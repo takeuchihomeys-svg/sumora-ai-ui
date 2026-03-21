@@ -37,17 +37,72 @@ type SupabaseMessageRow = {
 };
 
 const STATUS_LIST = [
-  { key: "first_reply", label: "初回返信", color: "bg-sky-100 text-sky-700" },
-  { key: "condition_hearing", label: "ヒアリング中", color: "bg-violet-100 text-violet-700" },
-  { key: "property_search", label: "物件探し中", color: "bg-amber-100 text-amber-700" },
-  { key: "property_recommendation", label: "提案中", color: "bg-emerald-100 text-emerald-700" },
-  { key: "viewing", label: "内覧調整", color: "bg-cyan-100 text-cyan-700" },
-  { key: "estimate_request", label: "見積送付後", color: "bg-orange-100 text-orange-700" },
-  { key: "availability_check", label: "募集確認中", color: "bg-yellow-100 text-yellow-700" },
-  { key: "application", label: "申込段階", color: "bg-rose-100 text-rose-700" },
-  { key: "screening", label: "審査中", color: "bg-pink-100 text-pink-700" },
-  { key: "contract", label: "契約前", color: "bg-indigo-100 text-indigo-700" },
-  { key: "closed_won", label: "成約", color: "bg-green-100 text-green-700" },
+  {
+    key: "first_reply",
+    label: "初回返信",
+    color: "bg-sky-100 text-sky-700",
+    dot: "bg-sky-500",
+  },
+  {
+    key: "condition_hearing",
+    label: "ヒアリング中",
+    color: "bg-violet-100 text-violet-700",
+    dot: "bg-violet-500",
+  },
+  {
+    key: "property_search",
+    label: "物件探し中",
+    color: "bg-amber-100 text-amber-700",
+    dot: "bg-amber-500",
+  },
+  {
+    key: "property_recommendation",
+    label: "提案中",
+    color: "bg-emerald-100 text-emerald-700",
+    dot: "bg-emerald-500",
+  },
+  {
+    key: "viewing",
+    label: "内覧調整",
+    color: "bg-cyan-100 text-cyan-700",
+    dot: "bg-cyan-500",
+  },
+  {
+    key: "estimate_request",
+    label: "見積送付後",
+    color: "bg-orange-100 text-orange-700",
+    dot: "bg-orange-500",
+  },
+  {
+    key: "availability_check",
+    label: "募集確認中",
+    color: "bg-yellow-100 text-yellow-700",
+    dot: "bg-yellow-500",
+  },
+  {
+    key: "application",
+    label: "申込段階",
+    color: "bg-rose-100 text-rose-700",
+    dot: "bg-rose-500",
+  },
+  {
+    key: "screening",
+    label: "審査中",
+    color: "bg-pink-100 text-pink-700",
+    dot: "bg-pink-500",
+  },
+  {
+    key: "contract",
+    label: "契約前",
+    color: "bg-indigo-100 text-indigo-700",
+    dot: "bg-indigo-500",
+  },
+  {
+    key: "closed_won",
+    label: "成約",
+    color: "bg-green-100 text-green-700",
+    dot: "bg-green-500",
+  },
 ];
 
 function formatTime(dateString: string) {
@@ -63,8 +118,13 @@ function getStatusMeta(statusKey: string) {
       key: statusKey,
       label: "未設定",
       color: "bg-gray-100 text-gray-700",
+      dot: "bg-gray-400",
     }
   );
+}
+
+function getInitial(name: string) {
+  return name?.trim()?.charAt(0) || "?";
 }
 
 export default function Home() {
@@ -79,6 +139,7 @@ export default function Home() {
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [showAixMenu, setShowAixMenu] = useState(false);
   const [showConversationDrawer, setShowConversationDrawer] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<string>("all");
 
   const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
   const [selectedImagePreview, setSelectedImagePreview] = useState<string>("");
@@ -161,8 +222,22 @@ export default function Home() {
     setPageLoading(false);
   };
 
+  const filteredConversations = useMemo(() => {
+    if (statusFilter === "all") return conversations;
+    return conversations.filter((conversation) => conversation.status === statusFilter);
+  }, [conversations, statusFilter]);
+
+  useEffect(() => {
+    if (filteredConversations.length === 0) return;
+
+    const exists = filteredConversations.some((conversation) => conversation.id === selectedId);
+    if (!exists) {
+      setSelectedId(filteredConversations[0].id);
+    }
+  }, [filteredConversations, selectedId]);
+
   const selectedConversation = useMemo(() => {
-    if (conversations.length === 0) {
+    if (filteredConversations.length === 0) {
       return {
         id: "",
         customerName: "",
@@ -173,8 +248,11 @@ export default function Home() {
       };
     }
 
-    return conversations.find((conversation) => conversation.id === selectedId) ?? conversations[0];
-  }, [conversations, selectedId]);
+    return (
+      filteredConversations.find((conversation) => conversation.id === selectedId) ??
+      filteredConversations[0]
+    );
+  }, [filteredConversations, selectedId]);
 
   useEffect(() => {
     setReplyDraft("");
@@ -183,7 +261,7 @@ export default function Home() {
     setShowAixMenu(false);
     setSelectedImageFile(null);
     setSelectedImagePreview("");
-  }, [selectedConversation]);
+  }, [selectedConversation.id]);
 
   const latestCustomerMessage = useMemo(() => {
     const customerMessages = selectedConversation.messages.filter(
@@ -390,8 +468,14 @@ export default function Home() {
   };
 
   return (
-    <main className="h-dvh overflow-hidden bg-[#9fc5e8]">
-      <div className="flex h-full">
+    <main
+      className="h-[100svh] overflow-hidden bg-[#9fc5e8]"
+      style={{
+        WebkitTextSizeAdjust: "100%",
+        touchAction: "manipulation",
+      }}
+    >
+      <div className="flex h-full w-full overflow-hidden">
         {showConversationDrawer ? (
           <div
             className="fixed inset-0 z-40 bg-black/30 lg:hidden"
@@ -400,41 +484,72 @@ export default function Home() {
         ) : null}
 
         <aside
-          className={`fixed left-0 top-0 z-50 flex h-dvh w-[84%] max-w-[320px] flex-col bg-white shadow-2xl transition-transform duration-300 lg:static lg:w-[320px] lg:max-w-none lg:translate-x-0 lg:border-r lg:border-gray-200 lg:shadow-none ${
+          className={`fixed left-0 top-0 z-50 flex h-[100svh] w-[88%] max-w-[360px] flex-col bg-white transition-transform duration-300 lg:static lg:w-[360px] lg:max-w-none lg:translate-x-0 lg:border-r lg:border-gray-200 ${
             showConversationDrawer ? "translate-x-0" : "-translate-x-full"
           }`}
         >
-          <div className="flex items-center justify-between border-b border-gray-200 px-4 py-4">
-            <div className="flex items-center gap-3">
-              <h1 className="text-[28px] font-bold tracking-tight text-gray-900">スモラAI</h1>
-              <div
-                className="inline-flex items-center rounded-full px-3 py-1 text-[11px] font-bold text-white shadow-lg"
-                style={{
-                  background:
-                    "linear-gradient(135deg, #050816 0%, #0b122f 35%, #1d4ed8 70%, #0f172a 100%)",
-                }}
-              >
-                <span className="mr-1 text-[10px]">✦</span>
-                AIXpro
+          <div className="border-b border-gray-200 px-4 py-4">
+            <div className="mb-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <h1 className="text-[28px] font-bold tracking-tight text-gray-900">スモラAI</h1>
+                <div
+                  className="inline-flex items-center rounded-full px-3 py-1 text-[11px] font-bold text-white shadow-lg"
+                  style={{
+                    background:
+                      "linear-gradient(135deg, #050816 0%, #0b122f 35%, #1d4ed8 70%, #0f172a 100%)",
+                  }}
+                >
+                  <span className="mr-1 text-[10px]">✦</span>
+                  AIXpro
+                </div>
               </div>
+
+              <button
+                onClick={() => setShowConversationDrawer(false)}
+                className="rounded-full p-2 text-gray-500 lg:hidden"
+              >
+                ✕
+              </button>
             </div>
 
-            <button
-              onClick={() => setShowConversationDrawer(false)}
-              className="rounded-full p-2 text-gray-500 lg:hidden"
-            >
-              ✕
-            </button>
+            <div className="overflow-x-auto">
+              <div className="flex min-w-max gap-2 pb-1">
+                <button
+                  onClick={() => setStatusFilter("all")}
+                  className={`rounded-full px-3 py-2 text-xs font-semibold whitespace-nowrap ${
+                    statusFilter === "all"
+                      ? "bg-[#06c755] text-white"
+                      : "bg-gray-100 text-gray-700"
+                  }`}
+                >
+                  すべて
+                </button>
+
+                {STATUS_LIST.map((status) => (
+                  <button
+                    key={status.key}
+                    onClick={() => setStatusFilter(status.key)}
+                    className={`rounded-full px-3 py-2 text-xs font-semibold whitespace-nowrap ${
+                      statusFilter === status.key
+                        ? "bg-gray-900 text-white"
+                        : `${status.color}`
+                    }`}
+                  >
+                    {status.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto overscroll-contain bg-white">
             {pageLoading ? (
               <div className="p-4 text-sm text-gray-500">読み込み中...</div>
-            ) : conversations.length === 0 ? (
-              <div className="p-4 text-sm text-gray-500">会話データがありません</div>
+            ) : filteredConversations.length === 0 ? (
+              <div className="p-4 text-sm text-gray-500">該当する会話がありません</div>
             ) : (
-              conversations.map((conversation) => {
-                const isActive = conversation.id === selectedId;
+              filteredConversations.map((conversation) => {
+                const isActive = conversation.id === selectedConversation.id;
                 const itemStatusMeta = getStatusMeta(conversation.status);
 
                 return (
@@ -444,26 +559,39 @@ export default function Home() {
                       setSelectedId(conversation.id);
                       setShowConversationDrawer(false);
                     }}
-                    className={`w-full border-b border-gray-100 px-4 py-4 text-left ${
+                    className={`w-full border-b border-gray-100 px-4 py-4 text-left transition ${
                       isActive ? "bg-[#eef7ea]" : "bg-white hover:bg-gray-50"
                     }`}
                   >
-                    <div className="mb-2 flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="truncate text-[17px] font-semibold text-gray-900">
-                          {conversation.customerName}
+                    <div className="flex items-start gap-3">
+                      <div className="relative shrink-0">
+                        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#dff3e6] text-base font-bold text-[#0f8f44]">
+                          {getInitial(conversation.customerName)}
                         </div>
+                        <span
+                          className={`absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full border-2 border-white ${itemStatusMeta.dot}`}
+                        />
                       </div>
 
-                      <span
-                        className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${itemStatusMeta.color}`}
-                      >
-                        {itemStatusMeta.label}
-                      </span>
-                    </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="mb-1 flex items-center justify-between gap-2">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <div className="truncate text-[16px] font-semibold text-gray-900">
+                              {conversation.customerName}
+                            </div>
+                          </div>
 
-                    <div className="truncate text-sm text-gray-500">
-                      {conversation.lastMessage}
+                          <span
+                            className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${itemStatusMeta.color}`}
+                          >
+                            {itemStatusMeta.label}
+                          </span>
+                        </div>
+
+                        <div className="truncate text-sm text-gray-500">
+                          {conversation.lastMessage}
+                        </div>
+                      </div>
                     </div>
                   </button>
                 );
@@ -472,7 +600,7 @@ export default function Home() {
           </div>
         </aside>
 
-        <section className="flex min-w-0 flex-1 flex-col">
+        <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <header className="border-b border-[#8fb8d8] bg-white px-3 py-3 sm:px-4">
             <div className="flex items-center gap-3">
               <button
@@ -482,11 +610,35 @@ export default function Home() {
                 ☰
               </button>
 
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[20px] font-bold text-gray-900">
-                  {selectedConversation.customerName || "会話を選択"}
-                </div>
-                <div className="mt-0.5 text-sm text-gray-500">{statusMeta.label}</div>
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                {selectedConversation.id ? (
+                  <>
+                    <div className="relative shrink-0">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-base font-bold text-[#0f8f44] shadow-sm ring-1 ring-gray-200">
+                        {getInitial(selectedConversation.customerName)}
+                      </div>
+                      <span
+                        className={`absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full border-2 border-white ${statusMeta.dot}`}
+                      />
+                    </div>
+
+                    <div className="min-w-0">
+                      <div className="truncate text-[19px] font-bold text-gray-900">
+                        {selectedConversation.customerName}
+                      </div>
+                      <div className="mt-0.5 flex items-center gap-2 text-sm text-gray-500">
+                        <span
+                          className={`inline-block h-2.5 w-2.5 rounded-full ${statusMeta.dot}`}
+                        />
+                        <span>{statusMeta.label}</span>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="truncate text-[20px] font-bold text-gray-900">
+                    会話を選択
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center gap-2">
@@ -497,20 +649,23 @@ export default function Home() {
                       setShowAixMenu(false);
                     }}
                     disabled={!selectedConversation.id || statusSaving}
-                    className={`rounded-full px-4 py-2 text-sm font-semibold ${statusMeta.color}`}
+                    className={`rounded-full px-4 py-2 text-sm font-semibold shadow-sm ${statusMeta.color}`}
                   >
-                    {statusSaving ? "更新中..." : "状態変更"}
+                    {statusSaving ? "更新中..." : `状態変更：${statusMeta.label}`}
                   </button>
 
                   {showStatusMenu ? (
-                    <div className="absolute right-0 top-full z-30 mt-2 w-48 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl">
+                    <div className="absolute right-0 top-full z-30 mt-2 w-56 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl">
                       {STATUS_LIST.map((item) => (
                         <button
                           key={item.key}
                           onClick={() => updateConversationStatus(item.key)}
-                          className="block w-full px-4 py-3 text-left text-sm hover:bg-gray-50"
+                          className={`flex w-full items-center gap-3 px-4 py-3 text-left text-sm hover:bg-gray-50 ${
+                            item.key === selectedConversation.status ? "bg-gray-50" : ""
+                          }`}
                         >
-                          {item.label}
+                          <span className={`h-3 w-3 rounded-full ${item.dot}`} />
+                          <span>{item.label}</span>
                         </button>
                       ))}
                     </div>
@@ -527,8 +682,8 @@ export default function Home() {
             </div>
           </header>
 
-          <div className="flex-1 overflow-y-auto bg-[#b7d4ea] px-3 py-4 sm:px-5">
-            <div className="mx-auto flex max-w-4xl flex-col gap-4">
+          <div className="flex-1 overflow-y-auto overscroll-contain bg-[#b7d4ea] px-2 py-3 sm:px-4 sm:py-4">
+            <div className="mx-auto flex h-full w-full max-w-5xl flex-col gap-4">
               {selectedConversation.messages.length === 0 ? (
                 <div className="rounded-2xl bg-white px-4 py-6 text-center text-sm text-gray-500 shadow-sm">
                   メッセージがありません
@@ -542,19 +697,20 @@ export default function Home() {
                       key={message.id}
                       className={`flex ${isCustomer ? "justify-start" : "justify-end"}`}
                     >
-                      <div className="max-w-[86%] sm:max-w-[72%]">
+                      <div className="max-w-[92%] sm:max-w-[78%] lg:max-w-[70%]">
                         <div
                           className={`rounded-[22px] px-4 py-3 text-[15px] leading-7 shadow-sm ${
                             isCustomer
-                              ? "bg-white text-gray-900"
-                              : "bg-[#8de055] text-gray-900"
+                              ? "rounded-bl-md bg-white text-gray-900"
+                              : "rounded-br-md bg-[#8de055] text-gray-900"
                           }`}
                         >
-                          {message.text}
+                          <div className="whitespace-pre-wrap break-words">{message.text}</div>
                         </div>
+
                         <div
                           className={`mt-1 text-xs text-gray-600 ${
-                            isCustomer ? "text-left" : "text-right"
+                            isCustomer ? "text-left pl-1" : "text-right pr-1"
                           }`}
                         >
                           {message.time}
@@ -594,7 +750,7 @@ export default function Home() {
               </div>
             ) : null}
 
-            <div className="mb-3 flex items-center gap-2">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
               <button
                 onClick={generateReply}
                 disabled={generating || !selectedConversation.id}
@@ -609,7 +765,7 @@ export default function Home() {
                     setShowAixMenu(!showAixMenu);
                     setShowStatusMenu(false);
                   }}
-                  className="group relative overflow-hidden rounded-full px-5 py-2.5 text-sm font-bold tracking-[0.18em] text-white shadow-[0_10px_30px_rgba(0,0,0,0.35)] transition hover:scale-[1.02]"
+                  className="relative overflow-hidden rounded-full px-5 py-2.5 text-sm font-bold tracking-[0.18em] text-white shadow-[0_10px_30px_rgba(0,0,0,0.35)]"
                   style={{
                     background:
                       "linear-gradient(135deg, #050816 0%, #0b122f 35%, #1d4ed8 70%, #0f172a 100%)",
