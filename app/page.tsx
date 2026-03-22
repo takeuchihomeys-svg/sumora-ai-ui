@@ -8,6 +8,7 @@ type Message = {
   sender: "customer" | "staff";
   text: string;
   time: string;
+  rawCreatedAt?: string;
 };
 
 type Conversation = {
@@ -16,6 +17,7 @@ type Conversation = {
   lastMessage: string;
   status: string;
   lineUserId: string;
+  updatedAt?: string;
   messages: Message[];
 };
 
@@ -105,13 +107,6 @@ const STATUS_LIST = [
   },
 ];
 
-function formatTime(dateString: string) {
-  const date = new Date(dateString);
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  return `${hours}:${minutes}`;
-}
-
 function getStatusMeta(statusKey: string) {
   return (
     STATUS_LIST.find((status) => status.key === statusKey) || {
@@ -127,6 +122,30 @@ function getInitial(name: string) {
   return name?.trim()?.charAt(0) || "?";
 }
 
+function formatTime(dateString: string) {
+  const date = new Date(dateString);
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
+function formatListTime(dateString?: string) {
+  if (!dateString) return "";
+  const date = new Date(dateString);
+  const now = new Date();
+
+  const isSameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+
+  if (isSameDay) {
+    return formatTime(dateString);
+  }
+
+  return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
 export default function Home() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
@@ -138,8 +157,8 @@ export default function Home() {
   const [error, setError] = useState("");
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [showAixMenu, setShowAixMenu] = useState(false);
-  const [showConversationDrawer, setShowConversationDrawer] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [mobileView, setMobileView] = useState<"list" | "chat">("list");
 
   const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
   const [selectedImagePreview, setSelectedImagePreview] = useState<string>("");
@@ -196,6 +215,7 @@ export default function Home() {
           sender: message.sender,
           text: message.text,
           time: formatTime(message.created_at),
+          rawCreatedAt: message.created_at,
         }));
 
       const lastMessage =
@@ -209,6 +229,7 @@ export default function Home() {
         lastMessage,
         status: conversation.status || "first_reply",
         lineUserId: conversation.line_user_id,
+        updatedAt: conversation.updated_at || undefined,
         messages: relatedMessages,
       };
     });
@@ -244,6 +265,7 @@ export default function Home() {
         lastMessage: "",
         status: "first_reply",
         lineUserId: "",
+        updatedAt: "",
         messages: [],
       };
     }
@@ -287,14 +309,16 @@ export default function Home() {
         })
         .eq("id", Number(selectedConversation.id));
 
-      if (updateError) {
-        throw updateError;
-      }
+      if (updateError) throw updateError;
 
       setConversations((prev) =>
         prev.map((conversation) =>
           conversation.id === selectedConversation.id
-            ? { ...conversation, status: nextStatus }
+            ? {
+                ...conversation,
+                status: nextStatus,
+                updatedAt: new Date().toISOString(),
+              }
             : conversation
         )
       );
@@ -401,7 +425,6 @@ export default function Home() {
       setError("");
 
       const now = new Date();
-
       let finalText = replyDraft.trim();
 
       if (selectedImageFile && !finalText) {
@@ -420,9 +443,7 @@ export default function Home() {
         })
         .select();
 
-      if (insertError) {
-        throw insertError;
-      }
+      if (insertError) throw insertError;
 
       const inserted = insertedRows?.[0];
 
@@ -434,27 +455,33 @@ export default function Home() {
         })
         .eq("id", Number(selectedConversation.id));
 
-      if (updateError) {
-        throw updateError;
-      }
+      if (updateError) throw updateError;
 
       const newMessage: Message = {
         id: String(inserted?.id || crypto.randomUUID()),
         sender: "staff",
         text: finalText,
         time: formatTime(now.toISOString()),
+        rawCreatedAt: now.toISOString(),
       };
 
       setConversations((prev) =>
-        prev.map((conversation) =>
-          conversation.id === selectedConversation.id
-            ? {
-                ...conversation,
-                lastMessage: finalText,
-                messages: [...conversation.messages, newMessage],
-              }
-            : conversation
-        )
+        prev
+          .map((conversation) =>
+            conversation.id === selectedConversation.id
+              ? {
+                  ...conversation,
+                  lastMessage: finalText,
+                  updatedAt: now.toISOString(),
+                  messages: [...conversation.messages, newMessage],
+                }
+              : conversation
+          )
+          .sort((a, b) => {
+            const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+            const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+            return bTime - aTime;
+          })
       );
 
       setReplyDraft("");
@@ -467,48 +494,36 @@ export default function Home() {
     }
   };
 
+  const openConversation = (conversationId: string) => {
+    setSelectedId(conversationId);
+    setMobileView("chat");
+  };
+
+  const showListOnMobile = mobileView === "list";
+  const showChatOnMobile = mobileView === "chat";
+
   return (
     <main
-      className="h-[100svh] overflow-hidden bg-[#9fc5e8]"
+      className="h-[100svh] overflow-hidden bg-[#111b21]"
       style={{
         WebkitTextSizeAdjust: "100%",
         touchAction: "manipulation",
       }}
     >
-      <div className="flex h-full w-full overflow-hidden">
-        {showConversationDrawer ? (
-          <div
-            className="fixed inset-0 z-40 bg-black/30 lg:hidden"
-            onClick={() => setShowConversationDrawer(false)}
-          />
-        ) : null}
-
+      <div className="mx-auto flex h-full w-full max-w-[1600px] overflow-hidden bg-white shadow-2xl">
         <aside
-          className={`fixed left-0 top-0 z-50 flex h-[100svh] w-[88%] max-w-[360px] flex-col bg-white transition-transform duration-300 lg:static lg:w-[360px] lg:max-w-none lg:translate-x-0 lg:border-r lg:border-gray-200 ${
-            showConversationDrawer ? "translate-x-0" : "-translate-x-full"
-          }`}
+          className={`${
+            showListOnMobile ? "flex" : "hidden"
+          } w-full flex-col bg-white md:flex md:w-[390px] md:min-w-[390px] md:border-r md:border-[#dfe5e7]`}
         >
-          <div className="border-b border-gray-200 px-4 py-4">
-            <div className="mb-4 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <h1 className="text-[28px] font-bold tracking-tight text-gray-900">スモラAI</h1>
-                <div
-                  className="inline-flex items-center rounded-full px-3 py-1 text-[11px] font-bold text-white shadow-lg"
-                  style={{
-                    background:
-                      "linear-gradient(135deg, #050816 0%, #0b122f 35%, #1d4ed8 70%, #0f172a 100%)",
-                  }}
-                >
-                  <span className="mr-1 text-[10px]">✦</span>
-                  AIXpro
-                </div>
-              </div>
-
+          <div className="border-b border-[#e9edef] bg-[#f0f2f5] px-4 pb-3 pt-[max(12px,env(safe-area-inset-top))]">
+            <div className="mb-3 flex items-center justify-between">
+              <div className="text-[22px] font-bold tracking-tight text-[#111b21]">トーク</div>
               <button
-                onClick={() => setShowConversationDrawer(false)}
-                className="rounded-full p-2 text-gray-500 lg:hidden"
+                onClick={fetchConversationsAndMessages}
+                className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-[#111b21] shadow-sm"
               >
-                ✕
+                更新
               </button>
             </div>
 
@@ -519,7 +534,7 @@ export default function Home() {
                   className={`rounded-full px-3 py-2 text-xs font-semibold whitespace-nowrap ${
                     statusFilter === "all"
                       ? "bg-[#06c755] text-white"
-                      : "bg-gray-100 text-gray-700"
+                      : "bg-white text-[#54656f]"
                   }`}
                 >
                   すべて
@@ -530,9 +545,7 @@ export default function Home() {
                     key={status.key}
                     onClick={() => setStatusFilter(status.key)}
                     className={`rounded-full px-3 py-2 text-xs font-semibold whitespace-nowrap ${
-                      statusFilter === status.key
-                        ? "bg-gray-900 text-white"
-                        : `${status.color}`
+                      statusFilter === status.key ? "bg-[#111b21] text-white" : "bg-white text-[#54656f]"
                     }`}
                   >
                     {status.label}
@@ -542,11 +555,11 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto overscroll-contain bg-white">
+          <div className="flex-1 overflow-y-auto bg-white">
             {pageLoading ? (
-              <div className="p-4 text-sm text-gray-500">読み込み中...</div>
+              <div className="p-4 text-sm text-[#667781]">読み込み中...</div>
             ) : filteredConversations.length === 0 ? (
-              <div className="p-4 text-sm text-gray-500">該当する会話がありません</div>
+              <div className="p-4 text-sm text-[#667781]">該当する会話がありません</div>
             ) : (
               filteredConversations.map((conversation) => {
                 const isActive = conversation.id === selectedConversation.id;
@@ -555,42 +568,32 @@ export default function Home() {
                 return (
                   <button
                     key={conversation.id}
-                    onClick={() => {
-                      setSelectedId(conversation.id);
-                      setShowConversationDrawer(false);
-                    }}
-                    className={`w-full border-b border-gray-100 px-4 py-4 text-left transition ${
-                      isActive ? "bg-[#eef7ea]" : "bg-white hover:bg-gray-50"
+                    onClick={() => openConversation(conversation.id)}
+                    className={`flex w-full items-center gap-3 border-b border-[#f0f2f5] px-4 py-3 text-left transition ${
+                      isActive ? "bg-[#f0f2f5]" : "bg-white hover:bg-[#f5f6f6]"
                     }`}
                   >
-                    <div className="flex items-start gap-3">
-                      <div className="relative shrink-0">
-                        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#dff3e6] text-base font-bold text-[#0f8f44]">
-                          {getInitial(conversation.customerName)}
+                    <div className="relative shrink-0">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#d9fdd3] text-base font-bold text-[#0f8f44]">
+                        {getInitial(conversation.customerName)}
+                      </div>
+                      <span
+                        className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white ${itemStatusMeta.dot}`}
+                      />
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <div className="mb-1 flex items-start justify-between gap-2">
+                        <div className="truncate text-[16px] font-semibold text-[#111b21]">
+                          {conversation.customerName}
                         </div>
-                        <span
-                          className={`absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full border-2 border-white ${itemStatusMeta.dot}`}
-                        />
+                        <div className="shrink-0 text-[11px] text-[#667781]">
+                          {formatListTime(conversation.updatedAt)}
+                        </div>
                       </div>
 
-                      <div className="min-w-0 flex-1">
-                        <div className="mb-1 flex items-center justify-between gap-2">
-                          <div className="flex min-w-0 items-center gap-2">
-                            <div className="truncate text-[16px] font-semibold text-gray-900">
-                              {conversation.customerName}
-                            </div>
-                          </div>
-
-                          <span
-                            className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${itemStatusMeta.color}`}
-                          >
-                            {itemStatusMeta.label}
-                          </span>
-                        </div>
-
-                        <div className="truncate text-sm text-gray-500">
-                          {conversation.lastMessage}
-                        </div>
+                      <div className="truncate text-[13px] text-[#667781]">
+                        {conversation.lastMessage}
                       </div>
                     </div>
                   </button>
@@ -600,92 +603,83 @@ export default function Home() {
           </div>
         </aside>
 
-        <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <header className="border-b border-[#8fb8d8] bg-white px-3 py-3 sm:px-4">
+        <section
+          className={`${
+            showChatOnMobile ? "flex" : "hidden"
+          } min-w-0 flex-1 flex-col bg-[#efeae2] md:flex`}
+          style={{
+            backgroundImage:
+              "radial-gradient(rgba(255,255,255,0.25) 1px, transparent 1px)",
+            backgroundSize: "18px 18px",
+          }}
+        >
+          <header className="border-b border-[#d1d7db] bg-[#f0f2f5] px-3 pb-3 pt-[max(10px,env(safe-area-inset-top))] md:px-4">
             <div className="flex items-center gap-3">
               <button
-                onClick={() => setShowConversationDrawer(true)}
-                className="flex h-10 w-10 items-center justify-center rounded-full border border-gray-200 bg-white text-xl text-gray-700 shadow-sm lg:hidden"
+                onClick={() => setMobileView("list")}
+                className="flex h-10 w-10 items-center justify-center rounded-full text-[22px] text-[#54656f] md:hidden"
               >
-                ☰
+                ←
               </button>
 
-              <div className="flex min-w-0 flex-1 items-center gap-3">
-                {selectedConversation.id ? (
-                  <>
-                    <div className="relative shrink-0">
-                      <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-base font-bold text-[#0f8f44] shadow-sm ring-1 ring-gray-200">
-                        {getInitial(selectedConversation.customerName)}
-                      </div>
-                      <span
-                        className={`absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full border-2 border-white ${statusMeta.dot}`}
-                      />
+              {selectedConversation.id ? (
+                <>
+                  <div className="relative shrink-0">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-base font-bold text-[#0f8f44]">
+                      {getInitial(selectedConversation.customerName)}
                     </div>
-
-                    <div className="min-w-0">
-                      <div className="truncate text-[19px] font-bold text-gray-900">
-                        {selectedConversation.customerName}
-                      </div>
-                      <div className="mt-0.5 flex items-center gap-2 text-sm text-gray-500">
-                        <span
-                          className={`inline-block h-2.5 w-2.5 rounded-full ${statusMeta.dot}`}
-                        />
-                        <span>{statusMeta.label}</span>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <div className="truncate text-[20px] font-bold text-gray-900">
-                    会話を選択
+                    <span
+                      className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white ${statusMeta.dot}`}
+                    />
                   </div>
-                )}
-              </div>
 
-              <div className="flex items-center gap-2">
-                <div className="relative">
-                  <button
-                    onClick={() => {
-                      setShowStatusMenu(!showStatusMenu);
-                      setShowAixMenu(false);
-                    }}
-                    disabled={!selectedConversation.id || statusSaving}
-                    className={`rounded-full px-4 py-2 text-sm font-semibold shadow-sm ${statusMeta.color}`}
-                  >
-                    {statusSaving ? "更新中..." : `状態変更：${statusMeta.label}`}
-                  </button>
-
-                  {showStatusMenu ? (
-                    <div className="absolute right-0 top-full z-30 mt-2 w-56 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl">
-                      {STATUS_LIST.map((item) => (
-                        <button
-                          key={item.key}
-                          onClick={() => updateConversationStatus(item.key)}
-                          className={`flex w-full items-center gap-3 px-4 py-3 text-left text-sm hover:bg-gray-50 ${
-                            item.key === selectedConversation.status ? "bg-gray-50" : ""
-                          }`}
-                        >
-                          <span className={`h-3 w-3 rounded-full ${item.dot}`} />
-                          <span>{item.label}</span>
-                        </button>
-                      ))}
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[17px] font-semibold text-[#111b21]">
+                      {selectedConversation.customerName}
                     </div>
-                  ) : null}
-                </div>
+                    <div className="truncate text-xs text-[#667781]">{statusMeta.label}</div>
+                  </div>
+                </>
+              ) : (
+                <div className="text-[18px] font-semibold text-[#111b21]">会話を選択</div>
+              )}
 
+              <div className="relative">
                 <button
-                  onClick={fetchConversationsAndMessages}
-                  className="hidden rounded-full border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 sm:inline-flex"
+                  onClick={() => {
+                    setShowStatusMenu(!showStatusMenu);
+                    setShowAixMenu(false);
+                  }}
+                  disabled={!selectedConversation.id || statusSaving}
+                  className="rounded-full bg-white px-3 py-2 text-xs font-semibold text-[#111b21] shadow-sm"
                 >
-                  更新
+                  {statusSaving ? "更新中..." : statusMeta.label}
                 </button>
+
+                {showStatusMenu ? (
+                  <div className="absolute right-0 top-full z-30 mt-2 w-56 overflow-hidden rounded-2xl border border-[#d1d7db] bg-white shadow-xl">
+                    {STATUS_LIST.map((item) => (
+                      <button
+                        key={item.key}
+                        onClick={() => updateConversationStatus(item.key)}
+                        className={`flex w-full items-center gap-3 px-4 py-3 text-left text-sm hover:bg-[#f5f6f6] ${
+                          item.key === selectedConversation.status ? "bg-[#f0f2f5]" : ""
+                        }`}
+                      >
+                        <span className={`h-3 w-3 rounded-full ${item.dot}`} />
+                        <span>{item.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             </div>
           </header>
 
-          <div className="flex-1 overflow-y-auto overscroll-contain bg-[#b7d4ea] px-2 py-3 sm:px-4 sm:py-4">
-            <div className="mx-auto flex h-full w-full max-w-5xl flex-col gap-4">
+          <div className="flex-1 overflow-y-auto px-3 py-4 md:px-6">
+            <div className="mx-auto flex w-full max-w-4xl flex-col gap-2">
               {selectedConversation.messages.length === 0 ? (
-                <div className="rounded-2xl bg-white px-4 py-6 text-center text-sm text-gray-500 shadow-sm">
+                <div className="rounded-2xl bg-white px-4 py-6 text-center text-sm text-[#667781] shadow-sm">
                   メッセージがありません
                 </div>
               ) : (
@@ -697,23 +691,18 @@ export default function Home() {
                       key={message.id}
                       className={`flex ${isCustomer ? "justify-start" : "justify-end"}`}
                     >
-                      <div className="max-w-[92%] sm:max-w-[78%] lg:max-w-[70%]">
+                      <div className="max-w-[88%] md:max-w-[72%]">
                         <div
-                          className={`rounded-[22px] px-4 py-3 text-[15px] leading-7 shadow-sm ${
+                          className={`rounded-2xl px-4 py-2.5 text-[15px] leading-7 shadow-sm ${
                             isCustomer
-                              ? "rounded-bl-md bg-white text-gray-900"
-                              : "rounded-br-md bg-[#8de055] text-gray-900"
+                              ? "rounded-bl-md bg-white text-[#111b21]"
+                              : "rounded-br-md bg-[#d9fdd3] text-[#111b21]"
                           }`}
                         >
                           <div className="whitespace-pre-wrap break-words">{message.text}</div>
-                        </div>
-
-                        <div
-                          className={`mt-1 text-xs text-gray-600 ${
-                            isCustomer ? "text-left pl-1" : "text-right pr-1"
-                          }`}
-                        >
-                          {message.time}
+                          <div className="mt-1 text-right text-[11px] leading-none text-[#667781]">
+                            {message.time}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -724,7 +713,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="border-t border-[#8fb8d8] bg-white px-3 py-3 pb-[max(12px,env(safe-area-inset-bottom))] sm:px-4">
+          <div className="border-t border-[#d1d7db] bg-[#f0f2f5] px-3 pb-[max(10px,env(safe-area-inset-bottom))] pt-3 md:px-4">
             {error ? (
               <div className="mb-3 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">
                 {error}
@@ -732,9 +721,9 @@ export default function Home() {
             ) : null}
 
             {selectedImagePreview ? (
-              <div className="mb-3 rounded-2xl border border-gray-200 bg-gray-50 p-3">
+              <div className="mb-3 rounded-2xl border border-[#d1d7db] bg-white p-3">
                 <div className="mb-2 flex items-center justify-between">
-                  <div className="text-sm font-medium text-gray-700">添付画像</div>
+                  <div className="text-sm font-medium text-[#54656f]">添付画像</div>
                   <button
                     onClick={removeSelectedImage}
                     className="text-sm font-semibold text-red-500"
@@ -756,7 +745,7 @@ export default function Home() {
                 disabled={generating || !selectedConversation.id}
                 className="rounded-full bg-[#06c755] px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-50"
               >
-                {generating ? "作成中..." : "返信案を作成"}
+                {generating ? "作成中..." : "返信案"}
               </button>
 
               <div className="relative">
@@ -765,27 +754,21 @@ export default function Home() {
                     setShowAixMenu(!showAixMenu);
                     setShowStatusMenu(false);
                   }}
-                  className="relative overflow-hidden rounded-full px-5 py-2.5 text-sm font-bold tracking-[0.18em] text-white shadow-[0_10px_30px_rgba(0,0,0,0.35)]"
-                  style={{
-                    background:
-                      "linear-gradient(135deg, #050816 0%, #0b122f 35%, #1d4ed8 70%, #0f172a 100%)",
-                  }}
+                  className="rounded-full bg-[#111b21] px-4 py-2 text-sm font-bold text-white shadow-sm"
                 >
-                  <span className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.28),transparent_45%)] opacity-80" />
-                  <span className="absolute inset-[1px] rounded-full border border-white/15" />
-                  <span className="relative z-10">AIX</span>
+                  AIX
                 </button>
 
                 {showAixMenu ? (
-                  <div className="absolute bottom-[54px] left-0 z-30 w-48 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl">
+                  <div className="absolute bottom-[52px] left-0 z-30 w-48 overflow-hidden rounded-2xl border border-[#d1d7db] bg-white shadow-2xl">
                     <button
                       onClick={() => {
                         alert("準備中です");
                         setShowAixMenu(false);
                       }}
-                      className="block w-full border-b border-gray-100 px-4 py-3 text-left text-sm font-semibold text-gray-800 hover:bg-gray-50"
+                      className="block w-full border-b border-[#f0f2f5] px-4 py-3 text-left text-sm font-semibold text-[#111b21] hover:bg-[#f5f6f6]"
                     >
-                      物件オススメする
+                      物件オススメ
                     </button>
 
                     <button
@@ -793,21 +776,21 @@ export default function Home() {
                         alert("準備中です");
                         setShowAixMenu(false);
                       }}
-                      className="block w-full border-b border-gray-100 px-4 py-3 text-left text-sm font-semibold text-gray-800 hover:bg-gray-50"
+                      className="block w-full border-b border-[#f0f2f5] px-4 py-3 text-left text-sm font-semibold text-[#111b21] hover:bg-[#f5f6f6]"
                     >
                       初期費用送る
                     </button>
 
                     <button
                       onClick={() => generateReplyWithIntent("内覧誘導")}
-                      className="block w-full border-b border-gray-100 px-4 py-3 text-left text-sm font-semibold text-gray-800 hover:bg-blue-50"
+                      className="block w-full border-b border-[#f0f2f5] px-4 py-3 text-left text-sm font-semibold text-[#111b21] hover:bg-[#f5f6f6]"
                     >
                       内覧
                     </button>
 
                     <button
                       onClick={() => generateReplyWithIntent("申込誘導")}
-                      className="block w-full px-4 py-3 text-left text-sm font-semibold text-gray-800 hover:bg-red-50"
+                      className="block w-full px-4 py-3 text-left text-sm font-semibold text-[#111b21] hover:bg-[#f5f6f6]"
                     >
                       申込
                     </button>
@@ -817,7 +800,7 @@ export default function Home() {
 
               <button
                 onClick={openImagePicker}
-                className="flex h-10 w-10 items-center justify-center rounded-full border border-gray-300 bg-white text-[28px] leading-none text-gray-700 shadow-sm"
+                className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-[26px] leading-none text-[#54656f] shadow-sm"
                 aria-label="画像を添付"
                 title="画像を添付"
               >
@@ -835,19 +818,19 @@ export default function Home() {
               <button
                 onClick={sendReply}
                 disabled={sending || (!replyDraft.trim() && !selectedImageFile)}
-                className="ml-auto rounded-full bg-gray-900 px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-50"
+                className="ml-auto rounded-full bg-[#06c755] px-5 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-50"
               >
                 {sending ? "送信中..." : "送信"}
               </button>
             </div>
 
-            <div className="rounded-[26px] border border-gray-200 bg-[#f5f5f5] px-4 py-3 shadow-inner">
+            <div className="flex items-end gap-2 rounded-[28px] bg-white px-4 py-3 shadow-sm">
               <textarea
                 value={replyDraft}
                 onChange={(e) => setReplyDraft(e.target.value)}
-                rows={4}
-                placeholder="ここに返信案が入ります。必要なら修正してから送信してください。"
-                className="w-full resize-none bg-transparent text-[15px] leading-7 text-gray-900 outline-none placeholder:text-gray-400"
+                rows={1}
+                placeholder="メッセージを入力"
+                className="max-h-36 min-h-[24px] w-full resize-none bg-transparent text-[15px] leading-6 text-[#111b21] outline-none placeholder:text-[#8696a0]"
               />
             </div>
           </div>
