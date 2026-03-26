@@ -19,6 +19,7 @@ type Conversation = {
   lastMessage: string;
   status: string;
   lineUserId: string;
+  profileImageUrl?: string;
   updatedAt?: string;
   messages: Message[];
 };
@@ -30,6 +31,7 @@ type SupabaseConversationRow = {
   line_user_id: string;
   last_message?: string | null;
   updated_at?: string | null;
+  profile_image_url?: string | null;
 };
 
 type SupabaseMessageRow = {
@@ -217,6 +219,7 @@ export default function Home() {
         lastMessage,
         status: conversation.status || "first_reply",
         lineUserId: conversation.line_user_id,
+        profileImageUrl: conversation.profile_image_url || undefined,
         updatedAt: conversation.updated_at || undefined,
         messages: relatedMessages,
       };
@@ -542,7 +545,7 @@ export default function Home() {
 
   return (
     <main
-      className="h-[calc(100svh-56px)] overflow-hidden bg-[#111b21]"
+      className={`${showChatOnMobile ? "h-[100svh]" : "h-[calc(100svh-56px)]"} overflow-hidden bg-[#111b21]`}
       style={{
         WebkitTextSizeAdjust: "100%",
         touchAction: "manipulation",
@@ -620,9 +623,17 @@ export default function Home() {
                     }`}
                   >
                     <div className="relative shrink-0">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#d9fdd3] text-base font-bold text-[#0f8f44]">
-                        {getInitial(conversation.customerName)}
-                      </div>
+                      {conversation.profileImageUrl ? (
+                        <img
+                          src={conversation.profileImageUrl}
+                          alt={conversation.customerName}
+                          className="h-12 w-12 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#d9fdd3] text-base font-bold text-[#0f8f44]">
+                          {getInitial(conversation.customerName)}
+                        </div>
+                      )}
                       <span
                         className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white ${groupMeta.dot}`}
                       />
@@ -630,7 +641,7 @@ export default function Home() {
 
                     <div className="min-w-0 flex-1">
                       <div className="mb-1 flex items-start justify-between gap-2">
-                        <div className="truncate text-[16px] font-semibold text-[#111b21]">
+                        <div className="truncate text-[14px] font-semibold text-[#111b21]">
                           {conversation.customerName}
                         </div>
                         <div className="shrink-0 text-[11px] text-[#667781]">
@@ -674,16 +685,24 @@ export default function Home() {
               {selectedConversation.id ? (
                 <>
                   <div className="relative shrink-0">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-base font-bold text-[#0f8f44]">
-                      {getInitial(selectedConversation.customerName)}
-                    </div>
+                    {selectedConversation.profileImageUrl ? (
+                      <img
+                        src={selectedConversation.profileImageUrl}
+                        alt={selectedConversation.customerName}
+                        className="h-10 w-10 rounded-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-base font-bold text-[#0f8f44]">
+                        {getInitial(selectedConversation.customerName)}
+                      </div>
+                    )}
                     <span
                       className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white ${statusMeta.dot}`}
                     />
                   </div>
 
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[17px] font-semibold text-white">
+                    <div className="truncate text-[15px] font-semibold text-white">
                       {selectedConversation.customerName}
                     </div>
                     <div className="truncate text-xs text-white/70">{statusMeta.label}</div>
@@ -742,7 +761,7 @@ export default function Home() {
                     >
                       <div className="max-w-[88%] md:max-w-[72%]">
                         <div
-                          className={`rounded-2xl px-4 py-2.5 text-[15px] leading-7 shadow-sm ${
+                          className={`rounded-2xl px-4 py-2.5 text-[14px] leading-6 shadow-sm ${
                             isCustomer
                               ? "rounded-bl-md bg-white text-[#111b21]"
                               : "rounded-br-md bg-[#d9fdd3] text-[#111b21]"
@@ -906,7 +925,7 @@ export default function Home() {
                 onBlur={() => setInputFocused(false)}
                 rows={inputFocused ? 4 : 1}
                 placeholder="メッセージを入力"
-                className="min-h-[24px] w-full resize-none bg-transparent text-[15px] leading-6 text-[#111b21] outline-none placeholder:text-[#8696a0]"
+                className="min-h-[24px] w-full resize-none bg-transparent text-[14px] leading-5 text-[#111b21] outline-none placeholder:text-[#8696a0]"
                 style={{ maxHeight: inputFocused ? "160px" : "80px", transition: "max-height 0.2s ease" }}
               />
             </div>
