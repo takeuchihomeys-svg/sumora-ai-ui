@@ -154,11 +154,13 @@ export default function Home() {
   const [aixModalType, setAixModalType] = useState<AixActionType | null>(null);
   const [aixInitialFile, setAixInitialFile] = useState<File | null>(null);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const aixFileInputRef = useRef<HTMLInputElement | null>(null);
   const pendingAixTypeRef = useRef<AixActionType | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     fetchConversationsAndMessages();
@@ -406,13 +408,31 @@ export default function Home() {
     }
   };
 
-  const uploadImageToStorage = async (file: File): Promise<string | null> => {
+  const toggleFlagged = (id: string) => {
+    setFlaggedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const startLongPress = (id: string) => {
+    longPressTimerRef.current = setTimeout(() => toggleFlagged(id), 500);
+  };
+  const cancelLongPress = () => {
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+  };
+
+  const uploadImageToStorage = async (file: File): Promise<string> => {
     const ext = file.name.split(".").pop() || "jpg";
     const path = `messages/${selectedConversation.id}/${Date.now()}.${ext}`;
     const { error: uploadError } = await supabase.storage
       .from("property-images")
       .upload(path, file, { upsert: true });
-    if (uploadError) return null;
+    if (uploadError) {
+      throw new Error(`画像アップロード失敗: ${uploadError.message}`);
+    }
     const { data } = supabase.storage.from("property-images").getPublicUrl(path);
     return data.publicUrl;
   };
@@ -432,7 +452,7 @@ export default function Home() {
       const imageUrls: string[] = [];
       for (const file of selectedImageFiles) {
         const url = await uploadImageToStorage(file);
-        if (url) imageUrls.push(url);
+        imageUrls.push(url);
       }
 
       const newMessages: Message[] = [];
@@ -844,39 +864,52 @@ export default function Home() {
                   return (
                     <div
                       key={message.id}
-                      className={`flex items-end gap-1 ${isCustomer ? "justify-start" : "justify-end"}`}
+                      className={`flex flex-col gap-0.5 ${isCustomer ? "items-start" : "items-end"}`}
                     >
-                      {!isCustomer && (
-                        <span className="mb-0.5 shrink-0 text-[10px] leading-none text-[#667781]">
-                          {message.time}
+                      {flaggedIds.has(message.id) && (
+                        <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold text-orange-600">
+                          ！要対応
                         </span>
                       )}
-                      <div className="max-w-[86%] md:max-w-[74%]">
+                      <div className={`flex items-end gap-1 ${isCustomer ? "justify-start" : "justify-end"}`}>
+                        {!isCustomer && (
+                          <span className="mb-0.5 shrink-0 text-[10px] leading-none text-[#667781]">
+                            {message.time}
+                          </span>
+                        )}
                         <div
-                          className={`rounded-2xl text-[15px] leading-6 shadow-sm ${
-                            isCustomer
-                              ? "rounded-bl-md bg-white text-[#111b21]"
-                              : "rounded-br-md bg-[#d9fdd3] text-[#111b21]"
-                          }`}
+                          className="max-w-[86%] md:max-w-[74%]"
+                          onTouchStart={() => startLongPress(message.id)}
+                          onTouchEnd={cancelLongPress}
+                          onTouchMove={cancelLongPress}
+                          onContextMenu={(e) => { e.preventDefault(); toggleFlagged(message.id); }}
                         >
-                          {message.imageUrl && (
-                            <img
-                              src={message.imageUrl}
-                              alt="送信画像"
-                              className="max-h-56 w-full rounded-2xl object-contain"
-                              style={{ borderBottomLeftRadius: message.text ? 0 : undefined, borderBottomRightRadius: message.text ? 0 : undefined }}
-                            />
-                          )}
-                          {message.text && message.text !== "[画像]" && (
-                            <div className="whitespace-pre-wrap break-words px-4 py-2.5">{message.text}</div>
-                          )}
+                          <div
+                            className={`rounded-2xl text-[15px] leading-6 shadow-sm ${
+                              isCustomer
+                                ? "rounded-bl-md bg-white text-[#111b21]"
+                                : "rounded-br-md bg-[#d9fdd3] text-[#111b21]"
+                            } ${flaggedIds.has(message.id) ? "ring-2 ring-orange-300" : ""}`}
+                          >
+                            {message.imageUrl && (
+                              <img
+                                src={message.imageUrl}
+                                alt="送信画像"
+                                className="max-h-56 w-full rounded-2xl object-contain"
+                                style={{ borderBottomLeftRadius: message.text ? 0 : undefined, borderBottomRightRadius: message.text ? 0 : undefined }}
+                              />
+                            )}
+                            {message.text && message.text !== "[画像]" && (
+                              <div className="whitespace-pre-wrap break-words px-4 py-2.5">{message.text}</div>
+                            )}
+                          </div>
                         </div>
+                        {isCustomer && (
+                          <span className="mb-0.5 shrink-0 text-[10px] leading-none text-[#667781]">
+                            {message.time}
+                          </span>
+                        )}
                       </div>
-                      {isCustomer && (
-                        <span className="mb-0.5 shrink-0 text-[10px] leading-none text-[#667781]">
-                          {message.time}
-                        </span>
-                      )}
                     </div>
                   );
                 })
@@ -919,16 +952,15 @@ export default function Home() {
               <button
                 onClick={generateReply}
                 disabled={generating || !selectedConversation.id}
-                className="rounded-full bg-[#06c755] px-3 py-1.5 text-xs font-semibold text-white shadow-sm disabled:opacity-50"
+                className="rounded-full border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-semibold text-[#111b21] shadow-sm disabled:opacity-40"
               >
-                {generating ? "生成中..." : "返信案"}
+                {generating ? "生成中..." : "返信作成"}
               </button>
 
               <div className="relative">
                 <button
                   onClick={() => { setShowAixMenu(!showAixMenu); setShowStatusMenu(false); }}
-                  className="rounded-full px-3 py-1.5 text-xs font-bold text-white shadow-sm"
-                  style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}
+                  className="rounded-full border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-bold text-[#111b21] shadow-sm"
                 >
                   AIX
                 </button>
@@ -993,9 +1025,17 @@ export default function Home() {
               <button
                 onClick={sendReply}
                 disabled={sending || (!replyDraft.trim() && selectedImageFiles.length === 0)}
-                className="shrink-0 rounded-full bg-[#06c755] px-4 py-1.5 text-xs font-bold text-white shadow-sm disabled:opacity-50"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#06c755] text-white shadow-sm disabled:opacity-50"
+                title="送信"
               >
-                {sending ? "送信中..." : "送信"}
+                {sending ? (
+                  <span className="text-[10px] font-bold">…</span>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="22" y1="2" x2="11" y2="13"/>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                  </svg>
+                )}
               </button>
             </div>
           </div>
