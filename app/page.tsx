@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import AixModal, { type AixActionType } from "./components/AixModal";
 import { supabase } from "./lib/supabase";
 
 type Message = {
@@ -150,6 +151,7 @@ export default function Home() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [replyDraft, setReplyDraft] = useState("");
+  const [aiSuggestion, setAiSuggestion] = useState("");
   const [pageLoading, setPageLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [sending, setSending] = useState(false);
@@ -162,8 +164,12 @@ export default function Home() {
 
   const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
   const [selectedImagePreview, setSelectedImagePreview] = useState<string>("");
+  const [aixModalType, setAixModalType] = useState<AixActionType | null>(null);
+  const [aixInitialFile, setAixInitialFile] = useState<File | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const aixFileInputRef = useRef<HTMLInputElement | null>(null);
+  const pendingAixTypeRef = useRef<AixActionType | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -278,6 +284,7 @@ export default function Home() {
 
   useEffect(() => {
     setReplyDraft("");
+    setAiSuggestion("");
     setError("");
     setShowStatusMenu(false);
     setShowAixMenu(false);
@@ -351,38 +358,7 @@ export default function Home() {
         throw new Error(data.error || "返信案取得失敗");
       }
 
-      setReplyDraft(data.ai_reply || "");
-    } catch (requestError) {
-      console.error(requestError);
-      setError("返信案の作成に失敗しました。");
-    } finally {
-      setGenerating(false);
-    }
-  };
-
-  const generateReplyWithIntent = async (intent: string) => {
-    if (!latestCustomerMessage.trim()) return;
-
-    try {
-      setGenerating(true);
-      setError("");
-
-      const promptText = `${latestCustomerMessage}\n\n今回の意図: ${intent}`;
-
-      const res = await fetch(
-        `https://sumora-line-ai.takeuchi-homeys.workers.dev/debug/reply?message=${encodeURIComponent(
-          promptText
-        )}&state=${encodeURIComponent(selectedConversation.status)}`
-      );
-
-      const data = await res.json();
-
-      if (!res.ok || !data.ok) {
-        throw new Error(data.error || "返信案取得失敗");
-      }
-
-      setReplyDraft(data.ai_reply || "");
-      setShowAixMenu(false);
+      setAiSuggestion(data.ai_reply || "");
     } catch (requestError) {
       console.error(requestError);
       setError("返信案の作成に失敗しました。");
@@ -494,6 +470,69 @@ export default function Home() {
     }
   };
 
+  const sendMessageText = async (text: string) => {
+    if (!selectedConversation.id || !text.trim()) return;
+    const now = new Date();
+    const { data: insertedRows, error: insertError } = await supabase
+      .from("messages")
+      .insert({
+        conversation_id: Number(selectedConversation.id),
+        sender: "staff",
+        text: text.trim(),
+        created_at: now.toISOString(),
+      })
+      .select();
+    if (insertError) throw insertError;
+
+    await supabase
+      .from("conversations")
+      .update({ last_message: text.trim(), updated_at: now.toISOString() })
+      .eq("id", Number(selectedConversation.id));
+
+    const inserted = insertedRows?.[0];
+    const newMessage: Message = {
+      id: String(inserted?.id || crypto.randomUUID()),
+      sender: "staff",
+      text: text.trim(),
+      time: formatTime(now.toISOString()),
+      rawCreatedAt: now.toISOString(),
+    };
+
+    setConversations((prev) =>
+      prev
+        .map((conversation) =>
+          conversation.id === selectedConversation.id
+            ? {
+                ...conversation,
+                lastMessage: text.trim(),
+                updatedAt: now.toISOString(),
+                messages: [...conversation.messages, newMessage],
+              }
+            : conversation
+        )
+        .sort((a, b) => {
+          const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+          const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+          return bTime - aTime;
+        })
+    );
+  };
+
+  const openAixWithImagePicker = (type: AixActionType) => {
+    pendingAixTypeRef.current = type;
+    setAixInitialFile(null);
+    aixFileInputRef.current?.click();
+  };
+
+  const onAixImageSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !pendingAixTypeRef.current) return;
+    setAixInitialFile(file);
+    setAixModalType(pendingAixTypeRef.current);
+    pendingAixTypeRef.current = null;
+    if (aixFileInputRef.current) aixFileInputRef.current.value = "";
+  };
+
   const openConversation = (conversationId: string) => {
     setSelectedId(conversationId);
     setMobileView("chat");
@@ -504,7 +543,7 @@ export default function Home() {
 
   return (
     <main
-      className="h-[100svh] overflow-hidden bg-[#111b21]"
+      className="h-[calc(100svh-56px)] overflow-hidden bg-[#111b21]"
       style={{
         WebkitTextSizeAdjust: "100%",
         touchAction: "manipulation",
@@ -531,9 +570,10 @@ export default function Home() {
               <div className="flex min-w-max gap-2 pb-1">
                 <button
                   onClick={() => setStatusFilter("all")}
+                  style={statusFilter === "all" ? { background: "linear-gradient(135deg, #1565C0, #4BA8E8)" } : {}}
                   className={`rounded-full px-3 py-2 text-xs font-semibold whitespace-nowrap ${
                     statusFilter === "all"
-                      ? "bg-[#06c755] text-white"
+                      ? "text-white"
                       : "bg-white text-[#54656f]"
                   }`}
                 >
@@ -606,18 +646,21 @@ export default function Home() {
         <section
           className={`${
             showChatOnMobile ? "flex" : "hidden"
-          } min-w-0 flex-1 flex-col bg-[#efeae2] md:flex`}
+          } min-w-0 flex-1 flex-col md:flex`}
           style={{
+            background: "linear-gradient(180deg, #deeeff 0%, #eef6ff 60%, #f5faff 100%)",
             backgroundImage:
-              "radial-gradient(rgba(255,255,255,0.25) 1px, transparent 1px)",
+              "radial-gradient(rgba(255,255,255,0.5) 1px, transparent 1px)",
             backgroundSize: "18px 18px",
           }}
         >
-          <header className="border-b border-[#d1d7db] bg-[#f0f2f5] px-3 pb-3 pt-[max(10px,env(safe-area-inset-top))] md:px-4">
+          <header className="border-b border-[#1a7fe8]/30 px-3 pb-3 pt-[max(10px,env(safe-area-inset-top))] backdrop-blur-sm md:px-4"
+            style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}
+          >
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setMobileView("list")}
-                className="flex h-10 w-10 items-center justify-center rounded-full text-[22px] text-[#54656f] md:hidden"
+                className="flex h-10 w-10 items-center justify-center rounded-full text-[22px] text-white md:hidden"
               >
                 ←
               </button>
@@ -634,14 +677,14 @@ export default function Home() {
                   </div>
 
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[17px] font-semibold text-[#111b21]">
+                    <div className="truncate text-[17px] font-semibold text-white">
                       {selectedConversation.customerName}
                     </div>
-                    <div className="truncate text-xs text-[#667781]">{statusMeta.label}</div>
+                    <div className="truncate text-xs text-white/70">{statusMeta.label}</div>
                   </div>
                 </>
               ) : (
-                <div className="text-[18px] font-semibold text-[#111b21]">会話を選択</div>
+                <div className="text-[18px] font-semibold text-white">会話を選択</div>
               )}
 
               <div className="relative">
@@ -709,6 +752,31 @@ export default function Home() {
                   );
                 })
               )}
+              {/* 返信案カード — クリックで入力欄に自動入力 */}
+              {aiSuggestion && !generating && (
+                <div className="flex justify-end">
+                  <div className="max-w-[88%] md:max-w-[72%]">
+                    <div className="mb-1 text-right text-xs text-[#667781]">返信案（タップで入力）</div>
+                    <button
+                      onClick={() => {
+                        setReplyDraft(aiSuggestion);
+                        setAiSuggestion("");
+                      }}
+                      className="w-full rounded-2xl rounded-br-md border border-blue-200 bg-white px-4 py-3 text-left text-[14px] leading-6 text-[#333] shadow-sm hover:bg-blue-50 active:bg-blue-100"
+                    >
+                      <div className="whitespace-pre-wrap break-words">{aiSuggestion}</div>
+                    </button>
+                  </div>
+                </div>
+              )}
+              {generating && (
+                <div className="flex justify-end">
+                  <div className="rounded-2xl rounded-br-md bg-white px-4 py-3 text-sm text-[#667781] shadow-sm">
+                    返信案を生成中...
+                  </div>
+                </div>
+              )}
+
               <div ref={bottomRef} />
             </div>
           </div>
@@ -754,45 +822,54 @@ export default function Home() {
                     setShowAixMenu(!showAixMenu);
                     setShowStatusMenu(false);
                   }}
-                  className="rounded-full bg-[#111b21] px-4 py-2 text-sm font-bold text-white shadow-sm"
+                  className="rounded-full px-4 py-2 text-sm font-bold text-white shadow-sm"
+                  style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}
                 >
                   AIX
                 </button>
 
                 {showAixMenu ? (
-                  <div className="absolute bottom-[52px] left-0 z-30 w-48 overflow-hidden rounded-2xl border border-[#d1d7db] bg-white shadow-2xl">
+                  <div className="absolute bottom-[52px] left-0 z-30 w-52 overflow-hidden rounded-2xl border border-blue-100 bg-white shadow-2xl">
                     <button
                       onClick={() => {
-                        alert("準備中です");
                         setShowAixMenu(false);
+                        openAixWithImagePicker("property_recommendation");
                       }}
-                      className="block w-full border-b border-[#f0f2f5] px-4 py-3 text-left text-sm font-semibold text-[#111b21] hover:bg-[#f5f6f6]"
+                      className="flex w-full items-center gap-2 border-b border-blue-50 px-4 py-3 text-left text-sm font-semibold text-[#111b21] hover:bg-blue-50"
                     >
-                      物件オススメ
+                      🏠 物件オススメ
                     </button>
 
                     <button
                       onClick={() => {
-                        alert("準備中です");
                         setShowAixMenu(false);
+                        openAixWithImagePicker("estimate_sheet");
                       }}
-                      className="block w-full border-b border-[#f0f2f5] px-4 py-3 text-left text-sm font-semibold text-[#111b21] hover:bg-[#f5f6f6]"
+                      className="flex w-full items-center gap-2 border-b border-blue-50 px-4 py-3 text-left text-sm font-semibold text-[#111b21] hover:bg-blue-50"
                     >
-                      初期費用送る
+                      💰 見積書送る
                     </button>
 
                     <button
-                      onClick={() => generateReplyWithIntent("内覧誘導")}
-                      className="block w-full border-b border-[#f0f2f5] px-4 py-3 text-left text-sm font-semibold text-[#111b21] hover:bg-[#f5f6f6]"
+                      onClick={() => {
+                        setShowAixMenu(false);
+                        setAixInitialFile(null);
+                        setAixModalType("viewing_invite");
+                      }}
+                      className="flex w-full items-center gap-2 border-b border-blue-50 px-4 py-3 text-left text-sm font-semibold text-[#111b21] hover:bg-blue-50"
                     >
-                      内覧
+                      🔍 内覧へ！
                     </button>
 
                     <button
-                      onClick={() => generateReplyWithIntent("申込誘導")}
-                      className="block w-full px-4 py-3 text-left text-sm font-semibold text-[#111b21] hover:bg-[#f5f6f6]"
+                      onClick={() => {
+                        setShowAixMenu(false);
+                        setAixInitialFile(null);
+                        setAixModalType("application_push");
+                      }}
+                      className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-[#111b21] hover:bg-blue-50"
                     >
-                      申込
+                      ✋ 申込へ！
                     </button>
                   </div>
                 ) : null}
@@ -812,6 +889,14 @@ export default function Home() {
                 type="file"
                 accept="image/*"
                 onChange={onSelectImage}
+                className="hidden"
+              />
+
+              <input
+                ref={aixFileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={onAixImageSelected}
                 className="hidden"
               />
 
@@ -836,6 +921,20 @@ export default function Home() {
           </div>
         </section>
       </div>
+
+      {aixModalType && selectedConversation.id ? (
+        <AixModal
+          actionType={aixModalType}
+          conversationId={selectedConversation.id}
+          customerName={selectedConversation.customerName}
+          initialImageFile={aixInitialFile ?? undefined}
+          onClose={() => {
+            setAixModalType(null);
+            setAixInitialFile(null);
+          }}
+          onSend={sendMessageText}
+        />
+      ) : null}
     </main>
   );
 }
