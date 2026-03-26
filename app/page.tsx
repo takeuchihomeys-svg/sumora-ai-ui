@@ -845,48 +845,15 @@ export default function Home() {
           <div className="border-b border-[#e9edef] bg-white px-3 pb-3 pt-[max(16px,env(safe-area-inset-top))]">
             {/* 検索バー */}
             <div className="flex items-center gap-2 rounded-2xl bg-white px-3 py-2.5 shadow-sm">
-              {/* ハンバーガー（ドロップダウンメニュー） */}
-              <div className="relative shrink-0">
-                <button
-                  onClick={() => setShowHamburgerMenu((v) => !v)}
-                  className="flex flex-col gap-[4px] px-1 py-0.5"
-                >
-                  <span className="block h-[2px] w-5 rounded-full bg-[#111b21]" />
-                  <span className="block h-[2px] w-5 rounded-full bg-[#111b21]" />
-                  <span className="block h-[2px] w-5 rounded-full bg-[#111b21]" />
-                </button>
-                {showHamburgerMenu && (
-                  <>
-                    <div className="fixed inset-0 z-20" onClick={() => setShowHamburgerMenu(false)} />
-                    <div className="absolute left-0 top-full z-30 mt-2 w-48 overflow-hidden rounded-2xl border border-[#d1d7db] bg-white shadow-xl">
-                      <button
-                        onClick={() => { setShowHamburgerMenu(false); setShowAccountSwitcher(true); }}
-                        className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-[#111b21] hover:bg-[#f5f6f6] border-b border-[#f0f2f5]"
-                      >
-                        <span className="text-base">👤</span>
-                        <span className="font-semibold">アカウント切替</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowHamburgerMenu(false);
-                          setAixSearchMode(true);
-                          setAiSearchIds(null);
-                          setAiSearchMessageIds({});
-                          setSearchQuery("");
-                        }}
-                        className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm hover:bg-[#f5f6f6]"
-                        style={{ color: "#1565C0" }}
-                      >
-                        <span className="text-base">✨</span>
-                        <div>
-                          <div className="font-bold">AIX検索</div>
-                          <div className="text-[10px] text-[#8696a0]">条件・内容でAI検索</div>
-                        </div>
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
+              {/* ハンバーガー */}
+              <button
+                onClick={() => setShowHamburgerMenu(true)}
+                className="flex shrink-0 flex-col gap-[4px] px-1 py-0.5"
+              >
+                <span className="block h-[2px] w-5 rounded-full bg-[#111b21]" />
+                <span className="block h-[2px] w-5 rounded-full bg-[#111b21]" />
+                <span className="block h-[2px] w-5 rounded-full bg-[#111b21]" />
+              </button>
               {/* 検索入力 */}
               <input
                 type="text"
@@ -1442,6 +1409,97 @@ export default function Home() {
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ハンバーガーメニューモーダル */}
+      {showHamburgerMenu && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/60"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowHamburgerMenu(false); }}
+        >
+          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl overflow-hidden">
+            {/* ヘッダー：AIX Pro */}
+            <div
+              className="px-6 pt-6 pb-5"
+              style={{ background: "linear-gradient(135deg, #0d1b3e, #1565C0, #2196F3)" }}
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[22px] font-black tracking-tight text-white">AIX</span>
+                    <span
+                      className="rounded-full px-2.5 py-0.5 text-[11px] font-bold text-white border border-white/50"
+                      style={{ background: "rgba(255,255,255,0.15)" }}
+                    >Pro</span>
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-white/60 tracking-widest uppercase">Intelligent CRM</div>
+                </div>
+                <button
+                  onClick={() => setShowHamburgerMenu(false)}
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-white/70 hover:text-white"
+                  style={{ background: "rgba(255,255,255,0.1)" }}
+                >✕</button>
+              </div>
+            </div>
+
+            {/* メニュー */}
+            <div className="p-4 flex flex-col gap-3">
+              {/* AIX検索 */}
+              <button
+                onClick={() => {
+                  setShowHamburgerMenu(false);
+                  setAixSearchMode(true);
+                  setAiSearchIds(null);
+                  setAiSearchMessageIds({});
+                  setSearchQuery("");
+                }}
+                className="flex w-full items-center gap-4 rounded-2xl px-5 py-4 text-left active:scale-[0.98] transition-transform"
+                style={{ background: "linear-gradient(135deg, #0d1b3e, #1565C0, #2196F3)" }}
+              >
+                {/* 検索アイコン */}
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl" style={{ background: "rgba(255,255,255,0.15)" }}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                    <circle cx="11" cy="11" r="7" stroke="white" strokeWidth="2.2" />
+                    <path d="M16.5 16.5L21 21" stroke="white" strokeWidth="2.2" strokeLinecap="round" />
+                    <path d="M8 11h6M11 8v6" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <div className="text-[15px] font-bold text-white">AIX検索</div>
+                  <div className="text-[11px] text-white/60">名前・希望条件・会話内容でAI検索</div>
+                </div>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <path d="M9 18l6-6-6-6" stroke="rgba(255,255,255,0.5)" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              </button>
+
+              {/* アカウント切替 */}
+              <button
+                onClick={() => { setShowHamburgerMenu(false); setShowAccountSwitcher(true); }}
+                className="flex w-full items-center gap-4 rounded-2xl border border-[#e9edef] bg-[#f8f9fa] px-5 py-4 text-left active:scale-[0.98] transition-transform hover:bg-[#f0f2f5]"
+              >
+                {/* アバター */}
+                <div className="shrink-0">
+                  {currentAccount.profileImage ? (
+                    <img src={currentAccount.profileImage} alt={currentAccount.name} className="h-11 w-11 rounded-full object-cover border-2 border-white shadow-sm" />
+                  ) : (
+                    <div className="flex h-11 w-11 items-center justify-center rounded-full text-2xl border-2 border-[#e9edef] bg-white shadow-sm">
+                      {currentAccount.icon}
+                    </div>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[15px] font-bold text-[#111b21] truncate">{currentAccount.name}</div>
+                  <div className="text-[11px] text-[#8696a0]">アカウント切替</div>
+                </div>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <path d="M9 18l6-6-6-6" stroke="#aaa" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              </button>
+            </div>
+            <div className="pb-[max(20px,env(safe-area-inset-bottom))]" />
           </div>
         </div>
       )}
