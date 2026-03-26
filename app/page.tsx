@@ -389,6 +389,14 @@ export default function Home() {
     setSelectedImagePreviews([]);
   }, [selectedConversation.id]);
 
+  // replyDraftが変わったらtextareaの高さを自動調整
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
+  }, [replyDraft]);
+
   const latestCustomerMessage = useMemo(() => {
     const customerMessages = selectedConversation.messages.filter(
       (message) => message.sender === "customer"
@@ -1191,6 +1199,7 @@ export default function Home() {
                         )}
                         <div
                           className="max-w-[86%] md:max-w-[74%]"
+                          style={{ userSelect: "none", WebkitUserSelect: "none" }}
                           onTouchStart={(e) => startLongPress(message.id, message.text, e)}
                           onTouchEnd={cancelLongPress}
                           onTouchMove={cancelLongPress}
@@ -1634,65 +1643,81 @@ export default function Home() {
 
       {contextMenu && (
         <div
-          className="fixed inset-0 z-[90] flex items-end justify-center bg-black/70"
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-black/30"
           onClick={() => setContextMenu(null)}
         >
           <div
-            className="mx-4 mb-8 w-full max-w-sm overflow-hidden rounded-3xl shadow-2xl"
+            className="overflow-hidden rounded-2xl bg-white shadow-xl"
+            style={{ minWidth: "260px", maxWidth: "300px" }}
             onClick={(e) => e.stopPropagation()}
           >
             {/* メッセージプレビュー */}
-            <div className="px-5 py-4" style={{ background: "linear-gradient(135deg, #0d1b3e, #1565C0, #2196F3)" }}>
-              <p className="text-[13px] leading-5 text-white/90 line-clamp-3">
-                {contextMenu.text && contextMenu.text !== "[画像]" ? contextMenu.text : "📷 画像"}
-              </p>
-            </div>
-            {/* アクション */}
-            <div className="flex flex-col bg-white">
-              <button
-                onClick={() => { toggleFlagged(contextMenu.messageId); setContextMenu(null); }}
-                className="flex items-center gap-4 border-b border-[#f0f2f5] px-5 py-4 text-left active:bg-[#f0f2f5]"
-              >
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-orange-50 text-lg">🚩</div>
-                <span className="text-[15px] font-semibold text-[#111b21]">要対応フラグ</span>
-              </button>
-              <button
-                onClick={() => {
-                  const msg = selectedConversation.messages.find(m => m.id === contextMenu.messageId);
-                  if (msg && !announcements.find(a => a.id === msg.id)) setAnnouncements(prev => [...prev, msg]);
-                  setContextMenu(null);
-                }}
-                className="flex items-center gap-4 border-b border-[#f0f2f5] px-5 py-4 text-left active:bg-[#f0f2f5]"
-              >
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-yellow-50 text-lg">📌</div>
-                <span className="text-[15px] font-semibold text-[#111b21]">アナウンスに追加</span>
-              </button>
-              <button
-                onClick={() => {
-                  if (contextMenu.text && contextMenu.text !== "[画像]") navigator.clipboard.writeText(contextMenu.text);
-                  setContextMenu(null);
-                }}
-                className="flex items-center gap-4 border-b border-[#f0f2f5] px-5 py-4 text-left active:bg-[#f0f2f5]"
-              >
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full" style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                  </svg>
-                </div>
-                <span className="text-[15px] font-semibold text-[#111b21]">コピー</span>
-              </button>
-              <button
-                onClick={() => { setPartialCopyMessageId(contextMenu.messageId); setContextMenu(null); }}
-                className="flex items-center gap-4 px-5 py-4 text-left active:bg-[#f0f2f5]"
-              >
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full" style={{ background: "linear-gradient(135deg, #1565C0, #4BA8E8)" }}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
-                  </svg>
-                </div>
-                <span className="text-[15px] font-semibold text-[#111b21]">部分コピー</span>
-              </button>
+            {contextMenu.text && contextMenu.text !== "[画像]" && (
+              <div className="border-b border-[#f0f2f5] px-4 py-3">
+                <p className="line-clamp-2 text-[12px] leading-5 text-[#8696a0]">{contextMenu.text}</p>
+              </div>
+            )}
+            {/* アクション横並び */}
+            <div className="grid grid-cols-4 px-2 py-3">
+              {[
+                {
+                  icon: (
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-orange-50">
+                      <span className="text-[22px]">🚩</span>
+                    </div>
+                  ),
+                  label: "要対応",
+                  action: () => { toggleFlagged(contextMenu.messageId); setContextMenu(null); },
+                },
+                {
+                  icon: (
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-yellow-50">
+                      <span className="text-[22px]">📌</span>
+                    </div>
+                  ),
+                  label: "アナウンス",
+                  action: () => {
+                    const msg = selectedConversation.messages.find(m => m.id === contextMenu.messageId);
+                    if (msg && !announcements.find(a => a.id === msg.id)) setAnnouncements(prev => [...prev, msg]);
+                    setContextMenu(null);
+                  },
+                },
+                {
+                  icon: (
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#e3f2fd]">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1565C0" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                      </svg>
+                    </div>
+                  ),
+                  label: "コピー",
+                  action: () => {
+                    if (contextMenu.text && contextMenu.text !== "[画像]") navigator.clipboard.writeText(contextMenu.text);
+                    setContextMenu(null);
+                  },
+                },
+                {
+                  icon: (
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#e3f2fd]">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1565C0" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
+                      </svg>
+                    </div>
+                  ),
+                  label: "部分コピー",
+                  action: () => { setPartialCopyMessageId(contextMenu.messageId); setContextMenu(null); },
+                },
+              ].map((item) => (
+                <button
+                  key={item.label}
+                  onClick={item.action}
+                  className="flex flex-col items-center gap-1.5 rounded-xl px-1 py-2 active:bg-[#f0f2f5]"
+                >
+                  {item.icon}
+                  <span className="text-[10px] font-medium text-[#54656f]">{item.label}</span>
+                </button>
+              ))}
             </div>
           </div>
         </div>
