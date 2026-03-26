@@ -148,7 +148,7 @@ export default function Home() {
   const [currentAccount, setCurrentAccount] = useState<{ id: string; name: string; icon: string; profileImage?: string }>(() => {
     if (typeof window === "undefined") return { id: "sumora", name: "スモラ", icon: "🦄" };
     const saved = localStorage.getItem("sumora_account_profile");
-    return saved ? JSON.parse(saved) : { id: "sumora", name: "スモラ", icon: "🦄" };
+    return saved ? JSON.parse(saved) : { id: "sumora", name: "スモラ", icon: "🦄", profileImage: "/icon-192.png" };
   });
   const accountImageInputRef = useRef<HTMLInputElement | null>(null);
   const [mobileView, setMobileView] = useState<"list" | "chat">("list");
@@ -166,7 +166,8 @@ export default function Home() {
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);
   const [announcements, setAnnouncements] = useState<Message[]>([]);
   const [showAnnouncementList, setShowAnnouncementList] = useState(false);
-  const [contextMenu, setContextMenu] = useState<{ messageId: string; x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ messageId: string; x: number; y: number; text: string } | null>(null);
+  const [partialCopyMessageId, setPartialCopyMessageId] = useState<string | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const lightboxSwipeX = useRef(0);
   const [flaggedConvIds, setFlaggedConvIds] = useState<Set<string>>(new Set());
@@ -182,8 +183,14 @@ export default function Home() {
   const pendingAixTypeRef = useRef<AixActionType | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
+    // 通知許可リクエスト
+    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+
     fetchConversationsAndMessages();
 
     // Supabase real-time: 新しいメッセージをリアルタイム反映
@@ -192,7 +199,23 @@ export default function Home() {
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "messages" },
-        () => {
+        (payload) => {
+          // お客様メッセージが届いたら通知
+          if (
+            payload.new &&
+            (payload.new as { sender: string }).sender === "customer" &&
+            typeof window !== "undefined" &&
+            "Notification" in window &&
+            Notification.permission === "granted"
+          ) {
+            const msgText = (payload.new as { text?: string }).text || "新しいメッセージが届きました";
+            const notif = new Notification("AIX LINX — 新着メッセージ", {
+              body: msgText,
+              icon: "/icon-192.png",
+              badge: "/icon-192.png",
+            });
+            notif.onclick = () => { window.focus(); notif.close(); };
+          }
           fetchConversationsAndMessages();
         }
       )
@@ -482,10 +505,10 @@ export default function Home() {
     });
   };
 
-  const startLongPress = (messageId: string, e?: React.TouchEvent) => {
+  const startLongPress = (messageId: string, messageText: string, e?: React.TouchEvent) => {
     longPressTimerRef.current = setTimeout(() => {
       const touch = e?.touches[0];
-      setContextMenu({ messageId, x: touch?.clientX ?? 200, y: touch?.clientY ?? 300 });
+      setContextMenu({ messageId, x: touch?.clientX ?? 200, y: touch?.clientY ?? 300, text: messageText });
     }, 500);
   };
   const cancelLongPress = () => {
@@ -840,7 +863,8 @@ export default function Home() {
         <aside
           className={`${
             showListOnMobile ? "flex" : "hidden"
-          } w-full flex-col bg-white pb-14 md:flex md:w-[390px] md:min-w-[390px] md:border-r md:border-[#dfe5e7]`}
+          } w-full flex-col bg-white md:flex md:w-[390px] md:min-w-[390px] md:border-r md:border-[#dfe5e7]`}
+          style={{ paddingBottom: "calc(56px + env(safe-area-inset-bottom))" }}
         >
           <div className="border-b border-[#e9edef] bg-white px-3 pb-3 pt-[max(16px,env(safe-area-inset-top))]">
             {/* 検索バー */}
@@ -1027,8 +1051,8 @@ export default function Home() {
           } min-w-0 flex-1 flex-col md:flex`}
           style={{ background: "linear-gradient(180deg, #e8f4fd 0%, #f0f8ff 50%, #f8fbff 100%)" }}
         >
-          <header className="border-b border-[#e9edef] px-3 pb-2 pt-[max(8px,env(safe-area-inset-top))] backdrop-blur-md md:px-4"
-            style={{ background: "rgba(255,255,255,0.92)" }}
+          <header className="border-b border-[#e9edef] px-3 pb-3 pt-[max(14px,env(safe-area-inset-top))] backdrop-blur-md md:px-4"
+            style={{ background: "rgba(218,238,253,0.88)" }}
           >
             <div className="relative flex items-center">
               {/* 左: 戻るボタン + 未返信バッジ */}
@@ -1167,10 +1191,10 @@ export default function Home() {
                         )}
                         <div
                           className="max-w-[86%] md:max-w-[74%]"
-                          onTouchStart={(e) => startLongPress(message.id, e)}
+                          onTouchStart={(e) => startLongPress(message.id, message.text, e)}
                           onTouchEnd={cancelLongPress}
                           onTouchMove={cancelLongPress}
-                          onContextMenu={(e) => { e.preventDefault(); toggleFlagged(message.id); }}
+                          onContextMenu={(e) => { e.preventDefault(); setContextMenu({ messageId: message.id, x: e.clientX, y: e.clientY, text: message.text }); }}
                         >
                           <div
                             className={`rounded-2xl text-[15px] leading-6 shadow-sm ${
@@ -1248,7 +1272,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="border-t border-[#e9edef] bg-white px-2 pb-[max(8px,env(safe-area-inset-bottom))] pt-2 md:px-3">
+          <div className="border-t border-[#e9edef] bg-white px-2 pt-2 md:px-3" style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}>
             {error ? (
               <div className="mb-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-600">{error}</div>
             ) : null}
@@ -1314,14 +1338,19 @@ export default function Home() {
             {/* テキスト入力 */}
             <div className={`flex items-center gap-2 rounded-[24px] bg-[#f0f2f5] px-4 py-2 transition-all ${inputFocused ? "rounded-[16px]" : ""}`}>
               <textarea
+                ref={textareaRef}
                 value={replyDraft}
-                onChange={(e) => setReplyDraft(e.target.value)}
+                onChange={(e) => {
+                  setReplyDraft(e.target.value);
+                  e.target.style.height = "auto";
+                  e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`;
+                }}
                 onFocus={() => setInputFocused(true)}
                 onBlur={() => setInputFocused(false)}
-                rows={inputFocused ? 4 : 1}
+                rows={1}
                 placeholder="Aa"
-                className="min-h-[22px] w-full resize-none bg-transparent text-[14px] leading-6 text-[#111b21] outline-none placeholder:text-[#aaa]"
-                style={{ maxHeight: inputFocused ? "140px" : "72px", transition: "max-height 0.2s ease" }}
+                className="min-h-[22px] w-full resize-none overflow-hidden bg-transparent text-[14px] leading-6 text-[#111b21] outline-none placeholder:text-[#aaa]"
+                style={{ height: "22px" }}
               />
               <button
                 onClick={sendReply}
@@ -1605,35 +1634,99 @@ export default function Home() {
 
       {contextMenu && (
         <div
-          className="fixed inset-0 z-[90]"
+          className="fixed inset-0 z-[90] flex items-end justify-center bg-black/70"
           onClick={() => setContextMenu(null)}
         >
           <div
-            className="absolute overflow-hidden rounded-2xl bg-white shadow-2xl border border-[#e9edef]"
-            style={{ left: Math.min(contextMenu.x, window.innerWidth - 180), top: Math.min(contextMenu.y, window.innerHeight - 120) }}
+            className="mx-4 mb-8 w-full max-w-sm overflow-hidden rounded-3xl shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <button
-              onClick={() => {
-                toggleFlagged(contextMenu.messageId);
-                setContextMenu(null);
-              }}
-              className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-[#111b21] hover:bg-[#f0f2f5] border-b border-[#f0f2f5]"
-            >
-              <span>🚩</span> 要対応フラグ
-            </button>
-            <button
-              onClick={() => {
-                const msg = selectedConversation.messages.find(m => m.id === contextMenu.messageId);
-                if (msg && !announcements.find(a => a.id === msg.id)) {
-                  setAnnouncements(prev => [...prev, msg]);
-                }
-                setContextMenu(null);
-              }}
-              className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-[#111b21] hover:bg-[#f0f2f5]"
-            >
-              <span>📌</span> アナウンスに追加
-            </button>
+            {/* メッセージプレビュー */}
+            <div className="px-5 py-4" style={{ background: "linear-gradient(135deg, #0d1b3e, #1565C0, #2196F3)" }}>
+              <p className="text-[13px] leading-5 text-white/90 line-clamp-3">
+                {contextMenu.text && contextMenu.text !== "[画像]" ? contextMenu.text : "📷 画像"}
+              </p>
+            </div>
+            {/* アクション */}
+            <div className="flex flex-col bg-white">
+              <button
+                onClick={() => { toggleFlagged(contextMenu.messageId); setContextMenu(null); }}
+                className="flex items-center gap-4 border-b border-[#f0f2f5] px-5 py-4 text-left active:bg-[#f0f2f5]"
+              >
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-orange-50 text-lg">🚩</div>
+                <span className="text-[15px] font-semibold text-[#111b21]">要対応フラグ</span>
+              </button>
+              <button
+                onClick={() => {
+                  const msg = selectedConversation.messages.find(m => m.id === contextMenu.messageId);
+                  if (msg && !announcements.find(a => a.id === msg.id)) setAnnouncements(prev => [...prev, msg]);
+                  setContextMenu(null);
+                }}
+                className="flex items-center gap-4 border-b border-[#f0f2f5] px-5 py-4 text-left active:bg-[#f0f2f5]"
+              >
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-yellow-50 text-lg">📌</div>
+                <span className="text-[15px] font-semibold text-[#111b21]">アナウンスに追加</span>
+              </button>
+              <button
+                onClick={() => {
+                  if (contextMenu.text && contextMenu.text !== "[画像]") navigator.clipboard.writeText(contextMenu.text);
+                  setContextMenu(null);
+                }}
+                className="flex items-center gap-4 border-b border-[#f0f2f5] px-5 py-4 text-left active:bg-[#f0f2f5]"
+              >
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full" style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                  </svg>
+                </div>
+                <span className="text-[15px] font-semibold text-[#111b21]">コピー</span>
+              </button>
+              <button
+                onClick={() => { setPartialCopyMessageId(contextMenu.messageId); setContextMenu(null); }}
+                className="flex items-center gap-4 px-5 py-4 text-left active:bg-[#f0f2f5]"
+              >
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full" style={{ background: "linear-gradient(135deg, #1565C0, #4BA8E8)" }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
+                  </svg>
+                </div>
+                <span className="text-[15px] font-semibold text-[#111b21]">部分コピー</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 部分コピーモーダル */}
+      {partialCopyMessageId && (
+        <div
+          className="fixed inset-0 z-[91] flex items-center justify-center bg-black/60 px-6"
+          onClick={() => setPartialCopyMessageId(null)}
+        >
+          <div
+            className="w-full max-w-sm overflow-hidden rounded-3xl bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4" style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
+              <div className="text-[15px] font-bold text-white">部分コピー</div>
+              <div className="mt-0.5 text-[11px] text-white/70">テキストを長押しして選択→コピーしてください</div>
+            </div>
+            <div className="p-5">
+              <p
+                className="text-[15px] leading-6 text-[#111b21]"
+                style={{ userSelect: "text", WebkitUserSelect: "text" }}
+              >
+                {selectedConversation.messages.find(m => m.id === partialCopyMessageId)?.text}
+              </p>
+            </div>
+            <div className="px-5 pb-5">
+              <button
+                onClick={() => setPartialCopyMessageId(null)}
+                className="w-full rounded-2xl py-3 text-[15px] font-bold text-white"
+                style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}
+              >閉じる</button>
+            </div>
           </div>
         </div>
       )}
