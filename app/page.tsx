@@ -1102,7 +1102,7 @@ export default function Home() {
           <div className="flex-1 overflow-y-auto px-3 py-4 md:px-6">
             <div className="mx-auto flex w-full max-w-4xl flex-col gap-3.5">
               {(() => {
-                const q = searchQuery.trim().toLowerCase();
+                const q = aiSearchIds !== null ? "" : searchQuery.trim().toLowerCase();
                 const displayMessages = q
                   ? selectedConversation.messages.filter((m) => m.text?.toLowerCase().includes(q))
                   : selectedConversation.messages;
