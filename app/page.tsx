@@ -620,26 +620,7 @@ export default function Home() {
     const now = new Date();
     const newMessages: Message[] = [];
 
-    if (text.trim()) {
-      const { data: insertedRows, error: insertError } = await supabase
-        .from("messages")
-        .insert({
-          conversation_id: Number(selectedConversation.id),
-          sender: "staff",
-          text: text.trim(),
-          created_at: now.toISOString(),
-        })
-        .select();
-      if (insertError) throw insertError;
-      newMessages.push({
-        id: String(insertedRows?.[0]?.id || crypto.randomUUID()),
-        sender: "staff",
-        text: text.trim(),
-        time: formatTime(now.toISOString()),
-        rawCreatedAt: now.toISOString(),
-      });
-    }
-
+    // 画像が先、テキストが後の順で保存・送信
     if (imageUrl) {
       const imgNow = new Date();
       const { data: imgRow, error: imgError } = await supabase
@@ -663,7 +644,27 @@ export default function Home() {
       });
     }
 
-    const lastText = imageUrl ? "[画像]" : text.trim();
+    if (text.trim()) {
+      const { data: insertedRows, error: insertError } = await supabase
+        .from("messages")
+        .insert({
+          conversation_id: Number(selectedConversation.id),
+          sender: "staff",
+          text: text.trim(),
+          created_at: now.toISOString(),
+        })
+        .select();
+      if (insertError) throw insertError;
+      newMessages.push({
+        id: String(insertedRows?.[0]?.id || crypto.randomUUID()),
+        sender: "staff",
+        text: text.trim(),
+        time: formatTime(now.toISOString()),
+        rawCreatedAt: now.toISOString(),
+      });
+    }
+
+    const lastText = text.trim() || "[画像]";
     await supabase
       .from("conversations")
       .update({ last_message: lastText, updated_at: now.toISOString() })
@@ -688,20 +689,20 @@ export default function Home() {
         })
     );
 
-    // LINEに送信
+    // LINEに送信（画像→テキストの順）
     try {
-      if (text.trim()) {
-        await fetch("https://sumora-line-ai.takeuchi-homeys.workers.dev/api/send-message", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: text.trim() }),
-        });
-      }
       if (imageUrl) {
         await fetch("https://sumora-line-ai.takeuchi-homeys.workers.dev/api/send-message", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, image_url: imageUrl }),
+        });
+      }
+      if (text.trim()) {
+        await fetch("https://sumora-line-ai.takeuchi-homeys.workers.dev/api/send-message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: text.trim() }),
         });
       }
     } catch {
