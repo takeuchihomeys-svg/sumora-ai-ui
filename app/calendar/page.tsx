@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import BottomNav from "../components/BottomNav";
 import { supabase } from "../lib/supabase";
 
 type EventType = "viewing" | "contract" | "key_handover" | "other";
@@ -335,6 +336,8 @@ export default function CalendarPage() {
           ＋ 新しい予定の作成
         </button>
       </div>
+
+      <BottomNav />
 
       {/* 予定作成・編集モーダル */}
       {showModal && (

@@ -1,7 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
-import BottomNav from "./components/BottomNav";
 
 export const metadata: Metadata = {
   title: "スモラAI",
@@ -23,9 +22,8 @@ type RootLayoutProps = {
 export default function RootLayout({ children }: RootLayoutProps) {
   return (
     <html lang="ja">
-      <body className="pb-[56px]">
+      <body>
         {children}
-        <BottomNav />
       </body>
     </html>
   );

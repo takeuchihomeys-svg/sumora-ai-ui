@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import AixModal, { type AixActionType } from "./components/AixModal";
+import BottomNav from "./components/BottomNav";
 import { supabase } from "./lib/supabase";
 
 type Message = {
@@ -911,6 +912,11 @@ export default function Home() {
             </div>
           </div>
         </section>
+      </div>
+
+      {/* チャット中(モバイル)は非表示、一覧表示中・PCは常に表示 */}
+      <div className={showChatOnMobile ? "hidden md:block" : "block"}>
+        <BottomNav />
       </div>
 
       {aixModalType && selectedConversation.id ? (
