@@ -866,16 +866,9 @@ export default function Home() {
                 placeholder={aixSearchMode ? "✨ AIX検索：条件・名前を入力してEnter" : "検索"}
                 className={`min-w-0 flex-1 bg-transparent text-[14px] outline-none ${aixSearchMode ? "text-[#1565C0] font-medium placeholder:text-[#4BA8E8]" : "text-[#111b21] placeholder:text-[#aaa]"}`}
               />
-              {/* AIXモード中：検索ボタン */}
-              {aixSearchMode && searchQuery && (
-                <button
-                  onClick={handleAiSearch}
-                  disabled={aiSearchLoading}
-                  className="shrink-0 flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold text-white disabled:opacity-60"
-                  style={{ background: "linear-gradient(135deg, #1565C0, #4BA8E8)" }}
-                >
-                  {aiSearchLoading ? "…" : "検索"}
-                </button>
+              {/* AIXモード中：ローディング表示のみ */}
+              {aixSearchMode && aiSearchLoading && (
+                <span className="shrink-0 text-[12px] text-[#4BA8E8] font-bold">…</span>
               )}
               {(searchQuery || aiSearchIds !== null || aixSearchMode) && (
                 <button
