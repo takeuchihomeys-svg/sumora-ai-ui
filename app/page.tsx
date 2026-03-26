@@ -164,6 +164,9 @@ export default function Home() {
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);
+  const [announcements, setAnnouncements] = useState<Message[]>([]);
+  const [showAnnouncementList, setShowAnnouncementList] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ messageId: string; x: number; y: number } | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const lightboxSwipeX = useRef(0);
   const [flaggedConvIds, setFlaggedConvIds] = useState<Set<string>>(new Set());
@@ -456,8 +459,11 @@ export default function Home() {
     });
   };
 
-  const startLongPress = (id: string) => {
-    longPressTimerRef.current = setTimeout(() => toggleFlagged(id), 500);
+  const startLongPress = (messageId: string, e?: React.TouchEvent) => {
+    longPressTimerRef.current = setTimeout(() => {
+      const touch = e?.touches[0];
+      setContextMenu({ messageId, x: touch?.clientX ?? 200, y: touch?.clientY ?? 300 });
+    }, 500);
   };
   const cancelLongPress = () => {
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
@@ -769,7 +775,7 @@ export default function Home() {
 
   return (
     <main
-      className={`${showChatOnMobile ? "h-[100svh]" : "h-[calc(100svh-56px)]"} overflow-hidden bg-[#111b21]`}
+      className="h-[100svh] overflow-hidden bg-[#111b21]"
       style={{
         WebkitTextSizeAdjust: "100%",
         touchAction: "manipulation",
@@ -779,9 +785,9 @@ export default function Home() {
         <aside
           className={`${
             showListOnMobile ? "flex" : "hidden"
-          } w-full flex-col bg-white md:flex md:w-[390px] md:min-w-[390px] md:border-r md:border-[#dfe5e7]`}
+          } w-full flex-col bg-white pb-14 md:flex md:w-[390px] md:min-w-[390px] md:border-r md:border-[#dfe5e7]`}
         >
-          <div className="border-b border-[#e9edef] bg-[#f0f2f5] px-3 pb-3 pt-[max(12px,env(safe-area-inset-top))]">
+          <div className="border-b border-[#e9edef] bg-white px-3 pb-3 pt-[max(16px,env(safe-area-inset-top))]">
             {/* 検索バー */}
             <div className="flex items-center gap-2 rounded-2xl bg-white px-3 py-2.5 shadow-sm">
               {/* ハンバーガー（アカウント切替） */}
@@ -840,7 +846,7 @@ export default function Home() {
               </div>
             </div>
             {/* アカウント名 */}
-            <div className="mt-2 px-1 flex items-center gap-1.5 text-[12px] text-[#8696a0]">
+            <div className="mt-2.5 px-1 flex items-center gap-1.5 text-[12px] text-[#8696a0]">
               {currentAccount.profileImage ? (
                 <img src={currentAccount.profileImage} alt={currentAccount.name} className="h-5 w-5 rounded-full object-cover" />
               ) : (
@@ -1010,6 +1016,25 @@ export default function Home() {
             </div>
           </header>
 
+          {announcements.length > 0 && (
+            <button
+              onClick={() => setShowAnnouncementList(true)}
+              className="flex w-full items-center gap-2 border-b border-[#e9edef] bg-[#fffbe6] px-4 py-2.5 text-left"
+            >
+              <span className="shrink-0 text-base">📌</span>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[12px] text-[#8696a0]">
+                  {announcements[announcements.length - 1].text !== "[画像]"
+                    ? announcements[announcements.length - 1].text
+                    : "📷 画像"}
+                </div>
+              </div>
+              <span className="shrink-0 rounded-full bg-[#f0a500] px-2 py-0.5 text-[10px] font-bold text-white">
+                {announcements.length}件
+              </span>
+            </button>
+          )}
+
           <div className="flex-1 overflow-y-auto px-3 py-4 md:px-6">
             <div className="mx-auto flex w-full max-w-4xl flex-col gap-3.5">
               {(() => {
@@ -1024,10 +1049,25 @@ export default function Home() {
                     </div>
                   );
                 }
-                return displayMessages.map((message) => {
+                let lastDate = "";
+                return displayMessages.flatMap((message, idx) => {
+                  const msgDate = message.rawCreatedAt
+                    ? new Date(message.rawCreatedAt).toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric" })
+                    : "";
+                  const showDate = msgDate && msgDate !== lastDate;
+                  if (showDate) lastDate = msgDate;
                   const isCustomer = message.sender === "customer";
-
-                  return (
+                  const elems = [];
+                  if (showDate) {
+                    elems.push(
+                      <div key={`date-${idx}`} className="flex items-center gap-3 py-2">
+                        <div className="h-px flex-1 bg-[#e9edef]" />
+                        <span className="rounded-full bg-[#e9edef] px-3 py-1 text-[11px] text-[#8696a0]">{msgDate}</span>
+                        <div className="h-px flex-1 bg-[#e9edef]" />
+                      </div>
+                    );
+                  }
+                  elems.push(
                     <div
                       key={message.id}
                       className={`flex flex-col gap-0.5 ${isCustomer ? "items-start" : "items-end"}`}
@@ -1045,7 +1085,7 @@ export default function Home() {
                         )}
                         <div
                           className="max-w-[86%] md:max-w-[74%]"
-                          onTouchStart={() => startLongPress(message.id)}
+                          onTouchStart={(e) => startLongPress(message.id, e)}
                           onTouchEnd={cancelLongPress}
                           onTouchMove={cancelLongPress}
                           onContextMenu={(e) => { e.preventDefault(); toggleFlagged(message.id); }}
@@ -1053,9 +1093,10 @@ export default function Home() {
                           <div
                             className={`rounded-2xl text-[15px] leading-6 shadow-sm ${
                               isCustomer
-                                ? "rounded-bl-md bg-white text-[#111b21]"
-                                : "rounded-br-md bg-[#d9fdd3] text-[#111b21]"
+                                ? "rounded-bl-md bg-white text-[#3d4a52]"
+                                : "rounded-br-md text-[#3d4a52]"
                             } ${flaggedIds.has(message.id) ? "ring-2 ring-orange-300" : ""}`}
+                            style={!isCustomer ? { backgroundColor: "rgba(220,248,198,0.55)" } : undefined}
                           >
                             {message.imageUrl && (() => {
                               let imgs: string[];
@@ -1110,6 +1151,7 @@ export default function Home() {
                       </div>
                     </div>
                   );
+                  return elems;
                 });
               })()}
               {generating && (
@@ -1245,6 +1287,43 @@ export default function Home() {
         />
       ) : null}
 
+      {showAnnouncementList && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowAnnouncementList(false); }}
+        >
+          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl">
+            <div
+              className="flex items-center justify-between rounded-t-3xl px-5 py-4"
+              style={{ background: "linear-gradient(135deg, #f0a500, #f5c842)" }}
+            >
+              <div className="text-[17px] font-bold text-white">📌 アナウンス</div>
+              <button
+                onClick={() => setShowAnnouncementList(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white"
+              >✕</button>
+            </div>
+            <div className="max-h-[60vh] overflow-y-auto p-4 flex flex-col gap-3">
+              {announcements.map((ann) => (
+                <div key={ann.id} className="flex items-start gap-3 rounded-2xl border border-[#e9edef] bg-[#fffbe6] px-4 py-3">
+                  <span className="shrink-0 text-base">📌</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[13px] text-[#111b21] whitespace-pre-wrap break-words">
+                      {ann.text !== "[画像]" ? ann.text : "📷 画像"}
+                    </div>
+                    <div className="mt-1 text-[10px] text-[#8696a0]">{ann.time}</div>
+                  </div>
+                  <button
+                    onClick={() => setAnnouncements(prev => prev.filter(a => a.id !== ann.id))}
+                    className="shrink-0 text-[#aaa] text-xs"
+                  >✕</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* アカウント切替モーダル */}
       {showAccountSwitcher && (
         <div
@@ -1256,7 +1335,10 @@ export default function Home() {
               className="flex items-center justify-between rounded-t-3xl px-5 py-4"
               style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}
             >
-              <div className="text-[17px] font-bold text-white">アカウント切替</div>
+              <div className="flex items-center gap-2">
+                <div className="text-[17px] font-bold text-white">アカウント切替</div>
+                <span className="rounded-full bg-white/20 px-2.5 py-0.5 text-[11px] font-bold text-white border border-white/40">AIX Pro</span>
+              </div>
               <button
                 onClick={() => setShowAccountSwitcher(false)}
                 className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white"
@@ -1344,6 +1426,41 @@ export default function Home() {
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {contextMenu && (
+        <div
+          className="fixed inset-0 z-[90]"
+          onClick={() => setContextMenu(null)}
+        >
+          <div
+            className="absolute overflow-hidden rounded-2xl bg-white shadow-2xl border border-[#e9edef]"
+            style={{ left: Math.min(contextMenu.x, window.innerWidth - 180), top: Math.min(contextMenu.y, window.innerHeight - 120) }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => {
+                toggleFlagged(contextMenu.messageId);
+                setContextMenu(null);
+              }}
+              className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-[#111b21] hover:bg-[#f0f2f5] border-b border-[#f0f2f5]"
+            >
+              <span>🚩</span> 要対応フラグ
+            </button>
+            <button
+              onClick={() => {
+                const msg = selectedConversation.messages.find(m => m.id === contextMenu.messageId);
+                if (msg && !announcements.find(a => a.id === msg.id)) {
+                  setAnnouncements(prev => [...prev, msg]);
+                }
+                setContextMenu(null);
+              }}
+              className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-[#111b21] hover:bg-[#f0f2f5]"
+            >
+              <span>📌</span> アナウンスに追加
+            </button>
           </div>
         </div>
       )}
