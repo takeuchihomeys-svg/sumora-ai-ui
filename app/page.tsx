@@ -429,9 +429,9 @@ export default function Home() {
     const path = `messages/${selectedConversation.id}/${Date.now()}.${ext}`;
     const { error: uploadError } = await supabase.storage
       .from("property-images")
-      .upload(path, file, { upsert: true });
+      .upload(path, file, { upsert: false });
     if (uploadError) {
-      throw new Error(`画像アップロード失敗: ${uploadError.message}`);
+      throw new Error(`画像アップロード失敗: ${uploadError.message} [${uploadError.statusCode ?? ""}]`);
     }
     const { data } = supabase.storage.from("property-images").getPublicUrl(path);
     return data.publicUrl;
@@ -551,7 +551,7 @@ export default function Home() {
       removeSelectedImage();
     } catch (sendError) {
       console.error(sendError);
-      setError("送信に失敗しました。");
+      setError(sendError instanceof Error ? sendError.message : "送信に失敗しました。");
     } finally {
       setSending(false);
     }
