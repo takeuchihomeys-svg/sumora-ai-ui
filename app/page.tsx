@@ -757,22 +757,29 @@ export default function Home() {
                   return (
                     <div
                       key={message.id}
-                      className={`flex ${isCustomer ? "justify-start" : "justify-end"}`}
+                      className={`flex items-end gap-1 ${isCustomer ? "justify-start" : "justify-end"}`}
                     >
-                      <div className="max-w-[88%] md:max-w-[72%]">
+                      {!isCustomer && (
+                        <span className="mb-0.5 shrink-0 text-[10px] leading-none text-[#667781]">
+                          {message.time}
+                        </span>
+                      )}
+                      <div className="max-w-[80%] md:max-w-[68%]">
                         <div
-                          className={`rounded-2xl px-4 py-2.5 text-[14px] leading-6 shadow-sm ${
+                          className={`rounded-2xl px-3 py-2 text-[13px] leading-5 shadow-sm ${
                             isCustomer
                               ? "rounded-bl-md bg-white text-[#111b21]"
                               : "rounded-br-md bg-[#d9fdd3] text-[#111b21]"
                           }`}
                         >
                           <div className="whitespace-pre-wrap break-words">{message.text}</div>
-                          <div className="mt-1 text-right text-[11px] leading-none text-[#667781]">
-                            {message.time}
-                          </div>
                         </div>
                       </div>
+                      {isCustomer && (
+                        <span className="mb-0.5 shrink-0 text-[10px] leading-none text-[#667781]">
+                          {message.time}
+                        </span>
+                      )}
                     </div>
                   );
                 })
@@ -925,7 +932,7 @@ export default function Home() {
                 onBlur={() => setInputFocused(false)}
                 rows={inputFocused ? 4 : 1}
                 placeholder="メッセージを入力"
-                className="min-h-[24px] w-full resize-none bg-transparent text-[14px] leading-5 text-[#111b21] outline-none placeholder:text-[#8696a0]"
+                className="min-h-[24px] w-full resize-none bg-transparent text-[13px] leading-5 text-[#111b21] outline-none placeholder:text-[#8696a0]"
                 style={{ maxHeight: inputFocused ? "160px" : "80px", transition: "max-height 0.2s ease" }}
               />
             </div>
