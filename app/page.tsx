@@ -149,8 +149,8 @@ export default function Home() {
   const [isPulling, setIsPulling] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
 
-  const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
-  const [selectedImagePreview, setSelectedImagePreview] = useState<string>("");
+  const [selectedImageFiles, setSelectedImageFiles] = useState<File[]>([]);
+  const [selectedImagePreviews, setSelectedImagePreviews] = useState<string[]>([]);
   const [aixModalType, setAixModalType] = useState<AixActionType | null>(null);
   const [aixInitialFile, setAixInitialFile] = useState<File | null>(null);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
@@ -295,8 +295,8 @@ export default function Home() {
     setError("");
     setShowStatusMenu(false);
     setShowAixMenu(false);
-    setSelectedImageFile(null);
-    setSelectedImagePreview("");
+    setSelectedImageFiles([]);
+    setSelectedImagePreviews([]);
   }, [selectedConversation.id]);
 
   const latestCustomerMessage = useMemo(() => {
@@ -379,23 +379,30 @@ export default function Home() {
   };
 
   const onSelectImage = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    setSelectedImageFile(file);
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      setSelectedImagePreview(String(reader.result || ""));
-    };
-    reader.readAsDataURL(file);
+    const files = Array.from(event.target.files || []).slice(0, 10);
+    if (files.length === 0) return;
+    setSelectedImageFiles(files);
+    const previews: string[] = new Array(files.length).fill("");
+    let loaded = 0;
+    files.forEach((file, i) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        previews[i] = String(reader.result || "");
+        loaded++;
+        if (loaded === files.length) setSelectedImagePreviews([...previews]);
+      };
+      reader.readAsDataURL(file);
+    });
   };
 
-  const removeSelectedImage = () => {
-    setSelectedImageFile(null);
-    setSelectedImagePreview("");
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
+  const removeSelectedImage = (index?: number) => {
+    if (index !== undefined) {
+      setSelectedImageFiles((prev) => prev.filter((_, i) => i !== index));
+      setSelectedImagePreviews((prev) => prev.filter((_, i) => i !== index));
+    } else {
+      setSelectedImageFiles([]);
+      setSelectedImagePreviews([]);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
@@ -412,7 +419,7 @@ export default function Home() {
 
   const sendReply = async () => {
     if (!selectedConversation.id) return;
-    if (!replyDraft.trim() && !selectedImageFile) return;
+    if (!replyDraft.trim() && selectedImageFiles.length === 0) return;
 
     try {
       setSending(true);
@@ -420,43 +427,66 @@ export default function Home() {
 
       const now = new Date();
       const textToSend = replyDraft.trim();
-      let imageUrl: string | null = null;
 
-      // 画像をSupabaseにアップロード
-      if (selectedImageFile) {
-        imageUrl = await uploadImageToStorage(selectedImageFile);
+      // 全画像をアップロード
+      const imageUrls: string[] = [];
+      for (const file of selectedImageFiles) {
+        const url = await uploadImageToStorage(file);
+        if (url) imageUrls.push(url);
       }
 
-      // Supabaseにメッセージ保存
-      const displayText = textToSend || (imageUrl ? "[画像]" : "");
-      const { data: insertedRows, error: insertError } = await supabase
-        .from("messages")
-        .insert({
-          conversation_id: Number(selectedConversation.id),
+      const newMessages: Message[] = [];
+
+      // テキストメッセージを保存
+      if (textToSend) {
+        const { data: textRow, error: textInsertError } = await supabase
+          .from("messages")
+          .insert({
+            conversation_id: Number(selectedConversation.id),
+            sender: "staff",
+            text: textToSend,
+            created_at: now.toISOString(),
+          })
+          .select();
+        if (textInsertError) throw textInsertError;
+        newMessages.push({
+          id: String(textRow?.[0]?.id || crypto.randomUUID()),
           sender: "staff",
-          text: displayText,
-          image_url: imageUrl || null,
-          created_at: now.toISOString(),
-        })
-        .select();
+          text: textToSend,
+          time: formatTime(now.toISOString()),
+          rawCreatedAt: now.toISOString(),
+        });
+      }
 
-      if (insertError) throw insertError;
+      // 画像メッセージを1枚ずつ保存
+      for (const imageUrl of imageUrls) {
+        const imgNow = new Date();
+        const { data: imgRow, error: imgInsertError } = await supabase
+          .from("messages")
+          .insert({
+            conversation_id: Number(selectedConversation.id),
+            sender: "staff",
+            text: "[画像]",
+            image_url: imageUrl,
+            created_at: imgNow.toISOString(),
+          })
+          .select();
+        if (imgInsertError) throw imgInsertError;
+        newMessages.push({
+          id: String(imgRow?.[0]?.id || crypto.randomUUID()),
+          sender: "staff",
+          text: "[画像]",
+          imageUrl: imageUrl,
+          time: formatTime(imgNow.toISOString()),
+          rawCreatedAt: imgNow.toISOString(),
+        });
+      }
 
-      const inserted = insertedRows?.[0];
-
+      const lastText = imageUrls.length > 0 ? "[画像]" : textToSend;
       await supabase
         .from("conversations")
-        .update({ last_message: displayText, updated_at: now.toISOString() })
+        .update({ last_message: lastText, updated_at: now.toISOString() })
         .eq("id", Number(selectedConversation.id));
-
-      const newMessage: Message = {
-        id: String(inserted?.id || crypto.randomUUID()),
-        sender: "staff",
-        text: displayText,
-        imageUrl: imageUrl || undefined,
-        time: formatTime(now.toISOString()),
-        rawCreatedAt: now.toISOString(),
-      };
 
       setConversations((prev) =>
         prev
@@ -464,9 +494,9 @@ export default function Home() {
             conversation.id === selectedConversation.id
               ? {
                   ...conversation,
-                  lastMessage: displayText,
+                  lastMessage: lastText,
                   updatedAt: now.toISOString(),
-                  messages: [...conversation.messages, newMessage],
+                  messages: [...conversation.messages, ...newMessages],
                 }
               : conversation
           )
@@ -477,17 +507,22 @@ export default function Home() {
           })
       );
 
-      // LINEにテキスト＋画像を送信
+      // LINEに送信（テキスト→画像の順）
       try {
-        await fetch("https://sumora-line-ai.takeuchi-homeys.workers.dev/api/send-message", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            line_user_id: selectedConversation.lineUserId,
-            message: textToSend || undefined,
-            image_url: imageUrl || undefined,
-          }),
-        });
+        if (textToSend) {
+          await fetch("https://sumora-line-ai.takeuchi-homeys.workers.dev/api/send-message", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: textToSend }),
+          });
+        }
+        for (const imageUrl of imageUrls) {
+          await fetch("https://sumora-line-ai.takeuchi-homeys.workers.dev/api/send-message", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, image_url: imageUrl }),
+          });
+        }
       } catch {
         // LINE送信失敗しても管理画面の動作は続ける
       }
@@ -863,37 +898,24 @@ export default function Home() {
               <div className="mb-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-600">{error}</div>
             ) : null}
 
-            {selectedImagePreview ? (
-              <div className="mb-2 flex items-center gap-2 rounded-xl border border-[#d1d7db] bg-white px-3 py-2">
-                <img src={selectedImagePreview} alt="preview" className="h-12 w-12 rounded-lg object-cover" />
-                <div className="flex-1 truncate text-xs text-[#54656f]">{selectedImageFile?.name}</div>
-                <button onClick={removeSelectedImage} className="text-xs font-semibold text-red-500">削除</button>
+            {selectedImagePreviews.length > 0 && (
+              <div className="mb-2 flex gap-2 overflow-x-auto">
+                {selectedImagePreviews.map((preview, i) => (
+                  <div key={i} className="relative shrink-0">
+                    <img src={preview} alt="preview" className="h-14 w-14 rounded-lg object-cover" />
+                    <button
+                      onClick={() => removeSelectedImage(i)}
+                      className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
               </div>
-            ) : null}
+            )}
 
-            {/* テキスト入力 */}
-            <div className={`mb-2 flex items-end gap-2 rounded-[24px] bg-white px-3 py-2 shadow-sm transition-all ${inputFocused ? "rounded-[16px]" : ""}`}>
-              <textarea
-                value={replyDraft}
-                onChange={(e) => setReplyDraft(e.target.value)}
-                onFocus={() => setInputFocused(true)}
-                onBlur={() => setInputFocused(false)}
-                rows={inputFocused ? 4 : 1}
-                placeholder="メッセージを入力"
-                className="min-h-[22px] w-full resize-none bg-transparent text-[13px] leading-5 text-[#111b21] outline-none placeholder:text-[#8696a0]"
-                style={{ maxHeight: inputFocused ? "140px" : "72px", transition: "max-height 0.2s ease" }}
-              />
-              <button
-                onClick={sendReply}
-                disabled={sending || (!replyDraft.trim() && !selectedImageFile)}
-                className="shrink-0 rounded-full bg-[#06c755] px-4 py-1.5 text-xs font-bold text-white shadow-sm disabled:opacity-50"
-              >
-                {sending ? "送信中..." : "送信"}
-              </button>
-            </div>
-
-            {/* アクションボタン列 */}
-            <div className="flex items-center gap-1.5">
+            {/* アクションボタン列（入力欄の上） */}
+            <div className="mb-1.5 flex items-center gap-1.5">
               <button
                 onClick={generateReply}
                 disabled={generating || !selectedConversation.id}
@@ -931,25 +953,50 @@ export default function Home() {
                 )}
               </div>
 
-              {/* 辞書ボタン */}
+              {/* 辞書ボタン（本マークのみ） */}
               <button
                 onClick={() => setShowTemplateModal(true)}
-                className="rounded-full border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-semibold text-[#54656f] shadow-sm"
+                className="flex h-8 w-8 items-center justify-center rounded-full border border-[#d1d7db] bg-white text-[#54656f] shadow-sm"
+                title="テンプレート一覧"
               >
-                📋 辞書
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                  <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                </svg>
               </button>
 
-              {/* 画像添付 */}
+              {/* 画像添付（＋のみ） */}
               <button
                 onClick={openImagePicker}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-[18px] text-[#54656f] shadow-sm"
-                title="画像を添付"
+                className="flex h-8 w-8 items-center justify-center rounded-full border border-[#d1d7db] bg-white text-[20px] font-light leading-none text-[#54656f] shadow-sm"
+                title="画像を添付（最大10枚）"
               >
-                🖼
+                +
               </button>
 
-              <input ref={fileInputRef} type="file" accept="image/*" onChange={onSelectImage} className="hidden" />
+              <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={onSelectImage} className="hidden" />
               <input ref={aixFileInputRef} type="file" accept="image/*" onChange={onAixImageSelected} className="hidden" />
+            </div>
+
+            {/* テキスト入力 */}
+            <div className={`flex items-end gap-2 rounded-[24px] bg-white px-3 py-2 shadow-sm transition-all ${inputFocused ? "rounded-[16px]" : ""}`}>
+              <textarea
+                value={replyDraft}
+                onChange={(e) => setReplyDraft(e.target.value)}
+                onFocus={() => setInputFocused(true)}
+                onBlur={() => setInputFocused(false)}
+                rows={inputFocused ? 4 : 1}
+                placeholder="メッセージを入力"
+                className="min-h-[22px] w-full resize-none bg-transparent text-[13px] leading-5 text-[#111b21] outline-none placeholder:text-[#8696a0]"
+                style={{ maxHeight: inputFocused ? "140px" : "72px", transition: "max-height 0.2s ease" }}
+              />
+              <button
+                onClick={sendReply}
+                disabled={sending || (!replyDraft.trim() && selectedImageFiles.length === 0)}
+                className="shrink-0 rounded-full bg-[#06c755] px-4 py-1.5 text-xs font-bold text-white shadow-sm disabled:opacity-50"
+              >
+                {sending ? "送信中..." : "送信"}
+              </button>
             </div>
           </div>
         </section>

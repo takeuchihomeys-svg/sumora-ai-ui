@@ -31,7 +31,7 @@ export default function TemplateModal({ onClose, onSelect }: TemplateModalProps)
           className="flex items-center justify-between rounded-t-3xl px-5 py-4"
           style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}
         >
-          <div className="text-[17px] font-bold text-white">📋 テンプレート辞書</div>
+          <div className="text-[17px] font-bold text-white">テンプレート一覧</div>
           <button
             onClick={onClose}
             className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white"
