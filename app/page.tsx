@@ -145,7 +145,12 @@ export default function Home() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
-  const [currentAccount, setCurrentAccount] = useState({ id: "sumora", name: "スモラ", icon: "🦄" });
+  const [currentAccount, setCurrentAccount] = useState<{ id: string; name: string; icon: string; profileImage?: string }>(() => {
+    if (typeof window === "undefined") return { id: "sumora", name: "スモラ", icon: "🦄" };
+    const saved = localStorage.getItem("sumora_account_profile");
+    return saved ? JSON.parse(saved) : { id: "sumora", name: "スモラ", icon: "🦄" };
+  });
+  const accountImageInputRef = useRef<HTMLInputElement | null>(null);
   const [mobileView, setMobileView] = useState<"list" | "chat">("list");
   const [inputFocused, setInputFocused] = useState(false);
   const [pullStartY, setPullStartY] = useState(0);
@@ -710,6 +715,19 @@ export default function Home() {
     }
   };
 
+  const onAccountImageSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const updated = { ...currentAccount, profileImage: String(reader.result) };
+      setCurrentAccount(updated);
+      localStorage.setItem("sumora_account_profile", JSON.stringify(updated));
+    };
+    reader.readAsDataURL(file);
+    if (accountImageInputRef.current) accountImageInputRef.current.value = "";
+  };
+
   const openAixWithImagePicker = (type: AixActionType) => {
     pendingAixTypeRef.current = type;
     setAixInitialFile(null);
@@ -822,8 +840,13 @@ export default function Home() {
               </div>
             </div>
             {/* アカウント名 */}
-            <div className="mt-2 px-1 text-[12px] text-[#8696a0]">
-              {currentAccount.icon} {currentAccount.name} のメッセージ一覧
+            <div className="mt-2 px-1 flex items-center gap-1.5 text-[12px] text-[#8696a0]">
+              {currentAccount.profileImage ? (
+                <img src={currentAccount.profileImage} alt={currentAccount.name} className="h-5 w-5 rounded-full object-cover" />
+              ) : (
+                <span>{currentAccount.icon}</span>
+              )}
+              {currentAccount.name} のメッセージ一覧
             </div>
           </div>
 
@@ -1247,28 +1270,37 @@ export default function Home() {
             </div>
             <div className="p-5">
               <div className="mb-3 text-xs font-semibold text-[#8696a0]">使用中のアカウント</div>
-              {[
-                { id: "sumora", name: "スモラ", icon: "🦄", sub: "蓮産業株式会社" },
-              ].map((acc) => (
+              <div className={`flex w-full items-center gap-3 rounded-2xl border-2 px-4 py-3 mb-2 border-[#2196F3] bg-[#e3f2fd]`}>
+                {/* プロフィール画像 */}
                 <button
-                  key={acc.id}
-                  onClick={() => { setCurrentAccount(acc); setShowAccountSwitcher(false); }}
-                  className={`flex w-full items-center gap-3 rounded-2xl border-2 px-4 py-3 text-left mb-2 ${
-                    currentAccount.id === acc.id
-                      ? "border-[#2196F3] bg-[#e3f2fd]"
-                      : "border-[#e9edef] bg-white"
-                  }`}
+                  onClick={() => accountImageInputRef.current?.click()}
+                  className="relative shrink-0"
+                  title="画像を変更"
                 >
-                  <span className="text-2xl">{acc.icon}</span>
-                  <div className="flex-1">
-                    <div className="text-sm font-bold text-[#1565C0]">{acc.name}</div>
-                    <div className="text-xs text-[#8696a0]">{acc.sub}</div>
-                  </div>
-                  {currentAccount.id === acc.id && (
-                    <span className="text-[#2196F3] font-bold">✓</span>
+                  {currentAccount.profileImage ? (
+                    <img src={currentAccount.profileImage} alt={currentAccount.name} className="h-12 w-12 rounded-full object-cover" />
+                  ) : (
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#e3f2fd] text-2xl border-2 border-[#2196F3]">
+                      {currentAccount.icon}
+                    </div>
                   )}
+                  <span className="absolute -bottom-0.5 -right-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-[#2196F3] text-[9px] text-white font-bold">
+                    ✎
+                  </span>
                 </button>
-              ))}
+                <div className="flex-1">
+                  <div className="text-sm font-bold text-[#1565C0]">{currentAccount.name}</div>
+                  <div className="text-xs text-[#8696a0]">蓮産業株式会社 · 現在使用中</div>
+                </div>
+                <span className="text-[#2196F3] font-bold">✓</span>
+              </div>
+              <input
+                ref={accountImageInputRef}
+                type="file"
+                accept="image/*"
+                onChange={onAccountImageSelected}
+                className="hidden"
+              />
               <div className="mt-3 rounded-2xl bg-[#f0f2f5] px-4 py-3 text-center text-xs text-[#8696a0]">
                 アカウントは順次追加予定です
               </div>
