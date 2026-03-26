@@ -155,7 +155,9 @@ export default function Home() {
   const [aixInitialFile, setAixInitialFile] = useState<File | null>(null);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
-  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [lightboxImages, setLightboxImages] = useState<string[]>([]);
+  const [lightboxIndex, setLightboxIndex] = useState(0);
+  const lightboxSwipeX = useRef(0);
   const [flaggedConvIds, setFlaggedConvIds] = useState<Set<string>>(new Set());
   const convLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -755,6 +757,7 @@ export default function Home() {
                     onTouchEnd={cancelConvLongPress}
                     onTouchMove={cancelConvLongPress}
                     onContextMenu={(e) => { e.preventDefault(); toggleFlaggedConv(conversation.id); }}
+                    style={{ WebkitUserSelect: "none", userSelect: "none" }}
                     className={`flex w-full items-center gap-3 border-b border-[#f0f2f5] px-4 py-3 text-left transition ${
                       isActive ? "bg-[#f0f2f5]" : "bg-white hover:bg-[#f5f6f6]"
                     }`}
@@ -932,12 +935,16 @@ export default function Home() {
                               }
                               const hasText = message.text && message.text !== "[画像]";
                               const roundB = hasText ? "rounded-b-none" : "";
+                              const openLightbox = (idx: number) => {
+                                setLightboxImages(imgs);
+                                setLightboxIndex(idx);
+                              };
                               if (imgs.length === 1) {
                                 return (
                                   <img
                                     src={imgs[0]}
                                     alt="送信画像"
-                                    onClick={() => setLightboxUrl(imgs[0])}
+                                    onClick={() => openLightbox(0)}
                                     className={`max-h-56 w-full cursor-pointer rounded-2xl object-cover ${roundB}`}
                                   />
                                 );
@@ -950,7 +957,7 @@ export default function Home() {
                                       key={idx}
                                       src={url}
                                       alt={`画像${idx + 1}`}
-                                      onClick={() => setLightboxUrl(url)}
+                                      onClick={() => openLightbox(idx)}
                                       className="aspect-square w-full cursor-pointer object-cover"
                                     />
                                   ))}
@@ -984,7 +991,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="border-t border-[#d1d7db] bg-[#f0f2f5] px-2 pb-[max(8px,env(safe-area-inset-bottom))] pt-2 md:px-3">
+          <div className="border-t border-[#e9edef] bg-white px-2 pb-[max(8px,env(safe-area-inset-bottom))] pt-2 md:px-3">
             {error ? (
               <div className="mb-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-600">{error}</div>
             ) : null}
@@ -1010,7 +1017,7 @@ export default function Home() {
               <button
                 onClick={generateReply}
                 disabled={generating || !selectedConversation.id}
-                className="rounded-full border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-semibold text-[#8696a0] shadow-sm disabled:opacity-40"
+                className="rounded-full border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-semibold text-[#111b21] shadow-sm disabled:opacity-40 active:scale-95 transition-transform duration-75"
               >
                 {generating ? "生成中..." : "メッセージを作成"}
               </button>
@@ -1018,7 +1025,7 @@ export default function Home() {
               <div className="relative">
                 <button
                   onClick={() => { setShowAixMenu(!showAixMenu); setShowStatusMenu(false); }}
-                  className="rounded-full border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-bold text-[#111b21] shadow-sm"
+                  className="rounded-full border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-bold text-[#111b21] shadow-sm active:scale-95 transition-transform duration-75"
                 >
                   AIX
                 </button>
@@ -1069,7 +1076,7 @@ export default function Home() {
             </div>
 
             {/* テキスト入力 */}
-            <div className={`flex items-end gap-2 rounded-[24px] bg-white px-3 py-2 shadow-sm transition-all ${inputFocused ? "rounded-[16px]" : ""}`}>
+            <div className={`flex items-center gap-2 rounded-[24px] bg-[#f0f2f5] px-4 py-2 transition-all ${inputFocused ? "rounded-[16px]" : ""}`}>
               <textarea
                 value={replyDraft}
                 onChange={(e) => setReplyDraft(e.target.value)}
@@ -1077,7 +1084,7 @@ export default function Home() {
                 onBlur={() => setInputFocused(false)}
                 rows={inputFocused ? 4 : 1}
                 placeholder="Aa"
-                className="min-h-[22px] w-full resize-none bg-transparent text-[13px] leading-5 text-[#111b21] outline-none placeholder:text-[#8696a0]"
+                className="min-h-[22px] w-full resize-none bg-transparent text-[14px] leading-6 text-[#111b21] outline-none placeholder:text-[#aaa]"
                 style={{ maxHeight: inputFocused ? "140px" : "72px", transition: "max-height 0.2s ease" }}
               />
               <button
@@ -1126,19 +1133,59 @@ export default function Home() {
         />
       ) : null}
 
-      {/* 画像ライトボックス */}
-      {lightboxUrl && (
+      {/* 画像ライトボックス（スワイプ対応） */}
+      {lightboxImages.length > 0 && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90"
-          onClick={() => setLightboxUrl(null)}
+          onClick={() => setLightboxImages([])}
+          onTouchStart={(e) => { lightboxSwipeX.current = e.touches[0].clientX; }}
+          onTouchEnd={(e) => {
+            const delta = e.changedTouches[0].clientX - lightboxSwipeX.current;
+            if (delta < -50 && lightboxIndex < lightboxImages.length - 1) {
+              setLightboxIndex((i) => i + 1);
+            } else if (delta > 50 && lightboxIndex > 0) {
+              setLightboxIndex((i) => i - 1);
+            }
+          }}
         >
           <img
-            src={lightboxUrl}
+            src={lightboxImages[lightboxIndex]}
             alt="拡大画像"
             className="max-h-[90svh] max-w-[96vw] rounded-xl object-contain shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
           />
+          {/* 左矢印 */}
+          {lightboxIndex > 0 && (
+            <button
+              className="absolute left-3 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full bg-white/20 text-white text-xl"
+              onClick={(e) => { e.stopPropagation(); setLightboxIndex((i) => i - 1); }}
+            >
+              ‹
+            </button>
+          )}
+          {/* 右矢印 */}
+          {lightboxIndex < lightboxImages.length - 1 && (
+            <button
+              className="absolute right-3 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full bg-white/20 text-white text-xl"
+              onClick={(e) => { e.stopPropagation(); setLightboxIndex((i) => i + 1); }}
+            >
+              ›
+            </button>
+          )}
+          {/* ドットインジケーター */}
+          {lightboxImages.length > 1 && (
+            <div className="absolute bottom-8 left-0 right-0 flex justify-center gap-1.5">
+              {lightboxImages.map((_, i) => (
+                <div
+                  key={i}
+                  className={`h-1.5 w-1.5 rounded-full transition-all ${i === lightboxIndex ? "bg-white scale-125" : "bg-white/40"}`}
+                />
+              ))}
+            </div>
+          )}
+          {/* 閉じるボタン */}
           <button
-            onClick={() => setLightboxUrl(null)}
+            onClick={() => setLightboxImages([])}
             className="absolute right-4 top-[max(16px,env(safe-area-inset-top))] flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-white text-lg"
           >
             ✕
