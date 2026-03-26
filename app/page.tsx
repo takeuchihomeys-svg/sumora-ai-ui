@@ -171,6 +171,8 @@ export default function Home() {
   const lightboxSwipeX = useRef(0);
   const [flaggedConvIds, setFlaggedConvIds] = useState<Set<string>>(new Set());
   const convLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [aiSearchLoading, setAiSearchLoading] = useState(false);
+  const [aiSearchIds, setAiSearchIds] = useState<string[] | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const aixFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -287,6 +289,10 @@ export default function Home() {
       const group = DISPLAY_GROUPS.find((g) => g.key === statusFilter);
       if (group) result = result.filter((c) => group.statuses.includes(c.status));
     }
+    // AI検索結果がある場合はそちらを優先
+    if (aiSearchIds !== null) {
+      return result.filter((c) => aiSearchIds.includes(c.id));
+    }
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
       result = result.filter(
@@ -297,7 +303,7 @@ export default function Home() {
       );
     }
     return result;
-  }, [conversations, statusFilter, searchQuery]);
+  }, [conversations, statusFilter, searchQuery, aiSearchIds]);
 
   const needsReplyCount = useMemo(() => {
     return conversations.filter((c) => {
@@ -626,6 +632,36 @@ export default function Home() {
     }
   };
 
+  const handleAiSearch = async () => {
+    if (!searchQuery.trim() || aiSearchLoading) return;
+    setAiSearchLoading(true);
+    setAiSearchIds(null);
+    try {
+      const convData = conversations.map((c) => ({
+        id: c.id,
+        customerName: c.customerName,
+        status: c.status,
+        lastMessage: c.lastMessage,
+        messages: c.messages.slice(-15).map((m) => ({ sender: m.sender, text: m.text || "" })),
+      }));
+      const res = await fetch("https://sumora-line-ai.takeuchi-homeys.workers.dev/api/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: searchQuery, conversations: convData }),
+      });
+      const data = await res.json();
+      if (data.ok && Array.isArray(data.matchedIds)) {
+        setAiSearchIds(data.matchedIds.map(String));
+      } else {
+        setAiSearchIds([]);
+      }
+    } catch {
+      setAiSearchIds([]);
+    } finally {
+      setAiSearchLoading(false);
+    }
+  };
+
   const sendMessageText = async (text: string, imageUrl?: string) => {
     if (!selectedConversation.id || (!text.trim() && !imageUrl)) return;
     const now = new Date();
@@ -803,12 +839,28 @@ export default function Home() {
               <input
                 type="text"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="検索"
+                onChange={(e) => { setSearchQuery(e.target.value); setAiSearchIds(null); }}
+                onKeyDown={(e) => { if (e.key === "Enter") handleAiSearch(); }}
+                placeholder="名前・条件で検索"
                 className="min-w-0 flex-1 bg-transparent text-[14px] text-[#111b21] outline-none placeholder:text-[#aaa]"
               />
+              {/* AI検索ボタン */}
               {searchQuery && (
-                <button onClick={() => setSearchQuery("")} className="shrink-0 text-[#aaa] text-sm">✕</button>
+                <button
+                  onClick={handleAiSearch}
+                  disabled={aiSearchLoading}
+                  className="shrink-0 flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold text-white disabled:opacity-60"
+                  style={{ background: "linear-gradient(135deg, #1565C0, #4BA8E8)" }}
+                  title="AIで検索"
+                >
+                  {aiSearchLoading ? "…" : "✨AI"}
+                </button>
+              )}
+              {(searchQuery || aiSearchIds !== null) && (
+                <button
+                  onClick={() => { setSearchQuery(""); setAiSearchIds(null); }}
+                  className="shrink-0 text-[#aaa] text-sm"
+                >✕</button>
               )}
               {/* ステータスフィルター */}
               <div className="relative shrink-0">
@@ -866,10 +918,22 @@ export default function Home() {
             {isPulling && (
               <div className="py-2 text-center text-xs text-[#2196F3]">↓ 離して更新</div>
             )}
+            {aiSearchIds !== null && (
+              <div className="flex items-center gap-2 border-b border-[#d1d7db] bg-blue-50 px-4 py-2">
+                <span className="text-[11px] font-bold text-[#2196F3]">✨ AI検索結果</span>
+                <span className="text-[11px] text-[#667781]">「{searchQuery}」— {filteredConversations.length}件</span>
+                <button
+                  onClick={() => setAiSearchIds(null)}
+                  className="ml-auto text-[11px] text-[#aaa]"
+                >クリア</button>
+              </div>
+            )}
             {pageLoading ? (
               <div className="p-4 text-sm text-[#667781]">読み込み中...</div>
             ) : filteredConversations.length === 0 ? (
-              <div className="p-4 text-sm text-[#667781]">該当する会話がありません</div>
+              <div className="p-4 text-sm text-[#667781]">
+                {aiSearchIds !== null ? "AIが条件に合う会話を見つけられませんでした" : "該当する会話がありません"}
+              </div>
             ) : (
               filteredConversations.map((conversation) => {
                 const isActive = conversation.id === selectedConversation.id;
