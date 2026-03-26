@@ -466,11 +466,18 @@ export default function Home() {
       const now = new Date();
       const textToSend = replyDraft.trim();
 
-      // 全画像をアップロード
+      // 全画像をアップロード（indexつきでパス衝突を防ぐ）
       const imageUrls: string[] = [];
-      for (const file of selectedImageFiles) {
-        const url = await uploadImageToStorage(file);
-        imageUrls.push(url);
+      for (let i = 0; i < selectedImageFiles.length; i++) {
+        const file = selectedImageFiles[i];
+        const ext = file.name.split(".").pop() || "jpg";
+        const path = `messages/${selectedConversation.id}/${Date.now()}_${i}.${ext}`;
+        const { error: uploadError } = await supabase.storage
+          .from("property-images")
+          .upload(path, file, { upsert: false });
+        if (uploadError) throw new Error(`画像アップロード失敗: ${uploadError.message}`);
+        const { data } = supabase.storage.from("property-images").getPublicUrl(path);
+        imageUrls.push(data.publicUrl);
       }
 
       const newMessages: Message[] = [];
@@ -496,8 +503,9 @@ export default function Home() {
         });
       }
 
-      // 画像メッセージを1枚ずつ保存
-      for (const imageUrl of imageUrls) {
+      // 画像は複数でも1メッセージ行にまとめて保存（JSON配列）
+      if (imageUrls.length > 0) {
+        const imageUrlData = imageUrls.length === 1 ? imageUrls[0] : JSON.stringify(imageUrls);
         const imgNow = new Date();
         const { data: imgRow, error: imgInsertError } = await supabase
           .from("messages")
@@ -505,7 +513,7 @@ export default function Home() {
             conversation_id: Number(selectedConversation.id),
             sender: "staff",
             text: "[画像]",
-            image_url: imageUrl,
+            image_url: imageUrlData,
             created_at: imgNow.toISOString(),
           })
           .select();
@@ -514,7 +522,7 @@ export default function Home() {
           id: String(imgRow?.[0]?.id || crypto.randomUUID()),
           sender: "staff",
           text: "[画像]",
-          imageUrl: imageUrl,
+          imageUrl: imageUrlData,
           time: formatTime(imgNow.toISOString()),
           rawCreatedAt: imgNow.toISOString(),
         });
@@ -920,14 +928,40 @@ export default function Home() {
                                 : "rounded-br-md bg-[#d9fdd3] text-[#111b21]"
                             } ${flaggedIds.has(message.id) ? "ring-2 ring-orange-300" : ""}`}
                           >
-                            {message.imageUrl && (
-                              <img
-                                src={message.imageUrl}
-                                alt="送信画像"
-                                className="max-h-56 w-full rounded-2xl object-contain"
-                                style={{ borderBottomLeftRadius: message.text ? 0 : undefined, borderBottomRightRadius: message.text ? 0 : undefined }}
-                              />
-                            )}
+                            {message.imageUrl && (() => {
+                              let imgs: string[];
+                              try {
+                                imgs = message.imageUrl!.startsWith("[")
+                                  ? JSON.parse(message.imageUrl!)
+                                  : [message.imageUrl!];
+                              } catch {
+                                imgs = [message.imageUrl!];
+                              }
+                              const hasText = message.text && message.text !== "[画像]";
+                              const roundB = hasText ? "rounded-b-none" : "";
+                              if (imgs.length === 1) {
+                                return (
+                                  <img
+                                    src={imgs[0]}
+                                    alt="送信画像"
+                                    className={`max-h-56 w-full rounded-2xl object-cover ${roundB}`}
+                                  />
+                                );
+                              }
+                              const cols = imgs.length === 2 ? "grid-cols-2" : "grid-cols-3";
+                              return (
+                                <div className={`grid ${cols} gap-0.5 overflow-hidden rounded-2xl ${roundB}`}>
+                                  {imgs.map((url, idx) => (
+                                    <img
+                                      key={idx}
+                                      src={url}
+                                      alt={`画像${idx + 1}`}
+                                      className="aspect-square w-full object-cover"
+                                    />
+                                  ))}
+                                </div>
+                              );
+                            })()}
                             {message.text && message.text !== "[画像]" && (
                               <div className="whitespace-pre-wrap break-words px-4 py-2.5">{message.text}</div>
                             )}
