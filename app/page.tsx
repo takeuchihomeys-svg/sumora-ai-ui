@@ -155,6 +155,8 @@ export default function Home() {
   const [aixInitialFile, setAixInitialFile] = useState<File | null>(null);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
+  const [flaggedConvIds, setFlaggedConvIds] = useState<Set<string>>(new Set());
+  const convLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const aixFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -422,6 +424,22 @@ export default function Home() {
   };
   const cancelLongPress = () => {
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+  };
+
+  const toggleFlaggedConv = (id: string) => {
+    setFlaggedConvIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const startConvLongPress = (id: string) => {
+    convLongPressTimerRef.current = setTimeout(() => toggleFlaggedConv(id), 500);
+  };
+  const cancelConvLongPress = () => {
+    if (convLongPressTimerRef.current) clearTimeout(convLongPressTimerRef.current);
   };
 
   const uploadImageToStorage = async (file: File): Promise<string> => {
@@ -724,6 +742,10 @@ export default function Home() {
                   <button
                     key={conversation.id}
                     onClick={() => openConversation(conversation.id)}
+                    onTouchStart={() => startConvLongPress(conversation.id)}
+                    onTouchEnd={cancelConvLongPress}
+                    onTouchMove={cancelConvLongPress}
+                    onContextMenu={(e) => { e.preventDefault(); toggleFlaggedConv(conversation.id); }}
                     className={`flex w-full items-center gap-3 border-b border-[#f0f2f5] px-4 py-3 text-left transition ${
                       isActive ? "bg-[#f0f2f5]" : "bg-white hover:bg-[#f5f6f6]"
                     }`}
@@ -747,8 +769,15 @@ export default function Home() {
 
                     <div className="min-w-0 flex-1">
                       <div className="mb-1 flex items-start justify-between gap-2">
-                        <div className="truncate text-[14px] font-semibold text-[#111b21]">
-                          {conversation.customerName}
+                        <div className="flex min-w-0 items-center gap-1.5 truncate">
+                          <span className="truncate text-[14px] font-semibold text-[#111b21]">
+                            {conversation.customerName}
+                          </span>
+                          {flaggedConvIds.has(conversation.id) && (
+                            <span className="shrink-0 rounded-full bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-600">
+                              要対応
+                            </span>
+                          )}
                         </div>
                         <div className="flex shrink-0 items-center gap-1.5">
                           {needsReply && (
@@ -952,7 +981,7 @@ export default function Home() {
               <button
                 onClick={generateReply}
                 disabled={generating || !selectedConversation.id}
-                className="rounded-full border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-semibold text-[#111b21] shadow-sm disabled:opacity-40"
+                className="rounded-full border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-semibold text-[#8696a0] shadow-sm disabled:opacity-40"
               >
                 {generating ? "生成中..." : "メッセージを作成"}
               </button>
@@ -1018,14 +1047,14 @@ export default function Home() {
                 onFocus={() => setInputFocused(true)}
                 onBlur={() => setInputFocused(false)}
                 rows={inputFocused ? 4 : 1}
-                placeholder="メッセージを入力"
+                placeholder="Aa"
                 className="min-h-[22px] w-full resize-none bg-transparent text-[13px] leading-5 text-[#111b21] outline-none placeholder:text-[#8696a0]"
                 style={{ maxHeight: inputFocused ? "140px" : "72px", transition: "max-height 0.2s ease" }}
               />
               <button
                 onClick={sendReply}
                 disabled={sending || (!replyDraft.trim() && selectedImageFiles.length === 0)}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#06c755] text-white shadow-sm disabled:opacity-50"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#29B6F6] text-white shadow-sm disabled:opacity-50"
                 title="送信"
               >
                 {sending ? (
