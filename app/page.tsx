@@ -916,17 +916,13 @@ export default function Home() {
                             </span>
                           )}
                         </div>
-                        <div className="flex shrink-0 items-center gap-1.5">
-                          {needsReply && (
-                            <span className="rounded-full px-2 py-0.5 text-[10px] font-bold text-white"
-                              style={{ background: "linear-gradient(135deg, #1565C0, #4BA8E8)" }}
-                            >
-                              未返信
-                            </span>
-                          )}
+                        <div className="flex shrink-0 flex-col items-end gap-1">
                           <span className="text-[11px] text-[#667781]">
                             {formatListTime(conversation.updatedAt)}
                           </span>
+                          {needsReply && (
+                            <span className="h-3 w-3 rounded-full bg-[#2196F3]" />
+                          )}
                         </div>
                       </div>
 
