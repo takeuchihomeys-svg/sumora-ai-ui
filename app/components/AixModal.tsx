@@ -295,7 +295,7 @@ export default function AixModal({
                 disabled={loading || (config.requiresImage && !imageFile)}
                 className="w-full rounded-full bg-[#111b21] py-3 text-sm font-bold text-white disabled:opacity-50"
               >
-                {loading ? "生成中..." : "AIで生成する"}
+                {loading ? "生成中..." : "✨ AIX 生成"}
               </button>
             )}
           </div>

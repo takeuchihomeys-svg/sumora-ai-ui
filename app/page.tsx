@@ -446,6 +446,20 @@ export default function Home() {
           })
       );
 
+      // LINEにも送信
+      try {
+        await fetch("https://sumora-line-ai.takeuchi-homeys.workers.dev/api/send-message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            line_user_id: selectedConversation.lineUserId,
+            message: finalText,
+          }),
+        });
+      } catch {
+        // LINE送信失敗しても管理画面の動作は続ける
+      }
+
       setReplyDraft("");
       removeSelectedImage();
     } catch (sendError) {
@@ -559,7 +573,7 @@ export default function Home() {
         >
           <div className="border-b border-[#e9edef] bg-[#f0f2f5] px-4 pb-3 pt-[max(12px,env(safe-area-inset-top))]">
             <div className="relative flex items-center justify-between">
-              <div className="text-[22px] font-bold tracking-tight text-[#111b21]">トーク</div>
+              <div className="text-[22px] font-bold tracking-tight text-[#111b21]">スモラ</div>
               <button
                 onClick={() => setShowGroupFilter((v) => !v)}
                 className="flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold text-white shadow-sm"
@@ -778,9 +792,9 @@ export default function Home() {
                           {message.time}
                         </span>
                       )}
-                      <div className="max-w-[80%] md:max-w-[68%]">
+                      <div className="max-w-[86%] md:max-w-[74%]">
                         <div
-                          className={`rounded-2xl px-3 py-2 text-[13px] leading-5 shadow-sm ${
+                          className={`rounded-2xl px-4 py-2.5 text-[15px] leading-6 shadow-sm ${
                             isCustomer
                               ? "rounded-bl-md bg-white text-[#111b21]"
                               : "rounded-br-md bg-[#d9fdd3] text-[#111b21]"
