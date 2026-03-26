@@ -269,6 +269,13 @@ export default function Home() {
     return conversations.filter((c) => group.statuses.includes(c.status));
   }, [conversations, statusFilter]);
 
+  const needsReplyCount = useMemo(() => {
+    return conversations.filter((c) => {
+      const last = c.messages[c.messages.length - 1];
+      return last?.sender === "customer" && c.status !== "closed_won";
+    }).length;
+  }, [conversations]);
+
   useEffect(() => {
     if (filteredConversations.length === 0) return;
 
@@ -826,12 +833,19 @@ export default function Home() {
             style={{ background: "rgba(255,255,255,0.92)" }}
           >
             <div className="relative flex items-center">
-              {/* 左: 戻るボタン */}
+              {/* 左: 戻るボタン + 未返信バッジ */}
               <button
                 onClick={() => setMobileView("list")}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[20px] text-[#111b21] md:hidden"
+                className="flex items-center gap-1.5 shrink-0 md:hidden"
               >
-                ←
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#111b21" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="15 18 9 12 15 6" />
+                </svg>
+                {needsReplyCount > 0 && (
+                  <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#2196F3] px-1 text-[11px] font-bold text-white leading-none">
+                    {needsReplyCount}
+                  </span>
+                )}
               </button>
 
               {/* 中央: 名前 */}
@@ -1019,36 +1033,15 @@ export default function Home() {
                 disabled={generating || !selectedConversation.id}
                 className="rounded-full border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-semibold text-[#111b21] shadow-sm disabled:opacity-40 active:scale-95 transition-transform duration-75"
               >
-                {generating ? "生成中..." : "メッセージを作成"}
+                {generating ? "作成中..." : "メッセージを作成"}
               </button>
 
-              <div className="relative">
-                <button
-                  onClick={() => { setShowAixMenu(!showAixMenu); setShowStatusMenu(false); }}
-                  className="rounded-full border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-bold text-[#111b21] shadow-sm active:scale-95 transition-transform duration-75"
-                >
-                  AIX
-                </button>
-
-                {showAixMenu && (
-                  <div className="absolute bottom-[40px] left-0 z-30 w-48 overflow-hidden rounded-2xl border border-blue-100 bg-white shadow-2xl">
-                    {[
-                      { label: "🏠 物件オススメ", action: () => { setShowAixMenu(false); openAixWithImagePicker("property_recommendation"); } },
-                      { label: "💰 見積書送る", action: () => { setShowAixMenu(false); openAixWithImagePicker("estimate_sheet"); } },
-                      { label: "🔍 内覧へ！", action: () => { setShowAixMenu(false); setAixInitialFile(null); setAixModalType("viewing_invite"); } },
-                      { label: "✋ 申込へ！", action: () => { setShowAixMenu(false); setAixInitialFile(null); setAixModalType("application_push"); } },
-                    ].map((item, i, arr) => (
-                      <button
-                        key={item.label}
-                        onClick={item.action}
-                        className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-[#111b21] hover:bg-blue-50 ${i < arr.length - 1 ? "border-b border-blue-50" : ""}`}
-                      >
-                        {item.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <button
+                onClick={() => { setShowAixMenu(true); setShowStatusMenu(false); }}
+                className="rounded-full border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-bold text-[#111b21] shadow-sm active:scale-95 transition-transform duration-75"
+              >
+                AIX
+              </button>
 
               {/* 辞書ボタン（本マークのみ） */}
               <button
@@ -1132,6 +1125,49 @@ export default function Home() {
           onSend={sendMessageText}
         />
       ) : null}
+
+      {/* AIXメニュー（ボトムシート） */}
+      {showAixMenu && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowAixMenu(false); }}
+        >
+          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl">
+            <div
+              className="flex items-center justify-between rounded-t-3xl px-5 py-4"
+              style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}
+            >
+              <div className="text-[17px] font-bold text-white">AIX</div>
+              <button
+                onClick={() => setShowAixMenu(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="p-4 flex flex-col gap-3">
+              {[
+                { icon: "🏠", label: "物件オススメ", sub: "おすすめ物件をAIが提案", action: () => { setShowAixMenu(false); openAixWithImagePicker("property_recommendation"); } },
+                { icon: "💰", label: "見積書送る", sub: "費用の見積書を作成", action: () => { setShowAixMenu(false); openAixWithImagePicker("estimate_sheet"); } },
+                { icon: "🔍", label: "内覧へ！", sub: "内覧の案内メッセージを作成", action: () => { setShowAixMenu(false); setAixInitialFile(null); setAixModalType("viewing_invite"); } },
+                { icon: "✋", label: "申込へ！", sub: "申込のご案内メッセージを作成", action: () => { setShowAixMenu(false); setAixInitialFile(null); setAixModalType("application_push"); } },
+              ].map((item) => (
+                <button
+                  key={item.label}
+                  onClick={item.action}
+                  className="flex items-center gap-4 rounded-2xl border border-[#e9edef] bg-[#f8f9fa] px-4 py-3 text-left active:scale-[0.98] transition-transform"
+                >
+                  <span className="text-2xl">{item.icon}</span>
+                  <div>
+                    <div className="text-[14px] font-bold text-[#111b21]">{item.label}</div>
+                    <div className="text-[11px] text-[#8696a0]">{item.sub}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 画像ライトボックス（スワイプ対応） */}
       {lightboxImages.length > 0 && (
