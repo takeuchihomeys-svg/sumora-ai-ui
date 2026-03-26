@@ -143,6 +143,9 @@ export default function Home() {
   const [showAixMenu, setShowAixMenu] = useState(false);
   const [showGroupFilter, setShowGroupFilter] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
+  const [currentAccount, setCurrentAccount] = useState({ id: "sumora", name: "スモラ", icon: "🦄" });
   const [mobileView, setMobileView] = useState<"list" | "chat">("list");
   const [inputFocused, setInputFocused] = useState(false);
   const [pullStartY, setPullStartY] = useState(0);
@@ -263,11 +266,22 @@ export default function Home() {
   };
 
   const filteredConversations = useMemo(() => {
-    if (statusFilter === "all") return conversations;
-    const group = DISPLAY_GROUPS.find((g) => g.key === statusFilter);
-    if (!group) return conversations;
-    return conversations.filter((c) => group.statuses.includes(c.status));
-  }, [conversations, statusFilter]);
+    let result = conversations;
+    if (statusFilter !== "all") {
+      const group = DISPLAY_GROUPS.find((g) => g.key === statusFilter);
+      if (group) result = result.filter((c) => group.statuses.includes(c.status));
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      result = result.filter(
+        (c) =>
+          c.customerName.toLowerCase().includes(q) ||
+          c.lastMessage.toLowerCase().includes(q) ||
+          c.messages.some((m) => m.text?.toLowerCase().includes(q))
+      );
+    }
+    return result;
+  }, [conversations, statusFilter, searchQuery]);
 
   const needsReplyCount = useMemo(() => {
     return conversations.filter((c) => {
@@ -695,40 +709,66 @@ export default function Home() {
           } w-full flex-col bg-white md:flex md:w-[390px] md:min-w-[390px] md:border-r md:border-[#dfe5e7]`}
         >
           <div className="border-b border-[#e9edef] bg-[#f0f2f5] px-4 pb-3 pt-[max(12px,env(safe-area-inset-top))]">
-            <div className="relative flex items-center justify-between">
-              <div className="text-[22px] font-bold tracking-tight text-[#111b21]">スモラ</div>
+            {/* 検索バー */}
+            <div className="flex items-center gap-2 rounded-full bg-white px-3 py-2 shadow-sm">
+              {/* ハンバーガー（アカウント切替） */}
               <button
-                onClick={() => setShowGroupFilter((v) => !v)}
-                className="flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold text-white shadow-sm"
-                style={{ background: "linear-gradient(135deg, #1565C0, #4BA8E8)" }}
+                onClick={() => setShowAccountSwitcher(true)}
+                className="flex shrink-0 flex-col gap-[4px] px-1 py-0.5"
               >
-                {statusFilter === "all"
-                  ? "すべて"
-                  : DISPLAY_GROUPS.find((g) => g.key === statusFilter)?.label ?? "すべて"}
-                <span className="text-xs">{showGroupFilter ? "▲" : "▼"}</span>
+                <span className="block h-[2px] w-5 rounded-full bg-[#111b21]" />
+                <span className="block h-[2px] w-5 rounded-full bg-[#111b21]" />
+                <span className="block h-[2px] w-5 rounded-full bg-[#111b21]" />
               </button>
-
-              {showGroupFilter && (
-                <div className="absolute right-0 top-full z-30 mt-2 w-44 overflow-hidden rounded-2xl border border-[#d1d7db] bg-white shadow-xl">
-                  <button
-                    onClick={() => { setStatusFilter("all"); setShowGroupFilter(false); }}
-                    className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold border-b border-[#f0f2f5] ${statusFilter === "all" ? "text-[#2196F3]" : "text-[#111b21]"} hover:bg-[#f5f6f6]`}
-                  >
-                    <span className="h-3 w-3 rounded-full bg-gray-300" />
-                    すべて
-                  </button>
-                  {DISPLAY_GROUPS.map((g) => (
-                    <button
-                      key={g.key}
-                      onClick={() => { setStatusFilter(g.key); setShowGroupFilter(false); }}
-                      className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold border-b border-[#f0f2f5] last:border-b-0 ${statusFilter === g.key ? "text-[#2196F3]" : "text-[#111b21]"} hover:bg-[#f5f6f6]`}
-                    >
-                      <span className={`h-3 w-3 rounded-full ${g.dot}`} />
-                      {g.label}
-                    </button>
-                  ))}
-                </div>
+              {/* 検索入力 */}
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="検索"
+                className="min-w-0 flex-1 bg-transparent text-[14px] text-[#111b21] outline-none placeholder:text-[#aaa]"
+              />
+              {searchQuery && (
+                <button onClick={() => setSearchQuery("")} className="shrink-0 text-[#aaa] text-sm">✕</button>
               )}
+              {/* ステータスフィルター */}
+              <div className="relative shrink-0">
+                <button
+                  onClick={() => setShowGroupFilter((v) => !v)}
+                  className="flex items-center gap-1 rounded-full px-3 py-1.5 text-[11px] font-bold text-white"
+                  style={{ background: "linear-gradient(135deg, #1565C0, #4BA8E8)" }}
+                >
+                  {statusFilter === "all"
+                    ? "すべて"
+                    : DISPLAY_GROUPS.find((g) => g.key === statusFilter)?.label ?? "すべて"}
+                  <span className="text-[9px]">{showGroupFilter ? "▲" : "▼"}</span>
+                </button>
+                {showGroupFilter && (
+                  <div className="absolute right-0 top-full z-30 mt-2 w-44 overflow-hidden rounded-2xl border border-[#d1d7db] bg-white shadow-xl">
+                    <button
+                      onClick={() => { setStatusFilter("all"); setShowGroupFilter(false); }}
+                      className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold border-b border-[#f0f2f5] ${statusFilter === "all" ? "text-[#2196F3]" : "text-[#111b21]"} hover:bg-[#f5f6f6]`}
+                    >
+                      <span className="h-3 w-3 rounded-full bg-gray-300" />
+                      すべて
+                    </button>
+                    {DISPLAY_GROUPS.map((g) => (
+                      <button
+                        key={g.key}
+                        onClick={() => { setStatusFilter(g.key); setShowGroupFilter(false); }}
+                        className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold border-b border-[#f0f2f5] last:border-b-0 ${statusFilter === g.key ? "text-[#2196F3]" : "text-[#111b21]"} hover:bg-[#f5f6f6]`}
+                      >
+                        <span className={`h-3 w-3 rounded-full ${g.dot}`} />
+                        {g.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            {/* アカウント名 */}
+            <div className="mt-2 px-1 text-[12px] text-[#8696a0]">
+              {currentAccount.icon} {currentAccount.name} のメッセージ一覧
             </div>
           </div>
 
@@ -1125,6 +1165,57 @@ export default function Home() {
           onSend={sendMessageText}
         />
       ) : null}
+
+      {/* アカウント切替モーダル */}
+      {showAccountSwitcher && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowAccountSwitcher(false); }}
+        >
+          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl">
+            <div
+              className="flex items-center justify-between rounded-t-3xl px-5 py-4"
+              style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}
+            >
+              <div className="text-[17px] font-bold text-white">アカウント切替</div>
+              <button
+                onClick={() => setShowAccountSwitcher(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="p-5">
+              <div className="mb-3 text-xs font-semibold text-[#8696a0]">使用中のアカウント</div>
+              {[
+                { id: "sumora", name: "スモラ", icon: "🦄", sub: "蓮産業株式会社" },
+              ].map((acc) => (
+                <button
+                  key={acc.id}
+                  onClick={() => { setCurrentAccount(acc); setShowAccountSwitcher(false); }}
+                  className={`flex w-full items-center gap-3 rounded-2xl border-2 px-4 py-3 text-left mb-2 ${
+                    currentAccount.id === acc.id
+                      ? "border-[#2196F3] bg-[#e3f2fd]"
+                      : "border-[#e9edef] bg-white"
+                  }`}
+                >
+                  <span className="text-2xl">{acc.icon}</span>
+                  <div className="flex-1">
+                    <div className="text-sm font-bold text-[#1565C0]">{acc.name}</div>
+                    <div className="text-xs text-[#8696a0]">{acc.sub}</div>
+                  </div>
+                  {currentAccount.id === acc.id && (
+                    <span className="text-[#2196F3] font-bold">✓</span>
+                  )}
+                </button>
+              ))}
+              <div className="mt-3 rounded-2xl bg-[#f0f2f5] px-4 py-3 text-center text-xs text-[#8696a0]">
+                アカウントは順次追加予定です
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* AIXメニュー（ボトムシート） */}
       {showAixMenu && (
