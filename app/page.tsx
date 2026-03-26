@@ -863,7 +863,7 @@ export default function Home() {
                   if (!aixSearchMode) { setAiSearchIds(null); setAiSearchMessageIds({}); }
                 }}
                 onKeyDown={(e) => { if (e.key === "Enter" && aixSearchMode) handleAiSearch(); }}
-                placeholder={aixSearchMode ? "✨ AIX検索：条件・名前を入力してEnter" : "検索"}
+                placeholder={aixSearchMode ? "AI による検索" : "検索"}
                 className={`min-w-0 flex-1 bg-transparent text-[14px] outline-none ${aixSearchMode ? "text-[#1565C0] font-medium placeholder:text-[#4BA8E8]" : "text-[#111b21] placeholder:text-[#aaa]"}`}
               />
               {/* AIXモード中：ローディング表示のみ */}
