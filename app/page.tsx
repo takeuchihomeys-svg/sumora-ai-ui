@@ -173,6 +173,7 @@ export default function Home() {
   const convLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [aiSearchLoading, setAiSearchLoading] = useState(false);
   const [aiSearchIds, setAiSearchIds] = useState<string[] | null>(null);
+  const [aiSearchMessageIds, setAiSearchMessageIds] = useState<Record<string, string[]>>({});
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const aixFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -200,10 +201,24 @@ export default function Home() {
     };
   }, []);
 
-  // 会話を開いたとき：即座に最下部へ
+  // 会話を開いたとき：AI検索のマッチメッセージがあればそこへ、なければ最下部へ
   useEffect(() => {
-    if (bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior: "instant" });
+    if (!selectedId) return;
+    const matchedMsgIds = aiSearchMessageIds[selectedId] || [];
+    if (matchedMsgIds.length > 0) {
+      // 少し待ってからスクロール（DOM描画待ち）
+      setTimeout(() => {
+        const el = document.getElementById(`msg-${matchedMsgIds[0]}`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+        } else if (bottomRef.current) {
+          bottomRef.current.scrollIntoView({ behavior: "instant" });
+        }
+      }, 100);
+    } else {
+      if (bottomRef.current) {
+        bottomRef.current.scrollIntoView({ behavior: "instant" });
+      }
     }
   }, [selectedId]);
 
@@ -636,13 +651,14 @@ export default function Home() {
     if (!searchQuery.trim() || aiSearchLoading) return;
     setAiSearchLoading(true);
     setAiSearchIds(null);
+    setAiSearchMessageIds({});
     try {
       const convData = conversations.map((c) => ({
         id: c.id,
         customerName: c.customerName,
         status: c.status,
         lastMessage: c.lastMessage,
-        messages: c.messages.slice(-15).map((m) => ({ sender: m.sender, text: m.text || "" })),
+        messages: c.messages.slice(-20).map((m) => ({ id: m.id, sender: m.sender, text: m.text || "" })),
       }));
       const res = await fetch("https://sumora-line-ai.takeuchi-homeys.workers.dev/api/search", {
         method: "POST",
@@ -652,6 +668,7 @@ export default function Home() {
       const data = await res.json();
       if (data.ok && Array.isArray(data.matchedIds)) {
         setAiSearchIds(data.matchedIds.map(String));
+        setAiSearchMessageIds(data.matchedMessageIds || {});
       } else {
         setAiSearchIds([]);
       }
@@ -839,7 +856,7 @@ export default function Home() {
               <input
                 type="text"
                 value={searchQuery}
-                onChange={(e) => { setSearchQuery(e.target.value); setAiSearchIds(null); }}
+                onChange={(e) => { setSearchQuery(e.target.value); setAiSearchIds(null); setAiSearchMessageIds({}); }}
                 onKeyDown={(e) => { if (e.key === "Enter") handleAiSearch(); }}
                 placeholder="名前・条件で検索"
                 className="min-w-0 flex-1 bg-transparent text-[14px] text-[#111b21] outline-none placeholder:text-[#aaa]"
@@ -858,7 +875,7 @@ export default function Home() {
               )}
               {(searchQuery || aiSearchIds !== null) && (
                 <button
-                  onClick={() => { setSearchQuery(""); setAiSearchIds(null); }}
+                  onClick={() => { setSearchQuery(""); setAiSearchIds(null); setAiSearchMessageIds({}); }}
                   className="shrink-0 text-[#aaa] text-sm"
                 >✕</button>
               )}
@@ -923,7 +940,7 @@ export default function Home() {
                 <span className="text-[11px] font-bold text-[#2196F3]">✨ AI検索結果</span>
                 <span className="text-[11px] text-[#667781]">「{searchQuery}」— {filteredConversations.length}件</span>
                 <button
-                  onClick={() => setAiSearchIds(null)}
+                  onClick={() => { setAiSearchIds(null); setAiSearchMessageIds({}); }}
                   className="ml-auto text-[11px] text-[#aaa]"
                 >クリア</button>
               </div>
@@ -1131,10 +1148,14 @@ export default function Home() {
                       </div>
                     );
                   }
+                  const isAiMatch = selectedId
+                    ? (aiSearchMessageIds[selectedId] || []).includes(message.id)
+                    : false;
                   elems.push(
                     <div
                       key={message.id}
-                      className={`flex flex-col gap-0.5 ${isCustomer ? "items-start" : "items-end"}`}
+                      id={`msg-${message.id}`}
+                      className={`flex flex-col gap-0.5 ${isCustomer ? "items-start" : "items-end"} ${isAiMatch ? "rounded-2xl ring-2 ring-[#2196F3] ring-offset-2" : ""}`}
                     >
                       {flaggedIds.has(message.id) && (
                         <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold text-orange-600">
