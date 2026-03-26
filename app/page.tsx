@@ -39,82 +39,59 @@ type SupabaseMessageRow = {
   created_at: string;
 };
 
-const STATUS_LIST = [
+// 画面表示用グループ（5種類）
+const DISPLAY_GROUPS = [
   {
-    key: "first_reply",
-    label: "初回返信",
+    key: "initial",
+    label: "初回応対",
+    statuses: ["first_reply", "condition_hearing"],
     color: "bg-sky-100 text-sky-700",
     dot: "bg-sky-500",
+    canonicalStatus: "first_reply",
   },
   {
-    key: "condition_hearing",
-    label: "ヒアリング中",
-    color: "bg-violet-100 text-violet-700",
-    dot: "bg-violet-500",
-  },
-  {
-    key: "property_search",
+    key: "searching",
     label: "物件探し中",
+    statuses: ["property_search", "property_recommendation", "viewing", "estimate_request", "availability_check", "application"],
     color: "bg-amber-100 text-amber-700",
     dot: "bg-amber-500",
-  },
-  {
-    key: "property_recommendation",
-    label: "提案中",
-    color: "bg-emerald-100 text-emerald-700",
-    dot: "bg-emerald-500",
-  },
-  {
-    key: "viewing",
-    label: "内覧調整",
-    color: "bg-cyan-100 text-cyan-700",
-    dot: "bg-cyan-500",
-  },
-  {
-    key: "estimate_request",
-    label: "見積送付後",
-    color: "bg-orange-100 text-orange-700",
-    dot: "bg-orange-500",
-  },
-  {
-    key: "availability_check",
-    label: "募集確認中",
-    color: "bg-yellow-100 text-yellow-700",
-    dot: "bg-yellow-500",
-  },
-  {
-    key: "application",
-    label: "申込段階",
-    color: "bg-rose-100 text-rose-700",
-    dot: "bg-rose-500",
+    canonicalStatus: "property_search",
   },
   {
     key: "screening",
     label: "審査中",
+    statuses: ["screening"],
     color: "bg-pink-100 text-pink-700",
     dot: "bg-pink-500",
+    canonicalStatus: "screening",
   },
   {
     key: "contract",
-    label: "契約前",
+    label: "契約準備中",
+    statuses: ["contract"],
     color: "bg-indigo-100 text-indigo-700",
     dot: "bg-indigo-500",
+    canonicalStatus: "contract",
   },
   {
-    key: "closed_won",
-    label: "成約",
+    key: "closed",
+    label: "ご成約",
+    statuses: ["closed_won"],
     color: "bg-green-100 text-green-700",
     dot: "bg-green-500",
+    canonicalStatus: "closed_won",
   },
 ];
 
-function getStatusMeta(statusKey: string) {
+function getGroupMeta(statusKey: string) {
   return (
-    STATUS_LIST.find((status) => status.key === statusKey) || {
-      key: statusKey,
+    DISPLAY_GROUPS.find((g) => g.statuses.includes(statusKey)) ?? {
+      key: "unknown",
       label: "未設定",
+      statuses: [],
       color: "bg-gray-100 text-gray-700",
       dot: "bg-gray-400",
+      canonicalStatus: statusKey,
     }
   );
 }
@@ -151,7 +128,6 @@ export default function Home() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [replyDraft, setReplyDraft] = useState("");
-  const [aiSuggestion, setAiSuggestion] = useState("");
   const [pageLoading, setPageLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [sending, setSending] = useState(false);
@@ -159,8 +135,13 @@ export default function Home() {
   const [error, setError] = useState("");
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [showAixMenu, setShowAixMenu] = useState(false);
+  const [showGroupFilter, setShowGroupFilter] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [mobileView, setMobileView] = useState<"list" | "chat">("list");
+  const [inputFocused, setInputFocused] = useState(false);
+  const [pullStartY, setPullStartY] = useState(0);
+  const [isPulling, setIsPulling] = useState(false);
+  const listRef = useRef<HTMLDivElement | null>(null);
 
   const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
   const [selectedImagePreview, setSelectedImagePreview] = useState<string>("");
@@ -251,7 +232,9 @@ export default function Home() {
 
   const filteredConversations = useMemo(() => {
     if (statusFilter === "all") return conversations;
-    return conversations.filter((conversation) => conversation.status === statusFilter);
+    const group = DISPLAY_GROUPS.find((g) => g.key === statusFilter);
+    if (!group) return conversations;
+    return conversations.filter((c) => group.statuses.includes(c.status));
   }, [conversations, statusFilter]);
 
   useEffect(() => {
@@ -284,7 +267,6 @@ export default function Home() {
 
   useEffect(() => {
     setReplyDraft("");
-    setAiSuggestion("");
     setError("");
     setShowStatusMenu(false);
     setShowAixMenu(false);
@@ -299,7 +281,7 @@ export default function Home() {
     return customerMessages[customerMessages.length - 1]?.text ?? "";
   }, [selectedConversation]);
 
-  const statusMeta = getStatusMeta(selectedConversation.status);
+  const statusMeta = getGroupMeta(selectedConversation.status);
 
   const updateConversationStatus = async (nextStatus: string) => {
     if (!selectedConversation.id) return;
@@ -358,7 +340,7 @@ export default function Home() {
         throw new Error(data.error || "返信案取得失敗");
       }
 
-      setAiSuggestion(data.ai_reply || "");
+      setReplyDraft(data.ai_reply || "");
     } catch (requestError) {
       console.error(requestError);
       setError("返信案の作成に失敗しました。");
@@ -533,6 +515,22 @@ export default function Home() {
     if (aixFileInputRef.current) aixFileInputRef.current.value = "";
   };
 
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (listRef.current && listRef.current.scrollTop === 0) {
+      setPullStartY(e.touches[0].clientY);
+    }
+  };
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (pullStartY > 0 && e.touches[0].clientY - pullStartY > 60) {
+      setIsPulling(true);
+    }
+  };
+  const handleTouchEnd = () => {
+    if (isPulling) fetchConversationsAndMessages();
+    setPullStartY(0);
+    setIsPulling(false);
+  };
+
   const openConversation = (conversationId: string) => {
     setSelectedId(conversationId);
     setMobileView("chat");
@@ -556,46 +554,53 @@ export default function Home() {
           } w-full flex-col bg-white md:flex md:w-[390px] md:min-w-[390px] md:border-r md:border-[#dfe5e7]`}
         >
           <div className="border-b border-[#e9edef] bg-[#f0f2f5] px-4 pb-3 pt-[max(12px,env(safe-area-inset-top))]">
-            <div className="mb-3 flex items-center justify-between">
+            <div className="relative flex items-center justify-between">
               <div className="text-[22px] font-bold tracking-tight text-[#111b21]">トーク</div>
               <button
-                onClick={fetchConversationsAndMessages}
-                className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-[#111b21] shadow-sm"
+                onClick={() => setShowGroupFilter((v) => !v)}
+                className="flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold text-white shadow-sm"
+                style={{ background: "linear-gradient(135deg, #1565C0, #4BA8E8)" }}
               >
-                更新
+                {statusFilter === "all"
+                  ? "すべて"
+                  : DISPLAY_GROUPS.find((g) => g.key === statusFilter)?.label ?? "すべて"}
+                <span className="text-xs">{showGroupFilter ? "▲" : "▼"}</span>
               </button>
-            </div>
 
-            <div className="overflow-x-auto">
-              <div className="flex min-w-max gap-2 pb-1">
-                <button
-                  onClick={() => setStatusFilter("all")}
-                  style={statusFilter === "all" ? { background: "linear-gradient(135deg, #1565C0, #4BA8E8)" } : {}}
-                  className={`rounded-full px-3 py-2 text-xs font-semibold whitespace-nowrap ${
-                    statusFilter === "all"
-                      ? "text-white"
-                      : "bg-white text-[#54656f]"
-                  }`}
-                >
-                  すべて
-                </button>
-
-                {STATUS_LIST.map((status) => (
+              {showGroupFilter && (
+                <div className="absolute right-0 top-full z-30 mt-2 w-44 overflow-hidden rounded-2xl border border-[#d1d7db] bg-white shadow-xl">
                   <button
-                    key={status.key}
-                    onClick={() => setStatusFilter(status.key)}
-                    className={`rounded-full px-3 py-2 text-xs font-semibold whitespace-nowrap ${
-                      statusFilter === status.key ? "bg-[#111b21] text-white" : "bg-white text-[#54656f]"
-                    }`}
+                    onClick={() => { setStatusFilter("all"); setShowGroupFilter(false); }}
+                    className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold border-b border-[#f0f2f5] ${statusFilter === "all" ? "text-[#2196F3]" : "text-[#111b21]"} hover:bg-[#f5f6f6]`}
                   >
-                    {status.label}
+                    <span className="h-3 w-3 rounded-full bg-gray-300" />
+                    すべて
                   </button>
-                ))}
-              </div>
+                  {DISPLAY_GROUPS.map((g) => (
+                    <button
+                      key={g.key}
+                      onClick={() => { setStatusFilter(g.key); setShowGroupFilter(false); }}
+                      className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold border-b border-[#f0f2f5] last:border-b-0 ${statusFilter === g.key ? "text-[#2196F3]" : "text-[#111b21]"} hover:bg-[#f5f6f6]`}
+                    >
+                      <span className={`h-3 w-3 rounded-full ${g.dot}`} />
+                      {g.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto bg-white">
+          <div
+            ref={listRef}
+            className="flex-1 overflow-y-auto bg-white"
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+          >
+            {isPulling && (
+              <div className="py-2 text-center text-xs text-[#2196F3]">↓ 離して更新</div>
+            )}
             {pageLoading ? (
               <div className="p-4 text-sm text-[#667781]">読み込み中...</div>
             ) : filteredConversations.length === 0 ? (
@@ -603,7 +608,7 @@ export default function Home() {
             ) : (
               filteredConversations.map((conversation) => {
                 const isActive = conversation.id === selectedConversation.id;
-                const itemStatusMeta = getStatusMeta(conversation.status);
+                const groupMeta = getGroupMeta(conversation.status);
 
                 return (
                   <button
@@ -618,7 +623,7 @@ export default function Home() {
                         {getInitial(conversation.customerName)}
                       </div>
                       <span
-                        className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white ${itemStatusMeta.dot}`}
+                        className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white ${groupMeta.dot}`}
                       />
                     </div>
 
@@ -700,17 +705,17 @@ export default function Home() {
                 </button>
 
                 {showStatusMenu ? (
-                  <div className="absolute right-0 top-full z-30 mt-2 w-56 overflow-hidden rounded-2xl border border-[#d1d7db] bg-white shadow-xl">
-                    {STATUS_LIST.map((item) => (
+                  <div className="absolute right-0 top-full z-30 mt-2 w-44 overflow-hidden rounded-2xl border border-[#d1d7db] bg-white shadow-xl">
+                    {DISPLAY_GROUPS.map((g) => (
                       <button
-                        key={item.key}
-                        onClick={() => updateConversationStatus(item.key)}
-                        className={`flex w-full items-center gap-3 px-4 py-3 text-left text-sm hover:bg-[#f5f6f6] ${
-                          item.key === selectedConversation.status ? "bg-[#f0f2f5]" : ""
+                        key={g.key}
+                        onClick={() => updateConversationStatus(g.canonicalStatus)}
+                        className={`flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-semibold hover:bg-[#f5f6f6] border-b border-[#f0f2f5] last:border-b-0 ${
+                          g.statuses.includes(selectedConversation.status) ? "bg-[#f0f2f5]" : ""
                         }`}
                       >
-                        <span className={`h-3 w-3 rounded-full ${item.dot}`} />
-                        <span>{item.label}</span>
+                        <span className={`h-3 w-3 rounded-full ${g.dot}`} />
+                        <span>{g.label}</span>
                       </button>
                     ))}
                   </div>
@@ -751,23 +756,6 @@ export default function Home() {
                     </div>
                   );
                 })
-              )}
-              {/* 返信案カード — クリックで入力欄に自動入力 */}
-              {aiSuggestion && !generating && (
-                <div className="flex justify-end">
-                  <div className="max-w-[88%] md:max-w-[72%]">
-                    <div className="mb-1 text-right text-xs text-[#667781]">返信案（タップで入力）</div>
-                    <button
-                      onClick={() => {
-                        setReplyDraft(aiSuggestion);
-                        setAiSuggestion("");
-                      }}
-                      className="w-full rounded-2xl rounded-br-md border border-blue-200 bg-white px-4 py-3 text-left text-[14px] leading-6 text-[#333] shadow-sm hover:bg-blue-50 active:bg-blue-100"
-                    >
-                      <div className="whitespace-pre-wrap break-words">{aiSuggestion}</div>
-                    </button>
-                  </div>
-                </div>
               )}
               {generating && (
                 <div className="flex justify-end">
@@ -837,7 +825,7 @@ export default function Home() {
                       }}
                       className="flex w-full items-center gap-2 border-b border-blue-50 px-4 py-3 text-left text-sm font-semibold text-[#111b21] hover:bg-blue-50"
                     >
-                      🏠 物件オススメ
+                      → 物件オススメ
                     </button>
 
                     <button
@@ -847,7 +835,7 @@ export default function Home() {
                       }}
                       className="flex w-full items-center gap-2 border-b border-blue-50 px-4 py-3 text-left text-sm font-semibold text-[#111b21] hover:bg-blue-50"
                     >
-                      💰 見積書送る
+                      → 見積書送る
                     </button>
 
                     <button
@@ -858,7 +846,7 @@ export default function Home() {
                       }}
                       className="flex w-full items-center gap-2 border-b border-blue-50 px-4 py-3 text-left text-sm font-semibold text-[#111b21] hover:bg-blue-50"
                     >
-                      🔍 内覧へ！
+                      → 内覧へ！
                     </button>
 
                     <button
@@ -869,7 +857,7 @@ export default function Home() {
                       }}
                       className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-[#111b21] hover:bg-blue-50"
                     >
-                      ✋ 申込へ！
+                      → 申込へ！
                     </button>
                   </div>
                 ) : null}
@@ -909,13 +897,16 @@ export default function Home() {
               </button>
             </div>
 
-            <div className="flex items-end gap-2 rounded-[28px] bg-white px-4 py-3 shadow-sm">
+            <div className={`flex items-end gap-2 rounded-[28px] bg-white px-4 py-3 shadow-sm transition-all ${inputFocused ? "rounded-[20px]" : ""}`}>
               <textarea
                 value={replyDraft}
                 onChange={(e) => setReplyDraft(e.target.value)}
-                rows={1}
+                onFocus={() => setInputFocused(true)}
+                onBlur={() => setInputFocused(false)}
+                rows={inputFocused ? 4 : 1}
                 placeholder="メッセージを入力"
-                className="max-h-36 min-h-[24px] w-full resize-none bg-transparent text-[15px] leading-6 text-[#111b21] outline-none placeholder:text-[#8696a0]"
+                className="min-h-[24px] w-full resize-none bg-transparent text-[15px] leading-6 text-[#111b21] outline-none placeholder:text-[#8696a0]"
+                style={{ maxHeight: inputFocused ? "160px" : "80px", transition: "max-height 0.2s ease" }}
               />
             </div>
           </div>
