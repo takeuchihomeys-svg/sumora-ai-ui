@@ -15,7 +15,7 @@ interface AixModalProps {
   customerName: string;
   initialImageFile?: File;
   onClose: () => void;
-  onSend: (text: string) => Promise<void>;
+  onSend: (text: string, imageUrl?: string) => Promise<void>;
 }
 
 const CONFIG: Record<
@@ -161,7 +161,12 @@ export default function AixModal({
     if (!preview.trim()) return;
     try {
       setLoading(true);
-      await onSend(preview);
+      // 画像ありアクション（物件オススメ・見積書）はimageUrlも一緒に送る
+      let uploadedImageUrl: string | undefined;
+      if (config.requiresImage && imageFile) {
+        uploadedImageUrl = await uploadImage(imageFile);
+      }
+      await onSend(preview, uploadedImageUrl);
       onClose();
     } catch {
       setError("送信に失敗しました");

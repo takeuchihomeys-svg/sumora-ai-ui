@@ -615,33 +615,59 @@ export default function Home() {
     }
   };
 
-  const sendMessageText = async (text: string) => {
-    if (!selectedConversation.id || !text.trim()) return;
+  const sendMessageText = async (text: string, imageUrl?: string) => {
+    if (!selectedConversation.id || (!text.trim() && !imageUrl)) return;
     const now = new Date();
-    const { data: insertedRows, error: insertError } = await supabase
-      .from("messages")
-      .insert({
-        conversation_id: Number(selectedConversation.id),
+    const newMessages: Message[] = [];
+
+    if (text.trim()) {
+      const { data: insertedRows, error: insertError } = await supabase
+        .from("messages")
+        .insert({
+          conversation_id: Number(selectedConversation.id),
+          sender: "staff",
+          text: text.trim(),
+          created_at: now.toISOString(),
+        })
+        .select();
+      if (insertError) throw insertError;
+      newMessages.push({
+        id: String(insertedRows?.[0]?.id || crypto.randomUUID()),
         sender: "staff",
         text: text.trim(),
-        created_at: now.toISOString(),
-      })
-      .select();
-    if (insertError) throw insertError;
+        time: formatTime(now.toISOString()),
+        rawCreatedAt: now.toISOString(),
+      });
+    }
 
+    if (imageUrl) {
+      const imgNow = new Date();
+      const { data: imgRow, error: imgError } = await supabase
+        .from("messages")
+        .insert({
+          conversation_id: Number(selectedConversation.id),
+          sender: "staff",
+          text: "[画像]",
+          image_url: imageUrl,
+          created_at: imgNow.toISOString(),
+        })
+        .select();
+      if (imgError) throw imgError;
+      newMessages.push({
+        id: String(imgRow?.[0]?.id || crypto.randomUUID()),
+        sender: "staff",
+        text: "[画像]",
+        imageUrl,
+        time: formatTime(imgNow.toISOString()),
+        rawCreatedAt: imgNow.toISOString(),
+      });
+    }
+
+    const lastText = imageUrl ? "[画像]" : text.trim();
     await supabase
       .from("conversations")
-      .update({ last_message: text.trim(), updated_at: now.toISOString() })
+      .update({ last_message: lastText, updated_at: now.toISOString() })
       .eq("id", Number(selectedConversation.id));
-
-    const inserted = insertedRows?.[0];
-    const newMessage: Message = {
-      id: String(inserted?.id || crypto.randomUUID()),
-      sender: "staff",
-      text: text.trim(),
-      time: formatTime(now.toISOString()),
-      rawCreatedAt: now.toISOString(),
-    };
 
     setConversations((prev) =>
       prev
@@ -649,9 +675,9 @@ export default function Home() {
           conversation.id === selectedConversation.id
             ? {
                 ...conversation,
-                lastMessage: text.trim(),
+                lastMessage: lastText,
                 updatedAt: now.toISOString(),
-                messages: [...conversation.messages, newMessage],
+                messages: [...conversation.messages, ...newMessages],
               }
             : conversation
         )
@@ -661,6 +687,26 @@ export default function Home() {
           return bTime - aTime;
         })
     );
+
+    // LINEに送信
+    try {
+      if (text.trim()) {
+        await fetch("https://sumora-line-ai.takeuchi-homeys.workers.dev/api/send-message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: text.trim() }),
+        });
+      }
+      if (imageUrl) {
+        await fetch("https://sumora-line-ai.takeuchi-homeys.workers.dev/api/send-message", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, image_url: imageUrl }),
+        });
+      }
+    } catch {
+      // LINE送信失敗しても管理画面の動作は続ける
+    }
   };
 
   const openAixWithImagePicker = (type: AixActionType) => {
@@ -716,9 +762,9 @@ export default function Home() {
             showListOnMobile ? "flex" : "hidden"
           } w-full flex-col bg-white md:flex md:w-[390px] md:min-w-[390px] md:border-r md:border-[#dfe5e7]`}
         >
-          <div className="border-b border-[#e9edef] bg-[#f0f2f5] px-4 pb-3 pt-[max(12px,env(safe-area-inset-top))]">
+          <div className="border-b border-[#e9edef] bg-[#f0f2f5] px-3 pb-3 pt-[max(12px,env(safe-area-inset-top))]">
             {/* 検索バー */}
-            <div className="flex items-center gap-2 rounded-full bg-white px-3 py-2 shadow-sm">
+            <div className="flex items-center gap-2 rounded-2xl bg-white px-3 py-2.5 shadow-sm">
               {/* ハンバーガー（アカウント切替） */}
               <button
                 onClick={() => setShowAccountSwitcher(true)}
@@ -897,16 +943,15 @@ export default function Home() {
               </button>
 
               {/* 中央: 名前（タップで更新） */}
-              <div className="absolute left-0 right-0 flex justify-center">
+              <div className="pointer-events-none absolute left-0 right-0 flex justify-center">
                 <button
                   onClick={fetchConversationsAndMessages}
-                  className="flex items-center gap-1.5 max-w-[60%] active:opacity-60 transition-opacity"
+                  className="pointer-events-auto flex items-center max-w-[60%] active:opacity-60 transition-opacity"
                   title="タップして更新"
                 >
                   <span className="truncate text-[15px] font-semibold text-[#111b21] text-center">
                     {selectedConversation.id ? selectedConversation.customerName : "会話を選択"}
                   </span>
-                  <span className="shrink-0 text-[11px] text-[#b0bec5]">↻</span>
                 </button>
               </div>
 
