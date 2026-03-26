@@ -3,12 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import AixModal, { type AixActionType } from "./components/AixModal";
 import BottomNav from "./components/BottomNav";
+import TemplateModal from "./components/TemplateModal";
 import { supabase } from "./lib/supabase";
 
 type Message = {
   id: string;
   sender: "customer" | "staff";
   text: string;
+  imageUrl?: string;
   time: string;
   rawCreatedAt?: string;
 };
@@ -39,6 +41,7 @@ type SupabaseMessageRow = {
   conversation_id: number;
   sender: "customer" | "staff";
   text: string;
+  image_url?: string | null;
   created_at: string;
 };
 
@@ -150,6 +153,7 @@ export default function Home() {
   const [selectedImagePreview, setSelectedImagePreview] = useState<string>("");
   const [aixModalType, setAixModalType] = useState<AixActionType | null>(null);
   const [aixInitialFile, setAixInitialFile] = useState<File | null>(null);
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const aixFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -220,6 +224,7 @@ export default function Home() {
           id: String(message.id),
           sender: message.sender,
           text: message.text,
+          imageUrl: message.image_url || undefined,
           time: formatTime(message.created_at),
           rawCreatedAt: message.created_at,
         }));
@@ -394,6 +399,17 @@ export default function Home() {
     }
   };
 
+  const uploadImageToStorage = async (file: File): Promise<string | null> => {
+    const ext = file.name.split(".").pop() || "jpg";
+    const path = `messages/${selectedConversation.id}/${Date.now()}.${ext}`;
+    const { error: uploadError } = await supabase.storage
+      .from("property-images")
+      .upload(path, file, { upsert: true });
+    if (uploadError) return null;
+    const { data } = supabase.storage.from("property-images").getPublicUrl(path);
+    return data.publicUrl;
+  };
+
   const sendReply = async () => {
     if (!selectedConversation.id) return;
     if (!replyDraft.trim() && !selectedImageFile) return;
@@ -403,20 +419,23 @@ export default function Home() {
       setError("");
 
       const now = new Date();
-      let finalText = replyDraft.trim();
+      const textToSend = replyDraft.trim();
+      let imageUrl: string | null = null;
 
-      if (selectedImageFile && !finalText) {
-        finalText = `[画像添付予定] ${selectedImageFile.name}`;
-      } else if (selectedImageFile && finalText) {
-        finalText = `${finalText}\n[画像添付予定] ${selectedImageFile.name}`;
+      // 画像をSupabaseにアップロード
+      if (selectedImageFile) {
+        imageUrl = await uploadImageToStorage(selectedImageFile);
       }
 
+      // Supabaseにメッセージ保存
+      const displayText = textToSend || (imageUrl ? "[画像]" : "");
       const { data: insertedRows, error: insertError } = await supabase
         .from("messages")
         .insert({
           conversation_id: Number(selectedConversation.id),
           sender: "staff",
-          text: finalText,
+          text: displayText,
+          image_url: imageUrl || null,
           created_at: now.toISOString(),
         })
         .select();
@@ -425,20 +444,16 @@ export default function Home() {
 
       const inserted = insertedRows?.[0];
 
-      const { error: updateError } = await supabase
+      await supabase
         .from("conversations")
-        .update({
-          last_message: finalText,
-          updated_at: now.toISOString(),
-        })
+        .update({ last_message: displayText, updated_at: now.toISOString() })
         .eq("id", Number(selectedConversation.id));
-
-      if (updateError) throw updateError;
 
       const newMessage: Message = {
         id: String(inserted?.id || crypto.randomUUID()),
         sender: "staff",
-        text: finalText,
+        text: displayText,
+        imageUrl: imageUrl || undefined,
         time: formatTime(now.toISOString()),
         rawCreatedAt: now.toISOString(),
       };
@@ -449,7 +464,7 @@ export default function Home() {
             conversation.id === selectedConversation.id
               ? {
                   ...conversation,
-                  lastMessage: finalText,
+                  lastMessage: displayText,
                   updatedAt: now.toISOString(),
                   messages: [...conversation.messages, newMessage],
                 }
@@ -462,14 +477,15 @@ export default function Home() {
           })
       );
 
-      // LINEにも送信
+      // LINEにテキスト＋画像を送信
       try {
         await fetch("https://sumora-line-ai.takeuchi-homeys.workers.dev/api/send-message", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             line_user_id: selectedConversation.lineUserId,
-            message: finalText,
+            message: textToSend || undefined,
+            image_url: imageUrl || undefined,
           }),
         });
       } catch {
@@ -715,64 +731,47 @@ export default function Home() {
             backgroundSize: "18px 18px",
           }}
         >
-          <header className="border-b border-[#e9edef] px-3 pb-3 pt-[max(10px,env(safe-area-inset-top))] backdrop-blur-md md:px-4"
+          <header className="border-b border-[#e9edef] px-3 pb-2 pt-[max(8px,env(safe-area-inset-top))] backdrop-blur-md md:px-4"
             style={{ background: "rgba(255,255,255,0.88)" }}
           >
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               <button
                 onClick={() => setMobileView("list")}
-                className="flex h-10 w-10 items-center justify-center rounded-full text-[22px] text-[#111b21] md:hidden"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[20px] text-[#111b21] md:hidden"
               >
                 ←
               </button>
 
               {selectedConversation.id ? (
-                <>
-                  <div className="relative shrink-0">
-                    {selectedConversation.profileImageUrl ? (
-                      <img
-                        src={selectedConversation.profileImageUrl}
-                        alt={selectedConversation.customerName}
-                        className="h-10 w-10 rounded-full object-cover"
-                      />
-                    ) : (
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#d9fdd3] text-base font-bold text-[#0f8f44]">
-                        {getInitial(selectedConversation.customerName)}
-                      </div>
-                    )}
-                    <span
-                      className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white ${statusMeta.dot}`}
-                    />
-                  </div>
-
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[15px] font-semibold text-[#111b21]">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${statusMeta.dot}`} />
+                    <span className="truncate text-[15px] font-semibold text-[#111b21]">
                       {selectedConversation.customerName}
-                    </div>
-                    <div className="truncate text-xs text-[#667781]">{statusMeta.label}</div>
+                    </span>
                   </div>
-                </>
+                </div>
               ) : (
-                <div className="text-[18px] font-semibold text-[#111b21]">会話を選択</div>
+                <div className="min-w-0 flex-1 text-[15px] font-semibold text-[#111b21]">会話を選択</div>
               )}
 
-              {/* 更新ボタン（LINE OA送信分を手動で反映） */}
+              {/* 更新ボタン */}
               <button
                 onClick={fetchConversationsAndMessages}
-                className="flex h-8 w-8 items-center justify-center rounded-full text-[16px] text-[#667781] hover:bg-[#f0f2f5]"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[15px] text-[#667781] hover:bg-[#f0f2f5]"
                 title="最新メッセージを取得"
               >
                 ↻
               </button>
 
-              <div className="relative">
+              <div className="relative shrink-0">
                 <button
                   onClick={() => {
                     setShowStatusMenu(!showStatusMenu);
                     setShowAixMenu(false);
                   }}
                   disabled={!selectedConversation.id || statusSaving}
-                  className="rounded-full border border-[#d1d7db] bg-white px-3 py-2 text-xs font-semibold text-[#111b21] shadow-sm"
+                  className="rounded-full border border-[#d1d7db] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#111b21] shadow-sm"
                 >
                   {statusSaving ? "更新中..." : statusMeta.label}
                 </button>
@@ -819,13 +818,23 @@ export default function Home() {
                       )}
                       <div className="max-w-[86%] md:max-w-[74%]">
                         <div
-                          className={`rounded-2xl px-4 py-2.5 text-[15px] leading-6 shadow-sm ${
+                          className={`rounded-2xl text-[15px] leading-6 shadow-sm ${
                             isCustomer
                               ? "rounded-bl-md bg-white text-[#111b21]"
                               : "rounded-br-md bg-[#d9fdd3] text-[#111b21]"
                           }`}
                         >
-                          <div className="whitespace-pre-wrap break-words">{message.text}</div>
+                          {message.imageUrl && (
+                            <img
+                              src={message.imageUrl}
+                              alt="送信画像"
+                              className="max-h-56 w-full rounded-2xl object-contain"
+                              style={{ borderBottomLeftRadius: message.text ? 0 : undefined, borderBottomRightRadius: message.text ? 0 : undefined }}
+                            />
+                          )}
+                          {message.text && message.text !== "[画像]" && (
+                            <div className="whitespace-pre-wrap break-words px-4 py-2.5">{message.text}</div>
+                          )}
                         </div>
                       </div>
                       {isCustomer && (
@@ -849,135 +858,21 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="border-t border-[#d1d7db] bg-[#f0f2f5] px-3 pb-[max(10px,env(safe-area-inset-bottom))] pt-3 md:px-4">
+          <div className="border-t border-[#d1d7db] bg-[#f0f2f5] px-2 pb-[max(8px,env(safe-area-inset-bottom))] pt-2 md:px-3">
             {error ? (
-              <div className="mb-3 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">
-                {error}
-              </div>
+              <div className="mb-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-600">{error}</div>
             ) : null}
 
             {selectedImagePreview ? (
-              <div className="mb-3 rounded-2xl border border-[#d1d7db] bg-white p-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <div className="text-sm font-medium text-[#54656f]">添付画像</div>
-                  <button
-                    onClick={removeSelectedImage}
-                    className="text-sm font-semibold text-red-500"
-                  >
-                    削除
-                  </button>
-                </div>
-                <img
-                  src={selectedImagePreview}
-                  alt="preview"
-                  className="max-h-40 rounded-xl object-contain"
-                />
+              <div className="mb-2 flex items-center gap-2 rounded-xl border border-[#d1d7db] bg-white px-3 py-2">
+                <img src={selectedImagePreview} alt="preview" className="h-12 w-12 rounded-lg object-cover" />
+                <div className="flex-1 truncate text-xs text-[#54656f]">{selectedImageFile?.name}</div>
+                <button onClick={removeSelectedImage} className="text-xs font-semibold text-red-500">削除</button>
               </div>
             ) : null}
 
-            <div className="mb-3 flex flex-wrap items-center gap-2">
-              <button
-                onClick={generateReply}
-                disabled={generating || !selectedConversation.id}
-                className="rounded-full bg-[#06c755] px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-50"
-              >
-                {generating ? "作成中..." : "返信案"}
-              </button>
-
-              <div className="relative">
-                <button
-                  onClick={() => {
-                    setShowAixMenu(!showAixMenu);
-                    setShowStatusMenu(false);
-                  }}
-                  className="rounded-full px-4 py-2 text-sm font-bold text-white shadow-sm"
-                  style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}
-                >
-                  AIX
-                </button>
-
-                {showAixMenu ? (
-                  <div className="absolute bottom-[52px] left-0 z-30 w-52 overflow-hidden rounded-2xl border border-blue-100 bg-white shadow-2xl">
-                    <button
-                      onClick={() => {
-                        setShowAixMenu(false);
-                        openAixWithImagePicker("property_recommendation");
-                      }}
-                      className="flex w-full items-center gap-2 border-b border-blue-50 px-4 py-3 text-left text-sm font-semibold text-[#111b21] hover:bg-blue-50"
-                    >
-                      → 物件オススメ
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        setShowAixMenu(false);
-                        openAixWithImagePicker("estimate_sheet");
-                      }}
-                      className="flex w-full items-center gap-2 border-b border-blue-50 px-4 py-3 text-left text-sm font-semibold text-[#111b21] hover:bg-blue-50"
-                    >
-                      → 見積書送る
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        setShowAixMenu(false);
-                        setAixInitialFile(null);
-                        setAixModalType("viewing_invite");
-                      }}
-                      className="flex w-full items-center gap-2 border-b border-blue-50 px-4 py-3 text-left text-sm font-semibold text-[#111b21] hover:bg-blue-50"
-                    >
-                      → 内覧へ！
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        setShowAixMenu(false);
-                        setAixInitialFile(null);
-                        setAixModalType("application_push");
-                      }}
-                      className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-[#111b21] hover:bg-blue-50"
-                    >
-                      → 申込へ！
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-
-              <button
-                onClick={openImagePicker}
-                className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-[26px] leading-none text-[#54656f] shadow-sm"
-                aria-label="画像を添付"
-                title="画像を添付"
-              >
-                ＋
-              </button>
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={onSelectImage}
-                className="hidden"
-              />
-
-              <input
-                ref={aixFileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={onAixImageSelected}
-                className="hidden"
-              />
-
-              <button
-                onClick={sendReply}
-                disabled={sending || (!replyDraft.trim() && !selectedImageFile)}
-                className="ml-auto rounded-full bg-[#06c755] px-5 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-50"
-              >
-                {sending ? "送信中..." : "送信"}
-              </button>
-            </div>
-
-            <div className={`flex items-end gap-2 rounded-[28px] bg-white px-4 py-3 shadow-sm transition-all ${inputFocused ? "rounded-[20px]" : ""}`}>
+            {/* テキスト入力 */}
+            <div className={`mb-2 flex items-end gap-2 rounded-[24px] bg-white px-3 py-2 shadow-sm transition-all ${inputFocused ? "rounded-[16px]" : ""}`}>
               <textarea
                 value={replyDraft}
                 onChange={(e) => setReplyDraft(e.target.value)}
@@ -985,9 +880,76 @@ export default function Home() {
                 onBlur={() => setInputFocused(false)}
                 rows={inputFocused ? 4 : 1}
                 placeholder="メッセージを入力"
-                className="min-h-[24px] w-full resize-none bg-transparent text-[13px] leading-5 text-[#111b21] outline-none placeholder:text-[#8696a0]"
-                style={{ maxHeight: inputFocused ? "160px" : "80px", transition: "max-height 0.2s ease" }}
+                className="min-h-[22px] w-full resize-none bg-transparent text-[13px] leading-5 text-[#111b21] outline-none placeholder:text-[#8696a0]"
+                style={{ maxHeight: inputFocused ? "140px" : "72px", transition: "max-height 0.2s ease" }}
               />
+              <button
+                onClick={sendReply}
+                disabled={sending || (!replyDraft.trim() && !selectedImageFile)}
+                className="shrink-0 rounded-full bg-[#06c755] px-4 py-1.5 text-xs font-bold text-white shadow-sm disabled:opacity-50"
+              >
+                {sending ? "送信中..." : "送信"}
+              </button>
+            </div>
+
+            {/* アクションボタン列 */}
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={generateReply}
+                disabled={generating || !selectedConversation.id}
+                className="rounded-full bg-[#06c755] px-3 py-1.5 text-xs font-semibold text-white shadow-sm disabled:opacity-50"
+              >
+                {generating ? "生成中..." : "返信案"}
+              </button>
+
+              <div className="relative">
+                <button
+                  onClick={() => { setShowAixMenu(!showAixMenu); setShowStatusMenu(false); }}
+                  className="rounded-full px-3 py-1.5 text-xs font-bold text-white shadow-sm"
+                  style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}
+                >
+                  AIX
+                </button>
+
+                {showAixMenu && (
+                  <div className="absolute bottom-[40px] left-0 z-30 w-48 overflow-hidden rounded-2xl border border-blue-100 bg-white shadow-2xl">
+                    {[
+                      { label: "🏠 物件オススメ", action: () => { setShowAixMenu(false); openAixWithImagePicker("property_recommendation"); } },
+                      { label: "💰 見積書送る", action: () => { setShowAixMenu(false); openAixWithImagePicker("estimate_sheet"); } },
+                      { label: "🔍 内覧へ！", action: () => { setShowAixMenu(false); setAixInitialFile(null); setAixModalType("viewing_invite"); } },
+                      { label: "✋ 申込へ！", action: () => { setShowAixMenu(false); setAixInitialFile(null); setAixModalType("application_push"); } },
+                    ].map((item, i, arr) => (
+                      <button
+                        key={item.label}
+                        onClick={item.action}
+                        className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold text-[#111b21] hover:bg-blue-50 ${i < arr.length - 1 ? "border-b border-blue-50" : ""}`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 辞書ボタン */}
+              <button
+                onClick={() => setShowTemplateModal(true)}
+                className="rounded-full border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-semibold text-[#54656f] shadow-sm"
+              >
+                📋 辞書
+              </button>
+
+              {/* 画像添付 */}
+              <button
+                onClick={openImagePicker}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-white text-[18px] text-[#54656f] shadow-sm"
+                title="画像を添付"
+              >
+                🖼
+              </button>
+
+              <input ref={fileInputRef} type="file" accept="image/*" onChange={onSelectImage} className="hidden" />
+              <input ref={aixFileInputRef} type="file" accept="image/*" onChange={onAixImageSelected} className="hidden" />
             </div>
           </div>
         </section>
@@ -997,6 +959,13 @@ export default function Home() {
       <div className={showChatOnMobile ? "hidden md:block" : "block"}>
         <BottomNav />
       </div>
+
+      {showTemplateModal && (
+        <TemplateModal
+          onClose={() => setShowTemplateModal(false)}
+          onSelect={(text) => { setReplyDraft(text); setShowTemplateModal(false); }}
+        />
+      )}
 
       {aixModalType && selectedConversation.id ? (
         <AixModal
