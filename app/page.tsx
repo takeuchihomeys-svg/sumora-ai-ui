@@ -614,6 +614,11 @@ export default function Home() {
                 const isActive = conversation.id === selectedConversation.id;
                 const groupMeta = getGroupMeta(conversation.status);
 
+                const lastMsg = conversation.messages[conversation.messages.length - 1];
+                const needsReply =
+                  lastMsg?.sender === "customer" &&
+                  conversation.status !== "closed_won";
+
                 return (
                   <button
                     key={conversation.id}
@@ -644,8 +649,17 @@ export default function Home() {
                         <div className="truncate text-[14px] font-semibold text-[#111b21]">
                           {conversation.customerName}
                         </div>
-                        <div className="shrink-0 text-[11px] text-[#667781]">
-                          {formatListTime(conversation.updatedAt)}
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          {needsReply && (
+                            <span className="rounded-full px-2 py-0.5 text-[10px] font-bold text-white"
+                              style={{ background: "linear-gradient(135deg, #1565C0, #4BA8E8)" }}
+                            >
+                              未返信
+                            </span>
+                          )}
+                          <span className="text-[11px] text-[#667781]">
+                            {formatListTime(conversation.updatedAt)}
+                          </span>
                         </div>
                       </div>
 
