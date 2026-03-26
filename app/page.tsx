@@ -953,7 +953,7 @@ export default function Home() {
                 onClick={generateReply}
                 disabled={generating || !selectedConversation.id}
                 className="flex h-8 w-8 items-center justify-center rounded-full border border-[#d1d7db] bg-white text-[#111b21] shadow-sm disabled:opacity-40"
-                title="返信作成"
+                title="メッセージを作成"
               >
                 {generating ? (
                   <span className="text-[10px] font-bold text-[#111b21]">…</span>
