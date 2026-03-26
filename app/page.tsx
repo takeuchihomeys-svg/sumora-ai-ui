@@ -190,11 +190,19 @@ export default function Home() {
     };
   }, []);
 
+  // 会話を開いたとき：即座に最下部へ
+  useEffect(() => {
+    if (bottomRef.current) {
+      bottomRef.current.scrollIntoView({ behavior: "instant" });
+    }
+  }, [selectedId]);
+
+  // 新しいメッセージが届いたとき：スムーズにスクロール
   useEffect(() => {
     if (bottomRef.current) {
       bottomRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  }, [selectedId, conversations]);
+  }, [conversations]);
 
   const fetchConversationsAndMessages = async () => {
     setPageLoading(true);
@@ -888,23 +896,22 @@ export default function Home() {
                 )}
               </button>
 
-              {/* 中央: 名前 */}
-              <div className="absolute left-0 right-0 flex justify-center pointer-events-none">
-                <span className="truncate text-[15px] font-semibold text-[#111b21] max-w-[60%] text-center">
-                  {selectedConversation.id ? selectedConversation.customerName : "会話を選択"}
-                </span>
-              </div>
-
-              {/* 右: 更新 + ステータス */}
-              <div className="ml-auto flex items-center gap-1.5">
+              {/* 中央: 名前（タップで更新） */}
+              <div className="absolute left-0 right-0 flex justify-center">
                 <button
                   onClick={fetchConversationsAndMessages}
-                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[14px] text-[#b0bec5] hover:bg-[#f0f2f5]"
-                  title="最新メッセージを取得"
+                  className="flex items-center gap-1.5 max-w-[60%] active:opacity-60 transition-opacity"
+                  title="タップして更新"
                 >
-                  ↻
+                  <span className="truncate text-[15px] font-semibold text-[#111b21] text-center">
+                    {selectedConversation.id ? selectedConversation.customerName : "会話を選択"}
+                  </span>
+                  <span className="shrink-0 text-[11px] text-[#b0bec5]">↻</span>
                 </button>
+              </div>
 
+              {/* 右: ステータス */}
+              <div className="ml-auto flex items-center gap-1.5">
                 <div className="relative shrink-0">
                   <button
                     onClick={() => {
@@ -940,12 +947,19 @@ export default function Home() {
 
           <div className="flex-1 overflow-y-auto px-3 py-4 md:px-6">
             <div className="mx-auto flex w-full max-w-4xl flex-col gap-3.5">
-              {selectedConversation.messages.length === 0 ? (
-                <div className="rounded-2xl bg-white px-4 py-6 text-center text-sm text-[#667781] shadow-sm">
-                  メッセージがありません
-                </div>
-              ) : (
-                selectedConversation.messages.map((message) => {
+              {(() => {
+                const q = searchQuery.trim().toLowerCase();
+                const displayMessages = q
+                  ? selectedConversation.messages.filter((m) => m.text?.toLowerCase().includes(q))
+                  : selectedConversation.messages;
+                if (displayMessages.length === 0) {
+                  return (
+                    <div className="rounded-2xl bg-white px-4 py-6 text-center text-sm text-[#667781] shadow-sm">
+                      {q ? `「${searchQuery}」に一致するメッセージがありません` : "メッセージがありません"}
+                    </div>
+                  );
+                }
+                return displayMessages.map((message) => {
                   const isCustomer = message.sender === "customer";
 
                   return (
@@ -1031,8 +1045,8 @@ export default function Home() {
                       </div>
                     </div>
                   );
-                })
-              )}
+                });
+              })()}
               {generating && (
                 <div className="flex justify-end">
                   <div className="rounded-2xl rounded-br-md bg-white px-4 py-3 text-sm text-[#667781] shadow-sm">
