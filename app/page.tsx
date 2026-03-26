@@ -51,8 +51,8 @@ const DISPLAY_GROUPS = [
     key: "initial",
     label: "初回応対",
     statuses: ["first_reply", "condition_hearing"],
-    color: "bg-sky-100 text-sky-700",
-    dot: "bg-sky-500",
+    color: "bg-green-100 text-green-700",
+    dot: "bg-green-500",
     canonicalStatus: "first_reply",
   },
   {
@@ -83,8 +83,8 @@ const DISPLAY_GROUPS = [
     key: "closed",
     label: "ご成約",
     statuses: ["closed_won"],
-    color: "bg-green-100 text-green-700",
-    dot: "bg-green-500",
+    color: "bg-yellow-100 text-yellow-700",
+    dot: "bg-yellow-400",
     canonicalStatus: "closed_won",
   },
 ];
