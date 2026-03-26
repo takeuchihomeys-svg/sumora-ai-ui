@@ -174,6 +174,8 @@ export default function Home() {
   const [aiSearchLoading, setAiSearchLoading] = useState(false);
   const [aiSearchIds, setAiSearchIds] = useState<string[] | null>(null);
   const [aiSearchMessageIds, setAiSearchMessageIds] = useState<Record<string, string[]>>({});
+  const [showHamburgerMenu, setShowHamburgerMenu] = useState(false);
+  const [aixSearchMode, setAixSearchMode] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const aixFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -843,39 +845,74 @@ export default function Home() {
           <div className="border-b border-[#e9edef] bg-white px-3 pb-3 pt-[max(16px,env(safe-area-inset-top))]">
             {/* 検索バー */}
             <div className="flex items-center gap-2 rounded-2xl bg-white px-3 py-2.5 shadow-sm">
-              {/* ハンバーガー（アカウント切替） */}
-              <button
-                onClick={() => setShowAccountSwitcher(true)}
-                className="flex shrink-0 flex-col gap-[4px] px-1 py-0.5"
-              >
-                <span className="block h-[2px] w-5 rounded-full bg-[#111b21]" />
-                <span className="block h-[2px] w-5 rounded-full bg-[#111b21]" />
-                <span className="block h-[2px] w-5 rounded-full bg-[#111b21]" />
-              </button>
+              {/* ハンバーガー（ドロップダウンメニュー） */}
+              <div className="relative shrink-0">
+                <button
+                  onClick={() => setShowHamburgerMenu((v) => !v)}
+                  className="flex flex-col gap-[4px] px-1 py-0.5"
+                >
+                  <span className="block h-[2px] w-5 rounded-full bg-[#111b21]" />
+                  <span className="block h-[2px] w-5 rounded-full bg-[#111b21]" />
+                  <span className="block h-[2px] w-5 rounded-full bg-[#111b21]" />
+                </button>
+                {showHamburgerMenu && (
+                  <>
+                    <div className="fixed inset-0 z-20" onClick={() => setShowHamburgerMenu(false)} />
+                    <div className="absolute left-0 top-full z-30 mt-2 w-48 overflow-hidden rounded-2xl border border-[#d1d7db] bg-white shadow-xl">
+                      <button
+                        onClick={() => { setShowHamburgerMenu(false); setShowAccountSwitcher(true); }}
+                        className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-[#111b21] hover:bg-[#f5f6f6] border-b border-[#f0f2f5]"
+                      >
+                        <span className="text-base">👤</span>
+                        <span className="font-semibold">アカウント切替</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowHamburgerMenu(false);
+                          setAixSearchMode(true);
+                          setAiSearchIds(null);
+                          setAiSearchMessageIds({});
+                          setSearchQuery("");
+                        }}
+                        className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm hover:bg-[#f5f6f6]"
+                        style={{ color: "#1565C0" }}
+                      >
+                        <span className="text-base">✨</span>
+                        <div>
+                          <div className="font-bold">AIX検索</div>
+                          <div className="text-[10px] text-[#8696a0]">条件・内容でAI検索</div>
+                        </div>
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
               {/* 検索入力 */}
               <input
                 type="text"
                 value={searchQuery}
-                onChange={(e) => { setSearchQuery(e.target.value); setAiSearchIds(null); setAiSearchMessageIds({}); }}
-                onKeyDown={(e) => { if (e.key === "Enter") handleAiSearch(); }}
-                placeholder="名前・条件で検索"
-                className="min-w-0 flex-1 bg-transparent text-[14px] text-[#111b21] outline-none placeholder:text-[#aaa]"
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  if (!aixSearchMode) { setAiSearchIds(null); setAiSearchMessageIds({}); }
+                }}
+                onKeyDown={(e) => { if (e.key === "Enter" && aixSearchMode) handleAiSearch(); }}
+                placeholder={aixSearchMode ? "✨ AIX検索：条件・名前を入力してEnter" : "検索"}
+                className={`min-w-0 flex-1 bg-transparent text-[14px] outline-none ${aixSearchMode ? "text-[#1565C0] font-medium placeholder:text-[#4BA8E8]" : "text-[#111b21] placeholder:text-[#aaa]"}`}
               />
-              {/* AI検索ボタン */}
-              {searchQuery && (
+              {/* AIXモード中：検索ボタン */}
+              {aixSearchMode && searchQuery && (
                 <button
                   onClick={handleAiSearch}
                   disabled={aiSearchLoading}
                   className="shrink-0 flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold text-white disabled:opacity-60"
                   style={{ background: "linear-gradient(135deg, #1565C0, #4BA8E8)" }}
-                  title="AIで検索"
                 >
-                  {aiSearchLoading ? "…" : "✨AI"}
+                  {aiSearchLoading ? "…" : "検索"}
                 </button>
               )}
-              {(searchQuery || aiSearchIds !== null) && (
+              {(searchQuery || aiSearchIds !== null || aixSearchMode) && (
                 <button
-                  onClick={() => { setSearchQuery(""); setAiSearchIds(null); setAiSearchMessageIds({}); }}
+                  onClick={() => { setSearchQuery(""); setAiSearchIds(null); setAiSearchMessageIds({}); setAixSearchMode(false); }}
                   className="shrink-0 text-[#aaa] text-sm"
                 >✕</button>
               )}
@@ -937,10 +974,10 @@ export default function Home() {
             )}
             {aiSearchIds !== null && (
               <div className="flex items-center gap-2 border-b border-[#d1d7db] bg-blue-50 px-4 py-2">
-                <span className="text-[11px] font-bold text-[#2196F3]">✨ AI検索結果</span>
+                <span className="text-[11px] font-bold text-[#2196F3]">✨ AIX検索結果</span>
                 <span className="text-[11px] text-[#667781]">「{searchQuery}」— {filteredConversations.length}件</span>
                 <button
-                  onClick={() => { setAiSearchIds(null); setAiSearchMessageIds({}); }}
+                  onClick={() => { setAiSearchIds(null); setAiSearchMessageIds({}); setAixSearchMode(false); setSearchQuery(""); }}
                   className="ml-auto text-[11px] text-[#aaa]"
                 >クリア</button>
               </div>
