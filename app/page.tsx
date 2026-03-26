@@ -158,6 +158,22 @@ export default function Home() {
 
   useEffect(() => {
     fetchConversationsAndMessages();
+
+    // Supabase real-time: 新しいメッセージをリアルタイム反映
+    const channel = supabase
+      .channel("realtime-messages")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages" },
+        () => {
+          fetchConversationsAndMessages();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   useEffect(() => {
@@ -699,13 +715,13 @@ export default function Home() {
             backgroundSize: "18px 18px",
           }}
         >
-          <header className="border-b border-[#1a7fe8]/30 px-3 pb-3 pt-[max(10px,env(safe-area-inset-top))] backdrop-blur-sm md:px-4"
-            style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}
+          <header className="border-b border-[#e9edef] px-3 pb-3 pt-[max(10px,env(safe-area-inset-top))] backdrop-blur-md md:px-4"
+            style={{ background: "rgba(255,255,255,0.88)" }}
           >
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setMobileView("list")}
-                className="flex h-10 w-10 items-center justify-center rounded-full text-[22px] text-white md:hidden"
+                className="flex h-10 w-10 items-center justify-center rounded-full text-[22px] text-[#111b21] md:hidden"
               >
                 ←
               </button>
@@ -720,7 +736,7 @@ export default function Home() {
                         className="h-10 w-10 rounded-full object-cover"
                       />
                     ) : (
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-base font-bold text-[#0f8f44]">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#d9fdd3] text-base font-bold text-[#0f8f44]">
                         {getInitial(selectedConversation.customerName)}
                       </div>
                     )}
@@ -730,15 +746,24 @@ export default function Home() {
                   </div>
 
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[15px] font-semibold text-white">
+                    <div className="truncate text-[15px] font-semibold text-[#111b21]">
                       {selectedConversation.customerName}
                     </div>
-                    <div className="truncate text-xs text-white/70">{statusMeta.label}</div>
+                    <div className="truncate text-xs text-[#667781]">{statusMeta.label}</div>
                   </div>
                 </>
               ) : (
-                <div className="text-[18px] font-semibold text-white">会話を選択</div>
+                <div className="text-[18px] font-semibold text-[#111b21]">会話を選択</div>
               )}
+
+              {/* 更新ボタン（LINE OA送信分を手動で反映） */}
+              <button
+                onClick={fetchConversationsAndMessages}
+                className="flex h-8 w-8 items-center justify-center rounded-full text-[16px] text-[#667781] hover:bg-[#f0f2f5]"
+                title="最新メッセージを取得"
+              >
+                ↻
+              </button>
 
               <div className="relative">
                 <button
@@ -747,7 +772,7 @@ export default function Home() {
                     setShowAixMenu(false);
                   }}
                   disabled={!selectedConversation.id || statusSaving}
-                  className="rounded-full bg-white px-3 py-2 text-xs font-semibold text-[#111b21] shadow-sm"
+                  className="rounded-full border border-[#d1d7db] bg-white px-3 py-2 text-xs font-semibold text-[#111b21] shadow-sm"
                 >
                   {statusSaving ? "更新中..." : statusMeta.label}
                 </button>
