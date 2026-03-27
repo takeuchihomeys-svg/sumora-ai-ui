@@ -899,7 +899,7 @@ export default function Home() {
           className={`${
             showListOnMobile ? "flex" : "hidden"
           } w-full flex-col bg-white md:flex md:w-[390px] md:min-w-[390px] md:border-r md:border-[#dfe5e7]`}
-          style={{ paddingBottom: "calc(40px + env(safe-area-inset-bottom))" }}
+          style={{ paddingBottom: "calc(30px + env(safe-area-inset-bottom))" }}
         >
           <div className="border-b border-[#e9edef] bg-white px-3 pb-2 pt-[max(12px,env(safe-area-inset-top))]">
             {/* ステータスフィルター（上段）＋ハンバーガー左上 */}
