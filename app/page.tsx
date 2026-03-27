@@ -917,19 +917,23 @@ export default function Home() {
                   <text x="10" y="10" textAnchor="middle" dominantBaseline="central" fontSize="6.5" fontWeight="bold" fill={aixSearchMode ? "#1565C0" : "#90caf9"}>AI</text>
                 </svg>
               </button>
-              <button
-                onClick={() => setShowGroupFilter((v) => !v)}
-                className="flex w-[104px] items-center justify-center gap-1.5 rounded-full py-1.5 text-[12px] font-bold shadow-sm transition-colors"
-                style={statusFilter !== "all"
-                  ? { background: "linear-gradient(135deg, #1565C0, #4BA8E8)", color: "white" }
-                  : { background: "#f0f2f5", color: "#1565C0" }
-                }
-              >
-                {statusFilter === "all"
-                  ? "すべて"
-                  : DISPLAY_GROUPS.find((g) => g.key === statusFilter)?.label ?? "すべて"}
-                <span className="text-[10px]">{showGroupFilter ? "▲" : "▼"}</span>
-              </button>
+              {(() => {
+                const lbl = statusFilter === "all" ? "すべて" : (DISPLAY_GROUPS.find((g) => g.key === statusFilter)?.label ?? "すべて");
+                const fs = lbl.length >= 5 ? "text-[10px]" : lbl.length >= 4 ? "text-[11px]" : "text-[12px]";
+                return (
+                  <button
+                    onClick={() => setShowGroupFilter((v) => !v)}
+                    className={`flex w-[104px] items-center justify-center gap-1 rounded-full py-1.5 ${fs} font-bold shadow-sm transition-all`}
+                    style={statusFilter !== "all"
+                      ? { background: "linear-gradient(135deg, #1565C0, #4BA8E8)", color: "white" }
+                      : { background: "#f0f2f5", color: "#1565C0" }
+                    }
+                  >
+                    {lbl}
+                    <span className="text-[9px]">{showGroupFilter ? "▲" : "▼"}</span>
+                  </button>
+                );
+              })()}
               {showGroupFilter && (
                 <div className="absolute top-full z-30 mt-1 w-44 overflow-hidden rounded-2xl border border-[#d1d7db] bg-white shadow-xl">
                   <button
