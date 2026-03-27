@@ -186,6 +186,14 @@ export default function Home() {
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const notifiedCalendarIds = useRef<Set<string>>(new Set());
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [navHidden, setNavHidden] = useState(false);
+
+  const handleListScroll = () => {
+    setNavHidden(true);
+    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+    scrollTimerRef.current = setTimeout(() => setNavHidden(false), 600);
+  };
 
   useEffect(() => {
     // SW登録 + 通知許可
@@ -991,6 +999,7 @@ export default function Home() {
           <div
             ref={listRef}
             className="flex-1 overflow-y-auto bg-white"
+            onScroll={handleListScroll}
             onTouchStart={handleTouchStart}
             onTouchMove={handleTouchMove}
             onTouchEnd={handleTouchEnd}
@@ -1417,7 +1426,7 @@ export default function Home() {
 
       {/* チャット中(モバイル)は非表示、一覧表示中・PCは常に表示 */}
       <div className={showChatOnMobile ? "hidden md:block" : "block"}>
-        <BottomNav unreadCount={needsReplyCount} />
+        <BottomNav unreadCount={needsReplyCount} hidden={navHidden} />
       </div>
 
       {showTemplateModal && (
