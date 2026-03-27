@@ -905,6 +905,19 @@ export default function Home() {
                 <span className="block h-[2px] w-[18px] rounded-full bg-[#555]" />
                 <span className="block h-[2px] w-[18px] rounded-full bg-[#555]" />
               </button>
+              {/* AI検索ボタン（右端） */}
+              <button
+                onClick={() => { setAixSearchMode(true); setAiSearchIds(null); setAiSearchMessageIds({}); setSearchQuery(""); }}
+                className="absolute right-0 flex h-8 w-8 items-center justify-center rounded-full transition-colors"
+                style={aixSearchMode ? { background: "linear-gradient(135deg, #1565C0, #2196F3)" } : { background: "#f0f2f5" }}
+                title="AIで検索"
+              >
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                  <circle cx="10" cy="10" r="7" stroke={aixSearchMode ? "white" : "#1565C0"} strokeWidth="2"/>
+                  <line x1="15.2" y1="15.2" x2="21" y2="21" stroke={aixSearchMode ? "white" : "#1565C0"} strokeWidth="2.2" strokeLinecap="round"/>
+                  <text x="10" y="10" textAnchor="middle" dominantBaseline="central" fontSize="6.5" fontWeight="bold" fill={aixSearchMode ? "white" : "#1565C0"}>AI</text>
+                </svg>
+              </button>
               <button
                 onClick={() => setShowGroupFilter((v) => !v)}
                 className="flex items-center gap-1.5 rounded-full px-4 py-1.5 text-[12px] font-bold text-white shadow-sm"
@@ -961,19 +974,6 @@ export default function Home() {
                   className="shrink-0 text-[#aaa] text-sm"
                 >✕</button>
               )}
-              {/* AI検索アイコンボタン */}
-              <button
-                onClick={() => { setAixSearchMode(true); setAiSearchIds(null); setAiSearchMessageIds({}); setSearchQuery(""); }}
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors"
-                style={aixSearchMode ? { background: "linear-gradient(135deg, #1565C0, #2196F3)" } : { background: "transparent" }}
-                title="AIで検索"
-              >
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
-                  <circle cx="10.5" cy="10.5" r="6.5" stroke={aixSearchMode ? "white" : "#1565C0"} strokeWidth="2"/>
-                  <line x1="15.5" y1="15.5" x2="20" y2="20" stroke={aixSearchMode ? "white" : "#1565C0"} strokeWidth="2" strokeLinecap="round"/>
-                  <text x="10.5" y="14" textAnchor="middle" fontSize="5.5" fontWeight="bold" fill={aixSearchMode ? "white" : "#1565C0"}>AI</text>
-                </svg>
-              </button>
             </div>
 
             {/* アカウント名 */}
