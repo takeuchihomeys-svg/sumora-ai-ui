@@ -895,7 +895,7 @@ export default function Home() {
                   if (!aixSearchMode) { setAiSearchIds(null); setAiSearchMessageIds({}); }
                 }}
                 onKeyDown={(e) => { if (e.key === "Enter" && aixSearchMode) handleAiSearch(); }}
-                placeholder={aixSearchMode ? "AI による検索" : "検索"}
+                placeholder={aixSearchMode ? "AIで検索（Enterで実行）" : "検索"}
                 className={`min-w-0 flex-1 bg-transparent text-[14px] outline-none ${aixSearchMode ? "text-[#1565C0] font-medium placeholder:text-[#4BA8E8]" : "text-[#111b21] placeholder:text-[#aaa]"}`}
               />
               {/* AIXモード中：ローディング表示のみ */}
@@ -908,8 +908,8 @@ export default function Home() {
                   className="shrink-0 text-[#aaa] text-sm"
                 >✕</button>
               )}
-              {/* ステータスフィルター */}
-              <div className="relative shrink-0">
+              {/* ステータスフィルター + AIで検索 */}
+              <div className="relative shrink-0 flex flex-col items-end gap-1">
                 <button
                   onClick={() => setShowGroupFilter((v) => !v)}
                   className="flex items-center gap-1 rounded-full px-3 py-1.5 text-[11px] font-bold text-white"
@@ -919,6 +919,21 @@ export default function Home() {
                     ? "すべて"
                     : DISPLAY_GROUPS.find((g) => g.key === statusFilter)?.label ?? "すべて"}
                   <span className="text-[9px]">{showGroupFilter ? "▲" : "▼"}</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setAixSearchMode(true);
+                    setAiSearchIds(null);
+                    setAiSearchMessageIds({});
+                    setSearchQuery("");
+                  }}
+                  className="flex items-center gap-1 rounded-full px-3 py-1 text-[10px] font-bold"
+                  style={aixSearchMode
+                    ? { background: "linear-gradient(135deg, #0d1b3e, #1565C0)", color: "white" }
+                    : { background: "#f0f2f5", color: "#1565C0" }
+                  }
+                >
+                  ✨ AIで検索
                 </button>
                 {showGroupFilter && (
                   <div className="absolute right-0 top-full z-30 mt-2 w-44 overflow-hidden rounded-2xl border border-[#d1d7db] bg-white shadow-xl">
@@ -966,7 +981,7 @@ export default function Home() {
             )}
             {aiSearchIds !== null && (
               <div className="flex items-center gap-2 border-b border-[#d1d7db] bg-blue-50 px-4 py-2">
-                <span className="text-[11px] font-bold text-[#2196F3]">✨ AIX検索結果</span>
+                <span className="text-[11px] font-bold text-[#2196F3]">✨ AI検索結果</span>
                 <span className="text-[11px] text-[#667781]">「{searchQuery}」— {filteredConversations.length}件</span>
                 <button
                   onClick={() => { setAiSearchIds(null); setAiSearchMessageIds({}); setAixSearchMode(false); setSearchQuery(""); }}
@@ -1477,35 +1492,6 @@ export default function Home() {
 
             {/* メニュー */}
             <div className="p-4 flex flex-col gap-3">
-              {/* AIX検索 */}
-              <button
-                onClick={() => {
-                  setShowHamburgerMenu(false);
-                  setAixSearchMode(true);
-                  setAiSearchIds(null);
-                  setAiSearchMessageIds({});
-                  setSearchQuery("");
-                }}
-                className="flex w-full items-center gap-4 rounded-2xl px-5 py-4 text-left active:scale-[0.98] transition-transform"
-                style={{ background: "linear-gradient(135deg, #0d1b3e, #1565C0, #2196F3)" }}
-              >
-                {/* 検索アイコン */}
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl" style={{ background: "rgba(255,255,255,0.15)" }}>
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-                    <circle cx="11" cy="11" r="7" stroke="white" strokeWidth="2.2" />
-                    <path d="M16.5 16.5L21 21" stroke="white" strokeWidth="2.2" strokeLinecap="round" />
-                    <path d="M8 11h6M11 8v6" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
-                  </svg>
-                </div>
-                <div className="flex-1">
-                  <div className="text-[15px] font-bold text-white">AIX検索</div>
-                  <div className="text-[11px] text-white/60">名前・希望条件・会話内容でAI検索</div>
-                </div>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                  <path d="M9 18l6-6-6-6" stroke="rgba(255,255,255,0.5)" strokeWidth="2" strokeLinecap="round" />
-                </svg>
-              </button>
-
               {/* アカウント切替 */}
               <button
                 onClick={() => { setShowHamburgerMenu(false); setShowAccountSwitcher(true); }}
