@@ -32,7 +32,8 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
     <nav
       className="fixed bottom-0 left-0 right-0 z-40 flex items-end transition-transform duration-300"
       style={{
-        background: "#f0f2f5",
+        background: "white",
+        borderTop: "1px solid #e9edef",
         paddingBottom: "max(env(safe-area-inset-bottom), 8px)",
         transform: hidden ? "translateY(100%)" : "translateY(0)",
       }}
