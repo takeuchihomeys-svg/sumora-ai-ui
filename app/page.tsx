@@ -173,6 +173,10 @@ export default function Home() {
   const lightboxSwipeX = useRef(0);
   const [flaggedConvIds, setFlaggedConvIds] = useState<Set<string>>(new Set());
   const convLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [memos, setMemos] = useState<Record<string, string>>({});
+  const [memoModalConvId, setMemoModalConvId] = useState<string | null>(null);
+  const [memoInput, setMemoInput] = useState("");
+  const [viewingMemoConvId, setViewingMemoConvId] = useState<string | null>(null);
   const [aiSearchLoading, setAiSearchLoading] = useState(false);
   const [aiSearchIds, setAiSearchIds] = useState<string[] | null>(null);
   const [aiSearchMessageIds, setAiSearchMessageIds] = useState<Record<string, string[]>>({});
@@ -550,6 +554,23 @@ export default function Home() {
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
   };
 
+  // メモをlocalStorageから読み込む
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("conv_memos");
+      if (stored) setMemos(JSON.parse(stored));
+    } catch {}
+  }, []);
+
+  const saveMemo = (convId: string, text: string) => {
+    const next = { ...memos };
+    if (text.trim()) next[convId] = text.trim();
+    else delete next[convId];
+    setMemos(next);
+    try { localStorage.setItem("conv_memos", JSON.stringify(next)); } catch {}
+    setMemoModalConvId(null);
+  };
+
   const toggleFlaggedConv = (id: string) => {
     setFlaggedConvIds((prev) => {
       const next = new Set(prev);
@@ -560,7 +581,10 @@ export default function Home() {
   };
 
   const startConvLongPress = (id: string) => {
-    convLongPressTimerRef.current = setTimeout(() => toggleFlaggedConv(id), 500);
+    convLongPressTimerRef.current = setTimeout(() => {
+      setMemoModalConvId(id);
+      setMemoInput(memos[id] || "");
+    }, 500);
   };
   const cancelConvLongPress = () => {
     if (convLongPressTimerRef.current) clearTimeout(convLongPressTimerRef.current);
@@ -1061,6 +1085,14 @@ export default function Home() {
                       <span
                         className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white ${groupMeta.dot}`}
                       />
+                      {memos[conversation.id] && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setViewingMemoConvId(conversation.id); }}
+                          className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white bg-yellow-400 text-[10px] shadow-sm"
+                        >
+                          📝
+                        </button>
+                      )}
                     </div>
 
                     <div className="min-w-0 flex-1">
@@ -1428,6 +1460,76 @@ export default function Home() {
       <div className={showChatOnMobile ? "hidden md:block" : "block"}>
         <BottomNav unreadCount={needsReplyCount} hidden={navHidden} />
       </div>
+
+      {/* メモ入力モーダル */}
+      {memoModalConvId && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
+          onClick={(e) => { if (e.target === e.currentTarget) setMemoModalConvId(null); }}
+        >
+          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 flex items-center justify-between" style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}>
+              <div className="text-[16px] font-bold text-white">
+                📝 メモ — {conversations.find(c => c.id === memoModalConvId)?.customerName}
+              </div>
+              <button onClick={() => setMemoModalConvId(null)} className="flex h-7 w-7 items-center justify-center rounded-full bg-white/20 text-white text-sm">✕</button>
+            </div>
+            <div className="p-4">
+              <textarea
+                value={memoInput}
+                onChange={(e) => setMemoInput(e.target.value)}
+                placeholder="メモを入力..."
+                className="w-full rounded-2xl border border-[#e9edef] bg-[#f0f2f5] px-4 py-3 text-[14px] text-[#111b21] outline-none resize-none"
+                rows={5}
+                autoFocus
+              />
+              <div className="mt-3 flex gap-2">
+                {memos[memoModalConvId] && (
+                  <button
+                    onClick={() => saveMemo(memoModalConvId, "")}
+                    className="flex-1 rounded-full border border-[#e9edef] py-2.5 text-[13px] font-semibold text-[#667781]"
+                  >
+                    削除
+                  </button>
+                )}
+                <button
+                  onClick={() => saveMemo(memoModalConvId, memoInput)}
+                  className="flex-1 rounded-full py-2.5 text-[13px] font-bold text-white"
+                  style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}
+                >
+                  保存
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* メモ全文表示ポップアップ */}
+      {viewingMemoConvId && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-6"
+          onClick={() => setViewingMemoConvId(null)}
+        >
+          <div className="w-full max-w-sm rounded-3xl bg-white shadow-2xl overflow-hidden">
+            <div className="px-5 py-3 flex items-center justify-between" style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
+              <span className="text-[14px] font-bold text-white">
+                📝 {conversations.find(c => c.id === viewingMemoConvId)?.customerName}
+              </span>
+              <button onClick={() => setViewingMemoConvId(null)} className="text-white/80 text-sm">✕</button>
+            </div>
+            <div className="px-5 py-4">
+              <p className="text-[14px] text-[#111b21] leading-relaxed whitespace-pre-wrap">{memos[viewingMemoConvId]}</p>
+              <button
+                onClick={() => { setMemoModalConvId(viewingMemoConvId); setMemoInput(memos[viewingMemoConvId] || ""); setViewingMemoConvId(null); }}
+                className="mt-4 w-full rounded-full border border-[#e9edef] py-2 text-[12px] font-semibold text-[#1565C0]"
+              >
+                編集
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showTemplateModal && (
         <TemplateModal
