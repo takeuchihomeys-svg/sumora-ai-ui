@@ -1496,7 +1496,7 @@ export default function Home() {
               <div className="flex items-center justify-between">
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="text-[22px] font-black tracking-tight text-white">AIX LINX</span>
+                    <span className="text-[22px] font-black tracking-tight text-white">AIXLINX</span>
                     <span
                       className="rounded-full px-2.5 py-0.5 text-[11px] font-bold text-white border border-white/50"
                       style={{ background: "rgba(255,255,255,0.15)" }}
