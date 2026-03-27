@@ -50,8 +50,8 @@ export default function BottomNav() {
   return (
     <>
       <nav
-        className="fixed bottom-0 left-0 right-0 z-40 flex border-t border-[#d1d7db] bg-white/95 backdrop-blur-sm"
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        className="fixed bottom-0 left-0 right-0 z-40 flex border-t border-[#d1d7db] bg-white"
+        style={{ paddingBottom: "max(env(safe-area-inset-bottom), 4px)" }}
       >
         {/* アカウント */}
         <button
