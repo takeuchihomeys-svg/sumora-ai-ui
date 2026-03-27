@@ -1432,7 +1432,14 @@ export default function Home() {
               className="flex items-center justify-between rounded-t-3xl px-5 py-4"
               style={{ background: "linear-gradient(135deg, #f0a500, #f5c842)" }}
             >
-              <div className="text-[17px] font-bold text-white">📌 アナウンス</div>
+              <div className="flex items-center gap-2 text-[17px] font-bold text-white">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                </svg>
+                アナウンス
+              </div>
               <button
                 onClick={() => setShowAnnouncementList(false)}
                 className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white"
@@ -1629,12 +1636,12 @@ export default function Home() {
 
       {contextMenu && (
         <div
-          className="fixed inset-0 z-[90] flex items-center justify-center bg-black/30"
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-black/20"
           onClick={() => setContextMenu(null)}
         >
           <div
-            className="overflow-hidden rounded-2xl bg-white shadow-xl"
-            style={{ minWidth: "260px", maxWidth: "300px" }}
+            className="overflow-hidden rounded-2xl bg-white shadow-2xl"
+            style={{ minWidth: "270px", maxWidth: "310px" }}
             onClick={(e) => e.stopPropagation()}
           >
             {/* メッセージプレビュー */}
@@ -1644,12 +1651,15 @@ export default function Home() {
               </div>
             )}
             {/* アクション横並び */}
-            <div className="grid grid-cols-4 px-2 py-3">
+            <div className="grid grid-cols-4 px-3 py-4">
               {[
                 {
                   icon: (
-                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-orange-50">
-                      <span className="text-[22px]">🚩</span>
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#f5f5f5]">
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/>
+                        <line x1="4" y1="22" x2="4" y2="15"/>
+                      </svg>
                     </div>
                   ),
                   label: "要対応",
@@ -1657,8 +1667,12 @@ export default function Home() {
                 },
                 {
                   icon: (
-                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-yellow-50">
-                      <span className="text-[22px]">📌</span>
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#f5f5f5]">
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                        <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                        <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                      </svg>
                     </div>
                   ),
                   label: "アナウンス",
@@ -1670,8 +1684,8 @@ export default function Home() {
                 },
                 {
                   icon: (
-                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#e3f2fd]">
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1565C0" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#f5f5f5]">
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
                       </svg>
@@ -1685,8 +1699,8 @@ export default function Home() {
                 },
                 {
                   icon: (
-                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#e3f2fd]">
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1565C0" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#f5f5f5]">
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
                       </svg>
                     </div>
@@ -1698,10 +1712,10 @@ export default function Home() {
                 <button
                   key={item.label}
                   onClick={item.action}
-                  className="flex flex-col items-center gap-1.5 rounded-xl px-1 py-2 active:bg-[#f0f2f5]"
+                  className="flex flex-col items-center gap-2 rounded-xl px-1 py-2 active:bg-[#f0f2f5]"
                 >
                   {item.icon}
-                  <span className="text-[10px] font-medium text-[#54656f]">{item.label}</span>
+                  <span className="text-[11px] font-medium text-[#444]">{item.label}</span>
                 </button>
               ))}
             </div>
