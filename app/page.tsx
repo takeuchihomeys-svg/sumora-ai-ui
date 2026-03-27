@@ -920,8 +920,11 @@ export default function Home() {
               </button>
               <button
                 onClick={() => setShowGroupFilter((v) => !v)}
-                className="flex items-center gap-1.5 rounded-full px-4 py-1.5 text-[12px] font-bold text-white shadow-sm"
-                style={{ background: "linear-gradient(135deg, #1565C0, #4BA8E8)" }}
+                className="flex items-center gap-1.5 rounded-full px-4 py-1.5 text-[12px] font-bold shadow-sm transition-colors"
+                style={statusFilter !== "all"
+                  ? { background: "linear-gradient(135deg, #1565C0, #4BA8E8)", color: "white" }
+                  : { background: "#f0f2f5", color: "#1565C0" }
+                }
               >
                 {statusFilter === "all"
                   ? "すべて"
@@ -953,10 +956,6 @@ export default function Home() {
 
             {/* 検索バー（スリム） */}
             <div className="flex items-center gap-2 rounded-2xl bg-[#f0f2f5] px-3 py-1.5">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2.2" strokeLinecap="round" className="shrink-0">
-                <circle cx="11" cy="11" r="7"/>
-                <line x1="16.5" y1="16.5" x2="21" y2="21"/>
-              </svg>
               <input
                 type="text"
                 value={searchQuery}
