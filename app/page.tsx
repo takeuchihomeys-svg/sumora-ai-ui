@@ -908,14 +908,13 @@ export default function Home() {
               {/* AI検索ボタン（右端） */}
               <button
                 onClick={() => { setAixSearchMode(true); setAiSearchIds(null); setAiSearchMessageIds({}); setSearchQuery(""); }}
-                className="absolute right-0 flex h-8 w-8 items-center justify-center rounded-full transition-colors"
-                style={aixSearchMode ? { background: "linear-gradient(135deg, #1565C0, #2196F3)" } : { background: "#f0f2f5" }}
+                className="absolute right-0 flex items-center justify-center p-1"
                 title="AIで検索"
               >
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-                  <circle cx="10" cy="10" r="7" stroke={aixSearchMode ? "white" : "#1565C0"} strokeWidth="2"/>
-                  <line x1="15.2" y1="15.2" x2="21" y2="21" stroke={aixSearchMode ? "white" : "#1565C0"} strokeWidth="2.2" strokeLinecap="round"/>
-                  <text x="10" y="10" textAnchor="middle" dominantBaseline="central" fontSize="6.5" fontWeight="bold" fill={aixSearchMode ? "white" : "#1565C0"}>AI</text>
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+                  <circle cx="10" cy="10" r="7" stroke={aixSearchMode ? "#1565C0" : "#90caf9"} strokeWidth="2.5"/>
+                  <line x1="15.2" y1="15.2" x2="21" y2="21" stroke={aixSearchMode ? "#1565C0" : "#90caf9"} strokeWidth="2.8" strokeLinecap="round"/>
+                  <text x="10" y="10" textAnchor="middle" dominantBaseline="central" fontSize="6.5" fontWeight="bold" fill={aixSearchMode ? "#1565C0" : "#90caf9"}>AI</text>
                 </svg>
               </button>
               <button
