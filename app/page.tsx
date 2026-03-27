@@ -908,8 +908,32 @@ export default function Home() {
                   className="shrink-0 text-[#aaa] text-sm"
                 >✕</button>
               )}
-              {/* ステータスフィルター + AIで検索 */}
-              <div className="relative shrink-0 flex flex-col items-end gap-1">
+              {/* AIで検索 + ステータスフィルター */}
+              <div className="shrink-0 flex items-center gap-1.5">
+                {/* AI検索アイコンボタン */}
+                <button
+                  onClick={() => {
+                    setAixSearchMode(true);
+                    setAiSearchIds(null);
+                    setAiSearchMessageIds({});
+                    setSearchQuery("");
+                  }}
+                  className="flex h-8 w-8 items-center justify-center rounded-full transition-colors"
+                  style={aixSearchMode
+                    ? { background: "linear-gradient(135deg, #1565C0, #2196F3)" }
+                    : { background: "#f0f2f5" }
+                  }
+                  title="AIで検索"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                    <circle cx="10.5" cy="10.5" r="6.5" stroke={aixSearchMode ? "white" : "#1565C0"} strokeWidth="2"/>
+                    <line x1="15.5" y1="15.5" x2="20" y2="20" stroke={aixSearchMode ? "white" : "#1565C0"} strokeWidth="2" strokeLinecap="round"/>
+                    <text x="10.5" y="14" textAnchor="middle" fontSize="5.5" fontWeight="bold" fill={aixSearchMode ? "white" : "#1565C0"}>AI</text>
+                  </svg>
+                </button>
+
+                {/* ステータスフィルター */}
+                <div className="relative">
                 <button
                   onClick={() => setShowGroupFilter((v) => !v)}
                   className="flex items-center gap-1 rounded-full px-3 py-1.5 text-[11px] font-bold text-white"
@@ -919,21 +943,6 @@ export default function Home() {
                     ? "すべて"
                     : DISPLAY_GROUPS.find((g) => g.key === statusFilter)?.label ?? "すべて"}
                   <span className="text-[9px]">{showGroupFilter ? "▲" : "▼"}</span>
-                </button>
-                <button
-                  onClick={() => {
-                    setAixSearchMode(true);
-                    setAiSearchIds(null);
-                    setAiSearchMessageIds({});
-                    setSearchQuery("");
-                  }}
-                  className="flex items-center gap-1 rounded-full px-3 py-1 text-[10px] font-bold"
-                  style={aixSearchMode
-                    ? { background: "linear-gradient(135deg, #0d1b3e, #1565C0)", color: "white" }
-                    : { background: "#f0f2f5", color: "#1565C0" }
-                  }
-                >
-                  ✨ AIで検索
                 </button>
                 {showGroupFilter && (
                   <div className="absolute right-0 top-full z-30 mt-2 w-44 overflow-hidden rounded-2xl border border-[#d1d7db] bg-white shadow-xl">
@@ -956,8 +965,9 @@ export default function Home() {
                     ))}
                   </div>
                 )}
-              </div>
-            </div>
+                </div>{/* /relative */}
+              </div>{/* /flex items-center gap-1.5 */}
+            </div>{/* /search bar */}
             {/* アカウント名 */}
             <div className="mt-2.5 px-1 flex items-center gap-1.5 text-[12px] text-[#8696a0]">
               {currentAccount.profileImage ? (
