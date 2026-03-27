@@ -1082,9 +1082,11 @@ export default function Home() {
                           {getInitial(conversation.customerName)}
                         </div>
                       )}
-                      <span
-                        className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white ${groupMeta.dot}`}
-                      />
+                      {groupMeta.key !== "searching" && (
+                        <span
+                          className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white ${groupMeta.dot}`}
+                        />
+                      )}
                       {memos[conversation.id] && (
                         <button
                           onClick={(e) => { e.stopPropagation(); setViewingMemoConvId(conversation.id); }}
@@ -1473,46 +1475,45 @@ export default function Home() {
       {/* トーク一覧 長押しメニュー */}
       {convMenuConvId && (
         <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40"
-          onClick={(e) => { if (e.target === e.currentTarget) setConvMenuConvId(null); }}
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-black/20"
+          onClick={() => setConvMenuConvId(null)}
         >
-          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl overflow-hidden">
-            <div className="px-5 pt-4 pb-2 text-center text-[13px] font-semibold text-[#111b21] border-b border-[#f0f2f5]">
+          <div
+            className="overflow-hidden rounded-2xl bg-white shadow-2xl"
+            style={{ minWidth: "270px", maxWidth: "310px" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 pt-4 pb-3 text-center text-[13px] font-semibold text-[#111b21] border-b border-[#f0f2f5]">
               {conversations.find(c => c.id === convMenuConvId)?.customerName}
             </div>
-            <div className="p-3 flex flex-col gap-1">
+            <div className="grid grid-cols-2">
               <button
                 onClick={() => { setMemoModalConvId(convMenuConvId); setMemoInput(memos[convMenuConvId] || ""); setConvMenuConvId(null); }}
-                className="flex items-center gap-3 rounded-2xl px-4 py-3.5 text-left active:bg-[#f0f2f5]"
+                className="flex flex-col items-center gap-2 px-4 py-5 active:bg-[#f0f2f5] border-r border-[#f0f2f5]"
               >
-                <span className="flex h-9 w-9 items-center justify-center rounded-full" style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <span className="flex h-11 w-11 items-center justify-center rounded-full" style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
                     <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
                   </svg>
                 </span>
-                <div>
-                  <div className="text-[14px] font-semibold text-[#111b21]">メモ</div>
-                  <div className="text-[11px] text-[#8696a0]">{memos[convMenuConvId] ? memos[convMenuConvId].slice(0, 20) + (memos[convMenuConvId].length > 20 ? "…" : "") : "メモを追加"}</div>
-                </div>
+                <div className="text-[13px] font-semibold text-[#111b21]">メモ</div>
+                <div className="text-[10px] text-[#8696a0] text-center leading-tight">{memos[convMenuConvId] ? memos[convMenuConvId].slice(0, 16) + (memos[convMenuConvId].length > 16 ? "…" : "") : "メモを追加"}</div>
               </button>
               <button
                 onClick={() => { setAssigneeModalConvId(convMenuConvId); setAssigneeInput(assignees[convMenuConvId] || ""); setConvMenuConvId(null); }}
-                className="flex items-center gap-3 rounded-2xl px-4 py-3.5 text-left active:bg-[#f0f2f5]"
+                className="flex flex-col items-center gap-2 px-4 py-5 active:bg-[#f0f2f5]"
               >
-                <span className="flex h-9 w-9 items-center justify-center rounded-full" style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <span className="flex h-11 w-11 items-center justify-center rounded-full" style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
                     <circle cx="12" cy="7" r="4"/>
                   </svg>
                 </span>
-                <div>
-                  <div className="text-[14px] font-semibold text-[#111b21]">担当者選択</div>
-                  <div className="text-[11px] text-[#8696a0]">{assignees[convMenuConvId] ? `担当: ${assignees[convMenuConvId]}` : "担当者を設定"}</div>
-                </div>
+                <div className="text-[13px] font-semibold text-[#111b21]">スタンプに名前</div>
+                <div className="text-[10px] text-[#8696a0] text-center leading-tight">{assignees[convMenuConvId] ? `担当: ${assignees[convMenuConvId]}` : "担当者を設定"}</div>
               </button>
             </div>
-            <div style={{ paddingBottom: "max(16px, env(safe-area-inset-bottom))" }} />
           </div>
         </div>
       )}
@@ -1525,7 +1526,7 @@ export default function Home() {
         >
           <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl overflow-hidden">
             <div className="px-5 py-4 flex items-center justify-between" style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}>
-              <div className="text-[16px] font-bold text-white">👤 担当者選択</div>
+              <div className="text-[16px] font-bold text-white">👤 スタンプに名前</div>
               <button onClick={() => setAssigneeModalConvId(null)} className="flex h-7 w-7 items-center justify-center rounded-full bg-white/20 text-white text-sm">✕</button>
             </div>
             <div className="p-4">
