@@ -5,6 +5,7 @@ import AixModal, { type AixActionType } from "./components/AixModal";
 import BottomNav from "./components/BottomNav";
 import TemplateModal from "./components/TemplateModal";
 import { supabase } from "./lib/supabase";
+import { registerSW, requestNotifPermission, showNotif } from "./lib/notifications";
 
 type Message = {
   id: string;
@@ -184,12 +185,11 @@ export default function Home() {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const notifiedCalendarIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    // 通知許可リクエスト
-    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
-    }
+    // SW登録 + 通知許可
+    registerSW().then(() => requestNotifPermission());
 
     fetchConversationsAndMessages();
 
@@ -201,28 +201,47 @@ export default function Home() {
         { event: "INSERT", schema: "public", table: "messages" },
         (payload) => {
           // お客様メッセージが届いたら通知
-          if (
-            payload.new &&
-            (payload.new as { sender: string }).sender === "customer" &&
-            typeof window !== "undefined" &&
-            "Notification" in window &&
-            Notification.permission === "granted"
-          ) {
+          if (payload.new && (payload.new as { sender: string }).sender === "customer") {
             const msgText = (payload.new as { text?: string }).text || "新しいメッセージが届きました";
-            const notif = new Notification("AIX LINX — 新着メッセージ", {
-              body: msgText,
-              icon: "/icon-192.png",
-              badge: "/icon-192.png",
-            });
-            notif.onclick = () => { window.focus(); notif.close(); };
+            showNotif("AIX LINX — 新着メッセージ", msgText, "/");
           }
           fetchConversationsAndMessages();
         }
       )
       .subscribe();
 
+    // カレンダーアラーム（1分ごとに予定開始15分前・開始時刻を通知）
+    const calendarAlarm = setInterval(async () => {
+      const now = new Date();
+      const from = now.toISOString();
+      const to = new Date(now.getTime() + 16 * 60 * 1000).toISOString();
+      const { data } = await supabase
+        .from("calendar_events")
+        .select("id, title, customer_name, start_at, event_type")
+        .gte("start_at", from)
+        .lte("start_at", to)
+        .eq("all_day", false);
+      if (!data) return;
+      for (const ev of data) {
+        const start = new Date(ev.start_at).getTime();
+        const diff = start - now.getTime(); // ms
+        const key15 = `15_${ev.id}`;
+        const key0 = `0_${ev.id}`;
+        const emoji = ev.event_type === "viewing" ? "🔍" : ev.event_type === "contract" ? "📝" : ev.event_type === "key_handover" ? "🔑" : "📌";
+        if (diff >= 14 * 60 * 1000 && diff < 16 * 60 * 1000 && !notifiedCalendarIds.current.has(key15)) {
+          notifiedCalendarIds.current.add(key15);
+          showNotif(`${emoji} まもなく開始 — ${ev.title}`, `${ev.customer_name} の予定が15分後に始まります`, "/calendar");
+        }
+        if (diff >= 0 && diff < 2 * 60 * 1000 && !notifiedCalendarIds.current.has(key0)) {
+          notifiedCalendarIds.current.add(key0);
+          showNotif(`${emoji} 開始時刻です — ${ev.title}`, `${ev.customer_name} の予定が始まります`, "/calendar");
+        }
+      }
+    }, 60 * 1000);
+
     return () => {
       supabase.removeChannel(channel);
+      clearInterval(calendarAlarm);
     };
   }, []);
 

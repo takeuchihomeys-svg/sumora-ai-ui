@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import BottomNav from "../components/BottomNav";
+import { registerSW, requestNotifPermission, showNotif } from "../lib/notifications";
 import { supabase } from "../lib/supabase";
 
 type EventType = "viewing" | "contract" | "key_handover" | "other";
@@ -67,6 +68,39 @@ export default function CalendarPage() {
   });
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
+  const notifiedIds = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    registerSW().then(() => requestNotifPermission());
+
+    const calendarAlarm = setInterval(async () => {
+      const now = new Date();
+      const from = now.toISOString();
+      const to = new Date(now.getTime() + 16 * 60 * 1000).toISOString();
+      const { data } = await supabase
+        .from("calendar_events")
+        .select("id, title, customer_name, start_at, event_type")
+        .gte("start_at", from)
+        .lte("start_at", to)
+        .eq("all_day", false);
+      if (!data) return;
+      for (const ev of data) {
+        const start = new Date(ev.start_at).getTime();
+        const diff = start - now.getTime();
+        const emoji = ev.event_type === "viewing" ? "🔍" : ev.event_type === "contract" ? "📝" : ev.event_type === "key_handover" ? "🔑" : "📌";
+        if (diff >= 14 * 60 * 1000 && diff < 16 * 60 * 1000 && !notifiedIds.current.has(`15_${ev.id}`)) {
+          notifiedIds.current.add(`15_${ev.id}`);
+          showNotif(`${emoji} まもなく開始 — ${ev.title}`, `${ev.customer_name} の予定が15分後に始まります`, "/calendar");
+        }
+        if (diff >= 0 && diff < 2 * 60 * 1000 && !notifiedIds.current.has(`0_${ev.id}`)) {
+          notifiedIds.current.add(`0_${ev.id}`);
+          showNotif(`${emoji} 開始時刻です — ${ev.title}`, `${ev.customer_name} の予定が始まります`, "/calendar");
+        }
+      }
+    }, 60 * 1000);
+
+    return () => clearInterval(calendarAlarm);
+  }, []);
 
   useEffect(() => {
     fetchEvents();
