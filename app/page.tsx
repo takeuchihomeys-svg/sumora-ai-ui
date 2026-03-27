@@ -161,6 +161,10 @@ export default function Home() {
   const [memoModalConvId, setMemoModalConvId] = useState<string | null>(null);
   const [memoInput, setMemoInput] = useState("");
   const [viewingMemoConvId, setViewingMemoConvId] = useState<string | null>(null);
+  const [convMenuConvId, setConvMenuConvId] = useState<string | null>(null);
+  const [assignees, setAssignees] = useState<Record<string, string>>({});
+  const [assigneeModalConvId, setAssigneeModalConvId] = useState<string | null>(null);
+  const [assigneeInput, setAssigneeInput] = useState("");
   const [aiSearchLoading, setAiSearchLoading] = useState(false);
   const [aiSearchIds, setAiSearchIds] = useState<string[] | null>(null);
   const [aiSearchMessageIds, setAiSearchMessageIds] = useState<Record<string, string[]>>({});
@@ -538,11 +542,15 @@ export default function Home() {
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
   };
 
-  // メモをlocalStorageから読み込む
+  // メモ・担当者をlocalStorageから読み込む
   useEffect(() => {
     try {
       const stored = localStorage.getItem("conv_memos");
       if (stored) setMemos(JSON.parse(stored));
+    } catch {}
+    try {
+      const stored = localStorage.getItem("conv_assignees");
+      if (stored) setAssignees(JSON.parse(stored));
     } catch {}
   }, []);
 
@@ -553,6 +561,15 @@ export default function Home() {
     setMemos(next);
     try { localStorage.setItem("conv_memos", JSON.stringify(next)); } catch {}
     setMemoModalConvId(null);
+  };
+
+  const saveAssignee = (convId: string, name: string) => {
+    const next = { ...assignees };
+    if (name.trim()) next[convId] = name.trim();
+    else delete next[convId];
+    setAssignees(next);
+    try { localStorage.setItem("conv_assignees", JSON.stringify(next)); } catch {}
+    setAssigneeModalConvId(null);
   };
 
   const toggleFlaggedConv = (id: string) => {
@@ -566,8 +583,7 @@ export default function Home() {
 
   const startConvLongPress = (id: string) => {
     convLongPressTimerRef.current = setTimeout(() => {
-      setMemoModalConvId(id);
-      setMemoInput(memos[id] || "");
+      setConvMenuConvId(id);
     }, 500);
   };
   const cancelConvLongPress = () => {
@@ -1089,6 +1105,11 @@ export default function Home() {
                           <span className="truncate text-[14px] font-semibold text-[#111b21]">
                             {conversation.customerName}
                           </span>
+                          {assignees[conversation.id] && (
+                            <span className="shrink-0 rounded-full bg-[#e3f2fd] px-1.5 py-0.5 text-[10px] font-bold text-[#1565C0]">
+                              {assignees[conversation.id]}
+                            </span>
+                          )}
                           {flaggedConvIds.has(conversation.id) && (
                             <span className="shrink-0 rounded-full bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-600">
                               要対応
@@ -1448,6 +1469,95 @@ export default function Home() {
       <div className={showChatOnMobile ? "hidden md:block" : "block"}>
         <BottomNav unreadCount={needsReplyCount} hidden={navHidden} />
       </div>
+
+      {/* トーク一覧 長押しメニュー */}
+      {convMenuConvId && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40"
+          onClick={(e) => { if (e.target === e.currentTarget) setConvMenuConvId(null); }}
+        >
+          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl overflow-hidden">
+            <div className="px-5 pt-4 pb-2 text-center text-[13px] font-semibold text-[#111b21] border-b border-[#f0f2f5]">
+              {conversations.find(c => c.id === convMenuConvId)?.customerName}
+            </div>
+            <div className="p-3 flex flex-col gap-1">
+              <button
+                onClick={() => { setMemoModalConvId(convMenuConvId); setMemoInput(memos[convMenuConvId] || ""); setConvMenuConvId(null); }}
+                className="flex items-center gap-3 rounded-2xl px-4 py-3.5 text-left active:bg-[#f0f2f5]"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-full" style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                  </svg>
+                </span>
+                <div>
+                  <div className="text-[14px] font-semibold text-[#111b21]">メモ</div>
+                  <div className="text-[11px] text-[#8696a0]">{memos[convMenuConvId] ? memos[convMenuConvId].slice(0, 20) + (memos[convMenuConvId].length > 20 ? "…" : "") : "メモを追加"}</div>
+                </div>
+              </button>
+              <button
+                onClick={() => { setAssigneeModalConvId(convMenuConvId); setAssigneeInput(assignees[convMenuConvId] || ""); setConvMenuConvId(null); }}
+                className="flex items-center gap-3 rounded-2xl px-4 py-3.5 text-left active:bg-[#f0f2f5]"
+              >
+                <span className="flex h-9 w-9 items-center justify-center rounded-full" style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                    <circle cx="12" cy="7" r="4"/>
+                  </svg>
+                </span>
+                <div>
+                  <div className="text-[14px] font-semibold text-[#111b21]">担当者選択</div>
+                  <div className="text-[11px] text-[#8696a0]">{assignees[convMenuConvId] ? `担当: ${assignees[convMenuConvId]}` : "担当者を設定"}</div>
+                </div>
+              </button>
+            </div>
+            <div style={{ paddingBottom: "max(16px, env(safe-area-inset-bottom))" }} />
+          </div>
+        </div>
+      )}
+
+      {/* 担当者入力モーダル */}
+      {assigneeModalConvId && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
+          onClick={(e) => { if (e.target === e.currentTarget) setAssigneeModalConvId(null); }}
+        >
+          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 flex items-center justify-between" style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}>
+              <div className="text-[16px] font-bold text-white">👤 担当者選択</div>
+              <button onClick={() => setAssigneeModalConvId(null)} className="flex h-7 w-7 items-center justify-center rounded-full bg-white/20 text-white text-sm">✕</button>
+            </div>
+            <div className="p-4">
+              <p className="mb-2 text-[12px] text-[#8696a0]">担当者の苗字を入力してください</p>
+              <input
+                value={assigneeInput}
+                onChange={(e) => setAssigneeInput(e.target.value)}
+                placeholder="例：竹内"
+                className="w-full rounded-2xl border border-[#e9edef] bg-[#f0f2f5] px-4 py-3 text-[14px] text-[#111b21] outline-none"
+                autoFocus
+              />
+              <div className="mt-3 flex gap-2">
+                {assignees[assigneeModalConvId] && (
+                  <button
+                    onClick={() => saveAssignee(assigneeModalConvId, "")}
+                    className="flex-1 rounded-full border border-[#e9edef] py-2.5 text-[13px] font-semibold text-[#667781]"
+                  >
+                    削除
+                  </button>
+                )}
+                <button
+                  onClick={() => saveAssignee(assigneeModalConvId, assigneeInput)}
+                  className="flex-1 rounded-full py-2.5 text-[13px] font-bold text-white"
+                  style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}
+                >
+                  保存
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* メモ入力モーダル */}
       {memoModalConvId && (
