@@ -56,7 +56,7 @@ export default function BottomNav() {
         {/* アカウント */}
         <button
           onClick={() => setShowAccountModal(true)}
-          className="flex flex-1 items-center justify-center py-3"
+          className="flex flex-1 items-center justify-center py-2"
         >
           <span style={{ color: inactiveColor }}>
             <IconPerson />
@@ -64,14 +64,14 @@ export default function BottomNav() {
         </button>
 
         {/* メッセージ */}
-        <Link href="/" className="flex flex-1 items-center justify-center py-3">
+        <Link href="/" className="flex flex-1 items-center justify-center py-2">
           <span style={{ color: pathname === "/" ? activeColor : inactiveColor }}>
             <IconChat active={pathname === "/"} />
           </span>
         </Link>
 
         {/* カレンダー */}
-        <Link href="/calendar" className="flex flex-1 items-center justify-center py-3">
+        <Link href="/calendar" className="flex flex-1 items-center justify-center py-2">
           <span style={{ color: pathname === "/calendar" ? activeColor : inactiveColor }}>
             <IconCalendar active={pathname === "/calendar"} />
           </span>
@@ -80,7 +80,7 @@ export default function BottomNav() {
         {/* テンプレート */}
         <button
           onClick={() => setShowTemplates(true)}
-          className="flex flex-1 items-center justify-center py-3"
+          className="flex flex-1 items-center justify-center py-2"
         >
           <span style={{ color: inactiveColor }}>
             <IconBook />

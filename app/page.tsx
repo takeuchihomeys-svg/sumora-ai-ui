@@ -872,7 +872,7 @@ export default function Home() {
           className={`${
             showListOnMobile ? "flex" : "hidden"
           } w-full flex-col bg-white md:flex md:w-[390px] md:min-w-[390px] md:border-r md:border-[#dfe5e7]`}
-          style={{ paddingBottom: "calc(56px + env(safe-area-inset-bottom))" }}
+          style={{ paddingBottom: "calc(44px + env(safe-area-inset-bottom))" }}
         >
           <div className="border-b border-[#e9edef] bg-white px-3 pb-3 pt-[max(16px,env(safe-area-inset-top))]">
             {/* 検索バー */}
@@ -1306,7 +1306,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="border-t border-[#e9edef] bg-white px-2 pt-2 md:px-3" style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}>
+          <div className="border-t border-[#e9edef] bg-white px-2 pt-1.5 md:px-3" style={{ paddingBottom: "max(10px, env(safe-area-inset-bottom))" }}>
             {error ? (
               <div className="mb-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-600">{error}</div>
             ) : null}
