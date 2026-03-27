@@ -894,8 +894,17 @@ export default function Home() {
           style={{ paddingBottom: "calc(40px + env(safe-area-inset-bottom))" }}
         >
           <div className="border-b border-[#e9edef] bg-white px-3 pb-2 pt-[max(12px,env(safe-area-inset-top))]">
-            {/* ステータスフィルター（上段・中央） */}
-            <div className="relative flex justify-center mb-2">
+            {/* ステータスフィルター（上段）＋ハンバーガー左上 */}
+            <div className="relative flex items-center justify-center mb-2">
+              {/* ハンバーガー（左端） */}
+              <button
+                onClick={() => setShowHamburgerMenu(true)}
+                className="absolute left-0 flex flex-col gap-[4px] px-1 py-1"
+              >
+                <span className="block h-[2px] w-[18px] rounded-full bg-[#555]" />
+                <span className="block h-[2px] w-[18px] rounded-full bg-[#555]" />
+                <span className="block h-[2px] w-[18px] rounded-full bg-[#555]" />
+              </button>
               <button
                 onClick={() => setShowGroupFilter((v) => !v)}
                 className="flex items-center gap-1.5 rounded-full px-4 py-1.5 text-[12px] font-bold text-white shadow-sm"
@@ -931,15 +940,6 @@ export default function Home() {
 
             {/* 検索バー（スリム） */}
             <div className="flex items-center gap-2 rounded-2xl bg-[#f0f2f5] px-3 py-1.5">
-              {/* ハンバーガー */}
-              <button
-                onClick={() => setShowHamburgerMenu(true)}
-                className="flex shrink-0 flex-col gap-[4px] px-0.5 py-0.5"
-              >
-                <span className="block h-[2px] w-[18px] rounded-full bg-[#555]" />
-                <span className="block h-[2px] w-[18px] rounded-full bg-[#555]" />
-                <span className="block h-[2px] w-[18px] rounded-full bg-[#555]" />
-              </button>
               {/* 検索入力 */}
               <input
                 type="text"
