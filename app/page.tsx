@@ -46,39 +46,23 @@ type SupabaseMessageRow = {
   created_at: string;
 };
 
-// 画面表示用グループ（5種類）
+// 画面表示用グループ（4種類）
 const DISPLAY_GROUPS = [
-  {
-    key: "initial",
-    label: "初回応対",
-    statuses: ["first_reply", "condition_hearing"],
-    color: "bg-green-100 text-green-700",
-    dot: "bg-green-500",
-    canonicalStatus: "first_reply",
-  },
   {
     key: "searching",
     label: "物件探し中",
-    statuses: ["property_search", "property_recommendation", "viewing", "estimate_request", "availability_check", "application"],
+    statuses: ["first_reply", "condition_hearing", "property_search", "property_recommendation", "viewing", "estimate_request", "availability_check", "application"],
     color: "bg-amber-100 text-amber-700",
     dot: "bg-amber-500",
     canonicalStatus: "property_search",
   },
   {
     key: "screening",
-    label: "審査中",
-    statuses: ["screening"],
+    label: "審査・契約",
+    statuses: ["screening", "contract"],
     color: "bg-pink-100 text-pink-700",
     dot: "bg-pink-500",
     canonicalStatus: "screening",
-  },
-  {
-    key: "contract",
-    label: "契約準備中",
-    statuses: ["contract"],
-    color: "bg-indigo-100 text-indigo-700",
-    dot: "bg-indigo-500",
-    canonicalStatus: "contract",
   },
   {
     key: "closed",
