@@ -953,7 +953,10 @@ export default function Home() {
 
             {/* 検索バー（スリム） */}
             <div className="flex items-center gap-2 rounded-2xl bg-[#f0f2f5] px-3 py-1.5">
-              {/* 検索入力 */}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2.2" strokeLinecap="round" className="shrink-0">
+                <circle cx="11" cy="11" r="7"/>
+                <line x1="16.5" y1="16.5" x2="21" y2="21"/>
+              </svg>
               <input
                 type="text"
                 value={searchQuery}
@@ -976,13 +979,8 @@ export default function Home() {
               )}
             </div>
 
-            {/* アカウント名 */}
-            <div className="mt-1.5 px-1 flex items-center gap-1.5 text-[11px] text-[#8696a0]">
-              {currentAccount.profileImage ? (
-                <img src={currentAccount.profileImage} alt={currentAccount.name} className="h-4 w-4 rounded-full object-cover" />
-              ) : (
-                <span>{currentAccount.icon}</span>
-              )}
+            {/* アカウント名（ロゴなし・中央） */}
+            <div className="mt-1.5 text-center text-[10px] font-medium tracking-wide text-[#b0bec5]">
               {currentAccount.name} のメッセージ一覧
             </div>
           </div>
