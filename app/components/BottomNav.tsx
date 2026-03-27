@@ -26,22 +26,19 @@ export default function BottomNav({ unreadCount = 0 }: Props) {
   const pathname = usePathname();
 
   const activeColor = "#1565C0";
-  const inactiveColor = "#64b5f6";
+  const inactiveColor = "#90caf9";
 
   return (
     <nav
-      className="fixed bottom-0 left-0 right-0 z-40 flex border-t border-[#90caf9]"
-      style={{
-        background: "linear-gradient(to bottom, #dbeafe, #e3f2fd)",
-        paddingBottom: "max(env(safe-area-inset-bottom), 4px)",
-      }}
+      className="fixed bottom-0 left-0 right-0 z-40 flex border-t border-[#e9edef] bg-white"
+      style={{ paddingBottom: "max(env(safe-area-inset-bottom), 4px)" }}
     >
       {/* メッセージ */}
       <Link href="/" className="flex flex-1 items-center justify-center py-1.5">
         <span className="relative" style={{ color: pathname === "/" ? activeColor : inactiveColor }}>
           <IconChat active={pathname === "/"} />
           {unreadCount > 0 && (
-            <span className="absolute -right-2.5 -top-1.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white leading-none">
+            <span className="absolute -right-2.5 -top-1.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1 text-[9px] font-bold text-white leading-none" style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
               {unreadCount > 99 ? "99+" : unreadCount}
             </span>
           )}
