@@ -893,17 +893,52 @@ export default function Home() {
           } w-full flex-col bg-white md:flex md:w-[390px] md:min-w-[390px] md:border-r md:border-[#dfe5e7]`}
           style={{ paddingBottom: "calc(40px + env(safe-area-inset-bottom))" }}
         >
-          <div className="border-b border-[#e9edef] bg-white px-3 pb-3 pt-[max(16px,env(safe-area-inset-top))]">
-            {/* 検索バー */}
-            <div className="flex items-center gap-2 rounded-2xl bg-white px-3 py-2.5 shadow-sm">
+          <div className="border-b border-[#e9edef] bg-white px-3 pb-2 pt-[max(12px,env(safe-area-inset-top))]">
+            {/* ステータスフィルター（上段・中央） */}
+            <div className="relative flex justify-center mb-2">
+              <button
+                onClick={() => setShowGroupFilter((v) => !v)}
+                className="flex items-center gap-1.5 rounded-full px-4 py-1.5 text-[12px] font-bold text-white shadow-sm"
+                style={{ background: "linear-gradient(135deg, #1565C0, #4BA8E8)" }}
+              >
+                {statusFilter === "all"
+                  ? "すべて"
+                  : DISPLAY_GROUPS.find((g) => g.key === statusFilter)?.label ?? "すべて"}
+                <span className="text-[10px]">{showGroupFilter ? "▲" : "▼"}</span>
+              </button>
+              {showGroupFilter && (
+                <div className="absolute top-full z-30 mt-1 w-44 overflow-hidden rounded-2xl border border-[#d1d7db] bg-white shadow-xl">
+                  <button
+                    onClick={() => { setStatusFilter("all"); setShowGroupFilter(false); }}
+                    className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold border-b border-[#f0f2f5] ${statusFilter === "all" ? "text-[#2196F3]" : "text-[#111b21]"}`}
+                  >
+                    <span className="h-3 w-3 rounded-full bg-gray-300" />
+                    すべて
+                  </button>
+                  {DISPLAY_GROUPS.map((g) => (
+                    <button
+                      key={g.key}
+                      onClick={() => { setStatusFilter(g.key); setShowGroupFilter(false); }}
+                      className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold border-b border-[#f0f2f5] last:border-b-0 ${statusFilter === g.key ? "text-[#2196F3]" : "text-[#111b21]"}`}
+                    >
+                      <span className={`h-3 w-3 rounded-full ${g.dot}`} />
+                      {g.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 検索バー（スリム） */}
+            <div className="flex items-center gap-2 rounded-2xl bg-[#f0f2f5] px-3 py-1.5">
               {/* ハンバーガー */}
               <button
                 onClick={() => setShowHamburgerMenu(true)}
-                className="flex shrink-0 flex-col gap-[4px] px-1 py-0.5"
+                className="flex shrink-0 flex-col gap-[4px] px-0.5 py-0.5"
               >
-                <span className="block h-[2px] w-5 rounded-full bg-[#111b21]" />
-                <span className="block h-[2px] w-5 rounded-full bg-[#111b21]" />
-                <span className="block h-[2px] w-5 rounded-full bg-[#111b21]" />
+                <span className="block h-[2px] w-[18px] rounded-full bg-[#555]" />
+                <span className="block h-[2px] w-[18px] rounded-full bg-[#555]" />
+                <span className="block h-[2px] w-[18px] rounded-full bg-[#555]" />
               </button>
               {/* 検索入力 */}
               <input
@@ -915,9 +950,8 @@ export default function Home() {
                 }}
                 onKeyDown={(e) => { if (e.key === "Enter" && aixSearchMode) handleAiSearch(); }}
                 placeholder={aixSearchMode ? "AIで検索（Enterで実行）" : "検索"}
-                className={`min-w-0 flex-1 bg-transparent text-[14px] outline-none ${aixSearchMode ? "text-[#1565C0] font-medium placeholder:text-[#4BA8E8]" : "text-[#111b21] placeholder:text-[#aaa]"}`}
+                className={`min-w-0 flex-1 bg-transparent text-[13px] outline-none ${aixSearchMode ? "text-[#1565C0] font-medium placeholder:text-[#4BA8E8]" : "text-[#111b21] placeholder:text-[#aaa]"}`}
               />
-              {/* AIXモード中：ローディング表示のみ */}
               {aixSearchMode && aiSearchLoading && (
                 <span className="shrink-0 text-[12px] text-[#4BA8E8] font-bold">…</span>
               )}
@@ -927,70 +961,25 @@ export default function Home() {
                   className="shrink-0 text-[#aaa] text-sm"
                 >✕</button>
               )}
-              {/* AIで検索 + ステータスフィルター */}
-              <div className="shrink-0 flex items-center gap-1.5">
-                {/* AI検索アイコンボタン */}
-                <button
-                  onClick={() => {
-                    setAixSearchMode(true);
-                    setAiSearchIds(null);
-                    setAiSearchMessageIds({});
-                    setSearchQuery("");
-                  }}
-                  className="flex h-8 w-8 items-center justify-center rounded-full transition-colors"
-                  style={aixSearchMode
-                    ? { background: "linear-gradient(135deg, #1565C0, #2196F3)" }
-                    : { background: "#f0f2f5" }
-                  }
-                  title="AIで検索"
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                    <circle cx="10.5" cy="10.5" r="6.5" stroke={aixSearchMode ? "white" : "#1565C0"} strokeWidth="2"/>
-                    <line x1="15.5" y1="15.5" x2="20" y2="20" stroke={aixSearchMode ? "white" : "#1565C0"} strokeWidth="2" strokeLinecap="round"/>
-                    <text x="10.5" y="14" textAnchor="middle" fontSize="5.5" fontWeight="bold" fill={aixSearchMode ? "white" : "#1565C0"}>AI</text>
-                  </svg>
-                </button>
+              {/* AI検索アイコンボタン */}
+              <button
+                onClick={() => { setAixSearchMode(true); setAiSearchIds(null); setAiSearchMessageIds({}); setSearchQuery(""); }}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors"
+                style={aixSearchMode ? { background: "linear-gradient(135deg, #1565C0, #2196F3)" } : { background: "transparent" }}
+                title="AIで検索"
+              >
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+                  <circle cx="10.5" cy="10.5" r="6.5" stroke={aixSearchMode ? "white" : "#1565C0"} strokeWidth="2"/>
+                  <line x1="15.5" y1="15.5" x2="20" y2="20" stroke={aixSearchMode ? "white" : "#1565C0"} strokeWidth="2" strokeLinecap="round"/>
+                  <text x="10.5" y="14" textAnchor="middle" fontSize="5.5" fontWeight="bold" fill={aixSearchMode ? "white" : "#1565C0"}>AI</text>
+                </svg>
+              </button>
+            </div>
 
-                {/* ステータスフィルター */}
-                <div className="relative">
-                <button
-                  onClick={() => setShowGroupFilter((v) => !v)}
-                  className="flex items-center gap-1 rounded-full px-3 py-1.5 text-[11px] font-bold text-white"
-                  style={{ background: "linear-gradient(135deg, #1565C0, #4BA8E8)" }}
-                >
-                  {statusFilter === "all"
-                    ? "すべて"
-                    : DISPLAY_GROUPS.find((g) => g.key === statusFilter)?.label ?? "すべて"}
-                  <span className="text-[9px]">{showGroupFilter ? "▲" : "▼"}</span>
-                </button>
-                {showGroupFilter && (
-                  <div className="absolute right-0 top-full z-30 mt-2 w-44 overflow-hidden rounded-2xl border border-[#d1d7db] bg-white shadow-xl">
-                    <button
-                      onClick={() => { setStatusFilter("all"); setShowGroupFilter(false); }}
-                      className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold border-b border-[#f0f2f5] ${statusFilter === "all" ? "text-[#2196F3]" : "text-[#111b21]"} hover:bg-[#f5f6f6]`}
-                    >
-                      <span className="h-3 w-3 rounded-full bg-gray-300" />
-                      すべて
-                    </button>
-                    {DISPLAY_GROUPS.map((g) => (
-                      <button
-                        key={g.key}
-                        onClick={() => { setStatusFilter(g.key); setShowGroupFilter(false); }}
-                        className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold border-b border-[#f0f2f5] last:border-b-0 ${statusFilter === g.key ? "text-[#2196F3]" : "text-[#111b21]"} hover:bg-[#f5f6f6]`}
-                      >
-                        <span className={`h-3 w-3 rounded-full ${g.dot}`} />
-                        {g.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                </div>{/* /relative */}
-              </div>{/* /flex items-center gap-1.5 */}
-            </div>{/* /search bar */}
             {/* アカウント名 */}
-            <div className="mt-2.5 px-1 flex items-center gap-1.5 text-[12px] text-[#8696a0]">
+            <div className="mt-1.5 px-1 flex items-center gap-1.5 text-[11px] text-[#8696a0]">
               {currentAccount.profileImage ? (
-                <img src={currentAccount.profileImage} alt={currentAccount.name} className="h-5 w-5 rounded-full object-cover" />
+                <img src={currentAccount.profileImage} alt={currentAccount.name} className="h-4 w-4 rounded-full object-cover" />
               ) : (
                 <span>{currentAccount.icon}</span>
               )}
