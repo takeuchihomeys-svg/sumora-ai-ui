@@ -3,11 +3,38 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-const IconChat = ({ active }: { active?: boolean }) => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.5 : 1.8} strokeLinecap="round" strokeLinejoin="round">
-    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-  </svg>
-);
+// 未読数をバブル内に表示するアイコン
+const IconChatWithCount = ({ active, count }: { active?: boolean; count: number }) => {
+  const hasCount = count > 0;
+  const label = count > 99 ? "99+" : String(count);
+  const fontSize = label.length >= 3 ? 5 : label.length === 2 ? 6.5 : 7.5;
+
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+      <path
+        d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
+        fill={hasCount ? "#1565C0" : "none"}
+        stroke={hasCount ? "none" : "currentColor"}
+        strokeWidth={active ? 2.5 : 1.8}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {hasCount && (
+        <text
+          x="12"
+          y="9.5"
+          textAnchor="middle"
+          dominantBaseline="central"
+          fontSize={fontSize}
+          fontWeight="bold"
+          fill="white"
+        >
+          {label}
+        </text>
+      )}
+    </svg>
+  );
+};
 
 const IconCalendar = ({ active }: { active?: boolean }) => (
   <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.5 : 1.8} strokeLinecap="round" strokeLinejoin="round">
@@ -41,31 +68,15 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
       {/* メッセージ */}
       <Link href="/" className="flex flex-1 items-center justify-center pt-1.5 pb-0">
         <span
-          className="flex items-center justify-center gap-1 rounded-full transition-all duration-200"
-          style={unreadCount > 0
-            ? {
-                minWidth: 52,
-                height: 30,
-                paddingLeft: 10,
-                paddingRight: 10,
-                background: "linear-gradient(135deg, #1565C0, #2196F3)",
-                color: "white",
-                boxShadow: "0 0 10px rgba(33,150,243,0.55)",
-              }
-            : {
-                width: 52,
-                height: 30,
-                background: pathname === "/" ? "#dbeafe" : "transparent",
-                color: pathname === "/" ? activeColor : inactiveColor,
-              }
-          }
+          className="flex items-center justify-center rounded-full transition-all duration-200"
+          style={{
+            width: 52,
+            height: 30,
+            background: unreadCount > 0 ? "#e3f2fd" : pathname === "/" ? "#dbeafe" : "transparent",
+            color: unreadCount > 0 || pathname === "/" ? activeColor : inactiveColor,
+          }}
         >
-          <IconChat active={pathname === "/" || unreadCount > 0} />
-          {unreadCount > 0 && (
-            <span className="text-[11px] font-bold text-white leading-none">
-              {unreadCount > 99 ? "99+" : unreadCount}
-            </span>
-          )}
+          <IconChatWithCount active={pathname === "/" || unreadCount > 0} count={unreadCount} />
         </span>
       </Link>
 
