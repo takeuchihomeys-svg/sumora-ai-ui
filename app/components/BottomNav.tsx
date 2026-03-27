@@ -40,23 +40,29 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
     >
       {/* メッセージ */}
       <Link href="/" className="flex flex-1 items-center justify-center pt-1.5 pb-0">
-        <span className="relative flex items-center">
-          <span
-            className="flex items-center justify-center rounded-full transition-all duration-200"
-            style={{
-              width: 52,
-              height: 30,
-              background: pathname === "/" ? "#dbeafe" : "transparent",
-              color: pathname === "/" ? activeColor : inactiveColor,
-            }}
-          >
-            <IconChat active={pathname === "/"} />
-          </span>
+        <span
+          className="flex items-center justify-center gap-1 rounded-full transition-all duration-200"
+          style={unreadCount > 0
+            ? {
+                minWidth: 52,
+                height: 30,
+                paddingLeft: 10,
+                paddingRight: 10,
+                background: "linear-gradient(135deg, #1565C0, #2196F3)",
+                color: "white",
+                boxShadow: "0 0 10px rgba(33,150,243,0.55)",
+              }
+            : {
+                width: 52,
+                height: 30,
+                background: pathname === "/" ? "#dbeafe" : "transparent",
+                color: pathname === "/" ? activeColor : inactiveColor,
+              }
+          }
+        >
+          <IconChat active={pathname === "/" || unreadCount > 0} />
           {unreadCount > 0 && (
-            <span
-              className="absolute -right-0.5 -top-2 flex h-[17px] min-w-[17px] items-center justify-center rounded-full px-0.5 text-[8px] font-bold text-white leading-none"
-              style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}
-            >
+            <span className="text-[11px] font-bold text-white leading-none">
               {unreadCount > 99 ? "99+" : unreadCount}
             </span>
           )}
