@@ -978,10 +978,11 @@ export default function Home() {
               )}
             </div>
 
-            {/* アカウント名（ロゴなし・中央） */}
-            <div className="mt-1.5 text-center text-[10px] font-medium tracking-wide text-[#b0bec5]">
-              {currentAccount.name} のメッセージ一覧
-            </div>
+          </div>
+
+          {/* アカウント名（検索欄とトーク一覧の間・左揃え） */}
+          <div className="px-4 py-1.5 text-[10px] font-medium tracking-wide text-[#b0bec5] bg-white border-b border-[#f0f2f5]">
+            {currentAccount.name} のメッセージ一覧
           </div>
 
           <div
