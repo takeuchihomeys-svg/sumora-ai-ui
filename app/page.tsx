@@ -919,7 +919,7 @@ export default function Home() {
               </button>
               <button
                 onClick={() => setShowGroupFilter((v) => !v)}
-                className="flex items-center gap-1.5 rounded-full px-4 py-1.5 text-[12px] font-bold shadow-sm transition-colors"
+                className="flex w-[104px] items-center justify-center gap-1.5 rounded-full py-1.5 text-[12px] font-bold shadow-sm transition-colors"
                 style={statusFilter !== "all"
                   ? { background: "linear-gradient(135deg, #1565C0, #4BA8E8)", color: "white" }
                   : { background: "#f0f2f5", color: "#1565C0" }
