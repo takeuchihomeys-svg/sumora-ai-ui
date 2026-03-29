@@ -241,7 +241,7 @@ export default function Home() {
             setConversations((prev) =>
               prev.map((c) =>
                 c.id === String(newMsg.conversation_id)
-                  ? { ...c, messages: [...c.messages, msg], lastMessage: newMsg.text }
+                  ? { ...c, messages: [...c.messages, msg], lastMessage: newMsg.text, updatedAt: newMsg.created_at }
                   : c
               ).sort((a, b) => {
                 const aTime = a.updatedAt || "";
@@ -402,10 +402,13 @@ export default function Home() {
           rawCreatedAt: message.created_at,
         }));
 
+      // conversations.last_message はWorkersが毎回更新するので優先する
+      // relatedMessagesはlimitや期間制限で欠ける場合があるため
       const lastMessage =
-        relatedMessages.length > 0
+        conversation.last_message ||
+        (relatedMessages.length > 0
           ? relatedMessages[relatedMessages.length - 1].text
-          : conversation.last_message || "メッセージなし";
+          : "メッセージなし");
 
       return {
         id: String(conversation.id),
