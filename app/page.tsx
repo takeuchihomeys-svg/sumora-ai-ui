@@ -20,6 +20,7 @@ type Conversation = {
   id: string;
   customerName: string;
   lastMessage: string;
+  lastSender?: string;
   status: string;
   lineUserId: string;
   profileImageUrl?: string;
@@ -33,6 +34,7 @@ type SupabaseConversationRow = {
   status: string | null;
   line_user_id: string;
   last_message?: string | null;
+  last_sender?: string | null;
   updated_at?: string | null;
   profile_image_url?: string | null;
 };
@@ -241,7 +243,7 @@ export default function Home() {
             setConversations((prev) =>
               prev.map((c) =>
                 c.id === String(newMsg.conversation_id)
-                  ? { ...c, messages: [...c.messages, msg], lastMessage: newMsg.text, updatedAt: newMsg.created_at }
+                  ? { ...c, messages: [...c.messages, msg], lastMessage: newMsg.text, lastSender: newMsg.sender, updatedAt: newMsg.created_at }
                   : c
               ).sort((a, b) => {
                 const aTime = a.updatedAt || "";
@@ -410,10 +412,18 @@ export default function Home() {
           ? relatedMessages[relatedMessages.length - 1].text
           : "メッセージなし");
 
+      // last_senderがDBにあればそれを優先、なければメッセージ配列から推定
+      const lastSender =
+        conversation.last_sender ||
+        (relatedMessages.length > 0
+          ? relatedMessages[relatedMessages.length - 1].sender
+          : undefined);
+
       return {
         id: String(conversation.id),
         customerName: conversation.customer_name || "名称未設定",
         lastMessage,
+        lastSender,
         status: conversation.status || "first_reply",
         lineUserId: conversation.line_user_id,
         profileImageUrl: conversation.profile_image_url || undefined,
@@ -455,8 +465,8 @@ export default function Home() {
 
   const needsReplyCount = useMemo(() => {
     return conversations.filter((c) => {
-      const last = c.messages[c.messages.length - 1];
-      return last?.sender === "customer" && c.status !== "closed_won";
+      const sender = c.lastSender ?? c.messages[c.messages.length - 1]?.sender;
+      return sender === "customer" && c.status !== "closed_won";
     }).length;
   }, [conversations]);
 
@@ -679,19 +689,6 @@ export default function Home() {
     if (convLongPressTimerRef.current) clearTimeout(convLongPressTimerRef.current);
   };
 
-  const uploadImageToStorage = async (file: File): Promise<string> => {
-    const ext = file.name.split(".").pop() || "jpg";
-    const path = `messages/${selectedConversation.id}/${Date.now()}.${ext}`;
-    const { error: uploadError } = await supabase.storage
-      .from("property-images")
-      .upload(path, file, { upsert: false });
-    if (uploadError) {
-      throw new Error(`画像アップロード失敗: ${uploadError.message} [${uploadError.statusCode ?? ""}]`);
-    }
-    const { data } = supabase.storage.from("property-images").getPublicUrl(path);
-    return data.publicUrl;
-  };
-
   const sendReply = async () => {
     if (!selectedConversation.id) return;
     if (!replyDraft.trim() && selectedImageFiles.length === 0) return;
@@ -768,7 +765,7 @@ export default function Home() {
       const lastText = imageUrls.length > 0 ? "[画像]" : textToSend;
       await supabase
         .from("conversations")
-        .update({ last_message: lastText, updated_at: now.toISOString() })
+        .update({ last_message: lastText, last_sender: "staff", updated_at: now.toISOString() })
         .eq("id", Number(selectedConversation.id));
 
       setConversations((prev) =>
@@ -778,6 +775,7 @@ export default function Home() {
               ? {
                   ...conversation,
                   lastMessage: lastText,
+                  lastSender: "staff",
                   updatedAt: now.toISOString(),
                   messages: [...conversation.messages, ...newMessages],
                 }
@@ -1141,9 +1139,9 @@ export default function Home() {
                 const isActive = conversation.id === selectedConversation.id;
                 const groupMeta = getGroupMeta(conversation.status);
 
-                const lastMsg = conversation.messages[conversation.messages.length - 1];
+                const lastSenderVal = conversation.lastSender ?? conversation.messages[conversation.messages.length - 1]?.sender;
                 const needsReply =
-                  lastMsg?.sender === "customer" &&
+                  lastSenderVal === "customer" &&
                   conversation.status !== "closed_won";
 
                 return (
