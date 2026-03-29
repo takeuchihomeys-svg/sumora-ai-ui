@@ -432,7 +432,17 @@ export default function Home() {
       };
     });
 
-    setConversations(formatted);
+    // 既存のメッセージ配列の方が長い場合は保持（ポーリングによる縮退を防ぐ）
+    setConversations((prev) => {
+      const prevMap = new Map(prev.map((c) => [c.id, c]));
+      return formatted.map((conv) => {
+        const existing = prevMap.get(conv.id);
+        if (existing && existing.messages.length > conv.messages.length) {
+          return { ...conv, messages: existing.messages };
+        }
+        return conv;
+      });
+    });
 
     if (formatted.length > 0) {
       setSelectedId((prev) => prev || formatted[0].id);
