@@ -227,7 +227,31 @@ export default function Home() {
             const msgText = (payload.new as { text?: string }).text || "新しいメッセージが届きました";
             showNotif("AIX LINX — 新着メッセージ", msgText, "/");
           }
-          fetchConversationsAndMessages();
+          // バックグラウンドで静かに更新（ローディング表示なし）
+          const newMsg = payload.new as { id: number; conversation_id: number; sender: string; text: string; image_url?: string; created_at: string };
+          if (newMsg?.id) {
+            const msg = {
+              id: String(newMsg.id),
+              sender: newMsg.sender as "customer" | "staff",
+              text: newMsg.text,
+              imageUrl: newMsg.image_url || undefined,
+              time: formatTime(newMsg.created_at),
+              rawCreatedAt: newMsg.created_at,
+            };
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id === String(newMsg.conversation_id)
+                  ? { ...c, messages: [...c.messages, msg], lastMessage: newMsg.text }
+                  : c
+              ).sort((a, b) => {
+                const aTime = a.updatedAt || "";
+                const bTime = b.updatedAt || "";
+                return bTime.localeCompare(aTime);
+              })
+            );
+          } else {
+            fetchConversationsAndMessages();
+          }
         }
       )
       .subscribe((status) => {
