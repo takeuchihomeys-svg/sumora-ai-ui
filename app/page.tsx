@@ -241,11 +241,14 @@ export default function Home() {
               rawCreatedAt: newMsg.created_at,
             };
             setConversations((prev) =>
-              prev.map((c) =>
-                c.id === String(newMsg.conversation_id)
-                  ? { ...c, messages: [...c.messages, msg], lastMessage: newMsg.text, lastSender: newMsg.sender, updatedAt: newMsg.created_at }
-                  : c
-              ).sort((a, b) => {
+              prev.map((c) => {
+                if (c.id !== String(newMsg.conversation_id)) return c;
+                // 既に同じIDのメッセージがあれば追加しない（重複防止）
+                if (c.messages.some((m) => m.id === String(newMsg.id))) {
+                  return { ...c, lastMessage: newMsg.text, lastSender: newMsg.sender, updatedAt: newMsg.created_at };
+                }
+                return { ...c, messages: [...c.messages, msg], lastMessage: newMsg.text, lastSender: newMsg.sender, updatedAt: newMsg.created_at };
+              }).sort((a, b) => {
                 const aTime = a.updatedAt || "";
                 const bTime = b.updatedAt || "";
                 return bTime.localeCompare(aTime);
