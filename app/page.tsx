@@ -91,6 +91,28 @@ function getInitial(name: string) {
   return name?.trim()?.charAt(0) || "?";
 }
 
+const URL_REGEX = /(https?:\/\/[^\s\u3000-\u9fff\uff00-\uffef]+)/g;
+
+function isVideoUrl(url: string) {
+  return /\.(mp4|mov|webm|m4v)(\?|$)/i.test(url);
+}
+
+function renderTextWithLinks(text: string) {
+  const parts = text.split(URL_REGEX);
+  return parts.map((part, i) => {
+    if (URL_REGEX.test(part)) {
+      URL_REGEX.lastIndex = 0;
+      return (
+        <a key={i} href={part} target="_blank" rel="noopener noreferrer"
+          className="text-[#1565C0] underline break-all">
+          {part}
+        </a>
+      );
+    }
+    return part;
+  });
+}
+
 function formatTime(dateString: string) {
   const date = new Date(dateString);
   const hours = String(date.getHours()).padStart(2, "0");
@@ -208,7 +230,15 @@ export default function Home() {
           fetchConversationsAndMessages();
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        // realtime接続失敗時はポーリングで補完
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          fetchConversationsAndMessages();
+        }
+      });
+
+    // フォールバック: 30秒ごとにポーリング（realtime漏れ対策）
+    const pollInterval = setInterval(() => fetchConversationsAndMessages(), 30_000);
 
     // カレンダーアラーム（1分ごとに予定開始15分前・開始時刻を通知）
     const calendarAlarm = setInterval(async () => {
@@ -242,6 +272,7 @@ export default function Home() {
     return () => {
       supabase.removeChannel(channel);
       clearInterval(calendarAlarm);
+      clearInterval(pollInterval);
     };
   }, []);
 
@@ -1308,8 +1339,20 @@ export default function Home() {
                               } catch {
                                 imgs = [message.imageUrl!];
                               }
-                              const hasText = message.text && message.text !== "[画像]";
+                              const hasText = message.text && message.text !== "[画像]" && message.text !== "[動画]";
                               const roundB = hasText ? "rounded-b-none" : "";
+                              // 動画の場合
+                              if (imgs.length === 1 && isVideoUrl(imgs[0])) {
+                                return (
+                                  <video
+                                    src={imgs[0]}
+                                    controls
+                                    playsInline
+                                    className={`max-h-72 w-full rounded-2xl object-cover ${roundB}`}
+                                    style={{ background: "#000" }}
+                                  />
+                                );
+                              }
                               const openLightbox = (idx: number) => {
                                 setLightboxImages(imgs);
                                 setLightboxIndex(idx);
@@ -1339,8 +1382,8 @@ export default function Home() {
                                 </div>
                               );
                             })()}
-                            {message.text && message.text !== "[画像]" && (
-                              <div className="whitespace-pre-wrap break-words px-4 py-2.5">{message.text}</div>
+                            {message.text && message.text !== "[画像]" && message.text !== "[動画]" && (
+                              <div className="whitespace-pre-wrap break-words px-4 py-2.5">{renderTextWithLinks(message.text)}</div>
                             )}
                           </div>
                         </div>
@@ -1497,8 +1540,8 @@ export default function Home() {
                     <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
                   </svg>
                 </span>
-                <div className="text-[13px] font-semibold text-[#111b21]">メモ</div>
-                <div className="text-[10px] text-[#8696a0] text-center leading-tight">{memos[convMenuConvId] ? memos[convMenuConvId].slice(0, 16) + (memos[convMenuConvId].length > 16 ? "…" : "") : "メモを追加"}</div>
+                <div className="text-[13px] font-semibold text-[#111b21]">ノート</div>
+                <div className="text-[10px] text-[#8696a0] text-center leading-tight">{memos[convMenuConvId] ? memos[convMenuConvId].slice(0, 16) + (memos[convMenuConvId].length > 16 ? "…" : "") : "ノートを追加"}</div>
               </button>
               <button
                 onClick={() => { setAssigneeModalConvId(convMenuConvId); setAssigneeInput(assignees[convMenuConvId] || ""); setConvMenuConvId(null); }}
@@ -1510,8 +1553,8 @@ export default function Home() {
                     <circle cx="12" cy="7" r="4"/>
                   </svg>
                 </span>
-                <div className="text-[13px] font-semibold text-[#111b21]">スタンプに名前</div>
-                <div className="text-[10px] text-[#8696a0] text-center leading-tight">{assignees[convMenuConvId] ? `担当: ${assignees[convMenuConvId]}` : "担当者を設定"}</div>
+                <div className="text-[13px] font-semibold text-[#111b21]">メモ</div>
+                <div className="text-[10px] text-[#8696a0] text-center leading-tight">{assignees[convMenuConvId] ? `${assignees[convMenuConvId]}` : "名前を入力"}</div>
               </button>
             </div>
           </div>
@@ -1526,7 +1569,7 @@ export default function Home() {
         >
           <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl overflow-hidden">
             <div className="px-5 py-4 flex items-center justify-between" style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}>
-              <div className="text-[16px] font-bold text-white">👤 スタンプに名前</div>
+              <div className="text-[16px] font-bold text-white">👤 メモ</div>
               <button onClick={() => setAssigneeModalConvId(null)} className="flex h-7 w-7 items-center justify-center rounded-full bg-white/20 text-white text-sm">✕</button>
             </div>
             <div className="p-4">
@@ -1569,7 +1612,7 @@ export default function Home() {
           <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl overflow-hidden">
             <div className="px-5 py-4 flex items-center justify-between" style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}>
               <div className="text-[16px] font-bold text-white">
-                📝 メモ — {conversations.find(c => c.id === memoModalConvId)?.customerName}
+                📝 ノート — {conversations.find(c => c.id === memoModalConvId)?.customerName}
               </div>
               <button onClick={() => setMemoModalConvId(null)} className="flex h-7 w-7 items-center justify-center rounded-full bg-white/20 text-white text-sm">✕</button>
             </div>
@@ -1577,7 +1620,7 @@ export default function Home() {
               <textarea
                 value={memoInput}
                 onChange={(e) => setMemoInput(e.target.value)}
-                placeholder="メモを入力..."
+                placeholder="ノートを入力..."
                 className="w-full rounded-2xl border border-[#e9edef] bg-[#f0f2f5] px-4 py-3 text-[14px] text-[#111b21] outline-none resize-none"
                 rows={5}
                 autoFocus
