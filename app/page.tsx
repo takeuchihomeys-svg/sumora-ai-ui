@@ -276,6 +276,32 @@ export default function Home() {
     };
   }, []);
 
+  // 会話を開いたとき：その会話の全メッセージを再取得（90日制限を超える古い履歴も表示）
+  useEffect(() => {
+    if (!selectedId) return;
+    const convIdNum = Number(selectedId);
+    if (isNaN(convIdNum)) return;
+    supabase
+      .from("messages")
+      .select("*")
+      .eq("conversation_id", convIdNum)
+      .order("created_at", { ascending: true })
+      .then(({ data }) => {
+        if (!data) return;
+        const msgs = data.map((m: SupabaseMessageRow) => ({
+          id: String(m.id),
+          sender: m.sender,
+          text: m.text,
+          imageUrl: m.image_url || undefined,
+          time: formatTime(m.created_at),
+          rawCreatedAt: m.created_at,
+        }));
+        setConversations((prev) =>
+          prev.map((c) => (c.id === selectedId ? { ...c, messages: msgs } : c))
+        );
+      });
+  }, [selectedId]);
+
   // 会話を開いたとき：AI検索のマッチメッセージがあればそこへ、なければ最下部へ
   useEffect(() => {
     if (!selectedId) return;
@@ -311,7 +337,8 @@ export default function Home() {
     const { data: conversationRows, error: conversationError } = await supabase
       .from("conversations")
       .select("*")
-      .order("updated_at", { ascending: false });
+      .order("updated_at", { ascending: false })
+      .limit(500);
 
     if (conversationError) {
       console.error(conversationError);
@@ -320,10 +347,14 @@ export default function Home() {
       return;
     }
 
+    // 直近90日のメッセージのみ取得（1000行制限対策）
+    const since90Days = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
     const { data: messageRows, error: messageError } = await supabase
       .from("messages")
       .select("*")
-      .order("created_at", { ascending: true });
+      .gte("created_at", since90Days)
+      .order("created_at", { ascending: true })
+      .limit(5000);
 
     if (messageError) {
       console.error(messageError);
