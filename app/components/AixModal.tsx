@@ -80,6 +80,9 @@ export default function AixModal({
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>("");
+  // 物件オススメ専用: お客さんの条件スクショ
+  const [conditionImageFile, setConditionImageFile] = useState<File | null>(null);
+  const [conditionImagePreview, setConditionImagePreview] = useState<string>("");
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -87,6 +90,7 @@ export default function AixModal({
   const [parsedEstimate, setParsedEstimate] = useState<Record<string, string> | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const conditionFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (initialImageFile) {
@@ -108,6 +112,16 @@ export default function AixModal({
     setParsedEstimate(null);
   };
 
+  const onSelectConditionImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setConditionImageFile(file);
+    const reader = new FileReader();
+    reader.onload = () => setConditionImagePreview(String(reader.result ?? ""));
+    reader.readAsDataURL(file);
+    setPreview("");
+  };
+
   const uploadImage = async (file: File): Promise<string> => {
     const ext = file.name.split(".").pop() || "jpg";
     const path = `${conversationId}/${Date.now()}.${ext}`;
@@ -125,17 +139,25 @@ export default function AixModal({
       setLoading(true);
       setError("");
 
-      let imageUrl: string | undefined;
-      if (config.requiresImage && imageFile) {
-        imageUrl = await uploadImage(imageFile);
-      }
-
       const body: Record<string, unknown> = {
         action: actionType,
         conversation_id: conversationId,
         customer_name: customerName,
       };
-      if (imageUrl) body.image_url = imageUrl;
+
+      if (actionType === "property_recommendation") {
+        // 物件オススメ: 条件スクショ + 物件資料の2枚
+        if (!conditionImageFile || !imageFile) throw new Error("条件スクショと物件資料の両方を選択してください");
+        const [conditionUrl, propertyUrl] = await Promise.all([
+          uploadImage(conditionImageFile),
+          uploadImage(imageFile),
+        ]);
+        body.condition_image_url = conditionUrl;
+        body.image_url = propertyUrl;
+      } else if (config.requiresImage && imageFile) {
+        body.image_url = await uploadImage(imageFile);
+      }
+
       if (inputText.trim()) body.extra_input = inputText.trim();
       if (parsedEstimate) body.parsed_estimate = parsedEstimate;
 
@@ -161,9 +183,11 @@ export default function AixModal({
     if (!preview.trim()) return;
     try {
       setLoading(true);
-      // 画像ありアクション（物件オススメ・見積書）はimageUrlも一緒に送る
+      // 物件オススメは物件資料画像をLINEに添付
       let uploadedImageUrl: string | undefined;
-      if (config.requiresImage && imageFile) {
+      if (actionType === "property_recommendation" && imageFile) {
+        uploadedImageUrl = await uploadImage(imageFile);
+      } else if (config.requiresImage && imageFile) {
         uploadedImageUrl = await uploadImage(imageFile);
       }
       await onSend(preview, uploadedImageUrl);
@@ -174,6 +198,11 @@ export default function AixModal({
       setLoading(false);
     }
   };
+
+  // 物件オススメで生成ボタンが押せるか
+  const canGenerate = actionType === "property_recommendation"
+    ? !!conditionImageFile && !!imageFile
+    : !config.requiresImage || !!imageFile;
 
   return (
     <div
@@ -201,46 +230,69 @@ export default function AixModal({
         <div className="max-h-[75vh] overflow-y-auto p-5">
           <p className="mb-4 text-sm text-[#667781]">{config.description}</p>
 
-          {/* 画像エリア */}
-          {config.requiresImage && (
+          {/* 物件オススメ専用: 2枚画像エリア */}
+          {actionType === "property_recommendation" ? (
+            <div className="mb-4 flex flex-col gap-3">
+              {/* ①お客さんの条件スクショ */}
+              <div>
+                <p className="mb-1 text-xs font-bold text-[#54656f]">① お客さんの条件スクショ</p>
+                {conditionImagePreview ? (
+                  <div className="relative overflow-hidden rounded-2xl border border-[#d1d7db]">
+                    <img src={conditionImagePreview} alt="条件" className="max-h-36 w-full object-contain" />
+                    <button
+                      onClick={() => { setConditionImageFile(null); setConditionImagePreview(""); setPreview(""); if (conditionFileInputRef.current) conditionFileInputRef.current.value = ""; }}
+                      className="absolute right-2 top-2 rounded-full bg-black/50 px-3 py-1 text-xs text-white"
+                    >変更</button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => conditionFileInputRef.current?.click()}
+                    className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-blue-200 py-5 text-sm font-semibold text-[#2196F3] hover:bg-blue-50"
+                  >📋 条件スクショを選択</button>
+                )}
+                <input ref={conditionFileInputRef} type="file" accept="image/*" onChange={onSelectConditionImage} className="hidden" />
+              </div>
+
+              {/* ②物件資料 */}
+              <div>
+                <p className="mb-1 text-xs font-bold text-[#54656f]">② 物件資料</p>
+                {imagePreview ? (
+                  <div className="relative overflow-hidden rounded-2xl border border-[#d1d7db]">
+                    <img src={imagePreview} alt="物件" className="max-h-36 w-full object-contain" />
+                    <button
+                      onClick={() => { setImageFile(null); setImagePreview(""); setPreview(""); if (fileInputRef.current) fileInputRef.current.value = ""; }}
+                      className="absolute right-2 top-2 rounded-full bg-black/50 px-3 py-1 text-xs text-white"
+                    >変更</button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-blue-200 py-5 text-sm font-semibold text-[#2196F3] hover:bg-blue-50"
+                  >🏠 物件資料を選択</button>
+                )}
+                <input ref={fileInputRef} type="file" accept="image/*" onChange={onSelectImage} className="hidden" />
+              </div>
+            </div>
+          ) : config.requiresImage ? (
+            /* その他の画像あきアクション */
             <div className="mb-4">
               {imagePreview ? (
                 <div className="relative mb-2 overflow-hidden rounded-2xl border border-[#d1d7db]">
-                  <img
-                    src={imagePreview}
-                    alt="選択画像"
-                    className="max-h-48 w-full object-contain"
-                  />
+                  <img src={imagePreview} alt="選択画像" className="max-h-48 w-full object-contain" />
                   <button
-                    onClick={() => {
-                      setImageFile(null);
-                      setImagePreview("");
-                      setPreview("");
-                      setParsedEstimate(null);
-                      if (fileInputRef.current) fileInputRef.current.value = "";
-                    }}
+                    onClick={() => { setImageFile(null); setImagePreview(""); setPreview(""); setParsedEstimate(null); if (fileInputRef.current) fileInputRef.current.value = ""; }}
                     className="absolute right-2 top-2 rounded-full bg-black/50 px-3 py-1 text-xs text-white"
-                  >
-                    変更
-                  </button>
+                  >変更</button>
                 </div>
               ) : (
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-blue-200 py-6 text-sm font-semibold text-[#2196F3] hover:bg-blue-50"
-                >
-                  📷 {config.imageLabel}
-                </button>
+                >📷 {config.imageLabel}</button>
               )}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={onSelectImage}
-                className="hidden"
-              />
+              <input ref={fileInputRef} type="file" accept="image/*" onChange={onSelectImage} className="hidden" />
             </div>
-          )}
+          ) : null}
 
           {/* テキスト入力欄（各アクション専用） */}
           {config.inputLabel && (
@@ -281,7 +333,7 @@ export default function AixModal({
               <>
                 <button
                   onClick={generate}
-                  disabled={loading || (config.requiresImage && !imageFile)}
+                  disabled={loading || !canGenerate}
                   className="flex-1 rounded-full border border-[#d1d7db] py-3 text-sm font-semibold text-[#54656f] disabled:opacity-50"
                 >
                   {loading ? "生成中..." : "再生成"}
@@ -297,7 +349,7 @@ export default function AixModal({
             ) : (
               <button
                 onClick={generate}
-                disabled={loading || (config.requiresImage && !imageFile)}
+                disabled={loading || !canGenerate}
                 className="w-full rounded-full bg-[#111b21] py-3 text-sm font-bold text-white disabled:opacity-50"
               >
                 {loading ? "生成中..." : "✨ AIX 生成"}
