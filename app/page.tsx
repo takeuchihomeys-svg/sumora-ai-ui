@@ -48,6 +48,30 @@ type SupabaseMessageRow = {
   created_at: string;
 };
 
+// トーク画面用の詳細ステータス（11種類）
+const DETAIL_STATUSES = [
+  { key: "first_reply",            label: "初回返信",       color: "bg-sky-100 text-sky-700",      dot: "bg-sky-400" },
+  { key: "condition_hearing",      label: "条件ヒアリング", color: "bg-blue-100 text-blue-700",    dot: "bg-blue-400" },
+  { key: "property_search",        label: "物件探し中",     color: "bg-amber-100 text-amber-700",  dot: "bg-amber-400" },
+  { key: "property_recommendation",label: "物件提案",       color: "bg-orange-100 text-orange-700",dot: "bg-orange-400" },
+  { key: "viewing",                label: "内覧",           color: "bg-purple-100 text-purple-700",dot: "bg-purple-400" },
+  { key: "estimate_request",       label: "見積依頼",       color: "bg-teal-100 text-teal-700",    dot: "bg-teal-400" },
+  { key: "availability_check",     label: "空室確認",       color: "bg-cyan-100 text-cyan-700",    dot: "bg-cyan-400" },
+  { key: "application",            label: "申込",           color: "bg-indigo-100 text-indigo-700",dot: "bg-indigo-400" },
+  { key: "screening",              label: "審査中",         color: "bg-pink-100 text-pink-700",    dot: "bg-pink-500" },
+  { key: "contract",               label: "契約",           color: "bg-rose-100 text-rose-700",    dot: "bg-rose-500" },
+  { key: "closed_won",             label: "ご成約",         color: "bg-yellow-100 text-yellow-700",dot: "bg-yellow-400" },
+];
+
+function getDetailStatusMeta(statusKey: string) {
+  return DETAIL_STATUSES.find((s) => s.key === statusKey) ?? {
+    key: statusKey,
+    label: statusKey,
+    color: "bg-gray-100 text-gray-700",
+    dot: "bg-gray-400",
+  };
+}
+
 // 画面表示用グループ（4種類）
 const DISPLAY_GROUPS = [
   {
@@ -536,6 +560,7 @@ export default function Home() {
   }, [selectedConversation]);
 
   const statusMeta = getGroupMeta(selectedConversation.status);
+  const detailStatusMeta = getDetailStatusMeta(selectedConversation.status);
 
   const updateConversationStatus = async (nextStatus: string) => {
     if (!selectedConversation.id) return;
@@ -1286,23 +1311,23 @@ export default function Home() {
                       setShowAixMenu(false);
                     }}
                     disabled={!selectedConversation.id || statusSaving}
-                    className="rounded-full border border-[#e0e0e0] bg-white px-2 py-0.5 text-[10px] text-[#aaa] shadow-none"
+                    className={`rounded-full border px-2 py-0.5 text-[10px] shadow-none ${detailStatusMeta.color} border-transparent`}
                   >
-                    {statusSaving ? "..." : statusMeta.label}
+                    {statusSaving ? "..." : detailStatusMeta.label}
                   </button>
 
                   {showStatusMenu ? (
-                    <div className="absolute right-0 top-full z-30 mt-2 w-40 overflow-hidden rounded-2xl border border-[#d1d7db] bg-white shadow-xl">
-                      {DISPLAY_GROUPS.map((g) => (
+                    <div className="absolute right-0 top-full z-30 mt-2 w-44 overflow-hidden rounded-2xl border border-[#d1d7db] bg-white shadow-xl">
+                      {DETAIL_STATUSES.map((s) => (
                         <button
-                          key={g.key}
-                          onClick={() => updateConversationStatus(g.canonicalStatus)}
-                          className={`flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-semibold hover:bg-[#f5f6f6] border-b border-[#f0f2f5] last:border-b-0 ${
-                            g.statuses.includes(selectedConversation.status) ? "bg-[#f0f2f5]" : ""
+                          key={s.key}
+                          onClick={() => updateConversationStatus(s.key)}
+                          className={`flex w-full items-center gap-3 px-4 py-2.5 text-left text-[13px] font-semibold hover:bg-[#f5f6f6] border-b border-[#f0f2f5] last:border-b-0 ${
+                            selectedConversation.status === s.key ? "bg-[#f0f2f5]" : ""
                           }`}
                         >
-                          <span className={`h-3 w-3 rounded-full ${g.dot}`} />
-                          <span>{g.label}</span>
+                          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${s.dot}`} />
+                          <span>{s.label}</span>
                         </button>
                       ))}
                     </div>
