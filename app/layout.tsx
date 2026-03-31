@@ -15,6 +15,27 @@ export const metadata: Metadata = {
     icon: "/icon-192.png",
     apple: "/icon-192.png",
   },
+  openGraph: {
+    title: "AIXLINX",
+    description: "AIXLINX — スモラAI LINE管理",
+    url: "https://sumora-ai-ui.vercel.app",
+    siteName: "AIXLINX",
+    images: [
+      {
+        url: "https://sumora-ai-ui.vercel.app/icon-512.png",
+        width: 512,
+        height: 512,
+        alt: "AIXLINX",
+      },
+    ],
+    type: "website",
+  },
+  twitter: {
+    card: "summary",
+    title: "AIXLINX",
+    description: "AIXLINX — スモラAI LINE管理",
+    images: ["https://sumora-ai-ui.vercel.app/icon-512.png"],
+  },
 };
 
 export const viewport: Viewport = {
