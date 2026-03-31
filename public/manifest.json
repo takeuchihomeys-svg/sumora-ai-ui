@@ -1,7 +1,7 @@
 {
-  "name": "AIX LINX",
-  "short_name": "AIX LINX",
-  "description": "AIX LINX — スモラAI LINE管理",
+  "name": "AIXLINX",
+  "short_name": "AIXLINX",
+  "description": "AIXLINX — スモラAI LINE管理",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait",

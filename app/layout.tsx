@@ -3,13 +3,13 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AIX LINX",
-  description: "AIX LINX — スモラAI LINE管理",
+  title: "AIXLINX",
+  description: "AIXLINX — スモラAI LINE管理",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "AIX LINX",
+    title: "AIXLINX",
   },
   icons: {
     icon: "/icon-192.png",
