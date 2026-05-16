@@ -45,6 +45,21 @@ const STATUS_LABELS: Record<Status, string> = {
   application: "申込",
 };
 
+const STATUS_COLORS: Record<Status, string> = {
+  first_reply: "bg-purple-100 text-purple-700",
+  condition_hearing: "bg-blue-100 text-blue-700",
+  property_search: "bg-cyan-100 text-cyan-700",
+  property_recommendation: "bg-green-100 text-green-700",
+  viewing: "bg-orange-100 text-orange-700",
+  application: "bg-rose-100 text-rose-700",
+};
+
+const PRIORITY_BAR: Record<Priority, string> = {
+  urgent: "bg-red-500",
+  normal: "bg-yellow-400",
+  done: "bg-gray-300",
+};
+
 const EMPTY_FORM: Omit<Customer, "id" | "created_at" | "updated_at"> = {
   customer_name: "",
   line_user_id: "",
@@ -126,10 +141,7 @@ export default function ConditionsPage() {
     setSaving(true);
     setError(null);
 
-    const payload = {
-      ...form,
-      max_rent: form.max_rent || null,
-    };
+    const payload = { ...form, max_rent: form.max_rent || null };
 
     let res: Response;
     if (editTarget) {
@@ -161,38 +173,48 @@ export default function ConditionsPage() {
   async function deleteCustomer(id: string) {
     if (!confirm("このお客様を削除しますか？")) return;
     await fetch(`/api/property-customers?id=${id}`, { method: "DELETE" });
+    setShowModal(false);
     load();
   }
 
   const filtered =
     filter === "all" ? customers : customers.filter((c) => c.priority === filter);
 
-  const priorityColor: Record<Priority, string> = {
-    urgent: "bg-red-100 border-red-300",
-    normal: "bg-yellow-50 border-yellow-300",
-    done: "bg-gray-50 border-gray-200",
-  };
-
-  const priorityBadge: Record<Priority, string> = {
-    urgent: "bg-red-500 text-white",
-    normal: "bg-yellow-400 text-white",
-    done: "bg-gray-400 text-white",
-  };
-
   return (
-    <div className="min-h-screen bg-slate-50 pb-24">
+    <div className="min-h-screen bg-gray-50 pb-24">
       {/* ヘッダー */}
-      <header className="sticky top-0 z-20 bg-blue-700 text-white px-4 py-3 flex items-center justify-between shadow-md">
-        <div>
-          <h1 className="text-lg font-bold leading-tight">物件条件管理</h1>
-          <p className="text-xs text-blue-200">{customers.length}件</p>
+      <header className="sticky top-0 z-20 bg-blue-700 text-white shadow-md">
+        <div className="px-4 pt-3 pb-2 flex items-center justify-between">
+          <div>
+            <h1 className="text-lg font-bold leading-tight">物件条件管理</h1>
+            <p className="text-xs text-blue-200">
+              {filtered.length}件表示 / 全{customers.length}件
+            </p>
+          </div>
+          <button
+            onClick={openAdd}
+            className="bg-white text-blue-700 font-bold text-sm px-4 py-2 rounded-lg shadow"
+          >
+            ＋ 新規追加
+          </button>
         </div>
-        <button
-          onClick={openAdd}
-          className="bg-white text-blue-700 font-bold text-sm px-4 py-2 rounded-xl shadow"
-        >
-          ＋ 新規追加
-        </button>
+
+        {/* フィルタータブ */}
+        <div className="flex gap-1.5 px-4 pb-3 overflow-x-auto">
+          {(["all", "urgent", "normal", "done"] as const).map((p) => (
+            <button
+              key={p}
+              onClick={() => setFilter(p)}
+              className={`whitespace-nowrap px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                filter === p
+                  ? "bg-white text-blue-700"
+                  : "bg-blue-600/70 text-blue-100"
+              }`}
+            >
+              {p === "all" ? "全て" : PRIORITY_LABELS[p]}
+            </button>
+          ))}
+        </div>
       </header>
 
       {/* DBセットアップ案内 */}
@@ -209,115 +231,90 @@ export default function ConditionsPage() {
         </div>
       )}
 
-      {/* フィルタータブ */}
-      <div className="flex gap-2 px-4 pt-4 pb-2 overflow-x-auto">
-        {(["all", "urgent", "normal", "done"] as const).map((p) => (
-          <button
-            key={p}
-            onClick={() => setFilter(p)}
-            className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
-              filter === p
-                ? "bg-blue-700 text-white"
-                : "bg-white text-slate-600 border border-slate-200"
-            }`}
-          >
-            {p === "all" ? "全て" : PRIORITY_LABELS[p]}
-          </button>
-        ))}
-      </div>
-
-      {/* カード一覧 */}
-      <div className="px-4 space-y-3 mt-1">
+      {/* リスト */}
+      <div className="mt-2">
         {loading ? (
-          <p className="text-center text-slate-400 py-12">読み込み中...</p>
+          <p className="text-center text-gray-400 py-16 text-sm">読み込み中...</p>
         ) : filtered.length === 0 ? (
-          <p className="text-center text-slate-400 py-12">
-            {filter === "all" ? "お客様がいません" : "該当するお客様がいません"}
-          </p>
-        ) : (
-          filtered.map((c) => (
-            <div
-              key={c.id}
-              className={`rounded-xl border-2 p-4 ${priorityColor[c.priority]} shadow-sm`}
+          <div className="text-center py-16">
+            <p className="text-gray-400 text-sm">
+              {filter === "all" ? "お客様がいません" : "該当するお客様がいません"}
+            </p>
+            <button
+              onClick={openAdd}
+              className="mt-4 text-blue-600 text-sm underline"
             >
-              {/* ヘッダー行 */}
-              <div className="flex items-start justify-between gap-2 mb-2">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span
-                    className={`text-xs font-bold px-2 py-0.5 rounded-full ${priorityBadge[c.priority]}`}
+              ＋ 新規追加
+            </button>
+          </div>
+        ) : (
+          <div className="bg-white border-t border-b border-gray-200 divide-y divide-gray-100">
+            {filtered.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => openEdit(c)}
+                className="w-full text-left flex items-stretch hover:bg-blue-50 active:bg-blue-100 transition-colors"
+              >
+                {/* 優先度バー */}
+                <div className={`w-1 flex-shrink-0 ${PRIORITY_BAR[c.priority]}`} />
+
+                {/* コンテンツ */}
+                <div className="flex-1 px-3 py-3 min-w-0">
+                  {/* 1行目: 名前 + ステータスバッジ */}
+                  <div className="flex items-center gap-2 flex-wrap mb-1">
+                    <span className="font-bold text-gray-900 text-sm">
+                      {c.customer_name}
+                    </span>
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                        STATUS_COLORS[c.status] ?? "bg-gray-100 text-gray-600"
+                      }`}
+                    >
+                      {STATUS_LABELS[c.status] ?? c.status}
+                    </span>
+                  </div>
+
+                  {/* 2行目: 条件サマリー */}
+                  <div className="flex items-center gap-3 text-xs text-gray-500 flex-wrap">
+                    {c.area && <span>📍 {c.area}</span>}
+                    {c.max_rent && (
+                      <span>💴 {c.max_rent.toLocaleString()}円</span>
+                    )}
+                    {c.layout && <span>🏠 {c.layout}</span>}
+                    {!c.area && !c.max_rent && !c.layout && (
+                      <span className="text-gray-300">条件未設定</span>
+                    )}
+                  </div>
+
+                  {/* 3行目: 担当者 + メモ */}
+                  {(c.assignee || c.property_memo) && (
+                    <div className="flex items-center gap-3 mt-1 text-xs text-gray-400">
+                      {c.assignee && <span>👤 {c.assignee}</span>}
+                      {c.property_memo && (
+                        <span className="truncate max-w-[200px]">
+                          📝 {c.property_memo}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* 右矢印 */}
+                <div className="flex items-center pr-3 text-gray-300">
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
                   >
-                    {PRIORITY_LABELS[c.priority]}
-                  </span>
-                  <span className="font-bold text-slate-800">{c.customer_name}</span>
-                  <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
-                    {STATUS_LABELS[c.status] ?? c.status}
-                  </span>
+                    <path d="M9 18l6-6-6-6" />
+                  </svg>
                 </div>
-                <button
-                  onClick={() => openEdit(c)}
-                  className="text-xs text-blue-600 underline whitespace-nowrap"
-                >
-                  編集
-                </button>
-              </div>
-
-              {/* 条件情報 */}
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm text-slate-700 mb-2">
-                {c.area && (
-                  <div>
-                    <span className="text-slate-400 text-xs">エリア</span>
-                    <p>{c.area}</p>
-                  </div>
-                )}
-                {c.max_rent && (
-                  <div>
-                    <span className="text-slate-400 text-xs">賃料上限</span>
-                    <p>{c.max_rent.toLocaleString()}円</p>
-                  </div>
-                )}
-                {c.layout && (
-                  <div>
-                    <span className="text-slate-400 text-xs">間取り</span>
-                    <p>{c.layout}</p>
-                  </div>
-                )}
-                {c.assignee && (
-                  <div>
-                    <span className="text-slate-400 text-xs">担当者</span>
-                    <p>{c.assignee}</p>
-                  </div>
-                )}
-              </div>
-
-              {c.preferences && (
-                <div className="text-sm text-slate-700 mb-1">
-                  <span className="text-slate-400 text-xs">こだわり</span>
-                  <p>{c.preferences}</p>
-                </div>
-              )}
-              {c.ng_points && (
-                <div className="text-sm text-slate-700 mb-1">
-                  <span className="text-slate-400 text-xs">NGポイント</span>
-                  <p className="text-red-700">{c.ng_points}</p>
-                </div>
-              )}
-              {c.property_memo && (
-                <div className="mt-2 bg-white/70 rounded-lg px-3 py-2 text-sm text-slate-700 border border-slate-200">
-                  <span className="text-slate-400 text-xs block">物件メモ</span>
-                  <p className="whitespace-pre-wrap">{c.property_memo}</p>
-                </div>
-              )}
-
-              <div className="flex justify-end mt-2">
-                <button
-                  onClick={() => deleteCustomer(c.id)}
-                  className="text-xs text-red-400 underline"
-                >
-                  削除
-                </button>
-              </div>
-            </div>
-          ))
+              </button>
+            ))}
+          </div>
         )}
       </div>
 
@@ -329,15 +326,15 @@ export default function ConditionsPage() {
             if (e.target === e.currentTarget) setShowModal(false);
           }}
         >
-          <div className="w-full max-w-lg bg-white rounded-t-2xl shadow-2xl max-h-[90vh] flex flex-col">
+          <div className="w-full max-w-lg bg-white rounded-t-2xl shadow-2xl max-h-[92vh] flex flex-col">
             {/* モーダルヘッダー */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-              <h2 className="font-bold text-slate-800">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+              <h2 className="font-bold text-gray-800">
                 {editTarget ? "お客様情報を編集" : "新規お客様追加"}
               </h2>
               <button
                 onClick={() => setShowModal(false)}
-                className="text-slate-400 text-2xl leading-none"
+                className="text-gray-400 text-2xl leading-none"
               >
                 ×
               </button>
@@ -346,14 +343,18 @@ export default function ConditionsPage() {
             {/* フォーム */}
             <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
               {error && (
-                <p className="text-red-600 text-sm bg-red-50 rounded-lg px-3 py-2">{error}</p>
+                <p className="text-red-600 text-sm bg-red-50 rounded-lg px-3 py-2">
+                  {error}
+                </p>
               )}
 
               <Field label="お客様名 *">
                 <input
                   className={INPUT}
                   value={form.customer_name}
-                  onChange={(e) => setForm({ ...form, customer_name: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, customer_name: e.target.value })
+                  }
                   placeholder="例：田中 太郎"
                 />
               </Field>
@@ -363,7 +364,9 @@ export default function ConditionsPage() {
                   <select
                     className={INPUT}
                     value={form.priority}
-                    onChange={(e) => setForm({ ...form, priority: e.target.value as Priority })}
+                    onChange={(e) =>
+                      setForm({ ...form, priority: e.target.value as Priority })
+                    }
                   >
                     <option value="urgent">🔴 急ぎ</option>
                     <option value="normal">🟡 通常</option>
@@ -375,7 +378,9 @@ export default function ConditionsPage() {
                   <select
                     className={INPUT}
                     value={form.status}
-                    onChange={(e) => setForm({ ...form, status: e.target.value as Status })}
+                    onChange={(e) =>
+                      setForm({ ...form, status: e.target.value as Status })
+                    }
                   >
                     {Object.entries(STATUS_LABELS).map(([k, v]) => (
                       <option key={k} value={k}>
@@ -391,7 +396,9 @@ export default function ConditionsPage() {
                   <input
                     className={INPUT}
                     value={form.area ?? ""}
-                    onChange={(e) => setForm({ ...form, area: e.target.value })}
+                    onChange={(e) =>
+                      setForm({ ...form, area: e.target.value })
+                    }
                     placeholder="例：梅田 徒歩10分"
                   />
                 </Field>
@@ -402,7 +409,12 @@ export default function ConditionsPage() {
                     type="number"
                     value={form.max_rent ?? ""}
                     onChange={(e) =>
-                      setForm({ ...form, max_rent: e.target.value ? Number(e.target.value) : undefined })
+                      setForm({
+                        ...form,
+                        max_rent: e.target.value
+                          ? Number(e.target.value)
+                          : undefined,
+                      })
                     }
                     placeholder="例：80000"
                   />
@@ -414,7 +426,9 @@ export default function ConditionsPage() {
                   <input
                     className={INPUT}
                     value={form.layout ?? ""}
-                    onChange={(e) => setForm({ ...form, layout: e.target.value })}
+                    onChange={(e) =>
+                      setForm({ ...form, layout: e.target.value })
+                    }
                     placeholder="例：1LDK以上"
                   />
                 </Field>
@@ -423,7 +437,9 @@ export default function ConditionsPage() {
                   <input
                     className={INPUT}
                     value={form.assignee ?? ""}
-                    onChange={(e) => setForm({ ...form, assignee: e.target.value })}
+                    onChange={(e) =>
+                      setForm({ ...form, assignee: e.target.value })
+                    }
                     placeholder="例：竹内"
                   />
                 </Field>
@@ -433,7 +449,9 @@ export default function ConditionsPage() {
                 <textarea
                   className={INPUT + " h-16 resize-none"}
                   value={form.preferences ?? ""}
-                  onChange={(e) => setForm({ ...form, preferences: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, preferences: e.target.value })
+                  }
                   placeholder="例：オートロック・独立洗面台"
                 />
               </Field>
@@ -442,7 +460,9 @@ export default function ConditionsPage() {
                 <textarea
                   className={INPUT + " h-16 resize-none"}
                   value={form.ng_points ?? ""}
-                  onChange={(e) => setForm({ ...form, ng_points: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, ng_points: e.target.value })
+                  }
                   placeholder="例：1階・南向き以外"
                 />
               </Field>
@@ -451,7 +471,9 @@ export default function ConditionsPage() {
                 <textarea
                   className={INPUT + " h-20 resize-none"}
                   value={form.property_memo ?? ""}
-                  onChange={(e) => setForm({ ...form, property_memo: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, property_memo: e.target.value })
+                  }
                   placeholder="例：〇〇マンション確認中・△△は送済み"
                 />
               </Field>
@@ -460,14 +482,25 @@ export default function ConditionsPage() {
                 <input
                   className={INPUT}
                   value={form.phone ?? ""}
-                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, phone: e.target.value })
+                  }
                   placeholder="例：090-1234-5678"
                 />
               </Field>
+
+              {editTarget && (
+                <button
+                  onClick={() => deleteCustomer(editTarget.id)}
+                  className="w-full text-red-500 text-sm py-2 border border-red-200 rounded-lg hover:bg-red-50 transition-colors"
+                >
+                  このお客様を削除
+                </button>
+              )}
             </div>
 
             {/* フッター */}
-            <div className="px-5 py-4 border-t border-slate-100">
+            <div className="px-5 py-4 border-t border-gray-100">
               <button
                 onClick={save}
                 disabled={saving}
@@ -485,14 +518,22 @@ export default function ConditionsPage() {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <div>
-      <label className="block text-xs text-slate-500 mb-1 font-medium">{label}</label>
+      <label className="block text-xs text-gray-500 mb-1 font-medium">
+        {label}
+      </label>
       {children}
     </div>
   );
 }
 
 const INPUT =
-  "w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none";
+  "w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none";
