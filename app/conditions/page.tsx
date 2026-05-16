@@ -3,14 +3,7 @@
 import { useEffect, useState } from "react";
 import BottomNav from "@/app/components/BottomNav";
 
-type Priority = "urgent" | "normal" | "done";
-type Status =
-  | "first_reply"
-  | "condition_hearing"
-  | "property_search"
-  | "property_recommendation"
-  | "viewing"
-  | "application";
+type Status = "new_inquiry" | "hot" | "property_search" | "pending";
 
 interface Customer {
   id: string;
@@ -18,7 +11,6 @@ interface Customer {
   line_user_id?: string;
   phone?: string;
   status: Status;
-  priority: Priority;
   assignee?: string;
   area?: string;
   max_rent?: number;
@@ -26,46 +18,47 @@ interface Customer {
   preferences?: string;
   ng_points?: string;
   property_memo?: string;
+  last_property_sent_at?: string;
+  format_received?: boolean;
+  move_in_time?: string;
+  rent_min?: number;
+  rent_max?: number;
+  desired_area?: string;
+  walk_minutes?: number;
+  floor_plan?: string;
+  initial_cost_limit?: number;
+  building_age?: number;
+  other_requests?: string;
   created_at: string;
   updated_at: string;
 }
 
-const PRIORITY_LABELS: Record<Priority, string> = {
-  urgent: "🔴 急ぎ",
-  normal: "🟡 通常",
-  done: "⚪ 完了",
-};
-
 const STATUS_LABELS: Record<Status, string> = {
-  first_reply: "初回返信",
-  condition_hearing: "条件ヒアリング",
-  property_search: "物件探し中",
-  property_recommendation: "物件紹介中",
-  viewing: "内見予約",
-  application: "申込",
+  new_inquiry: "新規問い合わせ",
+  hot: "毎日物件出し",
+  property_search: "物件出し",
+  pending: "検討中",
 };
 
 const STATUS_COLORS: Record<Status, string> = {
-  first_reply: "bg-purple-100 text-purple-700",
-  condition_hearing: "bg-blue-100 text-blue-700",
-  property_search: "bg-cyan-100 text-cyan-700",
-  property_recommendation: "bg-green-100 text-green-700",
-  viewing: "bg-orange-100 text-orange-700",
-  application: "bg-rose-100 text-rose-700",
+  new_inquiry: "bg-red-100 text-red-700",
+  hot: "bg-orange-100 text-orange-700",
+  property_search: "bg-blue-100 text-blue-700",
+  pending: "bg-gray-100 text-gray-500",
 };
 
-const PRIORITY_BAR: Record<Priority, string> = {
-  urgent: "bg-red-500",
-  normal: "bg-yellow-400",
-  done: "bg-gray-300",
+const STATUS_BAR: Record<Status, string> = {
+  new_inquiry: "bg-red-500",
+  hot: "bg-orange-400",
+  property_search: "bg-blue-400",
+  pending: "bg-gray-300",
 };
 
 const EMPTY_FORM: Omit<Customer, "id" | "created_at" | "updated_at"> = {
   customer_name: "",
   line_user_id: "",
   phone: "",
-  status: "first_reply",
-  priority: "normal",
+  status: "new_inquiry",
   assignee: "",
   area: "",
   max_rent: undefined,
@@ -73,18 +66,78 @@ const EMPTY_FORM: Omit<Customer, "id" | "created_at" | "updated_at"> = {
   preferences: "",
   ng_points: "",
   property_memo: "",
+  last_property_sent_at: undefined,
+  format_received: false,
+  move_in_time: "",
+  rent_min: undefined,
+  rent_max: undefined,
+  desired_area: "",
+  walk_minutes: undefined,
+  floor_plan: "",
+  initial_cost_limit: undefined,
+  building_age: undefined,
+  other_requests: "",
 };
+
+function needsActionToday(c: Customer): boolean {
+  if (c.status === "pending") return false;
+  if (c.status === "new_inquiry") return true;
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (c.status === "hot") {
+    if (!c.last_property_sent_at) return true;
+    return new Date(c.last_property_sent_at) < todayStart;
+  }
+  if (c.status === "property_search") {
+    if (!c.last_property_sent_at) return true;
+    const diff = (now.getTime() - new Date(c.last_property_sent_at).getTime()) / 86400000;
+    return diff >= 3;
+  }
+  return false;
+}
+
+function daysSinceSent(c: Customer): number | null {
+  if (!c.last_property_sent_at) return null;
+  return Math.floor(
+    (Date.now() - new Date(c.last_property_sent_at).getTime()) / 86400000
+  );
+}
+
+function CustomerMarker({ c }: { c: Customer }) {
+  if (c.status === "new_inquiry") return <span className="text-base">🔥</span>;
+  if (c.format_received) return <span className="text-base">🌟</span>;
+  return <span className="text-base">🥋</span>;
+}
+
+const INPUT =
+  "w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none";
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="block text-xs text-gray-500 mb-1 font-medium">{label}</label>
+      {children}
+    </div>
+  );
+}
 
 export default function ConditionsPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<Priority | "all">("all");
+  const [tab, setTab] = useState<"announce" | "list">("announce");
+  const [listFilter, setListFilter] = useState<Status | "all">("all");
   const [showModal, setShowModal] = useState(false);
   const [editTarget, setEditTarget] = useState<Customer | null>(null);
   const [form, setForm] = useState<Omit<Customer, "id" | "created_at" | "updated_at">>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dbReady, setDbReady] = useState(true);
+  const [markingId, setMarkingId] = useState<string | null>(null);
+
+  // フォーマット貼り付け
+  const [formatText, setFormatText] = useState("");
+  const [parsing, setParsing] = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -102,14 +155,14 @@ export default function ConditionsPage() {
     setLoading(false);
   }
 
-  useEffect(() => {
-    load();
-  }, []);
+  useEffect(() => { load(); }, []);
 
   function openAdd() {
     setEditTarget(null);
     setForm(EMPTY_FORM);
     setError(null);
+    setFormatText("");
+    setParseError(null);
     setShowModal(true);
   }
 
@@ -120,7 +173,6 @@ export default function ConditionsPage() {
       line_user_id: c.line_user_id ?? "",
       phone: c.phone ?? "",
       status: c.status,
-      priority: c.priority,
       assignee: c.assignee ?? "",
       area: c.area ?? "",
       max_rent: c.max_rent,
@@ -128,20 +180,38 @@ export default function ConditionsPage() {
       preferences: c.preferences ?? "",
       ng_points: c.ng_points ?? "",
       property_memo: c.property_memo ?? "",
+      last_property_sent_at: c.last_property_sent_at,
+      format_received: c.format_received ?? false,
+      move_in_time: c.move_in_time ?? "",
+      rent_min: c.rent_min,
+      rent_max: c.rent_max,
+      desired_area: c.desired_area ?? "",
+      walk_minutes: c.walk_minutes,
+      floor_plan: c.floor_plan ?? "",
+      initial_cost_limit: c.initial_cost_limit,
+      building_age: c.building_age,
+      other_requests: c.other_requests ?? "",
     });
     setError(null);
+    setFormatText("");
+    setParseError(null);
     setShowModal(true);
   }
 
   async function save() {
-    if (!form.customer_name.trim()) {
-      setError("お客様名は必須です");
-      return;
-    }
+    if (!form.customer_name.trim()) { setError("お客様名は必須です"); return; }
     setSaving(true);
     setError(null);
 
-    const payload = { ...form, max_rent: form.max_rent || null };
+    const payload = {
+      ...form,
+      max_rent: form.max_rent || null,
+      rent_min: form.rent_min || null,
+      rent_max: form.rent_max || null,
+      walk_minutes: form.walk_minutes || null,
+      initial_cost_limit: form.initial_cost_limit || null,
+      building_age: form.building_age || null,
+    };
 
     let res: Response;
     if (editTarget) {
@@ -164,7 +234,6 @@ export default function ConditionsPage() {
       setSaving(false);
       return;
     }
-
     setSaving(false);
     setShowModal(false);
     load();
@@ -177,8 +246,50 @@ export default function ConditionsPage() {
     load();
   }
 
-  const filtered =
-    filter === "all" ? customers : customers.filter((c) => c.priority === filter);
+  async function markSent(id: string) {
+    setMarkingId(id);
+    await fetch("/api/property-customers", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, last_property_sent_at: new Date().toISOString() }),
+    });
+    setMarkingId(null);
+    load();
+  }
+
+  async function parseFormat() {
+    if (!formatText.trim()) return;
+    setParsing(true);
+    setParseError(null);
+    try {
+      const res = await fetch("/api/parse-format", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: formatText }),
+      });
+      if (!res.ok) throw new Error("解析失敗");
+      const data = await res.json();
+      setForm((prev) => ({
+        ...prev,
+        format_received: true,
+        move_in_time: data.move_in_time ?? prev.move_in_time,
+        rent_min: data.rent_min ?? prev.rent_min,
+        rent_max: data.rent_max ?? prev.rent_max,
+        desired_area: data.desired_area ?? prev.desired_area,
+        walk_minutes: data.walk_minutes ?? prev.walk_minutes,
+        floor_plan: data.floor_plan ?? prev.floor_plan,
+        initial_cost_limit: data.initial_cost_limit ?? prev.initial_cost_limit,
+        building_age: data.building_age ?? prev.building_age,
+        other_requests: data.other_requests ?? prev.other_requests,
+      }));
+    } catch {
+      setParseError("AI解析に失敗しました。もう一度お試しください。");
+    }
+    setParsing(false);
+  }
+
+  const actionNeeded = customers.filter(needsActionToday);
+  const listFiltered = listFilter === "all" ? customers : customers.filter((c) => c.status === listFilter);
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
@@ -186,43 +297,51 @@ export default function ConditionsPage() {
       <header className="sticky top-0 z-20 bg-blue-700 text-white shadow-md">
         <div className="px-4 pt-3 pb-2 flex items-center justify-between">
           <div>
-            <h1 className="text-lg font-bold leading-tight">物件条件管理</h1>
-            <p className="text-xs text-blue-200">
-              {filtered.length}件表示 / 全{customers.length}件
-            </p>
+            <h1 className="text-lg font-bold leading-tight">売上サポ</h1>
+            <p className="text-xs text-blue-200">全{customers.length}件</p>
           </div>
           <button
             onClick={openAdd}
             className="bg-white text-blue-700 font-bold text-sm px-4 py-2 rounded-lg shadow"
           >
-            ＋ 新規追加
+            ＋ 追加
           </button>
         </div>
 
-        {/* フィルタータブ */}
-        <div className="flex gap-1.5 px-4 pb-3 overflow-x-auto">
-          {(["all", "urgent", "normal", "done"] as const).map((p) => (
-            <button
-              key={p}
-              onClick={() => setFilter(p)}
-              className={`whitespace-nowrap px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                filter === p
-                  ? "bg-white text-blue-700"
-                  : "bg-blue-600/70 text-blue-100"
-              }`}
-            >
-              {p === "all" ? "全て" : PRIORITY_LABELS[p]}
-            </button>
-          ))}
+        {/* タブ */}
+        <div className="flex gap-0 px-4 pb-0">
+          <button
+            onClick={() => setTab("announce")}
+            className={`flex-1 py-2 text-sm font-bold border-b-2 transition-colors ${
+              tab === "announce"
+                ? "border-white text-white"
+                : "border-transparent text-blue-300"
+            }`}
+          >
+            アナウンス {actionNeeded.length > 0 && (
+              <span className="ml-1 bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">
+                {actionNeeded.length}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setTab("list")}
+            className={`flex-1 py-2 text-sm font-bold border-b-2 transition-colors ${
+              tab === "list"
+                ? "border-white text-white"
+                : "border-transparent text-blue-300"
+            }`}
+          >
+            一覧
+          </button>
         </div>
       </header>
 
-      {/* DBセットアップ案内 */}
       {!dbReady && (
         <div className="mx-4 mt-4 p-4 bg-amber-50 border border-amber-300 rounded-xl text-sm">
           <p className="font-bold text-amber-800 mb-2">⚠️ テーブルが未作成です</p>
           <p className="text-amber-700">
-            Supabase ダッシュボードの SQL Editor で{" "}
+            Supabase SQL Editor で{" "}
             <a href="/api/migrate-schema" target="_blank" className="underline font-bold">
               /api/migrate-schema
             </a>{" "}
@@ -231,263 +350,407 @@ export default function ConditionsPage() {
         </div>
       )}
 
-      {/* リスト */}
-      <div className="mt-2">
-        {loading ? (
-          <p className="text-center text-gray-400 py-16 text-sm">読み込み中...</p>
-        ) : filtered.length === 0 ? (
-          <div className="text-center py-16">
-            <p className="text-gray-400 text-sm">
-              {filter === "all" ? "お客様がいません" : "該当するお客様がいません"}
-            </p>
-            <button
-              onClick={openAdd}
-              className="mt-4 text-blue-600 text-sm underline"
-            >
-              ＋ 新規追加
-            </button>
-          </div>
-        ) : (
-          <div className="bg-white border-t border-b border-gray-200 divide-y divide-gray-100">
-            {filtered.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => openEdit(c)}
-                className="w-full text-left flex items-stretch hover:bg-blue-50 active:bg-blue-100 transition-colors"
-              >
-                {/* 優先度バー */}
-                <div className={`w-1 flex-shrink-0 ${PRIORITY_BAR[c.priority]}`} />
-
-                {/* コンテンツ */}
-                <div className="flex-1 px-3 py-3 min-w-0">
-                  {/* 1行目: 名前 + ステータスバッジ */}
-                  <div className="flex items-center gap-2 flex-wrap mb-1">
-                    <span className="font-bold text-gray-900 text-sm">
-                      {c.customer_name}
-                    </span>
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                        STATUS_COLORS[c.status] ?? "bg-gray-100 text-gray-600"
-                      }`}
-                    >
-                      {STATUS_LABELS[c.status] ?? c.status}
-                    </span>
-                  </div>
-
-                  {/* 2行目: 条件サマリー */}
-                  <div className="flex items-center gap-3 text-xs text-gray-500 flex-wrap">
-                    {c.area && <span>📍 {c.area}</span>}
-                    {c.max_rent && (
-                      <span>💴 {c.max_rent.toLocaleString()}円</span>
-                    )}
-                    {c.layout && <span>🏠 {c.layout}</span>}
-                    {!c.area && !c.max_rent && !c.layout && (
-                      <span className="text-gray-300">条件未設定</span>
-                    )}
-                  </div>
-
-                  {/* 3行目: 担当者 + メモ */}
-                  {(c.assignee || c.property_memo) && (
-                    <div className="flex items-center gap-3 mt-1 text-xs text-gray-400">
-                      {c.assignee && <span>👤 {c.assignee}</span>}
-                      {c.property_memo && (
-                        <span className="truncate max-w-[200px]">
-                          📝 {c.property_memo}
-                        </span>
-                      )}
-                    </div>
-                  )}
+      {loading ? (
+        <p className="text-center text-gray-400 py-16 text-sm">読み込み中...</p>
+      ) : (
+        <>
+          {/* ── アナウンスタブ ── */}
+          {tab === "announce" && (
+            <div className="mt-2">
+              {actionNeeded.length === 0 ? (
+                <div className="text-center py-16">
+                  <p className="text-3xl mb-3">🎉</p>
+                  <p className="text-gray-500 text-sm font-bold">今日の対応は全て完了！！</p>
                 </div>
+              ) : (
+                <>
+                  <p className="px-4 pt-3 pb-1 text-xs text-gray-500 font-bold">
+                    今日対応が必要なお客様 {actionNeeded.length}名
+                  </p>
+                  <div className="bg-white border-t border-b border-gray-200 divide-y divide-gray-100">
+                    {actionNeeded.map((c) => {
+                      const days = daysSinceSent(c);
+                      return (
+                        <div key={c.id} className="flex items-stretch">
+                          {/* 左バー */}
+                          <div className={`w-1 flex-shrink-0 ${STATUS_BAR[c.status]}`} />
 
-                {/* 右矢印 */}
-                <div className="flex items-center pr-3 text-gray-300">
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
+                          {/* コンテンツ */}
+                          <button
+                            onClick={() => openEdit(c)}
+                            className="flex-1 text-left px-3 py-3 min-w-0"
+                          >
+                            <div className="flex items-center gap-2 mb-1">
+                              <CustomerMarker c={c} />
+                              <span className="font-bold text-gray-900 text-sm">{c.customer_name}</span>
+                              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[c.status]}`}>
+                                {STATUS_LABELS[c.status]}
+                              </span>
+                            </div>
+                            <div className="text-xs text-gray-500 flex gap-3 flex-wrap">
+                              {c.desired_area || c.area ? (
+                                <span>📍 {c.desired_area || c.area}</span>
+                              ) : null}
+                              {(c.rent_max || c.max_rent) ? (
+                                <span>💴 {(c.rent_max || c.max_rent)!.toLocaleString()}円</span>
+                              ) : null}
+                              {c.floor_plan || c.layout ? (
+                                <span>🏠 {c.floor_plan || c.layout}</span>
+                              ) : null}
+                              {days !== null && (
+                                <span className="text-orange-500 font-bold">
+                                  {days === 0 ? "今日送信済み" : `${days}日前に送信`}
+                                </span>
+                              )}
+                              {days === null && <span className="text-red-500 font-bold">未送信</span>}
+                            </div>
+                          </button>
+
+                          {/* ✅送ったボタン */}
+                          <div className="flex items-center pr-3">
+                            <button
+                              onClick={() => markSent(c.id)}
+                              disabled={markingId === c.id}
+                              className="bg-green-600 text-white text-xs font-bold px-3 py-2 rounded-lg disabled:opacity-50 whitespace-nowrap"
+                            >
+                              {markingId === c.id ? "..." : "✅送った"}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── 一覧タブ ── */}
+          {tab === "list" && (
+            <div className="mt-2">
+              {/* フィルター */}
+              <div className="flex gap-1.5 px-4 pt-3 pb-2 overflow-x-auto">
+                {(["all", "new_inquiry", "hot", "property_search", "pending"] as const).map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => setListFilter(s)}
+                    className={`whitespace-nowrap px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                      listFilter === s
+                        ? "bg-blue-700 text-white"
+                        : "bg-white text-gray-600 border border-gray-200"
+                    }`}
                   >
-                    <path d="M9 18l6-6-6-6" />
-                  </svg>
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+                    {s === "all" ? "全て" : STATUS_LABELS[s]}
+                  </button>
+                ))}
+              </div>
 
-      {/* 追加・編集モーダル */}
+              {listFiltered.length === 0 ? (
+                <div className="text-center py-16">
+                  <p className="text-gray-400 text-sm">お客様がいません</p>
+                  <button onClick={openAdd} className="mt-4 text-blue-600 text-sm underline">
+                    ＋ 新規追加
+                  </button>
+                </div>
+              ) : (
+                <div className="bg-white border-t border-b border-gray-200 divide-y divide-gray-100">
+                  {listFiltered.map((c) => {
+                    const days = daysSinceSent(c);
+                    return (
+                      <button
+                        key={c.id}
+                        onClick={() => openEdit(c)}
+                        className="w-full text-left flex items-stretch hover:bg-blue-50 active:bg-blue-100 transition-colors"
+                      >
+                        <div className={`w-1 flex-shrink-0 ${STATUS_BAR[c.status]}`} />
+                        <div className="flex-1 px-3 py-3 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap mb-1">
+                            <CustomerMarker c={c} />
+                            <span className="font-bold text-gray-900 text-sm">{c.customer_name}</span>
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[c.status]}`}>
+                              {STATUS_LABELS[c.status]}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-3 text-xs text-gray-500 flex-wrap">
+                            {(c.desired_area || c.area) && <span>📍 {c.desired_area || c.area}</span>}
+                            {(c.rent_max || c.max_rent) && (
+                              <span>💴 {(c.rent_max || c.max_rent)!.toLocaleString()}円</span>
+                            )}
+                            {(c.floor_plan || c.layout) && <span>🏠 {c.floor_plan || c.layout}</span>}
+                            {days !== null && (
+                              <span className="text-orange-500">
+                                {days === 0 ? "今日送信" : `${days}日前送信`}
+                              </span>
+                            )}
+                          </div>
+                          {(c.assignee || c.property_memo) && (
+                            <div className="flex items-center gap-3 mt-1 text-xs text-gray-400">
+                              {c.assignee && <span>👤 {c.assignee}</span>}
+                              {c.property_memo && (
+                                <span className="truncate max-w-[200px]">📝 {c.property_memo}</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center pr-3 text-gray-300">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M9 18l6-6-6-6" />
+                          </svg>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── モーダル ── */}
       {showModal && (
         <div
           className="fixed inset-0 z-50 bg-black/40 flex items-end justify-center"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setShowModal(false);
-          }}
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setShowModal(false); }}
         >
           <div className="w-full max-w-lg bg-white rounded-t-2xl shadow-2xl max-h-[92vh] flex flex-col">
-            {/* モーダルヘッダー */}
+            {/* ヘッダー */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
               <h2 className="font-bold text-gray-800">
                 {editTarget ? "お客様情報を編集" : "新規お客様追加"}
               </h2>
-              <button
-                onClick={() => setShowModal(false)}
-                className="text-gray-400 text-2xl leading-none"
-              >
-                ×
-              </button>
+              <button onClick={() => setShowModal(false)} className="text-gray-400 text-2xl leading-none">×</button>
             </div>
 
-            {/* フォーム */}
             <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
               {error && (
-                <p className="text-red-600 text-sm bg-red-50 rounded-lg px-3 py-2">
-                  {error}
-                </p>
+                <p className="text-red-600 text-sm bg-red-50 rounded-lg px-3 py-2">{error}</p>
               )}
 
-              <Field label="お客様名 *">
-                <input
-                  className={INPUT}
-                  value={form.customer_name}
-                  onChange={(e) =>
-                    setForm({ ...form, customer_name: e.target.value })
-                  }
-                  placeholder="例：田中 太郎"
-                />
-              </Field>
+              {/* 基本情報 */}
+              <div className="space-y-3">
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wide">基本情報</p>
 
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="対応優先度">
-                  <select
-                    className={INPUT}
-                    value={form.priority}
-                    onChange={(e) =>
-                      setForm({ ...form, priority: e.target.value as Priority })
-                    }
-                  >
-                    <option value="urgent">🔴 急ぎ</option>
-                    <option value="normal">🟡 通常</option>
-                    <option value="done">⚪ 完了</option>
-                  </select>
-                </Field>
-
-                <Field label="フェーズ">
-                  <select
-                    className={INPUT}
-                    value={form.status}
-                    onChange={(e) =>
-                      setForm({ ...form, status: e.target.value as Status })
-                    }
-                  >
-                    {Object.entries(STATUS_LABELS).map(([k, v]) => (
-                      <option key={k} value={k}>
-                        {v}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="エリア">
+                <Field label="お客様名 *">
                   <input
                     className={INPUT}
-                    value={form.area ?? ""}
-                    onChange={(e) =>
-                      setForm({ ...form, area: e.target.value })
-                    }
-                    placeholder="例：梅田 徒歩10分"
+                    value={form.customer_name}
+                    onChange={(e) => setForm({ ...form, customer_name: e.target.value })}
+                    placeholder="例：田中 太郎"
                   />
                 </Field>
 
-                <Field label="賃料上限（円）">
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="ステータス">
+                    <select
+                      className={INPUT}
+                      value={form.status}
+                      onChange={(e) => setForm({ ...form, status: e.target.value as Status })}
+                    >
+                      {Object.entries(STATUS_LABELS).map(([k, v]) => (
+                        <option key={k} value={k}>{v}</option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="担当者">
+                    <input
+                      className={INPUT}
+                      value={form.assignee ?? ""}
+                      onChange={(e) => setForm({ ...form, assignee: e.target.value })}
+                      placeholder="例：竹内"
+                    />
+                  </Field>
+                </div>
+
+                <Field label="物件候補メモ">
+                  <textarea
+                    className={INPUT + " h-16 resize-none"}
+                    value={form.property_memo ?? ""}
+                    onChange={(e) => setForm({ ...form, property_memo: e.target.value })}
+                    placeholder="例：〇〇マンション確認中・△△は送済み"
+                  />
+                </Field>
+
+                {/* ✅送ったボタン（編集時のみ） */}
+                {editTarget && (
+                  <button
+                    onClick={async () => {
+                      await markSent(editTarget.id);
+                      setShowModal(false);
+                    }}
+                    className="w-full bg-green-600 text-white font-bold py-2.5 rounded-xl text-sm"
+                  >
+                    ✅ 物件を送った
+                  </button>
+                )}
+              </div>
+
+              {/* LINEフォーマット */}
+              <div className="space-y-3 pt-2">
+                <div className="flex items-center gap-2">
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wide">
+                    LINEフォーマット
+                  </p>
+                  {form.format_received && (
+                    <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
+                      🌟 受信済み
+                    </span>
+                  )}
+                </div>
+
+                <Field label="フォーマットを貼り付けてAI解析">
+                  <textarea
+                    className={INPUT + " h-24 resize-none"}
+                    value={formatText}
+                    onChange={(e) => setFormatText(e.target.value)}
+                    placeholder={"①入居時期：\n②希望家賃：\n③希望地域：\n..."}
+                  />
+                </Field>
+                <button
+                  onClick={parseFormat}
+                  disabled={parsing || !formatText.trim()}
+                  className="w-full bg-blue-600 text-white font-bold py-2.5 rounded-xl text-sm disabled:opacity-40"
+                >
+                  {parsing ? "AI解析中..." : "🤖 AIで自動入力"}
+                </button>
+                {parseError && (
+                  <p className="text-red-600 text-xs bg-red-50 rounded-lg px-3 py-2">{parseError}</p>
+                )}
+              </div>
+
+              {/* 条件詳細 */}
+              <div className="space-y-3 pt-2">
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wide">条件詳細</p>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="入居時期">
+                    <input
+                      className={INPUT}
+                      value={form.move_in_time ?? ""}
+                      onChange={(e) => setForm({ ...form, move_in_time: e.target.value })}
+                      placeholder="例：来月中"
+                    />
+                  </Field>
+                  <Field label="希望地域・駅">
+                    <input
+                      className={INPUT}
+                      value={form.desired_area ?? ""}
+                      onChange={(e) => setForm({ ...form, desired_area: e.target.value })}
+                      placeholder="例：梅田・難波"
+                    />
+                  </Field>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3">
+                  <Field label="家賃下限（円）">
+                    <input
+                      className={INPUT}
+                      type="number"
+                      value={form.rent_min ?? ""}
+                      onChange={(e) => setForm({ ...form, rent_min: e.target.value ? Number(e.target.value) : undefined })}
+                      placeholder="例：50000"
+                    />
+                  </Field>
+                  <Field label="家賃上限（円）">
+                    <input
+                      className={INPUT}
+                      type="number"
+                      value={form.rent_max ?? ""}
+                      onChange={(e) => setForm({ ...form, rent_max: e.target.value ? Number(e.target.value) : undefined })}
+                      placeholder="例：80000"
+                    />
+                  </Field>
+                  <Field label="徒歩（分）">
+                    <input
+                      className={INPUT}
+                      type="number"
+                      value={form.walk_minutes ?? ""}
+                      onChange={(e) => setForm({ ...form, walk_minutes: e.target.value ? Number(e.target.value) : undefined })}
+                      placeholder="例：10"
+                    />
+                  </Field>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="間取り">
+                    <input
+                      className={INPUT}
+                      value={form.floor_plan ?? ""}
+                      onChange={(e) => setForm({ ...form, floor_plan: e.target.value })}
+                      placeholder="例：1LDK以上"
+                    />
+                  </Field>
+                  <Field label="築年数（年以内）">
+                    <input
+                      className={INPUT}
+                      type="number"
+                      value={form.building_age ?? ""}
+                      onChange={(e) => setForm({ ...form, building_age: e.target.value ? Number(e.target.value) : undefined })}
+                      placeholder="例：10"
+                    />
+                  </Field>
+                </div>
+
+                <Field label="初期費用上限（円）">
                   <input
                     className={INPUT}
                     type="number"
-                    value={form.max_rent ?? ""}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        max_rent: e.target.value
-                          ? Number(e.target.value)
-                          : undefined,
-                      })
-                    }
-                    placeholder="例：80000"
+                    value={form.initial_cost_limit ?? ""}
+                    onChange={(e) => setForm({ ...form, initial_cost_limit: e.target.value ? Number(e.target.value) : undefined })}
+                    placeholder="例：300000"
+                  />
+                </Field>
+
+                <Field label="こだわり">
+                  <textarea
+                    className={INPUT + " h-16 resize-none"}
+                    value={form.preferences ?? ""}
+                    onChange={(e) => setForm({ ...form, preferences: e.target.value })}
+                    placeholder="例：オートロック・独立洗面台"
+                  />
+                </Field>
+
+                <Field label="NGポイント">
+                  <textarea
+                    className={INPUT + " h-16 resize-none"}
+                    value={form.ng_points ?? ""}
+                    onChange={(e) => setForm({ ...form, ng_points: e.target.value })}
+                    placeholder="例：1階・南向き以外"
+                  />
+                </Field>
+
+                <Field label="その他要望">
+                  <textarea
+                    className={INPUT + " h-16 resize-none"}
+                    value={form.other_requests ?? ""}
+                    onChange={(e) => setForm({ ...form, other_requests: e.target.value })}
+                    placeholder="例：ペット可・駐車場あり"
                   />
                 </Field>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="間取り">
-                  <input
-                    className={INPUT}
-                    value={form.layout ?? ""}
-                    onChange={(e) =>
-                      setForm({ ...form, layout: e.target.value })
-                    }
-                    placeholder="例：1LDK以上"
-                  />
-                </Field>
-
-                <Field label="担当者">
-                  <input
-                    className={INPUT}
-                    value={form.assignee ?? ""}
-                    onChange={(e) =>
-                      setForm({ ...form, assignee: e.target.value })
-                    }
-                    placeholder="例：竹内"
-                  />
-                </Field>
+              {/* その他 */}
+              <div className="space-y-3 pt-2">
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wide">その他</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="電話番号">
+                    <input
+                      className={INPUT}
+                      value={form.phone ?? ""}
+                      onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                      placeholder="090-1234-5678"
+                    />
+                  </Field>
+                  <Field label="LINE ID">
+                    <input
+                      className={INPUT}
+                      value={form.line_user_id ?? ""}
+                      onChange={(e) => setForm({ ...form, line_user_id: e.target.value })}
+                      placeholder="例：U1234..."
+                    />
+                  </Field>
+                </div>
               </div>
-
-              <Field label="こだわり">
-                <textarea
-                  className={INPUT + " h-16 resize-none"}
-                  value={form.preferences ?? ""}
-                  onChange={(e) =>
-                    setForm({ ...form, preferences: e.target.value })
-                  }
-                  placeholder="例：オートロック・独立洗面台"
-                />
-              </Field>
-
-              <Field label="NGポイント">
-                <textarea
-                  className={INPUT + " h-16 resize-none"}
-                  value={form.ng_points ?? ""}
-                  onChange={(e) =>
-                    setForm({ ...form, ng_points: e.target.value })
-                  }
-                  placeholder="例：1階・南向き以外"
-                />
-              </Field>
-
-              <Field label="物件候補メモ">
-                <textarea
-                  className={INPUT + " h-20 resize-none"}
-                  value={form.property_memo ?? ""}
-                  onChange={(e) =>
-                    setForm({ ...form, property_memo: e.target.value })
-                  }
-                  placeholder="例：〇〇マンション確認中・△△は送済み"
-                />
-              </Field>
-
-              <Field label="電話番号">
-                <input
-                  className={INPUT}
-                  value={form.phone ?? ""}
-                  onChange={(e) =>
-                    setForm({ ...form, phone: e.target.value })
-                  }
-                  placeholder="例：090-1234-5678"
-                />
-              </Field>
 
               {editTarget && (
                 <button
@@ -517,23 +780,3 @@ export default function ConditionsPage() {
     </div>
   );
 }
-
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <label className="block text-xs text-gray-500 mb-1 font-medium">
-        {label}
-      </label>
-      {children}
-    </div>
-  );
-}
-
-const INPUT =
-  "w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none";

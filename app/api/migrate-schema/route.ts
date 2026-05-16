@@ -7,8 +7,7 @@ CREATE TABLE IF NOT EXISTS property_customers (
   customer_name TEXT NOT NULL,
   line_user_id TEXT,
   phone TEXT,
-  status TEXT DEFAULT 'first_reply',
-  priority TEXT DEFAULT 'normal',
+  status TEXT DEFAULT 'new_inquiry',
   assignee TEXT,
   area TEXT,
   max_rent INTEGER,
@@ -19,6 +18,21 @@ CREATE TABLE IF NOT EXISTS property_customers (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Phase1: 物件出しアナウンス用カラム
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS last_property_sent_at TIMESTAMPTZ;
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS format_received BOOLEAN DEFAULT FALSE;
+
+-- Phase2: LINEフォーマット8項目
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS move_in_time TEXT;
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS rent_min INTEGER;
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS rent_max INTEGER;
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS desired_area TEXT;
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS walk_minutes INTEGER;
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS floor_plan TEXT;
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS initial_cost_limit INTEGER;
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS building_age INTEGER;
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS other_requests TEXT;
 
 -- updated_at 自動更新トリガー
 CREATE OR REPLACE FUNCTION update_updated_at_column()
