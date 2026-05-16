@@ -45,6 +45,17 @@ const IconCalendar = ({ active }: { active?: boolean }) => (
   </svg>
 );
 
+const IconBuilding = ({ active }: { active?: boolean }) => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.5 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="3" width="18" height="18" rx="2"/>
+    <path d="M9 3v18"/>
+    <path d="M3 9h6"/>
+    <path d="M3 15h6"/>
+    <path d="M12 9h6v12h-6z" fill={active ? "currentColor" : "none"} strokeWidth={active ? 2 : 1.8}/>
+    <line x1="15" y1="12" x2="15" y2="15"/>
+  </svg>
+);
+
 type Props = {
   unreadCount?: number;
   hidden?: boolean;
@@ -80,8 +91,24 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
         </span>
       </Link>
 
+      {/* 物件条件 */}
+      <Link href="/conditions" className="flex flex-1 flex-col items-center justify-center pt-1.5 pb-0">
+        <span
+          className="flex items-center justify-center rounded-full transition-all duration-200"
+          style={{
+            width: 52,
+            height: 30,
+            background: pathname === "/conditions" ? "#dbeafe" : "transparent",
+            color: pathname === "/conditions" ? activeColor : inactiveColor,
+          }}
+        >
+          <IconBuilding active={pathname === "/conditions"} />
+        </span>
+        <span className="text-[10px] mt-0.5" style={{ color: pathname === "/conditions" ? activeColor : inactiveColor }}>物件条件</span>
+      </Link>
+
       {/* カレンダー */}
-      <Link href="/calendar" className="flex flex-1 items-center justify-center pt-1.5 pb-0">
+      <Link href="/calendar" className="flex flex-1 flex-col items-center justify-center pt-1.5 pb-0">
         <span
           className="flex items-center justify-center rounded-full transition-all duration-200"
           style={{
@@ -93,6 +120,7 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
         >
           <IconCalendar active={pathname === "/calendar"} />
         </span>
+        <span className="text-[10px] mt-0.5" style={{ color: pathname === "/calendar" ? activeColor : inactiveColor }}>カレンダー</span>
       </Link>
     </nav>
   );
