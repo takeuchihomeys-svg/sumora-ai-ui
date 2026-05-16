@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Start-Sleep -Seconds 5)",
+      "Bash(Get-Content \"C:\\\\Users\\\\竹内悠~1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-------sumora-ai-ui\\\\1f8c54c4-a44d-4eaf-9c6e-f7aa88ed226f\\\\tasks\\\\bzra7zftg.output\")",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(git commit *)",
+      "Bash(npm install *)",
+      "Bash(dir app\\\\api /s /b)",
+      "Bash(dir /b)",
+      "Bash(Remove-Item \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\\\\app\\\\lib\\\\.env.local\")"
+    ]
+  }
+}
