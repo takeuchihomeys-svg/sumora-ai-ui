@@ -1,0 +1,27 @@
+html, body {
+  min-width: 1200px !important;
+  overflow-x: auto !important;
+}
+
+/* テーブルレイアウトの左列を強制表示 */
+td:first-child,
+th:first-child {
+  display: table-cell !important;
+  visibility: visible !important;
+  width: auto !important;
+}
+
+/* よく使われる左メニュー系クラス・ID を網羅 */
+#left, #left_menu, #left_column, #left_nav, #left_panel,
+#leftMenu, #leftColumn, #searchPanel, #search_panel,
+#search_area, #searchArea, #sidebar, #side_bar,
+.left, .left_menu, .left_column, .left_nav,
+.leftMenu, .leftColumn, .searchPanel, .search_panel,
+.sidebar, .side_bar, .side-bar, #sidenav, .sidenav,
+[id^="left"], [class^="left_"],
+[id*="search"][id*="panel"], [id*="side"] {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  width: auto !important;
+}
