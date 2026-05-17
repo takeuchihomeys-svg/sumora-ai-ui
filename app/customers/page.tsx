@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import BottomNav from "@/app/components/BottomNav";
 
 type Status = "new_inquiry" | "hot" | "property_search" | "pending";
+type Account = "sumora" | "ieyasu" | "giga" | "hasu";
 
 interface Customer {
   id: string;
@@ -11,6 +12,7 @@ interface Customer {
   line_user_id?: string;
   phone?: string;
   status: Status;
+  account?: Account;
   assignee?: string;
   area?: string;
   max_rent?: number;

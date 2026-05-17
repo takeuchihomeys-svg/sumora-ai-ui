@@ -84,6 +84,9 @@ CREATE TRIGGER update_property_customers_updated_at
   BEFORE UPDATE ON property_customers
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- accountカラム（sumora / ieyasu / giga / hasu）
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS account TEXT;
+
 -- RLS無効化（ログインなしでアクセス可能にする）
 ALTER TABLE property_customers DISABLE ROW LEVEL SECURITY;
 `.trim();

@@ -5,12 +5,22 @@ import BottomNav from "@/app/components/BottomNav";
 
 type Status = "new_inquiry" | "hot" | "property_search" | "pending";
 
+type Account = "sumora" | "ieyasu" | "giga" | "hasu";
+
+const ACCOUNT_LABELS: Record<Account, string> = {
+  sumora: "スモラ",
+  ieyasu: "イエヤス",
+  giga:   "ギガ賃貸",
+  hasu:   "蓮産業",
+};
+
 interface Customer {
   id: string;
   customer_name: string;
   line_user_id?: string;
   phone?: string;
   status: Status;
+  account?: Account;
   assignee?: string;
   area?: string;
   max_rent?: number;
@@ -52,6 +62,7 @@ const EMPTY_FORM: Omit<Customer, "id" | "created_at" | "updated_at"> = {
   line_user_id: "",
   phone: "",
   status: "new_inquiry",
+  account: undefined,
   assignee: "",
   area: "",
   max_rent: undefined,
@@ -161,6 +172,7 @@ export default function ConditionsPage() {
       line_user_id: c.line_user_id ?? "",
       phone: c.phone ?? "",
       status: c.status,
+      account: c.account ?? undefined,
       assignee: c.assignee ?? "",
       area: c.area ?? "",
       max_rent: c.max_rent,
@@ -605,6 +617,30 @@ export default function ConditionsPage() {
                     onChange={(e) => setForm({ ...form, customer_name: e.target.value })}
                     placeholder="例：田中 太郎"
                   />
+                </Field>
+
+                {/* アカウント選択 */}
+                <Field label="アカウント（LINE）">
+                  <div className="flex gap-2 flex-wrap">
+                    {(Object.entries(ACCOUNT_LABELS) as [Account, string][]).map(([key, label]) => {
+                      const isSelected = form.account === key;
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setForm({ ...form, account: isSelected ? undefined : key })}
+                          className="flex-1 min-w-[72px] py-2 rounded-xl text-sm font-bold border-2 transition-all"
+                          style={{
+                            background: isSelected ? "#1565C0" : "white",
+                            borderColor: isSelected ? "#1565C0" : "#e2e8f0",
+                            color: isSelected ? "white" : "#64748b",
+                          }}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </Field>
 
                 <div className="grid grid-cols-2 gap-3">
