@@ -551,57 +551,99 @@ const SITE_CONFIG = {
     icon: "📋",
     steps: (c, mode = "pinpoint") => {
       const d = buildCondData(c, mode);
+      const rawArea = (c.desired_area || c.area || "").trim();
+
+      // 大阪メトロの路線名変換（itandiは「高速電気軌道第N号線」表記）
+      const ITANDI_LINE_MAP = {
+        "大阪市高速軌道御堂筋線":   "高速電気軌道第1号線（大阪メトロ御堂筋線）",
+        "大阪市高速軌道谷町線":     "高速電気軌道第2号線（大阪メトロ谷町線）",
+        "大阪市高速軌道四つ橋線":   "高速電気軌道第3号線（大阪メトロ四つ橋線）",
+        "大阪市高速軌道中央線":     "高速電気軌道第4号線（大阪メトロ中央線）",
+        "大阪市高速軌道千日前線":   "高速電気軌道第5号線（大阪メトロ千日前線）",
+        "大阪市高速軌道堺筋線":     "高速電気軌道第6号線（大阪メトロ堺筋線）",
+        "大阪市高速軌道長堀鶴見緑地線": "高速電気軌道第7号線（大阪メトロ長堀鶴見緑地線）",
+        "大阪市高速軌道今里筋線":   "高速電気軌道第8号線（大阪メトロ今里筋線）",
+        "大阪市高速軌道南港ポートタウン線": "大阪市高速鉄道南港ポートタウン線（大阪メトロ南港ポートタウン線）",
+        "北大阪急行南北線":         "北大阪急行電鉄",
+        "阪急電鉄神戸線":           "阪急神戸本線",
+        "阪急電鉄宝塚線":           "阪急宝塚本線",
+        "阪急電鉄京都線":           "阪急京都本線",
+        "阪急電鉄千里線":           "阪急千里線",
+        "阪神電鉄本線":             "阪神本線",
+        "阪神電鉄阪神なんば線":     "阪神なんば線",
+        "南海電鉄南海本線":         "南海本線",
+        "南海電鉄南本線":           "南海本線",
+        "南海電鉄高野線":           "南海高野線",
+        "京阪電気鉄道京阪線":       "京阪本線",
+        "大阪モノレール本線":        "大阪モノレール線",
+        "大阪モノレール彩都線":      "国際文化公園都市線（大阪モノレール彩都線）",
+        "おおさか東線":              "おおさか東線",
+        "大阪環状線":                "大阪環状線",
+        "JR東西線":                  "JR東西線",
+        "片町線":                    "JR片町線（学研都市線）",
+        "阪和線":                    "阪和線（天王寺〜和歌山）",
+      };
+
+      // 駅に対応するitandi路線名を取得
+      const stationLines = rawArea ? (STATION_LINE_MAP[rawArea.replace(/駅|周辺|付近|近く/g, "").trim()] || []) : [];
+      const itandiLines = stationLines.map(l => ITANDI_LINE_MAP[l] || l);
+      const linesNote = itandiLines.length ? itandiLines.join(" / ") : null;
+
+      // ペット条件の検出
+      const petNote = /ペット|pet/i.test(c.preferences || c.notes || "") ? "ページ最下部「入居条件（その他）」→「ペット相談」にチェック" : null;
+
       return [
         {
           num: 1,
-          field: "地域・駅",
+          field: "エリア絞り込み",
           value: d.area,
-          hint: "エリアタブまたは路線タブから絞り込み",
+          hint: "「所在地で絞り込み」→ 大阪府 → 市区選択 → 確定\nまたは「路線・駅で絞り込み」→ 大阪府 → 路線 → 駅 → 確定",
+          linesNote: linesNote ? `itandiの路線名：${linesNote}` : null,
         },
         {
           num: 2,
-          field: "家賃（上限）",
+          field: "賃料（上限）",
           value: d.rentMax,
-          hint: "家賃上限を入力（管理費別の場合に注意）",
+          hint: "賃料の上限欄に入力（万円単位）。「管理費・共益費込み」にもチェックを忘れずに",
           copyRaw: d.rentMaxNum ? String(d.rentMaxNum) : null,
         },
         {
           num: 3,
-          field: "間取り",
-          value: d.floorPlan,
-          hint: "間取り絞り込みタブから選択",
+          field: "駅徒歩",
+          value: d.walkMin,
+          hint: "「駅徒歩」欄に分数を入力",
         },
         {
           num: 4,
-          field: "駅徒歩",
-          value: d.walkMin,
-          hint: "「駅から徒歩〇分以内」を選択",
+          field: "間取り",
+          value: d.floorPlan,
+          hint: "「間取り」セクションのチェックボックスから選択（1R〜5K以上）",
         },
         {
           num: 5,
           field: "築年数",
           value: d.buildingAge,
-          hint: "「築〇年以内」の条件を設定",
+          hint: "「築年数」欄に数字を入力（例：15 → 15年以内）",
         },
         {
           num: 6,
-          field: "入居可能日",
-          value: d.moveInTime,
-          hint: "入居可能日の条件で絞り込み",
+          field: "特記設備",
+          value: d.preferences,
+          hint: "バス・トイレ別はサイドバー「バス・トイレ」→「バス・トイレ別」をチェック",
         },
         {
           num: 7,
-          field: "特徴・設備",
-          value: d.preferences,
-          hint: "詳細条件の設備・特徴タブから選択",
-        },
-        {
-          num: 8,
           field: "NG条件（確認用）",
           value: d.ngPoints,
-          hint: "この条件の物件は除外して候補を絞る",
+          hint: "この条件に当てはまる物件は候補から除外",
         },
-      ].filter((s) => s.value);
+        petNote ? {
+          num: 8,
+          field: "ペット相談",
+          value: "チェックあり",
+          hint: petNote,
+        } : null,
+      ].filter(Boolean).filter((s) => s.value);
     },
   },
 
