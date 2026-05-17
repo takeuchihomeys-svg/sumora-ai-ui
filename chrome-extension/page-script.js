@@ -98,6 +98,19 @@
       var vals = plans.map(function(p){return FLOOR_MAP[p];}).filter(Boolean);
       if (vals.length) setCheckboxes("room_layout_id[]", vals);
     }
+    // 所在地（city_code[]）
+    if (cond.city_codes && cond.city_codes.length > 0) {
+      var prefCb = document.querySelector('input[name="pref_code"][value="27"]');
+      if (prefCb && !prefCb.checked) {
+        prefCb.checked = true;
+        prefCb.dispatchEvent(new Event("change", {bubbles:true}));
+      }
+      setTimeout(function() { setCheckboxes("city_code[]", cond.city_codes); }, 150);
+    }
+    // 沿線（route_id[]）
+    if (cond.route_ids && cond.route_ids.length > 0) {
+      setCheckboxes("route_id[]", cond.route_ids);
+    }
   }
 
   window.addEventListener("message", function(e) {

@@ -268,6 +268,77 @@ function findStationLines(areaText) {
   return STATION_LINE_MAP[normalized] || STATION_LINE_MAP[areaText] || null;
 }
 
+// ── 市区コード（リアプロ city_code[]） ──────────────────────────────
+const WARD_CODE_MAP = {
+  "大阪市都島区":"27102","大阪市福島区":"27103","大阪市此花区":"27104",
+  "大阪市西区":"27106","大阪市港区":"27107","大阪市大正区":"27108",
+  "大阪市天王寺区":"27109","大阪市浪速区":"27111","大阪市西淀川区":"27113",
+  "大阪市東淀川区":"27114","大阪市東成区":"27115","大阪市生野区":"27116",
+  "大阪市旭区":"27117","大阪市城東区":"27118","大阪市阿倍野区":"27119",
+  "大阪市住吉区":"27120","大阪市東住吉区":"27121","大阪市西成区":"27122",
+  "大阪市淀川区":"27123","大阪市鶴見区":"27124","大阪市住之江区":"27125",
+  "大阪市平野区":"27126","大阪市北区":"27127","大阪市中央区":"27128",
+  "堺市堺区":"27141","堺市中区":"27142","堺市東区":"27143",
+  "堺市西区":"27144","堺市南区":"27145","堺市北区":"27146","堺市美原区":"27147",
+  "豊中市":"27203","池田市":"27204","吹田市":"27205","高槻市":"27207",
+  "守口市":"27209","枚方市":"27210","茨木市":"27211","八尾市":"27212",
+  "寝屋川市":"27215","東大阪市":"27227","門真市":"27223","摂津市":"27224",
+  "岸和田市":"27202","泉大津市":"27206","貝塚市":"27208","泉佐野市":"27213",
+  "富田林市":"27214","河内長野市":"27216","松原市":"27217","大東市":"27218",
+  "和泉市":"27219","箕面市":"27220","柏原市":"27221","羽曳野市":"27222",
+  "大阪狭山市":"27231","泉南市":"27228","四條畷市":"27229","交野市":"27230","阪南市":"27232",
+};
+
+// ── 沿線名 → route_id（リアプロ route_id[]） ──────────────────────
+const LINE_ROUTE_MAP = {
+  "大阪市高速軌道御堂筋線":"6701","大阪市高速軌道谷町線":"6702",
+  "大阪市高速軌道四つ橋線":"6703","大阪市高速軌道中央線":"6704",
+  "大阪市高速軌道千日前線":"6705","大阪市高速軌道堺筋線":"6706",
+  "大阪市高速軌道南港ポートタウン線":"6707","大阪市高速軌道今里筋線":"6699",
+  "大阪市高速軌道長堀鶴見緑地線":"6768","北大阪急行南北線":"6711",
+  "大阪環状線":"6603","JR東西線":"6767","ＪＲ東西線":"6767",
+  "片町線":"6645","桜島線":"6604","おおさか東線":"6650",
+  "関西本線":"6426","阪和線":"6647","福知山線":"6605","東海道本線":"6171",
+  "近鉄大阪線":"6541","近鉄難波・奈良線":"6551","近鉄奈良線":"6551",
+  "近鉄南大阪線":"6555","近鉄長野線":"6557","近鉄道明寺線":"6558","近鉄けいはんな線":"6563",
+  "京阪電気鉄道京阪線":"6651","京阪電気鉄道中之島線":"6658","京阪電気鉄道交野線":"6652",
+  "阪急電鉄京都線":"6661","阪急電鉄千里線":"6662","阪急電鉄神戸線":"6664",
+  "阪急電鉄宝塚線":"6668","阪急電鉄箕面線":"6669",
+  "阪神電鉄本線":"6671","阪神電鉄阪神なんば線":"6673",
+  "南海電鉄南海本線":"6681","南海電鉄南本線":"6681",
+  "南海電鉄高野線":"6686","南海電鉄泉北線":"6694",
+  "南海電鉄空港線":"6691","南海電鉄汐見橋線":"6766","南海電鉄多奈川線":"6684","南海電鉄高師浜線":"6683",
+  "阪堺電気軌道阪堺線":"6689","阪堺電気軌道上町線":"6690",
+  "大阪モノレール本線":"6709","大阪モノレール彩都線":"6772",
+  "能勢電鉄":"6676","水間鉄道水間線":"6713","関西空港線":"6648",
+};
+
+// desired_area → city_codes & route_ids
+function buildAreaRouteCodes(c) {
+  const rawArea = (c.desired_area || c.area || "").trim();
+  const city_codes = [], route_ids = [];
+  if (!rawArea) return { city_codes, route_ids };
+
+  // 「大阪市」「大阪市内」 → 全区
+  if (/^大阪市(内)?$/.test(rawArea)) {
+    Object.values(WARD_CODE_MAP).filter((_, i) => Object.keys(WARD_CODE_MAP)[i].startsWith("大阪市")).forEach(v => city_codes.push(v));
+    return { city_codes, route_ids };
+  }
+
+  const parts = rawArea.split(/[,、・\/\s]+/).map(s => s.replace(/駅|周辺|付近|近く|沿線/g, "").trim()).filter(Boolean);
+  for (const part of parts) {
+    if (WARD_CODE_MAP[part]) {
+      if (!city_codes.includes(WARD_CODE_MAP[part])) city_codes.push(WARD_CODE_MAP[part]);
+      continue;
+    }
+    const ward = findStationWard(part);
+    if (ward && WARD_CODE_MAP[ward] && !city_codes.includes(WARD_CODE_MAP[ward])) city_codes.push(WARD_CODE_MAP[ward]);
+    const lines = STATION_LINE_MAP[part] || [];
+    lines.forEach(l => { const id = LINE_ROUTE_MAP[l]; if (id && !route_ids.includes(id)) route_ids.push(id); });
+  }
+  return { city_codes, route_ids };
+}
+
 const STATUS_LABELS = {
   new_inquiry:      "新規問い合わせ",
   hot:              "毎日物件出し",
@@ -788,6 +859,7 @@ function openInstructions(siteKey) {
     autofillBtn.className = "autofill-btn";
     autofillBtn.onclick = () => {
       const c = selectedCustomer;
+      const { city_codes, route_ids } = buildAreaRouteCodes(c);
       window.parent.postMessage({
         from: "aixlinx-underbar",
         action: "autofill",
@@ -797,6 +869,8 @@ function openInstructions(siteKey) {
           walk_minutes: c.walk_minutes || null,
           floor_plan:   c.floor_plan || c.layout || null,
           building_age: c.building_age || null,
+          city_codes,
+          route_ids,
         },
       }, "*");
       autofillBtn.textContent = "✓ 入力しました！";
