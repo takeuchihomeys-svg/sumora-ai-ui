@@ -866,7 +866,8 @@ function openInstructions(siteKey) {
     document.getElementById("adj-rent-max").value = c0.rent_max || c0.max_rent || "";
     document.getElementById("adj-walk").value     = c0.walk_minutes || "";
     document.getElementById("adj-age").value      = c0.building_age || "";
-    document.getElementById("adj-floor").value    = c0.floor_plan || c0.layout || "";
+    document.getElementById("adj-floor").value      = c0.floor_plan || c0.layout || "";
+    document.getElementById("adj-structure").value  = c0.building_structure || c0.structure || "";
     // ペット相談：お客さんの preferences にペット関連があれば初期チェック
     const petPref = (c0.preferences || c0.notes || "");
     document.getElementById("adj-pet").checked = /ペット|pet/i.test(petPref);
@@ -878,8 +879,9 @@ function openInstructions(siteKey) {
       const adjRentMax  = document.getElementById("adj-rent-max").value;
       const adjWalk     = document.getElementById("adj-walk").value;
       const adjAge      = document.getElementById("adj-age").value;
-      const adjFloor    = document.getElementById("adj-floor").value.trim();
-      const adjPet      = document.getElementById("adj-pet").checked;
+      const adjFloor     = document.getElementById("adj-floor").value.trim();
+      const adjStructure = document.getElementById("adj-structure").value.trim();
+      const adjPet       = document.getElementById("adj-pet").checked;
       const adjC = {
         desired_area: adjArea     || c.desired_area || c.area  || null,
         area:         adjArea     || c.desired_area || c.area  || null,
@@ -888,6 +890,9 @@ function openInstructions(siteKey) {
         walk_minutes: adjWalk     ? Number(adjWalk)     : (c.walk_minutes || null),
         building_age: adjAge      ? Number(adjAge)      : (c.building_age || null),
         floor_plan:   adjFloor    || c.floor_plan || c.layout || null,
+        structure_types: adjStructure
+          ? adjStructure.split(/[,、・\/\.\s]+/).map(s => s.trim()).filter(Boolean)
+          : [],
       };
       const { city_codes, route_ids } = buildAreaRouteCodes(adjC);
       window.parent.postMessage({
@@ -901,6 +906,7 @@ function openInstructions(siteKey) {
           building_age: adjC.building_age,
           city_codes,
           route_ids,
+          structure_types: adjC.structure_types,
           pet_ok: adjPet,
         },
       }, "*");

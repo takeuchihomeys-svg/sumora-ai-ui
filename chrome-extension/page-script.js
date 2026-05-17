@@ -37,6 +37,15 @@
   // ── リアプロ自動入力 ──────────────────────────────────────────────
   var RENT_OPTS = [-1,20000,25000,30000,35000,40000,45000,50000,55000,60000,65000,70000,75000,80000,85000,90000,95000,100000,110000,120000,130000,140000,150000,160000,170000,180000,190000,200000,250000,300000,350000,400000,450000,500000,600000,700000,800000,900000,1000000];
   var AGE_OPTS  = [-1,1,3,5,7,10,15,20,25,30,35,40,45,50];
+  var STRUCTURE_MAP = {
+    "鉄骨鉄筋コンクリート造":"1","SRC":"1","SRC造":"1",
+    "鉄筋コンクリート造":"2","RC":"2","RC造":"2",
+    "鉄骨造":"3","S造":"3",
+    "重量鉄骨造":"4",
+    "軽量鉄骨造":"5",
+    "木造":"6",
+    "木造一部RC造":"7"
+  };
   var FLOOR_MAP = {
     "ワンルーム":"1","1R":"1","スタジオタイプ":"2","スタジオ":"2",
     "1K":"3","1DK":"4","1LDK":"6",
@@ -112,6 +121,11 @@
     // 沿線（route_id[]）
     if (cond.route_ids && cond.route_ids.length > 0) {
       setCheckboxes("route_id[]", cond.route_ids);
+    }
+    // 物件構造（structured_type[]）
+    if (cond.structure_types && cond.structure_types.length > 0) {
+      var sVals = cond.structure_types.map(function(s){ return STRUCTURE_MAP[s]; }).filter(Boolean);
+      if (sVals.length) setCheckboxes("structured_type[]", sVals);
     }
     // ペット相談（eq_rm[] value=113）
     if (cond.pet_ok) {
