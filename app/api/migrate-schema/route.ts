@@ -1,6 +1,39 @@
 import { NextResponse } from "next/server";
 
 const SQL = `
+-- conversations テーブル（LINEトーク一覧）
+CREATE TABLE IF NOT EXISTS conversations (
+  id BIGINT PRIMARY KEY,
+  customer_name TEXT,
+  status TEXT DEFAULT 'first_reply',
+  line_user_id TEXT NOT NULL,
+  last_message TEXT,
+  last_sender TEXT,
+  profile_image_url TEXT,
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversations_line_user_id ON conversations(line_user_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations(updated_at DESC);
+
+ALTER TABLE conversations DISABLE ROW LEVEL SECURITY;
+
+-- messages テーブル（LINEメッセージ）
+CREATE TABLE IF NOT EXISTS messages (
+  id BIGINT PRIMARY KEY,
+  conversation_id BIGINT NOT NULL,
+  sender TEXT NOT NULL CHECK (sender IN ('customer', 'staff')),
+  text TEXT NOT NULL DEFAULT '',
+  image_url TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at ASC);
+
+ALTER TABLE messages DISABLE ROW LEVEL SECURITY;
+
 -- property_customers テーブル（物件出しツール用）
 CREATE TABLE IF NOT EXISTS property_customers (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
