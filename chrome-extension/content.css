@@ -3,12 +3,16 @@ html, body {
   overflow-x: auto !important;
 }
 
-/* テーブルレイアウトの左列を強制表示 */
-td:first-child,
-th:first-child {
+/* テーブルレイアウトの全セルを強制表示（display: table-cell で復元） */
+table td,
+table th {
   display: table-cell !important;
   visibility: visible !important;
-  width: auto !important;
+}
+
+table tr {
+  display: table-row !important;
+  visibility: visible !important;
 }
 
 /* よく使われる左メニュー系クラス・ID を網羅 */
@@ -18,8 +22,7 @@ th:first-child {
 .left, .left_menu, .left_column, .left_nav,
 .leftMenu, .leftColumn, .searchPanel, .search_panel,
 .sidebar, .side_bar, .side-bar, #sidenav, .sidenav,
-[id^="left"], [class^="left_"],
-[id*="search"][id*="panel"], [id*="side"] {
+[id^="left"], [class^="left_"] {
   display: block !important;
   visibility: visible !important;
   opacity: 1 !important;

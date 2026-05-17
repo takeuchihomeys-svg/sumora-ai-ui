@@ -1,10 +1,22 @@
 "use strict";
 
-// リアプロ 左サイドバー強制表示スクリプト v5
+// リアプロ 左サイドバー強制表示スクリプト v6
 (function () {
   const SIDEBAR_MARKERS = ["リスト検索", "所在地絞り込み", "沿線・駅絞り込み", "管理会社絞り込み"];
 
-  // bodyまで全遡り → 最上位の隠し要素だけを強制表示（もっとも確実な方法）
+  // 要素の種類に合った display 値を返す（td に block を設定するとテーブルが崩れる）
+  function correctDisplay(el) {
+    const tag = el.tagName.toLowerCase();
+    if (tag === "td" || tag === "th") return "table-cell";
+    if (tag === "tr") return "table-row";
+    if (tag === "thead" || tag === "tbody" || tag === "tfoot") return "table-row-group";
+    if (tag === "colgroup" || tag === "col") return "table-column";
+    if (tag === "table") return "table";
+    if (tag === "li") return "list-item";
+    return "block";
+  }
+
+  // bodyまで全遡り → 最上位の隠し祖先を特定して正しい display で表示
   function forceShowSidebar() {
     if (!document.body) return;
 
@@ -27,25 +39,26 @@
             cs.opacity === "0" ||
             parseFloat(cs.width) < 1
           ) {
-            topHidden = el; // より上の要素で更新し続ける
+            topHidden = el;
           }
           el = el.parentElement;
         }
 
         if (topHidden) {
-          topHidden.style.setProperty("display", "block", "important");
+          // td/tr/table などテーブル要素は正しい display 値で復元
+          const dispVal = correctDisplay(topHidden);
+          topHidden.style.setProperty("display", dispVal, "important");
           topHidden.style.setProperty("visibility", "visible", "important");
           topHidden.style.setProperty("opacity", "1", "important");
           topHidden.style.setProperty("width", "auto", "important");
-          topHidden.style.setProperty("min-width", "0", "important");
           topHidden.style.setProperty("overflow", "visible", "important");
         }
-        return; // 1つ見つかれば十分
+        return;
       }
     }
   }
 
-  // window.innerWidth / outerWidth を常に1300px以上にする
+  // window.innerWidth / outerWidth を常に1300px以上に見せる
   try {
     const origInner = Object.getOwnPropertyDescriptor(Window.prototype, "innerWidth");
     if (origInner && origInner.get) {
