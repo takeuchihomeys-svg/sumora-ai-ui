@@ -867,6 +867,9 @@ function openInstructions(siteKey) {
     document.getElementById("adj-walk").value     = c0.walk_minutes || "";
     document.getElementById("adj-age").value      = c0.building_age || "";
     document.getElementById("adj-floor").value    = c0.floor_plan || c0.layout || "";
+    // ペット相談：お客さんの preferences にペット関連があれば初期チェック
+    const petPref = (c0.preferences || c0.notes || "");
+    document.getElementById("adj-pet").checked = /ペット|pet/i.test(petPref);
 
     autofillBtn.onclick = () => {
       const c = selectedCustomer;
@@ -876,6 +879,7 @@ function openInstructions(siteKey) {
       const adjWalk     = document.getElementById("adj-walk").value;
       const adjAge      = document.getElementById("adj-age").value;
       const adjFloor    = document.getElementById("adj-floor").value.trim();
+      const adjPet      = document.getElementById("adj-pet").checked;
       const adjC = {
         desired_area: adjArea     || c.desired_area || c.area  || null,
         area:         adjArea     || c.desired_area || c.area  || null,
@@ -897,6 +901,7 @@ function openInstructions(siteKey) {
           building_age: adjC.building_age,
           city_codes,
           route_ids,
+          pet_ok: adjPet,
         },
       }, "*");
       autofillBtn.textContent = "✓ 入力しました！";

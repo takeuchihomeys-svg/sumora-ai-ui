@@ -113,6 +113,11 @@
     if (cond.route_ids && cond.route_ids.length > 0) {
       setCheckboxes("route_id[]", cond.route_ids);
     }
+    // ペット相談（eq_rm[] value=113）
+    if (cond.pet_ok) {
+      var petCb = document.querySelector('input[name="eq_rm[]"][value="113"]');
+      if (petCb && !petCb.checked) petCb.click();
+    }
   }
 
   window.addEventListener("message", function(e) {

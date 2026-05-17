@@ -299,6 +299,8 @@ body {
 .adj-input:focus { border-color: #e65100; }
 .adj-num { flex: none; width: 78px; }
 .adj-unit { font-size: 10px; color: #888; flex-shrink: 0; }
+.adj-check-label { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 11px; }
+.adj-label-text { color: #555; }
 
 .autofill-btn {
   width: 100%; padding: 10px;
