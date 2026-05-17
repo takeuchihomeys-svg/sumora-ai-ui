@@ -610,7 +610,7 @@ export default function ConditionsPage() {
               <div className="space-y-3">
                 <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">基本情報</p>
 
-                <Field label="お客様名 *">
+                <Field label="アカウント名 *">
                   <input
                     className={INPUT}
                     value={form.customer_name}
@@ -643,27 +643,17 @@ export default function ConditionsPage() {
                   </div>
                 </Field>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="ステータス">
-                    <select
-                      className={INPUT}
-                      value={form.status}
-                      onChange={(e) => setForm({ ...form, status: e.target.value as Status })}
-                    >
-                      {Object.entries(STATUS_LABELS).map(([k, v]) => (
-                        <option key={k} value={k}>{v}</option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field label="担当者">
-                    <input
-                      className={INPUT}
-                      value={form.assignee ?? ""}
-                      onChange={(e) => setForm({ ...form, assignee: e.target.value })}
-                      placeholder="例：竹内"
-                    />
-                  </Field>
-                </div>
+                <Field label="ステータス">
+                  <select
+                    className={INPUT}
+                    value={form.status}
+                    onChange={(e) => setForm({ ...form, status: e.target.value as Status })}
+                  >
+                    {Object.entries(STATUS_LABELS).map(([k, v]) => (
+                      <option key={k} value={k}>{v}</option>
+                    ))}
+                  </select>
+                </Field>
 
                 <Field label="物件候補メモ">
                   <textarea
@@ -699,7 +689,7 @@ export default function ConditionsPage() {
                   disabled={parsing || !formatText.trim()}
                   className="w-full bg-blue-600 text-white font-bold py-3 rounded-2xl text-sm disabled:opacity-40"
                 >
-                  {parsing ? "AI解析中..." : "🤖 AIで自動入力"}
+                  {parsing ? "AI解析中..." : "AIで自動入力"}
                 </button>
                 {parseError && (
                   <p className="text-red-600 text-xs bg-red-50 rounded-xl px-3 py-2">{parseError}</p>
@@ -757,18 +747,6 @@ export default function ConditionsPage() {
                 </Field>
               </div>
 
-              {/* その他 */}
-              <div className="space-y-3 pt-2">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wide">その他</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="電話番号">
-                    <input className={INPUT} value={form.phone ?? ""} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="090-1234-5678" />
-                  </Field>
-                  <Field label="LINE ID">
-                    <input className={INPUT} value={form.line_user_id ?? ""} onChange={(e) => setForm({ ...form, line_user_id: e.target.value })} placeholder="例：U1234..." />
-                  </Field>
-                </div>
-              </div>
 
               {editTarget && (
                 <button
