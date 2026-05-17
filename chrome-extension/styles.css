@@ -270,6 +270,7 @@ body {
   position: absolute; bottom: 0; left: 0; right: 0;
   padding: 8px 12px;
   background: white; border-top: 1px solid #e9edef;
+  display: flex; flex-direction: column; gap: 6px;
 }
 .copy-all-btn {
   width: 100%; padding: 11px;
@@ -279,6 +280,16 @@ body {
 }
 .copy-all-btn:hover { opacity: 0.92; }
 .copy-all-btn:active { transform: scale(0.99); }
+
+.autofill-btn {
+  width: 100%; padding: 10px;
+  background: linear-gradient(135deg, #e65100, #ff9800);
+  color: white; border: none; border-radius: 10px;
+  font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.autofill-btn:hover { opacity: 0.92; }
+.autofill-btn:active { transform: scale(0.99); }
+.autofill-btn.done { background: linear-gradient(135deg, #2e7d32, #43a047); }
 
 /* ── フローティングミニモード（左上52x52ボタン） ── */
 body.mini-mode {

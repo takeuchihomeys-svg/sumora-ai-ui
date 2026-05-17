@@ -780,6 +780,36 @@ function openInstructions(siteKey) {
     });
   };
 
+  // 自動入力ボタン（リアプロ＋アンダーバーモードのみ）
+  const autofillBtn = document.getElementById("autofill-btn");
+  if (isUnderbar && siteKey === "realpro") {
+    autofillBtn.style.display = "block";
+    autofillBtn.textContent = "⚡ リアプロに自動入力";
+    autofillBtn.className = "autofill-btn";
+    autofillBtn.onclick = () => {
+      const c = selectedCustomer;
+      window.parent.postMessage({
+        from: "aixlinx-underbar",
+        action: "autofill",
+        conditions: {
+          rent_min:     c.rent_min || null,
+          rent_max:     c.rent_max || c.max_rent || null,
+          walk_minutes: c.walk_minutes || null,
+          floor_plan:   c.floor_plan || c.layout || null,
+          building_age: c.building_age || null,
+        },
+      }, "*");
+      autofillBtn.textContent = "✓ 入力しました！";
+      autofillBtn.classList.add("done");
+      setTimeout(() => {
+        autofillBtn.textContent = "⚡ リアプロに自動入力";
+        autofillBtn.classList.remove("done");
+      }, 3000);
+    };
+  } else {
+    autofillBtn.style.display = "none";
+  }
+
   showView("view-instructions");
 }
 

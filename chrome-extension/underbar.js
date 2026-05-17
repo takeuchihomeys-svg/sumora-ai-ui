@@ -233,5 +233,9 @@
     }
     if (a === "expand") setSize(true);
     if (a === "toggle") setSize(!expanded);
+    if (a === "autofill") {
+      // page-script.jsのリスナーに転送（ページのJS文脈で動かす）
+      window.postMessage({ from: "aixlinx-fill", conditions: e.data.conditions }, "*");
+    }
   });
 })();
