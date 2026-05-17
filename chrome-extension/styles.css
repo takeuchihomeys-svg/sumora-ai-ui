@@ -279,3 +279,43 @@ body {
 }
 .copy-all-btn:hover { opacity: 0.92; }
 .copy-all-btn:active { transform: scale(0.99); }
+
+/* ── フローティングミニモード（左上52x52ボタン） ── */
+body.mini-mode {
+  background: transparent;
+  overflow: hidden;
+}
+body.mini-mode #app {
+  width: 52px;
+  height: 52px;
+  overflow: hidden;
+}
+body.mini-mode .header {
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  border-radius: 12px;
+  cursor: pointer;
+  justify-content: center;
+  flex-direction: column;
+  gap: 1px;
+}
+body.mini-mode .header-sep,
+body.mini-mode .header-sub,
+body.mini-mode #underbar-toggle,
+body.mini-mode #refresh-btn {
+  display: none !important;
+}
+body.mini-mode .header-left {
+  flex-direction: column;
+  gap: 0;
+  align-items: center;
+}
+body.mini-mode .header-logo {
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+}
+body.mini-mode .view {
+  display: none !important;
+}

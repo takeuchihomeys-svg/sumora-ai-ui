@@ -1,69 +1,57 @@
 "use strict";
 
-// リアプロページにAIXLINXアンダーバーを注入
-// サイドパネルと違いviewportを狭めないため、リアプロの左サイドバーが消えない
+// リアプロページにAIXLINX フローティングボタンを注入
+// 左上に小さい■ボタン → クリックでパネル展開
 (function () {
-  if (document.getElementById("aixlinx-underbar-wrap")) return;
+  if (document.getElementById("aixlinx-float-wrap")) return;
 
-  const COLLAPSED_H = 54;
-  const EXPANDED_H  = 480;
+  const MINI     = 52;
+  const PANEL_W  = 360;
+  const PANEL_H  = 520;
 
-  // ── ラッパー（高さアニメーション用） ──
   const wrap = document.createElement("div");
-  wrap.id = "aixlinx-underbar-wrap";
+  wrap.id = "aixlinx-float-wrap";
   Object.assign(wrap.style, {
     position:   "fixed",
-    bottom:     "0",
-    left:       "0",
-    right:      "0",
-    width:      "100%",
-    height:     COLLAPSED_H + "px",
+    top:        "70px",
+    left:       "8px",
+    width:      MINI + "px",
+    height:     MINI + "px",
     zIndex:     "2147483647",
-    boxShadow:  "0 -3px 20px rgba(0,0,0,0.22)",
-    transition: "height 0.28s cubic-bezier(0.4,0,0.2,1)",
+    boxShadow:  "0 4px 24px rgba(0,0,0,0.28)",
+    transition: "width 0.25s cubic-bezier(0.4,0,0.2,1), height 0.25s cubic-bezier(0.4,0,0.2,1)",
     overflow:   "hidden",
-    background: "white",
-    borderTop:  "2px solid #1565C0",
+    borderRadius: "14px",
   });
 
-  // ── iframe（popup.htmlを読み込む） ──
   const iframe = document.createElement("iframe");
   iframe.src = chrome.runtime.getURL("popup.html");
   Object.assign(iframe.style, {
-    width:   "100%",
-    height:  (EXPANDED_H + 60) + "px",
+    width:   PANEL_W + "px",
+    height:  (PANEL_H + 60) + "px",
     border:  "none",
     display: "block",
   });
 
   wrap.appendChild(iframe);
-
-  // ページコンテンツがアンダーバーに隠れないよう余白を追加
-  function updateBodyPadding(h) {
-    document.body.style.paddingBottom = Math.max(
-      parseInt(document.body.style.paddingBottom || "0") - COLLAPSED_H,
-      0
-    ) + h + "px";
-  }
-  updateBodyPadding(COLLAPSED_H);
-
   document.body.appendChild(wrap);
 
-  // ── popup.htmlからのメッセージを受信して高さを制御 ──
   let expanded = false;
   window.addEventListener("message", function (e) {
     if (!e.data || e.data.from !== "aixlinx-underbar") return;
-
     const action = e.data.action;
     if (action === "expand") {
       expanded = true;
-      wrap.style.height = EXPANDED_H + "px";
+      wrap.style.width  = PANEL_W + "px";
+      wrap.style.height = PANEL_H + "px";
     } else if (action === "collapse") {
       expanded = false;
-      wrap.style.height = COLLAPSED_H + "px";
+      wrap.style.width  = MINI + "px";
+      wrap.style.height = MINI + "px";
     } else if (action === "toggle") {
       expanded = !expanded;
-      wrap.style.height = (expanded ? EXPANDED_H : COLLAPSED_H) + "px";
+      wrap.style.width  = (expanded ? PANEL_W : MINI) + "px";
+      wrap.style.height = (expanded ? PANEL_H : MINI) + "px";
     }
   });
 })();

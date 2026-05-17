@@ -609,12 +609,17 @@ function notifyParent(action) {
 }
 
 // ── View switching ─────────────────────────────────────────────────
+function setMiniMode(mini) {
+  document.body.classList.toggle("mini-mode", mini);
+}
+
 function showView(id) {
   document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
   document.getElementById(id).classList.add("active");
-  // アンダーバーモード: リスト画面は折りたたみ、それ以外は展開
   if (isUnderbar) {
-    notifyParent(id === "view-list" ? "collapse" : "expand");
+    const mini = id === "view-list";
+    setMiniMode(mini);
+    notifyParent(mini ? "collapse" : "expand");
   }
 }
 
@@ -806,25 +811,18 @@ function filterCustomers(q) {
 document.addEventListener("DOMContentLoaded", () => {
   loadCustomers();
 
-  // アンダーバーモードの初期化
+  // フローティングミニモードの初期化
   if (isUnderbar) {
-    const toggleBtn = document.getElementById("underbar-toggle");
-    toggleBtn.style.display = "flex";
-    let isExpanded = false;
-    toggleBtn.addEventListener("click", () => {
-      isExpanded = !isExpanded;
-      notifyParent("toggle");
-      // アイコンを ▲/▼ で切り替え
-      document.getElementById("toggle-icon").innerHTML = isExpanded
-        ? `<polyline points="6 9 12 15 18 9"/>`   // ▼ 折りたたむ
-        : `<polyline points="18 15 12 9 6 15"/>`;  // ▲ 展開
-    });
-    // 初期状態：折りたたみ表示（アイコン▲）
+    // 起動時はミニ（52x52）で表示
+    setMiniMode(true);
     notifyParent("collapse");
-    // ヘッダー全体クリックでもトグル
-    document.querySelector(".header-left").style.cursor = "pointer";
-    document.querySelector(".header-left").addEventListener("click", () => {
-      toggleBtn.click();
+    // ヘッダーをクリックでパネルを開く（ミニモード時のみ）
+    document.querySelector(".header").style.cursor = "pointer";
+    document.querySelector(".header").addEventListener("click", () => {
+      if (document.body.classList.contains("mini-mode")) {
+        setMiniMode(false);
+        notifyParent("expand");
+      }
     });
   }
 
