@@ -12,6 +12,59 @@
     if (el && !el.checked) el.click();
   }
 
+  // 表示中のラベルをテキストで探してクリック
+  function clickLabel(text) {
+    var found = [].slice.call(document.querySelectorAll("label")).find(function (l) {
+      return l.textContent.trim() === text && l.offsetParent !== null;
+    });
+    if (found) { found.click(); return true; }
+    return false;
+  }
+
+  // 表示中のボタンをテキストで探してクリック
+  function clickBtn(text) {
+    var found = [].slice.call(document.querySelectorAll("button")).find(function (b) {
+      return b.textContent.trim() === text && b.offsetParent !== null;
+    });
+    if (found) { found.click(); return true; }
+    return false;
+  }
+
+  // 所在地モーダル: 所在地で絞り込み → 大阪府 → 市区 → 確定
+  function selectItandiArea(wardName, callback) {
+    if (!wardName) { if (callback) callback(); return; }
+    if (!clickBtn("所在地で絞り込み")) { if (callback) callback(); return; }
+    setTimeout(function () {
+      clickLabel("大阪府");
+      setTimeout(function () {
+        clickLabel(wardName);
+        setTimeout(function () {
+          clickBtn("確定");
+          setTimeout(callback || function () {}, 500);
+        }, 400);
+      }, 400);
+    }, 600);
+  }
+
+  // 路線・駅モーダル: 路線・駅で絞り込み → 近畿 → 大阪府 → 路線チェック → 確定
+  function selectItandiLines(lineNames, callback) {
+    if (!lineNames || !lineNames.length) { if (callback) callback(); return; }
+    if (!clickBtn("路線・駅で絞り込み")) { if (callback) callback(); return; }
+    setTimeout(function () {
+      clickLabel("近畿");
+      setTimeout(function () {
+        clickLabel("大阪府");
+        setTimeout(function () {
+          lineNames.forEach(function (line) { clickLabel(line); });
+          setTimeout(function () {
+            clickBtn("確定");
+            setTimeout(callback || function () {}, 500);
+          }, 400);
+        }, 400);
+      }, 400);
+    }, 600);
+  }
+
   var STRUCTURE_MAP = {
     "木造": "wooden", "木造一部RC造": "wooden",
     "鉄骨造": "steel", "S造": "steel", "重量鉄骨造": "steel",
@@ -23,7 +76,7 @@
   var VALID_LAYOUTS = ["1R","1K","1DK","1LDK","2K","2DK","2LDK","3K","3DK","3LDK","4K","4DK","4LDK","5K_OVER"];
 
   function fill(cond) {
-    // 賃料上限（itandiは万円単位 → yen÷10000）
+    // 賃料上限（itandiは万円単位）
     if (cond.rent_max) {
       var rentVal = cond.rent_max > 1000 ? Math.floor(cond.rent_max / 10000) : cond.rent_max;
       var rentEl = document.querySelector('input[name="rent:lteq"]');
@@ -72,6 +125,15 @@
     if (cond.preferences && /バス.*トイレ別|トイレ別|バストイレ別/i.test(cond.preferences)) {
       tick(document.querySelector('input[name="option_id:all_in"][id="11010"]'));
     }
+
+    // 所在地 or 路線・駅モーダル（フィールド入力後に実行）
+    setTimeout(function () {
+      if (cond.ward_name) {
+        selectItandiArea(cond.ward_name);
+      } else if (cond.itandi_lines && cond.itandi_lines.length) {
+        selectItandiLines(cond.itandi_lines);
+      }
+    }, 300);
   }
 
   window.addEventListener("axlx-itandi-fill", function (e) { fill(e.detail); });

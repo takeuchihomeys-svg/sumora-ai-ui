@@ -978,15 +978,58 @@ function openInstructions(siteKey) {
 
     autofillBtn.onclick = () => {
       const c = selectedCustomer;
+      const rawArea = (c.desired_area || c.area || "").trim();
+      const stationClean = rawArea.replace(/駅|周辺|付近|近く/g, "").trim();
+      const isWardArea = /[都道府県市区町村郡]/.test(stationClean);
+
+      // リアプロ路線名 → itandi路線名（実画面から取得した正式名称）
+      const ITANDI_LINE_MAP_FILL = {
+        "大阪市高速軌道御堂筋線":       "高速電気軌道第1号線(大阪メトロ御堂筋線)",
+        "大阪市高速軌道谷町線":         "高速電気軌道第2号線(大阪メトロ谷町線)",
+        "大阪市高速軌道四つ橋線":       "高速電気軌道第3号線(大阪メトロ四つ橋線)",
+        "大阪市高速軌道中央線":         "高速電気軌道第4号線(大阪メトロ中央線)",
+        "大阪市高速軌道千日前線":       "高速電気軌道第5号線(大阪メトロ千日前線)",
+        "大阪市高速軌道堺筋線":         "高速電気軌道第6号線(大阪メトロ堺筋線)",
+        "大阪市高速軌道長堀鶴見緑地線": "高速電気軌道第7号線(大阪メトロ長堀鶴見緑地線)",
+        "大阪市高速軌道今里筋線":       "高速電気軌道第8号線(大阪メトロ今里筋線)",
+        "北大阪急行南北線":             "北大阪急行電鉄",
+        "阪急電鉄神戸線":               "阪急神戸本線",
+        "阪急電鉄宝塚線":               "阪急宝塚本線",
+        "阪急電鉄京都線":               "阪急京都本線",
+        "阪急電鉄千里線":               "阪急千里線",
+        "阪神電鉄本線":                 "阪神本線",
+        "阪神電鉄阪神なんば線":         "阪神なんば線",
+        "南海電鉄南海本線":             "南海本線",
+        "南海電鉄南本線":               "南海本線",
+        "南海電鉄高野線":               "南海高野線",
+        "京阪電気鉄道京阪線":           "京阪本線",
+        "大阪環状線":                   "大阪環状線",
+        "JR東西線":                     "JR東西線",
+        "片町線":                       "JR片町線(学研都市線)",
+        "阪和線":                       "阪和線(天王寺～和歌山)",
+        "おおさか東線":                 "おおさか東線",
+        "近鉄難波線":                   "近鉄難波線",
+        "近鉄南大阪線":                 "近鉄南大阪線",
+        "近鉄大阪線":                   "近鉄大阪線",
+        "近鉄奈良線":                   "近鉄奈良線",
+        "近鉄けいはんな線":             "近鉄けいはんな線",
+      };
+
+      const stationLines = !isWardArea ? (STATION_LINE_MAP[stationClean] || []) : [];
+      const itandiLines  = stationLines.map(l => ITANDI_LINE_MAP_FILL[l]).filter(Boolean);
+      const wardName     = isWardArea ? stationClean : (STATION_WARD_MAP[stationClean] || null);
+
       const conditions = {
-        rent_max:       c.rent_max || c.max_rent || null,
-        walk_minutes:   c.walk_minutes || null,
-        building_age:   c.building_age || null,
-        floor_plan:     c.floor_plan || c.layout || null,
+        rent_max:        c.rent_max || c.max_rent || null,
+        walk_minutes:    c.walk_minutes || null,
+        building_age:    c.building_age || null,
+        floor_plan:      c.floor_plan || c.layout || null,
         structure_types: (c.building_structure || c.structure || "")
           .split(/[,、・\/\.\s]+/).map(s => s.trim()).filter(Boolean),
         pet_ok:      /ペット|pet/i.test(c.preferences || c.notes || ""),
         preferences: c.preferences || c.notes || null,
+        ward_name:   isWardArea ? wardName : null,
+        itandi_lines: !isWardArea ? itandiLines : [],
       };
       chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
         if (!tabs[0]) return;
