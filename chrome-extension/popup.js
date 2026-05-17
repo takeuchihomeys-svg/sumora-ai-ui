@@ -970,7 +970,36 @@ function openInstructions(siteKey) {
   // 自動入力ボタン＋一時調整フォーム（リアプロ＋アンダーバーモードのみ）
   const autofillBtn = document.getElementById("autofill-btn");
   const adjForm     = document.getElementById("adj-form");
-  if (isUnderbar && siteKey === "realpro") {
+  if (!isUnderbar && siteKey === "itandi") {
+    autofillBtn.style.display = "block";
+    autofillBtn.textContent = "⚡ itandiに自動入力";
+    autofillBtn.className = "autofill-btn";
+    adjForm.style.display = "none";
+
+    autofillBtn.onclick = () => {
+      const c = selectedCustomer;
+      const conditions = {
+        rent_max:       c.rent_max || c.max_rent || null,
+        walk_minutes:   c.walk_minutes || null,
+        building_age:   c.building_age || null,
+        floor_plan:     c.floor_plan || c.layout || null,
+        structure_types: (c.building_structure || c.structure || "")
+          .split(/[,、・\/\.\s]+/).map(s => s.trim()).filter(Boolean),
+        pet_ok:      /ペット|pet/i.test(c.preferences || c.notes || ""),
+        preferences: c.preferences || c.notes || null,
+      };
+      chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+        if (!tabs[0]) return;
+        chrome.tabs.sendMessage(tabs[0].id, { type: "axlx-itandi-autofill", conditions });
+      });
+      autofillBtn.textContent = "✓ 入力しました！";
+      autofillBtn.classList.add("done");
+      setTimeout(() => {
+        autofillBtn.textContent = "⚡ itandiに自動入力";
+        autofillBtn.classList.remove("done");
+      }, 3000);
+    };
+  } else if (isUnderbar && siteKey === "realpro") {
     autofillBtn.style.display = "block";
     autofillBtn.textContent = "⚡ リアプロに自動入力";
     autofillBtn.className = "autofill-btn";
