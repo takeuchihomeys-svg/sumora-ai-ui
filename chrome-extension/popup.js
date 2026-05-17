@@ -970,7 +970,7 @@ function openInstructions(siteKey) {
   // 自動入力ボタン＋一時調整フォーム（リアプロ＋アンダーバーモードのみ）
   const autofillBtn = document.getElementById("autofill-btn");
   const adjForm     = document.getElementById("adj-form");
-  if (!isUnderbar && siteKey === "itandi") {
+  if (isUnderbar && siteKey === "itandi") {
     autofillBtn.style.display = "block";
     autofillBtn.textContent = "⚡ itandiに自動入力";
     autofillBtn.className = "autofill-btn";

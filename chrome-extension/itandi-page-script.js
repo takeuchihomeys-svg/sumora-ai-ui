@@ -12,19 +12,23 @@
     if (el && !el.checked) el.click();
   }
 
-  // 表示中のラベルをテキストで探してクリック
+  // getBoundingClientRect で判定（position:fixed のモーダル要素も正しく検出）
+  function isVis(el) {
+    var r = el.getBoundingClientRect();
+    return r.width > 0 || r.height > 0;
+  }
+
   function clickLabel(text) {
     var found = [].slice.call(document.querySelectorAll("label")).find(function (l) {
-      return l.textContent.trim() === text && l.offsetParent !== null;
+      return l.textContent.trim() === text && isVis(l);
     });
     if (found) { found.click(); return true; }
     return false;
   }
 
-  // 表示中のボタンをテキストで探してクリック
   function clickBtn(text) {
     var found = [].slice.call(document.querySelectorAll("button")).find(function (b) {
-      return b.textContent.trim() === text && b.offsetParent !== null;
+      return b.textContent.trim() === text && isVis(b);
     });
     if (found) { found.click(); return true; }
     return false;
