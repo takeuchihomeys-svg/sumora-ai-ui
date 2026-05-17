@@ -1024,9 +1024,10 @@ function syncModeButtons() {
   document.getElementById("mode-desc").textContent = modeDescs[searchMode];
 }
 
-function renderInstrSteps(siteKey) {
+function renderInstrSteps(siteKey, cOverride) {
   const cfg = SITE_CONFIG[siteKey];
-  const steps = cfg.steps(selectedCustomer, searchMode);
+  const c = cOverride || selectedCustomer;
+  const steps = cfg.steps(c, searchMode);
 
   const modeLabel = searchMode === "wide"
     ? `<div class="wide-banner">🔎 広げて検索モード（家賃・エリア・広さを少し緩めて検索）</div>`
@@ -1076,13 +1077,42 @@ function renderInstrSteps(siteKey) {
   }
 
   // コピーオールのテキスト
-  const allText = buildCopyAll(cfg.name, steps, selectedCustomer);
+  const allText = buildCopyAll(cfg.name, steps, c);
   document.getElementById("copy-all-btn").onclick = () => {
     navigator.clipboard.writeText(allText).then(() => {
       const btn = document.getElementById("copy-all-btn");
       btn.textContent = "✓ コピーしました！";
       setTimeout(() => { btn.textContent = "📋 全条件をコピー"; }, 2000);
     });
+  };
+}
+
+function preloadAdjForm(c) {
+  document.getElementById("adj-area").value      = c.desired_area || c.area || "";
+  document.getElementById("adj-rent-max").value  = c.rent_max || c.max_rent || "";
+  document.getElementById("adj-walk").value      = c.walk_minutes || "";
+  document.getElementById("adj-age").value       = c.building_age || "";
+  document.getElementById("adj-floor").value     = c.floor_plan || c.layout || "";
+  document.getElementById("adj-structure").value = c.building_structure || c.structure || "";
+  document.getElementById("adj-pet").checked     = /ペット|pet/i.test(c.preferences || c.notes || "");
+}
+
+function buildAdjCustomer(c) {
+  const adjArea    = document.getElementById("adj-area").value.trim();
+  const adjRentMax = document.getElementById("adj-rent-max").value;
+  const adjWalk    = document.getElementById("adj-walk").value;
+  const adjAge     = document.getElementById("adj-age").value;
+  const adjFloor   = document.getElementById("adj-floor").value.trim();
+  return {
+    ...c,
+    desired_area: adjArea    || c.desired_area || c.area || null,
+    area:         adjArea    || c.desired_area || c.area || null,
+    rent_max:     adjRentMax ? Number(adjRentMax) : (c.rent_max || c.max_rent || null),
+    max_rent:     adjRentMax ? Number(adjRentMax) : (c.rent_max || c.max_rent || null),
+    walk_minutes: adjWalk    ? Number(adjWalk)    : (c.walk_minutes || null),
+    building_age: adjAge     ? Number(adjAge)     : (c.building_age || null),
+    floor_plan:   adjFloor   || c.floor_plan || c.layout || null,
+    layout:       adjFloor   || c.floor_plan || c.layout || null,
   };
 }
 
@@ -1097,15 +1127,23 @@ function openInstructions(siteKey) {
   // 自動入力ボタン＋一時調整フォーム（リアプロ＋アンダーバーモードのみ）
   const autofillBtn = document.getElementById("autofill-btn");
   const adjForm     = document.getElementById("adj-form");
-  if (isUnderbar && siteKey === "itandi") {
+  if (!isUnderbar && siteKey === "itandi") {
+    adjForm.style.display = "block";
+    preloadAdjForm(selectedCustomer);
     autofillBtn.style.display = "block";
     autofillBtn.textContent = "⚡ itandiに自動入力";
     autofillBtn.className = "autofill-btn";
-    adjForm.style.display = "none";
 
     autofillBtn.onclick = () => {
       const c = selectedCustomer;
-      const rawArea = (c.desired_area || c.area || "").trim();
+      const adjArea      = document.getElementById("adj-area").value.trim();
+      const adjRentMax   = document.getElementById("adj-rent-max").value;
+      const adjWalk      = document.getElementById("adj-walk").value;
+      const adjAge       = document.getElementById("adj-age").value;
+      const adjFloor     = document.getElementById("adj-floor").value.trim();
+      const adjStructure = document.getElementById("adj-structure").value.trim();
+      const adjPet       = document.getElementById("adj-pet").checked;
+      const rawArea = (adjArea || c.desired_area || c.area || "").trim();
       const stationClean = rawArea.replace(/駅|周辺|付近|近く/g, "").trim();
       const isWardArea = /[都道府県市区町村郡]/.test(stationClean);
 
@@ -1171,17 +1209,17 @@ function openInstructions(siteKey) {
       }
 
       const conditions = {
-        rent_max:        c.rent_max || c.max_rent || null,
-        walk_minutes:    c.walk_minutes || null,
-        building_age:    c.building_age || null,
-        floor_plan:      c.floor_plan || c.layout || null,
-        structure_types: (c.building_structure || c.structure || "")
+        rent_max:        adjRentMax ? Number(adjRentMax) : (c.rent_max || c.max_rent || null),
+        walk_minutes:    adjWalk    ? Number(adjWalk)    : (c.walk_minutes || null),
+        building_age:    adjAge     ? Number(adjAge)     : (c.building_age || null),
+        floor_plan:      adjFloor   || c.floor_plan || c.layout || null,
+        structure_types: (adjStructure || c.building_structure || c.structure || "")
           .split(/[,、・\/\.\s]+/).map(s => s.trim()).filter(Boolean),
-        pet_ok:      /ペット|pet/i.test(c.preferences || c.notes || ""),
+        pet_ok:      adjPet,
         preferences: c.preferences || c.notes || null,
         ward_name:    isWardArea_itandi ? wardName : null,
         itandi_lines: !isWardArea_itandi ? itandiLines : [],
-        station_names: stationNames, // 配列（広げて：最大3駅、ピンポイント：1駅）
+        station_names: stationNames,
       };
       chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
         if (!tabs[0]) return;
@@ -1199,18 +1237,9 @@ function openInstructions(siteKey) {
     autofillBtn.textContent = "⚡ リアプロに自動入力";
     autofillBtn.className = "autofill-btn";
 
-    // 調整フォームに現在値をセット
     adjForm.style.display = "block";
     const c0 = selectedCustomer;
-    document.getElementById("adj-area").value     = c0.desired_area || c0.area || "";
-    document.getElementById("adj-rent-max").value = c0.rent_max || c0.max_rent || "";
-    document.getElementById("adj-walk").value     = c0.walk_minutes || "";
-    document.getElementById("adj-age").value      = c0.building_age || "";
-    document.getElementById("adj-floor").value      = c0.floor_plan || c0.layout || "";
-    document.getElementById("adj-structure").value  = c0.building_structure || c0.structure || "";
-    // ペット相談：お客さんの preferences にペット関連があれば初期チェック
-    const petPref = (c0.preferences || c0.notes || "");
-    document.getElementById("adj-pet").checked = /ペット|pet/i.test(petPref);
+    preloadAdjForm(c0);
 
     autofillBtn.onclick = () => {
       const c = selectedCustomer;
@@ -1256,6 +1285,22 @@ function openInstructions(siteKey) {
         autofillBtn.textContent = "⚡ リアプロに自動入力";
         autofillBtn.classList.remove("done");
       }, 3000);
+    };
+  } else if (siteKey === "reins") {
+    adjForm.style.display = "block";
+    preloadAdjForm(selectedCustomer);
+    autofillBtn.style.display = "block";
+    autofillBtn.textContent = "🔄 手順を更新";
+    autofillBtn.className = "autofill-btn";
+    autofillBtn.onclick = () => {
+      const adjC = buildAdjCustomer(selectedCustomer);
+      renderInstrSteps("reins", adjC);
+      autofillBtn.textContent = "✓ 更新しました！";
+      autofillBtn.classList.add("done");
+      setTimeout(() => {
+        autofillBtn.textContent = "🔄 手順を更新";
+        autofillBtn.classList.remove("done");
+      }, 2000);
     };
   } else {
     autofillBtn.style.display = "none";
