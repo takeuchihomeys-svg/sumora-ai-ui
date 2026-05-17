@@ -16,9 +16,9 @@
         <span class="header-sub">物件検索サポート</span>
       </div>
       <!-- アンダーバーモード時のみ表示：展開/折りたたみトグル -->
-      <button class="icon-btn" id="underbar-toggle" title="展開/折りたたむ" style="display:none">
-        <svg id="toggle-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="18 15 12 9 6 15"/>
+      <button class="icon-btn" id="collapse-btn" title="折りたたむ">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="6 9 12 15 18 9"/>
         </svg>
       </button>
       <button class="icon-btn" id="refresh-btn" title="更新">
@@ -46,19 +46,6 @@
         <span id="site-customer-name" class="back-title"></span>
       </div>
       <div id="conditions-summary" class="cond-summary"></div>
-
-      <!-- 検索モード選択 -->
-      <div class="mode-toggle-wrap">
-        <div class="mode-toggle">
-          <button class="mode-btn active" data-mode="pinpoint">
-            🎯 ピンポイント
-          </button>
-          <button class="mode-btn" data-mode="wide">
-            🔎 広げて検索
-          </button>
-        </div>
-        <div id="mode-desc" class="mode-desc">条件ぴったりで検索</div>
-      </div>
 
       <p class="section-label">検索サイトを選択</p>
       <div class="site-list">
@@ -97,6 +84,19 @@
         </button>
         <span id="instr-title" class="back-title"></span>
       </div>
+      <!-- 検索モード選択 -->
+      <div class="mode-toggle-wrap">
+        <div class="mode-toggle">
+          <button class="mode-btn active pinpoint" data-mode="pinpoint">
+            🎯 ピンポイント
+          </button>
+          <button class="mode-btn" data-mode="wide">
+            🔎 広げて検索
+          </button>
+        </div>
+        <div id="mode-desc" class="mode-desc">条件ぴったりで検索</div>
+      </div>
+
       <div class="instr-scroll">
         <div id="instr-customer-card" class="instr-card"></div>
         <div id="instr-steps" class="steps-list"></div>

@@ -334,7 +334,7 @@ body.mini-mode .header {
 }
 body.mini-mode .header-sep,
 body.mini-mode .header-sub,
-body.mini-mode #underbar-toggle,
+body.mini-mode #collapse-btn,
 body.mini-mode #refresh-btn {
   display: none !important;
 }

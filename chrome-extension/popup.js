@@ -787,12 +787,18 @@ function openSiteView(customer) {
 }
 
 // ── View 3: Instructions ───────────────────────────────────────────
-function openInstructions(siteKey) {
-  selectedSite = siteKey;
+function syncModeButtons() {
+  const modeDescs = { pinpoint: "条件ぴったりで検索", wide: "エリア・家賃・広さを少し広げて検索" };
+  document.querySelectorAll(".mode-btn").forEach((b) => {
+    b.classList.remove("active", "pinpoint", "wide");
+    if (b.dataset.mode === searchMode) b.classList.add("active", searchMode);
+  });
+  document.getElementById("mode-desc").textContent = modeDescs[searchMode];
+}
+
+function renderInstrSteps(siteKey) {
   const cfg = SITE_CONFIG[siteKey];
   const steps = cfg.steps(selectedCustomer, searchMode);
-
-  document.getElementById("instr-title").textContent = cfg.icon + " " + cfg.name;
 
   const modeLabel = searchMode === "wide"
     ? `<div class="wide-banner">🔎 広げて検索モード（家賃・エリア・広さを少し緩めて検索）</div>`
@@ -850,6 +856,15 @@ function openInstructions(siteKey) {
       setTimeout(() => { btn.textContent = "📋 全条件をコピー"; }, 2000);
     });
   };
+}
+
+function openInstructions(siteKey) {
+  selectedSite = siteKey;
+  const cfg = SITE_CONFIG[siteKey];
+
+  document.getElementById("instr-title").textContent = cfg.icon + " " + cfg.name;
+  syncModeButtons();
+  renderInstrSteps(siteKey);
 
   // 自動入力ボタン＋一時調整フォーム（リアプロ＋アンダーバーモードのみ）
   const autofillBtn = document.getElementById("autofill-btn");
@@ -967,28 +982,31 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  document.getElementById("collapse-btn").addEventListener("click", () => {
+    if (isUnderbar) {
+      setMiniMode(true);
+      notifyParent("collapse");
+    } else {
+      showView("view-list");
+    }
+  });
+
   document.getElementById("refresh-btn").addEventListener("click", () => {
     showView("view-list");
     loadCustomers();
   });
 
   // 検索モード切替
-  const modeDescs = {
-    pinpoint: "条件ぴったりで検索",
-    wide: "エリア・家賃・広さを少し広げて検索",
-  };
   document.querySelectorAll(".mode-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       searchMode = btn.dataset.mode;
-      document.querySelectorAll(".mode-btn").forEach((b) => {
-        b.classList.remove("active", "pinpoint", "wide");
-      });
-      btn.classList.add("active", searchMode);
-      document.getElementById("mode-desc").textContent = modeDescs[searchMode];
+      syncModeButtons();
+      if (selectedSite && document.getElementById("view-instructions").classList.contains("active")) {
+        renderInstrSteps(selectedSite);
+      }
     });
   });
-  // 初期状態のスタイル設定
-  document.querySelector(".mode-btn[data-mode='pinpoint']").classList.add("pinpoint");
+  syncModeButtons();
 
   document.getElementById("search-input").addEventListener("input", (e) => {
     filterCustomers(e.target.value);
