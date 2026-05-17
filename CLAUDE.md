@@ -73,3 +73,17 @@ Invoke-RestMethod -Uri "https://sumora-screening-admin.vercel.app/api/memory/rec
 
 - `memory/dept_knowhow.md` — 実装パターン・技術ノウハウ（sumora-screening-adminで学んだこと）
 - `memory/brain_kt.md` — 設計判断軸・最初にやること・避けるべきバグパターン
+
+---
+
+## 🔧 セッション開始時：部署記録の読み込み
+
+**Chrome拡張ツール（物件検索）に関する作業をする場合は必ず読む：**
+
+```
+memory/dept_search_tool.md
+```
+
+このツールはプロジェクト最重要ツールの一つ。前回セッションからの変更・保留事項・引き継ぎを把握してから作業開始すること。
+
+**Chrome拡張への変更後は必ず `dept_search_tool.md` を即座に更新する（後回し厳禁）。**
