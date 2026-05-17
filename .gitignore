@@ -39,3 +39,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+.vercel
+
+# Claude Code local settings（APIトークン等を含む可能性があるため除外）
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/*.lock
