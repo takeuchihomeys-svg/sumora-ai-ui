@@ -27,17 +27,23 @@
     return r.width > 0 || r.height > 0;
   }
 
-  // label のみ（チェックボックス用）— 正規化比較
+  // 正規化テキストがヒットするか（完全一致 or 部分一致）
+  function textMatch(elText, search) {
+    var t = norm(elText);
+    var n = norm(search);
+    return t === n || t.includes(n);
+  }
+
+  // label のみ（チェックボックス用）
   function clickLabel(text) {
-    var n = norm(text);
     var found = [].slice.call(document.querySelectorAll("label")).find(function (l) {
-      return norm(l.textContent) === n && isVis(l);
+      return textMatch(l.textContent, text) && isVis(l);
     });
     if (found) { found.click(); return true; }
     return false;
   }
 
-  // button のみ — 正規化比較
+  // button のみ（完全一致のみ — 誤クリック防止）
   function clickBtn(text) {
     var n = norm(text);
     var found = [].slice.call(document.querySelectorAll("button")).find(function (b) {
@@ -47,12 +53,11 @@
     return false;
   }
 
-  // label・button・li・span・a を横断して探す（モーダルナビ用）— 正規化比較
+  // label・button・li・span・a を横断して探す（モーダルナビ用）
   function clickAny(text) {
-    var n = norm(text);
     var els = [].slice.call(document.querySelectorAll("label, button, li, span, a, div[role='button'], div[role='option']"));
     var found = els.find(function (el) {
-      return norm(el.textContent) === n && isVis(el);
+      return textMatch(el.textContent, text) && isVis(el);
     });
     if (found) { found.click(); return true; }
     return false;
