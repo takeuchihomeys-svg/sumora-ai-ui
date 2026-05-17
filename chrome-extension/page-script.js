@@ -77,10 +77,9 @@
   function setCheckboxes(name, vals) {
     var cbs = document.querySelectorAll('input[name="' + name + '"]');
     cbs.forEach(function(cb) {
-      var on = vals.indexOf(cb.value) >= 0;
-      if (cb.checked !== on) {
-        cb.checked = on;
-        cb.dispatchEvent(new Event("change", {bubbles:true}));
+      var shouldCheck = vals.indexOf(cb.value) >= 0;
+      if (cb.checked !== shouldCheck) {
+        cb.click();
       }
     });
   }
