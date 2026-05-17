@@ -12,35 +12,47 @@
     if (el && !el.checked) el.click();
   }
 
+  // 全角/半角の括弧・波線・スペースを正規化して比較（文字種の違いを吸収）
+  function norm(s) {
+    return String(s)
+      .replace(/（/g, "(").replace(/）/g, ")")
+      .replace(/〜/g, "~").replace(/～/g, "~")
+      .replace(/　/g, " ")
+      .trim();
+  }
+
   // getBoundingClientRect で判定（position:fixed のモーダル要素も正しく検出）
   function isVis(el) {
     var r = el.getBoundingClientRect();
     return r.width > 0 || r.height > 0;
   }
 
-  // label のみ（チェックボックス用）
+  // label のみ（チェックボックス用）— 正規化比較
   function clickLabel(text) {
+    var n = norm(text);
     var found = [].slice.call(document.querySelectorAll("label")).find(function (l) {
-      return l.textContent.trim() === text && isVis(l);
+      return norm(l.textContent) === n && isVis(l);
     });
     if (found) { found.click(); return true; }
     return false;
   }
 
-  // button のみ
+  // button のみ — 正規化比較
   function clickBtn(text) {
+    var n = norm(text);
     var found = [].slice.call(document.querySelectorAll("button")).find(function (b) {
-      return b.textContent.trim() === text && isVis(b);
+      return norm(b.textContent) === n && isVis(b);
     });
     if (found) { found.click(); return true; }
     return false;
   }
 
-  // label・button・li・span・a を横断して探す（モーダルナビ用）
+  // label・button・li・span・a を横断して探す（モーダルナビ用）— 正規化比較
   function clickAny(text) {
+    var n = norm(text);
     var els = [].slice.call(document.querySelectorAll("label, button, li, span, a, div[role='button'], div[role='option']"));
     var found = els.find(function (el) {
-      return el.textContent.trim() === text && isVis(el);
+      return norm(el.textContent) === n && isVis(el);
     });
     if (found) { found.click(); return true; }
     return false;
