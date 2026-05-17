@@ -87,6 +87,9 @@
     if (!cond) return;
     if (cond.rent_min) setSelVal("rental_cost1", nearestDown(RENT_OPTS, cond.rent_min));
     if (cond.rent_max) setSelVal("rental_cost2", nearestUp(RENT_OPTS, cond.rent_max));
+    // 管理費・共益費含む を常にON
+    var feeCb = document.querySelector('input[name="include_common_fee"]');
+    if (feeCb && !feeCb.checked) feeCb.click();
     if (cond.walk_minutes) {
       setSelVal("transportation_id", "1");
       setTxtVal("required_time", cond.walk_minutes);
