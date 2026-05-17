@@ -2,6 +2,22 @@
 
 ---
 
+## ⏰ セッション開始時：Git自動保存Cronを設定する
+
+**新しいセッションが始まったら必ずCronを設定する（3時間ごとに自動コミット・プッシュ）。**
+
+```
+CronCreate ツールを使って以下を設定：
+- cron: "17 */3 * * *"
+- recurring: true
+- durable: true
+- prompt: "sumora-ai-ui プロジェクトの自動保存を実行してください。手順：1. `cd \"c:\\Users\\竹内 悠馬\\sumora-ai-ui\" && git status --short` で変更があるか確認 2. 変更がある場合のみ `git add -A && git commit -m \"auto: 3時間自動保存\" && git push` 3. 変更がなければスキップ"
+```
+
+竹内悠馬が「保存して」「GitHubに上げて」と言った場合も即座に `git add -A && git commit && git push` を実行する。
+
+---
+
 ## 🚀 セッション開始時：竹内AI記憶の自動注入
 
 **新しいセッションが始まったら最初に以下を実行して竹内AIのコア知識をロードする。**
