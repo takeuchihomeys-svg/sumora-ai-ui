@@ -1127,7 +1127,7 @@ function openInstructions(siteKey) {
   // 自動入力ボタン＋一時調整フォーム（リアプロ＋アンダーバーモードのみ）
   const autofillBtn = document.getElementById("autofill-btn");
   const adjForm     = document.getElementById("adj-form");
-  if (!isUnderbar && siteKey === "itandi") {
+  if (isUnderbar && siteKey === "itandi") {
     adjForm.style.display = "block";
     preloadAdjForm(selectedCustomer);
     autofillBtn.style.display = "block";
