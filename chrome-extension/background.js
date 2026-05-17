@@ -1,15 +1,44 @@
 "use strict";
 
-// サイドパネルをアイコンクリックで開く設定
-// onInstalled・onStartup・即時の3箇所で呼ぶ（service worker 再起動対策）
+// underbar（フローティングパネル）を使うサイト → サイドパネルを無効化
+const UNDERBAR_SITES = ["realnetpro.com", "itandibb.com"];
+
+function isUnderbarSite(url) {
+  return !!url && UNDERBAR_SITES.some(function (s) { return url.includes(s); });
+}
+
 function setupSidePanel() {
   if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
     chrome.sidePanel
       .setPanelBehavior({ openPanelOnActionClick: true })
-      .catch((e) => console.error("sidePanel setup error:", e));
+      .catch(function (e) { console.error("sidePanel setup error:", e); });
   }
+}
+
+function configureSidePanelForTab(tabId, url) {
+  if (!chrome.sidePanel || !chrome.sidePanel.setOptions) return;
+  chrome.sidePanel.setOptions({
+    tabId: tabId,
+    enabled: !isUnderbarSite(url),
+  }).catch(function () {});
 }
 
 chrome.runtime.onInstalled.addListener(setupSidePanel);
 chrome.runtime.onStartup.addListener(setupSidePanel);
-setupSidePanel(); // 即時実行（初回対策）
+setupSidePanel();
+
+// タブがアクティブになったとき
+chrome.tabs.onActivated.addListener(function ({ tabId }) {
+  chrome.tabs.get(tabId, function (tab) {
+    if (tab && tab.url) configureSidePanelForTab(tabId, tab.url);
+  });
+});
+
+// タブのURLが変わったとき
+chrome.tabs.onUpdated.addListener(function (tabId, changeInfo, tab) {
+  if (changeInfo.url) {
+    configureSidePanelForTab(tabId, changeInfo.url);
+  } else if (changeInfo.status === "complete" && tab.url) {
+    configureSidePanelForTab(tabId, tab.url);
+  }
+});
