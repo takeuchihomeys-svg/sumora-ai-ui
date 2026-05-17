@@ -18,6 +18,7 @@
     return r.width > 0 || r.height > 0;
   }
 
+  // label のみ（チェックボックス用）
   function clickLabel(text) {
     var found = [].slice.call(document.querySelectorAll("label")).find(function (l) {
       return l.textContent.trim() === text && isVis(l);
@@ -26,9 +27,20 @@
     return false;
   }
 
+  // button のみ
   function clickBtn(text) {
     var found = [].slice.call(document.querySelectorAll("button")).find(function (b) {
       return b.textContent.trim() === text && isVis(b);
+    });
+    if (found) { found.click(); return true; }
+    return false;
+  }
+
+  // label・button・li・span・a を横断して探す（モーダルナビ用）
+  function clickAny(text) {
+    var els = [].slice.call(document.querySelectorAll("label, button, li, span, a, div[role='button'], div[role='option']"));
+    var found = els.find(function (el) {
+      return el.textContent.trim() === text && isVis(el);
     });
     if (found) { found.click(); return true; }
     return false;
@@ -39,15 +51,15 @@
     if (!wardName) { if (callback) callback(); return; }
     if (!clickBtn("所在地で絞り込み")) { if (callback) callback(); return; }
     setTimeout(function () {
-      clickLabel("大阪府");
+      clickAny("大阪府");
       setTimeout(function () {
-        clickLabel(wardName);
+        clickAny(wardName) || clickLabel(wardName);
         setTimeout(function () {
           clickBtn("確定");
           setTimeout(callback || function () {}, 500);
-        }, 400);
-      }, 400);
-    }, 600);
+        }, 500);
+      }, 500);
+    }, 700);
   }
 
   // 路線・駅モーダル: 路線・駅で絞り込み → 近畿 → 大阪府 → 路線チェック → 確定
@@ -55,18 +67,18 @@
     if (!lineNames || !lineNames.length) { if (callback) callback(); return; }
     if (!clickBtn("路線・駅で絞り込み")) { if (callback) callback(); return; }
     setTimeout(function () {
-      clickLabel("近畿");
+      clickAny("近畿");
       setTimeout(function () {
-        clickLabel("大阪府");
+        clickAny("大阪府");
         setTimeout(function () {
-          lineNames.forEach(function (line) { clickLabel(line); });
+          lineNames.forEach(function (line) { clickAny(line) || clickLabel(line); });
           setTimeout(function () {
             clickBtn("確定");
             setTimeout(callback || function () {}, 500);
-          }, 400);
-        }, 400);
-      }, 400);
-    }, 600);
+          }, 500);
+        }, 500);
+      }, 500);
+    }, 700);
   }
 
   var STRUCTURE_MAP = {

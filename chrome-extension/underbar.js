@@ -42,12 +42,6 @@
   const wrap = document.createElement("div");
   wrap.id = "aixlinx-float-wrap";
   Object.assign(wrap.style, {
-    position:      "fixed",
-    top:           posY + "px",
-    left:          posX + "px",
-    width:         MINI + "px",
-    height:        MINI + "px",
-    zIndex:        "2147483647",
     boxShadow:     "0 4px 28px rgba(0,0,0,0.32)",
     borderRadius:  "14px",
     overflow:      "hidden",
@@ -56,6 +50,13 @@
     transition:    "width 0.22s ease, height 0.22s ease",
     background:    "#fff",
   });
+  // ページCSSに上書きされないよう !important で固定
+  wrap.style.setProperty("position", "fixed", "important");
+  wrap.style.setProperty("top",      posY + "px", "important");
+  wrap.style.setProperty("left",     posX + "px", "important");
+  wrap.style.setProperty("width",    MINI + "px", "important");
+  wrap.style.setProperty("height",   MINI + "px", "important");
+  wrap.style.setProperty("z-index",  "2147483647", "important");
 
   // ── ドラッグバー（展開時）─────────────────────────────────────────
   const dragBar = document.createElement("div");
@@ -129,14 +130,14 @@
   function setSize(exp) {
     expanded = exp;
     if (exp) {
-      wrap.style.width            = panelW + "px";
-      wrap.style.height           = (panelH + DRAG_H) + "px";
+      wrap.style.setProperty("width",  panelW + "px", "important");
+      wrap.style.setProperty("height", (panelH + DRAG_H) + "px", "important");
       dragBar.style.display       = "flex";
       resizeHandle.style.display  = "block";
       miniOverlay.style.display   = "none";
     } else {
-      wrap.style.width            = MINI + "px";
-      wrap.style.height           = MINI + "px";
+      wrap.style.setProperty("width",  MINI + "px", "important");
+      wrap.style.setProperty("height", MINI + "px", "important");
       dragBar.style.display       = "none";
       resizeHandle.style.display  = "none";
       miniOverlay.style.display   = "block";
@@ -186,13 +187,13 @@
     const dx = e.clientX - startCX;
     const dy = e.clientY - startCY;
     if (dragAction === "move") {
-      wrap.style.left = Math.max(0, startWX + dx) + "px";
-      wrap.style.top  = Math.max(0, startWY + dy) + "px";
+      wrap.style.setProperty("left", Math.max(0, startWX + dx) + "px", "important");
+      wrap.style.setProperty("top",  Math.max(0, startWY + dy) + "px", "important");
     } else {
       panelW = Math.max(MIN_W, startPW + dx);
       panelH = Math.max(MIN_H, startPH + dy);
-      wrap.style.width  = panelW + "px";
-      wrap.style.height = (panelH + DRAG_H) + "px";
+      wrap.style.setProperty("width",  panelW + "px", "important");
+      wrap.style.setProperty("height", (panelH + DRAG_H) + "px", "important");
     }
   });
 
