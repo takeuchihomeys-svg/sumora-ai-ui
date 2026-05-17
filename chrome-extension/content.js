@@ -11,48 +11,9 @@
   // ══════════════════════════════════════════════════
   (function injectPageScript() {
     const s = document.createElement("script");
-    s.textContent = `(function(){
-      // window.innerWidth / outerWidth を常に1300以上に偽装
-      // → リアプロが「幅が狭い→サイドバーを隠す」判定をするのを防ぐ
-      try {
-        var di = Object.getOwnPropertyDescriptor(Window.prototype, 'innerWidth');
-        if (di && di.get) Object.defineProperty(window, 'innerWidth', {
-          get: function(){ return Math.max(di.get.call(window), 1300); },
-          configurable: true
-        });
-      } catch(e){}
-      try {
-        var do2 = Object.getOwnPropertyDescriptor(Window.prototype, 'outerWidth');
-        if (do2 && do2.get) Object.defineProperty(window, 'outerWidth', {
-          get: function(){ return Math.max(do2.get.call(window), 1300); },
-          configurable: true
-        });
-      } catch(e){}
-
-      // resizeイベント後、全ハンドラ実行後に「検索条件を表示」を自動クリック
-      // bubble phaseに登録 → リアプロのhandlerが先に実行された後に動く
-      window.addEventListener('resize', function() {
-        function tryClick(delay) {
-          setTimeout(function() {
-            var all = document.querySelectorAll('a,button,input,div,span,td,p');
-            for (var i = 0; i < all.length; i++) {
-              var el = all[i];
-              if (!el.offsetParent) continue; // 非表示要素をスキップ
-              var txt = (el.textContent || el.value || '').trim();
-              if (txt.indexOf('検索条件を表示') >= 0) {
-                el.click();
-                return;
-              }
-            }
-          }, delay);
-        }
-        tryClick(300);
-        tryClick(800);
-        tryClick(1800);
-      });
-    })();`;
+    s.src = chrome.runtime.getURL("page-script.js");
+    s.onload = function() { this.remove(); };
     (document.head || document.documentElement).appendChild(s);
-    s.remove();
   })();
 
   // ══════════════════════════════════════════════════
