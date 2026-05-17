@@ -550,12 +550,23 @@ const SITE_CONFIG = {
           // 駅名・沿線名 → 沿線・駅
           const lines = findStationLines(areaText);
           const linesText = lines ? lines.join(" / ") : null;
+          // 広げて検索：隣駅名を実際に計算して表示
+          let wideStationNote = null;
+          if (d.isWide && lines) {
+            const stClean = areaText.replace(/駅|周辺|付近|近く/g, "").trim();
+            const adj = getAdjacentStations(stClean, lines);
+            if (adj.length > 0) {
+              wideStationNote = "広げて：" + stClean + " ＋ 前後の駅「" + adj.join("・") + "」も追加で選択する";
+            } else {
+              wideStationNote = "広げて：この駅 ＋ 隣の駅も追加で選択する（「駅名から絞り込み」で隣駅を検索）";
+            }
+          }
           steps.push({
             num: n++,
             field: "【沿線・駅】絞り込み",
             value: areaText,
             linesNote: linesText ? "選択する沿線: " + linesText : null,
-            note: d.isWide ? "広げて：この駅 ＋ 隣の駅も追加で選択する（「駅名から絞り込み」で隣駅を検索）" : null,
+            note: wideStationNote,
             hint: "左メニュー「沿線・駅絞り込み ＋」→「駅名から絞り込み」に駅名を入力 → 上記の沿線を選択 → 右側「駅の設定へ進む ›」→ 駅を選択 → 「確定してリストへ」",
           });
 

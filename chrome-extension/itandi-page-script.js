@@ -109,27 +109,36 @@
     var stNames = (stationNames || []).map(function (s) { return s.replace(/駅$/, "").trim(); }).filter(Boolean);
 
     setTimeout(function () {
-      clickNav("近畿"); // ナビタブ（完全一致）
+      clickNav("近畿");
       setTimeout(function () {
-        clickNav("大阪府"); // ナビタブ（完全一致）— 路線名ラベルと混同しないよう完全一致
+        clickNav("大阪府");
         setTimeout(function () {
-          // 路線リストが描画されてから各チェックボックスをクリック
-          lineNames.forEach(function (line) { clickLabel(line); });
-          setTimeout(function () {
-            // 駅名がある場合は駅列が表示されるのを待ってから全駅を選択（部分一致）
-            if (stNames.length) {
+          // 路線チェックを1路線ずつ順番にクリック（React同期再レンダリング対策）
+          // forEach で一括クリックすると1つ目のクリック後にReactが再レンダリングし
+          // 2つ目以降のチェックボックスDOMが差し替えられてクリックが空振りになる
+          var lineIdx = 0;
+          function clickNextLine() {
+            if (lineIdx >= lineNames.length) {
+              // 全路線チェック完了 → 駅列描画待ち → 駅選択
               setTimeout(function () {
-                stNames.forEach(function (sn) { clickLabel(sn); }); // 当駅＋前後駅を全選択
-                setTimeout(function () {
+                if (stNames.length) {
+                  stNames.forEach(function (sn) { clickLabel(sn); }); // 当駅＋前後駅を全選択
+                  setTimeout(function () {
+                    clickBtn("確定");
+                    setTimeout(callback || function () {}, 600);
+                  }, 600);
+                } else {
                   clickBtn("確定");
                   setTimeout(callback || function () {}, 600);
-                }, 600);
-              }, 800); // 路線チェック後、駅列の描画を待つ
-            } else {
-              clickBtn("確定");
-              setTimeout(callback || function () {}, 600);
+                }
+              }, 900); // 最後の路線チェック後、駅列描画を待つ
+              return;
             }
-          }, 600);
+            clickLabel(lineNames[lineIdx]);
+            lineIdx++;
+            setTimeout(clickNextLine, 500); // 次の路線クリックまで500ms待機（React再描画完了を待つ）
+          }
+          clickNextLine();
         }, 800);
       }, 600);
     }, 800);
