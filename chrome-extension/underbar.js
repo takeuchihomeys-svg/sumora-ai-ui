@@ -5,7 +5,7 @@
 (function () {
   if (document.getElementById("aixlinx-float-wrap")) return;
 
-  const MINI    = 52;
+  const MINI    = 100;
   const DRAG_H  = 28;
   const MIN_W   = 260;
   const MIN_H   = 300;

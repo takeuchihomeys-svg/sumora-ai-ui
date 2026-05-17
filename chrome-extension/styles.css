@@ -7,6 +7,9 @@ body {
   background: #f8f9fa;
   color: #111b21;
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 #app {
@@ -312,25 +315,25 @@ body {
 .autofill-btn:active { transform: scale(0.99); }
 .autofill-btn.done { background: linear-gradient(135deg, #2e7d32, #43a047); }
 
-/* ── フローティングミニモード（左上52x52ボタン） ── */
+/* ── フローティングミニモード（100x100ボタン） ── */
 body.mini-mode {
   background: transparent;
   overflow: hidden;
 }
 body.mini-mode #app {
-  width: 52px;
-  height: 52px;
+  width: 100px;
+  height: 100px;
   overflow: hidden;
 }
 body.mini-mode .header {
-  width: 52px;
-  height: 52px;
+  width: 100px;
+  height: 100px;
   padding: 0;
-  border-radius: 12px;
+  border-radius: 20px;
   cursor: pointer;
   justify-content: center;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
 }
 body.mini-mode .header-sep,
 body.mini-mode .header-sub,
@@ -344,7 +347,7 @@ body.mini-mode .header-left {
   align-items: center;
 }
 body.mini-mode .header-logo {
-  font-size: 8px;
+  font-size: 14px;
   font-weight: 900;
   letter-spacing: 0.5px;
 }
