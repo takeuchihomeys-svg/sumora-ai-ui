@@ -1,122 +1,166 @@
 "use strict";
 
-// リアプロ 左サイドバー強制表示スクリプト v7
-// 「検索条件を表示」ボタンを自動クリックするアプローチ
+// リアプロ 左サイドバー強制表示スクリプト v8 - 包括対策版
 (function () {
   const SIDEBAR_MARKERS = ["リスト検索", "所在地絞り込み", "沿線・駅絞り込み", "管理会社絞り込み"];
 
-  // サイドバーが現在表示されているか確認
+  // ══════════════════════════════════════════════════
+  // STEP 1: ページのJSコンテキストに直接注入
+  // content scriptのisolated worldではリアプロのJSに効かないため
+  // scriptタグを使ってページ本体のJSとして実行させる
+  // ══════════════════════════════════════════════════
+  (function injectPageScript() {
+    const s = document.createElement("script");
+    s.textContent = `(function(){
+      // window.innerWidth / outerWidth を常に1300以上に偽装
+      // → リアプロが「幅が狭い→サイドバーを隠す」判定をするのを防ぐ
+      try {
+        var di = Object.getOwnPropertyDescriptor(Window.prototype, 'innerWidth');
+        if (di && di.get) Object.defineProperty(window, 'innerWidth', {
+          get: function(){ return Math.max(di.get.call(window), 1300); },
+          configurable: true
+        });
+      } catch(e){}
+      try {
+        var do2 = Object.getOwnPropertyDescriptor(Window.prototype, 'outerWidth');
+        if (do2 && do2.get) Object.defineProperty(window, 'outerWidth', {
+          get: function(){ return Math.max(do2.get.call(window), 1300); },
+          configurable: true
+        });
+      } catch(e){}
+
+      // resizeイベント後、全ハンドラ実行後に「検索条件を表示」を自動クリック
+      // bubble phaseに登録 → リアプロのhandlerが先に実行された後に動く
+      window.addEventListener('resize', function() {
+        function tryClick(delay) {
+          setTimeout(function() {
+            var all = document.querySelectorAll('a,button,input,div,span,td,p');
+            for (var i = 0; i < all.length; i++) {
+              var el = all[i];
+              if (!el.offsetParent) continue; // 非表示要素をスキップ
+              var txt = (el.textContent || el.value || '').trim();
+              if (txt.indexOf('検索条件を表示') >= 0) {
+                el.click();
+                return;
+              }
+            }
+          }, delay);
+        }
+        tryClick(300);
+        tryClick(800);
+        tryClick(1800);
+      });
+    })();`;
+    (document.head || document.documentElement).appendChild(s);
+    s.remove();
+  })();
+
+  // ══════════════════════════════════════════════════
+  // STEP 2: CSSメディアクエリをスキャンして隠し規則を上書き
+  // リアプロが @media (max-width: Npx) で隠している要素を !important で復元
+  // ══════════════════════════════════════════════════
+  function overrideHidingMQRules() {
+    if (!document.head) return;
+    if (document.getElementById("aixlinx-mq-fix")) return;
+
+    const overrides = [];
+    for (const sheet of Array.from(document.styleSheets)) {
+      let rules;
+      try { rules = sheet.cssRules; } catch (e) { continue; }
+      if (!rules) continue;
+      for (const rule of Array.from(rules)) {
+        if (!(rule instanceof CSSMediaRule)) continue;
+        const m = rule.media.mediaText.match(/max-width:\s*(\d+(?:\.\d+)?)px/i);
+        if (!m || +m[1] < 900 || +m[1] > 1400) continue;
+        for (const inner of Array.from(rule.cssRules)) {
+          if (!(inner instanceof CSSStyleRule)) continue;
+          if (inner.style.display === "none" || inner.style.visibility === "hidden") {
+            overrides.push(
+              `${inner.selectorText} { display: revert !important; visibility: visible !important; }`
+            );
+          }
+        }
+      }
+    }
+
+    if (overrides.length) {
+      const el = document.createElement("style");
+      el.id = "aixlinx-mq-fix";
+      el.textContent = overrides.join("\n");
+      document.head.appendChild(el);
+    }
+  }
+
+  // ══════════════════════════════════════════════════
+  // STEP 3: content scriptからもサイドバー監視＋クリック（二重対策）
+  // ══════════════════════════════════════════════════
   function isSidebarVisible() {
     if (!document.body) return false;
     for (const marker of SIDEBAR_MARKERS) {
-      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
-      let node;
-      while ((node = walker.nextNode())) {
-        if (!node.textContent.includes(marker)) continue;
-        // テキストが見つかった → 非表示の祖先があるか確認
-        let el = node.parentElement;
+      const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+      let n;
+      while ((n = w.nextNode())) {
+        if (!n.textContent.includes(marker)) continue;
+        let el = n.parentElement;
         while (el && el !== document.body) {
           const cs = window.getComputedStyle(el);
           if (cs.display === "none" || cs.visibility === "hidden") return false;
           el = el.parentElement;
         }
-        return true; // 可視状態
+        return true;
       }
     }
-    return false; // マーカー未検出（ページが未読込など）
+    return false;
   }
 
-  // リアプロ自身の「検索条件を表示」ボタンをクリック
-  function clickShowConditionsBtn() {
+  function clickShowBtn() {
     if (!document.body) return false;
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
-    let node;
-    while ((node = walker.nextNode())) {
-      const text = node.textContent.trim();
-      if (!text.includes("検索条件を表示")) continue;
-      // ボタン自体が可視かチェック
-      let el = node.parentElement;
-      const cs = window.getComputedStyle(el);
-      if (cs.display === "none" || cs.visibility === "hidden") continue;
-      // クリック可能な要素を上に遡って探す
-      let target = el;
-      for (let i = 0; i < 6; i++) {
-        if (!target || target === document.body) break;
-        const tag = target.tagName.toLowerCase();
-        if (
-          tag === "a" || tag === "button" ||
-          target.onclick || target.getAttribute("onclick") ||
-          target.style.cursor === "pointer" ||
-          window.getComputedStyle(target).cursor === "pointer"
-        ) {
-          target.click();
+    const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+    let n;
+    while ((n = w.nextNode())) {
+      if (!n.textContent.trim().includes("検索条件を表示")) continue;
+      let el = n.parentElement;
+      if (window.getComputedStyle(el).display === "none") continue;
+      let t = el;
+      for (let i = 0; i < 6 && t && t !== document.body; t = t.parentElement, i++) {
+        if ("A BUTTON".includes(t.tagName) || t.onclick || t.getAttribute("onclick") ||
+            window.getComputedStyle(t).cursor === "pointer") {
+          t.click();
           return true;
         }
-        target = target.parentElement;
       }
-      // cursor が見つからなくても試しにクリック
       el.click();
       return true;
     }
     return false;
   }
 
-  // メイン処理：サイドバーが閉じていたら自動で開く
-  function fixSidebar() {
+  function fix() {
     if (!document.body) return;
-    if (!isSidebarVisible()) {
-      clickShowConditionsBtn();
-    }
+    if (!isSidebarVisible()) clickShowBtn();
   }
 
-  // window.innerWidth / outerWidth を常に1300px以上に見せる（JSによる非表示対策）
-  try {
-    const origInner = Object.getOwnPropertyDescriptor(Window.prototype, "innerWidth");
-    if (origInner && origInner.get) {
-      Object.defineProperty(window, "innerWidth", {
-        get: function () { return Math.max(origInner.get.call(window), 1300); },
-        configurable: true,
-      });
-    }
-  } catch (e) {}
-
-  try {
-    const origOuter = Object.getOwnPropertyDescriptor(Window.prototype, "outerWidth");
-    if (origOuter && origOuter.get) {
-      Object.defineProperty(window, "outerWidth", {
-        get: function () { return Math.max(origOuter.get.call(window), 1300); },
-        configurable: true,
-      });
-    }
-  } catch (e) {}
-
-  // Chromeサイドパネル開閉でresizeが発火 → 自動で「検索条件を表示」クリック
+  // resizeイベント（content scriptからも二重対策）
   window.addEventListener("resize", function () {
-    setTimeout(fixSidebar, 300);
-    setTimeout(fixSidebar, 800);
-    setTimeout(fixSidebar, 1500);
+    [200, 600, 1500].forEach(function (d) { setTimeout(fix, d); });
   });
 
-  // DOM変化を監視（リアプロがサイドバーを隠したら即再クリック）
-  let observerLock = false;
-  const observer = new MutationObserver(function () {
-    if (observerLock) return;
-    observerLock = true;
-    setTimeout(function () {
-      fixSidebar();
-      observerLock = false;
-    }, 200);
+  // MutationObserver（ループ防止ロック付き）
+  let lock = false;
+  const obs = new MutationObserver(function () {
+    if (lock) return;
+    lock = true;
+    setTimeout(function () { fix(); lock = false; }, 400);
   });
 
   function start() {
-    fixSidebar();
-    observer.observe(document.documentElement, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["style", "class"],
+    fix();
+    overrideHidingMQRules();
+    obs.observe(document.documentElement, {
+      childList: true, subtree: true,
+      attributes: true, attributeFilter: ["style", "class"],
     });
-    setInterval(fixSidebar, 3000);
+    setInterval(fix, 3000);
   }
 
   if (document.readyState === "loading") {
@@ -126,7 +170,7 @@
   }
 
   window.addEventListener("load", function () {
-    setTimeout(fixSidebar, 500);
-    setTimeout(fixSidebar, 1500);
+    overrideHidingMQRules();
+    [500, 1500, 3000].forEach(function (d) { setTimeout(fix, d); });
   });
 })();
