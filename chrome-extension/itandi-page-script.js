@@ -122,11 +122,21 @@
               // 全路線チェック完了 → 駅列描画待ち → 駅選択
               setTimeout(function () {
                 if (stNames.length) {
-                  stNames.forEach(function (sn) { clickLabel(sn); }); // 当駅＋前後駅を全選択
-                  setTimeout(function () {
-                    clickBtn("確定");
-                    setTimeout(callback || function () {}, 600);
-                  }, 600);
+                  // 駅選択もReact再描画対策で1駅ずつ順番にクリック（同期forEachだと当駅が戻る）
+                  var stIdx = 0;
+                  function clickNextStation() {
+                    if (stIdx >= stNames.length) {
+                      setTimeout(function () {
+                        clickBtn("確定");
+                        setTimeout(callback || function () {}, 600);
+                      }, 300);
+                      return;
+                    }
+                    clickLabel(stNames[stIdx]);
+                    stIdx++;
+                    setTimeout(clickNextStation, 300);
+                  }
+                  clickNextStation();
                 } else {
                   clickBtn("確定");
                   setTimeout(callback || function () {}, 600);

@@ -9,8 +9,8 @@
   const DRAG_H  = 28;
   const MIN_W   = 260;
   const MIN_H   = 300;
-  const INIT_W  = 360;
-  const INIT_H  = 520;
+  const INIT_W  = 540;
+  const INIT_H  = 780;
   const SK      = "aixlinx_state"; // sessionStorage key
 
   // ── 前回状態を復元 ────────────────────────────────────────────────
