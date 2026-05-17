@@ -34,13 +34,18 @@
     return t === n || t.includes(n);
   }
 
-  // label のみ（チェックボックス用）
+  // チェックボックス用：label クリック + 内部 input を直接クリック（React対応）
   function clickLabel(text) {
-    var found = [].slice.call(document.querySelectorAll("label")).find(function (l) {
+    var lbl = [].slice.call(document.querySelectorAll("label")).find(function (l) {
       return textMatch(l.textContent, text) && isVis(l);
     });
-    if (found) { found.click(); return true; }
-    return false;
+    if (!lbl) return false;
+    lbl.click(); // label クリック（標準HTML用）
+    // React チェックボックス対応：input を直接クリック
+    var inp = lbl.querySelector("input[type='checkbox']");
+    if (!inp && lbl.htmlFor) inp = document.getElementById(lbl.htmlFor);
+    if (inp && !inp.checked) inp.click();
+    return true;
   }
 
   // button のみ（完全一致のみ — 誤クリック防止）
@@ -68,15 +73,15 @@
     if (!wardName) { if (callback) callback(); return; }
     if (!clickBtn("所在地で絞り込み")) { if (callback) callback(); return; }
     setTimeout(function () {
-      clickAny("大阪府"); // ナビ要素（li/button）を対象に
+      clickAny("大阪府"); // ナビ要素（li/button）
       setTimeout(function () {
-        clickLabel(wardName); // チェックボックスのlabelのみ対象
+        clickLabel(wardName); // チェックボックス（label + input直接）
         setTimeout(function () {
           clickBtn("確定");
-          setTimeout(callback || function () {}, 500);
-        }, 500);
-      }, 500);
-    }, 700);
+          setTimeout(callback || function () {}, 600);
+        }, 600);
+      }, 700);
+    }, 800);
   }
 
   // 路線・駅モーダル: 路線・駅で絞り込み → 近畿 → 大阪府 → 路線チェック → 確定
@@ -84,18 +89,19 @@
     if (!lineNames || !lineNames.length) { if (callback) callback(); return; }
     if (!clickBtn("路線・駅で絞り込み")) { if (callback) callback(); return; }
     setTimeout(function () {
-      clickAny("近畿"); // ナビ要素（li/button）を対象に
+      clickAny("近畿"); // ナビ要素（li/button）
       setTimeout(function () {
-        clickAny("大阪府"); // ナビ要素（li/button）を対象に
+        clickAny("大阪府"); // ナビ要素（li/button）
         setTimeout(function () {
-          lineNames.forEach(function (line) { clickLabel(line); }); // チェックボックスのlabelのみ
+          // 路線リストが描画されてから各チェックボックスをクリック
+          lineNames.forEach(function (line) { clickLabel(line); });
           setTimeout(function () {
             clickBtn("確定");
-            setTimeout(callback || function () {}, 500);
-          }, 500);
-        }, 500);
-      }, 500);
-    }, 700);
+            setTimeout(callback || function () {}, 600);
+          }, 600);
+        }, 800); // 大阪府選択後、路線リスト描画を待つ
+      }, 600);
+    }, 800);
   }
 
   var STRUCTURE_MAP = {
