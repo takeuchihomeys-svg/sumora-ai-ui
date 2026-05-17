@@ -71,12 +71,24 @@
     return false;
   }
 
+  // モーダルナビタブ専用（完全一致）— 部分一致で誤クリックするのを防ぐ
+  // 例: "大阪府" を含む路線名ラベルを誤クリックしないよう、ナビタブは完全一致で探す
+  function clickNav(text) {
+    var n = norm(text);
+    var els = [].slice.call(document.querySelectorAll("li, button, a, span, div[role='button']"));
+    var found = els.find(function (el) {
+      return norm(el.textContent) === n && isVis(el);
+    });
+    if (found) { found.click(); return true; }
+    return false;
+  }
+
   // 所在地モーダル: 所在地で絞り込み → 大阪府 → 市区チェック → 確定
   function selectItandiArea(wardName, callback) {
     if (!wardName) { if (callback) callback(); return; }
     if (!clickBtn("所在地で絞り込み")) { if (callback) callback(); return; }
     setTimeout(function () {
-      clickAny("大阪府"); // ナビ要素（li/button）
+      clickNav("大阪府"); // ナビタブ（完全一致）
       setTimeout(function () {
         clickLabel(wardName); // チェックボックス（label + input直接）
         setTimeout(function () {
@@ -87,26 +99,27 @@
     }, 800);
   }
 
-  // 路線・駅モーダル: 路線・駅で絞り込み → 近畿 → 大阪府 → 路線チェック → 駅選択 → 確定
-  function selectItandiLines(lineNames, stationName, callback) {
+  // 路線・駅モーダル: 路線・駅で絞り込み → 近畿 → 大阪府 → 路線チェック → 駅選択（複数可）→ 確定
+  // stationNames: string[] — 「駅」なしの駅名リスト（広げて検索は最大3駅）
+  function selectItandiLines(lineNames, stationNames, callback) {
     if (!lineNames || !lineNames.length) { if (callback) callback(); return; }
     if (!clickBtn("路線・駅で絞り込み")) { if (callback) callback(); return; }
 
     // 駅名から「駅」サフィックスを除去（itandiラベルは「堺筋本町」のように「駅」なし）
-    var stName = stationName ? stationName.replace(/駅$/, "").trim() : null;
+    var stNames = (stationNames || []).map(function (s) { return s.replace(/駅$/, "").trim(); }).filter(Boolean);
 
     setTimeout(function () {
-      clickAny("近畿");
+      clickNav("近畿"); // ナビタブ（完全一致）
       setTimeout(function () {
-        clickAny("大阪府");
+        clickNav("大阪府"); // ナビタブ（完全一致）— 路線名ラベルと混同しないよう完全一致
         setTimeout(function () {
           // 路線リストが描画されてから各チェックボックスをクリック
           lineNames.forEach(function (line) { clickLabel(line); });
           setTimeout(function () {
-            // 駅名がある場合は駅列が表示されるのを待ってから選択（部分一致）
-            if (stName) {
+            // 駅名がある場合は駅列が表示されるのを待ってから全駅を選択（部分一致）
+            if (stNames.length) {
               setTimeout(function () {
-                clickLabel(stName); // textMatch 内で includes（部分一致）を使用
+                stNames.forEach(function (sn) { clickLabel(sn); }); // 当駅＋前後駅を全選択
                 setTimeout(function () {
                   clickBtn("確定");
                   setTimeout(callback || function () {}, 600);
@@ -191,7 +204,9 @@
       if (cond.ward_name) {
         selectItandiArea(cond.ward_name, doSearch);
       } else if (cond.itandi_lines && cond.itandi_lines.length) {
-        selectItandiLines(cond.itandi_lines, cond.station_name || null, doSearch);
+        // station_names（配列）優先、旧 station_name（文字列）にも後方互換
+        var stNames = cond.station_names || (cond.station_name ? [cond.station_name] : []);
+        selectItandiLines(cond.itandi_lines, stNames, doSearch);
       } else {
         doSearch();
       }

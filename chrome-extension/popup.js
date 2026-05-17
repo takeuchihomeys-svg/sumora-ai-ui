@@ -327,6 +327,27 @@ function findStationLines(areaText) {
   return STATION_LINE_MAP[normalized] || STATION_LINE_MAP[areaText] || null;
 }
 
+// STATION_LINE_MAP から路線ごとの駅順リストを導出（定義順 = 地理順）
+const LINE_STATION_ORDER = {};
+for (const [station, lines] of Object.entries(STATION_LINE_MAP)) {
+  for (const line of lines) {
+    if (!LINE_STATION_ORDER[line]) LINE_STATION_ORDER[line] = [];
+    if (!LINE_STATION_ORDER[line].includes(station)) LINE_STATION_ORDER[line].push(station);
+  }
+}
+
+// 当駅が属する路線上の前後各1駅を返す（重複なし）
+function getAdjacentStations(stationName, lines) {
+  const adj = new Set();
+  for (const line of (lines || [])) {
+    const order = LINE_STATION_ORDER[line] || [];
+    const idx = order.indexOf(stationName);
+    if (idx > 0) adj.add(order[idx - 1]);
+    if (idx >= 0 && idx < order.length - 1) adj.add(order[idx + 1]);
+  }
+  return [...adj];
+}
+
 // ── 市区コード（リアプロ city_code[]） ──────────────────────────────
 const WARD_CODE_MAP = {
   "大阪市都島区":"27102","大阪市福島区":"27103","大阪市此花区":"27104",
@@ -1033,6 +1054,16 @@ function openInstructions(siteKey) {
       });
       const wardName = isWardArea_itandi ? stationClean : (STATION_WARD_MAP[stationClean] || null);
 
+      // 駅名リスト（広げて検索：当駅＋前後各1駅、ピンポイント：当駅のみ）
+      let stationNames = null;
+      if (!isWardArea_itandi) {
+        stationNames = [stationClean];
+        if (searchMode === "wide") {
+          const adj = getAdjacentStations(stationClean, stationLines);
+          stationNames = [stationClean, ...adj]; // 当駅を先頭に前後駅を追加
+        }
+      }
+
       const conditions = {
         rent_max:        c.rent_max || c.max_rent || null,
         walk_minutes:    c.walk_minutes || null,
@@ -1044,7 +1075,7 @@ function openInstructions(siteKey) {
         preferences: c.preferences || c.notes || null,
         ward_name:    isWardArea_itandi ? wardName : null,
         itandi_lines: !isWardArea_itandi ? itandiLines : [],
-        station_name: !isWardArea_itandi ? stationClean : null,
+        station_names: stationNames, // 配列（広げて：最大3駅、ピンポイント：1駅）
       };
       chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
         if (!tabs[0]) return;
