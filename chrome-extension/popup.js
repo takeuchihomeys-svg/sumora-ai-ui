@@ -816,12 +816,11 @@ document.addEventListener("DOMContentLoaded", () => {
     // 起動時はミニ（52x52）で表示
     setMiniMode(true);
     notifyParent("collapse");
-    // ヘッダーをクリックでパネルを開く（ミニモード時のみ）
-    document.querySelector(".header").style.cursor = "pointer";
-    document.querySelector(".header").addEventListener("click", () => {
-      if (document.body.classList.contains("mini-mode")) {
+
+    // 親ページのドラッグオーバーレイがクリックを検出して展開指示を送ってくる
+    window.addEventListener("message", (e) => {
+      if (e.data?.from === "underbar-parent" && e.data?.action === "expand-from-parent") {
         setMiniMode(false);
-        notifyParent("expand");
       }
     });
   }
