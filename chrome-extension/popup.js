@@ -1020,14 +1020,18 @@ function openInstructions(siteKey) {
         "大阪モノレール彩都線":             "国際文化公園都市線(大阪モノレール彩都線)",
       };
 
-      const stationLines = !isWardArea ? (STATION_LINE_MAP[stationClean] || []) : [];
+      // STATION_LINE_MAPに収録済みなら必ず駅（「町」「村」が含まれていても駅名の場合がある）
+      const inStationMap = !!(STATION_LINE_MAP[stationClean]);
+      const isWardArea_itandi = !inStationMap && /[都道府県市区郡]/.test(stationClean);
+
+      const stationLines = !isWardArea_itandi ? (STATION_LINE_MAP[stationClean] || []) : [];
       // 配列値を flatMap で展開（近鉄難波・奈良線 → 2路線など）
       const itandiLines = stationLines.flatMap(l => {
         const v = ITANDI_LINE_MAP_FILL[l];
         if (!v) return [];
         return Array.isArray(v) ? v : [v];
       });
-      const wardName     = isWardArea ? stationClean : (STATION_WARD_MAP[stationClean] || null);
+      const wardName = isWardArea_itandi ? stationClean : (STATION_WARD_MAP[stationClean] || null);
 
       const conditions = {
         rent_max:        c.rent_max || c.max_rent || null,
@@ -1038,8 +1042,8 @@ function openInstructions(siteKey) {
           .split(/[,、・\/\.\s]+/).map(s => s.trim()).filter(Boolean),
         pet_ok:      /ペット|pet/i.test(c.preferences || c.notes || ""),
         preferences: c.preferences || c.notes || null,
-        ward_name:   isWardArea ? wardName : null,
-        itandi_lines: !isWardArea ? itandiLines : [],
+        ward_name:    isWardArea_itandi ? wardName : null,
+        itandi_lines: !isWardArea_itandi ? itandiLines : [],
       };
       chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
         if (!tabs[0]) return;
