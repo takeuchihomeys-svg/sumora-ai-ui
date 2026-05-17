@@ -1,64 +1,75 @@
 "use strict";
 
-// リアプロ 左サイドバー強制表示スクリプト v6
+// リアプロ 左サイドバー強制表示スクリプト v7
+// 「検索条件を表示」ボタンを自動クリックするアプローチ
 (function () {
   const SIDEBAR_MARKERS = ["リスト検索", "所在地絞り込み", "沿線・駅絞り込み", "管理会社絞り込み"];
 
-  // 要素の種類に合った display 値を返す（td に block を設定するとテーブルが崩れる）
-  function correctDisplay(el) {
-    const tag = el.tagName.toLowerCase();
-    if (tag === "td" || tag === "th") return "table-cell";
-    if (tag === "tr") return "table-row";
-    if (tag === "thead" || tag === "tbody" || tag === "tfoot") return "table-row-group";
-    if (tag === "colgroup" || tag === "col") return "table-column";
-    if (tag === "table") return "table";
-    if (tag === "li") return "list-item";
-    return "block";
-  }
-
-  // bodyまで全遡り → 最上位の隠し祖先を特定して正しい display で表示
-  function forceShowSidebar() {
-    if (!document.body) return;
-
+  // サイドバーが現在表示されているか確認
+  function isSidebarVisible() {
+    if (!document.body) return false;
     for (const marker of SIDEBAR_MARKERS) {
-      const walker = document.createTreeWalker(
-        document.body, NodeFilter.SHOW_TEXT, null, false
-      );
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
       let node;
       while ((node = walker.nextNode())) {
         if (!node.textContent.includes(marker)) continue;
-
-        // bodyまで全階層を遡り、最上位の非表示要素を特定
-        let topHidden = null;
+        // テキストが見つかった → 非表示の祖先があるか確認
         let el = node.parentElement;
-        while (el && el !== document.body && el !== document.documentElement) {
+        while (el && el !== document.body) {
           const cs = window.getComputedStyle(el);
-          if (
-            cs.display === "none" ||
-            cs.visibility === "hidden" ||
-            cs.opacity === "0" ||
-            parseFloat(cs.width) < 1
-          ) {
-            topHidden = el;
-          }
+          if (cs.display === "none" || cs.visibility === "hidden") return false;
           el = el.parentElement;
         }
-
-        if (topHidden) {
-          // td/tr/table などテーブル要素は正しい display 値で復元
-          const dispVal = correctDisplay(topHidden);
-          topHidden.style.setProperty("display", dispVal, "important");
-          topHidden.style.setProperty("visibility", "visible", "important");
-          topHidden.style.setProperty("opacity", "1", "important");
-          topHidden.style.setProperty("width", "auto", "important");
-          topHidden.style.setProperty("overflow", "visible", "important");
-        }
-        return;
+        return true; // 可視状態
       }
+    }
+    return false; // マーカー未検出（ページが未読込など）
+  }
+
+  // リアプロ自身の「検索条件を表示」ボタンをクリック
+  function clickShowConditionsBtn() {
+    if (!document.body) return false;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+    let node;
+    while ((node = walker.nextNode())) {
+      const text = node.textContent.trim();
+      if (!text.includes("検索条件を表示")) continue;
+      // ボタン自体が可視かチェック
+      let el = node.parentElement;
+      const cs = window.getComputedStyle(el);
+      if (cs.display === "none" || cs.visibility === "hidden") continue;
+      // クリック可能な要素を上に遡って探す
+      let target = el;
+      for (let i = 0; i < 6; i++) {
+        if (!target || target === document.body) break;
+        const tag = target.tagName.toLowerCase();
+        if (
+          tag === "a" || tag === "button" ||
+          target.onclick || target.getAttribute("onclick") ||
+          target.style.cursor === "pointer" ||
+          window.getComputedStyle(target).cursor === "pointer"
+        ) {
+          target.click();
+          return true;
+        }
+        target = target.parentElement;
+      }
+      // cursor が見つからなくても試しにクリック
+      el.click();
+      return true;
+    }
+    return false;
+  }
+
+  // メイン処理：サイドバーが閉じていたら自動で開く
+  function fixSidebar() {
+    if (!document.body) return;
+    if (!isSidebarVisible()) {
+      clickShowConditionsBtn();
     }
   }
 
-  // window.innerWidth / outerWidth を常に1300px以上に見せる
+  // window.innerWidth / outerWidth を常に1300px以上に見せる（JSによる非表示対策）
   try {
     const origInner = Object.getOwnPropertyDescriptor(Window.prototype, "innerWidth");
     if (origInner && origInner.get) {
@@ -79,26 +90,33 @@
     }
   } catch (e) {}
 
-  // Chromeサイドパネルを開くとresizeが発火 → 発火後に強制再表示
+  // Chromeサイドパネル開閉でresizeが発火 → 自動で「検索条件を表示」クリック
   window.addEventListener("resize", function () {
-    setTimeout(forceShowSidebar, 100);
-    setTimeout(forceShowSidebar, 400);
-    setTimeout(forceShowSidebar, 1000);
-    setTimeout(forceShowSidebar, 2000);
+    setTimeout(fixSidebar, 300);
+    setTimeout(fixSidebar, 800);
+    setTimeout(fixSidebar, 1500);
   });
 
-  // DOM変化・style/class属性変更を監視して即座に再表示
-  const observer = new MutationObserver(forceShowSidebar);
+  // DOM変化を監視（リアプロがサイドバーを隠したら即再クリック）
+  let observerLock = false;
+  const observer = new MutationObserver(function () {
+    if (observerLock) return;
+    observerLock = true;
+    setTimeout(function () {
+      fixSidebar();
+      observerLock = false;
+    }, 200);
+  });
 
   function start() {
-    forceShowSidebar();
+    fixSidebar();
     observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
       attributes: true,
       attributeFilter: ["style", "class"],
     });
-    setInterval(forceShowSidebar, 2000);
+    setInterval(fixSidebar, 3000);
   }
 
   if (document.readyState === "loading") {
@@ -107,9 +125,8 @@
     start();
   }
 
-  window.addEventListener("load", forceShowSidebar);
-  setTimeout(forceShowSidebar, 300);
-  setTimeout(forceShowSidebar, 800);
-  setTimeout(forceShowSidebar, 2000);
-  setTimeout(forceShowSidebar, 4000);
+  window.addEventListener("load", function () {
+    setTimeout(fixSidebar, 500);
+    setTimeout(fixSidebar, 1500);
+  });
 })();
