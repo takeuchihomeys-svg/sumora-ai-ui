@@ -89,6 +89,8 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 | 2026-05-17 | アンダーバーモード実装（リアプロでviewport幅を狭めない固定バー）v1.3.0 |
 | 2026-05-17 | content.css追加（manifest css注入でCSSが文字列として表示されるバグを修正） |
 | 2026-05-17 | Supabase PAT誤コミット → トークン失効・.gitignore更新で対応済み |
+| 2026-05-17 | フローティングミニボタン実装（左上52×52px、ドラッグ移動・リサイズ対応）v1.3.5 |
+| 2026-05-17 | ⚡リアプロ自動入力ボタン実装 v1.3.6〜1.3.9 |
 
 ---
 
@@ -118,14 +120,55 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 
 ---
 
+## ⚡ リアプロ自動入力機能（v1.3.9 完成）
+
+ボタン1つでリアプロの検索フォームにお客さんの条件を自動入力する機能。
+**アンダーバーモード（フローティングパネル）限定**。サイドパネルでは非表示。
+
+### 自動入力される項目
+| 条件 | リアプロフォーム | 備考 |
+|---|---|---|
+| 希望エリア（駅名） | route_id[]（沿線）+ city_code[]（市区） | STATION_LINE_MAP→LINE_ROUTE_MAP で変換 |
+| 希望エリア（市区名） | city_code[]（市区） | WARD_CODE_MAP で変換 |
+| 賃料上限 | rental_cost2 (SELECT) | 最近似値に丸める |
+| 賃料下限 | rental_cost1 (SELECT) | 最近似値に丸める |
+| 徒歩分数 | transportation_id=1 + required_time | 自動で「徒歩」を選択 |
+| 築年数 | structured_date (SELECT) | 最近似値（切り上げ）|
+| 間取り | room_layout_id[] (checkbox) | ドット区切り対応済み（"1DK.1LDK.2K"→各チェック）|
+
+### フォームフィールド調査結果（2026-05-17実測）
+- `rental_cost1/2`: 20000〜1000000円（5000円刻み〜）
+- `transportation_id`: 1=徒歩, 2=バス, 3=自動車
+- `structured_date`: -1/1/3/5/7/10/15/20/25/30/35/40/45/50年
+- `room_layout_id[]`: 1=ワンルーム, 3=1K, 4=1DK, 6=1LDK, 7=2K, 8=2DK, 9=2LDK...
+- 間取りデータの区切り文字: ドット（`.`）例：「1DK.1LDK.2K」
+
+### 実装ファイル
+| ファイル | 役割 |
+|---|---|
+| `popup.js` | WARD_CODE_MAP・LINE_ROUTE_MAP・buildAreaRouteCodes・自動入力ボタン |
+| `page-script.js` | fillRealpro関数（フォーム値セット・チェックボックスclick）|
+| `underbar.js` | autofillアクション受信→window.postMessageでpage-scriptに転送 |
+| `popup.html` | ⚡ボタンのHTML |
+| `styles.css` | ⚡ボタンのスタイル（オレンジ→緑に変化） |
+
+### メッセージフロー
+```
+popup.js → window.parent.postMessage({action:"autofill", conditions}) → underbar.js
+underbar.js → window.postMessage({from:"aixlinx-fill", conditions}) → page-script.js
+page-script.js → fillRealpro(conditions) → フォーム各要素に直接セット
+```
+
+---
+
 ## 📋 調整中・保留事項
 
 | 項目 | 内容 | 優先度 |
 |---|---|---|
-| リアプロの詳細条件 | 家賃・間取り・築年数の実際の入力UIを未確認 | 高 |
 | itandi手順 | 実際の画面で手順を検証・調整が必要 | 中 |
 | レインズ手順 | 実際の画面で手順を検証・調整が必要 | 中 |
 | 駅マッピング追加 | 兵庫・京都・奈良方面の駅が未収録 | 低 |
+| 自動入力後の検索実行 | 現状は条件入力のみ・検索ボタンは手動 | 低 |
 
 ---
 
