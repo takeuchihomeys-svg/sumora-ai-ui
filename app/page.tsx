@@ -29,7 +29,7 @@ type Conversation = {
 };
 
 type SupabaseConversationRow = {
-  id: number;
+  id: string;
   customer_name: string | null;
   status: string | null;
   line_user_id: string;
@@ -40,8 +40,8 @@ type SupabaseConversationRow = {
 };
 
 type SupabaseMessageRow = {
-  id: number;
-  conversation_id: number;
+  id: string;
+  conversation_id: string;
   sender: "customer" | "staff";
   text: string;
   image_url?: string | null;
@@ -575,7 +575,7 @@ export default function Home() {
           status: nextStatus,
           updated_at: new Date().toISOString(),
         })
-        .eq("id", Number(selectedConversation.id));
+        .eq("id", selectedConversation.id);
 
       if (updateError) throw updateError;
 
@@ -759,7 +759,7 @@ export default function Home() {
         const { data: textRow, error: textInsertError } = await supabase
           .from("messages")
           .insert({
-            conversation_id: Number(selectedConversation.id),
+            conversation_id: selectedConversation.id,
             sender: "staff",
             text: textToSend,
             created_at: now.toISOString(),
@@ -782,7 +782,7 @@ export default function Home() {
         const { data: imgRow, error: imgInsertError } = await supabase
           .from("messages")
           .insert({
-            conversation_id: Number(selectedConversation.id),
+            conversation_id: selectedConversation.id,
             sender: "staff",
             text: "[画像]",
             image_url: imageUrlData,
@@ -804,7 +804,7 @@ export default function Home() {
       await supabase
         .from("conversations")
         .update({ last_message: lastText, last_sender: "staff", updated_at: now.toISOString() })
-        .eq("id", Number(selectedConversation.id));
+        .eq("id", selectedConversation.id);
 
       setConversations((prev) =>
         prev
@@ -899,7 +899,7 @@ export default function Home() {
       const { data: imgRow, error: imgError } = await supabase
         .from("messages")
         .insert({
-          conversation_id: Number(selectedConversation.id),
+          conversation_id: selectedConversation.id,
           sender: "staff",
           text: "[画像]",
           image_url: imageUrl,
@@ -921,7 +921,7 @@ export default function Home() {
       const { data: insertedRows, error: insertError } = await supabase
         .from("messages")
         .insert({
-          conversation_id: Number(selectedConversation.id),
+          conversation_id: selectedConversation.id,
           sender: "staff",
           text: text.trim(),
           created_at: now.toISOString(),
@@ -941,7 +941,7 @@ export default function Home() {
     await supabase
       .from("conversations")
       .update({ last_message: lastText, updated_at: now.toISOString() })
-      .eq("id", Number(selectedConversation.id));
+      .eq("id", selectedConversation.id);
 
     setConversations((prev) =>
       prev

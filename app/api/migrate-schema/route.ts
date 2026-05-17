@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 const SQL = `
 -- conversations テーブル（LINEトーク一覧）
 CREATE TABLE IF NOT EXISTS conversations (
-  id BIGINT PRIMARY KEY,
+  id TEXT PRIMARY KEY,
   customer_name TEXT,
   status TEXT DEFAULT 'first_reply',
   line_user_id TEXT NOT NULL,
@@ -21,8 +21,8 @@ ALTER TABLE conversations DISABLE ROW LEVEL SECURITY;
 
 -- messages テーブル（LINEメッセージ）
 CREATE TABLE IF NOT EXISTS messages (
-  id BIGINT PRIMARY KEY,
-  conversation_id BIGINT NOT NULL,
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  conversation_id TEXT NOT NULL,
   sender TEXT NOT NULL CHECK (sender IN ('customer', 'staff')),
   text TEXT NOT NULL DEFAULT '',
   image_url TEXT,
