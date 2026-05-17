@@ -93,7 +93,7 @@
     }
     if (cond.building_age) setSelVal("structured_date", nearestUp(AGE_OPTS, cond.building_age));
     if (cond.floor_plan) {
-      var plans = cond.floor_plan.split(/[,、・\/\s]+/).map(function(s){return s.trim();}).filter(Boolean);
+      var plans = cond.floor_plan.split(/[,、・\/\.\s]+/).map(function(s){return s.trim();}).filter(Boolean);
       var vals = plans.map(function(p){return FLOOR_MAP[p];}).filter(Boolean);
       if (vals.length) setCheckboxes("room_layout_id[]", vals);
     }
