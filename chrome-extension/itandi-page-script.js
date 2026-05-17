@@ -126,12 +126,17 @@
       tick(document.querySelector('input[name="option_id:all_in"][id="11010"]'));
     }
 
-    // 所在地 or 路線・駅モーダル（フィールド入力後に実行）
+    // 所在地 or 路線・駅モーダル → 最後に検索ボタン自動クリック
     setTimeout(function () {
+      function doSearch() {
+        setTimeout(function () { clickBtn("検索"); }, 500);
+      }
       if (cond.ward_name) {
-        selectItandiArea(cond.ward_name);
+        selectItandiArea(cond.ward_name, doSearch);
       } else if (cond.itandi_lines && cond.itandi_lines.length) {
-        selectItandiLines(cond.itandi_lines);
+        selectItandiLines(cond.itandi_lines, doSearch);
+      } else {
+        doSearch();
       }
     }, 300);
   }

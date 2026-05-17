@@ -10,15 +10,24 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 お客さんの条件に合わせてリアプロ・itandi・レインズの検索手順を正確にアナウンスする。
 
 **管轄ファイル**:
-- `chrome-extension/popup.js` — メインロジック・検索手順定義
-- `chrome-extension/popup.html` — UI
-- `chrome-extension/styles.css` — スタイル
-- `chrome-extension/background.js` — サイドパネル設定
-- `chrome-extension/manifest.json` — 拡張設定
+| ファイル | 役割 |
+|--------|------|
+| `chrome-extension/popup.js` | メインロジック・検索手順定義・STATION_LINE_MAP・STATION_WARD_MAP |
+| `chrome-extension/popup.html` | 拡張ツールUI |
+| `chrome-extension/styles.css` | スタイル |
+| `chrome-extension/background.js` | サイドパネル設定 |
+| `chrome-extension/manifest.json` | 拡張設定・バージョン管理 |
+| `chrome-extension/page-script.js` | リアプロフォーム自動入力（ページコンテキスト） |
+| `chrome-extension/underbar.js` | リアプロ画面下部固定バー（iframe注入） |
+| `chrome-extension/content.js` | リアプロコンテンツスクリプト（viewport制御） |
+| `chrome-extension/content.css` | リアプロUI補正CSS |
+| `chrome-extension/bulk-dl.js` | リアプロ印刷用PDF一括DLバー |
+| `chrome-extension/itandi-content.js` | itandi BBコンテンツスクリプト（メッセージ受信・ページスクリプト注入） |
+| `chrome-extension/itandi-page-script.js` | itandi BBフォーム自動入力（ページコンテキスト） |
 
 ---
 
-## 🖥️ 表示モード（2026-05-17 アンダーバー実装）
+## 🖥️ 表示モード（2026-05-17 確立）
 
 ### アンダーバーモード（リアプロ専用）
 - リアプロ（realnetpro.com）を開くと画面下部に固定バーとして自動表示
@@ -26,31 +35,28 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 - 高さ: 折りたたみ 54px ↔ 展開 480px（アニメーション付き）
 - **サイドパネルと異なりviewport幅を狭めない** → リアプロの左サイドバーが消えない
 - ヘッダーのロゴクリック or トグルボタンで展開/折りたたみ
-- view-listでcollapse、view-site/view-instructionsでexpandを自動送信
+- ヘッダー右に折りたたみボタン（chevron）＋更新ボタン
 
-### サイドパネルモード（リアプロ以外）
+### サイドパネルモード（itandi・レインズ等）
 - Chrome拡張アイコンクリックでサイドパネルとして通常起動
+- itandi BBではサイドパネルで「⚡ itandiに自動入力」ボタンが表示される
 
-### アンダーバー実装ファイル
-| ファイル | 役割 |
-|--------|------|
-| `chrome-extension/underbar.js` | ページにiframe固定注入・高さ制御 |
-| `chrome-extension/content.js` | リアプロ左サイドバー維持（viewport幅override等） |
-| `chrome-extension/content.css` | リアプロUI補正CSS（manifestのcssフィールドで注入） |
-
-### popup.js アンダーバー対応
-- `window.self !== window.top` でiframe内かどうか検出
-- `window.parent.postMessage({from:"aixlinx-underbar", action})` でheight制御
+### isUnderbar 判定
+- `window.self !== window.top` → true でアンダーバーモード
+- リアプロ自動入力ボタンは `isUnderbar && siteKey === "realpro"` のときのみ表示
+- itandi自動入力ボタンは `!isUnderbar && siteKey === "itandi"` のときのみ表示
 
 ---
 
-## 🗺️ 現在の機能（2026-05-17時点）
+## 🗺️ 現在の機能（2026-05-18 時点）
 
-### 検索モード
+### 検索モード（v1.4.0〜）
 | モード | 説明 |
 |---|---|
 | 🎯 ピンポイント | 条件ぴったりで検索 |
 | 🔎 広げて検索 | 家賃・エリア・広さを緩めて検索 |
+
+※ モード切替はサイト選択後（view-instructions）に表示。以前はサイト選択前にあったが移動。
 
 ### 広げて検索のルール
 | 項目 | ルール |
@@ -73,6 +79,9 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 広げて検索時に所在地絞り込み用の市区を自動表示。
 例: 堺筋本町 → 大阪市中央区
 
+**収録済み駅数**: 約150駅（大阪府主要駅）
+**最終検証日**: 2026-05-18
+
 ---
 
 ## 🔧 実装済みの改善履歴
@@ -88,9 +97,19 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 | 2026-05-17 | 広げて検索時の所在地アナウンス追加 |
 | 2026-05-17 | アンダーバーモード実装（リアプロでviewport幅を狭めない固定バー）v1.3.0 |
 | 2026-05-17 | content.css追加（manifest css注入でCSSが文字列として表示されるバグを修正） |
-| 2026-05-17 | Supabase PAT誤コミット → トークン失効・.gitignore更新で対応済み |
-| 2026-05-17 | フローティングミニボタン実装（左上52×52px、ドラッグ移動・リサイズ対応）v1.3.5 |
+| 2026-05-17 | フローティングミニボタン実装（左上52×52px）v1.3.5 |
 | 2026-05-17 | ⚡リアプロ自動入力ボタン実装 v1.3.6〜1.3.9 |
+| 2026-05-17 | ピンポイント/広げて検索をサイト選択後に移動・折りたたみボタン追加 v1.4.0 |
+| 2026-05-17 | 一時調整フォームに構造・ペット相談フィールド追加 v1.4.0 |
+| 2026-05-17 | 賃料一時調整のステップを1000円単位に変更 v1.4.0 |
+| 2026-05-17 | リアプロpage-script.jsに構造(structured_type[])・ペット相談(eq_rm[]=113)自動入力追加 |
+| 2026-05-17 | bulk-dl.js: リアプロ印刷用PDF一括ダウンロード機能追加（フローティングバー）|
+| 2026-05-17 | 駅・沿線マッピング精度向上（阪神・おおさか東線・モノレール・近鉄南大阪線等追加） |
+| 2026-05-17 | 三国ヶ丘の路線マッピングバグ修正（大阪環状線→阪和線）|
+| 2026-05-17 | itandi BB手順を実際のDevTools調査に基づき精度向上（ITANDI_LINE_MAP追加）v1.4.6 |
+| 2026-05-17 | itandi BB自動入力機能追加（賃料・徒歩・間取り・構造・ペット）v1.4.7 |
+| 2026-05-17 | itandi BB所在地・路線自動選択追加（モーダル自動操作）v1.4.8 |
+| 2026-05-18 | itandi BB 検索ボタン自動クリック追加（条件入力→検索まで全自動）v1.4.9 |
 
 ---
 
@@ -102,73 +121,101 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 | **#43-SZ** | **鈴木AI分身**（実装・運用・実行の右腕） |
 | **#43-SM** | **スモ山分身**（部署全体統括・メンバー調整） |
 | #43 部長 | 全体統括・手順精度・記録監督 |
-| #43-R | 各サイトUI調査・手順アップデート |
-| #43-UX | UI/UX改善・表示設計 |
 | #43-T | テスト・動作確認 |
 | #43-B | バグ根本原因特定 |
 | #43-KN | 駅→沿線・市区マッピング管理・拡充 |
-| #43-V | 実サイト現地検証・UI変更追跡 |
-| #43-RP | **リアプロ専任**（最重要・所在地/沿線/ピンポイント/広げて管理） |
-| #43-IT | itandi BB手順専任整備 |
-| #43-RN | レインズ手順専任整備 |
-| #43-S | セッション引き継ぎ・保留事項追跡 |
+| #43-RP | **リアプロ専任**（最重要・所在地/沿線/自動入力管理） |
+| #43-IT | **itandi BB専任**（手順整備・自動入力実装済み） |
+| #43-RN | レインズ手順専任整備（未着手） |
 | #43-W | 第1倉庫管理人（dept_search_tool.md 一次記録） |
-| #43-W2 | 第2倉庫管理人（バックアップ・二重確認・断絶時代行） |
-
-**収録済み駅数**: 約130駅（大阪府主要駅）
-**最終検証日**: 2026-05-17（リアプロ 沿線設定画面をスクリーンショットで確認）
+| #43-W2 | 第2倉庫管理人（バックアップ・断絶時代行） |
 
 ---
 
-## ⚡ リアプロ自動入力機能（v1.3.9 完成）
+## ⚡ リアプロ自動入力機能（v1.4.0 完成）
 
 ボタン1つでリアプロの検索フォームにお客さんの条件を自動入力する機能。
-**アンダーバーモード（フローティングパネル）限定**。サイドパネルでは非表示。
+**アンダーバーモード（フローティングパネル）限定**。
 
 ### 自動入力される項目
-| 条件 | リアプロフォーム | 備考 |
-|---|---|---|
-| 希望エリア（駅名） | route_id[]（沿線）+ city_code[]（市区） | STATION_LINE_MAP→LINE_ROUTE_MAP で変換 |
-| 希望エリア（市区名） | city_code[]（市区） | WARD_CODE_MAP で変換 |
-| 賃料上限 | rental_cost2 (SELECT) | 最近似値に丸める |
-| 賃料下限 | rental_cost1 (SELECT) | 最近似値に丸める |
-| 徒歩分数 | transportation_id=1 + required_time | 自動で「徒歩」を選択 |
-| 築年数 | structured_date (SELECT) | 最近似値（切り上げ）|
-| 間取り | room_layout_id[] (checkbox) | ドット区切り対応済み（"1DK.1LDK.2K"→各チェック）|
-
-### フォームフィールド調査結果（2026-05-17実測）
-- `rental_cost1/2`: 20000〜1000000円（5000円刻み〜）
-- `transportation_id`: 1=徒歩, 2=バス, 3=自動車
-- `structured_date`: -1/1/3/5/7/10/15/20/25/30/35/40/45/50年
-- `room_layout_id[]`: 1=ワンルーム, 3=1K, 4=1DK, 6=1LDK, 7=2K, 8=2DK, 9=2LDK...
-- 間取りデータの区切り文字: ドット（`.`）例：「1DK.1LDK.2K」
-
-### 実装ファイル
-| ファイル | 役割 |
+| 条件 | リアプロフォーム |
 |---|---|
-| `popup.js` | WARD_CODE_MAP・LINE_ROUTE_MAP・buildAreaRouteCodes・自動入力ボタン |
-| `page-script.js` | fillRealpro関数（フォーム値セット・チェックボックスclick）|
-| `underbar.js` | autofillアクション受信→window.postMessageでpage-scriptに転送 |
-| `popup.html` | ⚡ボタンのHTML |
-| `styles.css` | ⚡ボタンのスタイル（オレンジ→緑に変化） |
+| 希望エリア（駅名）| route_id[]（沿線）+ city_code[]（市区） |
+| 希望エリア（市区名）| city_code[]（市区） |
+| 賃料上限 | rental_cost2 (SELECT) |
+| 賃料下限 | rental_cost1 (SELECT) |
+| 徒歩分数 | transportation_id=1 + required_time |
+| 築年数 | structured_date (SELECT) |
+| 間取り | room_layout_id[] (checkbox) |
+| 構造 | structured_type[] (checkbox) |
+| ペット相談 | eq_rm[]=113 (checkbox) |
+
+### 一時調整フォーム（adj-form）
+アンダーバーモードでリアプロ選択時に表示。DBを変更せず一時的に条件を調整できる。
+項目: エリア / 賃料上限（1000円刻み）/ 徒歩 / 築年数 / 間取り / 構造 / ペット相談チェック
+
+---
+
+## ⚡ itandi BB自動入力機能（v1.4.9 完成）
+
+ボタン1つでitandi BBの検索フォームに条件入力→検索まで全自動。
+**サイドパネルモード限定**（itandibb.com を開いている状態）。
+
+### 自動入力される項目
+| 条件 | itandiフォーム |
+|---|---|
+| 賃料上限 | `rent:lteq`（万円単位に変換）|
+| 管理費込み | `totalRentCheck`（常にチェック）|
+| 駅徒歩 | `station_walk_minutes:lteq` |
+| 築年数 | `building_age:lteq` |
+| 間取り | `room_layout:in`（1R〜5K_OVER）|
+| 構造 | `structure_type:in`（wooden/rc/src/steel等）|
+| ペット相談 | `option_id:all_in[22010]` |
+| バス・トイレ別 | `option_id:all_in[11010]`（preferences検出時）|
+| 所在地 | 「所在地で絞り込み」モーダル（市区名指定時）|
+| 路線 | 「路線・駅で絞り込み」モーダル（駅名指定時）|
+| 検索実行 | 「検索」ボタン自動クリック（全入力完了後）|
+
+### desired_area の判定ロジック
+- 市区名（大阪市北区等）→ 所在地モーダル（大阪府 → 市区選択 → 確定）
+- 駅名（梅田等）→ STATION_LINE_MAP → ITANDI_LINE_MAP_FILL で変換 → 路線モーダル
+
+### ITANDI_LINE_MAP_FILL（リアプロ路線名 → itandi正式路線名）
+DevTools実測に基づく正式名称を使用。大阪メトロは「高速電気軌道第N号線(大阪メトロ〇〇線)」形式（半角カッコ）。
 
 ### メッセージフロー
 ```
-popup.js → window.parent.postMessage({action:"autofill", conditions}) → underbar.js
-underbar.js → window.postMessage({from:"aixlinx-fill", conditions}) → page-script.js
-page-script.js → fillRealpro(conditions) → フォーム各要素に直接セット
+popup.js（サイドパネル）
+  → chrome.tabs.sendMessage({ type: "axlx-itandi-autofill", conditions })
+  → itandi-content.js（コンテンツスクリプト）
+  → itandi-page-script.js を<script>タグで注入
+  → CustomEvent "axlx-itandi-fill" で conditions を転送
+  → fill(cond) → フォーム入力 → モーダル操作 → 検索ボタンクリック
 ```
+
+---
+
+## 📦 bulk-dl.js（リアプロ一括PDFダウンロード）
+
+リアプロの物件一覧に各物件の「印刷用PDF」ボタン横にチェックボックスを注入。
+フローティングバー（右下固定）から一括DLできる。
+
+- チェックボックス: `.axlx-cb` クラス
+- フローティングバー: `#axlx-bar`（全選択/全解除 + 一括DLボタン）
+- 1.8秒間隔でPDFを順番にDL（ブラウザのダウンロード制限回避）
+- MutationObserverで動的ページ変化に追従
 
 ---
 
 ## 📋 調整中・保留事項
 
-| 項目 | 内容 | 優先度 |
-|---|---|---|
-| itandi手順 | 実際の画面で手順を検証・調整が必要 | 中 |
-| レインズ手順 | 実際の画面で手順を検証・調整が必要 | 中 |
-| 駅マッピング追加 | 兵庫・京都・奈良方面の駅が未収録 | 低 |
-| 自動入力後の検索実行 | 現状は条件入力のみ・検索ボタンは手動 | 低 |
+| 項目 | 内容 | 優先度 | 状態 |
+|---|---|---|---|
+| レインズ手順 | 実際の画面で手順を検証・調整が必要 | 中 | 未着手 |
+| 駅マッピング追加 | 兵庫・京都・奈良方面の駅が未収録 | 低 | 未着手 |
+| リアプロ自動入力後の検索実行 | 現状は条件入力のみ・検索ボタンは手動 | 低 | 未着手 |
+| itandi大阪モノレール路線名確認 | 60件制限でモーダル取得できず。「大阪モノレール線」で動くか未確認 | 低 | 未確認 |
+| itandi自動入力タイミング調整 | setTimeout値が実際の画面速度に合っているか未確認 | 中 | テスト待ち |
 
 ---
 
@@ -184,25 +231,15 @@ page-script.js → fillRealpro(conditions) → フォーム各要素に直接セ
 5. 「検索」ボタン
 ```
 
-**リアプロで確認されている沿線一覧（大阪府）**:
-JR東西線 / 大阪市高速軌道谷町線 / 大阪環状線 / 片町線 / 大阪市高速軌道長堀鶴見緑地線 /
-京阪電気鉄道京阪線 / 阪神電鉄本線 / 大阪市高速軌道千日前線 / 桜島線 / 阪神電鉄阪神なんば線 /
-大阪市高速軌道中央線 / 大阪市高速軌道四つ橋線 / 近鉄大阪線 / 近鉄難波・奈良線 / 関西本線 /
-阪和線 / 大阪市高速軌道御堂筋線 / 南海電鉄汐見橋線 / 阪堺電気軌道阪堺線 / 南海電鉄南本線 /
-南海電鉄高野線 / 大阪市高速軌道堺筋線 / 阪急電鉄京都線 / 阪急電鉄千里線 /
-大阪市高速軌道今里筋線 / おおさか東線 / 近鉄南大阪線 / 阪堺電気軌道上町線 /
-阪急電鉄神戸線 / 阪急電鉄宝塚線 / 大阪市高速軌道南港ポートタウン線 / 福知山線 /
-京阪電気鉄道中之島線 / 南海電鉄泉北線 / 大阪モノレール本線 / 北大阪急行南北線 /
-阪急電鉄箕面線 / 大阪モノレール彩都線 / 南海電鉄空港線 / 近鉄長野線 / 能勢電鉄 他
-
 ---
 
 ## 🔁 引き継ぎ事項（次セッションへ）
 
+- 現在のバージョン: **v1.4.9**
 - 拡張ツールはChromeに手動インストール済み（開発者モード）
 - 変更後は chrome://extensions で再読み込み必要
-- Vercelへの反映は不要（拡張はローカルファイル参照）
 - GitHub push → ローカルで git pull → Chrome再読み込み の流れ
-- **v1.3.0 アンダーバー実装済み**（git push 済み・竹内悠馬が拡張再読み込みしてテスト予定）
-- リアプロ開くと画面下部にAIXLINXバーが出るはず（54px固定→クリックで480px展開）
-- サイドパネルは引き続き非リアプロサイト用として動作
+- **itandi自動入力・所在地/路線モーダル・検索ボタン自動クリックが実装済み（v1.4.9）**
+- itandibb.com でサイドパネルを開いてお客さん選択 → itandi選択 → ⚡ボタン → 全自動で動くはず
+- タイミング（setTimeout）が合わない場合は値を調整すること（600ms/400ms/500ms）
+- レインズ手順整備が次の大きな課題
