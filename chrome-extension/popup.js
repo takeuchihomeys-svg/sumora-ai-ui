@@ -14,8 +14,8 @@ const SITE_CONFIG = {
   realpro: {
     name: "リアプロ",
     icon: "🏠",
-    steps: (c) => {
-      const d = buildCondData(c);
+    steps: (c, mode = "pinpoint") => {
+      const d = buildCondData(c, mode);
       const areaText = d.area || "";
       const isStation = /駅|線/.test(areaText);
       const isLocation = /市|区|町|村|府|県|都/.test(areaText);
@@ -25,27 +25,27 @@ const SITE_CONFIG = {
       // ── STEP 1: エリア絞り込み（所在地 or 沿線で分岐） ──
       if (areaText) {
         if (isStation && !isLocation) {
-          // 沿線・駅パターン
           steps.push({
             num: n++,
             field: "【沿線・駅】絞り込み",
             value: areaText,
+            note: d.isWide ? "広げて：隣の駅も含めて複数駅を選択する" : null,
             hint: "左メニュー「沿線・駅絞り込み ＋」をクリック → 沿線名を選択 → 右側「駅の設定へ進む ›」→ 駅を選択 → 「確定してリストへ」",
           });
         } else if (isLocation && !isStation) {
-          // 所在地パターン
           steps.push({
             num: n++,
             field: "【所在地】絞り込み",
             value: areaText,
+            note: d.isWide ? "広げて：大阪市内なら同じ区内も対象 / 隣接エリアも視野に" : null,
             hint: "左メニュー「所在地絞り込み ＋」をクリック → 都道府県を選択 → 市区郡を選択 → 右側「詳細な地域の設定へ進む ›」→ 地域を選択 → 「確定してリストへ」",
           });
         } else {
-          // 判断できない場合は両方案内
           steps.push({
             num: n++,
             field: "エリア絞り込み（方法を選んで）",
             value: areaText,
+            note: d.isWide ? "広げて：隣の駅 or 同じ区内も対象に含める" : null,
             hint: "【所在地の場合】「所在地絞り込み ＋」→ 都道府県 → 市区郡 → 詳細地域 → 確定\n【沿線・駅の場合】「沿線・駅絞り込み ＋」→ 沿線選択 → 駅の設定へ進む → 駅選択 → 確定",
           });
         }
@@ -66,8 +66,9 @@ const SITE_CONFIG = {
       if (d.rentMax) {
         steps.push({
           num: n++,
-          field: "賃料（上限）",
+          field: d.isWide ? "賃料（広げて上限）" : "賃料（上限）",
           value: d.rentMax,
+          note: d.rentWideNote,
           hint: "右側の詳細条件エリアで賃料上限を入力（管理費込みで考慮推奨）",
           copyRaw: d.rentMaxNum ? String(d.rentMaxNum) : null,
         });
@@ -123,6 +124,16 @@ const SITE_CONFIG = {
         });
       }
 
+      // ── 広げて：広さの許容ルール（常に表示） ──
+      if (d.isWide) {
+        steps.push({
+          num: n++,
+          field: "広さの許容ルール",
+          value: "30㎡未満 → −5㎡まで OK　／　30㎡以上 → −10㎡まで OK",
+          hint: "専有面積がお客さんの希望より少し小さい物件も候補に含めて確認する",
+        });
+      }
+
       return steps;
     },
   },
@@ -130,8 +141,8 @@ const SITE_CONFIG = {
   itandi: {
     name: "itandi BB",
     icon: "📋",
-    steps: (c) => {
-      const d = buildCondData(c);
+    steps: (c, mode = "pinpoint") => {
+      const d = buildCondData(c, mode);
       return [
         {
           num: 1,
@@ -189,8 +200,8 @@ const SITE_CONFIG = {
   reins: {
     name: "レインズ",
     icon: "🔍",
-    steps: (c) => {
-      const d = buildCondData(c);
+    steps: (c, mode = "pinpoint") => {
+      const d = buildCondData(c, mode);
       return [
         {
           num: 1,
@@ -241,23 +252,35 @@ const SITE_CONFIG = {
 };
 
 // ── 条件データの整形 ──────────────────────────────────────────────
-function buildCondData(c) {
-  const rentMax = c.rent_max || c.max_rent || null;
-  const rentMin = c.rent_min || null;
+function buildCondData(c, mode = "pinpoint") {
+  const rentMaxRaw = c.rent_max || c.max_rent || null;
+  const rentMin    = c.rent_min || null;
+
+  // 広げて検索：家賃上限を自動拡張
+  let effectiveRentMax = rentMaxRaw;
+  let rentWideNote = null;
+  if (mode === "wide" && rentMaxRaw) {
+    const buffer = rentMaxRaw <= 100000 ? 5000 : 10000;
+    effectiveRentMax = rentMaxRaw + buffer;
+    rentWideNote = `元の上限 ${formatYen(rentMaxRaw)} ＋${buffer.toLocaleString()}円まで許容`;
+  }
+
   return {
-    area:        c.desired_area || c.area || null,
-    rentMax:     rentMax ? formatYen(rentMax) : null,
-    rentMaxNum:  rentMax,
-    rentMin:     rentMin ? formatYen(rentMin) : null,
-    rentRange:   buildRentRange(rentMin, rentMax),
-    floorPlan:   c.floor_plan || c.layout || null,
-    walkMin:     c.walk_minutes ? c.walk_minutes + "分以内" : null,
-    buildingAge: c.building_age ? c.building_age + "年以内" : null,
-    initialCost: c.initial_cost_limit ? formatYen(c.initial_cost_limit) : null,
-    moveInTime:  c.move_in_time || null,
-    preferences: c.preferences || null,
-    ngPoints:    c.ng_points || null,
-    otherReqs:   c.other_requests || null,
+    area:         c.desired_area || c.area || null,
+    rentMax:      effectiveRentMax ? formatYen(effectiveRentMax) : null,
+    rentMaxNum:   effectiveRentMax,
+    rentWideNote: rentWideNote,
+    rentMin:      rentMin ? formatYen(rentMin) : null,
+    rentRange:    buildRentRange(rentMin, effectiveRentMax),
+    floorPlan:    c.floor_plan || c.layout || null,
+    walkMin:      c.walk_minutes ? c.walk_minutes + "分以内" : null,
+    buildingAge:  c.building_age ? c.building_age + "年以内" : null,
+    initialCost:  c.initial_cost_limit ? formatYen(c.initial_cost_limit) : null,
+    moveInTime:   c.move_in_time || null,
+    preferences:  c.preferences || null,
+    ngPoints:     c.ng_points || null,
+    otherReqs:    c.other_requests || null,
+    isWide:       mode === "wide",
   };
 }
 
@@ -296,6 +319,7 @@ function esc(s) {
 let allCustomers = [];
 let selectedCustomer = null;
 let selectedSite = null;
+let searchMode = "pinpoint"; // "pinpoint" | "wide"
 
 // ── View switching ─────────────────────────────────────────────────
 function showView(id) {
@@ -399,11 +423,16 @@ function openSiteView(customer) {
 function openInstructions(siteKey) {
   selectedSite = siteKey;
   const cfg = SITE_CONFIG[siteKey];
-  const steps = cfg.steps(selectedCustomer);
+  const steps = cfg.steps(selectedCustomer, searchMode);
 
   document.getElementById("instr-title").textContent = cfg.icon + " " + cfg.name;
 
+  const modeLabel = searchMode === "wide"
+    ? `<div class="wide-banner">🔎 広げて検索モード（家賃・エリア・広さを少し緩めて検索）</div>`
+    : "";
+
   document.getElementById("instr-customer-card").innerHTML = `
+    ${modeLabel}
     <div class="instr-for">${esc(selectedCustomer.customer_name)} の検索条件</div>
     <div class="instr-site">${esc(cfg.name)} で以下の条件を入力してください</div>
   `;
@@ -424,6 +453,7 @@ function openInstructions(siteKey) {
             <span class="step-val">${esc(s.value)}</span>
             <button class="copy-btn" data-copy="${copyAttr}">コピー</button>
           </div>
+          ${s.note ? `<div class="step-note">▲ ${esc(s.note)}</div>` : ""}
           <div class="step-hint">${esc(s.hint)}</div>
         </div>`;
     }).join("");
@@ -488,6 +518,24 @@ document.addEventListener("DOMContentLoaded", () => {
     showView("view-list");
     loadCustomers();
   });
+
+  // 検索モード切替
+  const modeDescs = {
+    pinpoint: "条件ぴったりで検索",
+    wide: "エリア・家賃・広さを少し広げて検索",
+  };
+  document.querySelectorAll(".mode-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      searchMode = btn.dataset.mode;
+      document.querySelectorAll(".mode-btn").forEach((b) => {
+        b.classList.remove("active", "pinpoint", "wide");
+      });
+      btn.classList.add("active", searchMode);
+      document.getElementById("mode-desc").textContent = modeDescs[searchMode];
+    });
+  });
+  // 初期状態のスタイル設定
+  document.querySelector(".mode-btn[data-mode='pinpoint']").classList.add("pinpoint");
 
   document.getElementById("search-input").addEventListener("input", (e) => {
     filterCustomers(e.target.value);

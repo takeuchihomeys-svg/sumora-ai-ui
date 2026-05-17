@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>AIXLINX 物件検索</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+
+    <!-- ヘッダー（全画面共通） -->
+    <div class="header">
+      <div class="header-left">
+        <span class="header-logo">AIXLINX</span>
+        <span class="header-sep">|</span>
+        <span class="header-sub">物件検索サポート</span>
+      </div>
+      <button class="icon-btn" id="refresh-btn" title="更新">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <path d="M23 4v6h-6"/>
+          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- ▼ VIEW 1: お客さん一覧 -->
+    <div id="view-list" class="view active">
+      <div class="search-wrap">
+        <input type="text" id="search-input" placeholder="お客さんを検索..." autocomplete="off" />
+      </div>
+      <div id="customer-list"></div>
+    </div>
+
+    <!-- ▼ VIEW 2: サイト選択 -->
+    <div id="view-site" class="view">
+      <div class="back-bar">
+        <button class="back-btn" id="back-to-list">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+        <span id="site-customer-name" class="back-title"></span>
+      </div>
+      <div id="conditions-summary" class="cond-summary"></div>
+
+      <!-- 検索モード選択 -->
+      <div class="mode-toggle-wrap">
+        <div class="mode-toggle">
+          <button class="mode-btn active" data-mode="pinpoint">
+            🎯 ピンポイント
+          </button>
+          <button class="mode-btn" data-mode="wide">
+            🔎 広げて検索
+          </button>
+        </div>
+        <div id="mode-desc" class="mode-desc">条件ぴったりで検索</div>
+      </div>
+
+      <p class="section-label">検索サイトを選択</p>
+      <div class="site-list">
+        <button class="site-btn" data-site="realpro">
+          <span class="site-icon">🏠</span>
+          <div class="site-info">
+            <div class="site-name">リアプロ</div>
+            <div class="site-sub">賃貸物件を一括検索</div>
+          </div>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c5d8e8" stroke-width="2.5" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg>
+        </button>
+        <button class="site-btn" data-site="itandi">
+          <span class="site-icon">📋</span>
+          <div class="site-info">
+            <div class="site-name">itandi BB</div>
+            <div class="site-sub">空室確認・内見申込</div>
+          </div>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c5d8e8" stroke-width="2.5" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg>
+        </button>
+        <button class="site-btn" data-site="reins">
+          <span class="site-icon">🔍</span>
+          <div class="site-info">
+            <div class="site-name">レインズ</div>
+            <div class="site-sub">REINS 物件流通システム</div>
+          </div>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c5d8e8" stroke-width="2.5" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- ▼ VIEW 3: 検索手順 -->
+    <div id="view-instructions" class="view">
+      <div class="back-bar">
+        <button class="back-btn" id="back-to-site">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+        <span id="instr-title" class="back-title"></span>
+      </div>
+      <div class="instr-scroll">
+        <div id="instr-customer-card" class="instr-card"></div>
+        <div id="instr-steps" class="steps-list"></div>
+      </div>
+      <div class="copy-all-bar">
+        <button class="copy-all-btn" id="copy-all-btn">📋 全条件をコピー</button>
+      </div>
+    </div>
+
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
