@@ -18,6 +18,32 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 
 ---
 
+## 🖥️ 表示モード（2026-05-17 アンダーバー実装）
+
+### アンダーバーモード（リアプロ専用）
+- リアプロ（realnetpro.com）を開くと画面下部に固定バーとして自動表示
+- `underbar.js` がページに `<iframe src="popup.html">` を固定注入
+- 高さ: 折りたたみ 54px ↔ 展開 480px（アニメーション付き）
+- **サイドパネルと異なりviewport幅を狭めない** → リアプロの左サイドバーが消えない
+- ヘッダーのロゴクリック or トグルボタンで展開/折りたたみ
+- view-listでcollapse、view-site/view-instructionsでexpandを自動送信
+
+### サイドパネルモード（リアプロ以外）
+- Chrome拡張アイコンクリックでサイドパネルとして通常起動
+
+### アンダーバー実装ファイル
+| ファイル | 役割 |
+|--------|------|
+| `chrome-extension/underbar.js` | ページにiframe固定注入・高さ制御 |
+| `chrome-extension/content.js` | リアプロ左サイドバー維持（viewport幅override等） |
+| `chrome-extension/content.css` | リアプロUI補正CSS（manifestのcssフィールドで注入） |
+
+### popup.js アンダーバー対応
+- `window.self !== window.top` でiframe内かどうか検出
+- `window.parent.postMessage({from:"aixlinx-underbar", action})` でheight制御
+
+---
+
 ## 🗺️ 現在の機能（2026-05-17時点）
 
 ### 検索モード
@@ -60,6 +86,9 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 | 2026-05-17 | 駅→沿線マッピング（STATION_LINE_MAP）追加 |
 | 2026-05-17 | 駅→市区マッピング（STATION_WARD_MAP）追加 |
 | 2026-05-17 | 広げて検索時の所在地アナウンス追加 |
+| 2026-05-17 | アンダーバーモード実装（リアプロでviewport幅を狭めない固定バー）v1.3.0 |
+| 2026-05-17 | content.css追加（manifest css注入でCSSが文字列として表示されるバグを修正） |
+| 2026-05-17 | Supabase PAT誤コミット → トークン失効・.gitignore更新で対応済み |
 
 ---
 
@@ -131,3 +160,6 @@ JR東西線 / 大阪市高速軌道谷町線 / 大阪環状線 / 片町線 / 大
 - 変更後は chrome://extensions で再読み込み必要
 - Vercelへの反映は不要（拡張はローカルファイル参照）
 - GitHub push → ローカルで git pull → Chrome再読み込み の流れ
+- **v1.3.0 アンダーバー実装済み**（git push 済み・竹内悠馬が拡張再読み込みしてテスト予定）
+- リアプロ開くと画面下部にAIXLINXバーが出るはず（54px固定→クリックで480px展開）
+- サイドパネルは引き続き非リアプロサイト用として動作
