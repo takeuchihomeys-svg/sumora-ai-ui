@@ -34,17 +34,20 @@
     return t === n || t.includes(n);
   }
 
-  // チェックボックス用：label クリック + 内部 input を直接クリック（React対応）
+  // チェックボックス用（React対応）
+  // ダブルクリック防止：label と input の両方を叩くとチェックが戻るため、input 優先で1回だけクリック
   function clickLabel(text) {
     var lbl = [].slice.call(document.querySelectorAll("label")).find(function (l) {
       return textMatch(l.textContent, text) && isVis(l);
     });
     if (!lbl) return false;
-    lbl.click(); // label クリック（標準HTML用）
-    // React チェックボックス対応：input を直接クリック
     var inp = lbl.querySelector("input[type='checkbox']");
     if (!inp && lbl.htmlFor) inp = document.getElementById(lbl.htmlFor);
-    if (inp && !inp.checked) inp.click();
+    if (inp) {
+      inp.click(); // input を直接1回だけクリック（label+inputの二重クリックでトグル戻りを防ぐ）
+    } else {
+      lbl.click();
+    }
     return true;
   }
 
@@ -84,22 +87,37 @@
     }, 800);
   }
 
-  // 路線・駅モーダル: 路線・駅で絞り込み → 近畿 → 大阪府 → 路線チェック → 確定
-  function selectItandiLines(lineNames, callback) {
+  // 路線・駅モーダル: 路線・駅で絞り込み → 近畿 → 大阪府 → 路線チェック → 駅選択 → 確定
+  function selectItandiLines(lineNames, stationName, callback) {
     if (!lineNames || !lineNames.length) { if (callback) callback(); return; }
     if (!clickBtn("路線・駅で絞り込み")) { if (callback) callback(); return; }
+
+    // 駅名から「駅」サフィックスを除去（itandiラベルは「堺筋本町」のように「駅」なし）
+    var stName = stationName ? stationName.replace(/駅$/, "").trim() : null;
+
     setTimeout(function () {
-      clickAny("近畿"); // ナビ要素（li/button）
+      clickAny("近畿");
       setTimeout(function () {
-        clickAny("大阪府"); // ナビ要素（li/button）
+        clickAny("大阪府");
         setTimeout(function () {
           // 路線リストが描画されてから各チェックボックスをクリック
           lineNames.forEach(function (line) { clickLabel(line); });
           setTimeout(function () {
-            clickBtn("確定");
-            setTimeout(callback || function () {}, 600);
+            // 駅名がある場合は駅列が表示されるのを待ってから選択（部分一致）
+            if (stName) {
+              setTimeout(function () {
+                clickLabel(stName); // textMatch 内で includes（部分一致）を使用
+                setTimeout(function () {
+                  clickBtn("確定");
+                  setTimeout(callback || function () {}, 600);
+                }, 600);
+              }, 800); // 路線チェック後、駅列の描画を待つ
+            } else {
+              clickBtn("確定");
+              setTimeout(callback || function () {}, 600);
+            }
           }, 600);
-        }, 800); // 大阪府選択後、路線リスト描画を待つ
+        }, 800);
       }, 600);
     }, 800);
   }
@@ -173,7 +191,7 @@
       if (cond.ward_name) {
         selectItandiArea(cond.ward_name, doSearch);
       } else if (cond.itandi_lines && cond.itandi_lines.length) {
-        selectItandiLines(cond.itandi_lines, doSearch);
+        selectItandiLines(cond.itandi_lines, cond.station_name || null, doSearch);
       } else {
         doSearch();
       }

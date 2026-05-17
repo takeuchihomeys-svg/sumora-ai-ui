@@ -1044,6 +1044,7 @@ function openInstructions(siteKey) {
         preferences: c.preferences || c.notes || null,
         ward_name:    isWardArea_itandi ? wardName : null,
         itandi_lines: !isWardArea_itandi ? itandiLines : [],
+        station_name: !isWardArea_itandi ? stationClean : null,
       };
       chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
         if (!tabs[0]) return;
