@@ -17,22 +17,16 @@ const SITE_CONFIG = {
     steps: (c, mode = "pinpoint") => {
       const d = buildCondData(c, mode);
       const areaText = d.area || "";
-      const isStation = /駅|線/.test(areaText);
-      const isLocation = /市|区|町|村|府|県|都/.test(areaText);
+      // 「町」は駅名に頻出するため場所判定から除外（例：堺筋本町・中崎町）
+      const isStation  = /駅|線/.test(areaText);
+      const isLocation = /市|区|府|県|都|郡/.test(areaText);
       const steps = [];
       let n = 1;
 
       // ── STEP 1: エリア絞り込み（所在地 or 沿線で分岐） ──
       if (areaText) {
-        if (isStation && !isLocation) {
-          steps.push({
-            num: n++,
-            field: "【沿線・駅】絞り込み",
-            value: areaText,
-            note: d.isWide ? "広げて：隣の駅も含めて複数駅を選択する" : null,
-            hint: "左メニュー「沿線・駅絞り込み ＋」をクリック → 沿線名を選択 → 右側「駅の設定へ進む ›」→ 駅を選択 → 「確定してリストへ」",
-          });
-        } else if (isLocation && !isStation) {
+        if (isLocation && !isStation) {
+          // 市・区・府・県など → 所在地
           steps.push({
             num: n++,
             field: "【所在地】絞り込み",
@@ -41,12 +35,13 @@ const SITE_CONFIG = {
             hint: "左メニュー「所在地絞り込み ＋」をクリック → 都道府県を選択 → 市区郡を選択 → 右側「詳細な地域の設定へ進む ›」→ 地域を選択 → 「確定してリストへ」",
           });
         } else {
+          // 駅名・沿線名・判断できない場合 → 沿線・駅（デフォルト）
           steps.push({
             num: n++,
-            field: "エリア絞り込み（方法を選んで）",
+            field: "【沿線・駅】絞り込み",
             value: areaText,
-            note: d.isWide ? "広げて：隣の駅 or 同じ区内も対象に含める" : null,
-            hint: "【所在地の場合】「所在地絞り込み ＋」→ 都道府県 → 市区郡 → 詳細地域 → 確定\n【沿線・駅の場合】「沿線・駅絞り込み ＋」→ 沿線選択 → 駅の設定へ進む → 駅選択 → 確定",
+            note: d.isWide ? "広げて：この駅 ＋ 隣の駅も追加で選択する（「駅名から絞り込み」で隣駅を検索）" : null,
+            hint: "左メニュー「沿線・駅絞り込み ＋」→「駅名から絞り込み」に駅名を入力 → 沿線を選択 → 右側「駅の設定へ進む ›」→ 駅を選択 → 「確定してリストへ」",
           });
         }
       }
