@@ -63,14 +63,14 @@
     return false;
   }
 
-  // 所在地モーダル: 所在地で絞り込み → 大阪府 → 市区 → 確定
+  // 所在地モーダル: 所在地で絞り込み → 大阪府 → 市区チェック → 確定
   function selectItandiArea(wardName, callback) {
     if (!wardName) { if (callback) callback(); return; }
     if (!clickBtn("所在地で絞り込み")) { if (callback) callback(); return; }
     setTimeout(function () {
-      clickAny("大阪府");
+      clickAny("大阪府"); // ナビ要素（li/button）を対象に
       setTimeout(function () {
-        clickAny(wardName) || clickLabel(wardName);
+        clickLabel(wardName); // チェックボックスのlabelのみ対象
         setTimeout(function () {
           clickBtn("確定");
           setTimeout(callback || function () {}, 500);
@@ -84,11 +84,11 @@
     if (!lineNames || !lineNames.length) { if (callback) callback(); return; }
     if (!clickBtn("路線・駅で絞り込み")) { if (callback) callback(); return; }
     setTimeout(function () {
-      clickAny("近畿");
+      clickAny("近畿"); // ナビ要素（li/button）を対象に
       setTimeout(function () {
-        clickAny("大阪府");
+        clickAny("大阪府"); // ナビ要素（li/button）を対象に
         setTimeout(function () {
-          lineNames.forEach(function (line) { clickAny(line) || clickLabel(line); });
+          lineNames.forEach(function (line) { clickLabel(line); }); // チェックボックスのlabelのみ
           setTimeout(function () {
             clickBtn("確定");
             setTimeout(callback || function () {}, 500);
