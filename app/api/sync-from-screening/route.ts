@@ -44,6 +44,7 @@ export async function POST(req: NextRequest) {
           last_sender: record.last_sender ?? null,
           updated_at: record.updated_at ?? null,
           profile_image_url: record.profile_image_url ?? null,
+          account: record.account ?? null,
         },
         { onConflict: "id" }
       );

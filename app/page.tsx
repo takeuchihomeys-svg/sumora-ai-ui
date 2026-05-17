@@ -25,6 +25,7 @@ type Conversation = {
   lineUserId: string;
   profileImageUrl?: string;
   updatedAt?: string;
+  account?: string;
   messages: Message[];
 };
 
@@ -37,6 +38,7 @@ type SupabaseConversationRow = {
   last_sender?: string | null;
   updated_at?: string | null;
   profile_image_url?: string | null;
+  account?: string | null;
 };
 
 type SupabaseMessageRow = {
@@ -218,6 +220,9 @@ export default function Home() {
   const [aiSearchMessageIds, setAiSearchMessageIds] = useState<Record<string, string[]>>({});
   const [showHamburgerMenu, setShowHamburgerMenu] = useState(false);
   const [aixSearchMode, setAixSearchMode] = useState(false);
+  const [accountFilter, setAccountFilter] = useState<"all" | "linked" | "sumora" | "ieyasu" | "giga">("all");
+  const [linkedLineUserIds, setLinkedLineUserIds] = useState<Set<string>>(new Set());
+  const [showSendConfirm, setShowSendConfirm] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const aixFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -238,6 +243,15 @@ export default function Home() {
   useEffect(() => {
     // SW登録 + 通知許可
     registerSW().then(() => requestNotifPermission());
+
+    // 紐付け済フィルター用：property_customersのline_user_idを取得
+    fetch("/api/property-customers")
+      .then((r) => r.ok ? r.json() : [])
+      .then((data: { line_user_id?: string }[]) => {
+        const ids = new Set(data.map((c) => c.line_user_id).filter(Boolean) as string[]);
+        setLinkedLineUserIds(ids);
+      })
+      .catch(() => {});
 
     fetchConversationsAndMessages();
 
@@ -455,6 +469,7 @@ export default function Home() {
         lineUserId: conversation.line_user_id,
         profileImageUrl: conversation.profile_image_url || undefined,
         updatedAt: conversation.updated_at || undefined,
+        account: conversation.account || undefined,
         messages: relatedMessages,
       };
     });
@@ -480,6 +495,12 @@ export default function Home() {
 
   const filteredConversations = useMemo(() => {
     let result = conversations;
+    // アカウントフィルター
+    if (accountFilter === "linked") {
+      result = result.filter((c) => linkedLineUserIds.has(c.lineUserId));
+    } else if (accountFilter !== "all") {
+      result = result.filter((c) => (c.account ?? "sumora") === accountFilter);
+    }
     if (statusFilter !== "all") {
       const group = DISPLAY_GROUPS.find((g) => g.key === statusFilter);
       if (group) result = result.filter((c) => group.statuses.includes(c.status));
@@ -498,7 +519,7 @@ export default function Home() {
       );
     }
     return result;
-  }, [conversations, statusFilter, searchQuery, aiSearchIds]);
+  }, [conversations, statusFilter, searchQuery, aiSearchIds, accountFilter, linkedLineUserIds]);
 
   const needsReplyCount = useMemo(() => {
     return conversations.filter((c) => {
@@ -727,7 +748,14 @@ export default function Home() {
     if (convLongPressTimerRef.current) clearTimeout(convLongPressTimerRef.current);
   };
 
-  const sendReply = async () => {
+  const sendReply = () => {
+    if (!selectedConversation.id) return;
+    if (!replyDraft.trim() && selectedImageFiles.length === 0) return;
+    setShowSendConfirm(true);
+  };
+
+  const executeSend = async () => {
+    setShowSendConfirm(false);
     if (!selectedConversation.id) return;
     if (!replyDraft.trim() && selectedImageFiles.length === 0) return;
 
@@ -1839,7 +1867,7 @@ export default function Home() {
           onClick={(e) => { if (e.target === e.currentTarget) setShowHamburgerMenu(false); }}
         >
           <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl overflow-hidden">
-            {/* ヘッダー：AIX Pro */}
+            {/* ヘッダー */}
             <div
               className="px-6 pt-6 pb-5"
               style={{ background: "linear-gradient(135deg, #0d1b3e, #1565C0, #2196F3)" }}
@@ -1863,31 +1891,44 @@ export default function Home() {
               </div>
             </div>
 
-            {/* メニュー */}
-            <div className="p-4 flex flex-col gap-3">
-              {/* アカウント切替 */}
-              <button
-                onClick={() => { setShowHamburgerMenu(false); setShowAccountSwitcher(true); }}
-                className="flex w-full items-center gap-4 rounded-2xl border border-[#e9edef] bg-[#f8f9fa] px-5 py-4 text-left active:scale-[0.98] transition-transform hover:bg-[#f0f2f5]"
-              >
-                {/* アバター */}
-                <div className="shrink-0">
-                  {currentAccount.profileImage ? (
-                    <img src={currentAccount.profileImage} alt={currentAccount.name} className="h-11 w-11 rounded-full object-cover border-2 border-white shadow-sm" />
-                  ) : (
-                    <div className="flex h-11 w-11 items-center justify-center rounded-full text-2xl border-2 border-[#e9edef] bg-white shadow-sm">
-                      {currentAccount.icon}
-                    </div>
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-[15px] font-bold text-[#111b21] truncate">{currentAccount.name}</div>
-                  <div className="text-[11px] text-[#8696a0]">アカウント切替</div>
-                </div>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                  <path d="M9 18l6-6-6-6" stroke="#aaa" strokeWidth="2" strokeLinecap="round" />
-                </svg>
-              </button>
+            {/* アカウント選択 */}
+            <div className="px-4 pt-4 pb-2">
+              <p className="text-[11px] font-bold text-[#8696a0] mb-3 tracking-wide uppercase">表示アカウント</p>
+              <div className="flex flex-col gap-2">
+                {(
+                  [
+                    { key: "all",    label: "すべて",    icon: "🌐", sub: "全アカウントのトーク" },
+                    { key: "linked", label: "紐付け済",  icon: "🔗", sub: "物件出しツールと連携済み" },
+                    { key: "sumora", label: "スモラ",    icon: "🦄", sub: "スモラ LINEアカウント" },
+                    { key: "ieyasu", label: "イエヤス",  icon: "🏯", sub: "イエヤス LINEアカウント" },
+                    { key: "giga",   label: "ギガ賃貸",  icon: "🏢", sub: "ギガ賃貸 LINEアカウント" },
+                  ] as { key: typeof accountFilter; label: string; icon: string; sub: string }[]
+                ).map((item) => {
+                  const isSelected = accountFilter === item.key;
+                  return (
+                    <button
+                      key={item.key}
+                      onClick={() => { setAccountFilter(item.key); setShowHamburgerMenu(false); }}
+                      className="flex w-full items-center gap-4 rounded-2xl border px-4 py-3.5 text-left transition-all active:scale-[0.98]"
+                      style={{
+                        borderColor: isSelected ? "#2196F3" : "#e9edef",
+                        background: isSelected ? "#e3f2fd" : "#f8f9fa",
+                      }}
+                    >
+                      <span className="text-2xl leading-none">{item.icon}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[14px] font-bold" style={{ color: isSelected ? "#1565C0" : "#111b21" }}>
+                          {item.label}
+                        </div>
+                        <div className="text-[11px] text-[#8696a0]">{item.sub}</div>
+                      </div>
+                      {isSelected && (
+                        <span className="text-[#2196F3] font-bold text-lg">✓</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
             <div className="pb-[max(20px,env(safe-area-inset-bottom))]" />
           </div>
@@ -1952,6 +1993,47 @@ export default function Home() {
               <div className="mt-3 rounded-2xl bg-[#f0f2f5] px-4 py-3 text-center text-xs text-[#8696a0]">
                 アカウントは順次追加予定です
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 送信確認ダイアログ */}
+      {showSendConfirm && (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50"
+          onClick={() => setShowSendConfirm(false)}
+        >
+          <div
+            className="mx-4 w-full max-w-xs rounded-2xl bg-white shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 pt-5 pb-4">
+              <p className="text-[15px] font-bold text-[#111b21] mb-2">LINEに送信しますか？</p>
+              {replyDraft.trim() && (
+                <p className="text-[13px] text-[#667781] bg-[#f0f2f5] rounded-xl px-3 py-2 max-h-24 overflow-y-auto whitespace-pre-wrap leading-snug">
+                  {replyDraft.trim()}
+                </p>
+              )}
+              {selectedImageFiles.length > 0 && (
+                <p className="text-[12px] text-[#667781] mt-1.5">
+                  📷 画像 {selectedImageFiles.length}枚
+                </p>
+              )}
+            </div>
+            <div className="flex border-t border-[#f0f2f5]">
+              <button
+                onClick={() => setShowSendConfirm(false)}
+                className="flex-1 py-3.5 text-[14px] font-semibold text-[#8696a0] border-r border-[#f0f2f5]"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={executeSend}
+                className="flex-1 py-3.5 text-[14px] font-bold text-[#1565C0]"
+              >
+                送信する
+              </button>
             </div>
           </div>
         </div>

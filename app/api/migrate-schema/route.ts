@@ -19,6 +19,9 @@ CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations(updated
 
 ALTER TABLE conversations DISABLE ROW LEVEL SECURITY;
 
+-- accountカラム（sumora / ieyasu / giga）
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS account TEXT DEFAULT 'sumora';
+
 -- messages テーブル（LINEメッセージ）
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,

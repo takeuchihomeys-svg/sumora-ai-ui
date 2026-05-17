@@ -56,6 +56,15 @@ const IconBuilding = ({ active }: { active?: boolean }) => (
   </svg>
 );
 
+const IconPeople = ({ active }: { active?: boolean }) => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.5 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="9" cy="7" r="4"/>
+    <path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/>
+    <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+    <path d="M21 21v-2a4 4 0 0 0-3-3.87"/>
+  </svg>
+);
+
 type Props = {
   unreadCount?: number;
   hidden?: boolean;
@@ -105,6 +114,22 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
           <IconBuilding active={pathname === "/conditions"} />
         </span>
         <span className="text-[10px] mt-0.5" style={{ color: pathname === "/conditions" ? activeColor : inactiveColor }}>物件条件</span>
+      </Link>
+
+      {/* お客さん管理 */}
+      <Link href="/customers" className="flex flex-1 flex-col items-center justify-center pt-1.5 pb-0">
+        <span
+          className="flex items-center justify-center rounded-full transition-all duration-200"
+          style={{
+            width: 52,
+            height: 30,
+            background: pathname === "/customers" ? "#dbeafe" : "transparent",
+            color: pathname === "/customers" ? activeColor : inactiveColor,
+          }}
+        >
+          <IconPeople active={pathname === "/customers"} />
+        </span>
+        <span className="text-[10px] mt-0.5" style={{ color: pathname === "/customers" ? activeColor : inactiveColor }}>お客さん</span>
       </Link>
 
       {/* カレンダー */}
