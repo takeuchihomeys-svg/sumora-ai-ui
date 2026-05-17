@@ -599,10 +599,23 @@ let selectedCustomer = null;
 let selectedSite = null;
 let searchMode = "pinpoint"; // "pinpoint" | "wide"
 
+// ── アンダーバーモード検出 ─────────────────────────────────────────
+// リアプロページに iframe として埋め込まれているときは true
+const isUnderbar = window.self !== window.top;
+
+function notifyParent(action) {
+  if (!isUnderbar) return;
+  window.parent.postMessage({ from: "aixlinx-underbar", action }, "*");
+}
+
 // ── View switching ─────────────────────────────────────────────────
 function showView(id) {
   document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
   document.getElementById(id).classList.add("active");
+  // アンダーバーモード: リスト画面は折りたたみ、それ以外は展開
+  if (isUnderbar) {
+    notifyParent(id === "view-list" ? "collapse" : "expand");
+  }
 }
 
 // ── View 1: Customer list ──────────────────────────────────────────
@@ -792,6 +805,28 @@ function filterCustomers(q) {
 // ── Init ───────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
   loadCustomers();
+
+  // アンダーバーモードの初期化
+  if (isUnderbar) {
+    const toggleBtn = document.getElementById("underbar-toggle");
+    toggleBtn.style.display = "flex";
+    let isExpanded = false;
+    toggleBtn.addEventListener("click", () => {
+      isExpanded = !isExpanded;
+      notifyParent("toggle");
+      // アイコンを ▲/▼ で切り替え
+      document.getElementById("toggle-icon").innerHTML = isExpanded
+        ? `<polyline points="6 9 12 15 18 9"/>`   // ▼ 折りたたむ
+        : `<polyline points="18 15 12 9 6 15"/>`;  // ▲ 展開
+    });
+    // 初期状態：折りたたみ表示（アイコン▲）
+    notifyParent("collapse");
+    // ヘッダー全体クリックでもトグル
+    document.querySelector(".header-left").style.cursor = "pointer";
+    document.querySelector(".header-left").addEventListener("click", () => {
+      toggleBtn.click();
+    });
+  }
 
   document.getElementById("refresh-btn").addEventListener("click", () => {
     showView("view-list");
