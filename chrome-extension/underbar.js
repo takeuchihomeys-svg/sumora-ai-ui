@@ -1,20 +1,42 @@
 "use strict";
 
 // リアプロページにAIXLINX フローティングパネルを注入
-// ミニ(52x52)↔パネル(可変)、ドラッグ移動・右下コーナーリサイズ対応
+// ページ遷移をまたいで展開状態・位置・サイズをsessionStorageで保持
 (function () {
   if (document.getElementById("aixlinx-float-wrap")) return;
 
   const MINI    = 52;
-  const DRAG_H  = 28;   // 展開時のドラッグバー高さ
+  const DRAG_H  = 28;
   const MIN_W   = 260;
   const MIN_H   = 300;
   const INIT_W  = 360;
   const INIT_H  = 520;
+  const SK      = "aixlinx_state"; // sessionStorage key
 
-  let posX = 8, posY = 70;
-  let panelW = INIT_W, panelH = INIT_H;
-  let expanded = false;
+  // ── 前回状態を復元 ────────────────────────────────────────────────
+  let saved = {};
+  try { saved = JSON.parse(sessionStorage.getItem(SK) || "{}"); } catch {}
+
+  let posX   = saved.posX   ?? 8;
+  let posY   = saved.posY   ?? 70;
+  let panelW = saved.panelW ?? INIT_W;
+  let panelH = saved.panelH ?? INIT_H;
+  let expanded = false; // 視覚的サイズは後でiframe.loadで確定
+
+  const wasExpanded = saved.expanded === true;
+  let ignoreNextCollapse = wasExpanded; // popup.jsの初期collapseを無視するフラグ
+
+  function persist() {
+    try {
+      sessionStorage.setItem(SK, JSON.stringify({
+        expanded,
+        posX:   parseInt(wrap.style.left) || posX,
+        posY:   parseInt(wrap.style.top)  || posY,
+        panelW,
+        panelH,
+      }));
+    } catch {}
+  }
 
   // ── wrap ─────────────────────────────────────────────────────────
   const wrap = document.createElement("div");
@@ -62,11 +84,11 @@
   const iframe = document.createElement("iframe");
   iframe.src = chrome.runtime.getURL("popup.html");
   Object.assign(iframe.style, {
-    flex:     "1",
-    width:    "100%",
-    border:   "none",
-    display:  "block",
-    minHeight:"0",
+    flex:      "1",
+    width:     "100%",
+    border:    "none",
+    display:   "block",
+    minHeight: "0",
   });
 
   // ── リサイズハンドル（右下）──────────────────────────────────────
@@ -87,7 +109,7 @@
     <line x1="13" y1="20" x2="20" y2="13" stroke="rgba(21,101,192,0.45)" stroke-width="1.5" stroke-linecap="round"/>
   </svg>`;
 
-  // ── ミニ用オーバーレイ（ドラッグ+クリック検出）───────────────────
+  // ── ミニ用オーバーレイ ────────────────────────────────────────────
   const miniOverlay = document.createElement("div");
   Object.assign(miniOverlay.style, {
     position:      "absolute",
@@ -119,28 +141,38 @@
       resizeHandle.style.display  = "none";
       miniOverlay.style.display   = "block";
     }
+    persist();
   }
 
+  // ── iframe ロード後に展開状態を復元 ──────────────────────────────
+  iframe.addEventListener("load", () => {
+    if (wasExpanded) {
+      setTimeout(() => {
+        setSize(true);
+        iframe.contentWindow.postMessage(
+          { from: "underbar-parent", action: "expand-from-parent" }, "*"
+        );
+      }, 80);
+    }
+  });
+
   // ── ドラッグ & リサイズ（一元管理）──────────────────────────────
-  let action   = null; // "move" | "resize"
-  let startCX  = 0, startCY  = 0;
-  let startWX  = 0, startWY  = 0;
-  let startPW  = panelW, startPH = panelH;
+  let dragAction = null; // "move" | "resize"
+  let startCX = 0, startCY = 0;
+  let startWX = 0, startWY = 0;
+  let startPW = panelW, startPH = panelH;
 
   function onDragStart(e, type) {
     if (e.button !== 0) return;
-    action   = type;
-    startCX  = e.clientX;
-    startCY  = e.clientY;
-    startWX  = parseInt(wrap.style.left) || posX;
-    startWY  = parseInt(wrap.style.top)  || posY;
-    startPW  = panelW;
-    startPH  = panelH;
+    dragAction = type;
+    startCX = e.clientX;
+    startCY = e.clientY;
+    startWX = parseInt(wrap.style.left) || posX;
+    startWY = parseInt(wrap.style.top)  || posY;
+    startPW = panelW;
+    startPH = panelH;
     iframe.style.pointerEvents = "none";
     wrap.style.transition      = "none";
-    if (type === "move") {
-      (e.currentTarget || e.target).style.cursor = "grabbing";
-    }
     e.preventDefault();
     e.stopPropagation();
   }
@@ -150,10 +182,10 @@
   resizeHandle.addEventListener("mousedown", (e) => onDragStart(e, "resize"));
 
   document.addEventListener("mousemove", (e) => {
-    if (!action) return;
+    if (!dragAction) return;
     const dx = e.clientX - startCX;
     const dy = e.clientY - startCY;
-    if (action === "move") {
+    if (dragAction === "move") {
       wrap.style.left = Math.max(0, startWX + dx) + "px";
       wrap.style.top  = Math.max(0, startWY + dy) + "px";
     } else {
@@ -165,24 +197,28 @@
   });
 
   document.addEventListener("mouseup", (e) => {
-    if (!action) return;
-    const wasMini  = !expanded;
-    const wasMove  = action === "move";
+    if (!dragAction) return;
+    const wasMini = !expanded;
+    const wasMove = dragAction === "move";
     const dx = Math.abs(e.clientX - startCX);
     const dy = Math.abs(e.clientY - startCY);
 
-    action = null;
+    dragAction = null;
     iframe.style.pointerEvents = "";
-    dragBar.style.cursor   = "grab";
-    miniOverlay.style.cursor = "grab";
+    dragBar.style.cursor       = "grab";
+    miniOverlay.style.cursor   = "grab";
     setTimeout(() => {
       wrap.style.transition = "width 0.22s ease, height 0.22s ease";
     }, 50);
 
+    persist(); // 位置・サイズを保存
+
     // ミニモードでほぼ動かなかった → クリック → 展開
     if (wasMini && wasMove && dx < 5 && dy < 5) {
       setSize(true);
-      iframe.contentWindow.postMessage({ from: "underbar-parent", action: "expand-from-parent" }, "*");
+      iframe.contentWindow.postMessage(
+        { from: "underbar-parent", action: "expand-from-parent" }, "*"
+      );
     }
   });
 
@@ -190,8 +226,12 @@
   window.addEventListener("message", function (e) {
     if (!e.data || e.data.from !== "aixlinx-underbar") return;
     const a = e.data.action;
-    if (a === "expand")   setSize(true);
-    if (a === "collapse") setSize(false);
-    if (a === "toggle")   setSize(!expanded);
+    if (a === "collapse") {
+      // popup.js初期化時のcollapseは無視（前回展開状態を維持するため）
+      if (ignoreNextCollapse) { ignoreNextCollapse = false; return; }
+      setSize(false);
+    }
+    if (a === "expand") setSize(true);
+    if (a === "toggle") setSize(!expanded);
   });
 })();
