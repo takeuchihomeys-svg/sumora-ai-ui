@@ -100,6 +100,36 @@
       <div class="instr-scroll">
         <div id="instr-customer-card" class="instr-card"></div>
         <div id="instr-steps" class="steps-list"></div>
+
+        <!-- 一時調整フォーム（リアプロ+アンダーバーのみ表示） -->
+        <div id="adj-form" class="adj-form" style="display:none">
+          <div class="adj-title">⚙️ 一時調整 <span class="adj-note">DBは変更しません</span></div>
+          <div class="adj-fields">
+            <div class="adj-row">
+              <span class="adj-label">エリア</span>
+              <input class="adj-input" id="adj-area" type="text" />
+            </div>
+            <div class="adj-row">
+              <span class="adj-label">賃料上限</span>
+              <input class="adj-input adj-num" id="adj-rent-max" type="number" placeholder="例:110000" />
+              <span class="adj-unit">円</span>
+            </div>
+            <div class="adj-row">
+              <span class="adj-label">徒歩</span>
+              <input class="adj-input adj-num" id="adj-walk" type="number" />
+              <span class="adj-unit">分以内</span>
+            </div>
+            <div class="adj-row">
+              <span class="adj-label">築年数</span>
+              <input class="adj-input adj-num" id="adj-age" type="number" />
+              <span class="adj-unit">年以内</span>
+            </div>
+            <div class="adj-row">
+              <span class="adj-label">間取り</span>
+              <input class="adj-input" id="adj-floor" type="text" placeholder="例: 1K.2LDK" />
+            </div>
+          </div>
+        </div>
       </div>
       <div class="copy-all-bar">
         <button class="autofill-btn" id="autofill-btn" style="display:none">⚡ リアプロに自動入力</button>

@@ -281,6 +281,25 @@ body {
 .copy-all-btn:hover { opacity: 0.92; }
 .copy-all-btn:active { transform: scale(0.99); }
 
+/* ── 一時調整フォーム ── */
+.adj-form {
+  margin: 6px 12px 2px;
+  padding: 8px 10px;
+  background: #fff8e1; border: 1px solid #ffe082; border-radius: 10px;
+}
+.adj-title { font-size: 11px; font-weight: 700; color: #e65100; margin-bottom: 6px; }
+.adj-note { font-size: 10px; color: #adb5bd; font-weight: 400; margin-left: 4px; }
+.adj-fields { display: flex; flex-direction: column; gap: 5px; }
+.adj-row { display: flex; align-items: center; gap: 6px; }
+.adj-label { font-size: 11px; color: #555; width: 52px; flex-shrink: 0; }
+.adj-input {
+  flex: 1; border: 1px solid #ffe082; border-radius: 6px;
+  padding: 4px 7px; font-size: 12px; background: white; outline: none;
+}
+.adj-input:focus { border-color: #e65100; }
+.adj-num { flex: none; width: 78px; }
+.adj-unit { font-size: 10px; color: #888; flex-shrink: 0; }
+
 .autofill-btn {
   width: 100%; padding: 10px;
   background: linear-gradient(135deg, #e65100, #ff9800);

@@ -851,24 +851,50 @@ function openInstructions(siteKey) {
     });
   };
 
-  // 自動入力ボタン（リアプロ＋アンダーバーモードのみ）
+  // 自動入力ボタン＋一時調整フォーム（リアプロ＋アンダーバーモードのみ）
   const autofillBtn = document.getElementById("autofill-btn");
+  const adjForm     = document.getElementById("adj-form");
   if (isUnderbar && siteKey === "realpro") {
     autofillBtn.style.display = "block";
     autofillBtn.textContent = "⚡ リアプロに自動入力";
     autofillBtn.className = "autofill-btn";
+
+    // 調整フォームに現在値をセット
+    adjForm.style.display = "block";
+    const c0 = selectedCustomer;
+    document.getElementById("adj-area").value     = c0.desired_area || c0.area || "";
+    document.getElementById("adj-rent-max").value = c0.rent_max || c0.max_rent || "";
+    document.getElementById("adj-walk").value     = c0.walk_minutes || "";
+    document.getElementById("adj-age").value      = c0.building_age || "";
+    document.getElementById("adj-floor").value    = c0.floor_plan || c0.layout || "";
+
     autofillBtn.onclick = () => {
       const c = selectedCustomer;
-      const { city_codes, route_ids } = buildAreaRouteCodes(c);
+      // 調整フォームの値を優先して使う
+      const adjArea     = document.getElementById("adj-area").value.trim();
+      const adjRentMax  = document.getElementById("adj-rent-max").value;
+      const adjWalk     = document.getElementById("adj-walk").value;
+      const adjAge      = document.getElementById("adj-age").value;
+      const adjFloor    = document.getElementById("adj-floor").value.trim();
+      const adjC = {
+        desired_area: adjArea     || c.desired_area || c.area  || null,
+        area:         adjArea     || c.desired_area || c.area  || null,
+        rent_max:     adjRentMax  ? Number(adjRentMax)  : (c.rent_max || c.max_rent || null),
+        rent_min:     c.rent_min  || null,
+        walk_minutes: adjWalk     ? Number(adjWalk)     : (c.walk_minutes || null),
+        building_age: adjAge      ? Number(adjAge)      : (c.building_age || null),
+        floor_plan:   adjFloor    || c.floor_plan || c.layout || null,
+      };
+      const { city_codes, route_ids } = buildAreaRouteCodes(adjC);
       window.parent.postMessage({
         from: "aixlinx-underbar",
         action: "autofill",
         conditions: {
-          rent_min:     c.rent_min || null,
-          rent_max:     c.rent_max || c.max_rent || null,
-          walk_minutes: c.walk_minutes || null,
-          floor_plan:   c.floor_plan || c.layout || null,
-          building_age: c.building_age || null,
+          rent_min:     adjC.rent_min,
+          rent_max:     adjC.rent_max,
+          walk_minutes: adjC.walk_minutes,
+          floor_plan:   adjC.floor_plan,
+          building_age: adjC.building_age,
           city_codes,
           route_ids,
         },
@@ -882,6 +908,7 @@ function openInstructions(siteKey) {
     };
   } else {
     autofillBtn.style.display = "none";
+    adjForm.style.display = "none";
   }
 
   showView("view-instructions");
