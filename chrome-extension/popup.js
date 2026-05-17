@@ -1,0 +1,509 @@
+"use strict";
+
+const API_BASE = "https://sumora-ai-ui.vercel.app";
+
+const STATUS_LABELS = {
+  new_inquiry:      "新規問い合わせ",
+  hot:              "毎日物件出し",
+  property_search:  "物件出し",
+  pending:          "検討中",
+};
+
+// ── 各サイトの検索手順定義（ここを調整して使う） ──────────────────
+const SITE_CONFIG = {
+  realpro: {
+    name: "リアプロ",
+    icon: "🏠",
+    steps: (c) => {
+      const d = buildCondData(c);
+      const areaText = d.area || "";
+      const isStation = /駅|線/.test(areaText);
+      const isLocation = /市|区|町|村|府|県|都/.test(areaText);
+      const steps = [];
+      let n = 1;
+
+      // ── STEP 1: エリア絞り込み（所在地 or 沿線で分岐） ──
+      if (areaText) {
+        if (isStation && !isLocation) {
+          // 沿線・駅パターン
+          steps.push({
+            num: n++,
+            field: "【沿線・駅】絞り込み",
+            value: areaText,
+            hint: "左メニュー「沿線・駅絞り込み ＋」をクリック → 沿線名を選択 → 右側「駅の設定へ進む ›」→ 駅を選択 → 「確定してリストへ」",
+          });
+        } else if (isLocation && !isStation) {
+          // 所在地パターン
+          steps.push({
+            num: n++,
+            field: "【所在地】絞り込み",
+            value: areaText,
+            hint: "左メニュー「所在地絞り込み ＋」をクリック → 都道府県を選択 → 市区郡を選択 → 右側「詳細な地域の設定へ進む ›」→ 地域を選択 → 「確定してリストへ」",
+          });
+        } else {
+          // 判断できない場合は両方案内
+          steps.push({
+            num: n++,
+            field: "エリア絞り込み（方法を選んで）",
+            value: areaText,
+            hint: "【所在地の場合】「所在地絞り込み ＋」→ 都道府県 → 市区郡 → 詳細地域 → 確定\n【沿線・駅の場合】「沿線・駅絞り込み ＋」→ 沿線選択 → 駅の設定へ進む → 駅選択 → 確定",
+          });
+        }
+      }
+
+      // ── STEP 2: 駅からの移動手段（徒歩） ──
+      if (d.walkMin) {
+        steps.push({
+          num: n++,
+          field: "駅からの徒歩",
+          value: d.walkMin,
+          hint: "左メニュー「駅からの移動手段」の分数入力欄に入力",
+          copyRaw: c.walk_minutes ? String(c.walk_minutes) : null,
+        });
+      }
+
+      // ── STEP 3: 賃料 ──
+      if (d.rentMax) {
+        steps.push({
+          num: n++,
+          field: "賃料（上限）",
+          value: d.rentMax,
+          hint: "右側の詳細条件エリアで賃料上限を入力（管理費込みで考慮推奨）",
+          copyRaw: d.rentMaxNum ? String(d.rentMaxNum) : null,
+        });
+      }
+
+      // ── STEP 4: 間取り ──
+      if (d.floorPlan) {
+        steps.push({
+          num: n++,
+          field: "間取り",
+          value: d.floorPlan,
+          hint: "間取りのチェックボックスで該当を選択",
+        });
+      }
+
+      // ── STEP 5: 築年数 ──
+      if (d.buildingAge) {
+        steps.push({
+          num: n++,
+          field: "築年数",
+          value: d.buildingAge,
+          hint: "「築〇年以内」で絞り込み",
+        });
+      }
+
+      // ── STEP 6: 入居時期 ──
+      if (d.moveInTime) {
+        steps.push({
+          num: n++,
+          field: "入居時期",
+          value: d.moveInTime,
+          hint: "入居可能日・時期の条件で設定",
+        });
+      }
+
+      // ── STEP 7: こだわり・設備 ──
+      if (d.preferences) {
+        steps.push({
+          num: n++,
+          field: "こだわり・設備",
+          value: d.preferences,
+          hint: "詳細検索の設備・条件から該当を選択",
+        });
+      }
+
+      // ── STEP 8: NG条件（確認用） ──
+      if (d.ngPoints) {
+        steps.push({
+          num: n++,
+          field: "NG・除外条件（確認用）",
+          value: d.ngPoints,
+          hint: "この条件が当てはまる物件は除外して候補を絞る",
+        });
+      }
+
+      return steps;
+    },
+  },
+
+  itandi: {
+    name: "itandi BB",
+    icon: "📋",
+    steps: (c) => {
+      const d = buildCondData(c);
+      return [
+        {
+          num: 1,
+          field: "地域・駅",
+          value: d.area,
+          hint: "エリアタブまたは路線タブから絞り込み",
+        },
+        {
+          num: 2,
+          field: "家賃（上限）",
+          value: d.rentMax,
+          hint: "家賃上限を入力（管理費別の場合に注意）",
+          copyRaw: d.rentMaxNum ? String(d.rentMaxNum) : null,
+        },
+        {
+          num: 3,
+          field: "間取り",
+          value: d.floorPlan,
+          hint: "間取り絞り込みタブから選択",
+        },
+        {
+          num: 4,
+          field: "駅徒歩",
+          value: d.walkMin,
+          hint: "「駅から徒歩〇分以内」を選択",
+        },
+        {
+          num: 5,
+          field: "築年数",
+          value: d.buildingAge,
+          hint: "「築〇年以内」の条件を設定",
+        },
+        {
+          num: 6,
+          field: "入居可能日",
+          value: d.moveInTime,
+          hint: "入居可能日の条件で絞り込み",
+        },
+        {
+          num: 7,
+          field: "特徴・設備",
+          value: d.preferences,
+          hint: "詳細条件の設備・特徴タブから選択",
+        },
+        {
+          num: 8,
+          field: "NG条件（確認用）",
+          value: d.ngPoints,
+          hint: "この条件の物件は除外して候補を絞る",
+        },
+      ].filter((s) => s.value);
+    },
+  },
+
+  reins: {
+    name: "レインズ",
+    icon: "🔍",
+    steps: (c) => {
+      const d = buildCondData(c);
+      return [
+        {
+          num: 1,
+          field: "所在地",
+          value: d.area,
+          hint: "所在地 → 都道府県 → 市区町村の順に選択",
+        },
+        {
+          num: 2,
+          field: "賃料（上限）",
+          value: d.rentMax,
+          hint: "賃料の「上限」欄に入力",
+          copyRaw: d.rentMaxNum ? String(d.rentMaxNum) : null,
+        },
+        {
+          num: 3,
+          field: "間取り",
+          value: d.floorPlan,
+          hint: "「間取り」のチェックボックスを選択",
+        },
+        {
+          num: 4,
+          field: "交通（徒歩）",
+          value: d.walkMin,
+          hint: "交通条件の「徒歩〇分以内」で絞り込み",
+        },
+        {
+          num: 5,
+          field: "築年数",
+          value: d.buildingAge,
+          hint: "建物の「築〇年以内」で設定",
+        },
+        {
+          num: 6,
+          field: "入居時期",
+          value: d.moveInTime,
+          hint: "入居可能時期の条件を設定",
+        },
+        {
+          num: 7,
+          field: "設備・条件",
+          value: d.preferences,
+          hint: "詳細条件の設備から選択",
+        },
+      ].filter((s) => s.value);
+    },
+  },
+};
+
+// ── 条件データの整形 ──────────────────────────────────────────────
+function buildCondData(c) {
+  const rentMax = c.rent_max || c.max_rent || null;
+  const rentMin = c.rent_min || null;
+  return {
+    area:        c.desired_area || c.area || null,
+    rentMax:     rentMax ? formatYen(rentMax) : null,
+    rentMaxNum:  rentMax,
+    rentMin:     rentMin ? formatYen(rentMin) : null,
+    rentRange:   buildRentRange(rentMin, rentMax),
+    floorPlan:   c.floor_plan || c.layout || null,
+    walkMin:     c.walk_minutes ? c.walk_minutes + "分以内" : null,
+    buildingAge: c.building_age ? c.building_age + "年以内" : null,
+    initialCost: c.initial_cost_limit ? formatYen(c.initial_cost_limit) : null,
+    moveInTime:  c.move_in_time || null,
+    preferences: c.preferences || null,
+    ngPoints:    c.ng_points || null,
+    otherReqs:   c.other_requests || null,
+  };
+}
+
+function formatYen(n) {
+  if (!n) return null;
+  if (n >= 10000) return (n / 10000).toFixed(1) + "万円";
+  return n.toLocaleString() + "円";
+}
+
+function buildRentRange(min, max) {
+  if (!min && !max) return null;
+  if (!min) return "〜" + formatYen(max);
+  if (!max) return formatYen(min) + "〜";
+  return formatYen(min) + "〜" + formatYen(max);
+}
+
+function hasConditions(c) {
+  return !!(
+    c.desired_area || c.area ||
+    c.rent_max || c.max_rent || c.rent_min ||
+    c.floor_plan || c.layout ||
+    c.walk_minutes || c.building_age
+  );
+}
+
+// ── HTML helper ───────────────────────────────────────────────────
+function esc(s) {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// ── State ─────────────────────────────────────────────────────────
+let allCustomers = [];
+let selectedCustomer = null;
+let selectedSite = null;
+
+// ── View switching ─────────────────────────────────────────────────
+function showView(id) {
+  document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
+  document.getElementById(id).classList.add("active");
+}
+
+// ── View 1: Customer list ──────────────────────────────────────────
+async function loadCustomers() {
+  const list = document.getElementById("customer-list");
+  list.innerHTML = `<div class="state-msg">読み込み中...</div>`;
+
+  try {
+    const res = await fetch(`${API_BASE}/api/property-customers`, {
+      cache: "no-store",
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    allCustomers = await res.json();
+    renderList(allCustomers);
+  } catch (e) {
+    list.innerHTML = `<div class="state-msg">⚠️ データ取得失敗<br><small>${esc(e.message)}</small></div>`;
+  }
+}
+
+function renderList(customers) {
+  const list = document.getElementById("customer-list");
+
+  if (!customers.length) {
+    list.innerHTML = `<div class="state-msg">お客さんがいません</div>`;
+    return;
+  }
+
+  const withCond = customers.filter(hasConditions);
+  const noCond   = customers.filter((c) => !hasConditions(c));
+
+  let html = "";
+
+  if (withCond.length) {
+    if (noCond.length) {
+      html += `<div class="section-divider">条件登録済み (${withCond.length}人)</div>`;
+    }
+    withCond.forEach((c) => { html += renderCustomerRow(c, false); });
+  }
+
+  if (noCond.length) {
+    html += `<div class="section-divider">条件未登録 (${noCond.length}人)</div>`;
+    noCond.forEach((c) => { html += renderCustomerRow(c, true); });
+  }
+
+  list.innerHTML = html;
+
+  list.querySelectorAll(".customer-item").forEach((el) => {
+    el.addEventListener("click", () => {
+      const c = allCustomers.find((x) => String(x.id) === el.dataset.id);
+      if (c) openSiteView(c);
+    });
+  });
+}
+
+function renderCustomerRow(c, dimmed) {
+  const d = buildCondData(c);
+  const metaParts = [];
+  if (d.area)        metaParts.push("📍" + d.area);
+  if (d.rentRange)   metaParts.push(d.rentRange);
+  if (d.floorPlan)   metaParts.push(d.floorPlan);
+  if (d.walkMin)     metaParts.push("徒歩" + d.walkMin);
+
+  const meta = metaParts.join("  ");
+  const label = STATUS_LABELS[c.status] || c.status;
+
+  return `
+    <div class="customer-item${dimmed ? " dimmed" : ""}" data-id="${esc(String(c.id))}">
+      <div class="c-dot dot-${esc(c.status)}"></div>
+      <div class="c-body">
+        <div class="c-name">${esc(c.customer_name)}</div>
+        ${meta ? `<div class="c-meta">${esc(meta)}</div>` : ""}
+      </div>
+      <span class="s-badge badge-${esc(c.status)}">${esc(label)}</span>
+      <svg class="c-arrow" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg>
+    </div>`;
+}
+
+// ── View 2: Site selection ─────────────────────────────────────────
+function openSiteView(customer) {
+  selectedCustomer = customer;
+  document.getElementById("site-customer-name").textContent = customer.customer_name;
+
+  const d = buildCondData(customer);
+  const chips = [d.area, d.rentRange, d.floorPlan, d.walkMin && "徒歩" + d.walkMin, d.buildingAge && "築" + d.buildingAge]
+    .filter(Boolean);
+
+  const summaryEl = document.getElementById("conditions-summary");
+  summaryEl.innerHTML = chips.length
+    ? `<div class="cond-chips">${chips.map((ch) => `<span class="cond-chip">${esc(ch)}</span>`).join("")}</div>`
+    : `<div class="cond-empty">物件条件が未登録です。先に物件条件ページで登録してください。</div>`;
+
+  showView("view-site");
+}
+
+// ── View 3: Instructions ───────────────────────────────────────────
+function openInstructions(siteKey) {
+  selectedSite = siteKey;
+  const cfg = SITE_CONFIG[siteKey];
+  const steps = cfg.steps(selectedCustomer);
+
+  document.getElementById("instr-title").textContent = cfg.icon + " " + cfg.name;
+
+  document.getElementById("instr-customer-card").innerHTML = `
+    <div class="instr-for">${esc(selectedCustomer.customer_name)} の検索条件</div>
+    <div class="instr-site">${esc(cfg.name)} で以下の条件を入力してください</div>
+  `;
+
+  const stepsEl = document.getElementById("instr-steps");
+  if (!steps.length) {
+    stepsEl.innerHTML = `<div class="state-msg">条件が登録されていません。<br>物件条件ページで登録してください。</div>`;
+  } else {
+    stepsEl.innerHTML = steps.map((s) => {
+      const copyAttr = s.copyRaw ? esc(s.copyRaw) : esc(s.value);
+      return `
+        <div class="step-card">
+          <div class="step-top">
+            <span class="step-num">${s.num}</span>
+            <span class="step-field">${esc(s.field)}</span>
+          </div>
+          <div class="step-value-row">
+            <span class="step-val">${esc(s.value)}</span>
+            <button class="copy-btn" data-copy="${copyAttr}">コピー</button>
+          </div>
+          <div class="step-hint">${esc(s.hint)}</div>
+        </div>`;
+    }).join("");
+
+    stepsEl.querySelectorAll(".copy-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const text = btn.dataset.copy;
+        navigator.clipboard.writeText(text).then(() => {
+          btn.textContent = "✓ 済";
+          btn.classList.add("copied");
+          setTimeout(() => {
+            btn.textContent = "コピー";
+            btn.classList.remove("copied");
+          }, 1800);
+        });
+      });
+    });
+  }
+
+  // コピーオールのテキスト
+  const allText = buildCopyAll(cfg.name, steps, selectedCustomer);
+  document.getElementById("copy-all-btn").onclick = () => {
+    navigator.clipboard.writeText(allText).then(() => {
+      const btn = document.getElementById("copy-all-btn");
+      btn.textContent = "✓ コピーしました！";
+      setTimeout(() => { btn.textContent = "📋 全条件をコピー"; }, 2000);
+    });
+  };
+
+  showView("view-instructions");
+}
+
+function buildCopyAll(siteName, steps, c) {
+  const lines = [
+    `【${siteName} 検索条件】`,
+    `お客さん: ${c.customer_name}`,
+    "",
+    ...steps.map((s) => `${s.field}: ${s.value}`),
+  ];
+  if (c.other_requests) lines.push(`その他要望: ${c.other_requests}`);
+  return lines.join("\n");
+}
+
+// ── Search filter ──────────────────────────────────────────────────
+function filterCustomers(q) {
+  if (!q.trim()) { renderList(allCustomers); return; }
+  const kw = q.trim().toLowerCase();
+  renderList(
+    allCustomers.filter((c) =>
+      c.customer_name.toLowerCase().includes(kw) ||
+      (c.desired_area || "").toLowerCase().includes(kw) ||
+      (c.area || "").toLowerCase().includes(kw)
+    )
+  );
+}
+
+// ── Init ───────────────────────────────────────────────────────────
+document.addEventListener("DOMContentLoaded", () => {
+  loadCustomers();
+
+  document.getElementById("refresh-btn").addEventListener("click", () => {
+    showView("view-list");
+    loadCustomers();
+  });
+
+  document.getElementById("search-input").addEventListener("input", (e) => {
+    filterCustomers(e.target.value);
+  });
+
+  document.getElementById("back-to-list").addEventListener("click", () => {
+    showView("view-list");
+  });
+
+  document.getElementById("back-to-site").addEventListener("click", () => {
+    showView("view-site");
+  });
+
+  document.querySelectorAll(".site-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      openInstructions(btn.dataset.site);
+    });
+  });
+});

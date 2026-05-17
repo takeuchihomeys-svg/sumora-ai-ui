@@ -37,9 +37,10 @@ This version has breaking changes — APIs, conventions, and file structure may 
           └──┬───┘
     ┌─────────┼─────────────────────────────┐
     ▼         ▼                             ▼
- 開発コア    ツール専任              AIXLINX部署
+  開発コア    ツール専任              AIXLINX部署
  (#1〜#9)  (#41 物件出し)          (#36 全部)
            (#42 見積書)
+           (#43 物件検索)
 ```
 
 ---
@@ -170,6 +171,48 @@ phase-5: 申込 → 審査ツールへ転送
 
 #### #42-W 見積書ツール倉庫管理人
 `memory/dept_estimate_tool.md` を常に最新状態に保つ。
+
+---
+
+### #43 物件検索ツール部長
+Chrome拡張ツール（物件検索サポート）の専任部長。リアプロ・itandi・レインズの検索手順をお客さんの条件に合わせてアナウンスする拡張ツールを管轄する。
+
+**管理ファイル**: `memory/dept_search_tool.md`
+
+**管轄ファイル**:
+| ファイル | 役割 |
+|--------|------|
+| `chrome-extension/popup.js` | 各サイトの検索手順定義・お客さん条件の整形ロジック |
+| `chrome-extension/popup.html` | 拡張ツールのUI |
+| `chrome-extension/styles.css` | スタイル |
+| `chrome-extension/background.js` | サイドパネル設定 |
+| `chrome-extension/manifest.json` | 拡張設定 |
+
+**管轄サイト**:
+```
+リアプロ（realnetpro.com）
+  - 所在地絞り込み：都道府県 → 市区郡 → 詳細地域
+  - 沿線・駅絞り込み：沿線選択 → 駅選択
+  ※ desired_area の内容で自動判定して手順を切り替える
+
+itandi BB
+レインズ
+```
+
+**チームメンバー**:
+| メンバー | 役割 |
+|---------|------|
+| #43 部長 | 拡張ツール全体統括・手順精度管理 |
+| #43-R | 各サイト検索UI調査・手順アップデート担当 |
+| #43-UX | 拡張ツールUI/UX改善担当 |
+| #43-W | 倉庫管理人（`memory/dept_search_tool.md` 管理） |
+
+**手順更新ルール**:
+- 実際にサイトを使って手順がズレたら即座に `popup.js` の `SITE_CONFIG` を更新する
+- 更新後は必ず `git commit && git push` してChrome拡張を再読み込みで確認
+
+#### #43-W 物件検索ツール倉庫管理人
+`memory/dept_search_tool.md` を常に最新状態に保つ。
 
 ---
 
