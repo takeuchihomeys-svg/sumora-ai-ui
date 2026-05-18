@@ -30,6 +30,7 @@ setupSidePanel();
 // タブがアクティブになったとき
 chrome.tabs.onActivated.addListener(function ({ tabId }) {
   chrome.tabs.get(tabId, function (tab) {
+    if (chrome.runtime.lastError) return; // タブが既に閉じられている場合など
     if (tab && tab.url) configureSidePanelForTab(tabId, tab.url);
   });
 });
