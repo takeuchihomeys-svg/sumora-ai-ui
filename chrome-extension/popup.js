@@ -959,6 +959,24 @@ function showView(id) {
   }
 }
 
+// Clipboard API がiframeのPermissions Policyでブロックされる場合に execCommand でフォールバック
+function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).catch(() => execCopy(text));
+  }
+  return Promise.resolve(execCopy(text));
+}
+function execCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.cssText = "position:fixed;top:-9999px;left:-9999px;opacity:0;";
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  try { document.execCommand("copy"); } catch {}
+  ta.remove();
+}
+
 // ── View 1: Customer list ──────────────────────────────────────────
 const CUSTOMER_CACHE_KEY = "aixlinx_customers";
 const CUSTOMER_CACHE_TTL = 5 * 60 * 1000; // 5分
@@ -1132,7 +1150,7 @@ function renderInstrSteps(siteKey, cOverride) {
     stepsEl.querySelectorAll(".copy-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         const text = btn.dataset.copy;
-        navigator.clipboard.writeText(text).then(() => {
+        copyText(text).then(() => {
           btn.textContent = "✓ 済";
           btn.classList.add("copied");
           setTimeout(() => {
@@ -1147,7 +1165,7 @@ function renderInstrSteps(siteKey, cOverride) {
   // コピーオールのテキスト
   const allText = buildCopyAll(cfg.name, steps, c);
   document.getElementById("copy-all-btn").onclick = () => {
-    navigator.clipboard.writeText(allText).then(() => {
+    copyText(allText).then(() => {
       const btn = document.getElementById("copy-all-btn");
       btn.textContent = "✓ コピーしました！";
       setTimeout(() => { btn.textContent = "📋 全条件をコピー"; }, 2000);
