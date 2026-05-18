@@ -27,7 +27,7 @@
   "web_accessible_resources": [
     {
       "resources": ["popup.html", "popup.js", "styles.css", "page-script.js"],
-      "matches": ["https://www.realnetpro.com/*", "https://itandibb.com/*"]
+      "matches": ["https://www.realnetpro.com/*", "https://itandibb.com/*", "https://system.reins.jp/*"]
     },
     {
       "resources": ["itandi-page-script.js"],
