@@ -239,5 +239,19 @@
       // page-script.jsのリスナーに転送（ページのJS文脈で動かす）
       window.postMessage({ from: "aixlinx-fill", conditions: e.data.conditions }, "*");
     }
+    if (a === "copy" && typeof e.data.text === "string") {
+      // iframeはPermissions-Policyでclipboardがブロックされるため
+      // コンテンツスクリプト（ページコンテキスト）でコピーを実行
+      navigator.clipboard.writeText(e.data.text).catch(() => {
+        const ta = document.createElement("textarea");
+        ta.value = e.data.text;
+        ta.style.cssText = "position:fixed;top:-9999px;left:-9999px;opacity:0;";
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        try { document.execCommand("copy"); } catch {}
+        ta.remove();
+      });
+    }
   });
 })();

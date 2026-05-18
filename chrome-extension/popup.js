@@ -959,9 +959,14 @@ function showView(id) {
   }
 }
 
-// Clipboard API は iframe 内で Permissions Policy によりブロックされるため
-// execCommand("copy") に完全統一（サイドパネル・iframe 両対応）
+// iframe内（リアプロ/itandi）はページのPermissions-Policyによりclipboard操作が完全ブロックされる
+// → underbar.js（コンテンツスクリプト）にpostMessageでコピーを委託する
+// サイドパネルモードは execCommand で直接コピー
 function copyText(text) {
+  if (isUnderbar) {
+    window.parent.postMessage({ from: "aixlinx-underbar", action: "copy", text }, "*");
+    return Promise.resolve();
+  }
   const ta = document.createElement("textarea");
   ta.value = text;
   ta.style.cssText = "position:fixed;top:-9999px;left:-9999px;opacity:0;";
