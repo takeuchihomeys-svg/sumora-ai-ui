@@ -959,15 +959,9 @@ function showView(id) {
   }
 }
 
-// iframeモード（itandi/リアプロ）ではClipboard APIがPermissions Policyでブロックされるため
-// isUnderbarのときは最初からexecCommandを使い、エラーログ自体を出さない
+// Clipboard API は iframe 内で Permissions Policy によりブロックされるため
+// execCommand("copy") に完全統一（サイドパネル・iframe 両対応）
 function copyText(text) {
-  if (!isUnderbar && navigator.clipboard && navigator.clipboard.writeText) {
-    return navigator.clipboard.writeText(text).catch(() => Promise.resolve(execCopy(text)));
-  }
-  return Promise.resolve(execCopy(text));
-}
-function execCopy(text) {
   const ta = document.createElement("textarea");
   ta.value = text;
   ta.style.cssText = "position:fixed;top:-9999px;left:-9999px;opacity:0;";
@@ -976,6 +970,7 @@ function execCopy(text) {
   ta.select();
   try { document.execCommand("copy"); } catch {}
   ta.remove();
+  return Promise.resolve();
 }
 
 // ── View 1: Customer list ──────────────────────────────────────────
