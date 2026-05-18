@@ -96,12 +96,7 @@
       }
     }
 
-    // ③ 駅から徒歩 (index 50)
-    if (cond.walk_minutes) {
-      setVal(getField(50), cond.walk_minutes);
-    }
-
-    // ④ 賃料上限 (index 76、万円単位)
+    // ③ 賃料上限 (index 76、万円単位)
     if (cond.rent_max) {
       var rentVal = cond.rent_max > 1000
         ? Math.ceil(cond.rent_max / 10000)
