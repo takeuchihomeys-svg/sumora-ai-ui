@@ -102,7 +102,22 @@
       });
     }
 
-    // ⑥ 検索ボタン自動クリック
+    // ⑥ 築年月FROM（「築N年以内」→「YYYY年（和暦）」selectを選択）
+    if (cond.building_age) {
+      var fromYear = new Date().getFullYear() - parseInt(cond.building_age);
+      var yearStr = String(fromYear) + "年";
+      // 年号形式(「2028年(令和10年)」等)を持つselect群を抽出し、最初がFROM
+      var yearSels = [].slice.call(document.querySelectorAll("select")).filter(function (s) {
+        return [].slice.call(s.options).some(function (o) { return o.text.startsWith("2028年"); });
+      });
+      if (yearSels.length) {
+        var fromSel = yearSels[0];
+        var opt = [].slice.call(fromSel.options).find(function (o) { return o.text.startsWith(yearStr); });
+        if (opt) setVal(fromSel, opt.value);
+      }
+    }
+
+    // ⑦ 検索ボタン自動クリック
     setTimeout(function () {
       var btn = [].slice.call(document.querySelectorAll("button")).find(function (b) {
         return b.textContent.trim() === "検索";
