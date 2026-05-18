@@ -465,6 +465,43 @@ const WARD_CODE_MAP = {
 };
 
 // ── 沿線名 → route_id（リアプロ route_id[]） ──────────────────────
+// リアプロ路線名 → itandi正式路線名（DevTools実測）
+const ITANDI_LINE_MAP_FILL = {
+  "大阪市高速軌道御堂筋線":           "高速電気軌道第1号線(大阪メトロ御堂筋線)",
+  "大阪市高速軌道谷町線":             "高速電気軌道第2号線(大阪メトロ谷町線)",
+  "大阪市高速軌道四つ橋線":           "高速電気軌道第3号線(大阪メトロ四つ橋線)",
+  "大阪市高速軌道中央線":             "高速電気軌道第4号線(大阪メトロ中央線)",
+  "大阪市高速軌道千日前線":           "高速電気軌道第5号線(大阪メトロ千日前線)",
+  "大阪市高速軌道堺筋線":             "高速電気軌道第6号線(大阪メトロ堺筋線)",
+  "大阪市高速軌道長堀鶴見緑地線":     "高速電気軌道第7号線(大阪メトロ長堀鶴見緑地線)",
+  "大阪市高速軌道今里筋線":           "高速電気軌道第8号線(大阪メトロ今里筋線)",
+  "大阪市高速軌道南港ポートタウン線": "大阪市高速電気軌道南港ポートタウン線(大阪メトロ南港ポートタウン線)",
+  "北大阪急行南北線":                 "北大阪急行電鉄",
+  "阪急電鉄神戸線":                   "阪急神戸本線",
+  "阪急電鉄宝塚線":                   "阪急宝塚本線",
+  "阪急電鉄京都線":                   "阪急京都本線",
+  "阪急電鉄千里線":                   "阪急千里線",
+  "阪急電鉄箕面線":                   "阪急箕面線",
+  "阪神電鉄本線":                     "阪神本線",
+  "阪神電鉄阪神なんば線":             "阪神なんば線",
+  "南海電鉄南海本線":                 "南海本線",
+  "南海電鉄南本線":                   "南海本線",
+  "南海電鉄高野線":                   "南海高野線",
+  "南海電鉄泉北線":                   "南海泉北線(泉北線)",
+  "京阪電気鉄道京阪線":               "京阪本線",
+  "大阪環状線":                       "大阪環状線",
+  "JR東西線":                         "JR東西線",
+  "片町線":                           "JR片町線(学研都市線)",
+  "阪和線":                           "阪和線(天王寺～和歌山)",
+  "おおさか東線":                     "おおさか東線",
+  "近鉄難波・奈良線":                 ["近鉄難波線", "近鉄奈良線"],
+  "近鉄南大阪線":                     "近鉄南大阪線",
+  "近鉄大阪線":                       "近鉄大阪線",
+  "近鉄けいはんな線":                 "近鉄けいはんな線",
+  "大阪モノレール本線":               "大阪モノレール線",
+  "大阪モノレール彩都線":             "国際文化公園都市線(大阪モノレール彩都線)",
+};
+
 const LINE_ROUTE_MAP = {
   "大阪市高速軌道御堂筋線":"6701","大阪市高速軌道谷町線":"6702",
   "大阪市高速軌道四つ橋線":"6703","大阪市高速軌道中央線":"6704",
@@ -923,8 +960,38 @@ function showView(id) {
 }
 
 // ── View 1: Customer list ──────────────────────────────────────────
-async function loadCustomers() {
+const CUSTOMER_CACHE_KEY = "aixlinx_customers";
+const CUSTOMER_CACHE_TTL = 5 * 60 * 1000; // 5分
+
+function getCachedCustomers() {
+  try {
+    const raw = sessionStorage.getItem(CUSTOMER_CACHE_KEY);
+    if (!raw) return null;
+    const { ts, data } = JSON.parse(raw);
+    if (Date.now() - ts > CUSTOMER_CACHE_TTL) return null;
+    return data;
+  } catch { return null; }
+}
+
+function setCachedCustomers(data) {
+  try {
+    sessionStorage.setItem(CUSTOMER_CACHE_KEY, JSON.stringify({ ts: Date.now(), data }));
+  } catch {}
+}
+
+async function loadCustomers(forceRefresh = false) {
   const list = document.getElementById("customer-list");
+
+  // キャッシュ利用（強制更新でない場合）
+  if (!forceRefresh) {
+    const cached = getCachedCustomers();
+    if (cached) {
+      allCustomers = cached;
+      renderList(allCustomers);
+      return;
+    }
+  }
+
   list.innerHTML = `<div class="state-msg">読み込み中...</div>`;
 
   try {
@@ -933,6 +1000,7 @@ async function loadCustomers() {
     });
     if (!res.ok) throw new Error("HTTP " + res.status);
     allCustomers = await res.json();
+    setCachedCustomers(allCustomers);
     renderList(allCustomers);
   } catch (e) {
     list.innerHTML = `<div class="state-msg">⚠️ データ取得失敗<br><small>${esc(e.message)}</small></div>`;
@@ -1147,44 +1215,6 @@ function openInstructions(siteKey) {
       const stationClean = rawArea.replace(/駅|周辺|付近|近く/g, "").trim();
       const isWardArea = /[都道府県市区町村郡]/.test(stationClean);
 
-      // リアプロ路線名 → itandi路線名（実画面DevToolsで確認した正式名称）
-      // 配列の場合は複数路線に展開される（例: 近鉄難波・奈良線 → 2路線）
-      const ITANDI_LINE_MAP_FILL = {
-        "大阪市高速軌道御堂筋線":           "高速電気軌道第1号線(大阪メトロ御堂筋線)",
-        "大阪市高速軌道谷町線":             "高速電気軌道第2号線(大阪メトロ谷町線)",
-        "大阪市高速軌道四つ橋線":           "高速電気軌道第3号線(大阪メトロ四つ橋線)",
-        "大阪市高速軌道中央線":             "高速電気軌道第4号線(大阪メトロ中央線)",
-        "大阪市高速軌道千日前線":           "高速電気軌道第5号線(大阪メトロ千日前線)",
-        "大阪市高速軌道堺筋線":             "高速電気軌道第6号線(大阪メトロ堺筋線)",
-        "大阪市高速軌道長堀鶴見緑地線":     "高速電気軌道第7号線(大阪メトロ長堀鶴見緑地線)",
-        "大阪市高速軌道今里筋線":           "高速電気軌道第8号線(大阪メトロ今里筋線)",
-        "大阪市高速軌道南港ポートタウン線": "大阪市高速電気軌道南港ポートタウン線(大阪メトロ南港ポートタウン線)",
-        "北大阪急行南北線":                 "北大阪急行電鉄",
-        "阪急電鉄神戸線":                   "阪急神戸本線",
-        "阪急電鉄宝塚線":                   "阪急宝塚本線",
-        "阪急電鉄京都線":                   "阪急京都本線",
-        "阪急電鉄千里線":                   "阪急千里線",
-        "阪急電鉄箕面線":                   "阪急箕面線",
-        "阪神電鉄本線":                     "阪神本線",
-        "阪神電鉄阪神なんば線":             "阪神なんば線",
-        "南海電鉄南海本線":                 "南海本線",
-        "南海電鉄南本線":                   "南海本線",
-        "南海電鉄高野線":                   "南海高野線",
-        "南海電鉄泉北線":                   "南海泉北線(泉北線)",
-        "京阪電気鉄道京阪線":               "京阪本線",
-        "大阪環状線":                       "大阪環状線",
-        "JR東西線":                         "JR東西線",
-        "片町線":                           "JR片町線(学研都市線)",
-        "阪和線":                           "阪和線(天王寺～和歌山)",
-        "おおさか東線":                     "おおさか東線",
-        "近鉄難波・奈良線":                 ["近鉄難波線", "近鉄奈良線"],
-        "近鉄南大阪線":                     "近鉄南大阪線",
-        "近鉄大阪線":                       "近鉄大阪線",
-        "近鉄けいはんな線":                 "近鉄けいはんな線",
-        "大阪モノレール本線":               "大阪モノレール線",
-        "大阪モノレール彩都線":             "国際文化公園都市線(大阪モノレール彩都線)",
-      };
-
       // STATION_LINE_MAPに収録済みなら必ず駅（「町」「村」が含まれていても駅名の場合がある）
       const inStationMap = !!(STATION_LINE_MAP[stationClean]);
       const isWardArea_itandi = !inStationMap && /[都道府県市区郡]/.test(stationClean);
@@ -1380,7 +1410,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("refresh-btn").addEventListener("click", () => {
     showView("view-list");
-    loadCustomers();
+    loadCustomers(true); // 強制更新（キャッシュを無視して再取得）
   });
 
   // 検索モード切替
