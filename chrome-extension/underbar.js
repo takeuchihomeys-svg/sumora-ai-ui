@@ -241,6 +241,10 @@
       // page-script.jsのリスナーに転送（ページのJS文脈で動かす）
       window.postMessage({ from: "aixlinx-fill", conditions: e.data.conditions }, "*");
     }
+    if (a === "itandi-autofill") {
+      // itandi-content.jsに転送（chrome.tabsがiframe内で使えないためpostMessage経由）
+      window.postMessage({ from: "aixlinx-itandi-fill", conditions: e.data.conditions }, "*");
+    }
     if (a === "copy" && typeof e.data.text === "string") {
       // Clipboard APIは一切使わずexecCommandのみでコピー
       // （navigator.clipboard.writeTextもPermissions-Policy違反ログの原因になるため使用禁止）

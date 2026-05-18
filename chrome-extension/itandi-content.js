@@ -18,4 +18,13 @@
       window.dispatchEvent(new CustomEvent("axlx-itandi-fill", { detail: msg.conditions }));
     }, 200);
   });
+
+  // underbar.js経由のpostMessageも受け取る（iframe内でchrome.tabsが使えないため）
+  window.addEventListener("message", function (e) {
+    if (!e.data || e.data.from !== "aixlinx-itandi-fill") return;
+    injectPageScript();
+    setTimeout(function () {
+      window.dispatchEvent(new CustomEvent("axlx-itandi-fill", { detail: e.data.conditions }));
+    }, 200);
+  });
 })();

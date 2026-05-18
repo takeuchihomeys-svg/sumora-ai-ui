@@ -1270,10 +1270,8 @@ function openInstructions(siteKey) {
         itandi_lines: !isWardArea_itandi ? itandiLines : [],
         station_names: stationNames,
       };
-      chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-        if (!tabs[0]) return;
-        chrome.tabs.sendMessage(tabs[0].id, { type: "axlx-itandi-autofill", conditions });
-      });
+      // chrome.tabs はiframe内で使用不可 → underbar.js経由でitandi-content.jsに中継
+      window.parent.postMessage({ from: "aixlinx-underbar", action: "itandi-autofill", conditions }, "*");
       autofillBtn.textContent = "✓ 入力しました！";
       autofillBtn.classList.add("done");
       setTimeout(() => {
