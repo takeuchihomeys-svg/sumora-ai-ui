@@ -42,9 +42,10 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 - itandi BBではサイドパネルで「⚡ itandiに自動入力」ボタンが表示される
 
 ### isUnderbar 判定
-- `window.self !== window.top` → true でアンダーバーモード
+- `window.self !== window.top` → true でアンダーバーモード（リアプロ・itandiどちらも underbar.js が動くため、両方で isUnderbar=true）
 - リアプロ自動入力ボタンは `isUnderbar && siteKey === "realpro"` のときのみ表示
-- itandi自動入力ボタンは `!isUnderbar && siteKey === "itandi"` のときのみ表示
+- itandi自動入力ボタンは `isUnderbar && siteKey === "itandi"` のときのみ表示（!isUnderbarは誤り）
+- Clipboard API: isUnderbar=true のとき navigator.clipboard を使わず execCommand("copy") を直接使用（Permissions Policyエラー対策）
 
 ---
 
@@ -122,6 +123,12 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 | 2026-05-18 | itandi・レインズに一時調整フォーム追加（リアプロと同機能・DBは変更しない一時変更）v1.5.3 |
 | 2026-05-18 | itandi条件バグ修正: isUnderbar→!isUnderbarに変更（サイドパネルでautofillBtn表示されない問題）v1.5.3 |
 | 2026-05-18 | renderInstrSteps()にcOverrideパラメータ追加（レインズ手順更新機能の基盤）v1.5.3 |
+| 2026-05-18 | リアプロ自動入力後の検索ボタン自動クリック実装（駅あり→1200ms / なし→600ms遅延）v1.5.4 |
+| 2026-05-18 | リアプロ page-script.js に selectStationsByName()追加（ラベル文字列一致で駅チェックボックス選択）v1.5.4 |
+| 2026-05-18 | Clipboard API Permissions Policyエラー修正: isUnderbar=trueのときclipboard API完全スキップ→execCommand直接使用 v1.5.4 |
+| 2026-05-18 | ITANDI_LINE_MAP_FILLをonclick内からトップレベルconstに移動（パフォーマンス改善）v1.5.4 |
+| 2026-05-18 | 顧客データsessionStorageキャッシュ実装（TTL 5分・更新ボタンで強制リフレッシュ）v1.5.4 |
+| 2026-05-18 | Manifestに"tabs"権限追加・chrome.tabs.get()にlastErrorチェック追加（拡張エラーバッジ修正）v1.5.4 |
 
 ---
 
@@ -266,7 +273,7 @@ popup.js（サイドパネル）
 |---|---|---|---|
 | レインズ手順 | 実際の画面で手順を検証・調整が必要 | 中 | 未着手 |
 | 駅マッピング追加 | 兵庫・京都・奈良方面の駅が未収録 | 低 | 未着手 |
-| リアプロ自動入力後の検索実行 | 現状は条件入力のみ・検索ボタンは手動 | 低 | 未着手 |
+| リアプロ自動入力後の検索実行 | 実装済み（v1.5.4）| - | ✅完了 |
 | itandi大阪モノレール路線名確認 | 60件制限でモーダル取得できず。「大阪モノレール線」で動くか未確認 | 低 | 未確認 |
 | itandi自動入力タイミング調整 | setTimeout値が実際の画面速度に合っているか未確認 | 中 | テスト待ち |
 
@@ -288,11 +295,14 @@ popup.js（サイドパネル）
 
 ## 🔁 引き継ぎ事項（次セッションへ）
 
-- 現在のバージョン: **v1.5.2**
+- 現在のバージョン: **v1.5.4**
 - 拡張ツールはChromeに手動インストール済み（開発者モード）
 - 変更後は chrome://extensions で再読み込み必要
 - GitHub push → ローカルで git pull → Chrome再読み込み の流れ
-- **itandi自動入力・所在地/路線・駅選択モーダル・検索ボタン自動クリックが実装済み（v1.5.2）**
+- **itandi自動入力・所在地/路線・駅選択モーダル・検索ボタン自動クリックが実装済み（v1.5.2〜v1.5.4）**
+- **リアプロ自動入力後の検索ボタン自動クリック実装済み（v1.5.4）**
+- **Clipboard API Permissions Policyエラー修正済み（isUnderbar=trueのときexecCommand直接使用）（v1.5.4）**
+- **拡張エラーバッジ修正済み（tabs権限追加・lastErrorチェック）（v1.5.4）**
 - フロー: 路線・駅で絞り込み → 近畿(完全一致) → 大阪府(完全一致) → 路線チェック → 駅列描画待ち(800ms) → 駅を全選択 → 確定
 - 広げて検索: 当駅＋前後各1駅を `clickLabel` で全選択（LINE_STATION_ORDER で隣駅を自動取得）
 - ピンポイント検索: 当駅のみ選択
