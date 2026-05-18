@@ -24,6 +24,8 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 | `chrome-extension/bulk-dl.js` | リアプロ印刷用PDF一括DLバー |
 | `chrome-extension/itandi-content.js` | itandi BBコンテンツスクリプト（メッセージ受信・ページスクリプト注入） |
 | `chrome-extension/itandi-page-script.js` | itandi BBフォーム自動入力（ページコンテキスト） |
+| `chrome-extension/reins-content.js` | REINSコンテンツスクリプト（chrome.tabs.sendMessage受信・ページスクリプト注入） |
+| `chrome-extension/reins-page-script.js` | REINSフォーム自動入力（Vueセッター・select/option/checkbox対応） |
 
 ---
 
@@ -135,6 +137,8 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 | 2026-05-18 | レインズ手順を実際のフォーム画面をもとに実装: 物件種別/沿線・駅or所在地/徒歩/賃料/間取タイプ/築年月/設備・条件 v1.6.0 |
 | 2026-05-18 | REINS_LINE_MAP追加: 内部名(大阪市高速軌道/阪急電鉄/南海電鉄など)→REINS表記(大阪メトロ/阪急/南海など)変換 53路線対応 v1.6.1 |
 | 2026-05-18 | REINSフォーム調査: 全フィールドはselect/option構造(li不使用)・沿線モーダルは2ステップ(地域→都道府県→次へ→路線select) |
+| 2026-05-18 | REINS自動入力実装: reins-page-script.js/reins-content.js新規作成・manifest.jsonにsystem.reins.jp追加 v1.7.0 |
+| 2026-05-18 | REINS自動入力: 物件種別/沿線名/駅名/徒歩/賃料/間取タイプを自動入力→検索ボタン自動クリック |
 
 ---
 
