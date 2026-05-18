@@ -92,6 +92,24 @@
       }
     });
   }
+  // 駅名（文字列）でラベル一致するチェックボックスを選択
+  function selectStationsByName(names) {
+    if (!names || !names.length) return;
+    names.forEach(function(name) {
+      var clean = name.replace(/駅$/, '').trim();
+      var labels = document.querySelectorAll('label');
+      for (var i = 0; i < labels.length; i++) {
+        var lbl = labels[i];
+        var lblTxt = lbl.textContent.replace(/\s+/g, '').replace(/駅$/, '');
+        if (lblTxt === clean) {
+          var inp = lbl.querySelector('input[type="checkbox"]');
+          if (!inp && lbl.htmlFor) inp = document.getElementById(lbl.htmlFor);
+          if (inp && !inp.checked) { inp.click(); break; }
+        }
+      }
+    });
+  }
+
   function fillRealpro(cond) {
     if (!cond) return;
     if (cond.rent_min) setSelVal("rental_cost1", nearestDown(RENT_OPTS, cond.rent_min));
@@ -122,6 +140,10 @@
     if (cond.route_ids && cond.route_ids.length > 0) {
       setCheckboxes("route_id[]", cond.route_ids);
     }
+    // 駅選択：沿線チェック後 DOM 更新を待ってラベル一致でクリック
+    if (cond.station_names && cond.station_names.length > 0) {
+      setTimeout(function() { selectStationsByName(cond.station_names); }, 500);
+    }
     // 物件構造（structured_type[]）
     if (cond.structure_types && cond.structure_types.length > 0) {
       var sVals = cond.structure_types.map(function(s){ return STRUCTURE_MAP[s]; }).filter(Boolean);
@@ -132,6 +154,18 @@
       var petCb = document.querySelector('input[name="eq_rm[]"][value="113"]');
       if (petCb && !petCb.checked) petCb.click();
     }
+    // 検索ボタン自動クリック（駅選択がある場合は遅めに）
+    var searchDelay = (cond.station_names && cond.station_names.length) ? 1200 : 600;
+    setTimeout(function() {
+      var allBtns = Array.prototype.slice.call(
+        document.querySelectorAll('button, input[type="submit"], a')
+      );
+      var btn = allBtns.find(function(b) {
+        var txt = (b.textContent || b.value || '').replace(/\s+/g, '');
+        return txt === '検索' || txt === '物件を検索する' || txt === '条件で検索';
+      });
+      if (btn) btn.click();
+    }, searchDelay);
   }
 
   window.addEventListener("message", function(e) {

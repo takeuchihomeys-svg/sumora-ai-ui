@@ -1264,17 +1264,34 @@ function openInstructions(siteKey) {
           : [],
       };
       const { city_codes, route_ids } = buildAreaRouteCodes(adjC);
+
+      // 駅名リスト（STATION_LINE_MAPに収録されている駅のみ）
+      const adjAreaClean = (adjC.desired_area || adjC.area || "").trim();
+      const areaParts = adjAreaClean.split(/[,、・\/\s]+/)
+        .map(s => s.replace(/駅|周辺|付近|近く|沿線/g, "").trim()).filter(Boolean);
+      const realpro_station_names = [];
+      for (const part of areaParts) {
+        if (STATION_LINE_MAP[part]) {
+          realpro_station_names.push(part);
+          if (searchMode === "wide") {
+            const adj = getAdjacentStations(part, STATION_LINE_MAP[part] || []);
+            adj.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
+          }
+        }
+      }
+
       window.parent.postMessage({
         from: "aixlinx-underbar",
         action: "autofill",
         conditions: {
-          rent_min:     adjC.rent_min,
-          rent_max:     adjC.rent_max,
-          walk_minutes: adjC.walk_minutes,
-          floor_plan:   adjC.floor_plan,
-          building_age: adjC.building_age,
+          rent_min:      adjC.rent_min,
+          rent_max:      adjC.rent_max,
+          walk_minutes:  adjC.walk_minutes,
+          floor_plan:    adjC.floor_plan,
+          building_age:  adjC.building_age,
           city_codes,
           route_ids,
+          station_names: realpro_station_names,
           structure_types: adjC.structure_types,
           pet_ok: adjPet,
         },
