@@ -1,6 +1,8 @@
 (function () {
   "use strict";
 
+  function sleep(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
+
   // Vue対応 value setter（select/inputどちらも対応）
   function setVal(el, val) {
     if (!el) return;
@@ -32,7 +34,7 @@
     return false;
   }
 
-  // 間取タイプ チェックボックス（ラベル名で探す・半角/全角両対応）
+  // チェックボックス（ラベル名で探す）
   function checkByLabel(text) {
     var labels = [].slice.call(document.querySelectorAll("label"));
     var found = labels.find(function (l) {
@@ -45,7 +47,7 @@
     return true;
   }
 
-  // 間取タイプ ラベルマッピング（半角→REINS表記の候補リスト）
+  // 間取タイプ ラベルマッピング（半角→REINS表記の候補リスト・半角/全角両対応）
   var MADORI_LABELS = {
     "1R":   ["ワンルーム"],
     "R":    ["ワンルーム"],
@@ -63,7 +65,7 @@
     "SLDK": ["SLDK", "ＳＬＤＫ"],
   };
 
-  function fill(cond) {
+  async function fill(cond) {
     // ① 物件種別1 = 賃貸マンション (select index 5)
     selectByText(getField(5), "賃貸マンション");
 
@@ -94,7 +96,6 @@
     if (cond.floor_plan) {
       cond.floor_plan.split(/[・,、\/\.\s]+/).forEach(function (p) {
         p = p.trim().toUpperCase();
-        // "2LDK" → "LDK" のように数字プレフィックスを除いたキーも試す
         var key = p.replace(/^\d+/, "") || p;
         var candidates = MADORI_LABELS[p] || MADORI_LABELS[key];
         if (!candidates) return;
@@ -102,28 +103,45 @@
       });
     }
 
-    // ⑥ 築年月FROM（「築N年以内」→「YYYY年（和暦）」selectを選択）
+    // ⑥ 築年月FROM（「築N年以内」→「YYYY年（和暦）」selectを自動選択）
     if (cond.building_age) {
       var fromYear = new Date().getFullYear() - parseInt(cond.building_age);
       var yearStr = String(fromYear) + "年";
-      // 年号形式(「2028年(令和10年)」等)を持つselect群を抽出し、最初がFROM
       var yearSels = [].slice.call(document.querySelectorAll("select")).filter(function (s) {
         return [].slice.call(s.options).some(function (o) { return o.text.startsWith("2028年"); });
       });
       if (yearSels.length) {
-        var fromSel = yearSels[0];
-        var opt = [].slice.call(fromSel.options).find(function (o) { return o.text.startsWith(yearStr); });
-        if (opt) setVal(fromSel, opt.value);
+        var opt = [].slice.call(yearSels[0].options).find(function (o) { return o.text.startsWith(yearStr); });
+        if (opt) setVal(yearSels[0], opt.value);
       }
     }
 
-    // ⑦ 検索ボタン自動クリック
-    setTimeout(function () {
-      var btn = [].slice.call(document.querySelectorAll("button")).find(function (b) {
-        return b.textContent.trim() === "検索";
-      });
-      if (btn) btn.click();
-    }, 600);
+    // ⑦ ペット相談（オプション入力ガイドモーダル経由）
+    if (cond.pet_ok) {
+      // 設備・条件の「入力ガイド」ボタン = textareaの隣にあるもの
+      var allGuideBtns = [].slice.call(document.querySelectorAll("button"))
+        .filter(function (b) { return b.textContent.trim() === "入力ガイド"; });
+      // 最後の入力ガイドボタンが設備・条件欄のもの（診断結果: index 9）
+      var optGuideBtn = allGuideBtns[allGuideBtns.length - 1];
+      if (optGuideBtn) {
+        optGuideBtn.click();
+        await sleep(800);
+        checkByLabel("ペット相談");
+        await sleep(300);
+        var ketteBtn = [].slice.call(document.querySelectorAll("button")).find(function (b) {
+          return b.textContent.trim() === "決定";
+        });
+        if (ketteBtn) ketteBtn.click();
+        await sleep(500);
+      }
+    }
+
+    // ⑧ 検索ボタン自動クリック
+    await sleep(600);
+    var searchBtn = [].slice.call(document.querySelectorAll("button")).find(function (b) {
+      return b.textContent.trim() === "検索";
+    });
+    if (searchBtn) searchBtn.click();
   }
 
   window.addEventListener("axlx-reins-fill", function (e) {

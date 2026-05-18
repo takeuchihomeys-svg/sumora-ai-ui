@@ -1507,6 +1507,7 @@ function openInstructions(siteKey) {
         ? (REINS_LINE_MAP[stationLines[0]] || stationLines[0])
         : null;
 
+      const adjPet = document.getElementById("adj-pet")?.checked ?? false;
       const conditions = {
         rent_max:     adjC.rent_max || null,
         walk_minutes: adjC.walk_minutes || null,
@@ -1515,6 +1516,7 @@ function openInstructions(siteKey) {
         reins_line:   reinsLine,
         station_name: reinsLine ? stationKey : null,
         ward_name:    !reinsLine ? rawArea : null,
+        pet_ok:       adjPet,
       };
 
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
