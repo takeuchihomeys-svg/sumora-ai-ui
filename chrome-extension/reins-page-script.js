@@ -167,11 +167,12 @@
       }
     }
 
-    // ⑧ 登録年月日（radio button）
+    // ⑧ 登録年月日（radio button）- REINSラベルは全角数字のため変換
     if (cond.reins_reg_date) {
+      var regDateLabel = cond.reins_reg_date.replace(/1/g, "１").replace(/3/g, "３");
       var regLabels = [].slice.call(document.querySelectorAll("label"));
       var regFound = regLabels.find(function (l) {
-        return l.textContent.trim() === cond.reins_reg_date;
+        return l.textContent.trim() === regDateLabel;
       });
       if (regFound) {
         var radio = regFound.querySelector('input[type="radio"]');
