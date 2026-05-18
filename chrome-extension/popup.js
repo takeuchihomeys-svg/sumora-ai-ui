@@ -824,38 +824,36 @@ const SITE_CONFIG = {
       steps.push({
         num: n++,
         field: "物件種別",
-        value: "マンション等",
-        hint: "「物件種別1」プルダウン →「マンション等」を選択（必須項目）",
+        value: "賃貸マンション",
+        hint: "「物件種別1」プルダウン →「賃貸マンション」を選択（必須）",
       });
 
       // エリア絞り込み（沿線・駅 or 所在地）
       const stationKey = rawArea.replace(/駅|周辺|付近|近く/g, "").trim();
       const stationLines = stationKey ? (STATION_LINE_MAP[stationKey] || []) : [];
       if (stationLines.length) {
+        // 沿線モード（広げて検索の場合は沿線2・3に隣接沿線を追加）
+        const wideNote = mode === "wide" ? "。広げて検索の場合は沿線2・3に複数路線を追加可" : "";
         steps.push({
           num: n++,
           field: "沿線名",
           value: stationLines.join(" / "),
-          hint: "「沿線名」欄に入力（完全一致必須）。右の「入力ガイド」ボタンから選択すると確実",
+          hint: `「沿線1」欄に入力。右サイドの「沿線名表記一覧」で正式名称を確認${wideNote}`,
         });
         steps.push({
           num: n++,
           field: "駅名",
           value: stationKey,
-          hint: "「駅名」欄に入力（「駅」は不要・完全一致必須）",
+          hint: "「駅名」欄に入力（「駅」不要）",
         });
       } else if (rawArea) {
+        // 所在地モード（広げて検索の場合は所在地2・3に隣接エリアを追加）
+        const wideNote = mode === "wide" ? "。広げて検索の場合は所在地2・3に隣接区も追加可" : "";
         steps.push({
           num: n++,
-          field: "都道府県名",
-          value: "大阪府",
-          hint: "「所在地1」→「都道府県名」欄に「大阪府」と入力（完全一致）",
-        });
-        steps.push({
-          num: n++,
-          field: "所在地名（市区）",
+          field: "所在地（市・区）",
           value: rawArea,
-          hint: "「所在地名1」欄に市区名を入力（例：大阪市北区 →「北区」のみでも可・完全一致）",
+          hint: `「所在地範囲選択1」の「入力ガイド」ボタン → 大阪府 → 市・区を選択${wideNote}`,
         });
       }
 
