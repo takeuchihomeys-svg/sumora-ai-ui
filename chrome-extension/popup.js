@@ -1502,21 +1502,25 @@ function openInstructions(siteKey) {
       const rawArea = (adjC.desired_area || adjC.area || "").trim();
       const stationKey = rawArea.replace(/駅|周辺|付近|近く/g, "").trim();
       const stationLines = stationKey ? (STATION_LINE_MAP[stationKey] || []) : [];
-      // 内部路線名 → REINS表記に変換（最初の1路線）
-      const reinsLine = stationLines.length
-        ? (REINS_LINE_MAP[stationLines[0]] || stationLines[0])
-        : null;
+      // 内部路線名 → REINS表記に変換（最大3路線・沿線1〜3に対応）
+      const reinsLines = stationLines
+        .slice(0, 3)
+        .map(l => REINS_LINE_MAP[l] || l);
+      const reinsLine = reinsLines[0] || null;
 
-      const adjPet = document.getElementById("adj-pet")?.checked ?? false;
+      const adjPet     = document.getElementById("adj-pet")?.checked ?? false;
+      const adjRegDate = document.getElementById("adj-reg-date")?.value || "";
       const conditions = {
-        rent_max:     adjC.rent_max || null,
-        walk_minutes: adjC.walk_minutes || null,
-        floor_plan:   adjC.floor_plan || null,
-        building_age: adjC.building_age || null,
-        reins_line:   reinsLine,
-        station_name: reinsLine ? stationKey : null,
-        ward_name:    !reinsLine ? rawArea : null,
-        pet_ok:       adjPet,
+        rent_max:       adjC.rent_max || null,
+        walk_minutes:   adjC.walk_minutes || null,
+        floor_plan:     adjC.floor_plan || null,
+        building_age:   adjC.building_age || null,
+        reins_lines:    reinsLines,
+        reins_line:     reinsLine,
+        station_name:   reinsLine ? stationKey : null,
+        ward_name:      !reinsLine ? rawArea : null,
+        pet_ok:         adjPet,
+        reins_reg_date: adjRegDate || null,
       };
 
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {

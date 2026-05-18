@@ -80,13 +80,19 @@
       await sleep(300);
       setVal(getField(28), cond.ward_name);
     } else if (cond.reins_line) {
-      // 沿線モード: 沿線名1(47) + 駅名FROM/TO(48/49)
-      setVal(getField(47), cond.reins_line);
-      await sleep(400);
+      // 沿線モード: 最大3路線を沿線1(47)〜沿線3(61)に設定
+      var lines = cond.reins_lines && cond.reins_lines.length ? cond.reins_lines : [cond.reins_line];
       var stName = (cond.station_name || "").replace(/駅$/, "").trim();
-      if (stName) {
-        setVal(getField(48), stName);
-        setVal(getField(49), stName);
+      // 沿線1〜3の開始idx: 47, 54, 61（各ブロック7フィールド）
+      var sensenIdxs = [47, 54, 61];
+      for (var li = 0; li < lines.length && li < 3; li++) {
+        var baseIdx = sensenIdxs[li];
+        setVal(getField(baseIdx), lines[li]);        // 沿線名
+        await sleep(400);
+        if (stName) {
+          setVal(getField(baseIdx + 1), stName);     // 駅名FROM
+          setVal(getField(baseIdx + 2), stName);     // 駅名TO
+        }
       }
     }
 
