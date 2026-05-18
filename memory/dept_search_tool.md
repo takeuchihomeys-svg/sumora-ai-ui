@@ -133,6 +133,8 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 | 2026-05-18 | itandi自動入力のchrome.tabs→postMessage中継に変更（iframe内でchrome.tabs使用不可のため）popup.js→underbar.js→itandi-content.js v1.5.7 |
 | 2026-05-18 | itandi 広げて検索で当駅が選択されないバグ修正: clickLabel()に!inp.checked ガード追加（React自動チェック→再クリックでトグルOFFになる問題）v1.5.8 |
 | 2026-05-18 | レインズ手順を実際のフォーム画面をもとに実装: 物件種別/沿線・駅or所在地/徒歩/賃料/間取タイプ/築年月/設備・条件 v1.6.0 |
+| 2026-05-18 | REINS_LINE_MAP追加: 内部名(大阪市高速軌道/阪急電鉄/南海電鉄など)→REINS表記(大阪メトロ/阪急/南海など)変換 53路線対応 v1.6.1 |
+| 2026-05-18 | REINSフォーム調査: 全フィールドはselect/option構造(li不使用)・沿線モーダルは2ステップ(地域→都道府県→次へ→路線select) |
 
 ---
 
