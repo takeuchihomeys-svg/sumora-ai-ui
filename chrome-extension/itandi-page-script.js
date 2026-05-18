@@ -44,7 +44,7 @@
     var inp = lbl.querySelector("input[type='checkbox']");
     if (!inp && lbl.htmlFor) inp = document.getElementById(lbl.htmlFor);
     if (inp) {
-      inp.click(); // input を直接1回だけクリック（label+inputの二重クリックでトグル戻りを防ぐ）
+      if (!inp.checked) inp.click(); // 未チェックのときのみクリック（既チェックを再クリックするとトグルでOFFになる）
     } else {
       lbl.click();
     }
