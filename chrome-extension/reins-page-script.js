@@ -71,7 +71,9 @@
     await sleep(800);
 
     // ① 物件種別1 = 賃貸マンション (select index 5)
+    // 入力ガイド（ペット相談等）はこの選択が完了していないと動かないため必ずwaitする
     selectByText(getField(5), "賃貸マンション");
+    await sleep(600);
 
     // ② 所在地1（ward_name）または 沿線名1（reins_line）
     if (cond.ward_name) {
