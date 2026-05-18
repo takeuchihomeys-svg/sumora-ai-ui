@@ -84,6 +84,7 @@
   // ── iframe ────────────────────────────────────────────────────────
   const iframe = document.createElement("iframe");
   iframe.src = chrome.runtime.getURL("popup.html");
+  iframe.allow = "clipboard-write"; // iframeではClipboard APIがデフォルトでブロックされるため明示許可
   Object.assign(iframe.style, {
     flex:      "1",
     width:     "100%",
