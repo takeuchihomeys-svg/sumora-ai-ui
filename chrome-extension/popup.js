@@ -959,10 +959,11 @@ function showView(id) {
   }
 }
 
-// Clipboard API がiframeのPermissions Policyでブロックされる場合に execCommand でフォールバック
+// iframeモード（itandi/リアプロ）ではClipboard APIがPermissions Policyでブロックされるため
+// isUnderbarのときは最初からexecCommandを使い、エラーログ自体を出さない
 function copyText(text) {
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    return navigator.clipboard.writeText(text).catch(() => execCopy(text));
+  if (!isUnderbar && navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).catch(() => Promise.resolve(execCopy(text)));
   }
   return Promise.resolve(execCopy(text));
 }
