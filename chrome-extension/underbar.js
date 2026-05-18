@@ -84,7 +84,9 @@
   // ── iframe ────────────────────────────────────────────────────────
   const iframe = document.createElement("iframe");
   iframe.src = chrome.runtime.getURL("popup.html");
-  iframe.allow = "clipboard-write"; // iframeではClipboard APIがデフォルトでブロックされるため明示許可
+  // iframe.allow = "clipboard-write" は削除
+  // → itandibb.comのPermissions-PolicyがclipboardをブロックするためChrome違反ログの原因になる
+  // → コピーはpostMessage経由でコンテンツスクリプトのexecCommandに委託
   Object.assign(iframe.style, {
     flex:      "1",
     width:     "100%",
@@ -240,18 +242,16 @@
       window.postMessage({ from: "aixlinx-fill", conditions: e.data.conditions }, "*");
     }
     if (a === "copy" && typeof e.data.text === "string") {
-      // iframeはPermissions-Policyでclipboardがブロックされるため
-      // コンテンツスクリプト（ページコンテキスト）でコピーを実行
-      navigator.clipboard.writeText(e.data.text).catch(() => {
-        const ta = document.createElement("textarea");
-        ta.value = e.data.text;
-        ta.style.cssText = "position:fixed;top:-9999px;left:-9999px;opacity:0;";
-        document.body.appendChild(ta);
-        ta.focus();
-        ta.select();
-        try { document.execCommand("copy"); } catch {}
-        ta.remove();
-      });
+      // Clipboard APIは一切使わずexecCommandのみでコピー
+      // （navigator.clipboard.writeTextもPermissions-Policy違反ログの原因になるため使用禁止）
+      const ta = document.createElement("textarea");
+      ta.value = e.data.text;
+      ta.style.cssText = "position:fixed;top:-9999px;left:-9999px;opacity:0;";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      try { document.execCommand("copy"); } catch {}
+      ta.remove();
     }
   });
 })();
