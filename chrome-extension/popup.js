@@ -816,51 +816,128 @@ const SITE_CONFIG = {
     icon: "🔍",
     steps: (c, mode = "pinpoint") => {
       const d = buildCondData(c, mode);
-      return [
-        {
-          num: 1,
-          field: "所在地",
-          value: d.area,
-          hint: "所在地 → 都道府県 → 市区町村の順に選択",
-        },
-        {
-          num: 2,
+      const rawArea = (c.desired_area || c.area || "").trim();
+      const steps = [];
+      let n = 1;
+
+      // 物件種別（必須・固定）
+      steps.push({
+        num: n++,
+        field: "物件種別",
+        value: "マンション等",
+        hint: "「物件種別1」プルダウン →「マンション等」を選択（必須項目）",
+      });
+
+      // エリア絞り込み（沿線・駅 or 所在地）
+      const stationKey = rawArea.replace(/駅|周辺|付近|近く/g, "").trim();
+      const stationLines = stationKey ? (STATION_LINE_MAP[stationKey] || []) : [];
+      if (stationLines.length) {
+        steps.push({
+          num: n++,
+          field: "沿線名",
+          value: stationLines.join(" / "),
+          hint: "「沿線名」欄に入力（完全一致必須）。右の「入力ガイド」ボタンから選択すると確実",
+        });
+        steps.push({
+          num: n++,
+          field: "駅名",
+          value: stationKey,
+          hint: "「駅名」欄に入力（「駅」は不要・完全一致必須）",
+        });
+      } else if (rawArea) {
+        steps.push({
+          num: n++,
+          field: "都道府県名",
+          value: "大阪府",
+          hint: "「所在地1」→「都道府県名」欄に「大阪府」と入力（完全一致）",
+        });
+        steps.push({
+          num: n++,
+          field: "所在地名（市区）",
+          value: rawArea,
+          hint: "「所在地名1」欄に市区名を入力（例：大阪市北区 →「北区」のみでも可・完全一致）",
+        });
+      }
+
+      // 駅から徒歩
+      if (d.walkMin) {
+        steps.push({
+          num: n++,
+          field: "駅から徒歩",
+          value: d.walkMin,
+          hint: "「駅から徒歩」欄に数字のみ入力（例：10）",
+          copyRaw: c.walk_minutes ? String(c.walk_minutes) : null,
+        });
+      }
+
+      // 賃料（万円）
+      if (d.rentMax) {
+        const rentMaxMan = d.rentMaxNum ? Math.ceil(d.rentMaxNum / 10000) : null;
+        steps.push({
+          num: n++,
           field: "賃料（上限）",
           value: d.rentMax,
-          hint: "賃料の「上限」欄に入力",
-          copyRaw: d.rentMaxNum ? String(d.rentMaxNum) : null,
-        },
-        {
-          num: 3,
-          field: "間取り",
-          value: d.floorPlan,
-          hint: "「間取り」のチェックボックスを選択",
-        },
-        {
-          num: 4,
-          field: "交通（徒歩）",
-          value: d.walkMin,
-          hint: "交通条件の「徒歩〇分以内」で絞り込み",
-        },
-        {
-          num: 5,
-          field: "築年数",
-          value: d.buildingAge,
-          hint: "建物の「築〇年以内」で設定",
-        },
-        {
-          num: 6,
-          field: "入居時期",
-          value: d.moveInTime,
-          hint: "入居可能時期の条件を設定",
-        },
-        {
-          num: 7,
+          hint: "賃料の「上限」欄に万円単位で入力",
+          copyRaw: rentMaxMan ? String(rentMaxMan) : null,
+        });
+      }
+
+      // 間取タイプ（REINS: ワンルーム/K/DK/LK/LDK/SK/SDK/SLK/SLDK のタイプ別チェックボックス）
+      if (d.floorPlan) {
+        const typeSet = new Set();
+        d.floorPlan.split(/[・,、\/\.\s]+/).forEach(p => {
+          p = p.trim().toUpperCase();
+          if (p === "1R" || p === "R") typeSet.add("ワンルーム");
+          else if (/^\d*SLDK$/.test(p)) typeSet.add("SLDK");
+          else if (/^\d*SLK$/.test(p)) typeSet.add("SLK");
+          else if (/^\d*SDK$/.test(p)) typeSet.add("SDK");
+          else if (/^\d*SK$/.test(p)) typeSet.add("SK");
+          else if (/^\d*LDK$/.test(p)) typeSet.add("LDK");
+          else if (/^\d*LK$/.test(p)) typeSet.add("LK");
+          else if (/^\d*DK$/.test(p)) typeSet.add("DK");
+          else if (/^\d*K$/.test(p)) typeSet.add("K");
+        });
+        steps.push({
+          num: n++,
+          field: "間取タイプ",
+          value: typeSet.size ? Array.from(typeSet).join(" / ") : d.floorPlan,
+          hint: "「間取タイプ」のチェックボックスから選択（ワンルーム／K／DK／LK／LDK など）",
+        });
+      }
+
+      // 築年月（築N年以内 → YYYY年以降に変換）
+      if (c.building_age) {
+        const fromYear = new Date().getFullYear() - parseInt(c.building_age);
+        steps.push({
+          num: n++,
+          field: "築年月（FROM）",
+          value: `${fromYear}年以降（築${c.building_age}年以内）`,
+          hint: `「築年月」の「FROM」ドロップダウンで「${fromYear}年」を選択`,
+          copyRaw: String(fromYear),
+        });
+      }
+
+      // 設備・条件・住宅性能等（テキストエリア）
+      if (d.preferences) {
+        steps.push({
+          num: n++,
           field: "設備・条件",
           value: d.preferences,
-          hint: "詳細条件の設備から選択",
-        },
-      ].filter((s) => s.value);
+          hint: "「設備・条件・住宅性能等」テキストエリアに入力。「入力ガイド」ボタンから選択肢を追加も可（ペット相談・駐車場など）",
+        });
+      }
+
+      // NG条件（確認用）
+      if (d.ngPoints) {
+        steps.push({
+          num: n++,
+          field: "NG条件（確認用）",
+          value: d.ngPoints,
+          hint: "この条件に当てはまる物件は候補から外す",
+        });
+      }
+
+      return steps.filter(s => s.value);
     },
   },
 };
