@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AIXLINX 物件検索",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "お客さんの条件に合わせてリアプロ・itandi・レインズを検索するサポートツール",
   "action": {
     "default_title": "AIXLINX 物件検索"
@@ -16,7 +16,8 @@
   "host_permissions": [
     "https://sumora-ai-ui.vercel.app/*",
     "https://www.realnetpro.com/*",
-    "https://itandibb.com/*"
+    "https://itandibb.com/*",
+    "https://system.reins.jp/*"
   ],
   "permissions": [
     "sidePanel",
@@ -31,6 +32,10 @@
     {
       "resources": ["itandi-page-script.js"],
       "matches": ["https://itandibb.com/*"]
+    },
+    {
+      "resources": ["reins-page-script.js"],
+      "matches": ["https://system.reins.jp/*"]
     }
   ],
   "content_scripts": [
@@ -58,6 +63,11 @@
     {
       "matches": ["https://itandibb.com/*"],
       "js": ["itandi-content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://system.reins.jp/*"],
+      "js": ["reins-content.js"],
       "run_at": "document_idle"
     }
   ]

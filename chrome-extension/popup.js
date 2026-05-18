@@ -1492,17 +1492,45 @@ function openInstructions(siteKey) {
     adjForm.style.display = "block";
     preloadAdjForm(selectedCustomer);
     autofillBtn.style.display = "block";
-    autofillBtn.textContent = "🔄 手順を更新";
+    autofillBtn.textContent = "⚡ REINSに自動入力";
     autofillBtn.className = "autofill-btn";
     autofillBtn.onclick = () => {
       const adjC = buildAdjCustomer(selectedCustomer);
       renderInstrSteps("reins", adjC);
-      autofillBtn.textContent = "✓ 更新しました！";
+
+      // 沿線 or 所在地 判定して条件を組み立てる
+      const rawArea = (adjC.desired_area || adjC.area || "").trim();
+      const stationKey = rawArea.replace(/駅|周辺|付近|近く/g, "").trim();
+      const stationLines = stationKey ? (STATION_LINE_MAP[stationKey] || []) : [];
+      // 内部路線名 → REINS表記に変換（最初の1路線）
+      const reinsLine = stationLines.length
+        ? (REINS_LINE_MAP[stationLines[0]] || stationLines[0])
+        : null;
+
+      const conditions = {
+        rent_max:     adjC.rent_max || null,
+        walk_minutes: adjC.walk_minutes || null,
+        floor_plan:   adjC.floor_plan || null,
+        building_age: adjC.building_age || null,
+        reins_line:   reinsLine,
+        station_name: reinsLine ? stationKey : null,
+        ward_name:    !reinsLine ? rawArea : null,
+      };
+
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (!tabs[0]) return;
+        chrome.tabs.sendMessage(tabs[0].id, {
+          type: "axlx-reins-autofill",
+          conditions,
+        });
+      });
+
+      autofillBtn.textContent = "✓ 入力しました！";
       autofillBtn.classList.add("done");
       setTimeout(() => {
-        autofillBtn.textContent = "🔄 手順を更新";
+        autofillBtn.textContent = "⚡ REINSに自動入力";
         autofillBtn.classList.remove("done");
-      }, 2000);
+      }, 3000);
     };
   } else {
     autofillBtn.style.display = "none";
