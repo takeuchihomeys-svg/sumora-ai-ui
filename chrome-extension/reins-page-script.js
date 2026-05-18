@@ -104,6 +104,23 @@
       setVal(getField(76), rentVal);
     }
 
+    // ④ 間取部屋数 FROM/TO (index 89, 90)
+    if (cond.floor_plan) {
+      var plans = cond.floor_plan.split(/[・,、\/\.\s]+/);
+      var roomNums = plans.map(function (p) {
+        p = p.trim().toUpperCase();
+        if (!p) return null;
+        var m = p.match(/^(\d+)/);
+        if (m) return parseInt(m[1]);
+        if (/^(R|K|DK|LK|LDK|SK|SDK|SLK|SLDK|ワンルーム)/.test(p)) return 1;
+        return null;
+      }).filter(function (n) { return n !== null; });
+      if (roomNums.length) {
+        setVal(getField(89), Math.min.apply(null, roomNums));
+        setVal(getField(90), Math.max.apply(null, roomNums));
+      }
+    }
+
     // ⑤ 間取タイプ チェックボックス
     if (cond.floor_plan) {
       cond.floor_plan.split(/[・,、\/\.\s]+/).forEach(function (p) {
