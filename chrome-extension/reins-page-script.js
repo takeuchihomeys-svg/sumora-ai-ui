@@ -73,10 +73,16 @@
     // ① 物件種別1 = 賃貸マンション (select index 5)
     selectByText(getField(5), "賃貸マンション");
 
-    // ② 沿線名1 (index 47) + 駅名FROM/TO (48/49)
-    if (cond.reins_line) {
+    // ② 所在地1（ward_name）または 沿線名1（reins_line）
+    if (cond.ward_name) {
+      // 所在地モード: 都道府県名(27) + 所在地名1(28)
+      setVal(getField(27), "大阪府");
+      await sleep(300);
+      setVal(getField(28), cond.ward_name);
+    } else if (cond.reins_line) {
+      // 沿線モード: 沿線名1(47) + 駅名FROM/TO(48/49)
       setVal(getField(47), cond.reins_line);
-      await sleep(400); // 沿線名設定後に駅名フィールドが有効になるのを待つ
+      await sleep(400);
       var stName = (cond.station_name || "").replace(/駅$/, "").trim();
       if (stName) {
         setVal(getField(48), stName);
