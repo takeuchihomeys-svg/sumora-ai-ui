@@ -66,12 +66,17 @@
   };
 
   async function fill(cond) {
+    // 遅延レンダリング対策：最上部にスクロールして全フィールドを確実にレンダリング
+    window.scrollTo(0, 0);
+    await sleep(800);
+
     // ① 物件種別1 = 賃貸マンション (select index 5)
     selectByText(getField(5), "賃貸マンション");
 
     // ② 沿線名1 (index 47) + 駅名FROM/TO (48/49)
     if (cond.reins_line) {
       setVal(getField(47), cond.reins_line);
+      await sleep(400); // 沿線名設定後に駅名フィールドが有効になるのを待つ
       var stName = (cond.station_name || "").replace(/駅$/, "").trim();
       if (stName) {
         setVal(getField(48), stName);
@@ -136,7 +141,20 @@
       }
     }
 
-    // ⑧ 検索ボタン自動クリック
+    // ⑧ 登録年月日（radio button）
+    if (cond.reins_reg_date) {
+      var regLabels = [].slice.call(document.querySelectorAll("label"));
+      var regFound = regLabels.find(function (l) {
+        return l.textContent.trim() === cond.reins_reg_date;
+      });
+      if (regFound) {
+        var radio = regFound.querySelector('input[type="radio"]');
+        if (!radio && regFound.htmlFor) radio = document.getElementById(regFound.htmlFor);
+        if (radio && !radio.checked) radio.click();
+      }
+    }
+
+    // ⑨ 検索ボタン自動クリック
     await sleep(600);
     var searchBtn = [].slice.call(document.querySelectorAll("button")).find(function (b) {
       return b.textContent.trim() === "検索";
