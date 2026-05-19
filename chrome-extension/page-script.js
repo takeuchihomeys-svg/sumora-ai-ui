@@ -423,6 +423,13 @@
           return clickByText(['確定してリストへ', '×とじる', '× とじる', 'とじる', '閉じる']);
         }
 
+        // 「詳細な地域の設定へ進む」ボタン（DevTools調査済: div.next_step_button2）
+        function clickNextStepBtn() {
+          var btn = document.querySelector('div.next_step_button2');
+          if (btn && btn.offsetParent) { btn.click(); return true; }
+          return clickByText(['詳細な地域の設定へ進む']);
+        }
+
         // STEP1: 「所在地絞り込み＋」が出るまで待ってクリック
         waitForClick(
           function() { return clickByText(['所在地絞り込み＋', '所在地絞り込み+', '所在地絞り込み']); },
@@ -436,19 +443,23 @@
                   function() { return clickByText([wardFull, wardShort]); },
                   function() {
                     if (hasDetailArea) {
-                      // STEP4: 町字（例:「喜連西」）が出るまで待ってクリック（ピンポイントのみ）
-                      waitForClick(
-                        function() { return clickDetailArea(detailAreaName); },
-                        function() {
-                          // STEP5: 閉じるボタンが出るまで待ってクリック
-                          waitForClick(closeAreaModal, function() {
-                            // STEP6: 検索実行
-                            setTimeout(clickSearch, 800);
-                          });
-                        }
-                      );
+                      // STEP4: 「詳細な地域の設定へ進む」をクリック（ピンポイントのみ）
+                      // ※ DevTools調査済: div.next_step_button2.next_action
+                      waitForClick(clickNextStepBtn, function() {
+                        // STEP5: 町字（例:「喜連西」）が出るまで待ってクリック
+                        waitForClick(
+                          function() { return clickDetailArea(detailAreaName); },
+                          function() {
+                            // STEP6: 閉じるボタンが出るまで待ってクリック
+                            waitForClick(closeAreaModal, function() {
+                              // STEP7: 検索実行
+                              setTimeout(clickSearch, 800);
+                            });
+                          }
+                        );
+                      });
                     } else {
-                      // 広げて検索: 市区郡まで選択して閉じる
+                      // 広げて検索: 市区郡まで選択して閉じる（詳細地域には進まない）
                       waitForClick(closeAreaModal, function() {
                         setTimeout(clickSearch, 800);
                       });
