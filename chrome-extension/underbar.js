@@ -10,7 +10,7 @@
   const MIN_W   = 260;
   const MIN_H   = 300;
   const INIT_W  = 540;
-  const INIT_H  = 780;
+  const BOTTOM_GAP = 60; // 展開時に画面下端から確保する余白（リサイズハンドルが触れる）
   const SK      = "aixlinx_state"; // sessionStorage key
 
   // ── 前回状態を復元 ────────────────────────────────────────────────
@@ -20,6 +20,8 @@
   let posX   = saved.posX   ?? 8;
   let posY   = saved.posY   ?? 70;
   let panelW = saved.panelW ?? INIT_W;
+  // 初期高さ：ビューポートに収まるよう計算（下端に BOTTOM_GAP を確保）
+  const INIT_H = Math.min(680, window.innerHeight - posY - BOTTOM_GAP - DRAG_H);
   let panelH = saved.panelH ?? INIT_H;
   let expanded = false; // 視覚的サイズは後でiframe.loadで確定
 
@@ -130,9 +132,17 @@
   document.body.appendChild(wrap);
 
   // ── サイズ切り替え ────────────────────────────────────────────────
+  function clampHeight() {
+    // 現在の top 位置から下端まで BOTTOM_GAP を確保できる最大高さに制限
+    const curTop = parseInt(wrap.style.top) || posY;
+    const maxH = window.innerHeight - curTop - BOTTOM_GAP - DRAG_H;
+    if (panelH > maxH) panelH = Math.max(MIN_H, maxH);
+  }
+
   function setSize(exp) {
     expanded = exp;
     if (exp) {
+      clampHeight(); // 展開時に画面外にはみ出ないよう高さを調整
       wrap.style.setProperty("width",  panelW + "px", "important");
       wrap.style.setProperty("height", (panelH + DRAG_H) + "px", "important");
       dragBar.style.display       = "flex";
@@ -193,8 +203,10 @@
       wrap.style.setProperty("left", Math.max(0, startWX + dx) + "px", "important");
       wrap.style.setProperty("top",  Math.max(0, startWY + dy) + "px", "important");
     } else {
+      const curTop = parseInt(wrap.style.top) || posY;
+      const maxH = window.innerHeight - curTop - BOTTOM_GAP - DRAG_H;
       panelW = Math.max(MIN_W, startPW + dx);
-      panelH = Math.max(MIN_H, startPH + dy);
+      panelH = Math.min(Math.max(MIN_H, startPH + dy), maxH);
       wrap.style.setProperty("width",  panelW + "px", "important");
       wrap.style.setProperty("height", (panelH + DRAG_H) + "px", "important");
     }
