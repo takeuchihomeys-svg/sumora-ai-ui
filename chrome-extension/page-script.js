@@ -383,47 +383,47 @@
     // 沿線・駅なし
     if (!hasStation && !hasRoutes) {
       if (hasModalWard) {
-        // 所在地モーダルをステップごとに操作（ピンポイント・広げて両方）
+        // 所在地モーダルを人間ペースで1つずつ操作（2000ms間隔）
         // STEP1: 所在地絞り込み+ → STEP2: 大阪府 → STEP3: 市区郡 → [STEP4: 町字] → 閉じる → 検索
-        var wardFull  = cond.detail_ward || "";          // 例: 「大阪市平野区」
-        var wardShort = wardFull.replace(/^大阪市|^大阪府/, "");  // 例: 「平野区」
-        var detailAreaName = cond.detail_area || "";     // 例: 「喜連西」（ピンポイントのみ）
+        var wardFull  = cond.detail_ward || "";
+        var wardShort = wardFull.replace(/^大阪市|^大阪府/, "");
+        var detailAreaName = cond.detail_area || "";
 
-        // STEP1: モーダルを開く
+        // STEP1: モーダルを開く (T=800ms)
         setTimeout(function() {
           clickByText(['所在地絞り込み＋', '所在地絞り込み+', '所在地絞り込み']);
-        }, 500);
-        // STEP2: 大阪府を選択
+        }, 800);
+        // STEP2: 大阪府を選択 (T=2800ms)
         setTimeout(function() {
           clickByText(['大阪府']);
-        }, 1700);
-        // STEP3: 市区郡を選択（例: 「大阪市平野区」or「平野区」）
+        }, 2800);
+        // STEP3: 市区郡を選択 (T=4800ms)
         setTimeout(function() {
           clickByText([wardFull, wardShort]);
-        }, 2900);
+        }, 4800);
 
         if (hasDetailArea) {
-          // STEP4: 町字を選択（ピンポイントのみ）
+          // STEP4: 町字を選択（ピンポイントのみ）(T=6800ms)
           setTimeout(function() {
             clickDetailArea(detailAreaName);
-          }, 4100);
-          // STEP5: モーダルを閉じる
+          }, 6800);
+          // STEP5: 閉じる (T=8800ms)
           setTimeout(function() {
             var closeDiv = document.querySelector('div.this_window_close');
             if (closeDiv && closeDiv.offsetParent) { closeDiv.click(); return; }
             clickByText(['確定してリストへ', '×とじる', '× とじる', 'とじる', '閉じる']);
-          }, 5300);
-          // STEP6: 検索実行
-          setTimeout(function() { clickSearch(); }, 6500);
+          }, 8800);
+          // STEP6: 検索実行 (T=10800ms)
+          setTimeout(function() { clickSearch(); }, 10800);
         } else {
-          // 広げて検索: 市区郡まで選択してそのまま閉じる
+          // 広げて検索: 市区郡まで選択して閉じる (T=6800ms)
           setTimeout(function() {
             var closeDiv = document.querySelector('div.this_window_close');
             if (closeDiv && closeDiv.offsetParent) { closeDiv.click(); return; }
             clickByText(['確定してリストへ', '×とじる', '× とじる', 'とじる', '閉じる']);
-          }, 4100);
-          // 検索実行
-          setTimeout(function() { clickSearch(); }, 5300);
+          }, 6800);
+          // 検索実行 (T=8800ms)
+          setTimeout(function() { clickSearch(); }, 8800);
         }
       } else {
         setTimeout(function() { clickSearch(); }, hasCities ? 700 : 300);
