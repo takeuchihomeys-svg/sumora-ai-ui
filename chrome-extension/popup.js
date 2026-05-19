@@ -1512,6 +1512,7 @@ function openInstructions(siteKey) {
         walk_minutes:    adjWalk    ? Number(adjWalk)    : (c.walk_minutes || null),
         building_age:    adjAge     ? Number(adjAge)     : (c.building_age || null),
         floor_plan:      adjFloor   || c.floor_plan || c.layout || null,
+        area_min:        c.area_min || c.min_area || null,
         structure_types: (adjStructure || c.building_structure || c.structure || "")
           .split(/[,、・\/\.\s]+/).map(s => s.trim()).filter(Boolean),
         pet_ok:      adjPet,

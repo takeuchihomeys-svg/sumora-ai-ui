@@ -164,12 +164,23 @@
     "軽量鉄骨造": "lightweight_steel",
     "鉄筋コンクリート造": "rc", "RC": "rc", "RC造": "rc",
     "鉄骨鉄筋コンクリート造": "src", "SRC": "src", "SRC造": "src",
+    "ブロック": "block",
+    "鉄筋ブロック": "reinforcing_block",
+    "PC": "pc", "PC造": "pc",
+    "HPC": "hpc", "HPC造": "hpc",
+    "ALC": "alc", "ALC造": "alc",
+    "CFT": "cft", "CFT造": "cft",
   };
 
   var VALID_LAYOUTS = ["1R","1K","1DK","1LDK","2K","2DK","2LDK","3K","3DK","3LDK","4K","4DK","4LDK","5K_OVER"];
 
   // モーダル完了後に入力する条件（専有面積・築年数・間取り・構造・ペット・駅徒歩）
   function fillRemainingFields(cond) {
+    // 専有面積（フィールド名はfloor_area_amount:gteq / lteq）
+    if (cond.area_min) {
+      var areaMinEl = document.querySelector('input[name="floor_area_amount:gteq"]');
+      if (areaMinEl) setReactVal(areaMinEl, cond.area_min);
+    }
     if (cond.walk_minutes) {
       var walkEl = document.querySelector('input[name="station_walk_minutes:lteq"]');
       if (walkEl) setReactVal(walkEl, cond.walk_minutes);
