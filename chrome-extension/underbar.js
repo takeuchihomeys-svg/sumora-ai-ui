@@ -270,4 +270,10 @@
       ta.remove();
     }
   });
+
+  // ── page-script.js からの完了通知を popup.js に中継 ──────────────────
+  window.addEventListener("message", function(e) {
+    if (!e.data || e.data.from !== "aixlinx-fill-done") return;
+    iframe.contentWindow.postMessage({ from: "aixlinx-fill-done" }, "*");
+  });
 })();

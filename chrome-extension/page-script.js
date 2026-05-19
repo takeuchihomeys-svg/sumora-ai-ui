@@ -203,8 +203,13 @@
     attempt();
   }
 
+  function notifyDone() {
+    window.postMessage({ from: 'aixlinx-fill-done' }, '*');
+  }
+
   function alertStop(msg) {
     alert('⚠️ ' + msg + '\n\n手動で選択してから「検索」を押してください。');
+    notifyDone();
   }
 
   // 検索ボタンをクリック
@@ -215,7 +220,7 @@
       document.querySelectorAll('div.go_search, div.go_search_submit')
     );
     for (var i = 0; i < goDivs.length; i++) {
-      if (goDivs[i].offsetParent) { goDivs[i].click(); return; }
+      if (goDivs[i].offsetParent) { goDivs[i].click(); notifyDone(); return; }
     }
     // フォールバック: button/a テキスト一致
     var SEARCH_TEXTS = ['住居検索', '検索', '物件を検索する', '条件で検索'];
@@ -227,9 +232,10 @@
         var b = allBtns[i];
         if (!b.offsetParent) continue;
         var txt = (b.textContent || b.value || '').replace(/\s+/g, '');
-        if (txt === SEARCH_TEXTS[si]) { b.click(); return; }
+        if (txt === SEARCH_TEXTS[si]) { b.click(); notifyDone(); return; }
       }
     }
+    notifyDone();
   }
 
   // 路線ボタンをクリック（リアプロモーダル: LABEL.one_line 構造確認済み）

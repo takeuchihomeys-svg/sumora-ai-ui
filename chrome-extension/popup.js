@@ -1786,12 +1786,10 @@ function openInstructions(siteKey) {
           pet_ok: adjPet,
         },
       }, "*");
-      autofillBtn.textContent = "✓ 検索中...";
-      autofillBtn.classList.add("done");
-      setTimeout(() => {
-        autofillBtn.textContent = "🔍 リアプロで自動検索";
-        autofillBtn.classList.remove("done");
-      }, 3000);
+      autofillBtn.textContent = "⏳ 検索中...";
+      autofillBtn.classList.remove("done");
+      autofillBtn.classList.add("searching");
+      autofillBtn.disabled = true;
     };
   } else if (siteKey === "reins") {
     adjForm.style.display = "block";
@@ -1897,6 +1895,14 @@ document.addEventListener("DOMContentLoaded", () => {
     window.addEventListener("message", (e) => {
       if (e.data?.from === "underbar-parent" && e.data?.action === "expand-from-parent") {
         setMiniMode(false);
+      }
+      if (e.data?.from === "aixlinx-fill-done") {
+        const btn = document.getElementById("autofill-btn");
+        if (btn) {
+          btn.textContent = "🔍 リアプロで自動検索";
+          btn.classList.remove("searching", "done");
+          btn.disabled = false;
+        }
       }
     });
   }

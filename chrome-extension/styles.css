@@ -330,6 +330,15 @@ body {
 .autofill-btn:hover { opacity: 0.92; }
 .autofill-btn:active { transform: scale(0.99); }
 .autofill-btn.done { background: linear-gradient(135deg, #2e7d32, #43a047); }
+.autofill-btn.searching {
+  background: linear-gradient(135deg, #1565c0, #1976d2);
+  cursor: not-allowed;
+  animation: searchingPulse 1.2s ease-in-out infinite;
+}
+@keyframes searchingPulse {
+  0%,100% { opacity: 1; }
+  50%      { opacity: 0.65; }
+}
 
 /* ── フローティングミニモード（100x100ボタン） ── */
 body.mini-mode {
