@@ -1506,12 +1506,12 @@ function openInstructions(siteKey) {
       };
       // chrome.tabs はiframe内で使用不可 → underbar.js経由でitandi-content.jsに中継
       window.parent.postMessage({ from: "aixlinx-underbar", action: "itandi-autofill", conditions }, "*");
-      autofillBtn.textContent = "✓ 入力完了！あとは検索ボタンを押してください";
+      autofillBtn.textContent = "✓ 自動検索中...";
       autofillBtn.classList.add("done");
       setTimeout(() => {
         autofillBtn.textContent = "⚡ itandiに自動入力";
         autofillBtn.classList.remove("done");
-      }, 5000);
+      }, 8000);
     };
   } else if (isUnderbar && siteKey === "realpro") {
     autofillBtn.style.display = "block";
