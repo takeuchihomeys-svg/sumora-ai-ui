@@ -489,22 +489,31 @@
         waitForClick(
           function() { return clickByText(['所在地絞り込み＋', '所在地絞り込み+', '所在地絞り込み']); },
           function() {
+            console.log('[AX] STEP1完了: 所在地絞り込みクリック済');
             // STEP2+3を統合: 市区郡直接クリックと大阪府クリックを同時にポーリング
             // ケースA: モーダルが市区郡ページ表示中 → 大阪府をスキップして市区郡を直接クリック
             // ケースB: モーダルが都道府県ページ表示中 → 大阪府をクリック
             var prefClicked = false;
 
             function doAfterWard() {
+              console.log('[AX] STEP3完了: 市区郡クリック済 → 詳細地域ボタン待機');
               if (hasDetailArea) {
                 // STEP4: 「詳細な地域の設定へ進む」をクリック（ピンポイントのみ）
                 waitForClick(clickNextStepBtn,
                   function() {
+                    console.log('[AX] STEP4完了: 詳細な地域へ進むクリック済 → 町字待機 detailArea:', detailAreaName);
                     // STEP5: 町字（例:「喜連西」）が出るまで待ってクリック
                     waitForClick(
-                      function() { return clickDetailArea(detailAreaName); },
                       function() {
+                        var n = document.querySelectorAll('label.one_town').length;
+                        if (n > 0) console.log('[AX] STEP5 poll: label.one_town=' + n + '個');
+                        return clickDetailArea(detailAreaName);
+                      },
+                      function() {
+                        console.log('[AX] STEP5完了: 町字クリック済 → 閉じる待機');
                         // STEP6: 閉じるボタンが出るまで待ってクリック
                         waitForClick(closeAreaModal, function() {
+                          console.log('[AX] STEP6完了: モーダル閉じた → 検索');
                           // STEP7: 検索実行（地域が確定してから）
                           setTimeout(clickSearch, 800);
                         });
