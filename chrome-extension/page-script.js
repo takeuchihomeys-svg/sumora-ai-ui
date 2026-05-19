@@ -368,8 +368,9 @@
       if (petCb && !petCb.checked) petCb.click();
     }
 
-    // ── T=150ms: 所在地絞り込み ───────────────────────────────────────
-    if (hasCities) {
+    // ── T=150ms: 所在地絞り込み（直接チェック — 詳細地域なし時のみ）─────
+    // ピンポイント+詳細地域の場合はモーダル経由で選択するのでスキップ
+    if (hasCities && !hasDetailArea) {
       var prefCb = document.querySelector('input[name="pref_code"][value="27"]');
       if (prefCb && !prefCb.checked) {
         prefCb.checked = true;
@@ -381,15 +382,29 @@
     // 沿線・駅なし
     if (!hasStation && !hasRoutes) {
       if (hasDetailArea) {
-        // ピンポイント：所在地（区）選択後に詳細地域モーダルを開いて選択
-        setTimeout(function() { clickByText(['詳細な地域の設定へ進む']); }, 500);
-        setTimeout(function() { clickDetailArea(cond.detail_area); }, 1500);
+        // ピンポイント：所在地絞り込みモーダルを3ステップで操作
+        // 都道府県の設定 → 市区郡の設定（区クリック） → 町字の設定（地名クリック）
+        var detailAreaName = cond.detail_area || "";
+        var wardFull  = cond.detail_ward || "";                          // 「大阪市平野区」
+        var wardShort = wardFull.replace(/^大阪市|^大阪府/, "");         // 「平野区」
+        setTimeout(function() {
+          clickByText(['所在地絞り込み＋', '所在地絞り込み+', '所在地絞り込み']);
+        }, 300);
+        setTimeout(function() {
+          clickByText(['大阪府']);
+        }, 1100);
+        setTimeout(function() {
+          clickByText([wardFull, wardShort]);
+        }, 2000);
+        setTimeout(function() {
+          clickDetailArea(detailAreaName);
+        }, 2800);
         setTimeout(function() {
           var closeDiv = document.querySelector('div.this_window_close');
           if (closeDiv && closeDiv.offsetParent) { closeDiv.click(); return; }
-          clickByText(['確定してリストへ', '×とじる', 'とじる']);
-        }, 2500);
-        setTimeout(function() { clickSearch(); }, 3500);
+          clickByText(['×とじる', '× とじる', 'とじる', '閉じる']);
+        }, 3600);
+        setTimeout(function() { clickSearch(); }, 4600);
       } else {
         setTimeout(function() { clickSearch(); }, hasCities ? 700 : 300);
       }

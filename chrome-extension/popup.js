@@ -1757,6 +1757,8 @@ function openInstructions(siteKey) {
       const detailNeighborhood = searchMode === "pinpoint"
         ? (areaParts.find(p => NEIGHBORHOOD_WARD_MAP[p] && !p.endsWith("区") && !WARD_CODE_MAP[p]) || null)
         : null;
+      // detail_wardは「大阪市平野区」形式（モーダルの市区郡クリックに使用）
+      const detailWard = detailNeighborhood ? NEIGHBORHOOD_WARD_MAP[detailNeighborhood] : null;
 
       window.parent.postMessage({
         from: "aixlinx-underbar",
@@ -1771,6 +1773,7 @@ function openInstructions(siteKey) {
           route_ids,
           station_names: realpro_station_names,
           detail_area:   detailNeighborhood,
+          detail_ward:   detailWard,
           structure_types: adjC.structure_types,
           pet_ok: adjPet,
         },
