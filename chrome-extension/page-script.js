@@ -343,33 +343,23 @@
     if (!name) return false;
     var clean = name.trim();
 
-    // PASS0: label.one_town 直接狙い撃ち（DevTools調査で確認済みセレクタ・最優先）
-    // ※逆部分一致(clean.includes(ptxt))は使わない → "喜連"が"喜連西"より先にマッチするため
+    // PASS0: label.one_town 直接狙い撃ち（DevTools調査済）
+    // 「近いの何個か選択」: 完全一致・前方一致・双方向前方一致をまとめてクリック
+    // 例: clean="喜連西" → "喜連西"(完全) + "喜連"(双方向:喜連西.startsWith(喜連)) を同時に選択
     var townLabels = Array.prototype.slice.call(document.querySelectorAll('label.one_town'));
-    // PASS0-A: 完全一致
+    var pass0clicked = false;
     for (var pi = 0; pi < townLabels.length; pi++) {
       var ptxt = townLabels[pi].textContent.replace(/\s+/g, '');
-      if (ptxt !== clean) continue;
+      var ok = ptxt === clean ||
+               ptxt.startsWith(clean) ||
+               ptxt.includes(clean) ||
+               (ptxt.length >= 2 && clean.startsWith(ptxt));
+      if (!ok) continue;
       var pinp = townLabels[pi].querySelector('input[type="checkbox"]');
-      if (pinp && !pinp.checked) { pinp.click(); return true; }
-      townLabels[pi].click(); return true;
+      if (pinp && !pinp.checked) { pinp.click(); pass0clicked = true; }
+      else if (!pinp) { townLabels[pi].click(); pass0clicked = true; }
     }
-    // PASS0-B: 前方一致（例: "喜連西1丁目".startsWith("喜連西") = true）
-    for (var pi = 0; pi < townLabels.length; pi++) {
-      var ptxt = townLabels[pi].textContent.replace(/\s+/g, '');
-      if (!ptxt.startsWith(clean)) continue;
-      var pinp = townLabels[pi].querySelector('input[type="checkbox"]');
-      if (pinp && !pinp.checked) { pinp.click(); return true; }
-      townLabels[pi].click(); return true;
-    }
-    // PASS0-C: 部分一致（例: "（喜連西）".includes("喜連西") = true）
-    for (var pi = 0; pi < townLabels.length; pi++) {
-      var ptxt = townLabels[pi].textContent.replace(/\s+/g, '');
-      if (!ptxt.includes(clean)) continue;
-      var pinp = townLabels[pi].querySelector('input[type="checkbox"]');
-      if (pinp && !pinp.checked) { pinp.click(); return true; }
-      townLabels[pi].click(); return true;
-    }
+    if (pass0clicked) return true;
 
     function tryLabel(matchFn) {
       var labels = Array.prototype.slice.call(document.querySelectorAll('label'));
@@ -550,17 +540,20 @@
             }
 
             // 500msごとにポーリング:
-            //   先に市区郡ボタンを試す（大阪府記憶済みケース）
-            //   なければ大阪府ボタンを試す（初回ケース）
+            //   最優先: div.next_step_button2 が既に見える = 市区郡選択済み → 再クリック禁止（デセレクトになるため）
+            //   次優先: 市区郡ボタンを直接クリック（大阪府記憶済みケース）
+            //   最後: 大阪府をクリック（初回ケース）
             waitForClick(
               function() {
+                var nb = document.querySelector('div.next_step_button2');
+                if (nb && isVisible(nb)) { prefClicked = false; console.log('[AX] STEP2: 市区郡選択済みを検出 → 再クリックスキップ'); return true; }
                 if (clickByText([wardFull, wardShort])) { prefClicked = false; return true; }
                 if (clickByText(['大阪府'])) { prefClicked = true; return true; }
                 return false;
               },
               function() {
                 if (!prefClicked) {
-                  // 市区郡を直接クリック完了 → 次のステップへ
+                  // 市区郡選択済みOR直接クリック完了 → 次のステップへ
                   doAfterWard();
                 } else {
                   // 大阪府クリック後 → 市区郡ページへ遷移を待ってクリック
