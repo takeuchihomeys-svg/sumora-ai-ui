@@ -1515,7 +1515,7 @@ function openInstructions(siteKey) {
     };
   } else if (isUnderbar && siteKey === "realpro") {
     autofillBtn.style.display = "block";
-    autofillBtn.textContent = "⚡ リアプロに自動入力";
+    autofillBtn.textContent = "🔍 リアプロで自動検索";
     autofillBtn.className = "autofill-btn";
 
     adjForm.style.display = "block";
@@ -1578,10 +1578,10 @@ function openInstructions(siteKey) {
           pet_ok: adjPet,
         },
       }, "*");
-      autofillBtn.textContent = "✓ 入力しました！";
+      autofillBtn.textContent = "✓ 検索中...";
       autofillBtn.classList.add("done");
       setTimeout(() => {
-        autofillBtn.textContent = "⚡ リアプロに自動入力";
+        autofillBtn.textContent = "🔍 リアプロで自動検索";
         autofillBtn.classList.remove("done");
       }, 3000);
     };
