@@ -250,7 +250,7 @@
       var found = false;
       // PASS1: label.one_line 完全一致
       for (var i = 0; i < labels.length && !found; i++) {
-        if (!labels[i].offsetParent) continue;
+        if (!isVisible(labels[i])) continue;
         var lNorm = norm(labels[i].textContent);
         if (lNorm === lineNorm) {
           var cb = labels[i].querySelector('input[type="checkbox"]');
@@ -261,7 +261,7 @@
       }
       // PASS2: 短縮名サフィックス一致（"御堂筋線" → "大阪市高速軌道御堂筋線"）
       for (var i = 0; i < labels.length && !found; i++) {
-        if (!labels[i].offsetParent) continue;
+        if (!isVisible(labels[i])) continue;
         var lNorm = norm(labels[i].textContent);
         if (lNorm.length >= 4 && lineNorm.endsWith(lNorm)) {
           var cb = labels[i].querySelector('input[type="checkbox"]');
@@ -284,7 +284,7 @@
       // STEP1: label+checkbox（フォーム方式）
       var labels = Array.prototype.slice.call(document.querySelectorAll('label'));
       for (var i = 0; i < labels.length && !found; i++) {
-        if (!labels[i].offsetParent) continue;
+        if (!isVisible(labels[i])) continue;
         var txt = labels[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
         if (txt === clean) {
           var inp = labels[i].querySelector('input[type="checkbox"]');
@@ -300,14 +300,14 @@
 
       // STEP2: 直接テキスト 完全一致
       for (var i = 0; i < els.length && !found; i++) {
-        if (!els[i].offsetParent) continue;
+        if (!isVisible(els[i])) continue;
         if (getDirectText(els[i]) === clean) { fireClick(els[i]); found = true; }
       }
       if (found) return;
 
       // STEP3: 全テキスト完全一致かつ葉ノード
       for (var i = 0; i < els.length && !found; i++) {
-        if (!els[i].offsetParent) continue;
+        if (!isVisible(els[i])) continue;
         var ft = els[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
         if (ft === clean && els[i].children.length === 0) { fireClick(els[i]); found = true; }
       }
@@ -315,7 +315,7 @@
 
       // STEP4: 直接テキスト 前方一致
       for (var i = 0; i < els.length && !found; i++) {
-        if (!els[i].offsetParent) continue;
+        if (!isVisible(els[i])) continue;
         var dt = getDirectText(els[i]);
         if (dt.length >= 2 && clean.length >= 2 &&
             (dt.startsWith(clean) || clean.startsWith(dt))) {
@@ -326,7 +326,7 @@
 
       // STEP5: label 前方一致フォールバック
       for (var i = 0; i < labels.length && !found; i++) {
-        if (!labels[i].offsetParent) continue;
+        if (!isVisible(labels[i])) continue;
         var txt = labels[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
         if ((txt.startsWith(clean) || clean.startsWith(txt)) && txt.length >= 2) {
           var inp = labels[i].querySelector('input[type="checkbox"]');
@@ -337,7 +337,8 @@
     });
   }
 
-  // 詳細地域（町丁目レベル）のチェックボックスを選択する（4段階フォールバック）
+  // 詳細地域（町丁目レベル）のチェックボックスを選択する
+  // position:fixed のモーダル内でも動作するよう isVisible() を使用
   function clickDetailArea(name) {
     if (!name) return false;
     var clean = name.trim();
@@ -345,7 +346,7 @@
     function tryLabel(matchFn) {
       var labels = Array.prototype.slice.call(document.querySelectorAll('label'));
       for (var i = 0; i < labels.length; i++) {
-        if (!labels[i].offsetParent) continue;
+        if (!isVisible(labels[i])) continue;
         var txt = labels[i].textContent.replace(/\s+/g, '');
         if (matchFn(txt)) {
           var inp = labels[i].querySelector('input[type="checkbox"]');
@@ -357,9 +358,9 @@
       return false;
     }
     function tryEl(matchFn) {
-      var els = Array.prototype.slice.call(document.querySelectorAll('a,div,span,td,li,button'));
+      var els = Array.prototype.slice.call(document.querySelectorAll('a,div,span,td,li,button,p'));
       for (var i = 0; i < els.length; i++) {
-        if (!els[i].offsetParent) continue;
+        if (!isVisible(els[i])) continue;
         var txt = els[i].textContent.replace(/\s+/g, '');
         if (matchFn(txt)) { els[i].click(); return true; }
       }
@@ -368,18 +369,18 @@
 
     // PASS1: 完全一致
     if (tryLabel(function(t){ return t === clean; })) return true;
+    if (tryEl(function(t){ return t === clean; })) return true;
     // PASS2: 前方一致（「喜連西1丁目〜5丁目」等）
     if (tryLabel(function(t){ return t.startsWith(clean); })) return true;
+    if (tryEl(function(t){ return t.startsWith(clean); })) return true;
     // PASS3: 部分一致（要素テキストに地名が含まれる）
     if (tryLabel(function(t){ return t.includes(clean); })) return true;
+    if (tryEl(function(t){ return t.includes(clean); })) return true;
     // PASS4: 逆部分一致（地名が要素テキストを含む — 短いラベル向け）
     if (clean.length >= 2) {
       if (tryLabel(function(t){ return t.length >= 2 && clean.includes(t); })) return true;
+      if (tryEl(function(t){ return t.length >= 2 && clean.includes(t); })) return true;
     }
-    // PASS5〜8: label でヒットしなければ div/span/a 等も同順で試みる
-    if (tryEl(function(t){ return t === clean; })) return true;
-    if (tryEl(function(t){ return t.startsWith(clean); })) return true;
-    if (tryEl(function(t){ return t.includes(clean); })) return true;
     return false;
   }
 
@@ -440,7 +441,7 @@
 
         function closeAreaModal() {
           var d = document.querySelector('div.this_window_close');
-          if (d && d.offsetParent) { d.click(); return true; }
+          if (d && isVisible(d)) { d.click(); return true; }
           return clickByText(['確定してリストへ', '×とじる', '× とじる', 'とじる', '閉じる']);
         }
 
@@ -534,7 +535,7 @@
     // 沿線・駅モーダル：waitForClick方式（必ず駅が選択されるまでリトライ）
     function closeStationModal() {
       var d = document.querySelector('div.this_window_close');
-      if (d && d.offsetParent) { d.click(); return true; }
+      if (d && isVisible(d)) { d.click(); return true; }
       return clickByText(['確定してリストへ', '×とじる', '× とじる', 'とじる']);
     }
 
@@ -545,7 +546,7 @@
         for (var ci = 0; ci < clsTargets.length; ci++) {
           var divs = Array.prototype.slice.call(document.querySelectorAll('div.' + clsTargets[ci]));
           for (var i = 0; i < divs.length; i++) {
-            if (!divs[i].offsetParent) continue;
+            if (!isVisible(divs[i])) continue;
             var t = divs[i].textContent.replace(/\s+/g, '');
             if (t === '沿線・駅絞り込み＋' || t === '沿線・駅絞り込み+') {
               divs[i].click(); return true;
@@ -559,7 +560,7 @@
         waitForClick(
           function() {
             var labels = Array.prototype.slice.call(document.querySelectorAll('label.one_line'));
-            var vis = labels.filter(function(l) { return l.offsetParent; });
+            var vis = labels.filter(function(l) { return isVisible(l); });
             if (!vis.length) return false; // まだ描画されていない
             if (hasRoutes) clickLineButtons(cond.route_ids);
             return true;
@@ -579,7 +580,7 @@
                 waitForClick(
                   function() {
                     var labels = Array.prototype.slice.call(document.querySelectorAll('label'));
-                    var vis = labels.filter(function(l) { return l.offsetParent; });
+                    var vis = labels.filter(function(l) { return isVisible(l); });
                     if (!vis.length) return false; // 駅リストがまだ描画されていない
                     selectStationsByName(cond.station_names);
                     // 指定駅のいずれかがチェックされたか確認
