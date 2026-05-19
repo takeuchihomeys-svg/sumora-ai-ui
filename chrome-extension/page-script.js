@@ -290,12 +290,59 @@
     });
   }
 
+  // 詳細地域（町丁目レベル）のチェックボックスを選択する（4段階フォールバック）
+  function clickDetailArea(name) {
+    if (!name) return false;
+    var clean = name.trim();
+
+    function tryLabel(matchFn) {
+      var labels = Array.prototype.slice.call(document.querySelectorAll('label'));
+      for (var i = 0; i < labels.length; i++) {
+        if (!labels[i].offsetParent) continue;
+        var txt = labels[i].textContent.replace(/\s+/g, '');
+        if (matchFn(txt)) {
+          var inp = labels[i].querySelector('input[type="checkbox"]');
+          if (!inp && labels[i].htmlFor) inp = document.getElementById(labels[i].htmlFor);
+          if (inp && !inp.checked) { inp.click(); return true; }
+          labels[i].click(); return true;
+        }
+      }
+      return false;
+    }
+    function tryEl(matchFn) {
+      var els = Array.prototype.slice.call(document.querySelectorAll('a,div,span,td,li,button'));
+      for (var i = 0; i < els.length; i++) {
+        if (!els[i].offsetParent) continue;
+        var txt = els[i].textContent.replace(/\s+/g, '');
+        if (matchFn(txt)) { els[i].click(); return true; }
+      }
+      return false;
+    }
+
+    // PASS1: 完全一致
+    if (tryLabel(function(t){ return t === clean; })) return true;
+    // PASS2: 前方一致（「喜連西1丁目〜5丁目」等）
+    if (tryLabel(function(t){ return t.startsWith(clean); })) return true;
+    // PASS3: 部分一致（要素テキストに地名が含まれる）
+    if (tryLabel(function(t){ return t.includes(clean); })) return true;
+    // PASS4: 逆部分一致（地名が要素テキストを含む — 短いラベル向け）
+    if (clean.length >= 2) {
+      if (tryLabel(function(t){ return t.length >= 2 && clean.includes(t); })) return true;
+    }
+    // PASS5〜8: label でヒットしなければ div/span/a 等も同順で試みる
+    if (tryEl(function(t){ return t === clean; })) return true;
+    if (tryEl(function(t){ return t.startsWith(clean); })) return true;
+    if (tryEl(function(t){ return t.includes(clean); })) return true;
+    return false;
+  }
+
   function fillRealpro(cond) {
     if (!cond) return;
 
-    var hasStation = cond.station_names && cond.station_names.length > 0;
-    var hasRoutes  = cond.route_ids && cond.route_ids.length > 0;
-    var hasCities  = cond.city_codes && cond.city_codes.length > 0;
+    var hasStation   = cond.station_names && cond.station_names.length > 0;
+    var hasRoutes    = cond.route_ids && cond.route_ids.length > 0;
+    var hasCities    = cond.city_codes && cond.city_codes.length > 0;
+    var hasDetailArea = !!(cond.detail_area);
 
     // ── T=0ms: 基本条件 ──────────────────────────────────────────────
     if (cond.rent_min) setSelVal("rental_cost1", nearestDown(RENT_OPTS, cond.rent_min));
@@ -331,9 +378,21 @@
       setTimeout(function() { setCheckboxes("city_code[]", cond.city_codes); }, 150);
     }
 
-    // 沿線・駅なし → 早期検索
+    // 沿線・駅なし
     if (!hasStation && !hasRoutes) {
-      setTimeout(function() { clickSearch(); }, hasCities ? 700 : 300);
+      if (hasDetailArea) {
+        // ピンポイント：所在地（区）選択後に詳細地域モーダルを開いて選択
+        setTimeout(function() { clickByText(['詳細な地域の設定へ進む']); }, 500);
+        setTimeout(function() { clickDetailArea(cond.detail_area); }, 1500);
+        setTimeout(function() {
+          var closeDiv = document.querySelector('div.this_window_close');
+          if (closeDiv && closeDiv.offsetParent) { closeDiv.click(); return; }
+          clickByText(['確定してリストへ', '×とじる', 'とじる']);
+        }, 2500);
+        setTimeout(function() { clickSearch(); }, 3500);
+      } else {
+        setTimeout(function() { clickSearch(); }, hasCities ? 700 : 300);
+      }
       return;
     }
 
