@@ -58,6 +58,22 @@ body {
 }
 .search-wrap input::placeholder { color: #adb5bd; }
 
+.account-filter {
+  display: flex; gap: 5px; padding: 6px 10px;
+  background: white; border-bottom: 1px solid #e9edef;
+  flex-shrink: 0; overflow-x: auto;
+}
+.account-filter::-webkit-scrollbar { display: none; }
+.acct-btn {
+  flex-shrink: 0; padding: 3px 10px; border-radius: 12px;
+  border: 1px solid #d0d7de; background: #f6f8fa;
+  font-size: 11px; color: #555; cursor: pointer; white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.acct-btn.active {
+  background: #1565C0; color: white; border-color: #1565C0; font-weight: 600;
+}
+
 #customer-list { overflow-y: auto; flex: 1; }
 
 .section-divider {

@@ -1077,6 +1077,7 @@ let allCustomers = [];
 let selectedCustomer = null;
 let selectedSite = null;
 let searchMode = "pinpoint"; // "pinpoint" | "wide"
+let currentAccount = ""; // "" = すべて / "sumora" / "ieyasu" / "giga" / "hasu"
 
 // ── アンダーバーモード検出 ─────────────────────────────────────────
 // リアプロページに iframe として埋め込まれているときは true
@@ -1562,17 +1563,25 @@ function buildCopyAll(siteName, steps, c) {
   return lines.join("\n");
 }
 
-// ── Search filter ──────────────────────────────────────────────────
-function filterCustomers(q) {
-  if (!q.trim()) { renderList(allCustomers); return; }
-  const kw = q.trim().toLowerCase();
-  renderList(
-    allCustomers.filter((c) =>
+// ── Search + Account filter ────────────────────────────────────────
+function getFilteredCustomers(q) {
+  let result = allCustomers;
+  if (currentAccount) {
+    result = result.filter((c) => (c.account || "") === currentAccount);
+  }
+  if (q && q.trim()) {
+    const kw = q.trim().toLowerCase();
+    result = result.filter((c) =>
       c.customer_name.toLowerCase().includes(kw) ||
       (c.desired_area || "").toLowerCase().includes(kw) ||
       (c.area || "").toLowerCase().includes(kw)
-    )
-  );
+    );
+  }
+  return result;
+}
+
+function filterCustomers(q) {
+  renderList(getFilteredCustomers(q));
 }
 
 // ── Init ───────────────────────────────────────────────────────────
@@ -1621,6 +1630,15 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("search-input").addEventListener("input", (e) => {
     filterCustomers(e.target.value);
+  });
+
+  document.querySelectorAll(".acct-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".acct-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentAccount = btn.dataset.acct;
+      filterCustomers(document.getElementById("search-input").value);
+    });
   });
 
   document.getElementById("back-to-list").addEventListener("click", () => {
