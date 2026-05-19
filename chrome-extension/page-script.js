@@ -344,12 +344,28 @@
     var clean = name.trim();
 
     // PASS0: label.one_town 直接狙い撃ち（DevTools調査で確認済みセレクタ・最優先）
+    // ※逆部分一致(clean.includes(ptxt))は使わない → "喜連"が"喜連西"より先にマッチするため
     var townLabels = Array.prototype.slice.call(document.querySelectorAll('label.one_town'));
+    // PASS0-A: 完全一致
     for (var pi = 0; pi < townLabels.length; pi++) {
       var ptxt = townLabels[pi].textContent.replace(/\s+/g, '');
-      var pmatch = ptxt === clean || ptxt.startsWith(clean) || ptxt.includes(clean) ||
-                   (clean.length >= 2 && clean.includes(ptxt) && ptxt.length >= 2);
-      if (!pmatch) continue;
+      if (ptxt !== clean) continue;
+      var pinp = townLabels[pi].querySelector('input[type="checkbox"]');
+      if (pinp && !pinp.checked) { pinp.click(); return true; }
+      townLabels[pi].click(); return true;
+    }
+    // PASS0-B: 前方一致（例: "喜連西1丁目".startsWith("喜連西") = true）
+    for (var pi = 0; pi < townLabels.length; pi++) {
+      var ptxt = townLabels[pi].textContent.replace(/\s+/g, '');
+      if (!ptxt.startsWith(clean)) continue;
+      var pinp = townLabels[pi].querySelector('input[type="checkbox"]');
+      if (pinp && !pinp.checked) { pinp.click(); return true; }
+      townLabels[pi].click(); return true;
+    }
+    // PASS0-C: 部分一致（例: "（喜連西）".includes("喜連西") = true）
+    for (var pi = 0; pi < townLabels.length; pi++) {
+      var ptxt = townLabels[pi].textContent.replace(/\s+/g, '');
+      if (!ptxt.includes(clean)) continue;
       var pinp = townLabels[pi].querySelector('input[type="checkbox"]');
       if (pinp && !pinp.checked) { pinp.click(); return true; }
       townLabels[pi].click(); return true;
