@@ -12,7 +12,6 @@
     if (el && !el.checked) el.click();
   }
 
-  // 全角/半角の括弧・波線・スペースを正規化して比較（文字種の違いを吸収）
   function norm(s) {
     return String(s)
       .replace(/（/g, "(").replace(/）/g, ")")
@@ -21,21 +20,18 @@
       .trim();
   }
 
-  // getBoundingClientRect で判定（position:fixed のモーダル要素も正しく検出）
   function isVis(el) {
     var r = el.getBoundingClientRect();
     return r.width > 0 || r.height > 0;
   }
 
-  // 正規化テキストがヒットするか（完全一致 or 部分一致）
   function textMatch(elText, search) {
     var t = norm(elText);
     var n = norm(search);
     return t === n || t.includes(n);
   }
 
-  // チェックボックス用（React対応）
-  // ダブルクリック防止：label と input の両方を叩くとチェックが戻るため、input 優先で1回だけクリック
+  // label内のcheckboxを優先してクリック（React対応・トグル戻り防止）
   function clickLabel(text) {
     var lbl = [].slice.call(document.querySelectorAll("label")).find(function (l) {
       return textMatch(l.textContent, text) && isVis(l);
@@ -44,14 +40,14 @@
     var inp = lbl.querySelector("input[type='checkbox']");
     if (!inp && lbl.htmlFor) inp = document.getElementById(lbl.htmlFor);
     if (inp) {
-      if (!inp.checked) inp.click(); // 未チェックのときのみクリック（既チェックを再クリックするとトグルでOFFになる）
+      if (!inp.checked) inp.click();
     } else {
       lbl.click();
     }
     return true;
   }
 
-  // button のみ（完全一致のみ — 誤クリック防止）
+  // buttonのみ完全一致（誤クリック防止）
   function clickBtn(text) {
     var n = norm(text);
     var found = [].slice.call(document.querySelectorAll("button")).find(function (b) {
@@ -61,18 +57,7 @@
     return false;
   }
 
-  // label・button・li・span・a を横断して探す（モーダルナビ用）
-  function clickAny(text) {
-    var els = [].slice.call(document.querySelectorAll("label, button, li, span, a, div[role='button'], div[role='option']"));
-    var found = els.find(function (el) {
-      return textMatch(el.textContent, text) && isVis(el);
-    });
-    if (found) { found.click(); return true; }
-    return false;
-  }
-
-  // モーダルナビタブ専用（完全一致）— 部分一致で誤クリックするのを防ぐ
-  // 例: "大阪府" を含む路線名ラベルを誤クリックしないよう、ナビタブは完全一致で探す
+  // ナビタブ（li/button/a/span）完全一致
   function clickNav(text) {
     var n = norm(text);
     var els = [].slice.call(document.querySelectorAll("li, button, a, span, div[role='button']"));
@@ -83,29 +68,39 @@
     return false;
   }
 
-  // 所在地モーダル: 所在地で絞り込み → 大阪府 → 市区チェック → 確定
+  // ── 所在地モーダル ────────────────────────────────────────────────────
+  // T=0   : 「所在地で絞り込み」ボタン
+  // T=900 : 「大阪府」タブ
+  // T=1800: 市区チェックボックス
+  // T=2700: 「確定」ボタン
+  // T=2700+1500=4200: callback（doSearch）
   function selectItandiArea(wardName, callback) {
     if (!wardName) { if (callback) callback(); return; }
     if (!clickBtn("所在地で絞り込み")) { if (callback) callback(); return; }
     setTimeout(function () {
-      clickNav("大阪府"); // ナビタブ（完全一致）
+      clickNav("大阪府");
       setTimeout(function () {
-        clickLabel(wardName); // チェックボックス（label + input直接）
+        clickLabel(wardName);
         setTimeout(function () {
           clickBtn("確定");
-          setTimeout(callback || function () {}, 600);
-        }, 600);
-      }, 700);
-    }, 800);
+          setTimeout(callback || function () {}, 1500);
+        }, 900);
+      }, 900);
+    }, 900);
   }
 
-  // 路線・駅モーダル: 路線・駅で絞り込み → 近畿 → 大阪府 → 路線チェック → 駅選択（複数可）→ 確定
-  // stationNames: string[] — 「駅」なしの駅名リスト（広げて検索は最大3駅）
+  // ── 路線・駅モーダル ─────────────────────────────────────────────────
+  // T=0    : 「路線・駅で絞り込み」ボタン
+  // T=900  : 「近畿」タブ
+  // T=1700 : 「大阪府」タブ
+  // T=2500 : 路線チェック（1路線700ms間隔）
+  // T=最終路線+1200: 駅チェック開始（1駅600ms間隔）
+  // T=最終駅+600  : 「確定」ボタン
+  // T=確定+1500   : callback（doSearch）
   function selectItandiLines(lineNames, stationNames, callback) {
     if (!lineNames || !lineNames.length) { if (callback) callback(); return; }
     if (!clickBtn("路線・駅で絞り込み")) { if (callback) callback(); return; }
 
-    // 駅名から「駅」サフィックスを除去（itandiラベルは「堺筋本町」のように「駅」なし）
     var stNames = (stationNames || []).map(function (s) { return s.replace(/駅$/, "").trim(); }).filter(Boolean);
 
     setTimeout(function () {
@@ -113,45 +108,47 @@
       setTimeout(function () {
         clickNav("大阪府");
         setTimeout(function () {
-          // 路線チェックを1路線ずつ順番にクリック（React同期再レンダリング対策）
-          // forEach で一括クリックすると1つ目のクリック後にReactが再レンダリングし
-          // 2つ目以降のチェックボックスDOMが差し替えられてクリックが空振りになる
+
+          // 路線を1本ずつ順番にクリック
           var lineIdx = 0;
           function clickNextLine() {
             if (lineIdx >= lineNames.length) {
-              // 全路線チェック完了 → 駅列描画待ち → 駅選択
+              // 全路線チェック完了 → 駅リスト描画を待つ
               setTimeout(function () {
                 if (stNames.length) {
-                  // 駅選択もReact再描画対策で1駅ずつ順番にクリック（同期forEachだと当駅が戻る）
+                  // 駅を1つずつ順番にクリック
                   var stIdx = 0;
                   function clickNextStation() {
                     if (stIdx >= stNames.length) {
+                      // 全駅チェック完了 → 確定
                       setTimeout(function () {
                         clickBtn("確定");
-                        setTimeout(callback || function () {}, 600);
-                      }, 300);
+                        setTimeout(callback || function () {}, 1500);
+                      }, 600);
                       return;
                     }
                     clickLabel(stNames[stIdx]);
                     stIdx++;
-                    setTimeout(clickNextStation, 300);
+                    setTimeout(clickNextStation, 600);
                   }
                   clickNextStation();
                 } else {
+                  // 駅指定なし → 確定
                   clickBtn("確定");
-                  setTimeout(callback || function () {}, 600);
+                  setTimeout(callback || function () {}, 1500);
                 }
-              }, 900); // 最後の路線チェック後、駅列描画を待つ
+              }, 1200);
               return;
             }
             clickLabel(lineNames[lineIdx]);
             lineIdx++;
-            setTimeout(clickNextLine, 500); // 次の路線クリックまで500ms待機（React再描画完了を待つ）
+            setTimeout(clickNextLine, 700);
           }
           clickNextLine();
+
         }, 800);
-      }, 600);
-    }, 800);
+      }, 800);
+    }, 900);
   }
 
   var STRUCTURE_MAP = {
@@ -165,6 +162,8 @@
   var VALID_LAYOUTS = ["1R","1K","1DK","1LDK","2K","2DK","2LDK","3K","3DK","3LDK","4K","4DK","4LDK","5K_OVER"];
 
   function fill(cond) {
+    // ── 基本条件（即座に入力）────────────────────────────────────────────
+
     // 賃料上限（itandiは万円単位）
     if (cond.rent_max) {
       var rentVal = cond.rent_max > 1000 ? Math.floor(cond.rent_max / 10000) : cond.rent_max;
@@ -172,7 +171,7 @@
       if (rentEl) setReactVal(rentEl, rentVal);
     }
 
-    // 管理費・共益費込み（常にチェック）
+    // 管理費込みチェック
     tick(document.querySelector('input[name="totalRentCheck"]'));
 
     // 駅徒歩
@@ -215,23 +214,26 @@
       tick(document.querySelector('input[name="option_id:all_in"][id="11010"]'));
     }
 
-    // 所在地 or 路線・駅モーダル → Reactの再描画が落ち着いてから検索ボタンをクリック
-  // （モーダル「確定」後2000ms待機でReact state更新を確実に待つ → 500エラー防止）
+    // ── モーダル操作 → 最後に検索（React state更新を2000ms待つ）──────────
+    // 基本条件の入力が落ち着いてからモーダル開始（500ms待機）
     setTimeout(function () {
+
+      // モーダル確定後2000ms待ってから検索ボタンをクリック
       function doSearch() {
         setTimeout(function () { clickBtn("検索"); }, 2000);
       }
+
       if (cond.ward_name) {
         selectItandiArea(cond.ward_name, doSearch);
       } else if (cond.itandi_lines && cond.itandi_lines.length) {
-        // station_names（配列）優先、旧 station_name（文字列）にも後方互換
         var stNames = cond.station_names || (cond.station_name ? [cond.station_name] : []);
         selectItandiLines(cond.itandi_lines, stNames, doSearch);
       } else {
-        // エリア・路線なしの場合も少し待ってから検索（form state更新を待つ）
-        setTimeout(function () { clickBtn("検索"); }, 800);
+        // エリア・路線なし：基本条件だけで検索（1500ms待ってからクリック）
+        setTimeout(function () { clickBtn("検索"); }, 1500);
       }
-    }, 300);
+
+    }, 500);
   }
 
   window.addEventListener("axlx-itandi-fill", function (e) { fill(e.detail); });
