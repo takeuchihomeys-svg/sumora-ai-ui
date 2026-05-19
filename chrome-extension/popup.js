@@ -62,8 +62,10 @@ const STATION_WARD_MAP = {
   // 東大阪市
   "布施": "東大阪市", "俊徳道": "東大阪市", "長瀬": "東大阪市",
   "弥刀": "東大阪市", "久宝寺口": "東大阪市",
+  "吉田": "東大阪市", "東花園": "東大阪市", "若江岩田": "東大阪市",
+  "八戸ノ里": "東大阪市", "河内小阪": "東大阪市", "河内永和": "東大阪市",
   // 八尾市
-  "八尾": "八尾市", "久宝寺": "八尾市",
+  "八尾": "八尾市", "久宝寺": "八尾市", "近鉄八尾": "八尾市",
   // 堺市
   "堺": "堺市堺区", "堺東": "堺市堺区", "百舌鳥": "堺市北区",
   "三国ヶ丘": "堺市堺区", "中百舌鳥": "堺市北区",
@@ -93,6 +95,21 @@ const STATION_WARD_MAP = {
 function findStationWard(areaText) {
   const normalized = areaText.replace(/駅|周辺|付近|近く|沿線/g, "").trim();
   return STATION_WARD_MAP[normalized] || STATION_WARD_MAP[areaText] || null;
+}
+
+// 駅名あいまい解決：完全一致→前方一致→部分一致の順で STATION_LINE_MAP キーを検索
+function resolveStation(rawInput) {
+  const clean = rawInput.replace(/駅|周辺|付近|近く|沿線/g, "").trim();
+  if (!clean) return null;
+  if (STATION_LINE_MAP[clean]) return clean;                                 // 完全一致
+  const keys = Object.keys(STATION_LINE_MAP);
+  const sw = keys.find(k => k.startsWith(clean) && clean.length >= 2);      // clean が key の先頭に一致
+  if (sw) return sw;
+  const ci = keys.find(k => clean.includes(k) && k.length >= 2);            // key が clean に含まれる
+  if (ci) return ci;
+  const ki = keys.find(k => k.includes(clean) && clean.length >= 2);        // clean が key に含まれる
+  if (ki) return ki;
+  return null;
 }
 
 // ── 駅名 → リアプロ沿線名マッピング ────────────────────────────────
@@ -548,9 +565,12 @@ function buildAreaRouteCodes(c) {
       if (!city_codes.includes(WARD_CODE_MAP[part])) city_codes.push(WARD_CODE_MAP[part]);
       continue;
     }
-    const ward = findStationWard(part);
+    // 駅名あいまい解決（完全一致→部分一致）
+    const station = resolveStation(part);
+    const stationKey = station || part;
+    const ward = STATION_WARD_MAP[stationKey] || findStationWard(part);
     if (ward && WARD_CODE_MAP[ward] && !city_codes.includes(WARD_CODE_MAP[ward])) city_codes.push(WARD_CODE_MAP[ward]);
-    const lines = STATION_LINE_MAP[part] || [];
+    const lines = STATION_LINE_MAP[stationKey] || [];
     lines.forEach(l => { const id = LINE_ROUTE_MAP[l]; if (id && !route_ids.includes(id)) route_ids.push(id); });
   }
   return { city_codes, route_ids };
@@ -1456,16 +1476,17 @@ function openInstructions(siteKey) {
       };
       const { city_codes, route_ids } = buildAreaRouteCodes(adjC);
 
-      // 駅名リスト（STATION_LINE_MAPに収録されている駅のみ）
+      // 駅名リスト（あいまい解決つき：完全一致→部分一致→前後駅）
       const adjAreaClean = (adjC.desired_area || adjC.area || "").trim();
       const areaParts = adjAreaClean.split(/[,、・\/\s]+/)
         .map(s => s.replace(/駅|周辺|付近|近く|沿線/g, "").trim()).filter(Boolean);
       const realpro_station_names = [];
       for (const part of areaParts) {
-        if (STATION_LINE_MAP[part]) {
-          realpro_station_names.push(part);
+        const station = resolveStation(part);
+        if (station) {
+          if (!realpro_station_names.includes(station)) realpro_station_names.push(station);
           if (searchMode === "wide") {
-            const adj = getAdjacentStations(part, STATION_LINE_MAP[part] || []);
+            const adj = getAdjacentStations(station, STATION_LINE_MAP[station] || []);
             adj.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
           }
         }

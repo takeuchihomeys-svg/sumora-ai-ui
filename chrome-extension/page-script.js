@@ -93,18 +93,33 @@
     });
   }
   // 駅名（文字列）でラベル一致するチェックボックスを選択
+  // 完全一致→前方一致→部分一致の順で試みる
   function selectStationsByName(names) {
     if (!names || !names.length) return;
     names.forEach(function(name) {
       var clean = name.replace(/駅$/, '').trim();
-      var labels = document.querySelectorAll('label');
+      var labels = Array.prototype.slice.call(document.querySelectorAll('label'));
+      var found = false;
+
+      // 1. 完全一致（空白除去）
       for (var i = 0; i < labels.length; i++) {
-        var lbl = labels[i];
-        var lblTxt = lbl.textContent.replace(/\s+/g, '').replace(/駅$/, '');
+        var lblTxt = labels[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
         if (lblTxt === clean) {
-          var inp = lbl.querySelector('input[type="checkbox"]');
-          if (!inp && lbl.htmlFor) inp = document.getElementById(lbl.htmlFor);
-          if (inp && !inp.checked) { inp.click(); break; }
+          var inp = labels[i].querySelector('input[type="checkbox"]');
+          if (!inp && labels[i].htmlFor) inp = document.getElementById(labels[i].htmlFor);
+          if (inp && !inp.checked) { inp.click(); found = true; break; }
+        }
+      }
+
+      // 2. 前方一致（"東花" → "東花園" など）
+      if (!found) {
+        for (var i = 0; i < labels.length; i++) {
+          var lblTxt = labels[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
+          if ((lblTxt.startsWith(clean) || clean.startsWith(lblTxt)) && lblTxt.length >= 2) {
+            var inp = labels[i].querySelector('input[type="checkbox"]');
+            if (!inp && labels[i].htmlFor) inp = document.getElementById(labels[i].htmlFor);
+            if (inp && !inp.checked) { inp.click(); found = true; break; }
+          }
         }
       }
     });
