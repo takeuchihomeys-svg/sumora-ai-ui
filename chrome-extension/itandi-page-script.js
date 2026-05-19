@@ -71,22 +71,24 @@
 
   // ── 所在地モーダル ───────────────────────────────────────────────────────
   // 戻り値: boolean（モーダルを開けたか）
-  // ボタンが見つからない場合は何もしない（呼び出し元のsafetyTimerが検索する）
   function selectItandiArea(wardName, onDone) {
     if (!wardName) return false;
-    // ボタンテキスト候補（表記ゆれ対応）
     var opened = clickBtn("所在地で絞り込み") || clickBtn("エリアで絞り込み") || clickBtn("地域で絞り込み");
-    if (!opened) return false; // モーダル開けず → safetyTimerに任せる
+    if (!opened) return false;
 
     setTimeout(function () {
-      clickNav("大阪府");
+      // 地方タブがあれば近畿を選択（なければ無視して進む）
+      clickNav("近畿");
       setTimeout(function () {
-        clickLabel(wardName);
+        clickNav("大阪府");
         setTimeout(function () {
-          clickBtn("確定");
-          setTimeout(onDone, 2000); // 確定後2000ms待ってから検索
+          clickLabel(wardName);
+          setTimeout(function () {
+            clickBtn("確定");
+            setTimeout(onDone, 1500);
+          }, 1000);
         }, 1000);
-      }, 1000);
+      }, 800);
     }, 1000);
     return true;
   }
@@ -96,7 +98,7 @@
   function selectItandiLines(lineNames, stationNames, onDone) {
     if (!lineNames || !lineNames.length) return false;
     var opened = clickBtn("路線・駅で絞り込み") || clickBtn("路線で絞り込み") || clickBtn("沿線・駅で絞り込み");
-    if (!opened) return false; // モーダル開けず → safetyTimerに任せる
+    if (!opened) return false;
 
     var stNames = (stationNames || []).map(function (s) { return s.replace(/駅$/, "").trim(); }).filter(Boolean);
 
@@ -119,7 +121,7 @@
                       // 全駅完了 → 確定
                       setTimeout(function () {
                         clickBtn("確定");
-                        setTimeout(onDone, 2000); // 確定後2000ms待ってから検索
+                        setTimeout(onDone, 1500);
                       }, 700);
                       return;
                     }
@@ -131,14 +133,14 @@
                 } else {
                   // 駅なし → 確定
                   clickBtn("確定");
-                  setTimeout(onDone, 2000);
+                  setTimeout(onDone, 1500);
                 }
-              }, 1500); // 路線チェック後、駅リスト描画を十分待つ
+              }, 1500);
               return;
             }
             clickLabel(lineNames[lineIdx]);
             lineIdx++;
-            setTimeout(clickNextLine, 800); // 路線ごとに800ms待機
+            setTimeout(clickNextLine, 800);
           }
           clickNextLine();
 
@@ -158,15 +160,8 @@
 
   var VALID_LAYOUTS = ["1R","1K","1DK","1LDK","2K","2DK","2LDK","3K","3DK","3LDK","4K","4DK","4LDK","5K_OVER"];
 
-  function fill(cond) {
-    // ── 基本条件を入力 ────────────────────────────────────────────────────
-
-    if (cond.rent_max) {
-      var rentVal = cond.rent_max > 1000 ? Math.floor(cond.rent_max / 10000) : cond.rent_max;
-      var rentEl = document.querySelector('input[name="rent:lteq"]');
-      if (rentEl) setReactVal(rentEl, rentVal);
-    }
-    tick(document.querySelector('input[name="totalRentCheck"]'));
+  // モーダル完了後に入力する条件（専有面積・築年数・間取り・構造・ペット・駅徒歩）
+  function fillRemainingFields(cond) {
     if (cond.walk_minutes) {
       var walkEl = document.querySelector('input[name="station_walk_minutes:lteq"]');
       if (walkEl) setReactVal(walkEl, cond.walk_minutes);
@@ -195,46 +190,56 @@
     if (cond.preferences && /バス.*トイレ別|トイレ別|バストイレ別/i.test(cond.preferences)) {
       tick(document.querySelector('input[name="option_id:all_in"][id="11010"]'));
     }
+  }
 
-    // ── モーダル操作 + 検索 ───────────────────────────────────────────────
+  function fill(cond) {
+    // ── STEP 1: 賃料（最初に入力）────────────────────────────────────────
+    if (cond.rent_max) {
+      var rentVal = cond.rent_max > 1000 ? Math.floor(cond.rent_max / 10000) : cond.rent_max;
+      var rentEl = document.querySelector('input[name="rent:lteq"]');
+      if (rentEl) setReactVal(rentEl, rentVal);
+    }
+    tick(document.querySelector('input[name="totalRentCheck"]'));
+
+    // ── STEP 2 & 3: 所在地 or 路線・駅モーダル → 完了後に残り条件 → 検索 ──
+    var hasArea  = !!cond.ward_name;
+    var hasLines = !!(cond.itandi_lines && cond.itandi_lines.length);
+
     setTimeout(function () {
 
-      // searchFired フラグで二重発火を防止
-      var searchFired = false;
-      function doSearch() {
-        if (searchFired) return;
-        searchFired = true;
-        clickBtn("検索");
+      // モーダル完了コールバック
+      function afterModal() {
+        // STEP 4〜8: 専有面積・築年数・間取り・構造・ペット
+        setTimeout(function () {
+          fillRemainingFields(cond);
+          // STEP 9: 検索
+          setTimeout(function () {
+            clickBtn("検索");
+          }, 1000);
+        }, 500);
       }
 
-      var hasArea  = !!cond.ward_name;
-      var hasLines = !!(cond.itandi_lines && cond.itandi_lines.length);
-
       if (hasArea) {
-        var opened = selectItandiArea(cond.ward_name, doSearch);
+        var opened = selectItandiArea(cond.ward_name, afterModal);
         if (!opened) {
-          // モーダル開けなかった → 5秒後に検索（基本条件のみ）
-          setTimeout(doSearch, 5000);
+          // モーダルが開けなかった → 検索せずに通知（500エラー防止）
+          alert("「所在地で絞り込み」ボタンが見つかりませんでした。\n手動で所在地を選択してから検索してください。");
         }
-        // 安全網: モーダル操作が何らかの理由で完了しなくても15秒後に必ず検索
-        setTimeout(doSearch, 15000);
 
       } else if (hasLines) {
         var stNames = cond.station_names || (cond.station_name ? [cond.station_name] : []);
-        var opened = selectItandiLines(cond.itandi_lines, stNames, doSearch);
+        var opened = selectItandiLines(cond.itandi_lines, stNames, afterModal);
         if (!opened) {
-          // モーダル開けなかった → 5秒後に検索
-          setTimeout(doSearch, 5000);
+          // モーダルが開けなかった → 検索せずに通知（500エラー防止）
+          alert("「路線・駅で絞り込み」ボタンが見つかりませんでした。\n手動で路線を選択してから検索してください。");
         }
-        // 安全網: 15秒後に必ず検索
-        setTimeout(doSearch, 15000);
 
       } else {
-        // エリアも路線もない → 2秒後に検索（基本条件のみ）
-        setTimeout(doSearch, 2000);
+        // 所在地も路線もない → 検索せずに通知（500エラー防止・必須条件未設定）
+        alert("所在地または路線・駅の情報がありません。\nお客さんのエリア条件を確認してください。");
       }
 
-    }, 600);
+    }, 800);
   }
 
   window.addEventListener("axlx-itandi-fill", function (e) { fill(e.detail); });
