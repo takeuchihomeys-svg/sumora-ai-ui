@@ -207,6 +207,32 @@
     window.postMessage({ from: 'aixlinx-fill-done' }, '*');
   }
 
+  // 市区郡チェックボックス（city_code[]）が1つ以上 checked か確認
+  // div.next_step_button2 の視覚チェックより確実（ボタンは常にdisplay:blockの可能性あり）
+  function isWardChecked() {
+    return document.querySelectorAll('label input[name="city_code[]"]:checked').length > 0;
+  }
+
+  // 市区郡ラベルを安全にクリック（city_code[]を持つlabel限定・checked済みは再クリックしない）
+  function clickWardPrecise(texts) {
+    var allLabels = Array.prototype.slice.call(document.querySelectorAll('label'));
+    var wardLabels = allLabels.filter(function(l) {
+      return !!l.querySelector('input[name="city_code[]"]');
+    });
+    if (wardLabels.length === 0) return false; // まだ市区郡ページに到達していない
+    for (var ci = 0; ci < texts.length; ci++) {
+      var t = norm(texts[ci]);
+      for (var i = 0; i < wardLabels.length; i++) {
+        var ltxt = norm(wardLabels[i].textContent);
+        if (ltxt !== t && !ltxt.includes(t) && !t.includes(ltxt)) continue;
+        var inp = wardLabels[i].querySelector('input[name="city_code[]"]');
+        if (inp && !inp.checked) { inp.click(); return true; } // 未選択 → クリックして選択
+        if (inp && inp.checked)  { return true; }              // 選択済み → そのまま成功
+      }
+    }
+    return false;
+  }
+
   function alertStop(msg) {
     alert('⚠️ ' + msg + '\n\n手動で選択してから「検索」を押してください。');
     notifyDone();
@@ -533,18 +559,17 @@
                   );
                 }
 
-                // 300ms後に next_step_button2 の状態を確認
+                // 300ms後に city_code[] の checked 状態を確認
                 setTimeout(function() {
-                  var nb = document.querySelector('div.next_step_button2');
-                  if (nb && isVisible(nb)) {
-                    console.log('[AX] STEP3後確認: next_step_button2 可視 → STEP4へ');
+                  if (isWardChecked()) {
+                    console.log('[AX] STEP3後確認: city_code[]チェック済み → STEP4へ');
                     startSTEP4();
                   } else {
-                    // 市区郡が deselect された → 再クリックして再選択
-                    console.log('[AX] STEP3後確認: next_step_button2 不可視 → 市区郡を再クリック');
-                    clickByText([wardFull, wardShort]);
+                    // 市区郡が deselect された → 精密クリックで再選択（トグル防止）
+                    console.log('[AX] STEP3後確認: city_code[]未チェック → clickWardPreciseで再選択');
+                    clickWardPrecise([wardFull, wardShort]);
                     waitForClick(
-                      function() { var b = document.querySelector('div.next_step_button2'); return !!(b && isVisible(b)); },
+                      isWardChecked,
                       startSTEP4,
                       30, 300, 300,
                       function() { alertStop('「' + wardFull + '」の市区郡選択に失敗しました。'); }
@@ -560,14 +585,13 @@
             }
 
             // 500msごとにポーリング:
-            //   最優先: div.next_step_button2 が既に見える = 市区郡選択済み → 再クリック禁止（デセレクトになるため）
-            //   次優先: 市区郡ボタンを直接クリック（大阪府記憶済みケース）
+            //   最優先: city_code[]が既にchecked = 市区郡選択済み → 再クリック禁止（トグルで解除になるため）
+            //   次優先: city_code[]を持つlabelを安全クリック（大阪府記憶済みケース）
             //   最後: 大阪府をクリック（初回ケース）
             waitForClick(
               function() {
-                var nb = document.querySelector('div.next_step_button2');
-                if (nb && isVisible(nb)) { prefClicked = false; console.log('[AX] STEP2: 市区郡選択済みを検出 → 再クリックスキップ'); return true; }
-                if (clickByText([wardFull, wardShort])) { prefClicked = false; return true; }
+                if (isWardChecked()) { prefClicked = false; console.log('[AX] STEP2: city_code[]選択済みを検出 → 再クリックスキップ'); return true; }
+                if (clickWardPrecise([wardFull, wardShort])) { prefClicked = false; return true; }
                 if (clickByText(['大阪府'])) { prefClicked = true; return true; }
                 return false;
               },
@@ -578,7 +602,7 @@
                 } else {
                   // 大阪府クリック後 → 市区郡ページへ遷移を待ってクリック
                   waitForClick(
-                    function() { return clickByText([wardFull, wardShort]); },
+                    function() { return clickWardPrecise([wardFull, wardShort]); },
                     doAfterWard,
                     30, 500, 600,
                     function() { alertStop('「' + wardFull + '」の市区郡ボタンが見つかりませんでした。'); }
