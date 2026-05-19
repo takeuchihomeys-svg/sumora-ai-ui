@@ -136,6 +136,16 @@
     });
   }
 
+  // position:fixed のモーダル内要素は offsetParent=null になるため BoundingClientRect で判定
+  function isVisible(el) {
+    try {
+      var r = el.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) return false;
+      var s = window.getComputedStyle(el);
+      return s.display !== 'none' && s.visibility !== 'hidden';
+    } catch(e) { return false; }
+  }
+
   // テキストで要素を探してクリック（完全一致→包含の順）
   // DIVのonclickはel.click()の方が確実（診断でgo_search等がDIVと判明）
   function clickByText(candidates) {
@@ -146,7 +156,7 @@
       var cand = norm(candidates[ci]);
       // 完全一致
       for (var i = 0; i < els.length; i++) {
-        if (!els[i].offsetParent) continue;
+        if (!isVisible(els[i])) continue;
         if (norm(els[i].textContent) === cand) {
           els[i].click(); return true;
         }
@@ -157,7 +167,7 @@
       // 包含（短すぎる候補は除外）
       if (cand.length < 5) continue;
       for (var i = 0; i < els.length; i++) {
-        if (!els[i].offsetParent) continue;
+        if (!isVisible(els[i])) continue;
         if (norm(els[i].textContent).indexOf(cand) >= 0) {
           els[i].click(); return true;
         }
@@ -442,8 +452,8 @@
             // STEP2→3: 大阪府固定
             // モーダルが前回選択を記憶していれば市区郡ボタンが既に表示されているのでスキップ
             function isWardVisible() {
-              return Array.prototype.some.call(document.querySelectorAll('*'), function(e) {
-                if (!e.offsetParent) return false;
+              return Array.prototype.some.call(document.querySelectorAll('a,button,div,span,td,li,p,label'), function(e) {
+                if (!isVisible(e)) return false;
                 var t = e.textContent.trim();
                 return t === wardFull || t === wardShort;
               });
