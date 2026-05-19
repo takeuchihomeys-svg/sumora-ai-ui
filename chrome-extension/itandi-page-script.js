@@ -57,10 +57,11 @@
     return false;
   }
 
-  // ナビタブ（li/button/a/span）完全一致
+  // ナビタブ（li/button/a/span/label）完全一致
+  // itandiの地域・都道府県タブはLABELタグ（診断で確認済み）
   function clickNav(text) {
     var n = norm(text);
-    var els = [].slice.call(document.querySelectorAll("li, button, a, span, div[role='button']"));
+    var els = [].slice.call(document.querySelectorAll("li, button, a, span, label, div[role='button']"));
     var found = els.find(function (el) {
       return norm(el.textContent) === n && isVis(el);
     });
