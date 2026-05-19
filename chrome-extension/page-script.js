@@ -441,7 +441,7 @@
         // 「詳細な地域の設定へ進む」ボタン（DevTools調査済: div.next_step_button2）
         function clickNextStepBtn() {
           var btn = document.querySelector('div.next_step_button2');
-          if (btn && btn.offsetParent) { btn.click(); return true; }
+          if (btn && isVisible(btn)) { btn.click(); return true; }
           return clickByText(['詳細な地域の設定へ進む']);
         }
 
@@ -449,67 +449,67 @@
         waitForClick(
           function() { return clickByText(['所在地絞り込み＋', '所在地絞り込み+', '所在地絞り込み']); },
           function() {
-            // STEP2→3: 大阪府固定
-            // モーダルが前回選択を記憶していれば市区郡ボタンが既に表示されているのでスキップ
-            function isWardVisible() {
-              return Array.prototype.some.call(document.querySelectorAll('a,button,div,span,td,li,p,label'), function(e) {
-                if (!isVisible(e)) return false;
-                var t = e.textContent.trim();
-                return t === wardFull || t === wardShort;
-              });
-            }
+            // STEP2+3を統合: 市区郡直接クリックと大阪府クリックを同時にポーリング
+            // ケースA: モーダルが市区郡ページ表示中 → 大阪府をスキップして市区郡を直接クリック
+            // ケースB: モーダルが都道府県ページ表示中 → 大阪府をクリック
+            var prefClicked = false;
 
-            function doStep3() {
-              // STEP3: 市区郡（例:「大阪市平野区」）が出るまで待ってクリック
-              waitForClick(
-                function() { return clickByText([wardFull, wardShort]); },
-                function() {
-                  if (hasDetailArea) {
-                    // STEP4: 「詳細な地域の設定へ進む」をクリック（ピンポイントのみ）
-                    waitForClick(clickNextStepBtn,
+            function doAfterWard() {
+              if (hasDetailArea) {
+                // STEP4: 「詳細な地域の設定へ進む」をクリック（ピンポイントのみ）
+                waitForClick(clickNextStepBtn,
+                  function() {
+                    // STEP5: 町字（例:「喜連西」）が出るまで待ってクリック
+                    waitForClick(
+                      function() { return clickDetailArea(detailAreaName); },
                       function() {
-                        // STEP5: 町字（例:「喜連西」）が出るまで待ってクリック
-                        waitForClick(
-                          function() { return clickDetailArea(detailAreaName); },
-                          function() {
-                            // STEP6: 閉じるボタンが出るまで待ってクリック
-                            waitForClick(closeAreaModal, function() {
-                              // STEP7: 検索実行（地域が確定してから）
-                              setTimeout(clickSearch, 800);
-                            });
-                          },
-                          30, 500, 600,
-                          function() { alertStop('「' + detailAreaName + '」の地域ボタンが見つかりませんでした。'); }
-                        );
+                        // STEP6: 閉じるボタンが出るまで待ってクリック
+                        waitForClick(closeAreaModal, function() {
+                          // STEP7: 検索実行（地域が確定してから）
+                          setTimeout(clickSearch, 800);
+                        });
                       },
                       30, 500, 600,
-                      function() { alertStop('「詳細な地域の設定へ進む」ボタンが見つかりませんでした。'); }
+                      function() { alertStop('「' + detailAreaName + '」の地域ボタンが見つかりませんでした。'); }
                     );
-                  } else {
-                    // 広げて検索: 市区郡まで選択して閉じる（詳細地域には進まない）
-                    waitForClick(closeAreaModal, function() {
-                      setTimeout(clickSearch, 800);
-                    });
-                  }
-                },
-                30, 500, 600,
-                function() { alertStop('「' + wardFull + '」の市区郡ボタンが見つかりませんでした。'); }
-              );
+                  },
+                  30, 500, 600,
+                  function() { alertStop('「詳細な地域の設定へ進む」ボタンが見つかりませんでした。'); }
+                );
+              } else {
+                // 広げて検索: 市区郡まで選択して閉じる（詳細地域には進まない）
+                waitForClick(closeAreaModal, function() {
+                  setTimeout(clickSearch, 800);
+                });
+              }
             }
 
-            // 600ms後: 市区郡が既に見えていれば大阪府クリック不要・直接STEP3へ
-            setTimeout(function() {
-              if (isWardVisible()) {
-                doStep3();
-              } else {
-                waitForClick(
-                  function() { return clickByText(['大阪府']); },
-                  doStep3,
-                  30, 500, 600,
-                  function() { alertStop('大阪府の選択ができませんでした。\n「所在地絞り込み＋」を押して大阪府を手動選択してください。'); }
-                );
-              }
-            }, 600);
+            // 500msごとにポーリング:
+            //   先に市区郡ボタンを試す（大阪府記憶済みケース）
+            //   なければ大阪府ボタンを試す（初回ケース）
+            waitForClick(
+              function() {
+                if (clickByText([wardFull, wardShort])) { prefClicked = false; return true; }
+                if (clickByText(['大阪府'])) { prefClicked = true; return true; }
+                return false;
+              },
+              function() {
+                if (!prefClicked) {
+                  // 市区郡を直接クリック完了 → 次のステップへ
+                  doAfterWard();
+                } else {
+                  // 大阪府クリック後 → 市区郡ページへ遷移を待ってクリック
+                  waitForClick(
+                    function() { return clickByText([wardFull, wardShort]); },
+                    doAfterWard,
+                    30, 500, 600,
+                    function() { alertStop('「' + wardFull + '」の市区郡ボタンが見つかりませんでした。'); }
+                  );
+                }
+              },
+              30, 500, 600,
+              function() { alertStop('大阪府または市区郡の選択ができませんでした。'); }
+            );
           },
           30, 500, 600,
           function() { alertStop('「所在地絞り込み」ボタンが見つかりませんでした。'); }
