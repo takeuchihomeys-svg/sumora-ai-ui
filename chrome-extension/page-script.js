@@ -381,6 +381,27 @@
       if (tryLabel(function(t){ return t.length >= 2 && clean.includes(t); })) return true;
       if (tryEl(function(t){ return t.length >= 2 && clean.includes(t); })) return true;
     }
+    // PASS5: 強制クリック（isVisible()が position:fixed モーダル内で誤判定する場合のフォールバック）
+    function tryForce(matchFn) {
+      var all = Array.prototype.slice.call(document.querySelectorAll('label,a,div,span,td,li,button,p'));
+      for (var i = 0; i < all.length; i++) {
+        var txt = all[i].textContent.replace(/\s+/g, '');
+        if (!matchFn(txt)) continue;
+        if (all[i].tagName === 'LABEL') {
+          var inp = all[i].querySelector('input[type="checkbox"]');
+          if (!inp && all[i].htmlFor) inp = document.getElementById(all[i].htmlFor);
+          if (inp && !inp.checked) { inp.click(); return true; }
+        }
+        try { all[i].click(); return true; } catch(e) {}
+      }
+      return false;
+    }
+    if (tryForce(function(t){ return t === clean; })) return true;
+    if (tryForce(function(t){ return t.startsWith(clean); })) return true;
+    if (tryForce(function(t){ return t.includes(clean); })) return true;
+    if (clean.length >= 2) {
+      if (tryForce(function(t){ return t.length >= 2 && clean.includes(t); })) return true;
+    }
     return false;
   }
 
