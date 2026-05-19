@@ -452,3 +452,4 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 - **itandi複数駅パース実装済み（2026-05-20）**: desired_areaを「、・,/スペース」で分割→各トークンをSTATION_LINE_MAP照合（末尾「町/村」除去フォールバック付き）→全路線集約→全駅名をstation_namesに渡す
 - **リアプロ所在地モーダル修正（2026-05-20）**: 広げて検索でもモーダル経由に変更。直接checkboxではUI反映されない問題を解消。detail_wardが渡されるときはhasModalWard=trueで必ずモーダルを使う。タイミング1200ms間隔（駅モーダルと同等）
 - **次の課題**: リアプロ所在地モーダル修正後の動作確認（広げて検索+ピンポイント両方）・REINS実機テスト・itandi大阪モノレール路線名確認・yumiko案件（吉田町/東花園/新石切）でのitandi複数駅動作確認
+- **市区郡トグル防止修正（2026-05-20）**: `div.next_step_button2`の視覚チェックをやめ`input[name="city_code[]"]:checked`でward選択状態を判定。`clickWardPrecise()`でcity_code[]を持つlabel限定・checked済み再クリック禁止。根本原因: next_step_button2はdisplay:block常時→isVisible()が誤判定→未選択でもSTEP4進行→町字ページに遷移しない

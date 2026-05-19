@@ -167,6 +167,15 @@ Array.from(document.querySelectorAll('a,button,div[onclick],label,input[type=che
 
 ---
 
+### 町字ボタン（DevTools直接確認済 2026-05-20）
+
+| 要素 | セレクタ | 確認日 | 備考 |
+|---|---|---|---|
+| 町字ボタン | **`label.one_town`** | 2026-05-20 | DevTools診断で確認。`<label class="one_town"><input type="checkbox" name="town_code[]" title="喜連西" value="27126013">喜連西</label>` |
+| 町字チェックボックス | `label.one_town input[type="checkbox"][name="town_code[]"]` | 2026-05-20 | `inp.click()` で checked=true に確認 |
+
+> ✅ `label.one_town` は `display: inline-block`, `visibility: visible`, `offsetParent` あり（position:fixedモーダル内でも正常）
+
 ## 📅 更新履歴
 
 | 日付 | 内容 | 担当 |
@@ -175,3 +184,5 @@ Array.from(document.querySelectorAll('a,button,div[onclick],label,input[type=che
 | 2026-05-18 | itandi BBのフォーム要素・モーダル構造を記録 | #43-DOM |
 | 2026-05-18 | レインズのフィールドインデックスを記録（DevTools全調査） | #43-DOM |
 | 2026-05-20 | リアプロ所在地モーダルの「詳細な地域の設定へ進む」ボタン確認: `div.next_step_button2.next_action` | #43-DOM（竹内悠馬がDevToolsで直接確認） |
+| 2026-05-20 | 町字ボタンのセレクタ確認: `label.one_town > input[type="checkbox"][name="town_code[]"]`。clickDetailArea PASS0として実装 | #43-DOM/#43-W3 |
+| 2026-05-20 | 市区郡チェックボックス: `label input[name="city_code[]"]`（label内のinputにchecked状態あり）。div.next_step_button2は常にdisplay:blockで寸法あり→isVisible()で選択状態を判定できない（=根本原因）。clickWardPrecise()でlabel限定・checked前確認クリックに変更 | #43-DOM/#43-W3 |
