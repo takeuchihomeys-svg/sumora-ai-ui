@@ -383,48 +383,53 @@
     // 沿線・駅なし
     if (!hasStation && !hasRoutes) {
       if (hasModalWard) {
-        // 所在地モーダルを人間ペースで1つずつ操作（2000ms間隔）
-        // STEP1: 所在地絞り込み+ → STEP2: 大阪府 → STEP3: 市区郡 → [STEP4: 町字] → 閉じる → 検索
+        // itandi方式：ネストコールバックで1ステップずつ確実に実行
+        // 前のステップが実行されてから2000ms後に次を起動（ページ描画待ち）
         var wardFull  = cond.detail_ward || "";
         var wardShort = wardFull.replace(/^大阪市|^大阪府/, "");
         var detailAreaName = cond.detail_area || "";
 
-        // STEP1: モーダルを開く (T=800ms)
+        // STEP1: モーダルを開く
         setTimeout(function() {
           clickByText(['所在地絞り込み＋', '所在地絞り込み+', '所在地絞り込み']);
-        }, 800);
-        // STEP2: 大阪府を選択 (T=2800ms)
-        setTimeout(function() {
-          clickByText(['大阪府']);
-        }, 2800);
-        // STEP3: 市区郡を選択 (T=4800ms)
-        setTimeout(function() {
-          clickByText([wardFull, wardShort]);
-        }, 4800);
 
-        if (hasDetailArea) {
-          // STEP4: 町字を選択（ピンポイントのみ）(T=6800ms)
+          // STEP2: 大阪府を選択（モーダルが描画されてから）
           setTimeout(function() {
-            clickDetailArea(detailAreaName);
-          }, 6800);
-          // STEP5: 閉じる (T=8800ms)
-          setTimeout(function() {
-            var closeDiv = document.querySelector('div.this_window_close');
-            if (closeDiv && closeDiv.offsetParent) { closeDiv.click(); return; }
-            clickByText(['確定してリストへ', '×とじる', '× とじる', 'とじる', '閉じる']);
-          }, 8800);
-          // STEP6: 検索実行 (T=10800ms)
-          setTimeout(function() { clickSearch(); }, 10800);
-        } else {
-          // 広げて検索: 市区郡まで選択して閉じる (T=6800ms)
-          setTimeout(function() {
-            var closeDiv = document.querySelector('div.this_window_close');
-            if (closeDiv && closeDiv.offsetParent) { closeDiv.click(); return; }
-            clickByText(['確定してリストへ', '×とじる', '× とじる', 'とじる', '閉じる']);
-          }, 6800);
-          // 検索実行 (T=8800ms)
-          setTimeout(function() { clickSearch(); }, 8800);
-        }
+            clickByText(['大阪府']);
+
+            // STEP3: 市区郡を選択（都道府県ページが描画されてから）
+            setTimeout(function() {
+              clickByText([wardFull, wardShort]);
+
+              if (hasDetailArea) {
+                // STEP4: 町字を選択（ピンポイントのみ・市区郡ページが描画されてから）
+                setTimeout(function() {
+                  clickDetailArea(detailAreaName);
+
+                  // STEP5: モーダルを閉じる（町字が選択されてから）
+                  setTimeout(function() {
+                    var closeDiv = document.querySelector('div.this_window_close');
+                    if (closeDiv && closeDiv.offsetParent) { closeDiv.click(); }
+                    else { clickByText(['確定してリストへ', '×とじる', '× とじる', 'とじる', '閉じる']); }
+
+                    // STEP6: 検索実行（モーダルが閉じてから）
+                    setTimeout(function() { clickSearch(); }, 2000);
+                  }, 2000);
+                }, 2000);
+              } else {
+                // 広げて検索：市区郡まで選択してそのまま閉じる
+                setTimeout(function() {
+                  var closeDiv = document.querySelector('div.this_window_close');
+                  if (closeDiv && closeDiv.offsetParent) { closeDiv.click(); }
+                  else { clickByText(['確定してリストへ', '×とじる', '× とじる', 'とじる', '閉じる']); }
+
+                  // 検索実行（モーダルが閉じてから）
+                  setTimeout(function() { clickSearch(); }, 2000);
+                }, 2000);
+              }
+            }, 2000);
+          }, 2000);
+        }, 800);
       } else {
         setTimeout(function() { clickSearch(); }, hasCities ? 700 : 300);
       }
