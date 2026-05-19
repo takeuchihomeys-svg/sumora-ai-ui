@@ -166,6 +166,32 @@
     return false;
   }
 
+  // ────────────────────────────────────────────────────────────────────
+  // waitForClick: 要素が出るまでリトライして、成功したら onDone を呼ぶ
+  // tryFn      : function() → boolean（true=成功）
+  // onDone     : 成功後に呼ぶコールバック
+  // maxTries   : 最大リトライ数（デフォルト12回 = 約6秒）
+  // retryMs    : リトライ間隔ms（デフォルト500ms）
+  // pauseMs    : 成功後 onDone を呼ぶまでの待機ms（デフォルト600ms）
+  // ────────────────────────────────────────────────────────────────────
+  function waitForClick(tryFn, onDone, maxTries, retryMs, pauseMs) {
+    maxTries = maxTries !== undefined ? maxTries : 12;
+    retryMs  = retryMs  !== undefined ? retryMs  : 500;
+    pauseMs  = pauseMs  !== undefined ? pauseMs  : 600;
+    var tries = 0;
+    function attempt() {
+      if (tryFn()) {
+        // 成功 → ページが反応してから次へ
+        setTimeout(onDone, pauseMs);
+      } else if (tries < maxTries) {
+        tries++;
+        setTimeout(attempt, retryMs);
+      }
+      // maxTries 超過は無視（静かに停止）
+    }
+    attempt();
+  }
+
   // 検索ボタンをクリック
   // リアプロは DIV.go_search が実際の検索ボタン（診断で確認済み）
   function clickSearch() {
@@ -383,53 +409,56 @@
     // 沿線・駅なし
     if (!hasStation && !hasRoutes) {
       if (hasModalWard) {
-        // itandi方式：ネストコールバックで1ステップずつ確実に実行
-        // 前のステップが実行されてから2000ms後に次を起動（ページ描画待ち）
+        // ── ポーリング方式（waitForClick）──────────────────────────────
+        // 各ステップ: 要素が見つかるまで500msごとにリトライ
+        //             見つかったら600ms後に次のステップを起動
+        // 人間が画面を見て確認してから押すのと同等の動き
         var wardFull  = cond.detail_ward || "";
         var wardShort = wardFull.replace(/^大阪市|^大阪府/, "");
         var detailAreaName = cond.detail_area || "";
 
-        // STEP1: モーダルを開く
-        setTimeout(function() {
-          clickByText(['所在地絞り込み＋', '所在地絞り込み+', '所在地絞り込み']);
+        function closeAreaModal() {
+          var d = document.querySelector('div.this_window_close');
+          if (d && d.offsetParent) { d.click(); return true; }
+          return clickByText(['確定してリストへ', '×とじる', '× とじる', 'とじる', '閉じる']);
+        }
 
-          // STEP2: 大阪府を選択（モーダルが描画されてから）
-          setTimeout(function() {
-            clickByText(['大阪府']);
-
-            // STEP3: 市区郡を選択（都道府県ページが描画されてから）
-            setTimeout(function() {
-              clickByText([wardFull, wardShort]);
-
-              if (hasDetailArea) {
-                // STEP4: 町字を選択（ピンポイントのみ・市区郡ページが描画されてから）
-                setTimeout(function() {
-                  clickDetailArea(detailAreaName);
-
-                  // STEP5: モーダルを閉じる（町字が選択されてから）
-                  setTimeout(function() {
-                    var closeDiv = document.querySelector('div.this_window_close');
-                    if (closeDiv && closeDiv.offsetParent) { closeDiv.click(); }
-                    else { clickByText(['確定してリストへ', '×とじる', '× とじる', 'とじる', '閉じる']); }
-
-                    // STEP6: 検索実行（モーダルが閉じてから）
-                    setTimeout(function() { clickSearch(); }, 2000);
-                  }, 2000);
-                }, 2000);
-              } else {
-                // 広げて検索：市区郡まで選択してそのまま閉じる
-                setTimeout(function() {
-                  var closeDiv = document.querySelector('div.this_window_close');
-                  if (closeDiv && closeDiv.offsetParent) { closeDiv.click(); }
-                  else { clickByText(['確定してリストへ', '×とじる', '× とじる', 'とじる', '閉じる']); }
-
-                  // 検索実行（モーダルが閉じてから）
-                  setTimeout(function() { clickSearch(); }, 2000);
-                }, 2000);
+        // STEP1: 「所在地絞り込み＋」が出るまで待ってクリック
+        waitForClick(
+          function() { return clickByText(['所在地絞り込み＋', '所在地絞り込み+', '所在地絞り込み']); },
+          function() {
+            // STEP2: 「大阪府」ボタンが出るまで待ってクリック
+            waitForClick(
+              function() { return clickByText(['大阪府']); },
+              function() {
+                // STEP3: 市区郡（例:「大阪市平野区」）が出るまで待ってクリック
+                waitForClick(
+                  function() { return clickByText([wardFull, wardShort]); },
+                  function() {
+                    if (hasDetailArea) {
+                      // STEP4: 町字（例:「喜連西」）が出るまで待ってクリック（ピンポイントのみ）
+                      waitForClick(
+                        function() { return clickDetailArea(detailAreaName); },
+                        function() {
+                          // STEP5: 閉じるボタンが出るまで待ってクリック
+                          waitForClick(closeAreaModal, function() {
+                            // STEP6: 検索実行
+                            setTimeout(clickSearch, 800);
+                          });
+                        }
+                      );
+                    } else {
+                      // 広げて検索: 市区郡まで選択して閉じる
+                      waitForClick(closeAreaModal, function() {
+                        setTimeout(clickSearch, 800);
+                      });
+                    }
+                  }
+                );
               }
-            }, 2000);
-          }, 2000);
-        }, 800);
+            );
+          }
+        );
       } else {
         setTimeout(function() { clickSearch(); }, hasCities ? 700 : 300);
       }
