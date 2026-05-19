@@ -383,6 +383,7 @@
       if (!ok) continue;
       var pinp = townLabels[pi].querySelector('input[type="checkbox"]');
       if (pinp && !pinp.checked) { pinp.click(); pass0clicked = true; }
+      else if (pinp && pinp.checked) { pass0clicked = true; } // checked済みも成功（再クリック禁止）
       else if (!pinp) { townLabels[pi].click(); pass0clicked = true; }
     }
     if (pass0clicked) return true;
@@ -511,7 +512,12 @@
         }
 
         // 「詳細な地域の設定へ進む」ボタン（DevTools調査済: div.next_step_button2）
+        // 町字ページが既に表示中(label.one_town存在)の場合はスキップしてtrueを返す
         function clickNextStepBtn() {
+          if (document.querySelectorAll('label.one_town').length > 0) {
+            console.log('[AX] clickNextStepBtn: 既に町字ページ → スキップ');
+            return true;
+          }
           var btn = document.querySelector('div.next_step_button2');
           if (btn && isVisible(btn)) { btn.click(); return true; }
           return clickByText(['詳細な地域の設定へ進む']);
