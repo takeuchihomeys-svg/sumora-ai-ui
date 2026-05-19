@@ -338,10 +338,22 @@
   }
 
   // 詳細地域（町丁目レベル）のチェックボックスを選択する
-  // position:fixed のモーダル内でも動作するよう isVisible() を使用
+  // DevTools調査済: 町字ボタンは label.one_town > input[type="checkbox"][name="town_code[]"]
   function clickDetailArea(name) {
     if (!name) return false;
     var clean = name.trim();
+
+    // PASS0: label.one_town 直接狙い撃ち（DevTools調査で確認済みセレクタ・最優先）
+    var townLabels = Array.prototype.slice.call(document.querySelectorAll('label.one_town'));
+    for (var pi = 0; pi < townLabels.length; pi++) {
+      var ptxt = townLabels[pi].textContent.replace(/\s+/g, '');
+      var pmatch = ptxt === clean || ptxt.startsWith(clean) || ptxt.includes(clean) ||
+                   (clean.length >= 2 && clean.includes(ptxt) && ptxt.length >= 2);
+      if (!pmatch) continue;
+      var pinp = townLabels[pi].querySelector('input[type="checkbox"]');
+      if (pinp && !pinp.checked) { pinp.click(); return true; }
+      townLabels[pi].click(); return true;
+    }
 
     function tryLabel(matchFn) {
       var labels = Array.prototype.slice.call(document.querySelectorAll('label'));
