@@ -318,3 +318,91 @@ function findSS(idx) {
   return results;
 }
 ```
+
+---
+
+## 10. Chrome拡張 DOM自動操作ノウハウ（2026-05-20 #22記録）
+
+### ① 「ボタンが見える」≠「ボタンが選択済み」
+
+UIボタンの `isVisible()` や `getBoundingClientRect()` は「表示状態」しか見ない。  
+`display:block` で寸法があっても「アクティブ」とは限らない。
+
+**実例**: `div.next_step_button2`（リアプロ 詳細地域へ進むボタン）  
+→ 市区郡が未選択でも常に `display:block` + 実寸法あり → `isVisible()` が誤判定
+
+**正解**: フォームのチェックボックス状態で判定する
+```javascript
+// NG: ボタンの見た目で判定 → 誤判定しやすい
+if (btn && isVisible(btn)) { ... }
+
+// OK: チェックボックスの checked 状態で判定
+document.querySelectorAll('label input[name="city_code[]"]:checked').length > 0
+```
+
+---
+
+### ② トグルボタンのクリック前チェック（deselect防止）
+
+チェックボックス型のボタンは**クリック＝トグル**。既選択でクリックすると解除される。  
+`clickByText()` のような汎用クリックは選択前確認をしないため deselect を引き起こす。
+
+```javascript
+// checked前確認パターン（トグル防止）
+var inp = label.querySelector('input[name="city_code[]"]');
+if (inp && !inp.checked) { inp.click(); return true; } // 未選択 → クリック
+if (inp && inp.checked)  { return true; }              // 選択済み → そのままOK
+```
+
+---
+
+### ③ モーダルが前回の状態を記憶する問題
+
+リアプロの所在地モーダルは**前回選択したページ状態のまま開く**。  
+前回 詳細地域まで進んでいた → 次回は最初から詳細地域ページが表示される  
+→ 遷移ボタン（w=0 h=0）を探して15秒タイムアウト。
+
+**対処**: まず「既に目的のページにいるか」を確認してからボタンをクリック
+```javascript
+function clickNextStepBtn() {
+  if (document.querySelectorAll('label.one_town').length > 0) return true; // スキップ
+  var btn = document.querySelector('div.next_step_button2');
+  if (btn && isVisible(btn)) { btn.click(); return true; }
+  return false;
+}
+```
+
+---
+
+### ④ checked済み要素を「成功」として扱う
+
+「クリックして選択する」前提のコードは、既選択状態で `false` を返し続けてタイムアウトする。
+
+```javascript
+if (pinp && !pinp.checked) { pinp.click(); clicked = true; } // 未選択 → クリック
+if (pinp && pinp.checked)  { clicked = true; }               // 選択済みも成功扱い
+```
+
+---
+
+### ⑤ Chrome拡張の変更が反映されない問題
+
+`git push` しても **chrome://extensions で再読み込みしないと旧コードが動き続ける**。
+
+**デプロイフロー（必須）**:
+```
+コード変更 → git push → git pull → chrome://extensions → 🔄 再読み込み → サイトリロード
+```
+
+**デバッグの判断基準**:  
+「コンソールスクリプトは動くが自動入力が動かない」→ まず拡張の再読み込みを疑う
+
+---
+
+### ⑥ DevTools診断の切り分け手順
+
+1. 対象要素の存在確認: `document.querySelectorAll('セレクタ').length`
+2. 状態確認: `checked`, `getBoundingClientRect()`, `getComputedStyle()`
+3. 自動入力と同じロジックをコンソールで直接実行
+4. コンソールでは動く → 拡張未再読み込みが原因
+5. コンソールでも動かない → セレクタ・条件・DOM構造の問題
