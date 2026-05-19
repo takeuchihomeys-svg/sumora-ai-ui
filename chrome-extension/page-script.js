@@ -191,33 +191,35 @@
     }
   }
 
-  // 路線ボタンをクリック（モーダル内の沿線選択UI）
-  // 完全一致 → 短縮名（サフィックス一致）の順で探す
+  // 路線ボタンをクリック（リアプロモーダル: LABEL.one_line 構造確認済み）
   function clickLineButtons(routeIds) {
     if (!routeIds || !routeIds.length) return;
-    var els = Array.prototype.slice.call(
-      document.querySelectorAll('a,button,div,span,td,li,label')
-    );
+    // label.one_line を優先（診断で確認した実DOM構造）
+    var labels = Array.prototype.slice.call(document.querySelectorAll('label.one_line'));
     routeIds.forEach(function(id) {
       var lineName = ROUTE_LINE_MAP[id];
       if (!lineName) return;
       var lineNorm = norm(lineName);
       var found = false;
-      // PASS1: 完全一致（LABEL[one_line]が対象 - 診断で確認済み）
-      for (var i = 0; i < els.length && !found; i++) {
-        if (!els[i].offsetParent) continue;
-        var elNorm = norm(els[i].textContent);
-        if (elNorm === lineNorm) {
-          els[i].click(); // labelをクリック → 内部checkboxが自動チェック
+      // PASS1: label.one_line 完全一致
+      for (var i = 0; i < labels.length && !found; i++) {
+        if (!labels[i].offsetParent) continue;
+        var lNorm = norm(labels[i].textContent);
+        if (lNorm === lineNorm) {
+          var cb = labels[i].querySelector('input[type="checkbox"]');
+          if (cb) { if (!cb.checked) cb.click(); }
+          else { labels[i].click(); }
           found = true;
         }
       }
-      // PASS2: 短縮名サフィックス一致（例: "御堂筋線" が "大阪市高速軌道御堂筋線" の末尾）
-      for (var i = 0; i < els.length && !found; i++) {
-        if (!els[i].offsetParent) continue;
-        var elNorm = norm(els[i].textContent);
-        if (elNorm.length >= 4 && lineNorm.endsWith(elNorm)) {
-          els[i].click();
+      // PASS2: 短縮名サフィックス一致（"御堂筋線" → "大阪市高速軌道御堂筋線"）
+      for (var i = 0; i < labels.length && !found; i++) {
+        if (!labels[i].offsetParent) continue;
+        var lNorm = norm(labels[i].textContent);
+        if (lNorm.length >= 4 && lineNorm.endsWith(lNorm)) {
+          var cb = labels[i].querySelector('input[type="checkbox"]');
+          if (cb) { if (!cb.checked) cb.click(); }
+          else { labels[i].click(); }
           found = true;
         }
       }
@@ -359,22 +361,22 @@
       if (!opened) clickByText(['沿線・駅絞り込み＋', '沿線・駅絞り込み+', '沿線・駅絞り込み']);
     }, 600);
 
-    // ── T=1400ms: 路線ボタンをクリック（モーダル内）───────────────────
+    // ── T=1800ms: 路線ボタンをクリック（モーダル内）───────────────────
     setTimeout(function() {
       if (hasRoutes) clickLineButtons(cond.route_ids);
-    }, 1400);
+    }, 1800);
 
-    // ── T=2200ms: 「駅の設定へ進む」をクリック ──────────────────────
+    // ── T=2900ms: 「駅の設定へ進む」をクリック ──────────────────────
     setTimeout(function() {
       clickByText(['駅の設定へ進む', '駅の設定へ進む›', '駅の設定へ進む>']);
-    }, 2200);
+    }, 2900);
 
-    // ── T=3100ms: 駅ボタンをクリック ────────────────────────────────
+    // ── T=4000ms: 駅ボタンをクリック ────────────────────────────────
     setTimeout(function() {
       if (hasStation) selectStationsByName(cond.station_names);
-    }, 3100);
+    }, 4000);
 
-    // ── T=3900ms: モーダルを閉じる（「確定してリストへ」= DIV.this_window_close 診断済み）
+    // ── T=4900ms: モーダルを閉じる（「確定してリストへ」= DIV.this_window_close 診断済み）
     setTimeout(function() {
       // 優先: 確定してリストへ（DIV.this_window_close）
       var closeDiv = document.querySelector('div.this_window_close');
@@ -388,12 +390,12 @@
           allEl[i].click(); break;
         }
       }
-    }, 3900);
+    }, 4900);
 
-    // ── T=4700ms: 検索実行 ───────────────────────────────────────────
+    // ── T=5700ms: 検索実行 ───────────────────────────────────────────
     setTimeout(function() {
       clickSearch();
-    }, 4700);
+    }, 5700);
   }
 
   window.addEventListener("message", function(e) {
