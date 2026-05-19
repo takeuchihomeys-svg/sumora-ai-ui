@@ -502,35 +502,55 @@
             var prefClicked = false;
 
             function doAfterWard() {
-              console.log('[AX] STEP3完了: 市区郡クリック済 → 詳細地域ボタン待機');
+              console.log('[AX] STEP3完了: 市区郡クリック済 → next_step_button2 確認');
               if (hasDetailArea) {
-                // STEP4: 「詳細な地域の設定へ進む」をクリック（ピンポイントのみ）
-                waitForClick(clickNextStepBtn,
-                  function() {
-                    console.log('[AX] STEP4完了: 詳細な地域へ進むクリック済 → 町字待機 detailArea:', detailAreaName);
-                    // STEP5: 町字（例:「喜連西」）が出るまで待ってクリック
+                // STEP3後確認: div.next_step_button2 が見えることを確認
+                // 見えない場合 = 市区郡がトグルで解除された → 再クリックして再選択
+                function startSTEP4() {
+                  waitForClick(clickNextStepBtn,
+                    function() {
+                      console.log('[AX] STEP4完了: 詳細な地域へ進むクリック済 → 町字待機 detailArea:', detailAreaName);
+                      // STEP5: 町字（例:「喜連西」）が出るまで待ってクリック
+                      waitForClick(
+                        function() {
+                          var n = document.querySelectorAll('label.one_town').length;
+                          if (n > 0) console.log('[AX] STEP5 poll: label.one_town=' + n + '個');
+                          return clickDetailArea(detailAreaName);
+                        },
+                        function() {
+                          console.log('[AX] STEP5完了: 町字クリック済 → 閉じる待機');
+                          waitForClick(closeAreaModal, function() {
+                            console.log('[AX] STEP6完了: モーダル閉じた → 検索');
+                            setTimeout(clickSearch, 800);
+                          });
+                        },
+                        30, 500, 600,
+                        function() { alertStop('「' + detailAreaName + '」の地域ボタンが見つかりませんでした。'); }
+                      );
+                    },
+                    30, 500, 600,
+                    function() { alertStop('「詳細な地域の設定へ進む」ボタンが見つかりませんでした。'); }
+                  );
+                }
+
+                // 300ms後に next_step_button2 の状態を確認
+                setTimeout(function() {
+                  var nb = document.querySelector('div.next_step_button2');
+                  if (nb && isVisible(nb)) {
+                    console.log('[AX] STEP3後確認: next_step_button2 可視 → STEP4へ');
+                    startSTEP4();
+                  } else {
+                    // 市区郡が deselect された → 再クリックして再選択
+                    console.log('[AX] STEP3後確認: next_step_button2 不可視 → 市区郡を再クリック');
+                    clickByText([wardFull, wardShort]);
                     waitForClick(
-                      function() {
-                        var n = document.querySelectorAll('label.one_town').length;
-                        if (n > 0) console.log('[AX] STEP5 poll: label.one_town=' + n + '個');
-                        return clickDetailArea(detailAreaName);
-                      },
-                      function() {
-                        console.log('[AX] STEP5完了: 町字クリック済 → 閉じる待機');
-                        // STEP6: 閉じるボタンが出るまで待ってクリック
-                        waitForClick(closeAreaModal, function() {
-                          console.log('[AX] STEP6完了: モーダル閉じた → 検索');
-                          // STEP7: 検索実行（地域が確定してから）
-                          setTimeout(clickSearch, 800);
-                        });
-                      },
-                      30, 500, 600,
-                      function() { alertStop('「' + detailAreaName + '」の地域ボタンが見つかりませんでした。'); }
+                      function() { var b = document.querySelector('div.next_step_button2'); return !!(b && isVisible(b)); },
+                      startSTEP4,
+                      30, 300, 300,
+                      function() { alertStop('「' + wardFull + '」の市区郡選択に失敗しました。'); }
                     );
-                  },
-                  30, 500, 600,
-                  function() { alertStop('「詳細な地域の設定へ進む」ボタンが見つかりませんでした。'); }
-                );
+                  }
+                }, 300);
               } else {
                 // 広げて検索: 市区郡まで選択して閉じる（詳細地域には進まない）
                 waitForClick(closeAreaModal, function() {
