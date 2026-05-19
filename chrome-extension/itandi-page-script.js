@@ -76,13 +76,21 @@
     var opened = clickBtn("所在地で絞り込み") || clickBtn("エリアで絞り込み") || clickBtn("地域で絞り込み");
     if (!opened) return false;
 
+    // 区名短縮版を用意（「大阪市福島区」→「福島区」、「大阪市北区」→「北区」）
+    var shortName = wardName.replace(/^.+?([^\s　市区郡]+[区町村])$/, "$1");
+    if (shortName === wardName) shortName = null; // 変換できなければnull
+
     setTimeout(function () {
-      // 地方タブがあれば近畿を選択（なければ無視して進む）
+      // 地方タブがあれば近畿を選択（ない場合は無視して進む）
       clickNav("近畿");
       setTimeout(function () {
-        clickNav("大阪府");
+        // 都道府県タブを選択
+        clickNav("大阪府") || clickNav("大阪");
         setTimeout(function () {
-          clickLabel(wardName);
+          // フル名で試し、失敗したら区名のみで試みる
+          if (!clickLabel(wardName) && shortName) {
+            clickLabel(shortName);
+          }
           setTimeout(function () {
             clickBtn("確定");
             setTimeout(onDone, 1500);
@@ -185,10 +193,13 @@
       });
     }
     if (cond.pet_ok) {
-      tick(document.querySelector('input[name="option_id:all_in"][id="22010"]'));
+      // CSSセレクターとlabelクリックの両方を試みる
+      var petEl = document.querySelector('input[name="option_id:all_in"][id="22010"]');
+      if (petEl) tick(petEl); else clickLabel("ペット相談");
     }
     if (cond.preferences && /バス.*トイレ別|トイレ別|バストイレ別/i.test(cond.preferences)) {
-      tick(document.querySelector('input[name="option_id:all_in"][id="11010"]'));
+      var bathEl = document.querySelector('input[name="option_id:all_in"][id="11010"]');
+      if (bathEl) tick(bathEl); else clickLabel("バス・トイレ別");
     }
   }
 
