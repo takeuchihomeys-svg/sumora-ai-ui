@@ -215,20 +215,18 @@
       tick(document.querySelector('input[name="option_id:all_in"][id="11010"]'));
     }
 
-    // 所在地 or 路線・駅モーダル → 最後に検索ボタン自動クリック
+    // 所在地 or 路線・駅モーダル → 条件入力後は検索ボタンを押さず完了
+  // （Reactの状態更新タイミングと競合して500エラーになるため手動クリックに委ねる）
     setTimeout(function () {
-      function doSearch() {
-        setTimeout(function () { clickBtn("検索"); }, 500);
-      }
+      function done() { /* 入力完了 — 検索ボタンはユーザーが押す */ }
       if (cond.ward_name) {
-        selectItandiArea(cond.ward_name, doSearch);
+        selectItandiArea(cond.ward_name, done);
       } else if (cond.itandi_lines && cond.itandi_lines.length) {
         // station_names（配列）優先、旧 station_name（文字列）にも後方互換
         var stNames = cond.station_names || (cond.station_name ? [cond.station_name] : []);
-        selectItandiLines(cond.itandi_lines, stNames, doSearch);
-      } else {
-        doSearch();
+        selectItandiLines(cond.itandi_lines, stNames, done);
       }
+      // エリア・路線どちらもない場合も自動検索しない（ユーザーが確認してから押す）
     }, 300);
   }
 
