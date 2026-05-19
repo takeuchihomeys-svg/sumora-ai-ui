@@ -168,28 +168,33 @@
 
   // ────────────────────────────────────────────────────────────────────
   // waitForClick: 要素が出るまでリトライして、成功したら onDone を呼ぶ
-  // tryFn      : function() → boolean（true=成功）
-  // onDone     : 成功後に呼ぶコールバック
-  // maxTries   : 最大リトライ数（デフォルト12回 = 約6秒）
-  // retryMs    : リトライ間隔ms（デフォルト500ms）
-  // pauseMs    : 成功後 onDone を呼ぶまでの待機ms（デフォルト600ms）
+  // tryFn    : function() → boolean（true=成功）
+  // onDone   : 成功後に呼ぶコールバック
+  // maxTries : 最大リトライ数（デフォルト30回 = 約15秒）
+  // retryMs  : リトライ間隔ms（デフォルト500ms）
+  // pauseMs  : 成功後 onDone を呼ぶまでの待機ms（デフォルト600ms）
+  // onFail   : maxTries超過時に呼ぶコールバック（省略時は静かに停止）
   // ────────────────────────────────────────────────────────────────────
-  function waitForClick(tryFn, onDone, maxTries, retryMs, pauseMs) {
-    maxTries = maxTries !== undefined ? maxTries : 12;
+  function waitForClick(tryFn, onDone, maxTries, retryMs, pauseMs, onFail) {
+    maxTries = maxTries !== undefined ? maxTries : 30;
     retryMs  = retryMs  !== undefined ? retryMs  : 500;
     pauseMs  = pauseMs  !== undefined ? pauseMs  : 600;
     var tries = 0;
     function attempt() {
       if (tryFn()) {
-        // 成功 → ページが反応してから次へ
         setTimeout(onDone, pauseMs);
       } else if (tries < maxTries) {
         tries++;
         setTimeout(attempt, retryMs);
+      } else {
+        if (onFail) onFail(); // 失敗通知（検索はしない）
       }
-      // maxTries 超過は無視（静かに停止）
     }
     attempt();
+  }
+
+  function alertStop(msg) {
+    alert('⚠️ ' + msg + '\n\n手動で選択してから「検索」を押してください。');
   }
 
   // 検索ボタンをクリック
@@ -444,31 +449,42 @@
                   function() {
                     if (hasDetailArea) {
                       // STEP4: 「詳細な地域の設定へ進む」をクリック（ピンポイントのみ）
-                      // ※ DevTools調査済: div.next_step_button2.next_action
-                      waitForClick(clickNextStepBtn, function() {
-                        // STEP5: 町字（例:「喜連西」）が出るまで待ってクリック
-                        waitForClick(
-                          function() { return clickDetailArea(detailAreaName); },
-                          function() {
-                            // STEP6: 閉じるボタンが出るまで待ってクリック
-                            waitForClick(closeAreaModal, function() {
-                              // STEP7: 検索実行
-                              setTimeout(clickSearch, 800);
-                            });
-                          }
-                        );
-                      });
+                      waitForClick(clickNextStepBtn,
+                        function() {
+                          // STEP5: 町字（例:「喜連西」）が出るまで待ってクリック
+                          waitForClick(
+                            function() { return clickDetailArea(detailAreaName); },
+                            function() {
+                              // STEP6: 閉じるボタンが出るまで待ってクリック
+                              waitForClick(closeAreaModal, function() {
+                                // STEP7: 検索実行（地域が確定してから）
+                                setTimeout(clickSearch, 800);
+                              });
+                            },
+                            30, 500, 600,
+                            function() { alertStop('「' + detailAreaName + '」の地域ボタンが見つかりませんでした。'); }
+                          );
+                        },
+                        30, 500, 600,
+                        function() { alertStop('「詳細な地域の設定へ進む」ボタンが見つかりませんでした。'); }
+                      );
                     } else {
                       // 広げて検索: 市区郡まで選択して閉じる（詳細地域には進まない）
                       waitForClick(closeAreaModal, function() {
                         setTimeout(clickSearch, 800);
                       });
                     }
-                  }
+                  },
+                  30, 500, 600,
+                  function() { alertStop('「' + wardFull + '」の市区郡ボタンが見つかりませんでした。'); }
                 );
-              }
+              },
+              30, 500, 600,
+              function() { alertStop('大阪府の選択ができませんでした。'); }
             );
-          }
+          },
+          30, 500, 600,
+          function() { alertStop('「所在地絞り込み」ボタンが見つかりませんでした。'); }
         );
       } else {
         setTimeout(function() { clickSearch(); }, hasCities ? 700 : 300);
@@ -481,60 +497,91 @@
       setCheckboxes("route_id[]", cond.route_ids);
     }
 
-    // ── T=600ms: 「沿線・駅絞り込み ＋」をクリックしてモーダルを開く ──
-    setTimeout(function() {
-      // click_menu class が実際のクリッカブル要素（診断結果より）
-      var clsTargets = ['click_menu', 'one_slide_search_box'];
-      var opened = false;
-      for (var ci = 0; ci < clsTargets.length && !opened; ci++) {
-        var divs = Array.prototype.slice.call(document.querySelectorAll('div.' + clsTargets[ci]));
-        for (var i = 0; i < divs.length; i++) {
-          if (!divs[i].offsetParent) continue;
-          var t = divs[i].textContent.replace(/\s+/g, '');
-          if (t === '沿線・駅絞り込み＋' || t === '沿線・駅絞り込み+') {
-            divs[i].click(); opened = true; break;
+    // 沿線・駅モーダル：waitForClick方式（必ず駅が選択されるまでリトライ）
+    function closeStationModal() {
+      var d = document.querySelector('div.this_window_close');
+      if (d && d.offsetParent) { d.click(); return true; }
+      return clickByText(['確定してリストへ', '×とじる', '× とじる', 'とじる']);
+    }
+
+    // STEP A: 「沿線・駅絞り込み＋」が出るまで待ってクリック
+    waitForClick(
+      function() {
+        var clsTargets = ['click_menu', 'one_slide_search_box'];
+        for (var ci = 0; ci < clsTargets.length; ci++) {
+          var divs = Array.prototype.slice.call(document.querySelectorAll('div.' + clsTargets[ci]));
+          for (var i = 0; i < divs.length; i++) {
+            if (!divs[i].offsetParent) continue;
+            var t = divs[i].textContent.replace(/\s+/g, '');
+            if (t === '沿線・駅絞り込み＋' || t === '沿線・駅絞り込み+') {
+              divs[i].click(); return true;
+            }
           }
         }
-      }
-      // フォールバック
-      if (!opened) clickByText(['沿線・駅絞り込み＋', '沿線・駅絞り込み+', '沿線・駅絞り込み']);
-    }, 600);
-
-    // ── T=1800ms: 路線ボタンをクリック（モーダル内）───────────────────
-    setTimeout(function() {
-      if (hasRoutes) clickLineButtons(cond.route_ids);
-    }, 1800);
-
-    // ── T=2900ms: 「駅の設定へ進む」をクリック ──────────────────────
-    setTimeout(function() {
-      clickByText(['駅の設定へ進む', '駅の設定へ進む›', '駅の設定へ進む>']);
-    }, 2900);
-
-    // ── T=4000ms: 駅ボタンをクリック ────────────────────────────────
-    setTimeout(function() {
-      if (hasStation) selectStationsByName(cond.station_names);
-    }, 4000);
-
-    // ── T=4900ms: モーダルを閉じる（「確定してリストへ」= DIV.this_window_close 診断済み）
-    setTimeout(function() {
-      // 優先: 確定してリストへ（DIV.this_window_close）
-      var closeDiv = document.querySelector('div.this_window_close');
-      if (closeDiv && closeDiv.offsetParent) { closeDiv.click(); return; }
-      // フォールバック: テキスト一致
-      var allEl = Array.prototype.slice.call(document.querySelectorAll('a,button,div,span'));
-      for (var i = 0; i < allEl.length; i++) {
-        if (!allEl[i].offsetParent) continue;
-        var txt = allEl[i].textContent.replace(/\s+/g, '');
-        if (txt === '確定してリストへ' || txt === '×とじる' || txt === 'とじる') {
-          allEl[i].click(); break;
-        }
-      }
-    }, 4900);
-
-    // ── T=5700ms: 検索実行 ───────────────────────────────────────────
-    setTimeout(function() {
-      clickSearch();
-    }, 5700);
+        return clickByText(['沿線・駅絞り込み＋', '沿線・駅絞り込み+', '沿線・駅絞り込み']);
+      },
+      function() {
+        // STEP B: 路線ボタン（label.one_line）が描画されたらクリック
+        waitForClick(
+          function() {
+            var labels = Array.prototype.slice.call(document.querySelectorAll('label.one_line'));
+            var vis = labels.filter(function(l) { return l.offsetParent; });
+            if (!vis.length) return false; // まだ描画されていない
+            if (hasRoutes) clickLineButtons(cond.route_ids);
+            return true;
+          },
+          function() {
+            // STEP C: 「駅の設定へ進む」が出るまで待ってクリック
+            waitForClick(
+              function() { return clickByText(['駅の設定へ進む', '駅の設定へ進む›', '駅の設定へ進む>']); },
+              function() {
+                if (!hasStation) {
+                  // 駅指定なし → そのまま閉じて検索
+                  waitForClick(closeStationModal, function() { setTimeout(clickSearch, 800); });
+                  return;
+                }
+                var stNamesStr = (cond.station_names || []).join('・');
+                // STEP D: 駅ページが描画され、かつ指定駅が選択されるまでリトライ
+                waitForClick(
+                  function() {
+                    var labels = Array.prototype.slice.call(document.querySelectorAll('label'));
+                    var vis = labels.filter(function(l) { return l.offsetParent; });
+                    if (!vis.length) return false; // 駅リストがまだ描画されていない
+                    selectStationsByName(cond.station_names);
+                    // 指定駅のいずれかがチェックされたか確認
+                    return (cond.station_names || []).some(function(sn) {
+                      var clean = sn.replace(/駅$/, '').trim();
+                      return vis.some(function(l) {
+                        var txt = l.textContent.replace(/\s+/g, '').replace(/駅$/, '');
+                        if (txt !== clean && !txt.includes(clean) && !clean.includes(txt)) return false;
+                        var inp = l.querySelector('input[type="checkbox"]');
+                        if (!inp && l.htmlFor) inp = document.getElementById(l.htmlFor);
+                        return inp && inp.checked;
+                      });
+                    });
+                  },
+                  function() {
+                    // STEP E: 駅が選択された → モーダルを閉じる
+                    waitForClick(closeStationModal, function() {
+                      // STEP F: 検索実行（駅が確定してから）
+                      setTimeout(clickSearch, 800);
+                    });
+                  },
+                  30, 500, 600,
+                  function() { alertStop('指定の駅が選択できませんでした。\n駅: ' + stNamesStr); }
+                );
+              },
+              30, 500, 600,
+              function() { alertStop('「駅の設定へ進む」ボタンが見つかりませんでした。'); }
+            );
+          },
+          30, 500, 600,
+          function() { alertStop('路線一覧が表示されませんでした。'); }
+        );
+      },
+      30, 500, 600,
+      function() { alertStop('「沿線・駅絞り込み」ボタンが見つかりませんでした。'); }
+    );
   }
 
   window.addEventListener("message", function(e) {
