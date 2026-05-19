@@ -1752,13 +1752,14 @@ function openInstructions(siteKey) {
         }
       }
 
-      // 地名（NEIGHBORHOOD_WARD_MAP収録・かつ区名略称でない）→ 詳細地域へ渡す（ピンポイントのみ）
-      // 「平野区」等の区名略称はcity_codeのみ使用、detail_areaには渡さない
-      const detailNeighborhood = searchMode === "pinpoint"
-        ? (areaParts.find(p => NEIGHBORHOOD_WARD_MAP[p] && !p.endsWith("区") && !WARD_CODE_MAP[p]) || null)
-        : null;
-      // detail_wardは「大阪市平野区」形式（モーダルの市区郡クリックに使用）
-      const detailWard = detailNeighborhood ? NEIGHBORHOOD_WARD_MAP[detailNeighborhood] : null;
+      // 地名・区略称マップから区フル名を検索（ピンポイント・広げて両方でモーダル使用）
+      const neighPart = areaParts.find(p => NEIGHBORHOOD_WARD_MAP[p] && !STATION_LINE_MAP[p]) || null;
+      // detail_ward: モーダルで区を選択するため両モードで渡す（例:「大阪市平野区」）
+      const detailWard = neighPart ? NEIGHBORHOOD_WARD_MAP[neighPart] : null;
+      // detail_area: 町字名はピンポイントかつ区略称でない場合のみ（例:「喜連西」）
+      const detailNeighborhood = (searchMode === "pinpoint" && neighPart
+        && !neighPart.endsWith("区") && !neighPart.endsWith("市"))
+        ? neighPart : null;
 
       window.parent.postMessage({
         from: "aixlinx-underbar",

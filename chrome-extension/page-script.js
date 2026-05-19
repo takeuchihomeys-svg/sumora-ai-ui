@@ -342,7 +342,8 @@
     var hasStation   = cond.station_names && cond.station_names.length > 0;
     var hasRoutes    = cond.route_ids && cond.route_ids.length > 0;
     var hasCities    = cond.city_codes && cond.city_codes.length > 0;
-    var hasDetailArea = !!(cond.detail_area);
+    var hasModalWard = !!(cond.detail_ward);   // 所在地モーダルを使う（ピンポイント・広げて両方）
+    var hasDetailArea = !!(cond.detail_area);  // 町字まで選択（ピンポイントのみ）
 
     // ── T=0ms: 基本条件 ──────────────────────────────────────────────
     if (cond.rent_min) setSelVal("rental_cost1", nearestDown(RENT_OPTS, cond.rent_min));
@@ -368,9 +369,9 @@
       if (petCb && !petCb.checked) petCb.click();
     }
 
-    // ── T=150ms: 所在地絞り込み（直接チェック — 詳細地域なし時のみ）─────
-    // ピンポイント+詳細地域の場合はモーダル経由で選択するのでスキップ
-    if (hasCities && !hasDetailArea) {
+    // ── T=150ms: 所在地絞り込み（直接チェック — モーダルを使わない場合のみ）─────
+    // detail_ward がある場合はモーダル経由で選択するのでスキップ
+    if (hasCities && !hasModalWard) {
       var prefCb = document.querySelector('input[name="pref_code"][value="27"]');
       if (prefCb && !prefCb.checked) {
         prefCb.checked = true;
@@ -381,30 +382,49 @@
 
     // 沿線・駅なし
     if (!hasStation && !hasRoutes) {
-      if (hasDetailArea) {
-        // ピンポイント：所在地絞り込みモーダルを3ステップで操作
-        // 都道府県の設定 → 市区郡の設定（区クリック） → 町字の設定（地名クリック）
-        var detailAreaName = cond.detail_area || "";
-        var wardFull  = cond.detail_ward || "";                          // 「大阪市平野区」
-        var wardShort = wardFull.replace(/^大阪市|^大阪府/, "");         // 「平野区」
+      if (hasModalWard) {
+        // 所在地モーダルをステップごとに操作（ピンポイント・広げて両方）
+        // STEP1: 所在地絞り込み+ → STEP2: 大阪府 → STEP3: 市区郡 → [STEP4: 町字] → 閉じる → 検索
+        var wardFull  = cond.detail_ward || "";          // 例: 「大阪市平野区」
+        var wardShort = wardFull.replace(/^大阪市|^大阪府/, "");  // 例: 「平野区」
+        var detailAreaName = cond.detail_area || "";     // 例: 「喜連西」（ピンポイントのみ）
+
+        // STEP1: モーダルを開く
         setTimeout(function() {
           clickByText(['所在地絞り込み＋', '所在地絞り込み+', '所在地絞り込み']);
-        }, 300);
+        }, 500);
+        // STEP2: 大阪府を選択
         setTimeout(function() {
           clickByText(['大阪府']);
-        }, 1100);
+        }, 1700);
+        // STEP3: 市区郡を選択（例: 「大阪市平野区」or「平野区」）
         setTimeout(function() {
           clickByText([wardFull, wardShort]);
-        }, 2000);
-        setTimeout(function() {
-          clickDetailArea(detailAreaName);
-        }, 2800);
-        setTimeout(function() {
-          var closeDiv = document.querySelector('div.this_window_close');
-          if (closeDiv && closeDiv.offsetParent) { closeDiv.click(); return; }
-          clickByText(['×とじる', '× とじる', 'とじる', '閉じる']);
-        }, 3600);
-        setTimeout(function() { clickSearch(); }, 4600);
+        }, 2900);
+
+        if (hasDetailArea) {
+          // STEP4: 町字を選択（ピンポイントのみ）
+          setTimeout(function() {
+            clickDetailArea(detailAreaName);
+          }, 4100);
+          // STEP5: モーダルを閉じる
+          setTimeout(function() {
+            var closeDiv = document.querySelector('div.this_window_close');
+            if (closeDiv && closeDiv.offsetParent) { closeDiv.click(); return; }
+            clickByText(['確定してリストへ', '×とじる', '× とじる', 'とじる', '閉じる']);
+          }, 5300);
+          // STEP6: 検索実行
+          setTimeout(function() { clickSearch(); }, 6500);
+        } else {
+          // 広げて検索: 市区郡まで選択してそのまま閉じる
+          setTimeout(function() {
+            var closeDiv = document.querySelector('div.this_window_close');
+            if (closeDiv && closeDiv.offsetParent) { closeDiv.click(); return; }
+            clickByText(['確定してリストへ', '×とじる', '× とじる', 'とじる', '閉じる']);
+          }, 4100);
+          // 検索実行
+          setTimeout(function() { clickSearch(); }, 5300);
+        }
       } else {
         setTimeout(function() { clickSearch(); }, hasCities ? 700 : 300);
       }
