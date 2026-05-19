@@ -72,7 +72,7 @@
     "6661":"阪急電鉄京都線","6662":"阪急電鉄千里線","6664":"阪急電鉄神戸線",
     "6668":"阪急電鉄宝塚線","6669":"阪急電鉄箕面線",
     "6671":"阪神電鉄本線","6673":"阪神電鉄阪神なんば線",
-    "6681":"南海電鉄南本線",
+    "6681":"南海電鉄南海本線",
     "6686":"南海電鉄高野線","6694":"南海電鉄泉北線",
     "6691":"南海電鉄空港線","6766":"南海電鉄汐見橋線","6684":"南海電鉄多奈川線","6683":"南海電鉄高師浜線",
     "6689":"阪堺電気軌道阪堺線","6690":"阪堺電気軌道上町線",
@@ -137,6 +137,7 @@
   }
 
   // テキストで要素を探してクリック（完全一致→包含の順）
+  // DIVのonclickはel.click()の方が確実（診断でgo_search等がDIVと判明）
   function clickByText(candidates) {
     var els = Array.prototype.slice.call(
       document.querySelectorAll('a,button,div,span,td,li,p,label')
@@ -147,7 +148,7 @@
       for (var i = 0; i < els.length; i++) {
         if (!els[i].offsetParent) continue;
         if (norm(els[i].textContent) === cand) {
-          fireClick(els[i]); return true;
+          els[i].click(); return true;
         }
       }
     }
@@ -158,26 +159,34 @@
       for (var i = 0; i < els.length; i++) {
         if (!els[i].offsetParent) continue;
         if (norm(els[i].textContent).indexOf(cand) >= 0) {
-          fireClick(els[i]); return true;
+          els[i].click(); return true;
         }
       }
     }
     return false;
   }
 
-  // 検索ボタンをクリック（住居検索 / 検索 / 物件を検索する 等）
+  // 検索ボタンをクリック
+  // リアプロは DIV.go_search が実際の検索ボタン（診断で確認済み）
   function clickSearch() {
+    // 優先: div.go_search（リアプロのメイン検索ボタン）
+    var goDivs = Array.prototype.slice.call(
+      document.querySelectorAll('div.go_search, div.go_search_submit')
+    );
+    for (var i = 0; i < goDivs.length; i++) {
+      if (goDivs[i].offsetParent) { goDivs[i].click(); return; }
+    }
+    // フォールバック: button/a テキスト一致
     var SEARCH_TEXTS = ['住居検索', '検索', '物件を検索する', '条件で検索'];
     var allBtns = Array.prototype.slice.call(
       document.querySelectorAll('button,input[type="submit"],a')
     );
     for (var si = 0; si < SEARCH_TEXTS.length; si++) {
-      var target = SEARCH_TEXTS[si];
       for (var i = 0; i < allBtns.length; i++) {
         var b = allBtns[i];
         if (!b.offsetParent) continue;
         var txt = (b.textContent || b.value || '').replace(/\s+/g, '');
-        if (txt === target) { b.click(); return; }
+        if (txt === SEARCH_TEXTS[si]) { b.click(); return; }
       }
     }
   }
@@ -194,14 +203,12 @@
       if (!lineName) return;
       var lineNorm = norm(lineName);
       var found = false;
-      // PASS1: 完全一致
+      // PASS1: 完全一致（LABEL[one_line]が対象 - 診断で確認済み）
       for (var i = 0; i < els.length && !found; i++) {
         if (!els[i].offsetParent) continue;
         var elNorm = norm(els[i].textContent);
         if (elNorm === lineNorm) {
-          var cb = els[i].querySelector('input[type="checkbox"]');
-          if (cb) { if (!cb.checked) cb.click(); }
-          else { els[i].click(); }
+          els[i].click(); // labelをクリック → 内部checkboxが自動チェック
           found = true;
         }
       }
@@ -210,9 +217,7 @@
         if (!els[i].offsetParent) continue;
         var elNorm = norm(els[i].textContent);
         if (elNorm.length >= 4 && lineNorm.endsWith(elNorm)) {
-          var cb = els[i].querySelector('input[type="checkbox"]');
-          if (cb) { if (!cb.checked) cb.click(); }
-          else { els[i].click(); }
+          els[i].click();
           found = true;
         }
       }
@@ -369,15 +374,18 @@
       if (hasStation) selectStationsByName(cond.station_names);
     }, 3100);
 
-    // ── T=3900ms: モーダルを閉じる（「確定してリストへ」優先）────────
+    // ── T=3900ms: モーダルを閉じる（「確定してリストへ」= DIV.this_window_close 診断済み）
     setTimeout(function() {
+      // 優先: 確定してリストへ（DIV.this_window_close）
+      var closeDiv = document.querySelector('div.this_window_close');
+      if (closeDiv && closeDiv.offsetParent) { closeDiv.click(); return; }
+      // フォールバック: テキスト一致
       var allEl = Array.prototype.slice.call(document.querySelectorAll('a,button,div,span'));
       for (var i = 0; i < allEl.length; i++) {
         if (!allEl[i].offsetParent) continue;
         var txt = allEl[i].textContent.replace(/\s+/g, '');
         if (txt === '確定してリストへ' || txt === '×とじる' || txt === 'とじる') {
-          allEl[i].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-          break;
+          allEl[i].click(); break;
         }
       }
     }, 3900);
