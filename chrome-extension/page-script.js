@@ -56,6 +56,30 @@
     "6LDK":"19","メゾネット":"21","テナント":"20"
   };
 
+  // route_id → リアプロ路線名（モーダルのボタンテキストと一致）
+  var ROUTE_LINE_MAP = {
+    "6701":"大阪市高速軌道御堂筋線","6702":"大阪市高速軌道谷町線",
+    "6703":"大阪市高速軌道四つ橋線","6704":"大阪市高速軌道中央線",
+    "6705":"大阪市高速軌道千日前線","6706":"大阪市高速軌道堺筋線",
+    "6707":"大阪市高速軌道南港ポートタウン線","6699":"大阪市高速軌道今里筋線",
+    "6768":"大阪市高速軌道長堀鶴見緑地線","6711":"北大阪急行南北線",
+    "6603":"大阪環状線","6767":"JR東西線",
+    "6645":"片町線","6604":"桜島線","6650":"おおさか東線",
+    "6426":"関西本線","6647":"阪和線","6605":"福知山線","6171":"東海道本線",
+    "6541":"近鉄大阪線","6551":"近鉄難波・奈良線",
+    "6555":"近鉄南大阪線","6557":"近鉄長野線","6558":"近鉄道明寺線","6563":"近鉄けいはんな線",
+    "6651":"京阪電気鉄道京阪線","6658":"京阪電気鉄道中之島線","6652":"京阪電気鉄道交野線",
+    "6661":"阪急電鉄京都線","6662":"阪急電鉄千里線","6664":"阪急電鉄神戸線",
+    "6668":"阪急電鉄宝塚線","6669":"阪急電鉄箕面線",
+    "6671":"阪神電鉄本線","6673":"阪神電鉄阪神なんば線",
+    "6681":"南海電鉄南本線",
+    "6686":"南海電鉄高野線","6694":"南海電鉄泉北線",
+    "6691":"南海電鉄空港線","6766":"南海電鉄汐見橋線","6684":"南海電鉄多奈川線","6683":"南海電鉄高師浜線",
+    "6689":"阪堺電気軌道阪堺線","6690":"阪堺電気軌道上町線",
+    "6709":"大阪モノレール本線","6772":"大阪モノレール彩都線",
+    "6676":"能勢電鉄","6713":"水間鉄道水間線","6648":"関西空港線",
+  };
+
   function nearestUp(opts, val) {
     for (var i = 0; i < opts.length; i++) {
       if (opts[i] !== -1 && opts[i] >= val) return String(opts[i]);
@@ -92,9 +116,7 @@
       }
     });
   }
-  // 駅名（文字列）でラベル一致するチェックボックスを選択
-  // 要素の「直接テキスト」のみ取得（子要素のテキストを含まない）
-  // → 駅ボタンを確実に特定するために使用
+
   function getDirectText(el) {
     var t = '';
     for (var n = el.firstChild; n; n = n.nextSibling) {
@@ -103,12 +125,87 @@
     return t.replace(/\s+/g, '').replace(/駅$/, '');
   }
 
-  // el.click()は一部UIで発火しないため MouseEvent を使う
   function fireClick(el) {
     el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
   }
 
-  // 駅名でボタン/チェックボックスをクリック（完全一致→前方一致の順）
+  // スペース除去＋全角英数→半角
+  function norm(t) {
+    return (t || '').replace(/\s+/g, '').replace(/[Ａ-Ｚａ-ｚ０-９＋－＊／]/g, function(c) {
+      return String.fromCharCode(c.charCodeAt(0) - 0xFEE0);
+    });
+  }
+
+  // テキストで要素を探してクリック（完全一致→包含の順）
+  function clickByText(candidates) {
+    var els = Array.prototype.slice.call(
+      document.querySelectorAll('a,button,div,span,td,li,p,label')
+    );
+    for (var ci = 0; ci < candidates.length; ci++) {
+      var cand = norm(candidates[ci]);
+      // 完全一致
+      for (var i = 0; i < els.length; i++) {
+        if (!els[i].offsetParent) continue;
+        if (norm(els[i].textContent) === cand) {
+          fireClick(els[i]); return true;
+        }
+      }
+    }
+    for (var ci = 0; ci < candidates.length; ci++) {
+      var cand = norm(candidates[ci]);
+      // 包含（短すぎる候補は除外）
+      if (cand.length < 5) continue;
+      for (var i = 0; i < els.length; i++) {
+        if (!els[i].offsetParent) continue;
+        if (norm(els[i].textContent).indexOf(cand) >= 0) {
+          fireClick(els[i]); return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // 検索ボタンをクリック
+  function clickSearch() {
+    var allBtns = Array.prototype.slice.call(
+      document.querySelectorAll('button,input[type="submit"],a')
+    );
+    var btn = allBtns.find(function(b) {
+      var txt = (b.textContent || b.value || '').replace(/\s+/g, '');
+      return txt === '検索' || txt === '物件を検索する' || txt === '条件で検索';
+    });
+    if (btn) btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  }
+
+  // 路線ボタンをクリック（モーダル内の沿線選択UI）
+  function clickLineButtons(routeIds) {
+    if (!routeIds || !routeIds.length) return;
+    var els = Array.prototype.slice.call(
+      document.querySelectorAll('a,button,div,span,td,li,label')
+    );
+    routeIds.forEach(function(id) {
+      var lineName = ROUTE_LINE_MAP[id];
+      if (!lineName) return;
+      var lineNorm = norm(lineName);
+      for (var i = 0; i < els.length; i++) {
+        if (!els[i].offsetParent) continue;
+        var elNorm = norm(els[i].textContent);
+        if (elNorm === lineNorm) {
+          // チェックボックス内包の場合
+          var cb = els[i].querySelector('input[type="checkbox"]');
+          if (cb) { if (!cb.checked) cb.click(); break; }
+          // ボタン形式：既にアクティブでなければクリック
+          var cl = (els[i].className || '') + (els[i].getAttribute('aria-selected') || '');
+          if (!(/selected|active|checked|is-active|on\b/.test(cl))) {
+            fireClick(els[i]);
+          }
+          break;
+        }
+      }
+    });
+  }
+
+  // 駅名でボタン/チェックボックスをクリック
   function selectStationsByName(names) {
     if (!names || !names.length) return;
     names.forEach(function(name) {
@@ -116,7 +213,7 @@
       if (!clean) return;
       var found = false;
 
-      // ── STEP1: label+checkbox（フォーム方式） ──
+      // STEP1: label+checkbox（フォーム方式）
       var labels = Array.prototype.slice.call(document.querySelectorAll('label'));
       for (var i = 0; i < labels.length && !found; i++) {
         if (!labels[i].offsetParent) continue;
@@ -130,30 +227,25 @@
       if (found) return;
 
       var els = Array.prototype.slice.call(
-        document.querySelectorAll('a, button, td, li, span, div, p')
+        document.querySelectorAll('a,button,td,li,span,div,p')
       );
 
-      // ── STEP2: 直接テキスト 完全一致（最も確実） ──
-      // 駅ボタンは自身のテキストノードだけに駅名を持つ（子要素にテキストが分散していない）
+      // STEP2: 直接テキスト 完全一致
       for (var i = 0; i < els.length && !found; i++) {
         if (!els[i].offsetParent) continue;
-        if (getDirectText(els[i]) === clean) {
-          fireClick(els[i]); found = true;
-        }
+        if (getDirectText(els[i]) === clean) { fireClick(els[i]); found = true; }
       }
       if (found) return;
 
-      // ── STEP3: 全体テキスト 完全一致 かつ 子要素なし（葉ノード） ──
+      // STEP3: 全テキスト完全一致かつ葉ノード
       for (var i = 0; i < els.length && !found; i++) {
         if (!els[i].offsetParent) continue;
         var ft = els[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
-        if (ft === clean && els[i].children.length === 0) {
-          fireClick(els[i]); found = true;
-        }
+        if (ft === clean && els[i].children.length === 0) { fireClick(els[i]); found = true; }
       }
       if (found) return;
 
-      // ── STEP4: 直接テキスト 前方一致 ──
+      // STEP4: 直接テキスト 前方一致
       for (var i = 0; i < els.length && !found; i++) {
         if (!els[i].offsetParent) continue;
         var dt = getDirectText(els[i]);
@@ -164,7 +256,7 @@
       }
       if (found) return;
 
-      // ── STEP5: label 前方一致フォールバック ──
+      // STEP5: label 前方一致フォールバック
       for (var i = 0; i < labels.length && !found; i++) {
         if (!labels[i].offsetParent) continue;
         var txt = labels[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
@@ -179,9 +271,14 @@
 
   function fillRealpro(cond) {
     if (!cond) return;
+
+    var hasStation = cond.station_names && cond.station_names.length > 0;
+    var hasRoutes  = cond.route_ids && cond.route_ids.length > 0;
+    var hasCities  = cond.city_codes && cond.city_codes.length > 0;
+
+    // ── T=0ms: 基本条件 ──────────────────────────────────────────────
     if (cond.rent_min) setSelVal("rental_cost1", nearestDown(RENT_OPTS, cond.rent_min));
     if (cond.rent_max) setSelVal("rental_cost2", nearestUp(RENT_OPTS, cond.rent_max));
-    // 管理費・共益費含む を常にON
     var feeCb = document.querySelector('input[name="include_common_fee"]');
     if (feeCb && !feeCb.checked) feeCb.click();
     if (cond.walk_minutes) {
@@ -194,8 +291,17 @@
       var vals = plans.map(function(p){return FLOOR_MAP[p];}).filter(Boolean);
       if (vals.length) setCheckboxes("room_layout_id[]", vals);
     }
-    // 所在地（city_code[]）
-    if (cond.city_codes && cond.city_codes.length > 0) {
+    if (cond.structure_types && cond.structure_types.length > 0) {
+      var sVals = cond.structure_types.map(function(s){ return STRUCTURE_MAP[s]; }).filter(Boolean);
+      if (sVals.length) setCheckboxes("structured_type[]", sVals);
+    }
+    if (cond.pet_ok) {
+      var petCb = document.querySelector('input[name="eq_rm[]"][value="113"]');
+      if (petCb && !petCb.checked) petCb.click();
+    }
+
+    // ── T=150ms: 所在地絞り込み ───────────────────────────────────────
+    if (hasCities) {
       var prefCb = document.querySelector('input[name="pref_code"][value="27"]');
       if (prefCb && !prefCb.checked) {
         prefCb.checked = true;
@@ -203,50 +309,55 @@
       }
       setTimeout(function() { setCheckboxes("city_code[]", cond.city_codes); }, 150);
     }
-    // 沿線（route_id[]）
-    if (cond.route_ids && cond.route_ids.length > 0) {
+
+    // 沿線・駅なし → 早期検索
+    if (!hasStation && !hasRoutes) {
+      setTimeout(function() { clickSearch(); }, hasCities ? 700 : 300);
+      return;
+    }
+
+    // 沿線 form state を事前セット（モーダルを開いた時に反映される可能性あり）
+    if (hasRoutes) {
       setCheckboxes("route_id[]", cond.route_ids);
     }
-    // 駅選択：沿線チェック後 800ms 待って DOM が確定してからボタンをクリック
-    if (cond.station_names && cond.station_names.length > 0) {
-      setTimeout(function() {
-        selectStationsByName(cond.station_names);
-        // 駅選択後 700ms 待ってモーダル「×とじる」を閉じる
-        setTimeout(function() {
-          var allEl = Array.prototype.slice.call(document.querySelectorAll('a, button, div, span'));
-          for (var i = 0; i < allEl.length; i++) {
-            if (!allEl[i].offsetParent) continue;
-            var txt = allEl[i].textContent.replace(/\s+/g, '');
-            if (txt === '×とじる' || txt === 'とじる') {
-              allEl[i].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-              break;
-            }
-          }
-        }, 700);
-      }, 800);
-    }
-    // 物件構造（structured_type[]）
-    if (cond.structure_types && cond.structure_types.length > 0) {
-      var sVals = cond.structure_types.map(function(s){ return STRUCTURE_MAP[s]; }).filter(Boolean);
-      if (sVals.length) setCheckboxes("structured_type[]", sVals);
-    }
-    // ペット相談（eq_rm[] value=113）
-    if (cond.pet_ok) {
-      var petCb = document.querySelector('input[name="eq_rm[]"][value="113"]');
-      if (petCb && !petCb.checked) petCb.click();
-    }
-    // 検索実行：駅あり = 800(駅選択) + 700(モーダル閉) + 700(余裕) = 2200ms
-    var searchDelay = (cond.station_names && cond.station_names.length) ? 2200 : 600;
+
+    // ── T=600ms: 「沿線・駅絞り込み ＋」をクリックしてモーダルを開く ──
     setTimeout(function() {
-      var allBtns = Array.prototype.slice.call(
-        document.querySelectorAll('button, input[type="submit"], a')
-      );
-      var btn = allBtns.find(function(b) {
-        var txt = (b.textContent || b.value || '').replace(/\s+/g, '');
-        return txt === '検索' || txt === '物件を検索する' || txt === '条件で検索';
-      });
-      if (btn) btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-    }, searchDelay);
+      clickByText(['沿線・駅絞り込み＋', '沿線・駅絞り込み+', '沿線・駅絞り込み']);
+    }, 600);
+
+    // ── T=1400ms: 路線ボタンをクリック（モーダル内）───────────────────
+    setTimeout(function() {
+      if (hasRoutes) clickLineButtons(cond.route_ids);
+    }, 1400);
+
+    // ── T=2200ms: 「駅の設定へ進む」をクリック ──────────────────────
+    setTimeout(function() {
+      clickByText(['駅の設定へ進む', '駅の設定へ進む›', '駅の設定へ進む>']);
+    }, 2200);
+
+    // ── T=3100ms: 駅ボタンをクリック ────────────────────────────────
+    setTimeout(function() {
+      if (hasStation) selectStationsByName(cond.station_names);
+    }, 3100);
+
+    // ── T=3900ms: モーダルを閉じる（「確定してリストへ」優先）────────
+    setTimeout(function() {
+      var allEl = Array.prototype.slice.call(document.querySelectorAll('a,button,div,span'));
+      for (var i = 0; i < allEl.length; i++) {
+        if (!allEl[i].offsetParent) continue;
+        var txt = allEl[i].textContent.replace(/\s+/g, '');
+        if (txt === '確定してリストへ' || txt === '×とじる' || txt === 'とじる') {
+          allEl[i].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+          break;
+        }
+      }
+    }, 3900);
+
+    // ── T=4700ms: 検索実行 ───────────────────────────────────────────
+    setTimeout(function() {
+      clickSearch();
+    }, 4700);
   }
 
   window.addEventListener("message", function(e) {
