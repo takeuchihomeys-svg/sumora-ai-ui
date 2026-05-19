@@ -886,7 +886,11 @@ const SITE_CONFIG = {
       const areaText = d.area || "";
       // 「町」は駅名に頻出するため場所判定から除外（例：堺筋本町・中崎町）
       const isStation  = /駅|線/.test(areaText);
-      const isLocation = /市|区|府|県|都|郡/.test(areaText);
+      // 「周辺・付近・近く」を除いた地名がNEIGHBORHOOD_WARD_MAP収録 → 所在地扱い（例: 喜連西周辺）
+      const areaClean        = areaText.replace(/周辺|付近|近く|エリア/g, "").trim();
+      const neighborhoodWard = (NEIGHBORHOOD_WARD_MAP[areaClean] && !STATION_LINE_MAP[areaClean])
+        ? NEIGHBORHOOD_WARD_MAP[areaClean] : null;
+      const isLocation = !!(neighborhoodWard) || /市|区|府|県|都|郡/.test(areaText);
       const steps = [];
       let n = 1;
 
@@ -894,10 +898,13 @@ const SITE_CONFIG = {
       if (areaText) {
         if (isLocation && !isStation) {
           // 市・区・府・県など → 所在地
+          const locationValue = neighborhoodWard
+            ? neighborhoodWard + "（" + areaClean + "）"
+            : areaText;
           steps.push({
             num: n++,
             field: "【所在地】絞り込み",
-            value: areaText,
+            value: locationValue,
             note: d.isWide ? "広げて：大阪市内なら同じ区内も対象 / 隣接エリアも視野に" : null,
             hint: "左メニュー「所在地絞り込み ＋」をクリック → 都道府県を選択 → 市区郡を選択 → 右側「詳細な地域の設定へ進む ›」→ 地域を選択 → 「確定してリストへ」",
           });
