@@ -93,6 +93,21 @@
     });
   }
   // 駅名（文字列）でラベル一致するチェックボックスを選択
+  // 要素の「直接テキスト」のみ取得（子要素のテキストを含まない）
+  // → 駅ボタンを確実に特定するために使用
+  function getDirectText(el) {
+    var t = '';
+    for (var n = el.firstChild; n; n = n.nextSibling) {
+      if (n.nodeType === 3) t += n.textContent;
+    }
+    return t.replace(/\s+/g, '').replace(/駅$/, '');
+  }
+
+  // el.click()は一部UIで発火しないため MouseEvent を使う
+  function fireClick(el) {
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  }
+
   // 駅名でボタン/チェックボックスをクリック（完全一致→前方一致の順）
   function selectStationsByName(names) {
     if (!names || !names.length) return;
@@ -101,52 +116,62 @@
       if (!clean) return;
       var found = false;
 
-      // ── パターン1: label > checkbox（フォーム方式） ──
+      // ── STEP1: label+checkbox（フォーム方式） ──
       var labels = Array.prototype.slice.call(document.querySelectorAll('label'));
-      for (var i = 0; i < labels.length; i++) {
-        var lblTxt = labels[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
-        if (lblTxt === clean) {
+      for (var i = 0; i < labels.length && !found; i++) {
+        if (!labels[i].offsetParent) continue;
+        var txt = labels[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
+        if (txt === clean) {
           var inp = labels[i].querySelector('input[type="checkbox"]');
           if (!inp && labels[i].htmlFor) inp = document.getElementById(labels[i].htmlFor);
-          if (inp && !inp.checked) { inp.click(); found = true; break; }
+          if (inp && !inp.checked) { inp.click(); found = true; }
         }
       }
       if (found) return;
 
-      // ── パターン2: リアプロ 駅ボタン（a/button/div/span/td等） ──
-      // 駅名は短い（2〜12文字程度）ので textContent 長さでフィルタ
-      var candidates = Array.prototype.slice.call(
-        document.querySelectorAll('a, button, td, li, span, div')
-      ).filter(function(el) {
-        if (!el.offsetParent) return false;
-        var txt = el.textContent.replace(/\s+/g, '');
-        return txt.length >= 2 && txt.length <= 15;
-      });
+      var els = Array.prototype.slice.call(
+        document.querySelectorAll('a, button, td, li, span, div, p')
+      );
 
-      // 完全一致
-      for (var i = 0; i < candidates.length; i++) {
-        var txt = candidates[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
-        if (txt === clean) { candidates[i].click(); found = true; break; }
-      }
-      if (found) return;
-
-      // 前方・逆前方一致（"東花"→"東花園" / "若江"→"若江岩田" 等）
-      for (var i = 0; i < candidates.length; i++) {
-        var txt = candidates[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
-        if (txt.length >= 2 && clean.length >= 2 &&
-            (txt.startsWith(clean) || clean.startsWith(txt))) {
-          candidates[i].click(); found = true; break;
+      // ── STEP2: 直接テキスト 完全一致（最も確実） ──
+      // 駅ボタンは自身のテキストノードだけに駅名を持つ（子要素にテキストが分散していない）
+      for (var i = 0; i < els.length && !found; i++) {
+        if (!els[i].offsetParent) continue;
+        if (getDirectText(els[i]) === clean) {
+          fireClick(els[i]); found = true;
         }
       }
       if (found) return;
 
-      // パターン1 前方一致フォールバック
-      for (var i = 0; i < labels.length; i++) {
-        var lblTxt = labels[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
-        if ((lblTxt.startsWith(clean) || clean.startsWith(lblTxt)) && lblTxt.length >= 2) {
+      // ── STEP3: 全体テキスト 完全一致 かつ 子要素なし（葉ノード） ──
+      for (var i = 0; i < els.length && !found; i++) {
+        if (!els[i].offsetParent) continue;
+        var ft = els[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
+        if (ft === clean && els[i].children.length === 0) {
+          fireClick(els[i]); found = true;
+        }
+      }
+      if (found) return;
+
+      // ── STEP4: 直接テキスト 前方一致 ──
+      for (var i = 0; i < els.length && !found; i++) {
+        if (!els[i].offsetParent) continue;
+        var dt = getDirectText(els[i]);
+        if (dt.length >= 2 && clean.length >= 2 &&
+            (dt.startsWith(clean) || clean.startsWith(dt))) {
+          fireClick(els[i]); found = true;
+        }
+      }
+      if (found) return;
+
+      // ── STEP5: label 前方一致フォールバック ──
+      for (var i = 0; i < labels.length && !found; i++) {
+        if (!labels[i].offsetParent) continue;
+        var txt = labels[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
+        if ((txt.startsWith(clean) || clean.startsWith(txt)) && txt.length >= 2) {
           var inp = labels[i].querySelector('input[type="checkbox"]');
           if (!inp && labels[i].htmlFor) inp = document.getElementById(labels[i].htmlFor);
-          if (inp && !inp.checked) { inp.click(); found = true; break; }
+          if (inp && !inp.checked) { inp.click(); found = true; }
         }
       }
     });
@@ -182,20 +207,23 @@
     if (cond.route_ids && cond.route_ids.length > 0) {
       setCheckboxes("route_id[]", cond.route_ids);
     }
-    // 駅選択：沿線チェック後 DOM 更新を待ってボタンをクリック
+    // 駅選択：沿線チェック後 800ms 待って DOM が確定してからボタンをクリック
     if (cond.station_names && cond.station_names.length > 0) {
       setTimeout(function() {
         selectStationsByName(cond.station_names);
-        // 駅選択後にモーダル「×とじる」を閉じる
+        // 駅選択後 700ms 待ってモーダル「×とじる」を閉じる
         setTimeout(function() {
           var allEl = Array.prototype.slice.call(document.querySelectorAll('a, button, div, span'));
           for (var i = 0; i < allEl.length; i++) {
             if (!allEl[i].offsetParent) continue;
             var txt = allEl[i].textContent.replace(/\s+/g, '');
-            if (txt === '×とじる' || txt === 'とじる') { allEl[i].click(); break; }
+            if (txt === '×とじる' || txt === 'とじる') {
+              allEl[i].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+              break;
+            }
           }
-        }, 600);
-      }, 500);
+        }, 700);
+      }, 800);
     }
     // 物件構造（structured_type[]）
     if (cond.structure_types && cond.structure_types.length > 0) {
@@ -207,8 +235,8 @@
       var petCb = document.querySelector('input[name="eq_rm[]"][value="113"]');
       if (petCb && !petCb.checked) petCb.click();
     }
-    // 検索ボタン自動クリック（駅あり: 駅選択600ms+モーダル閉じ600ms+余裕600ms=1800ms）
-    var searchDelay = (cond.station_names && cond.station_names.length) ? 1800 : 600;
+    // 検索実行：駅あり = 800(駅選択) + 700(モーダル閉) + 700(余裕) = 2200ms
+    var searchDelay = (cond.station_names && cond.station_names.length) ? 2200 : 600;
     setTimeout(function() {
       var allBtns = Array.prototype.slice.call(
         document.querySelectorAll('button, input[type="submit"], a')
@@ -217,7 +245,7 @@
         var txt = (b.textContent || b.value || '').replace(/\s+/g, '');
         return txt === '検索' || txt === '物件を検索する' || txt === '条件で検索';
       });
-      if (btn) btn.click();
+      if (btn) btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     }, searchDelay);
   }
 
