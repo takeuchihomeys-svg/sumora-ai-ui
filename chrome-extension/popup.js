@@ -1662,8 +1662,15 @@ function openInstructions(siteKey) {
 
       const hasAnyStationMatch = matchedStations.length > 0;
       const stationClean = tokens[0] || rawArea.replace(/駅|周辺|付近|近く/g, "").trim();
-      // 所在地判定：1駅もマッチせず、かつ市区郡などを含む場合
-      const isWardArea_itandi = !hasAnyStationMatch && /[都道府県市区郡]/.test(tokens.join(""));
+
+      // NEIGHBORHOOD_WARD_MAPにマッチ（かつ駅名でない）トークンを探す（例: 喜連西 → 大阪市平野区）
+      const neighborhoodToken = tokens.find(t => NEIGHBORHOOD_WARD_MAP[t] && !STATION_LINE_MAP[t]) || null;
+      const neighborhoodWard  = neighborhoodToken ? NEIGHBORHOOD_WARD_MAP[neighborhoodToken] : null;
+
+      // 所在地判定：1駅もマッチせず、かつ（市区郡文字 OR NEIGHBORHOOD_WARD_MAP収録地名）の場合
+      const isWardArea_itandi = !hasAnyStationMatch && (
+        /[都道府県市区郡]/.test(tokens.join("")) || !!neighborhoodWard
+      );
 
       // itandi路線名に変換（ITANDI_LINE_MAP_FILL）、重複排除
       const itandiLines = allRpLines.flatMap(l => {
@@ -1672,7 +1679,10 @@ function openInstructions(siteKey) {
         return Array.isArray(v) ? v : [v];
       }).filter((v, i, arr) => arr.indexOf(v) === i);
 
-      const wardName = isWardArea_itandi ? stationClean : (STATION_WARD_MAP[stationClean] || null);
+      // 所在地名: NEIGHBORHOOD_WARD_MAP → 市区郡テキスト → STATION_WARD_MAP の優先順
+      const wardName = isWardArea_itandi
+        ? (neighborhoodWard || stationClean)
+        : (STATION_WARD_MAP[stationClean] || null);
 
       // 駅名リスト（広げて検索：各マッチ駅＋前後駅、ピンポイント：マッチ駅のみ）
       let stationNames = null;
