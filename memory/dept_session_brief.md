@@ -53,7 +53,7 @@
 
 > 3回以上確認された法則。これに反する実装は原則禁止。
 
-0. **NEIGHBORHOOD_WARD_MAPは竹内悠馬に確認してから追加** → 「川保」を平野区と誤登録→実際は東大阪市（2026-05-20 竹内悠馬が修正）。地名の市区判定は必ず確認を取ること
+0. **地名・駅名追加は「助手検証→博士OK→竹内確認」の3段階** → #43-GKA/#43-EKAが⚠️フラグ管理。川保を平野区と誤登録した反省（2026-05-20）。不確実なものは必ず竹内悠馬に確認してから追加する
 1. **MUI hidden radioは label.click()** → itandiのradio inputはwidth=0。inp.click()は無効。必ずfound.click()（label要素）を使う
 2. **simulateClickはchecked確認後** → チェックボックス/ラジオに simulateClick する前に checked 状態を確認。checked済みに使うとトグルOFFになる
 3. **3サイトの路線名は絶対に独立** → STATION_LINE_MAP（内部名）→ 各サイト専用マップで変換。内部名をそのままitandi/レインズに使わない
