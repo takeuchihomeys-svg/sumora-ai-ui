@@ -112,6 +112,18 @@
         <!-- 一時調整フォーム（リアプロ+アンダーバーのみ表示） -->
         <div id="adj-form" class="adj-form" style="display:none">
           <div class="adj-title">⚙️ 一時調整 <span class="adj-note">DBは変更しません</span></div>
+
+          <!-- 駅/地域 切替セクション（混在条件のとき表示） -->
+          <div id="area-mode-selector" style="display:none">
+            <div class="area-mode-btns">
+              <button id="btn-mode-station" class="area-mode-btn">🚉 駅で選択</button>
+              <button id="btn-mode-ward" class="area-mode-btn">📍 地域で選択</button>
+            </div>
+            <div id="area-mixed-notice" class="area-mixed-notice" style="display:none">
+              ⚠️ 駅と地域が混在しています。駅と地域は別々に検索する必要があります。
+            </div>
+          </div>
+
           <div class="adj-fields">
             <div class="adj-row">
               <span class="adj-label">エリア</span>
