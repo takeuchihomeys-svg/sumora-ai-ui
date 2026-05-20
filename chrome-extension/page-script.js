@@ -226,7 +226,7 @@
         var ltxt = norm(wardLabels[i].textContent);
         if (ltxt !== t && !ltxt.includes(t) && !t.includes(ltxt)) continue;
         var inp = wardLabels[i].querySelector('input[name="city_code[]"]');
-        if (inp && !inp.checked) { inp.click(); return true; } // 未選択 → クリックして選択
+        if (inp && !inp.checked) { wardLabels[i].click(); return true; } // ラベルクリック→サイトJS確実に発火
         if (inp && inp.checked)  { return true; }              // 選択済み → そのまま成功
       }
     }
@@ -546,7 +546,7 @@
                       waitForClick(
                         function() {
                           var n = document.querySelectorAll('label.one_town').length;
-                          if (n > 0) console.log('[AX] STEP5 poll: label.one_town=' + n + '個');
+                          console.log('[AX] STEP5 poll: label.one_town=' + n + '個');
                           return clickDetailArea(detailAreaName);
                         },
                         function() {
