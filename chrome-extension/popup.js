@@ -1708,6 +1708,7 @@ function openInstructions(siteKey) {
         pet_ok:      adjPet,
         preferences: c.preferences || c.notes || null,
         ward_name:    isWardArea_itandi ? wardName : null,
+        town_area:    isWardArea_itandi ? neighborhoodToken : null,
         itandi_lines: !isWardArea_itandi ? itandiLines : [],
         station_names: stationNames,
       };

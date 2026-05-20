@@ -73,7 +73,7 @@
   // itandi診断済みDOM: LABEL.itandi-bb-ui__InputRadio + input[type=radio]
   //   近畿: name=regionName / 大阪府: name=prefectureId / 区市: name=''
   // 戻り値: boolean（モーダルを開けたか）
-  function selectItandiArea(wardName, onDone) {
+  function selectItandiArea(wardName, townArea, onDone) {
     if (!wardName) return false;
     var opened = clickBtn("所在地で絞り込み") || clickBtn("エリアで絞り込み") || clickBtn("地域で絞り込み");
     if (!opened) return false;
@@ -123,10 +123,25 @@
             console.log("[AX] selectItandiArea: ward not found, retry 1000ms");
             setTimeout(function () {
               clickItandiRadio(wardName) || (shortName ? clickItandiRadio(shortName) : false);
-              setTimeout(function () { clickBtn("確定"); setTimeout(onDone, 1500); }, 800);
+              setTimeout(selectTownThenConfirm, 500);
             }, 1000);
           } else {
-            setTimeout(function () { clickBtn("確定"); setTimeout(onDone, 1500); }, 800);
+            setTimeout(selectTownThenConfirm, 500);
+          }
+
+          // 町域・丁目選択 → 確定
+          function selectTownThenConfirm() {
+            if (townArea) {
+              var townLabels = [].slice.call(document.querySelectorAll("label")).filter(function(l) {
+                return l.textContent.includes(townArea) && l.getBoundingClientRect().height > 0;
+              });
+              townLabels.forEach(function(l) {
+                var inp = l.querySelector("input");
+                if (!inp || !inp.checked) l.click();
+              });
+              console.log("[AX] 町域選択: " + townArea + " " + townLabels.length + "件");
+            }
+            setTimeout(function() { clickBtn("確定"); setTimeout(onDone, 1500); }, 800);
           }
         }, 1000);
       }, 800);
@@ -275,7 +290,7 @@
       }
 
       if (hasArea) {
-        var opened = selectItandiArea(cond.ward_name, afterModal);
+        var opened = selectItandiArea(cond.ward_name, cond.town_area || null, afterModal);
         if (!opened) {
           // モーダルが開けなかった → 検索せずに通知（500エラー防止）
           alert("「所在地で絞り込み」ボタンが見つかりませんでした。\n手動で所在地を選択してから検索してください。");
