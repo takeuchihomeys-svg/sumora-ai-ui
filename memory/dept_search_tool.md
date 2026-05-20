@@ -178,6 +178,9 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 | #43-W | 第1倉庫管理人（dept_search_tool.md 一次記録） |
 | #43-W2 | 第2倉庫管理人（バックアップ・断絶時代行） |
 | **#43-W3** | **DOM倉庫管理人**（`dept_dom_db.md` 一次記録・確認済みDOM情報の管理） |
+| **#43-EV** | **イベント専任**（native .click / simulateClick / fireClick 使い分け・サイト別イベントメソッド台帳）【2026-05-20新設】 |
+| **#43-CP** | **条件パーサー担当**（「3LDK以上」等テキストパターン変換・エッジケース管理・条件フォーマット品質保証）【2026-05-20新設】 |
+| **#43-ST** | **状態機械専任**（多段モーダルの全入口状態設計・ensureXxx()系関数設計・「どの状態から入っても動く」保証）【2026-05-20新設】 |
 
 ---
 
@@ -453,3 +456,8 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 - **リアプロ所在地モーダル修正（2026-05-20）**: 広げて検索でもモーダル経由に変更。直接checkboxではUI反映されない問題を解消。detail_wardが渡されるときはhasModalWard=trueで必ずモーダルを使う。タイミング1200ms間隔（駅モーダルと同等）
 - **次の課題**: リアプロ所在地モーダル修正後の動作確認（広げて検索+ピンポイント両方）・REINS実機テスト・itandi大阪モノレール路線名確認・yumiko案件（吉田町/東花園/新石切）でのitandi複数駅動作確認
 - **市区郡トグル防止修正（2026-05-20）**: `div.next_step_button2`の視覚チェックをやめ`input[name="city_code[]"]:checked`でward選択状態を判定。`clickWardPrecise()`でcity_code[]を持つlabel限定・checked済み再クリック禁止。根本原因: next_step_button2はdisplay:block常時→isVisible()が誤判定→未選択でもSTEP4進行→町字ページに遷移しない
+- **isWardButtonY()セレクタ根本修正（2026-05-20）**: `.next_action_town_search_Y`（存在しない複合クラス）→`classList.contains('town_search_Y')`に修正。常にfalseを返していたためN状態ループが止まらなかった根本原因
+- **ensureWardButtonY()新設・N状態無限ループ根絶（2026-05-20）**: native.click()でdeselect→300ms→simulateClickでselect→400ms→Y確認の3段シーケンス。診断スクリプトで実証済みの動作を完全再現。clickNextStepBtnのN状態ward再クリックループを廃止
+- **リアプロ ピンポイント検索（喜連西）完全動作確認✅（2026-05-20）**
+- **間取り「以上」パターン対応（2026-05-20）**: 「3LDK以上」→FLOOR_RANKで順位付け→3LDK以上の全間取り(3LDK/4K/4DK/4LDK/5K/5DK/5LDK/6LDK/メゾネット)を自動選択。page-script.js
+- **新設部署（2026-05-20）**: #43-EV（イベント専任）・#43-CP（条件パーサー担当）・#43-ST（状態機械専任）

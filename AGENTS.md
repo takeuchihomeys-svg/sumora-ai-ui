@@ -228,6 +228,9 @@ itandi BB（調整中）
 | #43-W2 | 第2倉庫管理人（#43-Wのバックアップ・記録の二重確認・断絶時の緊急対応） |
 | **#43-W3** | **DOM倉庫管理人**（`dept_dom_db.md` をリアルタイム更新・確認済みDOM情報の一次管理） |
 | **#43-LN** | **バグ学習担当**（バグ修正完了後にノウハウを抽出・`dept_knowhow.md`の「Chrome拡張DOM自動操作」セクションに蓄積・次のバグを事前に潰す） |
+| **#43-EV** | **イベント専任**（native .click / simulateClick / fireClick の使い分け・サイト別イベントメソッド台帳管理。「何をどう発火するか」の判断軸を持つ） |
+| **#43-CP** | **条件パーサー担当**（「3LDK以上」「〜」「複数駅」等のテキストパターンを構造化条件に変換・エッジケース管理・popup.js ↔ page-script.js 間の条件フォーマット品質保証） |
+| **#43-ST** | **状態機械専任**（所在地/沿線モーダルの多段フロー設計・全入口状態の網羅・ensureXxx()系関数の設計。「どの状態から入っても正しく動く」を保証） |
 
 **バグ対応プロトコル**:
 ```
@@ -421,6 +424,72 @@ itandi BB
 正しい対処法: コードパターン
 次回の予防: 実装前に確認すべきこと
 ```
+
+#### #43-EV イベント専任（2026-05-20 新設）
+DOMイベントの使い分けを一元管理する専任。Chrome拡張でサイト独自のイベントデリゲーションを正確に叩くために「何をどう発火するか」を常に把握する。
+
+**管理する知識**:
+- `native .click()` — フォームのチェックボックス(inp.click())・ラベル(label.click())。トグル解除に使う
+- `simulateClick(el)` — mousedown+mouseup+clickの3段シーケンス。jQueryイベントデリゲーションに対応（リアプロ必須）
+- `fireClick(el)` — click単発dispatchEvent。シンプルなクリックに使う
+- `clickByText(candidates)` — テキスト検索でel.click()。**チェックボックス型には使わない**
+
+**サイト別イベントメソッド台帳**（確認済み）:
+| サイト | 要素 | 正しいメソッド |
+|--------|------|-------------|
+| リアプロ | city_code[]チェックボックス解除 | `label.click()` (native) |
+| リアプロ | city_code[]チェックボックス選択 | `simulateClick(label)` |
+| リアプロ | next_step_button2 | `simulateClick(btn)` |
+| リアプロ | div.this_window_close | `d.click()` (native) |
+| リアプロ | 路線ラベル | `cb.click()` (inp, checked確認後) |
+
+**禁止事項**:
+- checked済みのcity_code[]/town_code[] ラベルに `simulateClick` → deselect（トグル発動）
+- `clickByText()` をチェックボックス型ボタンに使う（checked状態を確認しない）
+
+**新DOM要素に対応するとき**: 必ず #43-DOM・#43-B と連携して「このサイトのこの要素は何のイベントを使うか」を確認してから実装する。
+
+#### #43-CP 条件パーサー担当（2026-05-20 新設）
+popup.js と page-script.js の間でテキスト条件を正確に構造化する専任。LINEから来た自然文の条件が正しくフォームに反映されることを保証する。
+
+**管理するパターン**:
+| 入力テキスト | 期待する変換 |
+|------------|------------|
+| `3LDK以上` | 3LDK,4K,4DK,4LDK,5K,5DK,5LDK,6LDK,メゾネット を全選択 |
+| `2LDK,3LDK` | カンマ区切りで複数選択 |
+| `梅田、難波` | 複数駅をパース → 各STATION_LINE_MAP照合 |
+| `徒歩10分以内` | walk_minutes: 10 として扱う |
+
+**責務**:
+- 新しい「以上/以内/程度/くらい」パターンが出たら即座に対応関数を追加
+- エッジケース（表記ゆれ・全角半角・全角数字）のテストケースを管理
+- `cond.*` オブジェクトの各フィールドの型と取りうる値を文書化する
+- page-script.js の FLOOR_RANK・FLOOR_MAP 等の拡張を主導する
+
+#### #43-ST 状態機械専任（2026-05-20 新設）
+多段ステップモーダル（所在地/沿線）のフロー設計を専任で管理する。「どの入口状態から入っても正しく動く」を保証する。
+
+**管理するフロー（リアプロ所在地モーダル・全入口）**:
+```
+入口A: 初回（都道府県ページから）
+  → 大阪府クリック → 市区郡ページ → clickWardPrecise → ensureWardButtonY → 詳細地域 → 町字
+
+入口B: モーダルが市区郡ページを記憶
+  → label.one_city 存在確認 → clickWardPrecise直接 → ensureWardButtonY → 詳細地域 → 町字
+
+入口C: モーダルが詳細地域ページを記憶（label.one_town存在）
+  → label.one_town.length>0 を検知 → 即座に町字クリックへジャンプ
+
+入口D: checkbox=checked だがボタンN（サイト内部状態リセット）
+  → ensureWardButtonY: native.click()でdeselect → 300ms → simulateClick → 400ms → Y確認
+```
+
+**設計原則**:
+- 各STEPの先頭で「既にゴールにいるか」チェックを必ず入れる
+- Y/N状態は `classList.contains()` で判定（isVisible()禁止・常時display:blockの要素があるため）
+- `waitForClick` だけに頼らず `ensureXxx()` 系の能動的状態修正関数を設計する
+- タイムアウト時は強制続行（`callback()` で流す）して部分的な成功を活かす
+- 新モーダルを実装するとき：先に全入口状態を書き出してから実装を開始する
 
 ---
 
