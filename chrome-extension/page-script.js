@@ -493,8 +493,31 @@
     }
     if (cond.building_age) setSelVal("structured_date", nearestUp(AGE_OPTS, cond.building_age));
     if (cond.floor_plan) {
-      var plans = cond.floor_plan.split(/[,、・\/\.\s]+/).map(function(s){return s.trim();}).filter(Boolean);
-      var vals = plans.map(function(p){return FLOOR_MAP[p];}).filter(Boolean);
+      var FLOOR_RANK = [
+        "1R","ワンルーム","スタジオタイプ","スタジオ",
+        "1K","1DK","1LDK",
+        "2K","2DK","2LDK",
+        "3K","3DK","3LDK",
+        "4K","4DK","4LDK",
+        "5K","5DK","5LDK",
+        "6LDK","メゾネット"
+      ];
+      var fpStr = cond.floor_plan.trim();
+      var vals = [];
+      var ijouMatch = fpStr.match(/^(.+?)以上$/);
+      if (ijouMatch) {
+        var baseFloor = ijouMatch[1].trim();
+        var baseIdx = FLOOR_RANK.indexOf(baseFloor);
+        if (baseIdx >= 0) {
+          for (var ri = baseIdx; ri < FLOOR_RANK.length; ri++) {
+            var fv = FLOOR_MAP[FLOOR_RANK[ri]];
+            if (fv && vals.indexOf(fv) < 0) vals.push(fv);
+          }
+        }
+      } else {
+        var plans = fpStr.split(/[,、・\/\.\s]+/).map(function(s){return s.trim();}).filter(Boolean);
+        vals = plans.map(function(p){ return FLOOR_MAP[p]; }).filter(Boolean);
+      }
       if (vals.length) setCheckboxes("room_layout_id[]", vals);
     }
     if (cond.structure_types && cond.structure_types.length > 0) {
