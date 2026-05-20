@@ -1604,7 +1604,7 @@ function setupAreaModeSelector(c, siteKey) {
       btnWard.classList.add("active");
       btnStation.classList.remove("active");
     }
-    renderInstrSteps(siteKey);
+    renderInstrSteps(siteKey, buildAdjCustomer(c));
   }
 
   setMode(stTokens.length > 0 ? "station" : "ward");
@@ -1855,8 +1855,17 @@ function openInstructions(siteKey) {
 
       // 沿線 or 所在地 判定して条件を組み立てる
       const rawArea = (adjC.desired_area || adjC.area || "").trim();
-      const stationKey = rawArea.replace(/駅|周辺|付近|近く/g, "").trim();
-      const stationLines = stationKey ? (STATION_LINE_MAP[stationKey] || []) : [];
+      // 複数トークンに対応（「駅で選択」モードで複数駅が入る場合）
+      const areaToks = rawArea.split(/[、・,\/\s]+/).map(t => t.replace(/駅|周辺|付近|近く/g, "").trim()).filter(Boolean);
+      const matchedTok = areaToks.find(t => STATION_LINE_MAP[t] || STATION_LINE_MAP[t.replace(/[町村]$/, "")]);
+      const stationKey = matchedTok
+        ? (STATION_LINE_MAP[matchedTok] ? matchedTok : matchedTok.replace(/[町村]$/, ""))
+        : (areaToks.length === 1 ? areaToks[0] : "");
+      const stationLines = areaToks.reduce((acc, t) => {
+        const key = STATION_LINE_MAP[t] ? t : t.replace(/[町村]$/, "");
+        (STATION_LINE_MAP[key] || []).forEach(l => { if (!acc.includes(l)) acc.push(l); });
+        return acc;
+      }, []);
       // 内部路線名 → REINS表記に変換（最大3路線・沿線1〜3に対応）
       const reinsLines = stationLines
         .slice(0, 3)
