@@ -97,11 +97,8 @@
       }
       if (!found) return false;
       var inp = found.querySelector("input[type='radio']");
-      if (inp) {
-        if (!inp.checked) inp.click(); // already checked なら触らない（状態破壊防止）
-        return true;
-      }
-      found.click();
+      if (inp && inp.checked) return true; // already checked → skip
+      found.click(); // label.click()が正解（MUI hidden inputにinp.click()は効かない）
       return true;
     }
 
