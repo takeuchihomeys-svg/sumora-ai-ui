@@ -1576,6 +1576,42 @@ function renderInstrSteps(siteKey, cOverride) {
   };
 }
 
+function setupAreaModeSelector(c, siteKey) {
+  const rawA = (c.desired_area || c.area || "").trim();
+  const toks = rawA.split(/[、・,\/\s]+/).map(t => t.replace(/駅|周辺|付近|近く/g,"").trim()).filter(Boolean);
+  const stTokens   = toks.filter(t => STATION_LINE_MAP[t] || STATION_LINE_MAP[t.replace(/[町村]$/,"")]);
+  const wardTokens = toks.filter(t => !STATION_LINE_MAP[t] && !STATION_LINE_MAP[t.replace(/[町村]$/,"")]);
+  const hasMixed   = stTokens.length > 0 && wardTokens.length > 0;
+  const hasEither  = stTokens.length > 0 || wardTokens.length > 0;
+
+  const selectorEl = document.getElementById("area-mode-selector");
+  const noticeEl   = document.getElementById("area-mixed-notice");
+  const btnStation = document.getElementById("btn-mode-station");
+  const btnWard    = document.getElementById("btn-mode-ward");
+
+  if (!hasEither) { selectorEl.style.display = "none"; return; }
+  selectorEl.style.display = "block";
+  noticeEl.style.display   = hasMixed ? "block" : "none";
+
+  function setMode(mode) {
+    const adjAreaEl = document.getElementById("adj-area");
+    if (mode === "station") {
+      adjAreaEl.value = stTokens.length ? stTokens.join("、") : rawA;
+      btnStation.classList.add("active");
+      btnWard.classList.remove("active");
+    } else {
+      adjAreaEl.value = wardTokens.length ? wardTokens.join("、") : rawA;
+      btnWard.classList.add("active");
+      btnStation.classList.remove("active");
+    }
+    renderInstrSteps(siteKey);
+  }
+
+  setMode(stTokens.length > 0 ? "station" : "ward");
+  btnStation.onclick = () => setMode("station");
+  btnWard.onclick    = () => setMode("ward");
+}
+
 function preloadAdjForm(c) {
   document.getElementById("adj-area").value      = c.desired_area || c.area || "";
   document.getElementById("adj-rent-max").value  = c.rent_max || c.max_rent || "";
@@ -1619,6 +1655,7 @@ function openInstructions(siteKey) {
   if (isUnderbar && siteKey === "itandi") {
     adjForm.style.display = "block";
     preloadAdjForm(selectedCustomer);
+    setupAreaModeSelector(selectedCustomer, "itandi");
     autofillBtn.style.display = "block";
     autofillBtn.textContent = "⚡ itandiに自動入力";
     autofillBtn.className = "autofill-btn";
@@ -1731,49 +1768,7 @@ function openInstructions(siteKey) {
     preloadAdjForm(c0);
 
     // ── 駅/地域 切替ボタン（混在条件の検出） ──────────────────────────
-    (function setupAreaModeSelector() {
-      const rawA = (c0.desired_area || c0.area || "").trim();
-      const toks = rawA.split(/[、・,\/\s]+/).map(t => t.replace(/駅|周辺|付近|近く/g,"").trim()).filter(Boolean);
-      const stTokens  = toks.filter(t => {
-        if (STATION_LINE_MAP[t]) return true;
-        const s = t.replace(/[町村]$/,"");
-        return s !== t && STATION_LINE_MAP[s];
-      });
-      const wardTokens = toks.filter(t => {
-        const inStation = STATION_LINE_MAP[t] || STATION_LINE_MAP[t.replace(/[町村]$/,"")];
-        return !inStation;
-      });
-      const hasMixed = stTokens.length > 0 && wardTokens.length > 0;
-      const hasEither = stTokens.length > 0 || wardTokens.length > 0;
-
-      const selectorEl = document.getElementById("area-mode-selector");
-      const noticeEl   = document.getElementById("area-mixed-notice");
-      const btnStation = document.getElementById("btn-mode-station");
-      const btnWard    = document.getElementById("btn-mode-ward");
-
-      if (!hasEither) { selectorEl.style.display = "none"; return; }
-      selectorEl.style.display = "block";
-      noticeEl.style.display   = hasMixed ? "block" : "none";
-
-      function setMode(mode) {
-        const adjAreaEl = document.getElementById("adj-area");
-        if (mode === "station") {
-          adjAreaEl.value = stTokens.length ? stTokens.join("、") : rawA;
-          btnStation.classList.add("active");
-          btnWard.classList.remove("active");
-        } else {
-          adjAreaEl.value = wardTokens.length ? wardTokens.join("、") : rawA;
-          btnWard.classList.add("active");
-          btnStation.classList.remove("active");
-        }
-        renderInstrSteps("realpro");
-      }
-
-      // 初期状態: 駅ありなら駅モード、なければ地域モード
-      setMode(stTokens.length > 0 ? "station" : "ward");
-      btnStation.onclick = () => setMode("station");
-      btnWard.onclick    = () => setMode("ward");
-    })();
+    setupAreaModeSelector(c0, "realpro");
 
     autofillBtn.onclick = () => {
       const c = selectedCustomer;
@@ -1850,6 +1845,7 @@ function openInstructions(siteKey) {
   } else if (siteKey === "reins") {
     adjForm.style.display = "block";
     preloadAdjForm(selectedCustomer);
+    setupAreaModeSelector(selectedCustomer, "reins");
     autofillBtn.style.display = "block";
     autofillBtn.textContent = "⚡ REINSに自動入力";
     autofillBtn.className = "autofill-btn";
@@ -1900,6 +1896,7 @@ function openInstructions(siteKey) {
   } else {
     autofillBtn.style.display = "none";
     adjForm.style.display = "none";
+    document.getElementById("area-mode-selector").style.display = "none";
   }
 
   showView("view-instructions");
