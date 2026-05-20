@@ -70,34 +70,70 @@
   }
 
   // ── 所在地モーダル ───────────────────────────────────────────────────────
+  // itandi診断済みDOM: LABEL.itandi-bb-ui__InputRadio + input[type=radio]
+  //   近畿: name=regionName / 大阪府: name=prefectureId / 区市: name=''
   // 戻り値: boolean（モーダルを開けたか）
   function selectItandiArea(wardName, onDone) {
     if (!wardName) return false;
     var opened = clickBtn("所在地で絞り込み") || clickBtn("エリアで絞り込み") || clickBtn("地域で絞り込み");
     if (!opened) return false;
 
-    // 区名短縮版を用意（「大阪市福島区」→「福島区」、「大阪市北区」→「北区」）
+    // 区名短縮版を用意（「大阪市福島区」→「福島区」）
     var shortName = wardName.replace(/^.+?([^\s　市区郡]+[区町村])$/, "$1");
-    if (shortName === wardName) shortName = null; // 変換できなければnull
+    if (shortName === wardName) shortName = null;
 
+    // itandiラジオボタン専用クリック: already checked なら触らない
+    function clickItandiRadio(text) {
+      var n = norm(text);
+      var labels = [].slice.call(document.querySelectorAll("label"));
+      var found = null;
+      for (var i = 0; i < labels.length; i++) {
+        if (norm(labels[i].textContent) === n && isVis(labels[i])) { found = labels[i]; break; }
+      }
+      if (!found) {
+        for (var i = 0; i < labels.length; i++) {
+          if (norm(labels[i].textContent).includes(n) && isVis(labels[i])) { found = labels[i]; break; }
+        }
+      }
+      if (!found) return false;
+      var inp = found.querySelector("input[type='radio']");
+      if (inp) {
+        if (!inp.checked) inp.click(); // already checked なら触らない（状態破壊防止）
+        return true;
+      }
+      found.click();
+      return true;
+    }
+
+    // モーダル描画待ち: 2000ms（1000msでは描画未完了の場合あり）
     setTimeout(function () {
-      // 地方タブがあれば近畿を選択（ない場合は無視して進む）
-      clickNav("近畿");
+      // 近畿: already checked なら skip（触ると大阪府リストが消える恐れ）
+      var regionInp = document.querySelector("input[type='radio'][name='regionName']");
+      if (!regionInp || !regionInp.checked) {
+        clickItandiRadio("近畿");
+      }
       setTimeout(function () {
-        // 都道府県タブを選択
-        clickNav("大阪府") || clickNav("大阪");
+        // 大阪府: already checked なら skip
+        var prefInp = document.querySelector("input[type='radio'][name='prefectureId']");
+        if (!prefInp || !prefInp.checked) {
+          clickItandiRadio("大阪府") || clickItandiRadio("大阪");
+        }
         setTimeout(function () {
-          // フル名で試し、失敗したら区名のみで試みる
-          if (!clickLabel(wardName) && shortName) {
-            clickLabel(shortName);
+          // 区市ラベルをクリック（name='' のラジオ）
+          var clicked = clickItandiRadio(wardName) || (shortName ? clickItandiRadio(shortName) : false);
+          if (!clicked) {
+            // 未発見 → さらに1000ms待ってリトライ
+            console.log("[AX] selectItandiArea: ward not found, retry 1000ms");
+            setTimeout(function () {
+              clickItandiRadio(wardName) || (shortName ? clickItandiRadio(shortName) : false);
+              setTimeout(function () { clickBtn("確定"); setTimeout(onDone, 1500); }, 800);
+            }, 1000);
+          } else {
+            setTimeout(function () { clickBtn("確定"); setTimeout(onDone, 1500); }, 800);
           }
-          setTimeout(function () {
-            clickBtn("確定");
-            setTimeout(onDone, 1500);
-          }, 1000);
         }, 1000);
       }, 800);
-    }, 1000);
+    }, 2000);
     return true;
   }
 
