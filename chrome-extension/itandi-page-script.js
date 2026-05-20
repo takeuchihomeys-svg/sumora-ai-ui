@@ -73,14 +73,11 @@
   // itandi診断済みDOM: LABEL.itandi-bb-ui__InputRadio + input[type=radio]
   //   近畿: name=regionName / 大阪府: name=prefectureId / 区市: name=''
   // 戻り値: boolean（モーダルを開けたか）
-  // wardNamesInput: 文字列1つ or 文字列配列（複数区・市対応）
+  // 市区町村ラジオはname=""の同一グループ → 1区1モーダルで順番に開いてチップを積み上げる方式
   function selectItandiArea(wardNamesInput, townArea, onDone) {
     var wardNames = Array.isArray(wardNamesInput) ? wardNamesInput : (wardNamesInput ? [wardNamesInput] : []);
     if (!wardNames.length) return false;
-    var opened = clickBtn("所在地で絞り込み") || clickBtn("エリアで絞り込み") || clickBtn("地域で絞り込み");
-    if (!opened) return false;
 
-    // itandiラジオボタン専用クリック: already checked なら触らない
     function clickItandiRadio(text) {
       var n = norm(text);
       var labels = [].slice.call(document.querySelectorAll("label"));
@@ -95,74 +92,98 @@
       }
       if (!found) return false;
       var inp = found.querySelector("input[type='radio']");
-      if (inp && inp.checked) return true; // already checked → skip
-      found.click(); // label.click()が正解（MUI hidden inputにinp.click()は効かない）
+      if (inp && inp.checked) return true;
+      found.click();
       return true;
     }
 
-    // 区・市名の短縮版を生成（「大阪市福島区」→「福島区」）
     function getShortName(wName) {
       var s = wName.replace(/^.+?([^\s　市区郡]+[区町村])$/, "$1");
       return s === wName ? null : s;
     }
 
-    // モーダル描画待ち: 2000ms（1000msでは描画未完了の場合あり）
-    setTimeout(function () {
-      // 近畿: already checked なら skip（触ると大阪府リストが消える恐れ）
-      var regionInp = document.querySelector("input[type='radio'][name='regionName']");
-      if (!regionInp || !regionInp.checked) {
-        clickItandiRadio("近畿");
+    var wardIdx = 0;
+
+    // 1区ずつモーダルを開いて確定 → チップが積み上がる方式（ラジオname=""制約の回避）
+    function openNextWardModal() {
+      if (wardIdx >= wardNames.length) {
+        onDone();
+        return;
       }
+      var wName = wardNames[wardIdx];
+      var isLast = wardIdx === wardNames.length - 1;
+      var currentTown = isLast ? townArea : null; // townAreaは最後の区にのみ適用
+      wardIdx++;
+
+      var opened = clickBtn("所在地で絞り込み") || clickBtn("エリアで絞り込み") || clickBtn("地域で絞り込み");
+      if (!opened) {
+        console.log("[AX] selectItandiArea: modal button not found for " + wName);
+        setTimeout(openNextWardModal, 1000);
+        return;
+      }
+
       setTimeout(function () {
-        // 大阪府: already checked なら skip
-        var prefInp = document.querySelector("input[type='radio'][name='prefectureId']");
-        if (!prefInp || !prefInp.checked) {
-          clickItandiRadio("大阪府") || clickItandiRadio("大阪");
-        }
+        var regionInp = document.querySelector("input[type='radio'][name='regionName']");
+        if (!regionInp || !regionInp.checked) clickItandiRadio("近畿");
+
         setTimeout(function () {
-          // 区・市を順番にクリック（複数対応・300ms間隔）
-          var wardIdx = 0;
-          function clickNextWard() {
-            if (wardIdx >= wardNames.length) {
-              // 全区・市の選択完了 → 町域 → 確定
-              setTimeout(selectTownThenConfirm, 500);
-              return;
-            }
-            var wName = wardNames[wardIdx];
+          var prefInp = document.querySelector("input[type='radio'][name='prefectureId']");
+          if (!prefInp || !prefInp.checked) clickItandiRadio("大阪府") || clickItandiRadio("大阪");
+
+          setTimeout(function () {
             var shortName = getShortName(wName);
             var clicked = clickItandiRadio(wName) || (shortName ? clickItandiRadio(shortName) : false);
+
+            function afterWardSelected() {
+              if (currentTown) {
+                // 全域チェックを外してから個別町域を選択（全域チェック時は個別選択が無効になる）
+                setTimeout(function () {
+                  var zenLbl = [].slice.call(document.querySelectorAll("label")).find(function (l) {
+                    return l.textContent.trim() === "全域" && isVis(l);
+                  });
+                  var zenInp = zenLbl && zenLbl.querySelector("input");
+                  if (zenInp && zenInp.checked) {
+                    zenLbl.click(); // 全域チェックを外す
+                    console.log("[AX] 全域チェックを解除");
+                  }
+                  setTimeout(function () {
+                    var townLabels = [].slice.call(document.querySelectorAll("label")).filter(function (l) {
+                      return l.textContent.includes(currentTown) && l.getBoundingClientRect().height > 0;
+                    });
+                    townLabels.forEach(function (l) {
+                      var inp = l.querySelector("input");
+                      if (!inp || !inp.checked) l.click();
+                    });
+                    console.log("[AX] 町域選択: " + currentTown + " " + townLabels.length + "件");
+                    setTimeout(function () {
+                      clickBtn("確定");
+                      setTimeout(openNextWardModal, 2000); // 次の区モーダルを開く前に待機
+                    }, 800);
+                  }, 600);
+                }, 600);
+              } else {
+                setTimeout(function () {
+                  clickBtn("確定");
+                  setTimeout(openNextWardModal, 2000);
+                }, 800);
+              }
+            }
+
             if (!clicked) {
-              // 未発見 → 1000ms待ってリトライして次へ
-              console.log("[AX] selectItandiArea: ward not found, retry 1000ms: " + wName);
+              console.log("[AX] selectItandiArea: ward not found, retry: " + wName);
               setTimeout(function () {
                 clickItandiRadio(wName) || (shortName ? clickItandiRadio(shortName) : false);
-                wardIdx++;
-                setTimeout(clickNextWard, 300);
+                setTimeout(afterWardSelected, 500);
               }, 1000);
             } else {
-              wardIdx++;
-              setTimeout(clickNextWard, 300);
+              setTimeout(afterWardSelected, 500);
             }
-          }
-          clickNextWard();
+          }, 1000);
+        }, 800);
+      }, 2000);
+    }
 
-          // 町域・丁目選択 → 確定（複数区の場合はtownAreaがnullなのでスキップ）
-          function selectTownThenConfirm() {
-            if (townArea) {
-              var townLabels = [].slice.call(document.querySelectorAll("label")).filter(function(l) {
-                return l.textContent.includes(townArea) && l.getBoundingClientRect().height > 0;
-              });
-              townLabels.forEach(function(l) {
-                var inp = l.querySelector("input");
-                if (!inp || !inp.checked) l.click();
-              });
-              console.log("[AX] 町域選択: " + townArea + " " + townLabels.length + "件");
-            }
-            setTimeout(function() { clickBtn("確定"); setTimeout(onDone, 1500); }, 800);
-          }
-        }, 1000);
-      }, 800);
-    }, 2000);
+    openNextWardModal();
     return true;
   }
 
