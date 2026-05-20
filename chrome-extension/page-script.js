@@ -207,10 +207,24 @@
     window.postMessage({ from: 'aixlinx-fill-done' }, '*');
   }
 
-  // 市区郡チェックボックス（city_code[]）が1つ以上 checked か確認
-  // div.next_step_button2 の視覚チェックより確実（ボタンは常にdisplay:blockの可能性あり）
+  // next_step_button2 がY状態（市区郡選択済み）か確認
+  // 診断で確認: Y状態=クラス next_action_town_search_Y が付く
+  function isWardButtonY() {
+    return !!document.querySelector('div.next_step_button2.next_action_town_search_Y');
+  }
+
+  // 市区郡チェックボックス（city_code[]）が1つ以上 checked か確認（DOMフォールバック）
   function isWardChecked() {
+    if (isWardButtonY()) return true; // ボタンY状態が最も確実
     return document.querySelectorAll('label input[name="city_code[]"]:checked').length > 0;
+  }
+
+  // 完全マウスイベントシーケンスでクリック（mousedown→mouseup→click）
+  // サイト独自のイベントデリゲーションがmousedownを待っている場合に対応
+  function simulateClick(el) {
+    el.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, cancelable:true, view:window}));
+    el.dispatchEvent(new MouseEvent('mouseup',   {bubbles:true, cancelable:true, view:window}));
+    el.dispatchEvent(new MouseEvent('click',     {bubbles:true, cancelable:true, view:window}));
   }
 
   // 市区郡ラベルを安全にクリック（city_code[]を持つlabel限定・checked済みは再クリックしない）
@@ -226,17 +240,15 @@
         var ltxt = norm(wardLabels[i].textContent);
         if (ltxt !== t && !ltxt.includes(t) && !t.includes(ltxt)) continue;
         var inp = wardLabels[i].querySelector('input[name="city_code[]"]');
-        if (inp && !inp.checked) {
-          wardLabels[i].click(); // ラベルクリックでサイトJSイベントを発火
-          // ラベルクリックでcheckされなかった場合のフォールバック：直接stateを設定してchangeイベント発火
-          if (!inp.checked) {
-            inp.checked = true;
-            inp.dispatchEvent(new Event('change', {bubbles: true}));
-            inp.dispatchEvent(new Event('input',  {bubbles: true}));
-          }
+        if (inp && inp.checked && isWardButtonY()) { return true; } // 選択済みかつボタンY → 成功
+        if (inp && inp.checked) {
+          // DOM上はcheckedだがボタンがN → サイト内部状態が未反映 → 再クリックで登録し直す
+          simulateClick(wardLabels[i]);
           return true;
         }
-        if (inp && inp.checked)  { return true; }              // 選択済み → そのまま成功
+        // 未選択 → フルイベントシーケンスでクリック
+        simulateClick(wardLabels[i]);
+        return true;
       }
     }
     return false;
@@ -520,26 +532,28 @@
           return clickByText(['確定してリストへ', '×とじる', '× とじる', 'とじる', '閉じる']);
         }
 
-        // 「詳細な地域の設定へ進む」ボタン（DevTools調査済: div.next_step_button2）
-        // ボタンクリック後に町字ページが実際に表示されるまで false を返し続ける（waitForClickが検証）
+        // 「詳細な地域の設定へ進む」ボタン
+        // 診断確認: class=next_action_town_search_Y のときだけ機能する
+        // → Y状態を確認してからクリック・N状態なら市区郡を再クリック
         var nextBtnAttempts = 0;
         function clickNextStepBtn() {
           if (document.querySelectorAll('label.one_town').length > 0) {
             console.log('[AX] clickNextStepBtn: 町字ページ表示確認 → 完了 (試行=' + nextBtnAttempts + ')');
             return true;
           }
-          // 初回と3回おきにボタンを再クリック（連打はしない）
           if (nextBtnAttempts % 3 === 0) {
-            var btn = document.querySelector('div.next_step_button2');
-            if (btn && isVisible(btn)) {
-              btn.click();
-              console.log('[AX] clickNextStepBtn: next_step_button2クリック (試行=' + nextBtnAttempts + ')');
+            var btnY = document.querySelector('div.next_step_button2.next_action_town_search_Y');
+            if (btnY) {
+              simulateClick(btnY);
+              console.log('[AX] clickNextStepBtn: Y状態確認→クリック (試行=' + nextBtnAttempts + ')');
             } else {
-              clickByText(['詳細な地域の設定へ進む']);
+              // N状態 = 市区郡がサイト内部に未登録 → 再クリックで登録
+              console.log('[AX] clickNextStepBtn: N状態 → 市区郡を再クリック (試行=' + nextBtnAttempts + ')');
+              clickWardPrecise([wardFull, wardShort]);
             }
           }
           nextBtnAttempts++;
-          return false; // 町字ページが出るまで待ち続ける
+          return false;
         }
 
         // STEP1: 「所在地絞り込み＋」が出るまで待ってクリック
