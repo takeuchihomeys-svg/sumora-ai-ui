@@ -265,12 +265,14 @@ const NEIGHBORHOOD_WARD_MAP = {
   "龍華": "八尾市",  "志紀": "八尾市",  "刑部": "八尾市",
   // ── 大阪市城東区（#43-GK 2026-05-20 追加）──────────────────────
   "稲田本町": "大阪市城東区",  "稲田新町": "大阪市城東区",
+  "稲田町": "大阪市城東区",
   "稲嶋": "大阪市城東区",      "永田": "大阪市城東区",
   "東中浜": "大阪市城東区",    "天王田": "大阪市城東区",
   // ── 大阪市平野区（#43-GK 2026-05-20 追加）──────────────────────
   "長吉西": "大阪市平野区",    "長吉長原": "大阪市平野区",
   "長吉出戸": "大阪市平野区",  "川筋": "大阪市平野区",
-  "川保本町": "大阪市平野区",  "加美南": "大阪市平野区",
+  "川保本町": "大阪市平野区",  "川保": "大阪市平野区",
+  "加美南": "大阪市平野区",
   "加美北": "大阪市平野区",    "加美東": "大阪市平野区",
   "加美正覚寺": "大阪市平野区","加美鞍作": "大阪市平野区",
   "瓜破西": "大阪市平野区",    "瓜破東": "大阪市平野区",
@@ -1762,9 +1764,11 @@ function openInstructions(siteKey) {
       const hasAnyStationMatch = matchedStations.length > 0;
       const stationClean = tokens[0] || rawArea.replace(/駅|周辺|付近|近く/g, "").trim();
 
-      // NEIGHBORHOOD_WARD_MAPにマッチ（かつ駅名でない）トークンを探す（例: 喜連西 → 大阪市平野区）
-      const neighborhoodToken = tokens.find(t => NEIGHBORHOOD_WARD_MAP[t] && !STATION_LINE_MAP[t]) || null;
-      const neighborhoodWard  = neighborhoodToken ? NEIGHBORHOOD_WARD_MAP[neighborhoodToken] : null;
+      // NEIGHBORHOOD_WARD_MAPにマッチ（かつ駅名でない）トークンを全収集（複数区・市対応）
+      const neighborhoodTokens = tokens.filter(t => NEIGHBORHOOD_WARD_MAP[t] && !STATION_LINE_MAP[t]);
+      const neighborhoodWard   = neighborhoodTokens.length > 0 ? NEIGHBORHOOD_WARD_MAP[neighborhoodTokens[0]] : null;
+      // 全ユニーク区・市名を収集（例: 城東区・東大阪市・平野区 が混在する場合に全部選択）
+      const allNeighborhoodWards = [...new Set(neighborhoodTokens.map(t => NEIGHBORHOOD_WARD_MAP[t]))];
 
       // 所在地判定：1駅もマッチせず、かつ（市区郡文字 OR NEIGHBORHOOD_WARD_MAP収録地名）の場合
       const isWardArea_itandi = !hasAnyStationMatch && (
@@ -1806,8 +1810,11 @@ function openInstructions(siteKey) {
           .split(/[,、・\/\.\s]+/).map(s => s.trim()).filter(Boolean),
         pet_ok:      adjPet,
         preferences: c.preferences || c.notes || null,
-        ward_name:    isWardArea_itandi ? wardName : null,
-        town_area:    isWardArea_itandi && searchMode !== "wide" ? neighborhoodToken : null,
+        ward_name:   isWardArea_itandi ? wardName : null,
+        ward_names:  isWardArea_itandi && allNeighborhoodWards.length > 0 ? allNeighborhoodWards : null,
+        // town_area: 複数区にまたがる場合は町域指定不可（区が特定できないため）
+        town_area:   isWardArea_itandi && searchMode !== "wide" && allNeighborhoodWards.length <= 1
+          ? (neighborhoodTokens[0] || null) : null,
         itandi_lines: !isWardArea_itandi ? itandiLines : [],
         station_names: stationNames,
       };

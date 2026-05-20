@@ -73,14 +73,12 @@
   // itandi診断済みDOM: LABEL.itandi-bb-ui__InputRadio + input[type=radio]
   //   近畿: name=regionName / 大阪府: name=prefectureId / 区市: name=''
   // 戻り値: boolean（モーダルを開けたか）
-  function selectItandiArea(wardName, townArea, onDone) {
-    if (!wardName) return false;
+  // wardNamesInput: 文字列1つ or 文字列配列（複数区・市対応）
+  function selectItandiArea(wardNamesInput, townArea, onDone) {
+    var wardNames = Array.isArray(wardNamesInput) ? wardNamesInput : (wardNamesInput ? [wardNamesInput] : []);
+    if (!wardNames.length) return false;
     var opened = clickBtn("所在地で絞り込み") || clickBtn("エリアで絞り込み") || clickBtn("地域で絞り込み");
     if (!opened) return false;
-
-    // 区名短縮版を用意（「大阪市福島区」→「福島区」）
-    var shortName = wardName.replace(/^.+?([^\s　市区郡]+[区町村])$/, "$1");
-    if (shortName === wardName) shortName = null;
 
     // itandiラジオボタン専用クリック: already checked なら触らない
     function clickItandiRadio(text) {
@@ -102,6 +100,12 @@
       return true;
     }
 
+    // 区・市名の短縮版を生成（「大阪市福島区」→「福島区」）
+    function getShortName(wName) {
+      var s = wName.replace(/^.+?([^\s　市区郡]+[区町村])$/, "$1");
+      return s === wName ? null : s;
+    }
+
     // モーダル描画待ち: 2000ms（1000msでは描画未完了の場合あり）
     setTimeout(function () {
       // 近畿: already checked なら skip（触ると大阪府リストが消える恐れ）
@@ -116,20 +120,33 @@
           clickItandiRadio("大阪府") || clickItandiRadio("大阪");
         }
         setTimeout(function () {
-          // 区市ラベルをクリック（name='' のラジオ）
-          var clicked = clickItandiRadio(wardName) || (shortName ? clickItandiRadio(shortName) : false);
-          if (!clicked) {
-            // 未発見 → さらに1000ms待ってリトライ
-            console.log("[AX] selectItandiArea: ward not found, retry 1000ms");
-            setTimeout(function () {
-              clickItandiRadio(wardName) || (shortName ? clickItandiRadio(shortName) : false);
+          // 区・市を順番にクリック（複数対応・300ms間隔）
+          var wardIdx = 0;
+          function clickNextWard() {
+            if (wardIdx >= wardNames.length) {
+              // 全区・市の選択完了 → 町域 → 確定
               setTimeout(selectTownThenConfirm, 500);
-            }, 1000);
-          } else {
-            setTimeout(selectTownThenConfirm, 500);
+              return;
+            }
+            var wName = wardNames[wardIdx];
+            var shortName = getShortName(wName);
+            var clicked = clickItandiRadio(wName) || (shortName ? clickItandiRadio(shortName) : false);
+            if (!clicked) {
+              // 未発見 → 1000ms待ってリトライして次へ
+              console.log("[AX] selectItandiArea: ward not found, retry 1000ms: " + wName);
+              setTimeout(function () {
+                clickItandiRadio(wName) || (shortName ? clickItandiRadio(shortName) : false);
+                wardIdx++;
+                setTimeout(clickNextWard, 300);
+              }, 1000);
+            } else {
+              wardIdx++;
+              setTimeout(clickNextWard, 300);
+            }
           }
+          clickNextWard();
 
-          // 町域・丁目選択 → 確定
+          // 町域・丁目選択 → 確定（複数区の場合はtownAreaがnullなのでスキップ）
           function selectTownThenConfirm() {
             if (townArea) {
               var townLabels = [].slice.call(document.querySelectorAll("label")).filter(function(l) {
@@ -293,7 +310,9 @@
     tick(document.querySelector('input[name="totalRentCheck"]'));
 
     // ── STEP 2 & 3: 所在地 or 路線・駅モーダル → 完了後に残り条件 → 検索 ──
-    var hasArea  = !!cond.ward_name;
+    // ward_names（配列）優先、なければ ward_name（単一・後方互換）にフォールバック
+    var wardNames = cond.ward_names && cond.ward_names.length ? cond.ward_names : (cond.ward_name ? [cond.ward_name] : []);
+    var hasArea  = wardNames.length > 0;
     var hasLines = !!(cond.itandi_lines && cond.itandi_lines.length);
 
     setTimeout(function () {
@@ -311,7 +330,7 @@
       }
 
       if (hasArea) {
-        var opened = selectItandiArea(cond.ward_name, cond.town_area || null, afterModal);
+        var opened = selectItandiArea(wardNames, cond.town_area || null, afterModal);
         if (!opened) {
           // モーダルが開けなかった → 検索せずに通知（500エラー防止）
           alert("「所在地で絞り込み」ボタンが見つかりませんでした。\n手動で所在地を選択してから検索してください。");
