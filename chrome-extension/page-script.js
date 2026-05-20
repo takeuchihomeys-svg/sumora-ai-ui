@@ -540,22 +540,60 @@
         var nextBtnAttempts = 0;
         function clickNextStepBtn() {
           if (document.querySelectorAll('label.one_town').length > 0) {
-            console.log('[AX] clickNextStepBtn: 町字ページ表示確認 → 完了 (試行=' + nextBtnAttempts + ')');
+            console.log('[AX] clickNextStepBtn: 町字ページ表示確認 → 完了');
             return true;
           }
-          if (nextBtnAttempts % 3 === 0) {
-            var btnY = document.querySelector('div.next_step_button2.next_action_town_search_Y');
-            if (btnY) {
-              simulateClick(btnY);
-              console.log('[AX] clickNextStepBtn: Y状態確認→クリック (試行=' + nextBtnAttempts + ')');
+          if (nextBtnAttempts % 2 === 0) {
+            var btnEl = document.querySelector('div.next_step_button2');
+            var isY = btnEl ? btnEl.classList.contains('town_search_Y') : false;
+            if (isY) {
+              simulateClick(btnEl);
+              console.log('[AX] clickNextStepBtn: Y確認→クリック (試行=' + nextBtnAttempts + ')');
             } else {
-              // N状態 = 市区郡がサイト内部に未登録 → 再クリックで登録
-              console.log('[AX] clickNextStepBtn: N状態 → 市区郡を再クリック (試行=' + nextBtnAttempts + ')');
-              clickWardPrecise([wardFull, wardShort]);
+              console.log('[AX] clickNextStepBtn: N待機 (試行=' + nextBtnAttempts + ')');
             }
           }
           nextBtnAttempts++;
           return false;
+        }
+
+        // 市区郡ボタンを確実にY状態にしてからコールバック
+        // 診断実証済み: native .click()でdeselect→300ms→simulateClickでselect→400ms→Y確認
+        function ensureWardButtonY(callback) {
+          if (isWardButtonY()) { callback(); return; }
+          var wardLbls = Array.prototype.slice.call(document.querySelectorAll('label')).filter(function(l){
+            return !!l.querySelector('input[name="city_code[]"]');
+          });
+          var wTarget = null;
+          var searchTerms = [wardFull, wardShort];
+          for (var ci = 0; ci < searchTerms.length && !wTarget; ci++) {
+            var t = norm(searchTerms[ci]);
+            for (var i = 0; i < wardLbls.length; i++) {
+              var ltxt = norm(wardLbls[i].textContent);
+              if (ltxt === t || ltxt.includes(t) || t.includes(ltxt)) { wTarget = wardLbls[i]; break; }
+            }
+          }
+          if (!wTarget) { console.log('[AX] ensureWardButtonY: ラベル見つからず → proceed'); callback(); return; }
+          var wInp = wTarget.querySelector('input[name="city_code[]"]');
+          if (wInp && wInp.checked) {
+            wTarget.click();
+            console.log('[AX] ensureWardButtonY: checked→deselect 300ms待機');
+          }
+          setTimeout(function() {
+            simulateClick(wTarget);
+            console.log('[AX] ensureWardButtonY: simulateClick→select 400ms待機');
+            setTimeout(function() {
+              if (isWardButtonY()) {
+                console.log('[AX] ensureWardButtonY: Y確認 → callback');
+                callback();
+              } else {
+                waitForClick(isWardButtonY, callback, 15, 300, 300, function() {
+                  console.log('[AX] ensureWardButtonY: タイムアウト → 強制callback');
+                  callback();
+                });
+              }
+            }, 400);
+          }, 300);
         }
 
         // STEP1: 「所在地絞り込み＋」が出るまで待ってクリック
@@ -600,21 +638,14 @@
                   );
                 }
 
-                // 300ms後に city_code[] の checked 状態を確認
+                // 300ms後にボタンY状態を確認してSTEP4へ
                 setTimeout(function() {
-                  if (isWardChecked()) {
-                    console.log('[AX] STEP3後確認: city_code[]チェック済み → STEP4へ');
+                  if (isWardButtonY()) {
+                    console.log('[AX] STEP3後確認: ボタンY確認 → STEP4へ');
                     startSTEP4();
                   } else {
-                    // 市区郡が deselect された → 精密クリックで再選択（トグル防止）
-                    console.log('[AX] STEP3後確認: city_code[]未チェック → clickWardPreciseで再選択');
-                    clickWardPrecise([wardFull, wardShort]);
-                    waitForClick(
-                      isWardChecked,
-                      startSTEP4,
-                      30, 300, 300,
-                      function() { alertStop('「' + wardFull + '」の市区郡選択に失敗しました。'); }
-                    );
+                    console.log('[AX] STEP3後確認: N状態 → ensureWardButtonY');
+                    ensureWardButtonY(startSTEP4);
                   }
                 }, 300);
               } else {
