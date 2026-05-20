@@ -208,9 +208,11 @@
   }
 
   // next_step_button2 がY状態（市区郡選択済み）か確認
-  // 診断で確認: Y状態=クラス next_action_town_search_Y が付く
+  // 診断確認: Y状態=クラス town_search_Y が独立で付く（next_action とは別クラス）
+  // NG: '.next_action_town_search_Y'（アンダースコアで繋げると一致しない）
   function isWardButtonY() {
-    return !!document.querySelector('div.next_step_button2.next_action_town_search_Y');
+    var btn = document.querySelector('div.next_step_button2');
+    return btn ? btn.classList.contains('town_search_Y') : false;
   }
 
   // 市区郡チェックボックス（city_code[]）が1つ以上 checked か確認（DOMフォールバック）
