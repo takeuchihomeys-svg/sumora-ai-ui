@@ -226,7 +226,16 @@
         var ltxt = norm(wardLabels[i].textContent);
         if (ltxt !== t && !ltxt.includes(t) && !t.includes(ltxt)) continue;
         var inp = wardLabels[i].querySelector('input[name="city_code[]"]');
-        if (inp && !inp.checked) { wardLabels[i].click(); return true; } // ラベルクリック→サイトJS確実に発火
+        if (inp && !inp.checked) {
+          wardLabels[i].click(); // ラベルクリックでサイトJSイベントを発火
+          // ラベルクリックでcheckされなかった場合のフォールバック：直接stateを設定してchangeイベント発火
+          if (!inp.checked) {
+            inp.checked = true;
+            inp.dispatchEvent(new Event('change', {bubbles: true}));
+            inp.dispatchEvent(new Event('input',  {bubbles: true}));
+          }
+          return true;
+        }
         if (inp && inp.checked)  { return true; }              // 選択済み → そのまま成功
       }
     }
@@ -512,15 +521,25 @@
         }
 
         // 「詳細な地域の設定へ進む」ボタン（DevTools調査済: div.next_step_button2）
-        // 町字ページが既に表示中(label.one_town存在)の場合はスキップしてtrueを返す
+        // ボタンクリック後に町字ページが実際に表示されるまで false を返し続ける（waitForClickが検証）
+        var nextBtnAttempts = 0;
         function clickNextStepBtn() {
           if (document.querySelectorAll('label.one_town').length > 0) {
-            console.log('[AX] clickNextStepBtn: 既に町字ページ → スキップ');
+            console.log('[AX] clickNextStepBtn: 町字ページ表示確認 → 完了 (試行=' + nextBtnAttempts + ')');
             return true;
           }
-          var btn = document.querySelector('div.next_step_button2');
-          if (btn && isVisible(btn)) { btn.click(); return true; }
-          return clickByText(['詳細な地域の設定へ進む']);
+          // 初回と3回おきにボタンを再クリック（連打はしない）
+          if (nextBtnAttempts % 3 === 0) {
+            var btn = document.querySelector('div.next_step_button2');
+            if (btn && isVisible(btn)) {
+              btn.click();
+              console.log('[AX] clickNextStepBtn: next_step_button2クリック (試行=' + nextBtnAttempts + ')');
+            } else {
+              clickByText(['詳細な地域の設定へ進む']);
+            }
+          }
+          nextBtnAttempts++;
+          return false; // 町字ページが出るまで待ち続ける
         }
 
         // STEP1: 「所在地絞り込み＋」が出るまで待ってクリック
@@ -596,6 +615,12 @@
             //   最後: 大阪府をクリック（初回ケース）
             waitForClick(
               function() {
+                // 最優先: 既に町字ページ表示中（モーダル記憶）→ 大阪府ブレッドクラムを誤クリックしないよう先にチェック
+                if (document.querySelectorAll('label.one_town').length > 0) {
+                  prefClicked = false;
+                  console.log('[AX] STEP2: 既に町字ページ → STEP4へ直行');
+                  return true;
+                }
                 if (isWardChecked()) { prefClicked = false; console.log('[AX] STEP2: city_code[]選択済みを検出 → 再クリックスキップ'); return true; }
                 if (clickWardPrecise([wardFull, wardShort])) { prefClicked = false; return true; }
                 if (clickByText(['大阪府'])) { prefClicked = true; return true; }
