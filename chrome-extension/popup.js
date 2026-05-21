@@ -1917,10 +1917,10 @@ function openInstructions(siteKey) {
         .map(s => s.replace(/駅|周辺|付近|近く|沿線/g, "").trim()).filter(Boolean);
       const realpro_station_names = [];
       for (const part of areaParts) {
-        // NEIGHBORHOOD_WARD_MAP収録済み（かつ駅名でない）→ 地名として扱い駅解決をスキップ
-        // 例: 「福島区」は NEIGHBORHOOD_WARD_MAP にあり STATION_LINE_MAP にない
-        //     → resolveStation("福島区") が「福島駅」にマッチするのを防ぐ
-        if (NEIGHBORHOOD_WARD_MAP[part] && !STATION_LINE_MAP[part]) continue;
+        // 地名・市区郡名（かつ駅名でない）→ 地名として扱い駅解決をスキップ
+        // 例: 「福島区」→ resolveStation が「福島駅」に誤マッチするのを防ぐ
+        // 例: 「豊中市」→ resolveStation が「豊中駅」に誤マッチするのを防ぐ
+        if (!STATION_LINE_MAP[part] && (NEIGHBORHOOD_WARD_MAP[part] || WARD_CODE_MAP[part])) continue;
         const station = resolveStation(part);
         if (station) {
           if (!realpro_station_names.includes(station)) realpro_station_names.push(station);
