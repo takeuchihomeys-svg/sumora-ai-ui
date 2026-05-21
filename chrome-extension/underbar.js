@@ -7,9 +7,9 @@
 
   const MINI    = 100;
   const DRAG_H  = 28;
-  const MIN_W   = 260;
-  const MIN_H   = 300;
-  const INIT_W  = 540;
+  const MIN_W   = 300;
+  const MIN_H   = 340;
+  const INIT_W  = 640;
   const BOTTOM_GAP = 60; // 展開時に画面下端から確保する余白（リサイズハンドルが触れる）
   const SK      = "aixlinx_state"; // sessionStorage key
 
