@@ -351,7 +351,7 @@
 
     // ── STEP 1: 賃料（最初に入力）────────────────────────────────────────
     if (cond.rent_max) {
-      var rentVal = cond.rent_max > 1000 ? Math.floor(cond.rent_max / 10000) : cond.rent_max;
+      var rentVal = cond.rent_max > 1000 ? cond.rent_max / 10000 : cond.rent_max;
       var rentEl = document.querySelector('input[name="rent:lteq"]');
       if (rentEl) setReactVal(rentEl, rentVal);
     }
