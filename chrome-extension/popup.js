@@ -1717,6 +1717,28 @@ function openInstructions(siteKey) {
   // 自動入力ボタン＋一時調整フォーム（リアプロ＋アンダーバーモードのみ）
   const autofillBtn = document.getElementById("autofill-btn");
   const adjForm     = document.getElementById("adj-form");
+
+  // ── 未登録地名ヘルパー（博士連携: 駅でも地名マップにもないトークンを検出） ──────
+  function computeUnknownTokens(areaStr) {
+    if (!areaStr) return [];
+    return areaStr.split(/[、・,\/\s]+/)
+      .map(t => t.replace(/駅|周辺|付近|近く|沿線/g, "").trim())
+      .filter(t => t.length >= 2 && !/^[0-9０-９]/.test(t))
+      .filter(t =>
+        !STATION_LINE_MAP[t] &&
+        !STATION_LINE_MAP[t.replace(/[町村]$/, "")] &&
+        !NEIGHBORHOOD_WARD_MAP[t] &&
+        !/[都道府県市区郡]/.test(t)
+      );
+  }
+  function showUnknownWarn(tokens) {
+    const el = document.getElementById("unknown-warn");
+    if (!el) return;
+    if (!tokens || !tokens.length) { el.style.display = "none"; return; }
+    el.style.display = "block";
+    el.innerHTML = "⚠️ 未登録地名: <b>" + tokens.join("・") + "</b><br>地域博士に確認後 NEIGHBORHOOD_WARD_MAP に追加してください";
+  }
+
   if (isUnderbar && siteKey === "itandi") {
     adjForm.style.display = "block";
     preloadAdjForm(selectedCustomer);
@@ -1724,6 +1746,8 @@ function openInstructions(siteKey) {
     autofillBtn.style.display = "block";
     autofillBtn.textContent = "⚡ itandiに自動入力";
     autofillBtn.className = "autofill-btn";
+    // ボタン表示と同時に未登録地名チェック（クリック前に気づける）
+    showUnknownWarn(computeUnknownTokens(selectedCustomer.desired_area || selectedCustomer.area || ""));
 
     autofillBtn.onclick = () => {
       const c = selectedCustomer;
@@ -1853,6 +1877,8 @@ function openInstructions(siteKey) {
     autofillBtn.style.display = "block";
     autofillBtn.textContent = "🔍 リアプロで自動検索";
     autofillBtn.className = "autofill-btn";
+    // ボタン表示と同時に未登録地名チェック
+    showUnknownWarn(computeUnknownTokens(selectedCustomer.desired_area || selectedCustomer.area || ""));
 
     adjForm.style.display = "block";
     const c0 = selectedCustomer;
@@ -1910,6 +1936,8 @@ function openInstructions(siteKey) {
         && !neighPart.endsWith("区") && !neighPart.endsWith("市"))
         ? neighPart : null;
 
+      const rpUnknownTokens = computeUnknownTokens(adjAreaClean);
+      showUnknownWarn(rpUnknownTokens); // クリック後も最新状態で更新
       window.parent.postMessage({
         from: "aixlinx-underbar",
         action: "autofill",
@@ -1926,6 +1954,7 @@ function openInstructions(siteKey) {
           detail_ward:   detailWard,
           structure_types: adjC.structure_types,
           pet_ok: adjPet,
+          unknown_tokens: rpUnknownTokens.length > 0 ? rpUnknownTokens : null,
         },
       }, "*");
       autofillBtn.textContent = "⏳ 検索中...";
