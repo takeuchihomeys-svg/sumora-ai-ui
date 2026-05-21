@@ -329,6 +329,18 @@ const NEIGHBORHOOD_WARD_MAP = {
   "庄": "茨木市",
 };
 
+// 「第一希望:枚方市」「大阪府以外:奈良」などのラベルプレフィックスと方向サフィックスを除去してエリアトークンを分解
+function parseAreaTokens(rawArea) {
+  if (!rawArea) return [];
+  return rawArea
+    .split(/[,、・\/\s]+/)
+    .map(t => t.replace(/^[^:]+:/, "")             // 「第一希望:」「第二希望:」「大阪府以外:」などを除去
+                .replace(/以南$|以北$|以西$|以東$/, "") // 方向サフィックスを除去
+                .replace(/駅|周辺|付近|近く|沿線|エリア/g, "")
+                .trim())
+    .filter(t => t.length >= 1);
+}
+
 function findStationWard(areaText) {
   const normalized = areaText.replace(/駅|周辺|付近|近く|沿線/g, "").trim();
   return STATION_WARD_MAP[normalized] || STATION_WARD_MAP[areaText] || null;
@@ -859,7 +871,7 @@ function buildAreaRouteCodes(c, mode = "auto") {
     return { city_codes, route_ids };
   }
 
-  const parts = rawArea.split(/[,、・\/\s]+/).map(s => s.replace(/駅|周辺|付近|近く|沿線/g, "").trim()).filter(Boolean);
+  const parts = parseAreaTokens(rawArea);
   for (const part of parts) {
     if (mode === "ward") {
       // 地域モード: WARD_CODE_MAP → NEIGHBORHOOD_WARD_MAP のみ。路線IDは追加しない
@@ -1690,7 +1702,7 @@ function renderInstrSteps(siteKey, cOverride) {
 
 function setupAreaModeSelector(c, siteKey) {
   const rawA = (c.desired_area || c.area || "").trim();
-  const toks = rawA.split(/[、・,\/\s]+/).map(t => t.replace(/駅|周辺|付近|近く/g,"").trim()).filter(Boolean);
+  const toks = parseAreaTokens(rawA);
 
   const selectorEl = document.getElementById("area-mode-selector");
   const noticeEl   = document.getElementById("area-mixed-notice");
@@ -1764,13 +1776,13 @@ function openInstructions(siteKey) {
   // ── 未登録地名ヘルパー（博士連携: 駅でも地名マップにもないトークンを検出） ──────
   function computeUnknownTokens(areaStr) {
     if (!areaStr) return [];
-    return areaStr.split(/[、・,\/\s]+/)
-      .map(t => t.replace(/駅|周辺|付近|近く|沿線/g, "").trim())
+    return parseAreaTokens(areaStr)
       .filter(t => t.length >= 2 && !/^[0-9０-９]/.test(t))
       .filter(t =>
         !STATION_LINE_MAP[t] &&
         !STATION_LINE_MAP[t.replace(/[町村]$/, "")] &&
         !NEIGHBORHOOD_WARD_MAP[t] &&
+        !WARD_CODE_MAP[t] &&
         !/[都道府県市区郡]/.test(t)
       );
   }
@@ -1804,11 +1816,8 @@ function openInstructions(siteKey) {
       const adjPet       = document.getElementById("adj-pet").checked;
       const rawArea = (adjArea || c.desired_area || c.area || "").trim();
 
-      // 複数駅対応：「吉田町、東花園、新石切」を個別にパースして照合
-      const tokens = rawArea
-        .split(/[、・,\/\s]+/)
-        .map(t => t.replace(/駅|周辺|付近|近く/g, "").trim())
-        .filter(Boolean);
+      // 複数駅・複数地域対応（「第一希望:〇〇」「第二希望:〇〇」などのプレフィックスも除去）
+      const tokens = parseAreaTokens(rawArea);
 
       const matchedStations = [];  // STATION_LINE_MAPにマッチした駅名
       const allRpLines = [];       // リアプロ内部路線名（重複なし）
@@ -1848,12 +1857,13 @@ function openInstructions(siteKey) {
       // 未登録トークン検出: 駅でも地名マップにもない → page-scriptで警告ログ
       const unknownTokens = tokens.filter(t =>
         t.length >= 2 &&
-        !/^[0-9０-９]/.test(t) &&                   // 数字は除外
-        !matchedStations.includes(t) &&              // 駅ではない
-        !STATION_LINE_MAP[t] &&                      // 駅マップにない
-        !STATION_LINE_MAP[t.replace(/[町村]$/,"")] && // 末尾除去でも駅にない
-        !NEIGHBORHOOD_WARD_MAP[t] &&                 // 地名マップにない
-        !/[都道府県市区郡]/.test(t)                    // 市区郡名でもない
+        !/^[0-9０-９]/.test(t) &&
+        !matchedStations.includes(t) &&
+        !STATION_LINE_MAP[t] &&
+        !STATION_LINE_MAP[t.replace(/[町村]$/,"")] &&
+        !NEIGHBORHOOD_WARD_MAP[t] &&
+        !WARD_CODE_MAP[t] &&                         // WARD_CODE_MAP収録済みも除外
+        !/[都道府県市区郡]/.test(t)
       );
 
       // itandi路線名に変換（ITANDI_LINE_MAP_FILL）、重複排除
@@ -1975,8 +1985,7 @@ function openInstructions(siteKey) {
 
       // 駅名リスト: 駅モードのみ解決（地域モードでは空のまま）
       const adjAreaClean = (adjC.desired_area || adjC.area || "").trim();
-      const areaParts = adjAreaClean.split(/[,、・\/\s]+/)
-        .map(s => s.replace(/駅|周辺|付近|近く|沿線/g, "").trim()).filter(Boolean);
+      const areaParts = parseAreaTokens(adjAreaClean);
       const realpro_station_names = [];
       if (currentAreaMode === "station") {
         for (const part of areaParts) {
@@ -2058,7 +2067,7 @@ function openInstructions(siteKey) {
 
       // ボタン押下が絶対ルール: currentAreaMode で駅 or 地域を決定
       const rawArea = (adjC.desired_area || adjC.area || "").trim();
-      const areaToks = rawArea.split(/[、・,\/\s]+/).map(t => t.replace(/駅|周辺|付近|近く/g, "").trim()).filter(Boolean);
+      const areaToks = parseAreaTokens(rawArea);
       const isStationMode = currentAreaMode === "station";
 
       // 駅モードのみ: 路線・駅名を解決
