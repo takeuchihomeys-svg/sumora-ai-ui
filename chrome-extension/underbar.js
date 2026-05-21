@@ -17,8 +17,11 @@
   let saved = {};
   try { saved = JSON.parse(sessionStorage.getItem(SK) || "{}"); } catch {}
 
-  let posX   = saved.posX   ?? 8;
-  let posY   = saved.posY   ?? 70;
+  // デフォルト初期位置：画面右上エリア（コンテンツ右端付近）
+  const DEFAULT_X = Math.max(0, window.innerWidth - 280);
+  const DEFAULT_Y = 180;
+  let posX   = saved.posX   ?? DEFAULT_X;
+  let posY   = saved.posY   ?? DEFAULT_Y;
   let panelW = saved.panelW ?? INIT_W;
   // 初期高さ：ビューポートに収まるよう計算（下端に BOTTOM_GAP を確保）
   const INIT_H = Math.min(680, window.innerHeight - posY - BOTTOM_GAP - DRAG_H);
