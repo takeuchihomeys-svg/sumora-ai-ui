@@ -1857,10 +1857,13 @@ function openInstructions(siteKey) {
         }
       }
 
-      // 広げて検索：賃料上限を自動拡張（リアプロと同じバッファロジック）
+      // 広げて検索：賃料上限を自動拡張
+      // preloadAdjFormで初期値が入るためadjRentMaxは常にtruthy。
+      // お客さんのデフォルト値と異なる場合のみ手動変更とみなす。
       const rawRentMax = c.rent_max || c.max_rent || null;
+      const itandiRentManualChanged = adjRentMax && rawRentMax && Number(adjRentMax) !== rawRentMax;
       const itandiEffectiveRentMax = (() => {
-        if (adjRentMax) return Number(adjRentMax);
+        if (itandiRentManualChanged) return Number(adjRentMax);
         if (!rawRentMax) return null;
         if (searchMode === "wide") {
           const buffer = rawRentMax <= 100000 ? 5000 : 10000;
@@ -1975,10 +1978,15 @@ function openInstructions(siteKey) {
       // 区名だけの場合はcity_codesの直接チェックで複数区を同時選択（例:北区+福島区）
       const detailWard = detailNeighborhood ? NEIGHBORHOOD_WARD_MAP[neighPart] : null;
 
-      // 広げて検索：賃料上限を自動拡張（手動入力adjRentMaxがある場合はそのまま）
+      // 広げて検索：賃料上限を自動拡張
+      // preloadAdjFormで初期値が入るためadjRentMaxは常にtruthy。
+      // お客さんのデフォルト値と異なる場合のみ手動変更とみなす。
+      const rpRentDefault = c.rent_max || c.max_rent || null;
+      const rpRentManualChanged = adjRentMax && rpRentDefault && Number(adjRentMax) !== rpRentDefault;
       const rpEffectiveRentMax = (() => {
         if (!adjC.rent_max) return null;
-        if (searchMode === "wide" && !adjRentMax) {
+        if (rpRentManualChanged) return Number(adjRentMax);
+        if (searchMode === "wide") {
           const buffer = adjC.rent_max <= 100000 ? 5000 : 10000;
           return adjC.rent_max + buffer;
         }
