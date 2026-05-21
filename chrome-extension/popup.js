@@ -1812,9 +1812,18 @@ function openInstructions(siteKey) {
         preferences: c.preferences || c.notes || null,
         ward_name:   isWardArea_itandi ? wardName : null,
         ward_names:  isWardArea_itandi && allNeighborhoodWards.length > 0 ? allNeighborhoodWards : null,
-        // town_area: 複数区にまたがる場合は町域指定不可（区が特定できないため）
-        town_area:   isWardArea_itandi && searchMode !== "wide" && allNeighborhoodWards.length <= 1
-          ? (neighborhoodTokens[0] || null) : null,
+        // 区ごとの町域トークンマップ: { "大阪市城東区": ["稲田本町","稲田新町"], "東大阪市": ["川保本町"] }
+        ward_town_map: (() => {
+          if (!isWardArea_itandi || searchMode === "wide" || neighborhoodTokens.length === 0) return null;
+          const m = {};
+          neighborhoodTokens.forEach(t => {
+            const w = NEIGHBORHOOD_WARD_MAP[t];
+            if (!m[w]) m[w] = [];
+            if (!m[w].includes(t)) m[w].push(t);
+          });
+          return Object.keys(m).length ? m : null;
+        })(),
+        town_area:   null, // ward_town_mapで代替（後方互換用として残す）
         itandi_lines: !isWardArea_itandi ? itandiLines : [],
         station_names: stationNames,
       };

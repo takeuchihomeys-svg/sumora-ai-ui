@@ -74,7 +74,8 @@
   //   近畿: name=regionName / 大阪府: name=prefectureId / 区市: name=''
   // 戻り値: boolean（モーダルを開けたか）
   // 市区町村ラジオはname=""の同一グループ → 1区1モーダルで順番に開いてチップを積み上げる方式
-  function selectItandiArea(wardNamesInput, townArea, onDone) {
+  // wardTownMap: { "大阪市城東区": ["稲田本町","稲田新町"], "東大阪市": ["川保本町"] } または null
+  function selectItandiArea(wardNamesInput, wardTownMap, townAreaFallback, onDone) {
     var wardNames = Array.isArray(wardNamesInput) ? wardNamesInput : (wardNamesInput ? [wardNamesInput] : []);
     if (!wardNames.length) return false;
 
@@ -112,7 +113,13 @@
       }
       var wName = wardNames[wardIdx];
       var isLast = wardIdx === wardNames.length - 1;
-      var currentTown = isLast ? townArea : null; // townAreaは最後の区にのみ適用
+      // ward_town_map優先。なければtownAreaFallback（後方互換）を最後の区のみ適用
+      var townsForWard = null;
+      if (wardTownMap && wardTownMap[wName] && wardTownMap[wName].length) {
+        townsForWard = wardTownMap[wName];
+      } else if (isLast && townAreaFallback) {
+        townsForWard = [townAreaFallback];
+      }
       wardIdx++;
 
       var opened = clickBtn("所在地で絞り込み") || clickBtn("エリアで絞り込み") || clickBtn("地域で絞り込み");
@@ -135,32 +142,46 @@
             var clicked = clickItandiRadio(wName) || (shortName ? clickItandiRadio(shortName) : false);
 
             function afterWardSelected() {
-              if (currentTown) {
-                // 全域チェックを外してから個別町域を選択（全域チェック時は個別選択が無効になる）
+              if (townsForWard && townsForWard.length) {
+                // 全域チェックを外してから個別町域を選択（全域時は個別選択が無効になる）
                 setTimeout(function () {
                   var zenLbl = [].slice.call(document.querySelectorAll("label")).find(function (l) {
-                    return l.textContent.trim() === "全域" && isVis(l);
+                    return l.textContent.trim() === "全域" && l.querySelector("input[type='checkbox']") && isVis(l);
                   });
                   var zenInp = zenLbl && zenLbl.querySelector("input");
                   if (zenInp && zenInp.checked) {
-                    zenLbl.click(); // 全域チェックを外す
+                    zenLbl.click();
                     console.log("[AX] 全域チェックを解除");
                   }
                   setTimeout(function () {
-                    var townLabels = [].slice.call(document.querySelectorAll("label")).filter(function (l) {
-                      return l.textContent.includes(currentTown) && l.getBoundingClientRect().height > 0;
+                    // 町域checkboxラベルを全取得（スクロール外含む・visibilityチェックなし）
+                    var allCbLabels = [].slice.call(document.querySelectorAll("label")).filter(function (l) {
+                      return l.querySelector("input[type='checkbox']");
                     });
-                    townLabels.forEach(function (l) {
-                      var inp = l.querySelector("input");
-                      if (!inp || !inp.checked) l.click();
+                    var totalSelected = 0;
+                    townsForWard.forEach(function (town) {
+                      var tn = norm(town);
+                      // スマートマッチ: 完全一致 → 前方一致（〇〇1丁目等）→ 部分一致
+                      var matches = allCbLabels.filter(function (l) { return norm(l.textContent.trim()) === tn; });
+                      if (!matches.length) {
+                        matches = allCbLabels.filter(function (l) { return norm(l.textContent.trim()).startsWith(tn); });
+                      }
+                      if (!matches.length) {
+                        matches = allCbLabels.filter(function (l) { return norm(l.textContent.trim()).includes(tn); });
+                      }
+                      matches.forEach(function (l) {
+                        var inp = l.querySelector("input");
+                        if (!inp || !inp.checked) { l.click(); totalSelected++; }
+                      });
+                      console.log("[AX] 町域選択: " + town + " → " + matches.length + "件");
                     });
-                    console.log("[AX] 町域選択: " + currentTown + " " + townLabels.length + "件");
+                    console.log("[AX] 町域合計: " + totalSelected + "件選択");
                     setTimeout(function () {
                       clickBtn("確定");
-                      setTimeout(openNextWardModal, 2000); // 次の区モーダルを開く前に待機
-                    }, 800);
-                  }, 600);
-                }, 600);
+                      setTimeout(openNextWardModal, 2000);
+                    }, 1000);
+                  }, 800);
+                }, 800);
               } else {
                 setTimeout(function () {
                   clickBtn("確定");
@@ -351,7 +372,7 @@
       }
 
       if (hasArea) {
-        var opened = selectItandiArea(wardNames, cond.town_area || null, afterModal);
+        var opened = selectItandiArea(wardNames, cond.ward_town_map || null, cond.town_area || null, afterModal);
         if (!opened) {
           // モーダルが開けなかった → 検索せずに通知（500エラー防止）
           alert("「所在地で絞り込み」ボタンが見つかりませんでした。\n手動で所在地を選択してから検索してください。");
