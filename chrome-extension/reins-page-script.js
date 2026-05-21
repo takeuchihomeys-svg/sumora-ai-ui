@@ -66,6 +66,14 @@
   };
 
   async function fill(cond) {
+    // 連続検索対応: 前回の条件をリセット
+    var _resetBtn = [].slice.call(document.querySelectorAll("button, input[type='reset']")).find(function(b) {
+      var t = (b.textContent || b.value || "").trim();
+      var r = b.getBoundingClientRect();
+      return ["条件全削除","条件クリア","全クリア","クリア"].indexOf(t) >= 0 && (r.width > 0 || r.height > 0);
+    });
+    if (_resetBtn) { _resetBtn.click(); console.log("[AX] 条件リセット実行"); await sleep(600); }
+
     // 遅延レンダリング対策：最上部にスクロールして全フィールドを確実にレンダリング
     window.scrollTo(0, 0);
     await sleep(800);

@@ -420,6 +420,17 @@
   }
 
   function fill(cond) {
+    // 連続検索対応: 前回の条件をリセット
+    var _resetBtn = [].slice.call(document.querySelectorAll("button")).find(function(b) {
+      var t = b.textContent.trim();
+      var r = b.getBoundingClientRect();
+      return ["条件全削除","条件クリア","全クリア","クリア"].indexOf(t) >= 0 && (r.width > 0 || r.height > 0);
+    });
+    var _resetDelay = 0;
+    if (_resetBtn) { _resetBtn.click(); _resetDelay = 600; console.log("[AX] 条件リセット実行"); }
+
+    setTimeout(function() {
+
     // 未登録地名の警告（NEIGHBORHOOD_WARD_MAPに未登録のトークンをコンソールに表示）
     if (cond.unknown_tokens && cond.unknown_tokens.length) {
       console.log("[AX] ⚠️ 未登録地名（スキップ）: " + cond.unknown_tokens.join(", "));
@@ -475,6 +486,8 @@
       }
 
     }, 800);
+
+    }, _resetDelay); // 連続検索リセット待機
   }
 
   window.addEventListener("axlx-itandi-fill", function (e) { fill(e.detail); });
