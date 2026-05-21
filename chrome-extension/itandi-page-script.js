@@ -329,10 +329,19 @@
           tick(document.querySelector('input[name="room_layout:in"][id="' + FLOOR_RANK_IT[ri] + '"]'));
         }
       } else {
-        fpStr.split(/[・,、\/\.\s]+/).forEach(function (plan) {
+        // もしくは・または等の接続詞でも分割し、修飾語付き文字列からも間取りを抽出
+        var itFloorKeys = Object.keys(FLOOR_TEXT_IT).sort(function(a,b){ return b.length - a.length; });
+        function extractFloorIT(token) {
+          if (FLOOR_TEXT_IT[token]) return FLOOR_TEXT_IT[token];
+          for (var ki = 0; ki < itFloorKeys.length; ki++) {
+            if (token.indexOf(itFloorKeys[ki]) >= 0) return FLOOR_TEXT_IT[itFloorKeys[ki]];
+          }
+          return null;
+        }
+        fpStr.split(/[・,、\/\.\s]+|もしくは|または|もしくわ|あるいは/).forEach(function (plan) {
           plan = plan.trim();
-          var id = FLOOR_TEXT_IT[plan] || plan;
-          if (VALID_LAYOUTS.indexOf(id) !== -1) {
+          var id = extractFloorIT(plan);
+          if (id && VALID_LAYOUTS.indexOf(id) !== -1) {
             tick(document.querySelector('input[name="room_layout:in"][id="' + id + '"]'));
           }
         });

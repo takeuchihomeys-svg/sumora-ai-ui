@@ -538,9 +538,22 @@
           if (fv && vals.indexOf(fv) < 0) vals.push(fv);
         }
       } else {
-        // 「1DK,1LDK」などカンマ区切り
-        var plans = fpStr.split(/[,、・\/\.\s]+/).map(function(s){return s.trim();}).filter(Boolean);
-        vals = plans.map(function(p){ return FLOOR_MAP[p]; }).filter(Boolean);
+        // カンマ・もしくは・または等で分割し、各トークン内からFLOOR_MAPキーを抽出
+        // 例: "2LDKもしくは、ちょっと広めの1LDK" → ["2LDK", "1LDK"]
+        var floorKeys = Object.keys(FLOOR_MAP).sort(function(a,b){ return b.length - a.length; });
+        function extractFloor(token) {
+          if (FLOOR_MAP[token]) return FLOOR_MAP[token];
+          for (var ki = 0; ki < floorKeys.length; ki++) {
+            if (token.indexOf(floorKeys[ki]) >= 0) return FLOOR_MAP[floorKeys[ki]];
+          }
+          return null;
+        }
+        var rawTokens = fpStr.split(/[,、・\/\.\s]+|もしくは|または|もしくわ|あるいは/)
+          .map(function(s){ return s.trim(); }).filter(Boolean);
+        rawTokens.forEach(function(t) {
+          var v = extractFloor(t);
+          if (v && vals.indexOf(v) < 0) vals.push(v);
+        });
       }
       if (vals.length) setCheckboxes("room_layout_id[]", vals);
     }
