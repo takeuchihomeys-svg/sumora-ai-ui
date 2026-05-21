@@ -361,6 +361,27 @@ function resolveStation(rawInput) {
   return null;
 }
 
+// 「JR高槻」「阪急梅田」のような「路線プレフィックス+駅名」形式を解決する
+// 戻り値: { resolved: "高槻", type: "station" } or { resolved: "〇〇区", type: "ward" } or null
+const LINE_PREFIXES_TO_STRIP = ["JR", "近鉄", "阪急", "阪神", "京阪", "南海", "大阪メトロ", "地下鉄"];
+function resolveWithLinePrefixes(token) {
+  for (const prefix of LINE_PREFIXES_TO_STRIP) {
+    if (token.startsWith(prefix) && token.length > prefix.length) {
+      const stripped = token.slice(prefix.length).trim();
+      // STATION_LINE_MAP完全一致
+      if (STATION_LINE_MAP[stripped]) return { resolved: stripped, type: "station" };
+      // resolveStation（前方・部分一致）
+      const via = resolveStation(stripped);
+      if (via) return { resolved: via, type: "station" };
+      // WARD_CODE_MAP（市区郡名）
+      if (WARD_CODE_MAP[stripped]) return { resolved: stripped, type: "ward" };
+      // NEIGHBORHOOD_WARD_MAP（地名）
+      if (NEIGHBORHOOD_WARD_MAP[stripped]) return { resolved: stripped, type: "ward" };
+    }
+  }
+  return null;
+}
+
 // ── 駅名 → リアプロ沿線名マッピング ────────────────────────────────
 const STATION_LINE_MAP = {
   // ── 御堂筋線 ──
@@ -488,6 +509,9 @@ const STATION_LINE_MAP = {
   "新大阪": ["東海道本線", "おおさか東線"],
   "東淀川": ["東海道本線"],
   "吹田": ["東海道本線", "阪急電鉄千里線"],
+  "摂津富田": ["東海道本線"],
+  "高槻": ["東海道本線"],
+  "島本": ["東海道本線"],
   // ── JR東西線 ──
   "北新地": ["JR東西線"],
   "新福島": ["JR東西線"],
@@ -714,7 +738,7 @@ const LINE_STATION_ORDER = {
     "天王寺","寺田町","桃谷","鶴橋","玉造","森ノ宮","大阪城公園","京橋","桜ノ宮","天満",
   ],
   "東海道本線": [
-    "甲子園口","立花","尼崎","塚本","大阪","新大阪","東淀川","吹田",
+    "甲子園口","立花","尼崎","塚本","大阪","新大阪","東淀川","吹田","摂津富田","高槻","島本",
   ],
   "JR東西線": [
     "北新地","新福島","海老江","御幣島","加島","放出",
@@ -1783,15 +1807,54 @@ function openInstructions(siteKey) {
         !STATION_LINE_MAP[t.replace(/[町村]$/, "")] &&
         !NEIGHBORHOOD_WARD_MAP[t] &&
         !WARD_CODE_MAP[t] &&
-        !/[都道府県市区郡]/.test(t)
+        !/[都道府県市区郡]/.test(t) &&
+        !resolveStation(t)           // resolveStation（部分一致）で解決できるものは除外
       );
   }
   function showUnknownWarn(tokens) {
     const el = document.getElementById("unknown-warn");
     if (!el) return;
     if (!tokens || !tokens.length) { el.style.display = "none"; return; }
+
+    // 路線プレフィックス解決を試みる（例: JR高槻 → 高槻）
+    const analyzed = tokens.map(t => ({ original: t, suggestion: resolveWithLinePrefixes(t) }));
+    const hasResolvable = analyzed.some(r => r.suggestion);
+
+    let html = "⚠️ 未登録地名: <b>" + tokens.join("・") + "</b>";
+    if (hasResolvable) {
+      const hints = analyzed.filter(r => r.suggestion)
+        .map(r => r.original + "→<b>" + r.suggestion.resolved + "</b>("
+          + (r.suggestion.type === "station" ? "駅" : "地域") + ")");
+      html += "<br>🔄 解決候補: " + hints.join("、")
+        + ' <button id="unknown-resolve-btn" style="margin-left:6px;padding:2px 8px;'
+        + 'font-size:11px;background:#1a73e8;color:white;border:none;border-radius:4px;cursor:pointer">✓ 反映する</button>';
+    } else {
+      html += "<br>地域博士に確認後 NEIGHBORHOOD_WARD_MAP に追加してください";
+    }
     el.style.display = "block";
-    el.innerHTML = "⚠️ 未登録地名: <b>" + tokens.join("・") + "</b><br>地域博士に確認後 NEIGHBORHOOD_WARD_MAP に追加してください";
+    el.innerHTML = html;
+
+    if (hasResolvable) {
+      const btn = document.getElementById("unknown-resolve-btn");
+      if (btn) {
+        btn.onclick = () => {
+          const adjAreaEl = document.getElementById("adj-area");
+          let areaVal = adjAreaEl.value;
+          analyzed.forEach(r => {
+            if (r.suggestion) {
+              // 元トークンを解決済み名で置換
+              areaVal = areaVal.replace(
+                new RegExp(r.original.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"),
+                r.suggestion.resolved
+              );
+            }
+          });
+          adjAreaEl.value = areaVal;
+          showUnknownWarn(computeUnknownTokens(areaVal));
+          renderInstrSteps(selectedSite, buildAdjCustomer(selectedCustomer));
+        };
+      }
+    }
   }
 
   if (isUnderbar && siteKey === "itandi") {
@@ -1831,6 +1894,13 @@ function openInstructions(siteKey) {
             const stripped = token.replace(/[町村]$/, "");
             if (stripped !== token && STATION_LINE_MAP[stripped]) {
               lines = STATION_LINE_MAP[stripped]; key = stripped;
+            }
+          }
+          // 路線プレフィックス解決（「JR高槻」→「高槻」など）
+          if (!lines) {
+            const prefixResult = resolveWithLinePrefixes(token);
+            if (prefixResult && prefixResult.type === "station" && STATION_LINE_MAP[prefixResult.resolved]) {
+              lines = STATION_LINE_MAP[prefixResult.resolved]; key = prefixResult.resolved;
             }
           }
           if (lines && lines.length) {
