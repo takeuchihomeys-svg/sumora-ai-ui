@@ -478,8 +478,8 @@
     if (!cond) return;
     // 未登録地名の警告（NEIGHBORHOOD_WARD_MAPに未登録のトークン）
     if (cond.unknown_tokens && cond.unknown_tokens.length) {
-      console.warn("[AX] ⚠️ 未登録地名（スキップ）: " + cond.unknown_tokens.join(", "));
-      console.warn("[AX] → popup.js の NEIGHBORHOOD_WARD_MAP に追加が必要です");
+      console.log("[AX] ⚠️ 未登録地名（スキップ）: " + cond.unknown_tokens.join(", "));
+      console.log("[AX] → popup.js の NEIGHBORHOOD_WARD_MAP に追加が必要です");
     }
 
     var hasStation   = cond.station_names && cond.station_names.length > 0;
