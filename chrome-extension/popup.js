@@ -1931,14 +1931,16 @@ function openInstructions(siteKey) {
         }
       }
 
-      // 地名・区略称マップから区フル名を検索（ピンポイント・広げて両方でモーダル使用）
-      const neighPart = areaParts.find(p => NEIGHBORHOOD_WARD_MAP[p] && !STATION_LINE_MAP[p]) || null;
-      // detail_ward: モーダルで区を選択するため両モードで渡す（例:「大阪市平野区」）
-      const detailWard = neighPart ? NEIGHBORHOOD_WARD_MAP[neighPart] : null;
-      // detail_area: 町字名はピンポイントかつ区略称でない場合のみ（例:「喜連西」）
-      const detailNeighborhood = (searchMode === "pinpoint" && neighPart
-        && !neighPart.endsWith("区") && !neighPart.endsWith("市"))
-        ? neighPart : null;
+      // 地名マップから町字レベルのトークンを検索（区名・市名は対象外）
+      const neighPart = areaParts.find(p =>
+        NEIGHBORHOOD_WARD_MAP[p] && !STATION_LINE_MAP[p] &&
+        !p.endsWith("区") && !p.endsWith("市")  // 区名・市名はcity_codesで処理するためスキップ
+      ) || null;
+      // detail_area: 町字名はピンポイントのみ（例:「喜連西」）
+      const detailNeighborhood = (searchMode === "pinpoint" && neighPart) ? neighPart : null;
+      // detail_ward: detail_areaがある時だけモーダルを使う
+      // 区名だけの場合はcity_codesの直接チェックで複数区を同時選択（例:北区+福島区）
+      const detailWard = detailNeighborhood ? NEIGHBORHOOD_WARD_MAP[neighPart] : null;
 
       const rpUnknownTokens = computeUnknownTokens(adjAreaClean);
       showUnknownWarn(rpUnknownTokens); // クリック後も最新状態で更新
