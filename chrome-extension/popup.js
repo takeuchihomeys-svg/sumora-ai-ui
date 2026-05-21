@@ -847,7 +847,8 @@ const LINE_ROUTE_MAP = {
 };
 
 // desired_area → city_codes & route_ids
-function buildAreaRouteCodes(c) {
+// mode: "station" → 駅マップのみ / "ward" → 地域マップのみ / "auto" → 従来の自動判定
+function buildAreaRouteCodes(c, mode = "auto") {
   const rawArea = (c.desired_area || c.area || "").trim();
   const city_codes = [], route_ids = [];
   if (!rawArea) return { city_codes, route_ids };
@@ -860,19 +861,38 @@ function buildAreaRouteCodes(c) {
 
   const parts = rawArea.split(/[,、・\/\s]+/).map(s => s.replace(/駅|周辺|付近|近く|沿線/g, "").trim()).filter(Boolean);
   for (const part of parts) {
-    // 1. 完全一致の区・市名
+    if (mode === "ward") {
+      // 地域モード: WARD_CODE_MAP → NEIGHBORHOOD_WARD_MAP のみ。路線IDは追加しない
+      if (WARD_CODE_MAP[part]) {
+        if (!city_codes.includes(WARD_CODE_MAP[part])) city_codes.push(WARD_CODE_MAP[part]);
+      } else {
+        const neighWard = NEIGHBORHOOD_WARD_MAP[part];
+        if (neighWard && WARD_CODE_MAP[neighWard] && !city_codes.includes(WARD_CODE_MAP[neighWard]))
+          city_codes.push(WARD_CODE_MAP[neighWard]);
+      }
+      continue;
+    }
+    if (mode === "station") {
+      // 駅モード: WARD_CODE_MAPを無視してSTATION_LINE_MAPのみで解決
+      const station = resolveStation(part);
+      const stationKey = station || part;
+      const ward = STATION_WARD_MAP[stationKey] || findStationWard(part);
+      if (ward && WARD_CODE_MAP[ward] && !city_codes.includes(WARD_CODE_MAP[ward])) city_codes.push(WARD_CODE_MAP[ward]);
+      const lines = STATION_LINE_MAP[stationKey] || [];
+      lines.forEach(l => { const id = LINE_ROUTE_MAP[l]; if (id && !route_ids.includes(id)) route_ids.push(id); });
+      continue;
+    }
+    // auto: 従来の自動判定
     if (WARD_CODE_MAP[part]) {
       if (!city_codes.includes(WARD_CODE_MAP[part])) city_codes.push(WARD_CODE_MAP[part]);
       continue;
     }
-    // 2. 地名マップ（区略称・地域名）— STATION_LINE_MAP収録済みの駅名は駅優先なのでスキップ
     const neighWard = NEIGHBORHOOD_WARD_MAP[part];
     if (neighWard && !STATION_LINE_MAP[part]) {
       if (WARD_CODE_MAP[neighWard] && !city_codes.includes(WARD_CODE_MAP[neighWard]))
         city_codes.push(WARD_CODE_MAP[neighWard]);
-      continue;  // 地名は route_ids を追加しない
+      continue;
     }
-    // 3. 駅名あいまい解決（完全一致→部分一致）
     const station = resolveStation(part);
     const stationKey = station || part;
     const ward = STATION_WARD_MAP[stationKey] || findStationWard(part);
@@ -958,16 +978,23 @@ const SITE_CONFIG = {
   realpro: {
     name: "リアプロ",
     icon: "🏠",
-    steps: (c, mode = "pinpoint") => {
+    steps: (c, mode = "pinpoint", areaMode = null) => {
       const d = buildCondData(c, mode);
       const areaText = d.area || "";
-      // 「町」は駅名に頻出するため場所判定から除外（例：堺筋本町・中崎町）
-      const isStation  = /駅|線/.test(areaText);
-      // 「周辺・付近・近く」を除いた地名がNEIGHBORHOOD_WARD_MAP収録 → 所在地扱い（例: 喜連西周辺）
-      const areaClean        = areaText.replace(/周辺|付近|近く|エリア/g, "").trim();
+      const areaClean = areaText.replace(/周辺|付近|近く|エリア/g, "").trim();
       const neighborhoodWard = (NEIGHBORHOOD_WARD_MAP[areaClean] && !STATION_LINE_MAP[areaClean])
         ? NEIGHBORHOOD_WARD_MAP[areaClean] : null;
-      const isLocation = !!(neighborhoodWard) || /市|区|府|県|都|郡/.test(areaText);
+
+      // ボタン押下が絶対ルール。未選択時のみ自動判定
+      let isLocation, isStation;
+      if (areaMode === "ward") {
+        isLocation = true; isStation = false;
+      } else if (areaMode === "station") {
+        isLocation = false; isStation = true;
+      } else {
+        isStation  = /駅|線/.test(areaText);
+        isLocation = !!(neighborhoodWard) || /市|区|府|県|都|郡/.test(areaText);
+      }
       const steps = [];
       let n = 1;
 
@@ -1419,6 +1446,7 @@ let allCustomers = [];
 let selectedCustomer = null;
 let selectedSite = null;
 let searchMode = "pinpoint"; // "pinpoint" | "wide"
+let currentAreaMode = "ward"; // "station" | "ward" — ボタン押下が絶対ルール（自動判定より優先）
 let currentAccount = ""; // "" = すべて / "sumora" / "ieyasu" / "giga" / "hasu"
 
 // ── アンダーバーモード検出 ─────────────────────────────────────────
@@ -1600,7 +1628,7 @@ function syncModeButtons() {
 function renderInstrSteps(siteKey, cOverride) {
   const cfg = SITE_CONFIG[siteKey];
   const c = cOverride || selectedCustomer;
-  const steps = cfg.steps(c, searchMode);
+  const steps = cfg.steps(c, searchMode, currentAreaMode);
 
   const modeLabel = searchMode === "wide"
     ? `<div class="wide-banner">🔎 広げて検索モード（家賃・エリア・広さを少し緩めて検索）</div>`
@@ -1663,36 +1691,30 @@ function renderInstrSteps(siteKey, cOverride) {
 function setupAreaModeSelector(c, siteKey) {
   const rawA = (c.desired_area || c.area || "").trim();
   const toks = rawA.split(/[、・,\/\s]+/).map(t => t.replace(/駅|周辺|付近|近く/g,"").trim()).filter(Boolean);
-  // WARD_CODE_MAP収録済み市区郡は駅名と同名でも必ず地域扱い（守口市=京阪駅名 等の衝突を防ぐ）
-  const stTokens   = toks.filter(t => !WARD_CODE_MAP[t] && (STATION_LINE_MAP[t] || STATION_LINE_MAP[t.replace(/[町村]$/,"")]));
-  const wardTokens = toks.filter(t => WARD_CODE_MAP[t] || (!STATION_LINE_MAP[t] && !STATION_LINE_MAP[t.replace(/[町村]$/,"")]));
-  const hasMixed   = stTokens.length > 0 && wardTokens.length > 0;
-  const hasEither  = stTokens.length > 0 || wardTokens.length > 0;
 
   const selectorEl = document.getElementById("area-mode-selector");
   const noticeEl   = document.getElementById("area-mixed-notice");
   const btnStation = document.getElementById("btn-mode-station");
   const btnWard    = document.getElementById("btn-mode-ward");
 
-  if (!hasEither) { selectorEl.style.display = "none"; return; }
+  if (!rawA) { selectorEl.style.display = "none"; return; }
   selectorEl.style.display = "block";
-  noticeEl.style.display   = hasMixed ? "block" : "none";
+  noticeEl.style.display   = "none"; // 混在警告は不要（ユーザーが選択するため）
 
+  // ボタン押下が絶対ルール: currentAreaMode を更新 → ステップ表示も即更新
   function setMode(mode) {
-    const adjAreaEl = document.getElementById("adj-area");
-    if (mode === "station") {
-      adjAreaEl.value = stTokens.length ? stTokens.join("、") : rawA;
-      btnStation.classList.add("active");
-      btnWard.classList.remove("active");
-    } else {
-      adjAreaEl.value = wardTokens.length ? wardTokens.join("、") : rawA;
-      btnWard.classList.add("active");
-      btnStation.classList.remove("active");
-    }
+    currentAreaMode = mode;
+    btnStation.classList.toggle("active", mode === "station");
+    btnWard.classList.toggle("active", mode === "ward");
     renderInstrSteps(siteKey, buildAdjCustomer(c));
   }
 
-  setMode(stTokens.length > 0 ? "station" : "ward");
+  // デフォルト: WARD_CODE_MAP収録済み → 地域 / 駅名のみ → 駅 / それ以外 → 地域
+  const hasWardToken    = toks.some(t => WARD_CODE_MAP[t] || NEIGHBORHOOD_WARD_MAP[t] || /[市区郡]/.test(t));
+  const hasStationToken = toks.some(t => !WARD_CODE_MAP[t] && (STATION_LINE_MAP[t] || STATION_LINE_MAP[t.replace(/[町村]$/,"")]));
+  const defaultMode = hasWardToken ? "ward" : (hasStationToken ? "station" : "ward");
+
+  setMode(defaultMode);
   btnStation.onclick = () => setMode("station");
   btnWard.onclick    = () => setMode("ward");
 }
@@ -1791,38 +1813,37 @@ function openInstructions(siteKey) {
       const matchedStations = [];  // STATION_LINE_MAPにマッチした駅名
       const allRpLines = [];       // リアプロ内部路線名（重複なし）
 
-      tokens.forEach(token => {
-        // WARD_CODE_MAP収録済み市区郡は駅名と同名でも地域として扱い、駅マッチをスキップ
-        if (WARD_CODE_MAP[token]) return;
-        let lines = STATION_LINE_MAP[token];
-        let key = token;
-        // 完全一致しなければ末尾の「町」「村」を除いて再試行（例：吉田町→吉田）
-        if (!lines) {
-          const stripped = token.replace(/[町村]$/, "");
-          if (stripped !== token && STATION_LINE_MAP[stripped]) {
-            lines = STATION_LINE_MAP[stripped];
-            key = stripped;
+      // ボタン押下が絶対ルール: 駅モードなら全トークンを駅マッチ / 地域モードならスキップ
+      if (currentAreaMode === "station") {
+        tokens.forEach(token => {
+          let lines = STATION_LINE_MAP[token];
+          let key = token;
+          if (!lines) {
+            const stripped = token.replace(/[町村]$/, "");
+            if (stripped !== token && STATION_LINE_MAP[stripped]) {
+              lines = STATION_LINE_MAP[stripped]; key = stripped;
+            }
           }
-        }
-        if (lines && lines.length) {
-          if (!matchedStations.includes(key)) matchedStations.push(key);
-          lines.forEach(l => { if (!allRpLines.includes(l)) allRpLines.push(l); });
-        }
-      });
+          if (lines && lines.length) {
+            if (!matchedStations.includes(key)) matchedStations.push(key);
+            lines.forEach(l => { if (!allRpLines.includes(l)) allRpLines.push(l); });
+          }
+        });
+      }
 
-      const hasAnyStationMatch = matchedStations.length > 0;
       const stationClean = tokens[0] || rawArea.replace(/駅|周辺|付近|近く/g, "").trim();
 
-      // NEIGHBORHOOD_WARD_MAPにマッチ（かつ駅名でない）トークンを全収集（複数区・市対応）
-      const neighborhoodTokens = tokens.filter(t => NEIGHBORHOOD_WARD_MAP[t] && !STATION_LINE_MAP[t]);
-      const neighborhoodWard   = neighborhoodTokens.length > 0 ? NEIGHBORHOOD_WARD_MAP[neighborhoodTokens[0]] : null;
-      // 全ユニーク区・市名を収集（例: 城東区・東大阪市・平野区 が混在する場合に全部選択）
-      const allNeighborhoodWards = [...new Set(neighborhoodTokens.map(t => NEIGHBORHOOD_WARD_MAP[t]))];
+      // 地域トークン収集: 地域モードはWARD_CODE_MAP直接も対象（守口市 等）
+      const neighborhoodTokens = currentAreaMode === "ward"
+        ? tokens.filter(t => NEIGHBORHOOD_WARD_MAP[t] || WARD_CODE_MAP[t])
+        : tokens.filter(t => NEIGHBORHOOD_WARD_MAP[t] && !STATION_LINE_MAP[t]);
+      const neighborhoodWard = neighborhoodTokens.length > 0
+        ? (NEIGHBORHOOD_WARD_MAP[neighborhoodTokens[0]] || neighborhoodTokens[0])
+        : null;
+      const allNeighborhoodWards = [...new Set(neighborhoodTokens.map(t => NEIGHBORHOOD_WARD_MAP[t] || t))];
 
-      // 所在地判定：1駅もマッチせず、かつ（市区郡文字 OR NEIGHBORHOOD_WARD_MAP収録地名）の場合
-      const isWardArea_itandi = !hasAnyStationMatch && (
-        /[都道府県市区郡]/.test(tokens.join("")) || !!neighborhoodWard
-      );
+      // ボタン押下が絶対ルール
+      const isWardArea_itandi = currentAreaMode === "ward";
 
       // 未登録トークン検出: 駅でも地名マップにもない → page-scriptで警告ログ
       const unknownTokens = tokens.filter(t =>
@@ -1949,24 +1970,23 @@ function openInstructions(siteKey) {
           ? adjStructure.split(/[,、・\/\.\s]+/).map(s => s.trim()).filter(Boolean)
           : [],
       };
-      const { city_codes, route_ids } = buildAreaRouteCodes(adjC);
+      // ボタン押下が絶対ルール: currentAreaMode を buildAreaRouteCodes に渡す
+      const { city_codes, route_ids } = buildAreaRouteCodes(adjC, currentAreaMode);
 
-      // 駅名リスト（あいまい解決つき：完全一致→部分一致→前後駅）
+      // 駅名リスト: 駅モードのみ解決（地域モードでは空のまま）
       const adjAreaClean = (adjC.desired_area || adjC.area || "").trim();
       const areaParts = adjAreaClean.split(/[,、・\/\s]+/)
         .map(s => s.replace(/駅|周辺|付近|近く|沿線/g, "").trim()).filter(Boolean);
       const realpro_station_names = [];
-      for (const part of areaParts) {
-        // WARD_CODE_MAP収録済みの市区郡は必ず地名として扱う（守口市=京阪駅名と同名でも市として優先）
-        if (WARD_CODE_MAP[part]) continue;
-        // 地名判定: 市/区/郡 を含む OR 地名マップ収録済み → 駅解決をスキップ
-        if (!STATION_LINE_MAP[part] && (/[市区郡]/.test(part) || NEIGHBORHOOD_WARD_MAP[part])) continue;
-        const station = resolveStation(part);
-        if (station) {
-          if (!realpro_station_names.includes(station)) realpro_station_names.push(station);
-          if (searchMode === "wide") {
-            const adj = getAdjacentStations(station, STATION_LINE_MAP[station] || []);
-            adj.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
+      if (currentAreaMode === "station") {
+        for (const part of areaParts) {
+          const station = resolveStation(part);
+          if (station) {
+            if (!realpro_station_names.includes(station)) realpro_station_names.push(station);
+            if (searchMode === "wide") {
+              const adj = getAdjacentStations(station, STATION_LINE_MAP[station] || []);
+              adj.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
+            }
           }
         }
       }
@@ -2036,23 +2056,24 @@ function openInstructions(siteKey) {
       const adjC = buildAdjCustomer(selectedCustomer);
       renderInstrSteps("reins", adjC);
 
-      // 沿線 or 所在地 判定して条件を組み立てる
+      // ボタン押下が絶対ルール: currentAreaMode で駅 or 地域を決定
       const rawArea = (adjC.desired_area || adjC.area || "").trim();
-      // 複数トークンに対応（「駅で選択」モードで複数駅が入る場合）
       const areaToks = rawArea.split(/[、・,\/\s]+/).map(t => t.replace(/駅|周辺|付近|近く/g, "").trim()).filter(Boolean);
-      const matchedTok = areaToks.find(t => STATION_LINE_MAP[t] || STATION_LINE_MAP[t.replace(/[町村]$/, "")]);
+      const isStationMode = currentAreaMode === "station";
+
+      // 駅モードのみ: 路線・駅名を解決
+      const matchedTok = isStationMode
+        ? areaToks.find(t => STATION_LINE_MAP[t] || STATION_LINE_MAP[t.replace(/[町村]$/, "")])
+        : null;
       const stationKey = matchedTok
         ? (STATION_LINE_MAP[matchedTok] ? matchedTok : matchedTok.replace(/[町村]$/, ""))
         : (areaToks.length === 1 ? areaToks[0] : "");
-      const stationLines = areaToks.reduce((acc, t) => {
+      const stationLines = isStationMode ? areaToks.reduce((acc, t) => {
         const key = STATION_LINE_MAP[t] ? t : t.replace(/[町村]$/, "");
         (STATION_LINE_MAP[key] || []).forEach(l => { if (!acc.includes(l)) acc.push(l); });
         return acc;
-      }, []);
-      // 内部路線名 → REINS表記に変換（最大3路線・沿線1〜3に対応）
-      const reinsLines = stationLines
-        .slice(0, 3)
-        .map(l => REINS_LINE_MAP[l] || l);
+      }, []) : [];
+      const reinsLines = stationLines.slice(0, 3).map(l => REINS_LINE_MAP[l] || l);
       const reinsLine = reinsLines[0] || null;
 
       const adjPet     = document.getElementById("adj-pet")?.checked ?? false;
@@ -2062,10 +2083,10 @@ function openInstructions(siteKey) {
         walk_minutes:   adjC.walk_minutes || null,
         floor_plan:     adjC.floor_plan || null,
         building_age:   adjC.building_age || null,
-        reins_lines:    reinsLines,
-        reins_line:     reinsLine,
-        station_name:   reinsLine ? stationKey : null,
-        ward_name:      !reinsLine ? rawArea : null,
+        reins_lines:    isStationMode ? reinsLines : [],
+        reins_line:     isStationMode ? reinsLine : null,
+        station_name:   isStationMode ? stationKey : null,
+        ward_name:      !isStationMode ? rawArea : null,
         pet_ok:         adjPet,
         reins_reg_date: adjRegDate || null,
       };
