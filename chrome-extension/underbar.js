@@ -17,9 +17,9 @@
   let saved = {};
   try { saved = JSON.parse(sessionStorage.getItem(SK) || "{}"); } catch {}
 
-  // デフォルト初期位置：画面右上エリア（コンテンツ右端付近）
-  const DEFAULT_X = Math.max(0, window.innerWidth - 280);
-  const DEFAULT_Y = 180;
+  // デフォルト初期位置：画面中央付近
+  const DEFAULT_X = Math.round(window.innerWidth / 2) - 50;
+  const DEFAULT_Y = 200;
   let posX   = saved.posX   ?? DEFAULT_X;
   let posY   = saved.posY   ?? DEFAULT_Y;
   let panelW = saved.panelW ?? INIT_W;
