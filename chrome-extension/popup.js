@@ -1917,10 +1917,9 @@ function openInstructions(siteKey) {
         .map(s => s.replace(/駅|周辺|付近|近く|沿線/g, "").trim()).filter(Boolean);
       const realpro_station_names = [];
       for (const part of areaParts) {
-        // 地名・市区郡名（かつ駅名でない）→ 地名として扱い駅解決をスキップ
-        // 例: 「福島区」→ resolveStation が「福島駅」に誤マッチするのを防ぐ
-        // 例: 「豊中市」→ resolveStation が「豊中駅」に誤マッチするのを防ぐ
-        if (!STATION_LINE_MAP[part] && (NEIGHBORHOOD_WARD_MAP[part] || WARD_CODE_MAP[part])) continue;
+        // 地名判定: 市/区/郡 を含む OR 地名マップ収録済み → 駅解決をスキップ
+        // 「市が入ってるから地名」が基本ルール。STATION_LINE_MAPに完全一致する駅名は優先
+        if (!STATION_LINE_MAP[part] && (/[市区郡]/.test(part) || NEIGHBORHOOD_WARD_MAP[part] || WARD_CODE_MAP[part])) continue;
         const station = resolveStation(part);
         if (station) {
           if (!realpro_station_names.includes(station)) realpro_station_names.push(station);
