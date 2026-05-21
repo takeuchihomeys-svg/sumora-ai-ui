@@ -247,11 +247,22 @@
                     var stName = stNames[stIdx];
                     stIdx++;
 
-                    // isVisなし＋scrollIntoViewで検索（スクロール外・仮想リスト対策）
+                    // 駅ラベル検索（路線名への誤ヒット防止のため完全一致優先）
+                    // 例: "阪急宝塚本線".includes("塚本") → trueになる誤マッチを防ぐ
                     function tryClickStation(name) {
+                      var n = norm(name);
+                      // STEP1: textContent完全一致（駅名は短く路線名とは一致しない）
                       var lbl = [].slice.call(document.querySelectorAll("label")).find(function (l) {
-                        return textMatch(l.textContent, name);
+                        return norm(l.textContent.trim()) === n;
                       });
+                      // STEP2: 完全一致なければ checkbox持ち・短テキスト(≤8文字)限定で部分一致
+                      if (!lbl) {
+                        lbl = [].slice.call(document.querySelectorAll("label")).find(function (l) {
+                          var inp = l.querySelector("input[type='checkbox']");
+                          var txt = l.textContent.trim();
+                          return inp && txt.length <= 8 && norm(txt).includes(n);
+                        });
+                      }
                       if (!lbl) return false;
                       try { lbl.scrollIntoView({ behavior: "instant", block: "nearest" }); } catch (e) {}
                       var inp = lbl.querySelector("input[type='checkbox']");
