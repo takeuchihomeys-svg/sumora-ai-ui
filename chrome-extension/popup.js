@@ -2126,7 +2126,9 @@ function openInstructions(siteKey) {
           rent_max:      rpEffectiveRentMax,
           walk_minutes:  adjC.walk_minutes,
           floor_plan:    adjC.floor_plan,
-          building_age:  adjC.building_age,
+          building_age:  adjC.building_age
+            ? (searchMode === "wide" ? adjC.building_age + 5 : adjC.building_age)
+            : null,
           city_codes,
           route_ids,
           station_names: realpro_station_names,
