@@ -306,7 +306,8 @@
         "5K以上":"5K_OVER","5K":"5K_OVER","5K_OVER":"5K_OVER"
       };
       var fpStr = cond.floor_plan.trim();
-      var ijouMatch = fpStr.match(/^(.+?)以上$/);
+      var ijouMatch  = fpStr.match(/^(.+?)以上$/);
+      var rangeMatch = fpStr.match(/^(.+?)[～〜](.+?)$/);
       if (ijouMatch) {
         var baseKey = FLOOR_TEXT_IT[ijouMatch[1].trim()] || ijouMatch[1].trim();
         var baseIdx = FLOOR_RANK_IT.indexOf(baseKey);
@@ -314,6 +315,18 @@
           for (var ri = baseIdx; ri < FLOOR_RANK_IT.length; ri++) {
             tick(document.querySelector('input[name="room_layout:in"][id="' + FLOOR_RANK_IT[ri] + '"]'));
           }
+        }
+      } else if (rangeMatch) {
+        // 「1DK～1LDK」→ 1DKから1LDKまでの範囲を全選択
+        var fromKey = FLOOR_TEXT_IT[rangeMatch[1].trim()] || rangeMatch[1].trim();
+        var toKey   = FLOOR_TEXT_IT[rangeMatch[2].trim()] || rangeMatch[2].trim();
+        var fromIdx = FLOOR_RANK_IT.indexOf(fromKey);
+        var toIdx   = FLOOR_RANK_IT.indexOf(toKey);
+        if (fromIdx < 0) fromIdx = 0;
+        if (toIdx < 0) toIdx = fromIdx;
+        if (fromIdx > toIdx) { var tmp = fromIdx; fromIdx = toIdx; toIdx = tmp; }
+        for (var ri = fromIdx; ri <= toIdx; ri++) {
+          tick(document.querySelector('input[name="room_layout:in"][id="' + FLOOR_RANK_IT[ri] + '"]'));
         }
       } else {
         fpStr.split(/[・,、\/\.\s]+/).forEach(function (plan) {

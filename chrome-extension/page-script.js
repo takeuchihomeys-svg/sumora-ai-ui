@@ -513,7 +513,9 @@
       var fpStr = cond.floor_plan.trim();
       var vals = [];
       var ijouMatch = fpStr.match(/^(.+?)以上$/);
+      var rangeMatch = fpStr.match(/^(.+?)[～〜](.+?)$/);
       if (ijouMatch) {
+        // 「3LDK以上」→ 3LDK〜メゾネットを全選択
         var baseFloor = ijouMatch[1].trim();
         var baseIdx = FLOOR_RANK.indexOf(baseFloor);
         if (baseIdx >= 0) {
@@ -522,7 +524,21 @@
             if (fv && vals.indexOf(fv) < 0) vals.push(fv);
           }
         }
+      } else if (rangeMatch) {
+        // 「1DK～1LDK」→ 1DKから1LDKまでの範囲を全選択
+        var fromFloor = rangeMatch[1].trim();
+        var toFloor   = rangeMatch[2].trim();
+        var fromIdx = FLOOR_RANK.indexOf(fromFloor);
+        var toIdx   = FLOOR_RANK.indexOf(toFloor);
+        if (fromIdx < 0) fromIdx = 0;
+        if (toIdx < 0) toIdx = fromIdx;
+        if (fromIdx > toIdx) { var tmp = fromIdx; fromIdx = toIdx; toIdx = tmp; }
+        for (var ri = fromIdx; ri <= toIdx; ri++) {
+          var fv = FLOOR_MAP[FLOOR_RANK[ri]];
+          if (fv && vals.indexOf(fv) < 0) vals.push(fv);
+        }
       } else {
+        // 「1DK,1LDK」などカンマ区切り
         var plans = fpStr.split(/[,、・\/\.\s]+/).map(function(s){return s.trim();}).filter(Boolean);
         vals = plans.map(function(p){ return FLOOR_MAP[p]; }).filter(Boolean);
       }
