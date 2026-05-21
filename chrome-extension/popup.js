@@ -1954,6 +1954,16 @@ function openInstructions(siteKey) {
       // 区名だけの場合はcity_codesの直接チェックで複数区を同時選択（例:北区+福島区）
       const detailWard = detailNeighborhood ? NEIGHBORHOOD_WARD_MAP[neighPart] : null;
 
+      // 広げて検索：賃料上限を自動拡張（手動入力adjRentMaxがある場合はそのまま）
+      const rpEffectiveRentMax = (() => {
+        if (!adjC.rent_max) return null;
+        if (searchMode === "wide" && !adjRentMax) {
+          const buffer = adjC.rent_max <= 100000 ? 5000 : 10000;
+          return adjC.rent_max + buffer;
+        }
+        return adjC.rent_max;
+      })();
+
       const rpUnknownTokens = computeUnknownTokens(adjAreaClean);
       showUnknownWarn(rpUnknownTokens); // クリック後も最新状態で更新
       window.parent.postMessage({
@@ -1961,7 +1971,7 @@ function openInstructions(siteKey) {
         action: "autofill",
         conditions: {
           rent_min:      adjC.rent_min,
-          rent_max:      adjC.rent_max,
+          rent_max:      rpEffectiveRentMax,
           walk_minutes:  adjC.walk_minutes,
           floor_plan:    adjC.floor_plan,
           building_age:  adjC.building_age,
