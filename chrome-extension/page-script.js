@@ -37,6 +37,7 @@
   // ── リアプロ自動入力 ──────────────────────────────────────────────
   var RENT_OPTS = [-1,20000,25000,30000,35000,40000,45000,50000,55000,60000,65000,70000,75000,80000,85000,90000,95000,100000,110000,120000,130000,140000,150000,160000,170000,180000,190000,200000,250000,300000,350000,400000,450000,500000,600000,700000,800000,900000,1000000];
   var AGE_OPTS  = [-1,1,3,5,7,10,15,20,25,30,35,40,45,50];
+  var AREA_OPTS = [-1,15,20,25,30,35,40,45,50,55,60,70,80,100];
   var STRUCTURE_MAP = {
     "鉄骨鉄筋コンクリート造":"1","SRC":"1","SRC造":"1",
     "鉄筋コンクリート造":"2","RC":"2","RC造":"2",
@@ -490,6 +491,8 @@
     // ── T=0ms: 基本条件 ──────────────────────────────────────────────
     if (cond.rent_min) setSelVal("rental_cost1", nearestDown(RENT_OPTS, cond.rent_min));
     if (cond.rent_max) setSelVal("rental_cost2", nearestUp(RENT_OPTS, cond.rent_max));
+    if (cond.area_min) setSelVal("square_meter_l", nearestDown(AREA_OPTS, cond.area_min));
+    if (cond.area_max) setSelVal("square_meter_h", nearestUp(AREA_OPTS, cond.area_max));
     var feeCb = document.querySelector('input[name="include_common_fee"]');
     if (feeCb && !feeCb.checked) feeCb.click();
     if (cond.walk_minutes) {

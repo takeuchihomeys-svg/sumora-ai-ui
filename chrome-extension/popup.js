@@ -1980,6 +1980,8 @@ function openInstructions(siteKey) {
           station_names: realpro_station_names,
           detail_area:   detailNeighborhood,
           detail_ward:   detailWard,
+          area_min:        c.area_min || c.min_area || null,
+          area_max:        c.area_max || c.max_area || null,
           structure_types: adjC.structure_types,
           pet_ok: adjPet,
           unknown_tokens: rpUnknownTokens.length > 0 ? rpUnknownTokens : null,
