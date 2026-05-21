@@ -231,7 +231,7 @@
           var lineIdx = 0;
           function clickNextLine() {
             if (lineIdx >= lineNames.length) {
-              // 全路線完了 → 駅リスト描画待ち
+              // 全路線完了 → 駅リスト描画待ち（JR複数路線対応で2500msに延長）
               setTimeout(function () {
                 if (stNames.length) {
                   var stIdx = 0;
@@ -246,7 +246,22 @@
                     }
                     var stName = stNames[stIdx];
                     stIdx++;
-                    var found = clickLabel(stName);
+
+                    // isVisなし＋scrollIntoViewで検索（スクロール外・仮想リスト対策）
+                    function tryClickStation(name) {
+                      var lbl = [].slice.call(document.querySelectorAll("label")).find(function (l) {
+                        return textMatch(l.textContent, name);
+                      });
+                      if (!lbl) return false;
+                      try { lbl.scrollIntoView({ behavior: "instant", block: "nearest" }); } catch (e) {}
+                      var inp = lbl.querySelector("input[type='checkbox']");
+                      if (!inp && lbl.htmlFor) inp = document.getElementById(lbl.htmlFor);
+                      if (inp) { if (!inp.checked) inp.click(); } else { lbl.click(); }
+                      console.log("[AX] 駅クリック: " + name);
+                      return true;
+                    }
+
+                    var found = tryClickStation(stName);
                     if (!found) {
                       // JRフォールバック: 未選択のJR路線をすべてクリック → 再試行
                       console.log("[AX] 駅未発見: " + stName + " → JR沿線フォールバック開始");
@@ -262,8 +277,7 @@
                       if (addedLines.length) {
                         console.log("[AX] JR路線を追加: " + addedLines.join(" / "));
                         setTimeout(function () {
-                          var retryFound = clickLabel(stName);
-                          if (!retryFound) console.log("[AX] JRフォールバック後も駅未発見: " + stName);
+                          if (!tryClickStation(stName)) console.log("[AX] JRフォールバック後も駅未発見: " + stName);
                           setTimeout(clickNextStation, 700);
                         }, 1500);
                       } else {
@@ -280,7 +294,7 @@
                   clickBtn("確定");
                   setTimeout(onDone, 1500);
                 }
-              }, 1500);
+              }, 2500);
               return;
             }
             clickLabel(lineNames[lineIdx]);
