@@ -1663,8 +1663,9 @@ function renderInstrSteps(siteKey, cOverride) {
 function setupAreaModeSelector(c, siteKey) {
   const rawA = (c.desired_area || c.area || "").trim();
   const toks = rawA.split(/[、・,\/\s]+/).map(t => t.replace(/駅|周辺|付近|近く/g,"").trim()).filter(Boolean);
-  const stTokens   = toks.filter(t => STATION_LINE_MAP[t] || STATION_LINE_MAP[t.replace(/[町村]$/,"")]);
-  const wardTokens = toks.filter(t => !STATION_LINE_MAP[t] && !STATION_LINE_MAP[t.replace(/[町村]$/,"")]);
+  // WARD_CODE_MAP収録済み市区郡は駅名と同名でも必ず地域扱い（守口市=京阪駅名 等の衝突を防ぐ）
+  const stTokens   = toks.filter(t => !WARD_CODE_MAP[t] && (STATION_LINE_MAP[t] || STATION_LINE_MAP[t.replace(/[町村]$/,"")]));
+  const wardTokens = toks.filter(t => WARD_CODE_MAP[t] || (!STATION_LINE_MAP[t] && !STATION_LINE_MAP[t.replace(/[町村]$/,"")]));
   const hasMixed   = stTokens.length > 0 && wardTokens.length > 0;
   const hasEither  = stTokens.length > 0 || wardTokens.length > 0;
 
@@ -1791,6 +1792,8 @@ function openInstructions(siteKey) {
       const allRpLines = [];       // リアプロ内部路線名（重複なし）
 
       tokens.forEach(token => {
+        // WARD_CODE_MAP収録済み市区郡は駅名と同名でも地域として扱い、駅マッチをスキップ
+        if (WARD_CODE_MAP[token]) return;
         let lines = STATION_LINE_MAP[token];
         let key = token;
         // 完全一致しなければ末尾の「町」「村」を除いて再試行（例：吉田町→吉田）
@@ -1954,9 +1957,10 @@ function openInstructions(siteKey) {
         .map(s => s.replace(/駅|周辺|付近|近く|沿線/g, "").trim()).filter(Boolean);
       const realpro_station_names = [];
       for (const part of areaParts) {
+        // WARD_CODE_MAP収録済みの市区郡は必ず地名として扱う（守口市=京阪駅名と同名でも市として優先）
+        if (WARD_CODE_MAP[part]) continue;
         // 地名判定: 市/区/郡 を含む OR 地名マップ収録済み → 駅解決をスキップ
-        // 「市が入ってるから地名」が基本ルール。STATION_LINE_MAPに完全一致する駅名は優先
-        if (!STATION_LINE_MAP[part] && (/[市区郡]/.test(part) || NEIGHBORHOOD_WARD_MAP[part] || WARD_CODE_MAP[part])) continue;
+        if (!STATION_LINE_MAP[part] && (/[市区郡]/.test(part) || NEIGHBORHOOD_WARD_MAP[part])) continue;
         const station = resolveStation(part);
         if (station) {
           if (!realpro_station_names.includes(station)) realpro_station_names.push(station);
