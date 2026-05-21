@@ -1376,6 +1376,13 @@ function buildCondData(c, mode = "pinpoint") {
   };
 }
 
+// preferencesテキストから面積下限を抽出（例: "25平米以上" → 25）
+function parseAreaMin(prefs) {
+  if (!prefs) return null;
+  const m = prefs.match(/(\d+)\s*(?:平米|㎡|m2|m²)\s*以上/i);
+  return m ? Number(m[1]) : null;
+}
+
 function formatYen(n) {
   if (!n) return null;
   if (n >= 10000) return (n / 10000).toFixed(1) + "万円";
@@ -1865,7 +1872,7 @@ function openInstructions(siteKey) {
         walk_minutes:    adjWalk    ? Number(adjWalk)    : (c.walk_minutes || null),
         building_age:    adjAge     ? Number(adjAge)     : (c.building_age || null),
         floor_plan:      adjFloor   || c.floor_plan || c.layout || null,
-        area_min:        c.area_min || c.min_area || null,
+        area_min:        c.area_min || c.min_area || parseAreaMin(c.preferences || c.other_requests || null),
         structure_types: (adjStructure || c.building_structure || c.structure || "")
           .split(/[,、・\/\.\s]+/).map(s => s.trim()).filter(Boolean),
         pet_ok:      adjPet,
@@ -1991,7 +1998,7 @@ function openInstructions(siteKey) {
           station_names: realpro_station_names,
           detail_area:   detailNeighborhood,
           detail_ward:   detailWard,
-          area_min:        c.area_min || c.min_area || null,
+          area_min:        c.area_min || c.min_area || parseAreaMin(c.preferences || c.other_requests || null),
           area_max:        c.area_max || c.max_area || null,
           structure_types: adjC.structure_types,
           pet_ok: adjPet,
