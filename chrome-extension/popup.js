@@ -1837,8 +1837,20 @@ function openInstructions(siteKey) {
         }
       }
 
+      // 広げて検索：賃料上限を自動拡張（リアプロと同じバッファロジック）
+      const rawRentMax = c.rent_max || c.max_rent || null;
+      const itandiEffectiveRentMax = (() => {
+        if (adjRentMax) return Number(adjRentMax);
+        if (!rawRentMax) return null;
+        if (searchMode === "wide") {
+          const buffer = rawRentMax <= 100000 ? 5000 : 10000;
+          return rawRentMax + buffer;
+        }
+        return rawRentMax;
+      })();
+
       const conditions = {
-        rent_max:        adjRentMax ? Number(adjRentMax) : (c.rent_max || c.max_rent || null),
+        rent_max:        itandiEffectiveRentMax,
         walk_minutes:    adjWalk    ? Number(adjWalk)    : (c.walk_minutes || null),
         building_age:    adjAge     ? Number(adjAge)     : (c.building_age || null),
         floor_plan:      adjFloor   || c.floor_plan || c.layout || null,
