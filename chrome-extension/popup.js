@@ -1699,6 +1699,7 @@ function setupAreaModeSelector(c, siteKey) {
 function preloadAdjForm(c) {
   document.getElementById("adj-area").value      = c.desired_area || c.area || "";
   document.getElementById("adj-rent-max").value  = c.rent_max || c.max_rent || "";
+  document.getElementById("adj-area-min").value  = c.area_min || c.min_area || parseAreaMin(c.preferences || c.other_requests || null) || "";
   document.getElementById("adj-walk").value      = c.walk_minutes || "";
   document.getElementById("adj-age").value       = c.building_age || "";
   document.getElementById("adj-floor").value     = c.floor_plan || c.layout || "";
@@ -1772,6 +1773,7 @@ function openInstructions(siteKey) {
       const c = selectedCustomer;
       const adjArea      = document.getElementById("adj-area").value.trim();
       const adjRentMax   = document.getElementById("adj-rent-max").value;
+      const adjAreaMin   = document.getElementById("adj-area-min").value;
       const adjWalk      = document.getElementById("adj-walk").value;
       const adjAge       = document.getElementById("adj-age").value;
       const adjFloor     = document.getElementById("adj-floor").value.trim();
@@ -1872,7 +1874,7 @@ function openInstructions(siteKey) {
         walk_minutes:    adjWalk    ? Number(adjWalk)    : (c.walk_minutes || null),
         building_age:    adjAge     ? Number(adjAge)     : (c.building_age || null),
         floor_plan:      adjFloor   || c.floor_plan || c.layout || null,
-        area_min:        c.area_min || c.min_area || parseAreaMin(c.preferences || c.other_requests || null),
+        area_min:        adjAreaMin ? Number(adjAreaMin) : (c.area_min || c.min_area || parseAreaMin(c.preferences || c.other_requests || null)),
         structure_types: (adjStructure || c.building_structure || c.structure || "")
           .split(/[,、・\/\.\s]+/).map(s => s.trim()).filter(Boolean),
         pet_ok:      adjPet,
@@ -1923,6 +1925,7 @@ function openInstructions(siteKey) {
       // 調整フォームの値を優先して使う
       const adjArea     = document.getElementById("adj-area").value.trim();
       const adjRentMax  = document.getElementById("adj-rent-max").value;
+      const adjAreaMin  = document.getElementById("adj-area-min").value;
       const adjWalk     = document.getElementById("adj-walk").value;
       const adjAge      = document.getElementById("adj-age").value;
       const adjFloor     = document.getElementById("adj-floor").value.trim();
@@ -1998,7 +2001,7 @@ function openInstructions(siteKey) {
           station_names: realpro_station_names,
           detail_area:   detailNeighborhood,
           detail_ward:   detailWard,
-          area_min:        c.area_min || c.min_area || parseAreaMin(c.preferences || c.other_requests || null),
+          area_min:        adjAreaMin ? Number(adjAreaMin) : (c.area_min || c.min_area || parseAreaMin(c.preferences || c.other_requests || null)),
           area_max:        c.area_max || c.max_area || null,
           structure_types: adjC.structure_types,
           pet_ok: adjPet,
