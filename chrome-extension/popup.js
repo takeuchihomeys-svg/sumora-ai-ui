@@ -236,6 +236,7 @@ const NEIGHBORHOOD_WARD_MAP = {
   "稲田": "東大阪市",    "楠根": "東大阪市",
   "小若江": "東大阪市",  "菱江": "東大阪市",
   "横小路": "東大阪市",  "柏田": "東大阪市",  "高井田": "東大阪市",
+  "長田西": "東大阪市",  "長田東": "東大阪市", "長田中": "東大阪市",
   // ── 堺市 ──────────────────────────────────────────────────────
   "深井": "堺市中区",  "鳳": "堺市西区",
   "上野芝": "堺市西区","上神谷": "堺市南区","金岡": "堺市北区",
@@ -1775,6 +1776,17 @@ function openInstructions(siteKey) {
         /[都道府県市区郡]/.test(tokens.join("")) || !!neighborhoodWard
       );
 
+      // 未登録トークン検出: 駅でも地名マップにもない → page-scriptで警告ログ
+      const unknownTokens = tokens.filter(t =>
+        t.length >= 2 &&
+        !/^[0-9０-９]/.test(t) &&                   // 数字は除外
+        !matchedStations.includes(t) &&              // 駅ではない
+        !STATION_LINE_MAP[t] &&                      // 駅マップにない
+        !STATION_LINE_MAP[t.replace(/[町村]$/,"")] && // 末尾除去でも駅にない
+        !NEIGHBORHOOD_WARD_MAP[t] &&                 // 地名マップにない
+        !/[都道府県市区郡]/.test(t)                    // 市区郡名でもない
+      );
+
       // itandi路線名に変換（ITANDI_LINE_MAP_FILL）、重複排除
       const itandiLines = allRpLines.flatMap(l => {
         const v = ITANDI_LINE_MAP_FILL[l];
@@ -1826,6 +1838,7 @@ function openInstructions(siteKey) {
         town_area:   null, // ward_town_mapで代替（後方互換用として残す）
         itandi_lines: !isWardArea_itandi ? itandiLines : [],
         station_names: stationNames,
+        unknown_tokens: unknownTokens.length > 0 ? unknownTokens : null,
       };
       // chrome.tabs はiframe内で使用不可 → underbar.js経由でitandi-content.jsに中継
       window.parent.postMessage({ from: "aixlinx-underbar", action: "itandi-autofill", conditions }, "*");
