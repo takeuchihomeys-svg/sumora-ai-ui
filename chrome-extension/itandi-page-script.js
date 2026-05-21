@@ -244,9 +244,35 @@
                       }, 700);
                       return;
                     }
-                    clickLabel(stNames[stIdx]);
+                    var stName = stNames[stIdx];
                     stIdx++;
-                    setTimeout(clickNextStation, 700);
+                    var found = clickLabel(stName);
+                    if (!found) {
+                      // JRフォールバック: 未選択のJR路線をすべてクリック → 再試行
+                      console.log("[AX] 駅未発見: " + stName + " → JR沿線フォールバック開始");
+                      var jrLabels = [].slice.call(document.querySelectorAll("label")).filter(function (l) {
+                        var inp = l.querySelector("input[type='checkbox']");
+                        return inp && !inp.checked && norm(l.textContent).includes("JR") && isVis(l);
+                      });
+                      var addedLines = [];
+                      jrLabels.forEach(function (l) {
+                        l.click();
+                        addedLines.push(l.textContent.trim().slice(0, 40));
+                      });
+                      if (addedLines.length) {
+                        console.log("[AX] JR路線を追加: " + addedLines.join(" / "));
+                        setTimeout(function () {
+                          var retryFound = clickLabel(stName);
+                          if (!retryFound) console.log("[AX] JRフォールバック後も駅未発見: " + stName);
+                          setTimeout(clickNextStation, 700);
+                        }, 1500);
+                      } else {
+                        console.log("[AX] 追加できるJR路線なし。駅をスキップ: " + stName);
+                        setTimeout(clickNextStation, 700);
+                      }
+                    } else {
+                      setTimeout(clickNextStation, 700);
+                    }
                   }
                   clickNextStation();
                 } else {
