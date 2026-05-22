@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS conversations (
   id TEXT PRIMARY KEY,
   customer_name TEXT,
   status TEXT DEFAULT 'first_reply',
-  line_user_id TEXT NOT NULL,
+  line_user_id TEXT,
   last_message TEXT,
   last_sender TEXT,
   profile_image_url TEXT,
@@ -21,6 +21,9 @@ ALTER TABLE conversations DISABLE ROW LEVEL SECURITY;
 
 -- accountカラム（sumora / ieyasu / giga）
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS account TEXT DEFAULT 'sumora';
+
+-- line_user_id の NOT NULL 制約を解除（screening-adminから同期する際にnullのケースがあるため）
+ALTER TABLE conversations ALTER COLUMN line_user_id DROP NOT NULL;
 
 -- messages テーブル（LINEメッセージ）
 CREATE TABLE IF NOT EXISTS messages (

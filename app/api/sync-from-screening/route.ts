@@ -36,10 +36,10 @@ export async function POST(req: NextRequest) {
       .from("conversations")
       .upsert(
         {
-          id: record.id,
+          id: String(record.id),
           customer_name: record.customer_name ?? null,
           status: record.status ?? null,
-          line_user_id: record.line_user_id,
+          line_user_id: record.line_user_id ?? "",
           last_message: record.last_message ?? null,
           last_sender: record.last_sender ?? null,
           updated_at: record.updated_at ?? null,
@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
       );
 
     if (error) {
-      console.error("sync conversations error:", error);
+      console.error("sync conversations error:", error.code, error.message, error.details, error.hint);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
     return NextResponse.json({ ok: true, synced: "conversation", id: record.id });
