@@ -626,21 +626,7 @@ export default function Home() {
 
     try {
       setGenerating(true);
-      setError("");
-
-      const res = await fetch(
-        `https://sumora-line-ai.takeuchi-homeys.workers.dev/debug/reply?message=${encodeURIComponent(
-          latestCustomerMessage
-        )}&state=${encodeURIComponent(selectedConversation.status)}`
-      );
-
-      const data = await res.json();
-
-      if (!res.ok || !data.ok) {
-        throw new Error(data.error || "返信案取得失敗");
-      }
-
-      setReplyDraft(data.ai_reply || "");
+      setError("AI返信案機能は現在停止中です。");
     } catch (requestError) {
       console.error(requestError);
       setError("返信案の作成に失敗しました。");
@@ -857,17 +843,17 @@ export default function Home() {
       // LINEに送信（テキスト→画像の順）
       try {
         if (textToSend) {
-          await fetch("https://sumora-line-ai.takeuchi-homeys.workers.dev/api/send-message", {
+          await fetch("/api/send-line-message", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: textToSend }),
+            body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: textToSend, account: selectedConversation.account }),
           });
         }
         for (const imageUrl of imageUrls) {
-          await fetch("https://sumora-line-ai.takeuchi-homeys.workers.dev/api/send-message", {
+          await fetch("/api/send-line-message", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, image_url: imageUrl }),
+            body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, image_url: imageUrl, account: selectedConversation.account }),
           });
         }
       } catch {
@@ -897,18 +883,8 @@ export default function Home() {
         lastMessage: c.lastMessage,
         messages: c.messages.slice(-20).map((m) => ({ id: m.id, sender: m.sender, text: m.text || "" })),
       }));
-      const res = await fetch("https://sumora-line-ai.takeuchi-homeys.workers.dev/api/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: searchQuery, conversations: convData }),
-      });
-      const data = await res.json();
-      if (data.ok && Array.isArray(data.matchedIds)) {
-        setAiSearchIds(data.matchedIds.map(String));
-        setAiSearchMessageIds(data.matchedMessageIds || {});
-      } else {
-        setAiSearchIds([]);
-      }
+      setAiSearchIds([]);
+      setAiSearchMessageIds({});
     } catch {
       setAiSearchIds([]);
     } finally {
@@ -993,17 +969,17 @@ export default function Home() {
     // LINEに送信（画像→テキストの順）
     try {
       if (imageUrl) {
-        await fetch("https://sumora-line-ai.takeuchi-homeys.workers.dev/api/send-message", {
+        await fetch("/api/send-line-message", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, image_url: imageUrl }),
+          body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, image_url: imageUrl, account: selectedConversation.account }),
         });
       }
       if (text.trim()) {
-        await fetch("https://sumora-line-ai.takeuchi-homeys.workers.dev/api/send-message", {
+        await fetch("/api/send-line-message", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: text.trim() }),
+          body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: text.trim(), account: selectedConversation.account }),
         });
       }
     } catch {
