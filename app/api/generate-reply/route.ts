@@ -149,7 +149,7 @@ async function generateAiReply(apiKey: string, message: string, context: string)
 }
 
 export async function POST(req: NextRequest) {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) return NextResponse.json({ ok: false, error: "OPENAI_API_KEY not set" }, { status: 500 });
 
   const { message, state, customerName, recentMessages } = await req.json() as {
