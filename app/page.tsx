@@ -626,7 +626,22 @@ export default function Home() {
 
     try {
       setGenerating(true);
-      setError("AI返信案機能は現在停止中です。");
+      setError("");
+
+      const res = await fetch("/api/generate-reply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: latestCustomerMessage,
+          state: selectedConversation.status,
+          customerName: selectedConversation.customerName,
+          recentMessages: selectedConversation.messages.slice(-10).map((m) => ({ sender: m.sender, text: m.text || "" })),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || "返信案取得失敗");
+      setReplyDraft(data.ai_reply || "");
     } catch (requestError) {
       console.error(requestError);
       setError("返信案の作成に失敗しました。");
@@ -883,8 +898,18 @@ export default function Home() {
         lastMessage: c.lastMessage,
         messages: c.messages.slice(-20).map((m) => ({ id: m.id, sender: m.sender, text: m.text || "" })),
       }));
-      setAiSearchIds([]);
-      setAiSearchMessageIds({});
+      const res = await fetch("/api/ai-search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: searchQuery, conversations: convData }),
+      });
+      const data = await res.json();
+      if (data.ok && Array.isArray(data.matchedIds)) {
+        setAiSearchIds(data.matchedIds.map(String));
+        setAiSearchMessageIds(data.matchedMessageIds || {});
+      } else {
+        setAiSearchIds([]);
+      }
     } catch {
       setAiSearchIds([]);
     } finally {
