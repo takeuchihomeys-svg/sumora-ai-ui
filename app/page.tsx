@@ -745,8 +745,9 @@ export default function Home() {
         }
       }, 50);
     } catch (requestError) {
-      console.error(requestError);
-      setError("返信案の作成に失敗しました。");
+      const msg = requestError instanceof Error ? requestError.message : "返信案の作成に失敗しました。";
+      console.error("generateReply error:", msg);
+      setError(`返信案の作成に失敗しました: ${msg}`);
     } finally {
       setGenerating(false);
     }

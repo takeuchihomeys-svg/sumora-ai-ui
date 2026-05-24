@@ -95,67 +95,67 @@ function getNextState(current: string, intent: string): string {
   return map[intent] || map["other"] || current;
 }
 
-async function classifyIntent(apiKey: string, state: string, message: string, history: string): Promise<string> {
-  const prompt = `あなたは賃貸仲介LINE営業AIのintent分類器です。
-現在のstate: ${state}
-会話履歴:
-${history || "なし"}
-最新メッセージ: ${message}
+async function callClaude(apiKey: string, system: string, userMessage: string): Promise<string> {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1024,
+      system,
+      messages: [{ role: "user", content: userMessage }],
+    }),
+  });
 
+  if (!res.ok) {
+    const errText = await res.text();
+    console.error("Anthropic API error:", res.status, errText);
+    throw new Error(`Anthropic ${res.status}: ${errText}`);
+  }
+
+  const data = await res.json() as { content?: Array<{ type: string; text: string }> };
+  return data.content?.[0]?.text?.trim() || "";
+}
+
+async function classifyIntent(apiKey: string, state: string, message: string, history: string): Promise<string> {
+  const system = `あなたは賃貸仲介LINE営業AIのintent分類器です。
 以下のintent_keyのどれか1つだけをJSONで返してください。
 condition_share, consult_property_search, estimate_request, like_property, dislike_property,
 viewing_request, application_interest, search_more_properties, conditions_complete,
 conditions_incomplete, property_available, property_unavailable, screening_passed, screening_failed, other
 
-{"intent_key":"..."}`;
+必ず {"intent_key":"..."} のJSON形式のみで返すこと。説明不要。`;
 
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: "gpt-4o-mini",
-      temperature: 0,
-      response_format: { type: "json_object" },
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-  if (!res.ok) return "other";
-  const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
+  const userPrompt = `現在のstate: ${state}
+会話履歴:
+${history || "なし"}
+最新メッセージ: ${message}`;
+
   try {
-    const parsed = JSON.parse(data.choices?.[0]?.message?.content || "{}") as { intent_key?: string };
-    return normalizeIntent(parsed.intent_key || "other");
+    const text = await callClaude(apiKey, system, userPrompt);
+    const jsonMatch = text.match(/\{[\s\S]*?\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]) as { intent_key?: string };
+      return normalizeIntent(parsed.intent_key || "other");
+    }
+    return "other";
   } catch {
     return "other";
   }
 }
 
 async function generateAiReply(apiKey: string, message: string, context: string): Promise<string> {
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: "gpt-4o-mini",
-      temperature: 0.7,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "system", content: context },
-        { role: "user", content: message },
-      ],
-    }),
-  });
-  if (!res.ok) {
-    const errText = await res.text();
-    console.error("OpenAI generateAiReply error:", res.status, errText);
-    throw new Error(`OpenAI ${res.status}: ${errText}`);
-  }
-  const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-  return data.choices?.[0]?.message?.content?.trim() || "返信生成失敗";
+  const text = await callClaude(apiKey, SYSTEM_PROMPT, `${context}\n\n${message}`);
+  return text || "返信生成失敗";
 }
 
 export async function POST(req: NextRequest) {
-  // trim()だけでは中間の\r\nが除去できずHeaders.appendエラーになるため全空白を除去
-  const apiKey = process.env.OPENAI_API_KEY?.replace(/\s/g, "");
-  if (!apiKey) return NextResponse.json({ ok: false, error: "OPENAI_API_KEY not set" }, { status: 500 });
+  const apiKey = process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "");
+  if (!apiKey) return NextResponse.json({ ok: false, error: "ANTHROPIC_API_KEY not set" }, { status: 500 });
 
   let message: string, state: string, customerName: string | undefined, recentMessages: Array<{ sender: string; text: string }> | undefined;
   try {
@@ -197,9 +197,6 @@ ${detectedIntent}
 
 【次に進む営業状態】
 ${nextState}
-
-【お客様の最新メッセージ】
-${message}
 
 【直近の会話履歴】
 ${history || "なし"}
