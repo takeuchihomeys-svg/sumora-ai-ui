@@ -236,7 +236,6 @@ export default function Home() {
   const [accountFilter, setAccountFilter] = useState<"all" | "linked" | "sumora" | "ieyasu" | "giga">("all");
   const [linkedLineUserIds, setLinkedLineUserIds] = useState<Set<string>>(new Set());
   const [showSendConfirm, setShowSendConfirm] = useState(false);
-  const [showAccountPicker, setShowAccountPicker] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const aixFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -684,19 +683,6 @@ export default function Home() {
     } finally {
       setStatusSaving(false);
     }
-  };
-
-  const changeConversationAccount = async (newAccount: AccountKey) => {
-    if (!selectedConversation.id) return;
-    setShowAccountPicker(false);
-    const { error } = await supabase
-      .from("conversations")
-      .update({ account: newAccount })
-      .eq("id", selectedConversation.id);
-    if (error) { console.error(error); return; }
-    setConversations((prev) =>
-      prev.map((c) => c.id === selectedConversation.id ? { ...c, account: newAccount } : c)
-    );
   };
 
   const generateReply = async () => {
@@ -1443,43 +1429,13 @@ export default function Home() {
                 </button>
               </div>
 
-              {/* 右: アカウント + ステータス */}
+              {/* 右: ステータス */}
               <div className="ml-auto flex items-center gap-1.5">
-                {/* アカウントバッジ（タップで変更） */}
-                {selectedConversation.id && (() => {
-                  const acct = getAccountMeta(selectedConversation.account);
-                  return (
-                    <div className="relative shrink-0">
-                      <button
-                        onClick={() => { setShowAccountPicker(!showAccountPicker); setShowStatusMenu(false); }}
-                        className={`rounded-full border px-2 py-0.5 text-[10px] font-bold border-transparent ${acct.color}`}
-                      >
-                        {acct.icon} {acct.label}
-                      </button>
-                      {showAccountPicker && (
-                        <div className="absolute right-0 top-full z-30 mt-2 w-40 overflow-hidden rounded-2xl border border-[#d1d7db] bg-white shadow-xl">
-                          {ACCOUNT_LIST.map((a) => (
-                            <button
-                              key={a.key}
-                              onClick={() => changeConversationAccount(a.key)}
-                              className={`flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-[13px] font-semibold hover:bg-[#f5f6f6] border-b border-[#f0f2f5] last:border-b-0 ${selectedConversation.account === a.key || (!selectedConversation.account && a.key === "sumora") ? "bg-[#f0f2f5]" : ""}`}
-                            >
-                              <span>{a.icon}</span>
-                              <span>{a.label}</span>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
-
                 <div className="relative shrink-0">
                   <button
                     onClick={() => {
                       setShowStatusMenu(!showStatusMenu);
                       setShowAixMenu(false);
-                      setShowAccountPicker(false);
                     }}
                     disabled={!selectedConversation.id || statusSaving}
                     className={`rounded-full border px-2 py-0.5 text-[10px] shadow-none ${detailStatusMeta.color} border-transparent`}
