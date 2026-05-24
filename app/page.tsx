@@ -244,6 +244,7 @@ export default function Home() {
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const notifiedCalendarIds = useRef<Set<string>>(new Set());
+  const aiDraftRef = useRef<string>("");
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conversationsRef = useRef<Conversation[]>([]);
   const [navHidden, setNavHidden] = useState(false);
@@ -734,6 +735,7 @@ export default function Home() {
       if (!res.ok || !data.ok) throw new Error(data.error || "返信案取得失敗");
 
       const draft = data.ai_reply || "";
+      aiDraftRef.current = draft;
       setReplyDraft(draft);
 
       // 生成完了後にテキストエリアへフォーカスしてスクロール
@@ -976,6 +978,24 @@ export default function Home() {
         }
       } catch {
         // LINE送信失敗しても管理画面の動作は続ける
+      }
+
+      // 学習データ保存（テキスト送信時のみ・バックグラウンド）
+      if (textToSend) {
+        const lastCustomerMsg = latestCustomerMessage;
+        if (lastCustomerMsg) {
+          fetch("/api/save-reply-example", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              conversationState: selectedConversation.status,
+              customerMessage: lastCustomerMsg,
+              sentReply: textToSend,
+              aiDraft: aiDraftRef.current || undefined,
+            }),
+          }).catch(() => {});
+        }
+        aiDraftRef.current = "";
       }
 
       setReplyDraft("");
@@ -1692,7 +1712,7 @@ export default function Home() {
               {/* 文章クリアボタン（入力/AI文案があるときのみ表示） */}
               {replyDraft && (
                 <button
-                  onClick={() => setReplyDraft("")}
+                  onClick={() => { setReplyDraft(""); aiDraftRef.current = ""; }}
                   className="flex h-8 w-8 items-center justify-center rounded-full border border-[#d1d7db] bg-white text-[#54656f] shadow-sm active:scale-95 transition-transform duration-75"
                   title="文章を消す"
                 >

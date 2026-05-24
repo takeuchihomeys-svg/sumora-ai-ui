@@ -92,6 +92,24 @@ ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS account TEXT;
 
 -- RLS無効化（ログインなしでアクセス可能にする）
 ALTER TABLE property_customers DISABLE ROW LEVEL SECURITY;
+
+-- ai_reply_examples テーブル（LINE文案の自己学習用）
+-- 実際に送信した返信を蓄積し、次回のAI生成プロンプトに注入する
+CREATE TABLE IF NOT EXISTS ai_reply_examples (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_state TEXT NOT NULL DEFAULT 'first_reply',
+  customer_message TEXT NOT NULL,
+  sent_reply TEXT NOT NULL,
+  ai_draft TEXT,
+  was_ai_used BOOLEAN DEFAULT FALSE,
+  was_ai_modified BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_reply_examples_state ON ai_reply_examples(conversation_state);
+CREATE INDEX IF NOT EXISTS idx_ai_reply_examples_created_at ON ai_reply_examples(created_at DESC);
+
+ALTER TABLE ai_reply_examples DISABLE ROW LEVEL SECURITY;
 `.trim();
 
 export async function GET() {

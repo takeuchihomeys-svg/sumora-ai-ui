@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { supabase } from "@/app/lib/supabase";
 
 const SYSTEM_PROMPT = `
 あなたは賃貸仲介サービス「スモラ」のLINE営業AIです。
@@ -148,6 +149,23 @@ ${history || "なし"}
   }
 }
 
+async function fetchExamples(state: string): Promise<string> {
+  const { data } = await supabase
+    .from("ai_reply_examples")
+    .select("customer_message, sent_reply, was_ai_used")
+    .eq("conversation_state", state)
+    .order("was_ai_used", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(5);
+
+  if (!data || data.length === 0) return "";
+
+  const lines = data.map((ex, i) =>
+    `【例${i + 1}】\nお客様: ${ex.customer_message}\nスモラ返信: ${ex.sent_reply}`
+  );
+  return `\n\n【過去の成功返信例（参考にしてください）】\n${lines.join("\n\n")}`;
+}
+
 async function generateAiReply(apiKey: string, message: string, context: string): Promise<string> {
   const text = await callClaude(apiKey, SYSTEM_PROMPT, `${context}\n\n${message}`);
   return text || "返信生成失敗";
@@ -204,7 +222,11 @@ ${history || "なし"}
 スモラ営業スタイルで自然なLINE返信案を1つだけ作成してください。
 `.trim();
 
-    const aiReply = await generateAiReply(apiKey, message, context);
+    // 過去の成功例をプロンプトに注入（学習ループ）
+    const examples = await fetchExamples(currentState);
+    const contextWithExamples = examples ? context + examples : context;
+
+    const aiReply = await generateAiReply(apiKey, message, contextWithExamples);
 
     return NextResponse.json({ ok: true, ai_reply: aiReply, detected_intent: detectedIntent, next_state: nextState });
   } catch (err) {
