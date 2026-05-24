@@ -150,20 +150,36 @@ ${history || "なし"}
 }
 
 async function fetchExamples(state: string): Promise<string> {
-  const { data } = await supabase
+  // ★スター例を最大3件（最優先）
+  const { data: starred } = await supabase
     .from("ai_reply_examples")
-    .select("customer_message, sent_reply, was_ai_used")
+    .select("customer_message, sent_reply")
     .eq("conversation_state", state)
-    .order("was_ai_used", { ascending: false })
+    .eq("is_starred", true)
     .order("created_at", { ascending: false })
-    .limit(5);
+    .limit(3);
 
-  if (!data || data.length === 0) return "";
+  // AI文案をそのまま使った例を最大3件（補助）
+  const { data: aiUsed } = await supabase
+    .from("ai_reply_examples")
+    .select("customer_message, sent_reply")
+    .eq("conversation_state", state)
+    .eq("is_starred", false)
+    .eq("was_ai_used", true)
+    .order("created_at", { ascending: false })
+    .limit(3);
 
-  const lines = data.map((ex, i) =>
-    `【例${i + 1}】\nお客様: ${ex.customer_message}\nスモラ返信: ${ex.sent_reply}`
+  const allExamples = [
+    ...(starred || []).map((ex) => ({ ...ex, label: "★良い例" })),
+    ...(aiUsed || []).map((ex) => ({ ...ex, label: "参考例" })),
+  ];
+
+  if (allExamples.length === 0) return "";
+
+  const lines = allExamples.map((ex, i) =>
+    `【${ex.label}${i + 1}】\nお客様: ${ex.customer_message}\nスモラ返信: ${ex.sent_reply}`
   );
-  return `\n\n【過去の成功返信例（参考にしてください）】\n${lines.join("\n\n")}`;
+  return `\n\n【過去の優良返信例（特に★は積極的に参考にしてください）】\n${lines.join("\n\n")}`;
 }
 
 async function generateAiReply(apiKey: string, message: string, context: string): Promise<string> {

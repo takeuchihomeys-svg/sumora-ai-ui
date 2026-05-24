@@ -110,6 +110,10 @@ CREATE INDEX IF NOT EXISTS idx_ai_reply_examples_state ON ai_reply_examples(conv
 CREATE INDEX IF NOT EXISTS idx_ai_reply_examples_created_at ON ai_reply_examples(created_at DESC);
 
 ALTER TABLE ai_reply_examples DISABLE ROW LEVEL SECURITY;
+
+-- is_starred: スタッフが☆でマークした高品質な例（最優先でプロンプト注入）
+ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS is_starred BOOLEAN DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_ai_reply_examples_starred ON ai_reply_examples(is_starred) WHERE is_starred = TRUE;
 `.trim();
 
 export async function GET() {

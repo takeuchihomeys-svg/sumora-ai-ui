@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
 export async function POST(req: NextRequest) {
-  const { conversationState, customerMessage, sentReply, aiDraft } = await req.json() as {
+  const { conversationState, customerMessage, sentReply, aiDraft, isStarred } = await req.json() as {
     conversationState: string;
     customerMessage: string;
     sentReply: string;
     aiDraft?: string;
+    isStarred?: boolean;
   };
 
   if (!customerMessage || !sentReply) {
@@ -25,6 +26,7 @@ export async function POST(req: NextRequest) {
       ai_draft: aiDraft || null,
       was_ai_used: wasAiUsed,
       was_ai_modified: wasAiModified,
+      is_starred: isStarred ?? false,
     });
 
   if (error) {

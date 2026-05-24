@@ -185,6 +185,7 @@ export default function Home() {
   const [pageLoading, setPageLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [sending, setSending] = useState(false);
+  const [starredMsgIds, setStarredMsgIds] = useState<Set<string>>(new Set());
   const [statusSaving, setStatusSaving] = useState(false);
   const [error, setError] = useState("");
   const [showStatusMenu, setShowStatusMenu] = useState(false);
@@ -753,6 +754,33 @@ export default function Home() {
     } finally {
       setGenerating(false);
     }
+  };
+
+  const starMessage = (msgId: string, staffText: string) => {
+    if (starredMsgIds.has(msgId)) return; // 既にスター済みはスキップ
+
+    // このスタッフメッセージより前の最後のお客様メッセージを探す
+    const msgs = selectedConversation.messages;
+    const msgIdx = msgs.findIndex((m) => m.id === msgId);
+    const prevCustomerMsg = msgs
+      .slice(0, msgIdx)
+      .filter((m) => m.sender === "customer")
+      .slice(-1)[0];
+
+    if (!prevCustomerMsg) return;
+
+    setStarredMsgIds((prev) => new Set([...prev, msgId]));
+
+    fetch("/api/save-reply-example", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversationState: selectedConversation.status,
+        customerMessage: prevCustomerMsg.text,
+        sentReply: staffText,
+        isStarred: true,
+      }),
+    }).catch(() => {});
   };
 
   const openImagePicker = () => {
@@ -1565,6 +1593,15 @@ export default function Home() {
                         </span>
                       )}
                       <div className={`flex items-end gap-1 ${isCustomer ? "justify-start" : "justify-end"}`}>
+                        {!isCustomer && message.text && message.text !== "[画像]" && message.text !== "[動画]" && (
+                          <button
+                            onClick={() => starMessage(message.id, message.text)}
+                            className={`mb-0.5 shrink-0 text-[15px] leading-none transition-all duration-150 active:scale-110 ${starredMsgIds.has(message.id) ? "text-yellow-400" : "text-[#ccc] hover:text-yellow-300"}`}
+                            title="良い返信例として★登録"
+                          >
+                            {starredMsgIds.has(message.id) ? "★" : "☆"}
+                          </button>
+                        )}
                         {!isCustomer && (
                           <span className="mb-0.5 shrink-0 text-[10px] leading-none text-[#667781]">
                             {message.time}
