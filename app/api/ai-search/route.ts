@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(req: NextRequest) {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const apiKey = process.env.OPENAI_API_KEY?.replace(/\s/g, "");
   if (!apiKey) return NextResponse.json({ ok: false, error: "OPENAI_API_KEY not set" }, { status: 500 });
 
   const { query, conversations } = await req.json() as {

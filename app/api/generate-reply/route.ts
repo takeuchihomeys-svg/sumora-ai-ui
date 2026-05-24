@@ -143,13 +143,18 @@ async function generateAiReply(apiKey: string, message: string, context: string)
       ],
     }),
   });
-  if (!res.ok) throw new Error(`OpenAI error: ${await res.text()}`);
+  if (!res.ok) {
+    const errText = await res.text();
+    console.error("OpenAI generateAiReply error:", res.status, errText);
+    throw new Error(`OpenAI ${res.status}: ${errText}`);
+  }
   const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
   return data.choices?.[0]?.message?.content?.trim() || "返信生成失敗";
 }
 
 export async function POST(req: NextRequest) {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  // trim()だけでは中間の\r\nが除去できずHeaders.appendエラーになるため全空白を除去
+  const apiKey = process.env.OPENAI_API_KEY?.replace(/\s/g, "");
   if (!apiKey) return NextResponse.json({ ok: false, error: "OPENAI_API_KEY not set" }, { status: 500 });
 
   const { message, state, customerName, recentMessages } = await req.json() as {
