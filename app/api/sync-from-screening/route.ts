@@ -57,6 +57,12 @@ export async function POST(req: NextRequest) {
   }
 
   if (table === "messages") {
+    // screening-adminからのstaffメッセージ（AI自動返信案）は同期しない
+    // staffメッセージはsumora-ai-uiの管理画面から直接送信したものだけ表示する
+    if (record.sender === "staff") {
+      return NextResponse.json({ ok: true, action: "ignored_staff_message" });
+    }
+
     const { error } = await supabase
       .from("messages")
       .upsert(
