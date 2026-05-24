@@ -119,6 +119,19 @@ function getInitial(name: string) {
   return name?.trim()?.charAt(0) || "?";
 }
 
+// \u30a2\u30ab\u30a6\u30f3\u30c8\u5b9a\u7fa9\uff08\u30d5\u30a3\u30eb\u30bf\u30fc\u30fb\u30d0\u30c3\u30b8\u30fb\u30d4\u30c3\u30ab\u30fc\u5171\u901a\uff09
+const ACCOUNT_LIST = [
+  { key: "sumora", label: "\u30b9\u30e2\u30e9",   icon: "\ud83e\udd84", color: "bg-purple-100 text-purple-700" },
+  { key: "ieyasu", label: "\u30a4\u30a8\u30e4\u30b9", icon: "\ud83c\udfef", color: "bg-amber-100 text-amber-700" },
+  { key: "giga",   label: "\u30ae\u30ac\u8cc3\u8cb8", icon: "\ud83c\udfe2", color: "bg-teal-100 text-teal-700" },
+  { key: "hasu",   label: "\u30cf\u30b9",     icon: "\ud83c\udf38", color: "bg-pink-100 text-pink-700" },
+] as const;
+type AccountKey = typeof ACCOUNT_LIST[number]["key"];
+
+function getAccountMeta(account?: string | null) {
+  return ACCOUNT_LIST.find((a) => a.key === account) ?? ACCOUNT_LIST[0]; // \u672a\u8a2d\u5b9a\u306f\u30b9\u30e2\u30e9
+}
+
 const URL_REGEX = /(https?:\/\/[^\s\u3000-\u9fff\uff00-\uffef]+)/g;
 
 function isVideoUrl(url: string) {
@@ -223,6 +236,7 @@ export default function Home() {
   const [accountFilter, setAccountFilter] = useState<"all" | "linked" | "sumora" | "ieyasu" | "giga">("all");
   const [linkedLineUserIds, setLinkedLineUserIds] = useState<Set<string>>(new Set());
   const [showSendConfirm, setShowSendConfirm] = useState(false);
+  const [showAccountPicker, setShowAccountPicker] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const aixFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -670,6 +684,19 @@ export default function Home() {
     } finally {
       setStatusSaving(false);
     }
+  };
+
+  const changeConversationAccount = async (newAccount: AccountKey) => {
+    if (!selectedConversation.id) return;
+    setShowAccountPicker(false);
+    const { error } = await supabase
+      .from("conversations")
+      .update({ account: newAccount })
+      .eq("id", selectedConversation.id);
+    if (error) { console.error(error); return; }
+    setConversations((prev) =>
+      prev.map((c) => c.id === selectedConversation.id ? { ...c, account: newAccount } : c)
+    );
   };
 
   const generateReply = async () => {
@@ -1336,6 +1363,16 @@ export default function Home() {
                           <span className="truncate text-[14px] font-semibold text-[#111b21]">
                             {conversation.customerName}
                           </span>
+                          {(() => {
+                            const acct = getAccountMeta(conversation.account);
+                            // スモラ以外はバッジ表示
+                            if (acct.key !== "sumora") return (
+                              <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${acct.color}`}>
+                                {acct.icon} {acct.label}
+                              </span>
+                            );
+                            return null;
+                          })()}
                           {assignees[conversation.id] && (
                             <span className="shrink-0 rounded-full bg-[#e3f2fd] px-1.5 py-0.5 text-[10px] font-bold text-[#1565C0]">
                               {assignees[conversation.id]}
@@ -1406,13 +1443,43 @@ export default function Home() {
                 </button>
               </div>
 
-              {/* 右: ステータス */}
+              {/* 右: アカウント + ステータス */}
               <div className="ml-auto flex items-center gap-1.5">
+                {/* アカウントバッジ（タップで変更） */}
+                {selectedConversation.id && (() => {
+                  const acct = getAccountMeta(selectedConversation.account);
+                  return (
+                    <div className="relative shrink-0">
+                      <button
+                        onClick={() => { setShowAccountPicker(!showAccountPicker); setShowStatusMenu(false); }}
+                        className={`rounded-full border px-2 py-0.5 text-[10px] font-bold border-transparent ${acct.color}`}
+                      >
+                        {acct.icon} {acct.label}
+                      </button>
+                      {showAccountPicker && (
+                        <div className="absolute right-0 top-full z-30 mt-2 w-40 overflow-hidden rounded-2xl border border-[#d1d7db] bg-white shadow-xl">
+                          {ACCOUNT_LIST.map((a) => (
+                            <button
+                              key={a.key}
+                              onClick={() => changeConversationAccount(a.key)}
+                              className={`flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-[13px] font-semibold hover:bg-[#f5f6f6] border-b border-[#f0f2f5] last:border-b-0 ${selectedConversation.account === a.key || (!selectedConversation.account && a.key === "sumora") ? "bg-[#f0f2f5]" : ""}`}
+                            >
+                              <span>{a.icon}</span>
+                              <span>{a.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 <div className="relative shrink-0">
                   <button
                     onClick={() => {
                       setShowStatusMenu(!showStatusMenu);
                       setShowAixMenu(false);
+                      setShowAccountPicker(false);
                     }}
                     disabled={!selectedConversation.id || statusSaving}
                     className={`rounded-full border px-2 py-0.5 text-[10px] shadow-none ${detailStatusMeta.color} border-transparent`}
@@ -1991,6 +2058,12 @@ export default function Home() {
                   ] as { key: typeof accountFilter; label: string; icon: string; sub: string }[]
                 ).map((item) => {
                   const isSelected = accountFilter === item.key;
+                  // アカウント別の件数
+                  const count = item.key === "all"
+                    ? conversations.length
+                    : item.key === "linked"
+                    ? conversations.filter((c) => linkedLineUserIds.has(c.lineUserId)).length
+                    : conversations.filter((c) => (c.account ?? "sumora") === item.key).length;
                   return (
                     <button
                       key={item.key}
@@ -2008,6 +2081,9 @@ export default function Home() {
                         </div>
                         <div className="text-[11px] text-[#8696a0]">{item.sub}</div>
                       </div>
+                      <span className="shrink-0 rounded-full bg-[#e9edef] px-2 py-0.5 text-[11px] font-bold text-[#667781]">
+                        {count}
+                      </span>
                       {isSelected && (
                         <span className="text-[#2196F3] font-bold text-lg">✓</span>
                       )}
