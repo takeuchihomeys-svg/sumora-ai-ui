@@ -9,6 +9,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 このプロジェクトの対象ツール：
 - **物件出しツール**（お客様条件管理・物件紹介・顧客一覧）
 - **見積書作成ツール**（初期費用概算・LINE送付）
+- **LINE返信AI部署**（文案生成・自己学習・ナレッジ管理）
 
 ---
 
@@ -41,6 +42,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
  (#1〜#9)  (#41 物件出し)          (#36 全部)
            (#42 見積書)
            (#43 物件検索)
+           (#L LINE返信AI)
 ```
 
 ---
@@ -816,6 +818,155 @@ STEP 3: 追加後
 
 ---
 
+## LINE返信AI部署（#L）
+
+LINEのお客様メッセージに対してAIが文案を生成し、使うたびに賢くなる自己学習ループ。スモラのLINE営業品質を継続的に高めることが部署の存在意義。
+
+**管理ファイル**: `memory/dept_line_reply.md`
+
+**管轄API routes**:
+| ルート | 役割 |
+|--------|------|
+| `app/api/generate-reply/route.ts` | 文案生成・意図分類・営業状態遷移 |
+| `app/api/save-reply-example/route.ts` | 送信例の保存 + Claude深層分析 → ai_reply_knowledge |
+
+**管轄DBテーブル**:
+- `ai_reply_examples` — 実際に送った返信の蓄積（☆フラグ・AI使用フラグ）
+- `ai_reply_knowledge` — Claudeが抽出したパターン・口調・フレーズ・原則
+
+**学習ループ（フロー）**:
+```
+① スタッフがLINEで返信を送信
+  ↓（バックグラウンドで自動）
+② save-reply-example API に保存（ai_reply_examples）
+  ↓（☆マークまたは手動インポートの場合）
+③ Claude Haiku が深層分析 → pattern/style/phrase/principle を抽出
+④ ai_reply_knowledge に保存
+  ↓（次回の文案生成時）
+⑤ generate-reply が knowledge + examples を注入してプロンプト強化
+```
+
+**メンバー一覧**:
+
+| メンバー | 役割 |
+|---------|------|
+| **#L-AI** | **竹内AI分身**（スモラLINE営業のビジョン・判断軸を体現。何を学習すべきかを決める） |
+| **#L-IMP インポート担当** | 過去のLINEやりとりをSupabaseに一括書き込みする専任 |
+| **#L-KN ナレッジキュレーター** | ai_reply_knowledge の品質管理・重複削除・黄金パターン昇格 |
+| **#L-QC 品質監視担当** | wasAiUsed率・☆率・wasAiModified率を監視してプロンプト改善サイクルを回す |
+| **#L-PR プロンプト改善担当** | SYSTEM_PROMPTのBefore/After管理。改善のたびに効果測定 |
+| **#L-W 倉庫管理人** | `memory/dept_line_reply.md` をリアルタイム更新 |
+
+---
+
+### #L-AI 竹内AI分身部長
+スモラのLINE営業哲学をこの部署に宿す。「信頼を築いて契約に繋げる」ことが最終ゴール。
+
+- 「どんなやりとりを☆にすべきか」の基準を定義する
+- 学習が薄いconversation_stateを特定し、インポート優先度を決める
+- 文案品質の最終判断者
+
+---
+
+### #L-IMP インポート担当（最優先）
+**今すぐ必要な役職。ai_reply_knowledge が空の間は全部署が半稼働。**
+
+**ミッション**: 竹内悠馬が貼り付けた過去のLINEやりとりをパースして Supabase に書き込む。
+
+**入力フォーマット**（竹内悠馬が貼り付ける形式）:
+```
+スモラ：〇〇〇〇（スタッフの返信）
+お客さん：〇〇〇〇（お客様のメッセージ）
+スモラ：〇〇〇〇
+```
+
+**処理フロー**:
+```
+STEP 1: 会話テキストをパース（スモラ：/お客さん：を分割）
+STEP 2: 「お客さん → スモラ」のペアを抽出
+STEP 3: conversation_state を推定（ないければ "first_reply"）
+STEP 4: ai_reply_examples に INSERT（aiDraft=null → is_starred=false）
+STEP 5: analyzeAndSaveKnowledge を呼んで ai_reply_knowledge に学習データ保存
+```
+
+**インポート後の確認**:
+- ai_reply_examples の件数が増えたか
+- ai_reply_knowledge に pattern/style/phrase が追加されたか
+
+---
+
+### #L-KN ナレッジキュレーター
+ai_reply_knowledge テーブルの品質を管理する。貯まりっぱなしにしない。
+
+**主要責務**:
+- 重複エントリを発見したら低importanceを削除
+- 同じパターンが3件以上蓄積されたら importance+1 で「黄金パターン」に昇格
+- 古い・矛盾するエントリにフラグを立てる
+- conversation_state ごとの収録件数を管理（薄いstateをL-AIに報告）
+
+**定期チェック項目**:
+```
+□ ai_reply_knowledge の total件数・state別件数
+□ importance=10 の「黄金パターン」が存在するか
+□ 重複 content が5件以上ないか
+□ category ごとのバランス（pattern/style/phrase/principle）
+```
+
+---
+
+### #L-QC 品質監視担当
+数字でAI文案の品質を測り、改善サイクルを回す。
+
+**KPIダッシュボード（Supabaseで集計）**:
+```sql
+-- AI文案をそのまま使った率（高いほど良い）
+SELECT COUNT(*) FILTER (WHERE was_ai_used=true)::float / COUNT(*) AS ai_use_rate FROM ai_reply_examples;
+
+-- ☆率（良い例の蓄積速度）
+SELECT COUNT(*) FILTER (WHERE is_starred=true)::float / COUNT(*) AS star_rate FROM ai_reply_examples;
+
+-- 手修正率（AIがズレている頻度）
+SELECT COUNT(*) FILTER (WHERE was_ai_modified=true)::float / COUNT(*) AS edit_rate FROM ai_reply_examples;
+```
+
+**改善トリガー**:
+- ai_use_rate < 50% → SYSTEM_PROMPT を改善して L-PR に依頼
+- star_rate < 10% → スタッフに☆の付け方を周知
+- 特定 state の edit_rate が高い → そのstateの examples/knowledge 不足 → L-IMP に追加インポートを依頼
+
+---
+
+### #L-PR プロンプト改善担当
+`generate-reply/route.ts` の SYSTEM_PROMPT を管理する。変更のたびにBefore/Afterを記録。
+
+**変更ルール**:
+- 変更前に必ず現在のプロンプトを `dept_line_reply.md` に記録（Before）
+- 変更後は竹内悠馬に確認してもらってからコミット
+- 改善した場合は L-QC にKPI測定を依頼してEffectを検証
+
+**管理するプロンプト要素**:
+```
+SYSTEM_PROMPT（スモラ営業AIの基本人格・ルール）
+classifyIntent プロンプト（intent分類）
+analyzeAndSaveKnowledge プロンプト（深層分析）
+```
+
+---
+
+### #L-W 倉庫管理人
+`memory/dept_line_reply.md` をリアルタイム更新。以下のトリガーで即記録する。
+
+**記録トリガー**:
+```
+□ SYSTEM_PROMPT を変更した
+□ 新しいconversation_state を追加した
+□ ai_reply_knowledge の件数が大きく増減した
+□ 竹内悠馬からフィードバックを受けた
+□ 文案品質の改善・悪化を検知した
+```
+
+---
+
 ## AIXLINX部署（#36・全員必須）
 
 電話/メール/LINE/書類と管理プラットフォームを繋ぐAI統合連携システム。このプロジェクトでは物件出し・見積書のデータ統合に活用する。
@@ -883,3 +1034,4 @@ STEP 4 #7 博士が tsc + デグレ確認 → #2 レビュアーが最終承認
 | 秘書 #18 | `memory/dept_secretary.md` |
 | **物件検索ツール #43 / #43-W** | **`memory/dept_search_tool.md`** |
 | **DOM診断 #43-DOM / #43-W3** | **`memory/dept_dom_db.md`** |
+| **LINE返信AI #L / #L-W** | **`memory/dept_line_reply.md`** |
