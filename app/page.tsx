@@ -278,8 +278,14 @@ export default function Home() {
               time: formatTime(newMsg.created_at),
               rawCreatedAt: newMsg.created_at,
             };
-            setConversations((prev) =>
-              prev.map((c) => {
+            setConversations((prev) => {
+              const found = prev.some((c) => c.id === String(newMsg.conversation_id));
+              if (!found) {
+                // 新規会話のメッセージは一覧にないので全件再取得
+                fetchConversationsAndMessages();
+                return prev;
+              }
+              return prev.map((c) => {
                 if (c.id !== String(newMsg.conversation_id)) return c;
                 // 既に同じIDのメッセージがあれば追加しない（重複防止）
                 if (c.messages.some((m) => m.id === String(newMsg.id))) {
@@ -290,8 +296,8 @@ export default function Home() {
                 const aTime = a.updatedAt || "";
                 const bTime = b.updatedAt || "";
                 return bTime.localeCompare(aTime);
-              })
-            );
+              });
+            });
           } else {
             fetchConversationsAndMessages();
           }
