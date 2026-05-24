@@ -367,15 +367,42 @@ export default function Home() {
   // 会話を開いたとき：その会話の全メッセージを再取得（90日制限を超える古い履歴も表示）
   useEffect(() => {
     if (!selectedId) return;
-    const convIdNum = Number(selectedId);
-    if (isNaN(convIdNum)) return;
     supabase
       .from("messages")
       .select("*")
-      .eq("conversation_id", convIdNum)
+      .eq("conversation_id", selectedId)
       .order("created_at", { ascending: true })
-      .then(({ data }) => {
-        if (!data) return;
+      .then(({ data, error }) => {
+        if (error) {
+          // 文字列IDで失敗した場合は数値IDでリトライ
+          const convIdNum = Number(selectedId);
+          if (!isNaN(convIdNum)) {
+            supabase
+              .from("messages")
+              .select("*")
+              .eq("conversation_id", convIdNum)
+              .order("created_at", { ascending: true })
+              .then(({ data: data2 }) => {
+                if (!data2 || data2.length === 0) return;
+                const msgs = data2.map((m: SupabaseMessageRow) => ({
+                  id: String(m.id),
+                  sender: m.sender,
+                  text: m.text,
+                  imageUrl: m.image_url || undefined,
+                  time: formatTime(m.created_at),
+                  rawCreatedAt: m.created_at,
+                }));
+                setConversations((prev) =>
+                  prev.map((c) => (c.id === selectedId ? { ...c, messages: msgs } : c))
+                );
+              });
+          }
+          return;
+        }
+        if (!data || data.length === 0) {
+          // 空データで上書きしない（既存メッセージを保持）
+          return;
+        }
         const msgs = data.map((m: SupabaseMessageRow) => ({
           id: String(m.id),
           sender: m.sender,
@@ -435,13 +462,13 @@ export default function Home() {
       return;
     }
 
-    // 直近90日のメッセージのみ取得（1000行制限対策）
+    // 直近90日のメッセージのみ取得（新しい順で5000件 → 古いメッセージで枠が埋まるのを防ぐ）
     const since90Days = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
     const { data: messageRows, error: messageError } = await supabase
       .from("messages")
       .select("*")
       .gte("created_at", since90Days)
-      .order("created_at", { ascending: true })
+      .order("created_at", { ascending: false })
       .limit(5000);
 
     if (messageError) {
@@ -456,7 +483,7 @@ export default function Home() {
 
     const formatted: Conversation[] = conversationsData.map((conversation) => {
       const relatedMessages = messagesData
-        .filter((message) => message.conversation_id === conversation.id)
+        .filter((message) => String(message.conversation_id) === String(conversation.id))
         .map((message) => ({
           id: String(message.id),
           sender: message.sender,
@@ -464,7 +491,8 @@ export default function Home() {
           imageUrl: message.image_url || undefined,
           time: formatTime(message.created_at),
           rawCreatedAt: message.created_at,
-        }));
+        }))
+        .sort((a, b) => (a.rawCreatedAt || "").localeCompare(b.rawCreatedAt || ""));
 
       // conversations.last_message はWorkersが毎回更新するので優先する
       // relatedMessagesはlimitや期間制限で欠ける場合があるため
