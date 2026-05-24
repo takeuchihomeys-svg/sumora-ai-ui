@@ -247,7 +247,11 @@ export async function POST(req: NextRequest) {
 
   try {
     const currentState = normalizeState(state || "first_reply");
-    const history = (recentMessages || []).slice(-10).map((m) => `${m.sender}: ${m.text}`).join("\n");
+    const history = (recentMessages || [])
+      .slice(-20)
+      .filter((m) => m.text && m.text !== "[画像]" && m.text !== "[動画]")
+      .map((m) => `${m.sender === "customer" ? "お客様" : "スモラ"}: ${m.text}`)
+      .join("\n");
 
     const detectedIntent = await classifyIntent(apiKey, currentState, message, history);
     const nextState = getNextState(currentState, detectedIntent);
