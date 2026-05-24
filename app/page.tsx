@@ -1689,6 +1689,20 @@ export default function Home() {
                 AIX
               </button>
 
+              {/* 文章クリアボタン（入力/AI文案があるときのみ表示） */}
+              {replyDraft && (
+                <button
+                  onClick={() => setReplyDraft("")}
+                  className="flex h-8 w-8 items-center justify-center rounded-full border border-[#d1d7db] bg-white text-[#54656f] shadow-sm active:scale-95 transition-transform duration-75"
+                  title="文章を消す"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              )}
+
               {/* 辞書ボタン（本マークのみ） */}
               <button
                 onClick={() => setShowTemplateModal(true)}
