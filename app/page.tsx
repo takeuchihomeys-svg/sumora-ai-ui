@@ -460,7 +460,7 @@ export default function Home() {
 
   const fetchConversationsAndMessages = async (silent = false) => {
     if (!silent) setPageLoading(true);
-    setError("");
+    if (!silent) setError("");
 
     const { data: conversationRows, error: conversationError } = await supabase
       .from("conversations")
@@ -507,20 +507,20 @@ export default function Home() {
         }))
         .sort((a, b) => (a.rawCreatedAt || "").localeCompare(b.rawCreatedAt || ""));
 
-      // conversations.last_message はWorkersが毎回更新するので優先する
-      // relatedMessagesはlimitや期間制限で欠ける場合があるため
-      const lastMessage =
-        conversation.last_message ||
-        (relatedMessages.length > 0
-          ? relatedMessages[relatedMessages.length - 1].text
-          : "メッセージなし");
+      // 最新メッセージを使って lastMessage/lastSender/updatedAt を決定
+      // DB の last_message は screening-admin 側の更新タイミングに依存するためズレが生じる
+      // relatedMessages（直接取得）を優先し、DB値はフォールバックとして使う
+      const latestMsg = relatedMessages.length > 0 ? relatedMessages[relatedMessages.length - 1] : null;
+      const lastMessage = latestMsg?.text || conversation.last_message || "メッセージなし";
+      const lastSender = latestMsg?.sender || conversation.last_sender || undefined;
 
-      // last_senderがDBにあればそれを優先、なければメッセージ配列から推定
-      const lastSender =
-        conversation.last_sender ||
-        (relatedMessages.length > 0
-          ? relatedMessages[relatedMessages.length - 1].sender
-          : undefined);
+      // effectiveUpdatedAt = max(DB updated_at, 最新メッセージ created_at)
+      const latestMsgTime = latestMsg?.rawCreatedAt || null;
+      const dbUpdatedAt = conversation.updated_at || null;
+      const effectiveUpdatedAt =
+        latestMsgTime && (!dbUpdatedAt || latestMsgTime > dbUpdatedAt)
+          ? latestMsgTime
+          : (dbUpdatedAt || undefined);
 
       return {
         id: String(conversation.id),
@@ -530,22 +530,36 @@ export default function Home() {
         status: conversation.status || "first_reply",
         lineUserId: conversation.line_user_id,
         profileImageUrl: conversation.profile_image_url || undefined,
-        updatedAt: conversation.updated_at || undefined,
+        updatedAt: effectiveUpdatedAt,
         account: conversation.account || undefined,
         messages: relatedMessages,
       };
     });
 
     // 既存のメッセージ配列の方が長い場合は保持（ポーリングによる縮退を防ぐ）
+    // メッセージを保持する場合もメタデータ（lastMessage等）は新しい値を使う
     setConversations((prev) => {
       const prevMap = new Map(prev.map((c) => [c.id, c]));
       const next = formatted.map((conv) => {
         const existing = prevMap.get(conv.id);
         if (existing && existing.messages.length > conv.messages.length) {
-          return { ...conv, messages: existing.messages };
+          // メッセージ数は既存を保持するが、lastMessage/lastSender/updatedAt は
+          // 既存のメッセージ配列の末尾から再計算して常に最新を反映させる
+          const latestExisting = existing.messages[existing.messages.length - 1];
+          return {
+            ...conv,
+            messages: existing.messages,
+            lastMessage: latestExisting?.text || conv.lastMessage,
+            lastSender: latestExisting?.sender || conv.lastSender,
+            updatedAt:
+              latestExisting?.rawCreatedAt &&
+              (!conv.updatedAt || latestExisting.rawCreatedAt > conv.updatedAt)
+                ? latestExisting.rawCreatedAt
+                : conv.updatedAt,
+          };
         }
         return conv;
-      });
+      }).sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
       conversationsRef.current = next;
       return next;
     });

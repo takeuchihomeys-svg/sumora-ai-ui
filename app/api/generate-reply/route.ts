@@ -157,26 +157,36 @@ export async function POST(req: NextRequest) {
   const apiKey = process.env.OPENAI_API_KEY?.replace(/\s/g, "");
   if (!apiKey) return NextResponse.json({ ok: false, error: "OPENAI_API_KEY not set" }, { status: 500 });
 
-  const { message, state, customerName, recentMessages } = await req.json() as {
-    message: string;
-    state: string;
-    customerName?: string;
-    recentMessages?: Array<{ sender: string; text: string }>;
-  };
+  let message: string, state: string, customerName: string | undefined, recentMessages: Array<{ sender: string; text: string }> | undefined;
+  try {
+    const body = await req.json() as {
+      message: string;
+      state: string;
+      customerName?: string;
+      recentMessages?: Array<{ sender: string; text: string }>;
+    };
+    message = body.message;
+    state = body.state;
+    customerName = body.customerName;
+    recentMessages = body.recentMessages;
+  } catch {
+    return NextResponse.json({ ok: false, error: "Invalid request body" }, { status: 400 });
+  }
 
   if (!message) return NextResponse.json({ ok: false, error: "message required" }, { status: 400 });
 
-  const currentState = normalizeState(state || "first_reply");
-  const history = (recentMessages || []).slice(-10).map((m) => `${m.sender}: ${m.text}`).join("\n");
+  try {
+    const currentState = normalizeState(state || "first_reply");
+    const history = (recentMessages || []).slice(-10).map((m) => `${m.sender}: ${m.text}`).join("\n");
 
-  const detectedIntent = await classifyIntent(apiKey, currentState, message, history);
-  const nextState = getNextState(currentState, detectedIntent);
+    const detectedIntent = await classifyIntent(apiKey, currentState, message, history);
+    const nextState = getNextState(currentState, detectedIntent);
 
-  const nameRule = customerName
-    ? `お客様名は「${customerName}さん」として返信してください。`
-    : "お客様名が不明なため、名前呼びは不要です。";
+    const nameRule = customerName
+      ? `お客様名は「${customerName}さん」として返信してください。`
+      : "お客様名が不明なため、名前呼びは不要です。";
 
-  const context = `
+    const context = `
 ${nameRule}
 
 【現在の営業状態】
@@ -197,7 +207,12 @@ ${history || "なし"}
 スモラ営業スタイルで自然なLINE返信案を1つだけ作成してください。
 `.trim();
 
-  const aiReply = await generateAiReply(apiKey, message, context);
+    const aiReply = await generateAiReply(apiKey, message, context);
 
-  return NextResponse.json({ ok: true, ai_reply: aiReply, detected_intent: detectedIntent, next_state: nextState });
+    return NextResponse.json({ ok: true, ai_reply: aiReply, detected_intent: detectedIntent, next_state: nextState });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "返信生成エラー";
+    console.error("generate-reply error:", msg);
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
+  }
 }
