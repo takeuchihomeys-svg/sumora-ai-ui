@@ -232,6 +232,7 @@ export default function Home() {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const notifiedCalendarIds = useRef<Set<string>>(new Set());
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const conversationsRef = useRef<Conversation[]>([]);
   const [navHidden, setNavHidden] = useState(false);
 
   const handleListScroll = () => {
@@ -255,9 +256,24 @@ export default function Home() {
 
     fetchConversationsAndMessages();
 
-    // Supabase real-time: 新しいメッセージをリアルタイム反映
+    // Supabase real-time: 新しいメッセージ・会話をリアルタイム反映
     const channel = supabase
       .channel("realtime-messages")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "conversations" },
+        () => {
+          // 新規会話が届いたらサイレントで全件再取得
+          fetchConversationsAndMessages(true);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "conversations" },
+        () => {
+          fetchConversationsAndMessages(true);
+        }
+      )
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "messages" },
@@ -267,51 +283,50 @@ export default function Home() {
             const msgText = (payload.new as { text?: string }).text || "新しいメッセージが届きました";
             showNotif("AIX LINX — 新着メッセージ", msgText, "/");
           }
-          // バックグラウンドで静かに更新（ローディング表示なし）
           const newMsg = payload.new as { id: number; conversation_id: number; sender: string; text: string; image_url?: string; created_at: string };
-          if (newMsg?.id) {
-            const msg = {
-              id: String(newMsg.id),
-              sender: newMsg.sender as "customer" | "staff",
-              text: newMsg.text,
-              imageUrl: newMsg.image_url || undefined,
-              time: formatTime(newMsg.created_at),
-              rawCreatedAt: newMsg.created_at,
-            };
-            setConversations((prev) => {
-              const found = prev.some((c) => c.id === String(newMsg.conversation_id));
-              if (!found) {
-                // 新規会話のメッセージは一覧にないので全件再取得
-                fetchConversationsAndMessages();
-                return prev;
-              }
-              return prev.map((c) => {
-                if (c.id !== String(newMsg.conversation_id)) return c;
-                // 既に同じIDのメッセージがあれば追加しない（重複防止）
-                if (c.messages.some((m) => m.id === String(newMsg.id))) {
-                  return { ...c, lastMessage: newMsg.text, lastSender: newMsg.sender, updatedAt: newMsg.created_at };
-                }
-                return { ...c, messages: [...c.messages, msg], lastMessage: newMsg.text, lastSender: newMsg.sender, updatedAt: newMsg.created_at };
-              }).sort((a, b) => {
-                const aTime = a.updatedAt || "";
-                const bTime = b.updatedAt || "";
-                return bTime.localeCompare(aTime);
-              });
-            });
-          } else {
-            fetchConversationsAndMessages();
+          if (!newMsg?.id) {
+            fetchConversationsAndMessages(true);
+            return;
           }
+
+          // refで会話が存在するか確認（setState内でfetchを呼ぶのを避けるため）
+          const found = conversationsRef.current.some((c) => c.id === String(newMsg.conversation_id));
+          if (!found) {
+            // 新規会話のメッセージ → サイレントで全件再取得
+            fetchConversationsAndMessages(true);
+            return;
+          }
+
+          const msg = {
+            id: String(newMsg.id),
+            sender: newMsg.sender as "customer" | "staff",
+            text: newMsg.text,
+            imageUrl: newMsg.image_url || undefined,
+            time: formatTime(newMsg.created_at),
+            rawCreatedAt: newMsg.created_at,
+          };
+
+          setConversations((prev) => {
+            const next = prev.map((c) => {
+              if (c.id !== String(newMsg.conversation_id)) return c;
+              if (c.messages.some((m) => m.id === String(newMsg.id))) {
+                return { ...c, lastMessage: newMsg.text, lastSender: newMsg.sender, updatedAt: newMsg.created_at };
+              }
+              return { ...c, messages: [...c.messages, msg], lastMessage: newMsg.text, lastSender: newMsg.sender, updatedAt: newMsg.created_at };
+            }).sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+            conversationsRef.current = next;
+            return next;
+          });
         }
       )
       .subscribe((status) => {
-        // realtime接続失敗時はポーリングで補完
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-          fetchConversationsAndMessages();
+          fetchConversationsAndMessages(true);
         }
       });
 
-    // フォールバック: 30秒ごとにポーリング（realtime漏れ対策）
-    const pollInterval = setInterval(() => fetchConversationsAndMessages(), 30_000);
+    // フォールバック: 5秒ごとにポーリング（realtime漏れ対策）
+    const pollInterval = setInterval(() => fetchConversationsAndMessages(true), 5_000);
 
     // カレンダーアラーム（1分ごとに予定開始15分前・開始時刻を通知）
     const calendarAlarm = setInterval(async () => {
@@ -403,8 +418,8 @@ export default function Home() {
     }
   }, [conversations]);
 
-  const fetchConversationsAndMessages = async () => {
-    setPageLoading(true);
+  const fetchConversationsAndMessages = async (silent = false) => {
+    if (!silent) setPageLoading(true);
     setError("");
 
     const { data: conversationRows, error: conversationError } = await supabase
@@ -483,20 +498,22 @@ export default function Home() {
     // 既存のメッセージ配列の方が長い場合は保持（ポーリングによる縮退を防ぐ）
     setConversations((prev) => {
       const prevMap = new Map(prev.map((c) => [c.id, c]));
-      return formatted.map((conv) => {
+      const next = formatted.map((conv) => {
         const existing = prevMap.get(conv.id);
         if (existing && existing.messages.length > conv.messages.length) {
           return { ...conv, messages: existing.messages };
         }
         return conv;
       });
+      conversationsRef.current = next;
+      return next;
     });
 
     if (formatted.length > 0) {
       setSelectedId((prev) => prev || formatted[0].id);
     }
 
-    setPageLoading(false);
+    if (!silent) setPageLoading(false);
   };
 
   const filteredConversations = useMemo(() => {
@@ -1327,7 +1344,7 @@ export default function Home() {
               {/* 中央: 名前（タップで更新） */}
               <div className="pointer-events-none absolute left-0 right-0 flex justify-center">
                 <button
-                  onClick={fetchConversationsAndMessages}
+                  onClick={() => fetchConversationsAndMessages()}
                   className="pointer-events-auto flex items-center max-w-[60%] active:opacity-60 transition-opacity"
                   title="タップして更新"
                 >
