@@ -673,7 +673,19 @@ export default function Home() {
   };
 
   const generateReply = async () => {
-    if (!latestCustomerMessage.trim()) return;
+    if (!selectedConversation.id) return;
+
+    // 直近の顧客メッセージ（なければ誰のでも最後のメッセージ）を使用
+    const msgs = selectedConversation.messages;
+    const targetMessage =
+      latestCustomerMessage.trim() ||
+      msgs[msgs.length - 1]?.text ||
+      "";
+
+    if (!targetMessage.trim()) {
+      setError("メッセージが読み込まれていません。しばらく待ってから再試行してください。");
+      return;
+    }
 
     try {
       setGenerating(true);
@@ -683,16 +695,28 @@ export default function Home() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: latestCustomerMessage,
+          message: targetMessage,
           state: selectedConversation.status,
           customerName: selectedConversation.customerName,
-          recentMessages: selectedConversation.messages.slice(-10).map((m) => ({ sender: m.sender, text: m.text || "" })),
+          // 直近20件の会話履歴を渡してより精度の高い文案を生成
+          recentMessages: msgs.slice(-20).map((m) => ({ sender: m.sender, text: m.text || "" })),
         }),
       });
 
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || "返信案取得失敗");
-      setReplyDraft(data.ai_reply || "");
+
+      const draft = data.ai_reply || "";
+      setReplyDraft(draft);
+
+      // 生成完了後にテキストエリアへフォーカスしてスクロール
+      setTimeout(() => {
+        const el = textareaRef.current;
+        if (el) {
+          el.focus();
+          el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+      }, 50);
     } catch (requestError) {
       console.error(requestError);
       setError("返信案の作成に失敗しました。");
@@ -1610,9 +1634,14 @@ export default function Home() {
               <button
                 onClick={generateReply}
                 disabled={generating || !selectedConversation.id}
-                className="rounded-full border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-semibold text-[#111b21] shadow-sm disabled:opacity-40 active:scale-95 transition-transform duration-75"
+                className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-sm disabled:opacity-40 active:scale-95 transition-all duration-75 ${generating ? "border-blue-300 bg-blue-50 text-blue-600" : "border-[#d1d7db] bg-white text-[#111b21]"}`}
               >
-                {generating ? "作成中..." : "メッセージを作成"}
+                {generating ? (
+                  <>
+                    <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-blue-400 border-t-transparent" />
+                    作成中...
+                  </>
+                ) : "AI文案を作成"}
               </button>
 
               <button
@@ -1649,21 +1678,26 @@ export default function Home() {
 
             {/* テキスト入力 */}
             <div className={`flex items-center gap-2 rounded-[24px] bg-[#f0f2f5] px-4 py-2 transition-all ${inputFocused ? "rounded-[16px]" : ""}`}>
-              <textarea
-                ref={textareaRef}
-                value={replyDraft}
-                onChange={(e) => {
-                  setReplyDraft(e.target.value);
-                  e.target.style.height = "auto";
-                  e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`;
-                }}
-                onFocus={() => setInputFocused(true)}
-                onBlur={() => setInputFocused(false)}
-                rows={1}
-                placeholder="Aa"
-                className="min-h-[22px] w-full resize-none overflow-hidden bg-transparent text-[14px] leading-6 text-[#111b21] outline-none placeholder:text-[#aaa]"
-                style={{ height: "22px" }}
-              />
+              <div className="flex flex-1 flex-col gap-0.5 min-w-0">
+                {replyDraft && !inputFocused && (
+                  <span className="text-[10px] font-bold text-blue-500 leading-none">AI文案</span>
+                )}
+                <textarea
+                  ref={textareaRef}
+                  value={replyDraft}
+                  onChange={(e) => {
+                    setReplyDraft(e.target.value);
+                    e.target.style.height = "auto";
+                    e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`;
+                  }}
+                  onFocus={() => setInputFocused(true)}
+                  onBlur={() => setInputFocused(false)}
+                  rows={1}
+                  placeholder="Aa"
+                  className="min-h-[22px] w-full resize-none overflow-hidden bg-transparent text-[14px] leading-6 text-[#111b21] outline-none placeholder:text-[#aaa]"
+                  style={{ height: "22px" }}
+                />
+              </div>
               <button
                 onClick={sendReply}
                 disabled={sending || (!replyDraft.trim() && selectedImageFiles.length === 0)}
