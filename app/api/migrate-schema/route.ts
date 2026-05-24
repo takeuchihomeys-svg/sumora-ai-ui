@@ -114,6 +114,25 @@ ALTER TABLE ai_reply_examples DISABLE ROW LEVEL SECURITY;
 -- is_starred: スタッフが☆でマークした高品質な例（最優先でプロンプト注入）
 ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS is_starred BOOLEAN DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_ai_reply_examples_starred ON ai_reply_examples(is_starred) WHERE is_starred = TRUE;
+
+-- ai_reply_knowledge テーブル（LINE文案の深層学習用）
+-- 例から自動抽出したパターン・口調・フレーズを蓄積し、生成プロンプトに注入する
+CREATE TABLE IF NOT EXISTS ai_reply_knowledge (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category TEXT NOT NULL CHECK (category IN ('pattern', 'style', 'phrase', 'principle')),
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  importance INTEGER DEFAULT 5 CHECK (importance BETWEEN 1 AND 10),
+  conversation_state TEXT,
+  source_example_id UUID,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_reply_knowledge_category ON ai_reply_knowledge(category);
+CREATE INDEX IF NOT EXISTS idx_ai_reply_knowledge_importance ON ai_reply_knowledge(importance DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_reply_knowledge_state ON ai_reply_knowledge(conversation_state);
+
+ALTER TABLE ai_reply_knowledge DISABLE ROW LEVEL SECURITY;
 `.trim();
 
 export async function GET() {

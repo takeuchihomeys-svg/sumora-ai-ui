@@ -149,6 +149,42 @@ ${history || "なし"}
   }
 }
 
+async function fetchKnowledge(state: string): Promise<string> {
+  // パターン・原則・口調・フレーズを重要度順に取得
+  const { data: global } = await supabase
+    .from("ai_reply_knowledge")
+    .select("category, title, content, importance")
+    .is("conversation_state", null)
+    .order("importance", { ascending: false })
+    .limit(10);
+
+  const { data: stateSpecific } = await supabase
+    .from("ai_reply_knowledge")
+    .select("category, title, content, importance")
+    .eq("conversation_state", state)
+    .order("importance", { ascending: false })
+    .limit(5);
+
+  const all = [...(stateSpecific || []), ...(global || [])];
+  if (all.length === 0) return "";
+
+  const patterns = all.filter((k) => k.category === "pattern" || k.category === "principle");
+  const styles = all.filter((k) => k.category === "style");
+  const phrases = all.filter((k) => k.category === "phrase");
+
+  const sections: string[] = [];
+  if (patterns.length > 0) {
+    sections.push("【学習済みパターン・原則】\n" + patterns.map((k) => `・${k.title}：${k.content}`).join("\n"));
+  }
+  if (styles.length > 0) {
+    sections.push("【スモラの口調・スタイル】\n" + styles.map((k) => `・${k.content}`).join("\n"));
+  }
+  if (phrases.length > 0) {
+    sections.push("【よく使うフレーズ】\n" + phrases.map((k) => `「${k.content}」`).join("　"));
+  }
+  return "\n\n" + sections.join("\n\n");
+}
+
 async function fetchExamples(state: string): Promise<string> {
   // ★スター例を最大3件（最優先）
   const { data: starred } = await supabase
@@ -170,16 +206,16 @@ async function fetchExamples(state: string): Promise<string> {
     .limit(3);
 
   const allExamples = [
-    ...(starred || []).map((ex) => ({ ...ex, label: "★良い例" })),
-    ...(aiUsed || []).map((ex) => ({ ...ex, label: "参考例" })),
+    ...(starred || []).map((ex) => ({ ...ex, label: "★" })),
+    ...(aiUsed || []).map((ex) => ({ ...ex, label: "参考" })),
   ];
 
   if (allExamples.length === 0) return "";
 
-  const lines = allExamples.map((ex, i) =>
-    `【${ex.label}${i + 1}】\nお客様: ${ex.customer_message}\nスモラ返信: ${ex.sent_reply}`
+  const lines = allExamples.map((ex) =>
+    `[${ex.label}] お客様:「${ex.customer_message}」→ スモラ:「${ex.sent_reply}」`
   );
-  return `\n\n【過去の優良返信例（特に★は積極的に参考にしてください）】\n${lines.join("\n\n")}`;
+  return "\n\n【実際のやりとり例】\n" + lines.join("\n");
 }
 
 async function generateAiReply(apiKey: string, message: string, context: string): Promise<string> {
@@ -238,9 +274,12 @@ ${history || "なし"}
 スモラ営業スタイルで自然なLINE返信案を1つだけ作成してください。
 `.trim();
 
-    // 過去の成功例をプロンプトに注入（学習ループ）
-    const examples = await fetchExamples(currentState);
-    const contextWithExamples = examples ? context + examples : context;
+    // パターン知識 + 具体例を両方プロンプトに注入（深層学習ループ）
+    const [knowledge, examples] = await Promise.all([
+      fetchKnowledge(currentState),
+      fetchExamples(currentState),
+    ]);
+    const contextWithExamples = context + knowledge + examples;
 
     const aiReply = await generateAiReply(apiKey, message, contextWithExamples);
 
