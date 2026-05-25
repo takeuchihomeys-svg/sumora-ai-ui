@@ -66,7 +66,6 @@ const CONFIG: Record<
   },
 };
 
-const WORKERS_URL = "https://sumora-line-ai.takeuchi-homeys.workers.dev";
 
 export default function AixModal({
   actionType,
@@ -161,7 +160,7 @@ export default function AixModal({
       if (inputText.trim()) body.extra_input = inputText.trim();
       if (parsedEstimate) body.parsed_estimate = parsedEstimate;
 
-      const res = await fetch(`${WORKERS_URL}/api/aix/action`, {
+      const res = await fetch("/api/aix/action", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
