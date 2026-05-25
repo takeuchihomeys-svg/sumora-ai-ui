@@ -133,6 +133,22 @@ CREATE INDEX IF NOT EXISTS idx_ai_reply_knowledge_importance ON ai_reply_knowled
 CREATE INDEX IF NOT EXISTS idx_ai_reply_knowledge_state ON ai_reply_knowledge(conversation_state);
 
 ALTER TABLE ai_reply_knowledge DISABLE ROW LEVEL SECURITY;
+
+-- phrase_dictionary テーブル（LINE営業フレーズ辞書）
+-- カテゴリ別にフレーズを管理。辞書ボタンや文案生成プロンプトに活用
+CREATE TABLE IF NOT EXISTS phrase_dictionary (
+  id BIGSERIAL PRIMARY KEY,
+  category TEXT NOT NULL,
+  phrase TEXT NOT NULL,
+  priority INTEGER DEFAULT 10,
+  role TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_phrase_dictionary_category ON phrase_dictionary(category);
+CREATE INDEX IF NOT EXISTS idx_phrase_dictionary_priority ON phrase_dictionary(priority DESC);
+
+ALTER TABLE phrase_dictionary DISABLE ROW LEVEL SECURITY;
 `.trim();
 
 export async function GET() {
