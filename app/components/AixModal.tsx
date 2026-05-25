@@ -86,6 +86,7 @@ export default function AixModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<string>("");
+  const [aiDraft, setAiDraft] = useState<string>("");
   const [parsedEstimate, setParsedEstimate] = useState<Record<string, string> | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -170,12 +171,20 @@ export default function AixModal({
       if (!res.ok || !data.ok) throw new Error(data.error || "生成に失敗しました");
 
       setPreview(data.message_text || "");
+      setAiDraft(data.message_text || "");
       if (data.parsed_estimate) setParsedEstimate(data.parsed_estimate);
     } catch (err) {
       setError(err instanceof Error ? err.message : "エラーが発生しました");
     } finally {
       setLoading(false);
     }
+  };
+
+  const ACTION_TO_STATE: Record<AixActionType, string> = {
+    property_recommendation: "property_recommendation",
+    viewing_invite: "viewing",
+    application_push: "application",
+    estimate_sheet: "estimate_request",
   };
 
   const handleSend = async () => {
@@ -190,6 +199,19 @@ export default function AixModal({
         uploadedImageUrl = await uploadImage(imageFile);
       }
       await onSend(preview, uploadedImageUrl);
+
+      // 学習ループに保存（fire-and-forget）
+      fetch("/api/save-reply-example", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationState: ACTION_TO_STATE[actionType],
+          customerMessage: inputText.trim() || `（AIX: ${config.title}）`,
+          sentReply: preview,
+          aiDraft,
+        }),
+      }).catch(() => {});
+
       onClose();
     } catch {
       setError("送信に失敗しました");

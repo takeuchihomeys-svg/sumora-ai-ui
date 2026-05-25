@@ -1,6 +1,6 @@
 # LINE返信AI部署 倉庫（#L）
 
-最終更新: 2026-05-24
+最終更新: 2026-05-25
 
 ---
 
@@ -20,12 +20,71 @@
 
 ---
 
+## ⚠️ システム全体アーキテクチャ（必読）
+
+```
+LINEメッセージ受信
+  → Next.js /api/line-webhook（Vercel）
+      → Supabase に保存
+
+管理画面「文案生成」ボタン
+  → Next.js /api/generate-reply（Vercel）
+      → phrase_dictionary + ai_reply_examples + ai_reply_knowledge を注入
+      → Claude Haiku で返信案生成
+
+AIX ボタン（物件オススメ・内覧へ・申込へ・見積書）
+  → AixModal.tsx → Cloudflare Worker /api/aix/action
+      → phrase_dictionary から専用カテゴリ15件を取得（priority DESC）
+      → Claude Sonnet 4.6 で生成（Vision対応）
+
+⚠️ Cloudflare Worker 内の Webhook・generateReply・classifyIntentWithAI は
+   Next.js 移行済みのデッドコード。触らなくてよい。
+```
+
+---
+
 ## 管轄ファイル
 
-| ファイル | 役割 |
-|---------|------|
-| `app/api/generate-reply/route.ts` | 文案生成・intent分類・state遷移 |
-| `app/api/save-reply-example/route.ts` | 例の保存 + Claude深層分析 |
+| ファイル | 役割 | 場所 |
+|---------|------|------|
+| `app/api/generate-reply/route.ts` | 文案生成（管理画面ボタン）・Claude Haiku | Next.js |
+| `app/api/save-reply-example/route.ts` | 例の保存 + Claude深層分析 | Next.js |
+| `app/api/line-webhook/route.ts` | LINEメッセージ受信・Supabase保存 | Next.js |
+| `app/components/AixModal.tsx` | AIXボタンUI・Worker呼び出し | Next.js |
+| `sumora-ai-core/workers/index.js` | AIXアクション実行・Claude Sonnet呼び出し | Cloudflare Worker |
+
+---
+
+## AIX ボタン詳細（Cloudflare Worker）
+
+### Worker URL
+`https://sumora-line-ai.takeuchi-homeys.workers.dev`
+
+### 各ボタンの仕組み
+
+| ボタン | phrase_dictionary カテゴリ | モデル | 入力 |
+|--------|--------------------------|-------|------|
+| 🏠 物件オススメ | `property_recommendation`（15件） | Claude Sonnet 4.6（Vision） | 条件スクショ＋物件資料の2枚 |
+| 💰 見積書送る | なし | Claude Sonnet 4.6（Vision） | 見積書画像 |
+| 🔍 内覧へ！ | `viewing_invite`（15件） | Claude Sonnet 4.6 | 候補日時（任意） |
+| ✋ 申込へ！ | `application_push`（15件） | Claude Sonnet 4.6 | 補足情報（任意） |
+
+### 必要な環境変数（Cloudflare Worker Secrets）
+```
+ANTHROPIC_API_KEY   ← AIXボタン生成用（要登録）
+OPENAI_API_KEY      ← Webhook自動返信用（デッドコードだが残存）
+SUPABASE_URL
+SUPABASE_ANON_KEY
+LINE_CHANNEL_ACCESS_TOKEN
+LINE_CHANNEL_SECRET
+```
+
+### ANTHROPIC_API_KEY の登録方法
+```powershell
+cd "c:\Users\竹内 悠馬\sumora-ai-core\workers"
+npx wrangler secret put ANTHROPIC_API_KEY
+# → プロンプトが出るのでキーを貼り付けてEnter
+```
 
 ---
 
@@ -35,6 +94,36 @@
 |---------|------|
 | `ai_reply_examples` | 実際に送った返信の蓄積（☆・AI使用フラグ付き） |
 | `ai_reply_knowledge` | Claudeが抽出したパターン・口調・フレーズ・原則 |
+| `phrase_dictionary` | カテゴリ別フレーズ辞書（AIX・generate-reply 両方で使用） |
+
+---
+
+## phrase_dictionary 管理状況
+
+| 日付 | 件数 | 作業内容 |
+|------|------|---------|
+| 2026-05-25 | 438件 | 初期状態 |
+| 2026-05-25 | 380件 | Round1: 不要フレーズ削除 |
+| 2026-05-25 | 346件 | Round2: AI感・重複・硬すぎる文を削除 |
+| 2026-05-25 | 318件 | Round3: 長すぎる文を短縮・削除 |
+| 2026-05-25 | 300件 | Round4: 重複クラスター解消・ボトルネック除去・ハードコード修正 |
+
+### Round4 削除内訳（18件）
+- 敷金礼金0 重複（id:116・328 削除、100 残存）
+- スーパーコンビニ 重複（id:326 削除、299 残存）
+- インターネット無料 重複（id:48・193 削除、329 残存）
+- 特にオススメ 重複（id:291 削除、292 残存）
+- "ので"で終わる断片文（id:252 削除）
+- 間取り説明 重複（id:295 削除）
+- property_search_start 重複4件（id:211・101・140・141）
+- viewing_invite 重複6件（id:195・375・12・25・402・403）
+
+### Round4 修正内訳（6件）
+- id:40 「1件」のハードコード除去
+- id:166 「1台」のハードコード除去
+- id:311・323 "〜となっております" 二重表現を短縮
+- id:515 回りくどい説明を短縮
+- id:226 「1件目に」を除去
 
 ---
 
@@ -78,26 +167,13 @@ knowledge + examples をプロンプトに注入         │
 
 ## SYSTEM_PROMPT 管理（#L-PR）
 
-### 現行バージョン（2026-05-24）
+### 現行バージョン（2026-05-25）
 
+generate-reply/route.ts と Worker index.js の両方に同一のSYSTEM_PROMPTが存在する。
 スモラLINE営業AI。丁寧・親しみやすい・営業感強くない。
 詳細な説明ルール（具体的な築年・帖数・徒歩分）、内覧誘導・申込誘導の文例含む。
-お客様名が分かる場合は「〇〇さん」と呼ぶ。
 
 → 詳細: `app/api/generate-reply/route.ts` の `SYSTEM_PROMPT` 定数
-
-### 変更履歴
-| 日付 | 変更内容 | 担当 |
-|------|---------|------|
-| 2026-05-24 | 初版作成（OpenAI→Anthropic Haiku切替と同時） | #L-PR |
-
----
-
-## スモラ黄金ルール（#L-KN 管理）
-
-> importance=10 に昇格したパターンをここに蓄積する
-
-（データ蓄積後に追記）
 
 ---
 
@@ -128,7 +204,11 @@ knowledge + examples をプロンプトに注入         │
 
 ## 保留・引き継ぎ事項
 
+- [ ] **ANTHROPIC_API_KEY を Cloudflare Worker に登録する**（AIXボタンが動かない）
+  ```powershell
+  cd "c:\Users\竹内 悠馬\sumora-ai-core\workers"
+  npx wrangler secret put ANTHROPIC_API_KEY
+  ```
 - [ ] 過去のLINEやりとりをインポートする（竹内悠馬が貼り付け予定）
 - [ ] インポート後にKPI初回測定を実施（#L-QC）
 - [ ] ai_use_rate が安定したらプロンプト改善サイクルを開始（#L-PR）
-- [ ] 黄金ルール初号が出たら dept_line_session_brief.md に反映（#L-WX）
