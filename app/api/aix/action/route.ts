@@ -27,7 +27,7 @@ async function callClaude(system: string, user: string): Promise<string> {
     },
     body: JSON.stringify({
       model: MODEL,
-      max_tokens: 1024,
+      max_tokens: 4096,
       system,
       messages: [{ role: "user", content: user }],
     }),
@@ -47,7 +47,7 @@ async function callClaudeVision(system: string, content: unknown[]): Promise<str
     },
     body: JSON.stringify({
       model: MODEL,
-      max_tokens: 1024,
+      max_tokens: 4096,
       system,
       messages: [{ role: "user", content }],
     }),

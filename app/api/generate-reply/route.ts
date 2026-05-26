@@ -7,14 +7,14 @@ import { supabase } from "@/app/lib/supabase";
 // Step1（分析）: Haiku — 速度重視
 const analysisModel = new ChatAnthropic({
   model: "claude-haiku-4-5-20251001",
-  maxTokens: 512,
+  maxTokens: 1024,
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
 });
 
 // Step2（生成）: Sonnet — 品質重視
 const generationModel = new ChatAnthropic({
   model: "claude-sonnet-4-6",
-  maxTokens: 1024,
+  maxTokens: 4096,
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
 });
 
