@@ -237,6 +237,7 @@ export default function Home() {
   const [accountFilter, setAccountFilter] = useState<"all" | "linked" | "sumora" | "ieyasu" | "giga">("all");
   const [linkedLineUserIds, setLinkedLineUserIds] = useState<Set<string>>(new Set());
   const [showSendConfirm, setShowSendConfirm] = useState(false);
+  const [enhancing, setEnhancing] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const aixFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -753,6 +754,35 @@ export default function Home() {
       setError(`返信案の作成に失敗しました: ${msg}`);
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const handleEnhanceReply = async () => {
+    if (!replyDraft.trim() || enhancing) return;
+    try {
+      setEnhancing(true);
+      const msgs = selectedConversation.messages;
+      const res = await fetch("/api/enhance-reply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          currentDraft: replyDraft,
+          conversationState: selectedConversation.status,
+          customerName: selectedConversation.customerName,
+          recentMessages: msgs.slice(-15).map((m) => ({ sender: m.sender, text: m.text || "" })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || "改善失敗");
+      setReplyDraft(data.enhanced || replyDraft);
+      setTimeout(() => {
+        const el = textareaRef.current;
+        if (el) { el.style.height = "auto"; el.style.height = `${Math.min(el.scrollHeight, 140)}px`; }
+      }, 50);
+    } catch (err) {
+      console.error("enhance-reply error:", err);
+    } finally {
+      setEnhancing(false);
     }
   };
 
@@ -1745,6 +1775,18 @@ export default function Home() {
               >
                 AIX
               </button>
+
+              {/* ✨改善ボタン（入力テキストがあるときのみ表示） */}
+              {replyDraft.trim() && (
+                <button
+                  onClick={handleEnhanceReply}
+                  disabled={enhancing}
+                  className="flex h-8 items-center gap-1 rounded-full border border-[#c8b8ff] bg-gradient-to-r from-[#ede7ff] to-[#e3f0ff] px-3 text-xs font-bold text-[#6c3fc7] shadow-sm active:scale-95 transition-transform duration-75 disabled:opacity-60"
+                  title="入力中の文をAIが改善"
+                >
+                  {enhancing ? <span className="text-[11px]">…</span> : "✨"}
+                </button>
+              )}
 
               {/* 文章クリアボタン（入力/AI文案があるときのみ表示） */}
               {replyDraft && (

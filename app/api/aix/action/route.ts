@@ -4,14 +4,17 @@ import { supabase } from "@/app/lib/supabase";
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY!;
 const MODEL = "claude-sonnet-4-6";
 
-async function getPhrases(category: string): Promise<string> {
+async function getPhrases(category: string, customerName?: string): Promise<string> {
   const { data } = await supabase
     .from("phrase_dictionary")
     .select("phrase")
     .eq("category", category)
     .order("priority", { ascending: false })
     .limit(15);
-  return (data || []).map((r: { phrase: string }) => `- ${r.phrase}`).join("\n");
+  const fallback = customerName || "お客様";
+  return (data || []).map((r: { phrase: string }) =>
+    `- ${r.phrase.replace(/\{\{customer_name\}\}/g, fallback)}`
+  ).join("\n");
 }
 
 async function callClaude(system: string, user: string): Promise<string> {
@@ -68,7 +71,7 @@ export async function POST(request: NextRequest) {
       application_push: "application_push",
     };
     const phraseCategory = phraseCategoryMap[action];
-    const phraseText = phraseCategory ? await getPhrases(phraseCategory) : "";
+    const phraseText = phraseCategory ? await getPhrases(phraseCategory, customer_name) : "";
 
     let message_text = "";
     let parsed_estimate_result = null;
@@ -81,13 +84,16 @@ export async function POST(request: NextRequest) {
 お客様の条件スクショと物件資料の2枚の画像を見て、スモラ風のLINEメッセージを作成してください。
 
 【作成ルール】
-・お客様の条件に合っている点を具体的に伝える
-・フレンドリーで親しみやすいトーン
-・絵文字を適度に使用（使いすぎない）
-・物件の魅力を具体的に伝える（築年数・広さ・駅距離など）
+・お客様の条件に合っている点を具体的に伝える（築年数・広さ・駅距離など数字で）
 ・曖昧な表現禁止（「築浅」→「2023年築」など具体的に）
 ・最後に内覧を自然に促す一言を添える
-・200文字以内
+・感嘆符は「！！」を使う（スモラスタイル）
+
+【絵文字ルール — 最重要・必ず守ること】
+▼ 使ってよい絵文字はこの5つだけ：😊 😌 🙇‍♀️ 🌟 ✨
+▼ 上記以外は一切禁止：🙏 ⭐️ 🏠 💰 💪 👍 🔍 ✋ その他すべて禁止
+▼ 絵文字は1〜2個まで。文末か文の区切りにのみ置く。
+🌟✨ → 物件の冒頭・オススメ強調、😊😌 → 誘導・締めの一言
 
 【スモラの言葉・表現（参考にして自然に組み込んでください）】
 ${phraseText || "なし"}`;
@@ -140,10 +146,14 @@ ${phraseText || "なし"}`;
 お客様に内覧のお誘いメッセージを作成してください。
 
 【作成ルール】
-・フレンドリーで親しみやすいトーン
-・絵文字を適度に使う
-・日程調整を促す自然な誘い方
-・150文字以内
+・自然な流れで内覧を促す
+・日程調整をお客様に投げかける
+・感嘆符は「！！」を使う（スモラスタイル）
+
+【絵文字ルール — 最重要・必ず守ること】
+▼ 使ってよい絵文字はこの5つだけ：😊 😌 🙇‍♀️ 🌟 ✨
+▼ 上記以外は一切禁止：🙏 ⭐️ 🏠 💰 💪 👍 🔍 ✋ その他すべて禁止
+▼ 絵文字は1〜2個まで。😊😌 → 余裕を示してリードする場面
 
 【スモラの言葉・表現（参考にして自然に組み込んでください）】
 ${phraseText || "なし"}`;
@@ -156,11 +166,14 @@ ${phraseText || "なし"}`;
 お客様の申込を後押しするLINEメッセージを作成してください。
 
 【作成ルール】
-・前向きで背中を押すトーン
-・責任感のある提案
-・絵文字を適度に使う
-・申込手続きへの案内を含める
-・150文字以内
+・責任感を持って前向きに申込を促す
+・「お部屋おさえさせて頂きます」など具体的なアクションを伝える
+・感嘆符は「！！」を使う（スモラスタイル）
+
+【絵文字ルール — 最重要・必ず守ること】
+▼ 使ってよい絵文字はこの5つだけ：😊 😌 🙇‍♀️ 🌟 ✨
+▼ 上記以外は一切禁止：🙏 ⭐️ 🏠 💰 💪 👍 ✋ その他すべて禁止
+▼ 絵文字は1〜2個まで。😊😌 → 背中を押す・締めの一言
 
 【スモラの言葉・表現（参考にして自然に組み込んでください）】
 ${phraseText || "なし"}`;
