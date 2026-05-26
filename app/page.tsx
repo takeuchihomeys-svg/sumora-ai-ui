@@ -774,7 +774,10 @@ export default function Home() {
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || "改善失敗");
-      setReplyDraft(data.enhanced || replyDraft);
+      const enhanced = data.enhanced || replyDraft;
+      setReplyDraft(enhanced);
+      // ✨が出した文をAI提案として記録（スタッフがさらに編集した差分を学習）
+      aiDraftRef.current = enhanced;
       setTimeout(() => {
         const el = textareaRef.current;
         if (el) { el.style.height = "auto"; el.style.height = `${Math.min(el.scrollHeight, 140)}px`; }

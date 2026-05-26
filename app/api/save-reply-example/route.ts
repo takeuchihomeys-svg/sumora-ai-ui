@@ -324,14 +324,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
 
-  // ★ 手動インポート or ☆ → 深層分析・フレーズ抽出を並列実行
-  const shouldAnalyze = isStarred === true || !aiDraft;
-  if (shouldAnalyze && data?.id) {
-    await Promise.all([
-      analyzeAndSaveKnowledge(data.id, conversationState, customerMessage, sentReply),
-      extractAndSavePhrases(conversationState, sentReply),
-    ]);
+  // 学習トリガー判定
+  // ★ 手動インポート or ☆ → 深層分析 + フレーズ抽出（最高品質）
+  // AI文案をそのまま使った → フレーズ抽出のみ（AIが正解を出せた瞬間を蓄積）
+  const shouldDeepAnalyze = isStarred === true || !aiDraft;
+  const shouldExtractPhrases = shouldDeepAnalyze || wasAiUsed;
+
+  const analysisJobs: Promise<void>[] = [];
+  if (shouldDeepAnalyze && data?.id) {
+    analysisJobs.push(analyzeAndSaveKnowledge(data.id, conversationState, customerMessage, sentReply));
   }
+  if (shouldExtractPhrases && data?.id) {
+    analysisJobs.push(extractAndSavePhrases(conversationState, sentReply));
+  }
+  if (analysisJobs.length > 0) await Promise.all(analysisJobs);
 
   // ① AI差分学習：スタッフが修正して送った場合（最高品質の学習信号）
   if (wasAiModified && data?.id && aiDraft) {

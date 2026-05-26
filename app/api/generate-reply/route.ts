@@ -103,7 +103,8 @@ async function generateReplyWithLangChain(
   nextState: string,
   analysis: string,
   knowledge: string,
-  examples: string
+  examples: string,
+  phrases: string
 ): Promise<string> {
   const nameNote = customerName ? `お客様名：${customerName}さん` : "お客様名：不明";
 
@@ -132,6 +133,7 @@ ${history || "なし"}
 ${analysisBlock}
 ${knowledge}
 ${examples}
+${phrases}
 
 【お客様の最新メッセージ】
 ${customerMessage}
@@ -206,6 +208,37 @@ conditions_incomplete, property_available, property_unavailable, screening_passe
   } catch {
     return "other";
   }
+}
+
+// ─── phrase_dictionary → conversationState マッピング ───────────────────────
+const STATE_TO_PHRASE_CATEGORY: Record<string, string> = {
+  first_reply: "hearing_start",
+  condition_hearing: "hearing_followup",
+  property_search: "property_search_start",
+  property_recommendation: "property_recommendation",
+  viewing: "viewing_invite",
+  estimate_request: "estimate_send",
+  availability_check: "availability_check",
+  application: "application_push",
+  screening: "screening",
+  contract: "contract",
+};
+
+async function fetchPhrases(state: string): Promise<string> {
+  const category = STATE_TO_PHRASE_CATEGORY[state];
+  if (!category) return "";
+
+  const { data } = await supabase
+    .from("phrase_dictionary")
+    .select("phrase, priority")
+    .eq("category", category)
+    .order("priority", { ascending: false })
+    .limit(10);
+
+  if (!data || data.length === 0) return "";
+
+  return "\n\n【スモラの言葉・フレーズ（自然に組み込む）】\n" +
+    (data as Array<{ phrase: string }>).map((r) => `「${r.phrase}」`).join("　");
 }
 
 // ─── DB取得 ─────────────────────────────────────────────────────────────────
@@ -285,12 +318,13 @@ export async function POST(req: NextRequest) {
       .map((m) => `${m.sender === "customer" ? "お客様" : "スモラ"}: ${m.text}`)
       .join("\n");
 
-    // 並列実行: intent分類 + 状況分析 + 知識取得 + 実例取得
-    const [detectedIntent, analysis, knowledge, examples] = await Promise.all([
+    // 並列実行: intent分類 + 状況分析 + 知識取得 + 実例取得 + フレーズ取得
+    const [detectedIntent, analysis, knowledge, examples, phrases] = await Promise.all([
       classifyIntent(message, currentState, history),
       analyzeCustomerSituation(message, history, currentState, customerName),
       fetchKnowledge(currentState),
       fetchExamples(currentState),
+      fetchPhrases(currentState),
     ]);
 
     const nextState = getNextState(currentState, detectedIntent);
@@ -298,7 +332,7 @@ export async function POST(req: NextRequest) {
     // Sonnetで高品質生成
     const aiReply = await generateReplyWithLangChain(
       message, customerName, history, currentState, nextState,
-      analysis, knowledge, examples
+      analysis, knowledge, examples, phrases
     );
 
     return NextResponse.json({
