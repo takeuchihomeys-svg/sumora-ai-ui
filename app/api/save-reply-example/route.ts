@@ -1,6 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
+const STATE_TO_PHRASE_CATEGORY: Record<string, string> = {
+  first_reply: "hearing_start",
+  condition_hearing: "hearing_followup",
+  property_search: "property_search_start",
+  property_recommendation: "property_recommendation",
+  viewing: "viewing_invite",
+  estimate_request: "estimate_send",
+  availability_check: "availability_check",
+  application: "application_push",
+};
+
 type KnowledgeEntry = {
   category: "pattern" | "style" | "phrase" | "principle";
   title: string;
@@ -109,6 +120,68 @@ ${sentReply}
   }
 }
 
+async function extractAndSavePhrases(conversationState: string, sentReply: string) {
+  const phraseCategory = STATE_TO_PHRASE_CATEGORY[conversationState];
+  if (!phraseCategory) return;
+
+  const apiKey = process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "");
+  if (!apiKey) return;
+
+  const prompt = `以下のLINE賃貸営業のメッセージから、再利用できるフレーズを抽出してください。
+
+【メッセージ】
+${sentReply}
+
+ルール：
+・スモラらしい短い表現・言い回しを3〜5個抽出
+・1フレーズ = 15〜50文字程度
+・そのまま他のお客様にも使える汎用的なもの
+・物件名・金額・部屋番号などの固有情報は含めない
+・JSONのみで返答（説明不要）
+
+{"phrases": ["フレーズ1", "フレーズ2", ...]}`;
+
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 512,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+
+    if (!res.ok) return;
+
+    const data = await res.json() as { content?: Array<{ text: string }> };
+    const text = data.content?.[0]?.text || "";
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return;
+
+    const parsed = JSON.parse(jsonMatch[0]) as { phrases?: unknown[] };
+    const phrases = parsed.phrases;
+    if (!Array.isArray(phrases)) return;
+
+    for (const phrase of phrases) {
+      if (typeof phrase === "string" && phrase.trim()) {
+        await supabase.from("phrase_dictionary").insert({
+          category: phraseCategory,
+          phrase: phrase.trim(),
+          priority: 5,
+          role: "auto_extracted",
+        });
+      }
+    }
+  } catch (e) {
+    console.error("extractAndSavePhrases error:", e);
+  }
+}
+
 export async function POST(req: NextRequest) {
   const { conversationState, customerMessage, sentReply, aiDraft, isStarred } = await req.json() as {
     conversationState: string;
@@ -144,10 +217,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
 
-  // ★スターか手動インポートの場合は深層分析して知識を抽出・保存
+  // ★スターか手動インポートの場合は深層分析 + フレーズ抽出を並列実行
   const shouldAnalyze = isStarred === true || (!aiDraft);
   if (shouldAnalyze && data?.id) {
-    await analyzeAndSaveKnowledge(data.id, conversationState, customerMessage, sentReply);
+    await Promise.all([
+      analyzeAndSaveKnowledge(data.id, conversationState, customerMessage, sentReply),
+      extractAndSavePhrases(conversationState, sentReply),
+    ]);
   }
 
   return NextResponse.json({ ok: true, id: data?.id });
