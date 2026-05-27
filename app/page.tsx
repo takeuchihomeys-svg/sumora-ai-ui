@@ -651,7 +651,7 @@ export default function Home() {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
+    el.style.height = `${Math.min(el.scrollHeight, 320)}px`;
   }, [replyDraft]);
 
   const latestCustomerMessage = useMemo(() => {
@@ -780,7 +780,7 @@ export default function Home() {
       aiDraftRef.current = enhanced;
       setTimeout(() => {
         const el = textareaRef.current;
-        if (el) { el.style.height = "auto"; el.style.height = `${Math.min(el.scrollHeight, 140)}px`; }
+        if (el) { el.style.height = "auto"; el.style.height = `${Math.min(el.scrollHeight, 320)}px`; }
       }, 50);
     } catch (err) {
       console.error("enhance-reply error:", err);
@@ -1842,13 +1842,13 @@ export default function Home() {
                   onChange={(e) => {
                     setReplyDraft(e.target.value);
                     e.target.style.height = "auto";
-                    e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`;
+                    e.target.style.height = `${Math.min(e.target.scrollHeight, 320)}px`;
                   }}
                   onFocus={() => setInputFocused(true)}
                   onBlur={() => setInputFocused(false)}
                   rows={1}
                   placeholder="Aa"
-                  className="min-h-[22px] w-full resize-none overflow-hidden bg-transparent text-[14px] leading-6 text-[#111b21] outline-none placeholder:text-[#aaa]"
+                  className="min-h-[22px] w-full resize-none overflow-y-auto bg-transparent text-[14px] leading-6 text-[#111b21] outline-none placeholder:text-[#aaa]"
                   style={{ height: "22px" }}
                 />
               </div>
