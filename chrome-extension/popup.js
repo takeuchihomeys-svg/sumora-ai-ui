@@ -334,6 +334,16 @@ const NEIGHBORHOOD_WARD_MAP = {
   "庄": "茨木市",
 };
 
+// 漢数字・全角数字 → 半角算用数字に正規化（「五丁目」→「5丁目」など）
+function normalizeNumerals(s) {
+  return s
+    .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/一丁目/g, "1丁目").replace(/二丁目/g, "2丁目").replace(/三丁目/g, "3丁目")
+    .replace(/四丁目/g, "4丁目").replace(/五丁目/g, "5丁目").replace(/六丁目/g, "6丁目")
+    .replace(/七丁目/g, "7丁目").replace(/八丁目/g, "8丁目").replace(/九丁目/g, "9丁目")
+    .replace(/十丁目/g, "10丁目");
+}
+
 // 「第一希望:枚方市」「大阪府以外:奈良」などのラベルプレフィックスと方向サフィックスを除去してエリアトークンを分解
 function parseAreaTokens(rawArea) {
   if (!rawArea) return [];
@@ -343,6 +353,7 @@ function parseAreaTokens(rawArea) {
                 .replace(/以南$|以北$|以西$|以東$/, "") // 方向サフィックスを除去
                 .replace(/駅|周辺|付近|近く|沿線|エリア/g, "")
                 .trim())
+    .map(normalizeNumerals)
     .filter(t => t.length >= 1);
 }
 
@@ -1022,7 +1033,7 @@ const SITE_CONFIG = {
     steps: (c, mode = "pinpoint", areaMode = null) => {
       const d = buildCondData(c, mode);
       const areaText = d.area || "";
-      const areaClean = areaText.replace(/周辺|付近|近く|エリア/g, "").trim();
+      const areaClean = normalizeNumerals(areaText.replace(/周辺|付近|近く|エリア/g, "").trim());
       const neighborhoodWard = (NEIGHBORHOOD_WARD_MAP[areaClean] && !STATION_LINE_MAP[areaClean])
         ? NEIGHBORHOOD_WARD_MAP[areaClean] : null;
 
