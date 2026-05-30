@@ -282,6 +282,7 @@ export default function Home() {
   const aixFileInputRef = useRef<HTMLInputElement | null>(null);
   const pendingAixTypeRef = useRef<AixActionType | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const notifiedCalendarIds = useRef<Set<string>>(new Set());
@@ -493,9 +494,12 @@ export default function Home() {
     }
   }, [selectedId]);
 
-  // 新しいメッセージが届いたとき：スムーズにスクロール
+  // 新しいメッセージが届いたとき：下部付近にいる場合のみスクロール（過去トーク閲覧中は邪魔しない）
   useEffect(() => {
-    if (bottomRef.current) {
+    const el = chatScrollRef.current;
+    if (!el || !bottomRef.current) return;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distFromBottom < 150) {
       bottomRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [conversations]);
@@ -1687,7 +1691,7 @@ export default function Home() {
             </button>
           )}
 
-          <div className="flex-1 overflow-y-auto px-3 py-4 md:px-6">
+          <div ref={chatScrollRef} className="flex-1 overflow-y-auto px-3 py-4 md:px-6">
             <div className="mx-auto flex w-full max-w-4xl flex-col gap-3.5">
               {(() => {
                 const q = aiSearchIds !== null ? "" : searchQuery.trim().toLowerCase();
