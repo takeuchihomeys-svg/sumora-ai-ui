@@ -22,6 +22,19 @@ ALTER TABLE conversations DISABLE ROW LEVEL SECURITY;
 -- accountカラム（sumora / ieyasu / giga）
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS account TEXT DEFAULT 'sumora';
 
+-- 既存conversations.account を line_contacts から正しい値に修正
+-- ※ADD COLUMN DEFAULT 'sumora' で全行がsumora になってしまうため、line_contactsの実データで上書き
+UPDATE conversations c
+SET account = CASE
+  WHEN lc.account = 'イエヤス' THEN 'ieyasu'
+  WHEN lc.account = 'ギガ賃貸' THEN 'giga'
+  WHEN lc.account = 'スモラ'   THEN 'sumora'
+  ELSE c.account
+END
+FROM line_contacts lc
+WHERE c.line_user_id = lc.line_user_id
+  AND c.line_user_id IS NOT NULL;
+
 -- line_user_id の NOT NULL 制約を解除（screening-adminから同期する際にnullのケースがあるため）
 ALTER TABLE conversations ALTER COLUMN line_user_id DROP NOT NULL;
 
