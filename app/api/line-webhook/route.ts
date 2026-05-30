@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 // ── LINE アカウント設定（スモラ・イエヤス・ギガ賃貸） ──────────────────
 type AccountConfig = {
   name: string;
+  key: string; // send-line-message/route.ts の getToken() と一致する英語キー
   secret: string | undefined;
   token: string | undefined;
 };
@@ -11,16 +12,19 @@ type AccountConfig = {
 const ACCOUNTS: AccountConfig[] = [
   {
     name: "スモラ",
+    key: "sumora",
     secret: process.env.LINE_SUMORA_CHANNEL_SECRET,
     token: process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN,
   },
   {
     name: "イエヤス",
+    key: "ieyasu",
     secret: process.env.LINE_IEYASU_CHANNEL_SECRET,
     token: process.env.LINE_IEYASU_CHANNEL_ACCESS_TOKEN,
   },
   {
     name: "ギガ賃貸",
+    key: "giga",
     secret: process.env.LINE_GIGA_CHANNEL_SECRET,
     token: process.env.LINE_GIGA_CHANNEL_ACCESS_TOKEN,
   },
@@ -77,7 +81,7 @@ async function handleTextMessage(
   // 1. conversations を取得 or 作成
   const { data: convRows } = await db
     .from("conversations")
-    .select("id, customer_name, profile_image_url")
+    .select("id, customer_name, profile_image_url, account")
     .eq("line_user_id", userId)
     .limit(1);
 
@@ -85,12 +89,17 @@ async function handleTextMessage(
 
   if (convRows && convRows.length > 0) {
     convId = convRows[0].id as number;
+    // account が未設定の既存会話に account を補完する
+    if (!convRows[0].account) {
+      await db.from("conversations").update({ account: account.key }).eq("id", convId);
+    }
   } else {
     const { data: created, error: createErr } = await db
       .from("conversations")
       .insert({
         line_user_id: userId,
         customer_name: "名称未設定",
+        account: account.key,
         status: "first_reply",
         updated_at: now,
       })

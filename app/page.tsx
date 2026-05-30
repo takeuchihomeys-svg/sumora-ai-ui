@@ -1024,21 +1024,30 @@ export default function Home() {
       // LINEに送信（テキスト→画像の順）
       try {
         if (textToSend) {
-          await fetch("/api/send-line-message", {
+          const lineRes = await fetch("/api/send-line-message", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: textToSend, account: selectedConversation.account }),
           });
+          if (!lineRes.ok) {
+            const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string };
+            setError(`⚠️ LINE送信失敗: ${lineErr.error || lineRes.statusText}`);
+          }
         }
         for (const imageUrl of imageUrls) {
-          await fetch("/api/send-line-message", {
+          const lineRes = await fetch("/api/send-line-message", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, image_url: imageUrl, account: selectedConversation.account }),
           });
+          if (!lineRes.ok) {
+            const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string };
+            setError(`⚠️ LINE画像送信失敗: ${lineErr.error || lineRes.statusText}`);
+          }
         }
-      } catch {
-        // LINE送信失敗しても管理画面の動作は続ける
+      } catch (lineEx) {
+        console.error("LINE send error:", lineEx);
+        setError(`⚠️ LINE送信エラー: ${lineEx instanceof Error ? lineEx.message : "通信エラー"}`);
       }
 
       // 学習データ保存（テキスト送信時のみ・バックグラウンド）
