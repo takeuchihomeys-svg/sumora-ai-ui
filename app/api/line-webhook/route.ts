@@ -89,8 +89,8 @@ async function handleTextMessage(
 
   if (convRows && convRows.length > 0) {
     convId = convRows[0].id as number;
-    // account が未設定の既存会話に account を補完する
-    if (!convRows[0].account) {
+    // account が違う場合は常に正しい値に修正（ADD COLUMN DEFAULT 'sumora' で全行が sumora になった対策）
+    if (convRows[0].account !== account.key) {
       await db.from("conversations").update({ account: account.key }).eq("id", convId);
     }
   } else {
