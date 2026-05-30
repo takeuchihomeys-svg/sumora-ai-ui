@@ -239,6 +239,8 @@ export default function Home() {
   const [pullStartY, setPullStartY] = useState(0);
   const [isPulling, setIsPulling] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const chatSwipeStart = useRef<{ x: number; y: number } | null>(null);
+  const [chatSwipeDelta, setChatSwipeDelta] = useState(0);
 
   const [selectedImageFiles, setSelectedImageFiles] = useState<File[]>([]);
   const [selectedImagePreviews, setSelectedImagePreviews] = useState<string[]>([]);
@@ -1377,6 +1379,29 @@ export default function Home() {
     setIsPulling(false);
   };
 
+  // チャット画面の左スワイプで一覧に戻る
+  const onChatTouchStart = (e: React.TouchEvent) => {
+    chatSwipeStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    setChatSwipeDelta(0);
+  };
+  const onChatTouchMove = (e: React.TouchEvent) => {
+    if (!chatSwipeStart.current) return;
+    const dx = e.touches[0].clientX - chatSwipeStart.current.x;
+    const dy = e.touches[0].clientY - chatSwipeStart.current.y;
+    // 水平方向が支配的なときだけ追跡（縦スクロールと競合しない）
+    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 10) {
+      setChatSwipeDelta(dx);
+    }
+  };
+  const onChatTouchEnd = () => {
+    // 左に80px以上スワイプ → 一覧へ戻る
+    if (chatSwipeDelta < -80) {
+      setMobileView("list");
+    }
+    chatSwipeStart.current = null;
+    setChatSwipeDelta(0);
+  };
+
   const openConversation = (conversationId: string) => {
     setSelectedId(conversationId);
     setMobileView("chat");
@@ -1633,7 +1658,15 @@ export default function Home() {
           className={`${
             showChatOnMobile ? "flex" : "hidden"
           } min-w-0 flex-1 flex-col md:flex`}
-          style={{ background: "linear-gradient(180deg, #e8f4fd 0%, #f0f8ff 50%, #f8fbff 100%)" }}
+          style={{
+            background: "linear-gradient(180deg, #e8f4fd 0%, #f0f8ff 50%, #f8fbff 100%)",
+            transform: chatSwipeDelta < 0 ? `translateX(${Math.max(chatSwipeDelta * 0.3, -60)}px)` : "none",
+            transition: chatSwipeDelta === 0 ? "transform 0.25s cubic-bezier(0.25,0.46,0.45,0.94)" : "none",
+            touchAction: "pan-y",
+          }}
+          onTouchStart={onChatTouchStart}
+          onTouchMove={onChatTouchMove}
+          onTouchEnd={onChatTouchEnd}
         >
           <header className="border-b border-[#e9edef] px-3 pb-3 pt-[max(14px,env(safe-area-inset-top))] backdrop-blur-md md:px-4"
             style={{ background: "rgba(218,238,253,0.88)" }}
