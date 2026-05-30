@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
-export async function GET() {
+export async function GET(req: Request) {
+  const secret = req.headers.get("x-cron-secret");
+  if (secret !== "hasu-cron-secret-2024") {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const [examplesRes, knowledgeRes, phraseRes, knowledgeCatRes] = await Promise.all([
     supabase
       .from("ai_reply_examples")
