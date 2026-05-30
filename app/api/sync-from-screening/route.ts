@@ -31,6 +31,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, action: "ignored" });
   }
 
+  // 一時デバッグ: screeningから届くデータのフィールドを確認
+  if (table === "conversations") {
+    console.log("[sync-debug] conversations record keys:", Object.keys(record));
+    console.log("[sync-debug] account value:", record.account, "| id:", record.id);
+  }
+
   if (table === "conversations") {
     // screening-admin の account 値（日本語名 or 英語キー）を英語キーに変換
     const ACCOUNT_MAP: Record<string, string> = {
