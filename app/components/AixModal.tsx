@@ -9,11 +9,18 @@ export type AixActionType =
   | "application_push"
   | "estimate_sheet";
 
+interface LinkedCustomer {
+  id: string;
+  name: string;
+  conditions: string; // フォーマット済みテキスト
+}
+
 interface AixModalProps {
   actionType: AixActionType;
   conversationId: string;
   customerName: string;
   initialImageFile?: File;
+  linkedCustomer?: LinkedCustomer;
   onClose: () => void;
   onSend: (text: string, imageUrl?: string) => Promise<void>;
 }
@@ -72,6 +79,7 @@ export default function AixModal({
   conversationId,
   customerName,
   initialImageFile,
+  linkedCustomer,
   onClose,
   onSend,
 }: AixModalProps) {
@@ -146,14 +154,21 @@ export default function AixModal({
       };
 
       if (actionType === "property_recommendation") {
-        // 物件オススメ: 条件スクショ + 物件資料の2枚
-        if (!conditionImageFile || !imageFile) throw new Error("条件スクショと物件資料の両方を選択してください");
-        const [conditionUrl, propertyUrl] = await Promise.all([
-          uploadImage(conditionImageFile),
-          uploadImage(imageFile),
-        ]);
-        body.condition_image_url = conditionUrl;
-        body.image_url = propertyUrl;
+        if (!imageFile) throw new Error("物件資料を選択してください");
+        if (linkedCustomer) {
+          // 紐付け済み: DBの条件をテキストで渡す（スクショ不要）
+          body.customer_conditions = linkedCustomer.conditions;
+          body.image_url = await uploadImage(imageFile);
+        } else {
+          // 未紐付け: 条件スクショ + 物件資料の2枚
+          if (!conditionImageFile) throw new Error("条件スクショと物件資料の両方を選択してください");
+          const [conditionUrl, propertyUrl] = await Promise.all([
+            uploadImage(conditionImageFile),
+            uploadImage(imageFile),
+          ]);
+          body.condition_image_url = conditionUrl;
+          body.image_url = propertyUrl;
+        }
       } else if (config.requiresImage && imageFile) {
         body.image_url = await uploadImage(imageFile);
       }
@@ -220,9 +235,9 @@ export default function AixModal({
     }
   };
 
-  // 物件オススメで生成ボタンが押せるか
+  // 物件オススメで生成ボタンが押せるか（紐付け済みなら物件資料のみでOK）
   const canGenerate = actionType === "property_recommendation"
-    ? !!conditionImageFile && !!imageFile
+    ? !!imageFile && (!!linkedCustomer || !!conditionImageFile)
     : !config.requiresImage || !!imageFile;
 
   return (
@@ -254,10 +269,19 @@ export default function AixModal({
           {/* 物件オススメ専用: 2枚画像エリア */}
           {actionType === "property_recommendation" ? (
             <div className="mb-4 flex flex-col gap-3">
-              {/* ①お客さんの条件スクショ */}
+              {/* ①お客さんの条件 */}
               <div>
-                <p className="mb-1 text-xs font-bold text-[#54656f]">① お客さんの条件スクショ</p>
-                {conditionImagePreview ? (
+                <p className="mb-1 text-xs font-bold text-[#54656f]">① お客さんの条件</p>
+                {linkedCustomer ? (
+                  // 紐付け済み: DBの条件を自動表示
+                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                    <div className="mb-1 flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-emerald-600">🔗 紐付け済み</span>
+                      <span className="text-xs text-emerald-600">{linkedCustomer.name}</span>
+                    </div>
+                    <pre className="whitespace-pre-wrap text-xs text-[#111b21] font-sans leading-5">{linkedCustomer.conditions}</pre>
+                  </div>
+                ) : conditionImagePreview ? (
                   <div className="relative overflow-hidden rounded-2xl border border-[#d1d7db]">
                     <img src={conditionImagePreview} alt="条件" className="max-h-36 w-full object-contain" />
                     <button

@@ -60,7 +60,7 @@ async function callClaudeVision(system: string, content: unknown[]): Promise<str
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, customer_name, image_url, condition_image_url, extra_input, parsed_estimate } = body;
+    const { action, customer_name, image_url, condition_image_url, customer_conditions, extra_input, parsed_estimate } = body;
 
     const name = customer_name ? `${customer_name}さん` : "お客様";
 
@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
       if (!image_url) throw new Error("物件資料画像が必要です");
 
       const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。
-お客様の条件スクショと物件資料の2枚の画像を見て、スモラ風のLINEメッセージを作成してください。
+お客様の条件と物件資料を見て、スモラ風のLINEメッセージを作成してください。
 
 【作成ルール】
 ・お客様の条件に合っている点を具体的に伝える（築年数・広さ・駅距離など数字で）
@@ -98,8 +98,12 @@ export async function POST(request: NextRequest) {
 【スモラの言葉・表現（参考にして自然に組み込んでください）】
 ${phraseText || "なし"}`;
 
+      // 条件をテキストで受け取る場合（紐付け済み）とスクショ画像の場合に対応
+      const conditionsText = customer_conditions as string | undefined;
+      const userText = `${name}へのメッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${extra_input ? `\nおすすめポイント: ${extra_input}` : ""}`;
+
       const content = [
-        { type: "text", text: `${name}へのメッセージを作成してください。${extra_input ? `\nおすすめポイント: ${extra_input}` : ""}` },
+        { type: "text", text: userText },
         ...(condition_image_url ? [{ type: "image", source: { type: "url", url: condition_image_url } }] : []),
         { type: "image", source: { type: "url", url: image_url } },
       ];

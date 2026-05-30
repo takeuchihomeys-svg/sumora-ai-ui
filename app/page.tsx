@@ -26,6 +26,7 @@ type Conversation = {
   profileImageUrl?: string;
   updatedAt?: string;
   account?: string;
+  propertyCustomerId?: string;
   messages: Message[];
 };
 
@@ -39,6 +40,7 @@ type SupabaseConversationRow = {
   updated_at?: string | null;
   profile_image_url?: string | null;
   account?: string | null;
+  property_customer_id?: string | null;
 };
 
 type SupabaseMessageRow = {
@@ -130,6 +132,38 @@ type AccountKey = typeof ACCOUNT_LIST[number]["key"];
 
 function getAccountMeta(account?: string | null) {
   return ACCOUNT_LIST.find((a) => a.key === account) ?? ACCOUNT_LIST[0]; // \u672a\u8a2d\u5b9a\u306f\u30b9\u30e2\u30e9
+}
+
+type PropertyCustomerRow = {
+  id: string;
+  customer_name: string;
+  desired_area?: string | null;
+  floor_plan?: string | null;
+  rent_min?: number | null;
+  rent_max?: number | null;
+  move_in_time?: string | null;
+  walk_minutes?: number | null;
+  preferences?: string | null;
+  ng_points?: string | null;
+  other_requests?: string | null;
+  building_age?: number | null;
+};
+
+function formatConditions(customer: PropertyCustomerRow): string {
+  const lines: string[] = [];
+  if (customer.desired_area) lines.push(`\u30a8\u30ea\u30a2: ${customer.desired_area}`);
+  if (customer.floor_plan) lines.push(`\u9593\u53d6\u308a: ${customer.floor_plan}`);
+  const rentParts: string[] = [];
+  if (customer.rent_min) rentParts.push(`${Math.floor(customer.rent_min / 10000)}\u4e07\u5186\u301c`);
+  if (customer.rent_max) rentParts.push(`${Math.floor(customer.rent_max / 10000)}\u4e07\u5186\u4ee5\u5185`);
+  if (rentParts.length > 0) lines.push(`\u5bb6\u8cc3: ${rentParts.join("")}`);
+  if (customer.walk_minutes) lines.push(`\u99c5\u5f92\u6b69: ${customer.walk_minutes}\u5206\u4ee5\u5185`);
+  if (customer.move_in_time) lines.push(`\u5165\u5c45: ${customer.move_in_time}`);
+  if (customer.building_age) lines.push(`\u7bc9\u5e74\u6570: ${customer.building_age}\u5e74\u4ee5\u5185`);
+  if (customer.preferences) lines.push(`\u5e0c\u671b: ${customer.preferences}`);
+  if (customer.ng_points) lines.push(`NG: ${customer.ng_points}`);
+  if (customer.other_requests) lines.push(`\u305d\u306e\u4ed6: ${customer.other_requests}`);
+  return lines.join("\n");
 }
 
 const URL_REGEX = /(https?:\/\/[^\s\u3000-\u9fff\uff00-\uffef]+)/g;
@@ -238,6 +272,11 @@ export default function Home() {
   const [linkedLineUserIds, setLinkedLineUserIds] = useState<Set<string>>(new Set());
   const [showSendConfirm, setShowSendConfirm] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
+  const [linkModalConvId, setLinkModalConvId] = useState<string | null>(null);
+  const [linkSearchQuery, setLinkSearchQuery] = useState("");
+  const [propertyCustomers, setPropertyCustomers] = useState<Array<{ id: string; customer_name: string; desired_area?: string | null; floor_plan?: string | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; other_requests?: string | null; rent_min?: number | null; building_age?: number | null }>>([]);
+  // convId → linked property customer（条件テキスト含む）
+  const [linkedCustomerMap, setLinkedCustomerMap] = useState<Record<string, { id: string; name: string; conditions: string }>>({});
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const aixFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -535,6 +574,7 @@ export default function Home() {
         profileImageUrl: conversation.profile_image_url || undefined,
         updatedAt: effectiveUpdatedAt,
         account: conversation.account || undefined,
+        propertyCustomerId: conversation.property_customer_id || undefined,
         messages: relatedMessages,
       };
     });
@@ -569,6 +609,28 @@ export default function Home() {
 
     if (formatted.length > 0) {
       setSelectedId((prev) => prev || formatted[0].id);
+    }
+
+    // 紐付け済み物件顧客を取得してlinkedCustomerMapを構築
+    const propCustomerIds = [...new Set(
+      formatted.map((c) => c.propertyCustomerId).filter(Boolean) as string[]
+    )];
+    if (propCustomerIds.length > 0) {
+      const { data: pcData } = await supabase
+        .from("property_customers")
+        .select("id,customer_name,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age")
+        .in("id", propCustomerIds);
+      if (pcData) {
+        const map: Record<string, { id: string; name: string; conditions: string }> = {};
+        for (const conv of formatted) {
+          if (!conv.propertyCustomerId) continue;
+          const pc = (pcData as PropertyCustomerRow[]).find((d) => d.id === conv.propertyCustomerId);
+          if (pc) {
+            map[conv.id] = { id: pc.id, name: pc.customer_name, conditions: formatConditions(pc) };
+          }
+        }
+        setLinkedCustomerMap((prev) => ({ ...prev, ...map }));
+      }
     }
 
     if (!silent) setPageLoading(false);
@@ -1496,6 +1558,11 @@ export default function Home() {
                             );
                             return null;
                           })()}
+                          {linkedCustomerMap[conversation.id] && (
+                            <span className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">
+                              🔗
+                            </span>
+                          )}
                           {assignees[conversation.id] && (
                             <span className="shrink-0 rounded-full bg-[#e3f2fd] px-1.5 py-0.5 text-[10px] font-bold text-[#1565C0]">
                               {assignees[conversation.id]}
@@ -1932,10 +1999,10 @@ export default function Home() {
             <div className="px-5 pt-4 pb-3 text-center text-[13px] font-semibold text-[#111b21] border-b border-[#f0f2f5]">
               {conversations.find(c => c.id === convMenuConvId)?.customerName}
             </div>
-            <div className="grid grid-cols-2">
+            <div className="grid grid-cols-3">
               <button
                 onClick={() => { setMemoModalConvId(convMenuConvId); setMemoInput(memos[convMenuConvId] || ""); setConvMenuConvId(null); }}
-                className="flex flex-col items-center gap-2 px-4 py-5 active:bg-[#f0f2f5] border-r border-[#f0f2f5]"
+                className="flex flex-col items-center gap-2 px-3 py-5 active:bg-[#f0f2f5] border-r border-[#f0f2f5]"
               >
                 <span className="flex h-11 w-11 items-center justify-center rounded-full" style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -1943,12 +2010,12 @@ export default function Home() {
                     <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
                   </svg>
                 </span>
-                <div className="text-[13px] font-semibold text-[#111b21]">ノート</div>
-                <div className="text-[10px] text-[#8696a0] text-center leading-tight">{memos[convMenuConvId] ? memos[convMenuConvId].slice(0, 16) + (memos[convMenuConvId].length > 16 ? "…" : "") : "ノートを追加"}</div>
+                <div className="text-[12px] font-semibold text-[#111b21]">ノート</div>
+                <div className="text-[10px] text-[#8696a0] text-center leading-tight">{memos[convMenuConvId] ? memos[convMenuConvId].slice(0, 12) + (memos[convMenuConvId].length > 12 ? "…" : "") : "追加"}</div>
               </button>
               <button
                 onClick={() => { setAssigneeModalConvId(convMenuConvId); setAssigneeInput(assignees[convMenuConvId] || ""); setConvMenuConvId(null); }}
-                className="flex flex-col items-center gap-2 px-4 py-5 active:bg-[#f0f2f5]"
+                className="flex flex-col items-center gap-2 px-3 py-5 active:bg-[#f0f2f5] border-r border-[#f0f2f5]"
               >
                 <span className="flex h-11 w-11 items-center justify-center rounded-full" style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -1956,10 +2023,130 @@ export default function Home() {
                     <circle cx="12" cy="7" r="4"/>
                   </svg>
                 </span>
-                <div className="text-[13px] font-semibold text-[#111b21]">メモ</div>
-                <div className="text-[10px] text-[#8696a0] text-center leading-tight">{assignees[convMenuConvId] ? `${assignees[convMenuConvId]}` : "名前を入力"}</div>
+                <div className="text-[12px] font-semibold text-[#111b21]">メモ</div>
+                <div className="text-[10px] text-[#8696a0] text-center leading-tight">{assignees[convMenuConvId] ? assignees[convMenuConvId] : "入力"}</div>
+              </button>
+              <button
+                onClick={async () => {
+                  setConvMenuConvId(null);
+                  // property_customers を取得してモーダル表示
+                  const { data } = await import("./lib/supabase").then(m => m.supabase.from("property_customers").select("id,customer_name,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age").order("updated_at", { ascending: false }).limit(100));
+                  setPropertyCustomers((data as typeof propertyCustomers) ?? []);
+                  setLinkSearchQuery("");
+                  setLinkModalConvId(convMenuConvId);
+                }}
+                className="flex flex-col items-center gap-2 px-3 py-5 active:bg-[#f0f2f5]"
+              >
+                <span className="flex h-11 w-11 items-center justify-center rounded-full bg-emerald-500">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                  </svg>
+                </span>
+                <div className="text-[12px] font-semibold text-[#111b21]">紐付け</div>
+                <div className="text-[10px] text-[#8696a0] text-center leading-tight">
+                  {linkedCustomerMap[convMenuConvId]?.name ?? "未設定"}
+                </div>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 紐付けモーダル */}
+      {linkModalConvId && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
+          onClick={(e) => { if (e.target === e.currentTarget) setLinkModalConvId(null); }}
+        >
+          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 flex items-center justify-between" style={{ background: "linear-gradient(135deg, #059669, #10b981)" }}>
+              <div className="text-[16px] font-bold text-white">
+                🔗 紐付け — {conversations.find((c) => c.id === linkModalConvId)?.customerName}
+              </div>
+              <button onClick={() => setLinkModalConvId(null)} className="flex h-7 w-7 items-center justify-center rounded-full bg-white/20 text-white text-sm">✕</button>
+            </div>
+
+            {linkedCustomerMap[linkModalConvId] && (
+              <div className="px-4 pt-3 pb-2 border-b border-[#f0f2f5]">
+                <div className="mb-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2.5">
+                  <div className="text-[12px] font-bold text-emerald-700">🔗 現在の紐付け</div>
+                  <div className="text-[13px] text-[#111b21]">{linkedCustomerMap[linkModalConvId].name}</div>
+                </div>
+                <button
+                  onClick={async () => {
+                    const convId = linkModalConvId;
+                    const res = await fetch("/api/link-conversation", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ conversationId: convId, propertyCustomerId: null }),
+                    });
+                    if ((await res.json()).ok) {
+                      setConversations((prev) => prev.map((c) => c.id === convId ? { ...c, propertyCustomerId: undefined } : c));
+                      setLinkedCustomerMap((prev) => { const next = { ...prev }; delete next[convId]; return next; });
+                      setLinkModalConvId(null);
+                    }
+                  }}
+                  className="w-full rounded-full border border-red-200 py-2 text-[13px] font-semibold text-red-500"
+                >
+                  紐付けを解除
+                </button>
+              </div>
+            )}
+
+            <div className="p-4">
+              <input
+                type="text"
+                value={linkSearchQuery}
+                onChange={(e) => setLinkSearchQuery(e.target.value)}
+                placeholder="お客様名で検索..."
+                className="mb-3 w-full rounded-2xl border border-[#e9edef] bg-[#f0f2f5] px-4 py-2.5 text-[13px] text-[#111b21] outline-none"
+                autoFocus
+              />
+              <div className="max-h-[50vh] overflow-y-auto flex flex-col gap-2">
+                {propertyCustomers
+                  .filter((pc) => !linkSearchQuery.trim() || pc.customer_name.includes(linkSearchQuery.trim()))
+                  .map((pc) => (
+                    <button
+                      key={pc.id}
+                      onClick={async () => {
+                        const convId = linkModalConvId;
+                        const res = await fetch("/api/link-conversation", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ conversationId: convId, propertyCustomerId: pc.id }),
+                        });
+                        if ((await res.json()).ok) {
+                          setConversations((prev) => prev.map((c) => c.id === convId ? { ...c, propertyCustomerId: pc.id } : c));
+                          const conds = formatConditions(pc);
+                          setLinkedCustomerMap((prev) => ({ ...prev, [convId]: { id: pc.id, name: pc.customer_name, conditions: conds } }));
+                          setLinkModalConvId(null);
+                        }
+                      }}
+                      className="flex w-full items-start gap-3 rounded-2xl border border-[#e9edef] bg-[#f8f9fa] px-4 py-3 text-left active:scale-[0.98] transition-transform"
+                    >
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-base font-bold text-emerald-700">
+                        {pc.customer_name?.charAt(0) ?? "?"}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[13px] font-bold text-[#111b21]">{pc.customer_name}</div>
+                        <div className="truncate text-[11px] text-[#8696a0]">
+                          {[pc.desired_area, pc.floor_plan, pc.rent_max ? `〜${Math.floor(pc.rent_max / 10000)}万円` : null].filter(Boolean).join(" / ")}
+                        </div>
+                      </div>
+                      {linkedCustomerMap[linkModalConvId]?.id === pc.id && (
+                        <span className="shrink-0 text-emerald-500 font-bold text-lg">✓</span>
+                      )}
+                    </button>
+                  ))}
+                {propertyCustomers.filter((pc) => !linkSearchQuery.trim() || pc.customer_name.includes(linkSearchQuery.trim())).length === 0 && (
+                  <div className="py-8 text-center text-[13px] text-[#8696a0]">
+                    {linkSearchQuery.trim() ? "該当するお客様がいません" : "売上サポにお客様がいません"}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="pb-[max(20px,env(safe-area-inset-bottom))]" />
           </div>
         </div>
       )}
@@ -2089,6 +2276,7 @@ export default function Home() {
           conversationId={selectedConversation.id}
           customerName={selectedConversation.customerName}
           initialImageFile={aixInitialFile ?? undefined}
+          linkedCustomer={aixModalType === "property_recommendation" ? linkedCustomerMap[selectedConversation.id] : undefined}
           onClose={() => {
             setAixModalType(null);
             setAixInitialFile(null);
