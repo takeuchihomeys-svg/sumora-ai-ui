@@ -18,14 +18,11 @@ function getToken(accountKey?: string): string | undefined {
   }
 }
 
-// line_contacts からアカウントキーを取得するフォールバック
+// line_contacts からアカウントキーを取得
+// line_contacts が最も信頼できる情報源（webhookが正確に保存している）
+// conversations.account は ADD COLUMN DEFAULT で全行 sumora になった可能性があるため後回し
 async function resolveAccountKey(lineUserId: string, providedAccount?: string): Promise<string> {
-  // 既に正しいキーが来ている場合はそのまま使う
-  if (providedAccount && ["sumora", "ieyasu", "giga", "hasu"].includes(providedAccount)) {
-    return providedAccount;
-  }
-
-  // line_contacts から実際のアカウントを取得
+  // line_contacts を最優先で参照
   const { data } = await supabase
     .from("line_contacts")
     .select("account")
@@ -34,8 +31,13 @@ async function resolveAccountKey(lineUserId: string, providedAccount?: string): 
     .single();
 
   if (data?.account) {
-    // 日本語名 → 英語キー 変換
-    return ACCOUNT_KEY_MAP[data.account as string] ?? "sumora";
+    const key = ACCOUNT_KEY_MAP[data.account as string];
+    if (key) return key;
+  }
+
+  // line_contacts にデータがない場合のみ conversations.account を使用
+  if (providedAccount && ["ieyasu", "giga", "hasu"].includes(providedAccount)) {
+    return providedAccount;
   }
 
   return "sumora";
