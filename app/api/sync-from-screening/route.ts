@@ -32,22 +32,31 @@ export async function POST(req: NextRequest) {
   }
 
   if (table === "conversations") {
+    // screening-admin の account 値（日本語名 or 英語キー）を英語キーに変換
+    const ACCOUNT_MAP: Record<string, string> = {
+      "スモラ":   "sumora",  sumora:  "sumora",
+      "イエヤス": "ieyasu",  ieyasu:  "ieyasu",
+      "ギガ賃貸": "giga",    giga:    "giga",
+    };
+    const rawAccount = record.account as string | null | undefined;
+    const resolvedAccount = rawAccount ? (ACCOUNT_MAP[rawAccount] ?? rawAccount) : null;
+
+    // account が null の場合はフィールド自体を省略し、既存値を上書きしない
+    const upsertData: Record<string, unknown> = {
+      id: String(record.id),
+      customer_name: record.customer_name ?? null,
+      status: record.status ?? null,
+      line_user_id: record.line_user_id ?? "",
+      last_message: record.last_message ?? null,
+      last_sender: record.last_sender ?? null,
+      updated_at: record.updated_at ?? null,
+      profile_image_url: record.profile_image_url ?? null,
+    };
+    if (resolvedAccount) upsertData.account = resolvedAccount;
+
     const { error } = await supabase
       .from("conversations")
-      .upsert(
-        {
-          id: String(record.id),
-          customer_name: record.customer_name ?? null,
-          status: record.status ?? null,
-          line_user_id: record.line_user_id ?? "",
-          last_message: record.last_message ?? null,
-          last_sender: record.last_sender ?? null,
-          updated_at: record.updated_at ?? null,
-          profile_image_url: record.profile_image_url ?? null,
-          account: record.account ?? null,
-        },
-        { onConflict: "id" }
-      );
+      .upsert(upsertData, { onConflict: "id" });
 
     if (error) {
       console.error("sync conversations error:", error.code, error.message, error.details, error.hint);
