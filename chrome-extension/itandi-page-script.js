@@ -47,25 +47,38 @@
     return true;
   }
 
-  // buttonのみ完全一致
+  // buttonのみ。完全一致 → 部分一致フォールバック
   function clickBtn(text) {
     var n = norm(text);
-    var found = [].slice.call(document.querySelectorAll("button")).find(function (b) {
-      return norm(b.textContent) === n && isVis(b);
-    });
+    var btns = [].slice.call(document.querySelectorAll("button")).filter(isVis);
+    // 完全一致
+    var found = btns.find(function (b) { return norm(b.textContent) === n; });
     if (found) { found.click(); return true; }
+    // 部分一致フォールバック（ボタンテキストに検索語が含まれる）
+    found = btns.find(function (b) { return norm(b.textContent).includes(n); });
+    if (found) {
+      console.log("[AXLX] clickBtn partial match: '" + text + "' → '" + found.textContent.trim() + "'");
+      found.click(); return true;
+    }
+    // デバッグ: 表示中の全ボタンテキストを出力
+    console.log("[AXLX] clickBtn not found: '" + text + "'. Visible buttons:", btns.map(function(b){ return "'" + b.textContent.trim().slice(0,40) + "'"; }).join(", "));
     return false;
   }
 
-  // ナビタブ（li/button/a/span/label）完全一致
+  // ナビタブ（li/button/a/span/label）。完全一致 → 部分一致フォールバック
   // itandiの地域・都道府県タブはLABELタグ（診断で確認済み）
   function clickNav(text) {
     var n = norm(text);
-    var els = [].slice.call(document.querySelectorAll("li, button, a, span, label, div[role='button']"));
-    var found = els.find(function (el) {
-      return norm(el.textContent) === n && isVis(el);
-    });
+    var els = [].slice.call(document.querySelectorAll("li, button, a, span, label, div[role='button']")).filter(isVis);
+    // 完全一致
+    var found = els.find(function (el) { return norm(el.textContent) === n; });
     if (found) { found.click(); return true; }
+    // 部分一致フォールバック
+    found = els.find(function (el) { return norm(el.textContent).includes(n); });
+    if (found) {
+      console.log("[AXLX] clickNav partial match: '" + text + "' → '" + found.textContent.trim() + "'");
+      found.click(); return true;
+    }
     return false;
   }
 
