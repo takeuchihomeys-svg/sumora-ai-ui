@@ -122,9 +122,11 @@
       }
       wardIdx++;
 
-      var opened = clickBtn("所在地を絞り込む") || clickBtn("所在地で絞り込み")
+      var opened = clickBtn("所在地で絞り込む") || clickBtn("所在地を絞り込む")
+                || clickBtn("所在地で絞り込み") || clickBtn("エリアで絞り込む")
                 || clickBtn("エリアを絞り込む") || clickBtn("エリアで絞り込み")
-                || clickBtn("地域を絞り込む") || clickBtn("地域で絞り込み");
+                || clickBtn("地域で絞り込む") || clickBtn("地域を絞り込む")
+                || clickBtn("地域で絞り込み");
       if (!opened) {
         console.log("[AX] selectItandiArea: modal button not found for " + wName);
         setTimeout(openNextWardModal, 1000);
@@ -214,8 +216,9 @@
   // 戻り値: boolean（モーダルを開けたか）
   function selectItandiLines(lineNames, stationNames, onDone) {
     if (!lineNames || !lineNames.length) return false;
-    var opened = clickBtn("路線・駅を絞り込む") || clickBtn("路線・駅で絞り込み")
-              || clickBtn("路線で絞り込む") || clickBtn("路線で絞り込み")
+    var opened = clickBtn("路線・駅で絞り込む") || clickBtn("路線・駅を絞り込む")
+              || clickBtn("路線・駅で絞り込み") || clickBtn("路線で絞り込む")
+              || clickBtn("路線で絞り込み") || clickBtn("沿線・駅で絞り込む")
               || clickBtn("沿線・駅で絞り込み") || clickBtn("沿線・駅を絞り込む");
     if (!opened) return false;
 
