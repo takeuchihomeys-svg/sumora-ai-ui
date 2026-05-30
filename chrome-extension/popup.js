@@ -347,11 +347,16 @@ function normalizeNumerals(s) {
 // 「第一希望:枚方市」「大阪府以外:奈良」などのラベルプレフィックスと方向サフィックスを除去してエリアトークンを分解
 function parseAreaTokens(rawArea) {
   if (!rawArea) return [];
-  return rawArea
+  // 「AあたりからBあたりまで」「AからBまで」「A〜B」「A～B」→ 両端点をカンマで展開
+  const expanded = rawArea
+    .replace(/([^\s,、・\/～〜]+?)あたりから([^\s,、・\/～〜]+?)あたりまで/g, "$1,$2")
+    .replace(/([^\s,、・\/～〜]+?)から([^\s,、・\/～〜]+?)まで/g, "$1,$2")
+    .replace(/([^\s,、・\/]+?)[〜～]([^\s,、・\/]+)/g, "$1,$2");
+  return expanded
     .split(/[,、・\/\s]+/)
     .map(t => t.replace(/^[^:]+:/, "")             // 「第一希望:」「第二希望:」「大阪府以外:」などを除去
                 .replace(/以南$|以北$|以西$|以東$/, "") // 方向サフィックスを除去
-                .replace(/駅|周辺|付近|近く|沿線|エリア/g, "")
+                .replace(/駅|周辺|付近|近く|沿線|エリア|あたり/g, "")
                 .trim())
     .map(normalizeNumerals)
     .filter(t => t.length >= 1);
@@ -797,6 +802,54 @@ function getAdjacentStations(stationName, lines) {
     if (idx >= 0 && idx < order.length - 1) adj.add(order[idx + 1]);
   }
   return [...adj];
+}
+
+// 「AからBまで」範囲指定の中間駅を展開する
+// ① 同一路線上に両駅がある → その間の全駅を返す
+// ② ない場合 → 1ホップ探索（A路線の駅 X が B路線にも属する → X〜Bの中間駅を返す）
+function expandStationRange(stationA, stationB) {
+  const result = [];
+  const linesA = STATION_LINE_MAP[stationA] || [];
+  const linesB = STATION_LINE_MAP[stationB] || [];
+
+  // ① 直接共通路線
+  for (const line of linesA) {
+    if (!linesB.includes(line)) continue;
+    const order = LINE_STATION_ORDER[line] || [];
+    const idxA = order.indexOf(stationA), idxB = order.indexOf(stationB);
+    if (idxA === -1 || idxB === -1) continue;
+    const from = Math.min(idxA, idxB), to = Math.max(idxA, idxB);
+    for (let i = from + 1; i < to; i++) {
+      if (!result.includes(order[i])) result.push(order[i]);
+    }
+    return result; // 直接共通があれば終了
+  }
+
+  // ② 1ホップ探索: A側の各路線を走査して B側の路線につながる中間駅を探す
+  for (const lineA of linesA) {
+    const orderA = LINE_STATION_ORDER[lineA] || [];
+    const idxA = orderA.indexOf(stationA);
+    if (idxA === -1) continue;
+    for (const mid of orderA) {
+      if (mid === stationA) continue;
+      const linesMid = STATION_LINE_MAP[mid] || [];
+      for (const lineMid of linesMid) {
+        if (!linesB.includes(lineMid)) continue;
+        const orderMid = LINE_STATION_ORDER[lineMid] || [];
+        const idxMid = orderMid.indexOf(mid), idxB = orderMid.indexOf(stationB);
+        if (idxMid === -1 || idxB === -1) continue;
+        // 中間駅 mid を追加
+        if (!result.includes(mid)) result.push(mid);
+        // mid〜stationB の中間駅を追加
+        const from = Math.min(idxMid, idxB), to = Math.max(idxMid, idxB);
+        for (let i = from + 1; i < to; i++) {
+          if (!result.includes(orderMid[i])) result.push(orderMid[i]);
+        }
+        return result;
+      }
+    }
+  }
+  return result;
 }
 
 // ── 市区コード（リアプロ city_code[]） ──────────────────────────────
@@ -2094,15 +2147,22 @@ function openInstructions(siteKey) {
       const areaParts = parseAreaTokens(adjAreaClean);
       const realpro_station_names = [];
       if (currentAreaMode === "station") {
+        const resolvedStations = [];
         for (const part of areaParts) {
           const station = resolveStation(part);
           if (station) {
+            resolvedStations.push(station);
             if (!realpro_station_names.includes(station)) realpro_station_names.push(station);
             if (searchMode === "wide") {
               const adj = getAdjacentStations(station, STATION_LINE_MAP[station] || []);
               adj.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
             }
           }
+        }
+        // 2駅ペア間の中間駅を展開（「本町〜南森町」のような範囲指定に対応）
+        for (let i = 0; i < resolvedStations.length - 1; i++) {
+          const intermediate = expandStationRange(resolvedStations[i], resolvedStations[i + 1]);
+          intermediate.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
         }
       }
 
