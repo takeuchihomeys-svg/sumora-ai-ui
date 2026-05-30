@@ -198,6 +198,38 @@ CREATE INDEX IF NOT EXISTS idx_templates_category ON templates(category);
 CREATE INDEX IF NOT EXISTS idx_templates_sort_order ON templates(sort_order);
 
 ALTER TABLE templates DISABLE ROW LEVEL SECURITY;
+
+-- estimates テーブル（見積書作成ツール）
+CREATE TABLE IF NOT EXISTS estimates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  account TEXT NOT NULL DEFAULT 'sumora',
+  customer_name TEXT,
+  property_name TEXT,
+  move_in_date TEXT,
+  rent INTEGER NOT NULL DEFAULT 0,
+  management_fee INTEGER DEFAULT 0,
+  shikikin_months NUMERIC DEFAULT 0,
+  reikin_months NUMERIC DEFAULT 0,
+  commission_rate NUMERIC DEFAULT 1.1,
+  custom_commission INTEGER,
+  guarantee INTEGER DEFAULT 0,
+  insurance INTEGER DEFAULT 0,
+  key_exchange INTEGER DEFAULT 0,
+  cleaning INTEGER DEFAULT 0,
+  other_items JSONB DEFAULT '[]',
+  discount INTEGER DEFAULT 0,
+  discount_note TEXT,
+  supplementary_notes TEXT,
+  items JSONB DEFAULT '[]',
+  total INTEGER DEFAULT 0,
+  line_text TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_estimates_account ON estimates(account);
+CREATE INDEX IF NOT EXISTS idx_estimates_created_at ON estimates(created_at DESC);
+
+ALTER TABLE estimates DISABLE ROW LEVEL SECURITY;
 `.trim();
 
 export async function GET() {
