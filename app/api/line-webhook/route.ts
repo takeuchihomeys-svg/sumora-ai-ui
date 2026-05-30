@@ -160,32 +160,42 @@ async function handleTextMessage(
   })();
 }
 
+// destination → account key のマッピング（各LINE公式アカウントのBot User ID）
+const DESTINATION_MAP: Record<string, string> = {
+  [process.env.LINE_SUMORA_DESTINATION ?? ""]: "sumora",
+  [process.env.LINE_IEYASU_DESTINATION ?? ""]: "ieyasu",
+  [process.env.LINE_GIGA_DESTINATION ?? ""]: "giga",
+};
+
 // ── POST ──────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const rawBody = await req.text();
   const signature = req.headers.get("x-line-signature") ?? "";
 
-  // どのアカウントの署名か判定
-  let matchedAccount: AccountConfig | undefined;
-  for (const account of ACCOUNTS) {
-    if (!account.secret) continue;
-    const valid = await verifySignature(rawBody, signature, account.secret);
-    if (valid) {
-      matchedAccount = account;
-      break;
-    }
-  }
-
-  if (!matchedAccount) {
-    console.warn("[line-webhook] 署名検証失敗 — 全アカウント不一致");
-    return NextResponse.json({ error: "invalid signature" }, { status: 400 });
-  }
-
-  let body: { events?: unknown[] };
+  let body: { destination?: string; events?: unknown[] };
   try {
     body = JSON.parse(rawBody);
   } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
+  }
+
+  // 1. destination フィールドでアカウントを一発判定
+  const destination = body.destination ?? "";
+  const accountKey = DESTINATION_MAP[destination];
+  const matchedAccount = ACCOUNTS.find((a) => a.key === accountKey);
+
+  if (!matchedAccount) {
+    console.warn("[line-webhook] 未知のdestination:", destination);
+    return NextResponse.json({ error: "unknown destination" }, { status: 400 });
+  }
+
+  // 2. 署名検証（セキュリティ確保）
+  if (matchedAccount.secret) {
+    const valid = await verifySignature(rawBody, signature, matchedAccount.secret);
+    if (!valid) {
+      console.warn("[line-webhook] 署名検証失敗:", matchedAccount.key);
+      return NextResponse.json({ error: "invalid signature" }, { status: 400 });
+    }
   }
 
   const events = body.events ?? [];
