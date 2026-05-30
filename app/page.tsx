@@ -2271,6 +2271,11 @@ export default function Home() {
         <TemplateModal
           onClose={() => setShowTemplateModal(false)}
           onSelect={(text) => { setReplyDraft(text); setShowTemplateModal(false); }}
+          customerName={selectedConversation.customerName}
+          conversationState={selectedConversation.status}
+          recentMessages={(selectedConversation.messages || []).slice(-15).map((m: Message) => ({
+            sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined,
+          }))}
         />
       )}
 

@@ -183,6 +183,21 @@ CREATE INDEX IF NOT EXISTS idx_phrase_dictionary_category ON phrase_dictionary(c
 CREATE INDEX IF NOT EXISTS idx_phrase_dictionary_priority ON phrase_dictionary(priority DESC);
 
 ALTER TABLE phrase_dictionary DISABLE ROW LEVEL SECURITY;
+
+-- templates テーブル（LINEテンプレート管理）
+CREATE TABLE IF NOT EXISTS templates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category TEXT NOT NULL DEFAULT '全般',
+  label TEXT NOT NULL,
+  text TEXT NOT NULL,
+  sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_templates_category ON templates(category);
+CREATE INDEX IF NOT EXISTS idx_templates_sort_order ON templates(sort_order);
+
+ALTER TABLE templates DISABLE ROW LEVEL SECURITY;
 `.trim();
 
 export async function GET() {
