@@ -1,241 +1,306 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import BottomNav from "../components/BottomNav";
+import type { ExtractedEstimate } from "../api/extract-estimate-info/route";
 
 type Account = "sumora" | "ieyasu" | "giga";
+type Step = "input" | "review";
 
-type EstimateItem = {
-  item: string;
-  amount: number;
-  category: string;
-  notes: string;
+const ACCOUNT_CONFIG: Record<Account, { label: string; grad: string; accent: string }> = {
+  sumora: { label: "スモラ",    grad: "linear-gradient(135deg,#1565C0,#2196F3,#4BA8E8)", accent: "#1565C0" },
+  ieyasu: { label: "イエヤス",  grad: "linear-gradient(135deg,#bf360c,#e65100,#ff6d00)", accent: "#e65100" },
+  giga:   { label: "ギガ賃貸", grad: "linear-gradient(135deg,#1b5e20,#2e7d32,#43a047)", accent: "#1b5e20" },
 };
 
-type EstimateResult = {
-  id?: string;
-  items: EstimateItem[];
-  subtotal: number;
-  discountAmount: number;
-  discountBreakdown: string;
-  total: number;
-  lineText: string;
+type EditableItems = Omit<ExtractedEstimate, "otherItems"> & {
+  otherItems: Array<{ item: string; amount: number }>;
+  nextRent: number;
+  nextManagementFee: number;
+  nextWaterFee: number;
+  nextMonth: number;
+  nextYear: number;
 };
 
-type SavedEstimate = {
-  id: string;
-  account: Account;
-  customer_name: string;
-  property_name: string;
-  move_in_date: string;
-  total: number;
-  created_at: string;
-};
+function calcNext(moveInDate: string) {
+  if (!moveInDate) return { nextMonth: 0, nextYear: 0 };
+  const d = new Date(moveInDate);
+  const m = d.getMonth(); // 0-indexed
+  return {
+    nextMonth: m === 11 ? 1 : m + 2,
+    nextYear: m === 11 ? d.getFullYear() + 1 : d.getFullYear(),
+  };
+}
 
-const ACCOUNT_CONFIG: Record<Account, {
-  label: string;
-  accentColor: string;
-  headerGrad: string;
-  defaultInsurance: number;
-  defaultKeyExchange: number;
-  commissionRate: number;
-}> = {
-  sumora: {
-    label: "スモラ",
-    accentColor: "#1565C0",
-    headerGrad: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)",
-    defaultInsurance: 14000,
-    defaultKeyExchange: 16500,
-    commissionRate: 1.1,
-  },
-  ieyasu: {
-    label: "イエヤス",
-    accentColor: "#e65100",
-    headerGrad: "linear-gradient(135deg, #bf360c, #e65100, #ff6d00)",
-    defaultInsurance: 14000,
-    defaultKeyExchange: 16500,
-    commissionRate: 1.1,
-  },
-  giga: {
-    label: "ギガ賃貸",
-    accentColor: "#1b5e20",
-    headerGrad: "linear-gradient(135deg, #1b5e20, #2e7d32, #43a047)",
-    defaultInsurance: 14000,
-    defaultKeyExchange: 16500,
-    commissionRate: 1.1,
-  },
-};
-
-const CATEGORY_LABEL: Record<string, string> = {
-  shikikin: "敷金",
-  reikin: "礼金",
-  prorated_rent: "日割賃料",
-  prorated_fee: "日割管理費",
-  next_rent: "翌月賃料",
-  next_fee: "翌月管理費",
-  commission: "仲介手数料",
-  discount: "割引",
-  key: "鍵交換",
-  insurance: "火災保険",
-  guarantee: "保証料",
-  cleaning: "クリーニング",
-  other: "その他",
-};
+function calcProratedDays(moveInDay: number, monthDays: number) {
+  return monthDays - moveInDay + 1;
+}
 
 function fmtYen(n: number) {
-  const abs = Math.abs(n);
-  const prefix = n < 0 ? "▲" : "";
-  return `${prefix}¥${abs.toLocaleString()}`;
+  return `¥${Number(n || 0).toLocaleString()}`;
+}
+
+const ITEM_CONFIG: Array<{
+  key: keyof EditableItems;
+  label: string;
+  group?: string;
+  derived?: boolean;
+}> = [
+  { key: "propertyName",    label: "物件名",          group: "基本情報" },
+  { key: "roomNumber",      label: "号室" },
+  { key: "customerName",    label: "入居者名" },
+  { key: "assignee",        label: "担当者名" },
+  { key: "moveInDate",      label: "入居日",           group: "入居情報" },
+  { key: "moveInMonthDays", label: "入居月の日数（例: 31）" },
+  { key: "rent",            label: "月額家賃",          group: "賃料" },
+  { key: "managementFee",   label: "共益費・管理費" },
+  { key: "waterFee",        label: "水道代（月額）" },
+  { key: "shikikin",        label: "敷金",              group: "初期費用" },
+  { key: "reikin",          label: "礼金" },
+  { key: "hoshokikin",      label: "保証金" },
+  { key: "commission",      label: "仲介手数料（税抜）" },
+  { key: "commissionTax",   label: "仲介手数料 消費税" },
+  { key: "parkingCommission",    label: "駐車場手数料（税抜）" },
+  { key: "parkingCommissionTax", label: "駐車場手数料 消費税" },
+  { key: "guarantee",       label: "賃貸保証料" },
+  { key: "insurance",       label: "住宅保険" },
+  { key: "keyExchange",     label: "鍵交換代" },
+  { key: "cleaning",        label: "クリーニング代" },
+  { key: "parkingDeposit",  label: "駐車場保証金",      group: "駐車場" },
+  { key: "parkingMonthly",  label: "翌月駐車場代" },
+  { key: "discountAmount",  label: "割引額",            group: "割引" },
+  { key: "discountNote",    label: "割引メモ" },
+  { key: "nextRent",        label: "翌月家賃（変更あれば）", group: "翌月分" },
+  { key: "nextManagementFee", label: "翌月共益費（変更あれば）" },
+  { key: "nextWaterFee",    label: "翌月水道代（変更あれば）" },
+];
+
+const TEXT_KEYS = new Set(["propertyName", "roomNumber", "customerName", "assignee", "moveInDate", "discountNote", "supplementaryNotes"]);
+const GROUP_ORDER = ["基本情報", "入居情報", "賃料", "初期費用", "駐車場", "割引", "翌月分"];
+
+function toEditable(e: ExtractedEstimate, moveInDate?: string): EditableItems {
+  const date = moveInDate || e.moveInDate || "";
+  const { nextMonth, nextYear } = calcNext(date);
+  return {
+    ...e,
+    moveInDate: date,
+    nextRent: e.rent,
+    nextManagementFee: e.managementFee,
+    nextWaterFee: e.waterFee,
+    nextMonth,
+    nextYear,
+  };
 }
 
 export default function EstimatePage() {
   const [account, setAccount] = useState<Account>("sumora");
+  const [step, setStep] = useState<Step>("input");
   const cfg = ACCOUNT_CONFIG[account];
 
-  // 入力フォーム
-  const [customerName, setCustomerName] = useState("");
-  const [propertyName, setPropertyName] = useState("");
-  const [moveInDate, setMoveInDate] = useState("");
-  const [rent, setRent] = useState("");
-  const [managementFee, setManagementFee] = useState("");
-  const [shikikinMonths, setShikikinMonths] = useState("1");
-  const [reikinMonths, setReikinMonths] = useState("1");
-  const [useCustomCommission, setUseCustomCommission] = useState(false);
-  const [customCommission, setCustomCommission] = useState("");
-  const [guarantee, setGuarantee] = useState("");
-  const [insurance, setInsurance] = useState(String(cfg.defaultInsurance));
-  const [keyExchange, setKeyExchange] = useState(String(cfg.defaultKeyExchange));
-  const [cleaning, setCleaning] = useState("");
-  const [otherItems, setOtherItems] = useState<Array<{ item: string; amount: string; notes: string }>>([]);
-  const [discountAmount, setDiscountAmount] = useState("");
-  const [discountNote, setDiscountNote] = useState("");
-  const [supplementaryNotes, setSupplementaryNotes] = useState("");
+  // Step 1 inputs
+  const [images, setImages] = useState<Array<{ base64: string; mimeType: string; name: string }>>([]);
+  const [supplementaryText, setSupplementaryText] = useState("");
+  const [extracting, setExtracting] = useState(false);
+  const [extractError, setExtractError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [generating, setGenerating] = useState(false);
-  const [result, setResult] = useState<EstimateResult | null>(null);
-  const [error, setError] = useState("");
-  const [copyDone, setCopyDone] = useState(false);
+  // Step 2: editable extracted data
+  const [items, setItems] = useState<EditableItems | null>(null);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState("");
 
-  const [showHistory, setShowHistory] = useState(false);
-  const [history, setHistory] = useState<SavedEstimate[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
+  const reviewRef = useRef<HTMLDivElement>(null);
 
-  const resultRef = useRef<HTMLDivElement>(null);
-
-  // アカウント切替時にデフォルト値更新
-  useEffect(() => {
-    const c = ACCOUNT_CONFIG[account];
-    setInsurance(String(c.defaultInsurance));
-    setKeyExchange(String(c.defaultKeyExchange));
-  }, [account]);
-
-  // 賃料変更時に保証料を自動計算（50%）
-  useEffect(() => {
-    if (rent && !guarantee) {
-      setGuarantee(String(Math.round(Number(rent) * 0.5)));
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rent]);
-
-  const addOtherItem = () => {
-    setOtherItems((p) => [...p, { item: "", amount: "", notes: "" }]);
-  };
-
-  const removeOtherItem = (idx: number) => {
-    setOtherItems((p) => p.filter((_, i) => i !== idx));
-  };
-
-  const updateOtherItem = (idx: number, field: "item" | "amount" | "notes", val: string) => {
-    setOtherItems((p) => p.map((o, i) => i === idx ? { ...o, [field]: val } : o));
-  };
-
-  const handleGenerate = async () => {
-    if (!rent || Number(rent) <= 0) { setError("賃料を入力してください"); return; }
-    setError("");
-    setGenerating(true);
-    setResult(null);
-
-    try {
-      const res = await fetch("/api/generate-estimate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          account,
-          customerName: customerName.trim(),
-          propertyName: propertyName.trim(),
-          moveInDate,
-          rent: Number(rent),
-          managementFee: Number(managementFee) || 0,
-          shikikinMonths: Number(shikikinMonths) || 0,
-          reikinMonths: Number(reikinMonths) || 0,
-          commissionRate: cfg.commissionRate,
-          customCommission: useCustomCommission ? (Number(customCommission) || null) : null,
-          guarantee: Number(guarantee) || 0,
-          insurance: Number(insurance) || 0,
-          keyExchange: Number(keyExchange) || 0,
-          cleaning: Number(cleaning) || 0,
-          otherItems: otherItems
-            .filter((o) => o.item && Number(o.amount) > 0)
-            .map((o) => ({ item: o.item, amount: Number(o.amount), notes: o.notes })),
-          discountAmount: Number(discountAmount) || 0,
-          discountNote: discountNote.trim(),
-          supplementaryNotes: supplementaryNotes.trim(),
-        }),
-      });
-
-      const data = await res.json() as EstimateResult & { error?: string };
-      if (data.error) { setError(data.error); return; }
-      setResult(data);
-      setTimeout(() => resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
-    } catch {
-      setError("見積書の生成に失敗しました。もう一度お試しください。");
-    } finally {
-      setGenerating(false);
-    }
-  };
-
-  const copyLineText = () => {
-    if (!result?.lineText) return;
-    navigator.clipboard.writeText(result.lineText).then(() => {
-      setCopyDone(true);
-      setTimeout(() => setCopyDone(false), 2000);
+  const handleFileSelect = (files: FileList | null) => {
+    if (!files) return;
+    Array.from(files).forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const base64 = (e.target?.result as string).split(",")[1];
+        setImages((prev) => [
+          ...prev,
+          { base64, mimeType: file.type, name: file.name },
+        ]);
+      };
+      reader.readAsDataURL(file);
     });
   };
 
-  const loadHistory = async () => {
-    setHistoryLoading(true);
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = Array.from(e.clipboardData.items);
+    const imageItems = items.filter((i) => i.type.startsWith("image/"));
+    if (imageItems.length === 0) return;
+    e.preventDefault();
+    imageItems.forEach((item) => {
+      const file = item.getAsFile();
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const base64 = (ev.target?.result as string).split(",")[1];
+        setImages((prev) => [
+          ...prev,
+          { base64, mimeType: file.type, name: `貼付け画像${prev.length + 1}` },
+        ]);
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const removeImage = (idx: number) => setImages((p) => p.filter((_, i) => i !== idx));
+
+  const handleExtract = async () => {
+    if (images.length === 0 && !supplementaryText.trim()) {
+      setExtractError("画像をアップロードするか補足情報を入力してください");
+      return;
+    }
+    setExtractError("");
+    setExtracting(true);
     try {
-      const res = await fetch(`/api/generate-estimate?account=${account}&limit=20`);
-      const data = await res.json() as { ok: boolean; estimates: SavedEstimate[] };
-      if (data.ok) setHistory(data.estimates);
+      const res = await fetch("/api/extract-estimate-info", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          images: images.map(({ base64, mimeType }) => ({ base64, mimeType })),
+          supplementaryText,
+        }),
+      });
+      const data = await res.json() as { ok: boolean; extracted?: ExtractedEstimate; error?: string };
+      if (!data.ok || !data.extracted) {
+        setExtractError(data.error || "読み取りに失敗しました");
+        return;
+      }
+      setItems(toEditable(data.extracted));
+      setStep("review");
+      setTimeout(() => reviewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
+    } catch {
+      setExtractError("ネットワークエラーが発生しました");
     } finally {
-      setHistoryLoading(false);
+      setExtracting(false);
     }
   };
 
-  const toggleHistory = () => {
-    if (!showHistory) loadHistory();
-    setShowHistory((v) => !v);
+  const updateItem = (key: keyof EditableItems, value: string | number) => {
+    setItems((prev) => {
+      if (!prev) return prev;
+      const updated = { ...prev, [key]: value } as EditableItems;
+      // moveInDate変更時に翌月を再計算
+      if (key === "moveInDate") {
+        const { nextMonth, nextYear } = calcNext(value as string);
+        updated.nextMonth = nextMonth;
+        updated.nextYear = nextYear;
+      }
+      return updated;
+    });
   };
+
+  const addOtherItem = () => {
+    setItems((prev) => prev ? { ...prev, otherItems: [...prev.otherItems, { item: "", amount: 0 }] } : prev);
+  };
+
+  const updateOtherItem = (idx: number, field: "item" | "amount", val: string) => {
+    setItems((prev) => {
+      if (!prev) return prev;
+      const updated = [...prev.otherItems];
+      updated[idx] = { ...updated[idx], [field]: field === "amount" ? Number(val) || 0 : val };
+      return { ...prev, otherItems: updated };
+    });
+  };
+
+  const removeOtherItem = (idx: number) => {
+    setItems((prev) => prev ? { ...prev, otherItems: prev.otherItems.filter((_, i) => i !== idx) } : prev);
+  };
+
+  const handleDownload = async () => {
+    if (!items) return;
+    setDownloadError("");
+    setDownloading(true);
+    try {
+      const res = await fetch("/api/fill-estimate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account, items }),
+      });
+      if (!res.ok) {
+        const err = await res.json() as { error?: string };
+        setDownloadError(err.error || "ダウンロードに失敗しました");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const label = ACCOUNT_CONFIG[account].label;
+      const name = items.customerName ? `${items.customerName}様` : "見積書";
+      a.href = url;
+      a.download = `${label}見積書_${name}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setDownloadError("ダウンロードに失敗しました");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  // プレビュー計算
+  const proratedDays = items ? calcProratedDays(items.moveInDay || 1, items.moveInMonthDays || 30) : 0;
+  const proratedRent = items ? Math.round(((items.rent || 0) / (items.moveInMonthDays || 30)) * proratedDays) : 0;
+  const proratedMgmt = items ? Math.round(((items.managementFee || 0) / (items.moveInMonthDays || 30)) * proratedDays) : 0;
+  const proratedWater = items ? Math.round(((items.waterFee || 0) / (items.moveInMonthDays || 30)) * proratedDays) : 0;
+
+  const totalItems = items ? [
+    { label: "保証金", amount: items.hoshokikin },
+    { label: "敷金", amount: items.shikikin },
+    { label: "礼金", amount: items.reikin },
+    { label: `${items.moveInMonth}月分 日割家賃`, amount: proratedRent },
+    { label: `${items.moveInMonth}月分 日割共益費`, amount: proratedMgmt },
+    { label: `${items.moveInMonth}月分 日割水道代`, amount: proratedWater },
+    { label: `${items.nextMonth}月分 家賃`, amount: items.nextRent },
+    { label: `${items.nextMonth}月分 共益費`, amount: items.nextManagementFee },
+    { label: `${items.nextMonth}月分 水道代`, amount: items.nextWaterFee },
+    { label: "仲介手数料", amount: items.commission },
+    { label: "仲介手数料 消費税", amount: items.commissionTax },
+    { label: "駐車場手数料", amount: items.parkingCommission },
+    { label: "駐車場手数料 消費税", amount: items.parkingCommissionTax },
+    { label: "賃貸保証料", amount: items.guarantee },
+    { label: "住宅保険", amount: items.insurance },
+    { label: "鍵交換代", amount: items.keyExchange },
+    { label: "クリーニング代", amount: items.cleaning },
+    { label: "駐車場保証金", amount: items.parkingDeposit },
+    { label: `${items.nextMonth}月分 駐車場代`, amount: items.parkingMonthly },
+    ...items.otherItems.filter((o) => o.amount > 0).map((o) => ({ label: o.item, amount: o.amount })),
+    { label: "割引", amount: -(items.discountAmount || 0), isDiscount: true },
+  ].filter((r) => r.amount !== 0) : [];
+
+  const grandTotal = totalItems.reduce((s, r) => s + r.amount, 0);
+
+  // グループ別に ITEM_CONFIG を整理
+  const groups: Record<string, typeof ITEM_CONFIG> = {};
+  ITEM_CONFIG.forEach((cfg) => {
+    const g = cfg.group || "__no_group";
+    if (!groups[g]) groups[g] = [];
+    groups[g].push(cfg);
+  });
 
   return (
     <main
       className="flex h-[calc(100svh-56px)] flex-col overflow-hidden"
-      style={{ background: "linear-gradient(180deg, #f0f7ff 0%, #eef6ff 60%, #f5faff 100%)" }}
+      style={{ background: "linear-gradient(180deg,#f0f7ff 0%,#eef6ff 60%,#f5faff 100%)" }}
     >
       {/* ヘッダー */}
       <header
         className="shrink-0 px-4 pb-3 pt-[max(10px,env(safe-area-inset-top))]"
-        style={{ background: cfg.headerGrad }}
+        style={{ background: cfg.grad }}
       >
         <div className="mb-3 flex items-center justify-between">
           <div className="text-[17px] font-bold text-white">見積書作成</div>
-          <button
-            onClick={toggleHistory}
-            className="rounded-full bg-white/20 px-3 py-1 text-[11px] font-bold text-white"
-          >
-            履歴
-          </button>
+          {step === "review" && (
+            <button
+              onClick={() => setStep("input")}
+              className="rounded-full bg-white/20 px-3 py-1 text-[11px] font-bold text-white"
+            >
+              ← 戻る
+            </button>
+          )}
         </div>
 
         {/* アカウント選択 */}
@@ -243,11 +308,11 @@ export default function EstimatePage() {
           {(["sumora", "ieyasu", "giga"] as Account[]).map((a) => (
             <button
               key={a}
-              onClick={() => { setAccount(a); setResult(null); }}
+              onClick={() => { setAccount(a); setItems(null); setStep("input"); }}
               className="flex-1 rounded-full py-1.5 text-[13px] font-bold transition"
               style={
                 account === a
-                  ? { backgroundColor: "white", color: cfg.accentColor }
+                  ? { backgroundColor: "white", color: cfg.accent }
                   : { backgroundColor: "rgba(255,255,255,0.2)", color: "white" }
               }
             >
@@ -255,448 +320,304 @@ export default function EstimatePage() {
             </button>
           ))}
         </div>
+
+        {/* ステップインジケーター */}
+        <div className="mt-2.5 flex items-center gap-2">
+          {[
+            { num: "1", label: "資料・情報入力" },
+            { num: "2", label: "確認・調整・作成" },
+          ].map((s, idx) => (
+            <div key={idx} className="flex items-center gap-1">
+              {idx > 0 && <div className="h-px w-6 bg-white/40" />}
+              <div className="flex items-center gap-1">
+                <span
+                  className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold"
+                  style={
+                    (idx === 0 && step === "input") || (idx === 1 && step === "review")
+                      ? { backgroundColor: "white", color: cfg.accent }
+                      : { backgroundColor: "rgba(255,255,255,0.3)", color: "white" }
+                  }
+                >
+                  {s.num}
+                </span>
+                <span className="text-[10px] text-white/90">{s.label}</span>
+              </div>
+            </div>
+          ))}
+        </div>
       </header>
 
       {/* スクロール領域 */}
       <div className="flex-1 overflow-y-auto">
 
-        {/* 履歴パネル */}
-        {showHistory && (
-          <div className="border-b border-[#e9edef] bg-white px-4 py-3">
-            <div className="mb-2 text-[13px] font-bold text-[#1565C0]">過去の見積書（{ACCOUNT_CONFIG[account].label}）</div>
-            {historyLoading ? (
-              <div className="py-4 text-center text-[12px] text-[#aaa]">読み込み中...</div>
-            ) : history.length === 0 ? (
-              <div className="py-4 text-center text-[12px] text-[#aaa]">まだ見積書がありません</div>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {history.map((h) => (
-                  <div key={h.id} className="flex items-center justify-between rounded-xl bg-[#f8f9fa] px-3 py-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13px] font-semibold text-[#111b21]">
-                        {h.customer_name || "（名前なし）"} — {h.property_name || "（物件名なし）"}
-                      </div>
-                      <div className="text-[11px] text-[#667781]">
-                        {h.move_in_date ? `入居 ${h.move_in_date}` : "入居日未定"} / 合計 ¥{h.total.toLocaleString()}
-                      </div>
-                    </div>
-                    <div className="ml-2 shrink-0 text-[11px] text-[#aaa]">
-                      {new Date(h.created_at).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })}
-                    </div>
-                  </div>
-                ))}
+        {/* ─── STEP 1: 資料入力 ─── */}
+        {step === "input" && (
+          <div className="p-4 flex flex-col gap-4">
+
+            {/* 画像アップロードエリア */}
+            <section>
+              <div className="mb-2 text-[12px] font-bold" style={{ color: cfg.accent }}>
+                資料画像（物件資料・料金表・請求書など）
               </div>
+              <div
+                className="rounded-2xl border-2 border-dashed border-[#b3d4f5] bg-white p-4 text-center"
+                onPaste={handlePaste}
+                tabIndex={0}
+              >
+                <div className="text-[13px] text-[#667781] mb-3">
+                  画像をここに貼り付け（Ctrl+V）<br />
+                  またはファイルを選択
+                </div>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="rounded-full px-5 py-2 text-[13px] font-bold text-white"
+                  style={{ background: cfg.grad }}
+                >
+                  ＋ 画像を選択
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*,application/pdf"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => handleFileSelect(e.target.files)}
+                />
+              </div>
+
+              {/* アップロード済み画像プレビュー */}
+              {images.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {images.map((img, idx) => (
+                    <div key={idx} className="relative rounded-xl overflow-hidden bg-white border border-[#e9edef]">
+                      {img.mimeType.startsWith("image/") ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={`data:${img.mimeType};base64,${img.base64}`}
+                          alt={img.name}
+                          className="h-20 w-20 object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-20 w-20 items-center justify-center bg-[#f0f2f5] text-[10px] text-[#667781] font-bold">
+                          PDF
+                        </div>
+                      )}
+                      <button
+                        onClick={() => removeImage(idx)}
+                        className="absolute top-0.5 right-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/50 text-white text-[11px] leading-none"
+                      >
+                        ×
+                      </button>
+                      <div className="truncate px-1 pb-1 text-[9px] text-[#667781] max-w-[80px]">{img.name}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {/* 補足情報テキスト */}
+            <section>
+              <div className="mb-2 text-[12px] font-bold" style={{ color: cfg.accent }}>
+                補足情報（任意）
+              </div>
+              <div className="rounded-2xl bg-white shadow-sm p-4">
+                <textarea
+                  className="w-full resize-none rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3] placeholder:text-[#aaa]"
+                  rows={5}
+                  placeholder={"物件名・家賃・入居日など文字情報があれば入力してください\n\n例：\n物件名: グランドマンション202\n家賃: 85,000円 / 管理費: 5,000円\n入居予定: 2026年7月1日\n敷金1ヶ月 / 礼金1ヶ月\n仲介手数料 93,500円（税込）"}
+                  value={supplementaryText}
+                  onChange={(e) => setSupplementaryText(e.target.value)}
+                />
+              </div>
+            </section>
+
+            {extractError && (
+              <div className="rounded-xl bg-red-50 px-4 py-3 text-[13px] text-red-600">{extractError}</div>
             )}
+
+            {/* AI読み取りボタン */}
+            <button
+              onClick={handleExtract}
+              disabled={extracting}
+              className="w-full rounded-full py-4 text-[15px] font-bold text-white shadow-lg disabled:opacity-50 flex items-center justify-center gap-2"
+              style={{ background: cfg.grad }}
+            >
+              {extracting ? (
+                <>
+                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                  AI読み取り中...（10〜20秒かかります）
+                </>
+              ) : (
+                "🔍 AIで読み取る"
+              )}
+            </button>
+
+            <div className="h-4" />
           </div>
         )}
 
-        {/* フォーム */}
-        <div className="p-4 flex flex-col gap-5">
+        {/* ─── STEP 2: 確認・調整 ─── */}
+        {step === "review" && items && (
+          <div ref={reviewRef} className="p-4 flex flex-col gap-4">
 
-          {/* 基本情報 */}
-          <section>
-            <div className="mb-2 text-[12px] font-bold" style={{ color: cfg.accentColor }}>基本情報</div>
-            <div className="flex flex-col gap-2.5 rounded-2xl bg-white p-4 shadow-sm">
-              <div>
-                <label className="mb-1 block text-[11px] text-[#667781]">お客様名</label>
-                <input
-                  className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3]"
-                  placeholder="例：田中 太郎"
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-[11px] text-[#667781]">物件名</label>
-                <input
-                  className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3]"
-                  placeholder="例：グランドマンション502号室"
-                  value={propertyName}
-                  onChange={(e) => setPropertyName(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-[11px] text-[#667781]">入居予定日（日割り計算に使用）</label>
-                <input
-                  type="date"
-                  className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3]"
-                  value={moveInDate}
-                  onChange={(e) => setMoveInDate(e.target.value)}
-                />
-              </div>
-            </div>
-          </section>
-
-          {/* 賃料情報 */}
-          <section>
-            <div className="mb-2 text-[12px] font-bold" style={{ color: cfg.accentColor }}>賃料情報</div>
-            <div className="flex flex-col gap-2.5 rounded-2xl bg-white p-4 shadow-sm">
-              <div>
-                <label className="mb-1 block text-[11px] text-[#667781]">月額賃料 *</label>
-                <div className="flex items-center gap-1">
-                  <span className="text-[13px] text-[#667781]">¥</span>
-                  <input
-                    type="number"
-                    className="flex-1 rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3]"
-                    placeholder="例：100000"
-                    value={rent}
-                    onChange={(e) => setRent(e.target.value)}
-                  />
+            {/* プレビュー：費用合計 */}
+            <section className="rounded-2xl bg-white shadow-sm overflow-hidden">
+              <div className="px-4 py-3 flex items-center justify-between" style={{ background: cfg.grad }}>
+                <div className="text-[15px] font-bold text-white">費用プレビュー</div>
+                <div className="text-[12px] text-white/80">
+                  {items.customerName ? `${items.customerName}様` : ""} {items.propertyName}
                 </div>
               </div>
-              <div>
-                <label className="mb-1 block text-[11px] text-[#667781]">管理費・共益費（月額）</label>
-                <div className="flex items-center gap-1">
-                  <span className="text-[13px] text-[#667781]">¥</span>
-                  <input
-                    type="number"
-                    className="flex-1 rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3]"
-                    placeholder="例：5000（なければ0）"
-                    value={managementFee}
-                    onChange={(e) => setManagementFee(e.target.value)}
-                  />
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* 初期費用設定 */}
-          <section>
-            <div className="mb-2 text-[12px] font-bold" style={{ color: cfg.accentColor }}>初期費用設定</div>
-            <div className="flex flex-col gap-2.5 rounded-2xl bg-white p-4 shadow-sm">
-              {/* 敷金・礼金 */}
-              <div className="grid grid-cols-2 gap-2.5">
-                <div>
-                  <label className="mb-1 block text-[11px] text-[#667781]">敷金（ヶ月）</label>
-                  <div className="flex gap-1">
-                    {["0", "1", "2", "3"].map((v) => (
-                      <button
-                        key={v}
-                        onClick={() => setShikikinMonths(v)}
-                        className="flex-1 rounded-lg py-1.5 text-[12px] font-bold transition"
-                        style={
-                          shikikinMonths === v
-                            ? { background: cfg.accentColor, color: "white" }
-                            : { background: "#f0f2f5", color: "#54656f" }
-                        }
+              <div className="p-4">
+                <table className="w-full text-[12px]">
+                  <tbody>
+                    {totalItems.map((row, idx) => (
+                      <tr
+                        key={idx}
+                        className={(row as {isDiscount?: boolean}).isDiscount ? "text-red-500 font-bold" : ""}
                       >
-                        {v}
-                      </button>
+                        <td className="py-1 pr-2 text-[#54656f]">{row.label}</td>
+                        <td className="py-1 text-right font-semibold text-[#111b21] tabular-nums">
+                          {(row as {isDiscount?: boolean}).isDiscount
+                            ? `▲${fmtYen(Math.abs(row.amount))}`
+                            : fmtYen(row.amount)}
+                        </td>
+                      </tr>
                     ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-[#e9edef]">
+                      <td className="pt-2 font-bold text-[#111b21]">合計（目安）</td>
+                      <td className="pt-2 text-right text-[17px] font-bold tabular-nums" style={{ color: cfg.accent }}>
+                        {fmtYen(grandTotal)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </section>
+
+            {/* 各項目の確認・調整フォーム */}
+            {GROUP_ORDER.map((groupName) => {
+              const groupItems = groups[groupName];
+              if (!groupItems || groupItems.length === 0) return null;
+              return (
+                <section key={groupName}>
+                  <div className="mb-2 text-[12px] font-bold" style={{ color: cfg.accent }}>{groupName}</div>
+                  <div className="rounded-2xl bg-white p-4 shadow-sm flex flex-col gap-2.5">
+                    {groupItems.map(({ key, label }) => {
+                      const isText = TEXT_KEYS.has(key);
+                      const val = items[key as keyof EditableItems];
+                      return (
+                        <div key={key}>
+                          <label className="mb-1 block text-[11px] text-[#667781]">{label}</label>
+                          {isText ? (
+                            <input
+                              type={key === "moveInDate" ? "date" : "text"}
+                              className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3]"
+                              value={String(val || "")}
+                              onChange={(e) => updateItem(key, e.target.value)}
+                            />
+                          ) : (
+                            <div className="flex items-center gap-1">
+                              <span className="text-[13px] text-[#667781]">¥</span>
+                              <input
+                                type="number"
+                                className="flex-1 rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3]"
+                                value={String(val || 0)}
+                                onChange={(e) => updateItem(key, Number(e.target.value) || 0)}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
-                </div>
-                <div>
-                  <label className="mb-1 block text-[11px] text-[#667781]">礼金（ヶ月）</label>
-                  <div className="flex gap-1">
-                    {["0", "1", "2", "3"].map((v) => (
-                      <button
-                        key={v}
-                        onClick={() => setReikinMonths(v)}
-                        className="flex-1 rounded-lg py-1.5 text-[12px] font-bold transition"
-                        style={
-                          reikinMonths === v
-                            ? { background: cfg.accentColor, color: "white" }
-                            : { background: "#f0f2f5", color: "#54656f" }
-                        }
-                      >
-                        {v}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
+                </section>
+              );
+            })}
 
-              {/* 仲介手数料 */}
-              <div>
-                <div className="mb-1 flex items-center justify-between">
-                  <label className="text-[11px] text-[#667781]">仲介手数料</label>
-                  <button
-                    onClick={() => setUseCustomCommission((v) => !v)}
-                    className="text-[11px] font-bold"
-                    style={{ color: cfg.accentColor }}
-                  >
-                    {useCustomCommission ? "賃料×1.1に戻す" : "金額を直接入力"}
-                  </button>
-                </div>
-                {useCustomCommission ? (
-                  <div className="flex items-center gap-1">
-                    <span className="text-[13px] text-[#667781]">¥</span>
-                    <input
-                      type="number"
-                      className="flex-1 rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3]"
-                      placeholder="例：110000"
-                      value={customCommission}
-                      onChange={(e) => setCustomCommission(e.target.value)}
-                    />
-                  </div>
-                ) : (
-                  <div className="rounded-xl bg-[#f0f2f5] px-3 py-2 text-[13px] text-[#54656f]">
-                    賃料 × 1.1（税込）= {rent ? `¥${Math.round(Number(rent) * 1.1).toLocaleString()}` : "賃料入力後に表示"}
-                  </div>
-                )}
+            {/* その他費用 */}
+            <section>
+              <div className="mb-2 flex items-center justify-between">
+                <div className="text-[12px] font-bold" style={{ color: cfg.accent }}>その他費用</div>
+                <button
+                  onClick={addOtherItem}
+                  className="rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                  style={{ background: cfg.accent }}
+                >
+                  ＋ 追加
+                </button>
               </div>
-
-              {/* 保証料 */}
-              <div>
-                <label className="mb-1 block text-[11px] text-[#667781]">保証料（初回）</label>
-                <div className="flex items-center gap-1">
-                  <span className="text-[13px] text-[#667781]">¥</span>
-                  <input
-                    type="number"
-                    className="flex-1 rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3]"
-                    placeholder="例：50000"
-                    value={guarantee}
-                    onChange={(e) => setGuarantee(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              {/* 火災保険 */}
-              <div>
-                <label className="mb-1 block text-[11px] text-[#667781]">火災保険</label>
-                <div className="flex items-center gap-1">
-                  <span className="text-[13px] text-[#667781]">¥</span>
-                  <input
-                    type="number"
-                    className="flex-1 rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3]"
-                    value={insurance}
-                    onChange={(e) => setInsurance(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              {/* 鍵交換 */}
-              <div>
-                <label className="mb-1 block text-[11px] text-[#667781]">鍵交換費用</label>
-                <div className="flex items-center gap-1">
-                  <span className="text-[13px] text-[#667781]">¥</span>
-                  <input
-                    type="number"
-                    className="flex-1 rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3]"
-                    value={keyExchange}
-                    onChange={(e) => setKeyExchange(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              {/* クリーニング */}
-              <div>
-                <label className="mb-1 block text-[11px] text-[#667781]">ハウスクリーニング（任意）</label>
-                <div className="flex items-center gap-1">
-                  <span className="text-[13px] text-[#667781]">¥</span>
-                  <input
-                    type="number"
-                    className="flex-1 rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3]"
-                    placeholder="0"
-                    value={cleaning}
-                    onChange={(e) => setCleaning(e.target.value)}
-                  />
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* その他項目 */}
-          <section>
-            <div className="mb-2 flex items-center justify-between">
-              <div className="text-[12px] font-bold" style={{ color: cfg.accentColor }}>その他費用</div>
-              <button
-                onClick={addOtherItem}
-                className="rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                style={{ background: cfg.accentColor }}
-              >
-                ＋ 追加
-              </button>
-            </div>
-            {otherItems.length > 0 && (
-              <div className="flex flex-col gap-2 rounded-2xl bg-white p-4 shadow-sm">
-                {otherItems.map((o, idx) => (
-                  <div key={idx} className="flex gap-2 items-start">
-                    <div className="flex-1 flex flex-col gap-1">
+              {items.otherItems.length > 0 && (
+                <div className="rounded-2xl bg-white p-4 shadow-sm flex flex-col gap-2.5">
+                  {items.otherItems.map((o, idx) => (
+                    <div key={idx} className="flex gap-2 items-center">
                       <input
-                        className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3]"
-                        placeholder="項目名（例: 駐車場）"
+                        className="flex-1 rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3]"
+                        placeholder="項目名"
                         value={o.item}
                         onChange={(e) => updateOtherItem(idx, "item", e.target.value)}
                       />
                       <div className="flex items-center gap-1">
-                        <span className="text-[13px] text-[#667781]">¥</span>
+                        <span className="text-[12px] text-[#667781]">¥</span>
                         <input
                           type="number"
-                          className="flex-1 rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3]"
-                          placeholder="金額"
-                          value={o.amount}
+                          className="w-24 rounded-xl border border-[#d1d7db] px-2 py-2 text-[13px] outline-none focus:border-[#2196F3]"
+                          value={String(o.amount || 0)}
                           onChange={(e) => updateOtherItem(idx, "amount", e.target.value)}
                         />
                       </div>
+                      <button
+                        onClick={() => removeOtherItem(idx)}
+                        className="text-[#ccc] hover:text-red-400 text-lg leading-none"
+                      >
+                        ×
+                      </button>
                     </div>
-                    <button
-                      onClick={() => removeOtherItem(idx)}
-                      className="mt-1 text-[#ccc] hover:text-red-400 text-lg leading-none"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-
-          {/* 割引 */}
-          <section>
-            <div className="mb-2 text-[12px] font-bold" style={{ color: cfg.accentColor }}>割引（AIが適用方法を判断）</div>
-            <div className="flex flex-col gap-2.5 rounded-2xl bg-white p-4 shadow-sm">
-              <div>
-                <label className="mb-1 block text-[11px] text-[#667781]">割引額</label>
-                <div className="flex items-center gap-1">
-                  <span className="text-[13px] text-[#667781]">¥</span>
-                  <input
-                    type="number"
-                    className="flex-1 rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3]"
-                    placeholder="例：30000"
-                    value={discountAmount}
-                    onChange={(e) => setDiscountAmount(e.target.value)}
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="mb-1 block text-[11px] text-[#667781]">割引メモ（任意）</label>
-                <input
-                  className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3]"
-                  placeholder="例：仲介手数料半額キャンペーン"
-                  value={discountNote}
-                  onChange={(e) => setDiscountNote(e.target.value)}
-                />
-              </div>
-            </div>
-          </section>
-
-          {/* 補足情報 */}
-          <section>
-            <div className="mb-2 text-[12px] font-bold" style={{ color: cfg.accentColor }}>補足情報・資料メモ</div>
-            <div className="rounded-2xl bg-white p-4 shadow-sm">
-              <textarea
-                className="w-full resize-none rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3]"
-                rows={4}
-                placeholder="物件の特記事項、管理会社からの指定費用、お客様への説明メモなど自由に入力してください&#10;&#10;例：&#10;・敷金は退去時に返還あり&#10;・保証会社は〇〇保証のみ&#10;・礼金は交渉可能"
-                value={supplementaryNotes}
-                onChange={(e) => setSupplementaryNotes(e.target.value)}
-              />
-            </div>
-          </section>
-
-          {/* エラー表示 */}
-          {error && (
-            <div className="rounded-xl bg-red-50 px-4 py-3 text-[13px] text-red-600">{error}</div>
-          )}
-
-          {/* 生成ボタン */}
-          <button
-            onClick={handleGenerate}
-            disabled={generating}
-            className="w-full rounded-full py-4 text-[15px] font-bold text-white shadow-lg disabled:opacity-50 flex items-center justify-center gap-2"
-            style={{ background: cfg.headerGrad }}
-          >
-            {generating ? (
-              <>
-                <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                AI見積書を生成中...
-              </>
-            ) : (
-              "✨ AI見積書を生成する"
-            )}
-          </button>
-
-          {/* 生成結果 */}
-          {result && (
-            <div ref={resultRef} className="flex flex-col gap-3">
-              <div className="rounded-2xl bg-white shadow-sm overflow-hidden">
-                {/* 結果ヘッダー */}
-                <div
-                  className="px-4 py-3"
-                  style={{ background: cfg.headerGrad }}
-                >
-                  <div className="text-[15px] font-bold text-white">見積書（{ACCOUNT_CONFIG[account].label}）</div>
-                  {customerName && (
-                    <div className="text-[12px] text-white/80">{customerName} 様 / {propertyName || "物件名なし"}</div>
-                  )}
-                </div>
-
-                {/* 費用明細 */}
-                <div className="p-4">
-                  <table className="w-full text-[13px]">
-                    <tbody>
-                      {result.items.map((item, idx) => (
-                        <tr
-                          key={idx}
-                          className={item.category === "discount" ? "text-red-500 font-bold" : ""}
-                        >
-                          <td className="py-1.5 pr-2 text-[#54656f]">
-                            <div className="leading-tight">{item.item}</div>
-                            {item.notes && (
-                              <div className="text-[10px] text-[#8696a0]">{item.notes}</div>
-                            )}
-                          </td>
-                          <td className="py-1.5 text-right font-semibold text-[#111b21] whitespace-nowrap">
-                            {fmtYen(item.amount)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t-2 border-[#e9edef]">
-                        <td className="pt-2 font-bold text-[#111b21]">合計（目安）</td>
-                        <td className="pt-2 text-right text-[17px] font-bold" style={{ color: cfg.accentColor }}>
-                          ¥{result.total.toLocaleString()}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  </table>
-
-                  {result.discountBreakdown && (
-                    <div className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-[11px] text-amber-700">
-                      ✨ AIの割引適用: {result.discountBreakdown}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* LINE テキスト */}
-              {result.lineText && (
-                <div className="rounded-2xl bg-white shadow-sm overflow-hidden">
-                  <div className="flex items-center justify-between px-4 py-3 border-b border-[#f0f2f5]">
-                    <div className="text-[13px] font-bold text-[#1565C0]">LINE送付用テキスト</div>
-                    <button
-                      onClick={copyLineText}
-                      className="rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                      style={{ background: copyDone ? "#43a047" : "#25D366" }}
-                    >
-                      {copyDone ? "✓ コピー済み" : "コピー"}
-                    </button>
-                  </div>
-                  <div className="p-4">
-                    <pre className="whitespace-pre-wrap text-[12px] leading-[1.7] text-[#111b21] font-sans">
-                      {result.lineText}
-                    </pre>
-                  </div>
+                  ))}
                 </div>
               )}
+            </section>
 
-              {/* 再生成ボタン */}
-              <button
-                onClick={handleGenerate}
-                disabled={generating}
-                className="w-full rounded-full border-2 py-3 text-[13px] font-bold disabled:opacity-50"
-                style={{ borderColor: cfg.accentColor, color: cfg.accentColor }}
-              >
-                再生成する
-              </button>
-            </div>
-          )}
+            {/* 補足情報 */}
+            <section>
+              <div className="mb-2 text-[12px] font-bold" style={{ color: cfg.accent }}>特記事項・メモ</div>
+              <div className="rounded-2xl bg-white p-4 shadow-sm">
+                <textarea
+                  className="w-full resize-none rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3]"
+                  rows={3}
+                  placeholder="見積書に記載する特記事項があれば入力"
+                  value={items.supplementaryNotes || ""}
+                  onChange={(e) => updateItem("supplementaryNotes", e.target.value)}
+                />
+              </div>
+            </section>
 
-          {/* 下部余白 */}
-          <div className="h-4" />
-        </div>
+            {downloadError && (
+              <div className="rounded-xl bg-red-50 px-4 py-3 text-[13px] text-red-600">{downloadError}</div>
+            )}
+
+            {/* 見積書作成ボタン */}
+            <button
+              onClick={handleDownload}
+              disabled={downloading}
+              className="w-full rounded-full py-4 text-[15px] font-bold text-white shadow-lg disabled:opacity-50 flex items-center justify-center gap-2"
+              style={{ background: cfg.grad }}
+            >
+              {downloading ? (
+                <>
+                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                  Excelファイルを作成中...
+                </>
+              ) : (
+                "📄 見積書を作成（Excel ダウンロード）"
+              )}
+            </button>
+
+            <div className="h-4" />
+          </div>
+        )}
       </div>
 
       <BottomNav />
