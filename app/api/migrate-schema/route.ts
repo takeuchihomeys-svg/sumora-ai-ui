@@ -22,8 +22,26 @@ ALTER TABLE conversations DISABLE ROW LEVEL SECURITY;
 -- accountカラム（sumora / ieyasu / giga）
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS account TEXT DEFAULT 'sumora';
 
+-- line_contacts テーブル（LINEアカウント×ユーザーの連絡先管理）
+CREATE TABLE IF NOT EXISTS line_contacts (
+  id BIGSERIAL PRIMARY KEY,
+  line_user_id TEXT NOT NULL,
+  account TEXT NOT NULL,
+  line_name TEXT,
+  line_profile_image TEXT,
+  last_message TEXT,
+  last_message_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(line_user_id, account)
+);
+
+CREATE INDEX IF NOT EXISTS idx_line_contacts_line_user_id ON line_contacts(line_user_id);
+
+ALTER TABLE line_contacts DISABLE ROW LEVEL SECURITY;
+
 -- 既存conversations.account を line_contacts から正しい値に修正
--- ※ADD COLUMN DEFAULT 'sumora' で全行がsumora になってしまうため、line_contactsの実データで上書き
+-- ※line_contacts にデータが溜まり次第、このSQLを再実行すること
 UPDATE conversations c
 SET account = CASE
   WHEN lc.account = 'イエヤス' THEN 'ieyasu'
