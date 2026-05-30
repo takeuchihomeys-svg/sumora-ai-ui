@@ -1,0 +1,2662 @@
+﻿[
+    {
+        "id":  607,
+        "category":  "anxiety_relief",
+        "phrase":  "{{customer_name}}さんご納得頂ける形で進めて頂ければ大丈夫です😊！",
+        "priority":  16,
+        "role":  "customer_pace_respect"
+    },
+    {
+        "id":  539,
+        "category":  "anxiety_relief",
+        "phrase":  "ただ、条件に近いお部屋は別でお探し出来ますのでご安心ください😊！！",
+        "priority":  16,
+        "role":  "exclusive_property_reassurance"
+    },
+    {
+        "id":  583,
+        "category":  "anxiety_relief",
+        "phrase":  "はい😊！！気になる点出てきましたらいつでもお気軽にご質問ください！！",
+        "priority":  16,
+        "role":  "post_viewing_question_reassurance"
+    },
+    {
+        "id":  608,
+        "category":  "anxiety_relief",
+        "phrase":  "気になる点出てきましたら、その都度しっかりご説明させて頂きます😊！",
+        "priority":  15,
+        "role":  "continuous_support"
+    },
+    {
+        "id":  558,
+        "category":  "anxiety_relief",
+        "phrase":  "出来る限り初期費用抑えられる物件で{{customer_name}}さんご希望のご条件に合ったお部屋ピックアップさせて頂きます😌✨",
+        "priority":  15,
+        "role":  "cost_area_reassurance"
+    },
+    {
+        "id":  604,
+        "category":  "anxiety_relief",
+        "phrase":  "ご不安な点などございましたらいつでもお気軽にご相談ください😊！！",
+        "priority":  15,
+        "role":  "open_consultation"
+    },
+    {
+        "id":  605,
+        "category":  "anxiety_relief",
+        "phrase":  "初めてのお部屋探し弊社全力でサポートさせて頂きます😊！ご安心ください！！",
+        "priority":  14,
+        "role":  "first_time_reassurance"
+    },
+    {
+        "id":  588,
+        "category":  "anxiety_relief",
+        "phrase":  "はい！！大阪府全域ご対応させて頂いております😊！！",
+        "priority":  14,
+        "role":  "service_area_full_osaka"
+    },
+    {
+        "id":  606,
+        "category":  "anxiety_relief",
+        "phrase":  "無理に進めることは一切ございません！ご安心頂けますと幸いです😊！",
+        "priority":  13,
+        "role":  "no_pressure_reassurance"
+    },
+    {
+        "id":  230,
+        "category":  "application_push",
+        "phrase":  "こちらでお申込み完了させて頂きます！！",
+        "priority":  30,
+        "role":  "application_processing_notice"
+    },
+    {
+        "id":  227,
+        "category":  "application_push",
+        "phrase":  "2番手お申込みから1番手に繰り上がる可能性十分にございます！！",
+        "priority":  30,
+        "role":  "application_rank_possibility"
+    },
+    {
+        "id":  286,
+        "category":  "application_push",
+        "phrase":  "保証会社審査通過までキャンセル料はかかりませんのでご安心ください😊！！",
+        "priority":  30,
+        "role":  "cancellation_reassurance"
+    },
+    {
+        "id":  86,
+        "category":  "application_push",
+        "phrase":  "{{room_number}}号室お申込完了しております！！",
+        "priority":  30,
+        "role":  "situation"
+    },
+    {
+        "id":  14,
+        "category":  "application_push",
+        "phrase":  "https://forms.gle/k6ZyCokRvRR2iH5q7\nこちらのフォームより、お手続きに必要な情報提供をお願い致します！\nなお、身分証明書のアップロードが上手くいかない場合はLINEで直接お送りください！\n完了されましたらご一報いただければ幸いです。\n何卒よろしくお願い申し上げます😌！",
+        "priority":  30,
+        "role":  null
+    },
+    {
+        "id":  414,
+        "category":  "application_push",
+        "phrase":  "人気条件のお部屋となっておりますので早めのご検討オススメ致します！！",
+        "priority":  25,
+        "role":  "early_decision"
+    },
+    {
+        "id":  413,
+        "category":  "application_push",
+        "phrase":  "かなり条件の良いお部屋となっておりますのでお申込み入る可能性ございます！！",
+        "priority":  25,
+        "role":  "urgency_notice"
+    },
+    {
+        "id":  417,
+        "category":  "application_push",
+        "phrase":  "条件の良いお部屋は同条件でお探しの方も多い為お早めのご検討オススメ致します！！",
+        "priority":  22,
+        "role":  "competition_notice"
+    },
+    {
+        "id":  254,
+        "category":  "application_push",
+        "phrase":  "お申込み完了次第お部屋おさえる形となります！！",
+        "priority":  20,
+        "role":  "room_hold"
+    },
+    {
+        "id":  511,
+        "category":  "application_push",
+        "phrase":  "キャンセル料が発生するタイミングはこちらから必ず事前にご案内させて頂きますのでご安心ください😊！！",
+        "priority":  20,
+        "role":  "cancel_notice"
+    },
+    {
+        "id":  415,
+        "category":  "application_push",
+        "phrase":  "よろしければお申込み手続き進めさせて頂きます😊！！",
+        "priority":  15,
+        "role":  "application_start"
+    },
+    {
+        "id":  258,
+        "category":  "application_push",
+        "phrase":  "物件の管理会社に確認しましたところ現在他に申込検討されている方がいるとの事です。",
+        "priority":  15,
+        "role":  "other_applicant_notice"
+    },
+    {
+        "id":  512,
+        "category":  "application_push",
+        "phrase":  "①先にお申込みでお部屋をおさえる②その後ご内覧という流れが一番ご安心です！！",
+        "priority":  15,
+        "role":  "apply_then_view"
+    },
+    {
+        "id":  514,
+        "category":  "application_push",
+        "phrase":  "もし宜しければこちらのお部屋でお申込み進めさせて頂きます😊！",
+        "priority":  15,
+        "role":  "application_question"
+    },
+    {
+        "id":  259,
+        "category":  "application_push",
+        "phrase":  "お申込先着順でお部屋止めが出来る形となります！！",
+        "priority":  15,
+        "role":  "first_come_application"
+    },
+    {
+        "id":  416,
+        "category":  "application_push",
+        "phrase":  "お申込み頂けましたらお部屋おさえさせて頂きます😊！！",
+        "priority":  15,
+        "role":  "room_hold"
+    },
+    {
+        "id":  507,
+        "category":  "application_push",
+        "phrase":  "もし{{customer_name}}さんお気に召されている状況でしたら一度お申込みでお部屋をおさえるのが一番安心です！！",
+        "priority":  15,
+        "role":  "apply_recommend"
+    },
+    {
+        "id":  508,
+        "category":  "application_push",
+        "phrase":  "お申込みの手続きはこちらのLINEで完結致します😊！！",
+        "priority":  15,
+        "role":  "line_application"
+    },
+    {
+        "id":  513,
+        "category":  "application_push",
+        "phrase":  "{{customer_name}}さんのお部屋をしっかり確保出来るようこちらでも最大限サポートさせて頂きます！！",
+        "priority":  15,
+        "role":  "customer_support"
+    },
+    {
+        "id":  573,
+        "category":  "application_push",
+        "phrase":  "よろしければ事前にお申込みしお部屋おさえさせて頂きます😊！",
+        "priority":  14,
+        "role":  "pre_viewing_application_offer"
+    },
+    {
+        "id":  574,
+        "category":  "application_push",
+        "phrase":  "お部屋をおさえた状態で{{customer_name}}さんご都合よろしいお日にちにお部屋ご案内させて頂くのが一番オススメです😌！！",
+        "priority":  13,
+        "role":  "apply_then_view_best"
+    },
+    {
+        "id":  628,
+        "category":  "application_push",
+        "phrase":  "この条件のお部屋はかなり人気の為、お気に召されましたらお部屋おさえるのがオススメです！",
+        "priority":  13,
+        "role":  "apply_urgency"
+    },
+    {
+        "id":  631,
+        "category":  "application_push",
+        "phrase":  "保証会社の審査が通過するまでキャンセル料かかりませんので、一度おさえてからご検討する形が一番オススメです！",
+        "priority":  12,
+        "role":  "risk_reversal"
+    },
+    {
+        "id":  530,
+        "category":  "availability_check",
+        "phrase":  "物件の空き状況は日々変わるため、最新の募集状況を確認致します！",
+        "priority":  25,
+        "role":  "explanation"
+    },
+    {
+        "id":  538,
+        "category":  "availability_check",
+        "phrase":  "SUUMO掲載物件は基本ご対応可能ですが、一部専属物件のみ専任業者でのご案内となります。",
+        "priority":  22,
+        "role":  "exclusive_property_explanation"
+    },
+    {
+        "id":  529,
+        "category":  "availability_check",
+        "phrase":  "最新の募集状況を確認しご案内致します！",
+        "priority":  22,
+        "role":  "guide"
+    },
+    {
+        "id":  528,
+        "category":  "availability_check",
+        "phrase":  "空室状況を確認し、確認出来次第ご連絡させて頂きます😊",
+        "priority":  20,
+        "role":  "reassurance"
+    },
+    {
+        "id":  527,
+        "category":  "availability_check",
+        "phrase":  "現在の募集状況を確認させて頂きます！",
+        "priority":  18,
+        "role":  "inquiry"
+    },
+    {
+        "id":  537,
+        "category":  "availability_check",
+        "phrase":  "お送り頂いた物件ですが、専属物件のため弊社ではご案内ができないお部屋となります。",
+        "priority":  18,
+        "role":  "exclusive_property_notice"
+    },
+    {
+        "id":  531,
+        "category":  "availability_check",
+        "phrase":  "ご希望の物件の募集状況をすぐにお調べ致します！",
+        "priority":  15,
+        "role":  "response"
+    },
+    {
+        "id":  180,
+        "category":  "closing_support",
+        "phrase":  "ご入居可能日が{{available_date}}の為ご入居日は{{move_start}}以降となります。",
+        "priority":  30,
+        "role":  "info"
+    },
+    {
+        "id":  518,
+        "category":  "closing_support",
+        "phrase":  "その後いかがでしょうか？気になる点あれば何でもご相談ください😊",
+        "priority":  25,
+        "role":  null
+    },
+    {
+        "id":  90,
+        "category":  "closing_support",
+        "phrase":  "進捗あり次第ご連絡致します！！",
+        "priority":  20,
+        "role":  "reassurance"
+    },
+    {
+        "id":  565,
+        "category":  "closing_support",
+        "phrase":  "見積内容ご不明点などございましたらいつでもお気軽にご連絡ください😊！！",
+        "priority":  18,
+        "role":  "post_estimate_support"
+    },
+    {
+        "id":  561,
+        "category":  "closing_support",
+        "phrase":  "初期費用面も出来る限り抑えられますよう最大限割引させて頂きます😊！！",
+        "priority":  17,
+        "role":  "cost_support_statement"
+    },
+    {
+        "id":  560,
+        "category":  "closing_support",
+        "phrase":  "ご入居後も何かお困りの事がございましたらいつでもお気軽にご相談ください！快適にお引越し出来ますよう精一杯サポートさせて頂きます！！",
+        "priority":  16,
+        "role":  "support_statement_strong"
+    },
+    {
+        "id":  592,
+        "category":  "closing_support",
+        "phrase":  "{{referrer_name}}さんからご連絡頂きました！！お話し頂きありがとうございます！！",
+        "priority":  16,
+        "role":  "referral_notice"
+    },
+    {
+        "id":  85,
+        "category":  "closing_support",
+        "phrase":  "礼金交渉させて頂きます！！",
+        "priority":  15,
+        "role":  "negotiation"
+    },
+    {
+        "id":  593,
+        "category":  "closing_support",
+        "phrase":  "{{customer_name}}さんご満足頂くお部屋が見つかるまでお部屋探し全力でサポートさせて頂きます！！",
+        "priority":  15,
+        "role":  "referral_support_statement"
+    },
+    {
+        "id":  619,
+        "category":  "closing_support",
+        "phrase":  "ご条件に近いお部屋新しく募集出ている可能性ございますのでお探しさせて頂きます😊！",
+        "priority":  15,
+        "role":  "followup_new_property_search"
+    },
+    {
+        "id":  87,
+        "category":  "closing_support",
+        "phrase":  "家賃や礼金の交渉行っていきますので進捗あり次第ご連絡致します！！",
+        "priority":  15,
+        "role":  "follow_up"
+    },
+    {
+        "id":  615,
+        "category":  "closing_support",
+        "phrase":  "まだお探し中でしたら改めて最安値でお部屋ご提案させて頂きます😌！",
+        "priority":  14,
+        "role":  "followup_reproposal"
+    },
+    {
+        "id":  582,
+        "category":  "closing_support",
+        "phrase":  "{{customer_name}}さん お世話になっております！！その後お引越しのご予定はいかがでしょうか😊！！",
+        "priority":  13,
+        "role":  "followup_status_check"
+    },
+    {
+        "id":  614,
+        "category":  "closing_support",
+        "phrase":  "その後お部屋探しのご状況いかがでしょうか😊！！",
+        "priority":  12,
+        "role":  "followup_status_check"
+    },
+    {
+        "id":  92,
+        "category":  "closing_support",
+        "phrase":  "ご入居後不明な点がある場合スモラスタッフに聞いてください😊！！",
+        "priority":  10,
+        "role":  "explanation"
+    },
+    {
+        "id":  124,
+        "category":  "condition_summary",
+        "phrase":  "{{customer_name}}さんご満足いただくお部屋見つかるまで物件探しさせて頂きます!!",
+        "priority":  30,
+        "role":  "reassurance"
+    },
+    {
+        "id":  32,
+        "category":  "condition_summary",
+        "phrase":  "{{customer_name}}さんがご満足頂くお引越し出来ますようお部屋探し全力でサポートさせて頂きます！！",
+        "priority":  30,
+        "role":  null
+    },
+    {
+        "id":  3,
+        "category":  "condition_summary",
+        "phrase":  "{{customer_name}}さんご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます！！",
+        "priority":  30,
+        "role":  null
+    },
+    {
+        "id":  110,
+        "category":  "condition_summary",
+        "phrase":  "{{customer_name}}さんがご満足してお引越し完了するまで全力でサポートさせていただきます！！",
+        "priority":  30,
+        "role":  "reassurance"
+    },
+    {
+        "id":  81,
+        "category":  "condition_summary",
+        "phrase":  "{{customer_name}}さんご満足頂くご入居が出来ますよう最善を尽くさせて頂きます！！",
+        "priority":  30,
+        "role":  "reassurance"
+    },
+    {
+        "id":  267,
+        "category":  "condition_summary",
+        "phrase":  "物件確認出来次第ご連絡させて頂きます！！",
+        "priority":  28,
+        "role":  "property_check_notice"
+    },
+    {
+        "id":  276,
+        "category":  "condition_summary",
+        "phrase":  "最短での入居可能日確認させて頂きます😊！！",
+        "priority":  25,
+        "role":  "earliest_move_in_confirmation"
+    },
+    {
+        "id":  199,
+        "category":  "condition_summary",
+        "phrase":  "{{customer_name}}さん\n本日はご内覧ありがとうございました！！",
+        "priority":  20,
+        "role":  "after_viewing"
+    },
+    {
+        "id":  127,
+        "category":  "condition_summary",
+        "phrase":  "ご事情お聞かせ頂きありがとうございます😊！！",
+        "priority":  20,
+        "role":  "thanks"
+    },
+    {
+        "id":  57,
+        "category":  "condition_summary",
+        "phrase":  "引き続き並行してお部屋探させて頂きます😊！！",
+        "priority":  20,
+        "role":  "reassurance"
+    },
+    {
+        "id":  35,
+        "category":  "condition_summary",
+        "phrase":  "{{customer_name}}さん気になる点出てきましたらいつでもお気軽にご連絡ください！！",
+        "priority":  20,
+        "role":  null
+    },
+    {
+        "id":  34,
+        "category":  "condition_summary",
+        "phrase":  "オンライン内見やお部屋の採寸等もご対応させて頂いております！！",
+        "priority":  20,
+        "role":  null
+    },
+    {
+        "id":  82,
+        "category":  "condition_summary",
+        "phrase":  "気になる点出てきましたらいつでもお気軽にご連絡ください！！",
+        "priority":  20,
+        "role":  "action_check"
+    },
+    {
+        "id":  123,
+        "category":  "condition_summary",
+        "phrase":  "全然大丈夫です😊！！",
+        "priority":  20,
+        "role":  "reassurance"
+    },
+    {
+        "id":  79,
+        "category":  "condition_summary",
+        "phrase":  "{{customer_name}}さん本日は遠い中お越し頂きありがとうございました！！",
+        "priority":  15,
+        "role":  "thanks"
+    },
+    {
+        "id":  30,
+        "category":  "condition_summary",
+        "phrase":  "その中でお気に召されたお部屋全てご案内させて頂きます😊！！",
+        "priority":  10,
+        "role":  null
+    },
+    {
+        "id":  27,
+        "category":  "condition_summary",
+        "phrase":  "{{customer_name}}さんご希望のご条件に合ったお部屋探しを全力でサポートさせて頂きます！！",
+        "priority":  10,
+        "role":  null
+    },
+    {
+        "id":  205,
+        "category":  "condition_summary",
+        "phrase":  "{{property_name}}最新の募集状況確認させて頂きます！！",
+        "priority":  10,
+        "role":  "property_availability_check"
+    },
+    {
+        "id":  543,
+        "category":  "estimate_send",
+        "phrase":  "契約内容自体はどこの不動産会社様でご契約されても基本同じ内容となりますのでご安心ください😊",
+        "priority":  18,
+        "role":  "contract_same_reassurance"
+    },
+    {
+        "id":  264,
+        "category":  "estimate_send",
+        "phrase":  "かしこまりました！！\n初期費用面を最優先に新着物件募集に出ているか確認させて頂きます！！",
+        "priority":  18,
+        "role":  "cost_priority_search"
+    },
+    {
+        "id":  545,
+        "category":  "estimate_send",
+        "phrase":  "スモラでは出来る限り{{customer_name}}さんのお引越し費用を抑えられるようご案内させて頂いております😌！！",
+        "priority":  17,
+        "role":  "sumora_cost_support"
+    },
+    {
+        "id":  609,
+        "category":  "estimate_send",
+        "phrase":  "気になる点出てきましたらいつでもお気軽にご連絡ください😊！！",
+        "priority":  16,
+        "role":  "estimate_support"
+    },
+    {
+        "id":  563,
+        "category":  "estimate_send",
+        "phrase":  "お待たせ致しました！！こちらお見積書となります！！",
+        "priority":  15,
+        "role":  "estimate_send_intro"
+    },
+    {
+        "id":  611,
+        "category":  "estimate_send",
+        "phrase":  "もし気になる点ございましたら一つずつご説明させていただきます！",
+        "priority":  15,
+        "role":  "estimate_explanation"
+    },
+    {
+        "id":  542,
+        "category":  "estimate_send",
+        "phrase":  "初期費用が安い理由ですが、オーナー様から頂く費用を{{customer_name}}さんの初期費用へ還元している為となります😊✨",
+        "priority":  14,
+        "role":  "cost_reason_explanation"
+    },
+    {
+        "id":  612,
+        "category":  "estimate_send",
+        "phrase":  "この条件ですとかなりお得にご入居頂ける形となります😊！",
+        "priority":  14,
+        "role":  "estimate_value"
+    },
+    {
+        "id":  564,
+        "category":  "estimate_send",
+        "phrase":  "初期費用最大限割引させて頂き、一般的な不動産業者より{{discount_amount}}円お得となります！！",
+        "priority":  13,
+        "role":  "estimate_discount_core"
+    },
+    {
+        "id":  610,
+        "category":  "estimate_send",
+        "phrase":  "こちらの内容で問題なければそのままお手続き進めることも可能です！！",
+        "priority":  13,
+        "role":  "estimate_to_application"
+    },
+    {
+        "id":  613,
+        "category":  "estimate_send",
+        "phrase":  "よろしければこちらのお部屋で進めることも可能です！",
+        "priority":  12,
+        "role":  "estimate_closing"
+    },
+    {
+        "id":  546,
+        "category":  "estimate_send",
+        "phrase":  "お送りさせて頂いた物件すべて弊社ですと初期費用2,980円＋前家賃のみでご入居可能となっております😊！！",
+        "priority":  12,
+        "role":  "sumora_core_offer"
+    },
+    {
+        "id":  9,
+        "category":  "estimate_start",
+        "phrase":  "{{customer_name}}さん\nお送りいただきありがとうございます😊！！\n\nお部屋の募集状況と最大限割引させていただいたお見積書をお送りさせていただきます！！",
+        "priority":  30,
+        "role":  null
+    },
+    {
+        "id":  21,
+        "category":  "estimate_start",
+        "phrase":  "お送り頂きました物件最大限割引した初期費用御見積出来次第送らせて頂きます😊！！",
+        "priority":  30,
+        "role":  null
+    },
+    {
+        "id":  106,
+        "category":  "estimate_start",
+        "phrase":  "{{property_name}}の最大限割引させていただいたお見積送らせていただきました！！",
+        "priority":  30,
+        "role":  "explanation"
+    },
+    {
+        "id":  469,
+        "category":  "estimate_start",
+        "phrase":  "初期費用が安い理由ですが、お部屋のオーナー様から不動産会社が頂く報酬を{{customer_name}}さんの初期費用へ還元している為となります😊✨",
+        "priority":  30,
+        "role":  "cost_reason"
+    },
+    {
+        "id":  475,
+        "category":  "estimate_start",
+        "phrase":  "スモラでは契約内容はそのままで{{customer_name}}さんのご入居費用のみ出来る限りお安くさせて頂いております✨",
+        "priority":  25,
+        "role":  "sumora_merit"
+    },
+    {
+        "id":  470,
+        "category":  "estimate_start",
+        "phrase":  "不動産会社は通常①お部屋のオーナー様からの報酬（家賃1〜2ヶ月分）②ご入居者様からの仲介手数料の2つで利益を頂いております。",
+        "priority":  25,
+        "role":  "industry_structure"
+    },
+    {
+        "id":  479,
+        "category":  "estimate_start",
+        "phrase":  "スモラではどこの不動産会社よりも{{customer_name}}さんのご入居費用を出来る限りお安くさせて頂く事を大切にしております✨",
+        "priority":  25,
+        "role":  "sumora_policy"
+    },
+    {
+        "id":  481,
+        "category":  "estimate_start",
+        "phrase":  "{{customer_name}}さんのお引越し費用を出来る限り抑えられるよう、物件ごとに最大限割引させて頂いております✨",
+        "priority":  25,
+        "role":  "sumora_discount_support"
+    },
+    {
+        "id":  476,
+        "category":  "estimate_start",
+        "phrase":  "物件によっては最大割引適用で【2,980円＋前家賃のみ】でご入居出来るお部屋も御座います😊",
+        "priority":  25,
+        "role":  "sumora_max_discount"
+    },
+    {
+        "id":  478,
+        "category":  "estimate_start",
+        "phrase":  "{{customer_name}}さんのお引越し費用を出来る限り抑えられるよう最大限サポートさせて頂きます😊",
+        "priority":  25,
+        "role":  "sumora_customer_support"
+    },
+    {
+        "id":  474,
+        "category":  "estimate_start",
+        "phrase":  "物件の契約内容自体はどこの不動産会社で契約しても同じ内容となりますのでご安心ください😊",
+        "priority":  22,
+        "role":  "contract_same"
+    },
+    {
+        "id":  482,
+        "category":  "estimate_start",
+        "phrase":  "ご不明点など御座いましたらいつでもお気軽にご連絡ください😊",
+        "priority":  20,
+        "role":  "sumora_support"
+    },
+    {
+        "id":  64,
+        "category":  "estimate_start",
+        "phrase":  "初期費用確認でき次第送らせていただきます！！",
+        "priority":  20,
+        "role":  "cost_intro"
+    },
+    {
+        "id":  105,
+        "category":  "estimate_start",
+        "phrase":  "かしこまりました！！\n初期費用確認でき次第送らせていただきます！！",
+        "priority":  20,
+        "role":  "action"
+    },
+    {
+        "id":  5,
+        "category":  "estimate_start",
+        "phrase":  "初期費用面最大限割引させて頂きます！！",
+        "priority":  20,
+        "role":  null
+    },
+    {
+        "id":  519,
+        "category":  "estimate_start",
+        "phrase":  "初期費用もかなり抑えられる条件でご提案可能です！",
+        "priority":  20,
+        "role":  null
+    },
+    {
+        "id":  562,
+        "category":  "estimate_start",
+        "phrase":  "ご連絡ありがとうございます！！お送り頂きました物件確認し最大限割引した見積書を作成しお送りさせて頂きます😌✨",
+        "priority":  15,
+        "role":  "estimate_preparation_strong"
+    },
+    {
+        "id":  150,
+        "category":  "estimate_start",
+        "phrase":  "{{customer_name}}さんお世話になっております！！\n大変お待たせ致しました。\n初期費用の御見積書となります。\nお手隙の際にご査収の程よろしくお願い致します！！",
+        "priority":  15,
+        "role":  "cost"
+    },
+    {
+        "id":  302,
+        "category":  "estimate_start",
+        "phrase":  "初期費用もかなり抑えてご入居出来るお部屋となっております！！",
+        "priority":  15,
+        "role":  "initial_cost_merit"
+    },
+    {
+        "id":  303,
+        "category":  "estimate_start",
+        "phrase":  "敷金礼金無しの為初期費用もかなり抑えてご入居可能です😊！！",
+        "priority":  15,
+        "role":  "deposit_keymoney_merit"
+    },
+    {
+        "id":  52,
+        "category":  "estimate_start",
+        "phrase":  "駐車場代を含めた初期費用の御見積作成致しました！！",
+        "priority":  10,
+        "role":  "cost_intro"
+    },
+    {
+        "id":  156,
+        "category":  "estimate_start",
+        "phrase":  "現在募集が出ている物件で内覧可能なお部屋ですと、お気に召されるお部屋がまだ出ていない状況となります。",
+        "priority":  5,
+        "role":  "situation"
+    },
+    {
+        "id":  263,
+        "category":  "hearing_followup",
+        "phrase":  "ご希望のご条件お送り頂きありがとうございます😊！！",
+        "priority":  30,
+        "role":  "condition_received"
+    },
+    {
+        "id":  28,
+        "category":  "hearing_followup",
+        "phrase":  "お送り頂きありがとうございます！！",
+        "priority":  20,
+        "role":  null
+    },
+    {
+        "id":  555,
+        "category":  "hearing_followup",
+        "phrase":  "家賃帯・広さ・築年数など分かる範囲で大丈夫ですのでお送りください😊",
+        "priority":  20,
+        "role":  "area_only_detail_request"
+    },
+    {
+        "id":  556,
+        "category":  "hearing_followup",
+        "phrase":  "絶対外せない条件ございましたらそちらも教えて頂けますとより精度高くお探し出来ます！！",
+        "priority":  20,
+        "role":  "area_only_priority_request"
+    },
+    {
+        "id":  600,
+        "category":  "hearing_followup",
+        "phrase":  "家賃の上限だけ少し広げさせて頂けますとよりピッタリなお部屋お探し出来ます！",
+        "priority":  18,
+        "role":  "budget_adjust_suggestion"
+    },
+    {
+        "id":  586,
+        "category":  "hearing_followup",
+        "phrase":  "かしこまりました！！{{area1}}、{{area2}}、{{area3}}とその周辺エリアで{{customer_name}}さんにオススメ出来るお部屋ピックアップしてお送りさせて頂きます！！",
+        "priority":  17,
+        "role":  "expanded_area_search"
+    },
+    {
+        "id":  601,
+        "category":  "hearing_followup",
+        "phrase":  "ご入居時期はいつ頃ご希望でしょうか😌！",
+        "priority":  16,
+        "role":  "movein_timing_question"
+    },
+    {
+        "id":  584,
+        "category":  "hearing_followup",
+        "phrase":  "今出ている物件で新しくピックアップしてお送りさせて頂きます！！",
+        "priority":  16,
+        "role":  "repickup_notice"
+    },
+    {
+        "id":  549,
+        "category":  "hearing_followup",
+        "phrase":  "ご希望条件お送り頂けましたら、審査面も含めて通りやすいお部屋ピックアップしてお送りさせて頂きます😊！！",
+        "priority":  16,
+        "role":  "screening_sensitive_followup"
+    },
+    {
+        "id":  554,
+        "category":  "hearing_followup",
+        "phrase":  "ご希望条件お送り頂けましたら、{{area}}周辺全域からピックアップしてご提案させて頂きます！！",
+        "priority":  16,
+        "role":  "area_only_followup"
+    },
+    {
+        "id":  602,
+        "category":  "hearing_followup",
+        "phrase":  "{{customer_name}}さん絶対に外せない条件ございましたら教えて頂けますでしょうか！\r\n※（家賃◯万円まで等）",
+        "priority":  15,
+        "role":  "must_condition_question"
+    },
+    {
+        "id":  585,
+        "category":  "hearing_followup",
+        "phrase":  "以前お送り頂きましたご条件から変更御座いませんでしょうか！",
+        "priority":  15,
+        "role":  "condition_reconfirm"
+    },
+    {
+        "id":  599,
+        "category":  "hearing_followup",
+        "phrase":  "{{customer_name}}さんご希望のエリアはどのあたりになりますでしょうか😊！",
+        "priority":  15,
+        "role":  "area_question"
+    },
+    {
+        "id":  603,
+        "category":  "hearing_followup",
+        "phrase":  "優先順位としまして「家賃」「立地」「広さ」どれが一番重要になりますでしょうか😊！",
+        "priority":  14,
+        "role":  "priority_question"
+    },
+    {
+        "id":  6,
+        "category":  "hearing_start",
+        "phrase":  "①ご入居の時期\n②希望の家賃（○万円〜○万円）\n③希望の地域・最寄駅等\n④希望駅徒歩分数\n⑤希望の広さ（㎡）・間取り\n⑥初期費用の限度額\n⑦希望築年数\n⑧その他ご要望があれば",
+        "priority":  30,
+        "role":  null
+    },
+    {
+        "id":  2,
+        "category":  "hearing_start",
+        "phrase":  "お部屋探しご担当させて頂きます{{agent_name}}と申します！！",
+        "priority":  30,
+        "role":  null
+    },
+    {
+        "id":  1,
+        "category":  "hearing_start",
+        "phrase":  "{{customer_name}}さんご連絡頂きありがとうございます😊！！",
+        "priority":  30,
+        "role":  null
+    },
+    {
+        "id":  26,
+        "category":  "hearing_start",
+        "phrase":  "こちらに{{customer_name}}さんご希望のご条件お送りください😊！！",
+        "priority":  30,
+        "role":  null
+    },
+    {
+        "id":  8,
+        "category":  "hearing_start",
+        "phrase":  "こちらに{{customer_name}}さんご希望のご条件お送り頂けますと{{customer_name}}さんお探しの地域全域からご条件に合ったお部屋ピックアップし\nお送りさせて頂きます！！",
+        "priority":  30,
+        "role":  null
+    },
+    {
+        "id":  517,
+        "category":  "hearing_start",
+        "phrase":  "ご希望条件しっかり確認させて頂きます！",
+        "priority":  20,
+        "role":  null
+    },
+    {
+        "id":  553,
+        "category":  "hearing_start",
+        "phrase":  "よろしければ以下ご条件お送り頂けますでしょうか😊？",
+        "priority":  18,
+        "role":  "area_only_hearing_intro"
+    },
+    {
+        "id":  548,
+        "category":  "hearing_start",
+        "phrase":  "審査面も踏まえてご提案出来ますので、よろしければご希望条件お送り頂けますでしょうか😌！！",
+        "priority":  18,
+        "role":  "screening_sensitive_hearing"
+    },
+    {
+        "id":  540,
+        "category":  "hearing_start",
+        "phrase":  "よろしければご希望条件お送り頂けましたら、条件に合うお部屋ピックアップしてご提案させて頂きます！！",
+        "priority":  16,
+        "role":  "exclusive_property_next_step"
+    },
+    {
+        "id":  116,
+        "category":  "property_recommendation",
+        "phrase":  "敷金礼金0の為初期費用かなり抑えられます！！",
+        "priority":  30,
+        "role":  "cost_point"
+    },
+    {
+        "id":  328,
+        "category":  "property_recommendation",
+        "phrase":  "敷金礼金無しの為初期費用かなり抑えてご入居可能なお部屋となっております！！",
+        "priority":  30,
+        "role":  "initial_cost_reason"
+    },
+    {
+        "id":  500,
+        "category":  "property_recommendation",
+        "phrase":  "もしお気に召されましたらこちらのお部屋で進めて頂くのが一番オススメです！！",
+        "priority":  30,
+        "role":  "closing_recommendation"
+    },
+    {
+        "id":  312,
+        "category":  "property_recommendation",
+        "phrase":  "今出ているお部屋の中でも〇〇の為かなり条件の良いお部屋となっております！！",
+        "priority":  30,
+        "role":  "current_best_reason"
+    },
+    {
+        "id":  313,
+        "category":  "property_recommendation",
+        "phrase":  "個人的にもかなりオススメ出来る物件です！！",
+        "priority":  30,
+        "role":  "strong_recommendation"
+    },
+    {
+        "id":  311,
+        "category":  "property_recommendation",
+        "phrase":  "かなりコストパフォーマンスの良いお部屋となっておりますのでオススメ出来る物件です！！",
+        "priority":  30,
+        "role":  "cost_performance_reason"
+    },
+    {
+        "id":  309,
+        "category":  "property_recommendation",
+        "phrase":  "同条件の中でも〇〇の為かなり条件が良く、{{customer_name}}さんにかなりオススメ出来るお部屋となっております！！",
+        "priority":  30,
+        "role":  "balanced_property_reason"
+    },
+    {
+        "id":  330,
+        "category":  "property_recommendation",
+        "phrase":  "かなり人気条件のお部屋となっておりますので早めのご検討をオススメ致します！！",
+        "priority":  30,
+        "role":  "early_decision_reason"
+    },
+    {
+        "id":  308,
+        "category":  "property_recommendation",
+        "phrase":  "{{customer_name}}さんのご希望条件にかなり近いお部屋となっておりますので、かなりオススメ出来る物件です！！",
+        "priority":  30,
+        "role":  "condition_match_reason"
+    },
+    {
+        "id":  98,
+        "category":  "property_recommendation",
+        "phrase":  "審査通過の可能性が高いお部屋を{{area_name}}エリア全域からピックアップしてお送りさせて頂きました！！",
+        "priority":  30,
+        "role":  "proposal_intro"
+    },
+    {
+        "id":  215,
+        "category":  "property_recommendation",
+        "phrase":  "{{customer_name}}さんご希望の条件に近い{{layout_name}}のお部屋となっております！！",
+        "priority":  30,
+        "role":  "recommend_condition_match"
+    },
+    {
+        "id":  493,
+        "category":  "property_recommendation",
+        "phrase":  "{{area}}周辺全域でお部屋お探しさせて頂きました！！",
+        "priority":  30,
+        "role":  "search_report"
+    },
+    {
+        "id":  189,
+        "category":  "property_recommendation",
+        "phrase":  "こちらのお部屋がお送りさせて頂きましたお部屋の中で、\n私の中で{{customer_name}}さんに一番オススメのお部屋となります！！",
+        "priority":  30,
+        "role":  "recommend"
+    },
+    {
+        "id":  111,
+        "category":  "property_recommendation",
+        "phrase":  "新しく{{customer_name}}さんにオススメできるお部屋が募集してましたので送らせていただきます！！",
+        "priority":  30,
+        "role":  "proposal_intro"
+    },
+    {
+        "id":  120,
+        "category":  "property_recommendation",
+        "phrase":  "{{customer_name}}さんにかなりオススメできるお部屋です！！",
+        "priority":  30,
+        "role":  "recommend"
+    },
+    {
+        "id":  331,
+        "category":  "property_recommendation",
+        "phrase":  "かなり条件の良いお部屋となっておりますので退去前でもお申込みが入る可能性ございます！！",
+        "priority":  30,
+        "role":  "urgency_reason"
+    },
+    {
+        "id":  100,
+        "category":  "property_recommendation",
+        "phrase":  "敷金礼金0のため初期費用かなり抑えられます！！",
+        "priority":  30,
+        "role":  "property_point"
+    },
+    {
+        "id":  496,
+        "category":  "property_recommendation",
+        "phrase":  "{{reason}}の条件となっており、{{customer_name}}さんのご条件にかなり近いお部屋です！！",
+        "priority":  30,
+        "role":  "condition_match_reason"
+    },
+    {
+        "id":  495,
+        "category":  "property_recommendation",
+        "phrase":  "ただ間取り・家賃・立地すべて含めて考えますと、{{property_name}}が{{customer_name}}さんに一番オススメ出来るお部屋です！！",
+        "priority":  30,
+        "role":  "best_property_statement"
+    },
+    {
+        "id":  498,
+        "category":  "property_recommendation",
+        "phrase":  "間取り・家賃・立地すべて含めて考えてもこれ以上ない条件のお部屋です！！",
+        "priority":  30,
+        "role":  "strong_reason"
+    },
+    {
+        "id":  310,
+        "category":  "property_recommendation",
+        "phrase":  "この条件でこの家賃はかなり魅力的なお部屋となっておりますので{{customer_name}}さんにかなりオススメです！！",
+        "priority":  30,
+        "role":  "price_merit_reason"
+    },
+    {
+        "id":  40,
+        "category":  "property_recommendation",
+        "phrase":  "{{customer_name}}さんのご希望条件に近いオススメ物件新しく1件募集に出ましたのでお送りさせて頂きます！！",
+        "priority":  30,
+        "role":  "proposal_intro"
+    },
+    {
+        "id":  339,
+        "category":  "property_recommendation",
+        "phrase":  "{{layout}}のお部屋で{{living_size}}帖リビングと{{room1_size}}帖{{room_type}}があり{{resident_count}}人暮らしの{{customer_name}}さんにかなりオススメです！！",
+        "priority":  28,
+        "role":  "layout_resident_match"
+    },
+    {
+        "id":  337,
+        "category":  "property_recommendation",
+        "phrase":  "{{layout}}のお部屋で{{living_size}}帖リビングに加えて{{room1_size}}帖{{room_type}}があり生活空間もかなり広く使えます！！",
+        "priority":  28,
+        "role":  "layout_space_reason"
+    },
+    {
+        "id":  356,
+        "category":  "property_recommendation",
+        "phrase":  "駅近物件の為お出かけや通勤にもかなり便利です！！",
+        "priority":  28,
+        "role":  "station_convenience_reason"
+    },
+    {
+        "id":  355,
+        "category":  "property_recommendation",
+        "phrase":  "駅まで{{station_minutes}}分の距離で毎日の通勤にもかなり便利な立地です！！",
+        "priority":  28,
+        "role":  "daily_commute_reason"
+    },
+    {
+        "id":  354,
+        "category":  "property_recommendation",
+        "phrase":  "駅徒歩{{station_minutes}}分の為通勤や通学にもかなり便利です！！",
+        "priority":  28,
+        "role":  "commute_station_reason"
+    },
+    {
+        "id":  353,
+        "category":  "property_recommendation",
+        "phrase":  "主要エリア{{destination_station}}までアクセスしやすい立地です！！",
+        "priority":  28,
+        "role":  "main_area_access_reason"
+    },
+    {
+        "id":  352,
+        "category":  "property_recommendation",
+        "phrase":  "{{destination_station}}まで乗り換え無しで{{train_minutes}}分となります！！",
+        "priority":  28,
+        "role":  "train_access_reason"
+    },
+    {
+        "id":  351,
+        "category":  "property_recommendation",
+        "phrase":  "{{destination_station}}まで電車1本で{{train_minutes}}分で通う事が出来ます！！",
+        "priority":  28,
+        "role":  "direct_access_reason"
+    },
+    {
+        "id":  350,
+        "category":  "property_recommendation",
+        "phrase":  "駅徒歩{{station_minutes}}分の駅近物件で生活しやすい環境です！！",
+        "priority":  28,
+        "role":  "station_living_reason"
+    },
+    {
+        "id":  334,
+        "category":  "property_recommendation",
+        "phrase":  "{{layout}}のお部屋で{{living_size}}帖のリビングとなっており広々とした空間です！！",
+        "priority":  28,
+        "role":  "layout_living_reason"
+    },
+    {
+        "id":  335,
+        "category":  "property_recommendation",
+        "phrase":  "{{layout}}のお部屋で{{living_size}}帖のリビングと{{room1_size}}帖の洋室がありゆったり生活出来る間取りです！！",
+        "priority":  28,
+        "role":  "layout_room_structure"
+    },
+    {
+        "id":  336,
+        "category":  "property_recommendation",
+        "phrase":  "{{layout}}のお部屋で{{living_size}}帖のリビングと{{room1_size}}帖{{room_type}}があり使いやすい間取りとなっております！！",
+        "priority":  28,
+        "role":  "layout_usability_reason"
+    },
+    {
+        "id":  349,
+        "category":  "property_recommendation",
+        "phrase":  "駅徒歩{{station_minutes}}分の距離でかなり便利な立地です！！",
+        "priority":  28,
+        "role":  "station_access_reason"
+    },
+    {
+        "id":  348,
+        "category":  "property_recommendation",
+        "phrase":  "{{station_name}}駅徒歩{{station_minutes}}分の好立地です！！",
+        "priority":  28,
+        "role":  "station_location_reason"
+    },
+    {
+        "id":  347,
+        "category":  "property_recommendation",
+        "phrase":  "{{station_name}}駅徒歩{{station_minutes}}分の駅近物件となっております！！",
+        "priority":  28,
+        "role":  "station_near_reason"
+    },
+    {
+        "id":  346,
+        "category":  "property_recommendation",
+        "phrase":  "{{station_name}}駅から{{destination_station}}駅まで{{train_minutes}}分でアクセス可能な立地です！！",
+        "priority":  28,
+        "role":  "access_route_reason"
+    },
+    {
+        "id":  345,
+        "category":  "property_recommendation",
+        "phrase":  "{{station_name}}駅から{{destination_station}}駅まで{{train_minutes}}分となり通勤にもかなり便利です！！",
+        "priority":  28,
+        "role":  "commute_route_reason"
+    },
+    {
+        "id":  344,
+        "category":  "property_recommendation",
+        "phrase":  "{{station_name}}駅まで電車で{{train_minutes}}分となり{{customer_name}}さんの職場まで{{commute_minutes}}分で通う事が出来ます！！",
+        "priority":  28,
+        "role":  "commute_time_reason"
+    },
+    {
+        "id":  343,
+        "category":  "property_recommendation",
+        "phrase":  "{{layout}}のお部屋で{{living_size}}帖リビングと{{room1_size}}帖{{room_type}}があり{{resident_count}}人暮らしでもゆったり生活出来ます！！",
+        "priority":  28,
+        "role":  "layout_family_reason"
+    },
+    {
+        "id":  342,
+        "category":  "property_recommendation",
+        "phrase":  "{{layout}}のお部屋で{{living_size}}帖のリビングに加えて{{room1_size}}帖{{room_type}}がありかなり生活しやすい間取りです！！",
+        "priority":  28,
+        "role":  "layout_living_comfort"
+    },
+    {
+        "id":  341,
+        "category":  "property_recommendation",
+        "phrase":  "{{layout}}のお部屋で{{living_size}}帖のリビングがあり家具配置もしやすい間取りです！！",
+        "priority":  28,
+        "role":  "layout_furniture_reason"
+    },
+    {
+        "id":  340,
+        "category":  "property_recommendation",
+        "phrase":  "{{layout}}のお部屋で{{living_size}}帖の広々リビングがあり開放感のあるお部屋となっております！！",
+        "priority":  28,
+        "role":  "layout_open_space"
+    },
+    {
+        "id":  338,
+        "category":  "property_recommendation",
+        "phrase":  "{{layout}}のお部屋で{{living_size}}帖リビングと{{room1_size}}帖{{room_type}}それぞれ{{room_min_size}}帖以上ありゆったり生活して頂けます！！",
+        "priority":  28,
+        "role":  "layout_large_rooms"
+    },
+    {
+        "id":  325,
+        "category":  "property_recommendation",
+        "phrase":  "主要エリアへのアクセスもかなり良い立地となっておりますのでかなりオススメ出来る物件です！！",
+        "priority":  25,
+        "role":  "access_reason"
+    },
+    {
+        "id":  48,
+        "category":  "property_recommendation",
+        "phrase":  "インターネット無料のため月額賃料も抑えてご入居可能です！！",
+        "priority":  25,
+        "role":  "cost_point"
+    },
+    {
+        "id":  327,
+        "category":  "property_recommendation",
+        "phrase":  "人気のエリアとなっておりますのでかなり生活環境の良い地域となっております！！",
+        "priority":  25,
+        "role":  "popular_area_reason"
+    },
+    {
+        "id":  323,
+        "category":  "property_recommendation",
+        "phrase":  "オートロック付きの物件となっておりますのでセキュリティ面も安心出来るお部屋となっております！！",
+        "priority":  25,
+        "role":  "security_reason"
+    },
+    {
+        "id":  322,
+        "category":  "property_recommendation",
+        "phrase":  "リノベーションされており水回り設備も綺麗な状態となっておりますのでかなり生活しやすいお部屋となっております！！",
+        "priority":  25,
+        "role":  "facility_reason"
+    },
+    {
+        "id":  316,
+        "category":  "property_recommendation",
+        "phrase":  "収納スペースもしっかり確保されておりますので生活しやすいお部屋となっております！！",
+        "priority":  25,
+        "role":  "storage_reason"
+    },
+    {
+        "id":  315,
+        "category":  "property_recommendation",
+        "phrase":  "家具家電も配置しやすい間取りとなっておりますのでかなり生活しやすいお部屋となっております！！",
+        "priority":  25,
+        "role":  "layout_usability_reason"
+    },
+    {
+        "id":  494,
+        "category":  "property_recommendation",
+        "phrase":  "{{target_layout}}の条件のお部屋は現在出ていませんでしたが、別で{{alternative_property}}という物件が募集に出ています！！",
+        "priority":  25,
+        "role":  "alternative_property"
+    },
+    {
+        "id":  326,
+        "category":  "property_recommendation",
+        "phrase":  "物件周辺にはスーパーやコンビニもあり生活しやすい環境となっております！！",
+        "priority":  22,
+        "role":  "living_environment_reason"
+    },
+    {
+        "id":  324,
+        "category":  "property_recommendation",
+        "phrase":  "{{station_name}}駅徒歩{{station_minutes}}分の駅近物件となっておりますので立地面もかなり良い物件となっております！！",
+        "priority":  22,
+        "role":  "station_access_reason"
+    },
+    {
+        "id":  318,
+        "category":  "property_recommendation",
+        "phrase":  "南向きのお部屋となっておりますので日当たりも良く快適に生活して頂けるお部屋となっております！！",
+        "priority":  22,
+        "role":  "sunlight_reason"
+    },
+    {
+        "id":  333,
+        "category":  "property_recommendation",
+        "phrase":  "内覧頂きますと{{customer_name}}さんにもかなり気に入って頂ける可能性が高いお部屋となっております！！",
+        "priority":  22,
+        "role":  "viewing_trigger_reason"
+    },
+    {
+        "id":  298,
+        "category":  "property_recommendation",
+        "phrase":  "{{destination}}までアクセスしやすい立地となっております！！",
+        "priority":  22,
+        "role":  "access_information"
+    },
+    {
+        "id":  317,
+        "category":  "property_recommendation",
+        "phrase":  "ウォークインクローゼット付きで収納力もしっかりございますので{{customer_name}}さんにかなりオススメ出来るお部屋です！！",
+        "priority":  22,
+        "role":  "walkin_storage_reason"
+    },
+    {
+        "id":  314,
+        "category":  "property_recommendation",
+        "phrase":  "広々としたお部屋となっておりますのでかなり生活しやすい間取りとなっております！！",
+        "priority":  22,
+        "role":  "spacious_room_reason"
+    },
+    {
+        "id":  321,
+        "category":  "property_recommendation",
+        "phrase":  "リノベーションされておりますので室内かなり綺麗なお部屋となっております！！",
+        "priority":  22,
+        "role":  "renovation_reason"
+    },
+    {
+        "id":  332,
+        "category":  "property_recommendation",
+        "phrase":  "実際にご内覧頂きますとより魅力が伝わるお部屋となっておりますのでかなりオススメ出来る物件です！！",
+        "priority":  22,
+        "role":  "viewing_encouragement_reason"
+    },
+    {
+        "id":  320,
+        "category":  "property_recommendation",
+        "phrase":  "築浅物件となっておりますので室内かなり綺麗なお部屋となっております！！",
+        "priority":  22,
+        "role":  "new_building_reason"
+    },
+    {
+        "id":  299,
+        "category":  "property_recommendation",
+        "phrase":  "物件周辺にはスーパーやコンビニもあり生活しやすい環境となっております😊！！",
+        "priority":  22,
+        "role":  "area_environment_information"
+    },
+    {
+        "id":  329,
+        "category":  "property_recommendation",
+        "phrase":  "インターネット無料の物件となっておりますので毎月の固定費も抑えられます！！",
+        "priority":  22,
+        "role":  "internet_reason"
+    },
+    {
+        "id":  42,
+        "category":  "property_recommendation",
+        "phrase":  "⭐{{property_name}} {{room_number}}",
+        "priority":  20,
+        "role":  "property_title"
+    },
+    {
+        "id":  44,
+        "category":  "property_recommendation",
+        "phrase":  "間取り：{{layout}}（{{room_size}}㎡）",
+        "priority":  20,
+        "role":  "property_info"
+    },
+    {
+        "id":  115,
+        "category":  "property_recommendation",
+        "phrase":  "駐車場あり（敷地内空き1台）",
+        "priority":  20,
+        "role":  "property_info"
+    },
+    {
+        "id":  17,
+        "category":  "property_recommendation",
+        "phrase":  "お送りさせて頂いたお部屋の中でも特に{{customer_name}}さんにオススメのお部屋です！！",
+        "priority":  20,
+        "role":  null
+    },
+    {
+        "id":  289,
+        "category":  "property_recommendation",
+        "phrase":  "{{customer_name}}さんにかなりオススメ出来るお部屋が新しく募集に出ましたのでお送りさせて頂きました😊！！",
+        "priority":  20,
+        "role":  "new_property_recommendation"
+    },
+    {
+        "id":  47,
+        "category":  "property_recommendation",
+        "phrase":  "{{construction_year}}年築の築浅のお部屋となります！！",
+        "priority":  20,
+        "role":  "recommend"
+    },
+    {
+        "id":  133,
+        "category":  "property_recommendation",
+        "phrase":  "敷地内駐車場月額{{parking_price}}円となります！！",
+        "priority":  20,
+        "role":  "property_info"
+    },
+    {
+        "id":  217,
+        "category":  "property_recommendation",
+        "phrase":  "南向きバルコニーの為日当たりも良く快適にお過ごしいただけるお部屋となります😊！！",
+        "priority":  20,
+        "role":  "recommend_sunlight_feature"
+    },
+    {
+        "id":  18,
+        "category":  "property_recommendation",
+        "phrase":  "{{property_name}}ですが駐車場が無い物件となります！！\n\n{{customer_name}}さん駐車場借りられる場合、近隣の月極駐車場お調べさせて頂きます😊！！",
+        "priority":  20,
+        "role":  null
+    },
+    {
+        "id":  117,
+        "category":  "property_recommendation",
+        "phrase":  "{{construction_year}}年築の新築物件です！！",
+        "priority":  20,
+        "role":  "recommend"
+    },
+    {
+        "id":  50,
+        "category":  "property_recommendation",
+        "phrase":  "{{vacancy_month}}月末退去予定のお部屋となります！！",
+        "priority":  20,
+        "role":  "situation"
+    },
+    {
+        "id":  190,
+        "category":  "property_recommendation",
+        "phrase":  "家賃は管理費込み{{rent_price}}円ですので\n{{budget_price}}円を超えてしまいますが\n{{room_size}}㎡の広々とした{{layout}}でお部屋白基調でかなり綺麗です😊！！",
+        "priority":  20,
+        "role":  "recommend"
+    },
+    {
+        "id":  207,
+        "category":  "property_recommendation",
+        "phrase":  "現在{{layout_type_1}}・{{layout_type_2}}の間取りのお部屋のみ募集されております！！",
+        "priority":  20,
+        "role":  "layout_availability_explain"
+    },
+    {
+        "id":  46,
+        "category":  "property_recommendation",
+        "phrase":  "最寄駅：{{station_name}}駅 徒歩{{walk_minutes}}分",
+        "priority":  20,
+        "role":  "property_access"
+    },
+    {
+        "id":  216,
+        "category":  "property_recommendation",
+        "phrase":  "ウォークインクローゼット付きの為収納スペースも充実しております！！",
+        "priority":  20,
+        "role":  "recommend_storage_feature"
+    },
+    {
+        "id":  252,
+        "category":  "property_recommendation",
+        "phrase":  "{{customer_name}}さんのご希望条件に近い類似のお部屋が現在募集出ておりましたので",
+        "priority":  20,
+        "role":  "similar_property_notice"
+    },
+    {
+        "id":  43,
+        "category":  "property_recommendation",
+        "phrase":  "家賃：{{rent_price}}円（共益費込み）",
+        "priority":  20,
+        "role":  "property_info"
+    },
+    {
+        "id":  319,
+        "category":  "property_recommendation",
+        "phrase":  "角部屋のお部屋となっておりますので生活音も気になりにくいお部屋となっております！！",
+        "priority":  20,
+        "role":  "corner_room_reason"
+    },
+    {
+        "id":  89,
+        "category":  "property_recommendation",
+        "phrase":  "他にも新着でオススメ出来るお部屋が出てきましたら並行してお送りさせて頂きます！！",
+        "priority":  20,
+        "role":  "proposal_intro"
+    },
+    {
+        "id":  502,
+        "category":  "property_recommendation",
+        "phrase":  "{{customer_name}}さんご不明点御座いましたらいつでもお気軽にご連絡ください😊！！",
+        "priority":  20,
+        "role":  "support_message"
+    },
+    {
+        "id":  39,
+        "category":  "property_recommendation",
+        "phrase":  "{{customer_name}}さん\nお世話になっております！！",
+        "priority":  20,
+        "role":  "greeting"
+    },
+    {
+        "id":  88,
+        "category":  "property_recommendation",
+        "phrase":  "現在出ている{{property_name}}の類似物件がこちら2件となります！！",
+        "priority":  20,
+        "role":  "proposal_intro"
+    },
+    {
+        "id":  63,
+        "category":  "property_recommendation",
+        "phrase":  "{{viewing_month}}/{{viewing_day}}までお日にち少し空きますので随時{{customer_name}}さんにオススメできるお部屋新しく募集出ましたら送らせていただきます😊！！",
+        "priority":  20,
+        "role":  "proposal_intro"
+    },
+    {
+        "id":  113,
+        "category":  "property_recommendation",
+        "phrase":  "賃料{{rent_price}}円　共益費{{maintenance_fee}}円",
+        "priority":  20,
+        "role":  "property_info"
+    },
+    {
+        "id":  130,
+        "category":  "property_recommendation",
+        "phrase":  "夜分遅くに失礼致します！\n1件新着物件で{{customer_name}}さんにかなりオススメ出来る物件が出ました！",
+        "priority":  20,
+        "role":  "proposal_intro"
+    },
+    {
+        "id":  144,
+        "category":  "property_recommendation",
+        "phrase":  "{{customer_name}}さんお世話になっております！！\nこちらが新着物件で{{customer_name}}さんにオススメ出来るお部屋となります！！",
+        "priority":  20,
+        "role":  "intro"
+    },
+    {
+        "id":  166,
+        "category":  "property_recommendation",
+        "phrase":  "{{customer_name}}さんお世話になっております！！\n月極駐車場1台見つかりました！！",
+        "priority":  20,
+        "role":  "update"
+    },
+    {
+        "id":  253,
+        "category":  "property_recommendation",
+        "phrase":  "最大限割引した初期費用の御見積書と併せてお送りさせて頂きます！！",
+        "priority":  20,
+        "role":  "similar_property_notice"
+    },
+    {
+        "id":  301,
+        "category":  "property_recommendation",
+        "phrase":  "{{construction_year}}築の築浅物件となっており室内かなり綺麗です😊！！",
+        "priority":  18,
+        "role":  "new_building_recommendation"
+    },
+    {
+        "id":  291,
+        "category":  "property_recommendation",
+        "phrase":  "今回お送りさせて頂いた物件の中でも特にオススメ出来るお部屋となっております！！",
+        "priority":  18,
+        "role":  "top_recommendation"
+    },
+    {
+        "id":  300,
+        "category":  "property_recommendation",
+        "phrase":  "設備面も充実しておりかなり生活しやすいお部屋となっております！！",
+        "priority":  18,
+        "role":  "feature_recommendation"
+    },
+    {
+        "id":  292,
+        "category":  "property_recommendation",
+        "phrase":  "{{customer_name}}さんに特にオススメ出来る条件の良いお部屋となっております😊！！",
+        "priority":  18,
+        "role":  "customer_specific_recommendation"
+    },
+    {
+        "id":  566,
+        "category":  "property_recommendation",
+        "phrase":  "即日ご入居可能なお部屋となっております😊！！",
+        "priority":  17,
+        "role":  "immediate_movein"
+    },
+    {
+        "id":  296,
+        "category":  "property_recommendation",
+        "phrase":  "{{area}}㎡の広々としたお部屋となっております！！",
+        "priority":  15,
+        "role":  "area_information"
+    },
+    {
+        "id":  118,
+        "category":  "property_recommendation",
+        "phrase":  "近隣にスーパーやコンビニがあり生活しやすい立地となります！！",
+        "priority":  15,
+        "role":  "property_point"
+    },
+    {
+        "id":  131,
+        "category":  "property_recommendation",
+        "phrase":  "{{build_year}}年築\n{{room_size}}㎡のお部屋となります！！",
+        "priority":  15,
+        "role":  "property_info"
+    },
+    {
+        "id":  135,
+        "category":  "property_recommendation",
+        "phrase":  "こちらが現在出ているカウンターキッチン付きの物件となります！！",
+        "priority":  15,
+        "role":  "property_info"
+    },
+    {
+        "id":  149,
+        "category":  "property_recommendation",
+        "phrase":  "近隣の月極駐車場状況につきましても確認させて頂きます！！",
+        "priority":  15,
+        "role":  "action"
+    },
+    {
+        "id":  193,
+        "category":  "property_recommendation",
+        "phrase":  "インターネット無料ですのでその分毎月のお支払いを抑えられます！！",
+        "priority":  15,
+        "role":  "recommend"
+    },
+    {
+        "id":  83,
+        "category":  "property_recommendation",
+        "phrase":  "1階のお部屋がお申込入ってしまい、2階部分のお部屋が募集されております！！",
+        "priority":  15,
+        "role":  "situation"
+    },
+    {
+        "id":  294,
+        "category":  "property_recommendation",
+        "phrase":  "家賃管理費込み{{rent_price}}のお部屋となります！！",
+        "priority":  15,
+        "role":  "rent_information"
+    },
+    {
+        "id":  295,
+        "category":  "property_recommendation",
+        "phrase":  "{{layout}}の間取りのお部屋となっております！！",
+        "priority":  15,
+        "role":  "layout_information"
+    },
+    {
+        "id":  297,
+        "category":  "property_recommendation",
+        "phrase":  "{{station_name}}駅徒歩{{station_minutes}}分の駅近物件となります！！",
+        "priority":  15,
+        "role":  "station_distance_information"
+    },
+    {
+        "id":  290,
+        "category":  "property_recommendation",
+        "phrase":  "{{customer_name}}さんのご条件にかなり近いお部屋となっております😊！！",
+        "priority":  15,
+        "role":  "condition_match_recommendation"
+    },
+    {
+        "id":  293,
+        "category":  "property_recommendation",
+        "phrase":  "⭐ {{property_name}}",
+        "priority":  12,
+        "role":  "property_title"
+    },
+    {
+        "id":  19,
+        "category":  "property_recommendation",
+        "phrase":  "{{property_name}}室内の設備や写真はこちらのURLに掲載されております😊！！",
+        "priority":  10,
+        "role":  null
+    },
+    {
+        "id":  49,
+        "category":  "property_recommendation",
+        "phrase":  "カウンターキッチン付きで{{customer_name}}さんのご希望に近いオススメのお部屋となります！！",
+        "priority":  10,
+        "role":  "recommend"
+    },
+    {
+        "id":  154,
+        "category":  "property_recommendation",
+        "phrase":  "月極駐車場につきまして空き駐車場見つかり次第お送りさせて頂きます！！",
+        "priority":  10,
+        "role":  "action"
+    },
+    {
+        "id":  148,
+        "category":  "property_recommendation",
+        "phrase":  "こちらが室内写真のURLとなります。\nお手隙の際にご確認ください！！",
+        "priority":  10,
+        "role":  "info"
+    },
+    {
+        "id":  23,
+        "category":  "property_recommendation",
+        "phrase":  "【{{property_name}}】",
+        "priority":  10,
+        "role":  null
+    },
+    {
+        "id":  191,
+        "category":  "property_recommendation",
+        "phrase":  "お風呂も広く追い炊き機能付きと設備充実しております😌！！",
+        "priority":  10,
+        "role":  "recommend"
+    },
+    {
+        "id":  168,
+        "category":  "property_recommendation",
+        "phrase":  "現在他からのお申し込みを止めていただいております。",
+        "priority":  10,
+        "role":  "situation"
+    },
+    {
+        "id":  99,
+        "category":  "property_recommendation",
+        "phrase":  "初期費用を抑えられる新築物件で{{customer_name}}さんにかなりオススメ出来る物件です！！",
+        "priority":  10,
+        "role":  "recommend"
+    },
+    {
+        "id":  155,
+        "category":  "property_recommendation",
+        "phrase":  "新着物件となります！！\nお手隙の際にご査収お願い致します！！",
+        "priority":  8,
+        "role":  "intro"
+    },
+    {
+        "id":  29,
+        "category":  "property_search_start",
+        "phrase":  "{{customer_name}}さんご希望のご条件に合ったお部屋を{{area_name}}全域からピックアップし送らせて頂きます！！",
+        "priority":  30,
+        "role":  null
+    },
+    {
+        "id":  241,
+        "category":  "property_search_start",
+        "phrase":  "ピックアップさせて頂きました😊！！",
+        "priority":  30,
+        "role":  "pickup_action"
+    },
+    {
+        "id":  212,
+        "category":  "property_search_start",
+        "phrase":  "条件に近いお部屋ピックアップさせて頂きました！！",
+        "priority":  30,
+        "role":  "pickup_action_fast"
+    },
+    {
+        "id":  211,
+        "category":  "property_search_start",
+        "phrase":  "ピックアップさせて頂きました！！",
+        "priority":  30,
+        "role":  "pickup_action"
+    },
+    {
+        "id":  141,
+        "category":  "property_search_start",
+        "phrase":  "新着物件随時確認し{{customer_name}}さんに新しくオススメ出来る物件出てき次第お送りさせて頂きます！！",
+        "priority":  30,
+        "role":  "reassurance"
+    },
+    {
+        "id":  15,
+        "category":  "property_search_start",
+        "phrase":  "お待たせ致しました！！\n{{area_name}}全域から{{customer_name}}さんご希望のご条件に合ったお部屋ピックアップさせて頂きました！！\nお手隙の際にご査収ください😊！！",
+        "priority":  30,
+        "role":  null
+    },
+    {
+        "id":  97,
+        "category":  "property_search_start",
+        "phrase":  "{{customer_name}}さんのご希望に合ったお部屋引き続き探させて頂きます！！",
+        "priority":  30,
+        "role":  "reassurance"
+    },
+    {
+        "id":  245,
+        "category":  "property_search_start",
+        "phrase":  "お調べさせて頂きます！！",
+        "priority":  30,
+        "role":  "property_search_action"
+    },
+    {
+        "id":  109,
+        "category":  "property_search_start",
+        "phrase":  "お部屋ピックアップでき次第送らせていただきます😊！！",
+        "priority":  25,
+        "role":  "proposal_intro"
+    },
+    {
+        "id":  108,
+        "category":  "property_search_start",
+        "phrase":  "駐車場付きのお部屋、また駐車場がないお部屋でも月極駐車場が近くにあるか確認させていただきます！！",
+        "priority":  20,
+        "role":  "reassurance"
+    },
+    {
+        "id":  213,
+        "category":  "property_search_start",
+        "phrase":  "⭐オススメ物件",
+        "priority":  20,
+        "role":  "recommend_title"
+    },
+    {
+        "id":  242,
+        "category":  "property_search_start",
+        "phrase":  "かしこまりました😊！！",
+        "priority":  20,
+        "role":  "request_acknowledge"
+    },
+    {
+        "id":  121,
+        "category":  "property_search_start",
+        "phrase":  "カウンターキッチンのお部屋で{{customer_name}}さんの条件に合うお部屋再度お探しさせていただきます！！",
+        "priority":  20,
+        "role":  "reassurance"
+    },
+    {
+        "id":  101,
+        "category":  "property_search_start",
+        "phrase":  "カウンターキッチンのお部屋で{{customer_name}}さんの条件に合ったお部屋再度お探しさせて頂きます！！",
+        "priority":  20,
+        "role":  "reassurance"
+    },
+    {
+        "id":  76,
+        "category":  "property_search_start",
+        "phrase":  "新しく募集されてるお部屋ピックアップし送らせていただきます😊！！",
+        "priority":  20,
+        "role":  "proposal_intro"
+    },
+    {
+        "id":  33,
+        "category":  "property_search_start",
+        "phrase":  "物件ピックアップ出来次第お送りさせて頂きます😊！！",
+        "priority":  20,
+        "role":  null
+    },
+    {
+        "id":  550,
+        "category":  "property_search_start",
+        "phrase":  "ご条件お送り頂きありがとうございます！！ご希望条件に合ったお部屋ピックアップしてお送りさせて頂きます😊！！",
+        "priority":  16,
+        "role":  "screening_sensitive_search_start"
+    },
+    {
+        "id":  552,
+        "category":  "property_search_start",
+        "phrase":  "{{area}}周辺全域からご条件に合ったお部屋お探しさせて頂きます！！",
+        "priority":  15,
+        "role":  "area_only_search_start"
+    },
+    {
+        "id":  559,
+        "category":  "property_search_start",
+        "phrase":  "本日中に{{customer_name}}さんご条件に合ったお部屋ピックアップしお送りさせて頂きます！！",
+        "priority":  15,
+        "role":  "same_day_property_search"
+    },
+    {
+        "id":  146,
+        "category":  "property_search_start",
+        "phrase":  "新着でご条件に合った物件出てきましたらすぐお送りさせて頂きます！！",
+        "priority":  10,
+        "role":  "action"
+    },
+    {
+        "id":  140,
+        "category":  "property_search_start",
+        "phrase":  "対面キッチンで{{customer_name}}さんにオススメ出来るお部屋を重点的に新着状況確認させて頂きます😊！！",
+        "priority":  8,
+        "role":  "reassurance"
+    },
+    {
+        "id":  597,
+        "category":  "reproposal",
+        "phrase":  "同条件でお探しの方も多い為、少し幅広く見て頂くと良いお部屋見つかりやすいです😊！！",
+        "priority":  20,
+        "role":  "condition_expand_suggestion"
+    },
+    {
+        "id":  541,
+        "category":  "reproposal",
+        "phrase":  "条件に近い別のお部屋がいくつかございますのでお送りさせて頂きます😊！！",
+        "priority":  18,
+        "role":  "alternative_property_offer"
+    },
+    {
+        "id":  596,
+        "category":  "reproposal",
+        "phrase":  "少し条件は変わってしまいますが、{{customer_name}}さんにかなりオススメ出来るお部屋ですのでお送りさせて頂きました😌！！",
+        "priority":  18,
+        "role":  "alternative_property_recommend"
+    },
+    {
+        "id":  598,
+        "category":  "reproposal",
+        "phrase":  "①ご入居の時期\r\n②ご希望の家賃（〇万円〜〇万円）\r\n③ご希望の地域・最寄駅\r\n④駅徒歩分数\r\n⑤広さ・間取り\r\n⑥初期費用の上限\r\n⑦築年数\r\n⑧その他ご要望\r\n\r\nこちらお送り頂きますと、より{{customer_name}}さんご希望のご条件に合ったお部屋をピックアップし、お送りさせて頂きます😊！！",
+        "priority":  17,
+        "role":  "reproposal_hearing_format"
+    },
+    {
+        "id":  594,
+        "category":  "reproposal",
+        "phrase":  "お送り頂きましたお部屋確認しましたところ、現在募集終了してしまっておりました。\r\n{{customer_name}}さんのご条件に合ったお部屋ピックアップし送らせて頂きます！！",
+        "priority":  15,
+        "role":  "property_closed_reproposal"
+    },
+    {
+        "id":  251,
+        "category":  "reproposal",
+        "phrase":  "先程お送り頂いた{{property_name}}ですが確認したところ募集終了しておりました。",
+        "priority":  15,
+        "role":  "property_update"
+    },
+    {
+        "id":  151,
+        "category":  "reproposal",
+        "phrase":  "管理会社に礼金の件交渉させて頂きました！！",
+        "priority":  15,
+        "role":  "action"
+    },
+    {
+        "id":  158,
+        "category":  "reproposal",
+        "phrase":  "室内撮影しこちらのLINEに室内の写真・動画お送りさせて頂きます！！",
+        "priority":  15,
+        "role":  "support"
+    },
+    {
+        "id":  307,
+        "category":  "urgency_push",
+        "phrase":  "かなり条件の良い物件となりますのでお部屋埋まってしまう可能性ございます！！",
+        "priority":  30,
+        "role":  "popular_property_notice"
+    },
+    {
+        "id":  283,
+        "category":  "urgency_push",
+        "phrase":  "かなり好条件のお部屋となりますので退去前でもお申込みが入る可能性が十分にございます！！",
+        "priority":  30,
+        "role":  "popular_property_notice"
+    },
+    {
+        "id":  515,
+        "category":  "urgency_push",
+        "phrase":  "人気条件のお部屋は他のお客様から見ても条件が良いと判断されますのでお申込みが入る可能性がかなり高いです！！",
+        "priority":  20,
+        "role":  "conditional_urgency"
+    },
+    {
+        "id":  56,
+        "category":  "urgency_push",
+        "phrase":  "ご内覧までにお申し込み入ってしまう可能性ございます！！\nよろしければお申込みし事前にお部屋抑えさせていただきます！",
+        "priority":  20,
+        "role":  "urgency"
+    },
+    {
+        "id":  284,
+        "category":  "urgency_push",
+        "phrase":  "条件の良いお部屋は退去前で決まる事が多いです。",
+        "priority":  20,
+        "role":  "early_decision_encouragement"
+    },
+    {
+        "id":  570,
+        "category":  "urgency_push",
+        "phrase":  "土日になりますとご案内がかなり集中してしまうためお部屋が埋まってしまう可能性が高くなります！",
+        "priority":  15,
+        "role":  "weekend_urgency"
+    },
+    {
+        "id":  516,
+        "category":  "urgency_push",
+        "phrase":  "人気な条件のお部屋はお申込みがすぐに入り埋まってしまいます！！",
+        "priority":  15,
+        "role":  "conditional_urgency"
+    },
+    {
+        "id":  568,
+        "category":  "urgency_push",
+        "phrase":  "他のお客様で既にお申込みが入っておりまして、2番手でのお申込となる状況です。",
+        "priority":  14,
+        "role":  "second_rank_notice"
+    },
+    {
+        "id":  569,
+        "category":  "urgency_push",
+        "phrase":  "1番手に繰り上がる可能性ございます！！2番手でお申込させて頂いてもよろしいでしょうか！",
+        "priority":  13,
+        "role":  "second_rank_push"
+    },
+    {
+        "id":  173,
+        "category":  "urgency_push",
+        "phrase":  "管理会社より本日中にご入居希望日を設定していただきたいとの連絡をいただいております！！",
+        "priority":  10,
+        "role":  "request"
+    },
+    {
+        "id":  174,
+        "category":  "urgency_push",
+        "phrase":  "本日中に入居日をお伝え出来ない場合お部屋留めが出来なくなる可能性がございます。",
+        "priority":  10,
+        "role":  "caution"
+    },
+    {
+        "id":  369,
+        "category":  "viewing_invite",
+        "phrase":  "直近ですと{{viewing_date}}ご案内可能です😊！！",
+        "priority":  30,
+        "role":  "viewing_date_offer"
+    },
+    {
+        "id":  67,
+        "category":  "viewing_invite",
+        "phrase":  "{{viewing_month}}/{{viewing_day}} {{viewing_time}}に\n{{property_name}}\n住所：{{property_address}}\n現地エントランスお待ち合わせでお願い致します！！",
+        "priority":  30,
+        "role":  "viewing_reserve"
+    },
+    {
+        "id":  160,
+        "category":  "viewing_invite",
+        "phrase":  "{{moveout_date}}以降で{{customer_name}}さんご都合よろしいお日にちにご案内させて頂きます！！",
+        "priority":  30,
+        "role":  "viewing_info"
+    },
+    {
+        "id":  360,
+        "category":  "viewing_invite",
+        "phrase":  "気になるお部屋御座いましたら全てご案内させて頂きます😊！！",
+        "priority":  30,
+        "role":  "multi_property_viewing"
+    },
+    {
+        "id":  358,
+        "category":  "viewing_invite",
+        "phrase":  "お気に召されましたらご都合よろしいお日にちにご内覧手配させて頂きます😊！！",
+        "priority":  30,
+        "role":  "viewing_arrangement"
+    },
+    {
+        "id":  404,
+        "category":  "viewing_invite",
+        "phrase":  "{{customer_name}}さん本日はお忙しい中ご内覧頂きありがとうございました😊！！",
+        "priority":  30,
+        "role":  "viewing_thanks_polite"
+    },
+    {
+        "id":  403,
+        "category":  "viewing_invite",
+        "phrase":  "{{customer_name}}さん本日はご内覧お越し頂きありがとうございました😊！！",
+        "priority":  30,
+        "role":  "viewing_thanks"
+    },
+    {
+        "id":  398,
+        "category":  "viewing_invite",
+        "phrase":  "明日{{viewing_time}}{{meeting_place}}お待ち合わせとなります😊！！",
+        "priority":  30,
+        "role":  "meeting_reminder"
+    },
+    {
+        "id":  397,
+        "category":  "viewing_invite",
+        "phrase":  "明日{{viewing_time}}お部屋ご案内となります😊！！何卒よろしくお願い致します！！",
+        "priority":  30,
+        "role":  "viewing_reminder_time"
+    },
+    {
+        "id":  396,
+        "category":  "viewing_invite",
+        "phrase":  "{{customer_name}}さん明日はよろしくお願い致します😊！！",
+        "priority":  30,
+        "role":  "viewing_reminder_basic"
+    },
+    {
+        "id":  394,
+        "category":  "viewing_invite",
+        "phrase":  "{{meeting_place}}に{{viewing_time}}お待ち合わせ如何でしょうか😊！！",
+        "priority":  30,
+        "role":  "meeting_proposal"
+    },
+    {
+        "id":  393,
+        "category":  "viewing_invite",
+        "phrase":  "お待ち合わせ場所は{{meeting_place}}となります😊！！",
+        "priority":  30,
+        "role":  "meeting_location"
+    },
+    {
+        "id":  305,
+        "category":  "viewing_invite",
+        "phrase":  "お気に召されましたら{{customer_name}}さんご都合よろしいお日にちにご案内させて頂きます😊！！",
+        "priority":  30,
+        "role":  "viewing_invitation"
+    },
+    {
+        "id":  306,
+        "category":  "viewing_invite",
+        "phrase":  "お手隙の際にご査収ください😌！！",
+        "priority":  30,
+        "role":  "soft_viewing_invitation"
+    },
+    {
+        "id":  200,
+        "category":  "viewing_invite",
+        "phrase":  "【{{property_name}}】 {{room_number}}号室\nお申込みさせて頂きます！",
+        "priority":  30,
+        "role":  "application"
+    },
+    {
+        "id":  390,
+        "category":  "viewing_invite",
+        "phrase":  "お部屋の空室状況確認し{{meeting_place}}とあわせてご連絡させて頂きます😊！！",
+        "priority":  30,
+        "role":  "meeting_place_notice"
+    },
+    {
+        "id":  388,
+        "category":  "viewing_invite",
+        "phrase":  "かしこまりました😊！！{{viewing_date}} {{viewing_time}}何卒よろしくお願い致します！！",
+        "priority":  30,
+        "role":  "viewing_confirm_polite"
+    },
+    {
+        "id":  387,
+        "category":  "viewing_invite",
+        "phrase":  "かしこまりました😊！！{{viewing_date}} {{viewing_time}}でお部屋ご案内させて頂きます！！",
+        "priority":  30,
+        "role":  "viewing_confirm"
+    },
+    {
+        "id":  381,
+        "category":  "viewing_invite",
+        "phrase":  "本日ですと{{viewing_time_range}}の間でご案内可能です😊！！",
+        "priority":  30,
+        "role":  "same_day_viewing_time"
+    },
+    {
+        "id":  379,
+        "category":  "viewing_invite",
+        "phrase":  "直近ですと{{viewing_date}} {{viewing_time_range}}ご案内可能です😊！！{{customer_name}}さんご都合如何でしょうか😌！！",
+        "priority":  30,
+        "role":  "viewing_time_proposal"
+    },
+    {
+        "id":  378,
+        "category":  "viewing_invite",
+        "phrase":  "かしこまりました😊！！{{customer_name}}さんご案内させて頂きます！！",
+        "priority":  30,
+        "role":  "viewing_accept_customer"
+    },
+    {
+        "id":  377,
+        "category":  "viewing_invite",
+        "phrase":  "かしこまりました😊！！お部屋ご案内させて頂きます！！",
+        "priority":  30,
+        "role":  "viewing_accept"
+    },
+    {
+        "id":  374,
+        "category":  "viewing_invite",
+        "phrase":  "ご内覧希望御座いましたらすぐ手配させて頂きます😊！！",
+        "priority":  30,
+        "role":  "fast_viewing_arrange"
+    },
+    {
+        "id":  370,
+        "category":  "viewing_invite",
+        "phrase":  "直近ですと{{viewing_date}} {{viewing_time_range}}ご案内可能です😊！！",
+        "priority":  30,
+        "role":  "viewing_time_offer"
+    },
+    {
+        "id":  197,
+        "category":  "viewing_invite",
+        "phrase":  "{{viewing_date}} {{viewing_time}}\n{{property_name}} 現地エントランス\n住所：{{address}}\nにお待ち合わせお願い致します！！",
+        "priority":  30,
+        "role":  "viewing_schedule"
+    },
+    {
+        "id":  364,
+        "category":  "viewing_invite",
+        "phrase":  "お部屋ご内覧頂きますとより魅力伝わる物件ですのでご案内させて頂きます😊！！",
+        "priority":  30,
+        "role":  "viewing_encouragement"
+    },
+    {
+        "id":  164,
+        "category":  "viewing_invite",
+        "phrase":  "上記のお時間でご案内出来ます😊！！",
+        "priority":  30,
+        "role":  "viewing_info"
+    },
+    {
+        "id":  195,
+        "category":  "viewing_invite",
+        "phrase":  "かしこまりました😊！\nお部屋ご案内させて頂きます！",
+        "priority":  30,
+        "role":  "viewing"
+    },
+    {
+        "id":  222,
+        "category":  "viewing_invite",
+        "phrase":  "本日ご案内させて頂きます！！",
+        "priority":  30,
+        "role":  "viewing_confirm"
+    },
+    {
+        "id":  165,
+        "category":  "viewing_invite",
+        "phrase":  "{{customer_name}}さんご都合如何でしょうか😌！！",
+        "priority":  30,
+        "role":  "question"
+    },
+    {
+        "id":  219,
+        "category":  "viewing_invite",
+        "phrase":  "{{time_range}}〜{{time_end}}の間ですとご案内可能です😊！！",
+        "priority":  30,
+        "role":  "viewing_time_range"
+    },
+    {
+        "id":  196,
+        "category":  "viewing_invite",
+        "phrase":  "{{viewing_date}}ご案内させて頂きます！！",
+        "priority":  30,
+        "role":  "viewing_schedule"
+    },
+    {
+        "id":  223,
+        "category":  "viewing_invite",
+        "phrase":  "何卒よろしくお願い致します😌！",
+        "priority":  30,
+        "role":  "polite_closing"
+    },
+    {
+        "id":  361,
+        "category":  "viewing_invite",
+        "phrase":  "お送りさせて頂いたお部屋の中で気になる物件御座いましたらご案内させて頂きます😊！！",
+        "priority":  25,
+        "role":  "viewing_selection_invite"
+    },
+    {
+        "id":  363,
+        "category":  "viewing_invite",
+        "phrase":  "ご希望のお部屋御座いましたらご案内可能です😊！！",
+        "priority":  25,
+        "role":  "viewing_possible_notice"
+    },
+    {
+        "id":  368,
+        "category":  "viewing_invite",
+        "phrase":  "本日でもご案内可能です😊！！",
+        "priority":  25,
+        "role":  "same_day_viewing"
+    },
+    {
+        "id":  372,
+        "category":  "viewing_invite",
+        "phrase":  "{{customer_name}}さんのご都合に合わせてご案内調整させて頂きます😊！！",
+        "priority":  25,
+        "role":  "viewing_flexible"
+    },
+    {
+        "id":  69,
+        "category":  "viewing_invite",
+        "phrase":  "{{viewing_time_after}}以降ですとお時間何時でも大丈夫です😊！",
+        "priority":  25,
+        "role":  "viewing_adjust"
+    },
+    {
+        "id":  359,
+        "category":  "viewing_invite",
+        "phrase":  "お気に召されましたらお部屋ご案内させて頂きますのでお気軽にお申し付けください😊！！",
+        "priority":  25,
+        "role":  "soft_viewing_invite"
+    },
+    {
+        "id":  373,
+        "category":  "viewing_invite",
+        "phrase":  "お部屋ご案内させて頂きますのでお気軽にお申し付けください😊！！",
+        "priority":  22,
+        "role":  "viewing_support"
+    },
+    {
+        "id":  375,
+        "category":  "viewing_invite",
+        "phrase":  "お気に召されましたらお部屋ご案内・お申込どちらも対応可能です😊！！",
+        "priority":  22,
+        "role":  "viewing_or_apply"
+    },
+    {
+        "id":  382,
+        "category":  "viewing_invite",
+        "phrase":  "本日でもご案内可能です😊！！ご都合よろしいお時間帯御座いましたらお知らせください😊！！",
+        "priority":  22,
+        "role":  "same_day_viewing"
+    },
+    {
+        "id":  380,
+        "category":  "viewing_invite",
+        "phrase":  "直近ですと{{viewing_date}}ご案内可能です😊！！ご都合よろしいお時間帯御座いましたらお知らせください😊！！",
+        "priority":  22,
+        "role":  "viewing_date_proposal"
+    },
+    {
+        "id":  383,
+        "category":  "viewing_invite",
+        "phrase":  "{{viewing_date}}でしたらご案内可能です😊！！ご都合よろしいお時間帯御座いましたらお知らせください！！",
+        "priority":  22,
+        "role":  "date_available"
+    },
+    {
+        "id":  365,
+        "category":  "viewing_invite",
+        "phrase":  "実際にご内覧頂くとかなり良さが伝わるお部屋ですのでオススメです😊！！",
+        "priority":  22,
+        "role":  "viewing_value_reason"
+    },
+    {
+        "id":  366,
+        "category":  "viewing_invite",
+        "phrase":  "ご内覧可能なお部屋となっておりますのでお気軽にお申し付けください😊！！",
+        "priority":  22,
+        "role":  "viewing_available_notice"
+    },
+    {
+        "id":  371,
+        "category":  "viewing_invite",
+        "phrase":  "ご都合よろしいお日にち御座いましたらお知らせください😊！！",
+        "priority":  22,
+        "role":  "viewing_date_request"
+    },
+    {
+        "id":  400,
+        "category":  "viewing_invite",
+        "phrase":  "明日ご内覧よろしくお願い致します😊！！お会い出来るの楽しみにしております！！",
+        "priority":  22,
+        "role":  "meeting_expectation"
+    },
+    {
+        "id":  386,
+        "category":  "viewing_invite",
+        "phrase":  "お気に召されたお部屋全てご案内可能です😊！！",
+        "priority":  20,
+        "role":  "multiple_property_viewing"
+    },
+    {
+        "id":  402,
+        "category":  "viewing_invite",
+        "phrase":  "何かご不明点御座いましたらいつでもご連絡ください😊！！",
+        "priority":  20,
+        "role":  "support_notice"
+    },
+    {
+        "id":  25,
+        "category":  "viewing_invite",
+        "phrase":  "お手隙の際にご査収ください😊！！",
+        "priority":  20,
+        "role":  null
+    },
+    {
+        "id":  225,
+        "category":  "viewing_invite",
+        "phrase":  "お部屋の空室状況確認させて頂きます！！",
+        "priority":  20,
+        "role":  "vacancy_check"
+    },
+    {
+        "id":  12,
+        "category":  "viewing_invite",
+        "phrase":  "{{customer_name}} さんお気に召されましたらご都合よろしいお日にちにご案内させて頂きます😊！！",
+        "priority":  20,
+        "role":  null
+    },
+    {
+        "id":  376,
+        "category":  "viewing_invite",
+        "phrase":  "ご内覧頂きその場でお申込みも可能です😊！！",
+        "priority":  20,
+        "role":  "viewing_application_flow"
+    },
+    {
+        "id":  409,
+        "category":  "viewing_invite",
+        "phrase":  "ご内覧頂いたお部屋で気になる点ございましたらお気軽にお申し付けください😊！！",
+        "priority":  20,
+        "role":  "question_support"
+    },
+    {
+        "id":  55,
+        "category":  "viewing_invite",
+        "phrase":  "{{viewing_day}}日可能です！！",
+        "priority":  20,
+        "role":  "viewing_confirm"
+    },
+    {
+        "id":  411,
+        "category":  "viewing_invite",
+        "phrase":  "ご不明点ございましたらいつでもご連絡ください😊！！",
+        "priority":  20,
+        "role":  "support_message"
+    },
+    {
+        "id":  75,
+        "category":  "viewing_invite",
+        "phrase":  "{{viewing_month}}/{{viewing_day}}何卒よろしくお願い致します！！",
+        "priority":  20,
+        "role":  "closing"
+    },
+    {
+        "id":  70,
+        "category":  "viewing_invite",
+        "phrase":  "かしこまりました！\n本日何卒よろしくお願い致します！！",
+        "priority":  20,
+        "role":  "viewing_confirm"
+    },
+    {
+        "id":  68,
+        "category":  "viewing_invite",
+        "phrase":  "本日お客様ご予約がありまして{{viewing_time_alt}}難しい形となります！！",
+        "priority":  20,
+        "role":  "viewing_adjust"
+    },
+    {
+        "id":  395,
+        "category":  "viewing_invite",
+        "phrase":  "住所：{{meeting_address}}となります😊！！",
+        "priority":  20,
+        "role":  "meeting_address"
+    },
+    {
+        "id":  367,
+        "category":  "viewing_invite",
+        "phrase":  "今週中ですとご案内可能です😊！！",
+        "priority":  20,
+        "role":  "viewing_week_available"
+    },
+    {
+        "id":  204,
+        "category":  "viewing_invite",
+        "phrase":  "審査面も無事通りますよう最善のサポートをさせて頂きます！！",
+        "priority":  20,
+        "role":  "screening_reassurance"
+    },
+    {
+        "id":  226,
+        "category":  "viewing_invite",
+        "phrase":  "本日1件目にご内覧頂くお待ち合わせ場所とあわせてご連絡させて頂きます！！",
+        "priority":  20,
+        "role":  "meeting_point_notice"
+    },
+    {
+        "id":  399,
+        "category":  "viewing_invite",
+        "phrase":  "明日お気をつけてお越しください😊！！何卒よろしくお願い致します！！",
+        "priority":  20,
+        "role":  "visit_reminder"
+    },
+    {
+        "id":  59,
+        "category":  "viewing_invite",
+        "phrase":  "{{viewing_month}}/{{viewing_day}}に一緒にご内覧可能なお部屋ピックアップし送らせていただきました！！",
+        "priority":  20,
+        "role":  "viewing_possible"
+    },
+    {
+        "id":  392,
+        "category":  "viewing_invite",
+        "phrase":  "お部屋ご案内させて頂きますので当日お気をつけてお越しください😊！！",
+        "priority":  20,
+        "role":  "visit_notice"
+    },
+    {
+        "id":  391,
+        "category":  "viewing_invite",
+        "phrase":  "当日お部屋ご案内させて頂きます😊！！よろしくお願い致します！！",
+        "priority":  20,
+        "role":  "viewing_day_notice"
+    },
+    {
+        "id":  401,
+        "category":  "viewing_invite",
+        "phrase":  "もし道に迷われましたらお気軽にご連絡ください😊！！",
+        "priority":  20,
+        "role":  "contact_support"
+    },
+    {
+        "id":  58,
+        "category":  "viewing_invite",
+        "phrase":  "{{customer_name}}さん\nお世話になっております！！",
+        "priority":  20,
+        "role":  "proposal_intro"
+    },
+    {
+        "id":  389,
+        "category":  "viewing_invite",
+        "phrase":  "かしこまりました😊！！当日よろしくお願い致します！！",
+        "priority":  20,
+        "role":  "viewing_confirm_simple"
+    },
+    {
+        "id":  521,
+        "category":  "viewing_invite",
+        "phrase":  "ご都合よろしいお日にちお伺いできますでしょうか？内覧調整させて頂きます！",
+        "priority":  20,
+        "role":  null
+    },
+    {
+        "id":  384,
+        "category":  "viewing_invite",
+        "phrase":  "ご都合よろしいお日にち御座いましたら調整させて頂きます😊！！",
+        "priority":  20,
+        "role":  "viewing_adjustment"
+    },
+    {
+        "id":  410,
+        "category":  "viewing_invite",
+        "phrase":  "他にも条件近いお部屋ございましたらすぐお送りさせて頂きます😊！！",
+        "priority":  20,
+        "role":  "additional_property_offer"
+    },
+    {
+        "id":  53,
+        "category":  "viewing_invite",
+        "phrase":  "{{viewing_month}}月{{viewing_day}}日以降ご内覧可能です！！",
+        "priority":  20,
+        "role":  "viewing_possible"
+    },
+    {
+        "id":  281,
+        "category":  "viewing_invite",
+        "phrase":  "退去後の{{moveout_date}}以降ご内覧可能となります！！",
+        "priority":  18,
+        "role":  "post_moveout_viewing_notice"
+    },
+    {
+        "id":  224,
+        "category":  "viewing_invite",
+        "phrase":  "お部屋ご案内させて頂きます！！",
+        "priority":  18,
+        "role":  "viewing_offer"
+    },
+    {
+        "id":  288,
+        "category":  "viewing_invite",
+        "phrase":  "{{moveout_date}}以降でご都合よろしいお日にちにご案内させて頂きます！！",
+        "priority":  18,
+        "role":  "post_moveout_viewing_schedule_notice"
+    },
+    {
+        "id":  572,
+        "category":  "viewing_invite",
+        "phrase":  "{{customer_name}}さんご都合よろしいお日にちございますでしょうか😌！",
+        "priority":  16,
+        "role":  "viewing_date_question"
+    },
+    {
+        "id":  581,
+        "category":  "viewing_invite",
+        "phrase":  "{{customer_name}}さん 本日{{time}}よりお部屋ご案内させていただきます😊！！本日はよろしくお願い致します！！",
+        "priority":  15,
+        "role":  "same_day_viewing_notice"
+    },
+    {
+        "id":  220,
+        "category":  "viewing_invite",
+        "phrase":  "{{customer_name}}さんお気に召したお部屋ご案内させて頂きます！！",
+        "priority":  15,
+        "role":  "viewing_offer"
+    },
+    {
+        "id":  54,
+        "category":  "viewing_invite",
+        "phrase":  "ご希望曜日御座いますでしょうか！！",
+        "priority":  15,
+        "role":  "viewing_request"
+    },
+    {
+        "id":  62,
+        "category":  "viewing_invite",
+        "phrase":  "{{property_name}} {{room_number}}\nこちらも{{viewing_month}}/{{viewing_day}}に一緒にご案内させていただきます！！",
+        "priority":  15,
+        "role":  "viewing_reserve"
+    },
+    {
+        "id":  51,
+        "category":  "viewing_invite",
+        "phrase":  "退去後ご内覧可能となります！！",
+        "priority":  15,
+        "role":  "action_viewing"
+    },
+    {
+        "id":  571,
+        "category":  "viewing_invite",
+        "phrase":  "{{customer_name}}さんご都合よろしいお日にちにてお部屋ご案内させて頂きます😊！！",
+        "priority":  14,
+        "role":  "viewing_date_request_strong"
+    },
+    {
+        "id":  408,
+        "category":  "viewing_invite",
+        "phrase":  "{{customer_name}}さん本日ご覧頂いたお部屋いかがでしたでしょうか😌！",
+        "priority":  12,
+        "role":  "feedback_request"
+    },
+    {
+        "id":  405,
+        "category":  "viewing_invite",
+        "phrase":  "{{customer_name}}さん本日はご内覧ありがとうございました😊！！",
+        "priority":  12,
+        "role":  "viewing_thanks_simple"
+    },
+    {
+        "id":  203,
+        "category":  "viewing_invite",
+        "phrase":  "おおよそ{{viewing_time}}時間が所要時間となります😌！！",
+        "priority":  10,
+        "role":  "viewing_info"
+    },
+    {
+        "id":  198,
+        "category":  "viewing_invite",
+        "phrase":  "2件目以降のお部屋は車でご案内させて頂きます😊",
+        "priority":  10,
+        "role":  "viewing"
+    },
+    {
+        "id":  77,
+        "category":  "viewing_invite",
+        "phrase":  "かしこまりました😊！！",
+        "priority":  10,
+        "role":  "thanks"
+    },
+    {
+        "id":  78,
+        "category":  "viewing_invite",
+        "phrase":  "何卒よろしくお願い致します！！",
+        "priority":  10,
+        "role":  "arrival_support"
+    },
+    {
+        "id":  202,
+        "category":  "viewing_invite",
+        "phrase":  "{{viewing_date}} {{viewing_property_count}}件お部屋ご案内させて頂く形となります😊！！",
+        "priority":  10,
+        "role":  "viewing_info"
+    }
+]

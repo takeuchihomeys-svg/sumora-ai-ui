@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e ' *)",
+      "PowerShell(Invoke-RestMethod -Uri \"https://sumora-ai-ui.vercel.app/api/migrate-account-from-line\" -Method POST)"
+    ]
+  }
+}
