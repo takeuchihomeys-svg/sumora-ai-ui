@@ -720,6 +720,7 @@ export default function Home() {
     try {
       setGenerating(true);
       setError("");
+      setReplyDraft("");
 
       const res = await fetch("/api/generate-reply", {
         method: "POST",
@@ -728,17 +729,48 @@ export default function Home() {
           message: targetMessage,
           state: selectedConversation.status,
           customerName: selectedConversation.customerName,
-          // 直近20件の会話履歴を渡してより精度の高い文案を生成
           recentMessages: msgs.slice(-20).map((m) => ({ sender: m.sender, text: m.text || "" })),
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || "返信案取得失敗");
+      if (!res.ok || !res.body) {
+        const errData = await res.json().catch(() => ({ error: "返信案取得失敗" })) as { error?: string };
+        throw new Error(errData.error || "返信案取得失敗");
+      }
 
-      const draft = data.ai_reply || "";
-      aiDraftRef.current = draft;
-      setReplyDraft(draft);
+      // ストリーミング読み取り
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let metaDone = false;
+      let fullText = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+
+        if (!metaDone) {
+          buffer += chunk;
+          const nl = buffer.indexOf("\n");
+          if (nl >= 0) {
+            const metaLine = buffer.slice(0, nl);
+            const meta = JSON.parse(metaLine) as { ok: boolean; error?: string };
+            if (!meta.ok) throw new Error(meta.error || "返信案取得失敗");
+            metaDone = true;
+            fullText = buffer.slice(nl + 1);
+            if (fullText) setReplyDraft(fullText);
+          }
+        } else {
+          fullText += chunk;
+          setReplyDraft(fullText);
+        }
+      }
+
+      const finalDraft = fullText.trim();
+      aiDraftRef.current = finalDraft;
+      setReplyDraft(finalDraft);
 
       // 生成完了後にテキストエリアへフォーカスしてスクロール
       setTimeout(() => {

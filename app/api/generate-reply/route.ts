@@ -95,7 +95,7 @@ ${STYLE_RULE}
 お客様の「本当のニーズ」に寄り添い、表面の質問だけに答えず、感情・懸念にも届く文を作ること。
 押しつけがましくなく、でも確実に次のステップ（内覧・申込）へ近づける文を書くこと。`;
 
-async function generateReplyWithLangChain(
+function buildGenerationMessages(
   customerMessage: string,
   customerName: string,
   history: string,
@@ -105,7 +105,7 @@ async function generateReplyWithLangChain(
   knowledge: string,
   examples: string,
   phrases: string
-): Promise<string> {
+): [SystemMessage, HumanMessage] {
   const nameNote = customerName ? `お客様名：${customerName}さん` : "お客様名：不明";
 
   let analysisBlock = "";
@@ -140,13 +140,7 @@ ${customerMessage}
 
 上記の分析と会話の流れを踏まえ、スモラスタイルのLINE返信案を1つだけ作成してください。`;
 
-  const res = await generationModel.invoke([
-    new SystemMessage(GENERATION_SYSTEM),
-    new HumanMessage(prompt),
-  ]);
-
-  const text = typeof res.content === "string" ? res.content : JSON.stringify(res.content);
-  return text.trim() || "返信生成失敗";
+  return [new SystemMessage(GENERATION_SYSTEM), new HumanMessage(prompt)];
 }
 
 // ─── Intent分類（Haiku）──────────────────────────────────────────────────────
@@ -329,18 +323,34 @@ export async function POST(req: NextRequest) {
 
     const nextState = getNextState(currentState, detectedIntent);
 
-    // Sonnetで高品質生成
-    const aiReply = await generateReplyWithLangChain(
+    // Sonnetでストリーミング生成
+    const messages = buildGenerationMessages(
       message, customerName, history, currentState, nextState,
       analysis, knowledge, examples, phrases
     );
+    const genStream = generationModel.stream(messages);
 
-    return NextResponse.json({
-      ok: true,
-      ai_reply: aiReply,
-      detected_intent: detectedIntent,
-      next_state: nextState,
-    });
+    const encoder = new TextEncoder();
+    return new Response(
+      new ReadableStream({
+        async start(controller) {
+          // 1行目: メタデータJSON（フロントエンドがok確認に使用）
+          controller.enqueue(encoder.encode(
+            JSON.stringify({ ok: true, detected_intent: detectedIntent, next_state: nextState }) + "\n"
+          ));
+          try {
+            for await (const chunk of await genStream) {
+              const text = typeof chunk.content === "string" ? chunk.content : "";
+              if (text) controller.enqueue(encoder.encode(text));
+            }
+          } catch (streamErr) {
+            console.error("generate-reply stream error:", streamErr);
+          }
+          controller.close();
+        },
+      }),
+      { headers: { "Content-Type": "text/plain; charset=utf-8" } }
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : "返信生成エラー";
     console.error("generate-reply error:", msg);
