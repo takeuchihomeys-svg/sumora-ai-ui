@@ -230,6 +230,17 @@ CREATE INDEX IF NOT EXISTS idx_estimates_account ON estimates(account);
 CREATE INDEX IF NOT EXISTS idx_estimates_created_at ON estimates(created_at DESC);
 
 ALTER TABLE estimates DISABLE ROW LEVEL SECURITY;
+
+-- push_subscriptions テーブル（Web Push通知）
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE push_subscriptions DISABLE ROW LEVEL SECURITY;
 `.trim();
 
 export async function GET() {

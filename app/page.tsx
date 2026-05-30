@@ -5,7 +5,7 @@ import AixModal, { type AixActionType } from "./components/AixModal";
 import BottomNav from "./components/BottomNav";
 import TemplateModal from "./components/TemplateModal";
 import { supabase } from "./lib/supabase";
-import { registerSW, requestNotifPermission, showNotif } from "./lib/notifications";
+import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 
 type Message = {
   id: string;
@@ -269,6 +269,7 @@ export default function Home() {
   const [showHamburgerMenu, setShowHamburgerMenu] = useState(false);
   const [aixSearchMode, setAixSearchMode] = useState(false);
   const [accountFilter, setAccountFilter] = useState<"all" | "linked" | "sumora" | "ieyasu" | "giga">("all");
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission>("default");
   const [linkedLineUserIds, setLinkedLineUserIds] = useState<Set<string>>(new Set());
   const [showSendConfirm, setShowSendConfirm] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
@@ -298,8 +299,17 @@ export default function Home() {
   };
 
   useEffect(() => {
-    // SW登録 + 通知許可
-    registerSW().then(() => requestNotifPermission());
+    // SW登録 + 通知許可 + Web Push登録
+    if (typeof window !== "undefined" && "Notification" in window) {
+      setNotifPermission(Notification.permission);
+    }
+    registerSW().then(async () => {
+      const granted = await requestNotifPermission();
+      if (granted) {
+        setNotifPermission("granted");
+        await subscribePush();
+      }
+    });
 
     // 紐付け済フィルター用：property_customersのline_user_idを取得
     fetch("/api/property-customers")
@@ -373,6 +383,26 @@ export default function Home() {
             conversationsRef.current = next;
             return next;
           });
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "messages" },
+        (payload) => {
+          // image_url が後から埋まったとき（画像メッセージの非同期取得）に反映する
+          const upd = payload.new as { id: number; conversation_id: number; image_url?: string };
+          if (!upd?.id || !upd.image_url) return;
+          setConversations((prev) =>
+            prev.map((c) => {
+              if (c.id !== String(upd.conversation_id)) return c;
+              return {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === String(upd.id) ? { ...m, imageUrl: upd.image_url } : m
+                ),
+              };
+            })
+          );
         }
       )
       .subscribe((status) => {
@@ -2416,6 +2446,46 @@ export default function Home() {
                   );
                 })}
               </div>
+            </div>
+            {/* 通知設定 */}
+            <div className="px-4 pt-2 pb-4">
+              <p className="text-[11px] font-bold text-[#8696a0] mb-3 tracking-wide uppercase">通知設定</p>
+              {notifPermission === "granted" ? (
+                <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                  <span className="text-xl">🔔</span>
+                  <div>
+                    <div className="text-[13px] font-bold text-emerald-700">通知オン</div>
+                    <div className="text-[11px] text-emerald-600">LINEが届いたらプッシュ通知が来ます</div>
+                  </div>
+                </div>
+              ) : notifPermission === "denied" ? (
+                <div className="flex items-center gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3">
+                  <span className="text-xl">🔕</span>
+                  <div>
+                    <div className="text-[13px] font-bold text-red-700">通知がブロックされています</div>
+                    <div className="text-[11px] text-red-600">ブラウザの設定から許可してください</div>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={async () => {
+                    const granted = await requestNotifPermission();
+                    if (granted) {
+                      setNotifPermission("granted");
+                      await subscribePush();
+                    } else {
+                      setNotifPermission(Notification.permission);
+                    }
+                  }}
+                  className="flex w-full items-center gap-3 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-left active:scale-[0.98] transition-all"
+                >
+                  <span className="text-xl">🔔</span>
+                  <div>
+                    <div className="text-[13px] font-bold text-[#1565C0]">通知を有効にする</div>
+                    <div className="text-[11px] text-[#1565C0]/70">タップして通知を許可する</div>
+                  </div>
+                </button>
+              )}
             </div>
             <div className="pb-[max(20px,env(safe-area-inset-bottom))]" />
           </div>

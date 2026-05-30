@@ -13,9 +13,11 @@
     "@langchain/anthropic": "^1.4.0",
     "@langchain/core": "^1.1.48",
     "@supabase/supabase-js": "^2.99.2",
+    "@types/web-push": "^3.6.4",
     "next": "16.1.7",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "web-push": "^3.6.7",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
