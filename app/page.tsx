@@ -795,7 +795,7 @@ export default function Home() {
           message: targetMessage,
           state: selectedConversation.status,
           customerName: selectedConversation.customerName,
-          recentMessages: msgs.slice(-20).map((m) => ({ sender: m.sender, text: m.text || "" })),
+          recentMessages: msgs.slice(-20).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined })),
         }),
       });
 
@@ -867,7 +867,7 @@ export default function Home() {
           currentDraft: replyDraft,
           conversationState: selectedConversation.status,
           customerName: selectedConversation.customerName,
-          recentMessages: msgs.slice(-15).map((m) => ({ sender: m.sender, text: m.text || "" })),
+          recentMessages: msgs.slice(-15).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined })),
         }),
       });
       const data = await res.json();

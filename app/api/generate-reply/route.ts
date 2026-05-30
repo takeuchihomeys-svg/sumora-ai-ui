@@ -91,6 +91,13 @@ ${STYLE_RULE}
 × 広い → ○ 洋室9帖
 × 駅近 → ○ 本町駅徒歩5分
 
+【会話履歴の画像表記について】
+・「スモラ: 【物件資料を送付した】」= 物件のPDF・写真をLINEで送った
+・「スモラ: 【見積書を送付した】」= 初期費用の見積書をLINEで送った
+・「スモラ: 【物件資料・画像を送付した】」= 資料系の画像を送った（種類不明）
+・「お客様: 【画像を送ってきた】」= お客様が画像（間取り図・内装写真など）を送ってきた
+これらの後のメッセージは、送付した資料への反応や次の質問である。
+
 【重要】
 お客様の「本当のニーズ」に寄り添い、表面の質問だけに答えず、感情・懸念にも届く文を作ること。
 押しつけがましくなく、でも確実に次のステップ（内覧・申込）へ近づける文を書くこと。`;
@@ -286,13 +293,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "ANTHROPIC_API_KEY not set" }, { status: 500 });
   }
 
-  let message: string, state: string, customerName: string, recentMessages: Array<{ sender: string; text: string }>;
+  type RecentMessage = { sender: string; text: string; imageUrl?: string };
+  let message: string, state: string, customerName: string, recentMessages: RecentMessage[];
   try {
     const body = await req.json() as {
       message: string;
       state: string;
       customerName?: string;
-      recentMessages?: Array<{ sender: string; text: string }>;
+      recentMessages?: RecentMessage[];
     };
     message = body.message;
     state = body.state;
@@ -306,10 +314,33 @@ export async function POST(req: NextRequest) {
 
   try {
     const currentState = normalizeState(state || "first_reply");
+
+    // 画像送付を会話履歴に反映（[画像]をフィルタせず意味のあるラベルに変換）
     const history = recentMessages
       .slice(-20)
-      .filter((m) => m.text && m.text !== "[画像]" && m.text !== "[動画]")
-      .map((m) => `${m.sender === "customer" ? "お客様" : "スモラ"}: ${m.text}`)
+      .map((m, i, arr) => {
+        const who = m.sender === "customer" ? "お客様" : "スモラ";
+        const isImageMsg = m.text === "[画像]" || m.text === "[動画]" || (!m.text && !!m.imageUrl);
+
+        if (isImageMsg) {
+          if (m.sender === "customer") return `${who}: 【画像を送ってきた】`;
+          // スタッフの画像: 前後テキストで物件資料か見積書かを判定
+          const nearby = [arr[i - 1], arr[i + 1]].filter(Boolean).map((x) => x?.text || "").join(" ");
+          if (/見積|初期費用/.test(nearby)) return `${who}: 【見積書を送付した】`;
+          if (/物件|お部屋|ピックアップ|間取り|アパート|マンション|資料/.test(nearby)) return `${who}: 【物件資料を送付した】`;
+          return `${who}: 【物件資料・画像を送付した】`;
+        }
+
+        // テキスト + 画像が同一メッセージの場合
+        if (m.imageUrl && m.text && m.text !== "[画像]") {
+          const label = m.sender === "staff" ? "【物件資料を送付しながら】" : "";
+          return `${who}: ${label}「${m.text}」`;
+        }
+
+        if (!m.text) return null;
+        return `${who}: ${m.text}`;
+      })
+      .filter(Boolean)
       .join("\n");
 
     // 並列実行: intent分類 + 状況分析 + 知識取得 + 実例取得 + フレーズ取得
