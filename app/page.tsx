@@ -640,7 +640,7 @@ export default function Home() {
     let result = conversations;
     // アカウントフィルター
     if (accountFilter === "linked") {
-      result = result.filter((c) => linkedLineUserIds.has(c.lineUserId));
+      result = result.filter((c) => !!linkedCustomerMap[c.id]);
     } else if (accountFilter !== "all") {
       result = result.filter((c) => (c.account ?? "sumora") === accountFilter);
     }
@@ -2378,7 +2378,7 @@ export default function Home() {
                   const count = item.key === "all"
                     ? conversations.length
                     : item.key === "linked"
-                    ? conversations.filter((c) => linkedLineUserIds.has(c.lineUserId)).length
+                    ? conversations.filter((c) => !!linkedCustomerMap[c.id]).length
                     : conversations.filter((c) => (c.account ?? "sumora") === item.key).length;
                   return (
                     <button
