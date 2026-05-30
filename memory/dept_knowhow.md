@@ -487,3 +487,49 @@ if (ijouMatch) {
 
 **応用**: 「2LDK以上」「4K以上」等も同様のパターンで対応可能。  
 **注意**: FLOOR_MAP に存在しないキー（"1R"等）はfvがundefinedになるため `if (fv && ...)` でガードする。
+
+---
+
+### ⑩ JavaScript `||` 短絡評価で関数に渡す引数が途中でブロックされる（2026-05-30 発見）
+
+**バグ名**: 「parseAreaMin 短絡評価ブロック問題」
+
+**教訓**: `func(a || b || c)` は `a` が truthy なら `func(a)` しか呼ばれない。`b`・`c` まで到達しない。
+
+**実例**: `parseAreaMin(c.preferences || c.other_requests || c.floor_plan || null)`  
+→ `c.preferences = "ペット可"` のように truthy な文字列があると `c.floor_plan` の値が無視される  
+→ 「間取り: 30㎡以上」が `floor_plan` に入っていても `area_min` に反映されなかった
+
+**正しい対処法**:
+```javascript
+// NG: || で繋いで1回だけ呼ぶ → 最初の truthy で止まる
+parseAreaMin(c.preferences || c.other_requests || c.floor_plan || null)
+
+// OK: フィールドごとに個別に呼んで || で連結 → 全フィールドを独立して試す
+parseAreaMin(c.floor_plan || c.layout) || parseAreaMin(c.preferences) || parseAreaMin(c.other_requests)
+```
+
+**次回の予防**: 「複数フィールドをフォールバックしながらパターン抽出する」ときは必ず個別呼び出しにする。特に「フィールドAは別の情報を持ちながら、フィールドBに探したいパターンが含まれる」ケースで必ず発生する。
+
+---
+
+### ⑪ 外部サイトのボタンテキストは「む」「み」まで確認する（2026-05-30 発見）
+
+**バグ名**: 「itandiモーダルボタン む/み 不一致問題」
+
+**教訓**: 外部サイト（itandi等）のボタンテキストは完全一致で照合するため、語尾1文字の違いで完全ミスマッチになる。
+
+**実例**: コードが `clickBtn("路線・駅で絞り込み")` を試みていたが、itandi の実ボタンは「路線・駅で絞り込む」（む で終わる）→ `false` を返してモーダルが開かなかった。
+
+**正しい対処法**:
+```javascript
+// む・み・を・で の全パターンを列挙する
+clickBtn("路線・駅で絞り込む") || clickBtn("路線・駅を絞り込む")
+|| clickBtn("路線・駅で絞り込み") || clickBtn("沿線・駅で絞り込む")
+|| ...
+```
+
+**次回の予防**:
+- 新しいサイトのボタンテキストを追加するときは必ず DevTools で `b.textContent.trim()` を確認する
+- `む/み`・`を/で` の両パターンをデフォルトで列挙しておく
+- ボタンが見つからない場合のアラートが出ていないか DevTools Console で必ず確認する
