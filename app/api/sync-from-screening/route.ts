@@ -115,6 +115,65 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, action: "ignored_staff_message" });
     }
 
+    let imageUrl: string | null = (record.image_url as string) ?? null;
+
+    // お客さんが送った画像: LINE Content APIから取得してStorageにアップロード
+    const isImageMsg = !imageUrl && record.sender === "customer" &&
+      (record.text === "[画像]" || (record as Record<string, unknown>).message_type === "image");
+
+    if (isImageMsg) {
+      // LINE message ID候補: line_message_id フィールドがあればそちらを優先、なければ record.id
+      const lineMessageId = (record.line_message_id as string) || String(record.id);
+
+      // conversationのaccountを取得してどのLINE tokenを使うか決める
+      const { data: conv } = await supabase
+        .from("conversations")
+        .select("account")
+        .eq("id", String(record.conversation_id))
+        .single();
+
+      const TOKEN_MAP: Record<string, string | undefined> = {
+        sumora: process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN,
+        ieyasu: process.env.LINE_IEYASU_CHANNEL_ACCESS_TOKEN,
+        giga:   process.env.LINE_GIGA_CHANNEL_ACCESS_TOKEN,
+      };
+      const token = conv?.account ? TOKEN_MAP[conv.account as string] : undefined;
+
+      if (token && lineMessageId) {
+        try {
+          const contentRes = await fetch(
+            `https://api-data.line.me/v2/bot/message/${lineMessageId}/content`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          if (contentRes.ok) {
+            const contentType = contentRes.headers.get("content-type") || "image/jpeg";
+            const ext = contentType.includes("png") ? "png" : contentType.includes("gif") ? "gif" : "jpg";
+            const arrayBuffer = await contentRes.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            const storagePath = `line-images/${lineMessageId}.${ext}`;
+
+            const { error: uploadErr } = await supabase.storage
+              .from("property-images")
+              .upload(storagePath, buffer, { contentType, upsert: true });
+
+            if (!uploadErr) {
+              const { data: urlData } = supabase.storage
+                .from("property-images")
+                .getPublicUrl(storagePath);
+              imageUrl = urlData.publicUrl;
+              console.log("[sync] LINE画像を取得・保存:", storagePath);
+            } else {
+              console.error("[sync] Storage upload error:", uploadErr.message);
+            }
+          } else {
+            console.warn("[sync] LINE Content API returned", contentRes.status, "for message", lineMessageId);
+          }
+        } catch (err) {
+          console.error("[sync] LINE Content API fetch error:", err);
+        }
+      }
+    }
+
     const { error } = await supabase
       .from("messages")
       .upsert(
@@ -123,7 +182,7 @@ export async function POST(req: NextRequest) {
           conversation_id: record.conversation_id,
           sender: record.sender,
           text: record.text ?? "",
-          image_url: record.image_url ?? null,
+          image_url: imageUrl,
           created_at: record.created_at,
         },
         { onConflict: "id" }
@@ -133,7 +192,7 @@ export async function POST(req: NextRequest) {
       console.error("sync messages error:", error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
-    return NextResponse.json({ ok: true, synced: "message", id: record.id });
+    return NextResponse.json({ ok: true, synced: "message", id: record.id, image_fetched: !!imageUrl });
   }
 
   return NextResponse.json({ ok: true, action: "ignored_unknown_table", table });
