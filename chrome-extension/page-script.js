@@ -477,14 +477,34 @@
   function fillRealpro(cond) {
     if (!cond) return;
 
-    // 連続検索対応: 前回の条件をリセット
-    var _resetBtn = [].slice.call(document.querySelectorAll("button, input[type='reset']")).find(function(b) {
-      var t = (b.textContent || b.value || "").trim();
-      var r = b.getBoundingClientRect();
-      return ["リセット","条件全削除","条件クリア","全クリア","クリア"].indexOf(t) >= 0 && (r.width > 0 || r.height > 0);
-    });
-    var _resetDelay = 0;
-    if (_resetBtn) { _resetBtn.click(); _resetDelay = 600; console.log("[AX] 条件リセット実行"); }
+    // 連続検索対応: モーダルを閉じる → リセット → 条件入力 の順で実行
+    function _doReset(callback) {
+      // Step1: 開いているモーダルを先に閉じる
+      var closeBtn = [].slice.call(document.querySelectorAll("a, button, div, span")).find(function(el) {
+        var t = (el.textContent || "").trim();
+        return (t === "× とじる" || t === "×とじる" || t === "とじる" || t === "閉じる") && el.offsetParent !== null;
+      });
+      var closeDelay = 0;
+      if (closeBtn) { closeBtn.click(); closeDelay = 400; console.log("[AX] モーダルを閉じました"); }
+
+      // Step2: モーダル閉鎖後にリセットボタンをクリック
+      setTimeout(function() {
+        var resetBtn = [].slice.call(document.querySelectorAll("a, button, input[type='reset'], input[type='button']")).find(function(b) {
+          var t = (b.textContent || b.value || "").trim();
+          return ["リセット","条件全削除","条件クリア","全クリア","クリア"].indexOf(t) >= 0;
+        });
+        if (resetBtn) {
+          resetBtn.click();
+          console.log("[AX] 条件リセット実行");
+          setTimeout(callback, 800); // リセット反映を待つ
+        } else {
+          console.log("[AX] リセットボタン未検出（そのまま入力）");
+          callback();
+        }
+      }, closeDelay);
+    }
+
+    _doReset(function() {
 
     setTimeout(function() {
 
@@ -863,7 +883,8 @@
       function() { alertStop('「沿線・駅絞り込み」ボタンが見つかりませんでした。'); }
     );
 
-    }, _resetDelay); // 連続検索リセット待機
+    }, 0); // _doReset内で待機済みのため即時実行
+    }); // _doReset end
   }
 
   window.addEventListener("message", function(e) {
