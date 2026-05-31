@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { supabase } from "@/app/lib/supabase";
 import BottomNav from "@/app/components/BottomNav";
 
 type Status = "new_inquiry" | "hot" | "property_search" | "pending";
@@ -86,13 +87,25 @@ export default function CustomersPage() {
   const [newPhone, setNewPhone] = useState("");
   const [newAssignee, setNewAssignee] = useState("");
   const [addLoading, setAddLoading] = useState(false);
+  // 紐付け済みの property_customer_id セット
+  const [linkedIds, setLinkedIds] = useState<Set<string>>(new Set());
 
   const fetchCustomers = async () => {
     try {
-      const res = await fetch("/api/property-customers");
-      if (!res.ok) return;
-      const data = await res.json();
-      setCustomers(data);
+      const [res, { data: convData }] = await Promise.all([
+        fetch("/api/property-customers"),
+        supabase
+          .from("conversations")
+          .select("property_customer_id")
+          .not("property_customer_id", "is", null),
+      ]);
+      if (res.ok) {
+        const data = await res.json();
+        setCustomers(data);
+      }
+      if (convData) {
+        setLinkedIds(new Set(convData.map((r: { property_customer_id: string }) => r.property_customer_id)));
+      }
     } finally {
       setLoading(false);
     }
@@ -251,12 +264,13 @@ export default function CustomersPage() {
             const urgent = needsActionToday(c);
             const days = daysSinceSent(c);
             const isExpanded = expandedId === c.id;
+            const isLinked = linkedIds.has(c.id);
 
             return (
               <div
                 key={c.id}
                 className={`bg-white rounded-xl border shadow-sm overflow-hidden ${
-                  urgent ? "border-red-200" : "border-slate-100"
+                  urgent ? "border-red-200" : isLinked ? "border-emerald-200" : "border-slate-100"
                 }`}
               >
                 {/* Main row */}
@@ -264,16 +278,16 @@ export default function CustomersPage() {
                   className="flex items-center gap-3 px-4 py-3 cursor-pointer"
                   onClick={() => setExpandedId(isExpanded ? null : c.id)}
                 >
-                  {/* Urgent dot */}
+                  {/* Urgent / linked dot */}
                   <div
                     className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                      urgent ? "bg-red-500" : col.dot
+                      urgent ? "bg-red-500" : isLinked ? "bg-emerald-400" : col.dot
                     }`}
                   />
 
                   {/* Name + info */}
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-bold text-slate-800 text-sm truncate">
                         {c.customer_name}
                       </span>
@@ -282,6 +296,11 @@ export default function CustomersPage() {
                       >
                         {STATUS_LABELS[c.status]}
                       </span>
+                      {isLinked && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          🔗 紐付け済
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-2 mt-0.5 text-[11px] text-slate-400">
                       {c.assignee && <span>担当: {c.assignee}</span>}
