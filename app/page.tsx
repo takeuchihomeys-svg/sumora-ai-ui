@@ -1139,9 +1139,15 @@ export default function Home() {
       }
 
       const lastText = imageUrls.length > 0 ? "[画像]" : textToSend;
+
+      // 初回返信の場合はステータスを first_reply に自動設定
+      const isFirstStaffReply = !selectedConversation.messages.some((m) => m.sender === "staff");
+      const convUpdate: Record<string, unknown> = { last_message: lastText, last_sender: "staff", updated_at: now.toISOString() };
+      if (isFirstStaffReply) convUpdate.status = "first_reply";
+
       await supabase
         .from("conversations")
-        .update({ last_message: lastText, last_sender: "staff", updated_at: now.toISOString() })
+        .update(convUpdate)
         .eq("id", selectedConversation.id);
 
       setConversations((prev) =>
@@ -1152,6 +1158,7 @@ export default function Home() {
                   ...conversation,
                   lastMessage: lastText,
                   lastSender: "staff",
+                  ...(isFirstStaffReply ? { status: "first_reply" } : {}),
                   updatedAt: now.toISOString(),
                   messages: [...conversation.messages, ...newMessages],
                 }
