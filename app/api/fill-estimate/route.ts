@@ -17,11 +17,45 @@ const ACCOUNT_LABELS: Record<Account, string> = {
   giga: "ギガ賃貸",
 };
 
+type ItemData = {
+  propertyName: string;
+  roomNumber: string;
+  customerName: string;
+  assignee: string;
+  moveInDate: string;
+  moveInMonth: number;
+  moveInDay: number;
+  moveInMonthDays: number;
+  nextMonth: number;
+  nextYear: number;
+  rent: number;
+  managementFee: number;
+  waterFee: number;
+  shikikin: number;
+  reikin: number;
+  hoshokikin: number;
+  commission: number;
+  commissionTax: number;
+  parkingCommission: number;
+  parkingCommissionTax: number;
+  guarantee: number;
+  insurance: number;
+  keyExchange: number;
+  cleaning: number;
+  parkingDeposit: number;
+  parkingMonthly: number;
+  otherItems: Array<{ item: string; amount: number }>;
+  discountAmount: number;
+  discountNote: string;
+  nextRent: number;
+  nextManagementFee: number;
+  nextWaterFee: number;
+};
+
 function setCellValue(ws: XLSX.WorkSheet, cellAddr: string, value: string | number) {
   const type = typeof value === "number" ? "n" : "s";
   ws[cellAddr] = { v: value, t: type };
 
-  // worksheet の !ref を拡張して書き込んだセルを確実に含める
   if (ws["!ref"]) {
     const range = XLSX.utils.decode_range(ws["!ref"]);
     const cell = XLSX.utils.decode_cell(cellAddr);
@@ -35,13 +69,6 @@ function setCellValue(ws: XLSX.WorkSheet, cellAddr: string, value: string | numb
   }
 }
 
-function calcProratedAmount(amount: number, moveInDay: number, monthDays: number): number {
-  if (!amount || !moveInDay || !monthDays) return 0;
-  const days = monthDays - moveInDay + 1;
-  return Math.round((amount / monthDays) * days);
-}
-
-// テンプレートファイルパスを複数候補から探す（Vercel対応）
 function findTemplatePath(templateFile: string): string | null {
   const candidates = [
     path.join(process.cwd(), "public", "templates", templateFile),
@@ -55,44 +82,97 @@ function findTemplatePath(templateFile: string): string | null {
   return null;
 }
 
+function fillEstimateSheet(ws: XLSX.WorkSheet, d: ItemData): void {
+  // ── 物件情報（右上）
+  setCellValue(ws, "M8", d.propertyName || "");
+  setCellValue(ws, "N9", d.roomNumber || "");
+  setCellValue(ws, "M10", d.customerName || ""); // "入居者" ラベルと "様" の間
+
+  // ── 契約条件（右側列 L〜N）
+  setCellValue(ws, "M12", d.hoshokikin || 0);    // 保証金
+  setCellValue(ws, "M13", d.shikikin || 0);       // 敷金
+  setCellValue(ws, "M14", d.reikin || 0);         // 礼金
+  setCellValue(ws, "M15", d.rent || 0);           // 家賃
+  setCellValue(ws, "M16", d.managementFee || 0);  // 共益費
+  setCellValue(ws, "M19", d.parkingDeposit || 0); // 駐保証金
+
+  // ── 固定上段費用（E=スモラ列、F=一般列）
+  setCellValue(ws, "E11", d.shikikin || 0);
+  setCellValue(ws, "F11", d.shikikin || 0);
+  setCellValue(ws, "E12", d.reikin || 0);
+  setCellValue(ws, "F12", d.reikin || 0);
+  const nextRent = d.nextRent || d.rent || 0;
+  const nextMgmt = d.nextManagementFee || d.managementFee || 0;
+  setCellValue(ws, "E13", nextRent);
+  setCellValue(ws, "F13", nextRent);
+  setCellValue(ws, "E14", nextMgmt);
+  setCellValue(ws, "F14", nextMgmt);
+
+  // ── 日割り計算
+  const moveInDay = d.moveInDay || 1;
+  const monthDays = d.moveInMonthDays || 30;
+  const proratedDays = monthDays - moveInDay + 1;
+  const prorated = (amount: number) =>
+    amount ? Math.round((amount / monthDays) * proratedDays) : 0;
+  const proratedRent = prorated(d.rent);
+  const proratedMgmt = prorated(d.managementFee);
+  const proratedWater = prorated(d.waterFee);
+
+  // ── 動的項目（行15〜24、空き行に順番に書き込む）
+  type DynItem = { label: string; amount: number };
+  const dynamicItems: DynItem[] = [];
+
+  if (proratedRent > 0)
+    dynamicItems.push({ label: `日割り家賃（${proratedDays}日分）`, amount: proratedRent });
+  if (proratedMgmt > 0)
+    dynamicItems.push({ label: `日割り共益費（${proratedDays}日分）`, amount: proratedMgmt });
+  if (proratedWater > 0)
+    dynamicItems.push({ label: `日割り水道代（${proratedDays}日分）`, amount: proratedWater });
+  if (d.keyExchange)
+    dynamicItems.push({ label: "鍵交換代", amount: d.keyExchange });
+  const parkingTotal = (d.parkingCommission || 0) + (d.parkingCommissionTax || 0);
+  if (parkingTotal > 0)
+    dynamicItems.push({ label: "駐車場仲介手数料", amount: parkingTotal });
+  if (d.parkingMonthly)
+    dynamicItems.push({ label: "翌月駐車場代", amount: d.parkingMonthly });
+  for (const oi of d.otherItems || []) {
+    if (oi.item && oi.amount > 0)
+      dynamicItems.push({ label: oi.item, amount: oi.amount });
+  }
+
+  for (let i = 0; i < Math.min(dynamicItems.length, 10); i++) {
+    const row = 15 + i;
+    setCellValue(ws, `B${row}`, dynamicItems[i].label);
+    setCellValue(ws, `E${row}`, dynamicItems[i].amount);
+    setCellValue(ws, `F${row}`, dynamicItems[i].amount); // 一般も同額
+  }
+
+  // ── 固定下段費用（E=スモラ実費、F=一般費用）
+  setCellValue(ws, "E25", d.cleaning || 0);
+  setCellValue(ws, "F25", d.cleaning || 0);
+  setCellValue(ws, "E26", d.guarantee || 0);
+  setCellValue(ws, "F26", d.guarantee || 0);
+  setCellValue(ws, "E27", d.insurance || 0);
+  setCellValue(ws, "F27", d.insurance || 0);
+
+  // 仲介手数料（E=スモラ実費、F=一般1ヶ月分家賃相当）
+  setCellValue(ws, "E28", d.commission || 0);
+  setCellValue(ws, "F28", d.rent || 0);
+  setCellValue(ws, "E29", d.commissionTax || 0);
+  setCellValue(ws, "F29", Math.round((d.rent || 0) * 0.1));
+
+  // スモ割 / イエヤス割（ラベルはテンプレートに記載済み）
+  setCellValue(ws, "E30", d.discountAmount ? -(d.discountAmount) : 0);
+
+  // E32(SUM)・F32(SUM)・E35(=E30)・E37(差引請求金額)・E8 は触らない
+  // → Excelが開いたときに自動再計算される
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json() as {
       account: Account;
-      items: {
-        propertyName: string;
-        roomNumber: string;
-        customerName: string;
-        assignee: string;
-        moveInDate: string;
-        moveInMonth: number;
-        moveInDay: number;
-        moveInMonthDays: number;
-        nextMonth: number;
-        nextYear: number;
-        rent: number;
-        managementFee: number;
-        waterFee: number;
-        shikikin: number;
-        reikin: number;
-        hoshokikin: number;
-        commission: number;
-        commissionTax: number;
-        parkingCommission: number;
-        parkingCommissionTax: number;
-        guarantee: number;
-        insurance: number;
-        keyExchange: number;
-        cleaning: number;
-        parkingDeposit: number;
-        parkingMonthly: number;
-        otherItems: Array<{ item: string; amount: number }>;
-        discountAmount: number;
-        discountNote: string;
-        nextRent: number;
-        nextManagementFee: number;
-        nextWaterFee: number;
-      };
+      items: ItemData;
     };
 
     const { account = "sumora", items: d } = body;
@@ -112,7 +192,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // テンプレート読み込み
     let wb: XLSX.WorkBook;
     try {
       const buf = fs.readFileSync(templatePath);
@@ -125,80 +204,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const sheetName = wb.SheetNames[0];
+    // 見積書シート（左から2枚目）を使用
+    const sheetName = wb.SheetNames.length > 1 ? wb.SheetNames[1] : wb.SheetNames[0];
     const ws = wb.Sheets[sheetName];
-
-    // ─── 右側セクション（物件情報） ───
-    setCellValue(ws, "B2", d.assignee || "");
-    setCellValue(ws, "H2", d.propertyName || "");
-    setCellValue(ws, "B4", d.customerName || "");
-    setCellValue(ws, "E4", d.moveInMonthDays || 31);
-    setCellValue(ws, "I5", d.roomNumber || "");
-    setCellValue(ws, "H5", d.shikikin || 0);
-    setCellValue(ws, "H6", d.reikin || 0);
-    setCellValue(ws, "H7", d.rent || 0);
-    setCellValue(ws, "H8", d.managementFee || 0);
-
-    // ─── 日割り計算 ───
-    const moveInDay = d.moveInDay || 1;
-    const monthDays = d.moveInMonthDays || 30;
-    const proratedRent = calcProratedAmount(d.rent, moveInDay, monthDays);
-    const proratedMgmt = calcProratedAmount(d.managementFee, moveInDay, monthDays);
-    const proratedWater = calcProratedAmount(d.waterFee, moveInDay, monthDays);
-    const proratedDays = monthDays - moveInDay + 1;
-
-    // 左側セクション（費用計算）
-    setCellValue(ws, "C9", d.moveInMonth || "");
-    setCellValue(ws, "D9", moveInDay);
-    setCellValue(ws, "E9", proratedDays);
-
-    // 右側の数値（日割計算用）
-    setCellValue(ws, "H16", proratedRent);
-    setCellValue(ws, "H17", proratedMgmt);
-    setCellValue(ws, "H18", proratedWater);
-    setCellValue(ws, "H20", 0); // 日割駐車場
-
-    // 翌月分
-    setCellValue(ws, "B14", d.nextRent || d.rent || 0);
-    setCellValue(ws, "B15", d.nextManagementFee || d.managementFee || 0);
-
-    // 仲介手数料
-    setCellValue(ws, "B21", d.commission || 0);
-    setCellValue(ws, "B22", d.commissionTax || 0);
-    setCellValue(ws, "B23", d.parkingCommission || 0);
-    setCellValue(ws, "B24", d.parkingCommissionTax || 0);
-
-    // 保険・鍵・クリーニング・保証料
-    setCellValue(ws, "B25", d.insurance || 0);
-    setCellValue(ws, "B26", d.cleaning || 0);
-    setCellValue(ws, "B27", d.keyExchange || 0);
-    setCellValue(ws, "B28", d.guarantee || 0);
-
-    // 入居日
-    if (d.moveInDate) {
-      const dateObj = new Date(d.moveInDate);
-      const dateStr = `${dateObj.getMonth() + 1}月${dateObj.getDate()}日`;
-      setCellValue(ws, "H28", dateStr);
+    if (!ws) {
+      return NextResponse.json(
+        { error: `シートが見つかりません（${sheetName}）。テンプレートを確認してください。` },
+        { status: 500 }
+      );
     }
 
-    // 保証金・敷金（左側）
-    setCellValue(ws, "B6", d.hoshokikin || 0);
-    setCellValue(ws, "B7", d.shikikin || 0);
+    fillEstimateSheet(ws, d);
 
-    // 保証金（右側）
-    setCellValue(ws, "H4", d.hoshokikin || 0);
-
-    // 駐車場保証金
-    setCellValue(ws, "B18", d.parkingDeposit || 0);
-    setCellValue(ws, "B19", d.parkingMonthly || 0);
-
-    // 特別割引
-    if (d.discountAmount) {
-      setCellValue(ws, "B30", -(d.discountAmount));
-      if (d.discountNote) setCellValue(ws, "A30", `特別割引: ${d.discountNote}`);
-    }
-
-    // Excel 書き出し
     let buf: Buffer;
     try {
       buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;

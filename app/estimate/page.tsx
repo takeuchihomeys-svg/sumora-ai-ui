@@ -85,6 +85,62 @@ const ITEM_CONFIG: Array<{
 const TEXT_KEYS = new Set(["propertyName", "roomNumber", "customerName", "assignee", "moveInDate", "discountNote", "supplementaryNotes"]);
 const GROUP_ORDER = ["基本情報", "入居情報", "賃料", "初期費用", "駐車場", "割引", "翌月分"];
 
+type PreviewRow = {
+  label: string;
+  amount: number;
+  editKey?: keyof EditableItems;
+  otherIdx?: number;
+  isDiscount?: boolean;
+  isComputed?: boolean;
+};
+
+const ACCOUNT_SAVINGS_TEMPLATE: Record<Account, (n: number) => string> = {
+  sumora:  (n) => `スモラなら一般的な不動産業者より${n.toLocaleString()}円節約出来ます！！`,
+  ieyasu:  (n) => `イエヤスなら一般的な不動産業者より${n.toLocaleString()}円節約出来ます！！`,
+  giga:    (n) => `ギガ賃貸なら一般的な不動産業者より${n.toLocaleString()}円節約出来ます！！`,
+};
+
+function generateLineText(
+  items: EditableItems,
+  grandTotal: number,
+  account: Account,
+): string {
+  const parts: string[] = [];
+
+  // 【物件名 号室】
+  const propName = items.propertyName || "";
+  const roomSuffix = items.roomNumber ? ` ${items.roomNumber}号室` : "";
+  if (propName || roomSuffix) {
+    parts.push(`【${propName}${roomSuffix}】`);
+    parts.push("");
+  }
+
+  // 割引あり → 強調フォーマット
+  const discount = items.discountAmount || 0;
+  if (discount > 0) {
+    parts.push("初期費用さらに");
+    parts.push(`🌟${discount.toLocaleString()}円割引させて頂き`);
+    parts.push(`初期費用：${grandTotal.toLocaleString()}円`);
+  } else {
+    parts.push(`初期費用：${grandTotal.toLocaleString()}円`);
+  }
+
+  parts.push("");
+
+  // 節約額 = (業界標準手数料1ヶ月+税 - 実際の手数料) + 割引額
+  const standardCommission = Math.round((items.rent || 0) * 1.1);
+  const actualCommission = (items.commission || 0) + (items.commissionTax || 0);
+  const savings = Math.max(0, standardCommission - actualCommission + discount);
+  if (savings > 0) {
+    parts.push(ACCOUNT_SAVINGS_TEMPLATE[account](savings));
+    parts.push("");
+  }
+
+  parts.push("※ご入居日によって日割家賃が発生致します。");
+
+  return parts.join("\n");
+}
+
 function toEditable(e: ExtractedEstimate, account: Account = "sumora", moveInDate?: string): EditableItems {
   const date = moveInDate || e.moveInDate || "";
   const { nextMonth, nextYear } = calcNext(date);
@@ -142,6 +198,9 @@ export default function EstimatePage() {
   const [downloadError, setDownloadError] = useState("");
 
   const reviewRef = useRef<HTMLDivElement>(null);
+  const [lineModal, setLineModal] = useState(false);
+  const [lineText, setLineText] = useState("");
+  const [lineCopied, setLineCopied] = useState(false);
 
   const handleFileSelect = (files: FileList | null) => {
     if (!files) return;
@@ -221,6 +280,14 @@ export default function EstimatePage() {
         updated.nextMonth = nextMonth;
         updated.nextYear = nextYear;
       }
+      // 仲介手数料変更時に消費税を自動計算（10%）
+      if (key === "commission") {
+        updated.commissionTax = Math.round((Number(value) || 0) * 0.1);
+      }
+      // 駐車場手数料変更時も同様
+      if (key === "parkingCommission") {
+        updated.parkingCommissionTax = Math.round((Number(value) || 0) * 0.1);
+      }
       return updated;
     });
   };
@@ -279,15 +346,6 @@ export default function EstimatePage() {
   const proratedMgmt = items ? Math.round(((items.managementFee || 0) / (items.moveInMonthDays || 30)) * proratedDays) : 0;
   const proratedWater = items ? Math.round(((items.waterFee || 0) / (items.moveInMonthDays || 30)) * proratedDays) : 0;
 
-  type PreviewRow = {
-    label: string;
-    amount: number;
-    editKey?: keyof EditableItems;
-    otherIdx?: number;
-    isDiscount?: boolean;
-    isComputed?: boolean;
-  };
-
   const costRows: PreviewRow[] = items ? ([
     { label: "保証金",                              amount: items.hoshokikin,          editKey: "hoshokikin" },
     { label: "敷金",                               amount: items.shikikin,             editKey: "shikikin" },
@@ -321,6 +379,24 @@ export default function EstimatePage() {
   const totalItems: PreviewRow[] = items ? [...costRows, discountRow] : [];
 
   const grandTotal = totalItems.reduce((s, r) => s + r.amount, 0);
+
+  const handleLinePreview = () => {
+    if (!items) return;
+    const text = generateLineText(items, grandTotal, account);
+    setLineText(text);
+    setLineModal(true);
+    setLineCopied(false);
+  };
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(lineText);
+      setLineCopied(true);
+      setTimeout(() => setLineCopied(false), 2500);
+    } catch {
+      // clipboard API unavailable
+    }
+  };
 
   // グループ別に ITEM_CONFIG を整理
   const groups: Record<string, typeof ITEM_CONFIG> = {};
@@ -711,12 +787,65 @@ export default function EstimatePage() {
               )}
             </button>
 
+            {/* LINE送付ボタン */}
+            <button
+              onClick={handleLinePreview}
+              className="w-full rounded-full py-4 text-[15px] font-bold text-white shadow-lg flex items-center justify-center gap-2"
+              style={{ background: "linear-gradient(135deg,#00B900,#00C300)" }}
+            >
+              💬 LINE用テキストを生成
+            </button>
+
             <div className="h-4" />
           </div>
         )}
       </div>
 
       <BottomNav />
+
+      {/* LINE テキストモーダル */}
+      {lineModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center"
+          style={{ background: "rgba(0,0,0,0.5)" }}
+          onClick={() => setLineModal(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-t-3xl bg-white"
+            style={{ paddingBottom: "max(20px,env(safe-area-inset-bottom))" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* ヘッダー */}
+            <div className="flex items-center justify-between border-b border-[#e9edef] px-5 py-4">
+              <div className="text-[15px] font-bold text-[#111b21]">💬 LINE送付テキスト</div>
+              <button
+                onClick={() => setLineModal(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-[#f0f2f5] text-[18px] leading-none text-[#667781]"
+              >
+                ×
+              </button>
+            </div>
+
+            {/* テキストプレビュー */}
+            <div className="max-h-[52vh] overflow-y-auto px-5 py-3">
+              <pre className="whitespace-pre-wrap rounded-xl bg-[#f0f2f5] p-3 font-sans text-[12px] leading-relaxed text-[#111b21]">
+                {lineText}
+              </pre>
+            </div>
+
+            {/* コピーボタン */}
+            <div className="px-5 pt-3">
+              <button
+                onClick={handleCopy}
+                className="flex w-full items-center justify-center gap-2 rounded-full py-4 text-[15px] font-bold text-white shadow transition-all"
+                style={{ background: lineCopied ? "#28a745" : "linear-gradient(135deg,#00B900,#00C300)" }}
+              >
+                {lineCopied ? "✅ コピーしました！LINEに貼り付けて送信" : "📋 コピーしてLINEで送る"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
