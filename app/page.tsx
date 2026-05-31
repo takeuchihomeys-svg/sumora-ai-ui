@@ -1636,13 +1636,11 @@ export default function Home() {
                           </span>
                           {(() => {
                             const acct = getAccountMeta(conversation.account);
-                            // スモラ以外はバッジ表示
-                            if (acct.key !== "sumora") return (
+                            return (
                               <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${acct.color}`}>
                                 {acct.icon} {acct.label}
                               </span>
                             );
-                            return null;
                           })()}
                           {linkedCustomerMap[conversation.id] && (
                             <span className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">
