@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { supabase } from "@/app/lib/supabase";
 import BottomNav from "@/app/components/BottomNav";
 
 type Status = "new_inquiry" | "hot" | "property_search" | "pending";
@@ -130,6 +131,9 @@ export default function ConditionsPage() {
   const [dbReady, setDbReady] = useState(true);
   const [markingId, setMarkingId] = useState<string | null>(null);
 
+  // 紐付け済み property_customer_id セット
+  const [linkedIds, setLinkedIds] = useState<Set<string>>(new Set());
+
   // クイックアクションシート
   const [quickTarget, setQuickTarget] = useState<Customer | null>(null);
 
@@ -140,7 +144,10 @@ export default function ConditionsPage() {
 
   async function load() {
     setLoading(true);
-    const res = await fetch("/api/property-customers");
+    const [res, { data: convData }] = await Promise.all([
+      fetch("/api/property-customers"),
+      supabase.from("conversations").select("property_customer_id").not("property_customer_id", "is", null),
+    ]);
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       if (err.error?.includes("does not exist") || err.error?.includes("relation")) {
@@ -151,6 +158,9 @@ export default function ConditionsPage() {
     }
     const data: Customer[] = await res.json();
     setCustomers(data);
+    if (convData) {
+      setLinkedIds(new Set(convData.map((r: { property_customer_id: string }) => r.property_customer_id)));
+    }
     setLoading(false);
   }
 
@@ -408,11 +418,16 @@ export default function ConditionsPage() {
 
                           {/* コンテンツ */}
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-0.5">
+                            <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                               <span className="font-bold text-slate-800 text-sm">{c.customer_name}</span>
                               <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 ${meta.chip}`}>
                                 {STATUS_LABELS[c.status]}
                               </span>
+                              {linkedIds.has(c.id) && (
+                                <span className="text-[10px] bg-blue-50 text-blue-600 font-bold px-1.5 py-0.5 rounded-full flex-shrink-0">
+                                  紐付け済
+                                </span>
+                              )}
                             </div>
                             <div className="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
                               {(c.desired_area || c.area) && <span>{c.desired_area || c.area}</span>}
@@ -478,6 +493,7 @@ export default function ConditionsPage() {
                     const meta = STATUS_META[c.status];
                     const isExpanded = expandedListId === c.id;
                     const rent = formatRent(c);
+                    const isLinked = linkedIds.has(c.id);
 
                     // 表示する条件項目
                     const condItems: { label: string; value: string }[] = [];
@@ -503,6 +519,11 @@ export default function ConditionsPage() {
                               <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 ${meta.chip}`}>
                                 {STATUS_LABELS[c.status]}
                               </span>
+                              {isLinked && (
+                                <span className="text-[10px] bg-blue-50 text-blue-600 font-bold px-1.5 py-0.5 rounded-full flex-shrink-0">
+                                  紐付け済
+                                </span>
+                              )}
                               {c.format_received && (
                                 <span className="text-[10px] bg-green-50 text-green-700 font-bold px-1.5 py-0.5 rounded-full">
                                   フォーマット済
