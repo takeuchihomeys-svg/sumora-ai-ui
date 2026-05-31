@@ -148,9 +148,9 @@ function toEditable(e: ExtractedEstimate, account: Account = "sumora", moveInDat
   return {
     ...e,
     moveInDate: date,
-    // AIが0を返した場合はアカウントのデフォルト値を使用
-    commission: e.commission !== 0 ? e.commission : commDefaults.commission,
-    commissionTax: e.commissionTax !== 0 ? e.commissionTax : commDefaults.commissionTax,
+    // アカウントの手数料が0固定（イエヤス・ギガ）は常に0 / スモラはAIが0のときのみデフォルト2980
+    commission:    commDefaults.commission    === 0 ? 0 : (e.commission    || commDefaults.commission),
+    commissionTax: commDefaults.commissionTax === 0 ? 0 : (e.commissionTax || commDefaults.commissionTax),
     nextRent: e.rent,
     nextManagementFee: e.managementFee,
     nextWaterFee: e.waterFee,
