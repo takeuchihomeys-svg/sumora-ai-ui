@@ -774,7 +774,7 @@ export default function Home() {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 320)}px`;
+    el.style.height = `${Math.min(el.scrollHeight, 250)}px`;
   }, [replyDraft]);
 
   const latestCustomerMessage = useMemo(() => {
@@ -935,7 +935,7 @@ export default function Home() {
       aiDraftRef.current = enhanced;
       setTimeout(() => {
         const el = textareaRef.current;
-        if (el) { el.style.height = "auto"; el.style.height = `${Math.min(el.scrollHeight, 320)}px`; }
+        if (el) { el.style.height = "auto"; el.style.height = `${Math.min(el.scrollHeight, 250)}px`; }
       }, 50);
     } catch (err) {
       console.error("enhance-reply error:", err);
