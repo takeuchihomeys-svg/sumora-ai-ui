@@ -290,6 +290,18 @@ export default function ConditionsPage() {
     setParsing(false);
   }
 
+  // 一覧タブの展開状態
+  const [expandedListId, setExpandedListId] = useState<string | null>(null);
+
+  function formatRent(c: Customer): string | null {
+    const min = c.rent_min;
+    const max = c.rent_max || c.max_rent;
+    if (!min && !max) return null;
+    if (min && max) return `${Math.floor(min / 10000)}万〜${Math.floor(max / 10000)}万円`;
+    if (max) return `〜${Math.floor(max / 10000)}万円`;
+    return `${Math.floor(min! / 10000)}万円〜`;
+  }
+
   const actionNeeded = customers.filter(needsActionToday);
   const listFiltered = listFilter === "all" ? customers : customers.filter((c) => c.status === listFilter);
 
@@ -464,45 +476,119 @@ export default function ConditionsPage() {
                   {listFiltered.map((c) => {
                     const days = daysSinceSent(c);
                     const meta = STATUS_META[c.status];
+                    const isExpanded = expandedListId === c.id;
+                    const rent = formatRent(c);
+
+                    // 表示する条件項目
+                    const condItems: { label: string; value: string }[] = [];
+                    if (c.move_in_time) condItems.push({ label: "📅 入居時期", value: c.move_in_time });
+                    if (c.desired_area || c.area) condItems.push({ label: "📍 エリア", value: (c.desired_area || c.area)! });
+                    if (rent) condItems.push({ label: "💰 家賃", value: rent });
+                    if (c.walk_minutes) condItems.push({ label: "🚶 徒歩", value: `${c.walk_minutes}分以内` });
+                    if (c.floor_plan || c.layout) condItems.push({ label: "🏠 間取り", value: (c.floor_plan || c.layout)! });
+                    if (c.building_age) condItems.push({ label: "🏢 築年数", value: `${c.building_age}年以内` });
+                    if (c.initial_cost_limit) condItems.push({ label: "💴 初期費用", value: `${Math.floor(c.initial_cost_limit / 10000)}万以内` });
+
                     return (
-                      <button
-                        key={c.id}
-                        onClick={() => openEdit(c)}
-                        className="w-full text-left flex items-center gap-3 px-4 py-3.5 active:bg-slate-50 transition-colors"
-                      >
-                        {/* ステータスドット */}
-                        <div className={`w-3 h-3 rounded-full flex-shrink-0 ${meta.dot}`} />
-
-                        {/* コンテンツ */}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-0.5">
-                            <span className="font-bold text-slate-800 text-sm">{c.customer_name}</span>
-                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 ${meta.chip}`}>
-                              {STATUS_LABELS[c.status]}
-                            </span>
-                            {c.format_received && (
-                              <span className="text-[10px] bg-green-50 text-green-700 font-bold px-1.5 py-0.5 rounded-full">
-                                🌟
+                      <div key={c.id}>
+                        {/* サマリー行（タップで展開） */}
+                        <button
+                          onClick={() => setExpandedListId(isExpanded ? null : c.id)}
+                          className="w-full text-left flex items-center gap-3 px-4 py-3.5 active:bg-slate-50 transition-colors"
+                        >
+                          <div className={`w-3 h-3 rounded-full flex-shrink-0 ${meta.dot}`} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                              <span className="font-bold text-slate-800 text-sm">{c.customer_name}</span>
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 ${meta.chip}`}>
+                                {STATUS_LABELS[c.status]}
                               </span>
-                            )}
+                              {c.format_received && (
+                                <span className="text-[10px] bg-green-50 text-green-700 font-bold px-1.5 py-0.5 rounded-full">
+                                  🌟 フォーマット済
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
+                              {(c.desired_area || c.area) && <span>📍{c.desired_area || c.area}</span>}
+                              {rent && <span>{rent}</span>}
+                              {(c.floor_plan || c.layout) && <span>{c.floor_plan || c.layout}</span>}
+                              {c.assignee && <span>担当: {c.assignee}</span>}
+                              {days !== null ? (
+                                <span className={days >= 3 ? "text-orange-500 font-bold" : ""}>
+                                  {days === 0 ? "今日送信" : `${days}日前`}
+                                </span>
+                              ) : (
+                                c.status !== "pending" && <span className="text-red-400 font-bold">未送信</span>
+                              )}
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
-                            {(c.desired_area || c.area) && <span>📍{c.desired_area || c.area}</span>}
-                            {(c.rent_max || c.max_rent) && <span>〜{((c.rent_max || c.max_rent)! / 10000).toFixed(1)}万</span>}
-                            {(c.floor_plan || c.layout) && <span>{c.floor_plan || c.layout}</span>}
-                            {c.assignee && <span>担当: {c.assignee}</span>}
-                            {days !== null && (
-                              <span className={days >= 3 ? "text-orange-500 font-bold" : ""}>
-                                {days === 0 ? "今日送信" : `${days}日前`}
-                              </span>
-                            )}
-                          </div>
-                        </div>
+                          {/* 展開チェブロン */}
+                          <svg
+                            width="16" height="16" viewBox="0 0 24 24" fill="none"
+                            stroke="#c5d8e8" strokeWidth="2" strokeLinecap="round"
+                            className={`flex-shrink-0 transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`}
+                          >
+                            <polyline points="6 9 12 15 18 9" />
+                          </svg>
+                        </button>
 
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#c5d8e8" strokeWidth="2">
-                          <path d="M9 18l6-6-6-6"/>
-                        </svg>
-                      </button>
+                        {/* 展開：全条件表示 */}
+                        {isExpanded && (
+                          <div className="border-t border-slate-100 bg-slate-50 px-4 py-3 space-y-3">
+                            {condItems.length > 0 ? (
+                              <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                                {condItems.map(({ label, value }) => (
+                                  <div key={label}>
+                                    <p className="text-[10px] text-slate-400 font-medium mb-0.5">{label}</p>
+                                    <p className="text-xs text-slate-700 font-bold">{value}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-xs text-slate-400">条件がまだ入力されていません</p>
+                            )}
+
+                            {/* テキスト系条件（全幅） */}
+                            {(c.preferences || c.ng_points || c.other_requests || c.property_memo) && (
+                              <div className="space-y-1.5 pt-1 border-t border-slate-200">
+                                {c.preferences && (
+                                  <div>
+                                    <span className="text-[10px] text-slate-400 font-medium">✨ こだわり  </span>
+                                    <span className="text-xs text-slate-700">{c.preferences}</span>
+                                  </div>
+                                )}
+                                {c.ng_points && (
+                                  <div>
+                                    <span className="text-[10px] text-slate-400 font-medium">🚫 NG  </span>
+                                    <span className="text-xs text-slate-700">{c.ng_points}</span>
+                                  </div>
+                                )}
+                                {c.other_requests && (
+                                  <div>
+                                    <span className="text-[10px] text-slate-400 font-medium">📝 その他  </span>
+                                    <span className="text-xs text-slate-700">{c.other_requests}</span>
+                                  </div>
+                                )}
+                                {c.property_memo && (
+                                  <div>
+                                    <span className="text-[10px] text-slate-400 font-medium">📋 物件メモ  </span>
+                                    <span className="text-xs text-slate-700">{c.property_memo}</span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* 編集ボタン */}
+                            <button
+                              onClick={(e) => { e.stopPropagation(); openEdit(c); }}
+                              className="w-full py-2.5 rounded-xl text-sm font-bold border border-blue-200 text-blue-600 bg-white"
+                            >
+                              ✏️ 編集する
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
@@ -532,19 +618,49 @@ export default function ConditionsPage() {
               </span>
             </div>
 
-            {/* 情報サマリー */}
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500 pb-1">
-              {(quickTarget.desired_area || quickTarget.area) && (
-                <span>📍 {quickTarget.desired_area || quickTarget.area}</span>
-              )}
-              {(quickTarget.rent_max || quickTarget.max_rent) && (
-                <span>〜{((quickTarget.rent_max || quickTarget.max_rent)! / 10000).toFixed(1)}万円</span>
-              )}
-              {(quickTarget.floor_plan || quickTarget.layout) && (
-                <span>🏠 {quickTarget.floor_plan || quickTarget.layout}</span>
-              )}
-              {quickTarget.preferences && <span>✨ {quickTarget.preferences}</span>}
-            </div>
+            {/* 全条件表示 */}
+            {(() => {
+              const qt = quickTarget;
+              const rent = formatRent(qt);
+              const gridItems: { label: string; value: string }[] = [];
+              if (qt.move_in_time) gridItems.push({ label: "📅 入居時期", value: qt.move_in_time });
+              if (qt.desired_area || qt.area) gridItems.push({ label: "📍 エリア", value: (qt.desired_area || qt.area)! });
+              if (rent) gridItems.push({ label: "💰 家賃", value: rent });
+              if (qt.walk_minutes) gridItems.push({ label: "🚶 徒歩", value: `${qt.walk_minutes}分以内` });
+              if (qt.floor_plan || qt.layout) gridItems.push({ label: "🏠 間取り", value: (qt.floor_plan || qt.layout)! });
+              if (qt.building_age) gridItems.push({ label: "🏢 築年数", value: `${qt.building_age}年以内` });
+              if (qt.initial_cost_limit) gridItems.push({ label: "💴 初期費用", value: `${Math.floor(qt.initial_cost_limit / 10000)}万以内` });
+              return (
+                <div className="bg-slate-50 rounded-xl p-3 space-y-2">
+                  {gridItems.length > 0 && (
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                      {gridItems.map(({ label, value }) => (
+                        <div key={label}>
+                          <p className="text-[10px] text-slate-400 font-medium mb-0.5">{label}</p>
+                          <p className="text-xs text-slate-700 font-bold">{value}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {(qt.preferences || qt.ng_points || qt.other_requests) && (
+                    <div className="space-y-1 pt-1.5 border-t border-slate-200">
+                      {qt.preferences && (
+                        <p className="text-xs text-slate-600"><span className="text-slate-400">✨ こだわり </span>{qt.preferences}</p>
+                      )}
+                      {qt.ng_points && (
+                        <p className="text-xs text-slate-600"><span className="text-slate-400">🚫 NG </span>{qt.ng_points}</p>
+                      )}
+                      {qt.other_requests && (
+                        <p className="text-xs text-slate-600"><span className="text-slate-400">📝 その他 </span>{qt.other_requests}</p>
+                      )}
+                    </div>
+                  )}
+                  {gridItems.length === 0 && !qt.preferences && !qt.ng_points && !qt.other_requests && (
+                    <p className="text-xs text-slate-400">条件が入力されていません</p>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* ✅ 物件を送った（メインアクション・大きく） */}
             <button
