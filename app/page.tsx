@@ -123,10 +123,10 @@ function getInitial(name: string) {
 
 // \u30a2\u30ab\u30a6\u30f3\u30c8\u5b9a\u7fa9\uff08\u30d5\u30a3\u30eb\u30bf\u30fc\u30fb\u30d0\u30c3\u30b8\u30fb\u30d4\u30c3\u30ab\u30fc\u5171\u901a\uff09
 const ACCOUNT_LIST = [
-  { key: "sumora", label: "\u30b9\u30e2\u30e9",   icon: "\ud83e\udd84", color: "bg-purple-100 text-purple-700" },
-  { key: "ieyasu", label: "\u30a4\u30a8\u30e4\u30b9", icon: "\ud83c\udfef", color: "bg-amber-100 text-amber-700" },
-  { key: "giga",   label: "\u30ae\u30ac\u8cc3\u8cb8", icon: "\ud83c\udfe2", color: "bg-teal-100 text-teal-700" },
-  { key: "hasu",   label: "\u30cf\u30b9",     icon: "\ud83c\udf38", color: "bg-pink-100 text-pink-700" },
+  { key: "sumora", label: "\u30b9\u30e2\u30e9",   icon: "\ud83e\udd95", image: "/images/sumora-mascot.png",  color: "bg-purple-100 text-purple-700" },
+  { key: "ieyasu", label: "\u30a4\u30a8\u30e4\u30b9", icon: "\u26e9\ufe0f", image: "/images/ieyasu-mascot.png", color: "bg-amber-100 text-amber-700" },
+  { key: "giga",   label: "\u30ae\u30ac\u8cc3\u8cb8", icon: "\ud83d\udc26", image: "/images/giga-mascot.png",   color: "bg-teal-100 text-teal-700" },
+  { key: "hasu",   label: "\u30cf\u30b9",     icon: "\ud83c\udf38", image: null,                         color: "bg-pink-100 text-pink-700" },
 ] as const;
 type AccountKey = typeof ACCOUNT_LIST[number]["key"];
 
@@ -2199,14 +2199,16 @@ export default function Home() {
                         : "border-transparent bg-[#f0f2f5] active:bg-[#e9ecef]"
                     }`}
                   >
-                    <span className="text-xl">{acc.icon}</span>
+                    {"image" in acc && acc.image ? (
+                      <img src={acc.image} alt={acc.label} className="rounded-full object-cover border border-white shadow-sm" style={{ width: 36, height: 36 }} />
+                    ) : (
+                      <span className="flex items-center justify-center rounded-full bg-[#e9edef] text-lg" style={{ width: 36, height: 36 }}>{acc.icon}</span>
+                    )}
                     <span className="text-[14px] font-semibold text-[#111b21] flex-1 text-left">{acc.label}</span>
                     {acc.key === currentAccount && (
-                      <span className="text-blue-500">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                          <polyline points="20 6 9 17 4 12"/>
-                        </svg>
-                      </span>
+                      <svg className="text-blue-500" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="20 6 9 17 4 12"/>
+                      </svg>
                     )}
                   </button>
                 ))}
@@ -2540,15 +2542,12 @@ export default function Home() {
               <div className="flex flex-col gap-2">
                 {(
                   [
-                    { key: "all",    label: "すべて",    icon: "🌐", sub: "全アカウントのトーク" },
-                    { key: "linked", label: "紐付け済",  icon: "🔗", sub: "物件出しツールと連携済み" },
-                    { key: "sumora", label: "スモラ",    icon: "🦄", sub: "スモラ LINEアカウント" },
-                    { key: "ieyasu", label: "イエヤス",  icon: "🏯", sub: "イエヤス LINEアカウント" },
-                    { key: "giga",   label: "ギガ賃貸",  icon: "🏢", sub: "ギガ賃貸 LINEアカウント" },
-                  ] as { key: typeof accountFilter; label: string; icon: string; sub: string }[]
+                    { key: "all",    label: "すべて",   icon: "🌐", image: null, sub: "全アカウントのトーク" },
+                    { key: "linked", label: "紐付け済", icon: "🔗", image: null, sub: "物件出しツールと連携済み" },
+                    ...ACCOUNT_LIST.map((a) => ({ key: a.key, label: a.label, icon: a.icon, image: "image" in a ? a.image : null, sub: `${a.label} LINEアカウント` })),
+                  ] as { key: typeof accountFilter; label: string; icon: string; image: string | null; sub: string }[]
                 ).map((item) => {
                   const isSelected = accountFilter === item.key;
-                  // アカウント別の件数
                   const count = item.key === "all"
                     ? conversations.length
                     : item.key === "linked"
@@ -2558,13 +2557,22 @@ export default function Home() {
                     <button
                       key={item.key}
                       onClick={() => { setAccountFilter(item.key); setShowHamburgerMenu(false); }}
-                      className="flex w-full items-center gap-4 rounded-2xl border px-4 py-3.5 text-left transition-all active:scale-[0.98]"
+                      className="flex w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left transition-all active:scale-[0.98]"
                       style={{
                         borderColor: isSelected ? "#2196F3" : "#e9edef",
                         background: isSelected ? "#e3f2fd" : "#f8f9fa",
                       }}
                     >
-                      <span className="text-2xl leading-none">{item.icon}</span>
+                      {item.image ? (
+                        <img
+                          src={item.image}
+                          alt={item.label}
+                          className="shrink-0 rounded-full object-cover border-2 border-white shadow-sm"
+                          style={{ width: 44, height: 44 }}
+                        />
+                      ) : (
+                        <span className="shrink-0 flex items-center justify-center rounded-full bg-[#e9edef] text-xl" style={{ width: 44, height: 44 }}>{item.icon}</span>
+                      )}
                       <div className="flex-1 min-w-0">
                         <div className="text-[14px] font-bold" style={{ color: isSelected ? "#1565C0" : "#111b21" }}>
                           {item.label}
@@ -2575,7 +2583,9 @@ export default function Home() {
                         {count}
                       </span>
                       {isSelected && (
-                        <span className="text-[#2196F3] font-bold text-lg">✓</span>
+                        <svg className="shrink-0 text-[#2196F3]" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="20 6 9 17 4 12"/>
+                        </svg>
                       )}
                     </button>
                   );
