@@ -14,7 +14,7 @@ const analysisModel = new ChatAnthropic({
 // Step2（生成）: Sonnet — 品質重視
 const generationModel = new ChatAnthropic({
   model: "claude-sonnet-4-6",
-  maxTokens: 4096,
+  maxTokens: 512,
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
 });
 
@@ -30,10 +30,12 @@ const EMOJI_RULE = `
 
 const STYLE_RULE = `
 【スモラのLINEスタイル】
+・3〜5行以内に収める（LINEメッセージなので短く）
 ・感嘆符は「！！」（スモラスタイル。「!」1つや「！」1つは禁止）
 ・「〇〇さん」とお客様名を必ず呼ぶ（名前が分かる場合）
 ・こちらが動く姿勢を示す（「確認します」「ピックアップします」等）
 ・「顧客」「弊社」「御社」などビジネス敬語は一切使わない
+・箇条書き・番号リスト・見出し・改行の多用は禁止
 ・LINEでそのまま送れる文章のみ。解説・補足・候補複数は禁止
 ・返信案は必ず1つだけ`.trim();
 
@@ -159,27 +161,36 @@ const ALLOWED_INTENTS = new Set([
 ]);
 
 const ALLOWED_STATES = new Set([
-  "first_reply", "condition_hearing", "property_search", "property_recommendation",
-  "viewing", "estimate_request", "availability_check", "application", "screening",
-  "contract", "closed_won",
+  "first_reply", "hearing", "proposing", "applying", "closed_won",
+  // 旧キーも受け付ける（後方互換）
+  "condition_hearing", "property_search", "property_recommendation",
+  "viewing", "estimate_request", "availability_check", "application", "screening", "contract",
 ]);
 
+// 旧ステータスキーを新5段階に正規化
+const STATE_ALIAS: Record<string, string> = {
+  condition_hearing:       "hearing",
+  property_search:         "hearing",
+  property_recommendation: "proposing",
+  viewing:                 "proposing",
+  estimate_request:        "proposing",
+  availability_check:      "proposing",
+  application:             "applying",
+  screening:               "applying",
+  contract:                "applying",
+};
+
 const NEXT_STATE_MAP: Record<string, Record<string, string>> = {
-  first_reply: { condition_share: "property_search", consult_property_search: "condition_hearing", estimate_request: "availability_check" },
-  condition_hearing: { conditions_complete: "property_search", conditions_incomplete: "condition_hearing" },
-  property_search: { other: "property_recommendation" },
-  property_recommendation: { like_property: "viewing", dislike_property: "property_search", search_more_properties: "property_search" },
-  viewing: { application_interest: "application", search_more_properties: "property_search", viewing_request: "viewing" },
-  availability_check: { property_available: "estimate_request", property_unavailable: "property_search" },
-  estimate_request: { application_interest: "application", search_more_properties: "property_search" },
-  application: { other: "screening" },
-  screening: { screening_passed: "contract", screening_failed: "property_search" },
-  contract: { other: "closed_won" },
-  closed_won: { other: "closed_won" },
+  first_reply: { condition_share: "hearing", consult_property_search: "hearing", other: "hearing" },
+  hearing:     { conditions_complete: "proposing", other: "hearing" },
+  proposing:   { like_property: "proposing", application_interest: "applying", other: "proposing" },
+  applying:    { screening_passed: "applying", screening_failed: "proposing", other: "applying" },
+  closed_won:  { other: "closed_won" },
 };
 
 function normalizeState(k: string): string {
-  return ALLOWED_STATES.has(k) ? k : "first_reply";
+  const resolved = STATE_ALIAS[k] ?? k;
+  return ALLOWED_STATES.has(resolved) ? resolved : "first_reply";
 }
 function getNextState(current: string, intent: string): string {
   const map = NEXT_STATE_MAP[normalizeState(current)] || {};
@@ -214,15 +225,10 @@ conditions_incomplete, property_available, property_unavailable, screening_passe
 // ─── phrase_dictionary → conversationState マッピング ───────────────────────
 const STATE_TO_PHRASE_CATEGORY: Record<string, string> = {
   first_reply: "hearing_start",
-  condition_hearing: "hearing_followup",
-  property_search: "property_search_start",
-  property_recommendation: "property_recommendation",
-  viewing: "viewing_invite",
-  estimate_request: "estimate_send",
-  availability_check: "availability_check",
-  application: "application_push",
-  screening: "screening",
-  contract: "contract",
+  hearing:     "hearing_followup",
+  proposing:   "property_recommendation",
+  applying:    "application_push",
+  closed_won:  "contract",
 };
 
 async function fetchPhrases(state: string): Promise<string> {

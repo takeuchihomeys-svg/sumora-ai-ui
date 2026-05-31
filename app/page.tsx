@@ -52,23 +52,31 @@ type SupabaseMessageRow = {
   created_at: string;
 };
 
-// トーク画面用の詳細ステータス（11種類）
+// ステータス（5段階）
 const DETAIL_STATUSES = [
-  { key: "first_reply",            label: "初回返信",       color: "bg-sky-100 text-sky-700",      dot: "bg-sky-400" },
-  { key: "condition_hearing",      label: "条件ヒアリング", color: "bg-blue-100 text-blue-700",    dot: "bg-blue-400" },
-  { key: "property_search",        label: "物件探し中",     color: "bg-amber-100 text-amber-700",  dot: "bg-amber-400" },
-  { key: "property_recommendation",label: "物件提案",       color: "bg-orange-100 text-orange-700",dot: "bg-orange-400" },
-  { key: "viewing",                label: "内覧",           color: "bg-purple-100 text-purple-700",dot: "bg-purple-400" },
-  { key: "estimate_request",       label: "見積依頼",       color: "bg-teal-100 text-teal-700",    dot: "bg-teal-400" },
-  { key: "availability_check",     label: "空室確認",       color: "bg-cyan-100 text-cyan-700",    dot: "bg-cyan-400" },
-  { key: "application",            label: "申込",           color: "bg-indigo-100 text-indigo-700",dot: "bg-indigo-400" },
-  { key: "screening",              label: "審査中",         color: "bg-pink-100 text-pink-700",    dot: "bg-pink-500" },
-  { key: "contract",               label: "契約",           color: "bg-rose-100 text-rose-700",    dot: "bg-rose-500" },
-  { key: "closed_won",             label: "ご成約",         color: "bg-yellow-100 text-yellow-700",dot: "bg-yellow-400" },
+  { key: "first_reply", label: "初回返信",    color: "bg-sky-100 text-sky-700",       dot: "bg-sky-400" },
+  { key: "hearing",     label: "ヒアリング中", color: "bg-blue-100 text-blue-700",     dot: "bg-blue-400" },
+  { key: "proposing",   label: "物件提案中",   color: "bg-orange-100 text-orange-700", dot: "bg-orange-400" },
+  { key: "applying",    label: "申込・審査中", color: "bg-pink-100 text-pink-700",     dot: "bg-pink-500" },
+  { key: "closed_won",  label: "ご成約",       color: "bg-yellow-100 text-yellow-700", dot: "bg-yellow-400" },
 ];
 
+// 旧ステータスキーの後方互換マッピング
+const STATUS_ALIAS: Record<string, string> = {
+  condition_hearing:       "hearing",
+  property_search:         "hearing",
+  property_recommendation: "proposing",
+  viewing:                 "proposing",
+  estimate_request:        "proposing",
+  availability_check:      "proposing",
+  application:             "applying",
+  screening:               "applying",
+  contract:                "applying",
+};
+
 function getDetailStatusMeta(statusKey: string) {
-  return DETAIL_STATUSES.find((s) => s.key === statusKey) ?? {
+  const key = STATUS_ALIAS[statusKey] ?? statusKey;
+  return DETAIL_STATUSES.find((s) => s.key === key) ?? {
     key: statusKey,
     label: statusKey,
     color: "bg-gray-100 text-gray-700",
@@ -76,23 +84,28 @@ function getDetailStatusMeta(statusKey: string) {
   };
 }
 
-// 画面表示用グループ（4種類）
+// getGroupMeta は getDetailStatusMeta の別名（後方互換）
+function getGroupMeta(statusKey: string) {
+  return getDetailStatusMeta(statusKey);
+}
+
+// DISPLAY_GROUPS は後方互換のため残す（フィルター処理で使用）
 const DISPLAY_GROUPS = [
   {
     key: "searching",
     label: "物件探し中",
-    statuses: ["first_reply", "condition_hearing", "property_search", "property_recommendation", "viewing", "estimate_request", "availability_check", "application"],
+    statuses: ["first_reply", "hearing", "condition_hearing", "property_search", "proposing", "property_recommendation", "viewing", "estimate_request", "availability_check", "application"],
     color: "bg-amber-100 text-amber-700",
     dot: "bg-amber-500",
-    canonicalStatus: "property_search",
+    canonicalStatus: "hearing",
   },
   {
     key: "screening",
-    label: "審査・契約",
-    statuses: ["screening", "contract"],
+    label: "申込・審査中",
+    statuses: ["applying", "screening", "contract"],
     color: "bg-pink-100 text-pink-700",
     dot: "bg-pink-500",
-    canonicalStatus: "screening",
+    canonicalStatus: "applying",
   },
   {
     key: "closed",
@@ -691,8 +704,8 @@ export default function Home() {
       result = result.filter((c) => (c.account ?? "sumora") === accountFilter);
     }
     if (statusFilter !== "all") {
-      const group = DISPLAY_GROUPS.find((g) => g.key === statusFilter);
-      if (group) result = result.filter((c) => group.statuses.includes(c.status));
+      // 5段階ステータスキーで直接フィルター（旧キーもエイリアスで統一）
+      result = result.filter((c) => (STATUS_ALIAS[c.status] ?? c.status) === statusFilter);
     }
     // AI検索結果がある場合はそちらを優先
     if (aiSearchIds !== null) {
@@ -771,7 +784,6 @@ export default function Home() {
     return customerMessages[customerMessages.length - 1]?.text ?? "";
   }, [selectedConversation]);
 
-  const statusMeta = getGroupMeta(selectedConversation.status);
   const detailStatusMeta = getDetailStatusMeta(selectedConversation.status);
 
   const updateConversationStatus = async (nextStatus: string) => {
@@ -1484,7 +1496,7 @@ export default function Home() {
                 </svg>
               </button>
               {(() => {
-                const lbl = statusFilter === "all" ? "すべて" : (DISPLAY_GROUPS.find((g) => g.key === statusFilter)?.label ?? "すべて");
+                const lbl = statusFilter === "all" ? "すべて" : (DETAIL_STATUSES.find((s) => s.key === statusFilter)?.label ?? "すべて");
                 const fs = lbl.length >= 5 ? "text-[10px]" : lbl.length >= 4 ? "text-[11px]" : "text-[12px]";
                 return (
                   <button
@@ -1509,14 +1521,14 @@ export default function Home() {
                     <span className="h-3 w-3 rounded-full bg-gray-300" />
                     すべて
                   </button>
-                  {DISPLAY_GROUPS.map((g) => (
+                  {DETAIL_STATUSES.map((s) => (
                     <button
-                      key={g.key}
-                      onClick={() => { setStatusFilter(g.key); setShowGroupFilter(false); }}
-                      className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold border-b border-[#f0f2f5] last:border-b-0 ${statusFilter === g.key ? "text-[#2196F3]" : "text-[#111b21]"}`}
+                      key={s.key}
+                      onClick={() => { setStatusFilter(s.key); setShowGroupFilter(false); }}
+                      className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold border-b border-[#f0f2f5] last:border-b-0 ${statusFilter === s.key ? "text-[#2196F3]" : "text-[#111b21]"}`}
                     >
-                      <span className={`h-3 w-3 rounded-full ${g.dot}`} />
-                      {g.label}
+                      <span className={`h-3 w-3 rounded-full ${s.dot}`} />
+                      {s.label}
                     </button>
                   ))}
                 </div>
@@ -1616,7 +1628,7 @@ export default function Home() {
                           {getInitial(conversation.customerName)}
                         </div>
                       )}
-                      {groupMeta.key !== "searching" && (
+                      {(groupMeta.key === "applying" || groupMeta.key === "closed_won") && (
                         <span
                           className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-white ${groupMeta.dot}`}
                         />
