@@ -1381,6 +1381,13 @@ export default function Home() {
 
   // チャット画面の左スワイプで一覧に戻る
   const onChatTouchStart = (e: React.TouchEvent) => {
+    // テキスト入力・カーソル操作中はスワイプを無効化（LINEと同じ挙動）
+    const target = e.target as HTMLElement;
+    const tag = target.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable) {
+      chatSwipeStart.current = null;
+      return;
+    }
     chatSwipeStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
     setChatSwipeDelta(0);
   };
