@@ -73,7 +73,8 @@ export async function POST(req: NextRequest) {
     const templatePath = path.join(process.cwd(), "public", "templates", templateFile);
 
     if (!fs.existsSync(templatePath)) {
-      return NextResponse.json({ error: "テンプレートファイルが見つかりません" }, { status: 500 });
+      console.error("[fill-estimate] template not found:", templatePath, "cwd:", process.cwd());
+      return NextResponse.json({ error: `テンプレートファイルが見つかりません: ${templateFile}` }, { status: 500 });
     }
 
     const wb = XLSX.readFile(templatePath);

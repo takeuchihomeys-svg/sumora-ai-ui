@@ -1,7 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // テンプレートXLSファイルをサーバーレス関数バンドルに含める（Vercel対応）
+  outputFileTracingIncludes: {
+    "/api/fill-estimate": ["./public/templates/**/*"],
+  },
 };
 
 export default nextConfig;

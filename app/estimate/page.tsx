@@ -247,29 +247,38 @@ export default function EstimatePage() {
   const proratedMgmt = items ? Math.round(((items.managementFee || 0) / (items.moveInMonthDays || 30)) * proratedDays) : 0;
   const proratedWater = items ? Math.round(((items.waterFee || 0) / (items.moveInMonthDays || 30)) * proratedDays) : 0;
 
-  const totalItems = items ? [
-    { label: "保証金", amount: items.hoshokikin },
-    { label: "敷金", amount: items.shikikin },
-    { label: "礼金", amount: items.reikin },
-    { label: `${items.moveInMonth}月分 日割家賃`, amount: proratedRent },
-    { label: `${items.moveInMonth}月分 日割共益費`, amount: proratedMgmt },
-    { label: `${items.moveInMonth}月分 日割水道代`, amount: proratedWater },
-    { label: `${items.nextMonth}月分 家賃`, amount: items.nextRent },
-    { label: `${items.nextMonth}月分 共益費`, amount: items.nextManagementFee },
-    { label: `${items.nextMonth}月分 水道代`, amount: items.nextWaterFee },
-    { label: "仲介手数料", amount: items.commission },
-    { label: "仲介手数料 消費税", amount: items.commissionTax },
-    { label: "駐車場手数料", amount: items.parkingCommission },
-    { label: "駐車場手数料 消費税", amount: items.parkingCommissionTax },
-    { label: "賃貸保証料", amount: items.guarantee },
-    { label: "住宅保険", amount: items.insurance },
-    { label: "鍵交換代", amount: items.keyExchange },
-    { label: "クリーニング代", amount: items.cleaning },
-    { label: "駐車場保証金", amount: items.parkingDeposit },
-    { label: `${items.nextMonth}月分 駐車場代`, amount: items.parkingMonthly },
-    ...items.otherItems.filter((o) => o.amount > 0).map((o) => ({ label: o.item, amount: o.amount })),
-    { label: "割引", amount: -(items.discountAmount || 0), isDiscount: true },
-  ].filter((r) => r.amount !== 0) : [];
+  type PreviewRow = {
+    label: string;
+    amount: number;
+    editKey?: keyof EditableItems;
+    otherIdx?: number;
+    isDiscount?: boolean;
+    isComputed?: boolean;
+  };
+
+  const totalItems: PreviewRow[] = items ? (([
+    { label: "保証金",                              amount: items.hoshokikin,          editKey: "hoshokikin" },
+    { label: "敷金",                               amount: items.shikikin,             editKey: "shikikin" },
+    { label: "礼金",                               amount: items.reikin,               editKey: "reikin" },
+    { label: `${items.moveInMonth}月分 日割家賃`,  amount: proratedRent,               isComputed: true },
+    { label: `${items.moveInMonth}月分 日割共益費`, amount: proratedMgmt,              isComputed: true },
+    { label: `${items.moveInMonth}月分 日割水道代`, amount: proratedWater,             isComputed: true },
+    { label: `${items.nextMonth}月分 家賃`,         amount: items.nextRent,            editKey: "nextRent" },
+    { label: `${items.nextMonth}月分 共益費`,       amount: items.nextManagementFee,   editKey: "nextManagementFee" },
+    { label: `${items.nextMonth}月分 水道代`,       amount: items.nextWaterFee,        editKey: "nextWaterFee" },
+    { label: "仲介手数料",                          amount: items.commission,           editKey: "commission" },
+    { label: "仲介手数料 消費税",                   amount: items.commissionTax,        editKey: "commissionTax" },
+    { label: "駐車場手数料",                        amount: items.parkingCommission,    editKey: "parkingCommission" },
+    { label: "駐車場手数料 消費税",                 amount: items.parkingCommissionTax, editKey: "parkingCommissionTax" },
+    { label: "賃貸保証料",                          amount: items.guarantee,            editKey: "guarantee" },
+    { label: "住宅保険",                            amount: items.insurance,            editKey: "insurance" },
+    { label: "鍵交換代",                            amount: items.keyExchange,          editKey: "keyExchange" },
+    { label: "クリーニング代",                       amount: items.cleaning,             editKey: "cleaning" },
+    { label: "駐車場保証金",                        amount: items.parkingDeposit,       editKey: "parkingDeposit" },
+    { label: `${items.nextMonth}月分 駐車場代`,     amount: items.parkingMonthly,       editKey: "parkingMonthly" },
+    ...items.otherItems.map((o, i) => ({ label: o.item, amount: o.amount, otherIdx: i })),
+    { label: "割引", amount: -(items.discountAmount || 0), editKey: "discountAmount", isDiscount: true },
+  ] as PreviewRow[]).filter((r) => r.amount !== 0)) : [];
 
   const grandTotal = totalItems.reduce((s, r) => s + r.amount, 0);
 
@@ -468,19 +477,49 @@ export default function EstimatePage() {
                   {items.customerName ? `${items.customerName}様` : ""} {items.propertyName}
                 </div>
               </div>
-              <div className="p-4">
+              <div className="px-4 pb-1 pt-2">
+                <p className="text-[10px] text-[#aab] mb-1">金額をタップして直接編集できます　※日割りは自動計算</p>
+              </div>
+              <div className="px-4 pb-4">
                 <table className="w-full text-[12px]">
                   <tbody>
                     {totalItems.map((row, idx) => (
-                      <tr
-                        key={idx}
-                        className={(row as {isDiscount?: boolean}).isDiscount ? "text-red-500 font-bold" : ""}
-                      >
-                        <td className="py-1 pr-2 text-[#54656f]">{row.label}</td>
-                        <td className="py-1 text-right font-semibold text-[#111b21] tabular-nums">
-                          {(row as {isDiscount?: boolean}).isDiscount
-                            ? `▲${fmtYen(Math.abs(row.amount))}`
-                            : fmtYen(row.amount)}
+                      <tr key={idx} className={row.isDiscount ? "text-red-500 font-bold" : ""}>
+                        <td className="py-0.5 pr-2 text-[#54656f] align-middle">{row.label}
+                          {row.isComputed && <span className="ml-1 text-[9px] text-[#b0bec5]">自動</span>}
+                        </td>
+                        <td className="py-0.5 text-right align-middle">
+                          {row.isComputed || row.otherIdx !== undefined ? (
+                            <span className={`font-semibold tabular-nums ${row.isComputed ? "text-[#90a4ae]" : "text-[#111b21]"}`}>
+                              {fmtYen(row.amount)}
+                            </span>
+                          ) : row.isDiscount ? (
+                            <div className="flex items-center justify-end gap-0.5">
+                              <span className="text-[11px]">▲¥</span>
+                              <input
+                                type="number"
+                                min="0"
+                                className="w-24 text-right text-[12px] font-bold border-b border-red-200 focus:border-red-400 outline-none bg-transparent text-red-500 tabular-nums"
+                                value={String(items?.discountAmount || 0)}
+                                onChange={(e) => updateItem("discountAmount", Number(e.target.value) || 0)}
+                              />
+                            </div>
+                          ) : row.editKey ? (
+                            <div className="flex items-center justify-end gap-0.5">
+                              <span className="text-[11px] text-[#90a4ae]">¥</span>
+                              <input
+                                type="number"
+                                min="0"
+                                className="w-24 text-right text-[12px] font-semibold border-b border-[#d1d7db] focus:border-blue-400 outline-none bg-transparent text-[#111b21] tabular-nums"
+                                value={String((items?.[row.editKey] as number) || 0)}
+                                onChange={(e) => updateItem(row.editKey!, Number(e.target.value) || 0)}
+                              />
+                            </div>
+                          ) : (
+                            <span className="font-semibold text-[#111b21] tabular-nums">
+                              {fmtYen(row.amount)}
+                            </span>
+                          )}
                         </td>
                       </tr>
                     ))}
