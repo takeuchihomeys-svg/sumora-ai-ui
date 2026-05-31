@@ -90,18 +90,33 @@
       await sleep(300);
       setVal(getField(28), cond.ward_name);
     } else if (cond.reins_line) {
-      // 沿線モード: 最大3路線を沿線1(47)〜沿線3(61)に設定
-      var lines = cond.reins_lines && cond.reins_lines.length ? cond.reins_lines : [cond.reins_line];
-      var stName = (cond.station_name || "").replace(/駅$/, "").trim();
-      // 沿線1〜3の開始idx: 47, 54, 61（各ブロック7フィールド）
+      // 沿線モード: 駅ごとに正しい沿線を対応させて入力（最大3駅）
       var sensenIdxs = [47, 54, 61];
-      for (var li = 0; li < lines.length && li < 3; li++) {
-        var baseIdx = sensenIdxs[li];
-        setVal(getField(baseIdx), lines[li]);        // 沿線名
-        await sleep(400);
-        if (stName) {
-          setVal(getField(baseIdx + 1), stName);     // 駅名FROM
-          setVal(getField(baseIdx + 2), stName);     // 駅名TO
+      if (cond.reins_station_pairs && cond.reins_station_pairs.length) {
+        // 新方式: 駅-沿線ペアを使用（各駅に正しい沿線を入力）
+        for (var li = 0; li < cond.reins_station_pairs.length && li < 3; li++) {
+          var pair = cond.reins_station_pairs[li];
+          var baseIdx = sensenIdxs[li];
+          setVal(getField(baseIdx), pair.line);
+          await sleep(400);
+          var stName = (pair.station || "").replace(/駅$/, "").trim();
+          if (stName) {
+            setVal(getField(baseIdx + 1), stName);   // 駅名FROM
+            setVal(getField(baseIdx + 2), stName);   // 駅名TO
+          }
+        }
+      } else {
+        // 旧方式フォールバック（reins_station_pairsがない場合）
+        var lines = cond.reins_lines && cond.reins_lines.length ? cond.reins_lines : [cond.reins_line];
+        var stName = (cond.station_name || "").replace(/駅$/, "").trim();
+        for (var li = 0; li < lines.length && li < 3; li++) {
+          var baseIdx = sensenIdxs[li];
+          setVal(getField(baseIdx), lines[li]);
+          await sleep(400);
+          if (stName) {
+            setVal(getField(baseIdx + 1), stName);
+            setVal(getField(baseIdx + 2), stName);
+          }
         }
       }
     }

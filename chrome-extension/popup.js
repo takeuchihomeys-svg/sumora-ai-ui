@@ -2238,20 +2238,22 @@ function openInstructions(siteKey) {
       const areaToks = parseAreaTokens(rawArea);
       const isStationMode = currentAreaMode === "station";
 
-      // 駅モードのみ: 路線・駅名を解決
-      const matchedTok = isStationMode
-        ? areaToks.find(t => STATION_LINE_MAP[t] || STATION_LINE_MAP[t.replace(/[町村]$/, "")])
-        : null;
-      const stationKey = matchedTok
-        ? (STATION_LINE_MAP[matchedTok] ? matchedTok : matchedTok.replace(/[町村]$/, ""))
-        : (areaToks.length === 1 ? areaToks[0] : "");
-      const stationLines = isStationMode ? areaToks.reduce((acc, t) => {
-        const key = STATION_LINE_MAP[t] ? t : t.replace(/[町村]$/, "");
-        (STATION_LINE_MAP[key] || []).forEach(l => { if (!acc.includes(l)) acc.push(l); });
-        return acc;
-      }, []) : [];
-      const reinsLines = stationLines.slice(0, 3).map(l => REINS_LINE_MAP[l] || l);
-      const reinsLine = reinsLines[0] || null;
+      // 駅モードのみ: 駅ごとに沿線を対応させたペア配列を構築（最大3駅）
+      const reinsStationPairs = [];
+      if (isStationMode) {
+        for (const tok of areaToks) {
+          const key = STATION_LINE_MAP[tok] ? tok : tok.replace(/[町村]$/, "");
+          const lines = STATION_LINE_MAP[key] || [];
+          if (lines.length > 0) {
+            const reinsLine = REINS_LINE_MAP[lines[0]] || lines[0];
+            if (!reinsStationPairs.some(p => p.line === reinsLine)) {
+              reinsStationPairs.push({ line: reinsLine, station: key });
+            }
+          }
+          if (reinsStationPairs.length >= 3) break;
+        }
+      }
+      const reinsLine = reinsStationPairs[0]?.line || null;
 
       const adjPet     = document.getElementById("adj-pet")?.checked ?? false;
       const adjRegDate = document.getElementById("adj-reg-date")?.value || "";
@@ -2260,9 +2262,9 @@ function openInstructions(siteKey) {
         walk_minutes:   adjC.walk_minutes || null,
         floor_plan:     adjC.floor_plan || null,
         building_age:   adjC.building_age || null,
-        reins_lines:    isStationMode ? reinsLines : [],
+        reins_station_pairs: isStationMode ? reinsStationPairs : [],
         reins_line:     isStationMode ? reinsLine : null,
-        station_name:   isStationMode ? stationKey : null,
+        station_name:   isStationMode ? (reinsStationPairs[0]?.station || null) : null,
         ward_name:      !isStationMode ? rawArea : null,
         pet_ok:         adjPet,
         reins_reg_date: adjRegDate || null,
