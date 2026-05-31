@@ -92,6 +92,7 @@ type PreviewRow = {
   otherIdx?: number;
   isDiscount?: boolean;
   isComputed?: boolean;
+  alwaysShow?: boolean;
 };
 
 const ACCOUNT_SAVINGS_TEMPLATE: Record<Account, (n: number) => string> = {
@@ -356,8 +357,8 @@ export default function EstimatePage() {
     { label: `${items.nextMonth}月分 家賃`,         amount: items.nextRent,            editKey: "nextRent" },
     { label: `${items.nextMonth}月分 共益費`,       amount: items.nextManagementFee,   editKey: "nextManagementFee" },
     { label: `${items.nextMonth}月分 水道代`,       amount: items.nextWaterFee,        editKey: "nextWaterFee" },
-    { label: "仲介手数料",                          amount: items.commission,           editKey: "commission" },
-    { label: "仲介手数料 消費税",                   amount: items.commissionTax,        editKey: "commissionTax" },
+    { label: "仲介手数料",                          amount: items.commission,           editKey: "commission",    alwaysShow: true },
+    { label: "仲介手数料 消費税",                   amount: items.commissionTax,        editKey: "commissionTax", alwaysShow: true },
     { label: "駐車場手数料",                        amount: items.parkingCommission,    editKey: "parkingCommission" },
     { label: "駐車場手数料 消費税",                 amount: items.parkingCommissionTax, editKey: "parkingCommissionTax" },
     { label: "賃貸保証料",                          amount: items.guarantee,            editKey: "guarantee" },
@@ -367,7 +368,7 @@ export default function EstimatePage() {
     { label: "駐車場保証金",                        amount: items.parkingDeposit,       editKey: "parkingDeposit" },
     { label: `${items.nextMonth}月分 駐車場代`,     amount: items.parkingMonthly,       editKey: "parkingMonthly" },
     ...items.otherItems.map((o, i): PreviewRow => ({ label: o.item, amount: o.amount, otherIdx: i })),
-  ] as PreviewRow[]).filter((r) => r.amount !== 0) : [];
+  ] as PreviewRow[]).filter((r) => r.amount !== 0 || r.alwaysShow) : [];
 
   // 特別割引は 0 でも常に表示
   const discountRow: PreviewRow = {
