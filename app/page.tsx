@@ -1387,12 +1387,17 @@ export default function Home() {
     setIsPulling(false);
   };
 
-  // チャット画面の左スワイプで一覧に戻る
+  // チャット画面：左端エッジから右スワイプで一覧に戻る（LINEと同じ挙動）
   const onChatTouchStart = (e: React.TouchEvent) => {
-    // テキスト入力・カーソル操作中はスワイプを無効化（LINEと同じ挙動）
     const target = e.target as HTMLElement;
     const tag = target.tagName;
+    // テキスト入力中は無効
     if (tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable) {
+      chatSwipeStart.current = null;
+      return;
+    }
+    // 左端50px以内から始まるタッチのみ追跡（iOS的エッジスワイプ）
+    if (e.touches[0].clientX > 50) {
       chatSwipeStart.current = null;
       return;
     }
@@ -1403,14 +1408,14 @@ export default function Home() {
     if (!chatSwipeStart.current) return;
     const dx = e.touches[0].clientX - chatSwipeStart.current.x;
     const dy = e.touches[0].clientY - chatSwipeStart.current.y;
-    // 水平方向が支配的なときだけ追跡（縦スクロールと競合しない）
-    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 10) {
+    // 右スワイプかつ水平が支配的なときだけ追跡
+    if (dx > 0 && Math.abs(dx) > Math.abs(dy) && dx > 5) {
       setChatSwipeDelta(dx);
     }
   };
   const onChatTouchEnd = () => {
-    // 左に80px以上スワイプ → 一覧へ戻る
-    if (chatSwipeDelta < -80) {
+    // 右に80px以上スワイプ → 一覧へ戻る
+    if (chatSwipeDelta > 80) {
       setMobileView("list");
     }
     chatSwipeStart.current = null;
@@ -1675,7 +1680,7 @@ export default function Home() {
           } min-w-0 flex-1 flex-col md:flex`}
           style={{
             background: "linear-gradient(180deg, #e8f4fd 0%, #f0f8ff 50%, #f8fbff 100%)",
-            transform: chatSwipeDelta < 0 ? `translateX(${Math.max(chatSwipeDelta * 0.3, -60)}px)` : "none",
+            transform: chatSwipeDelta > 0 ? `translateX(${Math.min(chatSwipeDelta * 0.7, 200)}px)` : "none",
             transition: chatSwipeDelta === 0 ? "transform 0.25s cubic-bezier(0.25,0.46,0.45,0.94)" : "none",
             touchAction: "pan-y",
           }}
