@@ -13,6 +13,13 @@ const ACCOUNT_CONFIG: Record<Account, { label: string; grad: string; accent: str
   giga:   { label: "ギガ賃貸", grad: "linear-gradient(135deg,#1b5e20,#2e7d32,#43a047)", accent: "#1b5e20" },
 };
 
+// アカウント別仲介手数料デフォルト
+const ACCOUNT_COMMISSION: Record<Account, { commission: number; commissionTax: number }> = {
+  sumora: { commission: 2980, commissionTax: 298 },
+  ieyasu: { commission: 0,    commissionTax: 0 },
+  giga:   { commission: 0,    commissionTax: 0 },
+};
+
 type EditableItems = Omit<ExtractedEstimate, "otherItems"> & {
   otherItems: Array<{ item: string; amount: number }>;
   nextRent: number;
@@ -78,17 +85,42 @@ const ITEM_CONFIG: Array<{
 const TEXT_KEYS = new Set(["propertyName", "roomNumber", "customerName", "assignee", "moveInDate", "discountNote", "supplementaryNotes"]);
 const GROUP_ORDER = ["基本情報", "入居情報", "賃料", "初期費用", "駐車場", "割引", "翌月分"];
 
-function toEditable(e: ExtractedEstimate, moveInDate?: string): EditableItems {
+function toEditable(e: ExtractedEstimate, account: Account = "sumora", moveInDate?: string): EditableItems {
   const date = moveInDate || e.moveInDate || "";
   const { nextMonth, nextYear } = calcNext(date);
+  const commDefaults = ACCOUNT_COMMISSION[account];
   return {
     ...e,
     moveInDate: date,
+    // AIが0を返した場合はアカウントのデフォルト値を使用
+    commission: e.commission !== 0 ? e.commission : commDefaults.commission,
+    commissionTax: e.commissionTax !== 0 ? e.commissionTax : commDefaults.commissionTax,
     nextRent: e.rent,
     nextManagementFee: e.managementFee,
     nextWaterFee: e.waterFee,
     nextMonth,
     nextYear,
+  };
+}
+
+// アカウントのデフォルト値で空の EditableItems を生成（手動入力用）
+function makeBlankItems(account: Account): EditableItems {
+  const { nextMonth, nextYear } = calcNext("");
+  const commDefaults = ACCOUNT_COMMISSION[account];
+  return {
+    propertyName: "", roomNumber: "", customerName: "", assignee: "",
+    moveInDate: "", moveInMonth: 0, moveInDay: 1, moveInMonthDays: 30,
+    rent: 0, managementFee: 0, waterFee: 0,
+    shikikin: 0, reikin: 0, hoshokikin: 0,
+    commission: commDefaults.commission,
+    commissionTax: commDefaults.commissionTax,
+    parkingCommission: 0, parkingCommissionTax: 0,
+    guarantee: 0, insurance: 0, keyExchange: 0, cleaning: 0,
+    parkingDeposit: 0, parkingMonthly: 0,
+    otherItems: [],
+    discountAmount: 0, discountNote: "", supplementaryNotes: "",
+    nextRent: 0, nextManagementFee: 0, nextWaterFee: 0,
+    nextMonth, nextYear,
   };
 }
 
@@ -169,7 +201,7 @@ export default function EstimatePage() {
         setExtractError(data.error || "読み取りに失敗しました");
         return;
       }
-      setItems(toEditable(data.extracted));
+      setItems(toEditable(data.extracted, account));
       setStep("review");
       setTimeout(() => reviewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
     } catch {
@@ -256,7 +288,7 @@ export default function EstimatePage() {
     isComputed?: boolean;
   };
 
-  const totalItems: PreviewRow[] = items ? (([
+  const costRows: PreviewRow[] = items ? ([
     { label: "保証金",                              amount: items.hoshokikin,          editKey: "hoshokikin" },
     { label: "敷金",                               amount: items.shikikin,             editKey: "shikikin" },
     { label: "礼金",                               amount: items.reikin,               editKey: "reikin" },
@@ -276,9 +308,17 @@ export default function EstimatePage() {
     { label: "クリーニング代",                       amount: items.cleaning,             editKey: "cleaning" },
     { label: "駐車場保証金",                        amount: items.parkingDeposit,       editKey: "parkingDeposit" },
     { label: `${items.nextMonth}月分 駐車場代`,     amount: items.parkingMonthly,       editKey: "parkingMonthly" },
-    ...items.otherItems.map((o, i) => ({ label: o.item, amount: o.amount, otherIdx: i })),
-    { label: "割引", amount: -(items.discountAmount || 0), editKey: "discountAmount", isDiscount: true },
-  ] as PreviewRow[]).filter((r) => r.amount !== 0)) : [];
+    ...items.otherItems.map((o, i): PreviewRow => ({ label: o.item, amount: o.amount, otherIdx: i })),
+  ] as PreviewRow[]).filter((r) => r.amount !== 0) : [];
+
+  // 特別割引は 0 でも常に表示
+  const discountRow: PreviewRow = {
+    label: "特別割引",
+    amount: -(items?.discountAmount || 0),
+    editKey: "discountAmount",
+    isDiscount: true,
+  };
+  const totalItems: PreviewRow[] = items ? [...costRows, discountRow] : [];
 
   const grandTotal = totalItems.reduce((s, r) => s + r.amount, 0);
 
@@ -317,7 +357,11 @@ export default function EstimatePage() {
           {(["sumora", "ieyasu", "giga"] as Account[]).map((a) => (
             <button
               key={a}
-              onClick={() => { setAccount(a); setItems(null); setStep("input"); }}
+              onClick={() => {
+                setAccount(a);
+                setItems(null);
+                setStep("input");
+              }}
               className="flex-1 rounded-full py-1.5 text-[13px] font-bold transition"
               style={
                 account === a
@@ -459,6 +503,19 @@ export default function EstimatePage() {
               ) : (
                 "🔍 AIで読み取る"
               )}
+            </button>
+
+            {/* 手動入力ボタン */}
+            <button
+              onClick={() => {
+                setItems(makeBlankItems(account));
+                setStep("review");
+                setTimeout(() => reviewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
+              }}
+              className="w-full rounded-full py-3 text-[13px] font-bold border-2 flex items-center justify-center gap-2"
+              style={{ borderColor: cfg.accent, color: cfg.accent, background: "white" }}
+            >
+              ✏️ 手動で入力する（画像なし）
             </button>
 
             <div className="h-4" />

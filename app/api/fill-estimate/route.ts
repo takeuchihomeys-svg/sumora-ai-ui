@@ -20,12 +20,39 @@ const ACCOUNT_LABELS: Record<Account, string> = {
 function setCellValue(ws: XLSX.WorkSheet, cellAddr: string, value: string | number) {
   const type = typeof value === "number" ? "n" : "s";
   ws[cellAddr] = { v: value, t: type };
+
+  // worksheet の !ref を拡張して書き込んだセルを確実に含める
+  if (ws["!ref"]) {
+    const range = XLSX.utils.decode_range(ws["!ref"]);
+    const cell = XLSX.utils.decode_cell(cellAddr);
+    range.s.r = Math.min(range.s.r, cell.r);
+    range.s.c = Math.min(range.s.c, cell.c);
+    range.e.r = Math.max(range.e.r, cell.r);
+    range.e.c = Math.max(range.e.c, cell.c);
+    ws["!ref"] = XLSX.utils.encode_range(range);
+  } else {
+    ws["!ref"] = `${cellAddr}:${cellAddr}`;
+  }
 }
 
 function calcProratedAmount(amount: number, moveInDay: number, monthDays: number): number {
   if (!amount || !moveInDay || !monthDays) return 0;
   const days = monthDays - moveInDay + 1;
   return Math.round((amount / monthDays) * days);
+}
+
+// テンプレートファイルパスを複数候補から探す（Vercel対応）
+function findTemplatePath(templateFile: string): string | null {
+  const candidates = [
+    path.join(process.cwd(), "public", "templates", templateFile),
+    path.join(process.cwd(), ".next", "server", "public", "templates", templateFile),
+    path.join("/var/task", "public", "templates", templateFile),
+    path.join("/var/task", ".next", "server", "public", "templates", templateFile),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
 }
 
 export async function POST(req: NextRequest) {
@@ -70,14 +97,34 @@ export async function POST(req: NextRequest) {
 
     const { account = "sumora", items: d } = body;
     const templateFile = TEMPLATE_FILES[account] || TEMPLATE_FILES.sumora;
-    const templatePath = path.join(process.cwd(), "public", "templates", templateFile);
 
-    if (!fs.existsSync(templatePath)) {
-      console.error("[fill-estimate] template not found:", templatePath, "cwd:", process.cwd());
-      return NextResponse.json({ error: `テンプレートファイルが見つかりません: ${templateFile}` }, { status: 500 });
+    const templatePath = findTemplatePath(templateFile);
+    if (!templatePath) {
+      const cwd = process.cwd();
+      const tried = [
+        path.join(cwd, "public", "templates", templateFile),
+        path.join("/var/task", "public", "templates", templateFile),
+      ];
+      console.error("[fill-estimate] template not found. cwd:", cwd, "tried:", tried);
+      return NextResponse.json(
+        { error: `テンプレートが見つかりません（${templateFile}）。cwd=${cwd}` },
+        { status: 500 }
+      );
     }
 
-    const wb = XLSX.readFile(templatePath);
+    // テンプレート読み込み
+    let wb: XLSX.WorkBook;
+    try {
+      const buf = fs.readFileSync(templatePath);
+      wb = XLSX.read(buf, { type: "buffer" });
+    } catch (readErr) {
+      console.error("[fill-estimate] XLSX read error:", readErr);
+      return NextResponse.json(
+        { error: `テンプレート読み込みエラー: ${readErr instanceof Error ? readErr.message : String(readErr)}` },
+        { status: 500 }
+      );
+    }
+
     const sheetName = wb.SheetNames[0];
     const ws = wb.Sheets[sheetName];
 
@@ -138,27 +185,46 @@ export async function POST(req: NextRequest) {
     setCellValue(ws, "B6", d.hoshokikin || 0);
     setCellValue(ws, "B7", d.shikikin || 0);
 
-    // 保証金・敷金（右側）
+    // 保証金（右側）
     setCellValue(ws, "H4", d.hoshokikin || 0);
 
     // 駐車場保証金
     setCellValue(ws, "B18", d.parkingDeposit || 0);
     setCellValue(ws, "B19", d.parkingMonthly || 0);
 
+    // 特別割引
+    if (d.discountAmount) {
+      setCellValue(ws, "B30", -(d.discountAmount));
+      if (d.discountNote) setCellValue(ws, "A30", `特別割引: ${d.discountNote}`);
+    }
+
+    // Excel 書き出し
+    let buf: Buffer;
+    try {
+      buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+    } catch (writeErr) {
+      console.error("[fill-estimate] XLSX write error:", writeErr);
+      return NextResponse.json(
+        { error: `Excel書き出しエラー: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}` },
+        { status: 500 }
+      );
+    }
+
     const accountLabel = ACCOUNT_LABELS[account];
     const customerLabel = d.customerName ? `${d.customerName}様` : "見積書";
     const fileName = `${accountLabel}見積書_${customerLabel}.xlsx`;
 
-    const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-
-    return new NextResponse(buf, {
+    return new NextResponse(buf as unknown as BodyInit, {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`,
       },
     });
   } catch (err) {
-    console.error("[fill-estimate]", err);
-    return NextResponse.json({ error: "見積書の作成に失敗しました" }, { status: 500 });
+    console.error("[fill-estimate] unexpected error:", err);
+    return NextResponse.json(
+      { error: `見積書の作成に失敗しました: ${err instanceof Error ? err.message : String(err)}` },
+      { status: 500 }
+    );
   }
 }
