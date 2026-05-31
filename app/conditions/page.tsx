@@ -40,6 +40,7 @@ interface Customer {
   initial_cost_limit?: number;
   building_age?: number;
   other_requests?: string;
+  additional_conditions?: string;
   created_at: string;
   updated_at: string;
 }
@@ -82,6 +83,7 @@ const EMPTY_FORM: Omit<Customer, "id" | "created_at" | "updated_at"> = {
   initial_cost_limit: undefined,
   building_age: undefined,
   other_requests: "",
+  additional_conditions: "",
 };
 
 function needsActionToday(c: Customer): boolean {
@@ -130,6 +132,7 @@ export default function ConditionsPage() {
   const [error, setError] = useState<string | null>(null);
   const [dbReady, setDbReady] = useState(true);
   const [markingId, setMarkingId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   // 紐付け済み property_customer_id セット
   const [linkedIds, setLinkedIds] = useState<Set<string>>(new Set());
@@ -201,6 +204,7 @@ export default function ConditionsPage() {
       initial_cost_limit: c.initial_cost_limit,
       building_age: c.building_age,
       other_requests: c.other_requests ?? "",
+      additional_conditions: c.additional_conditions ?? "",
     });
     setError(null);
     setFormatText("");
@@ -312,8 +316,24 @@ export default function ConditionsPage() {
     return `${Math.floor(min! / 10000)}万円〜`;
   }
 
+  const q = searchQuery.trim().toLowerCase();
+  function matchesSearch(c: Customer): boolean {
+    if (!q) return true;
+    return [
+      c.customer_name,
+      c.desired_area,
+      c.area,
+      c.preferences,
+      c.ng_points,
+      c.other_requests,
+      c.additional_conditions,
+      c.floor_plan,
+      c.layout,
+      c.move_in_time,
+    ].some((v) => v && v.toLowerCase().includes(q));
+  }
   const actionNeeded = customers.filter(needsActionToday);
-  const listFiltered = listFilter === "all" ? customers : customers.filter((c) => c.status === listFilter);
+  const listFiltered = (listFilter === "all" ? customers : customers.filter((c) => c.status === listFilter)).filter(matchesSearch);
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
@@ -479,12 +499,25 @@ export default function ConditionsPage() {
                 })}
               </div>
 
+              {/* 検索バー */}
+              <div className="px-4 pb-2">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="名前・エリア・条件で検索..."
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:border-blue-400 focus:ring-1 focus:ring-blue-400 outline-none"
+                />
+              </div>
+
               {listFiltered.length === 0 ? (
                 <div className="text-center py-16">
-                  <p className="text-slate-400 text-sm">お客様がいません</p>
-                  <button onClick={openAdd} className="mt-4 text-blue-600 text-sm underline">
-                    ＋ 新規追加
-                  </button>
+                  <p className="text-slate-400 text-sm">{q ? "該当するお客様がいません" : "お客様がいません"}</p>
+                  {!q && (
+                    <button onClick={openAdd} className="mt-4 text-blue-600 text-sm underline">
+                      ＋ 新規追加
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="bg-white border-y border-slate-100 divide-y divide-slate-50">
@@ -600,6 +633,14 @@ export default function ConditionsPage() {
                               </div>
                             )}
 
+                            {/* 追加条件（LINEで届いた追加メッセージ） */}
+                            {c.additional_conditions && (
+                              <div className="pt-1 border-t border-slate-200">
+                                <p className="text-[10px] text-slate-400 font-medium mb-1">追加条件</p>
+                                <p className="text-xs text-slate-700 whitespace-pre-wrap">{c.additional_conditions}</p>
+                              </div>
+                            )}
+
                             {/* 編集ボタン */}
                             <button
                               onClick={(e) => { e.stopPropagation(); openEdit(c); }}
@@ -676,7 +717,13 @@ export default function ConditionsPage() {
                       )}
                     </div>
                   )}
-                  {gridItems.length === 0 && !qt.preferences && !qt.ng_points && !qt.other_requests && (
+                  {qt.additional_conditions && (
+                    <div className="pt-1.5 border-t border-slate-200">
+                      <p className="text-[10px] text-slate-400 font-medium mb-0.5">追加条件</p>
+                      <p className="text-xs text-slate-700 whitespace-pre-wrap">{qt.additional_conditions}</p>
+                    </div>
+                  )}
+                  {gridItems.length === 0 && !qt.preferences && !qt.ng_points && !qt.other_requests && !qt.additional_conditions && (
                     <p className="text-xs text-slate-400">条件が入力されていません</p>
                   )}
                 </div>
@@ -881,6 +928,10 @@ export default function ConditionsPage() {
 
                 <Field label="その他要望">
                   <textarea className={INPUT + " h-16 resize-none"} value={form.other_requests ?? ""} onChange={(e) => setForm({ ...form, other_requests: e.target.value })} placeholder="例：ペット可・駐車場あり" />
+                </Field>
+
+                <Field label="追加条件（LINEで届いた追加メッセージ）">
+                  <textarea className={INPUT + " h-24 resize-none"} value={form.additional_conditions ?? ""} onChange={(e) => setForm({ ...form, additional_conditions: e.target.value })} placeholder="LINEから届いた追加条件が自動で保存されます" />
                 </Field>
               </div>
 

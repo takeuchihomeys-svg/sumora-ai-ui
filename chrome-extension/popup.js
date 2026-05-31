@@ -1737,6 +1737,40 @@ function openSiteView(customer) {
     ? `<div class="cond-chips">${chips.map((ch) => `<span class="cond-chip">${esc(ch)}</span>`).join("")}</div>`
     : `<div class="cond-empty">物件条件が未登録です。先に物件条件ページで登録してください。</div>`;
 
+  // 追加条件の表示・最新条件ボタン
+  const addWrap = document.getElementById("additional-cond-wrap");
+  const addText = document.getElementById("additional-cond-text");
+  const mergeBtn = document.getElementById("merge-cond-btn");
+  if (customer.additional_conditions) {
+    addText.textContent = "追加条件: " + customer.additional_conditions.slice(0, 100) + (customer.additional_conditions.length > 100 ? "…" : "");
+    addWrap.style.display = "block";
+    mergeBtn.onclick = async () => {
+      mergeBtn.textContent = "AIが統合中...";
+      mergeBtn.disabled = true;
+      try {
+        const res = await fetch(API_BASE + "/api/merge-conditions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ customer }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const merged = data.merged;
+          // selectedCustomer を merged の値で上書き
+          selectedCustomer = { ...customer, ...merged };
+          // adj フォームも更新
+          if (document.getElementById("adj-area")) preloadAdjForm(selectedCustomer);
+        }
+      } catch (e) {
+        console.error("[AX] merge-conditions error:", e);
+      }
+      mergeBtn.textContent = "最新条件で検索";
+      mergeBtn.disabled = false;
+    };
+  } else {
+    addWrap.style.display = "none";
+  }
+
   showView("view-site");
 }
 

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import webpush from "web-push";
+import Anthropic from "@anthropic-ai/sdk";
+
+const anthropic = new Anthropic();
 
 if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
   webpush.setVapidDetails(
@@ -53,6 +56,90 @@ async function resolveAccountByLineUserId(lineUserId: string): Promise<string | 
     } catch { /* skip */ }
   }
   return null;
+}
+
+// フォーマットメッセージ検知（①入居時期 などのキーワードを含む長文）
+function isFormatMessage(text: string): boolean {
+  if (text.length < 30) return false;
+  const hasNumbered = text.includes("①") || text.includes("②") || text.includes("③");
+  const hasKeyword =
+    text.includes("入居時期") ||
+    text.includes("希望家賃") ||
+    (text.includes("家賃") && text.includes("地域")) ||
+    (text.includes("家賃") && text.includes("間取"));
+  return hasNumbered || hasKeyword;
+}
+
+// Anthropic でフォーマットテキストを条件JSONに変換
+async function parseConditionsWithAI(text: string): Promise<Record<string, unknown> | null> {
+  try {
+    const msg = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1024,
+      messages: [{
+        role: "user",
+        content: `不動産検索条件をJSONで返してください。数値は円単位。不明はnull。
+返すJSONのみ（説明不要）:
+{"move_in_time":null,"rent_min":null,"rent_max":null,"desired_area":null,"walk_minutes":null,"floor_plan":null,"initial_cost_limit":null,"building_age":null,"other_requests":null}
+
+テキスト:
+${text}`,
+      }],
+    });
+    const raw = msg.content[0].type === "text" ? msg.content[0].text : "";
+    const match = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim().match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    return JSON.parse(match[0]);
+  } catch {
+    return null;
+  }
+}
+
+// LINEフォーマットが届いたとき: property_customer を自動作成・紐付け or 追加条件を保存
+async function handleFormatMessage(conversationId: string, msgText: string): Promise<void> {
+  const { data: conv } = await supabase
+    .from("conversations")
+    .select("id, customer_name, property_customer_id, line_user_id, account")
+    .eq("id", conversationId)
+    .single();
+  if (!conv) return;
+
+  if (!conv.property_customer_id) {
+    // 初回フォーマット: 条件解析 → 新規 property_customer 作成 → 紐付け
+    const conditions = await parseConditionsWithAI(msgText);
+    const { data: newCustomer } = await supabase
+      .from("property_customers")
+      .insert({
+        customer_name: conv.customer_name || "名前未設定",
+        line_user_id: conv.line_user_id || null,
+        account: conv.account || null,
+        status: "new_inquiry",
+        format_received: true,
+        ...(conditions || {}),
+      })
+      .select()
+      .single();
+    if (newCustomer) {
+      await supabase
+        .from("conversations")
+        .update({ property_customer_id: (newCustomer as { id: string }).id })
+        .eq("id", conversationId);
+    }
+  } else {
+    // 追加フォーマット: additional_conditions に追記
+    const { data: existing } = await supabase
+      .from("property_customers")
+      .select("additional_conditions")
+      .eq("id", conv.property_customer_id)
+      .single();
+    const prev = (existing as { additional_conditions?: string } | null)?.additional_conditions || "";
+    const ts = new Date().toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" });
+    const updated = prev ? `${prev}\n\n[${ts}]\n${msgText}` : `[${ts}]\n${msgText}`;
+    await supabase
+      .from("property_customers")
+      .update({ additional_conditions: updated })
+      .eq("id", conv.property_customer_id);
+  }
 }
 
 // Web Push: 全登録端末に通知を送る
@@ -248,6 +335,11 @@ export async function POST(req: NextRequest) {
     if (error) {
       console.error("sync messages error:", error);
       return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    // フォーマットメッセージ検知 → property_customer 自動作成・追加条件保存
+    if (record.sender === "customer" && isFormatMessage(msgText)) {
+      handleFormatMessage(String(record.conversation_id), msgText).catch(() => {});
     }
 
     // お客さんのメッセージが届いたら Web Push 通知を送る

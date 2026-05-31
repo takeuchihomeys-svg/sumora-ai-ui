@@ -241,6 +241,9 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 );
 
 ALTER TABLE push_subscriptions DISABLE ROW LEVEL SECURITY;
+
+-- 追加条件カラム（LINE追加メッセージを蓄積）
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS additional_conditions TEXT;
 `.trim();
 
 export async function GET() {
