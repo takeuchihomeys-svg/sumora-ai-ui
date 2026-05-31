@@ -286,6 +286,7 @@ export default function Home() {
   const pendingAixTypeRef = useRef<AixActionType | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const justOpenedRef = useRef(false); // 会話を開いた直後フラグ（メッセージ取得後に最下部強制スクロール）
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const notifiedCalendarIds = useRef<Set<string>>(new Set());
@@ -505,12 +506,12 @@ export default function Home() {
       });
   }, [selectedId]);
 
-  // 会話を開いたとき：AI検索のマッチメッセージがあればそこへ、なければ最下部へ
+  // 会話を開いたとき：最下部スクロールを予約（メッセージ取得完了後に実行）
   useEffect(() => {
     if (!selectedId) return;
     const matchedMsgIds = aiSearchMessageIds[selectedId] || [];
     if (matchedMsgIds.length > 0) {
-      // 少し待ってからスクロール（DOM描画待ち）
+      // AI検索マッチがあればそのメッセージへ（フラグは立てない）
       setTimeout(() => {
         const el = document.getElementById(`msg-${matchedMsgIds[0]}`);
         if (el) {
@@ -520,16 +521,23 @@ export default function Home() {
         }
       }, 100);
     } else {
-      if (bottomRef.current) {
-        bottomRef.current.scrollIntoView({ behavior: "instant" });
-      }
+      // 通常：メッセージ取得後にconversations更新→Effect3が最下部へ強制スクロール
+      justOpenedRef.current = true;
     }
-  }, [selectedId]);
+  }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 新しいメッセージが届いたとき：下部付近にいる場合のみスクロール（過去トーク閲覧中は邪魔しない）
+  // メッセージ更新時スクロール：会話を開いた直後は必ず最下部、それ以外は下部付近のみ
   useEffect(() => {
+    if (!bottomRef.current) return;
+    if (justOpenedRef.current) {
+      // 会話を開いた直後（メッセージ取得完了）：常に最下部へ
+      justOpenedRef.current = false;
+      bottomRef.current.scrollIntoView({ behavior: "instant" });
+      return;
+    }
+    // リアルタイム受信：下部付近にいるときだけスクロール（過去トーク閲覧中は邪魔しない）
     const el = chatScrollRef.current;
-    if (!el || !bottomRef.current) return;
+    if (!el) return;
     const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     if (distFromBottom < 150) {
       bottomRef.current.scrollIntoView({ behavior: "smooth" });
