@@ -1638,7 +1638,7 @@ export default function Home() {
                             const acct = getAccountMeta(conversation.account);
                             return (
                               <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${acct.color}`}>
-                                {acct.icon} {acct.label}
+                                {acct.label}
                               </span>
                             );
                           })()}
