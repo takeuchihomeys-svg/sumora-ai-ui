@@ -291,6 +291,7 @@ export default function Home() {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const notifiedCalendarIds = useRef<Set<string>>(new Set());
   const aiDraftRef = useRef<string>("");
+  const replyTargetCustomerMsgRef = useRef<string>("");
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conversationsRef = useRef<Conversation[]>([]);
   const [navHidden, setNavHidden] = useState(false);
@@ -750,6 +751,8 @@ export default function Home() {
     setShowAixMenu(false);
     setSelectedImageFiles([]);
     setSelectedImagePreviews([]);
+    aiDraftRef.current = "";
+    replyTargetCustomerMsgRef.current = "";
   }, [selectedConversation.id]);
 
   // replyDraftが変わったらtextareaの高さを自動調整
@@ -876,6 +879,7 @@ export default function Home() {
 
       const finalDraft = fullText.trim();
       aiDraftRef.current = finalDraft;
+      replyTargetCustomerMsgRef.current = targetMessage;
       setReplyDraft(finalDraft);
 
       // 生成完了後にテキストエリアへフォーカスしてスクロール
@@ -1190,7 +1194,8 @@ export default function Home() {
 
       // 学習データ保存（テキスト送信時のみ・バックグラウンド）
       if (textToSend) {
-        const lastCustomerMsg = latestCustomerMessage;
+        // AI生成時はgenerate時点の顧客メッセージを使う（その後に新メッセージが届いても正しい対応先を記録）
+        const lastCustomerMsg = replyTargetCustomerMsgRef.current || latestCustomerMessage;
         if (lastCustomerMsg) {
           fetch("/api/save-reply-example", {
             method: "POST",
@@ -1204,6 +1209,7 @@ export default function Home() {
           }).catch(() => {});
         }
         aiDraftRef.current = "";
+        replyTargetCustomerMsgRef.current = "";
       }
 
       setReplyDraft("");
