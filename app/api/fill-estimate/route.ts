@@ -69,6 +69,15 @@ function setCellValue(ws: XLSX.WorkSheet, cellAddr: string, value: string | numb
   }
 }
 
+// 数式セルのキャッシュ値だけ更新（数式文字列は保持）
+function updateCachedValue(ws: XLSX.WorkSheet, cellAddr: string, value: number) {
+  if (ws[cellAddr]) {
+    ws[cellAddr].v = value;
+  } else {
+    ws[cellAddr] = { v: value, t: "n" };
+  }
+}
+
 function findTemplatePath(templateFile: string): string | null {
   const candidates = [
     path.join(process.cwd(), "public", "templates", templateFile),
@@ -82,11 +91,11 @@ function findTemplatePath(templateFile: string): string | null {
   return null;
 }
 
-function fillEstimateSheet(ws: XLSX.WorkSheet, d: ItemData): void {
+function fillEstimateSheet(ws: XLSX.WorkSheet, d: ItemData, account: Account): void {
   // ── 物件情報（右上）
   setCellValue(ws, "M8", d.propertyName || "");
   setCellValue(ws, "N9", d.roomNumber || "");
-  setCellValue(ws, "M10", d.customerName || ""); // "入居者" ラベルと "様" の間
+  setCellValue(ws, "M10", d.customerName || "");
 
   // ── 契約条件（右側列 L〜N）
   setCellValue(ws, "M12", d.hoshokikin || 0);    // 保証金
@@ -118,7 +127,7 @@ function fillEstimateSheet(ws: XLSX.WorkSheet, d: ItemData): void {
   const proratedMgmt = prorated(d.managementFee);
   const proratedWater = prorated(d.waterFee);
 
-  // ── 動的項目（行15〜24、空き行に順番に書き込む）
+  // ── 動的項目（行15〜24、テンプレートの空き行に順番に書き込む）
   type DynItem = { label: string; amount: number };
   const dynamicItems: DynItem[] = [];
 
@@ -144,7 +153,7 @@ function fillEstimateSheet(ws: XLSX.WorkSheet, d: ItemData): void {
     const row = 15 + i;
     setCellValue(ws, `B${row}`, dynamicItems[i].label);
     setCellValue(ws, `E${row}`, dynamicItems[i].amount);
-    setCellValue(ws, `F${row}`, dynamicItems[i].amount); // 一般も同額
+    setCellValue(ws, `F${row}`, dynamicItems[i].amount);
   }
 
   // ── 固定下段費用（E=スモラ実費、F=一般費用）
@@ -162,10 +171,56 @@ function fillEstimateSheet(ws: XLSX.WorkSheet, d: ItemData): void {
   setCellValue(ws, "F29", Math.round((d.rent || 0) * 0.1));
 
   // スモ割 / イエヤス割（ラベルはテンプレートに記載済み）
-  setCellValue(ws, "E30", d.discountAmount ? -(d.discountAmount) : 0);
+  const discountVal = d.discountAmount ? -(d.discountAmount) : 0;
+  setCellValue(ws, "E30", discountVal);
 
-  // E32(SUM)・F32(SUM)・E35(=E30)・E37(差引請求金額)・E8 は触らない
-  // → Excelが開いたときに自動再計算される
+  // ── 数式セルのキャッシュ値を更新
+  // （保護ビューで開いた際も正しい値を表示するため）
+
+  // E32 = SUM(E10:E31)
+  let e32 = 0;
+  e32 += (d.shikikin || 0);        // E11
+  e32 += (d.reikin || 0);          // E12
+  e32 += nextRent;                   // E13
+  e32 += nextMgmt;                   // E14
+  for (const item of dynamicItems) e32 += item.amount; // E15-E24
+  e32 += (d.cleaning || 0);         // E25
+  e32 += (d.guarantee || 0);        // E26
+  e32 += (d.insurance || 0);        // E27
+  e32 += (d.commission || 0);       // E28
+  e32 += (d.commissionTax || 0);    // E29
+  e32 += discountVal;                // E30
+
+  // F32 = SUM(F11:J31)
+  let f32 = 0;
+  f32 += (d.shikikin || 0);         // F11
+  f32 += (d.reikin || 0);           // F12
+  f32 += nextRent;                   // F13
+  f32 += nextMgmt;                   // F14
+  for (const item of dynamicItems) f32 += item.amount; // F15-F24
+  f32 += (d.cleaning || 0);         // F25
+  f32 += (d.guarantee || 0);        // F26
+  f32 += (d.insurance || 0);        // F27
+  f32 += (d.rent || 0);             // F28（一般手数料 = 1ヶ月分家賃）
+  f32 += Math.round((d.rent || 0) * 0.1); // F29
+
+  // E35 = E30（スモ割）
+  const e35 = discountVal;
+
+  // E37 = 差引請求金額
+  // スモラ/ギガ: E32-E34-E36 → E34=E36=0 なので E32
+  // イエヤス: E32-E35-E36 → E36=0 なので E32-E35
+  const e37 = account === "ieyasu" ? e32 - e35 : e32;
+
+  // E8 = 見積書上部に表示するメイン金額
+  // スモラ/ギガ: E37、イエヤス: E32
+  const e8 = account === "ieyasu" ? e32 : e37;
+
+  updateCachedValue(ws, "E32", e32);
+  updateCachedValue(ws, "F32", f32);
+  updateCachedValue(ws, "E35", e35);
+  updateCachedValue(ws, "E37", e37);
+  updateCachedValue(ws, "E8",  e8);
 }
 
 export async function POST(req: NextRequest) {
@@ -181,11 +236,7 @@ export async function POST(req: NextRequest) {
     const templatePath = findTemplatePath(templateFile);
     if (!templatePath) {
       const cwd = process.cwd();
-      const tried = [
-        path.join(cwd, "public", "templates", templateFile),
-        path.join("/var/task", "public", "templates", templateFile),
-      ];
-      console.error("[fill-estimate] template not found. cwd:", cwd, "tried:", tried);
+      console.error("[fill-estimate] template not found. cwd:", cwd);
       return NextResponse.json(
         { error: `テンプレートが見つかりません（${templateFile}）。cwd=${cwd}` },
         { status: 500 }
@@ -214,7 +265,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    fillEstimateSheet(ws, d);
+    fillEstimateSheet(ws, d, account);
+
+    // 見積書シート以外を削除（入力画面・請求書・広告料請求書等）
+    for (const name of wb.SheetNames.filter((n) => n !== sheetName)) {
+      delete wb.Sheets[name];
+    }
+    wb.SheetNames = [sheetName];
 
     let buf: Buffer;
     try {
