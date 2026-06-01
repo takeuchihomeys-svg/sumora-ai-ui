@@ -89,46 +89,6 @@ function getGroupMeta(statusKey: string) {
   return getDetailStatusMeta(statusKey);
 }
 
-// DISPLAY_GROUPS は後方互換のため残す（フィルター処理で使用）
-const DISPLAY_GROUPS = [
-  {
-    key: "searching",
-    label: "物件探し中",
-    statuses: ["first_reply", "hearing", "condition_hearing", "property_search", "proposing", "property_recommendation", "viewing", "estimate_request", "availability_check", "application"],
-    color: "bg-amber-100 text-amber-700",
-    dot: "bg-amber-500",
-    canonicalStatus: "hearing",
-  },
-  {
-    key: "screening",
-    label: "申込・審査中",
-    statuses: ["applying", "screening", "contract"],
-    color: "bg-pink-100 text-pink-700",
-    dot: "bg-pink-500",
-    canonicalStatus: "applying",
-  },
-  {
-    key: "closed",
-    label: "ご成約",
-    statuses: ["closed_won"],
-    color: "bg-yellow-100 text-yellow-700",
-    dot: "bg-yellow-400",
-    canonicalStatus: "closed_won",
-  },
-];
-
-function getGroupMeta(statusKey: string) {
-  return (
-    DISPLAY_GROUPS.find((g) => g.statuses.includes(statusKey)) ?? {
-      key: "unknown",
-      label: "未設定",
-      statuses: [],
-      color: "bg-gray-100 text-gray-700",
-      dot: "bg-gray-400",
-      canonicalStatus: statusKey,
-    }
-  );
-}
 
 function getInitial(name: string) {
   return name?.trim()?.charAt(0) || "?";
