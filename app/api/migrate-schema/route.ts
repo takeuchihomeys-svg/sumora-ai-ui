@@ -71,6 +71,10 @@ CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at ASC);
 
 ALTER TABLE messages DISABLE ROW LEVEL SECURITY;
 
+-- LINE公式のメッセージID（Content API 呼び出し用）
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS line_message_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_messages_line_message_id ON messages(line_message_id);
+
 -- property_customers テーブル（物件出しツール用）
 CREATE TABLE IF NOT EXISTS property_customers (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

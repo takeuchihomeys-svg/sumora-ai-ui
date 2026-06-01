@@ -69,85 +69,72 @@ function getDb() {
   );
 }
 
-// ── メッセージ保存処理 ────────────────────────────────────────────────
-async function handleTextMessage(
+// ── conversation 取得 or 作成（共通）────────────────────────────────────
+async function ensureConversation(
+  db: ReturnType<typeof getDb>,
   userId: string,
-  text: string,
   account: AccountConfig,
-): Promise<void> {
-  const db = getDb();
-  const now = new Date().toISOString();
-
-  // 1. conversations を取得 or 作成
+  now: string,
+): Promise<string | null> {
   const { data: convRows } = await db
     .from("conversations")
-    .select("id, customer_name, profile_image_url, account")
+    .select("id, account")
     .eq("line_user_id", userId)
     .limit(1);
 
-  let convId: number;
-
   if (convRows && convRows.length > 0) {
-    convId = convRows[0].id as number;
-    // account が違う場合は常に正しい値に修正（ADD COLUMN DEFAULT 'sumora' で全行が sumora になった対策）
+    const convId = convRows[0].id as string;
     if (convRows[0].account !== account.key) {
       await db.from("conversations").update({ account: account.key }).eq("id", convId);
     }
-  } else {
-    const { data: created, error: createErr } = await db
-      .from("conversations")
-      .insert({
-        line_user_id: userId,
-        customer_name: "名称未設定",
-        account: account.key,
-        status: "first_reply",
-        updated_at: now,
-      })
-      .select("id")
-      .single();
-    if (createErr || !created) {
-      console.error("[line-webhook] conversation作成失敗:", createErr?.message);
-      return;
-    }
-    convId = created.id as number;
+    return convId;
   }
 
-  // 2. messages テーブルに保存
-  const { error: msgErr } = await db.from("messages").insert({
-    conversation_id: convId,
-    sender: "customer",
-    text,
-    created_at: now,
-  });
-  if (msgErr) console.error("[line-webhook] message保存失敗:", msgErr.message);
-
-  // 3. conversations.last_message を更新
-  await db
+  const { data: created, error: createErr } = await db
     .from("conversations")
-    .update({ last_message: text, last_sender: "customer", updated_at: now })
-    .eq("id", convId);
+    .insert({
+      line_user_id: userId,
+      customer_name: "名称未設定",
+      account: account.key,
+      status: "first_reply",
+      updated_at: now,
+    })
+    .select("id")
+    .single();
+  if (createErr || !created) {
+    console.error("[line-webhook] conversation作成失敗:", createErr?.message);
+    return null;
+  }
+  return created.id as string;
+}
 
-  // 4. LINE プロフィール取得 → line_contacts upsert + conversations 更新（非同期）
+// ── プロフィール非同期更新（共通）────────────────────────────────────────
+function updateProfileAsync(
+  db: ReturnType<typeof getDb>,
+  userId: string,
+  convId: string,
+  account: AccountConfig,
+  lastMessage: string,
+  now: string,
+): void {
   void (async () => {
     try {
       if (!account.token) return;
       const profile = await fetchLineProfile(userId, account.token);
       if (!profile) return;
 
-      // line_contacts upsert（LINE管理画面で使用）
       await db.from("line_contacts").upsert(
         {
           line_user_id: userId,
           line_name: profile.displayName ?? "名称未設定",
           line_profile_image: profile.pictureUrl ?? "",
           account: account.name,
-          last_message: text.slice(0, 500),
+          last_message: lastMessage.slice(0, 500),
           last_message_at: now,
         },
         { onConflict: "line_user_id,account" },
       );
 
-      // conversations.customer_name / profile_image_url を更新
       const patch: Record<string, string> = {};
       if (profile.displayName) patch.customer_name = profile.displayName;
       if (profile.pictureUrl) patch.profile_image_url = profile.pictureUrl;
@@ -158,6 +145,97 @@ async function handleTextMessage(
       console.warn("[line-webhook] プロフィール取得エラー:", e);
     }
   })();
+}
+
+// ── テキストメッセージ保存 ────────────────────────────────────────────────
+async function handleTextMessage(
+  userId: string,
+  text: string,
+  account: AccountConfig,
+): Promise<void> {
+  const db = getDb();
+  const now = new Date().toISOString();
+
+  const convId = await ensureConversation(db, userId, account, now);
+  if (!convId) return;
+
+  const { error: msgErr } = await db.from("messages").insert({
+    conversation_id: convId,
+    sender: "customer",
+    text,
+    created_at: now,
+  });
+  if (msgErr) console.error("[line-webhook] message保存失敗:", msgErr.message);
+
+  await db
+    .from("conversations")
+    .update({ last_message: text, last_sender: "customer", updated_at: now })
+    .eq("id", convId);
+
+  updateProfileAsync(db, userId, convId, account, text, now);
+}
+
+// ── 画像メッセージ保存 ────────────────────────────────────────────────────
+async function handleImageMessage(
+  userId: string,
+  lineMessageId: string,
+  account: AccountConfig,
+): Promise<void> {
+  const db = getDb();
+  const now = new Date().toISOString();
+
+  const convId = await ensureConversation(db, userId, account, now);
+  if (!convId) return;
+
+  // LINE Content API から画像を即時取得してストレージに保存
+  let imageUrl: string | null = null;
+  if (account.token) {
+    try {
+      const contentRes = await fetch(
+        `https://api-data.line.me/v2/bot/message/${lineMessageId}/content`,
+        { headers: { Authorization: `Bearer ${account.token}` } },
+      );
+      if (contentRes.ok) {
+        const contentType = contentRes.headers.get("content-type") || "image/jpeg";
+        const ext = contentType.includes("png") ? "png" : contentType.includes("gif") ? "gif" : "jpg";
+        const buffer = Buffer.from(await contentRes.arrayBuffer());
+        const storagePath = `line-images/${lineMessageId}.${ext}`;
+
+        const { error: uploadErr } = await db.storage
+          .from("property-images")
+          .upload(storagePath, buffer, { contentType, upsert: true });
+
+        if (!uploadErr) {
+          const { data: urlData } = db.storage
+            .from("property-images")
+            .getPublicUrl(storagePath);
+          imageUrl = urlData.publicUrl;
+        } else {
+          console.warn("[line-webhook] Storage upload失敗:", uploadErr.message);
+        }
+      }
+    } catch (e) {
+      console.warn("[line-webhook] 画像取得エラー:", e);
+    }
+  }
+
+  // image_url が取れなくても line_message_id を保存 → fetch-line-images で後から取得可能
+  const { error: msgErr } = await db.from("messages").insert({
+    conversation_id: convId,
+    sender: "customer",
+    text: "[画像]",
+    image_url: imageUrl,
+    line_message_id: lineMessageId,
+    created_at: now,
+  });
+  if (msgErr) console.error("[line-webhook] image message保存失敗:", msgErr.message);
+
+  await db
+    .from("conversations")
+    .update({ last_message: "[画像]", last_sender: "customer", updated_at: now })
+    .eq("id", convId);
+
+  updateProfileAsync(db, userId, convId, account, "[画像]", now);
 }
 
 // destination → account key のマッピング（各LINE公式アカウントのBot User ID）
@@ -204,16 +282,25 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const event = ev as {
       type: string;
       source?: { userId?: string };
-      message?: { type: string; text?: string };
+      message?: { type: string; id?: string; text?: string };
     };
 
     if (event.type !== "message") continue;
     if (event.source?.userId == null) continue;
-    if (event.message?.type !== "text") continue;
-    const text = event.message.text;
-    if (!text) continue;
 
-    await handleTextMessage(event.source.userId, text, matchedAccount);
+    const msgType = event.message?.type;
+    const userId = event.source.userId;
+
+    if (msgType === "text") {
+      const text = event.message?.text;
+      if (!text) continue;
+      await handleTextMessage(userId, text, matchedAccount);
+    } else if (msgType === "image") {
+      const lineMessageId = event.message?.id;
+      if (!lineMessageId) continue;
+      await handleImageMessage(userId, lineMessageId, matchedAccount);
+    }
+    // video / audio / file は現状スキップ
   }
 
   return NextResponse.json({ ok: true });

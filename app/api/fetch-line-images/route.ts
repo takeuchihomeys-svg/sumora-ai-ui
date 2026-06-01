@@ -12,13 +12,14 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const limit = Math.min(Number(url.searchParams.get("limit") || "50"), 200);
 
-  // image_url が null のお客さんメッセージを取得
+  // image_url が null かつ line_message_id がある未処理メッセージを取得
   const { data: msgs, error: fetchErr } = await supabase
     .from("messages")
-    .select("id, conversation_id, text")
+    .select("id, conversation_id, line_message_id")
     .eq("sender", "customer")
     .eq("text", "[画像]")
     .is("image_url", null)
+    .not("line_message_id", "is", null)
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -47,7 +48,7 @@ export async function GET(req: NextRequest) {
     const token = conv?.account ? TOKEN_MAP[conv.account as string] : undefined;
     if (!token) { failCount++; continue; }
 
-    const lineMessageId = String(msg.id);
+    const lineMessageId = String(msg.line_message_id);
 
     try {
       const contentRes = await fetch(
