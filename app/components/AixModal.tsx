@@ -19,6 +19,7 @@ interface AixModalProps {
   actionType: AixActionType;
   conversationId: string;
   customerName: string;
+  account?: string;
   initialImageFile?: File;
   linkedCustomer?: LinkedCustomer;
   onClose: () => void;
@@ -78,6 +79,7 @@ export default function AixModal({
   actionType,
   conversationId,
   customerName,
+  account,
   initialImageFile,
   linkedCustomer,
   onClose,
@@ -149,6 +151,7 @@ export default function AixModal({
 
       const body: Record<string, unknown> = {
         action: actionType,
+        account: account ?? "sumora",
         conversation_id: conversationId,
         customer_name: customerName,
       };

@@ -60,7 +60,7 @@ async function callClaudeVision(system: string, content: unknown[]): Promise<str
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, customer_name, image_url, condition_image_url, customer_conditions, extra_input, parsed_estimate } = body;
+    const { action, account, customer_name, image_url, condition_image_url, customer_conditions, extra_input, parsed_estimate } = body;
 
     const name = customer_name ? `${customer_name}さん` : "お客様";
 
@@ -117,31 +117,79 @@ ${phraseText || "なし"}`;
       if (!estimate) {
         if (!image_url) throw new Error("見積書画像が必要です");
 
-        const ocrSystem = `見積書画像から初期費用の項目と金額をJSON形式で抽出してください。
-形式: {"敷金": "XXX円", "礼金": "XXX円", "仲介手数料": "XXX円", ...}
-金額が不明な項目は除外する。数字は正確に読み取る。`;
+        const ocrSystem = `見積書画像から以下の項目をJSONで抽出してください。
+数値は整数のみ（円・¥・カンマは除く）。不明な項目は0または空文字。
+{
+  "property_name": "物件名（マンション名のみ、号室は含めない）",
+  "room_number": "号室番号のみ（例: 502）",
+  "rent": 月額家賃（整数）,
+  "total": 初期費用合計（割引後・整数）,
+  "discount": 割引額（なければ0）,
+  "commission": 仲介手数料税抜（なければ0）,
+  "commission_tax": 仲介手数料消費税（なければ0）
+}`;
 
         const raw = await callClaudeVision(ocrSystem, [
-          { type: "text", text: "この見積書の内訳を抽出してください。" },
+          { type: "text", text: "この見積書から指定の項目を抽出してください。" },
           { type: "image", source: { type: "url", url: image_url } },
         ]);
 
         const match = raw.match(/\{[\s\S]*\}/);
         if (match) {
-          try { estimate = JSON.parse(match[0]); } catch { estimate = { 内訳: raw }; }
+          try { estimate = JSON.parse(match[0]); } catch { estimate = {}; }
         } else {
-          estimate = { 内訳: raw };
+          estimate = {};
         }
       }
 
-      const lines = Object.entries(estimate as Record<string, string>)
-        .map(([k, v]) => `・${k}：${v}`)
-        .join("\n");
+      // アカウント名マッピング
+      const ACCOUNT_NAMES: Record<string, string> = {
+        sumora: "スモラ",
+        ieyasu: "イエヤス",
+        giga:   "ギガ賃貸",
+      };
+      const accountName = ACCOUNT_NAMES[String(account || "sumora")] ?? "スモラ";
 
-      const system = `不動産営業のアシスタントとして、初期費用の内訳をお客様にLINEで伝えるメッセージを作成してください。フレンドリーで分かりやすく、絵文字も適度に使ってください。`;
-      const user = `${name}へ。\n\n初期費用の内訳:\n${lines}${extra_input ? `\n\n補足: ${extra_input}` : ""}`;
+      // 固定フォーマットでテキスト生成（estimate/page.tsx の generateLineText と同じロジック）
+      const est = estimate as Record<string, unknown>;
+      const propertyName = String(est.property_name || "");
+      const roomNumber   = String(est.room_number   || "");
+      const total        = Number(est.total          || 0);
+      const discount     = Number(est.discount       || 0);
+      const rent         = Number(est.rent           || 0);
+      const commission   = Number(est.commission     || 0);
+      const commTax      = Number(est.commission_tax || 0);
 
-      message_text = await callClaude(system, user);
+      const standardCommission = Math.round(rent * 1.1);
+      const actualCommission   = commission + commTax;
+      const savings = Math.max(0, standardCommission - actualCommission + discount);
+
+      const parts: string[] = [];
+
+      if (propertyName || roomNumber) {
+        const roomSuffix = roomNumber ? ` ${roomNumber}号室` : "";
+        parts.push(`【${propertyName}${roomSuffix}】`);
+        parts.push("");
+      }
+
+      if (discount > 0) {
+        parts.push("初期費用さらに");
+        parts.push(`🌟${discount.toLocaleString()}円割引させて頂き`);
+        parts.push(`初期費用：${total.toLocaleString()}円`);
+      } else if (total > 0) {
+        parts.push(`初期費用：${total.toLocaleString()}円`);
+      }
+
+      parts.push("");
+
+      if (savings > 0) {
+        parts.push(`${accountName}なら一般的な不動産業者より${savings.toLocaleString()}円節約出来ます！！`);
+        parts.push("");
+      }
+
+      parts.push("※ご入居日によって日割家賃が発生致します。");
+
+      message_text = parts.join("\n");
       parsed_estimate_result = estimate;
 
     // ── 🔍 内覧へ！ ──────────────────────────────────────────────

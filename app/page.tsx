@@ -2531,6 +2531,7 @@ export default function Home() {
           actionType={aixModalType}
           conversationId={selectedConversation.id}
           customerName={selectedConversation.customerName}
+          account={selectedConversation.account ?? currentAccount.id}
           initialImageFile={aixInitialFile ?? undefined}
           linkedCustomer={aixModalType === "property_recommendation" ? linkedCustomerMap[selectedConversation.id] : undefined}
           onClose={() => {
