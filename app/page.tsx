@@ -224,7 +224,8 @@ export default function Home() {
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);
   const [announcements, setAnnouncements] = useState<Message[]>([]);
   const [showAnnouncementList, setShowAnnouncementList] = useState(false);
-  const [contextMenu, setContextMenu] = useState<{ messageId: string; x: number; y: number; text: string } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ messageId: string; x: number; y: number; text: string; sender: string } | null>(null);
+  const [targetOverrideMessage, setTargetOverrideMessage] = useState<string | null>(null);
   const [partialCopyMessageId, setPartialCopyMessageId] = useState<string | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const lightboxSwipeX = useRef(0);
@@ -727,6 +728,7 @@ export default function Home() {
     setSelectedImagePreviews([]);
     aiDraftRef.current = "";
     replyTargetCustomerMsgRef.current = "";
+    setTargetOverrideMessage(null);
   }, [selectedConversation.id]);
 
   // replyDraftが変わったらtextareaの高さを自動調整
@@ -787,12 +789,14 @@ export default function Home() {
   const generateReply = async () => {
     if (!selectedConversation.id) return;
 
-    // 直近の顧客メッセージ（なければ誰のでも最後のメッセージ）を使用
+    // 長押しで指定したメッセージ → 直近顧客メッセージ → 最後のメッセージ の優先順
     const msgs = selectedConversation.messages;
     const targetMessage =
+      targetOverrideMessage?.trim() ||
       latestCustomerMessage.trim() ||
       msgs[msgs.length - 1]?.text ||
       "";
+    setTargetOverrideMessage(null);
 
     if (!targetMessage.trim()) {
       setError("メッセージが読み込まれていません。しばらく待ってから再試行してください。");
@@ -972,10 +976,10 @@ export default function Home() {
     });
   };
 
-  const startLongPress = (messageId: string, messageText: string, e?: React.TouchEvent) => {
+  const startLongPress = (messageId: string, messageText: string, sender: string, e?: React.TouchEvent) => {
     longPressTimerRef.current = setTimeout(() => {
       const touch = e?.touches[0];
-      setContextMenu({ messageId, x: touch?.clientX ?? 200, y: touch?.clientY ?? 300, text: messageText });
+      setContextMenu({ messageId, x: touch?.clientX ?? 200, y: touch?.clientY ?? 300, text: messageText, sender });
     }, 500);
   };
   const cancelLongPress = () => {
@@ -1822,10 +1826,10 @@ export default function Home() {
                         <div
                           className="max-w-[86%] md:max-w-[74%]"
                           style={{ userSelect: "none", WebkitUserSelect: "none" }}
-                          onTouchStart={(e) => startLongPress(message.id, message.text, e)}
+                          onTouchStart={(e) => startLongPress(message.id, message.text, message.sender, e)}
                           onTouchEnd={cancelLongPress}
                           onTouchMove={cancelLongPress}
-                          onContextMenu={(e) => { e.preventDefault(); setContextMenu({ messageId: message.id, x: e.clientX, y: e.clientY, text: message.text }); }}
+                          onContextMenu={(e) => { e.preventDefault(); setContextMenu({ messageId: message.id, x: e.clientX, y: e.clientY, text: message.text, sender: message.sender }); }}
                         >
                           <div
                             className={`rounded-2xl text-[15px] leading-6 shadow-sm ${
@@ -1919,6 +1923,22 @@ export default function Home() {
             {error ? (
               <div className="mb-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-600">{error}</div>
             ) : null}
+
+            {/* 返信対象メッセージ指定インジケーター */}
+            {targetOverrideMessage && (
+              <div className="mb-2 flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2">
+                <div className="flex-1 min-w-0">
+                  <p className="text-[10px] font-semibold text-blue-500">この文に返信</p>
+                  <p className="truncate text-[12px] text-blue-700">{targetOverrideMessage}</p>
+                </div>
+                <button
+                  onClick={() => setTargetOverrideMessage(null)}
+                  className="shrink-0 text-blue-400 active:text-blue-600"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+            )}
 
             {selectedImagePreviews.length > 0 && (
               <div className="mb-2 flex gap-2 overflow-x-auto">
@@ -2848,6 +2868,23 @@ export default function Home() {
                 </button>
               ))}
             </div>
+            {/* 顧客メッセージのみ：この文に返信ボタン */}
+            {contextMenu.sender === "customer" && contextMenu.text && contextMenu.text !== "[画像]" && (
+              <div className="border-t border-[#f0f2f5] px-3 pb-3 pt-2">
+                <button
+                  onClick={() => {
+                    setTargetOverrideMessage(contextMenu.text);
+                    setContextMenu(null);
+                  }}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-500 py-3 text-[13px] font-bold text-white active:bg-blue-600"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                  </svg>
+                  この文に返信
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
