@@ -167,6 +167,43 @@ function formatConditions(customer: PropertyCustomerRow): string {
   return lines.join("\n");
 }
 
+// \u9023\u7d9a\u753b\u50cf\u30e1\u30c3\u30bb\u30fc\u30b8\u30921\u4ef6\u306b\u307e\u3068\u3081\u3066\u30b0\u30ea\u30c3\u30c9\u8868\u793a\u3059\u308b\uff08LINE\u98a8\uff09
+// \u540c\u4e00\u9001\u4fe1\u8005\u30fb30\u79d2\u4ee5\u5185\u30fb[\u753b\u50cf]\u30c6\u30ad\u30b9\u30c8\u306e\u307f \u2192 imageUrl\u3092JSON\u914d\u5217\u306b\u7d71\u5408
+function groupImageMessages(messages: Message[]): Message[] {
+  const result: Message[] = [];
+  let i = 0;
+  const isImgOnly = (m: Message) => !!m.imageUrl && (m.text === "[\u753b\u50cf]" || m.text === "");
+  const extractUrls = (url: string): string[] => {
+    try { return url.startsWith("[") ? (JSON.parse(url) as string[]) : [url]; }
+    catch { return [url]; }
+  };
+  while (i < messages.length) {
+    const msg = messages[i];
+    if (isImgOnly(msg)) {
+      const urls = extractUrls(msg.imageUrl!);
+      const sender = msg.sender;
+      let j = i + 1;
+      while (j < messages.length && urls.length < 9) {
+        const nxt = messages[j];
+        const diff = Math.abs(
+          new Date(nxt.rawCreatedAt || "").getTime() -
+          new Date(messages[j - 1].rawCreatedAt || "").getTime()
+        );
+        if (isImgOnly(nxt) && nxt.sender === sender && diff < 30000) {
+          urls.push(...extractUrls(nxt.imageUrl!));
+          j++;
+        } else break;
+      }
+      result.push({ ...msg, imageUrl: urls.length === 1 ? urls[0] : JSON.stringify(urls) });
+      i = j;
+    } else {
+      result.push(msg);
+      i++;
+    }
+  }
+  return result;
+}
+
 const URL_REGEX = /(https?:\/\/[^\s\u3000-\u9fff\uff00-\uffef]+)/g;
 
 function isVideoUrl(url: string) {
@@ -1850,7 +1887,7 @@ export default function Home() {
                 const q = aiSearchIds !== null ? "" : searchQuery.trim().toLowerCase();
                 const displayMessages = q
                   ? selectedConversation.messages.filter((m) => m.text?.toLowerCase().includes(q))
-                  : selectedConversation.messages;
+                  : groupImageMessages(selectedConversation.messages);
                 if (displayMessages.length === 0) {
                   return (
                     <div className="rounded-2xl bg-white px-4 py-6 text-center text-sm text-[#667781] shadow-sm">
