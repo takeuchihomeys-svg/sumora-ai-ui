@@ -765,7 +765,7 @@ export default function ConditionsPage() {
           className="fixed inset-0 z-50 bg-black/40 flex items-end justify-center"
           onMouseDown={(e) => { if (e.target === e.currentTarget) setShowModal(false); }}
         >
-          <div className="w-full max-w-lg bg-white rounded-t-2xl shadow-2xl max-h-[92vh] flex flex-col">
+          <div className="w-full max-w-lg bg-white rounded-t-2xl shadow-2xl max-h-[75vh] flex flex-col">
             {/* ヘッダー */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
               <h2 className="font-bold text-slate-800">

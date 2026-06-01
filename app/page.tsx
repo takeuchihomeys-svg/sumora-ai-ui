@@ -110,6 +110,8 @@ function getAccountMeta(account?: string | null) {
 type PropertyCustomerRow = {
   id: string;
   customer_name: string;
+  status?: string | null;
+  last_property_sent_at?: string | null;
   desired_area?: string | null;
   floor_plan?: string | null;
   rent_min?: number | null;
@@ -121,6 +123,32 @@ type PropertyCustomerRow = {
   other_requests?: string | null;
   building_age?: number | null;
 };
+
+// 物件出しステータス（売上サポのStatusと対応）
+const PROPERTY_STATUS_LABELS: Record<string, string> = {
+  new_inquiry: "新規",
+  hot: "毎日",
+  property_search: "物件出し",
+  pending: "検討中",
+};
+const PROPERTY_STATUS_COLORS: Record<string, string> = {
+  new_inquiry: "bg-red-100 text-red-700",
+  hot: "bg-orange-100 text-orange-700",
+  property_search: "bg-blue-100 text-blue-700",
+  pending: "bg-gray-100 text-gray-400",
+};
+function propertyNeedsAction(status: string, lastSentAt?: string | null): boolean {
+  if (status === "pending") return false;
+  if (status === "new_inquiry") return true;
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (status === "hot") return !lastSentAt || new Date(lastSentAt) < todayStart;
+  if (status === "property_search") {
+    if (!lastSentAt) return true;
+    return (now.getTime() - new Date(lastSentAt).getTime()) / 86400000 >= 3;
+  }
+  return false;
+}
 
 function formatConditions(customer: PropertyCustomerRow): string {
   const lines: string[] = [];
@@ -254,14 +282,15 @@ export default function Home() {
   const [linkSearchQuery, setLinkSearchQuery] = useState("");
   const [propertyCustomers, setPropertyCustomers] = useState<Array<{ id: string; customer_name: string; desired_area?: string | null; floor_plan?: string | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; other_requests?: string | null; rent_min?: number | null; building_age?: number | null }>>([]);
   // convId → linked property customer（条件テキスト含む）
-  const [linkedCustomerMap, setLinkedCustomerMap] = useState<Record<string, { id: string; name: string; conditions: string }>>({});
+  const [linkedCustomerMap, setLinkedCustomerMap] = useState<Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null }>>({});
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const aixFileInputRef = useRef<HTMLInputElement | null>(null);
   const pendingAixTypeRef = useRef<AixActionType | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
-  const justOpenedRef = useRef(false); // 会話を開いた直後フラグ（メッセージ取得後に最下部強制スクロール）
+  const justOpenedRef = useRef(false); // 会話を開いた直後フラグ（メッセージ取得完了後に最下部強制スクロール）
+  const scrollAfterFetchRef = useRef<string>(""); // Effect1でfetch完了したconvId → Effect3でスクロール
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const notifiedCalendarIds = useRef<Set<string>>(new Set());
@@ -460,6 +489,7 @@ export default function Home() {
                 setConversations((prev) =>
                   prev.map((c) => (c.id === selectedId ? { ...c, messages: msgs } : c))
                 );
+                scrollAfterFetchRef.current = selectedId;
               });
           }
           return;
@@ -476,18 +506,18 @@ export default function Home() {
           time: formatTime(m.created_at),
           rawCreatedAt: m.created_at,
         }));
+        scrollAfterFetchRef.current = selectedId;
         setConversations((prev) =>
           prev.map((c) => (c.id === selectedId ? { ...c, messages: msgs } : c))
         );
       });
   }, [selectedId]);
 
-  // 会話を開いたとき：最下部スクロールを予約（メッセージ取得完了後に実行）
+  // 会話を開いたとき：AI検索マッチがあればそのメッセージへ、なければ最下部へ予約
   useEffect(() => {
     if (!selectedId) return;
     const matchedMsgIds = aiSearchMessageIds[selectedId] || [];
     if (matchedMsgIds.length > 0) {
-      // AI検索マッチがあればそのメッセージへ（フラグは立てない）
       setTimeout(() => {
         const el = document.getElementById(`msg-${matchedMsgIds[0]}`);
         if (el) {
@@ -497,21 +527,31 @@ export default function Home() {
         }
       }, 100);
     } else {
-      // 通常：メッセージ取得後にconversations更新→Effect3が最下部へ強制スクロール
+      // 即時スクロール（既存メッセージが表示されている間の暫定スクロール）
       justOpenedRef.current = true;
+      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "instant" }), 0);
     }
   }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // メッセージ更新時スクロール：会話を開いた直後は必ず最下部、それ以外は下部付近のみ
+  // メッセージ更新時スクロール
+  // scrollAfterFetchRef: Effect1でのfetch完了を検知して確実に最下部へ
+  // それ以外（ポーリング等）: 下部付近にいる場合のみスクロール
   useEffect(() => {
     if (!bottomRef.current) return;
-    if (justOpenedRef.current) {
-      // 会話を開いた直後（メッセージ取得完了）：常に最下部へ
+    if (scrollAfterFetchRef.current) {
+      // Effect1でのメッセージfetch完了 → 確実に最下部へ
+      scrollAfterFetchRef.current = "";
       justOpenedRef.current = false;
       bottomRef.current.scrollIntoView({ behavior: "instant" });
       return;
     }
-    // リアルタイム受信：下部付近にいるときだけスクロール（過去トーク閲覧中は邪魔しない）
+    if (justOpenedRef.current) {
+      // 既存メッセージが先に描画された場合のフォールバック
+      justOpenedRef.current = false;
+      bottomRef.current.scrollIntoView({ behavior: "instant" });
+      return;
+    }
+    // リアルタイム受信・ポーリング：下部付近にいるときだけスクロール
     const el = chatScrollRef.current;
     if (!el) return;
     const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
@@ -584,12 +624,19 @@ export default function Home() {
           ? latestMsgTime
           : (dbUpdatedAt || undefined);
 
+      // ⑥ 初回返信の自動設定: スタッフ返信なし & メッセージ5件以内 → first_reply
+      const hasStaffReply = relatedMessages.some((m) => m.sender === "staff");
+      const autoStatus =
+        !hasStaffReply && relatedMessages.length <= 5
+          ? "first_reply"
+          : (conversation.status || "first_reply");
+
       return {
         id: String(conversation.id),
         customerName: conversation.customer_name || "名称未設定",
         lastMessage,
         lastSender,
-        status: conversation.status || "first_reply",
+        status: autoStatus,
         lineUserId: conversation.line_user_id,
         profileImageUrl: conversation.profile_image_url || undefined,
         updatedAt: effectiveUpdatedAt,
@@ -638,15 +685,21 @@ export default function Home() {
     if (propCustomerIds.length > 0) {
       const { data: pcData } = await supabase
         .from("property_customers")
-        .select("id,customer_name,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age")
+        .select("id,customer_name,status,last_property_sent_at,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age")
         .in("id", propCustomerIds);
       if (pcData) {
-        const map: Record<string, { id: string; name: string; conditions: string }> = {};
+        const map: Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null }> = {};
         for (const conv of formatted) {
           if (!conv.propertyCustomerId) continue;
           const pc = (pcData as PropertyCustomerRow[]).find((d) => d.id === conv.propertyCustomerId);
           if (pc) {
-            map[conv.id] = { id: pc.id, name: pc.customer_name, conditions: formatConditions(pc) };
+            map[conv.id] = {
+              id: pc.id,
+              name: pc.customer_name,
+              conditions: formatConditions(pc),
+              propertyStatus: pc.status || undefined,
+              lastPropertySentAt: pc.last_property_sent_at || null,
+            };
           }
         }
         setLinkedCustomerMap((prev) => ({ ...prev, ...map }));
@@ -1641,6 +1694,18 @@ export default function Home() {
                               🔗
                             </span>
                           )}
+                          {(() => {
+                            const linked = linkedCustomerMap[conversation.id];
+                            if (!linked?.propertyStatus) return null;
+                            const label = PROPERTY_STATUS_LABELS[linked.propertyStatus] ?? linked.propertyStatus;
+                            const color = PROPERTY_STATUS_COLORS[linked.propertyStatus] ?? "bg-gray-100 text-gray-400";
+                            const needs = propertyNeedsAction(linked.propertyStatus, linked.lastPropertySentAt);
+                            return (
+                              <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${color}`}>
+                                {label}{needs ? " !" : " ✓"}
+                              </span>
+                            );
+                          })()}
                           {assignees[conversation.id] && (
                             <span className="shrink-0 rounded-full bg-[#e3f2fd] px-1.5 py-0.5 text-[10px] font-bold text-[#1565C0]">
                               {assignees[conversation.id]}
@@ -1733,22 +1798,28 @@ export default function Home() {
                     {statusSaving ? "..." : detailStatusMeta.label}
                   </button>
 
-                  {showStatusMenu ? (
-                    <div className="absolute right-0 top-full z-30 mt-2 w-44 overflow-hidden rounded-2xl border border-[#d1d7db] bg-white shadow-xl">
-                      {DETAIL_STATUSES.map((s) => (
-                        <button
-                          key={s.key}
-                          onClick={() => updateConversationStatus(s.key)}
-                          className={`flex w-full items-center gap-3 px-4 py-2.5 text-left text-[13px] font-semibold hover:bg-[#f5f6f6] border-b border-[#f0f2f5] last:border-b-0 ${
-                            selectedConversation.status === s.key ? "bg-[#f0f2f5]" : ""
-                          }`}
-                        >
-                          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${s.dot}`} />
-                          <span>{s.label}</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
+                  {showStatusMenu && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-20"
+                        onClick={() => setShowStatusMenu(false)}
+                      />
+                      <div className="absolute right-0 top-full z-30 mt-2 w-44 overflow-hidden rounded-2xl border border-[#d1d7db] bg-white shadow-xl">
+                        {DETAIL_STATUSES.map((s) => (
+                          <button
+                            key={s.key}
+                            onClick={() => updateConversationStatus(s.key)}
+                            className={`flex w-full items-center gap-3 px-4 py-2.5 text-left text-[13px] font-semibold hover:bg-[#f5f6f6] border-b border-[#f0f2f5] last:border-b-0 ${
+                              selectedConversation.status === s.key ? "bg-[#f0f2f5]" : ""
+                            }`}
+                          >
+                            <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${s.dot}`} />
+                            <span>{s.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -1836,7 +1907,6 @@ export default function Home() {
                         )}
                         <div
                           className="max-w-[86%] md:max-w-[74%]"
-                          style={{ userSelect: "none", WebkitUserSelect: "none" }}
                           onTouchStart={(e) => startLongPress(message.id, message.text, message.sender, e)}
                           onTouchEnd={cancelLongPress}
                           onTouchMove={cancelLongPress}
