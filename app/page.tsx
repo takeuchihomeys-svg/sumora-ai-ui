@@ -789,13 +789,24 @@ export default function Home() {
   const generateReply = async () => {
     if (!selectedConversation.id) return;
 
-    // 長押しで指定したメッセージ → 直近顧客メッセージ → 最後のメッセージ の優先順
     const msgs = selectedConversation.messages;
-    const targetMessage =
-      targetOverrideMessage?.trim() ||
-      latestCustomerMessage.trim() ||
-      msgs[msgs.length - 1]?.text ||
-      "";
+
+    // 長押しで指定したメッセージがある場合：そのメッセージまでの会話履歴のみ渡す
+    // → AIが「それ以降の会話」を見て混乱しないようにする
+    let targetMessage: string;
+    let contextMsgs: typeof msgs;
+
+    if (targetOverrideMessage?.trim()) {
+      targetMessage = targetOverrideMessage.trim();
+      // 選択メッセージの位置を特定して、それ以降を除外
+      const idx = msgs.findLastIndex(
+        (m) => m.sender === "customer" && m.text === targetMessage
+      );
+      contextMsgs = idx >= 0 ? msgs.slice(0, idx + 1) : msgs;
+    } else {
+      targetMessage = latestCustomerMessage.trim() || msgs[msgs.length - 1]?.text || "";
+      contextMsgs = msgs;
+    }
     setTargetOverrideMessage(null);
 
     if (!targetMessage.trim()) {
@@ -815,7 +826,7 @@ export default function Home() {
           message: targetMessage,
           state: selectedConversation.status,
           customerName: selectedConversation.customerName,
-          recentMessages: msgs.slice(-20).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined })),
+          recentMessages: contextMsgs.slice(-20).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined })),
         }),
       });
 
