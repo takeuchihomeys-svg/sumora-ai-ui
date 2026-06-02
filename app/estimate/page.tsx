@@ -705,13 +705,18 @@ export default function EstimatePage() {
                 <section key={groupName}>
                   <div className="mb-2 text-[12px] font-bold" style={{ color: cfg.accent }}>{groupName}</div>
                   <div className="rounded-2xl bg-white p-4 shadow-sm flex flex-col gap-2.5">
-                    {groupItems.map(({ key, label }) => {
+                    {groupItems.map(({ key, label, derived }) => {
                       const isText = TEXT_KEYS.has(key);
                       const val = items[key as keyof EditableItems];
                       return (
                         <div key={key}>
                           <label className="mb-1 block text-[11px] text-[#667781]">{label}</label>
-                          {isText ? (
+                          {derived ? (
+                            // 自動計算フィールド → read-only表示
+                            <div className="w-full rounded-xl border border-[#e9edef] bg-[#f5f6f7] px-3 py-2 text-[13px] text-[#667781]">
+                              {String(val || 0)} 日
+                            </div>
+                          ) : isText ? (
                             <input
                               type={key === "moveInDate" ? "date" : "text"}
                               className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3]"
