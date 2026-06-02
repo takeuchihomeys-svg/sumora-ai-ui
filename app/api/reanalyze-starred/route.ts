@@ -139,12 +139,12 @@ export async function POST(req: NextRequest) {
   // ── STEP 1: ステート名を新5段階に正規化 ──────────────────────────────────
   let normalizedCount = 0;
   for (const [oldState, newState] of Object.entries(STATE_NORMALIZE)) {
-    const { count } = await supabase
+    const { data: updated } = await supabase
       .from("ai_reply_examples")
       .update({ conversation_state: newState })
       .eq("conversation_state", oldState)
-      .select("id", { count: "exact", head: true });
-    normalizedCount += count ?? 0;
+      .select("id");
+    normalizedCount += updated?.length ?? 0;
   }
   // knowledgeも同様に正規化
   for (const [oldState, newState] of Object.entries(STATE_NORMALIZE)) {
