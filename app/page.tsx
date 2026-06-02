@@ -527,6 +527,8 @@ export default function Home() {
                   prev.map((c) => (c.id === selectedId ? { ...c, messages: msgs } : c))
                 );
                 scrollAfterFetchRef.current = selectedId;
+                // DOM描画後に追加スクロール（フォールバック）
+                setTimeout(() => { if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight; }, 80);
               });
           }
           return;
@@ -547,53 +549,56 @@ export default function Home() {
         setConversations((prev) =>
           prev.map((c) => (c.id === selectedId ? { ...c, messages: msgs } : c))
         );
+        // DOM描画後に追加スクロール（長い履歴がレンダリングされた後を保証）
+        setTimeout(() => { if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight; }, 80);
       });
   }, [selectedId]);
 
-  // 会話を開いたとき：AI検索マッチがあればそのメッセージへ、なければ最下部へ予約
+  // scrollTop を直接セットする最確実スクロール（scrollIntoView より信頼性が高い）
+  const scrollToBottom = () => {
+    const el = chatScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  };
+
+  // 会話を開いたとき：DOM描画後に最下部へ（requestAnimationFrameで描画完了を待つ）
   useEffect(() => {
     if (!selectedId) return;
     const matchedMsgIds = aiSearchMessageIds[selectedId] || [];
     if (matchedMsgIds.length > 0) {
+      // AI検索マッチがあればそのメッセージへ
       setTimeout(() => {
         const el = document.getElementById(`msg-${matchedMsgIds[0]}`);
-        if (el) {
-          el.scrollIntoView({ behavior: "smooth", block: "center" });
-        } else if (bottomRef.current) {
-          bottomRef.current.scrollIntoView({ behavior: "instant" });
-        }
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+        else scrollToBottom();
       }, 100);
     } else {
-      // 即時スクロール（既存メッセージが表示されている間の暫定スクロール）
+      // 描画完了後に最下部へ（2段階：即時 + 描画後）
       justOpenedRef.current = true;
-      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "instant" }), 0);
+      requestAnimationFrame(() => scrollToBottom());
     }
   }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // メッセージ更新時スクロール
-  // scrollAfterFetchRef: Effect1でのfetch完了を検知して確実に最下部へ
-  // それ以外（ポーリング等）: 下部付近にいる場合のみスクロール
   useEffect(() => {
-    if (!bottomRef.current) return;
+    if (!chatScrollRef.current) return;
     if (scrollAfterFetchRef.current) {
-      // Effect1でのメッセージfetch完了 → 確実に最下部へ
+      // Effect1のfetch完了 → 確実に最下部へ（全メッセージ描画後）
       scrollAfterFetchRef.current = "";
       justOpenedRef.current = false;
-      bottomRef.current.scrollIntoView({ behavior: "instant" });
+      scrollToBottom();
       return;
     }
     if (justOpenedRef.current) {
-      // 既存メッセージが先に描画された場合のフォールバック
+      // 既存メッセージが先に更新された場合のフォールバック
       justOpenedRef.current = false;
-      bottomRef.current.scrollIntoView({ behavior: "instant" });
+      scrollToBottom();
       return;
     }
     // リアルタイム受信・ポーリング：下部付近にいるときだけスクロール
     const el = chatScrollRef.current;
-    if (!el) return;
     const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     if (distFromBottom < 150) {
-      bottomRef.current.scrollIntoView({ behavior: "smooth" });
+      el.scrollTop = el.scrollHeight;
     }
   }, [conversations]);
 
