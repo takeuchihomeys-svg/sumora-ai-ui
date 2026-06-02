@@ -353,5 +353,30 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, synced: "message", id: record.id, image_fetched: !!imageUrl });
   }
 
+  // ── カレンダーイベント同期 ──────────────────────────────────────────────────
+  if (table === "calendar_events") {
+    const { error } = await supabase
+      .from("calendar_events")
+      .upsert(
+        {
+          id:            String(record.id),
+          title:         record.title         ?? "",
+          event_type:    record.event_type    ?? "other",
+          customer_name: record.customer_name ?? "",
+          start_at:      record.start_at      ?? new Date().toISOString(),
+          end_at:        record.end_at        ?? null,
+          all_day:       record.all_day       ?? false,
+          notes:         record.notes         ?? "",
+        },
+        { onConflict: "id" }
+      );
+
+    if (error) {
+      console.error("sync calendar_events error:", error.message);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true, synced: "calendar_event", id: record.id });
+  }
+
   return NextResponse.json({ ok: true, action: "ignored_unknown_table", table });
 }
