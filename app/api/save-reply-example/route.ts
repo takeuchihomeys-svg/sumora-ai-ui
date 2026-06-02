@@ -14,10 +14,26 @@ const STATE_TO_PHRASE_CATEGORY: Record<string, string> = {
 };
 
 const VALID_STATES = [
-  "first_reply", "condition_hearing", "property_search",
-  "property_recommendation", "viewing", "estimate_request",
-  "availability_check", "application", "screening", "contract", "closed_won",
+  // 新5段階ステート
+  "first_reply", "hearing", "proposing", "applying", "closed_won",
+  // 旧ステート（後方互換）
+  "condition_hearing", "property_search", "property_recommendation",
+  "viewing", "estimate_request", "availability_check",
+  "application", "screening", "contract",
 ];
+
+// 旧ステートを新5段階に正規化して保存する（一貫性確保）
+const STATE_NORMALIZE: Record<string, string> = {
+  condition_hearing:       "hearing",
+  property_search:         "hearing",
+  property_recommendation: "proposing",
+  viewing:                 "proposing",
+  estimate_request:        "proposing",
+  availability_check:      "proposing",
+  application:             "applying",
+  screening:               "applying",
+  contract:                "applying",
+};
 
 // ─── Claude Haiku 共通ヘルパー ────────────────────────────────────────────────
 async function callHaiku(prompt: string, maxTokens = 1024): Promise<string> {
@@ -296,11 +312,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // ④ state が未指定または "auto" の場合は自動判定
-  const conversationState =
-    !rawState || rawState === "auto"
-      ? await autoClassifyState(customerMessage, sentReply)
-      : rawState;
+  // ④ state が未指定または "auto" の場合は自動判定 → 常に新5段階に正規化して保存
+  const rawResolved = !rawState || rawState === "auto"
+    ? await autoClassifyState(customerMessage, sentReply)
+    : rawState;
+  const conversationState = STATE_NORMALIZE[rawResolved] ?? rawResolved;
 
   const wasAiUsed = !!aiDraft && aiDraft.trim() === sentReply.trim();
   const wasAiModified = !!aiDraft && !wasAiUsed && aiDraft.trim().length > 0;
@@ -325,10 +341,10 @@ export async function POST(req: NextRequest) {
   }
 
   // 学習トリガー判定
-  // ★ 手動インポート or ☆ → 深層分析 + フレーズ抽出（最高品質）
-  // AI文案をそのまま使った → フレーズ抽出のみ（AIが正解を出せた瞬間を蓄積）
-  const shouldDeepAnalyze = isStarred === true || !aiDraft;
-  const shouldExtractPhrases = shouldDeepAnalyze || wasAiUsed;
+  // ⭐ 手動インポート or ☆ or AI文案そのまま使用 → 深層分析 + フレーズ抽出
+  // AI文案を修正して送った → 差分学習のみ（修正内容が最良の教師信号）
+  const shouldDeepAnalyze = isStarred === true || !aiDraft || wasAiUsed;
+  const shouldExtractPhrases = shouldDeepAnalyze || wasAiModified;
 
   const analysisJobs: Promise<void>[] = [];
   if (shouldDeepAnalyze && data?.id) {

@@ -127,18 +127,30 @@ function buildGenerationMessages(
   // フェーズ別の行動指針を取得
   const phaseGuide = PHASE_GUIDE[state] || PHASE_GUIDE["first_reply"];
 
+  // ⭐実例がある場合の強調指示
+  const examplesHeader = examples
+    ? "\n\n【最優先】上記の⭐実例の文体・長さ・感嘆符(！！)・絵文字の使い方をそのまま再現すること。"
+    : "";
+
+  // 分析結果から方針のみ抽出
+  let approachNote = "";
+  if (analysis) {
+    try {
+      const p = JSON.parse(analysis) as Record<string, string>;
+      if (p.approach) approachNote = `\n【今回の返し方】${p.approach}（トーン: ${p.tone || "自然に"}）`;
+    } catch { /* ignore */ }
+  }
+
   const prompt = `
 ${nameNote}
 【現在の営業フェーズ】${state}
-${phaseGuide}
-${analysisBlock ? `\n【今回の返し方の方針（最優先で参照）】\n${(() => { try { const p = JSON.parse(analysis) as Record<string,string>; return `方針: ${p.approach || ""}\nトーン: ${p.tone || ""}`.trim(); } catch { return analysisBlock; } })()}` : ""}
+${phaseGuide}${approachNote}
 
-【直近の会話履歴】
+【直近の会話履歴（スモラ自身の返信も含む）】
 ${history || "なし"}
-
 ${SMORA_QUICK_PATTERNS}
 ${knowledge}
-${examples}
+${examples}${examplesHeader}
 ${phrases}
 
 【お客様の最新メッセージ】
@@ -246,48 +258,69 @@ async function fetchPhrases(state: string): Promise<string> {
 }
 
 // ─── DB取得 ─────────────────────────────────────────────────────────────────
+// 新5段階ステートと旧ステートの対応（両方で検索してデータ漏れを防ぐ）
+const STATE_SEARCH_ALIASES: Record<string, string[]> = {
+  first_reply: ["first_reply"],
+  hearing:     ["hearing", "condition_hearing", "property_search"],
+  proposing:   ["proposing", "property_recommendation", "viewing", "estimate_request", "availability_check"],
+  applying:    ["applying", "application", "screening", "contract"],
+  closed_won:  ["closed_won"],
+};
+
 async function fetchKnowledge(state: string): Promise<string> {
+  const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
+
   const [{ data: global }, { data: stateSpecific }] = await Promise.all([
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
       .is("conversation_state", null).order("importance", { ascending: false }).limit(8),
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
-      .eq("conversation_state", state).order("importance", { ascending: false }).limit(6),
+      .in("conversation_state", stateAliases).order("importance", { ascending: false }).limit(10),
   ]);
 
   const all = [...(stateSpecific || []), ...(global || [])];
   if (all.length === 0) return "";
 
-  const patterns = all.filter((k) => k.category === "pattern" || k.category === "principle");
-  const phrases = all.filter((k) => k.category === "phrase");
+  // importance 9以上は「絶対ルール」として最優先
+  const critical = all.filter((k) => (k.importance || 0) >= 9);
+  const patterns = all.filter((k) => (k.importance || 0) < 9 && (k.category === "pattern" || k.category === "principle"));
+  const phrases  = all.filter((k) => k.category === "phrase");
 
   const sections: string[] = [];
+  if (critical.length > 0) {
+    sections.push("【⚠️ 絶対ルール（必ず守る）】\n" + critical.map((k) => `・${k.content}`).join("\n"));
+  }
   if (patterns.length > 0) {
-    sections.push("【スモラの営業パターン・原則】\n" + patterns.map((k) => `・${k.content}`).join("\n"));
+    sections.push("【スモラの営業パターン・原則】\n" + patterns.slice(0, 5).map((k) => `・${k.content}`).join("\n"));
   }
   if (phrases.length > 0) {
-    sections.push("【よく使うフレーズ】\n" + phrases.map((k) => `「${k.content}」`).join("　"));
+    sections.push("【スモラのフレーズ】\n" + phrases.slice(0, 5).map((k) => `「${k.content}」`).join("　"));
   }
   return sections.length > 0 ? "\n\n" + sections.join("\n\n") : "";
 }
 
 async function fetchExamples(state: string): Promise<string> {
+  const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
+
   const [{ data: starred }, { data: aiUsed }] = await Promise.all([
     supabase.from("ai_reply_examples").select("customer_message, sent_reply")
-      .eq("conversation_state", state).eq("is_starred", true)
+      .in("conversation_state", stateAliases).eq("is_starred", true)
       .order("created_at", { ascending: false }).limit(3),
     supabase.from("ai_reply_examples").select("customer_message, sent_reply")
-      .eq("conversation_state", state).eq("is_starred", false).eq("was_ai_used", true)
-      .order("created_at", { ascending: false }).limit(2),
+      .in("conversation_state", stateAliases).eq("is_starred", false).eq("was_ai_used", true)
+      .order("created_at", { ascending: false }).limit(3),
   ]);
 
   const all = [
-    ...(starred || []).map((ex) => ({ ...ex, label: "★実例" })),
-    ...(aiUsed || []).map((ex) => ({ ...ex, label: "参考" })),
-  ];
+    ...(starred || []).map((ex) => ({ ...ex, priority: 1 })),   // ⭐優先
+    ...(aiUsed  || []).map((ex) => ({ ...ex, priority: 2 })),
+  ].sort((a, b) => a.priority - b.priority).slice(0, 4);
+
   if (all.length === 0) return "";
 
-  return "\n\n【実際のやりとり例（文体・トーンの参考）】\n" +
-    all.map((ex) => `[${ex.label}]\nお客様:「${ex.customer_message}」\nスモラ:「${ex.sent_reply}」`).join("\n\n");
+  return "\n\n【⭐ スモラの実際の返信例 — 文体・長さ・感嘆符すべてを完全に踏襲すること】\n" +
+    all.map((ex, i) =>
+      `[例${i + 1}]\nお客様: 「${ex.customer_message}」\nスモラ: 「${ex.sent_reply}」`
+    ).join("\n\n");
 }
 
 // ─── POST ────────────────────────────────────────────────────────────────────
