@@ -916,7 +916,7 @@ export default function Home() {
           message: targetMessage,
           state: selectedConversation.status,
           customerName: selectedConversation.customerName,
-          recentMessages: contextMsgs.slice(-20).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined })),
+          recentMessages: contextMsgs.slice(-40).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined })),
         }),
       });
 
