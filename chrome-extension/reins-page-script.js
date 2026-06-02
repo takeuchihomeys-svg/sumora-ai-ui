@@ -129,26 +129,16 @@
       setVal(getField(76), rentVal);
     }
 
-    // ④ 建物使用部分面積 FROM（area_min または floor_planの平米記述から）
+    // ④ 建物使用部分面積 FROM (index 87, TO index 88)
+    // 診断結果: [87]建物使用部分面積FROM / [88]建物使用部分面積TO / [89]間取部屋数FROM / [90]間取部屋数TO
     var areaMin = cond.area_min || null;
     if (!areaMin && cond.floor_plan) {
       var areaMatch = cond.floor_plan.match(/(\d+)\s*(?:平米|㎡|m2)/i);
       if (areaMatch) areaMin = parseInt(areaMatch[1]);
     }
     if (areaMin) {
-      // 「建物使用部分面積」ラベルを含む行からinputを探す
-      var allThs = [].slice.call(document.querySelectorAll("th, td, span, label"));
-      var areaLabelEl = allThs.find(function (el) {
-        return el.textContent.trim().includes("建物使用部分面積");
-      });
-      if (areaLabelEl) {
-        var areaRow = areaLabelEl.closest("tr") || areaLabelEl.parentElement;
-        var areaInputs = areaRow ? areaRow.querySelectorAll("input") : null;
-        if (areaInputs && areaInputs.length > 0) {
-          setVal(areaInputs[0], areaMin); // 左側（FROM）のみ
-          console.log("[AX] 建物使用部分面積 FROM:", areaMin);
-        }
-      }
+      setVal(getField(87), areaMin); // FROM（左側）のみ入力・TO(88)は空白のまま
+      console.log("[AX] 建物使用部分面積 FROM:", areaMin);
     }
 
     // ⑤ 間取部屋数 FROM/TO (index 89, 90)
