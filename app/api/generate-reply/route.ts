@@ -375,7 +375,7 @@ export async function POST(req: NextRequest) {
 
     // 画像送付を会話履歴に反映（[画像]をフィルタせず意味のあるラベルに変換）
     const history = recentMessages
-      .slice(-40)
+      .slice(-25)
       .map((m, i, arr) => {
         const who = m.sender === "customer" ? "お客様" : "スモラ";
         const isImageMsg = m.text === "[画像]" || m.text === "[動画]" || (!m.text && !!m.imageUrl);

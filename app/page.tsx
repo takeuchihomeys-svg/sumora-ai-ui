@@ -916,7 +916,16 @@ export default function Home() {
           message: targetMessage,
           state: selectedConversation.status,
           customerName: selectedConversation.customerName,
-          recentMessages: contextMsgs.slice(-40).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined })),
+          recentMessages: (() => {
+            const last20 = contextMsgs.slice(-20);
+            // 直近20件にスタッフ返信がない場合のみ、最新のスタッフ返信を先頭に追加
+            const hasStaffInLast20 = last20.some((m) => m.sender === "staff");
+            const lastStaff = !hasStaffInLast20
+              ? [...contextMsgs].reverse().find((m) => m.sender === "staff")
+              : undefined;
+            const finalMsgs = lastStaff ? [lastStaff, ...last20] : last20;
+            return finalMsgs.map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined }));
+          })(),
         }),
       });
 
