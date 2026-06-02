@@ -39,6 +39,18 @@ function calcNext(moveInDate: string) {
   };
 }
 
+// 入居日文字列からmoveInDay・moveInMonth・moveInMonthDaysを計算
+// 日付未選択 or 1日入居 → moveInDay=1（日割りなし）
+function calcMoveInInfo(moveInDate: string) {
+  if (!moveInDate) return { moveInDay: 1, moveInMonth: 0, moveInMonthDays: 30 };
+  const d = new Date(moveInDate);
+  const year  = d.getFullYear();
+  const month = d.getMonth() + 1; // 1-indexed
+  const day   = d.getDate();
+  const monthDays = new Date(year, month, 0).getDate(); // その月の日数
+  return { moveInDay: day, moveInMonth: month, moveInMonthDays: monthDays };
+}
+
 function calcProratedDays(moveInDay: number, monthDays: number) {
   // 月初（1日）入居は日割りなし（Excelと同じ挙動）
   if (!moveInDay || moveInDay <= 1) return 0;
@@ -147,10 +159,16 @@ function generateLineText(
 function toEditable(e: ExtractedEstimate, account: Account = "sumora", moveInDate?: string): EditableItems {
   const date = moveInDate || e.moveInDate || "";
   const { nextMonth, nextYear } = calcNext(date);
+  // moveInDay・moveInMonth・moveInMonthDaysは必ずdate文字列から計算する
+  // （OCRが抽出したmoveInDay等は使わない → 入居日選択時にのみ日割りが発生する）
+  const { moveInDay, moveInMonth, moveInMonthDays } = calcMoveInInfo(date);
   const commDefaults = ACCOUNT_COMMISSION[account];
   return {
     ...e,
     moveInDate: date,
+    moveInDay,
+    moveInMonth,
+    moveInMonthDays,
     // アカウントの手数料が0固定（イエヤス・ギガ）は常に0 / スモラはAIが0のときのみデフォルト2980
     commission:    commDefaults.commission    === 0 ? 0 : (e.commission    || commDefaults.commission),
     commissionTax: commDefaults.commissionTax === 0 ? 0 : (e.commissionTax || commDefaults.commissionTax),
@@ -277,11 +295,15 @@ export default function EstimatePage() {
     setItems((prev) => {
       if (!prev) return prev;
       const updated = { ...prev, [key]: value } as EditableItems;
-      // moveInDate変更時に翌月を再計算
+      // moveInDate変更時: 翌月 + moveInDay/moveInMonth/moveInMonthDays を全て再計算
       if (key === "moveInDate") {
         const { nextMonth, nextYear } = calcNext(value as string);
+        const { moveInDay, moveInMonth, moveInMonthDays } = calcMoveInInfo(value as string);
         updated.nextMonth = nextMonth;
         updated.nextYear = nextYear;
+        updated.moveInDay = moveInDay;
+        updated.moveInMonth = moveInMonth;
+        updated.moveInMonthDays = moveInMonthDays;
       }
       // 仲介手数料変更時に消費税を自動計算（10%）
       if (key === "commission") {
