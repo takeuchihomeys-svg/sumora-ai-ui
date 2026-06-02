@@ -1606,6 +1606,7 @@ let selectedSite = null;
 let searchMode = "pinpoint"; // "pinpoint" | "wide"
 let currentAreaMode = "ward"; // "station" | "ward" — ボタン押下が絶対ルール（自動判定より優先）
 let currentAccount = ""; // "" = すべて / "sumora" / "ieyasu" / "giga" / "hasu"
+let linkedOnly = false;  // 紐付け済みのみ表示
 
 // ── アンダーバーモード検出 ─────────────────────────────────────────
 // リアプロページに iframe として埋め込まれているときは true
@@ -1702,17 +1703,26 @@ function renderList(customers) {
   const list = document.getElementById("customer-list");
 
   if (!customers.length) {
-    list.innerHTML = `<div class="state-msg">お客さんがいません</div>`;
+    list.innerHTML = `<div class="state-msg">${linkedOnly ? "🔗 紐付け済みのお客さんがいません" : "お客さんがいません"}</div>`;
     return;
   }
 
-  const withCond = customers.filter(hasConditions);
-  const noCond   = customers.filter((c) => !hasConditions(c));
+  // 紐付け済み・条件あり・条件なし の3グループに分類
+  const linked   = customers.filter((c) => c.is_linked);
+  const unlinked = customers.filter((c) => !c.is_linked);
+  const withCond = unlinked.filter(hasConditions);
+  const noCond   = unlinked.filter((c) => !hasConditions(c));
+  const showSections = linked.length > 0 && (withCond.length > 0 || noCond.length > 0);
 
   let html = "";
 
+  if (linked.length) {
+    html += `<div class="section-divider linked-divider">🔗 紐付け済み (${linked.length}人)</div>`;
+    linked.forEach((c) => { html += renderCustomerRow(c, false); });
+  }
+
   if (withCond.length) {
-    if (noCond.length) {
+    if (showSections || noCond.length) {
       html += `<div class="section-divider">条件登録済み (${withCond.length}人)</div>`;
     }
     withCond.forEach((c) => { html += renderCustomerRow(c, false); });
@@ -1748,7 +1758,7 @@ function renderCustomerRow(c, dimmed) {
     <div class="customer-item${dimmed ? " dimmed" : ""}" data-id="${esc(String(c.id))}">
       <div class="c-dot dot-${esc(c.status)}"></div>
       <div class="c-body">
-        <div class="c-name">${esc(c.customer_name)}</div>
+        <div class="c-name">${c.is_linked ? '<span class="link-chip">🔗</span>' : ""}${esc(c.customer_name)}</div>
         ${meta ? `<div class="c-meta">${esc(meta)}</div>` : ""}
       </div>
       <span class="s-badge badge-${esc(c.status)}">${esc(label)}</span>
@@ -2373,12 +2383,11 @@ function buildCopyAll(siteName, steps, c) {
   return lines.join("\n");
 }
 
-// ── Search + Account filter ────────────────────────────────────────
+// ── Search + Account + Linked filter ──────────────────────────────
 function getFilteredCustomers(q) {
   let result = allCustomers;
-  if (currentAccount) {
-    result = result.filter((c) => (c.account || "") === currentAccount);
-  }
+  if (currentAccount) result = result.filter((c) => (c.account || "") === currentAccount);
+  if (linkedOnly) result = result.filter((c) => c.is_linked);
   if (q && q.trim()) {
     const kw = q.trim().toLowerCase();
     result = result.filter((c) =>
@@ -2431,7 +2440,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
   document.getElementById("refresh-btn").addEventListener("click", () => {
     showView("view-list");
-    loadCustomers(true); // 強制更新（キャッシュを無視して再取得）
+    loadCustomers(true);
+  });
+
+  // 🔗 紐付け済みフィルター
+  document.getElementById("linked-filter-btn").addEventListener("click", () => {
+    linkedOnly = !linkedOnly;
+    document.getElementById("linked-filter-btn").classList.toggle("active", linkedOnly);
+    filterCustomers(document.getElementById("search-input").value);
   });
 
   // 検索モード切替
@@ -2450,9 +2466,9 @@ document.addEventListener("DOMContentLoaded", () => {
     filterCustomers(e.target.value);
   });
 
-  document.querySelectorAll(".acct-btn").forEach((btn) => {
+  document.querySelectorAll(".acct-btn:not(#linked-filter-btn)").forEach((btn) => {
     btn.addEventListener("click", () => {
-      document.querySelectorAll(".acct-btn").forEach((b) => b.classList.remove("active"));
+      document.querySelectorAll(".acct-btn:not(#linked-filter-btn)").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
       currentAccount = btn.dataset.acct;
       filterCustomers(document.getElementById("search-input").value);

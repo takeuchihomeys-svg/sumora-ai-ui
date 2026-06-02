@@ -74,6 +74,8 @@ body {
 .acct-btn.active {
   background: #1565C0; color: white; border-color: #1565C0; font-weight: 600;
 }
+.linked-btn { border-color: #10b981; color: #047857; background: #f0fdf4; }
+.linked-btn.active { background: #059669; color: white; border-color: #059669; }
 
 #customer-list { overflow-y: auto; flex: 1; }
 
@@ -83,6 +85,11 @@ body {
   color: #adb5bd; letter-spacing: 0.5px; text-transform: uppercase;
   background: #f8f9fa;
   border-bottom: 1px solid #f0f2f5;
+}
+.linked-divider { color: #059669; background: #f0fdf4; }
+
+.link-chip {
+  font-size: 11px; margin-right: 3px; vertical-align: middle;
 }
 
 .customer-item {

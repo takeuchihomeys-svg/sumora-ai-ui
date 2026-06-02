@@ -2,15 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
 export async function GET() {
-  const { data, error } = await supabase
-    .from("property_customers")
-    .select("*")
-    .order("created_at", { ascending: false });
+  const [{ data, error }, { data: convData }] = await Promise.all([
+    supabase.from("property_customers").select("*").order("created_at", { ascending: false }),
+    supabase.from("conversations").select("property_customer_id").not("property_customer_id", "is", null),
+  ]);
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-  return NextResponse.json(data);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  const linkedIds = new Set((convData || []).map((r) => r.property_customer_id).filter(Boolean));
+  const result = (data || []).map((c) => ({ ...c, is_linked: linkedIds.has(c.id) }));
+  return NextResponse.json(result);
 }
 
 export async function POST(req: NextRequest) {
