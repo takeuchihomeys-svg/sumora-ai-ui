@@ -123,11 +123,12 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
   type DynItem = { label: string; amount: number };
   const dynamicItems: DynItem[] = [];
 
-  if (proratedRent > 0)
+  // moveInDay=1（月初入居）は日割りなし（翌月家賃と二重払いになるため）
+  if (proratedRent > 0 && moveInDay > 1)
     dynamicItems.push({ label: `日割り家賃（${proratedDays}日分）`, amount: proratedRent });
-  if (proratedMgmt > 0)
+  if (proratedMgmt > 0 && moveInDay > 1)
     dynamicItems.push({ label: `日割り共益費（${proratedDays}日分）`, amount: proratedMgmt });
-  if (proratedWater > 0)
+  if (proratedWater > 0 && moveInDay > 1)
     dynamicItems.push({ label: `日割り水道代（${proratedDays}日分）`, amount: proratedWater });
   if (d.keyExchange)
     dynamicItems.push({ label: "鍵交換代", amount: d.keyExchange });
@@ -192,9 +193,10 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
   f32 += (d.rent      || 0);
   f32 += Math.round((d.rent || 0) * 0.1);
 
+  // discountValはe32に既に含まれているので全アカウント共通でe37=e32
   const e35 = discountVal;
-  const e37 = account === "ieyasu" ? e32 - e35 : e32;
-  const e8  = account === "ieyasu" ? e32 : e37;
+  const e37 = e32;
+  const e8  = e32;
 
   setCell(ws, "E32", e32);
   setCell(ws, "F32", f32);
