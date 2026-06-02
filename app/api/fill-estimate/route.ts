@@ -56,18 +56,20 @@ type ItemData = {
  * 全ての数式セルを静的値に変換する
  * - XLSXライブラリは他シート参照・複雑な数式を正しく再計算できない
  * - シート削除後に #REF! になる問題を根本解決する
- * - 変換後に setCellValue / updateCachedValue で上書きするので管理セルは正しい値になる
+ * - セルオブジェクトを丸ごと置換せず f(数式)プロパティだけ削除することで
+ *   スタイル(s)・配置(z)等を保持し、テンプレートの見た目を壊さない
  */
 function convertAllFormulasToStaticValues(ws: XLSX.WorkSheet): void {
   for (const key of Object.keys(ws)) {
     if (key.startsWith("!")) continue;
-    const cell = ws[key] as XLSX.CellObject;
+    const cell = ws[key] as XLSX.CellObject & { f?: string };
     if (!cell?.f) continue; // 数式なし → スキップ
-    const v = cell.v;
-    const t: XLSX.ExcelDataType =
-      typeof v === "number" ? "n" :
-      typeof v === "boolean" ? "b" : "s";
-    ws[key] = { v: v ?? "", t };
+    // 数式だけ削除（スタイル・値・型はそのまま保持）
+    delete cell.f;
+    // キャッシュ値が未定義の場合のみデフォルト値をセット
+    if (cell.v === undefined || cell.v === null) {
+      cell.v = cell.t === "n" ? 0 : "";
+    }
   }
 }
 
