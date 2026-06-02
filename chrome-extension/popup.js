@@ -1435,27 +1435,59 @@ const SITE_CONFIG = {
         });
       }
 
-      // 間取タイプ（REINS: ワンルーム/K/DK/LK/LDK/SK/SDK/SLK/SLDK のタイプ別チェックボックス）
-      if (d.floorPlan) {
-        const typeSet = new Set();
-        d.floorPlan.split(/[・,、\/\.\s]+/).forEach(p => {
-          p = p.trim().toUpperCase();
-          if (p === "1R" || p === "R") typeSet.add("ワンルーム");
-          else if (/^\d*SLDK$/.test(p)) typeSet.add("SLDK");
-          else if (/^\d*SLK$/.test(p)) typeSet.add("SLK");
-          else if (/^\d*SDK$/.test(p)) typeSet.add("SDK");
-          else if (/^\d*SK$/.test(p)) typeSet.add("SK");
-          else if (/^\d*LDK$/.test(p)) typeSet.add("LDK");
-          else if (/^\d*LK$/.test(p)) typeSet.add("LK");
-          else if (/^\d*DK$/.test(p)) typeSet.add("DK");
-          else if (/^\d*K$/.test(p)) typeSet.add("K");
-        });
+      // 建物使用部分面積（平米指定がある場合）
+      if (d.areaMin) {
         steps.push({
           num: n++,
-          field: "間取タイプ",
-          value: typeSet.size ? Array.from(typeSet).join(" / ") : d.floorPlan,
-          hint: "「間取タイプ」のチェックボックスから選択（ワンルーム／K／DK／LK／LDK など）",
+          field: "建物使用部分面積",
+          value: `${d.areaMin}㎡以上`,
+          hint: `「建物使用部分面積」の左欄（FROM）に「${d.areaMin}」を入力（マンション専用欄）`,
+          copyRaw: String(d.areaMin),
         });
+      }
+
+      // 間取部屋数・間取タイプ（平米表記を除外してから処理）
+      if (d.floorPlan) {
+        const typeSet = new Set();
+        const roomNums = [];
+        d.floorPlan.split(/[・,、\/\.\s]+/).forEach(p => {
+          p = p.trim();
+          // 平米・㎡・m2 を含むトークンは面積条件なので間取り処理をスキップ
+          if (/平米|㎡|m2|m²/i.test(p)) return;
+          const pu = p.toUpperCase();
+          // 間取部屋数の抽出
+          const m = pu.match(/^(\d+)/);
+          if (m) roomNums.push(parseInt(m[1]));
+          else if (/^(R|K|DK|LK|LDK|SK|SDK|SLK|SLDK|ワンルーム)/.test(pu)) roomNums.push(1);
+          // 間取タイプの抽出
+          if (pu === "1R" || pu === "R") typeSet.add("ワンルーム");
+          else if (/^\d*SLDK$/.test(pu)) typeSet.add("SLDK");
+          else if (/^\d*SLK$/.test(pu)) typeSet.add("SLK");
+          else if (/^\d*SDK$/.test(pu)) typeSet.add("SDK");
+          else if (/^\d*SK$/.test(pu)) typeSet.add("SK");
+          else if (/^\d*LDK$/.test(pu)) typeSet.add("LDK");
+          else if (/^\d*LK$/.test(pu)) typeSet.add("LK");
+          else if (/^\d*DK$/.test(pu)) typeSet.add("DK");
+          else if (/^\d*K$/.test(pu)) typeSet.add("K");
+        });
+
+        if (roomNums.length) {
+          steps.push({
+            num: n++,
+            field: "間取部屋数",
+            value: `${Math.min(...roomNums)}室 〜 ${Math.max(...roomNums)}室`,
+            hint: "「間取部屋数」の FROM/TO 欄に室数を入力",
+            copyRaw: String(Math.min(...roomNums)),
+          });
+        }
+        if (typeSet.size) {
+          steps.push({
+            num: n++,
+            field: "間取タイプ",
+            value: Array.from(typeSet).join(" / "),
+            hint: "「間取タイプ」のチェックボックスから選択（ワンルーム／K／DK／LK／LDK など）",
+          });
+        }
       }
 
       // 築年月（築N年以内 → YYYY年以降に変換）
@@ -1517,6 +1549,7 @@ function buildCondData(c, mode = "pinpoint") {
     rentMin:      rentMin ? formatYen(rentMin) : null,
     rentRange:    buildRentRange(rentMin, effectiveRentMax),
     floorPlan:    c.floor_plan || c.layout || null,
+    areaMin:      parseAreaMin(c.floor_plan) || parseAreaMin(c.preferences) || parseAreaMin(c.other_requests) || null,
     walkMin:      c.walk_minutes ? c.walk_minutes + "分以内" : null,
     buildingAge:  c.building_age ? c.building_age + "年以内" : null,
     initialCost:  c.initial_cost_limit ? formatYen(c.initial_cost_limit) : null,
@@ -2296,6 +2329,7 @@ function openInstructions(siteKey) {
         walk_minutes:   adjC.walk_minutes || null,
         floor_plan:     adjC.floor_plan || null,
         building_age:   adjC.building_age || null,
+        area_min:       parseAreaMin(adjC.floor_plan) || parseAreaMin(adjC.preferences) || parseAreaMin(adjC.other_requests) || null,
         reins_station_pairs: isStationMode ? reinsStationPairs : [],
         reins_line:     isStationMode ? reinsLine : null,
         station_name:   isStationMode ? (reinsStationPairs[0]?.station || null) : null,

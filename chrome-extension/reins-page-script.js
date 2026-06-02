@@ -129,9 +129,34 @@
       setVal(getField(76), rentVal);
     }
 
-    // ④ 間取部屋数 FROM/TO (index 89, 90)
+    // ④ 建物使用部分面積 FROM（area_min または floor_planの平米記述から）
+    var areaMin = cond.area_min || null;
+    if (!areaMin && cond.floor_plan) {
+      var areaMatch = cond.floor_plan.match(/(\d+)\s*(?:平米|㎡|m2)/i);
+      if (areaMatch) areaMin = parseInt(areaMatch[1]);
+    }
+    if (areaMin) {
+      // 「建物使用部分面積」ラベルを含む行からinputを探す
+      var allThs = [].slice.call(document.querySelectorAll("th, td, span, label"));
+      var areaLabelEl = allThs.find(function (el) {
+        return el.textContent.trim().includes("建物使用部分面積");
+      });
+      if (areaLabelEl) {
+        var areaRow = areaLabelEl.closest("tr") || areaLabelEl.parentElement;
+        var areaInputs = areaRow ? areaRow.querySelectorAll("input") : null;
+        if (areaInputs && areaInputs.length > 0) {
+          setVal(areaInputs[0], areaMin); // 左側（FROM）のみ
+          console.log("[AX] 建物使用部分面積 FROM:", areaMin);
+        }
+      }
+    }
+
+    // ⑤ 間取部屋数 FROM/TO (index 89, 90)
+    // ※ 平米表記（30平米以上 等）は間取り条件ではないので除外する
     if (cond.floor_plan) {
-      var plans = cond.floor_plan.split(/[・,、\/\.\s]+/);
+      var plans = cond.floor_plan.split(/[・,、\/\.\s]+/).filter(function (p) {
+        return !/平米|㎡|m2|m²/i.test(p);
+      });
       var roomNums = plans.map(function (p) {
         p = p.trim().toUpperCase();
         if (!p) return null;
@@ -146,15 +171,17 @@
       }
     }
 
-    // ⑤ 間取タイプ チェックボックス
+    // ⑥ 間取タイプ チェックボックス（平米表記を除外）
     if (cond.floor_plan) {
-      cond.floor_plan.split(/[・,、\/\.\s]+/).forEach(function (p) {
-        p = p.trim().toUpperCase();
-        var key = p.replace(/^\d+/, "") || p;
-        var candidates = MADORI_LABELS[p] || MADORI_LABELS[key];
-        if (!candidates) return;
-        candidates.some(function (lbl) { return checkByLabel(lbl); });
-      });
+      cond.floor_plan.split(/[・,、\/\.\s]+/)
+        .filter(function (p) { return !/平米|㎡|m2|m²/i.test(p); })
+        .forEach(function (p) {
+          p = p.trim().toUpperCase();
+          var key = p.replace(/^\d+/, "") || p;
+          var candidates = MADORI_LABELS[p] || MADORI_LABELS[key];
+          if (!candidates) return;
+          candidates.some(function (lbl) { return checkByLabel(lbl); });
+        });
     }
 
     // ⑥ 築年月FROM（「築N年以内」→「YYYY年（和暦）」selectを自動選択）
