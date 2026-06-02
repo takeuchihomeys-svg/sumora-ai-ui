@@ -72,7 +72,7 @@ const ITEM_CONFIG: Array<{
   { key: "customerName",    label: "入居者名" },
   { key: "assignee",        label: "担当者名" },
   { key: "moveInDate",      label: "入居日",           group: "入居情報" },
-  { key: "moveInMonthDays", label: "入居月の日数（例: 31）" },
+  { key: "moveInMonthDays", label: "入居月の日数（入居日から自動計算）", derived: true },
   { key: "rent",            label: "月額家賃",          group: "賃料" },
   { key: "managementFee",   label: "共益費・管理費" },
   { key: "waterFee",        label: "水道代（月額）" },
@@ -151,7 +151,10 @@ function generateLineText(
     parts.push("");
   }
 
-  parts.push("※ご入居日によって日割家賃が発生致します。");
+  // 日付未設定のときのみ注記を追加（設定済みなら日割りは既に計算済みなので不要）
+  if (!items.moveInDate) {
+    parts.push("※ご入居日によって日割家賃が発生致します。");
+  }
 
   return parts.join("\n");
 }
@@ -375,12 +378,12 @@ export default function EstimatePage() {
     { label: "保証金",                              amount: items.hoshokikin,          editKey: "hoshokikin" },
     { label: "敷金",                               amount: items.shikikin,             editKey: "shikikin" },
     { label: "礼金",                               amount: items.reikin,               editKey: "reikin" },
-    { label: `${items.moveInMonth}月分 日割家賃`,  amount: proratedRent,               isComputed: true },
-    { label: `${items.moveInMonth}月分 日割共益費`, amount: proratedMgmt,              isComputed: true },
-    { label: `${items.moveInMonth}月分 日割水道代`, amount: proratedWater,             isComputed: true },
-    { label: `${items.nextMonth}月分 家賃`,         amount: items.nextRent,            editKey: "nextRent" },
-    { label: `${items.nextMonth}月分 共益費`,       amount: items.nextManagementFee,   editKey: "nextManagementFee" },
-    { label: `${items.nextMonth}月分 水道代`,       amount: items.nextWaterFee,        editKey: "nextWaterFee" },
+    { label: items.moveInMonth > 0 ? `${items.moveInMonth}月分 日割家賃`  : "日割家賃",  amount: proratedRent,  isComputed: true },
+    { label: items.moveInMonth > 0 ? `${items.moveInMonth}月分 日割共益費` : "日割共益費", amount: proratedMgmt,  isComputed: true },
+    { label: items.moveInMonth > 0 ? `${items.moveInMonth}月分 日割水道代` : "日割水道代", amount: proratedWater, isComputed: true },
+    { label: items.nextMonth > 0 ? `${items.nextMonth}月分 家賃`   : "翌月家賃",   amount: items.nextRent,            editKey: "nextRent" },
+    { label: items.nextMonth > 0 ? `${items.nextMonth}月分 共益費` : "翌月共益費", amount: items.nextManagementFee,   editKey: "nextManagementFee" },
+    { label: items.nextMonth > 0 ? `${items.nextMonth}月分 水道代` : "翌月水道代", amount: items.nextWaterFee,        editKey: "nextWaterFee" },
     { label: "仲介手数料",                          amount: items.commission,           editKey: "commission",    alwaysShow: true },
     { label: "仲介手数料 消費税",                   amount: items.commissionTax,        editKey: "commissionTax", alwaysShow: true },
     { label: "駐車場手数料",                        amount: items.parkingCommission,    editKey: "parkingCommission" },
@@ -390,7 +393,7 @@ export default function EstimatePage() {
     { label: "鍵交換代",                            amount: items.keyExchange,          editKey: "keyExchange" },
     { label: "クリーニング代",                       amount: items.cleaning,             editKey: "cleaning" },
     { label: "駐車場保証金",                        amount: items.parkingDeposit,       editKey: "parkingDeposit" },
-    { label: `${items.nextMonth}月分 駐車場代`,     amount: items.parkingMonthly,       editKey: "parkingMonthly" },
+    { label: items.nextMonth > 0 ? `${items.nextMonth}月分 駐車場代` : "翌月駐車場代", amount: items.parkingMonthly, editKey: "parkingMonthly" },
     ...items.otherItems.map((o, i): PreviewRow => ({ label: o.item, amount: o.amount, otherIdx: i })),
   ] as PreviewRow[]).filter((r) => r.amount !== 0 || r.alwaysShow) : [];
 
