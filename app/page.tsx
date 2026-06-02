@@ -1740,6 +1740,11 @@ export default function Home() {
                               </span>
                             );
                           })()}
+                          {(conversation.status === "applying" || conversation.status === "closed_won" || STATUS_ALIAS[conversation.status] === "applying") && (
+                            <span className="shrink-0 rounded-full bg-pink-100 px-1.5 py-0.5 text-[9px] font-bold text-pink-700">
+                              審査中
+                            </span>
+                          )}
                           {linkedCustomerMap[conversation.id] && (
                             <span className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">
                               🔗
