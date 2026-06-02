@@ -72,8 +72,10 @@ function setCell(ws: ExcelJS.Worksheet, addr: string, value: string | number) {
 }
 
 function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account): void {
-  // B3: 入力画面シート参照の数式 → 削除後に#REF!になるのでクリア
-  ws.getCell("B3").value = "";
+  // B3（B3:E3マージ）: お客様名を挨拶行に書き込む（入力画面参照数式を上書き）
+  ws.getCell("B3").value = d.customerName ? `${d.customerName} 様` : "";
+  // M9（住所欄）: 入力画面参照数式を削除後に#REF!にならないようクリア
+  ws.getCell("M9").value = "";
   // 動的行（15〜24）のみクリア（B=ラベル, E/F=金額）
   // ※ 行25以降は固定ラベル（抗菌施工費・賃貸保証料等）があるのでB列は触らない
   for (let r = 15; r <= 24; r++) {
