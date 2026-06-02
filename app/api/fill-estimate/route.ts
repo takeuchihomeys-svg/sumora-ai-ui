@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
+import JSZip from "jszip";
 import path from "path";
 import fs from "fs";
 
@@ -52,6 +53,84 @@ type ItemData = {
   nextWaterFee: number;
 };
 
+// テンプレートアカウント別の節約金額プレースホルダー（drawing2.xml内の固定値）
+const SAVINGS_PLACEHOLDER: Record<Account, string> = {
+  sumora: "129,720",
+  ieyasu: "266,100",
+  giga:   "129,720",
+};
+
+type JSZipType = import("jszip");
+
+/**
+ * ExcelJS出力バッファに元テンプレートのテキスト図形(drawing2.xml)を移植し、
+ * 節約金額プレースホルダーを実際の計算値に書き換える。
+ *
+ * ExcelJSはテキストボックス/ワードアートを保持しないため、
+ * 元テンプレートのdrawing2.xmlを直接outputZipに追加する方式を採用。
+ */
+async function patchSavingsInDrawing(
+  exceljsBuf: Buffer,
+  templatePath: string,
+  account: Account,
+  savings: number
+): Promise<Buffer> {
+  const placeholder = SAVINGS_PLACEHOLDER[account];
+  const formatted = savings > 0 ? savings.toLocaleString("ja-JP") : "0";
+
+  const [outputZip, templateZip] = await Promise.all([
+    (JSZip as unknown as { loadAsync: (b: Buffer) => Promise<JSZipType> }).loadAsync(exceljsBuf),
+    (JSZip as unknown as { loadAsync: (b: Buffer) => Promise<JSZipType> }).loadAsync(fs.readFileSync(templatePath)),
+  ]);
+
+  // 元テンプレートのdrawing2.xmlを取得
+  const templateDrawing = templateZip.files["xl/drawings/drawing2.xml"];
+  if (!templateDrawing) return exceljsBuf;
+
+  let drawingXml = await templateDrawing.async("string");
+
+  // 節約金額プレースホルダーを実際の計算値に置換
+  if (drawingXml.includes(">" + placeholder + "<")) {
+    drawingXml = drawingXml.split(">" + placeholder + "<").join(">" + formatted + "<");
+  }
+
+  // ExcelJS出力には既に画像(drawing1.xml)があるため、
+  // drawing2.xml内の画像(xdr:pic)を除去して図形のみに絞る
+  drawingXml = drawingXml.replace(/<xdr:twoCellAnchor[^>]*>(?:(?!<xdr:twoCellAnchor).)*?<xdr:pic\b[\s\S]*?<\/xdr:twoCellAnchor>/g, "");
+
+  // outputZipにdrawing2.xmlを追加
+  outputZip.file("xl/drawings/drawing2.xml", drawingXml);
+
+  // sheet18.xml.rels に drawing2.xml の参照を追加
+  const sheetRelsKey = "xl/worksheets/_rels/sheet18.xml.rels";
+  const sheetRelsFile = outputZip.files[sheetRelsKey];
+  if (sheetRelsFile) {
+    let relsXml = await sheetRelsFile.async("string");
+    if (!relsXml.includes("drawing2.xml")) {
+      relsXml = relsXml.replace(
+        "</Relationships>",
+        `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing2.xml"/></Relationships>`
+      );
+      outputZip.file(sheetRelsKey, relsXml);
+    }
+  }
+
+  // [Content_Types].xmlにdrawing2.xmlのエントリを追加
+  const ctFile = outputZip.files["[Content_Types].xml"];
+  if (ctFile) {
+    let ctXml = await ctFile.async("string");
+    if (!ctXml.includes("drawing2.xml")) {
+      ctXml = ctXml.replace(
+        "</Types>",
+        `<Override PartName="/xl/drawings/drawing2.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/></Types>`
+      );
+      outputZip.file("[Content_Types].xml", ctXml);
+    }
+  }
+
+  return Buffer.from(await outputZip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }));
+}
+
 function findTemplatePath(templateFile: string): string | null {
   const candidates = [
     path.join(process.cwd(), "public", "templates", templateFile),
@@ -71,7 +150,7 @@ function setCell(ws: ExcelJS.Worksheet, addr: string, value: string | number) {
   cell.value = value;
 }
 
-function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account): void {
+function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account): number {
   // B3（B3:E3マージ）: お客様名を挨拶行に書き込む（入力画面参照数式を上書き）
   ws.getCell("B3").value = d.customerName ? `${d.customerName} 様` : "";
   // M9（住所欄）: 入力画面参照数式を削除後に#REF!にならないようクリア
@@ -207,6 +286,9 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
   setCell(ws, "E37", e37);
   setCell(ws, "E8",  e8);
   setCell(ws, "M1",  e8);
+
+  // 節約金額（一般との差額）を返す
+  return Math.max(0, f32 - e32);
 }
 
 export async function POST(req: NextRequest) {
@@ -241,7 +323,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "見積書シートが見つかりません" }, { status: 500 });
     }
 
-    fillEstimateSheet(targetSheet, d, account);
+    const savings = fillEstimateSheet(targetSheet, d, account);
 
     // 見積書シート以外を削除
     const keepId = targetSheet.id;
@@ -252,6 +334,8 @@ export async function POST(req: NextRequest) {
     let buf: Buffer;
     try {
       buf = Buffer.from(await wb.xlsx.writeBuffer());
+      // 元テンプレートのテキスト図形を移植し節約金額を動的書き換え
+      buf = await patchSavingsInDrawing(buf, templatePath, account, savings);
     } catch (writeErr) {
       console.error("[fill-estimate] write error:", writeErr);
       return NextResponse.json(
