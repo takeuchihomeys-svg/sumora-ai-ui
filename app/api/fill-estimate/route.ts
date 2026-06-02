@@ -137,6 +137,8 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
     dynamicItems.push({ label: "駐車場仲介手数料", amount: parkingTotal });
   if (d.parkingMonthly)
     dynamicItems.push({ label: "翌月駐車場代", amount: d.parkingMonthly });
+  if (d.nextWaterFee)
+    dynamicItems.push({ label: "翌月水道代", amount: d.nextWaterFee });
   for (const oi of d.otherItems || []) {
     if (oi.item && oi.amount > 0)
       dynamicItems.push({ label: oi.item, amount: oi.amount });
@@ -180,6 +182,7 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
   e32 += (d.commission    || 0);
   e32 += (d.commissionTax || 0);
   e32 += discountVal;
+  // nextWaterFeeはdynamicItemsに含まれているのでfor loopで加算済み
 
   let f32 = 0;
   f32 += (d.shikikin || 0);

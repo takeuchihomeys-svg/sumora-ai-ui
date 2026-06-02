@@ -40,6 +40,8 @@ function calcNext(moveInDate: string) {
 }
 
 function calcProratedDays(moveInDay: number, monthDays: number) {
+  // 月初（1日）入居は日割りなし（Excelと同じ挙動）
+  if (!moveInDay || moveInDay <= 1) return 0;
   return monthDays - moveInDay + 1;
 }
 
