@@ -1,20 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import path from "path";
 import fs from "fs";
 
 type Account = "sumora" | "ieyasu" | "giga";
 
 const TEMPLATE_FILES: Record<Account, string> = {
-  sumora: "sumora-estimate.xls",
-  ieyasu: "ieyasu-estimate.xls",
-  giga: "giga-estimate.xls",
+  sumora: "sumora-estimate.xlsx",
+  ieyasu: "ieyasu-estimate.xlsx",
+  giga:   "giga-estimate.xlsx",
 };
 
 const ACCOUNT_LABELS: Record<Account, string> = {
   sumora: "スモラ",
   ieyasu: "イエヤス",
-  giga: "ギガ賃貸",
+  giga:   "ギガ賃貸",
 };
 
 type ItemData = {
@@ -52,53 +52,6 @@ type ItemData = {
   nextWaterFee: number;
 };
 
-/**
- * 全ての数式セルを静的値に変換する
- * - XLSXライブラリは他シート参照・複雑な数式を正しく再計算できない
- * - シート削除後に #REF! になる問題を根本解決する
- * - セルオブジェクトを丸ごと置換せず f(数式)プロパティだけ削除することで
- *   スタイル(s)・配置(z)等を保持し、テンプレートの見た目を壊さない
- */
-function convertAllFormulasToStaticValues(ws: XLSX.WorkSheet): void {
-  for (const key of Object.keys(ws)) {
-    if (key.startsWith("!")) continue;
-    const cell = ws[key] as XLSX.CellObject & { f?: string };
-    if (!cell?.f) continue; // 数式なし → スキップ
-    // 数式だけ削除（スタイル・値・型はそのまま保持）
-    delete cell.f;
-    // キャッシュ値が未定義の場合のみデフォルト値をセット
-    if (cell.v === undefined || cell.v === null) {
-      cell.v = cell.t === "n" ? 0 : "";
-    }
-  }
-}
-
-function setCellValue(ws: XLSX.WorkSheet, cellAddr: string, value: string | number) {
-  const type = typeof value === "number" ? "n" : "s";
-  ws[cellAddr] = { v: value, t: type };
-
-  if (ws["!ref"]) {
-    const range = XLSX.utils.decode_range(ws["!ref"]);
-    const cell = XLSX.utils.decode_cell(cellAddr);
-    range.s.r = Math.min(range.s.r, cell.r);
-    range.s.c = Math.min(range.s.c, cell.c);
-    range.e.r = Math.max(range.e.r, cell.r);
-    range.e.c = Math.max(range.e.c, cell.c);
-    ws["!ref"] = XLSX.utils.encode_range(range);
-  } else {
-    ws["!ref"] = `${cellAddr}:${cellAddr}`;
-  }
-}
-
-// 数式セルのキャッシュ値だけ更新（数式文字列は保持）
-function updateCachedValue(ws: XLSX.WorkSheet, cellAddr: string, value: number) {
-  if (ws[cellAddr]) {
-    ws[cellAddr].v = value;
-  } else {
-    ws[cellAddr] = { v: value, t: "n" };
-  }
-}
-
 function findTemplatePath(templateFile: string): string | null {
   const candidates = [
     path.join(process.cwd(), "public", "templates", templateFile),
@@ -112,46 +65,49 @@ function findTemplatePath(templateFile: string): string | null {
   return null;
 }
 
-function fillEstimateSheet(ws: XLSX.WorkSheet, d: ItemData, account: Account): void {
-  // 全数式を静的値に変換（#REF! 防止・他シート参照を安全に除去）
-  convertAllFormulasToStaticValues(ws);
+// ExcelJSのセルに値をセット（既存スタイルを保持）
+function setCell(ws: ExcelJS.Worksheet, addr: string, value: string | number) {
+  const cell = ws.getCell(addr);
+  cell.value = value;
+}
 
+function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account): void {
   // ── 物件情報（右上）
-  setCellValue(ws, "M8", d.propertyName || "");
-  setCellValue(ws, "N9", d.roomNumber || "");
-  setCellValue(ws, "M10", d.customerName || "");
+  setCell(ws, "M8",  d.propertyName || "");
+  setCell(ws, "N9",  d.roomNumber   || "");
+  setCell(ws, "M10", d.customerName || "");
 
   // ── 契約条件（右側列 L〜N）
-  setCellValue(ws, "M12", d.hoshokikin || 0);    // 保証金
-  setCellValue(ws, "M13", d.shikikin || 0);       // 敷金
-  setCellValue(ws, "M14", d.reikin || 0);         // 礼金
-  setCellValue(ws, "M15", d.rent || 0);           // 家賃
-  setCellValue(ws, "M16", d.managementFee || 0);  // 共益費
-  setCellValue(ws, "M19", d.parkingDeposit || 0); // 駐保証金
+  setCell(ws, "M12", d.hoshokikin    || 0);
+  setCell(ws, "M13", d.shikikin      || 0);
+  setCell(ws, "M14", d.reikin        || 0);
+  setCell(ws, "M15", d.rent          || 0);
+  setCell(ws, "M16", d.managementFee || 0);
+  setCell(ws, "M19", d.parkingDeposit || 0);
 
-  // ── 固定上段費用（E=スモラ列、F=一般列）
-  setCellValue(ws, "E11", d.shikikin || 0);
-  setCellValue(ws, "F11", d.shikikin || 0);
-  setCellValue(ws, "E12", d.reikin || 0);
-  setCellValue(ws, "F12", d.reikin || 0);
-  const nextRent = d.nextRent || d.rent || 0;
+  // ── 固定上段費用
+  setCell(ws, "E11", d.shikikin || 0);
+  setCell(ws, "F11", d.shikikin || 0);
+  setCell(ws, "E12", d.reikin   || 0);
+  setCell(ws, "F12", d.reikin   || 0);
+  const nextRent = d.nextRent        || d.rent          || 0;
   const nextMgmt = d.nextManagementFee || d.managementFee || 0;
-  setCellValue(ws, "E13", nextRent);
-  setCellValue(ws, "F13", nextRent);
-  setCellValue(ws, "E14", nextMgmt);
-  setCellValue(ws, "F14", nextMgmt);
+  setCell(ws, "E13", nextRent);
+  setCell(ws, "F13", nextRent);
+  setCell(ws, "E14", nextMgmt);
+  setCell(ws, "F14", nextMgmt);
 
   // ── 日割り計算
-  const moveInDay = d.moveInDay || 1;
-  const monthDays = d.moveInMonthDays || 30;
+  const moveInDay   = d.moveInDay        || 1;
+  const monthDays   = d.moveInMonthDays  || 30;
   const proratedDays = monthDays - moveInDay + 1;
   const prorated = (amount: number) =>
     amount ? Math.round((amount / monthDays) * proratedDays) : 0;
-  const proratedRent = prorated(d.rent);
-  const proratedMgmt = prorated(d.managementFee);
+  const proratedRent  = prorated(d.rent);
+  const proratedMgmt  = prorated(d.managementFee);
   const proratedWater = prorated(d.waterFee);
 
-  // ── 動的項目（行15〜24、テンプレートの空き行に順番に書き込む）
+  // ── 動的項目（行15〜24）
   type DynItem = { label: string; amount: number };
   const dynamicItems: DynItem[] = [];
 
@@ -175,144 +131,112 @@ function fillEstimateSheet(ws: XLSX.WorkSheet, d: ItemData, account: Account): v
 
   for (let i = 0; i < Math.min(dynamicItems.length, 10); i++) {
     const row = 15 + i;
-    setCellValue(ws, `B${row}`, dynamicItems[i].label);
-    setCellValue(ws, `E${row}`, dynamicItems[i].amount);
-    setCellValue(ws, `F${row}`, dynamicItems[i].amount);
+    setCell(ws, `B${row}`, dynamicItems[i].label);
+    setCell(ws, `E${row}`, dynamicItems[i].amount);
+    setCell(ws, `F${row}`, dynamicItems[i].amount);
   }
 
-  // ── 固定下段費用（E=スモラ実費、F=一般費用）
-  setCellValue(ws, "E25", d.cleaning || 0);
-  setCellValue(ws, "F25", d.cleaning || 0);
-  setCellValue(ws, "E26", d.guarantee || 0);
-  setCellValue(ws, "F26", d.guarantee || 0);
-  setCellValue(ws, "E27", d.insurance || 0);
-  setCellValue(ws, "F27", d.insurance || 0);
+  // ── 固定下段費用
+  setCell(ws, "E25", d.cleaning  || 0);
+  setCell(ws, "F25", d.cleaning  || 0);
+  setCell(ws, "E26", d.guarantee || 0);
+  setCell(ws, "F26", d.guarantee || 0);
+  setCell(ws, "E27", d.insurance || 0);
+  setCell(ws, "F27", d.insurance || 0);
 
-  // 仲介手数料（E=スモラ実費、F=一般1ヶ月分家賃相当）
-  setCellValue(ws, "E28", d.commission || 0);
-  setCellValue(ws, "F28", d.rent || 0);
-  setCellValue(ws, "E29", d.commissionTax || 0);
-  setCellValue(ws, "F29", Math.round((d.rent || 0) * 0.1));
+  // 仲介手数料
+  setCell(ws, "E28", d.commission    || 0);
+  setCell(ws, "F28", d.rent          || 0);
+  setCell(ws, "E29", d.commissionTax || 0);
+  setCell(ws, "F29", Math.round((d.rent || 0) * 0.1));
 
-  // スモ割 / イエヤス割（ラベルはテンプレートに記載済み）
+  // スモ割
   const discountVal = d.discountAmount ? -(d.discountAmount) : 0;
-  setCellValue(ws, "E30", discountVal);
+  setCell(ws, "E30", discountVal);
 
-  // ── 数式セルのキャッシュ値を更新
-  // （保護ビューで開いた際も正しい値を表示するため）
-
-  // E32 = SUM(E10:E31)
+  // ── 合計・差引金額を静的値でセット
   let e32 = 0;
-  e32 += (d.shikikin || 0);        // E11
-  e32 += (d.reikin || 0);          // E12
-  e32 += nextRent;                   // E13
-  e32 += nextMgmt;                   // E14
-  for (const item of dynamicItems) e32 += item.amount; // E15-E24
-  e32 += (d.cleaning || 0);         // E25
-  e32 += (d.guarantee || 0);        // E26
-  e32 += (d.insurance || 0);        // E27
-  e32 += (d.commission || 0);       // E28
-  e32 += (d.commissionTax || 0);    // E29
-  e32 += discountVal;                // E30
+  e32 += (d.shikikin || 0);
+  e32 += (d.reikin   || 0);
+  e32 += nextRent;
+  e32 += nextMgmt;
+  for (const item of dynamicItems) e32 += item.amount;
+  e32 += (d.cleaning  || 0);
+  e32 += (d.guarantee || 0);
+  e32 += (d.insurance || 0);
+  e32 += (d.commission    || 0);
+  e32 += (d.commissionTax || 0);
+  e32 += discountVal;
 
-  // F32 = SUM(F11:J31)
   let f32 = 0;
-  f32 += (d.shikikin || 0);         // F11
-  f32 += (d.reikin || 0);           // F12
-  f32 += nextRent;                   // F13
-  f32 += nextMgmt;                   // F14
-  for (const item of dynamicItems) f32 += item.amount; // F15-F24
-  f32 += (d.cleaning || 0);         // F25
-  f32 += (d.guarantee || 0);        // F26
-  f32 += (d.insurance || 0);        // F27
-  f32 += (d.rent || 0);             // F28（一般手数料 = 1ヶ月分家賃）
-  f32 += Math.round((d.rent || 0) * 0.1); // F29
+  f32 += (d.shikikin || 0);
+  f32 += (d.reikin   || 0);
+  f32 += nextRent;
+  f32 += nextMgmt;
+  for (const item of dynamicItems) f32 += item.amount;
+  f32 += (d.cleaning  || 0);
+  f32 += (d.guarantee || 0);
+  f32 += (d.insurance || 0);
+  f32 += (d.rent      || 0);
+  f32 += Math.round((d.rent || 0) * 0.1);
 
-  // E35 = E30（スモ割）
   const e35 = discountVal;
-
-  // E37 = 差引請求金額
-  // スモラ/ギガ: E32-E34-E36 → E34=E36=0 なので E32
-  // イエヤス: E32-E35-E36 → E36=0 なので E32-E35
   const e37 = account === "ieyasu" ? e32 - e35 : e32;
+  const e8  = account === "ieyasu" ? e32 : e37;
 
-  // E8 = 見積書上部に表示するメイン金額
-  // スモラ/ギガ: E37、イエヤス: E32
-  const e8 = account === "ieyasu" ? e32 : e37;
-
-  updateCachedValue(ws, "E32", e32);
-  updateCachedValue(ws, "F32", f32);
-  updateCachedValue(ws, "E35", e35);
-  updateCachedValue(ws, "E37", e37);
-  updateCachedValue(ws, "E8",  e8);
-
-  // テンプレートの古いキャッシュ値・#REF! になりやすいセルをクリア・更新
-  // M1: 上部に表示される合計金額（=E8 相当）
-  setCellValue(ws, "M1", e8);
-  // B3, L9: 他シート参照で #REF! になっていたセルを空文字でクリア
-  if ((ws["B3"] as XLSX.CellObject | undefined)?.v === "#REF!" || !(ws["B3"] as XLSX.CellObject | undefined)?.v) {
-    setCellValue(ws, "B3", "");
-  }
-  if ((ws["L9"] as XLSX.CellObject | undefined)?.v === "#REF!" || !(ws["L9"] as XLSX.CellObject | undefined)?.v) {
-    setCellValue(ws, "L9", "");
-  }
+  setCell(ws, "E32", e32);
+  setCell(ws, "F32", f32);
+  setCell(ws, "E35", e35);
+  setCell(ws, "E37", e37);
+  setCell(ws, "E8",  e8);
+  setCell(ws, "M1",  e8);
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json() as {
-      account: Account;
-      items: ItemData;
-    };
-
+    const body = await req.json() as { account: Account; items: ItemData };
     const { account = "sumora", items: d } = body;
     const templateFile = TEMPLATE_FILES[account] || TEMPLATE_FILES.sumora;
 
     const templatePath = findTemplatePath(templateFile);
     if (!templatePath) {
-      const cwd = process.cwd();
-      console.error("[fill-estimate] template not found. cwd:", cwd);
+      console.error("[fill-estimate] template not found. cwd:", process.cwd());
       return NextResponse.json(
-        { error: `テンプレートが見つかりません（${templateFile}）。cwd=${cwd}` },
+        { error: `テンプレートが見つかりません（${templateFile}）` },
         { status: 500 }
       );
     }
 
-    let wb: XLSX.WorkBook;
+    const wb = new ExcelJS.Workbook();
     try {
-      const buf = fs.readFileSync(templatePath);
-      wb = XLSX.read(buf, { type: "buffer" });
+      await wb.xlsx.readFile(templatePath);
     } catch (readErr) {
-      console.error("[fill-estimate] XLSX read error:", readErr);
+      console.error("[fill-estimate] read error:", readErr);
       return NextResponse.json(
         { error: `テンプレート読み込みエラー: ${readErr instanceof Error ? readErr.message : String(readErr)}` },
         { status: 500 }
       );
     }
 
-    // 見積書シート（左から2枚目）を使用
-    const sheetName = wb.SheetNames.length > 1 ? wb.SheetNames[1] : wb.SheetNames[0];
-    const ws = wb.Sheets[sheetName];
-    if (!ws) {
-      return NextResponse.json(
-        { error: `シートが見つかりません（${sheetName}）。テンプレートを確認してください。` },
-        { status: 500 }
-      );
+    // 見積書シート（左から2枚目）
+    const targetSheet = wb.worksheets.length > 1 ? wb.worksheets[1] : wb.worksheets[0];
+    if (!targetSheet) {
+      return NextResponse.json({ error: "見積書シートが見つかりません" }, { status: 500 });
     }
 
-    fillEstimateSheet(ws, d, account);
+    fillEstimateSheet(targetSheet, d, account);
 
-    // 見積書シート以外を削除（入力画面・請求書・広告料請求書等）
-    for (const name of wb.SheetNames.filter((n) => n !== sheetName)) {
-      delete wb.Sheets[name];
+    // 見積書シート以外を削除
+    const keepId = targetSheet.id;
+    for (const ws of [...wb.worksheets]) {
+      if (ws.id !== keepId) wb.removeWorksheet(ws.id);
     }
-    wb.SheetNames = [sheetName];
 
     let buf: Buffer;
     try {
-      buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+      buf = Buffer.from(await wb.xlsx.writeBuffer());
     } catch (writeErr) {
-      console.error("[fill-estimate] XLSX write error:", writeErr);
+      console.error("[fill-estimate] write error:", writeErr);
       return NextResponse.json(
         { error: `Excel書き出しエラー: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}` },
         { status: 500 }
