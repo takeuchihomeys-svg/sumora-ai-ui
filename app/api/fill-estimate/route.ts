@@ -52,6 +52,25 @@ type ItemData = {
   nextWaterFee: number;
 };
 
+/**
+ * 全ての数式セルを静的値に変換する
+ * - XLSXライブラリは他シート参照・複雑な数式を正しく再計算できない
+ * - シート削除後に #REF! になる問題を根本解決する
+ * - 変換後に setCellValue / updateCachedValue で上書きするので管理セルは正しい値になる
+ */
+function convertAllFormulasToStaticValues(ws: XLSX.WorkSheet): void {
+  for (const key of Object.keys(ws)) {
+    if (key.startsWith("!")) continue;
+    const cell = ws[key] as XLSX.CellObject;
+    if (!cell?.f) continue; // 数式なし → スキップ
+    const v = cell.v;
+    const t: XLSX.ExcelDataType =
+      typeof v === "number" ? "n" :
+      typeof v === "boolean" ? "b" : "s";
+    ws[key] = { v: v ?? "", t };
+  }
+}
+
 function setCellValue(ws: XLSX.WorkSheet, cellAddr: string, value: string | number) {
   const type = typeof value === "number" ? "n" : "s";
   ws[cellAddr] = { v: value, t: type };
@@ -92,6 +111,9 @@ function findTemplatePath(templateFile: string): string | null {
 }
 
 function fillEstimateSheet(ws: XLSX.WorkSheet, d: ItemData, account: Account): void {
+  // 全数式を静的値に変換（#REF! 防止・他シート参照を安全に除去）
+  convertAllFormulasToStaticValues(ws);
+
   // ── 物件情報（右上）
   setCellValue(ws, "M8", d.propertyName || "");
   setCellValue(ws, "N9", d.roomNumber || "");
@@ -221,6 +243,17 @@ function fillEstimateSheet(ws: XLSX.WorkSheet, d: ItemData, account: Account): v
   updateCachedValue(ws, "E35", e35);
   updateCachedValue(ws, "E37", e37);
   updateCachedValue(ws, "E8",  e8);
+
+  // テンプレートの古いキャッシュ値・#REF! になりやすいセルをクリア・更新
+  // M1: 上部に表示される合計金額（=E8 相当）
+  setCellValue(ws, "M1", e8);
+  // B3, L9: 他シート参照で #REF! になっていたセルを空文字でクリア
+  if ((ws["B3"] as XLSX.CellObject | undefined)?.v === "#REF!" || !(ws["B3"] as XLSX.CellObject | undefined)?.v) {
+    setCellValue(ws, "B3", "");
+  }
+  if ((ws["L9"] as XLSX.CellObject | undefined)?.v === "#REF!" || !(ws["L9"] as XLSX.CellObject | undefined)?.v) {
+    setCellValue(ws, "L9", "");
+  }
 }
 
 export async function POST(req: NextRequest) {
