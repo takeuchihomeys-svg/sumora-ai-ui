@@ -2234,6 +2234,35 @@ function openInstructions(siteKey) {
     const updateDaysRow = document.getElementById("adj-update-days-row");
     if (updateDaysRow) updateDaysRow.style.display = "flex";
 
+    // 「送った」ボタン：今日の日付でDBを更新し日付欄・更新日を即反映
+    const markSentBtn = document.getElementById("adj-mark-sent-btn");
+    if (markSentBtn) {
+      markSentBtn.onclick = async () => {
+        const today = new Date().toISOString().split("T")[0];
+        markSentBtn.textContent = "更新中...";
+        markSentBtn.disabled = true;
+        try {
+          await fetch(`${API_BASE}/api/property-tasks`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ customer_id: selectedCustomer.id }),
+          });
+          // 日付欄を今日に更新
+          const lastSentEl = document.getElementById("adj-last-sent-date");
+          if (lastSentEl) lastSentEl.value = today;
+          // 更新日を再計算
+          const updateDaysEl = document.getElementById("adj-update-days");
+          if (updateDaysEl) updateDaysEl.value = calcUpdateDays(today, selectedCustomer.status);
+          // selectedCustomer も更新
+          selectedCustomer = { ...selectedCustomer, last_property_sent_at: new Date().toISOString() };
+          markSentBtn.textContent = "✅ 送った";
+        } catch {
+          markSentBtn.textContent = "✅ 送った";
+        }
+        markSentBtn.disabled = false;
+      };
+    }
+
     adjForm.style.display = "block";
     const c0 = selectedCustomer;
     preloadAdjForm(c0);
