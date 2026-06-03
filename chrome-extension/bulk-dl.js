@@ -143,23 +143,17 @@
     var today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
     var fileName = "物件まとめ_" + today + ".pdf";
 
-    // 全PDFをfetchしてbase64に変換（認証クッキー付き）
-    Promise.all(urls.map(function(url) {
-      return fetch(url, {
-        credentials: "include",
-        headers: { "Referer": location.href },
-      })
-        .then(function(r) {
-          if (!r.ok) throw new Error("HTTP " + r.status + ": " + url);
-          return r.arrayBuffer();
-        })
-        .then(function(buf) {
-          var bytes = new Uint8Array(buf);
-          var binary = "";
-          for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-          return btoa(binary);
-        });
-    }))
+    // バックグラウンドスクリプト経由でPDF取得（CORS回避）
+    new Promise(function(resolve, reject) {
+      chrome.runtime.sendMessage(
+        { type: "axlx-fetch-pdfs", urls: urls },
+        function(resp) {
+          if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+          if (!resp || !resp.ok) return reject(new Error(resp ? resp.error : "応答なし"));
+          resolve(resp.pdf_data);
+        }
+      );
+    })
     .then(function(pdf_data) {
       return fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
         method: "POST",
