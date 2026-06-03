@@ -33,10 +33,111 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (url) configureSidePanelForTab(tabId, url);
 });
 
-// ── PDF取得：ページコンテキストで fetch → base64配列を返す ───────────────
-// 診断結果: fetch(url, {credentials:"include"}) → 200 application/x-download ✅
-// ページのセッションクッキーが自然に使われるため認証問題なし。
-// async/await で SW が suspend されないようにする（MV3 module SW の既知問題対策）
+// ── chrome.debugger 経由でPDFを取得 ───────────────────────────────────────
+// fetch/XHR はブラウザがダウンロードレスポンスをスクリプトから遮断するため失敗する。
+// chrome.debugger (Network CDP) はそれより低レベルで動くため確実に取得できる。
+// 手順:
+//   1. debugger をタブにアタッチ
+//   2. Network.enable で通信を監視
+//   3. MAIN world で XHR を発火（JS 側は失敗してよい）
+//   4. Network.loadingFinished → Network.getResponseBody で base64 取得
+//   5. debugger をデタッチ
+async function fetchPdfsViaDebugger(tabId, urls) {
+  const debuggee = { tabId };
+
+  await chrome.debugger.attach(debuggee, "1.3");
+
+  try {
+    await chrome.debugger.sendCommand(debuggee, "Network.enable", {});
+
+    const urlToRid = new Map();   // url → requestId
+    const ridToBody = new Map();  // requestId → base64
+
+    const pdfData = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        chrome.debugger.onEvent.removeListener(onEvent);
+        reject(new Error("PDF取得タイムアウト（30秒）。リアプロを再読み込みして再試行してください。"));
+      }, 30000);
+
+      async function onEvent(source, method, params) {
+        if (source.tabId !== tabId) return;
+
+        // リクエスト開始 → URL と requestId を紐付け
+        if (method === "Network.requestWillBeSent") {
+          const matched = urls.find((u) => params.request.url === u);
+          if (matched) urlToRid.set(matched, params.requestId);
+        }
+
+        // リクエスト完了 → レスポンスボディを取得
+        if (method === "Network.loadingFinished") {
+          const isOurs = [...urlToRid.values()].includes(params.requestId);
+          if (!isOurs) return;
+
+          try {
+            const r = await chrome.debugger.sendCommand(debuggee, "Network.getResponseBody", {
+              requestId: params.requestId,
+            });
+            ridToBody.set(params.requestId, r.base64Encoded ? r.body : btoa(r.body));
+          } catch (_) {}
+
+          // 全 URL のボディが揃ったら完了
+          const allDone = urls.every((u) => {
+            const rid = urlToRid.get(u);
+            return rid && ridToBody.has(rid);
+          });
+
+          if (allDone) {
+            clearTimeout(timer);
+            chrome.debugger.onEvent.removeListener(onEvent);
+            const result = urls.map((u) => {
+              const rid = urlToRid.get(u);
+              return rid ? ridToBody.get(rid) : null;
+            }).filter(Boolean);
+            resolve(result);
+          }
+        }
+
+        // ネットワークエラー
+        if (method === "Network.loadingFailed") {
+          const isOurs = [...urlToRid.values()].includes(params.requestId);
+          if (isOurs) {
+            clearTimeout(timer);
+            chrome.debugger.onEvent.removeListener(onEvent);
+            reject(new Error("PDFの読み込みに失敗しました: " + (params.errorText || "不明なエラー")));
+          }
+        }
+      }
+
+      chrome.debugger.onEvent.addListener(onEvent);
+
+      // MAIN world から XHR を発火（JS 側のレスポンス受信は不要）
+      chrome.scripting.executeScript({
+        target: { tabId },
+        world: "MAIN",
+        func: (urlList) => {
+          urlList.forEach((url) => {
+            var xhr = new XMLHttpRequest();
+            xhr.open("GET", url, true);
+            xhr.withCredentials = true;
+            xhr.send();
+          });
+        },
+        args: [urls],
+      });
+    });
+
+    return pdfData;
+
+  } finally {
+    // 必ずデタッチ（バナーを即解除）
+    try {
+      await chrome.debugger.sendCommand(debuggee, "Network.disable");
+      await chrome.debugger.detach(debuggee);
+    } catch (_) {}
+  }
+}
+
+// ── メッセージハンドラ ─────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type !== "axlx-fetch-pdfs") return false;
 
@@ -48,37 +149,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   (async () => {
     try {
-      const results = await chrome.scripting.executeScript({
-        target: { tabId },
-        world: "MAIN",
-        func: function (urls) {
-          function toBase64(buf) {
-            const bytes = new Uint8Array(buf);
-            let binary = "";
-            const chunk = 8192;
-            for (let i = 0; i < bytes.length; i += chunk) {
-              binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + chunk, bytes.length)));
-            }
-            return btoa(binary);
-          }
-          return Promise.all(
-            urls.map((url) =>
-              fetch(url, { credentials: "include" })
-                .then((r) => {
-                  if (!r.ok) throw new Error("HTTP " + r.status + " (" + url + ")");
-                  return r.arrayBuffer();
-                })
-                .then((buf) => toBase64(buf))
-            )
-          );
-        },
-        args: [msg.urls],
-      });
-
-      const pdf_data = results?.[0]?.result;
-      if (!Array.isArray(pdf_data) || pdf_data.length === 0) {
-        throw new Error("PDFデータが空でした。ページを再読み込みして再試行してください。");
-      }
+      const pdf_data = await fetchPdfsViaDebugger(tabId, msg.urls);
+      if (!pdf_data?.length) throw new Error("PDFデータが空でした。");
       sendResponse({ ok: true, pdf_data });
     } catch (e) {
       sendResponse({ ok: false, error: e.message });

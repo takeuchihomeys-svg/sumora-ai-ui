@@ -306,26 +306,33 @@
     }
   }
 
-  // ── Approach A: document.cookie → サーバー代理取得 ──
-  // コンテンツスクリプトは document.cookie を読める（ページとcookieを共有）
-  // Vercelサーバーが Cookie ヘッダー付きでリアプロPDFを取得する
-  function tryProxyMerge(urls, opts) {
+  // ── Approach A: chrome.debugger 経由でPDF取得 ──────────
+  // background.js が Network CDP で XHR レスポンスを直接キャプチャ
+  // fetch/XHR が JS レベルで失敗してもデバッガは確実に取得できる
+  function tryDebuggerMerge(urls, opts) {
     var btn = opts.btn;
-    btn.textContent = "PDF取得中（サーバー経由）...";
+    btn.textContent = "PDF取得中... (" + urls.length + "件)";
 
-    var cookieStr = document.cookie; // 非HttpOnlyクッキーを収集
-
-    return fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        pdf_urls: urls,
-        cookie_str: cookieStr,
-        file_name: opts.fileName,
-        send_to_line: opts.sendToLine,
-        customer_name: opts.customerName || null,
-        property_summaries: opts.propertySummaries,
-      }),
+    return new Promise(function (resolve, reject) {
+      chrome.runtime.sendMessage({ type: "axlx-fetch-pdfs", urls: urls }, function (resp) {
+        if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+        if (!resp || !resp.ok) return reject(new Error(resp ? resp.error : "応答なし"));
+        resolve(resp.pdf_data);
+      });
+    })
+    .then(function (pdf_data) {
+      btn.textContent = opts.sendToLine ? "PDF送信中..." : "PDF結合中...";
+      return fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pdf_data: pdf_data,
+          file_name: opts.fileName,
+          send_to_line: opts.sendToLine,
+          customer_name: opts.customerName || null,
+          property_summaries: opts.propertySummaries,
+        }),
+      });
     })
     .then(function (r) { return r.json(); })
     .then(function (data) {
@@ -426,16 +433,16 @@
       propertySummaries: propertySummaries,
     };
 
-    // Approach A: サーバー代理取得
-    tryProxyMerge(urls, opts)
+    // Approach A: chrome.debugger 経由でPDF直接取得
+    tryDebuggerMerge(urls, opts)
       .then(function (data) {
         handleMergeSuccess(data, btn, origText, sendToLine, fileName);
         btn.disabled = false;
         setTimeout(function () { btn.textContent = origText; }, 4000);
       })
       .catch(function (e) {
-        console.warn("[AXLX] Approach A 失敗:", e.message, "→ ファイルピッカーに切替");
-        // Approach B: ファイルピッカー（自動切替・確認ダイアログなし）
+        console.warn("[AXLX] debugger取得失敗:", e.message, "→ ファイルピッカーに自動切替");
+        // Approach B: ファイルピッカー（確認ダイアログなし・自動切替）
         tryPickerMerge(opts);
       });
   }

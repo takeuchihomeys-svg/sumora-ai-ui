@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AIXLINX 物件検索",
-  "version": "1.8.2",
+  "version": "1.8.3",
   "description": "お客さんの条件に合わせてリアプロ・itandi・レインズを検索するサポートツール",
   "action": {
     "default_title": "AIXLINX 物件検索"
@@ -25,7 +25,8 @@
     "tabs",
     "clipboardWrite",
     "scripting",
-    "cookies"
+    "cookies",
+    "debugger"
   ],
   "web_accessible_resources": [
     {
