@@ -330,7 +330,7 @@ async function notifyFormatReceived(db: ReturnType<typeof getDb>, customerName: 
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({
       to: groupId,
-      messages: [{ type: "text", text: `🏠【新規】${customerName}様からフォーマットが届きました！\n条件を自動取得・売上サポに登録しました。今すぐ物件を探しましょう！` }],
+      messages: [{ type: "text", text: `【新規】${customerName}様からフォーマットが届きました！\n条件を自動取得・売上サポに登録しました。今すぐ物件を探しましょう！` }],
     }),
   });
 }
