@@ -2013,9 +2013,30 @@ export default function Home() {
                                   />
                                 );
                               }
-                              const cols = imgs.length === 2 ? "grid-cols-2" : "grid-cols-3";
+                              if (imgs.length === 2) {
+                                return (
+                                  <div className={`grid grid-cols-2 gap-0.5 overflow-hidden rounded-2xl ${roundB}`}>
+                                    {imgs.map((url, idx) => (
+                                      <img key={idx} src={url} alt={`画像${idx + 1}`} onClick={() => openLightbox(idx)} className="aspect-square w-full cursor-pointer object-cover" />
+                                    ))}
+                                  </div>
+                                );
+                              }
+                              if (imgs.length === 3) {
+                                // LINE風: 左1枚大きく(60%) + 右2枚縦並び(40%)
+                                return (
+                                  <div className={`flex gap-0.5 overflow-hidden rounded-2xl ${roundB}`} style={{ height: 200 }}>
+                                    <img src={imgs[0]} alt="画像1" onClick={() => openLightbox(0)} className="w-[60%] cursor-pointer object-cover" style={{ objectFit: "cover" }} />
+                                    <div className="flex w-[40%] flex-col gap-0.5">
+                                      <img src={imgs[1]} alt="画像2" onClick={() => openLightbox(1)} className="h-1/2 w-full cursor-pointer object-cover" />
+                                      <img src={imgs[2]} alt="画像3" onClick={() => openLightbox(2)} className="h-1/2 w-full cursor-pointer object-cover" />
+                                    </div>
+                                  </div>
+                                );
+                              }
+                              // 4枚以上: LINE風2列グリッド（全枚数表示）
                               return (
-                                <div className={`grid ${cols} gap-0.5 overflow-hidden rounded-2xl ${roundB}`}>
+                                <div className={`grid grid-cols-2 gap-0.5 overflow-hidden rounded-2xl ${roundB}`}>
                                   {imgs.map((url, idx) => (
                                     <img
                                       key={idx}
