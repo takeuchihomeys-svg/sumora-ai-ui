@@ -290,7 +290,7 @@ export default function Home() {
   const [announcements, setAnnouncements] = useState<Message[]>([]);
   const [showAnnouncementList, setShowAnnouncementList] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ messageId: string; x: number; y: number; text: string; sender: string } | null>(null);
-  const [targetOverrideMessage, setTargetOverrideMessage] = useState<string | null>(null);
+  const [targetOverrideMessage, setTargetOverrideMessage] = useState<{ id: string; text: string } | null>(null);
   const [partialCopyMessageId, setPartialCopyMessageId] = useState<string | null>(null);
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const lightboxSwipeX = useRef(0);
@@ -891,18 +891,17 @@ export default function Home() {
     let targetMessage: string;
     let contextMsgs: typeof msgs;
 
-    if (targetOverrideMessage?.trim()) {
-      targetMessage = targetOverrideMessage.trim();
-      // 選択メッセージの位置を特定して、それ以降を除外
+    if (targetOverrideMessage?.text?.trim()) {
+      targetMessage = targetOverrideMessage.text.trim();
+      // IDで正確にメッセージ位置を特定してそれ以降を除外（テキスト一致より確実）
       const idx = msgs.findLastIndex(
-        (m) => m.sender === "customer" && m.text === targetMessage
+        (m) => m.id === targetOverrideMessage.id
       );
       contextMsgs = idx >= 0 ? msgs.slice(0, idx + 1) : msgs;
     } else {
       targetMessage = latestCustomerMessage.trim() || msgs[msgs.length - 1]?.text || "";
       contextMsgs = msgs;
     }
-    setTargetOverrideMessage(null);
 
     if (!targetMessage.trim()) {
       setError("メッセージが読み込まれていません。しばらく待ってから再試行してください。");
@@ -988,6 +987,7 @@ export default function Home() {
       setError(`返信案の作成に失敗しました: ${msg}`);
     } finally {
       setGenerating(false);
+      setTargetOverrideMessage(null); // 生成完了後にバナーをクリア
     }
   };
 
@@ -2066,7 +2066,7 @@ export default function Home() {
               <div className="mb-2 flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2">
                 <div className="flex-1 min-w-0">
                   <p className="text-[10px] font-semibold text-blue-500">この文に返信</p>
-                  <p className="truncate text-[12px] text-blue-700">{targetOverrideMessage}</p>
+                  <p className="truncate text-[12px] text-blue-700">{targetOverrideMessage.text}</p>
                 </div>
                 <button
                   onClick={() => setTargetOverrideMessage(null)}
@@ -3011,7 +3011,7 @@ export default function Home() {
               <div className="border-t border-[#f0f2f5] px-3 pb-3 pt-2">
                 <button
                   onClick={() => {
-                    setTargetOverrideMessage(contextMenu.text);
+                    setTargetOverrideMessage({ id: contextMenu.messageId, text: contextMenu.text });
                     setContextMenu(null);
                   }}
                   className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-500 py-3 text-[13px] font-bold text-white active:bg-blue-600"
