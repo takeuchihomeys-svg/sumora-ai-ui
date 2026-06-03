@@ -95,6 +95,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // ── itandi用: キャプチャ済みpdf_dataをそのまま結合してLINE送信 ──────────
+  // クッキー不要（ブラウザ側でPDFを取得済み）
+  if (msg.type === "axlx-send-pdf-data-to-line") {
+    (async () => {
+      try {
+        const data = await callMergeApi({
+          pdf_data: msg.pdf_data,
+          file_name: msg.file_name,
+          send_to_line: true,
+          customer_name: msg.customer_name || null,
+          property_summaries: msg.property_summaries || null,
+        });
+        sendResponse({ ok: true, line_sent: !!data.line_sent, url: data.url });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
+    return true;
+  }
+
   // ── PDF結合ダウンロード ───────────────────────────────────────────────────
   if (msg.type === "axlx-merge-pdf") {
     (async () => {
