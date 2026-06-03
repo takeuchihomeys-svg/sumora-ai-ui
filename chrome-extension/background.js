@@ -30,7 +30,7 @@ setupSidePanel();
 // タブがアクティブになったとき
 chrome.tabs.onActivated.addListener(function ({ tabId }) {
   chrome.tabs.get(tabId, function (tab) {
-    if (chrome.runtime.lastError) return; // タブが既に閉じられている場合など
+    if (chrome.runtime.lastError) return;
     if (tab && tab.url) configureSidePanelForTab(tabId, tab.url);
   });
 });
@@ -44,62 +44,24 @@ chrome.tabs.onUpdated.addListener(function (tabId, changeInfo, tab) {
   }
 });
 
-// ── PDF一括取得（ページコンテキストに注入してSameSiteクッキー問題を回避） ──
+// ── PDF取得用クッキー収集 ──────────────────────────────
+// ブラウザのfetch/XHRはSameSite制限でクッキーが送れないケースがある。
+// サーバー側でPDFを代理取得するため、chrome.cookies APIでセッションクッキーを収集して渡す。
 chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   if (msg.type !== "axlx-fetch-pdfs") return false;
 
-  var tabId = sender.tab && sender.tab.id;
-  if (!tabId) { sendResponse({ ok: false, error: "tabId不明" }); return true; }
+  chrome.cookies.getAll({ url: "https://www.realnetpro.com/" }, function (cookies) {
+    if (chrome.runtime.lastError) {
+      sendResponse({ ok: false, error: "Cookie取得エラー: " + chrome.runtime.lastError.message });
+      return;
+    }
+    var cookieStr = cookies.map(function (c) { return c.name + "=" + c.value; }).join("; ");
+    if (!cookieStr) {
+      sendResponse({ ok: false, error: "リアプロのセッションクッキーが見つかりません。リアプロにログインしてから再試行してください。" });
+      return;
+    }
+    sendResponse({ ok: true, cookie_str: cookieStr });
+  });
 
-  // ページのコンテキストで実行（セッションクッキーが確実に使われる）
-  chrome.scripting.executeScript({
-    target: { tabId: tabId },
-    world: "MAIN",
-    func: function (urls) {
-      function toBase64(buf) {
-        var bytes = new Uint8Array(buf);
-        var binary = "";
-        var chunk = 8192;
-        for (var i = 0; i < bytes.length; i += chunk) {
-          binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + chunk, bytes.length)));
-        }
-        return btoa(binary);
-      }
-      return Promise.all(urls.map(function (url) {
-        // まずsame-origin credentials付きで試行
-        return fetch(url, { credentials: "same-origin" })
-          .then(function (r) {
-            if (!r.ok) throw new Error("HTTP " + r.status);
-            var ct = r.headers.get("content-type") || "";
-            // PDFでない場合（HTMLリダイレクト等）
-            if (ct.includes("text/html")) {
-              throw new Error("PDFではなくHTMLが返されました（ログイン切れの可能性）");
-            }
-            return r.arrayBuffer();
-          })
-          .then(function (buf) { return toBase64(buf); })
-          .catch(function (e) {
-            // fallback: includeで再試行
-            console.warn("[AXLX] same-origin失敗、includeで再試行:", e.message);
-            return fetch(url, { credentials: "include" })
-              .then(function (r) {
-                if (!r.ok) throw new Error("HTTP " + r.status);
-                return r.arrayBuffer();
-              })
-              .then(function (buf) { return toBase64(buf); });
-          });
-      }));
-    },
-    args: [msg.urls],
-  })
-    .then(function (results) {
-      var result = results && results[0] && results[0].result;
-      if (!result) throw new Error("結果が空です");
-      sendResponse({ ok: true, pdf_data: result });
-    })
-    .catch(function (e) {
-      sendResponse({ ok: false, error: e.message });
-    });
-
-  return true;
+  return true; // 非同期レスポンス
 });

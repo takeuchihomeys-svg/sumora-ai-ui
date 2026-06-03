@@ -76,8 +76,8 @@
     document.body.appendChild(bar);
     document.getElementById("axlx-all-btn").addEventListener("click", toggleAll);
     document.getElementById("axlx-dl-btn").addEventListener("click", bulkDownload);
-    document.getElementById("axlx-merge-btn").addEventListener("click", mergePdfs);
-    document.getElementById("axlx-line-btn").addEventListener("click", sendImageToLine);
+    document.getElementById("axlx-merge-btn").addEventListener("click", function () { mergePdfs(false); });
+    document.getElementById("axlx-line-btn").addEventListener("click", function () { mergePdfs(true); });
     document.getElementById("axlx-print-btn").addEventListener("click", printMerged);
     document.getElementById("axlx-img-btn").addEventListener("click", downloadImages);
   }
@@ -133,61 +133,90 @@
     next();
   }
 
-  // ── PDF結合（サーバー経由）────────────────────────
-  function mergePdfs() {
+  // ── PDF結合・LINE送信（cookieプロキシ方式）──────────
+  // PDF取得の流れ:
+  //   1. background.jsにメッセージ → chrome.cookies.getAll でリアプロのセッションクッキーを取得
+  //   2. クッキー文字列 + PDF URLリスト をサーバーに送信
+  //   3. サーバー側でfetch(url, { headers: { Cookie: cookieStr } }) → PDFを取得・結合
+  //   4. 結合済みPDFを返す（LINE送信の場合はVercel Blob経由でLINE送付）
+  function mergePdfs(sendToLine) {
     var urls = getSelectedUrls();
-    if (!urls.length) { alert("物件を選択してください（PDFリンクが見つかりません）"); return; }
+    if (!urls.length) {
+      alert("物件を選択してください\n（PDFリンクが検出できていない場合は一括DLをお試しください）");
+      return;
+    }
 
-    var btn = document.getElementById("axlx-merge-btn");
+    var btnId = sendToLine ? "axlx-line-btn" : "axlx-merge-btn";
+    var btn = document.getElementById(btnId);
     var origText = btn.textContent;
-    btn.textContent = "PDF取得中...";
+    btn.textContent = "クッキー取得中...";
     btn.disabled = true;
 
     var today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
     var fileName = "物件まとめ_" + today + ".pdf";
 
-    // バックグラウンドスクリプト経由でPDF取得
-    new Promise(function(resolve, reject) {
-      chrome.runtime.sendMessage(
-        { type: "axlx-fetch-pdfs", urls: urls },
-        function(resp) {
-          if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
-          if (!resp || !resp.ok) return reject(new Error(resp ? resp.error : "応答なし"));
-          resolve(resp.pdf_data);
-        }
-      );
-    })
-    .then(function(pdf_data) {
-      btn.textContent = "結合中...";
-      return fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
+    // Step 1: background.js からリアプロのセッションクッキーを取得
+    chrome.runtime.sendMessage({ type: "axlx-fetch-pdfs", urls: urls }, function (resp) {
+      if (chrome.runtime.lastError) {
+        alert("拡張機能エラー: " + chrome.runtime.lastError.message);
+        btn.textContent = origText;
+        btn.disabled = false;
+        return;
+      }
+      if (!resp || !resp.ok) {
+        alert((resp && resp.error) || "クッキー取得失敗\n\nリアプロにログインしてから再試行してください。");
+        btn.textContent = origText;
+        btn.disabled = false;
+        return;
+      }
+
+      // Step 2: サーバーにクッキー + URLリストを送ってPDF取得・結合を依頼
+      btn.textContent = sendToLine ? "PDF送信中..." : "PDF結合中...";
+
+      fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pdf_data: pdf_data, file_name: fileName }),
-      });
-    })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      if (!data.ok) throw new Error(data.error || "失敗");
-      var bytes = Uint8Array.from(atob(data.pdf), function(c) { return c.charCodeAt(0); });
-      var blob = new Blob([bytes], { type: "application/pdf" });
-      var a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(function() { a.remove(); }, 100);
-      btn.textContent = "✅ ダウンロード完了！";
-    })
-    .catch(function(e) {
-      console.error("[AXLX] PDF結合エラー:", e);
-      // PDF取得失敗時は個別DLにフォールバック
-      alert("PDFの取得に失敗しました。個別ダウンロードに切り替えます。\n（" + e.message + "）");
-      btn.textContent = origText;
-      bulkDownload();
-    })
-    .finally(function() {
-      btn.disabled = false;
-      setTimeout(function() { btn.textContent = origText; }, 3000);
+        body: JSON.stringify({
+          pdf_urls: urls,
+          cookie_str: resp.cookie_str,
+          file_name: fileName,
+          send_to_line: sendToLine,
+        }),
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (!data.ok) throw new Error(data.error || "サーバーエラー");
+
+          // PDFをブラウザにダウンロード
+          var bytes = Uint8Array.from(atob(data.pdf), function (c) { return c.charCodeAt(0); });
+          var blob = new Blob([bytes], { type: "application/pdf" });
+          var a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(function () { a.remove(); }, 100);
+
+          if (sendToLine && data.line_sent) {
+            btn.textContent = "✅ LINE送信完了！";
+          } else if (sendToLine) {
+            btn.textContent = "✅ PDF完成（LINE設定なし）";
+          } else {
+            btn.textContent = "✅ PDF完成！";
+          }
+        })
+        .catch(function (e) {
+          console.error("[AXLX] PDF結合エラー:", e);
+          // フォールバック: 個別ダウンロード
+          if (confirm("PDFの取得に失敗しました。\nエラー: " + e.message + "\n\n個別ダウンロードに切り替えますか？")) {
+            bulkDownload();
+          }
+          btn.textContent = origText;
+        })
+        .finally(function () {
+          btn.disabled = false;
+          setTimeout(function () { btn.textContent = origText; }, 4000);
+        });
     });
   }
 
@@ -240,11 +269,7 @@
 
       ctx.fillStyle = "#ffffff";
       ctx.beginPath();
-      if (ctx.roundRect) {
-        ctx.roundRect(x, y, w, CARD_H, 8);
-      } else {
-        ctx.rect(x, y, w, CARD_H);
-      }
+      if (ctx.roundRect) { ctx.roundRect(x, y, w, CARD_H, 8); } else { ctx.rect(x, y, w, CARD_H); }
       ctx.fill();
 
       ctx.fillStyle = "#1565C0";
@@ -289,65 +314,6 @@
     ctx.fillText("スモラ物件リスト " + today, W - PAD, canvas.height - 6);
 
     return canvas;
-  }
-
-  // ── 売上番長に送る（PNG画像→LINE）────────────────────
-  function sendImageToLine() {
-    var targets = tracked.filter(function (t) { return t.cb.checked; });
-    if (!targets.length) { alert("物件を選択してください"); return; }
-
-    var btn = document.getElementById("axlx-line-btn");
-    var origText = btn.textContent;
-    btn.textContent = "画像生成中...";
-    btn.disabled = true;
-
-    var cards = targets.map(function (t) { return extractCard(t.btn); });
-    var canvas = buildCanvas(cards);
-    var today = new Date().toLocaleDateString("ja-JP");
-    var fileName = "物件リスト_" + today.replace(/\//g, "-") + ".png";
-
-    canvas.toBlob(function(blob) {
-      if (!blob) {
-        alert("画像の生成に失敗しました");
-        btn.textContent = origText;
-        btn.disabled = false;
-        return;
-      }
-      var reader = new FileReader();
-      reader.onloadend = function() {
-        var base64 = reader.result.split(",")[1];
-        btn.textContent = "LINE送信中...";
-
-        fetch("https://sumora-ai-ui.vercel.app/api/send-image-to-line", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            image_base64: base64,
-            file_name: fileName,
-            caption: "📋 物件リスト（" + targets.length + "件）\n" + today,
-          }),
-        })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          if (!data.ok) throw new Error(data.error || "失敗");
-          if (data.line_sent) {
-            btn.textContent = "✅ LINE送信完了！";
-          } else {
-            btn.textContent = "⚠️ 画像保存完了（LINE未設定）";
-          }
-        })
-        .catch(function(e) {
-          console.error("[AXLX] LINE送信エラー:", e);
-          alert("LINE送信エラー: " + e.message);
-          btn.textContent = origText;
-        })
-        .finally(function() {
-          btn.disabled = false;
-          setTimeout(function() { btn.textContent = origText; }, 3000);
-        });
-      };
-      reader.readAsDataURL(blob);
-    }, "image/png");
   }
 
   // ── まとめて印刷（プレビュー）────────────────────────
