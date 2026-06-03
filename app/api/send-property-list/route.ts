@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import Anthropic from "@anthropic-ai/sdk";
 
 const TOKEN = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? "";
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 type Customer = {
   id: string;
@@ -54,6 +56,37 @@ async function pushToLine(to: string, text: string) {
   });
 }
 
+async function generateQuote(hotCount: number, totalCount: number): Promise<string> {
+  const today = new Date().toLocaleDateString("ja-JP", { weekday: "long" });
+  try {
+    const res = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 200,
+      messages: [{
+        role: "user",
+        content: `あなたはスモラという賃貸仲介会社の営業チームに毎朝名言を届ける役割です。
+
+今日の状況：
+- ${today}
+- 今日の物件出し対象：${totalCount}名
+- うち毎日追跡中のホット顧客：${hotCount}名
+
+以下の条件で名言を1つ作ってください：
+・今日の成果・状況に寄り添った深い内容
+・営業チームが「よし、やるぞ！」となる前向きな内容
+・3〜4行以内でコンパクトに
+・絵文字を1〜2個使う
+・名言の後に短いひと言コメントを添える
+・日本語で`,
+      }],
+    });
+    const text = res.content[0].type === "text" ? res.content[0].text : "";
+    return `\n💫 今日の名言\n─────────────────\n${text}`;
+  } catch {
+    return "";
+  }
+}
+
 export async function POST() {
   const groupId = await getGroupId();
   if (!groupId) {
@@ -63,11 +96,13 @@ export async function POST() {
   const customers = await getTodayList();
 
   if (customers.length === 0) {
-    await pushToLine(groupId, "✅ 今日の物件出し対象者はいません！");
+    await pushToLine(groupId, "✅ 今日の物件出し対象者はいません！\nお疲れ様です😊");
     return NextResponse.json({ ok: true, count: 0 });
   }
 
   const today = new Date().toLocaleDateString("ja-JP", { month: "long", day: "numeric", weekday: "short" });
+  const hotCount = customers.filter(c => c.status === "hot").length;
+
   const lines = [
     `📋 ${today} 物件出しリスト（${customers.length}名）`,
     "─────────────────",
@@ -82,6 +117,15 @@ export async function POST() {
     "完了したら「完了 [名前]」と返信してください",
   ];
 
-  await pushToLine(groupId, lines.join("\n"));
+  // 物件リストと名言を並行生成
+  const [, quote] = await Promise.all([
+    pushToLine(groupId, lines.join("\n")),
+    generateQuote(hotCount, customers.length),
+  ]);
+
+  if (quote) {
+    await pushToLine(groupId, quote);
+  }
+
   return NextResponse.json({ ok: true, count: customers.length });
 }
