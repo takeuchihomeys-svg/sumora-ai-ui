@@ -143,10 +143,16 @@
     var today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
     var fileName = "物件まとめ_" + today + ".pdf";
 
-    // 全PDFをfetchしてbase64に変換
+    // 全PDFをfetchしてbase64に変換（認証クッキー付き）
     Promise.all(urls.map(function(url) {
-      return fetch(url)
-        .then(function(r) { return r.arrayBuffer(); })
+      return fetch(url, {
+        credentials: "include",
+        headers: { "Referer": location.href },
+      })
+        .then(function(r) {
+          if (!r.ok) throw new Error("HTTP " + r.status + ": " + url);
+          return r.arrayBuffer();
+        })
         .then(function(buf) {
           var bytes = new Uint8Array(buf);
           var binary = "";
@@ -184,7 +190,8 @@
       }
     })
     .catch(function(e) {
-      alert("エラー: " + e.message);
+      console.error("[AXLX] PDF結合エラー:", e);
+      alert("エラー: " + e.message + "\n\nDevToolsのコンソールで詳細を確認してください。");
       btn.textContent = origText;
     })
     .finally(function() {
