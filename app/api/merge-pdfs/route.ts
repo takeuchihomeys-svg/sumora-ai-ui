@@ -149,6 +149,7 @@ export async function POST(req: NextRequest) {
         const blob = await put(name, Buffer.from(mergedBytes), {
           access: "public",
           contentType: "application/pdf",
+          allowOverwrite: true,
         });
         const lineText = buildLineMessage(
           blob.url,
