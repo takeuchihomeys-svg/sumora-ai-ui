@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import html2canvas from "html2canvas";
 import BottomNav from "../components/BottomNav";
 import type { ExtractedEstimate } from "../api/extract-estimate-info/route";
 
@@ -241,6 +242,8 @@ export default function EstimatePage() {
   const [downloadError, setDownloadError] = useState("");
 
   const reviewRef = useRef<HTMLDivElement>(null);
+  const printRef = useRef<HTMLDivElement>(null);
+  const [capturing, setCapturing] = useState(false);
   const [lineModal, setLineModal] = useState(false);
   const [lineText, setLineText] = useState("");
   const [lineCopied, setLineCopied] = useState(false);
@@ -446,6 +449,38 @@ export default function EstimatePage() {
   const totalItems: PreviewRow[] = items ? [...costRows, discountRow] : [];
 
   const grandTotal = totalItems.reduce((s, r) => s + r.amount, 0);
+
+  const handleCaptureAndShare = async () => {
+    if (!printRef.current || !items) return;
+    setCapturing(true);
+    try {
+      const canvas = await html2canvas(printRef.current, {
+        scale: 2,
+        backgroundColor: "#ffffff",
+        useCORS: true,
+        logging: false,
+      });
+      const blob = await new Promise<Blob>((resolve) =>
+        canvas.toBlob((b) => resolve(b!), "image/png")
+      );
+      const name = items.customerName ? `${items.customerName}様_見積書.png` : "見積書.png";
+      const file = new File([blob], name, { type: "image/png" });
+      if (navigator.share && navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file], title: name });
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch {
+      // share cancelled or failed — no-op
+    } finally {
+      setCapturing(false);
+    }
+  };
 
   const handleRefresh = () => {
     setItems(null);
@@ -1016,12 +1051,109 @@ export default function EstimatePage() {
               💬 LINE用テキストを生成
             </button>
 
+            {/* 画像化してLINEへ送るボタン */}
+            <button
+              onClick={handleCaptureAndShare}
+              disabled={capturing}
+              className="w-full rounded-full py-4 text-[15px] font-bold text-white shadow-lg flex items-center justify-center gap-2 disabled:opacity-50"
+              style={{ background: "linear-gradient(135deg,#FF6B6B,#FF8E53)" }}
+            >
+              {capturing ? (
+                <>
+                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                  画像を生成中...
+                </>
+              ) : (
+                "📷 見積書を画像化してLINEへ送る"
+              )}
+            </button>
+
             <div className="h-4" />
           </div>
         )}
       </div>
 
       <BottomNav />
+
+      {/* 画像化用 隠しDiv（画面外に配置・html2canvasでキャプチャ） */}
+      {items && (
+        <div
+          ref={printRef}
+          style={{
+            position: "fixed",
+            left: -9999,
+            top: 0,
+            width: 360,
+            background: "#fff",
+            fontFamily: "'Hiragino Sans', 'Noto Sans JP', sans-serif",
+          }}
+        >
+          {/* ヘッダー */}
+          <div style={{ background: cfg.grad, padding: "16px 20px" }}>
+            <div style={{ fontSize: 18, fontWeight: "bold", color: "#fff", marginBottom: 4 }}>
+              {cfg.label} 初期費用見積書
+            </div>
+            {(items.propertyName || items.roomNumber) && (
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.9)" }}>
+                {items.propertyName}{items.roomNumber ? `　${items.roomNumber}号室` : ""}
+              </div>
+            )}
+            {items.customerName && (
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.9)" }}>
+                {items.customerName} 様
+              </div>
+            )}
+          </div>
+
+          {/* 費用一覧 */}
+          <div style={{ padding: "16px 20px 8px" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <tbody>
+                {totalItems.filter(r => r.amount !== 0 || r.alwaysShow).map((row, idx) => (
+                  <tr key={idx} style={{ borderBottom: "1px solid #f0f2f5" }}>
+                    <td style={{ padding: "6px 0", color: row.isDiscount ? "#e53e3e" : "#54656f" }}>
+                      {row.label}
+                      {row.isComputed && <span style={{ fontSize: 10, color: "#b0bec5", marginLeft: 4 }}>自動</span>}
+                    </td>
+                    <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 600, color: row.isDiscount ? "#e53e3e" : "#111b21" }}>
+                      {row.isDiscount
+                        ? `▲¥${Math.abs(row.amount).toLocaleString()}`
+                        : `¥${(row.amount || 0).toLocaleString()}`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td style={{ paddingTop: 12, fontWeight: "bold", fontSize: 15, color: "#111b21", borderTop: "2px solid #e9edef" }}>
+                    合計（目安）
+                  </td>
+                  <td style={{ paddingTop: 12, textAlign: "right", fontSize: 18, fontWeight: "bold", color: cfg.accent, borderTop: "2px solid #e9edef" }}>
+                    ¥{grandTotal.toLocaleString()}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          {/* 節約額 */}
+          {(() => {
+            const standardCommission = Math.round((items.rent || 0) * 1.1);
+            const actualCommission = (items.commission || 0) + (items.commissionTax || 0);
+            const savings = Math.max(0, standardCommission - actualCommission + (items.discountAmount || 0));
+            return savings > 0 ? (
+              <div style={{ margin: "0 20px 16px", background: "#fff9e6", border: "1px solid #ffe082", borderRadius: 12, padding: "10px 16px", fontSize: 13, color: "#7b5e00", fontWeight: 600, textAlign: "center" }}>
+                {ACCOUNT_SAVINGS_TEMPLATE[account](savings)}
+              </div>
+            ) : null;
+          })()}
+
+          {/* フッター */}
+          <div style={{ background: "#f0f2f5", padding: "10px 20px", fontSize: 11, color: "#90a4ae", textAlign: "center" }}>
+            ※こちらは概算見積もりです。実際の金額は異なる場合があります。
+          </div>
+        </div>
+      )}
 
       {/* LINE テキストモーダル */}
       {lineModal && (
