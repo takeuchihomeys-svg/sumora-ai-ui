@@ -776,6 +776,7 @@ export default function EstimatePage() {
                                 className="w-24 text-right text-[12px] font-bold border-b border-red-200 focus:border-red-400 outline-none bg-transparent text-red-500 tabular-nums"
                                 value={String(items?.discountAmount || 0)}
                                 onChange={(e) => updateItem("discountAmount", Number(e.target.value) || 0)}
+                                onFocus={(e) => e.target.select()}
                               />
                             </div>
                           ) : row.editKey ? (
@@ -787,6 +788,7 @@ export default function EstimatePage() {
                                 className="w-24 text-right text-[12px] font-semibold border-b border-[#d1d7db] focus:border-blue-400 outline-none bg-transparent text-[#111b21] tabular-nums"
                                 value={String((items?.[row.editKey] as number) || 0)}
                                 onChange={(e) => updateItem(row.editKey!, Number(e.target.value) || 0)}
+                                onFocus={(e) => e.target.select()}
                               />
                             </div>
                           ) : (
