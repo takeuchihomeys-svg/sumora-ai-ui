@@ -314,6 +314,10 @@ export default function EstimatePage() {
         updated.moveInMonth = moveInMonth;
         updated.moveInMonthDays = moveInMonthDays;
       }
+      // 家賃・共益費・水道代変更時に翌月分も連動（手動入力で翌月分が0のまま防止）
+      if (key === "rent")          updated.nextRent          = Number(value) || 0;
+      if (key === "managementFee") updated.nextManagementFee = Number(value) || 0;
+      if (key === "waterFee")      updated.nextWaterFee      = Number(value) || 0;
       // 仲介手数料変更時に消費税を自動計算（10%）
       if (key === "commission") {
         updated.commissionTax = Math.round((Number(value) || 0) * 0.1);
