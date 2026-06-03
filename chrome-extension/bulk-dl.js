@@ -76,8 +76,8 @@
     document.body.appendChild(bar);
     document.getElementById("axlx-all-btn").addEventListener("click", toggleAll);
     document.getElementById("axlx-dl-btn").addEventListener("click", bulkDownload);
-    document.getElementById("axlx-merge-btn").addEventListener("click", function() { mergePdfs(false); });
-    document.getElementById("axlx-line-btn").addEventListener("click", function() { mergePdfs(true); });
+    document.getElementById("axlx-merge-btn").addEventListener("click", mergePdfs);
+    document.getElementById("axlx-line-btn").addEventListener("click", sendImageToLine);
     document.getElementById("axlx-print-btn").addEventListener("click", printMerged);
     document.getElementById("axlx-img-btn").addEventListener("click", downloadImages);
   }
@@ -99,8 +99,11 @@
     updateBar();
   }
 
+  // http(s) URLを持つ選択済みのみ返す
   function getSelectedUrls() {
-    return tracked.filter(function (t) { return t.cb.checked && t.btn.href; }).map(function (t) { return t.btn.href; });
+    return tracked.filter(function (t) {
+      return t.cb.checked && t.btn.href && /^https?:\/\//.test(t.btn.href);
+    }).map(function (t) { return t.btn.href; });
   }
 
   // ── 一括DL（既存） ────────────────────────────────
@@ -130,20 +133,20 @@
     next();
   }
 
-  // ── PDF結合・LINE送信（新）────────────────────────
-  function mergePdfs(sendToLine) {
+  // ── PDF結合（サーバー経由）────────────────────────
+  function mergePdfs() {
     var urls = getSelectedUrls();
-    if (!urls.length) { alert("物件を選択してください"); return; }
+    if (!urls.length) { alert("物件を選択してください（PDFリンクが見つかりません）"); return; }
 
-    var btn = document.getElementById(sendToLine ? "axlx-line-btn" : "axlx-merge-btn");
+    var btn = document.getElementById("axlx-merge-btn");
     var origText = btn.textContent;
-    btn.textContent = "処理中...";
+    btn.textContent = "PDF取得中...";
     btn.disabled = true;
 
     var today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
     var fileName = "物件まとめ_" + today + ".pdf";
 
-    // バックグラウンドスクリプト経由でPDF取得（CORS回避）
+    // バックグラウンドスクリプト経由でPDF取得
     new Promise(function(resolve, reject) {
       chrome.runtime.sendMessage(
         { type: "axlx-fetch-pdfs", urls: urls },
@@ -155,17 +158,16 @@
       );
     })
     .then(function(pdf_data) {
+      btn.textContent = "結合中...";
       return fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pdf_data: pdf_data, file_name: fileName, send_to_line: sendToLine }),
+        body: JSON.stringify({ pdf_data: pdf_data, file_name: fileName }),
       });
     })
     .then(function(r) { return r.json(); })
     .then(function(data) {
       if (!data.ok) throw new Error(data.error || "失敗");
-
-      // PDFをダウンロード
       var bytes = Uint8Array.from(atob(data.pdf), function(c) { return c.charCodeAt(0); });
       var blob = new Blob([bytes], { type: "application/pdf" });
       var a = document.createElement("a");
@@ -174,24 +176,178 @@
       document.body.appendChild(a);
       a.click();
       setTimeout(function() { a.remove(); }, 100);
-
-      if (sendToLine && data.line_sent) {
-        btn.textContent = "✅ LINE送信完了！";
-      } else if (sendToLine) {
-        btn.textContent = "✅ DL完了（LINE送信失敗）";
-      } else {
-        btn.textContent = "✅ ダウンロード完了！";
-      }
+      btn.textContent = "✅ ダウンロード完了！";
     })
     .catch(function(e) {
       console.error("[AXLX] PDF結合エラー:", e);
-      alert("エラー: " + e.message + "\n\nDevToolsのコンソールで詳細を確認してください。");
+      // PDF取得失敗時は個別DLにフォールバック
+      alert("PDFの取得に失敗しました。個別ダウンロードに切り替えます。\n（" + e.message + "）");
       btn.textContent = origText;
+      bulkDownload();
     })
     .finally(function() {
       btn.disabled = false;
       setTimeout(function() { btn.textContent = origText; }, 3000);
     });
+  }
+
+  // ── 物件カード情報抽出（共通）────────────────────────
+  function extractCard(btn) {
+    var row = btn;
+    while (row && row.tagName !== "TR") row = row.parentElement;
+
+    var name = "";
+    var cur = row ? row.parentElement : null;
+    while (cur && !name) {
+      var prev = cur.previousElementSibling;
+      if (prev) {
+        var h = prev.querySelector("h2,h3,h4,.building-name,td b,td strong");
+        if (h) { name = h.textContent.trim(); break; }
+        var txt = prev.textContent.trim();
+        if (txt && txt.length < 40) { name = txt; break; }
+      }
+      cur = cur.parentElement;
+    }
+    if (!name && row) {
+      var tbl = row.closest("table");
+      var before = tbl && tbl.previousElementSibling;
+      if (before) name = before.textContent.trim().split("\n")[0].trim().slice(0, 30);
+    }
+
+    var cells = row ? Array.from(row.querySelectorAll("td")) : [];
+    var texts = cells.map(function (td) {
+      return td.textContent.replace(/\s+/g, " ").trim();
+    }).filter(function (t) { return t && t.length > 0 && t.length < 60; });
+
+    return { name: name || "物件", texts: texts.slice(0, 8) };
+  }
+
+  // ── Canvas生成（共通ヘルパー）────────────────────────
+  function buildCanvas(cards) {
+    var W = 680, CARD_H = 130, GAP = 8, PAD = 14;
+    var canvas = document.createElement("canvas");
+    canvas.width = W;
+    canvas.height = PAD * 2 + cards.length * (CARD_H + GAP);
+    var ctx = canvas.getContext("2d");
+
+    ctx.fillStyle = "#f0f4f8";
+    ctx.fillRect(0, 0, W, canvas.height);
+
+    cards.forEach(function (card, i) {
+      var x = PAD;
+      var y = PAD + i * (CARD_H + GAP);
+      var w = W - PAD * 2;
+
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      if (ctx.roundRect) {
+        ctx.roundRect(x, y, w, CARD_H, 8);
+      } else {
+        ctx.rect(x, y, w, CARD_H);
+      }
+      ctx.fill();
+
+      ctx.fillStyle = "#1565C0";
+      ctx.fillRect(x, y, 4, CARD_H);
+
+      ctx.fillStyle = "#1565C0";
+      ctx.beginPath();
+      ctx.arc(x + 18, y + 16, 10, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 11px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(String(i + 1), x + 18, y + 20);
+      ctx.textAlign = "left";
+
+      ctx.fillStyle = "#1565C0";
+      ctx.font = "bold 13px 'Hiragino Sans', 'Meiryo', sans-serif";
+      ctx.fillText(card.name.slice(0, 32), x + 34, y + 20);
+
+      ctx.strokeStyle = "#e3eaf3";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x + 12, y + 28);
+      ctx.lineTo(x + w - 12, y + 28);
+      ctx.stroke();
+
+      ctx.fillStyle = "#444";
+      ctx.font = "11px 'Hiragino Sans', 'Meiryo', sans-serif";
+      var lineH = 16;
+      card.texts.forEach(function (t, j) {
+        if (j >= 6) return;
+        var col = j % 2 === 0 ? x + 14 : x + w / 2;
+        var row2 = y + 38 + Math.floor(j / 2) * lineH;
+        ctx.fillText(t.slice(0, 28), col, row2);
+      });
+    });
+
+    ctx.fillStyle = "#90a4ae";
+    ctx.font = "10px sans-serif";
+    ctx.textAlign = "right";
+    var today = new Date().toLocaleDateString("ja-JP");
+    ctx.fillText("スモラ物件リスト " + today, W - PAD, canvas.height - 6);
+
+    return canvas;
+  }
+
+  // ── 売上番長に送る（PNG画像→LINE）────────────────────
+  function sendImageToLine() {
+    var targets = tracked.filter(function (t) { return t.cb.checked; });
+    if (!targets.length) { alert("物件を選択してください"); return; }
+
+    var btn = document.getElementById("axlx-line-btn");
+    var origText = btn.textContent;
+    btn.textContent = "画像生成中...";
+    btn.disabled = true;
+
+    var cards = targets.map(function (t) { return extractCard(t.btn); });
+    var canvas = buildCanvas(cards);
+    var today = new Date().toLocaleDateString("ja-JP");
+    var fileName = "物件リスト_" + today.replace(/\//g, "-") + ".png";
+
+    canvas.toBlob(function(blob) {
+      if (!blob) {
+        alert("画像の生成に失敗しました");
+        btn.textContent = origText;
+        btn.disabled = false;
+        return;
+      }
+      var reader = new FileReader();
+      reader.onloadend = function() {
+        var base64 = reader.result.split(",")[1];
+        btn.textContent = "LINE送信中...";
+
+        fetch("https://sumora-ai-ui.vercel.app/api/send-image-to-line", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            image_base64: base64,
+            file_name: fileName,
+            caption: "📋 物件リスト（" + targets.length + "件）\n" + today,
+          }),
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (!data.ok) throw new Error(data.error || "失敗");
+          if (data.line_sent) {
+            btn.textContent = "✅ LINE送信完了！";
+          } else {
+            btn.textContent = "⚠️ 画像保存完了（LINE未設定）";
+          }
+        })
+        .catch(function(e) {
+          console.error("[AXLX] LINE送信エラー:", e);
+          alert("LINE送信エラー: " + e.message);
+          btn.textContent = origText;
+        })
+        .finally(function() {
+          btn.disabled = false;
+          setTimeout(function() { btn.textContent = origText; }, 3000);
+        });
+      };
+      reader.readAsDataURL(blob);
+    }, "image/png");
   }
 
   // ── まとめて印刷（プレビュー）────────────────────────
@@ -222,116 +378,14 @@
     win.document.close();
   }
 
-  // ── 画像保存（新）────────────────────────────────
-  function extractCard(btn) {
-    var row = btn;
-    while (row && row.tagName !== "TR") row = row.parentElement;
-
-    // 建物名を探す（上位のテーブルや見出し）
-    var name = "";
-    var cur = row ? row.parentElement : null;
-    while (cur && !name) {
-      var prev = cur.previousElementSibling;
-      if (prev) {
-        var h = prev.querySelector("h2,h3,h4,.building-name,td b,td strong");
-        if (h) { name = h.textContent.trim(); break; }
-        var txt = prev.textContent.trim();
-        if (txt && txt.length < 40) { name = txt; break; }
-      }
-      cur = cur.parentElement;
-    }
-    // 建物名が取れない場合はテーブル直前の要素から
-    if (!name && row) {
-      var tbl = row.closest("table");
-      var before = tbl && tbl.previousElementSibling;
-      if (before) name = before.textContent.trim().split("\n")[0].trim().slice(0, 30);
-    }
-
-    var cells = row ? Array.from(row.querySelectorAll("td")) : [];
-    var texts = cells.map(function (td) {
-      return td.textContent.replace(/\s+/g, " ").trim();
-    }).filter(function (t) { return t && t.length > 0 && t.length < 60; });
-
-    return { name: name || "物件", texts: texts.slice(0, 8) };
-  }
-
+  // ── 画像保存（ローカルDL）────────────────────────────
   function downloadImages() {
     var targets = tracked.filter(function (t) { return t.cb.checked; });
     if (!targets.length) { alert("物件を選択してください"); return; }
 
     var cards = targets.map(function (t) { return extractCard(t.btn); });
-
-    var W = 680, CARD_H = 130, GAP = 8, PAD = 14;
-    var canvas = document.createElement("canvas");
-    canvas.width = W;
-    canvas.height = PAD * 2 + cards.length * (CARD_H + GAP);
-    var ctx = canvas.getContext("2d");
-
-    // 背景
-    ctx.fillStyle = "#f0f4f8";
-    ctx.fillRect(0, 0, W, canvas.height);
-
-    cards.forEach(function (card, i) {
-      var x = PAD;
-      var y = PAD + i * (CARD_H + GAP);
-      var w = W - PAD * 2;
-
-      // カード背景
-      ctx.fillStyle = "#ffffff";
-      ctx.beginPath();
-      if (ctx.roundRect) {
-        ctx.roundRect(x, y, w, CARD_H, 8);
-      } else {
-        ctx.rect(x, y, w, CARD_H);
-      }
-      ctx.fill();
-
-      // 左アクセントバー
-      ctx.fillStyle = "#1565C0";
-      ctx.fillRect(x, y, 4, CARD_H);
-
-      // 番号バッジ
-      ctx.fillStyle = "#1565C0";
-      ctx.beginPath();
-      ctx.arc(x + 18, y + 16, 10, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 11px sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillText(String(i + 1), x + 18, y + 20);
-      ctx.textAlign = "left";
-
-      // 建物名
-      ctx.fillStyle = "#1565C0";
-      ctx.font = "bold 13px 'Hiragino Sans', 'Meiryo', sans-serif";
-      ctx.fillText(card.name.slice(0, 32), x + 34, y + 20);
-
-      // 区切り線
-      ctx.strokeStyle = "#e3eaf3";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(x + 12, y + 28);
-      ctx.lineTo(x + w - 12, y + 28);
-      ctx.stroke();
-
-      // 物件情報テキスト
-      ctx.fillStyle = "#444";
-      ctx.font = "11px 'Hiragino Sans', 'Meiryo', sans-serif";
-      var lineH = 16;
-      card.texts.forEach(function (t, j) {
-        if (j >= 6) return;
-        var col = j % 2 === 0 ? x + 14 : x + w / 2;
-        var row2 = y + 38 + Math.floor(j / 2) * lineH;
-        ctx.fillText(t.slice(0, 28), col, row2);
-      });
-    });
-
-    // 日付フッター
-    ctx.fillStyle = "#90a4ae";
-    ctx.font = "10px sans-serif";
-    ctx.textAlign = "right";
+    var canvas = buildCanvas(cards);
     var today = new Date().toLocaleDateString("ja-JP");
-    ctx.fillText("スモラ物件リスト " + today, W - PAD, canvas.height - 6);
 
     canvas.toBlob(function (blob) {
       var a = document.createElement("a");
