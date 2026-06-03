@@ -173,6 +173,25 @@ async function handleTextMessage(
     .eq("id", convId);
 
   updateProfileAsync(db, userId, convId, account, text, now);
+
+  // 返信きたお客さんを自動で毎日物件出し（hot）に格上げ
+  autoUpgradeToHot(db, userId);
+}
+
+async function autoUpgradeToHot(db: ReturnType<typeof getDb>, userId: string) {
+  const { data } = await db
+    .from("property_customers")
+    .select("id, status")
+    .eq("line_user_id", userId)
+    .in("status", ["new_inquiry", "property_search"])
+    .limit(1)
+    .single();
+  if (data?.id) {
+    await db
+      .from("property_customers")
+      .update({ status: "hot", updated_at: new Date().toISOString() })
+      .eq("id", data.id);
+  }
 }
 
 // ── 画像メッセージ即時保存（LINEへの応答前に完了させる軽量処理）────────────

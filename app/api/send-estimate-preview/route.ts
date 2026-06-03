@@ -1,21 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
-const ACCOUNT_TOKEN: Record<string, string | undefined> = {
-  ieyasu: process.env.LINE_IEYASU_CHANNEL_ACCESS_TOKEN,
-  sumora: process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN,
-  giga:   process.env.LINE_GIGA_CHANNEL_ACCESS_TOKEN,
-};
+const HANBANCYO_TOKEN = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? "";
+
+async function getGroupId(): Promise<string | null> {
+  const { data } = await supabase
+    .from("hanbancyo_settings")
+    .select("value")
+    .eq("key", "group_id")
+    .single();
+  return data?.value ?? null;
+}
 
 export async function POST(req: NextRequest) {
   const { imageBase64 } = await req.json() as { imageBase64: string };
 
-  const adminUserId = process.env.ADMIN_LINE_USER_ID;
-  const adminAccount = process.env.ADMIN_LINE_ACCOUNT || "ieyasu";
-  const token = ACCOUNT_TOKEN[adminAccount];
-
-  if (!adminUserId || !token) {
-    return NextResponse.json({ ok: false, error: "管理者LINEが未設定です" }, { status: 500 });
+  const groupId = await getGroupId();
+  if (!groupId || !HANBANCYO_TOKEN) {
+    return NextResponse.json({ ok: false, error: "売上番長グループが未設定です" }, { status: 500 });
   }
 
   // base64 → Buffer → Supabaseにアップロード
@@ -34,15 +36,15 @@ export async function POST(req: NextRequest) {
   const { data } = supabase.storage.from("property-images").getPublicUrl(path);
   const imageUrl = data.publicUrl;
 
-  // LINE push（画像メッセージ）
+  // 売上番長からグループに画像送信
   const res = await fetch("https://api.line.me/v2/bot/message/push", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${HANBANCYO_TOKEN}`,
     },
     body: JSON.stringify({
-      to: adminUserId,
+      to: groupId,
       messages: [
         { type: "image", originalContentUrl: imageUrl, previewImageUrl: imageUrl },
       ],

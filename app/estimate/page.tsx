@@ -1073,7 +1073,7 @@ export default function EstimatePage() {
                   画像を生成中...
                 </>
               ) : (
-                "📲 見積書を画像化して自分のLINEに送る"
+                "📲 見積書を画像化してグループに送る"
               )}
             </button>
 
