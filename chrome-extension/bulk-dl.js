@@ -312,65 +312,77 @@
       });
     }
 
-    // background.js がページコンテキストでPDFを取得してbase64で返す
-    btn.textContent = "PDF取得中...";
-    chrome.runtime.sendMessage({ type: "axlx-fetch-pdfs", urls: urls }, function (resp) {
-      if (chrome.runtime.lastError) {
-        alert("拡張機能エラー: " + chrome.runtime.lastError.message);
-        btn.textContent = origText; btn.disabled = false; return;
-      }
-      if (!resp || !resp.ok) {
-        alert((resp && resp.error) || "PDF取得失敗\n\nページを再読み込みして再試行してください。");
-        btn.textContent = origText; btn.disabled = false; return;
-      }
+    // コンテンツスクリプト（ISOLATED world）から直接fetch
+    // → ページのCSP制限を受けず・セッションクッキーは共有される
+    btn.textContent = "PDF取得中... (0/" + urls.length + ")";
 
+    var completed = 0;
+    Promise.all(urls.map(function (url) {
+      return fetch(url, { credentials: "include" })
+        .then(function (r) {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.arrayBuffer();
+        })
+        .then(function (buf) {
+          completed++;
+          btn.textContent = "PDF取得中... (" + completed + "/" + urls.length + ")";
+          var bytes = new Uint8Array(buf);
+          var binary = "";
+          var chunk = 8192;
+          for (var i = 0; i < bytes.length; i += chunk) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + chunk, bytes.length)));
+          }
+          return btoa(binary);
+        });
+    }))
+    .then(function (pdf_data) {
       // 取得したbase64 PDFをサーバーで結合
       btn.textContent = sendToLine ? "PDF送信中..." : "PDF結合中...";
 
-      fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
+      return fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          pdf_data: resp.pdf_data,
+          pdf_data: pdf_data,
           file_name: fileName,
           send_to_line: sendToLine,
           customer_name: customerName || null,
           property_summaries: propertySummaries,
         }),
-      })
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-          if (!data.ok) throw new Error(data.error || "サーバーエラー");
+      });
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (!data.ok) throw new Error(data.error || "サーバーエラー");
 
-          // PDFをブラウザにダウンロード
-          var bytes = Uint8Array.from(atob(data.pdf), function (c) { return c.charCodeAt(0); });
-          var blob = new Blob([bytes], { type: "application/pdf" });
-          var a = document.createElement("a");
-          a.href = URL.createObjectURL(blob);
-          a.download = fileName;
-          document.body.appendChild(a);
-          a.click();
-          setTimeout(function () { a.remove(); }, 100);
+      // PDFをブラウザにダウンロード
+      var bytes = Uint8Array.from(atob(data.pdf), function (c) { return c.charCodeAt(0); });
+      var blob = new Blob([bytes], { type: "application/pdf" });
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function () { a.remove(); }, 100);
 
-          if (sendToLine && data.line_sent) {
-            btn.textContent = "✅ LINE送信完了！";
-          } else if (sendToLine) {
-            btn.textContent = "✅ PDF完成（LINE設定なし）";
-          } else {
-            btn.textContent = "✅ PDF完成！";
-          }
-        })
-        .catch(function (e) {
-          console.error("[AXLX] PDF結合エラー:", e);
-          if (confirm("PDFの取得に失敗しました。\nエラー: " + e.message + "\n\n個別ダウンロードに切り替えますか？")) {
-            bulkDownload();
-          }
-          btn.textContent = origText;
-        })
-        .finally(function () {
-          btn.disabled = false;
-          setTimeout(function () { btn.textContent = origText; }, 4000);
-        });
+      if (sendToLine && data.line_sent) {
+        btn.textContent = "✅ LINE送信完了！";
+      } else if (sendToLine) {
+        btn.textContent = "✅ PDF完成（LINE設定なし）";
+      } else {
+        btn.textContent = "✅ PDF完成！";
+      }
+    })
+    .catch(function (e) {
+      console.error("[AXLX] PDF結合エラー:", e);
+      if (confirm("PDFの取得に失敗しました。\nエラー: " + e.message + "\n\n個別ダウンロードに切り替えますか？")) {
+        bulkDownload();
+      }
+      btn.textContent = origText;
+    })
+    .finally(function () {
+      btn.disabled = false;
+      setTimeout(function () { btn.textContent = origText; }, 4000);
     });
   }
 
