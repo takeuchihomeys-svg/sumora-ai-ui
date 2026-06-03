@@ -77,7 +77,7 @@
     document.getElementById("axlx-all-btn").addEventListener("click", toggleAll);
     document.getElementById("axlx-dl-btn").addEventListener("click", bulkDownload);
     document.getElementById("axlx-merge-btn").addEventListener("click", function () { mergePdfs(false); });
-    document.getElementById("axlx-line-btn").addEventListener("click", function () { getCustomerFromPopup(function (customerName) { sendLocalPdfsToLine(customerName); }); });
+    document.getElementById("axlx-line-btn").addEventListener("click", function () { getCustomerFromPopup(function (customerName) { mergePdfs(true, customerName); }); });
     document.getElementById("axlx-print-btn").addEventListener("click", printMerged);
     document.getElementById("axlx-img-btn").addEventListener("click", downloadImages);
   }
