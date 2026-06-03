@@ -63,13 +63,21 @@
       '  <button id="axlx-dl-btn" style="flex:2;padding:6px 8px;background:#ff9800;border:none;border-radius:8px;color:white;font-size:12px;font-weight:700;cursor:pointer;">一括DL</button>',
       "</div>",
       '<div style="display:flex;gap:6px;">',
-      '  <button id="axlx-print-btn" style="flex:1;padding:6px 8px;background:#43a047;border:none;border-radius:8px;color:white;font-size:11px;font-weight:700;cursor:pointer;">📄 まとめて印刷</button>',
-      '  <button id="axlx-img-btn" style="flex:1;padding:6px 8px;background:#7b1fa2;border:none;border-radius:8px;color:white;font-size:11px;font-weight:700;cursor:pointer;">📸 画像保存</button>',
+      '  <button id="axlx-merge-btn" style="flex:1;padding:6px 8px;background:#43a047;border:none;border-radius:8px;color:white;font-size:11px;font-weight:700;cursor:pointer;">📄 1つのPDFに結合</button>',
+      "</div>",
+      '<div style="display:flex;gap:6px;">',
+      '  <button id="axlx-line-btn" style="flex:1;padding:6px 8px;background:#06c755;border:none;border-radius:8px;color:white;font-size:11px;font-weight:700;cursor:pointer;">📤 売上番長に送る</button>',
+      "</div>",
+      '<div style="display:flex;gap:6px;">',
+      '  <button id="axlx-print-btn" style="flex:1;padding:6px 4px;background:rgba(255,255,255,0.18);border:none;border-radius:8px;color:white;font-size:10px;font-weight:700;cursor:pointer;">🖨 印刷プレビュー</button>',
+      '  <button id="axlx-img-btn" style="flex:1;padding:6px 4px;background:#7b1fa2;border:none;border-radius:8px;color:white;font-size:10px;font-weight:700;cursor:pointer;">📸 画像保存</button>',
       "</div>",
     ].join("");
     document.body.appendChild(bar);
     document.getElementById("axlx-all-btn").addEventListener("click", toggleAll);
     document.getElementById("axlx-dl-btn").addEventListener("click", bulkDownload);
+    document.getElementById("axlx-merge-btn").addEventListener("click", function() { mergePdfs(false); });
+    document.getElementById("axlx-line-btn").addEventListener("click", function() { mergePdfs(true); });
     document.getElementById("axlx-print-btn").addEventListener("click", printMerged);
     document.getElementById("axlx-img-btn").addEventListener("click", downloadImages);
   }
@@ -122,7 +130,70 @@
     next();
   }
 
-  // ── まとめて印刷（新）────────────────────────────
+  // ── PDF結合・LINE送信（新）────────────────────────
+  function mergePdfs(sendToLine) {
+    var urls = getSelectedUrls();
+    if (!urls.length) { alert("物件を選択してください"); return; }
+
+    var btn = document.getElementById(sendToLine ? "axlx-line-btn" : "axlx-merge-btn");
+    var origText = btn.textContent;
+    btn.textContent = "処理中...";
+    btn.disabled = true;
+
+    var today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
+    var fileName = "物件まとめ_" + today + ".pdf";
+
+    // 全PDFをfetchしてbase64に変換
+    Promise.all(urls.map(function(url) {
+      return fetch(url)
+        .then(function(r) { return r.arrayBuffer(); })
+        .then(function(buf) {
+          var bytes = new Uint8Array(buf);
+          var binary = "";
+          for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+          return btoa(binary);
+        });
+    }))
+    .then(function(pdf_data) {
+      return fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pdf_data: pdf_data, file_name: fileName, send_to_line: sendToLine }),
+      });
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (!data.ok) throw new Error(data.error || "失敗");
+
+      // PDFをダウンロード
+      var bytes = Uint8Array.from(atob(data.pdf), function(c) { return c.charCodeAt(0); });
+      var blob = new Blob([bytes], { type: "application/pdf" });
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function() { a.remove(); }, 100);
+
+      if (sendToLine && data.line_sent) {
+        btn.textContent = "✅ LINE送信完了！";
+      } else if (sendToLine) {
+        btn.textContent = "✅ DL完了（LINE送信失敗）";
+      } else {
+        btn.textContent = "✅ ダウンロード完了！";
+      }
+    })
+    .catch(function(e) {
+      alert("エラー: " + e.message);
+      btn.textContent = origText;
+    })
+    .finally(function() {
+      btn.disabled = false;
+      setTimeout(function() { btn.textContent = origText; }, 3000);
+    });
+  }
+
+  // ── まとめて印刷（プレビュー）────────────────────────
   function printMerged() {
     var urls = getSelectedUrls();
     if (!urls.length) { alert("物件を選択してください"); return; }
