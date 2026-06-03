@@ -56,36 +56,62 @@
   }
 
   // ── 物件資料ボタンを探す ────────────────────────────────────────────────
+  // DOM診断結果: P.css-5rqx8z-Label → SPAN.MuiButton-label → BUTTON.MuiButtonBase-root
+  //              → SPAN.MuiBadge-root → DIV → DIV.CommonButton → DIV.itandi-bb-ui__Flex
   function findMaterialBtns() {
     var seen = new Set();
     var results = [];
-    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    var node;
-    while ((node = walker.nextNode())) {
-      if (!node.textContent.trim().includes("物件資料")) continue;
-      var el = node.parentElement;
-      for (var i = 0; i < 6 && el && el !== document.body; i++, el = el.parentElement) {
-        if ((el.tagName === "A" || el.tagName === "BUTTON") && !seen.has(el) && el.offsetParent) {
+
+    // P タグのテキストで「物件資料」を探し、親の BUTTON まで遡る
+    Array.from(document.querySelectorAll("p")).forEach(function (p) {
+      if (!p.textContent.trim().includes("物件資料")) return;
+      var el = p.parentElement;
+      for (var i = 0; i < 5 && el && el !== document.body; i++, el = el.parentElement) {
+        if (el.tagName === "BUTTON" && !seen.has(el) && el.offsetParent) {
           seen.add(el);
           results.push(el);
           break;
         }
       }
+    });
+
+    // フォールバック: DIV.CommonButton 内の button
+    if (!results.length) {
+      Array.from(document.querySelectorAll("div.CommonButton")).forEach(function (div) {
+        if (!div.textContent.includes("物件資料")) return;
+        var btn = div.querySelector("button");
+        if (btn && !seen.has(btn) && btn.offsetParent) {
+          seen.add(btn);
+          results.push(btn);
+        }
+      });
     }
+
     return results;
   }
 
   // ── チェックボックス注入 ───────────────────────────────────────────────
+  // DIV.CommonButton の前に挿入（行の中のボタン群の一番外のコンテナ）
   function inject() {
     document.querySelectorAll(".axlx-itandi-cb").forEach(function (el) { el.remove(); });
     tracked = [];
     findMaterialBtns().forEach(function (btn) {
+      // CommonButton ラッパーを探す（挿入位置として使う）
+      var container = btn;
+      for (var i = 0; i < 4 && container.parentElement && container.parentElement !== document.body; i++) {
+        if (container.parentElement.classList && container.parentElement.classList.contains("CommonButton")) {
+          container = container.parentElement;
+          break;
+        }
+        container = container.parentElement;
+      }
+
       var cb = document.createElement("input");
       cb.type = "checkbox";
       cb.className = "axlx-itandi-cb";
-      cb.style.cssText = "width:15px;height:15px;margin-right:4px;cursor:pointer;accent-color:#1565C0;vertical-align:middle;flex-shrink:0;";
+      cb.style.cssText = "width:16px;height:16px;margin-right:6px;cursor:pointer;accent-color:#1565C0;vertical-align:middle;flex-shrink:0;align-self:center;";
       cb.addEventListener("change", updateBar);
-      btn.parentNode.insertBefore(cb, btn);
+      container.parentNode.insertBefore(cb, container);
       tracked.push({ cb: cb, btn: btn });
     });
     updateBar();
