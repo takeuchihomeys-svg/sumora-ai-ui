@@ -166,14 +166,13 @@ function generateLineText(
   return parts.join("\n");
 }
 
-function toEditable(e: ExtractedEstimate, account: Account = "sumora"): EditableItems {
-  // 入居日は常に未設定スタート。ユーザーが選択して初めて日割り計算が発生する
-  const { nextMonth, nextYear } = calcNext("");
-  const { moveInDay, moveInMonth, moveInMonthDays } = calcMoveInInfo("");
+function toEditable(e: ExtractedEstimate, account: Account = "sumora", moveInDate = ""): EditableItems {
+  const { nextMonth, nextYear } = calcNext(moveInDate);
+  const { moveInDay, moveInMonth, moveInMonthDays } = calcMoveInInfo(moveInDate);
   const commDefaults = ACCOUNT_COMMISSION[account];
   return {
     ...e,
-    moveInDate: "",
+    moveInDate,
     moveInDay,
     moveInMonth,
     moveInMonthDays,
@@ -189,14 +188,13 @@ function toEditable(e: ExtractedEstimate, account: Account = "sumora"): Editable
 }
 
 // アカウントのデフォルト値で空の EditableItems を生成（手動入力用）
-function makeBlankItems(account: Account): EditableItems {
-  // 入居日は未設定スタート（1日入居扱い・日割りなし）
-  const { nextMonth, nextYear } = calcNext("");
-  const { moveInDay, moveInMonth, moveInMonthDays } = calcMoveInInfo("");
+function makeBlankItems(account: Account, moveInDate = ""): EditableItems {
+  const { nextMonth, nextYear } = calcNext(moveInDate);
+  const { moveInDay, moveInMonth, moveInMonthDays } = calcMoveInInfo(moveInDate);
   const commDefaults = ACCOUNT_COMMISSION[account];
   return {
     propertyName: "", roomNumber: "", customerName: "", assignee: "",
-    moveInDate: "", moveInMonth, moveInDay, moveInMonthDays,
+    moveInDate, moveInMonth, moveInDay, moveInMonthDays,
     rent: 0, managementFee: 0, waterFee: 0,
     shikikin: 0, reikin: 0, hoshokikin: 0,
     commission: commDefaults.commission,
@@ -219,6 +217,7 @@ export default function EstimatePage() {
   // Step 1 inputs
   const [images, setImages] = useState<Array<{ base64: string; mimeType: string; name: string }>>([]);
   const [supplementaryText, setSupplementaryText] = useState("");
+  const [step1MoveInDate, setStep1MoveInDate] = useState("");
   const [extracting, setExtracting] = useState(false);
   const [extractError, setExtractError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -291,7 +290,7 @@ export default function EstimatePage() {
         setExtractError(data.error || "読み取りに失敗しました");
         return;
       }
-      setItems(toEditable(data.extracted, account));
+      setItems(toEditable(data.extracted, account, step1MoveInDate));
       setStep("review");
       setTimeout(() => reviewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
     } catch {
@@ -579,6 +578,31 @@ export default function EstimatePage() {
               )}
             </section>
 
+            {/* 入居日（任意） */}
+            <section>
+              <div className="mb-2 text-[12px] font-bold" style={{ color: cfg.accent }}>📅 入居日（任意）</div>
+              <div className="rounded-2xl bg-white shadow-sm px-4 py-3 flex items-center gap-3">
+                <input
+                  type="date"
+                  className="flex-1 rounded-xl border border-[#d1d7db] px-3 py-2.5 text-[15px] font-semibold outline-none focus:border-blue-400"
+                  value={step1MoveInDate}
+                  onChange={(e) => setStep1MoveInDate(e.target.value)}
+                />
+                <div className="text-[11px] text-[#667781] leading-snug text-right min-w-[64px]">
+                  {step1MoveInDate ? (
+                    (() => {
+                      const { moveInDay, moveInMonth } = calcMoveInInfo(step1MoveInDate);
+                      return moveInDay > 1
+                        ? <span className="text-orange-500 font-semibold">{moveInMonth}月{moveInDay}日<br/>日割りあり</span>
+                        : <span className="text-emerald-600 font-semibold">{moveInMonth}月1日<br/>日割りなし</span>;
+                    })()
+                  ) : (
+                    <span className="text-[#aaa]">未設定<br/>（1日入居）</span>
+                  )}
+                </div>
+              </div>
+            </section>
+
             {/* 補足情報テキスト */}
             <section>
               <div className="mb-2 text-[12px] font-bold" style={{ color: cfg.accent }}>
@@ -619,7 +643,7 @@ export default function EstimatePage() {
             {/* 手動入力ボタン */}
             <button
               onClick={() => {
-                setItems(makeBlankItems(account));
+                setItems(makeBlankItems(account, step1MoveInDate));
                 setStep("review");
                 setTimeout(() => reviewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
               }}
