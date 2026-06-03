@@ -405,7 +405,7 @@ export default function EstimatePage() {
     { label: "駐車場保証金",                        amount: items.parkingDeposit,       editKey: "parkingDeposit" },
     { label: items.nextMonth > 0 ? `${items.nextMonth}月分 駐車場代` : "翌月駐車場代", amount: items.parkingMonthly, editKey: "parkingMonthly" },
     ...items.otherItems.map((o, i): PreviewRow => ({ label: o.item, amount: o.amount, otherIdx: i })),
-  ] as PreviewRow[]).filter((r) => r.amount !== 0 || r.alwaysShow) : [];
+  ] as PreviewRow[]).filter((r) => r.amount !== 0 || r.alwaysShow || r.otherIdx !== undefined) : [];
 
   // 特別割引は 0 でも常に表示
   const discountRow: PreviewRow = {
