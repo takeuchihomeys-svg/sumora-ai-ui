@@ -1,6 +1,5 @@
 "use strict";
 
-// underbar（フローティングパネル）を使うサイト → サイドパネルを無効化
 const UNDERBAR_SITES = ["realnetpro.com"];
 
 function isUnderbarSite(url) {
@@ -34,55 +33,57 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (url) configureSidePanelForTab(tabId, url);
 });
 
-// ── PDF取得用クッキー収集 ──────────────────────────────────────────────────
-// 【根本修正】MV3 module SW + callback = SW suspend 既知不具合
-//   → 全て async/await (Promise) に統一して SW が suspend されないようにする
-//
-// 3段階フォールバック:
-//   1. chrome.cookies.getAll({ domain }) → HttpOnly 含む全クッキー
-//   2. document.cookie を executeScript MAIN world で取得 → 非HttpOnlyのみ
-//   3. 両方失敗 → 詳細エラー
+// ── PDF取得：ページコンテキストで fetch → base64配列を返す ───────────────
+// 診断結果: fetch(url, {credentials:"include"}) → 200 application/x-download ✅
+// ページのセッションクッキーが自然に使われるため認証問題なし。
+// async/await で SW が suspend されないようにする（MV3 module SW の既知問題対策）
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type !== "axlx-fetch-pdfs") return false;
 
-  const tabId = sender.tab?.id ?? null;
+  const tabId = sender.tab?.id;
+  if (!tabId) {
+    sendResponse({ ok: false, error: "tabId不明。リアプロのページで操作してください。" });
+    return true;
+  }
 
-  // async/await で書くことで SW の lifecycle に追跡させる
   (async () => {
     try {
-      // ── Step 1: chrome.cookies API (Promise形式) ─────────────────
-      const cookies = await chrome.cookies.getAll({ domain: "realnetpro.com" });
-      const cookieStr = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
-
-      if (cookieStr) {
-        sendResponse({ ok: true, cookie_str: cookieStr });
-        return;
-      }
-
-      // ── Step 2: document.cookie fallback ─────────────────────────
-      if (!tabId) throw new Error("tabId不明: リアプロのタブで操作してください");
-
       const results = await chrome.scripting.executeScript({
         target: { tabId },
         world: "MAIN",
-        func: () => document.cookie,
+        func: function (urls) {
+          function toBase64(buf) {
+            const bytes = new Uint8Array(buf);
+            let binary = "";
+            const chunk = 8192;
+            for (let i = 0; i < bytes.length; i += chunk) {
+              binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + chunk, bytes.length)));
+            }
+            return btoa(binary);
+          }
+          return Promise.all(
+            urls.map((url) =>
+              fetch(url, { credentials: "include" })
+                .then((r) => {
+                  if (!r.ok) throw new Error("HTTP " + r.status + " (" + url + ")");
+                  return r.arrayBuffer();
+                })
+                .then((buf) => toBase64(buf))
+            )
+          );
+        },
+        args: [msg.urls],
       });
 
-      const docCookie = results?.[0]?.result ?? "";
-      if (docCookie) {
-        sendResponse({ ok: true, cookie_str: docCookie });
-        return;
+      const pdf_data = results?.[0]?.result;
+      if (!Array.isArray(pdf_data) || pdf_data.length === 0) {
+        throw new Error("PDFデータが空でした。ページを再読み込みして再試行してください。");
       }
-
-      // ── Step 3: 両方空 → 詳細エラー ─────────────────────────────
-      throw new Error(
-        "クッキーが見つかりません（chrome.cookies: 0件, document.cookie: 空）\n" +
-        "リアプロにログインしてから再試行してください。"
-      );
+      sendResponse({ ok: true, pdf_data });
     } catch (e) {
       sendResponse({ ok: false, error: e.message });
     }
   })();
 
-  return true; // チャンネルを非同期で保持
+  return true;
 });

@@ -312,26 +312,26 @@
       });
     }
 
-    // Step 1: background.js からセッションクッキーを取得
+    // background.js がページコンテキストでPDFを取得してbase64で返す
+    btn.textContent = "PDF取得中...";
     chrome.runtime.sendMessage({ type: "axlx-fetch-pdfs", urls: urls }, function (resp) {
       if (chrome.runtime.lastError) {
         alert("拡張機能エラー: " + chrome.runtime.lastError.message);
         btn.textContent = origText; btn.disabled = false; return;
       }
       if (!resp || !resp.ok) {
-        alert((resp && resp.error) || "クッキー取得失敗\n\nリアプロにログインしてから再試行してください。");
+        alert((resp && resp.error) || "PDF取得失敗\n\nページを再読み込みして再試行してください。");
         btn.textContent = origText; btn.disabled = false; return;
       }
 
-      // Step 2: サーバーにクッキー + URLリスト + サマリーを送信
+      // 取得したbase64 PDFをサーバーで結合
       btn.textContent = sendToLine ? "PDF送信中..." : "PDF結合中...";
 
       fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          pdf_urls: urls,
-          cookie_str: resp.cookie_str,
+          pdf_data: resp.pdf_data,
           file_name: fileName,
           send_to_line: sendToLine,
           customer_name: customerName || null,
