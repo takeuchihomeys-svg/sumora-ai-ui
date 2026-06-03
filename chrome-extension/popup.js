@@ -1965,7 +1965,7 @@ function calcUpdateDays(dateStr, status) {
   if (daysSince <= 1) return "1";
   if (daysSince <= 3) return "3";
   if (daysSince <= 7) return "7";
-  return "30";
+  return "14";
 }
 
 function buildAdjCustomer(c) {
