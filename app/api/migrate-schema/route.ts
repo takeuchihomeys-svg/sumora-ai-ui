@@ -249,6 +249,9 @@ ALTER TABLE push_subscriptions DISABLE ROW LEVEL SECURITY;
 -- 追加条件カラム（LINE追加メッセージを蓄積）
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS additional_conditions TEXT;
 
+-- 元のLINEフォーマット全文を保存
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS raw_format_text TEXT;
+
 -- 売上番長設定テーブル（グループIDなど）
 CREATE TABLE IF NOT EXISTS hanbancyo_settings (
   key TEXT PRIMARY KEY,

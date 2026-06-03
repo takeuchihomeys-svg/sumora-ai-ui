@@ -74,6 +74,7 @@ interface Customer {
   building_age?: number;
   other_requests?: string;
   additional_conditions?: string;
+  raw_format_text?: string;
   created_at: string;
   updated_at: string;
 }
@@ -117,6 +118,7 @@ const EMPTY_FORM: Omit<Customer, "id" | "created_at" | "updated_at"> = {
   building_age: undefined,
   other_requests: "",
   additional_conditions: "",
+  raw_format_text: "",
 };
 
 function needsActionToday(c: Customer): boolean {
@@ -192,6 +194,9 @@ export default function ConditionsPage() {
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
 
+  // 元のLINE文表示
+  const [showRawFormat, setShowRawFormat] = useState(false);
+
   async function load() {
     setLoading(true);
     const [res, { data: convData }] = await Promise.all([
@@ -252,9 +257,10 @@ export default function ConditionsPage() {
       building_age: c.building_age,
       other_requests: c.other_requests ?? "",
       additional_conditions: c.additional_conditions ?? "",
+      raw_format_text: c.raw_format_text ?? "",
     });
     setError(null);
-    setFormatText("");
+    setFormatText(c.raw_format_text ?? "");
     setParseError(null);
     setQuickTarget(null);
     setShowModal(true);
@@ -335,6 +341,7 @@ export default function ConditionsPage() {
       setForm((prev) => ({
         ...prev,
         format_received: true,
+        raw_format_text: formatText,
         move_in_time: data.move_in_time ?? prev.move_in_time,
         rent_min: data.rent_min ?? prev.rent_min,
         rent_max: data.rent_max ?? prev.rent_max,
@@ -728,7 +735,7 @@ export default function ConditionsPage() {
         <div
           className="fixed inset-0 z-50 flex items-end"
           style={{ background: "rgba(0,0,0,0.4)" }}
-          onClick={(e) => e.target === e.currentTarget && setQuickTarget(null)}
+          onClick={(e) => { if (e.target === e.currentTarget) { setQuickTarget(null); setShowRawFormat(false); } }}
         >
           <div
             className="w-full bg-white rounded-t-2xl px-5 py-5 space-y-3"
@@ -811,9 +818,29 @@ export default function ConditionsPage() {
               詳細を編集する
             </button>
 
+            {/* 元のLINE文 */}
+            {quickTarget.raw_format_text && (
+              <>
+                <button
+                  onClick={() => setShowRawFormat((prev) => !prev)}
+                  className="w-full py-3.5 rounded-2xl font-bold text-blue-600 text-sm border border-blue-100 bg-blue-50"
+                >
+                  {showRawFormat ? "▲ LINEフォーマットを閉じる" : "📋 元のLINE文を見る"}
+                </button>
+                {showRawFormat && (
+                  <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200">
+                    <p className="text-[10px] text-slate-400 font-bold mb-2">受信したLINEフォーマット</p>
+                    <p className="text-xs text-slate-700 whitespace-pre-wrap leading-relaxed">
+                      {quickTarget.raw_format_text}
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
+
             {/* キャンセル */}
             <button
-              onClick={() => setQuickTarget(null)}
+              onClick={() => { setQuickTarget(null); setShowRawFormat(false); }}
               className="w-full py-3 text-slate-400 text-sm font-medium"
             >
               閉じる
