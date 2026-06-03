@@ -248,6 +248,14 @@ ALTER TABLE push_subscriptions DISABLE ROW LEVEL SECURITY;
 
 -- 追加条件カラム（LINE追加メッセージを蓄積）
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS additional_conditions TEXT;
+
+-- 売上番長設定テーブル（グループIDなど）
+CREATE TABLE IF NOT EXISTS hanbancyo_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE hanbancyo_settings DISABLE ROW LEVEL SECURITY;
 `.trim();
 
 export async function GET() {
