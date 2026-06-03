@@ -730,6 +730,21 @@ export default function EstimatePage() {
                               value={row.label}
                               onChange={(e) => updateOtherItem(row.otherIdx!, "item", e.target.value)}
                             />
+                          ) : row.editKey === "guarantee" ? (
+                            <div className="flex items-center gap-1.5">
+                              <span>賃貸保証料</span>
+                              <div className="flex items-center gap-0.5">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="100"
+                                  className="w-9 rounded border border-[#d1d7db] px-1 py-0.5 text-[11px] text-center outline-none focus:border-blue-400 bg-white tabular-nums"
+                                  value={String(items?.guaranteeRate || 0)}
+                                  onChange={(e) => updateItem("guaranteeRate", Number(e.target.value) || 0)}
+                                />
+                                <span className="text-[10px] text-[#90a4ae]">%</span>
+                              </div>
+                            </div>
                           ) : (
                             <>{row.label}{row.isComputed && <span className="ml-1 text-[9px] text-[#b0bec5]">自動</span>}</>
                           )}
