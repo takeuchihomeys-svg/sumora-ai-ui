@@ -29,6 +29,14 @@ type EditableItems = Omit<ExtractedEstimate, "otherItems"> & {
   nextYear: number;
 };
 
+// 翌月1日の日付文字列を返す（デフォルト入居日）
+function getDefaultMoveInDate(): string {
+  const now = new Date();
+  const y = now.getMonth() === 11 ? now.getFullYear() + 1 : now.getFullYear();
+  const m = now.getMonth() === 11 ? 1 : now.getMonth() + 2;
+  return `${y}-${String(m).padStart(2, "0")}-01`;
+}
+
 function calcNext(moveInDate: string) {
   if (!moveInDate) return { nextMonth: 0, nextYear: 0 };
   const d = new Date(moveInDate);
@@ -71,8 +79,7 @@ const ITEM_CONFIG: Array<{
   { key: "roomNumber",      label: "号室" },
   { key: "customerName",    label: "入居者名" },
   { key: "assignee",        label: "担当者名" },
-  { key: "moveInDate",      label: "入居日",           group: "入居情報" },
-  { key: "moveInMonthDays", label: "入居月の日数（入居日から自動計算）", derived: true },
+  // moveInDate・moveInMonthDays はStep2の専用UIで操作（フォームには出さない）
   { key: "rent",            label: "月額家賃",          group: "賃料" },
   { key: "managementFee",   label: "共益費・管理費" },
   { key: "waterFee",        label: "水道代（月額）" },
@@ -159,16 +166,14 @@ function generateLineText(
   return parts.join("\n");
 }
 
-function toEditable(e: ExtractedEstimate, account: Account = "sumora", moveInDate?: string): EditableItems {
-  const date = moveInDate || e.moveInDate || "";
-  const { nextMonth, nextYear } = calcNext(date);
-  // moveInDay・moveInMonth・moveInMonthDaysは必ずdate文字列から計算する
-  // （OCRが抽出したmoveInDay等は使わない → 入居日選択時にのみ日割りが発生する）
-  const { moveInDay, moveInMonth, moveInMonthDays } = calcMoveInInfo(date);
+function toEditable(e: ExtractedEstimate, account: Account = "sumora"): EditableItems {
+  // 入居日は常に未設定スタート。ユーザーが選択して初めて日割り計算が発生する
+  const { nextMonth, nextYear } = calcNext("");
+  const { moveInDay, moveInMonth, moveInMonthDays } = calcMoveInInfo("");
   const commDefaults = ACCOUNT_COMMISSION[account];
   return {
     ...e,
-    moveInDate: date,
+    moveInDate: "",
     moveInDay,
     moveInMonth,
     moveInMonthDays,
@@ -185,11 +190,13 @@ function toEditable(e: ExtractedEstimate, account: Account = "sumora", moveInDat
 
 // アカウントのデフォルト値で空の EditableItems を生成（手動入力用）
 function makeBlankItems(account: Account): EditableItems {
+  // 入居日は未設定スタート（1日入居扱い・日割りなし）
   const { nextMonth, nextYear } = calcNext("");
+  const { moveInDay, moveInMonth, moveInMonthDays } = calcMoveInInfo("");
   const commDefaults = ACCOUNT_COMMISSION[account];
   return {
     propertyName: "", roomNumber: "", customerName: "", assignee: "",
-    moveInDate: "", moveInMonth: 0, moveInDay: 1, moveInMonthDays: 30,
+    moveInDate: "", moveInMonth, moveInDay, moveInMonthDays,
     rent: 0, managementFee: 0, waterFee: 0,
     shikikin: 0, reikin: 0, hoshokikin: 0,
     commission: commDefaults.commission,
@@ -629,6 +636,30 @@ export default function EstimatePage() {
         {/* ─── STEP 2: 確認・調整 ─── */}
         {step === "review" && items && (
           <div ref={reviewRef} className="p-4 flex flex-col gap-4">
+
+            {/* 入居日選択カード */}
+            <section className="rounded-2xl bg-white shadow-sm overflow-hidden">
+              <div className="px-4 py-2.5 flex items-center gap-2" style={{ background: cfg.grad }}>
+                <span className="text-[14px] font-bold text-white">📅 入居日</span>
+                <span className="text-[11px] text-white/70">日付で日割り家賃が自動計算されます</span>
+              </div>
+              <div className="px-4 py-3 flex items-center gap-3">
+                <input
+                  type="date"
+                  className="flex-1 rounded-xl border border-[#d1d7db] px-3 py-2.5 text-[15px] font-semibold outline-none focus:border-blue-400"
+                  value={items.moveInDate || ""}
+                  onChange={(e) => updateItem("moveInDate", e.target.value)}
+                />
+                <div className="text-[11px] text-[#667781] leading-snug text-right">
+                  {items.moveInDay > 1
+                    ? <span className="text-orange-500 font-semibold">{items.moveInMonth}月{items.moveInDay}日入居<br/>日割りあり</span>
+                    : items.moveInMonth > 0
+                      ? <span className="text-emerald-600 font-semibold">{items.moveInMonth}月1日入居<br/>日割りなし</span>
+                      : <span>未設定</span>
+                  }
+                </div>
+              </div>
+            </section>
 
             {/* プレビュー：費用合計 */}
             <section className="rounded-2xl bg-white shadow-sm overflow-hidden">
