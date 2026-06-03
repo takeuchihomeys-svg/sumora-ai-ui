@@ -285,7 +285,9 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
   setCell(ws, "E35", e35);
   setCell(ws, "E37", e37);
   setCell(ws, "E8",  e8);
-  setCell(ws, "M1",  e8);
+  // M1 = 作成日（テンプレートは NOW() だが静的な今日の日付で上書き）
+  const t = new Date();
+  setCell(ws, "M1", `${t.getFullYear()}年${t.getMonth() + 1}月${t.getDate()}日`);
 
   // 節約金額（一般との差額）を返す
   return Math.max(0, f32 - e32);

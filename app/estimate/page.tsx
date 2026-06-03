@@ -705,14 +705,37 @@ export default function EstimatePage() {
                   <tbody>
                     {totalItems.map((row, idx) => (
                       <tr key={idx} className={row.isDiscount ? "text-red-500 font-bold" : ""}>
-                        <td className="py-0.5 pr-2 text-[#54656f] align-middle">{row.label}
-                          {row.isComputed && <span className="ml-1 text-[9px] text-[#b0bec5]">自動</span>}
+                        <td className="py-0.5 pr-2 text-[#54656f] align-middle">
+                          {row.otherIdx !== undefined ? (
+                            <input
+                              type="text"
+                              className="w-full text-[12px] border-b border-[#d1d7db] focus:border-blue-400 outline-none bg-transparent text-[#54656f] placeholder:text-[#ccc]"
+                              placeholder="項目名"
+                              value={row.label}
+                              onChange={(e) => updateOtherItem(row.otherIdx!, "item", e.target.value)}
+                            />
+                          ) : (
+                            <>{row.label}{row.isComputed && <span className="ml-1 text-[9px] text-[#b0bec5]">自動</span>}</>
+                          )}
                         </td>
                         <td className="py-0.5 text-right align-middle">
-                          {row.isComputed || row.otherIdx !== undefined ? (
-                            <span className={`font-semibold tabular-nums ${row.isComputed ? "text-[#90a4ae]" : "text-[#111b21]"}`}>
-                              {fmtYen(row.amount)}
-                            </span>
+                          {row.isComputed ? (
+                            <span className="font-semibold tabular-nums text-[#90a4ae]">{fmtYen(row.amount)}</span>
+                          ) : row.otherIdx !== undefined ? (
+                            <div className="flex items-center justify-end gap-0.5">
+                              <span className="text-[11px] text-[#90a4ae]">¥</span>
+                              <input
+                                type="number"
+                                min="0"
+                                className="w-20 text-right text-[12px] font-semibold border-b border-[#d1d7db] focus:border-blue-400 outline-none bg-transparent text-[#111b21] tabular-nums"
+                                value={String(row.amount || 0)}
+                                onChange={(e) => updateOtherItem(row.otherIdx!, "amount", e.target.value)}
+                              />
+                              <button
+                                onClick={() => removeOtherItem(row.otherIdx!)}
+                                className="ml-1 text-[#ccc] active:text-red-400 text-base leading-none"
+                              >×</button>
+                            </div>
                           ) : row.isDiscount ? (
                             <div className="flex items-center justify-end gap-0.5">
                               <span className="text-[11px]">▲¥</span>
@@ -753,6 +776,13 @@ export default function EstimatePage() {
                     </tr>
                   </tfoot>
                 </table>
+                <div className="mt-2 text-right">
+                  <button
+                    onClick={addOtherItem}
+                    className="rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                    style={{ background: cfg.accent }}
+                  >＋ その他費用を追加</button>
+                </div>
               </div>
             </section>
 
