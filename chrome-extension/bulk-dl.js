@@ -327,13 +327,11 @@
           return;
         }
         if (!resp || !resp.ok) {
-          alert("エラー: " + (resp ? resp.error : "応答なし"));
+          alert("LINE送信エラー:\n" + (resp ? resp.error : "応答なし"));
           lineBtn.textContent = lineOrig;
           return;
         }
-        lineBtn.textContent = resp.line_sent
-          ? "✅ " + urls.length + "件 まとめてLINE送信完了！"
-          : "✅ PDF完成（LINE設定なし）";
+        lineBtn.textContent = "✅ " + urls.length + "件 LINE送信完了！";
         setTimeout(function () { lineBtn.textContent = lineOrig; }, 5000);
       });
 

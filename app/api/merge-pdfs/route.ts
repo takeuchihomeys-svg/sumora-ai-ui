@@ -136,27 +136,34 @@ export async function POST(req: NextRequest) {
     const name = file_name || `物件まとめ_${today}.pdf`;
 
     // LINE送信
-    if (send_to_line && HANBANCYO_TOKEN) {
+    if (send_to_line) {
+      if (!HANBANCYO_TOKEN) {
+        return NextResponse.json({ ok: false, error: "LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN が未設定です（Vercel環境変数を確認してください）" }, { status: 500 });
+      }
       const groupId = await getGroupId();
-      if (groupId) {
-        try {
-          const { put } = await import("@vercel/blob");
-          const blob = await put(name, Buffer.from(mergedBytes), {
-            access: "public",
-            contentType: "application/pdf",
-          });
-          const lineText = buildLineMessage(
-            blob.url,
-            name,
-            merged.getPageCount(),
-            customer_name,
-            property_summaries,
-          );
-          await pushLineMessage(groupId, lineText);
-          return NextResponse.json({ ok: true, pdf: base64Result, line_sent: true, url: blob.url });
-        } catch {
-          // Blob/LINE失敗時はPDFだけ返す
-        }
+      if (!groupId) {
+        return NextResponse.json({ ok: false, error: "hanbancyo_settings に group_id が登録されていません" }, { status: 500 });
+      }
+      try {
+        const { put } = await import("@vercel/blob");
+        const blob = await put(name, Buffer.from(mergedBytes), {
+          access: "public",
+          contentType: "application/pdf",
+        });
+        const lineText = buildLineMessage(
+          blob.url,
+          name,
+          merged.getPageCount(),
+          customer_name,
+          property_summaries,
+        );
+        await pushLineMessage(groupId, lineText);
+        // LINE送信時はPDFデータは返さない（レスポンスサイズ削減）
+        return NextResponse.json({ ok: true, line_sent: true, url: blob.url });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error("[merge-pdfs] LINE送信失敗:", msg);
+        return NextResponse.json({ ok: false, error: "LINE送信失敗: " + msg }, { status: 500 });
       }
     }
 
