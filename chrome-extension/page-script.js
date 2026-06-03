@@ -597,6 +597,16 @@
       var petCb = document.querySelector('input[name="eq_rm[]"][value="113"]');
       if (petCb && !petCb.checked) petCb.click();
     }
+    if (cond.rp_update_days) {
+      // 更新日フィルター（new_days select）
+      var updEl = document.querySelector('select[name="new_days"]');
+      if (updEl) {
+        updEl.value = String(cond.rp_update_days);
+        updEl.dispatchEvent(new Event("change", { bubbles: true }));
+      } else {
+        console.log("[AX] 更新日フィールド(new_days)未検出 - リアプロのselect name要確認");
+      }
+    }
 
     // ── T=150ms: 所在地絞り込み（直接チェック — モーダルを使わない場合のみ）─────
     // detail_ward がある場合はモーダル経由で選択するのでスキップ

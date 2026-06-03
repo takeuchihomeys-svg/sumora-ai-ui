@@ -1929,7 +1929,15 @@ function preloadAdjForm(c) {
   document.getElementById("adj-age").value       = c.building_age || "";
   document.getElementById("adj-floor").value     = c.floor_plan || c.layout || "";
   document.getElementById("adj-structure").value = c.building_structure || c.structure || "";
-  document.getElementById("adj-pet").checked     = /ペット|pet/i.test(c.preferences || c.notes || "");
+
+  // ペット：全フィールドから検出
+  const petFields = [c.preferences, c.notes, c.other_requests, c.additional_conditions].filter(Boolean).join(" ");
+  document.getElementById("adj-pet").checked = /ペット|pet/i.test(petFields);
+
+  // 更新日：ステータスに応じて自動セット（hot=1日 / 3日ごと=3日 / 新規=1週間）
+  const STATUS_UPDATE_DAYS = { hot: "1", property_search: "3", new_inquiry: "7" };
+  const updateDaysEl = document.getElementById("adj-update-days");
+  if (updateDaysEl) updateDaysEl.value = STATUS_UPDATE_DAYS[c.status] || "";
 }
 
 function buildAdjCustomer(c) {
@@ -2192,6 +2200,10 @@ function openInstructions(siteKey) {
     // ボタン表示と同時に未登録地名チェック
     showUnknownWarn(computeUnknownTokens(selectedCustomer.desired_area || selectedCustomer.area || ""));
 
+    // 更新日フィールドを表示
+    const updateDaysRow = document.getElementById("adj-update-days-row");
+    if (updateDaysRow) updateDaysRow.style.display = "flex";
+
     adjForm.style.display = "block";
     const c0 = selectedCustomer;
     preloadAdjForm(c0);
@@ -2204,12 +2216,13 @@ function openInstructions(siteKey) {
       // 調整フォームの値を優先して使う
       const adjArea     = document.getElementById("adj-area").value.trim();
       const adjRentMax  = document.getElementById("adj-rent-max").value;
-      const adjAreaMin  = document.getElementById("adj-area-min").value;
-      const adjWalk     = document.getElementById("adj-walk").value;
-      const adjAge      = document.getElementById("adj-age").value;
-      const adjFloor     = document.getElementById("adj-floor").value.trim();
-      const adjStructure = document.getElementById("adj-structure").value.trim();
-      const adjPet       = document.getElementById("adj-pet").checked;
+      const adjAreaMin    = document.getElementById("adj-area-min").value;
+      const adjWalk       = document.getElementById("adj-walk").value;
+      const adjAge        = document.getElementById("adj-age").value;
+      const adjFloor      = document.getElementById("adj-floor").value.trim();
+      const adjStructure  = document.getElementById("adj-structure").value.trim();
+      const adjPet        = document.getElementById("adj-pet").checked;
+      const adjUpdateDays = document.getElementById("adj-update-days")?.value || "";
       const adjC = {
         desired_area: adjArea     || c.desired_area || c.area  || null,
         area:         adjArea     || c.desired_area || c.area  || null,
@@ -2297,6 +2310,7 @@ function openInstructions(siteKey) {
           area_max:        c.area_max || c.max_area || null,
           structure_types: adjC.structure_types,
           pet_ok: adjPet,
+          rp_update_days: adjUpdateDays ? Number(adjUpdateDays) : null,
           unknown_tokens: rpUnknownTokens.length > 0 ? rpUnknownTokens : null,
         },
       }, "*");
