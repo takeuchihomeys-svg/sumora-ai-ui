@@ -41,7 +41,7 @@ function buildLineMessage(
   }
 
   // PDFリンク
-  lines.push("↓物件PDF↓");
+  lines.push("物件PDF");
   lines.push(fileUrl);
 
   return lines.join("\n");

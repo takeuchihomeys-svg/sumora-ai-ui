@@ -168,13 +168,13 @@
     var rentText = card.texts.find(function (t) {
       return /[0-9,，]+[\s]*[万円]/.test(t) || /¥/.test(t);
     });
-    if (rentText) lines.push("💰 " + rentText.replace(/\s+/g, " ").trim());
+    if (rentText) lines.push(rentText.replace(/\s+/g, " ").trim());
 
     // 間取り（1R / 1K / 2LDK 等）
     var madoriText = card.texts.find(function (t) {
       return /[1-9](R\b|K\b|DK\b|LDK|SLDK|SDK)/.test(t);
     });
-    if (madoriText) lines.push("🏠 " + madoriText.trim());
+    if (madoriText) lines.push(madoriText.trim());
 
     // 駅・徒歩（「徒歩」または「駅」を含むセル）
     var accessText = card.texts.find(function (t) {
@@ -183,13 +183,13 @@
     if (!accessText) {
       accessText = card.texts.find(function (t) { return /駅/.test(t); });
     }
-    if (accessText) lines.push("🚶 " + accessText.trim());
+    if (accessText) lines.push(accessText.trim());
 
     // AD（「AD」または金額＋備考有 を含むセル）
     var adText = card.texts.find(function (t) {
       return /AD/.test(t) || /広告料/.test(t);
     });
-    if (adText) lines.push("📢 AD: " + adText.replace(/\s+/g, " ").trim());
+    if (adText) lines.push("AD: " + adText.replace(/\s+/g, " ").trim());
 
     return lines.join("\n");
   }
