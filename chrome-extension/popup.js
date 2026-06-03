@@ -2023,7 +2023,7 @@ function openInstructions(siteKey) {
     }
   }
 
-  if (isUnderbar && siteKey === "itandi") {
+  if (siteKey === "itandi") {
     adjForm.style.display = "block";
     preloadAdjForm(selectedCustomer);
     setupAreaModeSelector(selectedCustomer, "itandi");
@@ -2170,8 +2170,14 @@ function openInstructions(siteKey) {
         station_names: stationNames,
         unknown_tokens: unknownTokens.length > 0 ? unknownTokens : null,
       };
-      // chrome.tabs はiframe内で使用不可 → underbar.js経由でitandi-content.jsに中継
-      window.parent.postMessage({ from: "aixlinx-underbar", action: "itandi-autofill", conditions }, "*");
+      // underbar（iframe）モード: postMessage経由 / サイドパネルモード: chrome.tabs.sendMessage経由
+      if (isUnderbar) {
+        window.parent.postMessage({ from: "aixlinx-underbar", action: "itandi-autofill", conditions }, "*");
+      } else {
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+          if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: "axlx-itandi-autofill", conditions });
+        });
+      }
       autofillBtn.textContent = "✓ 自動検索中...";
       autofillBtn.classList.add("done");
       setTimeout(() => {

@@ -1,7 +1,7 @@
 "use strict";
 
 // underbar（フローティングパネル）を使うサイト → サイドパネルを無効化
-const UNDERBAR_SITES = ["realnetpro.com", "itandibb.com"];
+const UNDERBAR_SITES = ["realnetpro.com"];
 
 function isUnderbarSite(url) {
   return !!url && UNDERBAR_SITES.some(function (s) { return url.includes(s); });
