@@ -33,64 +33,26 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (url) configureSidePanelForTab(tabId, url);
 });
 
-// ── ページの fetch() でPDFを直接取得 ──────────────────────────────────────
-// MAIN world で実行 → ページの認証クッキーをそのまま使える
-// CDPデバッガ不要（DevTools 開いていても問題なし）・ファイルピッカー不要
-async function fetchPdfsViaPageFetch(tabId, urls) {
-  const result = await chrome.scripting.executeScript({
-    target: { tabId },
-    world: "MAIN",
-    func: async (urlList) => {
-      const pdfs = [];
-      for (const url of urlList) {
-        const resp = await fetch(url, { credentials: "include" });
-        if (!resp.ok) {
-          throw new Error("HTTP " + resp.status + " (" + url + ")");
-        }
-        const ct = resp.headers.get("content-type") || "";
-        if (ct.includes("text/html")) {
-          throw new Error("PDFではなくHTMLが返されました。リアプロに再ログインしてください。");
-        }
-        const buffer = await resp.arrayBuffer();
-        const bytes = new Uint8Array(buffer);
-        // base64 変換（8KB チャンク方式でスタックオーバーフロー防止）
-        const chunks = [];
-        for (let i = 0; i < bytes.length; i += 8192) {
-          chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
-        }
-        pdfs.push(btoa(chunks.join("")));
-      }
-      return pdfs;
-    },
-    args: [urls],
-  });
-
-  const pdf_data = result?.[0]?.result;
-  if (!Array.isArray(pdf_data) || pdf_data.length === 0) {
-    throw new Error("PDFが取得できませんでした");
-  }
-  return pdf_data;
-}
-
 // ── メッセージハンドラ ─────────────────────────────────────────────────────
+// コンテンツスクリプト（bulk-dl.js）は chrome.cookies API にアクセスできないため
+// background 経由でリアプロのセッションクッキーを取得して返す。
+// /api/merge-pdfs に pdf_urls + cookie_str を渡せば、
+// Vercel サーバー側でリアプロ PDF を代理取得 → 結合 → LINE 送信できる。
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type !== "axlx-fetch-pdfs") return false;
+  if (msg.type !== "axlx-get-cookies") return false;
 
-  const tabId = sender.tab?.id;
-  if (!tabId) {
-    sendResponse({ ok: false, error: "tabId不明。リアプロのページで操作してください。" });
-    return true;
-  }
-
-  (async () => {
-    try {
-      const pdf_data = await fetchPdfsViaPageFetch(tabId, msg.urls);
-      if (!pdf_data?.length) throw new Error("PDFが取得できませんでした。");
-      sendResponse({ ok: true, pdf_data });
-    } catch (e) {
-      sendResponse({ ok: false, error: e.message });
+  const targetUrl = msg.url || "https://www.realnetpro.com/";
+  chrome.cookies.getAll({ url: targetUrl }, (cookies) => {
+    if (chrome.runtime.lastError) {
+      sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+      return;
     }
-  })();
-
+    const cookie_str = (cookies || []).map((c) => `${c.name}=${c.value}`).join("; ");
+    if (!cookie_str) {
+      sendResponse({ ok: false, error: "リアプロのクッキーが取得できません。リアプロにログインしてください。" });
+      return;
+    }
+    sendResponse({ ok: true, cookie_str });
+  });
   return true;
 });

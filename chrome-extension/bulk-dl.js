@@ -306,27 +306,33 @@
     }
   }
 
-  // ── Approach A: chrome.debugger 経由でPDF取得 ──────────
-  // background.js が Network CDP で XHR レスポンスを直接キャプチャ
-  // fetch/XHR が JS レベルで失敗してもデバッガは確実に取得できる
+  // ── Approach A: クッキー proxy 方式でPDF直接送信 ──────────
+  // background 経由でリアプロのセッションクッキーを取得
+  // → /api/merge-pdfs に pdf_urls + cookie_str を渡す
+  // → Vercel サーバーがリアプロ PDF を代理取得 → 結合 → LINE 送信
+  // ファイルピッカーもデバッガも一切不要
   function tryDebuggerMerge(urls, opts) {
     var btn = opts.btn;
     btn.textContent = "PDF取得中... (" + urls.length + "件)";
 
     return new Promise(function (resolve, reject) {
-      chrome.runtime.sendMessage({ type: "axlx-fetch-pdfs", urls: urls }, function (resp) {
-        if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
-        if (!resp || !resp.ok) return reject(new Error(resp ? resp.error : "応答なし"));
-        resolve(resp.pdf_data);
-      });
+      chrome.runtime.sendMessage(
+        { type: "axlx-get-cookies", url: "https://www.realnetpro.com/" },
+        function (resp) {
+          if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+          if (!resp || !resp.ok) return reject(new Error(resp ? resp.error : "クッキー取得失敗"));
+          resolve(resp.cookie_str);
+        }
+      );
     })
-    .then(function (pdf_data) {
-      btn.textContent = opts.sendToLine ? "PDF送信中..." : "PDF結合中...";
+    .then(function (cookie_str) {
+      btn.textContent = opts.sendToLine ? "LINE送信中..." : "PDF結合中...";
       return fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          pdf_data: pdf_data,
+          pdf_urls: urls,
+          cookie_str: cookie_str,
           file_name: opts.fileName,
           send_to_line: opts.sendToLine,
           customer_name: opts.customerName || null,
@@ -433,7 +439,7 @@
       propertySummaries: propertySummaries,
     };
 
-    // Approach A: chrome.debugger 経由でPDF直接取得
+    // クッキー proxy 方式でPDF直接取得 → LINE 送信
     tryDebuggerMerge(urls, opts)
       .then(function (data) {
         handleMergeSuccess(data, btn, origText, sendToLine, fileName);
@@ -441,9 +447,10 @@
         setTimeout(function () { btn.textContent = origText; }, 4000);
       })
       .catch(function (e) {
-        console.warn("[AXLX] debugger取得失敗:", e.message, "→ ファイルピッカーに自動切替");
-        // Approach B: ファイルピッカー（確認ダイアログなし・自動切替）
-        tryPickerMerge(opts);
+        console.error("[AXLX] PDF送信失敗:", e.message);
+        alert("PDF送信エラー:\n" + e.message);
+        btn.disabled = false;
+        btn.textContent = origText;
       });
   }
 
