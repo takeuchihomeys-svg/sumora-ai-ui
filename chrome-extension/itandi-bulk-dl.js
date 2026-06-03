@@ -30,17 +30,32 @@
   }
 
   // ── チェックボックス注入 ───────────────────────────────────────────────
-  // 物件資料ボタンの直前に挿入
+  // DIV.CommonButton の外（前）に挿入してクリックイベント漏れを防ぐ
   function inject() {
     document.querySelectorAll(".axlx-itandi-cb").forEach(function (el) { el.remove(); });
     tracked = [];
     findMaterialBtns().forEach(function (btn) {
+      // DIV.CommonButton を探して、その前に挿入する（SPAN.MuiBadge-root 内への挿入を避ける）
+      var container = btn;
+      for (var i = 0; i < 5 && container.parentElement && container.parentElement !== document.body; i++) {
+        if (container.parentElement.classList && container.parentElement.classList.contains("CommonButton")) {
+          container = container.parentElement;
+          break;
+        }
+        container = container.parentElement;
+      }
+
       var cb = document.createElement("input");
       cb.type = "checkbox";
       cb.className = "axlx-itandi-cb";
-      cb.style.cssText = "width:16px;height:16px;margin-right:4px;cursor:pointer;accent-color:#1565C0;vertical-align:middle;flex-shrink:0;";
-      cb.addEventListener("change", updateBar);
-      btn.parentNode.insertBefore(cb, btn);
+      cb.style.cssText = [
+        "width:18px;height:18px;margin-right:6px;cursor:pointer;",
+        "accent-color:#1565C0;vertical-align:middle;flex-shrink:0;",
+      ].join("");
+      // クリックが親要素（物件資料ボタン）に伝播しないよう防止
+      cb.addEventListener("click", function (e) { e.stopPropagation(); });
+      cb.addEventListener("change", function (e) { e.stopPropagation(); updateBar(); });
+      container.parentNode.insertBefore(cb, container);
       tracked.push({ cb: cb, btn: btn });
     });
     updateBar();
