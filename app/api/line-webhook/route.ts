@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import Anthropic from "@anthropic-ai/sdk";
 
 // ── LINE アカウント設定（スモラ・イエヤス・ギガ賃貸） ──────────────────
 type AccountConfig = {
@@ -176,6 +177,13 @@ async function handleTextMessage(
 
   // 返信きたお客さんを自動で毎日物件出し（hot）に格上げ
   autoUpgradeToHot(db, userId);
+
+  // LINEフォーマット自動検知・解析
+  if (isFormatMessage(text)) {
+    void (async () => {
+      try { await autoParseFormat(db, userId, text); } catch {}
+    })();
+  }
 }
 
 async function autoUpgradeToHot(db: ReturnType<typeof getDb>, userId: string) {
@@ -193,6 +201,84 @@ async function autoUpgradeToHot(db: ReturnType<typeof getDb>, userId: string) {
       .eq("id", data.id);
     void notifyHanbancyoGroup(db, data.customer_name ?? "");
   }
+}
+
+function isFormatMessage(text: string): boolean {
+  // 丸数字が2つ以上 → フォーマットと判定
+  const circled = (text.match(/[①②③④⑤⑥⑦⑧⑨⑩]/g) ?? []).length;
+  if (circled >= 2) return true;
+  // フォーマットキーワードが3つ以上含まれている
+  const keywords = ["入居時期", "希望家賃", "家賃", "希望地域", "希望エリア", "間取り", "徒歩", "初期費用", "築年数", "エリア"];
+  return keywords.filter((k) => text.includes(k)).length >= 3;
+}
+
+async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, text: string) {
+  // line_user_id で property_customers を検索
+  const { data: customer } = await db
+    .from("property_customers")
+    .select("id")
+    .eq("line_user_id", userId)
+    .limit(1)
+    .single();
+  if (!customer?.id) return;
+
+  // AI でフォーマット解析（parse-format と同じプロンプト）
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  let parsed: Record<string, unknown>;
+  try {
+    const res = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1024,
+      messages: [{
+        role: "user",
+        content: `あなたは不動産業者のアシスタントです。
+以下のテキストから物件検索条件を読み取ってJSONで返してください。
+
+【重要】
+- フォーマットが崩れていたり、書き方がバラバラでも最大限読み取る
+- 「11万以内」→ rent_max: 110000 のように数値（円）に変換
+- 「2ヶ月後くらい」のような曖昧な表現もそのまま文字列で入れる
+- 「1DK・1LDK」のように複数ある場合はそのまま文字列で入れる
+- 不明な項目は null にする（絶対に省略しない）
+
+返すJSONの形式（これ以外の形式で返さない）:
+{
+  "move_in_time": "入居時期（文字列またはnull）",
+  "rent_min": 最低賃料の数値か null,
+  "rent_max": 最高賃料の数値か null,
+  "desired_area": "希望地域・駅名（文字列またはnull）",
+  "walk_minutes": 徒歩分数の数値か null,
+  "floor_plan": "希望間取り（文字列またはnull）",
+  "initial_cost_limit": 初期費用上限の数値か null,
+  "building_age": 築年数上限の数値か null,
+  "other_requests": "その他要望（文字列またはnull）"
+}
+
+テキスト:
+${text}
+
+JSONのみ返してください。説明文・コードブロック・マークダウンは一切不要です。`,
+      }],
+    });
+    const raw = res.content[0].type === "text" ? res.content[0].text : "";
+    const match = raw.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\{[\s\S]*\}/);
+    if (!match) return;
+    parsed = JSON.parse(match[0]) as Record<string, unknown>;
+  } catch {
+    return;
+  }
+
+  // nullでない項目だけ更新（既存データを守る）
+  const update: Record<string, unknown> = {
+    format_received: true,
+    raw_format_text: text,
+    updated_at: new Date().toISOString(),
+  };
+  for (const f of ["move_in_time", "rent_min", "rent_max", "desired_area", "walk_minutes", "floor_plan", "initial_cost_limit", "building_age", "other_requests"]) {
+    if (parsed[f] !== null && parsed[f] !== undefined) update[f] = parsed[f];
+  }
+
+  await db.from("property_customers").update(update).eq("id", customer.id);
 }
 
 async function notifyHanbancyoGroup(db: ReturnType<typeof getDb>, customerName: string) {
