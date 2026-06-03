@@ -83,39 +83,54 @@ async function patchSavingsInDrawing(
     (JSZip as unknown as { loadAsync: (b: Buffer) => Promise<JSZipType> }).loadAsync(fs.readFileSync(templatePath)),
   ]);
 
-  // 元テンプレートのdrawing2.xmlを取得
+  // 1. drawing2.xml を取得して節約金額プレースホルダーを置換
   const templateDrawing = templateZip.files["xl/drawings/drawing2.xml"];
   if (!templateDrawing) return exceljsBuf;
 
   let drawingXml = await templateDrawing.async("string");
-
-  // 節約金額プレースホルダーを実際の計算値に置換
   if (drawingXml.includes(">" + placeholder + "<")) {
     drawingXml = drawingXml.split(">" + placeholder + "<").join(">" + formatted + "<");
   }
-
-  // ExcelJS出力には既に画像(drawing1.xml)があるため、
-  // drawing2.xml内の画像(xdr:pic)を除去して図形のみに絞る
-  drawingXml = drawingXml.replace(/<xdr:twoCellAnchor[^>]*>(?:(?!<xdr:twoCellAnchor).)*?<xdr:pic\b[\s\S]*?<\/xdr:twoCellAnchor>/g, "");
-
-  // outputZipにdrawing2.xmlを追加
   outputZip.file("xl/drawings/drawing2.xml", drawingXml);
 
-  // sheet18.xml.rels に drawing2.xml の参照を追加
-  const sheetRelsKey = "xl/worksheets/_rels/sheet18.xml.rels";
-  const sheetRelsFile = outputZip.files[sheetRelsKey];
-  if (sheetRelsFile) {
-    let relsXml = await sheetRelsFile.async("string");
+  // 2. drawing2.xml.rels をテンプレートからコピー（キャラクター画像参照を保持）
+  const drawingRels = templateZip.files["xl/drawings/_rels/drawing2.xml.rels"];
+  if (drawingRels) {
+    outputZip.file("xl/drawings/_rels/drawing2.xml.rels", await drawingRels.async("string"));
+  }
+
+  // 3. image1.png（キャラクター画像）をテンプレートからコピー
+  const image = templateZip.files["xl/media/image1.png"];
+  if (image) {
+    outputZip.file("xl/media/image1.png", await image.async("uint8array"));
+  }
+
+  // 4. ExcelJS出力のsheet*.xml.relsを動的に検索して drawing2.xml 参照を追加
+  //    （ExcelJSはシートを再番号付けするためsheet18固定はNG）
+  const sheetRelsKey = Object.keys(outputZip.files)
+    .find(k => /xl\/worksheets\/_rels\/sheet\d+\.xml\.rels/.test(k));
+
+  if (sheetRelsKey) {
+    let relsXml = await outputZip.files[sheetRelsKey].async("string");
     if (!relsXml.includes("drawing2.xml")) {
       relsXml = relsXml.replace(
         "</Relationships>",
-        `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing2.xml"/></Relationships>`
+        `<Relationship Id="rId99" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing2.xml"/></Relationships>`
       );
       outputZip.file(sheetRelsKey, relsXml);
     }
+  } else {
+    // rels ファイルが存在しない場合は新規作成
+    const sheetXmlKey = Object.keys(outputZip.files)
+      .find(k => /xl\/worksheets\/sheet\d+\.xml$/.test(k));
+    const sheetNum = sheetXmlKey?.match(/sheet(\d+)\.xml$/)?.[1] ?? "1";
+    outputZip.file(
+      `xl/worksheets/_rels/sheet${sheetNum}.xml.rels`,
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId99" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing2.xml"/></Relationships>`
+    );
   }
 
-  // [Content_Types].xmlにdrawing2.xmlのエントリを追加
+  // 5. [Content_Types].xml に drawing2.xml と png type を追加
   const ctFile = outputZip.files["[Content_Types].xml"];
   if (ctFile) {
     let ctXml = await ctFile.async("string");
@@ -124,8 +139,14 @@ async function patchSavingsInDrawing(
         "</Types>",
         `<Override PartName="/xl/drawings/drawing2.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/></Types>`
       );
-      outputZip.file("[Content_Types].xml", ctXml);
     }
+    if (!ctXml.includes("image/png") && !ctXml.includes('Extension="png"')) {
+      ctXml = ctXml.replace(
+        "</Types>",
+        `<Default Extension="png" ContentType="image/png"/></Types>`
+      );
+    }
+    outputZip.file("[Content_Types].xml", ctXml);
   }
 
   return Buffer.from(await outputZip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }));
