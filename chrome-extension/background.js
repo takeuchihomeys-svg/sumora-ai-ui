@@ -50,12 +50,13 @@ chrome.tabs.onUpdated.addListener(function (tabId, changeInfo, tab) {
 chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   if (msg.type !== "axlx-fetch-pdfs") return false;
 
-  chrome.cookies.getAll({ url: "https://www.realnetpro.com/" }, function (cookies) {
+  // domain指定でwwwあり/なし両方のクッキーを取得
+  chrome.cookies.getAll({ domain: "realnetpro.com" }, function (cookies) {
     if (chrome.runtime.lastError) {
       sendResponse({ ok: false, error: "Cookie取得エラー: " + chrome.runtime.lastError.message });
       return;
     }
-    var cookieStr = cookies.map(function (c) { return c.name + "=" + c.value; }).join("; ");
+    var cookieStr = (cookies || []).map(function (c) { return c.name + "=" + c.value; }).join("; ");
     if (!cookieStr) {
       sendResponse({ ok: false, error: "リアプロのセッションクッキーが見つかりません。リアプロにログインしてから再試行してください。" });
       return;

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AIXLINX 物件検索",
-  "version": "1.7.2",
+  "version": "1.7.5",
   "description": "お客さんの条件に合わせてリアプロ・itandi・レインズを検索するサポートツール",
   "action": {
     "default_title": "AIXLINX 物件検索"
@@ -16,6 +16,7 @@
   "host_permissions": [
     "https://sumora-ai-ui.vercel.app/*",
     "https://www.realnetpro.com/*",
+    "https://realnetpro.com/*",
     "https://itandibb.com/*",
     "https://system.reins.jp/*"
   ],
