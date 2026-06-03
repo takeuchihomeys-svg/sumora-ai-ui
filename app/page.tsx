@@ -323,6 +323,7 @@ export default function Home() {
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const aixFileInputRef = useRef<HTMLInputElement | null>(null);
+  const accountLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingAixTypeRef = useRef<AixActionType | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -2116,6 +2117,46 @@ export default function Home() {
 
             {/* アクションボタン列（入力欄の上） */}
             <div className="mb-1.5 flex items-center gap-1.5">
+
+              {/* 送信アカウントバッジ（長押しで変更） */}
+              {selectedConversation.id && (() => {
+                const acc = getAccountMeta(selectedConversation.account);
+                const BADGE_BG: Record<string, string> = {
+                  sumora: "#7B1FA2",
+                  ieyasu: "#E65100",
+                  giga:   "#00695C",
+                  hasu:   "#C2185B",
+                };
+                const bg = BADGE_BG[selectedConversation.account ?? "sumora"] ?? "#7B1FA2";
+                return (
+                  <button
+                    onTouchStart={() => {
+                      accountLongPressTimer.current = setTimeout(() => {
+                        setAccountChangeConvId(selectedConversation.id);
+                      }, 500);
+                    }}
+                    onTouchEnd={() => {
+                      if (accountLongPressTimer.current) {
+                        clearTimeout(accountLongPressTimer.current);
+                        accountLongPressTimer.current = null;
+                      }
+                    }}
+                    onTouchMove={() => {
+                      if (accountLongPressTimer.current) {
+                        clearTimeout(accountLongPressTimer.current);
+                        accountLongPressTimer.current = null;
+                      }
+                    }}
+                    onClick={() => setAccountChangeConvId(selectedConversation.id)}
+                    className="flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold text-white active:opacity-70"
+                    style={{ backgroundColor: bg }}
+                    title="タップ/長押しでアカウント変更"
+                  >
+                    {acc.icon} {acc.label}
+                  </button>
+                );
+              })()}
+
               <button
                 onClick={generateReply}
                 disabled={generating || !selectedConversation.id}
