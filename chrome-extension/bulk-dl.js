@@ -45,7 +45,7 @@
     var bar = document.createElement("div");
     bar.id = "axlx-bar";
     bar.style.cssText = [
-      "position:fixed;bottom:24px;right:24px;z-index:2147483647;",
+      "position:fixed;bottom:24px;right:24px;z-index:2147483646;",
       "background:linear-gradient(135deg,#0d1b3e,#1565C0);",
       "color:white;border-radius:14px;padding:12px 16px;",
       "font-size:13px;font-weight:700;",
@@ -77,7 +77,7 @@
     document.getElementById("axlx-all-btn").addEventListener("click", toggleAll);
     document.getElementById("axlx-dl-btn").addEventListener("click", bulkDownload);
     document.getElementById("axlx-merge-btn").addEventListener("click", function () { mergePdfs(false); });
-    document.getElementById("axlx-line-btn").addEventListener("click", function () { mergePdfs(true); });
+    document.getElementById("axlx-line-btn").addEventListener("click", function () { showCustomerModal(function (customerName) { mergePdfs(true, customerName); }); });
     document.getElementById("axlx-print-btn").addEventListener("click", printMerged);
     document.getElementById("axlx-img-btn").addEventListener("click", downloadImages);
   }
@@ -99,14 +99,13 @@
     updateBar();
   }
 
-  // http(s) URLを持つ選択済みのみ返す
   function getSelectedUrls() {
     return tracked.filter(function (t) {
       return t.cb.checked && t.btn.href && /^https?:\/\//.test(t.btn.href);
     }).map(function (t) { return t.btn.href; });
   }
 
-  // ── 一括DL（既存） ────────────────────────────────
+  // ── 一括DL ────────────────────────────────────────
   function bulkDownload() {
     var targets = tracked.filter(function (t) { return t.cb.checked; });
     if (!targets.length) return;
@@ -119,10 +118,7 @@
         document.getElementById("axlx-count").textContent = "✓ " + targets.length + "件 完了！";
         dlBtn.textContent = "一括DL";
         dlBtn.style.pointerEvents = "auto";
-        setTimeout(function () {
-          targets.forEach(function (t) { t.cb.checked = false; });
-          updateBar();
-        }, 2500);
+        setTimeout(function () { targets.forEach(function (t) { t.cb.checked = false; }); updateBar(); }, 2500);
         return;
       }
       document.getElementById("axlx-count").textContent = (i + 1) + "/" + targets.length + " DL中";
@@ -133,94 +129,7 @@
     next();
   }
 
-  // ── PDF結合・LINE送信（cookieプロキシ方式）──────────
-  // PDF取得の流れ:
-  //   1. background.jsにメッセージ → chrome.cookies.getAll でリアプロのセッションクッキーを取得
-  //   2. クッキー文字列 + PDF URLリスト をサーバーに送信
-  //   3. サーバー側でfetch(url, { headers: { Cookie: cookieStr } }) → PDFを取得・結合
-  //   4. 結合済みPDFを返す（LINE送信の場合はVercel Blob経由でLINE送付）
-  function mergePdfs(sendToLine) {
-    var urls = getSelectedUrls();
-    if (!urls.length) {
-      alert("物件を選択してください\n（PDFリンクが検出できていない場合は一括DLをお試しください）");
-      return;
-    }
-
-    var btnId = sendToLine ? "axlx-line-btn" : "axlx-merge-btn";
-    var btn = document.getElementById(btnId);
-    var origText = btn.textContent;
-    btn.textContent = "クッキー取得中...";
-    btn.disabled = true;
-
-    var today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
-    var fileName = "物件まとめ_" + today + ".pdf";
-
-    // Step 1: background.js からリアプロのセッションクッキーを取得
-    chrome.runtime.sendMessage({ type: "axlx-fetch-pdfs", urls: urls }, function (resp) {
-      if (chrome.runtime.lastError) {
-        alert("拡張機能エラー: " + chrome.runtime.lastError.message);
-        btn.textContent = origText;
-        btn.disabled = false;
-        return;
-      }
-      if (!resp || !resp.ok) {
-        alert((resp && resp.error) || "クッキー取得失敗\n\nリアプロにログインしてから再試行してください。");
-        btn.textContent = origText;
-        btn.disabled = false;
-        return;
-      }
-
-      // Step 2: サーバーにクッキー + URLリストを送ってPDF取得・結合を依頼
-      btn.textContent = sendToLine ? "PDF送信中..." : "PDF結合中...";
-
-      fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pdf_urls: urls,
-          cookie_str: resp.cookie_str,
-          file_name: fileName,
-          send_to_line: sendToLine,
-        }),
-      })
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-          if (!data.ok) throw new Error(data.error || "サーバーエラー");
-
-          // PDFをブラウザにダウンロード
-          var bytes = Uint8Array.from(atob(data.pdf), function (c) { return c.charCodeAt(0); });
-          var blob = new Blob([bytes], { type: "application/pdf" });
-          var a = document.createElement("a");
-          a.href = URL.createObjectURL(blob);
-          a.download = fileName;
-          document.body.appendChild(a);
-          a.click();
-          setTimeout(function () { a.remove(); }, 100);
-
-          if (sendToLine && data.line_sent) {
-            btn.textContent = "✅ LINE送信完了！";
-          } else if (sendToLine) {
-            btn.textContent = "✅ PDF完成（LINE設定なし）";
-          } else {
-            btn.textContent = "✅ PDF完成！";
-          }
-        })
-        .catch(function (e) {
-          console.error("[AXLX] PDF結合エラー:", e);
-          // フォールバック: 個別ダウンロード
-          if (confirm("PDFの取得に失敗しました。\nエラー: " + e.message + "\n\n個別ダウンロードに切り替えますか？")) {
-            bulkDownload();
-          }
-          btn.textContent = origText;
-        })
-        .finally(function () {
-          btn.disabled = false;
-          setTimeout(function () { btn.textContent = origText; }, 4000);
-        });
-    });
-  }
-
-  // ── 物件カード情報抽出（共通）────────────────────────
+  // ── 物件カード情報抽出 ─────────────────────────────
   function extractCard(btn) {
     var row = btn;
     while (row && row.tagName !== "TR") row = row.parentElement;
@@ -251,6 +160,233 @@
     return { name: name || "物件", texts: texts.slice(0, 8) };
   }
 
+  // ── 物件サマリーテキスト生成（LINE送信用）──────────
+  function buildPropertySummary(card, index) {
+    var lines = ["【" + (index + 1) + "】" + card.name];
+
+    // 家賃（数字＋万円 or 円 or ¥ が含まれるセル）
+    var rentText = card.texts.find(function (t) {
+      return /[0-9,，]+[\s]*[万円]/.test(t) || /¥/.test(t);
+    });
+    if (rentText) lines.push("💰 " + rentText.replace(/\s+/g, " ").trim());
+
+    // 間取り（1R / 1K / 2LDK 等）
+    var madoriText = card.texts.find(function (t) {
+      return /[1-9](R\b|K\b|DK\b|LDK|SLDK|SDK)/.test(t);
+    });
+    if (madoriText) lines.push("🏠 " + madoriText.trim());
+
+    // 駅・徒歩（「徒歩」または「駅」を含むセル）
+    var accessText = card.texts.find(function (t) {
+      return /徒歩/.test(t);
+    });
+    if (!accessText) {
+      accessText = card.texts.find(function (t) { return /駅/.test(t); });
+    }
+    if (accessText) lines.push("🚶 " + accessText.trim());
+
+    return lines.join("\n");
+  }
+
+  // ── お客さん選択モーダル ──────────────────────────
+  function showCustomerModal(callback) {
+    // 既存モーダルがあれば消す
+    var existing = document.getElementById("axlx-customer-modal");
+    if (existing) existing.remove();
+
+    var overlay = document.createElement("div");
+    overlay.id = "axlx-customer-modal";
+    overlay.style.cssText = [
+      "position:fixed;top:0;left:0;right:0;bottom:0;",
+      "background:rgba(0,0,0,0.55);z-index:2147483647;",
+      "display:flex;align-items:center;justify-content:center;",
+      "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;",
+    ].join("");
+
+    var modal = document.createElement("div");
+    modal.style.cssText = [
+      "background:white;border-radius:16px;padding:20px 20px 16px;",
+      "width:320px;max-height:80vh;overflow-y:auto;",
+      "box-shadow:0 8px 40px rgba(0,0,0,0.35);",
+    ].join("");
+
+    modal.innerHTML = [
+      '<div style="font-size:15px;font-weight:700;color:#1565C0;margin-bottom:4px;">📤 売上番長に送る</div>',
+      '<div style="font-size:12px;color:#666;margin-bottom:12px;">どのお客さん向けですか？</div>',
+
+      // 顧客リスト
+      '<div id="axlx-cust-list" style="max-height:220px;overflow-y:auto;border:1px solid #e8e8e8;border-radius:10px;margin-bottom:10px;padding:4px 0;">',
+      '  <div style="padding:10px;color:#aaa;font-size:12px;text-align:center;">読み込み中...</div>',
+      '</div>',
+
+      // 手入力
+      '<input id="axlx-cust-input" type="text" placeholder="名前を直接入力（任意）"',
+      '  style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #ddd;border-radius:8px;font-size:13px;margin-bottom:12px;">',
+
+      // ボタン
+      '<div style="display:flex;gap:8px;">',
+      '  <button id="axlx-cust-cancel" style="flex:1;padding:10px;background:#f0f0f0;border:none;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;">キャンセル</button>',
+      '  <button id="axlx-cust-ok" style="flex:2;padding:10px;background:#06c755;border:none;border-radius:8px;color:white;font-weight:700;font-size:13px;cursor:pointer;">📤 この内容で送る</button>',
+      '</div>',
+    ].join("");
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    // 顧客リストを取得
+    fetch("https://sumora-ai-ui.vercel.app/api/property-customers")
+      .then(function (r) { return r.json(); })
+      .then(function (customers) {
+        var list = document.getElementById("axlx-cust-list");
+        if (!customers || !customers.length) {
+          list.innerHTML = '<div style="padding:10px;color:#aaa;font-size:12px;text-align:center;">顧客データなし</div>';
+          return;
+        }
+        // フェーズ順に並び替え（phase-1〜phase-4 を優先）
+        var active = customers.filter(function (c) {
+          return c.phase && ["phase-1","phase-2","phase-3","phase-4"].includes(c.phase);
+        });
+        var show = active.length ? active : customers;
+        list.innerHTML = show.slice(0, 20).map(function (c, idx) {
+          var phaseLabel = { "phase-1":"新規", "phase-2":"ヒアリング", "phase-3":"紹介中", "phase-4":"内見済" }[c.phase] || "";
+          var badgeColor = { "phase-1":"#ff9800", "phase-2":"#1565C0", "phase-3":"#43a047", "phase-4":"#7b1fa2" }[c.phase] || "#90a4ae";
+          return [
+            '<label style="display:flex;align-items:center;gap:8px;padding:7px 10px;cursor:pointer;',
+            idx < show.slice(0,20).length - 1 ? "border-bottom:1px solid #f5f5f5;" : "",
+            '">',
+            '<input type="radio" name="axlx-cust-radio" value="' + (c.name || "") + '" style="flex-shrink:0;">',
+            '<span style="font-size:13px;flex:1;">' + (c.name || "名前なし") + '</span>',
+            phaseLabel ? '<span style="font-size:10px;font-weight:700;color:white;background:' + badgeColor + ';padding:2px 6px;border-radius:10px;">' + phaseLabel + '</span>' : '',
+            '</label>',
+          ].join("");
+        }).join("");
+      })
+      .catch(function () {
+        var list = document.getElementById("axlx-cust-list");
+        list.innerHTML = '<div style="padding:10px;color:#aaa;font-size:12px;text-align:center;">顧客リスト取得エラー</div>';
+      });
+
+    // 顧客を選んだら input をクリア
+    modal.addEventListener("change", function (e) {
+      if (e.target && e.target.name === "axlx-cust-radio") {
+        document.getElementById("axlx-cust-input").value = "";
+      }
+    });
+
+    // 手入力したらラジオ解除
+    document.getElementById("axlx-cust-input").addEventListener("input", function () {
+      var checked = modal.querySelector('input[name="axlx-cust-radio"]:checked');
+      if (checked) checked.checked = false;
+    });
+
+    // キャンセル
+    document.getElementById("axlx-cust-cancel").addEventListener("click", function () {
+      overlay.remove();
+    });
+
+    // 送る
+    document.getElementById("axlx-cust-ok").addEventListener("click", function () {
+      var radio = modal.querySelector('input[name="axlx-cust-radio"]:checked');
+      var input = document.getElementById("axlx-cust-input").value.trim();
+      var customerName = (radio && radio.value) || input || "";
+      overlay.remove();
+      callback(customerName);
+    });
+
+    // オーバーレイクリックで閉じる
+    overlay.addEventListener("click", function (e) {
+      if (e.target === overlay) overlay.remove();
+    });
+  }
+
+  // ── PDF結合・LINE送信（cookieプロキシ方式）──────────
+  function mergePdfs(sendToLine, customerName) {
+    var urls = getSelectedUrls();
+    if (!urls.length) {
+      alert("物件を選択してください\n（PDFリンクが検出できない場合は一括DLをお試しください）");
+      return;
+    }
+
+    var btnId = sendToLine ? "axlx-line-btn" : "axlx-merge-btn";
+    var btn = document.getElementById(btnId);
+    var origText = btn.textContent;
+    btn.textContent = "クッキー取得中...";
+    btn.disabled = true;
+
+    var today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
+    var fileName = "物件まとめ_" + today + ".pdf";
+
+    // 物件サマリーを生成（LINEに送るときのみ）
+    var propertySummaries = null;
+    if (sendToLine) {
+      var selectedTargets = tracked.filter(function (t) { return t.cb.checked; });
+      propertySummaries = selectedTargets.map(function (t, i) {
+        return buildPropertySummary(extractCard(t.btn), i);
+      });
+    }
+
+    // Step 1: background.js からセッションクッキーを取得
+    chrome.runtime.sendMessage({ type: "axlx-fetch-pdfs", urls: urls }, function (resp) {
+      if (chrome.runtime.lastError) {
+        alert("拡張機能エラー: " + chrome.runtime.lastError.message);
+        btn.textContent = origText; btn.disabled = false; return;
+      }
+      if (!resp || !resp.ok) {
+        alert((resp && resp.error) || "クッキー取得失敗\n\nリアプロにログインしてから再試行してください。");
+        btn.textContent = origText; btn.disabled = false; return;
+      }
+
+      // Step 2: サーバーにクッキー + URLリスト + サマリーを送信
+      btn.textContent = sendToLine ? "PDF送信中..." : "PDF結合中...";
+
+      fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pdf_urls: urls,
+          cookie_str: resp.cookie_str,
+          file_name: fileName,
+          send_to_line: sendToLine,
+          customer_name: customerName || null,
+          property_summaries: propertySummaries,
+        }),
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (!data.ok) throw new Error(data.error || "サーバーエラー");
+
+          // PDFをブラウザにダウンロード
+          var bytes = Uint8Array.from(atob(data.pdf), function (c) { return c.charCodeAt(0); });
+          var blob = new Blob([bytes], { type: "application/pdf" });
+          var a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(function () { a.remove(); }, 100);
+
+          if (sendToLine && data.line_sent) {
+            btn.textContent = "✅ LINE送信完了！";
+          } else if (sendToLine) {
+            btn.textContent = "✅ PDF完成（LINE設定なし）";
+          } else {
+            btn.textContent = "✅ PDF完成！";
+          }
+        })
+        .catch(function (e) {
+          console.error("[AXLX] PDF結合エラー:", e);
+          if (confirm("PDFの取得に失敗しました。\nエラー: " + e.message + "\n\n個別ダウンロードに切り替えますか？")) {
+            bulkDownload();
+          }
+          btn.textContent = origText;
+        })
+        .finally(function () {
+          btn.disabled = false;
+          setTimeout(function () { btn.textContent = origText; }, 4000);
+        });
+    });
+  }
+
   // ── Canvas生成（共通ヘルパー）────────────────────────
   function buildCanvas(cards) {
     var W = 680, CARD_H = 130, GAP = 8, PAD = 14;
@@ -263,15 +399,12 @@
     ctx.fillRect(0, 0, W, canvas.height);
 
     cards.forEach(function (card, i) {
-      var x = PAD;
-      var y = PAD + i * (CARD_H + GAP);
-      var w = W - PAD * 2;
+      var x = PAD, y = PAD + i * (CARD_H + GAP), w = W - PAD * 2;
 
       ctx.fillStyle = "#ffffff";
       ctx.beginPath();
       if (ctx.roundRect) { ctx.roundRect(x, y, w, CARD_H, 8); } else { ctx.rect(x, y, w, CARD_H); }
       ctx.fill();
-
       ctx.fillStyle = "#1565C0";
       ctx.fillRect(x, y, 4, CARD_H);
 
@@ -289,76 +422,46 @@
       ctx.font = "bold 13px 'Hiragino Sans', 'Meiryo', sans-serif";
       ctx.fillText(card.name.slice(0, 32), x + 34, y + 20);
 
-      ctx.strokeStyle = "#e3eaf3";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(x + 12, y + 28);
-      ctx.lineTo(x + w - 12, y + 28);
-      ctx.stroke();
+      ctx.strokeStyle = "#e3eaf3"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x + 12, y + 28); ctx.lineTo(x + w - 12, y + 28); ctx.stroke();
 
       ctx.fillStyle = "#444";
       ctx.font = "11px 'Hiragino Sans', 'Meiryo', sans-serif";
-      var lineH = 16;
       card.texts.forEach(function (t, j) {
         if (j >= 6) return;
         var col = j % 2 === 0 ? x + 14 : x + w / 2;
-        var row2 = y + 38 + Math.floor(j / 2) * lineH;
-        ctx.fillText(t.slice(0, 28), col, row2);
+        ctx.fillText(t.slice(0, 28), col, y + 38 + Math.floor(j / 2) * 16);
       });
     });
 
-    ctx.fillStyle = "#90a4ae";
-    ctx.font = "10px sans-serif";
-    ctx.textAlign = "right";
-    var today = new Date().toLocaleDateString("ja-JP");
-    ctx.fillText("スモラ物件リスト " + today, W - PAD, canvas.height - 6);
-
+    ctx.fillStyle = "#90a4ae"; ctx.font = "10px sans-serif"; ctx.textAlign = "right";
+    ctx.fillText("スモラ物件リスト " + new Date().toLocaleDateString("ja-JP"), W - PAD, canvas.height - 6);
     return canvas;
   }
 
-  // ── まとめて印刷（プレビュー）────────────────────────
+  // ── まとめて印刷 ─────────────────────────────────
   function printMerged() {
     var urls = getSelectedUrls();
     if (!urls.length) { alert("物件を選択してください"); return; }
-
     var win = window.open("", "_blank", "width=960,height=900");
     var iframes = urls.map(function (u, i) {
       return '<div class="page"><div class="label">物件 ' + (i + 1) + ' / ' + urls.length + '</div><iframe src="' + u + '" allowfullscreen></iframe></div>';
     }).join("");
-
-    win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>物件まとめ印刷</title><style>' +
-      'body{margin:0;background:#eee;font-family:sans-serif}' +
-      '.ctrl{position:fixed;top:12px;right:12px;z-index:9999;display:flex;gap:8px;background:rgba(0,0,0,0.7);padding:8px 12px;border-radius:10px}' +
-      '.ctrl button{padding:8px 14px;border:none;border-radius:6px;font-weight:bold;cursor:pointer;font-size:13px}' +
-      '.print-btn{background:#1565C0;color:#fff}' +
-      '.close-btn{background:#fff;color:#333}' +
-      '.page{background:#fff;margin:12px auto;max-width:900px;box-shadow:0 2px 8px rgba(0,0,0,0.2);position:relative}' +
-      '.label{background:#1565C0;color:#fff;font-size:11px;font-weight:bold;padding:4px 10px}' +
-      'iframe{width:100%;height:1050px;border:none;display:block}' +
-      '@media print{.ctrl{display:none!important}.page{box-shadow:none;margin:0;max-width:100%;page-break-after:always}iframe{height:100vh}}' +
-      '</style></head><body>' +
-      '<div class="ctrl">' +
-      '<button class="print-btn" onclick="window.print()">🖨️ PDF保存（' + urls.length + '枚まとめて）</button>' +
-      '<button class="close-btn" onclick="window.close()">✕ 閉じる</button>' +
-      '</div>' + iframes + '</body></html>');
+    win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>物件まとめ印刷</title><style>body{margin:0;background:#eee;font-family:sans-serif}.ctrl{position:fixed;top:12px;right:12px;z-index:9999;display:flex;gap:8px;background:rgba(0,0,0,0.7);padding:8px 12px;border-radius:10px}.ctrl button{padding:8px 14px;border:none;border-radius:6px;font-weight:bold;cursor:pointer;font-size:13px}.print-btn{background:#1565C0;color:#fff}.close-btn{background:#fff;color:#333}.page{background:#fff;margin:12px auto;max-width:900px;box-shadow:0 2px 8px rgba(0,0,0,0.2)}.label{background:#1565C0;color:#fff;font-size:11px;font-weight:bold;padding:4px 10px}iframe{width:100%;height:1050px;border:none;display:block}@media print{.ctrl{display:none!important}.page{box-shadow:none;margin:0;page-break-after:always}iframe{height:100vh}}</style></head><body><div class="ctrl"><button class="print-btn" onclick="window.print()">🖨️ PDF保存（' + urls.length + '枚）</button><button class="close-btn" onclick="window.close()">✕ 閉じる</button></div>' + iframes + '</body></html>');
     win.document.close();
   }
 
-  // ── 画像保存（ローカルDL）────────────────────────────
+  // ── 画像保存 ─────────────────────────────────────
   function downloadImages() {
     var targets = tracked.filter(function (t) { return t.cb.checked; });
     if (!targets.length) { alert("物件を選択してください"); return; }
-
-    var cards = targets.map(function (t) { return extractCard(t.btn); });
-    var canvas = buildCanvas(cards);
+    var canvas = buildCanvas(targets.map(function (t) { return extractCard(t.btn); }));
     var today = new Date().toLocaleDateString("ja-JP");
-
     canvas.toBlob(function (blob) {
       var a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
       a.download = "物件リスト_" + today.replace(/\//g, "-") + ".png";
-      document.body.appendChild(a);
-      a.click();
+      document.body.appendChild(a); a.click();
       setTimeout(function () { a.remove(); }, 100);
     }, "image/png");
   }

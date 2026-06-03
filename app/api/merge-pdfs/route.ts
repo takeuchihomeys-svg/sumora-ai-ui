@@ -13,8 +13,43 @@ async function getGroupId(): Promise<string | null> {
   return data?.value ?? null;
 }
 
-async function pushLineFile(groupId: string, fileUrl: string, fileName: string, pageCount: number) {
-  const text = `📎 物件まとめPDF（${pageCount}枚）\n${fileName}\n\n↓ダウンロードリンク↓\n${fileUrl}\n\n※リンクをタップしてPDFを開いてください`;
+function buildLineMessage(
+  fileUrl: string,
+  fileName: string,
+  pageCount: number,
+  customerName: string | null | undefined,
+  propertySummaries: string[] | null | undefined,
+): string {
+  const today = new Date().toLocaleDateString("ja-JP");
+  const lines: string[] = [];
+
+  // ヘッダー
+  if (customerName) {
+    lines.push(`🏠 ${customerName}様 向け物件提案（${pageCount}件）`);
+  } else {
+    lines.push(`🏠 物件提案（${pageCount}件）`);
+  }
+  lines.push(`📅 ${today}`);
+  lines.push("━━━━━━━━━━━━━━");
+
+  // 物件サマリー（1件ずつ）
+  if (propertySummaries && propertySummaries.length > 0) {
+    propertySummaries.forEach((summary) => {
+      lines.push(summary);
+      lines.push("");
+    });
+    lines.push("━━━━━━━━━━━━━━");
+  }
+
+  // PDFリンク
+  lines.push(`📎 まとめPDF（${pageCount}枚）`);
+  lines.push("↓タップして開く↓");
+  lines.push(fileUrl);
+
+  return lines.join("\n");
+}
+
+async function pushLineMessage(groupId: string, text: string) {
   await fetch("https://api.line.me/v2/bot/message/push", {
     method: "POST",
     headers: {
@@ -28,12 +63,10 @@ async function pushLineFile(groupId: string, fileUrl: string, fileName: string, 
   });
 }
 
-// サーバー側でPDFを代理取得（クッキーを使って認証済みリクエスト）
 async function fetchPdfAsBase64(url: string, cookieStr: string): Promise<string> {
   const res = await fetch(url, {
     headers: {
       Cookie: cookieStr,
-      // リアプロが通常のブラウザリクエストと見なすようにヘッダーを付加
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
       Referer: "https://www.realnetpro.com/",
       Accept: "application/pdf,*/*",
@@ -47,7 +80,7 @@ async function fetchPdfAsBase64(url: string, cookieStr: string): Promise<string>
 
   const ct = res.headers.get("content-type") ?? "";
   if (ct.includes("text/html")) {
-    throw new Error(`PDFではなくHTMLが返されました。リアプロのセッションが切れている可能性があります。再ログインしてください。`);
+    throw new Error("PDFではなくHTMLが返されました。リアプロのセッションが切れています。再ログインしてください。");
   }
 
   const buf = await res.arrayBuffer();
@@ -57,25 +90,25 @@ async function fetchPdfAsBase64(url: string, cookieStr: string): Promise<string>
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json() as {
-      pdf_data?: string[];        // 既存: base64済みPDF配列
-      pdf_urls?: string[];        // 新方式: URLリスト（cookie_strと一緒に使う）
-      cookie_str?: string;        // 新方式: リアプロのセッションクッキー文字列
+      pdf_data?: string[];
+      pdf_urls?: string[];
+      cookie_str?: string;
       file_name?: string;
       send_to_line?: boolean;
+      customer_name?: string | null;
+      property_summaries?: string[] | null;
     };
 
-    const { pdf_data, pdf_urls, cookie_str, file_name, send_to_line } = body;
+    const { pdf_data, pdf_urls, cookie_str, file_name, send_to_line, customer_name, property_summaries } = body;
 
-    // PDF データを収集（URL方式 or base64方式）
+    // PDF データを収集
     let pdfBase64List: string[] = [];
 
     if (pdf_urls && pdf_urls.length > 0 && cookie_str) {
-      // 新方式: サーバー側でPDFを代理取得
       pdfBase64List = await Promise.all(
         pdf_urls.map((url) => fetchPdfAsBase64(url, cookie_str))
       );
     } else if (pdf_data && pdf_data.length > 0) {
-      // 旧方式: 拡張機能側で取得済みのbase64
       pdfBase64List = pdf_data;
     } else {
       return NextResponse.json({ error: "pdf_urls または pdf_data が必要です" }, { status: 400 });
@@ -89,7 +122,7 @@ export async function POST(req: NextRequest) {
       try {
         srcDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
       } catch {
-        continue; // 読み込めないPDFはスキップ
+        continue;
       }
       const pages = await merged.copyPages(srcDoc, srcDoc.getPageIndices());
       pages.forEach(p => merged.addPage(p));
@@ -104,7 +137,7 @@ export async function POST(req: NextRequest) {
     const today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
     const name = file_name || `物件まとめ_${today}.pdf`;
 
-    // LINE送信が要求された場合
+    // LINE送信
     if (send_to_line && HANBANCYO_TOKEN) {
       const groupId = await getGroupId();
       if (groupId) {
@@ -114,13 +147,15 @@ export async function POST(req: NextRequest) {
             access: "public",
             contentType: "application/pdf",
           });
-          await pushLineFile(groupId, blob.url, name, merged.getPageCount());
-          return NextResponse.json({
-            ok: true,
-            pdf: base64Result,
-            line_sent: true,
-            url: blob.url,
-          });
+          const lineText = buildLineMessage(
+            blob.url,
+            name,
+            merged.getPageCount(),
+            customer_name,
+            property_summaries,
+          );
+          await pushLineMessage(groupId, lineText);
+          return NextResponse.json({ ok: true, pdf: base64Result, line_sent: true, url: blob.url });
         } catch {
           // Blob/LINE失敗時はPDFだけ返す
         }
