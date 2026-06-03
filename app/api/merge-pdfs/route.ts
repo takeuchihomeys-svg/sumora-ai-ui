@@ -23,12 +23,11 @@ function buildLineMessage(
   const today = new Date().toLocaleDateString("ja-JP");
   const lines: string[] = [];
 
-  // ヘッダー：お客さん名 物件（N件）
+  // ヘッダー
   if (customerName) {
-    lines.push(`${customerName}様 物件（${pageCount}件）`);
-  } else {
-    lines.push(`物件（${pageCount}件）`);
+    lines.push(`【${customerName}様】`);
   }
+  lines.push(`物件（${pageCount}件）`);
   lines.push("━━━━━━━━━━━━━━");
 
   // 物件サマリー（1件ずつ）
