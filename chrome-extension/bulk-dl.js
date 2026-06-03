@@ -77,7 +77,7 @@
     document.getElementById("axlx-all-btn").addEventListener("click", toggleAll);
     document.getElementById("axlx-dl-btn").addEventListener("click", bulkDownload);
     document.getElementById("axlx-merge-btn").addEventListener("click", function () { mergePdfs(false); });
-    document.getElementById("axlx-line-btn").addEventListener("click", function () { getCustomerFromPopup(function (customerName) { mergePdfs(true, customerName); }); });
+    document.getElementById("axlx-line-btn").addEventListener("click", function () { getCustomerFromPopup(function (customerName) { sendLocalPdfsToLine(customerName); }); });
     document.getElementById("axlx-print-btn").addEventListener("click", printMerged);
     document.getElementById("axlx-img-btn").addEventListener("click", downloadImages);
   }
@@ -205,6 +205,85 @@
       window.removeEventListener("message", handler);
       callback(null);
     }, 800);
+  }
+
+  // ── 保存済みPDFをファイル選択してLINEに送る ─────────
+  // cookieもProxyも一切不要。すでにDLしたPDFをそのまま送るだけ。
+  function sendLocalPdfsToLine(customerName) {
+    var input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".pdf,application/pdf";
+    input.multiple = true;
+    input.style.display = "none";
+    document.body.appendChild(input);
+
+    input.addEventListener("change", function () {
+      var files = Array.from(input.files || []);
+      input.remove();
+      if (!files.length) return;
+
+      var btn = document.getElementById("axlx-line-btn");
+      var origText = btn.textContent;
+      btn.textContent = "読込中…(" + files.length + "件)";
+      btn.disabled = true;
+
+      // ファイルを全部base64に変換
+      Promise.all(files.map(function (file) {
+        return new Promise(function (resolve, reject) {
+          var reader = new FileReader();
+          reader.onload = function (e) { resolve(e.target.result.split(",")[1]); };
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      }))
+      .then(function (pdf_data) {
+        btn.textContent = "LINE送信中…";
+        var today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
+        var fileName = "物件まとめ_" + today + ".pdf";
+
+        // 選択した物件のサマリーも追加
+        var selectedTargets = tracked.filter(function (t) { return t.cb.checked; });
+        var propertySummaries = selectedTargets.length
+          ? selectedTargets.map(function (t, i) { return buildPropertySummary(extractCard(t.btn), i); })
+          : null;
+
+        return fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            pdf_data: pdf_data,
+            file_name: fileName,
+            send_to_line: true,
+            customer_name: customerName || null,
+            property_summaries: propertySummaries,
+          }),
+        });
+      })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data.ok) throw new Error(data.error || "サーバーエラー");
+        // 結合PDFをダウンロード
+        var bytes = Uint8Array.from(atob(data.pdf), function (c) { return c.charCodeAt(0); });
+        var blob = new Blob([bytes], { type: "application/pdf" });
+        var a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = (data.fileName || "物件まとめ.pdf");
+        document.body.appendChild(a); a.click();
+        setTimeout(function () { a.remove(); }, 100);
+
+        btn.textContent = data.line_sent ? "✅ LINE送信完了！" : "✅ PDF完成（LINE設定なし）";
+      })
+      .catch(function (e) {
+        alert("エラー: " + e.message);
+        btn.textContent = origText;
+      })
+      .finally(function () {
+        btn.disabled = false;
+        setTimeout(function () { btn.textContent = origText; }, 4000);
+      });
+    });
+
+    input.click();
   }
 
   // ── PDF結合・LINE送信（cookieプロキシ方式）──────────
