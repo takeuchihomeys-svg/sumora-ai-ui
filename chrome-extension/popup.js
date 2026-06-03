@@ -353,9 +353,10 @@ function parseAreaTokens(rawArea) {
     .replace(/([^\s,、・\/～〜]+?)から([^\s,、・\/～〜]+?)まで/g, "$1,$2")
     .replace(/([^\s,、・\/]+?)[〜～]([^\s,、・\/]+)/g, "$1,$2");
   return expanded
-    .split(/[,、・\/\s]+/)
+    .split(/[,、・\/\s]+|又は|もしくは/)
     .map(t => t.replace(/^[^:]+:/, "")             // 「第一希望:」「第二希望:」「大阪府以外:」などを除去
                 .replace(/以南$|以北$|以西$|以東$/, "") // 方向サフィックスを除去
+                .replace(/通勤\d+分圏内|通勤\d+分以内|\d+分圏内/g, "") // 「通勤20分圏内」などを除去
                 .replace(/駅|周辺|付近|近く|沿線|エリア|あたり/g, "")
                 .trim())
     .map(normalizeNumerals)
