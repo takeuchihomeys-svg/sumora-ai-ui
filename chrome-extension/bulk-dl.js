@@ -1,10 +1,9 @@
 (function () {
   "use strict";
 
-  var tracked = []; // { cb, btn }
+  var tracked = [];
   var injectTimer = null;
 
-  // ── 印刷用PDFボタンを探す ─────────────────────────
   function findPrintBtns() {
     var seen = new Set();
     var results = [];
@@ -24,7 +23,6 @@
     return results;
   }
 
-  // ── チェックボックス注入 ──────────────────────────
   function inject() {
     document.querySelectorAll(".axlx-cb").forEach(function (el) { el.remove(); });
     tracked = [];
@@ -52,7 +50,7 @@
       "color:white;border-radius:14px;padding:12px 16px;",
       "font-size:13px;font-weight:700;",
       "box-shadow:0 4px 20px rgba(0,0,0,0.4);",
-      "display:none;flex-direction:column;gap:8px;min-width:170px;",
+      "display:none;flex-direction:column;gap:8px;min-width:200px;",
       "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;",
     ].join("");
     bar.innerHTML = [
@@ -64,10 +62,16 @@
       '  <button id="axlx-all-btn" style="flex:1;padding:6px 4px;background:rgba(255,255,255,0.18);border:none;border-radius:8px;color:white;font-size:11px;font-weight:700;cursor:pointer;">全選択</button>',
       '  <button id="axlx-dl-btn" style="flex:2;padding:6px 8px;background:#ff9800;border:none;border-radius:8px;color:white;font-size:12px;font-weight:700;cursor:pointer;">一括DL</button>',
       "</div>",
+      '<div style="display:flex;gap:6px;">',
+      '  <button id="axlx-print-btn" style="flex:1;padding:6px 8px;background:#43a047;border:none;border-radius:8px;color:white;font-size:11px;font-weight:700;cursor:pointer;">📄 まとめて印刷</button>',
+      '  <button id="axlx-img-btn" style="flex:1;padding:6px 8px;background:#7b1fa2;border:none;border-radius:8px;color:white;font-size:11px;font-weight:700;cursor:pointer;">📸 画像保存</button>',
+      "</div>",
     ].join("");
     document.body.appendChild(bar);
     document.getElementById("axlx-all-btn").addEventListener("click", toggleAll);
     document.getElementById("axlx-dl-btn").addEventListener("click", bulkDownload);
+    document.getElementById("axlx-print-btn").addEventListener("click", printMerged);
+    document.getElementById("axlx-img-btn").addEventListener("click", downloadImages);
   }
 
   function updateBar() {
@@ -87,13 +91,17 @@
     updateBar();
   }
 
+  function getSelectedUrls() {
+    return tracked.filter(function (t) { return t.cb.checked && t.btn.href; }).map(function (t) { return t.btn.href; });
+  }
+
+  // ── 一括DL（既存） ────────────────────────────────
   function bulkDownload() {
     var targets = tracked.filter(function (t) { return t.cb.checked; });
     if (!targets.length) return;
     var dlBtn = document.getElementById("axlx-dl-btn");
     dlBtn.style.pointerEvents = "none";
     dlBtn.textContent = "DL中...";
-
     var i = 0;
     function next() {
       if (i >= targets.length) {
@@ -114,7 +122,156 @@
     next();
   }
 
-  // ── MutationObserver（ループ防止付き） ───────────
+  // ── まとめて印刷（新）────────────────────────────
+  function printMerged() {
+    var urls = getSelectedUrls();
+    if (!urls.length) { alert("物件を選択してください"); return; }
+
+    var win = window.open("", "_blank", "width=960,height=900");
+    var iframes = urls.map(function (u, i) {
+      return '<div class="page"><div class="label">物件 ' + (i + 1) + ' / ' + urls.length + '</div><iframe src="' + u + '" allowfullscreen></iframe></div>';
+    }).join("");
+
+    win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>物件まとめ印刷</title><style>' +
+      'body{margin:0;background:#eee;font-family:sans-serif}' +
+      '.ctrl{position:fixed;top:12px;right:12px;z-index:9999;display:flex;gap:8px;background:rgba(0,0,0,0.7);padding:8px 12px;border-radius:10px}' +
+      '.ctrl button{padding:8px 14px;border:none;border-radius:6px;font-weight:bold;cursor:pointer;font-size:13px}' +
+      '.print-btn{background:#1565C0;color:#fff}' +
+      '.close-btn{background:#fff;color:#333}' +
+      '.page{background:#fff;margin:12px auto;max-width:900px;box-shadow:0 2px 8px rgba(0,0,0,0.2);position:relative}' +
+      '.label{background:#1565C0;color:#fff;font-size:11px;font-weight:bold;padding:4px 10px}' +
+      'iframe{width:100%;height:1050px;border:none;display:block}' +
+      '@media print{.ctrl{display:none!important}.page{box-shadow:none;margin:0;max-width:100%;page-break-after:always}iframe{height:100vh}}' +
+      '</style></head><body>' +
+      '<div class="ctrl">' +
+      '<button class="print-btn" onclick="window.print()">🖨️ PDF保存（' + urls.length + '枚まとめて）</button>' +
+      '<button class="close-btn" onclick="window.close()">✕ 閉じる</button>' +
+      '</div>' + iframes + '</body></html>');
+    win.document.close();
+  }
+
+  // ── 画像保存（新）────────────────────────────────
+  function extractCard(btn) {
+    var row = btn;
+    while (row && row.tagName !== "TR") row = row.parentElement;
+
+    // 建物名を探す（上位のテーブルや見出し）
+    var name = "";
+    var cur = row ? row.parentElement : null;
+    while (cur && !name) {
+      var prev = cur.previousElementSibling;
+      if (prev) {
+        var h = prev.querySelector("h2,h3,h4,.building-name,td b,td strong");
+        if (h) { name = h.textContent.trim(); break; }
+        var txt = prev.textContent.trim();
+        if (txt && txt.length < 40) { name = txt; break; }
+      }
+      cur = cur.parentElement;
+    }
+    // 建物名が取れない場合はテーブル直前の要素から
+    if (!name && row) {
+      var tbl = row.closest("table");
+      var before = tbl && tbl.previousElementSibling;
+      if (before) name = before.textContent.trim().split("\n")[0].trim().slice(0, 30);
+    }
+
+    var cells = row ? Array.from(row.querySelectorAll("td")) : [];
+    var texts = cells.map(function (td) {
+      return td.textContent.replace(/\s+/g, " ").trim();
+    }).filter(function (t) { return t && t.length > 0 && t.length < 60; });
+
+    return { name: name || "物件", texts: texts.slice(0, 8) };
+  }
+
+  function downloadImages() {
+    var targets = tracked.filter(function (t) { return t.cb.checked; });
+    if (!targets.length) { alert("物件を選択してください"); return; }
+
+    var cards = targets.map(function (t) { return extractCard(t.btn); });
+
+    var W = 680, CARD_H = 130, GAP = 8, PAD = 14;
+    var canvas = document.createElement("canvas");
+    canvas.width = W;
+    canvas.height = PAD * 2 + cards.length * (CARD_H + GAP);
+    var ctx = canvas.getContext("2d");
+
+    // 背景
+    ctx.fillStyle = "#f0f4f8";
+    ctx.fillRect(0, 0, W, canvas.height);
+
+    cards.forEach(function (card, i) {
+      var x = PAD;
+      var y = PAD + i * (CARD_H + GAP);
+      var w = W - PAD * 2;
+
+      // カード背景
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      if (ctx.roundRect) {
+        ctx.roundRect(x, y, w, CARD_H, 8);
+      } else {
+        ctx.rect(x, y, w, CARD_H);
+      }
+      ctx.fill();
+
+      // 左アクセントバー
+      ctx.fillStyle = "#1565C0";
+      ctx.fillRect(x, y, 4, CARD_H);
+
+      // 番号バッジ
+      ctx.fillStyle = "#1565C0";
+      ctx.beginPath();
+      ctx.arc(x + 18, y + 16, 10, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 11px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(String(i + 1), x + 18, y + 20);
+      ctx.textAlign = "left";
+
+      // 建物名
+      ctx.fillStyle = "#1565C0";
+      ctx.font = "bold 13px 'Hiragino Sans', 'Meiryo', sans-serif";
+      ctx.fillText(card.name.slice(0, 32), x + 34, y + 20);
+
+      // 区切り線
+      ctx.strokeStyle = "#e3eaf3";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x + 12, y + 28);
+      ctx.lineTo(x + w - 12, y + 28);
+      ctx.stroke();
+
+      // 物件情報テキスト
+      ctx.fillStyle = "#444";
+      ctx.font = "11px 'Hiragino Sans', 'Meiryo', sans-serif";
+      var lineH = 16;
+      card.texts.forEach(function (t, j) {
+        if (j >= 6) return;
+        var col = j % 2 === 0 ? x + 14 : x + w / 2;
+        var row2 = y + 38 + Math.floor(j / 2) * lineH;
+        ctx.fillText(t.slice(0, 28), col, row2);
+      });
+    });
+
+    // 日付フッター
+    ctx.fillStyle = "#90a4ae";
+    ctx.font = "10px sans-serif";
+    ctx.textAlign = "right";
+    var today = new Date().toLocaleDateString("ja-JP");
+    ctx.fillText("スモラ物件リスト " + today, W - PAD, canvas.height - 6);
+
+    canvas.toBlob(function (blob) {
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "物件リスト_" + today.replace(/\//g, "-") + ".png";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function () { a.remove(); }, 100);
+    }, "image/png");
+  }
+
+  // ── MutationObserver ────────────────────────────
   var obs = new MutationObserver(function () {
     if (injectTimer) return;
     var btns = findPrintBtns();
