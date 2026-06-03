@@ -537,28 +537,41 @@ export default function EstimatePage() {
         </div>
 
         {/* ステップインジケーター */}
-        <div className="mt-2.5 flex items-center gap-2">
-          {[
-            { num: "1", label: "資料・情報入力" },
-            { num: "2", label: "確認・調整・作成" },
-          ].map((s, idx) => (
-            <div key={idx} className="flex items-center gap-1">
-              {idx > 0 && <div className="h-px w-6 bg-white/40" />}
-              <div className="flex items-center gap-1">
-                <span
-                  className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold"
-                  style={
-                    (idx === 0 && step === "input") || (idx === 1 && step === "review")
-                      ? { backgroundColor: "white", color: cfg.accent }
-                      : { backgroundColor: "rgba(255,255,255,0.3)", color: "white" }
-                  }
-                >
-                  {s.num}
-                </span>
-                <span className="text-[10px] text-white/90">{s.label}</span>
+        <div className="mt-2.5 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {[
+              { num: "1", label: "資料・情報入力" },
+              { num: "2", label: "確認・調整・作成" },
+            ].map((s, idx) => (
+              <div key={idx} className="flex items-center gap-1">
+                {idx > 0 && <div className="h-px w-6 bg-white/40" />}
+                <div className="flex items-center gap-1">
+                  <span
+                    className="flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold"
+                    style={
+                      (idx === 0 && step === "input") || (idx === 1 && step === "review")
+                        ? { backgroundColor: "white", color: cfg.accent }
+                        : { backgroundColor: "rgba(255,255,255,0.3)", color: "white" }
+                    }
+                  >
+                    {s.num}
+                  </span>
+                  <span className="text-[10px] text-white/90">{s.label}</span>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
+          {/* 更新ボタン */}
+          <button
+            onClick={handleRefresh}
+            className="flex items-center gap-1 rounded-full bg-white/20 px-2.5 py-1 text-[11px] text-white/90 active:bg-white/30"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="23 4 23 10 17 10"/>
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            </svg>
+            更新
+          </button>
         </div>
       </header>
 
@@ -1007,19 +1020,6 @@ export default function EstimatePage() {
           </div>
         )}
       </div>
-
-      {/* 更新ボタン（SafariツールバーのすぐそばBottomNav上に固定） */}
-      <button
-        onClick={handleRefresh}
-        className="fixed right-4 z-50 flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-lg border border-[#e9edef] active:scale-95 transition-transform"
-        style={{ bottom: "calc(56px + max(env(safe-area-inset-bottom), 8px) + 10px)" }}
-        title="データをリセットして更新"
-      >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#667781" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="23 4 23 10 17 10"/>
-          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-        </svg>
-      </button>
 
       <BottomNav />
 
