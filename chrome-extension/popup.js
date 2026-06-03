@@ -1935,7 +1935,7 @@ function preloadAdjForm(c) {
   document.getElementById("adj-pet").checked = /ペット|pet/i.test(petFields);
 
   // 更新日：ステータスに応じて自動セット（hot=1日 / 3日ごと=3日 / 新規=1週間）
-  const STATUS_UPDATE_DAYS = { hot: "1", property_search: "3", new_inquiry: "7" };
+  const STATUS_UPDATE_DAYS = { hot: "1", property_search: "3", new_inquiry: "" };
   const updateDaysEl = document.getElementById("adj-update-days");
   if (updateDaysEl) updateDaysEl.value = STATUS_UPDATE_DAYS[c.status] || "";
 }
