@@ -27,7 +27,6 @@ chrome.runtime.onInstalled.addListener(setupSidePanel);
 chrome.runtime.onStartup.addListener(setupSidePanel);
 setupSidePanel();
 
-// タブがアクティブになったとき
 chrome.tabs.onActivated.addListener(function ({ tabId }) {
   chrome.tabs.get(tabId, function (tab) {
     if (chrome.runtime.lastError) return;
@@ -35,7 +34,6 @@ chrome.tabs.onActivated.addListener(function ({ tabId }) {
   });
 });
 
-// タブのURLが変わったとき
 chrome.tabs.onUpdated.addListener(function (tabId, changeInfo, tab) {
   if (changeInfo.url) {
     configureSidePanelForTab(tabId, changeInfo.url);
@@ -45,23 +43,61 @@ chrome.tabs.onUpdated.addListener(function (tabId, changeInfo, tab) {
 });
 
 // ── PDF取得用クッキー収集 ──────────────────────────────
-// ブラウザのfetch/XHRはSameSite制限でクッキーが送れないケースがある。
-// サーバー側でPDFを代理取得するため、chrome.cookies APIでセッションクッキーを収集して渡す。
+// 戦略: 3段階フォールバック
+//   1. chrome.cookies.getAll（HttpOnly含む全クッキー）
+//   2. scripting.executeScript MAIN世界でdocument.cookie（非HttpOnlyのみ）
+//   3. 両方失敗 → エラー
 chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   if (msg.type !== "axlx-fetch-pdfs") return false;
 
-  // domain指定でwwwあり/なし両方のクッキーを取得
+  var tabId = sender.tab && sender.tab.id;
+
+  // ── Step 1: chrome.cookies API（ドット付きドメイン込みで全取得）──
   chrome.cookies.getAll({ domain: "realnetpro.com" }, function (cookies) {
     if (chrome.runtime.lastError) {
-      sendResponse({ ok: false, error: "Cookie取得エラー: " + chrome.runtime.lastError.message });
+      console.warn("[AXLX] cookies.getAll error:", chrome.runtime.lastError.message);
+    }
+
+    var cookieStr = (cookies || [])
+      .map(function (c) { return c.name + "=" + c.value; })
+      .join("; ");
+
+    if (cookieStr) {
+      console.log("[AXLX] cookies API で取得成功:", (cookies || []).length, "件");
+      sendResponse({ ok: true, cookie_str: cookieStr });
       return;
     }
-    var cookieStr = (cookies || []).map(function (c) { return c.name + "=" + c.value; }).join("; ");
-    if (!cookieStr) {
-      sendResponse({ ok: false, error: "リアプロのセッションクッキーが見つかりません。リアプロにログインしてから再試行してください。" });
+
+    // ── Step 2: ページのdocument.cookieをフォールバックとして使用 ──
+    // chrome.cookies APIが空の場合（ドメイン権限の不一致等）でも
+    // 非HttpOnlyなクッキーはページコンテキストから取得できる
+    if (!tabId) {
+      sendResponse({ ok: false, error: "tabId不明・クッキー取得不可" });
       return;
     }
-    sendResponse({ ok: true, cookie_str: cookieStr });
+
+    console.warn("[AXLX] cookies API が空 → scripting fallback を試みます");
+
+    chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      world: "MAIN",
+      func: function () { return document.cookie; },
+    })
+      .then(function (results) {
+        var docCookie = results && results[0] && results[0].result;
+        if (docCookie) {
+          console.log("[AXLX] document.cookie fallback 成功");
+          sendResponse({ ok: true, cookie_str: docCookie });
+        } else {
+          sendResponse({
+            ok: false,
+            error: "クッキーが取得できませんでした。\nリアプロに再ログインしてから再試行してください。",
+          });
+        }
+      })
+      .catch(function (e) {
+        sendResponse({ ok: false, error: "クッキー取得エラー: " + e.message });
+      });
   });
 
   return true; // 非同期レスポンス
