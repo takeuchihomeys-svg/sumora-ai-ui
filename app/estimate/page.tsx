@@ -27,6 +27,7 @@ type EditableItems = Omit<ExtractedEstimate, "otherItems"> & {
   nextWaterFee: number;
   nextMonth: number;
   nextYear: number;
+  guaranteeRate: number; // 賃貸保証料率（%）デフォルト50
 };
 
 // 翌月1日の日付文字列を返す（デフォルト入居日）
@@ -76,9 +77,9 @@ const ITEM_CONFIG: Array<{
   derived?: boolean;
 }> = [
   { key: "propertyName",    label: "物件名",          group: "基本情報" },
-  { key: "roomNumber",      label: "号室" },
-  { key: "customerName",    label: "入居者名" },
-  { key: "assignee",        label: "担当者名" },
+  { key: "roomNumber",      label: "号室",            group: "基本情報" },
+  { key: "customerName",    label: "入居者名",        group: "基本情報" },
+  { key: "assignee",        label: "担当者名",        group: "基本情報" },
   // moveInDate・moveInMonthDays はStep2の専用UIで操作（フォームには出さない）
   { key: "rent",            label: "月額家賃",          group: "賃料" },
   { key: "managementFee",   label: "共益費・管理費" },
@@ -90,7 +91,8 @@ const ITEM_CONFIG: Array<{
   { key: "commissionTax",   label: "仲介手数料 消費税" },
   { key: "parkingCommission",    label: "駐車場手数料（税抜）" },
   { key: "parkingCommissionTax", label: "駐車場手数料 消費税" },
-  { key: "guarantee",       label: "賃貸保証料" },
+  { key: "guaranteeRate",   label: "保証料率（%）" },
+  { key: "guarantee",       label: "賃貸保証料（自動計算）" },
   { key: "insurance",       label: "住宅保険" },
   { key: "keyExchange",     label: "鍵交換代" },
   { key: "cleaning",        label: "クリーニング代" },
@@ -104,6 +106,7 @@ const ITEM_CONFIG: Array<{
 ];
 
 const TEXT_KEYS = new Set(["propertyName", "roomNumber", "customerName", "assignee", "moveInDate", "discountNote", "supplementaryNotes"]);
+const PERCENT_KEYS = new Set(["guaranteeRate"]);
 const GROUP_ORDER = ["基本情報", "入居情報", "賃料", "初期費用", "駐車場", "割引", "翌月分"];
 
 type PreviewRow = {
@@ -170,6 +173,7 @@ function toEditable(e: ExtractedEstimate, account: Account = "sumora", moveInDat
   const { nextMonth, nextYear } = calcNext(moveInDate);
   const { moveInDay, moveInMonth, moveInMonthDays } = calcMoveInInfo(moveInDate);
   const commDefaults = ACCOUNT_COMMISSION[account];
+  const guaranteeRate = 50;
   return {
     ...e,
     moveInDate,
@@ -179,6 +183,9 @@ function toEditable(e: ExtractedEstimate, account: Account = "sumora", moveInDat
     // アカウントの手数料が0固定（イエヤス・ギガ）は常に0 / スモラはAIが0のときのみデフォルト2980
     commission:    commDefaults.commission    === 0 ? 0 : (e.commission    || commDefaults.commission),
     commissionTax: commDefaults.commissionTax === 0 ? 0 : (e.commissionTax || commDefaults.commissionTax),
+    guaranteeRate,
+    // OCRで guarantee が0 or 未抽出の場合は家賃×50%で自動計算
+    guarantee: e.guarantee || Math.round((e.rent || 0) * guaranteeRate / 100),
     nextRent: e.rent,
     nextManagementFee: e.managementFee,
     nextWaterFee: e.waterFee,
@@ -200,6 +207,7 @@ function makeBlankItems(account: Account, moveInDate = ""): EditableItems {
     commission: commDefaults.commission,
     commissionTax: commDefaults.commissionTax,
     parkingCommission: 0, parkingCommissionTax: 0,
+    guaranteeRate: 50,
     guarantee: 0, insurance: 0, keyExchange: 0, cleaning: 0,
     parkingDeposit: 0, parkingMonthly: 0,
     otherItems: [],
@@ -315,9 +323,17 @@ export default function EstimatePage() {
         updated.moveInMonthDays = moveInMonthDays;
       }
       // 家賃・共益費・水道代変更時に翌月分も連動（手動入力で翌月分が0のまま防止）
-      if (key === "rent")          updated.nextRent          = Number(value) || 0;
+      if (key === "rent") {
+        updated.nextRent = Number(value) || 0;
+        // 家賃変更時に保証料も再計算
+        updated.guarantee = Math.round((Number(value) || 0) * (prev.guaranteeRate || 0) / 100);
+      }
       if (key === "managementFee") updated.nextManagementFee = Number(value) || 0;
       if (key === "waterFee")      updated.nextWaterFee      = Number(value) || 0;
+      // 保証料率変更時に保証料を自動計算（家賃×率%）
+      if (key === "guaranteeRate") {
+        updated.guarantee = Math.round((prev.rent || 0) * (Number(value) || 0) / 100);
+      }
       // 仲介手数料変更時に消費税を自動計算（10%）
       if (key === "commission") {
         updated.commissionTax = Math.round((Number(value) || 0) * 0.1);
@@ -812,6 +828,23 @@ export default function EstimatePage() {
                               value={String(val || "")}
                               onChange={(e) => updateItem(key, e.target.value)}
                             />
+                          ) : PERCENT_KEYS.has(key as string) ? (
+                            <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="100"
+                                  className="w-20 rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3]"
+                                  value={String(val || 0)}
+                                  onChange={(e) => updateItem(key, Number(e.target.value) || 0)}
+                                />
+                                <span className="text-[13px] text-[#667781]">%</span>
+                              </div>
+                              <span className="text-[11px] text-[#b0bec5]">
+                                → {fmtYen(Math.round((items?.rent || 0) * (Number(val) || 0) / 100))}
+                              </span>
+                            </div>
                           ) : (
                             <div className="flex items-center gap-1">
                               <span className="text-[13px] text-[#667781]">¥</span>
