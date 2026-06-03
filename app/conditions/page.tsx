@@ -4,6 +4,39 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/app/lib/supabase";
 import BottomNav from "@/app/components/BottomNav";
 
+function SendTaskListButton() {
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState<string>("");
+
+  const handleSend = async () => {
+    setSending(true);
+    setResult("");
+    try {
+      const res = await fetch("/api/send-property-list", { method: "POST" });
+      const data = await res.json() as { ok: boolean; count?: number; error?: string };
+      setResult(data.ok ? `✅ ${data.count}名送信` : `❌ ${data.error}`);
+    } catch {
+      setResult("❌ エラー");
+    } finally {
+      setSending(false);
+      setTimeout(() => setResult(""), 3000);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <button
+        onClick={handleSend}
+        disabled={sending}
+        className="flex items-center gap-1 rounded-full bg-[#06c755] px-2.5 py-1 text-[10px] font-bold text-white disabled:opacity-50 active:opacity-70"
+      >
+        {sending ? "送信中..." : "📲 LINE送信"}
+      </button>
+      {result && <span className="text-[10px] text-slate-500">{result}</span>}
+    </div>
+  );
+}
+
 type Status = "new_inquiry" | "hot" | "property_search" | "pending";
 
 type Account = "sumora" | "ieyasu" | "giga" | "hasu";
@@ -350,6 +383,7 @@ export default function ConditionsPage() {
         <div className="flex items-center gap-2">
           <h1 className="text-lg font-bold text-slate-800">売上サポ</h1>
           <span className="text-xs text-slate-400">全{customers.length}件</span>
+          <SendTaskListButton />
         </div>
         <button
           onClick={openAdd}
