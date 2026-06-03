@@ -207,9 +207,8 @@
     }, 800);
   }
 
-  // ── 保存済みPDFをファイル選択してLINEに送る ─────────
-  // cookieもProxyも一切不要。すでにDLしたPDFをそのまま送るだけ。
-  function sendLocalPdfsToLine(customerName) {
+  // ── (旧: sendLocalPdfsToLine は廃止) ─────────────────
+  function sendLocalPdfsToLine_REMOVED(customerName) {
     var input = document.createElement("input");
     input.type = "file";
     input.accept = ".pdf,application/pdf";
@@ -286,172 +285,97 @@
     input.click();
   }
 
-  // ── PDF結合・LINE送信（cookieプロキシ方式）──────────
-  // ── PDF結合・送信の共通完了処理 ───────────────────────
-  function handleMergeSuccess(data, btn, origText, sendToLine, fileName) {
-    var bytes = Uint8Array.from(atob(data.pdf), function (c) { return c.charCodeAt(0); });
-    var blob = new Blob([bytes], { type: "application/pdf" });
-    var a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(function () { a.remove(); }, 100);
-    if (sendToLine && data.line_sent) {
-      btn.textContent = "✅ LINE送信完了！";
-    } else if (sendToLine) {
-      btn.textContent = "✅ PDF完成（LINE設定なし）";
-    } else {
-      btn.textContent = "✅ PDF完成！";
-    }
-  }
-
-  // ── Approach A: クッキー proxy 方式でPDF直接送信 ──────────
-  // background 経由でリアプロのセッションクッキーを取得
-  // → /api/merge-pdfs に pdf_urls + cookie_str を渡す
-  // → Vercel サーバーがリアプロ PDF を代理取得 → 結合 → LINE 送信
-  // ファイルピッカーもデバッガも一切不要
-  function tryDebuggerMerge(urls, opts) {
-    var btn = opts.btn;
-    btn.textContent = "PDF取得中... (" + urls.length + "件)";
-
-    return new Promise(function (resolve, reject) {
-      chrome.runtime.sendMessage(
-        { type: "axlx-get-cookies", url: "https://www.realnetpro.com/" },
-        function (resp) {
-          if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
-          if (!resp || !resp.ok) return reject(new Error(resp ? resp.error : "クッキー取得失敗"));
-          resolve(resp.cookie_str);
-        }
-      );
-    })
-    .then(function (cookie_str) {
-      btn.textContent = opts.sendToLine ? "LINE送信中..." : "PDF結合中...";
-      return fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pdf_urls: urls,
-          cookie_str: cookie_str,
-          file_name: opts.fileName,
-          send_to_line: opts.sendToLine,
-          customer_name: opts.customerName || null,
-          property_summaries: opts.propertySummaries,
-        }),
-      });
-    })
-    .then(function (r) { return r.json(); })
-    .then(function (data) {
-      if (!data.ok) throw new Error(data.error || "サーバーエラー");
-      return data;
-    });
-  }
-
-  // ── Approach B: ファイルピッカーで手動選択 ───────────
-  // Approach A が失敗したとき（HttpOnlyセッションクッキー等）の確実なフォールバック
-  function tryPickerMerge(opts) {
-    var btn = opts.btn;
-    btn.textContent = "📁 PDFを選んでください...";
-    btn.disabled = false;
-
-    var input = document.createElement("input");
-    input.type = "file";
-    input.accept = ".pdf,application/pdf";
-    input.multiple = true;
-    input.style.display = "none";
-    document.body.appendChild(input);
-
-    input.addEventListener("change", function () {
-      var files = Array.from(input.files || []);
-      input.remove();
-      if (!files.length) { btn.textContent = opts.origText; return; }
-
-      btn.textContent = "読込中…(" + files.length + "件)";
-      btn.disabled = true;
-
-      Promise.all(files.map(function (file) {
-        return new Promise(function (resolve, reject) {
-          var reader = new FileReader();
-          reader.onload = function (e) { resolve(e.target.result.split(",")[1]); };
-          reader.onerror = reject;
-          reader.readAsDataURL(file);
-        });
-      }))
-      .then(function (pdf_data) {
-        btn.textContent = opts.sendToLine ? "LINE送信中..." : "PDF結合中...";
-        return fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            pdf_data: pdf_data,
-            file_name: opts.fileName,
-            send_to_line: opts.sendToLine,
-            customer_name: opts.customerName || null,
-            property_summaries: opts.propertySummaries,
-          }),
-        });
-      })
-      .then(function (r) { return r.json(); })
-      .then(function (data) {
-        if (!data.ok) throw new Error(data.error || "サーバーエラー");
-        handleMergeSuccess(data, btn, opts.origText, opts.sendToLine, opts.fileName);
-      })
-      .catch(function (e) {
-        alert("エラー: " + e.message);
-        btn.textContent = opts.origText;
-      })
-      .finally(function () {
-        btn.disabled = false;
-        setTimeout(function () { btn.textContent = opts.origText; }, 4000);
-      });
-    });
-
-    input.click();
-  }
-
-  // ── メイン: A → B の順で試みる ────────────────────────
+  // ── LINE送信: 1件ずつ順番に送信（background経由・CSP/CORS完全回避）──────
+  // ── PDF結合ダウンロード: background経由 ───────────────────────────────────
   function mergePdfs(sendToLine, customerName) {
     var urls = getSelectedUrls();
     if (!urls.length) {
-      alert("物件を選択してください\n（PDFリンクが検出できない場合は一括DLをお試しください）");
+      alert("物件を選択してください（印刷用PDFリンクが検出できる物件をチェックしてください）");
       return;
     }
 
-    var btnId = sendToLine ? "axlx-line-btn" : "axlx-merge-btn";
-    var btn = document.getElementById(btnId);
-    var origText = btn.textContent;
-    btn.disabled = true;
-
     var today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
-    var fileName = "物件まとめ_" + today + ".pdf";
 
-    var propertySummaries = null;
     if (sendToLine) {
+      // ── 売上番長に送る: 1件ずつ順番にLINE送信 ─────────────────────────────
+      var lineBtn = document.getElementById("axlx-line-btn");
+      var lineOrig = lineBtn.textContent;
+      lineBtn.disabled = true;
+      lineBtn.textContent = "送信中... (0/" + urls.length + ")";
+
       var selectedTargets = tracked.filter(function (t) { return t.cb.checked; });
-      propertySummaries = selectedTargets.map(function (t, i) {
+      var propertySummaries = selectedTargets.map(function (t, i) {
         return buildPropertySummary(extractCard(t.btn), i);
       });
-    }
 
-    var opts = {
-      btn: btn, origText: origText, fileName: fileName,
-      sendToLine: sendToLine, customerName: customerName,
-      propertySummaries: propertySummaries,
-    };
-
-    // クッキー proxy 方式でPDF直接取得 → LINE 送信
-    tryDebuggerMerge(urls, opts)
-      .then(function (data) {
-        handleMergeSuccess(data, btn, origText, sendToLine, fileName);
-        btn.disabled = false;
-        setTimeout(function () { btn.textContent = origText; }, 4000);
-      })
-      .catch(function (e) {
-        console.error("[AXLX] PDF送信失敗:", e.message);
-        alert("PDF送信エラー:\n" + e.message);
-        btn.disabled = false;
-        btn.textContent = origText;
+      chrome.runtime.sendMessage({
+        type: "axlx-send-to-line",
+        urls: urls,
+        customer_name: customerName || null,
+        property_summaries: propertySummaries,
+      }, function (resp) {
+        lineBtn.disabled = false;
+        if (chrome.runtime.lastError) {
+          alert("エラー: " + chrome.runtime.lastError.message);
+          lineBtn.textContent = lineOrig;
+          return;
+        }
+        if (!resp || !resp.ok) {
+          alert("エラー: " + (resp ? resp.error : "応答なし"));
+          lineBtn.textContent = lineOrig;
+          return;
+        }
+        var sc = resp.successCount || 0;
+        var total = resp.total || urls.length;
+        if (sc === total) {
+          lineBtn.textContent = "✅ " + total + "件 LINE送信完了！";
+        } else {
+          var errs = (resp.results || [])
+            .filter(function (r) { return !r.ok; })
+            .map(function (r) { return r.error || "不明"; });
+          lineBtn.textContent = "⚠️ " + sc + "/" + total + "件 送信完了";
+          alert(sc + "/" + total + "件を送信しました。\n\n失敗:\n" + errs.join("\n"));
+        }
+        setTimeout(function () { lineBtn.textContent = lineOrig; }, 5000);
       });
+
+    } else {
+      // ── 1つのPDFに結合してダウンロード ────────────────────────────────────
+      var mergeBtn = document.getElementById("axlx-merge-btn");
+      var mergeOrig = mergeBtn.textContent;
+      mergeBtn.disabled = true;
+      mergeBtn.textContent = "PDF結合中... (" + urls.length + "件)";
+      var fileName = "物件まとめ_" + today + ".pdf";
+
+      chrome.runtime.sendMessage({
+        type: "axlx-merge-pdf",
+        urls: urls,
+        file_name: fileName,
+        customer_name: customerName || null,
+      }, function (resp) {
+        mergeBtn.disabled = false;
+        if (chrome.runtime.lastError) {
+          alert("エラー: " + chrome.runtime.lastError.message);
+          mergeBtn.textContent = mergeOrig;
+          return;
+        }
+        if (!resp || !resp.ok) {
+          alert("エラー: " + (resp ? resp.error : "応答なし"));
+          mergeBtn.textContent = mergeOrig;
+          return;
+        }
+        var bytes = Uint8Array.from(atob(resp.pdf), function (c) { return c.charCodeAt(0); });
+        var blob = new Blob([bytes], { type: "application/pdf" });
+        var a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = resp.fileName || fileName;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function () { a.remove(); }, 100);
+        mergeBtn.textContent = "✅ PDF完成！";
+        setTimeout(function () { mergeBtn.textContent = mergeOrig; }, 4000);
+      });
+    }
   }
 
   // ── Canvas生成（共通ヘルパー）────────────────────────

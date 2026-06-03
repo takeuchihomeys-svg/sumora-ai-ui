@@ -33,26 +33,98 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (url) configureSidePanelForTab(tabId, url);
 });
 
-// ── メッセージハンドラ ─────────────────────────────────────────────────────
-// コンテンツスクリプト（bulk-dl.js）は chrome.cookies API にアクセスできないため
-// background 経由でリアプロのセッションクッキーを取得して返す。
-// /api/merge-pdfs に pdf_urls + cookie_str を渡せば、
-// Vercel サーバー側でリアプロ PDF を代理取得 → 結合 → LINE 送信できる。
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type !== "axlx-get-cookies") return false;
-
-  const targetUrl = msg.url || "https://www.realnetpro.com/";
-  chrome.cookies.getAll({ url: targetUrl }, (cookies) => {
-    if (chrome.runtime.lastError) {
-      sendResponse({ ok: false, error: chrome.runtime.lastError.message });
-      return;
-    }
-    const cookie_str = (cookies || []).map((c) => `${c.name}=${c.value}`).join("; ");
-    if (!cookie_str) {
-      sendResponse({ ok: false, error: "リアプロのクッキーが取得できません。リアプロにログインしてください。" });
-      return;
-    }
-    sendResponse({ ok: true, cookie_str });
+// ── ヘルパー: リアプロのセッションクッキーを取得 ──────────────────────────
+function getRealproCookies() {
+  return new Promise((resolve, reject) => {
+    chrome.cookies.getAll({ url: "https://www.realnetpro.com/" }, (cookies) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      const cookie_str = (cookies || []).map((c) => `${c.name}=${c.value}`).join("; ");
+      if (!cookie_str) {
+        reject(new Error("リアプロのセッションが見つかりません。リアプロにログインしてください。"));
+        return;
+      }
+      resolve(cookie_str);
+    });
   });
-  return true;
+}
+
+// ── ヘルパー: /api/merge-pdfs を background から呼ぶ（CSP/CORS 完全回避）──
+async function callMergeApi(payload) {
+  const resp = await fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`サーバーエラー HTTP ${resp.status}: ${text.slice(0, 120)}`);
+  }
+  const data = await resp.json();
+  if (!data.ok) throw new Error(data.error || "APIエラー");
+  return data;
+}
+
+// ── メッセージハンドラ ─────────────────────────────────────────────────────
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+
+  // ── LINE送信: 1件ずつ順番に処理 ──────────────────────────────────────────
+  if (msg.type === "axlx-send-to-line") {
+    (async () => {
+      try {
+        const cookie_str = await getRealproCookies();
+        const { urls, customer_name, property_summaries } = msg;
+        const today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
+        const results = [];
+
+        for (let i = 0; i < urls.length; i++) {
+          const summary = property_summaries?.[i] ?? null;
+          try {
+            const data = await callMergeApi({
+              pdf_urls: [urls[i]],
+              cookie_str,
+              file_name: `物件${i + 1}_${today}.pdf`,
+              send_to_line: true,
+              customer_name: customer_name || null,
+              property_summaries: summary ? [summary] : null,
+            });
+            results.push({ ok: true, line_sent: !!data.line_sent });
+          } catch (e) {
+            results.push({ ok: false, error: `物件${i + 1}: ${e.message}` });
+          }
+        }
+
+        const successCount = results.filter((r) => r.ok).length;
+        sendResponse({ ok: true, results, successCount, total: urls.length });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
+    return true;
+  }
+
+  // ── PDF結合ダウンロード ───────────────────────────────────────────────────
+  if (msg.type === "axlx-merge-pdf") {
+    (async () => {
+      try {
+        const cookie_str = await getRealproCookies();
+        const data = await callMergeApi({
+          pdf_urls: msg.urls,
+          cookie_str,
+          file_name: msg.file_name,
+          send_to_line: false,
+          customer_name: msg.customer_name || null,
+          property_summaries: null,
+        });
+        sendResponse({ ok: true, pdf: data.pdf, fileName: msg.file_name });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
+    return true;
+  }
+
+  return false;
 });
