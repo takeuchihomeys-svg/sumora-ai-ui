@@ -1608,6 +1608,38 @@ let searchMode = "pinpoint"; // "pinpoint" | "wide"
 let currentAreaMode = "ward"; // "station" | "ward" — ボタン押下が絶対ルール（自動判定より優先）
 let currentAccount = ""; // "" = すべて / "sumora" / "ieyasu" / "giga" / "hasu"
 let linkedOnly = false;  // 紐付け済みのみ表示
+let todayOnly  = false;  // 今日対応のみ表示
+
+function needsActionToday(c) {
+  if (c.status === "pending") return false;
+  if (c.status === "new_inquiry") return true;
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (c.status === "hot") {
+    return !c.last_property_sent_at || new Date(c.last_property_sent_at) < todayStart;
+  }
+  if (c.status === "property_search") {
+    if (!c.last_property_sent_at) return true;
+    return (now.getTime() - new Date(c.last_property_sent_at).getTime()) / 86400000 >= 3;
+  }
+  return false;
+}
+
+function updateTodayBanner() {
+  const count = allCustomers.filter(needsActionToday).length;
+  const banner = document.getElementById("today-banner");
+  if (!banner) return;
+  if (count > 0) {
+    banner.style.display = "block";
+    banner.textContent = `🔥 今日対応 ${count}名 ← タップで絞り込み`;
+  } else {
+    banner.style.display = "block";
+    banner.textContent = "✅ 今日の対応は完了！";
+    banner.style.background = "#e8f5e9";
+    banner.style.color = "#2e7d32";
+    banner.style.cursor = "default";
+  }
+}
 
 // ── アンダーバーモード検出 ─────────────────────────────────────────
 // リアプロページに iframe として埋め込まれているときは true
@@ -1680,6 +1712,7 @@ async function loadCustomers(forceRefresh = false) {
     const cached = getCachedCustomers();
     if (cached) {
       allCustomers = cached;
+      updateTodayBanner();
       renderList(allCustomers);
       return;
     }
@@ -1694,6 +1727,7 @@ async function loadCustomers(forceRefresh = false) {
     if (!res.ok) throw new Error("HTTP " + res.status);
     allCustomers = await res.json();
     setCachedCustomers(allCustomers);
+    updateTodayBanner();
     renderList(allCustomers);
   } catch (e) {
     list.innerHTML = `<div class="state-msg">⚠️ データ取得失敗<br><small>${esc(e.message)}</small></div>`;
@@ -1995,6 +2029,19 @@ function openInstructions(siteKey) {
   document.getElementById("instr-title").textContent = cfg.icon + " " + cfg.name;
   syncModeButtons();
   renderInstrSteps(siteKey);
+
+  // 他サイトへのクロスサイトボタン
+  const crossBar = document.getElementById("cross-site-bar");
+  if (crossBar) {
+    const others = Object.entries(SITE_CONFIG).filter(([k]) => k !== siteKey);
+    crossBar.innerHTML = others.map(([k, c]) =>
+      `<button class="copy-all-btn" data-site="${k}" style="flex:1;background:#f5f5f5;color:#555;font-size:11px;padding:6px 4px">${c.icon} ${c.name}でも探す</button>`
+    ).join("");
+    crossBar.style.display = "flex";
+    crossBar.querySelectorAll("button[data-site]").forEach(btn => {
+      btn.addEventListener("click", () => openInstructions(btn.dataset.site));
+    });
+  }
 
   // 自動入力ボタン＋一時調整フォーム（リアプロ＋アンダーバーモードのみ）
   const autofillBtn = document.getElementById("autofill-btn");
@@ -2468,6 +2515,7 @@ function getFilteredCustomers(q) {
   let result = allCustomers;
   if (currentAccount) result = result.filter((c) => (c.account || "") === currentAccount);
   if (linkedOnly) result = result.filter((c) => c.is_linked);
+  if (todayOnly)  result = result.filter(needsActionToday);
   if (q && q.trim()) {
     const kw = q.trim().toLowerCase();
     result = result.filter((c) =>
@@ -2527,6 +2575,15 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("linked-filter-btn").addEventListener("click", () => {
     linkedOnly = !linkedOnly;
     document.getElementById("linked-filter-btn").classList.toggle("active", linkedOnly);
+    filterCustomers(document.getElementById("search-input").value);
+  });
+
+  // 🔥 今日対応バナー（クリックでフィルター）
+  document.getElementById("today-banner").addEventListener("click", () => {
+    todayOnly = !todayOnly;
+    const banner = document.getElementById("today-banner");
+    banner.style.background = todayOnly ? "#ff6f00" : "#fff3e0";
+    banner.style.color = todayOnly ? "white" : "#e65100";
     filterCustomers(document.getElementById("search-input").value);
   });
 
