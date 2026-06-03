@@ -189,8 +189,8 @@ function toEditable(e: ExtractedEstimate, account: Account = "sumora", moveInDat
     commission:    commDefaults.commission    === 0 ? 0 : (e.commission    || commDefaults.commission),
     commissionTax: commDefaults.commissionTax === 0 ? 0 : (e.commissionTax || commDefaults.commissionTax),
     guaranteeRate,
-    // OCRで guarantee が0 or 未抽出の場合は（家賃+共益費+水道代）×50%で自動計算
-    guarantee: e.guarantee || Math.round(calcGuaranteeBase(e.rent, e.managementFee, e.waterFee) * guaranteeRate / 100),
+    // 常に（家賃+共益費+水道代）×率%で計算（OCR抽出値は無視）
+    guarantee: Math.round(calcGuaranteeBase(e.rent, e.managementFee, e.waterFee) * guaranteeRate / 100),
     nextRent: e.rent,
     nextManagementFee: e.managementFee,
     nextWaterFee: e.waterFee,
