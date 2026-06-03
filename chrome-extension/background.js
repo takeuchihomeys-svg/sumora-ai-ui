@@ -70,6 +70,56 @@ async function callMergeApi(payload) {
 // ── メッセージハンドラ ─────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
+  // ── itandi CSP回避: MAIN worldにPDFキャプチャフックを注入 ─────────────────
+  // <script>タグ注入はCSPでブロックされるため chrome.scripting.executeScript を使う
+  if (msg.type === "axlx-inject-pdf-hook") {
+    const tabId = sender.tab?.id;
+    if (!tabId) { sendResponse({ ok: false }); return true; }
+    chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: () => {
+        if (window.__axlxItandiHook) return;
+        window.__axlxItandiHook = true;
+
+        // Blob URL フック（itandi が createObjectURL でPDFを作る場合）
+        const origCreate = URL.createObjectURL;
+        URL.createObjectURL = function (blob) {
+          const url = origCreate.call(URL, blob);
+          const t = (blob && blob.type) || "";
+          if (t.includes("pdf") || t === "application/octet-stream") {
+            const r = new FileReader();
+            r.onload = (e) => {
+              window.postMessage({ from: "axlx-itandi-pdf", b64: e.target.result.split(",")[1] }, "*");
+            };
+            r.readAsDataURL(blob);
+          }
+          return url;
+        };
+
+        // fetch フック（直接 application/pdf を返す場合）
+        const origFetch = window.fetch;
+        window.fetch = function (...args) {
+          return origFetch.apply(this, args).then((resp) => {
+            const ct = resp.headers.get("content-type") || "";
+            if (ct.includes("application/pdf")) {
+              resp.clone().arrayBuffer().then((buf) => {
+                const bytes = new Uint8Array(buf);
+                const chunks = [];
+                for (let i = 0; i < bytes.length; i += 8192) {
+                  chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
+                }
+                window.postMessage({ from: "axlx-itandi-pdf", b64: btoa(chunks.join("")) }, "*");
+              });
+            }
+            return resp;
+          });
+        };
+      },
+    }).then(() => sendResponse({ ok: true })).catch((e) => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+
   // ── LINE送信: 全件を1つのPDFに結合してURLで送信 ──────────────────────────
   if (msg.type === "axlx-send-to-line") {
     (async () => {

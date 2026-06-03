@@ -5,54 +5,14 @@
   var tracked = [];
   var injectTimer = null;
 
-  // ── PDF キャプチャ用スクリプトを MAIN world に注入 ─────────────────────
-  // URL.createObjectURL (blob) と fetch (直接PDF) の両方をフック
+  // ── PDF キャプチャフックを background 経由で MAIN world に注入 ───────────
+  // itandi は CSP で <script> タグのインライン注入を禁止しているため
+  // chrome.scripting.executeScript(world:"MAIN") で CSP を完全に迂回する
   var pdfHookInjected = false;
   function ensurePdfHook() {
     if (pdfHookInjected) return;
     pdfHookInjected = true;
-    var s = document.createElement("script");
-    s.textContent = [
-      "(function(){",
-      "  if (window.__axlxItandiHook) return;",
-      "  window.__axlxItandiHook = true;",
-      "  // Blob URL フック",
-      "  var origCreate = URL.createObjectURL;",
-      "  URL.createObjectURL = function(blob) {",
-      "    var url = origCreate.call(URL, blob);",
-      "    var t = (blob && blob.type) || '';",
-      "    if (t.includes('pdf') || t === 'application/octet-stream') {",
-      "      var r = new FileReader();",
-      "      r.onload = function(e) {",
-      "        window.postMessage({ from: 'axlx-itandi-pdf', b64: e.target.result.split(',')[1] }, '*');",
-      "      };",
-      "      r.readAsDataURL(blob);",
-      "    }",
-      "    return url;",
-      "  };",
-      "  // fetch フック (直接 application/pdf を返す場合)",
-      "  var origFetch = window.fetch;",
-      "  window.fetch = function() {",
-      "    var args = arguments;",
-      "    return origFetch.apply(this, args).then(function(resp) {",
-      "      var ct = resp.headers.get('content-type') || '';",
-      "      if (ct.includes('application/pdf')) {",
-      "        var clone = resp.clone();",
-      "        clone.arrayBuffer().then(function(buf) {",
-      "          var bytes = new Uint8Array(buf);",
-      "          var ch = [];",
-      "          for (var i = 0; i < bytes.length; i += 8192) {",
-      "            ch.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i+8192,bytes.length))));",
-      "          }",
-      "          window.postMessage({ from: 'axlx-itandi-pdf', b64: btoa(ch.join('')) }, '*');",
-      "        });",
-      "      }",
-      "      return resp;",
-      "    });",
-      "  };",
-      "})()",
-    ].join("\n");
-    (document.head || document.documentElement).appendChild(s);
+    chrome.runtime.sendMessage({ type: "axlx-inject-pdf-hook" });
   }
 
   // ── 物件資料ボタンを探す ────────────────────────────────────────────────
