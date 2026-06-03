@@ -698,7 +698,7 @@ export default function EstimatePage() {
                 </div>
               </div>
               <div className="px-4 pb-1 pt-2">
-                <p className="text-[10px] text-[#aab] mb-1">金額をタップして直接編集できます　※日割りは自動計算</p>
+                <p className="text-[10px] text-[#aab] mb-1">金額をタップして直接編集できます　※日割りは自動計算　※その他費用は税込金額をそのまま入力</p>
               </div>
               <div className="px-4 pb-4">
                 <table className="w-full text-[12px]">
@@ -834,7 +834,10 @@ export default function EstimatePage() {
             {/* その他費用 */}
             <section>
               <div className="mb-2 flex items-center justify-between">
-                <div className="text-[12px] font-bold" style={{ color: cfg.accent }}>その他費用</div>
+                <div className="flex items-center gap-2">
+                  <div className="text-[12px] font-bold" style={{ color: cfg.accent }}>その他費用</div>
+                  <span className="text-[10px] text-[#667781] bg-[#f0f2f5] rounded px-1.5 py-0.5">税込金額をそのまま入力</span>
+                </div>
                 <button
                   onClick={addOtherItem}
                   className="rounded-full px-3 py-1 text-[11px] font-bold text-white"

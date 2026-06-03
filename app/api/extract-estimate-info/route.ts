@@ -105,7 +105,7 @@ export async function POST(req: NextRequest) {
   "cleaning": クリーニング代（数値。不明なら0）,
   "parkingDeposit": 駐車場保証金（数値。不明なら0）,
   "parkingMonthly": 翌月駐車場代（数値。不明なら0）,
-  "otherItems": [{"item": "項目名", "amount": 金額数値}],
+  "otherItems": [{"item": "項目名", "amount": 税込金額数値}],
   "discountAmount": 割引額（数値、正数で。不明なら0）,
   "discountNote": "割引の説明（あれば）",
   "supplementaryNotes": "その他特記事項"
@@ -114,10 +114,12 @@ export async function POST(req: NextRequest) {
 重要なルール:
 - 金額は数値のみ（カンマ・円記号なし）
 - 家賃と共益費・管理費は必ず分ける
-- 仲介手数料は税抜と消費税を分けて抽出（まとめて書いてあれば内税として計算: 合計÷1.1=税抜）
+- 仲介手数料のみ税抜と消費税を分けて抽出（まとめて書いてあれば: 合計÷1.1=税抜、端数切捨て）
+- otherItemsの金額は【必ず税込金額のまま】記入すること。÷1.1の計算は絶対にしない。書いてある数字をそのまま使う
+- guarantee・insurance・keyExchange・cleaning等も税込のまま書いてある数字を使う（÷1.1しない）
 - 日割賃料は抽出不要（入居日から自動計算するため）
 - 不明な項目は0または空文字
-- otherItemsには上記項目に当てはまらない費用のみ入れる`;
+- otherItemsには上記フィールドに当てはまらない費用のみ入れる`;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const contentParts: any[] = images.map((img) =>
