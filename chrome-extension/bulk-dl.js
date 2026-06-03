@@ -325,17 +325,9 @@
           lineBtn.textContent = lineOrig;
           return;
         }
-        var sc = resp.successCount || 0;
-        var total = resp.total || urls.length;
-        if (sc === total) {
-          lineBtn.textContent = "✅ " + total + "件 LINE送信完了！";
-        } else {
-          var errs = (resp.results || [])
-            .filter(function (r) { return !r.ok; })
-            .map(function (r) { return r.error || "不明"; });
-          lineBtn.textContent = "⚠️ " + sc + "/" + total + "件 送信完了";
-          alert(sc + "/" + total + "件を送信しました。\n\n失敗:\n" + errs.join("\n"));
-        }
+        lineBtn.textContent = resp.line_sent
+          ? "✅ " + urls.length + "件 まとめてLINE送信完了！"
+          : "✅ PDF完成（LINE設定なし）";
         setTimeout(function () { lineBtn.textContent = lineOrig; }, 5000);
       });
 

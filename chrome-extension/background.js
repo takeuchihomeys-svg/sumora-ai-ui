@@ -70,34 +70,24 @@ async function callMergeApi(payload) {
 // ── メッセージハンドラ ─────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
-  // ── LINE送信: 1件ずつ順番に処理 ──────────────────────────────────────────
+  // ── LINE送信: 全件を1つのPDFに結合してURLで送信 ──────────────────────────
   if (msg.type === "axlx-send-to-line") {
     (async () => {
       try {
         const cookie_str = await getRealproCookies();
         const { urls, customer_name, property_summaries } = msg;
         const today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
-        const results = [];
 
-        for (let i = 0; i < urls.length; i++) {
-          const summary = property_summaries?.[i] ?? null;
-          try {
-            const data = await callMergeApi({
-              pdf_urls: [urls[i]],
-              cookie_str,
-              file_name: `物件${i + 1}_${today}.pdf`,
-              send_to_line: true,
-              customer_name: customer_name || null,
-              property_summaries: summary ? [summary] : null,
-            });
-            results.push({ ok: true, line_sent: !!data.line_sent });
-          } catch (e) {
-            results.push({ ok: false, error: `物件${i + 1}: ${e.message}` });
-          }
-        }
+        const data = await callMergeApi({
+          pdf_urls: urls,
+          cookie_str,
+          file_name: `物件まとめ_${today}.pdf`,
+          send_to_line: true,
+          customer_name: customer_name || null,
+          property_summaries: property_summaries || null,
+        });
 
-        const successCount = results.filter((r) => r.ok).length;
-        sendResponse({ ok: true, results, successCount, total: urls.length });
+        sendResponse({ ok: true, line_sent: !!data.line_sent, url: data.url });
       } catch (e) {
         sendResponse({ ok: false, error: e.message });
       }
