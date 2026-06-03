@@ -166,6 +166,20 @@ export default function ConditionsPage() {
   const [dbReady, setDbReady] = useState(true);
   const [markingId, setMarkingId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [sentMarkingId, setSentMarkingId] = useState<string | null>(null);
+
+  const handleMarkSent = async (e: React.MouseEvent, customerId: string) => {
+    e.stopPropagation();
+    setSentMarkingId(customerId);
+    await fetch("/api/property-tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ customer_id: customerId }),
+    });
+    const now = new Date().toISOString();
+    setCustomers((prev) => prev.map((c) => c.id === customerId ? { ...c, last_property_sent_at: now } : c));
+    setSentMarkingId(null);
+  };
 
   // 紐付け済み property_customer_id セット
   const [linkedIds, setLinkedIds] = useState<Set<string>>(new Set());
@@ -369,7 +383,7 @@ export default function ConditionsPage() {
   const listFiltered = (listFilter === "all" ? customers : customers.filter((c) => c.status === listFilter)).filter(matchesSearch);
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div className="min-h-screen bg-slate-50 flex flex-col pb-16">
       {/* ── ヘッダー（LINEページ風: 白背景） ── */}
       <header
         className="sticky top-0 z-20 flex items-center justify-between px-4"
@@ -611,6 +625,21 @@ export default function ConditionsPage() {
                               )}
                             </div>
                           </div>
+                          {/* 送ったボタン */}
+                          {c.status !== "pending" && (
+                            <button
+                              onClick={(e) => handleMarkSent(e, c.id)}
+                              disabled={sentMarkingId === c.id}
+                              className="shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold border active:opacity-70 disabled:opacity-50"
+                              style={
+                                daysSinceSent(c) === 0
+                                  ? { borderColor: "#86efac", color: "#16a34a", background: "#f0fdf4" }
+                                  : { borderColor: "#d1d5db", color: "#6b7280", background: "#f9fafb" }
+                              }
+                            >
+                              {sentMarkingId === c.id ? "..." : daysSinceSent(c) === 0 ? "✅送信済" : "📤送った"}
+                            </button>
+                          )}
                           {/* 展開チェブロン */}
                           <svg
                             width="16" height="16" viewBox="0 0 24 24" fill="none"
