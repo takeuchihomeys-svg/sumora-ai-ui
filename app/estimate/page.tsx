@@ -434,6 +434,25 @@ export default function EstimatePage() {
 
   const grandTotal = totalItems.reduce((s, r) => s + r.amount, 0);
 
+  const handleRefresh = () => {
+    setItems(null);
+    setImages([]);
+    setStep("input");
+    setExtractError("");
+    setDownloadError("");
+    setSupplementaryText("");
+    setStep1MoveInDate("");
+    setLineModal(false);
+    const doReload = () => window.location.reload();
+    if (typeof window !== "undefined" && "caches" in window) {
+      caches.keys().then((names) =>
+        Promise.all(names.map((n) => caches.delete(n))).then(doReload)
+      );
+    } else {
+      doReload();
+    }
+  };
+
   const handleLinePreview = () => {
     if (!items) return;
     const text = generateLineText(items, grandTotal, account);
@@ -975,6 +994,19 @@ export default function EstimatePage() {
           </div>
         )}
       </div>
+
+      {/* 更新ボタン（SafariツールバーのすぐそばBottomNav上に固定） */}
+      <button
+        onClick={handleRefresh}
+        className="fixed right-4 z-50 flex h-11 w-11 items-center justify-center rounded-full bg-white shadow-lg border border-[#e9edef] active:scale-95 transition-transform"
+        style={{ bottom: "calc(56px + max(env(safe-area-inset-bottom), 8px) + 10px)" }}
+        title="データをリセットして更新"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#667781" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="23 4 23 10 17 10"/>
+          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+        </svg>
+      </button>
 
       <BottomNav />
 
