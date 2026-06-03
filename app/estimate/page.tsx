@@ -460,14 +460,23 @@ export default function EstimatePage() {
         useCORS: true,
         logging: false,
       });
-      const blob = await new Promise<Blob>((resolve) =>
-        canvas.toBlob((b) => resolve(b!), "image/png")
-      );
-      const name = items.customerName ? `${items.customerName}様_見積書.png` : "見積書.png";
-      const file = new File([blob], name, { type: "image/png" });
-      if (navigator.share && navigator.canShare?.({ files: [file] })) {
-        await navigator.share({ files: [file], title: name });
-      } else {
+
+      // base64に変換
+      const imageBase64 = canvas.toDataURL("image/png");
+
+      // 自分のLINEに送る
+      const res = await fetch("/api/send-estimate-preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageBase64 }),
+      });
+
+      if (!res.ok) {
+        // フォールバック: ダウンロード
+        const blob = await new Promise<Blob>((resolve) =>
+          canvas.toBlob((b) => resolve(b!), "image/png")
+        );
+        const name = items.customerName ? `${items.customerName}様_見積書.png` : "見積書.png";
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -476,7 +485,7 @@ export default function EstimatePage() {
         URL.revokeObjectURL(url);
       }
     } catch {
-      // share cancelled or failed — no-op
+      // no-op
     } finally {
       setCapturing(false);
     }
@@ -1064,7 +1073,7 @@ export default function EstimatePage() {
                   画像を生成中...
                 </>
               ) : (
-                "📷 見積書を画像化してLINEへ送る"
+                "📲 見積書を画像化して自分のLINEに送る"
               )}
             </button>
 
