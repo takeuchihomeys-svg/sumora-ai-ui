@@ -77,7 +77,7 @@
     document.getElementById("axlx-all-btn").addEventListener("click", toggleAll);
     document.getElementById("axlx-dl-btn").addEventListener("click", bulkDownload);
     document.getElementById("axlx-merge-btn").addEventListener("click", function () { mergePdfs(false); });
-    document.getElementById("axlx-line-btn").addEventListener("click", function () { showCustomerModal(function (customerName) { mergePdfs(true, customerName); }); });
+    document.getElementById("axlx-line-btn").addEventListener("click", function () { getCustomerFromPopup(function (customerName) { mergePdfs(true, customerName); }); });
     document.getElementById("axlx-print-btn").addEventListener("click", printMerged);
     document.getElementById("axlx-img-btn").addEventListener("click", downloadImages);
   }
@@ -188,115 +188,23 @@
     return lines.join("\n");
   }
 
-  // ── お客さん選択モーダル ──────────────────────────
-  function showCustomerModal(callback) {
-    // 既存モーダルがあれば消す
-    var existing = document.getElementById("axlx-customer-modal");
-    if (existing) existing.remove();
-
-    var overlay = document.createElement("div");
-    overlay.id = "axlx-customer-modal";
-    overlay.style.cssText = [
-      "position:fixed;top:0;left:0;right:0;bottom:0;",
-      "background:rgba(0,0,0,0.55);z-index:2147483647;",
-      "display:flex;align-items:center;justify-content:center;",
-      "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;",
-    ].join("");
-
-    var modal = document.createElement("div");
-    modal.style.cssText = [
-      "background:white;border-radius:16px;padding:20px 20px 16px;",
-      "width:320px;max-height:80vh;overflow-y:auto;",
-      "box-shadow:0 8px 40px rgba(0,0,0,0.35);",
-    ].join("");
-
-    modal.innerHTML = [
-      '<div style="font-size:15px;font-weight:700;color:#1565C0;margin-bottom:4px;">📤 売上番長に送る</div>',
-      '<div style="font-size:12px;color:#666;margin-bottom:12px;">どのお客さん向けですか？</div>',
-
-      // 顧客リスト
-      '<div id="axlx-cust-list" style="max-height:220px;overflow-y:auto;border:1px solid #e8e8e8;border-radius:10px;margin-bottom:10px;padding:4px 0;">',
-      '  <div style="padding:10px;color:#aaa;font-size:12px;text-align:center;">読み込み中...</div>',
-      '</div>',
-
-      // 手入力
-      '<input id="axlx-cust-input" type="text" placeholder="名前を直接入力（任意）"',
-      '  style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #ddd;border-radius:8px;font-size:13px;margin-bottom:12px;">',
-
-      // ボタン
-      '<div style="display:flex;gap:8px;">',
-      '  <button id="axlx-cust-cancel" style="flex:1;padding:10px;background:#f0f0f0;border:none;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer;">キャンセル</button>',
-      '  <button id="axlx-cust-ok" style="flex:2;padding:10px;background:#06c755;border:none;border-radius:8px;color:white;font-weight:700;font-size:13px;cursor:pointer;">📤 この内容で送る</button>',
-      '</div>',
-    ].join("");
-
-    overlay.appendChild(modal);
-    document.body.appendChild(overlay);
-
-    // 顧客リストを取得
-    fetch("https://sumora-ai-ui.vercel.app/api/property-customers")
-      .then(function (r) { return r.json(); })
-      .then(function (customers) {
-        var list = document.getElementById("axlx-cust-list");
-        if (!customers || !customers.length) {
-          list.innerHTML = '<div style="padding:10px;color:#aaa;font-size:12px;text-align:center;">顧客データなし</div>';
-          return;
-        }
-        // フェーズ順に並び替え（phase-1〜phase-4 を優先）
-        var active = customers.filter(function (c) {
-          return c.phase && ["phase-1","phase-2","phase-3","phase-4"].includes(c.phase);
-        });
-        var show = active.length ? active : customers;
-        list.innerHTML = show.slice(0, 20).map(function (c, idx) {
-          var phaseLabel = { "phase-1":"新規", "phase-2":"ヒアリング", "phase-3":"紹介中", "phase-4":"内見済" }[c.phase] || "";
-          var badgeColor = { "phase-1":"#ff9800", "phase-2":"#1565C0", "phase-3":"#43a047", "phase-4":"#7b1fa2" }[c.phase] || "#90a4ae";
-          return [
-            '<label style="display:flex;align-items:center;gap:8px;padding:7px 10px;cursor:pointer;',
-            idx < show.slice(0,20).length - 1 ? "border-bottom:1px solid #f5f5f5;" : "",
-            '">',
-            '<input type="radio" name="axlx-cust-radio" value="' + (c.name || "") + '" style="flex-shrink:0;">',
-            '<span style="font-size:13px;flex:1;">' + (c.name || "名前なし") + '</span>',
-            phaseLabel ? '<span style="font-size:10px;font-weight:700;color:white;background:' + badgeColor + ';padding:2px 6px;border-radius:10px;">' + phaseLabel + '</span>' : '',
-            '</label>',
-          ].join("");
-        }).join("");
-      })
-      .catch(function () {
-        var list = document.getElementById("axlx-cust-list");
-        list.innerHTML = '<div style="padding:10px;color:#aaa;font-size:12px;text-align:center;">顧客リスト取得エラー</div>';
-      });
-
-    // 顧客を選んだら input をクリア
-    modal.addEventListener("change", function (e) {
-      if (e.target && e.target.name === "axlx-cust-radio") {
-        document.getElementById("axlx-cust-input").value = "";
-      }
-    });
-
-    // 手入力したらラジオ解除
-    document.getElementById("axlx-cust-input").addEventListener("input", function () {
-      var checked = modal.querySelector('input[name="axlx-cust-radio"]:checked');
-      if (checked) checked.checked = false;
-    });
-
-    // キャンセル
-    document.getElementById("axlx-cust-cancel").addEventListener("click", function () {
-      overlay.remove();
-    });
-
-    // 送る
-    document.getElementById("axlx-cust-ok").addEventListener("click", function () {
-      var radio = modal.querySelector('input[name="axlx-cust-radio"]:checked');
-      var input = document.getElementById("axlx-cust-input").value.trim();
-      var customerName = (radio && radio.value) || input || "";
-      overlay.remove();
-      callback(customerName);
-    });
-
-    // オーバーレイクリックで閉じる
-    overlay.addEventListener("click", function (e) {
-      if (e.target === overlay) overlay.remove();
-    });
+  // ── popup.jsから選択中のお客さん名を自動取得 ──────────
+  // postMessage → underbar.js中継 → popup.js → 応答を受け取る
+  function getCustomerFromPopup(callback) {
+    var timer;
+    var handler = function (e) {
+      if (!e.data || e.data.from !== "axlx-customer-response") return;
+      clearTimeout(timer);
+      window.removeEventListener("message", handler);
+      callback(e.data.name || null);
+    };
+    window.addEventListener("message", handler);
+    window.postMessage({ from: "axlx-get-customer" }, "*");
+    // 800ms 以内に応答がなければ null で続行（アンダーバー外から使った場合など）
+    timer = setTimeout(function () {
+      window.removeEventListener("message", handler);
+      callback(null);
+    }, 800);
   }
 
   // ── PDF結合・LINE送信（cookieプロキシ方式）──────────

@@ -279,4 +279,16 @@
     if (!e.data || e.data.from !== "aixlinx-fill-done") return;
     iframe.contentWindow.postMessage({ from: "aixlinx-fill-done" }, "*");
   });
+
+  // ── bulk-dl.js ↔ popup.js 顧客名の双方向中継 ───────────────────────
+  // bulk-dl.js → underbar.js → popup.js（要求）
+  window.addEventListener("message", function(e) {
+    if (!e.data || e.data.from !== "axlx-get-customer") return;
+    if (iframe) iframe.contentWindow.postMessage({ from: "axlx-get-customer" }, "*");
+  });
+  // popup.js → underbar.js → bulk-dl.js（応答）
+  window.addEventListener("message", function(e) {
+    if (!e.data || e.data.from !== "axlx-customer-response") return;
+    window.postMessage({ from: "axlx-customer-response", name: e.data.name }, "*");
+  });
 })();

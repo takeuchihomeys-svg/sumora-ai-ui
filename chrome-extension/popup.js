@@ -2557,6 +2557,13 @@ document.addEventListener("DOMContentLoaded", () => {
           btn.disabled = false;
         }
       }
+      // bulk-dl.jsからの顧客名要求（売上番長に送る時に自動反映）
+      if (e.data?.from === "axlx-get-customer") {
+        window.parent.postMessage({
+          from: "axlx-customer-response",
+          name: selectedCustomer?.customer_name ?? "",
+        }, "*");
+      }
     });
   }
 
