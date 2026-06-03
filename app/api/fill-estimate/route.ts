@@ -39,6 +39,7 @@ type ItemData = {
   commissionTax: number;
   parkingCommission: number;
   parkingCommissionTax: number;
+  guaranteeRate?: number;
   guarantee: number;
   insurance: number;
   keyExchange: number;
@@ -267,6 +268,8 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
   // ── 固定下段費用
   setCell(ws, "E25", d.cleaning  || 0);
   setCell(ws, "F25", d.cleaning  || 0);
+  // B26: 保証料ラベルを実際の率で上書き（テンプレートの「60%の場合」を消す）
+  ws.getCell("B26").value = `賃貸保証料(${d.guaranteeRate ?? 50}%の場合)`;
   setCell(ws, "E26", d.guarantee || 0);
   setCell(ws, "F26", d.guarantee || 0);
   setCell(ws, "E27", d.insurance || 0);
