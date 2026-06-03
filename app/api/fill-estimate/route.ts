@@ -105,20 +105,35 @@ async function patchSavingsInDrawing(
     outputZip.file("xl/media/image1.png", await image.async("uint8array"));
   }
 
-  // 4. ExcelJS出力のsheet*.xml.relsを動的に検索して drawing2.xml 参照を追加
-  //    （ExcelJSはシートを再番号付けするためsheet18固定はNG）
+  // 4. sheet*.xml.relsを動的に検索して drawing2.xml を唯一のdrawing参照にする
+  //    ExcelJSが drawing1.xml 等を作ってしまうと競合するため、既存のdrawing参照を
+  //    すべて drawing2.xml に置き換える（Excelは1シート1drawingのみ有効）
+  const DRAWING_REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing";
   const sheetRelsKey = Object.keys(outputZip.files)
     .find(k => /xl\/worksheets\/_rels\/sheet\d+\.xml\.rels/.test(k));
 
   if (sheetRelsKey) {
     let relsXml = await outputZip.files[sheetRelsKey].async("string");
-    if (!relsXml.includes("drawing2.xml")) {
+    // 既存のdrawing参照を drawing2.xml に上書き（競合防止）
+    if (relsXml.includes('Type="' + DRAWING_REL_TYPE + '"')) {
+      // 既存のdrawing参照をdrawing2.xmlに書き換える
+      relsXml = relsXml.replace(
+        new RegExp(`<Relationship[^>]+Type="${DRAWING_REL_TYPE}"[^>]*/>`),
+        `<Relationship Id="rId99" Type="${DRAWING_REL_TYPE}" Target="../drawings/drawing2.xml"/>`
+      );
+      // 残りの drawing 参照（drawing1.xml など）を削除
+      relsXml = relsXml.replace(
+        new RegExp(`<Relationship[^>]+Type="${DRAWING_REL_TYPE}"[^>]*/>`, "g"),
+        (m) => m.includes("drawing2.xml") ? m : ""
+      );
+    } else {
+      // drawing参照がない → 追加
       relsXml = relsXml.replace(
         "</Relationships>",
-        `<Relationship Id="rId99" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing2.xml"/></Relationships>`
+        `<Relationship Id="rId99" Type="${DRAWING_REL_TYPE}" Target="../drawings/drawing2.xml"/></Relationships>`
       );
-      outputZip.file(sheetRelsKey, relsXml);
     }
+    outputZip.file(sheetRelsKey, relsXml);
   } else {
     // rels ファイルが存在しない場合は新規作成
     const sheetXmlKey = Object.keys(outputZip.files)
@@ -126,7 +141,7 @@ async function patchSavingsInDrawing(
     const sheetNum = sheetXmlKey?.match(/sheet(\d+)\.xml$/)?.[1] ?? "1";
     outputZip.file(
       `xl/worksheets/_rels/sheet${sheetNum}.xml.rels`,
-      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId99" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing2.xml"/></Relationships>`
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId99" Type="${DRAWING_REL_TYPE}" Target="../drawings/drawing2.xml"/></Relationships>`
     );
   }
 
