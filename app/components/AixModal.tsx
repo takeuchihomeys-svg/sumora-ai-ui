@@ -162,15 +162,17 @@ export default function AixModal({
           // 紐付け済み: DBの条件をテキストで渡す（スクショ不要）
           body.customer_conditions = linkedCustomer.conditions;
           body.image_url = await uploadImage(imageFile);
-        } else {
-          // 未紐付け: 条件スクショ + 物件資料の2枚
-          if (!conditionImageFile) throw new Error("条件スクショと物件資料の両方を選択してください");
+        } else if (conditionImageFile) {
+          // 条件スクショあり: 両方アップロード
           const [conditionUrl, propertyUrl] = await Promise.all([
             uploadImage(conditionImageFile),
             uploadImage(imageFile),
           ]);
           body.condition_image_url = conditionUrl;
           body.image_url = propertyUrl;
+        } else {
+          // 条件スクショなし: 物件資料のみで生成
+          body.image_url = await uploadImage(imageFile);
         }
       } else if (config.requiresImage && imageFile) {
         body.image_url = await uploadImage(imageFile);
@@ -238,9 +240,9 @@ export default function AixModal({
     }
   };
 
-  // 物件オススメで生成ボタンが押せるか（紐付け済みなら物件資料のみでOK）
+  // 物件オススメで生成ボタンが押せるか（物件資料があればOK・条件スクショは任意）
   const canGenerate = actionType === "property_recommendation"
-    ? !!imageFile && (!!linkedCustomer || !!conditionImageFile)
+    ? !!imageFile
     : !config.requiresImage || !!imageFile;
 
   return (
@@ -272,9 +274,9 @@ export default function AixModal({
           {/* 物件オススメ専用: 2枚画像エリア */}
           {actionType === "property_recommendation" ? (
             <div className="mb-4 flex flex-col gap-3">
-              {/* ①お客さんの条件 */}
+              {/* ①お客さんの条件（任意） */}
               <div>
-                <p className="mb-1 text-xs font-bold text-[#54656f]">① お客さんの条件</p>
+                <p className="mb-1 text-xs font-bold text-[#54656f]">① お客さんの条件 <span className="font-normal text-[#90a4ae]">（任意）</span></p>
                 {linkedCustomer ? (
                   // 紐付け済み: DBの条件を自動表示
                   <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
@@ -295,8 +297,8 @@ export default function AixModal({
                 ) : (
                   <button
                     onClick={() => conditionFileInputRef.current?.click()}
-                    className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-blue-200 py-5 text-sm font-semibold text-[#2196F3] hover:bg-blue-50"
-                  >📋 条件スクショを選択</button>
+                    className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#d1d7db] py-4 text-sm font-semibold text-[#90a4ae] hover:bg-[#f5f6f7]"
+                  >📋 条件スクショを選択（スキップ可）</button>
                 )}
                 <input ref={conditionFileInputRef} type="file" accept="image/*" onChange={onSelectConditionImage} className="hidden" />
               </div>
