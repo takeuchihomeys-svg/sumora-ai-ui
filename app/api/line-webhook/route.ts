@@ -181,7 +181,7 @@ async function handleTextMessage(
 async function autoUpgradeToHot(db: ReturnType<typeof getDb>, userId: string) {
   const { data } = await db
     .from("property_customers")
-    .select("id, status")
+    .select("id, status, customer_name")
     .eq("line_user_id", userId)
     .in("status", ["new_inquiry", "property_search"])
     .limit(1)
@@ -191,7 +191,34 @@ async function autoUpgradeToHot(db: ReturnType<typeof getDb>, userId: string) {
       .from("property_customers")
       .update({ status: "hot", updated_at: new Date().toISOString() })
       .eq("id", data.id);
+    void notifyHanbancyoGroup(db, data.customer_name ?? "");
   }
+}
+
+async function notifyHanbancyoGroup(db: ReturnType<typeof getDb>, customerName: string) {
+  const { data } = await db
+    .from("hanbancyo_settings")
+    .select("value")
+    .eq("key", "group_id")
+    .single();
+  const groupId = data?.value as string | undefined;
+  const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN;
+  if (!groupId || !token) return;
+
+  await fetch("https://api.line.me/v2/bot/message/push", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      to: groupId,
+      messages: [{
+        type: "text",
+        text: `🔥 ${customerName}様から返信が来ました！\n自動でhotに格上げしました。今すぐ物件を送りましょう！`,
+      }],
+    }),
+  });
 }
 
 // ── 画像メッセージ即時保存（LINEへの応答前に完了させる軽量処理）────────────
