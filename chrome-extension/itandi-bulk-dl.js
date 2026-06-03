@@ -56,62 +56,31 @@
   }
 
   // ── 物件資料ボタンを探す ────────────────────────────────────────────────
-  // DOM診断結果: P.css-5rqx8z-Label → SPAN.MuiButton-label → BUTTON.MuiButtonBase-root
-  //              → SPAN.MuiBadge-root → DIV → DIV.CommonButton → DIV.itandi-bb-ui__Flex
+  // DOM診断結果: button.MuiButtonBase-root でテキスト「物件資料」
   function findMaterialBtns() {
     var seen = new Set();
     var results = [];
-
-    // P タグのテキストで「物件資料」を探し、親の BUTTON まで遡る
-    Array.from(document.querySelectorAll("p")).forEach(function (p) {
-      if (!p.textContent.trim().includes("物件資料")) return;
-      var el = p.parentElement;
-      for (var i = 0; i < 5 && el && el !== document.body; i++, el = el.parentElement) {
-        if (el.tagName === "BUTTON" && !seen.has(el) && el.offsetParent) {
-          seen.add(el);
-          results.push(el);
-          break;
-        }
-      }
+    Array.from(document.querySelectorAll("button.MuiButtonBase-root")).forEach(function (btn) {
+      if (btn.textContent.trim() !== "物件資料") return;
+      if (seen.has(btn) || !btn.offsetParent) return;
+      seen.add(btn);
+      results.push(btn);
     });
-
-    // フォールバック: DIV.CommonButton 内の button
-    if (!results.length) {
-      Array.from(document.querySelectorAll("div.CommonButton")).forEach(function (div) {
-        if (!div.textContent.includes("物件資料")) return;
-        var btn = div.querySelector("button");
-        if (btn && !seen.has(btn) && btn.offsetParent) {
-          seen.add(btn);
-          results.push(btn);
-        }
-      });
-    }
-
     return results;
   }
 
   // ── チェックボックス注入 ───────────────────────────────────────────────
-  // DIV.CommonButton の前に挿入（行の中のボタン群の一番外のコンテナ）
+  // 物件資料ボタンの直前に挿入
   function inject() {
     document.querySelectorAll(".axlx-itandi-cb").forEach(function (el) { el.remove(); });
     tracked = [];
     findMaterialBtns().forEach(function (btn) {
-      // CommonButton ラッパーを探す（挿入位置として使う）
-      var container = btn;
-      for (var i = 0; i < 4 && container.parentElement && container.parentElement !== document.body; i++) {
-        if (container.parentElement.classList && container.parentElement.classList.contains("CommonButton")) {
-          container = container.parentElement;
-          break;
-        }
-        container = container.parentElement;
-      }
-
       var cb = document.createElement("input");
       cb.type = "checkbox";
       cb.className = "axlx-itandi-cb";
-      cb.style.cssText = "width:16px;height:16px;margin-right:6px;cursor:pointer;accent-color:#1565C0;vertical-align:middle;flex-shrink:0;align-self:center;";
+      cb.style.cssText = "width:16px;height:16px;margin-right:4px;cursor:pointer;accent-color:#1565C0;vertical-align:middle;flex-shrink:0;";
       cb.addEventListener("change", updateBar);
-      container.parentNode.insertBefore(cb, container);
+      btn.parentNode.insertBefore(cb, btn);
       tracked.push({ cb: cb, btn: btn });
     });
     updateBar();
@@ -165,60 +134,82 @@
 
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
+  // ── MUI ダイアログが開くまで待機 ─────────────────────────────────────
+  function waitForDialog(timeoutMs) {
+    return new Promise(function (resolve, reject) {
+      var start = Date.now();
+      var iv = setInterval(function () {
+        // MUI Dialog は div.MuiDialog-paper / div[class*='MuiPaper-root'][class*='MuiDialog']
+        var el = document.querySelector(
+          "div.MuiDialog-paper, div[class*='MuiDialog-paper']"
+        );
+        if (el && el.offsetParent) { clearInterval(iv); resolve(el); return; }
+        if (Date.now() - start > timeoutMs) {
+          clearInterval(iv);
+          reject(new Error("モーダルが開きませんでした（" + timeoutMs / 1000 + "秒）"));
+        }
+      }, 200);
+    });
+  }
+
   // ── 1件のPDFをキャプチャ ──────────────────────────────────────────────
-  // 物件資料ボタン → モーダル → 間取り図＋写真12枚 → PDFを出力 → blob capture
+  // 物件資料ボタン → MUIダイアログ待機 → 間取り図＋写真12枚 → PDFを出力
   function captureOnePdf(btn) {
     return new Promise(function (resolve, reject) {
-      var timer;
-      var handler = function (e) {
+      var pdfTimer;
+      var pdfHandler = function (e) {
         if (!e.data || e.data.from !== "axlx-itandi-pdf") return;
-        clearTimeout(timer);
-        window.removeEventListener("message", handler);
+        clearTimeout(pdfTimer);
+        window.removeEventListener("message", pdfHandler);
         resolve(e.data.b64);
       };
-      window.addEventListener("message", handler);
-      timer = setTimeout(function () {
-        window.removeEventListener("message", handler);
+      window.addEventListener("message", pdfHandler);
+      pdfTimer = setTimeout(function () {
+        window.removeEventListener("message", pdfHandler);
         reject(new Error("PDF取得タイムアウト（30秒）"));
       }, 30000);
 
       // 物件資料ボタンをクリック
       btn.click();
 
-      sleep(800)
-        .then(function () {
-          // 「間取り図＋写真12枚」ラベルを探してクリック
-          var found = false;
-          // label テキストで探す
-          Array.from(document.querySelectorAll("label")).forEach(function (lbl) {
-            if (!found && lbl.textContent.includes("12枚") && lbl.offsetParent) {
-              var inp = lbl.querySelector("input[type='radio']");
-              if (!inp && lbl.htmlFor) inp = document.getElementById(lbl.htmlFor);
-              if (inp) { inp.click(); } else { lbl.click(); }
-              found = true;
-            }
+      // MUI ダイアログが開くまで最大5秒待機
+      waitForDialog(5000)
+        .then(function (dialog) {
+          return sleep(300).then(function () { return dialog; });
+        })
+        .then(function (dialog) {
+          // 「間取り図＋写真12枚」ラベルを探す（MUI: label.MuiFormControlLabel-root）
+          var labels = Array.from(dialog.querySelectorAll("label"));
+          var target = labels.find(function (l) {
+            return l.textContent.includes("12枚");
           });
-          // radio value で探す（ラベルが無い場合）
-          if (!found) {
-            Array.from(document.querySelectorAll("input[type='radio']")).forEach(function (r) {
-              if (!found && (r.value === "12" || r.value.includes("12"))) {
-                r.click();
-                found = true;
-              }
+          if (target) {
+            var radio = target.querySelector("input[type='radio']");
+            if (radio) { radio.click(); } else { target.click(); }
+          } else {
+            // value で探すフォールバック
+            var radios = dialog.querySelectorAll("input[type='radio']");
+            Array.from(radios).forEach(function (r) {
+              if (r.value === "12" || r.value.includes("12")) r.click();
             });
           }
           return sleep(400);
         })
         .then(function () {
-          // 「PDFを出力」ボタンをクリック
+          // 「PDFを出力」ボタンをクリック（モーダル内）
           var pdfBtns = Array.from(document.querySelectorAll("button")).filter(function (b) {
             return b.textContent.includes("PDFを出力") && b.offsetParent;
           });
           if (!pdfBtns.length) {
-            reject(new Error("「PDFを出力」ボタンが見つかりません（モーダルが開いているか確認してください）"));
+            reject(new Error("「PDFを出力」ボタンが見つかりません"));
             return;
           }
           pdfBtns[pdfBtns.length - 1].click();
+        })
+        .catch(function (e) {
+          clearTimeout(pdfTimer);
+          window.removeEventListener("message", pdfHandler);
+          reject(e);
         });
     });
   }
