@@ -23,13 +23,12 @@ function buildLineMessage(
   const today = new Date().toLocaleDateString("ja-JP");
   const lines: string[] = [];
 
-  // ヘッダー
+  // ヘッダー：お客さん名 物件（N件）
   if (customerName) {
-    lines.push(`🏠 ${customerName}様 向け物件提案（${pageCount}件）`);
+    lines.push(`${customerName}様 物件（${pageCount}件）`);
   } else {
-    lines.push(`🏠 物件提案（${pageCount}件）`);
+    lines.push(`物件（${pageCount}件）`);
   }
-  lines.push(`📅 ${today}`);
   lines.push("━━━━━━━━━━━━━━");
 
   // 物件サマリー（1件ずつ）
@@ -42,8 +41,7 @@ function buildLineMessage(
   }
 
   // PDFリンク
-  lines.push(`📎 まとめPDF（${pageCount}枚）`);
-  lines.push("↓タップして開く↓");
+  lines.push("↓物件PDF↓");
   lines.push(fileUrl);
 
   return lines.join("\n");

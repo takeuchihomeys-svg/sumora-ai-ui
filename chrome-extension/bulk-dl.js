@@ -185,6 +185,12 @@
     }
     if (accessText) lines.push("🚶 " + accessText.trim());
 
+    // AD（「AD」または金額＋備考有 を含むセル）
+    var adText = card.texts.find(function (t) {
+      return /AD/.test(t) || /広告料/.test(t);
+    });
+    if (adText) lines.push("📢 AD: " + adText.replace(/\s+/g, " ").trim());
+
     return lines.join("\n");
   }
 
