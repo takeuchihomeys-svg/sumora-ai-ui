@@ -44,33 +44,45 @@ chrome.tabs.onUpdated.addListener(function (tabId, changeInfo, tab) {
   }
 });
 
-// ── PDF一括取得（コンテンツスクリプトからのリクエストを処理） ──────────────
-// コンテンツスクリプトでのfetchはCORS制限を受けるため
-// バックグラウンドスクリプト経由でfetchすることで回避する
+// ── PDF一括取得（ページコンテキストに注入してSameSiteクッキー問題を回避） ──
 chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   if (msg.type !== "axlx-fetch-pdfs") return false;
 
-  var urls = msg.urls || [];
+  var tabId = sender.tab && sender.tab.id;
+  if (!tabId) { sendResponse({ ok: false, error: "tabId不明" }); return true; }
 
-  Promise.all(urls.map(function (url) {
-    return fetch(url, { credentials: "include" })
-      .then(function (r) {
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        return r.arrayBuffer();
-      })
-      .then(function (buf) {
-        // ArrayBuffer → base64
-        var bytes = new Uint8Array(buf);
-        var binary = "";
-        var chunk = 8192;
-        for (var i = 0; i < bytes.length; i += chunk) {
-          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-        }
-        return btoa(binary);
-      });
-  }))
-    .then(function (pdf_data) { sendResponse({ ok: true, pdf_data: pdf_data }); })
-    .catch(function (e) { sendResponse({ ok: false, error: e.message }); });
+  // ページのコンテキストで実行（セッションクッキーが確実に使われる）
+  chrome.scripting.executeScript({
+    target: { tabId: tabId },
+    world: "MAIN",
+    func: function (urls) {
+      return Promise.all(urls.map(function (url) {
+        return fetch(url, { credentials: "same-origin" })
+          .then(function (r) {
+            if (!r.ok) throw new Error("HTTP " + r.status + " " + url);
+            return r.arrayBuffer();
+          })
+          .then(function (buf) {
+            var bytes = new Uint8Array(buf);
+            var binary = "";
+            var chunk = 8192;
+            for (var i = 0; i < bytes.length; i += chunk) {
+              binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + chunk, bytes.length)));
+            }
+            return btoa(binary);
+          });
+      }));
+    },
+    args: [msg.urls],
+  })
+    .then(function (results) {
+      var result = results && results[0] && results[0].result;
+      if (!result) throw new Error("結果が空です");
+      sendResponse({ ok: true, pdf_data: result });
+    })
+    .catch(function (e) {
+      sendResponse({ ok: false, error: e.message });
+    });
 
-  return true; // 非同期レスポンスを示すためにtrueを返す
+  return true;
 });

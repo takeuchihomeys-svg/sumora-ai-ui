@@ -22,7 +22,8 @@
   "permissions": [
     "sidePanel",
     "tabs",
-    "clipboardWrite"
+    "clipboardWrite",
+    "scripting"
   ],
   "web_accessible_resources": [
     {
