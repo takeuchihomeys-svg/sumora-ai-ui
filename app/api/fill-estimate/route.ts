@@ -114,26 +114,24 @@ async function patchSavingsInDrawing(
 
   if (sheetRelsKey) {
     let relsXml = await outputZip.files[sheetRelsKey].async("string");
-    // 既存のdrawing参照を drawing2.xml に上書き（競合防止）
-    if (relsXml.includes('Type="' + DRAWING_REL_TYPE + '"')) {
-      // 既存のdrawing参照をdrawing2.xmlに書き換える
+    if (relsXml.includes('Target="../drawings/drawing2.xml"')) {
+      // 既にdrawing2.xmlを参照済み → そのまま
+    } else if (/Target="\.\.\/drawings\/drawing\d+\.xml"/.test(relsXml)) {
+      // drawing1.xml等を参照している → Targetだけdrawing2.xmlに変更（IDは必ず保持）
+      // sheet XML の <drawing r:id="rId1"/> と一致させる必要があるためIDを変えてはいけない
       relsXml = relsXml.replace(
-        new RegExp(`<Relationship[^>]+Type="${DRAWING_REL_TYPE}"[^>]*/>`),
-        `<Relationship Id="rId99" Type="${DRAWING_REL_TYPE}" Target="../drawings/drawing2.xml"/>`
+        /Target="\.\.\/drawings\/drawing\d+\.xml"/g,
+        'Target="../drawings/drawing2.xml"'
       );
-      // 残りの drawing 参照（drawing1.xml など）を削除
-      relsXml = relsXml.replace(
-        new RegExp(`<Relationship[^>]+Type="${DRAWING_REL_TYPE}"[^>]*/>`, "g"),
-        (m) => m.includes("drawing2.xml") ? m : ""
-      );
+      outputZip.file(sheetRelsKey, relsXml);
     } else {
-      // drawing参照がない → 追加
+      // drawing参照がない → 新規追加
       relsXml = relsXml.replace(
         "</Relationships>",
         `<Relationship Id="rId99" Type="${DRAWING_REL_TYPE}" Target="../drawings/drawing2.xml"/></Relationships>`
       );
+      outputZip.file(sheetRelsKey, relsXml);
     }
-    outputZip.file(sheetRelsKey, relsXml);
   } else {
     // rels ファイルが存在しない場合は新規作成
     const sheetXmlKey = Object.keys(outputZip.files)
