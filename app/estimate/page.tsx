@@ -60,6 +60,11 @@ function calcMoveInInfo(moveInDate: string) {
   return { moveInDay: day, moveInMonth: month, moveInMonthDays: monthDays };
 }
 
+// 保証料計算の基準額 = 家賃 + 共益費 + 水道代
+function calcGuaranteeBase(rent: number, managementFee: number, waterFee: number) {
+  return (rent || 0) + (managementFee || 0) + (waterFee || 0);
+}
+
 function calcProratedDays(moveInDay: number, monthDays: number) {
   // 月初（1日）入居は日割りなし（Excelと同じ挙動）
   if (!moveInDay || moveInDay <= 1) return 0;
@@ -184,8 +189,8 @@ function toEditable(e: ExtractedEstimate, account: Account = "sumora", moveInDat
     commission:    commDefaults.commission    === 0 ? 0 : (e.commission    || commDefaults.commission),
     commissionTax: commDefaults.commissionTax === 0 ? 0 : (e.commissionTax || commDefaults.commissionTax),
     guaranteeRate,
-    // OCRで guarantee が0 or 未抽出の場合は家賃×50%で自動計算
-    guarantee: e.guarantee || Math.round((e.rent || 0) * guaranteeRate / 100),
+    // OCRで guarantee が0 or 未抽出の場合は（家賃+共益費+水道代）×50%で自動計算
+    guarantee: e.guarantee || Math.round(calcGuaranteeBase(e.rent, e.managementFee, e.waterFee) * guaranteeRate / 100),
     nextRent: e.rent,
     nextManagementFee: e.managementFee,
     nextWaterFee: e.waterFee,
@@ -325,14 +330,22 @@ export default function EstimatePage() {
       // 家賃・共益費・水道代変更時に翌月分も連動（手動入力で翌月分が0のまま防止）
       if (key === "rent") {
         updated.nextRent = Number(value) || 0;
-        // 家賃変更時に保証料も再計算
-        updated.guarantee = Math.round((Number(value) || 0) * (prev.guaranteeRate || 0) / 100);
+        // 家賃変更時に保証料も再計算（基準: 家賃+共益費+水道代）
+        updated.guarantee = Math.round(calcGuaranteeBase(Number(value), prev.managementFee, prev.waterFee) * (prev.guaranteeRate || 0) / 100);
       }
-      if (key === "managementFee") updated.nextManagementFee = Number(value) || 0;
-      if (key === "waterFee")      updated.nextWaterFee      = Number(value) || 0;
-      // 保証料率変更時に保証料を自動計算（家賃×率%）
+      if (key === "managementFee") {
+        updated.nextManagementFee = Number(value) || 0;
+        // 共益費変更時も保証料を再計算
+        updated.guarantee = Math.round(calcGuaranteeBase(prev.rent, Number(value), prev.waterFee) * (prev.guaranteeRate || 0) / 100);
+      }
+      if (key === "waterFee") {
+        updated.nextWaterFee = Number(value) || 0;
+        // 水道代変更時も保証料を再計算
+        updated.guarantee = Math.round(calcGuaranteeBase(prev.rent, prev.managementFee, Number(value)) * (prev.guaranteeRate || 0) / 100);
+      }
+      // 保証料率変更時に保証料を自動計算（家賃+共益費+水道代）×率%
       if (key === "guaranteeRate") {
-        updated.guarantee = Math.round((prev.rent || 0) * (Number(value) || 0) / 100);
+        updated.guarantee = Math.round(calcGuaranteeBase(prev.rent, prev.managementFee, prev.waterFee) * (Number(value) || 0) / 100);
       }
       // 仲介手数料変更時に消費税を自動計算（10%）
       if (key === "commission") {
@@ -414,7 +427,7 @@ export default function EstimatePage() {
     { label: "仲介手数料 消費税",                   amount: items.commissionTax,        editKey: "commissionTax", alwaysShow: true },
     { label: "駐車場手数料",                        amount: items.parkingCommission,    editKey: "parkingCommission" },
     { label: "駐車場手数料 消費税",                 amount: items.parkingCommissionTax, editKey: "parkingCommissionTax" },
-    { label: "賃貸保証料",                          amount: items.guarantee,            editKey: "guarantee" },
+    { label: "賃貸保証料",                          amount: items.guarantee,            editKey: "guarantee", alwaysShow: true },
     { label: "住宅保険",                            amount: items.insurance,            editKey: "insurance" },
     { label: "鍵交換代",                            amount: items.keyExchange,          editKey: "keyExchange" },
     { label: "クリーニング代",                       amount: items.cleaning,             editKey: "cleaning" },
