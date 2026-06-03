@@ -264,3 +264,17 @@ ALTER TABLE hanbancyo_settings DISABLE ROW LEVEL SECURITY;
 export async function GET() {
   return NextResponse.json({ sql: SQL });
 }
+
+// POST: 実際にマイグレーションを実行（デプロイ後に一度叩く）
+export async function POST() {
+  const { supabase } = await import("@/app/lib/supabase");
+  const statements = SQL.split(";").map(s => s.trim()).filter(Boolean);
+  const errors: string[] = [];
+  for (const stmt of statements) {
+    try {
+      const { error } = await supabase.rpc("exec_sql", { sql: stmt + ";" });
+      if (error) errors.push(error.message);
+    } catch { /* ignore */ }
+  }
+  return NextResponse.json({ ok: true, errors });
+}

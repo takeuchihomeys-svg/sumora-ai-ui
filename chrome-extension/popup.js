@@ -2301,8 +2301,11 @@ function openInstructions(siteKey) {
           // 更新日を再計算
           const updateDaysEl = document.getElementById("adj-update-days");
           if (updateDaysEl) updateDaysEl.value = calcUpdateDays(today, selectedCustomer.status);
-          // selectedCustomer も更新
-          selectedCustomer = { ...selectedCustomer, last_property_sent_at: new Date().toISOString() };
+          // selectedCustomer と allCustomers を更新してバナーも再計算
+          const now = new Date().toISOString();
+          selectedCustomer = { ...selectedCustomer, last_property_sent_at: now };
+          allCustomers = allCustomers.map(c => c.id === selectedCustomer.id ? { ...c, last_property_sent_at: now } : c);
+          updateTodayBanner();
           markSentBtn.textContent = "✅ 送った";
         } catch {
           markSentBtn.textContent = "✅ 送った";

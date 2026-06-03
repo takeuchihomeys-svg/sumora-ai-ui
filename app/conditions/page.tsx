@@ -230,11 +230,24 @@ export default function ConditionsPage() {
     setShowModal(true);
   }
 
-  function openEdit(c: Customer) {
+  async function openEdit(c: Customer) {
     setEditTarget(c);
+
+    // line_user_id が未設定かつ紐付け済み会話がある場合は自動取得
+    let lineUserId = c.line_user_id ?? "";
+    if (!lineUserId && linkedIds.has(c.id)) {
+      const { data } = await supabase
+        .from("conversations")
+        .select("line_user_id")
+        .eq("property_customer_id", c.id)
+        .limit(1)
+        .single();
+      if (data?.line_user_id) lineUserId = data.line_user_id as string;
+    }
+
     setForm({
       customer_name: c.customer_name,
-      line_user_id: c.line_user_id ?? "",
+      line_user_id: lineUserId,
       phone: c.phone ?? "",
       status: c.status,
       account: c.account ?? undefined,

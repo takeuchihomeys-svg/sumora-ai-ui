@@ -13,9 +13,8 @@ async function getGroupId(): Promise<string | null> {
   return data?.value ?? null;
 }
 
-async function pushLineFile(groupId: string, fileUrl: string, fileName: string, fileSize: number) {
-  // LINEのpush APIでテキスト+URLを送信（PDF添付はAPIが非対応のためURL送付）
-  const text = `📎 物件まとめPDF（${fileName}）\n\nダウンロード：${fileUrl}`;
+async function pushLineFile(groupId: string, fileUrl: string, fileName: string, pageCount: number) {
+  const text = `📎 物件まとめPDF（${pageCount}枚）\n${fileName}\n\n↓ダウンロードリンク↓\n${fileUrl}\n\n※リンクをタップしてPDFを開いてください`;
   await fetch("https://api.line.me/v2/bot/message/push", {
     method: "POST",
     headers: {
@@ -71,7 +70,7 @@ export async function POST(req: NextRequest) {
             access: "public",
             contentType: "application/pdf",
           });
-          await pushLineFile(groupId, blob.url, name, mergedBytes.byteLength);
+          await pushLineFile(groupId, blob.url, name, merged.getPageCount());
           return NextResponse.json({
             ok: true,
             pdf: base64Result,

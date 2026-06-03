@@ -56,20 +56,37 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
     target: { tabId: tabId },
     world: "MAIN",
     func: function (urls) {
+      function toBase64(buf) {
+        var bytes = new Uint8Array(buf);
+        var binary = "";
+        var chunk = 8192;
+        for (var i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + chunk, bytes.length)));
+        }
+        return btoa(binary);
+      }
       return Promise.all(urls.map(function (url) {
+        // まずsame-origin credentials付きで試行
         return fetch(url, { credentials: "same-origin" })
           .then(function (r) {
-            if (!r.ok) throw new Error("HTTP " + r.status + " " + url);
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            var ct = r.headers.get("content-type") || "";
+            // PDFでない場合（HTMLリダイレクト等）
+            if (ct.includes("text/html")) {
+              throw new Error("PDFではなくHTMLが返されました（ログイン切れの可能性）");
+            }
             return r.arrayBuffer();
           })
-          .then(function (buf) {
-            var bytes = new Uint8Array(buf);
-            var binary = "";
-            var chunk = 8192;
-            for (var i = 0; i < bytes.length; i += chunk) {
-              binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + chunk, bytes.length)));
-            }
-            return btoa(binary);
+          .then(function (buf) { return toBase64(buf); })
+          .catch(function (e) {
+            // fallback: includeで再試行
+            console.warn("[AXLX] same-origin失敗、includeで再試行:", e.message);
+            return fetch(url, { credentials: "include" })
+              .then(function (r) {
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                return r.arrayBuffer();
+              })
+              .then(function (buf) { return toBase64(buf); });
           });
       }));
     },

@@ -599,7 +599,14 @@
     }
     if (cond.rp_update_days) {
       // 更新日フィルター（update_date select: 1/3/7/14日以内）
-      setSelVal("update_date", String(cond.rp_update_days));
+      // 検索フォームページにのみ存在するため、存在確認してからセット
+      var updEl = document.querySelector('select[name="update_date"]');
+      if (updEl) {
+        setSelVal("update_date", String(cond.rp_update_days));
+        console.log("[AX] 更新日セット:", cond.rp_update_days + "日以内");
+      } else {
+        console.log("[AX] 更新日フィールド未検出（検索フォームページ以外）");
+      }
     }
 
     // ── T=150ms: 所在地絞り込み（直接チェック — モーダルを使わない場合のみ）─────
