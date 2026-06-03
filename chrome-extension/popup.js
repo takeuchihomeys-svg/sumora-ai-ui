@@ -1934,10 +1934,38 @@ function preloadAdjForm(c) {
   const petFields = [c.preferences, c.notes, c.other_requests, c.additional_conditions].filter(Boolean).join(" ");
   document.getElementById("adj-pet").checked = /ペット|pet/i.test(petFields);
 
-  // 更新日：ステータスに応じて自動セット（hot=1日 / 3日ごと=3日 / 新規=1週間）
-  const STATUS_UPDATE_DAYS = { hot: "1", property_search: "3", new_inquiry: "" };
+  // お客様名表示
+  const labelEl = document.getElementById("adj-customer-label");
+  if (labelEl) labelEl.textContent = c.customer_name ? c.customer_name + "様" : "";
+
+  // 最終送信日：last_property_sent_at から初期値セット
+  const lastSentEl = document.getElementById("adj-last-sent-date");
+  if (lastSentEl) {
+    const initDate = c.last_property_sent_at ? c.last_property_sent_at.split("T")[0] : "";
+    lastSentEl.value = initDate;
+    lastSentEl.oninput = () => {
+      const el = document.getElementById("adj-update-days");
+      if (el) el.value = calcUpdateDays(lastSentEl.value, c.status);
+    };
+  }
+
+  // 更新日：日付から自動計算
   const updateDaysEl = document.getElementById("adj-update-days");
-  if (updateDaysEl) updateDaysEl.value = STATUS_UPDATE_DAYS[c.status] || "";
+  if (updateDaysEl) {
+    const initDate = c.last_property_sent_at ? c.last_property_sent_at.split("T")[0] : "";
+    updateDaysEl.value = calcUpdateDays(initDate, c.status);
+  }
+}
+
+function calcUpdateDays(dateStr, status) {
+  if (!dateStr) {
+    return { hot: "1", property_search: "3", new_inquiry: "" }[status] || "";
+  }
+  const daysSince = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
+  if (daysSince <= 1) return "1";
+  if (daysSince <= 3) return "3";
+  if (daysSince <= 7) return "7";
+  return "30";
 }
 
 function buildAdjCustomer(c) {
@@ -2200,7 +2228,9 @@ function openInstructions(siteKey) {
     // ボタン表示と同時に未登録地名チェック
     showUnknownWarn(computeUnknownTokens(selectedCustomer.desired_area || selectedCustomer.area || ""));
 
-    // 更新日フィールドを表示
+    // 最終送信日・更新日フィールドを表示
+    const lastSentRow = document.getElementById("adj-last-sent-row");
+    if (lastSentRow) lastSentRow.style.display = "flex";
     const updateDaysRow = document.getElementById("adj-update-days-row");
     if (updateDaysRow) updateDaysRow.style.display = "flex";
 
