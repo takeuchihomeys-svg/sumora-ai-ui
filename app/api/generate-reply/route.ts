@@ -323,29 +323,33 @@ async function fetchKnowledge(state: string): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
   const [{ data: global }, { data: stateSpecific }] = await Promise.all([
+    // 全体共通ナレッジ: importance8以上を優先（golden知識231件を活用）
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
-      .is("conversation_state", null).order("importance", { ascending: false }).limit(8),
+      .is("conversation_state", null).gte("importance", 7)
+      .order("importance", { ascending: false }).limit(12),
+    // state別ナレッジ: importance7以上を優先
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
-      .in("conversation_state", stateAliases).order("importance", { ascending: false }).limit(10),
+      .in("conversation_state", stateAliases).gte("importance", 7)
+      .order("importance", { ascending: false }).limit(15),
   ]);
 
   const all = [...(stateSpecific || []), ...(global || [])];
   if (all.length === 0) return "";
 
-  // importance 9以上は「絶対ルール」として最優先
+  // importance 9以上は「絶対ルール」として最優先（差分学習由来の高品質ルール）
   const critical = all.filter((k) => (k.importance || 0) >= 9);
-  const patterns = all.filter((k) => (k.importance || 0) < 9 && (k.category === "pattern" || k.category === "principle"));
+  const patterns = all.filter((k) => (k.importance || 0) >= 7 && (k.importance || 0) < 9 && (k.category === "pattern" || k.category === "principle"));
   const phrases  = all.filter((k) => k.category === "phrase");
 
   const sections: string[] = [];
   if (critical.length > 0) {
-    sections.push("【⚠️ 絶対ルール（必ず守る）】\n" + critical.map((k) => `・${k.content}`).join("\n"));
+    sections.push("【⚠️ 絶対ルール（必ず守る）】\n" + critical.slice(0, 8).map((k) => `・${k.content}`).join("\n"));
   }
   if (patterns.length > 0) {
-    sections.push("【スモラの営業パターン・原則】\n" + patterns.slice(0, 5).map((k) => `・${k.content}`).join("\n"));
+    sections.push("【スモラの営業パターン・原則】\n" + patterns.slice(0, 7).map((k) => `・${k.content}`).join("\n"));
   }
   if (phrases.length > 0) {
-    sections.push("【スモラのフレーズ】\n" + phrases.slice(0, 5).map((k) => `「${k.content}」`).join("　"));
+    sections.push("【スモラのフレーズ】\n" + phrases.slice(0, 7).map((k) => `「${k.content}」`).join("　"));
   }
   return sections.length > 0 ? "\n\n" + sections.join("\n\n") : "";
 }
@@ -353,19 +357,25 @@ async function fetchKnowledge(state: string): Promise<string> {
 async function fetchExamples(state: string): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
-  const [{ data: starred }, { data: aiUsed }] = await Promise.all([
+  const [{ data: starred }, { data: recentFallback }] = await Promise.all([
+    // ⭐優先: 同stateの☆つき（最新5件）
     supabase.from("ai_reply_examples").select("customer_message, sent_reply")
       .in("conversation_state", stateAliases).eq("is_starred", true)
-      .order("created_at", { ascending: false }).limit(3),
+      .order("created_at", { ascending: false }).limit(5),
+    // フォールバック: 非⭐の最近の送信例（was_ai_usedが正しく記録されるまでの補完）
     supabase.from("ai_reply_examples").select("customer_message, sent_reply")
-      .in("conversation_state", stateAliases).eq("is_starred", false).eq("was_ai_used", true)
+      .in("conversation_state", stateAliases).eq("is_starred", false)
       .order("created_at", { ascending: false }).limit(3),
   ]);
 
+  // ⭐がある場合は⭐のみ（最大5件）、なければ最近の例を使用
+  const starredList = starred || [];
+  const fallbackList = starredList.length < 3 ? (recentFallback || []) : [];
+
   const all = [
-    ...(starred || []).map((ex) => ({ ...ex, priority: 1 })),   // ⭐優先
-    ...(aiUsed  || []).map((ex) => ({ ...ex, priority: 2 })),
-  ].sort((a, b) => a.priority - b.priority).slice(0, 4);
+    ...starredList.map((ex) => ({ ...ex, priority: 1 })),
+    ...fallbackList.map((ex) => ({ ...ex, priority: 2 })),
+  ].sort((a, b) => a.priority - b.priority).slice(0, 5);
 
   if (all.length === 0) return "";
 

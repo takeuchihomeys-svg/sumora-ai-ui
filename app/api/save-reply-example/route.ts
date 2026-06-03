@@ -1,16 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
-// conversationState → phrase_dictionary カテゴリ
+// conversationState → phrase_dictionary カテゴリ（新5段階 + 旧ステート）
 const STATE_TO_PHRASE_CATEGORY: Record<string, string> = {
-  first_reply: "hearing_start",
-  condition_hearing: "hearing_followup",
-  property_search: "property_search_start",
-  property_recommendation: "property_recommendation",
-  viewing: "viewing_invite",
-  estimate_request: "estimate_send",
-  availability_check: "availability_check",
-  application: "application_push",
+  // 新5段階
+  first_reply:            "hearing_start",
+  hearing:                "hearing_followup",
+  proposing:              "property_recommendation",
+  applying:               "application_push",
+  closed_won:             "application_push",
+  // 旧ステート（後方互換）
+  condition_hearing:      "hearing_followup",
+  property_search:        "property_search_start",
+  property_recommendation:"property_recommendation",
+  viewing:                "viewing_invite",
+  estimate_request:       "estimate_send",
+  availability_check:     "availability_check",
+  application:            "application_push",
 };
 
 const VALID_STATES = [
@@ -34,6 +40,21 @@ const STATE_NORMALIZE: Record<string, string> = {
   screening:               "applying",
   contract:                "applying",
 };
+
+// ─── テキスト類似度（AI文案と送信文を比較してwasAiUsedを判定）─────────────────
+// グリーディー文字マッチで一致率を算出（空白除去・順序保持）
+function textSimilarity(a: string, b: string): number {
+  const s1 = a.replace(/\s+/g, "");
+  const s2 = b.replace(/\s+/g, "");
+  if (s1 === s2) return 1;
+  if (!s1 || !s2) return 0;
+  let j = 0, matches = 0;
+  for (let i = 0; i < s1.length; i++) {
+    while (j < s2.length && s2[j] !== s1[i]) j++;
+    if (j < s2.length) { matches++; j++; }
+  }
+  return matches / Math.max(s1.length, s2.length);
+}
 
 // ─── Claude Haiku 共通ヘルパー ────────────────────────────────────────────────
 async function callHaiku(prompt: string, maxTokens = 1024): Promise<string> {
@@ -334,8 +355,12 @@ export async function POST(req: NextRequest) {
     : rawState;
   const conversationState = STATE_NORMALIZE[rawResolved] ?? rawResolved;
 
-  const wasAiUsed = !!aiDraft && aiDraft.trim() === sentReply.trim();
-  const wasAiModified = !!aiDraft && !wasAiUsed && aiDraft.trim().length > 0;
+  // 70%以上の類似度 → AI文案をそのまま（or ほぼそのまま）使った
+  // 30〜70% → 大幅修正して送った
+  // 30%未満 → AIは参考程度（ほぼ手書き）
+  const sim = aiDraft ? textSimilarity(aiDraft.trim(), sentReply.trim()) : 0;
+  const wasAiUsed    = !!aiDraft && aiDraft.trim().length > 0 && sim >= 0.7;
+  const wasAiModified = !!aiDraft && aiDraft.trim().length > 0 && sim >= 0.3 && sim < 0.7;
 
   const { data, error } = await supabase
     .from("ai_reply_examples")
