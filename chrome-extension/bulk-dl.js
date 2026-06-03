@@ -287,6 +287,116 @@
   }
 
   // ── PDF結合・LINE送信（cookieプロキシ方式）──────────
+  // ── PDF結合・送信の共通完了処理 ───────────────────────
+  function handleMergeSuccess(data, btn, origText, sendToLine, fileName) {
+    var bytes = Uint8Array.from(atob(data.pdf), function (c) { return c.charCodeAt(0); });
+    var blob = new Blob([bytes], { type: "application/pdf" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { a.remove(); }, 100);
+    if (sendToLine && data.line_sent) {
+      btn.textContent = "✅ LINE送信完了！";
+    } else if (sendToLine) {
+      btn.textContent = "✅ PDF完成（LINE設定なし）";
+    } else {
+      btn.textContent = "✅ PDF完成！";
+    }
+  }
+
+  // ── Approach A: document.cookie → サーバー代理取得 ──
+  // コンテンツスクリプトは document.cookie を読める（ページとcookieを共有）
+  // Vercelサーバーが Cookie ヘッダー付きでリアプロPDFを取得する
+  function tryProxyMerge(urls, opts) {
+    var btn = opts.btn;
+    btn.textContent = "PDF取得中（サーバー経由）...";
+
+    var cookieStr = document.cookie; // 非HttpOnlyクッキーを収集
+
+    return fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pdf_urls: urls,
+        cookie_str: cookieStr,
+        file_name: opts.fileName,
+        send_to_line: opts.sendToLine,
+        customer_name: opts.customerName || null,
+        property_summaries: opts.propertySummaries,
+      }),
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (!data.ok) throw new Error(data.error || "サーバーエラー");
+      return data;
+    });
+  }
+
+  // ── Approach B: ファイルピッカーで手動選択 ───────────
+  // Approach A が失敗したとき（HttpOnlyセッションクッキー等）の確実なフォールバック
+  function tryPickerMerge(opts) {
+    var btn = opts.btn;
+    btn.textContent = "📁 PDFを選んでください...";
+    btn.disabled = false;
+
+    var input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".pdf,application/pdf";
+    input.multiple = true;
+    input.style.display = "none";
+    document.body.appendChild(input);
+
+    input.addEventListener("change", function () {
+      var files = Array.from(input.files || []);
+      input.remove();
+      if (!files.length) { btn.textContent = opts.origText; return; }
+
+      btn.textContent = "読込中…(" + files.length + "件)";
+      btn.disabled = true;
+
+      Promise.all(files.map(function (file) {
+        return new Promise(function (resolve, reject) {
+          var reader = new FileReader();
+          reader.onload = function (e) { resolve(e.target.result.split(",")[1]); };
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+      }))
+      .then(function (pdf_data) {
+        btn.textContent = opts.sendToLine ? "LINE送信中..." : "PDF結合中...";
+        return fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            pdf_data: pdf_data,
+            file_name: opts.fileName,
+            send_to_line: opts.sendToLine,
+            customer_name: opts.customerName || null,
+            property_summaries: opts.propertySummaries,
+          }),
+        });
+      })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data.ok) throw new Error(data.error || "サーバーエラー");
+        handleMergeSuccess(data, btn, opts.origText, opts.sendToLine, opts.fileName);
+      })
+      .catch(function (e) {
+        alert("エラー: " + e.message);
+        btn.textContent = opts.origText;
+      })
+      .finally(function () {
+        btn.disabled = false;
+        setTimeout(function () { btn.textContent = opts.origText; }, 4000);
+      });
+    });
+
+    input.click();
+  }
+
+  // ── メイン: A → B の順で試みる ────────────────────────
   function mergePdfs(sendToLine, customerName) {
     var urls = getSelectedUrls();
     if (!urls.length) {
@@ -297,13 +407,11 @@
     var btnId = sendToLine ? "axlx-line-btn" : "axlx-merge-btn";
     var btn = document.getElementById(btnId);
     var origText = btn.textContent;
-    btn.textContent = "クッキー取得中...";
     btn.disabled = true;
 
     var today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
     var fileName = "物件まとめ_" + today + ".pdf";
 
-    // 物件サマリーを生成（LINEに送るときのみ）
     var propertySummaries = null;
     if (sendToLine) {
       var selectedTargets = tracked.filter(function (t) { return t.cb.checked; });
@@ -312,78 +420,24 @@
       });
     }
 
-    // コンテンツスクリプト（ISOLATED world）から直接fetch
-    // → ページのCSP制限を受けず・セッションクッキーは共有される
-    btn.textContent = "PDF取得中... (0/" + urls.length + ")";
+    var opts = {
+      btn: btn, origText: origText, fileName: fileName,
+      sendToLine: sendToLine, customerName: customerName,
+      propertySummaries: propertySummaries,
+    };
 
-    var completed = 0;
-    Promise.all(urls.map(function (url) {
-      return fetch(url, { credentials: "include" })
-        .then(function (r) {
-          if (!r.ok) throw new Error("HTTP " + r.status);
-          return r.arrayBuffer();
-        })
-        .then(function (buf) {
-          completed++;
-          btn.textContent = "PDF取得中... (" + completed + "/" + urls.length + ")";
-          var bytes = new Uint8Array(buf);
-          var binary = "";
-          var chunk = 8192;
-          for (var i = 0; i < bytes.length; i += chunk) {
-            binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + chunk, bytes.length)));
-          }
-          return btoa(binary);
-        });
-    }))
-    .then(function (pdf_data) {
-      // 取得したbase64 PDFをサーバーで結合
-      btn.textContent = sendToLine ? "PDF送信中..." : "PDF結合中...";
-
-      return fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pdf_data: pdf_data,
-          file_name: fileName,
-          send_to_line: sendToLine,
-          customer_name: customerName || null,
-          property_summaries: propertySummaries,
-        }),
+    // Approach A: サーバー代理取得
+    tryProxyMerge(urls, opts)
+      .then(function (data) {
+        handleMergeSuccess(data, btn, origText, sendToLine, fileName);
+        btn.disabled = false;
+        setTimeout(function () { btn.textContent = origText; }, 4000);
+      })
+      .catch(function (e) {
+        console.warn("[AXLX] Approach A 失敗:", e.message, "→ ファイルピッカーに切替");
+        // Approach B: ファイルピッカー（自動切替・確認ダイアログなし）
+        tryPickerMerge(opts);
       });
-    })
-    .then(function (r) { return r.json(); })
-    .then(function (data) {
-      if (!data.ok) throw new Error(data.error || "サーバーエラー");
-
-      // PDFをブラウザにダウンロード
-      var bytes = Uint8Array.from(atob(data.pdf), function (c) { return c.charCodeAt(0); });
-      var blob = new Blob([bytes], { type: "application/pdf" });
-      var a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(function () { a.remove(); }, 100);
-
-      if (sendToLine && data.line_sent) {
-        btn.textContent = "✅ LINE送信完了！";
-      } else if (sendToLine) {
-        btn.textContent = "✅ PDF完成（LINE設定なし）";
-      } else {
-        btn.textContent = "✅ PDF完成！";
-      }
-    })
-    .catch(function (e) {
-      console.error("[AXLX] PDF結合エラー:", e);
-      if (confirm("PDFの取得に失敗しました。\nエラー: " + e.message + "\n\n個別ダウンロードに切り替えますか？")) {
-        bulkDownload();
-      }
-      btn.textContent = origText;
-    })
-    .finally(function () {
-      btn.disabled = false;
-      setTimeout(function () { btn.textContent = origText; }, 4000);
-    });
   }
 
   // ── Canvas生成（共通ヘルパー）────────────────────────
