@@ -122,7 +122,7 @@ export default function PropertyTasksPage() {
       </header>
 
       {/* リスト */}
-      <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2.5">
+      <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-2.5">
         {loading ? (
           <div className="flex items-center justify-center py-16 text-[#8696a0]">読み込み中...</div>
         ) : visibleTasks.length === 0 ? (
