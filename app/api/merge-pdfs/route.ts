@@ -138,7 +138,10 @@ export async function POST(req: NextRequest) {
     const mergedBytes = await merged.save();
     const base64Result = Buffer.from(mergedBytes).toString("base64");
     const today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
-    const name = file_name || `物件まとめ_${today}.pdf`;
+    // タイムスタンプで一意なファイル名にしてCDNキャッシュの古いPDF誤返却を防ぐ
+    // allowOverwrite:true でも Vercel Blob CDN は同じURLをキャッシュし続けるため
+    const baseName = (file_name || `物件まとめ_${today}`).replace(/\.pdf$/i, "");
+    const name = `${baseName}_${Date.now()}.pdf`;
 
     // LINE送信
     if (send_to_line) {
@@ -152,11 +155,10 @@ export async function POST(req: NextRequest) {
       try {
         const { put, del } = await import("@vercel/blob");
 
-        // 結合済みPDFをBlobに保存
+        // 結合済みPDFをBlobに保存（一意なファイル名なので allowOverwrite 不要）
         const blob = await put(name, Buffer.from(mergedBytes), {
           access: "public",
           contentType: "application/pdf",
-          allowOverwrite: true,
         });
 
         // 一時ファイル(itandiアップ分)を削除してBlobストレージを掃除
