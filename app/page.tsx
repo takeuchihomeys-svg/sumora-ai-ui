@@ -1768,9 +1768,6 @@ export default function Home() {
                               審査中
                             </span>
                           )}
-                          {linkedCustomerMap[conversation.id] && (
-                            <span className="shrink-0 text-[11px] text-gray-400">🏷</span>
-                          )}
                           {(() => {
                             const linked = linkedCustomerMap[conversation.id];
                             if (!linked?.propertyStatus) return null;
