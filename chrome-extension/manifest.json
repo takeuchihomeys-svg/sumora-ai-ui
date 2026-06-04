@@ -26,7 +26,8 @@
     "clipboardWrite",
     "scripting",
     "cookies",
-    "debugger"
+    "debugger",
+    "downloads"
   ],
   "web_accessible_resources": [
     {
