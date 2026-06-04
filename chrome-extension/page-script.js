@@ -477,7 +477,8 @@
   function fillRealpro(cond) {
     if (!cond) return;
 
-    // 連続検索対応: モーダルを閉じる → リセット → 条件入力 の順で実行
+    // 連続検索対応: モーダルを閉じる → フォームを手動クリア → 条件入力 の順で実行
+    // ※ リセットボタンはページ遷移を引き起こすため使用しない（ページ遷移するとスクリプトが死ぬ）
     function _doReset(callback) {
       // Step1: 開いているモーダルを先に閉じる
       var closeBtn = [].slice.call(document.querySelectorAll("a, button, div, span")).find(function(el) {
@@ -487,20 +488,34 @@
       var closeDelay = 0;
       if (closeBtn) { closeBtn.click(); closeDelay = 400; console.log("[AX] モーダルを閉じました"); }
 
-      // Step2: モーダル閉鎖後にリセットボタンをクリック
       setTimeout(function() {
-        var resetBtn = [].slice.call(document.querySelectorAll("a, button, input[type='reset'], input[type='button']")).find(function(b) {
-          var t = (b.textContent || b.value || "").trim();
-          return ["リセット","条件全削除","条件クリア","全クリア","クリア"].indexOf(t) >= 0;
+        // Step2: フォームを直接手動クリア（ページ遷移なし・確実にリセット）
+        // チェックボックス系：市区郡・間取り・構造・設備をすべてリセット
+        var checkboxNames = [
+          "city_code[]", "town_code[]",
+          "room_layout_id[]", "structured_type[]", "eq_rm[]",
+        ];
+        checkboxNames.forEach(function(name) {
+          [].slice.call(document.querySelectorAll("input[name='" + name + "']:checked"))
+            .forEach(function(cb) { cb.checked = false; cb.dispatchEvent(new Event("change", {bubbles:true})); });
         });
-        if (resetBtn) {
-          resetBtn.click();
-          console.log("[AX] 条件リセット実行");
-          setTimeout(callback, 800); // リセット反映を待つ
-        } else {
-          console.log("[AX] リセットボタン未検出（そのまま入力）");
-          callback();
-        }
+
+        // セレクト系（賃料・徒歩・交通手段）をリセット
+        var selectNames = ["rental_cost1", "rental_cost2", "transportation_id"];
+        selectNames.forEach(function(name) {
+          var el = document.querySelector("select[name='" + name + "']");
+          if (el) { el.selectedIndex = 0; el.dispatchEvent(new Event("change", {bubbles:true})); }
+        });
+
+        // テキスト・数値入力をクリア
+        var textNames = ["required_time", "structured_date"];
+        textNames.forEach(function(name) {
+          var el = document.querySelector("input[name='" + name + "']");
+          if (el && el.value) { el.value = ""; el.dispatchEvent(new Event("change", {bubbles:true})); }
+        });
+
+        console.log("[AX] フォーム手動クリア完了 → 条件入力開始");
+        setTimeout(callback, 300); // 短い安定待機のみ
       }, closeDelay);
     }
 
