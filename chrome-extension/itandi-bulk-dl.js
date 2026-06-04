@@ -372,7 +372,7 @@
           return lines.join("\n");
         });
 
-        lineBtn.textContent = "Blobアップ中... (0/" + pdfBase64List.length + ")";
+        lineBtn.textContent = "Blobアップ中... (1/" + pdfBase64List.length + ")";
         var today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
         chrome.runtime.sendMessage({
           type:               "axlx-send-pdf-data-to-line",
@@ -405,7 +405,9 @@
         .then(function (b64) {
           console.log("[AXLX] PDF取得成功 " + (i + 1) + "件目 (" + Math.round(b64.length / 1024) + "KB)");
           pdfBase64List.push(b64);
-          return sleep(1500);
+          // PDF取得後にモーダルを明示的に閉じる（次の物件との競合を防ぐ）
+          closeModal();
+          return sleep(1000);
         })
         .then(function () { processNext(i + 1); })
         .catch(function (e) {
@@ -434,6 +436,16 @@
     });
     if (uninj.length > 0) {
       injectTimer = setTimeout(function () { inject(); injectTimer = null; }, 400);
+    }
+  });
+
+  // Blobアップロード進捗をbackground.jsから受け取りボタンテキスト更新
+  chrome.runtime.onMessage.addListener(function (msg) {
+    if (msg.type === "axlx-blob-upload-progress") {
+      var lineBtn = document.getElementById("axlx-itandi-line-btn");
+      if (lineBtn) {
+        lineBtn.textContent = "Blobアップ中... (" + msg.current + "/" + msg.total + ")";
+      }
     }
   });
 

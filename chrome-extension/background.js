@@ -193,6 +193,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const name = `${baseName}_${i + 1}.pdf`;
           const url = await uploadPdfToBlob(msg.pdf_data[i], name);
           blobUrls.push(url);
+          // タブにアップロード進捗を通知（ボタンテキスト更新のため）
+          if (sender.tab?.id) {
+            chrome.tabs.sendMessage(sender.tab.id, {
+              type: "axlx-blob-upload-progress",
+              current: i + 1,
+              total: msg.pdf_data.length,
+            }).catch(() => {});
+          }
         }
 
         // Step2: URLでまとめてmerge → LINE送信（リアプロと同じ仕組み）

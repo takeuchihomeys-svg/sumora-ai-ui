@@ -150,12 +150,23 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: false, error: "hanbancyo_settings に group_id が登録されていません" }, { status: 500 });
       }
       try {
-        const { put } = await import("@vercel/blob");
+        const { put, del } = await import("@vercel/blob");
+
+        // 結合済みPDFをBlobに保存
         const blob = await put(name, Buffer.from(mergedBytes), {
           access: "public",
           contentType: "application/pdf",
           allowOverwrite: true,
         });
+
+        // 一時ファイル(itandiアップ分)を削除してBlobストレージを掃除
+        // pdf_urlsが提供されていた場合（=itandi方式）、アップロードした一時ファイルを削除
+        if (pdf_urls && pdf_urls.length > 0) {
+          del(pdf_urls).catch((e) =>
+            console.warn("[merge-pdfs] 一時Blob削除失敗（無視して続行）:", e)
+          );
+        }
+
         const lineText = buildLineMessage(
           blob.url,
           name,
@@ -164,7 +175,6 @@ export async function POST(req: NextRequest) {
           property_summaries,
         );
         await pushLineMessage(groupId, lineText);
-        // LINE送信時はPDFデータは返さない（レスポンスサイズ削減）
         return NextResponse.json({ ok: true, line_sent: true, url: blob.url });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
