@@ -1769,7 +1769,7 @@ export default function Home() {
                             </span>
                           )}
                           {linkedCustomerMap[conversation.id] && (
-                            <span className="shrink-0 text-[11px] text-gray-400">🔗</span>
+                            <span className="shrink-0 text-[11px] text-gray-400">🏷</span>
                           )}
                           {(() => {
                             const linked = linkedCustomerMap[conversation.id];
