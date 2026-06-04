@@ -279,10 +279,12 @@
           var pdfHandler     = null;
           var customEvtHdlr  = null;
           var doneCalled     = false; // 二重呼び出し防止
+          var reinjTimer     = null;  // 動的iframe対応の定期再注入タイマー
 
           var timer = setTimeout(function () {
             window.removeEventListener("message", pdfHandler);
             document.removeEventListener("axlx-pdf-ready", customEvtHdlr);
+            if (reinjTimer) { clearInterval(reinjTimer); reinjTimer = null; }
             closeViewer();
             reject(new Error("タイムアウト（30秒）"));
           }, 30000);
@@ -291,6 +293,7 @@
             if (doneCalled) return; // 両チャネルから同時に受信した場合の重複防止
             doneCalled = true;
             clearTimeout(timer);
+            if (reinjTimer) { clearInterval(reinjTimer); reinjTimer = null; }
             window.removeEventListener("message", pdfHandler);
             document.removeEventListener("axlx-pdf-ready", customEvtHdlr);
             // PDF受信後にビューワーを閉じて、次の行が見える状態にしてresolve
@@ -332,6 +335,7 @@
 
             if (!freshBtn) {
               clearTimeout(timer);
+              if (reinjTimer) { clearInterval(reinjTimer); reinjTimer = null; }
               window.removeEventListener("message", pdfHandler);
               reject(new Error("図面ボタンが見つかりません: " + target.rowKey.slice(0, 20)));
               return;
@@ -342,6 +346,20 @@
             chrome.runtime.sendMessage({ type: "axlx-reins-watch-tab" }, function () {
               console.log("[AX-REINS] 図面クリック:", target.rowKey.slice(0, 25));
               freshBtn.click();
+
+              // 動的iframe対応: クリック後に300msごと最大6回再注入
+              // レインズはボタンクリック後にPDF viewer iframeを生成する場合があり
+              // 生成後に即座にフックを入れて capturePending=true を確保する
+              var reinjCount = 0;
+              reinjTimer = setInterval(function () {
+                if (doneCalled || ++reinjCount > 6) {
+                  clearInterval(reinjTimer);
+                  reinjTimer = null;
+                  return;
+                }
+                console.log("[AX-REINS] 動的iframe対応 再注入(" + reinjCount + "/6)");
+                chrome.runtime.sendMessage({ type: "axlx-inject-pdf-hook" });
+              }, 300);
             });
           }, 200); // MAINワールドのaxlx-start-pdf-capture処理を待つ
         });

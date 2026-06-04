@@ -200,14 +200,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           window.__axlxItandiHookV2 = true;
           window.__axlxCapturePending = false;
 
-          // axlx-start-pdf-capture シグナルをトップレベルwindowで受信
-          // iframeから window.top を経由してシグナルが届く
-          const _listenOn = window.top || window;
-          _listenOn.addEventListener("message", function (e) {
-            if (e.data && e.data.from === "axlx-start-pdf-capture") {
-              window.__axlxCapturePending = true;
-            }
-          });
+          // axlx-start-pdf-capture シグナルを受信してcapturePendingを再セット
+          // window.top.addEventListener は cross-origin iframe で SecurityError → try-catch
+          try {
+            const _listenOn = window.top || window;
+            _listenOn.addEventListener("message", function (e) {
+              if (e.data && e.data.from === "axlx-start-pdf-capture") {
+                window.__axlxCapturePending = true;
+              }
+            });
+          } catch (_ce) {
+            // cross-origin iframe: 自分自身の window でシグナルを受信
+            window.addEventListener("message", function (e) {
+              if (e.data && e.data.from === "axlx-start-pdf-capture") {
+                window.__axlxCapturePending = true;
+              }
+            });
+          }
 
           // Blob URL フック（createObjectURL でPDFを作る場合）
           const origCreate = URL.createObjectURL;
