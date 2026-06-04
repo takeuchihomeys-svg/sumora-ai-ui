@@ -74,6 +74,25 @@ async function fetchLearnedMaps() {
   }
 }
 
+// 間違えて学習したエントリをDBから削除してローカルマップからも除去
+async function deleteLearnedToken(token, type) {
+  try {
+    const endpoint = type === "station" ? "station-map" : "region-map";
+    await fetch(`${API_BASE}/api/${endpoint}?token=${encodeURIComponent(token)}`, { method: "DELETE" });
+    if (type === "station") { delete LEARNED_STATION_MAP[token]; }
+    else                    { delete LEARNED_WARD_MAP[token]; }
+    console.log("[AX] 削除完了:", token, "→ 次回またWeb検索で再解決");
+    // 削除後に再描画して再解決を促す
+    if (selectedCustomer && selectedSite) {
+      const areaVal = document.getElementById("adj-area")?.value || (selectedCustomer.desired_area || selectedCustomer.area || "");
+      showUnknownWarn(computeUnknownTokens(areaVal));
+      renderInstrSteps(selectedSite, buildAdjCustomer(selectedCustomer));
+    }
+  } catch (e) {
+    console.warn("[AX] 削除失敗:", e.message);
+  }
+}
+
 // 未知トークンをWeb検索部隊（/api/token-resolve）で解決→LEARNED_MAPに追加→再描画
 async function resolveUnknownTokensWithAI(tokens, onResolved) {
   if (!tokens || tokens.length === 0) return;
@@ -2213,21 +2232,33 @@ function openInstructions(siteKey) {
         + ' <button id="unknown-resolve-btn" style="margin-left:6px;padding:2px 8px;'
         + 'font-size:11px;background:#1a73e8;color:white;border:none;border-radius:4px;cursor:pointer">✓ 反映する</button>';
     } else {
-      html += '<br>🤖 AI解決中... <span id="ai-resolve-status"></span>';
+      html += '<br>🤖 Web検索で自動解決中... <span id="ai-resolve-status"></span>';
     }
     el.style.display = "block";
     el.innerHTML = html;
 
-    // 解決候補がない場合はAIに自動解決を依頼
+    // 解決候補がない場合はAI+Web検索で自動解決を依頼
     if (!hasResolvable) {
       const unresolvedTokens = analyzed.filter(r => !r.suggestion).map(r => r.original);
       resolveUnknownTokensWithAI(unresolvedTokens, () => {
-        // 解決後に再描画
+        // 解決後: 結果をチェックして「間違い？」ボタンを表示
         if (selectedCustomer && selectedSite) {
           const adjAreaEl = document.getElementById("adj-area");
           const areaVal = adjAreaEl ? adjAreaEl.value : (selectedCustomer.desired_area || selectedCustomer.area || "");
           const stillUnknown = computeUnknownTokens(areaVal);
-          showUnknownWarn(stillUnknown);
+          if (stillUnknown.length === 0) {
+            // 全解決 → 解決結果と「間違い？」ボタンを表示
+            const resolved = unresolvedTokens.map(t => {
+              const w = LEARNED_WARD_MAP[t] || LEARNED_STATION_MAP[t]?.ward;
+              const type = LEARNED_STATION_MAP[t] ? "駅" : "地名";
+              return w ? `<span style="color:#1a73e8;font-weight:bold">${t}→${w}(${type})</span>
+                <button onclick="deleteLearnedToken('${t}','${LEARNED_STATION_MAP[t] ? 'station' : 'region'}')"
+                  style="margin-left:4px;font-size:10px;padding:1px 5px;background:#f44336;color:white;border:none;border-radius:3px;cursor:pointer">✗ 間違い</button>` : t;
+            }).join("　");
+            el.innerHTML = `✅ 自動解決: ${resolved}`;
+          } else {
+            showUnknownWarn(stillUnknown);
+          }
           renderInstrSteps(selectedSite, buildAdjCustomer(selectedCustomer));
         }
       });
@@ -2302,6 +2333,10 @@ function openInstructions(siteKey) {
               lines = STATION_LINE_MAP[prefixResult.resolved]; key = prefixResult.resolved;
             }
           }
+          // LEARNED_STATION_MAPフォールバック（Web検索で学習した駅）
+          if (!lines && LEARNED_STATION_MAP[token]?.realpro_lines?.length > 0) {
+            lines = LEARNED_STATION_MAP[token].realpro_lines; key = token;
+          }
           if (lines && lines.length) {
             if (!matchedStations.includes(key)) matchedStations.push(key);
             lines.forEach(l => { if (!allRpLines.includes(l)) allRpLines.push(l); });
@@ -2311,14 +2346,14 @@ function openInstructions(siteKey) {
 
       const stationClean = tokens[0] || rawArea.replace(/駅|周辺|付近|近く/g, "").trim();
 
-      // 地域トークン収集: 地域モードはWARD_CODE_MAP直接も対象（守口市 等）
+      // 地域トークン収集: NEIGHBORHOOD_WARD_MAP → LEARNED_WARD_MAP の順（守口市等も対象）
       const neighborhoodTokens = currentAreaMode === "ward"
-        ? tokens.filter(t => NEIGHBORHOOD_WARD_MAP[t] || WARD_CODE_MAP[t])
-        : tokens.filter(t => NEIGHBORHOOD_WARD_MAP[t] && !STATION_LINE_MAP[t]);
+        ? tokens.filter(t => resolveWard(t) || WARD_CODE_MAP[t])
+        : tokens.filter(t => resolveWard(t) && !STATION_LINE_MAP[t]);
       const neighborhoodWard = neighborhoodTokens.length > 0
-        ? (NEIGHBORHOOD_WARD_MAP[neighborhoodTokens[0]] || neighborhoodTokens[0])
+        ? (resolveWard(neighborhoodTokens[0]) || neighborhoodTokens[0])
         : null;
-      const allNeighborhoodWards = [...new Set(neighborhoodTokens.map(t => NEIGHBORHOOD_WARD_MAP[t] || t))];
+      const allNeighborhoodWards = [...new Set(neighborhoodTokens.map(t => resolveWard(t) || t))];
 
       // ボタン押下が絶対ルール
       const isWardArea_itandi = currentAreaMode === "ward";

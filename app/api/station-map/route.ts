@@ -19,3 +19,16 @@ export async function GET() {
 
   return NextResponse.json({ stations: data ?? [] });
 }
+
+// DELETE /api/station-map?token=XXX → 間違いエントリを削除して再学習させる
+export async function DELETE(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const token = searchParams.get("token");
+  if (!token) return NextResponse.json({ error: "token required" }, { status: 400 });
+
+  const db = getDb();
+  const { error } = await db.from("station_map").delete().eq("token", token);
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  return NextResponse.json({ ok: true, deleted: token });
+}

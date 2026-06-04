@@ -58,14 +58,32 @@ export async function POST(req: NextRequest) {
   const unknown = tokens.filter((t) => !resolvedTokens.has(t));
   if (unknown.length === 0) return NextResponse.json({ result });
 
+  // ── 1日30回のレート制限（Web検索コスト保護）──────────────────────────
+  const DAILY_LIMIT = 30;
+  const today = new Date().toISOString().slice(0, 10);
+  const [{ data: dateRow }, { data: countRow }] = await Promise.all([
+    db.from("hanbancyo_settings").select("value").eq("key", "token_resolve_date").maybeSingle(),
+    db.from("hanbancyo_settings").select("value").eq("key", "token_resolve_count").maybeSingle(),
+  ]);
+  const savedDate  = dateRow?.value as string | null;
+  const savedCount = savedDate === today ? parseInt(countRow?.value ?? "0", 10) : 0;
+  const webSearchAllowed = savedCount < DAILY_LIMIT;
+
+  if (!webSearchAllowed) {
+    console.warn(`[token-resolve] 1日${DAILY_LIMIT}回制限に達した。AI知識のみで解決。`);
+  }
+
   // ── Web検索部隊: Claude + web_search でトークンを解決 ──────────────
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  let dailyCount = savedCount;
 
   for (const token of unknown) {
     let resolved: ResolvedToken = { type: "unknown", ward: null, realpro_lines: [], itandi_lines: [], reins_line: null, source: "web_search" };
 
     try {
-      // Web検索を使って調査
+      // Web検索を使って調査（レート制限内の場合のみ）
+      if (!webSearchAllowed || dailyCount >= DAILY_LIMIT) throw new Error("rate_limit");
       const searchRes = await anthropic.messages.create({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 1024,
@@ -104,9 +122,15 @@ export async function POST(req: NextRequest) {
           reins_line: parsed.reins_line ?? null,
           source: "web_search",
         };
+        // Web検索成功 → カウンターをインクリメント
+        dailyCount++;
+        await Promise.all([
+          db.from("hanbancyo_settings").upsert({ key: "token_resolve_date",  value: today },      { onConflict: "key" }),
+          db.from("hanbancyo_settings").upsert({ key: "token_resolve_count", value: String(dailyCount) }, { onConflict: "key" }),
+        ]);
       }
     } catch {
-      // web_searchが使えない場合はAI知識のみでフォールバック
+      // web_searchが使えない・制限超過の場合はAI知識のみでフォールバック
       try {
         const fallbackRes = await anthropic.messages.create({
           model: "claude-haiku-4-5-20251001",
