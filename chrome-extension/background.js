@@ -119,6 +119,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           URL.createObjectURL = function (blob) {
             const url = origCreate.call(URL, blob);
             const t = (blob && blob.type) || "";
+            // 診断: PDF/octetのblob作成を全てログ（capturePending問わず）
+            if (t.includes("pdf") || t === "application/octet-stream") {
+              console.log("[AXLX DIAG] createObjectURL PDF:", t, Math.round(blob.size / 1024) + "KB", "pending:", window.__axlxCapturePending);
+            }
             if ((t.includes("pdf") || t === "application/octet-stream") && window.__axlxCapturePending) {
               window.__axlxCapturePending = false;
               window.__axlxLastBlobUrl = url; // window.open 抑制用に URL を保存
@@ -160,6 +164,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const origOpen = window.open;
           window.open = function (...args) {
             const url = String(args[0] || "");
+            // 診断: 全window.open呼び出しをログ
+            console.log("[AXLX DIAG] window.open:", url.slice(0, 80), "| target:", args[1], "| pending:", window.__axlxCapturePending);
             const isBlobPdf = url.startsWith("blob:") || /\.pdf(\?|$)/i.test(url);
             // ケース1: createObjectURLで既にキャプチャ済みのblob URL → 抑制のみ
             // createObjectURL後はcapturePending=falseになるため別フラグで判定する

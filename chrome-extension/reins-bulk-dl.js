@@ -267,7 +267,14 @@
 
       waitForRows(function () {
         // 毎件フックを再注入（レインズがSPA遷移でMAINワールド状態をリセットする場合に対応）
-        chrome.runtime.sendMessage({ type: "axlx-inject-pdf-hook" }, function () {
+        console.log("[AX-REINS] フック注入開始:", target.rowKey.slice(0, 25));
+        chrome.runtime.sendMessage({ type: "axlx-inject-pdf-hook" }, function (resp) {
+          if (chrome.runtime.lastError || !resp || !resp.ok) {
+            console.error("[AX-REINS] フック注入失敗:", chrome.runtime.lastError?.message || resp?.error);
+            reject(new Error("フック注入失敗"));
+            return;
+          }
+          console.log("[AX-REINS] フック注入OK");
           var captureStart = Date.now();
           var pdfHandler   = null;
 
@@ -313,6 +320,14 @@
               return;
             }
 
+            // 診断: ボタン属性をログ（レインズのPDF URLパターン特定のため）
+            console.log("[AX-REINS] 図面ボタン属性:", {
+              onclick: freshBtn.getAttribute("onclick"),
+              dataset: JSON.stringify(freshBtn.dataset),
+              name: freshBtn.getAttribute("name"),
+              value: freshBtn.getAttribute("value"),
+              parentHtml: freshBtn.parentElement?.outerHTML?.slice(0, 300),
+            });
             console.log("[AX-REINS] 図面クリック:", target.rowKey.slice(0, 25));
             freshBtn.click();
           }, 200); // MAINワールドのaxlx-start-pdf-capture処理を待つ
