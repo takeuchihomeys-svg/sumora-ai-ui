@@ -1580,14 +1580,11 @@ export default function Home() {
                 return (
                   <button
                     onClick={() => setShowGroupFilter((v) => !v)}
-                    className={`flex w-[104px] items-center justify-center gap-1 rounded-full py-1.5 ${fs} font-bold shadow-sm transition-all`}
-                    style={statusFilter !== "all"
-                      ? { background: "linear-gradient(135deg, #1565C0, #4BA8E8)", color: "white" }
-                      : { background: "#f0f2f5", color: "#1565C0" }
-                    }
+                    className={`flex items-center gap-0.5 ${fs} font-bold transition-all`}
+                    style={{ color: statusFilter !== "all" ? "#1565C0" : "#1565C0" }}
                   >
                     {lbl}
-                    <span className="text-[9px]">{showGroupFilter ? "▲" : "▼"}</span>
+                    <span className="text-[9px] text-[#90caf9]">{showGroupFilter ? "▲" : "▼"}</span>
                   </button>
                 );
               })()}
@@ -1754,9 +1751,7 @@ export default function Home() {
                             </span>
                           )}
                           {linkedCustomerMap[conversation.id] && (
-                            <span className="shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 text-[9px] font-bold text-gray-400">
-                              🔗
-                            </span>
+                            <span className="shrink-0 text-[11px] text-gray-400">🔗</span>
                           )}
                           {(() => {
                             const linked = linkedCustomerMap[conversation.id];
