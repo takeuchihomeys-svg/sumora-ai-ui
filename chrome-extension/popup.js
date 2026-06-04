@@ -2667,6 +2667,13 @@ function openInstructions(siteKey) {
         reins_line:     isStationMode ? reinsLine : null,
         station_name:   isStationMode ? (reinsStationPairs[0]?.station || null) : null,
         ward_name:      !isStationMode ? rawArea : null,
+        // 区ごとに1行ずつ入れるため、解決済みフル区名の配列を渡す（最大3件）
+        ward_names:     !isStationMode ? areaToks.map(tok => {
+          const r = resolveWard(tok);
+          if (r) return r;                    // "東住吉区" → "大阪市東住吉区"
+          if (WARD_CODE_MAP[tok]) return tok; // すでにフル区名
+          return tok;                         // 生トークン（フォールバック）
+        }).filter(Boolean).slice(0, 3) : [],
         pet_ok:         adjPet,
         reins_reg_date: adjRegDate || null,
       };

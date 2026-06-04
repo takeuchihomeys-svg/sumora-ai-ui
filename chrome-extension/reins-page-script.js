@@ -83,12 +83,22 @@
     selectByText(getField(5), "賃貸マンション");
     await sleep(600);
 
-    // ② 所在地1（ward_name）または 沿線名1（reins_line）
-    if (cond.ward_name) {
-      // 所在地モード: 都道府県名(27) + 所在地名1(28)
-      setVal(getField(27), "大阪府");
+    // ② 所在地（ward_names）または 沿線名（reins_line）
+    // 診断結果: 都道府県名[23,26,29] + 所在地名1[24,27,30] の3行構造
+    // 行1=[23,24] / 行2=[26,27] / 行3=[29,30]
+    if (cond.ward_names && cond.ward_names.length > 0) {
+      // 複数区モード: 区ごとに別の行に入力（最大3区）
+      var rowBases = [23, 26, 29];
+      for (var wi = 0; wi < cond.ward_names.length && wi < 3; wi++) {
+        setVal(getField(rowBases[wi]),     "大阪府");
+        await sleep(200);
+        setVal(getField(rowBases[wi] + 1), cond.ward_names[wi]);
+      }
+    } else if (cond.ward_name) {
+      // フォールバック: 旧方式の生テキスト → 行1に入れる
+      setVal(getField(23), "大阪府");
       await sleep(300);
-      setVal(getField(28), cond.ward_name);
+      setVal(getField(24), cond.ward_name);
     } else if (cond.reins_line) {
       // 沿線モード: 駅ごとに正しい沿線を対応させて入力（最大3駅）
       var sensenIdxs = [47, 54, 61];
