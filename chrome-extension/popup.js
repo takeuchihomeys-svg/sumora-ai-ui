@@ -15,7 +15,7 @@ async function seedMapsIfEmpty() {
       fetch(`${API_BASE}/api/station-map`),
     ]);
     const [rd, sd] = await Promise.all([rRes.json(), sRes.json()]);
-    if ((rd.regions || []).length > 0 || (sd.stations || []).length > 0) return;
+    if ((rd.regions || []).length > 0 && (sd.stations || []).length > 0) return;
 
     console.log("[AX] DBが空 → 既存マップをシード中...");
 
@@ -1104,12 +1104,12 @@ function buildAreaRouteCodes(c, mode = "auto") {
       continue;
     }
     if (mode === "station") {
-      // 駅モード: WARD_CODE_MAPを無視してSTATION_LINE_MAPのみで解決
+      // 駅モード: STATION_LINE_MAP → LEARNED_STATION_MAP の順で路線を解決
       const station = resolveStation(part);
       const stationKey = station || part;
       const ward = STATION_WARD_MAP[stationKey] || findStationWard(part);
       if (ward && WARD_CODE_MAP[ward] && !city_codes.includes(WARD_CODE_MAP[ward])) city_codes.push(WARD_CODE_MAP[ward]);
-      const lines = STATION_LINE_MAP[stationKey] || [];
+      const lines = STATION_LINE_MAP[stationKey] || LEARNED_STATION_MAP[stationKey]?.realpro_lines || [];
       lines.forEach(l => { const id = LINE_ROUTE_MAP[l]; if (id && !route_ids.includes(id)) route_ids.push(id); });
       continue;
     }
@@ -1128,7 +1128,7 @@ function buildAreaRouteCodes(c, mode = "auto") {
     const stationKey = station || part;
     const ward = STATION_WARD_MAP[stationKey] || findStationWard(part);
     if (ward && WARD_CODE_MAP[ward] && !city_codes.includes(WARD_CODE_MAP[ward])) city_codes.push(WARD_CODE_MAP[ward]);
-    const lines = STATION_LINE_MAP[stationKey] || [];
+    const lines = STATION_LINE_MAP[stationKey] || LEARNED_STATION_MAP[stationKey]?.realpro_lines || [];
     lines.forEach(l => { const id = LINE_ROUTE_MAP[l]; if (id && !route_ids.includes(id)) route_ids.push(id); });
   }
   return { city_codes, route_ids };

@@ -204,16 +204,16 @@ async function autoUpgradeToHot(db: ReturnType<typeof getDb>, userId: string) {
 }
 
 function isFormatMessage(text: string): boolean {
-  // 丸数字が1つ以上 → フォーマットと判定（①-⑮まで対応）
-  if (/[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮]/.test(text)) return true;
-  // 条件キーワードが1つ以上 → AI解析対象に（間取り・家賃・エリア等）
+  // 丸数字が2つ以上 → フォーマットと判定（①-⑮まで対応）
+  if ((text.match(/[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮]/g) ?? []).length >= 2) return true;
+  // 条件キーワードが2個以上含まれる → AI解析対象（1個だけは日常会話の誤検知が多い）
   const keywords = [
     "入居時期", "希望家賃", "家賃", "希望地域", "希望エリア", "間取り", "徒歩",
     "初期費用", "築年数", "エリア", "LDK", "DK", "1K", "2K", "3K", "1R",
-    "万以内", "万円以内", "万円まで", "以内で", "ペット", "駐車場", "独立洗面",
+    "万以内", "万円以内", "万円まで", "ペット可", "駐車場", "独立洗面",
     "バストイレ別", "オートロック", "駅近", "築浅",
   ];
-  return keywords.some((k) => text.includes(k));
+  return keywords.filter((k) => text.includes(k)).length >= 2;
 }
 
 async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, text: string, account: AccountConfig) {
