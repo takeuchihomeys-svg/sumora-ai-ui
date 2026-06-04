@@ -47,7 +47,7 @@ function buildLineMessage(
 }
 
 async function pushLineMessage(groupId: string, text: string) {
-  await fetch("https://api.line.me/v2/bot/message/push", {
+  const res = await fetch("https://api.line.me/v2/bot/message/push", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -58,6 +58,10 @@ async function pushLineMessage(groupId: string, text: string) {
       messages: [{ type: "text", text }],
     }),
   });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`LINE API エラー HTTP ${res.status}: ${body.slice(0, 200)}`);
+  }
 }
 
 async function fetchPdfAsBase64(url: string, cookieStr: string): Promise<string> {
