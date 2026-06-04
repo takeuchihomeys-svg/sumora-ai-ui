@@ -6,42 +6,45 @@ const API_BASE = "https://sumora-ai-ui.vercel.app";
 const LEARNED_WARD_MAP    = {};  // 地名 → 市区
 const LEARNED_STATION_MAP = {};  // 駅名 → { ward, realpro_lines[], itandi_lines[], reins_line }
 
-// 既存ハードコードデータをSupabaseにシード（DBが空のとき一度だけ実行）
+// ハードコードマップとSupabase DBを差分sync（DBにないtokenだけupsert）
 async function seedMapsIfEmpty() {
   try {
-    // DBに1件でもあればスキップ
     const [rRes, sRes] = await Promise.all([
       fetch(`${API_BASE}/api/region-map`),
       fetch(`${API_BASE}/api/station-map`),
     ]);
     const [rd, sd] = await Promise.all([rRes.json(), sRes.json()]);
-    if ((rd.regions || []).length > 0 && (sd.stations || []).length > 0) return;
 
-    console.log("[AX] DBが空 → 既存マップをシード中...");
+    const dbRegionTokens  = new Set((rd.regions  || []).map(r => r.token));
+    const dbStationTokens = new Set((sd.stations || []).map(s => s.token));
 
-    // ① NEIGHBORHOOD_WARD_MAP → region_map
-    const regions = Object.entries(NEIGHBORHOOD_WARD_MAP).map(([token, ward]) => ({
-      token, ward, source: "hardcoded", confidence: 100,
-    }));
+    // DBにないtokenだけ抽出
+    const regions = Object.entries(NEIGHBORHOOD_WARD_MAP)
+      .filter(([token]) => !dbRegionTokens.has(token))
+      .map(([token, ward]) => ({ token, ward, source: "hardcoded", confidence: 100 }));
 
-    // ② STATION_LINE_MAP → station_map（itandi/reins路線名も変換して保存）
-    const stations = Object.entries(STATION_LINE_MAP).map(([token, rpLines]) => {
-      const ward = STATION_WARD_MAP[token] || null;
-      const itandiLines = rpLines.flatMap(l => {
-        const v = ITANDI_LINE_MAP_FILL[l];
-        return v ? (Array.isArray(v) ? v : [v]) : [];
+    const stations = Object.entries(STATION_LINE_MAP)
+      .filter(([token]) => !dbStationTokens.has(token))
+      .map(([token, rpLines]) => {
+        const ward = STATION_WARD_MAP[token] || null;
+        const itandiLines = rpLines.flatMap(l => {
+          const v = ITANDI_LINE_MAP_FILL[l];
+          return v ? (Array.isArray(v) ? v : [v]) : [];
+        });
+        const reinsLine = REINS_LINE_MAP[rpLines[0]] || null;
+        return { token, ward, realpro_lines: rpLines, itandi_lines: itandiLines, reins_line: reinsLine, source: "hardcoded", confidence: 100 };
       });
-      const reinsLine = REINS_LINE_MAP[rpLines[0]] || null;
-      return { token, ward, realpro_lines: rpLines, itandi_lines: itandiLines, reins_line: reinsLine, source: "hardcoded", confidence: 100 };
-    });
 
+    if (regions.length === 0 && stations.length === 0) return;
+
+    console.log("[AX] 差分sync: 地名", regions.length, "件 / 駅", stations.length, "件 を追加");
     const res = await fetch(`${API_BASE}/api/seed-maps`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ regions, stations }),
     });
     const result = await res.json();
-    console.log("[AX] シード完了:", result);
+    console.log("[AX] 差分sync完了:", result);
   } catch (e) {
     console.warn("[AX] seed失敗:", e.message);
   }
@@ -142,6 +145,34 @@ function normalizeNumerals(s) {
     .replace(/十丁目/g, "10丁目");
 }
 
+// セパレーターなしで連結された複数駅名を分解（例: "寝屋川萱島大和田古川橋門真" → ["寝屋川市","萱島","大和田","古川橋","門真市"]）
+function decomposeToken(token) {
+  if (token.length < 4) return null;
+  const keys = Object.keys(STATION_LINE_MAP);
+  // 候補: 完全一致 + "市/区"なしバリアント（寝屋川→寝屋川市 など）
+  const candidates = [];
+  for (const k of keys) {
+    candidates.push({ match: k, result: k });
+    if (k.endsWith("市") || k.endsWith("区")) {
+      candidates.push({ match: k.slice(0, -1), result: k });
+    }
+  }
+  candidates.sort((a, b) => b.match.length - a.match.length);
+  const n = token.length;
+  const dp = new Array(n + 1).fill(null);
+  dp[0] = [];
+  for (let i = 1; i <= n; i++) {
+    for (const { match, result } of candidates) {
+      const len = match.length;
+      if (i >= len && token.slice(i - len, i) === match && dp[i - len] !== null) {
+        dp[i] = [...dp[i - len], result];
+        break;
+      }
+    }
+  }
+  return (dp[n] !== null && dp[n].length >= 2) ? dp[n] : null;
+}
+
 // 「第一希望:枚方市」「大阪府以外:奈良」などのラベルプレフィックスと方向サフィックスを除去してエリアトークンを分解
 function parseAreaTokens(rawArea) {
   if (!rawArea) return [];
@@ -152,15 +183,24 @@ function parseAreaTokens(rawArea) {
     .replace(/([^\s,、・\/]+?)[〜～]([^\s,、・\/]+)/g, "$1,$2")
     // 「Aか B」「AやB」「AまたはB」→ カンマ区切りに変換（例:「豊崎か北区」→「豊崎,北区」）
     .replace(/([^\s,、・\/～〜]{1,10})\s*[かや]\s*([^\s,、・\/～〜]{1,10})/g, "$1,$2");
-  return expanded
+  const raw = expanded
     .split(/[,、・\/\s]+|又は|もしくは/)
     .map(t => t.replace(/^[^:]+:/, "")             // 「第一希望:」「第二希望:」「大阪府以外:」などを除去
                 .replace(/以南$|以北$|以西$|以東$/, "") // 方向サフィックスを除去
+                .replace(/の[南北東西](の方)?$|の方$/, "") // 「八尾の南の方」→「八尾」「東淀川の方」→「東淀川」
                 .replace(/通勤\d+分圏内|通勤\d+分以内|\d+分圏内/g, "") // 「通勤20分圏内」などを除去
                 .replace(/駅|周辺|付近|近く|沿線|エリア|あたり/g, "")
                 .trim())
     .map(normalizeNumerals)
     .filter(t => t.length >= 1);
+  // 連結駅名を自動分解（例: "寝屋川萱島大和田古川橋門真"）
+  const result = [];
+  for (const t of raw) {
+    const decomposed = decomposeToken(t);
+    if (decomposed) result.push(...decomposed);
+    else result.push(t);
+  }
+  return result;
 }
 
 function findStationWard(areaText) {

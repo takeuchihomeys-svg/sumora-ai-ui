@@ -311,11 +311,24 @@
         appeared = true;
         modalObs.disconnect();
         modalObs = null;
-        // モーダルのアニメーション完了を待ってから操作（300ms: 600msから短縮）
-        setTimeout(interactWithModal, 300);
+        setTimeout(interactWithModal, 500);
       });
       modalObs.observe(document.body, { childList: true, subtree: true });
     });
+  }
+
+  // ── PDF取得リトライラッパー（最大1回リトライ・失敗時フック再注入） ──
+  async function captureOnePdfWithRetry(btn) {
+    try {
+      return await captureOnePdf(btn);
+    } catch (e) {
+      console.warn("[AXLX] PDF取得失敗（1回目）→ リトライ:", e.message);
+      closeModal();
+      pdfHookInjected = false;
+      ensurePdfHook();
+      await sleep(1200);
+      return captureOnePdf(btn);
+    }
   }
 
   // ── モーダルを閉じる ─────────────────────────────────────────────────
@@ -421,20 +434,19 @@
       }
 
       lineBtn.textContent = "PDF取得中... (" + (i + 1) + "/" + targets.length + ")";
-      captureOnePdf(targets[i].btn)
+      captureOnePdfWithRetry(targets[i].btn)
         .then(function (result) {
           var b64  = result.b64;
           var name = result.name;
           console.log("[AXLX] PDF取得成功 " + (i + 1) + "件目 (" + Math.round(b64.length / 1024) + "KB) 物件名:" + (name || "不明"));
           pdfBase64List.push(b64);
           capturedNames.push(name);
-          // PDF取得後にモーダルを明示的に閉じる（次の物件との競合を防ぐ）
           closeModal();
           return sleep(500);
         })
         .then(function () { processNext(i + 1); })
         .catch(function (e) {
-          console.error("[AXLX] PDF取得失敗 " + (i + 1) + "件目:", e.message);
+          console.warn("[AXLX] PDF取得失敗（リトライ後も失敗） " + (i + 1) + "件目:", e.message);
           closeModal();
           sleep(800).then(function () { processNext(i + 1); });
         });
