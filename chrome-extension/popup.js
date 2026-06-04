@@ -541,8 +541,8 @@ function resolveWithLinePrefixes(token) {
       if (via) return { resolved: via, type: "station" };
       // WARD_CODE_MAP（市区郡名）
       if (WARD_CODE_MAP[stripped]) return { resolved: stripped, type: "ward" };
-      // NEIGHBORHOOD_WARD_MAP（地名）
-      if (NEIGHBORHOOD_WARD_MAP[stripped]) return { resolved: stripped, type: "ward" };
+      // NEIGHBORHOOD_WARD_MAP + LEARNED_WARD_MAP（地名）
+      if (resolveWard(stripped)) return { resolved: stripped, type: "ward" };
     }
   }
   return null;
@@ -1232,8 +1232,8 @@ const SITE_CONFIG = {
       const d = buildCondData(c, mode);
       const areaText = d.area || "";
       const areaClean = normalizeNumerals(areaText.replace(/周辺|付近|近く|エリア/g, "").trim());
-      const neighborhoodWard = (NEIGHBORHOOD_WARD_MAP[areaClean] && !STATION_LINE_MAP[areaClean])
-        ? NEIGHBORHOOD_WARD_MAP[areaClean] : null;
+      const _resolvedWard = resolveWard(areaClean);
+      const neighborhoodWard = (_resolvedWard && !STATION_LINE_MAP[areaClean]) ? _resolvedWard : null;
 
       // ボタン押下が絶対ルール。未選択時のみ自動判定
       let isLocation, isStation;
@@ -2565,7 +2565,7 @@ function openInstructions(siteKey) {
       const detailNeighborhood = (searchMode === "pinpoint" && neighPart) ? neighPart : null;
       // detail_ward: detail_areaがある時だけモーダルを使う
       // 区名だけの場合はcity_codesの直接チェックで複数区を同時選択（例:北区+福島区）
-      const detailWard = detailNeighborhood ? NEIGHBORHOOD_WARD_MAP[neighPart] : null;
+      const detailWard = detailNeighborhood ? resolveWard(neighPart) : null;
 
       // 広げて検索：賃料上限を自動拡張
       // preloadAdjFormで初期値が入るためadjRentMaxは常にtruthy。
