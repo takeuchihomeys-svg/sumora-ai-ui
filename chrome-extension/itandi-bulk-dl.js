@@ -249,7 +249,7 @@
           }
         }
 
-        sleep(400).then(function () {
+        sleep(200).then(function () {
           var pdfBtn =
             document.querySelector('.itandi-bb-ui__ModalFooter__Right button') ||
             document.querySelector('button.itandi-bb-ui__Button__Variant--primary[type="submit"]') ||
@@ -311,8 +311,8 @@
         appeared = true;
         modalObs.disconnect();
         modalObs = null;
-        // モーダルのアニメーション完了を待ってから操作
-        setTimeout(interactWithModal, 600);
+        // モーダルのアニメーション完了を待ってから操作（300ms: 600msから短縮）
+        setTimeout(interactWithModal, 300);
       });
       modalObs.observe(document.body, { childList: true, subtree: true });
     });
@@ -430,7 +430,7 @@
           capturedNames.push(name);
           // PDF取得後にモーダルを明示的に閉じる（次の物件との競合を防ぐ）
           closeModal();
-          return sleep(1000);
+          return sleep(500);
         })
         .then(function () { processNext(i + 1); })
         .catch(function (e) {
