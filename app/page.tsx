@@ -343,12 +343,9 @@ export default function Home() {
   const replyTargetCustomerMsgRef = useRef<string>("");
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conversationsRef = useRef<Conversation[]>([]);
-  const [navHidden, setNavHidden] = useState(false);
-
   const handleListScroll = () => {
-    setNavHidden(true);
+    // スクロール時もBottomNavは常に表示（pull-to-refreshトリガー用）
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
-    scrollTimerRef.current = setTimeout(() => setNavHidden(false), 600);
   };
 
   useEffect(() => {
@@ -1694,7 +1691,7 @@ export default function Home() {
                     onTouchMove={cancelConvLongPress}
                     onContextMenu={(e) => { e.preventDefault(); toggleFlaggedConv(conversation.id); }}
                     style={{ WebkitUserSelect: "none", userSelect: "none" }}
-                    className={`flex w-full items-center gap-3 border-b border-[#f0f2f5] px-4 py-3 text-left transition ${
+                    className={`flex w-full items-center gap-3 px-4 py-3 text-left transition ${
                       isActive ? "bg-[#f0f2f5]" : postApplyConvIds.has(conversation.id) ? "bg-[#e3f2fd] hover:bg-[#daeaf8]" : "bg-white hover:bg-[#f5f6f6]"
                     }`}
                   >
@@ -2236,7 +2233,7 @@ export default function Home() {
 
       {/* チャット中(モバイル)は非表示、一覧表示中・PCは常に表示 */}
       <div className={showChatOnMobile ? "hidden md:block" : "block"}>
-        <BottomNav unreadCount={needsReplyCount} hidden={navHidden} />
+        <BottomNav unreadCount={needsReplyCount} hidden={false} />
       </div>
 
       {/* トーク一覧 長押しメニュー */}
