@@ -96,10 +96,10 @@ function getInitial(name: string) {
 
 // \u30a2\u30ab\u30a6\u30f3\u30c8\u5b9a\u7fa9\uff08\u30d5\u30a3\u30eb\u30bf\u30fc\u30fb\u30d0\u30c3\u30b8\u30fb\u30d4\u30c3\u30ab\u30fc\u5171\u901a\uff09
 const ACCOUNT_LIST = [
-  { key: "sumora", label: "\u30b9\u30e2\u30e9",   icon: "\ud83e\udd95", image: "/images/sumora-mascot.png",  color: "bg-purple-100 text-purple-700" },
-  { key: "ieyasu", label: "\u30a4\u30a8\u30e4\u30b9", icon: "\u26e9\ufe0f", image: "/images/ieyasu-mascot.png", color: "bg-amber-100 text-amber-700" },
-  { key: "giga",   label: "\u30ae\u30ac\u8cc3\u8cb8", icon: "\ud83d\udc26", image: "/images/giga-mascot.png",   color: "bg-teal-100 text-teal-700" },
-  { key: "hasu",   label: "\u30cf\u30b9",     icon: "\ud83c\udf38", image: null,                         color: "bg-pink-100 text-pink-700" },
+  { key: "sumora", label: "\u30b9\u30e2\u30e9",   icon: "\ud83e\udd95", image: "/images/sumora-mascot.png",  color: "bg-gray-100 text-gray-400" },
+  { key: "ieyasu", label: "\u30a4\u30a8\u30e4\u30b9", icon: "\u26e9\ufe0f", image: "/images/ieyasu-mascot.png", color: "bg-gray-100 text-gray-400" },
+  { key: "giga",   label: "\u30ae\u30ac\u8cc3\u8cb8", icon: "\ud83d\udc26", image: "/images/giga-mascot.png",   color: "bg-gray-100 text-gray-400" },
+  { key: "hasu",   label: "\u30cf\u30b9",     icon: "\ud83c\udf38", image: null,                         color: "bg-gray-100 text-gray-400" },
 ] as const;
 type AccountKey = typeof ACCOUNT_LIST[number]["key"];
 
@@ -1746,7 +1746,7 @@ export default function Home() {
                             </span>
                           )}
                           {linkedCustomerMap[conversation.id] && (
-                            <span className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">
+                            <span className="shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 text-[9px] font-bold text-gray-400">
                               🔗
                             </span>
                           )}
