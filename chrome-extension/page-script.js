@@ -500,15 +500,16 @@
             .forEach(function(cb) { cb.checked = false; cb.dispatchEvent(new Event("change", {bubbles:true})); });
         });
 
-        // セレクト系（賃料・徒歩・交通手段）をリセット
-        var selectNames = ["rental_cost1", "rental_cost2", "transportation_id"];
+        // セレクト系をリセット（structured_date=築年数 / square_meter=面積 も select要素）
+        var selectNames = ["rental_cost1", "rental_cost2", "transportation_id",
+                           "structured_date", "square_meter_l", "square_meter_h"];
         selectNames.forEach(function(name) {
           var el = document.querySelector("select[name='" + name + "']");
           if (el) { el.selectedIndex = 0; el.dispatchEvent(new Event("change", {bubbles:true})); }
         });
 
-        // テキスト・数値入力をクリア
-        var textNames = ["required_time", "structured_date"];
+        // テキスト・数値入力をクリア（required_timeのみ input 要素）
+        var textNames = ["required_time"];
         textNames.forEach(function(name) {
           var el = document.querySelector("input[name='" + name + "']");
           if (el && el.value) { el.value = ""; el.dispatchEvent(new Event("change", {bubbles:true})); }
