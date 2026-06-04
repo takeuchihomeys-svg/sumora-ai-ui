@@ -134,6 +134,21 @@ function resolveWard(token) {
   return NEIGHBORHOOD_WARD_MAP[token] || LEARNED_WARD_MAP[token] || null;
 }
 
+// 「鶴見区横堤」→「鶴見区」→「大阪市鶴見区」のように先頭の市区郡部分で部分一致解決
+function resolveWardLoose(token) {
+  const direct = resolveWard(token);
+  if (direct) return direct;
+  if (WARD_CODE_MAP[token]) return token;
+  // 先頭の「〜市/区/郡」部分を切り出して再解決（「鶴見区横堤」→「鶴見区」）
+  const m = token.match(/^(.+?[市区郡])/);
+  if (m) {
+    const partial = m[1];
+    const r = resolveWard(partial) || (WARD_CODE_MAP[partial] ? partial : null);
+    if (r) return r;
+  }
+  return null;
+}
+
 
 // 漢数字・全角数字 → 半角算用数字に正規化（「五丁目」→「5丁目」など）
 function normalizeNumerals(s) {
@@ -189,7 +204,7 @@ function parseAreaTokens(rawArea) {
                 .replace(/以南$|以北$|以西$|以東$/, "") // 方向サフィックスを除去
                 .replace(/の[南北東西](の方)?$|の方$/, "") // 「八尾の南の方」→「八尾」「東淀川の方」→「東淀川」
                 .replace(/通勤\d+分圏内|通勤\d+分以内|\d+分圏内/g, "") // 「通勤20分圏内」などを除去
-                .replace(/駅|周辺|付近|近く|沿線|エリア|あたり/g, "")
+                .replace(/駅|周辺|付近|近く|近辺|沿線|エリア|あたり/g, "")
                 .trim())
     .map(normalizeNumerals)
     .filter(t => t.length >= 1);
@@ -1508,13 +1523,14 @@ function openInstructions(siteKey) {
       const stationClean = tokens[0] || rawArea.replace(/駅|周辺|付近|近く/g, "").trim();
 
       // 地域トークン収集: NEIGHBORHOOD_WARD_MAP → LEARNED_WARD_MAP の順（守口市等も対象）
+      // resolveWardLoose で「鶴見区横堤」→「大阪市鶴見区」のような部分一致も解決
       const neighborhoodTokens = currentAreaMode === "ward"
-        ? tokens.filter(t => resolveWard(t) || WARD_CODE_MAP[t])
-        : tokens.filter(t => resolveWard(t) && !STATION_LINE_MAP[t]);
+        ? tokens.filter(t => resolveWardLoose(t) || WARD_CODE_MAP[t])
+        : tokens.filter(t => resolveWardLoose(t) && !STATION_LINE_MAP[t]);
       const neighborhoodWard = neighborhoodTokens.length > 0
-        ? (resolveWard(neighborhoodTokens[0]) || neighborhoodTokens[0])
+        ? (resolveWardLoose(neighborhoodTokens[0]) || neighborhoodTokens[0])
         : null;
-      const allNeighborhoodWards = [...new Set(neighborhoodTokens.map(t => resolveWard(t) || t))];
+      const allNeighborhoodWards = [...new Set(neighborhoodTokens.map(t => resolveWardLoose(t) || t))];
 
       // ボタン押下が絶対ルール
       const isWardArea_itandi = currentAreaMode === "ward";
@@ -1589,8 +1605,8 @@ function openInstructions(siteKey) {
           if (!isWardArea_itandi || searchMode === "wide" || neighborhoodTokens.length === 0) return null;
           const m = {};
           neighborhoodTokens.forEach(t => {
-            const w = NEIGHBORHOOD_WARD_MAP[t];
-            if (!w) return; // WARD_CODE_MAPのみマッチ（フルネーム）は対象外
+            const w = NEIGHBORHOOD_WARD_MAP[t] || resolveWardLoose(t);
+            if (!w) return;
             if (/[区市郡府県都]$/.test(t)) return; // 区名略称（生野区・浪速区等）は町域ではない
             if (!m[w]) m[w] = [];
             if (!m[w].includes(t)) m[w].push(t);
