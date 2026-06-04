@@ -724,6 +724,14 @@ export default function ConditionsPage() {
                               </div>
                             )}
 
+                            {/* LINEで届いた原文 */}
+                            {c.raw_format_text && (
+                              <div className="pt-1 border-t border-slate-200">
+                                <p className="text-[10px] text-slate-400 font-medium mb-1">📨 LINEで届いた原文</p>
+                                <p className="text-xs text-slate-600 whitespace-pre-wrap bg-white rounded-lg px-3 py-2 border border-slate-100">{c.raw_format_text}</p>
+                              </div>
+                            )}
+
                             {/* 編集ボタン */}
                             <button
                               onClick={(e) => { e.stopPropagation(); openEdit(c); }}

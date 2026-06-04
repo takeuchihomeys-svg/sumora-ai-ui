@@ -27,6 +27,7 @@ type Conversation = {
   updatedAt?: string;
   account?: string;
   propertyCustomerId?: string;
+  isPostApply?: boolean;
   messages: Message[];
 };
 
@@ -41,6 +42,7 @@ type SupabaseConversationRow = {
   profile_image_url?: string | null;
   account?: string | null;
   property_customer_id?: string | null;
+  is_post_apply?: boolean | null;
 };
 
 type SupabaseMessageRow = {
@@ -314,13 +316,7 @@ export default function Home() {
   const [accountFilter, setAccountFilter] = useState<"all" | "linked" | "sumora" | "ieyasu" | "giga">("all");
   const [notifPermission, setNotifPermission] = useState<NotificationPermission>("default");
   const [linkedLineUserIds, setLinkedLineUserIds] = useState<Set<string>>(new Set());
-  const [postApplyConvIds, setPostApplyConvIds] = useState<Set<string>>(() => {
-    if (typeof window === "undefined") return new Set<string>();
-    try {
-      const saved = localStorage.getItem("sumora_post_apply_ids");
-      return new Set<string>(saved ? JSON.parse(saved) : []);
-    } catch { return new Set<string>(); }
-  });
+  const [postApplyConvIds, setPostApplyConvIds] = useState<Set<string>>(new Set<string>());
   const [showSendConfirm, setShowSendConfirm] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
   const [linkModalConvId, setLinkModalConvId] = useState<string | null>(null);
@@ -703,6 +699,7 @@ export default function Home() {
         updatedAt: effectiveUpdatedAt,
         account: conversation.account || undefined,
         propertyCustomerId: conversation.property_customer_id || undefined,
+        isPostApply: conversation.is_post_apply ?? false,
         messages: relatedMessages,
       };
     });
@@ -738,6 +735,9 @@ export default function Home() {
     if (formatted.length > 0) {
       setSelectedId((prev) => prev || formatted[0].id);
     }
+
+    // DBのis_post_applyをpostApplyConvIdsに反映
+    setPostApplyConvIds(new Set(formatted.filter((c) => c.isPostApply).map((c) => c.id)));
 
     // 紐付け済み物件顧客を取得してlinkedCustomerMapを構築
     const propCustomerIds = [...new Set(
@@ -1537,7 +1537,7 @@ export default function Home() {
     if (chatSwipeDelta > 90) {
       // スワイプ後の合成クリック（BottomNavリンク等）を500ms間ブロック
       swipeBlockClickRef.current = true;
-      setTimeout(() => { swipeBlockClickRef.current = false; }, 500);
+      setTimeout(() => { swipeBlockClickRef.current = false; }, 200);
       e.preventDefault();
       setMobileView("list");
     }
@@ -2335,12 +2335,13 @@ export default function Home() {
                 </div>
               </button>
               <button
-                onClick={() => {
+                onClick={async () => {
                   const id = convMenuConvId!;
+                  const isNowPostApply = !postApplyConvIds.has(id);
+                  await supabase.from("conversations").update({ is_post_apply: isNowPostApply }).eq("id", id);
                   setPostApplyConvIds(prev => {
                     const next = new Set(prev);
                     if (next.has(id)) { next.delete(id); } else { next.add(id); }
-                    try { localStorage.setItem("sumora_post_apply_ids", JSON.stringify([...next])); } catch {}
                     return next;
                   });
                   setConvMenuConvId(null);

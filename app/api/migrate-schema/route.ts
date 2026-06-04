@@ -131,6 +131,9 @@ ALTER TABLE property_customers DISABLE ROW LEVEL SECURITY;
 -- conversations ↔ property_customers 紐付け
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS property_customer_id UUID REFERENCES property_customers(id) ON DELETE SET NULL;
 
+-- 申込以降マーク（申込・審査以降のトークを水色で区別）
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS is_post_apply BOOLEAN DEFAULT FALSE;
+
 -- ai_reply_examples テーブル（LINE文案の自己学習用）
 -- 実際に送信した返信を蓄積し、次回のAI生成プロンプトに注入する
 CREATE TABLE IF NOT EXISTS ai_reply_examples (
