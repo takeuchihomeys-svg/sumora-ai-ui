@@ -87,18 +87,20 @@
     // 診断結果: 都道府県名[23,26,29] + 所在地名1[24,27,30] の3行構造
     // 行1=[23,24] / 行2=[26,27] / 行3=[29,30]
     if (cond.ward_names && cond.ward_names.length > 0) {
-      // 複数区モード: 区ごとに別の行に入力（最大3区）
-      var rowBases = [23, 26, 29];
+      // 複数区モード: 所在地1/2/3 に1区ずつ入力
+      // 診断確定: 所在地1=[29,30] / 所在地2=[35,36] / 所在地3=[41,42]
+      // 各セクション6要素(text×4 + SELECT×2)ずつ
+      var rowBases = [29, 35, 41];
       for (var wi = 0; wi < cond.ward_names.length && wi < 3; wi++) {
-        setVal(getField(rowBases[wi]),     "大阪府");
+        setVal(getField(rowBases[wi]),     "大阪府");  // 都道府県名
         await sleep(200);
-        setVal(getField(rowBases[wi] + 1), cond.ward_names[wi]);
+        setVal(getField(rowBases[wi] + 1), cond.ward_names[wi]);  // 所在地名1
       }
     } else if (cond.ward_name) {
-      // フォールバック: 旧方式の生テキスト → 行1に入れる
-      setVal(getField(23), "大阪府");
+      // フォールバック: 旧方式の生テキスト → 所在地1に入れる
+      setVal(getField(29), "大阪府");
       await sleep(300);
-      setVal(getField(24), cond.ward_name);
+      setVal(getField(30), cond.ward_name);
     } else if (cond.reins_line) {
       // 沿線モード: 駅ごとに正しい沿線を対応させて入力（最大3駅）
       var sensenIdxs = [47, 54, 61];
