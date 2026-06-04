@@ -1678,6 +1678,18 @@ export default function Home() {
                   lastSenderVal === "customer" &&
                   conversation.status !== "closed_won";
 
+                // 最後のスタッフ返信以降の連続するお客さんメッセージ数
+                const unreadCount = (() => {
+                  if (!needsReply) return 0;
+                  const msgs = conversation.messages;
+                  let count = 0;
+                  for (let i = msgs.length - 1; i >= 0; i--) {
+                    if (msgs[i].sender === "customer") count++;
+                    else break;
+                  }
+                  return count || 1;
+                })();
+
                 return (
                   <button
                     key={conversation.id}
@@ -1773,8 +1785,10 @@ export default function Home() {
                           <span className="text-[11px] text-[#667781]">
                             {formatListTime(conversation.updatedAt)}
                           </span>
-                          {needsReply && (
-                            <span className="h-3 w-3 rounded-full bg-[#2196F3]" />
+                          {unreadCount > 0 && (
+                            <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#2196F3] px-1 text-[11px] font-bold text-white leading-none">
+                              {unreadCount}
+                            </span>
                           )}
                         </div>
                       </div>
