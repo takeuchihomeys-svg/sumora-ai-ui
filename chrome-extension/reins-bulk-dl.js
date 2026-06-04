@@ -3,7 +3,6 @@
 
   var tracked     = [];
   var injectTimer = null;
-  var checkedKeys = new Set();
   var isSending   = false;
 
   function sleep(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
@@ -30,52 +29,17 @@
     return row.textContent.replace(/\s+/g, " ").trim().slice(0, 60);
   }
 
-  // ── チェックボックスを図面ボタンの右側に注入 ────────────────────────────
+  // ── ネイティブCBをトラッキング（カスタムCB注入なし・レインズ左端CBを直接使用）──
   function inject() {
-    tracked.forEach(function (t) {
-      if (t.cb.checked) checkedKeys.add(t.rowKey);
-      else              checkedKeys.delete(t.rowKey);
-    });
-    document.querySelectorAll(".axlx-reins-cb").forEach(function (el) { el.remove(); });
     tracked = [];
-
     findResultRows().forEach(function (row) {
-      // 「図面」ボタン
+      var nativeCb = findNativeCheckbox(row);
+      if (!nativeCb) return;
       var zumenBtn = Array.from(row.querySelectorAll("button")).find(function (b) {
-        return b.textContent.trim() === "図面" && b.offsetParent;
+        return b.textContent.trim() === "図面";
       });
-      if (!zumenBtn) return;
-
-      // 間取りセル = 「概要」ボタンのセルの1つ前のセル
-      var gaiyoBtn  = Array.from(row.querySelectorAll("button")).find(function (b) {
-        return b.textContent.trim() === "概要";
-      });
-      var gaiyoCell = gaiyoBtn && gaiyoBtn.closest(".p-table-body-item");
-      var allCells  = Array.from(row.querySelectorAll(".p-table-body-item"));
-      var gaiyoIdx  = allCells.indexOf(gaiyoCell);
-      var madoriCell = gaiyoIdx >= 1 ? allCells[gaiyoIdx - 1] : null;
-      if (!madoriCell) return; // 間取セルが見つからなければスキップ
-
-      var rowKey = makeRowKey(row);
-
-      var cb = document.createElement("input");
-      cb.type      = "checkbox";
-      cb.className = "axlx-reins-cb";
-      cb.style.cssText = [
-        "width:16px;height:16px;cursor:pointer;",
-        "accent-color:#1565C0;vertical-align:middle;",
-        "margin-left:4px;flex-shrink:0;",
-      ].join("");
-      cb.checked = checkedKeys.has(rowKey);
-      cb.addEventListener("click",  function (e) { e.stopPropagation(); });
-      cb.addEventListener("change", function (e) { e.stopPropagation(); updateBar(); });
-
-      // 間取りセルの末尾（2LDKテキストの右側）に追加
-      madoriCell.appendChild(cb);
-
-      tracked.push({ cb: cb, row: row, zumenBtn: zumenBtn, rowKey: rowKey });
+      tracked.push({ cb: nativeCb, row: row, zumenBtn: zumenBtn, rowKey: makeRowKey(row) });
     });
-
     updateBar();
   }
 
@@ -117,11 +81,22 @@
     if (allBtn) allBtn.textContent = (checked.length === tracked.length && tracked.length > 0) ? "全解除" : "全選択";
   }
 
+  // ── React対応チェックボックス操作（レインズはReact製のため直接代入では反映されない）──
+  function clickNativeCb(cb, newState) {
+    if (cb.checked === newState) return;
+    try {
+      var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "checked").set;
+      setter.call(cb, newState);
+      cb.dispatchEvent(new Event("change", { bubbles: true }));
+      cb.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    } catch (_) { cb.click(); }
+  }
+
   function toggleAll() {
     var checked  = tracked.filter(function (t) { return t.cb.checked; });
     var newState = checked.length < tracked.length;
-    tracked.forEach(function (t) { t.cb.checked = newState; });
-    updateBar();
+    tracked.forEach(function (t) { clickNativeCb(t.cb, newState); });
+    setTimeout(function () { updateBar(); }, 100);
   }
 
   // ── popup.jsからお客さん名取得 ──────────────────────────────────────
@@ -201,11 +176,7 @@
         lineBtn.textContent = lineOrig;
         return;
       }
-      targets.forEach(function (t) {
-        t.cb.checked = false;
-        checkedKeys.delete(t.rowKey);
-      });
-      updateBar();
+      updateBar(); // ネイティブCBはそのまま（ユーザーが手動で解除）
       lineBtn.textContent = "✅ " + pdfBase64List.length + "件 LINE送信完了！";
       setTimeout(function () { lineBtn.textContent = lineOrig; }, 5000);
     });
@@ -241,18 +212,13 @@
       finish();
     }, Math.max(expectedCount * 30000, 60000));
 
-    // Step1: レインズの行ネイティブCBをONにする
-    var checked = 0;
+    // Step1: 念のり未チェックのものだけONに（ユーザーが既にチェック済みなら不要）
+    var confirmed = 0;
     targets.forEach(function (t) {
-      var nativeCb = findNativeCheckbox(t.row);
-      if (nativeCb && !nativeCb.checked) {
-        nativeCb.click();
-        checked++;
-      } else if (nativeCb && nativeCb.checked) {
-        checked++;
-      }
+      clickNativeCb(t.cb, true);
+      confirmed++;
     });
-    console.log("[AX-REINS] ネイティブCB: " + checked + "/" + expectedCount + " にチェック");
+    console.log("[AX-REINS] ネイティブCB確認: " + confirmed + "/" + expectedCount + " 件");
 
     sleep(400).then(function () {
       // Step2: フック注入 + 新タブ一括監視開始
@@ -481,18 +447,24 @@
     }
   });
 
-  // ── MutationObserver で結果ページ更新時に再注入 ──────────────────────
+  // ── MutationObserver で結果ページ更新時に再スキャン ──────────────────
   var mutObs = new MutationObserver(function () {
     if (injectTimer || isSending) return;
     injectTimer = setTimeout(function () {
       injectTimer = null;
-      var rows    = findResultRows();
-      var cbCount = document.querySelectorAll(".axlx-reins-cb").length;
-      if (rows.length > 0 && cbCount !== rows.length) inject();
+      var rows = findResultRows();
+      if (rows.length > 0 && rows.length !== tracked.length) inject();
     }, 800);
   });
   mutObs.observe(document.body, { childList: true, subtree: true });
 
-  // 初回注入
+  // ── ネイティブCBクリックでバーを更新（レインズのチェック操作を検知）─────
+  document.addEventListener("click", function (e) {
+    if (e.target.type === "checkbox" && !isSending) {
+      setTimeout(function () { updateBar(); }, 50);
+    }
+  }, true);
+
+  // 初回スキャン
   inject();
 })();
