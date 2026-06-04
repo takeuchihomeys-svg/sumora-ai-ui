@@ -2,29 +2,42 @@
 
 const API_BASE = "https://sumora-ai-ui.vercel.app";
 
-// ── AIが自動学習した地名→市区マッピング（Supabase region_map から起動時に取得）──
-// popup.js の NEIGHBORHOOD_WARD_MAP を補完する動的マップ
-const LEARNED_WARD_MAP = {};
+// ── 自動学習マップ（Supabase から起動時に取得・未知トークンは Web検索で自動解決）──
+const LEARNED_WARD_MAP    = {};  // 地名 → 市区
+const LEARNED_STATION_MAP = {};  // 駅名 → { ward, realpro_lines[], itandi_lines[], reins_line }
 
-async function fetchLearnedRegions() {
+// 起動時: 地名・駅マップを一括ロード
+async function fetchLearnedMaps() {
   try {
-    const res = await fetch(`${API_BASE}/api/region-map`, { cache: "no-store" });
-    if (!res.ok) return;
-    const data = await res.json();
-    for (const { token, ward } of (data.regions || [])) {
-      LEARNED_WARD_MAP[token] = ward;
+    const [regionRes, stationRes] = await Promise.all([
+      fetch(`${API_BASE}/api/region-map`,  { cache: "no-store" }),
+      fetch(`${API_BASE}/api/station-map`, { cache: "no-store" }),
+    ]);
+    if (regionRes.ok) {
+      const d = await regionRes.json();
+      for (const { token, ward } of (d.regions || [])) LEARNED_WARD_MAP[token] = ward;
     }
-    console.log("[AX] 学習済み地名をロード:", Object.keys(LEARNED_WARD_MAP).length, "件");
+    if (stationRes.ok) {
+      const d = await stationRes.json();
+      for (const r of (d.stations || [])) {
+        LEARNED_STATION_MAP[r.token] = {
+          ward: r.ward, realpro_lines: r.realpro_lines || [],
+          itandi_lines: r.itandi_lines || [], reins_line: r.reins_line || null,
+        };
+      }
+    }
+    console.log("[AX] 学習済みロード: 地名", Object.keys(LEARNED_WARD_MAP).length,
+      "件 / 駅", Object.keys(LEARNED_STATION_MAP).length, "件");
   } catch (e) {
-    console.warn("[AX] region-map 取得失敗:", e.message);
+    console.warn("[AX] 学習済みマップ取得失敗:", e.message);
   }
 }
 
-// 未知トークンをAIで解決してLEARNED_WARD_MAPに追加、コールバックで再描画
+// 未知トークンをWeb検索部隊（/api/token-resolve）で解決→LEARNED_MAPに追加→再描画
 async function resolveUnknownTokensWithAI(tokens, onResolved) {
   if (!tokens || tokens.length === 0) return;
   try {
-    const res = await fetch(`${API_BASE}/api/region-resolve`, {
+    const res = await fetch(`${API_BASE}/api/token-resolve`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tokens }),
@@ -32,16 +45,24 @@ async function resolveUnknownTokensWithAI(tokens, onResolved) {
     if (!res.ok) return;
     const data = await res.json();
     let anyNew = false;
-    for (const [token, ward] of Object.entries(data.resolved || {})) {
-      if (ward && !LEARNED_WARD_MAP[token]) {
-        LEARNED_WARD_MAP[token] = ward;
+    for (const [token, info] of Object.entries(data.result || {})) {
+      const r = info;
+      if (r.type === "region" && r.ward && !LEARNED_WARD_MAP[token]) {
+        LEARNED_WARD_MAP[token] = r.ward;
         anyNew = true;
-        console.log("[AX] 新規学習:", token, "→", ward);
+        console.log("[AX] 地名学習:", token, "→", r.ward, `(${r.source})`);
+      } else if (r.type === "station" && !LEARNED_STATION_MAP[token]) {
+        LEARNED_STATION_MAP[token] = {
+          ward: r.ward, realpro_lines: r.realpro_lines || [],
+          itandi_lines: r.itandi_lines || [], reins_line: r.reins_line || null,
+        };
+        anyNew = true;
+        console.log("[AX] 駅学習:", token, "→", r.ward, r.realpro_lines, `(${r.source})`);
       }
     }
     if (anyNew && onResolved) onResolved();
   } catch (e) {
-    console.warn("[AX] region-resolve 失敗:", e.message);
+    console.warn("[AX] token-resolve 失敗:", e.message);
   }
 }
 
@@ -415,22 +436,35 @@ function parseAreaTokens(rawArea) {
 
 function findStationWard(areaText) {
   const normalized = areaText.replace(/駅|周辺|付近|近く|沿線/g, "").trim();
-  return STATION_WARD_MAP[normalized] || STATION_WARD_MAP[areaText] || null;
+  // STATION_WARD_MAP → LEARNED_STATION_MAP の順で市区を解決
+  return STATION_WARD_MAP[normalized] || STATION_WARD_MAP[areaText]
+    || LEARNED_STATION_MAP[normalized]?.ward || LEARNED_STATION_MAP[areaText]?.ward || null;
 }
 
-// 駅名あいまい解決：完全一致→前方一致→部分一致の順で STATION_LINE_MAP キーを検索
+// 駅名あいまい解決：完全一致→前方一致→部分一致の順で STATION_LINE_MAP → LEARNED_STATION_MAP を検索
 function resolveStation(rawInput) {
   const clean = rawInput.replace(/駅|周辺|付近|近く|沿線/g, "").trim();
   if (!clean) return null;
-  if (STATION_LINE_MAP[clean]) return clean;                                 // 完全一致
+  if (STATION_LINE_MAP[clean]) return clean;                                 // 完全一致（ハードコード）
+  if (LEARNED_STATION_MAP[clean]) return clean;                             // 完全一致（学習済み）
   const keys = Object.keys(STATION_LINE_MAP);
-  const sw = keys.find(k => k.startsWith(clean) && clean.length >= 2);      // clean が key の先頭に一致
+  const sw = keys.find(k => k.startsWith(clean) && clean.length >= 2);
   if (sw) return sw;
-  const ci = keys.find(k => clean.includes(k) && k.length >= 2);            // key が clean に含まれる
+  const ci = keys.find(k => clean.includes(k) && k.length >= 2);
   if (ci) return ci;
-  const ki = keys.find(k => k.includes(clean) && clean.length >= 2);        // clean が key に含まれる
+  const ki = keys.find(k => k.includes(clean) && clean.length >= 2);
   if (ki) return ki;
+  // 学習済みマップでも検索
+  const lKeys = Object.keys(LEARNED_STATION_MAP);
+  const lk = lKeys.find(k => k === clean || k.includes(clean) || clean.includes(k));
+  if (lk) return lk;
   return null;
+}
+
+// 学習済み駅の路線情報を取得（buildAreaRouteCodes で使用）
+function getLearnedStationLines(token) {
+  const info = LEARNED_STATION_MAP[token];
+  return info ? info.realpro_lines || [] : [];
 }
 
 // 「JR高槻」「阪急梅田」のような「路線プレフィックス+駅名」形式を解決する
@@ -2602,8 +2636,8 @@ function filterCustomers(q) {
 
 // ── Init ───────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
-  // 学習済み地名をSupabaseから取得してLEARNED_WARD_MAPに追加
-  fetchLearnedRegions();
+  // 地名・駅マップをSupabaseから一括ロード（Web検索で自動学習済みのものも含む）
+  fetchLearnedMaps();
   loadCustomers();
 
   // フローティングミニモードの初期化

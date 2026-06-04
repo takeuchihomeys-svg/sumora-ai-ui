@@ -274,6 +274,21 @@ CREATE TABLE IF NOT EXISTS region_map (
 );
 ALTER TABLE region_map DISABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_region_map_token ON region_map(token);
+
+-- 駅自動学習テーブル（Web検索で解決した駅→路線+市区マッピングを蓄積）
+CREATE TABLE IF NOT EXISTS station_map (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  token TEXT NOT NULL UNIQUE,
+  ward TEXT,
+  realpro_lines JSONB DEFAULT '[]',
+  itandi_lines JSONB DEFAULT '[]',
+  reins_line TEXT,
+  source TEXT DEFAULT 'web_search',
+  confidence INT DEFAULT 80,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE station_map DISABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_station_map_token ON station_map(token);
 `.trim();
 
 export async function GET() {
