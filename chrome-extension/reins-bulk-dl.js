@@ -183,75 +183,92 @@
     });
   }
 
-  // ── 一括取得モード（図面一括取得ボタンを使用・高速並列）─────────────────
-  // レインズの「図面一括取得」が複数の新タブを開くのをbackground.jsが一括キャプチャ
+  // ── 一括取得モード（図面一括取得ボタン → 確認ダイアログ自動クリック → 1枚のマージ済みPDF）──
+  // レインズは「4件選択 → 1つのPDFにまとめてダウンロード」の設計。
+  // 個別タブは開かず、JSフック(createObjectURL / fetch / XHR / <a download>)でPDFを横取りする。
   function startBatchSend(targets, customerName, lineBtn, lineOrig, propertySummaries, batchBtnEl) {
     var expectedCount  = targets.length;
-    var pdfBase64List  = [];
+    var pdfReceived    = false;
     var batchHandler   = null;
     var batchTimer     = null;
     var fallbackTimer  = null;
 
-    function finish() {
+    function finish(mergedPdf) {
       if (fallbackTimer) { clearTimeout(fallbackTimer); fallbackTimer = null; }
       if (batchTimer)    { clearTimeout(batchTimer);    batchTimer    = null; }
       window.removeEventListener("message", batchHandler);
-      sendAllToLine(pdfBase64List, targets, customerName, propertySummaries, lineBtn, lineOrig);
+      if (!mergedPdf) {
+        // PDF取得失敗 → 逐次モードへ
+        console.warn("[AX-REINS] 一括PDF取得失敗 → 逐次モードへ");
+        lineBtn.textContent = "図面取得中... (0/" + expectedCount + ")";
+        startSequentialSend(targets, customerName, lineBtn, lineOrig, propertySummaries);
+        return;
+      }
+      // レインズが結合した1枚のPDFをそのままLINE送信（merge-pdfs APIはスキップ）
+      sendAllToLine([mergedPdf], targets, customerName, propertySummaries, lineBtn, lineOrig);
     }
 
-    // 各タブのPDFを受け取る（background.js → axlx-reins-pdf-captured → postMessage → ここ）
+    // PDFフックからのメッセージを受け取る（1件のマージ済みPDF）
     batchHandler = function (e) {
       if (!e.data || e.data.from !== "axlx-itandi-pdf") return;
-      // 1件目到着 → 逐次フォールバックをキャンセル
-      if (fallbackTimer) { clearTimeout(fallbackTimer); fallbackTimer = null; }
-      pdfBase64List.push(e.data.b64);
-      lineBtn.textContent = "PDF取得中... (" + pdfBase64List.length + "/" + expectedCount + ")";
-      console.log("[AX-REINS] 一括: " + pdfBase64List.length + "/" + expectedCount + " 件取得");
-      if (pdfBase64List.length >= expectedCount) finish();
+      if (pdfReceived) return; // 重複防止
+      pdfReceived = true;
+      console.log("[AX-REINS] 一括: マージ済みPDF取得 " + Math.round(e.data.b64.length / 1024) + "KB");
+      lineBtn.textContent = "LINE送信中...";
+      finish(e.data.b64);
     };
     window.addEventListener("message", batchHandler);
 
-    // タイムアウト（1件あたり30秒・取得できた分だけ送信）
+    // タイムアウト（60秒）
     batchTimer = setTimeout(function () {
-      console.warn("[AX-REINS] 一括タイムアウト: " + pdfBase64List.length + "/" + expectedCount + " 件取得済み");
-      finish();
-    }, Math.max(expectedCount * 30000, 60000));
+      console.warn("[AX-REINS] 一括タイムアウト（60s） → 逐次モードへ");
+      finish(null);
+    }, 60000);
 
-    // 15秒で1件も届かなければ逐次モードへ即切替（2分待ちを防ぐ）
+    // 15秒で未取得なら逐次へ（ダイアログ未表示・フック失敗時の早期離脱）
     fallbackTimer = setTimeout(function () {
-      if (pdfBase64List.length === 0) {
+      if (!pdfReceived) {
         clearTimeout(batchTimer); batchTimer = null;
         window.removeEventListener("message", batchHandler);
-        console.warn("[AX-REINS] 一括モード0件（15s）→ 逐次モードへ切替");
+        console.warn("[AX-REINS] 一括0件（15s）→ 逐次モードへ切替");
         lineBtn.textContent = "図面取得中... (0/" + expectedCount + ")";
         startSequentialSend(targets, customerName, lineBtn, lineOrig, propertySummaries);
       }
     }, 15000);
 
-    // Step1: 念のり未チェックのものだけONに（ユーザーが既にチェック済みなら不要）
+    // Step1: 念のり未チェックのものだけONに
     var confirmed = 0;
-    targets.forEach(function (t) {
-      clickNativeCb(t.cb, true);
-      confirmed++;
-    });
+    targets.forEach(function (t) { clickNativeCb(t.cb, true); confirmed++; });
     console.log("[AX-REINS] ネイティブCB確認: " + confirmed + "/" + expectedCount + " 件");
 
     sleep(400).then(function () {
-      // Step2: フック注入 + 新タブ一括監視開始
+      // Step2: JSフック注入（createObjectURL / fetch / XHR / <a download> を全て捕捉）
       chrome.runtime.sendMessage({ type: "axlx-inject-pdf-hook" }, function () {
         chrome.runtime.sendMessage({ type: "axlx-reins-watch-tab" }, function () {
-          // startSend で見つけたボタン参照を再利用（sleep後に再検索しない）
           if (!batchBtnEl || !batchBtnEl.isConnected) {
-            console.warn("[AX-REINS] 図面一括取得ボタンがDOMから消えた → 逐次モードへ");
-            window.removeEventListener("message", batchHandler);
+            console.warn("[AX-REINS] 図面一括取得ボタンが消えた → 逐次モードへ");
             clearTimeout(batchTimer);
             if (fallbackTimer) { clearTimeout(fallbackTimer); fallbackTimer = null; }
+            window.removeEventListener("message", batchHandler);
             startSequentialSend(targets, customerName, lineBtn, lineOrig, propertySummaries);
             return;
           }
-          lineBtn.textContent = "PDF取得中... (0/" + expectedCount + ")";
+          lineBtn.textContent = "PDF取得中...";
           console.log("[AX-REINS] 図面一括取得クリック");
           batchBtnEl.click();
+
+          // Step3: 確認ダイアログ「一括取得」を800ms後に自動クリック
+          sleep(800).then(function () {
+            var ikkatsuBtn = Array.from(document.querySelectorAll("button")).find(function (b) {
+              return b.textContent.trim() === "一括取得" && b.offsetParent;
+            });
+            if (ikkatsuBtn) {
+              console.log("[AX-REINS] 確認ダイアログ「一括取得」自動クリック");
+              ikkatsuBtn.click();
+            } else {
+              console.warn("[AX-REINS] 確認ダイアログが見つかりません（既に閉じた？）");
+            }
+          });
         });
       });
     });

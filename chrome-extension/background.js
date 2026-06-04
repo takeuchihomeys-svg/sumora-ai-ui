@@ -377,6 +377,40 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           };
         }
 
+        // <a download> フック（URLを直接ダウンロードする場合をキャプチャ）
+        // レインズが <a href="url" download="file.pdf"> の形でPDFを落とす場合に対応
+        if (!window.__axlxAnchorHookV1) {
+          window.__axlxAnchorHookV1 = true;
+          document.addEventListener("click", function (ev) {
+            if (!window.__axlxCapturePending) return;
+            var el = ev.target;
+            while (el && el !== document && el.tagName !== "A") el = el.parentElement;
+            if (!el || !el.getAttribute) return;
+            var dl = el.getAttribute("download");
+            if (dl === null) return; // download属性なし → スキップ
+            var href = el.href || "";
+            if (!href || href.startsWith("javascript:")) return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            window.__axlxCapturePending = false;
+            console.log("[AXLX] anchor download captured:", href.slice(0, 60));
+            fetch(href).then(function (r) { return r.arrayBuffer(); }).then(function (buf) {
+              var bytes = new Uint8Array(buf);
+              var chunks = [];
+              for (var i = 0; i < bytes.length; i += 8192) {
+                chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
+              }
+              var b64 = btoa(chunks.join(""));
+              var payload = { from: "axlx-itandi-pdf", b64: b64, ts: Date.now() };
+              (window.top || window).postMessage(payload, "*");
+              try {
+                var _doc = (window.top || window).document || document;
+                _doc.dispatchEvent(new CustomEvent("axlx-pdf-ready", { detail: payload }));
+              } catch (e) { console.error("[AXLX] anchor CustomEvent:", e); }
+            }).catch(function (e) { console.error("[AXLX] anchor fetch error:", e); });
+          }, true);
+        }
+
         // 毎回の注入完了時に capturePending を true にセット
         // postMessage経由だとwindow.openとcreateObjectURLの呼び出し順によってはリセットされるため
         // 注入直後に直接セットして確実にキャプチャ待機状態にする
