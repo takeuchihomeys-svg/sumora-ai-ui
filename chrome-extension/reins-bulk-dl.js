@@ -145,8 +145,9 @@
 
   // ── 図面一括取得ボタンを取得 ─────────────────────────────────────────
   function findBatchBtn() {
-    return Array.from(document.querySelectorAll("button")).find(function (b) {
-      return b.textContent.trim().includes("図面一括取得") && b.offsetParent;
+    return Array.from(document.querySelectorAll("button,input[type='button']")).find(function (b) {
+      // offsetParent チェック除外（ページ下部で非表示扱いになる場合があるため）
+      return (b.textContent || b.value || "").trim().includes("図面一括取得");
     }) || null;
   }
 
@@ -184,7 +185,7 @@
 
   // ── 一括取得モード（図面一括取得ボタンを使用・高速並列）─────────────────
   // レインズの「図面一括取得」が複数の新タブを開くのをbackground.jsが一括キャプチャ
-  function startBatchSend(targets, customerName, lineBtn, lineOrig, propertySummaries) {
+  function startBatchSend(targets, customerName, lineBtn, lineOrig, propertySummaries, batchBtnEl) {
     var expectedCount = targets.length;
     var pdfBase64List = [];
     var batchHandler  = null;
@@ -224,9 +225,9 @@
       // Step2: フック注入 + 新タブ一括監視開始
       chrome.runtime.sendMessage({ type: "axlx-inject-pdf-hook" }, function () {
         chrome.runtime.sendMessage({ type: "axlx-reins-watch-tab" }, function () {
-          var batchBtn = findBatchBtn();
-          if (!batchBtn) {
-            console.warn("[AX-REINS] 図面一括取得ボタンなし → 逐次モードへフォールバック");
+          // startSend で見つけたボタン参照を再利用（sleep後に再検索しない）
+          if (!batchBtnEl || !batchBtnEl.isConnected) {
+            console.warn("[AX-REINS] 図面一括取得ボタンがDOMから消えた → 逐次モードへ");
             window.removeEventListener("message", batchHandler);
             clearTimeout(batchTimer);
             startSequentialSend(targets, customerName, lineBtn, lineOrig, propertySummaries);
@@ -234,7 +235,7 @@
           }
           lineBtn.textContent = "PDF取得中... (0/" + expectedCount + ")";
           console.log("[AX-REINS] 図面一括取得クリック");
-          batchBtn.click();
+          batchBtnEl.click();
         });
       });
     });
@@ -281,8 +282,10 @@
     });
 
     // 図面一括取得ボタンがあれば一括モード（高速・並列）
-    if (findBatchBtn()) {
-      startBatchSend(targets, customerName, lineBtn, lineOrig, propertySummaries);
+    var batchBtnEl = findBatchBtn();
+    console.log("[AX-REINS] 図面一括取得ボタン:", batchBtnEl ? "発見 → 一括モード" : "なし → 逐次モード");
+    if (batchBtnEl) {
+      startBatchSend(targets, customerName, lineBtn, lineOrig, propertySummaries, batchBtnEl);
     } else {
       startSequentialSend(targets, customerName, lineBtn, lineOrig, propertySummaries);
     }
