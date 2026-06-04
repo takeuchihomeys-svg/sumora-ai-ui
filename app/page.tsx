@@ -313,6 +313,13 @@ export default function Home() {
   const [accountFilter, setAccountFilter] = useState<"all" | "linked" | "sumora" | "ieyasu" | "giga">("all");
   const [notifPermission, setNotifPermission] = useState<NotificationPermission>("default");
   const [linkedLineUserIds, setLinkedLineUserIds] = useState<Set<string>>(new Set());
+  const [postApplyConvIds, setPostApplyConvIds] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set<string>();
+    try {
+      const saved = localStorage.getItem("sumora_post_apply_ids");
+      return new Set<string>(saved ? JSON.parse(saved) : []);
+    } catch { return new Set<string>(); }
+  });
   const [showSendConfirm, setShowSendConfirm] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
   const [linkModalConvId, setLinkModalConvId] = useState<string | null>(null);
@@ -1493,17 +1500,11 @@ export default function Home() {
     setIsPulling(false);
   };
 
-  // チャット画面：左端エッジから右スワイプで一覧に戻る（LINEと同じ挙動）
+  // チャット画面：右スワイプで一覧に戻る（LINEと同じ挙動・画面全体対応）
   const onChatTouchStart = (e: React.TouchEvent) => {
     const target = e.target as HTMLElement;
     const tag = target.tagName;
-    // テキスト入力中は無効
     if (tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable) {
-      chatSwipeStart.current = null;
-      return;
-    }
-    // 左端50px以内から始まるタッチのみ追跡（iOS的エッジスワイプ）
-    if (e.touches[0].clientX > 50) {
       chatSwipeStart.current = null;
       return;
     }
@@ -1514,14 +1515,15 @@ export default function Home() {
     if (!chatSwipeStart.current) return;
     const dx = e.touches[0].clientX - chatSwipeStart.current.x;
     const dy = e.touches[0].clientY - chatSwipeStart.current.y;
-    // 右スワイプかつ水平が支配的なときだけ追跡
-    if (dx > 0 && Math.abs(dx) > Math.abs(dy) && dx > 5) {
+    // 右スワイプかつ水平が支配的なときだけ追跡（縦スクロールとの誤判定防止）
+    if (dx > 0 && Math.abs(dx) > Math.abs(dy) * 1.5 && dx > 8) {
+      e.stopPropagation();
       setChatSwipeDelta(dx);
     }
   };
   const onChatTouchEnd = () => {
-    // 右に80px以上スワイプ → 一覧へ戻る
-    if (chatSwipeDelta > 80) {
+    // 右に90px以上スワイプ → 一覧へ戻る
+    if (chatSwipeDelta > 90) {
       setMobileView("list");
     }
     chatSwipeStart.current = null;
@@ -1693,7 +1695,7 @@ export default function Home() {
                     onContextMenu={(e) => { e.preventDefault(); toggleFlaggedConv(conversation.id); }}
                     style={{ WebkitUserSelect: "none", userSelect: "none" }}
                     className={`flex w-full items-center gap-3 border-b border-[#f0f2f5] px-4 py-3 text-left transition ${
-                      isActive ? "bg-[#f0f2f5]" : "bg-white hover:bg-[#f5f6f6]"
+                      isActive ? "bg-[#dbeafe]" : postApplyConvIds.has(conversation.id) ? "bg-[#e3f2fd] hover:bg-[#daeaf8]" : "bg-white hover:bg-[#f5f6f6]"
                     }`}
                   >
                     <div className="relative shrink-0">
@@ -2118,44 +2120,6 @@ export default function Home() {
             {/* アクションボタン列（入力欄の上） */}
             <div className="mb-1.5 flex items-center gap-1.5">
 
-              {/* 送信アカウントバッジ（長押しで変更） */}
-              {selectedConversation.id && (() => {
-                const acc = getAccountMeta(selectedConversation.account);
-                const BADGE_BG: Record<string, string> = {
-                  sumora: "#7B1FA2",
-                  ieyasu: "#E65100",
-                  giga:   "#00695C",
-                  hasu:   "#C2185B",
-                };
-                const bg = BADGE_BG[selectedConversation.account ?? "sumora"] ?? "#7B1FA2";
-                return (
-                  <button
-                    onTouchStart={() => {
-                      accountLongPressTimer.current = setTimeout(() => {
-                        setAccountChangeConvId(selectedConversation.id);
-                      }, 500);
-                    }}
-                    onTouchEnd={() => {
-                      if (accountLongPressTimer.current) {
-                        clearTimeout(accountLongPressTimer.current);
-                        accountLongPressTimer.current = null;
-                      }
-                    }}
-                    onTouchMove={() => {
-                      if (accountLongPressTimer.current) {
-                        clearTimeout(accountLongPressTimer.current);
-                        accountLongPressTimer.current = null;
-                      }
-                    }}
-                    onClick={() => setAccountChangeConvId(selectedConversation.id)}
-                    className="flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold text-white active:opacity-70"
-                    style={{ backgroundColor: bg }}
-                    title="タップ/長押しでアカウント変更"
-                  >
-                    {acc.label}
-                  </button>
-                );
-              })()}
 
               <button
                 onClick={generateReply}
@@ -2289,7 +2253,7 @@ export default function Home() {
             <div className="px-5 pt-4 pb-3 text-center text-[13px] font-semibold text-[#111b21] border-b border-[#f0f2f5]">
               {conversations.find(c => c.id === convMenuConvId)?.customerName}
             </div>
-            <div className="grid grid-cols-4">
+            <div className="grid grid-cols-3">
               <button
                 onClick={() => { setMemoModalConvId(convMenuConvId); setMemoInput(memos[convMenuConvId] || ""); setConvMenuConvId(null); }}
                 className="flex flex-col items-center gap-1.5 px-2 py-4 active:bg-[#f0f2f5] border-r border-[#f0f2f5]"
@@ -2324,7 +2288,7 @@ export default function Home() {
                   setLinkSearchQuery("");
                   setLinkModalConvId(convMenuConvId);
                 }}
-                className="flex flex-col items-center gap-1.5 px-2 py-4 active:bg-[#f0f2f5] border-r border-[#f0f2f5]"
+                className="flex flex-col items-center gap-1.5 px-2 py-4 active:bg-[#f0f2f5]"
               >
                 <span className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -2337,9 +2301,11 @@ export default function Home() {
                   {linkedCustomerMap[convMenuConvId]?.name?.slice(0, 6) ?? "未設定"}
                 </div>
               </button>
+            </div>
+            <div className="grid grid-cols-2 border-t border-[#f0f2f5]">
               <button
                 onClick={() => { setAccountChangeConvId(convMenuConvId); setConvMenuConvId(null); }}
-                className="flex flex-col items-center gap-1.5 px-2 py-4 active:bg-[#f0f2f5]"
+                className="flex flex-col items-center gap-1.5 px-2 py-4 active:bg-[#f0f2f5] border-r border-[#f0f2f5]"
               >
                 <span className="flex h-10 w-10 items-center justify-center rounded-full bg-orange-500">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -2349,6 +2315,29 @@ export default function Home() {
                 <div className="text-[11px] font-semibold text-[#111b21]">会社</div>
                 <div className="text-[9px] text-[#8696a0] text-center leading-tight">
                   {getAccountMeta(conversations.find(c => c.id === convMenuConvId)?.account).label}
+                </div>
+              </button>
+              <button
+                onClick={() => {
+                  const id = convMenuConvId!;
+                  setPostApplyConvIds(prev => {
+                    const next = new Set(prev);
+                    if (next.has(id)) { next.delete(id); } else { next.add(id); }
+                    try { localStorage.setItem("sumora_post_apply_ids", JSON.stringify([...next])); } catch {}
+                    return next;
+                  });
+                  setConvMenuConvId(null);
+                }}
+                className="flex flex-col items-center gap-1.5 px-2 py-4 active:bg-[#f0f2f5]"
+              >
+                <span className={`flex h-10 w-10 items-center justify-center rounded-full ${postApplyConvIds.has(convMenuConvId ?? "") ? "bg-[#1565C0]" : "bg-[#90caf9]"}`}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z"/>
+                  </svg>
+                </span>
+                <div className="text-[11px] font-semibold text-[#111b21]">申込以降</div>
+                <div className="text-[9px] text-[#8696a0] text-center leading-tight">
+                  {postApplyConvIds.has(convMenuConvId ?? "") ? "解除" : "マーク"}
                 </div>
               </button>
             </div>
