@@ -279,6 +279,7 @@ export default function Home() {
   const listRef = useRef<HTMLDivElement | null>(null);
   const chatSwipeStart = useRef<{ x: number; y: number } | null>(null);
   const [chatSwipeDelta, setChatSwipeDelta] = useState(0);
+  const swipeBlockClickRef = useRef(false); // スワイプ直後の合成クリックをブロック
 
   const [selectedImageFiles, setSelectedImageFiles] = useState<File[]>([]);
   const [selectedImagePreviews, setSelectedImagePreviews] = useState<string[]>([]);
@@ -347,6 +348,18 @@ export default function Home() {
     // スクロール時もBottomNavは常に表示（pull-to-refreshトリガー用）
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
   };
+
+  // スワイプ直後の合成クリック（BottomNavリンク等への誤遷移）をドキュメントレベルでブロック
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (swipeBlockClickRef.current) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    };
+    document.addEventListener("click", handler, { capture: true });
+    return () => document.removeEventListener("click", handler, { capture: true });
+  }, []);
 
   useEffect(() => {
     // SW登録 + 通知許可 + Web Push登録
@@ -577,9 +590,10 @@ export default function Home() {
         else scrollToBottom();
       }, 100);
     } else {
-      // 描画完了後に最下部へ（2段階：即時 + 描画後）
+      // 描画完了後に最下部へ（hidden→flex切替後のレイアウト確定を待つため2段RAF+タイムアウト）
       justOpenedRef.current = true;
-      requestAnimationFrame(() => scrollToBottom());
+      requestAnimationFrame(() => requestAnimationFrame(() => scrollToBottom()));
+      setTimeout(() => { if (justOpenedRef.current) { justOpenedRef.current = false; scrollToBottom(); } }, 120);
     }
   }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1518,9 +1532,13 @@ export default function Home() {
       setChatSwipeDelta(dx);
     }
   };
-  const onChatTouchEnd = () => {
+  const onChatTouchEnd = (e: React.TouchEvent) => {
     // 右に90px以上スワイプ → 一覧へ戻る
     if (chatSwipeDelta > 90) {
+      // スワイプ後の合成クリック（BottomNavリンク等）を500ms間ブロック
+      swipeBlockClickRef.current = true;
+      setTimeout(() => { swipeBlockClickRef.current = false; }, 500);
+      e.preventDefault();
       setMobileView("list");
     }
     chatSwipeStart.current = null;
