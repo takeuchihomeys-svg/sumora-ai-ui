@@ -602,6 +602,17 @@
           if (v && vals.indexOf(v) < 0) vals.push(v);
         });
       }
+      // 広げて検索：LDK → 同室数DKも追加（1LDK→1DK, 2LDK→2DK等）
+      if (cond.is_wide) {
+        FLOOR_RANK.forEach(function(rank) {
+          var v = FLOOR_MAP[rank];
+          if (v && vals.indexOf(v) >= 0 && /LDK$/.test(rank)) {
+            var dkKey = rank.replace("LDK", "DK");
+            var dkVal = FLOOR_MAP[dkKey];
+            if (dkVal && vals.indexOf(dkVal) < 0) vals.push(dkVal);
+          }
+        });
+      }
       if (vals.length) setCheckboxes("room_layout_id[]", vals);
     }
     if (cond.structure_types && cond.structure_types.length > 0) {

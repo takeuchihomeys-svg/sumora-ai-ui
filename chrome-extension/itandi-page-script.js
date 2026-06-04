@@ -418,6 +418,17 @@
         });
       }
     }
+    // 広げて検索：LDK選択済みの場合、同室数DKも追加チェック
+    if (cond.is_wide) {
+      ["1LDK","2LDK","3LDK","4LDK"].forEach(function(ldk) {
+        var ldkEl = document.querySelector('input[name="room_layout:in"][id="' + ldk + '"]');
+        if (ldkEl && ldkEl.checked) {
+          var dk = ldk.replace("LDK", "DK");
+          var dkEl = document.querySelector('input[name="room_layout:in"][id="' + dk + '"]');
+          if (dkEl && !dkEl.checked) tick(dkEl);
+        }
+      });
+    }
     if (cond.structure_types && cond.structure_types.length) {
       cond.structure_types.forEach(function (s) {
         var v = STRUCTURE_MAP[s];

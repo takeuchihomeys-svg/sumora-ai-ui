@@ -172,6 +172,10 @@
           if (!candidates) return;
           candidates.some(function (lbl) { return checkByLabel(lbl); });
         });
+      // 広げて検索：LDK指定時にDKも追加
+      if (cond.is_wide && /LDK/i.test(cond.floor_plan)) {
+        (MADORI_LABELS["DK"] || []).some(function(lbl) { return checkByLabel(lbl); });
+      }
     }
 
     // ⑥ 築年月FROM（「築N年以内」→「YYYY年（和暦）」selectを自動選択）

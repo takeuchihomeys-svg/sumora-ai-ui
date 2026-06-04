@@ -1618,7 +1618,7 @@ const SITE_CONFIG = {
           else if (/^\d*SLK$/.test(pu)) typeSet.add("SLK");
           else if (/^\d*SDK$/.test(pu)) typeSet.add("SDK");
           else if (/^\d*SK$/.test(pu)) typeSet.add("SK");
-          else if (/^\d*LDK$/.test(pu)) typeSet.add("LDK");
+          else if (/^\d*LDK$/.test(pu)) { typeSet.add("LDK"); if (mode === "wide") typeSet.add("DK"); }
           else if (/^\d*LK$/.test(pu)) typeSet.add("LK");
           else if (/^\d*DK$/.test(pu)) typeSet.add("DK");
           else if (/^\d*K$/.test(pu)) typeSet.add("K");
@@ -2415,6 +2415,7 @@ function openInstructions(siteKey) {
         walk_minutes:    adjWalk    ? Number(adjWalk)    : (c.walk_minutes || null),
         building_age:    adjAge     ? Number(adjAge)     : (c.building_age || null),
         floor_plan:      adjFloor   || c.floor_plan || c.layout || null,
+        is_wide:         searchMode === "wide",
         area_min:        adjAreaMin ? Number(adjAreaMin) : (c.area_min || c.min_area || parseAreaMin(c.floor_plan || c.layout) || parseAreaMin(c.preferences) || parseAreaMin(c.other_requests) || null),
         structure_types: (adjStructure || c.building_structure || c.structure || "")
           .split(/[,、・\/\.\s]+/).map(s => s.trim()).filter(Boolean),
@@ -2592,6 +2593,7 @@ function openInstructions(siteKey) {
           rent_max:      rpEffectiveRentMax,
           walk_minutes:  adjC.walk_minutes,
           floor_plan:    adjC.floor_plan,
+          is_wide:       searchMode === "wide",
           building_age:  adjC.building_age
             ? (searchMode === "wide" ? adjC.building_age + 5 : adjC.building_age)
             : null,
@@ -2659,6 +2661,7 @@ function openInstructions(siteKey) {
         walk_minutes:   adjC.walk_minutes || null,
         floor_plan:     adjC.floor_plan || null,
         building_age:   adjC.building_age || null,
+        is_wide:        searchMode === "wide",
         area_min:       parseAreaMin(adjC.floor_plan) || parseAreaMin(adjC.preferences) || parseAreaMin(adjC.other_requests) || null,
         reins_station_pairs: isStationMode ? reinsStationPairs : [],
         reins_line:     isStationMode ? reinsLine : null,
