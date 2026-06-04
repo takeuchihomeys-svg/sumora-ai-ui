@@ -20,14 +20,15 @@ function buildLineMessage(
   customerName: string | null | undefined,
   propertySummaries: string[] | null | undefined,
 ): string {
-  const today = new Date().toLocaleDateString("ja-JP");
   const lines: string[] = [];
 
-  // ヘッダー
+  // お客さん名を最初に・物件情報を続ける
   if (customerName) {
-    lines.push(`【${customerName}様】`);
+    lines.push(`👤 ${customerName}様`);
+    lines.push(`🏠 物件（${pageCount}件）`);
+  } else {
+    lines.push(`🏠 物件（${pageCount}件）`);
   }
-  lines.push(`物件（${pageCount}件）`);
   lines.push("━━━━━━━━━━━━━━");
 
   // 物件サマリー（1件ずつ）
@@ -40,7 +41,7 @@ function buildLineMessage(
   }
 
   // PDFリンク
-  lines.push("物件PDF");
+  lines.push("📄 物件PDF");
   lines.push(fileUrl);
 
   return lines.join("\n");
