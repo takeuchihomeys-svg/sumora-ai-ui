@@ -106,9 +106,10 @@ export async function POST(req: NextRequest) {
     // PDF データを収集
     let pdfBase64List: string[] = [];
 
-    if (pdf_urls && pdf_urls.length > 0 && cookie_str) {
+    if (pdf_urls && pdf_urls.length > 0) {
+      // cookie_str なしでも公開URL（Vercel Blob等）は取得可能
       pdfBase64List = await Promise.all(
-        pdf_urls.map((url) => fetchPdfAsBase64(url, cookie_str))
+        pdf_urls.map((url) => fetchPdfAsBase64(url, cookie_str ?? ""))
       );
     } else if (pdf_data && pdf_data.length > 0) {
       pdfBase64List = pdf_data;

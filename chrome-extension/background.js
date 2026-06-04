@@ -51,6 +51,25 @@ function getRealproCookies() {
   });
 }
 
+// ── ヘルパー: PDF 1件をVercel Blobにアップロードして公開URLを返す ──────────
+// base64→binary変換して送信（base64より33%軽量・413回避）
+async function uploadPdfToBlob(b64, fileName) {
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const url = `https://sumora-ai-ui.vercel.app/api/blob-upload?name=${encodeURIComponent(fileName)}`;
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/pdf" },
+    body: bytes,
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`Blobアップロード失敗 HTTP ${resp.status}: ${text.slice(0, 120)}`);
+  }
+  const data = await resp.json();
+  if (!data.ok) throw new Error(data.error || "Blobアップロードエラー");
+  return data.url;
+}
+
 // ── ヘルパー: /api/merge-pdfs を background から呼ぶ（CSP/CORS 完全回避）──
 async function callMergeApi(payload) {
   const resp = await fetch("https://sumora-ai-ui.vercel.app/api/merge-pdfs", {
@@ -156,16 +175,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // ── itandi用: キャプチャ済みpdf_dataをそのまま結合してLINE送信 ──────────
-  // クッキー不要（ブラウザ側でPDFを取得済み）
+  // ── itandi用: キャプチャ済みpdf_dataをBlobにアップ→URL取得→まとめてmerge ──
+  // 旧: pdf_dataを全件まとめて送信 → 413エラー
+  // 新: 1件ずつBlobアップ(binary送信)でURL取得 → URLだけmerge-pdfsに渡す → リアプロと同じ仕組み
   if (msg.type === "axlx-send-pdf-data-to-line") {
     (async () => {
       try {
+        const today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
+        const baseName = (msg.file_name || `物件まとめ_${today}`).replace(/\.pdf$/, "");
+
+        // Step1: 1件ずつVercel BlobにアップロードしてURLを収集
+        const blobUrls = [];
+        for (let i = 0; i < msg.pdf_data.length; i++) {
+          const name = `${baseName}_${i + 1}.pdf`;
+          const url = await uploadPdfToBlob(msg.pdf_data[i], name);
+          blobUrls.push(url);
+        }
+
+        // Step2: URLでまとめてmerge → LINE送信（リアプロと同じ仕組み）
         const data = await callMergeApi({
-          pdf_data: msg.pdf_data,
-          file_name: msg.file_name,
-          send_to_line: true,
-          customer_name: msg.customer_name || null,
+          pdf_urls:           blobUrls,
+          cookie_str:         "",   // 公開Blob URLはcookie不要
+          file_name:          `${baseName}.pdf`,
+          send_to_line:       true,
+          customer_name:      msg.customer_name || null,
           property_summaries: msg.property_summaries || null,
         });
         sendResponse({ ok: true, line_sent: !!data.line_sent, url: data.url });
