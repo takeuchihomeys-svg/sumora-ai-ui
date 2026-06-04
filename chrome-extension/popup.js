@@ -6,6 +6,47 @@ const API_BASE = "https://sumora-ai-ui.vercel.app";
 const LEARNED_WARD_MAP    = {};  // 地名 → 市区
 const LEARNED_STATION_MAP = {};  // 駅名 → { ward, realpro_lines[], itandi_lines[], reins_line }
 
+// 既存ハードコードデータをSupabaseにシード（DBが空のとき一度だけ実行）
+async function seedMapsIfEmpty() {
+  try {
+    // DBに1件でもあればスキップ
+    const [rRes, sRes] = await Promise.all([
+      fetch(`${API_BASE}/api/region-map`),
+      fetch(`${API_BASE}/api/station-map`),
+    ]);
+    const [rd, sd] = await Promise.all([rRes.json(), sRes.json()]);
+    if ((rd.regions || []).length > 0 || (sd.stations || []).length > 0) return;
+
+    console.log("[AX] DBが空 → 既存マップをシード中...");
+
+    // ① NEIGHBORHOOD_WARD_MAP → region_map
+    const regions = Object.entries(NEIGHBORHOOD_WARD_MAP).map(([token, ward]) => ({
+      token, ward, source: "hardcoded", confidence: 100,
+    }));
+
+    // ② STATION_LINE_MAP → station_map（itandi/reins路線名も変換して保存）
+    const stations = Object.entries(STATION_LINE_MAP).map(([token, rpLines]) => {
+      const ward = STATION_WARD_MAP[token] || null;
+      const itandiLines = rpLines.flatMap(l => {
+        const v = ITANDI_LINE_MAP_FILL[l];
+        return v ? (Array.isArray(v) ? v : [v]) : [];
+      });
+      const reinsLine = REINS_LINE_MAP[rpLines[0]] || null;
+      return { token, ward, realpro_lines: rpLines, itandi_lines: itandiLines, reins_line: reinsLine, source: "hardcoded", confidence: 100 };
+    });
+
+    const res = await fetch(`${API_BASE}/api/seed-maps`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ regions, stations }),
+    });
+    const result = await res.json();
+    console.log("[AX] シード完了:", result);
+  } catch (e) {
+    console.warn("[AX] seed失敗:", e.message);
+  }
+}
+
 // 起動時: 地名・駅マップを一括ロード
 async function fetchLearnedMaps() {
   try {
@@ -1387,9 +1428,17 @@ const SITE_CONFIG = {
         "大阪モノレール彩都線":      "国際文化公園都市線（大阪モノレール彩都線）",
       };
 
-      // 駅に対応するitandi路線名を取得
-      const stationLines = rawArea ? (STATION_LINE_MAP[rawArea.replace(/駅|周辺|付近|近く/g, "").trim()] || []) : [];
-      const itandiLines = stationLines.map(l => ITANDI_LINE_MAP[l] || l);
+      // 駅に対応するitandi路線名を取得（STATION_LINE_MAP → LEARNED_STATION_MAP の順）
+      const stationKey_i = rawArea ? rawArea.replace(/駅|周辺|付近|近く/g, "").trim() : "";
+      const stationLines_i = STATION_LINE_MAP[stationKey_i] || [];
+      let itandiLines;
+      if (stationLines_i.length > 0) {
+        itandiLines = stationLines_i.map(l => ITANDI_LINE_MAP[l] || l);
+      } else if (LEARNED_STATION_MAP[stationKey_i]?.itandi_lines?.length > 0) {
+        itandiLines = LEARNED_STATION_MAP[stationKey_i].itandi_lines;
+      } else {
+        itandiLines = [];
+      }
       const linesNote = itandiLines.length ? itandiLines.join(" / ") : null;
 
       // ペット条件の検出
@@ -2551,11 +2600,17 @@ function openInstructions(siteKey) {
         for (const tok of areaToks) {
           const key = STATION_LINE_MAP[tok] ? tok : tok.replace(/[町村]$/, "");
           const lines = STATION_LINE_MAP[key] || [];
+          let reinsLine = null;
           if (lines.length > 0) {
-            const reinsLine = REINS_LINE_MAP[lines[0]] || lines[0];
-            if (!reinsStationPairs.some(p => p.line === reinsLine)) {
-              reinsStationPairs.push({ line: reinsLine, station: key });
-            }
+            reinsLine = REINS_LINE_MAP[lines[0]] || lines[0];
+          } else if (LEARNED_STATION_MAP[key]?.reins_line) {
+            // 学習済みマップからReins路線名を取得
+            reinsLine = LEARNED_STATION_MAP[key].reins_line;
+          } else if (LEARNED_STATION_MAP[tok]?.reins_line) {
+            reinsLine = LEARNED_STATION_MAP[tok].reins_line;
+          }
+          if (reinsLine && !reinsStationPairs.some(p => p.line === reinsLine)) {
+            reinsStationPairs.push({ line: reinsLine, station: key || tok });
           }
           if (reinsStationPairs.length >= 3) break;
         }
@@ -2636,8 +2691,8 @@ function filterCustomers(q) {
 
 // ── Init ───────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
-  // 地名・駅マップをSupabaseから一括ロード（Web検索で自動学習済みのものも含む）
-  fetchLearnedMaps();
+  // DBが空なら既存ハードコードデータをシード → 学習済みマップをロード
+  seedMapsIfEmpty().then(() => fetchLearnedMaps());
   loadCustomers();
 
   // フローティングミニモードの初期化
