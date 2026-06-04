@@ -186,13 +186,15 @@
   // ── 一括取得モード（図面一括取得ボタンを使用・高速並列）─────────────────
   // レインズの「図面一括取得」が複数の新タブを開くのをbackground.jsが一括キャプチャ
   function startBatchSend(targets, customerName, lineBtn, lineOrig, propertySummaries, batchBtnEl) {
-    var expectedCount = targets.length;
-    var pdfBase64List = [];
-    var batchHandler  = null;
-    var batchTimer    = null;
+    var expectedCount  = targets.length;
+    var pdfBase64List  = [];
+    var batchHandler   = null;
+    var batchTimer     = null;
+    var fallbackTimer  = null;
 
     function finish() {
-      if (batchTimer) { clearTimeout(batchTimer); batchTimer = null; }
+      if (fallbackTimer) { clearTimeout(fallbackTimer); fallbackTimer = null; }
+      if (batchTimer)    { clearTimeout(batchTimer);    batchTimer    = null; }
       window.removeEventListener("message", batchHandler);
       sendAllToLine(pdfBase64List, targets, customerName, propertySummaries, lineBtn, lineOrig);
     }
@@ -200,6 +202,8 @@
     // 各タブのPDFを受け取る（background.js → axlx-reins-pdf-captured → postMessage → ここ）
     batchHandler = function (e) {
       if (!e.data || e.data.from !== "axlx-itandi-pdf") return;
+      // 1件目到着 → 逐次フォールバックをキャンセル
+      if (fallbackTimer) { clearTimeout(fallbackTimer); fallbackTimer = null; }
       pdfBase64List.push(e.data.b64);
       lineBtn.textContent = "PDF取得中... (" + pdfBase64List.length + "/" + expectedCount + ")";
       console.log("[AX-REINS] 一括: " + pdfBase64List.length + "/" + expectedCount + " 件取得");
@@ -212,6 +216,17 @@
       console.warn("[AX-REINS] 一括タイムアウト: " + pdfBase64List.length + "/" + expectedCount + " 件取得済み");
       finish();
     }, Math.max(expectedCount * 30000, 60000));
+
+    // 15秒で1件も届かなければ逐次モードへ即切替（2分待ちを防ぐ）
+    fallbackTimer = setTimeout(function () {
+      if (pdfBase64List.length === 0) {
+        clearTimeout(batchTimer); batchTimer = null;
+        window.removeEventListener("message", batchHandler);
+        console.warn("[AX-REINS] 一括モード0件（15s）→ 逐次モードへ切替");
+        lineBtn.textContent = "図面取得中... (0/" + expectedCount + ")";
+        startSequentialSend(targets, customerName, lineBtn, lineOrig, propertySummaries);
+      }
+    }, 15000);
 
     // Step1: 念のり未チェックのものだけONに（ユーザーが既にチェック済みなら不要）
     var confirmed = 0;
@@ -230,6 +245,7 @@
             console.warn("[AX-REINS] 図面一括取得ボタンがDOMから消えた → 逐次モードへ");
             window.removeEventListener("message", batchHandler);
             clearTimeout(batchTimer);
+            if (fallbackTimer) { clearTimeout(fallbackTimer); fallbackTimer = null; }
             startSequentialSend(targets, customerName, lineBtn, lineOrig, propertySummaries);
             return;
           }

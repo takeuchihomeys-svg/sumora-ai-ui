@@ -7,21 +7,45 @@ const UNDERBAR_SITES = ["realnetpro.com"];
 const reinsTabWatchers = new Map();
 
 chrome.tabs.onCreated.addListener((tab) => {
-  if (!tab.openerTabId || !reinsTabWatchers.has(tab.openerTabId)) return;
-  const { senderTabId, timerId } = reinsTabWatchers.get(tab.openerTabId);
-  // 一括取得対応: タイマーをリセットして引き続き監視（初回で削除しない）
-  // 図面一括取得ボタンクリック時に複数タブが連続で開くため
-  clearTimeout(timerId);
-  const newTimer = setTimeout(() => reinsTabWatchers.delete(tab.openerTabId), 35000);
-  reinsTabWatchers.set(tab.openerTabId, { senderTabId, timerId: newTimer });
-
   const newTabId = tab.id;
-  console.log("[AXLX BG] レインズ新タブ検知 id=" + newTabId);
+  let senderTabId = null;
+  let watcherKey  = null;
+
+  if (tab.openerTabId && reinsTabWatchers.has(tab.openerTabId)) {
+    // 正常パス: openerTabId が一致
+    const entry = reinsTabWatchers.get(tab.openerTabId);
+    senderTabId = entry.senderTabId;
+    watcherKey  = tab.openerTabId;
+  } else if (reinsTabWatchers.size > 0) {
+    // フォールバック: 図面一括取得が window.open 以外の方法でタブを開く場合
+    // ウォッチャーが有効なら最初のエントリを使う
+    for (const [key, entry] of reinsTabWatchers) {
+      senderTabId = entry.senderTabId;
+      watcherKey  = key;
+      break;
+    }
+  }
+
+  if (!senderTabId) return;
+
+  // タイマーをリセット（複数タブが連続で開く一括取得に対応）
+  const existing = reinsTabWatchers.get(watcherKey);
+  if (existing) clearTimeout(existing.timerId);
+  const newTimer = setTimeout(() => reinsTabWatchers.delete(watcherKey), 35000);
+  reinsTabWatchers.set(watcherKey, { senderTabId, timerId: newTimer });
+
+  console.log("[AXLX BG] レインズ新タブ検知 id=" + newTabId + " openerTabId=" + tab.openerTabId + " senderTabId=" + senderTabId);
 
   // タブのロード完了後にPDFを取得して元のタブに送信する
   function captureFromTab(updatedTab) {
     const url = updatedTab.url || "";
     console.log("[AXLX BG] 新タブ完了:", url.slice(0, 80));
+
+    // レインズ外のURLはスキップ（誤検知でユーザーのタブを閉じないため）
+    if (url && !url.includes("system.reins.jp") && !url.startsWith("blob:") && url !== "about:blank") {
+      console.log("[AXLX BG] レインズ外URL → スキップ（タブ維持）");
+      return;
+    }
 
     // MAIN worldにスクリプトを注入してfetch経由でPDFデータを取得
     chrome.scripting.executeScript({
