@@ -356,69 +356,77 @@
 
   function startSend(targets, customerName, lineBtn, lineOrig) {
     // 送信前に各物件の情報（名前・AD）を収集
-    var propertyInfos = targets.map(function (t, i) {
+    var propertyInfos = targets.map(function (t) {
       return extractPropertyInfo(t.btn);
     });
 
-    lineBtn.textContent = "PDF取得中... (0/" + targets.length + ")";
-    var pdfBase64List = [];
+    var sentCount  = 0;
+    var failCount  = 0;
+    var today      = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
 
+    // ── 1件ずつ: キャプチャ → 即LINE送信 ──────────────────────────────────
+    // まとめ送りをやめて1件ごとに送信（413 FUNCTION_PAYLOAD_TOO_LARGE を回避）
     function processNext(i) {
       if (i >= targets.length) {
-        // 全件取得完了 → LINE送信
-        if (!pdfBase64List.length) {
-          alert("PDFが1件も取得できませんでした");
-          lineBtn.disabled    = false;
+        // 全件完了
+        lineBtn.disabled    = false;
+        if (sentCount === 0) {
+          alert("PDFが1件も送信できませんでした");
           lineBtn.textContent = lineOrig;
-          return;
-        }
-
-        // 物件サマリー生成（名前 + AD）
-        var propertySummaries = pdfBase64List.map(function (_, j) {
-          var info  = propertyInfos[j] || { name: "物件" + (j + 1), ad: null };
-          var lines = ["【" + (j + 1) + "】" + info.name];
-          if (info.ad) lines.push("AD: " + info.ad);
-          return lines.join("\n");
-        });
-
-        lineBtn.textContent = "LINE送信中...";
-        var today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
-        chrome.runtime.sendMessage({
-          type:               "axlx-send-pdf-data-to-line",
-          pdf_data:           pdfBase64List,
-          file_name:          "物件まとめ_" + today + ".pdf",
-          customer_name:      customerName || null,
-          property_summaries: propertySummaries,
-        }, function (resp) {
-          lineBtn.disabled    = false;
-          if (chrome.runtime.lastError || !resp || !resp.ok) {
-            var errMsg = resp ? resp.error : (chrome.runtime.lastError ? chrome.runtime.lastError.message : "不明");
-            alert("LINE送信エラー:\n" + errMsg);
-            lineBtn.textContent = lineOrig;
-            return;
-          }
+        } else {
           // 選択をリセット
           targets.forEach(function (t) {
             t.cb.checked = false;
             checkedKeys.delete(t.rowKey);
           });
           updateBar();
-          lineBtn.textContent = "✅ " + pdfBase64List.length + "件 LINE送信完了！";
-          setTimeout(function () { lineBtn.textContent = lineOrig; }, 5000);
-        });
+          lineBtn.textContent = "✅ " + sentCount + "件 LINE送信完了！" + (failCount ? "（" + failCount + "件失敗）" : "");
+          setTimeout(function () { lineBtn.textContent = lineOrig; }, 6000);
+        }
         return;
       }
 
-      lineBtn.textContent = "PDF取得中... (" + (i + 1) + "/" + targets.length + ")";
+      var info = propertyInfos[i] || { name: "物件" + (i + 1), ad: null };
+      lineBtn.textContent = "取得→送信中... (" + (i + 1) + "/" + targets.length + ")";
+
       captureOnePdf(targets[i].btn)
         .then(function (b64) {
-          console.log("[AXLX] PDF取得成功 " + (i + 1) + "件目 (" + b64.length + " chars)");
-          pdfBase64List.push(b64);
-          return sleep(1500);
+          console.log("[AXLX] PDF取得成功 " + (i + 1) + "件目 (" + Math.round(b64.length / 1024) + "KB)");
+
+          // 1件分のサマリー（物件名 + AD）
+          var summaryLines = ["【" + (i + 1) + "/" + targets.length + "】" + info.name];
+          if (info.ad) summaryLines.push("AD: " + info.ad);
+
+          // 即LINE送信（1件のみ・ペイロードを小さく）
+          return new Promise(function (resolve, reject) {
+            chrome.runtime.sendMessage({
+              type:               "axlx-send-pdf-data-to-line",
+              pdf_data:           [b64],
+              file_name:          info.name.slice(0, 20) + "_" + today + ".pdf",
+              customer_name:      customerName || null,
+              property_summaries: [summaryLines.join("\n")],
+            }, function (resp) {
+              if (chrome.runtime.lastError || !resp || !resp.ok) {
+                var errMsg = resp ? resp.error
+                  : (chrome.runtime.lastError ? chrome.runtime.lastError.message : "不明");
+                console.error("[AXLX] LINE送信失敗 " + (i + 1) + "件目:", errMsg);
+                reject(new Error(errMsg));
+              } else {
+                sentCount++;
+                console.log("[AXLX] LINE送信完了 " + (i + 1) + "件目");
+                resolve();
+              }
+            });
+          });
+        })
+        .then(function () {
+          lineBtn.textContent = "✓ " + sentCount + "件送信済 (" + (i + 1) + "/" + targets.length + ")";
+          return sleep(1200);
         })
         .then(function () { processNext(i + 1); })
         .catch(function (e) {
-          console.error("[AXLX] PDF取得失敗 " + (i + 1) + "件目:", e.message);
+          failCount++;
+          console.error("[AXLX] 失敗 " + (i + 1) + "件目:", e.message);
           closeModal();
           sleep(800).then(function () { processNext(i + 1); });
         });
