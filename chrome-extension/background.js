@@ -175,17 +175,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               return null;
             }
             // ケース2: capturePending=true でblob/PDF URL → 抑制 + blob fetchでキャプチャ
+            // ※ capturePendingはここではリセットしない（createObjectURLが後で呼ばれる場合も取得できるよう）
             if (window.__axlxCapturePending && isBlobPdf) {
-              window.__axlxCapturePending = false;
-              console.log("[AXLX V3] window.open 抑制 + blob fetch:", url.slice(0, 40));
-              fetch(url).then(r => r.arrayBuffer()).then(buf => {
-                const bytes = new Uint8Array(buf);
-                const chunks = [];
-                for (let i = 0; i < bytes.length; i += 8192) {
-                  chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
-                }
-                window.postMessage({ from: "axlx-itandi-pdf", b64: btoa(chunks.join("")), ts: Date.now() }, "*");
-              }).catch(e => console.error("[AXLX V3] blob fetch error:", e));
+              console.log("[AXLX V3] window.open 抑制 + blob fetch:", url.slice(0, 60));
+              if (url.startsWith("blob:")) {
+                // blob:URLはそのままfetchで取得（同一オリジンのため可能）
+                fetch(url).then(r => r.arrayBuffer()).then(buf => {
+                  if (!window.__axlxCapturePending) return; // createObjectURL側が先にキャプチャした場合はスキップ
+                  window.__axlxCapturePending = false;
+                  const bytes = new Uint8Array(buf);
+                  const chunks = [];
+                  for (let i = 0; i < bytes.length; i += 8192) {
+                    chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
+                  }
+                  window.postMessage({ from: "axlx-itandi-pdf", b64: btoa(chunks.join("")), ts: Date.now() }, "*");
+                }).catch(e => console.error("[AXLX V3] blob fetch error:", e));
+              }
               return null;
             }
             return origOpen.apply(this, args);
@@ -230,6 +235,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             return origXHRSend.apply(this, arguments);
           };
         }
+
+        // 毎回の注入完了時に capturePending を true にセット
+        // postMessage経由だとwindow.openとcreateObjectURLの呼び出し順によってはリセットされるため
+        // 注入直後に直接セットして確実にキャプチャ待機状態にする
+        window.__axlxCapturePending = true;
+        console.log("[AXLX] capturePending = true (injection complete)");
       },
     }).then(() => sendResponse({ ok: true })).catch((e) => sendResponse({ ok: false, error: e.message }));
     return true;
