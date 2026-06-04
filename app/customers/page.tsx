@@ -189,7 +189,7 @@ export default function CustomersPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div className="bg-slate-50 flex flex-col" style={{ height: "100svh", overflowY: "auto" }}>
       {/* Header */}
       <div
         className="sticky top-0 z-30 flex items-center justify-between px-4 py-3"

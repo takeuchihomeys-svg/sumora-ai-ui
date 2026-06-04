@@ -403,7 +403,7 @@ export default function ConditionsPage() {
   const listFiltered = (listFilter === "all" ? customers : customers.filter((c) => c.status === listFilter)).filter(matchesSearch);
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col pb-16">
+    <div className="bg-slate-50 flex flex-col pb-16" style={{ height: "100svh", overflowY: "auto" }}>
       {/* ── ヘッダー（LINEページ風: 白背景） ── */}
       <header
         className="sticky top-0 z-20 flex items-center justify-between px-4"
