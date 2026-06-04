@@ -285,9 +285,11 @@
               }, 250);
             };
             window.addEventListener("message", pdfHandler);
+            // axlx-start-pdf-capture を送ってから 60ms 待機してクリック
+            // postMessage は非同期のため、メッセージ処理前に click() が走る競合を防ぐ
             window.postMessage({ from: "axlx-start-pdf-capture" }, "*");
             console.log("[AXLX] PDFを出力クリック (captureStart=" + captureStart + ")");
-            pdfBtn.click();
+            setTimeout(function() { pdfBtn.click(); }, 60);
           } else {
             console.error("[AXLX] PDFを出力ボタンが見つかりません");
             cleanup();

@@ -409,29 +409,42 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           };
           XMLHttpRequest.prototype.send = function () {
             if (window.__axlxCapturePending) {
-              // responseTypeが未設定の場合はarraybufferに強制（バイナリデータを確実に受取る）
-              if (!this.responseType || this.responseType === "") {
-                try { this.responseType = "arraybuffer"; } catch (e) {}
-              }
+              // ⚠️ responseType を変更しない: itandi の XHR が responseText を読めなくなり
+              // InvalidStateError が発生してボタンが壊れるため（2026-06-04 根本原因特定）
+              var _self = this;
+              var _savedType = this.responseType;
               this.addEventListener("load", function () {
                 if (!window.__axlxCapturePending) return;
-                const ct = this.getResponseHeader("content-type") || "";
+                const ct = _self.getResponseHeader("content-type") || "";
                 if (!ct.includes("pdf") && !ct.includes("octet")) return;
                 window.__axlxCapturePending = false;
                 const _sendPdf = (b64) => (window.top || window).postMessage({ from: "axlx-itandi-pdf", b64, ts: Date.now() }, "*");
-                if (this.responseType === "blob" && this.response) {
+                if (_savedType === "blob" && _self.response) {
                   const r = new FileReader();
                   r.onload = (e) => _sendPdf(e.target.result.split(",")[1]);
-                  r.readAsDataURL(this.response);
+                  r.readAsDataURL(_self.response);
                   return;
                 }
-                if (this.responseType === "arraybuffer" && this.response) {
-                  const bytes = new Uint8Array(this.response);
+                if (_savedType === "arraybuffer" && _self.response) {
+                  const bytes = new Uint8Array(_self.response);
                   const chunks = [];
                   for (let i = 0; i < bytes.length; i += 8192) {
                     chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
                   }
                   _sendPdf(btoa(chunks.join("")));
+                  return;
+                }
+                // responseType="" or "text" の場合: URL を再 fetch してバイナリ取得
+                var _url = _self._axlxUrl;
+                if (_url) {
+                  fetch(_url).then(function(r) { return r.arrayBuffer(); }).then(function(buf) {
+                    var bytes = new Uint8Array(buf);
+                    var chunks = [];
+                    for (var i = 0; i < bytes.length; i += 8192) {
+                      chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
+                    }
+                    _sendPdf(btoa(chunks.join("")));
+                  }).catch(function(e) { console.error("[AXLX XHR] re-fetch error:", e); });
                 }
               });
             }
@@ -493,11 +506,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           };
         }
 
-        // 毎回の注入完了時に capturePending を true にセット
-        // postMessage経由だとwindow.openとcreateObjectURLの呼び出し順によってはリセットされるため
-        // 注入直後に直接セットして確実にキャプチャ待機状態にする
-        window.__axlxCapturePending = true;
-        console.log("[AXLX] capturePending = true (injection complete)");
+        // capturePending は axlx-start-pdf-capture メッセージで true にセット
+        // 注入時の自動 ON は廃止: 常時 ON だと itandi の全 XHR に干渉してボタンを壊すため
+        console.log("[AXLX] PDF hook ready. capturePending = false (waiting for axlx-start-pdf-capture)");
       },
     }).then(() => sendResponse({ ok: true })).catch((e) => sendResponse({ ok: false, error: e.message }));
     return true;
