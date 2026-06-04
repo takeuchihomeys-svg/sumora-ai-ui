@@ -79,15 +79,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       target: { tabId },
       world: "MAIN",
       func: () => {
-        if (window.__axlxItandiHook) return;
-        window.__axlxItandiHook = true;
+        // v2: キャプチャ許可フラグ追加（過去PDFの誤キャプチャを防止）
+        if (window.__axlxItandiHookV2) return;
+        window.__axlxItandiHookV2 = true;
+        window.__axlxCapturePending = false;
+
+        // コンテンツスクリプトから "PDFを出力クリック直前" に送られるシグナルを受信
+        window.addEventListener("message", function (e) {
+          if (e.data && e.data.from === "axlx-start-pdf-capture") {
+            window.__axlxCapturePending = true;
+          }
+        });
 
         // Blob URL フック（itandi が createObjectURL でPDFを作る場合）
         const origCreate = URL.createObjectURL;
         URL.createObjectURL = function (blob) {
           const url = origCreate.call(URL, blob);
           const t = (blob && blob.type) || "";
-          if (t.includes("pdf") || t === "application/octet-stream") {
+          if ((t.includes("pdf") || t === "application/octet-stream") && window.__axlxCapturePending) {
+            window.__axlxCapturePending = false; // 1回受け取ったらリセット
             const r = new FileReader();
             r.onload = (e) => {
               window.postMessage({ from: "axlx-itandi-pdf", b64: e.target.result.split(",")[1] }, "*");
@@ -102,7 +112,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         window.fetch = function (...args) {
           return origFetch.apply(this, args).then((resp) => {
             const ct = resp.headers.get("content-type") || "";
-            if (ct.includes("application/pdf")) {
+            if (ct.includes("application/pdf") && window.__axlxCapturePending) {
+              window.__axlxCapturePending = false; // 1回受け取ったらリセット
               resp.clone().arrayBuffer().then((buf) => {
                 const bytes = new Uint8Array(buf);
                 const chunks = [];

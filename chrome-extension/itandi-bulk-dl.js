@@ -224,12 +224,12 @@
       }
 
       // PDF blobをMAINワールドフックから受信
+      // ※ リスナーは「PDFを出力クリック直前」に登録する（過去PDF誤キャプチャ防止）
       var pdfHandler = function (e) {
         if (!e.data || e.data.from !== "axlx-itandi-pdf") return;
         cleanup();
         resolve(e.data.b64);
       };
-      window.addEventListener("message", pdfHandler);
 
       pdfTimer = setTimeout(function () {
         cleanup();
@@ -275,6 +275,10 @@
             });
 
           if (pdfBtn) {
+            // ① MAINワールドフックにキャプチャ許可シグナルを送る
+            window.postMessage({ from: "axlx-start-pdf-capture" }, "*");
+            // ② リスナーをここで登録（許可シグナルと同タイミング）
+            window.addEventListener("message", pdfHandler);
             console.log("[AXLX] PDFを出力クリック:", pdfBtn.textContent.trim());
             pdfBtn.click();
           } else {
