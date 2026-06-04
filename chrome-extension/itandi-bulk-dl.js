@@ -216,20 +216,13 @@
     return new Promise(function (resolve, reject) {
       var pdfTimer;
       var modalObs = null;
+      var pdfHandler = null; // クリック直前に生成してタイムスタンプ以降のみ受付
 
       function cleanup() {
         clearTimeout(pdfTimer);
-        window.removeEventListener("message", pdfHandler);
+        if (pdfHandler) window.removeEventListener("message", pdfHandler);
         if (modalObs) { modalObs.disconnect(); modalObs = null; }
       }
-
-      // PDF blobをMAINワールドフックから受信
-      // ※ リスナーは「PDFを出力クリック直前」に登録する（過去PDF誤キャプチャ防止）
-      var pdfHandler = function (e) {
-        if (!e.data || e.data.from !== "axlx-itandi-pdf") return;
-        cleanup();
-        resolve(e.data.b64);
-      };
 
       pdfTimer = setTimeout(function () {
         cleanup();
@@ -237,36 +230,26 @@
       }, 40000);
 
       // モーダル内で「12枚」ラジオ選択 → PDFを出力クリック
-      // 診断結果に基づく確定セレクター:
-      //   ラジオ: input[name="layoutType"][value="detailed"]
-      //   PDFボタン: .itandi-bb-ui__ModalFooter__Right の primaryボタン
       function interactWithModal() {
         // ── 「間取り図＋写真12枚」ラジオ選択 ────────────────────────────
-        // 診断: name=layoutType, value=detailed で確実に特定
         var radio12 = document.querySelector('input[name="layoutType"][value="detailed"]');
         if (radio12) {
           setReactRadio(radio12);
           console.log("[AXLX] 12枚ラジオ選択完了 (layoutType=detailed)");
         } else {
-          // フォールバック: ラベルテキストで探す
           var allRadios = Array.from(document.querySelectorAll('input[name="layoutType"]'));
-          var r12 = allRadios.find(function(r) {
+          var r12 = allRadios.find(function (r) {
             return r.labels && r.labels[0] && r.labels[0].textContent.includes("12枚");
           });
           if (r12) {
             setReactRadio(r12);
             console.log("[AXLX] 12枚ラジオ選択完了 (label fallback)");
           } else {
-            console.warn("[AXLX] 12枚ラジオが見つかりません。name=layoutType のラジオ一覧:");
-            allRadios.forEach(function(r) {
-              console.log("  value:", r.value, "| label:", r.labels[0] && r.labels[0].textContent.trim());
-            });
+            console.warn("[AXLX] 12枚ラジオが見つかりません");
           }
         }
 
         sleep(400).then(function () {
-          // ── 「PDFを出力」ボタンクリック ─────────────────────────────────
-          // 診断: .itandi-bb-ui__ModalFooter__Right の primaryボタン (type="submit")
           var pdfBtn =
             document.querySelector('.itandi-bb-ui__ModalFooter__Right button') ||
             document.querySelector('button.itandi-bb-ui__Button__Variant--primary[type="submit"]') ||
@@ -275,17 +258,25 @@
             });
 
           if (pdfBtn) {
-            // ① MAINワールドフックにキャプチャ許可シグナルを送る
-            window.postMessage({ from: "axlx-start-pdf-capture" }, "*");
-            // ② リスナーをここで登録（許可シグナルと同タイミング）
+            // クリック直前にタイムスタンプを記録し、それ以降のblobのみ受け付ける
+            // CDNキャッシュや以前のセッションのblobを誤キャプチャしないための安全策
+            var captureStart = Date.now();
+            pdfHandler = function (e) {
+              if (!e.data || e.data.from !== "axlx-itandi-pdf") return;
+              // ts が付いている場合はクリック前のものを除外
+              if (typeof e.data.ts === "number" && e.data.ts < captureStart) {
+                console.log("[AXLX] 古いblobをスキップ (ts=" + e.data.ts + " < start=" + captureStart + ")");
+                return;
+              }
+              cleanup();
+              resolve(e.data.b64);
+            };
             window.addEventListener("message", pdfHandler);
-            console.log("[AXLX] PDFを出力クリック:", pdfBtn.textContent.trim());
+            window.postMessage({ from: "axlx-start-pdf-capture" }, "*");
+            console.log("[AXLX] PDFを出力クリック (captureStart=" + captureStart + ")");
             pdfBtn.click();
           } else {
             console.error("[AXLX] PDFを出力ボタンが見つかりません");
-            findBtnByText("").slice(0, 20).forEach(function (b) {
-              console.log("  available btn:", b.textContent.trim().slice(0, 50));
-            });
             cleanup();
             reject(new Error("「PDFを出力」ボタンが見つかりません"));
           }

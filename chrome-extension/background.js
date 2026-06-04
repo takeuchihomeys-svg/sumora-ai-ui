@@ -55,7 +55,10 @@ function getRealproCookies() {
 // base64→binary変換して送信（base64より33%軽量・413回避）
 async function uploadPdfToBlob(b64, fileName) {
   const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-  const url = `https://sumora-ai-ui.vercel.app/api/blob-upload?name=${encodeURIComponent(fileName)}`;
+  // タイムスタンプをファイル名に付与してCDNキャッシュを完全に回避
+  // 同名ファイルをallowOverwrite:trueで上書きしてもCDNが古いキャッシュを返すため
+  const uniqueName = fileName.replace(/\.pdf$/i, "") + `_${Date.now()}.pdf`;
+  const url = `https://sumora-ai-ui.vercel.app/api/blob-upload?name=${encodeURIComponent(uniqueName)}`;
   const resp = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/pdf" },
@@ -119,7 +122,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             window.__axlxCapturePending = false; // 1回受け取ったらリセット
             const r = new FileReader();
             r.onload = (e) => {
-              window.postMessage({ from: "axlx-itandi-pdf", b64: e.target.result.split(",")[1] }, "*");
+              window.postMessage({ from: "axlx-itandi-pdf", b64: e.target.result.split(",")[1], ts: Date.now() }, "*");
             };
             r.readAsDataURL(blob);
           }
@@ -139,7 +142,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 for (let i = 0; i < bytes.length; i += 8192) {
                   chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
                 }
-                window.postMessage({ from: "axlx-itandi-pdf", b64: btoa(chunks.join("")) }, "*");
+                window.postMessage({ from: "axlx-itandi-pdf", b64: btoa(chunks.join("")), ts: Date.now() }, "*");
               });
             }
             return resp;
