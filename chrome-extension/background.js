@@ -378,22 +378,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
 
         // <a download> フック（URLを直接ダウンロードする場合をキャプチャ）
-        // レインズが <a href="url" download="file.pdf"> の形でPDFを落とす場合に対応
+        // 2パターン対応:
+        //   (A) DOM上のアンカー要素をクリック → document の capture-phase click で捕捉
+        //   (B) detached anchor の .click() → HTMLAnchorElement.prototype.click を上書き
         if (!window.__axlxAnchorHookV1) {
           window.__axlxAnchorHookV1 = true;
-          document.addEventListener("click", function (ev) {
-            if (!window.__axlxCapturePending) return;
-            var el = ev.target;
-            while (el && el !== document && el.tagName !== "A") el = el.parentElement;
-            if (!el || !el.getAttribute) return;
-            var dl = el.getAttribute("download");
-            if (dl === null) return; // download属性なし → スキップ
-            var href = el.href || "";
-            if (!href || href.startsWith("javascript:")) return;
-            ev.preventDefault();
-            ev.stopPropagation();
+
+          function _axlxFetchAndSend(href) {
             window.__axlxCapturePending = false;
-            console.log("[AXLX] anchor download captured:", href.slice(0, 60));
+            console.log("[AXLX] anchor captured:", href.slice(0, 60));
             fetch(href).then(function (r) { return r.arrayBuffer(); }).then(function (buf) {
               var bytes = new Uint8Array(buf);
               var chunks = [];
@@ -408,7 +401,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 _doc.dispatchEvent(new CustomEvent("axlx-pdf-ready", { detail: payload }));
               } catch (e) { console.error("[AXLX] anchor CustomEvent:", e); }
             }).catch(function (e) { console.error("[AXLX] anchor fetch error:", e); });
+          }
+
+          // (A) DOM上のアンカークリック
+          document.addEventListener("click", function (ev) {
+            if (!window.__axlxCapturePending) return;
+            var el = ev.target;
+            while (el && el !== document && el.tagName !== "A") el = el.parentElement;
+            if (!el || !el.getAttribute) return;
+            if (el.getAttribute("download") === null) return;
+            var href = el.href || "";
+            if (!href || href.startsWith("javascript:")) return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            _axlxFetchAndSend(href);
           }, true);
+
+          // (B) detached anchor の .click()（DOM外から呼ばれてもキャプチャ）
+          var _origAnchorClick = HTMLAnchorElement.prototype.click;
+          HTMLAnchorElement.prototype.click = function () {
+            if (window.__axlxCapturePending && this.getAttribute("download") !== null) {
+              var href = this.href || "";
+              if (href && !href.startsWith("javascript:") && !href.startsWith("blob:")) {
+                _axlxFetchAndSend(href);
+                return; // ブラウザのダウンロードを抑制
+              }
+            }
+            return _origAnchorClick.apply(this, arguments);
+          };
         }
 
         // 毎回の注入完了時に capturePending を true にセット

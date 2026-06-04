@@ -258,9 +258,12 @@
           batchBtnEl.click();
 
           // Step3: 確認ダイアログ「一括取得」を800ms後に自動クリック
+          // offsetParent は position:fixed のモーダルで null になるため getBoundingClientRect で可視判定
           sleep(800).then(function () {
             var ikkatsuBtn = Array.from(document.querySelectorAll("button")).find(function (b) {
-              return b.textContent.trim() === "一括取得" && b.offsetParent;
+              if (b.textContent.trim() !== "一括取得") return false;
+              var r = b.getBoundingClientRect();
+              return r.width > 0 && r.height > 0;
             });
             if (ikkatsuBtn) {
               console.log("[AX-REINS] 確認ダイアログ「一括取得」自動クリック");
