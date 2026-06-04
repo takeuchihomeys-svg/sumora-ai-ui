@@ -269,7 +269,20 @@
                 return;
               }
               cleanup();
-              resolve(e.data.b64);
+              // itandiが生成した <a download="物件名.pdf"> からファイル名を取得
+              // blob URLがhrefにセットされた後にリンクが現れるため少し待つ
+              var b64captured = e.data.b64;
+              setTimeout(function () {
+                var dlName = null;
+                var dlLink = document.querySelector('a[download$=".pdf"]') ||
+                             document.querySelector('.itandi-bb-ui__Modalv2 a[download]');
+                if (dlLink) {
+                  var fname = dlLink.getAttribute("download") || "";
+                  dlName = fname.replace(/\.pdf$/i, "").trim() || null;
+                  console.log("[AXLX] 物件名(download属性):", dlName);
+                }
+                resolve({ b64: b64captured, name: dlName });
+              }, 250);
             };
             window.addEventListener("message", pdfHandler);
             window.postMessage({ from: "axlx-start-pdf-capture" }, "*");
@@ -346,13 +359,14 @@
   }
 
   function startSend(targets, customerName, lineBtn, lineOrig) {
-    // 送信前に各物件の情報（名前・AD）を収集
+    // AD情報は事前に収集（物件名はPDFキャプチャ時に取得するのでフォールバック用）
     var propertyInfos = targets.map(function (t) {
       return extractPropertyInfo(t.btn);
     });
 
     lineBtn.textContent = "PDF取得中... (0/" + targets.length + ")";
-    var pdfBase64List = [];
+    var pdfBase64List   = [];
+    var capturedNames   = []; // captureOnePdf で取得した物件名（download属性）
 
     // ── 1件ずつキャプチャして全件集める → background.jsがBlobアップ→merge→LINE ──
     function processNext(i) {
@@ -366,9 +380,13 @@
         }
 
         var propertySummaries = pdfBase64List.map(function (_, j) {
-          var info  = propertyInfos[j] || { name: "物件" + (j + 1), ad: null };
-          var lines = ["【" + (j + 1) + "】" + info.name];
-          if (info.ad) lines.push("AD: " + info.ad);
+          // download属性の物件名 → extractPropertyInfo の名前 → "物件N" の優先順
+          var dlName   = capturedNames[j] || null;
+          var fallback = propertyInfos[j] || { name: null, ad: null };
+          var name     = dlName || fallback.name || ("物件" + (j + 1));
+          var ad       = fallback.ad;
+          var lines    = ["【" + (j + 1) + "】" + name];
+          if (ad) lines.push("AD: " + ad);
           return lines.join("\n");
         });
 
@@ -402,9 +420,12 @@
 
       lineBtn.textContent = "PDF取得中... (" + (i + 1) + "/" + targets.length + ")";
       captureOnePdf(targets[i].btn)
-        .then(function (b64) {
-          console.log("[AXLX] PDF取得成功 " + (i + 1) + "件目 (" + Math.round(b64.length / 1024) + "KB)");
+        .then(function (result) {
+          var b64  = result.b64;
+          var name = result.name;
+          console.log("[AXLX] PDF取得成功 " + (i + 1) + "件目 (" + Math.round(b64.length / 1024) + "KB) 物件名:" + (name || "不明"));
           pdfBase64List.push(b64);
+          capturedNames.push(name);
           // PDF取得後にモーダルを明示的に閉じる（次の物件との競合を防ぐ）
           closeModal();
           return sleep(1000);
