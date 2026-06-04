@@ -284,7 +284,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             const url = String(args[0] || "");
             // 診断: 全window.open呼び出しをログ
             console.log("[AXLX DIAG] window.open:", url.slice(0, 80), "| target:", args[1], "| pending:", window.__axlxCapturePending);
-            const isBlobPdf = url.startsWith("blob:") || /\.pdf(\?|$)/i.test(url);
             // ケース1: createObjectURLで既にキャプチャ済みのblob URL → 抑制のみ
             // createObjectURL後はcapturePending=falseになるため別フラグで判定する
             if (url && url === window.__axlxLastBlobUrl) {
@@ -292,23 +291,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               console.log("[AXLX V3] window.open 抑制（キャプチャ済みblob）:", url.slice(0, 40));
               return null;
             }
-            // ケース2: capturePending=true でblob/PDF URL → 抑制 + blob fetchでキャプチャ
-            // ※ capturePendingはここではリセットしない（createObjectURLが後で呼ばれる場合も取得できるよう）
-            if (window.__axlxCapturePending && isBlobPdf) {
+            // ケース2: capturePending=true で blob: URL → 抑制 + blob fetchでキャプチャ
+            // ※ サーバーPDF URL（https://...pdf）は抑制しない → 新タブで開く → タブ監視が捕捉
+            if (window.__axlxCapturePending && url.startsWith("blob:")) {
               console.log("[AXLX V3] window.open 抑制 + blob fetch:", url.slice(0, 60));
-              if (url.startsWith("blob:")) {
-                // blob:URLはそのままfetchで取得（同一オリジンのため可能）
-                fetch(url).then(r => r.arrayBuffer()).then(buf => {
-                  if (!window.__axlxCapturePending) return; // createObjectURL側が先にキャプチャした場合はスキップ
-                  window.__axlxCapturePending = false;
-                  const bytes = new Uint8Array(buf);
-                  const chunks = [];
-                  for (let i = 0; i < bytes.length; i += 8192) {
-                    chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
-                  }
-                  (window.top || window).postMessage({ from: "axlx-itandi-pdf", b64: btoa(chunks.join("")), ts: Date.now() }, "*");
-                }).catch(e => console.error("[AXLX V3] blob fetch error:", e));
-              }
+              // blob:URLはそのままfetchで取得（同一オリジンのため可能）
+              fetch(url).then(r => r.arrayBuffer()).then(buf => {
+                if (!window.__axlxCapturePending) return; // createObjectURL側が先にキャプチャした場合はスキップ
+                window.__axlxCapturePending = false;
+                const bytes = new Uint8Array(buf);
+                const chunks = [];
+                for (let i = 0; i < bytes.length; i += 8192) {
+                  chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
+                }
+                (window.top || window).postMessage({ from: "axlx-itandi-pdf", b64: btoa(chunks.join("")), ts: Date.now() }, "*");
+              }).catch(e => console.error("[AXLX V3] blob fetch error:", e));
               return null;
             }
             return origOpen.apply(this, args);

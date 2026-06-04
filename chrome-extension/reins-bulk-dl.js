@@ -216,7 +216,7 @@
         captureOnePdf(targets[i]).then(function (b64) {
           console.log("[AX-REINS] 図面取得成功 " + (i + 1) + "件目 (" + Math.round(b64.length / 1024) + "KB)");
           pdfBase64List.push(b64);
-          return sleep(800); // 連続クリック防止
+          return sleep(1500); // 連続クリック防止（800ms→1500ms: レインズのDOM安定化待ち）
         }).then(function () {
           processNext(i + 1);
         }).catch(function (e) {
@@ -230,11 +230,9 @@
   }
 
   // ── 開いているビューワー（モーダル・ダイアログ等）を閉じる ──────────────
+  // 注意: Escape を無条件に送るとレインズのページナビゲーションが起きるため
+  // 明示的な閉じるボタン OR role=dialog が検出された場合のみ Escape を送る
   function closeViewer() {
-    // Escapeキーで閉じる
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
-    document.dispatchEvent(new KeyboardEvent("keyup",   { key: "Escape", bubbles: true }));
-    // 閉じる系ボタンを探す
     var closeBtn = Array.from(document.querySelectorAll("button")).find(function (b) {
       return /^[×✕✗]$|^閉じる$|^close$|^Close$/i.test(b.textContent.trim()) && b.offsetParent;
     });
@@ -242,7 +240,12 @@
     var ariaClose = document.querySelector(
       "[aria-label='閉じる'],[aria-label='close'],[aria-label='Close']"
     );
-    if (ariaClose) ariaClose.click();
+    if (ariaClose) { ariaClose.click(); return; }
+    // モーダルが確認できた場合のみ Escape（無条件dispatch禁止 = ページ遷移防止）
+    if (document.querySelector('[role="dialog"],[aria-modal="true"]')) {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      document.dispatchEvent(new KeyboardEvent("keyup",   { key: "Escape", bubbles: true }));
+    }
   }
 
   // ── 結果行が見えるようになるまで待つ（最大maxMs ms）───────────────────
@@ -296,9 +299,11 @@
             if (reinjTimer) { clearInterval(reinjTimer); reinjTimer = null; }
             window.removeEventListener("message", pdfHandler);
             document.removeEventListener("axlx-pdf-ready", customEvtHdlr);
-            // PDF受信後にビューワーを閉じて、次の行が見える状態にしてresolve
             closeViewer();
-            waitForRows(function () { resolve(b64); }, 3000);
+            // レインズのDOM安定化を待ってから行の確認（新タブ閉鎖後のSPA再描画を考慮）
+            sleep(600).then(function () {
+              waitForRows(function () { resolve(b64); }, 3000);
+            });
           }
 
           // 方法1: window.postMessage（itandiと同じ）
