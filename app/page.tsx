@@ -2152,7 +2152,7 @@ export default function Home() {
                     style={{ backgroundColor: bg }}
                     title="タップ/長押しでアカウント変更"
                   >
-                    {acc.icon} {acc.label}
+                    {acc.label}
                   </button>
                 );
               })()}
