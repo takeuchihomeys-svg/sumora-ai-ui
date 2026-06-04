@@ -1550,6 +1550,8 @@ function openInstructions(siteKey) {
           const m = {};
           neighborhoodTokens.forEach(t => {
             const w = NEIGHBORHOOD_WARD_MAP[t];
+            if (!w) return; // WARD_CODE_MAPのみマッチ（フルネーム）は対象外
+            if (/[区市郡府県都]$/.test(t)) return; // 区名略称（生野区・浪速区等）は町域ではない
             if (!m[w]) m[w] = [];
             if (!m[w].includes(t)) m[w].push(t);
           });
