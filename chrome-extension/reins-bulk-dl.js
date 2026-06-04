@@ -156,67 +156,140 @@
     });
   }
 
-  // ── 送信メイン ──────────────────────────────────────────────────────
-  function startSend(targets, customerName, lineBtn, lineOrig) {
-    isSending = true;
+  // ── ネイティブチェックボックスを取得（レインズの行左端）─────────────────
+  function findNativeCheckbox(row) {
+    var cells = Array.from(row.querySelectorAll(".p-table-body-item"));
+    if (cells.length) {
+      var cb = cells[0].querySelector('input[type="checkbox"]');
+      if (cb) return cb;
+    }
+    return Array.from(row.querySelectorAll('input[type="checkbox"]')).find(function (c) {
+      return !c.classList.contains("axlx-reins-cb");
+    }) || null;
+  }
 
-    // PDF Blobフックを注入（background.js → MAIN world）
-    chrome.runtime.sendMessage({ type: "axlx-inject-pdf-hook" }, function () {
+  // ── 図面一括取得ボタンを取得 ─────────────────────────────────────────
+  function findBatchBtn() {
+    return Array.from(document.querySelectorAll("button")).find(function (b) {
+      return b.textContent.trim().includes("図面一括取得") && b.offsetParent;
+    }) || null;
+  }
 
-      var propertySummaries = targets.map(function (t, i) {
-        var info  = extractInfo(t.row);
-        var lines = ["【" + (i + 1) + "】" + (info.building || "物件" + (i + 1))];
-        if (info.rent)   lines.push("賃料: " + info.rent);
-        if (info.madori) lines.push("間取: " + info.madori);
-        return lines.join("\n");
+  // ── LINE送信共通ロジック ─────────────────────────────────────────────
+  function sendAllToLine(pdfBase64List, targets, customerName, propertySummaries, lineBtn, lineOrig) {
+    if (!pdfBase64List.length) {
+      alert("PDFが1件も取得できませんでした");
+      lineBtn.disabled    = false;
+      lineBtn.textContent = lineOrig;
+      isSending           = false;
+      return;
+    }
+    lineBtn.textContent = "Blobアップ中... (1/" + pdfBase64List.length + ")";
+    var today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
+    chrome.runtime.sendMessage({
+      type:               "axlx-send-pdf-data-to-line",
+      pdf_data:           pdfBase64List,
+      file_name:          "物件まとめ_" + today + ".pdf",
+      customer_name:      customerName || null,
+      property_summaries: propertySummaries,
+    }, function (resp) {
+      lineBtn.disabled = false;
+      isSending        = false;
+      if (chrome.runtime.lastError || !resp || !resp.ok) {
+        var err = resp ? resp.error : (chrome.runtime.lastError ? chrome.runtime.lastError.message : "不明");
+        alert("LINE送信エラー:\n" + err);
+        lineBtn.textContent = lineOrig;
+        return;
+      }
+      targets.forEach(function (t) {
+        t.cb.checked = false;
+        checkedKeys.delete(t.rowKey);
       });
+      updateBar();
+      lineBtn.textContent = "✅ " + pdfBase64List.length + "件 LINE送信完了！";
+      setTimeout(function () { lineBtn.textContent = lineOrig; }, 5000);
+    });
+  }
 
+  // ── 一括取得モード（図面一括取得ボタンを使用・高速並列）─────────────────
+  // レインズの「図面一括取得」が複数の新タブを開くのをbackground.jsが一括キャプチャ
+  function startBatchSend(targets, customerName, lineBtn, lineOrig, propertySummaries) {
+    var expectedCount = targets.length;
+    var pdfBase64List = [];
+    var batchHandler  = null;
+    var batchTimer    = null;
+
+    function finish() {
+      if (batchTimer) { clearTimeout(batchTimer); batchTimer = null; }
+      window.removeEventListener("message", batchHandler);
+      sendAllToLine(pdfBase64List, targets, customerName, propertySummaries, lineBtn, lineOrig);
+    }
+
+    // 各タブのPDFを受け取る（background.js → axlx-reins-pdf-captured → postMessage → ここ）
+    batchHandler = function (e) {
+      if (!e.data || e.data.from !== "axlx-itandi-pdf") return;
+      pdfBase64List.push(e.data.b64);
+      lineBtn.textContent = "PDF取得中... (" + pdfBase64List.length + "/" + expectedCount + ")";
+      console.log("[AX-REINS] 一括: " + pdfBase64List.length + "/" + expectedCount + " 件取得");
+      if (pdfBase64List.length >= expectedCount) finish();
+    };
+    window.addEventListener("message", batchHandler);
+
+    // タイムアウト（1件あたり30秒・取得できた分だけ送信）
+    batchTimer = setTimeout(function () {
+      console.warn("[AX-REINS] 一括タイムアウト: " + pdfBase64List.length + "/" + expectedCount + " 件取得済み");
+      finish();
+    }, Math.max(expectedCount * 30000, 60000));
+
+    // Step1: レインズの行ネイティブCBをONにする
+    var checked = 0;
+    targets.forEach(function (t) {
+      var nativeCb = findNativeCheckbox(t.row);
+      if (nativeCb && !nativeCb.checked) {
+        nativeCb.click();
+        checked++;
+      } else if (nativeCb && nativeCb.checked) {
+        checked++;
+      }
+    });
+    console.log("[AX-REINS] ネイティブCB: " + checked + "/" + expectedCount + " にチェック");
+
+    sleep(400).then(function () {
+      // Step2: フック注入 + 新タブ一括監視開始
+      chrome.runtime.sendMessage({ type: "axlx-inject-pdf-hook" }, function () {
+        chrome.runtime.sendMessage({ type: "axlx-reins-watch-tab" }, function () {
+          var batchBtn = findBatchBtn();
+          if (!batchBtn) {
+            console.warn("[AX-REINS] 図面一括取得ボタンなし → 逐次モードへフォールバック");
+            window.removeEventListener("message", batchHandler);
+            clearTimeout(batchTimer);
+            startSequentialSend(targets, customerName, lineBtn, lineOrig, propertySummaries);
+            return;
+          }
+          lineBtn.textContent = "PDF取得中... (0/" + expectedCount + ")";
+          console.log("[AX-REINS] 図面一括取得クリック");
+          batchBtn.click();
+        });
+      });
+    });
+  }
+
+  // ── 逐次取得モード（フォールバック：図面ボタンを1件ずつクリック）────────
+  function startSequentialSend(targets, customerName, lineBtn, lineOrig, propertySummaries) {
+    chrome.runtime.sendMessage({ type: "axlx-inject-pdf-hook" }, function () {
       lineBtn.textContent = "図面取得中... (0/" + targets.length + ")";
       var pdfBase64List   = [];
 
       function processNext(i) {
         if (i >= targets.length) {
-          // ─ 全件完了 ─
-          if (!pdfBase64List.length) {
-            alert("PDFが1件も取得できませんでした");
-            lineBtn.disabled    = false;
-            lineBtn.textContent = lineOrig;
-            isSending           = false;
-            return;
-          }
-          lineBtn.textContent = "Blobアップ中... (1/" + pdfBase64List.length + ")";
-          var today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
-          chrome.runtime.sendMessage({
-            type:               "axlx-send-pdf-data-to-line",
-            pdf_data:           pdfBase64List,
-            file_name:          "物件まとめ_" + today + ".pdf",
-            customer_name:      customerName || null,
-            property_summaries: propertySummaries,
-          }, function (resp) {
-            lineBtn.disabled = false;
-            isSending        = false;
-            if (chrome.runtime.lastError || !resp || !resp.ok) {
-              var err = resp ? resp.error : (chrome.runtime.lastError ? chrome.runtime.lastError.message : "不明");
-              alert("LINE送信エラー:\n" + err);
-              lineBtn.textContent = lineOrig;
-              return;
-            }
-            targets.forEach(function (t) {
-              t.cb.checked = false;
-              checkedKeys.delete(t.rowKey);
-            });
-            updateBar();
-            lineBtn.textContent = "✅ " + pdfBase64List.length + "件 LINE送信完了！";
-            setTimeout(function () { lineBtn.textContent = lineOrig; }, 5000);
-          });
+          sendAllToLine(pdfBase64List, targets, customerName, propertySummaries, lineBtn, lineOrig);
           return;
         }
-
         lineBtn.textContent = "図面取得中... (" + (i + 1) + "/" + targets.length + ")";
         captureOnePdf(targets[i]).then(function (b64) {
           console.log("[AX-REINS] 図面取得成功 " + (i + 1) + "件目 (" + Math.round(b64.length / 1024) + "KB)");
           pdfBase64List.push(b64);
-          return sleep(1500); // 連続クリック防止（800ms→1500ms: レインズのDOM安定化待ち）
+          return sleep(1500);
         }).then(function () {
           processNext(i + 1);
         }).catch(function (e) {
@@ -227,6 +300,26 @@
 
       processNext(0);
     });
+  }
+
+  // ── 送信メイン（一括 or 逐次を自動選択）────────────────────────────────
+  function startSend(targets, customerName, lineBtn, lineOrig) {
+    isSending = true;
+
+    var propertySummaries = targets.map(function (t, i) {
+      var info  = extractInfo(t.row);
+      var lines = ["【" + (i + 1) + "】" + (info.building || "物件" + (i + 1))];
+      if (info.rent)   lines.push("賃料: " + info.rent);
+      if (info.madori) lines.push("間取: " + info.madori);
+      return lines.join("\n");
+    });
+
+    // 図面一括取得ボタンがあれば一括モード（高速・並列）
+    if (findBatchBtn()) {
+      startBatchSend(targets, customerName, lineBtn, lineOrig, propertySummaries);
+    } else {
+      startSequentialSend(targets, customerName, lineBtn, lineOrig, propertySummaries);
+    }
   }
 
   // ── 開いているビューワー（モーダル・ダイアログ等）を閉じる ──────────────

@@ -9,8 +9,11 @@ const reinsTabWatchers = new Map();
 chrome.tabs.onCreated.addListener((tab) => {
   if (!tab.openerTabId || !reinsTabWatchers.has(tab.openerTabId)) return;
   const { senderTabId, timerId } = reinsTabWatchers.get(tab.openerTabId);
+  // 一括取得対応: タイマーをリセットして引き続き監視（初回で削除しない）
+  // 図面一括取得ボタンクリック時に複数タブが連続で開くため
   clearTimeout(timerId);
-  reinsTabWatchers.delete(tab.openerTabId);
+  const newTimer = setTimeout(() => reinsTabWatchers.delete(tab.openerTabId), 35000);
+  reinsTabWatchers.set(tab.openerTabId, { senderTabId, timerId: newTimer });
 
   const newTabId = tab.id;
   console.log("[AXLX BG] レインズ新タブ検知 id=" + newTabId);
