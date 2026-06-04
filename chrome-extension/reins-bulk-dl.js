@@ -320,28 +320,31 @@
               return;
             }
 
-            // 診断: ボタン属性をログ（レインズのPDF URLパターン特定のため）
-            console.log("[AX-REINS] 図面ボタン属性:", {
-              onclick: freshBtn.getAttribute("onclick"),
-              dataset: JSON.stringify(freshBtn.dataset),
-              name: freshBtn.getAttribute("name"),
-              value: freshBtn.getAttribute("value"),
-              parentHtml: freshBtn.parentElement?.outerHTML?.slice(0, 300),
+            // 新タブ監視を開始してからボタンクリック
+            // （レインズがwindow.openで開く新タブをbackground.jsが捕捉してPDFを取得）
+            chrome.runtime.sendMessage({ type: "axlx-reins-watch-tab" }, function () {
+              console.log("[AX-REINS] 図面クリック:", target.rowKey.slice(0, 25));
+              freshBtn.click();
             });
-            console.log("[AX-REINS] 図面クリック:", target.rowKey.slice(0, 25));
-            freshBtn.click();
           }, 200); // MAINワールドのaxlx-start-pdf-capture処理を待つ
         });
       }, 4000); // 前回のビューワーが閉じるのを最大4秒待つ
     });
   }
 
-  // ── background.jsからの進捗通知を受信 ────────────────────────────────
+  // ── background.jsからの通知を受信 ───────────────────────────────────
   chrome.runtime.onMessage.addListener(function (msg) {
-    if (msg.type !== "axlx-blob-upload-progress") return;
-    var lineBtn = document.getElementById("axlx-reins-line-btn");
-    if (lineBtn && isSending) {
-      lineBtn.textContent = "Blobアップ中... (" + msg.current + "/" + msg.total + ")";
+    if (msg.type === "axlx-blob-upload-progress") {
+      var lineBtn = document.getElementById("axlx-reins-line-btn");
+      if (lineBtn && isSending) {
+        lineBtn.textContent = "Blobアップ中... (" + msg.current + "/" + msg.total + ")";
+      }
+      return;
+    }
+    // 新タブからキャプチャされたPDFをpdfHandlerに転送
+    if (msg.type === "axlx-reins-pdf-captured" && msg.b64) {
+      console.log("[AX-REINS] 新タブPDF受信 → pdfHandlerに転送");
+      window.postMessage({ from: "axlx-itandi-pdf", b64: msg.b64, ts: msg.ts || Date.now() }, "*");
     }
   });
 

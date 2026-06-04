@@ -2,6 +2,88 @@
 
 const UNDERBAR_SITES = ["realnetpro.com"];
 
+// ── レインズ新タブ監視（window.openで開かれるタブからPDFを取得）────────────
+// openerTabId → { senderTabId, timerId }
+const reinsTabWatchers = new Map();
+
+chrome.tabs.onCreated.addListener((tab) => {
+  if (!tab.openerTabId || !reinsTabWatchers.has(tab.openerTabId)) return;
+  const { senderTabId, timerId } = reinsTabWatchers.get(tab.openerTabId);
+  clearTimeout(timerId);
+  reinsTabWatchers.delete(tab.openerTabId);
+
+  const newTabId = tab.id;
+  console.log("[AXLX BG] レインズ新タブ検知 id=" + newTabId);
+
+  // タブのロード完了後にPDFを取得して元のタブに送信する
+  function captureFromTab(updatedTab) {
+    const url = updatedTab.url || "";
+    console.log("[AXLX BG] 新タブ完了:", url.slice(0, 80));
+
+    // MAIN worldにスクリプトを注入してfetch経由でPDFデータを取得
+    chrome.scripting.executeScript({
+      target: { tabId: newTabId },
+      world: "MAIN",
+      func: () => {
+        return fetch(location.href)
+          .then((r) => {
+            const ct = r.headers.get("content-type") || "";
+            if (!ct.includes("pdf") && !ct.includes("octet")) {
+              return null; // PDFでない場合はスキップ
+            }
+            return r.arrayBuffer();
+          })
+          .then((buf) => {
+            if (!buf) return null;
+            const bytes = new Uint8Array(buf);
+            const chunks = [];
+            for (let i = 0; i < bytes.length; i += 8192) {
+              chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
+            }
+            return btoa(chunks.join(""));
+          })
+          .catch(() => null);
+      },
+    }).then((results) => {
+      const b64 = results?.[0]?.result;
+      // 新タブを閉じる
+      chrome.tabs.remove(newTabId).catch(() => {});
+      if (b64) {
+        console.log("[AXLX BG] 新タブPDF取得成功 → 元タブに送信");
+        chrome.tabs.sendMessage(senderTabId, {
+          type: "axlx-reins-pdf-captured",
+          b64,
+          ts: Date.now(),
+        }).catch((e) => console.error("[AXLX BG] sendMessage error:", e.message));
+      } else {
+        console.warn("[AXLX BG] 新タブからPDF取得失敗（null）");
+      }
+    }).catch((e) => {
+      console.error("[AXLX BG] 新タブ注入エラー:", e.message);
+      chrome.tabs.remove(newTabId).catch(() => {});
+    });
+  }
+
+  // タブ更新リスナー
+  const onUpdated = (tabId, changeInfo, updatedTab) => {
+    if (tabId !== newTabId || changeInfo.status !== "complete") return;
+    chrome.tabs.onUpdated.removeListener(onUpdated);
+    captureFromTab(updatedTab);
+  };
+  chrome.tabs.onUpdated.addListener(onUpdated);
+
+  // タブが既にcomplete状態の場合のフォールバック
+  setTimeout(() => {
+    chrome.tabs.get(newTabId, (t) => {
+      if (chrome.runtime.lastError) return;
+      if (t?.status === "complete") {
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+        captureFromTab(t);
+      }
+    });
+  }, 500);
+});
+
 function isUnderbarSite(url) {
   return !!url && UNDERBAR_SITES.some((s) => url.includes(s));
 }
@@ -91,6 +173,17 @@ async function callMergeApi(payload) {
 
 // ── メッセージハンドラ ─────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+
+  // ── レインズ新タブ監視開始 ───────────────────────────────────────────────
+  if (msg.type === "axlx-reins-watch-tab") {
+    const tabId = sender.tab?.id;
+    if (!tabId) { sendResponse({ ok: false }); return true; }
+    const timerId = setTimeout(() => reinsTabWatchers.delete(tabId), 35000);
+    reinsTabWatchers.set(tabId, { senderTabId: tabId, timerId });
+    console.log("[AXLX BG] 新タブ監視開始 tabId=" + tabId);
+    sendResponse({ ok: true });
+    return true;
+  }
 
   // ── itandi CSP回避: MAIN worldにPDFキャプチャフックを注入 ─────────────────
   // <script>タグ注入はCSPでブロックされるため chrome.scripting.executeScript を使う
