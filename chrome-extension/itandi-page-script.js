@@ -88,18 +88,30 @@
   // 戻り値: boolean（モーダルを開けたか）
   // 市区町村ラジオはname=""の同一グループ → 1区1モーダルで順番に開いてチップを積み上げる方式
   // wardTownMap: { "大阪市城東区": ["稲田本町","稲田新町"], "東大阪市": ["川保本町"] } または null
-  // 確定クリック → 1200ms後もモーダルが残っていたらEscapeで強制クローズ
+  // 確定クリック → 1500ms後もモーダルが残っていたら閉じるボタンをクリック
+  // ⚠️ Escapeキーは絶対に使わない: itandiのグローバルkeydownがReact状態を壊すため
   function safeConfirm(afterClose) {
     clickBtn("確定");
     setTimeout(function () {
-      var stillOpen = document.querySelector('[role="dialog"]') || document.querySelector('input[name="regionName"]');
-      if (stillOpen && isVis(stillOpen)) {
-        console.log("[AX] safeConfirm: モーダルが閉じていない → Escape送信");
-        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
-        document.dispatchEvent(new KeyboardEvent("keyup",   { key: "Escape", bubbles: true }));
+      // dialog内にregionNameが残っている = モーダルが本当に閉じていない
+      var dialog = document.querySelector('[role="dialog"]');
+      var stuck  = dialog && dialog.querySelector('input[name="regionName"]');
+      if (stuck) {
+        console.log("[AX] safeConfirm: モーダルが閉じていない → 閉じるボタンをクリック");
+        var closeBtn = (dialog.querySelector('button[aria-label="閉じる"]'))
+                    || (dialog.querySelector('button[aria-label="close"]'))
+                    || (dialog.querySelector('button[aria-label="Close"]'))
+                    || document.querySelector('button[aria-label="閉じる"]');
+        if (closeBtn) {
+          closeBtn.click();
+          console.log("[AX] safeConfirm: 閉じるボタンをクリック");
+        } else {
+          console.warn("[AX] safeConfirm: 閉じるボタン未発見 → 確定を再試行");
+          clickBtn("確定");
+        }
       }
-      setTimeout(afterClose, 800);
-    }, 1200);
+      setTimeout(afterClose, 1000);
+    }, 1500);
   }
 
   function selectItandiArea(wardNamesInput, wardTownMap, townAreaFallback, onDone) {
