@@ -6,6 +6,68 @@ const UNDERBAR_SITES = ["realnetpro.com"];
 // openerTabId → { senderTabId, timerId }
 const reinsTabWatchers = new Map();
 
+// ── レインズ一括PDFダウンロードをLINE送信に横取り ─────────────────────────────
+// 図面一括取得 → 確認ダイアログOK → Chrome download bar
+// JSフックでは捕捉できない場合（Content-Disposition: attachment の直DL）を chrome.downloads で補完
+// ダウンロードはキャンセルしない（ユーザーのファイルはそのまま保存される）
+chrome.downloads.onCreated.addListener((downloadItem) => {
+  if (reinsTabWatchers.size === 0) return; // 監視中でない
+
+  const url = downloadItem.url || "";
+  // blob:URL はJSフック側で捕捉済みのため除外、reins.jp ドメインのみ対象
+  if (url.startsWith("blob:") || !url.includes("reins.jp")) return;
+
+  // senderTabId（レインズを開いているタブ）を取得
+  let senderTabId = null;
+  for (const [, entry] of reinsTabWatchers) {
+    senderTabId = entry.senderTabId;
+    break;
+  }
+  if (!senderTabId) return;
+
+  console.log("[AXLX BG] 一括DL検知 → MAINworld再fetch:", url.slice(0, 80));
+
+  // レインズタブのMAIN worldでURLをfetch（ページのセッションCookieが自動的に使われる）
+  chrome.scripting.executeScript({
+    target: { tabId: senderTabId },
+    world: "MAIN",
+    func: (pdfUrl) => {
+      return fetch(pdfUrl)
+        .then((r) => {
+          const ct = r.headers.get("content-type") || "";
+          if (!ct.includes("pdf") && !ct.includes("octet")) return null;
+          return r.arrayBuffer();
+        })
+        .then((buf) => {
+          if (!buf) return null;
+          const bytes = new Uint8Array(buf);
+          const chunks = [];
+          for (let i = 0; i < bytes.length; i += 8192) {
+            chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
+          }
+          return btoa(chunks.join(""));
+        })
+        .catch(() => null);
+    },
+    args: [url],
+  }).then((results) => {
+    const b64 = results?.[0]?.result;
+    if (b64) {
+      console.log("[AXLX BG] 一括PDF取得成功 → senderTab送信");
+      chrome.tabs.sendMessage(senderTabId, {
+        type: "axlx-reins-pdf-captured",
+        b64,
+        ts: Date.now(),
+      }).catch((e) => console.error("[AXLX BG] sendMessage error:", e.message));
+      reinsTabWatchers.clear(); // 一括完了 → 監視終了
+    } else {
+      console.warn("[AXLX BG] 一括PDF fetch null（URLが期限切れ or 非PDF）");
+    }
+  }).catch((e) => {
+    console.error("[AXLX BG] 一括PDF executeScript error:", e.message);
+  });
+});
+
 chrome.tabs.onCreated.addListener((tab) => {
   const newTabId = tab.id;
   let senderTabId = null;
