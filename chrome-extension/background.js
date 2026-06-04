@@ -191,7 +191,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const tabId = sender.tab?.id;
     if (!tabId) { sendResponse({ ok: false }); return true; }
     chrome.scripting.executeScript({
-      target: { tabId },
+      target: { tabId, allFrames: true }, // ← iframe内も注入（レインズはiframe内でPDFを処理）
       world: "MAIN",
       func: () => {
         // v3: window.open抑制 + XHRフック追加（レインズ対応）
@@ -200,8 +200,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           window.__axlxItandiHookV2 = true;
           window.__axlxCapturePending = false;
 
-          // axlx-start-pdf-capture シグナルを受信してキャプチャ許可
-          window.addEventListener("message", function (e) {
+          // axlx-start-pdf-capture シグナルをトップレベルwindowで受信
+          // iframeから window.top を経由してシグナルが届く
+          const _listenOn = window.top || window;
+          _listenOn.addEventListener("message", function (e) {
             if (e.data && e.data.from === "axlx-start-pdf-capture") {
               window.__axlxCapturePending = true;
             }
@@ -224,13 +226,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               r.onload = (ev) => {
                 const b64 = ev.target.result.split(",")[1];
                 const ts  = Date.now();
-                console.log("[AXLX V2] FileReader完了 → 送信 " + Math.round(b64.length / 1024) + "KB");
+                console.log("[AXLX V2] FileReader完了 → 送信 " + Math.round(b64.length / 1024) + "KB (iframe=" + (window !== window.top) + ")");
                 const payload = { from: "axlx-itandi-pdf", b64, ts };
-                // 方法1: window.postMessage（itandiと同じ）
-                window.postMessage(payload, "*");
-                // 方法2: document CustomEvent（window messageがstopImmediatePropagationされる場合の回避策）
+                // トップレベルwindowに送信（iframeからでも届く）
+                const _top = window.top || window;
+                _top.postMessage(payload, "*");
+                // フォールバック: トップレベルdocumentにCustomEvent
                 try {
-                  document.dispatchEvent(new CustomEvent("axlx-pdf-ready", { detail: payload, bubbles: false }));
+                  const _doc = _top.document || document;
+                  _doc.dispatchEvent(new CustomEvent("axlx-pdf-ready", { detail: payload, bubbles: false }));
                 } catch (err) {
                   console.error("[AXLX V2] CustomEvent error:", err);
                 }
@@ -246,7 +250,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           window.fetch = function (...args) {
             return origFetch.apply(this, args).then((resp) => {
               const ct = resp.headers.get("content-type") || "";
-              if (ct.includes("application/pdf") && window.__axlxCapturePending) {
+              if ((ct.includes("application/pdf") || ct.includes("application/octet-stream")) && window.__axlxCapturePending) {
                 window.__axlxCapturePending = false;
                 resp.clone().arrayBuffer().then((buf) => {
                   const bytes = new Uint8Array(buf);
@@ -254,7 +258,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   for (let i = 0; i < bytes.length; i += 8192) {
                     chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
                   }
-                  window.postMessage({ from: "axlx-itandi-pdf", b64: btoa(chunks.join("")), ts: Date.now() }, "*");
+                  (window.top || window).postMessage({ from: "axlx-itandi-pdf", b64: btoa(chunks.join("")), ts: Date.now() }, "*");
                 });
               }
               return resp;
@@ -293,7 +297,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   for (let i = 0; i < bytes.length; i += 8192) {
                     chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
                   }
-                  window.postMessage({ from: "axlx-itandi-pdf", b64: btoa(chunks.join("")), ts: Date.now() }, "*");
+                  (window.top || window).postMessage({ from: "axlx-itandi-pdf", b64: btoa(chunks.join("")), ts: Date.now() }, "*");
                 }).catch(e => console.error("[AXLX V3] blob fetch error:", e));
               }
               return null;
@@ -319,11 +323,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 const ct = this.getResponseHeader("content-type") || "";
                 if (!ct.includes("pdf") && !ct.includes("octet")) return;
                 window.__axlxCapturePending = false;
+                const _sendPdf = (b64) => (window.top || window).postMessage({ from: "axlx-itandi-pdf", b64, ts: Date.now() }, "*");
                 if (this.responseType === "blob" && this.response) {
                   const r = new FileReader();
-                  r.onload = (e) => {
-                    window.postMessage({ from: "axlx-itandi-pdf", b64: e.target.result.split(",")[1], ts: Date.now() }, "*");
-                  };
+                  r.onload = (e) => _sendPdf(e.target.result.split(",")[1]);
                   r.readAsDataURL(this.response);
                   return;
                 }
@@ -333,7 +336,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   for (let i = 0; i < bytes.length; i += 8192) {
                     chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
                   }
-                  window.postMessage({ from: "axlx-itandi-pdf", b64: btoa(chunks.join("")), ts: Date.now() }, "*");
+                  _sendPdf(btoa(chunks.join("")));
                 }
               });
             }
