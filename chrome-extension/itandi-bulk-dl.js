@@ -237,69 +237,53 @@
       }, 40000);
 
       // モーダル内で「12枚」ラジオ選択 → PDFを出力クリック
+      // 診断結果に基づく確定セレクター:
+      //   ラジオ: input[name="layoutType"][value="detailed"]
+      //   PDFボタン: .itandi-bb-ui__ModalFooter__Right の primaryボタン
       function interactWithModal() {
-        // 「間取り図＋写真12枚」ラジオを探す（rectチェックなし）
-        var selected = false;
-
-        // パターン1: label テキストに「12枚」含む
-        var labels = findInModal("label").filter(function (l) {
-          return l.textContent.includes("12枚");
-        });
-        if (labels.length) {
-          var lbl = labels[labels.length - 1];
-          var radio = lbl.querySelector("input[type='radio']");
-          if (radio) {
-            setReactRadio(radio);
-            selected = true;
-          } else {
-            lbl.click();
-            selected = true;
-          }
-          console.log("[AXLX] 12枚ラジオ選択:", lbl.textContent.trim());
-        }
-
-        // パターン2: ラジオボタンのvalue/idに「12」含む
-        if (!selected) {
-          var radios = findInModal("input[type='radio']").filter(function (r) {
-            return (r.value || r.id || "").includes("12") ||
-                   (r.labels && r.labels[0] && r.labels[0].textContent.includes("12"));
+        // ── 「間取り図＋写真12枚」ラジオ選択 ────────────────────────────
+        // 診断: name=layoutType, value=detailed で確実に特定
+        var radio12 = document.querySelector('input[name="layoutType"][value="detailed"]');
+        if (radio12) {
+          setReactRadio(radio12);
+          console.log("[AXLX] 12枚ラジオ選択完了 (layoutType=detailed)");
+        } else {
+          // フォールバック: ラベルテキストで探す
+          var allRadios = Array.from(document.querySelectorAll('input[name="layoutType"]'));
+          var r12 = allRadios.find(function(r) {
+            return r.labels && r.labels[0] && r.labels[0].textContent.includes("12枚");
           });
-          if (radios.length) {
-            setReactRadio(radios[radios.length - 1]);
-            selected = true;
-            console.log("[AXLX] ラジオ(12)選択:", radios[radios.length - 1].id);
+          if (r12) {
+            setReactRadio(r12);
+            console.log("[AXLX] 12枚ラジオ選択完了 (label fallback)");
+          } else {
+            console.warn("[AXLX] 12枚ラジオが見つかりません。name=layoutType のラジオ一覧:");
+            allRadios.forEach(function(r) {
+              console.log("  value:", r.value, "| label:", r.labels[0] && r.labels[0].textContent.trim());
+            });
           }
         }
 
-        if (!selected) {
-          console.warn("[AXLX] 12枚ラジオが見つかりません。現在のラジオ一覧:");
-          findInModal("input[type='radio']").forEach(function(r){
-            console.log("  radio:", r.id, r.name, r.value, r.labels[0]&&r.labels[0].textContent.trim());
-          });
-        }
+        sleep(400).then(function () {
+          // ── 「PDFを出力」ボタンクリック ─────────────────────────────────
+          // 診断: .itandi-bb-ui__ModalFooter__Right の primaryボタン (type="submit")
+          var pdfBtn =
+            document.querySelector('.itandi-bb-ui__ModalFooter__Right button') ||
+            document.querySelector('button.itandi-bb-ui__Button__Variant--primary[type="submit"]') ||
+            Array.from(document.querySelectorAll("button")).find(function (b) {
+              return b.textContent.includes("PDFを出力") && b.parentElement !== null;
+            });
 
-        sleep(500).then(function () {
-          // 「PDFを出力」ボタンをクリック
-          var pdfBtns = findBtnByText("PDFを出力");
-          if (pdfBtns.length) {
-            console.log("[AXLX] PDFを出力クリック");
-            pdfBtns[pdfBtns.length - 1].click();
+          if (pdfBtn) {
+            console.log("[AXLX] PDFを出力クリック:", pdfBtn.textContent.trim());
+            pdfBtn.click();
           } else {
-            // フォールバック: 「出力」「生成」「ダウンロード」を含むボタン
-            var fallback = findBtnByText("出力").concat(findBtnByText("生成")).concat(findBtnByText("PDF"));
-            var dlBtn = fallback.find(function(b){ return !b.textContent.includes("物件資料"); });
-            if (dlBtn) {
-              console.log("[AXLX] フォールバックボタンクリック:", dlBtn.textContent.trim());
-              dlBtn.click();
-            } else {
-              console.error("[AXLX] PDFを出力ボタンが見つかりません");
-              // 診断: 現在のボタン一覧をログ
-              findBtnByText("").slice(0,20).forEach(function(b){
-                console.log("  available btn:", b.textContent.trim().slice(0,50));
-              });
-              cleanup();
-              reject(new Error("「PDFを出力」ボタンが見つかりません"));
-            }
+            console.error("[AXLX] PDFを出力ボタンが見つかりません");
+            findBtnByText("").slice(0, 20).forEach(function (b) {
+              console.log("  available btn:", b.textContent.trim().slice(0, 50));
+            });
+            cleanup();
+            reject(new Error("「PDFを出力」ボタンが見つかりません"));
           }
         });
       }
@@ -308,16 +292,16 @@
       btn.click();
 
       // MutationObserver でモーダルの出現を監視
-      // 「PDFを出力」が現れたら操作開始（rectチェックなし）
+      // 診断結果: .itandi-bb-ui__Modalv2[role="dialog"] で確実に検知
       var appeared = false;
       modalObs = new MutationObserver(function () {
         if (appeared) return;
-        var btns = findBtnByText("PDFを出力");
-        if (!btns.length) return;
+        var modal = document.querySelector('.itandi-bb-ui__Modalv2[role="dialog"]');
+        if (!modal) return;
         appeared = true;
         modalObs.disconnect();
         modalObs = null;
-        // モーダルの描画が完全に終わるまで少し待つ
+        // モーダルのアニメーション完了を待ってから操作
         setTimeout(interactWithModal, 600);
       });
       modalObs.observe(document.body, { childList: true, subtree: true });
