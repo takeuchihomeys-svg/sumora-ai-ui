@@ -88,6 +88,20 @@
   // 戻り値: boolean（モーダルを開けたか）
   // 市区町村ラジオはname=""の同一グループ → 1区1モーダルで順番に開いてチップを積み上げる方式
   // wardTownMap: { "大阪市城東区": ["稲田本町","稲田新町"], "東大阪市": ["川保本町"] } または null
+  // 確定クリック → 1200ms後もモーダルが残っていたらEscapeで強制クローズ
+  function safeConfirm(afterClose) {
+    clickBtn("確定");
+    setTimeout(function () {
+      var stillOpen = document.querySelector('[role="dialog"]') || document.querySelector('input[name="regionName"]');
+      if (stillOpen && isVis(stillOpen)) {
+        console.log("[AX] safeConfirm: モーダルが閉じていない → Escape送信");
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        document.dispatchEvent(new KeyboardEvent("keyup",   { key: "Escape", bubbles: true }));
+      }
+      setTimeout(afterClose, 800);
+    }, 1200);
+  }
+
   function selectItandiArea(wardNamesInput, wardTownMap, townAreaFallback, onDone) {
     var wardNames = Array.isArray(wardNamesInput) ? wardNamesInput : (wardNamesInput ? [wardNamesInput] : []);
     if (!wardNames.length) return false;
@@ -194,15 +208,13 @@
                     });
                     console.log("[AX] 町域合計: " + totalSelected + "件選択");
                     setTimeout(function () {
-                      clickBtn("確定");
-                      setTimeout(openNextWardModal, 2000);
+                      safeConfirm(function () { setTimeout(openNextWardModal, 800); });
                     }, 1000);
                   }, 800);
                 }, 800);
               } else {
                 setTimeout(function () {
-                  clickBtn("確定");
-                  setTimeout(openNextWardModal, 2000);
+                  safeConfirm(function () { setTimeout(openNextWardModal, 800); });
                 }, 800);
               }
             }
