@@ -40,29 +40,38 @@
     tracked = [];
 
     findResultRows().forEach(function (row) {
-      // 「図面」ボタンを探す
+      // 「図面」ボタン
       var zumenBtn = Array.from(row.querySelectorAll("button")).find(function (b) {
         return b.textContent.trim() === "図面" && b.offsetParent;
       });
       if (!zumenBtn) return;
 
+      // 間取りセル = 「概要」ボタンのセルの1つ前のセル
+      var gaiyoBtn  = Array.from(row.querySelectorAll("button")).find(function (b) {
+        return b.textContent.trim() === "概要";
+      });
+      var gaiyoCell = gaiyoBtn && gaiyoBtn.closest(".p-table-body-item");
+      var allCells  = Array.from(row.querySelectorAll(".p-table-body-item"));
+      var gaiyoIdx  = allCells.indexOf(gaiyoCell);
+      var madoriCell = gaiyoIdx >= 1 ? allCells[gaiyoIdx - 1] : null;
+      if (!madoriCell) return; // 間取セルが見つからなければスキップ
+
       var rowKey = makeRowKey(row);
-      var cell   = zumenBtn.closest(".p-table-body-item") || zumenBtn.parentElement;
 
       var cb = document.createElement("input");
       cb.type      = "checkbox";
       cb.className = "axlx-reins-cb";
       cb.style.cssText = [
-        "width:18px;height:18px;cursor:pointer;",
+        "width:16px;height:16px;cursor:pointer;",
         "accent-color:#1565C0;vertical-align:middle;",
-        "margin-left:6px;flex-shrink:0;",
+        "margin-left:4px;flex-shrink:0;",
       ].join("");
       cb.checked = checkedKeys.has(rowKey);
       cb.addEventListener("click",  function (e) { e.stopPropagation(); });
       cb.addEventListener("change", function (e) { e.stopPropagation(); updateBar(); });
 
-      // 図面ボタンの右側（cellの末尾）に追加
-      cell.appendChild(cb);
+      // 間取りセルの末尾（2LDKテキストの右側）に追加
+      madoriCell.appendChild(cb);
 
       tracked.push({ cb: cb, row: row, zumenBtn: zumenBtn, rowKey: rowKey });
     });
