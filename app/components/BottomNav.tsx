@@ -87,21 +87,22 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
 
   return (
     <nav
-      className="fixed bottom-0 left-0 right-0 z-40 flex items-end transition-transform duration-300"
+      className="fixed bottom-0 left-0 right-0 z-40 flex items-center transition-transform duration-300"
       style={{
         background: "white",
         borderTop: "1px solid #e9edef",
-        paddingBottom: "max(env(safe-area-inset-bottom), 8px)",
+        paddingTop: 4,
+        paddingBottom: "max(env(safe-area-inset-bottom), 4px)",
         transform: hidden ? "translateY(100%)" : "translateY(0)",
       }}
     >
       {/* メッセージ */}
-      <Link href="/" className="flex flex-1 items-center justify-center pt-1.5 pb-0">
+      <Link href="/" className="flex flex-1 items-center justify-center">
         <span
           className="flex items-center justify-center rounded-full transition-all duration-200"
           style={{
-            width: 52,
-            height: 30,
+            width: 48,
+            height: 28,
             background: unreadCount > 0 ? "#e3f2fd" : pathname === "/" ? "#dbeafe" : "transparent",
             color: unreadCount > 0 || pathname === "/" ? activeColor : inactiveColor,
           }}
@@ -111,67 +112,63 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
       </Link>
 
       {/* 物件条件 */}
-      <Link href="/conditions" className="flex flex-1 flex-col items-center justify-center pt-1.5 pb-0">
+      <Link href="/conditions" className="flex flex-1 items-center justify-center">
         <span
           className="flex items-center justify-center rounded-full transition-all duration-200"
           style={{
-            width: 52,
-            height: 30,
+            width: 48,
+            height: 28,
             background: pathname === "/conditions" ? "#dbeafe" : "transparent",
             color: pathname === "/conditions" ? activeColor : inactiveColor,
           }}
         >
           <IconBuilding active={pathname === "/conditions"} />
         </span>
-        <span className="text-[10px] mt-0.5" style={{ color: pathname === "/conditions" ? activeColor : inactiveColor }}>物件条件</span>
       </Link>
 
       {/* お客さん管理 */}
-      <Link href="/customers" className="flex flex-1 flex-col items-center justify-center pt-1.5 pb-0">
+      <Link href="/customers" className="flex flex-1 items-center justify-center">
         <span
           className="flex items-center justify-center rounded-full transition-all duration-200"
           style={{
-            width: 52,
-            height: 30,
+            width: 48,
+            height: 28,
             background: pathname === "/customers" ? "#dbeafe" : "transparent",
             color: pathname === "/customers" ? activeColor : inactiveColor,
           }}
         >
           <IconPeople active={pathname === "/customers"} />
         </span>
-        <span className="text-[10px] mt-0.5" style={{ color: pathname === "/customers" ? activeColor : inactiveColor }}>お客さん</span>
       </Link>
 
       {/* カレンダー */}
-      <Link href="/calendar" className="flex flex-1 flex-col items-center justify-center pt-1.5 pb-0">
+      <Link href="/calendar" className="flex flex-1 items-center justify-center">
         <span
           className="flex items-center justify-center rounded-full transition-all duration-200"
           style={{
-            width: 52,
-            height: 30,
+            width: 48,
+            height: 28,
             background: pathname === "/calendar" ? "#dbeafe" : "transparent",
             color: pathname === "/calendar" ? activeColor : inactiveColor,
           }}
         >
           <IconCalendar active={pathname === "/calendar"} />
         </span>
-        <span className="text-[10px] mt-0.5" style={{ color: pathname === "/calendar" ? activeColor : inactiveColor }}>カレンダー</span>
       </Link>
 
       {/* 見積書 */}
-      <Link href="/estimate" className="flex flex-1 flex-col items-center justify-center pt-1.5 pb-0">
+      <Link href="/estimate" className="flex flex-1 items-center justify-center">
         <span
           className="flex items-center justify-center rounded-full transition-all duration-200"
           style={{
-            width: 52,
-            height: 30,
+            width: 48,
+            height: 28,
             background: pathname === "/estimate" ? "#dbeafe" : "transparent",
             color: pathname === "/estimate" ? activeColor : inactiveColor,
           }}
         >
           <IconReceipt active={pathname === "/estimate"} />
         </span>
-        <span className="text-[10px] mt-0.5" style={{ color: pathname === "/estimate" ? activeColor : inactiveColor }}>見積書</span>
       </Link>
     </nav>
   );
