@@ -221,9 +221,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               window.__axlxLastBlobUrl = url; // window.open 抑制用に URL を保存
               console.log("[AXLX V2] PDF blob captured:", Math.round(blob.size / 1024) + "KB");
               const r = new FileReader();
-              r.onload = (e) => {
-                window.postMessage({ from: "axlx-itandi-pdf", b64: e.target.result.split(",")[1], ts: Date.now() }, "*");
+              r.onload = (ev) => {
+                const b64 = ev.target.result.split(",")[1];
+                const ts  = Date.now();
+                console.log("[AXLX V2] FileReader完了 → 送信 " + Math.round(b64.length / 1024) + "KB");
+                const payload = { from: "axlx-itandi-pdf", b64, ts };
+                // 方法1: window.postMessage（itandiと同じ）
+                window.postMessage(payload, "*");
+                // 方法2: document CustomEvent（window messageがstopImmediatePropagationされる場合の回避策）
+                try {
+                  document.dispatchEvent(new CustomEvent("axlx-pdf-ready", { detail: payload, bubbles: false }));
+                } catch (err) {
+                  console.error("[AXLX V2] CustomEvent error:", err);
+                }
               };
+              r.onerror = (err) => console.error("[AXLX V2] FileReader エラー:", err);
               r.readAsDataURL(blob);
             }
             return url;

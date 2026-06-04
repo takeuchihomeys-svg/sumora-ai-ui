@@ -275,29 +275,46 @@
             return;
           }
           console.log("[AX-REINS] フック注入OK");
-          var captureStart = Date.now();
-          var pdfHandler   = null;
+          var captureStart   = Date.now();
+          var pdfHandler     = null;
+          var customEvtHdlr  = null;
+          var doneCalled     = false; // 二重呼び出し防止
 
           var timer = setTimeout(function () {
             window.removeEventListener("message", pdfHandler);
+            document.removeEventListener("axlx-pdf-ready", customEvtHdlr);
             closeViewer();
             reject(new Error("タイムアウト（30秒）"));
           }, 30000);
 
           function done(b64) {
+            if (doneCalled) return; // 両チャネルから同時に受信した場合の重複防止
+            doneCalled = true;
             clearTimeout(timer);
             window.removeEventListener("message", pdfHandler);
+            document.removeEventListener("axlx-pdf-ready", customEvtHdlr);
             // PDF受信後にビューワーを閉じて、次の行が見える状態にしてresolve
             closeViewer();
             waitForRows(function () { resolve(b64); }, 3000);
           }
 
+          // 方法1: window.postMessage（itandiと同じ）
           pdfHandler = function (e) {
             if (!e.data || e.data.from !== "axlx-itandi-pdf") return;
             if (typeof e.data.ts === "number" && e.data.ts < captureStart) return;
+            console.log("[AX-REINS] window.message受信 → done()");
             done(e.data.b64);
           };
           window.addEventListener("message", pdfHandler);
+
+          // 方法2: document CustomEvent（window messageが止められる場合のフォールバック）
+          customEvtHdlr = function (e) {
+            if (!e.detail || e.detail.from !== "axlx-itandi-pdf") return;
+            if (typeof e.detail.ts === "number" && e.detail.ts < captureStart) return;
+            console.log("[AX-REINS] CustomEvent受信 → done()");
+            done(e.detail.b64);
+          };
+          document.addEventListener("axlx-pdf-ready", customEvtHdlr);
 
           // postMessage送信 → MAINワールドが処理するまで少し待ってからクリック
           // （同期的にクリックするとcapturePendingがfalseのままfetchが走る場合がある）
