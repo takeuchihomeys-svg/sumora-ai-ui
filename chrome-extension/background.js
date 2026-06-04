@@ -101,53 +101,129 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       target: { tabId },
       world: "MAIN",
       func: () => {
-        // v2: キャプチャ許可フラグ追加（過去PDFの誤キャプチャを防止）
-        if (window.__axlxItandiHookV2) return;
-        window.__axlxItandiHookV2 = true;
-        window.__axlxCapturePending = false;
+        // v3: window.open抑制 + XHRフック追加（レインズ対応）
+        // v2フックが入っていても v3は別フラグで追加注入する
+        if (!window.__axlxItandiHookV2) {
+          window.__axlxItandiHookV2 = true;
+          window.__axlxCapturePending = false;
 
-        // コンテンツスクリプトから "PDFを出力クリック直前" に送られるシグナルを受信
-        window.addEventListener("message", function (e) {
-          if (e.data && e.data.from === "axlx-start-pdf-capture") {
-            window.__axlxCapturePending = true;
-          }
-        });
+          // axlx-start-pdf-capture シグナルを受信してキャプチャ許可
+          window.addEventListener("message", function (e) {
+            if (e.data && e.data.from === "axlx-start-pdf-capture") {
+              window.__axlxCapturePending = true;
+            }
+          });
 
-        // Blob URL フック（itandi が createObjectURL でPDFを作る場合）
-        const origCreate = URL.createObjectURL;
-        URL.createObjectURL = function (blob) {
-          const url = origCreate.call(URL, blob);
-          const t = (blob && blob.type) || "";
-          if ((t.includes("pdf") || t === "application/octet-stream") && window.__axlxCapturePending) {
-            window.__axlxCapturePending = false; // 1回受け取ったらリセット
-            const r = new FileReader();
-            r.onload = (e) => {
-              window.postMessage({ from: "axlx-itandi-pdf", b64: e.target.result.split(",")[1], ts: Date.now() }, "*");
-            };
-            r.readAsDataURL(blob);
-          }
-          return url;
-        };
+          // Blob URL フック（createObjectURL でPDFを作る場合）
+          const origCreate = URL.createObjectURL;
+          URL.createObjectURL = function (blob) {
+            const url = origCreate.call(URL, blob);
+            const t = (blob && blob.type) || "";
+            if ((t.includes("pdf") || t === "application/octet-stream") && window.__axlxCapturePending) {
+              window.__axlxCapturePending = false;
+              window.__axlxLastBlobUrl = url; // window.open 抑制用に URL を保存
+              console.log("[AXLX V2] PDF blob captured:", Math.round(blob.size / 1024) + "KB");
+              const r = new FileReader();
+              r.onload = (e) => {
+                window.postMessage({ from: "axlx-itandi-pdf", b64: e.target.result.split(",")[1], ts: Date.now() }, "*");
+              };
+              r.readAsDataURL(blob);
+            }
+            return url;
+          };
 
-        // fetch フック（直接 application/pdf を返す場合）
-        const origFetch = window.fetch;
-        window.fetch = function (...args) {
-          return origFetch.apply(this, args).then((resp) => {
-            const ct = resp.headers.get("content-type") || "";
-            if (ct.includes("application/pdf") && window.__axlxCapturePending) {
-              window.__axlxCapturePending = false; // 1回受け取ったらリセット
-              resp.clone().arrayBuffer().then((buf) => {
+          // fetch フック（application/pdf を直接返す場合）
+          const origFetch = window.fetch;
+          window.fetch = function (...args) {
+            return origFetch.apply(this, args).then((resp) => {
+              const ct = resp.headers.get("content-type") || "";
+              if (ct.includes("application/pdf") && window.__axlxCapturePending) {
+                window.__axlxCapturePending = false;
+                resp.clone().arrayBuffer().then((buf) => {
+                  const bytes = new Uint8Array(buf);
+                  const chunks = [];
+                  for (let i = 0; i < bytes.length; i += 8192) {
+                    chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
+                  }
+                  window.postMessage({ from: "axlx-itandi-pdf", b64: btoa(chunks.join("")), ts: Date.now() }, "*");
+                });
+              }
+              return resp;
+            });
+          };
+        }
+
+        // v3: window.open フック（レインズがblobURLの新タブを開くのを抑制）
+        // 新タブが開くと後続のクリックがフォーカスの問題で機能しなくなるため抑制
+        if (!window.__axlxOpenHookV3) {
+          window.__axlxOpenHookV3 = true;
+          const origOpen = window.open;
+          window.open = function (...args) {
+            const url = String(args[0] || "");
+            const isBlobPdf = url.startsWith("blob:") || /\.pdf(\?|$)/i.test(url);
+            // ケース1: createObjectURLで既にキャプチャ済みのblob URL → 抑制のみ
+            // createObjectURL後はcapturePending=falseになるため別フラグで判定する
+            if (url && url === window.__axlxLastBlobUrl) {
+              window.__axlxLastBlobUrl = null;
+              console.log("[AXLX V3] window.open 抑制（キャプチャ済みblob）:", url.slice(0, 40));
+              return null;
+            }
+            // ケース2: capturePending=true でblob/PDF URL → 抑制 + blob fetchでキャプチャ
+            if (window.__axlxCapturePending && isBlobPdf) {
+              window.__axlxCapturePending = false;
+              console.log("[AXLX V3] window.open 抑制 + blob fetch:", url.slice(0, 40));
+              fetch(url).then(r => r.arrayBuffer()).then(buf => {
                 const bytes = new Uint8Array(buf);
                 const chunks = [];
                 for (let i = 0; i < bytes.length; i += 8192) {
                   chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
                 }
                 window.postMessage({ from: "axlx-itandi-pdf", b64: btoa(chunks.join("")), ts: Date.now() }, "*");
+              }).catch(e => console.error("[AXLX V3] blob fetch error:", e));
+              return null;
+            }
+            return origOpen.apply(this, args);
+          };
+
+          // XHR フック（fetchを使わずXHRでPDFを取得する場合）
+          const origXHROpen = XMLHttpRequest.prototype.open;
+          const origXHRSend = XMLHttpRequest.prototype.send;
+          XMLHttpRequest.prototype.open = function (method, url) {
+            this._axlxUrl = url;
+            return origXHROpen.apply(this, arguments);
+          };
+          XMLHttpRequest.prototype.send = function () {
+            if (window.__axlxCapturePending) {
+              // responseTypeが未設定の場合はarraybufferに強制（バイナリデータを確実に受取る）
+              if (!this.responseType || this.responseType === "") {
+                try { this.responseType = "arraybuffer"; } catch (e) {}
+              }
+              this.addEventListener("load", function () {
+                if (!window.__axlxCapturePending) return;
+                const ct = this.getResponseHeader("content-type") || "";
+                if (!ct.includes("pdf") && !ct.includes("octet")) return;
+                window.__axlxCapturePending = false;
+                if (this.responseType === "blob" && this.response) {
+                  const r = new FileReader();
+                  r.onload = (e) => {
+                    window.postMessage({ from: "axlx-itandi-pdf", b64: e.target.result.split(",")[1], ts: Date.now() }, "*");
+                  };
+                  r.readAsDataURL(this.response);
+                  return;
+                }
+                if (this.responseType === "arraybuffer" && this.response) {
+                  const bytes = new Uint8Array(this.response);
+                  const chunks = [];
+                  for (let i = 0; i < bytes.length; i += 8192) {
+                    chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
+                  }
+                  window.postMessage({ from: "axlx-itandi-pdf", b64: btoa(chunks.join("")), ts: Date.now() }, "*");
+                }
               });
             }
-            return resp;
-          });
-        };
+            return origXHRSend.apply(this, arguments);
+          };
+        }
       },
     }).then(() => sendResponse({ ok: true })).catch((e) => sendResponse({ ok: false, error: e.message }));
     return true;

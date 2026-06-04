@@ -257,64 +257,66 @@
   }
 
   // ── 1件の図面PDF取得 ─────────────────────────────────────────────────
-  // 流れ: ①ビューワーを閉じて行が見えるのを確認 → ②postMessage送信 →
-  //       ③少し待ってからクリック（MAINワールドの処理待ち） →
-  //       ④Blobキャプチャ → ⑤ビューワーを閉じて次の行が見える状態に戻す
+  // 流れ: ①ビューワーを閉じて行が見えるのを確認 → ②フック再注入（SPA遷移対策） →
+  //       ③postMessage送信 → ④少し待ってからクリック（MAINワールドの処理待ち） →
+  //       ⑤Blobキャプチャ → ⑥ビューワーを閉じて次の行が見える状態に戻す
   function captureOnePdf(target) {
     return new Promise(function (resolve, reject) {
       // まず前回のビューワーを閉じ、行が復活するのを待ってからクリック
       closeViewer();
 
       waitForRows(function () {
-        var captureStart = Date.now();
-        var pdfHandler   = null;
+        // 毎件フックを再注入（レインズがSPA遷移でMAINワールド状態をリセットする場合に対応）
+        chrome.runtime.sendMessage({ type: "axlx-inject-pdf-hook" }, function () {
+          var captureStart = Date.now();
+          var pdfHandler   = null;
 
-        var timer = setTimeout(function () {
-          window.removeEventListener("message", pdfHandler);
-          closeViewer();
-          reject(new Error("タイムアウト（30秒）"));
-        }, 30000);
+          var timer = setTimeout(function () {
+            window.removeEventListener("message", pdfHandler);
+            closeViewer();
+            reject(new Error("タイムアウト（30秒）"));
+          }, 30000);
 
-        function done(b64) {
-          clearTimeout(timer);
-          window.removeEventListener("message", pdfHandler);
-          // PDF受信後にビューワーを閉じて、次の行が見える状態にしてresolve
-          closeViewer();
-          waitForRows(function () { resolve(b64); }, 3000);
-        }
-
-        pdfHandler = function (e) {
-          if (!e.data || e.data.from !== "axlx-itandi-pdf") return;
-          if (typeof e.data.ts === "number" && e.data.ts < captureStart) return;
-          done(e.data.b64);
-        };
-        window.addEventListener("message", pdfHandler);
-
-        // postMessage送信 → MAINワールドが処理するまで少し待ってからクリック
-        // （同期的にクリックするとcapturePendingがfalseのままfetchが走る場合がある）
-        window.postMessage({ from: "axlx-start-pdf-capture" }, "*");
-
-        setTimeout(function () {
-          // offsetParentフィルタなしでrowを探す（ビューワーに覆われていても取得）
-          var freshRow = Array.from(document.querySelectorAll(".p-table-body-row"))
-            .find(function (r) { return makeRowKey(r) === target.rowKey; });
-          var freshBtn = freshRow
-            ? Array.from(freshRow.querySelectorAll("button")).find(function (b) {
-                return b.textContent.trim() === "図面";
-              })
-            : target.zumenBtn;
-
-          if (!freshBtn) {
+          function done(b64) {
             clearTimeout(timer);
             window.removeEventListener("message", pdfHandler);
-            reject(new Error("図面ボタンが見つかりません: " + target.rowKey.slice(0, 20)));
-            return;
+            // PDF受信後にビューワーを閉じて、次の行が見える状態にしてresolve
+            closeViewer();
+            waitForRows(function () { resolve(b64); }, 3000);
           }
 
-          console.log("[AX-REINS] 図面クリック:", target.rowKey.slice(0, 25));
-          freshBtn.click();
-        }, 200); // MAINワールドのaxlx-start-pdf-capture処理を待つ
+          pdfHandler = function (e) {
+            if (!e.data || e.data.from !== "axlx-itandi-pdf") return;
+            if (typeof e.data.ts === "number" && e.data.ts < captureStart) return;
+            done(e.data.b64);
+          };
+          window.addEventListener("message", pdfHandler);
 
+          // postMessage送信 → MAINワールドが処理するまで少し待ってからクリック
+          // （同期的にクリックするとcapturePendingがfalseのままfetchが走る場合がある）
+          window.postMessage({ from: "axlx-start-pdf-capture" }, "*");
+
+          setTimeout(function () {
+            // offsetParentフィルタなしでrowを探す（ビューワーに覆われていても取得）
+            var freshRow = Array.from(document.querySelectorAll(".p-table-body-row"))
+              .find(function (r) { return makeRowKey(r) === target.rowKey; });
+            var freshBtn = freshRow
+              ? Array.from(freshRow.querySelectorAll("button")).find(function (b) {
+                  return b.textContent.trim() === "図面";
+                })
+              : target.zumenBtn;
+
+            if (!freshBtn) {
+              clearTimeout(timer);
+              window.removeEventListener("message", pdfHandler);
+              reject(new Error("図面ボタンが見つかりません: " + target.rowKey.slice(0, 20)));
+              return;
+            }
+
+            console.log("[AX-REINS] 図面クリック:", target.rowKey.slice(0, 25));
+            freshBtn.click();
+          }, 200); // MAINワールドのaxlx-start-pdf-capture処理を待つ
+        });
       }, 4000); // 前回のビューワーが閉じるのを最大4秒待つ
     });
   }
