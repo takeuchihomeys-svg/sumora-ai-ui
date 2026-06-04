@@ -2,6 +2,54 @@
 
 const API_BASE = "https://sumora-ai-ui.vercel.app";
 
+// ── AIが自動学習した地名→市区マッピング（Supabase region_map から起動時に取得）──
+// popup.js の NEIGHBORHOOD_WARD_MAP を補完する動的マップ
+const LEARNED_WARD_MAP = {};
+
+async function fetchLearnedRegions() {
+  try {
+    const res = await fetch(`${API_BASE}/api/region-map`, { cache: "no-store" });
+    if (!res.ok) return;
+    const data = await res.json();
+    for (const { token, ward } of (data.regions || [])) {
+      LEARNED_WARD_MAP[token] = ward;
+    }
+    console.log("[AX] 学習済み地名をロード:", Object.keys(LEARNED_WARD_MAP).length, "件");
+  } catch (e) {
+    console.warn("[AX] region-map 取得失敗:", e.message);
+  }
+}
+
+// 未知トークンをAIで解決してLEARNED_WARD_MAPに追加、コールバックで再描画
+async function resolveUnknownTokensWithAI(tokens, onResolved) {
+  if (!tokens || tokens.length === 0) return;
+  try {
+    const res = await fetch(`${API_BASE}/api/region-resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tokens }),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    let anyNew = false;
+    for (const [token, ward] of Object.entries(data.resolved || {})) {
+      if (ward && !LEARNED_WARD_MAP[token]) {
+        LEARNED_WARD_MAP[token] = ward;
+        anyNew = true;
+        console.log("[AX] 新規学習:", token, "→", ward);
+      }
+    }
+    if (anyNew && onResolved) onResolved();
+  } catch (e) {
+    console.warn("[AX] region-resolve 失敗:", e.message);
+  }
+}
+
+// 地名 → 市区の解決（NEIGHBORHOOD_WARD_MAP → LEARNED_WARD_MAP の順に参照）
+function resolveWard(token) {
+  return NEIGHBORHOOD_WARD_MAP[token] || LEARNED_WARD_MAP[token] || null;
+}
+
 // ── 駅名 → 市区マッピング（広げて検索で所在地アナウンスに使用） ────────
 const STATION_WARD_MAP = {
   // 大阪市北区
@@ -974,7 +1022,7 @@ function buildAreaRouteCodes(c, mode = "auto") {
       if (WARD_CODE_MAP[part]) {
         if (!city_codes.includes(WARD_CODE_MAP[part])) city_codes.push(WARD_CODE_MAP[part]);
       } else {
-        const neighWard = NEIGHBORHOOD_WARD_MAP[part];
+          const neighWard = resolveWard(part);
         if (neighWard && WARD_CODE_MAP[neighWard] && !city_codes.includes(WARD_CODE_MAP[neighWard]))
           city_codes.push(WARD_CODE_MAP[neighWard]);
       }
@@ -995,7 +1043,7 @@ function buildAreaRouteCodes(c, mode = "auto") {
       if (!city_codes.includes(WARD_CODE_MAP[part])) city_codes.push(WARD_CODE_MAP[part]);
       continue;
     }
-    const neighWard = NEIGHBORHOOD_WARD_MAP[part];
+    const neighWard = resolveWard(part);
     if (neighWard && !STATION_LINE_MAP[part]) {
       if (WARD_CODE_MAP[neighWard] && !city_codes.includes(WARD_CODE_MAP[neighWard]))
         city_codes.push(WARD_CODE_MAP[neighWard]);
@@ -2058,9 +2106,10 @@ function openInstructions(siteKey) {
         !STATION_LINE_MAP[t] &&
         !STATION_LINE_MAP[t.replace(/[町村]$/, "")] &&
         !NEIGHBORHOOD_WARD_MAP[t] &&
+        !LEARNED_WARD_MAP[t] &&        // AI学習済みマップも参照
         !WARD_CODE_MAP[t] &&
         !/[都道府県市区郡]/.test(t) &&
-        !resolveStation(t)           // resolveStation（部分一致）で解決できるものは除外
+        !resolveStation(t)
       );
   }
   function showUnknownWarn(tokens) {
@@ -2081,10 +2130,25 @@ function openInstructions(siteKey) {
         + ' <button id="unknown-resolve-btn" style="margin-left:6px;padding:2px 8px;'
         + 'font-size:11px;background:#1a73e8;color:white;border:none;border-radius:4px;cursor:pointer">✓ 反映する</button>';
     } else {
-      html += "<br>地域博士に確認後 NEIGHBORHOOD_WARD_MAP に追加してください";
+      html += '<br>🤖 AI解決中... <span id="ai-resolve-status"></span>';
     }
     el.style.display = "block";
     el.innerHTML = html;
+
+    // 解決候補がない場合はAIに自動解決を依頼
+    if (!hasResolvable) {
+      const unresolvedTokens = analyzed.filter(r => !r.suggestion).map(r => r.original);
+      resolveUnknownTokensWithAI(unresolvedTokens, () => {
+        // 解決後に再描画
+        if (selectedCustomer && selectedSite) {
+          const adjAreaEl = document.getElementById("adj-area");
+          const areaVal = adjAreaEl ? adjAreaEl.value : (selectedCustomer.desired_area || selectedCustomer.area || "");
+          const stillUnknown = computeUnknownTokens(areaVal);
+          showUnknownWarn(stillUnknown);
+          renderInstrSteps(selectedSite, buildAdjCustomer(selectedCustomer));
+        }
+      });
+    }
 
     if (hasResolvable) {
       const btn = document.getElementById("unknown-resolve-btn");
@@ -2538,6 +2602,8 @@ function filterCustomers(q) {
 
 // ── Init ───────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
+  // 学習済み地名をSupabaseから取得してLEARNED_WARD_MAPに追加
+  fetchLearnedRegions();
   loadCustomers();
 
   // フローティングミニモードの初期化

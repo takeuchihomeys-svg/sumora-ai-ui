@@ -262,6 +262,18 @@ CREATE TABLE IF NOT EXISTS hanbancyo_settings (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 ALTER TABLE hanbancyo_settings DISABLE ROW LEVEL SECURITY;
+
+-- 地名自動学習テーブル（AIが解決した地名→市区マッピングを蓄積）
+CREATE TABLE IF NOT EXISTS region_map (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  token TEXT NOT NULL UNIQUE,
+  ward TEXT NOT NULL,
+  confidence INT DEFAULT 80,
+  source TEXT DEFAULT 'ai',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE region_map DISABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_region_map_token ON region_map(token);
 `.trim();
 
 export async function GET() {
