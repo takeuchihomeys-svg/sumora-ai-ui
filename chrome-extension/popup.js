@@ -1300,7 +1300,13 @@ function setupAreaModeSelector(c, siteKey) {
 
   // デフォルト: WARD_CODE_MAP収録済み → 地域 / 駅名のみ → 駅 / それ以外 → 地域
   const hasWardToken    = toks.some(t => WARD_CODE_MAP[t] || NEIGHBORHOOD_WARD_MAP[t] || /[市区郡]/.test(t));
-  const hasStationToken = toks.some(t => !WARD_CODE_MAP[t] && (STATION_LINE_MAP[t] || STATION_LINE_MAP[t.replace(/[町村]$/,"")]));
+  const _cpRe = /^(?:阪急|阪神|南海|近鉄|JR|京阪|大阪メトロ|地下鉄)/;
+  const hasStationToken = toks.some(t => {
+    if (WARD_CODE_MAP[t]) return false;
+    const vs = [t, t.replace(/[町村]$/, ""), t.replace(_cpRe, ""), t.replace(_cpRe, "").replace(/[町村]$/, "")];
+    return vs.some(v => STATION_LINE_MAP[v]) ||
+      Object.values(REINS_LINE_MAP).some(v => v === t || v.endsWith(t));
+  });
   const defaultMode = hasWardToken ? "ward" : (hasStationToken ? "station" : "ward");
 
   setMode(defaultMode);
@@ -1836,10 +1842,13 @@ function openInstructions(siteKey) {
 
       // 駅モードのみ: 駅ごとに沿線を対応させたペア配列を構築（最大3駅）
       const reinsStationPairs = [];
+      const _reinsLineCpRe = /^(?:阪急|阪神|南海|近鉄|JR|京阪|大阪メトロ|地下鉄)/;
       if (isStationMode) {
         for (const tok of areaToks) {
-          const key = STATION_LINE_MAP[tok] ? tok : tok.replace(/[町村]$/, "");
-          const lines = STATION_LINE_MAP[key] || [];
+          // lookup: そのまま → [町村]除去 → 会社名プレフィックス除去 → 両方除去
+          const _vs = [tok, tok.replace(/[町村]$/, ""), tok.replace(_reinsLineCpRe, ""), tok.replace(_reinsLineCpRe, "").replace(/[町村]$/, "")];
+          const key = _vs.find(v => STATION_LINE_MAP[v]) || null;
+          const lines = key ? (STATION_LINE_MAP[key] || []) : [];
           let reinsLine = null;
           if (lines.length > 0) {
             reinsLine = REINS_LINE_MAP[lines[0]] || lines[0];
@@ -1848,11 +1857,14 @@ function openInstructions(siteKey) {
             reinsLine = LEARNED_STATION_MAP[key].reins_line;
           } else if (LEARNED_STATION_MAP[tok]?.reins_line) {
             reinsLine = LEARNED_STATION_MAP[tok].reins_line;
+          } else {
+            // 路線名として直接マッチング（「堺筋線」→「大阪メトロ堺筋線」等）
+            reinsLine = Object.values(REINS_LINE_MAP).find(v => v === tok || v.endsWith(tok)) || null;
           }
           if (reinsLine && !reinsStationPairs.some(p => p.line === reinsLine)) {
-            // STATION_LINE_MAPに存在する場合のみ実際の駅名として使用（路線名はnull）
-            const isRealStation = !!(STATION_LINE_MAP[key] || STATION_LINE_MAP[tok]);
-            reinsStationPairs.push({ line: reinsLine, station: isRealStation ? (key || tok) : null });
+            // key が確定している場合のみ実際の駅名として使用
+            const isRealStation = !!key;
+            reinsStationPairs.push({ line: reinsLine, station: isRealStation ? key : null });
           }
           if (reinsStationPairs.length >= 3) break;
         }
