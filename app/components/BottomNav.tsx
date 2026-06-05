@@ -128,25 +128,19 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
       }}
     >
       {/* ボタン行 */}
-      <div className="flex items-center" style={{ paddingTop: 10, paddingBottom: 10 }}>
+      <div className="flex items-center" style={{ paddingTop: 5, paddingBottom: 5 }}>
         {items.map((item) => (
-          <Link key={item.href} href={item.href} className="flex flex-1 flex-col items-center justify-center gap-0.5">
+          <Link key={item.href} href={item.href} className="flex flex-1 items-center justify-center">
             <span
               className="flex items-center justify-center rounded-full transition-all duration-200"
               style={{
-                width: 44,
-                height: 32,
+                width: 40,
+                height: 26,
                 background: item.isActive ? "rgba(6,199,85,0.15)" : "transparent",
                 color: item.isActive ? activeColor : inactiveColor,
               }}
             >
               {item.icon}
-            </span>
-            <span
-              className="text-[9px] font-medium leading-none"
-              style={{ color: item.isActive ? activeColor : inactiveColor }}
-            >
-              {item.label}
             </span>
           </Link>
         ))}
