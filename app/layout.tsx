@@ -52,8 +52,8 @@ type RootLayoutProps = {
 
 export default function RootLayout({ children }: RootLayoutProps) {
   return (
-    <html lang="ja" style={{ backgroundColor: "white", height: "100%" }}>
-      <body style={{ backgroundColor: "white", margin: 0, padding: 0, overflowY: "hidden", height: "100%" }}>
+    <html lang="ja" style={{ backgroundColor: "#f7f8fa", height: "100%" }}>
+      <body style={{ backgroundColor: "#f7f8fa", margin: 0, padding: 0, overflowY: "hidden", height: "100%" }}>
         {children}
       </body>
     </html>
