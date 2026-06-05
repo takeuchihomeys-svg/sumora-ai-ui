@@ -1869,8 +1869,20 @@ export default function Home() {
                 </button>
               </div>
 
-              {/* 右: ステータス */}
+              {/* 右: アカウントバッジ + ステータス */}
               <div className="ml-auto flex items-center gap-1.5">
+                {selectedConversation.id && (() => {
+                  const acct = getAccountMeta(selectedConversation.account);
+                  return (
+                    <button
+                      onClick={() => { setAccountChangeConvId(selectedConversation.id); }}
+                      className={`flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[10px] font-bold border border-current ${acct.color}`}
+                      title="送信アカウント（タップで変更）"
+                    >
+                      {acct.label}
+                    </button>
+                  );
+                })()}
                 <div className="relative shrink-0">
                   <button
                     onClick={() => {
@@ -2969,7 +2981,15 @@ export default function Home() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="px-5 pt-5 pb-4">
-              <p className="text-[15px] font-bold text-[#111b21] mb-2">LINEに送信しますか？</p>
+              <p className="text-[15px] font-bold text-[#111b21] mb-1.5">LINEに送信しますか？</p>
+              {(() => {
+                const acct = getAccountMeta(selectedConversation.account);
+                return (
+                  <p className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold mb-2 ${acct.color}`}>
+                    送信元: {acct.label}
+                  </p>
+                );
+              })()}
               {replyDraft.trim() && (
                 <p className="text-[13px] text-[#667781] bg-[#f0f2f5] rounded-xl px-3 py-2 max-h-24 overflow-y-auto whitespace-pre-wrap leading-snug">
                   {replyDraft.trim()}
