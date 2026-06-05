@@ -1869,20 +1869,8 @@ export default function Home() {
                 </button>
               </div>
 
-              {/* 右: アカウントバッジ + ステータス */}
+              {/* 右: ステータス */}
               <div className="ml-auto flex items-center gap-1.5">
-                {selectedConversation.id && (() => {
-                  const acct = getAccountMeta(selectedConversation.account);
-                  return (
-                    <button
-                      onClick={() => { setAccountChangeConvId(selectedConversation.id); }}
-                      className={`flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[10px] font-bold border border-current ${acct.color}`}
-                      title="送信アカウント（タップで変更）"
-                    >
-                      {acct.label}
-                    </button>
-                  );
-                })()}
                 <div className="relative shrink-0">
                   <button
                     onClick={() => {
