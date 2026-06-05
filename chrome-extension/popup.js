@@ -1853,7 +1853,7 @@ function openInstructions(siteKey) {
           const r = resolveWard(tok);
           if (r) return r;                    // "東住吉区" → "大阪市東住吉区"
           if (WARD_CODE_MAP[tok]) return tok; // すでにフル区名
-          return tok;                         // 生トークン（フォールバック）
+          return null;                        // 解決できないトークンはスキップ（REINSのSELECTに存在しない値を渡さない）
         }).filter(Boolean).slice(0, 3) : [],
         pet_ok:         adjPet,
         reins_reg_date: adjRegDate || null,

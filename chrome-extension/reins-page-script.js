@@ -92,15 +92,27 @@
       // 各セクション6要素(text×4 + SELECT×2)ずつ
       var rowBases = [29, 35, 41];
       for (var wi = 0; wi < cond.ward_names.length && wi < 3; wi++) {
-        setVal(getField(rowBases[wi]),     "大阪府");  // 都道府県名
-        await sleep(200);
-        setVal(getField(rowBases[wi] + 1), cond.ward_names[wi]);  // 所在地名1
+        // 都道府県名（SELECTまたはtext）
+        var kenEl = getField(rowBases[wi]);
+        if (!selectByText(kenEl, "大阪府")) setVal(kenEl, "大阪府");
+        await sleep(800); // 所在地名1のSELECTオプションが読み込まれるまで待つ
+        // 所在地名1（SELECT）- selectByTextで選択、マッチしなければスキップ（不正値を入れない）
+        var chiikiEl = getField(rowBases[wi] + 1);
+        var wardVal = cond.ward_names[wi];
+        if (!selectByText(chiikiEl, wardVal)) {
+          // SELECTでなければ直接入力（text inputの場合）
+          if (chiikiEl && chiikiEl.tagName !== "SELECT") setVal(chiikiEl, wardVal);
+        }
       }
     } else if (cond.ward_name) {
       // フォールバック: 旧方式の生テキスト → 所在地1に入れる
-      setVal(getField(29), "大阪府");
-      await sleep(300);
-      setVal(getField(30), cond.ward_name);
+      var kenEl0 = getField(29);
+      if (!selectByText(kenEl0, "大阪府")) setVal(kenEl0, "大阪府");
+      await sleep(800);
+      var chiikiEl0 = getField(30);
+      if (!selectByText(chiikiEl0, cond.ward_name)) {
+        if (chiikiEl0 && chiikiEl0.tagName !== "SELECT") setVal(chiikiEl0, cond.ward_name);
+      }
     } else if (cond.reins_line) {
       // 沿線モード: 駅ごとに正しい沿線を対応させて入力（最大3駅）
       var sensenIdxs = [47, 54, 61];
