@@ -13,7 +13,7 @@ const IconChatWithCount = ({ active, count }: { active?: boolean; count: number 
     <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
       <path
         d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
-        fill={hasCount ? "#1565C0" : "none"}
+        fill={hasCount ? "#06C755" : "none"}
         stroke={hasCount ? "none" : "currentColor"}
         strokeWidth={active ? 2.5 : 1.8}
         strokeLinecap="round"
@@ -82,17 +82,17 @@ type Props = {
 
 export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
   const pathname = usePathname();
-  const activeColor = "#1565C0";
-  const inactiveColor = "#90caf9";
+  const activeColor = "#06C755";
+  const inactiveColor = "#aaaaaa";
 
   return (
     <nav
-      className="fixed bottom-0 left-0 right-0 z-40 flex items-center transition-transform duration-300"
+      className="fixed bottom-0 left-0 right-0 z-40 flex items-end transition-transform duration-300"
       style={{
-        background: "white",
-        borderTop: "1px solid #e9edef",
-        paddingTop: 4,
-        paddingBottom: "max(env(safe-area-inset-bottom), 4px)",
+        background: "#f7f8fa",
+        borderTop: "1px solid #dde1e5",
+        paddingTop: 10,
+        paddingBottom: "max(env(safe-area-inset-bottom), 14px)",
         transform: hidden ? "translateY(100%)" : "translateY(0)",
       }}
     >
@@ -103,7 +103,7 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
           style={{
             width: 48,
             height: 28,
-            background: unreadCount > 0 ? "#e3f2fd" : pathname === "/" ? "#dbeafe" : "transparent",
+            background: unreadCount > 0 ? "#e6f9ee" : pathname === "/" ? "#e6f9ee" : "transparent",
             color: unreadCount > 0 || pathname === "/" ? activeColor : inactiveColor,
           }}
         >
@@ -118,7 +118,7 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
           style={{
             width: 48,
             height: 28,
-            background: pathname === "/conditions" ? "#dbeafe" : "transparent",
+            background: pathname === "/conditions" ? "#e6f9ee" : "transparent",
             color: pathname === "/conditions" ? activeColor : inactiveColor,
           }}
         >
@@ -133,7 +133,7 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
           style={{
             width: 48,
             height: 28,
-            background: pathname === "/customers" ? "#dbeafe" : "transparent",
+            background: pathname === "/customers" ? "#e6f9ee" : "transparent",
             color: pathname === "/customers" ? activeColor : inactiveColor,
           }}
         >
@@ -148,7 +148,7 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
           style={{
             width: 48,
             height: 28,
-            background: pathname === "/calendar" ? "#dbeafe" : "transparent",
+            background: pathname === "/calendar" ? "#e6f9ee" : "transparent",
             color: pathname === "/calendar" ? activeColor : inactiveColor,
           }}
         >
@@ -163,7 +163,7 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
           style={{
             width: 48,
             height: 28,
-            background: pathname === "/estimate" ? "#dbeafe" : "transparent",
+            background: pathname === "/estimate" ? "#e6f9ee" : "transparent",
             color: pathname === "/estimate" ? activeColor : inactiveColor,
           }}
         >

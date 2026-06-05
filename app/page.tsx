@@ -1696,6 +1696,7 @@ export default function Home() {
                 // 最後のスタッフ返信以降の連続するお客さんメッセージ数
                 const unreadCount = (() => {
                   if (!needsReply) return 0;
+                  if (postApplyConvIds.has(conversation.id)) return 0;
                   const msgs = conversation.messages;
                   let count = 0;
                   for (let i = msgs.length - 1; i >= 0; i--) {
@@ -1714,7 +1715,7 @@ export default function Home() {
                     onTouchMove={cancelConvLongPress}
                     onContextMenu={(e) => { e.preventDefault(); toggleFlaggedConv(conversation.id); }}
                     style={{ WebkitUserSelect: "none", userSelect: "none" }}
-                    className={`flex w-full items-center gap-3 px-4 py-3 text-left transition ${
+                    className={`flex w-full items-center gap-3 px-4 py-[11px] text-left transition ${
                       isActive ? "bg-[#f0f2f5]" : postApplyConvIds.has(conversation.id) ? "bg-[#e3f2fd] hover:bg-[#daeaf8]" : "bg-white hover:bg-[#f5f6f6]"
                     }`}
                   >
