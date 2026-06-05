@@ -77,7 +77,7 @@ type Props = {
 
 export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
   const pathname = usePathname();
-  const activeColor = "#06C755";
+  const activeColor = "#111b21";
   const inactiveColor = "#aaaaaa";
 
   const items = [
@@ -132,11 +132,10 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
         {items.map((item) => (
           <Link key={item.href} href={item.href} className="flex flex-1 items-center justify-center">
             <span
-              className="flex items-center justify-center rounded-full transition-all duration-200"
+              className="flex items-center justify-center transition-all duration-200"
               style={{
                 width: 40,
                 height: 26,
-                background: item.isActive ? "rgba(6,199,85,0.15)" : "transparent",
                 color: item.isActive ? activeColor : inactiveColor,
               }}
             >
