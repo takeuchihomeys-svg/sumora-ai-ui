@@ -1749,61 +1749,63 @@ export default function Home() {
                       )}
                     </div>
 
-                    <div className="min-w-0 flex-1">
-                      <div className="mb-0.5 flex items-start justify-between gap-2">
-                        <div className="flex min-w-0 items-center gap-1.5 truncate">
-                          <span className="truncate text-[14px] font-medium text-[#111b21]">
-                            {conversation.customerName}
+                    <div className="relative min-w-0 flex-1 pr-14">
+                      {/* 時間・未読バッジ: 絶対配置で高さに影響させない */}
+                      <div className="absolute right-0 top-0 flex flex-col items-end gap-1">
+                        <span className="text-[11px] text-[#667781]">
+                          {formatListTime(conversation.updatedAt)}
+                        </span>
+                        {unreadCount > 0 && (
+                          <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#2196F3] px-1 text-[11px] font-bold text-white leading-none">
+                            {unreadCount}
                           </span>
-                          {(() => {
-                            const acct = getAccountMeta(conversation.account);
-                            return (
-                              <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${acct.color}`}>
-                                {acct.label}
-                              </span>
-                            );
-                          })()}
-                          {(conversation.status === "applying" || conversation.status === "closed_won" || STATUS_ALIAS[conversation.status] === "applying") && (
-                            <span className="shrink-0 rounded-full bg-pink-100 px-1.5 py-0.5 text-[9px] font-bold text-pink-700">
-                              審査中
-                            </span>
-                          )}
-                          {(() => {
-                            const linked = linkedCustomerMap[conversation.id];
-                            if (!linked?.propertyStatus) return null;
-                            const label = PROPERTY_STATUS_LABELS[linked.propertyStatus] ?? linked.propertyStatus;
-                            const color = PROPERTY_STATUS_COLORS[linked.propertyStatus] ?? "bg-gray-100 text-gray-400";
-                            const needs = propertyNeedsAction(linked.propertyStatus, linked.lastPropertySentAt);
-                            return (
-                              <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${color}`}>
-                                {label}{needs ? " !" : " ✓"}
-                              </span>
-                            );
-                          })()}
-                          {assignees[conversation.id] && (
-                            <span className="shrink-0 rounded-full bg-[#e3f2fd] px-1.5 py-0.5 text-[10px] font-bold text-[#1565C0]">
-                              {assignees[conversation.id]}
-                            </span>
-                          )}
-                          {flaggedConvIds.has(conversation.id) && (
-                            <span className="shrink-0 rounded-full bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-600">
-                              要対応
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex shrink-0 flex-col items-end gap-1">
-                          <span className="text-[11px] text-[#667781]">
-                            {formatListTime(conversation.updatedAt)}
-                          </span>
-                          {unreadCount > 0 && (
-                            <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#2196F3] px-1 text-[11px] font-bold text-white leading-none">
-                              {unreadCount}
-                            </span>
-                          )}
-                        </div>
+                        )}
                       </div>
 
-                      <div className="truncate text-[11px] text-[#667781]">
+                      {/* 名前行: 高さ固定で位置ブレなし */}
+                      <div className="mb-0.5 flex h-5 min-w-0 items-center gap-1.5 overflow-hidden">
+                        <span className="truncate text-[14px] font-medium text-[#111b21]">
+                          {conversation.customerName}
+                        </span>
+                        {(() => {
+                          const acct = getAccountMeta(conversation.account);
+                          return (
+                            <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${acct.color}`}>
+                              {acct.label}
+                            </span>
+                          );
+                        })()}
+                        {(conversation.status === "applying" || conversation.status === "closed_won" || STATUS_ALIAS[conversation.status] === "applying") && (
+                          <span className="shrink-0 rounded-full bg-pink-100 px-1.5 py-0.5 text-[9px] font-bold text-pink-700">
+                            審査中
+                          </span>
+                        )}
+                        {(() => {
+                          const linked = linkedCustomerMap[conversation.id];
+                          if (!linked?.propertyStatus) return null;
+                          const label = PROPERTY_STATUS_LABELS[linked.propertyStatus] ?? linked.propertyStatus;
+                          const color = PROPERTY_STATUS_COLORS[linked.propertyStatus] ?? "bg-gray-100 text-gray-400";
+                          const needs = propertyNeedsAction(linked.propertyStatus, linked.lastPropertySentAt);
+                          return (
+                            <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${color}`}>
+                              {label}{needs ? " !" : " ✓"}
+                            </span>
+                          );
+                        })()}
+                        {assignees[conversation.id] && (
+                          <span className="shrink-0 rounded-full bg-[#e3f2fd] px-1.5 py-0.5 text-[10px] font-bold text-[#1565C0]">
+                            {assignees[conversation.id]}
+                          </span>
+                        )}
+                        {flaggedConvIds.has(conversation.id) && (
+                          <span className="shrink-0 rounded-full bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-600">
+                            要対応
+                          </span>
+                        )}
+                      </div>
+
+                      {/* 本文プレビュー: 薄色・右端に余白 */}
+                      <div className="truncate text-[11px] text-[#b0b8be]">
                         {conversation.lastMessage}
                       </div>
                     </div>
