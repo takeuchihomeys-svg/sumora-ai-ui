@@ -78,7 +78,7 @@ type Props = {
 export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
   const pathname = usePathname();
   const activeColor = "#06C755";
-  const inactiveColor = "#888888";
+  const inactiveColor = "#aaaaaa";
 
   const items = [
     {
@@ -122,8 +122,8 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
     <nav
       className="fixed bottom-0 left-0 right-0 z-40 flex flex-col transition-transform duration-300"
       style={{
-        background: "#1c1c1e",
-        borderTop: "1px solid #3a3a3c",
+        background: "#ffffff",
+        borderTop: "1px solid #e9edef",
         transform: hidden ? "translateY(100%)" : "translateY(0)",
       }}
     >
