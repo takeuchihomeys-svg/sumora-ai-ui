@@ -191,6 +191,8 @@ function decomposeToken(token) {
 // 「第一希望:枚方市」「大阪府以外:奈良」などのラベルプレフィックスと方向サフィックスを除去してエリアトークンを分解
 function parseAreaTokens(rawArea) {
   if (!rawArea) return [];
+  // 括弧内の補足説明を除去（「西中島南方（〜じゃなくても可、大阪市内）」→「西中島南方」）
+  rawArea = rawArea.replace(/（[^）]*）/g, "").replace(/\([^)]*\)/g, "").trim();
   // 「AあたりからBあたりまで」「AからBまで」「A〜B」「A～B」→ 両端点をカンマで展開
   const expanded = rawArea
     .replace(/([^\s,、・\/～〜]+?)あたりから([^\s,、・\/～〜]+?)あたりまで/g, "$1,$2")
