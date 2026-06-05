@@ -110,11 +110,14 @@
           var pair = cond.reins_station_pairs[li];
           var baseIdx = sensenIdxs[li];
           setVal(getField(baseIdx), pair.line);
-          await sleep(400);
+          await sleep(800); // SELECTのオプション読み込みを待つ
           var stName = (pair.station || "").replace(/駅$/, "").trim();
           if (stName) {
-            setVal(getField(baseIdx + 1), stName);   // 駅名FROM
-            setVal(getField(baseIdx + 2), stName);   // 駅名TO
+            var stFromEl = getField(baseIdx + 1);
+            var stToEl   = getField(baseIdx + 2);
+            // SELECTならselectByText（表示テキストで選択）、失敗時はsetValでフォールバック
+            if (!selectByText(stFromEl, stName)) setVal(stFromEl, stName);
+            if (!selectByText(stToEl,   stName)) setVal(stToEl,   stName);
           }
         }
       } else {
@@ -124,10 +127,12 @@
         for (var li = 0; li < lines.length && li < 3; li++) {
           var baseIdx = sensenIdxs[li];
           setVal(getField(baseIdx), lines[li]);
-          await sleep(400);
+          await sleep(800);
           if (stName) {
-            setVal(getField(baseIdx + 1), stName);
-            setVal(getField(baseIdx + 2), stName);
+            var stFromEl2 = getField(baseIdx + 1);
+            var stToEl2   = getField(baseIdx + 2);
+            if (!selectByText(stFromEl2, stName)) setVal(stFromEl2, stName);
+            if (!selectByText(stToEl2,   stName)) setVal(stToEl2,   stName);
           }
         }
       }

@@ -1826,7 +1826,9 @@ function openInstructions(siteKey) {
             reinsLine = LEARNED_STATION_MAP[tok].reins_line;
           }
           if (reinsLine && !reinsStationPairs.some(p => p.line === reinsLine)) {
-            reinsStationPairs.push({ line: reinsLine, station: key || tok });
+            // STATION_LINE_MAPに存在する場合のみ実際の駅名として使用（路線名はnull）
+            const isRealStation = !!(STATION_LINE_MAP[key] || STATION_LINE_MAP[tok]);
+            reinsStationPairs.push({ line: reinsLine, station: isRealStation ? (key || tok) : null });
           }
           if (reinsStationPairs.length >= 3) break;
         }
