@@ -1715,7 +1715,7 @@ export default function Home() {
                     onTouchMove={cancelConvLongPress}
                     onContextMenu={(e) => { e.preventDefault(); toggleFlaggedConv(conversation.id); }}
                     style={{ WebkitUserSelect: "none", userSelect: "none" }}
-                    className={`flex w-full items-center gap-3 px-4 py-[11px] text-left transition ${
+                    className={`flex w-full items-center gap-3 px-4 py-[13px] text-left transition ${
                       isActive ? "bg-[#f0f2f5]" : postApplyConvIds.has(conversation.id) ? "bg-[#e3f2fd] hover:bg-[#daeaf8]" : "bg-white hover:bg-[#f5f6f6]"
                     }`}
                   >
