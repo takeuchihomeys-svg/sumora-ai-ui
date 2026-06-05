@@ -145,8 +145,8 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
         ))}
       </div>
 
-      {/* iOSセーフエリアスペーサー */}
-      <div style={{ height: "env(safe-area-inset-bottom, 0px)" }} />
+      {/* iOSセーフエリアスペーサー（上限34pxでキャップ） */}
+      <div style={{ height: "min(env(safe-area-inset-bottom, 0px), 34px)" }} />
     </nav>
   );
 }
