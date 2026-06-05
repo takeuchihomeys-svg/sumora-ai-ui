@@ -76,6 +76,11 @@
       "run_at": "document_idle"
     },
     {
+      "matches": ["https://system.reins.jp/main/BK/GBK001310*"],
+      "js": ["underbar.js"],
+      "run_at": "document_idle"
+    },
+    {
       "matches": ["https://system.reins.jp/*"],
       "js": ["reins-content.js"],
       "run_at": "document_idle"
