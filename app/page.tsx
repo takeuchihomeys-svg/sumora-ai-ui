@@ -800,10 +800,11 @@ export default function Home() {
 
   const needsReplyCount = useMemo(() => {
     return conversations.filter((c) => {
+      if (postApplyConvIds.has(c.id)) return false;
       const sender = c.lastSender ?? c.messages[c.messages.length - 1]?.sender;
       return sender === "customer" && c.status !== "closed_won";
     }).length;
-  }, [conversations]);
+  }, [conversations, postApplyConvIds]);
 
   useEffect(() => {
     if (filteredConversations.length === 0) return;
