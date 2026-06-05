@@ -87,89 +87,93 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
 
   return (
     <nav
-      className="fixed bottom-0 left-0 right-0 z-40 flex items-end transition-transform duration-300"
+      className="fixed bottom-0 left-0 right-0 z-40 flex flex-col transition-transform duration-300"
       style={{
         background: "#f7f8fa",
         borderTop: "1px solid #dde1e5",
-        paddingTop: 2,
-        paddingBottom: "max(env(safe-area-inset-bottom), 4px)",
         transform: hidden ? "translateY(100%)" : "translateY(0)",
       }}
     >
-      {/* メッセージ */}
-      <Link href="/" className="flex flex-1 items-center justify-center">
-        <span
-          className="flex items-center justify-center rounded-full transition-all duration-200"
-          style={{
-            width: 48,
-            height: 28,
-            background: unreadCount > 0 ? "#e6f9ee" : pathname === "/" ? "#e6f9ee" : "transparent",
-            color: unreadCount > 0 || pathname === "/" ? activeColor : inactiveColor,
-          }}
-        >
-          <IconChatWithCount active={pathname === "/" || unreadCount > 0} count={unreadCount} />
-        </span>
-      </Link>
+      {/* ボタン行（固定高さ・縦中央） */}
+      <div className="flex items-center" style={{ paddingTop: 6, paddingBottom: 6 }}>
+        {/* メッセージ */}
+        <Link href="/" className="flex flex-1 items-center justify-center">
+          <span
+            className="flex items-center justify-center rounded-full transition-all duration-200"
+            style={{
+              width: 48,
+              height: 28,
+              background: unreadCount > 0 ? "#e6f9ee" : pathname === "/" ? "#e6f9ee" : "transparent",
+              color: unreadCount > 0 || pathname === "/" ? activeColor : inactiveColor,
+            }}
+          >
+            <IconChatWithCount active={pathname === "/" || unreadCount > 0} count={unreadCount} />
+          </span>
+        </Link>
 
-      {/* 物件条件 */}
-      <Link href="/conditions" className="flex flex-1 items-center justify-center">
-        <span
-          className="flex items-center justify-center rounded-full transition-all duration-200"
-          style={{
-            width: 48,
-            height: 28,
-            background: pathname === "/conditions" ? "#e6f9ee" : "transparent",
-            color: pathname === "/conditions" ? activeColor : inactiveColor,
-          }}
-        >
-          <IconBuilding active={pathname === "/conditions"} />
-        </span>
-      </Link>
+        {/* 物件条件 */}
+        <Link href="/conditions" className="flex flex-1 items-center justify-center">
+          <span
+            className="flex items-center justify-center rounded-full transition-all duration-200"
+            style={{
+              width: 48,
+              height: 28,
+              background: pathname === "/conditions" ? "#e6f9ee" : "transparent",
+              color: pathname === "/conditions" ? activeColor : inactiveColor,
+            }}
+          >
+            <IconBuilding active={pathname === "/conditions"} />
+          </span>
+        </Link>
 
-      {/* お客さん管理 */}
-      <Link href="/customers" className="flex flex-1 items-center justify-center">
-        <span
-          className="flex items-center justify-center rounded-full transition-all duration-200"
-          style={{
-            width: 48,
-            height: 28,
-            background: pathname === "/customers" ? "#e6f9ee" : "transparent",
-            color: pathname === "/customers" ? activeColor : inactiveColor,
-          }}
-        >
-          <IconPeople active={pathname === "/customers"} />
-        </span>
-      </Link>
+        {/* お客さん管理 */}
+        <Link href="/customers" className="flex flex-1 items-center justify-center">
+          <span
+            className="flex items-center justify-center rounded-full transition-all duration-200"
+            style={{
+              width: 48,
+              height: 28,
+              background: pathname === "/customers" ? "#e6f9ee" : "transparent",
+              color: pathname === "/customers" ? activeColor : inactiveColor,
+            }}
+          >
+            <IconPeople active={pathname === "/customers"} />
+          </span>
+        </Link>
 
-      {/* カレンダー */}
-      <Link href="/calendar" className="flex flex-1 items-center justify-center">
-        <span
-          className="flex items-center justify-center rounded-full transition-all duration-200"
-          style={{
-            width: 48,
-            height: 28,
-            background: pathname === "/calendar" ? "#e6f9ee" : "transparent",
-            color: pathname === "/calendar" ? activeColor : inactiveColor,
-          }}
-        >
-          <IconCalendar active={pathname === "/calendar"} />
-        </span>
-      </Link>
+        {/* カレンダー */}
+        <Link href="/calendar" className="flex flex-1 items-center justify-center">
+          <span
+            className="flex items-center justify-center rounded-full transition-all duration-200"
+            style={{
+              width: 48,
+              height: 28,
+              background: pathname === "/calendar" ? "#e6f9ee" : "transparent",
+              color: pathname === "/calendar" ? activeColor : inactiveColor,
+            }}
+          >
+            <IconCalendar active={pathname === "/calendar"} />
+          </span>
+        </Link>
 
-      {/* 見積書 */}
-      <Link href="/estimate" className="flex flex-1 items-center justify-center">
-        <span
-          className="flex items-center justify-center rounded-full transition-all duration-200"
-          style={{
-            width: 48,
-            height: 28,
-            background: pathname === "/estimate" ? "#e6f9ee" : "transparent",
-            color: pathname === "/estimate" ? activeColor : inactiveColor,
-          }}
-        >
-          <IconReceipt active={pathname === "/estimate"} />
-        </span>
-      </Link>
+        {/* 見積書 */}
+        <Link href="/estimate" className="flex flex-1 items-center justify-center">
+          <span
+            className="flex items-center justify-center rounded-full transition-all duration-200"
+            style={{
+              width: 48,
+              height: 28,
+              background: pathname === "/estimate" ? "#e6f9ee" : "transparent",
+              color: pathname === "/estimate" ? activeColor : inactiveColor,
+            }}
+          >
+            <IconReceipt active={pathname === "/estimate"} />
+          </span>
+        </Link>
+      </div>
+
+      {/* iOSセーフエリアスペーサー（ホームバー分） */}
+      <div style={{ height: "env(safe-area-inset-bottom, 0px)" }} />
     </nav>
   );
 }
