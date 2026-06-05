@@ -22,12 +22,11 @@ function buildLineMessage(
 ): string {
   const lines: string[] = [];
 
-  // お客さん名を最初に・物件情報を続ける
+  // お客さん名 物件（リアプロ）から始める
   if (customerName) {
-    lines.push(`👤 ${customerName}様`);
-    lines.push(`🏠 物件（${pageCount}件）`);
+    lines.push(`${customerName} 物件（リアプロ）`);
   } else {
-    lines.push(`🏠 物件（${pageCount}件）`);
+    lines.push(`物件（リアプロ）`);
   }
   lines.push("━━━━━━━━━━━━━━");
 
