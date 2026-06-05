@@ -1750,7 +1750,7 @@ export default function Home() {
                     </div>
 
                     <div className="min-w-0 flex-1">
-                      <div className="mb-1 flex items-start justify-between gap-2">
+                      <div className="mb-0.5 flex items-start justify-between gap-2">
                         <div className="flex min-w-0 items-center gap-1.5 truncate">
                           <span className="truncate text-[14px] font-medium text-[#111b21]">
                             {conversation.customerName}
@@ -1803,7 +1803,7 @@ export default function Home() {
                         </div>
                       </div>
 
-                      <div className="truncate text-[13px] text-[#667781]">
+                      <div className="truncate text-[11px] text-[#667781]">
                         {conversation.lastMessage}
                       </div>
                     </div>
