@@ -9,7 +9,7 @@
   const DRAG_H  = 28;
   const MIN_W   = 300;
   const MIN_H   = 340;
-  const INIT_W  = 640;
+  const INIT_W  = 660;
   const BOTTOM_GAP = 60; // 展開時に画面下端から確保する余白（リサイズハンドルが触れる）
   const SK      = "aixlinx_state"; // sessionStorage key
 
@@ -17,9 +17,9 @@
   let saved = {};
   try { saved = JSON.parse(sessionStorage.getItem(SK) || "{}"); } catch {}
 
-  // デフォルト初期位置：画面中央付近
-  const DEFAULT_X = Math.round(window.innerWidth / 2) - 50;
-  const DEFAULT_Y = 200;
+  // デフォルト初期位置：画面右寄り（リアプロ検索結果エリアに近い位置）
+  const DEFAULT_X = Math.max(10, window.innerWidth - INIT_W - 20);
+  const DEFAULT_Y = 80;
   let posX   = saved.posX   ?? DEFAULT_X;
   let posY   = saved.posY   ?? DEFAULT_Y;
   let panelW = saved.panelW ?? INIT_W;
@@ -76,7 +76,7 @@
     justifyContent: "center",
     userSelect:     "none",
   });
-  dragBar.title = "ドラッグして移動";
+  dragBar.title = "ドラッグして移動 / ダブルクリックでサイズリセット";
   dragBar.innerHTML = `<svg width="36" height="10" viewBox="0 0 36 10">
     <circle cx="6"  cy="3" r="2.2" fill="rgba(255,255,255,0.38)"/>
     <circle cx="18" cy="3" r="2.2" fill="rgba(255,255,255,0.38)"/>
@@ -197,6 +197,16 @@
   miniOverlay.addEventListener("mousedown",  (e) => onDragStart(e, "move"));
   dragBar.addEventListener("mousedown",      (e) => onDragStart(e, "move"));
   resizeHandle.addEventListener("mousedown", (e) => onDragStart(e, "resize"));
+
+  // ダブルクリックでサイズをデフォルトにリセット
+  dragBar.addEventListener("dblclick", () => {
+    panelW = INIT_W;
+    panelH = 680;
+    clampHeight();
+    wrap.style.setProperty("width",  panelW + "px", "important");
+    wrap.style.setProperty("height", (panelH + DRAG_H) + "px", "important");
+    persist();
+  });
 
   document.addEventListener("mousemove", (e) => {
     if (!dragAction) return;
