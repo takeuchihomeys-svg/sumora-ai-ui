@@ -205,6 +205,7 @@ function parseAreaTokens(rawArea) {
                 .replace(/の[南北東西](の方)?$|の方$/, "") // 「八尾の南の方」→「八尾」「東淀川の方」→「東淀川」
                 .replace(/通勤\d+分圏内|通勤\d+分以内|\d+分圏内/g, "") // 「通勤20分圏内」などを除去
                 .replace(/駅|周辺|付近|近く|近辺|沿線|エリア|あたり/g, "")
+                .replace(/[かや]$/, "")  // 「〜駅か」→駅除去後に残る末尾助詞を除去
                 .trim())
     .map(normalizeNumerals)
     .filter(t => t.length >= 1);
@@ -440,39 +441,62 @@ const SITE_CONFIG = {
           });
         } else {
           // 駅名・沿線名 → 沿線・駅
-          const lines = findStationLines(areaText);
-          const linesText = lines ? lines.join(" / ") : null;
-          // 広げて検索：隣駅名を実際に計算して表示
-          let wideStationNote = null;
-          if (d.isWide && lines) {
-            const stClean = areaText.replace(/駅|周辺|付近|近く/g, "").trim();
-            const adj = getAdjacentStations(stClean, lines);
-            if (adj.length > 0) {
-              wideStationNote = "広げて：" + stClean + " ＋ 前後の駅「" + adj.join("・") + "」も追加で選択する";
-            } else {
-              wideStationNote = "広げて：この駅 ＋ 隣の駅も追加で選択する（「駅名から絞り込み」で隣駅を検索）";
-            }
-          }
-          steps.push({
-            num: n++,
-            field: "【沿線・駅】絞り込み",
-            value: areaText,
-            linesNote: linesText ? "選択する沿線: " + linesText : null,
-            note: wideStationNote,
-            hint: "左メニュー「沿線・駅絞り込み ＋」→「駅名から絞り込み」に駅名を入力 → 上記の沿線を選択 → 右側「駅の設定へ進む ›」→ 駅を選択 → 「確定してリストへ」",
-          });
+          // トークン単位で「駅名」か「路線名（全線）」かを判別して個別ステップ表示
+          const toks = parseAreaTokens(areaText);
+          const lineToks = toks.filter(t => t.endsWith("線") && !STATION_LINE_MAP[t] && !STATION_LINE_MAP[t.replace(/[町村]$/, "")]);
+          const stToks   = toks.filter(t => !lineToks.includes(t));
 
-          // 広げて検索のみ：その駅がある市区を所在地でも追加アナウンス
-          if (d.isWide) {
-            const ward = findStationWard(areaText);
+          // 駅名ステップ
+          if (stToks.length > 0) {
+            const stFirst = stToks[0];
+            const lines = findStationLines(stFirst) || findStationLines(areaText);
+            const linesText = lines ? lines.join(" / ") : null;
+            let wideStationNote = null;
+            if (d.isWide && lines) {
+              const adj = getAdjacentStations(stFirst, lines);
+              wideStationNote = adj.length > 0
+                ? "広げて：" + stFirst + " ＋ 前後の駅「" + adj.join("・") + "」も追加で選択する"
+                : "広げて：この駅 ＋ 隣の駅も追加で選択する（「駅名から絞り込み」で隣駅を検索）";
+            }
             steps.push({
               num: n++,
-              field: "【所在地でも検索】広げてオプション",
-              value: ward ? ward : areaText + " 周辺の市区",
-              note: ward
-                ? `${areaText} がある市区 → 所在地でも検索して候補を広げる`
-                : "この駅がある市区を所在地で検索して候補を広げる",
-              hint: "左メニュー「所在地絞り込み ＋」→ 都道府県 → 市区郡（上記の市区）→ 詳細地域 → 「確定してリストへ」",
+              field: "【沿線・駅】絞り込み",
+              value: stToks.join("・"),
+              linesNote: linesText ? "選択する沿線: " + linesText : null,
+              note: wideStationNote,
+              hint: "左メニュー「沿線・駅絞り込み ＋」→「駅名から絞り込み」に駅名を入力 → 上記の沿線を選択 → 右側「駅の設定へ進む ›」→ 駅を選択 → 「確定してリストへ」",
+            });
+            if (d.isWide) {
+              const ward = findStationWard(stFirst);
+              steps.push({
+                num: n++,
+                field: "【所在地でも検索】広げてオプション",
+                value: ward ? ward : stFirst + " 周辺の市区",
+                note: ward ? stFirst + " がある市区 → 所在地でも検索して候補を広げる" : "この駅がある市区を所在地で検索して候補を広げる",
+                hint: "左メニュー「所在地絞り込み ＋」→ 都道府県 → 市区郡（上記の市区）→ 詳細地域 → 「確定してリストへ」",
+              });
+            }
+          }
+
+          // 路線名ステップ（全線）
+          lineToks.forEach(ln => {
+            steps.push({
+              num: n++,
+              field: "【沿線・駅】絞り込み（全線）",
+              value: ln + "：全線",
+              hint: "左メニュー「沿線・駅絞り込み ＋」→「沿線から絞り込み」に路線名を入力 → 路線を選択 → 「全駅を選択」→ 「確定してリストへ」",
+            });
+          });
+
+          // どちらも空（parseAreaTokens が機能しなかった場合）→ 元のareaTextで表示
+          if (stToks.length === 0 && lineToks.length === 0) {
+            const lines = findStationLines(areaText);
+            steps.push({
+              num: n++,
+              field: "【沿線・駅】絞り込み",
+              value: areaText,
+              linesNote: lines ? "選択する沿線: " + lines.join(" / ") : null,
+              hint: "左メニュー「沿線・駅絞り込み ＋」→「駅名から絞り込み」に駅名を入力 → 上記の沿線を選択 → 右側「駅の設定へ進む ›」→ 駅を選択 → 「確定してリストへ」",
             });
           }
         }
