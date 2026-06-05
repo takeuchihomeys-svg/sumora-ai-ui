@@ -173,11 +173,12 @@
     // ⑤ 間取部屋数 FROM/TO (index 89, 90)
     // ※ 平米表記（30平米以上 等）は間取り条件ではないので除外する
     if (cond.floor_plan) {
+      var hasIjou = /以上/.test(cond.floor_plan); // 「1LDK以上」などの「以上」フラグ
       var plans = cond.floor_plan.split(/[・,、\/\.\s]+/).filter(function (p) {
         return !/平米|㎡|m2|m²/i.test(p);
       });
       var roomNums = plans.map(function (p) {
-        p = p.trim().toUpperCase();
+        p = p.trim().toUpperCase().replace(/以上$/, ""); // 「1LDK以上」→「1LDK」
         if (!p) return null;
         var m = p.match(/^(\d+)/);
         if (m) return parseInt(m[1]);
@@ -186,7 +187,8 @@
       }).filter(function (n) { return n !== null; });
       if (roomNums.length) {
         setVal(getField(89), Math.min.apply(null, roomNums));
-        setVal(getField(90), Math.max.apply(null, roomNums));
+        // 「以上」ありの場合はTO(90)を空にして「1室以上」扱いにする
+        if (!hasIjou) setVal(getField(90), Math.max.apply(null, roomNums));
       }
     }
 
@@ -195,7 +197,7 @@
       cond.floor_plan.split(/[・,、\/\.\s]+/)
         .filter(function (p) { return !/平米|㎡|m2|m²/i.test(p); })
         .forEach(function (p) {
-          p = p.trim().toUpperCase();
+          p = p.trim().toUpperCase().replace(/以上$/, ""); // 「1LDK以上」→「1LDK」
           var key = p.replace(/^\d+/, "") || p;
           var candidates = MADORI_LABELS[p] || MADORI_LABELS[key];
           if (!candidates) return;
