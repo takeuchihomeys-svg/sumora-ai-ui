@@ -3,32 +3,23 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-// 未読数をバブル内に表示するアイコン
 const IconChatWithCount = ({ active, count }: { active?: boolean; count: number }) => {
   const hasCount = count > 0;
   const label = count > 99 ? "99+" : String(count);
   const fontSize = label.length >= 3 ? 5 : label.length === 2 ? 6.5 : 7.5;
-
   return (
-    <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
       <path
         d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
         fill={hasCount ? "#06C755" : "none"}
         stroke={hasCount ? "none" : "currentColor"}
-        strokeWidth={active ? 2.5 : 1.8}
+        strokeWidth={active ? 2.4 : 1.8}
         strokeLinecap="round"
         strokeLinejoin="round"
       />
       {hasCount && (
-        <text
-          x="12"
-          y="9.5"
-          textAnchor="middle"
-          dominantBaseline="central"
-          fontSize={fontSize}
-          fontWeight="bold"
-          fill="white"
-        >
+        <text x="12" y="9.5" textAnchor="middle" dominantBaseline="central"
+          fontSize={fontSize} fontWeight="bold" fill="white">
           {label}
         </text>
       )}
@@ -37,7 +28,8 @@ const IconChatWithCount = ({ active, count }: { active?: boolean; count: number 
 };
 
 const IconCalendar = ({ active }: { active?: boolean }) => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.5 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth={active ? 2.4 : 1.8} strokeLinecap="round" strokeLinejoin="round">
     <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
     <line x1="16" y1="2" x2="16" y2="6"/>
     <line x1="8" y1="2" x2="8" y2="6"/>
@@ -46,7 +38,8 @@ const IconCalendar = ({ active }: { active?: boolean }) => (
 );
 
 const IconBuilding = ({ active }: { active?: boolean }) => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.5 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth={active ? 2.4 : 1.8} strokeLinecap="round" strokeLinejoin="round">
     <rect x="3" y="3" width="18" height="18" rx="2"/>
     <path d="M9 3v18"/>
     <path d="M3 9h6"/>
@@ -57,7 +50,8 @@ const IconBuilding = ({ active }: { active?: boolean }) => (
 );
 
 const IconPeople = ({ active }: { active?: boolean }) => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.5 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth={active ? 2.4 : 1.8} strokeLinecap="round" strokeLinejoin="round">
     <circle cx="9" cy="7" r="4"/>
     <path d="M3 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/>
     <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
@@ -66,7 +60,8 @@ const IconPeople = ({ active }: { active?: boolean }) => (
 );
 
 const IconReceipt = ({ active }: { active?: boolean }) => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 2.5 : 1.8} strokeLinecap="round" strokeLinejoin="round">
+  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth={active ? 2.4 : 1.8} strokeLinecap="round" strokeLinejoin="round">
     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
     <polyline points="14 2 14 8 20 8"/>
     <line x1="9" y1="13" x2="15" y2="13"/>
@@ -83,96 +78,81 @@ type Props = {
 export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
   const pathname = usePathname();
   const activeColor = "#06C755";
-  const inactiveColor = "#aaaaaa";
+  const inactiveColor = "#888888";
+
+  const items = [
+    {
+      href: "/",
+      label: "LINE",
+      icon: <IconChatWithCount active={pathname === "/" || unreadCount > 0} count={unreadCount} />,
+      isActive: pathname === "/" || unreadCount > 0,
+      hasUnread: unreadCount > 0,
+    },
+    {
+      href: "/conditions",
+      label: "申込一覧",
+      icon: <IconBuilding active={pathname === "/conditions"} />,
+      isActive: pathname === "/conditions",
+      hasUnread: false,
+    },
+    {
+      href: "/customers",
+      label: "お客さん",
+      icon: <IconPeople active={pathname === "/customers"} />,
+      isActive: pathname === "/customers",
+      hasUnread: false,
+    },
+    {
+      href: "/calendar",
+      label: "カレンダー",
+      icon: <IconCalendar active={pathname === "/calendar"} />,
+      isActive: pathname === "/calendar",
+      hasUnread: false,
+    },
+    {
+      href: "/estimate",
+      label: "見積書",
+      icon: <IconReceipt active={pathname === "/estimate"} />,
+      isActive: pathname === "/estimate",
+      hasUnread: false,
+    },
+  ];
 
   return (
     <nav
       className="fixed bottom-0 left-0 right-0 z-40 flex flex-col transition-transform duration-300"
       style={{
-        background: "#f7f8fa",
-        borderTop: "1px solid #dde1e5",
+        background: "#1c1c1e",
+        borderTop: "1px solid #3a3a3c",
         transform: hidden ? "translateY(100%)" : "translateY(0)",
       }}
     >
-      {/* ボタン行（固定高さ・縦中央） */}
-      <div className="flex items-center" style={{ paddingTop: 6, paddingBottom: 6 }}>
-        {/* メッセージ */}
-        <Link href="/" className="flex flex-1 items-center justify-center">
-          <span
-            className="flex items-center justify-center rounded-full transition-all duration-200"
-            style={{
-              width: 48,
-              height: 28,
-              background: unreadCount > 0 ? "#e6f9ee" : pathname === "/" ? "#e6f9ee" : "transparent",
-              color: unreadCount > 0 || pathname === "/" ? activeColor : inactiveColor,
-            }}
-          >
-            <IconChatWithCount active={pathname === "/" || unreadCount > 0} count={unreadCount} />
-          </span>
-        </Link>
-
-        {/* 物件条件 */}
-        <Link href="/conditions" className="flex flex-1 items-center justify-center">
-          <span
-            className="flex items-center justify-center rounded-full transition-all duration-200"
-            style={{
-              width: 48,
-              height: 28,
-              background: pathname === "/conditions" ? "#e6f9ee" : "transparent",
-              color: pathname === "/conditions" ? activeColor : inactiveColor,
-            }}
-          >
-            <IconBuilding active={pathname === "/conditions"} />
-          </span>
-        </Link>
-
-        {/* お客さん管理 */}
-        <Link href="/customers" className="flex flex-1 items-center justify-center">
-          <span
-            className="flex items-center justify-center rounded-full transition-all duration-200"
-            style={{
-              width: 48,
-              height: 28,
-              background: pathname === "/customers" ? "#e6f9ee" : "transparent",
-              color: pathname === "/customers" ? activeColor : inactiveColor,
-            }}
-          >
-            <IconPeople active={pathname === "/customers"} />
-          </span>
-        </Link>
-
-        {/* カレンダー */}
-        <Link href="/calendar" className="flex flex-1 items-center justify-center">
-          <span
-            className="flex items-center justify-center rounded-full transition-all duration-200"
-            style={{
-              width: 48,
-              height: 28,
-              background: pathname === "/calendar" ? "#e6f9ee" : "transparent",
-              color: pathname === "/calendar" ? activeColor : inactiveColor,
-            }}
-          >
-            <IconCalendar active={pathname === "/calendar"} />
-          </span>
-        </Link>
-
-        {/* 見積書 */}
-        <Link href="/estimate" className="flex flex-1 items-center justify-center">
-          <span
-            className="flex items-center justify-center rounded-full transition-all duration-200"
-            style={{
-              width: 48,
-              height: 28,
-              background: pathname === "/estimate" ? "#e6f9ee" : "transparent",
-              color: pathname === "/estimate" ? activeColor : inactiveColor,
-            }}
-          >
-            <IconReceipt active={pathname === "/estimate"} />
-          </span>
-        </Link>
+      {/* ボタン行 */}
+      <div className="flex items-center" style={{ paddingTop: 10, paddingBottom: 10 }}>
+        {items.map((item) => (
+          <Link key={item.href} href={item.href} className="flex flex-1 flex-col items-center justify-center gap-0.5">
+            <span
+              className="flex items-center justify-center rounded-full transition-all duration-200"
+              style={{
+                width: 44,
+                height: 32,
+                background: item.isActive ? "rgba(6,199,85,0.15)" : "transparent",
+                color: item.isActive ? activeColor : inactiveColor,
+              }}
+            >
+              {item.icon}
+            </span>
+            <span
+              className="text-[9px] font-medium leading-none"
+              style={{ color: item.isActive ? activeColor : inactiveColor }}
+            >
+              {item.label}
+            </span>
+          </Link>
+        ))}
       </div>
 
-      {/* iOSセーフエリアスペーサー（ホームバー分） */}
+      {/* iOSセーフエリアスペーサー */}
       <div style={{ height: "env(safe-area-inset-bottom, 0px)" }} />
     </nav>
   );
