@@ -1587,9 +1587,9 @@ export default function Home() {
                 title="AIで検索"
               >
                 <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
-                  <circle cx="10" cy="10" r="7" stroke={aixSearchMode ? "#1565C0" : "#90caf9"} strokeWidth="2.5"/>
-                  <line x1="15.2" y1="15.2" x2="21" y2="21" stroke={aixSearchMode ? "#1565C0" : "#90caf9"} strokeWidth="2.8" strokeLinecap="round"/>
-                  <text x="10" y="10" textAnchor="middle" dominantBaseline="central" fontSize="6.5" fontWeight="bold" fill={aixSearchMode ? "#1565C0" : "#90caf9"}>AI</text>
+                  <circle cx="10" cy="10" r="7" stroke={aixSearchMode ? "#06C755" : "#aaaaaa"} strokeWidth="2.5"/>
+                  <line x1="15.2" y1="15.2" x2="21" y2="21" stroke={aixSearchMode ? "#06C755" : "#aaaaaa"} strokeWidth="2.8" strokeLinecap="round"/>
+                  <text x="10" y="10" textAnchor="middle" dominantBaseline="central" fontSize="6.5" fontWeight="bold" fill={aixSearchMode ? "#06C755" : "#aaaaaa"}>AI</text>
                 </svg>
               </button>
               {(() => {
@@ -1599,10 +1599,10 @@ export default function Home() {
                   <button
                     onClick={() => setShowGroupFilter((v) => !v)}
                     className={`flex items-center gap-0.5 ${fs} font-bold transition-all`}
-                    style={{ color: statusFilter !== "all" ? "#1565C0" : "#1565C0" }}
+                    style={{ color: "#111b21" }}
                   >
                     {lbl}
-                    <span className="text-[9px] text-[#90caf9]">{showGroupFilter ? "▲" : "▼"}</span>
+                    <span className="text-[9px] text-[#aaa]">{showGroupFilter ? "▲" : "▼"}</span>
                   </button>
                 );
               })()}
