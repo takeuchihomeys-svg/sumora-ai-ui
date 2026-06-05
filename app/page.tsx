@@ -1568,9 +1568,9 @@ export default function Home() {
           } w-full flex-col bg-white md:flex md:w-[390px] md:min-w-[390px] md:border-r md:border-[#dfe5e7]`}
           style={{ paddingBottom: "calc(44px + env(safe-area-inset-bottom))" }}
         >
-          <div className="border-b border-[#e9edef] bg-white px-3 pb-2 pt-[max(12px,env(safe-area-inset-top))]">
+          <div className="border-b border-[#e9edef] bg-white px-3 pb-1.5 pt-[max(10px,env(safe-area-inset-top))]">
             {/* ステータスフィルター（上段）＋ハンバーガー左上 */}
-            <div className="relative flex items-center justify-center mb-2">
+            <div className="relative flex items-center justify-center mb-1.5">
               {/* ハンバーガー（左端） */}
               <button
                 onClick={() => setShowHamburgerMenu(true)}
@@ -1610,16 +1610,16 @@ export default function Home() {
                 <div className="absolute top-full z-30 mt-1 w-44 overflow-hidden rounded-2xl border border-[#d1d7db] bg-white shadow-xl">
                   <button
                     onClick={() => { setStatusFilter("all"); setShowGroupFilter(false); }}
-                    className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold border-b border-[#f0f2f5] ${statusFilter === "all" ? "text-[#2196F3]" : "text-[#111b21]"}`}
+                    className={`flex w-full items-center gap-2 px-4 py-2 text-left text-[13px] font-medium border-b border-[#f0f2f5] ${statusFilter === "all" ? "text-[#2196F3]" : "text-[#111b21]"}`}
                   >
-                    <span className="h-3 w-3 rounded-full bg-gray-300" />
+                    <span className="h-2.5 w-2.5 rounded-full bg-gray-300" />
                     すべて
                   </button>
                   {DETAIL_STATUSES.map((s) => (
                     <button
                       key={s.key}
                       onClick={() => { setStatusFilter(s.key); setShowGroupFilter(false); }}
-                      className={`flex w-full items-center gap-2 px-4 py-3 text-left text-sm font-semibold border-b border-[#f0f2f5] last:border-b-0 ${statusFilter === s.key ? "text-[#2196F3]" : "text-[#111b21]"}`}
+                      className={`flex w-full items-center gap-2 px-4 py-2 text-left text-[13px] font-medium border-b border-[#f0f2f5] last:border-b-0 ${statusFilter === s.key ? "text-[#2196F3]" : "text-[#111b21]"}`}
                     >
                       <span className={`h-3 w-3 rounded-full ${s.dot}`} />
                       {s.label}
@@ -1752,7 +1752,7 @@ export default function Home() {
                     <div className="min-w-0 flex-1">
                       <div className="mb-1 flex items-start justify-between gap-2">
                         <div className="flex min-w-0 items-center gap-1.5 truncate">
-                          <span className="truncate text-[14px] font-semibold text-[#111b21]">
+                          <span className="truncate text-[14px] font-medium text-[#111b21]">
                             {conversation.customerName}
                           </span>
                           {(() => {
@@ -2316,6 +2316,25 @@ export default function Home() {
                 <div className="text-[11px] font-semibold text-[#111b21]">紐付け</div>
                 <div className="text-[9px] text-[#8696a0] text-center leading-tight">
                   {linkedCustomerMap[convMenuConvId]?.name?.slice(0, 6) ?? "未設定"}
+                </div>
+              </button>
+            </div>
+            <div className="border-t border-[#f0f2f5]">
+              <button
+                onClick={() => { toggleFlaggedConv(convMenuConvId!); setConvMenuConvId(null); }}
+                className="flex w-full items-center gap-3 px-5 py-3.5 active:bg-[#f0f2f5]"
+              >
+                <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${flaggedConvIds.has(convMenuConvId ?? "") ? "bg-red-500" : "bg-[#f0f2f5]"}`}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill={flaggedConvIds.has(convMenuConvId ?? "") ? "white" : "#667781"} stroke="none">
+                    <path d="M3 3h18v2H5v13.59L7.76 16H21v-2h1v4H7.24L3 21.41V3z"/>
+                    <path d="M5 5v11.59L7.76 14H21V5H5z"/>
+                  </svg>
+                </span>
+                <div>
+                  <div className="text-[13px] font-medium text-[#111b21]">
+                    {flaggedConvIds.has(convMenuConvId ?? "") ? "要対応を解除" : "要対応にする"}
+                  </div>
+                  <div className="text-[11px] text-[#8696a0]">フラグを立てる</div>
                 </div>
               </button>
             </div>
