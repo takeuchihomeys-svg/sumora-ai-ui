@@ -298,6 +298,7 @@ export default function Home() {
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const lightboxSwipeX = useRef(0);
   const [flaggedConvIds, setFlaggedConvIds] = useState<Set<string>>(new Set());
+  const [manuallyReadConvIds, setManuallyReadConvIds] = useState<Set<string>>(new Set());
   const convLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [memos, setMemos] = useState<Record<string, string>>({});
   const [memoModalConvId, setMemoModalConvId] = useState<string | null>(null);
@@ -403,10 +404,12 @@ export default function Home() {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "messages" },
         (payload) => {
-          // お客様メッセージが届いたら通知
+          // お客様メッセージが届いたら通知＋手動既読を解除
           if (payload.new && (payload.new as { sender: string }).sender === "customer") {
             const msgText = (payload.new as { text?: string }).text || "新しいメッセージが届きました";
             showNotif("AIX LINX — 新着メッセージ", msgText, "/");
+            const cid = String((payload.new as { conversation_id: number }).conversation_id);
+            setManuallyReadConvIds(prev => { if (!prev.has(cid)) return prev; const n = new Set(prev); n.delete(cid); return n; });
           }
           const newMsg = payload.new as { id: number; conversation_id: number; sender: string; text: string; image_url?: string; created_at: string };
           if (!newMsg?.id) {
@@ -801,10 +804,11 @@ export default function Home() {
   const needsReplyCount = useMemo(() => {
     return conversations.filter((c) => {
       if (postApplyConvIds.has(c.id)) return false;
+      if (manuallyReadConvIds.has(c.id)) return false;
       const sender = c.lastSender ?? c.messages[c.messages.length - 1]?.sender;
       return sender === "customer" && c.status !== "closed_won";
     }).length;
-  }, [conversations, postApplyConvIds]);
+  }, [conversations, postApplyConvIds, manuallyReadConvIds]);
 
   useEffect(() => {
     if (filteredConversations.length === 0) return;
@@ -1698,6 +1702,7 @@ export default function Home() {
                 const unreadCount = (() => {
                   if (!needsReply) return 0;
                   if (postApplyConvIds.has(conversation.id)) return 0;
+                  if (manuallyReadConvIds.has(conversation.id)) return 0;
                   const msgs = conversation.messages;
                   let count = 0;
                   for (let i = msgs.length - 1; i >= 0; i--) {
@@ -2324,6 +2329,30 @@ export default function Home() {
               </button>
             </div>
             <div className="border-t border-[#f0f2f5]">
+              <button
+                onClick={() => {
+                  setManuallyReadConvIds(prev => {
+                    const next = new Set(prev);
+                    if (next.has(convMenuConvId!)) next.delete(convMenuConvId!);
+                    else next.add(convMenuConvId!);
+                    return next;
+                  });
+                  setConvMenuConvId(null);
+                }}
+                className="flex w-full items-center gap-3 px-5 py-3.5 active:bg-[#f0f2f5] border-b border-[#f0f2f5]"
+              >
+                <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${manuallyReadConvIds.has(convMenuConvId ?? "") ? "bg-[#06C755]" : "bg-[#f0f2f5]"}`}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={manuallyReadConvIds.has(convMenuConvId ?? "") ? "white" : "#667781"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M20 6L9 17l-5-5"/>
+                  </svg>
+                </span>
+                <div>
+                  <div className="text-[13px] font-medium text-[#111b21]">
+                    {manuallyReadConvIds.has(convMenuConvId ?? "") ? "未読に戻す" : "既読済みにする"}
+                  </div>
+                  <div className="text-[11px] text-[#8696a0]">未読バッジを消す</div>
+                </div>
+              </button>
               <button
                 onClick={() => { toggleFlaggedConv(convMenuConvId!); setConvMenuConvId(null); }}
                 className="flex w-full items-center gap-3 px-5 py-3.5 active:bg-[#f0f2f5]"
