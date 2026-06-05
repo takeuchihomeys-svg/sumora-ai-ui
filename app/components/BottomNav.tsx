@@ -91,8 +91,8 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
       style={{
         background: "#f7f8fa",
         borderTop: "1px solid #dde1e5",
-        paddingTop: 6,
-        paddingBottom: "max(env(safe-area-inset-bottom), 6px)",
+        paddingTop: 2,
+        paddingBottom: "max(env(safe-area-inset-bottom), 4px)",
         transform: hidden ? "translateY(100%)" : "translateY(0)",
       }}
     >
