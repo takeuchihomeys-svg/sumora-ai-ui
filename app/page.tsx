@@ -1749,7 +1749,7 @@ export default function Home() {
                       )}
                     </div>
 
-                    <div className="relative min-w-0 flex-1 pr-14">
+                    <div className="relative min-w-0 flex-1 pr-10">
                       {/* 時間・未読バッジ: 絶対配置で高さに影響させない */}
                       <div className="absolute right-0 top-0 flex flex-col items-end gap-1">
                         <span className="text-[11px] text-[#667781]">
