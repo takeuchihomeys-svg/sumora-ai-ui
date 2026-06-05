@@ -1757,7 +1757,7 @@ export default function Home() {
                           {formatListTime(conversation.updatedAt)}
                         </span>
                         {unreadCount > 0 && (
-                          <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#2196F3] px-1 text-[11px] font-bold text-white leading-none">
+                          <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#06C755] px-1 text-[11px] font-bold text-white leading-none">
                             {unreadCount}
                           </span>
                         )}
@@ -1844,7 +1844,7 @@ export default function Home() {
                   <polyline points="15 18 9 12 15 6" />
                 </svg>
                 {needsReplyCount > 0 && (
-                  <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#2196F3] px-1 text-[11px] font-bold text-white leading-none">
+                  <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#06C755] px-1 text-[11px] font-bold text-white leading-none">
                     {needsReplyCount}
                   </span>
                 )}
