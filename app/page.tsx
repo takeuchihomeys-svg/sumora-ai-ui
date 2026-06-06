@@ -351,16 +351,20 @@ export default function Home() {
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
   };
 
-  // スワイプ直後の合成クリック（BottomNavリンク等への誤遷移）をドキュメントレベルでブロック
+  // スワイプ直後の合成クリック・タッチ（BottomNavリンク等への誤遷移）をドキュメントレベルでブロック
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
+    const block = (e: Event) => {
       if (swipeBlockClickRef.current) {
         e.stopPropagation();
         e.preventDefault();
       }
     };
-    document.addEventListener("click", handler, { capture: true });
-    return () => document.removeEventListener("click", handler, { capture: true });
+    document.addEventListener("click", block, { capture: true });
+    document.addEventListener("touchstart", block, { capture: true, passive: false });
+    return () => {
+      document.removeEventListener("click", block, { capture: true });
+      document.removeEventListener("touchstart", block, { capture: true });
+    };
   }, []);
 
   useEffect(() => {
@@ -1566,9 +1570,9 @@ export default function Home() {
   const onChatTouchEnd = (e: React.TouchEvent) => {
     // 右に90px以上スワイプ → 一覧へ戻る
     if (chatSwipeDelta > 90) {
-      // スワイプ後の合成クリック（BottomNavリンク等）を500ms間ブロック
+      // スワイプ後の合成クリック・タッチ（BottomNavリンク等）を500ms間ブロック
       swipeBlockClickRef.current = true;
-      setTimeout(() => { swipeBlockClickRef.current = false; }, 200);
+      setTimeout(() => { swipeBlockClickRef.current = false; }, 500);
       e.preventDefault();
       setMobileView("list");
     }
