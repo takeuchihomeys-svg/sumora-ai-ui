@@ -12,6 +12,7 @@ type Message = {
   sender: "customer" | "staff";
   text: string;
   imageUrl?: string;
+  imageExpiresAt?: string;
   time: string;
   rawCreatedAt?: string;
 };
@@ -51,6 +52,7 @@ type SupabaseMessageRow = {
   sender: "customer" | "staff";
   text: string;
   image_url?: string | null;
+  image_expires_at?: string | null;
   created_at: string;
 };
 
@@ -452,7 +454,7 @@ export default function Home() {
         { event: "UPDATE", schema: "public", table: "messages" },
         (payload) => {
           // image_url が後から埋まったとき（画像メッセージの非同期取得）に反映する
-          const upd = payload.new as { id: number; conversation_id: number; image_url?: string };
+          const upd = payload.new as { id: number; conversation_id: number; image_url?: string; image_expires_at?: string };
           if (!upd?.id || !upd.image_url) return;
           setConversations((prev) =>
             prev.map((c) => {
@@ -460,7 +462,7 @@ export default function Home() {
               return {
                 ...c,
                 messages: c.messages.map((m) =>
-                  m.id === String(upd.id) ? { ...m, imageUrl: upd.image_url } : m
+                  m.id === String(upd.id) ? { ...m, imageUrl: upd.image_url, imageExpiresAt: upd.image_expires_at || undefined } : m
                 ),
               };
             })
@@ -537,6 +539,7 @@ export default function Home() {
                   sender: m.sender,
                   text: m.text,
                   imageUrl: m.image_url || undefined,
+                  imageExpiresAt: m.image_expires_at || undefined,
                   time: formatTime(m.created_at),
                   rawCreatedAt: m.created_at,
                 }));
@@ -559,6 +562,7 @@ export default function Home() {
           sender: m.sender,
           text: m.text,
           imageUrl: m.image_url || undefined,
+          imageExpiresAt: m.image_expires_at || undefined,
           time: formatTime(m.created_at),
           rawCreatedAt: m.created_at,
         }));
@@ -664,6 +668,7 @@ export default function Home() {
           sender: message.sender,
           text: message.text,
           imageUrl: message.image_url || undefined,
+          imageExpiresAt: message.image_expires_at || undefined,
           time: formatTime(message.created_at),
           rawCreatedAt: message.created_at,
         }))
@@ -2005,7 +2010,23 @@ export default function Home() {
                             } ${flaggedIds.has(message.id) ? "ring-2 ring-orange-300" : ""}`}
                             style={!isCustomer ? { backgroundColor: "rgba(220,248,198,0.55)" } : undefined}
                           >
+                            {/* 保存期間終了 */}
+                            {!message.imageUrl && message.text === "[画像]" && message.imageExpiresAt && new Date(message.imageExpiresAt) < new Date() && (
+                              <div className="flex items-center gap-1.5 px-3 py-2 text-[13px] text-gray-400">
+                                <span>🔒</span>
+                                <span>保存期間が終了しました</span>
+                              </div>
+                            )}
                             {message.imageUrl && (() => {
+                              // 期限切れチェック
+                              if (message.imageExpiresAt && new Date(message.imageExpiresAt) < new Date()) {
+                                return (
+                                  <div className="flex items-center gap-1.5 px-3 py-2 text-[13px] text-gray-400">
+                                    <span>🔒</span>
+                                    <span>保存期間が終了しました</span>
+                                  </div>
+                                );
+                              }
                               let imgs: string[];
                               try {
                                 imgs = message.imageUrl!.startsWith("[")

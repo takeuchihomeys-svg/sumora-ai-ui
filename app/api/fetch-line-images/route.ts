@@ -65,21 +65,22 @@ export async function GET(req: NextRequest) {
       const ext = contentType.includes("png") ? "png" : contentType.includes("gif") ? "gif" : "jpg";
       const arrayBuffer = await contentRes.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
-      const storagePath = `line-images/${lineMessageId}.${ext}`;
+      const storagePath = `${lineMessageId}.${ext}`;
 
       const { error: uploadErr } = await supabase.storage
-        .from("property-images")
+        .from("line-images")
         .upload(storagePath, buffer, { contentType, upsert: true });
 
       if (uploadErr) { failCount++; continue; }
 
       const { data: urlData } = supabase.storage
-        .from("property-images")
+        .from("line-images")
         .getPublicUrl(storagePath);
 
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
       await supabase
         .from("messages")
-        .update({ image_url: urlData.publicUrl })
+        .update({ image_url: urlData.publicUrl, image_expires_at: expiresAt })
         .eq("id", msg.id);
 
       successCount++;

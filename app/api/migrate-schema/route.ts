@@ -289,6 +289,37 @@ CREATE TABLE IF NOT EXISTS station_map (
 );
 ALTER TABLE station_map DISABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_station_map_token ON station_map(token);
+
+-- LINE顧客画像のStorageバケット（公開・5MB制限）
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('line-images', 'line-images', true, 5242880, ARRAY['image/jpeg','image/png','image/gif','image/webp'])
+ON CONFLICT (id) DO NOTHING;
+
+-- RLSポリシー: 公開読み取り + anon書き込み（LINEアカウントからのアップロード用）
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE tablename='objects' AND policyname='line-images public read'
+  ) THEN
+    CREATE POLICY "line-images public read" ON storage.objects
+      FOR SELECT USING (bucket_id = 'line-images');
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE tablename='objects' AND policyname='line-images anon insert'
+  ) THEN
+    CREATE POLICY "line-images anon insert" ON storage.objects
+      FOR INSERT WITH CHECK (bucket_id = 'line-images');
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE tablename='objects' AND policyname='line-images anon delete'
+  ) THEN
+    CREATE POLICY "line-images anon delete" ON storage.objects
+      FOR DELETE USING (bucket_id = 'line-images');
+  END IF;
+END $$;
+
+-- 画像の保存期限（デフォルト30日。超過または会話内100枚超えで自動期限切れ）
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS image_expires_at TIMESTAMPTZ;
 `.trim();
 
 export async function GET() {

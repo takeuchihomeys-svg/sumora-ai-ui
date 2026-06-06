@@ -499,6 +499,9 @@ async function handleImageMessageSave(
     return null;
   }
 
+  // image_expires_at = 30日後（デフォルト保存期限）
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
   // image_url は後から埋める。まず line_message_id だけ保存して即座に会話に表示
   const { data: msgData, error: msgErr } = await db.from("messages").insert({
     conversation_id: convId,
@@ -506,6 +509,7 @@ async function handleImageMessageSave(
     text: "[画像]",
     image_url: null,
     line_message_id: lineMessageId,
+    image_expires_at: expiresAt,
     created_at: now,
   }).select("id").single();
 
@@ -518,6 +522,9 @@ async function handleImageMessageSave(
     .from("conversations")
     .update({ last_message: "[画像]", last_sender: "customer", updated_at: now })
     .eq("id", convId);
+
+  // 会話内の画像が100枚を超えたら古い画像の保存期限を即時終了
+  void expireOldImagesIfOverLimit(db, convId);
 
   updateProfileAsync(db, userId, convId, account, "[画像]", now);
   return { convId, msgId: String(msgData.id) };
@@ -546,12 +553,11 @@ async function fetchAndUploadLineImage(
     const contentType = contentRes.headers.get("content-type") || "image/jpeg";
     const ext = contentType.includes("png") ? "png" : contentType.includes("gif") ? "gif" : "jpg";
 
-    // Blob を使用（Buffer よりも Supabase Storage との互換性が高い）
     const blob = new Blob([await contentRes.arrayBuffer()], { type: contentType });
-    const storagePath = `line-images/${lineMessageId}.${ext}`;
+    const storagePath = `${lineMessageId}.${ext}`;
 
     const { error: uploadErr } = await db.storage
-      .from("property-images")
+      .from("line-images")
       .upload(storagePath, blob, { contentType, upsert: true });
 
     if (uploadErr) {
@@ -560,7 +566,7 @@ async function fetchAndUploadLineImage(
     }
 
     const { data: urlData } = db.storage
-      .from("property-images")
+      .from("line-images")
       .getPublicUrl(storagePath);
 
     const { error: updateErr } = await db.from("messages")
@@ -575,6 +581,33 @@ async function fetchAndUploadLineImage(
   } catch (e) {
     console.error("[line-webhook] 画像処理エラー:", e);
   }
+}
+
+// 会話内の画像が100枚を超えたら、超過分の古い画像を即時期限切れにする
+async function expireOldImagesIfOverLimit(
+  db: ReturnType<typeof getDb>,
+  convId: string,
+  limit = 100,
+): Promise<void> {
+  const { data: imgs } = await db
+    .from("messages")
+    .select("id, image_expires_at")
+    .eq("conversation_id", convId)
+    .eq("sender", "customer")
+    .eq("text", "[画像]")
+    .not("image_expires_at", "is", null)
+    .gt("image_expires_at", new Date().toISOString()) // まだ有効なもの
+    .order("created_at", { ascending: true });
+
+  if (!imgs || imgs.length <= limit) return;
+
+  // limit超過分の古い画像IDを即時期限切れにする
+  const overflowIds = imgs.slice(0, imgs.length - limit).map((m) => m.id as string);
+  await db
+    .from("messages")
+    .update({ image_expires_at: new Date().toISOString() })
+    .in("id", overflowIds);
+  console.log(`[line-webhook] 画像上限超過: ${overflowIds.length}件を期限切れにしました`);
 }
 
 // destination → account key のマッピング（各LINE公式アカウントのBot User ID）
