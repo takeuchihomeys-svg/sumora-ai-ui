@@ -128,10 +128,12 @@ export async function POST(req: NextRequest) {
     }
 
     // 処理済み source_example_id を取得（重複実行防止）
+    // デフォルト1000行制限を回避するため上限を明示設定
     const { data: processed } = await supabase
       .from("ai_reply_knowledge")
       .select("source_example_id")
-      .not("source_example_id", "is", null);
+      .not("source_example_id", "is", null)
+      .limit(10000);
 
     const processedIds = new Set(
       (processed || []).map((r) => r.source_example_id as string)
