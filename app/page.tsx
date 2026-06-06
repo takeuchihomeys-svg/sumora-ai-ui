@@ -301,7 +301,6 @@ export default function Home() {
   const lightboxSwipeX = useRef(0);
   const [flaggedConvIds, setFlaggedConvIds] = useState<Set<string>>(new Set());
   const [hotConvIds, setHotConvIds] = useState<Set<string>>(new Set());
-  const [hotSending, setHotSending] = useState(false);
   const [manuallyReadConvIds, setManuallyReadConvIds] = useState<Set<string>>(new Set());
   const convLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [memos, setMemos] = useState<Record<string, string>>({});
@@ -1187,30 +1186,6 @@ export default function Home() {
     });
   };
 
-  const shareHotCustomers = async () => {
-    if (hotConvIds.size === 0 || hotSending) return;
-    setHotSending(true);
-    try {
-      const hotConvs = conversations.filter((c) => hotConvIds.has(c.id));
-      await fetch("/api/notify-hot-customers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          customers: hotConvs.map((c) => ({
-            name: c.customerName,
-            account: c.account || "sumora",
-            lastMessage: c.lastMessage,
-            updatedAt: c.updatedAt,
-          })),
-        }),
-      });
-      setShowHamburgerMenu(false);
-    } catch {
-      // silent
-    } finally {
-      setHotSending(false);
-    }
-  };
 
   const startConvLongPress = (id: string) => {
     convLongPressTimerRef.current = setTimeout(() => {
@@ -2941,37 +2916,6 @@ export default function Home() {
                 })}
               </div>
             </div>
-            {/* 🔥 あついお客さん共有 */}
-            <div className="px-4 pt-4 pb-2">
-              <p className="text-[11px] font-bold text-[#8696a0] mb-3 tracking-wide uppercase">あついお客さん</p>
-              <button
-                onClick={shareHotCustomers}
-                disabled={hotConvIds.size === 0 || hotSending}
-                className="flex w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left active:scale-[0.98] transition-all disabled:opacity-40"
-                style={{ borderColor: hotConvIds.size > 0 ? "#f97316" : "#e9edef", background: hotConvIds.size > 0 ? "#fff7ed" : "#f8f9fa" }}
-              >
-                <span
-                  className="shrink-0 flex items-center justify-center rounded-full text-[20px] leading-none"
-                  style={{ width: 44, height: 44, background: hotConvIds.size > 0 ? "#f97316" : "#e9edef" }}
-                >
-                  {hotSending ? "⏳" : "🔥"}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-[14px] font-bold" style={{ color: hotConvIds.size > 0 ? "#c2410c" : "#8696a0" }}>
-                    {hotSending ? "送信中..." : "LINEに共有する"}
-                  </div>
-                  <div className="text-[11px] text-[#8696a0]">
-                    {hotConvIds.size > 0 ? `${hotConvIds.size}人が🔥マーク中` : "長押しで🔥をつけてください"}
-                  </div>
-                </div>
-                {hotConvIds.size > 0 && (
-                  <span className="shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-[11px] font-bold text-orange-700">
-                    {hotConvIds.size}人
-                  </span>
-                )}
-              </button>
-            </div>
-
             {/* 通知設定 */}
             <div className="px-4 pt-2 pb-4">
               <p className="text-[11px] font-bold text-[#8696a0] mb-3 tracking-wide uppercase">通知設定</p>
