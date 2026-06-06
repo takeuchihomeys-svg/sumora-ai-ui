@@ -170,14 +170,12 @@ function buildGenerationMessages(
   customerName: string,
   history: string,
   state: string,
-  nextState: string,
   analysis: string,
   knowledge: string,
   examples: string,
   phrases: string
 ): [SystemMessage, HumanMessage] {
   const nameNote = customerName ? `お客様名：${customerName}さん` : "お客様名：不明";
-  void nextState; // 将来用（現在はフェーズガイドに統合）
 
   // フェーズ別の行動指針を取得
   const phaseGuide = PHASE_GUIDE[state] || PHASE_GUIDE["first_reply"];
@@ -259,21 +257,9 @@ const STATE_ALIAS: Record<string, string> = {
   contract:                "applying",
 };
 
-const NEXT_STATE_MAP: Record<string, Record<string, string>> = {
-  first_reply: { condition_share: "hearing", consult_property_search: "hearing", other: "hearing" },
-  hearing:     { conditions_complete: "proposing", other: "hearing" },
-  proposing:   { like_property: "proposing", application_interest: "applying", other: "proposing" },
-  applying:    { screening_passed: "applying", screening_failed: "proposing", other: "applying" },
-  closed_won:  { other: "closed_won" },
-};
-
 function normalizeState(k: string): string {
   const resolved = STATE_ALIAS[k] ?? k;
   return ALLOWED_STATES.has(resolved) ? resolved : "first_reply";
-}
-function getNextState(current: string, intent: string): string {
-  const map = NEXT_STATE_MAP[normalizeState(current)] || {};
-  return map[intent] || map["other"] || current;
 }
 
 async function classifyIntent(message: string, state: string, history: string): Promise<string> {
@@ -486,14 +472,12 @@ export async function POST(req: NextRequest) {
       analyzeCustomerSituation(message, history, currentState, customerName),
       fetchKnowledge(currentState),
       fetchExamples(currentState),
-      fetchPhrases(currentState),  // priority10以上・テンプレ除外済み
+      fetchPhrases(currentState),
     ]);
-
-    const nextState = getNextState(currentState, detectedIntent);
 
     // Sonnetでストリーミング生成
     const messages = buildGenerationMessages(
-      message, customerName, history, currentState, nextState,
+      message, customerName, history, currentState,
       analysis, knowledge, examples, phrases
     );
     const genStream = generationModel.stream(messages);
@@ -504,7 +488,7 @@ export async function POST(req: NextRequest) {
         async start(controller) {
           // 1行目: メタデータJSON（フロントエンドがok確認に使用）
           controller.enqueue(encoder.encode(
-            JSON.stringify({ ok: true, detected_intent: detectedIntent, next_state: nextState }) + "\n"
+            JSON.stringify({ ok: true, detected_intent: detectedIntent }) + "\n"
           ));
           try {
             for await (const chunk of await genStream) {

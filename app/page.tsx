@@ -695,10 +695,10 @@ export default function Home() {
           ? latestMsgTime
           : (dbUpdatedAt || undefined);
 
-      // ⑥ スタッフ返信なし & メッセージ5件以内 → hearing
+      // スタッフ返信なし → hearing（件数制限なし）
       const hasStaffReply = relatedMessages.some((m) => m.sender === "staff");
       const autoStatus =
-        !hasStaffReply && relatedMessages.length <= 5
+        !hasStaffReply
           ? "hearing"
           : (conversation.status || "hearing");
 
@@ -954,12 +954,17 @@ export default function Home() {
       setError("");
       setReplyDraft("");
 
+      // スタッフ返信ゼロ & 初回対応中 → first_reply としてAPIに渡す（初回挨拶文を生成するため）
+      const hasAnyStaffMsg = selectedConversation.messages.some((m) => m.sender === "staff");
+      const normalizedStatus = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
+      const effectiveState = !hasAnyStaffMsg && normalizedStatus === "hearing" ? "first_reply" : selectedConversation.status;
+
       const res = await fetch("/api/generate-reply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: targetMessage,
-          state: selectedConversation.status,
+          state: effectiveState,
           customerName: selectedConversation.customerName,
           recentMessages: (() => {
             const last20 = contextMsgs.slice(-20);
