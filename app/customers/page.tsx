@@ -35,6 +35,7 @@ type Customer = {
   building_age?: number | null;
   other_requests?: string | null;
   initial_cost_limit?: number | null;
+  floor_area_min?: number | null;
   created_at: string;
   updated_at: string;
   is_linked?: boolean;
@@ -89,6 +90,7 @@ type EditFields = {
   rent_min: string; rent_max: string;
   walk_minutes: string; move_in_time: string;
   building_age: string; initial_cost_limit: string;
+  floor_area_min: string;
   preferences: string; ng_points: string;
   other_requests: string; property_memo: string;
 };
@@ -103,6 +105,7 @@ function toEditFields(c: Customer): EditFields {
     move_in_time:       c.move_in_time       ?? "",
     building_age:       c.building_age       ? String(c.building_age) : "",
     initial_cost_limit: c.initial_cost_limit ? String(Math.floor(c.initial_cost_limit / 10000)) : "",
+    floor_area_min:     c.floor_area_min     ? String(c.floor_area_min) : "",
     preferences:        c.preferences        ?? "",
     ng_points:          c.ng_points          ?? "",
     other_requests:     c.other_requests     ?? "",
@@ -183,6 +186,7 @@ export default function CustomersPage() {
       move_in_time:       editFields.move_in_time       || null,
       building_age:       editFields.building_age       ? Number(editFields.building_age)               : null,
       initial_cost_limit: editFields.initial_cost_limit ? Number(editFields.initial_cost_limit) * 10000 : null,
+      floor_area_min:     editFields.floor_area_min     ? Number(editFields.floor_area_min)              : null,
       preferences:        editFields.preferences        || null,
       ng_points:          editFields.ng_points          || null,
       other_requests:     editFields.other_requests     || null,
@@ -314,6 +318,7 @@ export default function CustomersPage() {
                   <div className="flex flex-wrap gap-1.5">
                     {c.desired_area && <Tag label="エリア" value={c.desired_area} />}
                     {c.floor_plan   && <Tag label="間取り" value={c.floor_plan} />}
+                    {c.floor_area_min && <Tag label="広さ" value={`${c.floor_area_min}㎡以上`} />}
                     {(c.rent_min || c.rent_max) && (
                       <Tag label="家賃" value={`${c.rent_min ? Math.floor(c.rent_min/10000)+"万〜" : "〜"}${c.rent_max ? Math.floor(c.rent_max/10000)+"万" : ""}`} />
                     )}
@@ -427,6 +432,8 @@ export default function CustomersPage() {
                 value={editFields.desired_area} onChange={(v) => setEditFields((f) => f && ({ ...f, desired_area: v }))} />
               <Field label="間取り" placeholder="例: 1LDK・2DK"
                 value={editFields.floor_plan} onChange={(v) => setEditFields((f) => f && ({ ...f, floor_plan: v }))} />
+              <Field label="広さ（㎡以上）" placeholder="例: 30" type="number"
+                value={editFields.floor_area_min} onChange={(v) => setEditFields((f) => f && ({ ...f, floor_area_min: v }))} />
               <div className="flex gap-2">
                 <div className="flex-1">
                   <Field label="家賃 下限（万）" placeholder="5" type="number"

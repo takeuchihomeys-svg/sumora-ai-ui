@@ -324,6 +324,9 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS image_expires_at TIMESTAMPTZ;
 -- 🔥あついお客さんフラグ（cronアナウンス用）
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS is_hot BOOLEAN DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_conversations_is_hot ON conversations(is_hot) WHERE is_hot = TRUE;
+
+-- 部屋の広さ（㎡以上）
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS floor_area_min INTEGER;
 `.trim();
 
 export async function GET() {
