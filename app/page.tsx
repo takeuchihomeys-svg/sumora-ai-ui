@@ -351,20 +351,17 @@ export default function Home() {
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
   };
 
-  // スワイプ直後の合成クリック・タッチ（BottomNavリンク等への誤遷移）をドキュメントレベルでブロック
+  // スワイプ直後の合成クリック（BottomNavリンク等への誤遷移）をドキュメントレベルでブロック
+  // Next.js Linkはclickで動くのでclickのみブロック。touchstartは対象外（スクロール阻害を防ぐ）
   useEffect(() => {
-    const block = (e: Event) => {
+    const block = (e: MouseEvent) => {
       if (swipeBlockClickRef.current) {
         e.stopPropagation();
         e.preventDefault();
       }
     };
     document.addEventListener("click", block, { capture: true });
-    document.addEventListener("touchstart", block, { capture: true, passive: false });
-    return () => {
-      document.removeEventListener("click", block, { capture: true });
-      document.removeEventListener("touchstart", block, { capture: true });
-    };
+    return () => document.removeEventListener("click", block, { capture: true });
   }, []);
 
   useEffect(() => {

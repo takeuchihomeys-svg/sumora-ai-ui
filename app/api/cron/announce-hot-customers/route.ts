@@ -53,11 +53,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "LINE token not configured" }, { status: 500 });
   }
 
-  // ① 🔥マークされた会話を取得
+  // ① 🔥マークされた会話を取得（紐付き property_customer_id も取得して重複排除に使う）
   const [{ data: hotConvs }, { data: propCustomers }] = await Promise.all([
     supabase
       .from("conversations")
-      .select("id, customer_name, account, last_message, last_sender, updated_at")
+      .select("id, customer_name, account, last_message, last_sender, updated_at, property_customer_id")
       .eq("is_hot", true)
       .order("updated_at", { ascending: false }),
 
@@ -70,10 +70,17 @@ export async function GET(req: NextRequest) {
       .limit(30),
   ]);
 
-  // 物件出しが実際に必要な人だけに絞る
+  // 🔥会話に紐付いているproperty_customer_idのセット（重複排除用）
+  type HotConvRow = { id: string; customer_name: string | null; account: string | null; last_message: string | null; last_sender: string | null; updated_at: string | null; property_customer_id: string | null };
+  const hotLinkedPcIds = new Set(
+    (hotConvs as HotConvRow[] ?? []).map((c) => c.property_customer_id).filter(Boolean) as string[]
+  );
+
+  // 物件出しが実際に必要な人だけに絞り、🔥と重複する人は除外
   type PropCustomer = { id: string; customer_name: string | null; status: string | null; last_property_sent_at: string | null; account: string | null };
   const needsPropList = (propCustomers as PropCustomer[] ?? []).filter((c) =>
-    needsPropertyAction(c.status ?? "", c.last_property_sent_at ?? null)
+    needsPropertyAction(c.status ?? "", c.last_property_sent_at ?? null) &&
+    !hotLinkedPcIds.has(c.id)
   );
 
   // どちらも0件ならスキップ
@@ -86,8 +93,7 @@ export async function GET(req: NextRequest) {
 
   // 🔥セクション
   if (hotConvs && hotConvs.length > 0) {
-    type HotConv = { id: string; customer_name: string | null; account: string | null; last_message: string | null; last_sender: string | null; updated_at: string | null };
-    const lines = (hotConvs as HotConv[]).map((c, i) => {
+    const lines = (hotConvs as HotConvRow[]).map((c, i) => {
       const name = c.customer_name || "名称未設定";
       const acct = ACCOUNT_LABEL[c.account ?? "sumora"] ?? "スモラ";
       const time = relTime(c.updated_at);
