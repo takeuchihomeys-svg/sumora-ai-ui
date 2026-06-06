@@ -6,7 +6,7 @@ export async function GET() {
     supabase.from("property_customers").select("*").order("updated_at", { ascending: false }),
     supabase
       .from("conversations")
-      .select("id, property_customer_id, last_message, last_sender, updated_at, account, status")
+      .select("id, property_customer_id, last_message, last_sender, updated_at, account, status, profile_image_url, customer_name")
       .not("property_customer_id", "is", null),
   ]);
 

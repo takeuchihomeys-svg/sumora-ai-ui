@@ -3,13 +3,15 @@
 import { useEffect, useState, useMemo } from "react";
 import BottomNav from "@/app/components/BottomNav";
 
-type LinkedConversation = {
+type LinkedConv = {
   id: string;
   last_message?: string | null;
   last_sender?: string | null;
   updated_at?: string | null;
   account?: string | null;
   status?: string | null;
+  profile_image_url?: string | null;
+  customer_name?: string | null;
 };
 
 type Customer = {
@@ -35,384 +37,374 @@ type Customer = {
   created_at: string;
   updated_at: string;
   is_linked?: boolean;
-  linked_conversation?: LinkedConversation | null;
+  linked_conversation?: LinkedConv | null;
 };
 
-const PROPERTY_STATUS: Record<string, { label: string; color: string }> = {
-  new_inquiry:     { label: "新規",    color: "bg-red-100 text-red-700" },
-  hot:             { label: "毎日",    color: "bg-orange-100 text-orange-700" },
-  property_search: { label: "物件出し", color: "bg-blue-100 text-blue-700" },
-  pending:         { label: "検討中",  color: "bg-gray-100 text-gray-500" },
+const PROP_STATUS: Record<string, { label: string; dot: string }> = {
+  new_inquiry:     { label: "新規",    dot: "bg-red-500" },
+  hot:             { label: "毎日",    dot: "bg-orange-400" },
+  property_search: { label: "物件出し", dot: "bg-blue-400" },
+  pending:         { label: "検討中",  dot: "bg-gray-300" },
 };
 
-const ACCOUNT_LABEL: Record<string, string> = {
+const ACCT_LABEL: Record<string, string> = {
   sumora: "スモラ", ieyasu: "イエヤス", giga: "ギガ", hasu: "ハス",
 };
 
-function relativeTime(dateStr?: string | null): string {
-  if (!dateStr) return "";
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const m = Math.floor(diff / 60000);
+function relTime(d?: string | null) {
+  if (!d) return "";
+  const m = Math.floor((Date.now() - new Date(d).getTime()) / 60000);
   if (m < 60) return `${m}分前`;
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}時間前`;
   return `${Math.floor(h / 24)}日前`;
 }
 
-function needsPropertyAction(status: string, lastSentAt?: string | null): boolean {
+function needsProp(status: string, lastSent?: string | null) {
   if (status === "pending") return false;
   if (status === "new_inquiry") return true;
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if (status === "hot") return !lastSentAt || new Date(lastSentAt) < todayStart;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  if (status === "hot") return !lastSent || new Date(lastSent) < today;
   if (status === "property_search") {
-    if (!lastSentAt) return true;
-    return (now.getTime() - new Date(lastSentAt).getTime()) / 86400000 >= 3;
+    if (!lastSent) return true;
+    return (Date.now() - new Date(lastSent).getTime()) / 86400000 >= 3;
   }
   return false;
 }
 
-function daysSinceSent(lastSentAt?: string | null): number | null {
-  if (!lastSentAt) return null;
-  return Math.floor((Date.now() - new Date(lastSentAt).getTime()) / 86400000);
-}
-
-type UrgencyLevel = "reply" | "property" | "ok" | "passive";
-
-function getUrgency(c: Customer): UrgencyLevel {
-  const needsReply = c.linked_conversation?.last_sender === "customer";
-  if (needsReply) return "reply";
-  if (needsPropertyAction(c.status, c.last_property_sent_at)) return "property";
+type Urgency = "reply" | "property" | "ok" | "passive";
+function urgency(c: Customer): Urgency {
+  if (c.linked_conversation?.last_sender === "customer") return "reply";
+  if (needsProp(c.status, c.last_property_sent_at)) return "property";
   if (c.status === "pending") return "passive";
   return "ok";
 }
+const URGENCY_ORDER: Record<Urgency, number> = { reply: 0, property: 1, ok: 2, passive: 3 };
 
-const URGENCY_ORDER: Record<UrgencyLevel, number> = { reply: 0, property: 1, ok: 2, passive: 3 };
+function initial(name: string) { return name?.trim()?.charAt(0) ?? "?"; }
+
+// 条件編集モーダル用の型
+type EditFields = {
+  desired_area: string;
+  floor_plan: string;
+  rent_min: string;
+  rent_max: string;
+  walk_minutes: string;
+  move_in_time: string;
+  building_age: string;
+  preferences: string;
+  ng_points: string;
+  other_requests: string;
+  property_memo: string;
+};
+
+function toEditFields(c: Customer): EditFields {
+  return {
+    desired_area:   c.desired_area   ?? "",
+    floor_plan:     c.floor_plan     ?? "",
+    rent_min:       c.rent_min       ? String(Math.floor(c.rent_min / 10000)) : "",
+    rent_max:       c.rent_max       ? String(Math.floor(c.rent_max / 10000)) : "",
+    walk_minutes:   c.walk_minutes   ? String(c.walk_minutes) : "",
+    move_in_time:   c.move_in_time   ?? "",
+    building_age:   c.building_age   ? String(c.building_age) : "",
+    preferences:    c.preferences    ?? "",
+    ng_points:      c.ng_points      ?? "",
+    other_requests: c.other_requests ?? "",
+    property_memo:  c.property_memo  ?? "",
+  };
+}
 
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterLinked, setFilterLinked] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [statusUpdating, setStatusUpdating] = useState<string | null>(null);
   const [sentUpdating, setSentUpdating] = useState<string | null>(null);
-  const [showAddModal, setShowAddModal] = useState(false);
+
+  // 追加モーダル
+  const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
   const [newPhone, setNewPhone] = useState("");
   const [newAssignee, setNewAssignee] = useState("");
   const [addLoading, setAddLoading] = useState(false);
 
+  // 条件編集モーダル
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editFields, setEditFields] = useState<EditFields | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+
   const fetchCustomers = async () => {
-    try {
-      const res = await fetch("/api/property-customers");
-      if (res.ok) setCustomers(await res.json());
-    } finally {
-      setLoading(false);
-    }
+    const res = await fetch("/api/property-customers");
+    if (res.ok) setCustomers(await res.json());
+    setLoading(false);
   };
 
   useEffect(() => { fetchCustomers(); }, []);
 
   const sorted = useMemo(() => {
     const base = filterLinked ? customers.filter((c) => c.is_linked) : customers;
-    return [...base].sort((a, b) => URGENCY_ORDER[getUrgency(a)] - URGENCY_ORDER[getUrgency(b)]);
+    return [...base].sort((a, b) => URGENCY_ORDER[urgency(a)] - URGENCY_ORDER[urgency(b)]);
   }, [customers, filterLinked]);
 
   const linkedCount = customers.filter((c) => c.is_linked).length;
-  const replyCount = customers.filter((c) => getUrgency(c) === "reply").length;
+  const replyCount  = customers.filter((c) => urgency(c) === "reply").length;
 
-  const updateStatus = async (id: string, status: string) => {
-    setStatusUpdating(id);
-    try {
-      await fetch("/api/property-customers", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, status }),
-      });
-      setCustomers((prev) => prev.map((c) => c.id === id ? { ...c, status } : c));
-      setExpandedId(null);
-    } finally { setStatusUpdating(null); }
-  };
-
-  const markPropertySent = async (id: string) => {
+  const markSent = async (id: string) => {
     setSentUpdating(id);
-    try {
-      const now = new Date().toISOString();
-      await fetch("/api/property-customers", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, last_property_sent_at: now }),
-      });
-      setCustomers((prev) => prev.map((c) => c.id === id ? { ...c, last_property_sent_at: now } : c));
-    } finally { setSentUpdating(null); }
+    const now = new Date().toISOString();
+    await fetch("/api/property-customers", {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, last_property_sent_at: now }),
+    });
+    setCustomers((p) => p.map((c) => c.id === id ? { ...c, last_property_sent_at: now } : c));
+    setSentUpdating(null);
   };
 
   const addCustomer = async () => {
-    if (!newName.trim()) return;
+    if (!newName.trim() || addLoading) return;
     setAddLoading(true);
-    try {
-      const res = await fetch("/api/property-customers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ customer_name: newName.trim(), phone: newPhone.trim() || undefined, assignee: newAssignee.trim() || undefined, status: "new_inquiry" }),
-      });
-      if (res.ok) {
-        const created = await res.json();
-        setCustomers((prev) => [created, ...prev]);
-        setNewName(""); setNewPhone(""); setNewAssignee("");
-        setShowAddModal(false);
-      }
-    } finally { setAddLoading(false); }
+    const res = await fetch("/api/property-customers", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ customer_name: newName.trim(), phone: newPhone.trim() || undefined, assignee: newAssignee.trim() || undefined, status: "new_inquiry" }),
+    });
+    if (res.ok) {
+      const created = await res.json();
+      setCustomers((p) => [created, ...p]);
+      setNewName(""); setNewPhone(""); setNewAssignee(""); setShowAdd(false);
+    }
+    setAddLoading(false);
+  };
+
+  const openEdit = (c: Customer) => {
+    setEditId(c.id);
+    setEditFields(toEditFields(c));
+  };
+
+  const saveEdit = async () => {
+    if (!editId || !editFields || editSaving) return;
+    setEditSaving(true);
+    const patch = {
+      id: editId,
+      desired_area:   editFields.desired_area   || null,
+      floor_plan:     editFields.floor_plan     || null,
+      rent_min:       editFields.rent_min       ? Number(editFields.rent_min) * 10000   : null,
+      rent_max:       editFields.rent_max       ? Number(editFields.rent_max) * 10000   : null,
+      walk_minutes:   editFields.walk_minutes   ? Number(editFields.walk_minutes)       : null,
+      move_in_time:   editFields.move_in_time   || null,
+      building_age:   editFields.building_age   ? Number(editFields.building_age)      : null,
+      preferences:    editFields.preferences    || null,
+      ng_points:      editFields.ng_points      || null,
+      other_requests: editFields.other_requests || null,
+      property_memo:  editFields.property_memo  || null,
+    };
+    const res = await fetch("/api/property-customers", {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      setCustomers((p) => p.map((c) => c.id === editId ? { ...c, ...updated } : c));
+    }
+    setEditId(null); setEditFields(null); setEditSaving(false);
   };
 
   return (
-    <div className="bg-[#f0f2f5] flex flex-col" style={{ height: "100svh", overflowY: "auto" }}>
-      {/* Header */}
+    <div className="flex flex-col" style={{ height: "100svh", background: "#f0f2f5", overflowY: "auto" }}>
+      {/* Header — LINE風ダークナビ */}
       <div
         className="sticky top-0 z-30 px-4 pb-3"
         style={{
-          background: "linear-gradient(135deg, #0d1b3e, #1565C0)",
+          background: "linear-gradient(135deg, #0d1b3e 0%, #1565C0 100%)",
           paddingTop: "max(env(safe-area-inset-top), 14px)",
         }}
       >
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-2.5">
           <div className="flex items-center gap-2">
-            <h1 className="text-[17px] font-black text-white tracking-tight">お客さん</h1>
+            <span className="text-[18px] font-black text-white tracking-tight">お客さん</span>
             {replyCount > 0 && (
-              <span className="flex items-center gap-1 rounded-full bg-red-500 px-2 py-0.5 text-[11px] font-bold text-white">
-                <span>⏰</span>{replyCount}人 未返信
+              <span className="rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-bold text-white">
+                ⏰ {replyCount}件 未返信
               </span>
             )}
           </div>
           <button
-            onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-sm font-bold text-white border border-white/30"
-            style={{ background: "rgba(255,255,255,0.15)" }}
+            onClick={() => setShowAdd(true)}
+            className="rounded-xl border border-white/30 px-3 py-1.5 text-xs font-bold text-white active:opacity-70"
+            style={{ background: "rgba(255,255,255,0.13)" }}
           >
-            <span className="text-base leading-none">＋</span>
-            <span>追加</span>
+            ＋ 追加
           </button>
         </div>
-
-        {/* Filter tabs */}
         <div className="flex gap-2">
-          <button
-            onClick={() => setFilterLinked(true)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all ${filterLinked ? "bg-white text-[#1565C0]" : "bg-white/10 text-white/70 border border-white/20"}`}
-          >
-            🔗 紐付け済
-            <span className={`text-[10px] ${filterLinked ? "text-[#1565C0]/60" : "text-white/40"}`}>{linkedCount}</span>
-          </button>
-          <button
-            onClick={() => setFilterLinked(false)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition-all ${!filterLinked ? "bg-white text-[#1565C0]" : "bg-white/10 text-white/70 border border-white/20"}`}
-          >
-            全員
-            <span className={`text-[10px] ${!filterLinked ? "text-[#1565C0]/60" : "text-white/40"}`}>{customers.length}</span>
-          </button>
+          {[true, false].map((linked) => (
+            <button
+              key={String(linked)}
+              onClick={() => setFilterLinked(linked)}
+              className={`rounded-full px-3 py-1.5 text-xs font-bold transition-all ${filterLinked === linked ? "bg-white text-[#1565C0]" : "border border-white/25 text-white/70"}`}
+            >
+              {linked ? `🔗 紐付け済 ${linkedCount}` : `全員 ${customers.length}`}
+            </button>
+          ))}
         </div>
       </div>
 
       {/* List */}
-      <div className="flex-1 px-3 py-3 pb-28 space-y-2.5">
+      <div className="flex-1 pb-28">
         {loading ? (
-          <div className="text-center text-[#667781] py-16 text-sm">読み込み中...</div>
+          <div className="py-16 text-center text-sm text-[#667781]">読み込み中...</div>
         ) : sorted.length === 0 ? (
-          <div className="text-center text-[#667781] py-16 text-sm">
+          <div className="py-16 text-center text-sm text-[#667781]">
             {filterLinked ? "紐付き済みのお客さんがいません" : "お客さんがいません"}
           </div>
         ) : (
           sorted.map((c) => {
-            const urgency = getUrgency(c);
-            const conv = c.linked_conversation;
-            const needsReply = urgency === "reply";
-            const needsProp = urgency === "property";
-            const propDays = daysSinceSent(c.last_property_sent_at);
-            const propStatus = PROPERTY_STATUS[c.status] ?? { label: c.status, color: "bg-gray-100 text-gray-500" };
+            const u       = urgency(c);
+            const conv    = c.linked_conversation;
+            const propMeta = PROP_STATUS[c.status] ?? { label: c.status, dot: "bg-gray-300" };
             const isExpanded = expandedId === c.id;
+            const days = c.last_property_sent_at
+              ? Math.floor((Date.now() - new Date(c.last_property_sent_at).getTime()) / 86400000)
+              : null;
 
-            const borderColor = needsReply ? "#ef4444" : needsProp ? "#f97316" : "#e9edef";
-            const headerBg = needsReply
-              ? "linear-gradient(135deg, #fee2e2, #fff7f7)"
-              : needsProp
-              ? "linear-gradient(135deg, #fff7ed, #fffcf9)"
-              : "linear-gradient(135deg, #f8faff, #ffffff)";
+            // ボーダー色
+            const borderColor = u === "reply" ? "#ef4444" : u === "property" ? "#f97316" : "#e9edef";
 
             return (
-              <div
-                key={c.id}
-                className="rounded-2xl overflow-hidden shadow-sm"
-                style={{ border: `1.5px solid ${borderColor}`, background: "white" }}
-              >
-                {/* Card header */}
+              <div key={c.id} className="mx-3 mt-2.5 rounded-2xl overflow-hidden shadow-sm" style={{ border: `1.5px solid ${borderColor}`, background: "#fff" }}>
+
+                {/* ── LINE風ヘッダー行 ── */}
                 <button
-                  className="w-full text-left px-4 pt-3.5 pb-3"
-                  style={{ background: headerBg }}
+                  className="flex w-full items-center gap-3 px-4 py-3 text-left active:bg-[#f5f6f6]"
                   onClick={() => setExpandedId(isExpanded ? null : c.id)}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 min-w-0">
-                      {/* Name + badges */}
-                      <div className="flex items-center gap-1.5 flex-wrap mb-1">
-                        {c.is_linked && (
-                          <span className="shrink-0 text-[11px] text-emerald-600 font-bold">🔗</span>
-                        )}
-                        <span className="text-[15px] font-bold text-[#111b21] truncate">
-                          {c.customer_name}
-                        </span>
-                        {conv?.account && (
-                          <span className="shrink-0 rounded-full bg-[#e9edef] px-1.5 py-0.5 text-[9px] font-bold text-[#667781]">
-                            {ACCOUNT_LABEL[conv.account] ?? conv.account}
-                          </span>
-                        )}
-                        <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${propStatus.color}`}>
-                          {propStatus.label}
-                        </span>
-                        {c.assignee && (
-                          <span className="shrink-0 rounded-full bg-blue-50 px-1.5 py-0.5 text-[9px] font-bold text-blue-600">
-                            {c.assignee}
-                          </span>
-                        )}
+                  {/* プロフィール画像 */}
+                  <div className="relative shrink-0">
+                    {conv?.profile_image_url ? (
+                      <img
+                        src={conv.profile_image_url}
+                        alt={c.customer_name}
+                        className="h-12 w-12 rounded-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#d9fdd3] text-base font-bold text-[#0f8f44]">
+                        {initial(c.customer_name)}
                       </div>
+                    )}
+                    {/* ステータスドット */}
+                    <span className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white ${propMeta.dot}`} />
+                  </div>
 
-                      {/* LINE status + property status */}
-                      <div className="flex items-center gap-3 text-[11px]">
-                        {conv ? (
-                          <span className={`flex items-center gap-1 font-bold ${needsReply ? "text-red-500" : "text-[#8696a0]"}`}>
-                            {needsReply ? "⏰" : "✅"}
-                            {needsReply ? "未返信" : "返信済"}
-                            {conv.updated_at && (
-                              <span className="font-normal text-[#aaa]">{relativeTime(conv.updated_at)}</span>
-                            )}
-                          </span>
-                        ) : (
-                          <span className="text-[#bbb]">LINE未紐付け</span>
-                        )}
-                        <span className={`font-medium ${needsProp ? "text-orange-500 font-bold" : "text-[#8696a0]"}`}>
-                          {propDays === null
-                            ? (c.status !== "pending" ? "📦 未送信" : "")
-                            : propDays === 0
-                            ? "📦 今日送信済"
-                            : `📦 ${propDays}日前`}
+                  {/* 名前 + サブ情報 */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+                      <span className="text-[14px] font-bold text-[#111b21] truncate">{c.customer_name}</span>
+                      {conv?.account && (
+                        <span className="shrink-0 rounded-full bg-[#e9edef] px-1.5 py-0.5 text-[9px] font-bold text-[#667781]">
+                          {ACCT_LABEL[conv.account] ?? conv.account}
                         </span>
-                      </div>
+                      )}
+                      <span className="shrink-0 text-[9px] font-bold text-[#8696a0]">{propMeta.label}</span>
                     </div>
+                    {/* 最新LINEメッセージ */}
+                    {conv?.last_message ? (
+                      <p className={`truncate text-[12px] ${u === "reply" ? "font-bold text-red-500" : "text-[#667781]"}`}>
+                        {u === "reply" ? "⏰ " : ""}{conv.last_message}
+                      </p>
+                    ) : (
+                      <p className="text-[12px] text-[#bbb]">メッセージなし</p>
+                    )}
+                  </div>
 
-                    {/* Chevron */}
-                    <svg
-                      width="16" height="16" viewBox="0 0 24 24" fill="none"
-                      stroke="#90caf9" strokeWidth="2" strokeLinecap="round"
-                      className={`shrink-0 mt-1 transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`}
-                    >
+                  {/* 右端: 時間 + chevron */}
+                  <div className="shrink-0 flex flex-col items-end gap-1">
+                    <span className="text-[10px] text-[#667781]">{relTime(conv?.updated_at)}</span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#90caf9" strokeWidth="2" strokeLinecap="round"
+                      className={`transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`}>
                       <polyline points="6 9 12 15 18 9" />
                     </svg>
                   </div>
                 </button>
 
-                {/* Property conditions */}
-                <div className="px-4 py-2.5 border-t border-[#f0f2f5]">
-                  <div className="flex flex-wrap gap-1.5">
-                    {c.desired_area && (
-                      <span className="flex items-center gap-0.5 rounded-full bg-[#e3f2fd] px-2 py-0.5 text-[11px] font-medium text-[#1565C0]">
-                        📍 {c.desired_area}
-                      </span>
-                    )}
-                    {c.floor_plan && (
-                      <span className="flex items-center gap-0.5 rounded-full bg-[#e8f5e9] px-2 py-0.5 text-[11px] font-medium text-[#2e7d32]">
-                        🏠 {c.floor_plan}
-                      </span>
-                    )}
+                {/* ── 物件希望チップ ── */}
+                <div className="border-t border-[#f0f2f5] px-4 py-2.5">
+                  <div className="flex flex-wrap gap-1.5 mb-1.5">
+                    {c.desired_area   && <Chip icon="📍" text={c.desired_area}   color="blue" />}
+                    {c.floor_plan     && <Chip icon="🏠" text={c.floor_plan}     color="green" />}
                     {(c.rent_min || c.rent_max) && (
-                      <span className="flex items-center gap-0.5 rounded-full bg-[#fff3e0] px-2 py-0.5 text-[11px] font-medium text-[#e65100]">
-                        💰{" "}
-                        {c.rent_min ? `${Math.floor(c.rent_min / 10000)}万〜` : ""}
-                        {c.rent_max ? `${Math.floor(c.rent_max / 10000)}万` : ""}
-                      </span>
+                      <Chip icon="💰" color="orange"
+                        text={`${c.rent_min ? Math.floor(c.rent_min/10000)+"万〜" : ""}${c.rent_max ? Math.floor(c.rent_max/10000)+"万" : ""}`} />
                     )}
-                    {c.walk_minutes && (
-                      <span className="flex items-center gap-0.5 rounded-full bg-[#f3e5f5] px-2 py-0.5 text-[11px] font-medium text-[#6a1b9a]">
-                        🚶 {c.walk_minutes}分以内
-                      </span>
-                    )}
-                    {c.move_in_time && (
-                      <span className="flex items-center gap-0.5 rounded-full bg-[#e0f7fa] px-2 py-0.5 text-[11px] font-medium text-[#006064]">
-                        📅 {c.move_in_time}
-                      </span>
-                    )}
-                    {c.building_age && (
-                      <span className="flex items-center gap-0.5 rounded-full bg-[#fce4ec] px-2 py-0.5 text-[11px] font-medium text-[#880e4f]">
-                        🏢 {c.building_age}年以内
-                      </span>
-                    )}
+                    {c.walk_minutes   && <Chip icon="🚶" text={`${c.walk_minutes}分`} color="purple" />}
+                    {c.move_in_time   && <Chip icon="📅" text={c.move_in_time}   color="teal" />}
+                    {c.building_age   && <Chip icon="🏢" text={`${c.building_age}年`} color="pink" />}
                   </div>
                   {(c.preferences || c.ng_points) && (
-                    <div className="mt-1.5 space-y-0.5">
-                      {c.preferences && (
-                        <p className="text-[11px] text-[#667781]">
-                          <span className="text-[#2196F3] font-bold">✨</span> {c.preferences}
-                        </p>
-                      )}
-                      {c.ng_points && (
-                        <p className="text-[11px] text-[#667781]">
-                          <span className="text-red-400 font-bold">❌</span> {c.ng_points}
-                        </p>
-                      )}
+                    <div className="space-y-0.5">
+                      {c.preferences && <p className="text-[11px] text-[#667781]"><span className="text-[#2196F3] font-bold">✨</span> {c.preferences}</p>}
+                      {c.ng_points   && <p className="text-[11px] text-[#667781]"><span className="text-red-400 font-bold">❌</span> {c.ng_points}</p>}
                     </div>
                   )}
-                  {(!c.desired_area && !c.floor_plan && !c.rent_min && !c.rent_max && !c.preferences && !c.ng_points) && (
+                  {!c.desired_area && !c.floor_plan && !c.rent_min && !c.rent_max && !c.preferences && !c.ng_points && (
                     <p className="text-[11px] text-[#bbb]">条件未入力</p>
                   )}
                 </div>
 
-                {/* Quick actions */}
-                <div className="flex items-center gap-2 px-4 py-2.5 border-t border-[#f0f2f5] bg-[#fafafa]">
+                {/* ── アクション行 ── */}
+                <div className="flex items-center gap-2 border-t border-[#f0f2f5] bg-[#fafafa] px-4 py-2">
                   {c.status !== "pending" && (
                     <button
-                      onClick={() => markPropertySent(c.id)}
+                      onClick={() => markSent(c.id)}
                       disabled={sentUpdating === c.id}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 active:scale-95 transition-transform disabled:opacity-50"
+                      className="flex items-center gap-1 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 active:scale-95 transition-transform disabled:opacity-50"
                     >
-                      {sentUpdating === c.id ? "..." : "✓ 物件送った"}
+                      {sentUpdating === c.id ? "…" : "✓ 物件送った"}
                     </button>
                   )}
+                  <button
+                    onClick={() => openEdit(c)}
+                    className="flex items-center gap-1 rounded-xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 active:scale-95 transition-transform"
+                  >
+                    ✏️ 条件更新
+                  </button>
                   {c.phone && (
-                    <a
-                      href={`tel:${c.phone}`}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200 active:scale-95 transition-transform"
-                    >
+                    <a href={`tel:${c.phone}`}
+                      className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-[#667781] active:scale-95 transition-transform">
                       📞
                     </a>
                   )}
-                  <button
-                    onClick={() => setExpandedId(isExpanded ? null : c.id)}
-                    className="ml-auto text-[11px] text-[#8696a0] flex items-center gap-0.5"
-                  >
-                    {isExpanded ? "閉じる ▲" : "詳細 ▼"}
-                  </button>
+                  <div className="ml-auto flex items-center gap-1.5 text-[10px] text-[#8696a0]">
+                    {days === null
+                      ? (c.status !== "pending" ? <span className="text-orange-400 font-bold">未送信</span> : null)
+                      : days === 0 ? <span>今日送信済</span>
+                      : <span className={days >= 3 ? "text-red-400 font-bold" : ""}>{days}日前</span>}
+                  </div>
                 </div>
 
-                {/* Expanded: status change + memo */}
+                {/* ── 展開パネル: メモ + ステータス変更 ── */}
                 {isExpanded && (
-                  <div className="px-4 py-3 border-t border-[#f0f2f5] space-y-2">
-                    {(c.property_memo || c.other_requests) && (
-                      <div className="space-y-1 text-[11px] text-[#667781]">
+                  <div className="border-t border-[#f0f2f5] px-4 py-3 space-y-2.5">
+                    {(c.property_memo || c.other_requests || c.assignee) && (
+                      <div className="text-[11px] text-[#667781] space-y-0.5">
+                        {c.assignee      && <p><span className="font-bold text-[#8696a0]">担当: </span>{c.assignee}</p>}
                         {c.property_memo && <p><span className="font-bold text-[#8696a0]">メモ: </span>{c.property_memo}</p>}
                         {c.other_requests && <p><span className="font-bold text-[#8696a0]">その他: </span>{c.other_requests}</p>}
                       </div>
                     )}
                     <div className="flex flex-wrap gap-1.5">
-                      {["new_inquiry", "hot", "property_search", "pending"]
+                      {["new_inquiry","hot","property_search","pending"]
                         .filter((s) => s !== c.status)
                         .map((s) => {
-                          const meta = PROPERTY_STATUS[s];
+                          const m = PROP_STATUS[s];
                           return (
-                            <button
-                              key={s}
-                              onClick={() => updateStatus(c.id, s)}
-                              disabled={statusUpdating === c.id}
-                              className={`px-3 py-1.5 rounded-xl text-xs font-bold border active:scale-95 transition-transform disabled:opacity-50 ${meta.color} border-current`}
+                            <button key={s}
+                              onClick={async () => {
+                                await fetch("/api/property-customers", { method: "PATCH", headers: {"Content-Type":"application/json"}, body: JSON.stringify({id:c.id, status:s}) });
+                                setCustomers((p) => p.map((x) => x.id === c.id ? {...x, status:s} : x));
+                                setExpandedId(null);
+                              }}
+                              className="rounded-xl border border-current px-3 py-1.5 text-xs font-bold active:scale-95 transition-transform text-[#667781] border-[#e9edef]"
                             >
-                              {statusUpdating === c.id ? "..." : `→ ${meta.label}`}
+                              → {m.label}
                             </button>
                           );
                         })}
@@ -425,52 +417,102 @@ export default function CustomersPage() {
         )}
       </div>
 
-      {/* Add modal */}
-      {showAddModal && (
+      {/* ── 条件編集モーダル ── */}
+      {editId && editFields && (
         <div
           className="fixed inset-0 z-50 flex items-end"
           style={{ background: "rgba(0,0,0,0.5)" }}
-          onClick={(e) => e.target === e.currentTarget && setShowAddModal(false)}
+          onClick={(e) => { if (e.target === e.currentTarget) { setEditId(null); setEditFields(null); } }}
         >
           <div
-            className="w-full bg-white rounded-t-2xl px-5 py-5 space-y-4"
-            style={{ paddingBottom: "max(env(safe-area-inset-bottom), 20px)" }}
+            className="w-full rounded-t-2xl bg-white overflow-y-auto"
+            style={{ maxHeight: "85svh", paddingBottom: "max(env(safe-area-inset-bottom),20px)" }}
           >
+            {/* モーダルヘッダー */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#f0f2f5] sticky top-0 bg-white z-10">
+              <div>
+                <h2 className="font-bold text-[#111b21] text-[15px]">条件更新</h2>
+                <p className="text-[11px] text-[#8696a0]">
+                  {customers.find((c) => c.id === editId)?.customer_name}
+                </p>
+              </div>
+              <button onClick={() => { setEditId(null); setEditFields(null); }} className="text-[#aaa] text-xl leading-none">✕</button>
+            </div>
+
+            <div className="px-5 py-4 space-y-3">
+              <EditRow label="📍 エリア" placeholder="例: 城東区・東大阪市"
+                value={editFields.desired_area} onChange={(v) => setEditFields((f) => f && ({ ...f, desired_area: v }))} />
+              <EditRow label="🏠 間取り" placeholder="例: 1LDK・2DK"
+                value={editFields.floor_plan} onChange={(v) => setEditFields((f) => f && ({ ...f, floor_plan: v }))} />
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <label className="text-[11px] font-medium text-[#8696a0] mb-1 block">💰 家賃下限（万）</label>
+                  <input type="number" className="w-full border border-[#e9edef] rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-[#2196F3]"
+                    placeholder="5" value={editFields.rent_min}
+                    onChange={(e) => setEditFields((f) => f && ({ ...f, rent_min: e.target.value }))} />
+                </div>
+                <div className="flex-1">
+                  <label className="text-[11px] font-medium text-[#8696a0] mb-1 block">💰 家賃上限（万）</label>
+                  <input type="number" className="w-full border border-[#e9edef] rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-[#2196F3]"
+                    placeholder="7" value={editFields.rent_max}
+                    onChange={(e) => setEditFields((f) => f && ({ ...f, rent_max: e.target.value }))} />
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <EditRow label="🚶 駅徒歩（分）" placeholder="15" type="number"
+                    value={editFields.walk_minutes} onChange={(v) => setEditFields((f) => f && ({ ...f, walk_minutes: v }))} />
+                </div>
+                <div className="flex-1">
+                  <EditRow label="🏢 築年数以内" placeholder="20" type="number"
+                    value={editFields.building_age} onChange={(v) => setEditFields((f) => f && ({ ...f, building_age: v }))} />
+                </div>
+              </div>
+              <EditRow label="📅 入居時期" placeholder="例: 7月・来月・なるべく早く"
+                value={editFields.move_in_time} onChange={(v) => setEditFields((f) => f && ({ ...f, move_in_time: v }))} />
+              <EditRow label="✨ こだわり" placeholder="例: オートロック・ペット可・駐車場あり" textarea
+                value={editFields.preferences} onChange={(v) => setEditFields((f) => f && ({ ...f, preferences: v }))} />
+              <EditRow label="❌ NG条件" placeholder="例: 1階NG・木造NG" textarea
+                value={editFields.ng_points} onChange={(v) => setEditFields((f) => f && ({ ...f, ng_points: v }))} />
+              <EditRow label="📝 メモ" placeholder="社内メモ" textarea
+                value={editFields.property_memo} onChange={(v) => setEditFields((f) => f && ({ ...f, property_memo: v }))} />
+              <EditRow label="その他" placeholder="その他の要望" textarea
+                value={editFields.other_requests} onChange={(v) => setEditFields((f) => f && ({ ...f, other_requests: v }))} />
+            </div>
+
+            <div className="px-5">
+              <button
+                onClick={saveEdit}
+                disabled={editSaving}
+                className="w-full py-3 rounded-xl font-bold text-white text-sm disabled:opacity-40 active:scale-[0.98] transition-transform"
+                style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}
+              >
+                {editSaving ? "保存中..." : "保存する"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 追加モーダル ── */}
+      {showAdd && (
+        <div
+          className="fixed inset-0 z-50 flex items-end"
+          style={{ background: "rgba(0,0,0,0.5)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowAdd(false); }}
+        >
+          <div className="w-full rounded-t-2xl bg-white px-5 py-5 space-y-3"
+            style={{ paddingBottom: "max(env(safe-area-inset-bottom),20px)" }}>
             <div className="flex items-center justify-between">
               <h2 className="font-bold text-[#111b21] text-base">お客さん追加</h2>
-              <button onClick={() => setShowAddModal(false)} className="text-[#aaa] text-xl leading-none">✕</button>
+              <button onClick={() => setShowAdd(false)} className="text-[#aaa] text-xl leading-none">✕</button>
             </div>
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-medium text-[#8696a0] mb-1 block">お客さん名 *</label>
-                <input
-                  className="w-full border border-[#e9edef] rounded-xl px-3 py-2.5 text-sm text-[#111b21] focus:outline-none focus:border-[#2196F3]"
-                  placeholder="例: 田中さん"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  autoFocus
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-[#8696a0] mb-1 block">電話番号</label>
-                <input
-                  className="w-full border border-[#e9edef] rounded-xl px-3 py-2.5 text-sm text-[#111b21] focus:outline-none focus:border-[#2196F3]"
-                  placeholder="090-1234-5678"
-                  value={newPhone}
-                  onChange={(e) => setNewPhone(e.target.value)}
-                  type="tel"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-[#8696a0] mb-1 block">担当者</label>
-                <input
-                  className="w-full border border-[#e9edef] rounded-xl px-3 py-2.5 text-sm text-[#111b21] focus:outline-none focus:border-[#2196F3]"
-                  placeholder="例: 竹内"
-                  value={newAssignee}
-                  onChange={(e) => setNewAssignee(e.target.value)}
-                />
-              </div>
-            </div>
+            <EditRow label="お客さん名 *" placeholder="例: 田中さん"
+              value={newName} onChange={setNewName} />
+            <EditRow label="電話番号" placeholder="090-1234-5678" type="tel"
+              value={newPhone} onChange={setNewPhone} />
+            <EditRow label="担当者" placeholder="例: 竹内"
+              value={newAssignee} onChange={setNewAssignee} />
             <button
               onClick={addCustomer}
               disabled={!newName.trim() || addLoading}
@@ -484,6 +526,49 @@ export default function CustomersPage() {
       )}
 
       <BottomNav />
+    </div>
+  );
+}
+
+// ── 共通フォーム部品 ──
+function Chip({ icon, text, color }: { icon: string; text: string; color: string }) {
+  const colors: Record<string, string> = {
+    blue:   "bg-[#e3f2fd] text-[#1565C0]",
+    green:  "bg-[#e8f5e9] text-[#2e7d32]",
+    orange: "bg-[#fff3e0] text-[#e65100]",
+    purple: "bg-[#f3e5f5] text-[#6a1b9a]",
+    teal:   "bg-[#e0f7fa] text-[#006064]",
+    pink:   "bg-[#fce4ec] text-[#880e4f]",
+  };
+  return (
+    <span className={`flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${colors[color] ?? "bg-gray-100 text-gray-600"}`}>
+      {icon} {text}
+    </span>
+  );
+}
+
+function EditRow({
+  label, placeholder, value, onChange, textarea = false, type = "text",
+}: {
+  label: string; placeholder: string; value: string;
+  onChange: (v: string) => void; textarea?: boolean; type?: string;
+}) {
+  const base = "w-full border border-[#e9edef] rounded-xl px-3 py-2 text-sm text-[#111b21] focus:outline-none focus:border-[#2196F3]";
+  return (
+    <div>
+      <label className="text-[11px] font-medium text-[#8696a0] mb-1 block">{label}</label>
+      {textarea ? (
+        <textarea
+          className={base} rows={2} placeholder={placeholder}
+          value={value} onChange={(e) => onChange(e.target.value)}
+          style={{ resize: "none" }}
+        />
+      ) : (
+        <input
+          type={type} className={base} placeholder={placeholder}
+          value={value} onChange={(e) => onChange(e.target.value)}
+        />
+      )}
     </div>
   );
 }
