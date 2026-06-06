@@ -29,6 +29,7 @@ type Conversation = {
   account?: string;
   propertyCustomerId?: string;
   isPostApply?: boolean;
+  isHot?: boolean;
   messages: Message[];
 };
 
@@ -44,6 +45,7 @@ type SupabaseConversationRow = {
   account?: string | null;
   property_customer_id?: string | null;
   is_post_apply?: boolean | null;
+  is_hot?: boolean | null;
 };
 
 type SupabaseMessageRow = {
@@ -709,6 +711,7 @@ export default function Home() {
         account: conversation.account || undefined,
         propertyCustomerId: conversation.property_customer_id || undefined,
         isPostApply: conversation.is_post_apply ?? false,
+        isHot: conversation.is_hot ?? false,
         messages: relatedMessages,
       };
     });
@@ -747,6 +750,9 @@ export default function Home() {
 
     // DBのis_post_applyをpostApplyConvIdsに反映
     setPostApplyConvIds(new Set(formatted.filter((c) => c.isPostApply).map((c) => c.id)));
+
+    // DBのis_hotをhotConvIdsに反映（Supabaseが正）
+    setHotConvIds(new Set(formatted.filter((c) => c.isHot).map((c) => c.id)));
 
     // 紐付け済み物件顧客を取得してlinkedCustomerMapを構築
     const propCustomerIds = [...new Set(
@@ -1179,9 +1185,10 @@ export default function Home() {
   const toggleHotConv = (id: string) => {
     setHotConvIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      const isNowHot = !prev.has(id);
+      if (isNowHot) next.add(id); else next.delete(id);
       try { localStorage.setItem("hot_conv_ids", JSON.stringify([...next])); } catch {}
+      supabase.from("conversations").update({ is_hot: isNowHot }).eq("id", id).then(() => {});
       return next;
     });
   };

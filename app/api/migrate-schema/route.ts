@@ -320,6 +320,10 @@ END $$;
 
 -- 画像の保存期限（デフォルト30日。超過または会話内100枚超えで自動期限切れ）
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS image_expires_at TIMESTAMPTZ;
+
+-- 🔥あついお客さんフラグ（cronアナウンス用）
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS is_hot BOOLEAN DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_conversations_is_hot ON conversations(is_hot) WHERE is_hot = TRUE;
 `.trim();
 
 export async function GET() {
