@@ -137,8 +137,9 @@ export default function CustomersPage() {
   const [filterLinked, setFilterLinked] = useState(true);
   const [expandedId, setExpandedId]     = useState<string | null>(null);
   const [sentUpdating, setSentUpdating]   = useState<string | null>(null);
-  const [viewedUpdating, setViewedUpdating] = useState<string | null>(null);
-  const [showCompleted, setShowCompleted]   = useState(true);
+  const [viewedUpdating, setViewedUpdating]   = useState<string | null>(null);
+  const [showCompleted, setShowCompleted]     = useState(true);
+  const [reflectLoading, setReflectLoading]   = useState<string | null>(null);
 
   const [showAdd, setShowAdd]       = useState(false);
   const [newName, setNewName]       = useState("");
@@ -203,6 +204,43 @@ export default function CustomersPage() {
       setNewName(""); setNewPhone(""); setNewAssignee(""); setShowAdd(false);
     }
     setAddLoading(false);
+  };
+
+  const handleReflect = async (c: Customer) => {
+    if (!c.additional_conditions || reflectLoading) return;
+    setReflectLoading(c.id);
+    try {
+      const res = await fetch("/api/parse-additional-conditions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: c.additional_conditions }),
+      });
+      const data = await res.json() as { ok: boolean; parsed?: Record<string, unknown> };
+      if (!data.ok || !data.parsed) return;
+
+      const p = data.parsed;
+      // 既存条件とマージ（AIが返した非nullの値だけ上書き、nullは既存値を保持）
+      const base = toEditFields(c);
+      const merged: EditFields = {
+        desired_area:       (p.desired_area       != null ? String(p.desired_area)       : base.desired_area),
+        floor_plan:         (p.floor_plan         != null ? String(p.floor_plan)         : base.floor_plan),
+        rent_min:           (p.rent_min           != null ? String(Math.floor((p.rent_min as number) / 10000)) : base.rent_min),
+        rent_max:           (p.rent_max           != null ? String(Math.floor((p.rent_max as number) / 10000)) : base.rent_max),
+        walk_minutes:       (p.walk_minutes       != null ? String(p.walk_minutes)       : base.walk_minutes),
+        move_in_time:       (p.move_in_time       != null ? String(p.move_in_time)       : base.move_in_time),
+        building_age:       (p.building_age       != null ? String(p.building_age)       : base.building_age),
+        floor_area_min:     (p.floor_area_min     != null ? String(p.floor_area_min)     : base.floor_area_min),
+        initial_cost_limit: (p.initial_cost_limit != null ? String(Math.floor((p.initial_cost_limit as number) / 10000)) : base.initial_cost_limit),
+        preferences:        (p.preferences        != null ? String(p.preferences)        : base.preferences),
+        ng_points:          (p.ng_points          != null ? String(p.ng_points)          : base.ng_points),
+        other_requests:     (p.other_requests     != null ? String(p.other_requests)     : base.other_requests),
+        property_memo:      base.property_memo,
+      };
+      setEditId(c.id);
+      setEditFields(merged);
+    } finally {
+      setReflectLoading(null);
+    }
   };
 
   const clearAdditional = async (id: string) => {
@@ -467,14 +505,26 @@ export default function CustomersPage() {
                   {/* 新着要望（カジュアル更新ログ） */}
                   {c.additional_conditions && (
                     <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
-                      <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center justify-between mb-1.5">
                         <span className="text-[10px] font-bold text-amber-700">新着要望</span>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); clearAdditional(c.id); }}
-                          className="text-[9px] text-amber-400 active:opacity-60"
-                        >
-                          確認済・クリア
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleReflect(c);
+                            }}
+                            disabled={reflectLoading === c.id}
+                            className="rounded-lg bg-amber-600 px-2.5 py-1 text-[10px] font-bold text-white active:opacity-70 disabled:opacity-50"
+                          >
+                            {reflectLoading === c.id ? "解析中…" : "条件に反映する"}
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); clearAdditional(c.id); }}
+                            className="text-[9px] text-amber-400 active:opacity-60"
+                          >
+                            クリア
+                          </button>
+                        </div>
                       </div>
                       {c.additional_conditions.split("\n").map((line, i) => (
                         <p key={i} className="text-[11px] text-amber-800 leading-relaxed">{line}</p>
