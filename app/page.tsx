@@ -300,6 +300,8 @@ export default function Home() {
   const [lightboxIndex, setLightboxIndex] = useState(0);
   const lightboxSwipeX = useRef(0);
   const [flaggedConvIds, setFlaggedConvIds] = useState<Set<string>>(new Set());
+  const [hotConvIds, setHotConvIds] = useState<Set<string>>(new Set());
+  const [hotSending, setHotSending] = useState(false);
   const [manuallyReadConvIds, setManuallyReadConvIds] = useState<Set<string>>(new Set());
   const convLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [memos, setMemos] = useState<Record<string, string>>({});
@@ -786,7 +788,9 @@ export default function Home() {
     } else if (accountFilter !== "all") {
       result = result.filter((c) => (c.account ?? "sumora") === accountFilter);
     }
-    if (statusFilter !== "all") {
+    if (statusFilter === "hot_flag") {
+      result = result.filter((c) => hotConvIds.has(c.id));
+    } else if (statusFilter !== "all") {
       // 5段階ステータスキーで直接フィルター（旧キーもエイリアスで統一）
       result = result.filter((c) => (STATUS_ALIAS[c.status] ?? c.status) === statusFilter);
     }
@@ -804,7 +808,7 @@ export default function Home() {
       );
     }
     return result;
-  }, [conversations, statusFilter, searchQuery, aiSearchIds, accountFilter, linkedLineUserIds]);
+  }, [conversations, statusFilter, searchQuery, aiSearchIds, accountFilter, linkedLineUserIds, hotConvIds]);
 
   const needsReplyCount = useMemo(() => {
     return conversations.filter((c) => {
@@ -1130,7 +1134,7 @@ export default function Home() {
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
   };
 
-  // メモ・担当者をlocalStorageから読み込む
+  // メモ・担当者・🔥をlocalStorageから読み込む
   useEffect(() => {
     try {
       const stored = localStorage.getItem("conv_memos");
@@ -1139,6 +1143,10 @@ export default function Home() {
     try {
       const stored = localStorage.getItem("conv_assignees");
       if (stored) setAssignees(JSON.parse(stored));
+    } catch {}
+    try {
+      const stored = localStorage.getItem("hot_conv_ids");
+      if (stored) setHotConvIds(new Set(JSON.parse(stored)));
     } catch {}
   }, []);
 
@@ -1167,6 +1175,41 @@ export default function Home() {
       else next.add(id);
       return next;
     });
+  };
+
+  const toggleHotConv = (id: string) => {
+    setHotConvIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      try { localStorage.setItem("hot_conv_ids", JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  };
+
+  const shareHotCustomers = async () => {
+    if (hotConvIds.size === 0 || hotSending) return;
+    setHotSending(true);
+    try {
+      const hotConvs = conversations.filter((c) => hotConvIds.has(c.id));
+      await fetch("/api/notify-hot-customers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customers: hotConvs.map((c) => ({
+            name: c.customerName,
+            account: c.account || "sumora",
+            lastMessage: c.lastMessage,
+            updatedAt: c.updatedAt,
+          })),
+        }),
+      });
+      setShowHamburgerMenu(false);
+    } catch {
+      // silent
+    } finally {
+      setHotSending(false);
+    }
   };
 
   const startConvLongPress = (id: string) => {
@@ -1625,6 +1668,16 @@ export default function Home() {
                     <span className="h-2.5 w-2.5 rounded-full bg-gray-300" />
                     すべて
                   </button>
+                  <button
+                    onClick={() => { setStatusFilter("hot_flag"); setShowGroupFilter(false); }}
+                    className={`flex w-full items-center gap-2 px-4 py-2 text-left text-[13px] font-medium border-b border-[#f0f2f5] ${statusFilter === "hot_flag" ? "text-[#2196F3]" : "text-[#111b21]"}`}
+                  >
+                    <span className="text-base leading-none">🔥</span>
+                    あついお客さん
+                    {hotConvIds.size > 0 && (
+                      <span className="ml-auto text-[11px] font-bold text-orange-500">{hotConvIds.size}</span>
+                    )}
+                  </button>
                   {DETAIL_STATUSES.map((s) => (
                     <button
                       key={s.key}
@@ -1776,6 +1829,9 @@ export default function Home() {
 
                       {/* 名前行: 高さ固定で位置ブレなし */}
                       <div className="mb-0.5 flex h-5 min-w-0 items-center gap-1.5 overflow-hidden">
+                        {hotConvIds.has(conversation.id) && (
+                          <span className="shrink-0 leading-none text-base">🔥</span>
+                        )}
                         <span className="truncate text-[14px] font-medium text-[#111b21]">
                           {conversation.customerName}
                         </span>
@@ -2376,7 +2432,7 @@ export default function Home() {
               </button>
               <button
                 onClick={() => { toggleFlaggedConv(convMenuConvId!); setConvMenuConvId(null); }}
-                className="flex w-full items-center gap-3 px-5 py-3.5 active:bg-[#f0f2f5]"
+                className="flex w-full items-center gap-3 px-5 py-3.5 active:bg-[#f0f2f5] border-b border-[#f0f2f5]"
               >
                 <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${flaggedConvIds.has(convMenuConvId ?? "") ? "bg-red-500" : "bg-[#f0f2f5]"}`}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill={flaggedConvIds.has(convMenuConvId ?? "") ? "white" : "#667781"} stroke="none">
@@ -2389,6 +2445,20 @@ export default function Home() {
                     {flaggedConvIds.has(convMenuConvId ?? "") ? "要対応を解除" : "要対応にする"}
                   </div>
                   <div className="text-[11px] text-[#8696a0]">フラグを立てる</div>
+                </div>
+              </button>
+              <button
+                onClick={() => { toggleHotConv(convMenuConvId!); setConvMenuConvId(null); }}
+                className="flex w-full items-center gap-3 px-5 py-3.5 active:bg-[#f0f2f5]"
+              >
+                <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[18px] leading-none ${hotConvIds.has(convMenuConvId ?? "") ? "bg-orange-500" : "bg-[#f0f2f5]"}`}>
+                  🔥
+                </span>
+                <div>
+                  <div className="text-[13px] font-medium text-[#111b21]">
+                    {hotConvIds.has(convMenuConvId ?? "") ? "🔥を外す" : "🔥あついお客さんにする"}
+                  </div>
+                  <div className="text-[11px] text-[#8696a0]">優先返信リストに追加</div>
                 </div>
               </button>
             </div>
@@ -2871,6 +2941,37 @@ export default function Home() {
                 })}
               </div>
             </div>
+            {/* 🔥 あついお客さん共有 */}
+            <div className="px-4 pt-4 pb-2">
+              <p className="text-[11px] font-bold text-[#8696a0] mb-3 tracking-wide uppercase">あついお客さん</p>
+              <button
+                onClick={shareHotCustomers}
+                disabled={hotConvIds.size === 0 || hotSending}
+                className="flex w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left active:scale-[0.98] transition-all disabled:opacity-40"
+                style={{ borderColor: hotConvIds.size > 0 ? "#f97316" : "#e9edef", background: hotConvIds.size > 0 ? "#fff7ed" : "#f8f9fa" }}
+              >
+                <span
+                  className="shrink-0 flex items-center justify-center rounded-full text-[20px] leading-none"
+                  style={{ width: 44, height: 44, background: hotConvIds.size > 0 ? "#f97316" : "#e9edef" }}
+                >
+                  {hotSending ? "⏳" : "🔥"}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[14px] font-bold" style={{ color: hotConvIds.size > 0 ? "#c2410c" : "#8696a0" }}>
+                    {hotSending ? "送信中..." : "LINEに共有する"}
+                  </div>
+                  <div className="text-[11px] text-[#8696a0]">
+                    {hotConvIds.size > 0 ? `${hotConvIds.size}人が🔥マーク中` : "長押しで🔥をつけてください"}
+                  </div>
+                </div>
+                {hotConvIds.size > 0 && (
+                  <span className="shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-[11px] font-bold text-orange-700">
+                    {hotConvIds.size}人
+                  </span>
+                )}
+              </button>
+            </div>
+
             {/* 通知設定 */}
             <div className="px-4 pt-2 pb-4">
               <p className="text-[11px] font-bold text-[#8696a0] mb-3 tracking-wide uppercase">通知設定</p>
