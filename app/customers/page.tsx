@@ -148,11 +148,17 @@ export default function CustomersPage() {
   const markSent = async (id: string) => {
     setSentUpdating(id);
     const now = new Date().toISOString();
-    await fetch("/api/property-customers", {
+    const res = await fetch("/api/property-customers", {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, last_property_sent_at: now }),
     });
-    setCustomers((p) => p.map((c) => c.id === id ? { ...c, last_property_sent_at: now } : c));
+    if (res.ok) {
+      const updated = await res.json();
+      // APIで自動昇格した status も含めて反映
+      setCustomers((p) => p.map((c) => c.id === id ? { ...c, ...updated } : c));
+    } else {
+      setCustomers((p) => p.map((c) => c.id === id ? { ...c, last_property_sent_at: now } : c));
+    }
     setSentUpdating(null);
   };
 

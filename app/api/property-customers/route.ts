@@ -43,6 +43,18 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "id is required" }, { status: 400 });
   }
 
+  // 物件送信（last_property_sent_at 更新）かつ新規問い合わせ → 毎日物件出しに自動昇格
+  if ("last_property_sent_at" in fields && !("status" in fields)) {
+    const { data: current } = await supabase
+      .from("property_customers")
+      .select("status")
+      .eq("id", id)
+      .single();
+    if (current?.status === "new_inquiry") {
+      fields.status = "hot";
+    }
+  }
+
   const { error, data } = await supabase
     .from("property_customers")
     .update(fields)
