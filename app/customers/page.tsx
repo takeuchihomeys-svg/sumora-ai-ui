@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import BottomNav from "@/app/components/BottomNav";
 
 type LinkedConv = {
@@ -140,6 +140,7 @@ export default function CustomersPage() {
   const [viewedUpdating, setViewedUpdating]   = useState<string | null>(null);
   const [showCompleted, setShowCompleted]     = useState(true);
   const [reflectLoading, setReflectLoading]   = useState<string | null>(null);
+  const clearAfterSave = useRef(false);
 
   const [showAdd, setShowAdd]       = useState(false);
   const [newName, setNewName]       = useState("");
@@ -236,6 +237,7 @@ export default function CustomersPage() {
         other_requests:     (p.other_requests     != null ? String(p.other_requests)     : base.other_requests),
         property_memo:      base.property_memo,
       };
+      clearAfterSave.current = true;
       setEditId(c.id);
       setEditFields(merged);
     } finally {
@@ -265,7 +267,7 @@ export default function CustomersPage() {
     setViewedUpdating(null);
   };
 
-  const openEdit = (c: Customer) => { setEditId(c.id); setEditFields(toEditFields(c)); };
+  const openEdit = (c: Customer) => { clearAfterSave.current = false; setEditId(c.id); setEditFields(toEditFields(c)); };
 
   const saveEdit = async () => {
     if (!editId || !editFields || editSaving) return;
@@ -293,6 +295,15 @@ export default function CustomersPage() {
     if (res.ok) {
       const updated = await res.json();
       setCustomers((p) => p.map((c) => c.id === editId ? { ...c, ...updated } : c));
+      // 「条件に反映する」経由で開いたモーダルの場合、保存後に新着要望を自動クリア
+      if (clearAfterSave.current) {
+        clearAfterSave.current = false;
+        await fetch("/api/property-customers", {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: editId, additional_conditions: null }),
+        });
+        setCustomers((p) => p.map((c) => c.id === editId ? { ...c, additional_conditions: null } : c));
+      }
     }
     setEditId(null); setEditFields(null); setEditSaving(false);
   };
