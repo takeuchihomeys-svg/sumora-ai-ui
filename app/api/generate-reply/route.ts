@@ -302,7 +302,7 @@ const STATE_TO_PHRASE_CATEGORIES: Record<string, string[]> = {
   hearing:     ["hearing_followup", "condition_summary"],
   proposing:   ["property_recommendation", "urgency_push", "viewing_invite", "estimate_send", "availability_check"],
   applying:    ["application_push", "anxiety_relief", "estimate_start"],
-  closed_won:  ["closing_support", "application_push"],
+  closed_won:  ["closing_support"],
 };
 
 async function fetchPhrases(state: string): Promise<string> {
