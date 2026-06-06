@@ -296,38 +296,38 @@ conditions_incomplete, property_available, property_unavailable, screening_passe
   }
 }
 
-// ─── phrase_dictionary → conversationState マッピング ───────────────────────
-const STATE_TO_PHRASE_CATEGORY: Record<string, string> = {
-  first_reply: "hearing_start",
-  hearing:     "hearing_followup",
-  proposing:   "property_recommendation",
-  applying:    "application_push",
-  closed_won:  "contract",
+// ─── phrase_dictionary → conversationState マッピング（複数カテゴリ対応）────
+const STATE_TO_PHRASE_CATEGORIES: Record<string, string[]> = {
+  first_reply: ["hearing_start"],
+  hearing:     ["hearing_followup", "condition_summary"],
+  proposing:   ["property_recommendation", "urgency_push", "viewing_invite", "estimate_send", "availability_check"],
+  applying:    ["application_push", "anxiety_relief", "estimate_start"],
+  closed_won:  ["closing_support", "application_push"],
 };
 
 async function fetchPhrases(state: string): Promise<string> {
-  const category = STATE_TO_PHRASE_CATEGORY[state];
-  if (!category) return "";
+  const categories = STATE_TO_PHRASE_CATEGORIES[state];
+  if (!categories || categories.length === 0) return "";
 
-  // priority 10以上のみ取得（低品質エントリを除外）
+  // 複数カテゴリをまとめて取得・priority 10以上のみ
   const { data } = await supabase
     .from("phrase_dictionary")
-    .select("phrase, priority")
-    .eq("category", category)
+    .select("phrase, priority, category")
+    .in("category", categories)
     .gte("priority", 10)
     .order("priority", { ascending: false })
-    .limit(20);
+    .limit(40);
 
   if (!data || data.length === 0) return "";
 
   // コード側で問題フレーズを除外：
   // - {{...}} テンプレート変数（未置換で残るため）
   // - 特定会社名ベタ書き（イエヤス・ギガ等）
-  // - 不自然に長い（100字超）
+  // - 不自然に長い（80字超）
   const BAD_PATTERNS = /\{\{|\}\}|イエヤスなら|ギガ賃貸なら|スモラでは契約内容/;
-  const filtered = (data as Array<{ phrase: string; priority: number }>)
+  const filtered = (data as Array<{ phrase: string; priority: number; category: string }>)
     .filter((r) => r.phrase && !BAD_PATTERNS.test(r.phrase) && r.phrase.length <= 80)
-    .slice(0, 8);
+    .slice(0, 12);
 
   if (filtered.length === 0) return "";
 
