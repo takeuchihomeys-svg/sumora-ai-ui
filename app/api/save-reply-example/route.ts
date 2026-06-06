@@ -118,11 +118,13 @@ JSONのみ返答: {"state": "viewing"}`, 100);
 }
 
 // ─── ① パターン・スタイル・フレーズ・原則を抽出 → ai_reply_knowledge ───────
+// isStarred=true の場合: importance +1〜2 上乗せ（☆はより重要な学習シグナル）
 async function analyzeAndSaveKnowledge(
   exampleId: string,
   conversationState: string,
   customerMessage: string,
-  sentReply: string
+  sentReply: string,
+  isStarred = false
 ) {
   const text = await callHaiku(`以下のLINE賃貸営業のやりとりを深く分析してください。
 
@@ -153,14 +155,16 @@ ${sentReply}
       principle: string;
     };
 
+    // ☆の場合: importance を1〜2上乗せ（より強い学習シグナルとして扱う）
+    const boost = isStarred ? 2 : 0;
     const entries = [
-      { category: "pattern" as const, title: analysis.situation, content: analysis.pattern, importance: 7 },
-      { category: "principle" as const, title: `原則：${analysis.situation}`, content: analysis.principle, importance: 8 },
+      { category: "pattern" as const, title: analysis.situation, content: analysis.pattern, importance: 7 + boost },
+      { category: "principle" as const, title: `原則：${analysis.situation}`, content: analysis.principle, importance: 8 + boost },
       ...analysis.style_elements.map((el) => ({
-        category: "style" as const, title: "口調・スタイル", content: el, importance: 6,
+        category: "style" as const, title: "口調・スタイル", content: el, importance: 6 + boost,
       })),
       ...analysis.key_phrases.map((phrase) => ({
-        category: "phrase" as const, title: "フレーズ", content: phrase, importance: 6,
+        category: "phrase" as const, title: "フレーズ", content: phrase, importance: 7 + boost,
       })),
     ];
 
@@ -254,7 +258,9 @@ ${sentReply}
 }
 
 // ─── ②③ フレーズ抽出（重複排除 + priority 昇格）→ phrase_dictionary ────────
-async function extractAndSavePhrases(conversationState: string, sentReply: string) {
+// isStarred=true の場合: 新規priority=18、boost=+5（即座にfetchPhrases>=10に反映）
+// 通常の場合: 新規priority=5、boost=+1（累積で徐々に昇格）
+async function extractAndSavePhrases(conversationState: string, sentReply: string, isStarred: boolean) {
   const phraseCategory = STATE_TO_PHRASE_CATEGORY[conversationState];
   if (!phraseCategory) return;
 
@@ -281,8 +287,8 @@ ${sentReply}${existingList}
 
 ルール：
 ・15〜50文字程度のスモラらしいフレーズを抽出
-・固有情報（物件名・金額・部屋番号）は含めない
-・お客様の名前が含まれる場合は {{customer_name}} に置き換える（例：「田中さん」→「{{customer_name}}さん」）
+・固有情報（物件名・金額・部屋番号・人名）は含めない
+・お客様の名前が入っている場合は除去して汎用的なフレーズにする（テンプレート変数は使わない）
 ・既存フレーズと同一・類似のものは "boost" に入れる（既存の文字列をそのまま）
 ・完全に新しいものだけ "new" に入れる（0件でもOK）
 ・JSONのみ返答
@@ -297,19 +303,24 @@ ${sentReply}${existingList}
       boost: string[];
     };
 
-    // 新フレーズを挿入
+    // ☆の場合は高priority(18)で即反映、通常は5で累積昇格
+    const newPriority = isStarred ? 18 : 5;
+    const boostAmount = isStarred ? 5 : 1;
+    const boostCap    = isStarred ? 25 : 15;
+
+    // 新フレーズを挿入（{{}} テンプレート変数を含む場合は除外）
     for (const phrase of newPhrases) {
-      if (typeof phrase === "string" && phrase.trim()) {
+      if (typeof phrase === "string" && phrase.trim() && !/\{/.test(phrase)) {
         await supabase.from("phrase_dictionary").insert({
           category: phraseCategory,
           phrase: phrase.trim(),
-          priority: 5,
+          priority: newPriority,
           role: "auto_extracted",
         });
       }
     }
 
-    // 類似フレーズの priority を +1（上限10）
+    // 類似フレーズの priority を昇格（☆は+5、通常は+1）
     for (const boostPhrase of boostPhrases) {
       if (typeof boostPhrase !== "string") continue;
       const found = existingMap[boostPhrase]
@@ -317,7 +328,7 @@ ${sentReply}${existingList}
       if (found) {
         await supabase
           .from("phrase_dictionary")
-          .update({ priority: Math.min(10, (found.priority || 5) + 1) })
+          .update({ priority: Math.min(boostCap, (found.priority || 5) + boostAmount) })
           .eq("id", found.id);
       }
     }
@@ -389,10 +400,10 @@ export async function POST(req: NextRequest) {
 
   const analysisJobs: Promise<void>[] = [];
   if (shouldDeepAnalyze && data?.id) {
-    analysisJobs.push(analyzeAndSaveKnowledge(data.id, conversationState, customerMessage, sentReply));
+    analysisJobs.push(analyzeAndSaveKnowledge(data.id, conversationState, customerMessage, sentReply, isStarred));
   }
   if (shouldExtractPhrases && data?.id) {
-    analysisJobs.push(extractAndSavePhrases(conversationState, sentReply));
+    analysisJobs.push(extractAndSavePhrases(conversationState, sentReply, isStarred ?? false));
   }
   if (analysisJobs.length > 0) await Promise.all(analysisJobs);
 
