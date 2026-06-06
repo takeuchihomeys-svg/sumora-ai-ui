@@ -1811,9 +1811,6 @@ export default function Home() {
 
                       {/* 名前行: 高さ固定で位置ブレなし */}
                       <div className="mb-0.5 flex h-5 min-w-0 items-center gap-1.5 overflow-hidden">
-                        {hotConvIds.has(conversation.id) && (
-                          <span className="shrink-0 leading-none text-base">🔥</span>
-                        )}
                         <span className="truncate text-[14px] font-medium text-[#111b21]">
                           {conversation.customerName}
                         </span>
@@ -1851,6 +1848,9 @@ export default function Home() {
                           <span className="shrink-0 rounded-full bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-600">
                             要対応
                           </span>
+                        )}
+                        {hotConvIds.has(conversation.id) && (
+                          <span className="shrink-0 leading-none text-sm">🔥</span>
                         )}
                       </div>
 
