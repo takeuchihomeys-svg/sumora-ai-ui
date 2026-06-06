@@ -169,7 +169,8 @@ function buildGenerationMessages(
   nextState: string,
   analysis: string,
   knowledge: string,
-  examples: string
+  examples: string,
+  phrases: string
 ): [SystemMessage, HumanMessage] {
   const nameNote = customerName ? `お客様名：${customerName}さん` : "お客様名：不明";
   void nextState; // 将来用（現在はフェーズガイドに統合）
@@ -213,13 +214,14 @@ ${phaseGuide}${approachNote}${staffContextNote}
 ${history || "なし"}
 ${SMORA_QUICK_PATTERNS}
 ${knowledge}
+${phrases}
 
 【お客様の最新メッセージ】
 ${customerMessage}
 
 ${examples}${examplesInstruction}
 
-↑スモラの直前返信の流れを踏まえ、⭐実例の文体を忠実に再現しながら、このメッセージへのスモラらしい返信を3行以内で1つ生成してください。`;
+↑スモラの直前返信の流れを踏まえ、⭐実例の文体・言い回しを最優先で忠実に再現しながら、このメッセージへのスモラらしい返信を3行以内で1つ生成してください。`;
 
   return [new SystemMessage(GENERATION_SYSTEM), new HumanMessage(prompt)];
 }
@@ -307,17 +309,30 @@ async function fetchPhrases(state: string): Promise<string> {
   const category = STATE_TO_PHRASE_CATEGORY[state];
   if (!category) return "";
 
+  // priority 10以上のみ取得（低品質エントリを除外）
   const { data } = await supabase
     .from("phrase_dictionary")
     .select("phrase, priority")
     .eq("category", category)
+    .gte("priority", 10)
     .order("priority", { ascending: false })
-    .limit(10);
+    .limit(20);
 
   if (!data || data.length === 0) return "";
 
-  return "\n\n【スモラの言葉・フレーズ（自然に組み込む）】\n" +
-    (data as Array<{ phrase: string }>).map((r) => `「${r.phrase}」`).join("　");
+  // コード側で問題フレーズを除外：
+  // - {{...}} テンプレート変数（未置換で残るため）
+  // - 特定会社名ベタ書き（イエヤス・ギガ等）
+  // - 不自然に長い（100字超）
+  const BAD_PATTERNS = /\{\{|\}\}|イエヤスなら|ギガ賃貸なら|スモラでは契約内容/;
+  const filtered = (data as Array<{ phrase: string; priority: number }>)
+    .filter((r) => r.phrase && !BAD_PATTERNS.test(r.phrase) && r.phrase.length <= 80)
+    .slice(0, 8);
+
+  if (filtered.length === 0) return "";
+
+  return "\n\n【スモラのフレーズ集（参考程度に・⭐実例を最優先すること）】\n" +
+    filtered.map((r) => `「${r.phrase}」`).join("　");
 }
 
 // ─── DB取得 ─────────────────────────────────────────────────────────────────
@@ -369,14 +384,14 @@ async function fetchExamples(state: string): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
   const [{ data: starredSameState }, { data: starredAllState }, { data: recentFallback }] = await Promise.all([
-    // ⭐ 同フェーズの☆つき（最新10件）
+    // ⭐ 同フェーズの☆つき（最新30件・☆を習慣的につけているので多めに取得）
     supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state")
       .in("conversation_state", stateAliases).eq("is_starred", true)
-      .order("created_at", { ascending: false }).limit(10),
-    // ⭐ 全フェーズの☆つき（言葉遣い・文体を学習するため）
+      .order("created_at", { ascending: false }).limit(30),
+    // ⭐ 全フェーズの☆つき（言葉遣い・文体を全体から学習）
     supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state")
       .eq("is_starred", true)
-      .order("created_at", { ascending: false }).limit(15),
+      .order("created_at", { ascending: false }).limit(50),
     // フォールバック: 非⭐の最近の送信例
     supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state")
       .in("conversation_state", stateAliases).eq("is_starred", false)
@@ -389,16 +404,16 @@ async function fetchExamples(state: string): Promise<string> {
   );
   const fallbackList  = sameStateList.length < 3 ? (recentFallback || []) : [];
 
-  // 同フェーズ☆ → 全フェーズ☆ → フォールバックの優先順で最大12件
+  // 同フェーズ☆ → 全フェーズ☆ → フォールバックの優先順で最大25件
   const all = [
     ...sameStateList.map((ex) => ({ ...ex, priority: 1 })),
     ...fallbackList.map((ex) => ({ ...ex, priority: 2 })),
-    ...allStateList.slice(0, 5).map((ex) => ({ ...ex, priority: 3 })),
-  ].sort((a, b) => a.priority - b.priority).slice(0, 12);
+    ...allStateList.slice(0, 10).map((ex) => ({ ...ex, priority: 3 })),
+  ].sort((a, b) => a.priority - b.priority).slice(0, 25);
 
   if (all.length === 0) return "";
 
-  return "\n\n【⭐ スモラの実際の返信例 — これが唯一の文体・言い回しの基準。以下の例から文体・感嘆符・絵文字・長さを忠実に再現すること】\n" +
+  return "\n\n【⭐ スモラの実際の返信例（☆をつけた良質な実例）— 文体・言い回し・感嘆符・絵文字・長さをこの例から忠実に再現すること。これが最優先の文体基準】\n" +
     all.map((ex, i) =>
       `[例${i + 1}]\nお客様: 「${ex.customer_message}」\nスモラ: 「${ex.sent_reply}」`
     ).join("\n\n");
@@ -460,13 +475,13 @@ export async function POST(req: NextRequest) {
       .filter(Boolean)
       .join("\n");
 
-    // 並列実行: intent分類 + 状況分析 + 知識取得 + 実例取得
-    // phrase_dictionary は除外（古いデータが文体を汚染するため）
-    const [detectedIntent, analysis, knowledge, examples] = await Promise.all([
+    // 並列実行: intent分類 + 状況分析 + 知識取得 + 実例取得 + フレーズ取得
+    const [detectedIntent, analysis, knowledge, examples, phrases] = await Promise.all([
       classifyIntent(message, currentState, history),
       analyzeCustomerSituation(message, history, currentState, customerName),
       fetchKnowledge(currentState),
       fetchExamples(currentState),
+      fetchPhrases(currentState),  // priority10以上・テンプレ除外済み
     ]);
 
     const nextState = getNextState(currentState, detectedIntent);
@@ -474,7 +489,7 @@ export async function POST(req: NextRequest) {
     // Sonnetでストリーミング生成
     const messages = buildGenerationMessages(
       message, customerName, history, currentState, nextState,
-      analysis, knowledge, examples
+      analysis, knowledge, examples, phrases
     );
     const genStream = generationModel.stream(messages);
 
