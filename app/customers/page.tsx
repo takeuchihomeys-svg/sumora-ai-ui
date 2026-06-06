@@ -84,55 +84,46 @@ const URGENCY_ORDER: Record<Urgency, number> = { reply: 0, property: 1, ok: 2, p
 
 function initial(name: string) { return name?.trim()?.charAt(0) ?? "?"; }
 
-// 条件編集モーダル用の型
 type EditFields = {
-  desired_area: string;
-  floor_plan: string;
-  rent_min: string;
-  rent_max: string;
-  walk_minutes: string;
-  move_in_time: string;
-  building_age: string;
-  initial_cost_limit: string;
-  preferences: string;
-  ng_points: string;
-  other_requests: string;
-  property_memo: string;
+  desired_area: string; floor_plan: string;
+  rent_min: string; rent_max: string;
+  walk_minutes: string; move_in_time: string;
+  building_age: string; initial_cost_limit: string;
+  preferences: string; ng_points: string;
+  other_requests: string; property_memo: string;
 };
 
 function toEditFields(c: Customer): EditFields {
   return {
-    desired_area:   c.desired_area   ?? "",
-    floor_plan:     c.floor_plan     ?? "",
-    rent_min:       c.rent_min       ? String(Math.floor(c.rent_min / 10000)) : "",
-    rent_max:       c.rent_max       ? String(Math.floor(c.rent_max / 10000)) : "",
-    walk_minutes:   c.walk_minutes   ? String(c.walk_minutes) : "",
-    move_in_time:   c.move_in_time   ?? "",
-    building_age:      c.building_age      ? String(c.building_age) : "",
+    desired_area:       c.desired_area       ?? "",
+    floor_plan:         c.floor_plan         ?? "",
+    rent_min:           c.rent_min           ? String(Math.floor(c.rent_min / 10000)) : "",
+    rent_max:           c.rent_max           ? String(Math.floor(c.rent_max / 10000)) : "",
+    walk_minutes:       c.walk_minutes       ? String(c.walk_minutes) : "",
+    move_in_time:       c.move_in_time       ?? "",
+    building_age:       c.building_age       ? String(c.building_age) : "",
     initial_cost_limit: c.initial_cost_limit ? String(Math.floor(c.initial_cost_limit / 10000)) : "",
-    preferences:    c.preferences    ?? "",
-    ng_points:      c.ng_points      ?? "",
-    other_requests: c.other_requests ?? "",
-    property_memo:  c.property_memo  ?? "",
+    preferences:        c.preferences        ?? "",
+    ng_points:          c.ng_points          ?? "",
+    other_requests:     c.other_requests     ?? "",
+    property_memo:      c.property_memo      ?? "",
   };
 }
 
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading]     = useState(true);
   const [filterLinked, setFilterLinked] = useState(true);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedId, setExpandedId]     = useState<string | null>(null);
   const [sentUpdating, setSentUpdating] = useState<string | null>(null);
 
-  // 追加モーダル
-  const [showAdd, setShowAdd] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [newPhone, setNewPhone] = useState("");
+  const [showAdd, setShowAdd]       = useState(false);
+  const [newName, setNewName]       = useState("");
+  const [newPhone, setNewPhone]     = useState("");
   const [newAssignee, setNewAssignee] = useState("");
   const [addLoading, setAddLoading] = useState(false);
 
-  // 条件編集モーダル
-  const [editId, setEditId] = useState<string | null>(null);
+  const [editId, setEditId]         = useState<string | null>(null);
   const [editFields, setEditFields] = useState<EditFields | null>(null);
   const [editSaving, setEditSaving] = useState(false);
 
@@ -141,7 +132,6 @@ export default function CustomersPage() {
     if (res.ok) setCustomers(await res.json());
     setLoading(false);
   };
-
   useEffect(() => { fetchCustomers(); }, []);
 
   const sorted = useMemo(() => {
@@ -178,28 +168,25 @@ export default function CustomersPage() {
     setAddLoading(false);
   };
 
-  const openEdit = (c: Customer) => {
-    setEditId(c.id);
-    setEditFields(toEditFields(c));
-  };
+  const openEdit = (c: Customer) => { setEditId(c.id); setEditFields(toEditFields(c)); };
 
   const saveEdit = async () => {
     if (!editId || !editFields || editSaving) return;
     setEditSaving(true);
     const patch = {
       id: editId,
-      desired_area:   editFields.desired_area   || null,
-      floor_plan:     editFields.floor_plan     || null,
-      rent_min:       editFields.rent_min       ? Number(editFields.rent_min) * 10000   : null,
-      rent_max:       editFields.rent_max       ? Number(editFields.rent_max) * 10000   : null,
-      walk_minutes:   editFields.walk_minutes   ? Number(editFields.walk_minutes)       : null,
-      move_in_time:   editFields.move_in_time   || null,
-      building_age:      editFields.building_age      ? Number(editFields.building_age)                   : null,
+      desired_area:       editFields.desired_area       || null,
+      floor_plan:         editFields.floor_plan         || null,
+      rent_min:           editFields.rent_min           ? Number(editFields.rent_min) * 10000           : null,
+      rent_max:           editFields.rent_max           ? Number(editFields.rent_max) * 10000           : null,
+      walk_minutes:       editFields.walk_minutes       ? Number(editFields.walk_minutes)               : null,
+      move_in_time:       editFields.move_in_time       || null,
+      building_age:       editFields.building_age       ? Number(editFields.building_age)               : null,
       initial_cost_limit: editFields.initial_cost_limit ? Number(editFields.initial_cost_limit) * 10000 : null,
-      preferences:    editFields.preferences    || null,
-      ng_points:      editFields.ng_points      || null,
-      other_requests: editFields.other_requests || null,
-      property_memo:  editFields.property_memo  || null,
+      preferences:        editFields.preferences        || null,
+      ng_points:          editFields.ng_points          || null,
+      other_requests:     editFields.other_requests     || null,
+      property_memo:      editFields.property_memo      || null,
     };
     const res = await fetch("/api/property-customers", {
       method: "PATCH", headers: { "Content-Type": "application/json" },
@@ -214,20 +201,18 @@ export default function CustomersPage() {
 
   return (
     <div className="flex flex-col" style={{ height: "100svh", background: "#f0f2f5", overflowY: "auto" }}>
-      {/* Header — LINE風ダークナビ */}
+
+      {/* ── Header ── */}
       <div
         className="sticky top-0 z-30 px-4 pb-3"
-        style={{
-          background: "linear-gradient(135deg, #0d1b3e 0%, #1565C0 100%)",
-          paddingTop: "max(env(safe-area-inset-top), 14px)",
-        }}
+        style={{ background: "linear-gradient(135deg, #0d1b3e 0%, #1565C0 100%)", paddingTop: "max(env(safe-area-inset-top), 14px)" }}
       >
         <div className="flex items-center justify-between mb-2.5">
           <div className="flex items-center gap-2">
             <span className="text-[18px] font-black text-white tracking-tight">お客さん</span>
             {replyCount > 0 && (
               <span className="rounded-full bg-red-500 px-2 py-0.5 text-[10px] font-bold text-white">
-                ⏰ {replyCount}件 未返信
+                未返信 {replyCount}件
               </span>
             )}
           </div>
@@ -240,19 +225,19 @@ export default function CustomersPage() {
           </button>
         </div>
         <div className="flex gap-2">
-          {[true, false].map((linked) => (
+          {([true, false] as const).map((linked) => (
             <button
               key={String(linked)}
               onClick={() => setFilterLinked(linked)}
               className={`rounded-full px-3 py-1.5 text-xs font-bold transition-all ${filterLinked === linked ? "bg-white text-[#1565C0]" : "border border-white/25 text-white/70"}`}
             >
-              {linked ? `🔗 紐付け済 ${linkedCount}` : `全員 ${customers.length}`}
+              {linked ? `紐付き ${linkedCount}` : `全員 ${customers.length}`}
             </button>
           ))}
         </div>
       </div>
 
-      {/* List */}
+      {/* ── List ── */}
       <div className="flex-1 pb-28">
         {loading ? (
           <div className="py-16 text-center text-sm text-[#667781]">読み込み中...</div>
@@ -262,43 +247,39 @@ export default function CustomersPage() {
           </div>
         ) : (
           sorted.map((c) => {
-            const u       = urgency(c);
-            const conv    = c.linked_conversation;
+            const u        = urgency(c);
+            const conv     = c.linked_conversation;
             const propMeta = PROP_STATUS[c.status] ?? { label: c.status, dot: "bg-gray-300" };
-            const isExpanded = expandedId === c.id;
-            const days = c.last_property_sent_at
+            const isExp    = expandedId === c.id;
+            const days     = c.last_property_sent_at
               ? Math.floor((Date.now() - new Date(c.last_property_sent_at).getTime()) / 86400000)
               : null;
 
-            // ボーダー色
             const borderColor = u === "reply" ? "#ef4444" : u === "property" ? "#f97316" : "#e9edef";
 
             return (
-              <div key={c.id} className="mx-3 mt-2.5 rounded-2xl overflow-hidden shadow-sm" style={{ border: `1.5px solid ${borderColor}`, background: "#fff" }}>
+              <div key={c.id} className="mx-3 mt-2.5 rounded-2xl overflow-hidden shadow-sm"
+                style={{ border: `1.5px solid ${borderColor}`, background: "#fff" }}>
 
-                {/* ── LINE風ヘッダー行 ── */}
+                {/* ── ヘッダー行 ── */}
                 <button
                   className="flex w-full items-center gap-3 px-4 py-3 text-left active:bg-[#f5f6f6]"
-                  onClick={() => setExpandedId(isExpanded ? null : c.id)}
+                  onClick={() => setExpandedId(isExp ? null : c.id)}
                 >
                   {/* プロフィール画像 */}
                   <div className="relative shrink-0">
                     {conv?.profile_image_url ? (
-                      <img
-                        src={conv.profile_image_url}
-                        alt={c.customer_name}
-                        className="h-12 w-12 rounded-full object-cover"
-                      />
+                      <img src={conv.profile_image_url} alt={c.customer_name}
+                        className="h-12 w-12 rounded-full object-cover" />
                     ) : (
                       <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#d9fdd3] text-base font-bold text-[#0f8f44]">
                         {initial(c.customer_name)}
                       </div>
                     )}
-                    {/* ステータスドット */}
                     <span className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white ${propMeta.dot}`} />
                   </div>
 
-                  {/* 名前 + サブ情報 */}
+                  {/* 名前・ステータス・メッセージ */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
                       <span className="text-[14px] font-bold text-[#111b21] truncate">{c.customer_name}</span>
@@ -307,46 +288,52 @@ export default function CustomersPage() {
                           {ACCT_LABEL[conv.account] ?? conv.account}
                         </span>
                       )}
-                      <span className="shrink-0 text-[9px] font-bold text-[#8696a0]">{propMeta.label}</span>
+                      <span className="shrink-0 text-[9px] font-semibold text-[#8696a0]">{propMeta.label}</span>
                     </div>
-                    {/* 最新LINEメッセージ */}
                     {conv?.last_message ? (
-                      <p className={`truncate text-[12px] ${u === "reply" ? "font-bold text-red-500" : "text-[#667781]"}`}>
-                        {u === "reply" ? "⏰ " : ""}{conv.last_message}
+                      <p className={`truncate text-[12px] ${u === "reply" ? "font-semibold text-red-500" : "text-[#667781]"}`}>
+                        {conv.last_message}
                       </p>
                     ) : (
                       <p className="text-[12px] text-[#bbb]">メッセージなし</p>
                     )}
                   </div>
 
-                  {/* 右端: 時間 + chevron */}
+                  {/* 時間 + chevron */}
                   <div className="shrink-0 flex flex-col items-end gap-1">
                     <span className="text-[10px] text-[#667781]">{relTime(conv?.updated_at)}</span>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#90caf9" strokeWidth="2" strokeLinecap="round"
-                      className={`transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`}>
+                      className={`transition-transform duration-200 ${isExp ? "rotate-180" : ""}`}>
                       <polyline points="6 9 12 15 18 9" />
                     </svg>
                   </div>
                 </button>
 
-                {/* ── 物件希望チップ ── */}
+                {/* ── 物件条件 ── */}
                 <div className="border-t border-[#f0f2f5] px-4 py-2.5">
-                  <div className="flex flex-wrap gap-1.5 mb-1.5">
-                    {c.desired_area   && <Chip icon="📍" text={c.desired_area}   color="blue" />}
-                    {c.floor_plan     && <Chip icon="🏠" text={c.floor_plan}     color="green" />}
+                  <div className="flex flex-wrap gap-1.5">
+                    {c.desired_area && <Tag label="エリア" value={c.desired_area} />}
+                    {c.floor_plan   && <Tag label="間取り" value={c.floor_plan} />}
                     {(c.rent_min || c.rent_max) && (
-                      <Chip icon="💰" color="orange"
-                        text={`${c.rent_min ? Math.floor(c.rent_min/10000)+"万〜" : ""}${c.rent_max ? Math.floor(c.rent_max/10000)+"万" : ""}`} />
+                      <Tag label="家賃" value={`${c.rent_min ? Math.floor(c.rent_min/10000)+"万〜" : "〜"}${c.rent_max ? Math.floor(c.rent_max/10000)+"万" : ""}`} />
                     )}
-                    {c.walk_minutes   && <Chip icon="🚶" text={`${c.walk_minutes}分`} color="purple" />}
-                    {c.move_in_time   && <Chip icon="📅" text={c.move_in_time}   color="teal" />}
-                    {c.building_age   && <Chip icon="🏢" text={`${c.building_age}年`} color="pink" />}
-                    {c.initial_cost_limit && <Chip icon="💴" text={`初期${Math.floor(c.initial_cost_limit/10000)}万以内`} color="orange" />}
+                    {c.walk_minutes && <Tag label="徒歩" value={`${c.walk_minutes}分`} />}
+                    {c.move_in_time && <Tag label="入居" value={c.move_in_time} />}
+                    {c.building_age && <Tag label="築年" value={`${c.building_age}年`} />}
+                    {c.initial_cost_limit && <Tag label="初期" value={`${Math.floor(c.initial_cost_limit/10000)}万以内`} />}
                   </div>
                   {(c.preferences || c.ng_points) && (
-                    <div className="space-y-0.5">
-                      {c.preferences && <p className="text-[11px] text-[#667781]"><span className="text-[#2196F3] font-bold">✨</span> {c.preferences}</p>}
-                      {c.ng_points   && <p className="text-[11px] text-[#667781]"><span className="text-red-400 font-bold">❌</span> {c.ng_points}</p>}
+                    <div className="mt-1.5 space-y-0.5">
+                      {c.preferences && (
+                        <p className="text-[11px] text-[#555]">
+                          <span className="font-semibold text-[#8696a0]">希望　</span>{c.preferences}
+                        </p>
+                      )}
+                      {c.ng_points && (
+                        <p className="text-[11px] text-[#555]">
+                          <span className="font-semibold text-[#8696a0]">NG　　</span>{c.ng_points}
+                        </p>
+                      )}
                     </div>
                   )}
                   {!c.desired_area && !c.floor_plan && !c.rent_min && !c.rent_max && !c.preferences && !c.ng_points && (
@@ -360,39 +347,39 @@ export default function CustomersPage() {
                     <button
                       onClick={() => markSent(c.id)}
                       disabled={sentUpdating === c.id}
-                      className="flex items-center gap-1 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 active:scale-95 transition-transform disabled:opacity-50"
+                      className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 active:scale-95 transition-transform disabled:opacity-50"
                     >
-                      {sentUpdating === c.id ? "…" : "✓ 物件送った"}
+                      {sentUpdating === c.id ? "…" : "物件送った"}
                     </button>
                   )}
                   <button
                     onClick={() => openEdit(c)}
-                    className="flex items-center gap-1 rounded-xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 active:scale-95 transition-transform"
+                    className="rounded-xl border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-bold text-[#444] active:scale-95 transition-transform"
                   >
-                    ✏️ 条件更新
+                    条件更新
                   </button>
                   {c.phone && (
                     <a href={`tel:${c.phone}`}
-                      className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-[#667781] active:scale-95 transition-transform">
-                      📞
+                      className="rounded-xl border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-bold text-[#444] active:scale-95 transition-transform">
+                      電話
                     </a>
                   )}
-                  <div className="ml-auto flex items-center gap-1.5 text-[10px] text-[#8696a0]">
+                  <div className="ml-auto text-[10px] text-[#8696a0]">
                     {days === null
-                      ? (c.status !== "pending" ? <span className="text-orange-400 font-bold">未送信</span> : null)
-                      : days === 0 ? <span>今日送信済</span>
-                      : <span className={days >= 3 ? "text-red-400 font-bold" : ""}>{days}日前</span>}
+                      ? (c.status !== "pending" ? <span className="text-orange-400 font-semibold">未送信</span> : null)
+                      : days === 0 ? "今日送信"
+                      : <span className={days >= 3 ? "text-red-400 font-semibold" : ""}>{days}日前</span>}
                   </div>
                 </div>
 
-                {/* ── 展開パネル: メモ + ステータス変更 ── */}
-                {isExpanded && (
+                {/* ── 展開パネル ── */}
+                {isExp && (
                   <div className="border-t border-[#f0f2f5] px-4 py-3 space-y-2.5">
                     {(c.property_memo || c.other_requests || c.assignee) && (
-                      <div className="text-[11px] text-[#667781] space-y-0.5">
-                        {c.assignee      && <p><span className="font-bold text-[#8696a0]">担当: </span>{c.assignee}</p>}
-                        {c.property_memo && <p><span className="font-bold text-[#8696a0]">メモ: </span>{c.property_memo}</p>}
-                        {c.other_requests && <p><span className="font-bold text-[#8696a0]">その他: </span>{c.other_requests}</p>}
+                      <div className="text-[11px] text-[#555] space-y-0.5">
+                        {c.assignee       && <p><span className="font-semibold text-[#8696a0]">担当　　</span>{c.assignee}</p>}
+                        {c.property_memo  && <p><span className="font-semibold text-[#8696a0]">メモ　　</span>{c.property_memo}</p>}
+                        {c.other_requests && <p><span className="font-semibold text-[#8696a0]">その他　</span>{c.other_requests}</p>}
                       </div>
                     )}
                     <div className="flex flex-wrap gap-1.5">
@@ -407,9 +394,9 @@ export default function CustomersPage() {
                                 setCustomers((p) => p.map((x) => x.id === c.id ? {...x, status:s} : x));
                                 setExpandedId(null);
                               }}
-                              className="rounded-xl border border-current px-3 py-1.5 text-xs font-bold active:scale-95 transition-transform text-[#667781] border-[#e9edef]"
+                              className="rounded-xl border border-[#e9edef] bg-white px-3 py-1.5 text-xs font-bold text-[#555] active:scale-95 transition-transform"
                             >
-                              → {m.label}
+                              {m.label}に変更
                             </button>
                           );
                         })}
@@ -424,76 +411,59 @@ export default function CustomersPage() {
 
       {/* ── 条件編集モーダル ── */}
       {editId && editFields && (
-        <div
-          className="fixed inset-0 z-50 flex items-end"
-          style={{ background: "rgba(0,0,0,0.5)" }}
-          onClick={(e) => { if (e.target === e.currentTarget) { setEditId(null); setEditFields(null); } }}
-        >
-          <div
-            className="w-full rounded-t-2xl bg-white overflow-y-auto"
-            style={{ maxHeight: "85svh", paddingBottom: "max(env(safe-area-inset-bottom),20px)" }}
-          >
-            {/* モーダルヘッダー */}
+        <div className="fixed inset-0 z-50 flex items-end" style={{ background: "rgba(0,0,0,0.5)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) { setEditId(null); setEditFields(null); } }}>
+          <div className="w-full rounded-t-2xl bg-white overflow-y-auto"
+            style={{ maxHeight: "85svh", paddingBottom: "max(env(safe-area-inset-bottom),20px)" }}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-[#f0f2f5] sticky top-0 bg-white z-10">
               <div>
                 <h2 className="font-bold text-[#111b21] text-[15px]">条件更新</h2>
-                <p className="text-[11px] text-[#8696a0]">
-                  {customers.find((c) => c.id === editId)?.customer_name}
-                </p>
+                <p className="text-[11px] text-[#8696a0]">{customers.find((c) => c.id === editId)?.customer_name}</p>
               </div>
               <button onClick={() => { setEditId(null); setEditFields(null); }} className="text-[#aaa] text-xl leading-none">✕</button>
             </div>
-
             <div className="px-5 py-4 space-y-3">
-              <EditRow label="📍 エリア" placeholder="例: 城東区・東大阪市"
+              <Field label="エリア" placeholder="例: 城東区・東大阪市"
                 value={editFields.desired_area} onChange={(v) => setEditFields((f) => f && ({ ...f, desired_area: v }))} />
-              <EditRow label="🏠 間取り" placeholder="例: 1LDK・2DK"
+              <Field label="間取り" placeholder="例: 1LDK・2DK"
                 value={editFields.floor_plan} onChange={(v) => setEditFields((f) => f && ({ ...f, floor_plan: v }))} />
               <div className="flex gap-2">
                 <div className="flex-1">
-                  <label className="text-[11px] font-medium text-[#8696a0] mb-1 block">💰 家賃下限（万）</label>
-                  <input type="number" className="w-full border border-[#e9edef] rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-[#2196F3]"
-                    placeholder="5" value={editFields.rent_min}
-                    onChange={(e) => setEditFields((f) => f && ({ ...f, rent_min: e.target.value }))} />
+                  <Field label="家賃 下限（万）" placeholder="5" type="number"
+                    value={editFields.rent_min} onChange={(v) => setEditFields((f) => f && ({ ...f, rent_min: v }))} />
                 </div>
                 <div className="flex-1">
-                  <label className="text-[11px] font-medium text-[#8696a0] mb-1 block">💰 家賃上限（万）</label>
-                  <input type="number" className="w-full border border-[#e9edef] rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-[#2196F3]"
-                    placeholder="7" value={editFields.rent_max}
-                    onChange={(e) => setEditFields((f) => f && ({ ...f, rent_max: e.target.value }))} />
+                  <Field label="家賃 上限（万）" placeholder="7" type="number"
+                    value={editFields.rent_max} onChange={(v) => setEditFields((f) => f && ({ ...f, rent_max: v }))} />
                 </div>
               </div>
               <div className="flex gap-2">
                 <div className="flex-1">
-                  <EditRow label="🚶 駅徒歩（分）" placeholder="15" type="number"
+                  <Field label="駅徒歩（分）" placeholder="15" type="number"
                     value={editFields.walk_minutes} onChange={(v) => setEditFields((f) => f && ({ ...f, walk_minutes: v }))} />
                 </div>
                 <div className="flex-1">
-                  <EditRow label="🏢 築年数以内" placeholder="20" type="number"
+                  <Field label="築年数以内" placeholder="20" type="number"
                     value={editFields.building_age} onChange={(v) => setEditFields((f) => f && ({ ...f, building_age: v }))} />
                 </div>
               </div>
-              <EditRow label="📅 入居時期" placeholder="例: 7月・来月・なるべく早く"
+              <Field label="入居時期" placeholder="例: 7月・なるべく早く"
                 value={editFields.move_in_time} onChange={(v) => setEditFields((f) => f && ({ ...f, move_in_time: v }))} />
-              <EditRow label="💴 初期費用上限（万）" placeholder="例: 30" type="number"
+              <Field label="初期費用上限（万）" placeholder="30" type="number"
                 value={editFields.initial_cost_limit} onChange={(v) => setEditFields((f) => f && ({ ...f, initial_cost_limit: v }))} />
-              <EditRow label="✨ こだわり" placeholder="例: オートロック・ペット可・駐車場あり" textarea
+              <Field label="こだわり" placeholder="例: オートロック・ペット可・駐車場あり" textarea
                 value={editFields.preferences} onChange={(v) => setEditFields((f) => f && ({ ...f, preferences: v }))} />
-              <EditRow label="❌ NG条件" placeholder="例: 1階NG・木造NG" textarea
+              <Field label="NG条件" placeholder="例: 1階NG・木造NG" textarea
                 value={editFields.ng_points} onChange={(v) => setEditFields((f) => f && ({ ...f, ng_points: v }))} />
-              <EditRow label="📝 メモ" placeholder="社内メモ" textarea
+              <Field label="メモ" placeholder="社内メモ" textarea
                 value={editFields.property_memo} onChange={(v) => setEditFields((f) => f && ({ ...f, property_memo: v }))} />
-              <EditRow label="その他" placeholder="その他の要望" textarea
+              <Field label="その他" placeholder="その他の要望" textarea
                 value={editFields.other_requests} onChange={(v) => setEditFields((f) => f && ({ ...f, other_requests: v }))} />
             </div>
-
             <div className="px-5">
-              <button
-                onClick={saveEdit}
-                disabled={editSaving}
+              <button onClick={saveEdit} disabled={editSaving}
                 className="w-full py-3 rounded-xl font-bold text-white text-sm disabled:opacity-40 active:scale-[0.98] transition-transform"
-                style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}
-              >
+                style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
                 {editSaving ? "保存中..." : "保存する"}
               </button>
             </div>
@@ -503,29 +473,20 @@ export default function CustomersPage() {
 
       {/* ── 追加モーダル ── */}
       {showAdd && (
-        <div
-          className="fixed inset-0 z-50 flex items-end"
-          style={{ background: "rgba(0,0,0,0.5)" }}
-          onClick={(e) => { if (e.target === e.currentTarget) setShowAdd(false); }}
-        >
+        <div className="fixed inset-0 z-50 flex items-end" style={{ background: "rgba(0,0,0,0.5)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowAdd(false); }}>
           <div className="w-full rounded-t-2xl bg-white px-5 py-5 space-y-3"
             style={{ paddingBottom: "max(env(safe-area-inset-bottom),20px)" }}>
             <div className="flex items-center justify-between">
               <h2 className="font-bold text-[#111b21] text-base">お客さん追加</h2>
               <button onClick={() => setShowAdd(false)} className="text-[#aaa] text-xl leading-none">✕</button>
             </div>
-            <EditRow label="お客さん名 *" placeholder="例: 田中さん"
-              value={newName} onChange={setNewName} />
-            <EditRow label="電話番号" placeholder="090-1234-5678" type="tel"
-              value={newPhone} onChange={setNewPhone} />
-            <EditRow label="担当者" placeholder="例: 竹内"
-              value={newAssignee} onChange={setNewAssignee} />
-            <button
-              onClick={addCustomer}
-              disabled={!newName.trim() || addLoading}
+            <Field label="お客さん名 *" placeholder="例: 田中さん" value={newName} onChange={setNewName} />
+            <Field label="電話番号" placeholder="090-1234-5678" type="tel" value={newPhone} onChange={setNewPhone} />
+            <Field label="担当者" placeholder="例: 竹内" value={newAssignee} onChange={setNewAssignee} />
+            <button onClick={addCustomer} disabled={!newName.trim() || addLoading}
               className="w-full py-3 rounded-xl font-bold text-white text-sm disabled:opacity-40"
-              style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}
-            >
+              style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
               {addLoading ? "追加中..." : "追加する"}
             </button>
           </div>
@@ -537,24 +498,18 @@ export default function CustomersPage() {
   );
 }
 
-// ── 共通フォーム部品 ──
-function Chip({ icon, text, color }: { icon: string; text: string; color: string }) {
-  const colors: Record<string, string> = {
-    blue:   "bg-[#e3f2fd] text-[#1565C0]",
-    green:  "bg-[#e8f5e9] text-[#2e7d32]",
-    orange: "bg-[#fff3e0] text-[#e65100]",
-    purple: "bg-[#f3e5f5] text-[#6a1b9a]",
-    teal:   "bg-[#e0f7fa] text-[#006064]",
-    pink:   "bg-[#fce4ec] text-[#880e4f]",
-  };
+// ── 条件タグ（絵文字なし・ラベル+値） ──
+function Tag({ label, value }: { label: string; value: string }) {
   return (
-    <span className={`flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${colors[color] ?? "bg-gray-100 text-gray-600"}`}>
-      {icon} {text}
+    <span className="flex items-baseline gap-1 rounded-lg border border-[#e9edef] bg-[#f8f9fa] px-2 py-0.5">
+      <span className="text-[9px] font-semibold text-[#8696a0] shrink-0">{label}</span>
+      <span className="text-[11px] font-semibold text-[#333]">{value}</span>
     </span>
   );
 }
 
-function EditRow({
+// ── フォーム入力部品 ──
+function Field({
   label, placeholder, value, onChange, textarea = false, type = "text",
 }: {
   label: string; placeholder: string; value: string;
@@ -563,18 +518,13 @@ function EditRow({
   const base = "w-full border border-[#e9edef] rounded-xl px-3 py-2 text-sm text-[#111b21] focus:outline-none focus:border-[#2196F3]";
   return (
     <div>
-      <label className="text-[11px] font-medium text-[#8696a0] mb-1 block">{label}</label>
+      <label className="text-[11px] font-semibold text-[#8696a0] mb-1 block">{label}</label>
       {textarea ? (
-        <textarea
-          className={base} rows={2} placeholder={placeholder}
-          value={value} onChange={(e) => onChange(e.target.value)}
-          style={{ resize: "none" }}
-        />
+        <textarea className={base} rows={2} placeholder={placeholder} value={value}
+          onChange={(e) => onChange(e.target.value)} style={{ resize: "none" }} />
       ) : (
-        <input
-          type={type} className={base} placeholder={placeholder}
-          value={value} onChange={(e) => onChange(e.target.value)}
-        />
+        <input type={type} className={base} placeholder={placeholder} value={value}
+          onChange={(e) => onChange(e.target.value)} />
       )}
     </div>
   );
