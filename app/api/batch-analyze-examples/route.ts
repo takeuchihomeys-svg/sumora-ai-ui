@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
+import { supabase } from "@/app/lib/supabase";
+import { runKnowledgeCleanup } from "@/app/lib/knowledge-cleanup";
 
 export const maxDuration = 60;
-import { supabase } from "@/app/lib/supabase";
 
 const CRON_SECRET = "hasu-cron-secret-2024";
 
@@ -171,6 +172,18 @@ export async function POST(req: NextRequest) {
       totalAdded += results.reduce((s, n) => s + n, 0);
     }
 
+    // 新規処理があった場合はレスポンス送信後にバックグラウンドでクリーンアップ
+    if (toProcess.length > 0) {
+      after(async () => {
+        try {
+          const result = await runKnowledgeCleanup();
+          console.log("[batch-analyze] auto-cleanup:", JSON.stringify(result));
+        } catch (e) {
+          console.error("[batch-analyze] auto-cleanup error:", e);
+        }
+      });
+    }
+
     return NextResponse.json({
       ok: true,
       total_starred: examples.length,
@@ -178,6 +191,7 @@ export async function POST(req: NextRequest) {
       newly_processed: toProcess.length,
       remaining: unprocessed.length - toProcess.length,
       knowledge_entries_added: totalAdded,
+      cleanup: toProcess.length > 0 ? "scheduled" : "skipped",
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
