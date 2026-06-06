@@ -3,14 +3,21 @@ import { supabase } from "@/app/lib/supabase";
 
 export async function GET() {
   const [{ data, error }, { data: convData }] = await Promise.all([
-    supabase.from("property_customers").select("*").order("created_at", { ascending: false }),
-    supabase.from("conversations").select("property_customer_id").not("property_customer_id", "is", null),
+    supabase.from("property_customers").select("*").order("updated_at", { ascending: false }),
+    supabase
+      .from("conversations")
+      .select("id, property_customer_id, last_message, last_sender, updated_at, account, status")
+      .not("property_customer_id", "is", null),
   ]);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const linkedIds = new Set((convData || []).map((r) => r.property_customer_id).filter(Boolean));
-  const result = (data || []).map((c) => ({ ...c, is_linked: linkedIds.has(c.id) }));
+  const convMap = new Map((convData || []).map((c) => [c.property_customer_id, c]));
+  const result = (data || []).map((c) => ({
+    ...c,
+    is_linked: convMap.has(c.id),
+    linked_conversation: convMap.get(c.id) ?? null,
+  }));
   return NextResponse.json(result);
 }
 
