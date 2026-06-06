@@ -34,6 +34,7 @@ type Customer = {
   floor_plan?: string | null;
   building_age?: number | null;
   other_requests?: string | null;
+  initial_cost_limit?: number | null;
   created_at: string;
   updated_at: string;
   is_linked?: boolean;
@@ -92,6 +93,7 @@ type EditFields = {
   walk_minutes: string;
   move_in_time: string;
   building_age: string;
+  initial_cost_limit: string;
   preferences: string;
   ng_points: string;
   other_requests: string;
@@ -106,7 +108,8 @@ function toEditFields(c: Customer): EditFields {
     rent_max:       c.rent_max       ? String(Math.floor(c.rent_max / 10000)) : "",
     walk_minutes:   c.walk_minutes   ? String(c.walk_minutes) : "",
     move_in_time:   c.move_in_time   ?? "",
-    building_age:   c.building_age   ? String(c.building_age) : "",
+    building_age:      c.building_age      ? String(c.building_age) : "",
+    initial_cost_limit: c.initial_cost_limit ? String(Math.floor(c.initial_cost_limit / 10000)) : "",
     preferences:    c.preferences    ?? "",
     ng_points:      c.ng_points      ?? "",
     other_requests: c.other_requests ?? "",
@@ -191,7 +194,8 @@ export default function CustomersPage() {
       rent_max:       editFields.rent_max       ? Number(editFields.rent_max) * 10000   : null,
       walk_minutes:   editFields.walk_minutes   ? Number(editFields.walk_minutes)       : null,
       move_in_time:   editFields.move_in_time   || null,
-      building_age:   editFields.building_age   ? Number(editFields.building_age)      : null,
+      building_age:      editFields.building_age      ? Number(editFields.building_age)                   : null,
+      initial_cost_limit: editFields.initial_cost_limit ? Number(editFields.initial_cost_limit) * 10000 : null,
       preferences:    editFields.preferences    || null,
       ng_points:      editFields.ng_points      || null,
       other_requests: editFields.other_requests || null,
@@ -337,6 +341,7 @@ export default function CustomersPage() {
                     {c.walk_minutes   && <Chip icon="🚶" text={`${c.walk_minutes}分`} color="purple" />}
                     {c.move_in_time   && <Chip icon="📅" text={c.move_in_time}   color="teal" />}
                     {c.building_age   && <Chip icon="🏢" text={`${c.building_age}年`} color="pink" />}
+                    {c.initial_cost_limit && <Chip icon="💴" text={`初期${Math.floor(c.initial_cost_limit/10000)}万以内`} color="orange" />}
                   </div>
                   {(c.preferences || c.ng_points) && (
                     <div className="space-y-0.5">
@@ -470,6 +475,8 @@ export default function CustomersPage() {
               </div>
               <EditRow label="📅 入居時期" placeholder="例: 7月・来月・なるべく早く"
                 value={editFields.move_in_time} onChange={(v) => setEditFields((f) => f && ({ ...f, move_in_time: v }))} />
+              <EditRow label="💴 初期費用上限（万）" placeholder="例: 30" type="number"
+                value={editFields.initial_cost_limit} onChange={(v) => setEditFields((f) => f && ({ ...f, initial_cost_limit: v }))} />
               <EditRow label="✨ こだわり" placeholder="例: オートロック・ペット可・駐車場あり" textarea
                 value={editFields.preferences} onChange={(v) => setEditFields((f) => f && ({ ...f, preferences: v }))} />
               <EditRow label="❌ NG条件" placeholder="例: 1階NG・木造NG" textarea
