@@ -97,7 +97,7 @@ async function ensureConversation(
       line_user_id: userId,
       customer_name: "名称未設定",
       account: account.key,
-      status: "first_reply",
+      status: "hearing",
       updated_at: now,
     })
     .select("id")
@@ -178,11 +178,17 @@ async function handleTextMessage(
   // 返信きたお客さんを自動で毎日物件出し（hot）に格上げ
   autoUpgradeToHot(db, userId);
 
-  // LINEフォーマット自動検知・解析
+  // LINEフォーマット自動検知・解析 → ステータスを物件提案中に自動昇格
   if (isFormatMessage(text)) {
     void (async () => {
       try { await autoParseFormat(db, userId, text, account); } catch {}
     })();
+    // hearing/first_reply 状態なら proposing に自動昇格
+    await db
+      .from("conversations")
+      .update({ status: "proposing" })
+      .eq("id", convId)
+      .in("status", ["hearing", "first_reply"]);
   }
 }
 

@@ -54,17 +54,17 @@ type SupabaseMessageRow = {
   created_at: string;
 };
 
-// ステータス（5段階）
+// ステータス（4段階: 初回返信とヒアリング中を統合）
 const DETAIL_STATUSES = [
-  { key: "first_reply", label: "初回返信",    color: "bg-sky-100 text-sky-700",       dot: "bg-sky-400" },
-  { key: "hearing",     label: "ヒアリング中", color: "bg-blue-100 text-blue-700",     dot: "bg-blue-400" },
-  { key: "proposing",   label: "物件提案中",   color: "bg-orange-100 text-orange-700", dot: "bg-orange-400" },
-  { key: "applying",    label: "申込・審査中", color: "bg-pink-100 text-pink-700",     dot: "bg-pink-500" },
-  { key: "closed_won",  label: "ご成約",       color: "bg-yellow-100 text-yellow-700", dot: "bg-yellow-400" },
+  { key: "hearing",    label: "ヒアリング中", color: "bg-blue-100 text-blue-700",     dot: "bg-blue-400" },
+  { key: "proposing",  label: "物件提案中",   color: "bg-orange-100 text-orange-700", dot: "bg-orange-400" },
+  { key: "applying",   label: "申込・審査中", color: "bg-pink-100 text-pink-700",     dot: "bg-pink-500" },
+  { key: "closed_won", label: "ご成約",       color: "bg-yellow-100 text-yellow-700", dot: "bg-yellow-400" },
 ];
 
 // 旧ステータスキーの後方互換マッピング
 const STATUS_ALIAS: Record<string, string> = {
+  first_reply:             "hearing",
   condition_hearing:       "hearing",
   property_search:         "hearing",
   property_recommendation: "proposing",
@@ -684,12 +684,12 @@ export default function Home() {
           ? latestMsgTime
           : (dbUpdatedAt || undefined);
 
-      // ⑥ 初回返信の自動設定: スタッフ返信なし & メッセージ5件以内 → first_reply
+      // ⑥ スタッフ返信なし & メッセージ5件以内 → hearing
       const hasStaffReply = relatedMessages.some((m) => m.sender === "staff");
       const autoStatus =
         !hasStaffReply && relatedMessages.length <= 5
-          ? "first_reply"
-          : (conversation.status || "first_reply");
+          ? "hearing"
+          : (conversation.status || "hearing");
 
       return {
         id: String(conversation.id),
@@ -825,7 +825,7 @@ export default function Home() {
         id: "",
         customerName: "",
         lastMessage: "",
-        status: "first_reply",
+        status: "hearing",
         lineUserId: "",
         updatedAt: "",
         messages: [],
@@ -1255,10 +1255,10 @@ export default function Home() {
 
       const lastText = imageUrls.length > 0 ? "[画像]" : textToSend;
 
-      // 初回返信の場合はステータスを first_reply に自動設定
+      // 初回スタッフ返信の場合はステータスを hearing に自動設定
       const isFirstStaffReply = !selectedConversation.messages.some((m) => m.sender === "staff");
       const convUpdate: Record<string, unknown> = { last_message: lastText, last_sender: "staff", updated_at: now.toISOString() };
-      if (isFirstStaffReply) convUpdate.status = "first_reply";
+      if (isFirstStaffReply) convUpdate.status = "hearing";
 
       await supabase
         .from("conversations")
@@ -1273,7 +1273,7 @@ export default function Home() {
                   ...conversation,
                   lastMessage: lastText,
                   lastSender: "staff",
-                  ...(isFirstStaffReply ? { status: "first_reply" } : {}),
+                  ...(isFirstStaffReply ? { status: "hearing" } : {}),
                   updatedAt: now.toISOString(),
                   messages: [...conversation.messages, ...newMessages],
                 }
