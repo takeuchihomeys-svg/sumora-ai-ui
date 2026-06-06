@@ -87,6 +87,21 @@ const URGENCY_ORDER: Record<Urgency, number> = { reply: 0, property: 1, ok: 2, p
 
 function initial(name: string) { return name?.trim()?.charAt(0) ?? "?"; }
 
+function isToday(d?: string | null): boolean {
+  if (!d) return false;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return new Date(d) >= today;
+}
+
+function completedToday(c: Customer): { sent: boolean; viewed: boolean } {
+  return { sent: isToday(c.last_property_sent_at), viewed: isToday(c.property_viewed_at) };
+}
+
+function isDoneToday(c: Customer): boolean {
+  const { sent, viewed } = completedToday(c);
+  return sent || viewed;
+}
+
 type EditFields = {
   desired_area: string; floor_plan: string;
   rent_min: string; rent_max: string;
@@ -122,6 +137,7 @@ export default function CustomersPage() {
   const [expandedId, setExpandedId]     = useState<string | null>(null);
   const [sentUpdating, setSentUpdating]   = useState<string | null>(null);
   const [viewedUpdating, setViewedUpdating] = useState<string | null>(null);
+  const [showCompleted, setShowCompleted]   = useState(true);
 
   const [showAdd, setShowAdd]       = useState(false);
   const [newName, setNewName]       = useState("");
@@ -140,10 +156,18 @@ export default function CustomersPage() {
   };
   useEffect(() => { fetchCustomers(); }, []);
 
-  const sorted = useMemo(() => {
-    const base = filterLinked ? customers.filter((c) => c.is_linked) : customers;
-    return [...base].sort((a, b) => URGENCY_ORDER[urgency(a)] - URGENCY_ORDER[urgency(b)]);
-  }, [customers, filterLinked]);
+  const base = useMemo(() =>
+    filterLinked ? customers.filter((c) => c.is_linked) : customers,
+  [customers, filterLinked]);
+
+  const completedList = useMemo(() =>
+    base.filter((c) => isDoneToday(c)),
+  [base]);
+
+  const sorted = useMemo(() =>
+    base.filter((c) => !isDoneToday(c))
+      .sort((a, b) => URGENCY_ORDER[urgency(a)] - URGENCY_ORDER[urgency(b)]),
+  [base]);
 
   const linkedCount = customers.filter((c) => c.is_linked).length;
   const replyCount  = customers.filter((c) => urgency(c) === "reply").length;
@@ -263,6 +287,69 @@ export default function CustomersPage() {
           ))}
         </div>
       </div>
+
+      {/* ── 完了セクション ── */}
+      {!loading && completedList.length > 0 && (
+        <div className="mx-3 mt-2.5">
+          <button
+            onClick={() => setShowCompleted((v) => !v)}
+            className="flex w-full items-center justify-between rounded-2xl border border-[#e9edef] bg-white px-4 py-2.5 shadow-sm active:bg-[#f5f6f6]"
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-[13px] font-bold text-[#111b21]">完了</span>
+              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                {completedList.length}件
+              </span>
+            </div>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#90caf9" strokeWidth="2" strokeLinecap="round"
+              className={`transition-transform duration-200 ${showCompleted ? "rotate-180" : ""}`}>
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+
+          {showCompleted && (
+            <div className="mt-1 space-y-1">
+              {completedList.map((c) => {
+                const conv = c.linked_conversation;
+                const { sent, viewed } = completedToday(c);
+                return (
+                  <div key={c.id}
+                    className="flex items-center gap-3 rounded-2xl border border-[#e9edef] bg-white px-4 py-2.5">
+                    {/* アイコン */}
+                    <div className="shrink-0">
+                      {conv?.profile_image_url ? (
+                        <img src={conv.profile_image_url} alt={c.customer_name}
+                          className="h-9 w-9 rounded-full object-cover" />
+                      ) : (
+                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#d9fdd3] text-sm font-bold text-[#0f8f44]">
+                          {initial(c.customer_name)}
+                        </div>
+                      )}
+                    </div>
+                    {/* 名前 */}
+                    <span className="flex-1 truncate text-[13px] font-semibold text-[#111b21]">
+                      {c.customer_name}
+                    </span>
+                    {/* バッジ */}
+                    <div className="flex shrink-0 gap-1.5">
+                      {sent && (
+                        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                          物件送った
+                        </span>
+                      )}
+                      {viewed && (
+                        <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700">
+                          物件確認済
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── List ── */}
       <div className="flex-1 pb-28">
