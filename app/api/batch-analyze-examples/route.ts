@@ -91,8 +91,9 @@ ${sentReply}
       })),
     ];
 
+    let inserted = 0;
     for (const entry of entries) {
-      await supabase.from("ai_reply_knowledge").insert({
+      const { error: insErr } = await supabase.from("ai_reply_knowledge").insert({
         category: entry.category,
         title: entry.title,
         content: entry.content,
@@ -100,8 +101,13 @@ ${sentReply}
         conversation_state: conversationState || null,
         source_example_id: exampleId,
       });
+      if (insErr) {
+        console.error("[batch-analyze] insert error:", insErr.message, "code:", insErr.code);
+      } else {
+        inserted++;
+      }
     }
-    return entries.length;
+    return inserted;
   } catch {
     return 0;
   }
