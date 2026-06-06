@@ -169,8 +169,7 @@ function buildGenerationMessages(
   nextState: string,
   analysis: string,
   knowledge: string,
-  examples: string,
-  phrases: string
+  examples: string
 ): [SystemMessage, HumanMessage] {
   const nameNote = customerName ? `お客様名：${customerName}さん` : "お客様名：不明";
   void nextState; // 将来用（現在はフェーズガイドに統合）
@@ -200,6 +199,11 @@ function buildGenerationMessages(
     ? `\n【⚠️ スモラが直前に送った内容（必ず踏まえること）】「${lastStaffMsg}」\n→ この返信の後にお客様が上記メッセージを送った。会話の流れを引き継いで自然な続きを生成すること。`
     : "";
 
+  // ⭐実例がある場合: より強い指示に変更
+  const examplesInstruction = examples
+    ? "\n\n【🔴 最重要】上記⭐実例が唯一の文体基準。実例の言い回し・感嘆符(！！)・絵文字・長さをそのまま再現すること。phrase_dictやパターン集より実例を最優先。"
+    : "";
+
   const prompt = `
 ${nameNote}
 【現在の営業フェーズ】${state}
@@ -209,13 +213,13 @@ ${phaseGuide}${approachNote}${staffContextNote}
 ${history || "なし"}
 ${SMORA_QUICK_PATTERNS}
 ${knowledge}
-${examples}${examplesHeader}
-${phrases}
 
 【お客様の最新メッセージ】
 ${customerMessage}
 
-↑スモラの直前返信の流れを踏まえ、このメッセージに対してスモラらしい返信を3行以内で1つ生成してください。`;
+${examples}${examplesInstruction}
+
+↑スモラの直前返信の流れを踏まえ、⭐実例の文体を忠実に再現しながら、このメッセージへのスモラらしい返信を3行以内で1つ生成してください。`;
 
   return [new SystemMessage(GENERATION_SYSTEM), new HumanMessage(prompt)];
 }
@@ -364,29 +368,37 @@ async function fetchKnowledge(state: string): Promise<string> {
 async function fetchExamples(state: string): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
-  const [{ data: starred }, { data: recentFallback }] = await Promise.all([
-    // ⭐優先: 同stateの☆つき（最新5件）
-    supabase.from("ai_reply_examples").select("customer_message, sent_reply")
+  const [{ data: starredSameState }, { data: starredAllState }, { data: recentFallback }] = await Promise.all([
+    // ⭐ 同フェーズの☆つき（最新10件）
+    supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state")
       .in("conversation_state", stateAliases).eq("is_starred", true)
-      .order("created_at", { ascending: false }).limit(5),
-    // フォールバック: 非⭐の最近の送信例（was_ai_usedが正しく記録されるまでの補完）
-    supabase.from("ai_reply_examples").select("customer_message, sent_reply")
+      .order("created_at", { ascending: false }).limit(10),
+    // ⭐ 全フェーズの☆つき（言葉遣い・文体を学習するため）
+    supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state")
+      .eq("is_starred", true)
+      .order("created_at", { ascending: false }).limit(15),
+    // フォールバック: 非⭐の最近の送信例
+    supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state")
       .in("conversation_state", stateAliases).eq("is_starred", false)
-      .order("created_at", { ascending: false }).limit(3),
+      .order("created_at", { ascending: false }).limit(5),
   ]);
 
-  // ⭐がある場合は⭐のみ（最大5件）、なければ最近の例を使用
-  const starredList = starred || [];
-  const fallbackList = starredList.length < 3 ? (recentFallback || []) : [];
+  const sameStateList = starredSameState || [];
+  const allStateList  = (starredAllState || []).filter(
+    (ex) => !sameStateList.some((s) => s.sent_reply === ex.sent_reply)
+  );
+  const fallbackList  = sameStateList.length < 3 ? (recentFallback || []) : [];
 
+  // 同フェーズ☆ → 全フェーズ☆ → フォールバックの優先順で最大12件
   const all = [
-    ...starredList.map((ex) => ({ ...ex, priority: 1 })),
+    ...sameStateList.map((ex) => ({ ...ex, priority: 1 })),
     ...fallbackList.map((ex) => ({ ...ex, priority: 2 })),
-  ].sort((a, b) => a.priority - b.priority).slice(0, 5);
+    ...allStateList.slice(0, 5).map((ex) => ({ ...ex, priority: 3 })),
+  ].sort((a, b) => a.priority - b.priority).slice(0, 12);
 
   if (all.length === 0) return "";
 
-  return "\n\n【⭐ スモラの実際の返信例 — 文体・長さ・感嘆符すべてを完全に踏襲すること】\n" +
+  return "\n\n【⭐ スモラの実際の返信例 — これが唯一の文体・言い回しの基準。以下の例から文体・感嘆符・絵文字・長さを忠実に再現すること】\n" +
     all.map((ex, i) =>
       `[例${i + 1}]\nお客様: 「${ex.customer_message}」\nスモラ: 「${ex.sent_reply}」`
     ).join("\n\n");
@@ -448,13 +460,13 @@ export async function POST(req: NextRequest) {
       .filter(Boolean)
       .join("\n");
 
-    // 並列実行: intent分類 + 状況分析 + 知識取得 + 実例取得 + フレーズ取得
-    const [detectedIntent, analysis, knowledge, examples, phrases] = await Promise.all([
+    // 並列実行: intent分類 + 状況分析 + 知識取得 + 実例取得
+    // phrase_dictionary は除外（古いデータが文体を汚染するため）
+    const [detectedIntent, analysis, knowledge, examples] = await Promise.all([
       classifyIntent(message, currentState, history),
       analyzeCustomerSituation(message, history, currentState, customerName),
       fetchKnowledge(currentState),
       fetchExamples(currentState),
-      fetchPhrases(currentState),
     ]);
 
     const nextState = getNextState(currentState, detectedIntent);
@@ -462,7 +474,7 @@ export async function POST(req: NextRequest) {
     // Sonnetでストリーミング生成
     const messages = buildGenerationMessages(
       message, customerName, history, currentState, nextState,
-      analysis, knowledge, examples, phrases
+      analysis, knowledge, examples
     );
     const genStream = generationModel.stream(messages);
 
