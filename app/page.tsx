@@ -1139,7 +1139,7 @@ export default function Home() {
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
   };
 
-  // メモ・担当者・🔥をlocalStorageから読み込む
+  // メモ・担当者をlocalStorageから読み込む（🔥はSupabaseが正なので読み込まない）
   useEffect(() => {
     try {
       const stored = localStorage.getItem("conv_memos");
@@ -1148,10 +1148,6 @@ export default function Home() {
     try {
       const stored = localStorage.getItem("conv_assignees");
       if (stored) setAssignees(JSON.parse(stored));
-    } catch {}
-    try {
-      const stored = localStorage.getItem("hot_conv_ids");
-      if (stored) setHotConvIds(new Set(JSON.parse(stored)));
     } catch {}
   }, []);
 
@@ -1187,7 +1183,7 @@ export default function Home() {
       const next = new Set(prev);
       const isNowHot = !prev.has(id);
       if (isNowHot) next.add(id); else next.delete(id);
-      try { localStorage.setItem("hot_conv_ids", JSON.stringify([...next])); } catch {}
+      // Supabaseが唯一のソース（localStorageは使わない）
       supabase.from("conversations").update({ is_hot: isNowHot }).eq("id", id).then(() => {});
       return next;
     });
