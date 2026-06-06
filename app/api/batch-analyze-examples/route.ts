@@ -133,17 +133,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 処理済み source_example_id を取得（重複実行防止）
-    // デフォルト1000行制限を回避するため上限を明示設定
-    const { data: processed } = await supabase
-      .from("ai_reply_knowledge")
-      .select("source_example_id")
-      .not("source_example_id", "is", null)
-      .limit(10000);
-
-    const processedIds = new Set(
-      (processed || []).map((r) => r.source_example_id as string)
-    );
+    // 処理済み source_example_id を全ページ取得（anon keyは1000行上限のためページネーション必須）
+    const processedIds = new Set<string>();
+    let page = 0;
+    while (true) {
+      const { data: pageData } = await supabase
+        .from("ai_reply_knowledge")
+        .select("source_example_id")
+        .not("source_example_id", "is", null)
+        .range(page * 1000, page * 1000 + 999);
+      if (!pageData || pageData.length === 0) break;
+      pageData.forEach((r) => { if (r.source_example_id) processedIds.add(r.source_example_id as string); });
+      if (pageData.length < 1000) break;
+      page++;
+    }
     const unprocessed = examples.filter((ex) => !processedIds.has(ex.id as string));
 
     // 1回のリクエストで処理する上限（超過分は次回呼び出しで処理）
