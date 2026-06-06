@@ -173,7 +173,6 @@ function buildGenerationMessages(
   phrases: string
 ): [SystemMessage, HumanMessage] {
   const nameNote = customerName ? `お客様名：${customerName}さん` : "お客様名：不明";
-  const analysisBlock = analysis; // フェーズ別ガイド内で直接使う
   void nextState; // 将来用（現在はフェーズガイドに統合）
 
   // フェーズ別の行動指針を取得
@@ -193,10 +192,18 @@ function buildGenerationMessages(
     } catch { /* ignore */ }
   }
 
+  // スモラの直前返信を履歴から抽出（文脈の引き継ぎに使用）
+  const historyLines = (history || "").split("\n").filter(Boolean);
+  const lastStaffLines = historyLines.filter((l) => l.startsWith("スモラ:"));
+  const lastStaffMsg = lastStaffLines.length > 0 ? lastStaffLines[lastStaffLines.length - 1].replace(/^スモラ:\s*/, "") : null;
+  const staffContextNote = lastStaffMsg
+    ? `\n【⚠️ スモラが直前に送った内容（必ず踏まえること）】「${lastStaffMsg}」\n→ この返信の後にお客様が上記メッセージを送った。会話の流れを引き継いで自然な続きを生成すること。`
+    : "";
+
   const prompt = `
 ${nameNote}
 【現在の営業フェーズ】${state}
-${phaseGuide}${approachNote}
+${phaseGuide}${approachNote}${staffContextNote}
 
 【直近の会話履歴（スモラ自身の返信も含む）】
 ${history || "なし"}
@@ -208,7 +215,7 @@ ${phrases}
 【お客様の最新メッセージ】
 ${customerMessage}
 
-↑このメッセージに対してスモラらしい返信を3行以内で1つ生成してください。`;
+↑スモラの直前返信の流れを踏まえ、このメッセージに対してスモラらしい返信を3行以内で1つ生成してください。`;
 
   return [new SystemMessage(GENERATION_SYSTEM), new HumanMessage(prompt)];
 }
