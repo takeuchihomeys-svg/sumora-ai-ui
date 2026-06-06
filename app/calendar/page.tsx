@@ -16,7 +16,22 @@ type CalendarEvent = {
   end_at: string | null;
   all_day: boolean;
   notes: string;
+  _source: "local";
 };
+
+type DailyTask = {
+  id: string;
+  customer_name: string;
+  content: string;
+  date: string;
+  time: string;
+  end_time: string;
+  done: boolean;
+  management_company: string;
+  _source: "screening_admin";
+};
+
+type AnyEvent = CalendarEvent | DailyTask;
 
 const EVENT_TYPE_CONFIG: Record<EventType, { label: string; color: string; bg: string; emoji: string }> = {
   viewing:      { label: "内覧",   color: "#2196F3", bg: "#e3f2fd", emoji: "🔍" },
@@ -24,6 +39,9 @@ const EVENT_TYPE_CONFIG: Record<EventType, { label: string; color: string; bg: s
   key_handover: { label: "鍵渡し", color: "#FF9800", bg: "#fff3e0", emoji: "🔑" },
   other:        { label: "その他", color: "#9E9E9E", bg: "#f5f5f5", emoji: "📌" },
 };
+
+const SCREENING_COLOR = "#8B5CF6";
+const SCREENING_BG = "#F3E8FF";
 
 const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
 
@@ -52,11 +70,11 @@ export default function CalendarPage() {
   const [month, setMonth] = useState(today.getMonth());
   const [selectedDate, setSelectedDate] = useState<Date>(today);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [dailyTasks, setDailyTasks] = useState<DailyTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
 
-  // フォーム
   const [form, setForm] = useState({
     title: "",
     event_type: "viewing" as EventType,
@@ -65,6 +83,7 @@ export default function CalendarPage() {
     end_at: "",
     all_day: false,
     notes: "",
+    sync_to_screening: false,
   });
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
@@ -103,42 +122,53 @@ export default function CalendarPage() {
   }, []);
 
   useEffect(() => {
-    fetchEvents();
+    fetchAll();
   }, [year, month]);
 
-  const fetchEvents = async () => {
+  const fetchAll = async () => {
     setLoading(true);
     const startOfMonth = new Date(year, month, 1).toISOString();
     const endOfMonth = new Date(year, month + 1, 0, 23, 59, 59).toISOString();
+    const fromDate = `${year}-${String(month + 1).padStart(2, "0")}-01`;
+    const toDate = `${year}-${String(month + 1).padStart(2, "0")}-${String(new Date(year, month + 1, 0).getDate()).padStart(2, "0")}`;
 
-    const { data, error } = await supabase
-      .from("calendar_events")
-      .select("*")
-      .gte("start_at", startOfMonth)
-      .lte("start_at", endOfMonth)
-      .order("start_at", { ascending: true });
+    const [localResult, screeningResult] = await Promise.all([
+      supabase
+        .from("calendar_events")
+        .select("*")
+        .gte("start_at", startOfMonth)
+        .lte("start_at", endOfMonth)
+        .order("start_at", { ascending: true }),
+      fetch(`/api/daily-tasks?from=${fromDate}&to=${toDate}`).then(r => r.ok ? r.json() : []),
+    ]);
 
-    if (!error && data) {
-      setEvents(data as CalendarEvent[]);
+    if (!localResult.error && localResult.data) {
+      setEvents((localResult.data as Omit<CalendarEvent, "_source">[]).map(e => ({ ...e, _source: "local" as const })));
+    }
+    if (Array.isArray(screeningResult)) {
+      setDailyTasks(screeningResult.map((t: Omit<DailyTask, "_source">) => ({ ...t, _source: "screening_admin" as const })));
     }
     setLoading(false);
   };
 
-  // カレンダーグリッド生成
   const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-
   const cells: (Date | null)[] = [
     ...Array(firstDay).fill(null),
     ...Array.from({ length: daysInMonth }, (_, i) => new Date(year, month, i + 1)),
   ];
   while (cells.length % 7 !== 0) cells.push(null);
 
-  const eventsByDate: Record<string, CalendarEvent[]> = {};
+  const eventsByDate: Record<string, AnyEvent[]> = {};
   for (const ev of events) {
     const key = ev.start_at.slice(0, 10);
     if (!eventsByDate[key]) eventsByDate[key] = [];
     eventsByDate[key].push(ev);
+  }
+  for (const task of dailyTasks) {
+    const key = task.date;
+    if (!eventsByDate[key]) eventsByDate[key] = [];
+    eventsByDate[key].push(task);
   }
 
   const selectedKey = formatDateKey(selectedDate);
@@ -164,6 +194,7 @@ export default function CalendarPage() {
       end_at: "",
       all_day: false,
       notes: "",
+      sync_to_screening: false,
     });
     setEditingEvent(null);
     setFormError("");
@@ -179,6 +210,7 @@ export default function CalendarPage() {
       end_at: ev.end_at ? ev.end_at.slice(0, 16) : "",
       all_day: ev.all_day,
       notes: ev.notes || "",
+      sync_to_screening: false,
     });
     setEditingEvent(ev);
     setFormError("");
@@ -191,6 +223,10 @@ export default function CalendarPage() {
 
     setSaving(true);
     setFormError("");
+
+    const startDate = new Date(form.start_at);
+    const dateStr = form.start_at.slice(0, 10);
+    const timeStr = form.all_day ? "" : `${String(startDate.getHours()).padStart(2, "0")}:${String(startDate.getMinutes()).padStart(2, "0")}`;
 
     const payload = {
       title: form.title.trim(),
@@ -209,17 +245,45 @@ export default function CalendarPage() {
       ({ error } = await supabase.from("calendar_events").insert(payload));
     }
 
-    setSaving(false);
-    if (error) { setFormError("保存に失敗しました"); return; }
+    if (error) { setSaving(false); setFormError("保存に失敗しました"); return; }
 
+    // 申込ツールにも同期
+    if (form.sync_to_screening && !editingEvent) {
+      const cfg = EVENT_TYPE_CONFIG[form.event_type];
+      const endTimeStr = form.end_at
+        ? `${String(new Date(form.end_at).getHours()).padStart(2, "0")}:${String(new Date(form.end_at).getMinutes()).padStart(2, "0")}`
+        : "";
+      await fetch("/api/daily-tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customer_name: form.customer_name.trim(),
+          content: `${cfg.emoji} ${form.title.trim()}${form.customer_name.trim() ? ` — ${form.customer_name.trim()}` : ""}`,
+          date: dateStr,
+          time: timeStr,
+          end_time: endTimeStr,
+        }),
+      });
+    }
+
+    setSaving(false);
     setShowModal(false);
-    fetchEvents();
+    fetchAll();
   };
 
   const deleteEvent = async (id: string) => {
     if (!confirm("この予定を削除しますか？")) return;
     await supabase.from("calendar_events").delete().eq("id", id);
-    fetchEvents();
+    fetchAll();
+  };
+
+  const toggleTaskDone = async (task: DailyTask) => {
+    await fetch(`/api/daily-tasks?id=${task.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ done: !task.done }),
+    });
+    setDailyTasks(prev => prev.map(t => t.id === task.id ? { ...t, done: !t.done } : t));
   };
 
   const isToday = (d: Date) =>
@@ -251,7 +315,6 @@ export default function CalendarPage() {
           </button>
         </div>
 
-        {/* 曜日ヘッダー */}
         <div className="mt-2 grid grid-cols-7 text-center">
           {WEEKDAYS.map((w, i) => (
             <div key={w} className={`text-xs font-semibold ${i === 0 ? "text-red-300" : i === 6 ? "text-blue-200" : "text-white/80"}`}>
@@ -268,6 +331,8 @@ export default function CalendarPage() {
             if (!date) return <div key={`empty-${idx}`} className="h-14 border-b border-r border-gray-100" />;
             const key = formatDateKey(date);
             const dayEvents = eventsByDate[key] || [];
+            const localCount = dayEvents.filter(e => e._source === "local").length;
+            const screeningCount = dayEvents.filter(e => e._source === "screening_admin").length;
             const dow = date.getDay();
 
             return (
@@ -292,15 +357,15 @@ export default function CalendarPage() {
                   {date.getDate()}
                 </span>
 
-                {/* イベントドット */}
                 <div className="mt-0.5 flex gap-0.5">
-                  {dayEvents.slice(0, 3).map((ev) => (
-                    <span
-                      key={ev.id}
-                      className="h-1.5 w-1.5 rounded-full"
-                      style={{ backgroundColor: EVENT_TYPE_CONFIG[ev.event_type]?.color ?? "#9E9E9E" }}
-                    />
+                  {/* ローカルイベントのドット */}
+                  {Array.from({ length: Math.min(localCount, 2) }).map((_, i) => (
+                    <span key={`l${i}`} className="h-1.5 w-1.5 rounded-full bg-blue-400" />
                   ))}
+                  {/* 申込ツールのドット */}
+                  {screeningCount > 0 && (
+                    <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: SCREENING_COLOR }} />
+                  )}
                 </div>
               </button>
             );
@@ -324,11 +389,51 @@ export default function CalendarPage() {
         ) : (
           <div className="mb-4 flex flex-col gap-2">
             {selectedEvents.map((ev) => {
-              const cfg = EVENT_TYPE_CONFIG[ev.event_type] ?? EVENT_TYPE_CONFIG.other;
+              if (ev._source === "screening_admin") {
+                const task = ev as DailyTask;
+                return (
+                  <div
+                    key={task.id}
+                    className="flex items-start gap-3 rounded-2xl bg-white px-4 py-3 shadow-sm"
+                  >
+                    <button
+                      onClick={() => toggleTaskDone(task)}
+                      className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-base"
+                      style={{ backgroundColor: SCREENING_BG }}
+                    >
+                      {task.done ? "✅" : "📋"}
+                    </button>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="rounded-full px-2 py-0.5 text-[10px] font-bold text-white"
+                          style={{ backgroundColor: SCREENING_COLOR }}
+                        >
+                          申込ツール
+                        </span>
+                        <span className={`truncate text-[14px] font-semibold ${task.done ? "line-through text-gray-400" : "text-[#111b21]"}`}>
+                          {task.content}
+                        </span>
+                      </div>
+                      {task.customer_name && (
+                        <div className="mt-0.5 text-xs text-[#667781]">👤 {task.customer_name}</div>
+                      )}
+                      {task.time && (
+                        <div className="mt-0.5 text-xs text-[#667781]">
+                          🕐 {task.time}{task.end_time ? ` 〜 ${task.end_time}` : ""}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              }
+
+              const localEv = ev as CalendarEvent;
+              const cfg = EVENT_TYPE_CONFIG[localEv.event_type] ?? EVENT_TYPE_CONFIG.other;
               return (
                 <button
-                  key={ev.id}
-                  onClick={() => openEdit(ev)}
+                  key={localEv.id}
+                  onClick={() => openEdit(localEv)}
                   className="flex items-start gap-3 rounded-2xl bg-white px-4 py-3 text-left shadow-sm"
                 >
                   <span
@@ -345,15 +450,15 @@ export default function CalendarPage() {
                       >
                         {cfg.label}
                       </span>
-                      <span className="truncate text-[15px] font-semibold text-[#111b21]">{ev.title}</span>
+                      <span className="truncate text-[15px] font-semibold text-[#111b21]">{localEv.title}</span>
                     </div>
-                    {ev.customer_name && (
-                      <div className="mt-0.5 text-xs text-[#667781]">👤 {ev.customer_name}</div>
+                    {localEv.customer_name && (
+                      <div className="mt-0.5 text-xs text-[#667781]">👤 {localEv.customer_name}</div>
                     )}
                     <div className="mt-0.5 text-xs text-[#667781]">
-                      {ev.all_day ? "終日" : `${formatTimeJP(ev.start_at)}${ev.end_at ? ` 〜 ${formatTimeJP(ev.end_at)}` : ""}`}
+                      {localEv.all_day ? "終日" : `${formatTimeJP(localEv.start_at)}${localEv.end_at ? ` 〜 ${formatTimeJP(localEv.end_at)}` : ""}`}
                     </div>
-                    {ev.notes && <div className="mt-0.5 truncate text-xs text-[#8696a0]">{ev.notes}</div>}
+                    {localEv.notes && <div className="mt-0.5 truncate text-xs text-[#8696a0]">{localEv.notes}</div>}
                   </div>
                 </button>
               );
@@ -361,7 +466,6 @@ export default function CalendarPage() {
           </div>
         )}
 
-        {/* 新しい予定の作成ボタン */}
         <button
           onClick={openCreate}
           className="flex w-full items-center justify-center gap-2 rounded-2xl py-4 text-[15px] font-bold text-white shadow-md"
@@ -380,7 +484,6 @@ export default function CalendarPage() {
           onClick={(e) => { if (e.target === e.currentTarget) setShowModal(false); }}
         >
           <div className="w-full max-w-lg rounded-t-3xl bg-white shadow-2xl">
-            {/* モーダルヘッダー */}
             <div
               className="flex items-center justify-between rounded-t-3xl px-5 py-4"
               style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}
@@ -468,7 +571,6 @@ export default function CalendarPage() {
                 </button>
               </div>
 
-              {/* 開始日時 */}
               {!form.all_day && (
                 <>
                   <div className="mb-4">
@@ -516,6 +618,34 @@ export default function CalendarPage() {
                 />
               </div>
 
+              {/* 申込ツールへの同期トグル（新規作成時のみ） */}
+              {!editingEvent && (
+                <div
+                  className="mb-4 flex items-center justify-between rounded-xl border-2 px-4 py-3 transition"
+                  style={{
+                    borderColor: form.sync_to_screening ? SCREENING_COLOR : "#d1d7db",
+                    backgroundColor: form.sync_to_screening ? SCREENING_BG : "white",
+                  }}
+                >
+                  <div>
+                    <div className="text-sm font-bold" style={{ color: form.sync_to_screening ? SCREENING_COLOR : "#111b21" }}>
+                      📋 申込ツールにも追加
+                    </div>
+                    <div className="text-xs text-[#8696a0]">管理ツールのカレンダーにも同期</div>
+                  </div>
+                  <button
+                    onClick={() => setForm(f => ({ ...f, sync_to_screening: !f.sync_to_screening }))}
+                    className="relative h-6 w-11 rounded-full transition-colors"
+                    style={{ backgroundColor: form.sync_to_screening ? SCREENING_COLOR : "#d1d7db" }}
+                  >
+                    <span
+                      className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform"
+                      style={{ transform: form.sync_to_screening ? "translateX(20px)" : "translateX(2px)" }}
+                    />
+                  </button>
+                </div>
+              )}
+
               {formError && (
                 <div className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">{formError}</div>
               )}
@@ -526,7 +656,7 @@ export default function CalendarPage() {
                 className="w-full rounded-full py-3.5 text-sm font-bold text-white disabled:opacity-50"
                 style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}
               >
-                {saving ? "保存中..." : editingEvent ? "変更を保存" : "予定を追加する"}
+                {saving ? "保存中..." : editingEvent ? "変更を保存" : form.sync_to_screening ? "予定を追加する（両方に登録）" : "予定を追加する"}
               </button>
             </div>
           </div>
@@ -535,4 +665,3 @@ export default function CalendarPage() {
     </main>
   );
 }
-
