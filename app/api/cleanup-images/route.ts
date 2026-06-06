@@ -2,11 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
 // 期限切れ画像をStorageから削除してimage_urlをnullにする
-// POST /api/cleanup-images  (x-cron-secret 必須)
-// 毎日1回 Cron または手動で呼び出す
+// POST /api/cleanup-images  (x-cron-secret or Vercel cron auth)
+// 毎日3:23 AM にVercel Cronで自動実行
 export async function POST(req: NextRequest) {
   const secret = req.headers.get("x-cron-secret");
-  if (secret !== "hasu-cron-secret-2024") {
+  const authHeader = req.headers.get("authorization");
+  const cronSecret = process.env.CRON_SECRET;
+  const isVercelCron = cronSecret ? authHeader === `Bearer ${cronSecret}` : false;
+  if (secret !== "hasu-cron-secret-2024" && !isVercelCron) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
