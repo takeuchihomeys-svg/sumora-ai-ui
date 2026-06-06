@@ -38,6 +38,7 @@ type Customer = {
   floor_area_min?: number | null;
   property_send_count?: number | null;
   property_viewed_at?: string | null;
+  additional_conditions?: string | null;
   created_at: string;
   updated_at: string;
   is_linked?: boolean;
@@ -202,6 +203,14 @@ export default function CustomersPage() {
       setNewName(""); setNewPhone(""); setNewAssignee(""); setShowAdd(false);
     }
     setAddLoading(false);
+  };
+
+  const clearAdditional = async (id: string) => {
+    await fetch("/api/property-customers", {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, additional_conditions: null }),
+    });
+    setCustomers((p) => p.map((c) => c.id === id ? { ...c, additional_conditions: null } : c));
   };
 
   const markViewed = async (id: string) => {
@@ -451,8 +460,26 @@ export default function CustomersPage() {
                       )}
                     </div>
                   )}
-                  {!c.desired_area && !c.floor_plan && !c.rent_min && !c.rent_max && !c.preferences && !c.ng_points && (
+                  {!c.desired_area && !c.floor_plan && !c.rent_min && !c.rent_max && !c.preferences && !c.ng_points && !c.additional_conditions && (
                     <p className="text-[11px] text-[#bbb]">条件未入力</p>
+                  )}
+
+                  {/* 新着要望（カジュアル更新ログ） */}
+                  {c.additional_conditions && (
+                    <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] font-bold text-amber-700">新着要望</span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); clearAdditional(c.id); }}
+                          className="text-[9px] text-amber-400 active:opacity-60"
+                        >
+                          確認済・クリア
+                        </button>
+                      </div>
+                      {c.additional_conditions.split("\n").map((line, i) => (
+                        <p key={i} className="text-[11px] text-amber-800 leading-relaxed">{line}</p>
+                      ))}
+                    </div>
                   )}
                 </div>
 
