@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "LINE_STAFF_GROUP_ID not configured" }, { status: 500 });
   }
 
-  const token = process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN;
+  const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN;
   if (!token) {
     return NextResponse.json({ ok: false, error: "LINE token not configured" }, { status: 500 });
   }
