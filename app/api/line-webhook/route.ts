@@ -745,9 +745,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const userId = event.source.userId;
 
     if (msgType === "text") {
-      const text = event.message?.text;
-      if (!text) continue;
-      await handleTextMessage(userId, text, matchedAccount);
+      // テキストは sync-from-screening（screening-admin DB webhook）が処理するためスキップ
+      // relay経由で届くが、ここでは処理しない（二重保存防止）
+      continue;
     } else if (msgType === "image") {
       const lineMessageId = event.message?.id;
       if (!lineMessageId) continue;
