@@ -58,9 +58,9 @@ type SupabaseMessageRow = {
   created_at: string;
 };
 
-// ステータス（4段階: 初回返信とヒアリング中を統合）
+// ステータス（4段階）
 const DETAIL_STATUSES = [
-  { key: "hearing",    label: "ヒアリング中", color: "bg-blue-100 text-blue-700",     dot: "bg-blue-400" },
+  { key: "hearing",    label: "初回対応",     color: "bg-blue-100 text-blue-700",     dot: "bg-blue-400" },
   { key: "proposing",  label: "物件提案中",   color: "bg-orange-100 text-orange-700", dot: "bg-orange-400" },
   { key: "applying",   label: "申込・審査中", color: "bg-pink-100 text-pink-700",     dot: "bg-pink-500" },
   { key: "closed_won", label: "ご成約",       color: "bg-yellow-100 text-yellow-700", dot: "bg-yellow-400" },
@@ -1295,10 +1295,15 @@ export default function Home() {
 
       const lastText = imageUrls.length > 0 ? "[画像]" : textToSend;
 
-      // 初回スタッフ返信の場合はステータスを hearing に自動設定
+      // ステータス自動制御
       const isFirstStaffReply = !selectedConversation.messages.some((m) => m.sender === "staff");
+      const currentStatus = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
+      const isSendingImages = imageUrls.length > 0;
       const convUpdate: Record<string, unknown> = { last_message: lastText, last_sender: "staff", updated_at: now.toISOString() };
       if (isFirstStaffReply) convUpdate.status = "hearing";
+      // 画像送信時 & 初回対応中 → 物件提案中に自動昇格
+      if (isSendingImages && currentStatus === "hearing") convUpdate.status = "proposing";
+      const newStatus = convUpdate.status as string | undefined;
 
       await supabase
         .from("conversations")
@@ -1313,7 +1318,7 @@ export default function Home() {
                   ...conversation,
                   lastMessage: lastText,
                   lastSender: "staff",
-                  ...(isFirstStaffReply ? { status: "hearing" } : {}),
+                  ...(newStatus ? { status: newStatus } : {}),
                   updatedAt: now.toISOString(),
                   messages: [...conversation.messages, ...newMessages],
                 }
@@ -1477,9 +1482,14 @@ export default function Home() {
     }
 
     const lastText = text.trim() || "[画像]";
+    // 画像送信時 & 初回対応中 → 物件提案中に自動昇格
+    const sendTextCurrentStatus = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
+    const sendTextUpgrade = !!imageUrl && sendTextCurrentStatus === "hearing";
+    const sendTextUpdate: Record<string, unknown> = { last_message: lastText, updated_at: now.toISOString() };
+    if (sendTextUpgrade) sendTextUpdate.status = "proposing";
     await supabase
       .from("conversations")
-      .update({ last_message: lastText, updated_at: now.toISOString() })
+      .update(sendTextUpdate)
       .eq("id", selectedConversation.id);
 
     setConversations((prev) =>
@@ -1489,6 +1499,7 @@ export default function Home() {
             ? {
                 ...conversation,
                 lastMessage: lastText,
+                ...(sendTextUpgrade ? { status: "proposing" } : {}),
                 updatedAt: now.toISOString(),
                 messages: [...conversation.messages, ...newMessages],
               }
