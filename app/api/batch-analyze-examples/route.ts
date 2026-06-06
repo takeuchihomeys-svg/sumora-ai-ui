@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+
+export const maxDuration = 60;
 import { supabase } from "@/app/lib/supabase";
 
 const CRON_SECRET = "hasu-cron-secret-2024";
@@ -136,24 +138,34 @@ export async function POST(req: NextRequest) {
     );
     const unprocessed = examples.filter((ex) => !processedIds.has(ex.id as string));
 
+    // 1回のリクエストで処理する上限（超過分は次回呼び出しで処理）
+    const BATCH_LIMIT = 15;
+    const toProcess = unprocessed.slice(0, BATCH_LIMIT);
+
+    // 3件並列でHaikuを叩く（レート制限内・タイムアウト回避）
     let totalAdded = 0;
-    for (const ex of unprocessed) {
-      const added = await analyzeOne(
-        ex.id as string,
-        (ex.conversation_state as string) || "first_reply",
-        ex.customer_message as string,
-        ex.sent_reply as string
+    const CONCURRENCY = 3;
+    for (let i = 0; i < toProcess.length; i += CONCURRENCY) {
+      const chunk = toProcess.slice(i, i + CONCURRENCY);
+      const results = await Promise.all(
+        chunk.map((ex) =>
+          analyzeOne(
+            ex.id as string,
+            (ex.conversation_state as string) || "first_reply",
+            ex.customer_message as string,
+            ex.sent_reply as string
+          )
+        )
       );
-      totalAdded += added;
-      // レート制限対策
-      await new Promise((r) => setTimeout(r, 300));
+      totalAdded += results.reduce((s, n) => s + n, 0);
     }
 
     return NextResponse.json({
       ok: true,
       total_starred: examples.length,
       already_processed: examples.length - unprocessed.length,
-      newly_processed: unprocessed.length,
+      newly_processed: toProcess.length,
+      remaining: unprocessed.length - toProcess.length,
       knowledge_entries_added: totalAdded,
     });
   } catch (err) {
