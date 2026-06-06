@@ -36,6 +36,8 @@ type Customer = {
   other_requests?: string | null;
   initial_cost_limit?: number | null;
   floor_area_min?: number | null;
+  property_send_count?: number | null;
+  property_viewed_at?: string | null;
   created_at: string;
   updated_at: string;
   is_linked?: boolean;
@@ -118,7 +120,8 @@ export default function CustomersPage() {
   const [loading, setLoading]     = useState(true);
   const [filterLinked, setFilterLinked] = useState(true);
   const [expandedId, setExpandedId]     = useState<string | null>(null);
-  const [sentUpdating, setSentUpdating] = useState<string | null>(null);
+  const [sentUpdating, setSentUpdating]   = useState<string | null>(null);
+  const [viewedUpdating, setViewedUpdating] = useState<string | null>(null);
 
   const [showAdd, setShowAdd]       = useState(false);
   const [newName, setNewName]       = useState("");
@@ -175,6 +178,20 @@ export default function CustomersPage() {
       setNewName(""); setNewPhone(""); setNewAssignee(""); setShowAdd(false);
     }
     setAddLoading(false);
+  };
+
+  const markViewed = async (id: string) => {
+    setViewedUpdating(id);
+    const now = new Date().toISOString();
+    const res = await fetch("/api/property-customers", {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, property_viewed_at: now, property_send_count: 0 }),
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      setCustomers((p) => p.map((c) => c.id === id ? { ...c, ...updated } : c));
+    }
+    setViewedUpdating(null);
   };
 
   const openEdit = (c: Customer) => { setEditId(c.id); setEditFields(toEditFields(c)); };
@@ -361,6 +378,15 @@ export default function CustomersPage() {
                       className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 active:scale-95 transition-transform disabled:opacity-50"
                     >
                       {sentUpdating === c.id ? "…" : "物件送った"}
+                    </button>
+                  )}
+                  {c.status !== "pending" && (
+                    <button
+                      onClick={() => markViewed(c.id)}
+                      disabled={viewedUpdating === c.id}
+                      className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 active:scale-95 transition-transform disabled:opacity-50"
+                    >
+                      {viewedUpdating === c.id ? "…" : "物件確認した"}
                     </button>
                   )}
                   <button

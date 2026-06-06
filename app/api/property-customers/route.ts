@@ -43,15 +43,46 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "id is required" }, { status: 400 });
   }
 
-  // 物件送信（last_property_sent_at 更新）かつ新規問い合わせ → 毎日物件出しに自動昇格
+  // 物件送信（last_property_sent_at 更新）時の自動ステータス処理
   if ("last_property_sent_at" in fields && !("status" in fields)) {
     const { data: current } = await supabase
       .from("property_customers")
-      .select("status")
+      .select("id, status, property_send_count, line_user_id")
       .eq("id", id)
       .single();
+
     if (current?.status === "new_inquiry") {
+      // 新規問い合わせ → 毎日物件出しに自動昇格
       fields.status = "hot";
+      fields.property_send_count = 1;
+    } else if (current?.status === "hot") {
+      // 毎日物件出しの場合: 返信状況を確認してカウント管理
+      const newCount = ((current.property_send_count as number) ?? 0) + 1;
+
+      // 紐付き会話の最終送信者を確認（返信があればカウントリセット）
+      let lastSender: string | null = null;
+      if (current.line_user_id) {
+        const { data: conv } = await supabase
+          .from("conversations")
+          .select("last_sender")
+          .eq("line_user_id", current.line_user_id as string)
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .single();
+        lastSender = conv?.last_sender ?? null;
+      }
+
+      const hasCustomerReply = lastSender === "customer";
+      if (hasCustomerReply) {
+        // お客さんから返信あり → カウントリセット
+        fields.property_send_count = 1;
+      } else if (newCount >= 2) {
+        // 返信なしで2回送信 → 物件出しにダウングレード
+        fields.status = "property_search";
+        fields.property_send_count = 0;
+      } else {
+        fields.property_send_count = newCount;
+      }
     }
   }
 

@@ -327,6 +327,12 @@ CREATE INDEX IF NOT EXISTS idx_conversations_is_hot ON conversations(is_hot) WHE
 
 -- 部屋の広さ（㎡以上）
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS floor_area_min INTEGER;
+
+-- 物件送信カウント（返信なしで2回送ったら自動ダウングレード用）
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS property_send_count INTEGER DEFAULT 0;
+
+-- 物件確認日時（お客さんが物件を確認した記録）
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS property_viewed_at TIMESTAMPTZ;
 `.trim();
 
 export async function GET() {
