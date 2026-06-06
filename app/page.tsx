@@ -344,6 +344,8 @@ export default function Home() {
   const notifiedCalendarIds = useRef<Set<string>>(new Set());
   const aiDraftRef = useRef<string>("");
   const replyTargetCustomerMsgRef = useRef<string>("");
+  // 送信済みメッセージID → save-reply-example の ID（☆PATCH に使用）
+  const savedExampleIdByMsgId = useRef<Map<string, string>>(new Map());
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conversationsRef = useRef<Conversation[]>([]);
   const handleListScroll = () => {
@@ -1077,16 +1079,27 @@ export default function Home() {
 
     setStarredMsgIds((prev) => new Set([...prev, msgId]));
 
-    fetch("/api/save-reply-example", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        conversationState: selectedConversation.status,
-        customerMessage: prevCustomerMsg.text,
-        sentReply: staffText,
-        isStarred: true,
-      }),
-    }).catch(() => {});
+    const existingExampleId = savedExampleIdByMsgId.current.get(msgId);
+    if (existingExampleId) {
+      // 送信時に記録した example を PATCH → aiDraft が正しく保存されたまま☆を付ける
+      fetch("/api/save-reply-example", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: existingExampleId, is_starred: true }),
+      }).catch(() => {});
+    } else {
+      // 記録がない場合（古いメッセージや別セッション）は従来通り POST
+      fetch("/api/save-reply-example", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationState: selectedConversation.status,
+          customerMessage: prevCustomerMsg.text,
+          sentReply: staffText,
+          isStarred: true,
+        }),
+      }).catch(() => {});
+    }
   };
 
   const openImagePicker = () => {
@@ -1346,7 +1359,9 @@ export default function Home() {
       if (textToSend) {
         // AI生成時はgenerate時点の顧客メッセージを使う（その後に新メッセージが届いても正しい対応先を記録）
         const lastCustomerMsg = replyTargetCustomerMsgRef.current || latestCustomerMessage;
+        const capturedAiDraft = aiDraftRef.current || undefined;
         if (lastCustomerMsg) {
+          // 送信したメッセージの example ID を記録して、後で☆を押したとき PATCH で更新できるようにする
           fetch("/api/save-reply-example", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1354,8 +1369,16 @@ export default function Home() {
               conversationState: selectedConversation.status,
               customerMessage: lastCustomerMsg,
               sentReply: textToSend,
-              aiDraft: aiDraftRef.current || undefined,
+              aiDraft: capturedAiDraft,
             }),
+          }).then(async (r) => {
+            if (!r.ok) return;
+            const saved = await r.json() as { id?: string };
+            // 直近の送信メッセージIDが確定してから記録（newMessages の最初のテキストメッセージ）
+            const textMsgId = newMessages.find((m) => m.sender === "staff" && m.text === textToSend)?.id;
+            if (saved.id && textMsgId) {
+              savedExampleIdByMsgId.current.set(textMsgId, saved.id);
+            }
           }).catch(() => {});
         }
         aiDraftRef.current = "";

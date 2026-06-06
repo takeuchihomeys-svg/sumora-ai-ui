@@ -337,6 +337,38 @@ ${sentReply}${existingList}
   }
 }
 
+// ─── PATCH: 既存レコードを☆に更新して差分学習を再実行 ────────────────────────
+export async function PATCH(req: NextRequest) {
+  const { id, is_starred } = await req.json() as { id: string; is_starred: boolean };
+  if (!id) return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
+
+  // 既存レコードを取得
+  const { data: existing } = await supabase
+    .from("ai_reply_examples")
+    .select("id, conversation_state, customer_message, sent_reply, ai_draft, was_ai_used, was_ai_modified")
+    .eq("id", id)
+    .single();
+
+  if (!existing) return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
+
+  // is_starred を更新
+  await supabase.from("ai_reply_examples").update({ is_starred }).eq("id", id);
+
+  if (!is_starred) return NextResponse.json({ ok: true });
+
+  // ☆追加時 → 星ブーストで再分析（aiDraft があれば差分学習も実行）
+  const jobs: Promise<void>[] = [
+    analyzeAndSaveKnowledge(existing.id, existing.conversation_state, existing.customer_message, existing.sent_reply, true),
+    extractAndSavePhrases(existing.conversation_state, existing.sent_reply, true),
+  ];
+  if (existing.ai_draft) {
+    jobs.push(analyzeDiff(existing.id, existing.conversation_state, existing.customer_message, existing.ai_draft, existing.sent_reply));
+  }
+  await Promise.all(jobs);
+
+  return NextResponse.json({ ok: true });
+}
+
 // ─── POST ────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   const {
