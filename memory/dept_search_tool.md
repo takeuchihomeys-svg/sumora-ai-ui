@@ -455,7 +455,8 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 
 ## 🔁 引き継ぎ事項（次セッションへ）
 
-- 現在のバージョン: **v1.7.0**
+- 現在のバージョン: **v2.4.0**（manifest.json は v2.3.0 のまま・内部バージョン）
+- **✅ 2026-06-07 a34f535 が最も安定したベースライン（竹内悠馬確認済み）**
 - 拡張ツールはChromeに手動インストール済み（開発者モード）
 - 変更後は chrome://extensions で再読み込み必要
 - GitHub push → ローカルで git pull → Chrome再読み込み の流れ
@@ -494,6 +495,9 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 - **itandi PDF重複バグ修正・LINE送信信頼性向上（2026-06-07）**: sendMessageTextのdedup修正。line-webhookでテキストメッセージを直接保存+line_message_id dedup。sync-from-screeningでスキップロジック追加
 - **itandi PDFキャプチャ修正（2026-06-07）**: createObjectURLフックで空typeのBlob（size>=30KB）も補足対象に追加。detached anchorのblob:URL除外を撤廃
 - **レインズGBK002200警告エラー修正（2026-06-07）**: 非結果ページ除外リストにGBK002200追加。console.warn→console.logに変更でChrome拡張エラーログ非表示化
+- **拡張コンテキスト無効化クラッシュ防止（2026-06-07）**: background.js編集後にChromeがSWを自動再起動し既存タブのchrome.runtime.getURL()が「Extension context invalidated」例外を投げて3サイト同時にパネル消滅するバグを修正。underbar.jsのensureIframe()にtry-catch追加・doExpand()にnull guard追加・background.jsのsetupSidePanel()にtry-catch追加
+- **パネル毎回更新問題を修正（2026-06-07）**: underbar.jsをsessionStorage→localStorageに変更。「明示的にたたんだ記録がなければ展開」をリアプロ・itandiにも適用（レインズと同じ動作）。これにより新タブを開くたびにリロード不要になる。v2.4.0
+- **✅ 2026-06-07 時点が最も安定したベースライン（竹内悠馬確認済み）**: git commit a34f535
 
 ---
 
