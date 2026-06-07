@@ -211,15 +211,27 @@
     }
   }
 
+  // ── モーダルを3段階フォールバックで検索 ────────────────────────────
+  function findOpenModal() {
+    return (
+      document.querySelector('.itandi-bb-ui__Modalv2[role="dialog"]') ||
+      document.querySelector('[class*="itandi-bb-ui__Modal"][role="dialog"]') ||
+      document.querySelector('[class*="itandi"][role="dialog"]') ||
+      document.querySelector('[role="dialog"]')
+    );
+  }
+
   // ── 1件のPDFをキャプチャ ─────────────────────────────────────────────
   function captureOnePdf(btn) {
     return new Promise(function (resolve, reject) {
       var pdfTimer;
       var modalObs = null;
+      var pollTimer = null;
       var pdfHandler = null; // クリック直前に生成してタイムスタンプ以降のみ受付
 
       function cleanup() {
         clearTimeout(pdfTimer);
+        clearInterval(pollTimer);
         if (pdfHandler) window.removeEventListener("message", pdfHandler);
         if (modalObs) { modalObs.disconnect(); modalObs = null; }
       }
@@ -245,21 +257,29 @@
             setReactRadio(r12);
             console.log("[AXLX] 12枚ラジオ選択完了 (label fallback)");
           } else {
-            console.warn("[AXLX] 12枚ラジオが見つかりません");
+            // ラジオがない場合もボタン探しに進む（レイアウト選択なしの物件もある）
+            console.warn("[AXLX] 12枚ラジオが見つかりません（スキップして続行）");
           }
         }
 
         sleep(200).then(function () {
+          var modal = findOpenModal();
           var pdfBtn =
+            (modal && modal.querySelector('[class*="ModalFooter"] button:last-child')) ||
+            (modal && modal.querySelector('[class*="Footer"] button:last-child')) ||
             document.querySelector('.itandi-bb-ui__ModalFooter__Right button') ||
             document.querySelector('button.itandi-bb-ui__Button__Variant--primary[type="submit"]') ||
             Array.from(document.querySelectorAll("button")).find(function (b) {
-              return b.textContent.includes("PDFを出力") && b.parentElement !== null;
-            });
+              var t = b.textContent.trim();
+              return (t.includes("PDFを出力") || t.includes("PDF出力") || t === "出力" || t.includes("ダウンロード")) &&
+                     b.parentElement !== null;
+            }) ||
+            // モーダル内の最後の送信ボタン（最終フォールバック）
+            (modal && Array.from(modal.querySelectorAll('button[type="submit"],button')).pop()) || null;
 
           if (pdfBtn) {
+            console.log("[AXLX] PDFボタン発見:", pdfBtn.textContent.trim().slice(0, 30));
             // クリック直前にタイムスタンプを記録し、それ以降のblobのみ受け付ける
-            // CDNキャッシュや以前のセッションのblobを誤キャプチャしないための安全策
             var captureStart = Date.now();
             pdfHandler = function (e) {
               if (!e.data || e.data.from !== "axlx-itandi-pdf") return;
@@ -270,11 +290,11 @@
               }
               cleanup();
               // itandiが生成した <a download="物件名.pdf"> からファイル名を取得
-              // blob URLがhrefにセットされた後にリンクが現れるため少し待つ
               var b64captured = e.data.b64;
               setTimeout(function () {
                 var dlName = null;
                 var dlLink = document.querySelector('a[download$=".pdf"]') ||
+                             document.querySelector('[role="dialog"] a[download]') ||
                              document.querySelector('.itandi-bb-ui__Modalv2 a[download]');
                 if (dlLink) {
                   var fname = dlLink.getAttribute("download") || "";
@@ -286,12 +306,13 @@
             };
             window.addEventListener("message", pdfHandler);
             // axlx-start-pdf-capture を送ってから 60ms 待機してクリック
-            // postMessage は非同期のため、メッセージ処理前に click() が走る競合を防ぐ
             window.postMessage({ from: "axlx-start-pdf-capture" }, "*");
             console.log("[AXLX] PDFを出力クリック (captureStart=" + captureStart + ")");
             setTimeout(function() { pdfBtn.click(); }, 60);
           } else {
-            console.error("[AXLX] PDFを出力ボタンが見つかりません");
+            console.error("[AXLX] PDFを出力ボタンが見つかりません。モーダル内ボタン一覧:",
+              Array.from(document.querySelectorAll('[role="dialog"] button')).map(function(b){ return b.textContent.trim().slice(0,20); })
+            );
             cleanup();
             reject(new Error("「PDFを出力」ボタンが見つかりません"));
           }
@@ -299,21 +320,28 @@
       }
 
       // 物件資料ボタンをクリック
+      console.log("[AXLX] 物件資料ボタンをクリック");
       btn.click();
 
-      // MutationObserver でモーダルの出現を監視
-      // 診断結果: .itandi-bb-ui__Modalv2[role="dialog"] で確実に検知
+      // MutationObserver でモーダルの出現を監視（3段階フォールバック）
       var appeared = false;
-      modalObs = new MutationObserver(function () {
+      function tryDetectModal() {
         if (appeared) return;
-        var modal = document.querySelector('.itandi-bb-ui__Modalv2[role="dialog"]');
+        var modal = findOpenModal();
         if (!modal) return;
         appeared = true;
-        modalObs.disconnect();
-        modalObs = null;
+        if (modalObs) { modalObs.disconnect(); modalObs = null; }
+        clearInterval(pollTimer);
+        console.log("[AXLX] モーダル検出 (class=" + modal.className.slice(0, 60) + ")");
         setTimeout(interactWithModal, 500);
-      });
+      }
+
+      modalObs = new MutationObserver(tryDetectModal);
       modalObs.observe(document.body, { childList: true, subtree: true });
+
+      // MutationObserverが検知できない場合のポーリングバックアップ（500ms毎・最大10秒）
+      pollTimer = setInterval(tryDetectModal, 500);
+      setTimeout(function() { clearInterval(pollTimer); }, 10000);
     });
   }
 
