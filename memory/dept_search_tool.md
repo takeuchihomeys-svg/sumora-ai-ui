@@ -498,6 +498,10 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 - **拡張コンテキスト無効化クラッシュ防止（2026-06-07）**: background.js編集後にChromeがSWを自動再起動し既存タブのchrome.runtime.getURL()が「Extension context invalidated」例外を投げて3サイト同時にパネル消滅するバグを修正。underbar.jsのensureIframe()にtry-catch追加・doExpand()にnull guard追加・background.jsのsetupSidePanel()にtry-catch追加
 - **パネル毎回更新問題を修正（2026-06-07）**: underbar.jsをsessionStorage→localStorageに変更。「明示的にたたんだ記録がなければ展開」をリアプロ・itandiにも適用（レインズと同じ動作）。これにより新タブを開くたびにリロード不要になる。v2.4.0
 - **✅ 2026-06-07 時点が最も安定したベースライン（竹内悠馬確認済み）**: git commit a34f535
+- **itandi PDFキャプチャ 3大バグ修正（2026-06-07）**: (1) itandiDownloadWatcher Mapベース→時刻ベース変数（`itandiWatchExpiry` + `itandiWatchOriginalTab`）に変更 (2) BGサービスワーカーから直接fetch（`host_permissions: itandibb.com/*`）→失敗時のみMAIN worldフォールバック (3) `window.open(https:URL)` を「suppress+fetch」から「passthrough」に変更し `chrome.downloads.onCreated` に委譲。**PDF取得＋LINE送信 実機確認済み（竹内悠馬）✅**
+- **itandi ラジオ選択 5段階フォールバック（2026-06-07）**: `input[name="layoutType"][value="detailed"]`が実DOMに存在しないことが確認済み。5段階フォールバック: (1)`name=layoutType` (2)モーダル内全radio+ラベルテキスト「12枚」「間取り図」 (3)`closest("label")`/`aria-label` (4)`[role="radio"]` (5)最後のradio。`[AXLX] 12枚ラジオが見つかりません`エラー解消。
+- **AIXLINXパネル 白画面バグ 3原因修正（2026-06-07）**: (1) iframeのcompositing layer突き抜け → `iframe.style.visibility="hidden/visible"` でsetSize(false/true)時に制御 (2) `setSize(false)`でdisplay:`"block"` → `"flex"` に修正（ミニオーバーレイのflexboxセンタリング崩壊防止） (3) React SPAページ遷移でwrapがDOMから消えるバグ → MutationObserverでdocument.bodyを監視しwrap消滅時に即再appendChild
+- **underbar.js 常時展開＋ignoreNextCollapseフラグ（2026-06-07）**: ロード時の自動折りたたみ誤動作を防ぐ `ignoreNextCollapse` フラグ追加。拡張コンテキスト無効化時のchrome.runtime.sendMessage リトライロジック追加。
 
 ---
 
