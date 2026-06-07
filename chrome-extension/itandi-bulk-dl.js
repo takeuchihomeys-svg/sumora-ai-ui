@@ -259,26 +259,66 @@
           return false;
         }
 
+        // ── ラジオ選択（5段階フォールバック） ─────────────────────────────
+        var modal = findOpenModal();
+        var modalEl = modal || document;
+
+        // フォールバック1: 旧セレクタ（name=layoutType, value=detailed）
         var radio12 = document.querySelector('input[name="layoutType"][value="detailed"]');
-        if (radio12) {
-          var usedLabel = clickRadioLabel(radio12);
-          console.log("[AXLX] 12枚ラジオ選択完了 (layoutType=detailed, label=" + usedLabel + ")");
-          setStatusBar("ラジオ選択(12枚)・PDFボタン待ち...");
-        } else {
-          var allRadios = Array.from(document.querySelectorAll('input[name="layoutType"]'));
-          console.warn("[AXLX] layoutType=detailed が見つからない。利用可能:", allRadios.map(function(r){ return (r.name||"?")+"="+r.value; }).join(", "));
-          var r12 = allRadios.find(function (r) {
-            return r.labels && r.labels[0] && r.labels[0].textContent.includes("12枚");
+
+        // フォールバック2: モーダル内全ラジオ（name/value問わず）からラベルテキストで検索
+        if (!radio12) {
+          var allModalInputRadios = Array.from(modalEl.querySelectorAll('input[type="radio"]'));
+          // 診断: モーダル内の全ラジオ情報をログ（name/value/labelが判明する）
+          console.warn("[AXLX] layoutType=detailed 未発見。モーダル内ラジオ全件:",
+            allModalInputRadios.map(function(r) {
+              var lbl = (r.labels && r.labels[0]) ? r.labels[0].textContent.trim() : "?";
+              return "name=" + (r.name || "?") + " value=" + (r.value || "?") + " label=" + lbl;
+            }).join(" | ") || "（ラジオなし）"
+          );
+          radio12 = allModalInputRadios.find(function(r) {
+            // labels[0] → closest("label") → aria-label の優先順で取得
+            var labelEl = (r.labels && r.labels[0]) || (r.closest ? r.closest("label") : null);
+            var lbl = labelEl ? labelEl.textContent : (r.getAttribute("aria-label") || "");
+            return lbl.includes("12枚") || lbl.includes("間取り図");
+          }) || null;
+          if (radio12) {
+            console.log("[AXLX] ラジオ発見 (label=12枚/間取り図):", radio12.name, "=", radio12.value);
+          } else if (allModalInputRadios.length > 0) {
+            // フォールバック2b: 最後の input[type=radio]（最も詳細な選択肢が末尾の可能性）
+            radio12 = allModalInputRadios[allModalInputRadios.length - 1];
+            console.warn("[AXLX] 12枚ラベルなし。最後のラジオを選択:", radio12.name, "=", radio12.value);
+          }
+        }
+
+        // フォールバック3: role="radio" 要素（MUI や Headless UI のカスタムラジオ）
+        if (!radio12) {
+          var ariaRadios = Array.from(modalEl.querySelectorAll('[role="radio"]'));
+          console.warn("[AXLX] input[type=radio]なし。role=radio件数:", ariaRadios.length,
+            ariaRadios.map(function(el){ return '"' + el.textContent.trim().slice(0, 20) + '"'; }).join(", ")
+          );
+          var ar12 = ariaRadios.find(function(el) {
+            var t = el.textContent.trim();
+            return t.includes("12枚") || t.includes("間取り図");
           });
-          if (r12) {
-            clickRadioLabel(r12);
-            console.log("[AXLX] 12枚ラジオ選択完了 (label fallback)");
-            setStatusBar("ラジオ選択(12枚 fallback)・PDFボタン待ち...");
+          if (ar12) { ar12.click(); console.log("[AXLX] role=radio クリック:", ar12.textContent.trim().slice(0,20)); setStatusBar("ラジオ選択(role=radio)・PDFボタン待ち..."); }
+          else if (ariaRadios.length > 0) {
+            // フォールバック4: 最後のrole=radioを選択（最も詳細な選択肢が末尾の場合）
+            ariaRadios[ariaRadios.length - 1].click();
+            console.log("[AXLX] role=radio 最後の選択肢クリック:", ariaRadios[ariaRadios.length - 1].textContent.trim().slice(0,20));
+            setStatusBar("ラジオ(最終選択肢)・PDFボタン待ち...");
           } else {
-            // ラジオがない場合もボタン探しに進む（レイアウト選択なしの物件もある）
-            console.warn("[AXLX] 12枚ラジオが見つかりません（スキップして続行）。モーダル内ラジオ全件:", allRadios.length);
+            // モーダル内の全input要素もログ（何があるか把握）
+            var allInputs = Array.from(modalEl.querySelectorAll("input,select"));
+            console.warn("[AXLX] ラジオ系要素ゼロ。モーダル内input全件:", allInputs.map(function(el){ return el.tagName + " type=" + el.type + " name=" + el.name; }).join(", "));
             setStatusBar("ラジオ未発見・PDFボタン探索中...");
           }
+        }
+
+        if (radio12) {
+          var usedLabel = clickRadioLabel(radio12);
+          console.log("[AXLX] 12枚ラジオ選択完了 label=" + usedLabel);
+          setStatusBar("ラジオ選択(12枚)・PDFボタン待ち...");
         }
 
         // ラジオ変更がReact stateに反映されるまで500ms待機してからPDFボタンを探す
