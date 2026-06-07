@@ -85,7 +85,8 @@ async function ensureConversation(
 
   if (convRows && convRows.length > 0) {
     const convId = convRows[0].id as string;
-    if (convRows[0].account !== account.key) {
+    // アカウント未設定の場合のみ更新（手動切り替え済みを上書きしない）
+    if (!convRows[0].account) {
       await db.from("conversations").update({ account: account.key }).eq("id", convId);
     }
     return convId;
