@@ -113,11 +113,12 @@
     iframe = document.createElement("iframe");
     iframe.src = popupUrl;
     Object.assign(iframe.style, {
-      flex:      "1",
-      width:     "100%",
-      border:    "none",
-      display:   "block",
-      minHeight: "0",
+      flex:       "1",
+      width:      "100%",
+      border:     "none",
+      display:    "block",
+      minHeight:  "0",
+      visibility: "hidden", // setSize(true)で表示。ミニ時にcompositing layerが突き抜けるのを防止
     });
     iframe.addEventListener("load", () => {
       if (pendingExpand) {
@@ -222,12 +223,18 @@
       dragBar.style.display       = "flex";
       resizeHandle.style.display  = "block";
       miniOverlay.style.display   = "none";
+      // ミニ時に非表示にしたiframeを復元（visibility:hiddenで状態保持していたもの）
+      if (iframe) iframe.style.visibility = "visible";
     } else {
       wrap.style.setProperty("width",  MINI + "px", "important");
       wrap.style.setProperty("height", MINI + "px", "important");
       dragBar.style.display       = "none";
       resizeHandle.style.display  = "none";
-      miniOverlay.style.display   = "block";
+      // display:"flex" で中央揃えを維持（"block"だとAIXLINXテキストが左上に寄る）
+      miniOverlay.style.display   = "flex";
+      // iframeをvisibility:hiddenに（display:noneだと状態が失われる）
+      // iframeのcompositing layerがminiOverlayを突き抜けて白く見えるのを防止
+      if (iframe) iframe.style.visibility = "hidden";
     }
     persist();
   }
@@ -339,6 +346,16 @@
       ta.remove();
     }
   });
+
+  // ── SPA対策: itandiのReact遷移でbodyが書き換えられてもwrapを復元 ────────
+  // itandi BBはSPA。ページ遷移時にReactがdocument.bodyの子要素を入れ替えると
+  // wrapがDOMから消えて白画面になる。MutationObserverで消えたら即再追加する。
+  const _bodyObs = new MutationObserver(function () {
+    if (wrap.parentNode !== document.body) {
+      document.body.appendChild(wrap);
+    }
+  });
+  _bodyObs.observe(document.body, { childList: true });
 
   // ── page-script.js からの完了通知を popup.js に中継 ──────────────────
   window.addEventListener("message", function(e) {
