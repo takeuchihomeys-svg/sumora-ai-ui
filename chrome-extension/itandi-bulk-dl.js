@@ -244,17 +244,26 @@
       // モーダル内で「12枚」ラジオ選択 → PDFを出力クリック
       function interactWithModal() {
         // ── 「間取り図＋写真12枚」ラジオ選択 ────────────────────────────
+        // 黄金ルール#1: MUI hidden radioはlabel.click()が正解（inp.click()は無効）
+        function clickRadioLabel(inputEl) {
+          var lbl = inputEl.closest ? inputEl.closest("label") : null;
+          if (!lbl && inputEl.labels && inputEl.labels[0]) lbl = inputEl.labels[0];
+          if (lbl) { lbl.click(); return true; }
+          setReactRadio(inputEl); // labelが見つからない場合のフォールバック
+          return false;
+        }
+
         var radio12 = document.querySelector('input[name="layoutType"][value="detailed"]');
         if (radio12) {
-          setReactRadio(radio12);
-          console.log("[AXLX] 12枚ラジオ選択完了 (layoutType=detailed)");
+          var usedLabel = clickRadioLabel(radio12);
+          console.log("[AXLX] 12枚ラジオ選択完了 (layoutType=detailed, label=" + usedLabel + ")");
         } else {
           var allRadios = Array.from(document.querySelectorAll('input[name="layoutType"]'));
           var r12 = allRadios.find(function (r) {
             return r.labels && r.labels[0] && r.labels[0].textContent.includes("12枚");
           });
           if (r12) {
-            setReactRadio(r12);
+            clickRadioLabel(r12);
             console.log("[AXLX] 12枚ラジオ選択完了 (label fallback)");
           } else {
             // ラジオがない場合もボタン探しに進む（レイアウト選択なしの物件もある）
@@ -262,7 +271,13 @@
           }
         }
 
-        sleep(200).then(function () {
+        // ラジオ変更がReact stateに反映されるまで500ms待機してからPDFボタンを探す
+        // PDFボタンが未描画の場合は250msごとにポーリング（最大3秒）
+        var pdfPollTries = 0;
+        var maxPdfPollTries = 12; // 12 × 250ms = 3秒
+
+        function findAndClickPdf() {
+          pdfPollTries++;
           var modal = findOpenModal();
           var pdfBtn =
             (modal && modal.querySelector('[class*="ModalFooter"] button:last-child')) ||
@@ -277,46 +292,55 @@
             // モーダル内の最後の送信ボタン（最終フォールバック）
             (modal && Array.from(modal.querySelectorAll('button[type="submit"],button')).pop()) || null;
 
-          if (pdfBtn) {
-            console.log("[AXLX] PDFボタン発見:", pdfBtn.textContent.trim().slice(0, 30));
-            // クリック直前にタイムスタンプを記録し、それ以降のblobのみ受け付ける
-            var captureStart = Date.now();
-            pdfHandler = function (e) {
-              if (!e.data || e.data.from !== "axlx-itandi-pdf") return;
-              // ts が付いている場合はクリック前のものを除外
-              if (typeof e.data.ts === "number" && e.data.ts < captureStart) {
-                console.log("[AXLX] 古いblobをスキップ (ts=" + e.data.ts + " < start=" + captureStart + ")");
-                return;
-              }
-              cleanup();
-              // itandiが生成した <a download="物件名.pdf"> からファイル名を取得
-              var b64captured = e.data.b64;
-              setTimeout(function () {
-                var dlName = null;
-                var dlLink = document.querySelector('a[download$=".pdf"]') ||
-                             document.querySelector('[role="dialog"] a[download]') ||
-                             document.querySelector('.itandi-bb-ui__Modalv2 a[download]');
-                if (dlLink) {
-                  var fname = dlLink.getAttribute("download") || "";
-                  dlName = fname.replace(/\.pdf$/i, "").trim() || null;
-                  console.log("[AXLX] 物件名(download属性):", dlName);
-                }
-                resolve({ b64: b64captured, name: dlName });
-              }, 250);
-            };
-            window.addEventListener("message", pdfHandler);
-            // axlx-start-pdf-capture を送ってから 60ms 待機してクリック
-            window.postMessage({ from: "axlx-start-pdf-capture" }, "*");
-            console.log("[AXLX] PDFを出力クリック (captureStart=" + captureStart + ")");
-            setTimeout(function() { pdfBtn.click(); }, 60);
-          } else {
-            console.error("[AXLX] PDFを出力ボタンが見つかりません。モーダル内ボタン一覧:",
+          if (!pdfBtn) {
+            if (pdfPollTries < maxPdfPollTries) {
+              console.log("[AXLX] PDFボタン待機中... (" + pdfPollTries + "/" + maxPdfPollTries + ")");
+              setTimeout(findAndClickPdf, 250);
+              return;
+            }
+            console.error("[AXLX] PDFを出力ボタンが見つかりません（ポーリング終了）。モーダル内ボタン一覧:",
               Array.from(document.querySelectorAll('[role="dialog"] button')).map(function(b){ return b.textContent.trim().slice(0,20); })
             );
             cleanup();
             reject(new Error("「PDFを出力」ボタンが見つかりません"));
+            return;
           }
-        });
+
+          console.log("[AXLX] PDFボタン発見:", pdfBtn.textContent.trim().slice(0, 30), "(試行" + pdfPollTries + "回目)");
+          // クリック直前にタイムスタンプを記録し、それ以降のblobのみ受け付ける
+          var captureStart = Date.now();
+          pdfHandler = function (e) {
+            if (!e.data || e.data.from !== "axlx-itandi-pdf") return;
+            // ts が付いている場合はクリック前のものを除外
+            if (typeof e.data.ts === "number" && e.data.ts < captureStart) {
+              console.log("[AXLX] 古いblobをスキップ (ts=" + e.data.ts + " < start=" + captureStart + ")");
+              return;
+            }
+            cleanup();
+            // itandiが生成した <a download="物件名.pdf"> からファイル名を取得
+            var b64captured = e.data.b64;
+            setTimeout(function () {
+              var dlName = null;
+              var dlLink = document.querySelector('a[download$=".pdf"]') ||
+                           document.querySelector('[role="dialog"] a[download]') ||
+                           document.querySelector('.itandi-bb-ui__Modalv2 a[download]');
+              if (dlLink) {
+                var fname = dlLink.getAttribute("download") || "";
+                dlName = fname.replace(/\.pdf$/i, "").trim() || null;
+                console.log("[AXLX] 物件名(download属性):", dlName);
+              }
+              resolve({ b64: b64captured, name: dlName });
+            }, 250);
+          };
+          window.addEventListener("message", pdfHandler);
+          // axlx-start-pdf-capture を送ってから 60ms 待機してクリック
+          window.postMessage({ from: "axlx-start-pdf-capture" }, "*");
+          console.log("[AXLX] PDFを出力クリック (captureStart=" + captureStart + ")");
+          setTimeout(function() { pdfBtn.click(); }, 60);
+        }
+
+        // ラジオ選択後500ms待機してからPDFボタン探索開始
+        setTimeout(findAndClickPdf, 500);
       }
 
       // 物件資料ボタンをクリック
@@ -333,7 +357,8 @@
         if (modalObs) { modalObs.disconnect(); modalObs = null; }
         clearInterval(pollTimer);
         console.log("[AXLX] モーダル検出 (class=" + modal.className.slice(0, 60) + ")");
-        setTimeout(interactWithModal, 500);
+        // 黄金ルール#4: itandiモーダルは1000msでは描画未完了→2000ms待機
+        setTimeout(interactWithModal, 2000);
       }
 
       modalObs = new MutationObserver(tryDetectModal);
