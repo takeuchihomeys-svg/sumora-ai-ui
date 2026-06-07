@@ -70,9 +70,21 @@ function isFormatMessage(text: string): boolean {
   return hasNumbered || hasKeyword;
 }
 
-// 内覧・内見意思ありキーワード検知
+// 内覧・内見・申込意思ありキーワード検知
 function isNaikanIntent(text: string): boolean {
-  const keywords = ["内覧", "内見", "見に行", "見学", "見たい", "行きたい", "申込", "申し込", "決めたい", "ここにし", "これにし"];
+  const keywords = [
+    // 内覧・内見系
+    "内覧", "内見", "見に行", "見学", "見せてほしい", "見せてください", "お部屋見",
+    // 行きたい系
+    "見たい", "行きたい",
+    // 気に入り系
+    "気に入り", "気に入った", "気にいり", "気にいった",
+    // 申込系
+    "申込", "申し込", "申込み",
+    // 決定系
+    "決めたい", "決めました", "決めます", "決まり", "ここにし", "これにし",
+    "ここで決", "これで決", "ここにします", "これにします",
+  ];
   return keywords.some(kw => text.includes(kw));
 }
 
