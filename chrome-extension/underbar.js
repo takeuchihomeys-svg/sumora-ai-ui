@@ -218,6 +218,7 @@
     expanded = exp;
     if (exp) {
       clampHeight(); // 展開時に画面外にはみ出ないよう高さを調整
+      wrap.style.background = "#fff"; // ミニ時に変えた背景を戻す
       wrap.style.setProperty("width",  panelW + "px", "important");
       wrap.style.setProperty("height", (panelH + DRAG_H) + "px", "important");
       dragBar.style.display       = "flex";
@@ -226,14 +227,28 @@
       // ミニ時に非表示にしたiframeを復元（visibility:hiddenで状態保持していたもの）
       if (iframe) iframe.style.visibility = "visible";
     } else {
+      // 展開→ミニ: transition を一時オフにして即座に100×100へスナップ
+      // （アニメーション中に miniOverlay の inset:0 が wrap サイズに追随しないバグを防止）
+      wrap.style.transition = "none";
+      // wrap 背景をグラデーションに（miniOverlay が fill できない場合の保険）
+      wrap.style.background = "linear-gradient(135deg,#0a1628,#1565C0)";
       wrap.style.setProperty("width",  MINI + "px", "important");
       wrap.style.setProperty("height", MINI + "px", "important");
-      dragBar.style.display       = "none";
-      resizeHandle.style.display  = "none";
+      // 次フレームで transition を復元（展開アニメーションのため）
+      requestAnimationFrame(function () {
+        wrap.style.transition = "width 0.22s ease, height 0.22s ease";
+      });
+      dragBar.style.display      = "none";
+      resizeHandle.style.display = "none";
+      // miniOverlay の位置を !important で確定（itandi ページ CSS による上書き防止）
+      miniOverlay.style.setProperty("position", "absolute", "important");
+      miniOverlay.style.setProperty("top",    "0", "important");
+      miniOverlay.style.setProperty("right",  "0", "important");
+      miniOverlay.style.setProperty("bottom", "0", "important");
+      miniOverlay.style.setProperty("left",   "0", "important");
       // display:"flex" で中央揃えを維持（"block"だとAIXLINXテキストが左上に寄る）
-      miniOverlay.style.display   = "flex";
+      miniOverlay.style.display  = "flex";
       // iframeをvisibility:hiddenに（display:noneだと状態が失われる）
-      // iframeのcompositing layerがminiOverlayを突き抜けて白く見えるのを防止
       if (iframe) iframe.style.visibility = "hidden";
     }
     persist();
