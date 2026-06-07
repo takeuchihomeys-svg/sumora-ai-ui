@@ -124,8 +124,8 @@
       if (pendingExpand) {
         pendingExpand = false;
         setTimeout(() => {
-          // expand-from-parent 送信直前に再セット（popup.jsの初期化collapse競合を防止）
-          ignoreNextCollapse = true;
+          // ignoreNextCollapse はensureIframe()で1回だけセット済み（ここでは再セットしない）
+          // ここで再セットするとユーザーの最初のminimize操作まで吸収されてしまう
           setSize(true);
           iframe.contentWindow.postMessage(
             { from: "underbar-parent", action: "expand-from-parent" }, "*"
