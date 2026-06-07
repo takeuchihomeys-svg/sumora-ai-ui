@@ -335,6 +335,10 @@
           window.addEventListener("message", pdfHandler);
           // axlx-start-pdf-capture を送ってから 60ms 待機してクリック
           window.postMessage({ from: "axlx-start-pdf-capture" }, "*");
+          // cross-origin iframeにも同シグナルを送信（PDF生成がiframe内の場合に対応）
+          document.querySelectorAll("iframe").forEach(function(fr) {
+            try { fr.contentWindow.postMessage({ from: "axlx-start-pdf-capture" }, "*"); } catch(e) {}
+          });
           console.log("[AXLX] PDFを出力クリック (captureStart=" + captureStart + ")");
           setTimeout(function() { pdfBtn.click(); }, 60);
         }

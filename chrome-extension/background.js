@@ -295,22 +295,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           window.__axlxCapturePending = false;
 
           // axlx-start-pdf-capture シグナルを受信してcapturePendingを再セット
-          // window.top.addEventListener は cross-origin iframe で SecurityError → try-catch
+          // 自分自身のwindowで常に受信（content scriptからのiframe直接broadcastに対応）
+          window.addEventListener("message", function (e) {
+            if (e.data && e.data.from === "axlx-start-pdf-capture") {
+              window.__axlxCapturePending = true;
+            }
+          });
+          // 同一オリジンのiframe: window.topのメッセージも受信（追加保護）
           try {
-            const _listenOn = window.top || window;
-            _listenOn.addEventListener("message", function (e) {
-              if (e.data && e.data.from === "axlx-start-pdf-capture") {
-                window.__axlxCapturePending = true;
-              }
-            });
-          } catch (_ce) {
-            // cross-origin iframe: 自分自身の window でシグナルを受信
-            window.addEventListener("message", function (e) {
-              if (e.data && e.data.from === "axlx-start-pdf-capture") {
-                window.__axlxCapturePending = true;
-              }
-            });
-          }
+            if (window.top && window.top !== window) {
+              window.top.addEventListener("message", function (e) {
+                if (e.data && e.data.from === "axlx-start-pdf-capture") {
+                  window.__axlxCapturePending = true;
+                }
+              });
+            }
+          } catch (_ce) {} // cross-origin: own window listener が機能する
 
           // Blob URL フック（createObjectURL でPDFを作る場合）
           const origCreate = URL.createObjectURL;
@@ -388,7 +388,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               return null;
             }
             // ケース2: capturePending=true で blob: URL → 抑制 + blob fetchでキャプチャ
-            // ※ サーバーPDF URL（https://...pdf）は抑制しない → 新タブで開く → タブ監視が捕捉
             if (window.__axlxCapturePending && url.startsWith("blob:")) {
               console.log("[AXLX V3] window.open 抑制 + blob fetch:", url.slice(0, 60));
               // blob:URLはそのままfetchで取得（同一オリジンのため可能）
@@ -402,6 +401,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 }
                 (window.top || window).postMessage({ from: "axlx-itandi-pdf", b64: btoa(chunks.join("")), ts: Date.now() }, "*");
               }).catch(e => console.error("[AXLX V3] blob fetch error:", e));
+              return null;
+            }
+            // ケース3: capturePending=true でHTTPS URL → fetchでキャプチャ（itandiのサーバーPDF URL対応）
+            // 旧設計はタブ監視に委ねていたが、itandi用のタブ監視が未実装のため fetch で直接取得する
+            if (window.__axlxCapturePending && (url.startsWith("https:") || url.startsWith("http:"))) {
+              console.log("[AXLX V3] window.open 抑制 + https fetch:", url.slice(0, 80));
+              window.__axlxCapturePending = false;
+              fetch(url, { credentials: "include" }).then(function(r) {
+                const ct = r.headers.get("content-type") || "";
+                if (ct.includes("pdf") || ct.includes("octet-stream")) {
+                  return r.arrayBuffer().then(function(buf) {
+                    const bytes = new Uint8Array(buf);
+                    const chunks = [];
+                    for (let i = 0; i < bytes.length; i += 8192) {
+                      chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
+                    }
+                    (window.top || window).postMessage({ from: "axlx-itandi-pdf", b64: btoa(chunks.join("")), ts: Date.now() }, "*");
+                  });
+                }
+                console.warn("[AXLX V3] https URL は PDF でない (ct=" + ct + "):", url.slice(0, 80));
+              }).catch(function(e) { console.error("[AXLX V3] https fetch error:", e.message); });
               return null;
             }
             return origOpen.apply(this, args);
