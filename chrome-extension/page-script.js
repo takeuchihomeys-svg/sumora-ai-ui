@@ -638,7 +638,8 @@
 
     // ── T=150ms: 所在地絞り込み（直接チェック — モーダルを使わない場合のみ）─────
     // detail_ward がある場合はモーダル経由で選択するのでスキップ
-    if (hasCities && !hasModalWard) {
+    // 駅・沿線指定がある場合は所在地をセットしない（リアプロはAND条件になり検索結果が出なくなる）
+    if (hasCities && !hasModalWard && !hasStation && !hasRoutes) {
       var prefCb = document.querySelector('input[name="pref_code"][value="27"]');
       if (prefCb && !prefCb.checked) {
         prefCb.checked = true;
