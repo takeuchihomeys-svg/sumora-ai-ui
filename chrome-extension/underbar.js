@@ -13,12 +13,16 @@
   const BOTTOM_GAP = 60; // 展開時に画面下端から確保する余白（リサイズハンドルが触れる）
   const SK      = "aixlinx_state"; // sessionStorage key
 
+  const isReins = window.location.hostname.includes("reins.jp");
+
   // ── 前回状態を復元 ────────────────────────────────────────────────
   let saved = {};
   try { saved = JSON.parse(sessionStorage.getItem(SK) || "{}"); } catch {}
 
-  // デフォルト初期位置：画面右寄り（リアプロ検索結果エリアに近い位置）
-  const DEFAULT_X = Math.max(10, window.innerWidth - INIT_W - 20);
+  // デフォルト初期位置：レインズは中央寄り / リアプロは右寄り
+  const DEFAULT_X = isReins
+    ? Math.max(10, Math.round((window.innerWidth - INIT_W) / 2))
+    : Math.max(10, window.innerWidth - INIT_W - 20);
   const DEFAULT_Y = 80;
   let posX   = saved.posX   ?? DEFAULT_X;
   let posY   = saved.posY   ?? DEFAULT_Y;
@@ -28,7 +32,8 @@
   let panelH = saved.panelH ?? INIT_H;
   let expanded = false; // 視覚的サイズは後でiframe.loadで確定
 
-  const wasExpanded = saved.expanded === true;
+  // レインズは明示的にcollapseした記録がなければ常に展開状態で起動
+  const wasExpanded = isReins ? (saved.expanded !== false) : (saved.expanded === true);
   let ignoreNextCollapse = wasExpanded; // popup.jsの初期collapseを無視するフラグ
 
   function persist() {

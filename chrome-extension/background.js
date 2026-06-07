@@ -1,6 +1,6 @@
 "use strict";
 
-const UNDERBAR_SITES = ["realnetpro.com"];
+const UNDERBAR_SITES = ["realnetpro.com", "system.reins.jp"];
 
 // ── レインズ新タブ監視（window.openで開かれるタブからPDFを取得）────────────
 // openerTabId → { senderTabId, timerId }
@@ -201,13 +201,7 @@ chrome.tabs.onActivated.addListener(({ tabId }) => {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   const url = changeInfo.url || (changeInfo.status === "complete" ? tab.url : null);
-  if (url) {
-    configureSidePanelForTab(tabId, url);
-    // レインズを開いたらサイドパネルを自動で開く
-    if (url.includes("system.reins.jp") && changeInfo.status === "complete") {
-      chrome.sidePanel?.open?.({ tabId }).catch(() => {});
-    }
-  }
+  if (url) configureSidePanelForTab(tabId, url);
 });
 
 // ── ヘルパー: リアプロのセッションクッキーを取得 ──────────────────────────

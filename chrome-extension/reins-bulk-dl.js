@@ -184,6 +184,8 @@
   // ── フローティングバー ────────────────────────────────────────────────
   function ensureBar() {
     if (document.getElementById("axlx-reins-bar")) return;
+    // GBK001310（検索条件入力ページ）ではバー非表示。AIXLINXパネルで代替
+    if (location.pathname.indexOf("GBK001310") !== -1) return;
     var bar = document.createElement("div");
     bar.id = "axlx-reins-bar";
     bar.style.cssText = [
@@ -211,7 +213,8 @@
 
   function updateBar() {
     ensureBar();
-    var bar     = document.getElementById("axlx-reins-bar");
+    var bar = document.getElementById("axlx-reins-bar");
+    if (!bar) return; // GBK001310ではバーなし
     var checked = tracked.filter(function (t) { return t.cb.checked; });
     bar.style.display = "flex";
     var countEl = document.getElementById("axlx-reins-count");
@@ -698,7 +701,7 @@
 
   // 初回スキャン + 動的ページ対応リトライ（REINSは遅延描画 / ページ遷移後に再描画）
   console.log("[AX-REINS] 起動 URL=" + location.pathname);
-  ensureBar();  // 即座にバーを表示（物件スキャン前でも表示）
+  ensureBar();  // 検索結果ページのみバーを表示（GBK001310では非表示）
   addDiagButton();
   inject();
   var retryCount  = 0;
