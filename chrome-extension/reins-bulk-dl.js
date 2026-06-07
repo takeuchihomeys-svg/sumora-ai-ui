@@ -701,8 +701,18 @@
   ensureBar();  // 即座にバーを表示（物件スキャン前でも表示）
   addDiagButton();
   inject();
-  var retryCount = 0;
+  var retryCount  = 0;
+  var lastPath    = location.pathname;
   var retryTimer = setInterval(function () {
+    // SPA遷移検出: URLが変わったらリトライカウントをリセットして即inject
+    if (location.pathname !== lastPath) {
+      lastPath   = location.pathname;
+      retryCount = 0;
+      inject();
+      return;
+    }
+    // GBK001310（検索フォームページ）は物件行なし → 正常。エラーにしない・カウントしない
+    if (location.pathname.indexOf("GBK001310") !== -1) return;
     if (tracked.length > 0 || ++retryCount > 30) { // 最大60秒（30回×2秒）
       clearInterval(retryTimer);
       if (retryCount > 30) console.warn("[AX-REINS] リトライ上限到達: 行が見つかりませんでした");
