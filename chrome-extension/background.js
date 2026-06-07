@@ -312,11 +312,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           URL.createObjectURL = function (blob) {
             const url = origCreate.call(URL, blob);
             const t = (blob && blob.type) || "";
-            // 診断: PDF/octetのblob作成を全てログ（capturePending問わず）
-            if (t.includes("pdf") || t === "application/octet-stream") {
-              console.log("[AXLX DIAG] createObjectURL PDF:", t, Math.round(blob.size / 1024) + "KB", "pending:", window.__axlxCapturePending);
+            // 診断: capturePending時 or PDF/octetのblob作成を全てログ
+            if (window.__axlxCapturePending || t.includes("pdf") || t.includes("octet-stream")) {
+              console.log("[AXLX DIAG] createObjectURL:", t || "(empty)", Math.round(blob.size / 1024) + "KB", "pending:", window.__axlxCapturePending);
             }
-            if ((t.includes("pdf") || t === "application/octet-stream") && window.__axlxCapturePending) {
+            // PDF判定: 明示的なPDF/octetタイプ OR capturePending中の空タイプ大きめblob（≥30KB = itandi PDFの最小サイズ）
+            const isPdfBlob = t.includes("pdf") || t.includes("octet-stream") || (!t && blob.size >= 30000);
+            if (isPdfBlob && window.__axlxCapturePending) {
               window.__axlxCapturePending = false;
               window.__axlxLastBlobUrl = url; // window.open 抑制用に URL を保存
               console.log("[AXLX V2] PDF blob captured:", Math.round(blob.size / 1024) + "KB");
@@ -493,11 +495,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }, true);
 
           // (B) detached anchor の .click()（DOM外から呼ばれてもキャプチャ）
+          // blob: URL も fetch で取得可能（同一オリジン）なので除外しない
           var _origAnchorClick = HTMLAnchorElement.prototype.click;
           HTMLAnchorElement.prototype.click = function () {
             if (window.__axlxCapturePending && this.getAttribute("download") !== null) {
               var href = this.href || "";
-              if (href && !href.startsWith("javascript:") && !href.startsWith("blob:")) {
+              if (href && !href.startsWith("javascript:")) {
                 _axlxFetchAndSend(href);
                 return; // ブラウザのダウンロードを抑制
               }
