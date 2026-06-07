@@ -392,6 +392,39 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // ★ aiDraftなしで☆つき保存の場合（別セッションからの☆）→ 既存レコードを探してPATCHに転換
+  // 同じ sent_reply + customer_message のレコードが既にあれば、そちらに is_starred を付ける。
+  // これにより「AI生成→修正→送信」時に保存された aiDraft 付きレコードが正しく☆される。
+  if (isStarred && !aiDraft) {
+    const { data: existingRecord } = await supabase
+      .from("ai_reply_examples")
+      .select("id, conversation_state, customer_message, sent_reply, ai_draft, was_ai_modified, is_starred")
+      .eq("sent_reply", sentReply)
+      .eq("customer_message", customerMessage)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .single();
+
+    if (existingRecord && !existingRecord.is_starred) {
+      // 既存レコードを☆に更新してPATH相当の分析を実行
+      await supabase.from("ai_reply_examples").update({ is_starred: true }).eq("id", existingRecord.id);
+      const existConvState = existingRecord.conversation_state as string;
+      const existSentReply = existingRecord.sent_reply as string;
+      const existCustMsg   = existingRecord.customer_message as string;
+      const existAiDraft   = existingRecord.ai_draft as string | null;
+      const jobs: Promise<void>[] = [
+        analyzeAndSaveKnowledge(existingRecord.id, existConvState, existCustMsg, existSentReply, true),
+        extractAndSavePhrases(existConvState, existSentReply, true),
+      ];
+      if (existAiDraft) {
+        jobs.push(analyzeDiff(existingRecord.id, existConvState, existCustMsg, existAiDraft, existSentReply));
+      }
+      await Promise.all(jobs);
+      return NextResponse.json({ ok: true, id: existingRecord.id, merged: true });
+    }
+    // 既存なし → 通常通り新規作成
+  }
+
   // ④ state が未指定または "auto" の場合は自動判定 → 常に新5段階に正規化して保存
   const rawResolved = !rawState || rawState === "auto"
     ? await autoClassifyState(customerMessage, sentReply)
