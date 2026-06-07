@@ -10,12 +10,36 @@
   // ── 物件行を取得 ─────────────────────────────────────────────────────
   function findResultRows() {
     // offsetParent は position:fixed の親要素があるとnullになるため getBoundingClientRect で判定
-    return Array.from(document.querySelectorAll(".p-table-body-row"))
-      .filter(function (row) {
-        if (row.offsetParent !== null) return true;
-        var r = row.getBoundingClientRect();
-        return r.width > 0 && r.height > 0;
-      });
+    function isVisible(row) {
+      if (row.offsetParent !== null) return true;
+      var r = row.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    }
+
+    // 優先1: PrimeVue v3 クラス名（従来）
+    var rows = Array.from(document.querySelectorAll(".p-table-body-row")).filter(isVisible);
+    if (rows.length > 0) return rows;
+
+    // 優先2: PrimeVue v4+ クラス名（部分一致）
+    rows = Array.from(document.querySelectorAll("[class*='table-body-row'], [class*='datatable-row'], [class*='p-row']")).filter(isVisible);
+    if (rows.length > 0) return rows;
+
+    // 優先3: チェックボックスを含む行要素（div/tr）— REINS がどのバージョンでも動く汎用フォールバック
+    var candidates = Array.from(document.querySelectorAll("div, tr")).filter(function (el) {
+      if (!isVisible(el)) return false;
+      var cb = el.querySelector('input[type="checkbox"]');
+      if (!cb) return false;
+      // 自分自身がチェックボックスの親であり、かつ直接の親でない（行レベル）
+      var children = el.children;
+      for (var i = 0; i < children.length; i++) {
+        if (children[i].querySelector('input[type="checkbox"]')) return true;
+      }
+      return false;
+    });
+    // 子要素に包含されるものは除外（最小粒度の行だけ残す）
+    return candidates.filter(function (el) {
+      return !candidates.some(function (other) { return other !== el && el.contains(other); });
+    });
   }
 
   // ── 行テキストから物件情報を抽出 ──────────────────────────────────────

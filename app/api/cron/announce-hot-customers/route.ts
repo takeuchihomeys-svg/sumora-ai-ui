@@ -44,9 +44,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
-  const targetId = process.env.LINE_STAFF_GROUP_ID;
+  let targetId = process.env.LINE_STAFF_GROUP_ID ?? null;
+  // フォールバック: hanbancyo_settings テーブルの group_id を使う
   if (!targetId) {
-    return NextResponse.json({ ok: false, error: "LINE_STAFF_GROUP_ID not configured" }, { status: 500 });
+    const { data: grpRow } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").single();
+    targetId = grpRow?.value ?? null;
+  }
+  if (!targetId) {
+    return NextResponse.json({ ok: false, error: "LINE_STAFF_GROUP_ID not configured (env) and hanbancyo_settings group_id not set (db)" }, { status: 500 });
   }
   const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN;
   if (!token) {

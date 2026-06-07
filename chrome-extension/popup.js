@@ -1766,11 +1766,11 @@ function openInstructions(siteKey) {
         }
       }
 
-      // 地名マップから町字レベルのトークンを検索（区名・市名は対象外）
-      const neighPart = areaParts.find(p =>
+      // 地名マップから町字レベルのトークンを検索（駅モード時はスキップ：所在地フィールドに入らないようにする）
+      const neighPart = currentAreaMode === "station" ? null : (areaParts.find(p =>
         NEIGHBORHOOD_WARD_MAP[p] && !STATION_LINE_MAP[p] &&
         !p.endsWith("区") && !p.endsWith("市")  // 区名・市名はcity_codesで処理するためスキップ
-      ) || null;
+      ) || null);
       // detail_area: 町字名はピンポイントのみ（例:「喜連西」）
       const detailNeighborhood = (searchMode === "pinpoint" && neighPart) ? neighPart : null;
       // detail_ward: detail_areaがある時だけモーダルを使う
