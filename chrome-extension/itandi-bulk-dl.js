@@ -333,6 +333,8 @@
             }, 250);
           };
           window.addEventListener("message", pdfHandler);
+          // JSフック失敗時フォールバック：background.jsにダウンロード監視を依頼
+          chrome.runtime.sendMessage({ type: "axlx-itandi-watch-download" });
           // axlx-start-pdf-capture を送ってから 60ms 待機してクリック
           window.postMessage({ from: "axlx-start-pdf-capture" }, "*");
           // cross-origin iframeにも同シグナルを送信（PDF生成がiframe内の場合に対応）
@@ -347,8 +349,9 @@
         setTimeout(findAndClickPdf, 500);
       }
 
-      // 物件資料ボタンをクリック
+      // 物件資料ボタンをクリック（画面外の場合はスクロールして確実にクリックできる状態にする）
       console.log("[AXLX] 物件資料ボタンをクリック");
+      try { btn.scrollIntoView({ behavior: "instant", block: "center" }); } catch(e) {}
       btn.click();
 
       // MutationObserver でモーダルの出現を監視（3段階フォールバック）
@@ -551,13 +554,19 @@
     }
   });
 
-  // Blobアップロード進捗をbackground.jsから受け取りボタンテキスト更新
+  // background.jsからのメッセージ受信
   chrome.runtime.onMessage.addListener(function (msg) {
+    // Blobアップロード進捗更新
     if (msg.type === "axlx-blob-upload-progress") {
       var lineBtn = document.getElementById("axlx-itandi-line-btn");
       if (lineBtn) {
         lineBtn.textContent = "Blobアップ中... (" + msg.current + "/" + msg.total + ")";
       }
+    }
+    // ダウンロード経由でキャプチャしたPDF（JSフック失敗時フォールバック）
+    if (msg.type === "axlx-itandi-pdf-by-download") {
+      console.log("[AXLX] DLフォールバック: PDF取得成功 " + Math.round((msg.b64 || "").length / 1024) + "KB");
+      window.postMessage({ from: "axlx-itandi-pdf", b64: msg.b64, ts: msg.ts }, "*");
     }
   });
 

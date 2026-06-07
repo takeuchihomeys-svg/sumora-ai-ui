@@ -6,14 +6,62 @@ const UNDERBAR_SITES = ["realnetpro.com", "system.reins.jp"];
 // openerTabId → { senderTabId, timerId }
 const reinsTabWatchers = new Map();
 
+// ── itandi ダウンロード監視（JSフック失敗時のフォールバック）────────────────
+// tabId → timerId
+const itandiDownloadWatcher = new Map();
+
 // ── レインズ一括PDFダウンロードをLINE送信に横取り ─────────────────────────────
 // 図面一括取得 → 確認ダイアログOK → Chrome download bar
 // JSフックでは捕捉できない場合（Content-Disposition: attachment の直DL）を chrome.downloads で補完
 // ダウンロードはキャンセルしない（ユーザーのファイルはそのまま保存される）
 chrome.downloads.onCreated.addListener((downloadItem) => {
+  const url    = downloadItem.url || "";
+  const dlTabId = downloadItem.tabId;
+
+  // ── itandi PDF ダウンロードキャプチャ（JSフック失敗時フォールバック）───────
+  if (dlTabId && itandiDownloadWatcher.has(dlTabId)) {
+    clearTimeout(itandiDownloadWatcher.get(dlTabId));
+    itandiDownloadWatcher.delete(dlTabId);
+    console.log("[AXLX BG] itandi DL検知 tabId=" + dlTabId + " url=" + url.slice(0, 80));
+
+    chrome.scripting.executeScript({
+      target: { tabId: dlTabId },
+      world: "MAIN",
+      func: (pdfUrl) => {
+        const opts = pdfUrl.startsWith("blob:") ? {} : { credentials: "include" };
+        return fetch(pdfUrl, opts)
+          .then((r) => {
+            const ct = r.headers.get("content-type") || "";
+            if (!pdfUrl.startsWith("blob:") && !ct.includes("pdf") && !ct.includes("octet-stream")) return null;
+            return r.arrayBuffer();
+          })
+          .then((buf) => {
+            if (!buf) return null;
+            const bytes = new Uint8Array(buf);
+            const chunks = [];
+            for (let i = 0; i < bytes.length; i += 8192) {
+              chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
+            }
+            return btoa(chunks.join(""));
+          })
+          .catch(() => null);
+      },
+      args: [url],
+    }).then((results) => {
+      const b64 = results?.[0]?.result;
+      if (b64) {
+        console.log("[AXLX BG] itandi DL capture成功 " + Math.round(b64.length / 1024) + "KB");
+        chrome.tabs.sendMessage(dlTabId, { type: "axlx-itandi-pdf-by-download", b64, ts: Date.now() })
+          .catch((e) => console.error("[AXLX BG] itandi sendMessage error:", e.message));
+      } else {
+        console.warn("[AXLX BG] itandi DL capture null（PDF以外のダウンロードの可能性）");
+      }
+    }).catch((e) => console.error("[AXLX BG] itandi DL executeScript error:", e.message));
+  }
+
+  // ── レインズ PDF ダウンロードキャプチャ ──────────────────────────────────────
   if (reinsTabWatchers.size === 0) return; // 監視中でない
 
-  const url = downloadItem.url || "";
   // blob:URL はJSフック側で捕捉済みのため除外、reins.jp ドメインのみ対象
   if (url.startsWith("blob:") || !url.includes("reins.jp")) return;
 
@@ -275,6 +323,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const timerId = setTimeout(() => reinsTabWatchers.delete(tabId), 35000);
     reinsTabWatchers.set(tabId, { senderTabId: tabId, timerId });
     console.log("[AXLX BG] 新タブ監視開始 tabId=" + tabId);
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  // ── itandi: ダウンロード監視開始（JSフック失敗時フォールバック）────────────
+  if (msg.type === "axlx-itandi-watch-download") {
+    const tabId = sender.tab?.id;
+    if (!tabId) { sendResponse({ ok: false }); return true; }
+    clearTimeout(itandiDownloadWatcher.get(tabId));
+    const timerId = setTimeout(() => itandiDownloadWatcher.delete(tabId), 30000);
+    itandiDownloadWatcher.set(tabId, timerId);
+    console.log("[AXLX BG] itandi DL watch開始 tabId=" + tabId);
     sendResponse({ ok: true });
     return true;
   }

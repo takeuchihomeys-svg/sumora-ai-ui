@@ -166,15 +166,20 @@
     <line x1="13" y1="20" x2="20" y2="13" stroke="rgba(21,101,192,0.45)" stroke-width="1.5" stroke-linecap="round"/>
   </svg>`;
 
-  // ── ミニ用オーバーレイ ────────────────────────────────────────────
+  // ── ミニ用オーバーレイ（常にAIXLINXアイコンを表示してiframe未ロードでも白くならない）──
   const miniOverlay = document.createElement("div");
   Object.assign(miniOverlay.style, {
-    position:      "absolute",
-    inset:         "0",
-    zIndex:        "3",
-    cursor:        "grab",
-    pointerEvents: "auto",
+    position:        "absolute",
+    inset:           "0",
+    zIndex:          "3",
+    cursor:          "grab",
+    pointerEvents:   "auto",
+    background:      "linear-gradient(135deg,#0a1628,#1565C0)",
+    display:         "flex",
+    alignItems:      "center",
+    justifyContent:  "center",
   });
+  miniOverlay.innerHTML = '<span style="color:white;font-size:9px;font-weight:800;text-align:center;line-height:1.3;letter-spacing:0.5px;pointer-events:none;">AIX<br>LINX</span>';
 
   wrap.appendChild(dragBar);
   // iframeはここでは追加しない（ensureIframe()で遅延追加）
