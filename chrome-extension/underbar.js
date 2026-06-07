@@ -1,7 +1,7 @@
 "use strict";
 
 // リアプロページにAIXLINX フローティングパネルを注入
-// ページ遷移をまたいで展開状態・位置・サイズをsessionStorageで保持
+// 展開状態・位置・サイズをlocalStorageで保持（全タブ共有・ブラウザ再起動後も保持）
 (function () {
   if (document.getElementById("aixlinx-float-wrap")) return;
 
@@ -11,13 +11,16 @@
   const MIN_H   = 340;
   const INIT_W  = 660;
   const BOTTOM_GAP = 60; // 展開時に画面下端から確保する余白（リサイズハンドルが触れる）
-  const SK      = "aixlinx_state"; // sessionStorage key
+  const SK      = "aixlinx_state";
+  // localStorageを使って全タブ・ページ遷移・ブラウザ再起動をまたいで状態を保持
+  // sessionStorageは新しいタブごとにリセットされるため毎回ミニ表示になってしまう
+  const STORE = (() => { try { return localStorage; } catch { return sessionStorage; } })();
 
   const isReins = window.location.hostname.includes("reins.jp");
 
   // ── 前回状態を復元 ────────────────────────────────────────────────
   let saved = {};
-  try { saved = JSON.parse(sessionStorage.getItem(SK) || "{}"); } catch {}
+  try { saved = JSON.parse(STORE.getItem(SK) || "{}"); } catch {}
 
   // デフォルト初期位置：レインズは中央寄り / リアプロは右寄り
   const DEFAULT_X = isReins
@@ -32,14 +35,14 @@
   let panelH = saved.panelH ?? INIT_H;
   let expanded = false; // 視覚的サイズは後でiframe.loadで確定
 
-  // レインズは明示的にcollapseした記録がなければ常に展開状態で起動
-  const wasExpanded = isReins ? (saved.expanded !== false) : (saved.expanded === true);
+  // 明示的にたたんだ記録(expanded===false)がない限り展開状態で起動（全サイト共通）
+  const wasExpanded = saved.expanded !== false;
   // popup.jsの初期collapseを無視するフラグ（iframe作成直後にリセットされる）
   let ignoreNextCollapse = false;
 
   function persist() {
     try {
-      sessionStorage.setItem(SK, JSON.stringify({
+      STORE.setItem(SK, JSON.stringify({
         expanded,
         posX:   parseInt(wrap.style.left) || posX,
         posY:   parseInt(wrap.style.top)  || posY,
