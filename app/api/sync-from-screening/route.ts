@@ -291,15 +291,15 @@ export async function POST(req: NextRequest) {
               const ext = contentType.includes("png") ? "png" : contentType.includes("gif") ? "gif" : "jpg";
               const arrayBuffer = await contentRes.arrayBuffer();
               const buffer = Buffer.from(arrayBuffer);
-              const storagePath = `line-images/${lineMessageId}.${ext}`;
+              const storagePath = `${lineMessageId}.${ext}`;
 
               const { error: uploadErr } = await supabase.storage
-                .from("property-images")
+                .from("line-images")
                 .upload(storagePath, buffer, { contentType, upsert: true });
 
               if (!uploadErr) {
                 const { data: urlData } = supabase.storage
-                  .from("property-images")
+                  .from("line-images")
                   .getPublicUrl(storagePath);
                 imageUrl = urlData.publicUrl;
                 console.log("[sync] LINE画像を取得・保存:", storagePath);
@@ -318,6 +318,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const expiresAt = isImageMsg && imageUrl
+      ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+      : undefined;
+
     const { error } = await supabase
       .from("messages")
       .upsert(
@@ -327,6 +331,7 @@ export async function POST(req: NextRequest) {
           sender: record.sender,
           text: record.text ?? "",
           image_url: imageUrl,
+          ...(expiresAt ? { image_expires_at: expiresAt } : {}),
           created_at: record.created_at,
         },
         { onConflict: "id" }
