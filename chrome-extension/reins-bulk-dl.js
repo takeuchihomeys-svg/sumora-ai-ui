@@ -17,6 +17,12 @@
     }
     // チェックボックスを持つか確認
     function hasCb(el) { return !!el.querySelector('input[type="checkbox"]'); }
+    // 最小粒度の行だけ残す（親に包含されるものを除外）
+    function dedup(arr) {
+      return arr.filter(function(el) {
+        return !arr.some(function(other) { return other !== el && el.contains(other); });
+      });
+    }
 
     // 優先1: PrimeVue v3 クラス名（従来）
     var rows = Array.from(document.querySelectorAll(".p-table-body-row")).filter(isVisible);
@@ -26,19 +32,30 @@
     rows = Array.from(document.querySelectorAll("[class*='table-body-row'], [class*='datatable-row'], [class*='p-datatable-row']")).filter(isVisible);
     if (rows.length > 0) return rows;
 
-    // 優先3: WAI-ARIA role="row"（PrimeVue v4 仮想スクロール対応）
+    // 優先3: WAI-ARIA role="row" でCBを含む（PrimeVue v4 仮想スクロール対応）
     rows = Array.from(document.querySelectorAll("[role='row']")).filter(function (el) {
       return isVisible(el) && hasCb(el);
     });
     if (rows.length > 0) return rows;
 
-    // 優先4: tr 要素（従来型テーブル）— div は対象外（フォームCB誤検知防止）
-    var candidates = Array.from(document.querySelectorAll("tr")).filter(function (el) {
-      return isVisible(el) && hasCb(el);
+    // 優先4: tr 要素（thead除外・CB含む）
+    rows = Array.from(document.querySelectorAll("tr")).filter(function (el) {
+      return isVisible(el) && hasCb(el) && !el.closest("thead");
     });
-    return candidates.filter(function (el) {
-      return !candidates.some(function (other) { return other !== el && el.contains(other); });
+    if (rows.length > 0) return dedup(rows);
+
+    // 優先5: div 要素（物件リスト行判定: 同一親にCB付き兄弟が1件以上あること）
+    // フォームのチェックボックス（図面ありのみ等）は1要素だけで兄弟がないため除外される
+    var divRows = Array.from(document.querySelectorAll("div")).filter(function(el) {
+      if (!isVisible(el) || !hasCb(el)) return false;
+      var parent = el.parentElement;
+      if (!parent) return false;
+      var cbSiblings = Array.from(parent.children).filter(function(s) {
+        return s !== el && s.tagName === "DIV" && hasCb(s);
+      });
+      return cbSiblings.length >= 1; // 同親に1件以上CB付き兄弟がある ＝ リスト行
     });
+    return dedup(divRows);
   }
 
   // ── 行テキストから物件情報を抽出 ──────────────────────────────────────
