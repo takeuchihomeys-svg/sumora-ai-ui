@@ -9,8 +9,13 @@
 
   // ── 物件行を取得 ─────────────────────────────────────────────────────
   function findResultRows() {
+    // offsetParent は position:fixed の親要素があるとnullになるため getBoundingClientRect で判定
     return Array.from(document.querySelectorAll(".p-table-body-row"))
-      .filter(function (row) { return row.offsetParent !== null; });
+      .filter(function (row) {
+        if (row.offsetParent !== null) return true;
+        var r = row.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      });
   }
 
   // ── 行テキストから物件情報を抽出 ──────────────────────────────────────
@@ -504,6 +509,14 @@
     }
   }, true);
 
-  // 初回スキャン
+  // 初回スキャン + 動的ページ対応リトライ（レインズはSPA的にテーブルを遅延描画する）
   inject();
+  var retryCount = 0;
+  var retryTimer = setInterval(function () {
+    if (tracked.length > 0 || ++retryCount > 15) {
+      clearInterval(retryTimer);
+      return;
+    }
+    inject();
+  }, 2000);
 })();

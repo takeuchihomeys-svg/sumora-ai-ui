@@ -370,11 +370,9 @@ function buildAreaRouteCodes(c, mode = "auto") {
       continue;
     }
     if (mode === "station") {
-      // 駅モード: STATION_LINE_MAP → LEARNED_STATION_MAP の順で路線を解決
+      // 駅モード: 路線IDのみ追加（city_codesは追加しない → 所在地フィールドに入らないようにする）
       const station = resolveStation(part);
       const stationKey = station || part;
-      const ward = STATION_WARD_MAP[stationKey] || findStationWard(part);
-      if (ward && WARD_CODE_MAP[ward] && !city_codes.includes(WARD_CODE_MAP[ward])) city_codes.push(WARD_CODE_MAP[ward]);
       const lines = STATION_LINE_MAP[stationKey] || LEARNED_STATION_MAP[stationKey]?.realpro_lines || [];
       lines.forEach(l => { const id = LINE_ROUTE_MAP[l]; if (id && !route_ids.includes(id)) route_ids.push(id); });
       continue;
