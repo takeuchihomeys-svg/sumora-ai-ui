@@ -35,9 +35,10 @@
   let panelH = saved.panelH ?? INIT_H;
   let expanded = false; // 視覚的サイズは後でiframe.loadで確定
 
-  // 明示的にたたんだ記録(expanded===false)がない限り展開状態で起動（全サイト共通）
-  const wasExpanded = saved.expanded !== false;
-  // popup.jsの初期collapseを無視するフラグ（iframe作成直後にリセットされる）
+  // 常に展開状態で起動（localStorage の expanded:false を無視）
+  // 前回たたんで終了しても次回ロード時は必ず展開する（ユーザー要望 2026-06-07）
+  const wasExpanded = true;
+  // popup.jsの初期collapseを無視するフラグ（iframe作成・展開時に都度セット）
   let ignoreNextCollapse = false;
 
   function persist() {
@@ -122,6 +123,8 @@
       if (pendingExpand) {
         pendingExpand = false;
         setTimeout(() => {
+          // expand-from-parent 送信直前に再セット（popup.jsの初期化collapse競合を防止）
+          ignoreNextCollapse = true;
           setSize(true);
           iframe.contentWindow.postMessage(
             { from: "underbar-parent", action: "expand-from-parent" }, "*"
@@ -187,10 +190,19 @@
   wrap.appendChild(miniOverlay);
   document.body.appendChild(wrap);
 
-  // ── 前回展開状態を復元（wasExpanded=trueのときのみiframeを即座に作る）──
+  // ── 展開状態で起動（iframeを即座に作成・コンテキスト無効時は1.5秒後リトライ）──
   if (wasExpanded) {
     pendingExpand = true;
-    if (!ensureIframe()) pendingExpand = false; // コンテキスト無効なら展開しない
+    if (!ensureIframe()) {
+      pendingExpand = false;
+      // 拡張再読み込み直後の一時的なコンテキスト無効 → 1.5秒後にリトライ
+      setTimeout(function() {
+        if (!iframe) {
+          pendingExpand = true;
+          if (!ensureIframe()) pendingExpand = false;
+        }
+      }, 1500);
+    }
   }
 
   // ── サイズ切り替え ────────────────────────────────────────────────
