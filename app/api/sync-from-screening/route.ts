@@ -340,24 +340,48 @@ export async function POST(req: NextRequest) {
       ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
       : undefined;
 
-    const { error } = await supabase
-      .from("messages")
-      .upsert(
-        {
-          id: record.id,
-          conversation_id: record.conversation_id,
-          sender: record.sender,
-          text: record.text ?? "",
-          image_url: imageUrl,
-          ...(expiresAt ? { image_expires_at: expiresAt } : {}),
-          created_at: record.created_at,
-        },
-        { onConflict: "id" }
+    // テキストメッセージ: line-webhookが直接保存済みの場合はINSERTをスキップ（重複防止）
+    let skipUpsert = false;
+    if (!isImageMsg && record.sender === "customer") {
+      const textLineMessageId = (
+        (record.line_message_id as string) ||
+        (record.lineMessageId as string) ||
+        (record.message_id as string) ||
+        null
       );
+      if (textLineMessageId) {
+        const { data: existingByLineId } = await supabase
+          .from("messages")
+          .select("id")
+          .eq("line_message_id", textLineMessageId)
+          .maybeSingle();
+        if (existingByLineId) {
+          skipUpsert = true;
+          console.log("[sync] テキスト重複スキップ (line_message_id):", textLineMessageId);
+        }
+      }
+    }
 
-    if (error) {
-      console.error("sync messages error:", error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    if (!skipUpsert) {
+      const { error } = await supabase
+        .from("messages")
+        .upsert(
+          {
+            id: record.id,
+            conversation_id: record.conversation_id,
+            sender: record.sender,
+            text: record.text ?? "",
+            image_url: imageUrl,
+            ...(expiresAt ? { image_expires_at: expiresAt } : {}),
+            created_at: record.created_at,
+          },
+          { onConflict: "id" }
+        );
+
+      if (error) {
+        console.error("sync messages error:", error);
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
     }
 
     // フォーマットメッセージ検知 → property_customer 自動作成・追加条件保存

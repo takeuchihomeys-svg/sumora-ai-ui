@@ -154,6 +154,7 @@ async function handleTextMessage(
   userId: string,
   text: string,
   account: AccountConfig,
+  lineMessageId?: string,
 ): Promise<void> {
   const db = getDb();
   const now = new Date().toISOString();
@@ -161,10 +162,24 @@ async function handleTextMessage(
   const convId = await ensureConversation(db, userId, account, now);
   if (!convId) return;
 
+  // line_message_id重複チェック（sync-from-screeningとの二重保存防止）
+  if (lineMessageId) {
+    const { data: existingMsg } = await db
+      .from("messages")
+      .select("id")
+      .eq("line_message_id", lineMessageId)
+      .maybeSingle();
+    if (existingMsg) {
+      console.log("[line-webhook] テキスト重複スキップ:", lineMessageId);
+      return;
+    }
+  }
+
   const { error: msgErr } = await db.from("messages").insert({
     conversation_id: convId,
     sender: "customer",
     text,
+    ...(lineMessageId ? { line_message_id: lineMessageId } : {}),
     created_at: now,
   });
   if (msgErr) console.error("[line-webhook] message保存失敗:", msgErr.message);
@@ -746,8 +761,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const userId = event.source.userId;
 
     if (msgType === "text") {
-      // テキストは sync-from-screening（screening-admin DB webhook）が処理するためスキップ
-      // relay経由で届くが、ここでは処理しない（二重保存防止）
+      const lineMessageId = event.message?.id;
+      const text = (event.message as { text?: string })?.text;
+      if (!text) continue;
+      // sync-from-screeningより高速な直接経路で保存（line_message_idで重複防止）
+      await handleTextMessage(userId, text, matchedAccount, lineMessageId);
       continue;
     } else if (msgType === "image") {
       const lineMessageId = event.message?.id;

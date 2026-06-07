@@ -1534,17 +1534,19 @@ export default function Home() {
 
     setConversations((prev) =>
       prev
-        .map((conversation) =>
-          conversation.id === selectedConversation.id
-            ? {
-                ...conversation,
-                lastMessage: lastText,
-                ...(sendTextUpgrade ? { status: "proposing" } : {}),
-                updatedAt: now.toISOString(),
-                messages: [...conversation.messages, ...newMessages],
-              }
-            : conversation
-        )
+        .map((conversation) => {
+          if (conversation.id !== selectedConversation.id) return conversation;
+          // リアルタイムが既に追加済みの場合の重複防止
+          const existingIds = new Set(conversation.messages.map((m) => m.id));
+          const dedupedNew = newMessages.filter((m) => !existingIds.has(m.id));
+          return {
+            ...conversation,
+            lastMessage: lastText,
+            ...(sendTextUpgrade ? { status: "proposing" } : {}),
+            updatedAt: now.toISOString(),
+            messages: [...conversation.messages, ...dedupedNew],
+          };
+        })
         .sort((a, b) => {
           const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
           const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
