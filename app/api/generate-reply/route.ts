@@ -194,9 +194,13 @@ function buildGenerationMessages(
   analysis: string,
   knowledge: string,
   examples: string,
-  phrases: string
+  phrases: string,
+  customerConditions = ""
 ): [SystemMessage, HumanMessage] {
   const nameNote = customerName ? `お客様名：${customerName}さん` : "お客様名：不明";
+  const conditionsNote = customerConditions
+    ? `\n【お客様の希望条件（DB登録済み・必ず考慮すること）】\n${customerConditions}`
+    : "";
 
   // フェーズ別の行動指針を取得
   const phaseGuide = PHASE_GUIDE[state] || PHASE_GUIDE["first_reply"];
@@ -229,7 +233,7 @@ function buildGenerationMessages(
     : "";
 
   const prompt = `
-${nameNote}
+${nameNote}${conditionsNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${approachNote}${staffContextNote}
 
@@ -432,18 +436,20 @@ export async function POST(req: NextRequest) {
   }
 
   type RecentMessage = { sender: string; text: string; imageUrl?: string };
-  let message: string, state: string, customerName: string, recentMessages: RecentMessage[];
+  let message: string, state: string, customerName: string, recentMessages: RecentMessage[], customerConditions: string;
   try {
     const body = await req.json() as {
       message: string;
       state: string;
       customerName?: string;
       recentMessages?: RecentMessage[];
+      customerConditions?: string;
     };
     message = body.message;
     state = body.state;
     customerName = body.customerName || "";
     recentMessages = body.recentMessages || [];
+    customerConditions = body.customerConditions || "";
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid request body" }, { status: 400 });
   }
@@ -496,7 +502,7 @@ export async function POST(req: NextRequest) {
     // Sonnetでストリーミング生成
     const messages = buildGenerationMessages(
       message, customerName, history, currentState,
-      analysis, knowledge, examples, phrases
+      analysis, knowledge, examples, phrases, customerConditions
     );
     const genStream = generationModel.stream(messages);
 
