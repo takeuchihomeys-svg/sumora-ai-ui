@@ -128,6 +128,7 @@ type PropertyCustomerRow = {
   ng_points?: string | null;
   other_requests?: string | null;
   building_age?: number | null;
+  additional_conditions?: string | null;
 };
 
 // 物件出しステータス（売上サポのStatusと対応）
@@ -170,6 +171,7 @@ function formatConditions(customer: PropertyCustomerRow): string {
   if (customer.preferences) lines.push(`\u5e0c\u671b: ${customer.preferences}`);
   if (customer.ng_points) lines.push(`NG: ${customer.ng_points}`);
   if (customer.other_requests) lines.push(`\u305d\u306e\u4ed6: ${customer.other_requests}`);
+  if (customer.additional_conditions) lines.push(`\u8ffd\u52a0\u6761\u4ef6: ${customer.additional_conditions}`);
   return lines.join("\n");
 }
 
@@ -764,7 +766,7 @@ export default function Home() {
     if (propCustomerIds.length > 0) {
       const { data: pcData } = await supabase
         .from("property_customers")
-        .select("id,customer_name,status,last_property_sent_at,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age")
+        .select("id,customer_name,status,last_property_sent_at,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age,additional_conditions")
         .in("id", propCustomerIds);
       if (pcData) {
         const map: Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null }> = {};
