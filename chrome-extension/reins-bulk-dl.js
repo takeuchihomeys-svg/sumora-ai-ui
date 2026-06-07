@@ -12,6 +12,9 @@
   // チェックボックス要素を起点に「行コンテナ」を逆引きし、
   // 同一親に2件以上あるグループ = 物件リスト行と判定する。
   function findResultRows() {
+    // GBK001310: 検索条件入力ページ（検索フォームページ）は物件行なし → 早期リターン
+    if (location.pathname.indexOf("GBK001310") !== -1) return [];
+
     function isVisible(el) {
       if (el.offsetParent !== null) return true;
       var r = el.getBoundingClientRect();
@@ -112,9 +115,13 @@
       var rowEl = findRowEl(cb);
       if (!rowEl || !isVisible(rowEl)) return;
       if (seen.indexOf(rowEl) !== -1) return;
-      // ① form 要素内にある行はフォームフィールドのため除外
+      // ① form 要素内（HTMLフォーム）はスキップ
       if (rowEl.closest("form")) return;
-      // ② テキストが短すぎる要素は物件行でない
+      // ② Bootstrap グリッド .row はレイアウト用クラスであり物件行ではない
+      //    ただし table/grid コンテキスト内の .row はデータ行の可能性がある
+      if (rowEl.classList && rowEl.classList.contains("row") &&
+          !rowEl.closest("table") && !rowEl.closest("[role='grid']") && !rowEl.closest("[role='table']")) return;
+      // ③ テキストが短すぎる要素は物件行でない
       var txt = rowEl.textContent.replace(/\s+/g, "").length;
       if (txt < 15) return;
       seen.push(rowEl);
