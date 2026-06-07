@@ -70,6 +70,12 @@ function isFormatMessage(text: string): boolean {
   return hasNumbered || hasKeyword;
 }
 
+// 内覧・内見意思ありキーワード検知
+function isNaikanIntent(text: string): boolean {
+  const keywords = ["内覧", "内見", "見に行", "見学", "見たい", "行きたい", "申込", "申し込", "決めたい", "ここにし", "これにし"];
+  return keywords.some(kw => text.includes(kw));
+}
+
 // Anthropic でフォーマットテキストを条件JSONに変換
 async function parseConditionsWithAI(text: string): Promise<Record<string, unknown> | null> {
   try {
@@ -345,6 +351,21 @@ export async function POST(req: NextRequest) {
     // フォーマットメッセージ検知 → property_customer 自動作成・追加条件保存
     if (record.sender === "customer" && isFormatMessage(msgText)) {
       handleFormatMessage(String(record.conversation_id), msgText).catch(() => {});
+    }
+
+    // 内覧/申込意思キーワード → 🔥自動セット（未設定の場合のみ）
+    if (record.sender === "customer" && isNaikanIntent(msgText)) {
+      const { data: convData } = await supabase
+        .from("conversations")
+        .select("is_hot")
+        .eq("id", String(record.conversation_id))
+        .single();
+      if (convData && !convData.is_hot) {
+        await supabase
+          .from("conversations")
+          .update({ is_hot: true })
+          .eq("id", String(record.conversation_id));
+      }
     }
 
     // お客さんのメッセージが届いたら Web Push 通知を送る
