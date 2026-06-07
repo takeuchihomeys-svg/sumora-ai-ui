@@ -99,9 +99,15 @@
 
   function ensureIframe() {
     if (iframe) return iframe;
+    // 拡張コンテキスト無効（extension reload後）のとき getURL が throw する → null 返却でパネル無効化
+    let popupUrl;
+    try { popupUrl = chrome.runtime.getURL("popup.html"); } catch (_e) {
+      wrap.title = "🔄 ページをリロードしてパネルを復活";
+      return null;
+    }
     ignoreNextCollapse = true; // popup.js初期化時のcollapseを無視
     iframe = document.createElement("iframe");
-    iframe.src = chrome.runtime.getURL("popup.html");
+    iframe.src = popupUrl;
     Object.assign(iframe.style, {
       flex:      "1",
       width:     "100%",
@@ -127,6 +133,7 @@
 
   function doExpand() {
     const fr = ensureIframe();
+    if (!fr) return; // コンテキスト無効（ページリロードで回復）
     // iframeがまだ読み込み中の場合はload後に展開（pendingExpand）
     if (!fr.contentDocument || fr.contentDocument.readyState !== "complete") {
       pendingExpand = true;
@@ -175,7 +182,7 @@
   // ── 前回展開状態を復元（wasExpanded=trueのときのみiframeを即座に作る）──
   if (wasExpanded) {
     pendingExpand = true;
-    ensureIframe();
+    if (!ensureIframe()) pendingExpand = false; // コンテキスト無効なら展開しない
   }
 
   // ── サイズ切り替え ────────────────────────────────────────────────

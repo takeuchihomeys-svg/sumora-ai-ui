@@ -178,8 +178,13 @@ function isUnderbarSite(url) {
 }
 
 function setupSidePanel() {
-  if (chrome.sidePanel?.setPanelBehavior) {
-    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+  try {
+    if (chrome.sidePanel?.setPanelBehavior) {
+      chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+    }
+  } catch (e) {
+    // サービスワーカー起動クラッシュを防ぐ（sidePanel API の同期エラーを吸収）
+    console.warn("[AXLX BG] setupSidePanel error:", e.message);
   }
 }
 
