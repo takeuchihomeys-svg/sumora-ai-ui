@@ -238,8 +238,8 @@
 
       pdfTimer = setTimeout(function () {
         cleanup();
-        reject(new Error("タイムアウト（40秒）: PDFが生成されませんでした"));
-      }, 40000);
+        reject(new Error("タイムアウト（60秒）: PDFが生成されませんでした"));
+      }, 60000);
 
       // モーダル内で「12枚」ラジオ選択 → PDFを出力クリック
       function interactWithModal() {
@@ -401,6 +401,15 @@
     });
   }
 
+  // rowKey でフレッシュなボタンを取得（DOM更新後も正しいボタンをクリックできる）
+  function findFreshBtn(rowKey) {
+    var btns = findMaterialBtns();
+    for (var i = 0; i < btns.length; i++) {
+      if (makeRowKey(btns[i]) === rowKey) return btns[i];
+    }
+    return null;
+  }
+
   function startSend(targets, customerName, lineBtn, lineOrig) {
     // AD情報は事前に収集（物件名はPDFキャプチャ時に取得するのでフォールバック用）
     var propertyInfos = targets.map(function (t) {
@@ -411,11 +420,19 @@
     var pdfBase64List   = [];
     var capturedNames   = []; // captureOnePdf で取得した物件名（download属性）
 
+    // 送信中はMutationObserverを停止（DOM更新でtargetsのボタン参照が無効化されるのを防ぐ）
+    mutObs.disconnect();
+
+    function finalizeSend() {
+      mutObs.observe(document.body, { childList: true, subtree: true });
+    }
+
     // ── 1件ずつキャプチャして全件集める → background.jsがBlobアップ→merge→LINE ──
     function processNext(i) {
       if (i >= targets.length) {
         // 全件キャプチャ完了 → background.jsに渡す（Blobアップ→merge→LINE送信）
         if (!pdfBase64List.length) {
+          finalizeSend();
           alert("PDFが1件も取得できませんでした");
           lineBtn.disabled    = false;
           lineBtn.textContent = lineOrig;
@@ -442,6 +459,7 @@
           customer_name:      customerName || null,
           property_summaries: propertySummaries,
         }, function (resp) {
+          finalizeSend();
           lineBtn.disabled    = false;
           if (chrome.runtime.lastError || !resp || !resp.ok) {
             var errMsg = resp ? resp.error : (chrome.runtime.lastError ? chrome.runtime.lastError.message : "不明");
@@ -462,7 +480,9 @@
       }
 
       lineBtn.textContent = "PDF取得中... (" + (i + 1) + "/" + targets.length + ")";
-      captureOnePdfWithRetry(targets[i].btn)
+      // DOM更新後もボタンを正しく取得（stale reference 防止）
+      var freshBtn = findFreshBtn(targets[i].rowKey) || targets[i].btn;
+      captureOnePdfWithRetry(freshBtn)
         .then(function (result) {
           var b64  = result.b64;
           var name = result.name;
@@ -470,13 +490,13 @@
           pdfBase64List.push(b64);
           capturedNames.push(name);
           closeModal();
-          return sleep(500);
+          return sleep(1000); // モーダルが完全に閉じるのを待つ（500ms→1000ms）
         })
         .then(function () { processNext(i + 1); })
         .catch(function (e) {
           console.warn("[AXLX] PDF取得失敗（リトライ後も失敗） " + (i + 1) + "件目:", e.message);
           closeModal();
-          sleep(800).then(function () { processNext(i + 1); });
+          sleep(1200).then(function () { processNext(i + 1); });
         });
     }
 
