@@ -141,8 +141,8 @@
   function doExpand() {
     const fr = ensureIframe();
     if (!fr) return; // コンテキスト無効（ページリロードで回復）
-    // iframeがまだ読み込み中の場合はload後に展開（pendingExpand）
-    if (!fr.contentDocument || fr.contentDocument.readyState !== "complete") {
+    // cross-origin(chrome-extension://)ではcontentDocument=null→ロード済みとみなす
+    if (fr.contentDocument && fr.contentDocument.readyState !== "complete") {
       pendingExpand = true;
       return;
     }
