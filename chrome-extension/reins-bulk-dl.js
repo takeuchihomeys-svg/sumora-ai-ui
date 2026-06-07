@@ -15,28 +15,27 @@
       var r = row.getBoundingClientRect();
       return r.width > 0 && r.height > 0;
     }
+    // チェックボックスを持つか確認
+    function hasCb(el) { return !!el.querySelector('input[type="checkbox"]'); }
 
     // 優先1: PrimeVue v3 クラス名（従来）
     var rows = Array.from(document.querySelectorAll(".p-table-body-row")).filter(isVisible);
     if (rows.length > 0) return rows;
 
     // 優先2: PrimeVue v4+ クラス名（部分一致）
-    rows = Array.from(document.querySelectorAll("[class*='table-body-row'], [class*='datatable-row'], [class*='p-row']")).filter(isVisible);
+    rows = Array.from(document.querySelectorAll("[class*='table-body-row'], [class*='datatable-row'], [class*='p-datatable-row']")).filter(isVisible);
     if (rows.length > 0) return rows;
 
-    // 優先3: チェックボックスを含む行要素（div/tr）— REINS がどのバージョンでも動く汎用フォールバック
-    var candidates = Array.from(document.querySelectorAll("div, tr")).filter(function (el) {
-      if (!isVisible(el)) return false;
-      var cb = el.querySelector('input[type="checkbox"]');
-      if (!cb) return false;
-      // 自分自身がチェックボックスの親であり、かつ直接の親でない（行レベル）
-      var children = el.children;
-      for (var i = 0; i < children.length; i++) {
-        if (children[i].querySelector('input[type="checkbox"]')) return true;
-      }
-      return false;
+    // 優先3: WAI-ARIA role="row"（PrimeVue v4 仮想スクロール対応）
+    rows = Array.from(document.querySelectorAll("[role='row']")).filter(function (el) {
+      return isVisible(el) && hasCb(el);
     });
-    // 子要素に包含されるものは除外（最小粒度の行だけ残す）
+    if (rows.length > 0) return rows;
+
+    // 優先4: tr 要素（従来型テーブル）— div は対象外（フォームCB誤検知防止）
+    var candidates = Array.from(document.querySelectorAll("tr")).filter(function (el) {
+      return isVisible(el) && hasCb(el);
+    });
     return candidates.filter(function (el) {
       return !candidates.some(function (other) { return other !== el && el.contains(other); });
     });
@@ -162,9 +161,12 @@
 
   // ── ネイティブチェックボックスを取得（レインズの行左端）─────────────────
   function findNativeCheckbox(row) {
-    var cells = Array.from(row.querySelectorAll(".p-table-body-item"));
-    if (cells.length) {
-      var cb = cells[0].querySelector('input[type="checkbox"]');
+    // PrimeVue v3/v4 セル・標準 td・role="cell" を順に探す
+    var firstCell = row.querySelector(
+      ".p-table-body-item, .p-datatable-td, td, [role='cell']"
+    );
+    if (firstCell) {
+      var cb = firstCell.querySelector('input[type="checkbox"]');
       if (cb) return cb;
     }
     return Array.from(row.querySelectorAll('input[type="checkbox"]')).find(function (c) {
