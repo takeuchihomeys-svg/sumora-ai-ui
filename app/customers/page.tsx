@@ -103,6 +103,18 @@ function isDoneToday(c: Customer): boolean {
   return sent || viewed;
 }
 
+// 条件ログエントリのパース: "【2026/06/07追加】テキスト" 形式を検出
+function parseConditionLog(text: string): { isLog: boolean; date: string; content: string } {
+  const m = text.match(/^【(\d{4}\/\d{2}\/\d{2})追加】([\s\S]*)$/);
+  if (m) return { isLog: true, date: m[1], content: m[2].trim() };
+  return { isLog: false, date: "", content: text };
+}
+
+function formatLogDate(): string {
+  const d = new Date();
+  return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,"0")}/${String(d.getDate()).padStart(2,"0")}`;
+}
+
 type EditFields = {
   desired_area: string; floor_plan: string;
   rent_min: string; rent_max: string;
@@ -131,6 +143,10 @@ function toEditFields(c: Customer): EditFields {
   };
 }
 
+function emptyEditFields(): EditFields {
+  return { desired_area:"", floor_plan:"", rent_min:"", rent_max:"", walk_minutes:"", move_in_time:"", building_age:"", initial_cost_limit:"", floor_area_min:"", preferences:"", ng_points:"", other_requests:"", property_memo:"" };
+}
+
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading]     = useState(true);
@@ -140,6 +156,7 @@ export default function CustomersPage() {
   const [viewedUpdating, setViewedUpdating]   = useState<string | null>(null);
   const [showCompleted, setShowCompleted]     = useState(true);
   const [reflectLoading, setReflectLoading]   = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
   const clearAfterSave = useRef(false);
 
   const [showAdd, setShowAdd]       = useState(false);
@@ -152,6 +169,13 @@ export default function CustomersPage() {
   const [editFields, setEditFields] = useState<EditFields | null>(null);
   const [editSaving, setEditSaving] = useState(false);
 
+  // 条件追加モーダル
+  const [addCondId, setAddCondId]       = useState<string | null>(null);
+  const [addCondText, setAddCondText]   = useState("");
+  const [addCondParsing, setAddCondParsing] = useState(false);
+  const [addCondSaving, setAddCondSaving]   = useState(false);
+  const [parsedPreview, setParsedPreview]   = useState<EditFields | null>(null);
+
   const fetchCustomers = async () => {
     const res = await fetch("/api/property-customers");
     if (res.ok) setCustomers(await res.json());
@@ -159,17 +183,29 @@ export default function CustomersPage() {
   };
   useEffect(() => { fetchCustomers(); }, []);
 
-  const base = useMemo(() =>
-    filterLinked ? customers.filter((c) => c.is_linked) : customers,
-  [customers, filterLinked]);
+  const base = useMemo(() => {
+    const list = filterLinked ? customers.filter((c) => c.is_linked) : customers;
+    if (!searchQuery.trim()) return list;
+    const q = searchQuery.toLowerCase();
+    return list.filter((c) => c.customer_name.toLowerCase().includes(q));
+  }, [customers, filterLinked, searchQuery]);
 
   const completedList = useMemo(() =>
     base.filter((c) => isDoneToday(c)),
   [base]);
 
   const sorted = useMemo(() =>
-    base.filter((c) => !isDoneToday(c))
-      .sort((a, b) => URGENCY_ORDER[urgency(a)] - URGENCY_ORDER[urgency(b)]),
+    base
+      .filter((c) => !isDoneToday(c))
+      .sort((a, b) => {
+        const ua = URGENCY_ORDER[urgency(a)];
+        const ub = URGENCY_ORDER[urgency(b)];
+        if (ua !== ub) return ua - ub;
+        // 同じurgency内: 最近物件を送った人が上
+        const ta = a.last_property_sent_at ? new Date(a.last_property_sent_at).getTime() : 0;
+        const tb = b.last_property_sent_at ? new Date(b.last_property_sent_at).getTime() : 0;
+        return tb - ta;
+      }),
   [base]);
 
   const linkedCount = customers.filter((c) => c.is_linked).length;
@@ -184,7 +220,6 @@ export default function CustomersPage() {
     });
     if (res.ok) {
       const updated = await res.json();
-      // APIで自動昇格した status も含めて反映
       setCustomers((p) => p.map((c) => c.id === id ? { ...c, ...updated } : c));
     } else {
       setCustomers((p) => p.map((c) => c.id === id ? { ...c, last_property_sent_at: now } : c));
@@ -220,22 +255,21 @@ export default function CustomersPage() {
       if (!data.ok || !data.parsed) return;
 
       const p = data.parsed;
-      // 既存条件とマージ（AIが返した非nullの値だけ上書き、nullは既存値を保持）
-      const base = toEditFields(c);
+      const base2 = toEditFields(c);
       const merged: EditFields = {
-        desired_area:       (p.desired_area       != null ? String(p.desired_area)       : base.desired_area),
-        floor_plan:         (p.floor_plan         != null ? String(p.floor_plan)         : base.floor_plan),
-        rent_min:           (p.rent_min           != null ? String(Math.floor((p.rent_min as number) / 10000)) : base.rent_min),
-        rent_max:           (p.rent_max           != null ? String(Math.floor((p.rent_max as number) / 10000)) : base.rent_max),
-        walk_minutes:       (p.walk_minutes       != null ? String(p.walk_minutes)       : base.walk_minutes),
-        move_in_time:       (p.move_in_time       != null ? String(p.move_in_time)       : base.move_in_time),
-        building_age:       (p.building_age       != null ? String(p.building_age)       : base.building_age),
-        floor_area_min:     (p.floor_area_min     != null ? String(p.floor_area_min)     : base.floor_area_min),
-        initial_cost_limit: (p.initial_cost_limit != null ? String(Math.floor((p.initial_cost_limit as number) / 10000)) : base.initial_cost_limit),
-        preferences:        (p.preferences        != null ? String(p.preferences)        : base.preferences),
-        ng_points:          (p.ng_points          != null ? String(p.ng_points)          : base.ng_points),
-        other_requests:     (p.other_requests     != null ? String(p.other_requests)     : base.other_requests),
-        property_memo:      base.property_memo,
+        desired_area:       (p.desired_area       != null ? String(p.desired_area)       : base2.desired_area),
+        floor_plan:         (p.floor_plan         != null ? String(p.floor_plan)         : base2.floor_plan),
+        rent_min:           (p.rent_min           != null ? String(Math.floor((p.rent_min as number) / 10000)) : base2.rent_min),
+        rent_max:           (p.rent_max           != null ? String(Math.floor((p.rent_max as number) / 10000)) : base2.rent_max),
+        walk_minutes:       (p.walk_minutes       != null ? String(p.walk_minutes)       : base2.walk_minutes),
+        move_in_time:       (p.move_in_time       != null ? String(p.move_in_time)       : base2.move_in_time),
+        building_age:       (p.building_age       != null ? String(p.building_age)       : base2.building_age),
+        floor_area_min:     (p.floor_area_min     != null ? String(p.floor_area_min)     : base2.floor_area_min),
+        initial_cost_limit: (p.initial_cost_limit != null ? String(Math.floor((p.initial_cost_limit as number) / 10000)) : base2.initial_cost_limit),
+        preferences:        (p.preferences        != null ? String(p.preferences)        : base2.preferences),
+        ng_points:          (p.ng_points          != null ? String(p.ng_points)          : base2.ng_points),
+        other_requests:     (p.other_requests     != null ? String(p.other_requests)     : base2.other_requests),
+        property_memo:      base2.property_memo,
       };
       clearAfterSave.current = true;
       setEditId(c.id);
@@ -295,7 +329,6 @@ export default function CustomersPage() {
     if (res.ok) {
       const updated = await res.json();
       setCustomers((p) => p.map((c) => c.id === editId ? { ...c, ...updated } : c));
-      // 「条件に反映する」経由で開いたモーダルの場合、保存後に新着要望を自動クリア
       if (clearAfterSave.current) {
         clearAfterSave.current = false;
         await fetch("/api/property-customers", {
@@ -306,6 +339,85 @@ export default function CustomersPage() {
       }
     }
     setEditId(null); setEditFields(null); setEditSaving(false);
+  };
+
+  // 条件追加: AIでテキスト→構造化フィールドを自動解析
+  const parseAddCond = async () => {
+    if (!addCondText.trim() || addCondParsing) return;
+    setAddCondParsing(true);
+    try {
+      const res = await fetch("/api/parse-additional-conditions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: addCondText }),
+      });
+      const data = await res.json() as { ok: boolean; parsed?: Record<string, unknown> };
+      if (!data.ok || !data.parsed) return;
+      const p = data.parsed;
+      const f = emptyEditFields();
+      const preview: EditFields = {
+        desired_area:       p.desired_area       != null ? String(p.desired_area)       : f.desired_area,
+        floor_plan:         p.floor_plan         != null ? String(p.floor_plan)         : f.floor_plan,
+        rent_min:           p.rent_min           != null ? String(Math.floor((p.rent_min as number)/10000)) : f.rent_min,
+        rent_max:           p.rent_max           != null ? String(Math.floor((p.rent_max as number)/10000)) : f.rent_max,
+        walk_minutes:       p.walk_minutes       != null ? String(p.walk_minutes)       : f.walk_minutes,
+        move_in_time:       p.move_in_time       != null ? String(p.move_in_time)       : f.move_in_time,
+        building_age:       p.building_age       != null ? String(p.building_age)       : f.building_age,
+        floor_area_min:     p.floor_area_min     != null ? String(p.floor_area_min)     : f.floor_area_min,
+        initial_cost_limit: p.initial_cost_limit != null ? String(Math.floor((p.initial_cost_limit as number)/10000)) : f.initial_cost_limit,
+        preferences:        p.preferences        != null ? String(p.preferences)        : f.preferences,
+        ng_points:          p.ng_points          != null ? String(p.ng_points)          : f.ng_points,
+        other_requests:     p.other_requests     != null ? String(p.other_requests)     : f.other_requests,
+        property_memo:      f.property_memo,
+      };
+      setParsedPreview(preview);
+    } finally {
+      setAddCondParsing(false);
+    }
+  };
+
+  // 条件追加: 保存（テキストログ追記 + 構造化フィールドの更新）
+  const saveAddCond = async () => {
+    if (!addCondId || !addCondText.trim() || addCondSaving) return;
+    setAddCondSaving(true);
+    try {
+      const customer = customers.find((c) => c.id === addCondId);
+      if (!customer) return;
+
+      const logEntry = `【${formatLogDate()}追加】${addCondText.trim()}`;
+      const existing = customer.additional_conditions?.trim() || "";
+      const newAdditional = existing ? `${existing}\n${logEntry}` : logEntry;
+
+      const patch: Record<string, unknown> = { id: addCondId, additional_conditions: newAdditional };
+
+      // AI解析結果があれば構造化フィールドも更新（非null値のみ）
+      if (parsedPreview) {
+        if (parsedPreview.desired_area)       patch.desired_area       = parsedPreview.desired_area;
+        if (parsedPreview.floor_plan)         patch.floor_plan         = parsedPreview.floor_plan;
+        if (parsedPreview.rent_min)           patch.rent_min           = Number(parsedPreview.rent_min) * 10000;
+        if (parsedPreview.rent_max)           patch.rent_max           = Number(parsedPreview.rent_max) * 10000;
+        if (parsedPreview.walk_minutes)       patch.walk_minutes       = Number(parsedPreview.walk_minutes);
+        if (parsedPreview.move_in_time)       patch.move_in_time       = parsedPreview.move_in_time;
+        if (parsedPreview.building_age)       patch.building_age       = Number(parsedPreview.building_age);
+        if (parsedPreview.floor_area_min)     patch.floor_area_min     = Number(parsedPreview.floor_area_min);
+        if (parsedPreview.initial_cost_limit) patch.initial_cost_limit = Number(parsedPreview.initial_cost_limit) * 10000;
+        if (parsedPreview.preferences)        patch.preferences        = parsedPreview.preferences;
+        if (parsedPreview.ng_points)          patch.ng_points          = parsedPreview.ng_points;
+        if (parsedPreview.other_requests)     patch.other_requests     = parsedPreview.other_requests;
+      }
+
+      const res = await fetch("/api/property-customers", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setCustomers((p) => p.map((c) => c.id === addCondId ? { ...c, ...updated } : c));
+      }
+      setAddCondId(null); setAddCondText(""); setParsedPreview(null);
+    } finally {
+      setAddCondSaving(false);
+    }
   };
 
   return (
@@ -333,7 +445,9 @@ export default function CustomersPage() {
             ＋ 追加
           </button>
         </div>
-        <div className="flex gap-2">
+
+        {/* フィルター */}
+        <div className="flex gap-2 mb-2">
           {([true, false] as const).map((linked) => (
             <button
               key={String(linked)}
@@ -343,6 +457,24 @@ export default function CustomersPage() {
               {linked ? `紐付き ${linkedCount}` : `全員 ${customers.length}`}
             </button>
           ))}
+        </div>
+
+        {/* 検索欄 */}
+        <div className="relative">
+          <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-white/50" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input
+            type="text"
+            placeholder="お客さんを検索..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full rounded-xl py-2 pl-8 pr-3 text-sm text-white placeholder-white/50 outline-none"
+            style={{ background: "rgba(255,255,255,0.15)" }}
+          />
+          {searchQuery && (
+            <button onClick={() => setSearchQuery("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/50 text-xs">✕</button>
+          )}
         </div>
       </div>
 
@@ -373,7 +505,6 @@ export default function CustomersPage() {
                 return (
                   <div key={c.id}
                     className="flex items-center gap-3 rounded-2xl border border-[#e9edef] bg-white px-4 py-2.5">
-                    {/* アイコン */}
                     <div className="shrink-0">
                       {conv?.profile_image_url ? (
                         <img src={conv.profile_image_url} alt={c.customer_name}
@@ -384,11 +515,9 @@ export default function CustomersPage() {
                         </div>
                       )}
                     </div>
-                    {/* 名前 */}
                     <span className="flex-1 truncate text-[13px] font-semibold text-[#111b21]">
                       {c.customer_name}
                     </span>
-                    {/* バッジ */}
                     <div className="flex shrink-0 gap-1.5">
                       {sent && (
                         <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
@@ -415,7 +544,7 @@ export default function CustomersPage() {
           <div className="py-16 text-center text-sm text-[#667781]">読み込み中...</div>
         ) : sorted.length === 0 ? (
           <div className="py-16 text-center text-sm text-[#667781]">
-            {filterLinked ? "紐付き済みのお客さんがいません" : "お客さんがいません"}
+            {searchQuery ? "検索結果なし" : filterLinked ? "紐付き済みのお客さんがいません" : "お客さんがいません"}
           </div>
         ) : (
           sorted.map((c) => {
@@ -429,6 +558,11 @@ export default function CustomersPage() {
 
             const borderColor = u === "reply" ? "#ef4444" : u === "property" ? "#f97316" : "#e9edef";
 
+            // 条件ログを解析（追加日つきエントリを分離して表示）
+            const condLines = c.additional_conditions
+              ? c.additional_conditions.split("\n").map(parseConditionLog)
+              : [];
+
             return (
               <div key={c.id} className="mx-3 mt-2.5 rounded-2xl overflow-hidden shadow-sm"
                 style={{ border: `1.5px solid ${borderColor}`, background: "#fff" }}>
@@ -438,7 +572,6 @@ export default function CustomersPage() {
                   className="flex w-full items-center gap-3 px-4 py-3 text-left active:bg-[#f5f6f6]"
                   onClick={() => setExpandedId(isExp ? null : c.id)}
                 >
-                  {/* プロフィール画像 */}
                   <div className="relative shrink-0">
                     {conv?.profile_image_url ? (
                       <img src={conv.profile_image_url} alt={c.customer_name}
@@ -451,7 +584,6 @@ export default function CustomersPage() {
                     <span className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white ${propMeta.dot}`} />
                   </div>
 
-                  {/* 名前・ステータス・メッセージ */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
                       <span className="text-[14px] font-bold text-[#111b21] truncate">{c.customer_name}</span>
@@ -471,7 +603,6 @@ export default function CustomersPage() {
                     )}
                   </div>
 
-                  {/* 時間 + chevron */}
                   <div className="shrink-0 flex flex-col items-end gap-1">
                     <span className="text-[10px] text-[#667781]">{relTime(conv?.updated_at)}</span>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#90caf9" strokeWidth="2" strokeLinecap="round"
@@ -509,43 +640,53 @@ export default function CustomersPage() {
                       )}
                     </div>
                   )}
-                  {!c.desired_area && !c.floor_plan && !c.rent_min && !c.rent_max && !c.preferences && !c.ng_points && !c.additional_conditions && (
+                  {!c.desired_area && !c.floor_plan && !c.rent_min && !c.rent_max && !c.preferences && !c.ng_points && condLines.length === 0 && (
                     <p className="text-[11px] text-[#bbb]">条件未入力</p>
                   )}
 
-                  {/* 新着要望（カジュアル更新ログ） */}
-                  {c.additional_conditions && (
-                    <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
-                      <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-[10px] font-bold text-amber-700">新着要望</span>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleReflect(c);
-                            }}
-                            disabled={reflectLoading === c.id}
-                            className="rounded-lg bg-amber-600 px-2.5 py-1 text-[10px] font-bold text-white active:opacity-70 disabled:opacity-50"
-                          >
-                            {reflectLoading === c.id ? "解析中…" : "条件に反映する"}
-                          </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); clearAdditional(c.id); }}
-                            className="text-[9px] text-amber-400 active:opacity-60"
-                          >
-                            クリア
-                          </button>
-                        </div>
-                      </div>
-                      {c.additional_conditions.split("\n").map((line, i) => (
-                        <p key={i} className="text-[11px] text-amber-800 leading-relaxed">{line}</p>
-                      ))}
+                  {/* 条件ログ（追加日つき + 新着要望） */}
+                  {condLines.length > 0 && (
+                    <div className="mt-2 space-y-1.5">
+                      {condLines.map((entry, i) =>
+                        entry.isLog ? (
+                          // 手動追加された条件ログ
+                          <div key={i} className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-[10px] font-bold text-blue-600">📌 {entry.date}追加</span>
+                            </div>
+                            <p className="text-[11px] text-blue-800 leading-relaxed">{entry.content}</p>
+                          </div>
+                        ) : (
+                          // LINEからの新着要望
+                          <div key={i} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-[10px] font-bold text-amber-700">新着要望</span>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleReflect(c); }}
+                                  disabled={reflectLoading === c.id}
+                                  className="rounded-lg bg-amber-600 px-2.5 py-1 text-[10px] font-bold text-white active:opacity-70 disabled:opacity-50"
+                                >
+                                  {reflectLoading === c.id ? "解析中…" : "条件に反映する"}
+                                </button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); clearAdditional(c.id); }}
+                                  className="text-[9px] text-amber-400 active:opacity-60"
+                                >
+                                  クリア
+                                </button>
+                              </div>
+                            </div>
+                            <p className="text-[11px] text-amber-800 leading-relaxed">{entry.content}</p>
+                          </div>
+                        )
+                      )}
                     </div>
                   )}
                 </div>
 
                 {/* ── アクション行 ── */}
-                <div className="flex items-center gap-2 border-t border-[#f0f2f5] bg-[#fafafa] px-4 py-2">
+                <div className="flex items-center gap-2 border-t border-[#f0f2f5] bg-[#fafafa] px-4 py-2 flex-wrap">
                   {c.status !== "pending" && (
                     <button
                       onClick={() => markSent(c.id)}
@@ -569,6 +710,13 @@ export default function CustomersPage() {
                     className="rounded-xl border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-bold text-[#444] active:scale-95 transition-transform"
                   >
                     条件更新
+                  </button>
+                  {/* 条件追加ボタン */}
+                  <button
+                    onClick={() => { setAddCondId(c.id); setAddCondText(""); setParsedPreview(null); }}
+                    className="rounded-xl border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-bold text-purple-700 active:scale-95 transition-transform"
+                  >
+                    ＋ 条件追加
                   </button>
                   {c.phone && (
                     <a href={`tel:${c.phone}`}
@@ -685,6 +833,80 @@ export default function CustomersPage() {
         </div>
       )}
 
+      {/* ── 条件追加モーダル ── */}
+      {addCondId && (
+        <div className="fixed inset-0 z-50 flex items-end" style={{ background: "rgba(0,0,0,0.5)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) { setAddCondId(null); setAddCondText(""); setParsedPreview(null); } }}>
+          <div className="w-full rounded-t-2xl bg-white overflow-y-auto"
+            style={{ maxHeight: "85svh", paddingBottom: "max(env(safe-area-inset-bottom),20px)" }}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#f0f2f5] sticky top-0 bg-white z-10">
+              <div>
+                <h2 className="font-bold text-[#111b21] text-[15px]">条件追加</h2>
+                <p className="text-[11px] text-[#8696a0]">
+                  {customers.find((c) => c.id === addCondId)?.customer_name} ・ {formatLogDate()}
+                </p>
+              </div>
+              <button onClick={() => { setAddCondId(null); setAddCondText(""); setParsedPreview(null); }} className="text-[#aaa] text-xl leading-none">✕</button>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              {/* テキスト入力 */}
+              <div>
+                <label className="text-[11px] font-semibold text-[#8696a0] mb-1 block">
+                  追加する条件（自由に書いてOK）
+                </label>
+                <textarea
+                  className="w-full border border-[#e9edef] rounded-xl px-3 py-2.5 text-sm text-[#111b21] focus:outline-none focus:border-[#7c3aed]"
+                  rows={4}
+                  placeholder={"例: 家賃を7万以内に変更\nオートロック必須になった\nエリアを大阪北区に絞る"}
+                  value={addCondText}
+                  onChange={(e) => { setAddCondText(e.target.value); setParsedPreview(null); }}
+                  style={{ resize: "none" }}
+                />
+              </div>
+
+              {/* AI自動解析ボタン */}
+              <button
+                onClick={parseAddCond}
+                disabled={!addCondText.trim() || addCondParsing}
+                className="w-full py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-40 active:scale-[0.98] transition-transform"
+                style={{ background: "linear-gradient(135deg, #7c3aed, #a855f7)" }}
+              >
+                {addCondParsing ? "AI解析中..." : "✨ AIで自動解析"}
+              </button>
+
+              {/* AI解析結果プレビュー */}
+              {parsedPreview && (
+                <div className="rounded-xl border border-purple-100 bg-purple-50 px-4 py-3 space-y-1.5">
+                  <p className="text-[11px] font-bold text-purple-700 mb-2">AI解析結果（自動入力）</p>
+                  {parsedPreview.desired_area       && <PreviewRow label="エリア"   value={parsedPreview.desired_area} />}
+                  {parsedPreview.floor_plan         && <PreviewRow label="間取り"   value={parsedPreview.floor_plan} />}
+                  {parsedPreview.floor_area_min     && <PreviewRow label="広さ"     value={`${parsedPreview.floor_area_min}㎡以上`} />}
+                  {parsedPreview.rent_min           && <PreviewRow label="家賃下限" value={`${parsedPreview.rent_min}万`} />}
+                  {parsedPreview.rent_max           && <PreviewRow label="家賃上限" value={`${parsedPreview.rent_max}万`} />}
+                  {parsedPreview.walk_minutes       && <PreviewRow label="駅徒歩"   value={`${parsedPreview.walk_minutes}分`} />}
+                  {parsedPreview.move_in_time       && <PreviewRow label="入居"     value={parsedPreview.move_in_time} />}
+                  {parsedPreview.building_age       && <PreviewRow label="築年数"   value={`${parsedPreview.building_age}年以内`} />}
+                  {parsedPreview.initial_cost_limit && <PreviewRow label="初期費用" value={`${parsedPreview.initial_cost_limit}万以内`} />}
+                  {parsedPreview.preferences        && <PreviewRow label="こだわり" value={parsedPreview.preferences} />}
+                  {parsedPreview.ng_points          && <PreviewRow label="NG"       value={parsedPreview.ng_points} />}
+                  <p className="text-[10px] text-purple-500 pt-1">保存すると上記のフィールドが自動更新されます</p>
+                </div>
+              )}
+            </div>
+            <div className="px-5">
+              <button
+                onClick={saveAddCond}
+                disabled={!addCondText.trim() || addCondSaving}
+                className="w-full py-3 rounded-xl font-bold text-white text-sm disabled:opacity-40 active:scale-[0.98] transition-transform"
+                style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}
+              >
+                {addCondSaving ? "追加中..." : "追加する"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── 追加モーダル ── */}
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-end" style={{ background: "rgba(0,0,0,0.5)" }}
@@ -712,7 +934,6 @@ export default function CustomersPage() {
   );
 }
 
-// ── 条件タグ（絵文字なし・ラベル+値） ──
 function Tag({ label, value }: { label: string; value: string }) {
   return (
     <span className="flex items-baseline gap-1 rounded-lg border border-[#e9edef] bg-[#f8f9fa] px-2 py-0.5">
@@ -722,7 +943,15 @@ function Tag({ label, value }: { label: string; value: string }) {
   );
 }
 
-// ── フォーム入力部品 ──
+function PreviewRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-[10px] font-semibold text-purple-500 w-14 shrink-0">{label}</span>
+      <span className="text-[11px] text-purple-800 font-semibold">{value}</span>
+    </div>
+  );
+}
+
 function Field({
   label, placeholder, value, onChange, textarea = false, type = "text",
 }: {
