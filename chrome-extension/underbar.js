@@ -34,7 +34,8 @@
 
   // レインズは明示的にcollapseした記録がなければ常に展開状態で起動
   const wasExpanded = isReins ? (saved.expanded !== false) : (saved.expanded === true);
-  let ignoreNextCollapse = wasExpanded; // popup.jsの初期collapseを無視するフラグ
+  // popup.jsの初期collapseを無視するフラグ（iframe作成直後にリセットされる）
+  let ignoreNextCollapse = false;
 
   function persist() {
     try {
@@ -91,19 +92,51 @@
     <circle cx="30" cy="7" r="2.2" fill="rgba(255,255,255,0.38)"/>
   </svg>`;
 
-  // ── iframe ────────────────────────────────────────────────────────
-  const iframe = document.createElement("iframe");
-  iframe.src = chrome.runtime.getURL("popup.html");
-  // iframe.allow = "clipboard-write" は削除
-  // → itandibb.comのPermissions-PolicyがclipboardをブロックするためChrome違反ログの原因になる
-  // → コピーはpostMessage経由でコンテンツスクリプトのexecCommandに委託
-  Object.assign(iframe.style, {
-    flex:      "1",
-    width:     "100%",
-    border:    "none",
-    display:   "block",
-    minHeight: "0",
-  });
+  // ── iframe（遅延作成）─────────────────────────────────────────────
+  // 多数のタブが開かれてもメモリを圧迫しないよう、初めて展開するまでiframeを作らない
+  let iframe = null;
+  let pendingExpand = false;
+
+  function ensureIframe() {
+    if (iframe) return iframe;
+    ignoreNextCollapse = true; // popup.js初期化時のcollapseを無視
+    iframe = document.createElement("iframe");
+    iframe.src = chrome.runtime.getURL("popup.html");
+    Object.assign(iframe.style, {
+      flex:      "1",
+      width:     "100%",
+      border:    "none",
+      display:   "block",
+      minHeight: "0",
+    });
+    iframe.addEventListener("load", () => {
+      if (pendingExpand) {
+        pendingExpand = false;
+        setTimeout(() => {
+          setSize(true);
+          iframe.contentWindow.postMessage(
+            { from: "underbar-parent", action: "expand-from-parent" }, "*"
+          );
+        }, 80);
+      }
+    });
+    // resizeHandleの前に挿入
+    wrap.insertBefore(iframe, resizeHandle);
+    return iframe;
+  }
+
+  function doExpand() {
+    const fr = ensureIframe();
+    // iframeがまだ読み込み中の場合はload後に展開（pendingExpand）
+    if (!fr.contentDocument || fr.contentDocument.readyState !== "complete") {
+      pendingExpand = true;
+      return;
+    }
+    setSize(true);
+    try {
+      fr.contentWindow.postMessage({ from: "underbar-parent", action: "expand-from-parent" }, "*");
+    } catch {}
+  }
 
   // ── リサイズハンドル（右下）──────────────────────────────────────
   const resizeHandle = document.createElement("div");
@@ -134,10 +167,16 @@
   });
 
   wrap.appendChild(dragBar);
-  wrap.appendChild(iframe);
+  // iframeはここでは追加しない（ensureIframe()で遅延追加）
   wrap.appendChild(resizeHandle);
   wrap.appendChild(miniOverlay);
   document.body.appendChild(wrap);
+
+  // ── 前回展開状態を復元（wasExpanded=trueのときのみiframeを即座に作る）──
+  if (wasExpanded) {
+    pendingExpand = true;
+    ensureIframe();
+  }
 
   // ── サイズ切り替え ────────────────────────────────────────────────
   function clampHeight() {
@@ -166,18 +205,6 @@
     persist();
   }
 
-  // ── iframe ロード後に展開状態を復元 ──────────────────────────────
-  iframe.addEventListener("load", () => {
-    if (wasExpanded) {
-      setTimeout(() => {
-        setSize(true);
-        iframe.contentWindow.postMessage(
-          { from: "underbar-parent", action: "expand-from-parent" }, "*"
-        );
-      }, 80);
-    }
-  });
-
   // ── ドラッグ & リサイズ（一元管理）──────────────────────────────
   let dragAction = null; // "move" | "resize"
   let startCX = 0, startCY = 0;
@@ -193,7 +220,7 @@
     startWY = parseInt(wrap.style.top)  || posY;
     startPW = panelW;
     startPH = panelH;
-    iframe.style.pointerEvents = "none";
+    if (iframe) iframe.style.pointerEvents = "none";
     wrap.style.transition      = "none";
     e.preventDefault();
     e.stopPropagation();
@@ -238,7 +265,7 @@
     const dy = Math.abs(e.clientY - startCY);
 
     dragAction = null;
-    iframe.style.pointerEvents = "";
+    if (iframe) iframe.style.pointerEvents = "";
     dragBar.style.cursor       = "grab";
     miniOverlay.style.cursor   = "grab";
     setTimeout(() => {
@@ -249,10 +276,7 @@
 
     // ミニモードでほぼ動かなかった → クリック → 展開
     if (wasMini && wasMove && dx < 5 && dy < 5) {
-      setSize(true);
-      iframe.contentWindow.postMessage(
-        { from: "underbar-parent", action: "expand-from-parent" }, "*"
-      );
+      doExpand();
     }
   });
 
@@ -265,8 +289,8 @@
       if (ignoreNextCollapse) { ignoreNextCollapse = false; return; }
       setSize(false);
     }
-    if (a === "expand") setSize(true);
-    if (a === "toggle") setSize(!expanded);
+    if (a === "expand") doExpand();
+    if (a === "toggle") { expanded ? setSize(false) : doExpand(); }
     if (a === "autofill") {
       // page-script.jsのリスナーに転送（ページのJS文脈で動かす）
       window.postMessage({ from: "aixlinx-fill", conditions: e.data.conditions }, "*");
@@ -292,7 +316,7 @@
   // ── page-script.js からの完了通知を popup.js に中継 ──────────────────
   window.addEventListener("message", function(e) {
     if (!e.data || e.data.from !== "aixlinx-fill-done") return;
-    iframe.contentWindow.postMessage({ from: "aixlinx-fill-done" }, "*");
+    if (iframe) iframe.contentWindow.postMessage({ from: "aixlinx-fill-done" }, "*");
   });
 
   // ── bulk-dl.js ↔ popup.js 顧客名の双方向中継 ───────────────────────

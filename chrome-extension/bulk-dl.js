@@ -1,6 +1,9 @@
 (function () {
   "use strict";
 
+  // 物件詳細・その他ページでは動作不要（MutationObserver＋DOM走査によるメモリ圧迫を防ぐ）
+  if (location.pathname.indexOf("main.php") === -1) return;
+
   var tracked = [];
   var injectTimer = null;
 
