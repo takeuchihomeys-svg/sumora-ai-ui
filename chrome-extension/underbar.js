@@ -191,6 +191,27 @@
   wrap.appendChild(miniOverlay);
   document.body.appendChild(wrap);
 
+  // ── 独立ミニボタン（ミニ化時にwrapをdisplay:noneにして代替表示）────────
+  // wrap のCSS上書き問題を完全回避。wrap とは完全に独立した別要素。
+  const miniBtnEl = document.createElement("div");
+  miniBtnEl.id = "aixlinx-mini-btn";
+  Object.assign(miniBtnEl.style, {
+    background:     "linear-gradient(135deg,#0a1628,#1565C0)",
+    borderRadius:   "14px",
+    boxShadow:      "0 4px 28px rgba(0,0,0,0.32)",
+    display:        "none",
+    alignItems:     "center",
+    justifyContent: "center",
+    userSelect:     "none",
+    cursor:         "grab",
+  });
+  miniBtnEl.style.setProperty("position", "fixed",          "important");
+  miniBtnEl.style.setProperty("width",    MINI + "px",      "important");
+  miniBtnEl.style.setProperty("height",   MINI + "px",      "important");
+  miniBtnEl.style.setProperty("z-index",  "2147483647",     "important");
+  miniBtnEl.innerHTML = '<span style="color:white;font-size:9px;font-weight:800;text-align:center;line-height:1.3;letter-spacing:0.5px;pointer-events:none;">AIX<br>LINX</span>';
+  document.body.appendChild(miniBtnEl);
+
   // ── 展開状態で起動（iframeを即座に作成・コンテキスト無効時は1.5秒後リトライ）──
   if (wasExpanded) {
     pendingExpand = true;
@@ -217,8 +238,10 @@
   function setSize(exp) {
     expanded = exp;
     if (exp) {
+      // ミニボタンを隠し、wrapをflexで復元
+      miniBtnEl.style.display = "none";
+      wrap.style.setProperty("display", "flex", "important");
       clampHeight(); // 展開時に画面外にはみ出ないよう高さを調整
-      wrap.style.background = "#fff"; // ミニ時に変えた背景を戻す
       wrap.style.setProperty("width",  panelW + "px", "important");
       wrap.style.setProperty("height", (panelH + DRAG_H) + "px", "important");
       dragBar.style.display       = "flex";
@@ -227,27 +250,14 @@
       // ミニ時に非表示にしたiframeを復元（visibility:hiddenで状態保持していたもの）
       if (iframe) iframe.style.visibility = "visible";
     } else {
-      // 展開→ミニ: transition を一時オフにして即座に100×100へスナップ
-      // （アニメーション中に miniOverlay の inset:0 が wrap サイズに追随しないバグを防止）
-      wrap.style.transition = "none";
-      // wrap 背景をグラデーションに（miniOverlay が fill できない場合の保険）
-      wrap.style.background = "linear-gradient(135deg,#0a1628,#1565C0)";
-      wrap.style.setProperty("width",  MINI + "px", "important");
-      wrap.style.setProperty("height", MINI + "px", "important");
-      // 次フレームで transition を復元（展開アニメーションのため）
-      requestAnimationFrame(function () {
-        wrap.style.transition = "width 0.22s ease, height 0.22s ease";
-      });
-      dragBar.style.display      = "none";
-      resizeHandle.style.display = "none";
-      // miniOverlay の位置を !important で確定（itandi ページ CSS による上書き防止）
-      miniOverlay.style.setProperty("position", "absolute", "important");
-      miniOverlay.style.setProperty("top",    "0", "important");
-      miniOverlay.style.setProperty("right",  "0", "important");
-      miniOverlay.style.setProperty("bottom", "0", "important");
-      miniOverlay.style.setProperty("left",   "0", "important");
-      // display:"flex" で中央揃えを維持（"block"だとAIXLINXテキストが左上に寄る）
-      miniOverlay.style.display  = "flex";
+      // wrapをdisplay:none !importantで完全に隠す（itandi CSS上書き問題を完全回避）
+      wrap.style.setProperty("display", "none", "important");
+      // ミニボタンをwrapの現在位置に表示
+      const curLeft = parseInt(wrap.style.left) || posX;
+      const curTop  = parseInt(wrap.style.top)  || posY;
+      miniBtnEl.style.setProperty("left", curLeft + "px", "important");
+      miniBtnEl.style.setProperty("top",  curTop  + "px", "important");
+      miniBtnEl.style.display = "flex";
       // iframeをvisibility:hiddenに（display:noneだと状態が失われる）
       if (iframe) iframe.style.visibility = "hidden";
     }
@@ -362,12 +372,58 @@
     }
   });
 
+  // ── ミニボタンのドラッグ & クリック ─────────────────────────────────────
+  let miniBtnDrag = false;
+  let miniBtnSX = 0, miniBtnSY = 0, miniBtnSLeft = 0, miniBtnSTop = 0;
+
+  miniBtnEl.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    miniBtnDrag  = true;
+    miniBtnSX    = e.clientX;
+    miniBtnSY    = e.clientY;
+    miniBtnSLeft = parseInt(miniBtnEl.style.left) || posX;
+    miniBtnSTop  = parseInt(miniBtnEl.style.top)  || posY;
+    e.preventDefault();
+    e.stopPropagation();
+  });
+
+  document.addEventListener("mousemove", (e) => {
+    if (!miniBtnDrag) return;
+    const dx = e.clientX - miniBtnSX;
+    const dy = e.clientY - miniBtnSY;
+    miniBtnEl.style.setProperty("left", Math.max(0, miniBtnSLeft + dx) + "px", "important");
+    miniBtnEl.style.setProperty("top",  Math.max(0, miniBtnSTop  + dy) + "px", "important");
+  });
+
+  document.addEventListener("mouseup", (e) => {
+    if (!miniBtnDrag) return;
+    miniBtnDrag = false;
+    const dx = Math.abs(e.clientX - miniBtnSX);
+    const dy = Math.abs(e.clientY - miniBtnSY);
+    if (dx < 5 && dy < 5) {
+      // クリック → 展開（wrapの位置をミニボタン位置に合わせてから展開）
+      posX = parseInt(miniBtnEl.style.left) || posX;
+      posY = parseInt(miniBtnEl.style.top)  || posY;
+      wrap.style.setProperty("left", posX + "px", "important");
+      wrap.style.setProperty("top",  posY + "px", "important");
+      doExpand();
+    } else {
+      // ドラッグ完了 → 位置を保存
+      posX = parseInt(miniBtnEl.style.left) || posX;
+      posY = parseInt(miniBtnEl.style.top)  || posY;
+      persist();
+    }
+  });
+
   // ── SPA対策: itandiのReact遷移でbodyが書き換えられてもwrapを復元 ────────
   // itandi BBはSPA。ページ遷移時にReactがdocument.bodyの子要素を入れ替えると
   // wrapがDOMから消えて白画面になる。MutationObserverで消えたら即再追加する。
   const _bodyObs = new MutationObserver(function () {
     if (wrap.parentNode !== document.body) {
       document.body.appendChild(wrap);
+    }
+    if (miniBtnEl.parentNode !== document.body) {
+      document.body.appendChild(miniBtnEl);
     }
   });
   _bodyObs.observe(document.body, { childList: true });
