@@ -58,53 +58,63 @@
       return d4;
     }
 
-    // ── 最終フォールバック: CB逆引き（クラス名完全非依存）─────────────
-    // CBを1個だけ子に持つ最近の祖先を「行」とみなし、同一親でグループ化。
-    // フォームCB（図面ありのみ等）は同一親にCBが1個だけ → 除外される。
-    var allCbs = Array.from(document.querySelectorAll('input[type="checkbox"]')).filter(function(cb) {
+    // ── 最終フォールバック: CB逆引き（クラス名・フレームワーク完全非依存）─
+    // 戦略: CBから上に辿り「同じ親に CB を持つ兄弟が1件以上いる要素」= 行コンテナ
+    // PrimeVue v4 の [role="checkbox"] / data-pc-section にも対応
+    var CB_SEL = 'input[type="checkbox"], [role="checkbox"], [data-pc-section="checkbox"]';
+    var allCbs = Array.from(document.querySelectorAll(CB_SEL)).filter(function(cb) {
       return isVisible(cb) && !cb.classList.contains("axlx-reins-cb");
     });
 
-    console.log("[AX-REINS] CB逆引きモード: ページ上の可視CB数 =", allCbs.length);
+    console.log("[AX-REINS] CB逆引きモード: 可視CB数 =", allCbs.length);
     if (allCbs.length < 2) return [];
 
-    // CB → 行コンテナを逆引き（最大10レベル）
+    // CB → 行コンテナを逆引き
+    // 「このノードの兄弟ノードの中にCBを含むものが1件以上ある」要素が行コンテナ
     function findRowEl(cb) {
       var el = cb.parentElement;
-      for (var i = 0; i < 10 && el && el !== document.body; i++, el = el.parentElement) {
-        // tr / role=row は確実な行要素
+      for (var i = 0; i < 12 && el && el !== document.body; i++, el = el.parentElement) {
         if (el.tagName === "TR" || el.getAttribute("role") === "row") return el;
-        // このノード配下にCBが1個だけなら「行の最小コンテナ」候補
-        if (el.querySelectorAll('input[type="checkbox"]').length === 1) return el;
+        if (el.getAttribute("data-pc-section") === "bodyrow") return el;
+        var parent = el.parentElement;
+        if (parent) {
+          var cbSiblings = Array.from(parent.children).filter(function(s) {
+            return s !== el && !!(s.querySelector(CB_SEL));
+          });
+          if (cbSiblings.length >= 1) return el; // 兄弟にCBあり → ここが行レベル
+        }
       }
       return cb.parentElement;
     }
 
-    var parentGroups = new Map();
+    var seen = [];
+    var result = [];
     allCbs.forEach(function(cb) {
       var rowEl = findRowEl(cb);
       if (!rowEl || !isVisible(rowEl)) return;
-      var parent = rowEl.parentElement;
-      if (!parent) return;
-      if (!parentGroups.has(parent)) parentGroups.set(parent, []);
-      var list = parentGroups.get(parent);
-      if (list.indexOf(rowEl) === -1) list.push(rowEl);
+      if (seen.indexOf(rowEl) !== -1) return;
+      // フォームCB除外: テキストが短すぎる要素は物件行でない
+      var txt = rowEl.textContent.replace(/\s+/g, "").length;
+      if (txt < 15) return;
+      seen.push(rowEl);
+      result.push(rowEl);
     });
 
-    var result = [];
-    parentGroups.forEach(function(group, parent) {
-      if (group.length >= 2) {
-        console.log("[AX-REINS] CB逆引きグループ: <" + parent.tagName +
-          " class='" + (parent.className || "").toString().slice(0, 50) + "'> " + group.length + "件");
-        result = result.concat(group);
-      }
+    // 同一親に2件以上ある行グループのみ残す（フォームCBが少数でも残る場合への防衛）
+    var parentCount = new Map();
+    result.forEach(function(r) {
+      var p = r.parentElement;
+      parentCount.set(p, (parentCount.get(p) || 0) + 1);
     });
+    result = result.filter(function(r) { return (parentCount.get(r.parentElement) || 0) >= 2; });
 
     if (result.length > 0) {
-      console.log("[AX-REINS] 行検出[CB逆引き]:", result.length + "件");
+      var sample = result[0];
+      console.log("[AX-REINS] 行検出[CB逆引き]:", result.length + "件",
+        "| 最初の行 <" + sample.tagName + " class='" + (sample.className || "").toString().slice(0, 60) + "'>");
     } else {
-      console.warn("[AX-REINS] 行を検出できませんでした。DevToolsでDOM構造を確認してください。" +
-        " CB数=" + allCbs.length + " グループ数=" + parentGroups.size);
+      console.warn("[AX-REINS] 行を検出できませんでした。" +
+        "CB数=" + allCbs.length + " ページURL=" + location.pathname);
     }
     return result;
   }
@@ -128,14 +138,18 @@
   // ── ネイティブCBをトラッキング（カスタムCB注入なし・レインズ左端CBを直接使用）──
   function inject() {
     tracked = [];
-    findResultRows().forEach(function (row) {
+    var rows = findResultRows();
+    var noCbCount = 0;
+    rows.forEach(function (row) {
       var nativeCb = findNativeCheckbox(row);
-      if (!nativeCb) return;
+      if (!nativeCb) { noCbCount++; return; }
       var zumenBtn = Array.from(row.querySelectorAll("button")).find(function (b) {
         return b.textContent.trim() === "図面";
       });
       tracked.push({ cb: nativeCb, row: row, zumenBtn: zumenBtn, rowKey: makeRowKey(row) });
     });
+    if (rows.length > 0)
+      console.log("[AX-REINS] inject: 行=" + rows.length + " 有効=" + tracked.length + " CB不明=" + noCbCount);
     updateBar();
   }
 
@@ -227,17 +241,19 @@
     });
   }
 
-  // ── ネイティブチェックボックスを取得（レインズの行左端）─────────────────
+  // ── ネイティブチェックボックスを取得（PrimeVue v3/v4 + 汎用対応）───────
+  var CB_ANY = 'input[type="checkbox"], [role="checkbox"], [data-pc-section="checkbox"]';
   function findNativeCheckbox(row) {
-    // PrimeVue v3/v4 セル・標準 td・role="cell" を順に探す
+    // 1. PrimeVue v3/v4/標準テーブル の先頭セルを探す
     var firstCell = row.querySelector(
-      ".p-table-body-item, .p-datatable-td, td, [role='cell']"
+      ".p-table-body-item, .p-datatable-td, [data-pc-section='cell'], td, [role='cell']"
     );
     if (firstCell) {
-      var cb = firstCell.querySelector('input[type="checkbox"]');
+      var cb = firstCell.querySelector(CB_ANY);
       if (cb) return cb;
     }
-    return Array.from(row.querySelectorAll('input[type="checkbox"]')).find(function (c) {
+    // 2. 行全体からCBを探す
+    return Array.from(row.querySelectorAll(CB_ANY)).find(function(c) {
       return !c.classList.contains("axlx-reins-cb");
     }) || null;
   }
@@ -602,7 +618,45 @@
     }
   }, true);
 
+  // ── 🔍 診断ボタン（テスト部隊）─────────────────────────────────────
+  // 常にREINSページ右下に表示。クリックで拡張機能の認識状況をその場で確認できる。
+  function addDiagButton() {
+    if (document.getElementById("axlx-reins-diag")) return;
+    var btn = document.createElement("button");
+    btn.id = "axlx-reins-diag";
+    btn.textContent = "🔍AXLX";
+    btn.title = "AXLX診断（クリックで詳細表示）";
+    btn.style.cssText = [
+      "position:fixed;bottom:4px;right:4px;z-index:2147483647;",
+      "background:rgba(30,30,30,0.75);color:#aef;border:none;",
+      "border-radius:6px;padding:3px 7px;font-size:10px;cursor:pointer;",
+    ].join("");
+    btn.addEventListener("click", function() {
+      var cbAll = Array.from(document.querySelectorAll(CB_ANY)).length;
+      var rows  = findResultRows();
+      var valid = rows.filter(function(r) { return !!findNativeCheckbox(r); }).length;
+      var sample = rows.length > 0
+        ? "\n行0クラス: " + (rows[0].className || "").toString().slice(0, 80)
+        : "\n行なし";
+      alert(
+        "【AXLX REINS診断】\n" +
+        "URL: " + location.pathname + "\n" +
+        "CB数(全): " + cbAll + "\n" +
+        "検出行数: " + rows.length + "\n" +
+        "有効行数: " + valid + "\n" +
+        "tracked: " + tracked.length +
+        sample + "\n\n" +
+        (rows.length === 0
+          ? "⚠ 行が検出できません。検索結果ページで実行してください。"
+          : "✅ 行を検出しています。")
+      );
+    });
+    document.body.appendChild(btn);
+  }
+
   // 初回スキャン + 動的ページ対応リトライ（REINSは遅延描画 / ページ遷移後に再描画）
+  console.log("[AX-REINS] 起動 URL=" + location.pathname);
+  addDiagButton();
   inject();
   var retryCount = 0;
   var retryTimer = setInterval(function () {
