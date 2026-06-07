@@ -106,6 +106,7 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 
 | 日付 | 内容 |
 |---|---|
+| 2026-06-08 | ミニボタン→パネル再展開バグ修正: doExpand()のcross-origin contentDocument=null問題を修正（`!fr.contentDocument\|\|` 削除）✅ |
 | 2026-06-04 | parseAreaTokens に「か・や」区切り対応追加（「豊崎か北区」→「豊崎,北区」に分割） |
 | 2026-05-17 | Chrome拡張を初期作成（リアプロ・itandi・レインズ対応） |
 | 2026-05-17 | サイドパネル化（setPanelBehavior API使用） |
@@ -502,6 +503,7 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 - **itandi ラジオ選択 5段階フォールバック（2026-06-07）**: `input[name="layoutType"][value="detailed"]`が実DOMに存在しないことが確認済み。5段階フォールバック: (1)`name=layoutType` (2)モーダル内全radio+ラベルテキスト「12枚」「間取り図」 (3)`closest("label")`/`aria-label` (4)`[role="radio"]` (5)最後のradio。`[AXLX] 12枚ラジオが見つかりません`エラー解消。
 - **AIXLINXパネル 白画面バグ 3原因修正（2026-06-07）**: (1) iframeのcompositing layer突き抜け → `iframe.style.visibility="hidden/visible"` でsetSize(false/true)時に制御 (2) `setSize(false)`でdisplay:`"block"` → `"flex"` に修正（ミニオーバーレイのflexboxセンタリング崩壊防止） (3) React SPAページ遷移でwrapがDOMから消えるバグ → MutationObserverでdocument.bodyを監視しwrap消滅時に即再appendChild
 - **underbar.js 常時展開＋ignoreNextCollapseフラグ（2026-06-07）**: ロード時の自動折りたたみ誤動作を防ぐ `ignoreNextCollapse` フラグ追加。拡張コンテキスト無効化時のchrome.runtime.sendMessage リトライロジック追加。
+- **ミニボタン→パネル再展開バグ修正（2026-06-08）✅**: 最小化後にAIXLINXミニボタンをクリックしてもパネルが開かないバグを修正。根本原因: `doExpand()`の`!fr.contentDocument`条件がクロスオリジン（chrome-extension://）iframeでnullを返すため常にpendingExpandになり展開できなかった。修正: `!fr.contentDocument ||` を削除し、contentDocumentがnullの場合はロード済みとみなして即座に`setSize(true)`を呼ぶ。commit e109588。動作確認済み（竹内悠馬）✅
 
 ---
 
