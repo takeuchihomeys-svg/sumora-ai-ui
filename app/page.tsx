@@ -350,6 +350,11 @@ export default function Home() {
   const savedExampleIdByMsgId = useRef<Map<string, string>>(new Map());
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conversationsRef = useRef<Conversation[]>([]);
+  // 選択中会話にお客様メッセージが届いたとき強制スクロールするフラグ
+  const forceScrollForCustomerMsgRef = useRef(false);
+  // リアルタイムハンドラ内でのstale closure防止（selectedIdを常に最新に保つ）
+  const selectedIdRef = useRef("");
+  selectedIdRef.current = selectedId; // レンダリングごとに最新値を反映
   const handleListScroll = () => {
     // スクロール時もBottomNavは常に表示（pull-to-refreshトリガー用）
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
@@ -420,6 +425,8 @@ export default function Home() {
             showNotif("AIX LINX — 新着メッセージ", msgText, "/");
             const cid = String((payload.new as { conversation_id: number }).conversation_id);
             setManuallyReadConvIds(prev => { if (!prev.has(cid)) return prev; const n = new Set(prev); n.delete(cid); return n; });
+            // 返信入力中でも選択中の会話に届いたなら強制スクロール
+            if (cid === selectedIdRef.current) forceScrollForCustomerMsgRef.current = true;
           }
           const newMsg = payload.new as { id: number; conversation_id: number; sender: string; text: string; image_url?: string; created_at: string };
           if (!newMsg?.id) {
@@ -483,8 +490,8 @@ export default function Home() {
         }
       });
 
-    // フォールバック: 5秒ごとにポーリング（realtime漏れ対策）
-    const pollInterval = setInterval(() => fetchConversationsAndMessages(true), 5_000);
+    // フォールバック: 3秒ごとにポーリング（realtime漏れ対策・返信中に届いたメッセージも確実に反映）
+    const pollInterval = setInterval(() => fetchConversationsAndMessages(true), 3_000);
 
     // カレンダーアラーム（1分ごとに予定開始15分前・開始時刻を通知）
     const calendarAlarm = setInterval(async () => {
@@ -621,6 +628,12 @@ export default function Home() {
     if (justOpenedRef.current) {
       // 既存メッセージが先に更新された場合のフォールバック
       justOpenedRef.current = false;
+      scrollToBottom();
+      return;
+    }
+    // 選択中の会話にお客様メッセージが届いたら返信中でも強制スクロール
+    if (forceScrollForCustomerMsgRef.current) {
+      forceScrollForCustomerMsgRef.current = false;
       scrollToBottom();
       return;
     }
@@ -1335,18 +1348,20 @@ export default function Home() {
 
       setConversations((prev) =>
         prev
-          .map((conversation) =>
-            conversation.id === selectedConversation.id
-              ? {
-                  ...conversation,
-                  lastMessage: lastText,
-                  lastSender: "staff",
-                  ...(newStatus ? { status: newStatus } : {}),
-                  updatedAt: now.toISOString(),
-                  messages: [...conversation.messages, ...newMessages],
-                }
-              : conversation
-          )
+          .map((conversation) => {
+            if (conversation.id !== selectedConversation.id) return conversation;
+            // リアルタイムが既に追加済みの場合の重複防止（同じIDのメッセージを2回追加しない）
+            const existingIds = new Set(conversation.messages.map((m) => m.id));
+            const dedupedNew = newMessages.filter((m) => !existingIds.has(m.id));
+            return {
+              ...conversation,
+              lastMessage: lastText,
+              lastSender: "staff",
+              ...(newStatus ? { status: newStatus } : {}),
+              updatedAt: now.toISOString(),
+              messages: [...conversation.messages, ...dedupedNew],
+            };
+          })
           .sort((a, b) => {
             const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
             const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
@@ -1415,6 +1430,8 @@ export default function Home() {
 
       setReplyDraft("");
       removeSelectedImage();
+      // 送信完了後に1.5秒後フェッチ: 送信中に届いたお客様メッセージを確実に反映
+      setTimeout(() => fetchConversationsAndMessages(true), 1500);
     } catch (sendError) {
       console.error(sendError);
       setError(sendError instanceof Error ? sendError.message : "送信に失敗しました。");
