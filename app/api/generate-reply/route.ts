@@ -462,9 +462,12 @@ export async function POST(req: NextRequest) {
 
         if (isImageMsg) {
           if (m.sender === "customer") return `${who}: 【画像を送ってきた】`;
-          // スタッフの画像: 前後テキストで物件資料か見積書かを判定
-          const nearby = [arr[i - 1], arr[i + 1]].filter(Boolean).map((x) => x?.text || "").join(" ");
+          // スタッフの画像: 前後3件のテキストで文脈を判定
+          const nearbyMsgs = arr.slice(Math.max(0, i - 3), i + 2).filter((_, ni) => ni !== (Math.min(i, 3)));
+          const nearby = nearbyMsgs.map((x) => x?.text || "").join(" ");
           if (/見積|初期費用/.test(nearby)) return `${who}: 【見積書を送付した】`;
+          // 「確認します」→画像 の流れ → 空室確認済みとして扱う
+          if (/確認|空室|空き|募集/.test(nearby)) return `${who}: 【空室確認済み・物件資料を送付した】`;
           if (/物件|お部屋|ピックアップ|間取り|アパート|マンション|資料/.test(nearby)) return `${who}: 【物件資料を送付した】`;
           return `${who}: 【物件資料・画像を送付した】`;
         }
