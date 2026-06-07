@@ -93,14 +93,16 @@
       var rowEl = findRowEl(cb);
       if (!rowEl || !isVisible(rowEl)) return;
       if (seen.indexOf(rowEl) !== -1) return;
-      // フォームCB除外: テキストが短すぎる要素は物件行でない
+      // ① form 要素内にある行はフォームフィールドのため除外
+      if (rowEl.closest("form")) return;
+      // ② テキストが短すぎる要素は物件行でない
       var txt = rowEl.textContent.replace(/\s+/g, "").length;
       if (txt < 15) return;
       seen.push(rowEl);
       result.push(rowEl);
     });
 
-    // 同一親に2件以上ある行グループのみ残す（フォームCBが少数でも残る場合への防衛）
+    // 同一親に2件以上ある行グループのみ残す
     var parentCount = new Map();
     result.forEach(function(r) {
       var p = r.parentElement;
