@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
   const [{ data: hotConvs }, { data: propCustomers }, { data: staleConvs }] = await Promise.all([
     supabase
       .from("conversations")
-      .select("id, customer_name, account, last_message, last_sender, updated_at, property_customer_id")
+      .select("id, customer_name, account, last_message, last_sender, updated_at, property_customer_id, property_customers(last_property_sent_at, hot_confirmed_at)")
       .eq("is_hot", true)
       .order("updated_at", { ascending: false }),
 
@@ -88,8 +88,25 @@ export async function GET(req: NextRequest) {
       .limit(10),
   ]);
 
+  type HotConvRow = {
+    id: string; customer_name: string | null; account: string | null;
+    last_message: string | null; last_sender: string | null; updated_at: string | null;
+    property_customer_id: string | null;
+    // Supabaseのリレーションは常に配列で返る
+    property_customers: { last_property_sent_at: string | null; hot_confirmed_at: string | null }[] | null;
+  };
+
+  // 今日の開始（UTC 00:00）
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const isDoneToday = (pc: HotConvRow["property_customers"]) => {
+    const row = pc?.[0]; // 配列の先頭のみ参照
+    if (!row) return false;
+    const sent = row.last_property_sent_at && new Date(row.last_property_sent_at) >= todayStart;
+    const confirmed = row.hot_confirmed_at && new Date(row.hot_confirmed_at) >= todayStart;
+    return !!(sent || confirmed);
+  };
+
   // 🔥会話に紐付いているproperty_customer_idのセット（重複排除用）
-  type HotConvRow = { id: string; customer_name: string | null; account: string | null; last_message: string | null; last_sender: string | null; updated_at: string | null; property_customer_id: string | null };
   const hotLinkedPcIds = new Set(
     (hotConvs as HotConvRow[] ?? []).map((c) => c.property_customer_id).filter(Boolean) as string[]
   );
@@ -111,15 +128,18 @@ export async function GET(req: NextRequest) {
 
   // 🔥セクション
   if (hotConvs && hotConvs.length > 0) {
-    const lines = (hotConvs as HotConvRow[]).map((c, i) => {
+    const rows = hotConvs as HotConvRow[];
+    const doneCount = rows.filter((c) => isDoneToday(c.property_customers)).length;
+    const lines = rows.map((c, i) => {
       const name = c.customer_name || "名称未設定";
       const acct = ACCOUNT_LABEL[c.account ?? "sumora"] ?? "スモラ";
       const time = relTime(c.updated_at);
-      const status = c.last_sender === "customer" ? "⏰ 未返信" : "✅ 返信済";
+      const replyMark = c.last_sender === "customer" ? "⏰ 未返信" : "返信済";
+      const actionMark = isDoneToday(c.property_customers) ? "✅ 本日対応済" : "❌ 未対応";
       const preview = (c.last_message ?? "").slice(0, 18) + ((c.last_message ?? "").length > 18 ? "…" : "");
-      return `${i + 1}. ${name}（${acct}）\n   ${status} ${time}\n   └ ${preview}`;
+      return `${i + 1}. ${name}（${acct}）\n   ${actionMark}　${replyMark} ${time}\n   └ ${preview}`;
     });
-    sections.push(`🔥 あついお客さん（${hotConvs.length}人）\n\n${lines.join("\n\n")}`);
+    sections.push(`🔥 あついお客さん（${rows.length}人 / ✅${doneCount}名対応済）\n\n${lines.join("\n\n")}`);
   }
 
   // 📦物件出し要セクション
