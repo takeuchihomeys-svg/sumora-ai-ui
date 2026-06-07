@@ -12,8 +12,9 @@
   // チェックボックス要素を起点に「行コンテナ」を逆引きし、
   // 同一親に2件以上あるグループ = 物件リスト行と判定する。
   function findResultRows() {
-    // GBK001310: 検索条件入力ページ（検索フォームページ）は物件行なし → 早期リターン
-    if (location.pathname.indexOf("GBK001310") !== -1) return [];
+    // 非結果ページ（検索フォーム・物件詳細・登録系）は物件行なし → 早期リターン
+    var NON_RESULT_PAGES = ["GBK001310", "GBK002200"];
+    if (NON_RESULT_PAGES.some(function(p) { return location.pathname.indexOf(p) !== -1; })) return [];
 
     function isVisible(el) {
       if (el.offsetParent !== null) return true;
@@ -141,7 +142,7 @@
       console.log("[AX-REINS] 行検出[CB逆引き]:", result.length + "件",
         "| 最初の行 <" + sample.tagName + " class='" + (sample.className || "").toString().slice(0, 60) + "'>");
     } else {
-      console.warn("[AX-REINS] 行を検出できませんでした。" +
+      console.log("[AX-REINS] 行を検出できませんでした。" +
         "CB数=" + allCbs.length + " ページURL=" + location.pathname);
     }
     return result;
@@ -184,8 +185,9 @@
   // ── フローティングバー ────────────────────────────────────────────────
   function ensureBar() {
     if (document.getElementById("axlx-reins-bar")) return;
-    // GBK001310（検索条件入力ページ）ではバー非表示。AIXLINXパネルで代替
-    if (location.pathname.indexOf("GBK001310") !== -1) return;
+    // 非結果ページではバー非表示
+    var NON_RESULT_PAGES = ["GBK001310", "GBK002200"];
+    if (NON_RESULT_PAGES.some(function(p) { return location.pathname.indexOf(p) !== -1; })) return;
     var bar = document.createElement("div");
     bar.id = "axlx-reins-bar";
     bar.style.cssText = [
@@ -645,6 +647,9 @@
   // ── MutationObserver で結果ページ更新時に再スキャン ──────────────────
   var mutObs = new MutationObserver(function () {
     if (injectTimer || isSending) return;
+    // 非結果ページでは再スキャンしない（不要な警告ログ防止）
+    var NON_RESULT_PAGES = ["GBK001310", "GBK002200"];
+    if (NON_RESULT_PAGES.some(function(p) { return location.pathname.indexOf(p) !== -1; })) return;
     injectTimer = setTimeout(function () {
       injectTimer = null;
       var rows = findResultRows();
@@ -714,8 +719,9 @@
       inject();
       return;
     }
-    // GBK001310（検索フォームページ）は物件行なし → 正常。エラーにしない・カウントしない
-    if (location.pathname.indexOf("GBK001310") !== -1) return;
+    // 非結果ページは物件行なし → 正常。エラーにしない・カウントしない
+    var NON_RESULT_PAGES = ["GBK001310", "GBK002200"];
+    if (NON_RESULT_PAGES.some(function(p) { return location.pathname.indexOf(p) !== -1; })) return;
     if (tracked.length > 0 || ++retryCount > 30) { // 最大60秒（30回×2秒）
       clearInterval(retryTimer);
       if (retryCount > 30) console.warn("[AX-REINS] リトライ上限到達: 行が見つかりませんでした");
