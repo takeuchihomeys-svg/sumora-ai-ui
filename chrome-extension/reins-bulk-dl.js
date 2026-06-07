@@ -190,7 +190,7 @@
       "position:fixed;bottom:24px;right:24px;z-index:2147483646;",
       "background:linear-gradient(135deg,#0d1b3e,#1565C0);",
       "color:white;border-radius:14px;padding:12px 16px;",
-      "font-size:13px;font-weight:700;display:none;",
+      "font-size:13px;font-weight:700;display:flex;",
       "flex-direction:column;gap:8px;min-width:200px;",
       "box-shadow:0 4px 20px rgba(0,0,0,0.4);",
       "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;",
@@ -213,10 +213,21 @@
     ensureBar();
     var bar     = document.getElementById("axlx-reins-bar");
     var checked = tracked.filter(function (t) { return t.cb.checked; });
-    bar.style.display = tracked.length > 0 ? "flex" : "none";
-    document.getElementById("axlx-reins-count").textContent = checked.length + "件";
-    var allBtn = document.getElementById("axlx-reins-all-btn");
-    if (allBtn) allBtn.textContent = (checked.length === tracked.length && tracked.length > 0) ? "全解除" : "全選択";
+    bar.style.display = "flex";
+    var countEl = document.getElementById("axlx-reins-count");
+    if (countEl) countEl.textContent = checked.length + "件";
+    var allBtn  = document.getElementById("axlx-reins-all-btn");
+    var lineBtn = document.getElementById("axlx-reins-line-btn");
+    var hasRows = tracked.length > 0;
+    if (allBtn) {
+      allBtn.disabled    = !hasRows;
+      allBtn.style.opacity = hasRows ? "1" : "0.45";
+      allBtn.textContent = (checked.length === tracked.length && hasRows) ? "全解除" : "全選択";
+    }
+    if (lineBtn) {
+      lineBtn.disabled    = !hasRows;
+      lineBtn.style.opacity = hasRows ? "1" : "0.45";
+    }
   }
 
   // ── React対応チェックボックス操作（レインズはReact製のため直接代入では反映されない）──
@@ -687,6 +698,7 @@
 
   // 初回スキャン + 動的ページ対応リトライ（REINSは遅延描画 / ページ遷移後に再描画）
   console.log("[AX-REINS] 起動 URL=" + location.pathname);
+  ensureBar();  // 即座にバーを表示（物件スキャン前でも表示）
   addDiagButton();
   inject();
   var retryCount = 0;
