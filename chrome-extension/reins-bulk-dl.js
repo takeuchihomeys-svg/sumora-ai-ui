@@ -32,14 +32,33 @@
 
     // ── 高速パス2: PrimeVue v4+クラス部分一致 ────────────────────────
     rows = Array.from(document.querySelectorAll(
-      "[class*='table-body-row'],[class*='datatable-row'],[class*='p-datatable-row'],[class*='p-row-odd'],[class*='p-row-even']"
+      "[class*='table-body-row'],[class*='datatable-row'],[class*='p-datatable-row'],[class*='p-row-odd'],[class*='p-row-even'],[class*='datatable-row']"
     )).filter(isVisible);
     if (rows.length > 0) {
       console.log("[AX-REINS] 行検出[v4クラス]:", rows.length + "件");
       return rows;
     }
 
-    // ── 高速パス3: WAI-ARIA role="row" + CB ──────────────────────────
+    // ── 高速パス3: PrimeVue v4 data属性 ──────────────────────────────
+    // data-p-index: DataTable の行インデックス（v4 固有）
+    rows = Array.from(document.querySelectorAll("[data-p-index]")).filter(function(el) {
+      return isVisible(el) && !!el.querySelector('input[type="checkbox"]');
+    });
+    if (rows.length > 0) {
+      console.log("[AX-REINS] 行検出[data-p-index]:", rows.length + "件");
+      return rows;
+    }
+
+    // ── 高速パス4: aria-rowindex（仮想スクロール対応）────────────────
+    rows = Array.from(document.querySelectorAll("[aria-rowindex]")).filter(function(el) {
+      return isVisible(el) && !!el.querySelector('input[type="checkbox"]');
+    });
+    if (rows.length > 0) {
+      console.log("[AX-REINS] 行検出[aria-rowindex]:", rows.length + "件");
+      return rows;
+    }
+
+    // ── 高速パス5: WAI-ARIA role="row" + CB ──────────────────────────
     rows = Array.from(document.querySelectorAll("[role='row']")).filter(function(el) {
       return isVisible(el) && !!el.querySelector('input[type="checkbox"]');
     });
@@ -48,14 +67,14 @@
       return rows;
     }
 
-    // ── 高速パス4: thead除外 tr + CB ─────────────────────────────────
+    // ── 高速パス6: thead除外 tr + CB ─────────────────────────────────
     rows = Array.from(document.querySelectorAll("tr")).filter(function(el) {
       return isVisible(el) && !el.closest("thead") && !!el.querySelector('input[type="checkbox"]');
     });
     if (rows.length > 0) {
-      var d4 = dedup(rows);
-      console.log("[AX-REINS] 行検出[tr]:", d4.length + "件");
-      return d4;
+      var d6 = dedup(rows);
+      console.log("[AX-REINS] 行検出[tr]:", d6.length + "件");
+      return d6;
     }
 
     // ── 最終フォールバック: CB逆引き（クラス名・フレームワーク完全非依存）─
@@ -635,22 +654,25 @@
     ].join("");
     btn.addEventListener("click", function() {
       var cbAll = Array.from(document.querySelectorAll(CB_ANY)).length;
+      var cbInForm = Array.from(document.querySelectorAll("form " + CB_ANY)).length;
       var rows  = findResultRows();
       var valid = rows.filter(function(r) { return !!findNativeCheckbox(r); }).length;
       var sample = rows.length > 0
-        ? "\n行0クラス: " + (rows[0].className || "").toString().slice(0, 80)
-        : "\n行なし";
+        ? "\n行0タグ: " + rows[0].tagName +
+          "\n行0クラス: " + (rows[0].className || "(なし)").toString().slice(0, 80)
+        : "";
+      var isResultPage = !document.querySelector("form input[name], form select");
       alert(
         "【AXLX REINS診断】\n" +
         "URL: " + location.pathname + "\n" +
-        "CB数(全): " + cbAll + "\n" +
+        "CB数(全): " + cbAll + "  うちform内: " + cbInForm + "\n" +
         "検出行数: " + rows.length + "\n" +
         "有効行数: " + valid + "\n" +
         "tracked: " + tracked.length +
         sample + "\n\n" +
-        (rows.length === 0
-          ? "⚠ 行が検出できません。検索結果ページで実行してください。"
-          : "✅ 行を検出しています。")
+        (rows.length > 0
+          ? "✅ 行を検出中 → ツールバーが表示されるはずです"
+          : "⚠ 行が検出できません\n→ 検索ボタンを押して【結果ページ】で再度押してください\n→ 結果ページのURLを教えてもらえると修正できます")
       );
     });
     document.body.appendChild(btn);
