@@ -251,21 +251,32 @@ ${phraseText || "なし"}`;
 
     // ── ✋ 申込へ！ ──────────────────────────────────────────────
     } else if (action === "application_push") {
+      // ☆つき申込実例を取得
+      const { data: applyExamples } = await supabase
+        .from("ai_reply_examples")
+        .select("customer_message, sent_reply")
+        .in("conversation_state", ["applying", "application", "screening", "contract"])
+        .eq("is_starred", true)
+        .order("created_at", { ascending: false })
+        .limit(8);
+
+      const examplesText = (applyExamples || []).length > 0
+        ? "\n\n【⭐ スモラの実際の申込後押し例（文体・テンポ・感嘆符・絵文字をこれに合わせる）】\n" +
+          (applyExamples as { customer_message: string; sent_reply: string }[])
+            .map((r, i) => `[例${i + 1}]\nお客様:「${r.customer_message}」\nスモラ:「${r.sent_reply}」`)
+            .join("\n\n")
+        : "";
+
       const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。
 お客様の申込を後押しするLINEメッセージを作成してください。
 
-【作成ルール】
-・責任感を持って前向きに申込を促す
-・「お部屋おさえさせて頂きます」など具体的なアクションを伝える
-・感嘆符は「！！」を使う（スモラスタイル）
-
 【絵文字ルール — 最重要・必ず守ること】
-▼ 使ってよい絵文字はこの5つだけ：😊 😌 🙇‍♀️ 🌟 ✨
-▼ 上記以外は一切禁止：🙏 ⭐️ 🏠 💰 💪 👍 ✋ その他すべて禁止
+▼ 使ってよい絵文字：😊 😌 🙇‍♀️ 🌟 ✨ のみ（他は全禁止）
 ▼ 絵文字は1〜2個まで。😊😌 → 背中を押す・締めの一言
+▼ 感嘆符は「！！」（スモラスタイル）
 
-【スモラの言葉・表現（参考にして自然に組み込んでください）】
-${phraseText || "なし"}`;
+【スモラの言葉・表現】
+${phraseText || "なし"}${examplesText}`;
 
       message_text = await callClaude(system, `${name}への申込後押しメッセージ。${extra_input ? `補足: ${extra_input}` : ""}`);
 

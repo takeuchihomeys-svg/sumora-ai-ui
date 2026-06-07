@@ -396,11 +396,11 @@ export async function POST(req: NextRequest) {
   // 同じ sent_reply + customer_message のレコードが既にあれば、そちらに is_starred を付ける。
   // これにより「AI生成→修正→送信」時に保存された aiDraft 付きレコードが正しく☆される。
   if (isStarred && !aiDraft) {
+    // sent_replyのみで検索（customer_messageは連続メッセージ連結により不一致になる場合がある）
     const { data: existingRecord } = await supabase
       .from("ai_reply_examples")
       .select("id, conversation_state, customer_message, sent_reply, ai_draft, was_ai_modified, is_starred")
       .eq("sent_reply", sentReply)
-      .eq("customer_message", customerMessage)
       .order("created_at", { ascending: false })
       .limit(1)
       .single();
@@ -431,12 +431,12 @@ export async function POST(req: NextRequest) {
     : rawState;
   const conversationState = STATE_NORMALIZE[rawResolved] ?? rawResolved;
 
-  // 70%以上の類似度 → AI文案をそのまま（or ほぼそのまま）使った
-  // 30〜70% → 大幅修正して送った
-  // 30%未満 → AIは参考程度（ほぼ手書き）
+  // 90%以上 → AIをほぼそのまま使った
+  // 5〜90% → 何らかの修正あり（軽微〜大幅・すべて差分学習の対象）
+  // 5%未満 → ほぼ手書き（AIは参考のみ）
   const sim = aiDraft ? textSimilarity(aiDraft.trim(), sentReply.trim()) : 0;
-  const wasAiUsed    = !!aiDraft && aiDraft.trim().length > 0 && sim >= 0.7;
-  const wasAiModified = !!aiDraft && aiDraft.trim().length > 0 && sim >= 0.3 && sim < 0.7;
+  const wasAiUsed    = !!aiDraft && aiDraft.trim().length > 0 && sim >= 0.9;
+  const wasAiModified = !!aiDraft && aiDraft.trim().length > 0 && sim >= 0.05 && sim < 0.9;
 
   const { data, error } = await supabase
     .from("ai_reply_examples")

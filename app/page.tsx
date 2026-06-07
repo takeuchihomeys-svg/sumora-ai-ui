@@ -969,6 +969,8 @@ export default function Home() {
       const effectiveState = !hasAnyStaffMsg && normalizedStatus === "hearing" ? "first_reply" : selectedConversation.status;
 
       const linkedCustomerForGen = linkedCustomerMap[selectedConversation.id];
+      // 紐付き条件 → なければメモをフォールバック（80%の非紐付き会話でも条件が渡る）
+      const genConditions = linkedCustomerForGen?.conditions || memos[selectedConversation.id] || undefined;
       const res = await fetch("/api/generate-reply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -976,7 +978,7 @@ export default function Home() {
           message: targetMessage,
           state: effectiveState,
           customerName: selectedConversation.customerName,
-          customerConditions: linkedCustomerForGen?.conditions || undefined,
+          customerConditions: genConditions,
           recentMessages: (() => {
             const last20 = contextMsgs.slice(-20);
             // 直近20件にスタッフ返信がない場合のみ、最新のスタッフ返信を先頭に追加
@@ -1054,13 +1056,14 @@ export default function Home() {
       setEnhancing(true);
       const msgs = selectedConversation.messages;
       const linkedCustomerForEnhance = linkedCustomerMap[selectedConversation.id];
+      const enhanceConditions = linkedCustomerForEnhance?.conditions || memos[selectedConversation.id] || undefined;
       const res = await fetch("/api/enhance-reply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           currentDraft: replyDraft,
           conversationState: selectedConversation.status,
-          customerConditions: linkedCustomerForEnhance?.conditions || undefined,
+          customerConditions: enhanceConditions,
           customerName: selectedConversation.customerName,
           recentMessages: msgs.slice(-15).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined })),
         }),
