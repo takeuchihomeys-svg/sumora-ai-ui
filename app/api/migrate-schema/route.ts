@@ -333,6 +333,25 @@ ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS property_send_count INTE
 
 -- 物件確認日時（お客さんが物件を確認した記録）
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS property_viewed_at TIMESTAMPTZ;
+
+-- messages.line_message_id UNIQUE制約（重複保存をDB側で根絶）
+-- 既存の重複行を先に削除（created_at が古い方を残す）
+DELETE FROM messages
+WHERE id IN (
+  SELECT id FROM (
+    SELECT id, ROW_NUMBER() OVER (
+      PARTITION BY line_message_id
+      ORDER BY created_at ASC
+    ) AS rn
+    FROM messages
+    WHERE line_message_id IS NOT NULL
+  ) t
+  WHERE rn > 1
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_line_message_id_unique
+  ON messages(line_message_id)
+  WHERE line_message_id IS NOT NULL;
 `.trim();
 
 export async function GET() {

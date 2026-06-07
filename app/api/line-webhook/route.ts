@@ -182,7 +182,14 @@ async function handleTextMessage(
     ...(lineMessageId ? { line_message_id: lineMessageId } : {}),
     created_at: now,
   });
-  if (msgErr) console.error("[line-webhook] message保存失敗:", msgErr.message);
+  if (msgErr) {
+    if (msgErr.code === "23505") {
+      // UNIQUE制約違反 = sync-from-screeningが同時に保存済み。正常扱い
+      console.log("[line-webhook] DB UNIQUE制約で重複を検知・スキップ:", lineMessageId);
+    } else {
+      console.error("[line-webhook] message保存失敗:", msgErr.message);
+    }
+  }
 
   await db
     .from("conversations")

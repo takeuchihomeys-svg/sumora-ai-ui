@@ -340,10 +340,9 @@ export async function POST(req: NextRequest) {
       ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
       : undefined;
 
-    // テキストメッセージ: line-webhook-relay経由でsumora-ai-ui/api/line-webhookが直接保存する。
-    // sync-from-screeningとline-webhookはほぼ同時に動くためDB確認では間に合わず重複が発生する。
-    // line_message_idがある顧客テキストは必ずline-webhookが保存済み（またはほぼ同時に保存中）のため
-    // ここではDB確認なしで常にスキップし、レース条件による重複を根絶する。
+    // テキストメッセージ: line-webhookが直接保存済みの場合はINSERTをスキップ（重複防止）
+    // SELECTで見つからなくてもDB側のUNIQUE制約(idx_messages_line_message_id_unique)が
+    // レース条件による二重INSERTを最終的に弾く
     let skipUpsert = false;
     if (!isImageMsg && record.sender === "customer") {
       const textLineMessageId = (
@@ -353,8 +352,15 @@ export async function POST(req: NextRequest) {
         null
       );
       if (textLineMessageId) {
-        skipUpsert = true;
-        console.log("[sync] テキストメッセージスキップ (line-webhook管轄):", textLineMessageId);
+        const { data: existingByLineId } = await supabase
+          .from("messages")
+          .select("id")
+          .eq("line_message_id", textLineMessageId)
+          .maybeSingle();
+        if (existingByLineId) {
+          skipUpsert = true;
+          console.log("[sync] テキスト重複スキップ (line_message_id):", textLineMessageId);
+        }
       }
     }
 
@@ -375,8 +381,13 @@ export async function POST(req: NextRequest) {
         );
 
       if (error) {
-        console.error("sync messages error:", error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        if (error.code === "23505") {
+          // UNIQUE制約違反 = line-webhookが同時に保存済み。正常扱い
+          console.log("[sync] DB UNIQUE制約で重複を検知・スキップ:", error.message);
+        } else {
+          console.error("sync messages error:", error);
+          return NextResponse.json({ error: error.message }, { status: 500 });
+        }
       }
     }
 
