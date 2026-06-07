@@ -53,8 +53,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "LINE token not configured" }, { status: 500 });
   }
 
-  // ① 🔥マークされた会話を取得（紐付き property_customer_id も取得して重複排除に使う）
-  const [{ data: hotConvs }, { data: propCustomers }] = await Promise.all([
+  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+
+  // ① 🔥マークされた会話 / 物件出し要 / 3日フォローアップ を並列取得
+  const [{ data: hotConvs }, { data: propCustomers }, { data: staleConvs }] = await Promise.all([
     supabase
       .from("conversations")
       .select("id, customer_name, account, last_message, last_sender, updated_at, property_customer_id")
@@ -68,6 +70,17 @@ export async function GET(req: NextRequest) {
       .in("status", ["new_inquiry", "hot", "property_search"])
       .order("updated_at", { ascending: false })
       .limit(30),
+
+    // ③ 3日以上お客さんから連絡あり・未返信（🔥でない会話）
+    supabase
+      .from("conversations")
+      .select("id, customer_name, account, last_message, updated_at")
+      .eq("last_sender", "customer")
+      .eq("is_hot", false)
+      .neq("status", "closed_won")
+      .lt("updated_at", threeDaysAgo)
+      .order("updated_at", { ascending: true })
+      .limit(10),
   ]);
 
   // 🔥会話に紐付いているproperty_customer_idのセット（重複排除用）
@@ -83,8 +96,8 @@ export async function GET(req: NextRequest) {
     !hotLinkedPcIds.has(c.id)
   );
 
-  // どちらも0件ならスキップ
-  if ((!hotConvs || hotConvs.length === 0) && needsPropList.length === 0) {
+  // どれも0件ならスキップ
+  if ((!hotConvs || hotConvs.length === 0) && needsPropList.length === 0 && (!staleConvs || staleConvs.length === 0)) {
     return NextResponse.json({ ok: true, skipped: true, reason: "no actions needed" });
   }
 
@@ -117,6 +130,20 @@ export async function GET(req: NextRequest) {
     sections.push(`📦 物件出し要（${needsPropList.length}人）\n\n${lines.join("\n")}`);
   }
 
+  // ⏰ 3日以上未返信セクション（朝9時のタイミングのみ表示）
+  type StaleConvRow = { id: string; customer_name: string | null; account: string | null; last_message: string | null; updated_at: string | null };
+  const staleList = staleConvs as StaleConvRow[] ?? [];
+  if (staleList.length > 0) {
+    const lines = staleList.map((c, i) => {
+      const name = c.customer_name || "名称未設定";
+      const acct = ACCOUNT_LABEL[c.account ?? "sumora"] ?? "スモラ";
+      const days = Math.floor((Date.now() - new Date(c.updated_at ?? "").getTime()) / 86400000);
+      const preview = (c.last_message ?? "").slice(0, 20) + ((c.last_message ?? "").length > 20 ? "…" : "");
+      return `${i + 1}. ${name}（${acct}）— ${days}日前\n   └ ${preview}`;
+    });
+    sections.push(`⏰ 3日以上未返信（${staleList.length}人）\n\n${lines.join("\n\n")}`);
+  }
+
   const message = `${sections.join("\n\n——————\n\n")}\n\nAIX LINX より ${hour}:00`;
 
   const res = await fetch("https://api.line.me/v2/bot/message/push", {
@@ -131,5 +158,5 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: text }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true, hot: hotConvs?.length ?? 0, needsProp: needsPropList.length });
+  return NextResponse.json({ ok: true, hot: hotConvs?.length ?? 0, needsProp: needsPropList.length, stale: staleList.length });
 }
