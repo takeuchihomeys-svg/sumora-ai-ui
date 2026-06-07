@@ -169,6 +169,9 @@ export default function CustomersPage() {
   const [editFields, setEditFields] = useState<EditFields | null>(null);
   const [editSaving, setEditSaving] = useState(false);
 
+  // 条件ログ展開（3件以上のとき「もっと見る」）
+  const [expandedCondIds, setExpandedCondIds] = useState<Set<string>>(new Set());
+
   // 条件追加モーダル
   const [addCondId, setAddCondId]       = useState<string | null>(null);
   const [addCondText, setAddCondText]   = useState("");
@@ -645,44 +648,66 @@ export default function CustomersPage() {
                   )}
 
                   {/* 条件ログ（追加日つき + 新着要望） */}
-                  {condLines.length > 0 && (
-                    <div className="mt-2 space-y-1.5">
-                      {condLines.map((entry, i) =>
-                        entry.isLog ? (
-                          // 手動追加された条件ログ
-                          <div key={i} className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
-                            <div className="flex items-center justify-between mb-1">
-                              <span className="text-[10px] font-bold text-blue-600">📌 {entry.date}追加</span>
-                            </div>
-                            <p className="text-[11px] text-blue-800 leading-relaxed">{entry.content}</p>
-                          </div>
-                        ) : (
-                          // LINEからの新着要望
-                          <div key={i} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
-                            <div className="flex items-center justify-between mb-1.5">
-                              <span className="text-[10px] font-bold text-amber-700">新着要望</span>
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); handleReflect(c); }}
-                                  disabled={reflectLoading === c.id}
-                                  className="rounded-lg bg-amber-600 px-2.5 py-1 text-[10px] font-bold text-white active:opacity-70 disabled:opacity-50"
-                                >
-                                  {reflectLoading === c.id ? "解析中…" : "条件に反映する"}
-                                </button>
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); clearAdditional(c.id); }}
-                                  className="text-[9px] text-amber-400 active:opacity-60"
-                                >
-                                  クリア
-                                </button>
+                  {condLines.length > 0 && (() => {
+                    const isExpanded = expandedCondIds.has(c.id);
+                    const MAX = 3;
+                    const displayed = condLines.length > MAX && !isExpanded
+                      ? condLines.slice(-MAX)
+                      : condLines;
+                    const hiddenCount = condLines.length - MAX;
+                    return (
+                      <div className="mt-2 space-y-1.5">
+                        {condLines.length > MAX && !isExpanded && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setExpandedCondIds(prev => { const s = new Set(prev); s.add(c.id); return s; }); }}
+                            className="w-full text-center text-[10px] text-blue-500 font-semibold py-1 active:opacity-60"
+                          >
+                            ▲ 過去{hiddenCount}件を見る
+                          </button>
+                        )}
+                        {displayed.map((entry, i) =>
+                          entry.isLog ? (
+                            <div key={i} className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-[10px] font-bold text-blue-600">📌 {entry.date}追加</span>
                               </div>
+                              <p className="text-[11px] text-blue-800 leading-relaxed">{entry.content}</p>
                             </div>
-                            <p className="text-[11px] text-amber-800 leading-relaxed">{entry.content}</p>
-                          </div>
-                        )
-                      )}
-                    </div>
-                  )}
+                          ) : (
+                            <div key={i} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+                              <div className="flex items-center justify-between mb-1.5">
+                                <span className="text-[10px] font-bold text-amber-700">新着要望</span>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); handleReflect(c); }}
+                                    disabled={reflectLoading === c.id}
+                                    className="rounded-lg bg-amber-600 px-2.5 py-1 text-[10px] font-bold text-white active:opacity-70 disabled:opacity-50"
+                                  >
+                                    {reflectLoading === c.id ? "解析中…" : "条件に反映する"}
+                                  </button>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); clearAdditional(c.id); }}
+                                    className="text-[9px] text-amber-400 active:opacity-60"
+                                  >
+                                    クリア
+                                  </button>
+                                </div>
+                              </div>
+                              <p className="text-[11px] text-amber-800 leading-relaxed">{entry.content}</p>
+                            </div>
+                          )
+                        )}
+                        {condLines.length > MAX && isExpanded && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setExpandedCondIds(prev => { const s = new Set(prev); s.delete(c.id); return s; }); }}
+                            className="w-full text-center text-[10px] text-[#8696a0] font-semibold py-1 active:opacity-60"
+                          >
+                            ▼ 閉じる
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* ── アクション行 ── */}
