@@ -7,6 +7,7 @@ type Customer = {
   status: string;
   desired_area: string;
   last_property_sent_at: string | null;
+  hot_confirmed_at: string | null;
 };
 
 function needsActionToday(c: Customer): boolean {
@@ -15,8 +16,9 @@ function needsActionToday(c: Customer): boolean {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   if (c.status === "hot") {
-    if (!c.last_property_sent_at) return true;
-    return new Date(c.last_property_sent_at) < todayStart;
+    const sentToday = c.last_property_sent_at && new Date(c.last_property_sent_at) >= todayStart;
+    const confirmedToday = c.hot_confirmed_at && new Date(c.hot_confirmed_at) >= todayStart;
+    return !sentToday && !confirmedToday;
   }
   if (c.status === "property_search") {
     if (!c.last_property_sent_at) return true;
@@ -33,11 +35,34 @@ function nextDueLabel(c: Customer): string {
   return "";
 }
 
+// LINEグループに✅完了アナウンスを送る
+async function notifyGroupComplete(customerName: string, action: "send" | "confirm"): Promise<void> {
+  const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN;
+  if (!token) return;
+
+  let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? null;
+  if (!groupId) {
+    const { data } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").single();
+    groupId = (data?.value as string) ?? null;
+  }
+  if (!groupId) return;
+
+  const text = action === "confirm"
+    ? `✅ ${customerName}様 — 本日確認済み`
+    : `✅ ${customerName}様 — 物件送信完了`;
+
+  await fetch("https://api.line.me/v2/bot/message/push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ to: groupId, messages: [{ type: "text", text }] }),
+  });
+}
+
 // GET: 今日アクション必要な顧客リスト
 export async function GET() {
   const { data, error } = await supabase
     .from("property_customers")
-    .select("id, customer_name, status, desired_area, last_property_sent_at")
+    .select("id, customer_name, status, desired_area, last_property_sent_at, hot_confirmed_at")
     .not("status", "eq", "pending")
     .order("status", { ascending: true });
 
@@ -54,17 +79,22 @@ export async function GET() {
   return NextResponse.json({ ok: true, customers });
 }
 
-// POST: 完了マーク（last_property_sent_at を更新）
+// POST: 完了マーク（物件送信 or 確認済み）+ LINEグループ✅通知
 export async function POST(req: NextRequest) {
-  const { customer_id, upgrade_to_hot } = await req.json() as {
+  const { customer_id, upgrade_to_hot, action } = await req.json() as {
     customer_id: string;
     upgrade_to_hot?: boolean;
+    action?: "send" | "confirm";
   };
 
-  const update: Record<string, unknown> = {
-    last_property_sent_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
+  const now = new Date().toISOString();
+  const update: Record<string, unknown> = { updated_at: now };
+
+  if (action === "confirm") {
+    update.hot_confirmed_at = now;
+  } else {
+    update.last_property_sent_at = now;
+  }
   if (upgrade_to_hot) update.status = "hot";
 
   const { error } = await supabase
@@ -73,5 +103,18 @@ export async function POST(req: NextRequest) {
     .eq("id", customer_id);
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+
+  // 顧客名取得 → LINEグループに✅通知（非同期・失敗しても200を返す）
+  void (async () => {
+    try {
+      const { data: customer } = await supabase
+        .from("property_customers")
+        .select("customer_name")
+        .eq("id", customer_id)
+        .single();
+      await notifyGroupComplete(customer?.customer_name ?? "お客様", action === "confirm" ? "confirm" : "send");
+    } catch { /* 通知失敗は無視 */ }
+  })();
+
   return NextResponse.json({ ok: true });
 }

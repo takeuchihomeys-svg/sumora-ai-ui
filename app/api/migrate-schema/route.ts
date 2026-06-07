@@ -334,6 +334,9 @@ ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS property_send_count INTE
 -- 物件確認日時（お客さんが物件を確認した記録）
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS property_viewed_at TIMESTAMPTZ;
 
+-- 🔥あついお客さん: 物件送信なしで「本日確認済み」を記録するカラム
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS hot_confirmed_at TIMESTAMPTZ;
+
 -- messages.line_message_id UNIQUE制約（重複保存をDB側で根絶）
 -- 既存の重複行を先に削除（created_at が古い方を残す）
 DELETE FROM messages

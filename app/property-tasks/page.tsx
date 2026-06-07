@@ -51,7 +51,20 @@ export default function PropertyTasksPage() {
     const res = await fetch("/api/property-tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ customer_id: task.id }),
+      body: JSON.stringify({ customer_id: task.id, action: "send" }),
+    });
+    if (res.ok) {
+      setCompleted((prev) => new Set([...prev, task.id]));
+    }
+    setCompleting(null);
+  };
+
+  const handleConfirm = async (task: Task) => {
+    setCompleting(task.id);
+    const res = await fetch("/api/property-tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ customer_id: task.id, action: "confirm" }),
     });
     if (res.ok) {
       setCompleted((prev) => new Set([...prev, task.id]));
@@ -64,7 +77,7 @@ export default function PropertyTasksPage() {
     const res = await fetch("/api/property-tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ customer_id: task.id, upgrade_to_hot: true }),
+      body: JSON.stringify({ customer_id: task.id, upgrade_to_hot: true, action: "send" }),
     });
     if (res.ok) {
       setCompleted((prev) => new Set([...prev, task.id]));
@@ -156,7 +169,7 @@ export default function PropertyTasksPage() {
 
               {/* アクションボタン */}
               <div className="flex border-t border-[#f0f2f5]">
-                {/* 毎日に格上げ（property_searchのみ表示） */}
+                {/* 毎日に格上げ（property_searchのみ） */}
                 {task.status === "property_search" && (
                   <button
                     onClick={() => handleUpgradeAndComplete(task)}
@@ -166,7 +179,17 @@ export default function PropertyTasksPage() {
                     🔥 毎日に変更して完了
                   </button>
                 )}
-                {/* 完了ボタン */}
+                {/* 確認済み（🔥hotのみ・物件送らなくても本日対応完了） */}
+                {task.status === "hot" && (
+                  <button
+                    onClick={() => handleConfirm(task)}
+                    disabled={completing === task.id}
+                    className="flex-1 py-2.5 text-[11px] font-bold text-sky-600 border-r border-[#f0f2f5] active:bg-sky-50 disabled:opacity-50"
+                  >
+                    👀 本日確認済み
+                  </button>
+                )}
+                {/* 物件送信完了 */}
                 <button
                   onClick={() => handleComplete(task)}
                   disabled={completing === task.id}
