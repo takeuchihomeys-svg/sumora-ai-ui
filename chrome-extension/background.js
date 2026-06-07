@@ -7,8 +7,9 @@ const UNDERBAR_SITES = ["realnetpro.com", "system.reins.jp"];
 const reinsTabWatchers = new Map();
 
 // ── itandi ダウンロード監視（JSフック失敗時のフォールバック）────────────────
-// tabId → timerId
-const itandiDownloadWatcher = new Map();
+// タブIDではなく時刻ベースで管理（window.openで開いた新タブのDLにも対応）
+let itandiWatchExpiry     = 0; // epoch ms
+let itandiWatchOriginalTab = 0; // 結果を返す元タブ
 
 // ── レインズ一括PDFダウンロードをLINE送信に横取り ─────────────────────────────
 // 図面一括取得 → 確認ダイアログOK → Chrome download bar
@@ -18,45 +19,68 @@ chrome.downloads.onCreated.addListener((downloadItem) => {
   const url    = downloadItem.url || "";
   const dlTabId = downloadItem.tabId;
 
-  // ── itandi PDF ダウンロードキャプチャ（JSフック失敗時フォールバック）───────
-  if (dlTabId && itandiDownloadWatcher.has(dlTabId)) {
-    clearTimeout(itandiDownloadWatcher.get(dlTabId));
-    itandiDownloadWatcher.delete(dlTabId);
-    console.log("[AXLX BG] itandi DL検知 tabId=" + dlTabId + " url=" + url.slice(0, 80));
+  // ── itandi PDF ダウンロードキャプチャ（時刻ベース・タブID不問）────────────
+  // Bug fix: window.openで開いた新タブのdlTabIdは元タブと一致しないため時刻ベースで判定
+  if (itandiWatchExpiry > 0 && Date.now() < itandiWatchExpiry) {
+    const isMaybePdf =
+      url.includes(".pdf") ||
+      (downloadItem.mime || "").includes("pdf") ||
+      (downloadItem.mime || "").includes("octet-stream");
+    if (isMaybePdf) {
+      const originalTabId = itandiWatchOriginalTab;
+      itandiWatchExpiry     = 0;
+      itandiWatchOriginalTab = 0;
+      console.log("[AXLX BG] itandi DL検知 url=" + url.slice(0, 80) + " → originalTab=" + originalTabId);
 
-    chrome.scripting.executeScript({
-      target: { tabId: dlTabId },
-      world: "MAIN",
-      func: (pdfUrl) => {
-        const opts = pdfUrl.startsWith("blob:") ? {} : { credentials: "include" };
-        return fetch(pdfUrl, opts)
-          .then((r) => {
-            const ct = r.headers.get("content-type") || "";
-            if (!pdfUrl.startsWith("blob:") && !ct.includes("pdf") && !ct.includes("octet-stream")) return null;
-            return r.arrayBuffer();
-          })
-          .then((buf) => {
-            if (!buf) return null;
-            const bytes = new Uint8Array(buf);
-            const chunks = [];
-            for (let i = 0; i < bytes.length; i += 8192) {
-              chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
-            }
-            return btoa(chunks.join(""));
-          })
-          .catch(() => null);
-      },
-      args: [url],
-    }).then((results) => {
-      const b64 = results?.[0]?.result;
-      if (b64) {
-        console.log("[AXLX BG] itandi DL capture成功 " + Math.round(b64.length / 1024) + "KB");
-        chrome.tabs.sendMessage(dlTabId, { type: "axlx-itandi-pdf-by-download", b64, ts: Date.now() })
-          .catch((e) => console.error("[AXLX BG] itandi sendMessage error:", e.message));
-      } else {
-        console.warn("[AXLX BG] itandi DL capture null（PDF以外のダウンロードの可能性）");
-      }
-    }).catch((e) => console.error("[AXLX BG] itandi DL executeScript error:", e.message));
+      // BGサービスワーカーからfetch（host_permissionsがあるitandibb.comはCORSなし）
+      // S3/CDN URL はフォールバックで元タブのMAIN worldからfetch
+      (async () => {
+        let b64 = null;
+        try {
+          const r = await fetch(url, { credentials: "include" });
+          const buf = await r.arrayBuffer();
+          const bytes = new Uint8Array(buf);
+          const chunks = [];
+          for (let i = 0; i < bytes.length; i += 8192) {
+            chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
+          }
+          b64 = btoa(chunks.join(""));
+          console.log("[AXLX BG] itandi DL BG-fetch成功 " + Math.round(b64.length / 1024) + "KB");
+        } catch (e1) {
+          console.warn("[AXLX BG] itandi DL BG-fetch失敗:", e1.message, "→ MAIN world fallback");
+          try {
+            const results = await chrome.scripting.executeScript({
+              target: { tabId: originalTabId },
+              world: "MAIN",
+              func: (pdfUrl) => {
+                return fetch(pdfUrl, { credentials: "include" })
+                  .then((r) => r.arrayBuffer())
+                  .then((buf) => {
+                    const bytes = new Uint8Array(buf);
+                    const chunks = [];
+                    for (let i = 0; i < bytes.length; i += 8192) {
+                      chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
+                    }
+                    return btoa(chunks.join(""));
+                  })
+                  .catch(() => null);
+              },
+              args: [url],
+            });
+            b64 = results?.[0]?.result || null;
+            if (b64) console.log("[AXLX BG] itandi DL MAIN-fetch成功 " + Math.round(b64.length / 1024) + "KB");
+          } catch (e2) {
+            console.error("[AXLX BG] itandi DL MAIN-fetch失敗:", e2.message);
+          }
+        }
+        if (b64) {
+          chrome.tabs.sendMessage(originalTabId, { type: "axlx-itandi-pdf-by-download", b64, ts: Date.now() })
+            .catch((e) => console.error("[AXLX BG] itandi sendMessage error:", e.message));
+        } else {
+          console.warn("[AXLX BG] itandi DL capture null（全fetchパス失敗）");
+        }
+      })();
+    }
   }
 
   // ── レインズ PDF ダウンロードキャプチャ ──────────────────────────────────────
@@ -331,10 +355,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "axlx-itandi-watch-download") {
     const tabId = sender.tab?.id;
     if (!tabId) { sendResponse({ ok: false }); return true; }
-    clearTimeout(itandiDownloadWatcher.get(tabId));
-    const timerId = setTimeout(() => itandiDownloadWatcher.delete(tabId), 30000);
-    itandiDownloadWatcher.set(tabId, timerId);
-    console.log("[AXLX BG] itandi DL watch開始 tabId=" + tabId);
+    itandiWatchExpiry      = Date.now() + 30000;
+    itandiWatchOriginalTab = tabId;
+    console.log("[AXLX BG] itandi DL watch開始 originalTabId=" + tabId);
     sendResponse({ ok: true });
     return true;
   }
@@ -463,26 +486,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               }).catch(e => console.error("[AXLX V3] blob fetch error:", e));
               return null;
             }
-            // ケース3: capturePending=true でHTTPS URL → fetchでキャプチャ（itandiのサーバーPDF URL対応）
-            // 旧設計はタブ監視に委ねていたが、itandi用のタブ監視が未実装のため fetch で直接取得する
+            // ケース3: capturePending=true でHTTPS URL → パススルー
+            // background.jsのitandiWatchExpiry（時刻ベース）がchrome.downloads.onCreatedで捕捉する
+            // 旧設計: MAIN worldからfetch＋window.open抑制 → CDN/S3 CORSで失敗しDLイベントも消えるバグあり
             if (window.__axlxCapturePending && (url.startsWith("https:") || url.startsWith("http:"))) {
-              console.log("[AXLX V3] window.open 抑制 + https fetch:", url.slice(0, 80));
-              window.__axlxCapturePending = false;
-              fetch(url, { credentials: "include" }).then(function(r) {
-                const ct = r.headers.get("content-type") || "";
-                if (ct.includes("pdf") || ct.includes("octet-stream")) {
-                  return r.arrayBuffer().then(function(buf) {
-                    const bytes = new Uint8Array(buf);
-                    const chunks = [];
-                    for (let i = 0; i < bytes.length; i += 8192) {
-                      chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + 8192, bytes.length))));
-                    }
-                    (window.top || window).postMessage({ from: "axlx-itandi-pdf", b64: btoa(chunks.join("")), ts: Date.now() }, "*");
-                  });
-                }
-                console.warn("[AXLX V3] https URL は PDF でない (ct=" + ct + "):", url.slice(0, 80));
-              }).catch(function(e) { console.error("[AXLX V3] https fetch error:", e.message); });
-              return null;
+              console.log("[AXLX V3] window.open HTTPS パススルー（DLウォッチャーに委譲）:", url.slice(0, 80));
+              window.__axlxCapturePending = false; // 二重捕捉防止
+              return origOpen.apply(this, args);   // ブラウザの自然なDLを発生させる
             }
             return origOpen.apply(this, args);
           };
