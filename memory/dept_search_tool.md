@@ -490,3 +490,48 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 - **知識永久機関プロトコル確立（2026-05-20）**: セッション開始時の3ファイル読み込み→実装中の事前確認→修正後の即記録→デグレチェック→git pushの一連フローを部署全員の絶対ルールとして文書化（AGENTS.md）
 - **setModeバグ修正（2026-05-20）**: setupAreaModeSelector内 renderInstrSteps(siteKey)→renderInstrSteps(siteKey, buildAdjCustomer(c))に修正。駅/地域切替ボタンで手順が更新されるように
 - **レインズ複数駅パース対応（2026-05-20）**: rawAreaを単一トークンとして扱っていたバグを修正。areaToks分割→各トークンでSTATION_LINE_MAP照合→全路線集約に変更
+- **レインズOOM/クラッシュ修正（2026-06-07）**: manifest.jsonのbulk-dl.jsマッチパターンを`main.php*`のみに制限。underbar.jsのiframe遅延生成（初回展開まで作らない）でメモリ節約。v2.3.0
+- **itandi PDF重複バグ修正・LINE送信信頼性向上（2026-06-07）**: sendMessageTextのdedup修正。line-webhookでテキストメッセージを直接保存+line_message_id dedup。sync-from-screeningでスキップロジック追加
+- **itandi PDFキャプチャ修正（2026-06-07）**: createObjectURLフックで空typeのBlob（size>=30KB）も補足対象に追加。detached anchorのblob:URL除外を撤廃
+- **レインズGBK002200警告エラー修正（2026-06-07）**: 非結果ページ除外リストにGBK002200追加。console.warn→console.logに変更でChrome拡張エラーログ非表示化
+
+---
+
+## 🔌 itandi PDFキャプチャフック カバレッジマップ（2026-06-07確立）
+
+`background.js` に5経路のフックを実装済み。新しい配信パターンが出たら必ずここに追記する。
+
+| 経路 | フック | 条件 | 状態 |
+|---|---|---|---|
+| `URL.createObjectURL(blob)` | createObjectURL上書き | `type includes "pdf"` OR `type includes "octet-stream"` OR `(!type && size>=30KB)` | ✅ 対応済 |
+| `fetch()` レスポンス | window.fetch上書き | `Content-Type includes "pdf"` OR `includes "octet-stream"` | ✅ 対応済 |
+| `window.open(blob:URL)` | window.open上書き | `capturePending && url.startsWith("blob:")` | ✅ 対応済 |
+| `window.open(https:URL)` | ❌未対応 | パススルー（新タブ開く） | ⚠️ 未対応 |
+| DOM anchor `.click()` | document capture-phase click | `capturePending && download属性あり` | ✅ 対応済（blob:含む） |
+| detached anchor `.click()` | HTMLAnchorElement.prototype.click上書き | `capturePending && download属性あり && !javascript:` | ✅ 対応済（blob:含む） |
+| XHR responseType="blob" | XMLHttpRequest.send上書き | `capturePending && Content-Type pdf/octet` | ✅ 対応済 |
+| XHR responseType="" (text) | 同上 → URL再fetch | `_axlxUrl`を再fetchしてarrayBuffer取得 | ✅ 対応済（一時URL無効の場合失敗） |
+
+**未対応ケース（今後遭遇したら対応）**:
+- `window.open("https://...")` で PDF URL を新タブ → タブ監視方式が必要（現状は取りこぼし）
+- `window.location.href = url` によるページ遷移型ダウンロード → 未実装
+
+**フック有効化タイミング**:  
+`axlx-start-pdf-capture` メッセージ受信 → `__axlxCapturePending = true` → 60ms後 PDFボタンクリック → いずれかのフックが発火 → `__axlxCapturePending = false` → b64をpostMessage
+
+---
+
+## ⚠️ レインズ 非結果ページ除外リスト（2026-06-07確立）
+
+`findResultRows` / `ensureBar` / `retryTimer` / `MutationObserver` の4箇所に統一定義:
+
+```javascript
+var NON_RESULT_PAGES = ["GBK001310", "GBK002200"];
+```
+
+| ページコード | 種別 | 除外理由 |
+|---|---|---|
+| GBK001310 | 検索条件入力フォーム | チェックボックスがフォーム要素（物件行でない） |
+| GBK002200 | 物件詳細/登録系ページ | CB数=14だが物件行として解析不能 |
+
+**新しいページでエラーが出たら**: そのページコードを `NON_RESULT_PAGES` 配列に追加し、4箇所全てに適用すること（`reins-bulk-dl.js` 内 `NON_RESULT_PAGES` を一括検索して更新）。
