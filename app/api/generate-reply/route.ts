@@ -72,10 +72,22 @@ const PHASE_GUIDE: Record<string, string> = {
 2回目以降: 「〇〇さん、お世話になっております😊！！」で始める
 ※ 担当者名（鈴木など固有名詞）は絶対に文案に入れない
 ※ 条件フォームを送る場合: ①入居時期 ②家賃 ③間取り ④築年数 ⑤エリア・駅 ⑥駅徒歩 ⑦初期費用 ⑧その他 の形式で送る`,
-  hearing: `▶ 今すべきこと: 条件受け取りに感謝 + 本日中にピックアップ宣言。即アクション。
-例: 「〇〇さん、お世話になっております！！頂きましたご条件よりオススメできる物件ピックアップし、本日中にお送りさせて頂きます😊！」
-※ 初回連絡の場合は「お世話になっております」ではなく「初めまして」で始める
-※ 条件が足りない場合は1点だけ追加で聞く`,
+  hearing: `▶ 会話の状況を判断して以下の3パターンのどれかで対応する。
+
+【パターンA】条件がまだ届いていない・「探してます」だけの段階
+→ 挨拶 + 条件フォームを送る（①入居時期 ②家賃 ③間取り ④築年数 ⑤エリア・駅 ⑥駅徒歩 ⑦初期費用 ⑧その他 の形式）
+例: 「〇〇さんお世話になっております！！お部屋探しのお手伝いさせて頂きます😊！！まずはご希望の条件を教えていただけますでしょうか！①入居時期 ②ご希望家賃 ③間取り...」
+
+【パターンB】条件の一部しか届いていない・追加で確認が必要な段階
+→ 受け取りに感謝 + 足りない条件を「1点だけ」確認する（複数聞かない）
+例: 「〇〇さんありがとうございます！！ご希望エリアも教えていただけますでしょうか😊！！」
+
+【パターンC】条件が十分に揃った・ピックアップできる段階
+→ 感謝 + 本日中にピックアップ宣言。即アクションを示す
+例: 「〇〇さんありがとうございます！！ご希望条件よりオススメ出来る物件ピックアップし本日中にお送りさせて頂きます😊！！」
+
+※ 初回連絡なら「初めまして」、2回目以降は「お世話になっております」
+※ 絶対に複数の質問を一度にしない（1点だけ）`,
   proposing: `▶ 今すべきこと: 物件を具体的な数字で紹介し、申込/内覧へ自然に誘導。
 物件紹介フォーマット（必ずこの形で）:
 🌟[物件名] [部屋番号]
@@ -374,8 +386,8 @@ async function fetchKnowledge(state: string): Promise<string> {
 async function fetchExamples(state: string): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
-  const [{ data: starredSameState }, { data: starredAllState }, { data: recentFallback }] = await Promise.all([
-    // ⭐ 同フェーズの☆つき（最新30件・☆を習慣的につけているので多めに取得）
+  const [{ data: starredSameState }, { data: starredAllState }] = await Promise.all([
+    // ⭐ 同フェーズの☆つき（最新30件）
     supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state")
       .in("conversation_state", stateAliases).eq("is_starred", true)
       .order("created_at", { ascending: false }).limit(30),
@@ -383,23 +395,17 @@ async function fetchExamples(state: string): Promise<string> {
     supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state")
       .eq("is_starred", true)
       .order("created_at", { ascending: false }).limit(50),
-    // フォールバック: 非⭐の最近の送信例
-    supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state")
-      .in("conversation_state", stateAliases).eq("is_starred", false)
-      .order("created_at", { ascending: false }).limit(5),
   ]);
 
   const sameStateList = starredSameState || [];
   const allStateList  = (starredAllState || []).filter(
     (ex) => !sameStateList.some((s) => s.sent_reply === ex.sent_reply)
   );
-  const fallbackList  = sameStateList.length < 3 ? (recentFallback || []) : [];
 
-  // 同フェーズ☆ → 全フェーズ☆ → フォールバックの優先順で最大25件
+  // 同フェーズ☆ → 全フェーズ☆の優先順で最大25件（非☆は使わない）
   const all = [
     ...sameStateList.map((ex) => ({ ...ex, priority: 1 })),
-    ...fallbackList.map((ex) => ({ ...ex, priority: 2 })),
-    ...allStateList.slice(0, 10).map((ex) => ({ ...ex, priority: 3 })),
+    ...allStateList.slice(0, 10).map((ex) => ({ ...ex, priority: 2 })),
   ].sort((a, b) => a.priority - b.priority).slice(0, 25);
 
   if (all.length === 0) return "";
