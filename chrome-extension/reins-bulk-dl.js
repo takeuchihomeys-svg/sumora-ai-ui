@@ -7,55 +7,106 @@
 
   function sleep(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
 
-  // ── 物件行を取得 ─────────────────────────────────────────────────────
+  // ── 物件行を取得（クラス名非依存・CB逆引き方式）──────────────────────
+  // 設計方針: CSSクラス名はREINSのUI更新で変わるため信頼しない。
+  // チェックボックス要素を起点に「行コンテナ」を逆引きし、
+  // 同一親に2件以上あるグループ = 物件リスト行と判定する。
   function findResultRows() {
-    // offsetParent は position:fixed の親要素があるとnullになるため getBoundingClientRect で判定
-    function isVisible(row) {
-      if (row.offsetParent !== null) return true;
-      var r = row.getBoundingClientRect();
+    function isVisible(el) {
+      if (el.offsetParent !== null) return true;
+      var r = el.getBoundingClientRect();
       return r.width > 0 && r.height > 0;
     }
-    // チェックボックスを持つか確認
-    function hasCb(el) { return !!el.querySelector('input[type="checkbox"]'); }
-    // 最小粒度の行だけ残す（親に包含されるものを除外）
     function dedup(arr) {
       return arr.filter(function(el) {
-        return !arr.some(function(other) { return other !== el && el.contains(other); });
+        return !arr.some(function(o) { return o !== el && el.contains(o); });
       });
     }
 
-    // 優先1: PrimeVue v3 クラス名（従来）
+    // ── 高速パス1: PrimeVue v3クラス ─────────────────────────────────
     var rows = Array.from(document.querySelectorAll(".p-table-body-row")).filter(isVisible);
-    if (rows.length > 0) return rows;
+    if (rows.length > 0) {
+      console.log("[AX-REINS] 行検出[v3クラス]:", rows.length + "件");
+      return rows;
+    }
 
-    // 優先2: PrimeVue v4+ クラス名（部分一致）
-    rows = Array.from(document.querySelectorAll("[class*='table-body-row'], [class*='datatable-row'], [class*='p-datatable-row']")).filter(isVisible);
-    if (rows.length > 0) return rows;
+    // ── 高速パス2: PrimeVue v4+クラス部分一致 ────────────────────────
+    rows = Array.from(document.querySelectorAll(
+      "[class*='table-body-row'],[class*='datatable-row'],[class*='p-datatable-row'],[class*='p-row-odd'],[class*='p-row-even']"
+    )).filter(isVisible);
+    if (rows.length > 0) {
+      console.log("[AX-REINS] 行検出[v4クラス]:", rows.length + "件");
+      return rows;
+    }
 
-    // 優先3: WAI-ARIA role="row" でCBを含む（PrimeVue v4 仮想スクロール対応）
-    rows = Array.from(document.querySelectorAll("[role='row']")).filter(function (el) {
-      return isVisible(el) && hasCb(el);
+    // ── 高速パス3: WAI-ARIA role="row" + CB ──────────────────────────
+    rows = Array.from(document.querySelectorAll("[role='row']")).filter(function(el) {
+      return isVisible(el) && !!el.querySelector('input[type="checkbox"]');
     });
-    if (rows.length > 0) return rows;
+    if (rows.length > 0) {
+      console.log("[AX-REINS] 行検出[role=row]:", rows.length + "件");
+      return rows;
+    }
 
-    // 優先4: tr 要素（thead除外・CB含む）
-    rows = Array.from(document.querySelectorAll("tr")).filter(function (el) {
-      return isVisible(el) && hasCb(el) && !el.closest("thead");
+    // ── 高速パス4: thead除外 tr + CB ─────────────────────────────────
+    rows = Array.from(document.querySelectorAll("tr")).filter(function(el) {
+      return isVisible(el) && !el.closest("thead") && !!el.querySelector('input[type="checkbox"]');
     });
-    if (rows.length > 0) return dedup(rows);
+    if (rows.length > 0) {
+      var d4 = dedup(rows);
+      console.log("[AX-REINS] 行検出[tr]:", d4.length + "件");
+      return d4;
+    }
 
-    // 優先5: div 要素（物件リスト行判定: 同一親にCB付き兄弟が1件以上あること）
-    // フォームのチェックボックス（図面ありのみ等）は1要素だけで兄弟がないため除外される
-    var divRows = Array.from(document.querySelectorAll("div")).filter(function(el) {
-      if (!isVisible(el) || !hasCb(el)) return false;
-      var parent = el.parentElement;
-      if (!parent) return false;
-      var cbSiblings = Array.from(parent.children).filter(function(s) {
-        return s !== el && s.tagName === "DIV" && hasCb(s);
-      });
-      return cbSiblings.length >= 1; // 同親に1件以上CB付き兄弟がある ＝ リスト行
+    // ── 最終フォールバック: CB逆引き（クラス名完全非依存）─────────────
+    // CBを1個だけ子に持つ最近の祖先を「行」とみなし、同一親でグループ化。
+    // フォームCB（図面ありのみ等）は同一親にCBが1個だけ → 除外される。
+    var allCbs = Array.from(document.querySelectorAll('input[type="checkbox"]')).filter(function(cb) {
+      return isVisible(cb) && !cb.classList.contains("axlx-reins-cb");
     });
-    return dedup(divRows);
+
+    console.log("[AX-REINS] CB逆引きモード: ページ上の可視CB数 =", allCbs.length);
+    if (allCbs.length < 2) return [];
+
+    // CB → 行コンテナを逆引き（最大10レベル）
+    function findRowEl(cb) {
+      var el = cb.parentElement;
+      for (var i = 0; i < 10 && el && el !== document.body; i++, el = el.parentElement) {
+        // tr / role=row は確実な行要素
+        if (el.tagName === "TR" || el.getAttribute("role") === "row") return el;
+        // このノード配下にCBが1個だけなら「行の最小コンテナ」候補
+        if (el.querySelectorAll('input[type="checkbox"]').length === 1) return el;
+      }
+      return cb.parentElement;
+    }
+
+    var parentGroups = new Map();
+    allCbs.forEach(function(cb) {
+      var rowEl = findRowEl(cb);
+      if (!rowEl || !isVisible(rowEl)) return;
+      var parent = rowEl.parentElement;
+      if (!parent) return;
+      if (!parentGroups.has(parent)) parentGroups.set(parent, []);
+      var list = parentGroups.get(parent);
+      if (list.indexOf(rowEl) === -1) list.push(rowEl);
+    });
+
+    var result = [];
+    parentGroups.forEach(function(group, parent) {
+      if (group.length >= 2) {
+        console.log("[AX-REINS] CB逆引きグループ: <" + parent.tagName +
+          " class='" + (parent.className || "").toString().slice(0, 50) + "'> " + group.length + "件");
+        result = result.concat(group);
+      }
+    });
+
+    if (result.length > 0) {
+      console.log("[AX-REINS] 行検出[CB逆引き]:", result.length + "件");
+    } else {
+      console.warn("[AX-REINS] 行を検出できませんでした。DevToolsでDOM構造を確認してください。" +
+        " CB数=" + allCbs.length + " グループ数=" + parentGroups.size);
+    }
+    return result;
   }
 
   // ── 行テキストから物件情報を抽出 ──────────────────────────────────────
@@ -475,9 +526,8 @@
           window.postMessage({ from: "axlx-start-pdf-capture" }, "*");
 
           setTimeout(function () {
-            // offsetParentフィルタなしでrowを探す（ビューワーに覆われていても取得）
-            var freshRow = Array.from(document.querySelectorAll(".p-table-body-row"))
-              .find(function (r) { return makeRowKey(r) === target.rowKey; });
+            // findResultRows()でrowを逆引き（クラス名依存を排除）
+            var freshRow = findResultRows().find(function (r) { return makeRowKey(r) === target.rowKey; });
             var freshBtn = freshRow
               ? Array.from(freshRow.querySelectorAll("button")).find(function (b) {
                   return b.textContent.trim() === "図面";
@@ -552,14 +602,16 @@
     }
   }, true);
 
-  // 初回スキャン + 動的ページ対応リトライ（レインズはSPA的にテーブルを遅延描画する）
+  // 初回スキャン + 動的ページ対応リトライ（REINSは遅延描画 / ページ遷移後に再描画）
   inject();
   var retryCount = 0;
   var retryTimer = setInterval(function () {
-    if (tracked.length > 0 || ++retryCount > 15) {
+    if (tracked.length > 0 || ++retryCount > 30) { // 最大60秒（30回×2秒）
       clearInterval(retryTimer);
+      if (retryCount > 30) console.warn("[AX-REINS] リトライ上限到達: 行が見つかりませんでした");
       return;
     }
+    if (retryCount % 5 === 0) console.log("[AX-REINS] リトライ中... (" + retryCount + "/30)");
     inject();
   }, 2000);
 })();
