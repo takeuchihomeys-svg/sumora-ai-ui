@@ -17,6 +17,36 @@ async function getPhrases(category: string, customerName?: string): Promise<stri
   ).join("\n");
 }
 
+// 物件オススメの実例（☆つき）を取得してAIの参考文として返す
+async function getPropertyExamples(): Promise<string> {
+  const { data } = await supabase
+    .from("ai_reply_examples")
+    .select("sent_reply")
+    .in("conversation_state", ["property_recommendation", "proposing"])
+    .eq("is_starred", true)
+    .order("created_at", { ascending: false })
+    .limit(12);
+  if (!data || data.length === 0) return "";
+  return (data as { sent_reply: string }[])
+    .map((r, i) => `【実例${i + 1}】\n${r.sent_reply}`)
+    .join("\n\n---\n\n");
+}
+
+// 物件オススメ関連のknowledgeを取得
+async function getPropertyKnowledge(): Promise<string> {
+  const { data } = await supabase
+    .from("ai_reply_knowledge")
+    .select("category, title, content, importance")
+    .in("conversation_state", ["property_recommendation", "proposing"])
+    .gte("importance", 7)
+    .order("importance", { ascending: false })
+    .limit(15);
+  if (!data || data.length === 0) return "";
+  return (data as { category: string; title: string; content: string }[])
+    .map((r) => `[${r.category}] ${r.title}: ${r.content}`)
+    .join("\n");
+}
+
 async function callClaude(system: string, user: string): Promise<string> {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -80,48 +110,31 @@ export async function POST(request: NextRequest) {
     if (action === "property_recommendation") {
       if (!image_url) throw new Error("物件資料画像が必要です");
 
-      const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。
-物件資料の画像を読み取り、以下の【出力フォーマット】に従ってLINEメッセージを生成してください。
+      // 実例・knowledge・フレーズを並列取得
+      const [examples, knowledge] = await Promise.all([
+        getPropertyExamples(),
+        getPropertyKnowledge(),
+      ]);
 
-【出力フォーマット — 必ずこの構造を守ること】
+      const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
+物件資料の画像を読み取り、お客様へのオススメ物件メッセージをLINEで送る文章を書いてください。
 
-🌟 {物件名}　{号室}
+【最重要】下記の実例がスモラの実際の送信文です。この文体・構成・テンポを忠実に再現してください。
+テンプレートではなく、実例から自然に学んだスタイルで書くこと。
 
-{お客様名}に特にオススメ出来るお部屋となります！！
+${examples ? `【スモラの実際の物件オススメ文（実例）】\n${examples}` : ""}
 
-（オススメポイント）
-・{家賃（管理費込の場合は「家賃管理費込○○円」、別の場合は「家賃○○円／管理費○○円」）}
-・{築年月（例：2018年1月築）}
-・{最寄り駅}徒歩{○}分
-・{広さ}と{広め/コンパクト等}の{間取り}
-・敷金礼金{0/あり等}
-・{特筆設備1（Wi-Fi無料など）}
-※オススメポイントは物件資料から読み取れる重要事項を5〜7項目
+${knowledge ? `【物件オススメ時のノウハウ】\n${knowledge}` : ""}
 
-{間取り・広さの魅力を1文}！！
-{セキュリティ・設備の充実を1文}！！
-{設備詳細（洗濯機置場・コンロ等）を1文}！！
-{敷金礼金0など初期費用メリットを1文（該当する場合）}！！
+${phraseText ? `【よく使うフレーズ】\n${phraseText}` : ""}
 
-{お客様名}にかなりオススメ出来る条件のお部屋となります😊！！
-{空室状況・退去予定・競争率など緊急性を1文（情報があれば）}！！
-{お客様名}お気に召されましたらお申込しお部屋抑えさせて頂きます！！
-
-お手隙の際にご査収ください😌！！
-
-【絵文字ルール — 最重要・必ず守ること】
-▼ 使ってよい絵文字：😊 😌 🙇‍♀️ 🌟 ✨ のみ
-▼ 上記以外は一切禁止（🏠 💰 🔑 ⭐ 等すべて禁止）
-▼ 冒頭の🌟と末尾の😊😌の計2〜3個のみ
-
-【数字の読み取りルール】
-・家賃・管理費は必ず円単位の数字で（「7万円」→「70,000円」）
-・築年月は「○○年○月築」の形式で
-・駅徒歩は「徒歩○分」の形式で
-・広さは「○○帖」または「○○㎡」で
-
-【スモラの言葉・表現（自然に組み込む）】
-${phraseText || "なし"}`;
+【守るべきルール】
+・物件名・号室・家賃・築年・駅徒歩・広さ・間取り・設備は画像から正確に読み取る
+・数字は具体的に（「70,000円」「2018年1月築」「徒歩7分」「7.9帖」など）
+・感嘆符は「！！」（スモラスタイル）
+・絵文字は 😊 😌 🌟 ✨ 🙇‍♀️ のみ・2〜3個まで・それ以外は禁止
+・お客様の条件に合っているポイントを具体的に強調する
+・最後は「お手隙の際にご査収ください😌！！」で締める`;
 
       const conditionsText = customer_conditions as string | undefined;
       const userText = `${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${extra_input ? `\n追加情報: ${extra_input}` : ""}`;
