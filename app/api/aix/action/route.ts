@@ -32,6 +32,16 @@ async function getPropertyExamples(): Promise<string> {
     .join("\n\n---\n\n");
 }
 
+// aix_settings からシステムプロンプトを取得（なければデフォルト）
+async function getAixSystemPrompt(key: string, defaultValue: string): Promise<string> {
+  const { data } = await supabase
+    .from("aix_settings")
+    .select("value")
+    .eq("key", key)
+    .maybeSingle();
+  return data?.value ?? defaultValue;
+}
+
 // 物件オススメ関連のknowledgeを取得
 async function getPropertyKnowledge(): Promise<string> {
   const { data } = await supabase
@@ -110,23 +120,18 @@ export async function POST(request: NextRequest) {
     if (action === "property_recommendation") {
       if (!image_url) throw new Error("物件資料画像が必要です");
 
-      // 実例・knowledge・フレーズを並列取得
-      const [examples, knowledge] = await Promise.all([
-        getPropertyExamples(),
-        getPropertyKnowledge(),
-      ]);
-
-      const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
+      // 実例・knowledge・DBプロンプトを並列取得
+      const DEFAULT_PROP_SYSTEM = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
 物件資料の画像を読み取り、お客様へのオススメ物件メッセージをLINEで送る文章を書いてください。
 
 【最重要】下記の実例がスモラの実際の送信文です。この文体・構成・テンポを忠実に再現してください。
 テンプレートではなく、実例から自然に学んだスタイルで書くこと。
 
-${examples ? `【スモラの実際の物件オススメ文（実例）】\n${examples}` : ""}
+{{examples}}
 
-${knowledge ? `【物件オススメ時のノウハウ】\n${knowledge}` : ""}
+{{knowledge}}
 
-${phraseText ? `【よく使うフレーズ】\n${phraseText}` : ""}
+{{phrases}}
 
 【守るべきルール】
 ・物件名・号室・家賃・築年・駅徒歩・広さ・間取り・設備は画像から正確に読み取る
@@ -135,6 +140,18 @@ ${phraseText ? `【よく使うフレーズ】\n${phraseText}` : ""}
 ・絵文字は 😊 😌 🌟 ✨ 🙇‍♀️ のみ・2〜3個まで・それ以外は禁止
 ・お客様の条件に合っているポイントを具体的に強調する
 ・最後は「お手隙の際にご査収ください😌！！」で締める`;
+
+      const [examples, knowledge, systemTemplate] = await Promise.all([
+        getPropertyExamples(),
+        getPropertyKnowledge(),
+        getAixSystemPrompt("property_recommendation", DEFAULT_PROP_SYSTEM),
+      ]);
+
+      // {{examples}} {{knowledge}} {{phrases}} を実データに置換
+      const system = systemTemplate
+        .replace("{{examples}}", examples ? `【スモラの実際の物件オススメ文（実例）】\n${examples}` : "")
+        .replace("{{knowledge}}", knowledge ? `【物件オススメ時のノウハウ】\n${knowledge}` : "")
+        .replace("{{phrases}}", phraseText ? `【よく使うフレーズ】\n${phraseText}` : "");
 
       const conditionsText = customer_conditions as string | undefined;
       const userText = `${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${extra_input ? `\n追加情報: ${extra_input}` : ""}`;

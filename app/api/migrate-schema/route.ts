@@ -355,6 +355,15 @@ WHERE id IN (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_line_message_id_unique
   ON messages(line_message_id)
   WHERE line_message_id IS NOT NULL;
+
+-- AIXボタン設定テーブル（プロンプト・レスポンスルールをDB管理）
+CREATE TABLE IF NOT EXISTS aix_settings (
+  key TEXT PRIMARY KEY,
+  label TEXT NOT NULL DEFAULT '',
+  value TEXT NOT NULL DEFAULT '',
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE aix_settings DISABLE ROW LEVEL SECURITY;
 `.trim();
 
 export async function GET() {
