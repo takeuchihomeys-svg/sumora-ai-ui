@@ -360,6 +360,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_line_message_id_unique
   ON messages(line_message_id)
   WHERE line_message_id IS NOT NULL;
 
+-- conversations.id に DEFAULT を付与（LINE webhookがid未指定でINSERTしても自動生成）
+ALTER TABLE conversations ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+
 -- AIXボタン設定テーブル（プロンプト・レスポンスルールをDB管理）
 CREATE TABLE IF NOT EXISTS aix_settings (
   key TEXT PRIMARY KEY,
