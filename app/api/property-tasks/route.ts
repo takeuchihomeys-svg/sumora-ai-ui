@@ -35,8 +35,8 @@ function nextDueLabel(c: Customer): string {
   return "";
 }
 
-// LINEグループに✅完了アナウンスを送る
-async function notifyGroupComplete(customerName: string, action: "send" | "confirm"): Promise<void> {
+// 全員完了したときだけ🎉を売上番長グループに送る
+async function checkAllDone(): Promise<void> {
   const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN;
   if (!token) return;
 
@@ -47,14 +47,20 @@ async function notifyGroupComplete(customerName: string, action: "send" | "confi
   }
   if (!groupId) return;
 
-  const text = action === "confirm"
-    ? `✅ ${customerName}様 — 本日確認済み`
-    : `✅ ${customerName}様 — 物件送信完了`;
+  const { data } = await supabase
+    .from("property_customers")
+    .select("status, last_property_sent_at, hot_confirmed_at")
+    .in("status", ["new_inquiry", "hot", "property_search"]);
+  if (!data || data.length === 0) return;
+
+  const remaining = (data as Array<{ status: string; last_property_sent_at: string | null; hot_confirmed_at: string | null }>)
+    .filter(c => needsActionToday(c as Customer)).length;
+  if (remaining > 0) return;
 
   await fetch("https://api.line.me/v2/bot/message/push", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ to: groupId, messages: [{ type: "text", text }] }),
+    body: JSON.stringify({ to: groupId, messages: [{ type: "text", text: "🎉 本日の物件出し全員完了！\nお疲れ様でした！" }] }),
   });
 }
 
@@ -113,17 +119,8 @@ export async function POST(req: NextRequest) {
       .eq("is_hot", false);
   }
 
-  // 顧客名取得 → LINEグループに✅通知（非同期・失敗しても200を返す）
-  void (async () => {
-    try {
-      const { data: customer } = await supabase
-        .from("property_customers")
-        .select("customer_name")
-        .eq("id", customer_id)
-        .single();
-      await notifyGroupComplete(customer?.customer_name ?? "お客様", action === "confirm" ? "confirm" : "send");
-    } catch { /* 通知失敗は無視 */ }
-  })();
+  // 全員完了チェック → 完了したら🎉をグループに通知（fire-and-forget）
+  void checkAllDone().catch(() => {});
 
   return NextResponse.json({ ok: true });
 }

@@ -1,25 +1,51 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
-async function notifyGroup(customerId: string, action: "send" | "confirm"): Promise<void> {
+// 今日まだ未対応かどうか判定
+function needsActionToday(c: { status: string; last_property_sent_at: string | null; hot_confirmed_at?: string | null }): boolean {
+  if (c.status === "new_inquiry") return true;
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (c.status === "hot") {
+    const sent = c.last_property_sent_at && new Date(c.last_property_sent_at) >= todayStart;
+    const confirmed = c.hot_confirmed_at && new Date(c.hot_confirmed_at) >= todayStart;
+    return !sent && !confirmed;
+  }
+  if (c.status === "property_search") {
+    if (!c.last_property_sent_at) return true;
+    return (now.getTime() - new Date(c.last_property_sent_at).getTime()) / 86400000 >= 3;
+  }
+  return false;
+}
+
+// 全員完了したときだけ🎉を売上番長グループに送る
+async function checkAllDone(): Promise<void> {
   try {
     const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN;
     if (!token) return;
     let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? null;
     if (!groupId) {
-      const { data } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").single();
-      groupId = (data?.value as string) ?? null;
+      const { data: grp } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").single();
+      groupId = (grp?.value as string) ?? null;
     }
     if (!groupId) return;
-    const { data: pc } = await supabase.from("property_customers").select("customer_name").eq("id", customerId).single();
-    const name = (pc?.customer_name as string) ?? "お客様";
-    const text = action === "confirm" ? `✅ ${name}様 — 本日確認済み` : `✅ ${name}様 — 物件送信完了`;
+
+    const { data } = await supabase
+      .from("property_customers")
+      .select("status, last_property_sent_at, hot_confirmed_at")
+      .in("status", ["new_inquiry", "hot", "property_search"]);
+    if (!data || data.length === 0) return;
+
+    const remaining = (data as Array<{ status: string; last_property_sent_at: string | null; hot_confirmed_at: string | null }>)
+      .filter(needsActionToday).length;
+    if (remaining > 0) return;
+
     await fetch("https://api.line.me/v2/bot/message/push", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ to: groupId, messages: [{ type: "text", text }] }),
+      body: JSON.stringify({ to: groupId, messages: [{ type: "text", text: "🎉 本日の物件出し全員完了！\nお疲れ様でした！" }] }),
     });
-  } catch { /* 通知失敗は無視 */ }
+  } catch { /* 失敗は無視 */ }
 }
 
 export async function GET() {
@@ -118,9 +144,10 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // 売上番長グループに通知（fire-and-forget）
-  if ("last_property_sent_at" in body) void notifyGroup(id, "send");
-  else if ("property_viewed_at" in body) void notifyGroup(id, "confirm");
+  // 物件送った or 確認済みのとき: 全員完了チェック（fire-and-forget）
+  if ("last_property_sent_at" in body || "property_viewed_at" in body) {
+    void checkAllDone();
+  }
 
   return NextResponse.json(data);
 }
