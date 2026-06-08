@@ -224,10 +224,17 @@ async function autoUpgradeToHot(db: ReturnType<typeof getDb>, userId: string) {
     .limit(1)
     .single();
   if (data?.id) {
-    await db
-      .from("property_customers")
-      .update({ status: "hot", updated_at: new Date().toISOString() })
-      .eq("id", data.id);
+    const now = new Date().toISOString();
+    await Promise.all([
+      db.from("property_customers")
+        .update({ status: "hot", updated_at: now })
+        .eq("id", data.id),
+      // 会話一覧の🔥マークも連動して更新
+      db.from("conversations")
+        .update({ is_hot: true, updated_at: now })
+        .eq("line_user_id", userId)
+        .eq("is_hot", false),
+    ]);
     void notifyHanbancyoGroup(db, data.customer_name ?? "");
   }
 }
