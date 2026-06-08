@@ -236,7 +236,21 @@ export async function POST(req: NextRequest) {
       updated_at: record.updated_at ?? null,
       profile_image_url: record.profile_image_url ?? null,
     };
-    if (resolvedAccount) upsertData.account = resolvedAccount;
+
+    // 手動設定済みのアカウントを上書きしない
+    // スモラ・イエヤス両方に問い合わせているお客さんで、
+    // 同期のたびに resolvedAccount が変わってアカウントが入れ替わるのを防ぐ
+    if (resolvedAccount) {
+      const { data: existingConv } = await supabase
+        .from("conversations")
+        .select("account")
+        .eq("id", String(record.id))
+        .maybeSingle();
+      if (!existingConv?.account) {
+        // 新規 or 未設定の場合のみアカウントをセット
+        upsertData.account = resolvedAccount;
+      }
+    }
 
     const { error } = await supabase
       .from("conversations")
