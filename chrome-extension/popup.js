@@ -45,36 +45,48 @@ async function seedMapsIfEmpty() {
     });
     const result = await res.json();
     console.log("[AX] 差分sync完了:", result);
-  } catch (e) {
-    console.warn("[AX] seed失敗:", e.message);
+  } catch {
+    // ネットワーク一時失敗は無視（次回ロード時に再試行される）
   }
 }
 
-// 起動時: 地名・駅マップを一括ロード
+// 起動時: 地名・駅マップを一括ロード（タイムアウト付き・失敗時サイレントリトライ）
 async function fetchLearnedMaps() {
-  try {
-    const [regionRes, stationRes] = await Promise.all([
-      fetch(`${API_BASE}/api/region-map`,  { cache: "no-store" }),
-      fetch(`${API_BASE}/api/station-map`, { cache: "no-store" }),
-    ]);
-    if (regionRes.ok) {
-      const d = await regionRes.json();
-      for (const { token, ward } of (d.regions || [])) LEARNED_WARD_MAP[token] = ward;
-    }
-    if (stationRes.ok) {
-      const d = await stationRes.json();
-      for (const r of (d.stations || [])) {
-        LEARNED_STATION_MAP[r.token] = {
-          ward: r.ward, realpro_lines: r.realpro_lines || [],
-          itandi_lines: r.itandi_lines || [], reins_line: r.reins_line || null,
-        };
+  const tryFetch = async () => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    try {
+      const [regionRes, stationRes] = await Promise.all([
+        fetch(`${API_BASE}/api/region-map`,  { cache: "no-store", signal: ctrl.signal }),
+        fetch(`${API_BASE}/api/station-map`, { cache: "no-store", signal: ctrl.signal }),
+      ]);
+      clearTimeout(timer);
+      if (regionRes.ok) {
+        const d = await regionRes.json();
+        for (const { token, ward } of (d.regions || [])) LEARNED_WARD_MAP[token] = ward;
       }
+      if (stationRes.ok) {
+        const d = await stationRes.json();
+        for (const r of (d.stations || [])) {
+          LEARNED_STATION_MAP[r.token] = {
+            ward: r.ward, realpro_lines: r.realpro_lines || [],
+            itandi_lines: r.itandi_lines || [], reins_line: r.reins_line || null,
+          };
+        }
+      }
+      console.log("[AX] 学習済みロード: 地名", Object.keys(LEARNED_WARD_MAP).length,
+        "件 / 駅", Object.keys(LEARNED_STATION_MAP).length, "件");
+      return true;
+    } catch {
+      clearTimeout(timer);
+      return false;
     }
-    console.log("[AX] 学習済みロード: 地名", Object.keys(LEARNED_WARD_MAP).length,
-      "件 / 駅", Object.keys(LEARNED_STATION_MAP).length, "件");
-  } catch (e) {
-    console.warn("[AX] 学習済みマップ取得失敗:", e.message);
-  }
+  };
+
+  // 1回目試行、失敗したら3秒後に1回リトライ（エラーはサイレント）
+  if (await tryFetch()) return;
+  await new Promise(r => setTimeout(r, 3000));
+  await tryFetch();
 }
 
 // 間違えて学習したエントリをDBから削除してローカルマップからも除去
