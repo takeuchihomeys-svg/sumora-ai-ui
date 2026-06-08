@@ -30,6 +30,7 @@ type Conversation = {
   propertyCustomerId?: string;
   isPostApply?: boolean;
   isHot?: boolean;
+  isFlagged?: boolean;
   messages: Message[];
 };
 
@@ -46,6 +47,7 @@ type SupabaseConversationRow = {
   property_customer_id?: string | null;
   is_post_apply?: boolean | null;
   is_hot?: boolean | null;
+  is_flagged?: boolean | null;
 };
 
 type SupabaseMessageRow = {
@@ -729,6 +731,7 @@ export default function Home() {
         propertyCustomerId: conversation.property_customer_id || undefined,
         isPostApply: conversation.is_post_apply ?? false,
         isHot: conversation.is_hot ?? false,
+        isFlagged: conversation.is_flagged ?? false,
         messages: relatedMessages,
       };
     });
@@ -770,6 +773,9 @@ export default function Home() {
 
     // DBのis_hotをhotConvIdsに反映（Supabaseが正）
     setHotConvIds(new Set(formatted.filter((c) => c.isHot).map((c) => c.id)));
+
+    // DBのis_flaggedをflaggedConvIdsに反映（Supabaseが正）
+    setFlaggedConvIds(new Set(formatted.filter((c) => c.isFlagged).map((c) => c.id)));
 
     // 紐付け済み物件顧客を取得してlinkedCustomerMapを構築
     const propCustomerIds = [...new Set(
@@ -1233,8 +1239,10 @@ export default function Home() {
   const toggleFlaggedConv = (id: string) => {
     setFlaggedConvIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      const isNowFlagged = !prev.has(id);
+      if (isNowFlagged) next.add(id); else next.delete(id);
+      // Supabaseが唯一のソース（is_hotと同じ方式）
+      supabase.from("conversations").update({ is_flagged: isNowFlagged }).eq("id", id).then(() => {});
       return next;
     });
   };
