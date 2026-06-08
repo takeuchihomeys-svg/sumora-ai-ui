@@ -102,7 +102,6 @@ export default function AixModal({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const conditionFileInputRef = useRef<HTMLInputElement | null>(null);
-  const expandedTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     if (initialImageFile) {
@@ -442,7 +441,6 @@ export default function AixModal({
           </div>
           {/* 大型テキストエリア */}
           <textarea
-            ref={expandedTextareaRef}
             value={preview}
             onChange={(e) => setPreview(e.target.value)}
             autoFocus
