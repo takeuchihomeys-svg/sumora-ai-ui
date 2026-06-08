@@ -95,6 +95,7 @@ async function ensureConversation(
   const { data: created, error: createErr } = await db
     .from("conversations")
     .insert({
+      id: crypto.randomUUID(),
       line_user_id: userId,
       customer_name: "名称未設定",
       account: account.key,
@@ -104,6 +105,13 @@ async function ensureConversation(
     .select("id")
     .single();
   if (createErr || !created) {
+    // 同時にsync-from-screeningが作成した場合がある → 再検索
+    const { data: retry } = await db
+      .from("conversations")
+      .select("id")
+      .eq("line_user_id", userId)
+      .limit(1);
+    if (retry && retry.length > 0) return retry[0].id as string;
     console.error("[line-webhook] conversation作成失敗:", createErr?.message);
     return null;
   }
