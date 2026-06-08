@@ -250,10 +250,16 @@ export default function CustomersPage() {
     if (!c.additional_conditions || reflectLoading) return;
     setReflectLoading(c.id);
     try {
+      // ログエントリ（【日付追加/反映済み】形式）を除外して生テキストのみ送る
+      const rawText = c.additional_conditions.split("\n")
+        .filter(line => line.trim() && !parseConditionLog(line).isLog)
+        .join("\n");
+      if (!rawText.trim()) return;
+
       const res = await fetch("/api/parse-additional-conditions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: c.additional_conditions }),
+        body: JSON.stringify({ text: rawText }),
       });
       const data = await res.json() as { ok: boolean; parsed?: Record<string, unknown> };
       if (!data.ok || !data.parsed) return;
@@ -386,8 +392,8 @@ export default function CustomersPage() {
     }
   };
 
-  // 条件追加: 保存（テキストログ追記 + 構造化フィールドの更新）
-  const saveAddCond = async () => {
+  // 条件追加: 保存（テキストログ追記。alsoUpdateFields=trueのときは構造化フィールドも更新）
+  const saveAddCond = async (alsoUpdateFields = false) => {
     if (!addCondId || !addCondText.trim() || addCondSaving) return;
     setAddCondSaving(true);
     try {
@@ -398,8 +404,23 @@ export default function CustomersPage() {
       const existing = customer.additional_conditions?.trim() || "";
       const newAdditional = existing ? `${existing}\n${logEntry}` : logEntry;
 
-      // 追加条件はログに記録するのみ。元の条件フィールドは変更しない
       const patch: Record<string, unknown> = { id: addCondId, additional_conditions: newAdditional };
+
+      // 「追加 + 条件タグも更新」ボタン経由の場合のみフィールドを上書き
+      if (alsoUpdateFields && parsedPreview) {
+        if (parsedPreview.desired_area)       patch.desired_area       = parsedPreview.desired_area;
+        if (parsedPreview.floor_plan)         patch.floor_plan         = parsedPreview.floor_plan;
+        if (parsedPreview.rent_min)           patch.rent_min           = Number(parsedPreview.rent_min) * 10000;
+        if (parsedPreview.rent_max)           patch.rent_max           = Number(parsedPreview.rent_max) * 10000;
+        if (parsedPreview.walk_minutes)       patch.walk_minutes       = Number(parsedPreview.walk_minutes);
+        if (parsedPreview.move_in_time)       patch.move_in_time       = parsedPreview.move_in_time;
+        if (parsedPreview.building_age)       patch.building_age       = Number(parsedPreview.building_age);
+        if (parsedPreview.floor_area_min)     patch.floor_area_min     = Number(parsedPreview.floor_area_min);
+        if (parsedPreview.initial_cost_limit) patch.initial_cost_limit = Number(parsedPreview.initial_cost_limit) * 10000;
+        if (parsedPreview.preferences)        patch.preferences        = parsedPreview.preferences;
+        if (parsedPreview.ng_points)          patch.ng_points          = parsedPreview.ng_points;
+        if (parsedPreview.other_requests)     patch.other_requests     = parsedPreview.other_requests;
+      }
 
       const res = await fetch("/api/property-customers", {
         method: "PATCH", headers: { "Content-Type": "application/json" },
@@ -926,18 +947,29 @@ export default function CustomersPage() {
                   {parsedPreview.initial_cost_limit && <PreviewRow label="初期費用" value={`${parsedPreview.initial_cost_limit}万以内`} />}
                   {parsedPreview.preferences        && <PreviewRow label="こだわり" value={parsedPreview.preferences} />}
                   {parsedPreview.ng_points          && <PreviewRow label="NG"       value={parsedPreview.ng_points} />}
-                  <p className="text-[10px] text-purple-500 pt-1">元の条件タグは変わりません。追加内容はログに記録されます</p>
+                  <p className="text-[10px] text-purple-500 pt-1">「追加のみ」→ログ記録のみ（タグ変わらず）　「追加＋タグ更新」→上記フィールドも反映</p>
                 </div>
               )}
             </div>
-            <div className="px-5">
+            <div className="px-5 space-y-2">
+              {/* AI解析結果がある場合のみ「タグも更新」ボタンを表示 */}
+              {parsedPreview && (
+                <button
+                  onClick={() => saveAddCond(true)}
+                  disabled={!addCondText.trim() || addCondSaving}
+                  className="w-full py-3 rounded-xl font-bold text-white text-sm disabled:opacity-40 active:scale-[0.98] transition-transform"
+                  style={{ background: "linear-gradient(135deg, #7c3aed, #a855f7)" }}
+                >
+                  {addCondSaving ? "保存中..." : "追加 ＋ 条件タグも更新する"}
+                </button>
+              )}
               <button
-                onClick={saveAddCond}
+                onClick={() => saveAddCond(false)}
                 disabled={!addCondText.trim() || addCondSaving}
-                className="w-full py-3 rounded-xl font-bold text-white text-sm disabled:opacity-40 active:scale-[0.98] transition-transform"
-                style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}
+                className={`w-full py-3 rounded-xl font-bold text-sm disabled:opacity-40 active:scale-[0.98] transition-transform ${parsedPreview ? "border border-[#d1d7db] bg-white text-[#444]" : "text-white"}`}
+                style={parsedPreview ? {} : { background: "linear-gradient(135deg, #1565C0, #2196F3)" }}
               >
-                {addCondSaving ? "追加中..." : "追加する"}
+                {addCondSaving ? "追加中..." : parsedPreview ? "追加のみ（タグ変えない）" : "追加する"}
               </button>
             </div>
           </div>
