@@ -81,15 +81,11 @@ async function ensureConversation(
     .from("conversations")
     .select("id, account")
     .eq("line_user_id", userId)
+    .eq("account", account.key)
     .limit(1);
 
   if (convRows && convRows.length > 0) {
-    const convId = convRows[0].id as string;
-    // アカウント未設定の場合のみ更新（手動切り替え済みを上書きしない）
-    if (!convRows[0].account) {
-      await db.from("conversations").update({ account: account.key }).eq("id", convId);
-    }
-    return convId;
+    return convRows[0].id as string;
   }
 
   const { data: created, error: createErr } = await db
@@ -110,6 +106,7 @@ async function ensureConversation(
       .from("conversations")
       .select("id")
       .eq("line_user_id", userId)
+      .eq("account", account.key)
       .limit(1);
     if (retry && retry.length > 0) return retry[0].id as string;
     console.error("[line-webhook] conversation作成失敗:", createErr?.message);
@@ -163,12 +160,12 @@ async function handleTextMessage(
   text: string,
   account: AccountConfig,
   lineMessageId?: string,
-): Promise<void> {
+): Promise<boolean> {
   const db = getDb();
   const now = new Date().toISOString();
 
   const convId = await ensureConversation(db, userId, account, now);
-  if (!convId) return;
+  if (!convId) return false;
 
   // line_message_id重複チェック（sync-from-screeningとの二重保存防止）
   if (lineMessageId) {
@@ -179,7 +176,7 @@ async function handleTextMessage(
       .maybeSingle();
     if (existingMsg) {
       console.log("[line-webhook] テキスト重複スキップ:", lineMessageId);
-      return;
+      return true; // 既に保存済み = 正常
     }
   }
 
@@ -196,6 +193,7 @@ async function handleTextMessage(
       console.log("[line-webhook] DB UNIQUE制約で重複を検知・スキップ:", lineMessageId);
     } else {
       console.error("[line-webhook] message保存失敗:", msgErr.message);
+      return false;
     }
   }
 
@@ -221,6 +219,7 @@ async function handleTextMessage(
       .eq("id", convId)
       .in("status", ["hearing", "first_reply"]);
   }
+  return true;
 }
 
 async function autoUpgradeToHot(db: ReturnType<typeof getDb>, userId: string) {
@@ -597,12 +596,12 @@ async function handleImageMessageSave(
   userId: string,
   lineMessageId: string,
   account: AccountConfig,
-): Promise<{ convId: string; msgId: string } | null> {
+): Promise<{ convId: string; msgId: string } | "duplicate" | null> {
   const db = getDb();
   const now = new Date().toISOString();
 
   const convId = await ensureConversation(db, userId, account, now);
-  if (!convId) return null;
+  if (!convId) return null; // 失敗（LINEにリトライさせる）
 
   // 重複チェック（LINEのリトライで同じ lineMessageId が来ることがある）
   const { data: existing } = await db
@@ -612,7 +611,7 @@ async function handleImageMessageSave(
     .maybeSingle();
   if (existing) {
     console.log("[line-webhook] 重複スキップ:", lineMessageId);
-    return null;
+    return "duplicate"; // 既に保存済み = 正常（リトライ不要）
   }
 
   // image_expires_at = 30日後（デフォルト保存期限）
@@ -768,6 +767,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   // 画像メッセージの後処理用（after()で非同期実行する分）
   const imageJobs: Array<{ lineMessageId: string; msgId: string; account: typeof matchedAccount }> = [];
+  let anyFailed = false;
 
   for (const ev of events) {
     const event = ev as {
@@ -787,14 +787,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const text = (event.message as { text?: string })?.text;
       if (!text) continue;
       // sync-from-screeningより高速な直接経路で保存（line_message_idで重複防止）
-      await handleTextMessage(userId, text, matchedAccount, lineMessageId);
+      const ok = await handleTextMessage(userId, text, matchedAccount, lineMessageId);
+      if (!ok) anyFailed = true;
       continue;
     } else if (msgType === "image") {
       const lineMessageId = event.message?.id;
       if (!lineMessageId) continue;
       // 即時保存（重複チェック込み）してから後処理キューに積む
       const saved = await handleImageMessageSave(userId, lineMessageId, matchedAccount);
-      if (saved) {
+      if (saved === null) {
+        anyFailed = true; // 失敗 → LINEにリトライさせる
+      } else if (saved !== "duplicate") {
         imageJobs.push({ lineMessageId, msgId: saved.msgId, account: matchedAccount });
       }
     }
@@ -811,5 +814,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     });
   }
 
+  // 保存失敗時は500を返してLINEにリトライさせる（line_message_id UNIQUE制約で重複保存は防止済み）
+  if (anyFailed) {
+    return NextResponse.json({ error: "message save failed, will retry" }, { status: 500 });
+  }
   return NextResponse.json({ ok: true });
 }

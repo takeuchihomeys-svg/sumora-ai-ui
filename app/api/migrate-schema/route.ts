@@ -363,6 +363,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_line_message_id_unique
 -- conversations.id に DEFAULT を付与（LINE webhookがid未指定でINSERTしても自動生成）
 ALTER TABLE conversations ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
 
+-- 同一ユーザー×アカウントの重複会話を削除（updated_atが新しい方を残す）
+DELETE FROM conversations
+WHERE id IN (
+  SELECT id FROM (
+    SELECT id, ROW_NUMBER() OVER (
+      PARTITION BY line_user_id, account
+      ORDER BY updated_at DESC NULLS LAST
+    ) AS rn
+    FROM conversations
+    WHERE line_user_id IS NOT NULL
+  ) t
+  WHERE rn > 1
+);
+
+-- conversations に UNIQUE(line_user_id, account) 制約を追加（race condition防止）
+CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_line_user_id_account_unique
+  ON conversations(line_user_id, account)
+  WHERE line_user_id IS NOT NULL;
+
 -- AIXボタン設定テーブル（プロンプト・レスポンスルールをDB管理）
 CREATE TABLE IF NOT EXISTS aix_settings (
   key TEXT PRIMARY KEY,
