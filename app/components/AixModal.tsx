@@ -98,9 +98,11 @@ export default function AixModal({
   const [preview, setPreview] = useState<string>("");
   const [aiDraft, setAiDraft] = useState<string>("");
   const [parsedEstimate, setParsedEstimate] = useState<Record<string, string> | null>(null);
+  const [previewExpanded, setPreviewExpanded] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const conditionFileInputRef = useRef<HTMLInputElement | null>(null);
+  const expandedTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     if (initialImageFile) {
@@ -362,14 +364,17 @@ export default function AixModal({
 
           {/* プレビュー（生成後） */}
           {preview && (
-            <div className="mb-4 rounded-2xl bg-[#f0f2f5] px-4 py-3">
-              <div className="mb-1 text-xs font-semibold text-[#667781]">送信プレビュー</div>
-              <textarea
-                value={preview}
-                onChange={(e) => setPreview(e.target.value)}
-                rows={5}
-                className="w-full resize-none bg-transparent text-sm leading-6 text-[#111b21] outline-none"
-              />
+            <div className="mb-4">
+              <button
+                onClick={() => setPreviewExpanded(true)}
+                className="w-full rounded-2xl bg-[#f0f2f5] px-4 py-3 text-left active:bg-[#e8eaed] transition-colors"
+              >
+                <div className="mb-1.5 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-[#667781]">送信プレビュー</span>
+                  <span className="text-[10px] font-bold text-blue-500">✏️ タップして編集</span>
+                </div>
+                <p className="text-sm leading-6 text-[#111b21] line-clamp-4 whitespace-pre-wrap">{preview}</p>
+              </button>
             </div>
           )}
 
@@ -408,6 +413,54 @@ export default function AixModal({
           </div>
         </div>
       </div>
+
+      {/* 全画面編集オーバーレイ */}
+      {previewExpanded && (
+        <div className="fixed inset-0 z-[60] flex flex-col bg-white"
+          style={{ paddingTop: "max(env(safe-area-inset-top), 0px)", paddingBottom: "max(env(safe-area-inset-bottom), 0px)" }}>
+          {/* ヘッダー */}
+          <div className="flex items-center justify-between border-b border-[#f0f2f5] px-4 py-3"
+            style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
+            <button
+              onClick={() => setPreviewExpanded(false)}
+              className="rounded-full bg-white/20 px-4 py-1.5 text-sm font-bold text-white active:opacity-70"
+            >
+              キャンセル
+            </button>
+            <span className="text-sm font-bold text-white">メッセージ編集</span>
+            <button
+              onClick={() => setPreviewExpanded(false)}
+              className="rounded-full bg-white px-4 py-1.5 text-sm font-bold text-[#1565C0] active:opacity-70"
+            >
+              完了
+            </button>
+          </div>
+          {/* 文字カウント */}
+          <div className="flex items-center justify-between bg-[#f8f9fa] px-4 py-1.5">
+            <span className="text-[11px] text-[#8696a0]">LINEで送信するメッセージを自由に編集できます</span>
+            <span className="text-[11px] font-semibold text-[#8696a0]">{preview.length}文字</span>
+          </div>
+          {/* 大型テキストエリア */}
+          <textarea
+            ref={expandedTextareaRef}
+            value={preview}
+            onChange={(e) => setPreview(e.target.value)}
+            autoFocus
+            className="flex-1 resize-none px-5 py-4 text-[15px] leading-7 text-[#111b21] outline-none"
+            style={{ fontFamily: "inherit" }}
+          />
+          {/* 送信ボタン（展開中も送信可） */}
+          <div className="border-t border-[#f0f2f5] px-4 py-3">
+            <button
+              onClick={async () => { setPreviewExpanded(false); await handleSend(); }}
+              disabled={loading || !preview.trim()}
+              className="w-full rounded-full bg-[#06c755] py-3.5 text-sm font-bold text-white disabled:opacity-50 active:scale-[0.98] transition-transform"
+            >
+              {loading ? "送信中..." : "このメッセージを送信する"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
