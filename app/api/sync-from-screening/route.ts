@@ -340,28 +340,14 @@ export async function POST(req: NextRequest) {
       ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
       : undefined;
 
-    // テキストメッセージ: line-webhookが直接保存済みの場合はINSERTをスキップ（重複防止）
-    // SELECTで見つからなくてもDB側のUNIQUE制約(idx_messages_line_message_id_unique)が
-    // レース条件による二重INSERTを最終的に弾く
+    // 顧客テキストメッセージは line-webhook が唯一の保存経路
+    // screening-admin のレコードに line_message_id が含まれないため UNIQUE 制約が機能せず
+    // line_message_id の有無に関わらず常にスキップする
     let skipUpsert = false;
     if (!isImageMsg && record.sender === "customer") {
-      const textLineMessageId = (
-        (record.line_message_id as string) ||
-        (record.lineMessageId as string) ||
-        (record.message_id as string) ||
-        null
-      );
-      if (textLineMessageId) {
-        const { data: existingByLineId } = await supabase
-          .from("messages")
-          .select("id")
-          .eq("line_message_id", textLineMessageId)
-          .maybeSingle();
-        if (existingByLineId) {
-          skipUpsert = true;
-          console.log("[sync] テキスト重複スキップ (line_message_id):", textLineMessageId);
-        }
-      }
+      skipUpsert = true;
+      const lmid = (record.line_message_id as string) || (record.lineMessageId as string) || (record.message_id as string) || null;
+      console.log("[sync] 顧客テキストスキップ (line-webhook管轄):", lmid ?? `id=${record.id}`);
     }
 
     if (!skipUpsert) {
