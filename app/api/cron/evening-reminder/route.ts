@@ -8,8 +8,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
-  // 今日の開始時刻（UTC 00:00）
-  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  // 今日の開始時刻（JST 00:00 = UTC 前日15:00）
+  const _jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  _jstNow.setUTCHours(0, 0, 0, 0);
+  const todayStart = new Date(_jstNow.getTime() - 9 * 60 * 60 * 1000);
 
   // 🔥ステータスの顧客を全取得
   const { data: hotCustomers, error } = await supabase

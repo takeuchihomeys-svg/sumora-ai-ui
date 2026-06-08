@@ -104,6 +104,15 @@ export async function POST(req: NextRequest) {
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
+  // hotに格上げした場合は会話の🔥マークも同時更新
+  if (upgrade_to_hot) {
+    await supabase
+      .from("conversations")
+      .update({ is_hot: true })
+      .eq("property_customer_id", customer_id)
+      .eq("is_hot", false);
+  }
+
   // 顧客名取得 → LINEグループに✅通知（非同期・失敗しても200を返す）
   void (async () => {
     try {

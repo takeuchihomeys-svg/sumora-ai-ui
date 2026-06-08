@@ -96,8 +96,10 @@ export async function GET(req: NextRequest) {
     property_customers: { last_property_sent_at: string | null; hot_confirmed_at: string | null }[] | null;
   };
 
-  // 今日の開始（UTC 00:00）
-  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  // 今日の開始（JST 00:00 = UTC 前日15:00）
+  const _jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  _jstNow.setUTCHours(0, 0, 0, 0);
+  const todayStart = new Date(_jstNow.getTime() - 9 * 60 * 60 * 1000);
   const isDoneToday = (pc: HotConvRow["property_customers"]) => {
     const row = pc?.[0]; // 配列の先頭のみ参照
     if (!row) return false;
