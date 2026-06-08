@@ -103,11 +103,11 @@ function isDoneToday(c: Customer): boolean {
   return sent || viewed;
 }
 
-// 条件ログエントリのパース: "【2026/06/07追加】テキスト" 形式を検出
-function parseConditionLog(text: string): { isLog: boolean; date: string; content: string } {
-  const m = text.match(/^【(\d{4}\/\d{2}\/\d{2})追加】([\s\S]*)$/);
-  if (m) return { isLog: true, date: m[1], content: m[2].trim() };
-  return { isLog: false, date: "", content: text };
+// 条件ログエントリのパース: "【2026/06/07追加】" or "【2026/06/07反映済み】" 形式を検出
+function parseConditionLog(text: string): { isLog: boolean; isReflected: boolean; date: string; content: string } {
+  const m = text.match(/^【(\d{4}\/\d{2}\/\d{2})(追加|反映済み)】([\s\S]*)$/);
+  if (m) return { isLog: true, isReflected: m[2] === "反映済み", date: m[1], content: m[3].trim() };
+  return { isLog: false, isReflected: false, date: "", content: text };
 }
 
 function formatLogDate(): string {
@@ -157,7 +157,8 @@ export default function CustomersPage() {
   const [showCompleted, setShowCompleted]     = useState(true);
   const [reflectLoading, setReflectLoading]   = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const clearAfterSave = useRef(false);
+  // 条件に反映する → 保存後に生テキストを「反映済み」ログに変換するために使用
+  const convertRawOnSave = useRef<{ id: string; raw: string } | null>(null);
 
   const [showAdd, setShowAdd]       = useState(false);
   const [newName, setNewName]       = useState("");
@@ -274,7 +275,7 @@ export default function CustomersPage() {
         other_requests:     (p.other_requests     != null ? String(p.other_requests)     : base2.other_requests),
         property_memo:      base2.property_memo,
       };
-      clearAfterSave.current = true;
+      convertRawOnSave.current = { id: c.id, raw: c.additional_conditions ?? "" };
       setEditId(c.id);
       setEditFields(merged);
     } finally {
@@ -304,7 +305,7 @@ export default function CustomersPage() {
     setViewedUpdating(null);
   };
 
-  const openEdit = (c: Customer) => { clearAfterSave.current = false; setEditId(c.id); setEditFields(toEditFields(c)); };
+  const openEdit = (c: Customer) => { convertRawOnSave.current = null; setEditId(c.id); setEditFields(toEditFields(c)); };
 
   const saveEdit = async () => {
     if (!editId || !editFields || editSaving) return;
@@ -332,13 +333,19 @@ export default function CustomersPage() {
     if (res.ok) {
       const updated = await res.json();
       setCustomers((p) => p.map((c) => c.id === editId ? { ...c, ...updated } : c));
-      if (clearAfterSave.current) {
-        clearAfterSave.current = false;
+      // 「条件に反映する」経由の場合: 生テキストを「反映済み」ログエントリに変換（削除しない）
+      if (convertRawOnSave.current && convertRawOnSave.current.id === editId) {
+        const { raw } = convertRawOnSave.current;
+        convertRawOnSave.current = null;
+        const logified = raw.split("\n").map(line => {
+          const parsed = parseConditionLog(line);
+          return parsed.isLog ? line : `【${formatLogDate()}反映済み】${parsed.content}`;
+        }).filter(Boolean).join("\n");
         await fetch("/api/property-customers", {
           method: "PATCH", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: editId, additional_conditions: null }),
+          body: JSON.stringify({ id: editId, additional_conditions: logified || null }),
         });
-        setCustomers((p) => p.map((c) => c.id === editId ? { ...c, additional_conditions: null } : c));
+        setCustomers((p) => p.map((c) => c.id === editId ? { ...c, additional_conditions: logified || null } : c));
       }
     }
     setEditId(null); setEditFields(null); setEditSaving(false);
@@ -391,23 +398,8 @@ export default function CustomersPage() {
       const existing = customer.additional_conditions?.trim() || "";
       const newAdditional = existing ? `${existing}\n${logEntry}` : logEntry;
 
+      // 追加条件はログに記録するのみ。元の条件フィールドは変更しない
       const patch: Record<string, unknown> = { id: addCondId, additional_conditions: newAdditional };
-
-      // AI解析結果があれば構造化フィールドも更新（非null値のみ）
-      if (parsedPreview) {
-        if (parsedPreview.desired_area)       patch.desired_area       = parsedPreview.desired_area;
-        if (parsedPreview.floor_plan)         patch.floor_plan         = parsedPreview.floor_plan;
-        if (parsedPreview.rent_min)           patch.rent_min           = Number(parsedPreview.rent_min) * 10000;
-        if (parsedPreview.rent_max)           patch.rent_max           = Number(parsedPreview.rent_max) * 10000;
-        if (parsedPreview.walk_minutes)       patch.walk_minutes       = Number(parsedPreview.walk_minutes);
-        if (parsedPreview.move_in_time)       patch.move_in_time       = parsedPreview.move_in_time;
-        if (parsedPreview.building_age)       patch.building_age       = Number(parsedPreview.building_age);
-        if (parsedPreview.floor_area_min)     patch.floor_area_min     = Number(parsedPreview.floor_area_min);
-        if (parsedPreview.initial_cost_limit) patch.initial_cost_limit = Number(parsedPreview.initial_cost_limit) * 10000;
-        if (parsedPreview.preferences)        patch.preferences        = parsedPreview.preferences;
-        if (parsedPreview.ng_points)          patch.ng_points          = parsedPreview.ng_points;
-        if (parsedPreview.other_requests)     patch.other_requests     = parsedPreview.other_requests;
-      }
 
       const res = await fetch("/api/property-customers", {
         method: "PATCH", headers: { "Content-Type": "application/json" },
@@ -617,37 +609,44 @@ export default function CustomersPage() {
 
                 {/* ── 物件条件 ── */}
                 <div className="border-t border-[#f0f2f5] px-4 py-2.5">
-                  <div className="flex flex-wrap gap-1.5">
-                    {c.desired_area && <Tag label="エリア" value={c.desired_area} />}
-                    {c.floor_plan   && <Tag label="間取り" value={c.floor_plan} />}
-                    {c.floor_area_min && <Tag label="広さ" value={`${c.floor_area_min}㎡以上`} />}
-                    {(c.rent_min || c.rent_max) && (
-                      <Tag label="家賃" value={`${c.rent_min ? Math.floor(c.rent_min/10000)+"万〜" : "〜"}${c.rent_max ? Math.floor(c.rent_max/10000)+"万" : ""}`} />
-                    )}
-                    {c.walk_minutes && <Tag label="徒歩" value={`${c.walk_minutes}分`} />}
-                    {c.move_in_time && <Tag label="入居" value={c.move_in_time} />}
-                    {c.building_age && <Tag label="築年" value={`${c.building_age}年`} />}
-                    {c.initial_cost_limit && <Tag label="初期" value={`${Math.floor(c.initial_cost_limit/10000)}万以内`} />}
-                  </div>
-                  {(c.preferences || c.ng_points) && (
-                    <div className="mt-1.5 space-y-0.5">
-                      {c.preferences && (
-                        <p className="text-[11px] text-[#555]">
-                          <span className="font-semibold text-[#8696a0]">希望　</span>{c.preferences}
-                        </p>
+                  {/* 元の条件 */}
+                  {(c.desired_area || c.floor_plan || c.floor_area_min || c.rent_min || c.rent_max || c.walk_minutes || c.move_in_time || c.building_age || c.initial_cost_limit || c.preferences || c.ng_points) ? (
+                    <>
+                      {condLines.length > 0 && (
+                        <p className="text-[9px] font-bold text-[#8696a0] mb-1 tracking-wide">元の条件</p>
                       )}
-                      {c.ng_points && (
-                        <p className="text-[11px] text-[#555]">
-                          <span className="font-semibold text-[#8696a0]">NG　　</span>{c.ng_points}
-                        </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {c.desired_area && <Tag label="エリア" value={c.desired_area} />}
+                        {c.floor_plan   && <Tag label="間取り" value={c.floor_plan} />}
+                        {c.floor_area_min && <Tag label="広さ" value={`${c.floor_area_min}㎡以上`} />}
+                        {(c.rent_min || c.rent_max) && (
+                          <Tag label="家賃" value={`${c.rent_min ? Math.floor(c.rent_min/10000)+"万〜" : "〜"}${c.rent_max ? Math.floor(c.rent_max/10000)+"万" : ""}`} />
+                        )}
+                        {c.walk_minutes && <Tag label="徒歩" value={`${c.walk_minutes}分`} />}
+                        {c.move_in_time && <Tag label="入居" value={c.move_in_time} />}
+                        {c.building_age && <Tag label="築年" value={`${c.building_age}年`} />}
+                        {c.initial_cost_limit && <Tag label="初期" value={`${Math.floor(c.initial_cost_limit/10000)}万以内`} />}
+                      </div>
+                      {(c.preferences || c.ng_points) && (
+                        <div className="mt-1.5 space-y-0.5">
+                          {c.preferences && (
+                            <p className="text-[11px] text-[#555]">
+                              <span className="font-semibold text-[#8696a0]">希望　</span>{c.preferences}
+                            </p>
+                          )}
+                          {c.ng_points && (
+                            <p className="text-[11px] text-[#555]">
+                              <span className="font-semibold text-[#8696a0]">NG　　</span>{c.ng_points}
+                            </p>
+                          )}
+                        </div>
                       )}
-                    </div>
-                  )}
-                  {!c.desired_area && !c.floor_plan && !c.rent_min && !c.rent_max && !c.preferences && !c.ng_points && condLines.length === 0 && (
-                    <p className="text-[11px] text-[#bbb]">条件未入力</p>
+                    </>
+                  ) : (
+                    condLines.length === 0 && <p className="text-[11px] text-[#bbb]">条件未入力</p>
                   )}
 
-                  {/* 条件ログ（追加日つき + 新着要望） */}
+                  {/* 追加・変更履歴 */}
                   {condLines.length > 0 && (() => {
                     const isExpanded = expandedCondIds.has(c.id);
                     const MAX = 3;
@@ -657,6 +656,7 @@ export default function CustomersPage() {
                     const hiddenCount = condLines.length - MAX;
                     return (
                       <div className="mt-2 space-y-1.5">
+                        <p className="text-[9px] font-bold text-[#8696a0] tracking-wide">追加・変更履歴</p>
                         {condLines.length > MAX && !isExpanded && (
                           <button
                             onClick={(e) => { e.stopPropagation(); setExpandedCondIds(prev => { const s = new Set(prev); s.add(c.id); return s; }); }}
@@ -667,13 +667,25 @@ export default function CustomersPage() {
                         )}
                         {displayed.map((entry, i) =>
                           entry.isLog ? (
-                            <div key={i} className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
-                              <div className="flex items-center justify-between mb-1">
-                                <span className="text-[10px] font-bold text-blue-600">📌 {entry.date}追加</span>
+                            entry.isReflected ? (
+                              // 反映済みログ（緑）
+                              <div key={i} className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2">
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="text-[10px] font-bold text-emerald-600">✅ {entry.date} 反映済み</span>
+                                </div>
+                                <p className="text-[11px] text-emerald-800 leading-relaxed">{entry.content}</p>
                               </div>
-                              <p className="text-[11px] text-blue-800 leading-relaxed">{entry.content}</p>
-                            </div>
+                            ) : (
+                              // 追加ログ（青）
+                              <div key={i} className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="text-[10px] font-bold text-blue-600">📌 {entry.date} 追加</span>
+                                </div>
+                                <p className="text-[11px] text-blue-800 leading-relaxed">{entry.content}</p>
+                              </div>
+                            )
                           ) : (
+                            // 新着要望（琥珀）
                             <div key={i} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
                               <div className="flex items-center justify-between mb-1.5">
                                 <span className="text-[10px] font-bold text-amber-700">新着要望</span>
@@ -914,7 +926,7 @@ export default function CustomersPage() {
                   {parsedPreview.initial_cost_limit && <PreviewRow label="初期費用" value={`${parsedPreview.initial_cost_limit}万以内`} />}
                   {parsedPreview.preferences        && <PreviewRow label="こだわり" value={parsedPreview.preferences} />}
                   {parsedPreview.ng_points          && <PreviewRow label="NG"       value={parsedPreview.ng_points} />}
-                  <p className="text-[10px] text-purple-500 pt-1">保存すると上記のフィールドが自動更新されます</p>
+                  <p className="text-[10px] text-purple-500 pt-1">元の条件タグは変わりません。追加内容はログに記録されます</p>
                 </div>
               )}
             </div>
