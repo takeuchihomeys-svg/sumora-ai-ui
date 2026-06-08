@@ -444,6 +444,6 @@
   // popup.js → underbar.js → bulk-dl.js（応答）
   window.addEventListener("message", function(e) {
     if (!e.data || e.data.from !== "axlx-customer-response") return;
-    window.postMessage({ from: "axlx-customer-response", name: e.data.name }, "*");
+    window.postMessage({ from: "axlx-customer-response", name: e.data.name, id: e.data.id ?? null }, "*");
   });
 })();

@@ -462,20 +462,20 @@
     });
   }
 
-  // ── popup.js からお客さん名を取得 ────────────────────────────────────
+  // ── popup.js からお客さん名＋IDを取得 ────────────────────────────────
   function getCustomerFromPopup(callback) {
     var timer;
     var handler = function (e) {
       if (!e.data || e.data.from !== "axlx-customer-response") return;
       clearTimeout(timer);
       window.removeEventListener("message", handler);
-      callback(e.data.name || null);
+      callback(e.data.name || null, e.data.id || null);
     };
     window.addEventListener("message", handler);
     window.postMessage({ from: "axlx-get-customer" }, "*");
     timer = setTimeout(function () {
       window.removeEventListener("message", handler);
-      callback(null);
+      callback(null, null);
     }, 800);
   }
 
@@ -489,8 +489,8 @@
     lineBtn.disabled  = true;
     lineBtn.textContent = "準備中...";
 
-    getCustomerFromPopup(function (customerName) {
-      startSend(targets, customerName, lineBtn, lineOrig);
+    getCustomerFromPopup(function (customerName, customerId) {
+      startSend(targets, customerName, customerId, lineBtn, lineOrig);
     });
   }
 
@@ -503,7 +503,7 @@
     return null;
   }
 
-  function startSend(targets, customerName, lineBtn, lineOrig) {
+  function startSend(targets, customerName, customerId, lineBtn, lineOrig) {
     // AD情報は事前に収集（物件名はPDFキャプチャ時に取得するのでフォールバック用）
     var propertyInfos = targets.map(function (t) {
       return extractPropertyInfo(t.btn);
@@ -568,6 +568,14 @@
           updateBar();
           lineBtn.textContent = "✅ " + pdfBase64List.length + "件 LINE送信完了！";
           setTimeout(function () { lineBtn.textContent = lineOrig; }, 5000);
+          // 物件送った日付を自動更新（fire-and-forget）
+          if (customerId) {
+            fetch("https://sumora-ai-ui.vercel.app/api/property-tasks", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ customer_id: customerId }),
+            }).catch(function () {});
+          }
         });
         return;
       }

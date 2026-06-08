@@ -1993,6 +1993,7 @@ document.addEventListener("DOMContentLoaded", () => {
         window.parent.postMessage({
           from: "axlx-customer-response",
           name: selectedCustomer?.customer_name ?? "",
+          id: selectedCustomer?.id ?? null,
         }, "*");
       }
     });

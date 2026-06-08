@@ -1,6 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
+async function notifyGroup(customerId: string, action: "send" | "confirm"): Promise<void> {
+  try {
+    const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN;
+    if (!token) return;
+    let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? null;
+    if (!groupId) {
+      const { data } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").single();
+      groupId = (data?.value as string) ?? null;
+    }
+    if (!groupId) return;
+    const { data: pc } = await supabase.from("property_customers").select("customer_name").eq("id", customerId).single();
+    const name = (pc?.customer_name as string) ?? "お客様";
+    const text = action === "confirm" ? `✅ ${name}様 — 本日確認済み` : `✅ ${name}様 — 物件送信完了`;
+    await fetch("https://api.line.me/v2/bot/message/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ to: groupId, messages: [{ type: "text", text }] }),
+    });
+  } catch { /* 通知失敗は無視 */ }
+}
+
 export async function GET() {
   const [{ data, error }, { data: convData }] = await Promise.all([
     supabase.from("property_customers").select("*").order("updated_at", { ascending: false }),
@@ -96,6 +117,11 @@ export async function PATCH(req: NextRequest) {
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  // 売上番長グループに通知（fire-and-forget）
+  if ("last_property_sent_at" in body) void notifyGroup(id, "send");
+  else if ("property_viewed_at" in body) void notifyGroup(id, "confirm");
+
   return NextResponse.json(data);
 }
 
