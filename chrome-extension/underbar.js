@@ -30,9 +30,9 @@
   let posX   = saved.posX   ?? DEFAULT_X;
   let posY   = saved.posY   ?? DEFAULT_Y;
   let panelW = saved.panelW ?? INIT_W;
-  // 初期高さ：ビューポートに収まるよう計算（下端に BOTTOM_GAP を確保）
+  // 初期高さ：毎回ビューポートから算出（保存値は使わない）
   const INIT_H = Math.min(680, window.innerHeight - posY - BOTTOM_GAP - DRAG_H);
-  let panelH = saved.panelH ?? INIT_H;
+  let panelH = INIT_H;
   let expanded = false; // 視覚的サイズは後でiframe.loadで確定
 
   // 常に展開状態で起動（localStorage の expanded:false を無視）
@@ -48,7 +48,8 @@
         posX:   parseInt(wrap.style.left) || posX,
         posY:   parseInt(wrap.style.top)  || posY,
         panelW,
-        panelH,
+        // panelH は保存しない：小窓化で縮小した値が固定化されるのを防ぐ
+        // 毎回 INIT_H（画面サイズ基準）で開く
       }));
     } catch {}
   }
