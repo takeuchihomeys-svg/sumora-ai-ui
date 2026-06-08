@@ -266,8 +266,10 @@ export default function CustomersPage() {
 
       const p = data.parsed;
       const base2 = toEditFields(c);
+      // テキスト系フィールドは元の値に追記（置き換えると元の条件が消えるため）
+      const appendField = (orig: string, add: string) => orig ? `${orig}、${add}` : add;
       const merged: EditFields = {
-        desired_area:       (p.desired_area       != null ? String(p.desired_area)       : base2.desired_area),
+        desired_area:       (p.desired_area       != null ? appendField(base2.desired_area, String(p.desired_area)) : base2.desired_area),
         floor_plan:         (p.floor_plan         != null ? String(p.floor_plan)         : base2.floor_plan),
         rent_min:           (p.rent_min           != null ? String(Math.floor((p.rent_min as number) / 10000)) : base2.rent_min),
         rent_max:           (p.rent_max           != null ? String(Math.floor((p.rent_max as number) / 10000)) : base2.rent_max),
@@ -276,9 +278,9 @@ export default function CustomersPage() {
         building_age:       (p.building_age       != null ? String(p.building_age)       : base2.building_age),
         floor_area_min:     (p.floor_area_min     != null ? String(p.floor_area_min)     : base2.floor_area_min),
         initial_cost_limit: (p.initial_cost_limit != null ? String(Math.floor((p.initial_cost_limit as number) / 10000)) : base2.initial_cost_limit),
-        preferences:        (p.preferences        != null ? String(p.preferences)        : base2.preferences),
-        ng_points:          (p.ng_points          != null ? String(p.ng_points)          : base2.ng_points),
-        other_requests:     (p.other_requests     != null ? String(p.other_requests)     : base2.other_requests),
+        preferences:        (p.preferences        != null ? appendField(base2.preferences, String(p.preferences)) : base2.preferences),
+        ng_points:          (p.ng_points          != null ? appendField(base2.ng_points, String(p.ng_points)) : base2.ng_points),
+        other_requests:     (p.other_requests     != null ? appendField(base2.other_requests, String(p.other_requests)) : base2.other_requests),
         property_memo:      base2.property_memo,
       };
       convertRawOnSave.current = { id: c.id, raw: c.additional_conditions ?? "" };
@@ -406,9 +408,10 @@ export default function CustomersPage() {
 
       const patch: Record<string, unknown> = { id: addCondId, additional_conditions: newAdditional };
 
-      // 「追加 + 条件タグも更新」ボタン経由の場合のみフィールドを上書き
+      // 「追加 + 条件タグも更新」ボタン経由の場合のみフィールドを更新（テキスト系は元の値に追記）
       if (alsoUpdateFields && parsedPreview) {
-        if (parsedPreview.desired_area)       patch.desired_area       = parsedPreview.desired_area;
+        const app = (orig: string | null | undefined, add: string) => orig ? `${orig}、${add}` : add;
+        if (parsedPreview.desired_area)       patch.desired_area       = app(customer.desired_area, parsedPreview.desired_area);
         if (parsedPreview.floor_plan)         patch.floor_plan         = parsedPreview.floor_plan;
         if (parsedPreview.rent_min)           patch.rent_min           = Number(parsedPreview.rent_min) * 10000;
         if (parsedPreview.rent_max)           patch.rent_max           = Number(parsedPreview.rent_max) * 10000;
@@ -417,9 +420,9 @@ export default function CustomersPage() {
         if (parsedPreview.building_age)       patch.building_age       = Number(parsedPreview.building_age);
         if (parsedPreview.floor_area_min)     patch.floor_area_min     = Number(parsedPreview.floor_area_min);
         if (parsedPreview.initial_cost_limit) patch.initial_cost_limit = Number(parsedPreview.initial_cost_limit) * 10000;
-        if (parsedPreview.preferences)        patch.preferences        = parsedPreview.preferences;
-        if (parsedPreview.ng_points)          patch.ng_points          = parsedPreview.ng_points;
-        if (parsedPreview.other_requests)     patch.other_requests     = parsedPreview.other_requests;
+        if (parsedPreview.preferences)        patch.preferences        = app(customer.preferences, parsedPreview.preferences);
+        if (parsedPreview.ng_points)          patch.ng_points          = app(customer.ng_points, parsedPreview.ng_points);
+        if (parsedPreview.other_requests)     patch.other_requests     = app(customer.other_requests, parsedPreview.other_requests);
       }
 
       const res = await fetch("/api/property-customers", {
