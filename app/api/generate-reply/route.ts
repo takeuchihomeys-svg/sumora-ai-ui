@@ -205,10 +205,6 @@ function buildGenerationMessages(
   // フェーズ別の行動指針を取得
   const phaseGuide = PHASE_GUIDE[state] || PHASE_GUIDE["first_reply"];
 
-  // ⭐実例がある場合の強調指示
-  const examplesHeader = examples
-    ? "\n\n【最優先】上記の⭐実例の文体・長さ・感嘆符(！！)・絵文字の使い方をそのまま再現すること。"
-    : "";
 
   // 分析結果から方針のみ抽出
   let approachNote = "";
@@ -364,43 +360,49 @@ const STATE_SEARCH_ALIASES: Record<string, string[]> = {
 async function fetchKnowledge(state: string): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
-  const [{ data: diffLearned }, { data: global }, { data: stateSpecific }] = await Promise.all([
-    // 差分学習ルール（☆修正例から抽出・importance9固定）: state問わず最新20件
+  const [{ data: diffLearned }, { data: correctionPairs }, { data: global }, { data: stateSpecific }] = await Promise.all([
+    // ① 差分学習ルール [差分学習]: AIが間違えた → 正解のルール（最優先）
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
-      .in("conversation_state", [...stateAliases, null as unknown as string]).gte("importance", 9)
-      .ilike("title", "%差分学習%")
+      .ilike("title", "%差分学習%").gte("importance", 9)
       .order("created_at", { ascending: false }).limit(20),
-    // 全体共通ナレッジ: importance8以上
+    // ② 修正対比ルール [修正対比]: スタッフがどう直したかのパターン（第2優先）
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
-      .is("conversation_state", null).gte("importance", 8).not("title", "ilike", "%差分学習%")
+      .ilike("title", "%修正対比%").in("conversation_state", stateAliases)
       .order("importance", { ascending: false }).limit(10),
-    // state別ナレッジ: importance7以上
+    // ③ 全体共通ナレッジ: importance8以上
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
-      .in("conversation_state", stateAliases).gte("importance", 7).not("title", "ilike", "%差分学習%")
-      .order("importance", { ascending: false }).limit(15),
+      .is("conversation_state", null).gte("importance", 8)
+      .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
+      .order("importance", { ascending: false }).limit(12),
+    // ④ state別ナレッジ: importance7以上
+    supabase.from("ai_reply_knowledge").select("category, title, content, importance")
+      .in("conversation_state", stateAliases).gte("importance", 7)
+      .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
+      .order("importance", { ascending: false }).limit(18),
   ]);
 
   const all = [...(stateSpecific || []), ...(global || [])];
-  if ((diffLearned?.length ?? 0) === 0 && all.length === 0) return "";
+  if ((diffLearned?.length ?? 0) === 0 && (correctionPairs?.length ?? 0) === 0 && all.length === 0) return "";
 
-  // 差分学習ルールを最優先ブロックとして独立表示
-  const diffRules = diffLearned || [];
   const critical = all.filter((k) => (k.importance || 0) >= 9);
   const patterns = all.filter((k) => (k.importance || 0) >= 7 && (k.importance || 0) < 9 && (k.category === "pattern" || k.category === "principle"));
   const phrases  = all.filter((k) => k.category === "phrase");
 
   const sections: string[] = [];
-  if (diffRules.length > 0) {
-    sections.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffRules.slice(0, 15).map((k) => `・${k.content}`).join("\n"));
+  if ((diffLearned?.length ?? 0) > 0) {
+    sections.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned!.slice(0, 15).map((k) => `・${k.content}`).join("\n"));
+  }
+  if ((correctionPairs?.length ?? 0) > 0) {
+    sections.push("【🟠 スタッフが修正したポイント（このフェーズ専用）】\n" + correctionPairs!.slice(0, 8).map((k) => `・${k.content}`).join("\n"));
   }
   if (critical.length > 0) {
     sections.push("【⚠️ 絶対ルール】\n" + critical.slice(0, 10).map((k) => `・${k.content}`).join("\n"));
   }
   if (patterns.length > 0) {
-    sections.push("【スモラの営業パターン・原則】\n" + patterns.slice(0, 7).map((k) => `・${k.content}`).join("\n"));
+    sections.push("【スモラの営業パターン・原則】\n" + patterns.slice(0, 8).map((k) => `・${k.content}`).join("\n"));
   }
   if (phrases.length > 0) {
-    sections.push("【スモラのフレーズ】\n" + phrases.slice(0, 7).map((k) => `「${k.content}」`).join("　"));
+    sections.push("【スモラのフレーズ】\n" + phrases.slice(0, 6).map((k) => `「${k.content}」`).join("　"));
   }
   return sections.length > 0 ? "\n\n" + sections.join("\n\n") : "";
 }
@@ -408,27 +410,36 @@ async function fetchKnowledge(state: string): Promise<string> {
 async function fetchExamples(state: string): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
-  const [{ data: starredSameState }, { data: starredAllState }] = await Promise.all([
+  const [{ data: starredSameState }, { data: starredAllState }, { data: modifiedSameState }] = await Promise.all([
     // ⭐ 同フェーズの☆つき（最新30件）
     supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state")
       .in("conversation_state", stateAliases).eq("is_starred", true)
       .order("created_at", { ascending: false }).limit(30),
-    // ⭐ 全フェーズの☆つき（言葉遣い・文体を全体から学習）
+    // ⭐ 全フェーズの☆つき（文体・言い回しを全体から学習）
     supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state")
       .eq("is_starred", true)
       .order("created_at", { ascending: false }).limit(50),
+    // AI修正済み（☆なしだが差分ありの良質な教師データ）- ☆が少ないフェーズのフォールバック
+    supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state")
+      .in("conversation_state", stateAliases).eq("was_ai_modified", true).eq("is_starred", false)
+      .order("created_at", { ascending: false }).limit(15),
   ]);
 
   const sameStateList = starredSameState || [];
   const allStateList  = (starredAllState || []).filter(
     (ex) => !sameStateList.some((s) => s.sent_reply === ex.sent_reply)
   );
+  // ☆つき同フェーズが5件未満のとき、AI修正済みをフォールバックとして追加
+  const modifiedFallback = sameStateList.length < 5
+    ? (modifiedSameState || []).filter((ex) => !sameStateList.some((s) => s.sent_reply === ex.sent_reply))
+    : [];
 
-  // 同フェーズ☆ → 全フェーズ☆の優先順で最大25件（非☆は使わない）
+  // 同フェーズ☆ → 全フェーズ☆ → 修正済みフォールバック の優先順
   const all = [
     ...sameStateList.map((ex) => ({ ...ex, priority: 1 })),
     ...allStateList.slice(0, 10).map((ex) => ({ ...ex, priority: 2 })),
-  ].sort((a, b) => a.priority - b.priority).slice(0, 25);
+    ...modifiedFallback.slice(0, 8).map((ex) => ({ ...ex, priority: 3 })),
+  ].sort((a, b) => a.priority - b.priority).slice(0, 30);
 
   if (all.length === 0) return "";
 
