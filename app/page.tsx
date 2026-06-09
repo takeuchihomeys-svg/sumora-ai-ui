@@ -131,6 +131,7 @@ type PropertyCustomerRow = {
   other_requests?: string | null;
   building_age?: number | null;
   additional_conditions?: string | null;
+  ai_summary?: string | null;
 };
 
 // 物件出しステータス（売上サポのStatusと対応）
@@ -334,7 +335,7 @@ export default function Home() {
   const [linkSearchQuery, setLinkSearchQuery] = useState("");
   const [propertyCustomers, setPropertyCustomers] = useState<Array<{ id: string; customer_name: string; desired_area?: string | null; floor_plan?: string | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; other_requests?: string | null; rent_min?: number | null; building_age?: number | null }>>([]);
   // convId → linked property customer（条件テキスト含む）
-  const [linkedCustomerMap, setLinkedCustomerMap] = useState<Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null }>>({});
+  const [linkedCustomerMap, setLinkedCustomerMap] = useState<Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null }>>({});
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const aixFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -789,10 +790,10 @@ export default function Home() {
     if (propCustomerIds.length > 0) {
       const { data: pcData } = await supabase
         .from("property_customers")
-        .select("id,customer_name,status,last_property_sent_at,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age,additional_conditions")
+        .select("id,customer_name,status,last_property_sent_at,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age,additional_conditions,ai_summary")
         .in("id", propCustomerIds);
       if (pcData) {
-        const map: Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null }> = {};
+        const map: Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null }> = {};
         for (const conv of formatted) {
           if (!conv.propertyCustomerId) continue;
           const pc = (pcData as PropertyCustomerRow[]).find((d) => d.id === conv.propertyCustomerId);
@@ -803,6 +804,7 @@ export default function Home() {
               conditions: formatConditions(pc),
               propertyStatus: pc.status || undefined,
               lastPropertySentAt: pc.last_property_sent_at || null,
+              ai_summary: pc.ai_summary || null,
             };
           }
         }
@@ -1012,6 +1014,7 @@ export default function Home() {
           state: effectiveState,
           customerName: selectedConversation.customerName,
           customerConditions: genConditions,
+          customerSummary: linkedCustomerForGen?.ai_summary ?? undefined,
           recentMessages: (() => {
             const last20 = contextMsgs.slice(-20);
             // 直近20件にスタッフ返信がない場合のみ、最新のスタッフ返信を先頭に追加

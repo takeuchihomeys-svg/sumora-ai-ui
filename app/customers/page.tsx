@@ -39,6 +39,8 @@ type Customer = {
   property_send_count?: number | null;
   property_viewed_at?: string | null;
   additional_conditions?: string | null;
+  ai_summary?: string | null;
+  ai_summary_at?: string | null;
   created_at: string;
   updated_at: string;
   is_linked?: boolean;
@@ -159,6 +161,7 @@ export default function CustomersPage() {
   const [searchQuery, setSearchQuery] = useState("");
   // 条件に反映する → 保存後に生テキストを「反映済み」ログに変換するために使用
   const convertRawOnSave = useRef<{ id: string; raw: string } | null>(null);
+  const summaryInitDone = useRef(false);
 
   const [showAdd, setShowAdd]       = useState(false);
   const [newName, setNewName]       = useState("");
@@ -180,12 +183,38 @@ export default function CustomersPage() {
   const [addCondSaving, setAddCondSaving]   = useState(false);
   const [parsedPreview, setParsedPreview]   = useState<EditFields | null>(null);
 
+  const [summaries, setSummaries]           = useState<Record<string, string>>({});
+  const [summaryLoading, setSummaryLoading] = useState<Set<string>>(new Set());
+
   const fetchCustomers = async () => {
     const res = await fetch("/api/property-customers");
     if (res.ok) setCustomers(await res.json());
     setLoading(false);
   };
   useEffect(() => { fetchCustomers(); }, []);
+
+  // ロード完了後: DB保存済み要約をstateに読み込み → 未生成の紐付き客を順次自動生成
+  useEffect(() => {
+    if (loading || summaryInitDone.current || customers.length === 0) return;
+    summaryInitDone.current = true;
+
+    const fromDb: Record<string, string> = {};
+    for (const c of customers) {
+      if (c.ai_summary) fromDb[c.id] = c.ai_summary;
+    }
+    if (Object.keys(fromDb).length > 0) setSummaries(fromDb);
+
+    const toGenerate = customers.filter((c) => c.is_linked && !c.ai_summary).slice(0, 8);
+    if (toGenerate.length === 0) return;
+
+    void (async () => {
+      for (const c of toGenerate) {
+        await generateSummary(c);
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, customers]);
 
   const base = useMemo(() => {
     const list = filterLinked ? customers.filter((c) => c.is_linked) : customers;
@@ -436,6 +465,47 @@ export default function CustomersPage() {
       setAddCondId(null); setAddCondText(""); setParsedPreview(null);
     } finally {
       setAddCondSaving(false);
+    }
+  };
+
+  const generateSummary = async (c: Customer) => {
+    setSummaryLoading((prev) => new Set(prev).add(c.id));
+    try {
+      const res = await fetch("/api/customer-summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customer_id:           c.id,
+          customer_name:         c.customer_name,
+          status:                c.status,
+          desired_area:          c.desired_area,
+          floor_plan:            c.floor_plan,
+          floor_area_min:        c.floor_area_min,
+          rent_min:              c.rent_min,
+          rent_max:              c.rent_max,
+          walk_minutes:          c.walk_minutes,
+          move_in_time:          c.move_in_time,
+          building_age:          c.building_age,
+          initial_cost_limit:    c.initial_cost_limit,
+          preferences:           c.preferences,
+          ng_points:             c.ng_points,
+          other_requests:        c.other_requests,
+          property_memo:         c.property_memo,
+          additional_conditions: c.additional_conditions,
+          property_send_count:   c.property_send_count,
+          last_message:          c.linked_conversation?.last_message,
+          last_message_sender:   c.linked_conversation?.last_sender,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json() as { summary: string };
+        setSummaries((prev) => ({ ...prev, [c.id]: data.summary }));
+        setCustomers((prev) => prev.map((x) =>
+          x.id === c.id ? { ...x, ai_summary: data.summary, ai_summary_at: new Date().toISOString() } : x
+        ));
+      }
+    } finally {
+      setSummaryLoading((prev) => { const s = new Set(prev); s.delete(c.id); return s; });
     }
   };
 
@@ -746,6 +816,14 @@ export default function CustomersPage() {
                   })()}
                 </div>
 
+                {/* ── AI要約 ── */}
+                {summaries[c.id] && (
+                  <div className="border-t border-purple-100 px-4 py-3" style={{ background: "linear-gradient(to bottom, #faf5ff, #fefeff)" }}>
+                    <p className="text-[10px] font-bold text-purple-400 mb-1.5 tracking-wide">✨ AI要約（LINE参考用）</p>
+                    <p className="text-[12px] text-[#333] whitespace-pre-line leading-relaxed">{summaries[c.id]}</p>
+                  </div>
+                )}
+
                 {/* ── アクション行 ── */}
                 <div className="flex items-center gap-2 border-t border-[#f0f2f5] bg-[#fafafa] px-4 py-2 flex-wrap">
                   {c.status !== "pending" && (
@@ -778,6 +856,14 @@ export default function CustomersPage() {
                     className="rounded-xl border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-bold text-purple-700 active:scale-95 transition-transform"
                   >
                     ＋ 条件追加
+                  </button>
+                  {/* AI要約ボタン */}
+                  <button
+                    onClick={() => generateSummary(c)}
+                    disabled={summaryLoading.has(c.id)}
+                    className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 active:scale-95 transition-transform disabled:opacity-50"
+                  >
+                    {summaryLoading.has(c.id) ? "AI分析中…" : summaries[c.id] ? "✨ 再生成" : "✨ AI要約"}
                   </button>
                   {c.phone && (
                     <a href={`tel:${c.phone}`}

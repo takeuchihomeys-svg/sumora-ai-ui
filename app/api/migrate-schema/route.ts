@@ -390,6 +390,10 @@ CREATE TABLE IF NOT EXISTS aix_settings (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 ALTER TABLE aix_settings DISABLE ROW LEVEL SECURITY;
+
+-- AI要約カラム（お客さん一覧のAI要約機能用）
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS ai_summary TEXT;
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS ai_summary_at TIMESTAMPTZ;
 `.trim();
 
 export async function GET() {
