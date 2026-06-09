@@ -32,6 +32,7 @@ export default function TemplateModal({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [adaptingId, setAdaptingId] = useState<string | null>(null);
   const [adaptedTexts, setAdaptedTexts] = useState<Record<string, string>>({});
+  const [adaptErrors, setAdaptErrors] = useState<Record<string, string>>({});
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const addFormRef = useRef<HTMLDivElement | null>(null);
 
@@ -91,6 +92,7 @@ export default function TemplateModal({
 
   const handleAdapt = async (tmpl: Template) => {
     setAdaptingId(tmpl.id);
+    setAdaptErrors((prev) => { const n = { ...prev }; delete n[tmpl.id]; return n; });
     try {
       const res = await fetch("/api/templates/adapt", {
         method: "POST",
@@ -103,10 +105,14 @@ export default function TemplateModal({
           customerConditions: linkedCustomer?.conditions,
         }),
       });
-      const data = await res.json() as { ok: boolean; adapted?: string };
+      const data = await res.json() as { ok: boolean; adapted?: string; error?: string };
       if (data.ok && data.adapted) {
         setAdaptedTexts((prev) => ({ ...prev, [tmpl.id]: data.adapted! }));
+      } else {
+        setAdaptErrors((prev) => ({ ...prev, [tmpl.id]: data.error || "AI最適化に失敗しました" }));
       }
+    } catch {
+      setAdaptErrors((prev) => ({ ...prev, [tmpl.id]: "通信エラーが発生しました" }));
     } finally {
       setAdaptingId(null);
     }
@@ -239,6 +245,11 @@ export default function TemplateModal({
           {/* テンプレート一覧 */}
           {!showAddForm && (
             <div className="p-4">
+              {linkedCustomer && !loading && filtered.length > 0 && (
+                <div className="mb-3 flex items-center gap-1.5 rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-2">
+                  <span className="text-[11px] text-emerald-700">🔗 {linkedCustomer.name}さんの希望条件で最適化します</span>
+                </div>
+              )}
               {!linkedCustomer && !loading && filtered.length > 0 && (
                 <div className="mb-3 flex items-center gap-1.5 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2">
                   <span className="text-[11px] text-amber-700">👤 お客様を紐付けると駅名・間取りが自動で合わせられます</span>
@@ -292,6 +303,19 @@ export default function TemplateModal({
                               className="rounded-full px-3 py-1 text-[11px] font-bold text-[#667781] border border-[#d1d7db]"
                             >
                               戻る
+                            </button>
+                          </div>
+                        )}
+
+                        {/* AI最適化エラー */}
+                        {adaptErrors[tmpl.id] && (
+                          <div className="mb-1.5 flex items-center gap-1 rounded-xl bg-red-50 border border-red-200 px-2 py-1">
+                            <span className="text-[10px] text-red-600">⚠️ {adaptErrors[tmpl.id]}</span>
+                            <button
+                              onClick={() => setAdaptErrors((p) => { const n = { ...p }; delete n[tmpl.id]; return n; })}
+                              className="ml-auto text-[10px] text-[#aaa] underline"
+                            >
+                              閉じる
                             </button>
                           </div>
                         )}
