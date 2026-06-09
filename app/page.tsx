@@ -2879,6 +2879,7 @@ export default function Home() {
           recentMessages={(selectedConversation.messages || []).slice(-15).map((m: Message) => ({
             sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined,
           }))}
+          linkedCustomer={linkedCustomerMap[selectedConversation.id]}
         />
       )}
 

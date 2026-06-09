@@ -15,10 +15,11 @@ interface TemplateModalProps {
   customerName?: string;
   conversationState?: string;
   recentMessages?: Array<{ sender: string; text: string; imageUrl?: string }>;
+  linkedCustomer?: { id: string; name: string; conditions: string };
 }
 
 export default function TemplateModal({
-  onClose, onSelect, customerName, conversationState, recentMessages,
+  onClose, onSelect, customerName, conversationState, recentMessages, linkedCustomer,
 }: TemplateModalProps) {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
@@ -99,6 +100,7 @@ export default function TemplateModal({
           customerName,
           conversationState,
           recentMessages,
+          customerConditions: linkedCustomer?.conditions,
         }),
       });
       const data = await res.json() as { ok: boolean; adapted?: string };
