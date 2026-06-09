@@ -8,6 +8,7 @@ type Customer = {
   desired_area: string;
   last_property_sent_at: string | null;
   hot_confirmed_at: string | null;
+  property_viewed_at?: string | null;
 };
 
 function needsActionToday(c: Customer): boolean {
@@ -16,9 +17,10 @@ function needsActionToday(c: Customer): boolean {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   if (c.status === "hot") {
-    const sentToday = c.last_property_sent_at && new Date(c.last_property_sent_at) >= todayStart;
-    const confirmedToday = c.hot_confirmed_at && new Date(c.hot_confirmed_at) >= todayStart;
-    return !sentToday && !confirmedToday;
+    const sentToday      = c.last_property_sent_at && new Date(c.last_property_sent_at) >= todayStart;
+    const confirmedToday = c.hot_confirmed_at      && new Date(c.hot_confirmed_at)      >= todayStart;
+    const viewedToday    = c.property_viewed_at    && new Date(c.property_viewed_at)    >= todayStart;
+    return !sentToday && !confirmedToday && !viewedToday;
   }
   if (c.status === "property_search") {
     if (!c.last_property_sent_at) return true;
@@ -49,12 +51,11 @@ async function checkAllDone(): Promise<void> {
 
   const { data } = await supabase
     .from("property_customers")
-    .select("status, last_property_sent_at, hot_confirmed_at")
+    .select("status, last_property_sent_at, hot_confirmed_at, property_viewed_at")
     .in("status", ["new_inquiry", "hot", "property_search"]);
   if (!data || data.length === 0) return;
 
-  const remaining = (data as Array<{ status: string; last_property_sent_at: string | null; hot_confirmed_at: string | null }>)
-    .filter(c => needsActionToday(c as Customer)).length;
+  const remaining = (data as Customer[]).filter(needsActionToday).length;
   if (remaining > 0) return;
 
   await fetch("https://api.line.me/v2/bot/message/push", {
@@ -68,7 +69,7 @@ async function checkAllDone(): Promise<void> {
 export async function GET() {
   const { data, error } = await supabase
     .from("property_customers")
-    .select("id, customer_name, status, desired_area, last_property_sent_at, hot_confirmed_at")
+    .select("id, customer_name, status, desired_area, last_property_sent_at, hot_confirmed_at, property_viewed_at")
     .not("status", "eq", "pending")
     .order("status", { ascending: true });
 

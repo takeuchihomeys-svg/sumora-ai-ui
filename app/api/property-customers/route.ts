@@ -2,14 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
 // 今日まだ未対応かどうか判定
-function needsActionToday(c: { status: string; last_property_sent_at: string | null; hot_confirmed_at?: string | null }): boolean {
+function needsActionToday(c: { status: string; last_property_sent_at: string | null; hot_confirmed_at?: string | null; property_viewed_at?: string | null }): boolean {
   if (c.status === "new_inquiry") return true;
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   if (c.status === "hot") {
-    const sent = c.last_property_sent_at && new Date(c.last_property_sent_at) >= todayStart;
-    const confirmed = c.hot_confirmed_at && new Date(c.hot_confirmed_at) >= todayStart;
-    return !sent && !confirmed;
+    const sent     = c.last_property_sent_at && new Date(c.last_property_sent_at) >= todayStart;
+    const confirmed = c.hot_confirmed_at      && new Date(c.hot_confirmed_at)      >= todayStart;
+    const viewed   = c.property_viewed_at     && new Date(c.property_viewed_at)    >= todayStart;
+    return !sent && !confirmed && !viewed;
   }
   if (c.status === "property_search") {
     if (!c.last_property_sent_at) return true;
@@ -32,11 +33,11 @@ async function checkAllDone(): Promise<void> {
 
     const { data } = await supabase
       .from("property_customers")
-      .select("status, last_property_sent_at, hot_confirmed_at")
+      .select("status, last_property_sent_at, hot_confirmed_at, property_viewed_at")
       .in("status", ["new_inquiry", "hot", "property_search"]);
     if (!data || data.length === 0) return;
 
-    const remaining = (data as Array<{ status: string; last_property_sent_at: string | null; hot_confirmed_at: string | null }>)
+    const remaining = (data as Array<{ status: string; last_property_sent_at: string | null; hot_confirmed_at: string | null; property_viewed_at: string | null }>)
       .filter(needsActionToday).length;
     if (remaining > 0) return;
 
