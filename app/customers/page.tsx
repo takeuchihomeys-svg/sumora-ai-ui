@@ -152,7 +152,7 @@ function emptyEditFields(): EditFields {
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading]     = useState(true);
-  const [filterLinked, setFilterLinked] = useState(true);
+  const [filterMode, setFilterMode] = useState<"linked" | "all" | "urgent">("linked");
   const [expandedId, setExpandedId]     = useState<string | null>(null);
   const [sentUpdating, setSentUpdating]   = useState<string | null>(null);
   const [viewedUpdating, setViewedUpdating]   = useState<string | null>(null);
@@ -218,11 +218,12 @@ export default function CustomersPage() {
   }, [loading, customers]);
 
   const base = useMemo(() => {
-    const list = filterLinked ? customers.filter((c) => c.is_linked) : customers;
+    let list = filterMode === "all" ? customers : customers.filter((c) => c.is_linked);
+    if (filterMode === "urgent") list = list.filter((c) => urgency(c) === "property");
     if (!searchQuery.trim()) return list;
     const q = searchQuery.toLowerCase();
     return list.filter((c) => c.customer_name.toLowerCase().includes(q));
-  }, [customers, filterLinked, searchQuery]);
+  }, [customers, filterMode, searchQuery]);
 
   const completedList = useMemo(() =>
     base.filter((c) => isDoneToday(c)),
@@ -232,18 +233,24 @@ export default function CustomersPage() {
     base
       .filter((c) => !isDoneToday(c))
       .sort((a, b) => {
+        if (filterMode === "urgent") {
+          // 未送信フィルタ: 送ってない日数が長い順（null=未送信=最優先=先頭）
+          const ta = a.last_property_sent_at ? new Date(a.last_property_sent_at).getTime() : 0;
+          const tb = b.last_property_sent_at ? new Date(b.last_property_sent_at).getTime() : 0;
+          return ta - tb;
+        }
         const ua = URGENCY_ORDER[urgency(a)];
         const ub = URGENCY_ORDER[urgency(b)];
         if (ua !== ub) return ua - ub;
-        // 同じurgency内: 最近物件を送った人が上
         const ta = a.last_property_sent_at ? new Date(a.last_property_sent_at).getTime() : 0;
         const tb = b.last_property_sent_at ? new Date(b.last_property_sent_at).getTime() : 0;
         return tb - ta;
       }),
-  [base]);
+  [base, filterMode]);
 
-  const linkedCount = customers.filter((c) => c.is_linked).length;
-  const replyCount  = customers.filter((c) => urgency(c) === "reply").length;
+  const linkedCount  = customers.filter((c) => c.is_linked).length;
+  const replyCount   = customers.filter((c) => urgency(c) === "reply").length;
+  const urgentCount  = customers.filter((c) => c.is_linked && urgency(c) === "property").length;
 
   const markSent = async (id: string) => {
     setSentUpdating(id);
@@ -543,15 +550,24 @@ export default function CustomersPage() {
 
         {/* フィルター */}
         <div className="flex gap-2 mb-2">
-          {([true, false] as const).map((linked) => (
-            <button
-              key={String(linked)}
-              onClick={() => setFilterLinked(linked)}
-              className={`rounded-full px-3 py-1.5 text-xs font-bold transition-all ${filterLinked === linked ? "bg-white text-[#1565C0]" : "border border-white/25 text-white/70"}`}
-            >
-              {linked ? `紐付き ${linkedCount}` : `全員 ${customers.length}`}
-            </button>
-          ))}
+          <button
+            onClick={() => setFilterMode("linked")}
+            className={`rounded-full px-3 py-1.5 text-xs font-bold transition-all ${filterMode === "linked" ? "bg-white text-[#1565C0]" : "border border-white/25 text-white/70"}`}
+          >
+            紐付き {linkedCount}
+          </button>
+          <button
+            onClick={() => setFilterMode("urgent")}
+            className={`rounded-full px-3 py-1.5 text-xs font-bold transition-all ${filterMode === "urgent" ? "bg-orange-400 text-white" : "border border-white/25 text-white/70"}`}
+          >
+            🚨 未送信 {urgentCount}
+          </button>
+          <button
+            onClick={() => setFilterMode("all")}
+            className={`rounded-full px-3 py-1.5 text-xs font-bold transition-all ${filterMode === "all" ? "bg-white text-[#1565C0]" : "border border-white/25 text-white/70"}`}
+          >
+            全員 {customers.length}
+          </button>
         </div>
 
         {/* 検索欄 */}
@@ -639,7 +655,7 @@ export default function CustomersPage() {
           <div className="py-16 text-center text-sm text-[#667781]">読み込み中...</div>
         ) : sorted.length === 0 ? (
           <div className="py-16 text-center text-sm text-[#667781]">
-            {searchQuery ? "検索結果なし" : filterLinked ? "紐付き済みのお客さんがいません" : "お客さんがいません"}
+            {searchQuery ? "検索結果なし" : filterMode === "urgent" ? "物件送信が必要なお客さんはいません" : filterMode === "linked" ? "紐付き済みのお客さんがいません" : "お客さんがいません"}
           </div>
         ) : (
           sorted.map((c) => {
@@ -701,6 +717,11 @@ export default function CustomersPage() {
                         </span>
                       )}
                       <span className="shrink-0 text-[9px] font-semibold text-[#8696a0]">{propMeta.label}</span>
+                      {u === "property" && (
+                        <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${days === null || days === undefined ? "bg-red-100 text-red-600" : days >= 7 ? "bg-red-100 text-red-600" : "bg-orange-100 text-orange-600"}`}>
+                          {days === null || days === undefined ? "未送信" : `${days}日未送信`}
+                        </span>
+                      )}
                     </div>
                     {conv?.last_message ? (
                       <p className={`truncate text-[12px] ${u === "reply" ? "font-semibold text-red-500" : "text-[#667781]"}`}>
