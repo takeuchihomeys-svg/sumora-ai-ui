@@ -500,9 +500,6 @@ export default function CustomersPage() {
       if (res.ok) {
         const data = await res.json() as { summary: string };
         setSummaries((prev) => ({ ...prev, [c.id]: data.summary }));
-        setCustomers((prev) => prev.map((x) =>
-          x.id === c.id ? { ...x, ai_summary: data.summary, ai_summary_at: new Date().toISOString() } : x
-        ));
       }
     } finally {
       setSummaryLoading((prev) => { const s = new Set(prev); s.delete(c.id); return s; });
