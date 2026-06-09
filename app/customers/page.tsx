@@ -507,6 +507,8 @@ export default function CustomersPage() {
       if (res.ok) {
         const data = await res.json() as { summary: string };
         setSummaries((prev) => ({ ...prev, [c.id]: data.summary }));
+        const generatedAt = new Date().toISOString();
+        setCustomers((prev) => prev.map((cust) => cust.id === c.id ? { ...cust, ai_summary_at: generatedAt } : cust));
       }
     } finally {
       setSummaryLoading((prev) => { const s = new Set(prev); s.delete(c.id); return s; });
@@ -847,7 +849,10 @@ export default function CustomersPage() {
                         });
                       }}
                     >
-                      <p className="text-[10px] font-bold text-purple-400 tracking-wide">✨ AI要約（LINE参考用）</p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-[10px] font-bold text-purple-400 tracking-wide">✨ AI要約（LINE参考用）</p>
+                        {c.ai_summary_at && <span className="text-[9px] text-purple-300">{relTime(c.ai_summary_at)}</span>}
+                      </div>
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#c084fc" strokeWidth="2.5" strokeLinecap="round"
                         className={`transition-transform duration-200 ${expandedSummaryIds.has(c.id) ? "rotate-180" : ""}`}>
                         <polyline points="6 9 12 15 18 9" />

@@ -1442,27 +1442,27 @@ export default function Home() {
         // AI生成時はgenerate時点の顧客メッセージを使う（その後に新メッセージが届いても正しい対応先を記録）
         const lastCustomerMsg = replyTargetCustomerMsgRef.current || latestCustomerMessage;
         const capturedAiDraft = aiDraftRef.current || undefined;
-        if (lastCustomerMsg) {
-          // 送信したメッセージの example ID を記録して、後で☆を押したとき PATCH で更新できるようにする
-          fetch("/api/save-reply-example", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              conversationState: selectedConversation.status,
-              customerMessage: lastCustomerMsg,
-              sentReply: textToSend,
-              aiDraft: capturedAiDraft,
-            }),
-          }).then(async (r) => {
-            if (!r.ok) return;
-            const saved = await r.json() as { id?: string };
-            // 直近の送信メッセージIDが確定してから記録（newMessages の最初のテキストメッセージ）
-            const textMsgId = newMessages.find((m) => m.sender === "staff" && m.text === textToSend)?.id;
-            if (saved.id && textMsgId) {
-              savedExampleIdByMsgId.current.set(textMsgId, saved.id);
-            }
-          }).catch(() => {});
-        }
+        // 顧客メッセージがない場合（初回・プロアクティブ送信）も「（初回連絡）」として保存
+        const customerMsgToSave = lastCustomerMsg || "（初回連絡）";
+        // 送信したメッセージの example ID を記録して、後で☆を押したとき PATCH で更新できるようにする
+        fetch("/api/save-reply-example", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversationState: selectedConversation.status,
+            customerMessage: customerMsgToSave,
+            sentReply: textToSend,
+            aiDraft: capturedAiDraft,
+          }),
+        }).then(async (r) => {
+          if (!r.ok) return;
+          const saved = await r.json() as { id?: string };
+          // 直近の送信メッセージIDが確定してから記録（newMessages の最初のテキストメッセージ）
+          const textMsgId = newMessages.find((m) => m.sender === "staff" && m.text === textToSend)?.id;
+          if (saved.id && textMsgId) {
+            savedExampleIdByMsgId.current.set(textMsgId, saved.id);
+          }
+        }).catch(() => {});
         aiDraftRef.current = "";
         replyTargetCustomerMsgRef.current = "";
       }
