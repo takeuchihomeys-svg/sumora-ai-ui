@@ -971,7 +971,7 @@ let selectedSite = null;
 let searchMode = "pinpoint"; // "pinpoint" | "wide"
 let currentAreaMode = "ward"; // "station" | "ward" — ボタン押下が絶対ルール（自動判定より優先）
 let currentAccount = ""; // "" = すべて / "sumora" / "ieyasu" / "giga" / "hasu"
-let linkedOnly = false;  // 紐付け済みのみ表示
+let linkedOnly = true;   // 紐付け済みのみ表示（デフォルトON・初期表示を軽くする）
 let todayOnly  = false;  // 今日対応のみ表示
 
 function needsActionToday(c) {
@@ -1968,6 +1968,8 @@ document.addEventListener("DOMContentLoaded", () => {
   // DBが空なら既存ハードコードデータをシード → 学習済みマップをロード
   seedMapsIfEmpty().then(() => fetchLearnedMaps());
   loadCustomers();
+  // 初期状態で「紐付け済み」ボタンをONに見せる
+  document.getElementById("linked-filter-btn").classList.add("active");
 
   // フローティングミニモードの初期化
   if (isUnderbar) {
