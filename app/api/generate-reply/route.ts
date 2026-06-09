@@ -363,6 +363,24 @@ async function fetchPhrases(state: string): Promise<string> {
     filtered.map((r) => `「${r.phrase}」`).join("　");
 }
 
+// ─── ai_summaryがない場合の即席コンテキスト合成（Haiku・並列実行）────────────
+async function synthesizeCustomerContext(conditions: string, customerName: string): Promise<string> {
+  try {
+    const res = await analysisModel.invoke([
+      new HumanMessage(`以下の賃貸希望条件を持つお客様の特徴を1〜2文で要約してください。
+お客様名: ${customerName || "不明"}
+条件:
+${conditions}
+
+例: 「梅田エリアで1LDK・家賃8万以内を探している。ペット可・駅徒歩5分希望。入居は4月予定」
+要約のみ返答（説明不要）:`),
+    ]);
+    return typeof res.content === "string" ? res.content.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
 // ─── DB取得 ─────────────────────────────────────────────────────────────────
 // 新5段階ステートと旧ステートの対応（両方で検索してデータ漏れを防ぐ）
 const STATE_SEARCH_ALIASES: Record<string, string[]> = {
@@ -528,19 +546,24 @@ export async function POST(req: NextRequest) {
       .filter(Boolean)
       .join("\n");
 
-    // 並列実行: intent分類 + 状況分析 + 知識取得 + 実例取得 + フレーズ取得
-    const [detectedIntent, analysis, knowledge, examples, phrases] = await Promise.all([
+    // 並列実行: intent分類 + 状況分析 + 知識取得 + 実例取得 + フレーズ取得 + コンテキスト補完
+    const [detectedIntent, analysis, knowledge, examples, phrases, autoSummary] = await Promise.all([
       classifyIntent(message, currentState, history),
       analyzeCustomerSituation(message, history, currentState, customerName),
       fetchKnowledge(currentState),
       fetchExamples(currentState),
       fetchPhrases(currentState),
+      // ai_summaryがない場合のみ条件テキストから即席合成（Haiku・並列なので遅延ゼロ）
+      !customerSummary && customerConditions
+        ? synthesizeCustomerContext(customerConditions, customerName)
+        : Promise.resolve(""),
     ]);
+    const resolvedSummary = customerSummary || autoSummary;
 
     // Sonnetでストリーミング生成
     const messages = buildGenerationMessages(
       message, customerName, history, currentState,
-      analysis, knowledge, examples, phrases, customerConditions, customerSummary
+      analysis, knowledge, examples, phrases, customerConditions, resolvedSummary
     );
     const genStream = generationModel.stream(messages);
 

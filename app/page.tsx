@@ -174,7 +174,14 @@ function formatConditions(customer: PropertyCustomerRow): string {
   if (customer.preferences) lines.push(`\u5e0c\u671b: ${customer.preferences}`);
   if (customer.ng_points) lines.push(`NG: ${customer.ng_points}`);
   if (customer.other_requests) lines.push(`\u305d\u306e\u4ed6: ${customer.other_requests}`);
-  if (customer.additional_conditions) lines.push(`\u8ffd\u52a0\u6761\u4ef6: ${customer.additional_conditions}`);
+  if (customer.additional_conditions) {
+    const cleanAdditional = customer.additional_conditions
+      .split("\n")
+      .map((line) => line.replace(/^\u3010[^\u3011]*\u3011/, "").trim())
+      .filter(Boolean)
+      .join("\u3001");
+    if (cleanAdditional) lines.push(`\u8ffd\u52a0\u6761\u4ef6: ${cleanAdditional}`);
+  }
   return lines.join("\n");
 }
 
