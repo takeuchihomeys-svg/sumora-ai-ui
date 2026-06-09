@@ -661,16 +661,29 @@ export default function CustomersPage() {
                   className="flex w-full items-center gap-3 px-4 py-3 text-left active:bg-[#f5f6f6]"
                   onClick={() => setExpandedId(isExp ? null : c.id)}
                 >
-                  <div className="relative shrink-0">
+                  <div
+                    className="relative shrink-0"
+                    onClick={(e) => {
+                      if (!conv?.id) return;
+                      e.stopPropagation();
+                      window.location.href = `/?conv=${conv.id}`;
+                    }}
+                    style={{ cursor: conv?.id ? "pointer" : "default" }}
+                  >
                     {conv?.profile_image_url ? (
                       <img src={conv.profile_image_url} alt={c.customer_name}
-                        className="h-12 w-12 rounded-full object-cover" />
+                        className="h-12 w-12 rounded-full object-cover ring-2 ring-transparent active:ring-blue-300 transition-all" />
                     ) : (
-                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#d9fdd3] text-base font-bold text-[#0f8f44]">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#d9fdd3] text-base font-bold text-[#0f8f44] active:opacity-70 transition-opacity">
                         {initial(c.customer_name)}
                       </div>
                     )}
                     <span className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white ${propMeta.dot}`} />
+                    {conv?.id && (
+                      <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-[#1565C0] text-[7px] font-bold text-white">
+                        LINE
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex-1 min-w-0">

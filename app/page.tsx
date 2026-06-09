@@ -366,6 +366,12 @@ export default function Home() {
 
   // スワイプ直後の合成クリック（BottomNavリンク等への誤遷移）をドキュメントレベルでブロック
   // Next.js Linkはclickで動くのでclickのみブロック。touchstartは対象外（スクロール阻害を防ぐ）
+  // お客さん一覧からのLINE画面直接遷移（?conv=<id>）
+  useEffect(() => {
+    const convParam = new URLSearchParams(window.location.search).get("conv");
+    if (convParam) setSelectedId(convParam);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     const block = (e: MouseEvent) => {
       if (swipeBlockClickRef.current) {
