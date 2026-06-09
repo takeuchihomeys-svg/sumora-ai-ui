@@ -239,6 +239,11 @@ export default function TemplateModal({
           {/* テンプレート一覧 */}
           {!showAddForm && (
             <div className="p-4">
+              {!linkedCustomer && !loading && filtered.length > 0 && (
+                <div className="mb-3 flex items-center gap-1.5 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2">
+                  <span className="text-[11px] text-amber-700">👤 お客様を紐付けると駅名・間取りが自動で合わせられます</span>
+                </div>
+              )}
               {loading ? (
                 <div className="py-8 text-center text-[13px] text-[#aaa]">読み込み中...</div>
               ) : filtered.length === 0 ? (
@@ -330,7 +335,12 @@ export default function TemplateModal({
                                 最適化中...
                               </>
                             ) : (
-                              "✨ AIで最適化"
+                              <>
+                                ✨ AIで最適化
+                                {linkedCustomer && (
+                                  <span className="ml-1 rounded-full bg-white/30 px-1.5 py-0.5 text-[9px] font-bold">👤条件あり</span>
+                                )}
+                              </>
                             )}
                           </button>
                           {adapted && onSelect && (
