@@ -175,6 +175,7 @@ export default function CustomersPage() {
 
   // 条件ログ展開（3件以上のとき「もっと見る」）
   const [expandedCondIds, setExpandedCondIds] = useState<Set<string>>(new Set());
+  const [expandedSummaryIds, setExpandedSummaryIds] = useState<Set<string>>(new Set());
 
   // 条件追加モーダル
   const [addCondId, setAddCondId]       = useState<string | null>(null);
@@ -834,9 +835,29 @@ export default function CustomersPage() {
 
                 {/* ── AI要約 ── */}
                 {summaries[c.id] && (
-                  <div className="border-t border-purple-100 px-4 py-3" style={{ background: "linear-gradient(to bottom, #faf5ff, #fefeff)" }}>
-                    <p className="text-[10px] font-bold text-purple-400 mb-1.5 tracking-wide">✨ AI要約（LINE参考用）</p>
-                    <p className="text-[12px] text-[#333] whitespace-pre-line leading-relaxed">{summaries[c.id]}</p>
+                  <div className="border-t border-purple-100" style={{ background: "linear-gradient(to bottom, #faf5ff, #fefeff)" }}>
+                    <button
+                      className="flex w-full items-center justify-between px-4 py-2 active:opacity-70"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setExpandedSummaryIds((prev) => {
+                          const s = new Set(prev);
+                          s.has(c.id) ? s.delete(c.id) : s.add(c.id);
+                          return s;
+                        });
+                      }}
+                    >
+                      <p className="text-[10px] font-bold text-purple-400 tracking-wide">✨ AI要約（LINE参考用）</p>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#c084fc" strokeWidth="2.5" strokeLinecap="round"
+                        className={`transition-transform duration-200 ${expandedSummaryIds.has(c.id) ? "rotate-180" : ""}`}>
+                        <polyline points="6 9 12 15 18 9" />
+                      </svg>
+                    </button>
+                    {expandedSummaryIds.has(c.id) && (
+                      <div className="px-4 pb-3">
+                        <p className="text-[12px] text-[#333] whitespace-pre-line leading-relaxed">{summaries[c.id]}</p>
+                      </div>
+                    )}
                   </div>
                 )}
 
