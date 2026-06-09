@@ -369,7 +369,10 @@ export default function Home() {
   // お客さん一覧からのLINE画面直接遷移（?conv=<id>）
   useEffect(() => {
     const convParam = new URLSearchParams(window.location.search).get("conv");
-    if (convParam) setSelectedId(convParam);
+    if (convParam) {
+      setSelectedId(convParam);
+      setMobileView("chat");
+    }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
