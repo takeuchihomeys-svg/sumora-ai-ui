@@ -1077,7 +1077,7 @@ async function loadCustomers(forceRefresh = false) {
     if (cached) {
       allCustomers = cached;
       updateTodayBanner();
-      renderList(allCustomers);
+      filterCustomers(document.getElementById("search-input")?.value || "");
       return;
     }
   }
@@ -1092,7 +1092,7 @@ async function loadCustomers(forceRefresh = false) {
     allCustomers = await res.json();
     setCachedCustomers(allCustomers);
     updateTodayBanner();
-    renderList(allCustomers);
+    filterCustomers(document.getElementById("search-input")?.value || "");
   } catch (e) {
     list.innerHTML = `<div class="state-msg">⚠️ データ取得失敗<br><small>${esc(e.message)}</small></div>`;
   }
