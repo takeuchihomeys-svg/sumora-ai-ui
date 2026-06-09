@@ -370,6 +370,9 @@ export default function CustomersPage() {
     if (res.ok) {
       const updated = await res.json();
       setCustomers((p) => p.map((c) => c.id === editId ? { ...c, ...updated } : c));
+      // 条件更新後: 紐付き客はAI要約を自動再生成
+      const editedC = customers.find((c) => c.id === editId);
+      if (editedC?.is_linked) void generateSummary({ ...editedC, ...updated } as Customer);
       // 「条件に反映する」経由の場合: 生テキストを「反映済み」ログエントリに変換（削除しない）
       if (convertRawOnSave.current && convertRawOnSave.current.id === editId) {
         const { raw } = convertRawOnSave.current;
@@ -461,6 +464,9 @@ export default function CustomersPage() {
       if (res.ok) {
         const updated = await res.json();
         setCustomers((p) => p.map((c) => c.id === addCondId ? { ...c, ...updated } : c));
+        // 条件追加後: 紐付き客はAI要約を自動再生成
+        const addedC = customers.find((c) => c.id === addCondId);
+        if (addedC?.is_linked) void generateSummary({ ...addedC, ...updated } as Customer);
       }
       setAddCondId(null); setAddCondText(""); setParsedPreview(null);
     } finally {
