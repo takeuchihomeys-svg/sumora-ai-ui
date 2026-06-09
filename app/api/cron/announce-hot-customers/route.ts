@@ -137,7 +137,13 @@ export async function GET(req: NextRequest) {
       const acct = ACCOUNT_LABEL[c.account ?? "sumora"] ?? "スモラ";
       const time = relTime(c.updated_at);
       const replyMark = c.last_sender === "customer" ? "⏰ 未返信" : "返信済";
-      const actionMark = isDoneToday(c.property_customers) ? "✅ 本日対応済" : "❌ 未対応";
+      const repliedWithin24h = c.last_sender !== "customer" && !!c.updated_at &&
+        (Date.now() - new Date(c.updated_at).getTime()) < 24 * 60 * 60 * 1000;
+      const actionMark = isDoneToday(c.property_customers)
+        ? "✅ 本日対応済"
+        : repliedWithin24h
+          ? "💬 返信済"
+          : "❌ 未対応";
       const preview = (c.last_message ?? "").slice(0, 18) + ((c.last_message ?? "").length > 18 ? "…" : "");
       return `${i + 1}. ${name}（${acct}）\n   ${actionMark}　${replyMark} ${time}\n   └ ${preview}`;
     });
