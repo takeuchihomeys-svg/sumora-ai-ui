@@ -325,6 +325,7 @@ export default function Home() {
   const [aixSearchMode, setAixSearchMode] = useState(false);
   const [accountFilter, setAccountFilter] = useState<"all" | "linked" | "sumora" | "ieyasu" | "giga">("all");
   const [notifPermission, setNotifPermission] = useState<NotificationPermission>("default");
+  const [replyExamplesCount, setReplyExamplesCount] = useState<number | null>(null);
   const [linkedLineUserIds, setLinkedLineUserIds] = useState<Set<string>>(new Set());
   const [postApplyConvIds, setPostApplyConvIds] = useState<Set<string>>(new Set<string>());
   const [showSendConfirm, setShowSendConfirm] = useState(false);
@@ -387,6 +388,10 @@ export default function Home() {
         await subscribePush();
       }
     });
+
+    // LINE返信AI学習データ件数
+    supabase.from("ai_reply_examples").select("id", { count: "exact", head: true })
+      .then(({ count }) => { if (count !== null) setReplyExamplesCount(count); });
 
     // 紐付け済フィルター用：property_customersのline_user_idを取得
     fetch("/api/property-customers")
@@ -3070,6 +3075,11 @@ export default function Home() {
                 </button>
               )}
             </div>
+            {replyExamplesCount !== null && (
+              <div className="px-4 pt-1 pb-2 text-center">
+                <span className="text-[10px] text-[#aaa]">🤖 LINE返信AI：{replyExamplesCount.toLocaleString()}件学習済み</span>
+              </div>
+            )}
             <div className="pb-[max(20px,env(safe-area-inset-bottom))]" />
           </div>
         </div>
