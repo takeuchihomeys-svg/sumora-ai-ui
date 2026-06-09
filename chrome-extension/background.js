@@ -30,6 +30,8 @@ chrome.downloads.onCreated.addListener((downloadItem) => {
       const originalTabId = itandiWatchOriginalTab;
       itandiWatchExpiry     = 0;
       itandiWatchOriginalTab = 0;
+      // LINEに送るだけなのでファイルを保存しない（Adobeが開くのを防ぐ）
+      chrome.downloads.cancel(downloadItem.id).catch(() => {});
       console.log("[AXLX BG] itandi DL検知 url=" + url.slice(0, 80) + " → originalTab=" + originalTabId);
 
       // BGサービスワーカーからfetch（host_permissionsがあるitandibb.comはCORSなし）

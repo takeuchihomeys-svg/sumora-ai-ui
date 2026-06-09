@@ -126,6 +126,11 @@ const PHASE_GUIDE: Record<string, string> = {
 例: 「〇〇さん、この度はありがとうございます😊！入居準備につきましても何かございましたらお気軽にご連絡ください😌！」`,
 };
 
+// ─── JST時刻取得 ─────────────────────────────────────────────────────────────
+function getJSTHour(): number {
+  return new Date(Date.now() + 9 * 60 * 60 * 1000).getUTCHours();
+}
+
 // ─── Step2: LINE返信生成（Sonnet）──────────────────────────────────────────
 const GENERATION_SYSTEM = `あなたはスモラ（賃貸仲介）のLINE営業担当です。
 お客様へのLINE返信を1つだけ生成してください。
@@ -196,6 +201,11 @@ function buildGenerationMessages(
   phrases: string,
   customerConditions = ""
 ): [SystemMessage, HumanMessage] {
+  const jstHour = getJSTHour();
+  const greetingNote = jstHour >= 20
+    ? `\n【⏰ 時刻ルール・最優先】現在${jstHour}時台（JST）。20時以降のため2回目以降の冒頭は必ず「〇〇さん夜分遅くに失礼致します！！」を使う。「お世話になっております」は使用禁止。`
+    : `\n【⏰ 時刻ルール・最優先】現在${jstHour}時台（JST）。20時前のため2回目以降の冒頭は「〇〇さんお世話になっております！！」を使う。「夜分遅くに失礼致します」は使用禁止。`;
+
   const nameNote = customerName ? `お客様名：${customerName}さん` : "お客様名：不明";
   const conditionsNote = customerConditions
     ? `\n【お客様の希望条件（DB登録済み・必ず考慮すること）】\n${customerConditions}`
@@ -228,7 +238,7 @@ function buildGenerationMessages(
     : "";
 
   const prompt = `
-${nameNote}${conditionsNote}
+${nameNote}${conditionsNote}${greetingNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${approachNote}${staffContextNote}
 
