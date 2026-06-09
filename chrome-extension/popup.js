@@ -989,6 +989,14 @@ function needsActionToday(c) {
   return false;
 }
 
+function isCompletedToday(c) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return !!(
+    (c.last_property_sent_at  && new Date(c.last_property_sent_at)  >= today) ||
+    (c.property_viewed_at     && new Date(c.property_viewed_at)     >= today)
+  );
+}
+
 function updateTodayBanner() {
   const count = allCustomers.filter(needsActionToday).length;
   const banner = document.getElementById("today-banner");
@@ -1153,8 +1161,9 @@ function renderCustomerRow(c, dimmed) {
   const meta = metaParts.join("  ");
   const label = STATUS_LABELS[c.status] || c.status;
 
+  const doneClass = isCompletedToday(c) ? " done-today" : "";
   return `
-    <div class="customer-item${dimmed ? " dimmed" : ""}" data-id="${esc(String(c.id))}">
+    <div class="customer-item${dimmed ? " dimmed" : ""}${doneClass}" data-id="${esc(String(c.id))}">
       <div class="c-dot dot-${esc(c.status)}"></div>
       <div class="c-body">
         <div class="c-name">${c.is_linked ? '<span class="link-chip">🔗</span>' : ""}${esc(c.customer_name)}</div>
