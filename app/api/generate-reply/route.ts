@@ -364,28 +364,37 @@ const STATE_SEARCH_ALIASES: Record<string, string[]> = {
 async function fetchKnowledge(state: string): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
-  const [{ data: global }, { data: stateSpecific }] = await Promise.all([
-    // 全体共通ナレッジ: importance8以上を優先（golden知識231件を活用）
+  const [{ data: diffLearned }, { data: global }, { data: stateSpecific }] = await Promise.all([
+    // 差分学習ルール（☆修正例から抽出・importance9固定）: state問わず最新20件
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
-      .is("conversation_state", null).gte("importance", 7)
-      .order("importance", { ascending: false }).limit(12),
-    // state別ナレッジ: importance7以上を優先
+      .in("conversation_state", [...stateAliases, null as unknown as string]).gte("importance", 9)
+      .ilike("title", "%差分学習%")
+      .order("created_at", { ascending: false }).limit(20),
+    // 全体共通ナレッジ: importance8以上
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
-      .in("conversation_state", stateAliases).gte("importance", 7)
+      .is("conversation_state", null).gte("importance", 8).not("title", "ilike", "%差分学習%")
+      .order("importance", { ascending: false }).limit(10),
+    // state別ナレッジ: importance7以上
+    supabase.from("ai_reply_knowledge").select("category, title, content, importance")
+      .in("conversation_state", stateAliases).gte("importance", 7).not("title", "ilike", "%差分学習%")
       .order("importance", { ascending: false }).limit(15),
   ]);
 
   const all = [...(stateSpecific || []), ...(global || [])];
-  if (all.length === 0) return "";
+  if ((diffLearned?.length ?? 0) === 0 && all.length === 0) return "";
 
-  // importance 9以上は「絶対ルール」として最優先（差分学習由来の高品質ルール）
+  // 差分学習ルールを最優先ブロックとして独立表示
+  const diffRules = diffLearned || [];
   const critical = all.filter((k) => (k.importance || 0) >= 9);
   const patterns = all.filter((k) => (k.importance || 0) >= 7 && (k.importance || 0) < 9 && (k.category === "pattern" || k.category === "principle"));
   const phrases  = all.filter((k) => k.category === "phrase");
 
   const sections: string[] = [];
+  if (diffRules.length > 0) {
+    sections.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffRules.slice(0, 15).map((k) => `・${k.content}`).join("\n"));
+  }
   if (critical.length > 0) {
-    sections.push("【⚠️ 絶対ルール（必ず守る）】\n" + critical.slice(0, 8).map((k) => `・${k.content}`).join("\n"));
+    sections.push("【⚠️ 絶対ルール】\n" + critical.slice(0, 10).map((k) => `・${k.content}`).join("\n"));
   }
   if (patterns.length > 0) {
     sections.push("【スモラの営業パターン・原則】\n" + patterns.slice(0, 7).map((k) => `・${k.content}`).join("\n"));
