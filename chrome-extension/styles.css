@@ -100,8 +100,8 @@ body {
 }
 .customer-item:hover, .customer-item:active { background: #e8f4fd; }
 .customer-item.dimmed { opacity: 0.55; }
-.customer-item.done-today { background: #e1f5fe; }
-.customer-item.done-today:hover, .customer-item.done-today:active { background: #b3e5fc; }
+.customer-item.done-today { background: #f0f9ff; }
+.customer-item.done-today:hover, .customer-item.done-today:active { background: #e1f5fe; }
 
 .c-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
 .dot-new_inquiry  { background: #f44336; }
