@@ -57,15 +57,43 @@ ${sentReply.slice(0, 400)}`,
 
 export async function POST(req: NextRequest) {
   try {
-    const { aiDraft, sentReply, conversationState, customerMessage } = await req.json() as {
-      aiDraft: string;
-      sentReply: string;
-      conversationState: string;
+    const body = await req.json() as {
+      example_id?: string;
+      aiDraft?: string;
+      sentReply?: string;
+      conversationState?: string;
       customerMessage?: string;
     };
 
-    if (!aiDraft?.trim() || !sentReply?.trim()) {
-      return NextResponse.json({ ok: false, reason: "missing fields" });
+    let aiDraft: string;
+    let sentReply: string;
+    let conversationState: string;
+    let customerMessage: string;
+
+    // example_id 指定: DBから実例データを取得（☆トリガー用）
+    if (body.example_id) {
+      const { data: ex } = await supabase
+        .from("ai_reply_examples")
+        .select("ai_draft, sent_reply, conversation_state, customer_message, was_ai_modified")
+        .eq("id", body.example_id)
+        .single() as { data: { ai_draft?: string | null; sent_reply: string; conversation_state: string; customer_message: string; was_ai_modified: boolean } | null };
+
+      if (!ex || !ex.was_ai_modified || !ex.ai_draft) {
+        return NextResponse.json({ ok: false, reason: "no ai modification found" });
+      }
+      aiDraft = ex.ai_draft;
+      sentReply = ex.sent_reply;
+      conversationState = ex.conversation_state;
+      customerMessage = ex.customer_message;
+    } else {
+      // 直接フィールド指定（互換性維持）
+      if (!body.aiDraft?.trim() || !body.sentReply?.trim()) {
+        return NextResponse.json({ ok: false, reason: "missing fields" });
+      }
+      aiDraft = body.aiDraft;
+      sentReply = body.sentReply;
+      conversationState = body.conversationState ?? "hearing";
+      customerMessage = body.customerMessage ?? "";
     }
 
     // AIと送信文が同じなら学習不要
@@ -80,12 +108,7 @@ export async function POST(req: NextRequest) {
 
     const normalized = STATE_NORMALIZE[conversationState] ?? conversationState ?? "hearing";
 
-    const rule = await extractCorrectionRule(
-      aiDraft,
-      sentReply,
-      normalized,
-      customerMessage || "",
-    );
+    const rule = await extractCorrectionRule(aiDraft, sentReply, normalized, customerMessage);
 
     if (!rule) {
       return NextResponse.json({ ok: false, reason: "extraction skipped or failed" });

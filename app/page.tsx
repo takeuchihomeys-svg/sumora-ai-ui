@@ -1087,34 +1087,6 @@ export default function Home() {
       replyTargetCustomerMsgRef.current = targetMessage;
       setReplyDraft(finalDraft);
 
-      // バックグラウンドでAI要約を自動更新（UIをブロックしない・fire and forget）
-      if (linkedCustomerForGen?.id) {
-        const convIdForSummary = selectedConversation.id;
-        const custIdForSummary = linkedCustomerForGen.id;
-        const prevSummary = linkedCustomerForGen.ai_summary ?? null;
-        fetch("/api/customer-summary", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            customer_id:      custIdForSummary,
-            previous_summary: prevSummary,
-            conversation_id:  convIdForSummary,
-            customer_name:    selectedConversation.customerName,
-            fetch_from_db:    true,
-          }),
-        })
-          .then((r) => r.json())
-          .then((d: { summary?: string }) => {
-            if (d.summary) {
-              setLinkedCustomerMap((prev) => ({
-                ...prev,
-                [convIdForSummary]: { ...prev[convIdForSummary], ai_summary: d.summary },
-              }));
-            }
-          })
-          .catch(() => {});
-      }
-
       // 生成完了後にテキストエリアへフォーカスしてスクロール
       setTimeout(() => {
         const el = textareaRef.current;
@@ -1161,34 +1133,6 @@ export default function Home() {
         const el = textareaRef.current;
         if (el) { el.style.height = "auto"; el.style.height = `${Math.min(el.scrollHeight, 250)}px`; }
       }, 50);
-
-      // バックグラウンドでAI要約を自動更新（UIをブロックしない・fire and forget）
-      if (linkedCustomerForEnhance?.id) {
-        const convIdForSummary = selectedConversation.id;
-        const custIdForSummary = linkedCustomerForEnhance.id;
-        const prevSummary = linkedCustomerForEnhance.ai_summary ?? null;
-        fetch("/api/customer-summary", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            customer_id:      custIdForSummary,
-            previous_summary: prevSummary,
-            conversation_id:  convIdForSummary,
-            customer_name:    selectedConversation.customerName,
-            fetch_from_db:    true,
-          }),
-        })
-          .then((r) => r.json())
-          .then((d: { summary?: string }) => {
-            if (d.summary) {
-              setLinkedCustomerMap((prev) => ({
-                ...prev,
-                [convIdForSummary]: { ...prev[convIdForSummary], ai_summary: d.summary },
-              }));
-            }
-          })
-          .catch(() => {});
-      }
     } catch (err) {
       console.error("enhance-reply error:", err);
     } finally {
@@ -1218,6 +1162,12 @@ export default function Home() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: existingExampleId, is_starred: true }),
+      }).catch(() => {});
+      // ☆をつけた = スタッフが承認した良い修正 → 差分を自動ナレッジ化
+      fetch("/api/auto-knowledge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ example_id: existingExampleId }),
       }).catch(() => {});
     } else {
       // 記録がない場合（古いメッセージや別セッション）は従来通り POST
@@ -1527,26 +1477,40 @@ export default function Home() {
           }
         }).catch(() => {});
 
-        // AI修正差分を自動ナレッジ化（AIが生成した文とスタッフの送信文が異なる場合のみ）
-        if (capturedAiDraft && capturedAiDraft.trim() !== textToSend.trim()) {
-          fetch("/api/auto-knowledge", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              aiDraft: capturedAiDraft,
-              sentReply: textToSend,
-              conversationState: selectedConversation.status,
-              customerMessage: customerMsgToSave,
-            }),
-          }).catch(() => {});
-        }
-
         aiDraftRef.current = "";
         replyTargetCustomerMsgRef.current = "";
       }
 
       setReplyDraft("");
       removeSelectedImage();
+
+      // 送信完了後にAI要約をバックグラウンド更新（送信した文も含めた最新状態で要約）
+      const linkedForSummary = linkedCustomerMap[selectedConversation.id];
+      if (linkedForSummary?.id) {
+        const convIdForSummary = selectedConversation.id;
+        fetch("/api/customer-summary", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            customer_id:      linkedForSummary.id,
+            previous_summary: linkedForSummary.ai_summary ?? null,
+            conversation_id:  convIdForSummary,
+            customer_name:    selectedConversation.customerName,
+            fetch_from_db:    true,
+          }),
+        })
+          .then((r) => r.json())
+          .then((d: { summary?: string }) => {
+            if (d.summary) {
+              setLinkedCustomerMap((prev) => ({
+                ...prev,
+                [convIdForSummary]: { ...prev[convIdForSummary], ai_summary: d.summary },
+              }));
+            }
+          })
+          .catch(() => {});
+      }
+
       // 送信完了後に1.5秒後フェッチ: 送信中に届いたお客様メッセージを確実に反映
       setTimeout(() => fetchConversationsAndMessages(true), 1500);
     } catch (sendError) {
