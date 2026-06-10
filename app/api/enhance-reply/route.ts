@@ -15,12 +15,71 @@ const STATE_NORMALIZE: Record<string, string> = {
   application: "applying", screening: "applying", contract: "applying",
 };
 
-async function fetchEnhanceContext(state: string): Promise<{ knowledge: string; examples: string }> {
+async function getEmbedding(text: string): Promise<number[] | null> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  try {
+    const res = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { data: Array<{ embedding: number[] }> };
+    return data.data[0]?.embedding ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchEnhanceContext(state: string, customerMessage?: string): Promise<{ knowledge: string; examples: string }> {
   const normalized = STATE_NORMALIZE[state] ?? state;
   const aliases = STATE_SEARCH_ALIASES[normalized] || [normalized];
 
+  // pgvector 類似検索（customerMessage がある場合）
+  if (customerMessage && process.env.OPENAI_API_KEY) {
+    const [{ data: knowledgeRows }, embedding] = await Promise.all([
+      supabase.from("ai_reply_knowledge")
+        .select("category, title, content, importance")
+        .in("conversation_state", aliases)
+        .gte("importance", 8)
+        .order("importance", { ascending: false })
+        .limit(12),
+      getEmbedding(`${normalized}: ${customerMessage}`),
+    ]);
+
+    if (embedding) {
+      const { data: similar, error: rpcError } = await supabase.rpc("match_reply_examples", {
+        query_embedding: embedding,
+        match_count: 15,
+        filter_states: aliases,
+      }) as { data: Array<{ customer_message: string; sent_reply: string; conversation_state: string; is_starred: boolean; similarity: number }> | null; error: unknown };
+
+      if (!rpcError && similar && similar.length > 0) {
+        const sorted = [...similar].sort((a, b) => {
+          if (a.is_starred !== b.is_starred) return a.is_starred ? -1 : 1;
+          return b.similarity - a.similarity;
+        }).slice(0, 15);
+
+        const knowledge = (knowledgeRows || []).length > 0
+          ? "\n【スモラのノウハウ（必ず従うこと）】\n" +
+            (knowledgeRows as { category: string; title: string; content: string }[])
+              .map((r) => `・[${r.category}] ${r.content}`)
+              .join("\n")
+          : "";
+
+        const examples = "\n【⭐ スモラの実際の送信例（状況が類似した良質な実例・類似度順）— 文体・言い回し・感嘆符・絵文字はこれに合わせる】\n" +
+          sorted.map((ex, i) =>
+            `[例${i + 1}${ex.is_starred ? "⭐" : ""}]\nお客様:「${ex.customer_message}」\nスモラ:「${ex.sent_reply}」`
+          ).join("\n\n");
+
+        return { knowledge, examples };
+      }
+    }
+  }
+
+  // フォールバック: 従来のフェーズ別取得
   const [{ data: knowledgeRows }, { data: exampleRows }] = await Promise.all([
-    // importance 8以上（principle・差分学習ルール）を最大12件
     supabase.from("ai_reply_knowledge")
       .select("category, title, content, importance")
       .in("conversation_state", aliases)
@@ -28,13 +87,12 @@ async function fetchEnhanceContext(state: string): Promise<{ knowledge: string; 
       .order("importance", { ascending: false })
       .limit(12),
 
-    // ☆つき実例を最大5件（文体参照用）
     supabase.from("ai_reply_examples")
       .select("customer_message, sent_reply")
       .in("conversation_state", aliases)
       .eq("is_starred", true)
       .order("created_at", { ascending: false })
-      .limit(5),
+      .limit(10),
   ]);
 
   const knowledge = (knowledgeRows || []).length > 0
@@ -83,8 +141,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "currentDraft required" }, { status: 400 });
   }
 
-  // knowledge + examples を並列取得
-  const { knowledge, examples } = await fetchEnhanceContext(conversationState || "hearing");
+  // 直近のお客様メッセージを抽出（pgvector 類似検索のキーとして使用）
+  const lastCustomerMsg = (recentMessages || [])
+    .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
+    .slice(-1)[0]?.text;
+
+  // knowledge + examples を取得（pgvector 対応）
+  const { knowledge, examples } = await fetchEnhanceContext(
+    conversationState || "hearing",
+    lastCustomerMsg
+  );
 
   const history = (recentMessages || [])
     .slice(-15)
