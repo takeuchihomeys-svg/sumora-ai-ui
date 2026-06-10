@@ -100,7 +100,17 @@ async function callClaudeVision(system: string, content: unknown[]): Promise<str
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, account, customer_name, image_url, condition_image_url, customer_conditions, extra_input, parsed_estimate } = body;
+    const { action, account, customer_name, image_url, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages } = body;
+
+    // 直近の会話履歴テキスト（viewing_invite・application_push で使用）
+    const recentHistory = Array.isArray(recent_messages) && recent_messages.length > 0
+      ? "\n\n【直近の会話履歴（この流れを踏まえて文を作ること）】\n" +
+        (recent_messages as Array<{ sender: string; text: string }>)
+          .filter((m) => m.text && m.text !== "[画像]" && m.text !== "[動画]")
+          .slice(-20)
+          .map((m) => `${m.sender === "customer" ? "お客様" : "スモラ"}: ${m.text}`)
+          .join("\n")
+      : "";
 
     const name = customer_name ? `${customer_name}さん` : "お客様";
 
@@ -268,22 +278,24 @@ export async function POST(request: NextRequest) {
     // ── 🔍 内覧へ！ ──────────────────────────────────────────────
     } else if (action === "viewing_invite") {
       const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。
-お客様に内覧のお誘いメッセージを作成してください。
+今の会話の流れを読み取り、内覧へ自然に誘導するLINEメッセージを1つだけ作成してください。
 
 【作成ルール】
-・自然な流れで内覧を促す
-・日程調整をお客様に投げかける
+・会話履歴がある場合は、送った物件への反応・お客様の状況を踏まえて訴求する
+・物件への反応が良い場合は「ぜひご内覧を！」と背中を押す
+・「ご都合よろしいお日にちはございますか？」など日程調整の投げかけで締める
 ・感嘆符は「！！」を使う（スモラスタイル）
+・LINEでそのまま送れる完成文のみ出力（解説・候補複数は禁止）
 
 【絵文字ルール — 最重要・必ず守ること】
 ▼ 使ってよい絵文字はこの5つだけ：😊 😌 🙇‍♀️ 🌟 ✨
-▼ 上記以外は一切禁止：🙏 ⭐️ 🏠 💰 💪 👍 🔍 ✋ その他すべて禁止
-▼ 絵文字は1〜2個まで。😊😌 → 余裕を示してリードする場面
+▼ 上記以外は一切禁止
+▼ 絵文字は1〜2個まで
 
-【スモラの言葉・表現（参考にして自然に組み込んでください）】
+【スモラの言葉・表現（参考）】
 ${phraseText || "なし"}`;
 
-      message_text = await callClaude(system, `${name}への内覧お誘いメッセージ。${extra_input ? `候補日時: ${extra_input}` : ""}`);
+      message_text = await callClaude(system, `${name}への内覧お誘いメッセージ。${extra_input ? `候補日時: ${extra_input}` : ""}${recentHistory}`);
 
     // ── ✋ 申込へ！ ──────────────────────────────────────────────
     } else if (action === "application_push") {
@@ -304,7 +316,14 @@ ${phraseText || "なし"}`;
         : "";
 
       const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。
-お客様の申込を後押しするLINEメッセージを作成してください。
+今の会話の流れを読み取り、申込を自然に後押しするLINEメッセージを1つだけ作成してください。
+
+【作成ルール】
+・会話履歴がある場合は、お客様が興味を持っている物件・状況を踏まえて訴求する
+・申込のメリット（お部屋を押さえられる・他に取られる前に）を自然に伝える
+・繁忙期や退去予定がある場合は緊急性を持たせる
+・感嘆符は「！！」（スモラスタイル）
+・LINEでそのまま送れる完成文のみ出力（解説・候補複数は禁止）
 
 【絵文字ルール — 最重要・必ず守ること】
 ▼ 使ってよい絵文字：😊 😌 🙇‍♀️ 🌟 ✨ のみ（他は全禁止）
@@ -314,7 +333,7 @@ ${phraseText || "なし"}`;
 【スモラの言葉・表現】
 ${phraseText || "なし"}${examplesText}`;
 
-      message_text = await callClaude(system, `${name}への申込後押しメッセージ。${extra_input ? `補足: ${extra_input}` : ""}`);
+      message_text = await callClaude(system, `${name}への申込後押しメッセージ。${extra_input ? `補足: ${extra_input}` : ""}${recentHistory}`);
 
     } else {
       return NextResponse.json({ ok: false, error: `Unknown action: ${action}` }, { status: 400 });

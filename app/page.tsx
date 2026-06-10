@@ -1675,6 +1675,39 @@ export default function Home() {
     aixFileInputRef.current?.click();
   };
 
+  // 内覧・申込: ワンタップで生成→下書き反映→確認ダイアログ表示
+  const triggerAixOneTap = async (action: "viewing_invite" | "application_push") => {
+    if (!selectedConversation?.id) return;
+    try {
+      setGenerating(true);
+      setError("");
+      const recentMessages = selectedConversation.messages
+        .slice(-20)
+        .map((m) => ({ sender: m.sender, text: m.text || "" }));
+      const res = await fetch("/api/aix/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          account: selectedConversation.account,
+          customer_name: selectedConversation.customerName,
+          conversation_id: selectedConversation.id,
+          recent_messages: recentMessages,
+        }),
+      });
+      const data = await res.json() as { ok: boolean; message_text?: string; error?: string };
+      if (!res.ok || !data.ok) throw new Error(data.error || "生成に失敗しました");
+      const draft = data.message_text || "";
+      setReplyDraft(draft);
+      aiDraftRef.current = draft;
+      setShowSendConfirm(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "生成に失敗しました");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   const onAixImageSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !pendingAixTypeRef.current) return;
@@ -3277,8 +3310,8 @@ export default function Home() {
               {[
                 { icon: "🏠", label: "物件オススメ", sub: "おすすめ物件をAIが提案", action: () => { setShowAixMenu(false); openAixWithImagePicker("property_recommendation"); } },
                 { icon: "💰", label: "見積書送る", sub: "費用の見積書を作成", action: () => { setShowAixMenu(false); openAixWithImagePicker("estimate_sheet"); } },
-                { icon: "🔍", label: "内覧へ！", sub: "内覧の案内メッセージを作成", action: () => { setShowAixMenu(false); setAixInitialFile(null); setAixModalType("viewing_invite"); } },
-                { icon: "✋", label: "申込へ！", sub: "申込のご案内メッセージを作成", action: () => { setShowAixMenu(false); setAixInitialFile(null); setAixModalType("application_push"); } },
+                { icon: "🔍", label: "内覧へ！", sub: "会話から最適な内覧訴求を生成→確認後送信", action: () => { setShowAixMenu(false); void triggerAixOneTap("viewing_invite"); } },
+                { icon: "✋", label: "申込へ！", sub: "会話から最適な申込訴求を生成→確認後送信", action: () => { setShowAixMenu(false); void triggerAixOneTap("application_push"); } },
               ].map((item) => (
                 <button
                   key={item.label}
