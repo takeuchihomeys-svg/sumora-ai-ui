@@ -160,14 +160,14 @@ export async function POST(request: NextRequest) {
 
 {{phrases}}`;
 
-      const [examples, knowledge, systemTemplate] = await Promise.all([
+      // フォーマット固定: DEFAULT_PROP_SYSTEM を直接使用（DBで上書きしない）
+      const [examples, knowledge] = await Promise.all([
         getPropertyExamples(),
         getPropertyKnowledge(),
-        getAixSystemPrompt("property_recommendation", DEFAULT_PROP_SYSTEM),
       ]);
 
       // {{examples}} {{knowledge}} {{phrases}} を実データに置換
-      const system = systemTemplate
+      const system = DEFAULT_PROP_SYSTEM
         .replace("{{examples}}", examples ? `【スモラの実際の物件オススメ文（実例）】\n${examples}` : "")
         .replace("{{knowledge}}", knowledge ? `【物件オススメ時のノウハウ】\n${knowledge}` : "")
         .replace("{{phrases}}", phraseText ? `【よく使うフレーズ】\n${phraseText}` : "");
