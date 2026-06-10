@@ -394,6 +394,14 @@ ALTER TABLE aix_settings DISABLE ROW LEVEL SECURITY;
 -- AI要約カラム（お客さん一覧のAI要約機能用）
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS ai_summary TEXT;
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS ai_summary_at TIMESTAMPTZ;
+
+-- pgvector 拡張（類似例検索用）
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- ai_reply_examples: 埋め込みベクトルカラム（OpenAI text-embedding-3-small 1536次元）
+ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS embedding vector(1536);
+CREATE INDEX IF NOT EXISTS idx_ai_reply_examples_embedding ON ai_reply_examples
+  USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)
 `.trim();
 
 export async function GET() {

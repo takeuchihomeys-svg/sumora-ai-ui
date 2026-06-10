@@ -1,6 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
+// ─── OpenAI 埋め込み生成（text-embedding-3-small・1536次元）────────────────────
+async function getEmbedding(text: string): Promise<number[] | null> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  try {
+    const res = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { data: Array<{ embedding: number[] }> };
+    return data.data[0]?.embedding ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // conversationState → phrase_dictionary カテゴリ（新5段階 + 旧ステート）
 const STATE_TO_PHRASE_CATEGORY: Record<string, string> = {
   // 新5段階
@@ -438,19 +456,35 @@ export async function POST(req: NextRequest) {
   const wasAiUsed    = !!aiDraft && aiDraft.trim().length > 0 && sim >= 0.9;
   const wasAiModified = !!aiDraft && aiDraft.trim().length > 0 && sim >= 0.05 && sim < 0.9;
 
-  const { data, error } = await supabase
-    .from("ai_reply_examples")
-    .insert({
-      conversation_state: conversationState,
-      customer_message: customerMessage,
-      sent_reply: sentReply,
-      ai_draft: aiDraft || null,
-      was_ai_used: wasAiUsed,
-      was_ai_modified: wasAiModified,
-      is_starred: isStarred ?? false,
-    })
-    .select("id")
-    .single();
+  // 埋め込み生成（バックグラウンドで並列実行・失敗してもINSERTは続行）
+  const embeddingInput = `${conversationState}: ${customerMessage}`;
+  const embeddingPromise = getEmbedding(embeddingInput);
+
+  const [embedding, insertResult] = await Promise.all([
+    embeddingPromise,
+    supabase
+      .from("ai_reply_examples")
+      .insert({
+        conversation_state: conversationState,
+        customer_message: customerMessage,
+        sent_reply: sentReply,
+        ai_draft: aiDraft || null,
+        was_ai_used: wasAiUsed,
+        was_ai_modified: wasAiModified,
+        is_starred: isStarred ?? false,
+      })
+      .select("id")
+      .single(),
+  ]);
+
+  const { data, error } = insertResult;
+
+  // 埋め込みが取得できた場合のみ更新（fire-and-forget）
+  if (data?.id && embedding) {
+    void supabase.from("ai_reply_examples")
+      .update({ embedding: JSON.stringify(embedding) })
+      .eq("id", data.id);
+  }
 
   if (error) {
     console.error("save-reply-example error:", error.message);

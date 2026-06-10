@@ -441,19 +441,60 @@ async function fetchKnowledge(state: string): Promise<string> {
   return sections.length > 0 ? "\n\n" + sections.join("\n\n") : "";
 }
 
-async function fetchExamples(state: string): Promise<string> {
+// ─── OpenAI 埋め込み生成（generate-reply 側）────────────────────────────────
+async function getEmbedding(text: string): Promise<number[] | null> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  try {
+    const res = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { data: Array<{ embedding: number[] }> };
+    return data.data[0]?.embedding ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchExamples(state: string, customerMessage?: string): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
+  // pgvector 類似検索（OPENAI_API_KEY がある場合のみ・エラー時はフォールバック）
+  if (customerMessage && process.env.OPENAI_API_KEY) {
+    const embedding = await getEmbedding(`${state}: ${customerMessage}`);
+    if (embedding) {
+      const { data: similar, error: rpcError } = await supabase.rpc("match_reply_examples", {
+        query_embedding: embedding,
+        match_count: 20,
+        filter_states: stateAliases,
+      }) as { data: Array<{ customer_message: string; sent_reply: string; conversation_state: string; is_starred: boolean; similarity: number }> | null; error: unknown };
+
+      if (!rpcError && similar && similar.length > 0) {
+        // 類似度上位を取得。☆つきを優先して最大20件
+        const sorted = [...similar].sort((a, b) => {
+          if (a.is_starred !== b.is_starred) return a.is_starred ? -1 : 1;
+          return b.similarity - a.similarity;
+        }).slice(0, 20);
+
+        return "\n\n【⭐ スモラの実際の返信例（状況が類似した良質な実例・類似度順）— 文体・言い回し・感嘆符・絵文字・長さをこの例から忠実に再現すること。これが最優先の文体基準】\n" +
+          sorted.map((ex, i) =>
+            `[例${i + 1}${ex.is_starred ? "⭐" : ""}]\nお客様: 「${ex.customer_message}」\nスモラ: 「${ex.sent_reply}」`
+          ).join("\n\n");
+      }
+    }
+  }
+
+  // フォールバック: 従来のフェーズ別取得
   const [{ data: starredSameState }, { data: starredAllState }, { data: modifiedSameState }] = await Promise.all([
-    // ⭐ 同フェーズの☆つき（最新30件）
     supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state")
       .in("conversation_state", stateAliases).eq("is_starred", true)
       .order("created_at", { ascending: false }).limit(30),
-    // ⭐ 全フェーズの☆つき（文体・言い回しを全体から学習）
     supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state")
       .eq("is_starred", true)
       .order("created_at", { ascending: false }).limit(50),
-    // AI修正済み（☆なしだが差分ありの良質な教師データ）- ☆が少ないフェーズのフォールバック
     supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state")
       .in("conversation_state", stateAliases).eq("was_ai_modified", true).eq("is_starred", false)
       .order("created_at", { ascending: false }).limit(15),
@@ -463,12 +504,10 @@ async function fetchExamples(state: string): Promise<string> {
   const allStateList  = (starredAllState || []).filter(
     (ex) => !sameStateList.some((s) => s.sent_reply === ex.sent_reply)
   );
-  // ☆つき同フェーズが5件未満のとき、AI修正済みをフォールバックとして追加
   const modifiedFallback = sameStateList.length < 5
     ? (modifiedSameState || []).filter((ex) => !sameStateList.some((s) => s.sent_reply === ex.sent_reply))
     : [];
 
-  // 同フェーズ☆ → 全フェーズ☆ → 修正済みフォールバック の優先順
   const all = [
     ...sameStateList.map((ex) => ({ ...ex, priority: 1 })),
     ...allStateList.slice(0, 10).map((ex) => ({ ...ex, priority: 2 })),
@@ -551,7 +590,7 @@ export async function POST(req: NextRequest) {
       classifyIntent(message, currentState, history),
       analyzeCustomerSituation(message, history, currentState, customerName),
       fetchKnowledge(currentState),
-      fetchExamples(currentState),
+      fetchExamples(currentState, message),
       fetchPhrases(currentState),
       // ai_summaryがない場合のみ条件テキストから即席合成（Haiku・並列なので遅延ゼロ）
       !customerSummary && customerConditions

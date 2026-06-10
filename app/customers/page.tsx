@@ -509,6 +509,7 @@ export default function CustomersPage() {
           property_send_count:   c.property_send_count,
           last_message:          c.linked_conversation?.last_message,
           last_message_sender:   c.linked_conversation?.last_sender,
+          conversation_id:       c.linked_conversation?.id ?? null,
         }),
       });
       if (res.ok) {

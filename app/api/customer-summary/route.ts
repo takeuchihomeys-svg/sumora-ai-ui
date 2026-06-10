@@ -13,11 +13,14 @@ const SYSTEM = `あなたは賃貸仲介の営業アシスタントです。
 担当者がLINEを送る直前に確認する「このお客さんの特徴まとめ」を作成してください。
 
 ルール：
-・3〜5項目の箇条書き（「・」で始める）
+・4〜6項目の箇条書き（「・」で始める）
 ・条件の羅列は禁止（エリア・家賃・間取り等はすでに画面表示済み）
-・書くべき内容：お客さんの性格・タイプ・感情状態・次のLINEで確認すべきこと・営業上のヒント
+・2つの観点を必ずカバーする：
+  ①お客さんの性格・タイプ・感情状態・営業上のヒント（条件ではなく人物像）
+  ②今の会話の状況・どこで止まっているか・次のLINEで取るべきアクション
+・会話履歴がある場合は必ず②を充実させること（「〜の反応から〜が分かる」「〜待ちの状態」など）
 ・入力にない情報は書かない
-・各項目は1行以内で簡潔に（「〜さんは〜」形式）`;
+・各項目は1行以内で簡潔に`;
 
 const STATUS_LABEL: Record<string, string> = {
   new_inquiry:     "新規問い合わせ",
@@ -47,11 +50,33 @@ type SummaryRequest = {
   additional_conditions?: string | null;
   last_message?:        string | null;
   last_message_sender?: string | null;
+  conversation_id?:     string | null;
 };
 
 export async function POST(req: NextRequest) {
   try {
     const c = await req.json() as SummaryRequest;
+
+    // 会話履歴を取得（conversation_id がある場合のみ）
+    let conversationHistory = "";
+    if (c.conversation_id) {
+      const { data: msgs } = await supabase
+        .from("messages")
+        .select("sender, text, created_at")
+        .eq("conversation_id", c.conversation_id)
+        .neq("text", "[画像]")
+        .neq("text", "[動画]")
+        .not("text", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(30);
+      if (msgs && msgs.length > 0) {
+        const lines = (msgs as Array<{ sender: string; text: string }>)
+          .reverse()
+          .map((m) => `${m.sender === "customer" ? "お客さん" : "スタッフ"}: ${(m.text || "").slice(0, 120)}`)
+          .join("\n");
+        conversationHistory = `\n\n【直近の会話履歴】\n${lines}`;
+      }
+    }
 
     const rentStr = (c.rent_min || c.rent_max)
       ? `${c.rent_min ? Math.floor(c.rent_min / 10000) + "万〜" : "〜"}${c.rent_max ? Math.floor(c.rent_max / 10000) + "万" : ""}`
@@ -75,7 +100,7 @@ export async function POST(req: NextRequest) {
       c.property_send_count != null && `物件送付回数: ${c.property_send_count}回`,
       c.additional_conditions && `追加・変更履歴:\n${c.additional_conditions}`,
       c.last_message         && `最後のメッセージ（${c.last_message_sender === "customer" ? "お客さん" : "スタッフ"}）:「${c.last_message}」`,
-    ].filter(Boolean).join("\n");
+    ].filter(Boolean).join("\n") + conversationHistory;
 
     const res = await model.invoke([
       new SystemMessage(SYSTEM),
