@@ -1087,6 +1087,34 @@ export default function Home() {
       replyTargetCustomerMsgRef.current = targetMessage;
       setReplyDraft(finalDraft);
 
+      // バックグラウンドでAI要約を自動更新（UIをブロックしない・fire and forget）
+      if (linkedCustomerForGen?.id) {
+        const convIdForSummary = selectedConversation.id;
+        const custIdForSummary = linkedCustomerForGen.id;
+        const prevSummary = linkedCustomerForGen.ai_summary ?? null;
+        fetch("/api/customer-summary", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            customer_id:      custIdForSummary,
+            previous_summary: prevSummary,
+            conversation_id:  convIdForSummary,
+            customer_name:    selectedConversation.customerName,
+            fetch_from_db:    true,
+          }),
+        })
+          .then((r) => r.json())
+          .then((d: { summary?: string }) => {
+            if (d.summary) {
+              setLinkedCustomerMap((prev) => ({
+                ...prev,
+                [convIdForSummary]: { ...prev[convIdForSummary], ai_summary: d.summary },
+              }));
+            }
+          })
+          .catch(() => {});
+      }
+
       // 生成完了後にテキストエリアへフォーカスしてスクロール
       setTimeout(() => {
         const el = textareaRef.current;

@@ -19,6 +19,7 @@ const SYSTEM = `あなたは賃貸仲介の営業アシスタントです。
   ①お客さんの性格・タイプ・感情状態・営業上のヒント（条件ではなく人物像）
   ②今の会話の状況・どこで止まっているか・次のLINEで取るべきアクション
 ・会話履歴がある場合は必ず②を充実させること（「〜の反応から〜が分かる」「〜待ちの状態」など）
+・前回の要約がある場合は、変わっていない情報はそのまま維持し、変化した部分のみ更新すること
 ・入力にない情報は書かない
 ・各項目は1行以内で簡潔に`;
 
@@ -51,11 +52,26 @@ type SummaryRequest = {
   last_message?:        string | null;
   last_message_sender?: string | null;
   conversation_id?:     string | null;
+  previous_summary?:    string | null;
+  fetch_from_db?:       boolean;
 };
 
 export async function POST(req: NextRequest) {
   try {
-    const c = await req.json() as SummaryRequest;
+    const body = await req.json() as SummaryRequest;
+
+    // fetch_from_db: page.tsx からの自動更新など customer_id のみ渡す場合にDBから全データ取得
+    let c: SummaryRequest = body;
+    if (body.fetch_from_db && body.customer_id) {
+      const { data: dbC } = await supabase
+        .from("property_customers")
+        .select("customer_name, status, desired_area, floor_plan, floor_area_min, rent_min, rent_max, walk_minutes, move_in_time, building_age, initial_cost_limit, preferences, ng_points, other_requests, property_memo, property_send_count, additional_conditions")
+        .eq("id", body.customer_id)
+        .single();
+      if (dbC) {
+        c = { ...body, ...(dbC as Partial<SummaryRequest>) };
+      }
+    }
 
     // 会話履歴を取得（conversation_id がある場合のみ）
     let conversationHistory = "";
@@ -82,6 +98,11 @@ export async function POST(req: NextRequest) {
       ? `${c.rent_min ? Math.floor(c.rent_min / 10000) + "万〜" : "〜"}${c.rent_max ? Math.floor(c.rent_max / 10000) + "万" : ""}`
       : null;
 
+    // 前回要約がある場合は引き継ぎ指示として追加
+    const prevSummaryNote = c.previous_summary
+      ? `\n\n【前回の要約（引き継いで更新すること）】\n${c.previous_summary}`
+      : "";
+
     const info = [
       `名前: ${c.customer_name}`,
       `ステータス: ${STATUS_LABEL[c.status ?? ""] ?? c.status}`,
@@ -100,7 +121,7 @@ export async function POST(req: NextRequest) {
       c.property_send_count != null && `物件送付回数: ${c.property_send_count}回`,
       c.additional_conditions && `追加・変更履歴:\n${c.additional_conditions}`,
       c.last_message         && `最後のメッセージ（${c.last_message_sender === "customer" ? "お客さん" : "スタッフ"}）:「${c.last_message}」`,
-    ].filter(Boolean).join("\n") + conversationHistory;
+    ].filter(Boolean).join("\n") + prevSummaryNote + conversationHistory;
 
     const res = await model.invoke([
       new SystemMessage(SYSTEM),
