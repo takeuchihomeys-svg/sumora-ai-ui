@@ -1526,6 +1526,21 @@ export default function Home() {
             savedExampleIdByMsgId.current.set(textMsgId, saved.id);
           }
         }).catch(() => {});
+
+        // AI修正差分を自動ナレッジ化（AIが生成した文とスタッフの送信文が異なる場合のみ）
+        if (capturedAiDraft && capturedAiDraft.trim() !== textToSend.trim()) {
+          fetch("/api/auto-knowledge", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              aiDraft: capturedAiDraft,
+              sentReply: textToSend,
+              conversationState: selectedConversation.status,
+              customerMessage: customerMsgToSave,
+            }),
+          }).catch(() => {});
+        }
+
         aiDraftRef.current = "";
         replyTargetCustomerMsgRef.current = "";
       }
