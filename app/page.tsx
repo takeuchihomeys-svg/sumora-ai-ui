@@ -1161,6 +1161,34 @@ export default function Home() {
         const el = textareaRef.current;
         if (el) { el.style.height = "auto"; el.style.height = `${Math.min(el.scrollHeight, 250)}px`; }
       }, 50);
+
+      // バックグラウンドでAI要約を自動更新（UIをブロックしない・fire and forget）
+      if (linkedCustomerForEnhance?.id) {
+        const convIdForSummary = selectedConversation.id;
+        const custIdForSummary = linkedCustomerForEnhance.id;
+        const prevSummary = linkedCustomerForEnhance.ai_summary ?? null;
+        fetch("/api/customer-summary", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            customer_id:      custIdForSummary,
+            previous_summary: prevSummary,
+            conversation_id:  convIdForSummary,
+            customer_name:    selectedConversation.customerName,
+            fetch_from_db:    true,
+          }),
+        })
+          .then((r) => r.json())
+          .then((d: { summary?: string }) => {
+            if (d.summary) {
+              setLinkedCustomerMap((prev) => ({
+                ...prev,
+                [convIdForSummary]: { ...prev[convIdForSummary], ai_summary: d.summary },
+              }));
+            }
+          })
+          .catch(() => {});
+      }
     } catch (err) {
       console.error("enhance-reply error:", err);
     } finally {
