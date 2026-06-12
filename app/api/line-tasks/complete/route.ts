@@ -64,9 +64,14 @@ export async function POST(req: NextRequest) {
         if (!pc) return;
 
         const current = (pc.property_send_count as number | null) ?? 0;
+        const now = new Date().toISOString();
         await supabase
           .from("property_customers")
-          .update({ property_send_count: current + 1, updated_at: new Date().toISOString() })
+          .update({
+            property_send_count: current + 1,
+            last_property_sent_at: now,
+            updated_at: now,
+          })
           .eq("id", conv.property_customer_id as string);
       } catch {}
     })();
