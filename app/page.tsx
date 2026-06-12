@@ -1332,6 +1332,20 @@ export default function Home() {
     }
   };
 
+  const cancelLineTask = async (taskType: "property_check" | "property_send") => {
+    const convId = convMenuConvId;
+    if (!convId) return;
+    const task = activeTasks[convId];
+    if (!task || task.task_type !== taskType) return;
+    setConvMenuConvId(null);
+    await fetch("/api/line-tasks", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: task.id }),
+    });
+    setActiveTasks((prev) => { const next = { ...prev }; delete next[convId]; return next; });
+  };
+
   const sendReply = () => {
     if (!selectedConversation.id) return;
     if (!replyDraft.trim() && selectedImageFiles.length === 0) return;
@@ -2703,30 +2717,40 @@ export default function Home() {
               </button>
             </div>
             <div className="border-t border-[#f0f2f5] grid grid-cols-2">
-              <button
-                onClick={() => createLineTask("property_check")}
-                className="flex flex-col items-center gap-1.5 px-2 py-4 active:bg-[#f0f2f5] border-r border-[#f0f2f5]"
-              >
-                <span className={`flex h-10 w-10 items-center justify-center rounded-full text-[20px] leading-none ${activeTasks[convMenuConvId ?? ""]?.task_type === "property_check" ? "bg-purple-200" : "bg-purple-500"}`}>
-                  🔍
-                </span>
-                <div className="text-[11px] font-semibold text-[#111b21]">物件確認</div>
-                <div className="text-[9px] text-[#8696a0] text-center leading-tight">
-                  {activeTasks[convMenuConvId ?? ""]?.task_type === "property_check" ? "依頼中" : "依頼する"}
-                </div>
-              </button>
-              <button
-                onClick={() => createLineTask("property_send")}
-                className="flex flex-col items-center gap-1.5 px-2 py-4 active:bg-[#f0f2f5]"
-              >
-                <span className={`flex h-10 w-10 items-center justify-center rounded-full text-[20px] leading-none ${activeTasks[convMenuConvId ?? ""]?.task_type === "property_send" ? "bg-green-200" : "bg-green-500"}`}>
-                  🏠
-                </span>
-                <div className="text-[11px] font-semibold text-[#111b21]">物件出し</div>
-                <div className="text-[9px] text-[#8696a0] text-center leading-tight">
-                  {activeTasks[convMenuConvId ?? ""]?.task_type === "property_send" ? "依頼中" : "依頼する"}
-                </div>
-              </button>
+              {(() => {
+                const isActive = activeTasks[convMenuConvId ?? ""]?.task_type === "property_check";
+                return (
+                  <button
+                    onClick={() => isActive ? cancelLineTask("property_check") : createLineTask("property_check")}
+                    className="flex flex-col items-center gap-1.5 px-2 py-4 active:bg-[#f0f2f5] border-r border-[#f0f2f5]"
+                  >
+                    <span className={`flex h-10 w-10 items-center justify-center rounded-full text-[20px] leading-none ${isActive ? "bg-purple-200" : "bg-purple-500"}`}>
+                      {isActive ? "❌" : "🔍"}
+                    </span>
+                    <div className="text-[11px] font-semibold text-[#111b21]">物件確認</div>
+                    <div className={`text-[9px] text-center leading-tight ${isActive ? "text-purple-600 font-bold" : "text-[#8696a0]"}`}>
+                      {isActive ? "依頼中・取消" : "依頼する"}
+                    </div>
+                  </button>
+                );
+              })()}
+              {(() => {
+                const isActive = activeTasks[convMenuConvId ?? ""]?.task_type === "property_send";
+                return (
+                  <button
+                    onClick={() => isActive ? cancelLineTask("property_send") : createLineTask("property_send")}
+                    className="flex flex-col items-center gap-1.5 px-2 py-4 active:bg-[#f0f2f5]"
+                  >
+                    <span className={`flex h-10 w-10 items-center justify-center rounded-full text-[20px] leading-none ${isActive ? "bg-green-200" : "bg-green-500"}`}>
+                      {isActive ? "❌" : "🏠"}
+                    </span>
+                    <div className="text-[11px] font-semibold text-[#111b21]">物件出し</div>
+                    <div className={`text-[9px] text-center leading-tight ${isActive ? "text-green-600 font-bold" : "text-[#8696a0]"}`}>
+                      {isActive ? "依頼中・取消" : "依頼する"}
+                    </div>
+                  </button>
+                );
+              })()}
             </div>
             <div className="grid grid-cols-2 border-t border-[#f0f2f5]">
               <button

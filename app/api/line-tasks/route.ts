@@ -38,6 +38,28 @@ export async function GET() {
   return NextResponse.json({ tasks: data ?? [] });
 }
 
+// DELETE: タスクキャンセル
+export async function DELETE(req: NextRequest) {
+  const { id } = await req.json() as { id: string };
+  if (!id) return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
+
+  const { data: task, error } = await supabase
+    .from("line_tasks")
+    .update({ status: "completed", completed_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("status", "pending")
+    .select("task_type, customer_name")
+    .single();
+
+  if (error || !task) return NextResponse.json({ ok: false, reason: "not found" });
+
+  const label = TASK_LABEL[task.task_type as string] ?? task.task_type;
+  const text = `🚫【${label} キャンセル】\n${task.customer_name as string}さんのタスクが取り消されました`;
+
+  sendGroupMessage(text).catch(console.error);
+  return NextResponse.json({ ok: true });
+}
+
 // POST: タスク作成 + 売上番長グループへアナウンス
 export async function POST(req: NextRequest) {
   const body = await req.json() as {
