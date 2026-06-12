@@ -106,6 +106,8 @@ export default function AixModal({
   // 物件オススメ専用: お客さんの条件スクショ
   const [conditionImageFile, setConditionImageFile] = useState<File | null>(null);
   const [conditionImagePreview, setConditionImagePreview] = useState<string>("");
+  // 物件オススメ専用: 室内イメージURL（任意）
+  const [propertyImageUrl, setPropertyImageUrl] = useState("");
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -244,6 +246,11 @@ export default function AixModal({
       }
       await onSend(preview, uploadedImageUrl);
 
+      // 室内イメージURLがあれば「（室内イメージ）\nURL」として別送信
+      if (actionType === "property_recommendation" && propertyImageUrl.trim()) {
+        await onSend(`（室内イメージ）\n${propertyImageUrl.trim()}`);
+      }
+
       // 学習ループに保存（fire-and-forget）
       fetch("/api/save-reply-example", {
         method: "POST",
@@ -348,6 +355,25 @@ export default function AixModal({
                   >🏠 物件資料を選択</button>
                 )}
                 <input ref={fileInputRef} type="file" accept="image/*" onChange={onSelectImage} className="hidden" />
+              </div>
+
+              {/* ③室内イメージURL（任意） */}
+              <div>
+                <p className="mb-1 text-xs font-bold text-[#54656f]">
+                  ③ 室内イメージURL <span className="font-normal text-[#90a4ae]">（任意）</span>
+                </p>
+                <input
+                  type="url"
+                  value={propertyImageUrl}
+                  onChange={(e) => setPropertyImageUrl(e.target.value)}
+                  placeholder="https://suumo.jp/..."
+                  className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
+                />
+                {propertyImageUrl.trim() && (
+                  <p className="mt-1 text-[10px] text-[#8696a0]">
+                    送信時に「（室内イメージ）」として別メッセージで自動送信されます
+                  </p>
+                )}
               </div>
             </div>
           ) : actionType === "property_check_result" ? (
