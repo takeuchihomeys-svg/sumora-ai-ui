@@ -52,7 +52,14 @@ const PROP_STATUS: Record<string, { label: string; dot: string }> = {
   hot:             { label: "毎日",    dot: "bg-orange-400" },
   property_search: { label: "物件出し", dot: "bg-blue-400" },
   pending:         { label: "検討中",  dot: "bg-gray-300" },
+  applying:        { label: "申込",    dot: "bg-pink-500" },
+  screening:       { label: "審査中",  dot: "bg-indigo-500" },
+  contract:        { label: "契約",    dot: "bg-emerald-600" },
+  closed_won:      { label: "成約",    dot: "bg-emerald-800" },
 };
+
+const APPLYING_STATUSES = ["applying", "screening", "contract", "closed_won"];
+function isApplying(status: string) { return APPLYING_STATUSES.includes(status); }
 
 const ACCT_LABEL: Record<string, string> = {
   sumora: "スモラ", ieyasu: "イエヤス", giga: "ギガ", hasu: "ハス",
@@ -69,6 +76,7 @@ function relTime(d?: string | null) {
 
 function needsProp(status: string, lastSent?: string | null) {
   if (status === "pending") return false;
+  if (isApplying(status)) return false;
   if (status === "new_inquiry") return true;
   const today = new Date(); today.setHours(0, 0, 0, 0);
   if (status === "hot") return !lastSent || new Date(lastSent) < today;
@@ -152,7 +160,7 @@ function emptyEditFields(): EditFields {
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading]     = useState(true);
-  const [filterMode, setFilterMode] = useState<"linked" | "all" | "urgent">("linked");
+  const [filterMode, setFilterMode] = useState<"linked" | "all" | "urgent" | "applying">("linked");
   const [expandedId, setExpandedId]     = useState<string | null>(null);
   const [sentUpdating, setSentUpdating]   = useState<string | null>(null);
   const [viewedUpdating, setViewedUpdating]   = useState<string | null>(null);
@@ -218,7 +226,14 @@ export default function CustomersPage() {
   }, [loading, customers]);
 
   const base = useMemo(() => {
-    let list = filterMode === "all" ? customers : customers.filter((c) => c.is_linked);
+    let list: typeof customers;
+    if (filterMode === "applying") {
+      list = customers.filter((c) => isApplying(c.status));
+    } else if (filterMode === "all") {
+      list = customers.filter((c) => !isApplying(c.status));
+    } else {
+      list = customers.filter((c) => c.is_linked && !isApplying(c.status));
+    }
     if (filterMode === "urgent") list = list.filter((c) => urgency(c) === "property");
     if (!searchQuery.trim()) return list;
     const q = searchQuery.toLowerCase();
@@ -248,9 +263,10 @@ export default function CustomersPage() {
       }),
   [base, filterMode]);
 
-  const linkedCount  = customers.filter((c) => c.is_linked).length;
-  const replyCount   = customers.filter((c) => urgency(c) === "reply").length;
-  const urgentCount  = customers.filter((c) => c.is_linked && urgency(c) === "property").length;
+  const linkedCount    = customers.filter((c) => c.is_linked && !isApplying(c.status)).length;
+  const replyCount     = customers.filter((c) => urgency(c) === "reply" && !isApplying(c.status)).length;
+  const urgentCount    = customers.filter((c) => c.is_linked && urgency(c) === "property" && !isApplying(c.status)).length;
+  const applyingCount  = customers.filter((c) => isApplying(c.status)).length;
 
   const markSent = async (id: string) => {
     setSentUpdating(id);
@@ -574,7 +590,7 @@ export default function CustomersPage() {
         </div>
 
         {/* フィルター */}
-        <div className="flex gap-2 mb-2">
+        <div className="flex gap-2 mb-2 flex-wrap">
           <button
             onClick={() => setFilterMode("linked")}
             className={`rounded-full px-3 py-1.5 text-xs font-bold transition-all ${filterMode === "linked" ? "bg-white text-[#1565C0]" : "border border-white/25 text-white/70"}`}
@@ -588,10 +604,16 @@ export default function CustomersPage() {
             🚨 未送信 {urgentCount}
           </button>
           <button
+            onClick={() => setFilterMode("applying")}
+            className={`rounded-full px-3 py-1.5 text-xs font-bold transition-all ${filterMode === "applying" ? "bg-pink-400 text-white" : "border border-white/25 text-white/70"}`}
+          >
+            申込以降 {applyingCount}
+          </button>
+          <button
             onClick={() => setFilterMode("all")}
             className={`rounded-full px-3 py-1.5 text-xs font-bold transition-all ${filterMode === "all" ? "bg-white text-[#1565C0]" : "border border-white/25 text-white/70"}`}
           >
-            全員 {customers.length}
+            全員 {customers.filter((c) => !isApplying(c.status)).length}
           </button>
         </div>
 
@@ -680,7 +702,7 @@ export default function CustomersPage() {
           <div className="py-16 text-center text-sm text-[#667781]">読み込み中...</div>
         ) : sorted.length === 0 ? (
           <div className="py-16 text-center text-sm text-[#667781]">
-            {searchQuery ? "検索結果なし" : filterMode === "urgent" ? "物件送信が必要なお客さんはいません" : filterMode === "linked" ? "紐付き済みのお客さんがいません" : "お客さんがいません"}
+            {searchQuery ? "検索結果なし" : filterMode === "urgent" ? "物件送信が必要なお客さんはいません" : filterMode === "linked" ? "紐付き済みのお客さんがいません" : filterMode === "applying" ? "申込以降のお客さんはいません" : "お客さんがいません"}
           </div>
         ) : (
           sorted.map((c) => {
@@ -978,8 +1000,10 @@ export default function CustomersPage() {
                       </div>
                     )}
                     <div className="flex flex-wrap gap-1.5">
-                      {["new_inquiry","hot","property_search","pending"]
-                        .filter((s) => s !== c.status)
+                      {(isApplying(c.status)
+                        ? ["applying","screening","contract","closed_won","pending"]
+                        : ["new_inquiry","hot","property_search","pending","applying"]
+                      ).filter((s) => s !== c.status)
                         .map((s) => {
                           const m = PROP_STATUS[s];
                           return (
