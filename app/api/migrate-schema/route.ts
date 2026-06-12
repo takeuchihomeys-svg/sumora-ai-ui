@@ -414,7 +414,8 @@ CREATE TABLE IF NOT EXISTS line_tasks (
   completed_at TIMESTAMPTZ
 );
 ALTER TABLE line_tasks DISABLE ROW LEVEL SECURITY;
-CREATE INDEX IF NOT EXISTS idx_line_tasks_conversation_status ON line_tasks(conversation_id, status)
+CREATE INDEX IF NOT EXISTS idx_line_tasks_conversation_status ON line_tasks(conversation_id, status);
+ALTER PUBLICATION supabase_realtime ADD TABLE line_tasks
 `.trim();
 
 export async function GET() {

@@ -572,6 +572,9 @@ async function notifyFormatReceived(
 const PROPERTY_CHECK_KEYWORDS = [
   "物件確認", "初期費用確認", "初期費用を確認",
   "内覧したい", "内覧させてほしい", "内覧お願い", "内覧を希望",
+  "内覧できますか", "内覧は可能", "内覧申し込み",
+  "見学したい", "見学させてほしい", "見学お願い",
+  "空室確認",
 ];
 
 const PROPERTY_SEND_KEYWORDS = [
@@ -580,10 +583,13 @@ const PROPERTY_SEND_KEYWORDS = [
   "物件ください", "物件紹介してほしい", "物件を紹介", "物件ピックアップ",
 ];
 
+const CONFIRM_PHRASES = ["確認してほしい", "確認してください", "確認お願い", "確認をお願い", "確認できますか"];
+const CONFIRM_TARGETS = ["物件", "初期費用", "空室", "この部屋", "この物件"];
+
 function detectTaskType(text: string): "property_check" | "property_send" | null {
   if (PROPERTY_CHECK_KEYWORDS.some((k) => text.includes(k))) return "property_check";
-  // "確認してほしい" は物件・初期費用と組み合わさった場合のみ
-  if (text.includes("確認してほしい") && (text.includes("物件") || text.includes("初期費用"))) return "property_check";
+  // "確認してほしい/ください/お願い" + 物件/初期費用 の組み合わせ
+  if (CONFIRM_PHRASES.some((p) => text.includes(p)) && CONFIRM_TARGETS.some((t) => text.includes(t))) return "property_check";
   if (PROPERTY_SEND_KEYWORDS.some((k) => text.includes(k))) return "property_send";
   return null;
 }

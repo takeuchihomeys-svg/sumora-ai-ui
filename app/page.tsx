@@ -427,17 +427,20 @@ export default function Home() {
 
     fetchConversationsAndMessages();
 
-    // アクティブなタスク一覧を取得
-    fetch("/api/line-tasks")
-      .then((r) => r.ok ? r.json() : { tasks: [] })
-      .then((d: { tasks: Array<{ id: string; conversation_id: string; task_type: string; created_at: string; customer_name: string }> }) => {
-        const map: Record<string, { id: string; task_type: string; created_at: string; customer_name: string }> = {};
-        for (const t of d.tasks ?? []) {
-          map[t.conversation_id] = { id: t.id, task_type: t.task_type, created_at: t.created_at, customer_name: t.customer_name };
-        }
-        setActiveTasks(map);
-      })
-      .catch(() => {});
+    // アクティブなタスク一覧を取得（Realtime フォールバック兼用）
+    const refreshActiveTasks = () =>
+      fetch("/api/line-tasks")
+        .then((r) => r.ok ? r.json() : { tasks: [] })
+        .then((d: { tasks: Array<{ id: string; conversation_id: string; task_type: string; created_at: string; customer_name: string }> }) => {
+          const map: Record<string, { id: string; task_type: string; created_at: string; customer_name: string }> = {};
+          for (const t of d.tasks ?? []) {
+            map[t.conversation_id] = { id: t.id, task_type: t.task_type, created_at: t.created_at, customer_name: t.customer_name };
+          }
+          setActiveTasks(map);
+        })
+        .catch(() => {});
+
+    refreshActiveTasks();
 
     // Supabase real-time: 新しいメッセージ・会話をリアルタイム反映
     const channel = supabase
@@ -532,7 +535,11 @@ export default function Home() {
       });
 
     // フォールバック: 3秒ごとにポーリング（realtime漏れ対策・返信中に届いたメッセージも確実に反映）
-    const pollInterval = setInterval(() => fetchConversationsAndMessages(true), 3_000);
+    // タスクバッジも同期（Realtime publication 未設定 or 接続切れ時のフォールバック）
+    const pollInterval = setInterval(() => {
+      fetchConversationsAndMessages(true);
+      refreshActiveTasks();
+    }, 3_000);
 
     // カレンダーアラーム（1分ごとに予定開始15分前・開始時刻を通知）
     const calendarAlarm = setInterval(async () => {
