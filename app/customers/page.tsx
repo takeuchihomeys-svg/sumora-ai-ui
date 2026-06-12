@@ -170,6 +170,8 @@ export default function CustomersPage() {
   // 条件に反映する → 保存後に生テキストを「反映済み」ログに変換するために使用
   const convertRawOnSave = useRef<{ id: string; raw: string } | null>(null);
   const summaryInitDone = useRef(false);
+  const [statusMenuId, setStatusMenuId] = useState<string | null>(null);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [showAdd, setShowAdd]       = useState(false);
   const [newName, setNewName]       = useState("");
@@ -729,6 +731,14 @@ export default function CustomersPage() {
                 <button
                   className="flex w-full items-center gap-3 px-4 py-3 text-left active:bg-[#f5f6f6]"
                   onClick={() => setExpandedId(isExp ? null : c.id)}
+                  onPointerDown={() => {
+                    longPressTimer.current = setTimeout(() => {
+                      setStatusMenuId(c.id);
+                      longPressTimer.current = null;
+                    }, 500);
+                  }}
+                  onPointerUp={() => { if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; } }}
+                  onPointerCancel={() => { if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; } }}
                 >
                   <div
                     className="relative shrink-0"
@@ -1027,6 +1037,61 @@ export default function CustomersPage() {
           })
         )}
       </div>
+
+      {/* ── ステータス変更シート（長押し） ── */}
+      {statusMenuId && (() => {
+        const target = customers.find((c) => c.id === statusMenuId);
+        if (!target) return null;
+        const options = isApplying(target.status)
+          ? ["applying", "screening", "contract", "closed_won", "pending"]
+          : ["new_inquiry", "hot", "property_search", "pending", "applying"];
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-end justify-center bg-black/40"
+            onClick={() => setStatusMenuId(null)}
+          >
+            <div
+              className="w-full max-w-md rounded-t-3xl bg-white pb-safe"
+              style={{ paddingBottom: "max(env(safe-area-inset-bottom), 16px)" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="px-5 pt-5 pb-3">
+                <p className="text-[11px] font-bold text-[#8696a0] tracking-wide mb-1">ステータス変更</p>
+                <p className="text-[15px] font-bold text-[#111b21]">{target.customer_name}</p>
+              </div>
+              <div className="flex flex-col divide-y divide-[#f0f2f5]">
+                {options.filter((s) => s !== target.status).map((s) => {
+                  const m = PROP_STATUS[s] ?? { label: s, dot: "bg-gray-300" };
+                  return (
+                    <button
+                      key={s}
+                      onClick={async () => {
+                        await fetch("/api/property-customers", {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ id: target.id, status: s }),
+                        });
+                        setCustomers((p) => p.map((x) => x.id === target.id ? { ...x, status: s } : x));
+                        setStatusMenuId(null);
+                      }}
+                      className="flex items-center gap-3 px-5 py-4 text-left active:bg-[#f5f6f7]"
+                    >
+                      <span className={`h-3 w-3 rounded-full flex-shrink-0 ${m.dot}`} />
+                      <span className="text-[15px] font-semibold text-[#111b21]">{m.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                onClick={() => setStatusMenuId(null)}
+                className="mx-5 mt-3 mb-1 w-[calc(100%-2.5rem)] rounded-2xl bg-[#f0f2f5] py-3.5 text-[14px] font-bold text-[#667781] active:bg-[#e9edef]"
+              >
+                キャンセル
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── 条件編集モーダル ── */}
       {editId && editFields && (
