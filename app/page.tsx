@@ -3600,21 +3600,21 @@ export default function Home() {
                 ✕
               </button>
             </div>
-            <div className="p-4 flex flex-col gap-3">
+            <div className="p-4 flex flex-col gap-2">
               {[
-                { icon: "🏠", label: "物件オススメ", sub: "おすすめ物件をAIが提案", action: () => { setShowAixMenu(false); openAixWithImagePicker("property_recommendation"); } },
-                { icon: "✅", label: "物件確認した", sub: "確認結果を3パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); openAixDirect("property_check_result"); } },
-                { icon: "📋", label: "見積書送る", sub: "費用の見積書を作成", action: () => { setShowAixMenu(false); openAixWithImagePicker("estimate_sheet"); } },
-                { icon: "📅", label: "内覧へ！", sub: "会話から最適な内覧訴求を生成→確認後送信", action: () => { setShowAixMenu(false); void triggerAixOneTap("viewing_invite"); } },
-                { icon: "✏️", label: "申込へ！", sub: "会話から最適な申込訴求を生成→確認後送信", action: () => { setShowAixMenu(false); void triggerAixOneTap("application_push"); } },
+                { color: "#2196F3", label: "物件オススメ", sub: "おすすめ物件をAIが提案", action: () => { setShowAixMenu(false); openAixWithImagePicker("property_recommendation"); } },
+                { color: "#4CAF50", label: "物件確認した", sub: "確認結果を3パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); openAixDirect("property_check_result"); } },
+                { color: "#FF9800", label: "見積書送る", sub: "費用の見積書を作成", action: () => { setShowAixMenu(false); openAixWithImagePicker("estimate_sheet"); } },
+                { color: "#9C27B0", label: "内覧へ！", sub: "会話から最適な内覧訴求を生成→確認後送信", action: () => { setShowAixMenu(false); void triggerAixOneTap("viewing_invite"); } },
+                { color: "#E53935", label: "申込へ！", sub: "会話から最適な申込訴求を生成→確認後送信", action: () => { setShowAixMenu(false); void triggerAixOneTap("application_push"); } },
               ].map((item) => (
                 <button
                   key={item.label}
                   onClick={item.action}
-                  className="flex items-center gap-4 rounded-2xl border border-[#e9edef] bg-[#f8f9fa] px-4 py-3 text-left active:scale-[0.98] transition-transform"
+                  className="flex items-center gap-0 overflow-hidden rounded-xl border border-[#e9edef] bg-white text-left active:bg-[#f5f6f7] transition-colors"
                 >
-                  <span className="text-2xl">{item.icon}</span>
-                  <div>
+                  <span className="w-1 self-stretch flex-shrink-0" style={{ background: item.color }} />
+                  <div className="px-4 py-3">
                     <div className="text-[14px] font-bold text-[#111b21]">{item.label}</div>
                     <div className="text-[11px] text-[#8696a0]">{item.sub}</div>
                   </div>
