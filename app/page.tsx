@@ -31,6 +31,7 @@ type Conversation = {
   isPostApply?: boolean;
   isHot?: boolean;
   isFlagged?: boolean;
+  aiDraft?: string | null;
   messages: Message[];
 };
 
@@ -48,6 +49,7 @@ type SupabaseConversationRow = {
   is_post_apply?: boolean | null;
   is_hot?: boolean | null;
   is_flagged?: boolean | null;
+  ai_draft?: string | null;
 };
 
 type SupabaseMessageRow = {
@@ -816,6 +818,7 @@ export default function Home() {
         isPostApply: conversation.is_post_apply ?? false,
         isHot: conversation.is_hot ?? false,
         isFlagged: conversation.is_flagged ?? false,
+        aiDraft: conversation.ai_draft || null,
         messages: relatedMessages,
       };
     });
@@ -1778,6 +1781,23 @@ export default function Home() {
     } catch {
       // LINE送信失敗しても管理画面の動作は続ける
     }
+
+    // URLを含む送信 → property_sendタスクを自動完了
+    if (text.trim() && text.includes("http")) {
+      const task = (activeTasks[selectedConversation.id] ?? []).find((t) => t.task_type === "property_send");
+      if (task) {
+        fetch("/api/line-tasks/complete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: task.id }),
+        }).catch(() => {});
+      }
+    }
+
+    // ai_draft をクリア（送信したので不要になった）
+    setConversations((prev) =>
+      prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null } : c)
+    );
   };
 
   const onAccountImageSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2606,6 +2626,31 @@ export default function Home() {
               <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={onSelectImage} className="hidden" />
               <input ref={aixFileInputRef} type="file" accept="image/*" onChange={onAixImageSelected} className="hidden" />
             </div>
+
+            {/* AIドラフト提案バナー */}
+            {selectedConversation.aiDraft && !replyDraft && selectedConversation.lastSender === "customer" && (
+              <div className="mx-1 mb-1 flex items-center gap-2 rounded-2xl border border-blue-200 bg-blue-50 px-3 py-2">
+                <span className="text-[10px] font-bold text-blue-500 shrink-0">✨ AI返信案</span>
+                <p className="flex-1 truncate text-[11px] text-[#444]">{selectedConversation.aiDraft}</p>
+                <button
+                  onClick={() => {
+                    setReplyDraft(selectedConversation.aiDraft!);
+                    setConversations((prev) => prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null } : c));
+                    supabase.from("conversations").update({ ai_draft: null }).eq("id", selectedConversation.id).then(() => {});
+                    textareaRef.current?.focus();
+                  }}
+                  className="shrink-0 rounded-xl bg-blue-500 px-2.5 py-1 text-[11px] font-bold text-white active:bg-blue-600"
+                >
+                  使う
+                </button>
+                <button
+                  onClick={() => setConversations((prev) => prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null } : c))}
+                  className="shrink-0 text-[10px] text-[#aaa] active:text-[#555]"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
 
             {/* テキスト入力 */}
             <div className={`flex items-center gap-2 rounded-[24px] bg-[#f0f2f5] px-4 py-2 transition-all ${inputFocused ? "rounded-[16px]" : ""}`}>

@@ -172,6 +172,7 @@ export default function CustomersPage() {
   const summaryInitDone = useRef(false);
   const [statusMenuId, setStatusMenuId] = useState<string | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressStartPos = useRef<{ x: number; y: number } | null>(null);
 
   const [showAdd, setShowAdd]       = useState(false);
   const [newName, setNewName]       = useState("");
@@ -731,11 +732,21 @@ export default function CustomersPage() {
                 <button
                   className="flex w-full items-center gap-3 px-4 py-3 text-left active:bg-[#f5f6f6]"
                   onClick={() => setExpandedId(isExp ? null : c.id)}
-                  onPointerDown={() => {
+                  onPointerDown={(e) => {
+                    longPressStartPos.current = { x: e.clientX, y: e.clientY };
                     longPressTimer.current = setTimeout(() => {
                       setStatusMenuId(c.id);
                       longPressTimer.current = null;
                     }, 500);
+                  }}
+                  onPointerMove={(e) => {
+                    if (!longPressTimer.current || !longPressStartPos.current) return;
+                    const dx = e.clientX - longPressStartPos.current.x;
+                    const dy = e.clientY - longPressStartPos.current.y;
+                    if (Math.sqrt(dx * dx + dy * dy) > 8) {
+                      clearTimeout(longPressTimer.current);
+                      longPressTimer.current = null;
+                    }
                   }}
                   onPointerUp={() => { if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; } }}
                   onPointerCancel={() => { if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; } }}
@@ -946,7 +957,7 @@ export default function CustomersPage() {
 
                 {/* ── アクション行 ── */}
                 <div className="flex items-center gap-2 border-t border-[#f0f2f5] bg-[#fafafa] px-4 py-2 flex-wrap">
-                  {c.status !== "pending" && (
+                  {c.status !== "pending" && !isApplying(c.status) && (
                     <button
                       onClick={() => markSent(c.id)}
                       disabled={sentUpdating === c.id}
@@ -955,7 +966,7 @@ export default function CustomersPage() {
                       {sentUpdating === c.id ? "…" : "物件送った"}
                     </button>
                   )}
-                  {c.status !== "pending" && (
+                  {c.status !== "pending" && !isApplying(c.status) && (
                     <button
                       onClick={() => markViewed(c.id)}
                       disabled={viewedUpdating === c.id}

@@ -223,24 +223,72 @@ async function handleTextMessage(
   // タスク自動検知（物件確認・物件出し）
   void autoDetectTask(db, convId, text);
 
-  // ai_summary 自動更新（レスポンス後に非同期実行・Haiku使用）
+  // ai_summary 自動更新 + 返信ドラフト自動生成（レスポンス後に非同期実行）
   after(async () => {
     try {
       const { data: conv } = await db
         .from("conversations")
-        .select("property_customer_id")
+        .select("property_customer_id, status")
         .eq("id", convId)
         .single();
       const pcId = conv?.property_customer_id as string | null;
-      if (!pcId) return;
+      const convStatus = (conv?.status as string) || "hearing";
 
       const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
         ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
-      await fetch(`${baseUrl}/api/customer-summary`, {
+
+      // ai_summary 自動更新（fire-and-forget）
+      if (pcId) {
+        fetch(`${baseUrl}/api/customer-summary`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ customer_id: pcId, conversation_id: convId, fetch_from_db: true }),
+        }).catch(() => {});
+      }
+
+      // 返信ドラフト自動生成
+      const [{ data: msgs }, { data: pc }] = await Promise.all([
+        db.from("messages").select("sender, text").eq("conversation_id", convId)
+          .order("created_at", { ascending: false }).limit(20),
+        pcId
+          ? db.from("property_customers")
+            .select("customer_name, desired_area, floor_plan, rent_min, rent_max, ai_summary, preferences, ng_points")
+            .eq("id", pcId).single()
+          : Promise.resolve({ data: null }),
+      ]);
+
+      const recentMsgs = ((msgs || []) as Array<{ sender: string; text: string }>)
+        .reverse()
+        .map((m) => ({ sender: m.sender, text: m.text || "" }));
+
+      type PC = { customer_name?: string; desired_area?: string; floor_plan?: string; rent_min?: number; rent_max?: number; ai_summary?: string; preferences?: string; ng_points?: string } | null;
+      const pcData = pc as PC;
+      const customerConditions = [
+        pcData?.desired_area && `エリア: ${pcData.desired_area}`,
+        pcData?.floor_plan && `間取り: ${pcData.floor_plan}`,
+        (pcData?.rent_min || pcData?.rent_max) && `家賃: ${pcData?.rent_min ? Math.floor(pcData.rent_min / 10000) + "万〜" : ""}${pcData?.rent_max ? Math.floor(pcData.rent_max / 10000) + "万" : ""}`,
+        pcData?.preferences && `こだわり: ${pcData.preferences}`,
+        pcData?.ng_points && `NG: ${pcData.ng_points}`,
+      ].filter(Boolean).join(", ");
+
+      const draftRes = await fetch(`${baseUrl}/api/generate-reply`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ customer_id: pcId, conversation_id: convId, fetch_from_db: true }),
+        body: JSON.stringify({
+          message: text,
+          state: convStatus,
+          customerName: pcData?.customer_name || "",
+          recentMessages: recentMsgs,
+          customerConditions,
+          customerSummary: pcData?.ai_summary || "",
+        }),
       });
+      if (draftRes.ok) {
+        const draftData = await draftRes.json() as { ok: boolean; reply?: string };
+        if (draftData.ok && draftData.reply) {
+          await db.from("conversations").update({ ai_draft: draftData.reply }).eq("id", convId);
+        }
+      }
     } catch {}
   });
 
