@@ -2724,8 +2724,10 @@ export default function Home() {
                     onClick={() => isActive ? cancelLineTask("property_check") : createLineTask("property_check")}
                     className="flex flex-col items-center gap-1.5 px-2 py-4 active:bg-[#f0f2f5] border-r border-[#f0f2f5]"
                   >
-                    <span className={`flex h-10 w-10 items-center justify-center rounded-full text-[20px] leading-none ${isActive ? "bg-purple-200" : "bg-purple-500"}`}>
-                      {isActive ? "❌" : "🔍"}
+                    <span className={`flex h-10 w-10 items-center justify-center rounded-full ${isActive ? "bg-purple-300" : "bg-purple-500"}`}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+                      </svg>
                     </span>
                     <div className="text-[11px] font-semibold text-[#111b21]">物件確認</div>
                     <div className={`text-[9px] text-center leading-tight ${isActive ? "text-purple-600 font-bold" : "text-[#8696a0]"}`}>
@@ -2741,8 +2743,10 @@ export default function Home() {
                     onClick={() => isActive ? cancelLineTask("property_send") : createLineTask("property_send")}
                     className="flex flex-col items-center gap-1.5 px-2 py-4 active:bg-[#f0f2f5]"
                   >
-                    <span className={`flex h-10 w-10 items-center justify-center rounded-full text-[20px] leading-none ${isActive ? "bg-green-200" : "bg-green-500"}`}>
-                      {isActive ? "❌" : "🏠"}
+                    <span className={`flex h-10 w-10 items-center justify-center rounded-full ${isActive ? "bg-green-300" : "bg-green-500"}`}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>
+                      </svg>
                     </span>
                     <div className="text-[11px] font-semibold text-[#111b21]">物件出し</div>
                     <div className={`text-[9px] text-center leading-tight ${isActive ? "text-green-600 font-bold" : "text-[#8696a0]"}`}>
