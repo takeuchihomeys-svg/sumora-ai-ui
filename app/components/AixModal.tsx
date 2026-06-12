@@ -23,6 +23,8 @@ interface AixModalProps {
   account?: string;
   initialImageFile?: File;
   linkedCustomer?: LinkedCustomer;
+  recentMessages?: Array<{ sender: string; text: string }>;
+  customerSummary?: string | null;
   onClose: () => void;
   onSend: (text: string, imageUrl?: string) => Promise<void>;
   onAfterSend?: () => void;
@@ -51,7 +53,7 @@ const CONFIG: Record<
   },
   viewing_invite: {
     title: "内覧へ！",
-    emoji: "🔍",
+    emoji: "📅",
     requiresImage: false,
     imageLabel: "",
     description: "内覧の日程調整メッセージをLINEで送ります。",
@@ -60,7 +62,7 @@ const CONFIG: Record<
   },
   application_push: {
     title: "申込へ！",
-    emoji: "✋",
+    emoji: "✏️",
     requiresImage: false,
     imageLabel: "",
     description: "申込を後押しするメッセージをLINEで送ります。",
@@ -69,14 +71,14 @@ const CONFIG: Record<
   },
   estimate_sheet: {
     title: "見積書送る",
-    emoji: "💰",
+    emoji: "📋",
     requiresImage: true,
     imageLabel: "見積書画像を選択",
     description: "見積書の画像をAIが読み取り、初期費用の内訳をLINEで送ります。",
   },
   property_check_result: {
     title: "物件確認した",
-    emoji: "🔎",
+    emoji: "✅",
     requiresImage: false,
     imageLabel: "物件・部屋の画像を選択（任意）",
     description: "物件確認の結果をお客さんにLINEで報告します。",
@@ -91,6 +93,8 @@ export default function AixModal({
   account,
   initialImageFile,
   linkedCustomer,
+  recentMessages,
+  customerSummary,
   onClose,
   onSend,
   onAfterSend,
@@ -191,6 +195,8 @@ export default function AixModal({
         if (!checkPattern) throw new Error("確認結果を選択してください");
         body.check_pattern = checkPattern;
         if (imageFile) body.image_url = await uploadImage(imageFile);
+        if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
+        if (customerSummary) body.customer_summary = customerSummary;
       } else if (config.requiresImage && imageFile) {
         body.image_url = await uploadImage(imageFile);
       }

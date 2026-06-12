@@ -335,15 +335,52 @@ ${phraseText || "なし"}${examplesText}`;
 
       message_text = await callClaude(system, `${name}への申込後押しメッセージ。${extra_input ? `補足: ${extra_input}` : ""}${recentHistory}`);
 
-    // ── 🔎 物件確認した ──────────────────────────────────────────────
+    // ── ✅ 物件確認した ──────────────────────────────────────────────
     } else if (action === "property_check_result") {
       const pattern = check_pattern as "available" | "alternative" | "unavailable";
+      const customerSummary = body.customer_summary as string | undefined;
 
       const PATTERN_INSTRUCTION: Record<string, string> = {
-        available:   "物件を確認した結果「空室あり・入居可能」だったことをお客さんに報告してください。内見への誘導も自然に含めてください。",
-        alternative: "物件を確認した結果「満室だったが、同じマンションまたは近隣で別のお部屋が募集中」だったことを報告してください。別のお部屋への期待感をもたせて内見誘導で締めてください。",
-        unavailable: "物件を確認した結果「満室・空きなし」だったことをお客さんに丁重に報告してください。引き続き物件探しを続けることをお伝えして前向きな雰囲気で締めてください。",
+        available:   "物件を確認した結果「空室あり・入居可能」でした。お待たせしたお礼と空室報告をして、内見日程の調整へ自然に誘導してください。",
+        alternative: "物件を確認した結果「満室でしたが、同じマンションまたは近隣で別のお部屋が募集中」でした。残念な気持ちに寄り添いつつ、別の選択肢への期待感をもたせて内見誘導で締めてください。",
+        unavailable: "物件を確認した結果「満室・空きなし」でした。お待たせしたお詫びをしつつ、引き続き物件探しを続けることを伝え、前向きな雰囲気で締めてください。",
       };
+
+      // 実例・knowledgeを並列取得
+      const [{ data: checkExamples }, { data: checkKnowledge }] = await Promise.all([
+        supabase
+          .from("ai_reply_examples")
+          .select("customer_message, sent_reply")
+          .in("conversation_state", ["proposing", "availability_check", "property_recommendation"])
+          .eq("is_starred", true)
+          .order("created_at", { ascending: false })
+          .limit(8),
+        supabase
+          .from("ai_reply_knowledge")
+          .select("category, content")
+          .in("conversation_state", ["proposing", "availability_check"])
+          .gte("importance", 8)
+          .order("importance", { ascending: false })
+          .limit(8),
+      ]);
+
+      const examplesText = (checkExamples || []).length > 0
+        ? "\n\n【⭐ スモラの実際の送信例（文体・感嘆符・絵文字をこれに合わせる）】\n" +
+          (checkExamples as { customer_message: string; sent_reply: string }[])
+            .map((r, i) => `[例${i + 1}]\nお客様:「${r.customer_message}」\nスモラ:「${r.sent_reply}」`)
+            .join("\n\n")
+        : "";
+
+      const knowledgeText = (checkKnowledge || []).length > 0
+        ? "\n\n【スモラのノウハウ（必ず従うこと）】\n" +
+          (checkKnowledge as { category: string; content: string }[])
+            .map((r) => `・[${r.category}] ${r.content}`)
+            .join("\n")
+        : "";
+
+      const summaryNote = customerSummary
+        ? `\n\n【このお客さんの人物像・特徴（AI要約）— 文体・トーン・アプローチに必ず反映すること】\n${customerSummary}`
+        : "";
 
       const checkSystem = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
 物件確認の結果をお客さんに報告するLINEメッセージを1つだけ作成してください。
@@ -351,23 +388,25 @@ ${phraseText || "なし"}${examplesText}`;
 【作成ルール】
 ・「大変お待たせいたしました！！」で始める
 ・画像（物件資料）が添付されている場合は物件名・間取りなどを読み取って言及する
+・会話履歴がある場合はその流れを踏まえた自然な報告文にする
 ・感嘆符は「！！」（スモラスタイル）
-・LINEでそのまま送れる完成文のみ出力（解説不要）
+・LINEでそのまま送れる完成文のみ出力（解説・候補複数は禁止）
 
-【絵文字ルール】
-▼ 使ってよい絵文字：😊 😌 🙇‍♀️ のみ
-▼ 絵文字は1〜2個まで`;
+【絵文字ルール — 最重要・必ず守ること】
+▼ 使ってよい絵文字：😊 😌 🙇‍♀️ 🌟 ✨ のみ（他は全禁止）
+▼ 絵文字は1〜2個まで${knowledgeText}${examplesText}`;
 
       const instruction = PATTERN_INSTRUCTION[pattern] ?? PATTERN_INSTRUCTION.unavailable;
+      const userText = `${name}への物件確認報告メッセージを作成してください。\n\n${instruction}${summaryNote}${recentHistory}`;
 
       if (image_url) {
         const content = [
-          { type: "text", text: `${name}への物件確認報告メッセージを作成してください。\n\n${instruction}` },
+          { type: "text", text: userText },
           { type: "image", source: { type: "url", url: image_url } },
         ];
         message_text = await callClaudeVision(checkSystem, content);
       } else {
-        message_text = await callClaude(checkSystem, `${name}への物件確認報告メッセージを作成してください。\n\n${instruction}`);
+        message_text = await callClaude(checkSystem, userText);
       }
 
     } else {

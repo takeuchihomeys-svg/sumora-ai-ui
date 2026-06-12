@@ -3160,6 +3160,8 @@ export default function Home() {
           account={selectedConversation.account ?? currentAccount.id}
           initialImageFile={aixInitialFile ?? undefined}
           linkedCustomer={aixModalType === "property_recommendation" ? linkedCustomerMap[selectedConversation.id] : undefined}
+          recentMessages={(selectedConversation.messages || []).slice(-20).map((m: Message) => ({ sender: m.sender, text: m.text || "" }))}
+          customerSummary={linkedCustomerMap[selectedConversation.id]?.ai_summary ?? null}
           onClose={() => {
             setAixModalType(null);
             setAixInitialFile(null);
@@ -3601,10 +3603,10 @@ export default function Home() {
             <div className="p-4 flex flex-col gap-3">
               {[
                 { icon: "🏠", label: "物件オススメ", sub: "おすすめ物件をAIが提案", action: () => { setShowAixMenu(false); openAixWithImagePicker("property_recommendation"); } },
-                { icon: "🔎", label: "物件確認した", sub: "確認結果を3パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); openAixDirect("property_check_result"); } },
-                { icon: "💰", label: "見積書送る", sub: "費用の見積書を作成", action: () => { setShowAixMenu(false); openAixWithImagePicker("estimate_sheet"); } },
-                { icon: "🔍", label: "内覧へ！", sub: "会話から最適な内覧訴求を生成→確認後送信", action: () => { setShowAixMenu(false); void triggerAixOneTap("viewing_invite"); } },
-                { icon: "✋", label: "申込へ！", sub: "会話から最適な申込訴求を生成→確認後送信", action: () => { setShowAixMenu(false); void triggerAixOneTap("application_push"); } },
+                { icon: "✅", label: "物件確認した", sub: "確認結果を3パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); openAixDirect("property_check_result"); } },
+                { icon: "📋", label: "見積書送る", sub: "費用の見積書を作成", action: () => { setShowAixMenu(false); openAixWithImagePicker("estimate_sheet"); } },
+                { icon: "📅", label: "内覧へ！", sub: "会話から最適な内覧訴求を生成→確認後送信", action: () => { setShowAixMenu(false); void triggerAixOneTap("viewing_invite"); } },
+                { icon: "✏️", label: "申込へ！", sub: "会話から最適な申込訴求を生成→確認後送信", action: () => { setShowAixMenu(false); void triggerAixOneTap("application_push"); } },
               ].map((item) => (
                 <button
                   key={item.label}
