@@ -18,7 +18,7 @@
     },
     {
       "path": "/api/cron/morning-report",
-      "schedule": "0 0 * * *"
+      "schedule": "45 0 * * *"
     }
   ]
 }
