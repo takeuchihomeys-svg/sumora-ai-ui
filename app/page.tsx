@@ -323,6 +323,9 @@ export default function Home() {
   const [viewingMemoConvId, setViewingMemoConvId] = useState<string | null>(null);
   const [convMenuConvId, setConvMenuConvId] = useState<string | null>(null);
   const [activeTasks, setActiveTasks] = useState<Record<string, { id: string; task_type: string; created_at: string; customer_name: string }>>({});
+  const [showKnowledgeModal, setShowKnowledgeModal] = useState(false);
+  const [knowledgeRules, setKnowledgeRules] = useState<Array<{ id: string; content: string; conversation_state: string; created_at: string; title: string }>>([]);
+  const [knowledgeLoading, setKnowledgeLoading] = useState(false);
   const [accountChangeConvId, setAccountChangeConvId] = useState<string | null>(null);
   const [assignees, setAssignees] = useState<Record<string, string>>({});
   const [assigneeModalConvId, setAssigneeModalConvId] = useState<string | null>(null);
@@ -3276,12 +3279,116 @@ export default function Home() {
                 </button>
               )}
             </div>
+            {/* AIナレッジ管理 */}
+            <div className="px-4 pt-2 pb-4 border-t border-[#f0f2f5]">
+              <p className="text-[11px] font-bold text-[#8696a0] mb-3 tracking-wide uppercase">AI学習管理</p>
+              <button
+                onClick={async () => {
+                  setShowHamburgerMenu(false);
+                  setShowKnowledgeModal(true);
+                  setKnowledgeLoading(true);
+                  const d = await fetch("/api/knowledge-review").then((r) => r.json()) as { rules: Array<{ id: string; content: string; conversation_state: string; created_at: string; title: string }> };
+                  setKnowledgeRules(d.rules ?? []);
+                  setKnowledgeLoading(false);
+                }}
+                className="flex w-full items-center gap-3 rounded-2xl border border-[#e9edef] bg-[#f8f9fa] px-4 py-3 text-left active:scale-[0.98] transition-all"
+              >
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-indigo-500">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+                  </svg>
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[14px] font-bold text-[#111b21]">AIナレッジ管理</div>
+                  <div className="text-[11px] text-[#8696a0]">自動抽出ルールを確認・削除・承認</div>
+                </div>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8696a0" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 18l6-6-6-6"/>
+                </svg>
+              </button>
+            </div>
             {replyExamplesCount !== null && (
               <div className="px-4 pt-1 pb-2 text-center">
                 <span className="text-[10px] text-[#aaa]">🤖 LINE返信AI：{replyExamplesCount.toLocaleString()}件学習済み</span>
               </div>
             )}
             <div className="pb-[max(20px,env(safe-area-inset-bottom))]" />
+          </div>
+        </div>
+      )}
+
+      {/* AIナレッジ管理モーダル */}
+      {showKnowledgeModal && (
+        <div
+          className="fixed inset-0 z-[95] flex items-end justify-center bg-black/60"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowKnowledgeModal(false); }}
+        >
+          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl overflow-hidden flex flex-col" style={{ maxHeight: "85vh" }}>
+            {/* ヘッダー */}
+            <div className="px-5 pt-5 pb-4 flex items-center justify-between border-b border-[#f0f2f5]">
+              <div>
+                <div className="text-[16px] font-bold text-[#111b21]">AIナレッジ管理</div>
+                <div className="text-[11px] text-[#8696a0]">自動抽出ルール — 確認して不要なものを削除</div>
+              </div>
+              <button onClick={() => setShowKnowledgeModal(false)} className="flex h-8 w-8 items-center justify-center rounded-full bg-[#f0f2f5] text-[#667781]">✕</button>
+            </div>
+            {/* ルール一覧 */}
+            <div className="overflow-y-auto flex-1 px-4 py-3">
+              {knowledgeLoading ? (
+                <div className="flex items-center justify-center py-12 text-[13px] text-[#8696a0]">読み込み中...</div>
+              ) : knowledgeRules.length === 0 ? (
+                <div className="flex items-center justify-center py-12 text-[13px] text-[#8696a0]">自動抽出ルールはまだありません</div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {knowledgeRules.map((rule) => {
+                    const isApproved = rule.title.includes("承認済");
+                    const stateLabel: Record<string, string> = { first_reply: "初回", hearing: "ヒアリング", proposing: "提案", applying: "申込" };
+                    return (
+                      <div key={rule.id} className={`rounded-2xl border px-4 py-3 ${isApproved ? "border-indigo-200 bg-indigo-50" : "border-[#e9edef] bg-[#f8f9fa]"}`}>
+                        <div className="flex items-start gap-2 mb-2">
+                          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold ${isApproved ? "bg-indigo-200 text-indigo-800" : "bg-[#e9edef] text-[#667781]"}`}>
+                            {stateLabel[rule.conversation_state] ?? rule.conversation_state}
+                          </span>
+                          {isApproved && (
+                            <span className="shrink-0 rounded-full bg-indigo-500 px-2 py-0.5 text-[9px] font-bold text-white">承認済</span>
+                          )}
+                          <span className="ml-auto shrink-0 text-[10px] text-[#8696a0]">
+                            {new Date(rule.created_at).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })}
+                          </span>
+                        </div>
+                        <p className="text-[12px] text-[#111b21] leading-relaxed mb-3">{rule.content}</p>
+                        <div className="flex gap-2">
+                          {!isApproved && (
+                            <button
+                              onClick={async () => {
+                                await fetch("/api/knowledge-review", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: rule.id }) });
+                                setKnowledgeRules((prev) => prev.map((r) => r.id === rule.id ? { ...r, title: "差分学習 [承認済]" } : r));
+                              }}
+                              className="flex-1 rounded-xl bg-indigo-500 py-2 text-[12px] font-bold text-white active:opacity-80"
+                            >
+                              承認
+                            </button>
+                          )}
+                          <button
+                            onClick={async () => {
+                              await fetch("/api/knowledge-review", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: rule.id }) });
+                              setKnowledgeRules((prev) => prev.filter((r) => r.id !== rule.id));
+                            }}
+                            className="flex-1 rounded-xl bg-[#f0f2f5] py-2 text-[12px] font-bold text-red-500 active:opacity-80"
+                          >
+                            削除
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="px-4 py-3 border-t border-[#f0f2f5] text-center">
+              <span className="text-[11px] text-[#8696a0]">{knowledgeRules.length}件 / 承認済みはimportance 10になります</span>
+            </div>
+            <div className="pb-[max(12px,env(safe-area-inset-bottom))]" />
           </div>
         </div>
       )}

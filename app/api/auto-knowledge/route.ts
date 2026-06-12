@@ -26,21 +26,29 @@ async function extractCorrectionRule(
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 150,
-        system: `賃貸仲介LINEのAI文案とスタッフが実際に送った文を比較し、AIが間違えたポイントを1文で説明してください。
+        model: "claude-sonnet-4-6",
+        max_tokens: 200,
+        system: `賃貸仲介LINEのAI文案とスタッフが実際に送った文を比較し、次回以降のAIが学べる改善ルールを1文で抽出してください。
+
 出力形式: 「AIは〜としたが、正しくは〜」（60字以内・具体的に）
-変更が軽微（誤字修正・句読点・絵文字のみ）なら「SKIP」とだけ返してください。`,
+
+以下の場合は「SKIP」とだけ返すこと:
+・誤字修正・句読点・絵文字だけの変更
+・本質的に同じ内容の言い換えのみ
+・「もっと丁寧に」など抽象的すぎてAIが再現できないもの
+・個別案件にしか当てはまらない内容
+
+良いルール例: 「AIは物件の間取りを先に説明したが、正しくはお客様の希望条件への合致を先に述べてから詳細を補足する」`,
         messages: [{
           role: "user",
           content: `【営業フェーズ】${state}
-【お客様メッセージ】${customerMessage.slice(0, 100)}
+【お客様メッセージ】${customerMessage.slice(0, 150)}
 
 【AIが生成した文】
-${aiDraft.slice(0, 400)}
+${aiDraft.slice(0, 500)}
 
 【スタッフが実際に送った文】
-${sentReply.slice(0, 400)}`,
+${sentReply.slice(0, 500)}`,
         }],
       }),
     });
@@ -48,7 +56,7 @@ ${sentReply.slice(0, 400)}`,
     if (!res.ok) return null;
     const data = await res.json() as { content?: Array<{ text: string }> };
     const text = data.content?.[0]?.text?.trim() || "";
-    if (!text || text.startsWith("SKIP") || text.length < 10) return null;
+    if (!text || text.startsWith("SKIP") || text.length < 15) return null;
     return text;
   } catch {
     return null;
@@ -101,8 +109,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, reason: "no diff" });
     }
 
-    // 差分が小さすぎる場合はスキップ（8文字未満の差分）
-    if (Math.abs(aiDraft.length - sentReply.length) < 8) {
+    // 差分が小さすぎる場合はスキップ（20文字未満の差分）
+    if (Math.abs(aiDraft.length - sentReply.length) < 20) {
       return NextResponse.json({ ok: false, reason: "diff too small" });
     }
 
