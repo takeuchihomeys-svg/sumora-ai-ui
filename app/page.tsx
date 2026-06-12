@@ -992,6 +992,7 @@ export default function Home() {
     aiDraftRef.current = "";
     replyTargetCustomerMsgRef.current = "";
     setTargetOverrideMessage(null);
+    setAiDraftExpanded(false);
   }, [selectedConversation.id]);
 
   // replyDraftが変わったらtextareaの高さを自動調整
@@ -3242,6 +3243,17 @@ export default function Home() {
             aixModalType === "property_check_result"
               ? () => {
                   const task = (activeTasks[selectedConversation.id] ?? []).find((t) => t.task_type === "property_check");
+                  if (task) {
+                    fetch("/api/line-tasks/complete", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ id: task.id }),
+                    }).catch(() => {});
+                  }
+                }
+              : aixModalType === "property_recommendation"
+              ? () => {
+                  const task = (activeTasks[selectedConversation.id] ?? []).find((t) => t.task_type === "property_send");
                   if (task) {
                     fetch("/api/line-tasks/complete", {
                       method: "POST",
