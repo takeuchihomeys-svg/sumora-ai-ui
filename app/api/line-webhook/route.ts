@@ -223,6 +223,27 @@ async function handleTextMessage(
   // タスク自動検知（物件確認・物件出し）
   void autoDetectTask(db, convId, text);
 
+  // ai_summary 自動更新（レスポンス後に非同期実行・Haiku使用）
+  after(async () => {
+    try {
+      const { data: conv } = await db
+        .from("conversations")
+        .select("property_customer_id")
+        .eq("id", convId)
+        .single();
+      const pcId = conv?.property_customer_id as string | null;
+      if (!pcId) return;
+
+      const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
+        ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+      await fetch(`${baseUrl}/api/customer-summary`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customer_id: pcId, conversation_id: convId, fetch_from_db: true }),
+      });
+    } catch {}
+  });
+
   return true;
 }
 
