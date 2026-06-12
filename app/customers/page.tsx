@@ -288,10 +288,11 @@ export default function CustomersPage() {
     setReflectLoading(c.id);
     try {
       // ログエントリ（【日付追加/反映済み】形式）を除外して生テキストのみ送る
-      const rawText = c.additional_conditions.split("\n")
-        .filter(line => line.trim() && !parseConditionLog(line).isLog)
-        .join("\n");
-      if (!rawText.trim()) return;
+      const rawLines = c.additional_conditions.split("\n")
+        .filter(line => line.trim() && !parseConditionLog(line).isLog);
+      if (rawLines.length === 0) return;
+      // 最新の1件のみ解析（複数raw行がある場合も直近のみ対象）
+      const rawText = rawLines[rawLines.length - 1];
 
       const res = await fetch("/api/parse-additional-conditions", {
         method: "POST",
@@ -302,27 +303,50 @@ export default function CustomersPage() {
       if (!data.ok || !data.parsed) return;
 
       const p = data.parsed;
-      const base2 = toEditFields(c);
-      // テキスト系フィールドは元の値に追記（置き換えると元の条件が消えるため）
-      const appendField = (orig: string, add: string) => orig ? `${orig}、${add}` : add;
-      const merged: EditFields = {
-        desired_area:       (p.desired_area       != null ? appendField(base2.desired_area, String(p.desired_area)) : base2.desired_area),
-        floor_plan:         (p.floor_plan         != null ? String(p.floor_plan)         : base2.floor_plan),
-        rent_min:           (p.rent_min           != null ? String(Math.floor((p.rent_min as number) / 10000)) : base2.rent_min),
-        rent_max:           (p.rent_max           != null ? String(Math.floor((p.rent_max as number) / 10000)) : base2.rent_max),
-        walk_minutes:       (p.walk_minutes       != null ? String(p.walk_minutes)       : base2.walk_minutes),
-        move_in_time:       (p.move_in_time       != null ? String(p.move_in_time)       : base2.move_in_time),
-        building_age:       (p.building_age       != null ? String(p.building_age)       : base2.building_age),
-        floor_area_min:     (p.floor_area_min     != null ? String(p.floor_area_min)     : base2.floor_area_min),
-        initial_cost_limit: (p.initial_cost_limit != null ? String(Math.floor((p.initial_cost_limit as number) / 10000)) : base2.initial_cost_limit),
-        preferences:        (p.preferences        != null ? appendField(base2.preferences, String(p.preferences)) : base2.preferences),
-        ng_points:          (p.ng_points          != null ? appendField(base2.ng_points, String(p.ng_points)) : base2.ng_points),
-        other_requests:     (p.other_requests     != null ? appendField(base2.other_requests, String(p.other_requests)) : base2.other_requests),
-        property_memo:      base2.property_memo,
-      };
-      convertRawOnSave.current = { id: c.id, raw: c.additional_conditions ?? "" };
-      setEditId(c.id);
-      setEditFields(merged);
+      // 言及されたフィールドのみ更新（truthy チェックで null/""/0 は無視）
+      const appendStr = (orig: string | null | undefined, add: string) => orig ? `${orig}、${add}` : add;
+      const patch: Record<string, unknown> = { id: c.id };
+
+      if (p.desired_area)       patch.desired_area       = appendStr(c.desired_area, String(p.desired_area));
+      if (p.floor_plan)         patch.floor_plan         = String(p.floor_plan);  // 間取りは上書き（追記しない）
+      if (p.rent_min)           patch.rent_min           = Number(p.rent_min);
+      if (p.rent_max)           patch.rent_max           = Number(p.rent_max);
+      if (p.walk_minutes)       patch.walk_minutes       = Number(p.walk_minutes);
+      if (p.move_in_time)       patch.move_in_time       = String(p.move_in_time);
+      if (p.building_age)       patch.building_age       = Number(p.building_age);
+      if (p.floor_area_min)     patch.floor_area_min     = Number(p.floor_area_min);
+      if (p.initial_cost_limit) patch.initial_cost_limit = Number(p.initial_cost_limit);
+      if (p.preferences)        patch.preferences        = appendStr(c.preferences, String(p.preferences));
+      if (p.ng_points)          patch.ng_points          = appendStr(c.ng_points, String(p.ng_points));
+      if (p.other_requests)     patch.other_requests     = appendStr(c.other_requests, String(p.other_requests));
+
+      // 変更項目がない場合はスキップ
+      if (Object.keys(patch).length <= 1) return;
+
+      // 直接DBに保存（モーダル経由なし）
+      const saveRes = await fetch("/api/property-customers", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!saveRes.ok) return;
+      const updated = await saveRes.json() as Customer;
+      setCustomers((prev) => prev.map((x) => x.id === c.id ? { ...x, ...updated } : x));
+
+      // raw エントリを「反映済み」ログに変換（削除しない）
+      const logified = c.additional_conditions.split("\n").map(line => {
+        const pl = parseConditionLog(line);
+        return pl.isLog ? line : `【${formatLogDate()}反映済み】${pl.content}`;
+      }).filter(Boolean).join("\n");
+      await fetch("/api/property-customers", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: c.id, additional_conditions: logified || null }),
+      });
+      setCustomers((prev) => prev.map((x) => x.id === c.id ? { ...x, additional_conditions: logified || null } : x));
+
+      // 紐付き顧客はAI要約を自動再生成
+      if (c.is_linked) void generateSummary({ ...c, ...updated } as Customer);
     } finally {
       setReflectLoading(null);
     }
