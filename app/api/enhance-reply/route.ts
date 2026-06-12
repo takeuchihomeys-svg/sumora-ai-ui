@@ -129,12 +129,13 @@ export async function POST(req: NextRequest) {
   const apiKey = process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "");
   if (!apiKey) return NextResponse.json({ ok: false, error: "ANTHROPIC_API_KEY not set" }, { status: 500 });
 
-  const { currentDraft, conversationState, customerName, recentMessages, customerConditions } = await req.json() as {
+  const { currentDraft, conversationState, customerName, recentMessages, customerConditions, customerSummary } = await req.json() as {
     currentDraft: string;
     conversationState?: string;
     customerName?: string;
     recentMessages?: Array<{ sender: string; text: string }>;
     customerConditions?: string;
+    customerSummary?: string;
   };
 
   if (!currentDraft?.trim()) {
@@ -160,12 +161,13 @@ export async function POST(req: NextRequest) {
 
   const nameNote = customerName ? `お客様名：${customerName}さん` : "";
   const conditionsNote = customerConditions ? `\n【お客様の希望条件】\n${customerConditions}` : "";
+  const summaryNote = customerSummary ? `\n【このお客さんの人物像・特徴（AI要約）— 文体・トーン・アプローチに必ず反映すること】\n${customerSummary}` : "";
   const stateNote = conversationState ? `現在の営業フェーズ：${conversationState}` : "";
 
   const system = `${BASE_SYSTEM}${knowledge}${examples}`;
 
   const userPrompt = `
-${nameNote}${conditionsNote}
+${nameNote}${conditionsNote}${summaryNote}
 ${stateNote}
 
 【直近の会話】

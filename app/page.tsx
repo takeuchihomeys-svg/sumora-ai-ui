@@ -1168,6 +1168,7 @@ export default function Home() {
           currentDraft: replyDraft,
           conversationState: selectedConversation.status,
           customerConditions: enhanceConditions,
+          customerSummary: linkedCustomerForEnhance?.ai_summary ?? undefined,
           customerName: selectedConversation.customerName,
           recentMessages: msgs.slice(-15).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined })),
         }),
