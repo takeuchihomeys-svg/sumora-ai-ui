@@ -274,6 +274,7 @@ export default function Home() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [replyDraft, setReplyDraft] = useState("");
+  const [aiDraftExpanded, setAiDraftExpanded] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [sending, setSending] = useState(false);
@@ -459,7 +460,16 @@ export default function Home() {
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "conversations" },
-        () => {
+        (payload) => {
+          const upd = payload.new as SupabaseConversationRow | null;
+          // ai_draft が payload に含まれていればローカルStateを即時更新（バナー遅延ゼロに）
+          if (upd?.id && upd.ai_draft !== undefined) {
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id === String(upd.id) ? { ...c, aiDraft: upd.ai_draft || null } : c
+              )
+            );
+          }
           fetchConversationsAndMessages(true);
         }
       )
@@ -2629,25 +2639,41 @@ export default function Home() {
 
             {/* AIドラフト提案バナー */}
             {selectedConversation.aiDraft && !replyDraft && selectedConversation.lastSender === "customer" && (
-              <div className="mx-1 mb-1 flex items-center gap-2 rounded-2xl border border-blue-200 bg-blue-50 px-3 py-2">
-                <span className="text-[10px] font-bold text-blue-500 shrink-0">✨ AI返信案</span>
-                <p className="flex-1 truncate text-[11px] text-[#444]">{selectedConversation.aiDraft}</p>
-                <button
-                  onClick={() => {
-                    setReplyDraft(selectedConversation.aiDraft!);
-                    setConversations((prev) => prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null } : c));
-                    supabase.from("conversations").update({ ai_draft: null }).eq("id", selectedConversation.id).then(() => {});
-                    textareaRef.current?.focus();
-                  }}
-                  className="shrink-0 rounded-xl bg-blue-500 px-2.5 py-1 text-[11px] font-bold text-white active:bg-blue-600"
-                >
-                  使う
-                </button>
-                <button
-                  onClick={() => setConversations((prev) => prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null } : c))}
-                  className="shrink-0 text-[10px] text-[#aaa] active:text-[#555]"
-                >
-                  ✕
+              <div className="mx-1 mb-1 rounded-2xl border border-blue-200 bg-blue-50 px-3 py-2">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[10px] font-bold text-blue-500 shrink-0">✨ AI返信案</span>
+                  <div className="flex-1" />
+                  <button
+                    onClick={() => {
+                      aiDraftRef.current = selectedConversation.aiDraft!; // ② 送信時に学習データとして記録
+                      setReplyDraft(selectedConversation.aiDraft!);
+                      setAiDraftExpanded(false);
+                      setConversations((prev) => prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null } : c));
+                      supabase.from("conversations").update({ ai_draft: null }).eq("id", selectedConversation.id).then(() => {});
+                      textareaRef.current?.focus();
+                    }}
+                    className="shrink-0 rounded-xl bg-blue-500 px-2.5 py-1 text-[11px] font-bold text-white active:bg-blue-600"
+                  >
+                    使う
+                  </button>
+                  <button
+                    onClick={() => {
+                      setAiDraftExpanded(false);
+                      setConversations((prev) => prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null } : c));
+                    }}
+                    className="shrink-0 text-[10px] text-[#aaa] active:text-[#555]"
+                  >
+                    ✕
+                  </button>
+                </div>
+                {/* ④ タップで全文展開 */}
+                <button className="w-full text-left" onClick={() => setAiDraftExpanded((v) => !v)}>
+                  <p className={`text-[11px] text-[#444] leading-relaxed ${aiDraftExpanded ? "whitespace-pre-wrap break-words" : "line-clamp-2"}`}>
+                    {selectedConversation.aiDraft}
+                  </p>
+                  {!aiDraftExpanded && (
+                    <p className="mt-0.5 text-[9px] text-blue-300">▼ 全文を見る</p>
+                  )}
                 </button>
               </div>
             )}

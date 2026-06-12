@@ -809,150 +809,176 @@ export default function CustomersPage() {
                   </div>
                 </button>
 
-                {/* ── 物件条件 ── */}
-                <div className="border-t border-[#f0f2f5] px-4 py-2.5">
-                  {/* 元の条件 */}
-                  {(c.desired_area || c.floor_plan || c.floor_area_min || c.rent_min || c.rent_max || c.walk_minutes || c.move_in_time || c.building_age || c.initial_cost_limit || c.preferences || c.ng_points) ? (
-                    <>
-                      {condLines.length > 0 && (
-                        <p className="text-[9px] font-bold text-[#8696a0] mb-1 tracking-wide">元の条件</p>
-                      )}
-                      <div className="flex flex-wrap gap-1.5">
-                        {c.desired_area && <Tag label="エリア" value={c.desired_area} />}
-                        {c.floor_plan   && <Tag label="間取り" value={c.floor_plan} />}
-                        {c.floor_area_min && <Tag label="広さ" value={`${c.floor_area_min}㎡以上`} />}
-                        {(c.rent_min || c.rent_max) && (
-                          <Tag label="家賃" value={`${c.rent_min ? Math.floor(c.rent_min/10000)+"万〜" : "〜"}${c.rent_max ? Math.floor(c.rent_max/10000)+"万" : ""}`} />
-                        )}
-                        {c.walk_minutes && <Tag label="徒歩" value={`${c.walk_minutes}分`} />}
-                        {c.move_in_time && <Tag label="入居" value={c.move_in_time} />}
-                        {c.building_age && <Tag label="築年" value={`${c.building_age}年`} />}
-                        {c.initial_cost_limit && <Tag label="初期" value={`${Math.floor(c.initial_cost_limit/10000)}万以内`} />}
-                      </div>
-                      {(c.preferences || c.ng_points) && (
-                        <div className="mt-1.5 space-y-0.5">
-                          {c.preferences && (
-                            <p className="text-[11px] text-[#555]">
-                              <span className="font-semibold text-[#8696a0]">希望　</span>{c.preferences}
-                            </p>
-                          )}
-                          {c.ng_points && (
-                            <p className="text-[11px] text-[#555]">
-                              <span className="font-semibold text-[#8696a0]">NG　　</span>{c.ng_points}
-                            </p>
-                          )}
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    condLines.length === 0 && <p className="text-[11px] text-[#bbb]">条件未入力</p>
-                  )}
-
-                  {/* 追加・変更履歴 */}
-                  {condLines.length > 0 && (() => {
-                    const isExpanded = expandedCondIds.has(c.id);
-                    const MAX = 3;
-                    const displayed = condLines.length > MAX && !isExpanded
-                      ? condLines.slice(-MAX)
-                      : condLines;
-                    const hiddenCount = condLines.length - MAX;
-                    return (
-                      <div className="mt-2 space-y-1.5">
-                        <p className="text-[9px] font-bold text-[#8696a0] tracking-wide">追加・変更履歴</p>
-                        {condLines.length > MAX && !isExpanded && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setExpandedCondIds(prev => { const s = new Set(prev); s.add(c.id); return s; }); }}
-                            className="w-full text-center text-[10px] text-blue-500 font-semibold py-1 active:opacity-60"
-                          >
-                            ▲ 過去{hiddenCount}件を見る
-                          </button>
-                        )}
-                        {displayed.map((entry, i) =>
-                          entry.isLog ? (
-                            entry.isReflected ? (
-                              // 反映済みログ（緑）
-                              <div key={i} className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2">
-                                <div className="flex items-center justify-between mb-1">
-                                  <span className="text-[10px] font-bold text-emerald-600">✅ {entry.date} 反映済み</span>
-                                </div>
-                                <p className="text-[11px] text-emerald-800 leading-relaxed">{entry.content}</p>
-                              </div>
-                            ) : (
-                              // 追加ログ（青）
-                              <div key={i} className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
-                                <div className="flex items-center justify-between mb-1">
-                                  <span className="text-[10px] font-bold text-blue-600">📌 {entry.date} 追加</span>
-                                </div>
-                                <p className="text-[11px] text-blue-800 leading-relaxed">{entry.content}</p>
-                              </div>
-                            )
-                          ) : (
-                            // 新着要望（琥珀）
-                            <div key={i} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
-                              <div className="flex items-center justify-between mb-1.5">
-                                <span className="text-[10px] font-bold text-amber-700">新着要望</span>
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); handleReflect(c); }}
-                                    disabled={reflectLoading === c.id}
-                                    className="rounded-lg bg-amber-600 px-2.5 py-1 text-[10px] font-bold text-white active:opacity-70 disabled:opacity-50"
-                                  >
-                                    {reflectLoading === c.id ? "解析中…" : "条件に反映する"}
-                                  </button>
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); clearAdditional(c.id); }}
-                                    className="text-[9px] text-amber-400 active:opacity-60"
-                                  >
-                                    クリア
-                                  </button>
-                                </div>
-                              </div>
-                              <p className="text-[11px] text-amber-800 leading-relaxed">{entry.content}</p>
-                            </div>
-                          )
-                        )}
-                        {condLines.length > MAX && isExpanded && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setExpandedCondIds(prev => { const s = new Set(prev); s.delete(c.id); return s; }); }}
-                            className="w-full text-center text-[10px] text-[#8696a0] font-semibold py-1 active:opacity-60"
-                          >
-                            ▼ 閉じる
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })()}
-                </div>
-
-                {/* ── AI要約 ── */}
-                {summaries[c.id] && (
-                  <div className="border-t border-purple-100" style={{ background: "linear-gradient(to bottom, #faf5ff, #fefeff)" }}>
-                    <button
-                      className="flex w-full items-center justify-between px-4 py-2 active:opacity-70"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setExpandedSummaryIds((prev) => {
-                          const s = new Set(prev);
-                          s.has(c.id) ? s.delete(c.id) : s.add(c.id);
-                          return s;
-                        });
-                      }}
-                    >
-                      <div className="flex items-center gap-1.5">
-                        <p className="text-[10px] font-bold text-purple-400 tracking-wide">✨ AI要約（LINE参考用）</p>
-                        {c.ai_summary_at && <span className="text-[9px] text-purple-300">{relTime(c.ai_summary_at)}</span>}
-                      </div>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#c084fc" strokeWidth="2.5" strokeLinecap="round"
-                        className={`transition-transform duration-200 ${expandedSummaryIds.has(c.id) ? "rotate-180" : ""}`}>
-                        <polyline points="6 9 12 15 18 9" />
-                      </svg>
-                    </button>
-                    {expandedSummaryIds.has(c.id) && (
-                      <div className="px-4 pb-3">
-                        <p className="text-[12px] text-[#333] whitespace-pre-line leading-relaxed">{summaries[c.id]}</p>
-                      </div>
+                {/* ── 物件条件 / 申込以降情報 ── */}
+                {isApplying(c.status) ? (
+                  /* 申込以降：AIサマリー・社内メモ・担当者を表示 */
+                  <div className="border-t border-[#f0f2f5] px-4 py-2.5 space-y-1.5">
+                    {c.ai_summary ? (
+                      <p className="text-[11px] text-[#555] leading-relaxed">
+                        <span className="font-semibold text-[#8696a0]">AI分析　</span>{c.ai_summary}
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-[#bbb]">AIサマリーなし</p>
+                    )}
+                    {c.property_memo && (
+                      <p className="text-[11px] text-[#555]">
+                        <span className="font-semibold text-[#8696a0]">社内メモ　</span>{c.property_memo}
+                      </p>
+                    )}
+                    {c.assignee && (
+                      <p className="text-[11px] text-[#555]">
+                        <span className="font-semibold text-[#8696a0]">担当者　　</span>{c.assignee}
+                      </p>
                     )}
                   </div>
+                ) : (
+                  <>
+                    {/* 物件探し中：条件チップ */}
+                    <div className="border-t border-[#f0f2f5] px-4 py-2.5">
+                      {/* 元の条件 */}
+                      {(c.desired_area || c.floor_plan || c.floor_area_min || c.rent_min || c.rent_max || c.walk_minutes || c.move_in_time || c.building_age || c.initial_cost_limit || c.preferences || c.ng_points) ? (
+                        <>
+                          {condLines.length > 0 && (
+                            <p className="text-[9px] font-bold text-[#8696a0] mb-1 tracking-wide">元の条件</p>
+                          )}
+                          <div className="flex flex-wrap gap-1.5">
+                            {c.desired_area && <Tag label="エリア" value={c.desired_area} />}
+                            {c.floor_plan   && <Tag label="間取り" value={c.floor_plan} />}
+                            {c.floor_area_min && <Tag label="広さ" value={`${c.floor_area_min}㎡以上`} />}
+                            {(c.rent_min || c.rent_max) && (
+                              <Tag label="家賃" value={`${c.rent_min ? Math.floor(c.rent_min/10000)+"万〜" : "〜"}${c.rent_max ? Math.floor(c.rent_max/10000)+"万" : ""}`} />
+                            )}
+                            {c.walk_minutes && <Tag label="徒歩" value={`${c.walk_minutes}分`} />}
+                            {c.move_in_time && <Tag label="入居" value={c.move_in_time} />}
+                            {c.building_age && <Tag label="築年" value={`${c.building_age}年`} />}
+                            {c.initial_cost_limit && <Tag label="初期" value={`${Math.floor(c.initial_cost_limit/10000)}万以内`} />}
+                          </div>
+                          {(c.preferences || c.ng_points) && (
+                            <div className="mt-1.5 space-y-0.5">
+                              {c.preferences && (
+                                <p className="text-[11px] text-[#555]">
+                                  <span className="font-semibold text-[#8696a0]">希望　</span>{c.preferences}
+                                </p>
+                              )}
+                              {c.ng_points && (
+                                <p className="text-[11px] text-[#555]">
+                                  <span className="font-semibold text-[#8696a0]">NG　　</span>{c.ng_points}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        condLines.length === 0 && <p className="text-[11px] text-[#bbb]">条件未入力</p>
+                      )}
+
+                      {/* 追加・変更履歴 */}
+                      {condLines.length > 0 && (() => {
+                        const isExpanded = expandedCondIds.has(c.id);
+                        const MAX = 3;
+                        const displayed = condLines.length > MAX && !isExpanded
+                          ? condLines.slice(-MAX)
+                          : condLines;
+                        const hiddenCount = condLines.length - MAX;
+                        return (
+                          <div className="mt-2 space-y-1.5">
+                            <p className="text-[9px] font-bold text-[#8696a0] tracking-wide">追加・変更履歴</p>
+                            {condLines.length > MAX && !isExpanded && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setExpandedCondIds(prev => { const s = new Set(prev); s.add(c.id); return s; }); }}
+                                className="w-full text-center text-[10px] text-blue-500 font-semibold py-1 active:opacity-60"
+                              >
+                                ▲ 過去{hiddenCount}件を見る
+                              </button>
+                            )}
+                            {displayed.map((entry, i) =>
+                              entry.isLog ? (
+                                entry.isReflected ? (
+                                  // 反映済みログ（緑）
+                                  <div key={i} className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2">
+                                    <div className="flex items-center justify-between mb-1">
+                                      <span className="text-[10px] font-bold text-emerald-600">✅ {entry.date} 反映済み</span>
+                                    </div>
+                                    <p className="text-[11px] text-emerald-800 leading-relaxed">{entry.content}</p>
+                                  </div>
+                                ) : (
+                                  // 追加ログ（青）
+                                  <div key={i} className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
+                                    <div className="flex items-center justify-between mb-1">
+                                      <span className="text-[10px] font-bold text-blue-600">📌 {entry.date} 追加</span>
+                                    </div>
+                                    <p className="text-[11px] text-blue-800 leading-relaxed">{entry.content}</p>
+                                  </div>
+                                )
+                              ) : (
+                                // 新着要望（琥珀）
+                                <div key={i} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+                                  <div className="flex items-center justify-between mb-1.5">
+                                    <span className="text-[10px] font-bold text-amber-700">新着要望</span>
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); handleReflect(c); }}
+                                        disabled={reflectLoading === c.id}
+                                        className="rounded-lg bg-amber-600 px-2.5 py-1 text-[10px] font-bold text-white active:opacity-70 disabled:opacity-50"
+                                      >
+                                        {reflectLoading === c.id ? "解析中…" : "条件に反映する"}
+                                      </button>
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); clearAdditional(c.id); }}
+                                        className="text-[9px] text-amber-400 active:opacity-60"
+                                      >
+                                        クリア
+                                      </button>
+                                    </div>
+                                  </div>
+                                  <p className="text-[11px] text-amber-800 leading-relaxed">{entry.content}</p>
+                                </div>
+                              )
+                            )}
+                            {condLines.length > MAX && isExpanded && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setExpandedCondIds(prev => { const s = new Set(prev); s.delete(c.id); return s; }); }}
+                                className="w-full text-center text-[10px] text-[#8696a0] font-semibold py-1 active:opacity-60"
+                              >
+                                ▼ 閉じる
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    {/* ── AI要約 ── */}
+                    {summaries[c.id] && (
+                      <div className="border-t border-purple-100" style={{ background: "linear-gradient(to bottom, #faf5ff, #fefeff)" }}>
+                        <button
+                          className="flex w-full items-center justify-between px-4 py-2 active:opacity-70"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setExpandedSummaryIds((prev) => {
+                              const s = new Set(prev);
+                              s.has(c.id) ? s.delete(c.id) : s.add(c.id);
+                              return s;
+                            });
+                          }}
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-[10px] font-bold text-purple-400 tracking-wide">✨ AI要約（LINE参考用）</p>
+                            {c.ai_summary_at && <span className="text-[9px] text-purple-300">{relTime(c.ai_summary_at)}</span>}
+                          </div>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#c084fc" strokeWidth="2.5" strokeLinecap="round"
+                            className={`transition-transform duration-200 ${expandedSummaryIds.has(c.id) ? "rotate-180" : ""}`}>
+                            <polyline points="6 9 12 15 18 9" />
+                          </svg>
+                        </button>
+                        {expandedSummaryIds.has(c.id) && (
+                          <div className="px-4 pb-3">
+                            <p className="text-[12px] text-[#333] whitespace-pre-line leading-relaxed">{summaries[c.id]}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
                 )}
 
                 {/* ── アクション行 ── */}
