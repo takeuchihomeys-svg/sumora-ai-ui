@@ -25,6 +25,7 @@ interface AixModalProps {
   linkedCustomer?: LinkedCustomer;
   onClose: () => void;
   onSend: (text: string, imageUrl?: string) => Promise<void>;
+  onAfterSend?: () => void;
 }
 
 const CONFIG: Record<
@@ -92,6 +93,7 @@ export default function AixModal({
   linkedCustomer,
   onClose,
   onSend,
+  onAfterSend,
 }: AixModalProps) {
   const config = CONFIG[actionType];
 
@@ -248,6 +250,7 @@ export default function AixModal({
         }),
       }).catch(() => {});
 
+      onAfterSend?.();
       onClose();
     } catch {
       setError("送信に失敗しました");

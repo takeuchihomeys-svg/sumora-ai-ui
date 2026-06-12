@@ -3165,6 +3165,20 @@ export default function Home() {
             setAixInitialFile(null);
           }}
           onSend={sendMessageText}
+          onAfterSend={
+            aixModalType === "property_check_result"
+              ? () => {
+                  const task = (activeTasks[selectedConversation.id] ?? []).find((t) => t.task_type === "property_check");
+                  if (task) {
+                    fetch("/api/line-tasks/complete", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ id: task.id }),
+                    }).catch(() => {});
+                  }
+                }
+              : undefined
+          }
         />
       ) : null}
 
