@@ -1,0 +1,84 @@
+import { NextRequest, NextResponse } from "next/server";
+import { supabase } from "@/app/lib/supabase";
+
+const TASK_LABEL: Record<string, string> = {
+  property_check: "物件確認",
+  property_send: "物件出し",
+};
+
+const TASK_EMOJI: Record<string, string> = {
+  property_check: "🔍",
+  property_send: "🏠",
+};
+
+async function sendGroupMessage(text: string): Promise<void> {
+  let targetId = process.env.LINE_STAFF_GROUP_ID ?? null;
+  if (!targetId) {
+    const { data: grpRow } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").single();
+    targetId = grpRow?.value ?? null;
+  }
+  if (!targetId) return;
+  const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN;
+  if (!token) return;
+
+  await fetch("https://api.line.me/v2/bot/message/push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ to: targetId, messages: [{ type: "text", text }] }),
+  });
+}
+
+// GET: pending タスク一覧取得
+export async function GET() {
+  const { data, error } = await supabase
+    .from("line_tasks")
+    .select("id, conversation_id, task_type, status, customer_name, created_at")
+    .eq("status", "pending");
+  if (error) return NextResponse.json({ tasks: [] });
+  return NextResponse.json({ tasks: data ?? [] });
+}
+
+// POST: タスク作成 + 売上番長グループへアナウンス
+export async function POST(req: NextRequest) {
+  const body = await req.json() as {
+    conversation_id: string;
+    task_type: "property_check" | "property_send";
+    customer_name: string;
+  };
+
+  const { conversation_id, task_type, customer_name } = body;
+  if (!conversation_id || !task_type) {
+    return NextResponse.json({ ok: false, error: "missing fields" }, { status: 400 });
+  }
+
+  // 同じ会話・タイプで既にpendingなら重複作成しない
+  const { data: existing } = await supabase
+    .from("line_tasks")
+    .select("id, created_at")
+    .eq("conversation_id", conversation_id)
+    .eq("task_type", task_type)
+    .eq("status", "pending")
+    .single();
+
+  if (existing) {
+    return NextResponse.json({ ok: true, id: existing.id, created_at: existing.created_at, already_exists: true });
+  }
+
+  const { data: task, error } = await supabase
+    .from("line_tasks")
+    .insert({ conversation_id, task_type, customer_name, status: "pending" })
+    .select("id, created_at")
+    .single();
+
+  if (error || !task) {
+    return NextResponse.json({ ok: false, error: error?.message }, { status: 500 });
+  }
+
+  const label = TASK_LABEL[task_type] ?? task_type;
+  const emoji = TASK_EMOJI[task_type] ?? "📋";
+  const text = `${emoji}【${label}依頼】\n${customer_name}さんの${label}を開始しました\n担当スタッフ: 対応よろしくお願いします！`;
+
+  sendGroupMessage(text).catch(console.error);
+
+  return NextResponse.json({ ok: true, id: task.id, created_at: task.created_at });
+}

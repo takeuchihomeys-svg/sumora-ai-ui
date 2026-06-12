@@ -322,6 +322,7 @@ export default function Home() {
   const [memoInput, setMemoInput] = useState("");
   const [viewingMemoConvId, setViewingMemoConvId] = useState<string | null>(null);
   const [convMenuConvId, setConvMenuConvId] = useState<string | null>(null);
+  const [activeTasks, setActiveTasks] = useState<Record<string, { id: string; task_type: string; created_at: string; customer_name: string }>>({});
   const [accountChangeConvId, setAccountChangeConvId] = useState<string | null>(null);
   const [assignees, setAssignees] = useState<Record<string, string>>({});
   const [assigneeModalConvId, setAssigneeModalConvId] = useState<string | null>(null);
@@ -422,6 +423,18 @@ export default function Home() {
       .catch(() => {});
 
     fetchConversationsAndMessages();
+
+    // アクティブなタスク一覧を取得
+    fetch("/api/line-tasks")
+      .then((r) => r.ok ? r.json() : { tasks: [] })
+      .then((d: { tasks: Array<{ id: string; conversation_id: string; task_type: string; created_at: string; customer_name: string }> }) => {
+        const map: Record<string, { id: string; task_type: string; created_at: string; customer_name: string }> = {};
+        for (const t of d.tasks ?? []) {
+          map[t.conversation_id] = { id: t.id, task_type: t.task_type, created_at: t.created_at, customer_name: t.customer_name };
+        }
+        setActiveTasks(map);
+      })
+      .catch(() => {});
 
     // Supabase real-time: 新しいメッセージ・会話をリアルタイム反映
     const channel = supabase
@@ -1301,6 +1314,24 @@ export default function Home() {
     if (convLongPressTimerRef.current) clearTimeout(convLongPressTimerRef.current);
   };
 
+  const createLineTask = async (taskType: "property_check" | "property_send") => {
+    const conv = conversations.find((c) => c.id === convMenuConvId);
+    if (!conv) return;
+    setConvMenuConvId(null);
+    const res = await fetch("/api/line-tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conversation_id: conv.id, task_type: taskType, customer_name: conv.customerName }),
+    });
+    const data = await res.json() as { ok: boolean; id?: string; created_at?: string };
+    if (data.ok && data.id && data.created_at) {
+      setActiveTasks((prev) => ({
+        ...prev,
+        [conv.id]: { id: data.id!, task_type: taskType, created_at: data.created_at!, customer_name: conv.customerName },
+      }));
+    }
+  };
+
   const sendReply = () => {
     if (!selectedConversation.id) return;
     if (!replyDraft.trim() && selectedImageFiles.length === 0) return;
@@ -1509,6 +1540,27 @@ export default function Home() {
             }
           })
           .catch(() => {});
+      }
+
+      // タスクの自動完了チェック（スタッフ2通送信で完了）
+      const convIdForTask = selectedConversation.id;
+      const pendingTask = activeTasks[convIdForTask];
+      if (pendingTask) {
+        const staffMsgsAfterTask = selectedConversation.messages.filter(
+          (m) => m.sender === "staff" && (m.rawCreatedAt ?? "") >= pendingTask.created_at
+        ).length;
+        // +1 for the message just sent
+        if (staffMsgsAfterTask + 1 >= 2) {
+          fetch("/api/line-tasks/complete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: pendingTask.id }),
+          })
+            .then(() => {
+              setActiveTasks((prev) => { const next = { ...prev }; delete next[convIdForTask]; return next; });
+            })
+            .catch(() => {});
+        }
       }
 
       // 送信完了後に1.5秒後フェッチ: 送信中に届いたお客様メッセージを確実に反映
@@ -2047,6 +2099,11 @@ export default function Home() {
                         )}
                         {hotConvIds.has(conversation.id) && (
                           <span className="shrink-0 leading-none text-sm">🔥</span>
+                        )}
+                        {activeTasks[conversation.id] && (
+                          <span className="shrink-0 rounded-full bg-purple-100 px-1.5 py-0.5 text-[9px] font-bold text-purple-700">
+                            {activeTasks[conversation.id].task_type === "property_check" ? "🔍確認中" : "🏠出し中"}
+                          </span>
                         )}
                       </div>
 
@@ -2642,6 +2699,32 @@ export default function Home() {
                     {hotConvIds.has(convMenuConvId ?? "") ? "🔥を外す" : "🔥あついお客さんにする"}
                   </div>
                   <div className="text-[11px] text-[#8696a0]">優先返信リストに追加</div>
+                </div>
+              </button>
+            </div>
+            <div className="border-t border-[#f0f2f5] grid grid-cols-2">
+              <button
+                onClick={() => createLineTask("property_check")}
+                className="flex flex-col items-center gap-1.5 px-2 py-4 active:bg-[#f0f2f5] border-r border-[#f0f2f5]"
+              >
+                <span className={`flex h-10 w-10 items-center justify-center rounded-full text-[20px] leading-none ${activeTasks[convMenuConvId ?? ""]?.task_type === "property_check" ? "bg-purple-200" : "bg-purple-500"}`}>
+                  🔍
+                </span>
+                <div className="text-[11px] font-semibold text-[#111b21]">物件確認</div>
+                <div className="text-[9px] text-[#8696a0] text-center leading-tight">
+                  {activeTasks[convMenuConvId ?? ""]?.task_type === "property_check" ? "依頼中" : "依頼する"}
+                </div>
+              </button>
+              <button
+                onClick={() => createLineTask("property_send")}
+                className="flex flex-col items-center gap-1.5 px-2 py-4 active:bg-[#f0f2f5]"
+              >
+                <span className={`flex h-10 w-10 items-center justify-center rounded-full text-[20px] leading-none ${activeTasks[convMenuConvId ?? ""]?.task_type === "property_send" ? "bg-green-200" : "bg-green-500"}`}>
+                  🏠
+                </span>
+                <div className="text-[11px] font-semibold text-[#111b21]">物件出し</div>
+                <div className="text-[9px] text-[#8696a0] text-center leading-tight">
+                  {activeTasks[convMenuConvId ?? ""]?.task_type === "property_send" ? "依頼中" : "依頼する"}
                 </div>
               </button>
             </div>

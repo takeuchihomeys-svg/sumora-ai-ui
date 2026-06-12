@@ -401,7 +401,20 @@ CREATE EXTENSION IF NOT EXISTS vector;
 -- ai_reply_examples: 埋め込みベクトルカラム（OpenAI text-embedding-3-small 1536次元）
 ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS embedding vector(1536);
 CREATE INDEX IF NOT EXISTS idx_ai_reply_examples_embedding ON ai_reply_examples
-  USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)
+  USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+
+-- タスク管理テーブル（物件確認・物件出し依頼）
+CREATE TABLE IF NOT EXISTS line_tasks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id TEXT NOT NULL,
+  task_type TEXT NOT NULL CHECK (task_type IN ('property_check', 'property_send')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed')),
+  customer_name TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  completed_at TIMESTAMPTZ
+);
+ALTER TABLE line_tasks DISABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_line_tasks_conversation_status ON line_tasks(conversation_id, status)
 `.trim();
 
 export async function GET() {
