@@ -219,6 +219,10 @@ async function handleTextMessage(
       .eq("id", convId)
       .in("status", ["hearing", "first_reply"]);
   }
+
+  // タスク自動検知（物件確認・物件出し）
+  void autoDetectTask(db, convId, text);
+
   return true;
 }
 
@@ -562,6 +566,77 @@ async function notifyFormatReceived(
   if (!res.ok) {
     console.error("[notify] LINE push failed:", res.status, await res.text());
   }
+}
+
+// ── メッセージからタスクを自動検知・作成 ──────────────────────────────────
+const PROPERTY_CHECK_KEYWORDS = [
+  "物件確認", "初期費用確認", "初期費用を確認",
+  "内覧したい", "内覧させてほしい", "内覧お願い", "内覧を希望",
+];
+
+const PROPERTY_SEND_KEYWORDS = [
+  "物件送って", "物件を送", "物件探して", "物件を探",
+  "物件ありますか", "物件お願い", "物件出して", "物件を出して",
+  "物件ください", "物件紹介してほしい", "物件を紹介", "物件ピックアップ",
+];
+
+function detectTaskType(text: string): "property_check" | "property_send" | null {
+  if (PROPERTY_CHECK_KEYWORDS.some((k) => text.includes(k))) return "property_check";
+  // "確認してほしい" は物件・初期費用と組み合わさった場合のみ
+  if (text.includes("確認してほしい") && (text.includes("物件") || text.includes("初期費用"))) return "property_check";
+  if (PROPERTY_SEND_KEYWORDS.some((k) => text.includes(k))) return "property_send";
+  return null;
+}
+
+async function autoDetectTask(
+  db: ReturnType<typeof getDb>,
+  convId: string,
+  text: string,
+): Promise<void> {
+  const taskType = detectTaskType(text);
+  if (!taskType) return;
+
+  // 既にpending中なら重複作成しない
+  const { data: existing } = await db
+    .from("line_tasks")
+    .select("id")
+    .eq("conversation_id", convId)
+    .eq("task_type", taskType)
+    .eq("status", "pending")
+    .maybeSingle();
+  if (existing?.id) return;
+
+  // 顧客名を取得
+  const { data: conv } = await db
+    .from("conversations")
+    .select("customer_name")
+    .eq("id", convId)
+    .single();
+  const customerName = (conv?.customer_name as string | null) ?? "お客様";
+
+  // タスク作成
+  await db.from("line_tasks").insert({
+    conversation_id: convId,
+    task_type: taskType,
+    customer_name: customerName,
+    status: "pending",
+  });
+
+  // 売上番長グループへアナウンス
+  const { data: grpRow } = await db.from("hanbancyo_settings").select("value").eq("key", "group_id").single();
+  const groupId = grpRow?.value as string | undefined;
+  const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN;
+  if (!groupId || !token) return;
+
+  const label = taskType === "property_check" ? "物件確認" : "物件出し";
+  const emoji = taskType === "property_check" ? "🔍" : "🏠";
+  const msgText = `${emoji}【${label}依頼 自動検知】\n${customerName}さんから「${label}」の依頼が届きました\n対応よろしくお願いします！`;
+
+  await fetch("https://api.line.me/v2/bot/message/push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ to: groupId, messages: [{ type: "text", text: msgText }] }),
+  }).catch(() => {});
 }
 
 async function notifyHanbancyoGroup(db: ReturnType<typeof getDb>, customerName: string) {
