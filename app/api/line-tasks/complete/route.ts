@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
     .update({ status: "completed", completed_at: new Date().toISOString() })
     .eq("id", id)
     .eq("status", "pending")
-    .select("task_type, customer_name")
+    .select("task_type, customer_name, conversation_id")
     .single();
 
   if (error || !task) {
@@ -44,6 +44,33 @@ export async function POST(req: NextRequest) {
   const text = `✅【${label} 完了】\n${task.customer_name as string}さんへ2通送信で自動完了しました`;
 
   sendGroupMessage(text).catch(console.error);
+
+  // 物件出し完了時：紐付き顧客の property_send_count を自動+1
+  if (task.task_type === "property_send") {
+    void (async () => {
+      try {
+        const { data: conv } = await supabase
+          .from("conversations")
+          .select("property_customer_id")
+          .eq("id", task.conversation_id as string)
+          .single();
+        if (!conv?.property_customer_id) return;
+
+        const { data: pc } = await supabase
+          .from("property_customers")
+          .select("property_send_count")
+          .eq("id", conv.property_customer_id as string)
+          .single();
+        if (!pc) return;
+
+        const current = (pc.property_send_count as number | null) ?? 0;
+        await supabase
+          .from("property_customers")
+          .update({ property_send_count: current + 1, updated_at: new Date().toISOString() })
+          .eq("id", conv.property_customer_id as string);
+      } catch {}
+    })();
+  }
 
   return NextResponse.json({ ok: true });
 }

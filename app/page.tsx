@@ -563,8 +563,41 @@ export default function Home() {
       }
     }, 60 * 1000);
 
+    // line_tasks リアルタイム購読（自動検知タスクをUIに即時反映）
+    const taskChannel = supabase
+      .channel("realtime-line-tasks")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "line_tasks" },
+        (payload) => {
+          const t = payload.new as { id: string; conversation_id: string; task_type: string; created_at: string; customer_name: string; status: string };
+          if (t.status === "pending") {
+            setActiveTasks((prev) => ({
+              ...prev,
+              [t.conversation_id]: { id: t.id, task_type: t.task_type, created_at: t.created_at, customer_name: t.customer_name },
+            }));
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "line_tasks" },
+        (payload) => {
+          const t = payload.new as { id: string; conversation_id: string; status: string };
+          if (t.status === "completed") {
+            setActiveTasks((prev) => {
+              const next = { ...prev };
+              if (next[t.conversation_id]?.id === t.id) delete next[t.conversation_id];
+              return next;
+            });
+          }
+        }
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(channel);
+      supabase.removeChannel(taskChannel);
       clearInterval(calendarAlarm);
       clearInterval(pollInterval);
     };
