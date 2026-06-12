@@ -408,14 +408,16 @@ CREATE TABLE IF NOT EXISTS line_tasks (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   conversation_id TEXT NOT NULL,
   task_type TEXT NOT NULL CHECK (task_type IN ('property_check', 'property_send')),
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'cancelled')),
   customer_name TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   completed_at TIMESTAMPTZ
 );
 ALTER TABLE line_tasks DISABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_line_tasks_conversation_status ON line_tasks(conversation_id, status);
-ALTER PUBLICATION supabase_realtime ADD TABLE line_tasks
+ALTER PUBLICATION supabase_realtime ADD TABLE line_tasks;
+ALTER TABLE line_tasks DROP CONSTRAINT IF EXISTS line_tasks_status_check;
+ALTER TABLE line_tasks ADD CONSTRAINT line_tasks_status_check CHECK (status IN ('pending', 'completed', 'cancelled'))
 `.trim();
 
 export async function GET() {

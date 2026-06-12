@@ -45,7 +45,7 @@ export async function DELETE(req: NextRequest) {
 
   const { data: task, error } = await supabase
     .from("line_tasks")
-    .update({ status: "completed", completed_at: new Date().toISOString() })
+    .update({ status: "cancelled", completed_at: new Date().toISOString() })
     .eq("id", id)
     .eq("status", "pending")
     .select("task_type, customer_name")

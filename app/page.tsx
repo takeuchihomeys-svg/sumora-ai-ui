@@ -322,7 +322,7 @@ export default function Home() {
   const [memoInput, setMemoInput] = useState("");
   const [viewingMemoConvId, setViewingMemoConvId] = useState<string | null>(null);
   const [convMenuConvId, setConvMenuConvId] = useState<string | null>(null);
-  const [activeTasks, setActiveTasks] = useState<Record<string, { id: string; task_type: string; created_at: string; customer_name: string }>>({});
+  const [activeTasks, setActiveTasks] = useState<Record<string, Array<{ id: string; task_type: string; created_at: string; customer_name: string }>>>({});
   const [showKnowledgeModal, setShowKnowledgeModal] = useState(false);
   const [knowledgeRules, setKnowledgeRules] = useState<Array<{ id: string; content: string; conversation_state: string; created_at: string; title: string }>>([]);
   const [knowledgeLoading, setKnowledgeLoading] = useState(false);
@@ -432,9 +432,10 @@ export default function Home() {
       fetch("/api/line-tasks")
         .then((r) => r.ok ? r.json() : { tasks: [] })
         .then((d: { tasks: Array<{ id: string; conversation_id: string; task_type: string; created_at: string; customer_name: string }> }) => {
-          const map: Record<string, { id: string; task_type: string; created_at: string; customer_name: string }> = {};
+          const map: Record<string, Array<{ id: string; task_type: string; created_at: string; customer_name: string }>> = {};
           for (const t of d.tasks ?? []) {
-            map[t.conversation_id] = { id: t.id, task_type: t.task_type, created_at: t.created_at, customer_name: t.customer_name };
+            if (!map[t.conversation_id]) map[t.conversation_id] = [];
+            map[t.conversation_id].push({ id: t.id, task_type: t.task_type, created_at: t.created_at, customer_name: t.customer_name });
           }
           setActiveTasks(map);
         })
@@ -579,10 +580,11 @@ export default function Home() {
         (payload) => {
           const t = payload.new as { id: string; conversation_id: string; task_type: string; created_at: string; customer_name: string; status: string };
           if (t.status === "pending") {
-            setActiveTasks((prev) => ({
-              ...prev,
-              [t.conversation_id]: { id: t.id, task_type: t.task_type, created_at: t.created_at, customer_name: t.customer_name },
-            }));
+            setActiveTasks((prev) => {
+              const existing = prev[t.conversation_id] ?? [];
+              if (existing.some((x) => x.id === t.id)) return prev;
+              return { ...prev, [t.conversation_id]: [...existing, { id: t.id, task_type: t.task_type, created_at: t.created_at, customer_name: t.customer_name }] };
+            });
           }
         }
       )
@@ -591,11 +593,13 @@ export default function Home() {
         { event: "UPDATE", schema: "public", table: "line_tasks" },
         (payload) => {
           const t = payload.new as { id: string; conversation_id: string; status: string };
-          if (t.status === "completed") {
+          if (t.status === "completed" || t.status === "cancelled") {
             setActiveTasks((prev) => {
-              const next = { ...prev };
-              if (next[t.conversation_id]?.id === t.id) delete next[t.conversation_id];
-              return next;
+              const filtered = (prev[t.conversation_id] ?? []).filter((x) => x.id !== t.id);
+              if (filtered.length === 0) {
+                const next = { ...prev }; delete next[t.conversation_id]; return next;
+              }
+              return { ...prev, [t.conversation_id]: filtered };
             });
           }
         }
@@ -1168,6 +1172,8 @@ export default function Home() {
       const msgs = selectedConversation.messages;
       const linkedCustomerForEnhance = linkedCustomerMap[selectedConversation.id];
       const enhanceConditions = linkedCustomerForEnhance?.conditions || memos[selectedConversation.id] || undefined;
+      const activeTasksForConv = activeTasks[selectedConversation.id] ?? [];
+      const activeTaskTypes = activeTasksForConv.map((t) => t.task_type);
       const res = await fetch("/api/enhance-reply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1178,6 +1184,7 @@ export default function Home() {
           customerSummary: linkedCustomerForEnhance?.ai_summary ?? undefined,
           customerName: selectedConversation.customerName,
           recentMessages: msgs.slice(-15).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined })),
+          activeTasks: activeTaskTypes.length > 0 ? activeTaskTypes : undefined,
         }),
       });
       const data = await res.json();
@@ -1369,25 +1376,30 @@ export default function Home() {
     });
     const data = await res.json() as { ok: boolean; id?: string; created_at?: string };
     if (data.ok && data.id && data.created_at) {
-      setActiveTasks((prev) => ({
-        ...prev,
-        [conv.id]: { id: data.id!, task_type: taskType, created_at: data.created_at!, customer_name: conv.customerName },
-      }));
+      setActiveTasks((prev) => {
+        const existing = prev[conv.id] ?? [];
+        if (existing.some((x) => x.task_type === taskType)) return prev;
+        return { ...prev, [conv.id]: [...existing, { id: data.id!, task_type: taskType, created_at: data.created_at!, customer_name: conv.customerName }] };
+      });
     }
   };
 
   const cancelLineTask = async (taskType: "property_check" | "property_send") => {
     const convId = convMenuConvId;
     if (!convId) return;
-    const task = activeTasks[convId];
-    if (!task || task.task_type !== taskType) return;
+    const task = (activeTasks[convId] ?? []).find((t) => t.task_type === taskType);
+    if (!task) return;
     setConvMenuConvId(null);
     await fetch("/api/line-tasks", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: task.id }),
     });
-    setActiveTasks((prev) => { const next = { ...prev }; delete next[convId]; return next; });
+    setActiveTasks((prev) => {
+      const filtered = (prev[convId] ?? []).filter((x) => x.id !== task.id);
+      if (filtered.length === 0) { const next = { ...prev }; delete next[convId]; return next; }
+      return { ...prev, [convId]: filtered };
+    });
   };
 
   const sendReply = () => {
@@ -1600,14 +1612,12 @@ export default function Home() {
           .catch(() => {});
       }
 
-      // タスクの自動完了チェック（スタッフ2通送信で完了）
+      // タスクの自動完了チェック（スタッフ2通送信でタスクごとに完了）
       const convIdForTask = selectedConversation.id;
-      const pendingTask = activeTasks[convIdForTask];
-      if (pendingTask) {
+      for (const pendingTask of activeTasks[convIdForTask] ?? []) {
         const staffMsgsAfterTask = selectedConversation.messages.filter(
           (m) => m.sender === "staff" && (m.rawCreatedAt ?? "") >= pendingTask.created_at
         ).length;
-        // +1 for the message just sent
         if (staffMsgsAfterTask + 1 >= 2) {
           fetch("/api/line-tasks/complete", {
             method: "POST",
@@ -1615,7 +1625,11 @@ export default function Home() {
             body: JSON.stringify({ id: pendingTask.id }),
           })
             .then(() => {
-              setActiveTasks((prev) => { const next = { ...prev }; delete next[convIdForTask]; return next; });
+              setActiveTasks((prev) => {
+                const filtered = (prev[convIdForTask] ?? []).filter((x) => x.id !== pendingTask.id);
+                if (filtered.length === 0) { const next = { ...prev }; delete next[convIdForTask]; return next; }
+                return { ...prev, [convIdForTask]: filtered };
+              });
             })
             .catch(() => {});
         }
@@ -2158,11 +2172,11 @@ export default function Home() {
                         {hotConvIds.has(conversation.id) && (
                           <span className="shrink-0 leading-none text-sm">🔥</span>
                         )}
-                        {activeTasks[conversation.id] && (
-                          <span className="shrink-0 rounded-full bg-purple-100 px-1.5 py-0.5 text-[9px] font-bold text-purple-700">
-                            {activeTasks[conversation.id].task_type === "property_check" ? "🔍確認中" : "🏠出し中"}
+                        {(activeTasks[conversation.id] ?? []).map((task) => (
+                          <span key={task.id} className="shrink-0 rounded-full bg-purple-100 px-1.5 py-0.5 text-[9px] font-bold text-purple-700">
+                            {task.task_type === "property_check" ? "🔍確認中" : "🏠出し中"}
                           </span>
-                        )}
+                        ))}
                       </div>
 
                       {/* 本文プレビュー: 薄色・右端に余白 */}
@@ -2762,7 +2776,7 @@ export default function Home() {
             </div>
             <div className="border-t border-[#f0f2f5] grid grid-cols-2">
               {(() => {
-                const isActive = activeTasks[convMenuConvId ?? ""]?.task_type === "property_check";
+                const isActive = (activeTasks[convMenuConvId ?? ""] ?? []).some((t) => t.task_type === "property_check");
                 return (
                   <button
                     onClick={() => isActive ? cancelLineTask("property_check") : createLineTask("property_check")}
@@ -2781,7 +2795,7 @@ export default function Home() {
                 );
               })()}
               {(() => {
-                const isActive = activeTasks[convMenuConvId ?? ""]?.task_type === "property_send";
+                const isActive = (activeTasks[convMenuConvId ?? ""] ?? []).some((t) => t.task_type === "property_send");
                 return (
                   <button
                     onClick={() => isActive ? cancelLineTask("property_send") : createLineTask("property_send")}
