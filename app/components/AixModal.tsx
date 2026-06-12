@@ -7,7 +7,8 @@ export type AixActionType =
   | "property_recommendation"
   | "viewing_invite"
   | "application_push"
-  | "estimate_sheet";
+  | "estimate_sheet"
+  | "property_check_result";
 
 interface LinkedCustomer {
   id: string;
@@ -72,6 +73,13 @@ const CONFIG: Record<
     imageLabel: "見積書画像を選択",
     description: "見積書の画像をAIが読み取り、初期費用の内訳をLINEで送ります。",
   },
+  property_check_result: {
+    title: "物件確認した",
+    emoji: "🔎",
+    requiresImage: false,
+    imageLabel: "物件・部屋の画像を選択（任意）",
+    description: "物件確認の結果をお客さんにLINEで報告します。",
+  },
 };
 
 
@@ -99,6 +107,8 @@ export default function AixModal({
   const [aiDraft, setAiDraft] = useState<string>("");
   const [parsedEstimate, setParsedEstimate] = useState<Record<string, string> | null>(null);
   const [previewExpanded, setPreviewExpanded] = useState(false);
+  // 物件確認した専用
+  const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const conditionFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -175,6 +185,10 @@ export default function AixModal({
           // 条件スクショなし: 物件資料のみで生成
           body.image_url = await uploadImage(imageFile);
         }
+      } else if (actionType === "property_check_result") {
+        if (!checkPattern) throw new Error("確認結果を選択してください");
+        body.check_pattern = checkPattern;
+        if (imageFile) body.image_url = await uploadImage(imageFile);
       } else if (config.requiresImage && imageFile) {
         body.image_url = await uploadImage(imageFile);
       }
@@ -206,6 +220,7 @@ export default function AixModal({
     viewing_invite: "viewing",
     application_push: "application",
     estimate_sheet: "estimate_request",
+    property_check_result: "proposing",
   };
 
   const handleSend = async () => {
@@ -241,9 +256,11 @@ export default function AixModal({
     }
   };
 
-  // 物件オススメで生成ボタンが押せるか（物件資料があればOK・条件スクショは任意）
+  // 生成ボタンが押せるか
   const canGenerate = actionType === "property_recommendation"
     ? !!imageFile
+    : actionType === "property_check_result"
+    ? !!checkPattern
     : !config.requiresImage || !!imageFile;
 
   return (
@@ -323,6 +340,69 @@ export default function AixModal({
                 )}
                 <input ref={fileInputRef} type="file" accept="image/*" onChange={onSelectImage} className="hidden" />
               </div>
+            </div>
+          ) : actionType === "property_check_result" ? (
+            /* 物件確認した: パターン選択 + 任意画像 */
+            <div className="mb-4 flex flex-col gap-3">
+              <div>
+                <p className="mb-2 text-xs font-bold text-[#54656f]">確認結果を選択</p>
+                <div className="flex flex-col gap-2">
+                  {([
+                    { key: "available",    label: "物件あった",         sub: "入居可能",                  color: "emerald" },
+                    { key: "alternative",  label: "別の部屋が募集してた", sub: "満室だが代替あり",          color: "blue"    },
+                    { key: "unavailable",  label: "物件なかった",        sub: "満室・空きなし（画像不要）", color: "orange"  },
+                  ] as const).map((p) => (
+                    <button
+                      key={p.key}
+                      onClick={() => { setCheckPattern(p.key); setPreview(""); }}
+                      className={`flex items-center gap-3 rounded-2xl border-2 px-4 py-3 text-left transition-all ${
+                        checkPattern === p.key
+                          ? p.color === "emerald" ? "border-emerald-400 bg-emerald-50"
+                          : p.color === "blue"    ? "border-blue-400 bg-blue-50"
+                          :                         "border-orange-400 bg-orange-50"
+                          : "border-[#e9edef] bg-[#f8f9fa]"
+                      }`}
+                    >
+                      <span className={`flex h-5 w-5 items-center justify-center rounded-full border-2 flex-shrink-0 ${
+                        checkPattern === p.key
+                          ? p.color === "emerald" ? "border-emerald-500 bg-emerald-500"
+                          : p.color === "blue"    ? "border-blue-500 bg-blue-500"
+                          :                         "border-orange-500 bg-orange-500"
+                          : "border-[#d1d7db]"
+                      }`}>
+                        {checkPattern === p.key && <span className="h-2 w-2 rounded-full bg-white" />}
+                      </span>
+                      <div>
+                        <div className="text-[13px] font-bold text-[#111b21]">{p.label}</div>
+                        <div className="text-[10px] text-[#8696a0]">{p.sub}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* 物件あった・別の部屋: 任意画像 */}
+              {(checkPattern === "available" || checkPattern === "alternative") && (
+                <div>
+                  <p className="mb-1 text-xs font-bold text-[#54656f]">
+                    物件・部屋の画像 <span className="font-normal text-[#90a4ae]">（任意）</span>
+                  </p>
+                  {imagePreview ? (
+                    <div className="relative overflow-hidden rounded-2xl border border-[#d1d7db]">
+                      <img src={imagePreview} alt="物件画像" className="max-h-36 w-full object-contain" />
+                      <button
+                        onClick={() => { setImageFile(null); setImagePreview(""); setPreview(""); if (fileInputRef.current) fileInputRef.current.value = ""; }}
+                        className="absolute right-2 top-2 rounded-full bg-black/50 px-3 py-1 text-xs text-white"
+                      >変更</button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#d1d7db] py-4 text-sm font-semibold text-[#90a4ae] hover:bg-[#f5f6f7]"
+                    >📷 画像を添付する（スキップ可）</button>
+                  )}
+                  <input ref={fileInputRef} type="file" accept="image/*" onChange={onSelectImage} className="hidden" />
+                </div>
+              )}
             </div>
           ) : config.requiresImage ? (
             /* その他の画像あきアクション */

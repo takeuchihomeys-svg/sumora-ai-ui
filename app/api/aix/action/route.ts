@@ -100,7 +100,7 @@ async function callClaudeVision(system: string, content: unknown[]): Promise<str
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, account, customer_name, image_url, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages } = body;
+    const { action, account, customer_name, image_url, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern } = body;
 
     // 直近の会話履歴テキスト（viewing_invite・application_push で使用）
     const recentHistory = Array.isArray(recent_messages) && recent_messages.length > 0
@@ -334,6 +334,41 @@ ${phraseText || "なし"}`;
 ${phraseText || "なし"}${examplesText}`;
 
       message_text = await callClaude(system, `${name}への申込後押しメッセージ。${extra_input ? `補足: ${extra_input}` : ""}${recentHistory}`);
+
+    // ── 🔎 物件確認した ──────────────────────────────────────────────
+    } else if (action === "property_check_result") {
+      const pattern = check_pattern as "available" | "alternative" | "unavailable";
+
+      const PATTERN_INSTRUCTION: Record<string, string> = {
+        available:   "物件を確認した結果「空室あり・入居可能」だったことをお客さんに報告してください。内見への誘導も自然に含めてください。",
+        alternative: "物件を確認した結果「満室だったが、同じマンションまたは近隣で別のお部屋が募集中」だったことを報告してください。別のお部屋への期待感をもたせて内見誘導で締めてください。",
+        unavailable: "物件を確認した結果「満室・空きなし」だったことをお客さんに丁重に報告してください。引き続き物件探しを続けることをお伝えして前向きな雰囲気で締めてください。",
+      };
+
+      const checkSystem = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
+物件確認の結果をお客さんに報告するLINEメッセージを1つだけ作成してください。
+
+【作成ルール】
+・「大変お待たせいたしました！！」で始める
+・画像（物件資料）が添付されている場合は物件名・間取りなどを読み取って言及する
+・感嘆符は「！！」（スモラスタイル）
+・LINEでそのまま送れる完成文のみ出力（解説不要）
+
+【絵文字ルール】
+▼ 使ってよい絵文字：😊 😌 🙇‍♀️ のみ
+▼ 絵文字は1〜2個まで`;
+
+      const instruction = PATTERN_INSTRUCTION[pattern] ?? PATTERN_INSTRUCTION.unavailable;
+
+      if (image_url) {
+        const content = [
+          { type: "text", text: `${name}への物件確認報告メッセージを作成してください。\n\n${instruction}` },
+          { type: "image", source: { type: "url", url: image_url } },
+        ];
+        message_text = await callClaudeVision(checkSystem, content);
+      } else {
+        message_text = await callClaude(checkSystem, `${name}への物件確認報告メッセージを作成してください。\n\n${instruction}`);
+      }
 
     } else {
       return NextResponse.json({ ok: false, error: `Unknown action: ${action}` }, { status: 400 });

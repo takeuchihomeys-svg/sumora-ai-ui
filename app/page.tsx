@@ -1799,6 +1799,11 @@ export default function Home() {
     aixFileInputRef.current?.click();
   };
 
+  const openAixDirect = (type: AixActionType) => {
+    setAixInitialFile(null);
+    setAixModalType(type);
+  };
+
   // 内覧・申込: ワンタップで生成→下書き反映→確認ダイアログ表示
   const triggerAixOneTap = async (action: "viewing_invite" | "application_push") => {
     if (!selectedConversation?.id) return;
@@ -3582,6 +3587,7 @@ export default function Home() {
             <div className="p-4 flex flex-col gap-3">
               {[
                 { icon: "🏠", label: "物件オススメ", sub: "おすすめ物件をAIが提案", action: () => { setShowAixMenu(false); openAixWithImagePicker("property_recommendation"); } },
+                { icon: "🔎", label: "物件確認した", sub: "確認結果を3パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); openAixDirect("property_check_result"); } },
                 { icon: "💰", label: "見積書送る", sub: "費用の見積書を作成", action: () => { setShowAixMenu(false); openAixWithImagePicker("estimate_sheet"); } },
                 { icon: "🔍", label: "内覧へ！", sub: "会話から最適な内覧訴求を生成→確認後送信", action: () => { setShowAixMenu(false); void triggerAixOneTap("viewing_invite"); } },
                 { icon: "✋", label: "申込へ！", sub: "会話から最適な申込訴求を生成→確認後送信", action: () => { setShowAixMenu(false); void triggerAixOneTap("application_push"); } },
