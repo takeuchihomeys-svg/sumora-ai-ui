@@ -378,6 +378,9 @@ export default function Home() {
   // manuallyReadAt を effect 内で最新値として読むための ref
   const manuallyReadAtRef = useRef<Record<string, string>>({});
   manuallyReadAtRef.current = manuallyReadAt; // レンダリングごとに最新値を反映
+  // memos を fetchConversationsAndMessages 内で最新値として読むための ref
+  const memosRef = useRef<Record<string, string>>({});
+  memosRef.current = memos; // レンダリングごとに最新値を反映
   // プリ生成中の conversation_id セット（重複リクエスト防止）
   const preGenInProgress = useRef<Set<string>>(new Set());
   const handleListScroll = () => {
@@ -935,7 +938,7 @@ export default function Home() {
         fetch("/api/generate-draft-bg", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ conversation_id: conv.id }),
+          body: JSON.stringify({ conversation_id: conv.id, memo: memosRef.current[conv.id] || "" }),
         })
           .then(() => { preGenInProgress.current.delete(conv.id); })
           .catch(() => { preGenInProgress.current.delete(conv.id); });

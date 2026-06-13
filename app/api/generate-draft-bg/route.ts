@@ -10,9 +10,23 @@ function getDb() {
 
 const SKIP_STATUSES = new Set(["applying", "screening", "contract", "closed_won"]);
 
+const STATUS_ALIAS: Record<string, string> = {
+  first_reply:             "hearing",
+  condition_hearing:       "hearing",
+  property_search:         "hearing",
+  property_recommendation: "proposing",
+  viewing:                 "proposing",
+  estimate_request:        "proposing",
+  availability_check:      "proposing",
+  application:             "applying",
+  screening:               "applying",
+  contract:                "applying",
+};
+
 export async function POST(req: NextRequest) {
-  const body = await req.json() as { conversation_id?: string };
+  const body = await req.json() as { conversation_id?: string; memo?: string };
   const convId = body.conversation_id;
+  const memo = body.memo || "";
   if (!convId) return NextResponse.json({ ok: false }, { status: 400 });
 
   after(async () => {
@@ -25,10 +39,9 @@ export async function POST(req: NextRequest) {
         .eq("id", convId)
         .single();
 
-      // Skip conditions
       if (!conv) return;
       if (conv.last_sender !== "customer") return;
-      if (conv.ai_draft) return; // already generated
+      if (conv.ai_draft) return;
       if (SKIP_STATUSES.has(conv.status as string)) return;
 
       const [{ data: msgs }, { data: pc }] = await Promise.all([
@@ -43,7 +56,12 @@ export async function POST(req: NextRequest) {
 
       const recentMsgs = ((msgs || []) as Array<{ sender: string; text: string }>).reverse();
 
-      // Build target message: unread customer messages (up to 3) after last staff reply
+      // ① first_reply変換：スタッフ返信ゼロ + hearing → "first_reply" として初回挨拶を生成
+      const hasStaffMsg = recentMsgs.some((m) => m.sender === "staff");
+      const normalizedStatus = STATUS_ALIAS[conv.status as string] ?? conv.status;
+      const effectiveState = !hasStaffMsg && normalizedStatus === "hearing" ? "first_reply" : (conv.status as string);
+
+      // 未返信のお客様メッセージを最大3件結合
       const lastStaffIdx = recentMsgs.map((m, i) => m.sender === "staff" ? i : -1).filter((i) => i >= 0).at(-1);
       const msgsAfterStaff = lastStaffIdx !== undefined ? recentMsgs.slice(lastStaffIdx + 1) : recentMsgs;
       const unreplied = msgsAfterStaff
@@ -55,13 +73,16 @@ export async function POST(req: NextRequest) {
 
       type PC = { customer_name?: string; desired_area?: string; floor_plan?: string; rent_min?: number; rent_max?: number; ai_summary?: string; preferences?: string; ng_points?: string } | null;
       const pcData = pc as PC;
-      const customerConditions = [
+
+      // ② DB条件 → なければフロントから渡されたメモをフォールバック
+      const dbConditions = [
         pcData?.desired_area && `エリア: ${pcData.desired_area}`,
         pcData?.floor_plan && `間取り: ${pcData.floor_plan}`,
         (pcData?.rent_min || pcData?.rent_max) && `家賃: ${pcData?.rent_min ? Math.floor(pcData.rent_min / 10000) + "万〜" : ""}${pcData?.rent_max ? Math.floor(pcData.rent_max / 10000) + "万" : ""}`,
         pcData?.preferences && `こだわり: ${pcData.preferences}`,
         pcData?.ng_points && `NG: ${pcData.ng_points}`,
       ].filter(Boolean).join(", ");
+      const customerConditions = dbConditions || memo;
 
       const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
         ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
@@ -71,7 +92,7 @@ export async function POST(req: NextRequest) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: targetMessage,
-          state: conv.status,
+          state: effectiveState,
           customerName: pcData?.customer_name || "",
           recentMessages: recentMsgs,
           customerConditions,
