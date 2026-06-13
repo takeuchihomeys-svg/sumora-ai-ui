@@ -163,6 +163,10 @@ const PHASE_GUIDE: Record<string, string> = {
 function getJSTHour(): number {
   return new Date(Date.now() + 9 * 60 * 60 * 1000).getUTCHours();
 }
+// 0=日, 1=月, ..., 6=土
+function getJSTDayOfWeek(): number {
+  return new Date(Date.now() + 9 * 60 * 60 * 1000).getUTCDay();
+}
 
 // ─── Step2: LINE返信生成（Sonnet）──────────────────────────────────────────
 const GENERATION_SYSTEM = `あなたはスモラ（賃貸仲介）のLINE営業担当です。
@@ -255,9 +259,16 @@ function buildGenerationMessages(
   promptOverrides?: PromptOverrides
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
+  const jstDay = getJSTDayOfWeek();
+  const isWeekend = jstDay === 0 || jstDay === 6;
   const greetingNote = jstHour >= 20
     ? `\n【⏰ 時刻ルール・最優先】現在${jstHour}時台（JST）。20時以降のため2回目以降の冒頭は必ず「〇〇さん夜分遅くに失礼致します！！」を使う。「お世話になっております」は使用禁止。`
     : `\n【⏰ 時刻ルール・最優先】現在${jstHour}時台（JST）。20時前のため2回目以降の冒頭は「〇〇さんお世話になっております！！」を使う。「夜分遅くに失礼致します」は使用禁止。`;
+  const managementNote = isWeekend
+    ? `\n【管理会社の状況・必ず守ること】本日は土日のため管理会社はお休み。管理会社への確認が必要な場合は「管理会社が本日お休みのため、月曜日一番でご確認しご連絡させて頂きます！！」と伝える。当日中の回答を約束しない。`
+    : jstHour >= 18
+      ? `\n【管理会社の状況・必ず守ること】現在${jstHour}時台（JST）。18時以降のため管理会社の営業時間が終了している。確認が必要な場合は「本日は管理会社の営業時間が終了しておりますので、明日一番でご確認しご連絡させて頂きます！！」と伝える。当日中の回答を約束しない。`
+      : `\n【管理会社の状況】現在${jstHour}時台（JST）。管理会社営業中（平日〜18時）。確認が必要な場合は「管理会社に確認させていただきます！！確認出来次第ご連絡させていただきます！！」と伝えてよい。`;
 
   const nameNote = customerName ? `お客様名：${customerName}さん` : "お客様名：不明";
   const conditionsNote = customerConditions
@@ -298,7 +309,7 @@ function buildGenerationMessages(
   const quickPatterns = examples ? "" : `\n${effectiveQuickPatterns}`;
 
   const prompt = `
-${nameNote}${conditionsNote}${summaryNote}${greetingNote}
+${nameNote}${conditionsNote}${summaryNote}${greetingNote}${managementNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${approachNote}${staffContextNote}
 
