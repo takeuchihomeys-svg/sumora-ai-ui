@@ -144,7 +144,7 @@ async function analyzeAndSaveKnowledge(
   sentReply: string,
   isStarred = false
 ) {
-  const text = await callHaiku(`以下のLINE賃貸営業のやりとりを深く分析してください。
+  const text = await callHaiku(`以下のLINE賃貸営業のやりとりから、次回即使えるルールを抽出してください。
 
 【お客様のメッセージ】
 ${customerMessage}
@@ -152,14 +152,14 @@ ${customerMessage}
 【スモラスタッフの返信】
 ${sentReply}
 
-以下の4点を抽出してください。JSONのみで返答（説明不要）：
+JSONのみで返答（説明不要）：
 
 {
-  "situation": "この状況を一言で表す（例：初めての条件共有、物件への反応など）",
-  "pattern": "この状況でのベストな返し方の原則（具体的に・1〜2文）",
-  "style_elements": ["口調・文体の特徴を3〜5点（例：お客様名を呼ぶ、絵文字を使う、etc.）"],
-  "key_phrases": ["この返信で使われている再利用可能なフレーズ（1〜3個）"],
-  "principle": "この返信が優れている核心的な理由（1文）"
+  "situation": "状況を一言（例：初回条件ヒアリング完了・物件満室お詫び・内覧日程確認）",
+  "pattern": "次回この状況でどう書くか（具体的な文章ルール）例：「〇〇さんお世話になっております！！〜の件、〜させて頂きます！！」の形で始め本日中など期限を添える",
+  "style_elements": ["文体の具体的特徴（例：『させて頂きます！！』で締める・名前を冒頭で呼ぶ・絵文字は😊か😌を文末に1つ）"],
+  "key_phrases": ["そのまま使える一文やフレーズ（例：『全力でサポートさせて頂きます！！』『本日中にお送りさせて頂きます！！』）"],
+  "principle": "この返し方で成功するコツ（例：条件受け取り後は必ず本日中の行動を宣言する・内覧前申込を自然に促す）"
 }`);
 
   try {
@@ -457,7 +457,11 @@ export async function POST(req: NextRequest) {
   const wasAiModified = !!aiDraft && aiDraft.trim().length > 0 && sim >= 0.05 && sim < 0.9;
 
   // 埋め込み生成（バックグラウンドで並列実行・失敗してもINSERTは続行）
-  const embeddingInput = `${conversationState}: ${customerMessage}`;
+  // [画像][動画]メッセージはテキスト意味がないのでsentReplyをembeddingの主成分にする
+  const isImageMsg = customerMessage === "[画像]" || customerMessage === "[動画]" || !customerMessage.trim();
+  const embeddingInput = isImageMsg
+    ? `${conversationState}: [画像受信への返信] ${sentReply.slice(0, 300)}`
+    : `${conversationState}: ${customerMessage}`;
   const embeddingPromise = getEmbedding(embeddingInput);
 
   const [embedding, insertResult] = await Promise.all([
