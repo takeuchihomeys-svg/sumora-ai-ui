@@ -913,8 +913,8 @@ export default function Home() {
       }
     }
 
-    // 初期ロード時：未読かつai_draft未生成の会話を最大5件、バックグラウンドでプリ生成
-    if (!silent) {
+    // 未読かつai_draft未生成の会話を最大5件、バックグラウンドでプリ生成（毎回チェック・重複はpreGenInProgressで防止）
+    {
       const skipStatuses = new Set(["applying", "screening", "contract", "closed_won"]);
       const readAtMap = manuallyReadAtRef.current;
       const targets = formatted
