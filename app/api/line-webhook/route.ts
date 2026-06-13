@@ -274,6 +274,7 @@ async function handleTextMessage(
         pcData?.ng_points && `NG: ${pcData.ng_points}`,
       ].filter(Boolean).join(", ");
 
+      // generate-reply はストリーミングレスポンス（1行目:JSON meta + 続き:本文）
       const draftRes = await fetch(`${baseUrl}/api/generate-reply`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -286,10 +287,34 @@ async function handleTextMessage(
           customerSummary: pcData?.ai_summary || "",
         }),
       });
-      if (draftRes.ok) {
-        const draftData = await draftRes.json() as { ok: boolean; reply?: string };
-        if (draftData.ok && draftData.reply) {
-          await db.from("conversations").update({ ai_draft: draftData.reply }).eq("id", convId);
+      if (draftRes.ok && draftRes.body) {
+        const reader = draftRes.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let metaDone = false;
+        let fullText = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          if (!metaDone) {
+            buffer += chunk;
+            const nl = buffer.indexOf("\n");
+            if (nl >= 0) {
+              try {
+                const meta = JSON.parse(buffer.slice(0, nl)) as { ok: boolean };
+                if (!meta.ok) break;
+              } catch { break; }
+              metaDone = true;
+              fullText = buffer.slice(nl + 1);
+            }
+          } else {
+            fullText += chunk;
+          }
+        }
+        const finalDraft = fullText.trim();
+        if (finalDraft) {
+          await db.from("conversations").update({ ai_draft: finalDraft }).eq("id", convId);
         }
       }
     } catch {}
