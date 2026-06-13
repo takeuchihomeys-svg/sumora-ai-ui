@@ -246,6 +246,9 @@ async function handleTextMessage(
         }).catch(() => {});
       }
 
+      // 申込以降ステータスはai_draft生成不要（別フェーズの会話のため）
+      if (["applying", "screening", "contract", "closed_won"].includes(convStatus)) return;
+
       // 返信ドラフト自動生成
       const [{ data: msgs }, { data: pc }] = await Promise.all([
         db.from("messages").select("sender, text").eq("conversation_id", convId)

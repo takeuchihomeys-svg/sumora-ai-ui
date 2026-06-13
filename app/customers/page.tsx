@@ -187,6 +187,7 @@ export default function CustomersPage() {
   // 条件ログ展開（3件以上のとき「もっと見る」）
   const [expandedCondIds, setExpandedCondIds] = useState<Set<string>>(new Set());
   const [expandedSummaryIds, setExpandedSummaryIds] = useState<Set<string>>(new Set());
+  const [expandedApplyingIds, setExpandedApplyingIds] = useState<Set<string>>(new Set());
 
   // 条件追加モーダル
   const [addCondId, setAddCondId]       = useState<string | null>(null);
@@ -814,9 +815,17 @@ export default function CustomersPage() {
                   /* 申込以降：AIサマリー・社内メモ・担当者を表示 */
                   <div className="border-t border-[#f0f2f5] px-4 py-2.5 space-y-1.5">
                     {c.ai_summary ? (
-                      <p className="text-[11px] text-[#555] leading-relaxed">
-                        <span className="font-semibold text-[#8696a0]">AI分析　</span>{c.ai_summary}
-                      </p>
+                      <div>
+                        <p className={`text-[11px] text-[#555] leading-relaxed ${expandedApplyingIds.has(c.id) ? "whitespace-pre-wrap" : "line-clamp-3"}`}>
+                          <span className="font-semibold text-[#8696a0]">AI分析　</span>{c.ai_summary}
+                        </p>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setExpandedApplyingIds((prev) => { const s = new Set(prev); s.has(c.id) ? s.delete(c.id) : s.add(c.id); return s; }); }}
+                          className="mt-0.5 text-[9px] text-blue-400 active:opacity-60"
+                        >
+                          {expandedApplyingIds.has(c.id) ? "▲ 閉じる" : "▼ 続きを見る"}
+                        </button>
+                      </div>
                     ) : (
                       <p className="text-[11px] text-[#bbb]">AIサマリーなし</p>
                     )}

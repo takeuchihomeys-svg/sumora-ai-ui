@@ -1826,14 +1826,35 @@ export default function Home() {
       // LINE送信失敗しても管理画面の動作は続ける
     }
 
-    // URLを含む送信 → property_sendタスクを自動完了
+    // URLを含む送信 → property_sendタスク自動完了 + property_checkタスク自動作成
     if (text.trim() && text.includes("http")) {
-      const task = (activeTasks[selectedConversation.id] ?? []).find((t) => t.task_type === "property_send");
-      if (task) {
+      const convId = selectedConversation.id;
+      const customerName = selectedConversation.customerName;
+      const sendTask = (activeTasks[convId] ?? []).find((t) => t.task_type === "property_send");
+      if (sendTask) {
         fetch("/api/line-tasks/complete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: task.id }),
+          body: JSON.stringify({ id: sendTask.id }),
+        }).catch(() => {});
+      }
+      // property_checkタスクを自動作成（次の工程：物件確認）
+      const alreadyHasCheck = (activeTasks[convId] ?? []).some((t) => t.task_type === "property_check");
+      if (!alreadyHasCheck) {
+        fetch("/api/line-tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ conversation_id: convId, task_type: "property_check", customer_name: customerName }),
+        }).then(async (r) => {
+          if (!r.ok) return;
+          const d = await r.json() as { ok: boolean; id?: string; created_at?: string };
+          if (d.ok && d.id && d.created_at) {
+            setActiveTasks((prev) => {
+              const existing = prev[convId] ?? [];
+              if (existing.some((x) => x.task_type === "property_check")) return prev;
+              return { ...prev, [convId]: [...existing, { id: d.id!, task_type: "property_check", created_at: d.created_at!, customer_name: customerName }] };
+            });
+          }
         }).catch(() => {});
       }
     }
@@ -3286,12 +3307,33 @@ export default function Home() {
                 }
               : aixModalType === "property_recommendation"
               ? () => {
-                  const task = (activeTasks[selectedConversation.id] ?? []).find((t) => t.task_type === "property_send");
-                  if (task) {
+                  const convId = selectedConversation.id;
+                  const customerName = selectedConversation.customerName;
+                  const sendTask = (activeTasks[convId] ?? []).find((t) => t.task_type === "property_send");
+                  if (sendTask) {
                     fetch("/api/line-tasks/complete", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ id: task.id }),
+                      body: JSON.stringify({ id: sendTask.id }),
+                    }).catch(() => {});
+                  }
+                  // property_checkタスクを自動作成（次の工程：物件確認）
+                  const alreadyHasCheck = (activeTasks[convId] ?? []).some((t) => t.task_type === "property_check");
+                  if (!alreadyHasCheck) {
+                    fetch("/api/line-tasks", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ conversation_id: convId, task_type: "property_check", customer_name: customerName }),
+                    }).then(async (r) => {
+                      if (!r.ok) return;
+                      const d = await r.json() as { ok: boolean; id?: string; created_at?: string };
+                      if (d.ok && d.id && d.created_at) {
+                        setActiveTasks((prev) => {
+                          const existing = prev[convId] ?? [];
+                          if (existing.some((x) => x.task_type === "property_check")) return prev;
+                          return { ...prev, [convId]: [...existing, { id: d.id!, task_type: "property_check", created_at: d.created_at!, customer_name: customerName }] };
+                        });
+                      }
                     }).catch(() => {});
                   }
                 }
