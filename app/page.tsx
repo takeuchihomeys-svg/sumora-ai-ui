@@ -1043,17 +1043,7 @@ export default function Home() {
     } else {
       setReplyDraft("");
       aiDraftRef.current = "";
-      // ai_draft未生成 + 返信待ち + 実際に未読（既読マーク済みはスキップ）の場合のみ自動生成
-      if (selectedConversation.lastSender === "customer" && selectedConversation.id) {
-        const rAt = manuallyReadAtRef.current[selectedConversation.id];
-        const latestCust = selectedConversation.messages.filter((m) => m.sender === "customer").at(-1);
-        const isActuallyUnread = !rAt || (!!latestCust?.rawCreatedAt && latestCust.rawCreatedAt > rAt);
-        if (isActuallyUnread) {
-          generateReply();
-        }
-      }
     }
-  // generateReplyは意図的に依存配列から除外（id変化時のみ実行）
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedConversation.id]);
 
