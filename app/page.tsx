@@ -932,7 +932,7 @@ export default function Home() {
           const latestCust = c.messages.filter((m) => m.sender === "customer").at(-1);
           return !!latestCust?.rawCreatedAt && latestCust.rawCreatedAt > rAt;
         })
-        .slice(0, 5);
+        .slice(0, 10);
 
       for (const conv of targets) {
         preGenInProgress.current.add(conv.id);
@@ -1065,6 +1065,9 @@ export default function Home() {
           })
             .then(() => { preGenInProgress.current.delete(selectedConversation.id); })
             .catch(() => { preGenInProgress.current.delete(selectedConversation.id); setDraftPreparing(false); });
+        } else {
+          // ① 既読マーク済み or 生成中はpreparing表示しない
+          setDraftPreparing(false);
         }
       } else {
         setDraftPreparing(false);
@@ -2931,6 +2934,7 @@ export default function Home() {
               <button
                 onClick={() => {
                   const convId = convMenuConvId!;
+                  const wasRead = !!manuallyReadAt[convId];
                   setManuallyReadAt(prev => {
                     const next = { ...prev };
                     if (next[convId]) {
@@ -2941,6 +2945,22 @@ export default function Home() {
                     try { localStorage.setItem("conv_read_at", JSON.stringify(next)); } catch {}
                     return next;
                   });
+                  // ③ 既読→未読に戻した時、プリ生成を即起動
+                  if (wasRead) {
+                    const conv = conversationsRef.current.find((c) => c.id === convId);
+                    const skipStatuses = new Set(["applying", "screening", "contract", "closed_won"]);
+                    const ns = conv ? (STATUS_ALIAS[conv.status] ?? conv.status) : "";
+                    if (conv && conv.lastSender === "customer" && !conv.aiDraft && !skipStatuses.has(ns) && !preGenInProgress.current.has(convId)) {
+                      preGenInProgress.current.add(convId);
+                      fetch("/api/generate-draft-bg", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ conversation_id: convId, memo: memosRef.current[convId] || "" }),
+                      })
+                        .then(() => { preGenInProgress.current.delete(convId); })
+                        .catch(() => { preGenInProgress.current.delete(convId); });
+                    }
+                  }
                   setConvMenuConvId(null);
                 }}
                 className="flex w-full items-center gap-3 px-5 py-3.5 active:bg-[#f0f2f5] border-b border-[#f0f2f5]"
