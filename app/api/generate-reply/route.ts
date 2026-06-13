@@ -331,8 +331,9 @@ function buildGenerationMessages(
   const lastStaffMsg = lastStaffLines.length > 0 ? lastStaffLines[lastStaffLines.length - 1].replace(/^スモラ:\s*/, "") : null;
 
   // 履歴の末尾がスモラのメッセージ = お客様がまだ返信していない = 「続きのメッセージ」を生成する状況
-  const nonEmptyLines = historyLines.filter(Boolean);
-  const historyEndsWithStaff = nonEmptyLines.length > 0 && nonEmptyLines[nonEmptyLines.length - 1].startsWith("スモラ:");
+  // ※ マルチライン対応: 行分割すると途中行が「スモラ:」で始まらないため、正規表現で最後のスピーカーを判定
+  const allSpeakers = [...history.matchAll(/(?:^|\n)(スモラ|お客様):/g)];
+  const historyEndsWithStaff = allSpeakers.length > 0 && allSpeakers[allSpeakers.length - 1][1] === "スモラ";
 
   const staffContextNote = historyEndsWithStaff && lastStaffMsg
     ? `\n【⚠️ 最重要：スモラは既にこのお客様メッセージに返信済み】\nスモラが直前に送った内容：「${lastStaffMsg}」\n→ お客様はまだ返信していない。これはその【続きのメッセージ】。前の返信で伝えた内容を絶対に繰り返さない。前の返信を踏まえて補足・追加・次のアクション提案など、自然につながる内容を生成すること。`
