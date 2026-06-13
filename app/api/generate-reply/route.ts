@@ -284,9 +284,22 @@ function buildGenerationMessages(
   const jstHour = getJSTHour();
   const jstDay = getJSTDayOfWeek();
   const isWeekend = jstDay === 0 || jstDay === 6;
-  const greetingNote = jstHour >= 20
-    ? `\n【⏰ 時刻ルール・最優先】現在${jstHour}時台（JST）。20時以降のため2回目以降の冒頭は必ず「〇〇さん夜分遅くに失礼致します！！」を使う。「お世話になっております」は使用禁止。`
-    : `\n【⏰ 時刻ルール・最優先】現在${jstHour}時台（JST）。20時前のため2回目以降の冒頭は「〇〇さんお世話になっております！！」を使う。「夜分遅くに失礼致します」は使用禁止。`;
+
+  // 履歴を先に解析（挨拶使用済みか判定するため）
+  const historyLines = (history || "").split("\n").filter(Boolean);
+  const lastStaffLines = historyLines.filter((l) => l.startsWith("スモラ:"));
+
+  // 本日の会話で冒頭挨拶が既に使われているか
+  const alreadyGreeted = lastStaffLines.some(
+    l => l.includes("お世話になっております") || l.includes("夜分遅くに失礼")
+  );
+
+  const greetingNote = alreadyGreeted
+    ? `\n【⏰ 挨拶ルール・最優先】本日の会話で冒頭挨拶（お世話になっております / 夜分遅くに）は既に使用済み。今回は絶対に使わない。「はい！！」「かしこまりました！！」など短い言葉で直接始める。`
+    : jstHour >= 20
+      ? `\n【⏰ 時刻ルール・最優先】現在${jstHour}時台（JST）。20時以降のため今回の冒頭は「〇〇さん夜分遅くに失礼致します！！」を使う。`
+      : `\n【⏰ 時刻ルール・最優先】現在${jstHour}時台（JST）。今回の冒頭は「〇〇さんお世話になっております！！」を使う。「夜分遅くに失礼致します」は使用禁止。`;
+
   const managementNote = isWeekend
     ? `\n【管理会社の状況・必ず守ること】本日は土日のため管理会社はお休み。管理会社への確認が必要な場合は「管理会社が本日お休みのため、月曜日一番でご確認しご連絡させて頂きます！！」と伝える。当日中の回答を約束しない。`
     : jstHour >= 18
@@ -315,8 +328,6 @@ function buildGenerationMessages(
   }
 
   // スモラの直前返信を履歴から抽出（文脈の引き継ぎに使用）
-  const historyLines = (history || "").split("\n").filter(Boolean);
-  const lastStaffLines = historyLines.filter((l) => l.startsWith("スモラ:"));
   const lastStaffMsg = lastStaffLines.length > 0 ? lastStaffLines[lastStaffLines.length - 1].replace(/^スモラ:\s*/, "") : null;
   const staffContextNote = lastStaffMsg
     ? `\n【⚠️ スモラが直前に送った内容（必ず踏まえること）】「${lastStaffMsg}」\n→ この返信の後にお客様が上記メッセージを送った。会話の流れを引き継いで自然な続きを生成すること。`
