@@ -364,6 +364,8 @@ export default function Home() {
   const notifiedCalendarIds = useRef<Set<string>>(new Set());
   const aiDraftRef = useRef<string>("");
   const replyTargetCustomerMsgRef = useRef<string>("");
+  // Effect1（会話切替）がai_draft自動セット済みの場合、Effect2（Realtime）の二重処理を防ぐフラグ
+  const suppressAiDraftAutoLoad = useRef(false);
   // 送信済みメッセージID → save-reply-example の ID（☆PATCH に使用）
   const savedExampleIdByMsgId = useRef<Map<string, string>>(new Map());
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -983,17 +985,48 @@ export default function Home() {
   }, [filteredConversations, selectedId]);
 
   useEffect(() => {
-    setReplyDraft("");
     setError("");
     setShowStatusMenu(false);
     setShowAixMenu(false);
     setSelectedImageFiles([]);
     setSelectedImagePreviews([]);
-    aiDraftRef.current = "";
     replyTargetCustomerMsgRef.current = "";
     setTargetOverrideMessage(null);
     setAiDraftExpanded(false);
+
+    // 返信待ち + ai_draft あり → テキストエリアに自動セット（「使う」クリック不要）
+    if (selectedConversation.aiDraft && selectedConversation.lastSender === "customer") {
+      suppressAiDraftAutoLoad.current = true; // Effect2の二重処理を防ぐ
+      setReplyDraft(selectedConversation.aiDraft);
+      aiDraftRef.current = selectedConversation.aiDraft;
+      setConversations((prev) =>
+        prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null } : c)
+      );
+      supabase.from("conversations").update({ ai_draft: null }).eq("id", selectedConversation.id).then(() => {});
+    } else {
+      setReplyDraft("");
+      aiDraftRef.current = "";
+    }
   }, [selectedConversation.id]);
+
+  // Realtimeでai_draftが届いた時：textarea空なら自動セット、入力中ならバナー継続
+  useEffect(() => {
+    if (!selectedConversation.aiDraft) return;
+    if (selectedConversation.lastSender !== "customer") return;
+    if (suppressAiDraftAutoLoad.current) {
+      suppressAiDraftAutoLoad.current = false;
+      return;
+    }
+    // 入力中は上書きしない（バナーで通知）
+    if (replyDraft) return;
+    setReplyDraft(selectedConversation.aiDraft);
+    aiDraftRef.current = selectedConversation.aiDraft;
+    setConversations((prev) =>
+      prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null } : c)
+    );
+    supabase.from("conversations").update({ ai_draft: null }).eq("id", selectedConversation.id).then(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedConversation.aiDraft]);
 
   // replyDraftが変わったらtextareaの高さを自動調整
   useEffect(() => {
