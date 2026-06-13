@@ -33,9 +33,25 @@ async function analyzeCustomerSituation(
   customerMessage: string,
   history: string,
   state: string,
-  customerName: string
+  customerName: string,
+  isFollowUp = false
 ): Promise<string> {
-  const prompt = `
+  const prompt = isFollowUp ? `
+【営業フェーズ】${state}
+【お客様名】${customerName || "不明"}
+【直近の会話履歴（スモラが既に返信済み）】
+${history || "なし"}
+【スモラが返信済みのお客様メッセージ】
+${customerMessage}
+
+スモラはこのお客様メッセージに対して既に返信しました。
+これから「続きのメッセージ」を生成します。以下をJSONで分析してください：
+{
+  "already_covered": "スモラが直前の返信で既に伝えた内容の要約",
+  "next_action": "続きとして自然な次のアクション・補足（例：申込を促す、内覧日程を提案、安心感を与えるなど）",
+  "approach": "続きメッセージの方針（前の返信の内容を踏まえて何を追加するか・繰り返しNG）",
+  "tone": "適切なトーン（例：背中を押す・安心させる・次ステップへ誘導）"
+}` : `
 【営業フェーズ】${state}
 【お客様名】${customerName || "不明"}
 【直近の会話履歴】
@@ -279,7 +295,8 @@ function buildGenerationMessages(
   phrases: string,
   customerConditions = "",
   customerSummary = "",
-  promptOverrides?: PromptOverrides
+  promptOverrides?: PromptOverrides,
+  isFollowUp = false
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   const jstDay = getJSTDayOfWeek();
@@ -327,15 +344,14 @@ function buildGenerationMessages(
     } catch { /* ignore */ }
   }
 
-  // スモラの直前返信を履歴から抽出（文脈の引き継ぎに使用）
-  const lastStaffMsg = lastStaffLines.length > 0 ? lastStaffLines[lastStaffLines.length - 1].replace(/^スモラ:\s*/, "") : null;
+  // スモラの直前返信を全文で抽出（マルチライン対応）
+  const lastStaffMsg = (() => {
+    const segments = history.split(/\n(?=スモラ:|お客様:)/);
+    const lastStaffSeg = [...segments].reverse().find(s => s.startsWith("スモラ:"));
+    return lastStaffSeg ? lastStaffSeg.replace(/^スモラ:\s*/, "").trim() : null;
+  })();
 
-  // 履歴の末尾がスモラのメッセージ = お客様がまだ返信していない = 「続きのメッセージ」を生成する状況
-  // ※ マルチライン対応: 行分割すると途中行が「スモラ:」で始まらないため、正規表現で最後のスピーカーを判定
-  const allSpeakers = [...history.matchAll(/(?:^|\n)(スモラ|お客様):/g)];
-  const historyEndsWithStaff = allSpeakers.length > 0 && allSpeakers[allSpeakers.length - 1][1] === "スモラ";
-
-  const staffContextNote = historyEndsWithStaff && lastStaffMsg
+  const staffContextNote = isFollowUp && lastStaffMsg
     ? `\n【⚠️ 最重要：スモラは既にこのお客様メッセージに返信済み】\nスモラが直前に送った内容：「${lastStaffMsg}」\n→ お客様はまだ返信していない。これはその【続きのメッセージ】。前の返信で伝えた内容を絶対に繰り返さない。前の返信を踏まえて補足・追加・次のアクション提案など、自然につながる内容を生成すること。`
     : lastStaffMsg
       ? `\n【⚠️ スモラが直前に送った内容（必ず踏まえること）】「${lastStaffMsg}」\n→ この返信の後にお客様が上記メッセージを送った。会話の流れを引き継いで自然な続きを生成すること。`
@@ -363,12 +379,12 @@ ${realEstateNote}
 ${knowledge}
 ${phrases}
 
-${historyEndsWithStaff ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}
+${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}
 ${customerMessage}
 
 ${examples}${examplesInstruction}
 
-↑${historyEndsWithStaff ? "スモラは既にこのメッセージに返信済み。前の返信内容を繰り返さず、続きとして自然につながるメッセージを1つ生成すること。" : "スモラの直前返信の流れを踏まえ、⭐実例の文体・言い回しを最優先で忠実に再現しながら、このメッセージへのスモラらしい返信を1つ生成してください。"}
+↑${isFollowUp ? "スモラは既にこのメッセージに返信済み。前の返信内容を繰り返さず、続きとして自然につながるメッセージを1つ生成すること。" : "スモラの直前返信の流れを踏まえ、⭐実例の文体・言い回しを最優先で忠実に再現しながら、このメッセージへのスモラらしい返信を1つ生成してください。"}
 長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。絶対に担当者名（鈴木など）を入れない。`;
 
   return [new SystemMessage(promptOverrides?.generationSystem ?? GENERATION_SYSTEM), new HumanMessage(prompt)];
@@ -569,12 +585,17 @@ async function getEmbedding(text: string): Promise<number[] | null> {
   }
 }
 
-async function fetchExamples(state: string, customerMessage?: string): Promise<string> {
+async function fetchExamples(state: string, customerMessage?: string, lastStaffMessage?: string): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
   // pgvector 類似検索（OPENAI_API_KEY がある場合のみ・エラー時はフォールバック）
-  if (customerMessage && process.env.OPENAI_API_KEY) {
-    const embedding = await getEmbedding(`${state}: ${customerMessage}`);
+  // follow-up時: 「スモラが送った内容の続き」として検索クエリを構成
+  const searchQuery = lastStaffMessage
+    ? `${state}: ${customerMessage} 続き: ${lastStaffMessage.slice(0, 120)}`
+    : customerMessage ? `${state}: ${customerMessage}` : null;
+
+  if (searchQuery && process.env.OPENAI_API_KEY) {
+    const embedding = await getEmbedding(searchQuery);
     if (embedding) {
       const { data: similar, error: rpcError } = await supabase.rpc("match_reply_examples", {
         query_embedding: embedding,
@@ -726,12 +747,23 @@ export async function POST(req: NextRequest) {
       .filter(Boolean)
       .join("\n");
 
+    // follow-up検知（履歴末尾がスモラ = 2通目以降の生成）
+    const allSpeakersInHistory = [...history.matchAll(/(?:^|\n)(スモラ|お客様):/g)];
+    const isFollowUp = allSpeakersInHistory.length > 0 && allSpeakersInHistory[allSpeakersInHistory.length - 1][1] === "スモラ";
+
+    // 最後のスモラメッセージを全文抽出（② の検索クエリ・① の表示用）
+    const lastStaffMsgForSearch = (() => {
+      const segments = history.split(/\n(?=スモラ:|お客様:)/);
+      const seg = [...segments].reverse().find(s => s.startsWith("スモラ:"));
+      return seg ? seg.replace(/^スモラ:\s*/, "").trim() : undefined;
+    })();
+
     // 並列実行: intent分類 + 状況分析 + 知識取得 + 実例取得 + フレーズ取得 + コンテキスト補完
     const [detectedIntent, analysis, knowledge, examples, phrases, autoSummary] = await Promise.all([
       classifyIntent(message, currentState, history),
-      analyzeCustomerSituation(message, history, currentState, customerName),
+      analyzeCustomerSituation(message, history, currentState, customerName, isFollowUp),
       fetchKnowledge(currentState),
-      fetchExamples(currentState, message),
+      fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined),
       fetchPhrases(currentState),
       // ai_summaryがない場合のみ条件テキストから即席合成（Haiku・並列なので遅延ゼロ）
       !customerSummary && customerConditions
@@ -744,7 +776,7 @@ export async function POST(req: NextRequest) {
     const messages = buildGenerationMessages(
       message, customerName, history, currentState,
       analysis, knowledge, examples, phrases, customerConditions, resolvedSummary,
-      promptOverrides
+      promptOverrides, isFollowUp
     );
     const genStream = generationModel.stream(messages);
 
