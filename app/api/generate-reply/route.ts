@@ -504,10 +504,11 @@ async function fetchExamples(state: string, customerMessage?: string): Promise<s
       }) as { data: Array<{ customer_message: string; sent_reply: string; conversation_state: string; is_starred: boolean; similarity: number }> | null; error: unknown };
 
       if (!rpcError && similar && similar.length > 0) {
-        // ☆優先 → 類似度順で上位8件に絞る（多すぎると平均化してスモラらしさが薄れる）
+        // ☆に+0.15のスコアブースト → 類似度が高ければ非☆でも上位に来る
         const sorted = [...similar].sort((a, b) => {
-          if (a.is_starred !== b.is_starred) return a.is_starred ? -1 : 1;
-          return b.similarity - a.similarity;
+          const scoreA = a.similarity + (a.is_starred ? 0.15 : 0);
+          const scoreB = b.similarity + (b.is_starred ? 0.15 : 0);
+          return scoreB - scoreA;
         }).slice(0, 8);
 
         return "\n\n【⭐ スモラの実際の返信例（状況が最も類似した実例・類似度順）— 文体・言い回し・感嘆符・絵文字・長さをこの例から忠実に再現すること。これが最優先の文体基準】\n" +
@@ -518,32 +519,36 @@ async function fetchExamples(state: string, customerMessage?: string): Promise<s
     }
   }
 
-  // フォールバック: 従来のフェーズ別取得
-  const [{ data: starredSameState }, { data: starredAllState }, { data: modifiedSameState }] = await Promise.all([
-    supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state")
-      .in("conversation_state", stateAliases).eq("is_starred", true)
-      .order("created_at", { ascending: false }).limit(30),
-    supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state")
-      .eq("is_starred", true)
-      .order("created_at", { ascending: false }).limit(50),
-    supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state")
-      .in("conversation_state", stateAliases).or("was_ai_modified.eq.true,was_ai_used.eq.true").eq("is_starred", false)
-      .order("created_at", { ascending: false }).limit(20),
+  // フォールバック: 全件対象（☆優先・フェーズ一致優先）
+  const [{ data: sameStateFull }, { data: allStateFull }] = await Promise.all([
+    // 同フェーズ全件: ☆降順 → 新着順
+    supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state, is_starred")
+      .in("conversation_state", stateAliases)
+      .not("embedding", "is", null)
+      .order("is_starred", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(60),
+    // 全フェーズ全件: ☆降順 → 新着順
+    supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state, is_starred")
+      .not("embedding", "is", null)
+      .order("is_starred", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(120),
   ]);
 
-  const sameStateList = starredSameState || [];
-  const allStateList  = (starredAllState || []).filter(
+  const sameStateList = sameStateFull || [];
+  const allStateList = (allStateFull || []).filter(
     (ex) => !sameStateList.some((s) => s.sent_reply === ex.sent_reply)
   );
-  const modifiedFallback = sameStateList.length < 4
-    ? (modifiedSameState || []).filter((ex) => !sameStateList.some((s) => s.sent_reply === ex.sent_reply))
-    : [];
 
   const all = [
-    ...sameStateList.map((ex) => ({ ...ex, priority: 1 })),
+    ...sameStateList.slice(0, 6).map((ex) => ({ ...ex, priority: 1 })),
     ...allStateList.slice(0, 4).map((ex) => ({ ...ex, priority: 2 })),
-    ...modifiedFallback.slice(0, 2).map((ex) => ({ ...ex, priority: 3 })),
-  ].sort((a, b) => a.priority - b.priority).slice(0, 8);
+  ].sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    if (a.is_starred !== b.is_starred) return a.is_starred ? -1 : 1;
+    return 0;
+  }).slice(0, 8);
 
   if (all.length === 0) return "";
 
