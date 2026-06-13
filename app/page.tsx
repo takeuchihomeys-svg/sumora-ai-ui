@@ -375,6 +375,11 @@ export default function Home() {
   // リアルタイムハンドラ内でのstale closure防止（selectedIdを常に最新に保つ）
   const selectedIdRef = useRef("");
   selectedIdRef.current = selectedId; // レンダリングごとに最新値を反映
+  // manuallyReadAt を effect 内で最新値として読むための ref
+  const manuallyReadAtRef = useRef<Record<string, string>>({});
+  manuallyReadAtRef.current = manuallyReadAt; // レンダリングごとに最新値を反映
+  // プリ生成中の conversation_id セット（重複リクエスト防止）
+  const preGenInProgress = useRef<Set<string>>(new Set());
   const handleListScroll = () => {
     // スクロール時もBottomNavは常に表示（pull-to-refreshトリガー用）
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
@@ -905,6 +910,38 @@ export default function Home() {
       }
     }
 
+    // 初期ロード時：未読かつai_draft未生成の会話を最大5件、バックグラウンドでプリ生成
+    if (!silent) {
+      const skipStatuses = new Set(["applying", "screening", "contract", "closed_won"]);
+      const readAtMap = manuallyReadAtRef.current;
+      const targets = formatted
+        .filter((c) => {
+          if (c.id === selectedIdRef.current) return false; // 選択中は effect で別途処理
+          if (c.lastSender !== "customer") return false;
+          const ns = STATUS_ALIAS[c.status] ?? c.status;
+          if (skipStatuses.has(ns)) return false;
+          if (c.aiDraft) return false;
+          if (preGenInProgress.current.has(c.id)) return false;
+          // 既読マーク済みチェック
+          const rAt = readAtMap[c.id];
+          if (!rAt) return true;
+          const latestCust = c.messages.filter((m) => m.sender === "customer").at(-1);
+          return !!latestCust?.rawCreatedAt && latestCust.rawCreatedAt > rAt;
+        })
+        .slice(0, 5);
+
+      for (const conv of targets) {
+        preGenInProgress.current.add(conv.id);
+        fetch("/api/generate-draft-bg", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ conversation_id: conv.id }),
+        })
+          .then(() => { preGenInProgress.current.delete(conv.id); })
+          .catch(() => { preGenInProgress.current.delete(conv.id); });
+      }
+    }
+
     if (!silent) setPageLoading(false);
   };
 
@@ -1006,9 +1043,14 @@ export default function Home() {
     } else {
       setReplyDraft("");
       aiDraftRef.current = "";
-      // ai_draft未生成 + 返信待ちなら開いた瞬間に自動生成
+      // ai_draft未生成 + 返信待ち + 実際に未読（既読マーク済みはスキップ）の場合のみ自動生成
       if (selectedConversation.lastSender === "customer" && selectedConversation.id) {
-        generateReply();
+        const rAt = manuallyReadAtRef.current[selectedConversation.id];
+        const latestCust = selectedConversation.messages.filter((m) => m.sender === "customer").at(-1);
+        const isActuallyUnread = !rAt || (!!latestCust?.rawCreatedAt && latestCust.rawCreatedAt > rAt);
+        if (isActuallyUnread) {
+          generateReply();
+        }
       }
     }
   // generateReplyは意図的に依存配列から除外（id変化時のみ実行）
