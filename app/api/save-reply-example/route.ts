@@ -155,12 +155,12 @@ ${sentReply}
 JSONのみで返答（説明不要）：
 
 {
-  "situation": "状況を一言（例：初回条件ヒアリング完了・物件満室お詫び・内覧日程確認）",
-  "pattern": "次回この状況でどう書くか（具体的な文章ルール）例：「〇〇さんお世話になっております！！〜の件、〜させて頂きます！！」の形で始め本日中など期限を添える",
-  "style_elements": ["文体の具体的特徴（例：『させて頂きます！！』で締める・名前を冒頭で呼ぶ・絵文字は😊か😌を文末に1つ）"],
-  "key_phrases": ["そのまま使える一文やフレーズ（例：『全力でサポートさせて頂きます！！』『本日中にお送りさせて頂きます！！』）"],
-  "principle": "この返し方で成功するコツ（例：条件受け取り後は必ず本日中の行動を宣言する・内覧前申込を自然に促す）"
-}`);
+  "situation": "状況を一言（例：条件ヒアリング完了・物件満室お詫び・内覧日程確認）",
+  "pattern": "次回この状況でどう返すか（具体的なルール・文章構造）例：「〇〇さんお世話になっております！！〜の件、〜させて頂きます！！」の形で開始し本日中など期限を添える",
+  "key_phrases": ["そのまま使える完全な一文（20文字以上・お客様名は全て〇〇さんに置換・途中で切れた断片フレーズは不可）"]
+}
+
+注意: key_phrasesは完全な文のみ。「かしこまりました！！」「はい！！」などの短い断片・名前の断片は含めない。`);
 
   try {
     const match = text.match(/\{[\s\S]*\}/);
@@ -168,22 +168,22 @@ JSONのみで返答（説明不要）：
     const analysis = JSON.parse(match[0]) as {
       situation: string;
       pattern: string;
-      style_elements: string[];
       key_phrases: string[];
-      principle: string;
     };
 
     // ☆の場合: importance を1〜2上乗せ（より強い学習シグナルとして扱う）
     const boost = isStarred ? 2 : 0;
     const entries = [
-      { category: "pattern" as const, title: analysis.situation, content: analysis.pattern, importance: 7 + boost },
-      { category: "principle" as const, title: `原則：${analysis.situation}`, content: analysis.principle, importance: 8 + boost },
-      ...analysis.style_elements.map((el) => ({
-        category: "style" as const, title: "口調・スタイル", content: el, importance: 6 + boost,
-      })),
-      ...analysis.key_phrases.map((phrase) => ({
-        category: "phrase" as const, title: "フレーズ", content: phrase, importance: 7 + boost,
-      })),
+      // pattern: 具体的な返し方ルール（20文字未満は除外）
+      ...(analysis.pattern && analysis.pattern.length >= 20
+        ? [{ category: "pattern" as const, title: analysis.situation, content: analysis.pattern, importance: 7 + boost }]
+        : []),
+      // phrase: 完全な一文のみ（20文字未満・〇〇さん以外の実名は除外）
+      ...(Array.isArray(analysis.key_phrases) ? analysis.key_phrases : [])
+        .filter((phrase) => typeof phrase === "string" && phrase.length >= 20)
+        .map((phrase) => ({
+          category: "phrase" as const, title: "フレーズ", content: phrase, importance: 7 + boost,
+        })),
     ];
 
     for (const entry of entries) {
