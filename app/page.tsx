@@ -1048,7 +1048,7 @@ export default function Home() {
     } else {
       setReplyDraft("");
       aiDraftRef.current = "";
-      // 未読 + ai_draft未生成 → バックグラウンドで即起動（Realtimeで届いたらEffect2がセット）
+      // 未読 + ai_draft未生成 → 同期APIで生成してレスポンスから直接セット（Realtime不要）
       if (selectedConversation.lastSender === "customer" && selectedConversation.id) {
         const rAt = manuallyReadAtRef.current[selectedConversation.id];
         const latestCust = selectedConversation.messages.filter((m) => m.sender === "customer").at(-1);
@@ -1057,16 +1057,30 @@ export default function Home() {
         const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
         if (isActuallyUnread && !skipStatuses.has(ns) && !preGenInProgress.current.has(selectedConversation.id)) {
           setDraftPreparing(true);
-          preGenInProgress.current.add(selectedConversation.id);
+          const convIdForGen = selectedConversation.id;
+          preGenInProgress.current.add(convIdForGen);
           fetch("/api/generate-draft-bg", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ conversation_id: selectedConversation.id, memo: memosRef.current[selectedConversation.id] || "" }),
+            body: JSON.stringify({ conversation_id: convIdForGen, memo: memosRef.current[convIdForGen] || "" }),
           })
-            .then(() => { preGenInProgress.current.delete(selectedConversation.id); })
-            .catch(() => { preGenInProgress.current.delete(selectedConversation.id); setDraftPreparing(false); });
+            .then(async (res) => {
+              preGenInProgress.current.delete(convIdForGen);
+              if (!res.ok) { setDraftPreparing(false); return; }
+              const data = await res.json() as { ok: boolean; draft?: string; skipped?: boolean };
+              // まだ同じ会話を選択中の場合のみセット
+              if (selectedIdRef.current !== convIdForGen) return;
+              if (data.draft) {
+                setDraftPreparing(false);
+                setReplyDraft(data.draft);
+                aiDraftRef.current = data.draft;
+                // DBのai_draftは既にAPIがnullでなく保存済み。ここで消すのは不要
+              } else {
+                setDraftPreparing(false);
+              }
+            })
+            .catch(() => { preGenInProgress.current.delete(convIdForGen); setDraftPreparing(false); });
         } else {
-          // ① 既読マーク済み or 生成中はpreparing表示しない
           setDraftPreparing(false);
         }
       } else {
