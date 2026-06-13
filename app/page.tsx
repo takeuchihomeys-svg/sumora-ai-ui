@@ -1006,7 +1006,13 @@ export default function Home() {
     } else {
       setReplyDraft("");
       aiDraftRef.current = "";
+      // ai_draft未生成 + 返信待ちなら開いた瞬間に自動生成
+      if (selectedConversation.lastSender === "customer" && selectedConversation.id) {
+        generateReply();
+      }
     }
+  // generateReplyは意図的に依存配列から除外（id変化時のみ実行）
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedConversation.id]);
 
   // Realtimeでai_draftが届いた時：textarea空なら自動セット、入力中ならバナー継続
