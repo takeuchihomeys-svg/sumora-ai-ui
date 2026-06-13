@@ -471,7 +471,7 @@ export async function POST(req: NextRequest) {
         ai_draft: aiDraft || null,
         was_ai_used: wasAiUsed,
         was_ai_modified: wasAiModified,
-        is_starred: isStarred ?? false,
+        is_starred: isStarred ?? wasAiUsed,
       })
       .select("id")
       .single(),
@@ -492,17 +492,18 @@ export async function POST(req: NextRequest) {
   }
 
   // 学習トリガー判定
-  // ⭐ 手動インポート or ☆ or AI文案そのまま使用 → 深層分析 + フレーズ抽出
+  // ⭐ 手動インポート or ☆ or AI文案そのまま使用 → 深層分析 + フレーズ抽出（wasAiUsed=trueも☆として扱う）
   // AI文案を修正して送った → 差分学習のみ（修正内容が最良の教師信号）
-  const shouldDeepAnalyze = isStarred === true || !aiDraft || wasAiUsed;
+  const effectiveStarred = (isStarred ?? wasAiUsed) === true;
+  const shouldDeepAnalyze = effectiveStarred || !aiDraft || wasAiUsed;
   const shouldExtractPhrases = shouldDeepAnalyze || wasAiModified;
 
   const analysisJobs: Promise<void>[] = [];
   if (shouldDeepAnalyze && data?.id) {
-    analysisJobs.push(analyzeAndSaveKnowledge(data.id, conversationState, customerMessage, sentReply, isStarred));
+    analysisJobs.push(analyzeAndSaveKnowledge(data.id, conversationState, customerMessage, sentReply, effectiveStarred));
   }
   if (shouldExtractPhrases && data?.id) {
-    analysisJobs.push(extractAndSavePhrases(conversationState, sentReply, isStarred ?? false));
+    analysisJobs.push(extractAndSavePhrases(conversationState, sentReply, effectiveStarred));
   }
   if (analysisJobs.length > 0) await Promise.all(analysisJobs);
 

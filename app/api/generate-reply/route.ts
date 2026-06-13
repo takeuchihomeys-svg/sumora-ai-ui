@@ -244,6 +244,9 @@ function buildGenerationMessages(
     ? "\n\n【🔴 最重要】上記⭐実例が唯一の文体基準。実例の言い回し・感嘆符(！！)・絵文字・長さをそのまま再現すること。phrase_dictやパターン集より実例を最優先。"
     : "";
 
+  // 実例がある場合はQUICK_PATTERNSを省略（実例を真の最優先にする・競合を排除）
+  const quickPatterns = examples ? "" : `\n${SMORA_QUICK_PATTERNS}`;
+
   const prompt = `
 ${nameNote}${conditionsNote}${summaryNote}${greetingNote}
 【現在の営業フェーズ】${state}
@@ -251,7 +254,7 @@ ${phaseGuide}${approachNote}${staffContextNote}
 
 【直近の会話履歴（スモラ自身の返信も含む）】
 ${history || "なし"}
-${SMORA_QUICK_PATTERNS}
+${quickPatterns}
 ${knowledge}
 ${phrases}
 
@@ -473,13 +476,13 @@ async function fetchExamples(state: string, customerMessage?: string): Promise<s
       }) as { data: Array<{ customer_message: string; sent_reply: string; conversation_state: string; is_starred: boolean; similarity: number }> | null; error: unknown };
 
       if (!rpcError && similar && similar.length > 0) {
-        // 類似度上位を取得。☆つきを優先して最大20件
+        // ☆優先 → 類似度順で上位8件に絞る（多すぎると平均化してスモラらしさが薄れる）
         const sorted = [...similar].sort((a, b) => {
           if (a.is_starred !== b.is_starred) return a.is_starred ? -1 : 1;
           return b.similarity - a.similarity;
-        }).slice(0, 20);
+        }).slice(0, 8);
 
-        return "\n\n【⭐ スモラの実際の返信例（状況が類似した良質な実例・類似度順）— 文体・言い回し・感嘆符・絵文字・長さをこの例から忠実に再現すること。これが最優先の文体基準】\n" +
+        return "\n\n【⭐ スモラの実際の返信例（状況が最も類似した実例・類似度順）— 文体・言い回し・感嘆符・絵文字・長さをこの例から忠実に再現すること。これが最優先の文体基準】\n" +
           sorted.map((ex, i) =>
             `[例${i + 1}${ex.is_starred ? "⭐" : ""}]\nお客様: 「${ex.customer_message}」\nスモラ: 「${ex.sent_reply}」`
           ).join("\n\n");
@@ -496,23 +499,23 @@ async function fetchExamples(state: string, customerMessage?: string): Promise<s
       .eq("is_starred", true)
       .order("created_at", { ascending: false }).limit(50),
     supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state")
-      .in("conversation_state", stateAliases).eq("was_ai_modified", true).eq("is_starred", false)
-      .order("created_at", { ascending: false }).limit(15),
+      .in("conversation_state", stateAliases).or("was_ai_modified.eq.true,was_ai_used.eq.true").eq("is_starred", false)
+      .order("created_at", { ascending: false }).limit(20),
   ]);
 
   const sameStateList = starredSameState || [];
   const allStateList  = (starredAllState || []).filter(
     (ex) => !sameStateList.some((s) => s.sent_reply === ex.sent_reply)
   );
-  const modifiedFallback = sameStateList.length < 5
+  const modifiedFallback = sameStateList.length < 4
     ? (modifiedSameState || []).filter((ex) => !sameStateList.some((s) => s.sent_reply === ex.sent_reply))
     : [];
 
   const all = [
     ...sameStateList.map((ex) => ({ ...ex, priority: 1 })),
-    ...allStateList.slice(0, 10).map((ex) => ({ ...ex, priority: 2 })),
-    ...modifiedFallback.slice(0, 8).map((ex) => ({ ...ex, priority: 3 })),
-  ].sort((a, b) => a.priority - b.priority).slice(0, 30);
+    ...allStateList.slice(0, 4).map((ex) => ({ ...ex, priority: 2 })),
+    ...modifiedFallback.slice(0, 2).map((ex) => ({ ...ex, priority: 3 })),
+  ].sort((a, b) => a.priority - b.priority).slice(0, 8);
 
   if (all.length === 0) return "";
 
