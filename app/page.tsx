@@ -480,6 +480,8 @@ export default function Home() {
                 c.id === String(upd.id) ? { ...c, aiDraft: upd.ai_draft || null } : c
               )
             );
+            // async プリ生成完了 → preGenInProgress をクリア
+            if (upd.ai_draft) preGenInProgress.current.delete(String(upd.id));
           }
           fetchConversationsAndMessages(true);
         }
@@ -936,13 +938,14 @@ export default function Home() {
 
       for (const conv of targets) {
         preGenInProgress.current.add(conv.id);
-        fetch("/api/generate-draft-bg", {
+        // 即200返却のasyncエンドポイント → ブラウザ接続をブロックしない
+        // 2分後に自動クリーンアップ（Realtimeが来なかった場合の保険）
+        setTimeout(() => preGenInProgress.current.delete(conv.id), 120000);
+        fetch("/api/generate-draft-bg-async", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ conversation_id: conv.id, memo: memosRef.current[conv.id] || "" }),
-        })
-          .then(() => { preGenInProgress.current.delete(conv.id); })
-          .catch(() => { preGenInProgress.current.delete(conv.id); });
+        }).catch(() => { preGenInProgress.current.delete(conv.id); });
       }
     }
 
@@ -1055,31 +1058,29 @@ export default function Home() {
         const isActuallyUnread = !rAt || (!!latestCust?.rawCreatedAt && latestCust.rawCreatedAt > rAt);
         const skipStatuses = new Set(["applying", "screening", "contract", "closed_won"]);
         const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
-        if (isActuallyUnread && !skipStatuses.has(ns) && !preGenInProgress.current.has(selectedConversation.id)) {
+        if (isActuallyUnread && !skipStatuses.has(ns)) {
+          // preGenInProgressチェックなし：選択会話は常にsync生成を優先
+          // （プリ生成asyncと並走してもDBのai_draftチェックで二重保存は防止）
           setDraftPreparing(true);
           const convIdForGen = selectedConversation.id;
-          preGenInProgress.current.add(convIdForGen);
           fetch("/api/generate-draft-bg", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ conversation_id: convIdForGen, memo: memosRef.current[convIdForGen] || "" }),
           })
             .then(async (res) => {
-              preGenInProgress.current.delete(convIdForGen);
               if (!res.ok) { setDraftPreparing(false); return; }
               const data = await res.json() as { ok: boolean; draft?: string; skipped?: boolean };
-              // まだ同じ会話を選択中の場合のみセット
               if (selectedIdRef.current !== convIdForGen) return;
               if (data.draft) {
                 setDraftPreparing(false);
                 setReplyDraft(data.draft);
                 aiDraftRef.current = data.draft;
-                // DBのai_draftは既にAPIがnullでなく保存済み。ここで消すのは不要
               } else {
                 setDraftPreparing(false);
               }
             })
-            .catch(() => { preGenInProgress.current.delete(convIdForGen); setDraftPreparing(false); });
+            .catch(() => { setDraftPreparing(false); });
         } else {
           setDraftPreparing(false);
         }
