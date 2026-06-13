@@ -277,6 +277,7 @@ export default function Home() {
   const [aiDraftExpanded, setAiDraftExpanded] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [draftPreparing, setDraftPreparing] = useState(false);
   const [sending, setSending] = useState(false);
   const [starredMsgIds, setStarredMsgIds] = useState<Set<string>>(new Set());
   const [statusSaving, setStatusSaving] = useState(false);
@@ -1037,6 +1038,7 @@ export default function Home() {
     // 返信待ち + ai_draft あり → テキストエリアに自動セット（「使う」クリック不要）
     if (selectedConversation.aiDraft && selectedConversation.lastSender === "customer") {
       suppressAiDraftAutoLoad.current = true; // Effect2の二重処理を防ぐ
+      setDraftPreparing(false);
       setReplyDraft(selectedConversation.aiDraft);
       aiDraftRef.current = selectedConversation.aiDraft;
       setConversations((prev) =>
@@ -1046,6 +1048,27 @@ export default function Home() {
     } else {
       setReplyDraft("");
       aiDraftRef.current = "";
+      // 未読 + ai_draft未生成 → バックグラウンドで即起動（Realtimeで届いたらEffect2がセット）
+      if (selectedConversation.lastSender === "customer" && selectedConversation.id) {
+        const rAt = manuallyReadAtRef.current[selectedConversation.id];
+        const latestCust = selectedConversation.messages.filter((m) => m.sender === "customer").at(-1);
+        const isActuallyUnread = !rAt || (!!latestCust?.rawCreatedAt && latestCust.rawCreatedAt > rAt);
+        const skipStatuses = new Set(["applying", "screening", "contract", "closed_won"]);
+        const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
+        if (isActuallyUnread && !skipStatuses.has(ns) && !preGenInProgress.current.has(selectedConversation.id)) {
+          setDraftPreparing(true);
+          preGenInProgress.current.add(selectedConversation.id);
+          fetch("/api/generate-draft-bg", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ conversation_id: selectedConversation.id, memo: memosRef.current[selectedConversation.id] || "" }),
+          })
+            .then(() => { preGenInProgress.current.delete(selectedConversation.id); })
+            .catch(() => { preGenInProgress.current.delete(selectedConversation.id); setDraftPreparing(false); });
+        }
+      } else {
+        setDraftPreparing(false);
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedConversation.id]);
@@ -1060,6 +1083,7 @@ export default function Home() {
     }
     // 入力中は上書きしない（バナーで通知）
     if (replyDraft) return;
+    setDraftPreparing(false);
     setReplyDraft(selectedConversation.aiDraft);
     aiDraftRef.current = selectedConversation.aiDraft;
     setConversations((prev) =>
@@ -2810,7 +2834,7 @@ export default function Home() {
                   onFocus={() => setInputFocused(true)}
                   onBlur={() => setInputFocused(false)}
                   rows={1}
-                  placeholder="Aa"
+                  placeholder={draftPreparing ? "AI返信案を準備中..." : "Aa"}
                   className="min-h-[22px] w-full resize-none overflow-y-auto bg-transparent text-[14px] leading-6 text-[#111b21] outline-none placeholder:text-[#aaa]"
                   style={{ height: "22px" }}
                 />
