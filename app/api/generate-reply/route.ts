@@ -329,9 +329,16 @@ function buildGenerationMessages(
 
   // スモラの直前返信を履歴から抽出（文脈の引き継ぎに使用）
   const lastStaffMsg = lastStaffLines.length > 0 ? lastStaffLines[lastStaffLines.length - 1].replace(/^スモラ:\s*/, "") : null;
-  const staffContextNote = lastStaffMsg
-    ? `\n【⚠️ スモラが直前に送った内容（必ず踏まえること）】「${lastStaffMsg}」\n→ この返信の後にお客様が上記メッセージを送った。会話の流れを引き継いで自然な続きを生成すること。`
-    : "";
+
+  // 履歴の末尾がスモラのメッセージ = お客様がまだ返信していない = 「続きのメッセージ」を生成する状況
+  const nonEmptyLines = historyLines.filter(Boolean);
+  const historyEndsWithStaff = nonEmptyLines.length > 0 && nonEmptyLines[nonEmptyLines.length - 1].startsWith("スモラ:");
+
+  const staffContextNote = historyEndsWithStaff && lastStaffMsg
+    ? `\n【⚠️ 最重要：スモラは既にこのお客様メッセージに返信済み】\nスモラが直前に送った内容：「${lastStaffMsg}」\n→ お客様はまだ返信していない。これはその【続きのメッセージ】。前の返信で伝えた内容を絶対に繰り返さない。前の返信を踏まえて補足・追加・次のアクション提案など、自然につながる内容を生成すること。`
+    : lastStaffMsg
+      ? `\n【⚠️ スモラが直前に送った内容（必ず踏まえること）】「${lastStaffMsg}」\n→ この返信の後にお客様が上記メッセージを送った。会話の流れを引き継いで自然な続きを生成すること。`
+      : "";
 
   // ⭐実例がある場合: より強い指示に変更
   const examplesInstruction = examples
@@ -355,12 +362,12 @@ ${realEstateNote}
 ${knowledge}
 ${phrases}
 
-【お客様の最新メッセージ】
+${historyEndsWithStaff ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}
 ${customerMessage}
 
 ${examples}${examplesInstruction}
 
-↑スモラの直前返信の流れを踏まえ、⭐実例の文体・言い回しを最優先で忠実に再現しながら、このメッセージへのスモラらしい返信を1つ生成してください。
+↑${historyEndsWithStaff ? "スモラは既にこのメッセージに返信済み。前の返信内容を繰り返さず、続きとして自然につながるメッセージを1つ生成すること。" : "スモラの直前返信の流れを踏まえ、⭐実例の文体・言い回しを最優先で忠実に再現しながら、このメッセージへのスモラらしい返信を1つ生成してください。"}
 長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。絶対に担当者名（鈴木など）を入れない。`;
 
   return [new SystemMessage(promptOverrides?.generationSystem ?? GENERATION_SYSTEM), new HumanMessage(prompt)];
