@@ -211,6 +211,12 @@ const SMORA_QUICK_PATTERNS = `
 ・保証会社交渉: 「別の保証会社での審査が可能か管理会社に交渉させて頂きます！！」
 ・初期費用内訳説明: 「最大限割引させていただいたお見積書となります😊！！〇〇さんお気に召されましたらご都合よろしいお日にちにご案内させて頂きます！！」`.trim();
 
+type PromptOverrides = {
+  generationSystem?: string;
+  quickPatterns?: string;
+  phaseGuide?: Record<string, string>;
+};
+
 function buildGenerationMessages(
   customerMessage: string,
   customerName: string,
@@ -221,7 +227,8 @@ function buildGenerationMessages(
   examples: string,
   phrases: string,
   customerConditions = "",
-  customerSummary = ""
+  customerSummary = "",
+  promptOverrides?: PromptOverrides
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   const greetingNote = jstHour >= 20
@@ -236,8 +243,8 @@ function buildGenerationMessages(
     ? `\n【このお客さんの人物像・特徴（AI要約）— 文体・トーン・アプローチに必ず反映すること】\n${customerSummary}`
     : "";
 
-  // フェーズ別の行動指針を取得
-  const phaseGuide = PHASE_GUIDE[state] || PHASE_GUIDE["first_reply"];
+  // フェーズ別の行動指針を取得（DBオーバーライド優先）
+  const phaseGuide = promptOverrides?.phaseGuide?.[state] ?? PHASE_GUIDE[state] ?? PHASE_GUIDE["first_reply"];
 
 
   // 分析結果から方針のみ抽出
@@ -263,7 +270,8 @@ function buildGenerationMessages(
     : "";
 
   // 実例がある場合はQUICK_PATTERNSを省略（実例を真の最優先にする・競合を排除）
-  const quickPatterns = examples ? "" : `\n${SMORA_QUICK_PATTERNS}`;
+  const effectiveQuickPatterns = promptOverrides?.quickPatterns ?? SMORA_QUICK_PATTERNS;
+  const quickPatterns = examples ? "" : `\n${effectiveQuickPatterns}`;
 
   const prompt = `
 ${nameNote}${conditionsNote}${summaryNote}${greetingNote}
@@ -284,7 +292,7 @@ ${examples}${examplesInstruction}
 ↑スモラの直前返信の流れを踏まえ、⭐実例の文体・言い回しを最優先で忠実に再現しながら、このメッセージへのスモラらしい返信を1つ生成してください。
 長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。絶対に担当者名（鈴木など）を入れない。`;
 
-  return [new SystemMessage(GENERATION_SYSTEM), new HumanMessage(prompt)];
+  return [new SystemMessage(promptOverrides?.generationSystem ?? GENERATION_SYSTEM), new HumanMessage(prompt)];
 }
 
 // ─── Intent分類（Haiku）──────────────────────────────────────────────────────
@@ -574,6 +582,29 @@ export async function POST(req: NextRequest) {
 
   if (!message) return NextResponse.json({ ok: false, error: "message required" }, { status: 400 });
 
+  // DBカスタムプロンプトを取得（失敗時はハードコード値にフォールバック）
+  let promptOverrides: PromptOverrides | undefined;
+  try {
+    const { data: dbPrompts } = await supabase.from("ai_prompts").select("key, content");
+    if (dbPrompts && dbPrompts.length > 0) {
+      const phaseGuide: Record<string, string> = {};
+      let generationSystem: string | undefined;
+      let quickPatterns: string | undefined;
+      for (const p of dbPrompts as { key: string; content: string }[]) {
+        if (p.key === "generation_system") generationSystem = p.content;
+        else if (p.key === "smora_quick_patterns") quickPatterns = p.content;
+        else if (p.key.startsWith("phase_guide_")) phaseGuide[p.key.slice("phase_guide_".length)] = p.content;
+      }
+      if (generationSystem || quickPatterns || Object.keys(phaseGuide).length > 0) {
+        promptOverrides = {
+          generationSystem,
+          quickPatterns,
+          phaseGuide: Object.keys(phaseGuide).length > 0 ? phaseGuide : undefined,
+        };
+      }
+    }
+  } catch { /* use hardcoded fallback */ }
+
   try {
     const currentState = normalizeState(state || "first_reply");
 
@@ -625,7 +656,8 @@ export async function POST(req: NextRequest) {
     // Sonnetでストリーミング生成
     const messages = buildGenerationMessages(
       message, customerName, history, currentState,
-      analysis, knowledge, examples, phrases, customerConditions, resolvedSummary
+      analysis, knowledge, examples, phrases, customerConditions, resolvedSummary,
+      promptOverrides
     );
     const genStream = generationModel.stream(messages);
 

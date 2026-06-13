@@ -420,7 +420,16 @@ ALTER TABLE line_tasks DROP CONSTRAINT IF EXISTS line_tasks_status_check;
 ALTER TABLE line_tasks ADD CONSTRAINT line_tasks_status_check CHECK (status IN ('pending', 'completed', 'cancelled'));
 
 -- 返信ドラフト自動生成用
-ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ai_draft TEXT
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS ai_draft TEXT;
+
+-- AI返信プロンプト管理テーブル（UIから確認・編集可能）
+CREATE TABLE IF NOT EXISTS ai_prompts (
+  key TEXT PRIMARY KEY,
+  label TEXT NOT NULL DEFAULT '',
+  content TEXT NOT NULL DEFAULT '',
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE ai_prompts DISABLE ROW LEVEL SECURITY
 `.trim();
 
 export async function GET() {

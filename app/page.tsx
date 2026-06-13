@@ -330,6 +330,12 @@ export default function Home() {
   const [showKnowledgeModal, setShowKnowledgeModal] = useState(false);
   const [knowledgeRules, setKnowledgeRules] = useState<Array<{ id: string; content: string; conversation_state: string; created_at: string; title: string }>>([]);
   const [knowledgeLoading, setKnowledgeLoading] = useState(false);
+  const [showPromptModal, setShowPromptModal] = useState(false);
+  const [promptItems, setPromptItems] = useState<Array<{ key: string; label: string; content: string; is_custom: boolean }>>([]);
+  const [promptLoading, setPromptLoading] = useState(false);
+  const [editingPromptKey, setEditingPromptKey] = useState<string | null>(null);
+  const [editingPromptContent, setEditingPromptContent] = useState("");
+  const [promptSaving, setPromptSaving] = useState(false);
   const [accountChangeConvId, setAccountChangeConvId] = useState<string | null>(null);
   const [assignees, setAssignees] = useState<Record<string, string>>({});
   const [assigneeModalConvId, setAssigneeModalConvId] = useState<string | null>(null);
@@ -3632,9 +3638,36 @@ export default function Home() {
                 </button>
               )}
             </div>
-            {/* AIナレッジ管理 */}
+            {/* AI管理（プロンプト管理 + AIナレッジ管理） */}
             <div className="px-4 pt-2 pb-4 border-t border-[#f0f2f5]">
-              <p className="text-[11px] font-bold text-[#8696a0] mb-3 tracking-wide uppercase">AI学習管理</p>
+              <p className="text-[11px] font-bold text-[#8696a0] mb-3 tracking-wide uppercase">AI管理</p>
+              {/* プロンプト管理 */}
+              <button
+                onClick={async () => {
+                  setShowHamburgerMenu(false);
+                  setShowPromptModal(true);
+                  setEditingPromptKey(null);
+                  setPromptLoading(true);
+                  const d = await fetch("/api/prompt-management").then((r) => r.json()) as { prompts: Array<{ key: string; label: string; content: string; is_custom: boolean }> };
+                  setPromptItems(d.prompts ?? []);
+                  setPromptLoading(false);
+                }}
+                className="flex w-full items-center gap-3 rounded-2xl border border-[#e9edef] bg-[#f8f9fa] px-4 py-3 mb-2 text-left active:scale-[0.98] transition-all"
+              >
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-purple-500">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                  </svg>
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[14px] font-bold text-[#111b21]">プロンプト管理</div>
+                  <div className="text-[11px] text-[#8696a0]">AI生成プロンプトを確認・編集</div>
+                </div>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8696a0" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 18l6-6-6-6"/>
+                </svg>
+              </button>
+              {/* AIナレッジ管理 */}
               <button
                 onClick={async () => {
                   setShowHamburgerMenu(false);
@@ -3741,6 +3774,137 @@ export default function Home() {
             <div className="px-4 py-3 border-t border-[#f0f2f5] text-center">
               <span className="text-[11px] text-[#8696a0]">{knowledgeRules.length}件 / 承認済みはimportance 10になります</span>
             </div>
+            <div className="pb-[max(12px,env(safe-area-inset-bottom))]" />
+          </div>
+        </div>
+      )}
+
+      {/* プロンプト管理モーダル */}
+      {showPromptModal && (
+        <div
+          className="fixed inset-0 z-[95] flex items-end justify-center bg-black/60"
+          onClick={(e) => { if (e.target === e.currentTarget) { setShowPromptModal(false); setEditingPromptKey(null); } }}
+        >
+          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl overflow-hidden flex flex-col" style={{ maxHeight: "92vh" }}>
+            {/* ヘッダー */}
+            {editingPromptKey ? (
+              <div className="px-5 pt-5 pb-4 flex items-center justify-between border-b border-[#f0f2f5]">
+                <button
+                  onClick={() => setEditingPromptKey(null)}
+                  className="flex h-8 items-center gap-1 rounded-full bg-[#f0f2f5] px-3 text-[13px] text-[#667781]"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+                  戻る
+                </button>
+                <div className="text-[14px] font-bold text-[#111b21] flex-1 text-center mx-2 truncate">
+                  {promptItems.find((p) => p.key === editingPromptKey)?.label ?? editingPromptKey}
+                </div>
+                <button
+                  onClick={async () => {
+                    if (!editingPromptKey) return;
+                    setPromptSaving(true);
+                    await fetch("/api/prompt-management", {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ key: editingPromptKey, content: editingPromptContent }),
+                    });
+                    setPromptItems((prev) =>
+                      prev.some((p) => p.key === editingPromptKey)
+                        ? prev.map((p) => p.key === editingPromptKey ? { ...p, content: editingPromptContent, is_custom: true } : p)
+                        : [...prev, { key: editingPromptKey, label: editingPromptKey, content: editingPromptContent, is_custom: true }]
+                    );
+                    setPromptSaving(false);
+                    setEditingPromptKey(null);
+                  }}
+                  disabled={promptSaving}
+                  className="rounded-full bg-purple-500 px-4 py-1.5 text-[13px] font-bold text-white disabled:opacity-60 active:opacity-80"
+                >
+                  {promptSaving ? "保存中..." : "保存"}
+                </button>
+              </div>
+            ) : (
+              <div className="px-5 pt-5 pb-4 flex items-center justify-between border-b border-[#f0f2f5]">
+                <div>
+                  <div className="text-[16px] font-bold text-[#111b21]">プロンプト管理</div>
+                  <div className="text-[11px] text-[#8696a0]">AI生成プロンプトを確認・編集</div>
+                </div>
+                <button onClick={() => setShowPromptModal(false)} className="flex h-8 w-8 items-center justify-center rounded-full bg-[#f0f2f5] text-[#667781]">✕</button>
+              </div>
+            )}
+            {/* コンテンツ */}
+            <div className="overflow-y-auto flex-1 px-4 py-3">
+              {promptLoading ? (
+                <div className="flex items-center justify-center py-12 text-[13px] text-[#8696a0]">読み込み中...</div>
+              ) : editingPromptKey ? (
+                <div className="flex flex-col gap-3">
+                  <textarea
+                    value={editingPromptContent}
+                    onChange={(e) => setEditingPromptContent(e.target.value)}
+                    className="w-full rounded-xl border border-[#e9edef] bg-[#f8f9fa] p-3 text-[12px] leading-relaxed resize-none focus:outline-none focus:border-purple-400 focus:bg-white"
+                    rows={20}
+                    style={{ minHeight: "320px" }}
+                  />
+                  <button
+                    onClick={async () => {
+                      if (!editingPromptKey) return;
+                      if (!confirm("デフォルトに戻しますか？カスタムの変更は削除されます。")) return;
+                      await fetch(`/api/prompt-management?key=${editingPromptKey}`, { method: "DELETE" });
+                      setPromptItems((prev) => prev.filter((p) => p.key !== editingPromptKey));
+                      setEditingPromptKey(null);
+                      setPromptLoading(true);
+                      const d = await fetch("/api/prompt-management").then((r) => r.json()) as { prompts: Array<{ key: string; label: string; content: string; is_custom: boolean }> };
+                      setPromptItems(d.prompts ?? []);
+                      setPromptLoading(false);
+                    }}
+                    className="w-full rounded-xl border border-red-200 bg-red-50 py-2.5 text-[12px] font-bold text-red-500 active:opacity-80"
+                  >
+                    デフォルトに戻す
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {[
+                    { key: "generation_system", label: "生成システムプロンプト", desc: "AI返信の基本ルール・禁止ワード・スタイル定義" },
+                    { key: "phase_guide_first_reply", label: "初回返信ガイド", desc: "初めてのLINEへの返し方" },
+                    { key: "phase_guide_hearing", label: "ヒアリングガイド", desc: "条件ヒアリング中の返し方（A〜Dパターン）" },
+                    { key: "phase_guide_proposing", label: "提案フェーズガイド", desc: "物件提案・確認フェーズの返し方（A〜Eパターン）" },
+                    { key: "phase_guide_applying", label: "申込フェーズガイド", desc: "内覧・申込手続きの返し方" },
+                    { key: "smora_quick_patterns", label: "スモラ返信パターン集", desc: "実例から抽出した定型返信フレーズ一覧" },
+                  ].map((meta) => {
+                    const item = promptItems.find((p) => p.key === meta.key);
+                    const isCustom = item?.is_custom ?? false;
+                    return (
+                      <button
+                        key={meta.key}
+                        onClick={() => {
+                          setEditingPromptKey(meta.key);
+                          setEditingPromptContent(item?.content ?? "");
+                        }}
+                        className="flex items-center gap-3 rounded-2xl border border-[#e9edef] bg-[#f8f9fa] px-4 py-3 text-left active:scale-[0.98] transition-all"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-0.5">
+                            <span className="text-[13px] font-bold text-[#111b21]">{meta.label}</span>
+                            {isCustom && (
+                              <span className="shrink-0 rounded-full bg-purple-100 px-2 py-0.5 text-[9px] font-bold text-purple-700">カスタム</span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-[#8696a0]">{meta.desc}</div>
+                        </div>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8696a0" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M9 18l6-6-6-6"/>
+                        </svg>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            {!editingPromptKey && (
+              <div className="px-4 py-3 border-t border-[#f0f2f5] text-center">
+                <span className="text-[11px] text-[#8696a0]">カスタム編集済み: {promptItems.filter((p) => p.is_custom).length} / 6件 / 保存後すぐ反映</span>
+              </div>
+            )}
             <div className="pb-[max(12px,env(safe-area-inset-bottom))]" />
           </div>
         </div>
