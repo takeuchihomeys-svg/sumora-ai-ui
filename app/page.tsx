@@ -2266,11 +2266,26 @@ export default function Home() {
                         {hotConvIds.has(conversation.id) && (
                           <span className="shrink-0 leading-none text-sm">🔥</span>
                         )}
-                        {(activeTasks[conversation.id] ?? []).map((task) => (
-                          <span key={task.id} className="shrink-0 rounded-full bg-purple-100 px-1.5 py-0.5 text-[9px] font-bold text-purple-700">
-                            {task.task_type === "property_check" ? "🔍確認中" : "🏠出し中"}
-                          </span>
-                        ))}
+                        {(activeTasks[conversation.id] ?? []).map((task) => {
+                          if (task.task_type === "property_check") {
+                            const days = Math.floor((Date.now() - new Date(task.created_at).getTime()) / 86400000);
+                            const color = days >= 7
+                              ? "bg-red-100 text-red-700"
+                              : days >= 3
+                              ? "bg-orange-100 text-orange-700"
+                              : "bg-purple-100 text-purple-700";
+                            return (
+                              <span key={task.id} className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${color}`}>
+                                🔍確認中{days > 0 ? ` ${days}日` : ""}
+                              </span>
+                            );
+                          }
+                          return (
+                            <span key={task.id} className="shrink-0 rounded-full bg-purple-100 px-1.5 py-0.5 text-[9px] font-bold text-purple-700">
+                              🏠出し中
+                            </span>
+                          );
+                        })}
                       </div>
 
                       {/* 本文プレビュー: 薄色・右端に余白 */}
