@@ -2217,6 +2217,10 @@ export default function Home() {
                             {unreadCount}
                           </span>
                         )}
+                        {/* AI返信案が準備済み（開くと自動セットされる） */}
+                        {conversation.aiDraft && conversation.lastSender === "customer" && (
+                          <span className="text-[11px] leading-none" title="AI返信案あり">✨</span>
+                        )}
                       </div>
 
                       {/* 名前行: 高さ固定で位置ブレなし */}
@@ -2631,7 +2635,7 @@ export default function Home() {
                     <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-blue-400 border-t-transparent" />
                     作成中...
                   </>
-                ) : "AI文案を作成"}
+                ) : replyDraft ? "🔄 再生成" : "AI文案を作成"}
               </button>
 
               <button
