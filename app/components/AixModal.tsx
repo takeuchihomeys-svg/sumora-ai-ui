@@ -415,12 +415,12 @@ export default function AixModal({
       setLoading(true);
 
       if (actionType === "property_send") {
-        // テキストを先に送信 → 物件画像を順番に送信
-        await onSend(preview);
+        // 物件画像を先に送信 → テキストを後で送信
         for (const file of sendImageFiles) {
           const url = await uploadImage(file);
           await onSend("", url);
         }
+        await onSend(preview);
       } else if (actionType === "property_check_result") {
         // テキストを先に送信 → その後画像を順番に送信（会話の流れが自然になる）
         await onSend(preview);
