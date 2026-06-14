@@ -100,7 +100,7 @@ async function callClaudeVision(system: string, content: unknown[]): Promise<str
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, account, customer_name, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note } = body;
+    const { action, account, customer_name, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info } = body;
 
     // 直近の会話履歴テキスト（viewing_invite・application_push で使用）
     const recentHistory = Array.isArray(recent_messages) && recent_messages.length > 0
@@ -311,13 +311,16 @@ export async function POST(request: NextRequest) {
 
     // ── 🔍 内覧へ！ ──────────────────────────────────────────────
     } else if (action === "viewing_invite") {
+      const calendarNote = calendar_info ? String(calendar_info) : null;
       const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。
 今の会話の流れを読み取り、内覧へ自然に誘導するLINEメッセージを1つだけ作成してください。
 
 【作成ルール】
 ・会話履歴がある場合は、送った物件への反応・お客様の状況を踏まえて訴求する
 ・物件への反応が良い場合は「ぜひご内覧を！」と背中を押す
-・「ご都合よろしいお日にちはございますか？」など日程調整の投げかけで締める
+${calendarNote ? `・直近3日の内覧可能日時が提供されている場合は「直近ですと〜ご案内可能です！！」と具体日時を必ず含める
+・案内不可の日は言及せず、案内可能な日時のみ伝える
+・締めは「ご都合よろしいお日にちはいかがでしょうか？」` : `・「ご都合よろしいお日にちはございますか？」など日程調整の投げかけで締める`}
 ・感嘆符は「！！」を使う（スモラスタイル）
 ・LINEでそのまま送れる完成文のみ出力（解説・候補複数は禁止）
 
@@ -329,7 +332,10 @@ export async function POST(request: NextRequest) {
 【スモラの言葉・表現（参考）】
 ${phraseText || "なし"}`;
 
-      message_text = await callClaude(system, `${name}への内覧お誘いメッセージ。${extra_input ? `候補日時: ${extra_input}` : ""}${recentHistory}`);
+      const calendarPart = calendarNote
+        ? `\n\n【直近3日の内覧可能日時（calendar_events+daily_tasks合算済み・案内可能な日時のみメッセージに含めること）】\n${calendarNote}`
+        : extra_input ? `候補日時: ${extra_input}` : "";
+      message_text = await callClaude(system, `${name}への内覧お誘いメッセージ。${calendarPart}${recentHistory}`);
 
     // ── ✋ 申込へ！ ──────────────────────────────────────────────
     } else if (action === "application_push") {

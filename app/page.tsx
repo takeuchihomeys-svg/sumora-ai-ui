@@ -5,6 +5,7 @@ import AixModal, { type AixActionType } from "./components/AixModal";
 import BottomNav from "./components/BottomNav";
 import TemplateModal from "./components/TemplateModal";
 import { supabase } from "./lib/supabase";
+import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 
 type Message = {
@@ -1987,6 +1988,17 @@ export default function Home() {
       const recentMessages = selectedConversation.messages
         .slice(-20)
         .map((m) => ({ sender: m.sender, text: m.text || "" }));
+
+      let calendarInfoStr: string | undefined;
+      if (action === "viewing_invite") {
+        try {
+          const { infoString } = await fetchCalendarSlots();
+          calendarInfoStr = infoString;
+        } catch {
+          // カレンダー取得失敗は無視して続行
+        }
+      }
+
       const res = await fetch("/api/aix/action", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1996,6 +2008,7 @@ export default function Home() {
           customer_name: selectedConversation.customerName,
           conversation_id: selectedConversation.id,
           recent_messages: recentMessages,
+          ...(calendarInfoStr ? { calendar_info: calendarInfoStr } : {}),
         }),
       });
       const data = await res.json() as { ok: boolean; message_text?: string; error?: string };
