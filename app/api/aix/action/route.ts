@@ -285,22 +285,35 @@ export async function POST(request: NextRequest) {
         ? `\n\n【このお客さんの人物像・特徴（AI要約）— 文体・トーン・アプローチに必ず反映すること】\n${customerSummary}`
         : "";
 
+      // 物件送るの実例を取得
+      const { data: sendExamples } = await supabase
+        .from("ai_reply_examples")
+        .select("sent_reply")
+        .eq("conversation_state", "property_send")
+        .eq("is_starred", true)
+        .order("created_at", { ascending: false })
+        .limit(4);
+
+      const sendExamplesText = (sendExamples || []).length > 0
+        ? "\n\n【スモラの実際の物件送付メッセージ例（文体・構成をこれに合わせる）】\n" +
+          (sendExamples as { sent_reply: string }[])
+            .map((r, i) => `[例${i + 1}] ${r.sent_reply}`)
+            .join("\n\n")
+        : "";
+
       const sendSystem = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
 物件をピックアップしてお客さんに送る際の導入メッセージを1つだけ作成してください。
 
 【作成ルール】
 ・「[お客様名]さんお待たせ致しました！！ご希望のご条件に合ったお部屋ピックアップしお送りさせて頂きます😊！！」で自然に始める
 ・カレンダー情報が渡されている場合は必ず内覧可能日時をアナウンスする：
-  - 「終日案内可」の日は「[日付]は[スロット1]・[スロット2]ご案内可能です！！」と具体的スロットを案内
-  - 「案内可 [時間帯]」と書いてある日はその時間帯のみ案内
-  - 「案内不可」の日は含めない
   - 「直近ですと\n[日付] [時間帯]\n[日付] [時間帯]\nご案内可能です！！」の縦並び形式で案内する（案内できる日のみ）
   - 3日間すべて案内不可の場合は「来週ご案内できる日程をご連絡させていただきます！！」と伝える
 ・退去予定・案内できない物件情報が渡されている場合は「〇〇は[退去予定/時期]となりますのでお部屋ご案内出来ない形となります！！」と明確に伝える（複数ある場合は全て伝える）
 ・締めは「[お客様名]さんお気に召されましたらお日にちにご案内させて頂きます😊！！」
 ・感嘆符は「！！」（スモラスタイル）
 ・LINEでそのまま送れる完成文のみ出力（解説・候補複数は禁止）
-・絵文字は 😊 のみ・1〜2個まで`;
+・絵文字は 😊 のみ・1〜2個まで${sendExamplesText}`;
 
       const userParts: string[] = [`${name}への物件ピックアップ送付メッセージを作成してください。`];
       if (calendarData) userParts.push(`\n\n【直近3日の内覧可能時間帯（calendar_events+daily_tasks合算済み・この情報をそのまま使うこと）】\n${calendarData}`);
@@ -346,12 +359,13 @@ ${phraseText || "なし"}`;
 
     // ── ✋ 申込へ！ ──────────────────────────────────────────────
     } else if (action === "application_push") {
-      // ☆つき申込実例を取得
+      // ☆つき申込実例を取得（application_pushステートを優先）
       const { data: applyExamples } = await supabase
         .from("ai_reply_examples")
         .select("customer_message, sent_reply")
-        .in("conversation_state", ["applying", "application", "screening", "contract"])
+        .in("conversation_state", ["application_push", "applying", "application", "screening", "contract"])
         .eq("is_starred", true)
+        .order("conversation_state", { ascending: true })
         .order("created_at", { ascending: false })
         .limit(8);
 
