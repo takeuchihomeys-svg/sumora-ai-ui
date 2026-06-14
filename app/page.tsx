@@ -331,7 +331,7 @@ export default function Home() {
   const [knowledgeRules, setKnowledgeRules] = useState<Array<{ id: string; content: string; conversation_state: string; created_at: string; title: string }>>([]);
   const [knowledgeLoading, setKnowledgeLoading] = useState(false);
   const [showPromptModal, setShowPromptModal] = useState(false);
-  const [promptItems, setPromptItems] = useState<Array<{ key: string; label: string; content: string; is_custom: boolean }>>([]);
+  const [promptItems, setPromptItems] = useState<Array<{ key: string; label: string; content: string; is_custom: boolean; readonly?: boolean }>>([]);
   const [promptLoading, setPromptLoading] = useState(false);
   const [editingPromptKey, setEditingPromptKey] = useState<string | null>(null);
   const [editingPromptContent, setEditingPromptContent] = useState("");
@@ -3799,28 +3799,30 @@ export default function Home() {
                 <div className="text-[14px] font-bold text-[#111b21] flex-1 text-center mx-2 truncate">
                   {promptItems.find((p) => p.key === editingPromptKey)?.label ?? editingPromptKey}
                 </div>
-                <button
-                  onClick={async () => {
-                    if (!editingPromptKey) return;
-                    setPromptSaving(true);
-                    await fetch("/api/prompt-management", {
-                      method: "PATCH",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ key: editingPromptKey, content: editingPromptContent }),
-                    });
-                    setPromptItems((prev) =>
-                      prev.some((p) => p.key === editingPromptKey)
-                        ? prev.map((p) => p.key === editingPromptKey ? { ...p, content: editingPromptContent, is_custom: true } : p)
-                        : [...prev, { key: editingPromptKey, label: editingPromptKey, content: editingPromptContent, is_custom: true }]
-                    );
-                    setPromptSaving(false);
-                    setEditingPromptKey(null);
-                  }}
-                  disabled={promptSaving}
-                  className="rounded-full bg-purple-500 px-4 py-1.5 text-[13px] font-bold text-white disabled:opacity-60 active:opacity-80"
-                >
-                  {promptSaving ? "保存中..." : "保存"}
-                </button>
+                {!promptItems.find((p) => p.key === editingPromptKey)?.readonly && (
+                  <button
+                    onClick={async () => {
+                      if (!editingPromptKey) return;
+                      setPromptSaving(true);
+                      await fetch("/api/prompt-management", {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ key: editingPromptKey, content: editingPromptContent }),
+                      });
+                      setPromptItems((prev) =>
+                        prev.some((p) => p.key === editingPromptKey)
+                          ? prev.map((p) => p.key === editingPromptKey ? { ...p, content: editingPromptContent, is_custom: true } : p)
+                          : [...prev, { key: editingPromptKey, label: editingPromptKey, content: editingPromptContent, is_custom: true }]
+                      );
+                      setPromptSaving(false);
+                      setEditingPromptKey(null);
+                    }}
+                    disabled={promptSaving}
+                    className="rounded-full bg-purple-500 px-4 py-1.5 text-[13px] font-bold text-white disabled:opacity-60 active:opacity-80"
+                  >
+                    {promptSaving ? "保存中..." : "保存"}
+                  </button>
+                )}
               </div>
             ) : (
               <div className="px-5 pt-5 pb-4 flex items-center justify-between border-b border-[#f0f2f5]">
@@ -3837,29 +3839,41 @@ export default function Home() {
                 <div className="flex items-center justify-center py-12 text-[13px] text-[#8696a0]">読み込み中...</div>
               ) : editingPromptKey ? (
                 <div className="flex flex-col gap-3">
+                  {promptItems.find((p) => p.key === editingPromptKey)?.readonly && (
+                    <div className="rounded-xl bg-gray-50 border border-gray-200 px-3 py-2 text-[11px] text-gray-500">
+                      このルールはコードで管理されています。変更はAI（竹内AI）に依頼してください。
+                    </div>
+                  )}
                   <textarea
                     value={editingPromptContent}
-                    onChange={(e) => setEditingPromptContent(e.target.value)}
-                    className="w-full rounded-xl border border-[#e9edef] bg-[#f8f9fa] p-3 text-[12px] leading-relaxed resize-none focus:outline-none focus:border-purple-400 focus:bg-white"
+                    onChange={(e) => {
+                      if (!promptItems.find((p) => p.key === editingPromptKey)?.readonly) {
+                        setEditingPromptContent(e.target.value);
+                      }
+                    }}
+                    readOnly={promptItems.find((p) => p.key === editingPromptKey)?.readonly ?? false}
+                    className={`w-full rounded-xl border border-[#e9edef] p-3 text-[12px] leading-relaxed resize-none focus:outline-none ${promptItems.find((p) => p.key === editingPromptKey)?.readonly ? "bg-gray-50 text-gray-600 cursor-default" : "bg-[#f8f9fa] focus:border-purple-400 focus:bg-white"}`}
                     rows={20}
                     style={{ minHeight: "320px" }}
                   />
-                  <button
-                    onClick={async () => {
-                      if (!editingPromptKey) return;
-                      if (!confirm("デフォルトに戻しますか？カスタムの変更は削除されます。")) return;
-                      await fetch(`/api/prompt-management?key=${editingPromptKey}`, { method: "DELETE" });
-                      setPromptItems((prev) => prev.filter((p) => p.key !== editingPromptKey));
-                      setEditingPromptKey(null);
-                      setPromptLoading(true);
-                      const d = await fetch("/api/prompt-management").then((r) => r.json()) as { prompts: Array<{ key: string; label: string; content: string; is_custom: boolean }> };
-                      setPromptItems(d.prompts ?? []);
-                      setPromptLoading(false);
-                    }}
-                    className="w-full rounded-xl border border-red-200 bg-red-50 py-2.5 text-[12px] font-bold text-red-500 active:opacity-80"
-                  >
-                    デフォルトに戻す
-                  </button>
+                  {!promptItems.find((p) => p.key === editingPromptKey)?.readonly && (
+                    <button
+                      onClick={async () => {
+                        if (!editingPromptKey) return;
+                        if (!confirm("デフォルトに戻しますか？カスタムの変更は削除されます。")) return;
+                        await fetch(`/api/prompt-management?key=${editingPromptKey}`, { method: "DELETE" });
+                        setPromptItems((prev) => prev.filter((p) => p.key !== editingPromptKey));
+                        setEditingPromptKey(null);
+                        setPromptLoading(true);
+                        const d = await fetch("/api/prompt-management").then((r) => r.json()) as { prompts: Array<{ key: string; label: string; content: string; is_custom: boolean; readonly?: boolean }> };
+                        setPromptItems(d.prompts ?? []);
+                        setPromptLoading(false);
+                      }}
+                      className="w-full rounded-xl border border-red-200 bg-red-50 py-2.5 text-[12px] font-bold text-red-500 active:opacity-80"
+                    >
+                      デフォルトに戻す
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="flex flex-col gap-2">
@@ -3869,10 +3883,13 @@ export default function Home() {
                     { key: "phase_guide_hearing", label: "ヒアリングガイド", desc: "条件ヒアリング中の返し方（A〜Dパターン）" },
                     { key: "phase_guide_proposing", label: "提案フェーズガイド", desc: "物件提案・確認フェーズの返し方（A〜Eパターン）" },
                     { key: "phase_guide_applying", label: "申込フェーズガイド", desc: "内覧・申込手続きの返し方" },
+                    { key: "real_estate_rules", label: "不動産ルール", desc: "仲介手数料・敷礼金・保証会社・申込フロー等" },
                     { key: "smora_quick_patterns", label: "スモラ返信パターン集", desc: "実例から抽出した定型返信フレーズ一覧" },
+                    { key: "management_company_hours", label: "管理会社の営業時間ルール", desc: "土日・18時以降の対応ルール（閲覧のみ）" },
                   ].map((meta) => {
                     const item = promptItems.find((p) => p.key === meta.key);
                     const isCustom = item?.is_custom ?? false;
+                    const isReadonly = item?.readonly ?? false;
                     return (
                       <button
                         key={meta.key}
@@ -3885,7 +3902,10 @@ export default function Home() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-0.5">
                             <span className="text-[13px] font-bold text-[#111b21]">{meta.label}</span>
-                            {isCustom && (
+                            {isReadonly && (
+                              <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[9px] font-bold text-gray-500">閲覧のみ</span>
+                            )}
+                            {isCustom && !isReadonly && (
                               <span className="shrink-0 rounded-full bg-purple-100 px-2 py-0.5 text-[9px] font-bold text-purple-700">カスタム</span>
                             )}
                           </div>
@@ -3902,7 +3922,7 @@ export default function Home() {
             </div>
             {!editingPromptKey && (
               <div className="px-4 py-3 border-t border-[#f0f2f5] text-center">
-                <span className="text-[11px] text-[#8696a0]">カスタム編集済み: {promptItems.filter((p) => p.is_custom).length} / 6件 / 保存後すぐ反映</span>
+                <span className="text-[11px] text-[#8696a0]">カスタム編集済み: {promptItems.filter((p) => p.is_custom && !p.readonly).length} / 7件 / 保存後すぐ反映</span>
               </div>
             )}
             <div className="pb-[max(12px,env(safe-area-inset-bottom))]" />

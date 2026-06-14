@@ -6,7 +6,7 @@ import { supabase } from "@/app/lib/supabase";
 const EMOJI_RULE = `絵文字: 😊 😌 🌟 ✨ の4つのみ・1〜2個まで・文末か区切りのみ`;
 const STYLE_RULE = `感嘆符「！」または「！！」を文脈で使い分け / 「〇〇さん」で呼ぶ / 物件紹介以外は箇条書き禁止 / 1つの返信案のみ`;
 
-const PROMPT_DEFAULTS: Record<string, { label: string; content: string }> = {
+const PROMPT_DEFAULTS: Record<string, { label: string; content: string; readonly?: boolean }> = {
   generation_system: {
     label: "生成システムプロンプト",
     content: `あなたはスモラ（賃貸仲介）のLINE営業担当です。
@@ -141,6 +141,25 @@ const PROMPT_DEFAULTS: Record<string, { label: string; content: string }> = {
 ・退去前物件: 退去日以降に内覧可。先に申込してからご内覧という形も可能
 ・保証会社難易度: 信販系（エポス・オリコ等）は審査厳しめ。否決時は独立系保証会社への変更を交渉`,
   },
+  management_company_hours: {
+    label: "管理会社の営業時間ルール",
+    readonly: true,
+    content: `【管理会社の営業時間ルール（コードで自動判定・変更はAIに依頼）】
+
+■ 平日 〜18時（営業中）
+→ 空室確認・問い合わせOK
+→ 「管理会社に確認させていただきます！！確認出来次第ご連絡させていただきます！！」と伝えてよい
+
+■ 平日 18時〜（営業時間終了）
+→ 空室確認・問い合わせ・交渉NG
+→ 「本日は管理会社の営業時間が終了しておりますので、明日一番でご確認しご連絡させて頂きます！！」
+
+■ 土日（お休み）
+→ 空室確認のみOK（募集状況確認は可能）
+→ 「確認させていただきます！確認出来次第ご連絡させていただきます！！」と伝えてよい
+→ 交渉（フリーレント・値引き・条件変更・審査再挑戦等）はNG
+→ 「月曜日一番で管理会社に交渉させていただきます！！」`,
+  },
   smora_quick_patterns: {
     label: "スモラ返信パターン集",
     content: `【スモラの実際の返信パターン（実例から抽出）】
@@ -194,6 +213,7 @@ export async function GET() {
     content: dbMap[key]?.content ?? defaults.content,
     updated_at: dbMap[key]?.updated_at ?? null,
     is_custom: !!dbMap[key],
+    readonly: defaults.readonly ?? false,
   }));
 
   return NextResponse.json({ prompts });
@@ -205,6 +225,7 @@ export async function PATCH(req: NextRequest) {
   const { key, content } = body;
   if (!key || content === undefined) return NextResponse.json({ ok: false, error: "key and content required" }, { status: 400 });
   if (!(key in PROMPT_DEFAULTS)) return NextResponse.json({ ok: false, error: "unknown key" }, { status: 400 });
+  if (PROMPT_DEFAULTS[key].readonly) return NextResponse.json({ ok: false, error: "readonly" }, { status: 403 });
 
   const label = PROMPT_DEFAULTS[key].label;
   const { error } = await supabase.from("ai_prompts").upsert({
