@@ -280,6 +280,7 @@ export async function POST(request: NextRequest) {
       const calendarData = body.calendar_info ? String(body.calendar_info) : null;
       const vacatingInfo = vacating_note ? String(vacating_note) : null;
       const customerSummary = body.customer_summary as string | undefined;
+      const sendMode = body.send_mode === "application" ? "application" : "viewing";
 
       const summaryNote = customerSummary
         ? `\n\n【このお客さんの人物像・特徴（AI要約）— 文体・トーン・アプローチに必ず反映すること】\n${customerSummary}`
@@ -308,7 +309,22 @@ export async function POST(request: NextRequest) {
   条件から主なポイント（エリア・家賃・間取り等）を自然に組み込む`
         : `・「ご希望のご条件に合ったお部屋ピックアップしお送りさせて頂きます😊！！」で冒頭を続ける`;
 
-      const sendSystem = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
+      const sendSystem = sendMode === "application"
+        ? `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
+物件をピックアップしてお客さんに送る際の導入メッセージを1つだけ作成してください。
+このお客さんは内覧より先にお申込みで部屋を確保することを優先する流れです。
+
+【作成ルール】
+・「[お客様名]さんお待たせ致しました！！」で始める
+${conditionsRule}
+・退去予定・案内できない物件情報が渡されている場合は「〇〇は[退去予定/時期]となりますのでお部屋ご案内出来ない形となります！！」と明確に伝える（複数ある場合は全て伝える）
+・内覧日程は含めない
+・「お気に召されましたらそのままお申込みでお部屋を抑えることが可能です！！」等、申込みで先に確保できる旨を自然に入れる
+・締めは「お手隙の際にご査収ください😌！！」
+・感嘆符は「！！」（スモラスタイル）
+・LINEでそのまま送れる完成文のみ出力（解説・候補複数は禁止）
+・絵文字は 😊 😌 のみ・1〜2個まで${sendExamplesText}`
+        : `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
 物件をピックアップしてお客さんに送る際の導入メッセージを1つだけ作成してください。
 
 【作成ルール】

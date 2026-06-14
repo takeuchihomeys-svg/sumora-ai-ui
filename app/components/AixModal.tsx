@@ -149,6 +149,9 @@ export default function AixModal({
     label: string; slots: string[]; fullyBooked: boolean; noEvents: boolean;
   }>>([]);
   const [calendarLoading, setCalendarLoading] = useState(false);
+  // 物件送る専用: 内覧誘導 or 申込み誘導 モード + 編集可能スロット
+  const [sendMode, setSendMode] = useState<"viewing" | "application">("viewing");
+  const [editableCalendarSlots, setEditableCalendarSlots] = useState<string[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const conditionFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -195,9 +198,11 @@ export default function AixModal({
         const { days, infoString } = await fetchCalendarSlots();
         setCalendarInfo(infoString);
         setCalendarDays(days);
+        setEditableCalendarSlots(days.map(d => d.fullyBooked ? "" : (d.slots[0] || "")));
       } catch {
         setCalendarInfo("");
         setCalendarDays([]);
+        setEditableCalendarSlots([]);
       } finally {
         setCalendarLoading(false);
       }
@@ -343,7 +348,18 @@ export default function AixModal({
           body.image_urls = urls;
         }
         if (vacatingNote.trim()) body.vacating_note = vacatingNote.trim();
-        if (calendarInfo) body.calendar_info = calendarInfo;
+        body.send_mode = sendMode;
+        if (sendMode === "viewing") {
+          const finalCalendarInfo = calendarDays
+            .map((d, i) => {
+              if (d.fullyBooked) return "";
+              const slot = editableCalendarSlots[i] || d.slots[0] || "";
+              return slot ? `${d.label} ${slot}` : "";
+            })
+            .filter(Boolean)
+            .join("\n");
+          if (finalCalendarInfo) body.calendar_info = finalCalendarInfo;
+        }
         if (customerConditions) body.customer_conditions = customerConditions;
         if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
         if (customerSummary) body.customer_summary = customerSummary;
@@ -556,37 +572,79 @@ export default function AixModal({
               </div>
             </div>
           ) : actionType === "property_send" ? (
-            /* 物件送る: カレンダー自動取得 + 複数画像 + 退去予定メモ */
+            /* 物件送る: モード選択 + カレンダー自動取得 + 複数画像 + 退去予定メモ */
             <div className="mb-4 flex flex-col gap-3">
-              {/* カレンダー自動取得 */}
+              {/* モード選択 */}
               <div>
-                <p className="mb-1 text-xs font-bold text-[#54656f]">📅 内覧可能な時間帯（自動計算）</p>
-                {calendarLoading ? (
-                  <div className="flex items-center gap-2 rounded-xl bg-[#f0f2f5] px-3 py-2.5 text-sm text-[#8696a0]">
-                    <span className="inline-block animate-spin">⏳</span>
-                    <span>カレンダー読み込み中...</span>
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-1.5">
-                    {calendarDays.length > 0 ? calendarDays.map((d, i) => (
-                      <div key={i} className={`rounded-xl px-3 py-2 text-xs ${
-                        d.fullyBooked
-                          ? "bg-red-50 text-red-500"
-                          : "bg-emerald-50 text-emerald-700"
-                      }`}>
-                        <span className="font-bold">{d.label}</span>
-                        {d.fullyBooked
-                          ? <span className="ml-2">案内不可（予定詰まり）</span>
-                          : <span className="ml-2">{d.slots.join("　")}{d.noEvents ? "（予定なし）" : ""}</span>
-                        }
-                      </div>
-                    )) : (
-                      <div className="rounded-xl bg-[#f0f2f5] px-3 py-2 text-xs text-[#8696a0]">取得できませんでした</div>
-                    )}
-                  </div>
-                )}
-                <p className="mt-1 text-[10px] text-[#8696a0]">calendar_events＋screening予定を合算・AIが自動アナウンスします</p>
+                <p className="mb-1.5 text-xs font-bold text-[#54656f]">送るモードを選択</p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setSendMode("viewing"); setPreview(""); }}
+                    className={`flex-1 rounded-full py-2.5 text-sm font-bold transition-all ${
+                      sendMode === "viewing"
+                        ? "bg-[#2196F3] text-white shadow-sm"
+                        : "border border-[#d1d7db] bg-white text-[#54656f]"
+                    }`}
+                  >
+                    📅 内覧誘導
+                  </button>
+                  <button
+                    onClick={() => { setSendMode("application"); setPreview(""); }}
+                    className={`flex-1 rounded-full py-2.5 text-sm font-bold transition-all ${
+                      sendMode === "application"
+                        ? "bg-[#06c755] text-white shadow-sm"
+                        : "border border-[#d1d7db] bg-white text-[#54656f]"
+                    }`}
+                  >
+                    ✏️ 申込み誘導
+                  </button>
+                </div>
               </div>
+              {/* カレンダー自動取得（内覧誘導時のみ） */}
+              {sendMode === "viewing" && (
+                <div>
+                  <p className="mb-1 text-xs font-bold text-[#54656f]">📅 内覧可能な時間帯（自動計算）</p>
+                  {calendarLoading ? (
+                    <div className="flex items-center gap-2 rounded-xl bg-[#f0f2f5] px-3 py-2.5 text-sm text-[#8696a0]">
+                      <span className="inline-block animate-spin">⏳</span>
+                      <span>カレンダー読み込み中...</span>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-1.5">
+                      {calendarDays.length > 0 ? calendarDays.map((d, i) => (
+                        <div key={i} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs ${
+                          d.fullyBooked ? "bg-red-50" : "bg-emerald-50"
+                        }`}>
+                          <span className={`font-bold flex-shrink-0 ${d.fullyBooked ? "text-red-500" : "text-emerald-700"}`}>
+                            {d.label}
+                          </span>
+                          {d.fullyBooked ? (
+                            <span className="text-red-400">案内不可（予定詰まり）</span>
+                          ) : (
+                            <input
+                              type="text"
+                              value={editableCalendarSlots[i] ?? ""}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setEditableCalendarSlots(prev => {
+                                  const next = [...prev];
+                                  next[i] = v;
+                                  return next;
+                                });
+                              }}
+                              className="flex-1 min-w-0 bg-transparent text-emerald-700 outline-none text-xs"
+                              placeholder="11:00〜14:00"
+                            />
+                          )}
+                        </div>
+                      )) : (
+                        <div className="rounded-xl bg-[#f0f2f5] px-3 py-2 text-xs text-[#8696a0]">取得できませんでした</div>
+                      )}
+                    </div>
+                  )}
+                  <p className="mt-1 text-[10px] text-[#8696a0]">calendar_events＋screening予定を合算・AIが自動アナウンスします</p>
+                </div>
+              )}
               {/* 物件画像（複数） */}
               <div>
                 <p className="mb-1 text-xs font-bold text-[#54656f]">
