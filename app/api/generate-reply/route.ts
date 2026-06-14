@@ -50,7 +50,10 @@ ${customerMessage}
   "already_covered": "スモラが直前の返信で既に伝えた内容の要約",
   "next_action": "続きとして自然な次のアクション・補足（例：申込を促す、内覧日程を提案、安心感を与えるなど）",
   "approach": "続きメッセージの方針（前の返信の内容を踏まえて何を追加するか・繰り返しNG）",
-  "tone": "適切なトーン（例：背中を押す・安心させる・次ステップへ誘導）"
+  "tone": "適切なトーン（例：背中を押す・安心させる・次ステップへ誘導）",
+  "questions": ["お客様メッセージ内の質問・確認事項を全て列挙。なければ空配列"],
+  "repeated_concern": "履歴を見てお客様が繰り返し聞いているテーマ（例: 費用・審査・キャンセル）。なければnull",
+  "current_property": "現在話題にしている物件名・号室（履歴から特定できる場合のみ）。なければnull"
 }` : `
 【営業フェーズ】${state}
 【お客様名】${customerName || "不明"}
@@ -65,7 +68,10 @@ ${customerMessage}
   "real_need": "表面の質問の奥にある本当のニーズ・懸念（例：費用が心配で踏み出せない、家族に相談したいなど）",
   "key_insight": "優秀な営業スタッフが気づくべき重要なポイント（例：価格比較をしている、決断を急かされたくないなど）",
   "approach": "このメッセージへの最適な返し方の方針（例：まず共感→動画を送ると約束→内覧への自然な誘導など）",
-  "tone": "適切なトーン（例：温かく・余裕を持って・軽く背中を押す）"
+  "tone": "適切なトーン（例：温かく・余裕を持って・軽く背中を押す）",
+  "questions": ["お客様メッセージ内の質問・確認事項を全て列挙（例: [\"審査期間は？\",\"キャンセルできる？\",\"フリーレントある？\"]）。なければ空配列"],
+  "repeated_concern": "履歴を見てお客様が繰り返し聞いているテーマ（例: 費用・審査・キャンセル）。なければnull",
+  "current_property": "現在話題にしている物件名・号室（履歴から特定できる場合のみ）。なければnull"
 }`;
 
   try {
@@ -343,12 +349,32 @@ function buildGenerationMessages(
   const phaseGuide = promptOverrides?.phaseGuide?.[state] ?? PHASE_GUIDE[state] ?? PHASE_GUIDE["first_reply"];
 
 
-  // 分析結果から方針のみ抽出
+  // 分析結果から各フィールドを抽出
   let approachNote = "";
+  let questionsNote = "";
+  let repeatedConcernNote = "";
+  let currentPropertyNote = "";
   if (analysis) {
     try {
-      const p = JSON.parse(analysis) as Record<string, string>;
+      const p = JSON.parse(analysis) as Record<string, unknown>;
       if (p.approach) approachNote = `\n【今回の返し方】${p.approach}（トーン: ${p.tone || "自然に"}）`;
+
+      // ① 複数質問: 全問答えることを明示
+      if (Array.isArray(p.questions) && (p.questions as string[]).length > 1) {
+        questionsNote = `\n【⚠️ 複数質問検出（全て漏れなく答えること・省略禁止）】\n${
+          (p.questions as string[]).map((q, i) => `${i + 1}. ${q}`).join("\n")
+        }`;
+      }
+
+      // ② 迷いパターン: 根本不安を正面から解消
+      if (p.repeated_concern && typeof p.repeated_concern === "string") {
+        repeatedConcernNote = `\n【💭 迷いパターン検出】このお客様は「${p.repeated_concern}」について繰り返し確認している。表面的な質問の裏に根本的な不安がある。今回の返信でその不安を正面から・具体的な数字・事実で解消すること。同じ説明の繰り返しはNG — 別の角度・具体例で伝える。`;
+      }
+
+      // ④ 物件名追跡
+      if (p.current_property && typeof p.current_property === "string") {
+        currentPropertyNote = `\n【🏠 現在話している物件】${p.current_property} — この物件の文脈で返信すること。`;
+      }
     } catch { /* ignore */ }
   }
 
@@ -387,7 +413,7 @@ function buildGenerationMessages(
   const realEstateNote = `\n${promptOverrides?.realEstateRules ?? REAL_ESTATE_RULES}`;
 
   const prompt = `
-${nameNote}${conditionsNote}${summaryNote}${greetingNote}${managementNote}${repetitionNote}
+${nameNote}${conditionsNote}${summaryNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${questionsNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${approachNote}${staffContextNote}
 
