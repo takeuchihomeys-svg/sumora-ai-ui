@@ -387,34 +387,66 @@ ${phraseText || "なし"}${examplesText}`;
       const pattern = check_pattern as "available" | "alternative" | "unavailable";
       const customerSummary = body.customer_summary as string | undefined;
 
-      const PATTERN_INSTRUCTION: Record<string, string> = {
-        available:   "物件を確認した結果「空室あり・入居可能」でした。お待たせしたお礼と空室報告をして、内見日程の調整へ自然に誘導してください。",
-        alternative: "物件を確認した結果「満室でしたが、同じマンションまたは近隣で別のお部屋が募集中」でした。残念な気持ちに寄り添いつつ、別の選択肢への期待感をもたせて内見誘導で締めてください。",
-        unavailable: "物件を確認した結果「満室・空きなし」でした。お待たせしたお詫びをしつつ、引き続き物件探しを続けることを伝え、前向きな雰囲気で締めてください。",
+      // 各パターンの実データ由来お手本（DBに☆つき実例が少ないため直書き）
+      const PATTERN_EXAMPLES: Record<string, string> = {
+        available: `[パターン例: 空室あり・内覧誘導]
+スモラ:「大変お待たせいたしました！！
+〇〇（物件名）空室確認取れました😊！！
+ぜひご内覧させていただきたいのですが
+直近ですと
+6/15（月）15:00〜17:00
+6/16（火）12:00〜14:00
+ご案内可能です！！
+〇〇さんご都合いかがでしょうか😌！！」`,
+        alternative: `[パターン例: 満室・代替案あり]
+スモラ:「大変お待たせいたしました！！
+確認させていただきました物件のお部屋全て募集が終了しており大変申し訳ございません🙇‍♀️！！
+ただAPRILE南森町は一回り広い33.62㎡のお部屋が募集中です！！
+こちらのお部屋〇〇さんお気に召されましたらご案内させていただきます！！
+ご都合いかがでしょうか😊！！」`,
+        unavailable: `[パターン例: 満室・空きなし]
+スモラ:「大変お待たせいたしました！！
+大変申し訳ございません🙇‍♀️！！
+ご確認の物件は現在募集に出ていないお部屋となっております！！
+引き続き〇〇さんのご希望に合うお部屋をピックアップさせていただきます！！
+新着で出次第すぐにお送りさせていただきます😌！！」`,
       };
 
-      // 実例・knowledgeを並列取得
+      const PATTERN_INSTRUCTION: Record<string, string> = {
+        available:   "物件を確認した結果「空室あり・入居可能」でした。お待たせしたお礼と空室報告をして、内覧日程の調整へ自然に誘導してください。",
+        alternative: "物件を確認した結果「満室でしたが別のお部屋が募集中」でした。お詫びしつつ代替案への期待感を持たせて内覧誘導で締めてください。",
+        unavailable: "物件を確認した結果「満室・空きなし」でした。お詫びしつつ引き続き物件探しを続けることを伝え、前向きな雰囲気で締めてください。",
+      };
+
+      // knowledgeとDB実例（☆なしも含む）を並列取得
       const [{ data: checkExamples }, { data: checkKnowledge }] = await Promise.all([
         supabase
           .from("ai_reply_examples")
           .select("customer_message, sent_reply")
-          .in("conversation_state", ["proposing", "availability_check", "property_recommendation"])
-          .eq("is_starred", true)
+          .in("conversation_state", ["availability_check"])
+          .order("is_starred", { ascending: false })
           .order("created_at", { ascending: false })
-          .limit(8),
+          .limit(6),
         supabase
           .from("ai_reply_knowledge")
           .select("category, content")
           .in("conversation_state", ["proposing", "availability_check"])
           .gte("importance", 8)
           .order("importance", { ascending: false })
-          .limit(8),
+          .limit(6),
       ]);
 
-      const examplesText = (checkExamples || []).length > 0
-        ? "\n\n【⭐ スモラの実際の送信例（文体・感嘆符・絵文字をこれに合わせる）】\n" +
-          (checkExamples as { customer_message: string; sent_reply: string }[])
-            .map((r, i) => `[例${i + 1}]\nお客様:「${r.customer_message}」\nスモラ:「${r.sent_reply}」`)
+      // 見積書・物件ピックアップ系はフィルタして結果報告に近いものだけ残す
+      const relevantKeywords = ["空室", "募集終了", "満室", "お待たせ", "確認", "案内", "退去"];
+      const filteredExamples = (checkExamples || []).filter((r) =>
+        relevantKeywords.some((kw) => r.sent_reply?.includes(kw))
+      );
+
+      const examplesText = filteredExamples.length > 0
+        ? "\n\n【スモラの実際の送信例（文体・感嘆符・絵文字をこれに合わせる）】\n" +
+          filteredExamples
+            .slice(0, 4)
+            .map((r, i) => `[実例${i + 1}]\nスモラ:「${r.sent_reply}」`)
             .join("\n\n")
         : "";
 
@@ -429,6 +461,8 @@ ${phraseText || "なし"}${examplesText}`;
         ? `\n\n【このお客さんの人物像・特徴（AI要約）— 文体・トーン・アプローチに必ず反映すること】\n${customerSummary}`
         : "";
 
+      const patternExample = PATTERN_EXAMPLES[pattern] ?? PATTERN_EXAMPLES.unavailable;
+
       const checkSystem = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
 物件確認の結果をお客さんに報告するLINEメッセージを1つだけ作成してください。
 
@@ -441,7 +475,10 @@ ${phraseText || "なし"}${examplesText}`;
 
 【絵文字ルール — 最重要・必ず守ること】
 ▼ 使ってよい絵文字：😊 😌 🙇‍♀️ 🌟 ✨ のみ（他は全禁止）
-▼ 絵文字は1〜2個まで${knowledgeText}${examplesText}`;
+▼ 絵文字は1〜2個まで
+
+【このパターンのお手本（スモラ実データ由来・文体・構成をこれに合わせる）】
+${patternExample}${knowledgeText}${examplesText}`;
 
       const instruction = PATTERN_INSTRUCTION[pattern] ?? PATTERN_INSTRUCTION.unavailable;
       const userText = `${name}への物件確認報告メッセージを作成してください。\n\n${instruction}${summaryNote}${recentHistory}`;
