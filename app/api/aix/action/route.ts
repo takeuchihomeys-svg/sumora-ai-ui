@@ -100,7 +100,7 @@ async function callClaudeVision(system: string, content: unknown[]): Promise<str
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, account, customer_name, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info } = body;
+    const { action, account, customer_name, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done } = body;
 
     // 直近の会話履歴テキスト（viewing_invite・application_push で使用）
     const recentHistory = Array.isArray(recent_messages) && recent_messages.length > 0
@@ -376,25 +376,35 @@ ${phraseText || "なし"}`;
             .join("\n\n")
         : "";
 
+      const isViewingDone = viewing_done === true;
+      const pushInstruction = isViewingDone
+        ? `・内覧済みのお客様への申込クロージング
+・「本日はありがとうございました！！」など内覧のお礼から自然につなげる
+・「お気に召されましたら是非お申込みください！！お申込みはLINEで全て完結できます😊！！」と手軽さを伝える
+・迷っている場合は「ご入居前のキャンセルも可能ですので、まずお部屋を確保するという形も可能です！！」とバリアを下げる`
+        : `・まだ内覧前のお客様への申込検討促し
+・「ご条件が良いお部屋となりますので他のお客様がお申込みされますとお部屋確保が難しくなる可能性がございます！！」と緊急性を伝える
+・「まずはお申込みでお部屋を抑えておくことも可能ですのでお気軽にご相談ください😌！！」と選択肢を提示する`;
+
       const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。
 今の会話の流れを読み取り、申込を自然に後押しするLINEメッセージを1つだけ作成してください。
 
-【作成ルール】
+【フェーズ別作成ルール】
+${pushInstruction}
+
+【共通ルール】
 ・会話履歴がある場合は、お客様が興味を持っている物件・状況を踏まえて訴求する
-・申込のメリット（お部屋を押さえられる・他に取られる前に）を自然に伝える
-・繁忙期や退去予定がある場合は緊急性を持たせる
 ・感嘆符は「！！」（スモラスタイル）
 ・LINEでそのまま送れる完成文のみ出力（解説・候補複数は禁止）
 
 【絵文字ルール — 最重要・必ず守ること】
 ▼ 使ってよい絵文字：😊 😌 🙇‍♀️ 🌟 ✨ のみ（他は全禁止）
 ▼ 絵文字は1〜2個まで。😊😌 → 背中を押す・締めの一言
-▼ 感嘆符は「！！」（スモラスタイル）
 
 【スモラの言葉・表現】
 ${phraseText || "なし"}${examplesText}`;
 
-      message_text = await callClaude(system, `${name}への申込後押しメッセージ。${extra_input ? `補足: ${extra_input}` : ""}${recentHistory}`);
+      message_text = await callClaude(system, `${name}への申込後押しメッセージ（${isViewingDone ? "内覧済み" : "内覧前"}）。${extra_input ? `補足: ${extra_input}` : ""}${recentHistory}`);
 
     // ── ✅ 物件確認した ──────────────────────────────────────────────
     } else if (action === "property_check_result") {
@@ -426,8 +436,17 @@ ${phraseText || "なし"}${examplesText}`;
 新着で出次第すぐにお送りさせていただきます😌！！」`,
       };
 
+      const calendarNote = (pattern === "available" && calendar_info) ? String(calendar_info) : null;
+
       const PATTERN_INSTRUCTION: Record<string, string> = {
-        available:   "物件を確認した結果「空室あり・入居可能」でした。お待たせしたお礼と空室報告をして、内覧日程の調整へ自然に誘導してください。",
+        available: calendarNote
+          ? `物件を確認した結果「空室あり・入居可能」でした。お待たせしたお礼と空室報告をしたあと、提供された内覧可能日時を以下フォーマットで含めてください：
+「直近ですと
+M/D（曜日）HH:MM〜HH:MM
+M/D（曜日）HH:MM〜HH:MM
+ご案内可能です！！」
+案内不可の日は除外。締めは「ご都合いかがでしょうか😌！！」`
+          : "物件を確認した結果「空室あり・入居可能」でした。お待たせしたお礼と空室報告をして、内覧日程の調整へ自然に誘導してください。",
         alternative: "物件を確認した結果「満室でしたが別のお部屋が募集中」でした。お詫びしつつ代替案への期待感を持たせて内覧誘導で締めてください。",
         unavailable: "物件を確認した結果「満室・空きなし」でした。お詫びしつつ引き続き物件探しを続けることを伝え、前向きな雰囲気で締めてください。",
       };
@@ -495,7 +514,10 @@ ${phraseText || "なし"}${examplesText}`;
 ${patternExample}${knowledgeText}${examplesText}`;
 
       const instruction = PATTERN_INSTRUCTION[pattern] ?? PATTERN_INSTRUCTION.unavailable;
-      const userText = `${name}への物件確認報告メッセージを作成してください。\n\n${instruction}${summaryNote}${recentHistory}`;
+      const calendarPart = calendarNote
+        ? `\n\n【内覧可能日時（1日1行で含めること・案内不可の日は除外）】\n${calendarNote}`
+        : "";
+      const userText = `${name}への物件確認報告メッセージを作成してください。\n\n${instruction}${calendarPart}${summaryNote}${recentHistory}`;
 
       if (image_url) {
         const content = [

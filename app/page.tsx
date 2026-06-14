@@ -1999,6 +1999,15 @@ export default function Home() {
         }
       }
 
+      // 申込へ！: 直近会話から内覧済みかどうかを判定
+      let viewingDone: boolean | undefined;
+      if (action === "application_push") {
+        const viewingKeywords = ["お越しいただき", "お越し頂き", "内覧", "ご案内させて頂きまし", "ご案内いたしまし", "本日は遠い中"];
+        viewingDone = recentMessages.some(
+          (m) => m.sender === "staff" && viewingKeywords.some((kw) => m.text.includes(kw))
+        );
+      }
+
       const res = await fetch("/api/aix/action", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2009,6 +2018,7 @@ export default function Home() {
           conversation_id: selectedConversation.id,
           recent_messages: recentMessages,
           ...(calendarInfoStr ? { calendar_info: calendarInfoStr } : {}),
+          ...(viewingDone !== undefined ? { viewing_done: viewingDone } : {}),
         }),
       });
       const data = await res.json() as { ok: boolean; message_text?: string; error?: string };

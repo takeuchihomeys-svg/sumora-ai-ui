@@ -131,6 +131,12 @@ export default function AixModal({
   // 物件確認した専用: 複数画像
   const [checkImageFiles, setCheckImageFiles] = useState<File[]>([]);
   const [checkImagePreviews, setCheckImagePreviews] = useState<string[]>([]);
+  // 物件確認した「空室あり」専用カレンダー
+  const [checkCalendarInfo, setCheckCalendarInfo] = useState<string>("");
+  const [checkCalendarDays, setCheckCalendarDays] = useState<Array<{
+    label: string; slots: string[]; fullyBooked: boolean; noEvents: boolean;
+  }>>([]);
+  const [checkCalendarLoading, setCheckCalendarLoading] = useState(false);
   // 物件送る専用: 複数画像 + 退去予定メモ + カレンダー自動取得
   const [sendImageFiles, setSendImageFiles] = useState<File[]>([]);
   const [sendImagePreviews, setSendImagePreviews] = useState<string[]>([]);
@@ -154,6 +160,28 @@ export default function AixModal({
       reader.readAsDataURL(initialImageFile);
     }
   }, []);
+
+  // 物件確認した「空室あり」: 直近3日のカレンダーを取得して内覧日程をアナウンス
+  useEffect(() => {
+    if (actionType !== "property_check_result" || checkPattern !== "available") {
+      setCheckCalendarInfo("");
+      setCheckCalendarDays([]);
+      return;
+    }
+    setCheckCalendarLoading(true);
+    (async () => {
+      try {
+        const { days, infoString } = await fetchCalendarSlots();
+        setCheckCalendarInfo(infoString);
+        setCheckCalendarDays(days);
+      } catch {
+        setCheckCalendarInfo("");
+        setCheckCalendarDays([]);
+      } finally {
+        setCheckCalendarLoading(false);
+      }
+    })();
+  }, [actionType, checkPattern]);
 
   // 物件送る: 直近3日のカレンダー（calendar_events + daily_tasks）を取得して空き枠を計算
   useEffect(() => {
@@ -293,6 +321,7 @@ export default function AixModal({
           body.image_urls = urls;
           body.image_url = urls[0];
         }
+        if (checkPattern === "available" && checkCalendarInfo) body.calendar_info = checkCalendarInfo;
         if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
         if (customerSummary) body.customer_summary = customerSummary;
       } else if (config.requiresImage && imageFile) {
@@ -629,6 +658,30 @@ export default function AixModal({
                     📷 {checkImagePreviews.length > 0 ? `追加する（現在${checkImagePreviews.length}枚）` : "画像を追加する（スキップ可）"}
                   </button>
                   <input ref={checkFileInputRef} type="file" accept="image/*" multiple onChange={onSelectCheckImages} className="hidden" />
+                </div>
+              )}
+              {/* 空室あり: 内覧可能日時カレンダー */}
+              {checkPattern === "available" && (
+                <div className="rounded-2xl border border-[#d1d7db] bg-[#f8f9fa] p-3">
+                  <p className="mb-2 text-xs font-bold text-[#54656f]">内覧可能日時（自動取得）</p>
+                  {checkCalendarLoading ? (
+                    <p className="text-xs text-[#8696a0]">カレンダー取得中...</p>
+                  ) : checkCalendarDays.length > 0 ? (
+                    <div className="flex flex-col gap-1">
+                      {checkCalendarDays.map((d, i) => (
+                        <div key={i} className="text-xs">
+                          <span className="font-semibold text-[#111b21]">{d.label}</span>
+                          {d.fullyBooked ? (
+                            <span className="ml-2 text-red-400">案内不可</span>
+                          ) : (
+                            <span className="ml-2 text-emerald-600">{d.slots[0]}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-[#8696a0]">取得できませんでした</p>
+                  )}
                 </div>
               )}
             </div>
