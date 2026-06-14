@@ -135,6 +135,9 @@ export default function AixModal({
   const [sendImagePreviews, setSendImagePreviews] = useState<string[]>([]);
   const [vacatingNote, setVacatingNote] = useState("");
   const [calendarInfo, setCalendarInfo] = useState<string>("");
+  const [calendarDays, setCalendarDays] = useState<Array<{
+    label: string; slots: string[]; fullyBooked: boolean; noEvents: boolean;
+  }>>([]);
   const [calendarLoading, setCalendarLoading] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -151,62 +154,151 @@ export default function AixModal({
     }
   }, []);
 
-  // 物件送る: 直近3日のカレンダーを自動取得
+  // 物件送る: 直近3日のカレンダー（calendar_events + daily_tasks）を取得して空き枠を計算
   useEffect(() => {
     if (actionType !== "property_send") return;
     setCalendarLoading(true);
 
     const WEEKDAYS_JP = ["日", "月", "火", "水", "木", "金", "土"];
-    const nowJST = new Date(Date.now() + 9 * 60 * 60 * 1000);
-    const todayJST = new Date(nowJST);
-    todayJST.setUTCHours(0, 0, 0, 0);
-    const threeDaysLater = new Date(todayJST);
-    threeDaysLater.setUTCDate(todayJST.getUTCDate() + 3);
+    const WORK_START = 10 * 60; // 10:00 = 600min
+    const WORK_END   = 18 * 60; // 18:00 = 1080min
+    const MIN_SLOT   = 2 * 60;  // 2時間
+    const MAX_SLOT   = 3 * 60;  // 3時間
+
+    const minToStr = (m: number) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
+
+    // 空きスロット計算: busyIntervals → ["10:00〜13:00", "15:00〜18:00"] など
+    const calcSlots = (busy: Array<[number, number]>): string[] => {
+      const sorted = busy.filter(([s, e]) => e > s).sort((a, b) => a[0] - b[0]);
+      const merged: Array<[number, number]> = [];
+      for (const [s, e] of sorted) {
+        if (merged.length > 0 && s < merged[merged.length - 1][1]) {
+          merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], e);
+        } else {
+          merged.push([s, e]);
+        }
+      }
+      const slots: string[] = [];
+      let cursor = WORK_START;
+      const blocks = [...merged, [WORK_END, WORK_END] as [number, number]];
+      for (const [bs, be] of blocks) {
+        const freeStart = cursor;
+        const freeEnd   = Math.min(bs, WORK_END);
+        const freeLen   = freeEnd - freeStart;
+        if (freeLen >= MIN_SLOT) {
+          const slotEnd = Math.min(freeStart + MAX_SLOT, freeEnd);
+          slots.push(`${minToStr(freeStart)}〜${minToStr(slotEnd)}`);
+        }
+        cursor = Math.max(cursor, Math.min(be, WORK_END));
+      }
+      return slots;
+    };
+
+    // ブラウザのローカル時刻（JST）でYYYY-MM-DD生成
+    const fmtDate = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+    const today = new Date();
+    const days = Array.from({ length: 3 }, (_, i) => {
+      const d = new Date(today);
+      d.setDate(today.getDate() + i);
+      return d;
+    });
+    const fromDate = fmtDate(days[0]);
+    const toDate   = fmtDate(days[2]);
 
     (async () => {
       try {
-        const { data } = await supabase
-          .from("calendar_events")
-          .select("title, start_at, end_at, event_type, customer_name, all_day")
-          .gte("start_at", todayJST.toISOString())
-          .lt("start_at", threeDaysLater.toISOString())
-          .order("start_at");
+        // calendar_events と daily_tasks を並列取得
+        const startISO = new Date(`${fromDate}T00:00:00`).toISOString();
+        const endISO   = new Date(`${toDate}T23:59:59`).toISOString();
 
-        const events = (data || []) as Array<{
-          title: string; start_at: string; end_at: string | null;
-          event_type: string; customer_name: string; all_day: boolean;
+        const [evResult, tasksRaw] = await Promise.all([
+          supabase
+            .from("calendar_events")
+            .select("start_at, end_at, event_type, title, all_day")
+            .gte("start_at", startISO)
+            .lte("start_at", endISO)
+            .order("start_at"),
+          fetch(`/api/daily-tasks?from=${fromDate}&to=${toDate}`).then(r => r.ok ? r.json() : []),
+        ]);
+
+        const events = (evResult.data || []) as Array<{
+          start_at: string; end_at: string | null; event_type: string; title: string; all_day: boolean;
+        }>;
+        const tasks = (Array.isArray(tasksRaw) ? tasksRaw : []) as Array<{
+          content: string; date: string; time: string; end_time: string; done: boolean;
         }>;
 
-        const lines: string[] = [];
-        for (let i = 0; i < 3; i++) {
-          const day = new Date(todayJST);
-          day.setUTCDate(todayJST.getUTCDate() + i);
-          const dateKey = day.toISOString().slice(0, 10);
-          const month = day.getUTCMonth() + 1;
-          const date = day.getUTCDate();
-          const wd = WEEKDAYS_JP[day.getUTCDay()];
-          const label = i === 0 ? "本日" : i === 1 ? "明日" : "明後日";
+        const infoLines: string[] = [];
+        const displayDays: typeof calendarDays = [];
 
-          const dayEvents = events.filter(e => e.start_at.startsWith(dateKey));
-          if (dayEvents.length === 0) {
-            lines.push(`${label}(${month}/${date}${wd}): 予定なし`);
-          } else {
-            const evStrs = dayEvents.map(e => {
-              const s = new Date(e.start_at);
-              const startH = `${s.getUTCHours()}:${String(s.getUTCMinutes()).padStart(2, "0")}`;
-              if (e.end_at) {
-                const en = new Date(e.end_at);
-                const endH = `${en.getUTCHours()}:${String(en.getUTCMinutes()).padStart(2, "0")}`;
-                return `${e.title || e.event_type} ${startH}〜${endH}`;
+        for (let i = 0; i < 3; i++) {
+          const day = days[i];
+          const dateKey = fmtDate(day);
+          const month = day.getMonth() + 1;
+          const date  = day.getDate();
+          const wd    = WEEKDAYS_JP[day.getDay()];
+          const label = i === 0 ? "本日" : i === 1 ? "明日" : "明後日";
+          const shortLabel = `${month}/${date}(${wd})`;
+
+          const busy: Array<[number, number]> = [];
+
+          // calendar_events → ローカル時刻(JST)で読む
+          for (const ev of events) {
+            const s = new Date(ev.start_at);
+            if (fmtDate(s) !== dateKey) continue;
+            if (ev.all_day) {
+              busy.push([WORK_START, WORK_END]);
+            } else {
+              const sm = s.getHours() * 60 + s.getMinutes();
+              const em = ev.end_at
+                ? new Date(ev.end_at).getHours() * 60 + new Date(ev.end_at).getMinutes()
+                : sm + 60;
+              busy.push([Math.max(sm, WORK_START), Math.min(em, WORK_END)]);
+            }
+          }
+
+          // daily_tasks → time/end_time はJST文字列
+          for (const t of tasks) {
+            if (t.date !== dateKey || t.done) continue;
+            if (!t.time) {
+              busy.push([WORK_START, WORK_END]);
+            } else {
+              const [th, tm] = t.time.split(":").map(Number);
+              const sm = (th || 0) * 60 + (tm || 0);
+              let em = sm + 60;
+              if (t.end_time) {
+                const [eh, emin] = t.end_time.split(":").map(Number);
+                em = (eh || 0) * 60 + (emin || 0);
               }
-              return `${e.title || e.event_type} ${startH}〜`;
-            });
-            lines.push(`${label}(${month}/${date}${wd}): ${evStrs.join(", ")}`);
+              busy.push([Math.max(sm, WORK_START), Math.min(em, WORK_END)]);
+            }
+          }
+
+          const slots      = calcSlots(busy);
+          const noEvents   = busy.length === 0;
+          const fullyBooked = !noEvents && slots.length === 0;
+
+          if (noEvents) {
+            // 予定なし → デフォルト枠を案内
+            const defaultSlots = ["10:00〜13:00", "13:00〜16:00", "16:00〜18:00"];
+            infoLines.push(`${label}(${shortLabel}): 終日案内可（${defaultSlots.join(", ")}）`);
+            displayDays.push({ label: `${label} ${shortLabel}`, slots: defaultSlots, fullyBooked: false, noEvents: true });
+          } else if (fullyBooked) {
+            infoLines.push(`${label}(${shortLabel}): 案内不可（予定詰まり）`);
+            displayDays.push({ label: `${label} ${shortLabel}`, slots: [], fullyBooked: true, noEvents: false });
+          } else {
+            infoLines.push(`${label}(${shortLabel}): 案内可 ${slots.join(", ")}`);
+            displayDays.push({ label: `${label} ${shortLabel}`, slots, fullyBooked: false, noEvents: false });
           }
         }
-        setCalendarInfo(lines.join(" / "));
+
+        setCalendarInfo(infoLines.join(" / "));
+        setCalendarDays(displayDays);
       } catch {
         setCalendarInfo("");
+        setCalendarDays([]);
       } finally {
         setCalendarLoading(false);
       }
@@ -537,22 +629,32 @@ export default function AixModal({
             <div className="mb-4 flex flex-col gap-3">
               {/* カレンダー自動取得 */}
               <div>
-                <p className="mb-1 text-xs font-bold text-[#54656f]">📅 直近3日の予定（自動取得）</p>
+                <p className="mb-1 text-xs font-bold text-[#54656f]">📅 内覧可能な時間帯（自動計算）</p>
                 {calendarLoading ? (
                   <div className="flex items-center gap-2 rounded-xl bg-[#f0f2f5] px-3 py-2.5 text-sm text-[#8696a0]">
-                    <span className="animate-spin">⏳</span> カレンダー読み込み中...
+                    <span className="inline-block animate-spin">⏳</span>
+                    <span>カレンダー読み込み中...</span>
                   </div>
                 ) : (
-                  <div className="rounded-xl bg-[#f0f2f5] px-3 py-2.5 text-xs text-[#111b21] leading-5 whitespace-pre-wrap">
-                    {calendarInfo
-                      ? calendarInfo.split(" / ").map((line, i) => (
-                          <div key={i} className={`${line.includes("予定なし") ? "text-emerald-600 font-semibold" : ""}`}>{line}</div>
-                        ))
-                      : <span className="text-[#8696a0]">予定なし（直近3日は空き）</span>
-                    }
+                  <div className="flex flex-col gap-1.5">
+                    {calendarDays.length > 0 ? calendarDays.map((d, i) => (
+                      <div key={i} className={`rounded-xl px-3 py-2 text-xs ${
+                        d.fullyBooked
+                          ? "bg-red-50 text-red-500"
+                          : "bg-emerald-50 text-emerald-700"
+                      }`}>
+                        <span className="font-bold">{d.label}</span>
+                        {d.fullyBooked
+                          ? <span className="ml-2">案内不可（予定詰まり）</span>
+                          : <span className="ml-2">{d.slots.join("　")}{d.noEvents ? "（予定なし）" : ""}</span>
+                        }
+                      </div>
+                    )) : (
+                      <div className="rounded-xl bg-[#f0f2f5] px-3 py-2 text-xs text-[#8696a0]">取得できませんでした</div>
+                    )}
                   </div>
                 )}
-                <p className="mt-1 text-[10px] text-[#8696a0]">この情報をもとにAIが内覧可能日時を自動アナウンスします</p>
+                <p className="mt-1 text-[10px] text-[#8696a0]">calendar_events＋screening予定を合算・AIが自動アナウンスします</p>
               </div>
               {/* 物件画像（複数） */}
               <div>
