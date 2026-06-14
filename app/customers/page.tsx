@@ -36,6 +36,8 @@ type Customer = {
   other_requests?: string | null;
   initial_cost_limit?: number | null;
   floor_area_min?: number | null;
+  floor_area_max?: number | null;
+  pet?: boolean | null;
   property_send_count?: number | null;
   property_viewed_at?: string | null;
   additional_conditions?: string | null;
@@ -130,7 +132,8 @@ type EditFields = {
   rent_min: string; rent_max: string;
   walk_minutes: string; move_in_time: string;
   building_age: string; initial_cost_limit: string;
-  floor_area_min: string;
+  floor_area_min: string; floor_area_max: string;
+  pet: string;
   preferences: string; ng_points: string;
   other_requests: string; property_memo: string;
 };
@@ -146,6 +149,8 @@ function toEditFields(c: Customer): EditFields {
     building_age:       c.building_age       ? String(c.building_age) : "",
     initial_cost_limit: c.initial_cost_limit ? String(Math.floor(c.initial_cost_limit / 10000)) : "",
     floor_area_min:     c.floor_area_min     ? String(c.floor_area_min) : "",
+    floor_area_max:     c.floor_area_max     ? String(c.floor_area_max) : "",
+    pet:                c.pet === true ? "true" : c.pet === false ? "false" : "",
     preferences:        c.preferences        ?? "",
     ng_points:          c.ng_points          ?? "",
     other_requests:     c.other_requests     ?? "",
@@ -154,7 +159,7 @@ function toEditFields(c: Customer): EditFields {
 }
 
 function emptyEditFields(): EditFields {
-  return { desired_area:"", floor_plan:"", rent_min:"", rent_max:"", walk_minutes:"", move_in_time:"", building_age:"", initial_cost_limit:"", floor_area_min:"", preferences:"", ng_points:"", other_requests:"", property_memo:"" };
+  return { desired_area:"", floor_plan:"", rent_min:"", rent_max:"", walk_minutes:"", move_in_time:"", building_age:"", initial_cost_limit:"", floor_area_min:"", floor_area_max:"", pet:"", preferences:"", ng_points:"", other_requests:"", property_memo:"" };
 }
 
 export default function CustomersPage() {
@@ -410,6 +415,8 @@ export default function CustomersPage() {
       building_age:       editFields.building_age       ? Number(editFields.building_age)               : null,
       initial_cost_limit: editFields.initial_cost_limit ? Number(editFields.initial_cost_limit) * 10000 : null,
       floor_area_min:     editFields.floor_area_min     ? Number(editFields.floor_area_min)              : null,
+      floor_area_max:     editFields.floor_area_max     ? Number(editFields.floor_area_max)              : null,
+      pet:                editFields.pet === "true" ? true : editFields.pet === "false" ? false : null,
       preferences:        editFields.preferences        || null,
       ng_points:          editFields.ng_points          || null,
       other_requests:     editFields.other_requests     || null,
@@ -466,6 +473,8 @@ export default function CustomersPage() {
         move_in_time:       p.move_in_time       != null ? String(p.move_in_time)       : f.move_in_time,
         building_age:       p.building_age       != null ? String(p.building_age)       : f.building_age,
         floor_area_min:     p.floor_area_min     != null ? String(p.floor_area_min)     : f.floor_area_min,
+        floor_area_max:     f.floor_area_max,
+        pet:                f.pet,
         initial_cost_limit: p.initial_cost_limit != null ? String(Math.floor((p.initial_cost_limit as number)/10000)) : f.initial_cost_limit,
         preferences:        p.preferences        != null ? String(p.preferences)        : f.preferences,
         ng_points:          p.ng_points          != null ? String(p.ng_points)          : f.ng_points,
@@ -845,7 +854,7 @@ export default function CustomersPage() {
                     {/* 物件探し中：条件チップ */}
                     <div className="border-t border-[#f0f2f5] px-4 py-2.5">
                       {/* 元の条件 */}
-                      {(c.desired_area || c.floor_plan || c.floor_area_min || c.rent_min || c.rent_max || c.walk_minutes || c.move_in_time || c.building_age || c.initial_cost_limit || c.preferences || c.ng_points) ? (
+                      {(c.desired_area || c.floor_plan || c.floor_area_min || c.floor_area_max || c.pet != null || c.rent_min || c.rent_max || c.walk_minutes || c.move_in_time || c.building_age || c.initial_cost_limit || c.preferences || c.ng_points) ? (
                         <>
                           {condLines.length > 0 && (
                             <p className="text-[9px] font-bold text-[#8696a0] mb-1 tracking-wide">元の条件</p>
@@ -853,7 +862,15 @@ export default function CustomersPage() {
                           <div className="flex flex-wrap gap-1.5">
                             {c.desired_area && <Tag label="エリア" value={c.desired_area} />}
                             {c.floor_plan   && <Tag label="間取り" value={c.floor_plan} />}
-                            {c.floor_area_min && <Tag label="広さ" value={`${c.floor_area_min}㎡以上`} />}
+                            {(c.floor_area_min || c.floor_area_max) && (
+                              <Tag label="広さ" value={
+                                c.floor_area_min && c.floor_area_max ? `${c.floor_area_min}〜${c.floor_area_max}㎡`
+                                : c.floor_area_min ? `${c.floor_area_min}㎡以上`
+                                : `〜${c.floor_area_max}㎡`
+                              } />
+                            )}
+                            {c.pet === true && <Tag label="ペット" value="飼育あり" />}
+                            {c.pet === false && <Tag label="ペット" value="なし" />}
                             {(c.rent_min || c.rent_max) && (
                               <Tag label="家賃" value={`${c.rent_min ? Math.floor(c.rent_min/10000)+"万〜" : "〜"}${c.rent_max ? Math.floor(c.rent_max/10000)+"万" : ""}`} />
                             )}
@@ -1157,8 +1174,28 @@ export default function CustomersPage() {
                 value={editFields.desired_area} onChange={(v) => setEditFields((f) => f && ({ ...f, desired_area: v }))} />
               <Field label="間取り" placeholder="例: 1LDK・2DK"
                 value={editFields.floor_plan} onChange={(v) => setEditFields((f) => f && ({ ...f, floor_plan: v }))} />
-              <Field label="広さ（㎡以上）" placeholder="例: 30" type="number"
-                value={editFields.floor_area_min} onChange={(v) => setEditFields((f) => f && ({ ...f, floor_area_min: v }))} />
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <Field label="㎡数 下限" placeholder="例: 25" type="number"
+                    value={editFields.floor_area_min} onChange={(v) => setEditFields((f) => f && ({ ...f, floor_area_min: v }))} />
+                </div>
+                <div className="flex-1">
+                  <Field label="㎡数 上限" placeholder="例: 50" type="number"
+                    value={editFields.floor_area_max} onChange={(v) => setEditFields((f) => f && ({ ...f, floor_area_max: v }))} />
+                </div>
+              </div>
+              <div>
+                <label className="text-[11px] font-semibold text-[#8696a0] mb-1 block">ペット飼育</label>
+                <select
+                  value={editFields.pet}
+                  onChange={(e) => setEditFields((f) => f && ({ ...f, pet: e.target.value }))}
+                  className="w-full border border-[#e9edef] rounded-xl px-3 py-2 text-sm text-[#111b21] focus:outline-none focus:border-[#2196F3]"
+                >
+                  <option value="">未設定</option>
+                  <option value="true">あり（ペット飼育している）</option>
+                  <option value="false">なし</option>
+                </select>
+              </div>
               <div className="flex gap-2">
                 <div className="flex-1">
                   <Field label="家賃 下限（万）" placeholder="5" type="number"

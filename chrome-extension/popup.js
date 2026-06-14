@@ -914,7 +914,9 @@ function buildCondData(c, mode = "pinpoint") {
     rentMin:      rentMin ? formatYen(rentMin) : null,
     rentRange:    buildRentRange(rentMin, effectiveRentMax),
     floorPlan:    c.floor_plan || c.layout || null,
-    areaMin:      parseAreaMin(c.floor_plan) || parseAreaMin(c.preferences) || parseAreaMin(c.other_requests) || null,
+    areaMin:      c.floor_area_min || parseAreaMin(c.floor_plan) || parseAreaMin(c.preferences) || parseAreaMin(c.other_requests) || null,
+    areaMax:      c.floor_area_max || null,
+    petOk:        c.pet === true,
     walkMin:      c.walk_minutes ? c.walk_minutes + "分以内" : null,
     buildingAge:  c.building_age ? c.building_age + "年以内" : null,
     initialCost:  c.initial_cost_limit ? formatYen(c.initial_cost_limit) : null,
@@ -1338,15 +1340,22 @@ function setupAreaModeSelector(c, siteKey) {
 function preloadAdjForm(c) {
   document.getElementById("adj-area").value      = c.desired_area || c.area || "";
   document.getElementById("adj-rent-max").value  = c.rent_max || c.max_rent || "";
-  document.getElementById("adj-area-min").value  = c.area_min || c.min_area || parseAreaMin(c.floor_plan || c.layout) || parseAreaMin(c.preferences) || parseAreaMin(c.other_requests) || "";
+  document.getElementById("adj-area-min").value  = c.floor_area_min || c.area_min || c.min_area || parseAreaMin(c.floor_plan || c.layout) || parseAreaMin(c.preferences) || parseAreaMin(c.other_requests) || "";
+  document.getElementById("adj-area-max").value  = c.floor_area_max || c.area_max || c.max_area || "";
   document.getElementById("adj-walk").value      = c.walk_minutes || "";
   document.getElementById("adj-age").value       = c.building_age || "";
   document.getElementById("adj-floor").value     = c.floor_plan || c.layout || "";
   document.getElementById("adj-structure").value = c.building_structure || c.structure || "";
 
-  // ペット：全フィールドから検出
-  const petFields = [c.preferences, c.notes, c.other_requests, c.additional_conditions].filter(Boolean).join(" ");
-  document.getElementById("adj-pet").checked = /ペット|pet/i.test(petFields);
+  // ペット飼育: DBのpetフィールドを優先、未設定ならテキスト検出フォールバック
+  if (c.pet === true) {
+    document.getElementById("adj-pet").checked = true;
+  } else if (c.pet === false) {
+    document.getElementById("adj-pet").checked = false;
+  } else {
+    const petFields = [c.preferences, c.notes, c.other_requests, c.additional_conditions].filter(Boolean).join(" ");
+    document.getElementById("adj-pet").checked = /ペット|pet/i.test(petFields);
+  }
 
   // お客様名表示
   const labelEl = document.getElementById("adj-customer-label");
@@ -1529,6 +1538,7 @@ function openInstructions(siteKey) {
       const adjArea      = document.getElementById("adj-area").value.trim();
       const adjRentMax   = document.getElementById("adj-rent-max").value;
       const adjAreaMin   = document.getElementById("adj-area-min").value;
+      const adjAreaMax   = document.getElementById("adj-area-max").value;
       const adjWalk      = document.getElementById("adj-walk").value;
       const adjAge       = document.getElementById("adj-age").value;
       const adjFloor     = document.getElementById("adj-floor").value.trim();
@@ -1644,7 +1654,8 @@ function openInstructions(siteKey) {
         building_age:    adjAge     ? Number(adjAge)     : (c.building_age || null),
         floor_plan:      adjFloor   || c.floor_plan || c.layout || null,
         is_wide:         searchMode === "wide",
-        area_min:        adjAreaMin ? Number(adjAreaMin) : (c.area_min || c.min_area || parseAreaMin(c.floor_plan || c.layout) || parseAreaMin(c.preferences) || parseAreaMin(c.other_requests) || null),
+        area_min:        adjAreaMin ? Number(adjAreaMin) : (c.floor_area_min || c.area_min || c.min_area || parseAreaMin(c.floor_plan || c.layout) || parseAreaMin(c.preferences) || parseAreaMin(c.other_requests) || null),
+        area_max:        adjAreaMax ? Number(adjAreaMax) : (c.floor_area_max || null),
         structure_types: (adjStructure || c.building_structure || c.structure || "")
           .split(/[,、・\/\.\s]+/).map(s => s.trim()).filter(Boolean),
         pet_ok:      adjPet,
@@ -1742,6 +1753,7 @@ function openInstructions(siteKey) {
       const adjArea     = document.getElementById("adj-area").value.trim();
       const adjRentMax  = document.getElementById("adj-rent-max").value;
       const adjAreaMin    = document.getElementById("adj-area-min").value;
+      const adjAreaMax    = document.getElementById("adj-area-max").value;
       const adjWalk       = document.getElementById("adj-walk").value;
       const adjAge        = document.getElementById("adj-age").value;
       const adjFloor      = document.getElementById("adj-floor").value.trim();
@@ -1832,8 +1844,8 @@ function openInstructions(siteKey) {
           station_names: realpro_station_names,
           detail_area:   detailNeighborhood,
           detail_ward:   detailWard,
-          area_min:        adjAreaMin ? Number(adjAreaMin) : (c.area_min || c.min_area || parseAreaMin(c.floor_plan || c.layout) || parseAreaMin(c.preferences) || parseAreaMin(c.other_requests) || null),
-          area_max:        c.area_max || c.max_area || null,
+          area_min:        adjAreaMin ? Number(adjAreaMin) : (c.floor_area_min || c.area_min || c.min_area || parseAreaMin(c.floor_plan || c.layout) || parseAreaMin(c.preferences) || parseAreaMin(c.other_requests) || null),
+          area_max:        adjAreaMax ? Number(adjAreaMax) : (c.floor_area_max || null),
           structure_types: adjC.structure_types,
           pet_ok: adjPet,
           rp_update_days: adjUpdateDays ? Number(adjUpdateDays) : null,
@@ -1893,6 +1905,8 @@ function openInstructions(siteKey) {
       const reinsLine = reinsStationPairs[0]?.line || null;
 
       const adjPet     = document.getElementById("adj-pet")?.checked ?? false;
+      const adjAreaMax = document.getElementById("adj-area-max")?.value || "";
+      const adjAreaMin = document.getElementById("adj-area-min")?.value || "";
       const adjRegDate = document.getElementById("adj-reg-date")?.value || "";
       const conditions = {
         rent_max:       adjC.rent_max || null,
@@ -1900,7 +1914,8 @@ function openInstructions(siteKey) {
         floor_plan:     adjC.floor_plan || null,
         building_age:   adjC.building_age || null,
         is_wide:        searchMode === "wide",
-        area_min:       parseAreaMin(adjC.floor_plan) || parseAreaMin(adjC.preferences) || parseAreaMin(adjC.other_requests) || null,
+        area_min:       adjAreaMin ? Number(adjAreaMin) : (c.floor_area_min || parseAreaMin(adjC.floor_plan) || parseAreaMin(adjC.preferences) || parseAreaMin(adjC.other_requests) || null),
+        area_max:       adjAreaMax ? Number(adjAreaMax) : (c.floor_area_max || null),
         reins_station_pairs: isStationMode ? reinsStationPairs : [],
         reins_line:     isStationMode ? reinsLine : null,
         station_name:   isStationMode ? (reinsStationPairs[0]?.station || null) : null,

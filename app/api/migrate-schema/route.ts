@@ -329,8 +329,12 @@ CREATE INDEX IF NOT EXISTS idx_conversations_is_hot ON conversations(is_hot) WHE
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS is_flagged BOOLEAN DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_conversations_is_flagged ON conversations(is_flagged) WHERE is_flagged = TRUE;
 
--- 部屋の広さ（㎡以上）
+-- 部屋の広さ（㎡以上・以下）
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS floor_area_min INTEGER;
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS floor_area_max INTEGER;
+
+-- ペット飼育有無
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS pet BOOLEAN;
 
 -- 物件送信カウント（返信なしで2回送ったら自動ダウングレード用）
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS property_send_count INTEGER DEFAULT 0;
