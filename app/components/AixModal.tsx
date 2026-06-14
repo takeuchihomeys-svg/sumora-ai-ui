@@ -117,9 +117,13 @@ export default function AixModal({
   const [previewExpanded, setPreviewExpanded] = useState(false);
   // 物件確認した専用
   const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | null>(null);
+  // 物件確認した専用: 複数画像
+  const [checkImageFiles, setCheckImageFiles] = useState<File[]>([]);
+  const [checkImagePreviews, setCheckImagePreviews] = useState<string[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const conditionFileInputRef = useRef<HTMLInputElement | null>(null);
+  const checkFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (initialImageFile) {
@@ -148,6 +152,26 @@ export default function AixModal({
     const reader = new FileReader();
     reader.onload = () => setConditionImagePreview(String(reader.result ?? ""));
     reader.readAsDataURL(file);
+    setPreview("");
+  };
+
+  // 物件確認した専用: 複数画像追加
+  const onSelectCheckImages = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    setCheckImageFiles(prev => [...prev, ...files]);
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = () => setCheckImagePreviews(prev => [...prev, String(reader.result ?? "")]);
+      reader.readAsDataURL(file);
+    });
+    setPreview("");
+    if (checkFileInputRef.current) checkFileInputRef.current.value = "";
+  };
+
+  const removeCheckImage = (i: number) => {
+    setCheckImageFiles(prev => prev.filter((_, idx) => idx !== i));
+    setCheckImagePreviews(prev => prev.filter((_, idx) => idx !== i));
     setPreview("");
   };
 
@@ -196,7 +220,11 @@ export default function AixModal({
       } else if (actionType === "property_check_result") {
         if (!checkPattern) throw new Error("確認結果を選択してください");
         body.check_pattern = checkPattern;
-        if (imageFile) body.image_url = await uploadImage(imageFile);
+        if (checkImageFiles.length > 0) {
+          const urls = await Promise.all(checkImageFiles.map(f => uploadImage(f)));
+          body.image_urls = urls;
+          body.image_url = urls[0];
+        }
         if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
         if (customerSummary) body.customer_summary = customerSummary;
       } else if (config.requiresImage && imageFile) {
@@ -237,18 +265,28 @@ export default function AixModal({
     if (!preview.trim()) return;
     try {
       setLoading(true);
-      // 物件オススメは物件資料画像をLINEに添付
-      let uploadedImageUrl: string | undefined;
-      if (actionType === "property_recommendation" && imageFile) {
-        uploadedImageUrl = await uploadImage(imageFile);
-      } else if (config.requiresImage && imageFile) {
-        uploadedImageUrl = await uploadImage(imageFile);
-      }
-      await onSend(preview, uploadedImageUrl);
 
-      // 室内イメージURLがあれば「（室内イメージ）\nURL」として別送信
-      if (actionType === "property_recommendation" && propertyImageUrl.trim()) {
-        await onSend(`（室内イメージ）\n${propertyImageUrl.trim()}`);
+      if (actionType === "property_check_result") {
+        // テキストを先に送信 → その後画像を順番に送信（会話の流れが自然になる）
+        await onSend(preview);
+        for (const file of checkImageFiles) {
+          const url = await uploadImage(file);
+          await onSend("", url);
+        }
+      } else {
+        // 物件オススメは物件資料画像をLINEに添付
+        let uploadedImageUrl: string | undefined;
+        if (actionType === "property_recommendation" && imageFile) {
+          uploadedImageUrl = await uploadImage(imageFile);
+        } else if (config.requiresImage && imageFile) {
+          uploadedImageUrl = await uploadImage(imageFile);
+        }
+        await onSend(preview, uploadedImageUrl);
+
+        // 室内イメージURLがあれば「（室内イメージ）\nURL」として別送信
+        if (actionType === "property_recommendation" && propertyImageUrl.trim()) {
+          await onSend(`（室内イメージ）\n${propertyImageUrl.trim()}`);
+        }
       }
 
       // 学習ループに保存（fire-and-forget）
@@ -415,27 +453,32 @@ export default function AixModal({
                   ))}
                 </div>
               </div>
-              {/* 物件あった・別の部屋: 任意画像 */}
+              {/* 物件あった・別の部屋: 複数画像 */}
               {(checkPattern === "available" || checkPattern === "alternative") && (
                 <div>
                   <p className="mb-1 text-xs font-bold text-[#54656f]">
-                    物件・部屋の画像 <span className="font-normal text-[#90a4ae]">（任意）</span>
+                    物件・部屋の画像 <span className="font-normal text-[#90a4ae]">（複数選択可・任意）</span>
                   </p>
-                  {imagePreview ? (
-                    <div className="relative overflow-hidden rounded-2xl border border-[#d1d7db]">
-                      <img src={imagePreview} alt="物件画像" className="max-h-36 w-full object-contain" />
-                      <button
-                        onClick={() => { setImageFile(null); setImagePreview(""); setPreview(""); if (fileInputRef.current) fileInputRef.current.value = ""; }}
-                        className="absolute right-2 top-2 rounded-full bg-black/50 px-3 py-1 text-xs text-white"
-                      >変更</button>
+                  {checkImagePreviews.length > 0 && (
+                    <div className="mb-2 grid grid-cols-3 gap-2">
+                      {checkImagePreviews.map((src, i) => (
+                        <div key={i} className="relative overflow-hidden rounded-xl border border-[#d1d7db] aspect-square">
+                          <img src={src} alt={`物件${i + 1}`} className="h-full w-full object-cover" />
+                          <button
+                            onClick={() => removeCheckImage(i)}
+                            className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-[10px] text-white"
+                          >✕</button>
+                        </div>
+                      ))}
                     </div>
-                  ) : (
-                    <button
-                      onClick={() => fileInputRef.current?.click()}
-                      className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#d1d7db] py-4 text-sm font-semibold text-[#90a4ae] hover:bg-[#f5f6f7]"
-                    >📷 画像を添付する（スキップ可）</button>
                   )}
-                  <input ref={fileInputRef} type="file" accept="image/*" onChange={onSelectImage} className="hidden" />
+                  <button
+                    onClick={() => checkFileInputRef.current?.click()}
+                    className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#d1d7db] py-3 text-sm font-semibold text-[#90a4ae] hover:bg-[#f5f6f7]"
+                  >
+                    📷 {checkImagePreviews.length > 0 ? `追加する（現在${checkImagePreviews.length}枚）` : "画像を追加する（スキップ可）"}
+                  </button>
+                  <input ref={checkFileInputRef} type="file" accept="image/*" multiple onChange={onSelectCheckImages} className="hidden" />
                 </div>
               )}
             </div>
