@@ -25,6 +25,7 @@ interface AixModalProps {
   account?: string;
   initialImageFile?: File;
   linkedCustomer?: LinkedCustomer;
+  customerConditions?: string;
   recentMessages?: Array<{ sender: string; text: string }>;
   customerSummary?: string | null;
   onClose: () => void;
@@ -104,6 +105,7 @@ export default function AixModal({
   account,
   initialImageFile,
   linkedCustomer,
+  customerConditions,
   recentMessages,
   customerSummary,
   onClose,
@@ -342,6 +344,7 @@ export default function AixModal({
         }
         if (vacatingNote.trim()) body.vacating_note = vacatingNote.trim();
         if (calendarInfo) body.calendar_info = calendarInfo;
+        if (customerConditions) body.customer_conditions = customerConditions;
         if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
         if (customerSummary) body.customer_summary = customerSummary;
       } else if (actionType === "property_check_result") {

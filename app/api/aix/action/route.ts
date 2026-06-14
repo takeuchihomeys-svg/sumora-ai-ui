@@ -301,11 +301,19 @@ export async function POST(request: NextRequest) {
             .join("\n\n")
         : "";
 
+      const conditionsInfo = customer_conditions ? String(customer_conditions) : null;
+      const conditionsRule = conditionsInfo
+        ? `・お客様の希望条件が渡されている場合は、冒頭の「ご希望のご条件に合ったお部屋」の部分を具体化する
+  例：「九条周辺・家賃6万円以下・1Kのご条件に合ったお部屋ピックアップしお送りさせて頂きます😊！！」
+  条件から主なポイント（エリア・家賃・間取り等）を自然に組み込む`
+        : `・「ご希望のご条件に合ったお部屋ピックアップしお送りさせて頂きます😊！！」で冒頭を続ける`;
+
       const sendSystem = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
 物件をピックアップしてお客さんに送る際の導入メッセージを1つだけ作成してください。
 
 【作成ルール】
-・「[お客様名]さんお待たせ致しました！！ご希望のご条件に合ったお部屋ピックアップしお送りさせて頂きます😊！！」で自然に始める
+・「[お客様名]さんお待たせ致しました！！」で始める
+${conditionsRule}
 ・カレンダー情報が渡されている場合は必ず内覧可能日時をアナウンスする：
   - 「直近ですと\n[日付] [時間帯]\n[日付] [時間帯]\nご案内可能です！！」の縦並び形式で案内する（案内できる日のみ）
   - 3日間すべて案内不可の場合は「来週ご案内できる日程をご連絡させていただきます！！」と伝える
@@ -316,6 +324,7 @@ export async function POST(request: NextRequest) {
 ・絵文字は 😊 のみ・1〜2個まで${sendExamplesText}`;
 
       const userParts: string[] = [`${name}への物件ピックアップ送付メッセージを作成してください。`];
+      if (conditionsInfo) userParts.push(`\n\n【お客様の希望条件（冒頭に自然に組み込むこと）】\n${conditionsInfo}`);
       if (calendarData) userParts.push(`\n\n【直近3日の内覧可能時間帯（calendar_events+daily_tasks合算済み・この情報をそのまま使うこと）】\n${calendarData}`);
       if (vacatingInfo) userParts.push(`\n\n【退去予定・案内不可の物件情報（必ず全て伝えること）】\n${vacatingInfo}`);
       if (summaryNote) userParts.push(summaryNote);

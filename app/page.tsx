@@ -3434,6 +3434,7 @@ export default function Home() {
           account={selectedConversation.account ?? currentAccount.id}
           initialImageFile={aixInitialFile ?? undefined}
           linkedCustomer={aixModalType === "property_recommendation" ? linkedCustomerMap[selectedConversation.id] : undefined}
+          customerConditions={linkedCustomerMap[selectedConversation.id]?.conditions || memos[selectedConversation.id] || undefined}
           recentMessages={(selectedConversation.messages || []).slice(-20).map((m: Message) => ({ sender: m.sender, text: m.text || "" }))}
           customerSummary={linkedCustomerMap[selectedConversation.id]?.ai_summary ?? null}
           onClose={() => {
