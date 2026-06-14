@@ -1,7 +1,7 @@
 import { supabase } from "./supabase";
 
 const WEEKDAYS_JP = ["日", "月", "火", "水", "木", "金", "土"];
-const WORK_START = 10 * 60; // 10:00
+const WORK_START = 11 * 60; // 11:00
 const WORK_END   = 18 * 60; // 18:00
 const MIN_SLOT   = 2 * 60;
 const MAX_SLOT   = 3 * 60;
@@ -129,16 +129,16 @@ export async function fetchCalendarSlots(): Promise<{
     const defaultSlots = ["10:00〜13:00", "13:00〜16:00", "16:00〜18:00"];
 
     if (noEvents) {
-      infoLines.push(`${shortLabel}: 終日案内可（${defaultSlots.join(", ")}）`);
+      infoLines.push(`${shortLabel} ${defaultSlots.join(" / ")}`);
       resultDays.push({ label, slots: defaultSlots, fullyBooked: false, noEvents: true });
     } else if (fullyBooked) {
-      infoLines.push(`${shortLabel}: 案内不可（予定詰まり）`);
+      // 案内不可の日はinfoLinesに含めない（AIに渡さない）
       resultDays.push({ label, slots: [], fullyBooked: true, noEvents: false });
     } else {
-      infoLines.push(`${shortLabel}: 案内可 ${slots.join(", ")}`);
+      infoLines.push(`${shortLabel} ${slots.join(" / ")}`);
       resultDays.push({ label, slots, fullyBooked: false, noEvents: false });
     }
   }
 
-  return { days: resultDays, infoString: infoLines.join(" / ") };
+  return { days: resultDays, infoString: infoLines.join("\n") };
 }
