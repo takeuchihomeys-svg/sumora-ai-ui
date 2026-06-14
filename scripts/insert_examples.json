@@ -1,0 +1,82 @@
+[
+  {
+    "conversation_state": "application_push",
+    "customer_message": "でしたら16日にお願いしたいです！",
+    "sent_reply": "かしこまりました！！\n16日にご案内させて頂きます😊！！\n\nディアコート巽南は築年数設備面等オススメできるお部屋となります！！\nご条件が良いお部屋となりますのでご内覧出来る前にお申込が入る可能性が高い状況です！！\nお気に召されましたらお申込しお部屋抑えさせて頂く事可能です！！",
+    "is_starred": true,
+    "was_ai_used": false,
+    "was_ai_modified": false
+  },
+  {
+    "conversation_state": "application_push",
+    "customer_message": "かしこまりました",
+    "sent_reply": "6/30以降かずやさんのご都合よろしいお日にちにご内覧手配させて頂きます😊！！\n\nご内覧前にお部屋が埋まってしまう可能性もございますので、お気に召されていましたらお申込みでお部屋を抑えさせて頂きます！！\nお気軽にご相談ください😌！！",
+    "is_starred": true,
+    "was_ai_used": false,
+    "was_ai_modified": false
+  },
+  {
+    "conversation_state": "application_push",
+    "customer_message": "コンフォート申し込みしたいんですがもう少し安くなりませんか？",
+    "sent_reply": "コンフォート宮本につきまして貸主側からの手数料が頂けない物件となっておりますので、これ以上の値引きが出来ない状況となります😌！！\n\n現在お送りさせていただいております初期費用が最大限割引させていただいた金額となりますので何卒よろしくお願いいたします！！",
+    "is_starred": true,
+    "was_ai_used": false,
+    "was_ai_modified": false
+  },
+  {
+    "conversation_state": "application_push",
+    "customer_message": "審査だけ事前にしてもらう事はいけますか？",
+    "sent_reply": "かしこまりました！！\nお部屋のお申込みさせていただきます！！\n\nこちらのご入力と身分証明書として運転免許証の表裏のお写真お送りいただけましたら私の方でお申込み完了させていただきます😊！！",
+    "is_starred": true,
+    "was_ai_used": false,
+    "was_ai_modified": false
+  },
+  {
+    "conversation_state": "application_push",
+    "customer_message": "（内覧後）ありがとうございます！",
+    "sent_reply": "本日は遠い中お越し頂きありがとうございました！！\nご満足頂くご入居が出来ますよう最善を尽くさせて頂きます！\n気になる点出てきましたらいつでもお気軽にご連絡ください！！",
+    "is_starred": true,
+    "was_ai_used": false,
+    "was_ai_modified": false
+  },
+  {
+    "conversation_state": "application_push",
+    "customer_message": "保証会社の交渉は先日内見したサンライズも可能ですか？",
+    "sent_reply": "管理会社に確認・交渉させて頂きましたところ、オリコフォレントインシュアで否決となった場合は別の保証会社での審査可能か一度オーナー様にご検討いただく形で進められるとのことでした😊！！\n\nお気に召されておりましたら一度お申込みさせて頂きますのでお気軽にお申し付けください！！",
+    "is_starred": true,
+    "was_ai_used": false,
+    "was_ai_modified": false
+  },
+  {
+    "conversation_state": "property_send",
+    "customer_message": "（AIX: 物件送る）条件：家賃6万以下・1R〜1K・九条周辺",
+    "sent_reply": "お待たせ致しました！！\nご希望のご条件に合ったお部屋ピックアップしお送りさせて頂きます😊！！\n初期費用も最大限割引させて頂き、お引越しにかかる費用を出来る限り抑えられるようにさせて頂きます😌！！\nお手隙の際にご査収ください！！",
+    "is_starred": true,
+    "was_ai_used": false,
+    "was_ai_modified": false
+  },
+  {
+    "conversation_state": "property_send",
+    "customer_message": "（AIX: 物件送る）新着物件あり",
+    "sent_reply": "お待たせ致しました！！\nご希望のご条件に合ったお部屋が新着で出ましたのでお送りさせて頂きます😊！！\n\n直近ですと\n6/15（月）15:00〜17:00\n6/16（火）12:00〜14:00\n\nご案内可能です！！\nお気に召されましたらお日にちにご案内させて頂きます😊！！",
+    "is_starred": true,
+    "was_ai_used": false,
+    "was_ai_modified": false
+  },
+  {
+    "conversation_state": "property_send",
+    "customer_message": "（AIX: 物件送る）退去予定物件あり",
+    "sent_reply": "お待たせ致しました！！\nご希望のご条件に合ったお部屋ピックアップしお送りさせて頂きます😊！！\n\n◎〇〇マンション\n6月末退去予定となりますのでお部屋ご案内出来ない形となります！！\n\nお気に召されましたらご都合よろしいお日にちにご案内させて頂きます😌！！\nお手隙の際にご査収ください！！",
+    "is_starred": true,
+    "was_ai_used": false,
+    "was_ai_modified": false
+  },
+  {
+    "conversation_state": "property_send",
+    "customer_message": "（AIX: 物件送る）ピックアップ完了",
+    "sent_reply": "お待たせ致しました！！\nさんご希望のご条件に近いお部屋を全域から全てピックアップさせて頂きました！！\nお手隙の際にご査収ください😌！！\nお気に召されましたらお日にちにご案内させて頂きます😊！！",
+    "is_starred": true,
+    "was_ai_used": false,
+    "was_ai_modified": false
+  }
+]
