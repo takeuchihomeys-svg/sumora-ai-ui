@@ -612,8 +612,11 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
       }) as { data: Array<{ customer_message: string; sent_reply: string; conversation_state: string; is_starred: boolean; similarity: number }> | null; error: unknown };
 
       if (!rpcError && similar && similar.length > 0) {
+        // 類似度0.5未満は低品質として除外
+        const aboveThreshold = similar.filter(ex => ex.similarity >= 0.5);
+        if (aboveThreshold.length > 0) {
         // ☆に+0.15のスコアブースト → 類似度が高ければ非☆でも上位に来る
-        const sorted = [...similar].sort((a, b) => {
+        const sorted = [...aboveThreshold].sort((a, b) => {
           const scoreA = a.similarity + (a.is_starred ? 0.15 : 0);
           const scoreB = b.similarity + (b.is_starred ? 0.15 : 0);
           return scoreB - scoreA;
@@ -623,6 +626,7 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
           sorted.map((ex, i) =>
             `[例${i + 1}${ex.is_starred ? "⭐" : ""}]\nお客様: 「${ex.customer_message}」\nスモラ: 「${ex.sent_reply}」`
           ).join("\n\n");
+        }
       }
     }
   }
