@@ -100,7 +100,7 @@ async function callClaudeVision(system: string, content: unknown[]): Promise<str
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, account, customer_name, image_url, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern } = body;
+    const { action, account, customer_name, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note } = body;
 
     // 直近の会話履歴テキスト（viewing_invite・application_push で使用）
     const recentHistory = Array.isArray(recent_messages) && recent_messages.length > 0
@@ -274,6 +274,35 @@ export async function POST(request: NextRequest) {
 
       message_text = parts.join("\n");
       parsed_estimate_result = estimate;
+
+    // ── 📤 物件送る ──────────────────────────────────────────────
+    } else if (action === "property_send") {
+      const viewingTimes = extra_input ? String(extra_input) : null;
+      const vacatingInfo = vacating_note ? String(vacating_note) : null;
+      const customerSummary = body.customer_summary as string | undefined;
+
+      const summaryNote = customerSummary
+        ? `\n\n【このお客さんの人物像・特徴（AI要約）— 文体・トーン・アプローチに必ず反映すること】\n${customerSummary}`
+        : "";
+
+      const sendSystem = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
+物件をピックアップしてお客さんに送る際の導入メッセージを1つだけ作成してください。
+
+【作成ルール】
+・「[お客様名]さんお待たせ致しました！！ご希望のご条件に合ったお部屋ピックアップしお送りさせて頂きます😊！！」で自然に始める
+・内覧可能日時が渡されている場合は「直近ですと [日時] ご案内可能です！！」を自然に組み込む
+・退去予定・案内できない物件情報が渡されている場合は「〇〇は[退去予定/時期]となりますのでお部屋ご案内出来ない形となります！！」と明確に伝える（複数ある場合は全て伝える）
+・締めは「[お客様名]さんお気に召されましたらお日にちにご案内させて頂きます😊！！」
+・感嘆符は「！！」（スモラスタイル）
+・LINEでそのまま送れる完成文のみ出力（解説・候補複数は禁止）
+・絵文字は 😊 のみ・1〜2個まで`;
+
+      const userParts: string[] = [`${name}への物件ピックアップ送付メッセージを作成してください。`];
+      if (viewingTimes) userParts.push(`\n内覧可能日時: ${viewingTimes}`);
+      if (vacatingInfo) userParts.push(`\n退去予定・案内不可の物件情報: ${vacatingInfo}`);
+      if (summaryNote) userParts.push(summaryNote);
+
+      message_text = await callClaude(sendSystem, userParts.join(""));
 
     // ── 🔍 内覧へ！ ──────────────────────────────────────────────
     } else if (action === "viewing_invite") {

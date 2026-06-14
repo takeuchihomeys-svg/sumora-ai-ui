@@ -5,6 +5,7 @@ import { supabase } from "../lib/supabase";
 
 export type AixActionType =
   | "property_recommendation"
+  | "property_send"
   | "viewing_invite"
   | "application_push"
   | "estimate_sheet"
@@ -76,6 +77,15 @@ const CONFIG: Record<
     imageLabel: "見積書画像を選択",
     description: "見積書の画像をAIが読み取り、初期費用の内訳をLINEで送ります。",
   },
+  property_send: {
+    title: "物件送る",
+    emoji: "📤",
+    requiresImage: false,
+    imageLabel: "",
+    description: "ピックアップした物件の画像を送ります。退去予定で案内できないお部屋がある場合はその情報も入力してください。",
+    inputLabel: "内覧可能日時（任意）",
+    inputPlaceholder: "例：16日16:00〜18:00、17日16:00〜18:00",
+  },
   property_check_result: {
     title: "物件確認した",
     emoji: "✅",
@@ -120,10 +130,15 @@ export default function AixModal({
   // 物件確認した専用: 複数画像
   const [checkImageFiles, setCheckImageFiles] = useState<File[]>([]);
   const [checkImagePreviews, setCheckImagePreviews] = useState<string[]>([]);
+  // 物件送る専用: 複数画像 + 退去予定メモ
+  const [sendImageFiles, setSendImageFiles] = useState<File[]>([]);
+  const [sendImagePreviews, setSendImagePreviews] = useState<string[]>([]);
+  const [vacatingNote, setVacatingNote] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const conditionFileInputRef = useRef<HTMLInputElement | null>(null);
   const checkFileInputRef = useRef<HTMLInputElement | null>(null);
+  const sendFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (initialImageFile) {
@@ -175,6 +190,26 @@ export default function AixModal({
     setPreview("");
   };
 
+  // 物件送る専用: 複数画像追加
+  const onSelectSendImages = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    setSendImageFiles(prev => [...prev, ...files]);
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = () => setSendImagePreviews(prev => [...prev, String(reader.result ?? "")]);
+      reader.readAsDataURL(file);
+    });
+    setPreview("");
+    if (sendFileInputRef.current) sendFileInputRef.current.value = "";
+  };
+
+  const removeSendImage = (i: number) => {
+    setSendImageFiles(prev => prev.filter((_, idx) => idx !== i));
+    setSendImagePreviews(prev => prev.filter((_, idx) => idx !== i));
+    setPreview("");
+  };
+
   const uploadImage = async (file: File): Promise<string> => {
     const ext = file.name.split(".").pop() || "jpg";
     const path = `${conversationId}/${Date.now()}.${ext}`;
@@ -217,6 +252,14 @@ export default function AixModal({
           // 条件スクショなし: 物件資料のみで生成
           body.image_url = await uploadImage(imageFile);
         }
+      } else if (actionType === "property_send") {
+        if (sendImageFiles.length > 0) {
+          const urls = await Promise.all(sendImageFiles.map(f => uploadImage(f)));
+          body.image_urls = urls;
+        }
+        if (vacatingNote.trim()) body.vacating_note = vacatingNote.trim();
+        if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
+        if (customerSummary) body.customer_summary = customerSummary;
       } else if (actionType === "property_check_result") {
         if (!checkPattern) throw new Error("確認結果を選択してください");
         body.check_pattern = checkPattern;
@@ -255,6 +298,7 @@ export default function AixModal({
 
   const ACTION_TO_STATE: Record<AixActionType, string> = {
     property_recommendation: "property_recommendation",
+    property_send: "proposing",
     viewing_invite: "viewing",
     application_push: "application",
     estimate_sheet: "estimate_request",
@@ -266,7 +310,14 @@ export default function AixModal({
     try {
       setLoading(true);
 
-      if (actionType === "property_check_result") {
+      if (actionType === "property_send") {
+        // テキストを先に送信 → 物件画像を順番に送信
+        await onSend(preview);
+        for (const file of sendImageFiles) {
+          const url = await uploadImage(file);
+          await onSend("", url);
+        }
+      } else if (actionType === "property_check_result") {
         // テキストを先に送信 → その後画像を順番に送信（会話の流れが自然になる）
         await onSend(preview);
         for (const file of checkImageFiles) {
@@ -315,6 +366,8 @@ export default function AixModal({
     ? !!imageFile
     : actionType === "property_check_result"
     ? !!checkPattern
+    : actionType === "property_send"
+    ? true
     : !config.requiresImage || !!imageFile;
 
   return (
@@ -412,6 +465,49 @@ export default function AixModal({
                     送信時に「（室内イメージ）」として別メッセージで自動送信されます
                   </p>
                 )}
+              </div>
+            </div>
+          ) : actionType === "property_send" ? (
+            /* 物件送る: 複数画像 + 退去予定メモ */
+            <div className="mb-4 flex flex-col gap-3">
+              {/* 物件画像（複数） */}
+              <div>
+                <p className="mb-1 text-xs font-bold text-[#54656f]">
+                  物件画像 <span className="font-normal text-[#90a4ae]">（複数選択可・任意）</span>
+                </p>
+                {sendImagePreviews.length > 0 && (
+                  <div className="mb-2 grid grid-cols-3 gap-2">
+                    {sendImagePreviews.map((src, i) => (
+                      <div key={i} className="relative overflow-hidden rounded-xl border border-[#d1d7db] aspect-square">
+                        <img src={src} alt={`物件${i + 1}`} className="h-full w-full object-cover" />
+                        <button
+                          onClick={() => removeSendImage(i)}
+                          className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-[10px] text-white"
+                        >✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <button
+                  onClick={() => sendFileInputRef.current?.click()}
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-blue-200 py-3 text-sm font-semibold text-[#2196F3] hover:bg-blue-50"
+                >
+                  📷 {sendImagePreviews.length > 0 ? `追加する（現在${sendImagePreviews.length}枚）` : "物件画像を追加する（スキップ可）"}
+                </button>
+                <input ref={sendFileInputRef} type="file" accept="image/*" multiple onChange={onSelectSendImages} className="hidden" />
+              </div>
+              {/* 退去予定メモ */}
+              <div>
+                <p className="mb-1 text-xs font-bold text-[#54656f]">
+                  退去予定・案内できない物件 <span className="font-normal text-[#90a4ae]">（任意）</span>
+                </p>
+                <textarea
+                  value={vacatingNote}
+                  onChange={(e) => setVacatingNote(e.target.value)}
+                  placeholder="例：ディアコートとクレセントコートは6月末退去予定で案内不可"
+                  rows={2}
+                  className="w-full resize-none rounded-xl border border-[#d1d7db] px-3 py-2 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
+                />
               </div>
             </div>
           ) : actionType === "property_check_result" ? (
