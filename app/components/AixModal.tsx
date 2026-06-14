@@ -586,7 +586,7 @@ export default function AixModal({
                         : "border border-[#d1d7db] bg-white text-[#54656f]"
                     }`}
                   >
-                    📅 内覧誘導
+                    内覧誘導
                   </button>
                   <button
                     onClick={() => { setSendMode("application"); setPreview(""); }}
@@ -596,7 +596,7 @@ export default function AixModal({
                         : "border border-[#d1d7db] bg-white text-[#54656f]"
                     }`}
                   >
-                    ✏️ 申込み誘導
+                    申込み誘導
                   </button>
                 </div>
               </div>
