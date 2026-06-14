@@ -352,12 +352,23 @@ function buildGenerationMessages(
     } catch { /* ignore */ }
   }
 
-  // スモラの直前返信を全文で抽出（マルチライン対応）
-  const lastStaffMsg = (() => {
+  // スモラの全過去返信を抽出（マルチライン対応）
+  const allPastStaffMsgs = (() => {
     const segments = history.split(/\n(?=スモラ:|お客様:)/);
-    const lastStaffSeg = [...segments].reverse().find(s => s.startsWith("スモラ:"));
-    return lastStaffSeg ? lastStaffSeg.replace(/^スモラ:\s*/, "").trim() : null;
+    return segments
+      .filter(s => s.startsWith("スモラ:"))
+      .map(s => s.replace(/^スモラ:\s*/, "").trim());
   })();
+  const lastStaffMsg = allPastStaffMsgs.length > 0 ? allPastStaffMsgs[allPastStaffMsgs.length - 1] : null;
+
+  // 繰り返し防止リスト（直前を除く過去のスモラ返信を列挙）
+  const repetitionNote = allPastStaffMsgs.length > 1
+    ? `\n【🚫 繰り返し厳禁（スモラが過去に送った内容）— 同じ情報・同じ言い回し・同じ説明を絶対に使わない】\n${
+        allPastStaffMsgs.slice(0, -1).slice(-5).map((m, i) =>
+          `・${m.slice(0, 120)}${m.length > 120 ? "…" : ""}`
+        ).join("\n")
+      }\n→ 特に費用・ルール・フロー説明は「一度伝えた」事実を必ず踏まえ、同じ内容を別の言い方でも繰り返さない。次のアクションに進むこと。`
+    : "";
 
   const staffContextNote = isFollowUp && lastStaffMsg
     ? `\n【⚠️ 最重要：スモラは既にこのお客様メッセージに返信済み】\nスモラが直前に送った内容：「${lastStaffMsg}」\n→ お客様はまだ返信していない。これはその【続きのメッセージ】。前の返信で伝えた内容を絶対に繰り返さない。前の返信を踏まえて補足・追加・次のアクション提案など、自然につながる内容を生成すること。`
@@ -376,7 +387,7 @@ function buildGenerationMessages(
   const realEstateNote = `\n${promptOverrides?.realEstateRules ?? REAL_ESTATE_RULES}`;
 
   const prompt = `
-${nameNote}${conditionsNote}${summaryNote}${greetingNote}${managementNote}
+${nameNote}${conditionsNote}${summaryNote}${greetingNote}${managementNote}${repetitionNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${approachNote}${staffContextNote}
 
