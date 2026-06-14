@@ -141,6 +141,7 @@ export default function AixModal({
   const [sendImageFiles, setSendImageFiles] = useState<File[]>([]);
   const [sendImagePreviews, setSendImagePreviews] = useState<string[]>([]);
   const [vacatingNote, setVacatingNote] = useState("");
+  const [analyzeLoading, setAnalyzeLoading] = useState(false);
   const [calendarInfo, setCalendarInfo] = useState<string>("");
   const [calendarDays, setCalendarDays] = useState<Array<{
     label: string; slots: string[]; fullyBooked: boolean; noEvents: boolean;
@@ -247,13 +248,43 @@ export default function AixModal({
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
     setSendImageFiles(prev => [...prev, ...files]);
-    files.forEach(file => {
-      const reader = new FileReader();
-      reader.onload = () => setSendImagePreviews(prev => [...prev, String(reader.result ?? "")]);
-      reader.readAsDataURL(file);
-    });
     setPreview("");
     if (sendFileInputRef.current) sendFileInputRef.current.value = "";
+
+    // base64に変換してプレビュー表示 + 物件情報自動解析
+    const readPromises = files.map(file => new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result ?? ""));
+      reader.readAsDataURL(file);
+    }));
+
+    void (async () => {
+      const dataUrls = await Promise.all(readPromises);
+      setSendImagePreviews(prev => [...prev, ...dataUrls]);
+
+      // 画像から物件情報を自動解析
+      setAnalyzeLoading(true);
+      try {
+        const images = dataUrls.map(url => {
+          const [header, base64] = url.split(",");
+          const mediaType = header.match(/data:([^;]+)/)?.[1] || "image/jpeg";
+          return { base64, mediaType };
+        });
+        const res = await fetch("/api/aix/analyze-property", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ images }),
+        });
+        const data = await res.json() as { ok: boolean; vacating_note?: string };
+        if (data.ok && data.vacating_note) {
+          setVacatingNote(data.vacating_note);
+        }
+      } catch {
+        // 解析失敗は無視
+      } finally {
+        setAnalyzeLoading(false);
+      }
+    })();
   };
 
   const removeSendImage = (i: number) => {
@@ -579,16 +610,27 @@ export default function AixModal({
                 </button>
                 <input ref={sendFileInputRef} type="file" accept="image/*" multiple onChange={onSelectSendImages} className="hidden" />
               </div>
-              {/* 退去予定メモ */}
+              {/* 退去予定メモ（画像から自動読み取り） */}
               <div>
-                <p className="mb-1 text-xs font-bold text-[#54656f]">
-                  退去予定・案内できない物件 <span className="font-normal text-[#90a4ae]">（任意）</span>
-                </p>
+                <div className="mb-1 flex items-center justify-between">
+                  <p className="text-xs font-bold text-[#54656f]">
+                    退去予定・案内できない物件
+                    {analyzeLoading && (
+                      <span className="ml-2 font-normal text-[#2196F3]">画像から読み取り中...</span>
+                    )}
+                    {!analyzeLoading && vacatingNote && (
+                      <span className="ml-2 font-normal text-emerald-600">✓ 自動読み取り済（編集可）</span>
+                    )}
+                    {!analyzeLoading && !vacatingNote && (
+                      <span className="ml-2 font-normal text-[#90a4ae]">（画像から自動読み取り・任意）</span>
+                    )}
+                  </p>
+                </div>
                 <textarea
                   value={vacatingNote}
                   onChange={(e) => setVacatingNote(e.target.value)}
-                  placeholder="例：ディアコートとクレセントコートは6月末退去予定で案内不可"
-                  rows={2}
+                  placeholder="例：ディアコートは6月末退去予定のためご案内出来ない形となります！！"
+                  rows={3}
                   className="w-full resize-none rounded-xl border border-[#d1d7db] px-3 py-2 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
                 />
               </div>
