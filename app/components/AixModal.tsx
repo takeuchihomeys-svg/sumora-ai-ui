@@ -130,10 +130,12 @@ export default function AixModal({
   // 物件確認した専用: 複数画像
   const [checkImageFiles, setCheckImageFiles] = useState<File[]>([]);
   const [checkImagePreviews, setCheckImagePreviews] = useState<string[]>([]);
-  // 物件送る専用: 複数画像 + 退去予定メモ
+  // 物件送る専用: 複数画像 + 退去予定メモ + カレンダー自動取得
   const [sendImageFiles, setSendImageFiles] = useState<File[]>([]);
   const [sendImagePreviews, setSendImagePreviews] = useState<string[]>([]);
   const [vacatingNote, setVacatingNote] = useState("");
+  const [calendarInfo, setCalendarInfo] = useState<string>("");
+  const [calendarLoading, setCalendarLoading] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const conditionFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -148,6 +150,68 @@ export default function AixModal({
       reader.readAsDataURL(initialImageFile);
     }
   }, []);
+
+  // 物件送る: 直近3日のカレンダーを自動取得
+  useEffect(() => {
+    if (actionType !== "property_send") return;
+    setCalendarLoading(true);
+
+    const WEEKDAYS_JP = ["日", "月", "火", "水", "木", "金", "土"];
+    const nowJST = new Date(Date.now() + 9 * 60 * 60 * 1000);
+    const todayJST = new Date(nowJST);
+    todayJST.setUTCHours(0, 0, 0, 0);
+    const threeDaysLater = new Date(todayJST);
+    threeDaysLater.setUTCDate(todayJST.getUTCDate() + 3);
+
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from("calendar_events")
+          .select("title, start_at, end_at, event_type, customer_name, all_day")
+          .gte("start_at", todayJST.toISOString())
+          .lt("start_at", threeDaysLater.toISOString())
+          .order("start_at");
+
+        const events = (data || []) as Array<{
+          title: string; start_at: string; end_at: string | null;
+          event_type: string; customer_name: string; all_day: boolean;
+        }>;
+
+        const lines: string[] = [];
+        for (let i = 0; i < 3; i++) {
+          const day = new Date(todayJST);
+          day.setUTCDate(todayJST.getUTCDate() + i);
+          const dateKey = day.toISOString().slice(0, 10);
+          const month = day.getUTCMonth() + 1;
+          const date = day.getUTCDate();
+          const wd = WEEKDAYS_JP[day.getUTCDay()];
+          const label = i === 0 ? "本日" : i === 1 ? "明日" : "明後日";
+
+          const dayEvents = events.filter(e => e.start_at.startsWith(dateKey));
+          if (dayEvents.length === 0) {
+            lines.push(`${label}(${month}/${date}${wd}): 予定なし`);
+          } else {
+            const evStrs = dayEvents.map(e => {
+              const s = new Date(e.start_at);
+              const startH = `${s.getUTCHours()}:${String(s.getUTCMinutes()).padStart(2, "0")}`;
+              if (e.end_at) {
+                const en = new Date(e.end_at);
+                const endH = `${en.getUTCHours()}:${String(en.getUTCMinutes()).padStart(2, "0")}`;
+                return `${e.title || e.event_type} ${startH}〜${endH}`;
+              }
+              return `${e.title || e.event_type} ${startH}〜`;
+            });
+            lines.push(`${label}(${month}/${date}${wd}): ${evStrs.join(", ")}`);
+          }
+        }
+        setCalendarInfo(lines.join(" / "));
+      } catch {
+        setCalendarInfo("");
+      } finally {
+        setCalendarLoading(false);
+      }
+    })();
+  }, [actionType]);
 
   const onSelectImage = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -258,6 +322,7 @@ export default function AixModal({
           body.image_urls = urls;
         }
         if (vacatingNote.trim()) body.vacating_note = vacatingNote.trim();
+        if (calendarInfo) body.calendar_info = calendarInfo;
         if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
         if (customerSummary) body.customer_summary = customerSummary;
       } else if (actionType === "property_check_result") {
@@ -468,8 +533,27 @@ export default function AixModal({
               </div>
             </div>
           ) : actionType === "property_send" ? (
-            /* 物件送る: 複数画像 + 退去予定メモ */
+            /* 物件送る: カレンダー自動取得 + 複数画像 + 退去予定メモ */
             <div className="mb-4 flex flex-col gap-3">
+              {/* カレンダー自動取得 */}
+              <div>
+                <p className="mb-1 text-xs font-bold text-[#54656f]">📅 直近3日の予定（自動取得）</p>
+                {calendarLoading ? (
+                  <div className="flex items-center gap-2 rounded-xl bg-[#f0f2f5] px-3 py-2.5 text-sm text-[#8696a0]">
+                    <span className="animate-spin">⏳</span> カレンダー読み込み中...
+                  </div>
+                ) : (
+                  <div className="rounded-xl bg-[#f0f2f5] px-3 py-2.5 text-xs text-[#111b21] leading-5 whitespace-pre-wrap">
+                    {calendarInfo
+                      ? calendarInfo.split(" / ").map((line, i) => (
+                          <div key={i} className={`${line.includes("予定なし") ? "text-emerald-600 font-semibold" : ""}`}>{line}</div>
+                        ))
+                      : <span className="text-[#8696a0]">予定なし（直近3日は空き）</span>
+                    }
+                  </div>
+                )}
+                <p className="mt-1 text-[10px] text-[#8696a0]">この情報をもとにAIが内覧可能日時を自動アナウンスします</p>
+              </div>
               {/* 物件画像（複数） */}
               <div>
                 <p className="mb-1 text-xs font-bold text-[#54656f]">
@@ -600,7 +684,7 @@ export default function AixModal({
           ) : null}
 
           {/* テキスト入力欄（各アクション専用） */}
-          {config.inputLabel && (
+          {config.inputLabel && actionType !== "property_send" && (
             <div className="mb-4">
               <label className="mb-1 block text-xs font-semibold text-[#54656f]">
                 {config.inputLabel}

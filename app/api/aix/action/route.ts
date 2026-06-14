@@ -277,7 +277,7 @@ export async function POST(request: NextRequest) {
 
     // ── 📤 物件送る ──────────────────────────────────────────────
     } else if (action === "property_send") {
-      const viewingTimes = extra_input ? String(extra_input) : null;
+      const calendarData = body.calendar_info ? String(body.calendar_info) : null;
       const vacatingInfo = vacating_note ? String(vacating_note) : null;
       const customerSummary = body.customer_summary as string | undefined;
 
@@ -288,9 +288,16 @@ export async function POST(request: NextRequest) {
       const sendSystem = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
 物件をピックアップしてお客さんに送る際の導入メッセージを1つだけ作成してください。
 
+【スタッフの営業時間】10:00〜19:00
+
 【作成ルール】
 ・「[お客様名]さんお待たせ致しました！！ご希望のご条件に合ったお部屋ピックアップしお送りさせて頂きます😊！！」で自然に始める
-・内覧可能日時が渡されている場合は「直近ですと [日時] ご案内可能です！！」を自然に組み込む
+・カレンダー情報が渡されている場合は必ず内覧可能日時をアナウンスする：
+  - 「予定なし」の日 → 終日ご案内可能（例：「16日(月)は終日ご案内可能です！！」）
+  - 予定がある日 → 予定と予定の間・予定終了後で2時間以上空きがある時間帯を案内（例：「17日(火)は14:00〜」）
+  - 予定で埋まっている日（空きが2時間未満）→ その日は案内できないと伝える
+  - 直近3日のうち案内できる日・時間帯を「直近ですと\n[日付]([曜日]) [時間帯]\n[日付]([曜日]) [時間帯]\nご案内可能です！！」の形式で案内する（案内できる日のみ記載）
+  - 3日間すべて埋まっている場合は「来週ご案内できる日程をご連絡させていただきます！！」と伝える
 ・退去予定・案内できない物件情報が渡されている場合は「〇〇は[退去予定/時期]となりますのでお部屋ご案内出来ない形となります！！」と明確に伝える（複数ある場合は全て伝える）
 ・締めは「[お客様名]さんお気に召されましたらお日にちにご案内させて頂きます😊！！」
 ・感嘆符は「！！」（スモラスタイル）
@@ -298,8 +305,8 @@ export async function POST(request: NextRequest) {
 ・絵文字は 😊 のみ・1〜2個まで`;
 
       const userParts: string[] = [`${name}への物件ピックアップ送付メッセージを作成してください。`];
-      if (viewingTimes) userParts.push(`\n内覧可能日時: ${viewingTimes}`);
-      if (vacatingInfo) userParts.push(`\n退去予定・案内不可の物件情報: ${vacatingInfo}`);
+      if (calendarData) userParts.push(`\n\n【直近3日のカレンダー予定（営業時間10:00〜19:00内の空き時間を計算して案内すること）】\n${calendarData}`);
+      if (vacatingInfo) userParts.push(`\n\n【退去予定・案内不可の物件情報（必ず全て伝えること）】\n${vacatingInfo}`);
       if (summaryNote) userParts.push(summaryNote);
 
       message_text = await callClaude(sendSystem, userParts.join(""));
