@@ -378,13 +378,25 @@ function buildGenerationMessages(
     } catch { /* ignore */ }
   }
 
-  // スモラの全過去返信を抽出（マルチライン対応）
+  // スモラの全過去返信を抽出（連続する複数送信は1つにまとめる・スプリット送信対応）
   const allPastStaffMsgs = (() => {
     const segments = history.split(/\n(?=スモラ:|お客様:)/);
-    return segments
-      .filter(s => s.startsWith("スモラ:"))
-      .map(s => s.replace(/^スモラ:\s*/, "").trim());
+    const groups: string[] = [];
+    let currentGroup: string[] = [];
+    for (const seg of segments) {
+      if (seg.startsWith("スモラ:")) {
+        currentGroup.push(seg.replace(/^スモラ:\s*/, "").trim());
+      } else if (seg.startsWith("お客様:")) {
+        if (currentGroup.length > 0) {
+          groups.push(currentGroup.join("\n"));
+          currentGroup = [];
+        }
+      }
+    }
+    if (currentGroup.length > 0) groups.push(currentGroup.join("\n"));
+    return groups;
   })();
+  // 最後のスモラ返信（スプリット送信は結合済み）
   const lastStaffMsg = allPastStaffMsgs.length > 0 ? allPastStaffMsgs[allPastStaffMsgs.length - 1] : null;
 
   // 繰り返し防止リスト（直前を除く過去のスモラ返信を列挙）

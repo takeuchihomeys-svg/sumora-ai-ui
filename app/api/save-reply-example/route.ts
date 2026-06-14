@@ -236,6 +236,11 @@ ${aiDraft}
 【スタッフが実際に送った文（修正後）】
 ${sentReply}
 
+【重要】スタッフはLINEで1つの返信を2〜3通に分けて送ることがよくあります。
+送信文がAI文案より短い場合、「削除・短縮した」のではなく「分割して送った」可能性が高いです。
+その場合は「AI文案が長すぎた」「冗長だった」「削りすぎた」等のルールは絶対に生成しないこと。
+分析は「文体・言い回し・言葉の選び方・構成の変化」に集中すること。
+
 以下を分析してJSONのみで返答（説明不要）：
 {
   "ai_mistake": "AIが間違えた点（スモラスタイルの観点で・1〜2文）",
@@ -454,7 +459,10 @@ export async function POST(req: NextRequest) {
   // 5%未満 → ほぼ手書き（AIは参考のみ）
   const sim = aiDraft ? textSimilarity(aiDraft.trim(), sentReply.trim()) : 0;
   const wasAiUsed    = !!aiDraft && aiDraft.trim().length > 0 && sim >= 0.9;
-  const wasAiModified = !!aiDraft && aiDraft.trim().length > 0 && sim >= 0.05 && sim < 0.9;
+  // スプリット送信判定: sentReplyがaiDraftの55%未満 かつ 類似度30%以上 → 分割送信の可能性が高い
+  // この場合、差分学習を実行しない（「削った」と誤判定を防ぐ）
+  const likelySplit  = !!aiDraft && sentReply.trim().length < aiDraft.trim().length * 0.55 && sim >= 0.3;
+  const wasAiModified = !!aiDraft && aiDraft.trim().length > 0 && sim >= 0.05 && sim < 0.9 && !likelySplit;
 
   // 埋め込み生成（バックグラウンドで並列実行・失敗してもINSERTは続行）
   // [画像][動画]メッセージはテキスト意味がないのでsentReplyをembeddingの主成分にする
