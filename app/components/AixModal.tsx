@@ -152,6 +152,9 @@ export default function AixModal({
   // 物件送る専用: 内覧誘導 or 申込み誘導 モード + 編集可能スロット
   const [sendMode, setSendMode] = useState<"viewing" | "application">("viewing");
   const [editableCalendarSlots, setEditableCalendarSlots] = useState<string[]>([]);
+  // 申込へ！専用: 空室状況 + 退去予定日
+  const [appVacancyStatus, setAppVacancyStatus] = useState<"vacant" | "scheduled" | null>(null);
+  const [appMoveOutDate, setAppMoveOutDate] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const conditionFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -363,6 +366,16 @@ export default function AixModal({
         if (customerConditions) body.customer_conditions = customerConditions;
         if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
         if (customerSummary) body.customer_summary = customerSummary;
+      } else if (actionType === "application_push") {
+        if (!appVacancyStatus) throw new Error("空室状況を選択してください");
+        body.vacancy_status = appVacancyStatus;
+        if (appMoveOutDate.trim()) body.move_out_date = appMoveOutDate.trim();
+        // 直近スタッフメッセージから見積書送信済みを自動検出
+        const staffMsgs = (recentMessages || []).filter(m => m.sender === "staff").slice(-15);
+        const hasEstimate = staffMsgs.some(m => /見積|御見積|初期費用/.test(m.text));
+        body.has_estimate = hasEstimate;
+        if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
+        if (customerSummary) body.customer_summary = customerSummary;
       } else if (actionType === "property_check_result") {
         if (!checkPattern) throw new Error("確認結果を選択してください");
         body.check_pattern = checkPattern;
@@ -472,6 +485,8 @@ export default function AixModal({
     ? !!checkPattern
     : actionType === "property_send"
     ? true
+    : actionType === "application_push"
+    ? !!appVacancyStatus
     : !config.requiresImage || !!imageFile;
 
   return (
@@ -695,6 +710,73 @@ export default function AixModal({
                   className="w-full resize-none rounded-xl border border-[#d1d7db] px-3 py-2 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
                 />
               </div>
+            </div>
+          ) : actionType === "application_push" ? (
+            /* 申込へ！: 空室状況選択 + 見積書自動検出 */
+            <div className="mb-4 flex flex-col gap-3">
+              {/* 見積書送信済み自動検出 */}
+              {(() => {
+                const staffMsgs = (recentMessages || []).filter(m => m.sender === "staff").slice(-15);
+                const hasEstimate = staffMsgs.some(m => /見積|御見積|初期費用/.test(m.text));
+                return (
+                  <div className={`flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs ${
+                    hasEstimate ? "bg-emerald-50 text-emerald-700" : "bg-[#f0f2f5] text-[#8696a0]"
+                  }`}>
+                    <span>{hasEstimate ? "✓" : "−"}</span>
+                    <span className="font-semibold">
+                      {hasEstimate ? "見積書送信済み（直近メッセージより検出）" : "見積書未送信（見積書のくだりは省略されます）"}
+                    </span>
+                  </div>
+                );
+              })()}
+              {/* 空室状況選択 */}
+              <div>
+                <p className="mb-2 text-xs font-bold text-[#54656f]">空室状況を選択</p>
+                <div className="flex flex-col gap-2">
+                  {([
+                    { key: "vacant",    label: "空室（内覧できる）",   sub: "お申込みで抑えてご内覧もできます", color: "emerald" },
+                    { key: "scheduled", label: "退去予定（内覧不可）", sub: "先にお申込みでお部屋確保を推奨",   color: "orange"  },
+                  ] as const).map((p) => (
+                    <button
+                      key={p.key}
+                      onClick={() => { setAppVacancyStatus(p.key); setPreview(""); }}
+                      className={`flex items-center gap-3 rounded-2xl border-2 px-4 py-3 text-left transition-all ${
+                        appVacancyStatus === p.key
+                          ? p.color === "emerald" ? "border-emerald-400 bg-emerald-50"
+                          : "border-orange-400 bg-orange-50"
+                          : "border-[#e9edef] bg-[#f8f9fa]"
+                      }`}
+                    >
+                      <span className={`flex h-5 w-5 items-center justify-center rounded-full border-2 flex-shrink-0 ${
+                        appVacancyStatus === p.key
+                          ? p.color === "emerald" ? "border-emerald-500 bg-emerald-500" : "border-orange-500 bg-orange-500"
+                          : "border-[#d1d7db]"
+                      }`}>
+                        {appVacancyStatus === p.key && <span className="h-2 w-2 rounded-full bg-white" />}
+                      </span>
+                      <div>
+                        <div className="text-[13px] font-bold text-[#111b21]">{p.label}</div>
+                        <div className="text-[10px] text-[#8696a0]">{p.sub}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* 退去予定日（退去予定選択時のみ） */}
+              {appVacancyStatus === "scheduled" && (
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-[#54656f]">
+                    退去予定日 <span className="font-normal text-[#90a4ae]">（任意）</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={appMoveOutDate}
+                    onChange={(e) => setAppMoveOutDate(e.target.value)}
+                    placeholder="例：7月末、8月1日"
+                    className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
+                  />
+                </div>
+              )}
             </div>
           ) : actionType === "property_check_result" ? (
             /* 物件確認した: パターン選択 + 任意画像 */

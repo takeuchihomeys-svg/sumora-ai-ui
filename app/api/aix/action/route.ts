@@ -100,7 +100,7 @@ async function callClaudeVision(system: string, content: unknown[]): Promise<str
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, account, customer_name, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done } = body;
+    const { action, account, customer_name, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done, vacancy_status, has_estimate, move_out_date } = body;
 
     // 直近の会話履歴テキスト（viewing_invite・application_push で使用）
     const recentHistory = Array.isArray(recent_messages) && recent_messages.length > 0
@@ -401,35 +401,42 @@ ${phraseText || "なし"}`;
             .join("\n\n")
         : "";
 
-      const isViewingDone = viewing_done === true;
-      const pushInstruction = isViewingDone
-        ? `・内覧済みのお客様への申込クロージング
-・「本日はありがとうございました！！」など内覧のお礼から自然につなげる
-・「お気に召されましたら是非お申込みください！！お申込みはLINEで全て完結できます😊！！」と手軽さを伝える
-・迷っている場合は「ご入居前のキャンセルも可能ですので、まずお部屋を確保するという形も可能です！！」とバリアを下げる`
-        : `・まだ内覧前のお客様への申込検討促し
-・「ご条件が良いお部屋となりますので他のお客様がお申込みされますとお部屋確保が難しくなる可能性がございます！！」と緊急性を伝える
-・「まずはお申込みでお部屋を抑えておくことも可能ですのでお気軽にご相談ください😌！！」と選択肢を提示する`;
+      // 4パターン: (見積書あり/なし) × (空室/退去予定)
+      const isVacant = vacancy_status === "vacant";
+      const isScheduled = vacancy_status === "scheduled";
+      const hasEst = has_estimate === true;
+      const moveOut = move_out_date ? move_out_date : "●月●日";
+
+      let templateLines: string[] = [];
+      if (hasEst) {
+        templateLines.push("[物件名]の最大限割引しました初期費用の御見積書となります！！");
+      }
+      if (isScheduled) {
+        templateLines.push(`お部屋は${moveOut}退去の為ご内覧はまだ出来ないお部屋となります！！`);
+        templateLines.push(`お気に召されましたらお申込しお部屋抑えさせて頂きます😌！！`);
+      } else {
+        templateLines.push(`空室ですので${name}さんご都合よろしいお日にちにご案内させて頂きます！！`);
+        templateLines.push(`ご条件がよくお申込みが入る可能性が高いお部屋となります。`);
+        templateLines.push(`${name}さんお気に召されましたらお申込し一度お部屋抑えた状態でご内覧いただくのがオススメです😌！！`);
+      }
+      const template = templateLines.join("\n");
 
       const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。
-今の会話の流れを読み取り、申込を自然に後押しするLINEメッセージを1つだけ作成してください。
+以下のテンプレートを使って、会話履歴から物件名を特定し、完成したLINEメッセージを1つだけ出力してください。
 
-【フェーズ別作成ルール】
-${pushInstruction}
+【テンプレート】
+${template}
 
-【共通ルール】
-・会話履歴がある場合は、お客様が興味を持っている物件・状況を踏まえて訴求する
-・感嘆符は「！！」（スモラスタイル）
+【穴埋めルール】
+・「[物件名]」→ 会話履歴に登場する物件名（わからなければ「こちらのお部屋」に置換）
+・お客様名は既にテンプレートに入っているのでそのまま使う
+・テンプレートの文言・改行・絵文字は変えない
 ・LINEでそのまま送れる完成文のみ出力（解説・候補複数は禁止）
-
-【絵文字ルール — 最重要・必ず守ること】
-▼ 使ってよい絵文字：😊 😌 🙇‍♀️ 🌟 ✨ のみ（他は全禁止）
-▼ 絵文字は1〜2個まで。😊😌 → 背中を押す・締めの一言
 
 【スモラの言葉・表現】
 ${phraseText || "なし"}${examplesText}`;
 
-      message_text = await callClaude(system, `${name}への申込後押しメッセージ（${isViewingDone ? "内覧済み" : "内覧前"}）。${extra_input ? `補足: ${extra_input}` : ""}${recentHistory}`);
+      message_text = await callClaude(system, `物件名を会話から特定してテンプレートを完成させてください。${extra_input ? `補足: ${extra_input}` : ""}${recentHistory}`);
 
     // ── ✅ 物件確認した ──────────────────────────────────────────────
     } else if (action === "property_check_result") {
