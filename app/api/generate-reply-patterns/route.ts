@@ -231,9 +231,20 @@ async function generateOnePattern(
     try {
       const p = JSON.parse(analysis) as Record<string, unknown>;
       if (p.approach) analysisNote = `\n【返し方の方針】${p.approach}（トーン: ${p.tone || "自然に"}）`;
-      if (Array.isArray(p.questions) && (p.questions as string[]).length > 1) {
-        analysisNote += `\n【複数質問（全て答えること）】${(p.questions as string[]).map((q, i) => `${i + 1}. ${q}`).join(" / ")}`;
+
+      // 質問検出
+      if (Array.isArray(p.questions) && (p.questions as string[]).length > 0) {
+        const questions = p.questions as string[];
+        const anxietyKeywords = ["名義", "審査", "保証", "リスク", "キャンセル", "退去", "違約", "トラブル", "詐称", "仲違い", "離婚", "死亡", "相続", "ペット", "同居"];
+        const isAnxietyQuestion = questions.some(q => anxietyKeywords.some(k => q.includes(k)));
+        if (questions.length > 1) {
+          analysisNote += `\n【複数質問（全て漏れなく答えること）】${questions.map((q, i) => `${i + 1}. ${q}`).join(" / ")}`;
+        }
+        if (isAnxietyQuestion) {
+          analysisNote += `\n【⚠️ 不安系質問検出】お客様はリスク・ルール・法的な点について不安を持っている。曖昧・ぼかした回答は信頼を損なう。事実・手順・リスクを具体的に説明し、リスクがある場合は正直に伝えた上で代替案をセットで提示すること。`;
+        }
       }
+
       if (p.current_property && typeof p.current_property === "string") {
         analysisNote += `\n【話題の物件】${p.current_property} — この物件の文脈で返信すること`;
       }
@@ -254,6 +265,11 @@ ${angle.instruction}
 
 【現在の営業フェーズ: ${state}】
 ${phaseGuide}
+
+【質問・相談への回答ルール — 最重要】
+お客様から質問・相談（名義貸し・審査・費用・退去・キャンセル等）を受けた場合は「本質的・具体的」に答える。
+× 曖昧・ぼかした回答（「〜の可能性があります」「〜かもしれません」）→ 不安なお客様の信頼を損なう
+○ 事実・手順・リスク・数字を具体的に示す。リスクがあれば正直に伝え、代替案もセットで提示する
 
 【共通ルール】
 ・絵文字は 😊 😌 🌟 ✨ の4つのみ・1〜2個まで・文末か区切りのみ
