@@ -28,6 +28,11 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
   console.error("❌ SUPABASE_URL / SUPABASE_KEY が未設定です");
   process.exit(1);
 }
+if (!OPENAI_KEY) {
+  console.warn("⚠️  OPENAI_API_KEY が未設定です。embeddingは再生成されません");
+} else {
+  console.log("✅ OPENAI_API_KEY 読み込み済み（embedding再生成あり）");
+}
 const DRY_RUN       = process.argv.includes("--dry-run");
 const WINDOW_MS     = 90 * 1000; // 90秒
 
