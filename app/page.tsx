@@ -1043,9 +1043,12 @@ export default function Home() {
     setError("");
     setShowStatusMenu(false);
     setShowAixMenu(false);
+    setShowPatternSheet(false);
+    setPatternDrafts([]);
     setSelectedImageFiles([]);
     setSelectedImagePreviews([]);
     replyTargetCustomerMsgRef.current = "";
+    selectedPatternAngleRef.current = null;
     setTargetOverrideMessage(null);
     setAiDraftExpanded(false);
 
@@ -1743,6 +1746,8 @@ export default function Home() {
             sentReply: textToSend,
             aiDraft: capturedAiDraft,
             replyAngle: selectedPatternAngleRef.current || undefined,
+            // 4パターンから選んで送った場合は自動☆（パターン学習を確実に起動）
+            isStarred: selectedPatternAngleRef.current ? true : undefined,
           }),
         }).then(async (r) => {
           if (!r.ok) return;
