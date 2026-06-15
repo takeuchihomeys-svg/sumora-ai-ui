@@ -400,12 +400,14 @@ export async function POST(req: NextRequest) {
     sentReply,
     aiDraft,
     isStarred,
+    replyAngle,
   } = await req.json() as {
     conversationState: string;
     customerMessage: string;
     sentReply: string;
     aiDraft?: string;
     isStarred?: boolean;
+    replyAngle?: string;
   };
 
   if (!customerMessage || !sentReply) {
@@ -469,7 +471,9 @@ export async function POST(req: NextRequest) {
   const isImageMsg = customerMessage === "[画像]" || customerMessage === "[動画]" || !customerMessage.trim();
   const embeddingInput = isImageMsg
     ? `${conversationState}: [画像受信への返信] ${sentReply.slice(0, 300)}`
-    : `${conversationState}: ${customerMessage}`;
+    : replyAngle
+      ? `${conversationState} [角度:${replyAngle}]: ${customerMessage}`
+      : `${conversationState}: ${customerMessage}`;
   const embeddingPromise = getEmbedding(embeddingInput);
 
   const [embedding, insertResult] = await Promise.all([
@@ -484,6 +488,7 @@ export async function POST(req: NextRequest) {
         was_ai_used: wasAiUsed,
         was_ai_modified: wasAiModified,
         is_starred: isStarred ?? wasAiUsed,
+        reply_angle: replyAngle || null,
       })
       .select("id")
       .single(),

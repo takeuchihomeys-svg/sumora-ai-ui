@@ -278,6 +278,9 @@ export default function Home() {
   const [aiDraftExpanded, setAiDraftExpanded] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [patternLoading, setPatternLoading] = useState(false);
+  const [patternDrafts, setPatternDrafts] = useState<{ angle: string; label: string; text: string }[]>([]);
+  const [showPatternSheet, setShowPatternSheet] = useState(false);
   const [draftPreparing, setDraftPreparing] = useState(false);
   const [sending, setSending] = useState(false);
   const [starredMsgIds, setStarredMsgIds] = useState<Set<string>>(new Set());
@@ -371,6 +374,7 @@ export default function Home() {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const notifiedCalendarIds = useRef<Set<string>>(new Set());
   const aiDraftRef = useRef<string>("");
+  const selectedPatternAngleRef = useRef<string | null>(null);
   const replyTargetCustomerMsgRef = useRef<string>("");
   // Effect1（会話切替）がai_draft自動セット済みの場合、Effect2（Realtime）の二重処理を防ぐフラグ
   const suppressAiDraftAutoLoad = useRef(false);
@@ -1302,6 +1306,40 @@ export default function Home() {
     }
   };
 
+  const generatePatterns = async () => {
+    if (!selectedConversation.id || patternLoading) return;
+    setPatternLoading(true);
+    setPatternDrafts([]);
+    setShowPatternSheet(true);
+    const msgs = selectedConversation.messages;
+    const latestCustomer = [...msgs].reverse().find(m => m.sender === "customer");
+    const targetMessage = latestCustomer?.text || "";
+    const recentMessages = msgs.slice(-25).map(m => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl }));
+    try {
+      const res = await fetch("/api/generate-reply-patterns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: targetMessage,
+          state: selectedConversation.status,
+          customerName: selectedConversation.customerName,
+          recentMessages,
+        }),
+      });
+      if (!res.ok) throw new Error("生成失敗");
+      const data = await res.json() as { ok: boolean; patterns?: { angle: string; label: string; text: string }[] };
+      if (data.ok && data.patterns) {
+        setPatternDrafts(data.patterns);
+        replyTargetCustomerMsgRef.current = targetMessage;
+      }
+    } catch (e) {
+      console.error("generatePatterns error:", e);
+      setShowPatternSheet(false);
+    } finally {
+      setPatternLoading(false);
+    }
+  };
+
   const handleEnhanceReply = async () => {
     if (!replyDraft.trim() || enhancing) return;
     try {
@@ -1704,6 +1742,7 @@ export default function Home() {
             customerMessage: customerMsgToSave,
             sentReply: textToSend,
             aiDraft: capturedAiDraft,
+            replyAngle: selectedPatternAngleRef.current || undefined,
           }),
         }).then(async (r) => {
           if (!r.ok) return;
@@ -1716,6 +1755,7 @@ export default function Home() {
         }).catch(() => {});
 
         aiDraftRef.current = "";
+        selectedPatternAngleRef.current = null;
         replyTargetCustomerMsgRef.current = "";
       }
 
@@ -2763,6 +2803,17 @@ export default function Home() {
                     作成中...
                   </>
                 ) : replyDraft ? "🔄 再生成" : "AI文案を作成"}
+              </button>
+
+              <button
+                onClick={generatePatterns}
+                disabled={patternLoading || !selectedConversation.id}
+                className={`flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-sm disabled:opacity-40 active:scale-95 transition-all duration-75 ${patternLoading ? "border-purple-300 bg-purple-50 text-purple-600" : "border-[#c8b8ff] bg-gradient-to-r from-[#ede7ff] to-[#f0e6ff] text-[#6c3fc7]"}`}
+                title="4パターンの返信案を生成して選ぶ"
+              >
+                {patternLoading ? (
+                  <><span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-purple-400 border-t-transparent" /><span>生成中...</span></>
+                ) : "✦ 4案"}
               </button>
 
               <button
@@ -4095,6 +4146,82 @@ export default function Home() {
                 送信する
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 4パターン返信ピッカー（ボトムシート） */}
+      {showPatternSheet && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowPatternSheet(false); }}
+        >
+          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl">
+            {/* ヘッダー */}
+            <div className="flex items-center justify-between border-b border-[#f0f0f0] px-5 py-3">
+              <span className="text-sm font-bold text-[#111b21]">✦ 4パターン返信案</span>
+              <div className="flex items-center gap-2">
+                {!patternLoading && patternDrafts.length > 0 && (
+                  <button
+                    onClick={generatePatterns}
+                    className="rounded-full border border-[#c8b8ff] bg-[#f5f0ff] px-3 py-1 text-[11px] font-semibold text-[#6c3fc7]"
+                  >
+                    再生成
+                  </button>
+                )}
+                <button onClick={() => setShowPatternSheet(false)} className="text-[#aaa] text-lg leading-none">✕</button>
+              </div>
+            </div>
+
+            {/* ローディング */}
+            {patternLoading && (
+              <div className="flex flex-col items-center justify-center gap-3 py-12">
+                <span className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-purple-300 border-t-purple-600" />
+                <p className="text-sm text-[#888]">4パターンを並列生成中...</p>
+              </div>
+            )}
+
+            {/* パターンカード一覧 */}
+            {!patternLoading && patternDrafts.length > 0 && (
+              <div className="max-h-[70vh] overflow-y-auto px-4 py-3 space-y-3">
+                {patternDrafts.map((p) => (
+                  <div key={p.angle} className="rounded-2xl border border-[#e8e0ff] bg-[#faf7ff] p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="rounded-full bg-[#ede7ff] px-2.5 py-0.5 text-[11px] font-bold text-[#6c3fc7]">
+                        {p.label}
+                      </span>
+                      <button
+                        onClick={() => {
+                          aiDraftRef.current = p.text;
+                          selectedPatternAngleRef.current = p.angle;
+                          setReplyDraft(p.text);
+                          setShowPatternSheet(false);
+                          setTimeout(() => textareaRef.current?.focus(), 50);
+                        }}
+                        className="rounded-xl bg-[#6c3fc7] px-3 py-1 text-[11px] font-bold text-white active:opacity-80"
+                      >
+                        使う
+                      </button>
+                    </div>
+                    <p className="whitespace-pre-wrap break-words text-[12px] leading-relaxed text-[#333]">
+                      {p.text}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* エラー時 */}
+            {!patternLoading && patternDrafts.length === 0 && (
+              <div className="flex flex-col items-center gap-2 py-10 text-[#888]">
+                <p className="text-sm">生成に失敗しました</p>
+                <button onClick={generatePatterns} className="rounded-full border border-[#c8b8ff] bg-[#f5f0ff] px-4 py-1.5 text-[12px] font-semibold text-[#6c3fc7]">
+                  再試行
+                </button>
+              </div>
+            )}
+
+            <div className="pb-safe h-4" />
           </div>
         </div>
       )}

@@ -433,7 +433,10 @@ CREATE TABLE IF NOT EXISTS ai_prompts (
   content TEXT NOT NULL DEFAULT '',
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
-ALTER TABLE ai_prompts DISABLE ROW LEVEL SECURITY
+ALTER TABLE ai_prompts DISABLE ROW LEVEL SECURITY;
+
+-- ai_reply_examples: 4パターン返信の選択角度を記録（パターン学習用）
+ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS reply_angle TEXT
 `.trim();
 
 export async function GET() {
