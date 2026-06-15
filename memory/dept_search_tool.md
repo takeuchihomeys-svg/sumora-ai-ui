@@ -497,6 +497,7 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 - **itandi PDF重複バグ修正・LINE送信信頼性向上（2026-06-07）**: sendMessageTextのdedup修正。line-webhookでテキストメッセージを直接保存+line_message_id dedup。sync-from-screeningでスキップロジック追加
 - **itandi PDFキャプチャ修正（2026-06-07）**: createObjectURLフックで空typeのBlob（size>=30KB）も補足対象に追加。detached anchorのblob:URL除外を撤廃
 - **レインズGBK002200警告エラー修正（2026-06-07）**: 非結果ページ除外リストにGBK002200追加。console.warn→console.logに変更でChrome拡張エラーログ非表示化
+- **レインズGBK002200 LINE送信復旧（2026-06-15）**: GBK002200はREINS賃貸検索結果一覧の本体URL（42件表示確認済み）。2026-06-07に誤って除外リストに追加していたため「0件を選択中」で送信ボタン無効化されていた。GBK002200をNON_RESULT_PAGESから削除（全4箇所）→ 物件行検出・送信機能が復活
 - **拡張コンテキスト無効化クラッシュ防止（2026-06-07）**: background.js編集後にChromeがSWを自動再起動し既存タブのchrome.runtime.getURL()が「Extension context invalidated」例外を投げて3サイト同時にパネル消滅するバグを修正。underbar.jsのensureIframe()にtry-catch追加・doExpand()にnull guard追加・background.jsのsetupSidePanel()にtry-catch追加
 - **パネル毎回更新問題を修正（2026-06-07）**: underbar.jsをsessionStorage→localStorageに変更。「明示的にたたんだ記録がなければ展開」をリアプロ・itandiにも適用（レインズと同じ動作）。これにより新タブを開くたびにリロード不要になる。v2.4.0
 - **✅ 2026-06-07 時点が最も安定したベースライン（竹内悠馬確認済み）**: git commit a34f535
@@ -543,12 +544,12 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 `findResultRows` / `ensureBar` / `retryTimer` / `MutationObserver` の4箇所に統一定義:
 
 ```javascript
-var NON_RESULT_PAGES = ["GBK001310", "GBK002200"];
+var NON_RESULT_PAGES = ["GBK001310"];
 ```
 
 | ページコード | 種別 | 除外理由 |
 |---|---|---|
 | GBK001310 | 検索条件入力フォーム | チェックボックスがフォーム要素（物件行でない） |
-| GBK002200 | 物件詳細/登録系ページ | CB数=14だが物件行として解析不能 |
+| ~~GBK002200~~ | ~~物件詳細/登録系ページ~~ | ~~2026-06-15 削除。実際は賃貸検索結果一覧ページだった~~ |
 
 **新しいページでエラーが出たら**: そのページコードを `NON_RESULT_PAGES` 配列に追加し、4箇所全てに適用すること（`reins-bulk-dl.js` 内 `NON_RESULT_PAGES` を一括検索して更新）。

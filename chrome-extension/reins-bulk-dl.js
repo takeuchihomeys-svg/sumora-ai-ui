@@ -13,7 +13,7 @@
   // 同一親に2件以上あるグループ = 物件リスト行と判定する。
   function findResultRows() {
     // 非結果ページ（検索フォーム・物件詳細・登録系）は物件行なし → 早期リターン
-    var NON_RESULT_PAGES = ["GBK001310", "GBK002200"];
+    var NON_RESULT_PAGES = ["GBK001310"];
     if (NON_RESULT_PAGES.some(function(p) { return location.pathname.indexOf(p) !== -1; })) return [];
 
     function isVisible(el) {
@@ -186,7 +186,7 @@
   function ensureBar() {
     if (document.getElementById("axlx-reins-bar")) return;
     // 非結果ページではバー非表示
-    var NON_RESULT_PAGES = ["GBK001310", "GBK002200"];
+    var NON_RESULT_PAGES = ["GBK001310"];
     if (NON_RESULT_PAGES.some(function(p) { return location.pathname.indexOf(p) !== -1; })) return;
     var bar = document.createElement("div");
     bar.id = "axlx-reins-bar";
@@ -648,7 +648,7 @@
   var mutObs = new MutationObserver(function () {
     if (injectTimer || isSending) return;
     // 非結果ページでは再スキャンしない（不要な警告ログ防止）
-    var NON_RESULT_PAGES = ["GBK001310", "GBK002200"];
+    var NON_RESULT_PAGES = ["GBK001310"];
     if (NON_RESULT_PAGES.some(function(p) { return location.pathname.indexOf(p) !== -1; })) return;
     injectTimer = setTimeout(function () {
       injectTimer = null;
@@ -720,7 +720,7 @@
       return;
     }
     // 非結果ページは物件行なし → 正常。エラーにしない・カウントしない
-    var NON_RESULT_PAGES = ["GBK001310", "GBK002200"];
+    var NON_RESULT_PAGES = ["GBK001310"];
     if (NON_RESULT_PAGES.some(function(p) { return location.pathname.indexOf(p) !== -1; })) return;
     if (tracked.length > 0 || ++retryCount > 30) { // 最大60秒（30回×2秒）
       clearInterval(retryTimer);

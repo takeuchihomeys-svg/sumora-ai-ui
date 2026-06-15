@@ -6,14 +6,18 @@
   function injectPageScript() {
     if (injected) return;
     injected = true;
-    var s = document.createElement("script");
-    s.src = chrome.runtime.getURL("itandi-page-script.js");
-    (document.head || document.documentElement).appendChild(s);
+    try {
+      var s = document.createElement("script");
+      s.src = chrome.runtime.getURL("itandi-page-script.js");
+      (document.head || document.documentElement).appendChild(s);
+    } catch (e) {
+      injected = false;
+    }
   }
 
   chrome.runtime.onMessage.addListener(function (msg) {
     if (msg.type !== "axlx-itandi-autofill") return;
-    injectPageScript();
+    try { injectPageScript(); } catch (e) { return; }
     setTimeout(function () {
       window.dispatchEvent(new CustomEvent("axlx-itandi-fill", { detail: msg.conditions }));
     }, 200);
@@ -22,7 +26,7 @@
   // underbar.js経由のpostMessageも受け取る（iframe内でchrome.tabsが使えないため）
   window.addEventListener("message", function (e) {
     if (!e.data || e.data.from !== "aixlinx-itandi-fill") return;
-    injectPageScript();
+    try { injectPageScript(); } catch (e2) { return; }
     setTimeout(function () {
       window.dispatchEvent(new CustomEvent("axlx-itandi-fill", { detail: e.data.conditions }));
     }, 200);

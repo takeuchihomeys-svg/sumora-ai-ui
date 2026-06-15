@@ -6,14 +6,18 @@
   function injectPageScript() {
     if (injected) return;
     injected = true;
-    var s = document.createElement("script");
-    s.src = chrome.runtime.getURL("reins-page-script.js");
-    (document.head || document.documentElement).appendChild(s);
+    try {
+      var s = document.createElement("script");
+      s.src = chrome.runtime.getURL("reins-page-script.js");
+      (document.head || document.documentElement).appendChild(s);
+    } catch (e) {
+      injected = false;
+    }
   }
 
   chrome.runtime.onMessage.addListener(function (msg) {
     if (msg.type !== "axlx-reins-autofill") return;
-    injectPageScript();
+    try { injectPageScript(); } catch (e) { return; }
     setTimeout(function () {
       window.dispatchEvent(
         new CustomEvent("axlx-reins-fill", { detail: msg.conditions })
