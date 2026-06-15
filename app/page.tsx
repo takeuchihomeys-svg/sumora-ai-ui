@@ -1311,13 +1311,21 @@ export default function Home() {
 
   const generatePatterns = async () => {
     if (!selectedConversation.id || patternLoading) return;
-    setPatternLoading(true);
-    setPatternDrafts([]);
-    setShowPatternSheet(true);
     const msgs = selectedConversation.messages;
     const latestCustomer = [...msgs].reverse().find(m => m.sender === "customer");
     const targetMessage = latestCustomer?.text || "";
+    // 画像のみ・空メッセージはガード
+    if (!targetMessage || targetMessage === "[画像]" || targetMessage === "[動画]") return;
+
+    setPatternLoading(true);
+    setPatternDrafts([]);
+    setShowPatternSheet(true);
+
+    const linkedCustomerForPattern = linkedCustomerMap[selectedConversation.id];
+    const patternConditions = linkedCustomerForPattern?.conditions || memos[selectedConversation.id] || undefined;
+    const patternSummary = linkedCustomerForPattern?.ai_summary ?? undefined;
     const recentMessages = msgs.slice(-25).map(m => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl }));
+
     try {
       const res = await fetch("/api/generate-reply-patterns", {
         method: "POST",
@@ -1327,6 +1335,8 @@ export default function Home() {
           state: selectedConversation.status,
           customerName: selectedConversation.customerName,
           recentMessages,
+          customerConditions: patternConditions,
+          customerSummary: patternSummary,
         }),
       });
       if (!res.ok) throw new Error("生成失敗");

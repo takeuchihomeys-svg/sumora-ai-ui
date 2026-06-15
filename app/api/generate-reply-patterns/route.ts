@@ -22,7 +22,6 @@ export const REPLY_ANGLES = [
     angle: "short_direct",
     label: "簡潔",
     instruction: `【角度: 簡潔】
-このパターンは「短くスパッと」返す。
 ・2〜3行が目標（長くても4行まで）
 ・「はい！！」「かしこまりました！！」で直接始める（冒頭挨拶なし）
 ・絵文字は0〜1個
@@ -32,7 +31,6 @@ export const REPLY_ANGLES = [
     angle: "empathy",
     label: "共感",
     instruction: `【角度: 共感】
-このパターンは「お客様の気持ちに寄り添う」返信。
 ・お客様の感情・状況を受け止める一言を冒頭に入れる
 ・「ご安心ください」「全力でサポートさせて頂きます」など安心感の言葉を使う
 ・温かみのあるトーン・押しつけがましくない
@@ -42,7 +40,6 @@ export const REPLY_ANGLES = [
     angle: "conversion",
     label: "背中を押す",
     instruction: `【角度: 背中を押す】
-このパターンは「申込・内覧・次のアクションへの誘導」が目的。
 ・希少性・タイミングを1文添える（「かなり好条件のお部屋ですので」「繁忙期に入ると同様の物件は減ります」等）
 ・「お申込みでお部屋抑えさせて頂きます！！」など具体アクションを強めに促す
 ・プレッシャーを与えすぎず自然に背中を押す`,
@@ -51,7 +48,6 @@ export const REPLY_ANGLES = [
     angle: "info_detail",
     label: "丁寧・詳しく",
     instruction: `【角度: 丁寧・詳しく】
-このパターンは「具体的な数字・情報・流れ」を提供する返信。
 ・曖昧な表現を避け具体的な数字・日程・金額・ステップを使う
 ・「①〜 ②〜 ③〜」など流れを簡潔に説明するのも可
 ・5〜8行程度でしっかり情報を伝える
@@ -60,6 +56,27 @@ export const REPLY_ANGLES = [
 ] as const;
 
 export type AngleKey = (typeof REPLY_ANGLES)[number]["angle"];
+
+// ─── フェーズ別行動指針（簡略版）────────────────────────────────────────────
+const PHASE_GUIDE: Record<string, string> = {
+  first_reply: `今すべきこと: 初回挨拶＋条件ヒアリング開始。「〇〇さん初めまして😊！！この度ご連絡頂きありがとうございます！！担当させて頂きます鈴木と申します！！」で始める。条件フォームを送る場合は①入居時期 ②家賃 ③間取り ④築年数 ⑤エリア・駅 ⑥駅徒歩 ⑦初期費用 ⑧その他 の形式。`,
+  hearing: `会話状況を判断して対応:
+・条件がまだ届いていない → 条件フォームを送る
+・条件の一部しかない → 足りない条件を1点だけ確認（複数聞かない）
+・条件が揃った → 条件を具体的に復唱して「本日中にピックアップしお送りします」と宣言
+・URLや物件名を送ってきた → 「募集状況確認させていただきます！」`,
+  proposing: `会話状況を判断して対応:
+・物件画像を送付済み → 内覧/申込へ誘導（画像を再送しない）
+・「検討します」「また連絡します」→ 好条件一言＋申込促し＋新着継続サポートの3点セット
+・お客様がURLを送ってきた → 「募集状況確認させていただきます！」
+・退去予定物件は「退去予定のためお申込みでお部屋抑えさせて頂きます！」を添える`,
+  applying: `会話状況を判断して対応:
+・内覧日程調整 → 具体的な日時を複数提示
+・申込方法を聞かれた → 「全てLINEで完結」と伝える
+・初期費用の確認 → 「はい！！」で直接答える
+・キャンセル可否 → 「保証会社審査通過前はキャンセル料一切なし」`,
+  closed_won: `入居準備のサポート。感謝と次のステップを伝える。`,
+};
 
 // ─── ステート正規化 ──────────────────────────────────────────────────────────
 const STATE_SEARCH_ALIASES: Record<string, string[]> = {
@@ -78,6 +95,14 @@ const STATE_ALIAS: Record<string, string> = {
 function normalizeState(k: string): string {
   const r = STATE_ALIAS[k] ?? k;
   return STATE_SEARCH_ALIASES[r] ? r : "first_reply";
+}
+
+// ─── JST時刻 ─────────────────────────────────────────────────────────────────
+function getJSTHour(): number {
+  return new Date(Date.now() + 9 * 60 * 60 * 1000).getUTCHours();
+}
+function getJSTDayOfWeek(): number {
+  return new Date(Date.now() + 9 * 60 * 60 * 1000).getUTCDay();
 }
 
 // ─── Haiku 分析 ──────────────────────────────────────────────────────────────
@@ -136,7 +161,6 @@ async function fetchExamples(state: string, message: string, analysisCtx?: strin
       }
     }
   }
-  // フォールバック
   const { data } = await supabase.from("ai_reply_examples")
     .select("customer_message, sent_reply, is_starred")
     .in("conversation_state", aliases)
@@ -173,25 +197,63 @@ async function generateOnePattern(
   customerMessage: string,
   customerName: string,
   history: string,
+  state: string,
   analysis: string,
   knowledge: string,
   examples: string,
+  customerConditions: string,
+  customerSummary: string,
 ): Promise<string> {
+  // 時刻・挨拶ルール
+  const jstHour = getJSTHour();
+  const jstDay = getJSTDayOfWeek();
+  const isWeekend = jstDay === 0 || jstDay === 6;
+
+  const historyLines = (history || "").split("\n").filter(Boolean);
+  const alreadyGreeted = historyLines.filter(l => l.startsWith("スモラ:"))
+    .some(l => l.includes("お世話になっております") || l.includes("夜分遅くに失礼"));
+
+  const greetingNote = alreadyGreeted
+    ? `\n【⏰ 挨拶ルール最優先】本日の会話で冒頭挨拶は使用済み。今回は「はい！！」「かしこまりました！！」など短い言葉で直接始める。`
+    : jstHour >= 21
+      ? `\n【⏰ 時刻ルール最優先】現在${jstHour}時台（JST）。冒頭は「〇〇さん夜分遅くに失礼致します！！」を使う。`
+      : `\n【⏰ 時刻ルール最優先】現在${jstHour}時台（JST）。冒頭挨拶は「〇〇さんお世話になっております！！」を使う。「夜分遅くに」は使用禁止。`;
+
+  const managementNote = isWeekend
+    ? `\n【管理会社】本日は土日。空室確認は可。交渉（フリーレント・値引き・審査再挑戦）は不可。交渉が必要なら「月曜日一番で管理会社に交渉させていただきます！！」と伝える。`
+    : jstHour >= 18
+      ? `\n【管理会社】${jstHour}時台。18時以降のため管理会社の営業時間終了。確認が必要な場合「明日一番でご確認しご連絡させて頂きます！！」と伝える。当日中の回答を約束しない。`
+      : `\n【管理会社】平日営業中。確認が必要な場合「管理会社に確認させていただきます！！確認出来次第ご連絡させていただきます！！」と伝えてよい。`;
+
+  // 分析からの方針注入
   let analysisNote = "";
   if (analysis) {
     try {
       const p = JSON.parse(analysis) as Record<string, unknown>;
       if (p.approach) analysisNote = `\n【返し方の方針】${p.approach}（トーン: ${p.tone || "自然に"}）`;
       if (Array.isArray(p.questions) && (p.questions as string[]).length > 1) {
-        analysisNote += `\n【複数質問（全て答えること）】${(p.questions as string[]).map((q, i) => `${i+1}. ${q}`).join(" / ")}`;
+        analysisNote += `\n【複数質問（全て答えること）】${(p.questions as string[]).map((q, i) => `${i + 1}. ${q}`).join(" / ")}`;
+      }
+      if (p.current_property && typeof p.current_property === "string") {
+        analysisNote += `\n【話題の物件】${p.current_property} — この物件の文脈で返信すること`;
       }
     } catch { /* ignore */ }
   }
+
+  const conditionsNote = customerConditions
+    ? `\n【お客様の希望条件（DB登録済み・必ず考慮）】\n${customerConditions}` : "";
+  const summaryNote = customerSummary
+    ? `\n【このお客さんの人物像・特徴】${customerSummary}` : "";
+
+  const phaseGuide = PHASE_GUIDE[state] ?? PHASE_GUIDE["first_reply"];
 
   const systemPrompt = `あなたはスモラ（賃貸仲介）のLINE営業担当です。
 以下の角度でLINE返信を1つだけ生成してください。
 
 ${angle.instruction}
+
+【現在の営業フェーズ: ${state}】
+${phaseGuide}
 
 【共通ルール】
 ・絵文字は 😊 😌 🌟 ✨ の4つのみ・1〜2個まで・文末か区切りのみ
@@ -199,18 +261,20 @@ ${angle.instruction}
 ・「させて頂きます」「頂きます」を多用する（スモラの文体の核心）
 ・お客様名が「不明」の場合は名前を絶対に使わない
 ・担当者名が必要な場合は「鈴木」を使う
-・返信案1つのみ生成（説明・注釈・「---」などを付けない）`;
+・返信案1つのみ生成（説明・注釈・「---」などを付けない）
+・お客様が言ったことは繰り返さない → 次のアクションへ直行`;
 
-  const userPrompt = `お客様名: ${customerName || "不明"}
-【直近の会話履歴】
+  const userPrompt = `お客様名: ${customerName || "不明"}${conditionsNote}${summaryNote}${greetingNote}${managementNote}${analysisNote}
+
+【直近の会話履歴（スモラ:=自分の返信 / お客様:=顧客）】
 ${history || "なし"}
-${knowledge}${analysisNote}
+${knowledge}
 ${examples}
 
 【お客様の最新メッセージ】
 ${customerMessage}
 
-上記例の文体・言い回し・感嘆符・絵文字を最優先で再現しながら、${angle.label}な返信を1つ生成してください。`;
+上記⭐実例の文体・言い回し・感嘆符・絵文字を最優先で再現しながら、${angle.label}な返信を1つ生成してください。`;
 
   try {
     const res = await generationModel.invoke([
@@ -235,9 +299,21 @@ export async function POST(req: NextRequest) {
     state: string;
     customerName?: string;
     recentMessages?: RecentMessage[];
+    customerConditions?: string;
+    customerSummary?: string;
   };
-  const { message, state, customerName = "", recentMessages = [] } = body;
-  if (!message) return NextResponse.json({ ok: false, error: "message required" }, { status: 400 });
+  const {
+    message,
+    state,
+    customerName = "",
+    recentMessages = [],
+    customerConditions = "",
+    customerSummary = "",
+  } = body;
+
+  if (!message || message === "[画像]" || message === "[動画]") {
+    return NextResponse.json({ ok: false, error: "有効なメッセージが必要です" }, { status: 400 });
+  }
 
   const currentState = normalizeState(state || "first_reply");
 
@@ -272,7 +348,10 @@ export async function POST(req: NextRequest) {
   // Step3: 4パターンを並列生成
   const results = await Promise.all(
     REPLY_ANGLES.map(angle =>
-      generateOnePattern(angle, message, customerName, history, analysis, knowledge, examples)
+      generateOnePattern(
+        angle, message, customerName, history, currentState,
+        analysis, knowledge, examples, customerConditions, customerSummary,
+      )
     )
   );
 
