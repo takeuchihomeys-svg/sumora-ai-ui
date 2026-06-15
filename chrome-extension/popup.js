@@ -357,6 +357,25 @@ function expandStationRange(stationA, stationB) {
 
 // desired_area → city_codes & route_ids
 // mode: "station" → 駅マップのみ / "ward" → 地域マップのみ / "auto" → 従来の自動判定
+// 難波・心斎橋エリア = 中央区・浪速区・西区 の広げて検索クラスター
+const NAMBA_CLUSTER_CODES = ["27128", "27111", "27106"]; // 中央区・浪速区・西区
+const NAMBA_CLUSTER_WARDS = ["大阪市中央区", "大阪市浪速区", "大阪市西区"];
+
+// 地域モード+広げて検索で難波クラスター内のコードがあれば3区全部追加
+function expandNambaCodes(city_codes) {
+  if (!NAMBA_CLUSTER_CODES.some(code => city_codes.includes(code))) return city_codes;
+  const expanded = [...city_codes];
+  NAMBA_CLUSTER_CODES.forEach(code => { if (!expanded.includes(code)) expanded.push(code); });
+  return expanded;
+}
+
+function expandNambaWards(ward_names) {
+  if (!NAMBA_CLUSTER_WARDS.some(w => ward_names.includes(w))) return ward_names;
+  const expanded = [...ward_names];
+  NAMBA_CLUSTER_WARDS.forEach(w => { if (!expanded.includes(w)) expanded.push(w); });
+  return expanded;
+}
+
 function buildAreaRouteCodes(c, mode = "auto") {
   const rawArea = (c.desired_area || c.area || "").trim();
   const city_codes = [], route_ids = [];
@@ -1779,7 +1798,11 @@ function openInstructions(siteKey) {
           : [],
       };
       // ボタン押下が絶対ルール: currentAreaMode を buildAreaRouteCodes に渡す
-      const { city_codes, route_ids } = buildAreaRouteCodes(adjC, currentAreaMode);
+      let { city_codes, route_ids } = buildAreaRouteCodes(adjC, currentAreaMode);
+      // 地域モード+広げて検索: 難波/心斎橋エリアは中央区・浪速区・西区を全域追加
+      if (currentAreaMode === "ward" && searchMode === "wide") {
+        city_codes = expandNambaCodes(city_codes);
+      }
 
       // 駅名リスト: 駅モードのみ解決（地域モードでは空のまま）
       const adjAreaClean = (adjC.desired_area || adjC.area || "").trim();
@@ -1927,12 +1950,17 @@ function openInstructions(siteKey) {
         station_name:   isStationMode ? (reinsStationPairs[0]?.station || null) : null,
         ward_name:      !isStationMode ? rawArea : null,
         // 区ごとに1行ずつ入れるため、解決済みフル区名の配列を渡す（最大3件）
-        ward_names:     !isStationMode ? areaToks.map(tok => {
-          const r = resolveWard(tok);
-          if (r) return r;                    // "東住吉区" → "大阪市東住吉区"
-          if (WARD_CODE_MAP[tok]) return tok; // すでにフル区名
-          return null;                        // 解決できないトークンはスキップ（REINSのSELECTに存在しない値を渡さない）
-        }).filter(Boolean).slice(0, 3) : [],
+        ward_names:     !isStationMode ? (() => {
+          let wards = areaToks.map(tok => {
+            const r = resolveWard(tok);
+            if (r) return r;
+            if (WARD_CODE_MAP[tok]) return tok;
+            return null;
+          }).filter(Boolean);
+          // 地域モード+広げて検索: 難波/心斎橋エリアは中央区・浪速区・西区を全域追加
+          if (searchMode === "wide") wards = expandNambaWards(wards);
+          return wards.slice(0, 3);
+        })() : [],
         pet_ok:         adjPet,
         reins_reg_date: adjRegDate || null,
       };
