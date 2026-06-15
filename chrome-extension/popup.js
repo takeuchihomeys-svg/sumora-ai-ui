@@ -1378,11 +1378,17 @@ function preloadAdjForm(c) {
     const initDate = c.last_property_sent_at ? c.last_property_sent_at.split("T")[0] : "";
     updateDaysEl.value = calcUpdateDays(initDate, c.status);
   }
+
+  // レインズ登録日：初めての物件出しは絞り込まない
+  const regDateEl = document.getElementById("adj-reg-date");
+  if (regDateEl && !c.last_property_sent_at) {
+    regDateEl.value = "";
+  }
 }
 
 function calcUpdateDays(dateStr, status) {
   if (!dateStr) {
-    return { hot: "1", property_search: "3", new_inquiry: "" }[status] || "";
+    return ""; // 初めての物件出し → 絞り込まない
   }
   const daysSince = Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000);
   if (daysSince <= 1) return "1";
