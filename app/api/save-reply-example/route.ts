@@ -456,6 +456,33 @@ export async function POST(req: NextRequest) {
     : rawState;
   const conversationState = STATE_NORMALIZE[rawResolved] ?? rawResolved;
 
+  // ─── 分割送信マージ: 90秒以内に同じcustomerMessageで送ったものは1レコードに結合 ───
+  // LINEでは1つの返信を複数メッセージに分けて送ることが多い。別レコードにすると
+  // RAGが断片的な文のみ参照してしまうため、1つの完全な返信として結合して保存する。
+  const ninetySecondsAgo = new Date(Date.now() - 90 * 1000).toISOString();
+  const { data: splitCandidate } = await supabase
+    .from("ai_reply_examples")
+    .select("id, sent_reply")
+    .eq("customer_message", customerMessage)
+    .eq("conversation_state", conversationState)
+    .gte("created_at", ninetySecondsAgo)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .single();
+
+  if (splitCandidate) {
+    const mergedReply = splitCandidate.sent_reply + "\n" + sentReply;
+    const mergedEmbeddingInput = isStarred && replyAngle
+      ? `${conversationState} [角度:${replyAngle}]: ${customerMessage}`
+      : `${conversationState}: ${customerMessage}`;
+    const mergedEmbedding = await getEmbedding(mergedEmbeddingInput);
+    const updatePayload: Record<string, unknown> = { sent_reply: mergedReply };
+    if (mergedEmbedding) updatePayload.embedding = JSON.stringify(mergedEmbedding);
+    if (isStarred) updatePayload.is_starred = true;
+    await supabase.from("ai_reply_examples").update(updatePayload).eq("id", splitCandidate.id);
+    return NextResponse.json({ ok: true, id: splitCandidate.id, merged: true });
+  }
+
   // 90%以上 → AIをほぼそのまま使った
   // 5〜90% → 何らかの修正あり（軽微〜大幅・すべて差分学習の対象）
   // 5%未満 → ほぼ手書き（AIは参考のみ）
