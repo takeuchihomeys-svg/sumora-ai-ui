@@ -1349,7 +1349,7 @@ export default function Home() {
       }
     } catch (e) {
       console.error("generatePatterns error:", e);
-      setShowPatternSheet(false);
+      // シートは閉じない → エラー状態のまま再試行ボタンを見せる
     } finally {
       setPatternLoading(false);
     }
@@ -4176,7 +4176,9 @@ export default function Home() {
           <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl">
             {/* ヘッダー */}
             <div className="flex items-center justify-between border-b border-[#f0f0f0] px-5 py-3">
-              <span className="text-sm font-bold text-[#111b21]">✦ 4パターン返信案</span>
+              <span className="text-sm font-bold text-[#111b21]">
+                {patternLoading ? "✦ 生成中..." : patternDrafts.length > 0 ? `✦ ${patternDrafts.length}案` : "✦ 返信案"}
+              </span>
               <div className="flex items-center gap-2">
                 {!patternLoading && patternDrafts.length > 0 && (
                   <button
@@ -4194,7 +4196,7 @@ export default function Home() {
             {patternLoading && (
               <div className="flex flex-col items-center justify-center gap-3 py-12">
                 <span className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-purple-300 border-t-purple-600" />
-                <p className="text-sm text-[#888]">4パターンを並列生成中...</p>
+                <p className="text-sm text-[#888]">返信案を並列生成中...</p>
               </div>
             )}
 
