@@ -11,38 +11,14 @@ const analysisModel = new ChatAnthropic({
 
 const generationModel = new ChatAnthropic({
   model: "claude-sonnet-4-6",
-  maxTokens: 700,
-  temperature: 0.55,
+  maxTokens: 2000,
+  temperature: 0.65,
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
 });
 
-// ─── 4パターン定義（方向性のみ指定・文体は実例に任せる）──────────────────
-// ※ スタイル強制禁止。文長・絵文字数・口調は実例から自然に継承させる。
-// 4つの違いは「何を優先して返すか（方向性）」だけ。
-export const REPLY_ANGLES = [
-  {
-    angle: "answer_first",
-    label: "正面回答",
-    direction: "お客様の質問・相談に正面から答えることを最優先にする。事実・手順・数字を具体的に示して信頼を得る返し。",
-  },
-  {
-    angle: "reassure",
-    label: "安心先取り",
-    direction: "お客様が感じているであろう不安・懸念を先取りして解消することを最優先にする。リスクも正直に伝えつつ代替案・解決策をセットで提示する返し。",
-  },
-  {
-    angle: "options",
-    label: "選択肢提示",
-    direction: "複数の選択肢・代替案・次の手をシンプルに並べて提示することを最優先にする。お客様が自分で判断・選択できる形にまとめる返し。",
-  },
-  {
-    angle: "next_action",
-    label: "次のアクション",
-    direction: "質問に答えながら、内覧・申込・ご連絡など次の具体的なアクションを自然な流れで提案することを最優先にする返し。",
-  },
-] as const;
-
-export type AngleKey = (typeof REPLY_ANGLES)[number]["angle"];
+// ラベル定義（UI表示用・A/B/C/Dで識別）
+export const PATTERN_LABELS = ["A", "B", "C", "D"] as const;
+export type AngleKey = (typeof PATTERN_LABELS)[number];
 
 // ─── フェーズ別行動指針（簡略版）────────────────────────────────────────────
 const PHASE_GUIDE: Record<string, string> = {
@@ -178,9 +154,8 @@ async function fetchKnowledge(state: string): Promise<string> {
   return parts.join("\n\n");
 }
 
-// ─── 1パターン生成 ──────────────────────────────────────────────────────────
-async function generateOnePattern(
-  angle: typeof REPLY_ANGLES[number],
+// ─── 4案同時生成 ─────────────────────────────────────────────────────────────
+async function generateAllPatterns(
   customerMessage: string,
   customerName: string,
   history: string,
@@ -190,8 +165,7 @@ async function generateOnePattern(
   examples: string,
   customerConditions: string,
   customerSummary: string,
-): Promise<string> {
-  // 時刻・挨拶ルール
+): Promise<string[]> {
   const jstHour = getJSTHour();
   const jstDay = getJSTDayOfWeek();
   const isWeekend = jstDay === 0 || jstDay === 6;
@@ -212,14 +186,12 @@ async function generateOnePattern(
       ? `\n【管理会社】${jstHour}時台。18時以降のため管理会社の営業時間終了。確認が必要な場合「明日一番でご確認しご連絡させて頂きます！！」と伝える。当日中の回答を約束しない。`
       : `\n【管理会社】平日営業中。確認が必要な場合「管理会社に確認させていただきます！！確認出来次第ご連絡させていただきます！！」と伝えてよい。`;
 
-  // 分析からの方針注入
   let analysisNote = "";
   if (analysis) {
     try {
       const p = JSON.parse(analysis) as Record<string, unknown>;
       if (p.approach) analysisNote = `\n【返し方の方針】${p.approach}（トーン: ${p.tone || "自然に"}）`;
 
-      // 質問検出
       if (Array.isArray(p.questions) && (p.questions as string[]).length > 0) {
         const questions = p.questions as string[];
         const anxietyKeywords = ["名義", "審査", "保証", "リスク", "キャンセル", "退去", "違約", "トラブル", "詐称", "仲違い", "離婚", "死亡", "相続", "ペット", "同居"];
@@ -246,13 +218,13 @@ async function generateOnePattern(
   const phaseGuide = PHASE_GUIDE[state] ?? PHASE_GUIDE["first_reply"];
 
   const systemPrompt = `あなたはスモラ（賃貸仲介）のLINE営業担当です。
-返信を1つだけ生成してください。
+同じ内容・意図のLINE返信を4つ生成してください。
 
-【この返信で最優先にすること（方向性）】
-${angle.direction}
-
-【現在の営業フェーズ: ${state}】
-${phaseGuide}
+【4案の違いについて — 最重要】
+・4案全て: 全体の方向性・意図・ニュアンスは同じ
+・違う点: 1文1文の言い回し・言葉の選び方・文の組み合わせ方だけ
+・「同じことを少し違う言葉・順序・表現で書いた4バリエーション」
+・全て⭐実例と同じスモラの返信スタイルで書く
 
 【質問・相談への回答ルール — 最重要】
 お客様から質問・相談（名義貸し・審査・費用・退去・キャンセル等）を受けた場合は「本質的・具体的」に答える。
@@ -270,14 +242,29 @@ ${phaseGuide}
 ・「変な媚び」→ 行動・サポートで誠実さを示す。言葉での過剰な取り繕いは不要
 
 【共通ルール】
-・文体・言い回し・文の長さ・絵文字の使い方は⭐実例に完全に合わせる（スタイルを自分で変えない）
+・文体・言い回し・文の長さ・絵文字の使い方は⭐実例に完全に合わせる
 ・絵文字は 😊 😌 🌟 ✨ の4つのみ・1〜2個まで・文末か区切りのみ
 ・感嘆符「！」「！！」を文脈で使い分け
 ・「させて頂きます」「頂きます」を多用する（スモラの文体の核心）
 ・お客様名が「不明」の場合は名前を絶対に使わない
 ・担当者名が必要な場合は「鈴木」を使う
-・返信案1つのみ生成（説明・注釈・「---」などを付けない）
-・お客様が言ったことは繰り返さない → 次のアクションへ直行`;
+・お客様が言ったことは繰り返さない → 次のアクションへ直行
+
+【出力フォーマット（必ず守る・余計な説明・注釈禁止）】
+[A]
+（返信本文のみ）
+
+[B]
+（返信本文のみ）
+
+[C]
+（返信本文のみ）
+
+[D]
+（返信本文のみ）
+
+【現在の営業フェーズ: ${state}】
+${phaseGuide}`;
 
   const userPrompt = `お客様名: ${customerName || "不明"}${conditionsNote}${summaryNote}${greetingNote}${managementNote}${analysisNote}
 
@@ -289,16 +276,24 @@ ${examples}
 【お客様の最新メッセージ】
 ${customerMessage}
 
-上記⭐実例の文体・言い回し・感嘆符・絵文字を完全に再現しながら、「${angle.direction}」という方向性で返信を1つ生成してください。`;
+上記⭐実例の文体・言い回し・感嘆符・絵文字を完全に再現しながら、同じ意図で1文1文の言い回しだけ異なる返信を[A][B][C][D]の4案生成してください。`;
 
   try {
     const res = await generationModel.invoke([
       new SystemMessage(systemPrompt),
       new HumanMessage(userPrompt),
     ]);
-    return typeof res.content === "string" ? res.content.trim() : "";
+    const text = typeof res.content === "string" ? res.content : "";
+    const variants: string[] = [];
+    const regex = /\[([ABCD])\]\n([\s\S]*?)(?=\n\[[ABCD]\]|$)/g;
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      const body = match[2].trim();
+      if (body) variants.push(body);
+    }
+    return variants;
   } catch {
-    return "";
+    return [];
   }
 }
 
@@ -360,20 +355,16 @@ export async function POST(req: NextRequest) {
     fetchExamples(currentState, message, analysisCtx),
   ]);
 
-  // Step3: 最大4パターンを並列生成（失敗した分は除外してそのまま返す）
-  const results = await Promise.all(
-    REPLY_ANGLES.map(angle =>
-      generateOnePattern(
-        angle, message, customerName, history, currentState,
-        analysis, knowledge, examples, customerConditions, customerSummary,
-      )
-    )
+  // Step3: 4案を1回のcallで同時生成（全体の方向性は同じ・1文1文の言い回しだけ違う）
+  const variants = await generateAllPatterns(
+    message, customerName, history, currentState,
+    analysis, knowledge, examples, customerConditions, customerSummary,
   );
 
-  const patterns = REPLY_ANGLES.map((angle, i) => ({
-    angle: angle.angle,
-    label: angle.label,
-    text: results[i] || "",
+  const patterns = variants.map((text, i) => ({
+    angle: PATTERN_LABELS[i] ?? String(i + 1),
+    label: `${PATTERN_LABELS[i] ?? i + 1}案`,
+    text,
   })).filter(p => p.text.length > 0);
 
   return NextResponse.json({ ok: true, patterns });
