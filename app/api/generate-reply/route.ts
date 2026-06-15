@@ -15,7 +15,7 @@ const analysisModel = new ChatAnthropic({
 const generationModel = new ChatAnthropic({
   model: "claude-sonnet-4-6",
   maxTokens: 800,
-  temperature: 0.7,
+  temperature: 0.3,
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
 });
 
@@ -681,14 +681,18 @@ async function getEmbedding(text: string): Promise<number[] | null> {
   }
 }
 
-async function fetchExamples(state: string, customerMessage?: string, lastStaffMessage?: string): Promise<string> {
+async function fetchExamples(state: string, customerMessage?: string, lastStaffMessage?: string, analysisContext?: string): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
   // pgvector 類似検索（OPENAI_API_KEY がある場合のみ・エラー時はフォールバック）
   // follow-up時: 「スモラが送った内容の続き」として検索クエリを構成
-  const searchQuery = lastStaffMessage
+  const baseQuery = lastStaffMessage
     ? `${state}: ${customerMessage} 続き: ${lastStaffMessage.slice(0, 120)}`
     : customerMessage ? `${state}: ${customerMessage}` : null;
+  // 分析で検出したパターン（検討中・URL確認・複数質問等）をクエリに追加して関連例を引く
+  const searchQuery = baseQuery && analysisContext
+    ? `${baseQuery} パターン: ${analysisContext}`
+    : baseQuery;
 
   if (searchQuery && process.env.OPENAI_API_KEY) {
     const embedding = await getEmbedding(searchQuery);
@@ -858,12 +862,39 @@ export async function POST(req: NextRequest) {
       return seg ? seg.replace(/^スモラ:\s*/, "").trim() : undefined;
     })();
 
-    // 並列実行: intent分類 + 状況分析 + 知識取得 + 実例取得 + フレーズ取得 + コンテキスト補完
-    const [detectedIntent, analysis, knowledge, examples, phrases, autoSummary] = await Promise.all([
+    // ── Step1: 分析を先行実行（検出パターンを実例検索クエリに使うため）
+    if (!process.env.OPENAI_API_KEY) {
+      console.warn("[generate-reply] OPENAI_API_KEY not set — pgvector検索無効・フォールバック使用");
+    }
+    const analysis = await analyzeCustomerSituation(message, history, currentState, customerName, isFollowUp);
+
+    // ── 分析結果からパターンキーワードを抽出（実例検索クエリ強化用）
+    const analysisContext = (() => {
+      try {
+        const p = JSON.parse(analysis) as Record<string, unknown>;
+        const parts: string[] = [];
+        // 返し方の方針
+        if (p.approach && typeof p.approach === "string") parts.push(p.approach.slice(0, 60));
+        // 迷い・保留パターン → 検索に使うキーワード化
+        const hp = p.hesitancy_pattern;
+        if (hp === "thinking")  parts.push("検討します また連絡します ごゆっくり");
+        else if (hp === "callback") parts.push("また連絡します 後でご連絡");
+        else if (hp === "waiting")  parts.push("少し待ってほしい まだ決めていない キャンセル");
+        else if (hp === "undecided") parts.push("どちらにするか迷っています 比較 判断軸");
+        else if (hp === "timeline" && p.future_timeline) parts.push(String(p.future_timeline));
+        // 複数質問
+        if (Array.isArray(p.questions) && (p.questions as string[]).length > 0) {
+          parts.push((p.questions as string[]).slice(0, 3).join(" "));
+        }
+        return parts.length > 0 ? parts.join(" ") : undefined;
+      } catch { return undefined; }
+    })();
+
+    // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
+    const [detectedIntent, knowledge, examples, phrases, autoSummary] = await Promise.all([
       classifyIntent(message, currentState, history),
-      analyzeCustomerSituation(message, history, currentState, customerName, isFollowUp),
       fetchKnowledge(currentState),
-      fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined),
+      fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext),
       fetchPhrases(currentState),
       // ai_summaryがない場合のみ条件テキストから即席合成（Haiku・並列なので遅延ゼロ）
       !customerSummary && customerConditions
