@@ -1312,10 +1312,12 @@ export default function Home() {
   const generatePatterns = async () => {
     if (!selectedConversation.id || patternLoading) return;
     const msgs = selectedConversation.messages;
-    const latestCustomer = [...msgs].reverse().find(m => m.sender === "customer");
+    // 画像・動画を除いた最後の顧客テキストメッセージを使う（画像送信後でも正しく動く）
+    const latestCustomer = [...msgs].reverse().find(
+      m => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]"
+    );
     const targetMessage = latestCustomer?.text || "";
-    // 画像のみ・空メッセージはガード
-    if (!targetMessage || targetMessage === "[画像]" || targetMessage === "[動画]") return;
+    if (!targetMessage) return;
 
     setPatternLoading(true);
     setPatternDrafts([]);

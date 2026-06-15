@@ -345,14 +345,22 @@ export async function POST(req: NextRequest) {
     fetchExamples(currentState, message, analysisCtx),
   ]);
 
-  // Step3: 4パターンを並列生成
+  // Step3: 4パターンを並列生成（失敗したものは1回リトライ）
   const results = await Promise.all(
-    REPLY_ANGLES.map(angle =>
-      generateOnePattern(
+    REPLY_ANGLES.map(async angle => {
+      const text = await generateOnePattern(
         angle, message, customerName, history, currentState,
         analysis, knowledge, examples, customerConditions, customerSummary,
-      )
-    )
+      );
+      // 空の場合は1回リトライ
+      if (!text) {
+        return generateOnePattern(
+          angle, message, customerName, history, currentState,
+          analysis, knowledge, examples, customerConditions, customerSummary,
+        );
+      }
+      return text;
+    })
   );
 
   const patterns = REPLY_ANGLES.map((angle, i) => ({
