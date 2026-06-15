@@ -152,6 +152,7 @@ export default function AixModal({
   // 物件送る専用: 内覧誘導 or 申込み誘導 モード + 編集可能スロット
   const [sendMode, setSendMode] = useState<"viewing" | "application">("viewing");
   const [editableCalendarSlots, setEditableCalendarSlots] = useState<string[]>([]);
+  const [includeCalendar, setIncludeCalendar] = useState(true);
   // 申込へ！専用: 空室状況 + 退去予定日
   const [appVacancyStatus, setAppVacancyStatus] = useState<"vacant" | "scheduled" | null>(null);
   const [appMoveOutDate, setAppMoveOutDate] = useState("");
@@ -352,7 +353,7 @@ export default function AixModal({
         }
         if (vacatingNote.trim()) body.vacating_note = vacatingNote.trim();
         body.send_mode = sendMode;
-        if (sendMode === "viewing") {
+        if (sendMode === "viewing" && includeCalendar) {
           const finalCalendarInfo = calendarDays
             .map((d, i) => {
               if (d.fullyBooked) return "";
@@ -618,13 +619,28 @@ export default function AixModal({
               {/* カレンダー自動取得（内覧誘導時のみ） */}
               {sendMode === "viewing" && (
                 <div>
-                  <p className="mb-1 text-xs font-bold text-[#54656f]">📅 内覧可能な時間帯（自動計算）</p>
-                  {calendarLoading ? (
+                  <div className="mb-1 flex items-center justify-between">
+                    <p className="text-xs font-bold text-[#54656f]">📅 内覧可能な時間帯（自動計算）</p>
+                    <button
+                      onClick={() => setIncludeCalendar(prev => !prev)}
+                      className={`rounded-full px-2.5 py-1 text-[10px] font-bold transition-all ${
+                        includeCalendar
+                          ? "bg-[#f0f2f5] text-[#54656f]"
+                          : "bg-[#2196F3] text-white"
+                      }`}
+                    >
+                      {includeCalendar ? "日程なしにする" : "日程なし（タップで戻す）"}
+                    </button>
+                  </div>
+                  {!includeCalendar && (
+                    <div className="rounded-xl bg-[#f0f2f5] px-3 py-2 text-xs text-[#8696a0]">内覧可能日はメッセージに含まれません</div>
+                  )}
+                  {includeCalendar && calendarLoading ? (
                     <div className="flex items-center gap-2 rounded-xl bg-[#f0f2f5] px-3 py-2.5 text-sm text-[#8696a0]">
                       <span className="inline-block animate-spin">⏳</span>
                       <span>カレンダー読み込み中...</span>
                     </div>
-                  ) : (
+                  ) : includeCalendar ? (
                     <div className="flex flex-col gap-1.5">
                       {calendarDays.length > 0 ? calendarDays.map((d, i) => (
                         <div key={i} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs ${
@@ -656,7 +672,7 @@ export default function AixModal({
                         <div className="rounded-xl bg-[#f0f2f5] px-3 py-2 text-xs text-[#8696a0]">取得できませんでした</div>
                       )}
                     </div>
-                  )}
+                  ) : null}
                   <p className="mt-1 text-[10px] text-[#8696a0]">calendar_events＋screening予定を合算・AIが自動アナウンスします</p>
                 </div>
               )}
