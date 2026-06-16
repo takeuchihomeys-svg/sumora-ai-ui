@@ -14,10 +14,10 @@ async function analyzeDiff(
   try {
     const res = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 600,
+      max_tokens: 900,
       messages: [{
         role: "user",
-        content: `AIが生成した下書きとスタッフが実際に送った返信を比較して、改善パターンを抽出してください。
+        content: `スタッフが実際に送った返信とAIの下書きを「構成・文の役割」レベルで比較分析し、改善パターンを抽出してください。
 
 【お客様のメッセージ】
 ${customerMessage || "不明"}
@@ -25,21 +25,27 @@ ${customerMessage || "不明"}
 【AIの下書き】
 ${aiDraft}
 
-【スタッフが実際に送った返信】
+【スタッフが実際に送った返信（正解）】
 ${sentReply}
 
 【フェーズ】${conversationState}
 
-以下の場合は {"skip":true} のみ返す：
-- 物件名・金額・日時・住所・顧客名など固有情報だけが違う
-- 誤字修正のみ（1〜2文字の変更）
-- 文末の「！」の有無のみ
-- 意味のある改善パターンが読み取れない（ほぼ同じ内容）
+▼ この順番で分析する
+① スタッフの返信を1文ずつ分解し、各文の「役割」をラベル付け
+   役割ラベル例：[承認][共感][情報提供][提案][申込誘導][確認質問][次アクション][感謝][サポート姿勢]
+② AIの下書きも同様に分解・役割付け
+③ 役割レベルで比較：削除された役割・追加された役割・順番の変化を特定
+④ 「なぜその構成がこのお客様の心理に正解か」を1文で考える
 
-意味のある改善がある場合、必ずJSON形式で返す：
-{"skip":false,"title":"差分学習: [何のパターンか（25文字以内・具体的に）]","rule":"[具体的なルール。NGとOK例を明示。200文字以内]","category":"pattern"}
+▼ スキップ条件（以下のみなら {"skip":true} のみ返す）
+- 固有情報（物件名・金額・日時・住所・顧客名）のみ違う
+- 誤字修正のみ（1〜2文字）
+- 役割・構成・意図に実質的な差がない（ほぼ同じ）
 
-JSONのみを返す。説明文は不要。`,
+▼ 学習ルールがある場合のJSON出力
+{"skip":false,"title":"差分学習: [構成パターン名（30文字以内・具体的に）]","rule":"[役割レベルのルール。NG構成→OK構成、なぜその順番が正解かの理由を含む。250文字以内]","category":"[pattern=構成テンプレート / principle=顧客心理の原則 のどちらか]"}
+
+JSONのみを返す。分析の途中経過は不要。`,
       }],
     });
 
@@ -81,9 +87,8 @@ export async function POST() {
       conversation_state: string;
     };
 
-    // 差分が小さい場合はスキップ（文字数差10文字以下）
-    const lenDiff = Math.abs((ai_draft?.length ?? 0) - (sent_reply?.length ?? 0));
-    if (lenDiff < 10) {
+    // 完全一致はスキップ（構成が同じなので学習不要）
+    if ((ai_draft ?? "").trim() === (sent_reply ?? "").trim()) {
       await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
       processed++;
       continue;
@@ -101,10 +106,13 @@ export async function POST() {
         .limit(1);
 
       if (!existing || existing.length === 0) {
+        const ALLOWED_CATEGORIES = new Set(["pattern", "style", "phrase", "principle"]);
+        const rawCategory = (result.category ?? "pattern").split("=")[0].trim();
+        const safeCategory = ALLOWED_CATEGORIES.has(rawCategory) ? rawCategory : "pattern";
         await supabase.from("ai_reply_knowledge").insert({
           title: result.title,
           content: result.rule,
-          category: result.category ?? "pattern",
+          category: safeCategory,
           conversation_state: conversation_state ?? "proposing",
           importance: 8,
           source_example_id: id,
