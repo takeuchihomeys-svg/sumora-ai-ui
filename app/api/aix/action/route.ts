@@ -41,7 +41,7 @@ async function getPropertyExamples(): Promise<string> {
     .in("conversation_state", ["property_recommendation", "proposing"])
     .eq("is_starred", true)
     .order("created_at", { ascending: false })
-    .limit(12);
+    .limit(20);
   if (!data || data.length === 0) return "";
   return (data as { sent_reply: string }[])
     .map((r, i) => `【実例${i + 1}】\n${r.sent_reply}`)
@@ -58,19 +58,31 @@ async function getAixSystemPrompt(key: string, defaultValue: string): Promise<st
   return data?.value ?? defaultValue;
 }
 
-// 物件オススメ関連のknowledgeを取得
+// 物件オススメ関連のknowledgeを取得（差分学習ルール優先）
 async function getPropertyKnowledge(): Promise<string> {
-  const { data } = await supabase
-    .from("ai_reply_knowledge")
-    .select("category, title, content, importance")
-    .in("conversation_state", ["property_recommendation", "proposing"])
-    .gte("importance", 7)
-    .order("importance", { ascending: false })
-    .limit(15);
-  if (!data || data.length === 0) return "";
-  return (data as { category: string; title: string; content: string }[])
-    .map((r) => `[${r.category}] ${r.title}: ${r.content}`)
-    .join("\n");
+  const [{ data: diffLearned }, { data: stateKnowledge }] = await Promise.all([
+    // ① 差分学習ルール（最優先）
+    supabase.from("ai_reply_knowledge")
+      .select("title, content")
+      .ilike("title", "%差分学習%")
+      .gte("importance", 7)
+      .order("created_at", { ascending: false })
+      .limit(15),
+    // ② フェーズ別ナレッジ
+    supabase.from("ai_reply_knowledge")
+      .select("category, title, content")
+      .in("conversation_state", ["property_recommendation", "proposing"])
+      .gte("importance", 7)
+      .not("title", "ilike", "%差分学習%")
+      .order("importance", { ascending: false })
+      .limit(12),
+  ]);
+  const parts: string[] = [];
+  if ((diffLearned?.length ?? 0) > 0)
+    parts.push("【🔴 過去の修正パターン（必ず守る）】\n" + diffLearned!.map(r => `・${r.title}: ${r.content}`).join("\n"));
+  if ((stateKnowledge?.length ?? 0) > 0)
+    parts.push("【物件オススメのノウハウ】\n" + (stateKnowledge as { category: string; title: string; content: string }[]).map(r => `・${r.content}`).join("\n"));
+  return parts.join("\n\n");
 }
 
 async function callClaude(system: string, user: string): Promise<string> {
@@ -197,7 +209,9 @@ export async function POST(request: NextRequest) {
 
 {{knowledge}}
 
-{{phrases}}`;
+{{phrases}}
+
+${SMORA_COMMON_RULES}`;
 
       // フォーマット固定: DEFAULT_PROP_SYSTEM を直接使用（DBで上書きしない）
       const [examples, knowledge] = await Promise.all([
