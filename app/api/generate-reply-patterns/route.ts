@@ -140,9 +140,13 @@ async function getEmbedding(text: string): Promise<number[] | null> {
 }
 
 // ─── 実例取得（6件→12件に増加）──────────────────────────────────────────────
-async function fetchExamples(state: string, message: string, analysisCtx?: string): Promise<string> {
+async function fetchExamples(state: string, message: string, analysisCtx?: string, lastStaffMsg?: string): Promise<string> {
   const aliases = STATE_SEARCH_ALIASES[state] || [state];
-  const query = analysisCtx ? `${state}: ${message} パターン: ${analysisCtx}` : `${state}: ${message}`;
+  // 前のスタッフ返信をコンテキストに含めると「わかりました」等の汎用返答でも文脈が特定できる
+  const baseQuery = lastStaffMsg
+    ? `${state}: [前返信]${lastStaffMsg.slice(0, 100)} [顧客]${message}`
+    : `${state}: ${message}`;
+  const query = analysisCtx ? `${baseQuery} パターン: ${analysisCtx}` : baseQuery;
   if (process.env.OPENAI_API_KEY) {
     const embedding = await getEmbedding(query);
     if (embedding) {
@@ -486,10 +490,15 @@ export async function POST(req: NextRequest) {
     } catch { return undefined; }
   })();
 
+  // 直前のスタッフ返信を抽出（embeddingコンテキスト強化）
+  const lastStaffMsg = recentMessages
+    .filter(m => m.sender === "staff" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
+    .at(-1)?.text;
+
   // Step2: knowledge + examples を並列取得
   const [knowledge, examples] = await Promise.all([
     fetchKnowledge(currentState),
-    fetchExamples(currentState, message, analysisCtx),
+    fetchExamples(currentState, message, analysisCtx, lastStaffMsg),
   ]);
 
   // Step3: 3案を1回のcallで同時生成

@@ -34,7 +34,7 @@ async function getEmbedding(text: string): Promise<number[] | null> {
   }
 }
 
-async function fetchEnhanceContext(state: string, customerMessage?: string): Promise<{ knowledge: string; examples: string }> {
+async function fetchEnhanceContext(state: string, customerMessage?: string, lastStaffMsg?: string): Promise<{ knowledge: string; examples: string }> {
   const normalized = STATE_NORMALIZE[state] ?? state;
   const aliases = STATE_SEARCH_ALIASES[normalized] || [normalized];
 
@@ -66,7 +66,9 @@ async function fetchEnhanceContext(state: string, customerMessage?: string): Pro
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false }).limit(8),
     customerMessage && process.env.OPENAI_API_KEY
-      ? getEmbedding(`${normalized}: ${customerMessage}`)
+      ? getEmbedding(lastStaffMsg
+          ? `${normalized}: [前返信]${lastStaffMsg.slice(0, 100)} [顧客]${customerMessage}`
+          : `${normalized}: ${customerMessage}`)
       : Promise.resolve(null),
   ]);
 
@@ -175,10 +177,16 @@ export async function POST(req: NextRequest) {
     .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
     .slice(-1)[0]?.text;
 
+  // 直前のスタッフ返信を抽出（embeddingコンテキスト強化）
+  const lastStaffMsg = (recentMessages || [])
+    .filter((m) => m.sender === "staff" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
+    .slice(-1)[0]?.text;
+
   // knowledge + examples を取得（pgvector 対応）
   const { knowledge, examples } = await fetchEnhanceContext(
     conversationState || "hearing",
-    lastCustomerMsg
+    lastCustomerMsg,
+    lastStaffMsg
   );
 
   const history = (recentMessages || [])

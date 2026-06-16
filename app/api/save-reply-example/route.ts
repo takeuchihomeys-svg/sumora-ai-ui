@@ -412,6 +412,7 @@ export async function POST(req: NextRequest) {
     aiDraft,
     isStarred,
     replyAngle,
+    previousStaffMessage,
   } = await req.json() as {
     conversationState: string;
     customerMessage: string;
@@ -419,6 +420,7 @@ export async function POST(req: NextRequest) {
     aiDraft?: string;
     isStarred?: boolean;
     replyAngle?: string;
+    previousStaffMessage?: string;
   };
 
   if (!customerMessage || !sentReply) {
@@ -484,8 +486,8 @@ export async function POST(req: NextRequest) {
 
   if (splitCandidate) {
     const mergedReply = splitCandidate.sent_reply + "\n" + sentReply;
-    const mergedEmbeddingInput = isStarred && replyAngle
-      ? `${conversationState} [角度:${replyAngle}]: ${customerMessage}`
+    const mergedEmbeddingInput = previousStaffMessage
+      ? `${conversationState}: [前返信]${previousStaffMessage.slice(0, 100)} [顧客]${customerMessage}`
       : `${conversationState}: ${customerMessage}`;
     const mergedEmbedding = await getEmbedding(mergedEmbeddingInput);
     const updatePayload: Record<string, unknown> = { sent_reply: mergedReply };
@@ -508,10 +510,11 @@ export async function POST(req: NextRequest) {
   // 埋め込み生成（バックグラウンドで並列実行・失敗してもINSERTは続行）
   // [画像][動画]メッセージはテキスト意味がないのでsentReplyをembeddingの主成分にする
   const isImageMsg = customerMessage === "[画像]" || customerMessage === "[動画]" || !customerMessage.trim();
+  // 前のスタッフ返信をコンテキストに含めると「わかりました」等の汎用返答でも文脈が特定できる
   const embeddingInput = isImageMsg
     ? `${conversationState}: [画像受信への返信] ${sentReply.slice(0, 300)}`
-    : replyAngle
-      ? `${conversationState} [角度:${replyAngle}]: ${customerMessage}`
+    : previousStaffMessage
+      ? `${conversationState}: [前返信]${previousStaffMessage.slice(0, 100)} [顧客]${customerMessage}`
       : `${conversationState}: ${customerMessage}`;
   const embeddingPromise = getEmbedding(embeddingInput);
 

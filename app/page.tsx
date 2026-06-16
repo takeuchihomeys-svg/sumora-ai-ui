@@ -1748,6 +1748,10 @@ export default function Home() {
         const capturedAiDraft = aiDraftRef.current || undefined;
         // 顧客メッセージがない場合（初回・プロアクティブ送信）も「（初回連絡）」として保存
         const customerMsgToSave = lastCustomerMsg || "（初回連絡）";
+        // 直前のスタッフ返信をembeddingコンテキストとして保存（類似検索の精度向上）
+        const prevStaffMsgForEmbed = selectedConversation.messages
+          .filter(m => m.sender === "staff" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
+          .at(-1)?.text || undefined;
         // 送信したメッセージの example ID を記録して、後で☆を押したとき PATCH で更新できるようにする
         fetch("/api/save-reply-example", {
           method: "POST",
@@ -1758,6 +1762,7 @@ export default function Home() {
             sentReply: textToSend,
             aiDraft: capturedAiDraft,
             replyAngle: selectedPatternAngleRef.current || undefined,
+            previousStaffMessage: prevStaffMsgForEmbed,
             // 4パターンから選んで送った場合は自動☆（パターン学習を確実に起動）
             isStarred: selectedPatternAngleRef.current ? true : undefined,
           }),
