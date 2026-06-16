@@ -644,7 +644,7 @@ async function fetchKnowledge(state: string): Promise<string> {
     // ② 修正対比ルール [修正対比]: スタッフがどう直したかのパターン（第2優先）
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
       .ilike("title", "%修正対比%").in("conversation_state", stateAliases)
-      .order("importance", { ascending: false }).limit(10),
+      .order("importance", { ascending: false }).limit(20),
     // ③ 全体共通ナレッジ: importance9以上・全ステート横断（NULLレコードが存在しないためstate絞り込みなし・新着優先）
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
       .gte("importance", 9)

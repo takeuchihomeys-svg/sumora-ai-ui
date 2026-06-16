@@ -45,7 +45,7 @@ async function fetchEnhanceContext(state: string, customerMessage?: string): Pro
     supabase.from("ai_reply_knowledge")
       .select("category, title, content, importance")
       .ilike("title", "%修正対比%").in("conversation_state", aliases)
-      .order("importance", { ascending: false }).limit(8),
+      .order("importance", { ascending: false }).limit(12),
     supabase.from("ai_reply_knowledge")
       .select("category, title, content, importance")
       .in("conversation_state", aliases).gte("importance", 8)

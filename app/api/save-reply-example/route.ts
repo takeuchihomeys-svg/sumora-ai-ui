@@ -201,13 +201,22 @@ JSONのみで返答（説明不要）：
   }
 }
 
-// ─── ① 差分分析（AIドラフト修正からの逆学習）→ importance:9 で保存 ─────────
+// 修正量(sim)に応じてimportanceを変動させる（膨張防止）
+// sim < 0.4 = 大幅修正 → 9 / 0.4〜0.65 = 中程度 → 8 / 0.65〜0.9 = 微修正 → 7
+function diffImportance(sim: number): number {
+  if (sim < 0.4) return 9;
+  if (sim < 0.65) return 8;
+  return 7;
+}
+
+// ─── ① 差分分析（AIドラフト修正からの逆学習）→ 修正量に応じたimportanceで保存 ───
 async function analyzeDiff(
   exampleId: string,
   conversationState: string,
   customerMessage: string,
   aiDraft: string,
-  sentReply: string
+  sentReply: string,
+  sim = 0.5
 ) {
   const text = await callHaiku(`あなたはスモラ（賃貸仲介）のLINE営業AIのトレーナーです。
 スタッフが修正した内容から、次回のAI生成を改善するルールを抽出してください。
@@ -257,12 +266,13 @@ ${sentReply}
       rule: string;
     };
 
+    const diffImp = diffImportance(sim);
     await supabase.from("ai_reply_knowledge").insert([
       {
         category: "principle",
         title: `[差分学習] ${(analysis.ai_mistake || "").slice(0, 30)}`,
         content: analysis.rule,
-        importance: 9,
+        importance: diffImp,
         conversation_state: conversationState || null,
         source_example_id: exampleId,
       },
@@ -270,7 +280,7 @@ ${sentReply}
         category: "pattern",
         title: `[修正対比] ${conversationState}`,
         content: analysis.correction_pattern,
-        importance: 8,
+        importance: Math.max(7, diffImp - 1),
         conversation_state: conversationState || null,
         source_example_id: exampleId,
       },
@@ -385,7 +395,8 @@ export async function PATCH(req: NextRequest) {
     extractAndSavePhrases(existing.conversation_state, existing.sent_reply, true),
   ];
   if (existing.ai_draft) {
-    jobs.push(analyzeDiff(existing.id, existing.conversation_state, existing.customer_message, existing.ai_draft, existing.sent_reply));
+    const patchSim = textSimilarity((existing.ai_draft as string).trim(), (existing.sent_reply as string).trim());
+    jobs.push(analyzeDiff(existing.id, existing.conversation_state, existing.customer_message, existing.ai_draft, existing.sent_reply, patchSim));
   }
   await Promise.all(jobs);
 
@@ -442,7 +453,8 @@ export async function POST(req: NextRequest) {
         extractAndSavePhrases(existConvState, existSentReply, true),
       ];
       if (existAiDraft) {
-        jobs.push(analyzeDiff(existingRecord.id, existConvState, existCustMsg, existAiDraft, existSentReply));
+        const mergeSim = textSimilarity(existAiDraft.trim(), existSentReply.trim());
+        jobs.push(analyzeDiff(existingRecord.id, existConvState, existCustMsg, existAiDraft, existSentReply, mergeSim));
       }
       await Promise.all(jobs);
       return NextResponse.json({ ok: true, id: existingRecord.id, merged: true });
@@ -553,7 +565,7 @@ export async function POST(req: NextRequest) {
 
   // ① AI差分学習：スタッフが修正して送った場合（最高品質の学習信号）
   if (wasAiModified && data?.id && aiDraft) {
-    await analyzeDiff(data.id, conversationState, customerMessage, aiDraft, sentReply);
+    await analyzeDiff(data.id, conversationState, customerMessage, aiDraft, sentReply, sim);
   }
 
   return NextResponse.json({ ok: true, id: data?.id, conversation_state: conversationState });
