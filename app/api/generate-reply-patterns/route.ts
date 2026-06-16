@@ -160,8 +160,7 @@ async function fetchExamples(state: string, message: string, analysisCtx?: strin
   const { data } = await supabase.from("ai_reply_examples")
     .select("customer_message, sent_reply, is_starred")
     .in("conversation_state", aliases)
-    .not("embedding", "is", null)
-    .order("is_starred", { ascending: false })
+    .eq("is_starred", true)
     .order("created_at", { ascending: false })
     .limit(12);
   if (!data || data.length === 0) return "";
@@ -172,7 +171,7 @@ async function fetchExamples(state: string, message: string, analysisCtx?: strin
 // ─── ナレッジ取得（3層）────────────────────────────────────────────────────
 async function fetchKnowledge(state: string): Promise<string> {
   const aliases = STATE_SEARCH_ALIASES[state] || [state];
-  const [{ data: diffLearned }, { data: correctionPairs }, { data: stateSpecific }] = await Promise.all([
+  const [{ data: diffLearned }, { data: correctionPairs }, { data: stateSpecific }, { data: global }] = await Promise.all([
     // ① 差分学習: AIが間違えた→正解ルール（最優先）
     supabase.from("ai_reply_knowledge").select("content")
       .ilike("title", "%差分学習%").gte("importance", 7)
@@ -186,11 +185,24 @@ async function fetchKnowledge(state: string): Promise<string> {
       .in("conversation_state", aliases).gte("importance", 7)
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
       .order("importance", { ascending: false }).limit(12),
+    // ④ グローバル横断ナレッジ（全フェーズ共通・高importance）
+    supabase.from("ai_reply_knowledge").select("content, importance")
+      .gte("importance", 8)
+      .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
+      .not("category", "eq", "principle")
+      .order("importance", { ascending: false })
+      .order("created_at", { ascending: false }).limit(8),
   ]);
+
+  // stateSpecificとglobalの重複除去
+  const stateKeys = new Set((stateSpecific ?? []).map(k => k.content));
+  const globalDeduped = (global ?? []).filter(k => !stateKeys.has(k.content));
+
   const parts: string[] = [];
   if ((diffLearned?.length ?? 0) > 0) parts.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned!.map(k => `・${k.content}`).join("\n"));
   if ((correctionPairs?.length ?? 0) > 0) parts.push("【🟠 スタッフが修正したポイント】\n" + correctionPairs!.map(k => `・${k.content}`).join("\n"));
   if ((stateSpecific?.length ?? 0) > 0) parts.push("【スモラの営業ルール】\n" + stateSpecific!.map(k => `・${k.content}`).join("\n"));
+  if (globalDeduped.length > 0) parts.push("【スモラ共通ノウハウ】\n" + globalDeduped.map(k => `・${k.content}`).join("\n"));
   return parts.join("\n\n");
 }
 
