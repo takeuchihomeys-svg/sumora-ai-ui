@@ -42,7 +42,7 @@ async function fetchEnhanceContext(state: string, customerMessage?: string): Pro
   const [{ data: diffLearned }, { data: correctionPairs }, { data: knowledgeRows }, embedding] = await Promise.all([
     supabase.from("ai_reply_knowledge")
       .select("category, title, content, importance")
-      .ilike("title", "%差分学習%").gte("importance", 9)
+      .ilike("title", "%差分学習%").gte("importance", 7)
       .order("created_at", { ascending: false }).limit(15),
     supabase.from("ai_reply_knowledge")
       .select("category, title, content, importance")
