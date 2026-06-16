@@ -38,28 +38,43 @@ async function fetchEnhanceContext(state: string, customerMessage?: string): Pro
   const normalized = STATE_NORMALIZE[state] ?? state;
   const aliases = STATE_SEARCH_ALIASES[normalized] || [normalized];
 
-  // A: ナレッジを差分学習・修正対比・一般の3層で並列取得（generate-replyと同等）
-  const [{ data: diffLearned }, { data: correctionPairs }, { data: knowledgeRows }, embedding] = await Promise.all([
+  // A: ナレッジを差分学習・修正対比・一般・グローバルの4層で並列取得
+  const [{ data: diffLearned }, { data: correctionPairs }, { data: knowledgeRows }, { data: globalKnowledge }, embedding] = await Promise.all([
+    // ① 差分学習: AIが間違えた→正解ルール（最優先）
     supabase.from("ai_reply_knowledge")
       .select("category, title, content, importance")
       .ilike("title", "%差分学習%").gte("importance", 7)
       .order("created_at", { ascending: false }).limit(15),
+    // ② 修正対比: スタッフがどう直したかのパターン
     supabase.from("ai_reply_knowledge")
       .select("category, title, content, importance")
       .ilike("title", "%修正対比%").in("conversation_state", aliases)
       .order("importance", { ascending: false }).limit(12),
+    // ③ フェーズ別ナレッジ
     supabase.from("ai_reply_knowledge")
       .select("category, title, content, importance")
       .in("conversation_state", aliases).gte("importance", 8)
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false }).limit(10),
+    // ④ グローバル横断ナレッジ（全フェーズ共通・高importance）
+    supabase.from("ai_reply_knowledge")
+      .select("category, title, content, importance")
+      .gte("importance", 8)
+      .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
+      .not("category", "eq", "principle")
+      .order("importance", { ascending: false })
+      .order("created_at", { ascending: false }).limit(8),
     customerMessage && process.env.OPENAI_API_KEY
       ? getEmbedding(`${normalized}: ${customerMessage}`)
       : Promise.resolve(null),
   ]);
 
-  // ナレッジ文字列を構築（差分学習→修正対比→一般の優先順）
+  // ③と④の重複除去
+  const stateKeys = new Set((knowledgeRows ?? []).map((k) => k.content));
+  const globalDeduped = (globalKnowledge ?? []).filter((k) => !stateKeys.has(k.content));
+
+  // ナレッジ文字列を構築（差分学習→修正対比→フェーズ別→グローバルの4層）
   const knowledgeSections: string[] = [];
   if (diffLearned?.length) {
     knowledgeSections.push("【🔴 AIが過去に間違えたパターン（最優先）】\n" + diffLearned.slice(0, 15).map((k) => `・${k.content}`).join("\n"));
@@ -69,6 +84,9 @@ async function fetchEnhanceContext(state: string, customerMessage?: string): Pro
   }
   if (knowledgeRows?.length) {
     knowledgeSections.push("【スモラのノウハウ（必ず従うこと）】\n" + (knowledgeRows as { category: string; content: string }[]).map((r) => `・[${r.category}] ${r.content}`).join("\n"));
+  }
+  if (globalDeduped.length > 0) {
+    knowledgeSections.push("【スモラ共通ノウハウ】\n" + globalDeduped.map((k) => `・${k.content}`).join("\n"));
   }
   const knowledge = knowledgeSections.length > 0 ? "\n" + knowledgeSections.join("\n\n") : "";
 
