@@ -400,6 +400,7 @@ export default function ConditionsPage() {
     ].some((v) => v && v.toLowerCase().includes(q));
   }
   const actionNeeded = customers.filter(needsActionToday);
+  const announceFiltered = actionNeeded.filter(matchesSearch);
   const listFiltered = (listFilter === "all" ? customers : customers.filter((c) => c.status === listFilter)).filter(matchesSearch);
 
   return (
@@ -461,6 +462,26 @@ export default function ConditionsPage() {
         ))}
       </div>
 
+      {/* ── 検索バー（両タブ共通） ── */}
+      <div className="px-4 pt-3 pb-2 bg-white border-b border-[#e9edef]">
+        <div className="relative">
+          <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="名前で検索..."
+            className="w-full rounded-xl border border-[#e9edef] bg-[#f0f2f5] pl-9 pr-4 py-2 text-[13px] text-[#111b21] outline-none focus:border-blue-400 focus:bg-white transition-colors"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+            >✕</button>
+          )}
+        </div>
+      </div>
+
       {!dbReady && (
         <div className="mx-4 mt-4 p-4 bg-amber-50 border border-amber-300 rounded-xl text-sm">
           <p className="font-bold text-amber-800 mb-2">⚠️ テーブルが未作成です</p>
@@ -486,13 +507,17 @@ export default function ConditionsPage() {
                   <p className="text-4xl mb-3">🎉</p>
                   <p className="text-slate-500 text-sm font-bold">今日の対応は全て完了！！</p>
                 </div>
+              ) : announceFiltered.length === 0 ? (
+                <div className="text-center py-16">
+                  <p className="text-slate-400 text-sm">「{searchQuery}」に該当するお客様がいません</p>
+                </div>
               ) : (
                 <>
                   <p className="px-4 pt-3 pb-1.5 text-xs text-slate-400 font-bold">
-                    今日対応が必要 {actionNeeded.length}名
+                    今日対応が必要 {actionNeeded.length}名{searchQuery ? `（${announceFiltered.length}件表示）` : ""}
                   </p>
                   <div className="bg-white border-y border-slate-100 divide-y divide-slate-50">
-                    {actionNeeded.map((c) => {
+                    {announceFiltered.map((c) => {
                       const days = daysSinceSent(c);
                       const meta = STATUS_META[c.status];
                       return (
@@ -565,17 +590,6 @@ export default function ConditionsPage() {
                     </button>
                   );
                 })}
-              </div>
-
-              {/* 検索バー */}
-              <div className="px-4 pb-2">
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="名前・エリア・条件で検索..."
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:border-blue-400 focus:ring-1 focus:ring-blue-400 outline-none"
-                />
               </div>
 
               {listFiltered.length === 0 ? (
