@@ -36,71 +36,71 @@ async function fetchEnhanceContext(state: string, customerMessage?: string): Pro
   const normalized = STATE_NORMALIZE[state] ?? state;
   const aliases = STATE_SEARCH_ALIASES[normalized] || [normalized];
 
-  // pgvector 類似検索（customerMessage がある場合）
-  if (customerMessage && process.env.OPENAI_API_KEY) {
-    const [{ data: knowledgeRows }, embedding] = await Promise.all([
-      supabase.from("ai_reply_knowledge")
-        .select("category, title, content, importance")
-        .in("conversation_state", aliases)
-        .gte("importance", 8)
-        .order("importance", { ascending: false })
-        .limit(12),
-      getEmbedding(`${normalized}: ${customerMessage}`),
-    ]);
+  // A: ナレッジを差分学習・修正対比・一般の3層で並列取得（generate-replyと同等）
+  const [{ data: diffLearned }, { data: correctionPairs }, { data: knowledgeRows }, embedding] = await Promise.all([
+    supabase.from("ai_reply_knowledge")
+      .select("category, title, content, importance")
+      .ilike("title", "%差分学習%").gte("importance", 9)
+      .order("created_at", { ascending: false }).limit(15),
+    supabase.from("ai_reply_knowledge")
+      .select("category, title, content, importance")
+      .ilike("title", "%修正対比%").in("conversation_state", aliases)
+      .order("importance", { ascending: false }).limit(8),
+    supabase.from("ai_reply_knowledge")
+      .select("category, title, content, importance")
+      .in("conversation_state", aliases).gte("importance", 8)
+      .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
+      .order("importance", { ascending: false })
+      .order("created_at", { ascending: false }).limit(10),
+    customerMessage && process.env.OPENAI_API_KEY
+      ? getEmbedding(`${normalized}: ${customerMessage}`)
+      : Promise.resolve(null),
+  ]);
 
-    if (embedding) {
-      const { data: similar, error: rpcError } = await supabase.rpc("match_reply_examples", {
-        query_embedding: embedding,
-        match_count: 15,
-        filter_states: aliases,
-      }) as { data: Array<{ customer_message: string; sent_reply: string; conversation_state: string; is_starred: boolean; similarity: number }> | null; error: unknown };
+  // ナレッジ文字列を構築（差分学習→修正対比→一般の優先順）
+  const knowledgeSections: string[] = [];
+  if (diffLearned?.length) {
+    knowledgeSections.push("【🔴 AIが過去に間違えたパターン（最優先）】\n" + diffLearned.slice(0, 15).map((k) => `・${k.content}`).join("\n"));
+  }
+  if (correctionPairs?.length) {
+    knowledgeSections.push("【🟠 スタッフが修正したポイント】\n" + correctionPairs.slice(0, 8).map((k) => `・${k.content}`).join("\n"));
+  }
+  if (knowledgeRows?.length) {
+    knowledgeSections.push("【スモラのノウハウ（必ず従うこと）】\n" + (knowledgeRows as { category: string; content: string }[]).map((r) => `・[${r.category}] ${r.content}`).join("\n"));
+  }
+  const knowledge = knowledgeSections.length > 0 ? "\n" + knowledgeSections.join("\n\n") : "";
 
-      if (!rpcError && similar && similar.length > 0) {
-        const sorted = [...similar].sort((a, b) => {
-          if (a.is_starred !== b.is_starred) return a.is_starred ? -1 : 1;
-          return b.similarity - a.similarity;
-        }).slice(0, 15);
+  // B: pgvector + reply_angleブースト（generate-replyと同じスコアリング）
+  if (embedding) {
+    const { data: similar, error: rpcError } = await supabase.rpc("match_reply_examples", {
+      query_embedding: embedding,
+      match_count: 15,
+      filter_states: aliases,
+    }) as { data: Array<{ customer_message: string; sent_reply: string; conversation_state: string; is_starred: boolean; reply_angle: string | null; similarity: number }> | null; error: unknown };
 
-        const knowledge = (knowledgeRows || []).length > 0
-          ? "\n【スモラのノウハウ（必ず従うこと）】\n" +
-            (knowledgeRows as { category: string; title: string; content: string }[])
-              .map((r) => `・[${r.category}] ${r.content}`)
-              .join("\n")
-          : "";
+    if (!rpcError && similar && similar.length > 0) {
+      const sorted = [...similar].sort((a, b) => {
+        const scoreA = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0);
+        const scoreB = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0);
+        return scoreB - scoreA;
+      }).slice(0, 10);
 
-        const examples = "\n【⭐ スモラの実際の送信例（状況が類似した良質な実例・類似度順）— 文体・言い回し・感嘆符・絵文字はこれに合わせる】\n" +
-          sorted.map((ex, i) =>
-            `[例${i + 1}${ex.is_starred ? "⭐" : ""}]\nお客様:「${ex.customer_message}」\nスモラ:「${ex.sent_reply}」`
-          ).join("\n\n");
+      const examples = "\n【⭐ スモラの実際の送信例（状況が類似した良質な実例・類似度順）— 文体・言い回し・感嘆符・絵文字はこれに合わせる】\n" +
+        sorted.map((ex, i) =>
+          `[例${i + 1}${ex.is_starred ? "⭐" : ""}]\nお客様:「${ex.customer_message}」\nスモラ:「${ex.sent_reply}」`
+        ).join("\n\n");
 
-        return { knowledge, examples };
-      }
+      return { knowledge, examples };
     }
   }
 
-  // フォールバック: 従来のフェーズ別取得
-  const [{ data: knowledgeRows }, { data: exampleRows }] = await Promise.all([
-    supabase.from("ai_reply_knowledge")
-      .select("category, title, content, importance")
-      .in("conversation_state", aliases)
-      .gte("importance", 8)
-      .order("importance", { ascending: false })
-      .limit(12),
-
-    supabase.from("ai_reply_examples")
-      .select("customer_message, sent_reply")
-      .in("conversation_state", aliases)
-      .eq("is_starred", true)
-      .order("created_at", { ascending: false })
-      .limit(10),
-  ]);
-
-  const knowledge = (knowledgeRows || []).length > 0
-    ? "\n【スモラのノウハウ（必ず従うこと）】\n" +
-      (knowledgeRows as { category: string; title: string; content: string }[])
-        .map((r) => `・[${r.category}] ${r.content}`)
-        .join("\n")
-    : "";
+  // フォールバック: ☆つき実例をフェーズ別に取得
+  const { data: exampleRows } = await supabase.from("ai_reply_examples")
+    .select("customer_message, sent_reply")
+    .in("conversation_state", aliases)
+    .eq("is_starred", true)
+    .order("created_at", { ascending: false })
+    .limit(10);
 
   const examples = (exampleRows || []).length > 0
     ? "\n【⭐ スモラの実際の送信例（文体・感嘆符・絵文字はこれに合わせる）】\n" +
