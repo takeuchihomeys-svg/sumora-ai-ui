@@ -436,7 +436,20 @@ CREATE TABLE IF NOT EXISTS ai_prompts (
 ALTER TABLE ai_prompts DISABLE ROW LEVEL SECURITY;
 
 -- ai_reply_examples: 4パターン返信の選択角度を記録（パターン学習用）
-ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS reply_angle TEXT
+ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS reply_angle TEXT;
+
+-- match_reply_examples: reply_angleを返り値に追加（選ばれた実例のブースト用）
+-- 戻り値型変更のためDROP→CREATEが必要
+DROP FUNCTION IF EXISTS match_reply_examples(vector, int, text[]);
+CREATE OR REPLACE FUNCTION match_reply_examples(query_embedding vector(1536), match_count int, filter_states text[])
+RETURNS TABLE (id uuid, customer_message text, sent_reply text, conversation_state text, is_starred boolean, reply_angle text, similarity float)
+LANGUAGE sql STABLE AS $func$
+  SELECT ae.id, ae.customer_message, ae.sent_reply, ae.conversation_state, ae.is_starred, ae.reply_angle, (1 - (ae.embedding <=> query_embedding))::float AS similarity
+  FROM ai_reply_examples ae
+  WHERE ae.conversation_state = ANY(filter_states) AND ae.embedding IS NOT NULL
+  ORDER BY ae.embedding <=> query_embedding
+  LIMIT match_count
+$func$
 `.trim();
 
 export async function GET() {

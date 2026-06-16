@@ -723,16 +723,16 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
         query_embedding: embedding,
         match_count: 20,
         filter_states: stateAliases,
-      }) as { data: Array<{ customer_message: string; sent_reply: string; conversation_state: string; is_starred: boolean; similarity: number }> | null; error: unknown };
+      }) as { data: Array<{ customer_message: string; sent_reply: string; conversation_state: string; is_starred: boolean; reply_angle: string | null; similarity: number }> | null; error: unknown };
 
       if (!rpcError && similar && similar.length > 0) {
         // 類似度0.5未満は低品質として除外
         const aboveThreshold = similar.filter(ex => ex.similarity >= 0.5);
         if (aboveThreshold.length > 0) {
-        // ☆に+0.15のスコアブースト → 類似度が高ければ非☆でも上位に来る
+        // ★+0.15 に加え、4案から選ばれた実例（reply_angle あり）は+0.1 追加ブースト
         const sorted = [...aboveThreshold].sort((a, b) => {
-          const scoreA = a.similarity + (a.is_starred ? 0.15 : 0);
-          const scoreB = b.similarity + (b.is_starred ? 0.15 : 0);
+          const scoreA = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0);
+          const scoreB = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0);
           return scoreB - scoreA;
         }).slice(0, 8);
 

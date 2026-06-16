@@ -133,13 +133,14 @@ async function fetchExamples(state: string, message: string, analysisCtx?: strin
     if (embedding) {
       const { data: similar } = await supabase.rpc("match_reply_examples", {
         query_embedding: embedding, match_count: 20, filter_states: aliases,
-      }) as { data: Array<{ customer_message: string; sent_reply: string; is_starred: boolean; similarity: number }> | null };
+      }) as { data: Array<{ customer_message: string; sent_reply: string; is_starred: boolean; reply_angle: string | null; similarity: number }> | null };
       if (similar && similar.length > 0) {
         const above = similar.filter(e => e.similarity >= 0.45);
         if (above.length > 0) {
           const sorted = [...above].sort((a, b) => {
-            const sa = a.similarity + (a.is_starred ? 0.15 : 0);
-            const sb = b.similarity + (b.is_starred ? 0.15 : 0);
+            // ★+0.15 に加え、4案から選ばれた実例（reply_angle あり）は+0.1 追加ブースト
+            const sa = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0);
+            const sb = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0);
             return sb - sa;
           }).slice(0, 12);
           return "\n\n【⭐ スモラの実際の返信例（文体・言い回し・感嘆符・絵文字を最優先で再現すること）】\n" +
