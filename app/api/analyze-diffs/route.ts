@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -58,8 +58,13 @@ JSONのみを返す。分析の途中経過は不要。`,
   }
 }
 
-export async function POST() {
-  // 未処理の差分を最大15件取得
+export async function POST(req: NextRequest) {
+  // ?limit=N で件数を指定可能（デフォルト15・最大200）
+  const url = new URL(req.url);
+  const limitParam = url.searchParams.get("limit");
+  const limit = limitParam ? Math.min(parseInt(limitParam, 10) || 15, 200) : 15;
+
+  // 未処理の差分を取得
   const { data: examples } = await supabase
     .from("ai_reply_examples")
     .select("id, customer_message, ai_draft, sent_reply, conversation_state")
@@ -68,7 +73,7 @@ export async function POST() {
     .not("ai_draft", "is", null)
     .not("sent_reply", "is", null)
     .order("created_at", { ascending: false })
-    .limit(15);
+    .limit(limit);
 
   if (!examples || examples.length === 0) {
     return NextResponse.json({ ok: true, processed: 0, learned: 0, message: "処理対象なし" });
@@ -135,6 +140,6 @@ export async function POST() {
   return NextResponse.json({ ok: true, processed, learned, message: `${processed}件処理・${learned}件学習` });
 }
 
-export async function GET() {
-  return POST();
+export async function GET(req: NextRequest) {
+  return POST(req);
 }
