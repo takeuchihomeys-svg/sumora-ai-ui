@@ -484,9 +484,10 @@ export async function POST(req: NextRequest) {
     analysis, knowledge, examples, customerConditions, customerSummary,
   );
 
+  const PATTERN_DISPLAY_LABELS = ["王道", "B案", "C案", "D案"];
   const patterns = variants.map((text, i) => ({
     angle: PATTERN_LABELS[i] ?? String(i + 1),
-    label: `${PATTERN_LABELS[i] ?? i + 1}案`,
+    label: PATTERN_DISPLAY_LABELS[i] ?? `${i + 1}案`,
     text,
   })).filter(p => p.text.length > 0);
 
