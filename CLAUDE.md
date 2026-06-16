@@ -28,16 +28,26 @@
 
 ---
 
-## ⏰ セッション開始時：Git自動保存Cronを設定する
+## ⏰ セッション開始時：Cronを2つ設定する
 
-**新しいセッションが始まったら必ずCronを設定する（3時間ごとに自動コミット・プッシュ）。**
+**新しいセッションが始まったら必ず以下の2つをCronCreateで設定する。**
 
+### ① Git自動保存（3時間ごと）
 ```
 CronCreate ツールを使って以下を設定：
 - cron: "17 */3 * * *"
 - recurring: true
 - durable: true
 - prompt: "sumora-ai-ui プロジェクトの自動保存を実行してください。手順：1. `cd \"c:\\Users\\竹内 悠馬\\sumora-ai-ui\" && git status --short` で変更があるか確認 2. 変更がある場合のみ `git add -A && git commit -m \"auto: 3時間自動保存\" && git push` 3. 変更がなければスキップ"
+```
+
+### ② 差分自動学習（毎朝3:23）
+```
+CronCreate ツールを使って以下を設定：
+- cron: "23 3 * * *"
+- recurring: true
+- durable: true
+- prompt: "LINE返信AIの差分自動学習を実行してください。手順：`cd \"c:\\Users\\竹内 悠馬\\sumora-ai-ui\" && curl -s -X POST http://localhost:3000/api/analyze-diffs` を実行して結果を確認。learned件数が0以上なら「〇件の改善ルールを学習しました」と報告。エラーの場合はスキップ。"
 ```
 
 竹内悠馬が「保存して」「GitHubに上げて」と言った場合も即座に `git add -A && git commit && git push` を実行する。
