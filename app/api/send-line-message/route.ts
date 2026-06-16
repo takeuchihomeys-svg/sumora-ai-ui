@@ -84,39 +84,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: text }, { status: 500 });
   }
 
-  // スタッフ送信メッセージをDBに保存（AI生成の会話履歴に反映するため）
-  void (async () => {
-    try {
-      const { data: convRow } = await supabase
-        .from("conversations")
-        .select("id")
-        .eq("line_user_id", line_user_id)
-        .eq("account", accountKey)
-        .maybeSingle();
-      if (!convRow?.id) return;
-
-      const now = new Date().toISOString();
-      if (message) {
-        await supabase.from("messages").insert({
-          conversation_id: convRow.id as string,
-          sender: "staff",
-          text: message,
-          created_at: now,
-        });
-        await supabase.from("conversations").update({ last_message: message, last_sender: "staff", updated_at: now }).eq("id", convRow.id as string);
-      }
-      if (image_url) {
-        await supabase.from("messages").insert({
-          conversation_id: convRow.id as string,
-          sender: "staff",
-          text: "[画像]",
-          image_url,
-          created_at: new Date(Date.now() + 1).toISOString(),
-        });
-      }
-    } catch {}
-  })();
-
   // スタッフ送信メッセージに「物件ピックアップ・お送り」フレーズ → 物件出しタスク自動作成
   if (message) {
     const STAFF_SEND_KEYWORDS = [
