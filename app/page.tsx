@@ -3180,12 +3180,20 @@ export default function Home() {
                 onClick={async () => {
                   const id = convMenuConvId!;
                   const isNowPostApply = !postApplyConvIds.has(id);
-                  await supabase.from("conversations").update({ is_post_apply: isNowPostApply }).eq("id", id);
+                  const updatePayload: Record<string, unknown> = { is_post_apply: isNowPostApply };
+                  // 解除時はステータスをproposingに戻す（applyingのままだと一覧から消えるため）
+                  if (!isNowPostApply) updatePayload.status = "proposing";
+                  await supabase.from("conversations").update(updatePayload).eq("id", id);
                   setPostApplyConvIds(prev => {
                     const next = new Set(prev);
                     if (next.has(id)) { next.delete(id); } else { next.add(id); }
                     return next;
                   });
+                  if (!isNowPostApply) {
+                    setConversations(prev => prev.map(c =>
+                      c.id === id ? { ...c, status: "proposing" } : c
+                    ));
+                  }
                   setConvMenuConvId(null);
                 }}
                 className="flex flex-col items-center gap-1.5 px-2 py-4 active:bg-[#f0f2f5]"
