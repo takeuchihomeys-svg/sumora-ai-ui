@@ -278,7 +278,7 @@ async function generateAllPatterns(
       // 質問検出 + 不安系検出
       if (Array.isArray(p.questions) && (p.questions as string[]).length > 0) {
         const questions = p.questions as string[];
-        const anxietyKeywords = ["名義", "審査", "保証", "リスク", "キャンセル", "退去", "違約", "トラブル", "詐称", "仲違い", "離婚", "死亡", "相続", "ペット", "同居", "大丈夫", "問題ない", "断られ", "通らな"];
+        const anxietyKeywords = ["名義", "審査", "リスク", "キャンセル", "退去", "違約", "トラブル", "詐称", "仲違い", "離婚", "死亡", "相続", "大丈夫", "問題ない", "断られ", "通らな"];
         isAnxietyDetected = questions.some(q => anxietyKeywords.some(k => q.includes(k)));
         if (questions.length > 1) {
           analysisNote += `\n【複数質問（全て漏れなく答えること）】${questions.map((q, i) => `${i + 1}. ${q}`).join(" / ")}`;
@@ -370,17 +370,20 @@ async function generateAllPatterns(
 ・お客様が言ったことは繰り返さない → 次のアクションへ直行
 
 【出力フォーマット（必ず守る・余計な説明・注釈禁止）】
-[A]
-（返信本文のみ）
+
+[A] ← 黄金パターン（最重要・絶対に守る）
+⭐実例から引き出した最もシンプル・直接・短い文。「余計な説明ゼロ」「お客様の要望に直接答えて即アクション宣言のみ」。
+目安：3〜5行以内。長い説明・他社比較・制度解説は一切書かない。
+例のトーン：「かしこまりました！！最大限割引させていただいたお見積書を明日一番でお送りさせていただきます！！何卒よろしくお願い致します😌！！」
 
 [B]
-（返信本文のみ）
+（Aと同じ意図・Aより少し言葉を変えたバリエーション）
 
 [C]
-（返信本文のみ）
+（さらに別の言い回し）
 
 [D]
-（返信本文のみ）
+（もう一つの言い回し）
 
 【現在の営業フェーズ: ${state}】
 ${phaseGuide}`;
