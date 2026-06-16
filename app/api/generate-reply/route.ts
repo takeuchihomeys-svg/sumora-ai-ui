@@ -661,7 +661,7 @@ async function fetchKnowledge(state: string): Promise<string> {
   const [{ data: diffLearned }, { data: correctionPairs }, { data: global }, { data: stateSpecific }] = await Promise.all([
     // ① 差分学習ルール [差分学習]: AIが間違えた → 正解のルール（最優先）
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
-      .ilike("title", "%差分学習%").gte("importance", 9)
+      .ilike("title", "%差分学習%").gte("importance", 7)
       .order("created_at", { ascending: false }).limit(55),
     // ② 修正対比ルール [修正対比]: スタッフがどう直したかのパターン（第2優先）
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")

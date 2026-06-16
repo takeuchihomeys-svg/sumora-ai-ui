@@ -31,17 +31,20 @@ const PHASE_GUIDE: Record<string, string> = {
 ・条件が揃った → 条件を具体的に復唱して「本日中にピックアップしお送りします」と宣言
 ・URLや物件名を送ってきた → 「募集状況確認させていただきます！！」`,
   proposing: `会話状況を判断して対応:
-・物件画像を送付済み → 内覧/申込へ誘導（画像を再送しない）
-・「検討します」「また連絡します」→ 好条件一言＋申込促し＋新着継続サポートの3点セット
-・お客様がURLを送ってきた → 「募集状況確認させていただきます！」
-・「少し待ってほしい」「迷っている」→ 「保証会社審査通過前はキャンセル料一切なし」でバリア除去
-・退去予定物件 → 「退去予定のためお申込みでお部屋抑えさせて頂きます！」を添える`,
+・物件画像を送付済み → 内覧日時をこちらから複数提示（お客様が聞く前に先手）「直近ですと[日付][時間]ご案内可能ですがいかがでしょうか😌！！」。人気物件・退去予定なら「ご内覧前にお申込が入る可能性がございます。お申込みでお部屋を先に抑えることも可能です！！」を添える
+・お客様がURLや物件名を送ってきた → 「空室確認＋最大限割引した初期費用見積もり＋内覧対応可否」をセットで宣言する（「募集状況確認させていただきます」だけで終わらない）
+・「検討します」「また連絡します」→ ①好条件・希少性を一言 ②申込促し（「お申込みでお部屋抑えさせて頂きます！！」） ③新着継続サポート約束 の3点セット
+・「少し待ってほしい」「迷っている」→ 「保証会社審査通過前はキャンセル料一切なし。実際に見てからご判断いただけます！！」でバリア除去
+・お客様が申込タイムラインを示した → そのタイミングで動く具体アクション（「○月○日に新着含めてピックアップしお送りします」）を約束
+・募集終了 → 「募集終了となっておりました！！ご希望条件に近いお部屋をピックアップさせて頂きます😊！！」と即代替提案`,
   applying: `会話状況を判断して対応:
-・内覧日程調整 → 具体的な日時を複数提示
-・申込方法を聞かれた → 「全てLINEで完結」と伝える
-・初期費用の確認 → 「はい！！」で直接答える
-・キャンセル可否 → 「保証会社審査通過前はキャンセル料一切なし」
-・タイムラインを示した → そのタイミングで動く具体アクションを約束する`,
+・内覧日程調整 → 具体的な日時を複数提示「かしこまりました😊！[日付][時間]、[日付][時間]ご案内可能ですがいかがでしょうか😌！」
+・内覧日確定 → 日時・物件名・住所を明記。人気物件なら「ご内覧前に埋まる可能性があります。お申込みでお部屋を先に抑えることも可能です！！」を添える
+・申込方法を聞かれた → 「はい！！お申込み・審査状況・ご契約手続き全てLINEで対応させていただいております！！」
+・申込書類・審査書類 → 「こちらのフォームのご入力と身分証（運転免許証の表裏）をお送りいただければ私の方でお申込み完了させていただきます😊！！」
+・初期費用・入居費用 → 「はい！！」で直接答える。日割り・フリーレント等は具体的に説明
+・フリーレント・値引き交渉 → 「管理会社に確認させていただきます！！確認出来次第ご連絡させていただきます！！」→確認後に事実を正確に伝える
+・キャンセル可否 → 「保証会社の審査が通過するまでの間はキャンセル料は一切かかりませんのでご安心ください😊！！」`,
   closed_won: `入居準備のサポート。感謝と次のステップを伝える。`,
 };
 
@@ -166,21 +169,28 @@ async function fetchExamples(state: string, message: string, analysisCtx?: strin
     data.map((e, i) => `[例${i + 1}]\nお客様: 「${e.customer_message}」\nスモラ: 「${e.sent_reply}」`).join("\n\n");
 }
 
-// ─── ナレッジ取得 ────────────────────────────────────────────────────────────
+// ─── ナレッジ取得（3層）────────────────────────────────────────────────────
 async function fetchKnowledge(state: string): Promise<string> {
   const aliases = STATE_SEARCH_ALIASES[state] || [state];
-  const [{ data: diff }, { data: specific }] = await Promise.all([
+  const [{ data: diffLearned }, { data: correctionPairs }, { data: stateSpecific }] = await Promise.all([
+    // ① 差分学習: AIが間違えた→正解ルール（最優先）
     supabase.from("ai_reply_knowledge").select("content")
-      .ilike("title", "%差分学習%").gte("importance", 9)
-      .order("created_at", { ascending: false }).limit(10),
+      .ilike("title", "%差分学習%").gte("importance", 7)
+      .order("created_at", { ascending: false }).limit(20),
+    // ② 修正対比: スタッフがどう直したかのパターン
+    supabase.from("ai_reply_knowledge").select("content")
+      .ilike("title", "%修正対比%").in("conversation_state", aliases)
+      .order("importance", { ascending: false }).limit(12),
+    // ③ フェーズ別ナレッジ
     supabase.from("ai_reply_knowledge").select("content, importance")
       .in("conversation_state", aliases).gte("importance", 7)
-      .not("title", "ilike", "%差分学習%")
-      .order("importance", { ascending: false }).limit(10),
+      .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
+      .order("importance", { ascending: false }).limit(12),
   ]);
   const parts: string[] = [];
-  if ((diff?.length ?? 0) > 0) parts.push("【AIが過去に間違えたパターン（必ず守る）】\n" + diff!.map(k => `・${k.content}`).join("\n"));
-  if ((specific?.length ?? 0) > 0) parts.push("【スモラの営業ルール】\n" + specific!.map(k => `・${k.content}`).join("\n"));
+  if ((diffLearned?.length ?? 0) > 0) parts.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned!.map(k => `・${k.content}`).join("\n"));
+  if ((correctionPairs?.length ?? 0) > 0) parts.push("【🟠 スタッフが修正したポイント】\n" + correctionPairs!.map(k => `・${k.content}`).join("\n"));
+  if ((stateSpecific?.length ?? 0) > 0) parts.push("【スモラの営業ルール】\n" + stateSpecific!.map(k => `・${k.content}`).join("\n"));
   return parts.join("\n\n");
 }
 
