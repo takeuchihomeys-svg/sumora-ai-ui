@@ -4,8 +4,8 @@ import { supabase } from "@/app/lib/supabase";
 const STATE_SEARCH_ALIASES: Record<string, string[]> = {
   first_reply: ["first_reply"],
   hearing:     ["hearing", "condition_hearing", "property_search"],
-  proposing:   ["proposing", "property_recommendation", "viewing", "estimate_request", "availability_check"],
-  applying:    ["applying", "application", "screening", "contract"],
+  proposing:   ["proposing", "property_recommendation", "viewing", "estimate_request", "availability_check", "property_send"],
+  applying:    ["applying", "application", "screening", "contract", "application_push"],
   closed_won:  ["closed_won"],
 };
 const STATE_NORMALIZE: Record<string, string> = {

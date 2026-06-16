@@ -628,8 +628,8 @@ ${conditions}
 const STATE_SEARCH_ALIASES: Record<string, string[]> = {
   first_reply: ["first_reply"],
   hearing:     ["hearing", "condition_hearing", "property_search"],
-  proposing:   ["proposing", "property_recommendation", "viewing", "estimate_request", "availability_check"],
-  applying:    ["applying", "application", "screening", "contract"],
+  proposing:   ["proposing", "property_recommendation", "viewing", "estimate_request", "availability_check", "property_send"],
+  applying:    ["applying", "application", "screening", "contract", "application_push"],
   closed_won:  ["closed_won"],
 };
 
@@ -640,26 +640,32 @@ async function fetchKnowledge(state: string): Promise<string> {
     // ① 差分学習ルール [差分学習]: AIが間違えた → 正解のルール（最優先）
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
       .ilike("title", "%差分学習%").gte("importance", 9)
-      .order("created_at", { ascending: false }).limit(20),
+      .order("created_at", { ascending: false }).limit(55),
     // ② 修正対比ルール [修正対比]: スタッフがどう直したかのパターン（第2優先）
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
       .ilike("title", "%修正対比%").in("conversation_state", stateAliases)
       .order("importance", { ascending: false }).limit(10),
-    // ③ 全体共通ナレッジ: importance8以上・抽象的なprincipleを除外
+    // ③ 全体共通ナレッジ: importance9以上・全ステート横断（NULLレコードが存在しないためstate絞り込みなし・新着優先）
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
-      .is("conversation_state", null).gte("importance", 8)
+      .gte("importance", 9)
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
       .not("category", "eq", "principle")
-      .order("importance", { ascending: false }).limit(12),
-    // ④ state別ナレッジ: importance7以上・抽象的なprincipleを除外
+      .order("importance", { ascending: false })
+      .order("created_at", { ascending: false }).limit(20),
+    // ④ state別ナレッジ: importance7以上・抽象的なprincipleを除外（同importance内は新着優先）
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
       .in("conversation_state", stateAliases).gte("importance", 7)
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
       .not("category", "eq", "principle")
-      .order("importance", { ascending: false }).limit(18),
+      .order("importance", { ascending: false })
+      .order("created_at", { ascending: false }).limit(24),
   ]);
 
-  const all = [...(stateSpecific || []), ...(global || [])];
+  const stateSpecificList = stateSpecific || [];
+  const globalList = (global || []).filter(
+    (g) => !stateSpecificList.some((s) => s.content === g.content)
+  );
+  const all = [...stateSpecificList, ...globalList];
   if ((diffLearned?.length ?? 0) === 0 && (correctionPairs?.length ?? 0) === 0 && all.length === 0) return "";
 
   const critical = all.filter((k) => (k.importance || 0) >= 9);
@@ -668,13 +674,13 @@ async function fetchKnowledge(state: string): Promise<string> {
 
   const sections: string[] = [];
   if ((diffLearned?.length ?? 0) > 0) {
-    sections.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned!.slice(0, 15).map((k) => `・${k.content}`).join("\n"));
+    sections.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned!.slice(0, 20).map((k) => `・${k.content}`).join("\n"));
   }
   if ((correctionPairs?.length ?? 0) > 0) {
     sections.push("【🟠 スタッフが修正したポイント（このフェーズ専用）】\n" + correctionPairs!.slice(0, 8).map((k) => `・${k.content}`).join("\n"));
   }
   if (critical.length > 0) {
-    sections.push("【⚠️ 絶対ルール】\n" + critical.slice(0, 10).map((k) => `・${k.content}`).join("\n"));
+    sections.push("【⚠️ 絶対ルール】\n" + critical.slice(0, 15).map((k) => `・${k.content}`).join("\n"));
   }
   if (patterns.length > 0) {
     sections.push("【スモラの営業パターン・原則】\n" + patterns.slice(0, 8).map((k) => `・${k.content}`).join("\n"));
