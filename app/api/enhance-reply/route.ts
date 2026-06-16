@@ -172,7 +172,7 @@ export async function POST(req: NextRequest) {
   const TASK_LABEL: Record<string, string> = { property_check: "物件確認", property_send: "物件出し" };
   const nameNote = customerName ? `お客様名：${customerName}さん` : "";
   const conditionsNote = customerConditions ? `\n【お客様の希望条件】\n${customerConditions}` : "";
-  const summaryNote = customerSummary ? `\n【このお客さんの人物像・特徴（AI要約）— 文体・トーン・アプローチに必ず反映すること】\n${customerSummary}` : "";
+  const summaryNote = customerSummary ? `\n【このお客さんのAI要約 — 今の状況・次の必須対応を最優先で文案に反映すること。人物像・文体も合わせること】\n${customerSummary}` : "";
   const stateNote = conversationState ? `現在の営業フェーズ：${conversationState}` : "";
   const taskNote = (activeTasks && activeTasks.length > 0)
     ? `\n【現在対応中のタスク — このタスクの内容に沿ったメッセージに仕上げること】\n${activeTasks.map((t) => `・${TASK_LABEL[t] ?? t}`).join("\n")}`

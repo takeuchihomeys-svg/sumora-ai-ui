@@ -293,7 +293,7 @@ export async function POST(request: NextRequest) {
       const sendMode = body.send_mode === "application" ? "application" : "viewing";
 
       const summaryNote = customerSummary
-        ? `\n\n【このお客さんの人物像・特徴（AI要約）— 文体・トーン・アプローチに必ず反映すること】\n${customerSummary}`
+        ? `\n\n【このお客さんのAI要約 — 今の状況・次の必須対応を最優先で文案に反映すること。人物像・文体も合わせること】\n${customerSummary}`
         : "";
 
       // 物件送るの実例を取得
@@ -534,7 +534,7 @@ M/D（曜日）HH:MM〜HH:MM
         : "";
 
       const summaryNote = customerSummary
-        ? `\n\n【このお客さんの人物像・特徴（AI要約）— 文体・トーン・アプローチに必ず反映すること】\n${customerSummary}`
+        ? `\n\n【このお客さんのAI要約 — 今の状況・次の必須対応を最優先で文案に反映すること。人物像・文体も合わせること】\n${customerSummary}`
         : "";
 
       const patternExample = PATTERN_EXAMPLES[pattern] ?? PATTERN_EXAMPLES.unavailable;

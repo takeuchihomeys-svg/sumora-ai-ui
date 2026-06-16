@@ -399,7 +399,7 @@ function buildGenerationMessages(
     ? `\n【お客様の希望条件（DB登録済み・必ず考慮すること）】\n${customerConditions}`
     : "";
   const summaryNote = customerSummary
-    ? `\n【このお客さんの人物像・特徴（AI要約）— 文体・トーン・アプローチに必ず反映すること】\n${customerSummary}`
+    ? `\n【このお客さんのAI要約 — 今の状況・次の必須対応を最優先で文案に反映すること。人物像・文体も合わせること】\n${customerSummary}`
     : "";
 
   // フェーズ別の行動指針を取得（DBオーバーライド優先）
