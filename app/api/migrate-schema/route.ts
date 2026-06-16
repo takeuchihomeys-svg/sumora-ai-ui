@@ -438,6 +438,9 @@ ALTER TABLE ai_prompts DISABLE ROW LEVEL SECURITY;
 -- ai_reply_examples: 4パターン返信の選択角度を記録（パターン学習用）
 ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS reply_angle TEXT;
 
+-- ai_reply_examples: 差分自動学習の処理済みフラグ
+ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS diff_analyzed_at TIMESTAMPTZ;
+
 -- match_reply_examples: reply_angleを返り値に追加（選ばれた実例のブースト用）
 -- 戻り値型変更のためDROP→CREATEが必要
 DROP FUNCTION IF EXISTS match_reply_examples(vector, int, text[]);
