@@ -2830,7 +2830,7 @@ export default function Home() {
               >
                 {patternLoading ? (
                   <><span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-purple-400 border-t-transparent" /><span>生成中...</span></>
-                ) : "✦ 4案"}
+                ) : "✦ 3案"}
               </button>
 
               <button

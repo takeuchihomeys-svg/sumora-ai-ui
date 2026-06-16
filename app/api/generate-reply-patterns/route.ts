@@ -16,7 +16,7 @@ const generationModel = new ChatAnthropic({
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
 });
 
-export const PATTERN_LABELS = ["A", "B", "C", "D"] as const;
+export const PATTERN_LABELS = ["A", "B", "C"] as const;
 export type AngleKey = (typeof PATTERN_LABELS)[number];
 
 // ─── フェーズ別行動指針 ───────────────────────────────────────────────────────
@@ -157,7 +157,7 @@ async function fetchExamples(state: string, message: string, analysisCtx?: strin
             const sa = a.similarity + (a.is_starred ? 0.15 : 0) + (a.reply_angle ? 0.1 : 0);
             const sb = b.similarity + (b.is_starred ? 0.15 : 0) + (b.reply_angle ? 0.1 : 0);
             return sb - sa;
-          }).slice(0, 12);
+          }).slice(0, 25);
           return "\n\n【⭐ スモラの実際の返信例（文体・言い回し・感嘆符・絵文字を最優先で再現すること）】\n" +
             sorted.map((e, i) =>
               `[例${i + 1}${e.is_starred ? "⭐" : ""}]\nお客様: 「${e.customer_message}」\nスモラ: 「${e.sent_reply}」`
@@ -171,7 +171,7 @@ async function fetchExamples(state: string, message: string, analysisCtx?: strin
     .in("conversation_state", aliases)
     .eq("is_starred", true)
     .order("created_at", { ascending: false })
-    .limit(12);
+    .limit(25);
   if (!data || data.length === 0) return "";
   return "\n\n【⭐ スモラの実際の返信例】\n" +
     data.map((e, i) => `[例${i + 1}]\nお客様: 「${e.customer_message}」\nスモラ: 「${e.sent_reply}」`).join("\n\n");
@@ -337,7 +337,7 @@ async function generateAllPatterns(
   const realEstateSection = isAnxietyDetected ? `\n\n${REAL_ESTATE_RULES}` : "";
 
   const systemPrompt = `あなたはスモラ（賃貸仲介）のLINE営業担当です。
-同じ内容・意図のLINE返信を4つ生成してください。
+同じ内容・意図のLINE返信を3つ生成してください。
 
 【スモラの営業スタイル — 最重要】
 「誘導」とはお客様を考えさせないこと。スタッフが常に先手を打って次のアクションを示す。
@@ -346,10 +346,10 @@ async function generateAllPatterns(
 → URLを受け取ったら「空室確認＋初期費用見積もり＋内覧確認」をセットで宣言
 → お客様がすべきことは最小限（フォーム入力・承認・日程を言うだけ）。それ以外はすべてスタッフがやる
 
-【4案の違いについて — 最重要】
-・4案全て: 全体の方向性・意図・ニュアンスは同じ
+【3案の違いについて — 最重要】
+・3案全て: 全体の方向性・意図・ニュアンスは同じ
 ・違う点: 1文1文の言い回し・言葉の選び方・文の組み合わせ方だけ
-・「同じことを少し違う言葉・順序・表現で書いた4バリエーション」
+・「同じことを少し違う言葉・順序・表現で書いた3バリエーション」
 ・全て⭐実例と同じスモラの返信スタイルで書く
 
 【質問・相談への回答ルール — 最重要】
@@ -391,9 +391,6 @@ async function generateAllPatterns(
 [C]
 （さらに別の言い回し）
 
-[D]
-（もう一つの言い回し）
-
 【現在の営業フェーズ: ${state}】
 ${phaseGuide}`;
 
@@ -407,7 +404,7 @@ ${examples}
 【お客様の最新メッセージ】
 ${customerMessage}
 
-上記⭐実例の文体・言い回し・感嘆符・絵文字を完全に再現しながら、同じ意図で1文1文の言い回しだけ異なる返信を[A][B][C][D]の4案生成してください。`;
+上記⭐実例の文体・言い回し・感嘆符・絵文字を完全に再現しながら、同じ意図で1文1文の言い回しだけ異なる返信を[A][B][C]の3案生成してください。`;
 
   try {
     const res = await generationModel.invoke([
@@ -416,7 +413,7 @@ ${customerMessage}
     ]);
     const text = typeof res.content === "string" ? res.content : "";
     const variants: string[] = [];
-    const regex = /\[([ABCD])\]\n([\s\S]*?)(?=\n\[[ABCD]\]|$)/g;
+    const regex = /\[([ABC])\]\n([\s\S]*?)(?=\n\[[ABC]\]|$)/g;
     let match;
     while ((match = regex.exec(text)) !== null) {
       const body = match[2].trim();
@@ -487,13 +484,13 @@ export async function POST(req: NextRequest) {
     fetchExamples(currentState, message, analysisCtx),
   ]);
 
-  // Step3: 4案を1回のcallで同時生成
+  // Step3: 3案を1回のcallで同時生成
   const variants = await generateAllPatterns(
     message, customerName, history, currentState,
     analysis, knowledge, examples, customerConditions, customerSummary,
   );
 
-  const PATTERN_DISPLAY_LABELS = ["王道", "B案", "C案", "D案"];
+  const PATTERN_DISPLAY_LABELS = ["王道", "B案", "C案"];
   const patterns = variants.map((text, i) => ({
     angle: PATTERN_LABELS[i] ?? String(i + 1),
     label: PATTERN_DISPLAY_LABELS[i] ?? `${i + 1}案`,
