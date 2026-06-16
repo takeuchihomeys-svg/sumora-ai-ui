@@ -385,11 +385,15 @@ async function generateAllPatterns(
 目安：3〜5行以内。長い説明・他社比較・制度解説は一切書かない。
 例のトーン：「かしこまりました！！最大限割引させていただいたお見積書を明日一番でお送りさせていただきます！！何卒よろしくお願い致します😌！！」
 
-[B]
-（Aと同じ意図・Aより少し言葉を変えたバリエーション）
+[B] ← シンプルパターン（Aよりさらに短く・絶対に守る）
+・6行以内厳守。超えたら失敗。
+・お客様の言葉をまず受け取る（承認）→ 全力サポートの姿勢を一言 → 即アクション宣言のみ
+・変な言い回し・遠回し表現・他社比較・制度説明は一切入れない
+・普段スタッフが何百回も送ってきたような「ごく自然な短い返信」
+例のトーン：「〇〇さんお世話になっております！！かしこまりました！！全力でサポートさせていただきます！！何卒よろしくお願い致します😌！！」
 
 [C]
-（さらに別の言い回し）
+（Aと同じ意図・別の言い回し）
 
 【現在の営業フェーズ: ${state}】
 ${phaseGuide}`;
@@ -490,7 +494,7 @@ export async function POST(req: NextRequest) {
     analysis, knowledge, examples, customerConditions, customerSummary,
   );
 
-  const PATTERN_DISPLAY_LABELS = ["王道", "B案", "C案"];
+  const PATTERN_DISPLAY_LABELS = ["王道", "シンプル", "C案"];
   const patterns = variants.map((text, i) => ({
     angle: PATTERN_LABELS[i] ?? String(i + 1),
     label: PATTERN_DISPLAY_LABELS[i] ?? `${i + 1}案`,
