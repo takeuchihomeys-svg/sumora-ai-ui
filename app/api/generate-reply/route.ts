@@ -645,9 +645,10 @@ async function fetchKnowledge(state: string): Promise<string> {
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
       .ilike("title", "%修正対比%").in("conversation_state", stateAliases)
       .order("importance", { ascending: false }).limit(20),
-    // ③ 全体共通ナレッジ: importance9以上・全ステート横断（NULLレコードが存在しないためstate絞り込みなし・新着優先）
+    // ③ 全体共通ナレッジ: importance8以上・全ステート横断（principle除外・新着優先）
+    // G修正後: pattern/phrase importance=9→8 のため閾値を8に下げて機能を維持
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
-      .gte("importance", 9)
+      .gte("importance", 8)
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
       .not("category", "eq", "principle")
       .order("importance", { ascending: false })
@@ -668,8 +669,9 @@ async function fetchKnowledge(state: string): Promise<string> {
   const all = [...stateSpecificList, ...globalList];
   if ((diffLearned?.length ?? 0) === 0 && (correctionPairs?.length ?? 0) === 0 && all.length === 0) return "";
 
-  const critical = all.filter((k) => (k.importance || 0) >= 9);
-  const patterns = all.filter((k) => (k.importance || 0) >= 7 && (k.importance || 0) < 9 && (k.category === "pattern" || k.category === "principle"));
+  // F修正: criticalはprincipleカテゴリのみ（pattern/phraseが「絶対ルール」に混入しないよう）
+  const critical = all.filter((k) => (k.importance || 0) >= 9 && k.category === "principle");
+  const patterns = all.filter((k) => (k.importance || 0) >= 7 && k.category === "pattern");
   const phrases  = all.filter((k) => k.category === "phrase");
 
   const sections: string[] = [];

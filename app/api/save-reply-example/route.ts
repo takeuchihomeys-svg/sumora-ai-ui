@@ -171,8 +171,8 @@ JSONのみで返答（説明不要）：
       key_phrases: string[];
     };
 
-    // ☆の場合: importance を1〜2上乗せ（より強い学習シグナルとして扱う）
-    const boost = isStarred ? 2 : 0;
+    // ☆の場合: importance を1上乗せ（pattern/phraseは最大8・principleと区別）
+    const boost = isStarred ? 1 : 0;
     const entries = [
       // pattern: 具体的な返し方ルール（20文字未満は除外）
       ...(analysis.pattern && analysis.pattern.length >= 20

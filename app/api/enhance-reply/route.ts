@@ -12,7 +12,9 @@ const STATE_NORMALIZE: Record<string, string> = {
   condition_hearing: "hearing", property_search: "hearing",
   property_recommendation: "proposing", viewing: "proposing",
   estimate_request: "proposing", availability_check: "proposing",
+  property_send: "proposing",
   application: "applying", screening: "applying", contract: "applying",
+  application_push: "applying",
 };
 
 async function getEmbedding(text: string): Promise<number[] | null> {
