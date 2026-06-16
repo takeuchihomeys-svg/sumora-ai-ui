@@ -4,6 +4,20 @@ import { supabase } from "@/app/lib/supabase";
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY!;
 const MODEL = "claude-sonnet-4-6";
 
+// 全actionに共通する営業スタイル・禁止ワードルール
+const SMORA_COMMON_RULES = `
+【スモラの営業スタイル — 最重要】
+「誘導」とはお客様を考えさせないこと。スタッフが常に先手を打って次のアクションを示す。
+→ 物件を送ったら「お気に召されましたらお申込みでお部屋抑えさせて頂きます！！」と次を示す
+→ 内覧日が決まったら「ご内覧前に埋まる可能性があるのでお申込みでお部屋抑えることも可能です」と先に伝える
+→ お客様がすべきことは最小限（承認・日程を言うだけ）。それ以外はすべてスタッフがやる
+この姿勢がお客様の信頼を生み「任せよう」という気持ちを作る。
+
+【禁止ワード】
+× 「スモラにてお取り扱い可能か確認」→ 不動産物件はほぼ全て取り扱い可能。確認するのは「募集状況（空室かどうか）」のみ。正しい表現：「募集状況確認させていただきます！！」
+× 「ご共有頂き」→ お客様が物件を送ってきた時は「お送り頂き」を使う。「共有」は業者間・スタッフ間で使う言葉
+× 「少々お待ちください」→ 上から目線。「何卒よろしくお願い致します😌！！」で締める`.trim();
+
 async function getPhrases(category: string, customerName?: string): Promise<string> {
   const { data } = await supabase
     .from("phrase_dictionary")
@@ -324,6 +338,8 @@ export async function POST(request: NextRequest) {
 物件をピックアップしてお客さんに送る際の導入メッセージを1つだけ作成してください。
 このお客さんは内覧より先にお申込みで部屋を確保することを優先する流れです。
 
+${SMORA_COMMON_RULES}
+
 【作成ルール】
 ・「[お客様名]さんお待たせ致しました！！」で始める
 ${conditionsRule}
@@ -336,6 +352,8 @@ ${conditionsRule}
 ・絵文字は 😊 😌 のみ・1〜2個まで${sendExamplesText}`
         : `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
 物件をピックアップしてお客さんに送る際の導入メッセージを1つだけ作成してください。
+
+${SMORA_COMMON_RULES}
 
 【作成ルール】
 ・「[お客様名]さんお待たせ致しました！！」で始める
@@ -363,6 +381,8 @@ ${conditionsRule}
       const calendarNote = calendar_info ? String(calendar_info) : null;
       const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。
 今の会話の流れを読み取り、内覧へ自然に誘導するLINEメッセージを1つだけ作成してください。
+
+${SMORA_COMMON_RULES}
 
 【作成ルール】
 ・会話履歴がある場合は、送った物件への反応・お客様の状況を踏まえて訴求する
@@ -541,6 +561,8 @@ M/D（曜日）HH:MM〜HH:MM
 
       const checkSystem = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
 物件確認の結果をお客さんに報告するLINEメッセージを1つだけ作成してください。
+
+${SMORA_COMMON_RULES}
 
 【作成ルール】
 ・「お待たせいたしました！！」で始める
