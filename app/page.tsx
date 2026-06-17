@@ -2584,8 +2584,14 @@ export default function Home() {
             <div className="mx-auto flex w-full max-w-4xl flex-col gap-3.5">
               {(() => {
                 // 顧客名にマッチする検索の場合はメッセージをフィルタしない（LINEと同じ挙動）
+                // 「Sさん」→「S」のように末尾の「さん」を除去してから照合
                 const sq = searchQuery.trim().toLowerCase();
-                const isNameSearch = sq && selectedConversation.customerName?.toLowerCase().includes(sq);
+                const sqBase = sq.replace(/さん$/, "").trim();
+                const nameLower = selectedConversation.customerName?.toLowerCase() || "";
+                const isNameSearch = sq && (
+                  nameLower.includes(sq) ||
+                  (sqBase.length > 0 && nameLower.includes(sqBase))
+                );
                 const q = aiSearchIds !== null || isNameSearch ? "" : sq;
                 const displayMessages = q
                   ? selectedConversation.messages.filter((m) => m.text?.toLowerCase().includes(q))
