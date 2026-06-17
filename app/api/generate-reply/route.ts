@@ -762,7 +762,7 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
   // pgvector 類似検索（OPENAI_API_KEY がある場合のみ・エラー時はフォールバック）
   // follow-up時: 「スモラが送った内容の続き」として検索クエリを構成
   const baseQuery = lastStaffMessage
-    ? `${state}: ${customerMessage} 続き: ${lastStaffMessage.slice(0, 120)}`
+    ? `${state}: [前返信]${lastStaffMessage.slice(0, 100)} [顧客]${customerMessage}`
     : customerMessage ? `${state}: ${customerMessage}` : null;
   // 分析で検出したパターン（検討中・URL確認・複数質問等）をクエリに追加して関連例を引く
   const searchQuery = baseQuery && analysisContext
