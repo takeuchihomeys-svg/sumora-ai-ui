@@ -235,6 +235,14 @@ function getJSTHour(): number {
 function getJSTDayOfWeek(): number {
   return new Date(Date.now() + 9 * 60 * 60 * 1000).getUTCDay();
 }
+function getJSTDateString(): string {
+  const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const m = jst.getUTCMonth() + 1;
+  const d = jst.getUTCDate();
+  const days = ["日", "月", "火", "水", "木", "金", "土"];
+  const dow = days[jst.getUTCDay()];
+  return `${m}月${d}日（${dow}）`;
+}
 
 // ─── Step2: LINE返信生成（Sonnet）──────────────────────────────────────────
 const GENERATION_SYSTEM = `あなたはスモラ（賃貸仲介）のLINE営業担当です。
@@ -420,6 +428,8 @@ function buildGenerationMessages(
       ? `\n【管理会社の状況・必ず守ること】現在${jstHour}時台（JST）。18時以降のため管理会社の営業時間が終了している。確認が必要な場合は「本日は管理会社の営業時間が終了しておりますので、明日一番でご確認しご連絡させて頂きます！！」と伝える。当日中の回答を約束しない。`
       : `\n【管理会社の状況】現在${jstHour}時台（JST）。管理会社営業中（平日〜18時）。確認が必要な場合は「管理会社に確認させていただきます！！確認出来次第ご連絡させていただきます！！」と伝えてよい。`;
 
+  const dateNote = `\n【📅 今日の日付（JST・必ず基準にすること）】${getJSTDateString()} — 「明日」「明後日」「今週」などの相対表現や具体的な日付（○日）は全てこの日付を起点に計算すること`;
+
   const nameNote = customerName ? `お客様名：${customerName}さん` : "お客様名：不明";
   const conditionsNote = customerConditions
     ? `\n【お客様の希望条件（DB登録済み・必ず考慮すること）】\n${customerConditions}`
@@ -532,7 +542,7 @@ function buildGenerationMessages(
   const realEstateNote = `\n${promptOverrides?.realEstateRules ?? REAL_ESTATE_RULES}`;
 
   const prompt = `
-${nameNote}${conditionsNote}${summaryNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}
+${nameNote}${conditionsNote}${summaryNote}${dateNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${approachNote}${staffContextNote}
 
