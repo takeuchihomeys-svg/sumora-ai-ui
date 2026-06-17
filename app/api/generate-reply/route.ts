@@ -651,15 +651,18 @@ async function fetchPhrases(state: string): Promise<string> {
 }
 
 // ─── ai_summaryがない場合の即席コンテキスト合成（Haiku・並列実行）────────────
-async function synthesizeCustomerContext(conditions: string, customerName: string): Promise<string> {
+async function synthesizeCustomerContext(conditions: string, customerName: string, history?: string): Promise<string> {
   try {
+    const historyNote = history
+      ? `\n直近の会話:\n${history.split("\n").slice(-10).join("\n")}`
+      : "";
     const res = await analysisModel.invoke([
-      new HumanMessage(`以下の賃貸希望条件を持つお客様の特徴を1〜2文で要約してください。
+      new HumanMessage(`以下の賃貸希望条件と会話履歴から、お客様の状況を1〜2文で要約してください。
 お客様名: ${customerName || "不明"}
 条件:
-${conditions}
+${conditions}${historyNote}
 
-例: 「梅田エリアで1LDK・家賃8万以内を探している。ペット可・駅徒歩5分希望。入居は4月予定」
+例: 「梅田エリアで1LDK・家賃8万以内を探している。内覧済みで申込を検討中。審査に不安あり。」
 要約のみ返答（説明不要）:`),
     ]);
     return typeof res.content === "string" ? res.content.trim() : "";
@@ -681,17 +684,21 @@ const STATE_SEARCH_ALIASES: Record<string, string[]> = {
 async function fetchKnowledge(state: string): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
-  const [{ data: diffLearned }, { data: correctionPairs }, { data: global }, { data: stateSpecific }] = await Promise.all([
-    // ① 差分学習ルール [差分学習]: AIが間違えた → 正解のルール（最優先）
+  const [{ data: stateDiff }, { data: globalDiff }, { data: correctionPairs }, { data: global }, { data: stateSpecific }] = await Promise.all([
+    // ① 差分学習（フェーズ別・優先）: このフェーズで間違えたルールを最大15件
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
       .ilike("title", "%差分学習%").gte("importance", 7)
-      .order("created_at", { ascending: false }).limit(55),
+      .in("conversation_state", stateAliases)
+      .order("created_at", { ascending: false }).limit(15),
+    // ① 差分学習（グローバル補完）: 全フェーズ共通ルールで残り枠を補完
+    supabase.from("ai_reply_knowledge").select("category, title, content, importance")
+      .ilike("title", "%差分学習%").gte("importance", 7)
+      .order("created_at", { ascending: false }).limit(10),
     // ② 修正対比ルール [修正対比]: スタッフがどう直したかのパターン（第2優先）
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
       .ilike("title", "%修正対比%").in("conversation_state", stateAliases)
       .order("importance", { ascending: false }).limit(20),
     // ③ 全体共通ナレッジ: importance8以上・全ステート横断（principle除外・新着優先）
-    // G修正後: pattern/phrase importance=9→8 のため閾値を8に下げて機能を維持
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
       .gte("importance", 8)
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
@@ -707,12 +714,19 @@ async function fetchKnowledge(state: string): Promise<string> {
       .order("created_at", { ascending: false }).limit(24),
   ]);
 
+  // フェーズ別を優先・グローバルで補完（重複除去・合計20件以内）
+  const stateDiffList = stateDiff || [];
+  const globalDiffDeduped = (globalDiff || []).filter(
+    (g) => !stateDiffList.some((s) => s.content === g.content)
+  );
+  const diffLearned = [...stateDiffList, ...globalDiffDeduped].slice(0, 20);
+
   const stateSpecificList = stateSpecific || [];
   const globalList = (global || []).filter(
     (g) => !stateSpecificList.some((s) => s.content === g.content)
   );
   const all = [...stateSpecificList, ...globalList];
-  if ((diffLearned?.length ?? 0) === 0 && (correctionPairs?.length ?? 0) === 0 && all.length === 0) return "";
+  if (diffLearned.length === 0 && (correctionPairs?.length ?? 0) === 0 && all.length === 0) return "";
 
   // F修正: criticalはprincipleカテゴリのみ（pattern/phraseが「絶対ルール」に混入しないよう）
   const critical = all.filter((k) => (k.importance || 0) >= 9 && k.category === "principle");
@@ -720,8 +734,8 @@ async function fetchKnowledge(state: string): Promise<string> {
   const phrases  = all.filter((k) => k.category === "phrase");
 
   const sections: string[] = [];
-  if ((diffLearned?.length ?? 0) > 0) {
-    sections.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned!.slice(0, 20).map((k) => `・${k.content}`).join("\n"));
+  if (diffLearned.length > 0) {
+    sections.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned.map((k) => `・${k.content}`).join("\n"));
   }
   if ((correctionPairs?.length ?? 0) > 0) {
     sections.push("【🟠 スタッフが修正したポイント（このフェーズ専用）】\n" + correctionPairs!.slice(0, 8).map((k) => `・${k.content}`).join("\n"));
@@ -976,9 +990,9 @@ export async function POST(req: NextRequest) {
       fetchKnowledge(currentState),
       fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext),
       fetchPhrases(currentState),
-      // ai_summaryがない場合のみ条件テキストから即席合成（Haiku・並列なので遅延ゼロ）
+      // ai_summaryがない場合のみ条件テキスト+履歴から即席合成（Haiku・並列なので遅延ゼロ）
       !customerSummary && customerConditions
-        ? synthesizeCustomerContext(customerConditions, customerName)
+        ? synthesizeCustomerContext(customerConditions, customerName, history)
         : Promise.resolve(""),
     ]);
     const resolvedSummary = customerSummary || autoSummary;
