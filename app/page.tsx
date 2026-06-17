@@ -2583,7 +2583,10 @@ export default function Home() {
           <div ref={chatScrollRef} className="flex-1 overflow-y-auto px-3 py-4 md:px-6">
             <div className="mx-auto flex w-full max-w-4xl flex-col gap-3.5">
               {(() => {
-                const q = aiSearchIds !== null ? "" : searchQuery.trim().toLowerCase();
+                // 顧客名にマッチする検索の場合はメッセージをフィルタしない（LINEと同じ挙動）
+                const sq = searchQuery.trim().toLowerCase();
+                const isNameSearch = sq && selectedConversation.customerName?.toLowerCase().includes(sq);
+                const q = aiSearchIds !== null || isNameSearch ? "" : sq;
                 const displayMessages = q
                   ? selectedConversation.messages.filter((m) => m.text?.toLowerCase().includes(q))
                   : groupImageMessages(selectedConversation.messages);
