@@ -696,14 +696,16 @@ async function fetchKnowledge(state: string): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
   const [{ data: stateDiff }, { data: globalDiff }, { data: correctionPairs }, { data: global }, { data: stateSpecific }] = await Promise.all([
-    // ① 差分学習（フェーズ別・優先）: このフェーズで間違えたルールを最大15件
+    // ① 差分学習（フェーズ別・優先）: importance降順→新着順でimportance9を確実に取得
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
       .ilike("title", "%差分学習%").gte("importance", 7)
       .in("conversation_state", stateAliases)
+      .order("importance", { ascending: false })
       .order("created_at", { ascending: false }).limit(15),
     // ① 差分学習（グローバル補完）: 全フェーズ共通ルールで残り枠を補完
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
       .ilike("title", "%差分学習%").gte("importance", 7)
+      .order("importance", { ascending: false })
       .order("created_at", { ascending: false }).limit(10),
     // ② 修正対比ルール [修正対比]: スタッフがどう直したかのパターン（第2優先）
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")

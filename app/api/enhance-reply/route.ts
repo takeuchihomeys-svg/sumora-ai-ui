@@ -121,16 +121,19 @@ async function fetchEnhanceContext(state: string, customerMessage?: string, last
 
   // フォールバック: ☆つき実例をフェーズ別に取得
   const { data: exampleRows } = await supabase.from("ai_reply_examples")
-    .select("customer_message, sent_reply")
+    .select("customer_message, sent_reply, reply_angle")
     .in("conversation_state", aliases)
     .eq("is_starred", true)
     .order("created_at", { ascending: false })
     .limit(10);
 
   const examples = (exampleRows || []).length > 0
-    ? "\n【⭐ スモラの実際の送信例（文体・感嘆符・絵文字はこれに合わせる）】\n" +
-      (exampleRows as { customer_message: string; sent_reply: string }[])
-        .map((r, i) => `[例${i + 1}]\nお客様:「${r.customer_message}」\nスモラ:「${r.sent_reply}」`)
+    ? "\n【⭐ スモラの実際の送信例（文体・感嘆符・絵文字はこれに合わせる。ラベル: 王道=標準スモラスタイル / シンプル=短く簡潔 / C案=別角度アプローチ）】\n" +
+      (exampleRows as { customer_message: string; sent_reply: string; reply_angle?: string | null }[])
+        .map((r, i) => {
+          const angleTag = r.reply_angle && r.reply_angle !== "starred" ? `|${{"A":"王道","B":"シンプル","C":"C案","short_direct":"短く直接"}[r.reply_angle] ?? r.reply_angle}` : "";
+          return `[例${i + 1}${angleTag}]\nお客様:「${r.customer_message}」\nスモラ:「${r.sent_reply}」`;
+        })
         .join("\n\n")
     : "";
 
