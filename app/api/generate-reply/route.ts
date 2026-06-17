@@ -756,6 +756,8 @@ async function getEmbedding(text: string): Promise<number[] | null> {
   }
 }
 
+const ANGLE_LABEL: Record<string, string> = { A: "王道", B: "シンプル", C: "C案", short_direct: "短く直接" };
+
 async function fetchExamples(state: string, customerMessage?: string, lastStaffMessage?: string, analysisContext?: string): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
@@ -789,10 +791,11 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
           return scoreB - scoreA;
         }).slice(0, 8);
 
-        return "\n\n【⭐ スモラの実際の返信例（状況が最も類似した実例・類似度順）— 文体・言い回し・感嘆符・絵文字・長さをこの例から忠実に再現すること。これが最優先の文体基準】\n" +
-          sorted.map((ex, i) =>
-            `[例${i + 1}${ex.is_starred ? "⭐" : ""}]\nお客様: 「${ex.customer_message}」\nスモラ: 「${ex.sent_reply}」`
-          ).join("\n\n");
+        return "\n\n【⭐ スモラの実際の返信例（状況が最も類似した実例・類似度順）— 文体・言い回し・感嘆符・絵文字・長さをこの例から忠実に再現すること。これが最優先の文体基準。ラベル: 王道=標準スモラスタイル / シンプル=短く簡潔 / C案=別角度アプローチ】\n" +
+          sorted.map((ex, i) => {
+            const angleTag = ex.reply_angle && ex.reply_angle !== "starred" ? `|${ANGLE_LABEL[ex.reply_angle] ?? ex.reply_angle}` : "";
+            return `[例${i + 1}${ex.is_starred ? "⭐" : ""}${angleTag}]\nお客様: 「${ex.customer_message}」\nスモラ: 「${ex.sent_reply}」`;
+          }).join("\n\n");
         }
       }
     }
@@ -801,14 +804,14 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
   // フォールバック: 全件対象（☆優先・フェーズ一致優先）
   const [{ data: sameStateFull }, { data: allStateFull }] = await Promise.all([
     // 同フェーズ全件: ☆降順 → 新着順
-    supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state, is_starred")
+    supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state, is_starred, reply_angle")
       .in("conversation_state", stateAliases)
       .not("embedding", "is", null)
       .order("is_starred", { ascending: false })
       .order("created_at", { ascending: false })
       .limit(60),
     // 全フェーズ全件: ☆降順 → 新着順
-    supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state, is_starred")
+    supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state, is_starred, reply_angle")
       .not("embedding", "is", null)
       .order("is_starred", { ascending: false })
       .order("created_at", { ascending: false })
@@ -831,10 +834,12 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
 
   if (all.length === 0) return "";
 
-  return "\n\n【⭐ スモラの実際の返信例（☆をつけた良質な実例）— 文体・言い回し・感嘆符・絵文字・長さをこの例から忠実に再現すること。これが最優先の文体基準】\n" +
-    all.map((ex, i) =>
-      `[例${i + 1}]\nお客様: 「${ex.customer_message}」\nスモラ: 「${ex.sent_reply}」`
-    ).join("\n\n");
+  return "\n\n【⭐ スモラの実際の返信例（☆をつけた良質な実例）— 文体・言い回し・感嘆符・絵文字・長さをこの例から忠実に再現すること。これが最優先の文体基準。ラベル: 王道=標準スモラスタイル / シンプル=短く簡潔 / C案=別角度アプローチ】\n" +
+    all.map((ex, i) => {
+      const ra = (ex as { reply_angle?: string | null }).reply_angle;
+      const angleTag = ra && ra !== "starred" ? `|${ANGLE_LABEL[ra] ?? ra}` : "";
+      return `[例${i + 1}${angleTag}]\nお客様: 「${ex.customer_message}」\nスモラ: 「${ex.sent_reply}」`;
+    }).join("\n\n");
 }
 
 // ─── POST ────────────────────────────────────────────────────────────────────

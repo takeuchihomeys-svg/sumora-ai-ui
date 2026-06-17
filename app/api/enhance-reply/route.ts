@@ -34,6 +34,8 @@ async function getEmbedding(text: string): Promise<number[] | null> {
   }
 }
 
+const ANGLE_LABEL: Record<string, string> = { A: "王道", B: "シンプル", C: "C案", short_direct: "短く直接" };
+
 async function fetchEnhanceContext(state: string, customerMessage?: string, lastStaffMsg?: string): Promise<{ knowledge: string; examples: string }> {
   const normalized = STATE_NORMALIZE[state] ?? state;
   const aliases = STATE_SEARCH_ALIASES[normalized] || [normalized];
@@ -107,10 +109,11 @@ async function fetchEnhanceContext(state: string, customerMessage?: string, last
         return scoreB - scoreA;
       }).slice(0, 10);
 
-      const examples = "\n【⭐ スモラの実際の送信例（状況が類似した良質な実例・類似度順）— 文体・言い回し・感嘆符・絵文字はこれに合わせる】\n" +
-        sorted.map((ex, i) =>
-          `[例${i + 1}${ex.is_starred ? "⭐" : ""}]\nお客様:「${ex.customer_message}」\nスモラ:「${ex.sent_reply}」`
-        ).join("\n\n");
+      const examples = "\n【⭐ スモラの実際の送信例（状況が類似した良質な実例・類似度順）— 文体・言い回し・感嘆符・絵文字はこれに合わせる。ラベル: 王道=標準スモラスタイル / シンプル=短く簡潔 / C案=別角度アプローチ】\n" +
+        sorted.map((ex, i) => {
+          const angleTag = ex.reply_angle && ex.reply_angle !== "starred" ? `|${ANGLE_LABEL[ex.reply_angle] ?? ex.reply_angle}` : "";
+          return `[例${i + 1}${ex.is_starred ? "⭐" : ""}${angleTag}]\nお客様:「${ex.customer_message}」\nスモラ:「${ex.sent_reply}」`;
+        }).join("\n\n");
 
       return { knowledge, examples };
     }
