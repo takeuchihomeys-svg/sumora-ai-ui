@@ -3071,6 +3071,12 @@ export default function Home() {
                     try { localStorage.setItem("conv_read_at", JSON.stringify(next)); } catch {}
                     return next;
                   });
+                  // 既読済みにした時: DB側のdraft_pending_atをクリア（Cronによる下書き生成をキャンセル）
+                  if (!wasRead) {
+                    void supabase.from("conversations")
+                      .update({ draft_pending_at: null, ai_draft: null })
+                      .eq("id", convId);
+                  }
                   // ③ 既読→未読に戻した時、プリ生成を即起動
                   if (wasRead) {
                     const conv = conversationsRef.current.find((c) => c.id === convId);
