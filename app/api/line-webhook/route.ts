@@ -246,77 +246,14 @@ async function handleTextMessage(
         }).catch(() => {});
       }
 
-      // 申込以降ステータスはai_draft生成不要（別フェーズの会話のため）
+      // 申込以降ステータスはai_draft生成不要
       if (["applying", "screening", "contract", "closed_won"].includes(convStatus)) return;
 
-      // 返信ドラフト自動生成
-      const [{ data: msgs }, { data: pc }] = await Promise.all([
-        db.from("messages").select("sender, text").eq("conversation_id", convId)
-          .order("created_at", { ascending: false }).limit(20),
-        pcId
-          ? db.from("property_customers")
-            .select("customer_name, desired_area, floor_plan, rent_min, rent_max, ai_summary, preferences, ng_points")
-            .eq("id", pcId).single()
-          : Promise.resolve({ data: null }),
-      ]);
-
-      const recentMsgs = ((msgs || []) as Array<{ sender: string; text: string }>)
-        .reverse()
-        .map((m) => ({ sender: m.sender, text: m.text || "" }));
-
-      type PC = { customer_name?: string; desired_area?: string; floor_plan?: string; rent_min?: number; rent_max?: number; ai_summary?: string; preferences?: string; ng_points?: string } | null;
-      const pcData = pc as PC;
-      const customerConditions = [
-        pcData?.desired_area && `エリア: ${pcData.desired_area}`,
-        pcData?.floor_plan && `間取り: ${pcData.floor_plan}`,
-        (pcData?.rent_min || pcData?.rent_max) && `家賃: ${pcData?.rent_min ? Math.floor(pcData.rent_min / 10000) + "万〜" : ""}${pcData?.rent_max ? Math.floor(pcData.rent_max / 10000) + "万" : ""}`,
-        pcData?.preferences && `こだわり: ${pcData.preferences}`,
-        pcData?.ng_points && `NG: ${pcData.ng_points}`,
-      ].filter(Boolean).join(", ");
-
-      // generate-reply はストリーミングレスポンス（1行目:JSON meta + 続き:本文）
-      const draftRes = await fetch(`${baseUrl}/api/generate-reply`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: text,
-          state: convStatus,
-          customerName: pcData?.customer_name || "",
-          recentMessages: recentMsgs,
-          customerConditions,
-          customerSummary: pcData?.ai_summary || "",
-        }),
-      });
-      if (draftRes.ok && draftRes.body) {
-        const reader = draftRes.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let metaDone = false;
-        let fullText = "";
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = decoder.decode(value, { stream: true });
-          if (!metaDone) {
-            buffer += chunk;
-            const nl = buffer.indexOf("\n");
-            if (nl >= 0) {
-              try {
-                const meta = JSON.parse(buffer.slice(0, nl)) as { ok: boolean };
-                if (!meta.ok) break;
-              } catch { break; }
-              metaDone = true;
-              fullText = buffer.slice(nl + 1);
-            }
-          } else {
-            fullText += chunk;
-          }
-        }
-        const finalDraft = fullText.trim();
-        if (finalDraft) {
-          await db.from("conversations").update({ ai_draft: finalDraft }).eq("id", convId);
-        }
-      }
+      // 60秒デバウンス: draft_pending_atを更新してCronに生成を委ねる
+      // 連続送信された場合も最後のメッセージから60秒後に未読まとめで生成される
+      await db.from("conversations")
+        .update({ draft_pending_at: new Date().toISOString(), ai_draft: null })
+        .eq("id", convId);
     } catch {}
   });
 
