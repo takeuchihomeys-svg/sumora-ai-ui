@@ -692,33 +692,73 @@ const STATE_SEARCH_ALIASES: Record<string, string[]> = {
   closed_won:  ["closed_won"],
 };
 
-async function fetchKnowledge(state: string): Promise<string> {
+type KnowledgeRow = { title: string; content: string; category: string; conversation_state: string; importance: number };
+
+async function fetchKnowledge(state: string, customerMessage?: string, analysisContext?: string): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
+  // pgvector検索（customerMessageがある場合・OPENAI_API_KEYが設定済みの場合）
+  if (customerMessage && process.env.OPENAI_API_KEY) {
+    const searchQuery = analysisContext
+      ? `${state}: ${customerMessage} ${analysisContext}`.slice(0, 2000)
+      : `${state}: ${customerMessage}`.slice(0, 2000);
+
+    const embedding = await getEmbedding(searchQuery);
+    if (embedding) {
+      const { data: vectorResults } = await supabase.rpc("match_reply_knowledge", {
+        query_embedding: embedding,
+        match_count: 40,
+        min_importance: 7,
+      }) as { data: Array<KnowledgeRow & { similarity: number }> | null };
+
+      if (vectorResults && vectorResults.length > 0) {
+        const diffLearned = vectorResults.filter(r => r.title.includes("差分学習")).slice(0, 20);
+        const correctionPairs = vectorResults.filter(r => r.title.includes("修正対比")).slice(0, 8);
+        const critical = vectorResults.filter(r => r.importance >= 9 && r.category === "principle").slice(0, 15);
+        const patterns = vectorResults.filter(r => r.category === "pattern" && !r.title.includes("差分学習") && !r.title.includes("修正対比")).slice(0, 8);
+        const phrases = vectorResults.filter(r => r.category === "phrase").slice(0, 6);
+
+        const sections: string[] = [];
+        if (diffLearned.length > 0) {
+          sections.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned.map(k => `・${k.content}`).join("\n"));
+        }
+        if (correctionPairs.length > 0) {
+          sections.push("【🟠 スタッフが修正したポイント（このフェーズ専用）】\n" + correctionPairs.map(k => `・${k.content}`).join("\n"));
+        }
+        if (critical.length > 0) {
+          sections.push("【⚠️ 絶対ルール】\n" + critical.map(k => `・${k.content}`).join("\n"));
+        }
+        if (patterns.length > 0) {
+          sections.push("【スモラの営業パターン・原則】\n" + patterns.map(k => `・${k.content}`).join("\n"));
+        }
+        if (phrases.length > 0) {
+          sections.push("【スモラのフレーズ】\n" + phrases.map(k => `「${k.content}」`).join("　"));
+        }
+        return sections.length > 0 ? "\n\n" + sections.join("\n\n") : "";
+      }
+    }
+  }
+
+  // フォールバック: importance順検索（OPENAI_API_KEY未設定時 or embedding取得失敗時）
   const [{ data: stateDiff }, { data: globalDiff }, { data: correctionPairs }, { data: global }, { data: stateSpecific }] = await Promise.all([
-    // ① 差分学習（フェーズ別・優先）: importance降順→新着順でimportance9を確実に取得
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
       .ilike("title", "%差分学習%").gte("importance", 7)
       .in("conversation_state", stateAliases)
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false }).limit(15),
-    // ① 差分学習（グローバル補完）: 全フェーズ共通ルールで残り枠を補完
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
       .ilike("title", "%差分学習%").gte("importance", 7)
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false }).limit(10),
-    // ② 修正対比ルール [修正対比]: スタッフがどう直したかのパターン（第2優先）
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
       .ilike("title", "%修正対比%").in("conversation_state", stateAliases)
       .order("importance", { ascending: false }).limit(20),
-    // ③ 全体共通ナレッジ: importance8以上・全ステート横断（principle除外・新着優先）
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
       .gte("importance", 8)
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
       .not("category", "eq", "principle")
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false }).limit(20),
-    // ④ state別ナレッジ: importance7以上・抽象的なprincipleを除外（同importance内は新着優先）
     supabase.from("ai_reply_knowledge").select("category, title, content, importance")
       .in("conversation_state", stateAliases).gte("importance", 7)
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
@@ -727,40 +767,34 @@ async function fetchKnowledge(state: string): Promise<string> {
       .order("created_at", { ascending: false }).limit(24),
   ]);
 
-  // フェーズ別を優先・グローバルで補完（重複除去・合計20件以内）
   const stateDiffList = stateDiff || [];
-  const globalDiffDeduped = (globalDiff || []).filter(
-    (g) => !stateDiffList.some((s) => s.content === g.content)
-  );
+  const globalDiffDeduped = (globalDiff || []).filter(g => !stateDiffList.some(s => s.content === g.content));
   const diffLearned = [...stateDiffList, ...globalDiffDeduped].slice(0, 20);
 
   const stateSpecificList = stateSpecific || [];
-  const globalList = (global || []).filter(
-    (g) => !stateSpecificList.some((s) => s.content === g.content)
-  );
+  const globalList = (global || []).filter(g => !stateSpecificList.some(s => s.content === g.content));
   const all = [...stateSpecificList, ...globalList];
   if (diffLearned.length === 0 && (correctionPairs?.length ?? 0) === 0 && all.length === 0) return "";
 
-  // F修正: criticalはprincipleカテゴリのみ（pattern/phraseが「絶対ルール」に混入しないよう）
-  const critical = all.filter((k) => (k.importance || 0) >= 9 && k.category === "principle");
-  const patterns = all.filter((k) => (k.importance || 0) >= 7 && k.category === "pattern");
-  const phrases  = all.filter((k) => k.category === "phrase");
+  const critical = all.filter(k => (k.importance || 0) >= 9 && k.category === "principle");
+  const patterns = all.filter(k => (k.importance || 0) >= 7 && k.category === "pattern");
+  const phrases  = all.filter(k => k.category === "phrase");
 
   const sections: string[] = [];
   if (diffLearned.length > 0) {
-    sections.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned.map((k) => `・${k.content}`).join("\n"));
+    sections.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned.map(k => `・${k.content}`).join("\n"));
   }
   if ((correctionPairs?.length ?? 0) > 0) {
-    sections.push("【🟠 スタッフが修正したポイント（このフェーズ専用）】\n" + correctionPairs!.slice(0, 8).map((k) => `・${k.content}`).join("\n"));
+    sections.push("【🟠 スタッフが修正したポイント（このフェーズ専用）】\n" + correctionPairs!.slice(0, 8).map(k => `・${k.content}`).join("\n"));
   }
   if (critical.length > 0) {
-    sections.push("【⚠️ 絶対ルール】\n" + critical.slice(0, 15).map((k) => `・${k.content}`).join("\n"));
+    sections.push("【⚠️ 絶対ルール】\n" + critical.slice(0, 15).map(k => `・${k.content}`).join("\n"));
   }
   if (patterns.length > 0) {
-    sections.push("【スモラの営業パターン・原則】\n" + patterns.slice(0, 8).map((k) => `・${k.content}`).join("\n"));
+    sections.push("【スモラの営業パターン・原則】\n" + patterns.slice(0, 8).map(k => `・${k.content}`).join("\n"));
   }
   if (phrases.length > 0) {
-    sections.push("【スモラのフレーズ】\n" + phrases.slice(0, 6).map((k) => `「${k.content}」`).join("　"));
+    sections.push("【スモラのフレーズ】\n" + phrases.slice(0, 6).map(k => `「${k.content}」`).join("　"));
   }
   return sections.length > 0 ? "\n\n" + sections.join("\n\n") : "";
 }
@@ -1000,7 +1034,7 @@ export async function POST(req: NextRequest) {
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
     const [detectedIntent, knowledge, examples, phrases, autoSummary] = await Promise.all([
       classifyIntent(message, currentState, history),
-      fetchKnowledge(currentState),
+      fetchKnowledge(currentState, message, analysisContext),
       fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext),
       fetchPhrases(currentState),
       // ai_summaryがない場合のみ条件テキスト+履歴から即席合成（Haiku・並列なので遅延ゼロ）

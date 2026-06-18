@@ -441,6 +441,19 @@ ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS reply_angle TEXT;
 -- ai_reply_examples: 差分自動学習の処理済みフラグ
 ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS diff_analyzed_at TIMESTAMPTZ;
 
+-- ai_reply_knowledge: pgvector類似検索用embeddingカラム
+ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS embedding vector(1536);
+CREATE INDEX IF NOT EXISTS ai_reply_knowledge_embedding_idx ON ai_reply_knowledge USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50);
+CREATE OR REPLACE FUNCTION match_reply_knowledge(query_embedding vector, match_count integer, min_importance integer DEFAULT 7)
+RETURNS TABLE(id uuid, title text, content text, category text, conversation_state text, importance integer, similarity float)
+LANGUAGE sql STABLE AS $$
+  SELECT ak.id, ak.title, ak.content, ak.category, ak.conversation_state, ak.importance,
+    (1 - (ak.embedding <=> query_embedding))::float AS similarity
+  FROM ai_reply_knowledge ak
+  WHERE ak.embedding IS NOT NULL AND ak.importance >= min_importance
+  ORDER BY ak.embedding <=> query_embedding LIMIT match_count
+$$;
+
 -- match_reply_examples: reply_angleを返り値に追加（選ばれた実例のブースト用）
 -- 戻り値型変更のためDROP→CREATEが必要
 DROP FUNCTION IF EXISTS match_reply_examples(vector, int, text[]);

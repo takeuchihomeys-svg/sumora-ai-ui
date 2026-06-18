@@ -4,6 +4,23 @@ import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
+async function getEmbedding(text: string): Promise<number[] | null> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  try {
+    const res = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { data: Array<{ embedding: number[] }> };
+    return data.data[0]?.embedding ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // AIドラフトと実送信の差分を比較して学習ルールを抽出
 async function analyzeDiff(
   customerMessage: string,
@@ -114,6 +131,8 @@ export async function POST(req: NextRequest) {
         const ALLOWED_CATEGORIES = new Set(["pattern", "style", "phrase", "principle"]);
         const rawCategory = (result.category ?? "pattern").split("=")[0].trim();
         const safeCategory = ALLOWED_CATEGORIES.has(rawCategory) ? rawCategory : "pattern";
+        const embeddingInput = `${conversation_state ?? "proposing"}: ${result.rule}`;
+        const embedding = await getEmbedding(embeddingInput);
         await supabase.from("ai_reply_knowledge").insert({
           title: result.title,
           content: result.rule,
@@ -121,6 +140,7 @@ export async function POST(req: NextRequest) {
           conversation_state: conversation_state ?? "proposing",
           importance: 8,
           source_example_id: id,
+          ...(embedding ? { embedding: JSON.stringify(embedding) } : {}),
         });
         learned++;
       }
