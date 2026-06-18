@@ -46,7 +46,11 @@ export async function GET() {
     .is("ai_draft", null)
     .is("draft_pending_at", null)
     .gte("updated_at", yesterday)
-    .not("status", "in", "(applying,screening,contract,closed_won,closed_lost)")
+    .neq("status", "applying")
+    .neq("status", "screening")
+    .neq("status", "contract")
+    .neq("status", "closed_won")
+    .neq("status", "closed_lost")
     .limit(5);
 
   // 重複除外してまとめる
