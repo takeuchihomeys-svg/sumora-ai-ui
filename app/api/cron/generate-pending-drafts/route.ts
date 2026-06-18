@@ -67,7 +67,7 @@ export async function GET() {
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   if (combined.length === 0) {
-    return NextResponse.json({ ok: true, processed: 0 });
+    return NextResponse.json({ ok: true, processed: 0, debug: { pending: pendingConvs?.length ?? 0, orphaned: orphanedConvs?.length ?? 0, orphanedError: orphanedError?.message ?? null, yesterday } });
   }
 
   const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
