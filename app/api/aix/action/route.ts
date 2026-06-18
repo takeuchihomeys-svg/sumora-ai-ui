@@ -180,7 +180,8 @@ export async function POST(request: NextRequest) {
 [間取りの各部屋の広さを描写（LDK○帖と開放感のあるリビングに、洋室○帖・洋室○帖と各室広々〜など）。続けて設備はオススメポイントに書いていない特徴的なもの2〜3項目のみを記載して「設備面も充実しております！！」で締める。全設備を列挙しない。]
 
 [締め文 — 以下の条件で使い分ける]
-・退去予定がある場合：「○月末退去予定のため、○月○日以降にご内覧可能です！！」
+・「退去予定日:」としてユーザーメッセージに日付が明示されている場合：その日付をそのまま使い「[明示された日付]退去予定のため、[明示された日付]以降にご内覧可能です！！」（画像から読み直し絶対禁止）
+・退去予定が画像から読み取れる場合（日付未明示）：「○月末退去予定のため、○月○日以降にご内覧可能です！！」
 ・退去予定がない場合：「[お客様名]さんお気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！」
 
 【フォーマットルール — 必ず全て守ること】
@@ -226,7 +227,11 @@ ${SMORA_COMMON_RULES}`;
         .replace("{{phrases}}", phraseText ? `【よく使うフレーズ】\n${phraseText}` : "");
 
       const conditionsText = customer_conditions as string | undefined;
-      const userText = `${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${extra_input ? `\n追加情報: ${extra_input}` : ""}`;
+      // move_out_date が渡された場合は明示注入（画像OCR誤読防止）
+      const moveOutNote = move_out_date
+        ? `\n\n【退去予定日（必ずこの日付をそのまま使うこと・画像から読み直し禁止）】\n${move_out_date}`
+        : "";
+      const userText = `${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${extra_input ? `\n追加情報: ${extra_input}` : ""}${moveOutNote}`;
 
       const content = [
         { type: "text", text: userText },

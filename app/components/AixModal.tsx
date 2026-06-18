@@ -156,6 +156,8 @@ export default function AixModal({
   // 申込へ！専用: 空室状況 + 退去予定日
   const [appVacancyStatus, setAppVacancyStatus] = useState<"vacant" | "scheduled" | null>(null);
   const [appMoveOutDate, setAppMoveOutDate] = useState("");
+  // 物件オススメ専用: analyze-propertyで自動抽出した退去予定日
+  const [propMoveOutDate, setPropMoveOutDate] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const conditionFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -218,7 +220,29 @@ export default function AixModal({
     if (!file) return;
     setImageFile(file);
     const reader = new FileReader();
-    reader.onload = () => setImagePreview(String(reader.result ?? ""));
+    reader.onload = () => {
+      const dataUrl = String(reader.result ?? "");
+      setImagePreview(dataUrl);
+      // 物件オススメ: 退去日を自動抽出（OCR誤読防止）
+      if (actionType === "property_recommendation") {
+        setPropMoveOutDate("");
+        const [header, base64] = dataUrl.split(",");
+        const mediaType = header.match(/data:([^;]+)/)?.[1] || "image/jpeg";
+        void fetch("/api/aix/analyze-property", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ images: [{ base64, mediaType }] }),
+        }).then(res => res.json() as Promise<{ ok: boolean; properties?: Array<{ name: string; status: string; move_out: string }> }>)
+          .then(data => {
+            if (data.ok && data.properties?.length) {
+              const prop = data.properties[0];
+              if (prop.status === "scheduled" && prop.move_out) {
+                setPropMoveOutDate(prop.move_out);
+              }
+            }
+          }).catch(() => {});
+      }
+    };
     reader.readAsDataURL(file);
     setPreview("");
     setParsedEstimate(null);
@@ -346,6 +370,8 @@ export default function AixModal({
           // 条件スクショなし: 物件資料のみで生成
           body.image_url = await uploadImage(imageFile);
         }
+        // 自動抽出した退去予定日を注入（OCR誤読防止）
+        if (propMoveOutDate) body.move_out_date = propMoveOutDate;
       } else if (actionType === "property_send") {
         if (sendImageFiles.length > 0) {
           const urls = await Promise.all(sendImageFiles.map(f => uploadImage(f)));
