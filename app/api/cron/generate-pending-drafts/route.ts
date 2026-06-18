@@ -28,16 +28,36 @@ export async function GET() {
   const db = getDb();
   const threshold = new Date(Date.now() - 60 * 1000).toISOString();
 
-  // 60秒以上前にpendingになった会話を最大10件取得
+  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+  // ① 60秒以上前にpendingになった会話（デバウンス経過）
   const { data: pendingConvs, error } = await db
     .from("conversations")
     .select("id, status, property_customer_id, last_sender")
     .not("draft_pending_at", "is", null)
     .lte("draft_pending_at", threshold)
-    .limit(10);
+    .limit(8);
+
+  // ② 取りこぼし救済: pending_atなし・下書きなし・24時間以内・未返信
+  const { data: orphanedConvs } = await db
+    .from("conversations")
+    .select("id, status, property_customer_id, last_sender")
+    .eq("last_sender", "customer")
+    .is("ai_draft", null)
+    .is("draft_pending_at", null)
+    .gte("updated_at", yesterday)
+    .not("status", "in", '("applying","screening","contract","closed_won","closed_lost")')
+    .limit(5);
+
+  // 重複除外してまとめる
+  const pendingIds = new Set((pendingConvs || []).map(c => c.id as string));
+  const combined = [
+    ...(pendingConvs || []),
+    ...(orphanedConvs || []).filter(c => !pendingIds.has(c.id as string)),
+  ];
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  if (!pendingConvs || pendingConvs.length === 0) {
+  if (combined.length === 0) {
     return NextResponse.json({ ok: true, processed: 0 });
   }
 
@@ -47,7 +67,7 @@ export async function GET() {
   let processed = 0;
   let skipped = 0;
 
-  for (const conv of pendingConvs) {
+  for (const conv of combined) {
     const convId = conv.id as string;
     const convStatus = conv.status as string;
     const pcId = conv.property_customer_id as string | null;

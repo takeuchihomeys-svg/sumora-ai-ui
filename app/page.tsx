@@ -275,6 +275,7 @@ export default function Home() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [replyDraft, setReplyDraft] = useState("");
+  const [draftIsAi, setDraftIsAi] = useState(false); // AI生成の下書きがテキストエリアに入っているか
   const [aiDraftExpanded, setAiDraftExpanded] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -1058,6 +1059,7 @@ export default function Home() {
       setDraftPreparing(false);
       setReplyDraft(selectedConversation.aiDraft);
       aiDraftRef.current = selectedConversation.aiDraft;
+      setDraftIsAi(true);
       setConversations((prev) =>
         prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null } : c)
       );
@@ -1065,6 +1067,7 @@ export default function Home() {
     } else {
       setReplyDraft("");
       aiDraftRef.current = "";
+      setDraftIsAi(false);
       // 未読 + ai_draft未生成 → 同期APIで生成してレスポンスから直接セット（Realtime不要）
       if (selectedConversation.lastSender === "customer" && selectedConversation.id) {
         const rAt = manuallyReadAtRef.current[selectedConversation.id];
@@ -1090,6 +1093,7 @@ export default function Home() {
                 setDraftPreparing(false);
                 setReplyDraft(data.draft);
                 aiDraftRef.current = data.draft;
+                setDraftIsAi(true);
               } else {
                 setDraftPreparing(false);
               }
@@ -1118,6 +1122,7 @@ export default function Home() {
     setDraftPreparing(false);
     setReplyDraft(selectedConversation.aiDraft);
     aiDraftRef.current = selectedConversation.aiDraft;
+    setDraftIsAi(true);
     setConversations((prev) =>
       prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null } : c)
     );
@@ -1777,6 +1782,7 @@ export default function Home() {
         }).catch(() => {});
 
         aiDraftRef.current = "";
+        setDraftIsAi(false);
         selectedPatternAngleRef.current = null;
         replyTargetCustomerMsgRef.current = "";
       }
@@ -2869,7 +2875,7 @@ export default function Home() {
               {/* 文章クリアボタン（入力/AI文案があるときのみ表示） */}
               {replyDraft && (
                 <button
-                  onClick={() => { setReplyDraft(""); aiDraftRef.current = ""; }}
+                  onClick={() => { setReplyDraft(""); aiDraftRef.current = ""; setDraftIsAi(false); }}
                   className="flex h-8 w-8 items-center justify-center rounded-full border border-[#d1d7db] bg-white text-[#54656f] shadow-sm active:scale-95 transition-transform duration-75"
                   title="文章を消す"
                 >
@@ -2913,8 +2919,9 @@ export default function Home() {
                   <div className="flex-1" />
                   <button
                     onClick={() => {
-                      aiDraftRef.current = selectedConversation.aiDraft!; // ② 送信時に学習データとして記録
+                      aiDraftRef.current = selectedConversation.aiDraft!;
                       setReplyDraft(selectedConversation.aiDraft!);
+                      setDraftIsAi(true);
                       setAiDraftExpanded(false);
                       setConversations((prev) => prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null } : c));
                       supabase.from("conversations").update({ ai_draft: null }).eq("id", selectedConversation.id).then(() => {});
@@ -2947,16 +2954,17 @@ export default function Home() {
             )}
 
             {/* テキスト入力 */}
-            <div className={`flex items-center gap-2 rounded-[24px] bg-[#f0f2f5] px-4 py-2 transition-all ${inputFocused ? "rounded-[16px]" : ""}`}>
+            <div className={`flex items-center gap-2 rounded-[24px] px-4 py-2 transition-all ${inputFocused ? "rounded-[16px]" : ""} ${draftIsAi && replyDraft ? "bg-[#e8f4ff] border border-blue-200" : "bg-[#f0f2f5]"}`}>
               <div className="flex flex-1 flex-col gap-0.5 min-w-0">
-                {replyDraft && !inputFocused && (
-                  <span className="text-[10px] font-bold text-blue-500 leading-none">AI文案</span>
+                {draftIsAi && replyDraft && (
+                  <span className="text-[10px] font-bold text-blue-600 leading-none">⚡ AI下書き — 確認して送信 or 編集OK</span>
                 )}
                 <textarea
                   ref={textareaRef}
                   value={replyDraft}
                   onChange={(e) => {
                     setReplyDraft(e.target.value);
+                    setDraftIsAi(false); // 編集開始でAI下書きインジケーター解除
                     e.target.style.height = "auto";
                     e.target.style.height = `${Math.min(e.target.scrollHeight, 320)}px`;
                   }}
