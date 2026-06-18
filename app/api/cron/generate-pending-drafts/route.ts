@@ -39,7 +39,7 @@ export async function GET() {
     .limit(8);
 
   // ② 取りこぼし救済: pending_atなし・下書きなし・24時間以内・未返信
-  const { data: orphanedConvs } = await db
+  const { data: orphanedConvs, error: orphanedError } = await db
     .from("conversations")
     .select("id, status, property_customer_id, last_sender")
     .eq("last_sender", "customer")
@@ -52,6 +52,11 @@ export async function GET() {
     .neq("status", "closed_won")
     .neq("status", "closed_lost")
     .limit(5);
+
+  if (orphanedError) {
+    console.error("[generate-pending-drafts] orphaned query error:", orphanedError);
+  }
+  console.log("[generate-pending-drafts] pending:", pendingConvs?.length ?? 0, "orphaned:", orphanedConvs?.length ?? 0, "yesterday:", yesterday);
 
   // 重複除外してまとめる
   const pendingIds = new Set((pendingConvs || []).map(c => c.id as string));
