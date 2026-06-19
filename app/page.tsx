@@ -276,6 +276,8 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState<string>("");
   const [replyDraft, setReplyDraft] = useState("");
   const [draftIsAi, setDraftIsAi] = useState(false); // AI生成の下書きがテキストエリアに入っているか
+  const [draftNoEmoji, setDraftNoEmoji] = useState(false); // 絵文字なしモード
+  const [draftOrigText, setDraftOrigText] = useState(""); // 絵文字なし切替前の原文（復元用）
   const [textareaHeightPx, setTextareaHeightPx] = useState(22);
   const [aiDraftExpanded, setAiDraftExpanded] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
@@ -1073,6 +1075,8 @@ export default function Home() {
     // 会話切替時は必ず準備中状態をリセット（前の会話のタイムアウト・fetch残留を防ぐ）
     if (draftTimeoutRef.current) { clearTimeout(draftTimeoutRef.current); draftTimeoutRef.current = null; }
     setDraftPreparing(false);
+    setDraftNoEmoji(false);
+    setDraftOrigText("");
 
     // 返信待ち + ai_draft あり → テキストエリアに自動セット（「使う」クリック不要）
     if (selectedConversation.aiDraft && selectedConversation.lastSender === "customer") {
@@ -1423,6 +1427,27 @@ export default function Home() {
       console.error("enhance-reply error:", err);
     } finally {
       setEnhancing(false);
+    }
+  };
+
+  const stripEmoji = (text: string) =>
+    text
+      .replace(/\p{Extended_Pictographic}[\u{FE0F}\u{FE0E}]?(‍\p{Extended_Pictographic}[\u{FE0F}\u{FE0E}]?)*/gu, "")
+      .replace(/[ \t]{2,}/g, " ")
+      .replace(/^ /mg, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
+  const handleDraftEmojiToggle = (noEmoji: boolean) => {
+    if (noEmoji === draftNoEmoji) return;
+    if (noEmoji) {
+      setDraftOrigText(replyDraft);
+      setReplyDraft(stripEmoji(replyDraft));
+      setDraftNoEmoji(true);
+    } else {
+      if (draftOrigText) setReplyDraft(draftOrigText);
+      setDraftOrigText("");
+      setDraftNoEmoji(false);
     }
   };
 
@@ -3256,7 +3281,19 @@ export default function Home() {
             <div className={`flex items-center gap-2 rounded-[24px] px-4 py-2 transition-all ${inputFocused ? "rounded-[16px]" : ""} ${draftIsAi && replyDraft ? "bg-[#e8f4ff] border border-blue-200" : "bg-[#f0f2f5]"}`}>
               <div className="flex flex-1 flex-col gap-0.5 min-w-0">
                 {draftIsAi && replyDraft && (
-                  <span className="text-[10px] font-bold text-blue-600 leading-none">⚡ AI下書き — 確認して送信 or 編集OK</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-bold text-blue-600 leading-none shrink-0">⚡ AI下書き — 確認して送信 or 編集OK</span>
+                    <div className="flex rounded-full border border-blue-200 overflow-hidden text-[10px] font-bold shrink-0">
+                      <button
+                        onClick={() => handleDraftEmojiToggle(false)}
+                        className={`px-2 py-0.5 transition-colors ${!draftNoEmoji ? "bg-blue-500 text-white" : "bg-white text-[#888]"}`}
+                      >絵文字あり</button>
+                      <button
+                        onClick={() => handleDraftEmojiToggle(true)}
+                        className={`px-2 py-0.5 transition-colors ${draftNoEmoji ? "bg-blue-500 text-white" : "bg-white text-[#888]"}`}
+                      >絵文字なし</button>
+                    </div>
+                  </div>
                 )}
                 <textarea
                   ref={textareaRef}
