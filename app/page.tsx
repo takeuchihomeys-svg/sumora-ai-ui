@@ -2673,12 +2673,17 @@ export default function Home() {
               <div className="pointer-events-none absolute left-0 right-0 flex justify-center">
                 <button
                   onClick={() => fetchConversationsAndMessages()}
-                  className="pointer-events-auto flex items-center max-w-[60%] active:opacity-60 transition-opacity"
+                  className="pointer-events-auto flex flex-col items-center max-w-[60%] active:opacity-60 transition-opacity"
                   title="タップして更新"
                 >
                   <span className="truncate text-[15px] font-semibold text-[#111b21] text-center">
                     {selectedConversation.id ? selectedConversation.customerName : "会話を選択"}
                   </span>
+                  {selectedConversation.id && (
+                    <span className="text-[5px] text-[#999] leading-none mt-0.5">
+                      {getAccountMeta(selectedConversation.account).label}
+                    </span>
+                  )}
                 </button>
               </div>
 
