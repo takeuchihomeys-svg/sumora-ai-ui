@@ -57,7 +57,7 @@ async function pushToLine(to: string, text: string) {
 }
 
 async function generateQuote(hotCount: number, totalCount: number): Promise<string> {
-  const today = new Date().toLocaleDateString("ja-JP", { weekday: "long" });
+  const today = new Date().toLocaleDateString("ja-JP", { weekday: "long", timeZone: "Asia/Tokyo" });
   try {
     const res = await anthropic.messages.create({
       model: "claude-haiku-4-5-20251001",
@@ -106,7 +106,7 @@ export async function POST() {
     return NextResponse.json({ ok: true, count: 0 });
   }
 
-  const today = new Date().toLocaleDateString("ja-JP", { month: "long", day: "numeric", weekday: "short" });
+  const today = new Date().toLocaleDateString("ja-JP", { month: "long", day: "numeric", weekday: "short", timeZone: "Asia/Tokyo" });
   const hotCount = customers.filter(c => c.status === "hot").length;
 
   const lines = [

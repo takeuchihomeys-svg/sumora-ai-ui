@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "image_base64が空です" }, { status: 400 });
     }
 
-    const name = file_name || `物件リスト_${new Date().toLocaleDateString("ja-JP").replace(/\//g, "-")}.png`;
+    const name = file_name || `物件リスト_${new Date().toLocaleDateString("ja-JP", { timeZone: "Asia/Tokyo" }).replace(/\//g, "-")}.png`;
 
     // Vercel Blobにアップロード
     const bytes = Buffer.from(image_base64, "base64");

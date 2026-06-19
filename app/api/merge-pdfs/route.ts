@@ -136,7 +136,7 @@ export async function POST(req: NextRequest) {
 
     const mergedBytes = await merged.save();
     const base64Result = Buffer.from(mergedBytes).toString("base64");
-    const today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
+    const today = new Date().toLocaleDateString("ja-JP", { timeZone: "Asia/Tokyo" }).replace(/\//g, "-");
     // タイムスタンプで一意なファイル名にしてCDNキャッシュの古いPDF誤返却を防ぐ
     // allowOverwrite:true でも Vercel Blob CDN は同じURLをキャッシュし続けるため
     const baseName = (file_name || `物件まとめ_${today}`).replace(/\.pdf$/i, "");
