@@ -16,11 +16,21 @@ const STATUS_LABELS: Record<string, string> = {
   contract:             "契約中",
 };
 
+function getJSTHour(): number {
+  return (new Date().getUTCHours() + 9) % 24;
+}
+
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
   if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
+  // 9:00〜19:00 JST の間だけ配信
+  const jstHour = getJSTHour();
+  if (jstHour < 9 || jstHour >= 19) {
+    return NextResponse.json({ ok: true, skipped: true, reason: `JST ${jstHour}時 — 配信時間外（9:00〜19:00のみ）` });
   }
 
   // 要対応の会話を全取得
