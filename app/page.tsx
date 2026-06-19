@@ -276,6 +276,7 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState<string>("");
   const [replyDraft, setReplyDraft] = useState("");
   const [draftIsAi, setDraftIsAi] = useState(false); // AI生成の下書きがテキストエリアに入っているか
+  const [textareaHeightPx, setTextareaHeightPx] = useState(22);
   const [aiDraftExpanded, setAiDraftExpanded] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -1143,12 +1144,16 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedConversation.aiDraft]);
 
-  // replyDraftが変わったらtextareaの高さを自動調整
+  // replyDraftが変わったらtextareaの高さを自動調整（iOS SafariでのscrollHeight誤算対策でrAF使用）
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 250)}px`;
+    requestAnimationFrame(() => {
+      el.style.height = "auto";
+      const newH = Math.min(el.scrollHeight, 250);
+      el.style.height = `${newH}px`;
+      setTextareaHeightPx(newH);
+    });
   }, [replyDraft]);
 
   const latestCustomerMessage = useMemo(() => {
@@ -3173,14 +3178,16 @@ export default function Home() {
                     setReplyDraft(e.target.value);
                     setDraftIsAi(false); // 編集開始でAI下書きインジケーター解除
                     e.target.style.height = "auto";
-                    e.target.style.height = `${Math.min(e.target.scrollHeight, 320)}px`;
+                    const newH = Math.min(e.target.scrollHeight, 320);
+                    e.target.style.height = `${newH}px`;
+                    setTextareaHeightPx(newH);
                   }}
                   onFocus={() => setInputFocused(true)}
                   onBlur={() => setInputFocused(false)}
                   rows={1}
                   placeholder={draftPreparing ? "AI返信案を準備中..." : "Aa"}
                   className="min-h-[22px] w-full resize-none overflow-y-auto bg-transparent text-[14px] leading-6 text-[#111b21] outline-none placeholder:text-[#aaa]"
-                  style={{ height: "22px" }}
+                  style={{ height: `${textareaHeightPx}px` }}
                 />
               </div>
               <button
