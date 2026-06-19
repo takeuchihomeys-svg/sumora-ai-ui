@@ -99,7 +99,9 @@ chrome.downloads.onCreated.addListener((downloadItem) => {
   }
   if (!senderTabId) return;
 
-  console.log("[AXLX BG] 一括DL検知 → MAINworld再fetch:", url.slice(0, 80));
+  // ダウンロードをキャンセルしてAdobeが開くのを防ぐ（内容はMAIN world fetchで取得）
+  chrome.downloads.cancel(downloadItem.id).catch(() => {});
+  console.log("[AXLX BG] 一括DL検知 → キャンセル & MAINworld再fetch:", url.slice(0, 80));
 
   // レインズタブのMAIN worldでURLをfetch（ページのセッションCookieが自動的に使われる）
   chrome.scripting.executeScript({
