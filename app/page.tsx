@@ -3033,7 +3033,7 @@ export default function Home() {
                       onClick={() => setSparkleMeetingPlaceOpen((v) => !v)}
                       className={`rounded-full border px-3 py-1 text-[12px] font-medium transition-all ${sparkleMeetingPlace ? "border-[#00897b] bg-[#e0f2f1] text-[#00695c]" : sparkleMeetingPlaceOpen ? "border-[#7c4dff] bg-[#ede7ff] text-[#6c3fc7]" : "border-[#d1d7db] bg-white text-[#444]"}`}
                     >
-                      📍 集合場所{sparkleMeetingPlace ? " ✓" : ""}
+                      集合場所{sparkleMeetingPlace ? " ✓" : ""}
                     </button>
                   </div>
 
@@ -3042,7 +3042,7 @@ export default function Home() {
                     <div className="mt-2 rounded-2xl border border-[#b2dfdb] bg-[#f0faf9] px-3 py-2.5">
                       {sparkleMeetingPlace ? (
                         <div className="flex items-center gap-2">
-                          <span className="flex-1 text-[12px] text-[#00695c]">📍 {sparkleMeetingPlace}</span>
+                          <span className="flex-1 text-[12px] text-[#00695c]">{sparkleMeetingPlace}</span>
                           <button
                             onClick={() => { setSparkleMeetingPlace(""); }}
                             className="text-[11px] text-[#aaa] active:text-[#555]"
@@ -3050,7 +3050,7 @@ export default function Home() {
                         </div>
                       ) : (
                         <>
-                          <p className="mb-2 text-[12px] font-bold text-[#00695c]">📍 集合場所を画像から読み取る</p>
+                          <p className="mb-2 text-[12px] font-bold text-[#00695c]">集合場所を画像から読み取る</p>
                           <p className="mb-2 text-[11px] text-[#667781]">物件の外観・エントランス・物件図面など、物件名や住所がわかる画像を選んでください</p>
                           <label className={`flex items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-3 text-[12px] font-bold cursor-pointer transition-all ${sparkleMeetingPlaceLoading ? "border-[#b2dfdb] text-[#aaa]" : "border-[#00897b] text-[#00695c] active:bg-[#e0f2f1]"}`}>
                             {sparkleMeetingPlaceLoading ? (
@@ -3059,7 +3059,7 @@ export default function Home() {
                                 AI読み取り中...
                               </>
                             ) : (
-                              <>📷 画像を選ぶ</>
+                              <>画像を選ぶ</>
                             )}
                             <input
                               type="file"
