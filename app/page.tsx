@@ -1470,7 +1470,7 @@ export default function Home() {
         : "",
       sparkleNoEmoji ? "絵文字・顔文字は一切使わずテキストのみで書くこと" : "",
     ].filter(Boolean).join(" / ");
-    if (!replyHint) return;
+    // replyHintが空でも会話コンテキストで生成する（ブロックしない）
 
     try {
       setSparkleGenerating(true);
@@ -3153,7 +3153,7 @@ export default function Home() {
                 {/* 生成ボタン */}
                 <button
                   onClick={handleSparkleGenerate}
-                  disabled={sparkleGenerating || (!sparkleKeyword.trim() && sparkleSelectedSituations.length === 0)}
+                  disabled={sparkleGenerating}
                   className="w-full rounded-2xl bg-gradient-to-r from-[#7c4dff] to-[#3d9cf5] py-2.5 text-[13px] font-bold text-white shadow-md disabled:opacity-40 active:opacity-80 transition-opacity"
                 >
                   {sparkleGenerating ? (
