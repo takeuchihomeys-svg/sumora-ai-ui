@@ -1421,7 +1421,7 @@ export default function Home() {
     }
   };
 
-  const DEFAULT_SPARKLE_SITUATIONS = ["物件を提案する", "内見を提案する", "フォロー連絡", "初期費用の説明", "審査について", "申込を促す", "日程調整", "お礼・感謝"];
+  const DEFAULT_SPARKLE_SITUATIONS = ["物件を特にオススメする", "内見を提案する", "初期費用の説明", "審査について", "申込を促す", "日程調整", "お礼・感謝"];
 
   const handleSparkleGenerate = async () => {
     if (!selectedConversation?.id || sparkleGenerating) return;
