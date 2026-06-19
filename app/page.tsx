@@ -1455,14 +1455,17 @@ export default function Home() {
     }
   };
 
-  const DEFAULT_SPARKLE_SITUATIONS = ["物件を特にオススメする", "内見を提案する", "初期費用の説明", "審査について", "申込を促す", "日程調整", "お礼・感謝"];
+  const DEFAULT_SPARKLE_SITUATIONS = ["物件を特にオススメする", "内見を提案する", "初期費用の説明", "審査について", "申込を促す", "日程調整", "お礼・感謝", "ピックアップ（約束）"];
 
   const handleSparkleGenerate = async () => {
     if (!selectedConversation?.id || sparkleGenerating) return;
-    const situationPart = sparkleSelectedSituations.join("・");
+    const hasPickupPromise = sparkleSelectedSituations.includes("ピックアップ（約束）");
+    const otherSituations = sparkleSelectedSituations.filter(s => s !== "ピックアップ（約束）");
+    const situationPart = otherSituations.join("・");
     const replyHint = [
       sparkleKeyword.trim() ? `キーワード: ${sparkleKeyword.trim()}` : "",
       situationPart ? `状況: ${situationPart}` : "",
+      hasPickupPromise ? "【物件ピックアップ約束文】「物件ピックアップ出来ましたらお送りさせて頂きます！！」という1行のみを生成する。挨拶・サポート宣言など他の内容は一切追加しない" : "",
       sparkleMeetingPlace
         ? sparkleMeetingPlaceName && sparkleMeetingPlaceAddr
           ? `集合場所あり。必ずこの形式で書くこと→「〇〇時に${sparkleMeetingPlaceName}現地エントランスお待ち合わせ何卒よろしくお願い致します！！（改行）（改行）住所: ${sparkleMeetingPlaceAddr}」/ 物件名: ${sparkleMeetingPlaceName} / 住所: ${sparkleMeetingPlaceAddr}`
