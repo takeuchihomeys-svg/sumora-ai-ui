@@ -144,6 +144,9 @@ export default function AixModal({
   const [sendImagePreviews, setSendImagePreviews] = useState<string[]>([]);
   const [vacatingNote, setVacatingNote] = useState("");
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
+  // 退去確認ボタン専用: 構造化された退去予定物件リスト
+  const [vacatingProperties, setVacatingProperties] = useState<Array<{name: string; moveOut: string; editingDate: boolean}>>([]);
+  const [vacatingCheckLoading, setVacatingCheckLoading] = useState(false);
   const [calendarInfo, setCalendarInfo] = useState<string>("");
   const [calendarDays, setCalendarDays] = useState<Array<{
     label: string; slots: string[]; fullyBooked: boolean; noEvents: boolean;
@@ -326,6 +329,45 @@ export default function AixModal({
     setSendImageFiles(prev => prev.filter((_, idx) => idx !== i));
     setSendImagePreviews(prev => prev.filter((_, idx) => idx !== i));
     setPreview("");
+  };
+
+  // 退去予定リストから vacatingNote テキストを再生成
+  const syncVacatingNote = (props: Array<{name: string; moveOut: string; editingDate: boolean}>) => {
+    const note = props
+      .filter((p) => p.name.trim())
+      .map((p) => `◎${p.name}は${p.moveOut ? p.moveOut + "退去予定" : "退去予定"}となりますのでお部屋ご案内出来ない形となります！！`)
+      .join("\n");
+    setVacatingNote(note);
+  };
+
+  // 退去確認ボタン: 全画像を分析して退去予定物件を構造化リストに展開
+  const handleVacatingCheck = async () => {
+    if (sendImagePreviews.length === 0 || vacatingCheckLoading) return;
+    setVacatingCheckLoading(true);
+    try {
+      const images = sendImagePreviews.map((url) => {
+        const [header, base64] = url.split(",");
+        const mediaType = header.match(/data:([^;]+)/)?.[1] || "image/jpeg";
+        return { base64, mediaType };
+      });
+      const res = await fetch("/api/aix/analyze-property", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ images }),
+      });
+      const data = await res.json() as { ok: boolean; properties?: Array<{name: string; status: string; move_out: string}> };
+      if (data.ok && data.properties) {
+        const scheduled = data.properties
+          .filter((p) => p.status === "scheduled" && p.name)
+          .map((p) => ({ name: p.name, moveOut: p.move_out || "", editingDate: false }));
+        setVacatingProperties(scheduled);
+        syncVacatingNote(scheduled);
+      }
+    } catch {
+      // 失敗時は無視
+    } finally {
+      setVacatingCheckLoading(false);
+    }
   };
 
   const uploadImage = async (file: File): Promise<string> => {
@@ -736,29 +778,97 @@ export default function AixModal({
                 </button>
                 <input ref={sendFileInputRef} type="file" accept="image/*" multiple onChange={onSelectSendImages} className="hidden" />
               </div>
-              {/* 退去予定メモ（画像から自動読み取り） */}
+              {/* 退去予定・案内できない物件 */}
               <div>
-                <div className="mb-1 flex items-center justify-between">
-                  <p className="text-xs font-bold text-[#54656f]">
-                    退去予定・案内できない物件
-                    {analyzeLoading && (
-                      <span className="ml-2 font-normal text-[#2196F3]">画像から読み取り中...</span>
-                    )}
-                    {!analyzeLoading && vacatingNote && (
-                      <span className="ml-2 font-normal text-emerald-600">✓ 自動読み取り済（編集可）</span>
-                    )}
-                    {!analyzeLoading && !vacatingNote && (
-                      <span className="ml-2 font-normal text-[#90a4ae]">（画像から自動読み取り・任意）</span>
-                    )}
-                  </p>
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-xs font-bold text-[#54656f]">退去予定・案内できない物件</p>
+                  <button
+                    onClick={handleVacatingCheck}
+                    disabled={vacatingCheckLoading || sendImagePreviews.length === 0}
+                    className="flex items-center gap-1.5 rounded-full bg-[#ff6b35] px-3 py-1 text-[11px] font-bold text-white disabled:opacity-40 active:opacity-70"
+                  >
+                    {vacatingCheckLoading ? (
+                      <><span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />確認中</>
+                    ) : "退去確認"}
+                  </button>
                 </div>
-                <textarea
-                  value={vacatingNote}
-                  onChange={(e) => setVacatingNote(e.target.value)}
-                  placeholder="例：ディアコートは6月末退去予定のためご案内出来ない形となります！！"
-                  rows={3}
-                  className="w-full resize-none rounded-xl border border-[#d1d7db] px-3 py-2 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
-                />
+                {/* 構造化リスト（退去確認ボタン後に表示） */}
+                {vacatingProperties.length > 0 && (
+                  <div className="mb-2 flex flex-col gap-1.5">
+                    {vacatingProperties.map((p, i) => (
+                      <div key={i} className="flex items-center gap-2 rounded-xl border border-[#ffccbc] bg-[#fff3f0] px-2.5 py-2">
+                        <input
+                          value={p.name}
+                          onChange={(e) => {
+                            const updated = vacatingProperties.map((x, idx) => idx === i ? { ...x, name: e.target.value } : x);
+                            setVacatingProperties(updated);
+                            syncVacatingNote(updated);
+                          }}
+                          className="min-w-0 flex-1 bg-transparent text-[12px] text-[#111b21] outline-none"
+                          placeholder="物件名"
+                        />
+                        {p.editingDate ? (
+                          <input
+                            value={p.moveOut}
+                            autoFocus
+                            onChange={(e) => {
+                              const updated = vacatingProperties.map((x, idx) => idx === i ? { ...x, moveOut: e.target.value } : x);
+                              setVacatingProperties(updated);
+                              syncVacatingNote(updated);
+                            }}
+                            onBlur={() => {
+                              const updated = vacatingProperties.map((x, idx) => idx === i ? { ...x, editingDate: false } : x);
+                              setVacatingProperties(updated);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                const updated = vacatingProperties.map((x, idx) => idx === i ? { ...x, editingDate: false } : x);
+                                setVacatingProperties(updated);
+                              }
+                            }}
+                            className="w-24 shrink-0 rounded-lg border border-[#ff8a65] bg-white px-2 py-0.5 text-[12px] text-[#bf360c] outline-none"
+                            placeholder="退去日"
+                          />
+                        ) : (
+                          <button
+                            onClick={() => {
+                              const updated = vacatingProperties.map((x, idx) => idx === i ? { ...x, editingDate: true } : x);
+                              setVacatingProperties(updated);
+                            }}
+                            className="shrink-0 rounded-lg bg-[#ffccbc] px-2 py-0.5 text-[12px] font-bold text-[#bf360c]"
+                          >
+                            {p.moveOut || "日程未定"}
+                          </button>
+                        )}
+                        <button
+                          onClick={() => {
+                            const updated = vacatingProperties.filter((_, idx) => idx !== i);
+                            setVacatingProperties(updated);
+                            syncVacatingNote(updated);
+                          }}
+                          className="shrink-0 text-[#8696a0] text-[14px] leading-none"
+                        >×</button>
+                      </div>
+                    ))}
+                    <button
+                      onClick={() => {
+                        const updated = [...vacatingProperties, { name: "", moveOut: "", editingDate: false }];
+                        setVacatingProperties(updated);
+                      }}
+                      className="self-start pl-1 text-[11px] text-[#8696a0]"
+                    >＋ 手動追加</button>
+                  </div>
+                )}
+                {/* 構造化リストがない場合はテキストエリア（手動編集用フォールバック） */}
+                {vacatingProperties.length === 0 && (
+                  <textarea
+                    value={vacatingNote}
+                    onChange={(e) => setVacatingNote(e.target.value)}
+                    placeholder="退去確認ボタンで自動読み取り、または直接入力"
+                    rows={2}
+                    className="w-full resize-none rounded-xl border border-[#d1d7db] px-3 py-2 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
+                  />
+                )}
               </div>
             </div>
           ) : actionType === "application_push" ? (
