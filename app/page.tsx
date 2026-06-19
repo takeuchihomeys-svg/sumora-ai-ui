@@ -1421,7 +1421,7 @@ export default function Home() {
     }
   };
 
-  const DEFAULT_SPARKLE_SITUATIONS = ["物件を提案する", "内見を提案する", "フォロー連絡", "初期費用の説明", "審査について", "申込を促す", "日程調整", "お礼・感謝"];
+  const DEFAULT_SPARKLE_SITUATIONS = ["家賃の安さを訴求", "広さ・間取りを訴求", "立地・駅近を訴求", "初期費用の安さを訴求", "設備の充実を訴求", "即入居可を訴求", "内見を促す", "申込を促す"];
 
   const handleSparkleGenerate = async () => {
     if (!selectedConversation?.id || sparkleGenerating) return;
@@ -2961,14 +2961,14 @@ export default function Home() {
                     value={sparkleKeyword}
                     onChange={(e) => setSparkleKeyword(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter" && (sparkleKeyword.trim() || sparkleSelectedSituations.length > 0)) handleSparkleGenerate(); }}
-                    placeholder="例: 物件紹介、内見提案、フォロー..."
+                    placeholder="例: フィレンツェ1109号室を特に訴求、駅近を強調..."
                     className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#b39ddb]"
                   />
                 </div>
 
                 {/* 状況ボタン */}
                 <div className="mb-3">
-                  <label className="text-[11px] font-bold text-[#667781] mb-2 block">状況を選ぶ（複数OK）</label>
+                  <label className="text-[11px] font-bold text-[#667781] mb-2 block">訴求内容を選ぶ（複数OK）</label>
                   <div className="flex flex-wrap gap-1.5">
                     {[...DEFAULT_SPARKLE_SITUATIONS, ...sparkleSituations].map((s) => {
                       const selected = sparkleSelectedSituations.includes(s);
