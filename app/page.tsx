@@ -2694,7 +2694,7 @@ export default function Home() {
             </button>
           )}
 
-          <div ref={chatScrollRef} className="flex-1 overflow-y-auto px-3 py-4 md:px-6" onClick={() => { if (showSparkleModal) { setShowSparkleModal(false); setSparkleAddingNew(false); setSparkleNewText(""); } }}>
+          <div ref={chatScrollRef} className="flex-1 overflow-y-auto px-3 py-4 md:px-6">
             <div className="mx-auto flex w-full max-w-4xl flex-col gap-3.5">
               {(() => {
                 // 顧客名にマッチする検索の場合はメッセージをフィルタしない（LINEと同じ挙動）
