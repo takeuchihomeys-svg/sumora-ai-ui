@@ -3051,68 +3051,59 @@ export default function Home() {
                     </button>
                   </div>
 
-                  {/* 集合場所：画像読み取りUI */}
+                  {/* 集合場所：テキスト入力＋画像読み取りUI */}
                   {sparkleMeetingPlaceOpen && (
                     <div className="mt-2 rounded-2xl border border-[#b2dfdb] bg-[#f0faf9] px-3 py-2.5">
-                      {sparkleMeetingPlace ? (
-                        <div className="flex items-center gap-2">
-                          <span className="flex-1 text-[12px] text-[#00695c]">{sparkleMeetingPlace}</span>
-                          <button
-                            onClick={() => { setSparkleMeetingPlace(""); }}
-                            className="text-[11px] text-[#aaa] active:text-[#555]"
-                          >✕</button>
-                        </div>
-                      ) : (
-                        <>
-                          <p className="mb-2 text-[12px] font-bold text-[#00695c]">集合場所を画像から読み取る</p>
-                          <p className="mb-2 text-[11px] text-[#667781]">物件の外観・エントランス・物件図面など、物件名や住所がわかる画像を選んでください</p>
-                          <label className={`flex items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-3 text-[12px] font-bold cursor-pointer transition-all ${sparkleMeetingPlaceLoading ? "border-[#b2dfdb] text-[#aaa]" : "border-[#00897b] text-[#00695c] active:bg-[#e0f2f1]"}`}>
-                            {sparkleMeetingPlaceLoading ? (
-                              <>
-                                <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-[#00897b] border-t-transparent" />
-                                AI読み取り中...
-                              </>
-                            ) : (
-                              <>画像を選ぶ</>
-                            )}
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              disabled={sparkleMeetingPlaceLoading}
-                              onChange={async (e) => {
-                                const file = e.target.files?.[0];
-                                if (!file) return;
-                                setSparkleMeetingPlaceLoading(true);
-                                try {
-                                  const base64 = await new Promise<string>((resolve, reject) => {
-                                    const reader = new FileReader();
-                                    reader.onload = () => resolve((reader.result as string).split(",")[1]);
-                                    reader.onerror = reject;
-                                    reader.readAsDataURL(file);
-                                  });
-                                  const res = await fetch("/api/extract-meeting-place", {
-                                    method: "POST",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ image_base64: base64, media_type: file.type }),
-                                  });
-                                  const data = await res.json() as { ok: boolean; meeting_place?: string; error?: string };
-                                  if (data.ok && data.meeting_place) {
-                                    setSparkleMeetingPlace(data.meeting_place);
-                                  } else {
-                                    alert(data.error || "物件名・住所を読み取れませんでした。別の画像をお試しください。");
-                                  }
-                                } catch {
-                                  alert("読み取りに失敗しました。再度お試しください。");
-                                } finally {
-                                  setSparkleMeetingPlaceLoading(false);
-                                  e.target.value = "";
+                      <p className="mb-2 text-[11px] text-[#667781]">手入力 または 画像から自動読み取り</p>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={sparkleMeetingPlace}
+                          onChange={(e) => setSparkleMeetingPlace(e.target.value)}
+                          placeholder="例: フィレンツェ 〒532-0011 大阪府..."
+                          className="flex-1 rounded-xl border border-[#b2dfdb] bg-white px-3 py-2 text-[12px] outline-none focus:border-[#00897b]"
+                        />
+                        <label className={`shrink-0 flex items-center gap-1 rounded-xl border px-2.5 py-2 text-[11px] font-bold cursor-pointer transition-all ${sparkleMeetingPlaceLoading ? "border-[#b2dfdb] text-[#aaa]" : "border-[#00897b] text-[#00695c] bg-white active:bg-[#e0f2f1]"}`}>
+                          {sparkleMeetingPlaceLoading ? (
+                            <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-[#00897b] border-t-transparent" />
+                          ) : "画像"}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            disabled={sparkleMeetingPlaceLoading}
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              setSparkleMeetingPlaceLoading(true);
+                              try {
+                                const base64 = await new Promise<string>((resolve, reject) => {
+                                  const reader = new FileReader();
+                                  reader.onload = () => resolve((reader.result as string).split(",")[1]);
+                                  reader.onerror = reject;
+                                  reader.readAsDataURL(file);
+                                });
+                                const res = await fetch("/api/extract-meeting-place", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ image_base64: base64, media_type: file.type }),
+                                });
+                                const data = await res.json() as { ok: boolean; meeting_place?: string; error?: string };
+                                if (data.ok && data.meeting_place) {
+                                  setSparkleMeetingPlace(data.meeting_place);
+                                } else {
+                                  alert(data.error || "物件名・住所を読み取れませんでした。別の画像をお試しください。");
                                 }
-                              }}
-                            />
-                          </label>
-                        </>
-                      )}
+                              } catch {
+                                alert("読み取りに失敗しました。再度お試しください。");
+                              } finally {
+                                setSparkleMeetingPlaceLoading(false);
+                                e.target.value = "";
+                              }
+                            }}
+                          />
+                        </label>
+                      </div>
                     </div>
                   )}
                 </div>
