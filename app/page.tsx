@@ -1465,7 +1465,7 @@ export default function Home() {
     const replyHint = [
       sparkleKeyword.trim() ? `キーワード: ${sparkleKeyword.trim()}` : "",
       situationPart ? `状況: ${situationPart}` : "",
-      hasPickupPromise ? "【物件ピックアップ約束文】「物件ピックアップ出来ましたらお送りさせて頂きます！！」という1行のみを生成する。挨拶・サポート宣言など他の内容は一切追加しない" : "",
+      hasPickupPromise ? "【物件ピックアップ約束文】会話を読み取り、物件をピックアップして送る旨の短い約束メッセージを生成する。必須:「物件ピックアップ出来ましたらお送りさせて頂きます！！」を軸に、会話から重要なポイント（エリア・条件変更・お客様の気持ちなど）があれば自然に1〜2文追加する。合計5行以内・シンプルに。余分な挨拶・長い説明は不要" : "",
       sparkleMeetingPlace
         ? sparkleMeetingPlaceName && sparkleMeetingPlaceAddr
           ? `集合場所あり。必ずこの形式で書くこと→「〇〇時に${sparkleMeetingPlaceName}現地エントランスお待ち合わせ何卒よろしくお願い致します！！（改行）（改行）住所: ${sparkleMeetingPlaceAddr}」/ 物件名: ${sparkleMeetingPlaceName} / 住所: ${sparkleMeetingPlaceAddr}`
