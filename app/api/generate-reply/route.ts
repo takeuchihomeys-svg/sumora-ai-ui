@@ -401,7 +401,8 @@ function buildGenerationMessages(
   customerConditions = "",
   customerSummary = "",
   promptOverrides?: PromptOverrides,
-  isFollowUp = false
+  isFollowUp = false,
+  replyHint = ""
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   const jstDay = getJSTDayOfWeek();
@@ -541,6 +542,10 @@ function buildGenerationMessages(
   const quickPatterns = examples ? "" : `\n${effectiveQuickPatterns}`;
   const realEstateNote = `\n${promptOverrides?.realEstateRules ?? REAL_ESTATE_RULES}`;
 
+  const replyHintNote = replyHint
+    ? `\n\n【✨ スタッフ追加指示・最優先で反映すること】${replyHint}`
+    : "";
+
   const prompt = `
 ${nameNote}${conditionsNote}${summaryNote}${dateNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}
 【現在の営業フェーズ】${state}
@@ -554,7 +559,7 @@ ${knowledge}
 ${phrases}
 
 ${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}
-${customerMessage}
+${customerMessage}${replyHintNote}
 
 ${examples}${examplesInstruction}
 
@@ -910,7 +915,7 @@ export async function POST(req: NextRequest) {
   }
 
   type RecentMessage = { sender: string; text: string; imageUrl?: string };
-  let message: string, state: string, customerName: string, recentMessages: RecentMessage[], customerConditions: string, customerSummary: string;
+  let message: string, state: string, customerName: string, recentMessages: RecentMessage[], customerConditions: string, customerSummary: string, replyHint: string;
   try {
     const body = await req.json() as {
       message: string;
@@ -919,6 +924,7 @@ export async function POST(req: NextRequest) {
       recentMessages?: RecentMessage[];
       customerConditions?: string;
       customerSummary?: string;
+      replyHint?: string;
     };
     message = body.message;
     state = body.state;
@@ -926,6 +932,7 @@ export async function POST(req: NextRequest) {
     recentMessages = body.recentMessages || [];
     customerConditions = body.customerConditions || "";
     customerSummary = body.customerSummary || "";
+    replyHint = body.replyHint || "";
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid request body" }, { status: 400 });
   }
@@ -1048,7 +1055,7 @@ export async function POST(req: NextRequest) {
     const messages = buildGenerationMessages(
       message, customerName, history, currentState,
       analysis, knowledge, examples, phrases, customerConditions, resolvedSummary,
-      promptOverrides, isFollowUp
+      promptOverrides, isFollowUp, replyHint
     );
     const genStream = generationModel.stream(messages);
 

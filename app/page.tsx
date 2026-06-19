@@ -357,6 +357,16 @@ export default function Home() {
   const [postApplyConvIds, setPostApplyConvIds] = useState<Set<string>>(new Set<string>());
   const [showSendConfirm, setShowSendConfirm] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
+  const [showSparkleModal, setShowSparkleModal] = useState(false);
+  const [sparkleKeyword, setSparkleKeyword] = useState("");
+  const [sparkleSelectedSituations, setSparkleSelectedSituations] = useState<string[]>([]);
+  const [sparkleSituations, setSparkleSituations] = useState<string[]>(() => {
+    if (typeof window === "undefined") return [];
+    try { return JSON.parse(localStorage.getItem("sparkleSituations") || "[]") as string[]; } catch { return []; }
+  });
+  const [sparkleAddingNew, setSparkleAddingNew] = useState(false);
+  const [sparkleNewText, setSparkleNewText] = useState("");
+  const [sparkleGenerating, setSparkleGenerating] = useState(false);
   const [linkModalConvId, setLinkModalConvId] = useState<string | null>(null);
   const [linkSearchQuery, setLinkSearchQuery] = useState("");
   const [propertyCustomers, setPropertyCustomers] = useState<Array<{ id: string; customer_name: string; desired_area?: string | null; floor_plan?: string | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; other_requests?: string | null; rent_min?: number | null; building_age?: number | null }>>([]);
@@ -1396,6 +1406,84 @@ export default function Home() {
       console.error("enhance-reply error:", err);
     } finally {
       setEnhancing(false);
+    }
+  };
+
+  const DEFAULT_SPARKLE_SITUATIONS = ["物件を提案する", "内見を提案する", "フォロー連絡", "初期費用の説明", "審査について", "申込を促す", "日程調整", "お礼・感謝"];
+
+  const handleSparkleGenerate = async () => {
+    if (!selectedConversation?.id || sparkleGenerating) return;
+    const situationPart = sparkleSelectedSituations.join("・");
+    const replyHint = [
+      sparkleKeyword.trim() ? `キーワード: ${sparkleKeyword.trim()}` : "",
+      situationPart ? `状況: ${situationPart}` : "",
+    ].filter(Boolean).join(" / ");
+    if (!replyHint) return;
+
+    try {
+      setSparkleGenerating(true);
+      const msgs = selectedConversation.messages;
+      const lastStaffIdx = msgs.map((m, i) => m.sender === "staff" ? i : -1).filter(i => i >= 0).at(-1);
+      const msgsAfterStaff = lastStaffIdx !== undefined ? msgs.slice(lastStaffIdx + 1) : msgs;
+      const targetMessage = msgsAfterStaff.filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]").slice(-3).map((m) => m.text).join("\n") || latestCustomerMessage.trim() || msgs.at(-1)?.text || "（メッセージなし）";
+      const linkedCustomer = linkedCustomerMap[selectedConversation.id];
+      const hasAnyStaff = msgs.some((m) => m.sender === "staff");
+      const normalizedStatus = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
+      const effectiveState = !hasAnyStaff && normalizedStatus === "hearing" ? "first_reply" : selectedConversation.status;
+
+      const res = await fetch("/api/generate-reply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: targetMessage,
+          state: effectiveState,
+          customerName: selectedConversation.customerName,
+          customerConditions: linkedCustomer?.conditions || memos[selectedConversation.id] || undefined,
+          customerSummary: linkedCustomer?.ai_summary ?? undefined,
+          replyHint,
+          recentMessages: msgs.slice(-20).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined })),
+        }),
+      });
+
+      if (!res.ok || !res.body) throw new Error("生成失敗");
+
+      setReplyDraft("");
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let metaDone = false;
+      let fullText = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        if (!metaDone) {
+          buffer += chunk;
+          const nl = buffer.indexOf("\n");
+          if (nl >= 0) {
+            const meta = JSON.parse(buffer.slice(0, nl)) as { ok: boolean; error?: string };
+            if (!meta.ok) throw new Error(meta.error || "生成失敗");
+            metaDone = true;
+            fullText = buffer.slice(nl + 1);
+            if (fullText) setReplyDraft(fullText);
+          }
+        } else {
+          fullText += chunk;
+          setReplyDraft(fullText);
+        }
+      }
+      const finalDraft = fullText.trim();
+      aiDraftRef.current = finalDraft;
+      setReplyDraft(finalDraft);
+      setDraftIsAi(true);
+      setShowSparkleModal(false);
+      setSparkleKeyword("");
+      setSparkleSelectedSituations([]);
+      setTimeout(() => { textareaRef.current?.focus(); }, 50);
+    } catch (err) {
+      console.error("sparkle generate error:", err);
+    } finally {
+      setSparkleGenerating(false);
     }
   };
 
@@ -2833,6 +2921,113 @@ export default function Home() {
               </div>
             )}
 
+            {/* ✨ sparkleモーダル */}
+            {showSparkleModal && (
+              <div className="relative mb-2">
+                {/* 背景タップで閉じる */}
+                <div className="fixed inset-0 z-30" onClick={() => { setShowSparkleModal(false); setSparkleAddingNew(false); setSparkleNewText(""); }} />
+                <div className="relative z-40 rounded-2xl border border-[#c8b8ff] bg-white shadow-xl px-4 pt-3 pb-4">
+                  {/* ヘッダー */}
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-[13px] font-bold text-[#6c3fc7]">✨ AI返信を指定生成</span>
+                    <button onClick={() => { setShowSparkleModal(false); setSparkleAddingNew(false); setSparkleNewText(""); }} className="text-[#aaa] text-[16px] leading-none">×</button>
+                  </div>
+
+                  {/* キーワード入力 */}
+                  <div className="mb-3">
+                    <label className="text-[11px] font-bold text-[#667781] mb-1 block">キーワード（任意）</label>
+                    <input
+                      type="text"
+                      value={sparkleKeyword}
+                      onChange={(e) => setSparkleKeyword(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter" && (sparkleKeyword.trim() || sparkleSelectedSituations.length > 0)) handleSparkleGenerate(); }}
+                      placeholder="例: 物件紹介、内見提案、フォロー..."
+                      className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#b39ddb]"
+                      autoFocus
+                    />
+                  </div>
+
+                  {/* 状況ボタン */}
+                  <div className="mb-3">
+                    <label className="text-[11px] font-bold text-[#667781] mb-2 block">状況を選ぶ（複数OK）</label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[...DEFAULT_SPARKLE_SITUATIONS, ...sparkleSituations].map((s) => {
+                        const selected = sparkleSelectedSituations.includes(s);
+                        return (
+                          <button
+                            key={s}
+                            onClick={() => setSparkleSelectedSituations((prev) => selected ? prev.filter((x) => x !== s) : [...prev, s])}
+                            className={`rounded-full border px-3 py-1 text-[12px] font-medium transition-all ${selected ? "border-[#7c4dff] bg-[#ede7ff] text-[#6c3fc7]" : "border-[#d1d7db] bg-white text-[#444]"}`}
+                          >
+                            {s}
+                          </button>
+                        );
+                      })}
+                      {/* ＋ 新しい状況を追加 */}
+                      {!sparkleAddingNew ? (
+                        <button
+                          onClick={() => { setSparkleAddingNew(true); setSparkleNewText(""); }}
+                          className="rounded-full border border-dashed border-[#b39ddb] px-3 py-1 text-[12px] text-[#9c7fcc]"
+                        >
+                          ＋ 追加
+                        </button>
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            value={sparkleNewText}
+                            onChange={(e) => setSparkleNewText(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && sparkleNewText.trim()) {
+                                const newSit = sparkleNewText.trim();
+                                const updated = [...sparkleSituations, newSit];
+                                setSparkleSituations(updated);
+                                localStorage.setItem("sparkleSituations", JSON.stringify(updated));
+                                setSparkleSelectedSituations((prev) => [...prev, newSit]);
+                                setSparkleNewText("");
+                                setSparkleAddingNew(false);
+                              }
+                              if (e.key === "Escape") { setSparkleAddingNew(false); setSparkleNewText(""); }
+                            }}
+                            placeholder="新しい状況"
+                            autoFocus
+                            className="rounded-xl border border-[#b39ddb] px-2 py-1 text-[12px] w-28 outline-none"
+                          />
+                          <button
+                            onClick={() => {
+                              if (!sparkleNewText.trim()) { setSparkleAddingNew(false); return; }
+                              const newSit = sparkleNewText.trim();
+                              const updated = [...sparkleSituations, newSit];
+                              setSparkleSituations(updated);
+                              localStorage.setItem("sparkleSituations", JSON.stringify(updated));
+                              setSparkleSelectedSituations((prev) => [...prev, newSit]);
+                              setSparkleNewText("");
+                              setSparkleAddingNew(false);
+                            }}
+                            className="rounded-full bg-[#7c4dff] px-2 py-1 text-[11px] font-bold text-white"
+                          >追加</button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 生成ボタン */}
+                  <button
+                    onClick={handleSparkleGenerate}
+                    disabled={sparkleGenerating || (!sparkleKeyword.trim() && sparkleSelectedSituations.length === 0)}
+                    className="w-full rounded-2xl bg-gradient-to-r from-[#7c4dff] to-[#3d9cf5] py-2.5 text-[13px] font-bold text-white shadow-md disabled:opacity-40 active:opacity-80 transition-opacity"
+                  >
+                    {sparkleGenerating ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                        生成中...
+                      </span>
+                    ) : "✨ この指示で生成する"}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* アクションボタン列（入力欄の上） */}
             <div className="mb-1.5 flex items-center gap-1.5">
 
@@ -2868,17 +3063,15 @@ export default function Home() {
                 AIX
               </button>
 
-              {/* ✨改善ボタン（入力テキストがあるときのみ表示） */}
-              {replyDraft.trim() && (
-                <button
-                  onClick={handleEnhanceReply}
-                  disabled={enhancing}
-                  className="flex h-8 items-center gap-1 rounded-full border border-[#c8b8ff] bg-gradient-to-r from-[#ede7ff] to-[#e3f0ff] px-3 text-xs font-bold text-[#6c3fc7] shadow-sm active:scale-95 transition-transform duration-75 disabled:opacity-60"
-                  title="入力中の文をAIが改善"
-                >
-                  {enhancing ? <span className="text-[11px]">…</span> : "✨"}
-                </button>
-              )}
+              {/* ✨ sparkleボタン（常時表示） */}
+              <button
+                onClick={() => setShowSparkleModal(true)}
+                disabled={!selectedConversation?.id}
+                className="flex h-8 items-center gap-1 rounded-full border border-[#c8b8ff] bg-gradient-to-r from-[#ede7ff] to-[#e3f0ff] px-3 text-xs font-bold text-[#6c3fc7] shadow-sm active:scale-95 transition-transform duration-75 disabled:opacity-40"
+                title="キーワード・状況を指定してAI生成"
+              >
+                ✨
+              </button>
 
               {/* 文章クリアボタン（入力/AI文案があるときのみ表示） */}
               {replyDraft && (
