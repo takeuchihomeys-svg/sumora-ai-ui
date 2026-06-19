@@ -1520,7 +1520,12 @@ export default function Home() {
       }
       const finalDraft = fullText.trim();
       aiDraftRef.current = finalDraft;
-      setReplyDraft(finalDraft);
+      if (draftNoEmoji) {
+        setDraftOrigText(finalDraft);
+        setReplyDraft(stripEmoji(finalDraft));
+      } else {
+        setReplyDraft(finalDraft);
+      }
       setDraftIsAi(true);
       setShowSparkleModal(false);
       setSparkleKeyword("");
