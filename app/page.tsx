@@ -2351,8 +2351,16 @@ export default function Home() {
                     onTouchMove={cancelConvLongPress}
                     onContextMenu={(e) => { e.preventDefault(); toggleFlaggedConv(conversation.id); }}
                     style={{ WebkitUserSelect: "none", userSelect: "none" }}
-                    className={`flex w-full items-center gap-3 px-4 py-[23px] text-left transition ${
-                      isActive ? "bg-[#f0f2f5]" : postApplyConvIds.has(conversation.id) ? "bg-[#e3f2fd] hover:bg-[#daeaf8]" : "bg-white hover:bg-[#f5f6f6]"
+                    className={`flex w-full items-center gap-3 px-4 py-[23px] text-left transition border-l-[3px] ${
+                      flaggedConvIds.has(conversation.id)
+                        ? isActive
+                          ? "border-orange-400 bg-orange-100"
+                          : "border-orange-400 bg-orange-50 hover:bg-orange-100"
+                        : isActive
+                          ? "border-transparent bg-[#f0f2f5]"
+                          : postApplyConvIds.has(conversation.id)
+                            ? "border-transparent bg-[#e3f2fd] hover:bg-[#daeaf8]"
+                            : "border-transparent bg-white hover:bg-[#f5f6f6]"
                     }`}
                   >
                     <div className="relative shrink-0">
