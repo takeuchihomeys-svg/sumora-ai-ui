@@ -3043,14 +3043,14 @@ export default function Home() {
               </div>
             )}
 
-            {/* アクションボタン列（入力欄の上） */}
-            <div className="mb-1.5 flex items-center gap-1.5">
+            {/* アクションボタン列（入力欄の上）- overflow-x-auto で幅固定・横スクロール */}
+            <div className="mb-1.5 flex items-center gap-1.5 overflow-x-auto">
 
 
               <button
                 onClick={generateReply}
                 disabled={generating || !selectedConversation.id}
-                className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-sm disabled:opacity-40 active:scale-95 transition-all duration-75 ${generating ? "border-blue-300 bg-blue-50 text-blue-600" : "border-[#d1d7db] bg-white text-[#111b21]"}`}
+                className={`shrink-0 flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-sm disabled:opacity-40 active:scale-95 transition-all duration-75 ${generating ? "border-blue-300 bg-blue-50 text-blue-600" : "border-[#d1d7db] bg-white text-[#111b21]"}`}
               >
                 {generating ? (
                   <>
@@ -3063,7 +3063,7 @@ export default function Home() {
               <button
                 onClick={generatePatterns}
                 disabled={patternLoading || !selectedConversation.id}
-                className={`flex items-center gap-0.5 rounded-full border px-2 py-1.5 text-xs font-semibold shadow-sm disabled:opacity-40 active:scale-95 transition-all duration-75 ${patternLoading ? "border-purple-300 bg-purple-50 text-purple-600" : "border-[#c8b8ff] bg-gradient-to-r from-[#ede7ff] to-[#f0e6ff] text-[#6c3fc7]"}`}
+                className={`shrink-0 flex items-center gap-0.5 rounded-full border px-2 py-1.5 text-xs font-semibold shadow-sm disabled:opacity-40 active:scale-95 transition-all duration-75 ${patternLoading ? "border-purple-300 bg-purple-50 text-purple-600" : "border-[#c8b8ff] bg-gradient-to-r from-[#ede7ff] to-[#f0e6ff] text-[#6c3fc7]"}`}
                 title="4パターンの返信案を生成して選ぶ"
               >
                 {patternLoading ? (
@@ -3073,7 +3073,7 @@ export default function Home() {
 
               <button
                 onClick={() => { setShowAixMenu(true); setShowStatusMenu(false); }}
-                className="rounded-full border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-bold text-[#111b21] shadow-sm active:scale-95 transition-transform duration-75"
+                className="shrink-0 rounded-full border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-bold text-[#111b21] shadow-sm active:scale-95 transition-transform duration-75"
               >
                 AIX
               </button>
@@ -3082,7 +3082,7 @@ export default function Home() {
               <button
                 onClick={() => setShowSparkleModal(true)}
                 disabled={!selectedConversation?.id}
-                className="flex h-8 items-center gap-1 rounded-full border border-[#c8b8ff] bg-gradient-to-r from-[#ede7ff] to-[#e3f0ff] px-3 text-xs font-bold text-[#6c3fc7] shadow-sm active:scale-95 transition-transform duration-75 disabled:opacity-40"
+                className="shrink-0 flex h-8 items-center gap-1 rounded-full border border-[#c8b8ff] bg-gradient-to-r from-[#ede7ff] to-[#e3f0ff] px-3 text-xs font-bold text-[#6c3fc7] shadow-sm active:scale-95 transition-transform duration-75 disabled:opacity-40"
                 title="キーワード・状況を指定してAI生成"
               >
                 ✨
@@ -3092,7 +3092,7 @@ export default function Home() {
               {replyDraft && (
                 <button
                   onClick={() => { setReplyDraft(""); aiDraftRef.current = ""; setDraftIsAi(false); }}
-                  className="flex h-8 w-8 items-center justify-center rounded-full border border-[#d1d7db] bg-white text-[#54656f] shadow-sm active:scale-95 transition-transform duration-75"
+                  className="shrink-0 flex h-8 w-8 items-center justify-center rounded-full border border-[#d1d7db] bg-white text-[#54656f] shadow-sm active:scale-95 transition-transform duration-75"
                   title="文章を消す"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -3105,7 +3105,7 @@ export default function Home() {
               {/* 辞書ボタン（本マークのみ） */}
               <button
                 onClick={() => setShowTemplateModal(true)}
-                className="flex h-8 w-8 items-center justify-center rounded-full border border-[#d1d7db] bg-white text-[#54656f] shadow-sm"
+                className="shrink-0 flex h-8 w-8 items-center justify-center rounded-full border border-[#d1d7db] bg-white text-[#54656f] shadow-sm"
                 title="テンプレート一覧"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -3117,7 +3117,7 @@ export default function Home() {
               {/* 画像添付（＋のみ） */}
               <button
                 onClick={openImagePicker}
-                className="flex h-8 w-8 items-center justify-center rounded-full border border-[#d1d7db] bg-white text-[20px] font-light leading-none text-[#54656f] shadow-sm"
+                className="shrink-0 flex h-8 w-8 items-center justify-center rounded-full border border-[#d1d7db] bg-white text-[20px] font-light leading-none text-[#54656f] shadow-sm"
                 title="画像を添付（最大10枚）"
               >
                 +
