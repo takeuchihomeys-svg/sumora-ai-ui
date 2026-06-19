@@ -407,6 +407,8 @@ export default function Home() {
   memosRef.current = memos; // レンダリングごとに最新値を反映
   // プリ生成中の conversation_id セット（重複リクエスト防止）
   const preGenInProgress = useRef<Set<string>>(new Set());
+  // 下書き生成タイムアウト（60秒でdraftPreparingをリセット）
+  const draftTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleListScroll = () => {
     // スクロール時もBottomNavは常に表示（pull-to-refreshトリガー用）
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
@@ -1063,7 +1065,8 @@ export default function Home() {
     selectedPatternAngleRef.current = null;
     setTargetOverrideMessage(null);
     setAiDraftExpanded(false);
-    // 会話切替時は必ず準備中状態をリセット（前の会話のfetch残留を防ぐ）
+    // 会話切替時は必ず準備中状態をリセット（前の会話のタイムアウト・fetch残留を防ぐ）
+    if (draftTimeoutRef.current) { clearTimeout(draftTimeoutRef.current); draftTimeoutRef.current = null; }
     setDraftPreparing(false);
 
     // 返信待ち + ai_draft あり → テキストエリアに自動セット（「使う」クリック不要）
@@ -1090,29 +1093,29 @@ export default function Home() {
         const skipStatuses = new Set(["applying", "screening", "contract", "closed_won"]);
         const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
         if (isActuallyUnread && !skipStatuses.has(ns)) {
-          // preGenInProgressチェックなし：選択会話は常にsync生成を優先
-          // （プリ生成asyncと並走してもDBのai_draftチェックで二重保存は防止）
+          // async方式：即200返却 → Realtimeで下書きを受け取る（タイムアウト60秒）
           setDraftPreparing(true);
           const convIdForGen = selectedConversation.id;
-          fetch("/api/generate-draft-bg", {
+          draftTimeoutRef.current = setTimeout(() => {
+            draftTimeoutRef.current = null;
+            if (selectedIdRef.current === convIdForGen) setDraftPreparing(false);
+          }, 60000);
+          fetch("/api/generate-draft-bg-async", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ conversation_id: convIdForGen, memo: memosRef.current[convIdForGen] || "" }),
           })
             .then(async (res) => {
-              if (!res.ok) { setDraftPreparing(false); return; }
-              const data = await res.json() as { ok: boolean; draft?: string; skipped?: boolean };
-              if (selectedIdRef.current !== convIdForGen) { setDraftPreparing(false); return; }
-              if (data.draft) {
-                setDraftPreparing(false);
-                setReplyDraft(data.draft);
-                aiDraftRef.current = data.draft;
-                setDraftIsAi(true);
-              } else {
-                setDraftPreparing(false);
+              if (!res.ok) {
+                if (draftTimeoutRef.current) { clearTimeout(draftTimeoutRef.current); draftTimeoutRef.current = null; }
+                if (selectedIdRef.current === convIdForGen) setDraftPreparing(false);
               }
+              // ok: true → draftPreparingを維持（Realtimeで届く）
             })
-            .catch(() => { setDraftPreparing(false); });
+            .catch(() => {
+              if (draftTimeoutRef.current) { clearTimeout(draftTimeoutRef.current); draftTimeoutRef.current = null; }
+              if (selectedIdRef.current === convIdForGen) setDraftPreparing(false);
+            });
         } else {
           setDraftPreparing(false);
         }
@@ -1133,6 +1136,7 @@ export default function Home() {
     }
     // 入力中は上書きしない（バナーで通知）
     if (replyDraft) return;
+    if (draftTimeoutRef.current) { clearTimeout(draftTimeoutRef.current); draftTimeoutRef.current = null; }
     setDraftPreparing(false);
     setReplyDraft(selectedConversation.aiDraft);
     aiDraftRef.current = selectedConversation.aiDraft;
