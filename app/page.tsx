@@ -1150,6 +1150,8 @@ export default function Home() {
     setReplyDraft(selectedConversation.aiDraft);
     aiDraftRef.current = selectedConversation.aiDraft;
     setDraftIsAi(true);
+    setDraftNoEmoji(false);
+    setDraftOrigText("");
     setConversations((prev) =>
       prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null } : c)
     );
@@ -1432,7 +1434,7 @@ export default function Home() {
 
   const stripEmoji = (text: string) =>
     text
-      .replace(/\p{Extended_Pictographic}[\u{FE0F}\u{FE0E}]?(‍\p{Extended_Pictographic}[\u{FE0F}\u{FE0E}]?)*/gu, "")
+      .replace(/\p{Extended_Pictographic}[\u{FE0F}\u{FE0E}]?(\u200D\p{Extended_Pictographic}[\u{FE0F}\u{FE0E}]?)*/gu, "")
       .replace(/[ \t]{2,}/g, " ")
       .replace(/^ /mg, "")
       .replace(/\n{3,}/g, "\n\n")
