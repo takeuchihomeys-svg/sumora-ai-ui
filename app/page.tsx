@@ -1421,7 +1421,7 @@ export default function Home() {
     }
   };
 
-  const DEFAULT_SPARKLE_SITUATIONS = ["家賃の安さを訴求", "広さ・間取りを訴求", "立地・駅近を訴求", "初期費用の安さを訴求", "設備の充実を訴求", "即入居可を訴求", "内見を促す", "申込を促す"];
+  const DEFAULT_SPARKLE_SITUATIONS = ["物件を提案する", "内見を提案する", "フォロー連絡", "初期費用の説明", "審査について", "申込を促す", "日程調整", "お礼・感謝"];
 
   const handleSparkleGenerate = async () => {
     if (!selectedConversation?.id || sparkleGenerating) return;
