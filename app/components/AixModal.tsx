@@ -485,14 +485,22 @@ export default function AixModal({
       }
 
       // 学習ループに保存（fire-and-forget）
+      const lastCustomerMsg = (recentMessages ?? [])
+        .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
+        .at(-1)?.text;
+      const lastStaffMsg = (recentMessages ?? [])
+        .filter((m) => m.sender === "staff" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
+        .at(-1)?.text;
       fetch("/api/save-reply-example", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           conversationState: ACTION_TO_STATE[actionType],
-          customerMessage: inputText.trim() || `（AIX: ${config.title}）`,
+          customerMessage: lastCustomerMsg || inputText.trim() || `（AIX: ${config.title}）`,
           sentReply: preview,
           aiDraft,
+          previousStaffMessage: lastStaffMsg,
+          isStarred: true,
         }),
       }).catch(() => {});
 

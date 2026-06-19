@@ -75,20 +75,42 @@ JSONのみを返す。分析の途中経過は不要。`,
   }
 }
 
+function textSimilarity(a: string, b: string): number {
+  const s1 = a.replace(/\s+/g, "");
+  const s2 = b.replace(/\s+/g, "");
+  if (s1 === s2) return 1;
+  if (!s1 || !s2) return 0;
+  let j = 0, matches = 0;
+  for (let i = 0; i < s1.length; i++) {
+    while (j < s2.length && s2[j] !== s1[i]) j++;
+    if (j < s2.length) { matches++; j++; }
+  }
+  return matches / Math.max(s1.length, s2.length);
+}
+
+// 修正量に応じて importance を変動（save-reply-example と統一）
+// sim < 0.4 = 大幅修正 → 9 / 0.4〜0.65 = 中程度 → 8 / 0.65〜 = 微修正 → 7
+function diffImportance(sim: number): number {
+  if (sim < 0.4) return 9;
+  if (sim < 0.65) return 8;
+  return 7;
+}
+
 export async function POST(req: NextRequest) {
   // ?limit=N で件数を指定可能（デフォルト15・最大200）
   const url = new URL(req.url);
   const limitParam = url.searchParams.get("limit");
   const limit = limitParam ? Math.min(parseInt(limitParam, 10) || 15, 200) : 15;
 
-  // 未処理の差分を取得
+  // 未処理の差分を取得（is_starred順で重要な学習から処理）
   const { data: examples } = await supabase
     .from("ai_reply_examples")
-    .select("id, customer_message, ai_draft, sent_reply, conversation_state")
+    .select("id, customer_message, ai_draft, sent_reply, conversation_state, is_starred")
     .eq("was_ai_modified", true)
     .is("diff_analyzed_at", null)
     .not("ai_draft", "is", null)
     .not("sent_reply", "is", null)
+    .order("is_starred", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -101,16 +123,26 @@ export async function POST(req: NextRequest) {
   const now = new Date().toISOString();
 
   for (const ex of examples) {
-    const { id, customer_message, ai_draft, sent_reply, conversation_state } = ex as {
+    const { id, customer_message, ai_draft, sent_reply, conversation_state, is_starred } = ex as {
       id: string;
       customer_message: string;
       ai_draft: string;
       sent_reply: string;
       conversation_state: string;
+      is_starred: boolean;
     };
 
     // 完全一致はスキップ（構成が同じなので学習不要）
     if ((ai_draft ?? "").trim() === (sent_reply ?? "").trim()) {
+      await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
+      processed++;
+      continue;
+    }
+
+    // 分割送信っぽい場合（sentReplyがaiDraftの55%未満かつ類似度30%以上）はスキップ
+    const sim = textSimilarity((ai_draft ?? "").trim(), (sent_reply ?? "").trim());
+    const likelySplit = (sent_reply ?? "").trim().length < (ai_draft ?? "").trim().length * 0.55 && sim >= 0.3;
+    if (likelySplit) {
       await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
       processed++;
       continue;
@@ -133,12 +165,15 @@ export async function POST(req: NextRequest) {
         const safeCategory = ALLOWED_CATEGORIES.has(rawCategory) ? rawCategory : "pattern";
         const embeddingInput = `${conversation_state ?? "proposing"}: ${result.rule}`;
         const embedding = await getEmbedding(embeddingInput);
+        // ☆つき or 大幅修正ほど importance を上げる
+        const baseImp = diffImportance(sim);
+        const imp = is_starred ? Math.min(9, baseImp + 1) : baseImp;
         await supabase.from("ai_reply_knowledge").insert({
           title: result.title,
           content: result.rule,
           category: safeCategory,
           conversation_state: conversation_state ?? "proposing",
-          importance: 8,
+          importance: imp,
           source_example_id: id,
           ...(embedding ? { embedding: JSON.stringify(embedding) } : {}),
         });
