@@ -371,6 +371,7 @@ export default function Home() {
   const [sparkleMeetingPlaceOpen, setSparkleMeetingPlaceOpen] = useState(false);
   const [sparkleMeetingPlaceLoading, setSparkleMeetingPlaceLoading] = useState(false);
   const [sparkleMeetingPlace, setSparkleMeetingPlace] = useState("");
+  const [sparkleNoEmoji, setSparkleNoEmoji] = useState(false);
   const [linkModalConvId, setLinkModalConvId] = useState<string | null>(null);
   const [linkSearchQuery, setLinkSearchQuery] = useState("");
   const [propertyCustomers, setPropertyCustomers] = useState<Array<{ id: string; customer_name: string; desired_area?: string | null; floor_plan?: string | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; other_requests?: string | null; rent_min?: number | null; building_age?: number | null }>>([]);
@@ -1433,6 +1434,7 @@ export default function Home() {
       sparkleKeyword.trim() ? `キーワード: ${sparkleKeyword.trim()}` : "",
       situationPart ? `状況: ${situationPart}` : "",
       sparkleMeetingPlace ? `集合場所: ${sparkleMeetingPlace}` : "",
+      sparkleNoEmoji ? "絵文字・顔文字は一切使わずテキストのみで書くこと" : "",
     ].filter(Boolean).join(" / ");
     if (!replyHint) return;
 
@@ -2952,7 +2954,7 @@ export default function Home() {
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-[13px] font-bold text-[#6c3fc7]">✨ AI返信を指定生成</span>
                   <button
-                    onClick={() => { setShowSparkleModal(false); setSparkleAddingNew(false); setSparkleNewText(""); setSparkleMeetingPlaceOpen(false); setSparkleMeetingPlace(""); }}
+                    onClick={() => { setShowSparkleModal(false); setSparkleAddingNew(false); setSparkleNewText(""); setSparkleMeetingPlaceOpen(false); setSparkleMeetingPlace(""); setSparkleNoEmoji(false); }}
                     className="flex h-6 w-6 items-center justify-center rounded-full bg-[#f0f2f5] text-[#667781] text-[13px]"
                   >×</button>
                 </div>
@@ -2972,7 +2974,19 @@ export default function Home() {
 
                 {/* 状況ボタン */}
                 <div className="mb-3">
-                  <label className="text-[11px] font-bold text-[#667781] mb-2 block">訴求内容を選ぶ（複数OK）</label>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-[11px] font-bold text-[#667781]">訴求内容を選ぶ（複数OK）</label>
+                    <div className="flex rounded-full border border-[#d1d7db] overflow-hidden text-[10px] font-bold">
+                      <button
+                        onClick={() => setSparkleNoEmoji(false)}
+                        className={`px-2.5 py-0.5 transition-colors ${!sparkleNoEmoji ? "bg-[#6c3fc7] text-white" : "bg-white text-[#888]"}`}
+                      >絵文字あり</button>
+                      <button
+                        onClick={() => setSparkleNoEmoji(true)}
+                        className={`px-2.5 py-0.5 transition-colors ${sparkleNoEmoji ? "bg-[#6c3fc7] text-white" : "bg-white text-[#888]"}`}
+                      >絵文字なし</button>
+                    </div>
+                  </div>
                   <div className="flex flex-wrap gap-1.5">
                     {[...DEFAULT_SPARKLE_SITUATIONS, ...sparkleSituations].map((s) => {
                       const selected = sparkleSelectedSituations.includes(s);
