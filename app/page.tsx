@@ -2680,7 +2680,7 @@ export default function Home() {
                     {selectedConversation.id ? selectedConversation.customerName : "会話を選択"}
                   </span>
                   {selectedConversation.id && (
-                    <span className="text-[5px] text-[#999] leading-none mt-0.5">
+                    <span className="text-[8px] text-[#999] leading-none mt-0.5">
                       {getAccountMeta(selectedConversation.account).label}
                     </span>
                   )}
