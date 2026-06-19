@@ -1062,6 +1062,8 @@ export default function Home() {
     selectedPatternAngleRef.current = null;
     setTargetOverrideMessage(null);
     setAiDraftExpanded(false);
+    // 会話切替時は必ず準備中状態をリセット（前の会話のfetch残留を防ぐ）
+    setDraftPreparing(false);
 
     // 返信待ち + ai_draft あり → テキストエリアに自動セット（「使う」クリック不要）
     if (selectedConversation.aiDraft && selectedConversation.lastSender === "customer") {
@@ -1082,7 +1084,8 @@ export default function Home() {
       if (selectedConversation.lastSender === "customer" && selectedConversation.id) {
         const rAt = manuallyReadAtRef.current[selectedConversation.id];
         const latestCust = selectedConversation.messages.filter((m) => m.sender === "customer").at(-1);
-        const isActuallyUnread = !rAt || (!!latestCust?.rawCreatedAt && latestCust.rawCreatedAt > rAt);
+        // rawCreatedAtが未ロード（messages空）の場合は未読扱いにする
+        const isActuallyUnread = !rAt || !latestCust?.rawCreatedAt || latestCust.rawCreatedAt > rAt;
         const skipStatuses = new Set(["applying", "screening", "contract", "closed_won"]);
         const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
         if (isActuallyUnread && !skipStatuses.has(ns)) {
@@ -1098,7 +1101,7 @@ export default function Home() {
             .then(async (res) => {
               if (!res.ok) { setDraftPreparing(false); return; }
               const data = await res.json() as { ok: boolean; draft?: string; skipped?: boolean };
-              if (selectedIdRef.current !== convIdForGen) return;
+              if (selectedIdRef.current !== convIdForGen) { setDraftPreparing(false); return; }
               if (data.draft) {
                 setDraftPreparing(false);
                 setReplyDraft(data.draft);
