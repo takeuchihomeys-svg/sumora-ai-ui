@@ -374,6 +374,8 @@ export default function Home() {
   const [sparkleMeetingPlaceOpen, setSparkleMeetingPlaceOpen] = useState(false);
   const [sparkleMeetingPlaceLoading, setSparkleMeetingPlaceLoading] = useState(false);
   const [sparkleMeetingPlace, setSparkleMeetingPlace] = useState("");
+  const [sparkleMeetingPlaceName, setSparkleMeetingPlaceName] = useState("");
+  const [sparkleMeetingPlaceAddr, setSparkleMeetingPlaceAddr] = useState("");
   const [sparkleNoEmoji, setSparkleNoEmoji] = useState(false);
   const [linkModalConvId, setLinkModalConvId] = useState<string | null>(null);
   const [linkSearchQuery, setLinkSearchQuery] = useState("");
@@ -1461,7 +1463,11 @@ export default function Home() {
     const replyHint = [
       sparkleKeyword.trim() ? `キーワード: ${sparkleKeyword.trim()}` : "",
       situationPart ? `状況: ${situationPart}` : "",
-      sparkleMeetingPlace ? `集合場所: ${sparkleMeetingPlace}` : "",
+      sparkleMeetingPlace
+        ? sparkleMeetingPlaceName && sparkleMeetingPlaceAddr
+          ? `集合場所あり。必ずこの形式で書くこと→「〇〇時に${sparkleMeetingPlaceName}現地エントランスお待ち合わせ何卒よろしくお願い致します！！（改行）（改行）住所: ${sparkleMeetingPlaceAddr}」/ 物件名: ${sparkleMeetingPlaceName} / 住所: ${sparkleMeetingPlaceAddr}`
+          : `集合場所: ${sparkleMeetingPlace}。必ずこの形式で書くこと→「〇〇時に[物件名]現地エントランスお待ち合わせ何卒よろしくお願い致します！！（改行）（改行）住所: [住所]」`
+        : "",
       sparkleNoEmoji ? "絵文字・顔文字は一切使わずテキストのみで書くこと" : "",
     ].filter(Boolean).join(" / ");
     if (!replyHint) return;
@@ -3093,7 +3099,7 @@ export default function Home() {
                         <input
                           type="text"
                           value={sparkleMeetingPlace}
-                          onChange={(e) => setSparkleMeetingPlace(e.target.value)}
+                          onChange={(e) => { setSparkleMeetingPlace(e.target.value); setSparkleMeetingPlaceName(""); setSparkleMeetingPlaceAddr(""); }}
                           placeholder="例: フィレンツェ 〒532-0011 大阪府..."
                           className="flex-1 rounded-xl border border-[#b2dfdb] bg-white px-3 py-2 text-[12px] outline-none focus:border-[#00897b]"
                         />
@@ -3122,9 +3128,11 @@ export default function Home() {
                                   headers: { "Content-Type": "application/json" },
                                   body: JSON.stringify({ image_base64: base64, media_type: file.type }),
                                 });
-                                const data = await res.json() as { ok: boolean; meeting_place?: string; error?: string };
+                                const data = await res.json() as { ok: boolean; meeting_place?: string; name?: string; address?: string; error?: string };
                                 if (data.ok && data.meeting_place) {
                                   setSparkleMeetingPlace(data.meeting_place);
+                                  setSparkleMeetingPlaceName(data.name ?? "");
+                                  setSparkleMeetingPlaceAddr(data.address ?? "");
                                 } else {
                                   alert(data.error || "物件名・住所を読み取れませんでした。別の画像をお試しください。");
                                 }
