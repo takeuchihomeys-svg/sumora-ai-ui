@@ -231,6 +231,18 @@ const PHASE_GUIDE: Record<string, string> = {
 function getJSTHour(): number {
   return new Date(Date.now() + 9 * 60 * 60 * 1000).getUTCHours();
 }
+// JST 9:00 AM リセット基準時刻（UTC）を返す
+// 9時以降なら今日の0:00 UTC、9時前なら昨日の0:00 UTC（= JST 9:00 AM の直前のリセット点）
+function getGreetingSessionStart(): Date {
+  const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const h = jstNow.getUTCHours();
+  const y = jstNow.getUTCFullYear();
+  const mo = jstNow.getUTCMonth();
+  const d = jstNow.getUTCDate();
+  return h >= 9
+    ? new Date(Date.UTC(y, mo, d, 0, 0, 0, 0))
+    : new Date(Date.UTC(y, mo, d - 1, 0, 0, 0, 0));
+}
 // 0=日, 1=月, ..., 6=土
 function getJSTDayOfWeek(): number {
   return new Date(Date.now() + 9 * 60 * 60 * 1000).getUTCDay();
@@ -402,7 +414,8 @@ function buildGenerationMessages(
   customerSummary = "",
   promptOverrides?: PromptOverrides,
   isFollowUp = false,
-  replyHint = ""
+  replyHint = "",
+  alreadyGreetedToday?: boolean
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   const jstDay = getJSTDayOfWeek();
@@ -414,15 +427,17 @@ function buildGenerationMessages(
   // スタッフ返信が一度もない = 真の初回（お客様への最初の返信）
   const isFirstEverReply = lastStaffLines.length === 0;
 
-  // 本日の会話で冒頭挨拶が既に使われているか
-  // 「お世話になっております」「夜分遅くに失礼」に加え、
-  // 「〇〇さん」で始まる返信も挨拶済みとみなす（名前で呼びかけた = 既に挨拶した）
-  const alreadyGreeted = lastStaffLines.some(
-    l => l.includes("お世話になっております") ||
-         l.includes("夜分遅くに失礼") ||
-         l.includes("はじめまして") ||
-         /^スモラ:「?[^\s]{1,10}さん/.test(l)
-  );
+  // 本日（JST 9時リセット）の会話で挨拶済みか
+  // alreadyGreetedToday が渡された場合はそちらを優先（タイムスタンプ精度が高い）
+  // フォールバック: history 全体から判定（createdAt なしの場合）
+  const alreadyGreeted = alreadyGreetedToday !== undefined
+    ? alreadyGreetedToday
+    : lastStaffLines.some(
+        l => l.includes("お世話になっております") ||
+             l.includes("夜分遅くに失礼") ||
+             l.includes("はじめまして") ||
+             /^スモラ:「?[^\s]{1,10}さん/.test(l)
+      );
 
   // 【重要】「夜分遅くに失礼致します」はスタッフが先にお客様に連絡するときの言葉。
   // generate-replyは常にお客様からのメッセージへの「返信」なので使用しない。
@@ -924,7 +939,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "ANTHROPIC_API_KEY not set" }, { status: 500 });
   }
 
-  type RecentMessage = { sender: string; text: string; imageUrl?: string };
+  type RecentMessage = { sender: string; text: string; imageUrl?: string; createdAt?: string };
   let message: string, state: string, customerName: string, recentMessages: RecentMessage[], customerConditions: string, customerSummary: string, replyHint: string;
   try {
     const body = await req.json() as {
@@ -1061,11 +1076,30 @@ export async function POST(req: NextRequest) {
     ]);
     const resolvedSummary = customerSummary || autoSummary;
 
+    // JST 9時リセット基準で今日の挨拶済み判定
+    // createdAt が含まれるメッセージだけを使用（タイムスタンプなしはフォールバックへ）
+    const greetingStart = getGreetingSessionStart();
+    const hasTimestamps = recentMessages.some(m => !!m.createdAt);
+    const alreadyGreetedToday = hasTimestamps
+      ? recentMessages.some(m =>
+          m.sender === "staff" &&
+          m.createdAt &&
+          new Date(m.createdAt) >= greetingStart &&
+          m.text && m.text !== "[画像]" && m.text !== "[動画]" &&
+          (
+            m.text.includes("お世話になっております") ||
+            m.text.includes("夜分遅くに失礼") ||
+            m.text.includes("はじめまして") ||
+            /^[^\s]{1,10}さん/.test(m.text)
+          )
+        )
+      : undefined;
+
     // Sonnetでストリーミング生成
     const messages = buildGenerationMessages(
       message, customerName, history, currentState,
       analysis, knowledge, examples, phrases, customerConditions, resolvedSummary,
-      promptOverrides, isFollowUp, replyHint
+      promptOverrides, isFollowUp, replyHint, alreadyGreetedToday
     );
     const genStream = generationModel.stream(messages);
 

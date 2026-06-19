@@ -1366,7 +1366,7 @@ export default function Home() {
     const linkedCustomerForPattern = linkedCustomerMap[selectedConversation.id];
     const patternConditions = linkedCustomerForPattern?.conditions || memos[selectedConversation.id] || undefined;
     const patternSummary = linkedCustomerForPattern?.ai_summary ?? undefined;
-    const recentMessages = msgs.slice(-25).map(m => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl }));
+    const recentMessages = msgs.slice(-25).map(m => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl, createdAt: m.rawCreatedAt || undefined }));
 
     try {
       const res = await fetch("/api/generate-reply-patterns", {
@@ -1496,7 +1496,7 @@ export default function Home() {
           customerConditions: linkedCustomer?.conditions || memos[selectedConversation.id] || undefined,
           customerSummary: linkedCustomer?.ai_summary ?? undefined,
           replyHint,
-          recentMessages: msgs.slice(-20).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined })),
+          recentMessages: msgs.slice(-20).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined, createdAt: m.rawCreatedAt || undefined })),
         }),
       });
 
