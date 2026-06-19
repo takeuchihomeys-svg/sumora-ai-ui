@@ -368,6 +368,9 @@ export default function Home() {
   const [sparkleAddingNew, setSparkleAddingNew] = useState(false);
   const [sparkleNewText, setSparkleNewText] = useState("");
   const [sparkleGenerating, setSparkleGenerating] = useState(false);
+  const [sparkleMeetingPlaceOpen, setSparkleMeetingPlaceOpen] = useState(false);
+  const [sparkleMeetingPlaceLoading, setSparkleMeetingPlaceLoading] = useState(false);
+  const [sparkleMeetingPlace, setSparkleMeetingPlace] = useState("");
   const [linkModalConvId, setLinkModalConvId] = useState<string | null>(null);
   const [linkSearchQuery, setLinkSearchQuery] = useState("");
   const [propertyCustomers, setPropertyCustomers] = useState<Array<{ id: string; customer_name: string; desired_area?: string | null; floor_plan?: string | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; other_requests?: string | null; rent_min?: number | null; building_age?: number | null }>>([]);
@@ -1429,6 +1432,7 @@ export default function Home() {
     const replyHint = [
       sparkleKeyword.trim() ? `キーワード: ${sparkleKeyword.trim()}` : "",
       situationPart ? `状況: ${situationPart}` : "",
+      sparkleMeetingPlace ? `集合場所: ${sparkleMeetingPlace}` : "",
     ].filter(Boolean).join(" / ");
     if (!replyHint) return;
 
@@ -2948,7 +2952,7 @@ export default function Home() {
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-[13px] font-bold text-[#6c3fc7]">✨ AI返信を指定生成</span>
                   <button
-                    onClick={() => { setShowSparkleModal(false); setSparkleAddingNew(false); setSparkleNewText(""); }}
+                    onClick={() => { setShowSparkleModal(false); setSparkleAddingNew(false); setSparkleNewText(""); setSparkleMeetingPlaceOpen(false); setSparkleMeetingPlace(""); }}
                     className="flex h-6 w-6 items-center justify-center rounded-full bg-[#f0f2f5] text-[#667781] text-[13px]"
                   >×</button>
                 </div>
@@ -3024,7 +3028,79 @@ export default function Home() {
                         >追加</button>
                       </div>
                     )}
+                    {/* 集合場所ボタン */}
+                    <button
+                      onClick={() => setSparkleMeetingPlaceOpen((v) => !v)}
+                      className={`rounded-full border px-3 py-1 text-[12px] font-medium transition-all ${sparkleMeetingPlace ? "border-[#00897b] bg-[#e0f2f1] text-[#00695c]" : sparkleMeetingPlaceOpen ? "border-[#7c4dff] bg-[#ede7ff] text-[#6c3fc7]" : "border-[#d1d7db] bg-white text-[#444]"}`}
+                    >
+                      📍 集合場所{sparkleMeetingPlace ? " ✓" : ""}
+                    </button>
                   </div>
+
+                  {/* 集合場所：画像読み取りUI */}
+                  {sparkleMeetingPlaceOpen && (
+                    <div className="mt-2 rounded-2xl border border-[#b2dfdb] bg-[#f0faf9] px-3 py-2.5">
+                      {sparkleMeetingPlace ? (
+                        <div className="flex items-center gap-2">
+                          <span className="flex-1 text-[12px] text-[#00695c]">📍 {sparkleMeetingPlace}</span>
+                          <button
+                            onClick={() => { setSparkleMeetingPlace(""); }}
+                            className="text-[11px] text-[#aaa] active:text-[#555]"
+                          >✕</button>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="mb-2 text-[12px] font-bold text-[#00695c]">📍 集合場所を画像から読み取る</p>
+                          <p className="mb-2 text-[11px] text-[#667781]">物件の外観・エントランス・物件図面など、物件名や住所がわかる画像を選んでください</p>
+                          <label className={`flex items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-3 text-[12px] font-bold cursor-pointer transition-all ${sparkleMeetingPlaceLoading ? "border-[#b2dfdb] text-[#aaa]" : "border-[#00897b] text-[#00695c] active:bg-[#e0f2f1]"}`}>
+                            {sparkleMeetingPlaceLoading ? (
+                              <>
+                                <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-[#00897b] border-t-transparent" />
+                                AI読み取り中...
+                              </>
+                            ) : (
+                              <>📷 画像を選ぶ</>
+                            )}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              disabled={sparkleMeetingPlaceLoading}
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                setSparkleMeetingPlaceLoading(true);
+                                try {
+                                  const base64 = await new Promise<string>((resolve, reject) => {
+                                    const reader = new FileReader();
+                                    reader.onload = () => resolve((reader.result as string).split(",")[1]);
+                                    reader.onerror = reject;
+                                    reader.readAsDataURL(file);
+                                  });
+                                  const res = await fetch("/api/extract-meeting-place", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ image_base64: base64, media_type: file.type }),
+                                  });
+                                  const data = await res.json() as { ok: boolean; meeting_place?: string; error?: string };
+                                  if (data.ok && data.meeting_place) {
+                                    setSparkleMeetingPlace(data.meeting_place);
+                                  } else {
+                                    alert(data.error || "物件名・住所を読み取れませんでした。別の画像をお試しください。");
+                                  }
+                                } catch {
+                                  alert("読み取りに失敗しました。再度お試しください。");
+                                } finally {
+                                  setSparkleMeetingPlaceLoading(false);
+                                  e.target.value = "";
+                                }
+                              }}
+                            />
+                          </label>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* 生成ボタン */}
