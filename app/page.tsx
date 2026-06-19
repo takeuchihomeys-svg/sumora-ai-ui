@@ -372,6 +372,10 @@ export default function Home() {
   const [sparkleMeetingPlaceLoading, setSparkleMeetingPlaceLoading] = useState(false);
   const [sparkleMeetingPlace, setSparkleMeetingPlace] = useState("");
   const [sparkleNoEmoji, setSparkleNoEmoji] = useState(false);
+  const [sparklePropertyCheckOpen, setSparklePropertyCheckOpen] = useState(false);
+  const [sparklePropertyCheckStatus, setSparklePropertyCheckStatus] = useState("");
+  const [sparklePropertyCheckImages, setSparklePropertyCheckImages] = useState<{ preview: string }[]>([]);
+  const [sparklePropertyCheckNote, setSparklePropertyCheckNote] = useState("");
   const [linkModalConvId, setLinkModalConvId] = useState<string | null>(null);
   const [linkSearchQuery, setLinkSearchQuery] = useState("");
   const [propertyCustomers, setPropertyCustomers] = useState<Array<{ id: string; customer_name: string; desired_area?: string | null; floor_plan?: string | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; other_requests?: string | null; rent_min?: number | null; building_age?: number | null }>>([]);
@@ -1430,10 +1434,14 @@ export default function Home() {
   const handleSparkleGenerate = async () => {
     if (!selectedConversation?.id || sparkleGenerating) return;
     const situationPart = sparkleSelectedSituations.join("・");
+    const propertyCheckPart = sparklePropertyCheckStatus
+      ? `物件確認結果: ${sparklePropertyCheckStatus}${sparklePropertyCheckNote.trim() ? `（${sparklePropertyCheckNote.trim()}）` : ""}`
+      : "";
     const replyHint = [
       sparkleKeyword.trim() ? `キーワード: ${sparkleKeyword.trim()}` : "",
       situationPart ? `状況: ${situationPart}` : "",
       sparkleMeetingPlace ? `集合場所: ${sparkleMeetingPlace}` : "",
+      propertyCheckPart,
       sparkleNoEmoji ? "絵文字・顔文字は一切使わずテキストのみで書くこと" : "",
     ].filter(Boolean).join(" / ");
     if (!replyHint) return;
@@ -2954,7 +2962,7 @@ export default function Home() {
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-[13px] font-bold text-[#6c3fc7]">✨ AI返信を指定生成</span>
                   <button
-                    onClick={() => { setShowSparkleModal(false); setSparkleAddingNew(false); setSparkleNewText(""); setSparkleMeetingPlaceOpen(false); setSparkleMeetingPlace(""); setSparkleNoEmoji(false); }}
+                    onClick={() => { setShowSparkleModal(false); setSparkleAddingNew(false); setSparkleNewText(""); setSparkleMeetingPlaceOpen(false); setSparkleMeetingPlace(""); setSparkleNoEmoji(false); setSparklePropertyCheckOpen(false); setSparklePropertyCheckStatus(""); setSparklePropertyCheckImages([]); setSparklePropertyCheckNote(""); }}
                     className="flex h-6 w-6 items-center justify-center rounded-full bg-[#f0f2f5] text-[#667781] text-[13px]"
                   >×</button>
                 </div>
@@ -3049,6 +3057,14 @@ export default function Home() {
                     >
                       集合場所{sparkleMeetingPlace ? " ✓" : ""}
                     </button>
+
+                    {/* 物件確認したボタン */}
+                    <button
+                      onClick={() => setSparklePropertyCheckOpen((v) => !v)}
+                      className={`rounded-full border px-3 py-1 text-[12px] font-medium transition-all ${sparklePropertyCheckStatus ? "border-[#1565c0] bg-[#e3f2fd] text-[#1565c0]" : sparklePropertyCheckOpen ? "border-[#7c4dff] bg-[#ede7ff] text-[#6c3fc7]" : "border-[#d1d7db] bg-white text-[#444]"}`}
+                    >
+                      物件確認した{sparklePropertyCheckStatus ? " ✓" : ""}
+                    </button>
                   </div>
 
                   {/* 集合場所：テキスト入力＋画像読み取りUI */}
@@ -3104,6 +3120,69 @@ export default function Home() {
                           />
                         </label>
                       </div>
+                    </div>
+                  )}
+                  {/* 物件確認した：状態・画像・フリーワードUI */}
+                  {sparklePropertyCheckOpen && (
+                    <div className="mt-2 rounded-2xl border border-[#bbdefb] bg-[#f0f7ff] px-3 py-2.5">
+                      {/* ステータス選択 */}
+                      <div className="flex gap-1.5 mb-2.5 flex-wrap">
+                        {["物件あった", "別の部屋が募集してた", "物件なかった"].map((s) => (
+                          <button
+                            key={s}
+                            onClick={() => setSparklePropertyCheckStatus((prev) => prev === s ? "" : s)}
+                            className={`rounded-full border px-3 py-1 text-[12px] font-medium transition-all ${sparklePropertyCheckStatus === s ? "border-[#1565c0] bg-[#1565c0] text-white" : "border-[#90caf9] bg-white text-[#444]"}`}
+                          >
+                            {s}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* 画像サムネイル＋追加ボタン */}
+                      {sparklePropertyCheckImages.length > 0 && (
+                        <div className="flex gap-1.5 mb-2 flex-wrap">
+                          {sparklePropertyCheckImages.map((img, i) => (
+                            <div key={i} className="relative">
+                              <img src={img.preview} alt="" className="h-14 w-14 rounded-lg object-cover border border-[#90caf9]" />
+                              <button
+                                onClick={() => setSparklePropertyCheckImages((prev) => prev.filter((_, j) => j !== i))}
+                                className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white"
+                              >✕</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <label className="mb-2.5 flex items-center gap-1.5 cursor-pointer w-fit">
+                        <span className="rounded-xl border border-[#90caf9] bg-white px-3 py-1.5 text-[11px] font-bold text-[#1565c0]">
+                          + 画像を追加
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          multiple
+                          className="hidden"
+                          onChange={(e) => {
+                            const files = Array.from(e.target.files ?? []);
+                            files.forEach((file) => {
+                              const reader = new FileReader();
+                              reader.onload = () => {
+                                setSparklePropertyCheckImages((prev) => [...prev, { preview: reader.result as string }]);
+                              };
+                              reader.readAsDataURL(file);
+                            });
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+
+                      {/* フリーワード */}
+                      <input
+                        type="text"
+                        value={sparklePropertyCheckNote}
+                        onChange={(e) => setSparklePropertyCheckNote(e.target.value)}
+                        placeholder="フリーワード（例: 日当たりよかった、広さOK...）"
+                        className="w-full rounded-xl border border-[#90caf9] bg-white px-3 py-2 text-[12px] outline-none focus:border-[#1565c0]"
+                      />
                     </div>
                   )}
                 </div>
