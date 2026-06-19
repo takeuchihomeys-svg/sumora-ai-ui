@@ -290,6 +290,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [showAixMenu, setShowAixMenu] = useState(false);
+  const [aixInspectLabel, setAixInspectLabel] = useState<string | null>(null);
   const [showGroupFilter, setShowGroupFilter] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -4536,7 +4537,7 @@ export default function Home() {
       {showAixMenu && (
         <div
           className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
-          onClick={(e) => { if (e.target === e.currentTarget) setShowAixMenu(false); }}
+          onClick={(e) => { if (e.target === e.currentTarget) { setShowAixMenu(false); setAixInspectLabel(null); } }}
         >
           <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl">
             <div
@@ -4545,33 +4546,99 @@ export default function Home() {
             >
               <div className="text-[17px] font-bold text-white">AIX</div>
               <button
-                onClick={() => setShowAixMenu(false)}
+                onClick={() => { setShowAixMenu(false); setAixInspectLabel(null); }}
                 className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white"
               >
                 ✕
               </button>
             </div>
             <div className="p-4 flex flex-col gap-2">
-              {[
-                { color: "#2196F3", label: "物件オススメ", sub: "おすすめ物件をAIが提案", action: () => { setShowAixMenu(false); openAixWithImagePicker("property_recommendation"); } },
-                { color: "#00897B", label: "物件送る", sub: "ピックアップした物件を送る・退去予定も自動案内", action: () => { setShowAixMenu(false); openAixDirect("property_send"); } },
-                { color: "#4CAF50", label: "物件確認した", sub: "確認結果を3パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); openAixDirect("property_check_result"); } },
-                { color: "#FF9800", label: "見積書送る", sub: "費用の見積書を作成", action: () => { setShowAixMenu(false); openAixWithImagePicker("estimate_sheet"); } },
-                { color: "#9C27B0", label: "内覧へ！", sub: "会話から最適な内覧訴求を生成→確認後送信", action: () => { setShowAixMenu(false); void triggerAixOneTap("viewing_invite"); } },
-                { color: "#E53935", label: "申込へ！", sub: "会話から最適な申込訴求を生成→確認後送信", action: () => { setShowAixMenu(false); void triggerAixOneTap("application_push"); } },
-              ].map((item) => (
-                <button
-                  key={item.label}
-                  onClick={item.action}
-                  className="flex items-center gap-0 overflow-hidden rounded-xl border border-[#e9edef] bg-white text-left active:bg-[#f5f6f7] transition-colors"
-                >
-                  <span className="w-1 self-stretch flex-shrink-0" style={{ background: item.color }} />
-                  <div className="px-4 py-3">
-                    <div className="text-[14px] font-bold text-[#111b21]">{item.label}</div>
-                    <div className="text-[11px] text-[#8696a0]">{item.sub}</div>
-                  </div>
-                </button>
-              ))}
+              {(() => {
+                const AIX_INSPECT: Record<string, { inputs: string; process: string; data: string }> = {
+                  "物件オススメ": {
+                    inputs: "物件資料画像（必須）/ お客様条件スクショ（任意）/ 室内イメージURL（任意）",
+                    process: "Claude Vision で物件情報を読み取り → 🌟物件名・オススメポイント4〜5項目・退去予定対応の固定フォーマットで生成",
+                    data: "☆実例（proposing）/ 差分学習ナレッジ / フレーズ辞書",
+                  },
+                  "物件送る": {
+                    inputs: "物件画像（複数・任意）/ 内覧カレンダー（自動取得）/ 退去予定メモ（画像から自動読み取り）",
+                    process: "内覧誘導 or 申込み誘導の2モードで生成。退去予定ありなら自動案内文を含める",
+                    data: "☆実例（property_send）/ カレンダー情報 / お客様希望条件",
+                  },
+                  "物件確認した": {
+                    inputs: "確認結果（物件あった / 別の部屋 / なかった）/ 物件画像（任意）",
+                    process: "パターン別プロンプトで生成。「物件あった」時はカレンダー自動取得して内覧日程を含める",
+                    data: "パターン別実例 / ノウハウ（availability_check）",
+                  },
+                  "見積書送る": {
+                    inputs: "見積書画像（必須）",
+                    process: "Vision OCR で初期費用・割引額・仲介手数料を数値抽出 → 節約額を計算して固定フォーマット出力",
+                    data: "固定テンプレート（AI文生成なし・計算値のみ）",
+                  },
+                  "内覧へ！": {
+                    inputs: "なし（会話履歴・カレンダーを自動取得）",
+                    process: "ワンタップで即生成 → 確認画面を経て送信。カレンダー情報があれば内覧可能日時を自動で含める",
+                    data: "フレーズ辞書（viewing_invite）/ 直近会話履歴",
+                  },
+                  "申込へ！": {
+                    inputs: "空室状況（空室 / 退去予定）/ 退去予定日（任意）",
+                    process: "ワンタップで即生成 → 確認後送信。見積書送信済みかを直近メッセージから自動検出してテンプレートを切り替え",
+                    data: "☆実例（application_push）/ 直近会話履歴",
+                  },
+                };
+                return [
+                  { color: "#2196F3", label: "物件オススメ", sub: "おすすめ物件をAIが提案", action: () => { setShowAixMenu(false); setAixInspectLabel(null); openAixWithImagePicker("property_recommendation"); } },
+                  { color: "#00897B", label: "物件送る", sub: "ピックアップした物件を送る・退去予定も自動案内", action: () => { setShowAixMenu(false); setAixInspectLabel(null); openAixDirect("property_send"); } },
+                  { color: "#4CAF50", label: "物件確認した", sub: "確認結果を3パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); openAixDirect("property_check_result"); } },
+                  { color: "#FF9800", label: "見積書送る", sub: "費用の見積書を作成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); openAixWithImagePicker("estimate_sheet"); } },
+                  { color: "#9C27B0", label: "内覧へ！", sub: "会話から最適な内覧訴求を生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); void triggerAixOneTap("viewing_invite"); } },
+                  { color: "#E53935", label: "申込へ！", sub: "会話から最適な申込訴求を生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); void triggerAixOneTap("application_push"); } },
+                ].map((item) => {
+                  const info = AIX_INSPECT[item.label];
+                  const isOpen = aixInspectLabel === item.label;
+                  return (
+                    <div key={item.label} className="overflow-hidden rounded-xl border border-[#e9edef] bg-white">
+                      <div className="flex items-center gap-0">
+                        {/* メインボタン */}
+                        <button
+                          onClick={item.action}
+                          className="flex flex-1 items-center gap-0 text-left active:bg-[#f5f6f7] transition-colors"
+                        >
+                          <span className="w-1 self-stretch flex-shrink-0" style={{ background: item.color }} />
+                          <div className="px-4 py-3">
+                            <div className="text-[14px] font-bold text-[#111b21]">{item.label}</div>
+                            <div className="text-[11px] text-[#8696a0]">{item.sub}</div>
+                          </div>
+                        </button>
+                        {/* 確認ボタン */}
+                        <button
+                          onClick={() => setAixInspectLabel(isOpen ? null : item.label)}
+                          className={`flex h-full items-center px-3 py-3 text-[11px] font-bold transition-colors ${isOpen ? "text-[#1565c0]" : "text-[#b0bec5]"}`}
+                        >
+                          {isOpen ? "▲" : "確認"}
+                        </button>
+                      </div>
+                      {/* 展開パネル */}
+                      {isOpen && info && (
+                        <div className="border-t border-[#f0f2f5] bg-[#f8f9ff] px-4 py-3 flex flex-col gap-2">
+                          <div>
+                            <span className="text-[10px] font-bold text-[#1565c0] uppercase tracking-wide">入力</span>
+                            <p className="mt-0.5 text-[12px] text-[#333] leading-5">{info.inputs}</p>
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-bold text-[#00897b] uppercase tracking-wide">処理</span>
+                            <p className="mt-0.5 text-[12px] text-[#333] leading-5">{info.process}</p>
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-bold text-[#e65100] uppercase tracking-wide">使用データ</span>
+                            <p className="mt-0.5 text-[12px] text-[#333] leading-5">{info.data}</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
             </div>
           </div>
         </div>
