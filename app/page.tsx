@@ -118,6 +118,18 @@ function getAccountMeta(account?: string | null) {
   return ACCOUNT_LIST.find((a) => a.key === account) ?? ACCOUNT_LIST[0]; // \u672a\u8a2d\u5b9a\u306f\u30b9\u30e2\u30e9
 }
 
+// AIX\u30d5\u30ed\u30fc\u5b9a\u7fa9: \u30d5\u30ed\u30fc\u540d \u2192 \u95a2\u9023\u30a2\u30af\u30b7\u30e7\u30f3 + \u30c6\u30f3\u30d7\u30ec\u30fc\u30c8\u30ab\u30c6\u30b4\u30ea
+const AIX_FLOWS: Record<string, { label: string; color: string; actions: string[]; templateCategory: string }> = {
+  property: { label: "\u7269\u4ef6\u9001\u308b", color: "#00897B", actions: ["property_send", "property_recommendation", "property_check_result", "estimate_sheet"], templateCategory: "\u7269\u4ef6\u9001\u308b" },
+  viewing:  { label: "\u5185\u89a7",     color: "#9C27B0", actions: ["viewing_invite"],   templateCategory: "\u5185\u89a7" },
+  application: { label: "\u7533\u8fbc", color: "#E53935", actions: ["application_push"], templateCategory: "\u7533\u8fbc" },
+};
+const ACTION_TO_FLOW: Record<string, string> = {
+  property_send: "property", property_recommendation: "property",
+  property_check_result: "property", estimate_sheet: "property",
+  viewing_invite: "viewing", application_push: "application",
+};
+
 type PropertyCustomerRow = {
   id: string;
   customer_name: string;
@@ -293,6 +305,7 @@ export default function Home() {
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [showAixMenu, setShowAixMenu] = useState(false);
   const [aixInspectLabel, setAixInspectLabel] = useState<string | null>(null);
+  const [activeAixFlow, setActiveAixFlow] = useState<string | null>(null);
   const [showGroupFilter, setShowGroupFilter] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -3203,10 +3216,22 @@ export default function Home() {
               </button>
 
               <button
-                onClick={() => { setShowAixMenu(true); setShowStatusMenu(false); }}
-                className="shrink-0 rounded-full border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-bold text-[#111b21] shadow-sm active:scale-95 transition-transform duration-75"
+                onClick={() => {
+                  if (activeAixFlow) {
+                    setActiveAixFlow(null);
+                  } else {
+                    setShowAixMenu(true); setShowStatusMenu(false);
+                  }
+                }}
+                className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-bold shadow-sm active:scale-95 transition-all duration-75 ${
+                  activeAixFlow
+                    ? "border-transparent text-white"
+                    : "border-[#d1d7db] bg-white text-[#111b21]"
+                }`}
+                style={activeAixFlow ? { backgroundColor: AIX_FLOWS[activeAixFlow]?.color } : undefined}
+                title={activeAixFlow ? `${AIX_FLOWS[activeAixFlow]?.label}フロー中 — タップで解除` : "AIXメニュー"}
               >
-                AIX
+                {activeAixFlow ? `${AIX_FLOWS[activeAixFlow]?.label} ×` : "AIX"}
               </button>
 
               {/* ✨ sparkleボタン（常時表示） */}
@@ -3888,6 +3913,7 @@ export default function Home() {
             sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined,
           }))}
           linkedCustomer={linkedCustomerMap[selectedConversation.id]}
+          initialCategory={activeAixFlow ? AIX_FLOWS[activeAixFlow]?.templateCategory : undefined}
         />
       )}
 
@@ -4647,12 +4673,12 @@ export default function Home() {
                   },
                 };
                 return [
-                  { color: "#2196F3", label: "物件オススメ", sub: "おすすめ物件をAIが提案", action: () => { setShowAixMenu(false); setAixInspectLabel(null); openAixWithImagePicker("property_recommendation"); } },
-                  { color: "#00897B", label: "物件送る", sub: "ピックアップした物件を送る・退去予定も自動案内", action: () => { setShowAixMenu(false); setAixInspectLabel(null); openAixDirect("property_send"); } },
-                  { color: "#4CAF50", label: "物件確認した", sub: "確認結果を3パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); openAixDirect("property_check_result"); } },
-                  { color: "#FF9800", label: "見積書送る", sub: "費用の見積書を作成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); openAixWithImagePicker("estimate_sheet"); } },
-                  { color: "#9C27B0", label: "内覧へ！", sub: "会話から最適な内覧訴求を生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); void triggerAixOneTap("viewing_invite"); } },
-                  { color: "#E53935", label: "申込へ！", sub: "会話から最適な申込訴求を生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); void triggerAixOneTap("application_push"); } },
+                  { color: "#2196F3", label: "物件オススメ", sub: "おすすめ物件をAIが提案", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow(ACTION_TO_FLOW["property_recommendation"]); openAixWithImagePicker("property_recommendation"); } },
+                  { color: "#00897B", label: "物件送る", sub: "ピックアップした物件を送る・退去予定も自動案内", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow(ACTION_TO_FLOW["property_send"]); openAixDirect("property_send"); } },
+                  { color: "#4CAF50", label: "物件確認した", sub: "確認結果を3パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow(ACTION_TO_FLOW["property_check_result"]); openAixDirect("property_check_result"); } },
+                  { color: "#FF9800", label: "見積書送る", sub: "費用の見積書を作成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow(ACTION_TO_FLOW["estimate_sheet"]); openAixWithImagePicker("estimate_sheet"); } },
+                  { color: "#9C27B0", label: "内覧へ！", sub: "会話から最適な内覧訴求を生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow(ACTION_TO_FLOW["viewing_invite"]); void triggerAixOneTap("viewing_invite"); } },
+                  { color: "#E53935", label: "申込へ！", sub: "会話から最適な申込訴求を生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow(ACTION_TO_FLOW["application_push"]); void triggerAixOneTap("application_push"); } },
                 ].map((item) => {
                   const info = AIX_INSPECT[item.label];
                   const isOpen = aixInspectLabel === item.label;

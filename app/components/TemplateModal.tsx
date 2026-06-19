@@ -16,14 +16,15 @@ interface TemplateModalProps {
   conversationState?: string;
   recentMessages?: Array<{ sender: string; text: string; imageUrl?: string }>;
   linkedCustomer?: { id: string; name: string; conditions: string };
+  initialCategory?: string;
 }
 
 export default function TemplateModal({
-  onClose, onSelect, customerName, conversationState, recentMessages, linkedCustomer,
+  onClose, onSelect, customerName, conversationState, recentMessages, linkedCustomer, initialCategory,
 }: TemplateModalProps) {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
-  const [category, setCategory] = useState("全般");
+  const [category, setCategory] = useState(initialCategory || "全般");
   const [showAddForm, setShowAddForm] = useState(false);
   const [newLabel, setNewLabel] = useState("");
   const [newCategory, setNewCategory] = useState("全般");
