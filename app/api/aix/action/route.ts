@@ -680,7 +680,7 @@ ${patternExample}${knowledgeText}${examplesText}`;
         const availableTemplate = available_application === "yes"
           ? `${waitingPrefix}お送り頂きました
 [物件名と号室]
-募集中となります！！${estimateLine}
+2番手お申込み可能で募集中となります！！${estimateLine}
 
 1番手でお申込みがはいっておりますので、2番手以降でのお申込みとなります。`
           : `${waitingPrefix}お送り頂きました
