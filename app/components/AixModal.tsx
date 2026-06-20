@@ -1249,9 +1249,9 @@ export default function AixModal({
                 </div>
                 <p className="text-sm leading-6 text-[#111b21] line-clamp-4 whitespace-pre-wrap">{preview}</p>
               </button>
-              {preview.includes("[物件名]") && (
+              {(preview.includes("[物件名]") || preview.includes("[物件名と号室]")) && (
                 <div className="mt-2 rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-600">
-                  ⚠️ 「[物件名]」が残っています。会話履歴に物件名が見つかりませんでした。送信前に直接編集してください。
+                  ⚠️ 物件名が特定できませんでした。送信前に直接編集してください。
                 </div>
               )}
             </div>

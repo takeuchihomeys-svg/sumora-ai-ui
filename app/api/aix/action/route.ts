@@ -676,17 +676,16 @@ ${patternExample}${knowledgeText}${examplesText}`;
           }
         }
 
+        const estimateLine = estimate_image_url ? "\n初期費用の御見積書と併せてお送りさせて頂きました！！" : "";
         const availableTemplate = available_application === "yes"
           ? `${waitingPrefix}お送り頂きました
 [物件名と号室]
-募集中となります！！
-初期費用の御見積書と併せてお送りさせて頂きました！！
+募集中となります！！${estimateLine}
 
 1番手でお申込みがはいっておりますので、2番手以降でのお申込みとなります。`
           : `${waitingPrefix}お送り頂きました
 [物件名と号室]
-募集中となります！！
-初期費用の御見積書と併せてお送りさせて頂きました！！
+募集中となります！！${estimateLine}
 お手隙の際にご査収ください！！`;
 
         const availableFixedSystem = `あなたはテキスト置換エンジンです。
