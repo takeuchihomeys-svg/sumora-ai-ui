@@ -29,6 +29,19 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ ok: true, template: data });
 }
 
+export async function PATCH(req: NextRequest) {
+  const { updates } = await req.json() as { updates: Array<{ id: string; sort_order: number }> };
+  if (!Array.isArray(updates) || updates.length === 0) {
+    return NextResponse.json({ ok: false, error: "updates required" }, { status: 400 });
+  }
+
+  for (const { id, sort_order } of updates) {
+    const { error } = await supabase.from("templates").update({ sort_order }).eq("id", id);
+    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  }
+  return NextResponse.json({ ok: true });
+}
+
 export async function PUT(req: NextRequest) {
   const { id, category, label, text } = await req.json() as { id: string; category: string; label: string; text: string };
   if (!id || !label?.trim() || !text?.trim()) {

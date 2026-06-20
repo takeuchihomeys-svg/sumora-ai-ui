@@ -2325,6 +2325,7 @@ export default function Home() {
   const openConversation = (conversationId: string) => {
     setSelectedId(conversationId);
     setMobileView("chat");
+    setActiveAixFlow(null);
   };
 
   const showListOnMobile = mobileView === "list";

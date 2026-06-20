@@ -7,6 +7,7 @@ interface Template {
   category: string;
   label: string;
   text: string;
+  sort_order: number | null;
 }
 
 interface TemplateModalProps {
@@ -111,6 +112,29 @@ export default function TemplateModal({
     } finally {
       setEditSaving(false);
     }
+  };
+
+  const handleReorder = async (index: number, direction: "up" | "down") => {
+    const swapIndex = direction === "up" ? index - 1 : index + 1;
+    if (swapIndex < 0 || swapIndex >= filtered.length) return;
+
+    const a = filtered[index];
+    const b = filtered[swapIndex];
+    const aOrder = a.sort_order ?? index;
+    const bOrder = b.sort_order ?? swapIndex;
+
+    setTemplates((prev) =>
+      prev.map((t) =>
+        t.id === a.id ? { ...t, sort_order: bOrder } :
+        t.id === b.id ? { ...t, sort_order: aOrder } : t
+      )
+    );
+
+    await fetch("/api/templates", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ updates: [{ id: a.id, sort_order: bOrder }, { id: b.id, sort_order: aOrder }] }),
+    });
   };
 
   const handleDelete = async (id: string) => {
@@ -314,7 +338,7 @@ export default function TemplateModal({
                 </div>
               ) : (
                 <div className="flex flex-col gap-3">
-                  {filtered.map((tmpl) => {
+                  {filtered.map((tmpl, idx) => {
                     const adapted = adaptedTexts[tmpl.id];
                     const displayText = adapted || tmpl.text;
                     return (
@@ -323,7 +347,20 @@ export default function TemplateModal({
                         <div className="mb-2 flex items-center justify-between gap-2">
                           <span className="text-xs font-bold text-[#1565C0] flex-1 min-w-0 truncate">{tmpl.label}</span>
                           {editingId !== tmpl.id && (
-                            <div className="flex items-center gap-2.5 shrink-0">
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                onClick={() => handleReorder(idx, "up")}
+                                disabled={idx === 0}
+                                className="flex h-5 w-5 items-center justify-center rounded text-[11px] text-[#bbb] hover:text-[#1565C0] disabled:opacity-20 transition"
+                                title="上へ"
+                              >↑</button>
+                              <button
+                                onClick={() => handleReorder(idx, "down")}
+                                disabled={idx === filtered.length - 1}
+                                className="flex h-5 w-5 items-center justify-center rounded text-[11px] text-[#bbb] hover:text-[#1565C0] disabled:opacity-20 transition"
+                                title="下へ"
+                              >↓</button>
+                              <div className="w-px h-3 bg-[#e0e0e0] mx-0.5" />
                               <button
                                 onClick={() => startEdit(tmpl)}
                                 className="text-[11px] text-[#aaa] hover:text-[#1565C0] transition font-medium"
