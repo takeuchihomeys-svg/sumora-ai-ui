@@ -328,8 +328,12 @@ export default function Home() {
   const [aixModalType, setAixModalType] = useState<AixActionType | null>(null);
   const [aixInitialFile, setAixInitialFile] = useState<File | null>(null);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
-  const [suggest2ndHandMap, setSuggest2ndHandMap] = useState<Record<string, boolean>>({});
-  const [suggestPropertySendMap, setSuggestPropertySendMap] = useState<Record<string, boolean>>({});
+  const [suggest2ndHandMap, setSuggest2ndHandMap] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(sessionStorage.getItem("suggest2ndHandMap") || "{}") as Record<string, boolean>; } catch { return {}; }
+  });
+  const [suggestPropertySendMap, setSuggestPropertySendMap] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(sessionStorage.getItem("suggestPropertySendMap") || "{}") as Record<string, boolean>; } catch { return {}; }
+  });
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);
   const [announcements, setAnnouncements] = useState<Message[]>([]);
@@ -449,6 +453,14 @@ export default function Home() {
       setMobileView("chat");
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    try { sessionStorage.setItem("suggest2ndHandMap", JSON.stringify(suggest2ndHandMap)); } catch {}
+  }, [suggest2ndHandMap]);
+
+  useEffect(() => {
+    try { sessionStorage.setItem("suggestPropertySendMap", JSON.stringify(suggestPropertySendMap)); } catch {}
+  }, [suggestPropertySendMap]);
 
   useEffect(() => {
     const block = (e: MouseEvent) => {
@@ -3978,7 +3990,11 @@ export default function Home() {
       {showTemplateModal && (
         <TemplateModal
           onClose={() => setShowTemplateModal(false)}
-          onSelect={(text) => { setReplyDraft(text); setShowTemplateModal(false); }}
+          onSelect={(text, imageFile) => {
+            setReplyDraft(text);
+            if (imageFile) setSelectedImageFiles((prev) => [...prev, imageFile]);
+            setShowTemplateModal(false);
+          }}
           customerName={selectedConversation.customerName}
           conversationState={selectedConversation.status}
           recentMessages={(selectedConversation.messages || []).slice(-15).map((m: Message) => ({
@@ -4025,6 +4041,8 @@ export default function Home() {
               ? () => {
                   const convId = selectedConversation.id;
                   const customerName = selectedConversation.customerName;
+                  // 物件送るバナーを消去
+                  setSuggestPropertySendMap((prev) => { const n = { ...prev }; delete n[convId]; return n; });
                   // property_sendタスクを完了
                   const sendTask = (activeTasks[convId] ?? []).find((t) => t.task_type === "property_send");
                   if (sendTask) {

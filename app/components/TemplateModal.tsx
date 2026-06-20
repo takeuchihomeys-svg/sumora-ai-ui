@@ -13,7 +13,7 @@ interface Template {
 
 interface TemplateModalProps {
   onClose: () => void;
-  onSelect?: (text: string) => void;
+  onSelect?: (text: string, imageFile?: File) => void;
   customerName?: string;
   conversationState?: string;
   recentMessages?: Array<{ sender: string; text: string; imageUrl?: string }>;
@@ -559,7 +559,7 @@ export default function TemplateModal({
                                   alert("📸 物件資料画像を添付してください");
                                   return;
                                 }
-                                onSelect(displayText);
+                                onSelect(displayText, templateImages[tmpl.id]);
                                 onClose();
                               }}
                               className="rounded-full px-3 py-1.5 text-[11px] font-bold text-white"
@@ -590,7 +590,7 @@ export default function TemplateModal({
                           </button>
                           {adapted && onSelect && (
                             <button
-                              onClick={() => { onSelect(adapted); onClose(); }}
+                              onClick={() => { onSelect(adapted, templateImages[tmpl.id]); onClose(); }}
                               className="rounded-full px-3 py-1.5 text-[11px] font-bold text-white"
                               style={{ background: "linear-gradient(135deg, #06c755, #06a043)" }}
                             >
