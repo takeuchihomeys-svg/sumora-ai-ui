@@ -344,6 +344,12 @@ export default function Home() {
   const [dismissedPropertyRecommendIds, setDismissedPropertyRecommendIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedPropertyRecommendIds") || "[]") as string[]); } catch { return new Set(); }
   });
+  const [suggestViewingTemplateMap, setSuggestViewingTemplateMap] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(sessionStorage.getItem("suggestViewingTemplateMap") || "{}") as Record<string, boolean>; } catch { return {}; }
+  });
+  const [dismissedViewingTemplateIds, setDismissedViewingTemplateIds] = useState<Set<string>>(() => {
+    try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedViewingTemplateIds") || "[]") as string[]); } catch { return new Set(); }
+  });
   const [dismissedEstimateSheetIds, setDismissedEstimateSheetIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedEstimateSheetIds") || "[]") as string[]); } catch { return new Set(); }
   });
@@ -356,7 +362,7 @@ export default function Home() {
   const [dismissedApplyStep2Ids, setDismissedApplyStep2Ids] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedApplyStep2Ids") || "[]") as string[]); } catch { return new Set(); }
   });
-  const [templateOpenContext, setTemplateOpenContext] = useState<null | "apply_step1" | "apply_step2">(null);
+  const [templateOpenContext, setTemplateOpenContext] = useState<null | "apply_step1" | "apply_step2" | "viewing_follow">(null);
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);
   const [announcements, setAnnouncements] = useState<Message[]>([]);
@@ -496,6 +502,14 @@ export default function Home() {
   useEffect(() => {
     try { sessionStorage.setItem("dismissedPropertyRecommendIds", JSON.stringify([...dismissedPropertyRecommendIds])); } catch {}
   }, [dismissedPropertyRecommendIds]);
+
+  useEffect(() => {
+    try { sessionStorage.setItem("suggestViewingTemplateMap", JSON.stringify(suggestViewingTemplateMap)); } catch {}
+  }, [suggestViewingTemplateMap]);
+
+  useEffect(() => {
+    try { sessionStorage.setItem("dismissedViewingTemplateIds", JSON.stringify([...dismissedViewingTemplateIds])); } catch {}
+  }, [dismissedViewingTemplateIds]);
 
   useEffect(() => {
     try { sessionStorage.setItem("dismissedEstimateSheetIds", JSON.stringify([...dismissedEstimateSheetIds])); } catch {}
@@ -2053,6 +2067,14 @@ export default function Home() {
         setSuggestPropertySendMap((prev) => ({ ...prev, [selectedConversation.id]: true }));
       }
 
+      // 内覧招待メッセージ検知 → 内覧テンプレート辞書を誘導
+      const isViewingMsg = activeAixFlow === "viewing_invite"
+        || (textToSend && /内覧|ご案内|ご都合.*いかが|ご都合.*如何|お日にち|お部屋ご案内/.test(textToSend));
+      if (isViewingMsg) {
+        setSuggestViewingTemplateMap((prev) => ({ ...prev, [selectedConversation.id]: true }));
+        setDismissedViewingTemplateIds((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
+      }
+
       // 送信完了後にAI要約をバックグラウンド更新（送信した文も含めた最新状態で要約）
       const linkedForSummary = linkedCustomerMap[selectedConversation.id];
       if (linkedForSummary?.id) {
@@ -3467,6 +3489,26 @@ export default function Home() {
               </div>
             )}
 
+            {/* 内覧テンプレート辞書バナー（内覧招待メッセージ送信後） */}
+            {suggestViewingTemplateMap[selectedConversation.id] && !dismissedViewingTemplateIds.has(selectedConversation.id) && (
+              <div className="mx-1 mb-1 rounded-2xl border-2 border-purple-400 bg-purple-50 px-3 py-2 flex items-center gap-2">
+                <span className="text-[12px] font-bold text-purple-700 flex-1">▶ 追加で訴求LINEを送る → 内覧テンプレート辞書</span>
+                <button
+                  onClick={() => {
+                    setDismissedViewingTemplateIds((prev) => new Set([...prev, selectedConversation.id]));
+                    setTemplateOpenContext("viewing_follow");
+                    setShowTemplateModal(true);
+                  }}
+                  className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                  style={{ background: "linear-gradient(135deg, #9c27b0, #7b1fa2)" }}
+                >内覧テンプレート</button>
+                <button
+                  onClick={() => setDismissedViewingTemplateIds((prev) => new Set([...prev, selectedConversation.id]))}
+                  className="shrink-0 text-purple-400 text-[11px] font-bold"
+                >✕</button>
+              </div>
+            )}
+
             {/* 申込フォーマット①バナー（ステータスが申込・審査中になったとき） */}
             {(selectedConversation.status === "applying" || selectedConversation.status === "screening" || selectedConversation.status === "contract") && !suggestApplyStep2Map[selectedConversation.id] && !dismissedApplyStep1Ids.has(selectedConversation.id) && (
               <div className="mx-1 mb-1 rounded-2xl border-2 border-pink-400 bg-pink-50 px-3 py-2 flex items-center gap-2">
@@ -4188,6 +4230,7 @@ export default function Home() {
           }))}
           linkedCustomer={linkedCustomerMap[selectedConversation.id]}
           initialCategory={
+            templateOpenContext === "viewing_follow" ? "内覧" :
             templateOpenContext === "apply_step1" || templateOpenContext === "apply_step2" ? "申込・審査" :
             suggest2ndHandMap[selectedConversation.id] ? "物件確認した【AIX】" :
             activeAixFlow ? AIX_ACTION_META[activeAixFlow]?.templateCategory :
