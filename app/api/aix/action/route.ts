@@ -678,29 +678,38 @@ ${patternExample}${knowledgeText}${examplesText}`;
 
         const availableTemplate = available_application === "yes"
           ? `${waitingPrefix}お送り頂きました
-[物件名]
+[物件名と号室]
 募集中となります！！
 初期費用の御見積書と併せてお送りさせて頂きました！！
 
 1番手でお申込みがはいっておりますので、2番手以降でのお申込みとなります。`
           : `${waitingPrefix}お送り頂きました
-[物件名]
+[物件名と号室]
 募集中となります！！
 初期費用の御見積書と併せてお送りさせて頂きました！！
 お手隙の際にご査収ください！！`;
 
         const availableFixedSystem = `あなたはテキスト置換エンジンです。
 以下のテンプレートを一字一句そのまま出力してください。
-[物件名]の部分のみ、会話履歴から特定した物件名に置き換えること。
+[物件名と号室]の部分のみ、画像または会話履歴から「マンション名 ○○○号室」の形式で置き換えること（例: アドバンス難波ラシュレ 0806号室）。
+号室が不明な場合はマンション名のみ記載する。
 それ以外の文字・絵文字・改行は一切変更・追加・削除しないこと。
 
 テンプレート:
 ${availableTemplate}`;
 
-        message_text = await callClaude(
-          availableFixedSystem,
-          `以下の会話から物件名を特定して[物件名]を置き換えてください。${recentHistory}`
-        );
+        if (image_url) {
+          const content: Array<{ type: string; text?: string; source?: { type: string; url: string } }> = [
+            { type: "text", text: `以下の会話と画像から物件名と号室を特定して[物件名と号室]を置き換えてください。${recentHistory}` },
+            { type: "image", source: { type: "url", url: image_url } },
+          ];
+          message_text = await callClaudeVision(availableFixedSystem, content);
+        } else {
+          message_text = await callClaude(
+            availableFixedSystem,
+            `以下の会話から物件名と号室を特定して[物件名と号室]を置き換えてください。${recentHistory}`
+          );
+        }
 
       // 「同じ間取り」「違う間取り」は固定テンプレートを完全に守らせる専用フロー
       } else if (pattern === "alternative" && (floor_plan_match === "same" || floor_plan_match === "different")) {
