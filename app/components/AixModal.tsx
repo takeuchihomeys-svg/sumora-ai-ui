@@ -30,7 +30,7 @@ interface AixModalProps {
   customerSummary?: string | null;
   onClose: () => void;
   onSend: (text: string, imageUrl?: string) => Promise<void>;
-  onAfterSend?: (meta?: { suggest2ndHand?: boolean }) => void;
+  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean }) => void;
 }
 
 const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }> = {
@@ -199,6 +199,11 @@ export default function AixModal({
   const [sendMode, setSendMode] = useState<"viewing" | "application" | null>(null);
   const [editableCalendarSlots, setEditableCalendarSlots] = useState<string[]>([]);
   const [includeCalendar, setIncludeCalendar] = useState(true);
+  // 内覧へ！専用: カレンダースロット選択
+  const [viewingCalendarDays, setViewingCalendarDays] = useState<Array<{label: string; slots: string[]; fullyBooked: boolean; noEvents: boolean}>>([]);
+  const [viewingCalendarLoading, setViewingCalendarLoading] = useState(false);
+  const [viewingSlotEnabled, setViewingSlotEnabled] = useState<boolean[]>([]);
+  const [viewingSlotTexts, setViewingSlotTexts] = useState<string[]>([]);
   // 申込へ！専用: 空室状況 + 退去予定日
   const [appVacancyStatus, setAppVacancyStatus] = useState<"vacant" | "scheduled" | null>(null);
   const [appMoveOutDate, setAppMoveOutDate] = useState("");
@@ -268,6 +273,26 @@ export default function AixModal({
         setEditableCalendarSlots([]);
       } finally {
         setCalendarLoading(false);
+      }
+    })();
+  }, [actionType]);
+
+  // 内覧へ！: カレンダー取得
+  useEffect(() => {
+    if (actionType !== "viewing_invite") return;
+    setViewingCalendarLoading(true);
+    (async () => {
+      try {
+        const { days } = await fetchCalendarSlots();
+        setViewingCalendarDays(days);
+        setViewingSlotEnabled(days.map(d => !d.fullyBooked));
+        setViewingSlotTexts(days.map(d => d.slots[0] || ""));
+      } catch {
+        setViewingCalendarDays([]);
+        setViewingSlotEnabled([]);
+        setViewingSlotTexts([]);
+      } finally {
+        setViewingCalendarLoading(false);
       }
     })();
   }, [actionType]);
@@ -526,6 +551,13 @@ export default function AixModal({
         body.image_url = await uploadImage(imageFile);
       }
 
+      if (actionType === "viewing_invite" && viewingCalendarDays.length > 0) {
+        const selectedSlots = viewingCalendarDays
+          .map((d, i) => viewingSlotEnabled[i] && viewingSlotTexts[i] ? `${d.label} ${viewingSlotTexts[i]}` : "")
+          .filter(Boolean)
+          .join("\n");
+        if (selectedSlots) body.calendar_info = selectedSlots;
+      }
       if (inputText.trim()) body.extra_input = inputText.trim();
       if (parsedEstimate) body.parsed_estimate = parsedEstimate;
 
@@ -635,7 +667,10 @@ export default function AixModal({
         }),
       }).catch(() => {});
 
-      onAfterSend?.({ suggest2ndHand: actionType === "property_check_result" && checkAvailableApp === "yes" });
+      onAfterSend?.({
+        suggest2ndHand: actionType === "property_check_result" && checkAvailableApp === "yes",
+        suggestViewingTemplate: actionType === "viewing_invite",
+      });
       onClose();
     } catch {
       setError("送信に失敗しました");
@@ -1373,8 +1408,58 @@ export default function AixModal({
             </div>
           ) : null}
 
+          {/* 内覧へ！: カレンダースロット選択 */}
+          {actionType === "viewing_invite" && (
+            <div className="mb-4">
+              <p className="mb-2 text-xs font-bold text-[#54656f]">内覧可能日時（カレンダーから自動取得）</p>
+              {viewingCalendarLoading ? (
+                <div className="flex items-center gap-2 rounded-xl bg-[#f0f2f5] px-3 py-2.5 text-sm text-[#8696a0]">
+                  <span className="inline-block animate-spin">⏳</span>
+                  <span>カレンダー読み込み中...</span>
+                </div>
+              ) : viewingCalendarDays.length > 0 ? (
+                <div className="flex flex-col gap-2">
+                  {viewingCalendarDays.map((d, i) => (
+                    <div key={i} className={`flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs transition-all ${
+                      d.fullyBooked ? "bg-red-50 opacity-60" : viewingSlotEnabled[i] ? "bg-emerald-50 border border-emerald-200" : "bg-[#f0f2f5]"
+                    }`}>
+                      <button
+                        onClick={() => {
+                          if (d.fullyBooked) return;
+                          setViewingSlotEnabled(prev => { const n = [...prev]; n[i] = !n[i]; return n; });
+                        }}
+                        className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold transition-all ${
+                          d.fullyBooked ? "bg-red-200 text-red-400 cursor-not-allowed" : viewingSlotEnabled[i] ? "bg-emerald-500 text-white" : "bg-[#d1d7db] text-[#8696a0]"
+                        }`}
+                      >
+                        {d.fullyBooked ? "×" : viewingSlotEnabled[i] ? "✓" : "○"}
+                      </button>
+                      <span className={`font-bold flex-shrink-0 text-xs ${
+                        d.fullyBooked ? "text-red-400" : viewingSlotEnabled[i] ? "text-emerald-700" : "text-[#54656f]"
+                      }`}>{d.label}</span>
+                      {d.fullyBooked ? (
+                        <span className="text-red-400 text-xs">案内不可</span>
+                      ) : (
+                        <input
+                          type="text"
+                          value={viewingSlotTexts[i] ?? ""}
+                          onChange={(e) => { const v = e.target.value; setViewingSlotTexts(prev => { const n = [...prev]; n[i] = v; return n; }); }}
+                          onFocus={() => setViewingSlotEnabled(prev => { const n = [...prev]; n[i] = true; return n; })}
+                          className={`flex-1 min-w-0 bg-transparent outline-none text-xs ${viewingSlotEnabled[i] ? "text-emerald-700" : "text-[#8696a0]"}`}
+                          placeholder="14:00〜17:00"
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-xl bg-[#f0f2f5] px-3 py-2 text-xs text-[#8696a0]">カレンダー情報を取得できませんでした</div>
+              )}
+            </div>
+          )}
+
           {/* テキスト入力欄（各アクション専用） */}
-          {config.inputLabel && actionType !== "property_send" && (
+          {config.inputLabel && actionType !== "property_send" && actionType !== "viewing_invite" && (
             <div className="mb-4">
               <label className="mb-1 block text-xs font-semibold text-[#54656f]">
                 {config.inputLabel}
