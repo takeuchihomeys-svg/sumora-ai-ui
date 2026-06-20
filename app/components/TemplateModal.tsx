@@ -35,6 +35,11 @@ export default function TemplateModal({
   const [adaptedTexts, setAdaptedTexts] = useState<Record<string, string>>({});
   const [adaptErrors, setAdaptErrors] = useState<Record<string, string>>({});
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editLabel, setEditLabel] = useState("");
+  const [editText, setEditText] = useState("");
+  const [editCategory, setEditCategory] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
   const addFormRef = useRef<HTMLDivElement | null>(null);
 
   const loadTemplates = async () => {
@@ -77,6 +82,33 @@ export default function TemplateModal({
       }
     } finally {
       setSaving(false);
+    }
+  };
+
+  const startEdit = (tmpl: Template) => {
+    setEditingId(tmpl.id);
+    setEditLabel(tmpl.label);
+    setEditText(tmpl.text);
+    setEditCategory(tmpl.category);
+    setConfirmDeleteId(null);
+  };
+
+  const handleUpdate = async () => {
+    if (!editingId || !editLabel.trim() || !editText.trim()) return;
+    setEditSaving(true);
+    try {
+      const res = await fetch("/api/templates", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: editingId, category: editCategory || "全般", label: editLabel, text: editText }),
+      });
+      const data = await res.json() as { ok: boolean };
+      if (data.ok) {
+        setEditingId(null);
+        await loadTemplates();
+      }
+    } finally {
+      setEditSaving(false);
     }
   };
 
@@ -279,15 +311,51 @@ export default function TemplateModal({
                         {/* タイトル行 */}
                         <div className="mb-2 flex items-center justify-between gap-2">
                           <span className="text-xs font-bold text-[#1565C0] flex-1 min-w-0 truncate">{tmpl.label}</span>
-                          <button
-                            onClick={() => setConfirmDeleteId(tmpl.id)}
-                            className="shrink-0 text-[#ccc] hover:text-red-400 transition text-[16px] leading-none"
-                            title="削除"
-                          >
-                            🗑
-                          </button>
+                          {editingId !== tmpl.id && (
+                            <div className="flex items-center gap-2.5 shrink-0">
+                              <button
+                                onClick={() => startEdit(tmpl)}
+                                className="text-[11px] text-[#aaa] hover:text-[#1565C0] transition font-medium"
+                              >編集</button>
+                              <button
+                                onClick={() => setConfirmDeleteId(tmpl.id)}
+                                className="text-[11px] text-[#ccc] hover:text-red-400 transition font-medium"
+                              >削除</button>
+                            </div>
+                          )}
                         </div>
 
+                        {/* インライン編集フォーム */}
+                        {editingId === tmpl.id ? (
+                          <div className="flex flex-col gap-2">
+                            <input
+                              className="w-full rounded-xl border border-[#b3d0f7] px-3 py-2 text-[12px] outline-none focus:border-[#2196F3]"
+                              value={editLabel}
+                              onChange={(e) => setEditLabel(e.target.value)}
+                              placeholder="テンプレート名"
+                            />
+                            <textarea
+                              className="w-full rounded-xl border border-[#b3d0f7] px-3 py-2 text-[12px] outline-none focus:border-[#2196F3] resize-none"
+                              rows={5}
+                              value={editText}
+                              onChange={(e) => setEditText(e.target.value)}
+                              placeholder="本文"
+                            />
+                            <div className="flex gap-2 justify-end mt-1">
+                              <button
+                                onClick={() => setEditingId(null)}
+                                className="rounded-full px-3 py-1.5 text-[11px] font-bold text-[#667781] border border-[#d1d7db]"
+                              >キャンセル</button>
+                              <button
+                                onClick={handleUpdate}
+                                disabled={editSaving || !editLabel.trim() || !editText.trim()}
+                                className="rounded-full px-4 py-1.5 text-[11px] font-bold text-white disabled:opacity-50"
+                                style={{ background: "linear-gradient(135deg, #1565C0, #4BA8E8)" }}
+                              >{editSaving ? "保存中..." : "保存"}</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
                         {/* 削除確認 */}
                         {confirmDeleteId === tmpl.id && (
                           <div className="mb-2 flex items-center gap-2 rounded-xl bg-red-50 border border-red-200 px-3 py-2">
@@ -336,9 +404,11 @@ export default function TemplateModal({
 
                         {/* 本文 */}
                         <p className="whitespace-pre-wrap text-[13px] leading-5 text-[#111b21] mb-3">{displayText}</p>
+                        </>
+                        )}
 
                         {/* ボタン行 */}
-                        <div className="flex items-center gap-2 flex-wrap">
+                        {editingId !== tmpl.id && <div className="flex items-center gap-2 flex-wrap">
                           {onSelect && (
                             <button
                               onClick={() => { onSelect(displayText); onClose(); }}
@@ -377,7 +447,7 @@ export default function TemplateModal({
                               最適化版を使う
                             </button>
                           )}
-                        </div>
+                        </div>}
                       </div>
                     );
                   })}

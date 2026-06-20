@@ -29,6 +29,21 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ ok: true, template: data });
 }
 
+export async function PUT(req: NextRequest) {
+  const { id, category, label, text } = await req.json() as { id: string; category: string; label: string; text: string };
+  if (!id || !label?.trim() || !text?.trim()) {
+    return NextResponse.json({ ok: false, error: "id, label, text は必須" }, { status: 400 });
+  }
+
+  const { error } = await supabase
+    .from("templates")
+    .update({ category: category?.trim() || "全般", label: label.trim(), text: text.trim() })
+    .eq("id", id);
+
+  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  return NextResponse.json({ ok: true });
+}
+
 export async function DELETE(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const id = searchParams.get("id");
