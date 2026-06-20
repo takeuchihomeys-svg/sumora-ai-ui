@@ -3427,135 +3427,100 @@ export default function Home() {
               <input ref={aixFileInputRef} type="file" accept="image/*" onChange={onAixImageSelected} className="hidden" />
             </div>
 
-            {/* 物件送るサジェスチョンバナー */}
-            {(suggestPropertySendMap[selectedConversation.id] || (activeTasks[selectedConversation.id] ?? []).some(t => t.task_type === "property_send")) && !suggest2ndHandMap[selectedConversation.id] && !dismissedPropertySendIds.has(selectedConversation.id) && (
-              <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-500 bg-teal-50 px-3 py-2 flex items-center gap-2">
-                <span className="text-[12px] font-bold text-teal-700 flex-1">▶ 次のアクション → AIX 物件を送る</span>
-                <button
-                  onClick={() => {
-                    setDismissedPropertySendIds((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
-                    setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); openAixDirect("property_send");
-                    setSuggestPropertySendMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; });
-                  }}
-                  className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                  style={{ background: "linear-gradient(135deg, #00897B, #26a69a)" }}
-                >AIX 物件送る</button>
-                <button
-                  onClick={() => setDismissedPropertySendIds((prev) => new Set([...prev, selectedConversation.id]))}
-                  className="shrink-0 text-teal-400 text-[11px] font-bold"
-                >✕</button>
-              </div>
-            )}
-
-            {/* 物件オススメ誘導バナー（物件送る完了後） */}
-            {suggestPropertyRecommendMap[selectedConversation.id] && !dismissedPropertyRecommendIds.has(selectedConversation.id) && (
-              <div className="mx-1 mb-1 rounded-2xl border-2 border-indigo-500 bg-indigo-50 px-3 py-2 flex items-center gap-2">
-                <span className="text-[12px] font-bold text-indigo-700 flex-1">▶ 次のアクション → AIX 物件オススメ で文案を送る</span>
-                <button
-                  onClick={() => {
-                    setSuggestPropertyRecommendMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; });
-                    setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_recommendation"); openAixWithImagePicker("property_recommendation");
-                  }}
-                  className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                  style={{ background: "linear-gradient(135deg, #4f46e5, #7c3aed)" }}
-                >AIX 物件オススメ</button>
-                <button
-                  onClick={() => setDismissedPropertyRecommendIds((prev) => new Set([...prev, selectedConversation.id]))}
-                  className="shrink-0 text-indigo-400 text-[11px] font-bold"
-                >✕</button>
-              </div>
-            )}
-
-            {/* 見積書送るバナー（初期費用・見積キーワード検知） */}
+            {/* ===== アクション誘導バナー（優先度制御：1つだけ表示） ===== */}
             {(() => {
+              const id = selectedConversation.id;
               const msgs = selectedConversation.messages || [];
               const lastCustomerText = [...msgs].reverse().find((m: Message) => m.sender === "customer")?.text || "";
-              return /初期費用|見積|費用.*教|いくら|金額.*教|費用感/.test(lastCustomerText);
-            })() && !dismissedEstimateSheetIds.has(selectedConversation.id) && (
-              <div className="mx-1 mb-1 rounded-2xl border-2 border-amber-400 bg-amber-50 px-3 py-2 flex items-center gap-2">
-                <span className="text-[12px] font-bold text-amber-700 flex-1">▶ 初期費用の確認 → AIX 見積書送る</span>
-                <button
-                  onClick={() => {
-                    setDismissedEstimateSheetIds((prev) => new Set([...prev, selectedConversation.id]));
-                    setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet"); openAixWithImagePicker("estimate_sheet");
-                  }}
-                  className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                  style={{ background: "linear-gradient(135deg, #f59e0b, #d97706)" }}
-                >AIX 見積書送る</button>
-                <button
-                  onClick={() => setDismissedEstimateSheetIds((prev) => new Set([...prev, selectedConversation.id]))}
-                  className="shrink-0 text-amber-400 text-[11px] font-bold"
-                >✕</button>
-              </div>
-            )}
+              const hasPropertySendTask = (activeTasks[id] ?? []).some(t => t.task_type === "property_send");
+              const isApplyStatus = ["applying", "screening", "contract"].includes(selectedConversation.status ?? "");
 
-            {/* 内覧テンプレート辞書バナー（内覧招待メッセージ送信後） */}
-            {suggestViewingTemplateMap[selectedConversation.id] && !dismissedViewingTemplateIds.has(selectedConversation.id) && (
-              <div className="mx-1 mb-1 rounded-2xl border-2 border-purple-400 bg-purple-50 px-3 py-2 flex items-center gap-2">
-                <span className="text-[12px] font-bold text-purple-700 flex-1">▶ 追加で訴求LINEを送る → 内覧テンプレート辞書</span>
-                <button
-                  onClick={() => {
-                    setDismissedViewingTemplateIds((prev) => new Set([...prev, selectedConversation.id]));
-                    setTemplateOpenContext("viewing_follow");
-                    setShowTemplateModal(true);
-                  }}
-                  className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                  style={{ background: "linear-gradient(135deg, #9c27b0, #7b1fa2)" }}
-                >内覧テンプレート</button>
-                <button
-                  onClick={() => setDismissedViewingTemplateIds((prev) => new Set([...prev, selectedConversation.id]))}
-                  className="shrink-0 text-purple-400 text-[11px] font-bold"
-                >✕</button>
-              </div>
-            )}
+              // P1: 申込②（フロー途中 → 必ず完結させる）
+              if (suggestApplyStep2Map[id] && !dismissedApplyStep2Ids.has(id)) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-pink-500 bg-pink-50 px-3 py-2 flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-pink-800 flex-1">▶ 申込フォーマット ② （続き）を送る</span>
+                  <button onClick={() => { setTemplateOpenContext("apply_step2"); setShowTemplateModal(true); }}
+                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                    style={{ background: "linear-gradient(135deg, #be185d, #9d174d)" }}>②続きを送る</button>
+                  <button onClick={() => setDismissedApplyStep2Ids((prev) => new Set([...prev, id]))}
+                    className="shrink-0 text-pink-400 text-[11px] font-bold">✕</button>
+                </div>
+              );
 
-            {/* 申込フォーマット①バナー（ステータスが申込・審査中になったとき） */}
-            {(selectedConversation.status === "applying" || selectedConversation.status === "screening" || selectedConversation.status === "contract") && !suggestApplyStep2Map[selectedConversation.id] && !dismissedApplyStep1Ids.has(selectedConversation.id) && (
-              <div className="mx-1 mb-1 rounded-2xl border-2 border-pink-400 bg-pink-50 px-3 py-2 flex items-center gap-2">
-                <span className="text-[12px] font-bold text-pink-700 flex-1">▶ 申込フォーマット ① を送る</span>
-                <button
-                  onClick={() => { setTemplateOpenContext("apply_step1"); setShowTemplateModal(true); }}
-                  className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                  style={{ background: "linear-gradient(135deg, #ec4899, #be185d)" }}
-                >①フォーマット</button>
-                <button
-                  onClick={() => setDismissedApplyStep1Ids((prev) => new Set([...prev, selectedConversation.id]))}
-                  className="shrink-0 text-pink-400 text-[11px] font-bold"
-                >✕</button>
-              </div>
-            )}
+              // P2: 申込①（ステータス申込・審査）
+              if (isApplyStatus && !suggestApplyStep2Map[id] && !dismissedApplyStep1Ids.has(id)) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-pink-400 bg-pink-50 px-3 py-2 flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-pink-700 flex-1">▶ 申込フォーマット ① を送る</span>
+                  <button onClick={() => { setTemplateOpenContext("apply_step1"); setShowTemplateModal(true); }}
+                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                    style={{ background: "linear-gradient(135deg, #ec4899, #be185d)" }}>①フォーマット</button>
+                  <button onClick={() => setDismissedApplyStep1Ids((prev) => new Set([...prev, id]))}
+                    className="shrink-0 text-pink-400 text-[11px] font-bold">✕</button>
+                </div>
+              );
 
-            {/* 申込フォーマット②バナー（①選択後） */}
-            {suggestApplyStep2Map[selectedConversation.id] && !dismissedApplyStep2Ids.has(selectedConversation.id) && (
-              <div className="mx-1 mb-1 rounded-2xl border-2 border-pink-500 bg-pink-50 px-3 py-2 flex items-center gap-2">
-                <span className="text-[12px] font-bold text-pink-800 flex-1">▶ 申込フォーマット ② （続き）を送る</span>
-                <button
-                  onClick={() => { setTemplateOpenContext("apply_step2"); setShowTemplateModal(true); }}
-                  className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                  style={{ background: "linear-gradient(135deg, #be185d, #9d174d)" }}
-                >②続きを送る</button>
-                <button
-                  onClick={() => setDismissedApplyStep2Ids((prev) => new Set([...prev, selectedConversation.id]))}
-                  className="shrink-0 text-pink-400 text-[11px] font-bold"
-                >✕</button>
-              </div>
-            )}
+              // P3: 内覧テンプレ（内覧LINE送信直後）
+              if (suggestViewingTemplateMap[id] && !dismissedViewingTemplateIds.has(id)) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-purple-400 bg-purple-50 px-3 py-2 flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-purple-700 flex-1">▶ 追加で訴求LINEを送る → 内覧テンプレート辞書</span>
+                  <button onClick={() => { setDismissedViewingTemplateIds((prev) => new Set([...prev, id])); setTemplateOpenContext("viewing_follow"); setShowTemplateModal(true); }}
+                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                    style={{ background: "linear-gradient(135deg, #9c27b0, #7b1fa2)" }}>内覧テンプレート</button>
+                  <button onClick={() => setDismissedViewingTemplateIds((prev) => new Set([...prev, id]))}
+                    className="shrink-0 text-purple-400 text-[11px] font-bold">✕</button>
+                </div>
+              );
 
-            {/* 2番手サジェスチョンバナー */}
-            {suggest2ndHandMap[selectedConversation.id] && (
-              <div className="mx-1 mb-1 rounded-2xl border-2 border-orange-400 bg-orange-50 px-3 py-2 flex items-center gap-2">
-                <span className="text-[12px] font-bold text-orange-600 flex-1">▶ 次のアクション → 2番手内覧誘いをする</span>
-                <button
-                  onClick={() => setShowTemplateModal(true)}
-                  className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                  style={{ background: "linear-gradient(135deg, #f97316, #ea580c)" }}
-                >テンプレートを使う</button>
-                <button
-                  onClick={() => setSuggest2ndHandMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; })}
-                  className="shrink-0 text-orange-400 text-[11px] font-bold"
-                >✕</button>
-              </div>
-            )}
+              // P4: 物件オススメ（物件送る完了後）
+              if (suggestPropertyRecommendMap[id] && !dismissedPropertyRecommendIds.has(id)) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-indigo-500 bg-indigo-50 px-3 py-2 flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-indigo-700 flex-1">▶ 次のアクション → AIX 物件オススメ で文案を送る</span>
+                  <button onClick={() => { setSuggestPropertyRecommendMap((prev) => { const n = { ...prev }; delete n[id]; return n; }); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_recommendation"); openAixWithImagePicker("property_recommendation"); }}
+                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                    style={{ background: "linear-gradient(135deg, #4f46e5, #7c3aed)" }}>AIX 物件オススメ</button>
+                  <button onClick={() => setDismissedPropertyRecommendIds((prev) => new Set([...prev, id]))}
+                    className="shrink-0 text-indigo-400 text-[11px] font-bold">✕</button>
+                </div>
+              );
+
+              // P5: 見積書（初期費用キーワード検知）
+              if (/初期費用|見積|費用.*教|いくら|金額.*教|費用感/.test(lastCustomerText) && !dismissedEstimateSheetIds.has(id)) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-amber-400 bg-amber-50 px-3 py-2 flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-amber-700 flex-1">▶ 初期費用の確認 → AIX 見積書送る</span>
+                  <button onClick={() => { setDismissedEstimateSheetIds((prev) => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet"); openAixWithImagePicker("estimate_sheet"); }}
+                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                    style={{ background: "linear-gradient(135deg, #f59e0b, #d97706)" }}>AIX 見積書送る</button>
+                  <button onClick={() => setDismissedEstimateSheetIds((prev) => new Set([...prev, id]))}
+                    className="shrink-0 text-amber-400 text-[11px] font-bold">✕</button>
+                </div>
+              );
+
+              // P6: 物件送る（タスクあり or サジェスト）
+              if ((suggestPropertySendMap[id] || hasPropertySendTask) && !suggest2ndHandMap[id] && !dismissedPropertySendIds.has(id)) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-500 bg-teal-50 px-3 py-2 flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-teal-700 flex-1">▶ 次のアクション → AIX 物件を送る</span>
+                  <button onClick={() => { setDismissedPropertySendIds((prev) => { const n = new Set(prev); n.delete(id); return n; }); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); openAixDirect("property_send"); setSuggestPropertySendMap((prev) => { const n = { ...prev }; delete n[id]; return n; }); }}
+                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                    style={{ background: "linear-gradient(135deg, #00897B, #26a69a)" }}>AIX 物件送る</button>
+                  <button onClick={() => setDismissedPropertySendIds((prev) => new Set([...prev, id]))}
+                    className="shrink-0 text-teal-400 text-[11px] font-bold">✕</button>
+                </div>
+              );
+
+              // P7: 2番手
+              if (suggest2ndHandMap[id]) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-orange-400 bg-orange-50 px-3 py-2 flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-orange-600 flex-1">▶ 次のアクション → 2番手内覧誘いをする</span>
+                  <button onClick={() => setShowTemplateModal(true)}
+                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                    style={{ background: "linear-gradient(135deg, #f97316, #ea580c)" }}>テンプレートを使う</button>
+                  <button onClick={() => setSuggest2ndHandMap((prev) => { const n = { ...prev }; delete n[id]; return n; })}
+                    className="shrink-0 text-orange-400 text-[11px] font-bold">✕</button>
+                </div>
+              );
+
+              return null;
+            })()}
 
             {/* AI文案生成失敗時の再生成バナー */}
             {draftRetryConvId === selectedConversation.id && !replyDraft && (
