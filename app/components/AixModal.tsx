@@ -202,11 +202,16 @@ export default function AixModal({
   // 物件オススメ専用: analyze-propertyで自動抽出した退去予定日
   const [propMoveOutDate, setPropMoveOutDate] = useState("");
 
+  // 物件オススメ専用: 見積書（任意）
+  const [recommendEstimateFile, setRecommendEstimateFile] = useState<File | null>(null);
+  const [recommendEstimatePreview, setRecommendEstimatePreview] = useState<string>("");
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const conditionFileInputRef = useRef<HTMLInputElement | null>(null);
   const checkFileInputRef = useRef<HTMLInputElement | null>(null);
   const checkEstimateInputRef = useRef<HTMLInputElement | null>(null);
   const sendFileInputRef = useRef<HTMLInputElement | null>(null);
+  const recommendEstimateInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (initialImageFile) {
@@ -571,7 +576,15 @@ export default function AixModal({
         } else if (config.requiresImage && imageFile) {
           uploadedImageUrl = await uploadImage(imageFile);
         }
-        await onSend(preview, uploadedImageUrl);
+        // 見積書あり: 物件画像 → 見積書 → テキスト の順
+        if (actionType === "property_recommendation" && recommendEstimateFile) {
+          if (uploadedImageUrl) await onSend("", uploadedImageUrl);
+          const estUrl = await uploadImage(recommendEstimateFile);
+          await onSend("", estUrl);
+          await onSend(preview);
+        } else {
+          await onSend(preview, uploadedImageUrl);
+        }
 
         // 室内イメージURLがあれば「（室内イメージ）\nURL」として別送信
         if (actionType === "property_recommendation" && propertyImageUrl.trim()) {
@@ -723,6 +736,44 @@ export default function AixModal({
                     送信時に「（室内イメージ）」として別メッセージで自動送信されます
                   </p>
                 )}
+              </div>
+
+              {/* ④見積書（任意） */}
+              <div>
+                <p className="mb-1 text-xs font-bold text-[#54656f]">
+                  ④ 見積書 <span className="font-normal text-[#90a4ae]">（任意・物件資料と一緒に送る場合）</span>
+                </p>
+                {recommendEstimatePreview ? (
+                  <div className="relative overflow-hidden rounded-2xl border border-[#d1d7db]">
+                    <img src={recommendEstimatePreview} alt="見積書" className="max-h-36 w-full object-contain" />
+                    <button
+                      onClick={() => { setRecommendEstimateFile(null); setRecommendEstimatePreview(""); if (recommendEstimateInputRef.current) recommendEstimateInputRef.current.value = ""; }}
+                      className="absolute right-2 top-2 rounded-full bg-black/50 px-3 py-1 text-xs text-white"
+                    >変更</button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => recommendEstimateInputRef.current?.click()}
+                    className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#d1d7db] py-3 text-sm font-semibold text-[#90a4ae] hover:bg-[#f5f6f7]"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                    見積書を追加する（スキップ可）
+                  </button>
+                )}
+                <input
+                  ref={recommendEstimateInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    setRecommendEstimateFile(f);
+                    const reader = new FileReader();
+                    reader.onload = () => setRecommendEstimatePreview(String(reader.result ?? ""));
+                    reader.readAsDataURL(f);
+                  }}
+                  className="hidden"
+                />
               </div>
             </div>
           ) : actionType === "property_send" ? (
