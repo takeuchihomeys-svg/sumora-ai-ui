@@ -156,6 +156,7 @@ export default function AixModal({
   const [parsedEstimate, setParsedEstimate] = useState<Record<string, string> | null>(null);
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [showTemplateInfo, setShowTemplateInfo] = useState(false);
+  const [floorPlanTouched, setFloorPlanTouched] = useState(false);
   // 物件確認した専用
   const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | null>(null);
   // 物件確認した「別の部屋」専用
@@ -485,7 +486,7 @@ export default function AixModal({
         if (!checkPattern) throw new Error("確認結果を選択してください");
         body.check_pattern = checkPattern;
         if (checkPattern === "alternative") {
-          if (!checkFloorPlan) throw new Error("代替お部屋の間取りを選択してください");
+          if (!checkFloorPlan) { setFloorPlanTouched(true); throw new Error("代替お部屋の間取りを選択してください"); }
           if (checkEndedFloor !== null) body.ended_floor = checkEndedFloor;
           if (checkEndedUnit.trim()) body.ended_unit = checkEndedUnit.trim();
           body.floor_plan_match = checkFloorPlan;
@@ -1082,13 +1083,13 @@ export default function AixModal({
                   </div>
                   {/* 間取り選択 */}
                   <div>
-                    <p className="mb-1.5 text-xs font-bold text-[#54656f]">代替お部屋の間取り <span className="text-red-500">*必須</span></p>
+                    <p className="mb-1.5 text-xs font-bold text-[#54656f]">代替お部屋の間取り <span className={floorPlanTouched && !checkFloorPlan ? "text-red-500" : "text-[#90a4ae]"}>*必須</span></p>
                     <div className="flex gap-2">
                       {([{ key: "same", label: "同じ間取り" }, { key: "different", label: "違う間取り" }] as const).map((opt) => (
                         <button
                           key={opt.key}
-                          onClick={() => setCheckFloorPlan(opt.key)}
-                          className={`flex-1 rounded-xl border py-2 text-sm font-bold transition ${checkFloorPlan === opt.key ? "border-[#1565C0] bg-[#e3f0ff] text-[#1565C0]" : checkFloorPlan === null ? "border-[#e53935] bg-[#fff5f5] text-[#54656f]" : "border-[#d1d7db] bg-white text-[#54656f]"}`}
+                          onClick={() => { setCheckFloorPlan(opt.key); setFloorPlanTouched(false); }}
+                          className={`flex-1 rounded-xl border py-2 text-sm font-bold transition ${checkFloorPlan === opt.key ? "border-[#1565C0] bg-[#e3f0ff] text-[#1565C0]" : (floorPlanTouched && checkFloorPlan === null) ? "border-[#e53935] bg-[#fff5f5] text-[#54656f]" : "border-[#d1d7db] bg-white text-[#54656f]"}`}
                         >{opt.label}</button>
                       ))}
                     </div>
@@ -1238,6 +1239,11 @@ export default function AixModal({
                 </div>
                 <p className="text-sm leading-6 text-[#111b21] line-clamp-4 whitespace-pre-wrap">{preview}</p>
               </button>
+              {preview.includes("[物件名]") && (
+                <div className="mt-2 rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-600">
+                  ⚠️ 「[物件名]」が残っています。会話履歴に物件名が見つかりませんでした。送信前に直接編集してください。
+                </div>
+              )}
             </div>
           )}
 
