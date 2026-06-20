@@ -133,7 +133,7 @@ export default function TemplateModal({
           <div className="text-[17px] font-bold text-white">テンプレート一覧</div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => { setShowAddForm((v) => !v); setCategory("全般"); }}
+              onClick={() => { setShowAddForm((v) => !v); setNewCategory(category); }}
               className="flex h-8 w-8 items-center justify-center rounded-full bg-white/25 text-white text-lg font-bold"
               title="新規テンプレートを追加"
             >
@@ -197,8 +197,8 @@ export default function TemplateModal({
                       </button>
                     ))}
                     <input
-                      className="rounded-full border border-[#d1d7db] px-3 py-1 text-[11px] outline-none w-24"
-                      placeholder="新カテゴリ"
+                      className="rounded-full border border-[#d1d7db] px-3 py-1 text-[11px] outline-none w-32"
+                      placeholder="カテゴリ名を入力"
                       value={["全般","初回応対","物件探し中","内覧","申込・審査","契約・成約","その他"].includes(newCategory) ? "" : newCategory}
                       onChange={(e) => setNewCategory(e.target.value || "全般")}
                     />
