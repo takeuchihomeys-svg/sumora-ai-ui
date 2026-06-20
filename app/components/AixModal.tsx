@@ -675,7 +675,7 @@ export default function AixModal({
               onClick={() => setShowTemplateInfo(v => !v)}
               className="flex items-center gap-1 rounded-full bg-white/20 px-3 py-1 text-xs font-medium text-white hover:bg-white/30"
             >
-              📋 テンプレ確認
+              テンプレ確認
             </button>
             <button
               onClick={onClose}
