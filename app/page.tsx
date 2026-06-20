@@ -1844,31 +1844,10 @@ export default function Home() {
 
       const newMessages: Message[] = [];
 
-      // テキストメッセージを保存
-      if (textToSend) {
-        const { data: textRow, error: textInsertError } = await supabase
-          .from("messages")
-          .insert({
-            conversation_id: selectedConversation.id,
-            sender: "staff",
-            text: textToSend,
-            created_at: now.toISOString(),
-          })
-          .select();
-        if (textInsertError) throw textInsertError;
-        newMessages.push({
-          id: String(textRow?.[0]?.id || crypto.randomUUID()),
-          sender: "staff",
-          text: textToSend,
-          time: formatTime(now.toISOString()),
-          rawCreatedAt: now.toISOString(),
-        });
-      }
-
+      // 画像が先・テキストが後（LINEの表示順に合わせる）
       // 画像は複数でも1メッセージ行にまとめて保存（JSON配列）
       if (imageUrls.length > 0) {
         const imageUrlData = imageUrls.length === 1 ? imageUrls[0] : JSON.stringify(imageUrls);
-        const imgNow = new Date();
         const { data: imgRow, error: imgInsertError } = await supabase
           .from("messages")
           .insert({
@@ -1876,7 +1855,7 @@ export default function Home() {
             sender: "staff",
             text: "[画像]",
             image_url: imageUrlData,
-            created_at: imgNow.toISOString(),
+            created_at: now.toISOString(),
           })
           .select();
         if (imgInsertError) throw imgInsertError;
@@ -1885,12 +1864,34 @@ export default function Home() {
           sender: "staff",
           text: "[画像]",
           imageUrl: imageUrlData,
-          time: formatTime(imgNow.toISOString()),
-          rawCreatedAt: imgNow.toISOString(),
+          time: formatTime(now.toISOString()),
+          rawCreatedAt: now.toISOString(),
         });
       }
 
-      const lastText = imageUrls.length > 0 ? "[画像]" : textToSend;
+      // テキストメッセージを保存（画像の1秒後のタイムスタンプで後ろに表示）
+      if (textToSend) {
+        const textNow = imageUrls.length > 0 ? new Date(now.getTime() + 1000) : now;
+        const { data: textRow, error: textInsertError } = await supabase
+          .from("messages")
+          .insert({
+            conversation_id: selectedConversation.id,
+            sender: "staff",
+            text: textToSend,
+            created_at: textNow.toISOString(),
+          })
+          .select();
+        if (textInsertError) throw textInsertError;
+        newMessages.push({
+          id: String(textRow?.[0]?.id || crypto.randomUUID()),
+          sender: "staff",
+          text: textToSend,
+          time: formatTime(textNow.toISOString()),
+          rawCreatedAt: textNow.toISOString(),
+        });
+      }
+
+      const lastText = textToSend || (imageUrls.length > 0 ? "[画像]" : "");
 
       // ステータス自動制御
       const isFirstStaffReply = !selectedConversation.messages.some((m) => m.sender === "staff");
@@ -1930,19 +1931,8 @@ export default function Home() {
           })
       );
 
-      // LINEに送信（テキスト→画像の順）
+      // LINEに送信（画像→テキストの順）
       try {
-        if (textToSend) {
-          const lineRes = await fetch("/api/send-line-message", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: textToSend, account: selectedConversation.account }),
-          });
-          if (!lineRes.ok) {
-            const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string };
-            setError(`⚠️ LINE送信失敗: ${lineErr.error || lineRes.statusText}`);
-          }
-        }
         for (const imageUrl of imageUrls) {
           const lineRes = await fetch("/api/send-line-message", {
             method: "POST",
@@ -1952,6 +1942,17 @@ export default function Home() {
           if (!lineRes.ok) {
             const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string };
             setError(`⚠️ LINE画像送信失敗: ${lineErr.error || lineRes.statusText}`);
+          }
+        }
+        if (textToSend) {
+          const lineRes = await fetch("/api/send-line-message", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: textToSend, account: selectedConversation.account }),
+          });
+          if (!lineRes.ok) {
+            const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string };
+            setError(`⚠️ LINE送信失敗: ${lineErr.error || lineRes.statusText}`);
           }
         }
       } catch (lineEx) {
