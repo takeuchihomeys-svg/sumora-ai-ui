@@ -296,6 +296,7 @@ export default function Home() {
   const [patternDrafts, setPatternDrafts] = useState<{ angle: string; label: string; text: string }[]>([]);
   const [showPatternSheet, setShowPatternSheet] = useState(false);
   const [draftPreparing, setDraftPreparing] = useState(false);
+  const [draftRetryConvId, setDraftRetryConvId] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [starredMsgIds, setStarredMsgIds] = useState<Set<string>>(new Set());
   const [statusSaving, setStatusSaving] = useState(false);
@@ -1123,6 +1124,7 @@ export default function Home() {
     // 会話切替時は必ず準備中状態をリセット（前の会話のタイムアウト・fetch残留を防ぐ）
     if (draftTimeoutRef.current) { clearTimeout(draftTimeoutRef.current); draftTimeoutRef.current = null; }
     setDraftPreparing(false);
+    setDraftRetryConvId(null);
     setDraftNoEmoji(false);
     setDraftOrigText("");
 
@@ -1153,9 +1155,25 @@ export default function Home() {
           // async方式：即200返却 → Realtimeで下書きを受け取る（タイムアウト60秒）
           setDraftPreparing(true);
           const convIdForGen = selectedConversation.id;
-          draftTimeoutRef.current = setTimeout(() => {
+          draftTimeoutRef.current = setTimeout(async () => {
             draftTimeoutRef.current = null;
-            if (selectedIdRef.current === convIdForGen) setDraftPreparing(false);
+            if (selectedIdRef.current !== convIdForGen) return;
+            // Realtime が届かなかった場合のフォールバック：DB を直接確認
+            const { data: convRow } = await supabase
+              .from("conversations")
+              .select("ai_draft")
+              .eq("id", convIdForGen)
+              .single();
+            if (convRow?.ai_draft) {
+              // Realtime が漏れただけで実は生成済み → セット
+              setConversations((prev) =>
+                prev.map((c) => c.id === convIdForGen ? { ...c, aiDraft: convRow.ai_draft } : c)
+              );
+            } else {
+              // 本当に生成失敗 → 再生成ボタンを表示
+              setDraftRetryConvId(convIdForGen);
+            }
+            setDraftPreparing(false);
           }, 60000);
           fetch("/api/generate-draft-bg-async", {
             method: "POST",
@@ -3375,6 +3393,38 @@ export default function Home() {
                   onClick={() => setSuggest2ndHandMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; })}
                   className="shrink-0 text-orange-400 text-[11px] font-bold"
                 >✕</button>
+              </div>
+            )}
+
+            {/* AI文案生成失敗時の再生成バナー */}
+            {draftRetryConvId === selectedConversation.id && !replyDraft && (
+              <div className="mx-1 mb-1 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 flex items-center gap-2">
+                <span className="text-[12px] text-red-600 flex-1">⚠️ AI文案の生成に失敗しました</span>
+                <button
+                  onClick={() => {
+                    setDraftRetryConvId(null);
+                    setDraftPreparing(true);
+                    const convIdForGen = selectedConversation.id;
+                    draftTimeoutRef.current = setTimeout(async () => {
+                      draftTimeoutRef.current = null;
+                      if (selectedIdRef.current !== convIdForGen) return;
+                      const { data: convRow } = await supabase.from("conversations").select("ai_draft").eq("id", convIdForGen).single();
+                      if (convRow?.ai_draft) {
+                        setConversations((prev) => prev.map((c) => c.id === convIdForGen ? { ...c, aiDraft: convRow.ai_draft } : c));
+                      } else {
+                        setDraftRetryConvId(convIdForGen);
+                      }
+                      setDraftPreparing(false);
+                    }, 60000);
+                    fetch("/api/generate-draft-bg-async", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ conversation_id: convIdForGen, memo: memosRef.current[convIdForGen] || "" }),
+                    }).catch(() => { setDraftPreparing(false); setDraftRetryConvId(convIdForGen); });
+                  }}
+                  className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white bg-red-500"
+                >🔄 再生成</button>
+                <button onClick={() => setDraftRetryConvId(null)} className="shrink-0 text-red-400 text-[11px] font-bold">✕</button>
               </div>
             )}
 
