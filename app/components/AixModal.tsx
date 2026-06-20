@@ -420,12 +420,13 @@ export default function AixModal({
     }
   };
 
-  const uploadImage = async (file: File): Promise<string> => {
+  const uploadImage = async (file: File, idx?: number): Promise<string> => {
     const ext = file.name.split(".").pop() || "jpg";
-    const path = `${conversationId}/${Date.now()}.${ext}`;
+    const suffix = idx !== undefined ? `_${idx}` : "";
+    const path = `aix/${conversationId}/${Date.now()}${suffix}_${Math.random().toString(36).slice(2, 7)}.${ext}`;
     const { error: uploadError } = await supabase.storage
       .from("property-images")
-      .upload(path, file, { upsert: true });
+      .upload(path, file, { upsert: false });
     if (uploadError) throw new Error("画像のアップロードに失敗しました: " + uploadError.message);
 
     const { data } = supabase.storage.from("property-images").getPublicUrl(path);
@@ -453,8 +454,8 @@ export default function AixModal({
         } else if (conditionImageFile) {
           // 条件スクショあり: 両方アップロード
           const [conditionUrl, propertyUrl] = await Promise.all([
-            uploadImage(conditionImageFile),
-            uploadImage(imageFile),
+            uploadImage(conditionImageFile, 0),
+            uploadImage(imageFile, 1),
           ]);
           body.condition_image_url = conditionUrl;
           body.image_url = propertyUrl;
@@ -466,7 +467,7 @@ export default function AixModal({
         if (propMoveOutDate) body.move_out_date = propMoveOutDate;
       } else if (actionType === "property_send") {
         if (sendImageFiles.length > 0) {
-          const urls = await Promise.all(sendImageFiles.map(f => uploadImage(f)));
+          const urls = await Promise.all(sendImageFiles.map((f, i) => uploadImage(f, i)));
           body.image_urls = urls;
         }
         if (vacatingNote.trim()) body.vacating_note = vacatingNote.trim();
@@ -509,7 +510,7 @@ export default function AixModal({
         }
         if (checkEstimateFile) body.estimate_image_url = await uploadImage(checkEstimateFile);
         if (checkImageFiles.length > 0) {
-          const urls = await Promise.all(checkImageFiles.map(f => uploadImage(f)));
+          const urls = await Promise.all(checkImageFiles.map((f, i) => uploadImage(f, i)));
           body.image_urls = urls;
           body.image_url = urls[0];
         }
