@@ -158,7 +158,10 @@ export default function AixModal({
   const [showTemplateInfo, setShowTemplateInfo] = useState(false);
   const [floorPlanTouched, setFloorPlanTouched] = useState(false);
   // 物件確認した専用
-  const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | null>(null);
+  const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | "move_in_date" | null>(null);
+  // 入居日確認専用: 物件資料画像
+  const [moveInImageFile, setMoveInImageFile] = useState<File | null>(null);
+  const [moveInImagePreview, setMoveInImagePreview] = useState<string>("");
   // 物件あった専用: 申込状況
   const [checkAvailableApp, setCheckAvailableApp] = useState<"yes" | "no" | null>(null);
   // 物件あった専用: 内覧誘導モード（折りたたみ）
@@ -211,6 +214,7 @@ export default function AixModal({
   const checkFileInputRef = useRef<HTMLInputElement | null>(null);
   const checkEstimateInputRef = useRef<HTMLInputElement | null>(null);
   const sendFileInputRef = useRef<HTMLInputElement | null>(null);
+  const moveInImageInputRef = useRef<HTMLInputElement | null>(null);
   const recommendEstimateInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -494,7 +498,10 @@ export default function AixModal({
       } else if (actionType === "property_check_result") {
         if (!checkPattern) throw new Error("確認結果を選択してください");
         body.check_pattern = checkPattern;
-        if (checkPattern === "alternative") {
+        if (checkPattern === "move_in_date") {
+          if (!moveInImageFile) throw new Error("物件資料を選択してください");
+          body.image_url = await uploadImage(moveInImageFile);
+        } else if (checkPattern === "alternative") {
           if (!checkFloorPlan) { setFloorPlanTouched(true); throw new Error("代替お部屋の間取りを選択してください"); }
           if (checkEndedFloor !== null) body.ended_floor = checkEndedFloor;
           if (checkEndedUnit.trim()) body.ended_unit = checkEndedUnit.trim();
@@ -558,16 +565,21 @@ export default function AixModal({
         }
         await onSend(preview);
       } else if (actionType === "property_check_result") {
-        // ①物件資料画像 → ②見積書画像 → ③文書 の順で送信
-        for (const file of checkImageFiles) {
-          const url = await uploadImage(file);
-          await onSend("", url);
+        if (checkPattern === "move_in_date") {
+          // 入居日確認: テキストのみ送信（物件資料はお客さんに送らない）
+          await onSend(preview);
+        } else {
+          // ①物件資料画像 → ②見積書画像 → ③文書 の順で送信
+          for (const file of checkImageFiles) {
+            const url = await uploadImage(file);
+            await onSend("", url);
+          }
+          if (checkEstimateFile) {
+            const estUrl = await uploadImage(checkEstimateFile);
+            await onSend("", estUrl);
+          }
+          await onSend(preview);
         }
-        if (checkEstimateFile) {
-          const estUrl = await uploadImage(checkEstimateFile);
-          await onSend("", estUrl);
-        }
-        await onSend(preview);
       } else {
         // 物件オススメは物件資料画像をLINEに添付
         let uploadedImageUrl: string | undefined;
@@ -623,7 +635,7 @@ export default function AixModal({
   const canGenerate = actionType === "property_recommendation"
     ? !!imageFile
     : actionType === "property_check_result"
-    ? !!checkPattern
+    ? (checkPattern === "move_in_date" ? !!moveInImageFile : !!checkPattern)
     : actionType === "property_send"
     ? true
     : actionType === "application_push"
@@ -1057,9 +1069,10 @@ export default function AixModal({
                 <p className="mb-2 text-xs font-bold text-[#54656f]">確認結果を選択</p>
                 <div className="flex flex-col gap-2">
                   {([
-                    { key: "available",    label: "物件あった",         sub: "入居可能",                  color: "emerald" },
-                    { key: "alternative",  label: "別の部屋が募集してた", sub: "満室だが代替あり",          color: "blue"    },
-                    { key: "unavailable",  label: "物件なかった",        sub: "満室・空きなし（画像不要）", color: "orange"  },
+                    { key: "available",    label: "物件あった",         sub: "入居可能",                       color: "emerald" },
+                    { key: "alternative",  label: "別の部屋が募集してた", sub: "満室だが代替あり",              color: "blue"    },
+                    { key: "unavailable",  label: "物件なかった",        sub: "満室・空きなし（画像不要）",     color: "orange"  },
+                    { key: "move_in_date", label: "入居日確認した",      sub: "退去日から入居可能日を計算送信", color: "purple"  },
                   ] as const).map((p) => (
                     <button
                       key={p.key}
@@ -1068,6 +1081,7 @@ export default function AixModal({
                         checkPattern === p.key
                           ? p.color === "emerald" ? "border-emerald-400 bg-emerald-50"
                           : p.color === "blue"    ? "border-blue-400 bg-blue-50"
+                          : p.color === "purple"  ? "border-purple-400 bg-purple-50"
                           :                         "border-orange-400 bg-orange-50"
                           : "border-[#e9edef] bg-[#f8f9fa]"
                       }`}
@@ -1076,6 +1090,7 @@ export default function AixModal({
                         checkPattern === p.key
                           ? p.color === "emerald" ? "border-emerald-500 bg-emerald-500"
                           : p.color === "blue"    ? "border-blue-500 bg-blue-500"
+                          : p.color === "purple"  ? "border-purple-500 bg-purple-500"
                           :                         "border-orange-500 bg-orange-500"
                           : "border-[#d1d7db]"
                       }`}>
@@ -1089,6 +1104,44 @@ export default function AixModal({
                   ))}
                 </div>
               </div>
+              {/* 入居日確認した: 物件資料画像（テキストのみ送信・画像はAI読み込み用） */}
+              {checkPattern === "move_in_date" && (
+                <div>
+                  <p className="mb-1 text-xs font-bold text-[#54656f]">
+                    物件資料 <span className="font-normal text-[#90a4ae]">（AIが退去日・入居可能日を読み取ります）</span>
+                  </p>
+                  <p className="mb-2 text-[10px] text-[#8696a0]">※ 画像はお客さんには送られません</p>
+                  {moveInImagePreview ? (
+                    <div className="relative overflow-hidden rounded-2xl border border-[#d1d7db]">
+                      <img src={moveInImagePreview} alt="物件資料" className="max-h-44 w-full object-contain" />
+                      <button
+                        onClick={() => { setMoveInImageFile(null); setMoveInImagePreview(""); setPreview(""); if (moveInImageInputRef.current) moveInImageInputRef.current.value = ""; }}
+                        className="absolute right-2 top-2 rounded-full bg-black/50 px-3 py-1 text-xs text-white"
+                      >変更</button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => moveInImageInputRef.current?.click()}
+                      className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-purple-200 py-5 text-sm font-semibold text-purple-500 hover:bg-purple-50"
+                    >🏠 物件資料を選択</button>
+                  )}
+                  <input
+                    ref={moveInImageInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (!f) return;
+                      setMoveInImageFile(f);
+                      const reader = new FileReader();
+                      reader.onload = () => setMoveInImagePreview(String(reader.result ?? ""));
+                      reader.readAsDataURL(f);
+                    }}
+                    className="hidden"
+                  />
+                </div>
+              )}
+
               {/* 物件あった: 申込状況 */}
               {checkPattern === "available" && (
                 <div className="mb-1">

@@ -558,6 +558,38 @@ ${phraseText || "なし"}${examplesText}`;
       message_text = await callClaude(system, `物件名を会話から特定してテンプレートを完成させてください。${extra_input ? `補足: ${extra_input}` : ""}${recentHistory}`);
 
     // ── ✅ 物件確認した ──────────────────────────────────────────────
+    } else if (action === "property_check_result" && check_pattern === "move_in_date") {
+      // ── 🏠 入居日確認した ──────────────────────────────────────────────
+      if (!image_url) throw new Error("物件資料画像が必要です");
+
+      const moveInSystem = `あなたは賃貸仲介担当者です。添付の物件資料画像から以下の情報を読み取り、指定フォーマットでメッセージを作成してください。
+
+【読み取る情報】
+1. マンション名（物件名）
+2. 号室番号（先頭の0は省略: 0806→806）
+3. 退去予定日（例: 6月30日）
+4. 入居可能予定時期（退去日＋クリーニング1〜2週間で算出。「〇月上旬/中旬/下旬」で表現）
+   ※ 上旬=1〜10日、中旬=11〜20日、下旬=21日〜
+
+【出力フォーマット（このまま出力）】
+[マンション名][号室]は
+[入居可能月]月[上旬/中旬/下旬]頃ご入居日可能予定となります！！
+
+[退去日]退去予定となり、
+退去後クリーニングが入る形となります。室内の状況によってご入居日変動御座いますが遅くても[入居可能月]月[上旬/中旬/下旬]にご入居可能予定となります！！
+
+【厳守ルール】
+・フォーマット以外の文章・説明・挨拶は一切追加しない
+・号室番号の先頭0は省略すること
+・退去日が画像に記載されていない場合は「退去予定日不明」と記載
+・完成したメッセージのみ出力`;
+
+      const content: Array<{ type: string; text?: string; source?: { type: string; url: string } }> = [
+        { type: "text", text: `${name}へ送る入居日確認メッセージを作成してください。` },
+        { type: "image", source: { type: "url", url: String(image_url) } },
+      ];
+      message_text = await callClaudeVision(moveInSystem, content);
+
     } else if (action === "property_check_result") {
       const pattern = check_pattern as "available" | "alternative" | "unavailable";
       const customerSummary = body.customer_summary as string | undefined;
