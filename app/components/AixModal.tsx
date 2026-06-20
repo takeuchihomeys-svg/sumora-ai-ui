@@ -1060,8 +1060,8 @@ export default function AixModal({
                   <input ref={checkFileInputRef} type="file" accept="image/*" multiple onChange={onSelectCheckImages} className="hidden" />
                 </div>
               )}
-              {/* 全パターン共通: 見積書画像（任意） */}
-              {checkPattern && (
+              {/* 物件あった・別の部屋: 見積書画像（任意） */}
+              {(checkPattern === "available" || checkPattern === "alternative") && (
                 <div>
                   <p className="mb-1 text-xs font-bold text-[#54656f]">
                     見積書の画像 <span className="font-normal text-[#90a4ae]">（任意）</span>
