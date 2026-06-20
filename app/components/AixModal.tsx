@@ -614,7 +614,7 @@ export default function AixModal({
     : actionType === "property_check_result"
     ? !!checkPattern
     : actionType === "property_send"
-    ? sendMode !== null
+    ? true
     : actionType === "application_push"
     ? !!appVacancyStatus
     : !config.requiresImage || !!imageFile;

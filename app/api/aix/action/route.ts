@@ -328,7 +328,10 @@ ${SMORA_COMMON_RULES}`;
       const calendarData = body.calendar_info ? String(body.calendar_info) : null;
       const vacatingInfo = vacating_note ? String(vacating_note) : null;
       const customerSummary = body.customer_summary as string | undefined;
-      const sendMode = body.send_mode === "application" ? "application" : "viewing";
+      const sendMode: "viewing" | "application" | "simple" =
+        body.send_mode === "application" ? "application"
+        : body.send_mode === "viewing" ? "viewing"
+        : "simple";
 
       const summaryNote = customerSummary
         ? `\n\n【このお客さんのAI要約 — 今の状況・次の必須対応を最優先で文案に反映すること。人物像・文体も合わせること】\n${customerSummary}`
@@ -358,7 +361,30 @@ ${SMORA_COMMON_RULES}`;
   条件から主なポイント（エリア・家賃・間取り等）を自然に組み込む`
         : `・「ご希望のご条件に合ったお部屋ピックアップさせて頂きました😊！！」で冒頭を続ける`;
 
-      const sendSystem = sendMode === "application"
+      const sendSystem = sendMode === "simple"
+        ? `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
+物件をピックアップしてお客さんに送る際の導入メッセージを1つだけ作成してください。
+
+${SMORA_COMMON_RULES}
+
+【構成（この順番で必ず守ること）】
+①「[お客様名]さんお待たせ致しました！！」で始める
+②${conditionsRule.replace(/^・/, "")}
+③退去予定・案内できない物件がある場合：「◎〇〇マンション\n[退去予定/時期]となりますのでお部屋ご案内出来ない形となります！！」（複数あれば全て列挙）
+④最終行：「お手隙の際にご査収ください😌！！」を単独で置く
+
+【厳守ルール】
+・①〜④の構成のみ出力。内覧誘導・申込誘導・日程・その他の質問や補足は一切追加しない
+・②は「〇〇から[お客様名]さんご希望のご条件に合ったお部屋ピックアップさせて頂きました！！」の形で1行に完結させる
+・感嘆符は「！！」（スモラスタイル）・LINEでそのまま送れる完成文のみ出力・絵文字は 😊 😌 のみ・1〜2個まで
+
+【出力例】
+Rさんお待たせ致しました！！
+
+大阪駅・難波駅周辺全域からRさんご希望のご条件に合ったお部屋ピックアップさせて頂きました！！
+
+お手隙の際にご査収ください😌！！${sendExamplesText}`
+        : sendMode === "application"
         ? `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
 物件をピックアップしてお客さんに送る際の導入メッセージを1つだけ作成してください。
 このお客さんは内覧より先にお申込みで部屋を確保することを優先する流れです。
