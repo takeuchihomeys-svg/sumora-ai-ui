@@ -3350,7 +3350,7 @@ export default function Home() {
                     <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-blue-400 border-t-transparent" />
                     作成中...
                   </>
-                ) : replyDraft ? "🔄 再生成" : "AI文案を作成"}
+                ) : replyDraft ? (<><svg className="inline shrink-0 mr-1" style={{verticalAlign:"-2px"}} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>再生成</>) : "AI文案を作成"}
               </button>
 
 
@@ -3549,7 +3549,7 @@ export default function Home() {
                     }).catch(() => { setDraftPreparing(false); setDraftRetryConvId(convIdForGen); });
                   }}
                   className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white bg-red-500"
-                >🔄 再生成</button>
+                ><svg className="inline shrink-0 mr-1" style={{verticalAlign:"-2px"}} width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>再生成</button>
                 <button onClick={() => setDraftRetryConvId(null)} className="shrink-0 text-red-400 text-[11px] font-bold">✕</button>
               </div>
             )}
