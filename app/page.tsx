@@ -3242,16 +3242,6 @@ export default function Home() {
                 ) : replyDraft ? "🔄 再生成" : "AI文案を作成"}
               </button>
 
-              <button
-                onClick={generatePatterns}
-                disabled={patternLoading || !selectedConversation.id}
-                className={`shrink-0 flex items-center gap-0.5 rounded-full border px-2 py-1.5 text-xs font-semibold shadow-sm disabled:opacity-40 active:scale-95 transition-all duration-75 ${patternLoading ? "border-purple-300 bg-purple-50 text-purple-600" : "border-[#c8b8ff] bg-gradient-to-r from-[#ede7ff] to-[#f0e6ff] text-[#6c3fc7]"}`}
-                title="4パターンの返信案を生成して選ぶ"
-              >
-                {patternLoading ? (
-                  <><span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-purple-400 border-t-transparent" /></>
-                ) : "✦3案"}
-              </button>
 
               <button
                 onClick={() => {
