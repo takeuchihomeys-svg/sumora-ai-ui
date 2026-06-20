@@ -329,6 +329,7 @@ export default function Home() {
   const [aixInitialFile, setAixInitialFile] = useState<File | null>(null);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [suggest2ndHandMap, setSuggest2ndHandMap] = useState<Record<string, boolean>>({});
+  const [suggestPropertySendMap, setSuggestPropertySendMap] = useState<Record<string, boolean>>({});
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);
   const [announcements, setAnnouncements] = useState<Message[]>([]);
@@ -1965,6 +1966,11 @@ export default function Home() {
       setReplyDraft("");
       removeSelectedImage();
 
+      // 物件送る予告メッセージ検知 → AIX「物件送る」誘導
+      if (textToSend && /ピックアップ|物件.*送|お送りさせて|物件をお送り/.test(textToSend)) {
+        setSuggestPropertySendMap((prev) => ({ ...prev, [selectedConversation.id]: true }));
+      }
+
       // 送信完了後にAI要約をバックグラウンド更新（送信した文も含めた最新状態で要約）
       const linkedForSummary = linkedCustomerMap[selectedConversation.id];
       if (linkedForSummary?.id) {
@@ -3316,6 +3322,22 @@ export default function Home() {
               <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={onSelectImage} className="hidden" />
               <input ref={aixFileInputRef} type="file" accept="image/*" onChange={onAixImageSelected} className="hidden" />
             </div>
+
+            {/* 物件送るサジェスチョンバナー */}
+            {suggestPropertySendMap[selectedConversation.id] && !suggest2ndHandMap[selectedConversation.id] && (
+              <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-500 bg-teal-50 px-3 py-2 flex items-center gap-2">
+                <span className="text-[12px] font-bold text-teal-700 flex-1">💡 次のアクション → AIX 物件を送る</span>
+                <button
+                  onClick={() => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); openAixDirect("property_send"); setSuggestPropertySendMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; }); }}
+                  className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                  style={{ background: "linear-gradient(135deg, #00897B, #26a69a)" }}
+                >AIX 物件送る</button>
+                <button
+                  onClick={() => setSuggestPropertySendMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; })}
+                  className="shrink-0 text-teal-400 text-[11px] font-bold"
+                >✕</button>
+              </div>
+            )}
 
             {/* 2番手サジェスチョンバナー */}
             {suggest2ndHandMap[selectedConversation.id] && (
