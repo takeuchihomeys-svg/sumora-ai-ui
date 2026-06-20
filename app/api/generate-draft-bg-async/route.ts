@@ -23,6 +23,14 @@ const STATUS_ALIAS: Record<string, string> = {
   contract:                "applying",
 };
 
+function getBaseUrl(): string {
+  // 優先順位: 手動設定 > 本番URL > デプロイURL > ローカル
+  if (process.env.NEXT_PUBLIC_SITE_URL) return process.env.NEXT_PUBLIC_SITE_URL.replace(/\/$/, "");
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  return "http://localhost:3000";
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.json() as { conversation_id?: string; memo?: string };
   const convId = body.conversation_id;
@@ -31,21 +39,21 @@ export async function POST(req: NextRequest) {
 
   // 即200返却 → after()でバックグラウンド生成（Realtimeで通知）
   after(async () => {
+    const db = getDb();
     try {
-      const db = getDb();
-
-      const { data: conv } = await db
+      const { data: conv, error: convErr } = await db
         .from("conversations")
         .select("status, property_customer_id, ai_draft, last_sender")
         .eq("id", convId)
         .single();
 
-      if (!conv) return;
+      if (convErr) { console.error("[bg-async] conv fetch error:", convErr.message, "convId:", convId); return; }
+      if (!conv) { console.error("[bg-async] conv not found:", convId); return; }
       if (conv.last_sender !== "customer") return;
       if (conv.ai_draft) return;
       if (SKIP_STATUSES.has(conv.status as string)) return;
 
-      const [{ data: msgs }, { data: pc }] = await Promise.all([
+      const [{ data: msgs, error: msgsErr }, { data: pc }] = await Promise.all([
         db.from("messages").select("sender, text").eq("conversation_id", convId)
           .order("created_at", { ascending: false }).limit(20),
         conv.property_customer_id
@@ -54,6 +62,8 @@ export async function POST(req: NextRequest) {
             .eq("id", conv.property_customer_id).single()
           : Promise.resolve({ data: null }),
       ]);
+
+      if (msgsErr) { console.error("[bg-async] msgs fetch error:", msgsErr.message); return; }
 
       const recentMsgs = ((msgs || []) as Array<{ sender: string; text: string }>).reverse();
 
@@ -81,49 +91,91 @@ export async function POST(req: NextRequest) {
       ].filter(Boolean).join(", ");
       const customerConditions = dbConditions || memo;
 
-      const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
-        ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:3000");
+      const baseUrl = getBaseUrl();
+      console.log("[bg-async] calling generate-reply at:", baseUrl, "convId:", convId, "state:", effectiveState);
 
-      const draftRes = await fetch(`${baseUrl}/api/generate-reply`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: targetMessage,
-          state: effectiveState,
-          customerName: pcData?.customer_name || "",
-          recentMessages: recentMsgs,
-          customerConditions,
-          customerSummary: pcData?.ai_summary || "",
-        }),
-      });
+      // 50秒タイムアウト（Vercel after()のウォームアップ込みで安全マージン）
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 50000);
 
-      if (!draftRes.ok || !draftRes.body) return;
+      let draftRes: Response;
+      try {
+        draftRes = await fetch(`${baseUrl}/api/generate-reply`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            message: targetMessage,
+            state: effectiveState,
+            customerName: pcData?.customer_name || "",
+            recentMessages: recentMsgs,
+            customerConditions,
+            customerSummary: pcData?.ai_summary || "",
+          }),
+        });
+        clearTimeout(timeoutId);
+      } catch (fetchErr) {
+        clearTimeout(timeoutId);
+        const isTimeout = fetchErr instanceof Error && fetchErr.name === "AbortError";
+        console.error("[bg-async] fetch error:", isTimeout ? "timeout (50s)" : String(fetchErr), "baseUrl:", baseUrl, "convId:", convId);
+        return;
+      }
+
+      if (!draftRes.ok || !draftRes.body) {
+        console.error("[bg-async] generate-reply non-ok:", draftRes.status, draftRes.statusText, "convId:", convId);
+        return;
+      }
 
       const reader = draftRes.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "", metaDone = false, fullText = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        if (!metaDone) {
-          buffer += chunk;
-          const nl = buffer.indexOf("\n");
-          if (nl >= 0) {
-            try { const meta = JSON.parse(buffer.slice(0, nl)) as { ok: boolean }; if (!meta.ok) return; } catch { return; }
-            metaDone = true;
-            fullText = buffer.slice(nl + 1);
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          if (!metaDone) {
+            buffer += chunk;
+            const nl = buffer.indexOf("\n");
+            if (nl >= 0) {
+              try {
+                const meta = JSON.parse(buffer.slice(0, nl)) as { ok: boolean };
+                if (!meta.ok) { console.error("[bg-async] generate-reply meta.ok=false, convId:", convId); return; }
+              } catch (parseErr) {
+                console.error("[bg-async] meta parse error:", String(parseErr), "buffer:", buffer.slice(0, 100), "convId:", convId);
+                return;
+              }
+              metaDone = true;
+              fullText = buffer.slice(nl + 1);
+            }
+          } else {
+            fullText += chunk;
           }
-        } else {
-          fullText += chunk;
         }
+      } catch (streamErr) {
+        console.error("[bg-async] stream read error:", String(streamErr), "convId:", convId, "partial text length:", fullText.length);
+        // 部分テキストがあれば保存を試みる
+        if (fullText.trim().length > 20) {
+          await db.from("conversations").update({ ai_draft: fullText.trim() }).eq("id", convId);
+          console.log("[bg-async] saved partial draft:", fullText.length, "chars, convId:", convId);
+        }
+        return;
       }
 
       const finalDraft = fullText.trim();
       if (finalDraft) {
-        await db.from("conversations").update({ ai_draft: finalDraft }).eq("id", convId);
+        const { error: saveErr } = await db.from("conversations").update({ ai_draft: finalDraft }).eq("id", convId);
+        if (saveErr) {
+          console.error("[bg-async] save error:", saveErr.message, "convId:", convId);
+        } else {
+          console.log("[bg-async] draft saved OK, length:", finalDraft.length, "convId:", convId);
+        }
+      } else {
+        console.error("[bg-async] empty draft, convId:", convId, "targetMessage:", targetMessage.slice(0, 50));
       }
-    } catch {}
+    } catch (err) {
+      console.error("[bg-async] unhandled error:", String(err), "convId:", convId);
+    }
   });
 
   return NextResponse.json({ ok: true });
