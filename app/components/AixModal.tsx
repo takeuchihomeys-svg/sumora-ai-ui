@@ -159,7 +159,7 @@ export default function AixModal({
   // 物件確認した専用
   const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | null>(null);
   // 物件確認した「別の部屋」専用
-  const [checkEndedFloor, setCheckEndedFloor] = useState<number>(1);
+  const [checkEndedFloor, setCheckEndedFloor] = useState<number | null>(null);
   const [checkEndedUnit, setCheckEndedUnit] = useState<string>("");
   const [checkFloorPlan, setCheckFloorPlan] = useState<"same" | "different" | null>(null);
   // 物件確認した専用: 複数画像
@@ -485,7 +485,7 @@ export default function AixModal({
         if (!checkPattern) throw new Error("確認結果を選択してください");
         body.check_pattern = checkPattern;
         if (checkPattern === "alternative") {
-          body.ended_floor = checkEndedFloor;
+          if (checkEndedFloor !== null) body.ended_floor = checkEndedFloor;
           if (checkEndedUnit.trim()) body.ended_unit = checkEndedUnit.trim();
           if (checkFloorPlan) body.floor_plan_match = checkFloorPlan;
         }
@@ -1061,10 +1061,11 @@ export default function AixModal({
                     <p className="mb-1.5 text-xs font-bold text-[#54656f]">募集終了だったお部屋</p>
                     <div className="flex items-center gap-2">
                       <select
-                        value={checkEndedFloor}
-                        onChange={(e) => setCheckEndedFloor(parseInt(e.target.value))}
+                        value={checkEndedFloor ?? ""}
+                        onChange={(e) => setCheckEndedFloor(e.target.value === "" ? null : parseInt(e.target.value))}
                         className="rounded-xl border border-[#d1d7db] px-3 py-2 text-sm font-bold text-[#111b21] outline-none focus:border-[#2196F3] bg-white"
                       >
+                        <option value="">階数（任意）</option>
                         {Array.from({ length: 15 }, (_, i) => i + 1).map((f) => (
                           <option key={f} value={f}>{f}階</option>
                         ))}

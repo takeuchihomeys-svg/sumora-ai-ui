@@ -541,7 +541,7 @@ ${phraseText || "なし"}${examplesText}`;
       const estimate_image_url = body.estimate_image_url as string | undefined;
       const endedRoomStr = ended_floor != null
         ? `${ended_floor}階${ended_unit ? `${ended_unit}号室` : "部分"}`
-        : "◯階部分";
+        : "のお部屋";
 
       // 各パターンの実データ由来お手本（DBに☆つき実例が少ないため直書き）
       const PATTERN_EXAMPLES: Record<string, string> = {
