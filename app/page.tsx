@@ -338,6 +338,12 @@ export default function Home() {
   const [dismissedPropertySendIds, setDismissedPropertySendIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedPropertySendIds") || "[]") as string[]); } catch { return new Set(); }
   });
+  const [suggestPropertyRecommendMap, setSuggestPropertyRecommendMap] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(sessionStorage.getItem("suggestPropertyRecommendMap") || "{}") as Record<string, boolean>; } catch { return {}; }
+  });
+  const [dismissedPropertyRecommendIds, setDismissedPropertyRecommendIds] = useState<Set<string>>(() => {
+    try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedPropertyRecommendIds") || "[]") as string[]); } catch { return new Set(); }
+  });
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);
   const [announcements, setAnnouncements] = useState<Message[]>([]);
@@ -469,6 +475,14 @@ export default function Home() {
   useEffect(() => {
     try { sessionStorage.setItem("dismissedPropertySendIds", JSON.stringify([...dismissedPropertySendIds])); } catch {}
   }, [dismissedPropertySendIds]);
+
+  useEffect(() => {
+    try { sessionStorage.setItem("suggestPropertyRecommendMap", JSON.stringify(suggestPropertyRecommendMap)); } catch {}
+  }, [suggestPropertyRecommendMap]);
+
+  useEffect(() => {
+    try { sessionStorage.setItem("dismissedPropertyRecommendIds", JSON.stringify([...dismissedPropertyRecommendIds])); } catch {}
+  }, [dismissedPropertyRecommendIds]);
 
   useEffect(() => {
     const block = (e: MouseEvent) => {
@@ -3382,6 +3396,25 @@ export default function Home() {
               </div>
             )}
 
+            {/* 物件オススメ誘導バナー（物件送る完了後） */}
+            {suggestPropertyRecommendMap[selectedConversation.id] && !dismissedPropertyRecommendIds.has(selectedConversation.id) && (
+              <div className="mx-1 mb-1 rounded-2xl border-2 border-indigo-500 bg-indigo-50 px-3 py-2 flex items-center gap-2">
+                <span className="text-[12px] font-bold text-indigo-700 flex-1">▶ 次のアクション → AIX 物件オススメ で文案を送る</span>
+                <button
+                  onClick={() => {
+                    setSuggestPropertyRecommendMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; });
+                    setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_recommendation"); openAixWithImagePicker("property_recommendation");
+                  }}
+                  className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                  style={{ background: "linear-gradient(135deg, #4f46e5, #7c3aed)" }}
+                >AIX 物件オススメ</button>
+                <button
+                  onClick={() => setDismissedPropertyRecommendIds((prev) => new Set([...prev, selectedConversation.id]))}
+                  className="shrink-0 text-indigo-400 text-[11px] font-bold"
+                >✕</button>
+              </div>
+            )}
+
             {/* 2番手サジェスチョンバナー */}
             {suggest2ndHandMap[selectedConversation.id] && (
               <div className="mx-1 mb-1 rounded-2xl border-2 border-orange-400 bg-orange-50 px-3 py-2 flex items-center gap-2">
@@ -4107,6 +4140,9 @@ export default function Home() {
                   // 物件送るバナーを消去（dismissed も解除して次回のために備える）
                   setSuggestPropertySendMap((prev) => { const n = { ...prev }; delete n[convId]; return n; });
                   setDismissedPropertySendIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
+                  // 物件オススメ誘導バナーを表示
+                  setSuggestPropertyRecommendMap((prev) => ({ ...prev, [convId]: true }));
+                  setDismissedPropertyRecommendIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
                   // property_sendタスクを完了
                   const sendTask = (activeTasks[convId] ?? []).find((t) => t.task_type === "property_send");
                   if (sendTask) {
