@@ -344,6 +344,9 @@ export default function Home() {
   const [dismissedPropertyRecommendIds, setDismissedPropertyRecommendIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedPropertyRecommendIds") || "[]") as string[]); } catch { return new Set(); }
   });
+  const [dismissedEstimateSheetIds, setDismissedEstimateSheetIds] = useState<Set<string>>(() => {
+    try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedEstimateSheetIds") || "[]") as string[]); } catch { return new Set(); }
+  });
   const [dismissedApplyStep1Ids, setDismissedApplyStep1Ids] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedApplyStep1Ids") || "[]") as string[]); } catch { return new Set(); }
   });
@@ -493,6 +496,10 @@ export default function Home() {
   useEffect(() => {
     try { sessionStorage.setItem("dismissedPropertyRecommendIds", JSON.stringify([...dismissedPropertyRecommendIds])); } catch {}
   }, [dismissedPropertyRecommendIds]);
+
+  useEffect(() => {
+    try { sessionStorage.setItem("dismissedEstimateSheetIds", JSON.stringify([...dismissedEstimateSheetIds])); } catch {}
+  }, [dismissedEstimateSheetIds]);
 
   useEffect(() => {
     try { sessionStorage.setItem("dismissedApplyStep1Ids", JSON.stringify([...dismissedApplyStep1Ids])); } catch {}
@@ -3433,6 +3440,29 @@ export default function Home() {
                 <button
                   onClick={() => setDismissedPropertyRecommendIds((prev) => new Set([...prev, selectedConversation.id]))}
                   className="shrink-0 text-indigo-400 text-[11px] font-bold"
+                >✕</button>
+              </div>
+            )}
+
+            {/* 見積書送るバナー（初期費用・見積キーワード検知） */}
+            {(() => {
+              const msgs = selectedConversation.messages || [];
+              const lastCustomerText = [...msgs].reverse().find((m: Message) => m.sender === "customer")?.text || "";
+              return /初期費用|見積|費用.*教|いくら|金額.*教|費用感/.test(lastCustomerText);
+            })() && !dismissedEstimateSheetIds.has(selectedConversation.id) && (
+              <div className="mx-1 mb-1 rounded-2xl border-2 border-amber-400 bg-amber-50 px-3 py-2 flex items-center gap-2">
+                <span className="text-[12px] font-bold text-amber-700 flex-1">▶ 初期費用の確認 → AIX 見積書送る</span>
+                <button
+                  onClick={() => {
+                    setDismissedEstimateSheetIds((prev) => new Set([...prev, selectedConversation.id]));
+                    setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet"); openAixWithImagePicker("estimate_sheet");
+                  }}
+                  className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                  style={{ background: "linear-gradient(135deg, #f59e0b, #d97706)" }}
+                >AIX 見積書送る</button>
+                <button
+                  onClick={() => setDismissedEstimateSheetIds((prev) => new Set([...prev, selectedConversation.id]))}
+                  className="shrink-0 text-amber-400 text-[11px] font-bold"
                 >✕</button>
               </div>
             )}

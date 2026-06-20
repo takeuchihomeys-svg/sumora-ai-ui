@@ -208,6 +208,9 @@ export default function AixModal({
   // 物件オススメ専用: 見積書（任意）
   const [recommendEstimateFile, setRecommendEstimateFile] = useState<File | null>(null);
   const [recommendEstimatePreview, setRecommendEstimatePreview] = useState<string>("");
+  // 見積書送る専用: 物件資料（任意）
+  const [estimatePropertyFile, setEstimatePropertyFile] = useState<File | null>(null);
+  const [estimatePropertyPreview, setEstimatePropertyPreview] = useState<string>("");
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const conditionFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -216,6 +219,7 @@ export default function AixModal({
   const sendFileInputRef = useRef<HTMLInputElement | null>(null);
   const moveInImageInputRef = useRef<HTMLInputElement | null>(null);
   const recommendEstimateInputRef = useRef<HTMLInputElement | null>(null);
+  const estimatePropertyInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (initialImageFile) {
@@ -597,6 +601,14 @@ export default function AixModal({
             await onSend("", estUrl);
           }
           if (propertyImageUrl.trim()) await onSend(`（室内イメージ）\n${propertyImageUrl.trim()}`);
+          await onSend(preview);
+        } else if (actionType === "estimate_sheet") {
+          // 送信順: ①物件資料（任意）→ ②見積書 → ③テキスト
+          if (estimatePropertyFile) {
+            const propUrl = await uploadImage(estimatePropertyFile);
+            await onSend("", propUrl);
+          }
+          if (uploadedImageUrl) await onSend("", uploadedImageUrl);
           await onSend(preview);
         } else {
           await onSend(preview, uploadedImageUrl);
@@ -1306,6 +1318,43 @@ export default function AixModal({
           ) : config.requiresImage ? (
             /* その他の画像あきアクション */
             <div className="mb-4">
+              {/* 見積書送る: 物件資料（任意）ピッカー */}
+              {actionType === "estimate_sheet" && (
+                <div className="mb-3">
+                  <label className="mb-1 block text-xs font-semibold text-[#54656f]">
+                    物件資料 <span className="font-normal text-[#90a4ae]">（任意・一緒に送る場合）</span>
+                  </label>
+                  {estimatePropertyPreview ? (
+                    <div className="relative mb-2 overflow-hidden rounded-2xl border border-[#d1d7db]">
+                      <img src={estimatePropertyPreview} alt="物件資料" className="max-h-28 w-full object-contain" />
+                      <button
+                        onClick={() => { setEstimatePropertyFile(null); setEstimatePropertyPreview(""); if (estimatePropertyInputRef.current) estimatePropertyInputRef.current.value = ""; }}
+                        className="absolute right-2 top-2 rounded-full bg-black/50 px-3 py-1 text-xs text-white"
+                      >削除</button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => estimatePropertyInputRef.current?.click()}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#90a4ae] py-2 text-xs font-semibold text-[#546e7a] hover:bg-gray-50"
+                    >📄 物件資料を追加する（スキップ可）</button>
+                  )}
+                  <input
+                    ref={estimatePropertyInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (!f) return;
+                      setEstimatePropertyFile(f);
+                      const r = new FileReader();
+                      r.onload = () => setEstimatePropertyPreview(String(r.result ?? ""));
+                      r.readAsDataURL(f);
+                    }}
+                    className="hidden"
+                  />
+                </div>
+              )}
+              <label className="mb-1 block text-xs font-semibold text-[#54656f]">見積書画像</label>
               {imagePreview ? (
                 <div className="relative mb-2 overflow-hidden rounded-2xl border border-[#d1d7db]">
                   <img src={imagePreview} alt="選択画像" className="max-h-48 w-full object-contain" />
