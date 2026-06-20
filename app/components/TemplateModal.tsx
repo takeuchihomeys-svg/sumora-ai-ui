@@ -8,6 +8,7 @@ interface Template {
   label: string;
   text: string;
   sort_order: number | null;
+  requires_image: boolean;
 }
 
 interface TemplateModalProps {
@@ -30,6 +31,7 @@ export default function TemplateModal({
   const [newLabel, setNewLabel] = useState("");
   const [newCategory, setNewCategory] = useState("全般");
   const [newText, setNewText] = useState("");
+  const [newRequiresImage, setNewRequiresImage] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [adaptingId, setAdaptingId] = useState<string | null>(null);
@@ -40,9 +42,13 @@ export default function TemplateModal({
   const [editLabel, setEditLabel] = useState("");
   const [editText, setEditText] = useState("");
   const [editCategory, setEditCategory] = useState("");
+  const [editRequiresImage, setEditRequiresImage] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
   const [noEmoji, setNoEmoji] = useState(false);
+  const [templateImages, setTemplateImages] = useState<Record<string, File>>({});
+  const [templateImagePreviews, setTemplateImagePreviews] = useState<Record<string, string>>({});
   const addFormRef = useRef<HTMLDivElement | null>(null);
+  const templateImageInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const loadTemplates = async () => {
     setLoading(true);
@@ -75,11 +81,11 @@ export default function TemplateModal({
       const res = await fetch("/api/templates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ category: newCategory || "全般", label: newLabel, text: newText }),
+        body: JSON.stringify({ category: newCategory || "全般", label: newLabel, text: newText, requires_image: newRequiresImage }),
       });
       const data = await res.json() as { ok: boolean };
       if (data.ok) {
-        setNewLabel(""); setNewText(""); setNewCategory("全般"); setShowAddForm(false);
+        setNewLabel(""); setNewText(""); setNewCategory("全般"); setNewRequiresImage(false); setShowAddForm(false);
         await loadTemplates();
       }
     } finally {
@@ -92,6 +98,7 @@ export default function TemplateModal({
     setEditLabel(tmpl.label);
     setEditText(tmpl.text);
     setEditCategory(tmpl.category);
+    setEditRequiresImage(tmpl.requires_image);
     setConfirmDeleteId(null);
   };
 
@@ -102,7 +109,7 @@ export default function TemplateModal({
       const res = await fetch("/api/templates", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: editingId, category: editCategory || "全般", label: editLabel, text: editText }),
+        body: JSON.stringify({ id: editingId, category: editCategory || "全般", label: editLabel, text: editText, requires_image: editRequiresImage }),
       });
       const data = await res.json() as { ok: boolean };
       if (data.ok) {
@@ -281,9 +288,15 @@ export default function TemplateModal({
                     onChange={(e) => setNewText(e.target.value)}
                   />
                 </div>
+                <button
+                  onClick={() => setNewRequiresImage(v => !v)}
+                  className={`w-full rounded-xl border py-2 text-[12px] font-bold transition ${newRequiresImage ? "border-orange-400 bg-orange-50 text-orange-600" : "border-[#d1d7db] bg-white text-[#54656f]"}`}
+                >
+                  📸 {newRequiresImage ? "画像添付必要（オン）" : "画像添付必要（オフ）"}
+                </button>
                 <div className="flex gap-2 justify-end">
                   <button
-                    onClick={() => { setShowAddForm(false); setNewLabel(""); setNewText(""); setNewCategory("全般"); }}
+                    onClick={() => { setShowAddForm(false); setNewLabel(""); setNewText(""); setNewCategory("全般"); setNewRequiresImage(false); }}
                     className="rounded-full px-4 py-2 text-[12px] font-bold text-[#667781] border border-[#d1d7db]"
                   >
                     キャンセル
@@ -346,6 +359,9 @@ export default function TemplateModal({
                         {/* タイトル行 */}
                         <div className="mb-2 flex items-center justify-between gap-2">
                           <span className="text-xs font-bold text-[#1565C0] flex-1 min-w-0 truncate">{tmpl.label}</span>
+                          {tmpl.requires_image && (
+                            <span className="shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold text-orange-600">📸 画像必要</span>
+                          )}
                           {editingId !== tmpl.id && (
                             <div className="flex items-center gap-1.5 shrink-0">
                               <button
@@ -389,6 +405,10 @@ export default function TemplateModal({
                               onChange={(e) => setEditText(e.target.value)}
                               placeholder="本文"
                             />
+                            <button
+                              onClick={() => setEditRequiresImage(v => !v)}
+                              className={`w-full rounded-xl border py-1.5 text-[11px] font-bold transition ${editRequiresImage ? "border-orange-400 bg-orange-50 text-orange-600" : "border-[#d1d7db] bg-white text-[#54656f]"}`}
+                            >📸 {editRequiresImage ? "画像添付必要（オン）" : "画像添付必要（オフ）"}</button>
                             <div className="flex gap-2 justify-end mt-1">
                               <button
                                 onClick={() => setEditingId(null)}
@@ -455,11 +475,53 @@ export default function TemplateModal({
                         </>
                         )}
 
+                        {/* 画像必要テンプレ: 画像ピッカー */}
+                        {editingId !== tmpl.id && tmpl.requires_image && (
+                          <div className="mb-3">
+                            {templateImagePreviews[tmpl.id] ? (
+                              <div className="relative overflow-hidden rounded-xl border border-orange-200">
+                                <img src={templateImagePreviews[tmpl.id]} className="max-h-28 w-full object-contain" alt="添付画像" />
+                                <button
+                                  onClick={() => {
+                                    setTemplateImages(prev => { const n = { ...prev }; delete n[tmpl.id]; return n; });
+                                    setTemplateImagePreviews(prev => { const n = { ...prev }; delete n[tmpl.id]; return n; });
+                                  }}
+                                  className="absolute right-2 top-2 rounded-full bg-black/50 px-2 py-0.5 text-[10px] text-white"
+                                >変更</button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => templateImageInputRefs.current[tmpl.id]?.click()}
+                                className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-orange-300 py-3 text-[11px] font-bold text-orange-500 bg-orange-50"
+                              >📸 物件資料画像を添付（必須）</button>
+                            )}
+                            <input
+                              type="file" accept="image/*" className="hidden"
+                              ref={el => { templateImageInputRefs.current[tmpl.id] = el; }}
+                              onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (!f) return;
+                                setTemplateImages(prev => ({ ...prev, [tmpl.id]: f }));
+                                const reader = new FileReader();
+                                reader.onload = () => setTemplateImagePreviews(prev => ({ ...prev, [tmpl.id]: String(reader.result ?? "") }));
+                                reader.readAsDataURL(f);
+                              }}
+                            />
+                          </div>
+                        )}
+
                         {/* ボタン行 */}
                         {editingId !== tmpl.id && <div className="flex items-center gap-2 flex-wrap">
                           {onSelect && (
                             <button
-                              onClick={() => { onSelect(displayText); onClose(); }}
+                              onClick={() => {
+                                if (tmpl.requires_image && !templateImages[tmpl.id]) {
+                                  alert("📸 物件資料画像を添付してください");
+                                  return;
+                                }
+                                onSelect(displayText);
+                                onClose();
+                              }}
                               className="rounded-full px-3 py-1.5 text-[11px] font-bold text-white"
                               style={{ background: "linear-gradient(135deg, #06c755, #06a043)" }}
                             >

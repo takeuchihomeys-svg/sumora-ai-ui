@@ -198,6 +198,7 @@ CREATE TABLE IF NOT EXISTS templates (
   label TEXT NOT NULL,
   text TEXT NOT NULL,
   sort_order INTEGER DEFAULT 0,
+  requires_image BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

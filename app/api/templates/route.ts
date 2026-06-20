@@ -4,7 +4,7 @@ import { supabase } from "@/app/lib/supabase";
 export async function GET() {
   const { data, error } = await supabase
     .from("templates")
-    .select("id, category, label, text, sort_order, created_at")
+    .select("id, category, label, text, sort_order, requires_image, created_at")
     .order("category")
     .order("sort_order")
     .order("created_at");
@@ -14,14 +14,14 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const { category, label, text } = await req.json() as { category: string; label: string; text: string };
+  const { category, label, text, requires_image } = await req.json() as { category: string; label: string; text: string; requires_image?: boolean };
   if (!label?.trim() || !text?.trim()) {
     return NextResponse.json({ ok: false, error: "label と text は必須" }, { status: 400 });
   }
 
   const { data, error } = await supabase
     .from("templates")
-    .insert({ category: category?.trim() || "全般", label: label.trim(), text: text.trim() })
+    .insert({ category: category?.trim() || "全般", label: label.trim(), text: text.trim(), requires_image: requires_image ?? false })
     .select()
     .single();
 
@@ -43,14 +43,14 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
-  const { id, category, label, text } = await req.json() as { id: string; category: string; label: string; text: string };
+  const { id, category, label, text, requires_image } = await req.json() as { id: string; category: string; label: string; text: string; requires_image?: boolean };
   if (!id || !label?.trim() || !text?.trim()) {
     return NextResponse.json({ ok: false, error: "id, label, text は必須" }, { status: 400 });
   }
 
   const { error } = await supabase
     .from("templates")
-    .update({ category: category?.trim() || "全般", label: label.trim(), text: text.trim() })
+    .update({ category: category?.trim() || "全般", label: label.trim(), text: text.trim(), requires_image: requires_image ?? false })
     .eq("id", id);
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
