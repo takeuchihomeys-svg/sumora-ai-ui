@@ -3285,7 +3285,10 @@ export default function Home() {
               {/* 辞書ボタン（本マークのみ） */}
               <button
                 onClick={() => setShowTemplateModal(true)}
-                className="shrink-0 flex h-8 w-8 items-center justify-center rounded-full border border-[#d1d7db] bg-white text-[#54656f] shadow-sm"
+                className="shrink-0 flex h-8 w-8 items-center justify-center rounded-full shadow-sm transition-colors"
+                style={activeAixFlow
+                  ? { backgroundColor: AIX_ACTION_META[activeAixFlow]?.color, borderColor: "transparent", color: "white" }
+                  : { backgroundColor: "white", border: "1px solid #d1d7db", color: "#54656f" }}
                 title="テンプレート一覧"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
