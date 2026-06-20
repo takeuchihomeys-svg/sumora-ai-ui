@@ -538,6 +538,7 @@ ${phraseText || "なし"}${examplesText}`;
       const ended_floor = body.ended_floor as number | undefined;
       const ended_unit = body.ended_unit as string | undefined;
       const floor_plan_match = body.floor_plan_match as "same" | "different" | undefined;
+      const estimate_image_url = body.estimate_image_url as string | undefined;
       const endedRoomStr = ended_floor != null
         ? `${ended_floor}階${ended_unit ? `${ended_unit}号室` : "部分"}`
         : "◯階部分";
@@ -661,11 +662,12 @@ ${patternExample}${knowledgeText}${examplesText}`;
         : "";
       const userText = `${name}への物件確認報告メッセージを作成してください。\n\n${instruction}${calendarPart}${summaryNote}${recentHistory}`;
 
-      if (image_url) {
-        const content = [
+      if (image_url || estimate_image_url) {
+        const content: Array<{ type: string; text?: string; source?: { type: string; url: string } }> = [
           { type: "text", text: userText },
-          { type: "image", source: { type: "url", url: image_url } },
         ];
+        if (image_url) content.push({ type: "image", source: { type: "url", url: image_url } });
+        if (estimate_image_url) content.push({ type: "image", source: { type: "url", url: estimate_image_url } });
         message_text = await callClaudeVision(checkSystem, content);
       } else {
         message_text = await callClaude(checkSystem, userText);

@@ -137,6 +137,9 @@ export default function AixModal({
   // 物件確認した専用: 複数画像
   const [checkImageFiles, setCheckImageFiles] = useState<File[]>([]);
   const [checkImagePreviews, setCheckImagePreviews] = useState<string[]>([]);
+  // 物件確認した「別の部屋」専用: 見積書画像
+  const [checkEstimateFile, setCheckEstimateFile] = useState<File | null>(null);
+  const [checkEstimatePreview, setCheckEstimatePreview] = useState<string>("");
   // 物件確認した「空室あり」専用カレンダー
   const [checkCalendarInfo, setCheckCalendarInfo] = useState<string>("");
   const [checkCalendarDays, setCheckCalendarDays] = useState<Array<{
@@ -169,6 +172,7 @@ export default function AixModal({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const conditionFileInputRef = useRef<HTMLInputElement | null>(null);
   const checkFileInputRef = useRef<HTMLInputElement | null>(null);
+  const checkEstimateInputRef = useRef<HTMLInputElement | null>(null);
   const sendFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -457,6 +461,7 @@ export default function AixModal({
           if (checkEndedUnit.trim()) body.ended_unit = checkEndedUnit.trim();
           if (checkFloorPlan) body.floor_plan_match = checkFloorPlan;
         }
+        if (checkEstimateFile) body.estimate_image_url = await uploadImage(checkEstimateFile);
         if (checkImageFiles.length > 0) {
           const urls = await Promise.all(checkImageFiles.map(f => uploadImage(f)));
           body.image_urls = urls;
@@ -1055,6 +1060,45 @@ export default function AixModal({
                   <input ref={checkFileInputRef} type="file" accept="image/*" multiple onChange={onSelectCheckImages} className="hidden" />
                 </div>
               )}
+              {/* 全パターン共通: 見積書画像（任意） */}
+              {checkPattern && (
+                <div>
+                  <p className="mb-1 text-xs font-bold text-[#54656f]">
+                    見積書の画像 <span className="font-normal text-[#90a4ae]">（任意）</span>
+                  </p>
+                  {checkEstimatePreview ? (
+                    <div className="relative overflow-hidden rounded-xl border border-[#d1d7db] mb-1">
+                      <img src={checkEstimatePreview} alt="見積書" className="max-h-36 w-full object-contain" />
+                      <button
+                        onClick={() => { setCheckEstimateFile(null); setCheckEstimatePreview(""); if (checkEstimateInputRef.current) checkEstimateInputRef.current.value = ""; }}
+                        className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-[10px] text-white"
+                      >✕</button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => checkEstimateInputRef.current?.click()}
+                      className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#b3d0f7] py-3 text-sm font-semibold text-[#2196F3] hover:bg-blue-50"
+                    >
+                      📋 見積書を追加する（スキップ可）
+                    </button>
+                  )}
+                  <input
+                    ref={checkEstimateInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (!f) return;
+                      setCheckEstimateFile(f);
+                      const reader = new FileReader();
+                      reader.onload = () => setCheckEstimatePreview(String(reader.result ?? ""));
+                      reader.readAsDataURL(f);
+                    }}
+                    className="hidden"
+                  />
+                </div>
+              )}
+
               {/* 空室あり: 内覧可能日時カレンダー */}
               {checkPattern === "available" && (
                 <div className="rounded-2xl border border-[#d1d7db] bg-[#f8f9fa] p-3">
