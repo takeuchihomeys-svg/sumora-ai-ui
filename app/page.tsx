@@ -344,6 +344,16 @@ export default function Home() {
   const [dismissedPropertyRecommendIds, setDismissedPropertyRecommendIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedPropertyRecommendIds") || "[]") as string[]); } catch { return new Set(); }
   });
+  const [dismissedApplyStep1Ids, setDismissedApplyStep1Ids] = useState<Set<string>>(() => {
+    try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedApplyStep1Ids") || "[]") as string[]); } catch { return new Set(); }
+  });
+  const [suggestApplyStep2Map, setSuggestApplyStep2Map] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(sessionStorage.getItem("suggestApplyStep2Map") || "{}") as Record<string, boolean>; } catch { return {}; }
+  });
+  const [dismissedApplyStep2Ids, setDismissedApplyStep2Ids] = useState<Set<string>>(() => {
+    try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedApplyStep2Ids") || "[]") as string[]); } catch { return new Set(); }
+  });
+  const [templateOpenContext, setTemplateOpenContext] = useState<null | "apply_step1" | "apply_step2">(null);
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);
   const [announcements, setAnnouncements] = useState<Message[]>([]);
@@ -483,6 +493,18 @@ export default function Home() {
   useEffect(() => {
     try { sessionStorage.setItem("dismissedPropertyRecommendIds", JSON.stringify([...dismissedPropertyRecommendIds])); } catch {}
   }, [dismissedPropertyRecommendIds]);
+
+  useEffect(() => {
+    try { sessionStorage.setItem("dismissedApplyStep1Ids", JSON.stringify([...dismissedApplyStep1Ids])); } catch {}
+  }, [dismissedApplyStep1Ids]);
+
+  useEffect(() => {
+    try { sessionStorage.setItem("suggestApplyStep2Map", JSON.stringify(suggestApplyStep2Map)); } catch {}
+  }, [suggestApplyStep2Map]);
+
+  useEffect(() => {
+    try { sessionStorage.setItem("dismissedApplyStep2Ids", JSON.stringify([...dismissedApplyStep2Ids])); } catch {}
+  }, [dismissedApplyStep2Ids]);
 
   useEffect(() => {
     const block = (e: MouseEvent) => {
@@ -3415,6 +3437,38 @@ export default function Home() {
               </div>
             )}
 
+            {/* 申込フォーマット①バナー（ステータスが申込・審査中になったとき） */}
+            {(selectedConversation.status === "applying" || selectedConversation.status === "screening" || selectedConversation.status === "contract") && !suggestApplyStep2Map[selectedConversation.id] && !dismissedApplyStep1Ids.has(selectedConversation.id) && (
+              <div className="mx-1 mb-1 rounded-2xl border-2 border-pink-400 bg-pink-50 px-3 py-2 flex items-center gap-2">
+                <span className="text-[12px] font-bold text-pink-700 flex-1">▶ 申込フォーマット ① を送る</span>
+                <button
+                  onClick={() => { setTemplateOpenContext("apply_step1"); setShowTemplateModal(true); }}
+                  className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                  style={{ background: "linear-gradient(135deg, #ec4899, #be185d)" }}
+                >①フォーマット</button>
+                <button
+                  onClick={() => setDismissedApplyStep1Ids((prev) => new Set([...prev, selectedConversation.id]))}
+                  className="shrink-0 text-pink-400 text-[11px] font-bold"
+                >✕</button>
+              </div>
+            )}
+
+            {/* 申込フォーマット②バナー（①選択後） */}
+            {suggestApplyStep2Map[selectedConversation.id] && !dismissedApplyStep2Ids.has(selectedConversation.id) && (
+              <div className="mx-1 mb-1 rounded-2xl border-2 border-pink-500 bg-pink-50 px-3 py-2 flex items-center gap-2">
+                <span className="text-[12px] font-bold text-pink-800 flex-1">▶ 申込フォーマット ② （続き）を送る</span>
+                <button
+                  onClick={() => { setTemplateOpenContext("apply_step2"); setShowTemplateModal(true); }}
+                  className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                  style={{ background: "linear-gradient(135deg, #be185d, #9d174d)" }}
+                >②続きを送る</button>
+                <button
+                  onClick={() => setDismissedApplyStep2Ids((prev) => new Set([...prev, selectedConversation.id]))}
+                  className="shrink-0 text-pink-400 text-[11px] font-bold"
+                >✕</button>
+              </div>
+            )}
+
             {/* 2番手サジェスチョンバナー */}
             {suggest2ndHandMap[selectedConversation.id] && (
               <div className="mx-1 mb-1 rounded-2xl border-2 border-orange-400 bg-orange-50 px-3 py-2 flex items-center gap-2">
@@ -4085,10 +4139,16 @@ export default function Home() {
 
       {showTemplateModal && (
         <TemplateModal
-          onClose={() => setShowTemplateModal(false)}
-          onSelect={(text, imageFile) => {
+          onClose={() => { setShowTemplateModal(false); setTemplateOpenContext(null); }}
+          onSelect={(text, imageFile, label) => {
             setReplyDraft(text);
             if (imageFile) setSelectedImageFiles((prev) => [...prev, imageFile]);
+            // ①申込フォーマット選択 → ②を次に誘導
+            if (label?.includes("①申込")) {
+              setSuggestApplyStep2Map((prev) => ({ ...prev, [selectedConversation.id]: true }));
+              setDismissedApplyStep2Ids((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
+            }
+            setTemplateOpenContext(null);
             setShowTemplateModal(false);
           }}
           customerName={selectedConversation.customerName}
@@ -4097,8 +4157,18 @@ export default function Home() {
             sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined,
           }))}
           linkedCustomer={linkedCustomerMap[selectedConversation.id]}
-          initialCategory={suggest2ndHandMap[selectedConversation.id] ? "物件確認した【AIX】" : activeAixFlow ? AIX_ACTION_META[activeAixFlow]?.templateCategory : undefined}
-          highlightKeyword={suggest2ndHandMap[selectedConversation.id] ? "2番手" : undefined}
+          initialCategory={
+            templateOpenContext === "apply_step1" || templateOpenContext === "apply_step2" ? "申込・審査" :
+            suggest2ndHandMap[selectedConversation.id] ? "物件確認した【AIX】" :
+            activeAixFlow ? AIX_ACTION_META[activeAixFlow]?.templateCategory :
+            undefined
+          }
+          highlightKeyword={
+            templateOpenContext === "apply_step2" ? "②" :
+            templateOpenContext === "apply_step1" ? "①申込" :
+            suggest2ndHandMap[selectedConversation.id] ? "2番手" :
+            undefined
+          }
         />
       )}
 
