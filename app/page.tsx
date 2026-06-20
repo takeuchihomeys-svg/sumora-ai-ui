@@ -1074,6 +1074,19 @@ export default function Home() {
     );
   }, [filteredConversations, selectedId]);
 
+  // 空室確認メッセージを送った後 → AIX「物件確認した」ボタンに誘導
+  const guideToCheckResult = useMemo(() => {
+    if (activeAixFlow) return false;
+    if (selectedConversation.status === "availability_check") return true;
+    const msgs: Message[] = selectedConversation.messages || [];
+    const lastStaff = [...msgs].reverse().find((m: Message) => m.sender === "staff");
+    return !!(lastStaff?.text && (
+      lastStaff.text.includes("確認出来次第") ||
+      lastStaff.text.includes("確認させていただきます") ||
+      lastStaff.text.includes("募集状況確認")
+    ));
+  }, [selectedConversation, activeAixFlow]);
+
   useEffect(() => {
     setError("");
     setShowStatusMenu(false);
@@ -3251,7 +3264,9 @@ export default function Home() {
                 className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-bold shadow-sm active:scale-95 transition-all duration-75 ${
                   activeAixFlow
                     ? "border-transparent text-white"
-                    : "border-[#d1d7db] bg-white text-[#111b21]"
+                    : guideToCheckResult
+                      ? "border-[#4CAF50] bg-white text-[#2E7D32] animate-pulse ring-2 ring-[#4CAF50] ring-offset-1"
+                      : "border-[#d1d7db] bg-white text-[#111b21]"
                 }`}
                 style={activeAixFlow ? { backgroundColor: AIX_ACTION_META[activeAixFlow]?.color } : undefined}
                 title={activeAixFlow ? `${AIX_ACTION_META[activeAixFlow]?.label}フロー中 — タップで解除` : "AIXメニュー"}
@@ -4711,7 +4726,7 @@ export default function Home() {
                   const info = AIX_INSPECT[item.label];
                   const isOpen = aixInspectLabel === item.label;
                   return (
-                    <div key={item.label} className="overflow-hidden rounded-xl border border-[#e9edef] bg-white">
+                    <div key={item.label} className={`overflow-hidden rounded-xl border bg-white transition-all ${guideToCheckResult && item.label === "物件確認した" ? "border-2 border-[#4CAF50] shadow-[0_0_0_3px_rgba(76,175,80,0.15)]" : "border-[#e9edef]"}`}>
                       <div className="flex items-center gap-0">
                         {/* メインボタン */}
                         <button
