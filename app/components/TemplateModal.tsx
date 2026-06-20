@@ -19,10 +19,11 @@ interface TemplateModalProps {
   recentMessages?: Array<{ sender: string; text: string; imageUrl?: string }>;
   linkedCustomer?: { id: string; name: string; conditions: string };
   initialCategory?: string;
+  highlightKeyword?: string;
 }
 
 export default function TemplateModal({
-  onClose, onSelect, customerName, conversationState, recentMessages, linkedCustomer, initialCategory,
+  onClose, onSelect, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword,
 }: TemplateModalProps) {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
@@ -375,12 +376,16 @@ export default function TemplateModal({
                   {filtered.map((tmpl, idx) => {
                     const adapted = adaptedTexts[tmpl.id];
                     const displayText = adapted || tmpl.text;
+                    const isHighlighted = !!highlightKeyword && (tmpl.label.includes(highlightKeyword) || tmpl.text.includes(highlightKeyword));
                     return (
-                      <div key={tmpl.id} className="rounded-2xl border border-[#e9edef] bg-[#f8f9fa] p-4">
+                      <div key={tmpl.id} className={`rounded-2xl p-4 ${isHighlighted ? "border-2 border-orange-400 bg-orange-50" : "border border-[#e9edef] bg-[#f8f9fa]"}`}>
                         {/* タイトル行 */}
                         <div className="mb-2 flex items-center justify-between gap-2">
                           <span className="text-xs font-bold text-[#1565C0] flex-1 min-w-0 truncate">{tmpl.label}</span>
-                          {isSearching && (
+                          {isHighlighted && (
+                            <span className="shrink-0 rounded-full bg-orange-400 px-2 py-0.5 text-[10px] font-bold text-white">💡 次のアクション</span>
+                          )}
+                          {isSearching && !isHighlighted && (
                             <span className="shrink-0 rounded-full bg-[#e8f0fe] px-2 py-0.5 text-[10px] font-bold text-[#1565C0]">{tmpl.category}</span>
                           )}
                           {tmpl.requires_image && (

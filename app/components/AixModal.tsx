@@ -30,7 +30,7 @@ interface AixModalProps {
   customerSummary?: string | null;
   onClose: () => void;
   onSend: (text: string, imageUrl?: string) => Promise<void>;
-  onAfterSend?: () => void;
+  onAfterSend?: (meta?: { suggest2ndHand?: boolean }) => void;
 }
 
 const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }> = {
@@ -599,7 +599,7 @@ export default function AixModal({
         }),
       }).catch(() => {});
 
-      onAfterSend?.();
+      onAfterSend?.({ suggest2ndHand: actionType === "property_check_result" && checkAvailableApp === "yes" });
       onClose();
     } catch {
       setError("送信に失敗しました");

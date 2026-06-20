@@ -328,6 +328,7 @@ export default function Home() {
   const [aixModalType, setAixModalType] = useState<AixActionType | null>(null);
   const [aixInitialFile, setAixInitialFile] = useState<File | null>(null);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [suggest2ndHandMap, setSuggest2ndHandMap] = useState<Record<string, boolean>>({});
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);
   const [announcements, setAnnouncements] = useState<Message[]>([]);
@@ -3316,6 +3317,22 @@ export default function Home() {
               <input ref={aixFileInputRef} type="file" accept="image/*" onChange={onAixImageSelected} className="hidden" />
             </div>
 
+            {/* 2番手サジェスチョンバナー */}
+            {suggest2ndHandMap[selectedConversation.id] && (
+              <div className="mx-1 mb-1 rounded-2xl border-2 border-orange-400 bg-orange-50 px-3 py-2 flex items-center gap-2">
+                <span className="text-[12px] font-bold text-orange-600 flex-1">💡 次のアクション → 2番手内覧誘いをする</span>
+                <button
+                  onClick={() => setShowTemplateModal(true)}
+                  className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                  style={{ background: "linear-gradient(135deg, #f97316, #ea580c)" }}
+                >テンプレートを使う</button>
+                <button
+                  onClick={() => setSuggest2ndHandMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; })}
+                  className="shrink-0 text-orange-400 text-[11px] font-bold"
+                >✕</button>
+              </div>
+            )}
+
             {/* AIドラフト提案バナー */}
             {selectedConversation.aiDraft && !replyDraft && selectedConversation.lastSender === "customer" && (
               <div className="mx-1 mb-1 rounded-2xl border border-blue-200 bg-blue-50 px-3 py-2">
@@ -3946,7 +3963,8 @@ export default function Home() {
             sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined,
           }))}
           linkedCustomer={linkedCustomerMap[selectedConversation.id]}
-          initialCategory={activeAixFlow ? AIX_ACTION_META[activeAixFlow]?.templateCategory : undefined}
+          initialCategory={suggest2ndHandMap[selectedConversation.id] ? "物件確認した【AIX】" : activeAixFlow ? AIX_ACTION_META[activeAixFlow]?.templateCategory : undefined}
+          highlightKeyword={suggest2ndHandMap[selectedConversation.id] ? "2番手" : undefined}
         />
       )}
 
@@ -3968,7 +3986,7 @@ export default function Home() {
           onSend={sendMessageText}
           onAfterSend={
             aixModalType === "property_check_result"
-              ? () => {
+              ? (meta) => {
                   const task = (activeTasks[selectedConversation.id] ?? []).find((t) => t.task_type === "property_check");
                   if (task) {
                     fetch("/api/line-tasks/complete", {
@@ -3976,6 +3994,9 @@ export default function Home() {
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ id: task.id }),
                     }).catch(() => {});
+                  }
+                  if (meta?.suggest2ndHand) {
+                    setSuggest2ndHandMap((prev) => ({ ...prev, [selectedConversation.id]: true }));
                   }
                 }
               : aixModalType === "property_send"
