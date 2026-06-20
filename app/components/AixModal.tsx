@@ -161,6 +161,8 @@ export default function AixModal({
   const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | null>(null);
   // 物件あった専用: 申込状況
   const [checkAvailableApp, setCheckAvailableApp] = useState<"yes" | "no" | null>(null);
+  // 物件あった専用: 内覧誘導モード（折りたたみ）
+  const [showCheckCalendar, setShowCheckCalendar] = useState(false);
   // 物件確認した「別の部屋」専用
   const [checkEndedFloor, setCheckEndedFloor] = useState<number | null>(null);
   const [checkEndedUnit, setCheckEndedUnit] = useState<string>("");
@@ -499,7 +501,7 @@ export default function AixModal({
           body.image_urls = urls;
           body.image_url = urls[0];
         }
-        if (checkPattern === "available" && checkCalendarInfo) body.calendar_info = checkCalendarInfo;
+        if (checkPattern === "available" && showCheckCalendar && checkCalendarInfo) body.calendar_info = checkCalendarInfo;
         if (checkPattern === "available" && checkAvailableApp) body.available_application = checkAvailableApp;
         if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
         if (customerSummary) body.customer_summary = customerSummary;
@@ -1011,7 +1013,7 @@ export default function AixModal({
                   ] as const).map((p) => (
                     <button
                       key={p.key}
-                      onClick={() => { setCheckPattern(p.key); setPreview(""); setCheckAvailableApp(null); }}
+                      onClick={() => { setCheckPattern(p.key); setPreview(""); setCheckAvailableApp(null); setShowCheckCalendar(false); }}
                       className={`flex items-center gap-3 rounded-2xl border-2 px-4 py-3 text-left transition-all ${
                         checkPattern === p.key
                           ? p.color === "emerald" ? "border-emerald-400 bg-emerald-50"
@@ -1162,27 +1164,37 @@ export default function AixModal({
                 </div>
               )}
 
-              {/* 空室あり: 内覧可能日時カレンダー */}
+              {/* 空室あり: 内覧誘導ボタン + カレンダー折りたたみ */}
               {checkPattern === "available" && (
-                <div className="rounded-2xl border border-[#d1d7db] bg-[#f8f9fa] p-3">
-                  <p className="mb-2 text-xs font-bold text-[#54656f]">内覧可能日時（自動取得）</p>
-                  {checkCalendarLoading ? (
-                    <p className="text-xs text-[#8696a0]">カレンダー取得中...</p>
-                  ) : checkCalendarDays.length > 0 ? (
-                    <div className="flex flex-col gap-1">
-                      {checkCalendarDays.map((d, i) => (
-                        <div key={i} className="text-xs">
-                          <span className="font-semibold text-[#111b21]">{d.label}</span>
-                          {d.fullyBooked ? (
-                            <span className="ml-2 text-red-400">案内不可</span>
-                          ) : (
-                            <span className="ml-2 text-emerald-600">{d.slots[0]}</span>
-                          )}
+                <div>
+                  <button
+                    onClick={() => setShowCheckCalendar(v => !v)}
+                    className={`w-full rounded-xl border py-2 text-sm font-bold transition ${showCheckCalendar ? "border-[#1565C0] bg-[#e3f0ff] text-[#1565C0]" : "border-[#d1d7db] bg-white text-[#54656f]"}`}
+                  >
+                    📅 内覧誘導{showCheckCalendar ? "（オン）" : "（オフ）"}
+                  </button>
+                  {showCheckCalendar && (
+                    <div className="mt-2 rounded-2xl border border-[#d1d7db] bg-[#f8f9fa] p-3">
+                      <p className="mb-2 text-xs font-bold text-[#54656f]">内覧可能日時（自動取得）</p>
+                      {checkCalendarLoading ? (
+                        <p className="text-xs text-[#8696a0]">カレンダー取得中...</p>
+                      ) : checkCalendarDays.length > 0 ? (
+                        <div className="flex flex-col gap-1">
+                          {checkCalendarDays.map((d, i) => (
+                            <div key={i} className="text-xs">
+                              <span className="font-semibold text-[#111b21]">{d.label}</span>
+                              {d.fullyBooked ? (
+                                <span className="ml-2 text-red-400">案内不可</span>
+                              ) : (
+                                <span className="ml-2 text-emerald-600">{d.slots[0]}</span>
+                              )}
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      ) : (
+                        <p className="text-xs text-[#8696a0]">取得できませんでした</p>
+                      )}
                     </div>
-                  ) : (
-                    <p className="text-xs text-[#8696a0]">取得できませんでした</p>
                   )}
                 </div>
               )}
