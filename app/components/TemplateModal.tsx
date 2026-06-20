@@ -40,6 +40,7 @@ export default function TemplateModal({
   const [editText, setEditText] = useState("");
   const [editCategory, setEditCategory] = useState("");
   const [editSaving, setEditSaving] = useState(false);
+  const [noEmoji, setNoEmoji] = useState(false);
   const addFormRef = useRef<HTMLDivElement | null>(null);
 
   const loadTemplates = async () => {
@@ -136,6 +137,7 @@ export default function TemplateModal({
           conversationState,
           recentMessages,
           customerConditions: linkedCustomer?.conditions,
+          noEmoji,
         }),
       });
       const data = await res.json() as { ok: boolean; adapted?: string; error?: string };
@@ -278,14 +280,23 @@ export default function TemplateModal({
           {/* テンプレート一覧 */}
           {!showAddForm && (
             <div className="p-4">
-              {linkedCustomer && !loading && filtered.length > 0 && (
-                <div className="mb-3 flex items-center gap-1.5 rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-2">
-                  <span className="text-[11px] text-emerald-700">🔗 {linkedCustomer.name}さんの希望条件で最適化します</span>
-                </div>
-              )}
-              {!linkedCustomer && !loading && filtered.length > 0 && (
-                <div className="mb-3 flex items-center gap-1.5 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2">
-                  <span className="text-[11px] text-amber-700">👤 お客様を紐付けると駅名・間取りが自動で合わせられます</span>
+              {!loading && filtered.length > 0 && (
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className={`flex-1 flex items-center gap-1.5 rounded-xl px-3 py-2 ${linkedCustomer ? "bg-emerald-50 border border-emerald-200" : "bg-amber-50 border border-amber-200"}`}>
+                    <span className={`text-[11px] ${linkedCustomer ? "text-emerald-700" : "text-amber-700"}`}>
+                      {linkedCustomer ? `🔗 ${linkedCustomer.name}さんの希望条件で最適化します` : "👤 お客様を紐付けると駅名・間取りが自動で合わせられます"}
+                    </span>
+                  </div>
+                  <div className="flex rounded-full border border-[#d1d7db] overflow-hidden text-[10px] font-bold shrink-0">
+                    <button
+                      onClick={() => setNoEmoji(false)}
+                      className={`px-2.5 py-1 transition-colors ${!noEmoji ? "bg-[#1565C0] text-white" : "bg-white text-[#888]"}`}
+                    >絵文字あり</button>
+                    <button
+                      onClick={() => setNoEmoji(true)}
+                      className={`px-2.5 py-1 transition-colors ${noEmoji ? "bg-[#1565C0] text-white" : "bg-white text-[#888]"}`}
+                    >絵文字なし</button>
+                  </div>
                 </div>
               )}
               {loading ? (

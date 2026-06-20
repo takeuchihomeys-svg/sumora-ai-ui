@@ -10,12 +10,14 @@ export async function POST(req: NextRequest) {
     conversationState,
     recentMessages,
     customerConditions,
+    noEmoji,
   } = await req.json() as {
     templateText: string;
     customerName?: string;
     conversationState?: string;
     recentMessages?: Array<{ sender: string; text: string; imageUrl?: string }>;
     customerConditions?: string;
+    noEmoji?: boolean;
   };
 
   if (!templateText) {
@@ -52,7 +54,7 @@ export async function POST(req: NextRequest) {
 【ルール】
 ・文体・トーンはスモラのLINEスタイルを維持
 ・感嘆符は「！！」（「!」「！」1つは禁止）
-・使える絵文字: 😊 😌 🙇‍♀️ 🌟 ✨（1〜2個まで）
+${noEmoji ? "・絵文字は一切使用しない（テンプレートに絵文字があっても全て削除）" : "・使える絵文字: 😊 😌 🙇‍♀️ 🌟 ✨（1〜2個まで）"}
 ・お客様名が分かれば「〇〇さん」と呼ぶ
 ・テンプレートの構成・意図は変えず、お客様の状況に合った言葉に変換する
 ・希望条件がある場合: テンプレート内の駅名・エリア名・間取り・家賃などのプレースホルダーや一般的な表現を、お客様の実際の希望条件に置き換える（例: 「○○駅」→ お客様の希望駅、「2LDK」→ お客様の希望間取り）
