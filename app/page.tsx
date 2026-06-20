@@ -373,7 +373,8 @@ export default function Home() {
   const [showSendConfirm, setShowSendConfirm] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
   const [showSparkleModal, setShowSparkleModal] = useState(false);
-  const [sparkleKeyword, setSparkleKeyword] = useState("");
+  const [sparkleKeywords, setSparkleKeywords] = useState<string[]>([]);
+  const [sparkleKeywordInput, setSparkleKeywordInput] = useState("");
   const [sparkleSelectedSituations, setSparkleSelectedSituations] = useState<string[]>([]);
   const [sparkleSituations, setSparkleSituations] = useState<string[]>(() => {
     if (typeof window === "undefined") return [];
@@ -1474,7 +1475,7 @@ export default function Home() {
     const otherSituations = sparkleSelectedSituations.filter(s => s !== "ピックアップ（約束）");
     const situationPart = otherSituations.join("・");
     const replyHint = [
-      sparkleKeyword.trim() ? `キーワード: ${sparkleKeyword.trim()}` : "",
+      sparkleKeywords.length > 0 ? `キーワード: ${sparkleKeywords.join("、")}` : "",
       situationPart ? `状況: ${situationPart}` : "",
       hasPickupPromise ? "【物件ピックアップ約束文】会話を読み取り、物件をピックアップして送る旨の短い約束メッセージを生成する。必須:「物件ピックアップ出来ましたらお送りさせて頂きます！！」を軸に、会話から重要なポイント（エリア・条件変更・お客様の気持ちなど）があれば自然に1〜2文追加する。合計5行以内・シンプルに。余分な挨拶・長い説明は不要" : "",
       sparkleMeetingPlace
@@ -1548,7 +1549,8 @@ export default function Home() {
       }
       setDraftIsAi(true);
       setShowSparkleModal(false);
-      setSparkleKeyword("");
+      setSparkleKeywords([]);
+      setSparkleKeywordInput("");
       setSparkleSelectedSituations([]);
       setTimeout(() => { textareaRef.current?.focus(); }, 50);
     } catch (err) {
@@ -3012,22 +3014,46 @@ export default function Home() {
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-[13px] font-bold text-[#6c3fc7]">✨ AI返信を指定生成</span>
                   <button
-                    onClick={() => { setShowSparkleModal(false); setSparkleAddingNew(false); setSparkleNewText(""); setSparkleMeetingPlaceOpen(false); setSparkleMeetingPlace(""); setSparkleNoEmoji(false); }}
+                    onClick={() => { setShowSparkleModal(false); setSparkleKeywords([]); setSparkleKeywordInput(""); setSparkleAddingNew(false); setSparkleNewText(""); setSparkleMeetingPlaceOpen(false); setSparkleMeetingPlace(""); setSparkleNoEmoji(false); }}
                     className="flex h-6 w-6 items-center justify-center rounded-full bg-[#f0f2f5] text-[#667781] text-[13px]"
                   >×</button>
                 </div>
 
-                {/* キーワード入力 */}
+                {/* キーワード入力（タグ形式） */}
                 <div className="mb-3">
                   <label className="text-[11px] font-bold text-[#667781] mb-1 block">キーワード（任意）</label>
-                  <input
-                    type="text"
-                    value={sparkleKeyword}
-                    onChange={(e) => setSparkleKeyword(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter" && (sparkleKeyword.trim() || sparkleSelectedSituations.length > 0)) handleSparkleGenerate(); }}
-                    placeholder="例: フィレンツェ1109号室を特に訴求、駅近を強調..."
-                    className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#b39ddb]"
-                  />
+                  <div className="min-h-[42px] w-full rounded-xl border border-[#d1d7db] px-2.5 py-1.5 flex flex-wrap gap-1.5 focus-within:border-[#b39ddb]">
+                    {sparkleKeywords.map((kw, i) => (
+                      <span key={i} className="flex items-center gap-1 rounded-full bg-[#ede7ff] border border-[#c5b0f0] px-2.5 py-0.5 text-[11px] font-medium text-[#6c3fc7]">
+                        {kw}
+                        <button
+                          onClick={() => setSparkleKeywords(prev => prev.filter((_, j) => j !== i))}
+                          className="text-[#9c7fcc] leading-none font-bold"
+                        >×</button>
+                      </span>
+                    ))}
+                    <input
+                      type="text"
+                      value={sparkleKeywordInput}
+                      onChange={(e) => setSparkleKeywordInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          if (sparkleKeywordInput.trim()) {
+                            setSparkleKeywords(prev => [...prev, sparkleKeywordInput.trim()]);
+                            setSparkleKeywordInput("");
+                          } else if (sparkleKeywords.length > 0 || sparkleSelectedSituations.length > 0) {
+                            handleSparkleGenerate();
+                          }
+                        }
+                        if (e.key === "Backspace" && !sparkleKeywordInput && sparkleKeywords.length > 0) {
+                          setSparkleKeywords(prev => prev.slice(0, -1));
+                        }
+                      }}
+                      placeholder={sparkleKeywords.length === 0 ? "例: フィレンツェ1109号室、駅近を強調（Enterで追加）" : "Enterで追加"}
+                      className="flex-1 min-w-[100px] py-0.5 text-[12px] outline-none bg-transparent"
+                    />
+                  </div>
                 </div>
 
                 {/* 状況ボタン */}
