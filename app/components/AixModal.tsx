@@ -576,19 +576,17 @@ export default function AixModal({
         } else if (config.requiresImage && imageFile) {
           uploadedImageUrl = await uploadImage(imageFile);
         }
-        // 見積書あり: 物件画像 → 見積書 → テキスト の順
-        if (actionType === "property_recommendation" && recommendEstimateFile) {
+        // 物件オススメ送信順: 物件資料画像 → 見積書 → 室内URL → テキスト
+        if (actionType === "property_recommendation") {
           if (uploadedImageUrl) await onSend("", uploadedImageUrl);
-          const estUrl = await uploadImage(recommendEstimateFile);
-          await onSend("", estUrl);
+          if (recommendEstimateFile) {
+            const estUrl = await uploadImage(recommendEstimateFile);
+            await onSend("", estUrl);
+          }
+          if (propertyImageUrl.trim()) await onSend(`（室内イメージ）\n${propertyImageUrl.trim()}`);
           await onSend(preview);
         } else {
           await onSend(preview, uploadedImageUrl);
-        }
-
-        // 室内イメージURLがあれば「（室内イメージ）\nURL」として別送信
-        if (actionType === "property_recommendation" && propertyImageUrl.trim()) {
-          await onSend(`（室内イメージ）\n${propertyImageUrl.trim()}`);
         }
       }
 
