@@ -645,27 +645,6 @@ export default function AixModal({
           </div>
         </div>
 
-        {/* テンプレート確認パネル */}
-        {showTemplateInfo && (() => {
-          const info = AIX_TEMPLATES[actionType];
-          return (
-            <div className="border-b border-blue-100 bg-blue-50 px-5 py-4">
-              <p className="mb-2 text-xs font-bold text-blue-800">📋 このAIXが使うテンプレート・ルール</p>
-              <div className="mb-3">
-                <p className="mb-1 text-[10px] font-bold text-blue-600 uppercase tracking-wide">生成ルール</p>
-                <ul className="space-y-0.5">
-                  {info.rules.map((r, i) => (
-                    <li key={i} className="text-xs text-[#445]">・{r}</li>
-                  ))}
-                </ul>
-              </div>
-              <div>
-                <p className="mb-1 text-[10px] font-bold text-blue-600 uppercase tracking-wide">出力テンプレート（目安）</p>
-                <pre className="whitespace-pre-wrap rounded-xl bg-white px-3 py-2 text-xs text-[#333] border border-blue-100">{info.template}</pre>
-              </div>
-            </div>
-          );
-        })()}
 
         <div className="max-h-[75vh] overflow-y-auto p-5">
           <p className="mb-4 text-sm text-[#667781]">{config.description}</p>
@@ -1282,6 +1261,39 @@ export default function AixModal({
           </div>
         </div>
       </div>
+
+      {/* テンプレート確認フルスクリーン */}
+      {showTemplateInfo && (() => {
+        const info = AIX_TEMPLATES[actionType];
+        return (
+          <div className="fixed inset-0 z-[60] flex flex-col bg-white"
+            style={{ paddingTop: "max(env(safe-area-inset-top), 0px)", paddingBottom: "max(env(safe-area-inset-bottom), 0px)" }}>
+            <div className="flex items-center justify-between border-b border-[#f0f2f5] px-4 py-3"
+              style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
+              <button
+                onClick={() => setShowTemplateInfo(false)}
+                className="rounded-full bg-white/20 px-4 py-1.5 text-sm font-bold text-white active:opacity-70"
+              >閉じる</button>
+              <span className="text-sm font-bold text-white">📋 テンプレート確認</span>
+              <div className="w-16" />
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
+              <div>
+                <p className="mb-2 text-xs font-bold text-blue-700 uppercase tracking-wide">生成ルール</p>
+                <ul className="space-y-1.5">
+                  {info.rules.map((r, i) => (
+                    <li key={i} className="text-sm text-[#333]">・{r}</li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <p className="mb-2 text-xs font-bold text-blue-700 uppercase tracking-wide">出力テンプレート</p>
+                <pre className="whitespace-pre-wrap rounded-2xl bg-[#f0f2f5] px-4 py-4 text-sm leading-7 text-[#111b21]">{info.template}</pre>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 全画面編集オーバーレイ */}
       {previewExpanded && (
