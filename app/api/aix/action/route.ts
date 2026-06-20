@@ -128,7 +128,7 @@ async function callClaudeVision(system: string, content: unknown[]): Promise<str
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, account, customer_name, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done, vacancy_status, has_estimate, move_out_date } = body;
+    const { action, account, customer_name, conversation_id, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done, vacancy_status, has_estimate, move_out_date } = body;
 
     // 直近の会話履歴テキスト（viewing_invite・application_push で使用）
     const recentHistory = Array.isArray(recent_messages) && recent_messages.length > 0
@@ -660,14 +660,30 @@ ${patternExample}${knowledgeText}${examplesText}`;
 
       // 「物件あった」申込あり・申込なし（見積書あり）は固定テンプレ
       if (pattern === "available" && available_application) {
+        // 最終メッセージから3時間以上経過しているか判定
+        let waitingPrefix = "募集状況確認させて頂きました！！\n";
+        const { data: lastMsgRow } = await supabase
+          .from("messages")
+          .select("created_at")
+          .eq("conversation_id", conversation_id)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .single();
+        if (lastMsgRow?.created_at) {
+          const diffMs = Date.now() - new Date(lastMsgRow.created_at as string).getTime();
+          if (diffMs >= 3 * 60 * 60 * 1000) {
+            waitingPrefix = "お待たせいたしました！！\n募集状況確認させて頂きました！！\n";
+          }
+        }
+
         const availableTemplate = available_application === "yes"
-          ? `お送り頂きました
+          ? `${waitingPrefix}お送り頂きました
 [物件名]
 募集中となります！！
 初期費用の御見積書と併せてお送りさせて頂きました！！
 
 1番手でお申込みがはいっておりますので、2番手以降でのお申込みとなります。`
-          : `お送り頂きました
+          : `${waitingPrefix}お送り頂きました
 [物件名]
 募集中となります！！
 初期費用の御見積書と併せてお送りさせて頂きました！！
