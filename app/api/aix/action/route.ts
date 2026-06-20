@@ -656,21 +656,43 @@ ${SMORA_COMMON_RULES}
 【このパターンのお手本（スモラ実データ由来・文体・構成をこれに合わせる）】
 ${patternExample}${knowledgeText}${examplesText}`;
 
-      const instruction = PATTERN_INSTRUCTION[pattern] ?? PATTERN_INSTRUCTION.unavailable;
-      const calendarPart = calendarNote
-        ? `\n\n【内覧可能日時（1日1行で含めること・案内不可の日は除外）】\n${calendarNote}`
-        : "";
-      const userText = `${name}への物件確認報告メッセージを作成してください。\n\n${instruction}${calendarPart}${summaryNote}${recentHistory}`;
+      // 「同じ間取り」は固定テンプレートを完全に守らせる専用フロー
+      if (pattern === "alternative" && floor_plan_match === "same") {
+        const samePlanSystem = `あなたはテキスト置換エンジンです。
+以下のテンプレートを一字一句そのまま出力してください。
+[物件名]の部分のみ、会話履歴から特定した物件名に置き換えること。
+それ以外の文字・絵文字・改行は一切変更・追加・削除しないこと。
 
-      if (image_url || estimate_image_url) {
-        const content: Array<{ type: string; text?: string; source?: { type: string; url: string } }> = [
-          { type: "text", text: userText },
-        ];
-        if (image_url) content.push({ type: "image", source: { type: "url", url: image_url } });
-        if (estimate_image_url) content.push({ type: "image", source: { type: "url", url: estimate_image_url } });
-        message_text = await callClaudeVision(checkSystem, content);
+テンプレート:
+お待たせいたしました！！
+
+お送り頂きました[物件名]${endedRoomStr}ですが確認しましたところ募集終了しておりました！！
+
+別の階数となりますが、同じ間取りで
+[物件名]で現在募集中のお部屋御座いましたので、最大限割引しました御見積書と併せてお送りさせて頂きました！！
+お手隙の際にご査収ください！！`;
+
+        message_text = await callClaude(
+          samePlanSystem,
+          `以下の会話から物件名を特定して[物件名]を置き換えてください。${recentHistory}`
+        );
       } else {
-        message_text = await callClaude(checkSystem, userText);
+        const instruction = PATTERN_INSTRUCTION[pattern] ?? PATTERN_INSTRUCTION.unavailable;
+        const calendarPart = calendarNote
+          ? `\n\n【内覧可能日時（1日1行で含めること・案内不可の日は除外）】\n${calendarNote}`
+          : "";
+        const userText = `${name}への物件確認報告メッセージを作成してください。\n\n${instruction}${calendarPart}${summaryNote}${recentHistory}`;
+
+        if (image_url || estimate_image_url) {
+          const content: Array<{ type: string; text?: string; source?: { type: string; url: string } }> = [
+            { type: "text", text: userText },
+          ];
+          if (image_url) content.push({ type: "image", source: { type: "url", url: image_url } });
+          if (estimate_image_url) content.push({ type: "image", source: { type: "url", url: estimate_image_url } });
+          message_text = await callClaudeVision(checkSystem, content);
+        } else {
+          message_text = await callClaude(checkSystem, userText);
+        }
       }
 
     } else {

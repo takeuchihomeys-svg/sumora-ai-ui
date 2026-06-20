@@ -33,6 +33,33 @@ interface AixModalProps {
   onAfterSend?: () => void;
 }
 
+const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }> = {
+  property_recommendation: {
+    rules: ["物件資料画像をVisionで読み取り", "お客様希望条件と照合", "退去予定あれば自動案内文を追加"],
+    template: "🌟【物件名】\n築年数・間取り・面積・駅徒歩\nオススメ①②③④\n初期費用・退去予定（あれば）\n🙇‍♀️[お客様名]さんお気に召されましたらご案内させて頂きます！！",
+  },
+  property_send: {
+    rules: ["物件画像（複数）を添付", "カレンダーから内覧可能日時を自動取得", "退去予定物件は画像から自動読み取り", "内覧誘導 or 申込み誘導モードで切替"],
+    template: "○○から[お客様名]さんご希望のご条件に合ったお部屋ピックアップさせて頂きました！！\n[物件情報]\n[カレンダー or 申込み誘導]\n[お客様名]さんお気に召されましたらお部屋ご都合よろしいお日にちにご案内させて頂きます！！",
+  },
+  property_check_result: {
+    rules: ["物件あった → カレンダー自動取得で内覧誘導", "別の部屋 → 同じ間取り：固定テンプレ / 違う間取り：AI生成", "物件なかった → お詫び＋引き続き探す旨"],
+    template: "【物件あった】お待たせ → 空室確認 → 内覧日程案内\n【別の部屋/同じ間取り】固定テンプレで確実に出力\n【物件なかった】募集終了のお詫び＋引き続き探す",
+  },
+  estimate_sheet: {
+    rules: ["見積書画像をVisionでOCR読み取り", "初期費用・割引額・節約額を計算", "固定フォーマットで出力（AI文は不使用）"],
+    template: "【物件名 号室】\n初期費用さらに🌟〇〇円割引させて頂き\n初期費用：〇〇円\n[アカウント名]なら一般的な不動産業者より〇〇円節約出来ます！！",
+  },
+  viewing_invite: {
+    rules: ["会話履歴とカレンダーを自動取得", "ワンタップで即生成 → 確認後送信", "カレンダーがあれば内覧可能日時を自動で含める"],
+    template: "[お客様名]さんいかがでしょうか！！\nぜひご内覧させていただきたいのですが\n直近ですと\n[日程]\nご都合いかがでしょうか！！",
+  },
+  application_push: {
+    rules: ["空室 or 退去予定を選択", "見積書送信済みか会話から自動検出", "ワンタップで即生成 → 確認後送信"],
+    template: "お申込みを進めて頂ければと思います！！\n[空室状況]\n審査は最短〇〇日で結果が出ます！！\nよろしければご検討ください！！",
+  },
+};
+
 const CONFIG: Record<
   AixActionType,
   {
@@ -128,6 +155,7 @@ export default function AixModal({
   const [aiDraft, setAiDraft] = useState<string>("");
   const [parsedEstimate, setParsedEstimate] = useState<Record<string, string> | null>(null);
   const [previewExpanded, setPreviewExpanded] = useState(false);
+  const [showTemplateInfo, setShowTemplateInfo] = useState(false);
   // 物件確認した専用
   const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | null>(null);
   // 物件確認した「別の部屋」専用
@@ -595,13 +623,43 @@ export default function AixModal({
           <div className="text-[17px] font-bold text-white">
             {config.emoji} {config.title}
           </div>
-          <button
-            onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white hover:bg-white/30"
-          >
-            ✕
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowTemplateInfo(v => !v)}
+              className="flex items-center gap-1 rounded-full bg-white/20 px-3 py-1 text-xs font-medium text-white hover:bg-white/30"
+            >
+              📋 テンプレ確認
+            </button>
+            <button
+              onClick={onClose}
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white hover:bg-white/30"
+            >
+              ✕
+            </button>
+          </div>
         </div>
+
+        {/* テンプレート確認パネル */}
+        {showTemplateInfo && (() => {
+          const info = AIX_TEMPLATES[actionType];
+          return (
+            <div className="border-b border-blue-100 bg-blue-50 px-5 py-4">
+              <p className="mb-2 text-xs font-bold text-blue-800">📋 このAIXが使うテンプレート・ルール</p>
+              <div className="mb-3">
+                <p className="mb-1 text-[10px] font-bold text-blue-600 uppercase tracking-wide">生成ルール</p>
+                <ul className="space-y-0.5">
+                  {info.rules.map((r, i) => (
+                    <li key={i} className="text-xs text-[#445]">・{r}</li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <p className="mb-1 text-[10px] font-bold text-blue-600 uppercase tracking-wide">出力テンプレート（目安）</p>
+                <pre className="whitespace-pre-wrap rounded-xl bg-white px-3 py-2 text-xs text-[#333] border border-blue-100">{info.template}</pre>
+              </div>
+            </div>
+          );
+        })()}
 
         <div className="max-h-[75vh] overflow-y-auto p-5">
           <p className="mb-4 text-sm text-[#667781]">{config.description}</p>
