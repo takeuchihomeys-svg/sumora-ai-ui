@@ -4176,6 +4176,9 @@ export default function Home() {
               ? () => {
                   const convId = selectedConversation.id;
                   const customerName = selectedConversation.customerName;
+                  // 物件送るバナーを消去（property_send タスク完了 + ローカル state 即時クリア）
+                  setSuggestPropertySendMap((prev) => { const n = { ...prev }; delete n[convId]; return n; });
+                  setDismissedPropertySendIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
                   const sendTask = (activeTasks[convId] ?? []).find((t) => t.task_type === "property_send");
                   if (sendTask) {
                     fetch("/api/line-tasks/complete", {
@@ -4183,6 +4186,11 @@ export default function Home() {
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ id: sendTask.id }),
                     }).catch(() => {});
+                    // ローカル activeTasks からも即時除去（API応答待ちでバナーが残らないよう）
+                    setActiveTasks((prev) => ({
+                      ...prev,
+                      [convId]: (prev[convId] ?? []).filter((t) => t.task_type !== "property_send"),
+                    }));
                   }
                   // property_checkタスクを自動作成（次の工程：物件確認）
                   const alreadyHasCheck = (activeTasks[convId] ?? []).some((t) => t.task_type === "property_check");
