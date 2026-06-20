@@ -192,8 +192,8 @@ export default function AixModal({
     label: string; slots: string[]; fullyBooked: boolean; noEvents: boolean;
   }>>([]);
   const [calendarLoading, setCalendarLoading] = useState(false);
-  // 物件送る専用: 内覧誘導 or 申込み誘導 モード + 編集可能スロット
-  const [sendMode, setSendMode] = useState<"viewing" | "application">("viewing");
+  // 物件送る専用: 内覧誘導 or 申込み誘導 モード + 編集可能スロット（未選択 = null）
+  const [sendMode, setSendMode] = useState<"viewing" | "application" | null>(null);
   const [editableCalendarSlots, setEditableCalendarSlots] = useState<string[]>([]);
   const [includeCalendar, setIncludeCalendar] = useState(true);
   // 申込へ！専用: 空室状況 + 退去予定日
@@ -614,7 +614,7 @@ export default function AixModal({
     : actionType === "property_check_result"
     ? !!checkPattern
     : actionType === "property_send"
-    ? true
+    ? sendMode !== null
     : actionType === "application_push"
     ? !!appVacancyStatus
     : !config.requiresImage || !!imageFile;
@@ -733,7 +733,7 @@ export default function AixModal({
                 <p className="mb-1.5 text-xs font-bold text-[#54656f]">送るモードを選択</p>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => { setSendMode("viewing"); setPreview(""); }}
+                    onClick={() => { setSendMode(sendMode === "viewing" ? null : "viewing"); setPreview(""); }}
                     className={`flex-1 rounded-full py-2.5 text-sm font-bold transition-all ${
                       sendMode === "viewing"
                         ? "bg-[#2196F3] text-white shadow-sm"
@@ -743,7 +743,7 @@ export default function AixModal({
                     内覧誘導
                   </button>
                   <button
-                    onClick={() => { setSendMode("application"); setPreview(""); }}
+                    onClick={() => { setSendMode(sendMode === "application" ? null : "application"); setPreview(""); }}
                     className={`flex-1 rounded-full py-2.5 text-sm font-bold transition-all ${
                       sendMode === "application"
                         ? "bg-[#06c755] text-white shadow-sm"
@@ -836,7 +836,8 @@ export default function AixModal({
                   onClick={() => sendFileInputRef.current?.click()}
                   className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-blue-200 py-3 text-sm font-semibold text-[#2196F3] hover:bg-blue-50"
                 >
-                  📷 {sendImagePreviews.length > 0 ? `追加する（現在${sendImagePreviews.length}枚）` : "物件画像を追加する（スキップ可）"}
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
+                  {sendImagePreviews.length > 0 ? `追加する（現在${sendImagePreviews.length}枚）` : "物件画像を追加する（スキップ可）"}
                 </button>
                 <input ref={sendFileInputRef} type="file" accept="image/*" multiple onChange={onSelectSendImages} className="hidden" />
               </div>
