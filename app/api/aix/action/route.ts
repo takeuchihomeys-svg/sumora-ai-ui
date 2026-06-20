@@ -656,8 +656,38 @@ ${SMORA_COMMON_RULES}
 【このパターンのお手本（スモラ実データ由来・文体・構成をこれに合わせる）】
 ${patternExample}${knowledgeText}${examplesText}`;
 
+      const available_application = body.available_application as "yes" | "no" | undefined;
+
+      // 「物件あった」申込あり・申込なし（見積書あり）は固定テンプレ
+      if (pattern === "available" && available_application) {
+        const availableTemplate = available_application === "yes"
+          ? `お送り頂きました
+[物件名]
+募集中となります！！
+初期費用の御見積書と併せてお送りさせて頂きました！！
+
+1番手でお申込みがはいっておりますので、2番手以降でのお申込みとなります。`
+          : `お送り頂きました
+[物件名]
+募集中となります！！
+初期費用の御見積書と併せてお送りさせて頂きました！！
+お手隙の際にご査収ください！！`;
+
+        const availableFixedSystem = `あなたはテキスト置換エンジンです。
+以下のテンプレートを一字一句そのまま出力してください。
+[物件名]の部分のみ、会話履歴から特定した物件名に置き換えること。
+それ以外の文字・絵文字・改行は一切変更・追加・削除しないこと。
+
+テンプレート:
+${availableTemplate}`;
+
+        message_text = await callClaude(
+          availableFixedSystem,
+          `以下の会話から物件名を特定して[物件名]を置き換えてください。${recentHistory}`
+        );
+
       // 「同じ間取り」「違う間取り」は固定テンプレートを完全に守らせる専用フロー
-      if (pattern === "alternative" && (floor_plan_match === "same" || floor_plan_match === "different")) {
+      } else if (pattern === "alternative" && (floor_plan_match === "same" || floor_plan_match === "different")) {
         const templateText = floor_plan_match === "same"
           ? `お待たせいたしました！！
 

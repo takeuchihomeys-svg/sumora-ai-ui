@@ -159,6 +159,8 @@ export default function AixModal({
   const [floorPlanTouched, setFloorPlanTouched] = useState(false);
   // 物件確認した専用
   const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | null>(null);
+  // 物件あった専用: 申込状況
+  const [checkAvailableApp, setCheckAvailableApp] = useState<"yes" | "no" | null>(null);
   // 物件確認した「別の部屋」専用
   const [checkEndedFloor, setCheckEndedFloor] = useState<number | null>(null);
   const [checkEndedUnit, setCheckEndedUnit] = useState<string>("");
@@ -498,6 +500,7 @@ export default function AixModal({
           body.image_url = urls[0];
         }
         if (checkPattern === "available" && checkCalendarInfo) body.calendar_info = checkCalendarInfo;
+        if (checkPattern === "available" && checkAvailableApp) body.available_application = checkAvailableApp;
         if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
         if (customerSummary) body.customer_summary = customerSummary;
       } else if (config.requiresImage && imageFile) {
@@ -1008,7 +1011,7 @@ export default function AixModal({
                   ] as const).map((p) => (
                     <button
                       key={p.key}
-                      onClick={() => { setCheckPattern(p.key); setPreview(""); }}
+                      onClick={() => { setCheckPattern(p.key); setPreview(""); setCheckAvailableApp(null); }}
                       className={`flex items-center gap-3 rounded-2xl border-2 px-4 py-3 text-left transition-all ${
                         checkPattern === p.key
                           ? p.color === "emerald" ? "border-emerald-400 bg-emerald-50"
@@ -1034,6 +1037,22 @@ export default function AixModal({
                   ))}
                 </div>
               </div>
+              {/* 物件あった: 申込状況 */}
+              {checkPattern === "available" && (
+                <div className="mb-1">
+                  <p className="mb-1.5 text-xs font-bold text-[#54656f]">申込状況 <span className="font-normal text-[#90a4ae]">（任意）</span></p>
+                  <div className="flex gap-2">
+                    {([{ key: "yes", label: "申込あり", icon: "🔴" }, { key: "no", label: "申込なし", icon: "🟢" }] as const).map((opt) => (
+                      <button
+                        key={opt.key}
+                        onClick={() => setCheckAvailableApp(checkAvailableApp === opt.key ? null : opt.key)}
+                        className={`flex-1 rounded-xl border py-2 text-sm font-bold transition ${checkAvailableApp === opt.key ? "border-[#1565C0] bg-[#e3f0ff] text-[#1565C0]" : "border-[#d1d7db] bg-white text-[#54656f]"}`}
+                      >{opt.icon} {opt.label}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* 別の部屋が募集してた: 階数・号室・間取り */}
               {checkPattern === "alternative" && (
                 <div className="flex flex-col gap-3">
