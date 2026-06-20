@@ -1165,7 +1165,8 @@ export default function Home() {
               .eq("id", convIdForGen)
               .single();
             if (convRow?.ai_draft) {
-              // Realtime が漏れただけで実は生成済み → セット
+              // Realtime が漏れただけで実は生成済み → セットしてDBもクリア
+              supabase.from("conversations").update({ ai_draft: null }).eq("id", convIdForGen).then(() => {});
               setConversations((prev) =>
                 prev.map((c) => c.id === convIdForGen ? { ...c, aiDraft: convRow.ai_draft } : c)
               );
@@ -1897,7 +1898,7 @@ export default function Home() {
       const isFirstStaffReply = !selectedConversation.messages.some((m) => m.sender === "staff");
       const currentStatus = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
       const isSendingImages = imageUrls.length > 0;
-      const convUpdate: Record<string, unknown> = { last_message: lastText, last_sender: "staff", updated_at: now.toISOString() };
+      const convUpdate: Record<string, unknown> = { last_message: lastText, last_sender: "staff", updated_at: now.toISOString(), ai_draft: null };
       if (isFirstStaffReply) convUpdate.status = "hearing";
       // 画像送信時 & 初回対応中 → 物件提案中に自動昇格
       if (isSendingImages && currentStatus === "hearing") convUpdate.status = "proposing";
