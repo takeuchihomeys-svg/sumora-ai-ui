@@ -28,6 +28,7 @@ export default function TemplateModal({
   const [loading, setLoading] = useState(true);
   const [category, setCategory] = useState(initialCategory || "全般");
   const [showAddForm, setShowAddForm] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [newLabel, setNewLabel] = useState("");
   const [newCategory, setNewCategory] = useState("全般");
   const [newText, setNewText] = useState("");
@@ -72,7 +73,12 @@ export default function TemplateModal({
   }, [showAddForm]);
 
   const categories = Array.from(new Set(templates.map((t) => t.category)));
-  const filtered = templates.filter((t) => t.category === category);
+  const isSearching = searchQuery.trim().length > 0;
+  const filtered = isSearching
+    ? templates.filter((t) =>
+        t.label.includes(searchQuery) || t.text.includes(searchQuery) || t.category.includes(searchQuery)
+      )
+    : templates.filter((t) => t.category === category);
 
   const handleAdd = async () => {
     if (!newLabel.trim() || !newText.trim()) return;
@@ -148,7 +154,12 @@ export default function TemplateModal({
     setDeletingId(id);
     try {
       await fetch(`/api/templates?id=${id}`, { method: "DELETE" });
-      setTemplates((prev) => prev.filter((t) => t.id !== id));
+      setTemplates((prev) => {
+        const next = prev.filter((t) => t.id !== id);
+        const cats = Array.from(new Set(next.map((t) => t.category)));
+        if (cats.length > 0 && !cats.includes(category)) setCategory(cats[0]);
+        return next;
+      });
       setConfirmDeleteId(null);
     } finally {
       setDeletingId(null);
@@ -212,9 +223,19 @@ export default function TemplateModal({
             </button>
           </div>
         </div>
+        {/* 検索欄 */}
+        <div className="px-4 py-2 bg-white border-b border-[#f0f2f5] shrink-0">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="🔍 テンプレートを検索..."
+            className="w-full rounded-full border border-[#d1d7db] px-4 py-1.5 text-[12px] outline-none focus:border-[#2196F3] bg-[#f8f9fa]"
+          />
+        </div>
 
-        {/* カテゴリタブ */}
-        {!showAddForm && (
+        {/* カテゴリタブ（検索中は非表示） */}
+        {!showAddForm && !isSearching && (
           <div className="flex gap-1.5 overflow-x-auto border-b border-[#f0f2f5] bg-white px-4 py-2.5 shrink-0">
             {categories.length === 0 && !loading && (
               <span className="text-[12px] text-[#aaa] py-1">カテゴリなし（テンプレートを追加してください）</span>
@@ -359,6 +380,9 @@ export default function TemplateModal({
                         {/* タイトル行 */}
                         <div className="mb-2 flex items-center justify-between gap-2">
                           <span className="text-xs font-bold text-[#1565C0] flex-1 min-w-0 truncate">{tmpl.label}</span>
+                          {isSearching && (
+                            <span className="shrink-0 rounded-full bg-[#e8f0fe] px-2 py-0.5 text-[10px] font-bold text-[#1565C0]">{tmpl.category}</span>
+                          )}
                           {tmpl.requires_image && (
                             <span className="shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold text-orange-600">📸 画像必要</span>
                           )}
@@ -392,6 +416,17 @@ export default function TemplateModal({
                         {/* インライン編集フォーム */}
                         {editingId === tmpl.id ? (
                           <div className="flex flex-col gap-2">
+                            {/* カテゴリ変更 */}
+                            <div className="flex gap-1.5 flex-wrap">
+                              {["全般", "初回応対", "物件探し中", "内覧", "申込・審査", "契約・成約", "その他", ...categories.filter(c => !["全般","初回応対","物件探し中","内覧","申込・審査","契約・成約","その他"].includes(c))].map((c) => (
+                                <button
+                                  key={c}
+                                  onClick={() => setEditCategory(c)}
+                                  className="rounded-full px-2.5 py-1 text-[10px] font-bold border transition"
+                                  style={editCategory === c ? { background: "linear-gradient(135deg, #1565C0, #4BA8E8)", color: "white", border: "none" } : { backgroundColor: "#f0f2f5", color: "#54656f", borderColor: "#d1d7db" }}
+                                >{c}</button>
+                              ))}
+                            </div>
                             <input
                               className="w-full rounded-xl border border-[#b3d0f7] px-3 py-2 text-[12px] outline-none focus:border-[#2196F3]"
                               value={editLabel}
