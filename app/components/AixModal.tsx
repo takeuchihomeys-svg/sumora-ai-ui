@@ -993,24 +993,15 @@ export default function AixModal({
                   <div>
                     <p className="mb-1.5 text-xs font-bold text-[#54656f]">募集終了だったお部屋</p>
                     <div className="flex items-center gap-2">
-                      <div className="flex items-center rounded-xl border border-[#d1d7db] overflow-hidden">
-                        <button
-                          onClick={() => setCheckEndedFloor(f => Math.max(1, f - 1))}
-                          className="w-9 h-9 flex items-center justify-center text-[18px] font-bold text-[#54656f] bg-[#f5f6f7] active:bg-[#e0e0e0]"
-                        >−</button>
-                        <input
-                          type="number"
-                          value={checkEndedFloor}
-                          onChange={(e) => setCheckEndedFloor(Math.max(1, parseInt(e.target.value) || 1))}
-                          className="w-14 text-center font-bold text-[#111b21] text-[15px] outline-none bg-white py-2 border-x border-[#d1d7db]"
-                          min={1}
-                        />
-                        <button
-                          onClick={() => setCheckEndedFloor(f => f + 1)}
-                          className="w-9 h-9 flex items-center justify-center text-[18px] font-bold text-[#54656f] bg-[#f5f6f7] active:bg-[#e0e0e0]"
-                        >＋</button>
-                      </div>
-                      <span className="text-sm font-bold text-[#111b21]">階</span>
+                      <select
+                        value={checkEndedFloor}
+                        onChange={(e) => setCheckEndedFloor(parseInt(e.target.value))}
+                        className="rounded-xl border border-[#d1d7db] px-3 py-2 text-sm font-bold text-[#111b21] outline-none focus:border-[#2196F3] bg-white"
+                      >
+                        {Array.from({ length: 15 }, (_, i) => i + 1).map((f) => (
+                          <option key={f} value={f}>{f}階</option>
+                        ))}
+                      </select>
                       <input
                         type="text"
                         value={checkEndedUnit}
