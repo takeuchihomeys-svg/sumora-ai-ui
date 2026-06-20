@@ -130,6 +130,10 @@ export default function AixModal({
   const [previewExpanded, setPreviewExpanded] = useState(false);
   // 物件確認した専用
   const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | null>(null);
+  // 物件確認した「別の部屋」専用
+  const [checkEndedFloor, setCheckEndedFloor] = useState<number>(1);
+  const [checkEndedUnit, setCheckEndedUnit] = useState<string>("");
+  const [checkFloorPlan, setCheckFloorPlan] = useState<"same" | "different" | null>(null);
   // 物件確認した専用: 複数画像
   const [checkImageFiles, setCheckImageFiles] = useState<File[]>([]);
   const [checkImagePreviews, setCheckImagePreviews] = useState<string[]>([]);
@@ -448,6 +452,11 @@ export default function AixModal({
       } else if (actionType === "property_check_result") {
         if (!checkPattern) throw new Error("確認結果を選択してください");
         body.check_pattern = checkPattern;
+        if (checkPattern === "alternative") {
+          body.ended_floor = checkEndedFloor;
+          if (checkEndedUnit.trim()) body.ended_unit = checkEndedUnit.trim();
+          if (checkFloorPlan) body.floor_plan_match = checkFloorPlan;
+        }
         if (checkImageFiles.length > 0) {
           const urls = await Promise.all(checkImageFiles.map(f => uploadImage(f)));
           body.image_urls = urls;
@@ -977,6 +986,56 @@ export default function AixModal({
                   ))}
                 </div>
               </div>
+              {/* 別の部屋が募集してた: 階数・号室・間取り */}
+              {checkPattern === "alternative" && (
+                <div className="flex flex-col gap-3">
+                  {/* 募集終了だったお部屋 */}
+                  <div>
+                    <p className="mb-1.5 text-xs font-bold text-[#54656f]">募集終了だったお部屋</p>
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center rounded-xl border border-[#d1d7db] overflow-hidden">
+                        <button
+                          onClick={() => setCheckEndedFloor(f => Math.max(1, f - 1))}
+                          className="w-9 h-9 flex items-center justify-center text-[18px] font-bold text-[#54656f] bg-[#f5f6f7] active:bg-[#e0e0e0]"
+                        >−</button>
+                        <input
+                          type="number"
+                          value={checkEndedFloor}
+                          onChange={(e) => setCheckEndedFloor(Math.max(1, parseInt(e.target.value) || 1))}
+                          className="w-14 text-center font-bold text-[#111b21] text-[15px] outline-none bg-white py-2 border-x border-[#d1d7db]"
+                          min={1}
+                        />
+                        <button
+                          onClick={() => setCheckEndedFloor(f => f + 1)}
+                          className="w-9 h-9 flex items-center justify-center text-[18px] font-bold text-[#54656f] bg-[#f5f6f7] active:bg-[#e0e0e0]"
+                        >＋</button>
+                      </div>
+                      <span className="text-sm font-bold text-[#111b21]">階</span>
+                      <input
+                        type="text"
+                        value={checkEndedUnit}
+                        onChange={(e) => setCheckEndedUnit(e.target.value)}
+                        placeholder="号室（任意）"
+                        className="flex-1 rounded-xl border border-[#d1d7db] px-3 py-2 text-sm outline-none focus:border-[#2196F3] placeholder:text-[#90a4ae]"
+                      />
+                    </div>
+                  </div>
+                  {/* 間取り選択 */}
+                  <div>
+                    <p className="mb-1.5 text-xs font-bold text-[#54656f]">代替お部屋の間取り</p>
+                    <div className="flex gap-2">
+                      {([{ key: "same", label: "同じ間取り" }, { key: "different", label: "違う間取り" }] as const).map((opt) => (
+                        <button
+                          key={opt.key}
+                          onClick={() => setCheckFloorPlan(opt.key)}
+                          className={`flex-1 rounded-xl border py-2 text-sm font-bold transition ${checkFloorPlan === opt.key ? "border-[#1565C0] bg-[#e3f0ff] text-[#1565C0]" : "border-[#d1d7db] bg-white text-[#54656f]"}`}
+                        >{opt.label}</button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* 物件あった・別の部屋: 複数画像 */}
               {(checkPattern === "available" || checkPattern === "alternative") && (
                 <div>

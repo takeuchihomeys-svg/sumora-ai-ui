@@ -535,6 +535,12 @@ ${phraseText || "なし"}${examplesText}`;
     } else if (action === "property_check_result") {
       const pattern = check_pattern as "available" | "alternative" | "unavailable";
       const customerSummary = body.customer_summary as string | undefined;
+      const ended_floor = body.ended_floor as number | undefined;
+      const ended_unit = body.ended_unit as string | undefined;
+      const floor_plan_match = body.floor_plan_match as "same" | "different" | undefined;
+      const endedRoomStr = ended_floor != null
+        ? `${ended_floor}階${ended_unit ? `${ended_unit}号室` : "部分"}`
+        : "◯階部分";
 
       // 各パターンの実データ由来お手本（DBに☆つき実例が少ないため直書き）
       const PATTERN_EXAMPLES: Record<string, string> = {
@@ -572,7 +578,14 @@ M/D（曜日）HH:MM〜HH:MM
 ご案内可能です！！」
 案内不可の日は除外。締めは「ご都合いかがでしょうか😌！！」`
           : "物件を確認した結果「空室あり・入居可能」でした。お待たせしたお礼と空室報告をして、内覧日程の調整へ自然に誘導してください。",
-        alternative: "物件を確認した結果「満室でしたが別のお部屋が募集中」でした。お詫びしつつ代替案への期待感を持たせて内覧誘導で締めてください。",
+        alternative: floor_plan_match === "same"
+          ? `以下の構成・文体でそのまま作成してください（物件名は会話履歴から特定する）：
+「お送り頂きました[物件名]${endedRoomStr}ですが確認しましたところ募集終了しておりました！！
+
+別の階数となりますが、同じ間取りで
+[物件名]で現在募集中のお部屋が募集御座いますので最大限割引しました御見積書と併せてお送りさせて頂きました！！
+お手隙の際にご査収ください！！」`
+          : `物件を確認した結果「${endedRoomStr}は募集終了でしたが別の間取りのお部屋が募集中」でした。お詫びしつつ代替案への期待感を持たせて内覧誘導で締めてください。募集終了だったお部屋は${endedRoomStr}です。`,
         unavailable: "物件を確認した結果「満室・空きなし」でした。お詫びしつつ引き続き物件探しを続けることを伝え、前向きな雰囲気で締めてください。",
       };
 
