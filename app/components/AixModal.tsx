@@ -546,12 +546,16 @@ export default function AixModal({
         }
         await onSend(preview);
       } else if (actionType === "property_check_result") {
-        // テキストを先に送信 → その後画像を順番に送信（会話の流れが自然になる）
-        await onSend(preview);
+        // ①物件資料画像 → ②見積書画像 → ③文書 の順で送信
         for (const file of checkImageFiles) {
           const url = await uploadImage(file);
           await onSend("", url);
         }
+        if (checkEstimateFile) {
+          const estUrl = await uploadImage(checkEstimateFile);
+          await onSend("", estUrl);
+        }
+        await onSend(preview);
       } else {
         // 物件オススメは物件資料画像をLINEに添付
         let uploadedImageUrl: string | undefined;
