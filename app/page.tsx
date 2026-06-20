@@ -3364,7 +3364,7 @@ export default function Home() {
             {/* 物件送るサジェスチョンバナー */}
             {(suggestPropertySendMap[selectedConversation.id] || (activeTasks[selectedConversation.id] ?? []).some(t => t.task_type === "property_send")) && !suggest2ndHandMap[selectedConversation.id] && !dismissedPropertySendIds.has(selectedConversation.id) && (
               <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-500 bg-teal-50 px-3 py-2 flex items-center gap-2">
-                <span className="text-[12px] font-bold text-teal-700 flex-1">💡 次のアクション → AIX 物件を送る</span>
+                <span className="text-[12px] font-bold text-teal-700 flex-1">▶ 次のアクション → AIX 物件を送る</span>
                 <button
                   onClick={() => {
                     setDismissedPropertySendIds((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
@@ -3384,7 +3384,7 @@ export default function Home() {
             {/* 2番手サジェスチョンバナー */}
             {suggest2ndHandMap[selectedConversation.id] && (
               <div className="mx-1 mb-1 rounded-2xl border-2 border-orange-400 bg-orange-50 px-3 py-2 flex items-center gap-2">
-                <span className="text-[12px] font-bold text-orange-600 flex-1">💡 次のアクション → 2番手内覧誘いをする</span>
+                <span className="text-[12px] font-bold text-orange-600 flex-1">▶ 次のアクション → 2番手内覧誘いをする</span>
                 <button
                   onClick={() => setShowTemplateModal(true)}
                   className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
