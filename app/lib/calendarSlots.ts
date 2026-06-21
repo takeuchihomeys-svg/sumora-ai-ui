@@ -5,6 +5,7 @@ const WORK_START = 11 * 60; // 11:00
 const WORK_END   = 18 * 60; // 18:00
 const MIN_SLOT   = 2 * 60;
 const MAX_SLOT   = 3 * 60;
+const BUFFER     = 60;      // 予定の前後に確保する最低バッファ（1時間）
 
 const minToStr = (m: number) =>
   `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`;
@@ -13,7 +14,12 @@ const fmtDate = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 function calcSlots(busy: Array<[number, number]>): string[] {
-  const sorted = busy.filter(([s, e]) => e > s).sort((a, b) => a[0] - b[0]);
+  // 各予定の前後にBUFFER分の余裕を追加（内覧はその予定の1時間前後を空ける）
+  const buffered: Array<[number, number]> = busy.map(([s, e]) => [
+    Math.max(s - BUFFER, WORK_START),
+    Math.min(e + BUFFER, WORK_END),
+  ]);
+  const sorted = buffered.filter(([s, e]) => e > s).sort((a, b) => a[0] - b[0]);
   const merged: Array<[number, number]> = [];
   for (const [s, e] of sorted) {
     if (merged.length > 0 && s < merged[merged.length - 1][1]) {
