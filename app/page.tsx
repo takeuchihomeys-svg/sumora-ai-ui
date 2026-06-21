@@ -663,6 +663,38 @@ export default function Home() {
             conversationsRef.current = next;
             return next;
           });
+
+          // 選択中の会話にお客様メッセージが届いた → 即ドラフト生成
+          // （Effect1はid変更時のみ起動するためここで補完する）
+          if (newMsg.sender === "customer" && String(newMsg.conversation_id) === selectedIdRef.current) {
+            const conv = conversationsRef.current.find(c => c.id === selectedIdRef.current);
+            const skipStatuses = new Set(["applying", "screening", "contract", "closed_won"]);
+            const ns = conv ? (STATUS_ALIAS[conv.status] ?? conv.status) : "";
+            if (conv && !conv.aiDraft && !skipStatuses.has(ns) && !draftTimeoutRef.current) {
+              const convIdForGen = selectedIdRef.current;
+              setDraftPreparing(true);
+              draftTimeoutRef.current = setTimeout(async () => {
+                draftTimeoutRef.current = null;
+                if (selectedIdRef.current !== convIdForGen) return;
+                const { data: convRow } = await supabase.from("conversations").select("ai_draft").eq("id", convIdForGen).single();
+                if (convRow?.ai_draft) {
+                  supabase.from("conversations").update({ ai_draft: null }).eq("id", convIdForGen).then(() => {});
+                  setConversations(prev => prev.map(c => c.id === convIdForGen ? { ...c, aiDraft: convRow.ai_draft } : c));
+                } else {
+                  setDraftRetryConvId(convIdForGen);
+                }
+                setDraftPreparing(false);
+              }, 60000);
+              fetch("/api/generate-draft-bg-async", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ conversation_id: convIdForGen, memo: memosRef.current[convIdForGen] || "" }),
+              }).catch(() => {
+                if (draftTimeoutRef.current) { clearTimeout(draftTimeoutRef.current); draftTimeoutRef.current = null; }
+                if (selectedIdRef.current === convIdForGen) setDraftPreparing(false);
+              });
+            }
+          }
         }
       )
       .on(
