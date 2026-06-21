@@ -1205,6 +1205,28 @@ export default function Home() {
     ));
   }, [selectedConversation, activeAixFlow]);
 
+  // 待ち合わせ誘導: お客様が日付を返してきた（内覧日確定）場合にハイライト
+  const guideToMeetingPlace = useMemo(() => {
+    if (activeAixFlow) return false;
+    const msgs: Message[] = selectedConversation.messages || [];
+    const reversed = [...msgs].reverse();
+    // 直近のお客様メッセージが日付を含む
+    const lastCustomer = reversed.find((m: Message) => m.sender === "customer");
+    if (!lastCustomer?.text) return false;
+    const customerHasDate = /\d+[\/月]\d+|(\d+日)|(日曜|月曜|火曜|水曜|木曜|金曜|土曜)|[（(][日月火水木金土][）)]/.test(lastCustomer.text);
+    if (!customerHasDate) return false;
+    // 直近スタッフメッセージが内覧日程を送った（複数日列挙 or 内覧ご案内）
+    const lastStaff = reversed.find((m: Message) => m.sender === "staff");
+    if (!lastStaff?.text) return false;
+    const staffSentViewing = (
+      lastStaff.text.includes("ご案内させて頂きます") ||
+      lastStaff.text.includes("ご案内出来ます") ||
+      lastStaff.text.includes("ご都合如何") ||
+      /\d+\/\d+.*\d+\/\d+/.test(lastStaff.text)
+    );
+    return staffSentViewing;
+  }, [selectedConversation, activeAixFlow]);
+
   useEffect(() => {
     setError("");
     setShowStatusMenu(false);
@@ -3406,7 +3428,9 @@ export default function Home() {
                     ? "border-transparent text-white"
                     : guideToCheckResult
                       ? "border-[#4CAF50] bg-white text-[#2E7D32] animate-pulse ring-2 ring-[#4CAF50] ring-offset-1"
-                      : "border-[#d1d7db] bg-white text-[#111b21]"
+                      : guideToMeetingPlace
+                        ? "border-[#00838F] bg-white text-[#00838F] animate-pulse ring-2 ring-[#00838F] ring-offset-1"
+                        : "border-[#d1d7db] bg-white text-[#111b21]"
                 }`}
                 style={activeAixFlow ? { backgroundColor: AIX_ACTION_META[activeAixFlow]?.color } : undefined}
                 title={activeAixFlow ? `${AIX_ACTION_META[activeAixFlow]?.label}フロー中 — タップで解除` : "AIXメニュー"}
@@ -5062,7 +5086,11 @@ export default function Home() {
                   const info = AIX_INSPECT[item.label];
                   const isOpen = aixInspectLabel === item.label;
                   return (
-                    <div key={item.label} className={`overflow-hidden rounded-xl border bg-white transition-all ${guideToCheckResult && item.label === "物件確認した" ? "border-2 border-[#4CAF50] shadow-[0_0_0_3px_rgba(76,175,80,0.15)]" : "border-[#e9edef]"}`}>
+                    <div key={item.label} className={`overflow-hidden rounded-xl border bg-white transition-all ${
+                        guideToCheckResult && item.label === "物件確認した" ? "border-2 border-[#4CAF50] shadow-[0_0_0_3px_rgba(76,175,80,0.15)]" :
+                        guideToMeetingPlace && item.label === "待ち合わせ" ? "border-2 border-[#00838F] shadow-[0_0_0_3px_rgba(0,131,143,0.15)]" :
+                        "border-[#e9edef]"
+                      }`}>
                       <div className="flex items-center gap-0">
                         {/* メインボタン */}
                         <button
