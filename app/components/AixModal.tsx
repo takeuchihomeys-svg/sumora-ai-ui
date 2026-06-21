@@ -203,7 +203,8 @@ export default function AixModal({
   const [viewingCalendarDays, setViewingCalendarDays] = useState<Array<{label: string; slots: string[]; fullyBooked: boolean; noEvents: boolean}>>([]);
   const [viewingCalendarLoading, setViewingCalendarLoading] = useState(false);
   const [viewingSlotEnabled, setViewingSlotEnabled] = useState<boolean[]>([]);
-  const [viewingSlotTexts, setViewingSlotTexts] = useState<string[]>([]);
+  const [viewingSlotStarts, setViewingSlotStarts] = useState<string[]>([]);
+  const [viewingSlotEnds, setViewingSlotEnds] = useState<string[]>([]);
   // 申込へ！専用: 空室状況 + 退去予定日
   const [appVacancyStatus, setAppVacancyStatus] = useState<"vacant" | "scheduled" | null>(null);
   const [appMoveOutDate, setAppMoveOutDate] = useState("");
@@ -286,11 +287,18 @@ export default function AixModal({
         const { days } = await fetchCalendarSlots();
         setViewingCalendarDays(days);
         setViewingSlotEnabled(days.map(d => !d.fullyBooked));
-        setViewingSlotTexts(days.map(d => d.slots[0] || ""));
+        // "11:00〜14:00" → start: "11:00", end: "14:00"
+        const parseTime = (slot: string) => {
+          const m = slot.match(/(\d{1,2}:\d{2})[〜~\-](\d{1,2}:\d{2})/);
+          return m ? { start: m[1].padStart(5, "0"), end: m[2].padStart(5, "0") } : { start: "10:00", end: "18:00" };
+        };
+        setViewingSlotStarts(days.map(d => parseTime(d.slots[0] || "").start));
+        setViewingSlotEnds(days.map(d => parseTime(d.slots[0] || "").end));
       } catch {
         setViewingCalendarDays([]);
         setViewingSlotEnabled([]);
-        setViewingSlotTexts([]);
+        setViewingSlotStarts([]);
+        setViewingSlotEnds([]);
       } finally {
         setViewingCalendarLoading(false);
       }
@@ -553,7 +561,13 @@ export default function AixModal({
 
       if (actionType === "viewing_invite" && viewingCalendarDays.length > 0) {
         const selectedSlots = viewingCalendarDays
-          .map((d, i) => viewingSlotEnabled[i] && viewingSlotTexts[i] ? `${d.label} ${viewingSlotTexts[i]}` : "")
+          .map((d, i) => {
+            if (!viewingSlotEnabled[i]) return "";
+            const start = viewingSlotStarts[i] || "";
+            const end = viewingSlotEnds[i] || "";
+            if (!start) return "";
+            return `${d.label} ${start}${end ? "〜" + end : ""}`;
+          })
           .filter(Boolean)
           .join("\n");
         if (selectedSlots) body.calendar_info = selectedSlots;
@@ -1420,34 +1434,47 @@ export default function AixModal({
               ) : viewingCalendarDays.length > 0 ? (
                 <div className="flex flex-col gap-2">
                   {viewingCalendarDays.map((d, i) => (
-                    <div key={i} className={`flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs transition-all ${
+                    <div key={i} className={`rounded-xl px-3 py-2.5 transition-all ${
                       d.fullyBooked ? "bg-red-50 opacity-60" : viewingSlotEnabled[i] ? "bg-emerald-50 border border-emerald-200" : "bg-[#f0f2f5]"
                     }`}>
-                      <button
-                        onClick={() => {
-                          if (d.fullyBooked) return;
-                          setViewingSlotEnabled(prev => { const n = [...prev]; n[i] = !n[i]; return n; });
-                        }}
-                        className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold transition-all ${
-                          d.fullyBooked ? "bg-red-200 text-red-400 cursor-not-allowed" : viewingSlotEnabled[i] ? "bg-emerald-500 text-white" : "bg-[#d1d7db] text-[#8696a0]"
-                        }`}
-                      >
-                        {d.fullyBooked ? "×" : viewingSlotEnabled[i] ? "✓" : "○"}
-                      </button>
-                      <span className={`font-bold flex-shrink-0 text-xs ${
-                        d.fullyBooked ? "text-red-400" : viewingSlotEnabled[i] ? "text-emerald-700" : "text-[#54656f]"
-                      }`}>{d.label}</span>
-                      {d.fullyBooked ? (
-                        <span className="text-red-400 text-xs">案内不可</span>
-                      ) : (
-                        <input
-                          type="text"
-                          value={viewingSlotTexts[i] ?? ""}
-                          onChange={(e) => { const v = e.target.value; setViewingSlotTexts(prev => { const n = [...prev]; n[i] = v; return n; }); }}
-                          onFocus={() => setViewingSlotEnabled(prev => { const n = [...prev]; n[i] = true; return n; })}
-                          className={`flex-1 min-w-0 bg-transparent outline-none text-xs ${viewingSlotEnabled[i] ? "text-emerald-700" : "text-[#8696a0]"}`}
-                          placeholder="14:00〜17:00"
-                        />
+                      <div className="flex items-center gap-2">
+                        {/* ON/OFF トグル */}
+                        <button
+                          onClick={() => { if (d.fullyBooked) return; setViewingSlotEnabled(prev => { const n = [...prev]; n[i] = !n[i]; return n; }); }}
+                          className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold transition-all ${
+                            d.fullyBooked ? "bg-red-200 text-red-400 cursor-not-allowed" : viewingSlotEnabled[i] ? "bg-emerald-500 text-white" : "bg-[#d1d7db] text-[#8696a0]"
+                          }`}
+                        >{d.fullyBooked ? "×" : viewingSlotEnabled[i] ? "✓" : "○"}</button>
+                        {/* 日付チップ */}
+                        <span className={`font-bold text-xs flex-shrink-0 ${
+                          d.fullyBooked ? "text-red-400" : viewingSlotEnabled[i] ? "text-emerald-700" : "text-[#54656f]"
+                        }`}>{d.label}</span>
+                        {d.fullyBooked && <span className="text-red-400 text-xs">案内不可</span>}
+                      </div>
+                      {!d.fullyBooked && (
+                        <div className="mt-2 flex items-center gap-1.5 pl-7">
+                          {/* 開始時間 */}
+                          <input
+                            type="time"
+                            value={viewingSlotStarts[i] ?? "10:00"}
+                            onChange={(e) => { setViewingSlotStarts(prev => { const n = [...prev]; n[i] = e.target.value; return n; }); }}
+                            onFocus={() => setViewingSlotEnabled(prev => { const n = [...prev]; n[i] = true; return n; })}
+                            className={`rounded-lg border px-2 py-1 text-xs font-bold outline-none ${
+                              viewingSlotEnabled[i] ? "border-emerald-300 bg-white text-emerald-700" : "border-[#d1d7db] bg-white text-[#54656f]"
+                            }`}
+                          />
+                          <span className="text-[#8696a0] text-xs font-bold">〜</span>
+                          {/* 終了時間 */}
+                          <input
+                            type="time"
+                            value={viewingSlotEnds[i] ?? "18:00"}
+                            onChange={(e) => { setViewingSlotEnds(prev => { const n = [...prev]; n[i] = e.target.value; return n; }); }}
+                            onFocus={() => setViewingSlotEnabled(prev => { const n = [...prev]; n[i] = true; return n; })}
+                            className={`rounded-lg border px-2 py-1 text-xs font-bold outline-none ${
+                              viewingSlotEnabled[i] ? "border-emerald-300 bg-white text-emerald-700" : "border-[#d1d7db] bg-white text-[#54656f]"
+                            }`}
+                          />
+                        </div>
                       )}
                     </div>
                   ))}
