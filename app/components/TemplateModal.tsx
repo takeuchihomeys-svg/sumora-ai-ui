@@ -54,6 +54,8 @@ export default function TemplateModal({
   const [extractErrors, setExtractErrors] = useState<Record<string, string>>({});
   const addFormRef = useRef<HTMLDivElement | null>(null);
   const templateImageInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const categoryTabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const categoryScrollRef = useRef<HTMLDivElement | null>(null);
 
   const loadTemplates = async () => {
     setLoading(true);
@@ -75,6 +77,18 @@ export default function TemplateModal({
   useEffect(() => {
     if (showAddForm) setTimeout(() => addFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
   }, [showAddForm]);
+
+  useEffect(() => {
+    if (!category) return;
+    setTimeout(() => {
+      const btn = categoryTabRefs.current[category];
+      const container = categoryScrollRef.current;
+      if (btn && container) {
+        const offset = btn.offsetLeft - 16;
+        container.scrollTo({ left: Math.max(0, offset), behavior: "smooth" });
+      }
+    }, 80);
+  }, [category]);
 
   const categories = Array.from(new Set(templates.map((t) => t.category)));
   const isSearching = searchQuery.trim().length > 0;
@@ -240,13 +254,14 @@ export default function TemplateModal({
 
         {/* カテゴリタブ（検索中は非表示） */}
         {!showAddForm && !isSearching && (
-          <div className="flex gap-1.5 overflow-x-auto border-b border-[#f0f2f5] bg-white px-4 py-2.5 shrink-0">
+          <div ref={categoryScrollRef} className="flex gap-1.5 overflow-x-auto border-b border-[#f0f2f5] bg-white px-4 py-2.5 shrink-0 scroll-smooth" style={{ scrollbarWidth: "none" }}>
             {categories.length === 0 && !loading && (
               <span className="text-[12px] text-[#aaa] py-1">カテゴリなし（テンプレートを追加してください）</span>
             )}
             {categories.map((cat) => (
               <button
                 key={cat}
+                ref={el => { categoryTabRefs.current[cat] = el; }}
                 onClick={() => setCategory(cat)}
                 className="shrink-0 rounded-full px-3 py-1.5 text-[11px] font-bold transition"
                 style={
