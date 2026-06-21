@@ -205,6 +205,7 @@ export default function AixModal({
   const [viewingSlotEnabled, setViewingSlotEnabled] = useState<boolean[]>([]);
   const [viewingSlotStarts, setViewingSlotStarts] = useState<string[]>([]);
   const [viewingSlotEnds, setViewingSlotEnds] = useState<string[]>([]);
+  const [viewingSlotOverride, setViewingSlotOverride] = useState<boolean[]>([]); // 案内不可日を手動で追加
   // 申込へ！専用: 空室状況 + 退去予定日
   const [appVacancyStatus, setAppVacancyStatus] = useState<"vacant" | "scheduled" | null>(null);
   const [appMoveOutDate, setAppMoveOutDate] = useState("");
@@ -294,11 +295,13 @@ export default function AixModal({
         };
         setViewingSlotStarts(days.map(d => parseTime(d.slots[0] || "").start));
         setViewingSlotEnds(days.map(d => parseTime(d.slots[0] || "").end));
+        setViewingSlotOverride(days.map(() => false));
       } catch {
         setViewingCalendarDays([]);
         setViewingSlotEnabled([]);
         setViewingSlotStarts([]);
         setViewingSlotEnds([]);
+        setViewingSlotOverride([]);
       } finally {
         setViewingCalendarLoading(false);
       }
@@ -562,7 +565,8 @@ export default function AixModal({
       if (actionType === "viewing_invite" && viewingCalendarDays.length > 0) {
         const selectedSlots = viewingCalendarDays
           .map((d, i) => {
-            if (!viewingSlotEnabled[i]) return "";
+            const isEnabled = d.fullyBooked ? viewingSlotOverride[i] : viewingSlotEnabled[i];
+            if (!isEnabled) return "";
             const start = viewingSlotStarts[i] || "";
             const end = viewingSlotEnds[i] || "";
             if (!start) return "";
@@ -1435,43 +1439,57 @@ export default function AixModal({
                 <div className="flex flex-col gap-2">
                   {viewingCalendarDays.map((d, i) => (
                     <div key={i} className={`rounded-xl px-3 py-2.5 transition-all ${
-                      d.fullyBooked ? "bg-red-50 opacity-60" : viewingSlotEnabled[i] ? "bg-emerald-50 border border-emerald-200" : "bg-[#f0f2f5]"
+                      d.fullyBooked
+                        ? viewingSlotOverride[i] ? "bg-emerald-50 border border-emerald-200" : "bg-red-50"
+                        : viewingSlotEnabled[i] ? "bg-emerald-50 border border-emerald-200" : "bg-[#f0f2f5]"
                     }`}>
                       <div className="flex items-center gap-2">
                         {/* ON/OFF トグル */}
                         <button
-                          onClick={() => { if (d.fullyBooked) return; setViewingSlotEnabled(prev => { const n = [...prev]; n[i] = !n[i]; return n; }); }}
+                          onClick={() => {
+                            if (d.fullyBooked) {
+                              setViewingSlotOverride(prev => { const n = [...prev]; n[i] = !n[i]; return n; });
+                              if (!viewingSlotStarts[i]) setViewingSlotStarts(prev => { const n = [...prev]; n[i] = "11:00"; return n; });
+                              if (!viewingSlotEnds[i]) setViewingSlotEnds(prev => { const n = [...prev]; n[i] = "18:00"; return n; });
+                            } else {
+                              setViewingSlotEnabled(prev => { const n = [...prev]; n[i] = !n[i]; return n; });
+                            }
+                          }}
                           className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold transition-all ${
-                            d.fullyBooked ? "bg-red-200 text-red-400 cursor-not-allowed" : viewingSlotEnabled[i] ? "bg-emerald-500 text-white" : "bg-[#d1d7db] text-[#8696a0]"
+                            d.fullyBooked
+                              ? viewingSlotOverride[i] ? "bg-emerald-500 text-white" : "bg-red-200 text-red-400"
+                              : viewingSlotEnabled[i] ? "bg-emerald-500 text-white" : "bg-[#d1d7db] text-[#8696a0]"
                           }`}
-                        >{d.fullyBooked ? "×" : viewingSlotEnabled[i] ? "✓" : "○"}</button>
+                        >{d.fullyBooked ? (viewingSlotOverride[i] ? "✓" : "×") : viewingSlotEnabled[i] ? "✓" : "○"}</button>
                         {/* 日付チップ */}
                         <span className={`font-bold text-xs flex-shrink-0 ${
-                          d.fullyBooked ? "text-red-400" : viewingSlotEnabled[i] ? "text-emerald-700" : "text-[#54656f]"
+                          d.fullyBooked
+                            ? viewingSlotOverride[i] ? "text-emerald-700" : "text-red-400"
+                            : viewingSlotEnabled[i] ? "text-emerald-700" : "text-[#54656f]"
                         }`}>{d.label}</span>
-                        {d.fullyBooked && <span className="text-red-400 text-xs">案内不可</span>}
+                        {d.fullyBooked && !viewingSlotOverride[i] && (
+                          <span className="text-red-400 text-[10px]">予定あり（タップで手動追加）</span>
+                        )}
                       </div>
-                      {!d.fullyBooked && (
+                      {(!d.fullyBooked || viewingSlotOverride[i]) && (
                         <div className="mt-2 flex items-center gap-1.5 pl-7">
-                          {/* 開始時間 */}
                           <input
                             type="time"
-                            value={viewingSlotStarts[i] ?? "10:00"}
+                            value={viewingSlotStarts[i] ?? "11:00"}
                             onChange={(e) => { setViewingSlotStarts(prev => { const n = [...prev]; n[i] = e.target.value; return n; }); }}
-                            onFocus={() => setViewingSlotEnabled(prev => { const n = [...prev]; n[i] = true; return n; })}
+                            onFocus={() => { if (!d.fullyBooked) setViewingSlotEnabled(prev => { const n = [...prev]; n[i] = true; return n; }); }}
                             className={`rounded-lg border px-2 py-1 text-xs font-bold outline-none ${
-                              viewingSlotEnabled[i] ? "border-emerald-300 bg-white text-emerald-700" : "border-[#d1d7db] bg-white text-[#54656f]"
+                              (d.fullyBooked ? viewingSlotOverride[i] : viewingSlotEnabled[i]) ? "border-emerald-300 bg-white text-emerald-700" : "border-[#d1d7db] bg-white text-[#54656f]"
                             }`}
                           />
                           <span className="text-[#8696a0] text-xs font-bold">〜</span>
-                          {/* 終了時間 */}
                           <input
                             type="time"
                             value={viewingSlotEnds[i] ?? "18:00"}
                             onChange={(e) => { setViewingSlotEnds(prev => { const n = [...prev]; n[i] = e.target.value; return n; }); }}
-                            onFocus={() => setViewingSlotEnabled(prev => { const n = [...prev]; n[i] = true; return n; })}
+                            onFocus={() => { if (!d.fullyBooked) setViewingSlotEnabled(prev => { const n = [...prev]; n[i] = true; return n; }); }}
                             className={`rounded-lg border px-2 py-1 text-xs font-bold outline-none ${
-                              viewingSlotEnabled[i] ? "border-emerald-300 bg-white text-emerald-700" : "border-[#d1d7db] bg-white text-[#54656f]"
+                              (d.fullyBooked ? viewingSlotOverride[i] : viewingSlotEnabled[i]) ? "border-emerald-300 bg-white text-emerald-700" : "border-[#d1d7db] bg-white text-[#54656f]"
                             }`}
                           />
                         </div>

@@ -96,7 +96,12 @@ export async function fetchCalendarSlots(): Promise<{
       const s = new Date(ev.start_at);
       if (fmtDate(s) !== dateKey) continue;
       if (ev.all_day) {
-        busy.push([WORK_START, WORK_END]);
+        // 「定休・休業・休み・休日・お休み」などの休業系のみ終日ブロック
+        // それ以外の全日イベント（会議メモ・リマインダー等）は時間をブロックしない
+        const isClosedDay = /定休|休業|休み|休日|お休み|closed|holiday/i.test(ev.title || "") || ev.event_type === "holiday";
+        if (isClosedDay) {
+          busy.push([WORK_START, WORK_END]);
+        }
       } else {
         const sm = s.getHours() * 60 + s.getMinutes();
         const em = ev.end_at
@@ -109,7 +114,8 @@ export async function fetchCalendarSlots(): Promise<{
     for (const t of tasks) {
       if (t.date !== dateKey || t.done) continue;
       if (!t.time) {
-        busy.push([WORK_START, WORK_END]);
+        // 時間なしタスクは終日ブロックしない（タスクの存在は内覧枠に影響させない）
+        continue;
       } else {
         const [th, tm] = t.time.split(":").map(Number);
         const sm = (th || 0) * 60 + (tm || 0);
