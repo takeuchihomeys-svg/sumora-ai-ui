@@ -126,6 +126,7 @@ const AIX_ACTION_META: Record<string, { label: string; color: string; templateCa
   estimate_sheet:          { label: "\u898b\u7a4d\u66f8\u9001\u308b",    color: "#FF9800", templateCategory: "\u898b\u7a4d\u66f8\u9001\u308b\u3010AIX\u3011" },
   viewing_invite:          { label: "\u5185\u89a7\u3078\uff01",      color: "#9C27B0", templateCategory: "\u5185\u89a7\u3078\uff01\u3010AIX\u3011" },
   application_push:        { label: "\u7533\u8fbc\u3078\uff01",      color: "#E53935", templateCategory: "\u7533\u8fbc\u3078\uff01\u3010AIX\u3011" },
+  meeting_place:           { label: "\u5f85\u3061\u5408\u308f\u305b", color: "#00838F", templateCategory: "\u5185\u89a7\u3010AIX\u3011" },
 };
 
 type PropertyCustomerRow = {
@@ -5043,6 +5044,11 @@ export default function Home() {
                     process: "ワンタップで即生成 → 確認後送信。見積書送信済みかを直近メッセージから自動検出してテンプレートを切り替え",
                     data: "☆実例（application_push）/ 直近会話履歴",
                   },
+                  "待ち合わせ": {
+                    inputs: "物件資料画像（任意）/ 物件名・住所 / 日程（必須）/ 時間（任意）",
+                    process: "物件資料画像からOCRで物件名・住所を自動取得 → 日時を入力 → テンプレートを組み立て",
+                    data: "AI不使用（クライアント側で生成）",
+                  },
                 };
                 return [
                   { color: "#2196F3", label: "物件オススメ", sub: "おすすめ物件をAIが提案", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_recommendation"); openAixWithImagePicker("property_recommendation"); } },
@@ -5050,6 +5056,7 @@ export default function Home() {
                   { color: "#4CAF50", label: "物件確認した", sub: "確認結果を3パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); } },
                   { color: "#FF9800", label: "見積書送る", sub: "費用の見積書を作成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet"); openAixWithImagePicker("estimate_sheet"); } },
                   { color: "#9C27B0", label: "内覧へ！", sub: "カレンダーから日程を選択→AIで文生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); openAixDirect("viewing_invite"); } },
+                  { color: "#00838F", label: "待ち合わせ", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixDirect("meeting_place"); } },
                   { color: "#E53935", label: "申込へ！", sub: "会話から最適な申込訴求を生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); void triggerAixOneTap("application_push"); } },
                 ].map((item) => {
                   const info = AIX_INSPECT[item.label];

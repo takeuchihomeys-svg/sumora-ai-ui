@@ -10,7 +10,8 @@ export type AixActionType =
   | "viewing_invite"
   | "application_push"
   | "estimate_sheet"
-  | "property_check_result";
+  | "property_check_result"
+  | "meeting_place";
 
 interface LinkedCustomer {
   id: string;
@@ -57,6 +58,10 @@ const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }
   application_push: {
     rules: ["空室 or 退去予定を選択", "見積書送信済みか会話から自動検出", "ワンタップで即生成 → 確認後送信"],
     template: "お申込みを進めて頂ければと思います！！\n[空室状況]\n審査は最短〇〇日で結果が出ます！！\nよろしければご検討ください！！",
+  },
+  meeting_place: {
+    rules: ["物件資料画像から物件名・住所をAIが自動読み取り", "日程・時間を入力して待ち合わせ文を生成", "時間あり→確定文 / 時間なし→調整文 の2パターン対応"],
+    template: "かしこまりました！！\n〇〇日ご案内させて頂きます！！\n\n〇〇日〇〇時に[物件名]\n現地エントランスお待ち合わせで何卒よろしくお願い致します！！\n住所: [住所]",
   },
 };
 
@@ -121,6 +126,13 @@ const CONFIG: Record<
     requiresImage: false,
     imageLabel: "物件・部屋の画像を選択（任意）",
     description: "物件確認の結果をお客さんにLINEで報告します。",
+  },
+  meeting_place: {
+    title: "待ち合わせ",
+    emoji: "📍",
+    requiresImage: false,
+    imageLabel: "",
+    description: "物件資料画像から物件名・住所を読み取り、日程・時間を指定して待ち合わせメッセージを生成します。",
   },
 };
 
@@ -212,6 +224,15 @@ export default function AixModal({
   // 物件オススメ専用: analyze-propertyで自動抽出した退去予定日
   const [propMoveOutDate, setPropMoveOutDate] = useState("");
 
+  // 待ち合わせ専用
+  const [meetingPropertyFile, setMeetingPropertyFile] = useState<File | null>(null);
+  const [meetingPropertyPreview, setMeetingPropertyPreview] = useState<string>("");
+  const [meetingPropertyName, setMeetingPropertyName] = useState<string>("");
+  const [meetingPropertyAddress, setMeetingPropertyAddress] = useState<string>("");
+  const [meetingDate, setMeetingDate] = useState<string>("");
+  const [meetingTime, setMeetingTime] = useState<string>("");
+  const [meetingOcrLoading, setMeetingOcrLoading] = useState(false);
+
   // 物件オススメ専用: 見積書（任意）
   const [recommendEstimateFile, setRecommendEstimateFile] = useState<File | null>(null);
   const [recommendEstimatePreview, setRecommendEstimatePreview] = useState<string>("");
@@ -227,6 +248,7 @@ export default function AixModal({
   const moveInImageInputRef = useRef<HTMLInputElement | null>(null);
   const recommendEstimateInputRef = useRef<HTMLInputElement | null>(null);
   const estimatePropertyInputRef = useRef<HTMLInputElement | null>(null);
+  const meetingPropertyInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (initialImageFile) {
@@ -562,6 +584,23 @@ export default function AixModal({
         body.image_url = await uploadImage(imageFile);
       }
 
+      if (actionType === "meeting_place") {
+        if (!meetingDate.trim()) throw new Error("日程を入力してください");
+        if (!meetingPropertyName.trim()) throw new Error("物件名を入力してください（画像読み込みまたは手動入力）");
+        const hasTime = !!meetingTime.trim();
+        let msg: string;
+        if (hasTime) {
+          msg = `かしこまりました！！\n${meetingDate}ご案内させて頂きます！！\n\n${meetingDate}${meetingTime}に${meetingPropertyName}\n現地エントランスお待ち合わせで何卒よろしくお願い致します！！`;
+        } else {
+          msg = `かしこまりました！！\n${meetingDate}ご案内させて頂きます！！\n\n${meetingPropertyName}\n現地エントランスお待ち合わせのお時間ご都合如何でしょうか！！`;
+        }
+        if (meetingPropertyAddress.trim()) msg += `\n住所: ${meetingPropertyAddress}`;
+        setPreview(msg);
+        setAiDraft(msg);
+        setLoading(false);
+        return;
+      }
+
       if (actionType === "viewing_invite" && viewingCalendarDays.length > 0) {
         const selectedSlots = viewingCalendarDays
           .map((d, i) => {
@@ -605,6 +644,7 @@ export default function AixModal({
     application_push: "application",
     estimate_sheet: "estimate_request",
     property_check_result: "proposing",
+    meeting_place: "viewing",
   };
 
   const handleSend = async () => {
@@ -706,6 +746,8 @@ export default function AixModal({
     ? true
     : actionType === "application_push"
     ? !!appVacancyStatus
+    : actionType === "meeting_place"
+    ? (!!meetingDate.trim() && !!meetingPropertyName.trim())
     : !config.requiresImage || !!imageFile;
 
   return (
@@ -1503,8 +1545,113 @@ export default function AixModal({
             </div>
           )}
 
+          {/* 待ち合わせ専用UI */}
+          {actionType === "meeting_place" && (
+            <div className="mb-4">
+              {/* 物件資料画像 OCR */}
+              <div className="mb-3">
+                <label className="mb-1 block text-xs font-semibold text-[#54656f]">
+                  物件資料<span className="ml-1 font-normal text-[#90a4ae]">（画像から物件名・住所を自動取得）</span>
+                </label>
+                {meetingPropertyPreview ? (
+                  <div className="relative mb-2 overflow-hidden rounded-xl border border-sky-200">
+                    <img src={meetingPropertyPreview} alt="物件資料" className="max-h-28 w-full object-contain" />
+                    <button
+                      onClick={() => { setMeetingPropertyFile(null); setMeetingPropertyPreview(""); setMeetingPropertyName(""); setMeetingPropertyAddress(""); }}
+                      className="absolute right-2 top-2 rounded-full bg-black/50 px-2 py-0.5 text-[10px] text-white"
+                    >変更</button>
+                    {meetingOcrLoading && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-xs font-bold text-sky-600">
+                        <span className="mr-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-sky-500 border-t-transparent" />
+                        読み取り中...
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => meetingPropertyInputRef.current?.click()}
+                    className="mb-2 flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-sky-300 bg-sky-50 py-3 text-xs font-bold text-sky-600"
+                  >📸 物件資料を読み込む（スキップ可）</button>
+                )}
+                <input
+                  ref={meetingPropertyInputRef}
+                  type="file" accept="image/*" className="hidden"
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    setMeetingPropertyFile(f);
+                    const reader = new FileReader();
+                    reader.onload = async () => {
+                      const dataUrl = String(reader.result ?? "");
+                      setMeetingPropertyPreview(dataUrl);
+                      setMeetingOcrLoading(true);
+                      try {
+                        const base64 = dataUrl.split(",")[1];
+                        const mime = (dataUrl.split(";")[0].split(":")[1] || "image/jpeg") as "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+                        const res = await fetch("/api/extract-meeting-place", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ image_base64: base64, media_type: mime }),
+                        });
+                        const data = await res.json() as { ok: boolean; name?: string; address?: string };
+                        if (data.ok) {
+                          if (data.name) setMeetingPropertyName(data.name);
+                          if (data.address) setMeetingPropertyAddress(data.address);
+                        }
+                      } catch { /* silent */ } finally { setMeetingOcrLoading(false); }
+                    };
+                    reader.readAsDataURL(f);
+                  }}
+                />
+              </div>
+              {/* 物件名 + 住所 */}
+              <div className="mb-3">
+                <label className="mb-1 block text-xs font-semibold text-[#54656f]">物件名 <span className="text-red-400">*</span></label>
+                <input
+                  value={meetingPropertyName}
+                  onChange={(e) => setMeetingPropertyName(e.target.value)}
+                  placeholder="例：クラウンハイム夕陽丘"
+                  className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-sm outline-none focus:border-[#2196F3]"
+                />
+              </div>
+              <div className="mb-3">
+                <label className="mb-1 block text-xs font-semibold text-[#54656f]">住所<span className="ml-1 font-normal text-[#90a4ae]">（任意）</span></label>
+                <input
+                  value={meetingPropertyAddress}
+                  onChange={(e) => setMeetingPropertyAddress(e.target.value)}
+                  placeholder="例：大阪府大阪市天王寺区下寺町2丁目3-11"
+                  className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-sm outline-none focus:border-[#2196F3]"
+                />
+              </div>
+              {/* 日程 + 時間 */}
+              <div className="mb-3 flex gap-2">
+                <div className="flex-1">
+                  <label className="mb-1 block text-xs font-semibold text-[#54656f]">日程 <span className="text-red-400">*</span></label>
+                  <input
+                    value={meetingDate}
+                    onChange={(e) => setMeetingDate(e.target.value)}
+                    placeholder="例：6/22（月）"
+                    className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-sm outline-none focus:border-[#2196F3]"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="mb-1 block text-xs font-semibold text-[#54656f]">時間<span className="ml-1 font-normal text-[#90a4ae]">（任意）</span></label>
+                  <input
+                    type="time"
+                    value={meetingTime}
+                    onChange={(e) => setMeetingTime(e.target.value)}
+                    className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-sm outline-none focus:border-[#2196F3]"
+                  />
+                </div>
+              </div>
+              <div className="rounded-xl bg-[#f0f2f5] px-3 py-2 text-[10px] text-[#54656f]">
+                {meetingTime ? "✅ 時間あり → 「〇〇日〇〇時に ... お待ち合わせで何卒よろしくお願い致します！！」" : "💬 時間なし → 「... 現地エントランスお待ち合わせのお時間ご都合如何でしょうか！！」"}
+              </div>
+            </div>
+          )}
+
           {/* テキスト入力欄（各アクション専用） */}
-          {config.inputLabel && actionType !== "property_send" && actionType !== "viewing_invite" && (
+          {config.inputLabel && actionType !== "property_send" && actionType !== "viewing_invite" && actionType !== "meeting_place" && (
             <div className="mb-4">
               <label className="mb-1 block text-xs font-semibold text-[#54656f]">
                 {config.inputLabel}
