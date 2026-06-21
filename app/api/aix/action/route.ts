@@ -772,6 +772,29 @@ ${availableTemplate}`;
         // 号室の先頭ゼロを除去（例: 0806号室 → 806号室）
         message_text = message_text.replace(/\b0+(\d+)号室/g, "$1号室");
 
+      // 「物件なかった」は固定テンプレ専用フロー
+      } else if (pattern === "unavailable") {
+        const unavailableTemplate = `[お客様名]さんお世話になっております！！
+お送り頂きました[N件]の募集状況確認させて頂きましたところ[N件とも]募集終了しているお部屋となります。
+
+引き続き[お客様名]さんのご希望に合うお部屋をピックアップさせていただきます！！
+新着で出次第すぐにお送りさせていただきます😌！！`;
+
+        const unavailableSystem = `あなたはテキスト置換エンジンです。
+以下のテンプレートを出力してください。プレースホルダーを下記ルールで置き換えること。
+・[お客様名] → 会話履歴のお客様名（姓のみ）
+・[N件] → お客様が送ってきた物件のURL・物件名の数（例: 2件、3件）。数が特定できない場合は「お送り頂きました物件」
+・[N件とも] → 件数に合わせる（2件→「2件とも」、3件→「3件とも」、不明→「全て」）
+それ以外の文字・絵文字・改行は一切変更・追加・削除しないこと。
+
+テンプレート:
+${unavailableTemplate}`;
+
+        message_text = await callClaude(
+          unavailableSystem,
+          `以下の会話からお客様名と送られてきた物件の件数を特定してプレースホルダーを置き換えてください。${recentHistory}`
+        );
+
       // 「同じ間取り」「違う間取り」は固定テンプレートを完全に守らせる専用フロー
       } else if (pattern === "alternative" && (floor_plan_match === "same" || floor_plan_match === "different")) {
         const templateText = floor_plan_match === "same"
