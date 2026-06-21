@@ -1389,7 +1389,7 @@ export default function AixModal({
                     <button
                       onClick={() => estimatePropertyInputRef.current?.click()}
                       className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#90a4ae] py-2 text-xs font-semibold text-[#546e7a] hover:bg-gray-50"
-                    >📄 物件資料を追加する（スキップ可）</button>
+                    >📎 物件資料を追加する（スキップ可）</button>
                   )}
                   <input
                     ref={estimatePropertyInputRef}
@@ -1569,7 +1569,7 @@ export default function AixModal({
                 disabled={loading || !canGenerate}
                 className="w-full rounded-full bg-[#111b21] py-3 text-sm font-bold text-white disabled:opacity-50"
               >
-                {loading ? "生成中..." : "✨ AIX 生成"}
+                {loading ? "生成中..." : "AIX 生成"}
               </button>
             )}
           </div>
