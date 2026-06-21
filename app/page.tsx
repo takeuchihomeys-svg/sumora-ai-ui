@@ -304,6 +304,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [showAixMenu, setShowAixMenu] = useState(false);
+  const [aixViewingExpanded, setAixViewingExpanded] = useState(false);
   const [aixInspectLabel, setAixInspectLabel] = useState<string | null>(null);
   const [activeAixFlow, setActiveAixFlow] = useState<string | null>(null);
   const [showGroupFilter, setShowGroupFilter] = useState(false);
@@ -5005,7 +5006,7 @@ export default function Home() {
             >
               <div className="text-[17px] font-bold text-white">AIX</div>
               <button
-                onClick={() => { setShowAixMenu(false); setAixInspectLabel(null); }}
+                onClick={() => { setShowAixMenu(false); setAixInspectLabel(null); setAixViewingExpanded(false); }}
                 className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white"
               >
                 ✕
@@ -5055,12 +5056,12 @@ export default function Home() {
                   { color: "#00897B", label: "物件送る", sub: "ピックアップした物件を送る・退去予定も自動案内", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); openAixDirect("property_send"); } },
                   { color: "#4CAF50", label: "物件確認した", sub: "確認結果を3パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); } },
                   { color: "#FF9800", label: "見積書送る", sub: "費用の見積書を作成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet"); openAixWithImagePicker("estimate_sheet"); } },
-                  { color: "#9C27B0", label: "内覧へ！", sub: "カレンダーから日程を選択→AIで文生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); openAixDirect("viewing_invite"); } },
-                  { color: "#00838F", label: "待ち合わせ", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixDirect("meeting_place"); } },
+                  { color: "#9C27B0", label: "内覧へ！", sub: "日程調整または待ち合わせ文を送る", action: () => setAixViewingExpanded(v => !v) },
                   { color: "#E53935", label: "申込へ！", sub: "会話から最適な申込訴求を生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); void triggerAixOneTap("application_push"); } },
                 ].map((item) => {
                   const info = AIX_INSPECT[item.label];
                   const isOpen = aixInspectLabel === item.label;
+                  const isViewing = item.label === "内覧へ！";
                   return (
                     <div key={item.label} className={`overflow-hidden rounded-xl border bg-white transition-all ${guideToCheckResult && item.label === "物件確認した" ? "border-2 border-[#4CAF50] shadow-[0_0_0_3px_rgba(76,175,80,0.15)]" : "border-[#e9edef]"}`}>
                       <div className="flex items-center gap-0">
@@ -5070,21 +5071,53 @@ export default function Home() {
                           className="flex flex-1 items-center gap-0 text-left active:bg-[#f5f6f7] transition-colors"
                         >
                           <span className="w-1 self-stretch flex-shrink-0" style={{ background: item.color }} />
-                          <div className="px-4 py-3">
+                          <div className="px-4 py-3 flex-1">
                             <div className="text-[14px] font-bold text-[#111b21]">{item.label}</div>
                             <div className="text-[11px] text-[#8696a0]">{item.sub}</div>
                           </div>
+                          {isViewing && (
+                            <span className="pr-3 text-[13px] text-[#9C27B0] font-bold">
+                              {aixViewingExpanded ? "▲" : "▼"}
+                            </span>
+                          )}
                         </button>
-                        {/* 確認ボタン */}
-                        <button
-                          onClick={() => setAixInspectLabel(isOpen ? null : item.label)}
-                          className={`flex h-full items-center px-3 py-3 text-[11px] font-bold transition-colors ${isOpen ? "text-[#1565c0]" : "text-[#b0bec5]"}`}
-                        >
-                          {isOpen ? "▲" : "確認"}
-                        </button>
+                        {/* 確認ボタン（内覧へ！は非表示） */}
+                        {!isViewing && (
+                          <button
+                            onClick={() => setAixInspectLabel(isOpen ? null : item.label)}
+                            className={`flex h-full items-center px-3 py-3 text-[11px] font-bold transition-colors ${isOpen ? "text-[#1565c0]" : "text-[#b0bec5]"}`}
+                          >
+                            {isOpen ? "▲" : "確認"}
+                          </button>
+                        )}
                       </div>
-                      {/* 展開パネル */}
-                      {isOpen && info && (
+                      {/* 内覧へ！ サブメニュー */}
+                      {isViewing && aixViewingExpanded && (
+                        <div className="border-t border-[#f0f2f5] bg-[#faf5ff] px-3 py-2 flex flex-col gap-2">
+                          <button
+                            onClick={() => { setShowAixMenu(false); setAixInspectLabel(null); setAixViewingExpanded(false); setActiveAixFlow("viewing_invite"); openAixDirect("viewing_invite"); }}
+                            className="flex items-center gap-3 rounded-xl bg-white border border-[#e9edef] px-4 py-3 text-left active:bg-[#f5f6f7] transition-colors"
+                          >
+                            <span className="w-1 self-stretch rounded-full flex-shrink-0" style={{ background: "#9C27B0" }} />
+                            <div>
+                              <div className="text-[13px] font-bold text-[#111b21]">日程調整する</div>
+                              <div className="text-[11px] text-[#8696a0]">カレンダーから日程を選択→AIで文生成</div>
+                            </div>
+                          </button>
+                          <button
+                            onClick={() => { setShowAixMenu(false); setAixInspectLabel(null); setAixViewingExpanded(false); setActiveAixFlow("meeting_place"); openAixDirect("meeting_place"); }}
+                            className="flex items-center gap-3 rounded-xl bg-white border border-[#e9edef] px-4 py-3 text-left active:bg-[#f5f6f7] transition-colors"
+                          >
+                            <span className="w-1 self-stretch rounded-full flex-shrink-0" style={{ background: "#00838F" }} />
+                            <div>
+                              <div className="text-[13px] font-bold text-[#111b21]">待ち合わせ</div>
+                              <div className="text-[11px] text-[#8696a0]">物件資料から物件名・住所読み取り→待ち合わせ文生成</div>
+                            </div>
+                          </button>
+                        </div>
+                      )}
+                      {/* 確認パネル（内覧へ！以外） */}
+                      {!isViewing && isOpen && info && (
                         <div className="border-t border-[#f0f2f5] bg-[#f8f9ff] px-4 py-3 flex flex-col gap-2">
                           <div>
                             <span className="text-[10px] font-bold text-[#1565c0] uppercase tracking-wide">入力</span>
