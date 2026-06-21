@@ -350,6 +350,9 @@ export default function Home() {
   const [dismissedViewingTemplateIds, setDismissedViewingTemplateIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedViewingTemplateIds") || "[]") as string[]); } catch { return new Set(); }
   });
+  const [dismissedViewingInviteIds, setDismissedViewingInviteIds] = useState<Set<string>>(() => {
+    try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedViewingInviteIds") || "[]") as string[]); } catch { return new Set(); }
+  });
   const [dismissedEstimateSheetIds, setDismissedEstimateSheetIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedEstimateSheetIds") || "[]") as string[]); } catch { return new Set(); }
   });
@@ -510,6 +513,9 @@ export default function Home() {
   useEffect(() => {
     try { sessionStorage.setItem("dismissedViewingTemplateIds", JSON.stringify([...dismissedViewingTemplateIds])); } catch {}
   }, [dismissedViewingTemplateIds]);
+  useEffect(() => {
+    try { sessionStorage.setItem("dismissedViewingInviteIds", JSON.stringify([...dismissedViewingInviteIds])); } catch {}
+  }, [dismissedViewingInviteIds]);
 
   useEffect(() => {
     try { sessionStorage.setItem("dismissedEstimateSheetIds", JSON.stringify([...dismissedEstimateSheetIds])); } catch {}
@@ -3468,6 +3474,22 @@ export default function Home() {
                     style={{ background: "linear-gradient(135deg, #9c27b0, #7b1fa2)" }}>内覧テンプレート</button>
                   <button onClick={() => setDismissedViewingTemplateIds((prev) => new Set([...prev, id]))}
                     className="shrink-0 text-purple-400 text-[11px] font-bold">✕</button>
+                </div>
+              );
+
+              // P3.5: お客様が物件に興味を示した → AIX 内覧へ！
+              if (
+                /気になり|気になる|気になっ|興味あり|興味が|見てみたい|見たい|いいですね|よさそう|いいな|行ってみたい|行きたい|ぜひ見|見せて|内覧したい|気に入|行ってみ|見てみ/.test(lastCustomerText) &&
+                !suggestViewingTemplateMap[id] &&
+                !dismissedViewingInviteIds.has(id)
+              ) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-sky-400 bg-sky-50 px-3 py-2 flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-sky-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>お客様が興味あり → AIX 内覧へ！で日程調整</span>
+                  <button onClick={() => { setDismissedViewingInviteIds((prev) => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); openAixDirect("viewing_invite"); }}
+                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                    style={{ background: "linear-gradient(135deg, #0288d1, #0277bd)" }}>AIX 内覧へ！</button>
+                  <button onClick={() => setDismissedViewingInviteIds((prev) => new Set([...prev, id]))}
+                    className="shrink-0 text-sky-400 text-[11px] font-bold">✕</button>
                 </div>
               );
 
