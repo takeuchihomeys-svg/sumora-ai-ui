@@ -49,6 +49,9 @@ export default function TemplateModal({
   const [noEmoji, setNoEmoji] = useState(false);
   const [templateImages, setTemplateImages] = useState<Record<string, File>>({});
   const [templateImagePreviews, setTemplateImagePreviews] = useState<Record<string, string>>({});
+  const [extractingId, setExtractingId] = useState<string | null>(null);
+  const [extractedTexts, setExtractedTexts] = useState<Record<string, string>>({});
+  const [extractErrors, setExtractErrors] = useState<Record<string, string>>({});
   const addFormRef = useRef<HTMLDivElement | null>(null);
   const templateImageInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -375,7 +378,8 @@ export default function TemplateModal({
                 <div className="flex flex-col gap-3">
                   {filtered.map((tmpl, idx) => {
                     const adapted = adaptedTexts[tmpl.id];
-                    const displayText = adapted || tmpl.text;
+                    const isOcrTemplate = tmpl.text.includes("[物件名]") && tmpl.text.includes("[住所]");
+                    const displayText = extractedTexts[tmpl.id] || adapted || tmpl.text;
                     const isHighlighted = !!highlightKeyword && (tmpl.label.includes(highlightKeyword) || tmpl.text.includes(highlightKeyword));
                     return (
                       <div key={tmpl.id} className={`rounded-2xl p-4 ${isHighlighted ? "border-2 border-orange-400 bg-orange-50" : "border border-[#e9edef] bg-[#f8f9fa]"}`}>
@@ -519,31 +523,72 @@ export default function TemplateModal({
                         {editingId !== tmpl.id && tmpl.requires_image && (
                           <div className="mb-3">
                             {templateImagePreviews[tmpl.id] ? (
-                              <div className="relative overflow-hidden rounded-xl border border-orange-200">
-                                <img src={templateImagePreviews[tmpl.id]} className="max-h-28 w-full object-contain" alt="添付画像" />
+                              <div className="relative overflow-hidden rounded-xl border border-sky-200">
+                                <img src={templateImagePreviews[tmpl.id]} className="max-h-28 w-full object-contain" alt="物件資料" />
                                 <button
                                   onClick={() => {
                                     setTemplateImages(prev => { const n = { ...prev }; delete n[tmpl.id]; return n; });
                                     setTemplateImagePreviews(prev => { const n = { ...prev }; delete n[tmpl.id]; return n; });
+                                    setExtractedTexts(prev => { const n = { ...prev }; delete n[tmpl.id]; return n; });
+                                    setExtractErrors(prev => { const n = { ...prev }; delete n[tmpl.id]; return n; });
                                   }}
                                   className="absolute right-2 top-2 rounded-full bg-black/50 px-2 py-0.5 text-[10px] text-white"
                                 >変更</button>
+                                {extractingId === tmpl.id && (
+                                  <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-[12px] font-bold text-sky-600">
+                                    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-sky-500 border-t-transparent mr-2" />
+                                    物件名・住所を読み取り中...
+                                  </div>
+                                )}
                               </div>
                             ) : (
                               <button
                                 onClick={() => templateImageInputRefs.current[tmpl.id]?.click()}
-                                className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-orange-300 py-3 text-[11px] font-bold text-orange-500 bg-orange-50"
-                              >📸 物件資料画像を添付（必須）</button>
+                                className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-sky-300 py-3 text-[11px] font-bold text-sky-600 bg-sky-50"
+                              >📸 {isOcrTemplate ? "物件資料を読み込む（物件名・住所を自動取得）" : "物件資料画像を添付（必須）"}</button>
+                            )}
+                            {extractErrors[tmpl.id] && (
+                              <p className="mt-1 text-[10px] text-red-500">{extractErrors[tmpl.id]}</p>
                             )}
                             <input
                               type="file" accept="image/*" className="hidden"
                               ref={el => { templateImageInputRefs.current[tmpl.id] = el; }}
-                              onChange={(e) => {
+                              onChange={async (e) => {
                                 const f = e.target.files?.[0];
                                 if (!f) return;
                                 setTemplateImages(prev => ({ ...prev, [tmpl.id]: f }));
                                 const reader = new FileReader();
-                                reader.onload = () => setTemplateImagePreviews(prev => ({ ...prev, [tmpl.id]: String(reader.result ?? "") }));
+                                reader.onload = async () => {
+                                  const dataUrl = String(reader.result ?? "");
+                                  setTemplateImagePreviews(prev => ({ ...prev, [tmpl.id]: dataUrl }));
+
+                                  if (isOcrTemplate) {
+                                    setExtractingId(tmpl.id);
+                                    setExtractErrors(prev => { const n = { ...prev }; delete n[tmpl.id]; return n; });
+                                    try {
+                                      const base64 = dataUrl.split(",")[1];
+                                      const mime = dataUrl.split(";")[0].split(":")[1] as "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+                                      const res = await fetch("/api/extract-meeting-place", {
+                                        method: "POST",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ image_base64: base64, media_type: mime }),
+                                      });
+                                      const data = await res.json() as { ok: boolean; name?: string; address?: string; error?: string };
+                                      if (data.ok && (data.name || data.address)) {
+                                        const filled = tmpl.text
+                                          .replace("[物件名]", data.name || "[物件名]")
+                                          .replace("[住所]", data.address || "[住所]");
+                                        setExtractedTexts(prev => ({ ...prev, [tmpl.id]: filled }));
+                                      } else {
+                                        setExtractErrors(prev => ({ ...prev, [tmpl.id]: data.error || "読み取り失敗 — 手動で入力してください" }));
+                                      }
+                                    } catch {
+                                      setExtractErrors(prev => ({ ...prev, [tmpl.id]: "通信エラー — 手動で入力してください" }));
+                                    } finally {
+                                      setExtractingId(null);
+                                    }
+                                  }
+                                };
                                 reader.readAsDataURL(f);
                               }}
                             />
@@ -556,13 +601,16 @@ export default function TemplateModal({
                             <button
                               onClick={() => {
                                 if (tmpl.requires_image && !templateImages[tmpl.id]) {
-                                  alert("📸 物件資料画像を添付してください");
+                                  alert("📸 物件資料を画像で読み込んでください");
                                   return;
                                 }
-                                onSelect(displayText, templateImages[tmpl.id], tmpl.label);
+                                if (isOcrTemplate && extractingId === tmpl.id) return;
+                                // OCRテンプレートは画像をLINEに添付しない（物件名・住所抽出のみ）
+                                onSelect(displayText, isOcrTemplate ? undefined : templateImages[tmpl.id], tmpl.label);
                                 onClose();
                               }}
-                              className="rounded-full px-3 py-1.5 text-[11px] font-bold text-white"
+                              disabled={isOcrTemplate && extractingId === tmpl.id}
+                              className="rounded-full px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-50"
                               style={{ background: "linear-gradient(135deg, #06c755, #06a043)" }}
                             >
                               そのまま使う
