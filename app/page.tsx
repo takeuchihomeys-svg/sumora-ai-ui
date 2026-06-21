@@ -5081,15 +5081,13 @@ export default function Home() {
                             </span>
                           )}
                         </button>
-                        {/* 確認ボタン（内覧へ！は非表示） */}
-                        {!isViewing && (
-                          <button
-                            onClick={() => setAixInspectLabel(isOpen ? null : item.label)}
-                            className={`flex h-full items-center px-3 py-3 text-[11px] font-bold transition-colors ${isOpen ? "text-[#1565c0]" : "text-[#b0bec5]"}`}
-                          >
-                            {isOpen ? "▲" : "確認"}
-                          </button>
-                        )}
+                        {/* 確認ボタン（全アイテム共通） */}
+                        <button
+                          onClick={() => setAixInspectLabel(isOpen ? null : item.label)}
+                          className={`flex h-full items-center px-3 py-3 text-[11px] font-bold transition-colors ${isOpen ? "text-[#1565c0]" : "text-[#b0bec5]"}`}
+                        >
+                          {isOpen ? "▲" : "確認"}
+                        </button>
                       </div>
                       {/* 内覧へ！ サブメニュー */}
                       {isViewing && aixViewingExpanded && (
@@ -5116,8 +5114,8 @@ export default function Home() {
                           </button>
                         </div>
                       )}
-                      {/* 確認パネル（内覧へ！以外） */}
-                      {!isViewing && isOpen && info && (
+                      {/* 確認パネル（全アイテム共通） */}
+                      {isOpen && info && (
                         <div className="border-t border-[#f0f2f5] bg-[#f8f9ff] px-4 py-3 flex flex-col gap-2">
                           <div>
                             <span className="text-[10px] font-bold text-[#1565c0] uppercase tracking-wide">入力</span>

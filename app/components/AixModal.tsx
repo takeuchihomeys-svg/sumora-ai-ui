@@ -1653,28 +1653,52 @@ export default function AixModal({
                 />
               </div>
               {/* 日程 + 時間 */}
-              <div className="mb-3 flex gap-2">
-                <div className="flex-1">
-                  <label className="mb-1 block text-xs font-semibold text-[#54656f]">日程 <span className="text-red-400">*</span></label>
-                  <input
-                    value={meetingDate}
-                    onChange={(e) => setMeetingDate(e.target.value)}
-                    placeholder="例：6/22（月）"
-                    className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-sm outline-none focus:border-[#2196F3]"
-                  />
+              <div className="mb-1">
+                <label className="mb-1 block text-xs font-semibold text-[#54656f]">日程 <span className="text-red-400">*</span></label>
+                <input
+                  value={meetingDate}
+                  onChange={(e) => setMeetingDate(e.target.value)}
+                  placeholder="例：6/22（月）"
+                  className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-sm outline-none focus:border-[#2196F3]"
+                />
+              </div>
+              <div className="mb-3">
+                <div className="mb-1 flex items-center justify-between">
+                  <label className="text-xs font-semibold text-[#54656f]">時間</label>
+                  <button
+                    type="button"
+                    onClick={() => setMeetingTime(meetingTime ? "" : "10:00")}
+                    className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold transition-colors ${meetingTime ? "bg-sky-100 text-sky-700" : "bg-[#f0f2f5] text-[#8696a0]"}`}
+                  >
+                    <span className={`inline-block h-3 w-3 rounded-full border-2 transition-colors ${meetingTime ? "border-sky-500 bg-sky-500" : "border-[#b0bec5] bg-white"}`} />
+                    {meetingTime ? "時間あり" : "時間未定"}
+                  </button>
                 </div>
-                <div className="flex-1">
-                  <label className="mb-1 block text-xs font-semibold text-[#54656f]">時間<span className="ml-1 font-normal text-[#90a4ae]">（任意）</span></label>
-                  <input
-                    type="time"
-                    value={meetingTime}
-                    onChange={(e) => setMeetingTime(e.target.value)}
-                    className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-sm outline-none focus:border-[#2196F3]"
-                  />
-                </div>
+                {meetingTime ? (
+                  <div className="flex gap-2">
+                    {["10:00","11:00","13:00","14:00","15:00","16:00"].map(t => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setMeetingTime(t)}
+                        className={`rounded-lg border px-2.5 py-1.5 text-[12px] font-bold transition-colors ${meetingTime === t ? "border-sky-500 bg-sky-50 text-sky-700" : "border-[#d1d7db] bg-white text-[#54656f]"}`}
+                      >{t}</button>
+                    ))}
+                    <input
+                      type="time"
+                      value={meetingTime}
+                      onChange={(e) => setMeetingTime(e.target.value)}
+                      className="flex-1 min-w-0 rounded-xl border border-[#d1d7db] px-2 py-1.5 text-sm outline-none focus:border-[#2196F3]"
+                    />
+                  </div>
+                ) : (
+                  <div className="rounded-xl bg-[#f0f2f5] px-3 py-2 text-[11px] text-[#8696a0]">
+                    時間未定 → お客様に都合を確認する文になります
+                  </div>
+                )}
               </div>
               <div className="rounded-xl bg-[#f0f2f5] px-3 py-2 text-[10px] text-[#54656f]">
-                {meetingTime ? "✅ 時間あり → 「〇〇日〇〇時に ... お待ち合わせで何卒よろしくお願い致します！！」" : "💬 時間なし → 「... 現地エントランスお待ち合わせのお時間ご都合如何でしょうか！！」"}
+                {meetingTime ? `✅ 時間あり → 「${meetingDate || "〇〇日"}${meetingTime}に ... お待ち合わせで何卒よろしくお願い致します！！」` : `💬 時間未定 → 「... 現地エントランスお待ち合わせのお時間ご都合如何でしょうか！！」`}
               </div>
             </div>
           )}
