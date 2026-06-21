@@ -330,6 +330,35 @@ export default function AixModal({
     })();
   }, [actionType]);
 
+  // 待ち合わせ: 直近スタッフメッセージから日程を自動検出してプリセット
+  useEffect(() => {
+    if (actionType !== "meeting_place") return;
+    if (meetingDate) return; // 既に入力済みならスキップ
+    const staffMsgs = (recentMessages || [])
+      .filter(m => m.sender === "staff" && m.text)
+      .slice(-10)
+      .reverse(); // 新しい順に検索
+    for (const m of staffMsgs) {
+      // 例: "6/22（月）" "6月22日（月）" "6/22(月)" "6月22日" "6/22"
+      const match = m.text.match(
+        /(\d{1,2})[\/月](\d{1,2})(?:日)?(?:[（(]([月火水木金土日])[）)])?/
+      );
+      if (match) {
+        const mo = match[1], day = match[2], wd = match[3];
+        const dateStr = wd ? `${mo}/${day}（${wd}）` : `${mo}/${day}`;
+        setMeetingDate(dateStr);
+        // 時間も抽出: 例 "11:00" "14時" "14時00分"
+        const timeMatch = m.text.match(/(\d{1,2})[時:](\d{2})?/);
+        if (timeMatch) {
+          const h = timeMatch[1].padStart(2, "0");
+          const min = (timeMatch[2] || "00").padStart(2, "0");
+          setMeetingTime(`${h}:${min}`);
+        }
+        break;
+      }
+    }
+  }, [actionType]);
+
   const onSelectImage = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
