@@ -56,6 +56,9 @@ export default function TemplateModal({
   const templateImageInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const categoryTabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const categoryScrollRef = useRef<HTMLDivElement | null>(null);
+  const [editingCategory, setEditingCategory] = useState<string | null>(null);
+  const [editingCategoryName, setEditingCategoryName] = useState("");
+  const categoryEditInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadTemplates = async () => {
     setLoading(true);
@@ -73,6 +76,20 @@ export default function TemplateModal({
   };
 
   useEffect(() => { loadTemplates(); }, []);
+
+  const commitCategoryRename = async () => {
+    const oldCat = editingCategory;
+    const newCat = editingCategoryName.trim();
+    setEditingCategory(null);
+    if (!oldCat || !newCat || oldCat === newCat) return;
+    await fetch("/api/templates/rename-category", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ oldCategory: oldCat, newCategory: newCat }),
+    });
+    setTemplates(prev => prev.map(t => t.category === oldCat ? { ...t, category: newCat } : t));
+    setCategory(newCat);
+  };
 
   useEffect(() => {
     if (showAddForm) setTimeout(() => addFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
@@ -259,19 +276,48 @@ export default function TemplateModal({
               <span className="text-[12px] text-[#aaa] py-1">カテゴリなし（テンプレートを追加してください）</span>
             )}
             {categories.map((cat) => (
-              <button
+              <div
                 key={cat}
-                ref={el => { categoryTabRefs.current[cat] = el; }}
-                onClick={() => setCategory(cat)}
-                className="shrink-0 rounded-full px-3 py-1.5 text-[11px] font-bold transition"
+                ref={el => { categoryTabRefs.current[cat] = el as unknown as HTMLButtonElement; }}
+                className="shrink-0 flex items-center rounded-full text-[11px] font-bold transition overflow-hidden"
                 style={
                   category === cat
                     ? { background: "linear-gradient(135deg, #1565C0, #4BA8E8)", color: "white" }
                     : { backgroundColor: "#f0f2f5", color: "#54656f" }
                 }
               >
-                {cat}
-              </button>
+                {editingCategory === cat ? (
+                  <input
+                    ref={categoryEditInputRef}
+                    value={editingCategoryName}
+                    onChange={e => setEditingCategoryName(e.target.value)}
+                    onBlur={commitCategoryRename}
+                    onKeyDown={e => {
+                      if (e.key === "Enter") { e.preventDefault(); void commitCategoryRename(); }
+                      if (e.key === "Escape") { setEditingCategory(null); }
+                    }}
+                    className="bg-transparent outline-none min-w-[60px] max-w-[120px] px-3 py-1.5 text-[11px] font-bold"
+                    style={{ color: "white" }}
+                  />
+                ) : (
+                  <>
+                    <button
+                      onClick={() => setCategory(cat)}
+                      className="pl-3 py-1.5 pr-1"
+                    >{cat}</button>
+                    <button
+                      onClick={() => {
+                        setCategory(cat);
+                        setEditingCategory(cat);
+                        setEditingCategoryName(cat);
+                        setTimeout(() => { categoryEditInputRef.current?.select(); }, 20);
+                      }}
+                      className="pr-2 py-1.5 opacity-60 hover:opacity-100"
+                      title="カテゴリ名を編集"
+                    >✏️</button>
+                  </>
+                )}
+              </div>
             ))}
           </div>
         )}
