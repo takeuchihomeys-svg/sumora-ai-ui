@@ -1227,6 +1227,26 @@ export default function Home() {
     return staffSentViewing;
   }, [selectedConversation, activeAixFlow]);
 
+  // 見積書送る誘導: お客様が見積依頼 or スタッフが「作成次第送る」と約束した後、お客様の返信が来ている状態
+  const guideToEstimate = useMemo(() => {
+    if (activeAixFlow) return false;
+    const msgs: Message[] = selectedConversation.messages || [];
+    const reversed = [...msgs].reverse();
+    // 最後のメッセージがお客様（＝スタッフが次に動く番）
+    const lastMsg = reversed[0];
+    if (!lastMsg || lastMsg.sender !== "customer") return false;
+    // 直近スタッフメッセージ or お客様メッセージに見積書関連キーワード
+    const recentTexts = reversed.slice(0, 6).map((m: Message) => m.text || "").join(" ");
+    return (
+      recentTexts.includes("見積書") ||
+      recentTexts.includes("見積り") ||
+      recentTexts.includes("見積もり") ||
+      recentTexts.includes("初期費用") ||
+      recentTexts.includes("お見積") ||
+      recentTexts.includes("御見積")
+    );
+  }, [selectedConversation, activeAixFlow]);
+
   useEffect(() => {
     setError("");
     setShowStatusMenu(false);
@@ -3430,7 +3450,9 @@ export default function Home() {
                       ? "border-[#4CAF50] bg-white text-[#2E7D32] animate-pulse ring-2 ring-[#4CAF50] ring-offset-1"
                       : guideToMeetingPlace
                         ? "border-[#00838F] bg-white text-[#00838F] animate-pulse ring-2 ring-[#00838F] ring-offset-1"
-                        : "border-[#d1d7db] bg-white text-[#111b21]"
+                        : guideToEstimate
+                          ? "border-[#FF9800] bg-white text-[#E65100] animate-pulse ring-2 ring-[#FF9800] ring-offset-1"
+                          : "border-[#d1d7db] bg-white text-[#111b21]"
                 }`}
                 style={activeAixFlow ? { backgroundColor: AIX_ACTION_META[activeAixFlow]?.color } : undefined}
                 title={activeAixFlow ? `${AIX_ACTION_META[activeAixFlow]?.label}フロー中 — タップで解除` : "AIXメニュー"}
@@ -5089,6 +5111,7 @@ export default function Home() {
                     <div key={item.label} className={`overflow-hidden rounded-xl border bg-white transition-all ${
                         guideToCheckResult && item.label === "物件確認した" ? "border-2 border-[#4CAF50] shadow-[0_0_0_3px_rgba(76,175,80,0.15)]" :
                         guideToMeetingPlace && item.label === "待ち合わせ" ? "border-2 border-[#00838F] shadow-[0_0_0_3px_rgba(0,131,143,0.15)]" :
+                        guideToEstimate && item.label === "見積書送る" ? "border-2 border-[#FF9800] shadow-[0_0_0_3px_rgba(255,152,0,0.15)]" :
                         "border-[#e9edef]"
                       }`}>
                       <div className="flex items-center gap-0">
