@@ -4278,9 +4278,9 @@ export default function Home() {
       {showTemplateModal && (
         <TemplateModal
           onClose={() => { setShowTemplateModal(false); setTemplateOpenContext(null); }}
-          onSelect={(text, imageFile, label) => {
+          onSelect={(text, imageFiles, label) => {
             setReplyDraft(text);
-            if (imageFile) setSelectedImageFiles((prev) => [...prev, imageFile]);
+            if (imageFiles && imageFiles.length > 0) setSelectedImageFiles((prev) => [...prev, ...imageFiles]);
             // ①申込フォーマット選択 → ②を次に誘導
             if (label?.includes("①申込")) {
               setSuggestApplyStep2Map((prev) => ({ ...prev, [selectedConversation.id]: true }));
