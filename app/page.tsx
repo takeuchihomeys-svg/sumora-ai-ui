@@ -4914,6 +4914,7 @@ export default function Home() {
           conversationId={selectedConversation.id}
           customerName={selectedConversation.customerName}
           account={selectedConversation.account ?? currentAccount.id}
+          lineUserId={selectedConversation.lineUserId}
           initialImageFile={aixInitialFile ?? undefined}
           linkedCustomer={aixModalType === "property_recommendation" ? linkedCustomerMap[selectedConversation.id] : undefined}
           customerConditions={linkedCustomerMap[selectedConversation.id]?.conditions || memos[selectedConversation.id] || undefined}

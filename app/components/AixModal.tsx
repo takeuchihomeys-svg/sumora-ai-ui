@@ -29,6 +29,7 @@ interface AixModalProps {
   customerConditions?: string;
   recentMessages?: Array<{ sender: string; text: string }>;
   customerSummary?: string | null;
+  lineUserId: string;
   onClose: () => void;
   onSend: (text: string, imageUrl?: string) => Promise<void>;
   onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean }) => void;
@@ -147,11 +148,18 @@ export default function AixModal({
   customerConditions,
   recentMessages,
   customerSummary,
+  lineUserId,
   onClose,
   onSend,
   onAfterSend,
 }: AixModalProps) {
   const config = CONFIG[actionType];
+
+  const [showAixScheduleModal, setShowAixScheduleModal] = useState(false);
+  const [aixScheduleDateTime, setAixScheduleDateTime] = useState("");
+  const [aixScheduleSaving, setAixScheduleSaving] = useState(false);
+  const aixLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const aixLongPressedRef = useRef(false);
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>("");
@@ -738,6 +746,62 @@ export default function AixModal({
     estimate_sheet: "estimate_request",
     property_check_result: "proposing",
     meeting_place: "viewing",
+  };
+
+  const openAixScheduleModal = () => {
+    if (!preview.trim()) return;
+    const d = new Date(Date.now() + 60 * 60 * 1000 + 9 * 60 * 60 * 1000);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    setAixScheduleDateTime(`${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`);
+    setShowAixScheduleModal(true);
+  };
+
+  const executeAixScheduleSend = async () => {
+    if (!preview.trim() || !aixScheduleDateTime) return;
+    setAixScheduleSaving(true);
+    try {
+      const imageUrls: string[] = [];
+      let textToSend = preview;
+
+      if (actionType === "property_send") {
+        for (let i = 0; i < sendImageFiles.length; i++) imageUrls.push(await uploadImage(sendImageFiles[i], i));
+      } else if (actionType === "property_check_result") {
+        for (let i = 0; i < checkImageFiles.length; i++) imageUrls.push(await uploadImage(checkImageFiles[i], i));
+        if (checkEstimateFile) imageUrls.push(await uploadImage(checkEstimateFile));
+      } else if (actionType === "property_recommendation") {
+        if (imageFile) imageUrls.push(await uploadImage(imageFile));
+        if (recommendEstimateFile) imageUrls.push(await uploadImage(recommendEstimateFile));
+        if (propertyImageUrl.trim()) textToSend = `（室内イメージ）\n${propertyImageUrl.trim()}\n\n${preview}`;
+      } else if (actionType === "estimate_sheet") {
+        if (estimatePropertyFile) imageUrls.push(await uploadImage(estimatePropertyFile));
+        if (imageFile) imageUrls.push(await uploadImage(imageFile));
+      } else {
+        if (imageFile) imageUrls.push(await uploadImage(imageFile));
+      }
+
+      const cleanDt = aixScheduleDateTime.substring(0, 16);
+      const scheduledAt = new Date(`${cleanDt}:00+09:00`).toISOString();
+      const { error: insertErr } = await supabase.from("scheduled_messages").insert({
+        conversation_id: conversationId,
+        line_user_id: lineUserId,
+        account: account ?? "sumora",
+        text: textToSend || null,
+        image_urls: imageUrls,
+        scheduled_at: scheduledAt,
+      });
+      if (insertErr) throw insertErr;
+
+      onAfterSend?.({
+        suggest2ndHand: actionType === "property_check_result" && checkAvailableApp === "yes",
+        suggestViewingTemplate: actionType === "viewing_invite",
+      });
+      setShowAixScheduleModal(false);
+      onClose();
+    } catch (err) {
+      setError(`予約失敗: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setAixScheduleSaving(false);
+    }
   };
 
   const handleSend = async () => {
@@ -1913,9 +1977,15 @@ export default function AixModal({
                   {loading ? "生成中..." : "再生成"}
                 </button>
                 <button
-                  onClick={handleSend}
+                  onClick={() => { if (aixLongPressedRef.current) { aixLongPressedRef.current = false; return; } void handleSend(); }}
+                  onTouchStart={() => { aixLongPressTimerRef.current = setTimeout(() => { aixLongPressedRef.current = true; openAixScheduleModal(); }, 600); }}
+                  onTouchEnd={() => { if (aixLongPressTimerRef.current) { clearTimeout(aixLongPressTimerRef.current); aixLongPressTimerRef.current = null; } }}
+                  onMouseDown={() => { aixLongPressTimerRef.current = setTimeout(() => { aixLongPressedRef.current = true; openAixScheduleModal(); }, 600); }}
+                  onMouseUp={() => { if (aixLongPressTimerRef.current) { clearTimeout(aixLongPressTimerRef.current); aixLongPressTimerRef.current = null; } }}
+                  onMouseLeave={() => { if (aixLongPressTimerRef.current) { clearTimeout(aixLongPressTimerRef.current); aixLongPressTimerRef.current = null; } }}
                   disabled={loading}
                   className="flex-1 rounded-full bg-[#06c755] py-3 text-sm font-bold text-white disabled:opacity-50"
+                  title="送信（長押しで予約送信）"
                 >
                   {loading ? "送信中..." : "送信する"}
                 </button>
@@ -1965,6 +2035,36 @@ export default function AixModal({
           </div>
         );
       })()}
+
+      {/* 予約送信モーダル */}
+      {showAixScheduleModal && (
+        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/50">
+          <div className="w-full max-w-md rounded-t-2xl bg-white shadow-2xl px-5 pt-5 pb-4">
+            <p className="text-[15px] font-bold text-[#111b21] mb-1">📅 送信予約</p>
+            <p className="text-[12px] text-[#8696a0] mb-3">指定した日時にLINEへ自動送信します（JST）</p>
+            <p className="text-[13px] text-[#667781] bg-[#f0f2f5] rounded-xl px-3 py-2 max-h-20 overflow-y-auto whitespace-pre-wrap leading-snug mb-3">
+              {preview.slice(0, 80)}{preview.length > 80 ? "…" : ""}
+            </p>
+            {(actionType === "property_send" ? sendImageFiles.length : actionType === "property_check_result" ? checkImageFiles.length : imageFile ? 1 : 0) > 0 && (
+              <p className="text-[12px] text-[#667781] mb-3">📎 画像あり</p>
+            )}
+            <label className="text-[12px] font-bold text-[#667781] block mb-1">送信日時（JST）</label>
+            <input
+              type="datetime-local"
+              value={aixScheduleDateTime}
+              step="60"
+              onChange={(e) => setAixScheduleDateTime(e.target.value)}
+              className="w-full rounded-xl border border-[#e0e0e0] px-3 py-2.5 text-[14px] text-[#111b21] focus:outline-none focus:border-[#29B6F6]"
+            />
+            <div className="flex border-t border-[#f0f2f5] mt-4">
+              <button onClick={() => setShowAixScheduleModal(false)} className="flex-1 py-3.5 text-[14px] font-semibold text-[#8696a0] border-r">キャンセル</button>
+              <button onClick={executeAixScheduleSend} disabled={aixScheduleSaving || !aixScheduleDateTime} className="flex-1 py-3.5 text-[14px] font-bold text-[#1565C0] disabled:opacity-50">
+                {aixScheduleSaving ? "予約中…" : "完了"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 全画面編集オーバーレイ */}
       {previewExpanded && (
