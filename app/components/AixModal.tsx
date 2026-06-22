@@ -198,6 +198,7 @@ export default function AixModal({
   const [sendImageFiles, setSendImageFiles] = useState<File[]>([]);
   const [sendImagePreviews, setSendImagePreviews] = useState<string[]>([]);
   const [vacatingNote, setVacatingNote] = useState("");
+  const [sendKeyword, setSendKeyword] = useState("");
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
   // 退去確認ボタン専用: 構造化された退去予定物件リスト
   const [vacatingProperties, setVacatingProperties] = useState<Array<{name: string; moveOut: string; editingDate: boolean}>>([]);
@@ -586,6 +587,7 @@ export default function AixModal({
         if (customerConditions) body.customer_conditions = customerConditions;
         if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
         if (customerSummary) body.customer_summary = customerSummary;
+        if (sendKeyword.trim()) body.keyword = sendKeyword.trim();
       } else if (actionType === "application_push") {
         if (!appVacancyStatus) throw new Error("空室状況を選択してください");
         body.vacancy_status = appVacancyStatus;
@@ -1179,6 +1181,20 @@ export default function AixModal({
                     className="w-full resize-none rounded-xl border border-[#d1d7db] px-3 py-2 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
                   />
                 )}
+              </div>
+              {/* キーワード */}
+              <div>
+                <p className="mb-1 text-xs font-bold text-[#54656f]">
+                  キーワード <span className="font-normal text-[#90a4ae]">（任意）</span>
+                </p>
+                <input
+                  type="text"
+                  value={sendKeyword}
+                  onChange={(e) => { setSendKeyword(e.target.value); setPreview(""); }}
+                  placeholder="例：築浅・南向き・ペット可 など"
+                  className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
+                />
+                <p className="mt-1 text-[10px] text-[#8696a0]">入力するとLINEの会話＋キーワードをもとにAIが文を生成します</p>
               </div>
             </div>
           ) : actionType === "application_push" ? (
