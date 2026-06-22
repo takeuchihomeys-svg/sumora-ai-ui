@@ -4,11 +4,13 @@ import { supabase } from "@/app/lib/supabase";
 const TASK_LABEL: Record<string, string> = {
   property_check: "物件確認",
   property_send: "物件出し",
+  estimate_sheet: "見積書対応",
 };
 
 const TASK_EMOJI: Record<string, string> = {
   property_check: "🔍",
   property_send: "🏠",
+  estimate_sheet: "📋",
 };
 
 async function sendGroupMessage(text: string): Promise<void> {
@@ -64,7 +66,7 @@ export async function DELETE(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const body = await req.json() as {
     conversation_id: string;
-    task_type: "property_check" | "property_send";
+    task_type: "property_check" | "property_send" | "estimate_sheet";
     customer_name: string;
   };
 

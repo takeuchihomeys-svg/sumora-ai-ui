@@ -3296,9 +3296,19 @@ export default function Home() {
                 <path d="M4 11a9 9 0 0 1 9 9" /><path d="M4 4a16 16 0 0 1 16 16" /><circle cx="5" cy="19" r="1" fill="currentColor" />
               </svg>
               <span className="text-[12px] font-bold text-[#1b5e20]">
-                やること: {activeTasks[selectedConversation.id].map((t) =>
-                  t.task_type === "property_check" ? "物件確認" : "物件ピックアップ"
-                ).join(" · ")}
+                やること: {(() => {
+                  const TASK_LABEL_MAP: Record<string, string> = {
+                    property_check: "物件確認",
+                    property_send: "物件ピックアップ",
+                    estimate_sheet: "見積書対応中",
+                  };
+                  const counts: Record<string, number> = {};
+                  for (const t of activeTasks[selectedConversation.id]) {
+                    const lbl = TASK_LABEL_MAP[t.task_type] ?? t.task_type;
+                    counts[lbl] = (counts[lbl] ?? 0) + 1;
+                  }
+                  return Object.entries(counts).map(([lbl, n]) => n > 1 ? `${n}件${lbl}` : lbl).join("・");
+                })()}
               </span>
             </div>
           )}
@@ -3992,7 +4002,24 @@ export default function Home() {
               if (/初期費用|見積|費用.*教|いくら|金額.*教|費用感/.test(lastCustomerText) && !((lastCustomerText.match(/[①②③④⑤⑥⑦⑧⑨⑩]/g) ?? []).length >= 2) && !dismissedEstimateSheetIds.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-amber-400 bg-amber-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-amber-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>初期費用の確認 → AIX 見積書送る</span>
-                  <button onClick={() => { setDismissedEstimateSheetIds((prev) => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet"); openAixWithImagePicker("estimate_sheet"); }}
+                  <button onClick={() => {
+                    setDismissedEstimateSheetIds((prev) => new Set([...prev, id]));
+                    setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet");
+                    const convName = selectedConversation.customerName;
+                    if (!(activeTasks[id] ?? []).some((t) => t.task_type === "estimate_sheet")) {
+                      fetch("/api/line-tasks", { method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ conversation_id: id, task_type: "estimate_sheet", customer_name: convName }),
+                      }).then(async (r) => {
+                        const d = await r.json() as { ok: boolean; id?: string; created_at?: string };
+                        if (d.ok && d.id && d.created_at) setActiveTasks((prev) => {
+                          const ex = prev[id] ?? [];
+                          if (ex.some((x) => x.task_type === "estimate_sheet")) return prev;
+                          return { ...prev, [id]: [...ex, { id: d.id!, task_type: "estimate_sheet", created_at: d.created_at!, customer_name: convName }] };
+                        });
+                      }).catch(() => {});
+                    }
+                    openAixWithImagePicker("estimate_sheet");
+                  }}
                     className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
                     style={{ background: "linear-gradient(135deg, #f59e0b, #d97706)" }}>AIX 見積書送る</button>
                   <button onClick={() => setDismissedEstimateSheetIds((prev) => new Set([...prev, id]))}
@@ -5006,6 +5033,22 @@ export default function Home() {
                     }).catch(() => {});
                   }
                 }
+              : aixModalType === "estimate_sheet"
+              ? () => {
+                  const convId = selectedConversation.id;
+                  const estTask = (activeTasks[convId] ?? []).find((t) => t.task_type === "estimate_sheet");
+                  if (estTask) {
+                    fetch("/api/line-tasks/complete", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ id: estTask.id }),
+                    }).catch(() => {});
+                    setActiveTasks((prev) => ({
+                      ...prev,
+                      [convId]: (prev[convId] ?? []).filter((t) => t.task_type !== "estimate_sheet"),
+                    }));
+                  }
+                }
               : aixModalType === "viewing_invite"
               ? (meta) => {
                   if (meta?.suggestViewingTemplate) {
@@ -5826,7 +5869,23 @@ export default function Home() {
                   { color: "#2196F3", label: "物件オススメ", sub: "おすすめ物件をAIが提案", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_recommendation"); openAixWithImagePicker("property_recommendation"); } },
                   { color: "#00897B", label: "物件送る", sub: "ピックアップした物件を送る・退去予定も自動案内", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); openAixDirect("property_send"); } },
                   { color: "#4CAF50", label: "物件確認した", sub: "確認結果を3パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); } },
-                  { color: "#FF9800", label: "見積書送る", sub: "費用の見積書を作成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet"); openAixWithImagePicker("estimate_sheet"); } },
+                  { color: "#FF9800", label: "見積書送る", sub: "費用の見積書を作成", action: () => {
+                    setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet");
+                    const cid = selectedConversation.id; const cname = selectedConversation.customerName;
+                    if (!(activeTasks[cid] ?? []).some((t) => t.task_type === "estimate_sheet")) {
+                      fetch("/api/line-tasks", { method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ conversation_id: cid, task_type: "estimate_sheet", customer_name: cname }),
+                      }).then(async (r) => {
+                        const d = await r.json() as { ok: boolean; id?: string; created_at?: string };
+                        if (d.ok && d.id && d.created_at) setActiveTasks((prev) => {
+                          const ex = prev[cid] ?? [];
+                          if (ex.some((x) => x.task_type === "estimate_sheet")) return prev;
+                          return { ...prev, [cid]: [...ex, { id: d.id!, task_type: "estimate_sheet", created_at: d.created_at!, customer_name: cname }] };
+                        });
+                      }).catch(() => {});
+                    }
+                    openAixWithImagePicker("estimate_sheet");
+                  } },
                   { color: "#9C27B0", label: "内覧へ！", sub: "カレンダーから日程を選択→AIで文生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); openAixDirect("viewing_invite"); } },
                   { color: "#00838F", label: "待ち合わせ", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixDirect("meeting_place"); } },
                   { color: "#E53935", label: "申込へ！", sub: "会話から最適な申込訴求を生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); void triggerAixOneTap("application_push"); } },
