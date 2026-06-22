@@ -100,6 +100,30 @@ const URGENCY_ORDER: Record<Urgency, number> = { reply: 0, property: 1, ok: 2, p
 
 function initial(name: string) { return name?.trim()?.charAt(0) ?? "?"; }
 
+function generateSearchFormat(c: Customer): string {
+  const year = new Date().getFullYear();
+  const lines: string[] = [];
+  lines.push(`1 ${c.move_in_time || "（未入力）"}`);
+  const rentMin = c.rent_min ? Math.floor(c.rent_min / 10000) : null;
+  const rentMax = c.rent_max ? Math.floor(c.rent_max / 10000) : null;
+  if (rentMin && rentMax) lines.push(`2 できれば${rentMin}から${rentMax}万円`);
+  else if (rentMax) lines.push(`2 できれば${rentMax}万円以内`);
+  else lines.push("2 （未入力）");
+  if (c.ng_points) lines.push(`3 ${c.ng_points}でなければ特にない`);
+  else lines.push("3 特にない");
+  if (c.building_age) lines.push(`4 ${year - c.building_age}年以降`);
+  else lines.push("4 築年数不問");
+  lines.push(`5 ${c.desired_area || "（未入力）"}`);
+  if (c.walk_minutes) lines.push(`6 ${c.walk_minutes}分以内`);
+  else lines.push("6 （未入力）");
+  if (c.initial_cost_limit) lines.push(`7 ${Math.floor(c.initial_cost_limit / 10000)}万💴以内`);
+  else lines.push("7 （未入力）");
+  const petStr = c.pet === true ? "ペット可" : c.pet === false ? "ペット不可" : "";
+  const pref = [petStr, c.preferences].filter(Boolean).join("、");
+  lines.push(`8 ${pref || "特にない"}`);
+  return lines.join("\n");
+}
+
 function isToday(d?: string | null): boolean {
   if (!d) return false;
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -169,6 +193,7 @@ export default function CustomersPage() {
   const [expandedId, setExpandedId]     = useState<string | null>(null);
   const [sentUpdating, setSentUpdating]   = useState<string | null>(null);
   const [viewedUpdating, setViewedUpdating]   = useState<string | null>(null);
+  const [formatCopied, setFormatCopied]   = useState<string | null>(null);
   const [showCompleted, setShowCompleted]     = useState(true);
   const [reflectLoading, setReflectLoading]   = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -1027,6 +1052,20 @@ export default function CustomersPage() {
                       {viewedUpdating === c.id ? "…" : "物件確認した"}
                     </button>
                   )}
+                  {/* 物件探しフォーマットコピーボタン */}
+                  <button
+                    onClick={() => {
+                      const text = generateSearchFormat(c);
+                      navigator.clipboard.writeText(text).then(() => {
+                        setFormatCopied(c.id);
+                        setTimeout(() => setFormatCopied(null), 2000);
+                      });
+                    }}
+                    className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-bold text-gray-600 active:scale-95 transition-transform"
+                    title="物件探しフォーマットをコピー"
+                  >
+                    {formatCopied === c.id ? "✓ コピー済" : "📄 フォーマット"}
+                  </button>
                   <button
                     onClick={() => openEdit(c)}
                     className="rounded-xl border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-bold text-[#444] active:scale-95 transition-transform"
