@@ -4944,6 +4944,21 @@ export default function Home() {
                       }
                     }).catch(() => {});
                   }
+                  // 紐付き顧客を「物件出し」ステータスに更新
+                  const pcId = selectedConversation.propertyCustomerId;
+                  if (pcId) {
+                    const sentAt = new Date().toISOString();
+                    supabase.from("property_customers").update({
+                      status: "property_search",
+                      last_property_sent_at: sentAt,
+                    }).eq("id", pcId).then(() => {
+                      setLinkedCustomerMap((prev) => {
+                        const cur = prev[convId];
+                        if (!cur) return prev;
+                        return { ...prev, [convId]: { ...cur, propertyStatus: "property_search", lastPropertySentAt: sentAt } };
+                      });
+                    });
+                  }
                 }
               : aixModalType === "property_recommendation"
               ? () => {
