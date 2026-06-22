@@ -30,6 +30,7 @@ interface AixModalProps {
   recentMessages?: Array<{ sender: string; text: string }>;
   customerSummary?: string | null;
   lineUserId: string;
+  lastScheduledAt?: string;
   onClose: () => void;
   onSend: (text: string, imageUrl?: string) => Promise<void>;
   onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; scheduled?: boolean }) => void;
@@ -150,6 +151,7 @@ export default function AixModal({
   recentMessages,
   customerSummary,
   lineUserId,
+  lastScheduledAt,
   onClose,
   onSend,
   onAfterSend,
@@ -752,8 +754,15 @@ export default function AixModal({
 
   const openAixScheduleModal = () => {
     if (!preview.trim()) return;
-    const d = new Date(Date.now() + 60 * 60 * 1000 + 9 * 60 * 60 * 1000);
     const pad = (n: number) => String(n).padStart(2, "0");
+    let baseTime: Date;
+    if (lastScheduledAt) {
+      const normalized = lastScheduledAt.replace(" ", "T").replace(/\+00$/, "+00:00");
+      baseTime = new Date(Math.max(new Date(normalized).getTime() + 60 * 1000, Date.now() + 60 * 1000));
+    } else {
+      baseTime = new Date(Date.now() + 60 * 60 * 1000);
+    }
+    const d = new Date(baseTime.getTime() + 9 * 60 * 60 * 1000);
     setAixScheduleDateTime(`${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`);
     setShowAixScheduleModal(true);
   };

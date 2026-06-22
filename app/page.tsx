@@ -2162,9 +2162,16 @@ export default function Home() {
   const openScheduleModal = () => {
     if (!selectedConversation.id) return;
     if (!replyDraft.trim() && selectedImageFiles.length === 0) return;
-    // デフォルト: 今から1時間後（JST）
-    const d = new Date(Date.now() + 60 * 60 * 1000 + 9 * 60 * 60 * 1000);
     const pad = (n: number) => String(n).padStart(2, "0");
+    const lastAt = scheduledMsgsList.at(-1)?.scheduled_at;
+    let baseTime: Date;
+    if (lastAt) {
+      const normalized = lastAt.replace(" ", "T").replace(/\+00$/, "+00:00");
+      baseTime = new Date(Math.max(new Date(normalized).getTime() + 60 * 1000, Date.now() + 60 * 1000));
+    } else {
+      baseTime = new Date(Date.now() + 60 * 60 * 1000);
+    }
+    const d = new Date(baseTime.getTime() + 9 * 60 * 60 * 1000);
     const defaultDt = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
     setScheduleDateTime(defaultDt);
     setShowScheduleModal(true);
@@ -4939,6 +4946,7 @@ export default function Home() {
           customerName={selectedConversation.customerName}
           account={selectedConversation.account ?? currentAccount.id}
           lineUserId={selectedConversation.lineUserId}
+          lastScheduledAt={scheduledMsgsList.at(-1)?.scheduled_at}
           onScheduled={refreshScheduledMsgs}
           initialImageFile={aixInitialFile ?? undefined}
           linkedCustomer={aixModalType === "property_recommendation" ? linkedCustomerMap[selectedConversation.id] : undefined}
