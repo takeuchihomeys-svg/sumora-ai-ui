@@ -109,11 +109,12 @@ export default function TemplateModal({
 
   const categories = Array.from(new Set(templates.map((t) => t.category)));
   const isSearching = searchQuery.trim().length > 0;
-  const filtered = isSearching
+  const filtered = (isSearching
     ? templates.filter((t) =>
         t.label.includes(searchQuery) || t.text.includes(searchQuery) || t.category.includes(searchQuery)
       )
-    : templates.filter((t) => t.category === category);
+    : templates.filter((t) => t.category === category)
+  ).sort((a, b) => (a.sort_order ?? Number.MAX_SAFE_INTEGER) - (b.sort_order ?? Number.MAX_SAFE_INTEGER));
 
   const handleAdd = async () => {
     if (!newLabel.trim() || !newText.trim()) return;
@@ -168,8 +169,9 @@ export default function TemplateModal({
 
     const a = filtered[index];
     const b = filtered[swapIndex];
-    const aOrder = a.sort_order ?? index;
-    const bOrder = b.sort_order ?? swapIndex;
+    // filtered はソート済みなのでインデックスに * 10 を掛けてスパースな値を確保
+    const aOrder = a.sort_order ?? index * 10;
+    const bOrder = b.sort_order ?? swapIndex * 10;
 
     setTemplates((prev) =>
       prev.map((t) =>
