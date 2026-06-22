@@ -603,7 +603,7 @@ function buildGenerationMessages(
     : "";
 
   const replyHintNote = replyHint
-    ? `\n\n【✨ スタッフ追加指示・最優先で反映すること】${replyHint}`
+    ? `\n\n【🔴✨ 指定生成・全ルール最優先・必ず返信に反映すること】\n${replyHint}`
     : "";
 
   const prompt = `
@@ -619,12 +619,12 @@ ${knowledge}
 ${phrases}
 
 ${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}
-${customerMessage}${applicationFormNote}${replyHintNote}
+${customerMessage}${applicationFormNote}
 
 ${examples}${examplesInstruction}
 
 ↑${isFollowUp ? "スモラは既にこのメッセージに返信済み。前の返信内容を繰り返さず、続きとして自然につながるメッセージを1つ生成すること。" : "スモラの直前返信の流れを踏まえ、⭐実例の文体・言い回しを最優先で忠実に再現しながら、このメッセージへのスモラらしい返信を1つ生成してください。"}
-長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。絶対に担当者名（鈴木など）を入れない。`;
+長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。絶対に担当者名（鈴木など）を入れない。${replyHintNote}`;
 
   return [new SystemMessage(promptOverrides?.generationSystem ?? GENERATION_SYSTEM), new HumanMessage(prompt)];
 }

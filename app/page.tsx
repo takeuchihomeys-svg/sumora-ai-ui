@@ -1684,7 +1684,7 @@ export default function Home() {
     const otherSituations = sparkleSelectedSituations.filter(s => s !== "ピックアップ（約束）");
     const situationPart = otherSituations.join("・");
     const replyHint = [
-      sparkleKeywords.length > 0 ? `キーワード: ${sparkleKeywords.join("、")}` : "",
+      sparkleKeywords.length > 0 ? `【キーワード必須指示】返信文に必ず「${sparkleKeywords.join("、")}」のテーマを反映させること。お客様の最新メッセージに書かれている具体的な条件・要望・気持ちをできるだけ引用・言及しながら、このテーマに沿った文章を作ること` : "",
       situationPart ? `状況: ${situationPart}` : "",
       hasPickupPromise ? "【物件ピックアップ約束文】会話を読み取り、物件をピックアップして送る旨の短い約束メッセージを生成する。必須:「物件ピックアップ出来ましたらお送りさせて頂きます！！」を軸に、会話から重要なポイント（エリア・条件変更・お客様の気持ちなど）があれば自然に1〜2文追加する。合計5行以内・シンプルに。余分な挨拶・長い説明は不要" : "",
       sparkleMeetingPlace
