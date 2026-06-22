@@ -31,6 +31,14 @@
     {
       "path": "/api/cron/morning-report",
       "schedule": "45 0 * * *"
+    },
+    {
+      "path": "/api/analyze-diffs",
+      "schedule": "23 18 * * *"
+    },
+    {
+      "path": "/api/analyze-diffs",
+      "schedule": "0 6 * * *"
     }
   ]
 }
