@@ -308,7 +308,9 @@ export default function Home() {
   const [aixInspectLabel, setAixInspectLabel] = useState<string | null>(null);
   const [activeAixFlow, setActiveAixFlow] = useState<string | null>(null);
   const [showGroupFilter, setShowGroupFilter] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<string>(() => {
+    try { return sessionStorage.getItem("statusFilter") || "all"; } catch { return "all"; }
+  });
   const [searchQuery, setSearchQuery] = useState("");
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
   const [currentAccount, setCurrentAccount] = useState<{ id: string; name: string; icon: string; profileImage?: string }>(() => {
@@ -522,6 +524,10 @@ export default function Home() {
   useEffect(() => {
     try { sessionStorage.setItem("dismissedPropertySendIds", JSON.stringify([...dismissedPropertySendIds])); } catch {}
   }, [dismissedPropertySendIds]);
+
+  useEffect(() => {
+    try { sessionStorage.setItem("statusFilter", statusFilter); } catch {}
+  }, [statusFilter]);
 
   useEffect(() => {
     try { sessionStorage.setItem("suggestPropertyRecommendMap", JSON.stringify(suggestPropertyRecommendMap)); } catch {}
