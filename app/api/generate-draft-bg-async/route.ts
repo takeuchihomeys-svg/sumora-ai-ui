@@ -93,12 +93,26 @@ export async function POST(req: NextRequest) {
       ].filter(Boolean).join(", ");
       const customerConditions = dbConditions || memo;
 
-      // お客様メッセージから条件リストを自動抽出（短い行が3行以上 = 箇条書き条件リスト）
-      const extractedLines = targetMessage.split("\n").map((l) => l.trim()).filter((l) => l.length > 0 && l.length <= 25);
-      const extractedConditions = extractedLines.length >= 3 ? extractedLines.slice(0, 8).join("・") : "";
-      const replyHint = extractedConditions
-        ? `【お客様が列挙した条件・要望（返信で具体的に言及すること）】${extractedConditions}`
-        : "";
+      // お客様メッセージから返信ヒントを自動抽出
+      const msgLines = targetMessage.split("\n").map((l) => l.trim()).filter(Boolean);
+
+      // ① 箇条書き条件（3行以上の短い行）
+      const shortLines = msgLines.filter((l) => l.length <= 25);
+      const isBulletConditions = shortLines.length >= 3;
+
+      // ② 条件変更・緩和キーワード（1〜2行でも発火）
+      const COND_RE = /[0-9０-９]+万|[0-9０-９]+LDK|[0-9０-９]+[KDk]|エリア|区|駅|間取り|家賃|広さ|㎡|ペット|駐車場|築/;
+      const ACT_RE = /含めて|を外|に変え|以上|以下|でも可|気にしな|上げて|下げて|緩め|広げ|に絞|でお願い|から探|も探/;
+      const PICKUP_RE = /ありませんか|ありますか|送って|ピックアップ|おすすめ|オススメ|出てます|教えて/;
+      const hasConditionChange = msgLines.some((l) => COND_RE.test(l) && ACT_RE.test(l));
+      const hasPickupRequest = msgLines.some((l) => PICKUP_RE.test(l));
+
+      let replyHint = "";
+      if (isBulletConditions) {
+        replyHint = `【お客様が列挙した条件・要望（返信で具体的に言及すること）】${shortLines.slice(0, 8).join("・")}`;
+      } else if (hasConditionChange || hasPickupRequest) {
+        replyHint = `【条件変更/ピックアップ依頼（追加質問禁止・変更内容を具体的に言葉にして即行動宣言）】${msgLines.join("・")}`;
+      }
 
       const baseUrl = getBaseUrl();
       console.log("[bg-async] calling generate-reply at:", baseUrl, "convId:", convId, "state:", effectiveState);

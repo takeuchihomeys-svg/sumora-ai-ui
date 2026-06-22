@@ -74,6 +74,7 @@ ${customerMessage}
   "questions": ["お客様メッセージ内の質問・確認事項を全て列挙（例: [\"審査期間は？\",\"キャンセルできる？\",\"フリーレントある？\"]）。なければ空配列"],
   "repeated_concern": "履歴を見てお客様が繰り返し聞いているテーマ（例: 費用・審査・キャンセル）。なければnull",
   "current_property": "現在話題にしている物件名・号室（履歴から特定できる場合のみ）。なければnull",
+  "condition_change_type": "お客様が検索条件を変更・追加・緩和したか、または物件ピックアップ・送付を依頼しているか。該当する場合その種別（'area_change'=エリア変更、'rent_change'=家賃変更、'layout_change'=間取り変更、'condition_relax'=条件緩和、'pickup_request'=物件を送って・ピックアップ依頼・おすすめ、'multi'=複数変更）。なければnull",
   "hesitancy_pattern": "お客様が「検討します」「また連絡します」「少し待ってほしい」「迷っています」など、決断を保留するパターンを示しているか。示している場合はその種別（'thinking'=検討中・'callback'=また連絡・'waiting'=もう少し待って・'undecided'=どちらか迷い・'timeline'=○月に決めたい ）、なければnull",
   "future_timeline": "お客様が「○月に」「○日には」など具体的な決断・申込タイムラインを示している場合その内容。なければnull"
 }`;
@@ -506,6 +507,7 @@ function buildGenerationMessages(
   let repeatedConcernNote = "";
   let currentPropertyNote = "";
   let hesitancyNote = "";
+  let conditionChangeNote = "";
   if (analysis) {
     try {
       const p = JSON.parse(analysis) as Record<string, unknown>;
@@ -549,6 +551,20 @@ function buildGenerationMessages(
         } else if (hp === "undecided") {
           hesitancyNote = `\n【🔀 物件迷いパターン検出★実データ反映】複数物件で迷っている。判断軸を提供する：各物件の具体的な違い（費用・立地・設備）を数字で比較し、「初期費用を軸にお選びになられるのはいかがでしょうか」等で決断を後押しする。`;
         }
+      }
+
+      // ③ 条件変更/ピックアップ依頼検出
+      if (p.condition_change_type && typeof p.condition_change_type === "string") {
+        const typeLabel: Record<string, string> = {
+          area_change: "エリア変更",
+          rent_change: "家賃変更",
+          layout_change: "間取り変更",
+          condition_relax: "条件緩和",
+          pickup_request: "物件ピックアップ依頼",
+          multi: "複数条件変更",
+        };
+        const label = typeLabel[p.condition_change_type as string] ?? (p.condition_change_type as string);
+        conditionChangeNote = `\n【🔄 ${label}検出（最重要・絶対遵守）】追加条件を聞き返すことは絶対禁止。変更内容を具体的なエリア名・数字で言葉にして、即座に行動宣言する。「ピックアップします」「お送りします」で2〜3行で完結させること。`;
       }
     } catch { /* ignore */ }
   }
@@ -638,7 +654,7 @@ function buildGenerationMessages(
     : "";
 
   const prompt = `
-${nameNote}${conditionsNote}${summaryNote}${dateNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}
+${nameNote}${conditionsNote}${summaryNote}${dateNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${approachNote}${staffContextNote}
 
