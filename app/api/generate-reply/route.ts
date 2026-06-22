@@ -217,9 +217,14 @@ const PHASE_GUIDE: Record<string, string> = {
 → 感謝＋お申込み促し（または次のアクション）
 例: 「本日はお越し頂きありがとうございました！！〇〇さんがご満足頂くご入居ができますよう最善を尽くさせて頂きます！！気になる点ございましたらお気軽にご連絡ください！！」
 
-【パターンG】申込書類・審査書類の提出
-→ 必要書類を具体的に案内
-例: 「かしこまりました！！こちらのフォームのご入力と身分証明書（運転免許証の表裏）のお写真をお送りいただけましたら私の方でお申込み完了させていただきます😊！！」
+【パターンG】申込書類・フォームが送られてきた（★最重要ルール）
+▼ G-1: フォーム（氏名・緊急連絡先・住所・生年月日等の個人情報テキスト）のみ送られて身分証の写真がない場合（最多パターン・最優先）
+→ フォーム受け取りのお礼 ＋ 身分証明書（運転免許証またはマイナンバーカード）の表裏の写真を必ずリクエストする
+→ 例: 「〇〇さんフォームお送り頂きありがとうございます😊！！あわせて身分証明書（運転免許証またはマイナンバーカード）の表裏のお写真もお送りいただけますでしょうか！！」
+→ フォームに未記入欄がある場合はそちらも同時に確認する（勤務先欄が空 → 現在のお仕事状況を確認）
+▼ G-2: フォームと身分証写真の両方が揃っている場合
+→ 受け取り感謝 ＋ 「お申込み完了させていただきます！！」と伝える
+例（G-2）: 「かしこまりました！！お送り頂いた内容でお申込み進めさせて頂きます！！何卒よろしくお願い致します😊！！」
 
 申込促し: 「ご内覧日先になりますので、お申込みでお部屋抑えておいた方が確実ですがいかがでしょうか！」
 申込完了: 「[物件名]のお申し込み完了しております😊！！明日1番手でお申し込み完了しているかの確認させていただきます！！」`,
@@ -436,7 +441,8 @@ function buildGenerationMessages(
         l => l.includes("お世話になっております") ||
              l.includes("夜分遅くに失礼") ||
              l.includes("はじめまして") ||
-             /^スモラ:「?[^\s]{1,10}さん/.test(l)
+             l.includes("ご連絡頂きありがとうございます") ||
+             /^スモラ:\s*「?[^\s]{1,10}さん/.test(l)
       );
 
   // 【重要】「夜分遅くに失礼致します」はスタッフが先にお客様に連絡するときの言葉。
@@ -567,6 +573,13 @@ function buildGenerationMessages(
   const quickPatterns = examples ? "" : `\n${effectiveQuickPatterns}`;
   const realEstateNote = `\n${promptOverrides?.realEstateRules ?? REAL_ESTATE_RULES}`;
 
+  // 申込フォーム検出（氏名・緊急連絡先・住所等のキーワード）＋画像なし → 身分証リクエスト注入
+  const isApplicationFormText = /緊急連絡|氏名|フリガナ|生年月日|現住所|住居年数|続柄|勤務先/.test(customerMessage);
+  const hasCustomerImageInHistory = history.includes("【画像を送ってきた】");
+  const applicationFormNote = (isApplicationFormText && !hasCustomerImageInHistory)
+    ? `\n\n【🚨 申込フォーム受取・身分証なし検出】お客様からフォーム（個人情報テキスト）が送られてきたが、身分証明書の写真がない。返信には必ず「身分証明書（運転免許証またはマイナンバーカード）の表裏のお写真もお送りいただけますでしょうか！！」を含めること。フォーム未記入欄（勤務先等）があれば同時に確認する。パターンG-1で対応。`
+    : "";
+
   const replyHintNote = replyHint
     ? `\n\n【✨ スタッフ追加指示・最優先で反映すること】${replyHint}`
     : "";
@@ -584,7 +597,7 @@ ${knowledge}
 ${phrases}
 
 ${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}
-${customerMessage}${replyHintNote}
+${customerMessage}${applicationFormNote}${replyHintNote}
 
 ${examples}${examplesInstruction}
 
@@ -1090,6 +1103,7 @@ export async function POST(req: NextRequest) {
             m.text.includes("お世話になっております") ||
             m.text.includes("夜分遅くに失礼") ||
             m.text.includes("はじめまして") ||
+            m.text.includes("ご連絡頂きありがとうございます") ||
             /^[^\s]{1,10}さん/.test(m.text)
           )
         )

@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
     if (SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ ok: true, skipped: true });
 
     const [{ data: msgs }, { data: pc }] = await Promise.all([
-      db.from("messages").select("sender, text").eq("conversation_id", convId)
+      db.from("messages").select("sender, text, created_at").eq("conversation_id", convId)
         .order("created_at", { ascending: false }).limit(20),
       conv.property_customer_id
         ? db.from("property_customers")
@@ -53,7 +53,9 @@ export async function POST(req: NextRequest) {
         : Promise.resolve({ data: null }),
     ]);
 
-    const recentMsgs = ((msgs || []) as Array<{ sender: string; text: string }>).reverse();
+    const recentMsgs = ((msgs || []) as Array<{ sender: string; text: string; created_at?: string }>)
+      .reverse()
+      .map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at }));
 
     // first_reply変換：スタッフ返信ゼロ + hearing → 初回挨拶文
     const hasStaffMsg = recentMsgs.some((m) => m.sender === "staff");

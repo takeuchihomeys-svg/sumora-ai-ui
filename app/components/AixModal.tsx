@@ -233,6 +233,14 @@ export default function AixModal({
   const [meetingTime, setMeetingTime] = useState<string>("");
   const [meetingOcrLoading, setMeetingOcrLoading] = useState(false);
 
+  // 内覧へ！退去予定物件専用
+  const [viewingIsVacancy, setViewingIsVacancy] = useState(false);
+  const [viewingVacancyName, setViewingVacancyName] = useState("");
+  const [viewingVacancyMoveOut, setViewingVacancyMoveOut] = useState("");
+  const [viewingVacancyFile, setViewingVacancyFile] = useState<File | null>(null);
+  const [viewingVacancyPreview, setViewingVacancyPreview] = useState("");
+  const [viewingVacancyOcrLoading, setViewingVacancyOcrLoading] = useState(false);
+
   // 物件オススメ専用: 見積書（任意）
   const [recommendEstimateFile, setRecommendEstimateFile] = useState<File | null>(null);
   const [recommendEstimatePreview, setRecommendEstimatePreview] = useState<string>("");
@@ -249,6 +257,7 @@ export default function AixModal({
   const recommendEstimateInputRef = useRef<HTMLInputElement | null>(null);
   const estimatePropertyInputRef = useRef<HTMLInputElement | null>(null);
   const meetingPropertyInputRef = useRef<HTMLInputElement | null>(null);
+  const viewingVacancyInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (initialImageFile) {
@@ -611,6 +620,46 @@ export default function AixModal({
         if (customerSummary) body.customer_summary = customerSummary;
       } else if (config.requiresImage && imageFile) {
         body.image_url = await uploadImage(imageFile);
+      }
+
+      // 内覧へ！退去予定物件モード → テンプレで即生成（AI不要）
+      if (actionType === "viewing_invite" && viewingIsVacancy) {
+        if (!viewingVacancyName.trim()) throw new Error("物件名を入力してください");
+        if (!viewingVacancyMoveOut.trim()) throw new Error("退去予定日を入力してください");
+
+        // 退去翌日を計算（◯月◯日 形式）
+        const moveOutText = viewingVacancyMoveOut.trim();
+        let viewingFromText = "";
+        const jpMatch = moveOutText.match(/(\d{1,2})月(\d{1,2})日/);
+        if (jpMatch) {
+          const d = new Date(new Date().getFullYear(), parseInt(jpMatch[1]) - 1, parseInt(jpMatch[2]) + 1);
+          viewingFromText = `${d.getMonth() + 1}月${d.getDate()}日`;
+        }
+
+        // カレンダースロット取得
+        const selectedSlots = viewingCalendarDays
+          .map((d, i) => {
+            const isEnabled = d.fullyBooked ? viewingSlotOverride[i] : viewingSlotEnabled[i];
+            if (!isEnabled) return "";
+            const start = viewingSlotStarts[i] || "";
+            const end = viewingSlotEnds[i] || "";
+            if (!start) return "";
+            return `${d.label} ${start}${end ? "〜" + end : ""}`;
+          })
+          .filter(Boolean);
+
+        const fromLine = viewingFromText ? `${viewingFromText}以降ご内覧できます！！` : "退去後よりご内覧できます！！";
+        let msg = `${viewingVacancyName.trim()} ${moveOutText}退去予定のお部屋となりますので\n${fromLine}\n${customerName}さん`;
+        if (selectedSlots.length > 0) {
+          msg += `直近ですと\n${selectedSlots.join("\n")}\nご都合如何でしょうか！！`;
+        } else {
+          msg += `ご都合如何でしょうか！！`;
+        }
+
+        setPreview(msg);
+        setAiDraft(msg);
+        setLoading(false);
+        return;
       }
 
       if (actionType === "meeting_place") {
@@ -1496,6 +1545,97 @@ export default function AixModal({
               <input ref={fileInputRef} type="file" accept="image/*" onChange={onSelectImage} className="hidden" />
             </div>
           ) : null}
+
+          {/* 内覧へ！: 退去予定物件トグル */}
+          {actionType === "viewing_invite" && (
+            <div className="mb-3">
+              <button
+                type="button"
+                onClick={() => setViewingIsVacancy(v => !v)}
+                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition-all ${viewingIsVacancy ? "bg-orange-500 text-white" : "bg-[#f0f2f5] text-[#54656f]"}`}
+              >
+                🏚️ 退去予定物件
+              </button>
+
+              {viewingIsVacancy && (
+                <div className="mt-2 rounded-xl border border-orange-200 bg-orange-50 p-3">
+                  {/* 物件資料OCR（任意） */}
+                  <label className="mb-1 block text-xs font-semibold text-[#54656f]">
+                    物件資料<span className="ml-1 font-normal text-[#90a4ae]">（画像から物件名を自動取得・任意）</span>
+                  </label>
+                  {viewingVacancyPreview ? (
+                    <div className="relative mb-2 overflow-hidden rounded-xl border border-orange-200">
+                      <img src={viewingVacancyPreview} alt="物件資料" className="max-h-24 w-full object-contain" />
+                      <button
+                        onClick={() => { setViewingVacancyFile(null); setViewingVacancyPreview(""); setViewingVacancyName(""); }}
+                        className="absolute right-2 top-2 rounded-full bg-black/50 px-2 py-0.5 text-[10px] text-white"
+                      >変更</button>
+                      {viewingVacancyOcrLoading && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-xs font-bold text-orange-600">
+                          <span className="mr-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-orange-500 border-t-transparent" />
+                          読み取り中...
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => viewingVacancyInputRef.current?.click()}
+                      className="mb-2 flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-orange-300 bg-white py-3 text-xs font-bold text-orange-500"
+                    >📸 物件資料を読み込む（スキップ可）</button>
+                  )}
+                  <input
+                    ref={viewingVacancyInputRef}
+                    type="file" accept="image/*" className="hidden"
+                    onChange={async (e) => {
+                      const f = e.target.files?.[0];
+                      if (!f) return;
+                      setViewingVacancyFile(f);
+                      const reader = new FileReader();
+                      reader.onload = async () => {
+                        const dataUrl = String(reader.result ?? "");
+                        setViewingVacancyPreview(dataUrl);
+                        setViewingVacancyOcrLoading(true);
+                        try {
+                          const base64 = dataUrl.split(",")[1];
+                          const mime = (dataUrl.split(";")[0].split(":")[1] || "image/jpeg") as "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+                          const res = await fetch("/api/extract-meeting-place", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ image_base64: base64, media_type: mime }),
+                          });
+                          const data = await res.json() as { ok: boolean; name?: string };
+                          if (data.ok && data.name) setViewingVacancyName(data.name);
+                        } catch { /* silent */ } finally { setViewingVacancyOcrLoading(false); }
+                      };
+                      reader.readAsDataURL(f);
+                    }}
+                  />
+
+                  {/* 物件名 */}
+                  <div className="mb-2">
+                    <label className="mb-1 block text-xs font-semibold text-[#54656f]">物件名 <span className="text-red-400">*</span></label>
+                    <input
+                      value={viewingVacancyName}
+                      onChange={(e) => setViewingVacancyName(e.target.value)}
+                      placeholder="例：エムズ新大阪"
+                      className="w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-sm outline-none focus:border-orange-400"
+                    />
+                  </div>
+
+                  {/* 退去予定日 */}
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-[#54656f]">退去予定日 <span className="text-red-400">*</span></label>
+                    <input
+                      value={viewingVacancyMoveOut}
+                      onChange={(e) => setViewingVacancyMoveOut(e.target.value)}
+                      placeholder="例：7月31日"
+                      className="w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-sm outline-none focus:border-orange-400"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* 内覧へ！: カレンダースロット選択 */}
           {actionType === "viewing_invite" && (

@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
       if (SKIP_STATUSES.has(conv.status as string)) return;
 
       const [{ data: msgs, error: msgsErr }, { data: pc }] = await Promise.all([
-        db.from("messages").select("sender, text").eq("conversation_id", convId)
+        db.from("messages").select("sender, text, created_at").eq("conversation_id", convId)
           .order("created_at", { ascending: false }).limit(20),
         conv.property_customer_id
           ? db.from("property_customers")
@@ -65,7 +65,9 @@ export async function POST(req: NextRequest) {
 
       if (msgsErr) { console.error("[bg-async] msgs fetch error:", msgsErr.message); return; }
 
-      const recentMsgs = ((msgs || []) as Array<{ sender: string; text: string }>).reverse();
+      const recentMsgs = ((msgs || []) as Array<{ sender: string; text: string; created_at?: string }>)
+        .reverse()
+        .map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at }));
 
       const hasStaffMsg = recentMsgs.some((m) => m.sender === "staff");
       const normalizedStatus = STATUS_ALIAS[conv.status as string] ?? conv.status;

@@ -318,6 +318,7 @@ export default function Home() {
   const accountImageInputRef = useRef<HTMLInputElement | null>(null);
   const [mobileView, setMobileView] = useState<"list" | "chat">("list");
   const [inputFocused, setInputFocused] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [pullStartY, setPullStartY] = useState(0);
   const [isPulling, setIsPulling] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -1363,6 +1364,23 @@ export default function Home() {
     supabase.from("conversations").update({ ai_draft: null }).eq("id", selectedConversation.id).then(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedConversation.aiDraft]);
+
+  // iOS キーボード対応: visualViewport でキーボード高さを検出してレイアウトを押し上げる
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const handler = () => {
+      const kh = Math.max(0, window.innerHeight - vv.height);
+      setKeyboardHeight(kh);
+      if (kh > 100 && chatScrollRef.current) {
+        requestAnimationFrame(() => {
+          if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+        });
+      }
+    };
+    vv.addEventListener("resize", handler);
+    return () => vv.removeEventListener("resize", handler);
+  }, []);
 
   // replyDraftが変わったらtextareaの高さを自動調整（iOS SafariでのscrollHeight誤算対策でrAF使用）
   useEffect(() => {
@@ -2864,6 +2882,7 @@ export default function Home() {
             transform: chatSwipeDelta > 0 ? `translateX(${Math.min(chatSwipeDelta * 0.7, 200)}px)` : "none",
             transition: chatSwipeDelta === 0 ? "transform 0.25s cubic-bezier(0.25,0.46,0.45,0.94)" : "none",
             touchAction: "pan-y",
+            paddingBottom: keyboardHeight > 0 ? keyboardHeight : undefined,
           }}
           onTouchStart={onChatTouchStart}
           onTouchMove={onChatTouchMove}
