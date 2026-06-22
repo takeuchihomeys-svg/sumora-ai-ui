@@ -1373,9 +1373,14 @@ export default function Home() {
     const handler = () => {
       const kh = Math.max(0, window.innerHeight - vv.height);
       setKeyboardHeight(kh);
-      if (kh > 100 && chatScrollRef.current) {
+      if (kh > 100) {
         requestAnimationFrame(() => {
           if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+          // iOS: テキストエリアがフォーカス中なら内部スクロールをカーソル末尾に合わせる
+          const ta = textareaRef.current;
+          if (ta && document.activeElement === ta) {
+            ta.scrollTop = ta.scrollHeight;
+          }
         });
       }
     };
@@ -3813,6 +3818,8 @@ export default function Home() {
                     const newH = Math.min(e.target.scrollHeight, 320);
                     e.target.style.height = `${newH}px`;
                     setTextareaHeightPx(newH);
+                    // iOS: テキストエリアの内部スクロールをカーソル位置（末尾）に合わせる
+                    requestAnimationFrame(() => { e.target.scrollTop = e.target.scrollHeight; });
                   }}
                   onFocus={() => setInputFocused(true)}
                   onBlur={() => setInputFocused(false)}
