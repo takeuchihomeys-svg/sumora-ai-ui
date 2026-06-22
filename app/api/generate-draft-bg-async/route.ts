@@ -69,10 +69,35 @@ export async function POST(req: NextRequest) {
         .reverse()
         .map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at }));
 
-      const hasStaffMsg = recentMsgs.some((m) => m.sender === "staff");
-      const normalizedStatus = STATUS_ALIAS[conv.status as string] ?? conv.status;
-      const effectiveState = !hasStaffMsg && normalizedStatus === "hearing" ? "first_reply" : (conv.status as string);
+      // 直近20件にスタッフ返信があるか確認
+      const hasStaffInLast20 = recentMsgs.some((m) => m.sender === "staff");
 
+      // 直近20件にスタッフ返信がない場合: 全履歴から最新スタッフ返信を取得してコンテキストに注入
+      // - hasAnyStaffMsg: 過去に返信済みか（effectiveState=first_reply 判定精度向上）
+      // - 見つかれば先頭追加（generateReplyの inject last staff ロジックと統一）
+      let hasAnyStaffMsg = hasStaffInLast20;
+      let recentMsgsForGen = recentMsgs;
+      if (!hasStaffInLast20) {
+        const { data: lastStaffData } = await db.from("messages")
+          .select("sender, text, created_at")
+          .eq("conversation_id", convId)
+          .eq("sender", "staff")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (lastStaffData) {
+          hasAnyStaffMsg = true;
+          recentMsgsForGen = [
+            { sender: "staff", text: (lastStaffData.text as string) || "", createdAt: lastStaffData.created_at as string | undefined },
+            ...recentMsgs,
+          ];
+        }
+      }
+
+      const normalizedStatus = STATUS_ALIAS[conv.status as string] ?? conv.status;
+      const effectiveState = !hasAnyStaffMsg && normalizedStatus === "hearing" ? "first_reply" : (conv.status as string);
+
+      // targetMessage は元のrecentMsgs（注入なし）から計算
       const lastStaffIdx = recentMsgs.map((m, i) => m.sender === "staff" ? i : -1).filter((i) => i >= 0).at(-1);
       const msgsAfterStaff = lastStaffIdx !== undefined ? recentMsgs.slice(lastStaffIdx + 1) : recentMsgs;
       const unreplied = msgsAfterStaff
@@ -145,7 +170,7 @@ export async function POST(req: NextRequest) {
             state: effectiveState,
             // 紐付き顧客名 → なければ conversationsの表示名（LINEの名前）をフォールバック
             customerName: pcData?.customer_name || (conv.customer_name as string) || "",
-            recentMessages: recentMsgs,
+            recentMessages: recentMsgsForGen,
             customerConditions,
             customerSummary: pcData?.ai_summary || "",
             replyHint,
