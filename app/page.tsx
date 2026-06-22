@@ -2654,6 +2654,10 @@ export default function Home() {
     <main
       className="overflow-hidden bg-[#111b21]"
       style={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
         height: viewportHeight ? `${viewportHeight}px` : "100svh",
         WebkitTextSizeAdjust: "100%",
         touchAction: "manipulation",
