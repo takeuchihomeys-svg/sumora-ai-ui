@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
         pcData?.desired_area && `エリア: ${pcData.desired_area}`,
         pcData?.floor_plan && `間取り: ${pcData.floor_plan}`,
         (pcData?.rent_min || pcData?.rent_max) && `家賃: ${pcData?.rent_min ? Math.floor(pcData.rent_min / 10000) + "万〜" : ""}${pcData?.rent_max ? Math.floor(pcData.rent_max / 10000) + "万" : ""}`,
-        pcData?.preferences && `こだわり: ${pcData.preferences}`,
+        pcData?.preferences && `こだわり（参考・再確認不要）: ${pcData.preferences}`,
         pcData?.ng_points && `NG: ${pcData.ng_points}`,
       ].filter(Boolean).join(", ");
       const customerConditions = dbConditions || memo;
