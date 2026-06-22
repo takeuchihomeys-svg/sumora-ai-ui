@@ -4503,7 +4503,10 @@ export default function Home() {
                   const cfg = { viewing:{label:"内覧",color:"#2196F3"}, contract:{label:"契約",color:"#4CAF50"}, key_handover:{label:"鍵渡し",color:"#FF9800"}, application:{label:"申込",color:"#9C27B0"}, other:{label:"その他",color:"#9E9E9E"} }[t];
                   const active = calendarEventType === t;
                   return (
-                    <button key={t} onClick={() => setCalendarEventType(t)}
+                    <button key={t} onClick={() => {
+                      setCalendarEventType(t);
+                      setCalendarTitle(calendarCustomerName ? `${calendarCustomerName} ${cfg.label}` : cfg.label);
+                    }}
                       className="flex-1 rounded-xl py-2 text-[12px] font-bold border transition-all"
                       style={{ borderColor: active ? cfg.color : "#e9edef", background: active ? cfg.color : "transparent", color: active ? "white" : "#667781" }}>
                       {cfg.label}
@@ -4552,6 +4555,7 @@ export default function Home() {
                   const startAt = new Date(`${calendarDate}T${calendarTime}:00`).toISOString();
                   const endAt = calendarEndTime ? new Date(`${calendarDate}T${calendarEndTime}:00`).toISOString() : null;
                   const labelMap: Record<string, string> = { viewing:"内覧", contract:"契約", key_handover:"鍵渡し", application:"申込", other:"その他" };
+                  const convId = calendarModalConvId!;
                   await Promise.all([
                     supabase.from("calendar_events").insert({
                       title: calendarTitle.trim(),
@@ -4560,7 +4564,7 @@ export default function Home() {
                       start_at: startAt,
                       end_at: endAt,
                       all_day: false,
-                      notes: calendarNote.trim(),
+                      notes: calendarNote.trim() || labelMap[calendarEventType],
                     }),
                     fetch("/api/daily-tasks", {
                       method: "POST",
@@ -4573,7 +4577,9 @@ export default function Home() {
                         end_time: calendarEndTime || "",
                       }),
                     }),
+                    supabase.from("conversations").update({ is_flagged: true }).eq("id", convId),
                   ]);
+                  setFlaggedConvIds((prev) => { const next = new Set(prev); next.add(convId); return next; });
                   setCalendarSaving(false);
                   setCalendarModalConvId(null);
                 }}
