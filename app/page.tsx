@@ -416,6 +416,8 @@ export default function Home() {
   const [showSparkleModal, setShowSparkleModal] = useState(false);
   const [sparkleKeywords, setSparkleKeywords] = useState<string[]>([]);
   const [sparkleKeywordInput, setSparkleKeywordInput] = useState("");
+  const [sparkleKeywordHistory, setSparkleKeywordHistory] = useState<string[]>([]);
+  const [showKeywordSuggest, setShowKeywordSuggest] = useState(false);
   const [sparkleSelectedSituations, setSparkleSelectedSituations] = useState<string[]>([]);
   const [sparkleAttitudes, setSparkleAttitudes] = useState<string[]>([]);
   const [sparkleSituations, setSparkleSituations] = useState<string[]>(() => {
@@ -869,6 +871,22 @@ export default function Home() {
 
   // 会話切り替え時に条件パネルを閉じる
   useEffect(() => { setShowCondPanel(false); }, [selectedId]);
+
+  // キーワード履歴を localStorage から読み込む
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("sparkle_keyword_history");
+      if (saved) setSparkleKeywordHistory(JSON.parse(saved) as string[]);
+    } catch { /* ignore */ }
+  }, []);
+
+  const addKeywordToHistory = (kw: string) => {
+    setSparkleKeywordHistory((prev) => {
+      const next = [kw, ...prev.filter((h) => h !== kw)].slice(0, 20);
+      try { localStorage.setItem("sparkle_keyword_history", JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  };
 
   // scrollTop を直接セットする最確実スクロール（scrollIntoView より信頼性が高い）
   const scrollToBottom = () => {
@@ -3345,7 +3363,7 @@ export default function Home() {
                 </div>
 
                 {/* キーワード入力（タグ形式） */}
-                <div className="mb-3">
+                <div className="relative mb-3">
                   <label className="text-[11px] font-bold text-[#667781] mb-1 block">キーワード（任意）</label>
                   <div className="min-h-[42px] w-full rounded-xl border border-[#d1d7db] px-2.5 py-1.5 flex flex-wrap gap-1.5 focus-within:border-[#b39ddb]">
                     {sparkleKeywords.map((kw, i) => (
@@ -3361,11 +3379,15 @@ export default function Home() {
                       type="text"
                       value={sparkleKeywordInput}
                       onChange={(e) => setSparkleKeywordInput(e.target.value)}
+                      onFocus={() => setShowKeywordSuggest(true)}
+                      onBlur={() => setTimeout(() => setShowKeywordSuggest(false), 150)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
                           e.preventDefault();
                           if (sparkleKeywordInput.trim()) {
-                            setSparkleKeywords(prev => [...prev, sparkleKeywordInput.trim()]);
+                            const kw = sparkleKeywordInput.trim();
+                            setSparkleKeywords(prev => [...prev, kw]);
+                            addKeywordToHistory(kw);
                             setSparkleKeywordInput("");
                           } else if (sparkleKeywords.length > 0 || sparkleSelectedSituations.length > 0) {
                             handleSparkleGenerate();
@@ -3379,6 +3401,33 @@ export default function Home() {
                       className="flex-1 min-w-[100px] py-0.5 text-[12px] outline-none bg-transparent"
                     />
                   </div>
+                  {/* 履歴サジェストドロップダウン */}
+                  {showKeywordSuggest && (() => {
+                    const suggestions = sparkleKeywordHistory.filter(
+                      (h) => h.toLowerCase().includes(sparkleKeywordInput.toLowerCase()) && !sparkleKeywords.includes(h)
+                    );
+                    if (suggestions.length === 0) return null;
+                    return (
+                      <div className="absolute left-0 right-0 z-50 mt-1 overflow-hidden rounded-xl border border-[#d1d7db] bg-white shadow-lg">
+                        {suggestions.slice(0, 8).map((h, i) => (
+                          <button
+                            key={i}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              setSparkleKeywords((prev) => [...prev, h]);
+                              addKeywordToHistory(h);
+                              setSparkleKeywordInput("");
+                              setShowKeywordSuggest(false);
+                            }}
+                            className="flex w-full items-center gap-2 border-b border-[#f0f2f5] px-3 py-2.5 text-left text-[12px] text-[#111b21] last:border-b-0 active:bg-[#f0f2f5]"
+                          >
+                            <span className="text-[11px] text-[#bbb]">🕐</span>
+                            <span>{h}</span>
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* 向き合い方ボタン */}
