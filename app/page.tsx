@@ -2196,6 +2196,18 @@ export default function Home() {
         setError(`⚠️ LINE送信エラー: ${lineEx instanceof Error ? lineEx.message : "通信エラー"}`);
       }
 
+      // 画像送信時: 物件送った自動記録（fire-and-forget）
+      if (isSendingImages) {
+        const pcId = linkedCustomerMap[selectedConversation.id]?.id;
+        if (pcId) {
+          fetch("/api/property-customers", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: pcId, last_property_sent_at: now.toISOString() }),
+          }).catch(() => {});
+        }
+      }
+
       // 学習データ保存（テキスト送信時のみ・バックグラウンド）
       if (textToSend) {
         // AI生成時はgenerate時点の顧客メッセージを使う（その後に新メッセージが届いても正しい対応先を記録）
