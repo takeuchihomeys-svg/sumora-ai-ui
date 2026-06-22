@@ -304,6 +304,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [showAixMenu, setShowAixMenu] = useState(false);
+  const [showCondPanel, setShowCondPanel] = useState(false);
   const [aixInspectLabel, setAixInspectLabel] = useState<string | null>(null);
   const [activeAixFlow, setActiveAixFlow] = useState<string | null>(null);
   const [showGroupFilter, setShowGroupFilter] = useState(false);
@@ -865,6 +866,9 @@ export default function Home() {
         setTimeout(() => { if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight; }, 80);
       });
   }, [selectedId]);
+
+  // 会話切り替え時に条件パネルを閉じる
+  useEffect(() => { setShowCondPanel(false); }, [selectedId]);
 
   // scrollTop を直接セットする最確実スクロール（scrollIntoView より信頼性が高い）
   const scrollToBottom = () => {
@@ -2982,8 +2986,18 @@ export default function Home() {
                 </button>
               </div>
 
-              {/* 右: ステータス */}
+              {/* 右: 条件パネルトグル + ステータス */}
               <div className="ml-auto flex items-center gap-1.5">
+                {linkedCustomerMap[selectedConversation.id] && (
+                  <button
+                    onClick={() => setShowCondPanel((p) => !p)}
+                    className="flex items-center gap-0.5 rounded-lg px-1.5 py-1 text-[10px] text-[#aaa] hover:text-[#555] active:opacity-60 transition-all"
+                    title="お客様の条件を表示"
+                  >
+                    <span>条件</span>
+                    <span className={`inline-block transition-transform duration-200 ${showCondPanel ? "rotate-180" : ""}`}>▼</span>
+                  </button>
+                )}
                 <div className="relative shrink-0">
                   <button
                     onClick={() => {
@@ -3022,6 +3036,35 @@ export default function Home() {
               </div>
             </div>
           </header>
+
+          {/* 条件パネル: ▼ボタンで開閉 */}
+          {showCondPanel && (() => {
+            const lc = linkedCustomerMap[selectedConversation.id];
+            if (!lc) return null;
+            const condLines = lc.conditions.split("\n").filter(Boolean);
+            return (
+              <div className="border-b border-[#d1d7db] bg-white/95 backdrop-blur-md px-3 py-2.5 shadow-sm">
+                <div className="flex flex-wrap gap-1.5">
+                  {condLines.map((line, i) => {
+                    const colonIdx = line.indexOf(": ");
+                    const key = colonIdx >= 0 ? line.slice(0, colonIdx) : line;
+                    const val = colonIdx >= 0 ? line.slice(colonIdx + 2) : "";
+                    return (
+                      <span key={i} className="flex items-center gap-1 rounded-xl bg-[#f0f2f5] px-2.5 py-1 text-[11px]">
+                        <span className="text-[#8696a0] font-medium">{key}</span>
+                        {val && <span className="text-[#1565C0] font-semibold">{val}</span>}
+                      </span>
+                    );
+                  })}
+                </div>
+                {lc.ai_summary && (
+                  <div className="mt-2 border-t border-[#f0f2f5] pt-1.5 text-[11px] leading-relaxed text-[#666]">
+                    {lc.ai_summary}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {announcements.length > 0 && (
             <button
