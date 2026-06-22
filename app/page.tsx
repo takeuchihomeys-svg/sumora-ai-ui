@@ -394,6 +394,9 @@ export default function Home() {
   const [calendarTime, setCalendarTime] = useState("");
   const [calendarEndTime, setCalendarEndTime] = useState("");
   const [calendarNote, setCalendarNote] = useState("");
+  const [calendarEventType, setCalendarEventType] = useState<"viewing"|"contract"|"key_handover"|"other">("viewing");
+  const [calendarCustomerName, setCalendarCustomerName] = useState("");
+  const [calendarSaving, setCalendarSaving] = useState(false);
   const [convMenuConvId, setConvMenuConvId] = useState<string | null>(null);
   const [activeTasks, setActiveTasks] = useState<Record<string, Array<{ id: string; task_type: string; created_at: string; customer_name: string }>>>({});
   const [showKnowledgeModal, setShowKnowledgeModal] = useState(false);
@@ -4033,7 +4036,9 @@ export default function Home() {
               <button
                 onClick={() => {
                   const name = conversations.find(c => c.id === convMenuConvId)?.customerName || "";
+                  setCalendarCustomerName(name);
                   setCalendarTitle(name ? `${name} 内覧` : "内覧");
+                  setCalendarEventType("viewing");
                   setCalendarDate("");
                   setCalendarTime("");
                   setCalendarEndTime("");
@@ -4492,75 +4497,76 @@ export default function Home() {
               <button onClick={() => setCalendarModalConvId(null)} className="flex h-7 w-7 items-center justify-center rounded-full bg-white/20 text-white text-sm">✕</button>
             </div>
             <div className="p-4 flex flex-col gap-3">
+              {/* 種別 */}
+              <div className="flex gap-2">
+                {(["viewing","contract","key_handover","other"] as const).map((t) => {
+                  const cfg = { viewing:{label:"内覧",emoji:"🔍",color:"#2196F3"}, contract:{label:"契約",emoji:"📝",color:"#4CAF50"}, key_handover:{label:"鍵渡し",emoji:"🔑",color:"#FF9800"}, other:{label:"その他",emoji:"📌",color:"#9E9E9E"} }[t];
+                  const active = calendarEventType === t;
+                  return (
+                    <button key={t} onClick={() => setCalendarEventType(t)}
+                      className="flex-1 rounded-xl py-2 text-[12px] font-bold border transition-all"
+                      style={{ borderColor: active ? cfg.color : "#e9edef", background: active ? cfg.color : "transparent", color: active ? "white" : "#667781" }}>
+                      {cfg.emoji} {cfg.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {/* タイトル */}
               <div>
                 <div className="mb-1 text-[11px] font-bold text-[#54656f]">タイトル</div>
-                <input
-                  type="text"
-                  value={calendarTitle}
-                  onChange={(e) => setCalendarTitle(e.target.value)}
-                  className="w-full rounded-xl border border-[#e9edef] bg-[#f0f2f5] px-3 py-2.5 text-[14px] text-[#111b21] outline-none"
-                />
+                <input type="text" value={calendarTitle} onChange={(e) => setCalendarTitle(e.target.value)}
+                  className="w-full rounded-xl border border-[#e9edef] bg-[#f0f2f5] px-3 py-2.5 text-[14px] text-[#111b21] outline-none" />
               </div>
-              <div className="flex gap-2">
-                <div className="flex-1">
-                  <div className="mb-1 text-[11px] font-bold text-[#54656f]">日付</div>
-                  <input
-                    type="date"
-                    value={calendarDate}
-                    onChange={(e) => setCalendarDate(e.target.value)}
-                    className="w-full rounded-xl border border-[#e9edef] bg-[#f0f2f5] px-3 py-2.5 text-[14px] text-[#111b21] outline-none"
-                  />
-                </div>
+              {/* 日付 */}
+              <div>
+                <div className="mb-1 text-[11px] font-bold text-[#54656f]">日付</div>
+                <input type="date" value={calendarDate} onChange={(e) => setCalendarDate(e.target.value)}
+                  className="w-full rounded-xl border border-[#e9edef] bg-[#f0f2f5] px-3 py-2.5 text-[14px] text-[#111b21] outline-none" />
               </div>
+              {/* 時間 */}
               <div className="flex gap-2">
                 <div className="flex-1">
                   <div className="mb-1 text-[11px] font-bold text-[#54656f]">開始時間</div>
-                  <input
-                    type="time"
-                    value={calendarTime}
-                    onChange={(e) => setCalendarTime(e.target.value)}
-                    className="w-full rounded-xl border border-[#e9edef] bg-[#f0f2f5] px-3 py-2.5 text-[14px] text-[#111b21] outline-none"
-                  />
+                  <input type="time" value={calendarTime} onChange={(e) => setCalendarTime(e.target.value)}
+                    className="w-full rounded-xl border border-[#e9edef] bg-[#f0f2f5] px-3 py-2.5 text-[14px] text-[#111b21] outline-none" />
                 </div>
                 <div className="flex-1">
-                  <div className="mb-1 text-[11px] font-bold text-[#54656f]">終了時間 <span className="font-normal text-[#90a4ae]">（任意）</span></div>
-                  <input
-                    type="time"
-                    value={calendarEndTime}
-                    onChange={(e) => setCalendarEndTime(e.target.value)}
-                    className="w-full rounded-xl border border-[#e9edef] bg-[#f0f2f5] px-3 py-2.5 text-[14px] text-[#111b21] outline-none"
-                  />
+                  <div className="mb-1 text-[11px] font-bold text-[#54656f]">終了 <span className="font-normal text-[#90a4ae]">（任意）</span></div>
+                  <input type="time" value={calendarEndTime} onChange={(e) => setCalendarEndTime(e.target.value)}
+                    className="w-full rounded-xl border border-[#e9edef] bg-[#f0f2f5] px-3 py-2.5 text-[14px] text-[#111b21] outline-none" />
                 </div>
               </div>
+              {/* メモ */}
               <div>
                 <div className="mb-1 text-[11px] font-bold text-[#54656f]">メモ <span className="font-normal text-[#90a4ae]">（任意）</span></div>
-                <textarea
-                  value={calendarNote}
-                  onChange={(e) => setCalendarNote(e.target.value)}
+                <textarea value={calendarNote} onChange={(e) => setCalendarNote(e.target.value)}
                   placeholder="物件名・住所など..."
                   className="w-full rounded-xl border border-[#e9edef] bg-[#f0f2f5] px-3 py-2.5 text-[14px] text-[#111b21] outline-none resize-none"
-                  rows={2}
-                />
+                  rows={2} />
               </div>
+              {/* 保存ボタン */}
               <button
-                disabled={!calendarDate || !calendarTime || !calendarTitle.trim()}
-                onClick={() => {
-                  const d = calendarDate.replace(/-/g, "");
-                  const tStart = calendarTime.replace(":", "") + "00";
-                  const tEnd = calendarEndTime ? calendarEndTime.replace(":", "") + "00" : (String(Number(calendarTime.replace(":", "").slice(0, 4)) + 100).padStart(4, "0") + "00");
-                  const dates = `${d}T${tStart}/${d}T${tEnd}`;
-                  const params = new URLSearchParams({
-                    text: calendarTitle,
-                    dates,
-                    ...(calendarNote.trim() ? { details: calendarNote.trim() } : {}),
+                disabled={!calendarDate || !calendarTime || !calendarTitle.trim() || calendarSaving}
+                onClick={async () => {
+                  setCalendarSaving(true);
+                  const startAt = new Date(`${calendarDate}T${calendarTime}:00`).toISOString();
+                  const endAt = calendarEndTime ? new Date(`${calendarDate}T${calendarEndTime}:00`).toISOString() : null;
+                  await supabase.from("calendar_events").insert({
+                    title: calendarTitle.trim(),
+                    event_type: calendarEventType,
+                    customer_name: calendarCustomerName,
+                    start_at: startAt,
+                    end_at: endAt,
+                    all_day: false,
+                    notes: calendarNote.trim(),
                   });
-                  window.open(`https://calendar.google.com/calendar/r/eventedit?${params.toString()}`, "_blank");
+                  setCalendarSaving(false);
                   setCalendarModalConvId(null);
                 }}
                 className="w-full rounded-full py-3 text-[14px] font-bold text-white disabled:opacity-40"
                 style={{ background: "linear-gradient(135deg, #2E7D32, #43A047)" }}
               >
-                Googleカレンダーに追加
+                {calendarSaving ? "保存中..." : "カレンダーに追加"}
               </button>
             </div>
           </div>
