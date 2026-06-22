@@ -427,6 +427,9 @@ export default function Home() {
   const [scheduleDateTime, setScheduleDateTime] = useState("");
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const sendLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [scheduledMsgsList, setScheduledMsgsList] = useState<{ id: string; text: string | null; image_urls: string[]; scheduled_at: string }[]>([]);
+  const [showScheduledList, setShowScheduledList] = useState(false);
+  const [cancellingScheduleId, setCancellingScheduleId] = useState<string | null>(null);
   const [enhancing, setEnhancing] = useState(false);
   const [showSparkleModal, setShowSparkleModal] = useState(false);
   const [sparkleKeywords, setSparkleKeywords] = useState<string[]>([]);
@@ -886,6 +889,17 @@ export default function Home() {
 
   // 会話切り替え時に条件パネルを閉じる
   useEffect(() => { setShowCondPanel(false); }, [selectedId]);
+
+  // 会話切り替え時に予約送信一覧を取得
+  useEffect(() => {
+    if (!selectedId) { setScheduledMsgsList([]); return; }
+    supabase.from("scheduled_messages")
+      .select("id, text, image_urls, scheduled_at")
+      .eq("conversation_id", selectedId)
+      .eq("status", "pending")
+      .order("scheduled_at", { ascending: true })
+      .then(({ data }) => setScheduledMsgsList((data ?? []) as { id: string; text: string | null; image_urls: string[]; scheduled_at: string }[]));
+  }, [selectedId]);
 
   // キーワード履歴を localStorage から読み込む
   useEffect(() => {
@@ -2071,6 +2085,13 @@ export default function Home() {
     setShowSendConfirm(true);
   };
 
+  const cancelScheduledMsg = async (id: string) => {
+    setCancellingScheduleId(id);
+    await supabase.from("scheduled_messages").update({ status: "cancelled" }).eq("id", id);
+    setScheduledMsgsList((prev) => prev.filter((m) => m.id !== id));
+    setCancellingScheduleId(null);
+  };
+
   const openScheduleModal = () => {
     if (!selectedConversation.id) return;
     if (!replyDraft.trim() && selectedImageFiles.length === 0) return;
@@ -2109,12 +2130,19 @@ export default function Home() {
         scheduled_at: scheduledAt,
       });
       if (insertErr) throw insertErr;
+      // 予約リストを即更新（DB再取得せずローカルに追加）
+      const { data: inserted } = await supabase.from("scheduled_messages")
+        .select("id, text, image_urls, scheduled_at")
+        .eq("conversation_id", selectedConversation.id)
+        .eq("status", "pending")
+        .order("scheduled_at", { ascending: true });
+      setScheduledMsgsList((inserted ?? []) as { id: string; text: string | null; image_urls: string[]; scheduled_at: string }[]);
       // ドラフトをクリア
       setReplyDraft("");
       setSelectedImageFiles([]);
       setShowScheduleModal(false);
       const [datePart, timePart] = scheduleDateTime.split("T");
-      const [year, month, day] = datePart.split("-");
+      const [, month, day] = datePart.split("-");
       setError(`📅 ${parseInt(month)}/${parseInt(day)} ${timePart} に送信予約しました`);
       setTimeout(() => setError(""), 4000);
     } catch (err) {
@@ -4002,6 +4030,17 @@ export default function Home() {
               </div>
             )}
 
+            {/* 予約送信バッジ */}
+            {scheduledMsgsList.length > 0 && (
+              <button
+                onClick={() => setShowScheduledList(true)}
+                className="flex items-center gap-1.5 self-start rounded-full border border-[#e0e0e0] bg-white px-3 py-1 text-[11px] font-bold text-[#555] shadow-sm"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                予約中 {scheduledMsgsList.length}件
+              </button>
+            )}
+
             {/* テキスト入力 */}
             <div className={`flex items-center gap-2 rounded-[24px] px-4 py-2 transition-all ${inputFocused ? "rounded-[16px]" : ""} ${draftIsAi && replyDraft ? "bg-[#e8f4ff] border border-blue-200" : "bg-[#f0f2f5]"}`}>
               <div className="flex flex-1 flex-col gap-0.5 min-w-0">
@@ -5454,6 +5493,54 @@ export default function Home() {
               >
                 {scheduleSaving ? "予約中…" : "予約する"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 予約送信一覧モーダル */}
+      {showScheduledList && (
+        <div
+          className="fixed inset-0 z-[80] flex items-end justify-center bg-black/50"
+          onClick={() => setShowScheduledList(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-t-2xl bg-white shadow-2xl overflow-hidden pb-safe"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 pt-5 pb-2 flex items-center justify-between border-b border-[#f0f2f5]">
+              <p className="text-[15px] font-bold text-[#111b21]">送信予約 {scheduledMsgsList.length}件</p>
+              <button onClick={() => setShowScheduledList(false)} className="text-[#8696a0] text-[13px]">閉じる</button>
+            </div>
+            <div className="divide-y divide-[#f0f2f5] max-h-72 overflow-y-auto">
+              {scheduledMsgsList.map((msg) => {
+                const jstDate = new Date(new Date(msg.scheduled_at).getTime() + 9 * 60 * 60 * 1000);
+                const pad = (n: number) => String(n).padStart(2, "0");
+                const label = `${jstDate.getUTCMonth() + 1}/${jstDate.getUTCDate()} ${pad(jstDate.getUTCHours())}:${pad(jstDate.getUTCMinutes())}`;
+                return (
+                  <div key={msg.id} className="flex items-start gap-3 px-5 py-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[12px] font-bold text-[#29B6F6] mb-0.5">📅 {label} 送信予定</p>
+                      {msg.image_urls?.length > 0 && (
+                        <p className="text-[11px] text-[#8696a0]">📷 画像 {msg.image_urls.length}枚</p>
+                      )}
+                      {msg.text && (
+                        <p className="text-[12px] text-[#444] line-clamp-2 whitespace-pre-wrap leading-snug">{msg.text}</p>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => cancelScheduledMsg(msg.id)}
+                      disabled={cancellingScheduleId === msg.id}
+                      className="shrink-0 rounded-full border border-red-200 bg-red-50 px-3 py-1 text-[11px] font-bold text-red-500 disabled:opacity-50"
+                    >
+                      {cancellingScheduleId === msg.id ? "取消中…" : "キャンセル"}
+                    </button>
+                  </div>
+                );
+              })}
+              {scheduledMsgsList.length === 0 && (
+                <p className="px-5 py-6 text-center text-[13px] text-[#8696a0]">予約はありません</p>
+              )}
             </div>
           </div>
         </div>
