@@ -11,9 +11,18 @@ const STATUS_LABEL: Record<string, string> = {
   application: "申込手続き中",
   contract: "契約済み",
   lost: "失注",
+  // 追加ステータス（実DB値）
+  first_reply: "初回対応中",
+  condition_hearing: "条件ヒアリング中",
+  property_recommendation: "物件提案中",
+  availability_check: "空き確認中",
+  estimate_request: "見積依頼中",
+  applying: "申込手続き中",
+  closed_won: "契約成立",
+  closed_lost: "失注",
 };
 
-const SKIP_STATUSES = new Set(["contract", "lost"]);
+const SKIP_STATUSES = new Set(["contract", "lost", "closed_won", "closed_lost"]);
 
 export async function POST(req: NextRequest) {
   const { conversation_id } = await req.json() as { conversation_id: string };

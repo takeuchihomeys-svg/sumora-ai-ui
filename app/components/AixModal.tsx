@@ -804,6 +804,23 @@ export default function AixModal({
       });
       if (insertErr) throw insertErr;
 
+      // 予約送信もパターンとして記録（実際に送る意図が確定しているため）
+      if (conversationStatus) {
+        const lastCustomerMsg = (recentMessages ?? [])
+          .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]")
+          .at(-1)?.text ?? "";
+        fetch("/api/learn-action-patterns", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "log",
+            conversation_status: conversationStatus,
+            action_type: actionType,
+            customer_msg_summary: lastCustomerMsg.slice(0, 150),
+          }),
+        }).catch(() => {});
+      }
+
       onAfterSend?.({
         suggest2ndHand: actionType === "property_check_result" && checkAvailableApp === "yes",
         suggestViewingTemplate: actionType === "viewing_invite",

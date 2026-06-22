@@ -374,7 +374,9 @@ export default function Home() {
   });
   const [templateOpenContext, setTemplateOpenContext] = useState<null | "apply_step1" | "apply_step2" | "viewing_follow">(null);
   const [nextActionMap, setNextActionMap] = useState<Record<string, { action: string; reason: string } | null>>({});
-  const [dismissedNextActionIds, setDismissedNextActionIds] = useState<Set<string>>(new Set());
+  const [dismissedNextActionIds, setDismissedNextActionIds] = useState<Set<string>>(() => {
+    try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedNextActionIds") || "[]") as string[]); } catch { return new Set(); }
+  });
   const nextActionFetchingRef = useRef<Set<string>>(new Set());
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);
@@ -550,6 +552,9 @@ export default function Home() {
   useEffect(() => {
     try { sessionStorage.setItem("dismissedViewingInviteIds", JSON.stringify([...dismissedViewingInviteIds])); } catch {}
   }, [dismissedViewingInviteIds]);
+  useEffect(() => {
+    try { sessionStorage.setItem("dismissedNextActionIds", JSON.stringify([...dismissedNextActionIds])); } catch {}
+  }, [dismissedNextActionIds]);
 
   useEffect(() => {
     try { sessionStorage.setItem("dismissedEstimateSheetIds", JSON.stringify([...dismissedEstimateSheetIds])); } catch {}
@@ -647,9 +652,11 @@ export default function Home() {
             );
             // async プリ生成完了 → preGenInProgress をクリア
             if (upd.ai_draft) preGenInProgress.current.delete(String(upd.id));
-            // 新規顧客メッセージ → AI次アクション提案を再取得
+            // 新規顧客メッセージ → AI次アクション提案を再取得（dismiss もリセット）
             if (upd.ai_draft) {
-              setNextActionMap((prev) => { const n = { ...prev }; delete n[String(upd.id)]; return n; });
+              const convId = String(upd.id);
+              setNextActionMap((prev) => { const n = { ...prev }; delete n[convId]; return n; });
+              setDismissedNextActionIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
             }
           }
           fetchConversationsAndMessages(true);
@@ -2576,6 +2583,9 @@ export default function Home() {
 
   const sendMessageText = async (text: string, imageUrl?: string) => {
     if (!selectedConversation.id || (!text.trim() && !imageUrl)) return;
+    // AIX送信時も含めて、送信後は次アクション提案をリセット（状況が変わったため）
+    setNextActionMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; });
+    setDismissedNextActionIds((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
     const now = new Date();
     const newMessages: Message[] = [];
 
