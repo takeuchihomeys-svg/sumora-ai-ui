@@ -416,6 +416,7 @@ export default function Home() {
   const [sparkleKeywords, setSparkleKeywords] = useState<string[]>([]);
   const [sparkleKeywordInput, setSparkleKeywordInput] = useState("");
   const [sparkleSelectedSituations, setSparkleSelectedSituations] = useState<string[]>([]);
+  const [sparkleAttitudes, setSparkleAttitudes] = useState<string[]>([]);
   const [sparkleSituations, setSparkleSituations] = useState<string[]>(() => {
     if (typeof window === "undefined") return [];
     try { return JSON.parse(localStorage.getItem("sparkleSituations") || "[]") as string[]; } catch { return []; }
@@ -1678,6 +1679,16 @@ export default function Home() {
 
   const DEFAULT_SPARKLE_SITUATIONS = ["物件を特にオススメする", "内見を提案する", "初期費用の説明", "審査について", "申込を促す", "日程調整", "お礼・感謝", "ピックアップ（約束）"];
 
+  // 向き合い方ボタン
+  const ATTITUDE_OPTIONS = ["理解", "寄り添う", "感謝", "信頼", "選択できるように"];
+  const ATTITUDE_PROMPTS: Record<string, string> = {
+    "理解": "【向き合い方：理解】お客様の言葉・状況・気持ちをしっかり理解していることを示す表現を自然に使うこと（「しっかり拝見しました！！」「おっしゃる通りですね！！」など）",
+    "寄り添う": "【向き合い方：寄り添う】お客様の立場に立って共感・寄り添う言葉を使うこと（「〇〇なんですね！！」「お気持ちわかります！！」「ご不安なお気持ちお察しします」など）",
+    "感謝": "【向き合い方：感謝】お客様への感謝の気持ちを自然に表現すること（「丁寧にお伝え頂きありがとうございます！！」など）",
+    "信頼": "【向き合い方：信頼】「任せてください！！」「全力でサポートします！！」など力強く信頼感・安心感を与える言葉を使うこと",
+    "選択できるように": "【向き合い方：選択できるように】お客様が自分で決められるよう選択肢を2〜3つ提示すること（「AかBどちらがよろしいでしょうか！！」など）",
+  };
+
   // 各状況ボタンの専用プロンプト（ピックアップ（約束）のみ別途処理）
   const SITUATION_PROMPTS: Record<string, string> = {
     "物件を特にオススメする": "【特オススメ指示】提案中の物件の中でお客様の条件に最も合う1件を「特にこちらの物件がオススメです！！」と明示し、条件と照らし合わせた理由を1〜2文で述べること",
@@ -1727,6 +1738,8 @@ export default function Home() {
       extractedConditions
         ? `【お客様が列挙した条件・要望（返信で具体的に言及すること）】${extractedConditions}`
         : "",
+      // 向き合い方プロンプト
+      ...sparkleAttitudes.map(a => ATTITUDE_PROMPTS[a] ?? ""),
       // 各状況ボタンを専用プロンプトに展開（定義なしのカスタムボタンは「状況: ○○」にフォールバック）
       ...otherSituations.map(s => SITUATION_PROMPTS[s] ?? `状況: ${s}`),
       hasPickupPromise ? "【物件ピックアップ約束文】会話を読み取り、物件をピックアップして送る旨の短い約束メッセージを生成する。必須:「物件ピックアップ出来ましたらお送りさせて頂きます！！」を軸に、会話から重要なポイント（エリア・条件変更・お客様の気持ちなど）があれば自然に1〜2文追加する。合計5行以内・シンプルに。余分な挨拶・長い説明は不要" : "",
@@ -1799,6 +1812,7 @@ export default function Home() {
       setSparkleKeywords([]);
       setSparkleKeywordInput("");
       setSparkleSelectedSituations([]);
+      setSparkleAttitudes([]);
       setTimeout(() => { textareaRef.current?.focus(); }, 50);
     } catch (err) {
       console.error("sparkle generate error:", err);
@@ -3277,7 +3291,7 @@ export default function Home() {
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-[13px] font-bold text-[#6c3fc7]">✨ AI返信を指定生成</span>
                   <button
-                    onClick={() => { setShowSparkleModal(false); setSparkleKeywords([]); setSparkleKeywordInput(""); setSparkleAddingNew(false); setSparkleNewText(""); setSparkleMeetingPlaceOpen(false); setSparkleMeetingPlace(""); setSparkleNoEmoji(false); }}
+                    onClick={() => { setShowSparkleModal(false); setSparkleKeywords([]); setSparkleKeywordInput(""); setSparkleAddingNew(false); setSparkleNewText(""); setSparkleMeetingPlaceOpen(false); setSparkleMeetingPlace(""); setSparkleNoEmoji(false); setSparkleAttitudes([]); }}
                     className="flex h-6 w-6 items-center justify-center rounded-full bg-[#f0f2f5] text-[#667781] text-[13px]"
                   >×</button>
                 </div>
@@ -3316,6 +3330,23 @@ export default function Home() {
                       placeholder={sparkleKeywords.length === 0 ? "例: フィレンツェ1109号室、駅近を強調（Enterで追加）" : "Enterで追加"}
                       className="flex-1 min-w-[100px] py-0.5 text-[12px] outline-none bg-transparent"
                     />
+                  </div>
+                </div>
+
+                {/* 向き合い方ボタン */}
+                <div className="mb-3">
+                  <label className="mb-1.5 block text-[11px] font-bold text-[#667781]">向き合い方（複数OK）</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {ATTITUDE_OPTIONS.map((a) => {
+                      const selected = sparkleAttitudes.includes(a);
+                      return (
+                        <button
+                          key={a}
+                          onClick={() => setSparkleAttitudes(prev => selected ? prev.filter(x => x !== a) : [...prev, a])}
+                          className={`rounded-full border px-3 py-1 text-[12px] font-medium transition-all ${selected ? "border-[#2196f3] bg-[#e3f2fd] text-[#1565c0]" : "border-[#d1d7db] bg-white text-[#444]"}`}
+                        >{a}</button>
+                      );
+                    })}
                   </div>
                 </div>
 
