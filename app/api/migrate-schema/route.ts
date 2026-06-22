@@ -455,6 +455,26 @@ LANGUAGE sql STABLE AS $$
   ORDER BY ak.embedding <=> query_embedding LIMIT match_count
 $$;
 
+-- AIXアクションパターン学習テーブル
+-- 「このステータスでこのアクションが取られた」を蓄積して次アクション提案に活用
+CREATE TABLE IF NOT EXISTS action_pattern_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_status TEXT NOT NULL,
+  action_type TEXT NOT NULL,
+  customer_msg_summary TEXT,
+  source TEXT DEFAULT 'manual',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_action_pattern_logs_status ON action_pattern_logs(conversation_status);
+CREATE INDEX IF NOT EXISTS idx_action_pattern_logs_action ON action_pattern_logs(action_type);
+CREATE INDEX IF NOT EXISTS idx_action_pattern_logs_created_at ON action_pattern_logs(created_at DESC);
+ALTER TABLE action_pattern_logs DISABLE ROW LEVEL SECURITY;
+
+-- line_tasks: estimate_sheet を許可
+ALTER TABLE line_tasks DROP CONSTRAINT IF EXISTS line_tasks_task_type_check;
+ALTER TABLE line_tasks ADD CONSTRAINT line_tasks_task_type_check
+  CHECK (task_type IN ('property_check', 'property_send', 'estimate_sheet'));
+
 -- match_reply_examples: reply_angleを返り値に追加（選ばれた実例のブースト用）
 -- 戻り値型変更のためDROP→CREATEが必要
 DROP FUNCTION IF EXISTS match_reply_examples(vector, int, text[]);

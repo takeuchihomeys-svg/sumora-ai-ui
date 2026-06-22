@@ -5021,6 +5021,7 @@ export default function Home() {
           account={selectedConversation.account ?? currentAccount.id}
           lineUserId={selectedConversation.lineUserId}
           lastScheduledAt={scheduledMsgsList.at(-1)?.scheduled_at}
+          conversationStatus={selectedConversation.status}
           onScheduled={refreshScheduledMsgs}
           initialImageFile={aixInitialFile ?? undefined}
           linkedCustomer={aixModalType === "property_recommendation" ? linkedCustomerMap[selectedConversation.id] : undefined}

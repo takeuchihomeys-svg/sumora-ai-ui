@@ -31,6 +31,7 @@ interface AixModalProps {
   customerSummary?: string | null;
   lineUserId: string;
   lastScheduledAt?: string;
+  conversationStatus?: string;
   onClose: () => void;
   onSend: (text: string, imageUrl?: string) => Promise<void>;
   onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; scheduled?: boolean }) => void;
@@ -152,6 +153,7 @@ export default function AixModal({
   customerSummary,
   lineUserId,
   lastScheduledAt,
+  conversationStatus,
   onClose,
   onSend,
   onAfterSend,
@@ -894,6 +896,20 @@ export default function AixModal({
           isStarred: true,
         }),
       }).catch(() => {});
+
+      // 次アクション学習ログ（過去パターンとして蓄積）
+      if (conversationStatus) {
+        fetch("/api/learn-action-patterns", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "log",
+            conversation_status: conversationStatus,
+            action_type: actionType,
+            customer_msg_summary: (lastCustomerMsg || inputText.trim()).slice(0, 150),
+          }),
+        }).catch(() => {});
+      }
 
       onAfterSend?.({
         suggest2ndHand: actionType === "property_check_result" && checkAvailableApp === "yes",
