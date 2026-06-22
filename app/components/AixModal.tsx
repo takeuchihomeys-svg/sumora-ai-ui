@@ -891,8 +891,8 @@ export default function AixModal({
         suggestViewingTemplate: actionType === "viewing_invite",
       });
       onClose();
-    } catch {
-      setError("送信に失敗しました");
+    } catch (err) {
+      setError(`送信に失敗しました: ${err instanceof Error ? err.message : "通信エラー"}`);
     } finally {
       setLoading(false);
     }

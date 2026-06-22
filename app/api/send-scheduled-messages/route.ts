@@ -46,7 +46,8 @@ export async function GET(req: NextRequest) {
     .select("*")
     .eq("status", "pending")
     .lte("scheduled_at", now)
-    .limit(20);
+    .order("scheduled_at", { ascending: true })
+    .limit(100);
 
   if (fetchErr) return NextResponse.json({ error: fetchErr.message }, { status: 500 });
   if (!pending?.length) return NextResponse.json({ ok: true, processed: 0 });

@@ -908,16 +908,30 @@ export default function Home() {
       .then(({ data }) => setScheduledMsgsList((data ?? []) as { id: string; text: string | null; image_urls: string[]; scheduled_at: string }[]));
   }, [selectedId]);
 
-  // 予約送信リストを30秒ごとに自動更新（送信済みになったらバッジを自動消去）
+  // 予約送信リストを30秒ごとに自動更新（送信済みになったらバッジを自動消去 + 失敗通知）
   useEffect(() => {
     if (!selectedId) return;
     const interval = setInterval(async () => {
-      const { data } = await supabase.from("scheduled_messages")
-        .select("id, text, image_urls, scheduled_at")
-        .eq("conversation_id", selectedId)
-        .eq("status", "pending")
-        .order("scheduled_at", { ascending: true });
-      if (data) setScheduledMsgsList(data as { id: string; text: string | null; image_urls: string[]; scheduled_at: string }[]);
+      const [{ data: pending }, { data: failed }] = await Promise.all([
+        supabase.from("scheduled_messages")
+          .select("id, text, image_urls, scheduled_at")
+          .eq("conversation_id", selectedId)
+          .eq("status", "pending")
+          .order("scheduled_at", { ascending: true }),
+        supabase.from("scheduled_messages")
+          .select("id, error")
+          .eq("conversation_id", selectedId)
+          .eq("status", "failed")
+          .order("scheduled_at", { ascending: false })
+          .limit(1),
+      ]);
+      if (pending) setScheduledMsgsList(pending as { id: string; text: string | null; image_urls: string[]; scheduled_at: string }[]);
+      if (failed && failed.length > 0) {
+        const errMsg = (failed[0] as { id: string; error?: string }).error;
+        setError(`⚠️ 予約送信が失敗しました: ${errMsg ?? "LINE送信エラー"}`);
+        // 通知済みにしてDB上で acknowledged に更新（再通知防止）
+        await supabase.from("scheduled_messages").update({ status: "failed_ack" }).eq("id", (failed[0] as { id: string }).id);
+      }
     }, 30000);
     return () => clearInterval(interval);
   }, [selectedId]);
