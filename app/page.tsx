@@ -320,6 +320,7 @@ export default function Home() {
   const [mobileView, setMobileView] = useState<"list" | "chat">("list");
   const [inputFocused, setInputFocused] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState<number | null>(null);
   const [pullStartY, setPullStartY] = useState(0);
   const [isPulling, setIsPulling] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -1388,17 +1389,17 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedConversation.aiDraft]);
 
-  // iOS キーボード対応: visualViewport でキーボード高さを検出してレイアウトを押し上げる
+  // iOS キーボード対応: visualViewport.height で main の高さを追従させる
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
     const handler = () => {
       const kh = Math.max(0, window.innerHeight - vv.height);
       setKeyboardHeight(kh);
+      setViewportHeight(vv.height); // main の高さをキーボード分縮める
       if (kh > 100) {
         requestAnimationFrame(() => {
           if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
-          // iOS: テキストエリアがフォーカス中なら内部スクロールをカーソル末尾に合わせる
           const ta = textareaRef.current;
           if (ta && document.activeElement === ta) {
             ta.scrollTop = ta.scrollHeight;
@@ -1407,7 +1408,8 @@ export default function Home() {
       }
     };
     vv.addEventListener("resize", handler);
-    return () => vv.removeEventListener("resize", handler);
+    vv.addEventListener("scroll", handler);
+    return () => { vv.removeEventListener("resize", handler); vv.removeEventListener("scroll", handler); };
   }, []);
 
   // replyDraftが変わったらtextareaの高さを自動調整（iOS SafariでのscrollHeight誤算対策でrAF使用）
@@ -2650,8 +2652,9 @@ export default function Home() {
 
   return (
     <main
-      className="h-[100svh] overflow-hidden bg-[#111b21]"
+      className="overflow-hidden bg-[#111b21]"
       style={{
+        height: viewportHeight ? `${viewportHeight}px` : "100svh",
         WebkitTextSizeAdjust: "100%",
         touchAction: "manipulation",
       }}
@@ -2992,7 +2995,6 @@ export default function Home() {
             transform: chatSwipeDelta > 0 ? `translateX(${Math.min(chatSwipeDelta * 0.7, 200)}px)` : "none",
             transition: chatSwipeDelta === 0 ? "transform 0.25s cubic-bezier(0.25,0.46,0.45,0.94)" : "none",
             touchAction: "pan-y",
-            paddingBottom: keyboardHeight > 0 ? keyboardHeight : undefined,
           }}
           onTouchStart={onChatTouchStart}
           onTouchMove={onChatTouchMove}
