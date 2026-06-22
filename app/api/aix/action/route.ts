@@ -140,7 +140,11 @@ export async function POST(request: NextRequest) {
           .join("\n")
       : "";
 
-    const name = customer_name ? `${customer_name}さん` : "お客様";
+    const rawName = customer_name ? String(customer_name).trim() : "";
+    const familyName = rawName.includes(" ") || rawName.includes("　")
+      ? rawName.split(/[ 　]/)[0]
+      : rawName;
+    const name = familyName ? `${familyName}さん` : "お客様";
 
     // phrase_dictionary 取得（物件オススメ・内覧・申込のみ）
     const phraseCategoryMap: Record<string, string> = {
