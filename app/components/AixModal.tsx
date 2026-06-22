@@ -32,7 +32,8 @@ interface AixModalProps {
   lineUserId: string;
   onClose: () => void;
   onSend: (text: string, imageUrl?: string) => Promise<void>;
-  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean }) => void;
+  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; scheduled?: boolean }) => void;
+  onScheduled?: () => void;
 }
 
 const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }> = {
@@ -152,6 +153,7 @@ export default function AixModal({
   onClose,
   onSend,
   onAfterSend,
+  onScheduled,
 }: AixModalProps) {
   const config = CONFIG[actionType];
 
@@ -794,7 +796,9 @@ export default function AixModal({
       onAfterSend?.({
         suggest2ndHand: actionType === "property_check_result" && checkAvailableApp === "yes",
         suggestViewingTemplate: actionType === "viewing_invite",
+        scheduled: true,
       });
+      onScheduled?.();
       setShowAixScheduleModal(false);
       onClose();
     } catch (err) {

@@ -2128,6 +2128,16 @@ export default function Home() {
     setShowSendConfirm(true);
   };
 
+  const refreshScheduledMsgs = async () => {
+    if (!selectedId) return;
+    const { data } = await supabase.from("scheduled_messages")
+      .select("id, text, image_urls, scheduled_at")
+      .eq("conversation_id", selectedId)
+      .eq("status", "pending")
+      .order("scheduled_at", { ascending: true });
+    if (data) setScheduledMsgsList(data as { id: string; text: string | null; image_urls: string[]; scheduled_at: string }[]);
+  };
+
   const cancelScheduledMsg = async (id: string) => {
     setCancellingScheduleId(id);
     await supabase.from("scheduled_messages").update({ status: "cancelled" }).eq("id", id);
@@ -4915,6 +4925,7 @@ export default function Home() {
           customerName={selectedConversation.customerName}
           account={selectedConversation.account ?? currentAccount.id}
           lineUserId={selectedConversation.lineUserId}
+          onScheduled={refreshScheduledMsgs}
           initialImageFile={aixInitialFile ?? undefined}
           linkedCustomer={aixModalType === "property_recommendation" ? linkedCustomerMap[selectedConversation.id] : undefined}
           customerConditions={linkedCustomerMap[selectedConversation.id]?.conditions || memos[selectedConversation.id] || undefined}
@@ -4941,15 +4952,17 @@ export default function Home() {
                   }
                 }
               : aixModalType === "property_send"
-              ? () => {
+              ? (meta) => {
                   const convId = selectedConversation.id;
                   const customerName = selectedConversation.customerName;
                   // 物件送るバナーを消去（dismissed も解除して次回のために備える）
                   setSuggestPropertySendMap((prev) => { const n = { ...prev }; delete n[convId]; return n; });
                   setDismissedPropertySendIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
-                  // 物件オススメ誘導バナーを表示
-                  setSuggestPropertyRecommendMap((prev) => ({ ...prev, [convId]: true }));
-                  setDismissedPropertyRecommendIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
+                  if (!meta?.scheduled) {
+                    // 物件オススメ誘導バナーを表示（即時送信時のみ）
+                    setSuggestPropertyRecommendMap((prev) => ({ ...prev, [convId]: true }));
+                    setDismissedPropertyRecommendIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
+                  }
                   // property_sendタスクを完了
                   const sendTask = (activeTasks[convId] ?? []).find((t) => t.task_type === "property_send");
                   if (sendTask) {
@@ -4959,39 +4972,42 @@ export default function Home() {
                       body: JSON.stringify({ id: sendTask.id }),
                     }).catch(() => {});
                   }
-                  // property_checkタスクを自動作成（次の工程）
-                  const alreadyHasCheck = (activeTasks[convId] ?? []).some((t) => t.task_type === "property_check");
-                  if (!alreadyHasCheck) {
-                    fetch("/api/line-tasks", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ conversation_id: convId, task_type: "property_check", customer_name: customerName }),
-                    }).then(async (r) => {
-                      if (!r.ok) return;
-                      const d = await r.json() as { ok: boolean; id?: string; created_at?: string };
-                      if (d.ok && d.id && d.created_at) {
-                        setActiveTasks((prev) => {
-                          const existing = prev[convId] ?? [];
-                          if (existing.some((x) => x.task_type === "property_check")) return prev;
-                          return { ...prev, [convId]: [...existing, { id: d.id!, task_type: "property_check", created_at: d.created_at!, customer_name: customerName }] };
+                  // property_checkタスクを自動作成（次の工程）- 予約送信時はスキップ
+                  if (!meta?.scheduled) {
+                    // property_checkタスクを自動作成（即時送信時のみ）
+                    const alreadyHasCheck = (activeTasks[convId] ?? []).some((t) => t.task_type === "property_check");
+                    if (!alreadyHasCheck) {
+                      fetch("/api/line-tasks", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ conversation_id: convId, task_type: "property_check", customer_name: customerName }),
+                      }).then(async (r) => {
+                        if (!r.ok) return;
+                        const d = await r.json() as { ok: boolean; id?: string; created_at?: string };
+                        if (d.ok && d.id && d.created_at) {
+                          setActiveTasks((prev) => {
+                            const existing = prev[convId] ?? [];
+                            if (existing.some((x) => x.task_type === "property_check")) return prev;
+                            return { ...prev, [convId]: [...existing, { id: d.id!, task_type: "property_check", created_at: d.created_at!, customer_name: customerName }] };
+                          });
+                        }
+                      }).catch(() => {});
+                    }
+                    // 紐付き顧客を「物件出し」ステータスに更新（即時送信時のみ）
+                    const pcId = selectedConversation.propertyCustomerId;
+                    if (pcId) {
+                      const sentAt = new Date().toISOString();
+                      supabase.from("property_customers").update({
+                        status: "property_search",
+                        last_property_sent_at: sentAt,
+                      }).eq("id", pcId).then(() => {
+                        setLinkedCustomerMap((prev) => {
+                          const cur = prev[convId];
+                          if (!cur) return prev;
+                          return { ...prev, [convId]: { ...cur, propertyStatus: "property_search", lastPropertySentAt: sentAt } };
                         });
-                      }
-                    }).catch(() => {});
-                  }
-                  // 紐付き顧客を「物件出し」ステータスに更新
-                  const pcId = selectedConversation.propertyCustomerId;
-                  if (pcId) {
-                    const sentAt = new Date().toISOString();
-                    supabase.from("property_customers").update({
-                      status: "property_search",
-                      last_property_sent_at: sentAt,
-                    }).eq("id", pcId).then(() => {
-                      setLinkedCustomerMap((prev) => {
-                        const cur = prev[convId];
-                        if (!cur) return prev;
-                        return { ...prev, [convId]: { ...cur, propertyStatus: "property_search", lastPropertySentAt: sentAt } };
                       });
-                    });
+                    }
                   }
                 }
               : aixModalType === "property_recommendation"

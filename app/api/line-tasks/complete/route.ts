@@ -4,6 +4,7 @@ import { supabase } from "@/app/lib/supabase";
 const TASK_LABEL: Record<string, string> = {
   property_check: "物件確認",
   property_send: "物件出し",
+  estimate_sheet: "見積書対応",
 };
 
 async function sendGroupMessage(text: string): Promise<void> {
