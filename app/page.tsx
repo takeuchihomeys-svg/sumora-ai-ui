@@ -423,6 +423,10 @@ export default function Home() {
   const [linkedLineUserIds, setLinkedLineUserIds] = useState<Set<string>>(new Set());
   const [postApplyConvIds, setPostApplyConvIds] = useState<Set<string>>(new Set<string>());
   const [showSendConfirm, setShowSendConfirm] = useState(false);
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [scheduleDateTime, setScheduleDateTime] = useState("");
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+  const sendLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [enhancing, setEnhancing] = useState(false);
   const [showSparkleModal, setShowSparkleModal] = useState(false);
   const [sparkleKeywords, setSparkleKeywords] = useState<string[]>([]);
@@ -2065,6 +2069,59 @@ export default function Home() {
     if (!selectedConversation.id) return;
     if (!replyDraft.trim() && selectedImageFiles.length === 0) return;
     setShowSendConfirm(true);
+  };
+
+  const openScheduleModal = () => {
+    if (!selectedConversation.id) return;
+    if (!replyDraft.trim() && selectedImageFiles.length === 0) return;
+    // デフォルト: 今から1時間後（JST）
+    const d = new Date(Date.now() + 60 * 60 * 1000 + 9 * 60 * 60 * 1000);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const defaultDt = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+    setScheduleDateTime(defaultDt);
+    setShowScheduleModal(true);
+  };
+
+  const executeScheduleSend = async () => {
+    if (!selectedConversation.id || !scheduleDateTime) return;
+    setScheduleSaving(true);
+    try {
+      const textToSend = replyDraft.trim();
+      // 画像をアップロードしてURLを取得
+      const imageUrls: string[] = [];
+      for (let i = 0; i < selectedImageFiles.length; i++) {
+        const file = selectedImageFiles[i];
+        const ext = file.name.split(".").pop() || "jpg";
+        const path = `messages/${selectedConversation.id}/sched_${Date.now()}_${i}.${ext}`;
+        const { error: uploadError } = await supabase.storage.from("property-images").upload(path, file, { upsert: true });
+        if (uploadError) throw new Error(`画像アップロード失敗: ${uploadError.message}`);
+        const { data } = supabase.storage.from("property-images").getPublicUrl(path);
+        imageUrls.push(data.publicUrl);
+      }
+      // JSTのdatetime-local → UTC に変換
+      const scheduledAt = new Date(scheduleDateTime + ":00+09:00").toISOString();
+      const { error: insertErr } = await supabase.from("scheduled_messages").insert({
+        conversation_id: selectedConversation.id,
+        line_user_id: selectedConversation.lineUserId,
+        account: selectedConversation.account,
+        text: textToSend || null,
+        image_urls: imageUrls,
+        scheduled_at: scheduledAt,
+      });
+      if (insertErr) throw insertErr;
+      // ドラフトをクリア
+      setReplyDraft("");
+      setSelectedImageFiles([]);
+      setShowScheduleModal(false);
+      const [datePart, timePart] = scheduleDateTime.split("T");
+      const [year, month, day] = datePart.split("-");
+      setError(`📅 ${parseInt(month)}/${parseInt(day)} ${timePart} に送信予約しました`);
+      setTimeout(() => setError(""), 4000);
+    } catch (err) {
+      setError(`予約失敗: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setScheduleSaving(false);
+    }
   };
 
   const executeSend = async () => {
@@ -3996,9 +4053,14 @@ export default function Home() {
               </div>
               <button
                 onClick={sendReply}
+                onTouchStart={() => { sendLongPressTimer.current = setTimeout(openScheduleModal, 600); }}
+                onTouchEnd={() => { if (sendLongPressTimer.current) { clearTimeout(sendLongPressTimer.current); sendLongPressTimer.current = null; } }}
+                onMouseDown={() => { sendLongPressTimer.current = setTimeout(openScheduleModal, 600); }}
+                onMouseUp={() => { if (sendLongPressTimer.current) { clearTimeout(sendLongPressTimer.current); sendLongPressTimer.current = null; } }}
+                onMouseLeave={() => { if (sendLongPressTimer.current) { clearTimeout(sendLongPressTimer.current); sendLongPressTimer.current = null; } }}
                 disabled={sending || (!replyDraft.trim() && selectedImageFiles.length === 0)}
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#29B6F6] text-white shadow-sm disabled:opacity-50"
-                title="送信"
+                title="送信（長押しで予約送信）"
               >
                 {sending ? (
                   <span className="text-[10px] font-bold">…</span>
@@ -5343,6 +5405,54 @@ export default function Home() {
                 className="flex-1 py-3.5 text-[14px] font-bold text-[#1565C0]"
               >
                 送信する
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 予約送信モーダル */}
+      {showScheduleModal && (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50"
+          onClick={() => setShowScheduleModal(false)}
+        >
+          <div
+            className="mx-4 w-full max-w-xs rounded-2xl bg-white shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 pt-5 pb-4">
+              <p className="text-[15px] font-bold text-[#111b21] mb-1">📅 送信予約</p>
+              <p className="text-[12px] text-[#8696a0] mb-3">指定した日時にLINEへ自動送信します</p>
+              {replyDraft.trim() && (
+                <p className="text-[13px] text-[#667781] bg-[#f0f2f5] rounded-xl px-3 py-2 max-h-20 overflow-y-auto whitespace-pre-wrap leading-snug mb-2">
+                  {replyDraft.trim()}
+                </p>
+              )}
+              {selectedImageFiles.length > 0 && (
+                <p className="text-[12px] text-[#667781] mb-3">📷 画像 {selectedImageFiles.length}枚</p>
+              )}
+              <label className="text-[12px] font-bold text-[#667781] block mb-1">送信日時（JST）</label>
+              <input
+                type="datetime-local"
+                value={scheduleDateTime}
+                onChange={(e) => setScheduleDateTime(e.target.value)}
+                className="w-full rounded-xl border border-[#e0e0e0] px-3 py-2.5 text-[14px] text-[#111b21] focus:outline-none focus:border-[#29B6F6]"
+              />
+            </div>
+            <div className="flex border-t border-[#f0f2f5]">
+              <button
+                onClick={() => setShowScheduleModal(false)}
+                className="flex-1 py-3.5 text-[14px] font-semibold text-[#8696a0] border-r border-[#f0f2f5]"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={executeScheduleSend}
+                disabled={scheduleSaving || !scheduleDateTime}
+                className="flex-1 py-3.5 text-[14px] font-bold text-[#1565C0] disabled:opacity-50"
+              >
+                {scheduleSaving ? "予約中…" : "予約する"}
               </button>
             </div>
           </div>

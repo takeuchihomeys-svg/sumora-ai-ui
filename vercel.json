@@ -5,6 +5,10 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/send-scheduled-messages",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/flagged-reminder",
       "schedule": "*/30 * * * *"
     },
