@@ -2986,12 +2986,18 @@ export default function Home() {
                 )}
               </button>
 
-              {/* 中央: 名前（タップで更新） */}
+              {/* 中央: 名前（紐付き客→条件パネル開閉 / 未紐付き→更新） */}
               <div className="pointer-events-none absolute left-0 right-0 flex justify-center">
                 <button
-                  onClick={() => fetchConversationsAndMessages()}
+                  onClick={() => {
+                    if (linkedCustomerMap[selectedConversation.id]) {
+                      setShowCondPanel((p) => !p);
+                    } else {
+                      fetchConversationsAndMessages();
+                    }
+                  }}
                   className="pointer-events-auto flex flex-col items-center max-w-[60%] active:opacity-60 transition-opacity"
-                  title="タップして更新"
+                  title={linkedCustomerMap[selectedConversation.id] ? "タップして条件を表示" : "タップして更新"}
                 >
                   <span className="truncate text-[15px] font-semibold text-[#111b21] text-center">
                     {selectedConversation.id ? selectedConversation.customerName : "会話を選択"}
@@ -2999,23 +3005,16 @@ export default function Home() {
                   {selectedConversation.id && (
                     <span className="text-[8px] text-[#999] leading-none mt-0.5">
                       {getAccountMeta(selectedConversation.account).label}
+                      {linkedCustomerMap[selectedConversation.id] && (
+                        <span className={`ml-1 transition-transform duration-200 inline-block ${showCondPanel ? "rotate-180" : ""}`}>▾</span>
+                      )}
                     </span>
                   )}
                 </button>
               </div>
 
-              {/* 右: 条件パネルトグル + ステータス */}
+              {/* 右: ステータス */}
               <div className="ml-auto flex items-center gap-1.5">
-                {linkedCustomerMap[selectedConversation.id] && (
-                  <button
-                    onClick={() => setShowCondPanel((p) => !p)}
-                    className="flex items-center gap-0.5 rounded-lg px-1.5 py-1 text-[10px] text-[#aaa] hover:text-[#555] active:opacity-60 transition-all"
-                    title="お客様の条件を表示"
-                  >
-                    <span>条件</span>
-                    <span className={`inline-block transition-transform duration-200 ${showCondPanel ? "rotate-180" : ""}`}>▼</span>
-                  </button>
-                )}
                 <div className="relative shrink-0">
                   <button
                     onClick={() => {
