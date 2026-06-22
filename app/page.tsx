@@ -3965,12 +3965,22 @@ export default function Home() {
                     // iOS: テキストエリアの内部スクロールをカーソル位置（末尾）に合わせる
                     requestAnimationFrame(() => { e.target.scrollTop = e.target.scrollHeight; });
                   }}
-                  onFocus={() => setInputFocused(true)}
+                  onFocus={() => {
+                    setInputFocused(true);
+                    // iOS: フォーカス時にテキスト末尾を表示 & チャットを最下部へ
+                    requestAnimationFrame(() => {
+                      if (textareaRef.current) textareaRef.current.scrollTop = textareaRef.current.scrollHeight;
+                      if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+                    });
+                  }}
                   onBlur={() => setInputFocused(false)}
                   rows={1}
                   placeholder={draftPreparing ? "AI返信案を準備中..." : "Aa"}
                   className="min-h-[22px] w-full resize-none overflow-y-auto bg-transparent text-[14px] leading-6 text-[#111b21] outline-none placeholder:text-[#aaa]"
-                  style={{ height: `${textareaHeightPx}px` }}
+                  style={{
+                    height: `${textareaHeightPx}px`,
+                    maxHeight: keyboardHeight > 100 ? "140px" : "320px",
+                  }}
                 />
               </div>
               <button
