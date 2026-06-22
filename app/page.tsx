@@ -1583,7 +1583,7 @@ export default function Home() {
               ? [...contextMsgs].reverse().find((m) => m.sender === "staff")
               : undefined;
             const finalMsgs = lastStaff ? [lastStaff, ...last20] : last20;
-            return finalMsgs.map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined }));
+            return finalMsgs.map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined, createdAt: m.rawCreatedAt || undefined }));
           })(),
         }),
       });

@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
     try {
       const { data: conv, error: convErr } = await db
         .from("conversations")
-        .select("status, property_customer_id, ai_draft, last_sender")
+        .select("status, property_customer_id, ai_draft, last_sender, customer_name")
         .eq("id", convId)
         .single();
 
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
           .order("created_at", { ascending: false }).limit(20),
         conv.property_customer_id
           ? db.from("property_customers")
-            .select("customer_name, desired_area, floor_plan, rent_min, rent_max, ai_summary, preferences, ng_points")
+            .select("customer_name, desired_area, floor_plan, rent_min, rent_max, ai_summary, preferences, ng_points, walk_minutes, move_in_time, building_age, other_requests, additional_conditions")
             .eq("id", conv.property_customer_id).single()
           : Promise.resolve({ data: null }),
       ]);
@@ -82,15 +82,24 @@ export async function POST(req: NextRequest) {
 
       if (!targetMessage.trim()) return;
 
-      type PC = { customer_name?: string; desired_area?: string; floor_plan?: string; rent_min?: number; rent_max?: number; ai_summary?: string; preferences?: string; ng_points?: string } | null;
+      type PC = { customer_name?: string; desired_area?: string; floor_plan?: string; rent_min?: number; rent_max?: number; ai_summary?: string; preferences?: string; ng_points?: string; walk_minutes?: number; move_in_time?: string; building_age?: number; other_requests?: string; additional_conditions?: string } | null;
       const pcData = pc as PC;
+      // formatConditions と同じロジックで全フィールドを統一フォーマット
       const dbConditions = [
         pcData?.desired_area && `エリア: ${pcData.desired_area}`,
         pcData?.floor_plan && `間取り: ${pcData.floor_plan}`,
-        (pcData?.rent_min || pcData?.rent_max) && `家賃: ${pcData?.rent_min ? Math.floor(pcData.rent_min / 10000) + "万〜" : ""}${pcData?.rent_max ? Math.floor(pcData.rent_max / 10000) + "万" : ""}`,
-        pcData?.preferences && `こだわり（参考・再確認不要）: ${pcData.preferences}`,
+        (pcData?.rent_min || pcData?.rent_max) && `家賃: ${[pcData.rent_min ? Math.floor(pcData.rent_min / 10000) + "万円〜" : "", pcData.rent_max ? Math.floor(pcData.rent_max / 10000) + "万円以内" : ""].join("")}`,
+        pcData?.walk_minutes && `駅徒歩: ${pcData.walk_minutes}分以内`,
+        pcData?.move_in_time && `入居: ${pcData.move_in_time}`,
+        pcData?.building_age && `築年数: ${pcData.building_age}年以内`,
+        pcData?.preferences && `希望: ${pcData.preferences}`,
         pcData?.ng_points && `NG: ${pcData.ng_points}`,
-      ].filter(Boolean).join(", ");
+        pcData?.other_requests && `その他: ${pcData.other_requests}`,
+        pcData?.additional_conditions && (() => {
+          const clean = pcData.additional_conditions!.split("\n").map((l) => l.replace(/^【[^】]*】/, "").trim()).filter(Boolean).join("、");
+          return clean ? `追加条件: ${clean}` : null;
+        })(),
+      ].filter(Boolean).join("\n");
       const customerConditions = dbConditions || memo;
 
       // お客様メッセージから返信ヒントを自動抽出
@@ -130,7 +139,8 @@ export async function POST(req: NextRequest) {
           body: JSON.stringify({
             message: targetMessage,
             state: effectiveState,
-            customerName: pcData?.customer_name || "",
+            // 紐付き顧客名 → なければ conversationsの表示名（LINEの名前）をフォールバック
+            customerName: pcData?.customer_name || (conv.customer_name as string) || "",
             recentMessages: recentMsgs,
             customerConditions,
             customerSummary: pcData?.ai_summary || "",
