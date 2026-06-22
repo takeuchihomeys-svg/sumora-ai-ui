@@ -871,6 +871,30 @@ ${templateText}`;
         }
       }
 
+    // ── 📍 待ち合わせ（時間なし → LINEから自動抽出） ───────────────
+    } else if (action === "meeting_place") {
+      const mDate = body.meeting_date ? String(body.meeting_date) : "";
+      const mName = body.meeting_property_name ? String(body.meeting_property_name) : "";
+      const mAddr = body.meeting_property_address ? String(body.meeting_property_address) : "";
+
+      const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
+会話履歴を読み取り、待ち合わせ確認メッセージを生成してください。
+
+【出力形式（一字一句この構成で）】
+かしこまりました！！
+${mDate}ご案内させて頂きます！！
+
+${mDate}[時間]に${mName}
+現地エントランスお待ち合わせで何卒よろしくお願い致します！！${mAddr ? `\n住所: ${mAddr}` : ""}
+
+【時間の読み取りルール】
+・会話履歴から待ち合わせの時間（例：11時、14:00、午後2時など）を読み取り [時間] に当てはめること
+・「11時」→「11:00」、「14時30分」→「14:30」のように整形すること
+・時間が会話に見当たらない場合は [時間] をそのまま残すこと
+・構成・文言は一切変えず [時間] だけを置き換えること`;
+
+      message_text = await callClaude(system, `会話履歴から待ち合わせ時間を読み取り、メッセージを生成してください。${recentHistory}`);
+
     } else {
       return NextResponse.json({ ok: false, error: `Unknown action: ${action}` }, { status: 400 });
     }

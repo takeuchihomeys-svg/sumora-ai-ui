@@ -668,17 +668,21 @@ export default function AixModal({
         if (!meetingDate.trim()) throw new Error("日程を入力してください");
         if (!meetingPropertyName.trim()) throw new Error("物件名を入力してください（画像読み込みまたは手動入力）");
         const hasTime = !!meetingTime.trim();
-        let msg: string;
         if (hasTime) {
-          msg = `かしこまりました！！\n${meetingDate}ご案内させて頂きます！！\n\n${meetingDate}${meetingTime}に${meetingPropertyName}\n現地エントランスお待ち合わせで何卒よろしくお願い致します！！`;
-        } else {
-          msg = `かしこまりました！！\n${meetingDate}ご案内させて頂きます！！\n\n${meetingPropertyName}\n現地エントランスお待ち合わせのお時間ご都合如何でしょうか！！`;
+          // 時間あり: 即座にローカル生成
+          let msg = `かしこまりました！！\n${meetingDate}ご案内させて頂きます！！\n\n${meetingDate}${meetingTime}に${meetingPropertyName}\n現地エントランスお待ち合わせで何卒よろしくお願い致します！！`;
+          if (meetingPropertyAddress.trim()) msg += `\n住所: ${meetingPropertyAddress}`;
+          setPreview(msg);
+          setAiDraft(msg);
+          setLoading(false);
+          return;
         }
-        if (meetingPropertyAddress.trim()) msg += `\n住所: ${meetingPropertyAddress}`;
-        setPreview(msg);
-        setAiDraft(msg);
-        setLoading(false);
-        return;
+        // 時間なし: APIでLINEから時間を自動抽出して生成
+        body.meeting_date = meetingDate;
+        body.meeting_property_name = meetingPropertyName;
+        body.meeting_property_address = meetingPropertyAddress;
+        if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
+        // fall through to API call
       }
 
       if (actionType === "viewing_invite" && viewingCalendarDays.length > 0) {
@@ -1819,42 +1823,36 @@ export default function AixModal({
                 />
               </div>
               <div className="mb-3">
-                <div className="mb-1 flex items-center justify-between">
-                  <label className="text-xs font-semibold text-[#54656f]">時間</label>
-                  <button
-                    type="button"
-                    onClick={() => setMeetingTime(meetingTime ? "" : "10:00")}
-                    className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-bold transition-colors ${meetingTime ? "bg-sky-100 text-sky-700" : "bg-[#f0f2f5] text-[#8696a0]"}`}
-                  >
-                    <span className={`inline-block h-3 w-3 rounded-full border-2 transition-colors ${meetingTime ? "border-sky-500 bg-sky-500" : "border-[#b0bec5] bg-white"}`} />
-                    {meetingTime ? "時間あり" : "時間未定"}
-                  </button>
+                <div className="mb-1.5 flex items-center justify-between">
+                  <label className="text-xs font-semibold text-[#54656f]">
+                    時間 <span className="font-normal text-[#90a4ae]">（任意）</span>
+                  </label>
+                  {meetingTime && (
+                    <button
+                      type="button"
+                      onClick={() => setMeetingTime("")}
+                      className="text-[11px] text-[#8696a0] underline"
+                    >クリア</button>
+                  )}
                 </div>
-                {meetingTime ? (
-                  <div className="flex gap-2">
-                    {["10:00","11:00","13:00","14:00","15:00","16:00"].map(t => (
-                      <button
-                        key={t}
-                        type="button"
-                        onClick={() => setMeetingTime(t)}
-                        className={`rounded-lg border px-2.5 py-1.5 text-[12px] font-bold transition-colors ${meetingTime === t ? "border-sky-500 bg-sky-50 text-sky-700" : "border-[#d1d7db] bg-white text-[#54656f]"}`}
-                      >{t}</button>
-                    ))}
-                    <input
-                      type="time"
-                      value={meetingTime}
-                      onChange={(e) => setMeetingTime(e.target.value)}
-                      className="flex-1 min-w-0 rounded-xl border border-[#d1d7db] px-2 py-1.5 text-sm outline-none focus:border-[#2196F3]"
-                    />
-                  </div>
-                ) : (
-                  <div className="rounded-xl bg-[#f0f2f5] px-3 py-2 text-[11px] text-[#8696a0]">
-                    時間未定 → お客様に都合を確認する文になります
-                  </div>
-                )}
-              </div>
-              <div className="rounded-xl bg-[#f0f2f5] px-3 py-2 text-[10px] text-[#54656f]">
-                {meetingTime ? `✅ 時間あり → 「${meetingDate || "〇〇日"}${meetingTime}に ... お待ち合わせで何卒よろしくお願い致します！！」` : `💬 時間未定 → 「... 現地エントランスお待ち合わせのお時間ご都合如何でしょうか！！」`}
+                <div className="relative">
+                  <input
+                    type="time"
+                    value={meetingTime}
+                    onChange={(e) => setMeetingTime(e.target.value)}
+                    className={`w-full rounded-xl border px-4 py-3 text-[15px] font-bold outline-none transition-colors ${meetingTime ? "border-sky-400 bg-sky-50 text-sky-700 focus:border-sky-500" : "border-[#d1d7db] bg-white text-[#111b21] focus:border-[#2196F3]"}`}
+                  />
+                  {!meetingTime && (
+                    <span className="pointer-events-none absolute inset-0 flex items-center px-4 text-sm text-[#b0bec5]">
+                      タップして時間を選択
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 text-[10px] text-[#8696a0]">
+                  {meetingTime
+                    ? `✅ 「${meetingDate || "〇〇日"}${meetingTime}に ... お待ち合わせで何卒よろしくお願い致します！！」`
+                    : "💬 未選択 → AIがLINEの会話から待ち合わせ時間を自動読み取りして文を生成します"}
+                </p>
               </div>
             </div>
           )}
