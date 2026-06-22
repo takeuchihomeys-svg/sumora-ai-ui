@@ -2136,8 +2136,9 @@ export default function Home() {
         const { data } = supabase.storage.from("property-images").getPublicUrl(path);
         imageUrls.push(data.publicUrl);
       }
-      // JSTのdatetime-local → UTC に変換
-      const scheduledAt = new Date(scheduleDateTime + ":00+09:00").toISOString();
+      // JSTのdatetime-local → UTC に変換（秒以降を除去してから +09:00 を付与）
+      const cleanDt = scheduleDateTime.substring(0, 16); // "YYYY-MM-DDTHH:mm"
+      const scheduledAt = new Date(`${cleanDt}:00+09:00`).toISOString();
       const { error: insertErr } = await supabase.from("scheduled_messages").insert({
         conversation_id: selectedConversation.id,
         line_user_id: selectedConversation.lineUserId,
@@ -4078,8 +4079,10 @@ export default function Home() {
             {/* 予約送信バッジ */}
             {scheduledMsgsList.length > 0 && (() => {
               const next = scheduledMsgsList[0];
-              const jst = new Date(new Date(next.scheduled_at).getTime() + 9 * 60 * 60 * 1000);
-              const timeLabel = `${jst.getUTCMonth() + 1}/${jst.getUTCDate()} ${String(jst.getUTCHours()).padStart(2, "0")}:${String(jst.getUTCMinutes()).padStart(2, "0")}`;
+              // Supabase は "YYYY-MM-DD HH:mm:ss+00" 形式で返すことがある → ISO 8601 に正規化
+              const ts = next.scheduled_at.replace(" ", "T").replace(/\+00$/, "Z");
+              const jst = new Date(new Date(ts).getTime() + 9 * 60 * 60 * 1000);
+              const timeLabel = `${jst.getUTCMonth() + 1}/${jst.getUTCDate()} ${String(jst.getUTCHours()).padStart(2, "0")}:${String(jst.getUTCMinutes()).padStart(2, "0")} JST`;
               return (
                 <button
                   onClick={() => setShowScheduledList(true)}
@@ -5530,6 +5533,7 @@ export default function Home() {
               <input
                 type="datetime-local"
                 value={scheduleDateTime}
+                step="60"
                 onChange={(e) => setScheduleDateTime(e.target.value)}
                 className="w-full rounded-xl border border-[#e0e0e0] px-3 py-2.5 text-[14px] text-[#111b21] focus:outline-none focus:border-[#29B6F6]"
               />
