@@ -4527,14 +4527,14 @@ export default function Home() {
                   className="w-full rounded-xl border border-[#e9edef] bg-[#f0f2f5] px-3 py-2.5 text-[14px] text-[#111b21] outline-none" />
               </div>
               {/* 時間 */}
-              <div className="flex gap-2">
-                <div className="flex-1">
+              <div className="flex flex-col gap-3">
+                <div>
                   <div className="mb-1 text-[11px] font-bold text-[#54656f]">開始時間</div>
                   <input type="time" value={calendarTime} onChange={(e) => setCalendarTime(e.target.value)}
                     className="w-full rounded-xl border border-[#e9edef] bg-[#f0f2f5] px-3 py-2.5 text-[14px] text-[#111b21] outline-none" />
                 </div>
-                <div className="flex-1">
-                  <div className="mb-1 text-[11px] font-bold text-[#54656f]">終了 <span className="font-normal text-[#90a4ae]">（任意）</span></div>
+                <div>
+                  <div className="mb-1 text-[11px] font-bold text-[#54656f]">終了時間 <span className="font-normal text-[#90a4ae]">（任意）</span></div>
                   <input type="time" value={calendarEndTime} onChange={(e) => setCalendarEndTime(e.target.value)}
                     className="w-full rounded-xl border border-[#e9edef] bg-[#f0f2f5] px-3 py-2.5 text-[14px] text-[#111b21] outline-none" />
                 </div>
