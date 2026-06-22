@@ -223,6 +223,11 @@ async function handleTextMessage(
   // タスク自動検知（物件確認・物件出し）
   void autoDetectTask(db, convId, text);
 
+  // 「確認しました」→ 物件確認済み自動マーク
+  if (isPropertyViewedMessage(text)) {
+    void autoMarkPropertyViewed(db, userId);
+  }
+
   // ai_summary 自動更新 + 返信ドラフト自動生成（レスポンス後に非同期実行）
   after(async () => {
     try {
@@ -600,6 +605,38 @@ async function notifyFormatReceived(
   if (!res.ok) {
     console.error("[notify] LINE push failed:", res.status, await res.text());
   }
+}
+
+// ── 物件確認済みキーワード検出 ────────────────────────────────────────────
+const PROPERTY_VIEWED_KEYWORDS = [
+  "確認しました", "確認できました", "確認取れました", "確認しました",
+  "見ました", "見てみました", "見てます", "見てました",
+  "チェックしました", "拝見しました", "拝見しました", "拝見できました",
+  "見せてもらいました", "確認できました", "見れました",
+];
+
+function isPropertyViewedMessage(text: string): boolean {
+  return PROPERTY_VIEWED_KEYWORDS.some((k) => text.includes(k));
+}
+
+async function autoMarkPropertyViewed(
+  db: ReturnType<typeof getDb>,
+  userId: string,
+): Promise<void> {
+  // 物件を送った記録がある顧客だけマーク（誤検知防止）
+  const { data: pc } = await db
+    .from("property_customers")
+    .select("id, last_property_sent_at")
+    .eq("line_user_id", userId)
+    .not("last_property_sent_at", "is", null)
+    .limit(1)
+    .maybeSingle();
+  if (!pc?.id) return;
+
+  await db
+    .from("property_customers")
+    .update({ property_viewed_at: new Date().toISOString() })
+    .eq("id", pc.id);
 }
 
 // ── メッセージからタスクを自動検知・作成 ──────────────────────────────────
