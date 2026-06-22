@@ -194,6 +194,8 @@ export default function CustomersPage() {
   const [sentUpdating, setSentUpdating]   = useState<string | null>(null);
   const [viewedUpdating, setViewedUpdating]   = useState<string | null>(null);
   const [formatCopied, setFormatCopied]   = useState<string | null>(null);
+  const [formatMsgModal, setFormatMsgModal] = useState<{ text: string } | null>(null);
+  const [formatMsgLoading, setFormatMsgLoading] = useState<string | null>(null);
   const [showCompleted, setShowCompleted]     = useState(true);
   const [reflectLoading, setReflectLoading]   = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -1052,20 +1054,27 @@ export default function CustomersPage() {
                       {viewedUpdating === c.id ? "…" : "物件確認した"}
                     </button>
                   )}
-                  {/* 物件探しフォーマットコピーボタン */}
-                  <button
-                    onClick={() => {
-                      const text = generateSearchFormat(c);
-                      navigator.clipboard.writeText(text).then(() => {
-                        setFormatCopied(c.id);
-                        setTimeout(() => setFormatCopied(null), 2000);
-                      });
-                    }}
-                    className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-bold text-gray-600 active:scale-95 transition-transform"
-                    title="物件探しフォーマットをコピー"
-                  >
-                    {formatCopied === c.id ? "✓ コピー済" : "📄 フォーマット"}
-                  </button>
+                  {/* 物件探しフォーマットボタン: LINEの原文を表示 */}
+                  {c.linked_conversation?.id && (
+                    <button
+                      onClick={async () => {
+                        const convId = c.linked_conversation!.id;
+                        setFormatMsgLoading(c.id);
+                        try {
+                          const res = await fetch(`/api/messages?conversation_id=${convId}`);
+                          const data = await res.json() as { ok: boolean; text: string | null };
+                          setFormatMsgModal({ text: data.text ?? "フォーマット文が見つかりませんでした" });
+                        } finally {
+                          setFormatMsgLoading(null);
+                        }
+                      }}
+                      disabled={formatMsgLoading === c.id}
+                      className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-bold text-gray-600 active:scale-95 transition-transform disabled:opacity-50"
+                      title="お客様が送ったフォーマット文を表示"
+                    >
+                      {formatMsgLoading === c.id ? "…" : "📄 フォーマット"}
+                    </button>
+                  )}
                   <button
                     onClick={() => openEdit(c)}
                     className="rounded-xl border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-bold text-[#444] active:scale-95 transition-transform"
@@ -1382,6 +1391,40 @@ export default function CustomersPage() {
               style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
               {addLoading ? "追加中..." : "追加する"}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── フォーマット文モーダル ── */}
+      {formatMsgModal && (
+        <div className="fixed inset-0 z-50 flex items-end" style={{ background: "rgba(0,0,0,0.5)" }}
+          onClick={() => setFormatMsgModal(null)}>
+          <div className="w-full rounded-t-2xl bg-white"
+            style={{ maxHeight: "80svh", paddingBottom: "max(env(safe-area-inset-bottom),20px)" }}
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#f0f2f5] sticky top-0 bg-white">
+              <h2 className="font-bold text-[#111b21]">📄 お客様のフォーマット</h2>
+              <button onClick={() => setFormatMsgModal(null)} className="text-[#aaa] text-xl leading-none">✕</button>
+            </div>
+            <div className="overflow-y-auto px-5 py-4" style={{ maxHeight: "55svh" }}>
+              <pre className="whitespace-pre-wrap text-[13px] text-[#111b21] leading-relaxed font-sans">
+                {formatMsgModal.text}
+              </pre>
+            </div>
+            <div className="px-5 pt-3 border-t border-[#f0f2f5]">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(formatMsgModal.text).then(() => {
+                    setFormatCopied("modal");
+                    setTimeout(() => setFormatCopied(null), 2000);
+                  });
+                }}
+                className="w-full rounded-xl py-3 text-sm font-bold text-white active:opacity-80 transition"
+                style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}
+              >
+                {formatCopied === "modal" ? "✓ コピーしました" : "コピー"}
+              </button>
+            </div>
           </div>
         </div>
       )}
