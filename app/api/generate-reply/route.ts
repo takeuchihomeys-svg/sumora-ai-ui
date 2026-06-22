@@ -569,7 +569,25 @@ function buildGenerationMessages(
     : "";
 
   // 実例がある場合はQUICK_PATTERNSを省略（実例を真の最優先にする・競合を排除）
-  const effectiveQuickPatterns = promptOverrides?.quickPatterns ?? SMORA_QUICK_PATTERNS;
+  // 挨拶状態に応じて QUICK_PATTERNS の冒頭ルールを上書き（greetingNote との競合を解消）
+  const baseQuickPatterns = promptOverrides?.quickPatterns ?? SMORA_QUICK_PATTERNS;
+  const effectiveQuickPatterns = (() => {
+    if (alreadyGreeted) {
+      // 同日挨拶済み → 「長い返信はお世話になっております」を「挨拶なし」に置き換え
+      return baseQuickPatterns.replace(
+        /・冒頭ルール（★重要）:[\s\S]*?を使う/,
+        "・冒頭ルール（★重要・本日挨拶済みのため上書き）: 返信の長短にかかわらず【冒頭挨拶は一切使わない】。「はい！！」「かしこまりました！！」または直接本文から始める。「お世話になっております」「ありがとうございます」「夜分遅くに」は絶対禁止"
+      );
+    }
+    if (state === "first_reply" && isFirstEverReply) {
+      // 真の初回 → 「お世話になっております」を「ご連絡頂きありがとうございます」に置き換え
+      return baseQuickPatterns.replace(
+        /・冒頭ルール（★重要）:[\s\S]*?を使う/,
+        "・冒頭ルール（★重要・初回返信のため上書き）: 必ず「〇〇さんご連絡頂きありがとうございます😊！！お部屋探しを担当させて頂きます鈴木と申します！！」の形式で始める。「お世話になっております」は絶対禁止"
+      );
+    }
+    return baseQuickPatterns;
+  })();
   const quickPatterns = examples ? "" : `\n${effectiveQuickPatterns}`;
   const realEstateNote = `\n${promptOverrides?.realEstateRules ?? REAL_ESTATE_RULES}`;
 
