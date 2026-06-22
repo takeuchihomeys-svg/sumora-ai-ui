@@ -797,21 +797,16 @@ ${unavailableTemplate}`;
 
       // 「同じ間取り」「違う間取り」は固定テンプレートを完全に守らせる専用フロー
       } else if (pattern === "alternative" && (floor_plan_match === "same" || floor_plan_match === "different")) {
-        const templateText = floor_plan_match === "same"
-          ? `お待たせいたしました！！
+        if (floor_plan_match === "same") {
+          const templateText = `お待たせいたしました！！
 
 お送り頂きました[物件名]${endedRoomStr}ですが確認しましたところ募集終了しておりました！！
 
 別の階数となりますが、同じ間取りで
 [物件名]で現在募集中のお部屋御座いましたので、最大限割引しました御見積書と併せてお送りさせて頂きました！！
-お手隙の際にご査収ください！！`
-          : `お送り頂きました[物件名]${endedRoomStr}ですが確認しましたところ募集終了しておりました！！
-
-別の階数となりますが
-同じ間取りのお部屋で現在募集中のお部屋が御座いますので、最大限割引しました御見積書と併せてお送りさせて頂きました！！
 お手隙の際にご査収ください！！`;
 
-        const fixedSystem = `あなたはテキスト置換エンジンです。
+          const fixedSystem = `あなたはテキスト置換エンジンです。
 以下のテンプレートを一字一句そのまま出力してください。
 [物件名]の部分のみ、会話履歴から特定した物件名に置き換えること。
 それ以外の文字・絵文字・改行は一切変更・追加・削除しないこと。
@@ -819,10 +814,37 @@ ${unavailableTemplate}`;
 テンプレート:
 ${templateText}`;
 
-        message_text = await callClaude(
-          fixedSystem,
-          `以下の会話から物件名を特定して[物件名]を置き換えてください。${recentHistory}`
-        );
+          message_text = await callClaude(fixedSystem, `以下の会話から物件名を特定して[物件名]を置き換えてください。${recentHistory}`);
+
+        } else {
+          // 違う間取り: 物件画像から広さ（㎡）を読み取って文に反映
+          const templateText = `お待たせいたしました！！
+
+お送り頂きました[物件名]${endedRoomStr}ですが確認しましたところ募集終了しておりました！！
+
+別の間取り（[㎡]）となりますが
+[物件名]で現在募集中のお部屋が御座いますので、最大限割引しました御見積書と併せてお送りさせて頂きました！！
+お手隙の際にご査収ください！！`;
+
+          const fixedSystem = `あなたはテキスト置換エンジンです。
+以下のテンプレートを一字一句そのまま出力してください。
+[物件名]の部分のみ、会話履歴から特定した物件名に置き換えること。
+[㎡]の部分のみ、添付画像から読み取った部屋の広さ（例: 46.2㎡）に置き換えること（画像がない・読み取れない場合は[㎡]ごと削除すること）。
+それ以外の文字・絵文字・改行は一切変更・追加・削除しないこと。
+
+テンプレート:
+${templateText}`;
+
+          if (image_url) {
+            const content: Array<{ type: string; text?: string; source?: { type: string; url: string } }> = [
+              { type: "text", text: `以下の会話から物件名を特定して[物件名]を置き換え、添付画像から部屋の広さを読み取って[㎡]を置き換えてください。${recentHistory}` },
+              { type: "image", source: { type: "url", url: image_url } },
+            ];
+            message_text = await callClaudeVision(fixedSystem, content);
+          } else {
+            message_text = await callClaude(fixedSystem, `以下の会話から物件名を特定して[物件名]を置き換えてください。[㎡]は削除してください。${recentHistory}`);
+          }
+        }
       } else {
         const instruction = PATTERN_INSTRUCTION[pattern] ?? PATTERN_INSTRUCTION.unavailable;
         const calendarPart = calendarNote
