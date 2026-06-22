@@ -388,6 +388,12 @@ export default function Home() {
   const [memoModalConvId, setMemoModalConvId] = useState<string | null>(null);
   const [memoInput, setMemoInput] = useState("");
   const [viewingMemoConvId, setViewingMemoConvId] = useState<string | null>(null);
+  const [calendarModalConvId, setCalendarModalConvId] = useState<string | null>(null);
+  const [calendarTitle, setCalendarTitle] = useState("");
+  const [calendarDate, setCalendarDate] = useState("");
+  const [calendarTime, setCalendarTime] = useState("");
+  const [calendarEndTime, setCalendarEndTime] = useState("");
+  const [calendarNote, setCalendarNote] = useState("");
   const [convMenuConvId, setConvMenuConvId] = useState<string | null>(null);
   const [activeTasks, setActiveTasks] = useState<Record<string, Array<{ id: string; task_type: string; created_at: string; customer_name: string }>>>({});
   const [showKnowledgeModal, setShowKnowledgeModal] = useState(false);
@@ -4025,17 +4031,28 @@ export default function Home() {
             </div>
             <div className="grid grid-cols-3">
               <button
-                onClick={() => { setMemoModalConvId(convMenuConvId); setMemoInput(memos[convMenuConvId] || ""); setConvMenuConvId(null); }}
+                onClick={() => {
+                  const name = conversations.find(c => c.id === convMenuConvId)?.customerName || "";
+                  setCalendarTitle(name ? `${name} 内覧` : "内覧");
+                  setCalendarDate("");
+                  setCalendarTime("");
+                  setCalendarEndTime("");
+                  setCalendarNote("");
+                  setCalendarModalConvId(convMenuConvId);
+                  setConvMenuConvId(null);
+                }}
                 className="flex flex-col items-center gap-1.5 px-2 py-4 active:bg-[#f0f2f5] border-r border-[#f0f2f5]"
               >
-                <span className="flex h-10 w-10 items-center justify-center rounded-full" style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#43A047]">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="4" width="18" height="18" rx="2"/>
+                    <line x1="16" y1="2" x2="16" y2="6"/>
+                    <line x1="8" y1="2" x2="8" y2="6"/>
+                    <line x1="3" y1="10" x2="21" y2="10"/>
                   </svg>
                 </span>
-                <div className="text-[11px] font-semibold text-[#111b21]">ノート</div>
-                <div className="text-[9px] text-[#8696a0] text-center leading-tight">{memos[convMenuConvId] ? memos[convMenuConvId].slice(0, 8) + (memos[convMenuConvId].length > 8 ? "…" : "") : "追加"}</div>
+                <div className="text-[11px] font-semibold text-[#111b21]">予定</div>
+                <div className="text-[9px] text-[#8696a0] text-center leading-tight">入れる</div>
               </button>
               <button
                 onClick={() => { setAssigneeModalConvId(convMenuConvId); setAssigneeInput(assignees[convMenuConvId] || ""); setConvMenuConvId(null); }}
@@ -4450,6 +4467,101 @@ export default function Home() {
                   保存
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* カレンダー予定モーダル */}
+      {calendarModalConvId && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
+          onClick={(e) => { if (e.target === e.currentTarget) setCalendarModalConvId(null); }}
+        >
+          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 flex items-center justify-between" style={{ background: "linear-gradient(135deg, #2E7D32, #43A047, #66BB6A)" }}>
+              <div className="text-[16px] font-bold text-white flex items-center gap-2">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="4" width="18" height="18" rx="2"/>
+                  <line x1="16" y1="2" x2="16" y2="6"/>
+                  <line x1="8" y1="2" x2="8" y2="6"/>
+                  <line x1="3" y1="10" x2="21" y2="10"/>
+                </svg>
+                予定を入れる
+              </div>
+              <button onClick={() => setCalendarModalConvId(null)} className="flex h-7 w-7 items-center justify-center rounded-full bg-white/20 text-white text-sm">✕</button>
+            </div>
+            <div className="p-4 flex flex-col gap-3">
+              <div>
+                <div className="mb-1 text-[11px] font-bold text-[#54656f]">タイトル</div>
+                <input
+                  type="text"
+                  value={calendarTitle}
+                  onChange={(e) => setCalendarTitle(e.target.value)}
+                  className="w-full rounded-xl border border-[#e9edef] bg-[#f0f2f5] px-3 py-2.5 text-[14px] text-[#111b21] outline-none"
+                />
+              </div>
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <div className="mb-1 text-[11px] font-bold text-[#54656f]">日付</div>
+                  <input
+                    type="date"
+                    value={calendarDate}
+                    onChange={(e) => setCalendarDate(e.target.value)}
+                    className="w-full rounded-xl border border-[#e9edef] bg-[#f0f2f5] px-3 py-2.5 text-[14px] text-[#111b21] outline-none"
+                  />
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <div className="mb-1 text-[11px] font-bold text-[#54656f]">開始時間</div>
+                  <input
+                    type="time"
+                    value={calendarTime}
+                    onChange={(e) => setCalendarTime(e.target.value)}
+                    className="w-full rounded-xl border border-[#e9edef] bg-[#f0f2f5] px-3 py-2.5 text-[14px] text-[#111b21] outline-none"
+                  />
+                </div>
+                <div className="flex-1">
+                  <div className="mb-1 text-[11px] font-bold text-[#54656f]">終了時間 <span className="font-normal text-[#90a4ae]">（任意）</span></div>
+                  <input
+                    type="time"
+                    value={calendarEndTime}
+                    onChange={(e) => setCalendarEndTime(e.target.value)}
+                    className="w-full rounded-xl border border-[#e9edef] bg-[#f0f2f5] px-3 py-2.5 text-[14px] text-[#111b21] outline-none"
+                  />
+                </div>
+              </div>
+              <div>
+                <div className="mb-1 text-[11px] font-bold text-[#54656f]">メモ <span className="font-normal text-[#90a4ae]">（任意）</span></div>
+                <textarea
+                  value={calendarNote}
+                  onChange={(e) => setCalendarNote(e.target.value)}
+                  placeholder="物件名・住所など..."
+                  className="w-full rounded-xl border border-[#e9edef] bg-[#f0f2f5] px-3 py-2.5 text-[14px] text-[#111b21] outline-none resize-none"
+                  rows={2}
+                />
+              </div>
+              <button
+                disabled={!calendarDate || !calendarTime || !calendarTitle.trim()}
+                onClick={() => {
+                  const d = calendarDate.replace(/-/g, "");
+                  const tStart = calendarTime.replace(":", "") + "00";
+                  const tEnd = calendarEndTime ? calendarEndTime.replace(":", "") + "00" : (String(Number(calendarTime.replace(":", "").slice(0, 4)) + 100).padStart(4, "0") + "00");
+                  const dates = `${d}T${tStart}/${d}T${tEnd}`;
+                  const params = new URLSearchParams({
+                    text: calendarTitle,
+                    dates,
+                    ...(calendarNote.trim() ? { details: calendarNote.trim() } : {}),
+                  });
+                  window.open(`https://calendar.google.com/calendar/r/eventedit?${params.toString()}`, "_blank");
+                  setCalendarModalConvId(null);
+                }}
+                className="w-full rounded-full py-3 text-[14px] font-bold text-white disabled:opacity-40"
+                style={{ background: "linear-gradient(135deg, #2E7D32, #43A047)" }}
+              >
+                Googleカレンダーに追加
+              </button>
             </div>
           </div>
         </div>
