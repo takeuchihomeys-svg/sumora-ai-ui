@@ -691,13 +691,16 @@ async function autoDetectTask(
     .single();
   const customerName = (conv?.customer_name as string | null) ?? "お客様";
 
-  // タスク作成
-  await db.from("line_tasks").insert({
-    conversation_id: convId,
-    task_type: taskType,
-    customer_name: customerName,
-    status: "pending",
-  });
+  // タスク作成 + 要対応フラグをセット
+  await Promise.all([
+    db.from("line_tasks").insert({
+      conversation_id: convId,
+      task_type: taskType,
+      customer_name: customerName,
+      status: "pending",
+    }),
+    db.from("conversations").update({ is_flagged: true }).eq("id", convId),
+  ]);
 
   // 売上番長グループへアナウンス
   const { data: grpRow } = await db.from("hanbancyo_settings").select("value").eq("key", "group_id").single();
@@ -787,7 +790,7 @@ async function handleImageMessageSave(
 
   await db
     .from("conversations")
-    .update({ last_message: "[画像]", last_sender: "customer", updated_at: now })
+    .update({ last_message: "[画像]", last_sender: "customer", updated_at: now, is_flagged: true })
     .eq("id", convId);
 
   // 会話内の画像が100枚を超えたら古い画像の保存期限を即時終了
