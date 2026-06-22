@@ -426,6 +426,7 @@ export default function Home() {
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [scheduleDateTime, setScheduleDateTime] = useState("");
   const [scheduleSaving, setScheduleSaving] = useState(false);
+  const [scheduleSuccessInfo, setScheduleSuccessInfo] = useState<{ month: string; day: string; time: string; imageCount: number; text: string } | null>(null);
   const sendLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [scheduledMsgsList, setScheduledMsgsList] = useState<{ id: string; text: string | null; image_urls: string[]; scheduled_at: string }[]>([]);
   const [showScheduledList, setShowScheduledList] = useState(false);
@@ -2140,13 +2141,15 @@ export default function Home() {
         .order("scheduled_at", { ascending: true });
       setScheduledMsgsList((inserted ?? []) as { id: string; text: string | null; image_urls: string[]; scheduled_at: string }[]);
       // ドラフトをクリア
+      const savedText = replyDraft.trim();
+      const savedImageCount = selectedImageFiles.length;
+      const [datePart, timePart] = scheduleDateTime.split("T");
+      const [, month, day] = datePart.split("-");
       setReplyDraft("");
       setSelectedImageFiles([]);
       setShowScheduleModal(false);
-      const [datePart, timePart] = scheduleDateTime.split("T");
-      const [, month, day] = datePart.split("-");
-      setError(`📅 ${parseInt(month)}/${parseInt(day)} ${timePart} に送信予約しました`);
-      setTimeout(() => setError(""), 4000);
+      setScheduleSuccessInfo({ month: String(parseInt(month)), day: String(parseInt(day)), time: timePart, imageCount: savedImageCount, text: savedText });
+      setTimeout(() => setScheduleSuccessInfo(null), 3500);
     } catch (err) {
       setError(`予約失敗: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -3269,7 +3272,7 @@ export default function Home() {
                 <div className="truncate text-[12px] text-[#8696a0]">
                   {announcements[announcements.length - 1].text !== "[画像]"
                     ? announcements[announcements.length - 1].text
-                    : "📷 画像"}
+                    : "📎 画像"}
                 </div>
               </div>
               <span className="shrink-0 rounded-full bg-[#f0a500] px-2 py-0.5 text-[10px] font-bold text-white">
@@ -4981,7 +4984,7 @@ export default function Home() {
                   <span className="shrink-0 text-base">📌</span>
                   <div className="flex-1 min-w-0">
                     <div className="text-[13px] text-[#111b21] whitespace-pre-wrap break-words">
-                      {ann.text !== "[画像]" ? ann.text : "📷 画像"}
+                      {ann.text !== "[画像]" ? ann.text : "📎 画像"}
                     </div>
                     <div className="mt-1 text-[10px] text-[#8696a0]">{ann.time}</div>
                   </div>
@@ -5455,8 +5458,9 @@ export default function Home() {
                 </p>
               )}
               {selectedImageFiles.length > 0 && (
-                <p className="text-[12px] text-[#667781] mt-1.5">
-                  📷 画像 {selectedImageFiles.length}枚
+                <p className="text-[12px] text-[#667781] mt-1.5 flex items-center gap-1">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                  画像 {selectedImageFiles.length}枚
                 </p>
               )}
             </div>
@@ -5497,7 +5501,10 @@ export default function Home() {
                 </p>
               )}
               {selectedImageFiles.length > 0 && (
-                <p className="text-[12px] text-[#667781] mb-3">📷 画像 {selectedImageFiles.length}枚</p>
+                <p className="text-[12px] text-[#667781] mb-3 flex items-center gap-1">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                  画像 {selectedImageFiles.length}枚
+                </p>
               )}
               <label className="text-[12px] font-bold text-[#667781] block mb-1">送信日時（JST）</label>
               <input
@@ -5519,8 +5526,48 @@ export default function Home() {
                 disabled={scheduleSaving || !scheduleDateTime}
                 className="flex-1 py-3.5 text-[14px] font-bold text-[#1565C0] disabled:opacity-50"
               >
-                {scheduleSaving ? "予約中…" : "予約する"}
+                {scheduleSaving ? "予約中…" : "完了"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 予約完了 センター通知 */}
+      {scheduleSuccessInfo && (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center"
+          onClick={() => setScheduleSuccessInfo(null)}
+        >
+          <div className="mx-6 w-full max-w-xs rounded-2xl bg-white shadow-2xl overflow-hidden">
+            <div className="px-5 pt-5 pb-5 text-center">
+              <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-blue-50">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#1565C0" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                  <line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/>
+                  <line x1="3" y1="10" x2="21" y2="10"/>
+                  <polyline points="9 16 11 18 15 14"/>
+                </svg>
+              </div>
+              <p className="text-[16px] font-bold text-[#111b21] mb-1">送信予約しました！</p>
+              <p className="text-[14px] font-semibold text-[#1565C0] mb-4">
+                {scheduleSuccessInfo.month}/{scheduleSuccessInfo.day}（JST）{scheduleSuccessInfo.time} 送信
+              </p>
+              {(scheduleSuccessInfo.imageCount > 0 || scheduleSuccessInfo.text) && (
+                <div className="bg-[#f0f2f5] rounded-xl px-3 py-2.5 text-left">
+                  {scheduleSuccessInfo.imageCount > 0 && (
+                    <p className="text-[12px] text-[#667781] flex items-center gap-1 mb-1">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                      画像 {scheduleSuccessInfo.imageCount}枚
+                    </p>
+                  )}
+                  {scheduleSuccessInfo.text && (
+                    <p className="text-[12px] text-[#667781] whitespace-pre-wrap leading-snug line-clamp-3">
+                      {scheduleSuccessInfo.text}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
