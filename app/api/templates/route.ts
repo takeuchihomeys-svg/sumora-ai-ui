@@ -19,9 +19,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "label と text は必須" }, { status: 400 });
   }
 
+  const cat = category?.trim() || "全般";
+
+  // 同カテゴリの最大 sort_order を取得して末尾に追加
+  const { data: existing } = await supabase
+    .from("templates")
+    .select("sort_order")
+    .eq("category", cat)
+    .order("sort_order", { ascending: false })
+    .limit(1);
+  const maxOrder = existing?.[0]?.sort_order ?? -1;
+  const newOrder = (maxOrder ?? -1) + 1;
+
   const { data, error } = await supabase
     .from("templates")
-    .insert({ category: category?.trim() || "全般", label: label.trim(), text: text.trim(), requires_image: requires_image ?? false })
+    .insert({ category: cat, label: label.trim(), text: text.trim(), requires_image: requires_image ?? false, sort_order: newOrder })
     .select()
     .single();
 
