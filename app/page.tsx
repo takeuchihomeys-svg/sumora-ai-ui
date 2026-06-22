@@ -1566,6 +1566,25 @@ export default function Home() {
       const linkedCustomerForGen = linkedCustomerMap[selectedConversation.id];
       // 紐付き条件 → なければメモをフォールバック（80%の非紐付き会話でも条件が渡る）
       const genConditions = linkedCustomerForGen?.conditions || memos[selectedConversation.id] || undefined;
+
+      // bg-asyncと同じロジックでreplyHintを生成（first_replyは除外）
+      const genMsgLines = targetMessage.split("\n").map((l) => l.trim()).filter(Boolean);
+      const genShortLines = genMsgLines.filter((l) => l.length <= 25);
+      const genIsBullet = genShortLines.length >= 3;
+      const GEN_COND_RE = /[0-9０-９]+万|[0-9０-９]+LDK|[0-9０-９]+[KDk]|エリア|区|駅|間取り|家賃|広さ|㎡|ペット|駐車場|築/;
+      const GEN_ACT_RE = /含めて|を外|に変え|以上|以下|でも可|気にしな|上げて|下げて|緩め|広げ|に絞|でお願い|から探|も探/;
+      const GEN_PICKUP_RE = /ありませんか|ありますか|送って|ピックアップ|おすすめ|オススメ|出てます|教えて/;
+      const genHasCond = genMsgLines.some((l) => GEN_COND_RE.test(l) && GEN_ACT_RE.test(l));
+      const genHasPickup = genMsgLines.some((l) => GEN_PICKUP_RE.test(l));
+      let genReplyHint = "";
+      if (effectiveState !== "first_reply") {
+        if (genIsBullet) {
+          genReplyHint = `【お客様が列挙した条件・要望（返信で具体的に言及すること）】${genShortLines.slice(0, 8).join("・")}`;
+        } else if (genHasCond || genHasPickup) {
+          genReplyHint = `【条件変更/ピックアップ依頼（追加質問禁止・変更内容を具体的に言葉にして即行動宣言）】${genMsgLines.join("・")}`;
+        }
+      }
+
       const res = await fetch("/api/generate-reply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1575,6 +1594,7 @@ export default function Home() {
           customerName: selectedConversation.customerName,
           customerConditions: genConditions,
           customerSummary: linkedCustomerForGen?.ai_summary ?? undefined,
+          replyHint: genReplyHint || undefined,
           recentMessages: (() => {
             const last20 = contextMsgs.slice(-20);
             // 直近20件にスタッフ返信がない場合のみ、最新のスタッフ返信を先頭に追加

@@ -117,10 +117,14 @@ export async function POST(req: NextRequest) {
       const hasPickupRequest = msgLines.some((l) => PICKUP_RE.test(l));
 
       let replyHint = "";
-      if (isBulletConditions) {
-        replyHint = `【お客様が列挙した条件・要望（返信で具体的に言及すること）】${shortLines.slice(0, 8).join("・")}`;
-      } else if (hasConditionChange || hasPickupRequest) {
-        replyHint = `【条件変更/ピックアップ依頼（追加質問禁止・変更内容を具体的に言葉にして即行動宣言）】${msgLines.join("・")}`;
+      // first_reply は phase_guide の パターンA が最適対応（挨拶+条件復唱+ピックアップ宣言）
+      // replyHint を渡すと指定生成モード「2〜3行制限」が発動してパターンAが潰されるため除外
+      if (effectiveState !== "first_reply") {
+        if (isBulletConditions) {
+          replyHint = `【お客様が列挙した条件・要望（返信で具体的に言及すること）】${shortLines.slice(0, 8).join("・")}`;
+        } else if (hasConditionChange || hasPickupRequest) {
+          replyHint = `【条件変更/ピックアップ依頼（追加質問禁止・変更内容を具体的に言葉にして即行動宣言）】${msgLines.join("・")}`;
+        }
       }
 
       const baseUrl = getBaseUrl();
