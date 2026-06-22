@@ -2133,7 +2133,7 @@ export default function Home() {
       const isFirstStaffReply = !selectedConversation.messages.some((m) => m.sender === "staff");
       const currentStatus = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
       const isSendingImages = imageUrls.length > 0;
-      const convUpdate: Record<string, unknown> = { last_message: lastText, last_sender: "staff", updated_at: now.toISOString(), ai_draft: null };
+      const convUpdate: Record<string, unknown> = { last_message: lastText, last_sender: "staff", updated_at: now.toISOString(), ai_draft: null, is_flagged: false };
       if (isFirstStaffReply) convUpdate.status = "hearing";
       // 画像送信時 & 初回対応中 → 物件提案中に自動昇格
       if (isSendingImages && currentStatus === "hearing") convUpdate.status = "proposing";
@@ -2166,6 +2166,9 @@ export default function Home() {
             return bTime - aTime;
           })
       );
+
+      // 返信したら要対応フラグをクリア
+      setFlaggedConvIds((prev) => { const next = new Set(prev); next.delete(selectedConversation.id); return next; });
 
       // LINEに送信（画像→テキストの順）
       try {
@@ -2828,15 +2831,25 @@ export default function Home() {
                     onContextMenu={(e) => { e.preventDefault(); toggleFlaggedConv(conversation.id); }}
                     style={{ WebkitUserSelect: "none", userSelect: "none" }}
                     className={`flex w-full items-center gap-3 px-4 py-[23px] text-left transition border-l-[3px] ${
-                      flaggedConvIds.has(conversation.id)
-                        ? isActive
-                          ? "border-orange-400 bg-orange-100"
-                          : "border-orange-400 bg-orange-50 hover:bg-orange-100"
-                        : isActive
-                          ? "border-transparent bg-[#f0f2f5]"
-                          : postApplyConvIds.has(conversation.id)
-                            ? "border-transparent bg-[#e3f2fd] hover:bg-[#daeaf8]"
-                            : "border-transparent bg-white hover:bg-[#f5f6f6]"
+                      (() => {
+                        const autoFlag = (() => {
+                          if (conversation.lastSender !== "customer") return false;
+                          const age = Date.now() - new Date(conversation.updatedAt || 0).getTime();
+                          if (age < 24 * 60 * 60 * 1000) return false;
+                          const readAt = manuallyReadAt[conversation.id];
+                          return !(readAt && new Date(readAt) >= new Date(conversation.updatedAt || 0));
+                        })();
+                        const isFlagged = flaggedConvIds.has(conversation.id) || autoFlag;
+                        return isFlagged
+                          ? isActive
+                            ? "border-orange-400 bg-orange-100"
+                            : "border-orange-400 bg-orange-50 hover:bg-orange-100"
+                          : isActive
+                            ? "border-transparent bg-[#f0f2f5]"
+                            : postApplyConvIds.has(conversation.id)
+                              ? "border-transparent bg-[#e3f2fd] hover:bg-[#daeaf8]"
+                              : "border-transparent bg-white hover:bg-[#f5f6f6]";
+                      })()
                     }`}
                   >
                     <div className="relative shrink-0">
@@ -2922,7 +2935,13 @@ export default function Home() {
                             {assignees[conversation.id]}
                           </span>
                         )}
-                        {flaggedConvIds.has(conversation.id) && (
+                        {(flaggedConvIds.has(conversation.id) || (() => {
+                          if (conversation.lastSender !== "customer") return false;
+                          const age = Date.now() - new Date(conversation.updatedAt || 0).getTime();
+                          if (age < 24 * 60 * 60 * 1000) return false;
+                          const readAt = manuallyReadAt[conversation.id];
+                          return !(readAt && new Date(readAt) >= new Date(conversation.updatedAt || 0));
+                        })()) && (
                           <span className="shrink-0 rounded-full bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-orange-600">
                             要対応
                           </span>
