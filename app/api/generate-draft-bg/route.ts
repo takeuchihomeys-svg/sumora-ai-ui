@@ -82,6 +82,13 @@ export async function POST(req: NextRequest) {
     ].filter(Boolean).join(", ");
     const customerConditions = dbConditions || memo;
 
+    // お客様メッセージから条件リストを自動抽出（短い行が3行以上 = 箇条書き条件リスト）
+    const extractedLines = targetMessage.split("\n").map((l) => l.trim()).filter((l) => l.length > 0 && l.length <= 25);
+    const extractedConditions = extractedLines.length >= 3 ? extractedLines.slice(0, 8).join("・") : "";
+    const replyHint = extractedConditions
+      ? `【お客様が列挙した条件・要望（返信で具体的に言及すること）】${extractedConditions}`
+      : "";
+
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
       ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:3000");
 
@@ -95,6 +102,7 @@ export async function POST(req: NextRequest) {
         recentMessages: recentMsgs,
         customerConditions,
         customerSummary: pcData?.ai_summary || "",
+        replyHint,
       }),
     });
 
