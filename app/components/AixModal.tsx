@@ -203,6 +203,7 @@ export default function AixModal({
   // 退去確認ボタン専用: 構造化された退去予定物件リスト
   const [vacatingProperties, setVacatingProperties] = useState<Array<{name: string; moveOut: string; editingDate: boolean}>>([]);
   const [vacatingCheckLoading, setVacatingCheckLoading] = useState(false);
+  const [vacatingCheckProgress, setVacatingCheckProgress] = useState("");
   const [calendarInfo, setCalendarInfo] = useState<string>("");
   const [calendarDays, setCalendarDays] = useState<Array<{
     label: string; slots: string[]; fullyBooked: boolean; noEvents: boolean;
@@ -486,39 +487,47 @@ export default function AixModal({
   const syncVacatingNote = (props: Array<{name: string; moveOut: string; editingDate: boolean}>) => {
     const note = props
       .filter((p) => p.name.trim())
-      .map((p) => `◎${p.name}は${p.moveOut ? p.moveOut + "退去予定" : "退去予定"}となりますのでお部屋ご案内出来ない形となります！！`)
+      .map((p) => `◎${p.name}: ${p.moveOut ? p.moveOut + "退去予定" : "退去予定"}`)
       .join("\n");
     setVacatingNote(note);
   };
 
-  // 退去確認ボタン: 全画像を分析して退去予定物件を構造化リストに展開
+  // 退去確認ボタン: 画像を1枚ずつ順番にAI分析して退去予定物件を構造化リストに展開
   const handleVacatingCheck = async () => {
     if (sendImagePreviews.length === 0 || vacatingCheckLoading) return;
     setVacatingCheckLoading(true);
-    try {
-      const images = sendImagePreviews.map((url) => {
-        const [header, base64] = url.split(",");
-        const mediaType = header.match(/data:([^;]+)/)?.[1] || "image/jpeg";
-        return { base64, mediaType };
-      });
-      const res = await fetch("/api/aix/analyze-property", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ images }),
-      });
-      const data = await res.json() as { ok: boolean; properties?: Array<{name: string; status: string; move_out: string}> };
-      if (data.ok && data.properties) {
-        const scheduled = data.properties
-          .filter((p) => p.status === "scheduled" && p.name)
-          .map((p) => ({ name: p.name, moveOut: p.move_out || "", editingDate: false }));
-        setVacatingProperties(scheduled);
-        syncVacatingNote(scheduled);
+    setVacatingProperties([]);
+    setVacatingNote("");
+    const results: Array<{name: string; moveOut: string; editingDate: boolean}> = [];
+    const total = sendImagePreviews.length;
+
+    for (let i = 0; i < total; i++) {
+      setVacatingCheckProgress(`${i + 1}/${total}`);
+      const url = sendImagePreviews[i];
+      const [header, base64] = url.split(",");
+      const mediaType = header.match(/data:([^;]+)/)?.[1] || "image/jpeg";
+      try {
+        const res = await fetch("/api/aix/analyze-property", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ images: [{ base64, mediaType }] }),
+        });
+        const data = await res.json() as { ok: boolean; properties?: Array<{name: string; status: string; move_out: string}> };
+        if (data.ok && data.properties) {
+          const scheduled = data.properties
+            .filter((p) => p.status === "scheduled" && p.name)
+            .map((p) => ({ name: p.name, moveOut: p.move_out || "", editingDate: false }));
+          results.push(...scheduled);
+          setVacatingProperties([...results]);
+          syncVacatingNote([...results]);
+        }
+      } catch {
+        // 1枚失敗しても続ける
       }
-    } catch {
-      // 失敗時は無視
-    } finally {
-      setVacatingCheckLoading(false);
     }
+
+    setVacatingCheckProgress("");
+    setVacatingCheckLoading(false);
   };
 
   const uploadImage = async (file: File, idx?: number): Promise<string> => {
@@ -1104,7 +1113,7 @@ export default function AixModal({
                     className="flex items-center gap-1.5 rounded-full bg-[#ff6b35] px-3 py-1 text-[11px] font-bold text-white disabled:opacity-40 active:opacity-70"
                   >
                     {vacatingCheckLoading ? (
-                      <><span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />確認中</>
+                      <><span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />{vacatingCheckProgress ? `${vacatingCheckProgress}枚目確認中` : "確認中"}</>
                     ) : "退去確認"}
                   </button>
                 </div>
@@ -1175,15 +1184,9 @@ export default function AixModal({
                     >＋ 手動追加</button>
                   </div>
                 )}
-                {/* 構造化リストがない場合はテキストエリア（手動編集用フォールバック） */}
-                {vacatingProperties.length === 0 && (
-                  <textarea
-                    value={vacatingNote}
-                    onChange={(e) => setVacatingNote(e.target.value)}
-                    placeholder="退去確認ボタンで自動読み取り、または直接入力"
-                    rows={2}
-                    className="w-full resize-none rounded-xl border border-[#d1d7db] px-3 py-2 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
-                  />
+                {/* 退去確認前は何も表示しない（押したら1枚ずつ順番に読み取り結果が表示される） */}
+                {vacatingProperties.length === 0 && !vacatingCheckLoading && (
+                  <p className="text-[11px] text-[#b0bec5]">退去確認ボタンを押すと画像を1枚ずつ読み取ります</p>
                 )}
               </div>
               {/* キーワード */}
