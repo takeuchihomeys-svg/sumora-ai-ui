@@ -321,6 +321,7 @@ export default function Home() {
   const [inputFocused, setInputFocused] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
+  const [viewportTop, setViewportTop] = useState(0);
   const [pullStartY, setPullStartY] = useState(0);
   const [isPulling, setIsPulling] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -1396,7 +1397,8 @@ export default function Home() {
     const handler = () => {
       const kh = Math.max(0, window.innerHeight - vv.height);
       setKeyboardHeight(kh);
-      setViewportHeight(vv.height); // main の高さをキーボード分縮める
+      setViewportHeight(vv.height);
+      setViewportTop(vv.offsetTop); // iOSスクロール時にmainのtopも追従
       if (kh > 100) {
         requestAnimationFrame(() => {
           if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
@@ -2655,7 +2657,7 @@ export default function Home() {
       className="overflow-hidden bg-[#111b21]"
       style={{
         position: "fixed",
-        top: 0,
+        top: `${viewportTop}px`,
         left: 0,
         right: 0,
         height: viewportHeight ? `${viewportHeight}px` : "100svh",
