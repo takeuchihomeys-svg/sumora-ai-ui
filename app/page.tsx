@@ -3113,7 +3113,7 @@ export default function Home() {
                           </span>
                         )}
                         <div
-                          className="max-w-[86%] md:max-w-[74%]"
+                          className="max-w-[86%] md:max-w-[74%] select-none"
                           onTouchStart={(e) => startLongPress(message.id, message.text, message.sender, e)}
                           onTouchEnd={cancelLongPress}
                           onTouchMove={cancelLongPress}
