@@ -1680,11 +1680,43 @@ export default function Home() {
 
   const handleSparkleGenerate = async () => {
     if (!selectedConversation?.id || sparkleGenerating) return;
+
+    // ── targetMessage を先に計算（条件抽出のために replyHint より前に行う）──
+    const msgs = selectedConversation.messages;
+    const lastStaffIdx = msgs.map((m, i) => m.sender === "staff" ? i : -1).filter(i => i >= 0).at(-1);
+    const msgsAfterStaff = lastStaffIdx !== undefined ? msgs.slice(lastStaffIdx + 1) : msgs;
+    const targetMessage = msgsAfterStaff.filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]").slice(-3).map((m) => m.text).join("\n") || latestCustomerMessage.trim() || msgs.at(-1)?.text || "（メッセージなし）";
+
+    // ── ① お客様メッセージから条件リストを自動抽出 ──
+    // 改行区切りで短い行が3行以上 = 箇条書き条件リストと判定して抽出
+    const extractedConditions = (() => {
+      const lines = targetMessage.split("\n").map(l => l.trim()).filter(l => l.length > 0 && l.length <= 25);
+      return lines.length >= 3 ? lines.slice(0, 8).join("・") : "";
+    })();
+
+    // ── ② キーワード意図の自動分類・指示拡張 ──
+    const expandKeywordIntent = (kw: string): string => {
+      if (/理解|把握|拝見|確認|姿勢/.test(kw))
+        return "→ お客様の条件を2〜3個実際の名前を挙げて「しっかり拝見しました！！」の形で理解を示すこと";
+      if (/安心|サポート|不安|心配|フォロー/.test(kw))
+        return "→ 審査・手続きを全力でサポートする旨を明示して安心感を伝えること";
+      if (/急ぎ|早く|すぐ|スピード|迅速/.test(kw))
+        return "→「本日中に」「すぐに確認します」など即対応を示す言葉を含めること";
+      if (/丁寧|親切|親身/.test(kw))
+        return "→ お客様の状況に寄り添った温かみのある言葉で返すこと";
+      return "→ お客様の最新メッセージの具体的な内容を引用・言及してこのテーマを表現すること";
+    };
+
     const hasPickupPromise = sparkleSelectedSituations.includes("ピックアップ（約束）");
     const otherSituations = sparkleSelectedSituations.filter(s => s !== "ピックアップ（約束）");
     const situationPart = otherSituations.join("・");
     const replyHint = [
-      sparkleKeywords.length > 0 ? `【キーワード必須指示】返信文に必ず「${sparkleKeywords.join("、")}」のテーマを反映させること。お客様の最新メッセージに書かれている具体的な条件・要望・気持ちをできるだけ引用・言及しながら、このテーマに沿った文章を作ること` : "",
+      sparkleKeywords.length > 0
+        ? `【キーワード必須指示】「${sparkleKeywords.join("、")}」のテーマで返信を作ること。${sparkleKeywords.map(expandKeywordIntent).join(" ")}`
+        : "",
+      extractedConditions
+        ? `【お客様が列挙した条件・要望（返信で具体的に言及すること）】${extractedConditions}`
+        : "",
       situationPart ? `状況: ${situationPart}` : "",
       hasPickupPromise ? "【物件ピックアップ約束文】会話を読み取り、物件をピックアップして送る旨の短い約束メッセージを生成する。必須:「物件ピックアップ出来ましたらお送りさせて頂きます！！」を軸に、会話から重要なポイント（エリア・条件変更・お客様の気持ちなど）があれば自然に1〜2文追加する。合計5行以内・シンプルに。余分な挨拶・長い説明は不要" : "",
       sparkleMeetingPlace
@@ -1694,14 +1726,9 @@ export default function Home() {
         : "",
       sparkleNoEmoji ? "絵文字・顔文字は一切使わずテキストのみで書くこと" : "",
     ].filter(Boolean).join(" / ");
-    // replyHintが空でも会話コンテキストで生成する（ブロックしない）
 
     try {
       setSparkleGenerating(true);
-      const msgs = selectedConversation.messages;
-      const lastStaffIdx = msgs.map((m, i) => m.sender === "staff" ? i : -1).filter(i => i >= 0).at(-1);
-      const msgsAfterStaff = lastStaffIdx !== undefined ? msgs.slice(lastStaffIdx + 1) : msgs;
-      const targetMessage = msgsAfterStaff.filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]").slice(-3).map((m) => m.text).join("\n") || latestCustomerMessage.trim() || msgs.at(-1)?.text || "（メッセージなし）";
       const linkedCustomer = linkedCustomerMap[selectedConversation.id];
       const hasAnyStaff = msgs.some((m) => m.sender === "staff");
       const normalizedStatus = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
