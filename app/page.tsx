@@ -1179,6 +1179,8 @@ export default function Home() {
     }
     if (statusFilter === "hot_flag") {
       result = result.filter((c) => hotConvIds.has(c.id));
+    } else if (statusFilter === "flagged") {
+      result = result.filter((c) => flaggedConvIds.has(c.id));
     } else if (statusFilter !== "all") {
       // 5段階ステータスキーで直接フィルター（旧キーもエイリアスで統一）
       result = result.filter((c) => (STATUS_ALIAS[c.status] ?? c.status) === statusFilter);
@@ -2780,20 +2782,46 @@ export default function Home() {
                 <span className="block h-[2px] w-[18px] rounded-full bg-[#555]" />
                 <span className="block h-[2px] w-[18px] rounded-full bg-[#555]" />
               </button>
-              {/* AI検索ボタン（右端） */}
-              <button
-                onClick={() => { setAixSearchMode(true); setAiSearchIds(null); setAiSearchMessageIds({}); setSearchQuery(""); }}
-                className="absolute right-0 flex items-center justify-center p-1"
-                title="AIで検索"
-              >
-                <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
-                  <circle cx="10" cy="10" r="7" stroke={aixSearchMode ? "#06C755" : "#aaaaaa"} strokeWidth="2.5"/>
-                  <line x1="15.2" y1="15.2" x2="21" y2="21" stroke={aixSearchMode ? "#06C755" : "#aaaaaa"} strokeWidth="2.8" strokeLinecap="round"/>
-                  <text x="10" y="10" textAnchor="middle" dominantBaseline="central" fontSize="6.5" fontWeight="bold" fill={aixSearchMode ? "#06C755" : "#aaaaaa"}>AI</text>
-                </svg>
-              </button>
+              {/* 右端ボタン群 */}
+              <div className="absolute right-0 flex items-center">
+                {/* 要対応フィルターボタン */}
+                <button
+                  onClick={() => setStatusFilter((prev) => prev === "flagged" ? "all" : "flagged")}
+                  className="relative flex items-center justify-center p-1"
+                  title="要対応のみ表示"
+                >
+                  <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+                    <circle cx="13" cy="13.5" r="10.5"
+                      fill={statusFilter === "flagged" ? "#fff7ed" : "transparent"}
+                      stroke={statusFilter === "flagged" ? "#f97316" : "#aaaaaa"}
+                      strokeWidth="1.8"
+                    />
+                    <circle cx="9.8" cy="12" r="1.3" fill={statusFilter === "flagged" ? "#f97316" : "#aaaaaa"}/>
+                    <circle cx="16.2" cy="12" r="1.3" fill={statusFilter === "flagged" ? "#f97316" : "#aaaaaa"}/>
+                    <path d="M9.5 15.5 Q13 19 16.5 15.5" stroke={statusFilter === "flagged" ? "#f97316" : "#aaaaaa"} strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+                    <path d="M21 3.5 L21.55 5.2 L23.2 5.7 L21.55 6.2 L21 7.9 L20.45 6.2 L18.8 5.7 L20.45 5.2 Z"
+                      fill={statusFilter === "flagged" ? "#f97316" : "#cccccc"}
+                    />
+                  </svg>
+                  {flaggedConvIds.size > 0 && (
+                    <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-orange-500" />
+                  )}
+                </button>
+                {/* AI検索ボタン */}
+                <button
+                  onClick={() => { setAixSearchMode(true); setAiSearchIds(null); setAiSearchMessageIds({}); setSearchQuery(""); }}
+                  className="flex items-center justify-center p-1"
+                  title="AIで検索"
+                >
+                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+                    <circle cx="10" cy="10" r="7" stroke={aixSearchMode ? "#06C755" : "#aaaaaa"} strokeWidth="2.5"/>
+                    <line x1="15.2" y1="15.2" x2="21" y2="21" stroke={aixSearchMode ? "#06C755" : "#aaaaaa"} strokeWidth="2.8" strokeLinecap="round"/>
+                    <text x="10" y="10" textAnchor="middle" dominantBaseline="central" fontSize="6.5" fontWeight="bold" fill={aixSearchMode ? "#06C755" : "#aaaaaa"}>AI</text>
+                  </svg>
+                </button>
+              </div>
               {(() => {
-                const lbl = statusFilter === "all" ? "すべて" : (DETAIL_STATUSES.find((s) => s.key === statusFilter)?.label ?? "すべて");
+                const lbl = statusFilter === "all" ? "すべて" : statusFilter === "flagged" ? "要対応" : (DETAIL_STATUSES.find((s) => s.key === statusFilter)?.label ?? "すべて");
                 const fs = lbl.length >= 5 ? "text-[10px]" : lbl.length >= 4 ? "text-[11px]" : "text-[12px]";
                 return (
                   <button

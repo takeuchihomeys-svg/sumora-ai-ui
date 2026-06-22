@@ -100,7 +100,7 @@ export async function GET(req: NextRequest) {
       const lastText = text || (imageUrls.length > 0 ? "[画像]" : "");
       await supabase
         .from("conversations")
-        .update({ last_message: lastText, last_sender: "staff", updated_at: sentAt.toISOString(), ai_draft: null })
+        .update({ last_message: lastText, last_sender: "staff", updated_at: sentAt.toISOString(), ai_draft: null, is_flagged: false })
         .eq("id", msg.conversation_id as string);
 
       await supabase.from("scheduled_messages").update({ status: "sent" }).eq("id", msg.id as string);
