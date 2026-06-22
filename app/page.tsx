@@ -902,6 +902,20 @@ export default function Home() {
       .then(({ data }) => setScheduledMsgsList((data ?? []) as { id: string; text: string | null; image_urls: string[]; scheduled_at: string }[]));
   }, [selectedId]);
 
+  // 予約送信リストを30秒ごとに自動更新（送信済みになったらバッジを自動消去）
+  useEffect(() => {
+    if (!selectedId) return;
+    const interval = setInterval(async () => {
+      const { data } = await supabase.from("scheduled_messages")
+        .select("id, text, image_urls, scheduled_at")
+        .eq("conversation_id", selectedId)
+        .eq("status", "pending")
+        .order("scheduled_at", { ascending: true });
+      if (data) setScheduledMsgsList(data as { id: string; text: string | null; image_urls: string[]; scheduled_at: string }[]);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [selectedId]);
+
   // キーワード履歴を localStorage から読み込む
   useEffect(() => {
     try {
@@ -4062,15 +4076,21 @@ export default function Home() {
             )}
 
             {/* 予約送信バッジ */}
-            {scheduledMsgsList.length > 0 && (
-              <button
-                onClick={() => setShowScheduledList(true)}
-                className="flex items-center gap-1.5 self-start rounded-full border border-[#e0e0e0] bg-white px-3 py-1 text-[11px] font-bold text-[#555] shadow-sm"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                予約中 {scheduledMsgsList.length}件
-              </button>
-            )}
+            {scheduledMsgsList.length > 0 && (() => {
+              const next = scheduledMsgsList[0];
+              const jst = new Date(new Date(next.scheduled_at).getTime() + 9 * 60 * 60 * 1000);
+              const timeLabel = `${jst.getUTCMonth() + 1}/${jst.getUTCDate()} ${String(jst.getUTCHours()).padStart(2, "0")}:${String(jst.getUTCMinutes()).padStart(2, "0")}`;
+              return (
+                <button
+                  onClick={() => setShowScheduledList(true)}
+                  className="flex items-center gap-1.5 self-start rounded-full px-3 py-1.5 text-[11px] font-bold text-white animate-pulse"
+                  style={{ background: "#1565C0", boxShadow: "0 0 10px rgba(21,101,192,0.75), 0 2px 6px rgba(0,0,0,0.2)" }}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  予約中 {scheduledMsgsList.length}件 · {timeLabel}
+                </button>
+              );
+            })()}
 
             {/* テキスト入力 */}
             <div className={`flex items-center gap-2 rounded-[24px] px-4 py-2 transition-all ${inputFocused ? "rounded-[16px]" : ""} ${draftIsAi && replyDraft ? "bg-[#e8f4ff] border border-blue-200" : "bg-[#f0f2f5]"}`}>
