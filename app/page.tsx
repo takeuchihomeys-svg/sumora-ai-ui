@@ -373,6 +373,9 @@ export default function Home() {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedApplyStep2Ids") || "[]") as string[]); } catch { return new Set(); }
   });
   const [templateOpenContext, setTemplateOpenContext] = useState<null | "apply_step1" | "apply_step2" | "viewing_follow">(null);
+  const [nextActionMap, setNextActionMap] = useState<Record<string, { action: string; reason: string } | null>>({});
+  const [dismissedNextActionIds, setDismissedNextActionIds] = useState<Set<string>>(new Set());
+  const nextActionFetchingRef = useRef<Set<string>>(new Set());
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);
   const [announcements, setAnnouncements] = useState<Message[]>([]);
@@ -644,6 +647,10 @@ export default function Home() {
             );
             // async プリ生成完了 → preGenInProgress をクリア
             if (upd.ai_draft) preGenInProgress.current.delete(String(upd.id));
+            // 新規顧客メッセージ → AI次アクション提案を再取得
+            if (upd.ai_draft) {
+              setNextActionMap((prev) => { const n = { ...prev }; delete n[String(upd.id)]; return n; });
+            }
           }
           fetchConversationsAndMessages(true);
         }
@@ -896,6 +903,15 @@ export default function Home() {
 
   // 会話切り替え時に条件パネルを閉じる
   useEffect(() => { setShowCondPanel(false); }, [selectedId]);
+
+  // 会話選択時にAI次アクション提案を取得（未取得の場合のみ）
+  useEffect(() => {
+    if (!selectedId) return;
+    if (nextActionMap[selectedId] === undefined) {
+      void fetchNextAction(selectedId);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
 
   // 会話切り替え時に予約送信一覧を取得
   useEffect(() => {
@@ -2142,6 +2158,24 @@ export default function Home() {
     setShowSendConfirm(true);
   };
 
+  const fetchNextAction = async (convId: string) => {
+    if (nextActionFetchingRef.current.has(convId)) return;
+    nextActionFetchingRef.current.add(convId);
+    try {
+      const res = await fetch("/api/suggest-next-action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation_id: convId }),
+      });
+      const data = await res.json() as { action: string | null; reason: string };
+      setNextActionMap((prev) => ({ ...prev, [convId]: data.action ? { action: data.action, reason: data.reason } : null }));
+    } catch {
+      setNextActionMap((prev) => ({ ...prev, [convId]: null }));
+    } finally {
+      nextActionFetchingRef.current.delete(convId);
+    }
+  };
+
   const refreshScheduledMsgs = async () => {
     if (!selectedId) return;
     const { data } = await supabase.from("scheduled_messages")
@@ -2346,6 +2380,9 @@ export default function Home() {
 
       // 返信したら要対応フラグをクリア
       setFlaggedConvIds((prev) => { const next = new Set(prev); next.delete(selectedConversation.id); return next; });
+      // 返信後はAI次アクション提案をリセット（状況が変わったため）
+      setNextActionMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; });
+      setDismissedNextActionIds((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
 
       // LINEに送信（画像→テキストの順）
       try {
@@ -4082,6 +4119,43 @@ export default function Home() {
                     className="shrink-0 text-orange-400 text-[11px] font-bold">✕</button>
                 </div>
               );
+
+              // P8: AI次アクション提案（P1〜P7いずれも表示されない時のフォールバック）
+              const nextSugg = nextActionMap[id];
+              if (nextSugg && !dismissedNextActionIds.has(id)) {
+                const AIX_ACTION_LABEL: Record<string, string> = {
+                  property_send: "物件送る",
+                  viewing_invite: "内覧へ！",
+                  application_push: "申込へ！",
+                  estimate_sheet: "見積書送る",
+                  meeting_place: "待ち合わせ",
+                  property_recommendation: "物件オススメ",
+                };
+                return (
+                  <div className="mx-1 mb-1 rounded-2xl border-2 border-amber-400 bg-amber-50 px-3 py-2 flex items-center gap-2">
+                    <span className="text-[12px] font-bold text-amber-700 flex-1">
+                      <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
+                      {nextSugg.reason}
+                    </span>
+                    <button
+                      onClick={() => {
+                        setDismissedNextActionIds((prev) => new Set([...prev, id]));
+                        setShowAixMenu(false);
+                        setAixInspectLabel(null);
+                        openAixDirect(nextSugg.action as AixActionType);
+                      }}
+                      className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                      style={{ background: "linear-gradient(135deg, #f59e0b, #d97706)" }}
+                    >
+                      AIX {AIX_ACTION_LABEL[nextSugg.action] ?? nextSugg.action}
+                    </button>
+                    <button
+                      onClick={() => setDismissedNextActionIds((prev) => new Set([...prev, id]))}
+                      className="shrink-0 text-amber-400 text-[11px] font-bold"
+                    >✕</button>
+                  </div>
+                );
+              }
 
               return null;
             })()}
