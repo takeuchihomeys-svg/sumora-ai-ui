@@ -394,7 +394,7 @@ export default function Home() {
   const [calendarTime, setCalendarTime] = useState("");
   const [calendarEndTime, setCalendarEndTime] = useState("");
   const [calendarNote, setCalendarNote] = useState("");
-  const [calendarEventType, setCalendarEventType] = useState<"viewing"|"contract"|"key_handover"|"other">("viewing");
+  const [calendarEventType, setCalendarEventType] = useState<"viewing"|"contract"|"key_handover"|"other"|"application">("viewing");
   const [calendarCustomerName, setCalendarCustomerName] = useState("");
   const [calendarSaving, setCalendarSaving] = useState(false);
   const [convMenuConvId, setConvMenuConvId] = useState<string | null>(null);
@@ -4498,15 +4498,15 @@ export default function Home() {
             </div>
             <div className="p-4 flex flex-col gap-3">
               {/* 種別 */}
-              <div className="flex gap-2">
-                {(["viewing","contract","key_handover","other"] as const).map((t) => {
-                  const cfg = { viewing:{label:"内覧",emoji:"🔍",color:"#2196F3"}, contract:{label:"契約",emoji:"📝",color:"#4CAF50"}, key_handover:{label:"鍵渡し",emoji:"🔑",color:"#FF9800"}, other:{label:"その他",emoji:"📌",color:"#9E9E9E"} }[t];
+              <div className="flex gap-1.5 flex-wrap">
+                {(["viewing","contract","key_handover","application","other"] as const).map((t) => {
+                  const cfg = { viewing:{label:"内覧",color:"#2196F3"}, contract:{label:"契約",color:"#4CAF50"}, key_handover:{label:"鍵渡し",color:"#FF9800"}, application:{label:"申込",color:"#9C27B0"}, other:{label:"その他",color:"#9E9E9E"} }[t];
                   const active = calendarEventType === t;
                   return (
                     <button key={t} onClick={() => setCalendarEventType(t)}
                       className="flex-1 rounded-xl py-2 text-[12px] font-bold border transition-all"
                       style={{ borderColor: active ? cfg.color : "#e9edef", background: active ? cfg.color : "transparent", color: active ? "white" : "#667781" }}>
-                      {cfg.emoji} {cfg.label}
+                      {cfg.label}
                     </button>
                   );
                 })}
@@ -4551,15 +4551,29 @@ export default function Home() {
                   setCalendarSaving(true);
                   const startAt = new Date(`${calendarDate}T${calendarTime}:00`).toISOString();
                   const endAt = calendarEndTime ? new Date(`${calendarDate}T${calendarEndTime}:00`).toISOString() : null;
-                  await supabase.from("calendar_events").insert({
-                    title: calendarTitle.trim(),
-                    event_type: calendarEventType,
-                    customer_name: calendarCustomerName,
-                    start_at: startAt,
-                    end_at: endAt,
-                    all_day: false,
-                    notes: calendarNote.trim(),
-                  });
+                  const labelMap: Record<string, string> = { viewing:"内覧", contract:"契約", key_handover:"鍵渡し", application:"申込", other:"その他" };
+                  await Promise.all([
+                    supabase.from("calendar_events").insert({
+                      title: calendarTitle.trim(),
+                      event_type: calendarEventType,
+                      customer_name: calendarCustomerName,
+                      start_at: startAt,
+                      end_at: endAt,
+                      all_day: false,
+                      notes: calendarNote.trim(),
+                    }),
+                    fetch("/api/daily-tasks", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        customer_name: calendarCustomerName,
+                        content: `【${labelMap[calendarEventType]}】${calendarTitle.trim()}${calendarNote.trim() ? ` — ${calendarNote.trim()}` : ""}`,
+                        date: calendarDate,
+                        time: calendarTime,
+                        end_time: calendarEndTime || "",
+                      }),
+                    }),
+                  ]);
                   setCalendarSaving(false);
                   setCalendarModalConvId(null);
                 }}

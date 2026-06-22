@@ -5,7 +5,7 @@ import BottomNav from "../components/BottomNav";
 import { registerSW, requestNotifPermission, showNotif } from "../lib/notifications";
 import { supabase } from "../lib/supabase";
 
-type EventType = "viewing" | "contract" | "key_handover" | "other";
+type EventType = "viewing" | "contract" | "key_handover" | "other" | "application";
 
 type CalendarEvent = {
   id: string;
@@ -37,6 +37,7 @@ const EVENT_TYPE_CONFIG: Record<EventType, { label: string; color: string; bg: s
   viewing:      { label: "内覧",   color: "#2196F3", bg: "#e3f2fd", emoji: "🔍" },
   contract:     { label: "契約",   color: "#4CAF50", bg: "#e8f5e9", emoji: "📝" },
   key_handover: { label: "鍵渡し", color: "#FF9800", bg: "#fff3e0", emoji: "🔑" },
+  application:  { label: "申込",   color: "#9C27B0", bg: "#f3e5f5", emoji: "📋" },
   other:        { label: "その他", color: "#9E9E9E", bg: "#f5f5f5", emoji: "📌" },
 };
 
@@ -106,7 +107,7 @@ export default function CalendarPage() {
       for (const ev of data) {
         const start = new Date(ev.start_at).getTime();
         const diff = start - now.getTime();
-        const emoji = ev.event_type === "viewing" ? "🔍" : ev.event_type === "contract" ? "📝" : ev.event_type === "key_handover" ? "🔑" : "📌";
+        const emoji = ev.event_type === "viewing" ? "🔍" : ev.event_type === "contract" ? "📝" : ev.event_type === "key_handover" ? "🔑" : ev.event_type === "application" ? "📋" : "📌";
         if (diff >= 14 * 60 * 1000 && diff < 16 * 60 * 1000 && !notifiedIds.current.has(`15_${ev.id}`)) {
           notifiedIds.current.add(`15_${ev.id}`);
           showNotif(`${emoji} まもなく開始 — ${ev.title}`, `${ev.customer_name} の予定が15分後に始まります`, "/calendar");
