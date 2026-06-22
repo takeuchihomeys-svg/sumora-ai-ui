@@ -1678,6 +1678,17 @@ export default function Home() {
 
   const DEFAULT_SPARKLE_SITUATIONS = ["物件を特にオススメする", "内見を提案する", "初期費用の説明", "審査について", "申込を促す", "日程調整", "お礼・感謝", "ピックアップ（約束）"];
 
+  // 各状況ボタンの専用プロンプト（ピックアップ（約束）のみ別途処理）
+  const SITUATION_PROMPTS: Record<string, string> = {
+    "物件を特にオススメする": "【特オススメ指示】提案中の物件の中でお客様の条件に最も合う1件を「特にこちらの物件がオススメです！！」と明示し、条件と照らし合わせた理由を1〜2文で述べること",
+    "内見を提案する": "【内見提案指示】「ぜひ一度ご内覧いただけますと！！」の言葉を自然に盛り込み、実際に見て分かる良さを1文添えて内見を後押しすること",
+    "初期費用の説明": "【初期費用指示】敷金・礼金・仲介手数料・保証料などの内訳を簡潔に触れ、お客様が不安に感じやすいポイントを先回りして説明して安心させること",
+    "審査について": "【審査指示】審査の大まかな流れ（書類提出→審査→結果）を1〜2文で説明し、「全力でサポートします！！」など力強いサポートの言葉で締めること",
+    "申込を促す": "【申込促進指示】「もしよろしければ申込のお手続きに進めます！！」と自然な流れでお申込みへ誘導し、次のステップ（必要書類など）を1文で添えること",
+    "日程調整": "【日程調整指示】複数の候補日時を「〇日（曜）〇〇時〜」の形式で2〜3つ提示し、「ご都合如何でしょうか！！」で締めること",
+    "お礼・感謝": "【感謝指示】お客様への感謝の気持ちを自然に表現すること。過剰にならず、やり取りの流れに合った温かみのある1文にとどめること",
+  };
+
   const handleSparkleGenerate = async () => {
     if (!selectedConversation?.id || sparkleGenerating) return;
 
@@ -1709,7 +1720,6 @@ export default function Home() {
 
     const hasPickupPromise = sparkleSelectedSituations.includes("ピックアップ（約束）");
     const otherSituations = sparkleSelectedSituations.filter(s => s !== "ピックアップ（約束）");
-    const situationPart = otherSituations.join("・");
     const replyHint = [
       sparkleKeywords.length > 0
         ? `【キーワード必須指示】「${sparkleKeywords.join("、")}」のテーマで返信を作ること。${sparkleKeywords.map(expandKeywordIntent).join(" ")}`
@@ -1717,7 +1727,8 @@ export default function Home() {
       extractedConditions
         ? `【お客様が列挙した条件・要望（返信で具体的に言及すること）】${extractedConditions}`
         : "",
-      situationPart ? `状況: ${situationPart}` : "",
+      // 各状況ボタンを専用プロンプトに展開（定義なしのカスタムボタンは「状況: ○○」にフォールバック）
+      ...otherSituations.map(s => SITUATION_PROMPTS[s] ?? `状況: ${s}`),
       hasPickupPromise ? "【物件ピックアップ約束文】会話を読み取り、物件をピックアップして送る旨の短い約束メッセージを生成する。必須:「物件ピックアップ出来ましたらお送りさせて頂きます！！」を軸に、会話から重要なポイント（エリア・条件変更・お客様の気持ちなど）があれば自然に1〜2文追加する。合計5行以内・シンプルに。余分な挨拶・長い説明は不要" : "",
       sparkleMeetingPlace
         ? sparkleMeetingPlaceName && sparkleMeetingPlaceAddr
