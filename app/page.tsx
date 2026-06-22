@@ -3812,8 +3812,8 @@ export default function Home() {
                 </div>
               );
 
-              // P5: 見積書（初期費用キーワード検知）
-              if (/初期費用|見積|費用.*教|いくら|金額.*教|費用感/.test(lastCustomerText) && !dismissedEstimateSheetIds.has(id)) return (
+              // P5: 見積書（初期費用キーワード検知）※フォーマット送信時は除外（⑦初期費用が含まれるため誤検知する）
+              if (/初期費用|見積|費用.*教|いくら|金額.*教|費用感/.test(lastCustomerText) && !((lastCustomerText.match(/[①②③④⑤⑥⑦⑧⑨⑩]/g) ?? []).length >= 2) && !dismissedEstimateSheetIds.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-amber-400 bg-amber-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-amber-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>初期費用の確認 → AIX 見積書送る</span>
                   <button onClick={() => { setDismissedEstimateSheetIds((prev) => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet"); openAixWithImagePicker("estimate_sheet"); }}
@@ -3824,8 +3824,9 @@ export default function Home() {
                 </div>
               );
 
-              // P6: 物件送る（タスクあり or サジェスト）
-              if ((suggestPropertySendMap[id] || hasPropertySendTask) && !suggest2ndHandMap[id] && !dismissedPropertySendIds.has(id)) return (
+              // P6: 物件送る（タスクあり or サジェスト or フォーマット受信）
+              const isCustomerFormatMsg = (lastCustomerText.match(/[①②③④⑤⑥⑦⑧⑨⑩]/g) ?? []).length >= 2;
+              if ((suggestPropertySendMap[id] || hasPropertySendTask || isCustomerFormatMsg) && !suggest2ndHandMap[id] && !dismissedPropertySendIds.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-500 bg-teal-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-teal-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>次のアクション → AIX 物件を送る</span>
                   <button onClick={() => { setDismissedPropertySendIds((prev) => { const n = new Set(prev); n.delete(id); return n; }); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); openAixDirect("property_send"); setSuggestPropertySendMap((prev) => { const n = { ...prev }; delete n[id]; return n; }); }}
