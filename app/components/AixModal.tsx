@@ -175,6 +175,8 @@ export default function AixModal({
   // 物件オススメ専用: 室内イメージURL（任意）
   const [propertyImageUrl, setPropertyImageUrl] = useState("");
   const [inputText, setInputText] = useState("");
+  // 物件オススメ専用: 特に強調するポイント（複数選択可）
+  const [recommendFocusPoints, setRecommendFocusPoints] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<string>("");
@@ -715,7 +717,12 @@ export default function AixModal({
           .join("\n");
         if (selectedSlots) body.calendar_info = selectedSlots;
       }
-      if (inputText.trim()) body.extra_input = inputText.trim();
+      // おすすめポイント + 強調ポイントを結合
+      const focusPrefix = recommendFocusPoints.length > 0
+        ? `【特に強調するポイント: ${recommendFocusPoints.join("・")}】\n`
+        : "";
+      const combinedExtra = `${focusPrefix}${inputText.trim()}`.trim();
+      if (combinedExtra) body.extra_input = combinedExtra;
       if (parsedEstimate) body.parsed_estimate = parsedEstimate;
 
       const res = await fetch("/api/aix/action", {
@@ -1979,9 +1986,35 @@ export default function AixModal({
           {/* テキスト入力欄（各アクション専用） */}
           {config.inputLabel && actionType !== "property_send" && actionType !== "viewing_invite" && actionType !== "meeting_place" && (
             <div className="mb-4">
-              <label className="mb-1 block text-xs font-semibold text-[#54656f]">
-                {config.inputLabel}
-              </label>
+              <div className="mb-1.5 flex items-center gap-1.5 flex-wrap">
+                <label className="text-xs font-semibold text-[#54656f] shrink-0">{config.inputLabel}</label>
+                {actionType === "property_recommendation" && (
+                  <>
+                    {(["家賃", "初期費用", "お部屋の条件"] as const).map((pt) => {
+                      const selected = recommendFocusPoints.includes(pt);
+                      return (
+                        <button
+                          key={pt}
+                          type="button"
+                          onClick={() => {
+                            setRecommendFocusPoints(prev =>
+                              selected ? prev.filter(p => p !== pt) : [...prev, pt]
+                            );
+                            setPreview("");
+                          }}
+                          className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold transition-colors ${
+                            selected
+                              ? "border-orange-400 bg-orange-400 text-white"
+                              : "border-[#d1d7db] bg-white text-[#667781]"
+                          }`}
+                        >
+                          {selected ? "✓ " : ""}{pt}
+                        </button>
+                      );
+                    })}
+                  </>
+                )}
+              </div>
               <textarea
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
