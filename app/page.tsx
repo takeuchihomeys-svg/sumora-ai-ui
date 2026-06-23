@@ -5827,9 +5827,12 @@ export default function Home() {
                 return (
                   <div key={msg.id} className="flex items-start gap-3 px-5 py-3">
                     <div className="flex-1 min-w-0">
-                      <p className="text-[12px] font-bold text-[#29B6F6] mb-0.5">📅 {label} 送信予定</p>
+                      <p className="text-[12px] font-bold text-[#29B6F6] mb-0.5 flex items-center gap-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="#29B6F6"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                        {label} 送信予定
+                      </p>
                       {msg.image_urls?.length > 0 && (
-                        <p className="text-[11px] text-[#8696a0]">📷 画像 {msg.image_urls.length}枚</p>
+                        <p className="text-[11px] text-[#8696a0]">📎 画像 {msg.image_urls.length}枚</p>
                       )}
                       {msg.text && (
                         <p className="text-[12px] text-[#444] line-clamp-2 whitespace-pre-wrap leading-snug">{msg.text}</p>
