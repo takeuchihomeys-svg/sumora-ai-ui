@@ -214,7 +214,9 @@ export default function AixModal({
   const [sendImagePreviews, setSendImagePreviews] = useState<string[]>([]);
   const [vacatingNote, setVacatingNote] = useState("");
   const [sendKeyword, setSendKeyword] = useState("");
+  // analyzeLoading は退去自動検出削除に伴い未使用（将来拡張用に残す）
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
+  void analyzeLoading; void setAnalyzeLoading;
   // 退去確認ボタン専用: 構造化された退去予定物件リスト
   const [vacatingProperties, setVacatingProperties] = useState<Array<{name: string; moveOut: string; editingDate: boolean}>>([]);
   const [vacatingCheckLoading, setVacatingCheckLoading] = useState(false);
@@ -478,29 +480,7 @@ export default function AixModal({
     void (async () => {
       const dataUrls = await Promise.all(readPromises);
       setSendImagePreviews(prev => [...prev, ...dataUrls]);
-
-      // 画像から物件情報を自動解析
-      setAnalyzeLoading(true);
-      try {
-        const images = dataUrls.map(url => {
-          const [header, base64] = url.split(",");
-          const mediaType = header.match(/data:([^;]+)/)?.[1] || "image/jpeg";
-          return { base64, mediaType };
-        });
-        const res = await fetch("/api/aix/analyze-property", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ images }),
-        });
-        const data = await res.json() as { ok: boolean; vacating_note?: string };
-        if (data.ok && data.vacating_note) {
-          setVacatingNote(data.vacating_note);
-        }
-      } catch {
-        // 解析失敗は無視
-      } finally {
-        setAnalyzeLoading(false);
-      }
+      // 退去予定は自動検出しない。「退去確認」ボタンを押したときだけ含まれる
     })();
   };
 
