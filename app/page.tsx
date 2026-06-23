@@ -407,7 +407,15 @@ export default function Home() {
   const [calendarCustomerName, setCalendarCustomerName] = useState("");
   const [calendarSaving, setCalendarSaving] = useState(false);
   const [viewingCount, setViewingCount] = useState(1);
-  const [viewingProperties, setViewingProperties] = useState<Array<{name: string; keyMethod: string}>>([{name: "", keyMethod: ""}]);
+  const [viewingProperties, setViewingProperties] = useState<Array<{
+    name: string;
+    keyType: "genchi" | "kanri" | "itandi" | "";
+    autolock: string;
+    dial: string;
+    kanriName: string;
+    kanriPhone: string;
+    kanriAddress: string;
+  }>>([{name: "", keyType: "", autolock: "", dial: "", kanriName: "", kanriPhone: "", kanriAddress: ""}]);
   const [convMenuConvId, setConvMenuConvId] = useState<string | null>(null);
   const [activeTasks, setActiveTasks] = useState<Record<string, Array<{ id: string; task_type: string; created_at: string; customer_name: string }>>>({});
   const [showKnowledgeModal, setShowKnowledgeModal] = useState(false);
@@ -4522,7 +4530,7 @@ export default function Home() {
                   setCalendarEndTime("");
                   setCalendarNote("");
                   setViewingCount(1);
-                  setViewingProperties([{name: "", keyMethod: ""}]);
+                  setViewingProperties([{name: "", keyType: "", autolock: "", dial: "", kanriName: "", kanriPhone: "", kanriAddress: ""}]);
                   setCalendarModalConvId(convMenuConvId);
                   setConvMenuConvId(null);
                 }}
@@ -4988,7 +4996,7 @@ export default function Home() {
                       setCalendarTitle(calendarCustomerName ? `${calendarCustomerName} ${cfg.label}` : cfg.label);
                       if (t === "viewing") {
                         setViewingCount(1);
-                        setViewingProperties([{name: "", keyMethod: ""}]);
+                        setViewingProperties([{name: "", keyType: "", autolock: "", dial: "", kanriName: "", kanriPhone: "", kanriAddress: ""}]);
                       }
                     }}
                       className="flex-1 rounded-xl py-2 text-[12px] font-bold border transition-all"
@@ -5011,7 +5019,7 @@ export default function Home() {
                           onClick={() => {
                             setViewingCount(n);
                             setViewingProperties((prev) =>
-                              Array.from({length: n}, (_, i) => prev[i] ?? {name: "", keyMethod: ""})
+                              Array.from({length: n}, (_, i) => prev[i] ?? {name: "", keyType: "" as const, autolock: "", dial: "", kanriName: "", kanriPhone: "", kanriAddress: ""})
                             );
                           }}
                           className="flex-1 rounded-xl py-2 text-[12px] font-bold border transition-all"
@@ -5027,37 +5035,78 @@ export default function Home() {
                     </div>
                   </div>
                   {/* 各物件フォーム */}
-                  {viewingProperties.map((prop, i) => (
-                    <div key={i} className="rounded-xl border border-[#c8e6ff] bg-[#f0f8ff] p-3 flex flex-col gap-2">
-                      <div className="text-[11px] font-bold text-[#1565C0]">
-                        {viewingCount > 1 ? `${i + 1}件目` : "内覧物件"}
-                      </div>
-                      <div>
-                        <div className="mb-1 text-[10px] text-[#54656f]">物件名</div>
-                        <input
-                          type="text"
-                          value={prop.name}
-                          onChange={(e) => setViewingProperties((prev) =>
-                            prev.map((p, idx) => idx === i ? {...p, name: e.target.value} : p)
+                  {viewingProperties.map((prop, i) => {
+                    const upd = (fields: Partial<typeof prop>) =>
+                      setViewingProperties((prev) => prev.map((p, idx) => idx === i ? {...p, ...fields} : p));
+                    return (
+                      <div key={i} className="rounded-xl border border-[#c8e6ff] bg-[#f0f8ff] p-3 flex flex-col gap-2">
+                        <div className="text-[11px] font-bold text-[#1565C0]">
+                          {viewingCount > 1 ? `${i + 1}件目` : "内覧物件"}
+                        </div>
+                        {/* 物件名 */}
+                        <div>
+                          <div className="mb-1 text-[10px] text-[#54656f]">物件名</div>
+                          <input type="text" value={prop.name} onChange={(e) => upd({name: e.target.value})}
+                            placeholder="例: シティアーク天王寺"
+                            className="w-full rounded-lg border border-[#e9edef] bg-white px-3 py-2 text-[13px] text-[#111b21] outline-none" />
+                        </div>
+                        {/* 鍵の開け方ラベル＋種別ボタン */}
+                        <div>
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <span className="text-[10px] text-[#54656f] shrink-0">鍵の開け方</span>
+                            <div className="flex gap-1 flex-wrap">
+                              {(["genchi","kanri","itandi"] as const).map((k) => {
+                                const label = {genchi:"現地", kanri:"管理会社", itandi:"itandi"}[k];
+                                const active = prop.keyType === k;
+                                return (
+                                  <button key={k} onClick={() => upd({keyType: active ? "" : k})}
+                                    className="rounded-full px-2.5 py-0.5 text-[11px] font-bold border transition-all"
+                                    style={{
+                                      borderColor: active ? "#1565C0" : "#c8d8e8",
+                                      background: active ? "#1565C0" : "white",
+                                      color: active ? "white" : "#54656f",
+                                    }}>
+                                    {label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                          {/* 現地 */}
+                          {prop.keyType === "genchi" && (
+                            <div className="flex flex-col gap-2">
+                              <input type="text" value={prop.autolock} onChange={(e) => upd({autolock: e.target.value})}
+                                placeholder="オートロック番号（例: #1234）"
+                                className="w-full rounded-lg border border-[#e9edef] bg-white px-3 py-2 text-[13px] text-[#111b21] outline-none" />
+                              <input type="text" value={prop.dial} onChange={(e) => upd({dial: e.target.value})}
+                                placeholder="ダイヤル番号（例: 0000）"
+                                className="w-full rounded-lg border border-[#e9edef] bg-white px-3 py-2 text-[13px] text-[#111b21] outline-none" />
+                            </div>
                           )}
-                          placeholder="例: シティアーク天王寺"
-                          className="w-full rounded-lg border border-[#e9edef] bg-white px-3 py-2 text-[13px] text-[#111b21] outline-none"
-                        />
-                      </div>
-                      <div>
-                        <div className="mb-1 text-[10px] text-[#54656f]">鍵の開け方</div>
-                        <input
-                          type="text"
-                          value={prop.keyMethod}
-                          onChange={(e) => setViewingProperties((prev) =>
-                            prev.map((p, idx) => idx === i ? {...p, keyMethod: e.target.value} : p)
+                          {/* 管理会社 */}
+                          {prop.keyType === "kanri" && (
+                            <div className="flex flex-col gap-2">
+                              <input type="text" value={prop.kanriName} onChange={(e) => upd({kanriName: e.target.value})}
+                                placeholder="管理会社名"
+                                className="w-full rounded-lg border border-[#e9edef] bg-white px-3 py-2 text-[13px] text-[#111b21] outline-none" />
+                              <input type="tel" value={prop.kanriPhone} onChange={(e) => upd({kanriPhone: e.target.value})}
+                                placeholder="電話番号"
+                                className="w-full rounded-lg border border-[#e9edef] bg-white px-3 py-2 text-[13px] text-[#111b21] outline-none" />
+                              <input type="text" value={prop.kanriAddress} onChange={(e) => upd({kanriAddress: e.target.value})}
+                                placeholder="住所"
+                                className="w-full rounded-lg border border-[#e9edef] bg-white px-3 py-2 text-[13px] text-[#111b21] outline-none" />
+                            </div>
                           )}
-                          placeholder="例: キーボックス#1234 / 管理会社立会い"
-                          className="w-full rounded-lg border border-[#e9edef] bg-white px-3 py-2 text-[13px] text-[#111b21] outline-none"
-                        />
+                          {/* itandi */}
+                          {prop.keyType === "itandi" && (
+                            <div className="rounded-lg bg-[#e3f0ff] border border-[#b3d4f5] px-3 py-2 text-[12px] text-[#1565C0] leading-relaxed">
+                              内見方法は、内見予約日の前日から当日の間、閲覧できます。
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 
@@ -5106,10 +5155,26 @@ export default function Home() {
 
                   // 内覧の場合: 物件名・鍵情報をnotesに構造化
                   let builtNotes = calendarNote.trim() || labelMap[calendarEventType];
-                  if (calendarEventType === "viewing" && viewingProperties.some(p => p.name || p.keyMethod)) {
+                  if (calendarEventType === "viewing" && viewingProperties.some(p => p.name || p.keyType)) {
                     const propLines = viewingProperties.map((p, i) => {
                       const label = viewingCount > 1 ? `【${i + 1}件目】` : "【物件】";
-                      const parts = [p.name, p.keyMethod ? `鍵: ${p.keyMethod}` : ""].filter(Boolean);
+                      const parts: string[] = [];
+                      if (p.name) parts.push(p.name);
+                      if (p.keyType === "genchi") {
+                        const sub: string[] = [];
+                        if (p.autolock) sub.push(`オートロック: ${p.autolock}`);
+                        if (p.dial) sub.push(`ダイヤル: ${p.dial}`);
+                        if (sub.length) parts.push(`現地(${sub.join(" / ")})`);
+                        else parts.push("現地");
+                      } else if (p.keyType === "kanri") {
+                        const sub: string[] = [];
+                        if (p.kanriName) sub.push(p.kanriName);
+                        if (p.kanriPhone) sub.push(p.kanriPhone);
+                        if (p.kanriAddress) sub.push(p.kanriAddress);
+                        parts.push(`管理会社(${sub.join(" / ")})`);
+                      } else if (p.keyType === "itandi") {
+                        parts.push("itandi: 内見予約日の前日から当日の間、閲覧可");
+                      }
                       return `${label}${parts.join(" / ")}`;
                     }).join("\n");
                     builtNotes = calendarNote.trim() ? `${propLines}\n${calendarNote.trim()}` : propLines;
