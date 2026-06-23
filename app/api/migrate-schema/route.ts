@@ -455,6 +455,21 @@ LANGUAGE sql STABLE AS $$
   ORDER BY ak.embedding <=> query_embedding LIMIT match_count
 $$;
 
+-- トリガーアクションルールテーブル（キーワード→AIXアクション マッピング）
+CREATE TABLE IF NOT EXISTS trigger_action_rules (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  action_type TEXT NOT NULL,
+  keyword TEXT NOT NULL,
+  occurrence_count INTEGER DEFAULT 0,
+  total_occurrence INTEGER DEFAULT 0,
+  confidence FLOAT DEFAULT 0.0,
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(action_type, keyword)
+);
+CREATE INDEX IF NOT EXISTS idx_trigger_action_rules_action ON trigger_action_rules(action_type);
+CREATE INDEX IF NOT EXISTS idx_trigger_action_rules_confidence ON trigger_action_rules(confidence DESC);
+ALTER TABLE trigger_action_rules DISABLE ROW LEVEL SECURITY;
+
 -- AIXアクションパターン学習テーブル
 -- 「このステータスでこのアクションが取られた」を蓄積して次アクション提案に活用
 CREATE TABLE IF NOT EXISTS action_pattern_logs (

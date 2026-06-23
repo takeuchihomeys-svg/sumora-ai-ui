@@ -47,6 +47,62 @@ export async function POST(req: NextRequest) {
   const currentStatus = (conv.status as string) ?? "hearing";
   const statusLabel = STATUS_LABEL[currentStatus] ?? currentStatus;
 
+  // ---- トリガールールで即判定（Haiku不要の場合）----
+  const lastCustomerMsg = [...messages]
+    .reverse()
+    .filter((m) => m.sender === "customer" && (m.text as string)?.trim())
+    .at(-1)?.text as string ?? "";
+
+  if (lastCustomerMsg) {
+    const { data: triggerRules } = await supabase
+      .from("trigger_action_rules")
+      .select("action_type, keyword, confidence, occurrence_count")
+      .gte("confidence", 0.65)
+      .gte("occurrence_count", 3)
+      .order("confidence", { ascending: false })
+      .limit(300);
+
+    if (triggerRules?.length) {
+      // キーワードが含まれるルールをスコアリング
+      const scores: Record<string, { score: number; topKeyword: string; topConf: number }> = {};
+      for (const rule of triggerRules) {
+        const kw = rule.keyword as string;
+        if (lastCustomerMsg.includes(kw)) {
+          const a = rule.action_type as string;
+          const conf = rule.confidence as number;
+          if (!scores[a] || conf > scores[a].topConf) {
+            scores[a] = {
+              score: (scores[a]?.score ?? 0) + conf,
+              topKeyword: kw,
+              topConf: conf,
+            };
+          } else {
+            scores[a].score += conf;
+          }
+        }
+      }
+
+      const top = Object.entries(scores).sort((a, b) => b[1].score - a[1].score)[0];
+      // スコアが閾値を超えたら Haiku を呼ばずに即返却
+      if (top && top[1].score >= 0.85) {
+        const ACTION_REASON: Record<string, string> = {
+          property_send: "物件希望が来た",
+          viewing_invite: "内覧希望が出た",
+          application_push: "申込意欲あり",
+          estimate_sheet: "費用の質問あり",
+          meeting_place: "日程が決まりそう",
+          property_check: "物件確認依頼",
+          property_recommendation: "物件提案タイミング",
+        };
+        return NextResponse.json({
+          action: top[0],
+          reason: ACTION_REASON[top[0]] ?? top[1].topKeyword,
+          source: "trigger_rule",
+        });
+      }
+    }
+  }
+
   // ---- 過去パターンデータを取得 ----
   const { data: patternRows } = await supabase
     .from("action_pattern_logs")

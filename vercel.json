@@ -39,6 +39,14 @@
     {
       "path": "/api/analyze-diffs",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/learn-trigger-rules",
+      "schedule": "35 18 * * *"
+    },
+    {
+      "path": "/api/learn-trigger-rules",
+      "schedule": "10 6 * * *"
     }
   ]
 }
