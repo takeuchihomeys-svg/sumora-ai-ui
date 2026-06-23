@@ -84,12 +84,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: text }, { status: 500 });
   }
 
-  // スタッフ送信メッセージに「物件ピックアップ・お送り」フレーズ → 物件出しタスク自動作成
+  // スタッフ送信メッセージに「物件ピックアップ・お送り」フレーズ → 物件出しタスク自動作成 + ステータス変更
   if (message) {
     const STAFF_SEND_KEYWORDS = [
-      "物件ピックアップ", "物件をお送り", "物件お送り",
+      "物件ピックアップ", "お部屋ピックアップ", "ピックアップさせて頂", "ピックアップ出来次第",
+      "物件をお送り", "物件お送り", "お部屋をお送り", "お部屋お送り",
       "物件を送らせていただ", "物件を送ります", "物件送ります",
-      "物件をピックアップ",
+      "物件をピックアップ", "ピックアップします",
     ];
     const triggered = STAFF_SEND_KEYWORDS.some((k) => message.includes(k));
     if (triggered) {
@@ -97,7 +98,7 @@ export async function POST(req: NextRequest) {
         try {
           const { data: convRow } = await supabase
             .from("conversations")
-            .select("id, customer_name")
+            .select("id, customer_name, status")
             .eq("line_user_id", line_user_id)
             .eq("account", accountKey)
             .maybeSingle();
@@ -110,36 +111,51 @@ export async function POST(req: NextRequest) {
             .eq("task_type", "property_send")
             .eq("status", "pending")
             .maybeSingle();
-          if (existing?.id) return;
 
-          await supabase.from("line_tasks").insert({
-            conversation_id: convRow.id as string,
-            task_type: "property_send",
-            customer_name: convRow.customer_name as string ?? "お客様",
-            status: "pending",
-          });
+          // タスク未作成の場合のみ: タスク作成 + ステータス昇格 + 要対応 + 通知
+          if (!existing?.id) {
+            const currentStatus = (convRow.status as string) ?? "";
+            const earlyStatuses = ["hearing", "first_reply", "condition_hearing", "availability_check"];
+            const customerName = (convRow.customer_name as string) ?? "お客様";
 
-          // 売上番長グループへアナウンス
-          let groupId: string | null = null;
-          const envId = process.env.LINE_STAFF_GROUP_ID;
-          if (envId) {
-            groupId = envId;
-          } else {
-            const { data: grpRow } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").single();
-            groupId = grpRow?.value ?? null;
+            await Promise.all([
+              supabase.from("line_tasks").insert({
+                conversation_id: convRow.id as string,
+                task_type: "property_send",
+                customer_name: customerName,
+                status: "pending",
+              }),
+              // ヒアリング段階なら物件提案中に昇格、それ以外でも is_flagged=true
+              earlyStatuses.includes(currentStatus)
+                ? supabase.from("conversations")
+                    .update({ status: "proposing", is_flagged: true })
+                    .eq("id", convRow.id as string)
+                : supabase.from("conversations")
+                    .update({ is_flagged: true })
+                    .eq("id", convRow.id as string),
+            ]);
+
+            // 売上番長グループへアナウンス
+            let groupId: string | null = null;
+            const envId = process.env.LINE_STAFF_GROUP_ID;
+            if (envId) {
+              groupId = envId;
+            } else {
+              const { data: grpRow } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").single();
+              groupId = grpRow?.value ?? null;
+            }
+            const groupToken = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN;
+            if (groupId && groupToken) {
+              await fetch("https://api.line.me/v2/bot/message/push", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${groupToken}` },
+                body: JSON.stringify({
+                  to: groupId,
+                  messages: [{ type: "text", text: `🏠【物件出し開始】\n${customerName}さんへの物件ピックアップを開始しました` }],
+                }),
+              }).catch(() => {});
+            }
           }
-          const groupToken = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN;
-          if (!groupId || !groupToken) return;
-
-          const customerName = convRow.customer_name as string ?? "お客様";
-          await fetch("https://api.line.me/v2/bot/message/push", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${groupToken}` },
-            body: JSON.stringify({
-              to: groupId,
-              messages: [{ type: "text", text: `🏠【物件出し開始】\n${customerName}さんへの物件ピックアップを開始しました` }],
-            }),
-          }).catch(() => {});
         } catch {}
       })();
     }
