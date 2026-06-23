@@ -227,6 +227,8 @@ export default function CustomersPage() {
   const [addCondParsing, setAddCondParsing] = useState(false);
   const [addCondSaving, setAddCondSaving]   = useState(false);
   const [parsedPreview, setParsedPreview]   = useState<EditFields | null>(null);
+  const [addCondImage, setAddCondImage] = useState<{ base64: string; mediaType: string } | null>(null);
+  const [addCondImagePreview, setAddCondImagePreview] = useState<string>("");
 
   const [summaries, setSummaries]           = useState<Record<string, string>>({});
   const [summaryLoading, setSummaryLoading] = useState<Set<string>>(new Set());
@@ -477,17 +479,23 @@ export default function CustomersPage() {
     setEditId(null); setEditFields(null); setEditSaving(false);
   };
 
-  // 条件追加: AIでテキスト→構造化フィールドを自動解析
+  // 条件追加: AIでテキスト or 画像→構造化フィールドを自動解析
   const parseAddCond = async () => {
-    if (!addCondText.trim() || addCondParsing) return;
+    if (!addCondImage && !addCondText.trim()) return;
+    if (addCondParsing) return;
     setAddCondParsing(true);
     try {
+      const body = addCondImage
+        ? { imageBase64: addCondImage.base64, imageMediaType: addCondImage.mediaType }
+        : { text: addCondText };
       const res = await fetch("/api/parse-additional-conditions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: addCondText }),
+        body: JSON.stringify(body),
       });
-      const data = await res.json() as { ok: boolean; parsed?: Record<string, unknown> };
+      const data = await res.json() as { ok: boolean; parsed?: Record<string, unknown>; extracted_text?: string };
+      // 画像から抽出したテキストをテキスト欄に自動セット
+      if (data.extracted_text) setAddCondText(data.extracted_text);
       if (!data.ok || !data.parsed) return;
       const p = data.parsed;
       const f = emptyEditFields();
@@ -1291,7 +1299,7 @@ export default function CustomersPage() {
       {/* ── 条件追加モーダル ── */}
       {addCondId && (
         <div className="fixed inset-0 z-50 flex items-end" style={{ background: "rgba(0,0,0,0.5)" }}
-          onClick={(e) => { if (e.target === e.currentTarget) { setAddCondId(null); setAddCondText(""); setParsedPreview(null); } }}>
+          onClick={(e) => { if (e.target === e.currentTarget) { setAddCondId(null); setAddCondText(""); setParsedPreview(null); setAddCondImage(null); setAddCondImagePreview(""); } }}>
           <div className="w-full rounded-t-2xl bg-white overflow-y-auto"
             style={{ maxHeight: "85svh", paddingBottom: "max(env(safe-area-inset-bottom),20px)" }}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-[#f0f2f5] sticky top-0 bg-white z-10">
@@ -1301,9 +1309,52 @@ export default function CustomersPage() {
                   {customers.find((c) => c.id === addCondId)?.customer_name} ・ {formatLogDate()}
                 </p>
               </div>
-              <button onClick={() => { setAddCondId(null); setAddCondText(""); setParsedPreview(null); }} className="text-[#aaa] text-xl leading-none">✕</button>
+              <button onClick={() => { setAddCondId(null); setAddCondText(""); setParsedPreview(null); setAddCondImage(null); setAddCondImagePreview(""); }} className="text-[#aaa] text-xl leading-none">✕</button>
             </div>
             <div className="px-5 py-4 space-y-3">
+              {/* スクショアップロード */}
+              <div>
+                <label className="text-[11px] font-semibold text-[#8696a0] mb-1 block">
+                  📎 スクショから読み取る（任意）
+                </label>
+                {addCondImagePreview ? (
+                  <div className="relative">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={addCondImagePreview} alt="条件スクショ" className="w-full max-h-48 object-contain rounded-xl border border-[#e9edef] bg-[#f8f8f8]" />
+                    <button
+                      onClick={() => { setAddCondImage(null); setAddCondImagePreview(""); }}
+                      className="absolute top-2 right-2 rounded-full bg-black/50 w-6 h-6 flex items-center justify-center text-white text-xs"
+                    >✕</button>
+                  </div>
+                ) : (
+                  <label className="flex flex-col items-center justify-center gap-1.5 w-full rounded-xl border-2 border-dashed border-[#c8b8ff] bg-[#faf5ff] py-4 cursor-pointer active:bg-[#f3e8ff] transition-colors">
+                    <span className="text-2xl">🖼️</span>
+                    <span className="text-[12px] font-semibold text-[#7c3aed]">スクショを選択</span>
+                    <span className="text-[10px] text-[#8696a0]">LINEのやり取り・条件メモなど</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                          const dataUrl = String(reader.result ?? "");
+                          setAddCondImagePreview(dataUrl);
+                          const [header, base64] = dataUrl.split(",");
+                          const mediaType = header.match(/data:([^;]+)/)?.[1] ?? "image/jpeg";
+                          setAddCondImage({ base64, mediaType });
+                          setParsedPreview(null);
+                        };
+                        reader.readAsDataURL(file);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                )}
+              </div>
+
               {/* テキスト入力 */}
               <div>
                 <label className="text-[11px] font-semibold text-[#8696a0] mb-1 block">
@@ -1322,11 +1373,11 @@ export default function CustomersPage() {
               {/* AI自動解析ボタン */}
               <button
                 onClick={parseAddCond}
-                disabled={!addCondText.trim() || addCondParsing}
+                disabled={(!addCondText.trim() && !addCondImage) || addCondParsing}
                 className="w-full py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-40 active:scale-[0.98] transition-transform"
                 style={{ background: "linear-gradient(135deg, #7c3aed, #a855f7)" }}
               >
-                {addCondParsing ? "AI解析中..." : "✨ AIで自動解析"}
+                {addCondParsing ? "AI解析中..." : addCondImage ? "✨ スクショから条件を読み取る" : "✨ AIで自動解析"}
               </button>
 
               {/* AI解析結果プレビュー */}

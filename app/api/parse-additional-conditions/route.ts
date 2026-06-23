@@ -1,25 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-export async function POST(req: NextRequest) {
-  const { text } = await req.json() as { text: string };
-  if (!text) return NextResponse.json({ ok: false, error: "text required" }, { status: 400 });
-
-  const apiKey = process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "");
-  if (!apiKey) return NextResponse.json({ ok: false, error: "ANTHROPIC_API_KEY not set" }, { status: 500 });
-
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 512,
-      messages: [{
-        role: "user",
-        content: `以下はお客さんからのLINE新着要望ログです。
+const PARSE_PROMPT = (text: string) => `以下はお客さんからのLINE新着要望ログです。
 ここから更新したい物件条件を読み取り、JSONで返してください。
 
 【ルール】
@@ -55,8 +36,111 @@ export async function POST(req: NextRequest) {
 }
 
 新着要望ログ:
-${text}`,
-      }],
+${text}`;
+
+export async function POST(req: NextRequest) {
+  const body = await req.json() as {
+    text?: string;
+    imageBase64?: string;
+    imageMediaType?: string;
+  };
+
+  const apiKey = process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "");
+  if (!apiKey) return NextResponse.json({ ok: false, error: "ANTHROPIC_API_KEY not set" }, { status: 500 });
+
+  // ① 画像がある場合: Vision で条件テキストを抽出してからパース
+  if (body.imageBase64) {
+    // Step1: 画像から条件テキストを読み取る
+    const extractRes = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 600,
+        messages: [{
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: (body.imageMediaType ?? "image/jpeg") as "image/jpeg" | "image/png" | "image/webp" | "image/gif",
+                data: body.imageBase64,
+              },
+            },
+            {
+              type: "text",
+              text: `このスクリーンショットから、お客さんの物件希望条件を読み取ってください。
+LINEの会話・条件メモ・物件検索条件など、どのような形式でも対応します。
+
+【読み取り対象】エリア・間取り・家賃・駅徒歩・広さ・築年数・入居時期・初期費用・こだわり・NG条件など
+【出力形式】条件を箇条書きで日本語でまとめてください（JSON不要）。
+読み取れない場合は「条件が読み取れませんでした」とだけ返してください。`,
+            },
+          ],
+        }],
+      }),
+    });
+
+    if (!extractRes.ok) return NextResponse.json({ ok: false, error: "Vision error" }, { status: 500 });
+
+    const extractData = await extractRes.json() as { content?: Array<{ text: string }> };
+    const extractedText = extractData.content?.[0]?.text?.trim() ?? "";
+
+    if (!extractedText || extractedText.includes("読み取れませんでした")) {
+      return NextResponse.json({ ok: false, error: "画像から条件を読み取れませんでした" }, { status: 422 });
+    }
+
+    // Step2: 抽出テキストを構造化パース（既存フローと同じ）
+    const parseRes = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 512,
+        messages: [{ role: "user", content: PARSE_PROMPT(extractedText) }],
+      }),
+    });
+
+    if (!parseRes.ok) return NextResponse.json({ ok: false, error: "AI error" }, { status: 500 });
+
+    const parseData = await parseRes.json() as { content?: Array<{ text: string }> };
+    const raw = parseData.content?.[0]?.text ?? "";
+    const match = raw.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\{[\s\S]*\}/);
+    if (!match) return NextResponse.json({ ok: false, error: "parse error" }, { status: 500 });
+
+    const parsed = JSON.parse(match[0]) as Record<string, unknown>;
+    for (const f of ["rent_min", "rent_max", "initial_cost_limit"]) {
+      const v = parsed[f];
+      if (typeof v === "number" && v > 0 && v <= 300) parsed[f] = v * 10000;
+    }
+
+    // extracted_text も返す（フロントでテキスト欄に自動セット）
+    return NextResponse.json({ ok: true, parsed, extracted_text: extractedText });
+  }
+
+  // ② テキストのみの場合: 従来フロー
+  if (!body.text?.trim()) return NextResponse.json({ ok: false, error: "text or image required" }, { status: 400 });
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 512,
+      messages: [{ role: "user", content: PARSE_PROMPT(body.text) }],
     }),
   });
 
@@ -68,8 +152,6 @@ ${text}`,
   if (!match) return NextResponse.json({ ok: false, error: "parse error" }, { status: 500 });
 
   const parsed = JSON.parse(match[0]) as Record<string, unknown>;
-
-  // 家賃バリデーション（万円単位誤りを自動修正）
   for (const f of ["rent_min", "rent_max", "initial_cost_limit"]) {
     const v = parsed[f];
     if (typeof v === "number" && v > 0 && v <= 300) parsed[f] = v * 10000;
