@@ -406,6 +406,8 @@ export default function Home() {
   const [calendarEventType, setCalendarEventType] = useState<"viewing"|"contract"|"key_handover"|"other"|"application">("viewing");
   const [calendarCustomerName, setCalendarCustomerName] = useState("");
   const [calendarSaving, setCalendarSaving] = useState(false);
+  const [viewingCount, setViewingCount] = useState(1);
+  const [viewingProperties, setViewingProperties] = useState<Array<{name: string; keyMethod: string}>>([{name: "", keyMethod: ""}]);
   const [convMenuConvId, setConvMenuConvId] = useState<string | null>(null);
   const [activeTasks, setActiveTasks] = useState<Record<string, Array<{ id: string; task_type: string; created_at: string; customer_name: string }>>>({});
   const [showKnowledgeModal, setShowKnowledgeModal] = useState(false);
@@ -4519,6 +4521,8 @@ export default function Home() {
                   setCalendarTime("");
                   setCalendarEndTime("");
                   setCalendarNote("");
+                  setViewingCount(1);
+                  setViewingProperties([{name: "", keyMethod: ""}]);
                   setCalendarModalConvId(convMenuConvId);
                   setConvMenuConvId(null);
                 }}
@@ -4982,6 +4986,10 @@ export default function Home() {
                     <button key={t} onClick={() => {
                       setCalendarEventType(t);
                       setCalendarTitle(calendarCustomerName ? `${calendarCustomerName} ${cfg.label}` : cfg.label);
+                      if (t === "viewing") {
+                        setViewingCount(1);
+                        setViewingProperties([{name: "", keyMethod: ""}]);
+                      }
                     }}
                       className="flex-1 rounded-xl py-2 text-[12px] font-bold border transition-all"
                       style={{ borderColor: active ? cfg.color : "#e9edef", background: active ? cfg.color : "transparent", color: active ? "white" : "#667781" }}>
@@ -4990,6 +4998,69 @@ export default function Home() {
                   );
                 })}
               </div>
+              {/* 内覧: 件数＋物件フォーム */}
+              {calendarEventType === "viewing" && (
+                <div className="flex flex-col gap-3">
+                  {/* 件数セレクター */}
+                  <div>
+                    <div className="mb-1.5 text-[11px] font-bold text-[#54656f]">内覧件数</div>
+                    <div className="flex gap-1.5">
+                      {[1, 2, 3, 4, 5].map((n) => (
+                        <button
+                          key={n}
+                          onClick={() => {
+                            setViewingCount(n);
+                            setViewingProperties((prev) =>
+                              Array.from({length: n}, (_, i) => prev[i] ?? {name: "", keyMethod: ""})
+                            );
+                          }}
+                          className="flex-1 rounded-xl py-2 text-[12px] font-bold border transition-all"
+                          style={{
+                            borderColor: viewingCount === n ? "#2196F3" : "#e9edef",
+                            background: viewingCount === n ? "#2196F3" : "transparent",
+                            color: viewingCount === n ? "white" : "#667781",
+                          }}
+                        >
+                          {n}件
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {/* 各物件フォーム */}
+                  {viewingProperties.map((prop, i) => (
+                    <div key={i} className="rounded-xl border border-[#c8e6ff] bg-[#f0f8ff] p-3 flex flex-col gap-2">
+                      <div className="text-[11px] font-bold text-[#1565C0]">
+                        {viewingCount > 1 ? `${i + 1}件目` : "内覧物件"}
+                      </div>
+                      <div>
+                        <div className="mb-1 text-[10px] text-[#54656f]">物件名</div>
+                        <input
+                          type="text"
+                          value={prop.name}
+                          onChange={(e) => setViewingProperties((prev) =>
+                            prev.map((p, idx) => idx === i ? {...p, name: e.target.value} : p)
+                          )}
+                          placeholder="例: シティアーク天王寺"
+                          className="w-full rounded-lg border border-[#e9edef] bg-white px-3 py-2 text-[13px] text-[#111b21] outline-none"
+                        />
+                      </div>
+                      <div>
+                        <div className="mb-1 text-[10px] text-[#54656f]">鍵の開け方</div>
+                        <input
+                          type="text"
+                          value={prop.keyMethod}
+                          onChange={(e) => setViewingProperties((prev) =>
+                            prev.map((p, idx) => idx === i ? {...p, keyMethod: e.target.value} : p)
+                          )}
+                          placeholder="例: キーボックス#1234 / 管理会社立会い"
+                          className="w-full rounded-lg border border-[#e9edef] bg-white px-3 py-2 text-[13px] text-[#111b21] outline-none"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {/* タイトル */}
               <div>
                 <div className="mb-1 text-[11px] font-bold text-[#54656f]">タイトル</div>
@@ -5032,6 +5103,18 @@ export default function Home() {
                   const endAt = calendarEndTime ? new Date(`${calendarDate}T${calendarEndTime}:00`).toISOString() : null;
                   const labelMap: Record<string, string> = { viewing:"内覧", contract:"契約", key_handover:"鍵渡し", application:"申込", other:"その他" };
                   const convId = calendarModalConvId!;
+
+                  // 内覧の場合: 物件名・鍵情報をnotesに構造化
+                  let builtNotes = calendarNote.trim() || labelMap[calendarEventType];
+                  if (calendarEventType === "viewing" && viewingProperties.some(p => p.name || p.keyMethod)) {
+                    const propLines = viewingProperties.map((p, i) => {
+                      const label = viewingCount > 1 ? `【${i + 1}件目】` : "【物件】";
+                      const parts = [p.name, p.keyMethod ? `鍵: ${p.keyMethod}` : ""].filter(Boolean);
+                      return `${label}${parts.join(" / ")}`;
+                    }).join("\n");
+                    builtNotes = calendarNote.trim() ? `${propLines}\n${calendarNote.trim()}` : propLines;
+                  }
+
                   await Promise.all([
                     supabase.from("calendar_events").insert({
                       title: calendarTitle.trim(),
@@ -5040,14 +5123,14 @@ export default function Home() {
                       start_at: startAt,
                       end_at: endAt,
                       all_day: false,
-                      notes: calendarNote.trim() || labelMap[calendarEventType],
+                      notes: builtNotes,
                     }),
                     fetch("/api/daily-tasks", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({
                         customer_name: calendarCustomerName,
-                        content: `【${labelMap[calendarEventType]}】${calendarTitle.trim()}${calendarNote.trim() ? ` — ${calendarNote.trim()}` : ""}`,
+                        content: `【${labelMap[calendarEventType]}】${calendarTitle.trim()}${builtNotes ? ` — ${builtNotes}` : ""}`,
                         date: calendarDate,
                         time: calendarTime,
                         end_time: calendarEndTime || "",
