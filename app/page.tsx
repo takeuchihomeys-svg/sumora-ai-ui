@@ -475,6 +475,7 @@ export default function Home() {
   const pendingAixTypeRef = useRef<AixActionType | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const bottomPanelRef = useRef<HTMLDivElement | null>(null);
   const justOpenedRef = useRef(false); // 会話を開いた直後フラグ（メッセージ取得完了後に最下部強制スクロール）
   const scrollAfterFetchRef = useRef<string>(""); // Effect1でfetch完了したconvId → Effect3でスクロール
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -3676,7 +3677,15 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="border-t border-[#e9edef] bg-white px-2 pt-1.5 md:px-3" style={{ paddingBottom: "max(10px, env(safe-area-inset-bottom))" }}>
+          <div
+            ref={bottomPanelRef}
+            className="border-t border-[#e9edef] bg-white px-2 pt-1.5 md:px-3"
+            style={{
+              paddingBottom: keyboardHeight > 100 ? "4px" : "max(10px, env(safe-area-inset-bottom))",
+              overflowY: keyboardHeight > 100 ? "auto" : "visible",
+              maxHeight: keyboardHeight > 100 ? "290px" : "none",
+            }}
+          >
             {error ? (
               <div className="mb-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-600">{error}</div>
             ) : null}
@@ -4429,14 +4438,20 @@ export default function Home() {
                     e.target.style.height = `${newH}px`;
                     setTextareaHeightPx(newH);
                     // iOS: テキストエリアの内部スクロールをカーソル位置（末尾）に合わせる
-                    requestAnimationFrame(() => { e.target.scrollTop = e.target.scrollHeight; });
+                    requestAnimationFrame(() => {
+                      e.target.scrollTop = e.target.scrollHeight;
+                      // ボトムパネルも最下部にスクロール（入力欄を常に見えるよう）
+                      if (bottomPanelRef.current) bottomPanelRef.current.scrollTop = bottomPanelRef.current.scrollHeight;
+                    });
                   }}
                   onFocus={() => {
                     setInputFocused(true);
-                    // iOS: フォーカス時にテキスト末尾を表示 & チャットを最下部へ
+                    // iOS: フォーカス時にテキスト末尾を表示 & チャット・パネルを最下部へ
                     requestAnimationFrame(() => {
                       if (textareaRef.current) textareaRef.current.scrollTop = textareaRef.current.scrollHeight;
                       if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+                      // ボトムパネルを最下部にスクロールして入力欄を表示
+                      if (bottomPanelRef.current) bottomPanelRef.current.scrollTop = bottomPanelRef.current.scrollHeight;
                     });
                   }}
                   onBlur={() => setInputFocused(false)}
@@ -4445,7 +4460,7 @@ export default function Home() {
                   className="min-h-[22px] w-full resize-none overflow-y-auto bg-transparent text-[14px] leading-6 text-[#111b21] outline-none placeholder:text-[#aaa]"
                   style={{
                     height: `${textareaHeightPx}px`,
-                    maxHeight: keyboardHeight > 100 ? "140px" : "320px",
+                    maxHeight: keyboardHeight > 100 ? "180px" : "320px",
                   }}
                 />
               </div>
