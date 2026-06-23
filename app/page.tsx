@@ -378,6 +378,8 @@ export default function Home() {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedNextActionIds") || "[]") as string[]); } catch { return new Set(); }
   });
   const nextActionFetchingRef = useRef<Set<string>>(new Set());
+  const [statusSuggestionMap, setStatusSuggestionMap] = useState<Record<string, { status: string; label: string; reason: string } | null>>({});
+  const statusSuggFetchingRef = useRef<Set<string>>(new Set());
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);
   const [announcements, setAnnouncements] = useState<Message[]>([]);
@@ -916,6 +918,15 @@ export default function Home() {
     if (!selectedId) return;
     if (nextActionMap[selectedId] === undefined) {
       void fetchNextAction(selectedId);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
+
+  // 会話選択時にステータス昇格提案を取得
+  useEffect(() => {
+    if (!selectedId) return;
+    if (statusSuggestionMap[selectedId] === undefined) {
+      void fetchStatusSuggestion(selectedId);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
@@ -1552,6 +1563,8 @@ export default function Home() {
       );
 
       setShowStatusMenu(false);
+      // ステータスが変わったのでサジェストをリセット
+      setStatusSuggestionMap((prev) => ({ ...prev, [selectedConversation.id]: null }));
     } catch (updateError) {
       console.error(updateError);
       setError("状態の更新に失敗しました。");
@@ -2180,6 +2193,24 @@ export default function Home() {
       setNextActionMap((prev) => ({ ...prev, [convId]: null }));
     } finally {
       nextActionFetchingRef.current.delete(convId);
+    }
+  };
+
+  const fetchStatusSuggestion = async (convId: string) => {
+    if (statusSuggFetchingRef.current.has(convId)) return;
+    statusSuggFetchingRef.current.add(convId);
+    try {
+      const res = await fetch("/api/suggest-status-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation_id: convId }),
+      });
+      const data = await res.json() as { suggested: { status: string; label: string; reason: string } | null };
+      setStatusSuggestionMap((prev) => ({ ...prev, [convId]: data.suggested ?? null }));
+    } catch {
+      setStatusSuggestionMap((prev) => ({ ...prev, [convId]: null }));
+    } finally {
+      statusSuggFetchingRef.current.delete(convId);
     }
   };
 
@@ -3338,6 +3369,35 @@ export default function Home() {
               </div>
             </div>
           </header>
+
+          {/* ステータス昇格提案バナー */}
+          {(() => {
+            const sugg = statusSuggestionMap[selectedConversation.id];
+            if (!sugg) return null;
+            const nextMeta = DETAIL_STATUSES.find((s) => s.key === sugg.status);
+            if (!nextMeta) return null;
+            return (
+              <div className="flex items-center gap-2 border-b border-[#e9edef] bg-blue-50 px-3 py-1.5">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#1565C0" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
+                <span className="text-[11px] text-blue-700 flex-1 font-medium">
+                  {sugg.reason} →&nbsp;
+                  <span className={`font-bold px-1.5 py-0.5 rounded-full text-[10px] ${nextMeta.color}`}>{nextMeta.label}</span>
+                  &nbsp;に変更しませんか？
+                </span>
+                <button
+                  onClick={() => void updateConversationStatus(sugg.status)}
+                  disabled={statusSaving}
+                  className="shrink-0 rounded-full bg-blue-600 px-2.5 py-0.5 text-[10px] font-bold text-white disabled:opacity-50"
+                >
+                  変更
+                </button>
+                <button
+                  onClick={() => setStatusSuggestionMap((prev) => ({ ...prev, [selectedConversation.id]: null }))}
+                  className="shrink-0 text-[#aaa] text-xs"
+                >✕</button>
+              </div>
+            );
+          })()}
 
           {/* 条件パネル: ▼ボタンで開閉 */}
           {showCondPanel && (() => {
