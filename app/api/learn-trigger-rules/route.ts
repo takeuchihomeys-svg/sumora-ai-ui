@@ -127,20 +127,7 @@ export async function POST() {
   });
 }
 
-// GET: 現在のトリガールール一覧
+// GET: Vercel cronから呼ばれる → 学習を実行
 export async function GET() {
-  const { data } = await supabase
-    .from("trigger_action_rules")
-    .select("action_type, keyword, occurrence_count, confidence")
-    .order("confidence", { ascending: false })
-    .limit(200);
-
-  const byAction: Record<string, typeof data> = {};
-  for (const row of data ?? []) {
-    const a = row.action_type as string;
-    byAction[a] ??= [];
-    byAction[a]!.push(row);
-  }
-
-  return NextResponse.json({ ok: true, total: data?.length ?? 0, by_action: byAction });
+  return POST();
 }
