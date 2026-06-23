@@ -2193,7 +2193,7 @@
     {
         "id":  43,
         "category":  "property_recommendation",
-        "phrase":  "家賃：{{rent_price}}円（共益費込み）",
+        "phrase":  "家賃：{{rent_price}}円（家賃管理費込）",
         "priority":  20,
         "role":  "property_info"
     },
