@@ -2054,6 +2054,36 @@ export default function AixModal({
                   ⚠️ 物件名が特定できませんでした。送信前に直接編集してください。
                 </div>
               )}
+              {/* 物件オススメ: 強調ポイントを生成後にも選択できる */}
+              {actionType === "property_recommendation" && (
+                <div className="mt-3 rounded-2xl border border-[#e8eaed] bg-white px-3 py-2.5">
+                  <p className="mb-2 text-[11px] font-semibold text-[#8696a0]">強調ポイントを変えて再生成</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(["家賃", "初期費用", "お部屋の条件"] as const).map((pt) => {
+                      const selected = recommendFocusPoints.includes(pt);
+                      return (
+                        <button
+                          key={pt}
+                          type="button"
+                          onClick={() => {
+                            setRecommendFocusPoints(prev =>
+                              selected ? prev.filter(p => p !== pt) : [...prev, pt]
+                            );
+                            setPreview("");
+                          }}
+                          className={`rounded-full border px-3 py-1 text-[12px] font-bold transition-colors ${
+                            selected
+                              ? "border-orange-400 bg-orange-400 text-white"
+                              : "border-[#d1d7db] bg-white text-[#667781] active:bg-[#f0f2f5]"
+                          }`}
+                        >
+                          {selected ? "✓ " : ""}{pt}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
