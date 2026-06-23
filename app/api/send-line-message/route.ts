@@ -92,7 +92,9 @@ export async function POST(req: NextRequest) {
       "物件を送らせていただ", "物件を送ります", "物件送ります",
       "物件をピックアップ", "ピックアップします",
     ];
-    const triggered = STAFF_SEND_KEYWORDS.some((k) => message.includes(k));
+    // 「ご査収ください」はAIX物件送るの完了文に含まれる→実際の送信であり予告ではないので除外
+    const isActualSend = message.includes("ご査収ください");
+    const triggered = !isActualSend && STAFF_SEND_KEYWORDS.some((k) => message.includes(k));
     if (triggered) {
       void (async () => {
         try {
