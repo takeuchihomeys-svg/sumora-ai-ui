@@ -470,6 +470,19 @@ CREATE INDEX IF NOT EXISTS idx_trigger_action_rules_action ON trigger_action_rul
 CREATE INDEX IF NOT EXISTS idx_trigger_action_rules_confidence ON trigger_action_rules(confidence DESC);
 ALTER TABLE trigger_action_rules DISABLE ROW LEVEL SECURITY;
 
+-- テンプレートフレーズ学習テーブル（送信済みフレーズの蓄積・テンプレ画面でアナウンス用）
+CREATE TABLE IF NOT EXISTS template_phrase_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  action_type TEXT NOT NULL,
+  conversation_status TEXT NOT NULL DEFAULT 'hearing',
+  phrase TEXT NOT NULL,
+  usage_count INTEGER DEFAULT 1,
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(action_type, conversation_status, phrase)
+);
+CREATE INDEX IF NOT EXISTS idx_template_phrase_logs_action ON template_phrase_logs(action_type, conversation_status);
+ALTER TABLE template_phrase_logs DISABLE ROW LEVEL SECURITY;
+
 -- AIXアクションパターン学習テーブル
 -- 「このステータスでこのアクションが取られた」を蓄積して次アクション提案に活用
 CREATE TABLE IF NOT EXISTS action_pattern_logs (

@@ -182,6 +182,7 @@ export default function AixModal({
   const [parsedEstimate, setParsedEstimate] = useState<Record<string, string> | null>(null);
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [showTemplateInfo, setShowTemplateInfo] = useState(false);
+  const [topPhrases, setTopPhrases] = useState<{ phrase: string; usage_count: number }[]>([]);
   const [floorPlanTouched, setFloorPlanTouched] = useState(false);
   // 物件確認した専用
   const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | "move_in_date" | null>(null);
@@ -383,6 +384,18 @@ export default function AixModal({
       }
     }
   }, [actionType]);
+
+  // テンプレート画面を開いたときによく使われるフレーズを取得
+  useEffect(() => {
+    if (!showTemplateInfo) return;
+    const status = conversationStatus ?? "hearing";
+    fetch(`/api/learn-template-phrases?action_type=${encodeURIComponent(actionType)}&conversation_status=${encodeURIComponent(status)}`)
+      .then((r) => r.json())
+      .then((d: { ok: boolean; phrases?: { phrase: string; usage_count: number }[] }) => {
+        if (d.ok && d.phrases?.length) setTopPhrases(d.phrases);
+      })
+      .catch(() => {});
+  }, [showTemplateInfo, actionType, conversationStatus]);
 
   const onSelectImage = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -913,6 +926,19 @@ export default function AixModal({
           isStarred: true,
         }),
       }).catch(() => {});
+
+      // テンプレートフレーズ学習ログ
+      if (preview.trim()) {
+        fetch("/api/learn-template-phrases", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action_type: actionType,
+            conversation_status: conversationStatus ?? "hearing",
+            sent_text: preview,
+          }),
+        }).catch(() => {});
+      }
 
       // 次アクション学習ログ（過去パターンとして蓄積）
       if (conversationStatus) {
@@ -2065,6 +2091,21 @@ export default function AixModal({
               <div className="w-16" />
             </div>
             <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
+              {/* よく使われるフレーズバナー */}
+              {topPhrases.length > 0 && (
+                <div className="rounded-2xl border-2 border-amber-400 bg-amber-50 px-4 py-3">
+                  <p className="text-[11px] font-bold text-amber-700 mb-2">💡 よく使われるフレーズ（実績順）</p>
+                  <ul className="space-y-1.5">
+                    {topPhrases.map((p, i) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <span className="text-amber-500 font-bold text-xs mt-0.5">{i + 1}</span>
+                        <span className="text-[12px] text-[#333] flex-1 leading-snug">{p.phrase}</span>
+                        <span className="text-[10px] text-amber-600 font-bold shrink-0">{p.usage_count}回</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <div>
                 <p className="mb-2 text-xs font-bold text-blue-700 uppercase tracking-wide">生成ルール</p>
                 <ul className="space-y-1.5">
