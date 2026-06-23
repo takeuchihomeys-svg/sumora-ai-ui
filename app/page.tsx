@@ -4250,14 +4250,14 @@ export default function Home() {
               // Supabase は "YYYY-MM-DD HH:mm:ss+00" 形式で返すことがある → ISO 8601 に正規化
               const ts = next.scheduled_at.replace(" ", "T").replace(/\+00$/, "Z");
               const jst = new Date(new Date(ts).getTime() + 9 * 60 * 60 * 1000);
-              const timeLabel = `${jst.getUTCMonth() + 1}/${jst.getUTCDate()} ${String(jst.getUTCHours()).padStart(2, "0")}:${String(jst.getUTCMinutes()).padStart(2, "0")} JST`;
+              const timeLabel = `${jst.getUTCMonth() + 1}/${jst.getUTCDate()} ${String(jst.getUTCHours()).padStart(2, "0")}:${String(jst.getUTCMinutes()).padStart(2, "0")}`;
               return (
                 <button
                   onClick={() => setShowScheduledList(true)}
-                  className="flex items-center gap-1.5 self-start rounded-full px-3 py-1.5 text-[11px] font-bold text-white animate-pulse"
-                  style={{ background: "#1565C0", boxShadow: "0 0 10px rgba(21,101,192,0.75), 0 2px 6px rgba(0,0,0,0.2)" }}
+                  className="flex items-center gap-1 self-start rounded-full px-2.5 py-1 text-[10px] font-bold text-white"
+                  style={{ background: "#1565C0", boxShadow: "0 1px 4px rgba(21,101,192,0.5)" }}
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                   予約中 {scheduledMsgsList.length}件 · {timeLabel}
                 </button>
               );
