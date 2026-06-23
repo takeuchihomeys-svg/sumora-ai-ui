@@ -94,6 +94,37 @@ export async function POST(req: NextRequest) {
     ];
     // 「ご査収ください」はAIX物件送るの完了文に含まれる→実際の送信であり予告ではないので除外
     const isActualSend = message.includes("ご査収ください");
+
+    // 実際に物件を送った → pending の property_send タスクをサーバー側でも自動完了（安全網）
+    if (isActualSend) {
+      void (async () => {
+        try {
+          const { data: convRow } = await supabase
+            .from("conversations")
+            .select("id")
+            .eq("line_user_id", line_user_id)
+            .eq("account", accountKey)
+            .maybeSingle();
+          if (!convRow?.id) return;
+          const { data: pendingTask } = await supabase
+            .from("line_tasks")
+            .select("id")
+            .eq("conversation_id", convRow.id as string)
+            .eq("task_type", "property_send")
+            .eq("status", "pending")
+            .maybeSingle();
+          if (pendingTask?.id) {
+            const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "https://sumora-ai-ui.vercel.app";
+            fetch(`${baseUrl}/api/line-tasks/complete`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id: pendingTask.id }),
+            }).catch(() => {});
+          }
+        } catch {}
+      })();
+    }
+
     const triggered = !isActualSend && STAFF_SEND_KEYWORDS.some((k) => message.includes(k));
     if (triggered) {
       void (async () => {

@@ -2522,8 +2522,21 @@ export default function Home() {
       setReplyDraft("");
       removeSelectedImage();
 
+      // 物件送り完了メッセージ検知（「ご査収ください」はAIX物件送る完了文の固定フレーズ）
+      // → P6「物件送る」を消してP4「物件オススメ」へ切り替え
+      if (textToSend && textToSend.includes("ご査収ください")) {
+        const convId = selectedConversation.id;
+        setSuggestPropertyRecommendMap((prev) => ({ ...prev, [convId]: true }));
+        setDismissedPropertyRecommendIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
+        setSuggestPropertySendMap((prev) => { const n = { ...prev }; delete n[convId]; return n; });
+        // property_sendタスクをローカルでも即時除去（リアルタイム到着前にバナーが再表示されないよう）
+        setActiveTasks((prev) => {
+          const tasks = (prev[convId] ?? []).filter((t) => t.task_type !== "property_send");
+          if (tasks.length === 0) { const n = { ...prev }; delete n[convId]; return n; }
+          return { ...prev, [convId]: tasks };
+        });
       // 物件送る予告メッセージ検知 → AIX「物件送る」誘導
-      if (textToSend && /ピックアップ|物件.*送|お送りさせて|物件をお送り/.test(textToSend)) {
+      } else if (textToSend && /ピックアップ|物件.*送|お送りさせて|物件をお送り/.test(textToSend)) {
         setSuggestPropertySendMap((prev) => ({ ...prev, [selectedConversation.id]: true }));
       }
 
