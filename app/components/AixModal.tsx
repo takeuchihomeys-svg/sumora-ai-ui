@@ -2050,13 +2050,14 @@ export default function AixModal({
                 </button>
                 <button
                   onClick={() => { if (aixLongPressedRef.current) { aixLongPressedRef.current = false; return; } void handleSend(); }}
-                  onTouchStart={() => { aixLongPressTimerRef.current = setTimeout(() => { aixLongPressedRef.current = true; openAixScheduleModal(); }, 600); }}
+                  onTouchStart={(e) => { e.preventDefault(); aixLongPressTimerRef.current = setTimeout(() => { aixLongPressedRef.current = true; openAixScheduleModal(); }, 600); }}
                   onTouchEnd={() => { if (aixLongPressTimerRef.current) { clearTimeout(aixLongPressTimerRef.current); aixLongPressTimerRef.current = null; } }}
                   onMouseDown={() => { aixLongPressTimerRef.current = setTimeout(() => { aixLongPressedRef.current = true; openAixScheduleModal(); }, 600); }}
                   onMouseUp={() => { if (aixLongPressTimerRef.current) { clearTimeout(aixLongPressTimerRef.current); aixLongPressTimerRef.current = null; } }}
                   onMouseLeave={() => { if (aixLongPressTimerRef.current) { clearTimeout(aixLongPressTimerRef.current); aixLongPressTimerRef.current = null; } }}
                   disabled={loading}
-                  className="flex-1 rounded-full bg-[#06c755] py-3 text-sm font-bold text-white disabled:opacity-50"
+                  className="flex-1 rounded-full bg-[#06c755] py-3 text-sm font-bold text-white disabled:opacity-50 select-none"
+                  style={{ WebkitUserSelect: "none", touchAction: "manipulation" }}
                   title="送信（長押しで予約送信）"
                 >
                   {loading ? "送信中..." : "送信する"}
