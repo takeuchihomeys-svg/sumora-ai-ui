@@ -186,7 +186,9 @@ ${recentText}
     if (!match) return NextResponse.json({ action: null, reason: "" });
 
     const result = JSON.parse(match[0]) as { action: string | null; reason?: string };
-    return NextResponse.json({ action: result.action ?? null, reason: result.reason ?? "" });
+    // AIが "null" を文字列で返すケースを null に正規化
+    const action = (!result.action || result.action === "null") ? null : result.action;
+    return NextResponse.json({ action, reason: result.reason ?? "" });
   } catch {
     return NextResponse.json({ action: null, reason: "" });
   }

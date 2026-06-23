@@ -373,7 +373,7 @@ export default function Home() {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedApplyStep2Ids") || "[]") as string[]); } catch { return new Set(); }
   });
   const [templateOpenContext, setTemplateOpenContext] = useState<null | "apply_step1" | "apply_step2" | "viewing_follow">(null);
-  const [nextActionMap, setNextActionMap] = useState<Record<string, { action: string; reason: string } | null>>({});
+  const [nextActionMap, setNextActionMap] = useState<Record<string, { action: string | null; reason: string } | null>>({});
   const [dismissedNextActionIds, setDismissedNextActionIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedNextActionIds") || "[]") as string[]); } catch { return new Set(); }
   });
@@ -2191,7 +2191,8 @@ export default function Home() {
         body: JSON.stringify({ conversation_id: convId }),
       });
       const data = await res.json() as { action: string | null; reason: string };
-      setNextActionMap((prev) => ({ ...prev, [convId]: data.action ? { action: data.action, reason: data.reason } : null }));
+      // action が null でも reason が有意義な場合（内覧確定等）はバナー表示できるよう保持
+      setNextActionMap((prev) => ({ ...prev, [convId]: (data.action || data.reason?.trim()) ? { action: data.action ?? null, reason: data.reason } : null }));
     } catch {
       setNextActionMap((prev) => ({ ...prev, [convId]: null }));
     } finally {
@@ -4235,7 +4236,7 @@ export default function Home() {
 
               // P8: AI次アクション提案（P1〜P7いずれも表示されない時のフォールバック）
               const nextSugg = nextActionMap[id];
-              if (nextSugg && nextSugg.action && !dismissedNextActionIds.has(id)) {
+              if (nextSugg && !dismissedNextActionIds.has(id)) {
                 const AIX_ACTION_LABEL: Record<string, string> = {
                   property_send: "物件送る",
                   viewing_invite: "内覧へ！",
@@ -4244,30 +4245,63 @@ export default function Home() {
                   meeting_place: "待ち合わせ",
                   property_recommendation: "物件オススメ",
                 };
-                return (
-                  <div className="mx-1 mb-1 rounded-2xl border-2 border-amber-400 bg-amber-50 px-3 py-2 flex items-center gap-2">
-                    <span className="text-[12px] font-bold text-amber-700 flex-1">
-                      <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
-                      {nextSugg.reason}
-                    </span>
-                    <button
-                      onClick={() => {
-                        setDismissedNextActionIds((prev) => new Set([...prev, id]));
-                        setShowAixMenu(false);
-                        setAixInspectLabel(null);
-                        openAixDirect(nextSugg.action as AixActionType);
-                      }}
-                      className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                      style={{ background: "linear-gradient(135deg, #f59e0b, #d97706)" }}
-                    >
-                      AIX {AIX_ACTION_LABEL[nextSugg.action] ?? nextSugg.action}
-                    </button>
-                    <button
-                      onClick={() => setDismissedNextActionIds((prev) => new Set([...prev, id]))}
-                      className="shrink-0 text-amber-400 text-[11px] font-bold"
-                    >✕</button>
-                  </div>
-                );
+
+                // action あり → AIXボタン
+                if (nextSugg.action) {
+                  return (
+                    <div className="mx-1 mb-1 rounded-2xl border-2 border-amber-400 bg-amber-50 px-3 py-2 flex items-center gap-2">
+                      <span className="text-[12px] font-bold text-amber-700 flex-1">
+                        <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
+                        {nextSugg.reason}
+                      </span>
+                      <button
+                        onClick={() => {
+                          setDismissedNextActionIds((prev) => new Set([...prev, id]));
+                          setShowAixMenu(false);
+                          setAixInspectLabel(null);
+                          openAixDirect(nextSugg.action as AixActionType);
+                        }}
+                        className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                        style={{ background: "linear-gradient(135deg, #f59e0b, #d97706)" }}
+                      >
+                        AIX {AIX_ACTION_LABEL[nextSugg.action] ?? nextSugg.action}
+                      </button>
+                      <button
+                        onClick={() => setDismissedNextActionIds((prev) => new Set([...prev, id]))}
+                        className="shrink-0 text-amber-400 text-[11px] font-bold"
+                      >✕</button>
+                    </div>
+                  );
+                }
+
+                // action なし + reason が「内覧」関連 → カレンダー登録ボタン
+                if (nextSugg.reason && (nextSugg.reason.includes("内覧") || nextSugg.reason.includes("予約") || nextSugg.reason.includes("確定"))) {
+                  const customerName = selectedConversation.customerName ?? "";
+                  const calTitle = encodeURIComponent(`内覧 ${customerName}`.trim());
+                  const calUrl = `https://calendar.google.com/calendar/r/eventedit?text=${calTitle}`;
+                  return (
+                    <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-400 bg-teal-50 px-3 py-2 flex items-center gap-2">
+                      <span className="text-[12px] font-bold text-teal-700 flex-1">
+                        <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
+                        {nextSugg.reason}
+                      </span>
+                      <button
+                        onClick={() => {
+                          window.open(calUrl, "_blank");
+                          setDismissedNextActionIds((prev) => new Set([...prev, id]));
+                        }}
+                        className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                        style={{ background: "linear-gradient(135deg, #0d9488, #0f766e)" }}
+                      >
+                        📅 カレンダーに登録
+                      </button>
+                      <button
+                        onClick={() => setDismissedNextActionIds((prev) => new Set([...prev, id]))}
+                        className="shrink-0 text-teal-400 text-[11px] font-bold"
+                      >✕</button>
+                    </div>
+                  );
+                }
               }
 
               return null;
