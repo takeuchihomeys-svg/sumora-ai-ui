@@ -3434,11 +3434,26 @@ export default function Home() {
                     );
                   })}
                 </div>
-                {lc.ai_summary && (
-                  <div className="mt-2 border-t border-[#f0f2f5] pt-1.5 text-[11px] leading-relaxed text-[#666]">
-                    {lc.ai_summary}
-                  </div>
-                )}
+                {lc.ai_summary && (() => {
+                  const summary = lc.ai_summary as string;
+                  // 「次のアクション」の行だけ抽出して最上部に表示
+                  const bullets = summary.split(/(?=・)/);
+                  const actionBullet = bullets.find(b => b.includes("次のアクション"));
+                  const otherBullets = bullets.filter(b => !b.includes("次のアクション")).join("").trim();
+                  const actionText = actionBullet?.replace(/^・/, "").trim() ?? null;
+                  return (
+                    <div className="mt-2 border-t border-[#f0f2f5] pt-1.5">
+                      {actionText && (
+                        <div className="mb-2 rounded-xl border border-orange-300 bg-orange-50 px-3 py-2">
+                          <p className="text-[13px] font-bold leading-snug text-orange-600">🎯 {actionText}</p>
+                        </div>
+                      )}
+                      {otherBullets && (
+                        <div className="text-[11px] leading-relaxed text-[#666]">{otherBullets}</div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })()}
