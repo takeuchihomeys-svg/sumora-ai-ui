@@ -14,6 +14,7 @@ interface Template {
 interface TemplateModalProps {
   onClose: () => void;
   onSelect?: (text: string, imageFiles?: File[], label?: string) => void;
+  onOpenAixWithFocus?: (focusPoints: string[]) => void;
   customerName?: string;
   conversationState?: string;
   recentMessages?: Array<{ sender: string; text: string; imageUrl?: string }>;
@@ -24,7 +25,7 @@ interface TemplateModalProps {
 }
 
 export default function TemplateModal({
-  onClose, onSelect, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword, highlightLabel,
+  onClose, onSelect, onOpenAixWithFocus, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword, highlightLabel,
 }: TemplateModalProps) {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,6 +61,8 @@ export default function TemplateModal({
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
   const [editingCategoryName, setEditingCategoryName] = useState("");
   const categoryEditInputRef = useRef<HTMLInputElement | null>(null);
+  // AIXカテゴリ: テンプレートカードごとの訴求ポイント選択状態
+  const [focusPointsMap, setFocusPointsMap] = useState<Record<string, string[]>>({});
 
   const loadTemplates = async () => {
     setLoading(true);
@@ -688,11 +691,49 @@ export default function TemplateModal({
                           </div>
                         )}
 
+                        {/* AIXカテゴリ: 訴求ポイント選択 */}
+                        {editingId !== tmpl.id && tmpl.category.includes("AIX") && (
+                          <div className="mb-2">
+                            <p className="mb-1.5 text-[11px] font-semibold text-[#8696a0]">訴求ポイント（任意）</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {(["家賃", "初期費用", "部屋の条件"] as const).map((pt) => {
+                                const selected = (focusPointsMap[tmpl.id] ?? []).includes(pt);
+                                return (
+                                  <button
+                                    key={pt}
+                                    type="button"
+                                    onClick={() => {
+                                      setFocusPointsMap(prev => {
+                                        const current = prev[tmpl.id] ?? [];
+                                        const next = selected ? current.filter(p => p !== pt) : [...current, pt];
+                                        return { ...prev, [tmpl.id]: next };
+                                      });
+                                    }}
+                                    className={`rounded-full border px-2.5 py-1 text-[11px] font-bold transition-colors ${
+                                      selected
+                                        ? "border-orange-400 bg-orange-400 text-white"
+                                        : "border-[#d1d7db] bg-white text-[#667781]"
+                                    }`}
+                                  >
+                                    {selected ? "✓ " : ""}{pt}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
                         {/* ボタン行 */}
                         {editingId !== tmpl.id && <div className="flex items-center gap-2 flex-wrap">
                           {onSelect && (
                             <button
                               onClick={() => {
+                                // AIXカテゴリはAIXモーダルを開く（訴求ポイント引き継ぎ）
+                                if (tmpl.category.includes("AIX") && onOpenAixWithFocus) {
+                                  onOpenAixWithFocus(focusPointsMap[tmpl.id] ?? []);
+                                  onClose();
+                                  return;
+                                }
                                 if (tmpl.requires_image && (templateImages[tmpl.id] ?? []).length === 0) {
                                   alert("📎 物件資料を画像で読み込んでください");
                                   return;
@@ -706,7 +747,7 @@ export default function TemplateModal({
                               className="rounded-full px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-50"
                               style={{ background: "linear-gradient(135deg, #06c755, #06a043)" }}
                             >
-                              そのまま使う
+                              {tmpl.category.includes("AIX") ? "AIXで生成" : "そのまま使う"}
                             </button>
                           )}
                           <button

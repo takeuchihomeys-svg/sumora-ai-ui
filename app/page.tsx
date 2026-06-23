@@ -336,6 +336,7 @@ export default function Home() {
   const [aixModalType, setAixModalType] = useState<AixActionType | null>(null);
   const [aixInitialFile, setAixInitialFile] = useState<File | null>(null);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [pendingAixFocusPoints, setPendingAixFocusPoints] = useState<string[]>([]);
   const [suggest2ndHandMap, setSuggest2ndHandMap] = useState<Record<string, boolean>>(() => {
     try { return JSON.parse(sessionStorage.getItem("suggest2ndHandMap") || "{}") as Record<string, boolean>; } catch { return {}; }
   });
@@ -5318,6 +5319,12 @@ export default function Home() {
       {showTemplateModal && (
         <TemplateModal
           onClose={() => { setShowTemplateModal(false); setTemplateOpenContext(null); }}
+          onOpenAixWithFocus={(fps) => {
+            setPendingAixFocusPoints(fps);
+            setShowTemplateModal(false);
+            setTemplateOpenContext(null);
+            openAixWithImagePicker("property_recommendation");
+          }}
           onSelect={(text, imageFiles, label) => {
             setReplyDraft(text);
             if (imageFiles && imageFiles.length > 0) setSelectedImageFiles((prev) => [...prev, ...imageFiles]);
@@ -5396,9 +5403,11 @@ export default function Home() {
           customerConditions={linkedCustomerMap[selectedConversation.id]?.conditions || memos[selectedConversation.id] || undefined}
           recentMessages={(selectedConversation.messages || []).slice(-20).map((m: Message) => ({ sender: m.sender, text: m.text || "" }))}
           customerSummary={linkedCustomerMap[selectedConversation.id]?.ai_summary ?? null}
+          initialFocusPoints={pendingAixFocusPoints.length > 0 ? pendingAixFocusPoints : undefined}
           onClose={() => {
             setAixModalType(null);
             setAixInitialFile(null);
+            setPendingAixFocusPoints([]);
           }}
           onSend={sendMessageText}
           onAfterSend={

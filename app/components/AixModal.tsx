@@ -32,6 +32,7 @@ interface AixModalProps {
   lineUserId: string;
   lastScheduledAt?: string;
   conversationStatus?: string;
+  initialFocusPoints?: string[];
   onClose: () => void;
   onSend: (text: string, imageUrl?: string) => Promise<void>;
   onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; scheduled?: boolean }) => void;
@@ -154,6 +155,7 @@ export default function AixModal({
   lineUserId,
   lastScheduledAt,
   conversationStatus,
+  initialFocusPoints,
   onClose,
   onSend,
   onAfterSend,
@@ -175,8 +177,8 @@ export default function AixModal({
   // 物件オススメ専用: 室内イメージURL（任意）
   const [propertyImageUrl, setPropertyImageUrl] = useState("");
   const [inputText, setInputText] = useState("");
-  // 物件オススメ専用: 特に強調するポイント（複数選択可）
-  const [recommendFocusPoints, setRecommendFocusPoints] = useState<string[]>([]);
+  // 物件オススメ専用: 特に強調するポイント（複数選択可）。テンプレートモーダルから引き継ぐ場合は initialFocusPoints で渡す
+  const [recommendFocusPoints, setRecommendFocusPoints] = useState<string[]>(initialFocusPoints ?? []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<string>("");
