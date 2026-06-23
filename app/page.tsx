@@ -174,6 +174,14 @@ function propertyNeedsAction(status: string, lastSentAt?: string | null): boolea
   return false;
 }
 
+function parseCondLogLine(text: string): { isLog: boolean; content: string } {
+  return /^【[^】]*】/.test(text) ? { isLog: true, content: text.replace(/^【[^】]*】/, "").trim() } : { isLog: false, content: text };
+}
+function fmtLogDate(): string {
+  const d = new Date();
+  return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,"0")}/${String(d.getDate()).padStart(2,"0")}`;
+}
+
 function formatConditions(customer: PropertyCustomerRow): string {
   const lines: string[] = [];
   if (customer.desired_area) lines.push(`\u30a8\u30ea\u30a2: ${customer.desired_area}`);
@@ -478,7 +486,8 @@ export default function Home() {
   const [linkSearchQuery, setLinkSearchQuery] = useState("");
   const [propertyCustomers, setPropertyCustomers] = useState<Array<{ id: string; customer_name: string; desired_area?: string | null; floor_plan?: string | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; other_requests?: string | null; rent_min?: number | null; building_age?: number | null }>>([]);
   // convId → linked property customer（条件テキスト含む）
-  const [linkedCustomerMap, setLinkedCustomerMap] = useState<Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null }>>({});
+  const [linkedCustomerMap, setLinkedCustomerMap] = useState<Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null; additional_conditions?: string | null }>>({});
+  const [reflectLoadingChat, setReflectLoadingChat] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const aixFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1197,7 +1206,7 @@ export default function Home() {
         .select("id,customer_name,status,last_property_sent_at,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age,additional_conditions,ai_summary")
         .in("id", propCustomerIds);
       if (pcData) {
-        const map: Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null }> = {};
+        const map: Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null; additional_conditions?: string | null }> = {};
         for (const conv of formatted) {
           if (!conv.propertyCustomerId) continue;
           const pc = (pcData as PropertyCustomerRow[]).find((d) => d.id === conv.propertyCustomerId);
@@ -1209,6 +1218,7 @@ export default function Home() {
               propertyStatus: pc.status || undefined,
               lastPropertySentAt: pc.last_property_sent_at || null,
               ai_summary: pc.ai_summary || null,
+              additional_conditions: pc.additional_conditions ?? null,
             };
           }
         }
@@ -2798,6 +2808,80 @@ export default function Home() {
     if (accountImageInputRef.current) accountImageInputRef.current.value = "";
   };
 
+  const handleReflectInChat = async (convId: string) => {
+    const lc = linkedCustomerMap[convId];
+    if (!lc?.additional_conditions || reflectLoadingChat) return;
+    setReflectLoadingChat(true);
+    try {
+      const rawLines = lc.additional_conditions.split("\n")
+        .filter(line => line.trim() && !parseCondLogLine(line).isLog);
+      if (rawLines.length === 0) return;
+      const rawText = rawLines[rawLines.length - 1];
+
+      const res = await fetch("/api/parse-additional-conditions", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: rawText }),
+      });
+      const data = await res.json() as { ok: boolean; parsed?: Record<string, unknown> };
+      if (!data.ok || !data.parsed) return;
+
+      const { data: pc } = await supabase
+        .from("property_customers")
+        .select("desired_area,floor_plan,rent_min,rent_max,walk_minutes,move_in_time,building_age,preferences,ng_points,other_requests")
+        .eq("id", lc.id)
+        .single();
+      if (!pc) return;
+
+      const p = data.parsed;
+      const appendStr = (orig: string | null | undefined, add: string) => orig ? `${orig}、${add}` : add;
+      const patch: Record<string, unknown> = { id: lc.id };
+      if (p.desired_area)   patch.desired_area  = appendStr(pc.desired_area as string | null, String(p.desired_area));
+      if (p.floor_plan)     patch.floor_plan    = String(p.floor_plan);
+      if (p.rent_min)       patch.rent_min      = Number(p.rent_min);
+      if (p.rent_max)       patch.rent_max      = Number(p.rent_max);
+      if (p.walk_minutes)   patch.walk_minutes  = Number(p.walk_minutes);
+      if (p.move_in_time)   patch.move_in_time  = String(p.move_in_time);
+      if (p.building_age)   patch.building_age  = Number(p.building_age);
+      if (p.preferences)    patch.preferences   = appendStr(pc.preferences as string | null, String(p.preferences));
+      if (p.ng_points)      patch.ng_points     = appendStr(pc.ng_points as string | null, String(p.ng_points));
+      if (p.other_requests) patch.other_requests = appendStr(pc.other_requests as string | null, String(p.other_requests));
+
+      if (Object.keys(patch).length > 1) {
+        await fetch("/api/property-customers", {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        });
+      }
+
+      const logified = lc.additional_conditions.split("\n").map(line => {
+        const pl = parseCondLogLine(line);
+        return pl.isLog ? line : `【${fmtLogDate()}反映済み】${pl.content}`;
+      }).filter(Boolean).join("\n");
+      await fetch("/api/property-customers", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: lc.id, additional_conditions: logified || null }),
+      });
+
+      const updatedPc = { ...pc, ...patch } as PropertyCustomerRow;
+      setLinkedCustomerMap(prev => ({
+        ...prev,
+        [convId]: { ...prev[convId], additional_conditions: logified || null, conditions: formatConditions(updatedPc) },
+      }));
+    } finally {
+      setReflectLoadingChat(false);
+    }
+  };
+
+  const clearAdditionalInChat = async (convId: string) => {
+    const lc = linkedCustomerMap[convId];
+    if (!lc) return;
+    await fetch("/api/property-customers", {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: lc.id, additional_conditions: null }),
+    });
+    setLinkedCustomerMap(prev => ({ ...prev, [convId]: { ...prev[convId], additional_conditions: null } }));
+  };
+
   const openAixWithImagePicker = (type: AixActionType) => {
     pendingAixTypeRef.current = type;
     setAixInitialFile(null);
@@ -3468,6 +3552,37 @@ export default function Home() {
                     </div>
                   );
                 })()}
+              </div>
+            );
+          })()}
+
+          {(() => {
+            const lc = linkedCustomerMap[selectedConversation.id];
+            if (!lc?.additional_conditions) return null;
+            const rawLines = lc.additional_conditions.split("\n").filter(line => line.trim() && !parseCondLogLine(line).isLog);
+            if (rawLines.length === 0) return null;
+            const rawText = rawLines[rawLines.length - 1];
+            return (
+              <div className="border-b border-amber-200 bg-amber-50 px-3 py-2">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] font-bold text-amber-700">新着要望</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => void handleReflectInChat(selectedConversation.id)}
+                      disabled={reflectLoadingChat}
+                      className="rounded-lg bg-amber-600 px-2.5 py-1 text-[11px] font-bold text-white active:opacity-70 disabled:opacity-50"
+                    >
+                      {reflectLoadingChat ? "解析中…" : "条件に反映する"}
+                    </button>
+                    <button
+                      onClick={() => void clearAdditionalInChat(selectedConversation.id)}
+                      className="text-[10px] text-amber-400 active:opacity-60"
+                    >
+                      クリア
+                    </button>
+                  </div>
+                </div>
+                <p className="text-[12px] text-amber-800 leading-relaxed">{rawText}</p>
               </div>
             );
           })()}
