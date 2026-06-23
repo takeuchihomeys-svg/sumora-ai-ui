@@ -461,6 +461,8 @@ export default function Home() {
   const [sparkleMeetingPlaceName, setSparkleMeetingPlaceName] = useState("");
   const [sparkleMeetingPlaceAddr, setSparkleMeetingPlaceAddr] = useState("");
   const [sparkleNoEmoji, setSparkleNoEmoji] = useState(false);
+  const [sparkleScreenshot, setSparkleScreenshot] = useState<{ base64: string; mediaType: string } | null>(null);
+  const [sparkleScreenshotPreview, setSparkleScreenshotPreview] = useState("");
   const [linkModalConvId, setLinkModalConvId] = useState<string | null>(null);
   const [linkSearchQuery, setLinkSearchQuery] = useState("");
   const [propertyCustomers, setPropertyCustomers] = useState<Array<{ id: string; customer_name: string; desired_area?: string | null; floor_plan?: string | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; other_requests?: string | null; rent_min?: number | null; building_age?: number | null }>>([]);
@@ -1922,6 +1924,7 @@ export default function Home() {
           customerSummary: linkedCustomer?.ai_summary ?? undefined,
           replyHint,
           recentMessages: msgs.slice(-20).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined, createdAt: m.rawCreatedAt || undefined })),
+          ...(sparkleScreenshot ? { screenshotBase64: sparkleScreenshot.base64, screenshotMediaType: sparkleScreenshot.mediaType } : {}),
         }),
       });
 
@@ -3724,9 +3727,49 @@ export default function Home() {
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-[13px] font-bold text-[#6c3fc7]">✨ AI返信を指定生成</span>
                   <button
-                    onClick={() => { setShowSparkleModal(false); setSparkleKeywords([]); setSparkleKeywordInput(""); setSparkleAddingNew(false); setSparkleNewText(""); setSparkleMeetingPlaceOpen(false); setSparkleMeetingPlace(""); setSparkleNoEmoji(false); setSparkleAttitudes([]); }}
+                    onClick={() => { setShowSparkleModal(false); setSparkleKeywords([]); setSparkleKeywordInput(""); setSparkleAddingNew(false); setSparkleNewText(""); setSparkleMeetingPlaceOpen(false); setSparkleMeetingPlace(""); setSparkleNoEmoji(false); setSparkleAttitudes([]); setSparkleScreenshot(null); setSparkleScreenshotPreview(""); }}
                     className="flex h-6 w-6 items-center justify-center rounded-full bg-[#f0f2f5] text-[#667781] text-[13px]"
                   >×</button>
+                </div>
+
+                {/* スクショ添付（任意） */}
+                <div className="mb-3">
+                  <label className="text-[11px] font-bold text-[#667781] mb-1 block">📎 トークのスクショ（任意）</label>
+                  {sparkleScreenshotPreview ? (
+                    <div className="relative">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={sparkleScreenshotPreview} alt="スクショ" className="w-full max-h-32 object-contain rounded-xl border border-[#e0d4ff] bg-[#faf5ff]" />
+                      <button
+                        onClick={() => { setSparkleScreenshot(null); setSparkleScreenshotPreview(""); }}
+                        className="absolute top-1.5 right-1.5 rounded-full bg-black/50 w-5 h-5 flex items-center justify-center text-white text-[10px] font-bold"
+                      >✕</button>
+                      <span className="absolute bottom-1.5 left-2 rounded-full bg-[#6c3fc7]/80 text-white text-[9px] px-2 py-0.5">スクショを読み取り中...</span>
+                    </div>
+                  ) : (
+                    <label className="flex items-center gap-2 w-full rounded-xl border border-dashed border-[#c5b0f0] bg-[#faf5ff] px-3 py-2 cursor-pointer active:bg-[#f3e8ff] transition-colors">
+                      <span className="text-base">📱</span>
+                      <span className="text-[11px] text-[#6c3fc7] font-medium">お客さんとのトークを添付する</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const reader = new FileReader();
+                          reader.onload = () => {
+                            const dataUrl = String(reader.result ?? "");
+                            setSparkleScreenshotPreview(dataUrl);
+                            const [header, base64] = dataUrl.split(",");
+                            const mediaType = header.match(/data:([^;]+)/)?.[1] ?? "image/jpeg";
+                            setSparkleScreenshot({ base64, mediaType });
+                          };
+                          reader.readAsDataURL(file);
+                          e.target.value = "";
+                        }}
+                      />
+                    </label>
+                  )}
                 </div>
 
                 {/* キーワード入力（タグ形式） */}

@@ -1025,6 +1025,7 @@ export async function POST(req: NextRequest) {
 
   type RecentMessage = { sender: string; text: string; imageUrl?: string; createdAt?: string };
   let message: string, state: string, customerName: string, recentMessages: RecentMessage[], customerConditions: string, customerSummary: string, replyHint: string;
+  let screenshotBase64: string | undefined, screenshotMediaType: string | undefined;
   try {
     const body = await req.json() as {
       message: string;
@@ -1034,6 +1035,8 @@ export async function POST(req: NextRequest) {
       customerConditions?: string;
       customerSummary?: string;
       replyHint?: string;
+      screenshotBase64?: string;
+      screenshotMediaType?: string;
     };
     message = body.message;
     state = body.state;
@@ -1042,8 +1045,44 @@ export async function POST(req: NextRequest) {
     customerConditions = body.customerConditions || "";
     customerSummary = body.customerSummary || "";
     replyHint = body.replyHint || "";
+    screenshotBase64 = body.screenshotBase64;
+    screenshotMediaType = body.screenshotMediaType;
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid request body" }, { status: 400 });
+  }
+
+  // スクショがある場合: Sonnet Vision でトーク内容を抽出して replyHint に注入
+  if (screenshotBase64) {
+    try {
+      const apiKey = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
+      const visionRes = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 800,
+          messages: [{
+            role: "user",
+            content: [
+              { type: "image", source: { type: "base64", media_type: (screenshotMediaType ?? "image/jpeg") as "image/jpeg" | "image/png" | "image/webp", data: screenshotBase64 } },
+              { type: "text", text: `このLINEトークのスクリーンショットから会話内容を書き出してください。
+「お客様: 〇〇」「スタッフ: 〇〇」の形式で時系列順に全て書き出す。
+読み取れない場合は「読み取れませんでした」のみ返す。余計な説明不要。` },
+            ],
+          }],
+        }),
+      });
+      if (visionRes.ok) {
+        const visionData = await visionRes.json() as { content?: Array<{ text: string }> };
+        const extracted = visionData.content?.[0]?.text?.trim() ?? "";
+        if (extracted && !extracted.includes("読み取れませんでした")) {
+          replyHint = [
+            `【📱 スクショから読み取ったトーク内容（最優先の文脈として参照すること）】\n${extracted}`,
+            replyHint,
+          ].filter(Boolean).join(" / ");
+        }
+      }
+    } catch { /* スクショ読み取り失敗時は無視して通常生成 */ }
   }
 
   if (!message) return NextResponse.json({ ok: false, error: "message required" }, { status: 400 });
