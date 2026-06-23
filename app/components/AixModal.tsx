@@ -999,6 +999,17 @@ export default function AixModal({
 
 
         <div className="max-h-[75vh] overflow-y-auto p-5">
+          {/* 物件オススメ: テンプレート選択アナウンス */}
+          {actionType === "property_recommendation" && (
+            <button
+              onClick={() => setShowTemplateInfo(true)}
+              className="mb-4 w-full flex items-center justify-between rounded-2xl border-2 border-blue-400 bg-blue-50 px-4 py-3 active:bg-blue-100 transition-colors"
+            >
+              <span className="text-[14px] font-bold text-blue-700">▶ テンプレートを確認する</span>
+              <span className="text-blue-400 text-lg">›</span>
+            </button>
+          )}
+
           <p className="mb-4 text-sm text-[#667781]">{config.description}</p>
 
           {/* 物件オススメ専用: 2枚画像エリア */}
