@@ -4192,7 +4192,7 @@ export default function Home() {
 
               // P8: AI次アクション提案（P1〜P7いずれも表示されない時のフォールバック）
               const nextSugg = nextActionMap[id];
-              if (nextSugg && !dismissedNextActionIds.has(id)) {
+              if (nextSugg && nextSugg.action && !dismissedNextActionIds.has(id)) {
                 const AIX_ACTION_LABEL: Record<string, string> = {
                   property_send: "物件送る",
                   viewing_invite: "内覧へ！",
