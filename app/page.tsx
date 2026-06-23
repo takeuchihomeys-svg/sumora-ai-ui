@@ -4963,8 +4963,8 @@ export default function Home() {
           className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
           onClick={(e) => { if (e.target === e.currentTarget) setCalendarModalConvId(null); }}
         >
-          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl overflow-hidden">
-            <div className="px-5 py-4 flex items-center justify-between" style={{ background: "linear-gradient(135deg, #2E7D32, #43A047, #66BB6A)" }}>
+          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl overflow-hidden flex flex-col" style={{ maxHeight: "90vh" }}>
+            <div className="px-5 py-4 flex items-center justify-between shrink-0" style={{ background: "linear-gradient(135deg, #2E7D32, #43A047, #66BB6A)" }}>
               <div className="text-[16px] font-bold text-white flex items-center gap-2">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="3" y="4" width="18" height="18" rx="2"/>
@@ -4976,7 +4976,7 @@ export default function Home() {
               </div>
               <button onClick={() => setCalendarModalConvId(null)} className="flex h-7 w-7 items-center justify-center rounded-full bg-white/20 text-white text-sm">✕</button>
             </div>
-            <div className="p-4 flex flex-col gap-3">
+            <div className="p-4 flex flex-col gap-3 overflow-y-auto flex-1">
               {/* 種別 */}
               <div className="flex gap-1.5 flex-wrap">
                 {(["viewing","contract","key_handover","application","other"] as const).map((t) => {
