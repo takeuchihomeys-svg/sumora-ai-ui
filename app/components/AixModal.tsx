@@ -39,6 +39,16 @@ interface AixModalProps {
   onScheduled?: () => void;
 }
 
+function stripEmoji(text: string): string {
+  return text
+    .replace(/[\u{1F300}-\u{1FAFF}]/gu, "")
+    .replace(/[\u{2600}-\u{27BF}]/gu, "")
+    .replace(/[\u{FE00}-\u{FE0F}]/gu, "")
+    .replace(/[ ]{2,}/g, " ")
+    .replace(/\n /g, "\n")
+    .trim();
+}
+
 const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }> = {
   property_recommendation: {
     rules: ["物件資料画像をVisionで読み取り", "お客様希望条件と照合", "退去予定あれば自動案内文を追加"],
@@ -185,6 +195,7 @@ export default function AixModal({
   const [aiDraft, setAiDraft] = useState<string>("");
   const [parsedEstimate, setParsedEstimate] = useState<Record<string, string> | null>(null);
   const [previewExpanded, setPreviewExpanded] = useState(false);
+  const [useEmoji, setUseEmoji] = useState(true);
   const [showTemplateInfo, setShowTemplateInfo] = useState(false);
   const [topPhrases, setTopPhrases] = useState<{ phrase: string; usage_count: number }[]>([]);
   const [floorPlanTouched, setFloorPlanTouched] = useState(false);
@@ -678,8 +689,8 @@ export default function AixModal({
           msg += `ご都合如何でしょうか！！`;
         }
 
-        setPreview(msg);
         setAiDraft(msg);
+        setPreview(useEmoji ? msg : stripEmoji(msg));
         setLoading(false);
         return;
       }
@@ -692,8 +703,8 @@ export default function AixModal({
           // 時間あり: 即座にローカル生成
           let msg = `かしこまりました！！\n${meetingDate}ご案内させて頂きます！！\n\n${meetingDate}${meetingTime}に${meetingPropertyName}\n現地エントランスお待ち合わせで何卒よろしくお願い致します！！`;
           if (meetingPropertyAddress.trim()) msg += `\n住所: ${meetingPropertyAddress}`;
-          setPreview(msg);
           setAiDraft(msg);
+          setPreview(useEmoji ? msg : stripEmoji(msg));
           setLoading(false);
           return;
         }
@@ -736,8 +747,9 @@ export default function AixModal({
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || "生成に失敗しました");
 
-      setPreview(data.message_text || "");
-      setAiDraft(data.message_text || "");
+      const generatedMsg = data.message_text || "";
+      setAiDraft(generatedMsg);
+      setPreview(useEmoji ? generatedMsg : stripEmoji(generatedMsg));
       if (data.parsed_estimate) setParsedEstimate(data.parsed_estimate);
     } catch (err) {
       setError(err instanceof Error ? err.message : "エラーが発生しました");
@@ -2047,7 +2059,21 @@ export default function AixModal({
               >
                 <div className="mb-1.5 flex items-center justify-between">
                   <span className="text-xs font-semibold text-[#667781]">送信プレビュー</span>
-                  <span className="text-[10px] font-bold text-blue-500">✏️ タップして編集</span>
+                  <div className="flex items-center gap-2">
+                    <div className="flex overflow-hidden rounded-full border border-[#d1d7db] text-[10px] font-bold">
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setUseEmoji(true); if (aiDraft) setPreview(aiDraft); }}
+                        className={`px-2.5 py-0.5 transition-colors ${useEmoji ? "bg-[#2196F3] text-white" : "bg-white text-[#8696a0]"}`}
+                      >絵文字あり</button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setUseEmoji(false); if (aiDraft) setPreview(stripEmoji(aiDraft)); }}
+                        className={`px-2.5 py-0.5 transition-colors ${!useEmoji ? "bg-[#667781] text-white" : "bg-white text-[#8696a0]"}`}
+                      >なし</button>
+                    </div>
+                    <span className="text-[10px] font-bold text-blue-500">✏️ タップして編集</span>
+                  </div>
                 </div>
                 <p className="text-sm leading-6 text-[#111b21] line-clamp-4 whitespace-pre-wrap">{preview}</p>
               </button>
