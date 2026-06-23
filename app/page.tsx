@@ -5078,7 +5078,37 @@ export default function Home() {
             templateOpenContext === "apply_step2" ? "②" :
             templateOpenContext === "apply_step1" ? "①申込" :
             suggest2ndHandMap[selectedConversation.id] ? "2番手" :
-            undefined
+            (() => {
+              // 会話パターンを自動検出してハイライトキーワードを決定
+              const msgs = (selectedConversation.messages || []) as Message[];
+              const customerText = msgs.filter((m) => m.sender === "customer").map((m) => m.text || "").join("");
+              const rawStatus = selectedConversation.status ?? "hearing";
+              const normStatus = STATUS_ALIAS[rawStatus] ?? rawStatus;
+              // 条件ワードが来ていない（初回対応中）
+              const condWords = ["万", "LDK", "1K", "2K", "1R", "エリア", "家賃", "間取り", "駅", "㎡", "築"];
+              if (normStatus === "hearing" && !condWords.some((w) => customerText.includes(w))) return "条件送られていない";
+              // 内覧後フォロー
+              if (customerText.includes("内覧") || customerText.includes("見学") || customerText.includes("現地")) return "内覧後";
+              // 申込意欲あり
+              if (customerText.includes("申込") || customerText.includes("申し込") || customerText.includes("決め")) return "申込";
+              return undefined;
+            })()
+          }
+          highlightLabel={
+            templateOpenContext === "apply_step2" ? "💡 次のステップ" :
+            templateOpenContext === "apply_step1" ? "💡 次のアクション" :
+            suggest2ndHandMap[selectedConversation.id] ? "💡 2番手向け" :
+            (() => {
+              const msgs = (selectedConversation.messages || []) as Message[];
+              const customerText = msgs.filter((m) => m.sender === "customer").map((m) => m.text || "").join("");
+              const rawStatus = selectedConversation.status ?? "hearing";
+              const normStatus = STATUS_ALIAS[rawStatus] ?? rawStatus;
+              const condWords = ["万", "LDK", "1K", "2K", "1R", "エリア", "家賃", "間取り", "駅", "㎡", "築"];
+              if (normStatus === "hearing" && !condWords.some((w) => customerText.includes(w))) return "💡 条件未送信パターン";
+              if (customerText.includes("内覧") || customerText.includes("見学") || customerText.includes("現地")) return "💡 内覧後パターン";
+              if (customerText.includes("申込") || customerText.includes("申し込") || customerText.includes("決め")) return "💡 申込パターン";
+              return undefined;
+            })()
           }
         />
       )}

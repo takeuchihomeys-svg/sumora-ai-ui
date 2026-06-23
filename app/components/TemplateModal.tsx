@@ -20,10 +20,11 @@ interface TemplateModalProps {
   linkedCustomer?: { id: string; name: string; conditions: string };
   initialCategory?: string;
   highlightKeyword?: string;
+  highlightLabel?: string;
 }
 
 export default function TemplateModal({
-  onClose, onSelect, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword,
+  onClose, onSelect, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword, highlightLabel,
 }: TemplateModalProps) {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
@@ -450,7 +451,7 @@ export default function TemplateModal({
                         <div className="mb-2 flex items-center justify-between gap-2">
                           <span className="text-xs font-bold text-[#1565C0] flex-1 min-w-0 truncate">{tmpl.label}</span>
                           {isHighlighted && (
-                            <span className="shrink-0 rounded-full bg-orange-400 px-2 py-0.5 text-[10px] font-bold text-white">💡 次のアクション</span>
+                            <span className="shrink-0 rounded-full bg-orange-400 px-2 py-0.5 text-[10px] font-bold text-white">{highlightLabel ?? "💡 次のアクション"}</span>
                           )}
                           {isSearching && !isHighlighted && (
                             <span className="shrink-0 rounded-full bg-[#e8f0fe] px-2 py-0.5 text-[10px] font-bold text-[#1565C0]">{tmpl.category}</span>
