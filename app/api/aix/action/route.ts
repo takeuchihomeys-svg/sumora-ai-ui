@@ -201,6 +201,7 @@ export async function POST(request: NextRequest) {
 【フォーマットルール — 必ず全て守ること】
 ・物件名は先頭に必ず🌟をつける（🌟の後に半角スペースは入れない）
 ・[お客様名]は必ず実際の名前に置き換える（「さん」付け）・呼び方は最初から最後まで一貫して変えない
+・お客様名の前後に助詞（「にも」「からも」「ても」等）が来る場合でも、名前を省略・切断しない。例：「〜のお部屋となります！！もえかさんにかなりオススメ〜」のように名前全体を必ず使うこと
 ・「！！」（全角感嘆符2つ）を使用する（スモラスタイル）・「！」1つは使わない
 ・絵文字は 😊 のみ・最大1個まで・なくてもよい
 ・数字は具体的に（「63,000円」「徒歩7分」「6帖」など）
@@ -261,7 +262,7 @@ ${SMORA_COMMON_RULES}`;
       const moveOutNote = move_out_date
         ? `\n\n【退去予定日（必ずこの日付をそのまま使うこと・画像から読み直し禁止）】\n${move_out_date}`
         : "";
-      const userText = `${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${extra_input ? `\n追加情報: ${extra_input}` : ""}${moveOutNote}`;
+      const userText = `お客様名は「${name}」です。「${name}さん」と完全な名前で使うこと（助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${extra_input ? `\n追加情報: ${extra_input}` : ""}${moveOutNote}`;
 
       const content = [
         { type: "text", text: userText },
