@@ -1504,13 +1504,14 @@ export default function AixModal({
                 <div className="mb-1">
                   <p className="mb-1.5 text-xs font-bold text-[#54656f]">申込状況 <span className="font-normal text-[#90a4ae]">（任意）</span></p>
                   <div className="flex gap-2">
-                    {([{ key: "yes", label: "申込あり", icon: "🔴" }, { key: "no", label: "申込なし", icon: "🟢" }] as const).map((opt) => (
-                      <button
-                        key={opt.key}
-                        onClick={() => setCheckAvailableApp(checkAvailableApp === opt.key ? null : opt.key)}
-                        className={`flex-1 rounded-xl border py-2 text-sm font-bold transition ${checkAvailableApp === opt.key ? "border-[#1565C0] bg-[#e3f0ff] text-[#1565C0]" : "border-[#d1d7db] bg-white text-[#54656f]"}`}
-                      >{opt.icon} {opt.label}</button>
-                    ))}
+                    <button
+                      onClick={() => setCheckAvailableApp(checkAvailableApp === "yes" ? null : "yes")}
+                      className={`flex-1 rounded-xl border py-2 text-sm font-bold transition ${checkAvailableApp === "yes" ? "border-red-400 bg-red-50 text-red-600" : "border-[#d1d7db] bg-white text-red-400"}`}
+                    >申込あり</button>
+                    <button
+                      onClick={() => setCheckAvailableApp(checkAvailableApp === "no" ? null : "no")}
+                      className={`flex-1 rounded-xl border py-2 text-sm font-bold transition ${checkAvailableApp === "no" ? "border-blue-400 bg-blue-50 text-blue-600" : "border-[#d1d7db] bg-white text-blue-400"}`}
+                    >申込なし</button>
                   </div>
                 </div>
               )}
@@ -1580,7 +1581,7 @@ export default function AixModal({
                     onClick={() => checkFileInputRef.current?.click()}
                     className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#d1d7db] py-3 text-sm font-semibold text-[#90a4ae] hover:bg-[#f5f6f7]"
                   >
-                    📷 {checkImagePreviews.length > 0 ? `追加する（現在${checkImagePreviews.length}枚）` : "画像を追加する（スキップ可）"}
+                    📎 {checkImagePreviews.length > 0 ? `追加する（現在${checkImagePreviews.length}枚）` : "画像を追加する（スキップ可）"}
                   </button>
                   <input ref={checkFileInputRef} type="file" accept="image/*" multiple onChange={onSelectCheckImages} className="hidden" />
                 </div>
@@ -1604,7 +1605,7 @@ export default function AixModal({
                       onClick={() => checkEstimateInputRef.current?.click()}
                       className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#b3d0f7] py-3 text-sm font-semibold text-[#2196F3] hover:bg-blue-50"
                     >
-                      📋 見積書を追加する（スキップ可）
+                      📎 見積書を追加する（スキップ可）
                     </button>
                   )}
                   <input
