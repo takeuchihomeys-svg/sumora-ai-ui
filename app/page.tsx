@@ -3931,7 +3931,8 @@ export default function Home() {
             style={{
               paddingBottom: keyboardHeight > 100 ? "4px" : "max(10px, env(safe-area-inset-bottom))",
               overflowY: keyboardHeight > 100 ? "auto" : "visible",
-              maxHeight: keyboardHeight > 100 ? "290px" : "none",
+              maxHeight: keyboardHeight > 100 ? `${Math.min((viewportHeight ?? 500) - 80, 520)}px` : "none",
+              touchAction: keyboardHeight > 100 ? "pan-y" : "auto",
             }}
           >
             {error ? (
