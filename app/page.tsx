@@ -3608,7 +3608,7 @@ export default function Home() {
             );
           })()}
 
-          {(() => {
+          {!(inputFocused && keyboardHeight > 100) && (() => {
             const lc = linkedCustomerMap[selectedConversation.id];
             if (!lc?.additional_conditions) return null;
             const rawLines = lc.additional_conditions.split("\n").filter(line => line.trim() && !parseCondLogLine(line).isLog);
@@ -3639,7 +3639,7 @@ export default function Home() {
             );
           })()}
 
-          {(activeTasks[selectedConversation.id]?.length ?? 0) > 0 && (
+          {!(inputFocused && keyboardHeight > 100) && (activeTasks[selectedConversation.id]?.length ?? 0) > 0 && (
             <div className="flex items-center gap-2 border-b border-[#a5d6a7] px-4 py-2" style={{ background: "linear-gradient(90deg, #e8f5e9, #f1f8e9)" }}>
               <svg className="h-3.5 w-3.5 shrink-0 text-[#2e7d32]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path d="M4 11a9 9 0 0 1 9 9" /><path d="M4 4a16 16 0 0 1 16 16" /><circle cx="5" cy="19" r="1" fill="currentColor" />
