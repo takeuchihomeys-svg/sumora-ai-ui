@@ -3619,6 +3619,41 @@ export default function Home() {
             </div>
           )}
 
+          {(() => {
+            const nextSugg = nextActionMap[selectedConversation.id];
+            if (!nextSugg?.action || dismissedNextActionIds.has(selectedConversation.id)) return null;
+            const AIX_CHAT_LABEL: Record<string, string> = {
+              property_send: "物件送る",
+              viewing_invite: "内覧へ！",
+              application_push: "申込へ！",
+              estimate_sheet: "見積書送る",
+              meeting_place: "待ち合わせ",
+              property_recommendation: "物件オススメ",
+              property_check_result: "物件確認した",
+            };
+            const label = AIX_CHAT_LABEL[nextSugg.action] ?? nextSugg.action;
+            return (
+              <div className="flex items-center gap-2 border-b border-[#b3d9f7] px-4 py-2" style={{ background: "linear-gradient(90deg, #e3f2fd, #f0f8ff)" }}>
+                <svg className="h-3 w-3 shrink-0 text-[#1565c0]" viewBox="0 0 24 24" fill="currentColor">
+                  <polygon points="5,3 19,12 5,21" />
+                </svg>
+                <div className="min-w-0 flex-1">
+                  <span className="text-[11px] font-bold text-[#1565c0]">AIXおすすめ</span>
+                  <span className="mx-1 text-[11px] text-[#1976d2]">→ {label}</span>
+                  {nextSugg.reason && <span className="text-[10px] text-[#5c85d6]">({nextSugg.reason})</span>}
+                </div>
+                <button
+                  onClick={() => setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]))}
+                  className="shrink-0 text-[10px] text-[#8696a0] active:opacity-60"
+                >✕</button>
+                <button
+                  onClick={() => { openAixDirect(nextSugg.action as AixActionType); }}
+                  className="shrink-0 rounded-full bg-[#1976d2] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
+                >開く</button>
+              </div>
+            );
+          })()}
+
           {announcements.length > 0 && (
             <button
               onClick={() => setShowAnnouncementList(true)}
@@ -5534,9 +5569,22 @@ export default function Home() {
             setPendingAixFocusPoints([]);
           }}
           onSend={sendMessageText}
-          onAfterSend={
+          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; scheduled?: boolean }) => {
+            // AIX送信をパターン学習データとして記録（半自動化ループ）
+            if (aixModalType) {
+              const _ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
+              fetch("/api/learn-action-patterns", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "log", conversation_status: _ns, action_type: aixModalType }),
+              }).catch(() => {});
+              // AI提案バナーを一旦消す（次回選択時に再フェッチされる）
+              setNextActionMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; });
+              nextActionFetchingRef.current.delete(selectedConversation.id);
+            }
+            (
             aixModalType === "property_check_result"
-              ? (meta) => {
+              ? (meta: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; scheduled?: boolean } | undefined) => {
                   const task = (activeTasks[selectedConversation.id] ?? []).find((t) => t.task_type === "property_check");
                   if (task) {
                     fetch("/api/line-tasks/complete", {
@@ -5550,7 +5598,7 @@ export default function Home() {
                   }
                 }
               : aixModalType === "property_send"
-              ? (meta) => {
+              ? (meta: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; scheduled?: boolean } | undefined) => {
                   const convId = selectedConversation.id;
                   const customerName = selectedConversation.customerName;
                   // 物件送るバナーを消去（dismissed も解除して次回のために備える）
@@ -5665,7 +5713,7 @@ export default function Home() {
                   }
                 }
               : aixModalType === "viewing_invite"
-              ? (meta) => {
+              ? (meta: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; scheduled?: boolean } | undefined) => {
                   if (meta?.suggestViewingTemplate) {
                     const convId = selectedConversation.id;
                     setSuggestViewingTemplateMap((prev) => ({ ...prev, [convId]: true }));
@@ -5673,7 +5721,8 @@ export default function Home() {
                   }
                 }
               : undefined
-          }
+            )?.(meta);
+          }}
         />
       ) : null}
 
