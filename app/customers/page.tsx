@@ -155,12 +155,16 @@ function summarizeCondContent(content: string): string {
   return stripped;
 }
 
-// addCondText が駅リストのとき、保存用に要約テキストを生成
-function summarizeCondTextForLog(text: string): string {
+// addCondText が駅リストか判定（5駅以上）
+function isStationList(text: string): boolean {
   const stripped = text.trim().replace(/^#{1,3}\s*設定中の[駅沿線][^\n]*\n?/, "");
-  const items = stripped.split(/[・、\n]/).map(s => s.trim()).filter(Boolean);
-  if (items.length >= 5) return `設定中の駅: ${items[0]} 他${items.length - 1}駅`;
-  return text.trim();
+  return stripped.split(/[・、\n]/).map(s => s.trim()).filter(Boolean).length >= 5;
+}
+
+// 駅リストを「・」区切りの1行テキストに正規化（ヘッダー除去・改行結合）
+function normalizeStationList(text: string): string {
+  const stripped = text.trim().replace(/^#{1,3}\s*設定中の[駅沿線][^\n]*\n?/, "");
+  return stripped.split(/[\n]/).map(s => s.trim()).filter(Boolean).join("・").replace(/・{2,}/g, "・");
 }
 
 function formatLogDate(): string {
@@ -554,7 +558,11 @@ export default function CustomersPage() {
       const customer = customers.find((c) => c.id === addCondId);
       if (!customer) return;
 
-      const logEntry = `【${formatLogDate()}追加】${summarizeCondTextForLog(addCondText)}`;
+      // 駅リストは raw行（生行）として保存 → 琥珀カードの「条件に反映する」ボタンが使えるようになる
+      // 通常テキストは【追加】付きログ行として保存
+      const logEntry = isStationList(addCondText)
+        ? normalizeStationList(addCondText)
+        : `【${formatLogDate()}追加】${addCondText.trim()}`;
       const existing = customer.additional_conditions?.trim() || "";
       const newAdditional = existing ? `${existing}\n${logEntry}` : logEntry;
 
