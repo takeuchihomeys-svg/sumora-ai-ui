@@ -177,6 +177,17 @@ function propertyNeedsAction(status: string, lastSentAt?: string | null): boolea
 function parseCondLogLine(text: string): { isLog: boolean; content: string } {
   return /^【[^】]*】/.test(text) ? { isLog: true, content: text.replace(/^【[^】]*】/, "").trim() } : { isLog: false, content: text };
 }
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/^#{1,6}\s+/gm, "")          // ## 見出し
+    .replace(/\*\*(.+?)\*\*/g, "$1")      // **太字**
+    .replace(/\*(.+?)\*/g, "$1")          // *斜体*
+    .replace(/^[-*]\s+/gm, "・")          // - 箇条書き
+    .replace(/^---+$/gm, "")              // 水平線
+    .replace(/`(.+?)`/g, "$1")            // `コード`
+    .replace(/\n{3,}/g, "\n\n")           // 連続改行を圧縮
+    .trim();
+}
 function fmtLogDate(): string {
   const d = new Date();
   return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,"0")}/${String(d.getDate()).padStart(2,"0")}`;
@@ -963,6 +974,20 @@ export default function Home() {
 
   // 会話切り替え時に条件パネルを閉じる
   useEffect(() => { setShowCondPanel(false); }, [selectedId]);
+
+  // AIドラフトがセットされたとき（draftIsAi=trueかつ内容あり）→ textareaを末尾にスクロール
+  useEffect(() => {
+    if (!draftIsAi || !replyDraft) return;
+    requestAnimationFrame(() => {
+      if (!textareaRef.current) return;
+      const ta = textareaRef.current;
+      ta.style.height = "auto";
+      const newH = Math.min(ta.scrollHeight, 320);
+      ta.style.height = `${newH}px`;
+      setTextareaHeightPx(newH);
+      ta.scrollTop = ta.scrollHeight;
+    });
+  }, [replyDraft, draftIsAi]);
 
   // メッセージが0件の会話を選択したとき、個別に取得して補完する
   useEffect(() => {
@@ -3716,7 +3741,7 @@ export default function Home() {
                     </button>
                   </div>
                 </div>
-                <p className="text-[12px] text-amber-800 leading-relaxed">{rawText}</p>
+                <p className="text-[12px] text-amber-800 leading-relaxed">{stripMarkdown(rawText)}</p>
               </div>
             );
           })()}

@@ -147,8 +147,19 @@ function parseConditionLog(text: string): { isLog: boolean; isReflected: boolean
 }
 
 // 駅リスト（5駅以上の・区切り）を「なかもず 他47駅」に要約して表示
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/\*(.+?)\*/g, "$1")
+    .replace(/^[-*]\s+/gm, "・")
+    .replace(/^---+$/gm, "")
+    .replace(/`(.+?)`/g, "$1")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
 function summarizeCondContent(content: string): string {
-  const stripped = content.replace(/^#{1,3}\s*/, "").trim();
+  const stripped = stripMarkdown(content);
   if (!stripped) return "";
   const items = stripped.split(/[・、]/).map(s => s.trim()).filter(Boolean);
   if (items.length >= 5) return `${items[0]} 他${items.length - 1}駅`;
