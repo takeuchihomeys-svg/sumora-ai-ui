@@ -3274,15 +3274,19 @@ export default function Home() {
                     style={{ WebkitUserSelect: "none", userSelect: "none" }}
                     className={`flex w-full items-center gap-3 px-4 py-[23px] text-left transition ${isNextReply ? "border-[3px]" : "border-l-[3px]"} ${
                       (() => {
-                        if (isNextReply) return "border-orange-600 bg-orange-100 hover:bg-orange-150";
+                        const isPostApply = postApplyConvIds.has(conversation.id);
+                        const readAt = manuallyReadAt[conversation.id];
+                        const isRead = !!(readAt && new Date(readAt) >= new Date(conversation.updatedAt || 0));
+                        if (isNextReply && !isPostApply && !isRead) return "border-orange-600 bg-orange-100 hover:bg-orange-150";
                         const autoFlag = (() => {
+                          if (isPostApply) return false;
+                          if (isRead) return false;
                           if (conversation.lastSender !== "customer") return false;
                           const age = Date.now() - new Date(conversation.updatedAt || 0).getTime();
                           if (age < 24 * 60 * 60 * 1000) return false;
-                          const readAt = manuallyReadAt[conversation.id];
-                          return !(readAt && new Date(readAt) >= new Date(conversation.updatedAt || 0));
+                          return true;
                         })();
-                        const isFlagged = flaggedConvIds.has(conversation.id) || autoFlag;
+                        const isFlagged = !isRead && !isPostApply && (flaggedConvIds.has(conversation.id) || autoFlag);
                         return isFlagged
                           ? isActive
                             ? "border-orange-400 bg-orange-100"
