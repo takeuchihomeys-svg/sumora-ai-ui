@@ -430,6 +430,10 @@ export default function Home() {
   const [showKnowledgeModal, setShowKnowledgeModal] = useState(false);
   const [knowledgeRules, setKnowledgeRules] = useState<Array<{ id: string; content: string; conversation_state: string; created_at: string; title: string }>>([]);
   const [knowledgeLoading, setKnowledgeLoading] = useState(false);
+  const [showTriggerRulesModal, setShowTriggerRulesModal] = useState(false);
+  const [triggerRules, setTriggerRules] = useState<Array<{ id: string; action_type: string; keyword: string; confidence: number; occurrence_count: number }>>([]);
+  const [triggerRulesLoading, setTriggerRulesLoading] = useState(false);
+  const [triggerRulesFilter, setTriggerRulesFilter] = useState("all");
   const [showPromptModal, setShowPromptModal] = useState(false);
   const [promptItems, setPromptItems] = useState<Array<{ key: string; label: string; content: string; is_custom: boolean; readonly?: boolean }>>([]);
   const [promptLoading, setPromptLoading] = useState(false);
@@ -5776,10 +5780,10 @@ export default function Home() {
           className="fixed inset-0 z-50 flex items-end justify-center bg-black/60"
           onClick={(e) => { if (e.target === e.currentTarget) setShowHamburgerMenu(false); }}
         >
-          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl overflow-hidden">
+          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl overflow-hidden flex flex-col" style={{ maxHeight: "90vh" }}>
             {/* ヘッダー */}
             <div
-              className="px-6 pt-6 pb-5"
+              className="px-6 pt-6 pb-5 shrink-0"
               style={{ background: "linear-gradient(135deg, #0d1b3e, #1565C0, #2196F3)" }}
             >
               <div className="flex items-center justify-between">
@@ -5801,6 +5805,8 @@ export default function Home() {
               </div>
             </div>
 
+            {/* スクロール可能エリア */}
+            <div className="overflow-y-auto flex-1">
             {/* アカウント選択 */}
             <div className="px-4 pt-4 pb-2">
               <p className="text-[11px] font-bold text-[#8696a0] mb-3 tracking-wide uppercase">表示アカウント</p>
@@ -5936,7 +5942,7 @@ export default function Home() {
                   setKnowledgeRules(d.rules ?? []);
                   setKnowledgeLoading(false);
                 }}
-                className="flex w-full items-center gap-3 rounded-2xl border border-[#e9edef] bg-[#f8f9fa] px-4 py-3 text-left active:scale-[0.98] transition-all"
+                className="flex w-full items-center gap-3 rounded-2xl border border-[#e9edef] bg-[#f8f9fa] px-4 py-3 mb-2 text-left active:scale-[0.98] transition-all"
               >
                 <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-indigo-500">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -5951,6 +5957,32 @@ export default function Home() {
                   <path d="M9 18l6-6-6-6"/>
                 </svg>
               </button>
+              {/* AIX誘導ルール管理 */}
+              <button
+                onClick={async () => {
+                  setShowHamburgerMenu(false);
+                  setShowTriggerRulesModal(true);
+                  setTriggerRulesLoading(true);
+                  setTriggerRulesFilter("all");
+                  const d = await fetch("/api/trigger-rules").then((r) => r.json()) as { rules: Array<{ id: string; action_type: string; keyword: string; confidence: number; occurrence_count: number }> };
+                  setTriggerRules(d.rules ?? []);
+                  setTriggerRulesLoading(false);
+                }}
+                className="flex w-full items-center gap-3 rounded-2xl border border-[#e9edef] bg-[#f8f9fa] px-4 py-3 text-left active:scale-[0.98] transition-all"
+              >
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-500">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <polygon points="5,3 19,12 5,21"/><line x1="19" y1="3" x2="19" y2="21"/>
+                  </svg>
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[14px] font-bold text-[#111b21]">AIX誘導ルール管理</div>
+                  <div className="text-[11px] text-[#8696a0]">キーワード→AIXボタン自動提案ルール</div>
+                </div>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8696a0" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 18l6-6-6-6"/>
+                </svg>
+              </button>
             </div>
             {replyExamplesCount !== null && (
               <div className="px-4 pt-1 pb-2 text-center">
@@ -5958,6 +5990,7 @@ export default function Home() {
               </div>
             )}
             <div className="pb-[max(20px,env(safe-area-inset-bottom))]" />
+            </div>{/* /スクロール可能エリア */}
           </div>
         </div>
       )}
@@ -6032,6 +6065,116 @@ export default function Home() {
             </div>
             <div className="px-4 py-3 border-t border-[#f0f2f5] text-center">
               <span className="text-[11px] text-[#8696a0]">{knowledgeRules.length}件 / 承認済みはimportance 10になります</span>
+            </div>
+            <div className="pb-[max(12px,env(safe-area-inset-bottom))]" />
+          </div>
+        </div>
+      )}
+
+      {/* AIX誘導ルール管理モーダル */}
+      {showTriggerRulesModal && (
+        <div
+          className="fixed inset-0 z-[95] flex items-end justify-center bg-black/60"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowTriggerRulesModal(false); }}
+        >
+          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl overflow-hidden flex flex-col" style={{ maxHeight: "90vh" }}>
+            {/* ヘッダー */}
+            <div className="px-5 pt-5 pb-3 flex items-center justify-between border-b border-[#f0f2f5] shrink-0">
+              <div>
+                <div className="text-[16px] font-bold text-[#111b21]">AIX誘導ルール管理</div>
+                <div className="text-[11px] text-[#8696a0]">キーワード一致でAIXボタンを自動提案するルール</div>
+              </div>
+              <button onClick={() => setShowTriggerRulesModal(false)} className="flex h-8 w-8 items-center justify-center rounded-full bg-[#f0f2f5] text-[#667781]">✕</button>
+            </div>
+            {/* フィルタータブ */}
+            <div className="flex gap-1.5 px-4 py-2.5 overflow-x-auto shrink-0 border-b border-[#f0f2f5]" style={{ scrollbarWidth: "none" }}>
+              {[
+                { key: "all", label: "すべて" },
+                { key: "property_send", label: "物件送る" },
+                { key: "viewing_invite", label: "内覧へ！" },
+                { key: "application_push", label: "申込へ！" },
+                { key: "meeting_place", label: "待ち合わせ" },
+                { key: "estimate_sheet", label: "見積書" },
+                { key: "property_check", label: "物件確認" },
+              ].map((tab) => {
+                const cnt = tab.key === "all" ? triggerRules.length : triggerRules.filter((r) => r.action_type === tab.key).length;
+                return (
+                  <button
+                    key={tab.key}
+                    onClick={() => setTriggerRulesFilter(tab.key)}
+                    className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-bold transition-colors ${triggerRulesFilter === tab.key ? "bg-emerald-500 text-white" : "bg-[#f0f2f5] text-[#667781]"}`}
+                  >
+                    {tab.label} {cnt > 0 && <span className="opacity-70">({cnt})</span>}
+                  </button>
+                );
+              })}
+            </div>
+            {/* ルール一覧 */}
+            <div className="overflow-y-auto flex-1 px-4 py-3">
+              {triggerRulesLoading ? (
+                <div className="flex items-center justify-center py-12 text-[13px] text-[#8696a0]">読み込み中...</div>
+              ) : (() => {
+                const ACTION_COLOR: Record<string, string> = {
+                  property_send: "bg-blue-100 text-blue-700",
+                  viewing_invite: "bg-sky-100 text-sky-700",
+                  application_push: "bg-pink-100 text-pink-700",
+                  meeting_place: "bg-orange-100 text-orange-700",
+                  estimate_sheet: "bg-purple-100 text-purple-700",
+                  property_check: "bg-gray-100 text-gray-600",
+                  property_recommendation: "bg-teal-100 text-teal-700",
+                };
+                const ACTION_LABEL: Record<string, string> = {
+                  property_send: "物件送る",
+                  viewing_invite: "内覧へ！",
+                  application_push: "申込へ！",
+                  meeting_place: "待ち合わせ",
+                  estimate_sheet: "見積書",
+                  property_check: "物件確認",
+                  property_recommendation: "物件オススメ",
+                };
+                const filtered = triggerRulesFilter === "all"
+                  ? triggerRules
+                  : triggerRules.filter((r) => r.action_type === triggerRulesFilter);
+                if (filtered.length === 0) {
+                  return <div className="flex items-center justify-center py-12 text-[13px] text-[#8696a0]">ルールがありません</div>;
+                }
+                return (
+                  <div className="flex flex-col gap-2">
+                    {filtered.map((rule) => (
+                      <div key={rule.id} className="flex items-center gap-3 rounded-xl border border-[#e9edef] bg-[#f8f9fa] px-3 py-2.5">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold ${ACTION_COLOR[rule.action_type] ?? "bg-gray-100 text-gray-600"}`}>
+                              {ACTION_LABEL[rule.action_type] ?? rule.action_type}
+                            </span>
+                            <span className="text-[10px] text-[#8696a0]">{Math.round(rule.confidence * 100)}%</span>
+                            {rule.occurrence_count > 0 && (
+                              <span className="text-[10px] text-[#aaa]">{rule.occurrence_count}件実績</span>
+                            )}
+                          </div>
+                          <div className="text-[13px] font-bold text-[#111b21] truncate">「{rule.keyword}」</div>
+                          {/* 信頼度バー */}
+                          <div className="mt-1 h-1 rounded-full bg-[#e9edef] overflow-hidden">
+                            <div className="h-full rounded-full bg-emerald-400" style={{ width: `${Math.round(rule.confidence * 100)}%` }} />
+                          </div>
+                        </div>
+                        <button
+                          onClick={async () => {
+                            await fetch("/api/trigger-rules", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: rule.id }) });
+                            setTriggerRules((prev) => prev.filter((r) => r.id !== rule.id));
+                          }}
+                          className="shrink-0 rounded-lg bg-red-50 px-2.5 py-1.5 text-[11px] font-bold text-red-500 active:opacity-70"
+                        >削除</button>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+            <div className="px-4 py-3 border-t border-[#f0f2f5] text-center shrink-0">
+              <span className="text-[11px] text-[#8696a0]">
+                {triggerRulesFilter === "all" ? triggerRules.length : triggerRules.filter((r) => r.action_type === triggerRulesFilter).length}件表示
+              </span>
             </div>
             <div className="pb-[max(12px,env(safe-area-inset-bottom))]" />
           </div>
