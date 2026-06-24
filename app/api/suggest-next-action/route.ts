@@ -42,7 +42,18 @@ export async function POST(req: NextRequest) {
 
   if (!conv || !messages?.length) return NextResponse.json({ action: null, reason: "" });
   if (SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ action: null, reason: "" });
-  if (conv.last_sender === "staff") return NextResponse.json({ action: null, reason: "" });
+
+  // スタッフが最後に送信 → 3日以上返信なしなら物件送るを誘導
+  if (conv.last_sender === "staff") {
+    const latestMsg = messages[0]; // order: desc なので最新が先頭
+    const daysSince = latestMsg?.created_at
+      ? (Date.now() - new Date(latestMsg.created_at as string).getTime()) / (1000 * 60 * 60 * 24)
+      : 0;
+    if (daysSince >= 3) {
+      return NextResponse.json({ action: "property_send", reason: `${Math.floor(daysSince)}日間未返信・追客` });
+    }
+    return NextResponse.json({ action: null, reason: "" });
+  }
 
   const currentStatus = (conv.status as string) ?? "hearing";
   const statusLabel = STATUS_LABEL[currentStatus] ?? currentStatus;
