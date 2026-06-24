@@ -5592,10 +5592,15 @@ export default function Home() {
             // AIX送信をパターン学習データとして記録（半自動化ループ）
             if (aixModalType) {
               const _ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
+              // お客さんの直前メッセージ本文をキーワード抽出用に渡す
+              const _lastCustomerMsg = [...selectedConversation.messages]
+                .reverse()
+                .find((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
+                ?.text ?? "";
               fetch("/api/learn-action-patterns", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ action: "log", conversation_status: _ns, action_type: aixModalType }),
+                body: JSON.stringify({ action: "log", conversation_status: _ns, action_type: aixModalType, customer_msg_summary: _lastCustomerMsg.slice(0, 150) }),
               }).catch(() => {});
               // AI提案バナーを一旦消す（次回選択時に再フェッチされる）
               setNextActionMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; });
