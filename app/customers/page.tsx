@@ -498,6 +498,13 @@ export default function CustomersPage() {
       if (data.extracted_text) setAddCondText(data.extracted_text);
       if (!data.ok || !data.parsed) return;
       const p = data.parsed;
+      // Haikuが駅リストをdesired_areaに入れ損ねた場合のフォールバック
+      if (!p.desired_area && data.extracted_text) {
+        const m = data.extracted_text.match(/設定中の[駅沿線][^\n]*\n([\s\S]+)/);
+        if (m) {
+          p.desired_area = m[1].trim().replace(/\n+/g, "・").replace(/・{2,}/g, "・");
+        }
+      }
       const f = emptyEditFields();
       const preview: EditFields = {
         desired_area:       p.desired_area       != null ? String(p.desired_area)       : f.desired_area,
