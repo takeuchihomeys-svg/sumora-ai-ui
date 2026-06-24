@@ -54,13 +54,15 @@ export async function POST(req: NextRequest) {
     .at(-1)?.text as string ?? "";
 
   if (lastCustomerMsg) {
+    // conversation_status が NULL（全フェーズ共通）またはこのフェーズ限定のルールのみ取得
     const { data: triggerRules } = await supabase
       .from("trigger_action_rules")
-      .select("action_type, keyword, confidence, occurrence_count")
+      .select("action_type, keyword, confidence, occurrence_count, conversation_status")
       .gte("confidence", 0.65)
-      .gte("occurrence_count", 3)
+      .gte("occurrence_count", 1)
+      .or(`conversation_status.is.null,conversation_status.eq.${currentStatus}`)
       .order("confidence", { ascending: false })
-      .limit(300);
+      .limit(500);
 
     if (triggerRules?.length) {
       // キーワードが含まれるルールをスコアリング

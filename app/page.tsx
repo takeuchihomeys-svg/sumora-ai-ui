@@ -431,9 +431,14 @@ export default function Home() {
   const [knowledgeRules, setKnowledgeRules] = useState<Array<{ id: string; content: string; conversation_state: string; created_at: string; title: string }>>([]);
   const [knowledgeLoading, setKnowledgeLoading] = useState(false);
   const [showTriggerRulesModal, setShowTriggerRulesModal] = useState(false);
-  const [triggerRules, setTriggerRules] = useState<Array<{ id: string; action_type: string; keyword: string; confidence: number; occurrence_count: number }>>([]);
+  const [triggerRules, setTriggerRules] = useState<Array<{ id: string; action_type: string; keyword: string; confidence: number; occurrence_count: number; conversation_status: string | null }>>([]);
+  const [triggerAcceptStats, setTriggerAcceptStats] = useState<Record<string, { accepted: number; dismissed: number }>>({});
   const [triggerRulesLoading, setTriggerRulesLoading] = useState(false);
   const [triggerRulesFilter, setTriggerRulesFilter] = useState("all");
+  const [newRuleKeyword, setNewRuleKeyword] = useState("");
+  const [newRuleAction, setNewRuleAction] = useState("viewing_invite");
+  const [newRuleStatus, setNewRuleStatus] = useState("");
+  const [newRuleAdding, setNewRuleAdding] = useState(false);
   const [showPromptModal, setShowPromptModal] = useState(false);
   const [promptItems, setPromptItems] = useState<Array<{ key: string; label: string; content: string; is_custom: boolean; readonly?: boolean }>>([]);
   const [promptLoading, setPromptLoading] = useState(false);
@@ -3647,11 +3652,21 @@ export default function Home() {
                   {nextSugg.reason && <span className="text-[10px] text-[#5c85d6]">({nextSugg.reason})</span>}
                 </div>
                 <button
-                  onClick={() => setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]))}
+                  onClick={() => {
+                    setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
+                    // ③ dismiss をログ（精度測定）
+                    const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
+                    fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_dismissed" }) }).catch(() => {});
+                  }}
                   className="shrink-0 text-[10px] text-[#8696a0] active:opacity-60"
                 >✕</button>
                 <button
-                  onClick={() => { openAixDirect(nextSugg.action as AixActionType); }}
+                  onClick={() => {
+                    // ③ accept をログ（精度測定）
+                    const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
+                    fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_accepted" }) }).catch(() => {});
+                    openAixDirect(nextSugg.action as AixActionType);
+                  }}
                   className="shrink-0 rounded-full bg-[#1976d2] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
                 >開く</button>
               </div>
@@ -5964,8 +5979,9 @@ export default function Home() {
                   setShowTriggerRulesModal(true);
                   setTriggerRulesLoading(true);
                   setTriggerRulesFilter("all");
-                  const d = await fetch("/api/trigger-rules").then((r) => r.json()) as { rules: Array<{ id: string; action_type: string; keyword: string; confidence: number; occurrence_count: number }> };
+                  const d = await fetch("/api/trigger-rules").then((r) => r.json()) as { rules: Array<{ id: string; action_type: string; keyword: string; confidence: number; occurrence_count: number; conversation_status: string | null }>; acceptStats?: Record<string, { accepted: number; dismissed: number }> };
                   setTriggerRules(d.rules ?? []);
+                  setTriggerAcceptStats(d.acceptStats ?? {});
                   setTriggerRulesLoading(false);
                 }}
                 className="flex w-full items-center gap-3 rounded-2xl border border-[#e9edef] bg-[#f8f9fa] px-4 py-3 text-left active:scale-[0.98] transition-all"
@@ -6132,6 +6148,10 @@ export default function Home() {
                   property_check: "物件確認",
                   property_recommendation: "物件オススメ",
                 };
+                const STATUS_LABEL_MAP: Record<string, string> = {
+                  hearing: "ヒアリング", proposing: "物件提案中", viewing: "内覧調整",
+                  applying: "申込中", first_reply: "初回対応", property_recommendation: "物件提案中",
+                };
                 const filtered = triggerRulesFilter === "all"
                   ? triggerRules
                   : triggerRules.filter((r) => r.action_type === triggerRulesFilter);
@@ -6140,39 +6160,106 @@ export default function Home() {
                 }
                 return (
                   <div className="flex flex-col gap-2">
-                    {filtered.map((rule) => (
-                      <div key={rule.id} className="flex items-center gap-3 rounded-xl border border-[#e9edef] bg-[#f8f9fa] px-3 py-2.5">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 mb-1">
+                    {filtered.map((rule) => {
+                      const stats = triggerAcceptStats[rule.action_type];
+                      const total = stats ? stats.accepted + stats.dismissed : 0;
+                      const acceptRate = total > 0 ? Math.round(stats!.accepted / total * 100) : null;
+                      return (
+                        <div key={rule.id} className="rounded-xl border border-[#e9edef] bg-[#f8f9fa] px-3 py-2.5">
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
                             <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold ${ACTION_COLOR[rule.action_type] ?? "bg-gray-100 text-gray-600"}`}>
                               {ACTION_LABEL[rule.action_type] ?? rule.action_type}
                             </span>
-                            <span className="text-[10px] text-[#8696a0]">{Math.round(rule.confidence * 100)}%</span>
-                            {rule.occurrence_count > 0 && (
-                              <span className="text-[10px] text-[#aaa]">{rule.occurrence_count}件実績</span>
+                            {rule.conversation_status && (
+                              <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-bold text-amber-700">
+                                {STATUS_LABEL_MAP[rule.conversation_status] ?? rule.conversation_status}限定
+                              </span>
                             )}
+                            <span className="text-[10px] text-[#8696a0]">{Math.round(rule.confidence * 100)}%</span>
+                            {rule.occurrence_count > 0 && <span className="text-[10px] text-[#aaa]">{rule.occurrence_count}件実績</span>}
+                            {acceptRate !== null && (
+                              <span className={`text-[10px] font-bold ${acceptRate >= 60 ? "text-emerald-600" : "text-red-400"}`}>
+                                採用率{acceptRate}%
+                              </span>
+                            )}
+                            <button
+                              onClick={async () => {
+                                await fetch("/api/trigger-rules", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: rule.id }) });
+                                setTriggerRules((prev) => prev.filter((r) => r.id !== rule.id));
+                              }}
+                              className="ml-auto shrink-0 rounded-lg bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-400 active:opacity-70"
+                            >削除</button>
                           </div>
-                          <div className="text-[13px] font-bold text-[#111b21] truncate">「{rule.keyword}」</div>
-                          {/* 信頼度バー */}
-                          <div className="mt-1 h-1 rounded-full bg-[#e9edef] overflow-hidden">
+                          <div className="text-[13px] font-bold text-[#111b21]">「{rule.keyword}」</div>
+                          <div className="mt-1.5 h-1 rounded-full bg-[#e9edef] overflow-hidden">
                             <div className="h-full rounded-full bg-emerald-400" style={{ width: `${Math.round(rule.confidence * 100)}%` }} />
                           </div>
                         </div>
-                        <button
-                          onClick={async () => {
-                            await fetch("/api/trigger-rules", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: rule.id }) });
-                            setTriggerRules((prev) => prev.filter((r) => r.id !== rule.id));
-                          }}
-                          className="shrink-0 rounded-lg bg-red-50 px-2.5 py-1.5 text-[11px] font-bold text-red-500 active:opacity-70"
-                        >削除</button>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 );
               })()}
             </div>
-            <div className="px-4 py-3 border-t border-[#f0f2f5] text-center shrink-0">
-              <span className="text-[11px] text-[#8696a0]">
+            {/* ① ルール追加フォーム */}
+            <div className="shrink-0 border-t border-[#f0f2f5] px-4 py-3 bg-[#f8f9fa]">
+              <p className="text-[10px] font-bold text-[#8696a0] mb-2 uppercase tracking-wide">新しいルールを追加</p>
+              <div className="flex flex-col gap-2">
+                <input
+                  type="text"
+                  value={newRuleKeyword}
+                  onChange={(e) => setNewRuleKeyword(e.target.value)}
+                  placeholder="キーワード（例：内覧したい）"
+                  className="rounded-xl border border-[#e9edef] bg-white px-3 py-2 text-[13px] outline-none focus:border-emerald-400"
+                />
+                <div className="flex gap-2">
+                  <select
+                    value={newRuleAction}
+                    onChange={(e) => setNewRuleAction(e.target.value)}
+                    className="flex-1 rounded-xl border border-[#e9edef] bg-white px-2 py-2 text-[12px] outline-none"
+                  >
+                    <option value="viewing_invite">内覧へ！</option>
+                    <option value="application_push">申込へ！</option>
+                    <option value="property_send">物件送る</option>
+                    <option value="estimate_sheet">見積書</option>
+                    <option value="meeting_place">待ち合わせ</option>
+                    <option value="property_recommendation">物件オススメ</option>
+                    <option value="property_check">物件確認</option>
+                  </select>
+                  <select
+                    value={newRuleStatus}
+                    onChange={(e) => setNewRuleStatus(e.target.value)}
+                    className="flex-1 rounded-xl border border-[#e9edef] bg-white px-2 py-2 text-[12px] outline-none"
+                  >
+                    <option value="">全フェーズ共通</option>
+                    <option value="hearing">ヒアリング限定</option>
+                    <option value="proposing">物件提案中限定</option>
+                    <option value="viewing">内覧調整限定</option>
+                    <option value="applying">申込中限定</option>
+                  </select>
+                </div>
+                <button
+                  disabled={!newRuleKeyword.trim() || newRuleAdding}
+                  onClick={async () => {
+                    if (!newRuleKeyword.trim()) return;
+                    setNewRuleAdding(true);
+                    const d = await fetch("/api/trigger-rules", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ action_type: newRuleAction, keyword: newRuleKeyword.trim(), confidence: 0.9, conversation_status: newRuleStatus || null }),
+                    }).then((r) => r.json()) as { ok: boolean; rule?: { id: string; action_type: string; keyword: string; confidence: number; occurrence_count: number; conversation_status: string | null } };
+                    if (d.ok && d.rule) {
+                      setTriggerRules((prev) => [d.rule!, ...prev]);
+                      setNewRuleKeyword("");
+                    }
+                    setNewRuleAdding(false);
+                  }}
+                  className="rounded-xl bg-emerald-500 py-2 text-[13px] font-bold text-white active:opacity-80 disabled:opacity-40"
+                >{newRuleAdding ? "追加中…" : "追加する"}</button>
+              </div>
+            </div>
+            <div className="px-4 py-2 text-center shrink-0">
+              <span className="text-[10px] text-[#aaa]">
                 {triggerRulesFilter === "all" ? triggerRules.length : triggerRules.filter((r) => r.action_type === triggerRulesFilter).length}件表示
               </span>
             </div>
