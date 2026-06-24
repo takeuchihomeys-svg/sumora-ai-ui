@@ -471,6 +471,10 @@ export default function Home() {
   const [scheduledMsgsList, setScheduledMsgsList] = useState<{ id: string; text: string | null; image_urls: string[]; scheduled_at: string }[]>([]);
   const [showScheduledList, setShowScheduledList] = useState(false);
   const [cancellingScheduleId, setCancellingScheduleId] = useState<string | null>(null);
+  const [editingScheduledMsgId, setEditingScheduledMsgId] = useState<string | null>(null);
+  const [editSchedText, setEditSchedText] = useState("");
+  const [editSchedAt, setEditSchedAt] = useState("");
+  const [savingScheduledEdit, setSavingScheduledEdit] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
   const [showSparkleModal, setShowSparkleModal] = useState(false);
   const [sparkleKeywords, setSparkleKeywords] = useState<string[]>([]);
@@ -2284,6 +2288,31 @@ export default function Home() {
     await supabase.from("scheduled_messages").update({ status: "cancelled" }).eq("id", id);
     setScheduledMsgsList((prev) => prev.filter((m) => m.id !== id));
     setCancellingScheduleId(null);
+  };
+
+  const openScheduledMsgEdit = (msg: { id: string; text: string | null; scheduled_at: string }) => {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const jst = new Date(new Date(msg.scheduled_at).getTime() + 9 * 60 * 60 * 1000);
+    const jstStr = `${jst.getUTCFullYear()}-${pad(jst.getUTCMonth() + 1)}-${pad(jst.getUTCDate())}T${pad(jst.getUTCHours())}:${pad(jst.getUTCMinutes())}`;
+    setEditSchedText(msg.text ?? "");
+    setEditSchedAt(jstStr);
+    setEditingScheduledMsgId(msg.id);
+  };
+
+  const saveScheduledMsgEdit = async () => {
+    if (!editingScheduledMsgId || savingScheduledEdit) return;
+    setSavingScheduledEdit(true);
+    const utcDate = new Date(editSchedAt + ":00+09:00");
+    await supabase.from("scheduled_messages")
+      .update({ text: editSchedText.trim() || null, scheduled_at: utcDate.toISOString() })
+      .eq("id", editingScheduledMsgId);
+    setScheduledMsgsList((prev) => prev.map((m) =>
+      m.id === editingScheduledMsgId
+        ? { ...m, text: editSchedText.trim() || null, scheduled_at: utcDate.toISOString() }
+        : m
+    ));
+    setEditingScheduledMsgId(null);
+    setSavingScheduledEdit(false);
   };
 
   const openScheduleModal = () => {
@@ -6669,27 +6698,70 @@ export default function Home() {
                 const jstDate = new Date(new Date(msg.scheduled_at).getTime() + 9 * 60 * 60 * 1000);
                 const pad = (n: number) => String(n).padStart(2, "0");
                 const label = `${jstDate.getUTCMonth() + 1}/${jstDate.getUTCDate()} ${pad(jstDate.getUTCHours())}:${pad(jstDate.getUTCMinutes())}`;
+                const isEditing = editingScheduledMsgId === msg.id;
                 return (
-                  <div key={msg.id} className="flex items-start gap-3 px-5 py-3">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[12px] font-bold text-[#29B6F6] mb-0.5 flex items-center gap-1">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="#29B6F6"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                        {label} 送信予定
-                      </p>
-                      {msg.image_urls?.length > 0 && (
-                        <p className="text-[11px] text-[#8696a0]">📎 画像 {msg.image_urls.length}枚</p>
-                      )}
-                      {msg.text && (
-                        <p className="text-[12px] text-[#444] line-clamp-2 whitespace-pre-wrap leading-snug">{msg.text}</p>
-                      )}
-                    </div>
-                    <button
-                      onClick={() => cancelScheduledMsg(msg.id)}
-                      disabled={cancellingScheduleId === msg.id}
-                      className="shrink-0 rounded-full border border-red-200 bg-red-50 px-3 py-1 text-[11px] font-bold text-red-500 disabled:opacity-50"
-                    >
-                      {cancellingScheduleId === msg.id ? "取消中…" : "キャンセル"}
-                    </button>
+                  <div key={msg.id} className="px-5 py-3 border-b border-[#f0f2f5] last:border-b-0">
+                    {isEditing ? (
+                      /* 編集モード */
+                      <div className="flex flex-col gap-2">
+                        <p className="text-[11px] font-bold text-[#8696a0]">送信時間（JST）</p>
+                        <input
+                          type="datetime-local"
+                          value={editSchedAt}
+                          onChange={(e) => setEditSchedAt(e.target.value)}
+                          className="w-full rounded-lg border border-[#d1d7db] bg-[#f0f2f5] px-3 py-2 text-[13px] text-[#111b21]"
+                        />
+                        <p className="text-[11px] font-bold text-[#8696a0] mt-1">メッセージ</p>
+                        <textarea
+                          value={editSchedText}
+                          onChange={(e) => setEditSchedText(e.target.value)}
+                          rows={4}
+                          className="w-full rounded-lg border border-[#d1d7db] bg-[#f0f2f5] px-3 py-2 text-[13px] text-[#111b21] resize-none leading-snug"
+                        />
+                        <div className="flex gap-2 mt-1">
+                          <button
+                            onClick={() => void saveScheduledMsgEdit()}
+                            disabled={savingScheduledEdit}
+                            className="flex-1 rounded-full bg-[#29B6F6] py-2 text-[12px] font-bold text-white disabled:opacity-50"
+                          >
+                            {savingScheduledEdit ? "保存中…" : "保存する"}
+                          </button>
+                          <button
+                            onClick={() => setEditingScheduledMsgId(null)}
+                            className="flex-1 rounded-full border border-[#d1d7db] py-2 text-[12px] font-bold text-[#8696a0]"
+                          >
+                            キャンセル
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      /* 通常表示 */
+                      <div className="flex items-start gap-3">
+                        <button
+                          className="flex-1 min-w-0 text-left"
+                          onClick={() => openScheduledMsgEdit(msg)}
+                        >
+                          <p className="text-[12px] font-bold text-[#29B6F6] mb-0.5 flex items-center gap-1">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="#29B6F6"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                            {label} 送信予定
+                            <span className="ml-1 text-[10px] text-[#aaa] font-normal">✎ タップで編集</span>
+                          </p>
+                          {msg.image_urls?.length > 0 && (
+                            <p className="text-[11px] text-[#8696a0]">📎 画像 {msg.image_urls.length}枚</p>
+                          )}
+                          {msg.text && (
+                            <p className="text-[12px] text-[#444] line-clamp-2 whitespace-pre-wrap leading-snug">{msg.text}</p>
+                          )}
+                        </button>
+                        <button
+                          onClick={() => cancelScheduledMsg(msg.id)}
+                          disabled={cancellingScheduleId === msg.id}
+                          className="shrink-0 rounded-full border border-red-200 bg-red-50 px-3 py-1 text-[11px] font-bold text-red-500 disabled:opacity-50"
+                        >
+                          {cancellingScheduleId === msg.id ? "取消中…" : "キャンセル"}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
