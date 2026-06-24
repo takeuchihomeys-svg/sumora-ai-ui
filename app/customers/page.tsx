@@ -196,7 +196,7 @@ export default function CustomersPage() {
   const [formatCopied, setFormatCopied]   = useState<string | null>(null);
   const [formatMsgModal, setFormatMsgModal] = useState<{ text: string } | null>(null);
   const [formatMsgLoading, setFormatMsgLoading] = useState<string | null>(null);
-  const [showCompleted, setShowCompleted]     = useState(true);
+  const [showCompleted, setShowCompleted]     = useState(false);
   const [reflectLoading, setReflectLoading]   = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   // 条件に反映する → 保存後に生テキストを「反映済み」ログに変換するために使用
@@ -708,34 +708,77 @@ export default function CustomersPage() {
               {completedList.map((c) => {
                 const conv = c.linked_conversation;
                 const { sent, viewed } = completedToday(c);
+                const isExp = expandedId === c.id;
+                const condLines = c.additional_conditions
+                  ? c.additional_conditions.split("\n").map(parseConditionLog)
+                  : [];
                 return (
-                  <div key={c.id}
-                    className="flex items-center gap-3 rounded-2xl border border-[#e9edef] bg-white px-4 py-2.5">
-                    <div className="shrink-0">
-                      {conv?.profile_image_url ? (
-                        <img src={conv.profile_image_url} alt={c.customer_name}
-                          className="h-9 w-9 rounded-full object-cover" />
-                      ) : (
-                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#d9fdd3] text-sm font-bold text-[#0f8f44]">
-                          {initial(c.customer_name)}
+                  <div key={c.id} className="rounded-2xl overflow-hidden" style={{ border: "1.5px solid #e9edef", background: "#fff" }}>
+                    {/* ヘッダー行 */}
+                    <button
+                      className="flex w-full items-center gap-3 px-4 py-2.5 text-left active:bg-[#f5f6f6]"
+                      onClick={() => setExpandedId(isExp ? null : c.id)}
+                    >
+                      <div className="shrink-0">
+                        {conv?.profile_image_url ? (
+                          <img src={conv.profile_image_url} alt={c.customer_name} className="h-9 w-9 rounded-full object-cover" />
+                        ) : (
+                          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#d9fdd3] text-sm font-bold text-[#0f8f44]">
+                            {initial(c.customer_name)}
+                          </div>
+                        )}
+                      </div>
+                      <span className="flex-1 truncate text-[13px] font-semibold text-[#111b21]">{c.customer_name}</span>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        {sent && <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">物件送った</span>}
+                        {viewed && <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700">物件確認済</span>}
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#90caf9" strokeWidth="2" strokeLinecap="round"
+                          className={`transition-transform duration-200 ${isExp ? "rotate-180" : ""}`}>
+                          <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                      </div>
+                    </button>
+
+                    {/* 展開時：条件 + 編集ボタン */}
+                    {isExp && (
+                      <>
+                        <div className="border-t border-[#f0f2f5] px-4 py-2.5">
+                          {(c.desired_area || c.floor_plan || c.rent_min || c.rent_max || c.walk_minutes || c.move_in_time || c.initial_cost_limit || c.preferences || c.ng_points) ? (
+                            <>
+                              <div className="flex flex-wrap gap-1.5 mb-1.5">
+                                {c.desired_area && <Tag label="エリア" value={c.desired_area} />}
+                                {c.floor_plan   && <Tag label="間取り" value={c.floor_plan} />}
+                                {(c.rent_min || c.rent_max) && <Tag label="家賃" value={`${c.rent_min ? Math.floor(c.rent_min/10000)+"万〜" : "〜"}${c.rent_max ? Math.floor(c.rent_max/10000)+"万" : ""}`} />}
+                                {c.walk_minutes && <Tag label="徒歩" value={`${c.walk_minutes}分`} />}
+                                {c.move_in_time && <Tag label="入居" value={c.move_in_time} />}
+                                {c.initial_cost_limit && <Tag label="初期" value={`${Math.floor(c.initial_cost_limit/10000)}万以内`} />}
+                              </div>
+                              {c.preferences && <p className="text-[11px] text-[#555] mb-0.5"><span className="font-semibold text-[#8696a0]">希望　</span>{c.preferences}</p>}
+                              {c.ng_points    && <p className="text-[11px] text-[#555]"><span className="font-semibold text-[#8696a0]">NG　　</span>{c.ng_points}</p>}
+                            </>
+                          ) : (
+                            condLines.length === 0 && <p className="text-[11px] text-[#bbb]">条件未入力</p>
+                          )}
+                          {condLines.length > 0 && (
+                            <div className="mt-1.5 space-y-1">
+                              {condLines.slice(-3).map((line, i) => (
+                                <p key={i} className={`text-[11px] leading-snug ${line.isLog ? "text-[#90caf9]" : "text-[#555]"}`}>{line.content}</p>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                    <span className="flex-1 truncate text-[13px] font-semibold text-[#111b21]">
-                      {c.customer_name}
-                    </span>
-                    <div className="flex shrink-0 gap-1.5">
-                      {sent && (
-                        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
-                          物件送った
-                        </span>
-                      )}
-                      {viewed && (
-                        <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700">
-                          物件確認済
-                        </span>
-                      )}
-                    </div>
+                        <div className="flex gap-2 border-t border-[#f0f2f5] bg-[#fafafa] px-4 py-2">
+                          <button
+                            onClick={() => openEdit(c)}
+                            className="rounded-xl border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-bold text-[#444] active:scale-95 transition-transform"
+                          >条件更新</button>
+                          <button
+                            onClick={() => { setAddCondId(c.id); setAddCondText(""); setParsedPreview(null); }}
+                            className="rounded-xl border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-bold text-purple-700 active:scale-95 transition-transform"
+                          >＋ 条件追加</button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 );
               })}
