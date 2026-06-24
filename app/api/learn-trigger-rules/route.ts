@@ -102,8 +102,19 @@ export async function POST() {
     }
   }
 
-  // 信頼度の高い順に upsert（上限500件）
-  const sorted = rulesToUpsert.sort((a, b) => b.confidence - a.confidence).slice(0, 500);
+  // アクション別に上位150件ずつ取得（全体で一括カットするとマイナーアクションが0件になるため）
+  const PER_ACTION_LIMIT = 150;
+  const byActionSorted: typeof rulesToUpsert = [];
+  const actionGroups: Record<string, typeof rulesToUpsert> = {};
+  for (const r of rulesToUpsert) {
+    actionGroups[r.action_type] ??= [];
+    actionGroups[r.action_type].push(r);
+  }
+  for (const group of Object.values(actionGroups)) {
+    group.sort((a, b) => b.confidence - a.confidence);
+    byActionSorted.push(...group.slice(0, PER_ACTION_LIMIT));
+  }
+  const sorted = byActionSorted;
   let learned = 0;
 
   for (const rule of sorted) {
