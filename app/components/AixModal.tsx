@@ -35,7 +35,7 @@ interface AixModalProps {
   initialFocusPoints?: string[];
   onClose: () => void;
   onSend: (text: string, imageUrl?: string) => Promise<void>;
-  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean }) => void;
+  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean }) => void;
   onScheduled?: () => void;
 }
 
@@ -851,6 +851,7 @@ export default function AixModal({
         suggest2ndHand: actionType === "property_check_result" && checkAvailableApp === "yes",
         suggestViewingTemplate: actionType === "viewing_invite",
         suggestViewing: actionType === "property_check_result" && checkPattern === "available" && checkAvailableApp !== "yes",
+        suggestInitialCostTemplate: actionType === "property_recommendation" && recommendFocusPoints.includes("初期費用"),
         scheduled: true,
       });
       onScheduled?.();
@@ -972,6 +973,7 @@ export default function AixModal({
         suggest2ndHand: actionType === "property_check_result" && checkAvailableApp === "yes",
         suggestViewingTemplate: actionType === "viewing_invite",
         suggestViewing: actionType === "property_check_result" && checkPattern === "available" && checkAvailableApp !== "yes",
+        suggestInitialCostTemplate: actionType === "property_recommendation" && recommendFocusPoints.includes("初期費用"),
       });
       onClose();
     } catch (err) {

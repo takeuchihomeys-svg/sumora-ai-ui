@@ -3869,11 +3869,17 @@ export default function Home() {
                     </div>
                     {dismissBtn}
                     <button
-                      onClick={() => { openAixDirect("property_send"); }}
+                      onClick={() => {
+                        setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
+                        openAixDirect("property_send");
+                      }}
                       className="shrink-0 rounded-full bg-[#1976d2] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
                     >物件送る</button>
                     <button
-                      onClick={() => { openAixDirect("property_recommendation"); }}
+                      onClick={() => {
+                        setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
+                        openAixDirect("property_recommendation");
+                      }}
                       className="shrink-0 rounded-full bg-[#0288d1] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
                     >物件オススメ</button>
                   </>
@@ -5849,7 +5855,7 @@ export default function Home() {
             setPendingAixFocusPoints([]);
           }}
           onSend={sendMessageText}
-          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean }) => {
+          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean }) => {
             // AIX送信をパターン学習データとして記録（半自動化ループ）
             if (aixModalType) {
               const _ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
@@ -5946,9 +5952,14 @@ export default function Home() {
                   }
                 }
               : aixModalType === "property_recommendation"
-              ? () => {
+              ? (meta?: { suggestInitialCostTemplate?: boolean; scheduled?: boolean }) => {
                   const convId = selectedConversation.id;
                   const customerName = selectedConversation.customerName;
+                  // 初期費用強調で送信 → 追客テンプレートバナーをセット
+                  if (meta?.suggestInitialCostTemplate) {
+                    setSuggestNextTemplateMap(prev => ({ ...prev, [convId]: { num: "追客初期費用", category: "追客" } }));
+                    setDismissedNextTemplateIds(prev => { const n = new Set(prev); n.delete(convId); return n; });
+                  }
                   // 物件送るバナーを消去（property_send タスク完了 + ローカル state 即時クリア）
                   setSuggestPropertySendMap((prev) => { const n = { ...prev }; delete n[convId]; return n; });
                   setDismissedPropertySendIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
