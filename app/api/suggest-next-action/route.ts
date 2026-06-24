@@ -53,6 +53,12 @@ export async function POST(req: NextRequest) {
     .filter((m) => m.sender === "customer" && (m.text as string)?.trim())
     .at(-1)?.text as string ?? "";
 
+  // 物件画像・動画が送られてきた場合は即座に「物件確認した」を提案
+  const IMAGE_CHECK_STATUSES = new Set(["first_reply", "hearing", "proposing", "property_recommendation", "availability_check", "condition_hearing"]);
+  if ((lastCustomerMsg === "[画像]" || lastCustomerMsg === "[動画]") && IMAGE_CHECK_STATUSES.has(currentStatus)) {
+    return NextResponse.json({ action: "property_check_result", reason: "物件画像が送られた", source: "trigger_rule" });
+  }
+
   if (lastCustomerMsg) {
     // conversation_status が NULL（全フェーズ共通）またはこのフェーズ限定のルールのみ取得
     const { data: triggerRules } = await supabase
@@ -94,6 +100,7 @@ export async function POST(req: NextRequest) {
           estimate_sheet: "費用の質問あり",
           meeting_place: "日程が決まりそう",
           property_check: "物件確認依頼",
+          property_check_result: "物件画像が送られた",
           property_recommendation: "物件提案タイミング",
         };
         return NextResponse.json({
@@ -166,6 +173,7 @@ ${recentText}
 上記の過去実績データ（あれば）と現在の会話内容を総合して、スタッフが次に取るべき最適なアクションを1つ選んでください。
 
 選択肢:
+- property_check_result: 物件の空室確認結果を報告する（お客様が物件画像・URLを送ってきた・空室確認を依頼された）
 - property_send: 物件を送る（条件整理済み・物件を求めている）
 - viewing_invite: 内覧を提案する（物件に興味あり）
 - application_push: 申込を促す（内覧後・前向き）
