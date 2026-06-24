@@ -2620,6 +2620,14 @@ export default function Home() {
       setNextActionMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; });
       setDismissedNextActionIds((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
 
+      // 初期費用訴求メッセージ送信後 → 追客テンプレートバナーを表示
+      const SHOKI_KEYWORDS = ["初期費用", "敷金礼金なし", "敷金・礼金なし", "敷礼なし", "費用を抑え", "費用が抑え"];
+      if (textToSend && SHOKI_KEYWORDS.some(kw => textToSend.includes(kw))) {
+        const cid = selectedConversation.id;
+        setSuggestNextTemplateMap(prev => ({ ...prev, [cid]: { num: "追客初期費用", category: "追客" } }));
+        setDismissedNextTemplateIds(prev => { const n = new Set(prev); n.delete(cid); return n; });
+      }
+
       // LINEに送信（画像→テキストの順）
       try {
         for (const imageUrl of imageUrls) {
@@ -3837,34 +3845,56 @@ export default function Home() {
               property_check_result: "物件確認した",
             };
             const label = AIX_CHAT_LABEL[nextSugg.action] ?? nextSugg.action;
+            const isFollowUp = nextSugg.reason?.includes("未返信");
+            const dismissBtn = (
+              <button
+                onClick={() => {
+                  setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
+                  const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
+                  fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_dismissed" }) }).catch(() => {});
+                }}
+                className="shrink-0 text-[10px] text-[#8696a0] active:opacity-60"
+              >✕</button>
+            );
             return (
               <div className="flex items-center gap-2 border-b border-[#b3d9f7] px-4 py-2" style={{ background: "linear-gradient(90deg, #e3f2fd, #f0f8ff)" }}>
                 <svg className="h-3 w-3 shrink-0 text-[#1565c0]" viewBox="0 0 24 24" fill="currentColor">
                   <polygon points="5,3 19,12 5,21" />
                 </svg>
-                <div className="min-w-0 flex-1">
-                  <span className="text-[11px] font-bold text-[#1565c0]">AIXおすすめ</span>
-                  <span className="mx-1 text-[11px] text-[#1976d2]">→ {label}</span>
-                  {nextSugg.reason && <span className="text-[10px] text-[#5c85d6]">({nextSugg.reason})</span>}
-                </div>
-                <button
-                  onClick={() => {
-                    setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
-                    // ③ dismiss をログ（精度測定）
-                    const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
-                    fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_dismissed" }) }).catch(() => {});
-                  }}
-                  className="shrink-0 text-[10px] text-[#8696a0] active:opacity-60"
-                >✕</button>
-                <button
-                  onClick={() => {
-                    // ③ accept をログ（精度測定）
-                    const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
-                    fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_accepted" }) }).catch(() => {});
-                    openAixDirect(nextSugg.action as AixActionType);
-                  }}
-                  className="shrink-0 rounded-full bg-[#1976d2] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
-                >開く</button>
+                {isFollowUp ? (
+                  <>
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[11px] font-bold text-[#1565c0]">追客</span>
+                      <span className="ml-1 text-[10px] text-[#5c85d6]">({nextSugg.reason})</span>
+                    </div>
+                    {dismissBtn}
+                    <button
+                      onClick={() => { openAixDirect("property_send"); }}
+                      className="shrink-0 rounded-full bg-[#1976d2] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
+                    >物件送る</button>
+                    <button
+                      onClick={() => { openAixDirect("property_recommendation"); }}
+                      className="shrink-0 rounded-full bg-[#0288d1] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
+                    >物件オススメ</button>
+                  </>
+                ) : (
+                  <>
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[11px] font-bold text-[#1565c0]">AIXおすすめ</span>
+                      <span className="mx-1 text-[11px] text-[#1976d2]">→ {label}</span>
+                      {nextSugg.reason && <span className="text-[10px] text-[#5c85d6]">({nextSugg.reason})</span>}
+                    </div>
+                    {dismissBtn}
+                    <button
+                      onClick={() => {
+                        const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
+                        fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_accepted" }) }).catch(() => {});
+                        openAixDirect(nextSugg.action as AixActionType);
+                      }}
+                      className="shrink-0 rounded-full bg-[#1976d2] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
+                    >開く</button>
+                  </>
+                )}
               </div>
             );
           })()}
@@ -4542,18 +4572,26 @@ export default function Home() {
               const hasPropertySendTask = (activeTasks[id] ?? []).some(t => t.task_type === "property_send");
               const isApplyStatus = ["applying", "screening", "contract"].includes(selectedConversation.status ?? "");
 
-              // P0: 番号付きテンプレート連動（② → ③ → ... の誘導）
+              // P0: 番号付きテンプレート連動 / 追客初期費用テンプレート誘導
               const nextTmpl = suggestNextTemplateMap[id];
-              if (nextTmpl && !dismissedNextTemplateIds.has(id)) return (
-                <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-500 bg-teal-50 px-3 py-2 flex items-center gap-2">
-                  <span className="text-[12px] font-bold text-teal-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>次のテンプレート {nextTmpl.num} を送る</span>
-                  <button onClick={() => { setPendingNextTemplateInfo(nextTmpl); setTemplateOpenContext("next_numbered"); setShowTemplateModal(true); }}
-                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                    style={{ background: "linear-gradient(135deg, #0d9488, #0f766e)" }}>{nextTmpl.num} を送る</button>
-                  <button onClick={() => setDismissedNextTemplateIds((prev) => new Set([...prev, id]))}
-                    className="shrink-0 text-teal-400 text-[11px] font-bold">✕</button>
-                </div>
-              );
+              if (nextTmpl && !dismissedNextTemplateIds.has(id)) {
+                const isFollowupCost = nextTmpl.num === "追客初期費用";
+                return (
+                  <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-500 bg-teal-50 px-3 py-2 flex items-center gap-2">
+                    <span className="text-[12px] font-bold text-teal-800 flex-1">
+                      <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
+                      {isFollowupCost ? "【追客】初期費用テンプレートを送る" : `次のテンプレート ${nextTmpl.num} を送る`}
+                    </span>
+                    <button onClick={() => { setPendingNextTemplateInfo(nextTmpl); setTemplateOpenContext("next_numbered"); setShowTemplateModal(true); }}
+                      className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                      style={{ background: "linear-gradient(135deg, #0d9488, #0f766e)" }}>
+                      {isFollowupCost ? "見積書を送る" : `${nextTmpl.num} を送る`}
+                    </button>
+                    <button onClick={() => setDismissedNextTemplateIds((prev) => new Set([...prev, id]))}
+                      className="shrink-0 text-teal-400 text-[11px] font-bold">✕</button>
+                  </div>
+                );
+              }
 
               // P1: 申込②（フロー途中 → 必ず完結させる）
               if (suggestApplyStep2Map[id] && !dismissedApplyStep2Ids.has(id)) return (
@@ -5747,7 +5785,9 @@ export default function Home() {
             undefined
           }
           highlightKeyword={
-            templateOpenContext === "next_numbered" ? (pendingNextTemplateInfo?.num) :
+            templateOpenContext === "next_numbered" ? (
+              pendingNextTemplateInfo?.num === "追客初期費用" ? "初期費用" : pendingNextTemplateInfo?.num
+            ) :
             templateOpenContext === "apply_step2" ? "②" :
             templateOpenContext === "apply_step1" ? "①申込" :
             suggest2ndHandMap[selectedConversation.id] ? "2番手" :
