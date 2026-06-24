@@ -984,7 +984,7 @@ export default function Home() {
       if (!textareaRef.current) return;
       const ta = textareaRef.current;
       ta.style.height = "auto";
-      const newH = Math.min(ta.scrollHeight, 320);
+      const newH = ta.scrollHeight; // CSSのmaxHeightで制御するのでJS上限なし
       ta.style.height = `${newH}px`;
       setTextareaHeightPx(newH);
       ta.scrollTop = ta.scrollHeight;
@@ -4910,7 +4910,7 @@ export default function Home() {
                     setReplyDraft(e.target.value);
                     setDraftIsAi(false); // 編集開始でAI下書きインジケーター解除
                     e.target.style.height = "auto";
-                    const newH = Math.min(e.target.scrollHeight, 320);
+                    const newH = e.target.scrollHeight; // CSSのmaxHeightで制御するのでJS上限なし
                     e.target.style.height = `${newH}px`;
                     setTextareaHeightPx(newH);
                   }}
@@ -4927,11 +4927,12 @@ export default function Home() {
                   style={{
                     height: `${textareaHeightPx}px`,
                     maxHeight: (inputFocused && keyboardHeight > 100)
-                      ? `${Math.min((viewportHeight ?? 500) - 160, 360)}px`
+                      ? `${Math.min((viewportHeight ?? 500) - 140, 400)}px`
                       : keyboardHeight > 100 ? "180px" : "320px",
-                    overflowY: "scroll",
+                    overflowY: textareaHeightPx > 80 ? "scroll" : "hidden",
                     WebkitOverflowScrolling: "touch" as React.CSSProperties["WebkitOverflowScrolling"],
                     overscrollBehavior: "contain",
+                    paddingBottom: "48px", // 最終行をスクロールアップできるよう余白
                   }}
                 />
               </div>
