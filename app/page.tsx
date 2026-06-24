@@ -1073,7 +1073,7 @@ export default function Home() {
     }
   }, [conversations]);
 
-  const fetchConversationsAndMessages = async (silent = false) => {
+  const fetchConversationsAndMessages = async (silent = false, retries = 0) => {
     if (!silent) setPageLoading(true);
     if (!silent) setError("");
 
@@ -1085,6 +1085,10 @@ export default function Home() {
 
     if (conversationError) {
       console.error(conversationError);
+      if (retries < 2) {
+        setTimeout(() => { void fetchConversationsAndMessages(true, retries + 1); }, 3000);
+        return;
+      }
       setError("会話一覧の取得に失敗しました。");
       setPageLoading(false);
       return;
@@ -1101,6 +1105,10 @@ export default function Home() {
 
     if (messageError) {
       console.error(messageError);
+      if (retries < 2) {
+        setTimeout(() => { void fetchConversationsAndMessages(true, retries + 1); }, 3000);
+        return;
+      }
       setError("メッセージの取得に失敗しました。");
       setPageLoading(false);
       return;
@@ -3923,7 +3931,10 @@ export default function Home() {
             }}
           >
             {error ? (
-              <div className="mb-2 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-600">{error}</div>
+              <div className="mb-2 flex items-center justify-between rounded-xl bg-red-50 px-3 py-2 text-xs text-red-600">
+                <span>{error}</span>
+                <button onClick={() => { void fetchConversationsAndMessages(); }} className="ml-3 shrink-0 font-bold text-[#1565C0] active:opacity-60">再試行</button>
+              </div>
             ) : null}
 
             {/* 返信対象メッセージ指定インジケーター */}
