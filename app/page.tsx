@@ -5590,7 +5590,7 @@ export default function Home() {
             setPendingAixFocusPoints([]);
           }}
           onSend={sendMessageText}
-          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; scheduled?: boolean }) => {
+          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean }) => {
             // AIX送信をパターン学習データとして記録（半自動化ループ）
             if (aixModalType) {
               const _ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
@@ -5607,10 +5607,14 @@ export default function Home() {
               // AI提案バナーを一旦消す（次回選択時に再フェッチされる）
               setNextActionMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; });
               nextActionFetchingRef.current.delete(selectedConversation.id);
+              // 物件あった → 即座に「内覧へ！」を次のAIX提案としてセット
+              if (meta?.suggestViewing) {
+                setNextActionMap((prev) => ({ ...prev, [selectedConversation.id]: { action: "viewing_invite", reason: "物件が空室でした", source: "trigger_rule" } }));
+              }
             }
             (
             aixModalType === "property_check_result"
-              ? (meta: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; scheduled?: boolean } | undefined) => {
+              ? (meta: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean } | undefined) => {
                   const task = (activeTasks[selectedConversation.id] ?? []).find((t) => t.task_type === "property_check");
                   if (task) {
                     fetch("/api/line-tasks/complete", {
