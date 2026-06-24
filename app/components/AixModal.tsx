@@ -296,6 +296,12 @@ export default function AixModal({
   const meetingPropertyInputRef = useRef<HTMLInputElement | null>(null);
   const viewingVacancyInputRef = useRef<HTMLInputElement | null>(null);
 
+  // 会話が変わったらシンプルモードをリセット
+  useEffect(() => {
+    setRecSimpleMode(false);
+    setPreview("");
+  }, [conversationId]);
+
   useEffect(() => {
     if (initialImageFile) {
       setImageFile(initialImageFile);

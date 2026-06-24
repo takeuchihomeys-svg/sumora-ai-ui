@@ -382,8 +382,12 @@ export default function Home() {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedApplyStep2Ids") || "[]") as string[]); } catch { return new Set(); }
   });
   const [templateOpenContext, setTemplateOpenContext] = useState<null | "apply_step1" | "apply_step2" | "viewing_follow" | "next_numbered">(null);
-  const [suggestNextTemplateMap, setSuggestNextTemplateMap] = useState<Record<string, { num: string; category: string }>>({});
-  const [dismissedNextTemplateIds, setDismissedNextTemplateIds] = useState<Set<string>>(new Set());
+  const [suggestNextTemplateMap, setSuggestNextTemplateMap] = useState<Record<string, { num: string; category: string }>>(() => {
+    try { return JSON.parse(sessionStorage.getItem("suggestNextTemplateMap") || "{}") as Record<string, { num: string; category: string }>; } catch { return {}; }
+  });
+  const [dismissedNextTemplateIds, setDismissedNextTemplateIds] = useState<Set<string>>(() => {
+    try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedNextTemplateIds") || "[]") as string[]); } catch { return new Set(); }
+  });
   const [pendingNextTemplateInfo, setPendingNextTemplateInfo] = useState<{ num: string; category: string } | null>(null);
   const [nextActionMap, setNextActionMap] = useState<Record<string, { action: string | null; reason: string } | null>>({});
   const [dismissedNextActionIds, setDismissedNextActionIds] = useState<Set<string>>(() => {
@@ -612,6 +616,14 @@ export default function Home() {
   useEffect(() => {
     try { sessionStorage.setItem("dismissedApplyStep2Ids", JSON.stringify([...dismissedApplyStep2Ids])); } catch {}
   }, [dismissedApplyStep2Ids]);
+
+  useEffect(() => {
+    try { sessionStorage.setItem("suggestNextTemplateMap", JSON.stringify(suggestNextTemplateMap)); } catch {}
+  }, [suggestNextTemplateMap]);
+
+  useEffect(() => {
+    try { sessionStorage.setItem("dismissedNextTemplateIds", JSON.stringify([...dismissedNextTemplateIds])); } catch {}
+  }, [dismissedNextTemplateIds]);
 
   useEffect(() => {
     const block = (e: MouseEvent) => {
@@ -2284,6 +2296,7 @@ export default function Home() {
   };
 
   const cancelScheduledMsg = async (id: string) => {
+    if (!window.confirm("送信予約を取り消しますか？")) return;
     setCancellingScheduleId(id);
     await supabase.from("scheduled_messages").update({ status: "cancelled" }).eq("id", id);
     setScheduledMsgsList((prev) => prev.filter((m) => m.id !== id));
@@ -2306,11 +2319,12 @@ export default function Home() {
     await supabase.from("scheduled_messages")
       .update({ text: editSchedText.trim() || null, scheduled_at: utcDate.toISOString() })
       .eq("id", editingScheduledMsgId);
-    setScheduledMsgsList((prev) => prev.map((m) =>
-      m.id === editingScheduledMsgId
+    setScheduledMsgsList((prev) => prev
+      .map((m) => m.id === editingScheduledMsgId
         ? { ...m, text: editSchedText.trim() || null, scheduled_at: utcDate.toISOString() }
-        : m
-    ));
+        : m)
+      .sort((a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime())
+    );
     setEditingScheduledMsgId(null);
     setSavingScheduledEdit(false);
   };
@@ -2866,7 +2880,7 @@ export default function Home() {
     if (accountImageInputRef.current) accountImageInputRef.current.value = "";
   };
 
-  const handleReflectInChat = async (convId: string) => {
+  const applyCondInChat = async (convId: string, mode: "replace" | "add") => {
     const lc = linkedCustomerMap[convId];
     if (!lc?.additional_conditions || reflectLoadingChat) return;
     setReflectLoadingChat(true);
@@ -2893,16 +2907,16 @@ export default function Home() {
       const p = data.parsed;
       const appendStr = (orig: string | null | undefined, add: string) => orig ? `${orig}、${add}` : add;
       const patch: Record<string, unknown> = { id: lc.id };
-      if (p.desired_area)   patch.desired_area  = appendStr(pc.desired_area as string | null, String(p.desired_area));
+      if (p.desired_area)   patch.desired_area  = mode === "add" ? appendStr(pc.desired_area as string | null, String(p.desired_area)) : String(p.desired_area);
       if (p.floor_plan)     patch.floor_plan    = String(p.floor_plan);
       if (p.rent_min)       patch.rent_min      = Number(p.rent_min);
       if (p.rent_max)       patch.rent_max      = Number(p.rent_max);
       if (p.walk_minutes)   patch.walk_minutes  = Number(p.walk_minutes);
       if (p.move_in_time)   patch.move_in_time  = String(p.move_in_time);
       if (p.building_age)   patch.building_age  = Number(p.building_age);
-      if (p.preferences)    patch.preferences   = appendStr(pc.preferences as string | null, String(p.preferences));
-      if (p.ng_points)      patch.ng_points     = appendStr(pc.ng_points as string | null, String(p.ng_points));
-      if (p.other_requests) patch.other_requests = appendStr(pc.other_requests as string | null, String(p.other_requests));
+      if (p.preferences)    patch.preferences   = mode === "add" ? appendStr(pc.preferences as string | null, String(p.preferences)) : String(p.preferences);
+      if (p.ng_points)      patch.ng_points     = mode === "add" ? appendStr(pc.ng_points as string | null, String(p.ng_points)) : String(p.ng_points);
+      if (p.other_requests) patch.other_requests = mode === "add" ? appendStr(pc.other_requests as string | null, String(p.other_requests)) : String(p.other_requests);
 
       if (Object.keys(patch).length > 1) {
         await fetch("/api/property-customers", {
@@ -2929,6 +2943,9 @@ export default function Home() {
       setReflectLoadingChat(false);
     }
   };
+
+  const handleReflectInChat = (convId: string) => applyCondInChat(convId, "add");
+  const handleReplaceInChat = (convId: string) => applyCondInChat(convId, "replace");
 
   const clearAdditionalInChat = async (convId: string) => {
     const lc = linkedCustomerMap[convId];
@@ -3647,13 +3664,20 @@ export default function Home() {
               <div className="border-b border-amber-200 bg-amber-50 px-3 py-2">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-[11px] font-bold text-amber-700">新着要望</span>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
                     <button
-                      onClick={() => void handleReflectInChat(selectedConversation.id)}
+                      onClick={() => void handleReplaceInChat(selectedConversation.id)}
                       disabled={reflectLoadingChat}
                       className="rounded-lg bg-amber-600 px-2.5 py-1 text-[11px] font-bold text-white active:opacity-70 disabled:opacity-50"
                     >
-                      {reflectLoadingChat ? "解析中…" : "条件に反映する"}
+                      {reflectLoadingChat ? "解析中…" : "入れ替える"}
+                    </button>
+                    <button
+                      onClick={() => void handleReflectInChat(selectedConversation.id)}
+                      disabled={reflectLoadingChat}
+                      className="rounded-lg border border-amber-500 bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700 active:opacity-70 disabled:opacity-50"
+                    >
+                      追加する
                     </button>
                     <button
                       onClick={() => void clearAdditionalInChat(selectedConversation.id)}
