@@ -3207,14 +3207,15 @@ export default function Home() {
               </div>
             ) : (
               (() => {
-                // 次に返信すべき1件を計算（要対応優先→直近の未返信順）
+                // 次に返信すべき1件を計算（お客さんが最後に送った未返信のみ対象・要対応優先→直近順）
                 const nextReplyConvId = (() => {
+                  // ①要対応かつお客さんが最後に送った（スタッフ未返信）
                   for (const c of filteredConversations) {
-                    const age = Date.now() - new Date(c.updatedAt || 0).getTime();
-                    const readAt = manuallyReadAt[c.id];
-                    const autoFlagC = c.lastSender === "customer" && age >= 24 * 60 * 60 * 1000 && !(readAt && new Date(readAt) >= new Date(c.updatedAt || 0));
-                    if (flaggedConvIds.has(c.id) || autoFlagC) return c.id;
+                    const lsv = c.lastSender ?? c.messages[c.messages.length - 1]?.sender;
+                    if (lsv !== "customer" || c.status === "closed_won") continue;
+                    if (flaggedConvIds.has(c.id)) return c.id;
                   }
+                  // ②要対応なし：お客さんが最後に送った直近順
                   for (const c of filteredConversations) {
                     const lsv = c.lastSender ?? c.messages[c.messages.length - 1]?.sender;
                     if (lsv === "customer" && c.status !== "closed_won") return c.id;
