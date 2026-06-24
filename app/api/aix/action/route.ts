@@ -275,7 +275,13 @@ ${SMORA_COMMON_RULES}`;
       const skipConfirmationNote = body.skip_confirmation
         ? `\n\n【確認スキップ — 必ず守ること】\n確認事項メッセージを出さず、そのまま通常の物件オススメ文を生成すること。礼金・ペット可否不明・階数など気になる点があっても確認を挟まない。礼金がある場合はオススメポイントに含めずに省略する。`
         : "";
-      const userText = `お客様名は「${name}」です。「${name}さん」と完全な名前で使うこと（助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${extra_input ? `\n追加情報: ${extra_input}` : ""}${moveOutNote}${simpleModeNote}${skipConfirmationNote}`;
+      // extra_inputのうち【特に強調するポイント:...】プレフィックスを除いた手入力テキストを抽出
+      const extraInputStr = extra_input ? String(extra_input) : "";
+      const manualOpeningText = extraInputStr.replace(/^【特に強調するポイント:[^\n]*】\n?/, "").trim();
+      const openingPointNote = manualOpeningText
+        ? `\n\n【冒頭ポイント指定 — 最優先・必ず守ること】冒頭の「[ポイント]、${name}さんにかなりオススメ出来るお部屋となります！！」の[ポイント]部分は必ず「${manualOpeningText}」をそのまま使う。AIで独自のポイントを考えず、指定された文言をそのまま使うこと。`
+        : "";
+      const userText = `お客様名は「${name}」です。「${name}さん」と完全な名前で使うこと（助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${extra_input ? `\n追加情報: ${extra_input}` : ""}${openingPointNote}${moveOutNote}${simpleModeNote}${skipConfirmationNote}`;
 
       const content = [
         { type: "text", text: userText },
