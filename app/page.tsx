@@ -3206,8 +3206,24 @@ export default function Home() {
                 {aiSearchIds !== null ? "AIが条件に合う会話を見つけられませんでした" : "該当する会話がありません"}
               </div>
             ) : (
-              filteredConversations.map((conversation) => {
+              (() => {
+                // 次に返信すべき1件を計算（要対応優先→直近の未返信順）
+                const nextReplyConvId = (() => {
+                  for (const c of filteredConversations) {
+                    const age = Date.now() - new Date(c.updatedAt || 0).getTime();
+                    const readAt = manuallyReadAt[c.id];
+                    const autoFlagC = c.lastSender === "customer" && age >= 24 * 60 * 60 * 1000 && !(readAt && new Date(readAt) >= new Date(c.updatedAt || 0));
+                    if (flaggedConvIds.has(c.id) || autoFlagC) return c.id;
+                  }
+                  for (const c of filteredConversations) {
+                    const lsv = c.lastSender ?? c.messages[c.messages.length - 1]?.sender;
+                    if (lsv === "customer" && c.status !== "closed_won") return c.id;
+                  }
+                  return null;
+                })();
+                return filteredConversations.map((conversation) => {
                 const isActive = conversation.id === selectedConversation.id;
+                const isNextReply = conversation.id === nextReplyConvId && !isActive;
                 const groupMeta = getGroupMeta(conversation.status);
 
                 const lastSenderVal = conversation.lastSender ?? conversation.messages[conversation.messages.length - 1]?.sender;
@@ -3247,8 +3263,9 @@ export default function Home() {
                     onTouchMove={cancelConvLongPress}
                     onContextMenu={(e) => { e.preventDefault(); toggleFlaggedConv(conversation.id); }}
                     style={{ WebkitUserSelect: "none", userSelect: "none" }}
-                    className={`flex w-full items-center gap-3 px-4 py-[23px] text-left transition border-l-[3px] ${
+                    className={`flex w-full items-center gap-3 px-4 py-[23px] text-left transition ${isNextReply ? "border-[3px]" : "border-l-[3px]"} ${
                       (() => {
+                        if (isNextReply) return "border-orange-600 bg-orange-100 hover:bg-orange-150";
                         const autoFlag = (() => {
                           if (conversation.lastSender !== "customer") return false;
                           const age = Date.now() - new Date(conversation.updatedAt || 0).getTime();
@@ -3395,7 +3412,8 @@ export default function Home() {
                     </div>
                   </button>
                 );
-              })
+              });
+              })()
             )}
           </div>
         </aside>
