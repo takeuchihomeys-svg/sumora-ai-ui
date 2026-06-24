@@ -252,11 +252,15 @@ ${SMORA_COMMON_RULES}`;
         .replace("{{phrases}}", phraseText ? `【よく使うフレーズ】\n${phraseText}` : "");
 
       const conditionsText = customer_conditions as string | undefined;
+      const recCustomerSummary = body.customer_summary as string | undefined;
+      const summaryNoteForRec = recCustomerSummary
+        ? `\n\n【このお客さんのAI要約 — 人物像・今の状況・次の対応ヒントをオススメ訴求に反映すること】\n${recCustomerSummary}`
+        : "";
       // move_out_date が渡された場合は明示注入（画像OCR誤読防止）
       const moveOutNote = move_out_date
         ? `\n\n【退去予定日（必ずこの日付をそのまま使うこと・画像から読み直し禁止）】\n${move_out_date}`
         : "";
-      const userText = `${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${extra_input ? `\n追加情報: ${extra_input}` : ""}${moveOutNote}`;
+      const userText = `${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${extra_input ? `\n追加情報: ${extra_input}` : ""}${moveOutNote}`;
 
       const content = [
         { type: "text", text: userText },
