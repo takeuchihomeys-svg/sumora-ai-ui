@@ -4470,6 +4470,8 @@ export default function Home() {
                   estimate_sheet: "見積書送る",
                   meeting_place: "待ち合わせ",
                   property_recommendation: "物件オススメ",
+                  property_check_result: "物件確認した",
+                  property_check: "物件確認した",
                 };
 
                 // action あり → AIXボタン
