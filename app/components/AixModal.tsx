@@ -229,6 +229,8 @@ export default function AixModal({
   const [sendImagePreviews, setSendImagePreviews] = useState<string[]>([]);
   const [vacatingNote, setVacatingNote] = useState("");
   const [sendKeyword, setSendKeyword] = useState("");
+  const [sendExpandedConds, setSendExpandedConds] = useState<Set<string>>(new Set());
+  const [showExpandedCond, setShowExpandedCond] = useState(false);
   // analyzeLoading は退去自動検出削除に伴い未使用（将来拡張用に残す）
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
   void analyzeLoading; void setAnalyzeLoading;
@@ -619,6 +621,7 @@ export default function AixModal({
         if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
         if (customerSummary) body.customer_summary = customerSummary;
         if (sendKeyword.trim()) body.keyword = sendKeyword.trim();
+        if (sendExpandedConds.size > 0) body.expanded_conditions = Array.from(sendExpandedConds);
       } else if (actionType === "application_push") {
         if (!appVacancyStatus) throw new Error("空室状況を選択してください");
         body.vacancy_status = appVacancyStatus;
@@ -1339,6 +1342,46 @@ export default function AixModal({
                   <p className="text-[11px] text-[#b0bec5]">退去確認ボタンを押すと画像を1枚ずつ読み取ります</p>
                 )}
               </div>
+              {/* 条件を広げた */}
+              <div>
+                <button
+                  onClick={() => setShowExpandedCond(v => !v)}
+                  className={`flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-[13px] font-bold transition-colors ${sendExpandedConds.size > 0 ? "border-orange-400 bg-orange-50 text-orange-700" : "border-[#d1d7db] bg-white text-[#444]"}`}
+                >
+                  <span className="flex items-center gap-2">
+                    条件を広げた
+                    {sendExpandedConds.size > 0 && (
+                      <span className="rounded-full bg-orange-500 px-2 py-0.5 text-[10px] font-bold text-white">{Array.from(sendExpandedConds).join("・")}</span>
+                    )}
+                  </span>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+                    className={`transition-transform duration-200 ${showExpandedCond ? "rotate-180" : ""}`}>
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </button>
+                {showExpandedCond && (
+                  <div className="mt-2 flex gap-2">
+                    {(["家賃", "礼金", "築年数"] as const).map((cond) => {
+                      const selected = sendExpandedConds.has(cond);
+                      return (
+                        <button
+                          key={cond}
+                          onClick={() => {
+                            setSendExpandedConds(prev => {
+                              const next = new Set(prev);
+                              if (next.has(cond)) next.delete(cond); else next.add(cond);
+                              return next;
+                            });
+                            setPreview("");
+                          }}
+                          className={`rounded-full border px-4 py-1.5 text-[13px] font-bold transition-colors ${selected ? "border-orange-500 bg-orange-500 text-white" : "border-[#d1d7db] bg-white text-[#555]"}`}
+                        >{cond}</button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               {/* キーワード */}
               <div>
                 <p className="mb-1 text-xs font-bold text-[#54656f]">
