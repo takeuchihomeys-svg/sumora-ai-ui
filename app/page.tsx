@@ -312,6 +312,8 @@ export default function Home() {
   const [aiDraftExpanded, setAiDraftExpanded] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [hasMoreConversations, setHasMoreConversations] = useState(false);
+  const [loadingMoreConv, setLoadingMoreConv] = useState(false);
   const [patternLoading, setPatternLoading] = useState(false);
   const [patternDrafts, setPatternDrafts] = useState<{ angle: string; label: string; text: string }[]>([]);
   const [showPatternSheet, setShowPatternSheet] = useState(false);
@@ -1150,11 +1152,12 @@ export default function Home() {
     if (!silent) setPageLoading(true);
     if (!silent) setError("");
 
+    const CONV_LIMIT = 1000;
     const { data: conversationRows, error: conversationError } = await supabase
       .from("conversations")
       .select("*")
       .order("updated_at", { ascending: false })
-      .limit(500);
+      .limit(CONV_LIMIT);
 
     if (conversationError) {
       console.error(conversationError);
@@ -1273,6 +1276,8 @@ export default function Home() {
       return next;
     });
 
+    setHasMoreConversations(conversationsData.length >= CONV_LIMIT);
+
     if (formatted.length > 0) {
       setSelectedId((prev) => prev || formatted[0].id);
     }
@@ -1350,6 +1355,47 @@ export default function Home() {
     }
 
     if (!silent) setPageLoading(false);
+  };
+
+  const loadMoreConversations = async () => {
+    if (loadingMoreConv) return;
+    setLoadingMoreConv(true);
+    try {
+      const oldest = conversations[conversations.length - 1]?.updatedAt ?? "";
+      const { data } = await supabase
+        .from("conversations")
+        .select("*")
+        .order("updated_at", { ascending: false })
+        .lt("updated_at", oldest)
+        .limit(500);
+      if (!data || data.length === 0) { setHasMoreConversations(false); return; }
+      const extra = (data as SupabaseConversationRow[]).map((c) => {
+        const autoStatus = c.status || "hearing";
+        return {
+          id: String(c.id),
+          customerName: c.customer_name || "名無し",
+          lastMessage: c.last_message || "メッセージなし",
+          lastSender: (c.last_sender as "customer" | "staff" | undefined) ?? undefined,
+          status: autoStatus,
+          lineUserId: c.line_user_id || "",
+          updatedAt: c.updated_at || "",
+          messages: [],
+          account: c.account ?? "sumora",
+          aiDraft: null,
+          isPostApply: !!c.is_post_apply,
+          isHot: !!c.is_hot,
+        } as Conversation;
+      });
+      setConversations((prev) => {
+        const ids = new Set(prev.map((c) => c.id));
+        const merged = [...prev, ...extra.filter((c) => !ids.has(c.id))];
+        conversationsRef.current = merged;
+        return merged;
+      });
+      setHasMoreConversations(data.length >= 500);
+    } finally {
+      setLoadingMoreConv(false);
+    }
   };
 
   const filteredConversations = useMemo(() => {
@@ -3530,6 +3576,15 @@ export default function Home() {
                 );
               });
               })()
+            )}
+            {hasMoreConversations && !pageLoading && (
+              <button
+                onClick={() => void loadMoreConversations()}
+                disabled={loadingMoreConv}
+                className="w-full py-3 text-[12px] text-[#667781] font-medium active:bg-gray-50 disabled:opacity-50"
+              >
+                {loadingMoreConv ? "読み込み中…" : "古い会話をもっと見る"}
+              </button>
             )}
           </div>
         </aside>
