@@ -137,7 +137,7 @@ const CONFIG: Record<
   },
   property_check_result: {
     title: "物件確認した",
-    emoji: "✅",
+    emoji: "▶",
     requiresImage: false,
     imageLabel: "物件・部屋の画像を選択（任意）",
     description: "物件確認の結果をお客さんにLINEで報告します。",
