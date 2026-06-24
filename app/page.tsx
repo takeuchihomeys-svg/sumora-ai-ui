@@ -964,6 +964,35 @@ export default function Home() {
   // 会話切り替え時に条件パネルを閉じる
   useEffect(() => { setShowCondPanel(false); }, [selectedId]);
 
+  // メッセージが0件の会話を選択したとき、個別に取得して補完する
+  useEffect(() => {
+    if (!selectedId) return;
+    const conv = conversations.find(c => c.id === selectedId);
+    if (!conv || (conv.messages && conv.messages.length > 0)) return;
+    void (async () => {
+      const { data } = await supabase
+        .from("messages")
+        .select("*")
+        .eq("conversation_id", selectedId)
+        .order("created_at", { ascending: true })
+        .limit(300);
+      if (!data || data.length === 0) return;
+      const msgs = (data as SupabaseMessageRow[]).map(m => ({
+        id: String(m.id),
+        sender: m.sender,
+        text: m.text,
+        imageUrl: m.image_url || undefined,
+        imageExpiresAt: m.image_expires_at || undefined,
+        time: formatTime(m.created_at),
+        rawCreatedAt: m.created_at,
+      }));
+      setConversations(prev => prev.map(c =>
+        c.id === selectedId ? { ...c, messages: msgs } : c
+      ));
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
+
   // 会話選択時にAI次アクション提案を取得（未取得の場合のみ）
   useEffect(() => {
     if (!selectedId) return;
