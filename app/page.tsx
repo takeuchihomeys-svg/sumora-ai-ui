@@ -4015,7 +4015,7 @@ export default function Home() {
             className="border-t border-[#e9edef] bg-white px-2 pt-1.5 md:px-3"
             style={{
               paddingBottom: keyboardHeight > 100 ? "4px" : "max(10px, env(safe-area-inset-bottom))",
-              overflowY: keyboardHeight > 100 ? "auto" : "visible",
+              overflowY: (keyboardHeight > 100 && inputFocused) ? "hidden" : keyboardHeight > 100 ? "auto" : "visible",
               maxHeight: keyboardHeight > 100 ? `${Math.min((viewportHeight ?? 500) - 80, 520)}px` : "none",
               touchAction: keyboardHeight > 100 ? "pan-y" : "auto",
             }}
@@ -4789,32 +4789,25 @@ export default function Home() {
                     const newH = Math.min(e.target.scrollHeight, 320);
                     e.target.style.height = `${newH}px`;
                     setTextareaHeightPx(newH);
-                    // iOS: テキストエリアの内部スクロールをカーソル位置（末尾）に合わせる
-                    requestAnimationFrame(() => {
-                      e.target.scrollTop = e.target.scrollHeight;
-                      // ボトムパネルも最下部にスクロール（入力欄を常に見えるよう）
-                      if (bottomPanelRef.current) bottomPanelRef.current.scrollTop = bottomPanelRef.current.scrollHeight;
-                    });
                   }}
                   onFocus={() => {
                     setInputFocused(true);
-                    // iOS: フォーカス時にテキスト末尾を表示 & チャット・パネルを最下部へ
                     requestAnimationFrame(() => {
-                      if (textareaRef.current) textareaRef.current.scrollTop = textareaRef.current.scrollHeight;
                       if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
-                      // ボトムパネルを最下部にスクロールして入力欄を表示
-                      if (bottomPanelRef.current) bottomPanelRef.current.scrollTop = bottomPanelRef.current.scrollHeight;
                     });
                   }}
                   onBlur={() => setInputFocused(false)}
                   rows={1}
                   placeholder={draftPreparing ? "AI返信案を準備中..." : "Aa"}
-                  className="min-h-[22px] w-full resize-none overflow-y-auto bg-transparent text-[14px] leading-6 text-[#111b21] outline-none placeholder:text-[#aaa]"
+                  className="min-h-[22px] w-full resize-none bg-transparent text-[14px] leading-6 text-[#111b21] outline-none placeholder:text-[#aaa]"
                   style={{
                     height: `${textareaHeightPx}px`,
                     maxHeight: (inputFocused && keyboardHeight > 100)
                       ? `${Math.min((viewportHeight ?? 500) - 160, 360)}px`
                       : keyboardHeight > 100 ? "180px" : "320px",
+                    overflowY: "scroll",
+                    WebkitOverflowScrolling: "touch" as React.CSSProperties["WebkitOverflowScrolling"],
+                    overscrollBehavior: "contain",
                   }}
                 />
               </div>
