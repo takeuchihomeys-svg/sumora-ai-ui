@@ -189,6 +189,7 @@ export default function AixModal({
   const [inputText, setInputText] = useState("");
   // 物件オススメ専用: 特に強調するポイント（複数選択可）。テンプレートモーダルから引き継ぐ場合は initialFocusPoints で渡す
   const [recommendFocusPoints, setRecommendFocusPoints] = useState<string[]>(initialFocusPoints ?? []);
+  const [recSimpleMode, setRecSimpleMode] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<string>("");
@@ -739,6 +740,7 @@ export default function AixModal({
         : "";
       const combinedExtra = `${focusPrefix}${inputText.trim()}`.trim();
       if (combinedExtra) body.extra_input = combinedExtra;
+      if (recSimpleMode) body.simple_mode = true;
       if (parsedEstimate) body.parsed_estimate = parsedEstimate;
 
       const res = await fetch("/api/aix/action", {
@@ -2083,6 +2085,17 @@ export default function AixModal({
                         </button>
                       );
                     })}
+                    <button
+                      type="button"
+                      onClick={() => { setRecSimpleMode(v => !v); setPreview(""); }}
+                      className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold transition-colors ${
+                        recSimpleMode
+                          ? "border-blue-500 bg-blue-500 text-white"
+                          : "border-[#d1d7db] bg-white text-[#667781]"
+                      }`}
+                    >
+                      {recSimpleMode ? "✓ " : ""}シンプル
+                    </button>
                   </>
                 )}
               </div>

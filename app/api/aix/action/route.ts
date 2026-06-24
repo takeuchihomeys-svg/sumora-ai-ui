@@ -262,7 +262,10 @@ ${SMORA_COMMON_RULES}`;
       const moveOutNote = move_out_date
         ? `\n\n【退去予定日（必ずこの日付をそのまま使うこと・画像から読み直し禁止）】\n${move_out_date}`
         : "";
-      const userText = `お客様名は「${name}」です。「${name}さん」と完全な名前で使うこと（助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${extra_input ? `\n追加情報: ${extra_input}` : ""}${moveOutNote}`;
+      const simpleModeNote = body.simple_mode
+        ? `\n\n【シンプルモード — 必ず守ること】\nサマリー文と描写段落は出力しない。（オススメポイント）の直後に締め文を書いて終わること。（設備）欄も省略してよい。`
+        : "";
+      const userText = `お客様名は「${name}」です。「${name}さん」と完全な名前で使うこと（助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${extra_input ? `\n追加情報: ${extra_input}` : ""}${moveOutNote}${simpleModeNote}`;
 
       const content = [
         { type: "text", text: userText },
