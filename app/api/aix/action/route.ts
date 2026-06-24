@@ -148,7 +148,10 @@ export async function POST(request: NextRequest) {
     const rawName = customer_name ? String(customer_name).trim() : "";
     const familyName = rawName.includes(" ") || rawName.includes("　")
       ? rawName.split(/[ 　]/)[0]
-      : rawName;
+      // スペースなし漢字フルネーム（4文字以上）は先頭2文字を姓とみなす（例: 他谷遥香→他谷）
+      : rawName.length >= 4 && /^[一-鿿぀-ヿ]+$/.test(rawName)
+        ? rawName.slice(0, 2)
+        : rawName;
     const name = familyName ? `${familyName}さん` : "お客様";
 
     // phrase_dictionary 取得（物件オススメ・内覧・申込のみ）
@@ -736,6 +739,8 @@ M/D（曜日）HH:MM〜HH:MM
 
 ${SMORA_COMMON_RULES}
 
+【お客様の呼び方】必ず「${name}」で呼ぶこと（他の呼び方・〇〇さんの置き換えし忘れ禁止）
+
 【作成ルール】
 ・「お待たせいたしました！！」で始める
 ・画像（物件資料）が添付されている場合は物件名・間取りなどを読み取って言及する
@@ -809,15 +814,15 @@ ${availableTemplate}`;
 
       // 「物件なかった」は固定テンプレ専用フロー
       } else if (pattern === "unavailable") {
-        const unavailableTemplate = `[お客様名]さんお世話になっております！！
+        // [お客様名]は事前にname変数で置換（会話履歴が空でも確実に入る）
+        const unavailableTemplate = `${name}お世話になっております！！
 お送り頂きました[N件]の募集状況確認させて頂きましたところ[N件とも]募集終了しているお部屋となります。
 
-引き続き[お客様名]さんのご希望に合うお部屋をピックアップさせていただきます！！
+引き続き${name}のご希望に合うお部屋をピックアップさせていただきます！！
 新着で出次第すぐにお送りさせていただきます😌！！`;
 
         const unavailableSystem = `あなたはテキスト置換エンジンです。
 以下のテンプレートを出力してください。プレースホルダーを下記ルールで置き換えること。
-・[お客様名] → 会話履歴のお客様名（姓のみ）
 ・[N件] → お客様が送ってきた物件のURL・物件名の数（例: 2件、3件）。数が特定できない場合は「お送り頂きました物件」
 ・[N件とも] → 件数に合わせる（2件→「2件とも」、3件→「3件とも」、不明→「全て」）
 それ以外の文字・絵文字・改行は一切変更・追加・削除しないこと。
