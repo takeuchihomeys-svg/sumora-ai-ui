@@ -757,35 +757,16 @@ ${patternExample}${knowledgeText}${examplesText}`;
 
       const available_application = body.available_application as "yes" | "no" | undefined;
 
-      // 「物件あった」申込あり・申込なし（見積書あり）は固定テンプレ
-      if (pattern === "available" && available_application) {
-        // 最終メッセージから3時間以上経過しているか判定
-        let waitingPrefix = "募集状況確認させて頂きました！！\n";
-        const { data: lastMsgRow } = await supabase
-          .from("messages")
-          .select("created_at")
-          .eq("conversation_id", conversation_id)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .single();
-        if (lastMsgRow?.created_at) {
-          const diffMs = Date.now() - new Date(lastMsgRow.created_at as string).getTime();
-          if (diffMs >= 3 * 60 * 60 * 1000) {
-            waitingPrefix = "お待たせいたしました！！\n募集状況確認させて頂きました！！\n";
-          }
-        }
-
-        const estimateLine = estimate_image_url ? "\n初期費用の御見積書と併せてお送りさせて頂きました！！" : "";
+      // 「物件あった」申込あり・申込なし・未選択 は固定テンプレ
+      if (pattern === "available") {
+        const estimateLine = estimate_image_url ? "\n最大限割引しました御見積書同封させて頂きました！！" : "";
         const availableTemplate = available_application === "yes"
-          ? `${waitingPrefix}お送り頂きました
-[物件名と号室]
+          ? `[物件名と号室]
 2番手お申込み可能で募集中となります！！${estimateLine}
 
 1番手でお申込みがはいっておりますので、2番手以降でのお申込みとなります。`
-          : `${waitingPrefix}お送り頂きました
-[物件名と号室]
-募集中となります！！${estimateLine}
-お手隙の際にご査収ください！！`;
+          : `[物件名と号室]現在募集中となります！！
+現在空室でご内覧可能なお部屋となります！！${estimateLine}`;
 
         const availableFixedSystem = `あなたはテキスト置換エンジンです。
 以下のテンプレートを一字一句そのまま出力してください。
