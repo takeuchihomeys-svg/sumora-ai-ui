@@ -4372,8 +4372,8 @@ export default function Home() {
               <input ref={aixFileInputRef} type="file" accept="image/*" onChange={onAixImageSelected} className="hidden" />
             </div>
 
-            {/* ===== アクション誘導バナー（優先度制御：1つだけ表示） ===== */}
-            {(() => {
+            {/* ===== アクション誘導バナー（優先度制御：1つだけ表示） — 入力中キーボード表示時は非表示 ===== */}
+            {!(inputFocused && keyboardHeight > 100) && (() => {
               const id = selectedConversation.id;
               const msgs = selectedConversation.messages || [];
               const lastCustomerText = [...msgs].reverse().find((m: Message) => m.sender === "customer")?.text || "";
@@ -4730,7 +4730,9 @@ export default function Home() {
                   className="min-h-[22px] w-full resize-none overflow-y-auto bg-transparent text-[14px] leading-6 text-[#111b21] outline-none placeholder:text-[#aaa]"
                   style={{
                     height: `${textareaHeightPx}px`,
-                    maxHeight: keyboardHeight > 100 ? "180px" : "320px",
+                    maxHeight: (inputFocused && keyboardHeight > 100)
+                      ? `${Math.min((viewportHeight ?? 500) - 160, 360)}px`
+                      : keyboardHeight > 100 ? "180px" : "320px",
                   }}
                 />
               </div>
