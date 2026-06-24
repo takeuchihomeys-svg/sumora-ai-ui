@@ -381,7 +381,10 @@ export default function Home() {
   const [dismissedApplyStep2Ids, setDismissedApplyStep2Ids] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedApplyStep2Ids") || "[]") as string[]); } catch { return new Set(); }
   });
-  const [templateOpenContext, setTemplateOpenContext] = useState<null | "apply_step1" | "apply_step2" | "viewing_follow">(null);
+  const [templateOpenContext, setTemplateOpenContext] = useState<null | "apply_step1" | "apply_step2" | "viewing_follow" | "next_numbered">(null);
+  const [suggestNextTemplateMap, setSuggestNextTemplateMap] = useState<Record<string, { num: string; category: string }>>({});
+  const [dismissedNextTemplateIds, setDismissedNextTemplateIds] = useState<Set<string>>(new Set());
+  const [pendingNextTemplateInfo, setPendingNextTemplateInfo] = useState<{ num: string; category: string } | null>(null);
   const [nextActionMap, setNextActionMap] = useState<Record<string, { action: string | null; reason: string } | null>>({});
   const [dismissedNextActionIds, setDismissedNextActionIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedNextActionIds") || "[]") as string[]); } catch { return new Set(); }
@@ -4377,6 +4380,19 @@ export default function Home() {
               const hasPropertySendTask = (activeTasks[id] ?? []).some(t => t.task_type === "property_send");
               const isApplyStatus = ["applying", "screening", "contract"].includes(selectedConversation.status ?? "");
 
+              // P0: 番号付きテンプレート連動（② → ③ → ... の誘導）
+              const nextTmpl = suggestNextTemplateMap[id];
+              if (nextTmpl && !dismissedNextTemplateIds.has(id)) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-500 bg-teal-50 px-3 py-2 flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-teal-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>次のテンプレート {nextTmpl.num} を送る</span>
+                  <button onClick={() => { setPendingNextTemplateInfo(nextTmpl); setTemplateOpenContext("next_numbered"); setShowTemplateModal(true); }}
+                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                    style={{ background: "linear-gradient(135deg, #0d9488, #0f766e)" }}>{nextTmpl.num} を送る</button>
+                  <button onClick={() => setDismissedNextTemplateIds((prev) => new Set([...prev, id]))}
+                    className="shrink-0 text-teal-400 text-[11px] font-bold">✕</button>
+                </div>
+              );
+
               // P1: 申込②（フロー途中 → 必ず完結させる）
               if (suggestApplyStep2Map[id] && !dismissedApplyStep2Ids.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-pink-500 bg-pink-50 px-3 py-2 flex items-center gap-2">
@@ -5533,20 +5549,28 @@ export default function Home() {
 
       {showTemplateModal && (
         <TemplateModal
-          onClose={() => { setShowTemplateModal(false); setTemplateOpenContext(null); }}
+          onClose={() => { setShowTemplateModal(false); setTemplateOpenContext(null); setPendingNextTemplateInfo(null); }}
           onOpenAixWithFocus={(fps) => {
             setPendingAixFocusPoints(fps);
             setShowTemplateModal(false);
             setTemplateOpenContext(null);
             openAixWithImagePicker("property_recommendation");
           }}
-          onSelect={(text, imageFiles, label) => {
+          onSelect={(text, imageFiles, label, category) => {
             setReplyDraft(text);
             if (imageFiles && imageFiles.length > 0) setSelectedImageFiles((prev) => [...prev, ...imageFiles]);
             // ①申込フォーマット選択 → ②を次に誘導
             if (label?.includes("①申込")) {
               setSuggestApplyStep2Map((prev) => ({ ...prev, [selectedConversation.id]: true }));
               setDismissedApplyStep2Ids((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
+            }
+            // 番号付きテンプレート（①②③...）→ 次の番号を誘導
+            const NUM_NEXT: Record<string, string> = { "①": "②", "②": "③", "③": "④", "④": "⑤", "⑤": "⑥", "⑥": "⑦", "⑦": "⑧", "⑧": "⑨" };
+            const numMatch = label?.match(/^([①②③④⑤⑥⑦⑧])/);
+            if (numMatch && category && NUM_NEXT[numMatch[1]]) {
+              const nextNum = NUM_NEXT[numMatch[1]];
+              setSuggestNextTemplateMap((prev) => ({ ...prev, [selectedConversation.id]: { num: nextNum, category } }));
+              setDismissedNextTemplateIds((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
             }
             setTemplateOpenContext(null);
             setShowTemplateModal(false);
@@ -5558,6 +5582,7 @@ export default function Home() {
           }))}
           linkedCustomer={linkedCustomerMap[selectedConversation.id]}
           initialCategory={
+            templateOpenContext === "next_numbered" ? (pendingNextTemplateInfo?.category) :
             templateOpenContext === "viewing_follow" ? "内覧" :
             templateOpenContext === "apply_step1" || templateOpenContext === "apply_step2" ? "申込・審査" :
             suggest2ndHandMap[selectedConversation.id] ? "物件確認した【AIX】" :
@@ -5565,6 +5590,7 @@ export default function Home() {
             undefined
           }
           highlightKeyword={
+            templateOpenContext === "next_numbered" ? (pendingNextTemplateInfo?.num) :
             templateOpenContext === "apply_step2" ? "②" :
             templateOpenContext === "apply_step1" ? "①申込" :
             suggest2ndHandMap[selectedConversation.id] ? "2番手" :
@@ -5585,6 +5611,7 @@ export default function Home() {
             })()
           }
           highlightLabel={
+            templateOpenContext === "next_numbered" ? `💡 次は${pendingNextTemplateInfo?.num ?? ""}` :
             templateOpenContext === "apply_step2" ? "💡 次のステップ" :
             templateOpenContext === "apply_step1" ? "💡 次のアクション" :
             suggest2ndHandMap[selectedConversation.id] ? "💡 2番手向け" :

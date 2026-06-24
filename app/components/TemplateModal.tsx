@@ -13,7 +13,7 @@ interface Template {
 
 interface TemplateModalProps {
   onClose: () => void;
-  onSelect?: (text: string, imageFiles?: File[], label?: string) => void;
+  onSelect?: (text: string, imageFiles?: File[], label?: string, category?: string) => void;
   onOpenAixWithFocus?: (focusPoints: string[]) => void;
   customerName?: string;
   conversationState?: string;
@@ -740,7 +740,7 @@ export default function TemplateModal({
                                 }
                                 if (isOcrTemplate && extractingId === tmpl.id) return;
                                 // OCRテンプレートは画像をLINEに添付しない（物件名・住所抽出のみ）
-                                onSelect(displayText, isOcrTemplate ? undefined : (templateImages[tmpl.id] ?? []), tmpl.label);
+                                onSelect(displayText, isOcrTemplate ? undefined : (templateImages[tmpl.id] ?? []), tmpl.label, tmpl.category);
                                 onClose();
                               }}
                               disabled={isOcrTemplate && extractingId === tmpl.id}
