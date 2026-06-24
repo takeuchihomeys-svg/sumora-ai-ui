@@ -146,6 +146,23 @@ function parseConditionLog(text: string): { isLog: boolean; isReflected: boolean
   return { isLog: false, isReflected: false, date: "", content: text };
 }
 
+// 駅リスト（5駅以上の・区切り）を「なかもず 他47駅」に要約して表示
+function summarizeCondContent(content: string): string {
+  const stripped = content.replace(/^#{1,3}\s*/, "").trim();
+  if (!stripped) return "";
+  const items = stripped.split(/[・、]/).map(s => s.trim()).filter(Boolean);
+  if (items.length >= 5) return `${items[0]} 他${items.length - 1}駅`;
+  return stripped;
+}
+
+// addCondText が駅リストのとき、保存用に要約テキストを生成
+function summarizeCondTextForLog(text: string): string {
+  const stripped = text.trim().replace(/^#{1,3}\s*設定中の[駅沿線][^\n]*\n?/, "");
+  const items = stripped.split(/[・、\n]/).map(s => s.trim()).filter(Boolean);
+  if (items.length >= 5) return `設定中の駅: ${items[0]} 他${items.length - 1}駅`;
+  return text.trim();
+}
+
 function formatLogDate(): string {
   const d = new Date();
   return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,"0")}/${String(d.getDate()).padStart(2,"0")}`;
@@ -537,7 +554,7 @@ export default function CustomersPage() {
       const customer = customers.find((c) => c.id === addCondId);
       if (!customer) return;
 
-      const logEntry = `【${formatLogDate()}追加】${addCondText.trim()}`;
+      const logEntry = `【${formatLogDate()}追加】${summarizeCondTextForLog(addCondText)}`;
       const existing = customer.additional_conditions?.trim() || "";
       const newAdditional = existing ? `${existing}\n${logEntry}` : logEntry;
 
@@ -768,9 +785,11 @@ export default function CustomersPage() {
                           )}
                           {condLines.length > 0 && (
                             <div className="mt-1.5 space-y-1">
-                              {condLines.slice(-3).map((line, i) => (
-                                <p key={i} className={`text-[11px] leading-snug ${line.isLog ? "text-[#90caf9]" : "text-[#555]"}`}>{line.content}</p>
-                              ))}
+                              {condLines.slice(-3).map((line, i) => {
+                                const txt = summarizeCondContent(line.content);
+                                if (!txt) return null;
+                                return <p key={i} className={`text-[11px] leading-snug ${line.isLog ? "text-[#90caf9]" : "text-[#555]"}`}>{txt}</p>;
+                              })}
                             </div>
                           )}
                         </div>
@@ -1010,7 +1029,7 @@ export default function CustomersPage() {
                                     <div className="flex items-center justify-between mb-1">
                                       <span className="text-[10px] font-bold text-emerald-600">✅ {entry.date} 反映済み</span>
                                     </div>
-                                    <p className="text-[11px] text-emerald-800 leading-relaxed">{entry.content}</p>
+                                    <p className="text-[11px] text-emerald-800 leading-relaxed">{summarizeCondContent(entry.content)}</p>
                                   </div>
                                 ) : (
                                   // 追加ログ（青）
@@ -1018,7 +1037,7 @@ export default function CustomersPage() {
                                     <div className="flex items-center justify-between mb-1">
                                       <span className="text-[10px] font-bold text-blue-600">📌 {entry.date} 追加</span>
                                     </div>
-                                    <p className="text-[11px] text-blue-800 leading-relaxed">{entry.content}</p>
+                                    <p className="text-[11px] text-blue-800 leading-relaxed">{summarizeCondContent(entry.content)}</p>
                                   </div>
                                 )
                               ) : (
@@ -1042,7 +1061,7 @@ export default function CustomersPage() {
                                       </button>
                                     </div>
                                   </div>
-                                  <p className="text-[11px] text-amber-800 leading-relaxed">{entry.content}</p>
+                                  <p className="text-[11px] text-amber-800 leading-relaxed">{summarizeCondContent(entry.content)}</p>
                                 </div>
                               )
                             )}
