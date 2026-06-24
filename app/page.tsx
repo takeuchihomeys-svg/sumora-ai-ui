@@ -1628,9 +1628,15 @@ export default function Home() {
       contextMsgs = msgs;
     }
 
-    if (!targetMessage.trim()) {
-      setError("メッセージが読み込まれていません。しばらく待ってから再試行してください。");
-      return;
+    // お客さんが画像だけ送ってきた場合 → 物件画像送信として扱う
+    if (targetMessage === "[画像]" || targetMessage === "[動画]" || !targetMessage.trim()) {
+      const hasImageMsg = msgs.some((m) => m.sender === "customer" && m.text === "[画像]");
+      if (hasImageMsg) {
+        targetMessage = "（物件画像を送信）";
+      } else {
+        setError("メッセージが読み込まれていません。しばらく待ってから再試行してください。");
+        return;
+      }
     }
 
     try {
@@ -1657,7 +1663,10 @@ export default function Home() {
       const genHasCond = genMsgLines.some((l) => GEN_COND_RE.test(l) && GEN_ACT_RE.test(l));
       const genHasPickup = genMsgLines.some((l) => GEN_PICKUP_RE.test(l));
       let genReplyHint = "";
-      if (effectiveState !== "first_reply") {
+      if (targetMessage === "（物件画像を送信）") {
+        // 条件未確認（初回対応/ヒアリング段階）なら空室確認 + 条件フォーム送付セット
+        genReplyHint = "【お客様が物件画像を送信】お客様が特定物件の空室確認を依頼している。「かしこまりました！！お送り頂きました物件の募集状況確認させていただきます！！確認出来次第ご連絡させて頂きます！！」と返信し、条件がまだ未確認の場合はあわせて条件ヒアリングフォームを送る（①入居時期 ②ご希望家賃 ③間取り ④築年数 ⑤エリア・駅 ⑥駅徒歩 ⑦初期費用 ⑧その他）";
+      } else if (effectiveState !== "first_reply") {
         if (genIsBullet) {
           genReplyHint = `【お客様が列挙した条件・要望（返信で具体的に言及すること）】${genShortLines.slice(0, 8).join("・")}`;
         } else if (genHasCond || genHasPickup) {
