@@ -358,32 +358,80 @@ export default function CustomersPage() {
     setAddLoading(false);
   };
 
+  const appendStr = (orig: string | null | undefined, add: string) => orig ? `${orig}、${add}` : add;
+
+  const parseRawCondition = async (c: Customer) => {
+    const rawLines = c.additional_conditions!.split("\n")
+      .filter(line => line.trim() && !parseConditionLog(line).isLog);
+    if (rawLines.length === 0) return null;
+    const rawText = rawLines[rawLines.length - 1];
+    const res = await fetch("/api/parse-additional-conditions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: rawText }),
+    });
+    const data = await res.json() as { ok: boolean; parsed?: Record<string, unknown> };
+    return data.ok ? data.parsed ?? null : null;
+  };
+
+  const applyConditionPatch = async (c: Customer, patch: Record<string, unknown>) => {
+    if (Object.keys(patch).length <= 1) return;
+    const saveRes = await fetch("/api/property-customers", {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    if (!saveRes.ok) return;
+    const updated = await saveRes.json() as Customer;
+    setCustomers((prev) => prev.map((x) => x.id === c.id ? { ...x, ...updated } : x));
+    // rawエントリを「反映済み」ログに変換
+    const logified = c.additional_conditions!.split("\n").map(line => {
+      const pl = parseConditionLog(line);
+      return pl.isLog ? line : `【${formatLogDate()}反映済み】${pl.content}`;
+    }).filter(Boolean).join("\n");
+    await fetch("/api/property-customers", {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: c.id, additional_conditions: logified || null }),
+    });
+    setCustomers((prev) => prev.map((x) => x.id === c.id ? { ...x, additional_conditions: logified || null } : x));
+    if (c.is_linked) void generateSummary({ ...c, ...updated } as Customer);
+  };
+
+  // 入れ替え: 新着要望のフィールドで既存を上書き（テキストも追加しない）
+  const handleReplace = async (c: Customer) => {
+    if (!c.additional_conditions || reflectLoading) return;
+    setReflectLoading(c.id);
+    try {
+      const p = await parseRawCondition(c);
+      if (!p) return;
+      const patch: Record<string, unknown> = { id: c.id };
+      if (p.desired_area)       patch.desired_area       = String(p.desired_area);
+      if (p.floor_plan)         patch.floor_plan         = String(p.floor_plan);
+      if (p.rent_min)           patch.rent_min           = Number(p.rent_min);
+      if (p.rent_max)           patch.rent_max           = Number(p.rent_max);
+      if (p.walk_minutes)       patch.walk_minutes       = Number(p.walk_minutes);
+      if (p.move_in_time)       patch.move_in_time       = String(p.move_in_time);
+      if (p.building_age)       patch.building_age       = Number(p.building_age);
+      if (p.floor_area_min)     patch.floor_area_min     = Number(p.floor_area_min);
+      if (p.initial_cost_limit) patch.initial_cost_limit = Number(p.initial_cost_limit);
+      if (p.preferences)        patch.preferences        = String(p.preferences);
+      if (p.ng_points)          patch.ng_points          = String(p.ng_points);
+      if (p.other_requests)     patch.other_requests     = String(p.other_requests);
+      await applyConditionPatch(c, patch);
+    } finally {
+      setReflectLoading(null);
+    }
+  };
+
+  // 追加: テキスト系フィールドは既存に追記、数値は上書き
   const handleReflect = async (c: Customer) => {
     if (!c.additional_conditions || reflectLoading) return;
     setReflectLoading(c.id);
     try {
-      // ログエントリ（【日付追加/反映済み】形式）を除外して生テキストのみ送る
-      const rawLines = c.additional_conditions.split("\n")
-        .filter(line => line.trim() && !parseConditionLog(line).isLog);
-      if (rawLines.length === 0) return;
-      // 最新の1件のみ解析（複数raw行がある場合も直近のみ対象）
-      const rawText = rawLines[rawLines.length - 1];
-
-      const res = await fetch("/api/parse-additional-conditions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: rawText }),
-      });
-      const data = await res.json() as { ok: boolean; parsed?: Record<string, unknown> };
-      if (!data.ok || !data.parsed) return;
-
-      const p = data.parsed;
-      // 言及されたフィールドのみ更新（truthy チェックで null/""/0 は無視）
-      const appendStr = (orig: string | null | undefined, add: string) => orig ? `${orig}、${add}` : add;
+      const p = await parseRawCondition(c);
+      if (!p) return;
       const patch: Record<string, unknown> = { id: c.id };
-
       if (p.desired_area)       patch.desired_area       = appendStr(c.desired_area, String(p.desired_area));
-      if (p.floor_plan)         patch.floor_plan         = String(p.floor_plan);  // 間取りは上書き（追記しない）
+      if (p.floor_plan)         patch.floor_plan         = String(p.floor_plan);
       if (p.rent_min)           patch.rent_min           = Number(p.rent_min);
       if (p.rent_max)           patch.rent_max           = Number(p.rent_max);
       if (p.walk_minutes)       patch.walk_minutes       = Number(p.walk_minutes);
@@ -394,34 +442,7 @@ export default function CustomersPage() {
       if (p.preferences)        patch.preferences        = appendStr(c.preferences, String(p.preferences));
       if (p.ng_points)          patch.ng_points          = appendStr(c.ng_points, String(p.ng_points));
       if (p.other_requests)     patch.other_requests     = appendStr(c.other_requests, String(p.other_requests));
-
-      // 変更項目がない場合はスキップ
-      if (Object.keys(patch).length <= 1) return;
-
-      // 直接DBに保存（モーダル経由なし）
-      const saveRes = await fetch("/api/property-customers", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
-      });
-      if (!saveRes.ok) return;
-      const updated = await saveRes.json() as Customer;
-      setCustomers((prev) => prev.map((x) => x.id === c.id ? { ...x, ...updated } : x));
-
-      // raw エントリを「反映済み」ログに変換（削除しない）
-      const logified = c.additional_conditions.split("\n").map(line => {
-        const pl = parseConditionLog(line);
-        return pl.isLog ? line : `【${formatLogDate()}反映済み】${pl.content}`;
-      }).filter(Boolean).join("\n");
-      await fetch("/api/property-customers", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: c.id, additional_conditions: logified || null }),
-      });
-      setCustomers((prev) => prev.map((x) => x.id === c.id ? { ...x, additional_conditions: logified || null } : x));
-
-      // 紐付き顧客はAI要約を自動再生成
-      if (c.is_linked) void generateSummary({ ...c, ...updated } as Customer);
+      await applyConditionPatch(c, patch);
     } finally {
       setReflectLoading(null);
     }
@@ -1053,13 +1074,20 @@ export default function CustomersPage() {
                                 <div key={i} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
                                   <div className="flex items-center justify-between mb-1.5">
                                     <span className="text-[10px] font-bold text-amber-700">新着要望</span>
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex items-center gap-1.5">
                                       <button
-                                        onClick={(e) => { e.stopPropagation(); handleReflect(c); }}
-                                        disabled={reflectLoading === c.id}
+                                        onClick={(e) => { e.stopPropagation(); void handleReplace(c); }}
+                                        disabled={!!reflectLoading}
                                         className="rounded-lg bg-amber-600 px-2.5 py-1 text-[10px] font-bold text-white active:opacity-70 disabled:opacity-50"
                                       >
-                                        {reflectLoading === c.id ? "解析中…" : "条件に反映する"}
+                                        {reflectLoading === c.id ? "解析中…" : "入れ替える"}
+                                      </button>
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); void handleReflect(c); }}
+                                        disabled={!!reflectLoading}
+                                        className="rounded-lg border border-amber-500 bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-700 active:opacity-70 disabled:opacity-50"
+                                      >
+                                        追加する
                                       </button>
                                       <button
                                         onClick={(e) => { e.stopPropagation(); clearAdditional(c.id); }}
