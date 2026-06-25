@@ -70,6 +70,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ action: "property_check_result", reason: "物件画像が送られた", source: "trigger_rule" });
   }
 
+  // 物件URLの送信 or 空室確認の質問 → 物件確認を提案
+  const PROPERTY_URL_RE = /athome\.co\.jp|suumo\.jp|homes\.co\.jp|lifull\.com|chintai\.net|reins\.|realestate\.|rakumachi\.jp/i;
+  const AVAILABILITY_KEYWORDS = ["まだありますか", "まだありますか", "空いていますか", "空いてますか", "空いてますか", "空室ですか", "空室確認", "空き確認", "まだ空い", "まだ残って", "空室はありますか", "こちらの物件"];
+  // 直近3件の顧客メッセージを確認
+  const recentCustomerMsgs = [...messages].reverse().filter((m) => m.sender === "customer").slice(0, 3).map((m) => (m.text as string) ?? "");
+  const hasPropertyUrl = recentCustomerMsgs.some((t) => PROPERTY_URL_RE.test(t));
+  const hasAvailabilityQuestion = AVAILABILITY_KEYWORDS.some((kw) => lastCustomerMsg.includes(kw));
+  if ((hasPropertyUrl || hasAvailabilityQuestion) && IMAGE_CHECK_STATUSES.has(currentStatus)) {
+    return NextResponse.json({ action: "property_check_result", reason: "物件の空室確認依頼", source: "trigger_rule" });
+  }
+
   if (lastCustomerMsg) {
     // conversation_status が NULL（全フェーズ共通）またはこのフェーズ限定のルールのみ取得
     const { data: triggerRules } = await supabase
