@@ -1,5 +1,89 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import Anthropic from "@anthropic-ai/sdk";
+
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "") });
+
+// 内覧・申込・契約確定後に成功パターンを学習してai_reply_knowledgeへ保存
+async function recordSuccessPattern(conversationId: string, eventType: string): Promise<void> {
+  try {
+    const eventLabel: Record<string, string> = {
+      viewing: "内覧予約", contract: "契約", application: "申込", key_handover: "鍵渡し",
+    };
+    const label = eventLabel[eventType] ?? eventType;
+
+    // 直近の会話を取得（最大40件）
+    const { data: msgs } = await supabase
+      .from("messages")
+      .select("sender, text, created_at")
+      .eq("conversation_id", conversationId)
+      .neq("text", "[画像]").neq("text", "[動画]")
+      .not("text", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(40);
+
+    if (!msgs || msgs.length === 0) return;
+
+    const history = (msgs as Array<{ sender: string; text: string }>)
+      .reverse()
+      .map((m) => `${m.sender === "customer" ? "お客さん" : "スタッフ"}: ${(m.text ?? "").slice(0, 150)}`)
+      .join("\n");
+
+    // Haikuで成功パターンを分析
+    const resp = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 300,
+      messages: [{
+        role: "user",
+        content: `以下の賃貸仲介LINEの会話で「${label}」が決まりました。
+この会話でお客さんが${label}に至った決め手・スタッフの対応パターンを3行以内で要約してください。
+「★決まるパターン:」で始め、次回同じ状況のお客さんへの示唆を含めること。
+
+【会話履歴】
+${history}
+
+出力: ★決まるパターン: から始まる3行以内の文章のみ`,
+      }],
+    });
+
+    const pattern = resp.content[0].type === "text" ? resp.content[0].text.trim() : null;
+    if (!pattern) return;
+
+    // ai_reply_knowledgeに保存（customer-summary が次回から参照する）
+    const now = new Date().toISOString().slice(0, 10);
+    await supabase.from("ai_reply_knowledge").insert({
+      category: "pattern",
+      title: `成約パターン_${label}_${now}`,
+      content: pattern,
+    });
+
+    // 紐付き顧客のai_summaryにも★決まるパターンを上書き反映
+    const { data: conv } = await supabase
+      .from("conversations")
+      .select("property_customer_id")
+      .eq("id", conversationId)
+      .maybeSingle();
+    if (conv?.property_customer_id) {
+      const { data: pc } = await supabase
+        .from("property_customers")
+        .select("ai_summary")
+        .eq("id", conv.property_customer_id as string)
+        .maybeSingle();
+      if (pc) {
+        const oldSummary: string = (pc.ai_summary as string) ?? "";
+        // 既存の★決まるパターン行を置換、なければ末尾に追加
+        const updated = oldSummary.match(/★決まるパターン/)
+          ? oldSummary.replace(/★決まるパターン[：:].*/, pattern)
+          : `${oldSummary}\n${pattern}`.trim();
+        await supabase.from("property_customers")
+          .update({ ai_summary: updated, ai_summary_at: new Date().toISOString() })
+          .eq("id", conv.property_customer_id as string);
+      }
+    }
+  } catch (e) {
+    console.error("[recordSuccessPattern] error:", e);
+  }
+}
 
 // 日付文字列 (YYYY-MM-DD) を JST 基準で「今日」「明日」「○月○日」に変換
 function getDateLabel(dateStr: string): string {
@@ -34,12 +118,13 @@ const EVENT_LABEL: Record<string, string> = {
 
 export async function POST(req: NextRequest) {
   try {
-    const { customer_name, event_type, date, time, notes } = await req.json() as {
+    const { customer_name, event_type, date, time, notes, conversation_id } = await req.json() as {
       customer_name: string;
       event_type: string;
       date: string;
       time?: string;
       notes?: string;
+      conversation_id?: string;
     };
 
     if (!customer_name || !event_type || !date) {
@@ -79,6 +164,11 @@ export async function POST(req: NextRequest) {
       const errText = await res.text();
       console.error("[notify-viewing] LINE push error:", errText);
       return NextResponse.json({ ok: false, error: errText }, { status: 500 });
+    }
+
+    // 内覧・申込・契約確定 → 成功パターンを非同期で学習（fire-and-forget）
+    if (conversation_id && ["viewing", "application", "contract"].includes(event_type)) {
+      void recordSuccessPattern(conversation_id, event_type);
     }
 
     return NextResponse.json({ ok: true, text });

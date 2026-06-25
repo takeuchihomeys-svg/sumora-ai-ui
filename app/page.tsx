@@ -5788,7 +5788,7 @@ export default function Home() {
                         end_time: calendarEndTime || "",
                       }),
                     }),
-                    // 売上番長から物件出しグループへ通知
+                    // 売上番長から物件出しグループへ通知（内覧・申込・契約は成功パターンも学習）
                     fetch("/api/notify-viewing", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
@@ -5798,6 +5798,7 @@ export default function Home() {
                         date: calendarDate,
                         time: calendarTime || undefined,
                         notes: builtNotes || undefined,
+                        conversation_id: convId,
                       }),
                     }).catch(() => {}),
                     supabase.from("conversations").update({ is_flagged: true }).eq("id", convId),

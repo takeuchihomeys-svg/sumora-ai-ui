@@ -503,6 +503,24 @@ ALTER TABLE line_tasks DROP CONSTRAINT IF EXISTS line_tasks_task_type_check;
 ALTER TABLE line_tasks ADD CONSTRAINT line_tasks_task_type_check
   CHECK (task_type IN ('property_check', 'property_send', 'estimate_sheet'));
 
+-- line_tasks: 同一会話×タスクタイプのペンディングは1件のみ（重複🔍確認中防止）
+DELETE FROM line_tasks
+WHERE id IN (
+  SELECT id FROM (
+    SELECT id,
+           ROW_NUMBER() OVER (
+             PARTITION BY conversation_id, task_type
+             ORDER BY created_at ASC
+           ) AS rn
+    FROM line_tasks
+    WHERE status = 'pending'
+  ) sub
+  WHERE rn > 1
+);
+CREATE UNIQUE INDEX IF NOT EXISTS line_tasks_conv_type_pending_unique
+ON line_tasks (conversation_id, task_type)
+WHERE status = 'pending';
+
 -- match_reply_examples: reply_angleを返り値に追加（選ばれた実例のブースト用）
 -- 戻り値型変更のためDROP→CREATEが必要
 DROP FUNCTION IF EXISTS match_reply_examples(vector, int, text[]);
