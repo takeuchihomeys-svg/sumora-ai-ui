@@ -382,6 +382,9 @@ export default function Home() {
   const [dismissedViewingInviteIds, setDismissedViewingInviteIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedViewingInviteIds") || "[]") as string[]); } catch { return new Set(); }
   });
+  const [dismissedMeetingPlaceIds, setDismissedMeetingPlaceIds] = useState<Set<string>>(() => {
+    try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedMeetingPlaceIds") || "[]") as string[]); } catch { return new Set(); }
+  });
   const [dismissedEstimateSheetIds, setDismissedEstimateSheetIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedEstimateSheetIds") || "[]") as string[]); } catch { return new Set(); }
   });
@@ -610,6 +613,9 @@ export default function Home() {
   useEffect(() => {
     try { sessionStorage.setItem("dismissedViewingInviteIds", JSON.stringify([...dismissedViewingInviteIds])); } catch {}
   }, [dismissedViewingInviteIds]);
+  useEffect(() => {
+    try { sessionStorage.setItem("dismissedMeetingPlaceIds", JSON.stringify([...dismissedMeetingPlaceIds])); } catch {}
+  }, [dismissedMeetingPlaceIds]);
   useEffect(() => {
     try { sessionStorage.setItem("dismissedNextActionIds", JSON.stringify([...dismissedNextActionIds])); } catch {}
   }, [dismissedNextActionIds]);
@@ -1494,21 +1500,25 @@ export default function Home() {
     if (activeAixFlow) return false;
     const msgs: Message[] = selectedConversation.messages || [];
     const reversed = [...msgs].reverse();
-    // 直近のお客様メッセージが日付を含む
     const lastCustomer = reversed.find((m: Message) => m.sender === "customer");
     if (!lastCustomer?.text) return false;
+
+    // パターン1: お客様が「〇日〇時〜からお願いします」等で日時を確定した
+    const customerConfirmedTime = /(\d+日.*\d+時|\d+時.*からお願い|からお願いします|でお願いします|時からお願い|時にします|時で大丈夫|でいきます|で行きます|でお伺い)/.test(lastCustomer.text);
+    if (customerConfirmedTime) return true;
+
+    // パターン2: お客様のメッセージが日付を含む + 直近スタッフ5件のいずれかが内覧日程を送った
     const customerHasDate = /\d+[\/月]\d+|(\d+日)|(日曜|月曜|火曜|水曜|木曜|金曜|土曜)|[（(][日月火水木金土][）)]/.test(lastCustomer.text);
     if (!customerHasDate) return false;
-    // 直近スタッフメッセージが内覧日程を送った（複数日列挙 or 内覧ご案内）
-    const lastStaff = reversed.find((m: Message) => m.sender === "staff");
-    if (!lastStaff?.text) return false;
-    const staffSentViewing = (
-      lastStaff.text.includes("ご案内させて頂きます") ||
-      lastStaff.text.includes("ご案内出来ます") ||
-      lastStaff.text.includes("ご都合如何") ||
-      /\d+\/\d+.*\d+\/\d+/.test(lastStaff.text)
+    const recentStaff = reversed.filter((m: Message) => m.sender === "staff").slice(0, 5);
+    return recentStaff.some(m =>
+      m.text?.includes("ご案内させて頂きます") ||
+      m.text?.includes("ご案内出来ます") ||
+      m.text?.includes("ご都合如何") ||
+      m.text?.includes("ご内覧") ||
+      /\d+\/\d+.*\d+\/\d+/.test(m.text || "") ||
+      /\d+日.*\d+日/.test(m.text || "")
     );
-    return staffSentViewing;
   }, [selectedConversation, activeAixFlow]);
 
   // 見積書送る誘導: お客様が見積依頼 or スタッフが「作成次第送る」と約束した後、お客様の返信が来ている状態
@@ -4710,6 +4720,18 @@ export default function Home() {
                     style={{ background: "linear-gradient(135deg, #9c27b0, #7b1fa2)" }}>内覧テンプレート</button>
                   <button onClick={() => setDismissedViewingTemplateIds((prev) => new Set([...prev, id]))}
                     className="shrink-0 text-purple-400 text-[11px] font-bold">✕</button>
+                </div>
+              );
+
+              // P3.3: お客様が内覧日時を確定 → AIX 待ち合わせへ！
+              if (guideToMeetingPlace && !dismissedMeetingPlaceIds.has(id)) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-600 bg-teal-50 px-3 py-2 flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-teal-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>内覧日時が確定 → AIX 待ち合わせで確定文を送る</span>
+                  <button onClick={() => { setDismissedMeetingPlaceIds((prev) => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixDirect("meeting_place"); }}
+                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                    style={{ background: "linear-gradient(135deg, #00838F, #006064)" }}>AIX 待ち合わせ</button>
+                  <button onClick={() => setDismissedMeetingPlaceIds((prev) => new Set([...prev, id]))}
+                    className="shrink-0 text-teal-500 text-[11px] font-bold">✕</button>
                 </div>
               );
 
