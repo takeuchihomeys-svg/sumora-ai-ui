@@ -746,7 +746,7 @@ async function notifyHanbancyoGroup(db: ReturnType<typeof getDb>, customerName: 
       to: groupId,
       messages: [{
         type: "text",
-        text: `🔥 ${customerName}様から返信が来ました！\n自動でhotに格上げしました。今すぐ物件を送りましょう！`,
+        text: `🔥 ${customerName}さんから返信きた！！\n今が熱いからとことん詰める！！`,
       }],
     }),
   });
