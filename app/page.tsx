@@ -5749,6 +5749,18 @@ export default function Home() {
                         end_time: calendarEndTime || "",
                       }),
                     }),
+                    // 売上番長から物件出しグループへ通知
+                    fetch("/api/notify-viewing", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        customer_name: calendarCustomerName,
+                        event_type: calendarEventType,
+                        date: calendarDate,
+                        time: calendarTime || undefined,
+                        notes: builtNotes || undefined,
+                      }),
+                    }).catch(() => {}),
                     supabase.from("conversations").update({ is_flagged: true }).eq("id", convId),
                   ]);
                   setFlaggedConvIds((prev) => { const next = new Set(prev); next.add(convId); return next; });
