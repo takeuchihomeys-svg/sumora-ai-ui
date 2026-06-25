@@ -614,9 +614,15 @@ export default function AixModal({
     const ext = file.name.split(".").pop() || "jpg";
     const suffix = idx !== undefined ? `_${idx}` : "";
     const path = `aix/${conversationId}/${Date.now()}${suffix}_${Math.random().toString(36).slice(2, 7)}.${ext}`;
-    const { error: uploadError } = await supabase.storage
+
+    // 20秒タイムアウト（Supabase storage はキャンセル不可なので Promise.race で制御）
+    const uploadPromise = supabase.storage
       .from("property-images")
       .upload(path, file, { upsert: false });
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("画像のアップロードがタイムアウトしました（20秒）。通信状況を確認してください")), 20000)
+    );
+    const { error: uploadError } = await Promise.race([uploadPromise, timeoutPromise]);
     if (uploadError) throw new Error("画像のアップロードに失敗しました: " + uploadError.message);
 
     const { data } = supabase.storage.from("property-images").getPublicUrl(path);
@@ -800,11 +806,25 @@ export default function AixModal({
       if (extraFlags) Object.assign(body, extraFlags);
       if (parsedEstimate) body.parsed_estimate = parsedEstimate;
 
-      const res = await fetch("/api/aix/action", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+      // 30秒タイムアウト（AI生成が遅いと loading=true のまま固まるのを防ぐ）
+      const aborter = new AbortController();
+      const tid = setTimeout(() => aborter.abort(), 30000);
+      let res: Response;
+      try {
+        res = await fetch("/api/aix/action", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: aborter.signal,
+        });
+      } catch (fetchErr) {
+        if (fetchErr instanceof Error && fetchErr.name === "AbortError") {
+          throw new Error("AI生成がタイムアウトしました（30秒）。もう一度お試しください");
+        }
+        throw fetchErr;
+      } finally {
+        clearTimeout(tid);
+      }
 
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || "生成に失敗しました");
