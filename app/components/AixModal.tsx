@@ -1193,7 +1193,7 @@ export default function AixModal({
                         : "border border-[#d1d7db] bg-white text-[#54656f]"
                     }`}
                   >
-                    🆕 新着物件
+                    新着物件
                   </button>
                 </div>
                 <div className="flex gap-2">
