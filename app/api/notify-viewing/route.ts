@@ -63,10 +63,11 @@ export async function POST(req: NextRequest) {
 
     const dateLabel = getDateLabel(date);
     const timeLabel = time ? getTimeLabel(time) : "";
-    const eventLabel = EVENT_LABEL[event_type] ?? notes ?? "対応";
+    const eventLabel = EVENT_LABEL[event_type] ?? "対応";
+    const notesText = notes ? `\n${notes}` : "";
 
-    // 「今日Kさん16時〜内覧お願い！」
-    const text = `${dateLabel}${customer_name}さん${timeLabel}${eventLabel}お願い！`;
+    // 「今日Kさん16時〜内覧お願い！\n連帯保証人で契約の場合の流れ説明…」
+    const text = `${dateLabel}${customer_name}さん${timeLabel}${eventLabel}お願い！${notesText}`;
 
     const res = await fetch("https://api.line.me/v2/bot/message/push", {
       method: "POST",
