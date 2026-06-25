@@ -371,21 +371,23 @@ export default function CustomersPage() {
 
   const appendStr = (orig: string | null | undefined, add: string) => orig ? `${orig}、${add}` : add;
 
-  const parseRawCondition = async (c: Customer) => {
+  // entryText: 対象の1エントリのテキスト（指定しない場合は最後の未処理行）
+  const parseRawCondition = async (c: Customer, entryText?: string) => {
     const rawLines = c.additional_conditions!.split("\n")
       .filter(line => line.trim() && !parseConditionLog(line).isLog);
     if (rawLines.length === 0) return null;
-    const rawText = rawLines[rawLines.length - 1];
+    const rawText = entryText ?? rawLines[rawLines.length - 1];
     const res = await fetch("/api/parse-additional-conditions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: rawText }),
     });
     const data = await res.json() as { ok: boolean; parsed?: Record<string, unknown> };
-    return data.ok ? data.parsed ?? null : null;
+    return data.ok ? { parsed: data.parsed ?? null, rawText } : null;
   };
 
-  const applyConditionPatch = async (c: Customer, patch: Record<string, unknown>) => {
+  // appliedRawText: 反映済みにする1行のテキスト（省略時は全未処理行を反映済みにする）
+  const applyConditionPatch = async (c: Customer, patch: Record<string, unknown>, appliedRawText?: string) => {
     if (Object.keys(patch).length <= 1) return;
     const saveRes = await fetch("/api/property-customers", {
       method: "PATCH", headers: { "Content-Type": "application/json" },
@@ -394,10 +396,14 @@ export default function CustomersPage() {
     if (!saveRes.ok) return;
     const updated = await saveRes.json() as Customer;
     setCustomers((prev) => prev.map((x) => x.id === c.id ? { ...x, ...updated } : x));
-    // rawエントリを「反映済み」ログに変換
+    // 指定エントリのみ「反映済み」ログに変換（他の未処理エントリはそのまま）
     const logified = c.additional_conditions!.split("\n").map(line => {
       const pl = parseConditionLog(line);
-      return pl.isLog ? line : `【${formatLogDate()}反映済み】${pl.content}`;
+      if (pl.isLog) return line;
+      if (!appliedRawText || pl.content.trim() === appliedRawText.trim()) {
+        return `【${formatLogDate()}反映済み】${pl.content}`;
+      }
+      return line; // 他の未処理エントリは変更しない
     }).filter(Boolean).join("\n");
     await fetch("/api/property-customers", {
       method: "PATCH", headers: { "Content-Type": "application/json" },
@@ -407,13 +413,14 @@ export default function CustomersPage() {
     if (c.is_linked) void generateSummary({ ...c, ...updated } as Customer);
   };
 
-  // 入れ替え: 新着要望のフィールドで既存を上書き（テキストも追加しない）
-  const handleReplace = async (c: Customer) => {
+  // 入れ替え: 選択した1エントリのフィールドで既存を上書き
+  const handleReplace = async (c: Customer, entryText?: string) => {
     if (!c.additional_conditions || reflectLoading) return;
     setReflectLoading(c.id);
     try {
-      const p = await parseRawCondition(c);
-      if (!p) return;
+      const result = await parseRawCondition(c, entryText);
+      if (!result?.parsed) return;
+      const { parsed: p, rawText } = result;
       const patch: Record<string, unknown> = { id: c.id };
       if (p.desired_area)       patch.desired_area       = String(p.desired_area);
       if (p.floor_plan)         patch.floor_plan         = String(p.floor_plan);
@@ -427,19 +434,20 @@ export default function CustomersPage() {
       if (p.preferences)        patch.preferences        = String(p.preferences);
       if (p.ng_points)          patch.ng_points          = String(p.ng_points);
       if (p.other_requests)     patch.other_requests     = String(p.other_requests);
-      await applyConditionPatch(c, patch);
+      await applyConditionPatch(c, patch, rawText);
     } finally {
       setReflectLoading(null);
     }
   };
 
-  // 追加: テキスト系フィールドは既存に追記、数値は上書き
-  const handleReflect = async (c: Customer) => {
+  // 追加: 選択した1エントリのテキスト系フィールドを既存に追記
+  const handleReflect = async (c: Customer, entryText?: string) => {
     if (!c.additional_conditions || reflectLoading) return;
     setReflectLoading(c.id);
     try {
-      const p = await parseRawCondition(c);
-      if (!p) return;
+      const result = await parseRawCondition(c, entryText);
+      if (!result?.parsed) return;
+      const { parsed: p, rawText } = result;
       const patch: Record<string, unknown> = { id: c.id };
       if (p.desired_area)       patch.desired_area       = appendStr(c.desired_area, String(p.desired_area));
       if (p.floor_plan)         patch.floor_plan         = String(p.floor_plan);
@@ -453,7 +461,7 @@ export default function CustomersPage() {
       if (p.preferences)        patch.preferences        = appendStr(c.preferences, String(p.preferences));
       if (p.ng_points)          patch.ng_points          = appendStr(c.ng_points, String(p.ng_points));
       if (p.other_requests)     patch.other_requests     = appendStr(c.other_requests, String(p.other_requests));
-      await applyConditionPatch(c, patch);
+      await applyConditionPatch(c, patch, rawText);
     } finally {
       setReflectLoading(null);
     }
@@ -1087,16 +1095,16 @@ export default function CustomersPage() {
                                     <span className="text-[10px] font-bold text-amber-700">新着要望</span>
                                     <div className="flex items-center gap-1.5">
                                       <button
-                                        onClick={(e) => { e.stopPropagation(); void handleReplace(c); }}
+                                        onClick={(e) => { e.stopPropagation(); void handleReplace(c, entry.content); }}
                                         disabled={!!reflectLoading}
-                                        className="rounded-lg bg-amber-600 px-2.5 py-1 text-[10px] font-bold text-white active:opacity-70 disabled:opacity-50"
+                                        className="rounded-lg border border-amber-500 bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-700 active:opacity-70 disabled:opacity-50"
                                       >
                                         {reflectLoading === c.id ? "解析中…" : "入れ替える"}
                                       </button>
                                       <button
-                                        onClick={(e) => { e.stopPropagation(); void handleReflect(c); }}
+                                        onClick={(e) => { e.stopPropagation(); void handleReflect(c, entry.content); }}
                                         disabled={!!reflectLoading}
-                                        className="rounded-lg border border-amber-500 bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-700 active:opacity-70 disabled:opacity-50"
+                                        className="rounded-lg bg-amber-600 px-2.5 py-1 text-[10px] font-bold text-white active:opacity-70 disabled:opacity-50"
                                       >
                                         追加する
                                       </button>
