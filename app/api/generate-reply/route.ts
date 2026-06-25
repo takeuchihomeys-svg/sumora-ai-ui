@@ -47,6 +47,7 @@ ${customerMessage}
 スモラはこのお客様メッセージに対して既に返信しました。
 これから「続きのメッセージ」を生成します。以下をJSONで分析してください：
 {
+  "closing_strategy": "この続きのメッセージで何をすれば次の成約ステップへ繋がるか、具体的な一手を1行で（例: 内覧日程を2択で提示する / 申込書類を今すぐ催促する / 割引見積を提示してクロージング）",
   "already_covered": "スモラが直前の返信で既に伝えた内容の要約",
   "next_action": "続きとして自然な次のアクション・補足（例：申込を促す、内覧日程を提案、安心感を与えるなど）",
   "approach": "続きメッセージの方針（前の返信の内容を踏まえて何を追加するか・繰り返しNG）",
@@ -66,6 +67,7 @@ ${customerMessage}
 
 以下をJSONで分析してください：
 {
+  "closing_strategy": "今この会話でどうすれば成約につながるか、具体的な一手を1行で（例: 比較中の物件を引き出して割引見積を提示する / 今すぐ内覧日程を提案する / 申込みを即促す / 書類を催促して審査を進める）",
   "emotion": "お客様の感情状態（例：期待と不安が混在、前向き、迷っているなど）",
   "real_need": "表面の質問の奥にある本当のニーズ・懸念（例：費用が心配で踏み出せない、家族に相談したいなど）",
   "key_insight": "優秀な営業スタッフが気づくべき重要なポイント（例：価格比較をしている、決断を急かされたくないなど）",
@@ -563,6 +565,13 @@ function buildGenerationMessages(
     ? `\n【このお客さんのAI要約 — 今の状況・次の必須対応を最優先で文案に反映すること。人物像・文体も合わせること】\n${customerSummary}`
     : "";
 
+  // ① ai_summaryの「★決まるパターン」行を抽出して最優先注入
+  const closingPatternFromSummary = (() => {
+    if (!customerSummary) return "";
+    const m = customerSummary.match(/★決まるパターン[：:]\s*(.+)/);
+    return m ? m[1].trim() : "";
+  })();
+
   // フェーズ別の行動指針を取得（DBオーバーライド優先）
   const phaseGuide = promptOverrides?.phaseGuide?.[state] ?? PHASE_GUIDE[state] ?? PHASE_GUIDE["first_reply"];
 
@@ -574,9 +583,14 @@ function buildGenerationMessages(
   let currentPropertyNote = "";
   let hesitancyNote = "";
   let conditionChangeNote = "";
+  let closingStrategyFromAnalysis = "";
   if (analysis) {
     try {
       const p = JSON.parse(analysis) as Record<string, unknown>;
+      // ② Step1分析の closing_strategy を抽出
+      if (p.closing_strategy && typeof p.closing_strategy === "string") {
+        closingStrategyFromAnalysis = p.closing_strategy;
+      }
       if (p.approach) approachNote = `\n【今回の返し方】${p.approach}（トーン: ${p.tone || "自然に"}）`;
 
       // ① 複数質問: 全問答えることを明示 + 不安系質問検出
@@ -719,8 +733,17 @@ function buildGenerationMessages(
 指定内容: ${replyHint}`
     : "";
 
+  // ①②統合: closing_strategy（Step1分析）と★決まるパターン（ai_summary）を冒頭に最優先注入
+  const closingNote = (() => {
+    const parts: string[] = [];
+    if (closingStrategyFromAnalysis) parts.push(`AIが判断した成約への一手: ${closingStrategyFromAnalysis}`);
+    if (closingPatternFromSummary) parts.push(`この会話の成約ポイント: ${closingPatternFromSummary}`);
+    if (parts.length === 0) return "";
+    return `【🎯 最優先指示 — フェーズ別パターンより上位・この返信で必ず実行すること】\n${parts.join("\n")}\n`;
+  })();
+
   const prompt = `
-${nameNote}${conditionsNote}${summaryNote}${dateNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}
+${closingNote}${nameNote}${conditionsNote}${summaryNote}${dateNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${approachNote}${staffContextNote}
 
