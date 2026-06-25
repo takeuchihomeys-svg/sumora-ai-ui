@@ -3630,7 +3630,7 @@ export default function Home() {
                 )}
               </button>
 
-              {/* 中央: 名前（紐付き客→条件パネル開閉 / 未紐付き→更新） */}
+              {/* 中央: 名前（紐付き客→条件パネル開閉 / 未紐付き→更新 / 長押し→カレンダー予定追加） */}
               <div className="pointer-events-none absolute left-0 right-0 flex justify-center">
                 <button
                   onClick={() => {
@@ -3640,8 +3640,43 @@ export default function Home() {
                       fetchConversationsAndMessages();
                     }
                   }}
+                  onTouchStart={() => {
+                    if (!selectedConversation.id) return;
+                    longPressTimerRef.current = setTimeout(() => {
+                      const name = selectedConversation.customerName || "";
+                      setCalendarCustomerName(name);
+                      setCalendarTitle(name ? `${name} その他` : "その他");
+                      setCalendarEventType("other");
+                      setCalendarDate("");
+                      setCalendarTime("");
+                      setCalendarEndTime("");
+                      setCalendarNote("");
+                      setViewingCount(1);
+                      setViewingProperties([{name: "", keyType: "", autolock: "", dial: "", kanriName: "", kanriPhone: "", kanriAddress: ""}]);
+                      setCalendarModalConvId(selectedConversation.id);
+                    }, 600);
+                  }}
+                  onTouchEnd={() => { if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; } }}
+                  onMouseDown={() => {
+                    if (!selectedConversation.id) return;
+                    longPressTimerRef.current = setTimeout(() => {
+                      const name = selectedConversation.customerName || "";
+                      setCalendarCustomerName(name);
+                      setCalendarTitle(name ? `${name} その他` : "その他");
+                      setCalendarEventType("other");
+                      setCalendarDate("");
+                      setCalendarTime("");
+                      setCalendarEndTime("");
+                      setCalendarNote("");
+                      setViewingCount(1);
+                      setViewingProperties([{name: "", keyType: "", autolock: "", dial: "", kanriName: "", kanriPhone: "", kanriAddress: ""}]);
+                      setCalendarModalConvId(selectedConversation.id);
+                    }, 600);
+                  }}
+                  onMouseUp={() => { if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; } }}
+                  onMouseLeave={() => { if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; } }}
                   className="pointer-events-auto flex flex-col items-center max-w-[60%] active:opacity-60 transition-opacity"
-                  title={linkedCustomerMap[selectedConversation.id] ? "タップして条件を表示" : "タップして更新"}
+                  title={linkedCustomerMap[selectedConversation.id] ? "タップして条件を表示 / 長押しで予定追加" : "タップして更新 / 長押しで予定追加"}
                 >
                   <span className="truncate text-[15px] font-semibold text-[#111b21] text-center">
                     {selectedConversation.id ? selectedConversation.customerName : "会話を選択"}
