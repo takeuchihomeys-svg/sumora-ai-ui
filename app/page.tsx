@@ -4899,24 +4899,7 @@ export default function Home() {
                 <button
                   onClick={() => {
                     setDraftRetryConvId(null);
-                    setDraftPreparing(true);
-                    const convIdForGen = selectedConversation.id;
-                    draftTimeoutRef.current = setTimeout(async () => {
-                      draftTimeoutRef.current = null;
-                      if (selectedIdRef.current !== convIdForGen) return;
-                      const { data: convRow } = await supabase.from("conversations").select("ai_draft").eq("id", convIdForGen).single();
-                      if (convRow?.ai_draft) {
-                        setConversations((prev) => prev.map((c) => c.id === convIdForGen ? { ...c, aiDraft: convRow.ai_draft } : c));
-                      } else {
-                        setDraftRetryConvId(convIdForGen);
-                      }
-                      setDraftPreparing(false);
-                    }, 60000);
-                    fetch("/api/generate-draft-bg-async", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ conversation_id: convIdForGen, memo: memosRef.current[convIdForGen] || "" }),
-                    }).catch(() => { setDraftPreparing(false); setDraftRetryConvId(convIdForGen); });
+                    generateReply();
                   }}
                   className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white bg-red-500"
                 ><svg className="inline shrink-0 mr-1" style={{verticalAlign:"-2px"}} width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>再生成</button>

@@ -155,9 +155,9 @@ export async function POST(req: NextRequest) {
       const baseUrl = getBaseUrl();
       console.log("[bg-async] calling generate-reply at:", baseUrl, "convId:", convId, "state:", effectiveState);
 
-      // 50秒タイムアウト（Vercel after()のウォームアップ込みで安全マージン）
+      // 40秒タイムアウト（クライアント60秒フォールバックより20秒余裕を確保）
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 50000);
+      const timeoutId = setTimeout(() => controller.abort(), 40000);
 
       let draftRes: Response;
       try {
@@ -180,7 +180,7 @@ export async function POST(req: NextRequest) {
       } catch (fetchErr) {
         clearTimeout(timeoutId);
         const isTimeout = fetchErr instanceof Error && fetchErr.name === "AbortError";
-        console.error("[bg-async] fetch error:", isTimeout ? "timeout (50s)" : String(fetchErr), "baseUrl:", baseUrl, "convId:", convId);
+        console.error("[bg-async] fetch error:", isTimeout ? "timeout (40s)" : String(fetchErr), "baseUrl:", baseUrl, "convId:", convId);
         return;
       }
 
