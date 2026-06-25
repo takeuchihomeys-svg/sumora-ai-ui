@@ -2838,28 +2838,7 @@ export default function Home() {
           .catch(() => {});
       }
 
-      // タスクの自動完了チェック（スタッフ2通送信でタスクごとに完了）
-      const convIdForTask = selectedConversation.id;
-      for (const pendingTask of activeTasks[convIdForTask] ?? []) {
-        const staffMsgsAfterTask = selectedConversation.messages.filter(
-          (m) => m.sender === "staff" && (m.rawCreatedAt ?? "") >= pendingTask.created_at
-        ).length;
-        if (staffMsgsAfterTask + 1 >= 2) {
-          fetch("/api/line-tasks/complete", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id: pendingTask.id }),
-          })
-            .then(() => {
-              setActiveTasks((prev) => {
-                const filtered = (prev[convIdForTask] ?? []).filter((x) => x.id !== pendingTask.id);
-                if (filtered.length === 0) { const next = { ...prev }; delete next[convIdForTask]; return next; }
-                return { ...prev, [convIdForTask]: filtered };
-              });
-            })
-            .catch(() => {});
-        }
-      }
+      // タスク自動完了はAIXボタン送信時のみ（onAfterSendで処理） → ここでは何もしない
 
       // 送信完了後に1.5秒後フェッチ: 送信中に届いたお客様メッセージを確実に反映
       setTimeout(() => fetchConversationsAndMessages(true), 1500);
@@ -3512,7 +3491,7 @@ export default function Home() {
                           if (isRead) return false;
                           if (conversation.lastSender !== "customer") return false;
                           const age = Date.now() - new Date(conversation.updatedAt || 0).getTime();
-                          if (age < 24 * 60 * 60 * 1000) return false;
+                          if (age < 12 * 60 * 60 * 1000) return false;
                           return true;
                         })();
                         const isFlagged = !isRead && !isPostApply && (flaggedConvIds.has(conversation.id) || autoFlag);
@@ -3614,7 +3593,7 @@ export default function Home() {
                         {(flaggedConvIds.has(conversation.id) || (() => {
                           if (conversation.lastSender !== "customer") return false;
                           const age = Date.now() - new Date(conversation.updatedAt || 0).getTime();
-                          if (age < 24 * 60 * 60 * 1000) return false;
+                          if (age < 12 * 60 * 60 * 1000) return false;
                           const readAt = manuallyReadAt[conversation.id];
                           return !(readAt && new Date(readAt) >= new Date(conversation.updatedAt || 0));
                         })()) && (
@@ -6040,6 +6019,25 @@ export default function Home() {
               // 物件あった → 即座に「内覧へ！」を次のAIX提案としてセット
               if (meta?.suggestViewing) {
                 setNextActionMap((prev) => ({ ...prev, [selectedConversation.id]: { action: "viewing_invite", reason: "物件が空室でした", source: "trigger_rule" } }));
+              }
+            }
+            // AIXボタンからLINE送信 → 全ての未完了タスクを即座に完了
+            {
+              const _cid = selectedConversation.id;
+              const _tasks = activeTasks[_cid] ?? [];
+              for (const _t of _tasks) {
+                fetch("/api/line-tasks/complete", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ id: _t.id }),
+                }).catch(() => {});
+              }
+              if (_tasks.length > 0) {
+                setActiveTasks((prev) => {
+                  const next = { ...prev };
+                  delete next[_cid];
+                  return next;
+                });
               }
             }
             (
