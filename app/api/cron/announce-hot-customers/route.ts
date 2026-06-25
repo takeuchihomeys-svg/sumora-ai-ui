@@ -131,17 +131,23 @@ export async function GET(req: NextRequest) {
   // 🔥セクション
   if (hotConvs && hotConvs.length > 0) {
     const rows = hotConvs as HotConvRow[];
-    const doneCount = rows.filter((c) => isDoneToday(c.property_customers)).length;
+    const doneCount = rows.filter((c) =>
+      isDoneToday(c.property_customers) ||
+      (c.last_sender !== "customer" && !!c.updated_at && new Date(c.updated_at) >= todayStart)
+    ).length;
     const lines = rows.map((c, i) => {
       const name = c.customer_name || "名称未設定";
       const acct = ACCOUNT_LABEL[c.account ?? "sumora"] ?? "スモラ";
       const time = relTime(c.updated_at);
       const replyMark = c.last_sender === "customer" ? "⏰ 未返信" : "返信済";
-      const repliedWithin24h = c.last_sender !== "customer" && !!c.updated_at &&
+      // スタッフが今日返信 or 物件を送った/確認した → ✅対応済
+      const staffActedToday = c.last_sender !== "customer" && !!c.updated_at &&
+        new Date(c.updated_at) >= todayStart;
+      const repliedRecently = c.last_sender !== "customer" && !!c.updated_at &&
         (Date.now() - new Date(c.updated_at).getTime()) < 24 * 60 * 60 * 1000;
-      const actionMark = isDoneToday(c.property_customers)
+      const actionMark = (isDoneToday(c.property_customers) || staffActedToday)
         ? "✅ 本日対応済"
-        : repliedWithin24h
+        : repliedRecently
           ? "💬 返信済"
           : "❌ 未対応";
       const preview = (c.last_message ?? "").slice(0, 18) + ((c.last_message ?? "").length > 18 ? "…" : "");
