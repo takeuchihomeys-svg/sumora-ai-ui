@@ -5642,11 +5642,14 @@ export default function Home() {
               </div>
               {/* 保存ボタン */}
               <button
-                disabled={!calendarDate || !calendarTime || !calendarTitle.trim() || calendarSaving}
+                disabled={!calendarDate || !calendarTitle.trim() || calendarSaving}
                 onClick={async () => {
                   setCalendarSaving(true);
-                  const startAt = new Date(`${calendarDate}T${calendarTime}:00`).toISOString();
-                  const endAt = calendarEndTime ? new Date(`${calendarDate}T${calendarEndTime}:00`).toISOString() : null;
+                  const isAllDay = !calendarTime.trim();
+                  const startAt = isAllDay
+                    ? new Date(`${calendarDate}T00:00:00+09:00`).toISOString()
+                    : new Date(`${calendarDate}T${calendarTime}:00+09:00`).toISOString();
+                  const endAt = calendarEndTime ? new Date(`${calendarDate}T${calendarEndTime}:00+09:00`).toISOString() : null;
                   const labelMap: Record<string, string> = { viewing:"内覧", contract:"契約", key_handover:"鍵渡し", application:"申込", other:"その他" };
                   const convId = calendarModalConvId!;
 
@@ -5684,7 +5687,7 @@ export default function Home() {
                       customer_name: calendarCustomerName,
                       start_at: startAt,
                       end_at: endAt,
-                      all_day: false,
+                      all_day: isAllDay,
                       notes: builtNotes,
                     }),
                     fetch("/api/daily-tasks", {
