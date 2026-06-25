@@ -38,6 +38,7 @@ interface AixModalProps {
   onSend: (text: string, imageUrl?: string) => Promise<void>;
   onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean }) => void;
   onScheduled?: () => void;
+  onVacatingDetected?: (date: string) => void;
 }
 
 function stripEmoji(text: string): string {
@@ -172,6 +173,7 @@ export default function AixModal({
   onSend,
   onAfterSend,
   onScheduled,
+  onVacatingDetected,
 }: AixModalProps) {
   const config = CONFIG[actionType];
 
@@ -495,6 +497,7 @@ export default function AixModal({
               const prop = data.properties[0];
               if (prop.status === "scheduled" && prop.move_out) {
                 setPropMoveOutDate(prop.move_out);
+                onVacatingDetected?.(prop.move_out);
               }
             }
           }).catch(() => {});

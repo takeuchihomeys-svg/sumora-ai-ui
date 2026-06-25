@@ -401,6 +401,8 @@ export default function Home() {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedApplyStep2Ids") || "[]") as string[]); } catch { return new Set(); }
   });
   const [templateOpenContext, setTemplateOpenContext] = useState<null | "apply_step1" | "apply_step2" | "viewing_follow" | "next_numbered">(null);
+  // AIX物件オススメで退去予定が検知されたときに保持（テンプレート一覧ハイライト用）
+  const [detectedVacatingDate, setDetectedVacatingDate] = useState<string | null>(null);
   const [suggestNextTemplateMap, setSuggestNextTemplateMap] = useState<Record<string, { num: string; category: string }>>(() => {
     try { return JSON.parse(sessionStorage.getItem("suggestNextTemplateMap") || "{}") as Record<string, { num: string; category: string }>; } catch { return {}; }
   });
@@ -5954,6 +5956,8 @@ export default function Home() {
             templateOpenContext === "apply_step2" ? "②" :
             templateOpenContext === "apply_step1" ? "①申込" :
             suggest2ndHandMap[selectedConversation.id] ? "2番手" :
+            // AIX物件オススメで退去予定が検知されていたら退去予定テンプレを優先ハイライト
+            (activeAixFlow === "property_recommendation" && detectedVacatingDate) ? "退去予定" :
             (() => {
               // 会話パターンを自動検出してハイライトキーワードを決定
               const msgs = (selectedConversation.messages || []) as Message[];
@@ -5975,6 +5979,7 @@ export default function Home() {
             templateOpenContext === "apply_step2" ? "💡 次のステップ" :
             templateOpenContext === "apply_step1" ? "💡 次のアクション" :
             suggest2ndHandMap[selectedConversation.id] ? "💡 2番手向け" :
+            (activeAixFlow === "property_recommendation" && detectedVacatingDate) ? `💡 退去予定物件（${detectedVacatingDate}）` :
             (() => {
               const msgs = (selectedConversation.messages || []) as Message[];
               const customerText = msgs.filter((m) => m.sender === "customer").map((m) => m.text || "").join("");
@@ -6000,6 +6005,7 @@ export default function Home() {
           lastScheduledAt={scheduledMsgsList.at(-1)?.scheduled_at}
           conversationStatus={selectedConversation.status}
           onScheduled={refreshScheduledMsgs}
+          onVacatingDetected={(date) => setDetectedVacatingDate(date)}
           initialImageFile={aixInitialFile ?? undefined}
           linkedCustomer={aixModalType === "property_recommendation" ? linkedCustomerMap[selectedConversation.id] : undefined}
           customerConditions={linkedCustomerMap[selectedConversation.id]?.conditions || memos[selectedConversation.id] || undefined}
@@ -6011,6 +6017,7 @@ export default function Home() {
             setAixModalType(null);
             setAixInitialFile(null);
             setPendingAixFocusPoints([]);
+            setDetectedVacatingDate(null);
           }}
           onSend={sendMessageText}
           onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean }) => {
