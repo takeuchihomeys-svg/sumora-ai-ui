@@ -3784,14 +3784,26 @@ export default function Home() {
                 </div>
                 {lc.ai_summary && (() => {
                   const summary = lc.ai_summary as string;
-                  // 「次のアクション」行は除外 — 誘導ルールは別システムで管理
-                  const customerProfile = summary.split(/(?=・)/).filter(b => !b.includes("次のアクション")).join("").trim();
-                  if (!customerProfile) return null;
+                  const bullets = summary.split(/(?=・)/);
+                  // 「★決まるパターン」行を最上部に強調表示
+                  const closingBullet = bullets.find(b => b.includes("★決まるパターン"));
+                  // 「次のアクション」は除外（古い形式との互換）
+                  const profileBullets = bullets.filter(b => !b.includes("★決まるパターン") && !b.includes("次のアクション")).join("").trim();
+                  const closingText = closingBullet?.replace(/^・/, "").replace(/^★決まるパターン:\s*/, "").trim() ?? null;
+                  if (!closingText && !profileBullets) return null;
                   return (
-                    <div className="mt-2 border-t border-[#f0f2f5] pt-1.5">
-                      <div className="rounded-xl border border-orange-300 bg-orange-50 px-3 py-2">
-                        <p className="text-[12px] leading-relaxed text-orange-700">{customerProfile}</p>
-                      </div>
+                    <div className="mt-2 border-t border-[#f0f2f5] pt-1.5 space-y-1.5">
+                      {closingText && (
+                        <div className="rounded-xl border border-orange-400 bg-orange-50 px-3 py-2">
+                          <p className="text-[11px] font-bold text-orange-500 mb-0.5">★ 決まるパターン</p>
+                          <p className="text-[13px] font-bold leading-snug text-orange-700">{closingText}</p>
+                        </div>
+                      )}
+                      {profileBullets && (
+                        <div className="rounded-xl border border-[#e8e8e8] bg-[#fafafa] px-3 py-2">
+                          <p className="text-[11px] leading-relaxed text-[#666]">{profileBullets}</p>
+                        </div>
+                      )}
                     </div>
                   );
                 })()}
