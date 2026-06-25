@@ -5919,6 +5919,7 @@ export default function Home() {
           recentMessages={(selectedConversation.messages || []).slice(-15).map((m: Message) => ({
             sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined,
           }))}
+          pendingScheduledMessages={scheduledMsgsList.filter(m => m.text)}
           linkedCustomer={linkedCustomerMap[selectedConversation.id]}
           initialCategory={
             templateOpenContext === "next_numbered" ? (pendingNextTemplateInfo?.category) :

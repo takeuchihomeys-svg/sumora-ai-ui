@@ -22,10 +22,12 @@ interface TemplateModalProps {
   initialCategory?: string;
   highlightKeyword?: string;
   highlightLabel?: string;
+  // 予約送信待ちのAIXメッセージ（物件情報の読み取り元）
+  pendingScheduledMessages?: Array<{ text: string | null }>;
 }
 
 export default function TemplateModal({
-  onClose, onSelect, onOpenAixWithFocus, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword, highlightLabel,
+  onClose, onSelect, onOpenAixWithFocus, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword, highlightLabel, pendingScheduledMessages,
 }: TemplateModalProps) {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
@@ -221,6 +223,8 @@ export default function TemplateModal({
           recentMessages,
           customerConditions: linkedCustomer?.conditions,
           noEmoji,
+          // 予約送信待ちのAIXメッセージを渡す（物件情報の優先ソース）
+          pendingScheduledMessages: (pendingScheduledMessages ?? []).filter(m => m.text),
         }),
       });
       const data = await res.json() as { ok: boolean; adapted?: string; error?: string };
