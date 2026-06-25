@@ -4785,6 +4785,30 @@ export default function Home() {
                 </div>
               );
 
+              // P4.5: お客様が他社と比較中 → 割引見積で差別化！
+              if (
+                /他にも.*物件|物件.*他にも|比較.*物件|物件.*比較|他でも.*見|他.*検討|検討させてください|一度検討|比較検討|他社|他の会社/.test(lastCustomerText) &&
+                !dismissedEstimateSheetIds.has(id)
+              ) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-orange-500 bg-orange-50 px-3 py-2 flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-orange-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>他社と比較中 → 割引見積を提示して差別化！</span>
+                  <button onClick={() => {
+                    setDismissedEstimateSheetIds((prev) => new Set([...prev, id]));
+                    setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet");
+                    const convName = selectedConversation.customerName;
+                    if (!(activeTasks[id] ?? []).some((t) => t.task_type === "estimate_sheet")) {
+                      fetch("/api/line-tasks", { method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ conversation_id: id, task_type: "estimate_sheet", customer_name: convName, status: "pending" }) }).catch(() => {});
+                    }
+                    openAixDirect("estimate_sheet");
+                  }}
+                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                    style={{ background: "linear-gradient(135deg, #E65100, #F57C00)" }}>AIX 割引見積</button>
+                  <button onClick={() => setDismissedEstimateSheetIds((prev) => new Set([...prev, id]))}
+                    className="shrink-0 text-orange-400 text-[11px] font-bold">✕</button>
+                </div>
+              );
+
               // P4: 物件オススメ（物件送る完了後）
               if (suggestPropertyRecommendMap[id] && !dismissedPropertyRecommendIds.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-indigo-500 bg-indigo-50 px-3 py-2 flex items-center gap-2">
