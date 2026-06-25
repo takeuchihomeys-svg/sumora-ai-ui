@@ -1810,15 +1810,28 @@ export default function Home() {
       const GEN_PICKUP_RE = /ありませんか|ありますか|送って|ピックアップ|おすすめ|オススメ|出てます|教えて/;
       const genHasCond = genMsgLines.some((l) => GEN_COND_RE.test(l) && GEN_ACT_RE.test(l));
       const genHasPickup = genMsgLines.some((l) => GEN_PICKUP_RE.test(l));
+      // 直近スタッフの見積書メッセージ（「【物件名 号室】」形式）から物件名を検出
+      const estimatePropertyFromMsg = (() => {
+        const recent = contextMsgs.filter(m => m.sender === "staff").slice(-8).reverse();
+        for (const m of recent) {
+          const match = (m.text || "").match(/^【([^\s】]+)/);
+          if (match) return match[1];
+        }
+        return null;
+      })();
+
       let genReplyHint = "";
+      if (estimatePropertyFromMsg) {
+        genReplyHint = `【見積書の物件名固定】直近に送った見積書の物件「${estimatePropertyFromMsg}」を使うこと。会話に出てくる他の物件名は絶対に使わない`;
+      }
       if (targetMessage === "（物件画像を送信）") {
         // 条件未確認（初回対応/ヒアリング段階）なら空室確認 + 条件フォーム送付セット
         genReplyHint = "【お客様が物件画像を送信】お客様が特定物件の空室確認を依頼している。「かしこまりました！！お送り頂きました物件の募集状況確認させていただきます！！確認出来次第ご連絡させて頂きます！！」と返信し、条件がまだ未確認の場合はあわせて条件ヒアリングフォームを送る（①入居時期 ②ご希望家賃 ③間取り ④築年数 ⑤エリア・駅 ⑥駅徒歩 ⑦初期費用 ⑧その他）";
       } else if (effectiveState !== "first_reply") {
         if (genIsBullet) {
-          genReplyHint = `【お客様が列挙した条件・要望（返信で具体的に言及すること）】${genShortLines.slice(0, 8).join("・")}`;
+          genReplyHint = (genReplyHint ? genReplyHint + "\n" : "") + `【お客様が列挙した条件・要望（返信で具体的に言及すること）】${genShortLines.slice(0, 8).join("・")}`;
         } else if (genHasCond || genHasPickup) {
-          genReplyHint = `【条件変更/ピックアップ依頼（追加質問禁止・変更内容を具体的に言葉にして即行動宣言）】${genMsgLines.join("・")}`;
+          genReplyHint = (genReplyHint ? genReplyHint + "\n" : "") + `【条件変更/ピックアップ依頼（追加質問禁止・変更内容を具体的に言葉にして即行動宣言）】${genMsgLines.join("・")}`;
         }
       }
 
@@ -2092,6 +2105,19 @@ export default function Home() {
       const normalizedStatus = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
       const effectiveState = !hasAnyStaff && normalizedStatus === "hearing" ? "first_reply" : selectedConversation.status;
 
+      // 直近スタッフの見積書メッセージから物件名を検出してhintに注入
+      const sparkleEstimateProperty = (() => {
+        const recent = msgs.filter((m: Message) => m.sender === "staff").slice(-8).reverse();
+        for (const m of recent) {
+          const match = (m.text || "").match(/^【([^\s】]+)/);
+          if (match) return match[1];
+        }
+        return null;
+      })();
+      const replyHintWithEstimate = sparkleEstimateProperty
+        ? `【見積書の物件名固定】直近に送った見積書の物件「${sparkleEstimateProperty}」を使うこと。会話に出てくる他の物件名は絶対に使わない` + (replyHint ? "\n" + replyHint : "")
+        : replyHint;
+
       const res = await fetch("/api/generate-reply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2101,7 +2127,7 @@ export default function Home() {
           customerName: selectedConversation.customerName,
           customerConditions: linkedCustomer?.conditions || memos[selectedConversation.id] || undefined,
           customerSummary: linkedCustomer?.ai_summary ?? undefined,
-          replyHint,
+          replyHint: replyHintWithEstimate,
           recentMessages: msgs.slice(-20).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined, createdAt: m.rawCreatedAt || undefined })),
           ...(sparkleScreenshot ? { screenshotBase64: sparkleScreenshot.base64, screenshotMediaType: sparkleScreenshot.mediaType } : {}),
         }),
