@@ -103,6 +103,21 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // 学習済み成約パターンを取得（直近10件）
+    const { data: learnedPatterns } = await supabase
+      .from("ai_reply_knowledge")
+      .select("content")
+      .eq("category", "pattern")
+      .ilike("title", "成約パターン_%")
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    const learnedPatternsNote = learnedPatterns && learnedPatterns.length > 0
+      ? `\n\n【過去の実際の成約パターン（学習済み・最優先で参照すること）】\n${
+          (learnedPatterns as Array<{ content: string }>).map(p => p.content).join("\n\n---\n")
+        }`
+      : "";
+
     const rentStr = (c.rent_min || c.rent_max)
       ? `${c.rent_min ? Math.floor(c.rent_min / 10000) + "万〜" : "〜"}${c.rent_max ? Math.floor(c.rent_max / 10000) + "万" : ""}`
       : null;
@@ -114,6 +129,7 @@ export async function POST(req: NextRequest) {
 
     const info = [
       `名前: ${c.customer_name}`,
+      learnedPatternsNote && learnedPatternsNote,
       `ステータス: ${STATUS_LABEL[c.status ?? ""] ?? c.status}`,
       c.desired_area         && `希望エリア: ${c.desired_area}`,
       c.floor_plan           && `間取り: ${c.floor_plan}`,

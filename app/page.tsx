@@ -1710,6 +1710,18 @@ export default function Home() {
 
       if (updateError) throw updateError;
 
+      // 成約になったとき: バックグラウンドで決まるパターンを自動学習
+      if (nextStatus === "closed_won") {
+        void fetch("/api/learn-closing-pattern", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversation_id: selectedConversation.id,
+            customer_name: selectedConversation.customerName ?? "",
+          }),
+        });
+      }
+
       setConversations((prev) =>
         prev.map((conversation) =>
           conversation.id === selectedConversation.id
