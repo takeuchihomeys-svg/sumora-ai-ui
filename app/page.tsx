@@ -3785,14 +3785,14 @@ export default function Home() {
                     <button
                       onClick={() => void handleReplaceInChat(selectedConversation.id)}
                       disabled={reflectLoadingChat}
-                      className="rounded-lg bg-amber-600 px-2.5 py-1 text-[11px] font-bold text-white active:opacity-70 disabled:opacity-50"
+                      className="rounded-lg border border-amber-500 bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700 active:opacity-70 disabled:opacity-50"
                     >
                       {reflectLoadingChat ? "解析中…" : "入れ替える"}
                     </button>
                     <button
                       onClick={() => void handleReflectInChat(selectedConversation.id)}
                       disabled={reflectLoadingChat}
-                      className="rounded-lg border border-amber-500 bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700 active:opacity-70 disabled:opacity-50"
+                      className="rounded-lg bg-amber-600 px-2.5 py-1 text-[11px] font-bold text-white active:opacity-70 disabled:opacity-50"
                     >
                       追加する
                     </button>
