@@ -385,6 +385,9 @@ export default function Home() {
   const [dismissedMeetingPlaceIds, setDismissedMeetingPlaceIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedMeetingPlaceIds") || "[]") as string[]); } catch { return new Set(); }
   });
+  const [dismissedNewListingIds, setDismissedNewListingIds] = useState<Set<string>>(() => {
+    try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedNewListingIds") || "[]") as string[]); } catch { return new Set(); }
+  });
   const [dismissedEstimateSheetIds, setDismissedEstimateSheetIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedEstimateSheetIds") || "[]") as string[]); } catch { return new Set(); }
   });
@@ -1519,6 +1522,25 @@ export default function Home() {
       /\d+\/\d+.*\d+\/\d+/.test(m.text || "") ||
       /\d+日.*\d+日/.test(m.text || "")
     );
+  }, [selectedConversation, activeAixFlow]);
+
+  // 新着物件待ちパターン: スタッフが「新着で次第お送り」等を言っている → 物件が来たらAIX物件オススメへ
+  const guideToNewListingRecommend = useMemo(() => {
+    if (activeAixFlow) return false;
+    const msgs: Message[] = selectedConversation.messages || [];
+    const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
+    if (ns !== "proposing") return false;
+    // 直近スタッフ3件に「新着・新しい物件・募集が出次第」＋「お送り・連絡・ご案内」が含まれる
+    const reversed = [...msgs].reverse();
+    const recentStaff = reversed.filter((m: Message) => m.sender === "staff").slice(0, 3);
+    const hasNewListingPromise = recentStaff.some(m => {
+      const t = m.text || "";
+      return (t.includes("新着") || t.includes("新しいお部屋") || t.includes("新規募集") || t.includes("募集が出") || t.includes("新規物件")) &&
+        (t.includes("お送り") || t.includes("ご連絡") || t.includes("ご案内") || t.includes("次第"));
+    });
+    if (!hasNewListingPromise) return false;
+    // 最後のメッセージがお客様 or スタッフの新着宣言（返信待ち状態）
+    return true;
   }, [selectedConversation, activeAixFlow]);
 
   // 見積書送る誘導: お客様が見積依頼 or スタッフが「作成次第送る」と約束した後、お客様の返信が来ている状態
@@ -4732,6 +4754,18 @@ export default function Home() {
                     style={{ background: "linear-gradient(135deg, #00838F, #006064)" }}>AIX 待ち合わせ</button>
                   <button onClick={() => setDismissedMeetingPlaceIds((prev) => new Set([...prev, id]))}
                     className="shrink-0 text-teal-500 text-[11px] font-bold">✕</button>
+                </div>
+              );
+
+              // P3.4: スタッフが新着待ちを宣言 → 物件が見つかったらAIX物件オススメへ
+              if (guideToNewListingRecommend && !dismissedNewListingIds.has(id)) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-blue-500 bg-blue-50 px-3 py-2 flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-blue-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>新着物件が見つかったら → AIX 物件オススメで即送る</span>
+                  <button onClick={() => { setDismissedNewListingIds((prev) => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_recommendation"); openAixWithImagePicker("property_recommendation"); }}
+                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                    style={{ background: "linear-gradient(135deg, #1565C0, #1976D2)" }}>AIX 物件オススメ</button>
+                  <button onClick={() => { setDismissedNewListingIds((prev) => { const n = new Set([...prev, id]); sessionStorage.setItem("dismissedNewListingIds", JSON.stringify([...n])); return n; }) }}
+                    className="shrink-0 text-blue-400 text-[11px] font-bold">✕</button>
                 </div>
               );
 
