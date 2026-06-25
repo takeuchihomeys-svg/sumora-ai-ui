@@ -761,7 +761,7 @@ export default function AixModal({
         const hasTime = !!meetingTime.trim();
         if (hasTime) {
           // 時間あり: 即座にローカル生成
-          let msg = `かしこまりました！！\n${meetingDate}ご案内させて頂きます！！\n\n${meetingDate}${meetingTime}に${meetingPropertyName}\n現地エントランスお待ち合わせで何卒よろしくお願い致します！！`;
+          let msg = `かしこまりました！！\n${meetingDate}ご案内させて頂きます！！\n\n${meetingDate} ${meetingTime}に${meetingPropertyName}\n現地エントランスお待ち合わせで何卒よろしくお願い致します！！`;
           if (meetingPropertyAddress.trim()) msg += `\n住所: ${meetingPropertyAddress}`;
           setAiDraft(msg);
           setPreview(useEmoji ? msg : stripEmoji(msg));
@@ -2120,7 +2120,7 @@ export default function AixModal({
                 </div>
                 <p className="mt-1 text-[10px] text-[#8696a0]">
                   {meetingTime
-                    ? `✅ 「${meetingDate || "〇〇日"}${meetingTime}に ... お待ち合わせで何卒よろしくお願い致します！！」`
+                    ? `✅ 「${meetingDate || "〇〇日"} ${meetingTime}に ... お待ち合わせで何卒よろしくお願い致します！！」`
                     : "💬 未選択 → AIがLINEの会話から待ち合わせ時間を自動読み取りして文を生成します"}
                 </p>
               </div>
