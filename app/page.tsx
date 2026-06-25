@@ -5883,6 +5883,7 @@ export default function Home() {
           linkedCustomer={aixModalType === "property_recommendation" ? linkedCustomerMap[selectedConversation.id] : undefined}
           customerConditions={linkedCustomerMap[selectedConversation.id]?.conditions || memos[selectedConversation.id] || undefined}
           recentMessages={(selectedConversation.messages || []).slice(-20).map((m: Message) => ({ sender: m.sender, text: m.text || "" }))}
+          lastMessageAt={(selectedConversation.messages || []).slice(-1)[0]?.rawCreatedAt}
           customerSummary={linkedCustomerMap[selectedConversation.id]?.ai_summary ?? null}
           initialFocusPoints={pendingAixFocusPoints.length > 0 ? pendingAixFocusPoints : undefined}
           onClose={() => {

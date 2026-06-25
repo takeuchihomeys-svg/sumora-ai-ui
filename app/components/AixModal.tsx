@@ -31,6 +31,7 @@ interface AixModalProps {
   customerSummary?: string | null;
   lineUserId: string;
   lastScheduledAt?: string;
+  lastMessageAt?: string;
   conversationStatus?: string;
   initialFocusPoints?: string[];
   onClose: () => void;
@@ -164,6 +165,7 @@ export default function AixModal({
   customerSummary,
   lineUserId,
   lastScheduledAt,
+  lastMessageAt,
   conversationStatus,
   initialFocusPoints,
   onClose,
@@ -628,6 +630,7 @@ export default function AixModal({
         if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
         if (customerSummary) body.customer_summary = customerSummary;
         if (sendKeyword.trim()) body.keyword = sendKeyword.trim();
+        if (lastMessageAt) body.last_message_at = lastMessageAt;
         if (sendExpandedConds.size > 0) body.expanded_conditions = Array.from(sendExpandedConds);
       } else if (actionType === "application_push") {
         if (!appVacancyStatus) throw new Error("空室状況を選択してください");
