@@ -244,8 +244,8 @@ export default function AixModal({
     label: string; slots: string[]; fullyBooked: boolean; noEvents: boolean;
   }>>([]);
   const [calendarLoading, setCalendarLoading] = useState(false);
-  // 物件送る専用: 内覧誘導 or 申込み誘導 モード + 編集可能スロット（未選択 = null）
-  const [sendMode, setSendMode] = useState<"viewing" | "application" | null>(null);
+  // 物件送る専用: 新着物件 / 内覧誘導 / 申込み誘導 モード + 編集可能スロット（未選択 = null）
+  const [sendMode, setSendMode] = useState<"viewing" | "application" | "new_arrival" | null>(null);
   const [editableCalendarSlots, setEditableCalendarSlots] = useState<string[]>([]);
   const [includeCalendar, setIncludeCalendar] = useState(true);
   // 内覧へ！専用: カレンダースロット選択
@@ -1184,6 +1184,18 @@ export default function AixModal({
               {/* モード選択 */}
               <div>
                 <p className="mb-1.5 text-xs font-bold text-[#54656f]">送るモードを選択</p>
+                <div className="flex gap-2 mb-2">
+                  <button
+                    onClick={() => { setSendMode(sendMode === "new_arrival" ? null : "new_arrival"); setPreview(""); }}
+                    className={`flex-1 rounded-full py-2.5 text-sm font-bold transition-all ${
+                      sendMode === "new_arrival"
+                        ? "bg-[#FF6F00] text-white shadow-sm"
+                        : "border border-[#d1d7db] bg-white text-[#54656f]"
+                    }`}
+                  >
+                    🆕 新着物件
+                  </button>
+                </div>
                 <div className="flex gap-2">
                   <button
                     onClick={() => { setSendMode(sendMode === "viewing" ? null : "viewing"); setPreview(""); }}

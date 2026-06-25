@@ -378,9 +378,10 @@ ${SMORA_COMMON_RULES}`;
       const calendarData = body.calendar_info ? String(body.calendar_info) : null;
       const vacatingInfo = vacating_note ? String(vacating_note) : null;
       const customerSummary = body.customer_summary as string | undefined;
-      const sendMode: "viewing" | "application" | "simple" =
+      const sendMode: "viewing" | "application" | "new_arrival" | "simple" =
         body.send_mode === "application" ? "application"
         : body.send_mode === "viewing" ? "viewing"
+        : body.send_mode === "new_arrival" ? "new_arrival"
         : "simple";
 
       const summaryNote = customerSummary
@@ -432,6 +433,20 @@ ${SMORA_COMMON_RULES}`;
       const openingLine: string = jstHourNow >= 21
         ? `①「[お客様名]さん夜分遅くに失礼致します！！」で始める`
         : `①「[お客様名]さんお待たせ致しました！！」で始める`;
+
+      // 新着物件モード: 固定テンプレート（AI不要）
+      if (sendMode === "new_arrival") {
+        const imgCount = Array.isArray(image_urls) ? (image_urls as string[]).length : (image_url ? 1 : 0);
+        const countStr = imgCount > 0 ? `${imgCount}件` : "複数件";
+        const greeting = jstHourNow >= 21
+          ? `${name}さん夜分遅くに失礼致します！！`
+          : `${name}さんお世話になっております！！`;
+        const vacatingSection = vacatingInfo
+          ? `\n\n${vacatingInfo}`
+          : "";
+        message_text = `${greeting}\n\n新着で${name}さんご希望のご条件に合ったお部屋が${countStr}募集にでました！！${vacatingSection}\n\nお手隙の際にご査収ください😌！！`;
+        return NextResponse.json({ ok: true, message_text });
+      }
 
       const nameNote = `\n\n【お客様名 — 最重要】お客様名は「${name}」です。文中では必ず「${name}さん」と完全な名前で使うこと。「〇〇から${name}さんご希望の」のように助詞の直後に名前が続く場合でも、名前を途中で切ったり省略したりしない（例：「梅田から」→「もえかさん」→ 「梅田から${name}さん」と正確につなぐ）。`;
 
