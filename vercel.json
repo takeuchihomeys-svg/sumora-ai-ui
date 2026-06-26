@@ -47,6 +47,14 @@
     {
       "path": "/api/learn-trigger-rules",
       "schedule": "10 6 * * *"
+    },
+    {
+      "path": "/api/analyze-aix-flow",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/analyze-aix-flow",
+      "schedule": "0 18 * * *"
     }
   ]
 }
