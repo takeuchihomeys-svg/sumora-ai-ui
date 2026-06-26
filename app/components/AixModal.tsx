@@ -249,7 +249,7 @@ export default function AixModal({
   }>>([]);
   const [calendarLoading, setCalendarLoading] = useState(false);
   // 物件送る専用: 新着物件 / 内覧誘導 / 申込み誘導 モード + 編集可能スロット（未選択 = null）
-  const [sendMode, setSendMode] = useState<"viewing" | "application" | "new_arrival" | null>(null);
+  const [sendMode, setSendMode] = useState<"viewing" | "application" | "new_arrival" | "short" | null>(null);
   const [editableCalendarSlots, setEditableCalendarSlots] = useState<string[]>([]);
   const [includeCalendar, setIncludeCalendar] = useState(true);
   // 内覧へ！専用: カレンダースロット選択
@@ -809,9 +809,9 @@ export default function AixModal({
       if (extraFlags) Object.assign(body, extraFlags);
       if (parsedEstimate) body.parsed_estimate = parsedEstimate;
 
-      // 30秒タイムアウト（AI生成が遅いと loading=true のまま固まるのを防ぐ）
+      // 60秒タイムアウト（AI生成が遅いと loading=true のまま固まるのを防ぐ）
       const aborter = new AbortController();
-      const tid = setTimeout(() => aborter.abort(), 30000);
+      const tid = setTimeout(() => aborter.abort(), 60000);
       let res: Response;
       try {
         res = await fetch("/api/aix/action", {
@@ -822,7 +822,7 @@ export default function AixModal({
         });
       } catch (fetchErr) {
         if (fetchErr instanceof Error && fetchErr.name === "AbortError") {
-          throw new Error("AI生成がタイムアウトしました（30秒）。もう一度お試しください");
+          throw new Error("AI生成がタイムアウトしました（60秒）。もう一度お試しください");
         }
         throw fetchErr;
       } finally {
@@ -1270,6 +1270,16 @@ export default function AixModal({
                   </button>
                 </div>
                 <div className="flex gap-2">
+                  <button
+                    onClick={() => { setSendMode(sendMode === "short" ? null : "short"); setPreview(""); }}
+                    className={`flex-1 rounded-full py-2.5 text-sm font-bold transition-all ${
+                      sendMode === "short"
+                        ? "bg-[#607d8b] text-white shadow-sm"
+                        : "border border-[#d1d7db] bg-white text-[#54656f]"
+                    }`}
+                  >
+                    シンプル
+                  </button>
                   <button
                     onClick={() => { setSendMode(sendMode === "viewing" ? null : "viewing"); setPreview(""); }}
                     className={`flex-1 rounded-full py-2.5 text-sm font-bold transition-all ${
@@ -2269,7 +2279,17 @@ export default function AixModal({
           )}
 
           {error && (
-            <div className="mb-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div>
+            <div className="mb-4 rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">
+              <p>{error}</p>
+              {error.includes("タイムアウト") && (
+                <button
+                  onClick={() => { setError(""); void generate(); }}
+                  className="mt-2 flex items-center gap-1 rounded-full bg-red-500 px-4 py-1.5 text-xs font-bold text-white active:opacity-70"
+                >
+                  🔄 もう一度生成
+                </button>
+              )}
+            </div>
           )}
 
           {/* ボタン */}

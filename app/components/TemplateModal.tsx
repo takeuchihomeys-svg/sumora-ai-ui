@@ -51,6 +51,7 @@ export default function TemplateModal({
   const [editRequiresImage, setEditRequiresImage] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
   const [noEmoji, setNoEmoji] = useState(false);
+  const [inspectingId, setInspectingId] = useState<string | null>(null);
   const [templateImages, setTemplateImages] = useState<Record<string, File[]>>({});
   const [templateImagePreviews, setTemplateImagePreviews] = useState<Record<string, string[]>>({});
   const [extractingId, setExtractingId] = useState<string | null>(null);
@@ -65,6 +66,29 @@ export default function TemplateModal({
   const categoryEditInputRef = useRef<HTMLInputElement | null>(null);
   // AIXカテゴリ: テンプレートカードごとの訴求ポイント選択状態
   const [focusPointsMap, setFocusPointsMap] = useState<Record<string, string[]>>({});
+
+  function highlightTemplateVars(text: string): React.ReactNode[] {
+    const parts = text.split(/(アカウント名|〇〇|○○)/g);
+    return parts.map((part, i) => {
+      if (part === "アカウント名") return <mark key={i} className="bg-orange-100 text-orange-700 rounded px-0.5 font-bold not-italic">アカウント名</mark>;
+      if (part === "〇〇" || part === "○○") return <mark key={i} className="bg-sky-100 text-sky-700 rounded px-0.5 font-bold not-italic">{part}</mark>;
+      return <span key={i}>{part}</span>;
+    });
+  }
+
+  function detectTemplateElements(text: string): { emoji: string; label: string; bg: string; fg: string }[] {
+    const el: { emoji: string; label: string; bg: string; fg: string }[] = [];
+    if (/🌟|⭐|【新築|【物件/.test(text)) el.push({ emoji: "🌟", label: "物件名", bg: "bg-amber-100", fg: "text-amber-800" });
+    if (/内覧.*?(?:できません|出来ません|未完成|完成前|予定)|現在内覧/.test(text)) el.push({ emoji: "🚧", label: "内覧不可フォロー（突っ込まれ防止）", bg: "bg-orange-100", fg: "text-orange-800" });
+    else if (/内覧|ご案内/.test(text)) el.push({ emoji: "🏠", label: "内覧誘導", bg: "bg-blue-100", fg: "text-blue-800" });
+    if (/条件|ご希望/.test(text)) el.push({ emoji: "✅", label: "条件一致アピール", bg: "bg-emerald-100", fg: "text-emerald-800" });
+    if (/家賃|万円|[0-9]円/.test(text)) el.push({ emoji: "💴", label: "家賃・費用訴求", bg: "bg-green-100", fg: "text-green-800" });
+    if (/徒歩[0-9]|[0-9]分|駅.*徒歩/.test(text)) el.push({ emoji: "🚃", label: "アクセス訴求", bg: "bg-sky-100", fg: "text-sky-800" });
+    if (/新築|築浅/.test(text)) el.push({ emoji: "🏗️", label: "新築・築浅訴求", bg: "bg-teal-100", fg: "text-teal-800" });
+    if (/申込|仮押さえ/.test(text)) el.push({ emoji: "📝", label: "申込誘導", bg: "bg-purple-100", fg: "text-purple-800" });
+    if (/潜在|意識/.test(text)) el.push({ emoji: "🧠", label: "潜在意識への訴求", bg: "bg-violet-100", fg: "text-violet-800" });
+    return el;
+  }
 
   const loadTemplates = async () => {
     setLoading(true);
@@ -388,7 +412,7 @@ export default function TemplateModal({
                   onClick={() => setNewRequiresImage(v => !v)}
                   className={`w-full rounded-xl border py-2 text-[12px] font-bold transition ${newRequiresImage ? "border-orange-400 bg-orange-50 text-orange-600" : "border-[#d1d7db] bg-white text-[#54656f]"}`}
                 >
-                  📸 {newRequiresImage ? "画像添付必要（オン）" : "画像添付必要（オフ）"}
+                  📎 {newRequiresImage ? "画像添付必要（オン）" : "画像添付必要（オフ）"}
                 </button>
                 <div className="flex gap-2 justify-end">
                   <button
@@ -481,6 +505,10 @@ export default function TemplateModal({
                                 title="下へ"
                               >↓</button>
                               <div className="w-px h-3 bg-[#e0e0e0] mx-0.5" />
+                              <button
+                                onClick={() => setInspectingId(inspectingId === tmpl.id ? null : tmpl.id)}
+                                className={`text-[11px] transition font-medium ${inspectingId === tmpl.id ? "text-[#1565C0]" : "text-[#aaa] hover:text-[#1565C0]"}`}
+                              >確認</button>
                               <button
                                 onClick={() => startEdit(tmpl)}
                                 className="text-[11px] text-[#aaa] hover:text-[#1565C0] transition font-medium"
@@ -587,6 +615,43 @@ export default function TemplateModal({
 
                         {/* 本文 */}
                         <p className="whitespace-pre-wrap text-[13px] leading-5 text-[#111b21] mb-3">{displayText}</p>
+
+                        {/* 確認パネル */}
+                        {inspectingId === tmpl.id && (() => {
+                          const elements = detectTemplateElements(tmpl.text);
+                          const hasVars = /アカウント名|〇〇|○○/.test(tmpl.text);
+                          return (
+                            <div className="mb-3 rounded-xl border border-[#e3eaf2] bg-[#f8fafc] px-3 py-3 flex flex-col gap-3">
+                              {/* 変動箇所ハイライト */}
+                              {hasVars && (
+                                <div>
+                                  <p className="mb-1 text-[10px] font-bold text-[#54656f]">✏️ 変動箇所（AIが自動置換）</p>
+                                  <div className="flex flex-wrap gap-2 mb-1.5">
+                                    <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold text-orange-700">アカウント名 → お客様名</span>
+                                    {/〇〇|○○/.test(tmpl.text) && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">〇〇 → 物件情報</span>}
+                                  </div>
+                                  <p className="whitespace-pre-wrap text-[11px] leading-[1.6] text-[#333] bg-white rounded-lg border border-[#e0e0e0] px-2 py-2">
+                                    {highlightTemplateVars(tmpl.text)}
+                                  </p>
+                                </div>
+                              )}
+                              {/* メッセージ要素 */}
+                              {elements.length > 0 && (
+                                <div>
+                                  <p className="mb-1.5 text-[10px] font-bold text-[#54656f]">📋 このテンプレートの要素</p>
+                                  <div className="flex flex-col gap-1">
+                                    {elements.map((e, i) => (
+                                      <div key={i} className={`flex items-center gap-1.5 rounded-lg px-2 py-1 ${e.bg}`}>
+                                        <span className="text-[13px]">{e.emoji}</span>
+                                        <span className={`text-[11px] font-bold ${e.fg}`}>{e.label}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                         </>
                         )}
 

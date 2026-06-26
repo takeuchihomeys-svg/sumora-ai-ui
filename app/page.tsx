@@ -1744,14 +1744,15 @@ export default function Home() {
 
       if (updateError) throw updateError;
 
-      // 成約になったとき: バックグラウンドで決まるパターンを自動学習
-      if (nextStatus === "closed_won") {
+      // 申込以降・成約になったとき: バックグラウンドで決まるパターンを自動学習
+      if (nextStatus === "applying" || nextStatus === "closed_won") {
         void fetch("/api/learn-closing-pattern", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             conversation_id: selectedConversation.id,
             customer_name: selectedConversation.customerName ?? "",
+            event_type: nextStatus === "closed_won" ? "contract" : "application",
           }),
         });
       }
@@ -4679,7 +4680,13 @@ export default function Home() {
                       <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
                       {isFollowupCost ? "【追客】初期費用テンプレートを送る" : `次のテンプレート ${nextTmpl.num} を送る`}
                     </span>
-                    <button onClick={() => { setPendingNextTemplateInfo(nextTmpl); setTemplateOpenContext("next_numbered"); setShowTemplateModal(true); }}
+                    <button onClick={() => {
+                        if (isFollowupCost) {
+                          openAixWithImagePicker("estimate_sheet");
+                        } else {
+                          setPendingNextTemplateInfo(nextTmpl); setTemplateOpenContext("next_numbered"); setShowTemplateModal(true);
+                        }
+                      }}
                       className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
                       style={{ background: "linear-gradient(135deg, #0d9488, #0f766e)" }}>
                       {isFollowupCost ? "見積書を送る" : `${nextTmpl.num} を送る`}

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { supabase } from "@/app/lib/supabase";
@@ -1217,10 +1217,11 @@ export async function POST(req: NextRequest) {
 
         if (isImageMsg) {
           if (m.sender === "customer") return `${who}: 【画像を送ってきた】`;
-          // スタッフの画像: 前後3件のテキストで文脈を判定
-          const nearbyMsgs = arr.slice(Math.max(0, i - 3), i + 2).filter((_, ni) => ni !== (Math.min(i, 3)));
+          // スタッフの画像: 前後5件のテキストで文脈を判定（見積書はお客様の礼金反応からも判定可能）
+          const startIdx = Math.max(0, i - 5);
+          const nearbyMsgs = arr.slice(startIdx, i + 4).filter((_, ni) => startIdx + ni !== i);
           const nearby = nearbyMsgs.map((x) => x?.text || "").join(" ");
-          if (/見積|初期費用/.test(nearby)) return `${who}: 【見積書を送付した】`;
+          if (/見積|初期費用|礼金/.test(nearby)) return `${who}: 【見積書を送付した】`;
           // 「確認します」→画像 の流れ → 空室確認済みとして扱う
           if (/確認|空室|空き|募集/.test(nearby)) return `${who}: 【空室確認済み・物件資料を送付した】`;
           if (/物件|お部屋|ピックアップ|間取り|アパート|マンション|資料/.test(nearby)) return `${who}: 【物件資料を送付した】`;

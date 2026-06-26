@@ -4,6 +4,18 @@ import Anthropic from "@anthropic-ai/sdk";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "") });
 
+async function getEmbedding(text: string): Promise<number[] | null> {
+  try {
+    const res = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
+    });
+    const data = await res.json() as { data: Array<{ embedding: number[] }> };
+    return data.data[0]?.embedding ?? null;
+  } catch { return null; }
+}
+
 // 内覧・申込・契約確定後に成功パターンを学習してai_reply_knowledgeへ保存
 async function recordSuccessPattern(conversationId: string, eventType: string): Promise<void> {
   try {
@@ -49,12 +61,14 @@ ${history}
     const pattern = resp.content[0].type === "text" ? resp.content[0].text.trim() : null;
     if (!pattern) return;
 
-    // ai_reply_knowledgeに保存（customer-summary が次回から参照する）
+    // ai_reply_knowledgeに保存（embeddingも即座に付与してRAG検索対象にする）
     const now = new Date().toISOString().slice(0, 10);
+    const embedding = await getEmbedding(`pattern: ${pattern}`);
     await supabase.from("ai_reply_knowledge").insert({
       category: "pattern",
       title: `成約パターン_${label}_${now}`,
       content: pattern,
+      ...(embedding ? { embedding: JSON.stringify(embedding) } : {}),
     });
 
     // 紐付き顧客のai_summaryにも★決まるパターンを上書き反映
