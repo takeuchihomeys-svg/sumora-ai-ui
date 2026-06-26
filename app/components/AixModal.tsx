@@ -1525,13 +1525,20 @@ export default function AixModal({
               <button
                 onClick={() => {
                   const name = customerName || "お客様";
-                  const propertyPart = appPropertyName.trim() ? `${appPropertyName.trim()}、` : "";
-                  setPreview(`はい！！\n${name}さん${propertyPart}お気に召されましたらお申込しお部屋抑えさせて頂きます😌！！\nお気軽にお申し付けください！！`);
+                  const prop = appPropertyName.trim();
+                  const text = prop
+                    ? `はい！！\n${name}さん${prop}につきまして、お気に召されましたらお申込しお部屋抑えさせて頂きます😌！！\nお気軽にお申し付けください！！`
+                    : `はい！！\n${name}さんお気に召されましたらお申込しお部屋抑えさせて頂きます😌！！\nお気軽にお申し付けください！！`;
+                  setPreview(text);
                 }}
                 className="w-full rounded-2xl border-2 border-[#E53935] bg-[#fff5f5] px-4 py-3 text-left transition-all active:bg-[#ffebee]"
               >
                 <div className="text-[13px] font-bold text-[#E53935]">⚡ シンプル送信</div>
-                <div className="mt-0.5 text-[10px] text-[#8696a0]">はい！！〇〇さんお気に召されましたらお申込し…（即プレビュー）</div>
+                <div className="mt-0.5 text-[10px] text-[#8696a0]">
+                  {appPropertyName.trim()
+                    ? `はい！！ ${customerName || "〇〇"}さん${appPropertyName.trim()}につきまして、お気に召されましたら…`
+                    : "はい！！〇〇さんお気に召されましたらお申込し…"}
+                </div>
               </button>
               {/* 区切り */}
               <div className="flex items-center gap-2">
