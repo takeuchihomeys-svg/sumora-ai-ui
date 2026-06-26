@@ -63,6 +63,11 @@ type SupabaseMessageRow = {
   created_at: string;
 };
 
+// JST基準で今日の日付を YYYY-MM-DD で返す
+function getTodayJST(): string {
+  return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
 // ステータス（4段階）
 const DETAIL_STATUSES = [
   { key: "hearing",    label: "初回対応",     color: "bg-blue-100 text-blue-700",     dot: "bg-blue-400" },
@@ -437,7 +442,7 @@ export default function Home() {
   const [viewingMemoConvId, setViewingMemoConvId] = useState<string | null>(null);
   const [calendarModalConvId, setCalendarModalConvId] = useState<string | null>(null);
   const [calendarTitle, setCalendarTitle] = useState("");
-  const [calendarDate, setCalendarDate] = useState("");
+  const [calendarDate, setCalendarDate] = useState(getTodayJST());
   const [calendarTime, setCalendarTime] = useState("");
   const [calendarEndTime, setCalendarEndTime] = useState("");
   const [calendarNote, setCalendarNote] = useState("");
@@ -3714,7 +3719,7 @@ export default function Home() {
                       setCalendarCustomerName(name);
                       setCalendarTitle(name ? `${name} その他` : "その他");
                       setCalendarEventType("other");
-                      setCalendarDate("");
+                      setCalendarDate(getTodayJST());
                       setCalendarTime("");
                       setCalendarEndTime("");
                       setCalendarNote("");
@@ -3731,7 +3736,7 @@ export default function Home() {
                       setCalendarCustomerName(name);
                       setCalendarTitle(name ? `${name} その他` : "その他");
                       setCalendarEventType("other");
-                      setCalendarDate("");
+                      setCalendarDate(getTodayJST());
                       setCalendarTime("");
                       setCalendarEndTime("");
                       setCalendarNote("");
@@ -5153,7 +5158,7 @@ export default function Home() {
                   setCalendarCustomerName(name);
                   setCalendarTitle(name ? `${name} 内覧` : "内覧");
                   setCalendarEventType("viewing");
-                  setCalendarDate("");
+                  setCalendarDate(getTodayJST());
                   setCalendarTime("");
                   setCalendarEndTime("");
                   setCalendarNote("");
