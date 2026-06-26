@@ -363,6 +363,7 @@ export default function Home() {
   const [aixInitialFile, setAixInitialFile] = useState<File | null>(null);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [pendingAixFocusPoints, setPendingAixFocusPoints] = useState<string[]>([]);
+  const [pendingTemplateSource, setPendingTemplateSource] = useState<{ name: string; category: string } | null>(null);
   const [suggest2ndHandMap, setSuggest2ndHandMap] = useState<Record<string, boolean>>(() => {
     try { return JSON.parse(sessionStorage.getItem("suggest2ndHandMap") || "{}") as Record<string, boolean>; } catch { return {}; }
   });
@@ -5940,8 +5941,9 @@ export default function Home() {
       {showTemplateModal && (
         <TemplateModal
           onClose={() => { setShowTemplateModal(false); setTemplateOpenContext(null); setPendingNextTemplateInfo(null); }}
-          onOpenAixWithFocus={(fps) => {
+          onOpenAixWithFocus={(fps, templateInfo) => {
             setPendingAixFocusPoints(fps);
+            setPendingTemplateSource(templateInfo ?? null);
             setShowTemplateModal(false);
             setTemplateOpenContext(null);
             // activeAixFlowに応じて正しいAIXアクションを開く
@@ -6054,6 +6056,7 @@ export default function Home() {
             setAixModalType(null);
             setAixInitialFile(null);
             setPendingAixFocusPoints([]);
+            setPendingTemplateSource(null);
             setDetectedVacatingDate(null);
           }}
           onSend={sendMessageText}
@@ -6071,6 +6074,19 @@ export default function Home() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ action: "log", conversation_status: _ns, action_type: aixModalType, customer_msg_summary: _lastCustomerMsg.slice(0, 150) }),
               }).catch(() => {});
+              // AIXフロー使用ログ記録（テンプレート名・カテゴリ含む）
+              fetch("/api/log-aix-usage", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  conversation_id: selectedConversation.id,
+                  aix_type: aixModalType,
+                  template_name: pendingTemplateSource?.name ?? null,
+                  template_category: pendingTemplateSource?.category ?? null,
+                  conversation_status: _ns,
+                }),
+              }).catch(() => {});
+              setPendingTemplateSource(null);
               // AI提案バナーを一旦消す（次回選択時に再フェッチされる）
               setNextActionMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; });
               nextActionFetchingRef.current.delete(selectedConversation.id);

@@ -14,8 +14,18 @@ function jstDateStr(): string {
 // Cron: 毎日 06:00 UTC (15:00 JST) と 18:00 UTC (03:00 JST翌日) に実行
 export async function POST() {
   try {
-    // 1. 直近30日の成約パターン（最大20件）
     const since = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+    const today = jstDateStr();
+
+    // 1. 直近30日のAIX使用ログ（テンプレート情報含む）
+    const { data: usageLogs } = await supabase
+      .from("aix_usage_logs")
+      .select("aix_type, template_name, template_category, conversation_id, conversation_status")
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(200);
+
+    // 2. 成功した会話ID（成約パターンが記録されたもの）を取得
     const { data: patterns } = await supabase
       .from("ai_reply_knowledge")
       .select("title, content")
@@ -23,62 +33,68 @@ export async function POST() {
       .ilike("title", "成約パターン%")
       .gte("created_at", since)
       .order("created_at", { ascending: false })
-      .limit(20);
+      .limit(15);
 
-    // 2. AIXタスク使用頻度（過去30日）
-    const { data: tasks } = await supabase
-      .from("line_tasks")
-      .select("task_type")
-      .gte("created_at", since);
+    // 3. AIX種類ごとの使用回数・テンプレート別集計
+    type UsageLog = { aix_type: string; template_name: string | null; template_category: string | null; conversation_id: string; conversation_status: string | null };
+    const logs = (usageLogs ?? []) as UsageLog[];
 
-    const taskCounts: Record<string, number> = {};
-    for (const t of (tasks ?? []) as { task_type: string }[]) {
-      taskCounts[t.task_type] = (taskCounts[t.task_type] ?? 0) + 1;
+    const aixCount: Record<string, number> = {};
+    const templateCount: Record<string, number> = {};
+    for (const log of logs) {
+      aixCount[log.aix_type] = (aixCount[log.aix_type] ?? 0) + 1;
+      if (log.template_name) {
+        const key = `${log.aix_type}→${log.template_name}`;
+        templateCount[key] = (templateCount[key] ?? 0) + 1;
+      }
     }
-    const taskCountText = Object.entries(taskCounts)
-      .sort((a, b) => b[1] - a[1])
-      .map(([k, v]) => `${k}: ${v}件`)
-      .join(", ") || "データなし";
+
+    const aixCountText = Object.entries(aixCount).sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `${k}: ${v}回`).join(", ") || "データなし（まだ使用記録なし）";
+
+    const templateCountText = Object.entries(templateCount).sort((a, b) => b[1] - a[1]).slice(0, 10)
+      .map(([k, v]) => `${k}: ${v}回`).join("\n") || "テンプレート使用記録なし";
 
     const patternsText = (patterns ?? [])
-      .map((p) => `${p.title}: ${(p.content as string).slice(0, 120)}`)
-      .join("\n") || "データなし";
+      .map((p) => `${p.title}: ${(p.content as string).slice(0, 100)}`)
+      .join("\n") || "成約パターンデータなし";
 
-    // 3. Claude Haikuで分析・ガイド更新
-    const today = jstDateStr();
+    // 4. Claude Haikuで分析・ガイド更新
     const resp = await anthropic.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 700,
       messages: [{
         role: "user",
-        content: `以下のデータを分析して、スモラの賃貸仲介スタッフ向け「AIXボタン誘導ガイド」を更新してください。
+        content: `以下の実際の使用データを分析して、スモラの賃貸仲介スタッフ向け「AIXボタン誘導ガイド」を更新してください。
 
-【直近の成約パターン（成功した会話から学習）】
+【AIXボタン使用回数（過去30日の実績）】
+${aixCountText}
+
+【AIX × テンプレートの組み合わせ実績（よく使われた順）】
+${templateCountText}
+
+【直近の成約パターン（内覧・申込が決まった会話から学習）】
 ${patternsText}
 
-【AIXタスク使用頻度（過去30日）】
-${taskCountText}
+【AIXボタン一覧（参考）】
+- property_recommendation（物件オススメ）: 条件揃った後
+- property_send（物件送る）: 物件画像を送付した後
+- property_check_result（物件確認した）: 空室確認の結果報告
+- estimate_sheet（見積書送る）: 初期費用見積もり送付
+- viewing_invite（内覧へ！）: 内覧日程の提案
+- meeting_place（待ち合わせ）: 内覧確定後の待ち合わせ案内
+- application_push（申込へ！）: 申込を促す
 
-【AIXボタン一覧】
-- 物件オススメ: 条件揃った後・物件提案文を生成
-- 物件送る: 物件画像を送った後の案内文
-- 物件確認した: 空室確認の結果報告（OK/NG/調査中の3種）
-- 見積書送る: 初期費用見積もりを送る（テンプレートあり）
-- 内覧へ！: 内覧日程の提案文を生成
-- 待ち合わせ: 内覧確定後の待ち合わせ案内
-- 申込へ！: 申込を促すメッセージを生成
-
-以下の形式でガイドを出力してください（500文字以内・実用的な内容のみ）:
+実際の使用データに基づいて、以下の形式でガイドを出力してください（500文字以内）:
 
 【AIXフロー誘導ガイド — 更新日: ${today}】
 
-▶ [フェーズ] → [AIXボタン名] + [使うタイミング1行]
-▶ [フェーズ] → [AIXボタン名] + [使うタイミング1行]
-（3〜5フェーズ）
+▶ [お客様の状況] → [AIXボタン名] + [理由/使うタイミング]
+（3〜5フェーズ、実績データに基づいて）
 
-【バナーが出たら即AIXを使う】
-・[バナー色/種類] → [AIXボタン名]
-（2〜3点）
+【よく使われるテンプレートの組み合わせ】
+・[AIX名] × [テンプレート名]: [使うシーン]
+（実績上位2〜3件のみ。データがなければ省略）
 
 【半自動3ステップ】
 AIXを選ぶ → 生成を確認 → 送信`,

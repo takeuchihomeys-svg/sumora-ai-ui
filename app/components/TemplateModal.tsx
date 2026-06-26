@@ -14,7 +14,7 @@ interface Template {
 interface TemplateModalProps {
   onClose: () => void;
   onSelect?: (text: string, imageFiles?: File[], label?: string, category?: string) => void;
-  onOpenAixWithFocus?: (focusPoints: string[]) => void;
+  onOpenAixWithFocus?: (focusPoints: string[], templateInfo?: { name: string; category: string }) => void;
   customerName?: string;
   conversationState?: string;
   recentMessages?: Array<{ sender: string; text: string; imageUrl?: string }>;
@@ -799,7 +799,7 @@ export default function TemplateModal({
                               onClick={() => {
                                 // AIXカテゴリはAIXモーダルを開く（訴求ポイント引き継ぎ）
                                 if (tmpl.category.includes("AIX") && onOpenAixWithFocus) {
-                                  onOpenAixWithFocus(focusPointsMap[tmpl.id] ?? []);
+                                  onOpenAixWithFocus(focusPointsMap[tmpl.id] ?? [], { name: tmpl.label, category: tmpl.category });
                                   onClose();
                                   return;
                                 }

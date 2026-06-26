@@ -521,6 +521,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS line_tasks_conv_type_pending_unique
 ON line_tasks (conversation_id, task_type)
 WHERE status = 'pending';
 
+-- aix_usage_logs: AIXフロー使用ログ（どのAIX+テンプレートが送信されたか）
+CREATE TABLE IF NOT EXISTS aix_usage_logs (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  conversation_id text NOT NULL,
+  aix_type text NOT NULL,
+  template_name text,
+  template_category text,
+  conversation_status text,
+  created_at timestamptz DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_aix_usage_logs_conversation_id ON aix_usage_logs(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_aix_usage_logs_created_at ON aix_usage_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_aix_usage_logs_aix_type ON aix_usage_logs(aix_type);
+ALTER TABLE aix_usage_logs DISABLE ROW LEVEL SECURITY;
+
 -- match_reply_examples: reply_angleを返り値に追加（選ばれた実例のブースト用）
 -- 戻り値型変更のためDROP→CREATEが必要
 DROP FUNCTION IF EXISTS match_reply_examples(vector, int, text[]);
