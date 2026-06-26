@@ -474,8 +474,9 @@ export default function Home() {
   const [newRuleStatus, setNewRuleStatus] = useState("");
   const [newRuleAdding, setNewRuleAdding] = useState(false);
   const [showPromptModal, setShowPromptModal] = useState(false);
-  const [promptItems, setPromptItems] = useState<Array<{ key: string; label: string; content: string; is_custom: boolean; readonly?: boolean }>>([]);
+  const [promptItems, setPromptItems] = useState<Array<{ key: string; label: string; content: string; is_custom: boolean; readonly?: boolean; auto?: boolean }>>([]);
   const [promptLoading, setPromptLoading] = useState(false);
+  const [knowledgeCount, setKnowledgeCount] = useState<number | null>(null);
   const [editingPromptKey, setEditingPromptKey] = useState<string | null>(null);
   const [editingPromptContent, setEditingPromptContent] = useState("");
   const [promptSaving, setPromptSaving] = useState(false);
@@ -6429,8 +6430,9 @@ export default function Home() {
                   setShowPromptModal(true);
                   setEditingPromptKey(null);
                   setPromptLoading(true);
-                  const d = await fetch("/api/prompt-management").then((r) => r.json()) as { prompts: Array<{ key: string; label: string; content: string; is_custom: boolean }> };
+                  const d = await fetch("/api/prompt-management").then((r) => r.json()) as { prompts: Array<{ key: string; label: string; content: string; is_custom: boolean; auto?: boolean }>; knowledgeCount: number };
                   setPromptItems(d.prompts ?? []);
+                  setKnowledgeCount(d.knowledgeCount ?? null);
                   setPromptLoading(false);
                 }}
                 className="flex w-full items-center gap-3 rounded-2xl border border-[#e9edef] bg-[#f8f9fa] px-4 py-3 mb-2 text-left active:scale-[0.98] transition-all"
@@ -6867,8 +6869,19 @@ export default function Home() {
               )}
             </div>
             {!editingPromptKey && (
-              <div className="px-4 py-3 border-t border-[#f0f2f5] text-center">
-                <span className="text-[11px] text-[#8696a0]">カスタム編集済み: {promptItems.filter((p) => p.is_custom && !p.readonly).length} / 8件 / 保存後すぐ反映</span>
+              <div className="px-4 py-3 border-t border-[#f0f2f5]">
+                {knowledgeCount !== null && (
+                  <div className="mb-2 flex items-center gap-2 rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-2">
+                    <span className="text-[18px]">🧠</span>
+                    <div>
+                      <span className="text-[12px] font-bold text-emerald-700">学習済みナレッジ: {knowledgeCount.toLocaleString()}件</span>
+                      <div className="text-[10px] text-emerald-600">AIが返信生成時にRAG検索で参照しています</div>
+                    </div>
+                  </div>
+                )}
+                <div className="text-center">
+                  <span className="text-[11px] text-[#8696a0]">カスタム編集済み: {promptItems.filter((p) => p.is_custom && !p.readonly).length} / 8件 / 保存後すぐ反映</span>
+                </div>
               </div>
             )}
             <div className="pb-[max(12px,env(safe-area-inset-bottom))]" />

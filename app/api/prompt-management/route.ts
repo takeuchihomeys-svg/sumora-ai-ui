@@ -301,7 +301,11 @@ type PromptRow = { key: string; label: string; content: string; updated_at: stri
 
 // GET: 全プロンプトを取得（DBにあればカスタム値、なければデフォルト）
 export async function GET() {
-  const { data } = await supabase.from("ai_prompts").select("key, label, content, updated_at");
+  const [{ data }, { count: knowledgeCount }] = await Promise.all([
+    supabase.from("ai_prompts").select("key, label, content, updated_at"),
+    supabase.from("ai_reply_knowledge").select("*", { count: "exact", head: true }),
+  ]);
+
   const dbMap: Record<string, PromptRow> = {};
   for (const row of (data || []) as PromptRow[]) {
     dbMap[row.key] = row;
@@ -317,7 +321,7 @@ export async function GET() {
     auto: defaults.auto ?? false,
   }));
 
-  return NextResponse.json({ prompts });
+  return NextResponse.json({ prompts, knowledgeCount: knowledgeCount ?? 0 });
 }
 
 // PATCH: プロンプトを保存（upsert）
