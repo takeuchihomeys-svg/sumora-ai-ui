@@ -199,7 +199,7 @@ export default function ConditionsPage() {
 
   // 物件絞り込み
   type MatchedCustomer = { id: string; customer_name: string; reasons: string[] };
-  type ParsedProperty = { property_name: string; area: string; station: string; walk_minutes: number | null; rent: number | null; floor_plan: string; size: number | null; building_age: number | null };
+  type ParsedProperty = { property_name: string; area: string; station: string; nearby_areas: string[]; walk_minutes: number | null; rent: number | null; floor_plan: string; size: number | null; building_age: number | null };
   const [propFilterOpen, setPropFilterOpen] = useState(false);
   const [propFilterParsing, setPropFilterParsing] = useState(false);
   const [propFilterResult, setPropFilterResult] = useState<ParsedProperty | null>(null);
