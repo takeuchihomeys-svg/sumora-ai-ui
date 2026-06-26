@@ -197,6 +197,52 @@ export default function ConditionsPage() {
   // 元のLINE文表示
   const [showRawFormat, setShowRawFormat] = useState(false);
 
+  // 物件絞り込み
+  type MatchedCustomer = { id: string; customer_name: string; reasons: string[] };
+  type ParsedProperty = { property_name: string; area: string; station: string; walk_minutes: number | null; rent: number | null; floor_plan: string; size: number | null; building_age: number | null };
+  const [propFilterOpen, setPropFilterOpen] = useState(false);
+  const [propFilterParsing, setPropFilterParsing] = useState(false);
+  const [propFilterResult, setPropFilterResult] = useState<ParsedProperty | null>(null);
+  const [propFilterMatched, setPropFilterMatched] = useState<Set<string> | null>(null);
+  const [propFilterMatchedList, setPropFilterMatchedList] = useState<MatchedCustomer[]>([]);
+  const [propFilterError, setPropFilterError] = useState<string | null>(null);
+
+  const handlePropFilterImage = async (file: File) => {
+    setPropFilterParsing(true);
+    setPropFilterError(null);
+    setPropFilterResult(null);
+    setPropFilterMatched(null);
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve((reader.result as string).split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const res = await fetch("/api/match-property-customers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ base64, mediaType: file.type }),
+      });
+      const data = await res.json() as { ok: boolean; property?: ParsedProperty; matched?: MatchedCustomer[]; error?: string };
+      if (!data.ok) { setPropFilterError(data.error ?? "読み取り失敗"); return; }
+      setPropFilterResult(data.property ?? null);
+      setPropFilterMatchedList(data.matched ?? []);
+      setPropFilterMatched(new Set((data.matched ?? []).map(m => m.id)));
+    } catch {
+      setPropFilterError("エラーが発生しました");
+    } finally {
+      setPropFilterParsing(false);
+    }
+  };
+
+  const clearPropFilter = () => {
+    setPropFilterResult(null);
+    setPropFilterMatched(null);
+    setPropFilterMatchedList([]);
+    setPropFilterError(null);
+  };
+
   async function load() {
     setLoading(true);
     const [res, { data: convData }] = await Promise.all([
@@ -400,8 +446,12 @@ export default function ConditionsPage() {
     ].some((v) => v && v.toLowerCase().includes(q));
   }
   const actionNeeded = customers.filter(needsActionToday);
-  const announceFiltered = actionNeeded.filter(matchesSearch);
-  const listFiltered = (listFilter === "all" ? customers : customers.filter((c) => c.status === listFilter)).filter(matchesSearch);
+  const announceFiltered = actionNeeded
+    .filter(matchesSearch)
+    .filter(c => propFilterMatched === null || propFilterMatched.has(c.id));
+  const listFiltered = (listFilter === "all" ? customers : customers.filter((c) => c.status === listFilter))
+    .filter(matchesSearch)
+    .filter(c => propFilterMatched === null || propFilterMatched.has(c.id));
 
   return (
     <div className="bg-slate-50 flex flex-col pb-16" style={{ height: "100svh", overflowY: "auto" }}>
@@ -464,23 +514,137 @@ export default function ConditionsPage() {
 
       {/* ── 検索バー（両タブ共通） ── */}
       <div className="px-4 pt-3 pb-2 bg-white border-b border-[#e9edef]">
-        <div className="relative">
-          <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="名前で検索..."
-            className="w-full rounded-xl border border-[#e9edef] bg-[#f0f2f5] pl-9 pr-4 py-2 text-[13px] text-[#111b21] outline-none focus:border-blue-400 focus:bg-white transition-colors"
-          />
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
-            >✕</button>
-          )}
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="名前で検索..."
+              className="w-full rounded-xl border border-[#e9edef] bg-[#f0f2f5] pl-9 pr-4 py-2 text-[13px] text-[#111b21] outline-none focus:border-blue-400 focus:bg-white transition-colors"
+            />
+            {searchQuery && (
+              <button onClick={() => setSearchQuery("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">✕</button>
+            )}
+          </div>
+          {/* 物件絞り込みボタン */}
+          <button
+            onClick={() => setPropFilterOpen(true)}
+            className={`flex items-center gap-1 rounded-xl px-3 py-2 text-[12px] font-bold shrink-0 transition-colors ${
+              propFilterMatched !== null ? "bg-blue-500 text-white" : "bg-[#f0f2f5] text-[#54656f]"
+            }`}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+            {propFilterMatched !== null ? `${propFilterMatched.size}名` : "物件絞込"}
+          </button>
         </div>
       </div>
+
+      {/* ── 物件絞り込みパネル ── */}
+      {propFilterOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50" onClick={(e) => { if (e.target === e.currentTarget) setPropFilterOpen(false); }}>
+          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl" style={{ maxHeight: "80vh", overflowY: "auto" }}>
+            {/* ヘッダー */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#e9edef]">
+              <div>
+                <p className="text-[15px] font-bold text-[#111b21]">🏠 物件で絞り込み</p>
+                <p className="text-[11px] text-[#8696a0]">物件資料を貼り付けると条件に合うお客様を抽出します</p>
+              </div>
+              <button onClick={() => setPropFilterOpen(false)} className="text-[#8696a0] text-lg">✕</button>
+            </div>
+
+            <div className="px-5 py-4 flex flex-col gap-4">
+              {/* 読み取り済み物件情報 */}
+              {propFilterResult && (
+                <div className="rounded-2xl bg-blue-50 border border-blue-200 px-4 py-3">
+                  <p className="text-[12px] font-bold text-blue-700 mb-1">✓ 読み取り完了</p>
+                  <p className="text-[13px] font-bold text-[#111b21]">{propFilterResult.property_name || "（物件名不明）"}</p>
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-[#54656f]">
+                    {propFilterResult.station && <span>📍 {propFilterResult.station}{propFilterResult.walk_minutes ? `徒歩${propFilterResult.walk_minutes}分` : ""}</span>}
+                    {propFilterResult.rent && <span>💴 {propFilterResult.rent}万円</span>}
+                    {propFilterResult.floor_plan && <span>🏠 {propFilterResult.floor_plan}</span>}
+                    {propFilterResult.size && <span>📐 {propFilterResult.size}㎡</span>}
+                    {propFilterResult.building_age && <span>🏗 築{propFilterResult.building_age}年</span>}
+                  </div>
+                  <p className="mt-2 text-[12px] font-bold text-blue-600">→ {propFilterMatchedList.length}名がマッチしています</p>
+                </div>
+              )}
+
+              {/* マッチしたお客様リスト */}
+              {propFilterMatchedList.length > 0 && (
+                <div className="flex flex-col gap-1.5">
+                  <p className="text-[11px] font-bold text-[#54656f]">マッチしたお客様</p>
+                  {propFilterMatchedList.map(m => (
+                    <div key={m.id} className="flex items-start gap-2 rounded-xl bg-[#f0f2f5] px-3 py-2">
+                      <span className="mt-0.5 h-2 w-2 rounded-full bg-blue-400 flex-shrink-0" />
+                      <div>
+                        <p className="text-[13px] font-bold text-[#111b21]">{m.customer_name}</p>
+                        <p className="text-[10px] text-[#8696a0]">{m.reasons.join("・")}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* 画像アップロードエリア */}
+              {!propFilterParsing && !propFilterResult && (
+                <label className="flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#d1d7db] bg-[#f8f9fa] py-8 cursor-pointer active:bg-[#f0f2f5] transition-colors">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePropFilterImage(f); }}
+                  />
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#8696a0" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+                  <p className="text-[13px] font-bold text-[#54656f]">物件資料の画像を貼り付け</p>
+                  <p className="text-[11px] text-[#8696a0]">タップしてカメラロールから選択</p>
+                </label>
+              )}
+
+              {/* 読み取り中 */}
+              {propFilterParsing && (
+                <div className="flex flex-col items-center py-8 gap-3">
+                  <div className="h-8 w-8 animate-spin rounded-full border-3 border-blue-200 border-t-blue-500" />
+                  <p className="text-[13px] text-[#54656f]">AIが物件情報を読み取り中...</p>
+                </div>
+              )}
+
+              {/* エラー */}
+              {propFilterError && (
+                <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-[13px] text-red-600">{propFilterError}</div>
+              )}
+
+              {/* ボタン群 */}
+              <div className="flex gap-2">
+                {propFilterResult && (
+                  <>
+                    <button
+                      onClick={() => { clearPropFilter(); }}
+                      className="flex-1 rounded-full border border-[#d1d7db] py-2.5 text-[13px] font-bold text-[#54656f]"
+                    >別の物件を試す</button>
+                    <button
+                      onClick={() => setPropFilterOpen(false)}
+                      className="flex-1 rounded-full bg-blue-500 py-2.5 text-[13px] font-bold text-white"
+                    >この絞り込みで表示</button>
+                  </>
+                )}
+                {!propFilterResult && propFilterMatched !== null && (
+                  <button onClick={() => { clearPropFilter(); setPropFilterOpen(false); }} className="flex-1 rounded-full border border-[#d1d7db] py-2.5 text-[13px] font-bold text-red-500">絞り込みを解除</button>
+                )}
+                {!propFilterResult && propFilterMatched === null && (
+                  <button onClick={() => setPropFilterOpen(false)} className="flex-1 rounded-full border border-[#d1d7db] py-2.5 text-[13px] font-bold text-[#54656f]">キャンセル</button>
+                )}
+              </div>
+
+              {/* 絞り込み解除ボタン（適用中のみ） */}
+              {propFilterMatched !== null && propFilterResult && (
+                <button onClick={() => { clearPropFilter(); setPropFilterOpen(false); }} className="text-center text-[12px] text-red-400 underline py-1">絞り込みを解除してすべて表示</button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {!dbReady && (
         <div className="mx-4 mt-4 p-4 bg-amber-50 border border-amber-300 rounded-xl text-sm">
