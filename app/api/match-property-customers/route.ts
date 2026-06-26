@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
-const HAIKU_MODEL = "claude-haiku-4-5-20251001";
+const VISION_MODEL = "claude-sonnet-4-6"; // 画像読み取りはSonnetで精度優先
 
 interface ParsedProperty {
   property_name: string;
@@ -26,56 +26,64 @@ async function parsePropertyFromImage(base64: string, mediaType: string): Promis
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: HAIKU_MODEL,
-      max_tokens: 700,
-      system: `あなたは賃貸物件資料を読み取るAIです。画像から物件情報を正確に抽出してJSONで返してください。
-
-【最重要：駅名・エリアの読み取り】
-- 最寄り駅は「〇〇線 △△駅 徒歩X分」の形式で書かれていることが多い
-- station: 駅名のみ（「駅」を含めず。例:「姫島」「天王寺」「梅田」「なんば」）
-- area: 物件住所から区・市を読み取る（例:「西淀川区」「阿倍野区」「北区」）
-  ※住所が「大阪府大阪市西淀川区〇〇」なら area = 「西淀川区」
-- nearby_areas: 区名・路線名・隣接駅など関連キーワードを3〜5個（例:["西淀川区","阪神なんば線","福","姫島"]）
-
-【その他の読み取りルール】
-- 家賃: 管理費込みの月額。万円単位の数値（例: 6.5）。管理費が別の場合は合算
-- 広さ: ㎡の数値のみ（例: 28.5）。「28.50m²」→ 28.5
-- 築年数: 「2020年築」→ 現在年2026から引いた値 → 6。「築5年」→ 5。不明はnull
-- 間取り: 「1LDK」「2LDK」など正確に
-- pet_allowed: ペット可なら true、ペット不可なら false、記載なしなら null
-- 徒歩分数: 「徒歩7分」→ 7
-
-出力（JSONのみ・前後の説明文は不要）:
-{
-  "property_name": "物件名",
-  "area": "区・市名",
-  "station": "最寄り駅名（駅なし）",
-  "nearby_areas": ["関連キーワード1", "関連キーワード2"],
-  "walk_minutes": 数値かnull,
-  "rent": 万円数値かnull,
-  "floor_plan": "間取り",
-  "size": ㎡数値かnull,
-  "building_age": 築年数数値かnull,
-  "pet_allowed": trueかfalseかnull
-}`,
+      model: VISION_MODEL,
+      max_tokens: 1000,
       messages: [{
         role: "user",
         content: [
           { type: "image", source: { type: "base64", media_type: mediaType as "image/jpeg" | "image/png" | "image/webp", data: base64 } },
-          { type: "text", text: "この物件資料から情報を抽出してJSONで返してください。" },
+          { type: "text", text: `この賃貸物件の資料画像から情報を読み取って、以下のJSON形式で返してください。
+
+【読み取る項目】
+1. property_name: 物件名（マンション名・アパート名）
+2. area: 住所の区・市（例: 西淀川区、阿倍野区、北区）
+3. station: 最寄り駅名のみ（「駅」「線」は除く。例: 姫島、天王寺、梅田）
+4. nearby_areas: 路線名・周辺の区や駅など関連キーワードを3〜5個の配列
+5. walk_minutes: 徒歩分数（数値のみ。「徒歩7分」→7）
+6. rent: 月額家賃を万円単位の数値（管理費込みの合計。例: 6.5）
+7. floor_plan: 間取り（例: 1LDK、2DK）
+8. size: 専有面積を㎡の数値（例: 28.5）
+9. building_age: 築年数を数値（「2020年築」→2026-2020=6、「築5年」→5）
+10. pet_allowed: ペット可→true、ペット不可→false、記載なし→null
+
+【注意】
+- JSONのみ返す（説明文・前置き不要）
+- 読み取れない項目はnullにする
+- 数値フィールドは文字列ではなく数値型で返す
+
+{
+  "property_name": "",
+  "area": "",
+  "station": "",
+  "nearby_areas": [],
+  "walk_minutes": null,
+  "rent": null,
+  "floor_plan": "",
+  "size": null,
+  "building_age": null,
+  "pet_allowed": null
+}` },
         ],
       }],
     }),
   });
 
-  if (!res.ok) return null;
+  if (!res.ok) {
+    const errBody = await res.text();
+    console.error("[parsePropertyFromImage] Claude API error:", res.status, errBody);
+    return null;
+  }
   const data = await res.json() as { content: Array<{ type: string; text: string }> };
   const text = data.content[0]?.text ?? "";
+  console.log("[parsePropertyFromImage] raw response:", text);
   try {
     const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    return JSON.parse(match[0]) as ParsedProperty;
-  } catch {
+    if (!match) { console.error("[parsePropertyFromImage] no JSON found in:", text); return null; }
+    const parsed = JSON.parse(match[0]) as ParsedProperty;
+    console.log("[parsePropertyFromImage] parsed:", JSON.stringify(parsed));
+    return parsed;
+  } catch (e) {
+    console.error("[parsePropertyFromImage] JSON parse error:", e, "raw:", text);
     return null;
   }
 }
