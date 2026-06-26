@@ -133,7 +133,7 @@ async function callClaudeVision(system: string, content: unknown[]): Promise<str
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, account, customer_name, conversation_id, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done, vacancy_status, has_estimate, move_out_date, keyword } = body;
+    const { action, account, customer_name, conversation_id, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done, vacancy_status, has_estimate, move_out_date, keyword, property_name } = body;
 
     // 直近の会話履歴テキスト（viewing_invite・application_push で使用）
     const recentHistory = Array.isArray(recent_messages) && recent_messages.length > 0
@@ -680,7 +680,7 @@ ${phraseText || "なし"}`;
 ${template}
 
 【穴埋めルール】
-・「[物件名]」→ 会話履歴の最新スタッフメッセージ冒頭「【物件名 号室】」（見積書フォーマット）から物件名のみを抽出して使う（例: 「【ASK-6 201号室】」→「ASK-6」）。このフォーマットが見つかればそれを最優先にすること。古い会話に出てくる別の物件名は絶対に使わない。見積書フォーマットが見つからない場合のみ会話全体から特定し、それもなければ「こちらのお部屋」に置換。
+・「[物件名]」→ ${property_name ? `「${property_name}」を使う（ユーザーが指定済み）` : '会話履歴の最新スタッフメッセージ冒頭「【物件名 号室】」（見積書フォーマット）から物件名のみを抽出して使う（例: 「【ASK-6 201号室】」→「ASK-6」）。このフォーマットが見つかればそれを最優先にすること。古い会話に出てくる別の物件名は絶対に使わない。見積書フォーマットが見つからない場合のみ会話全体から特定し、それもなければ「こちらのお部屋」に置換。'}
 ・お客様名は既にテンプレートに入っているのでそのまま使う
 ・テンプレートの文言・改行・絵文字は変えない
 ・LINEでそのまま送れる完成文のみ出力（解説・候補複数は禁止）

@@ -259,7 +259,8 @@ export default function AixModal({
   const [viewingSlotStarts, setViewingSlotStarts] = useState<string[]>([]);
   const [viewingSlotEnds, setViewingSlotEnds] = useState<string[]>([]);
   const [viewingSlotOverride, setViewingSlotOverride] = useState<boolean[]>([]); // 案内不可日を手動で追加
-  // 申込へ！専用: 空室状況 + 退去予定日
+  // 申込へ！専用: 物件名 + 空室状況 + 退去予定日
+  const [appPropertyName, setAppPropertyName] = useState("");
   const [appVacancyStatus, setAppVacancyStatus] = useState<"vacant" | "scheduled" | null>(null);
   const [appMoveOutDate, setAppMoveOutDate] = useState("");
   // 物件オススメ専用: analyze-propertyで自動抽出した退去予定日
@@ -692,6 +693,7 @@ export default function AixModal({
         if (!appVacancyStatus) throw new Error("空室状況を選択してください");
         body.vacancy_status = appVacancyStatus;
         if (appMoveOutDate.trim()) body.move_out_date = appMoveOutDate.trim();
+        if (appPropertyName.trim()) body.property_name = appPropertyName.trim();
         // 直近スタッフメッセージから見積書送信済みを自動検出
         const staffMsgs = (recentMessages || []).filter(m => m.sender === "staff").slice(-15);
         const hasEstimate = staffMsgs.some(m => /見積|御見積|初期費用/.test(m.text));
@@ -1504,8 +1506,39 @@ export default function AixModal({
               </div>
             </div>
           ) : actionType === "application_push" ? (
-            /* 申込へ！: 空室状況選択 + 見積書自動検出 */
+            /* 申込へ！: 物件名 + シンプルボタン + AI生成 */
             <div className="mb-4 flex flex-col gap-3">
+              {/* 物件名（任意） */}
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-[#54656f]">
+                  物件名 <span className="font-normal text-[#90a4ae]">（任意）</span>
+                </label>
+                <input
+                  type="text"
+                  value={appPropertyName}
+                  onChange={(e) => setAppPropertyName(e.target.value)}
+                  placeholder="例：プレサンス心斎橋ブライト"
+                  className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
+                />
+              </div>
+              {/* シンプルボタン */}
+              <button
+                onClick={() => {
+                  const name = customerName || "お客様";
+                  const propertyPart = appPropertyName.trim() ? `${appPropertyName.trim()}、` : "";
+                  setPreview(`はい！！\n${name}さん${propertyPart}お気に召されましたらお申込しお部屋抑えさせて頂きます😌！！\nお気軽にお申し付けください！！`);
+                }}
+                className="w-full rounded-2xl border-2 border-[#E53935] bg-[#fff5f5] px-4 py-3 text-left transition-all active:bg-[#ffebee]"
+              >
+                <div className="text-[13px] font-bold text-[#E53935]">⚡ シンプル送信</div>
+                <div className="mt-0.5 text-[10px] text-[#8696a0]">はい！！〇〇さんお気に召されましたらお申込し…（即プレビュー）</div>
+              </button>
+              {/* 区切り */}
+              <div className="flex items-center gap-2">
+                <div className="h-px flex-1 bg-[#e9edef]" />
+                <span className="text-[10px] text-[#8696a0]">またはAIで詳しく作成</span>
+                <div className="h-px flex-1 bg-[#e9edef]" />
+              </div>
               {/* 見積書送信済み自動検出 */}
               {(() => {
                 const staffMsgs = (recentMessages || []).filter(m => m.sender === "staff").slice(-15);
