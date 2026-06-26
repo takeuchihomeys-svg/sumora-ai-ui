@@ -30,22 +30,27 @@ async function parsePropertyFromImage(base64: string, mediaType: string): Promis
       max_tokens: 700,
       system: `あなたは賃貸物件資料を読み取るAIです。画像から物件情報を正確に抽出してJSONで返してください。
 
-【読み取りルール】
-- 家賃: 管理費込みの月額。万円単位の数値（例: 6.5）
-- 広さ: ㎡の数値のみ（例: 28.5）。「28.50m²」→ 28.5
-- 築年数: 「2020年築」→ 現在年(2026)から引く → 6。「築5年」→ 5
-- 最寄り駅: 駅名のみ（「駅」「線」は含めない）
-- area: 区・市名（例: 西淀川区、阿倍野区）
-- nearby_areas: 最寄り駅の区・路線名・周辺エリアをなるべく多く（3〜6個）
-- pet_allowed: ペット可なら true、ペット不可なら false、不明なら null
-- 徒歩分数: 数値のみ
+【最重要：駅名・エリアの読み取り】
+- 最寄り駅は「〇〇線 △△駅 徒歩X分」の形式で書かれていることが多い
+- station: 駅名のみ（「駅」を含めず。例:「姫島」「天王寺」「梅田」「なんば」）
+- area: 物件住所から区・市を読み取る（例:「西淀川区」「阿倍野区」「北区」）
+  ※住所が「大阪府大阪市西淀川区〇〇」なら area = 「西淀川区」
+- nearby_areas: 区名・路線名・隣接駅など関連キーワードを3〜5個（例:["西淀川区","阪神なんば線","福","姫島"]）
 
-出力（JSONのみ・説明不要）:
+【その他の読み取りルール】
+- 家賃: 管理費込みの月額。万円単位の数値（例: 6.5）。管理費が別の場合は合算
+- 広さ: ㎡の数値のみ（例: 28.5）。「28.50m²」→ 28.5
+- 築年数: 「2020年築」→ 現在年2026から引いた値 → 6。「築5年」→ 5。不明はnull
+- 間取り: 「1LDK」「2LDK」など正確に
+- pet_allowed: ペット可なら true、ペット不可なら false、記載なしなら null
+- 徒歩分数: 「徒歩7分」→ 7
+
+出力（JSONのみ・前後の説明文は不要）:
 {
   "property_name": "物件名",
   "area": "区・市名",
-  "station": "最寄り駅名",
-  "nearby_areas": ["関連エリア1", "関連エリア2"],
+  "station": "最寄り駅名（駅なし）",
+  "nearby_areas": ["関連キーワード1", "関連キーワード2"],
   "walk_minutes": 数値かnull,
   "rent": 万円数値かnull,
   "floor_plan": "間取り",
@@ -202,7 +207,7 @@ function calcScore(customer: Record<string, unknown>, prop: ParsedProperty): Sco
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json() as { base64?: string; mediaType?: string; property?: ParsedProperty };
+    const body = await req.json() as { base64?: string; mediaType?: string; property?: ParsedProperty; parse_only?: boolean };
 
     let prop: ParsedProperty | null = body.property ?? null;
     if (!prop && body.base64 && body.mediaType) {
@@ -210,6 +215,11 @@ export async function POST(req: NextRequest) {
     }
     if (!prop) {
       return NextResponse.json({ ok: false, error: "物件情報を読み取れませんでした" }, { status: 400 });
+    }
+
+    // 読み取りのみモード（マッチングはしない）
+    if (body.parse_only) {
+      return NextResponse.json({ ok: true, property: prop });
     }
 
     const { data: customers } = await supabase
@@ -231,7 +241,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // スコア降順で並び替え
     results.sort((a, b) => b.score - a.score);
 
     return NextResponse.json({ ok: true, property: prop, matched: results, total: (customers ?? []).length });

@@ -203,17 +203,23 @@ export default function ConditionsPage() {
   type ParsedProperty = { property_name: string; area: string; station: string; nearby_areas: string[]; walk_minutes: number | null; rent: number | null; floor_plan: string; size: number | null; building_age: number | null; pet_allowed: boolean | null };
   const [propFilterOpen, setPropFilterOpen] = useState(false);
   const [propFilterParsing, setPropFilterParsing] = useState(false);
+  const [propFilterApplying, setPropFilterApplying] = useState(false);
   const [propFilterResult, setPropFilterResult] = useState<ParsedProperty | null>(null);
   const [propFilterMatched, setPropFilterMatched] = useState<Set<string> | null>(null);
   const [propFilterMatchedList, setPropFilterMatchedList] = useState<MatchedCustomer[]>([]);
   const [propFilterError, setPropFilterError] = useState<string | null>(null);
   const [propFilterExpanded, setPropFilterExpanded] = useState<string | null>(null);
+  // 読み取り後・反映前フラグ（テキスト確認フェーズ）
+  const [propFilterPending, setPropFilterPending] = useState(false);
 
+  // Step1: 画像読み取りのみ（マッチングはまだしない）
   const handlePropFilterImage = async (file: File) => {
     setPropFilterParsing(true);
     setPropFilterError(null);
     setPropFilterResult(null);
     setPropFilterMatched(null);
+    setPropFilterMatchedList([]);
+    setPropFilterPending(false);
     try {
       const base64 = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
@@ -224,17 +230,39 @@ export default function ConditionsPage() {
       const res = await fetch("/api/match-property-customers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ base64, mediaType: file.type }),
+        body: JSON.stringify({ base64, mediaType: file.type, parse_only: true }),
       });
-      const data = await res.json() as { ok: boolean; property?: ParsedProperty; matched?: MatchedCustomer[]; error?: string };
-      if (!data.ok) { setPropFilterError(data.error ?? "読み取り失敗"); return; }
-      setPropFilterResult(data.property ?? null);
-      setPropFilterMatchedList(data.matched ?? []);
-      setPropFilterMatched(new Set((data.matched ?? []).map(m => m.id)));
+      const data = await res.json() as { ok: boolean; property?: ParsedProperty; error?: string };
+      if (!data.ok || !data.property) { setPropFilterError(data.error ?? "読み取り失敗"); return; }
+      setPropFilterResult(data.property);
+      setPropFilterPending(true); // テキスト確認待ちフェーズへ
     } catch {
       setPropFilterError("エラーが発生しました");
     } finally {
       setPropFilterParsing(false);
+    }
+  };
+
+  // Step2: 反映ボタン押下 → マッチング実行
+  const handlePropFilterApply = async () => {
+    if (!propFilterResult) return;
+    setPropFilterApplying(true);
+    setPropFilterError(null);
+    try {
+      const res = await fetch("/api/match-property-customers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ property: propFilterResult }),
+      });
+      const data = await res.json() as { ok: boolean; matched?: MatchedCustomer[]; error?: string };
+      if (!data.ok) { setPropFilterError(data.error ?? "絞り込み失敗"); return; }
+      setPropFilterMatchedList(data.matched ?? []);
+      setPropFilterMatched(new Set((data.matched ?? []).map(m => m.id)));
+      setPropFilterPending(false);
+    } catch {
+      setPropFilterError("エラーが発生しました");
+    } finally {
+      setPropFilterApplying(false);
     }
   };
 
@@ -243,6 +271,7 @@ export default function ConditionsPage() {
     setPropFilterMatched(null);
     setPropFilterMatchedList([]);
     setPropFilterError(null);
+    setPropFilterPending(false);
   };
 
   async function load() {
@@ -557,53 +586,116 @@ export default function ConditionsPage() {
             </div>
 
             <div className="px-5 py-4 flex flex-col gap-4">
-              {/* 読み取り済み物件情報 */}
-              {propFilterResult && (
-                <div className="rounded-2xl bg-blue-50 border border-blue-200 px-4 py-3">
-                  <p className="text-[12px] font-bold text-blue-700 mb-1">✓ 読み取り完了</p>
-                  <p className="text-[13px] font-bold text-[#111b21]">{propFilterResult.property_name || "（物件名不明）"}</p>
-                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-[#54656f]">
-                    {propFilterResult.station && <span>📍 {propFilterResult.station}{propFilterResult.walk_minutes ? ` 徒歩${propFilterResult.walk_minutes}分` : ""}</span>}
-                    {propFilterResult.rent && <span>💴 {propFilterResult.rent}万円</span>}
-                    {propFilterResult.floor_plan && <span>🏠 {propFilterResult.floor_plan}</span>}
-                    {propFilterResult.size && <span>📐 {propFilterResult.size}㎡</span>}
-                    {propFilterResult.building_age && <span>🏗 築{propFilterResult.building_age}年</span>}
-                    {propFilterResult.pet_allowed === true && <span>🐾 ペット可</span>}
-                    {propFilterResult.pet_allowed === false && <span className="text-red-400">🚫 ペット不可</span>}
-                  </div>
-                  <p className="mt-2 text-[12px] font-bold text-blue-600">→ {propFilterMatchedList.length}名がマッチしています</p>
+
+              {/* ── STEP1: 画像アップロード ── */}
+              {!propFilterParsing && !propFilterResult && (
+                <label className="flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#d1d7db] bg-[#f8f9fa] py-10 cursor-pointer active:bg-[#f0f2f5] transition-colors">
+                  <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePropFilterImage(f); }} />
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#8696a0" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+                  <p className="text-[13px] font-bold text-[#54656f]">物件資料の画像を貼り付け</p>
+                  <p className="text-[11px] text-[#8696a0]">タップしてカメラロールから選択</p>
+                </label>
+              )}
+
+              {/* ── 読み取り中スピナー ── */}
+              {propFilterParsing && (
+                <div className="flex flex-col items-center py-10 gap-3">
+                  <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-blue-200 border-t-blue-500" />
+                  <p className="text-[13px] text-[#54656f]">AIが物件情報を読み取り中...</p>
                 </div>
               )}
 
-              {/* マッチしたお客様リスト（スコア順） */}
-              {propFilterMatchedList.length > 0 && (
-                <div className="flex flex-col gap-2">
-                  <p className="text-[11px] font-bold text-[#54656f]">マッチしたお客様（スコア順）</p>
+              {/* ── STEP2: 読み取り結果テキスト確認フェーズ ── */}
+              {propFilterResult && propFilterPending && !propFilterApplying && (
+                <div className="flex flex-col gap-3">
+                  <div className="rounded-2xl bg-blue-50 border border-blue-200 px-4 py-4">
+                    <p className="text-[11px] font-bold text-blue-600 mb-2">✓ 読み取り完了　内容を確認してください</p>
+                    <p className="text-[15px] font-bold text-[#111b21] mb-3">{propFilterResult.property_name || "（物件名不明）"}</p>
+                    <div className="grid grid-cols-2 gap-y-2 gap-x-3">
+                      <div className="flex flex-col">
+                        <span className="text-[10px] text-[#8696a0] mb-0.5">🚉 最寄り駅</span>
+                        <span className="text-[13px] font-bold text-[#111b21]">
+                          {propFilterResult.station || "不明"}
+                          {propFilterResult.walk_minutes ? ` 徒歩${propFilterResult.walk_minutes}分` : ""}
+                        </span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-[10px] text-[#8696a0] mb-0.5">📍 エリア</span>
+                        <span className="text-[13px] font-bold text-[#111b21]">{propFilterResult.area || "不明"}</span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-[10px] text-[#8696a0] mb-0.5">💴 家賃</span>
+                        <span className="text-[13px] font-bold text-[#111b21]">{propFilterResult.rent ? `${propFilterResult.rent}万円` : "不明"}</span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-[10px] text-[#8696a0] mb-0.5">🏠 間取り</span>
+                        <span className="text-[13px] font-bold text-[#111b21]">{propFilterResult.floor_plan || "不明"}</span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-[10px] text-[#8696a0] mb-0.5">📐 広さ</span>
+                        <span className="text-[13px] font-bold text-[#111b21]">{propFilterResult.size ? `${propFilterResult.size}㎡` : "不明"}</span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-[10px] text-[#8696a0] mb-0.5">🏗 築年数</span>
+                        <span className="text-[13px] font-bold text-[#111b21]">{(propFilterResult.building_age != null && propFilterResult.building_age > 0) ? `築${propFilterResult.building_age}年` : "不明"}</span>
+                      </div>
+                    </div>
+                    {propFilterResult.pet_allowed === true && <p className="mt-2 text-[12px] text-emerald-600 font-bold">🐾 ペット可</p>}
+                    {propFilterResult.pet_allowed === false && <p className="mt-2 text-[12px] text-red-500 font-bold">🚫 ペット不可</p>}
+                  </div>
+                  <button
+                    onClick={handlePropFilterApply}
+                    className="w-full rounded-full bg-blue-500 py-3.5 text-[14px] font-black text-white active:bg-blue-600"
+                  >
+                    この物件で絞り込む →
+                  </button>
+                  <button onClick={clearPropFilter} className="text-center text-[12px] text-[#8696a0] underline py-1">別の画像を使う</button>
+                </div>
+              )}
+
+              {/* ── マッチング中スピナー ── */}
+              {propFilterApplying && (
+                <div className="flex flex-col items-center py-8 gap-3">
+                  <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-emerald-200 border-t-emerald-500" />
+                  <p className="text-[13px] text-[#54656f]">条件に合うお客様を検索中...</p>
+                </div>
+              )}
+
+              {/* ── STEP3: マッチ結果 ── */}
+              {propFilterMatchedList.length > 0 && !propFilterPending && !propFilterApplying && (
+                <div className="flex flex-col gap-3">
+                  {/* 物件サマリー（コンパクト） */}
+                  <div className="rounded-xl bg-blue-50 border border-blue-200 px-3 py-2 flex items-center justify-between">
+                    <div>
+                      <p className="text-[11px] font-bold text-blue-700">{propFilterResult?.property_name || "読み取り物件"}</p>
+                      <div className="flex flex-wrap gap-x-2 text-[10px] text-[#54656f] mt-0.5">
+                        {propFilterResult?.station && <span>🚉 {propFilterResult.station}</span>}
+                        {propFilterResult?.rent && <span>💴 {propFilterResult.rent}万</span>}
+                        {propFilterResult?.floor_plan && <span>🏠 {propFilterResult.floor_plan}</span>}
+                        {propFilterResult?.size && <span>📐 {propFilterResult.size}㎡</span>}
+                      </div>
+                    </div>
+                    <span className="text-[11px] font-bold text-blue-600 flex-shrink-0">{propFilterMatchedList.length}名</span>
+                  </div>
+
+                  {/* スコア順リスト */}
+                  <p className="text-[11px] font-bold text-[#54656f]">条件が近いお客様（スコア順）</p>
                   {propFilterMatchedList.map(m => {
                     const scoreColor = m.score >= 4 ? "bg-emerald-500" : m.score >= 2 ? "bg-blue-500" : "bg-slate-400";
                     const isExpanded = propFilterExpanded === m.id;
                     return (
-                      <button
-                        key={m.id}
-                        onClick={() => setPropFilterExpanded(isExpanded ? null : m.id)}
-                        className="w-full text-left rounded-2xl border border-[#e9edef] bg-white px-4 py-3 active:bg-[#f0f2f5] transition-colors"
-                      >
+                      <button key={m.id} onClick={() => setPropFilterExpanded(isExpanded ? null : m.id)}
+                        className="w-full text-left rounded-2xl border border-[#e9edef] bg-white px-4 py-3 active:bg-[#f0f2f5] transition-colors">
                         <div className="flex items-center justify-between">
                           <p className="text-[14px] font-bold text-[#111b21]">{m.customer_name}</p>
                           <div className="flex items-center gap-2">
-                            <span className={`rounded-full px-2.5 py-1 text-[12px] font-black text-white ${scoreColor}`}>
-                              {m.score}/5点
-                            </span>
+                            <span className={`rounded-full px-2.5 py-1 text-[12px] font-black text-white ${scoreColor}`}>{m.score}/5点</span>
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8696a0" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform ${isExpanded ? "rotate-180" : ""}`}><path d="M6 9l6 6 6-6"/></svg>
                           </div>
                         </div>
-                        {/* スコア棒 */}
                         <div className="mt-2 flex gap-1">
-                          {[1,2,3,4,5].map(i => (
-                            <div key={i} className={`h-1.5 flex-1 rounded-full ${i <= m.score ? scoreColor : "bg-[#e9edef]"}`} />
-                          ))}
+                          {[1,2,3,4,5].map(i => <div key={i} className={`h-1.5 flex-1 rounded-full ${i <= m.score ? scoreColor : "bg-[#e9edef]"}`} />)}
                         </div>
-                        {/* breakdown（展開時） */}
                         {isExpanded && (
                           <div className="mt-3 flex flex-col gap-1.5 border-t border-[#f0f2f5] pt-3">
                             {m.breakdown.map((b, idx) => (
@@ -620,29 +712,19 @@ export default function ConditionsPage() {
                       </button>
                     );
                   })}
+
+                  <div className="flex gap-2 pt-1">
+                    <button onClick={clearPropFilter} className="flex-1 rounded-full border border-[#d1d7db] py-2.5 text-[13px] font-bold text-[#54656f]">別の物件を試す</button>
+                    <button onClick={() => setPropFilterOpen(false)} className="flex-1 rounded-full bg-blue-500 py-2.5 text-[13px] font-bold text-white">この絞り込みで表示</button>
+                  </div>
+                  <button onClick={() => { clearPropFilter(); setPropFilterOpen(false); }} className="text-center text-[12px] text-red-400 underline py-1">絞り込みを解除</button>
                 </div>
               )}
 
-              {/* 画像アップロードエリア */}
-              {!propFilterParsing && !propFilterResult && (
-                <label className="flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#d1d7db] bg-[#f8f9fa] py-8 cursor-pointer active:bg-[#f0f2f5] transition-colors">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePropFilterImage(f); }}
-                  />
-                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#8696a0" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-                  <p className="text-[13px] font-bold text-[#54656f]">物件資料の画像を貼り付け</p>
-                  <p className="text-[11px] text-[#8696a0]">タップしてカメラロールから選択</p>
-                </label>
-              )}
-
-              {/* 読み取り中 */}
-              {propFilterParsing && (
-                <div className="flex flex-col items-center py-8 gap-3">
-                  <div className="h-8 w-8 animate-spin rounded-full border-3 border-blue-200 border-t-blue-500" />
-                  <p className="text-[13px] text-[#54656f]">AIが物件情報を読み取り中...</p>
+              {/* マッチ0件 */}
+              {propFilterMatched !== null && propFilterMatchedList.length === 0 && !propFilterPending && !propFilterApplying && (
+                <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-[13px] text-amber-700 text-center">
+                  条件に合うお客様が見つかりませんでした
                 </div>
               )}
 
@@ -651,31 +733,9 @@ export default function ConditionsPage() {
                 <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-[13px] text-red-600">{propFilterError}</div>
               )}
 
-              {/* ボタン群 */}
-              <div className="flex gap-2">
-                {propFilterResult && (
-                  <>
-                    <button
-                      onClick={() => { clearPropFilter(); }}
-                      className="flex-1 rounded-full border border-[#d1d7db] py-2.5 text-[13px] font-bold text-[#54656f]"
-                    >別の物件を試す</button>
-                    <button
-                      onClick={() => setPropFilterOpen(false)}
-                      className="flex-1 rounded-full bg-blue-500 py-2.5 text-[13px] font-bold text-white"
-                    >この絞り込みで表示</button>
-                  </>
-                )}
-                {!propFilterResult && propFilterMatched !== null && (
-                  <button onClick={() => { clearPropFilter(); setPropFilterOpen(false); }} className="flex-1 rounded-full border border-[#d1d7db] py-2.5 text-[13px] font-bold text-red-500">絞り込みを解除</button>
-                )}
-                {!propFilterResult && propFilterMatched === null && (
-                  <button onClick={() => setPropFilterOpen(false)} className="flex-1 rounded-full border border-[#d1d7db] py-2.5 text-[13px] font-bold text-[#54656f]">キャンセル</button>
-                )}
-              </div>
-
-              {/* 絞り込み解除ボタン（適用中のみ） */}
-              {propFilterMatched !== null && propFilterResult && (
-                <button onClick={() => { clearPropFilter(); setPropFilterOpen(false); }} className="text-center text-[12px] text-red-400 underline py-1">絞り込みを解除してすべて表示</button>
+              {/* 閉じるボタン（初期状態のみ） */}
+              {!propFilterResult && propFilterMatched === null && !propFilterParsing && (
+                <button onClick={() => setPropFilterOpen(false)} className="w-full rounded-full border border-[#d1d7db] py-2.5 text-[13px] font-bold text-[#54656f]">キャンセル</button>
               )}
             </div>
           </div>
