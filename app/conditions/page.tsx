@@ -198,14 +198,16 @@ export default function ConditionsPage() {
   const [showRawFormat, setShowRawFormat] = useState(false);
 
   // 物件絞り込み
-  type MatchedCustomer = { id: string; customer_name: string; reasons: string[] };
-  type ParsedProperty = { property_name: string; area: string; station: string; nearby_areas: string[]; walk_minutes: number | null; rent: number | null; floor_plan: string; size: number | null; building_age: number | null };
+  type ScoreBreakdown = { label: string; point: number; note: string };
+  type MatchedCustomer = { id: string; customer_name: string; score: number; breakdown: ScoreBreakdown[] };
+  type ParsedProperty = { property_name: string; area: string; station: string; nearby_areas: string[]; walk_minutes: number | null; rent: number | null; floor_plan: string; size: number | null; building_age: number | null; pet_allowed: boolean | null };
   const [propFilterOpen, setPropFilterOpen] = useState(false);
   const [propFilterParsing, setPropFilterParsing] = useState(false);
   const [propFilterResult, setPropFilterResult] = useState<ParsedProperty | null>(null);
   const [propFilterMatched, setPropFilterMatched] = useState<Set<string> | null>(null);
   const [propFilterMatchedList, setPropFilterMatchedList] = useState<MatchedCustomer[]>([]);
   const [propFilterError, setPropFilterError] = useState<string | null>(null);
+  const [propFilterExpanded, setPropFilterExpanded] = useState<string | null>(null);
 
   const handlePropFilterImage = async (file: File) => {
     setPropFilterParsing(true);
@@ -561,29 +563,63 @@ export default function ConditionsPage() {
                   <p className="text-[12px] font-bold text-blue-700 mb-1">✓ 読み取り完了</p>
                   <p className="text-[13px] font-bold text-[#111b21]">{propFilterResult.property_name || "（物件名不明）"}</p>
                   <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-[#54656f]">
-                    {propFilterResult.station && <span>📍 {propFilterResult.station}{propFilterResult.walk_minutes ? `徒歩${propFilterResult.walk_minutes}分` : ""}</span>}
+                    {propFilterResult.station && <span>📍 {propFilterResult.station}{propFilterResult.walk_minutes ? ` 徒歩${propFilterResult.walk_minutes}分` : ""}</span>}
                     {propFilterResult.rent && <span>💴 {propFilterResult.rent}万円</span>}
                     {propFilterResult.floor_plan && <span>🏠 {propFilterResult.floor_plan}</span>}
                     {propFilterResult.size && <span>📐 {propFilterResult.size}㎡</span>}
                     {propFilterResult.building_age && <span>🏗 築{propFilterResult.building_age}年</span>}
+                    {propFilterResult.pet_allowed === true && <span>🐾 ペット可</span>}
+                    {propFilterResult.pet_allowed === false && <span className="text-red-400">🚫 ペット不可</span>}
                   </div>
                   <p className="mt-2 text-[12px] font-bold text-blue-600">→ {propFilterMatchedList.length}名がマッチしています</p>
                 </div>
               )}
 
-              {/* マッチしたお客様リスト */}
+              {/* マッチしたお客様リスト（スコア順） */}
               {propFilterMatchedList.length > 0 && (
-                <div className="flex flex-col gap-1.5">
-                  <p className="text-[11px] font-bold text-[#54656f]">マッチしたお客様</p>
-                  {propFilterMatchedList.map(m => (
-                    <div key={m.id} className="flex items-start gap-2 rounded-xl bg-[#f0f2f5] px-3 py-2">
-                      <span className="mt-0.5 h-2 w-2 rounded-full bg-blue-400 flex-shrink-0" />
-                      <div>
-                        <p className="text-[13px] font-bold text-[#111b21]">{m.customer_name}</p>
-                        <p className="text-[10px] text-[#8696a0]">{m.reasons.join("・")}</p>
-                      </div>
-                    </div>
-                  ))}
+                <div className="flex flex-col gap-2">
+                  <p className="text-[11px] font-bold text-[#54656f]">マッチしたお客様（スコア順）</p>
+                  {propFilterMatchedList.map(m => {
+                    const scoreColor = m.score >= 4 ? "bg-emerald-500" : m.score >= 2 ? "bg-blue-500" : "bg-slate-400";
+                    const isExpanded = propFilterExpanded === m.id;
+                    return (
+                      <button
+                        key={m.id}
+                        onClick={() => setPropFilterExpanded(isExpanded ? null : m.id)}
+                        className="w-full text-left rounded-2xl border border-[#e9edef] bg-white px-4 py-3 active:bg-[#f0f2f5] transition-colors"
+                      >
+                        <div className="flex items-center justify-between">
+                          <p className="text-[14px] font-bold text-[#111b21]">{m.customer_name}</p>
+                          <div className="flex items-center gap-2">
+                            <span className={`rounded-full px-2.5 py-1 text-[12px] font-black text-white ${scoreColor}`}>
+                              {m.score}/5点
+                            </span>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8696a0" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform ${isExpanded ? "rotate-180" : ""}`}><path d="M6 9l6 6 6-6"/></svg>
+                          </div>
+                        </div>
+                        {/* スコア棒 */}
+                        <div className="mt-2 flex gap-1">
+                          {[1,2,3,4,5].map(i => (
+                            <div key={i} className={`h-1.5 flex-1 rounded-full ${i <= m.score ? scoreColor : "bg-[#e9edef]"}`} />
+                          ))}
+                        </div>
+                        {/* breakdown（展開時） */}
+                        {isExpanded && (
+                          <div className="mt-3 flex flex-col gap-1.5 border-t border-[#f0f2f5] pt-3">
+                            {m.breakdown.map((b, idx) => (
+                              <div key={idx} className="flex items-center gap-2">
+                                <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold flex-shrink-0 ${b.point > 0 ? "bg-emerald-100 text-emerald-700" : "bg-[#f0f2f5] text-[#8696a0]"}`}>
+                                  {b.point > 0 ? "✓" : "−"}
+                                </span>
+                                <span className="text-[11px] font-bold text-[#54656f] w-14 flex-shrink-0">{b.label}</span>
+                                <span className="text-[11px] text-[#8696a0] truncate">{b.note}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
 
