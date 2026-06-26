@@ -6,7 +6,7 @@ import { supabase } from "@/app/lib/supabase";
 const EMOJI_RULE = `絵文字: 😊 😌 🌟 ✨ の4つのみ・1〜2個まで・文末か区切りのみ`;
 const STYLE_RULE = `感嘆符「！」または「！！」を文脈で使い分け / 「〇〇さん」で呼ぶ / 物件紹介以外は箇条書き禁止 / 1つの返信案のみ`;
 
-const PROMPT_DEFAULTS: Record<string, { label: string; content: string; readonly?: boolean }> = {
+const PROMPT_DEFAULTS: Record<string, { label: string; content: string; readonly?: boolean; auto?: boolean }> = {
   generation_system: {
     label: "生成システムプロンプト",
     content: `あなたはスモラ（賃貸仲介）のLINE営業担当です。
@@ -221,6 +221,39 @@ const PROMPT_DEFAULTS: Record<string, { label: string; content: string; readonly
 → 交渉（フリーレント・値引き・条件変更・審査再挑戦等）はNG
 → 「月曜日一番で管理会社に交渉させていただきます！！」`,
   },
+  aix_flow_guide: {
+    label: "AIXフロー誘導ガイド",
+    auto: true,
+    content: `【AIXフロー誘導ガイド — AIが毎日15:00・03:00に成功会話を分析して自動更新】
+
+▶ 条件ヒアリング完了後
+→「物件オススメ」AIX を使う
+→ 物件資料と一緒にAIが提案文を生成。送信前に確認してから送る
+
+▶ お客様から「初期費用は？」「見積もりが欲しい」が来た / 他社と比較中
+→「見積書送る」AIX を使う
+→ テンプレートから「見積書送る【AIX】」を選択 → AIが文章生成 → 見積書と一緒に送信
+
+▶ 物件を気に入った / 内覧を促したい
+→「内覧へ！」AIX を使う
+→ カレンダーで日程選択 → AIが日程提案文を生成 → 確認後送信
+
+▶ 内覧確定後（待ち合わせ場所を案内する）
+→「待ち合わせ」AIX を使う
+→ 物件住所を自動読み取り → 日時・場所をセットで案内文生成
+
+▶ 内覧後・申込を促したい
+→「申込へ！」AIX を使う
+→ 会話の流れから最適な申込促しを生成 → 確認後送信
+
+【バナーが出たら即AIXを使う】
+・オレンジバナー（初期費用）→ 見積書送るAIX
+・紫バナー（物件オススメ）→ 物件オススメAIX
+・申込フォームバナー（ピンク）→ 長押し「申込」ボタンで学習記録
+
+【半自動3ステップ】
+AIXを選ぶ → 生成された文を確認 → 送信`,
+  },
   smora_quick_patterns: {
     label: "スモラ返信パターン集",
     content: `【スモラの実際の返信パターン（実例から抽出）】
@@ -281,6 +314,7 @@ export async function GET() {
     updated_at: dbMap[key]?.updated_at ?? null,
     is_custom: !!dbMap[key],
     readonly: defaults.readonly ?? false,
+    auto: defaults.auto ?? false,
   }));
 
   return NextResponse.json({ prompts });

@@ -6826,11 +6826,13 @@ export default function Home() {
                     { key: "phase_guide_applying", label: "申込フェーズガイド", desc: "内覧・申込手続きの返し方" },
                     { key: "real_estate_rules", label: "不動産ルール", desc: "仲介手数料・敷礼金・保証会社・申込フロー等" },
                     { key: "smora_quick_patterns", label: "スモラ返信パターン集", desc: "実例から抽出した定型返信フレーズ一覧" },
+                    { key: "aix_flow_guide", label: "AIXフロー誘導ガイド", desc: "どのAIXボタンを押すか・半自動化フロー（毎日AI自動更新）" },
                     { key: "management_company_hours", label: "管理会社の営業時間ルール", desc: "土日・18時以降の対応ルール（閲覧のみ）" },
                   ].map((meta) => {
                     const item = promptItems.find((p) => p.key === meta.key);
                     const isCustom = item?.is_custom ?? false;
                     const isReadonly = item?.readonly ?? false;
+                    const isAuto = (item as { auto?: boolean } | undefined)?.auto ?? false;
                     return (
                       <button
                         key={meta.key}
@@ -6846,7 +6848,10 @@ export default function Home() {
                             {isReadonly && (
                               <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[9px] font-bold text-gray-500">閲覧のみ</span>
                             )}
-                            {isCustom && !isReadonly && (
+                            {isAuto && (
+                              <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-bold text-emerald-700">AI自動更新</span>
+                            )}
+                            {isCustom && !isReadonly && !isAuto && (
                               <span className="shrink-0 rounded-full bg-purple-100 px-2 py-0.5 text-[9px] font-bold text-purple-700">カスタム</span>
                             )}
                           </div>
@@ -6863,7 +6868,7 @@ export default function Home() {
             </div>
             {!editingPromptKey && (
               <div className="px-4 py-3 border-t border-[#f0f2f5] text-center">
-                <span className="text-[11px] text-[#8696a0]">カスタム編集済み: {promptItems.filter((p) => p.is_custom && !p.readonly).length} / 7件 / 保存後すぐ反映</span>
+                <span className="text-[11px] text-[#8696a0]">カスタム編集済み: {promptItems.filter((p) => p.is_custom && !p.readonly).length} / 8件 / 保存後すぐ反映</span>
               </div>
             )}
             <div className="pb-[max(12px,env(safe-area-inset-bottom))]" />
