@@ -26,7 +26,7 @@ async function sendGroupMessage(text: string): Promise<void> {
 
 // POST: タスク完了 + 完了アナウンス
 export async function POST(req: NextRequest) {
-  const { id } = await req.json() as { id: string };
+  const { id, source } = await req.json() as { id: string; source?: string };
   if (!id) return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
 
   const { data: task, error } = await supabase
@@ -42,7 +42,8 @@ export async function POST(req: NextRequest) {
   }
 
   const label = TASK_LABEL[task.task_type as string] ?? task.task_type;
-  const text = `✅【${label} 完了】\n${task.customer_name as string}さんへ2通送信で自動完了しました`;
+  const suffix = source === "aix" ? "AIX送信で完了しました" : "2通送信で自動完了しました";
+  const text = `✅【${label} 完了】\n${task.customer_name as string}さんへ${suffix}`;
 
   sendGroupMessage(text).catch(console.error);
 

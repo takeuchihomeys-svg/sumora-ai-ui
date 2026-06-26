@@ -6103,7 +6103,7 @@ export default function Home() {
                 fetch("/api/line-tasks/complete", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ id: _t.id }),
+                  body: JSON.stringify({ id: _t.id, source: "aix" }),
                 }).catch(() => {});
               }
               if (_tasks.length > 0) {
@@ -6122,7 +6122,7 @@ export default function Home() {
                     fetch("/api/line-tasks/complete", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ id: task.id }),
+                      body: JSON.stringify({ id: task.id, source: "aix" }),
                     }).catch(() => {});
                   }
                   if (meta?.suggest2ndHand) {
@@ -6147,7 +6147,7 @@ export default function Home() {
                     fetch("/api/line-tasks/complete", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ id: sendTask.id }),
+                      body: JSON.stringify({ id: sendTask.id, source: "aix" }),
                     }).catch(() => {});
                   }
                   // property_checkタスクを自動作成（次の工程）- 予約送信時はスキップ
@@ -6205,7 +6205,7 @@ export default function Home() {
                     fetch("/api/line-tasks/complete", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ id: sendTask.id }),
+                      body: JSON.stringify({ id: sendTask.id, source: "aix" }),
                     }).catch(() => {});
                     // ローカル activeTasks からも即時除去（API応答待ちでバナーが残らないよう）
                     setActiveTasks((prev) => ({
@@ -6241,7 +6241,7 @@ export default function Home() {
                     fetch("/api/line-tasks/complete", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ id: estTask.id }),
+                      body: JSON.stringify({ id: estTask.id, source: "aix" }),
                     }).catch(() => {});
                     setActiveTasks((prev) => ({
                       ...prev,
