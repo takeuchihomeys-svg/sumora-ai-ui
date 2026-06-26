@@ -414,6 +414,7 @@ export default function Home() {
   const [dismissedNextActionIds, setDismissedNextActionIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedNextActionIds") || "[]") as string[]); } catch { return new Set(); }
   });
+  const [dismissedApplyFormIds, setDismissedApplyFormIds] = useState<Set<string>>(new Set());
   const nextActionFetchingRef = useRef<Set<string>>(new Set());
   const [statusSuggestionMap, setStatusSuggestionMap] = useState<Record<string, { status: string; label: string; reason: string } | null>>({});
   const statusSuggFetchingRef = useRef<Set<string>>(new Set());
@@ -1723,6 +1724,20 @@ export default function Home() {
       (message) => message.sender === "customer"
     );
     return customerMessages[customerMessages.length - 1]?.text ?? "";
+  }, [selectedConversation]);
+
+  // 申込フォーム自動検知（お客さんが氏名・フリガナ等を送ってきたとき）
+  const isApplyFormDetected = useMemo(() => {
+    const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
+    if (ns === "applying" || ns === "closed_won") return false;
+    const recentCustomerText = selectedConversation.messages
+      .filter((m) => m.sender === "customer")
+      .slice(-6)
+      .map((m) => m.text ?? "")
+      .join("\n");
+    const keywords = ["氏名", "フリガナ", "生年月日", "現住所", "緊急連絡先", "勤務先", "続柄", "住居年数", "入居者"];
+    const matched = keywords.filter((kw) => recentCustomerText.includes(kw));
+    return matched.length >= 3;
   }, [selectedConversation]);
 
   const detailStatusMeta = getDetailStatusMeta(selectedConversation.status);
@@ -3996,6 +4011,28 @@ export default function Home() {
               </div>
             );
           })()}
+
+          {/* 申込フォーム自動検知バナー */}
+          {isApplyFormDetected && !dismissedApplyFormIds.has(selectedConversation.id) && (
+            <div className="flex items-center gap-2 border-b border-[#f8bbd0] px-4 py-2.5" style={{ background: "linear-gradient(90deg, #fce4ec, #fff0f5)" }}>
+              <span className="text-base shrink-0">📝</span>
+              <div className="min-w-0 flex-1">
+                <span className="text-[11px] font-bold text-[#c2185b]">申込フォームが届きました！</span>
+                <span className="ml-1 text-[10px] text-[#e91e63]">ステータスを申込・審査中に変更しますか？</span>
+              </div>
+              <button
+                onClick={() => setDismissedApplyFormIds((prev) => new Set([...prev, selectedConversation.id]))}
+                className="shrink-0 text-[10px] text-[#e91e63] active:opacity-60"
+              >✕</button>
+              <button
+                onClick={async () => {
+                  setDismissedApplyFormIds((prev) => new Set([...prev, selectedConversation.id]));
+                  await updateConversationStatus("applying");
+                }}
+                className="shrink-0 rounded-full bg-[#e91e63] px-2.5 py-1 text-[10px] font-bold text-white active:opacity-70"
+              >申込に変更</button>
+            </div>
+          )}
 
           {announcements.length > 0 && (
             <button
