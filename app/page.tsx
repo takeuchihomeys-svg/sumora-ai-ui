@@ -4830,7 +4830,7 @@ export default function Home() {
                       fetch("/api/line-tasks", { method: "POST", headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ conversation_id: id, task_type: "estimate_sheet", customer_name: convName, status: "pending" }) }).catch(() => {});
                     }
-                    openAixDirect("estimate_sheet");
+                    setShowTemplateModal(true);
                   }}
                     className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
                     style={{ background: "linear-gradient(135deg, #E65100, #F57C00)" }}>AIX 割引見積</button>
@@ -4871,7 +4871,7 @@ export default function Home() {
                         });
                       }).catch(() => {});
                     }
-                    openAixWithImagePicker("estimate_sheet");
+                    setShowTemplateModal(true);
                   }}
                     className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
                     style={{ background: "linear-gradient(135deg, #f59e0b, #d97706)" }}>AIX 見積書送る</button>
@@ -5943,7 +5943,13 @@ export default function Home() {
             setPendingAixFocusPoints(fps);
             setShowTemplateModal(false);
             setTemplateOpenContext(null);
-            openAixWithImagePicker("property_recommendation");
+            // activeAixFlowに応じて正しいAIXアクションを開く
+            const action = (activeAixFlow ?? "property_recommendation") as AixActionType;
+            if (action === "estimate_sheet" || action === "property_check_result" || action === "property_send" || action === "meeting_place") {
+              openAixDirect(action);
+            } else {
+              openAixWithImagePicker(action);
+            }
           }}
           onSelect={(text, imageFiles, label, category) => {
             setReplyDraft(text);
@@ -7319,7 +7325,7 @@ export default function Home() {
                         });
                       }).catch(() => {});
                     }
-                    openAixWithImagePicker("estimate_sheet");
+                    setShowTemplateModal(true);
                   } },
                   { color: "#9C27B0", label: "内覧へ！", sub: "カレンダーから日程を選択→AIで文生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); openAixDirect("viewing_invite"); } },
                   { color: "#00838F", label: "待ち合わせ", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixDirect("meeting_place"); } },
