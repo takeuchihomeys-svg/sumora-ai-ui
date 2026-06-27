@@ -177,12 +177,16 @@ export async function POST(request: NextRequest) {
     // ※ 初期費用テンプレート等の挨拶なしメッセージは対象外。挨拶キーワードを含む場合のみ切り替え
     const todayJST = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const toJSTDate = (iso: string) => new Date(new Date(iso).getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const GREETING_KEYWORDS = ["お世話になっております", "お待たせ致しました", "夜分遅くに失礼"];
-    const staffMessagedToday = Array.isArray(recent_messages) && (recent_messages as Array<{ sender: string; rawCreatedAt?: string; text?: string }>).some((m) => {
-      if (m.sender !== "staff" || !m.rawCreatedAt || !m.text) return false;
-      if (toJSTDate(m.rawCreatedAt) !== todayJST) return false;
-      return GREETING_KEYWORDS.some((kw) => m.text!.includes(kw));
-    });
+    // 今日最後のメッセージがお客様から → お客様が返信待ち → 「お待たせ致しました」を使う
+    // 最後が自分（staff）から or 今日メッセージなし → 初回または追伸 → 「お世話になっております」を使う
+    const recentMsgArray = Array.isArray(recent_messages)
+      ? (recent_messages as Array<{ sender: string; rawCreatedAt?: string }>)
+      : [];
+    const lastMsg = recentMsgArray[recentMsgArray.length - 1];
+    const staffMessagedToday = !!lastMsg &&
+      lastMsg.sender === "customer" &&
+      !!lastMsg.rawCreatedAt &&
+      toJSTDate(lastMsg.rawCreatedAt) === todayJST;
 
     // 直近の会話履歴テキスト（viewing_invite・application_push で使用）
     const recentHistory = Array.isArray(recent_messages) && recent_messages.length > 0
