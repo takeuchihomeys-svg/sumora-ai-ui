@@ -514,6 +514,7 @@ type PromptOverrides = {
   quickPatterns?: string;
   phaseGuide?: Record<string, string>;
   realEstateRules?: string;
+  replyContentRules?: string;
 };
 
 function buildGenerationMessages(
@@ -727,6 +728,7 @@ function buildGenerationMessages(
   })();
   const quickPatterns = examples ? "" : `\n${effectiveQuickPatterns}`;
   const realEstateNote = `\n${promptOverrides?.realEstateRules ?? REAL_ESTATE_RULES}`;
+  const replyContentNote = promptOverrides?.replyContentRules ? `\n${promptOverrides.replyContentRules}` : "";
 
   // 申込フォーム検出（applying フェーズのみ・氏名・緊急連絡先・住所等のキーワード）＋直近の画像なし → 身分証リクエスト注入
   const isApplicationFormText = /緊急連絡|氏名|フリガナ|生年月日|現住所|住居年数|続柄|勤務先/.test(customerMessage);
@@ -766,6 +768,7 @@ ${phaseGuide}${approachNote}${staffContextNote}
 ${history || "なし"}
 ${quickPatterns}
 ${realEstateNote}
+${replyContentNote}
 ${knowledge}
 ${phrases}
 
@@ -1222,17 +1225,20 @@ export async function POST(req: NextRequest) {
       let generationSystem: string | undefined;
       let quickPatterns: string | undefined;
       let realEstateRules: string | undefined;
+      let replyContentRules: string | undefined;
       for (const p of dbPrompts as { key: string; content: string }[]) {
         if (p.key === "generation_system") generationSystem = p.content;
         else if (p.key === "smora_quick_patterns") quickPatterns = p.content;
         else if (p.key === "real_estate_rules") realEstateRules = p.content;
+        else if (p.key === "reply_content_rules") replyContentRules = p.content;
         else if (p.key.startsWith("phase_guide_")) phaseGuide[p.key.slice("phase_guide_".length)] = p.content;
       }
-      if (generationSystem || quickPatterns || realEstateRules || Object.keys(phaseGuide).length > 0) {
+      if (generationSystem || quickPatterns || realEstateRules || replyContentRules || Object.keys(phaseGuide).length > 0) {
         promptOverrides = {
           generationSystem,
           quickPatterns,
           realEstateRules,
+          replyContentRules,
           phaseGuide: Object.keys(phaseGuide).length > 0 ? phaseGuide : undefined,
         };
       }
