@@ -4718,14 +4718,46 @@ export default function Home() {
                 {activeAixFlow ? `${AIX_ACTION_META[activeAixFlow]?.label} ×` : "AIX"}
               </button>
 
-              {/* ✨ sparkleボタン（常時表示） */}
+              {/* ✨ sparkleボタン（本文あり→整形・本文なし→スパークルモーダル） */}
               <button
-                onClick={() => setShowSparkleModal(true)}
-                disabled={!selectedConversation?.id}
+                onClick={async () => {
+                  if (!selectedConversation?.id) return;
+                  if (replyDraft.trim()) {
+                    // 本文が入っている → スモラスタイルに整形
+                    setGenerating(true);
+                    try {
+                      const recentMsgs = (selectedConversation.messages || [])
+                        .slice(-10)
+                        .map((m) => ({ sender: m.sender, text: m.text || "" }));
+                      const res = await fetch("/api/polish-draft", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          draft: replyDraft,
+                          customer_name: selectedConversation.customerName,
+                          recent_messages: recentMsgs,
+                        }),
+                      });
+                      const data = await res.json() as { ok: boolean; polished?: string };
+                      if (data.ok && data.polished) {
+                        setReplyDraft(data.polished);
+                        setDraftIsAi(true);
+                      }
+                    } catch (err) {
+                      console.error("[polish-draft]", err);
+                    } finally {
+                      setGenerating(false);
+                    }
+                  } else {
+                    // 本文なし → 従来のスパークルモーダル
+                    setShowSparkleModal(true);
+                  }
+                }}
+                disabled={!selectedConversation?.id || generating}
                 className="shrink-0 flex h-8 items-center gap-1 rounded-full border border-[#c8b8ff] bg-gradient-to-r from-[#ede7ff] to-[#e3f0ff] px-3 text-xs font-bold text-[#6c3fc7] shadow-sm active:scale-95 transition-transform duration-75 disabled:opacity-40"
-                title="キーワード・状況を指定してAI生成"
+                title={replyDraft.trim() ? "入力中の文をスモラスタイルに整形" : "キーワード・状況を指定してAI生成"}
               >
-                ✨
+                {generating && replyDraft.trim() ? "…" : "✨"}
               </button>
 
               {/* 文章クリアボタン（入力/AI文案があるときのみ表示） */}
