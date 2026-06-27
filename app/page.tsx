@@ -483,6 +483,7 @@ export default function Home() {
   const [editingPromptContent, setEditingPromptContent] = useState("");
   const [promptSaving, setPromptSaving] = useState(false);
   const [aixLogicExpanded, setAixLogicExpanded] = useState(false);
+  const aixLogicSubRef = useRef<HTMLDivElement | null>(null);
   const [accountChangeConvId, setAccountChangeConvId] = useState<string | null>(null);
   const [assignees, setAssignees] = useState<Record<string, string>>({});
   const [assigneeModalConvId, setAssigneeModalConvId] = useState<string | null>(null);
@@ -6960,6 +6961,7 @@ export default function Home() {
                     { key: "smora_quick_patterns", label: "スモラ返信パターン集", desc: "実例から抽出した定型返信フレーズ一覧" },
                     { key: "template_adapt_rules", label: "テンプレートAI最適化ルール", desc: "テンプレートAI生成時のルール（物件名置換・禁止事項）" },
                     { key: "reply_content_rules", label: "返信ルール（内容について）", desc: "何を言う・言わないかの判断基準" },
+                    { key: "customer_summary_system", label: "顧客サマリー（どうやったら決まるか）", desc: "★決まるパターン・お客様プロフィール生成ルール" },
                     { key: "aix_flow_guide", label: "AIXフロー誘導ガイド", desc: "どのAIXボタンを押すか・半自動化フロー（毎日AI自動更新）" },
                     { key: "management_company_hours", label: "管理会社の営業時間ルール", desc: "土日・18時以降の対応ルール（閲覧のみ）" },
                   ].map((meta) => {
@@ -7000,7 +7002,15 @@ export default function Home() {
 
                   {/* AIX提案ロジック グループ */}
                   <button
-                    onClick={() => setAixLogicExpanded((v) => !v)}
+                    onClick={() => {
+                      const next = !aixLogicExpanded;
+                      setAixLogicExpanded(next);
+                      if (next) {
+                        setTimeout(() => {
+                          aixLogicSubRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                        }, 80);
+                      }
+                    }}
                     className="flex items-center gap-3 rounded-2xl border border-[#e9edef] bg-[#f8f9fa] px-4 py-3 text-left active:scale-[0.98] transition-all"
                   >
                     <div className="flex-1 min-w-0">
@@ -7015,7 +7025,7 @@ export default function Home() {
                     </svg>
                   </button>
                   {aixLogicExpanded && (
-                    <div className="flex flex-col gap-1.5 pl-4">
+                    <div ref={aixLogicSubRef} className="flex flex-col gap-1.5 pl-4">
                       {[
                         { key: "aix_logic_estimate_sheet", label: "💰 見積書送る", desc: "費用・入居日指定・見積再送の発動条件" },
                         { key: "aix_logic_property_send", label: "🏠 物件送る", desc: "物件希望・追客の発動条件" },
