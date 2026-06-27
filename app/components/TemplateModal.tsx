@@ -620,25 +620,38 @@ export default function TemplateModal({
                         {inspectingId === tmpl.id && (() => {
                           const elements = detectTemplateElements(tmpl.text);
                           const hasVars = /アカウント名|〇〇|○○/.test(tmpl.text);
+                          const hasStation = /徒歩[0-9]|[0-9]分|駅.*徒歩|電車.*本|線.*駅/.test(tmpl.text);
+                          const hasPropertyName = /🌟|⭐|【新築|【物件|マンション名|物件名/.test(tmpl.text);
                           return (
                             <div className="mb-3 rounded-xl border border-[#e3eaf2] bg-[#f8fafc] px-3 py-3 flex flex-col gap-3">
+                              {/* テンプレートは構成のもの — 説明 */}
+                              <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2">
+                                <p className="text-[10px] font-bold text-blue-700 mb-1">📐 これは構成テンプレートです</p>
+                                <p className="text-[10px] text-blue-600 leading-relaxed">「AIで最適化」を押すと、お客様の条件・会話履歴をもとに内容が自動で書き換わります。固定の物件名や駅情報はお客様に合わせて変動します。</p>
+                              </div>
                               {/* 変動箇所ハイライト */}
-                              {hasVars && (
+                              {(hasVars || hasPropertyName || hasStation) && (
                                 <div>
-                                  <p className="mb-1 text-[10px] font-bold text-[#54656f]">✏️ 変動箇所（AIが自動置換）</p>
-                                  <div className="flex flex-wrap gap-2 mb-1.5">
-                                    <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold text-orange-700">アカウント名 → お客様名</span>
-                                    {/〇〇|○○/.test(tmpl.text) && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">〇〇 → 物件情報</span>}
+                                  <p className="mb-1.5 text-[10px] font-bold text-[#54656f]">✏️ AIが自動で変える箇所</p>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {/アカウント名/.test(tmpl.text) && <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold text-orange-700">アカウント名 → お客様名</span>}
+                                    {/〇〇|○○/.test(tmpl.text) && <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">〇〇 → 物件・条件情報</span>}
+                                    {hasPropertyName && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">物件名 → 今回の物件名</span>}
+                                    {hasStation && <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">🚃 駅情報 → 希望なければ省略</span>}
                                   </div>
-                                  <p className="whitespace-pre-wrap text-[11px] leading-[1.6] text-[#333] bg-white rounded-lg border border-[#e0e0e0] px-2 py-2">
-                                    {highlightTemplateVars(tmpl.text)}
-                                  </p>
+                                </div>
+                              )}
+                              {/* 駅情報の注意書き */}
+                              {hasStation && (
+                                <div className="rounded-lg bg-amber-50 border border-amber-200 px-2 py-1.5 flex items-start gap-1.5">
+                                  <span className="text-[13px] flex-shrink-0">⚠️</span>
+                                  <p className="text-[10px] text-amber-700 leading-relaxed">このテンプレートに駅情報が含まれています。お客様が希望エリア・駅・徒歩分数を指定していない場合、AIは自動でその部分を省略します。</p>
                                 </div>
                               )}
                               {/* メッセージ要素 */}
                               {elements.length > 0 && (
                                 <div>
-                                  <p className="mb-1.5 text-[10px] font-bold text-[#54656f]">📋 このテンプレートの要素</p>
+                                  <p className="mb-1.5 text-[10px] font-bold text-[#54656f]">📋 このテンプレートの構成要素</p>
                                   <div className="flex flex-col gap-1">
                                     {elements.map((e, i) => (
                                       <div key={i} className={`flex items-center gap-1.5 rounded-lg px-2 py-1 ${e.bg}`}>
