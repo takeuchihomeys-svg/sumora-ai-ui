@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { supabase } from "@/app/lib/supabase";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "") });
 
@@ -39,6 +40,14 @@ export async function POST(req: NextRequest) {
   if (!templateText) {
     return NextResponse.json({ ok: false, error: "templateText required" }, { status: 400 });
   }
+
+  // DBからテンプレート追加ルールを取得
+  const { data: dbRule } = await supabase
+    .from("ai_prompts")
+    .select("content")
+    .eq("key", "template_adapt_rules")
+    .single();
+  const extraRules = dbRule?.content ?? "";
 
   const history = (recentMessages || [])
     .slice(-15)
@@ -162,7 +171,7 @@ ${history || "なし"}
 ${processedTemplateText}
 
 ━━━━━━━━━━━━━━━━━━━━
-出力は置き換え後のテキストのみ。説明・前置き・補足コメントは一切書かない。`;
+${extraRules ? `${extraRules}\n\n━━━━━━━━━━━━━━━━━━━━\n` : ""}出力は置き換え後のテキストのみ。説明・前置き・補足コメントは一切書かない。`;
 
   try {
     const msg = await client.messages.create({
