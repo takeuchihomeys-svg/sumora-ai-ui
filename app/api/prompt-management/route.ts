@@ -6,7 +6,7 @@ import { supabase } from "@/app/lib/supabase";
 const EMOJI_RULE = `絵文字: 😊 😌 🌟 ✨ の4つのみ・1〜2個まで・文末か区切りのみ`;
 const STYLE_RULE = `感嘆符「！」または「！！」を文脈で使い分け / 「〇〇さん」で呼ぶ / 物件紹介以外は箇条書き禁止 / 1つの返信案のみ`;
 
-const PROMPT_DEFAULTS: Record<string, { label: string; content: string; readonly?: boolean; auto?: boolean }> = {
+const PROMPT_DEFAULTS: Record<string, { label: string; content: string; readonly?: boolean; auto?: boolean; group?: string }> = {
   generation_system: {
     label: "生成システムプロンプト",
     content: `あなたはスモラ（賃貸仲介）のLINE営業担当です。
@@ -266,6 +266,109 @@ const PROMPT_DEFAULTS: Record<string, { label: string; content: string; readonly
 ・既に会話履歴で伝えた内容（仲介手数料・審査の流れ・保証会社の説明等）は再度説明しない。
 ・お客様が既に知っている・理解している前提で次のアクションに直行する。`,
   },
+  aix_logic_estimate_sheet: {
+    label: "見積書送る",
+    group: "aix_logic",
+    content: `【AIX「見積書送る」の発動条件】
+
+■ 発動するキーワード・状況
+・「初期費用」「見積もり」「見積書」「費用」「いくら」「いくらですか」
+・「出して欲しい」「送って欲しい」＋入居日の指定（例：「7/30入居で出して欲しい」）
+・他社と比較中・競合他社の費用を聞かれた時
+・見積書を受け取った後に入居日を変えて再送依頼が来た時
+
+■ 発動しないケース
+・単純に「家賃はいくら？」と聞かれた場合 → 不動産ルールで答えるだけ
+・既に見積書を送った後に「ありがとうございます」など反応が来た場合 → 申込誘導`,
+  },
+  aix_logic_property_send: {
+    label: "物件送る",
+    group: "aix_logic",
+    content: `【AIX「物件送る」の発動条件】
+
+■ 発動するキーワード・状況
+・「物件」「部屋」「お部屋」「探して」「紹介して」「ピックアップ」
+・条件（エリア・家賃・間取り等）が揃った・条件ヒアリング完了後
+・「他にいい物件ありますか」「別の物件を」
+・スタッフの最後の送信から3日以上返信なし（追客タイミング）
+・お客様から物件希望・条件変更が来た時
+
+■ 発動しないケース
+・物件URLをお客様が送ってきた場合 → 「物件確認した」を使う
+・見積書を要求された場合 → 「見積書送る」を使う`,
+  },
+  aix_logic_property_check: {
+    label: "物件確認した",
+    group: "aix_logic",
+    content: `【AIX「物件確認した」の発動条件】
+
+■ 発動するキーワード・状況
+・お客様が物件URL（athome・suumo・homes等）を送ってきた
+・「この物件どうですか」「まだありますか」「空いていますか」「空室ですか」
+・お客様が物件画像・動画を送ってきた
+・「空室確認」「募集状況確認」を依頼された
+
+■ 発動しないケース
+・スタッフが物件URLを送った場合（スタッフ側の送信）
+・既に空室確認済みで回答した後`,
+  },
+  aix_logic_viewing_invite: {
+    label: "内覧へ！",
+    group: "aix_logic",
+    content: `【AIX「内覧へ！」の発動条件】
+
+■ 発動するキーワード・状況
+・「内覧」「見に行く」「見学」「案内」「見てみたい」
+・物件の詳細・設備について具体的に質問してきた（興味あり）
+・「いつ見れますか」「いつ行けますか」
+
+■ 発動しないケース
+・内覧日時が既に確定している場合 → 「待ち合わせ」を使う
+・内覧後のお客様 → 「申込へ！」を使う`,
+  },
+  aix_logic_application_push: {
+    label: "申込へ！",
+    group: "aix_logic",
+    content: `【AIX「申込へ！」の発動条件】
+
+■ 発動するキーワード・状況
+・内覧後のお客様が感想・反応を示した時
+・「申込みたい」「お願いします」「進めたい」「決めます」
+・「キャンセルできますか」「キャンセル料は」（→ キャンセル無料を伝えながら申込促し）
+・「検討します」が来た後の返し
+
+■ 発動しないケース
+・まだ物件を見ていない・内覧前の段階`,
+  },
+  aix_logic_meeting_place: {
+    label: "待ち合わせ",
+    group: "aix_logic",
+    content: `【AIX「待ち合わせ」の発動条件】
+
+■ 発動するキーワード・状況
+・内覧日時が確定した（日付・時間が決まった）
+・「〇月〇日〇時でお願いします」「その日時で大丈夫です」
+・「どこで待ち合わせ」「どこに行けばいいですか」
+
+■ 発動しないケース
+・「入居で出してほしい」など入居日指定の見積書依頼 → 「見積書送る」を使う（誤検知注意）
+・まだ日時が決まっていない内覧希望 → 「内覧へ！」を使う`,
+  },
+  aix_logic_property_recommendation: {
+    label: "物件オススメ",
+    group: "aix_logic",
+    content: `【AIX「物件オススメ」の発動条件】
+
+■ 発動するキーワード・状況
+・条件ヒアリングが完了した直後（エリア・家賃・間取り等が揃った）
+・お客様から代替物件を求められた（物件なかった後）
+・「他の物件も見せて欲しい」「もっとオススメを」
+・物件確認した後（空室あり）にオススメ文を添えて送る時
+
+■ 代替物件の場合（2ボタン誘導）
+・複数物件を送る → 「物件送る」を選択
+・1件のみオススメする → 「物件オススメ」を選択`,
+  },
   aix_flow_guide: {
     label: "AIXフロー誘導ガイド",
     auto: true,
@@ -364,6 +467,7 @@ export async function GET() {
     is_custom: !!dbMap[key],
     readonly: defaults.readonly ?? false,
     auto: defaults.auto ?? false,
+    group: defaults.group ?? null,
   }));
 
   return NextResponse.json({ prompts, knowledgeCount: knowledgeCount ?? 0 });

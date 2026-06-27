@@ -476,12 +476,13 @@ export default function Home() {
   const [newRuleStatus, setNewRuleStatus] = useState("");
   const [newRuleAdding, setNewRuleAdding] = useState(false);
   const [showPromptModal, setShowPromptModal] = useState(false);
-  const [promptItems, setPromptItems] = useState<Array<{ key: string; label: string; content: string; is_custom: boolean; readonly?: boolean; auto?: boolean }>>([]);
+  const [promptItems, setPromptItems] = useState<Array<{ key: string; label: string; content: string; is_custom: boolean; readonly?: boolean; auto?: boolean; group?: string | null }>>([]);
   const [promptLoading, setPromptLoading] = useState(false);
   const [knowledgeCount, setKnowledgeCount] = useState<number | null>(null);
   const [editingPromptKey, setEditingPromptKey] = useState<string | null>(null);
   const [editingPromptContent, setEditingPromptContent] = useState("");
   const [promptSaving, setPromptSaving] = useState(false);
+  const [aixLogicExpanded, setAixLogicExpanded] = useState(false);
   const [accountChangeConvId, setAccountChangeConvId] = useState<string | null>(null);
   const [assignees, setAssignees] = useState<Record<string, string>>({});
   const [assigneeModalConvId, setAssigneeModalConvId] = useState<string | null>(null);
@@ -6854,6 +6855,8 @@ export default function Home() {
                     { key: "phase_guide_applying", label: "申込フェーズガイド", desc: "内覧・申込手続きの返し方" },
                     { key: "real_estate_rules", label: "不動産ルール", desc: "仲介手数料・敷礼金・保証会社・申込フロー等" },
                     { key: "smora_quick_patterns", label: "スモラ返信パターン集", desc: "実例から抽出した定型返信フレーズ一覧" },
+                    { key: "template_adapt_rules", label: "テンプレートAI最適化ルール", desc: "テンプレートAI生成時のルール（物件名置換・禁止事項）" },
+                    { key: "reply_content_rules", label: "返信ルール（内容について）", desc: "何を言う・言わないかの判断基準" },
                     { key: "aix_flow_guide", label: "AIXフロー誘導ガイド", desc: "どのAIXボタンを押すか・半自動化フロー（毎日AI自動更新）" },
                     { key: "management_company_hours", label: "管理会社の営業時間ルール", desc: "土日・18時以降の対応ルール（閲覧のみ）" },
                   ].map((meta) => {
@@ -6891,6 +6894,62 @@ export default function Home() {
                       </button>
                     );
                   })}
+
+                  {/* AIX提案ロジック グループ */}
+                  <button
+                    onClick={() => setAixLogicExpanded((v) => !v)}
+                    className="flex items-center gap-3 rounded-2xl border border-[#e9edef] bg-[#f8f9fa] px-4 py-3 text-left active:scale-[0.98] transition-all"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span className="text-[13px] font-bold text-[#111b21]">AIX提案ロジック</span>
+                        <span className="shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-[9px] font-bold text-orange-700">7ボタン</span>
+                      </div>
+                      <div className="text-[11px] text-[#8696a0]">各AIXボタンの発動条件・キーワード管理</div>
+                    </div>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8696a0" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: aixLogicExpanded ? "rotate(90deg)" : "none", transition: "transform 0.2s" }}>
+                      <path d="M9 18l6-6-6-6"/>
+                    </svg>
+                  </button>
+                  {aixLogicExpanded && (
+                    <div className="flex flex-col gap-1.5 pl-4">
+                      {[
+                        { key: "aix_logic_estimate_sheet", label: "💰 見積書送る", desc: "費用・入居日指定・見積再送の発動条件" },
+                        { key: "aix_logic_property_send", label: "🏠 物件送る", desc: "物件希望・追客の発動条件" },
+                        { key: "aix_logic_property_check", label: "🔍 物件確認した", desc: "URL送付・空室確認依頼の発動条件" },
+                        { key: "aix_logic_viewing_invite", label: "📅 内覧へ！", desc: "内覧希望・日程調整の発動条件" },
+                        { key: "aix_logic_application_push", label: "✍️ 申込へ！", desc: "内覧後・申込意欲の発動条件" },
+                        { key: "aix_logic_meeting_place", label: "📍 待ち合わせ", desc: "内覧日時確定後の発動条件" },
+                        { key: "aix_logic_property_recommendation", label: "⭐ 物件オススメ", desc: "条件整理後・代替物件の発動条件" },
+                      ].map((sub) => {
+                        const item = promptItems.find((p) => p.key === sub.key);
+                        const isCustom = item?.is_custom ?? false;
+                        return (
+                          <button
+                            key={sub.key}
+                            onClick={() => {
+                              setEditingPromptKey(sub.key);
+                              setEditingPromptContent(item?.content ?? "");
+                            }}
+                            className="flex items-center gap-3 rounded-xl border border-[#e9edef] bg-white px-4 py-2.5 text-left active:scale-[0.98] transition-all"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-0.5">
+                                <span className="text-[12px] font-bold text-[#111b21]">{sub.label}</span>
+                                {isCustom && (
+                                  <span className="shrink-0 rounded-full bg-purple-100 px-2 py-0.5 text-[9px] font-bold text-purple-700">カスタム</span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-[#8696a0]">{sub.desc}</div>
+                            </div>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8696a0" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M9 18l6-6-6-6"/>
+                            </svg>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -6906,7 +6965,7 @@ export default function Home() {
                   </div>
                 )}
                 <div className="text-center">
-                  <span className="text-[11px] text-[#8696a0]">カスタム編集済み: {promptItems.filter((p) => p.is_custom && !p.readonly).length} / 8件 / 保存後すぐ反映</span>
+                  <span className="text-[11px] text-[#8696a0]">カスタム編集済み: {promptItems.filter((p) => p.is_custom && !p.readonly).length}件 / 保存後すぐ反映</span>
                 </div>
               </div>
             )}
