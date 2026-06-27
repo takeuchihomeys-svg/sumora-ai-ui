@@ -4003,19 +4003,23 @@ export default function Home() {
                       <span className="text-[11px] font-bold text-[#388e3c]">物件確認した</span>
                       <span className="ml-1 text-[10px] text-[#5c85d6]">結果を選択</span>
                     </div>
-                    {dismissBtn}
-                    <button
-                      onClick={() => void handleQuickPropertyCheck("available")}
-                      className="shrink-0 rounded-full bg-[#4CAF50] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
-                    >✅ まだある</button>
-                    <button
-                      onClick={() => void handleQuickPropertyCheck("unavailable")}
-                      className="shrink-0 rounded-full bg-[#FF5722] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
-                    >❌ なかった</button>
-                    <button
-                      onClick={() => { setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id])); openAixDirect("property_check_result"); }}
-                      className="shrink-0 rounded-full bg-[#607D8B] px-2 py-0.5 text-[10px] text-white active:opacity-70"
-                    >詳細</button>
+                    <div className="flex shrink-0 items-start gap-1">
+                      {dismissBtn}
+                      <div className="flex flex-col items-end gap-1">
+                        <button
+                          onClick={() => void handleQuickPropertyCheck("available")}
+                          className="w-full rounded-full bg-[#4CAF50] px-3 py-0.5 text-[10px] font-bold text-white active:opacity-70"
+                        >まだある</button>
+                        <button
+                          onClick={() => void handleQuickPropertyCheck("unavailable")}
+                          className="w-full rounded-full bg-[#FF5722] px-3 py-0.5 text-[10px] font-bold text-white active:opacity-70"
+                        >なかった</button>
+                        <button
+                          onClick={() => { setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id])); openAixDirect("property_check_result"); }}
+                          className="w-full rounded-full bg-[#607D8B] px-3 py-0.5 text-[10px] text-white active:opacity-70"
+                        >詳細</button>
+                      </div>
+                    </div>
                   </>
                 ) : isAlternativeSend ? (
                   <>
