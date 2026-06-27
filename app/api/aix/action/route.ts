@@ -153,18 +153,16 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { action, account, customer_name, conversation_id, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done, vacancy_status, has_estimate, move_out_date, keyword, property_name } = body;
 
-    // 今日（JST）スタッフが既に送信済みか判定 → 挨拶を切り替える
+    // 今日（JST）スタッフがすでに挨拶メッセージを送っているか判定 → 挨拶を切り替える
+    // ※ 初期費用テンプレート等の挨拶なしメッセージは対象外。挨拶キーワードを含む場合のみ切り替え
     const todayJST = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const toJSTDate = (iso: string) => new Date(new Date(iso).getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const staffMessagedToday = (
-      // 主要: recent_messages の中に今日スタッフ送信があるか
-      (Array.isArray(recent_messages) && (recent_messages as Array<{ sender: string; rawCreatedAt?: string }>).some((m) => {
-        if (m.sender !== "staff" || !m.rawCreatedAt) return false;
-        return toJSTDate(m.rawCreatedAt) === todayJST;
-      }))
-      // フォールバック: last_message_at が今日（会話がアクティブなら挨拶不要）
-      || (!!(body as Record<string, unknown>).last_message_at && toJSTDate(String((body as Record<string, unknown>).last_message_at)) === todayJST)
-    );
+    const GREETING_KEYWORDS = ["お世話になっております", "お待たせ致しました", "夜分遅くに失礼"];
+    const staffMessagedToday = Array.isArray(recent_messages) && (recent_messages as Array<{ sender: string; rawCreatedAt?: string; text?: string }>).some((m) => {
+      if (m.sender !== "staff" || !m.rawCreatedAt || !m.text) return false;
+      if (toJSTDate(m.rawCreatedAt) !== todayJST) return false;
+      return GREETING_KEYWORDS.some((kw) => m.text!.includes(kw));
+    });
 
     // 直近の会話履歴テキスト（viewing_invite・application_push で使用）
     const recentHistory = Array.isArray(recent_messages) && recent_messages.length > 0

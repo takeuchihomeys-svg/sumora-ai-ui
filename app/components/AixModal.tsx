@@ -723,7 +723,6 @@ export default function AixModal({
         if (checkPattern === "available" && showCheckCalendar && checkCalendarInfo) body.calendar_info = checkCalendarInfo;
         if (checkPattern === "available" && checkAvailableApp) body.available_application = checkAvailableApp;
         if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
-        if (lastMessageAt) body.last_message_at = lastMessageAt;
         if (customerSummary) body.customer_summary = customerSummary;
       } else if (config.requiresImage && imageFile) {
         body.image_url = await uploadImage(imageFile);
