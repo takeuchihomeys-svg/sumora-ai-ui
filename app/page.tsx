@@ -3133,6 +3133,40 @@ export default function Home() {
     setAixModalType(type);
   };
 
+  // 物件確認した：提案バーから「まだある/なかった」をワンタップで生成
+  const handleQuickPropertyCheck = async (pattern: "available" | "unavailable") => {
+    if (!selectedConversation) return;
+    setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
+    setGenerating(true);
+    setReplyDraft("");
+    setDraftIsAi(false);
+    try {
+      const recentMsgs = (selectedConversation.messages || [])
+        .slice(-15)
+        .map((m) => ({ sender: m.sender, text: m.text || "" }));
+      const res = await fetch("/api/aix/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "property_check_result",
+          check_pattern: pattern,
+          customer_name: selectedConversation.customerName,
+          recent_messages: recentMsgs,
+          conversation_id: selectedConversation.id,
+        }),
+      });
+      const data = await res.json() as { ok: boolean; message_text?: string };
+      if (data.ok && data.message_text) {
+        setReplyDraft(data.message_text);
+        setDraftIsAi(true);
+      }
+    } catch (err) {
+      console.error("[quickPropertyCheck]", err);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   // 内覧・申込: ワンタップで生成→下書き反映→確認ダイアログ表示
   const triggerAixOneTap = async (action: "viewing_invite" | "application_push") => {
     if (!selectedConversation?.id) return;
@@ -3947,6 +3981,7 @@ export default function Home() {
             const label = AIX_CHAT_LABEL[nextSugg.action] ?? nextSugg.action;
             const isFollowUp = nextSugg.reason?.includes("未返信");
             const isAlternativeSend = nextSugg.action === "alternative_send";
+            const isPropertyCheck = nextSugg.action === "property_check_result";
             const dismissBtn = (
               <button
                 onClick={() => {
@@ -3962,7 +3997,27 @@ export default function Home() {
                 <svg className="h-3 w-3 shrink-0 text-[#1565c0]" viewBox="0 0 24 24" fill="currentColor">
                   <polygon points="5,3 19,12 5,21" />
                 </svg>
-                {isAlternativeSend ? (
+                {isPropertyCheck ? (
+                  <>
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[11px] font-bold text-[#388e3c]">物件確認した</span>
+                      <span className="ml-1 text-[10px] text-[#5c85d6]">結果を選択</span>
+                    </div>
+                    {dismissBtn}
+                    <button
+                      onClick={() => void handleQuickPropertyCheck("available")}
+                      className="shrink-0 rounded-full bg-[#4CAF50] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
+                    >✅ まだある</button>
+                    <button
+                      onClick={() => void handleQuickPropertyCheck("unavailable")}
+                      className="shrink-0 rounded-full bg-[#FF5722] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
+                    >❌ なかった</button>
+                    <button
+                      onClick={() => { setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id])); openAixDirect("property_check_result"); }}
+                      className="shrink-0 rounded-full bg-[#607D8B] px-2 py-0.5 text-[10px] text-white active:opacity-70"
+                    >詳細</button>
+                  </>
+                ) : isAlternativeSend ? (
                   <>
                     <div className="min-w-0 flex-1">
                       <span className="text-[11px] font-bold text-[#1565c0]">代替物件送る</span>
