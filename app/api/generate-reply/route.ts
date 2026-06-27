@@ -421,6 +421,7 @@ const SMORA_QUICK_PATTERNS = `
 ・承認・了解（短い場合）: 「かしこまりました！！\n〇〇させて頂きます！！」（挨拶なしで即アクション）
 ・承認・了解（長い場合）: 「〇〇さんお世話になっております！！\nかしこまりました！！\n〇〇させて頂きます！！」
 ・条件受け取り（復唱あり）: 「〇〇さんありがとうございます！！〇〇エリア全域から〇〇さんご希望のご条件にあった管理費込み〇万以内・〇㎡・〇〇のお部屋ピックアップし本日中にお送りさせて頂きます😊！！」
+・【条件表現ルール★重要】「緊急連絡先」を条件リストに含める時は「緊急連絡先でご入居可能」と表現する。「緊急連絡先設定可」「緊急連絡先可」は絶対禁止。例：「緊急連絡先でご入居可能・家賃〇万以内のご条件に合ったお部屋」
 ・条件追加: 「ご条件追加頂きありがとうございます😊！そちらのエリアも含めて本日中にはご提案させて頂きます！引き続きよろしくお願いいたします😌！」
 ・お客様がURL・物件画像を送ってきた（特定物件）→確認: 「〇〇さんお送り頂きありがとうございます😊！！お送り頂きました物件の募集状況確認させていただきます！！空室が確認でき次第、最大限割引させていただいた初期費用のお見積書もあわせてお送りさせていただきます！！確認出来次第ご連絡させて頂きます！！」
 ・お客様がエリアについて質問・興味示した（特定物件URLなし）→ピックアップ: 「〇〇エリア全域から〇〇さんのご希望のご条件に合ったお部屋全てピックアップしてお送りさせて頂きます！！」（「空室確認」は使わない）
@@ -1146,6 +1147,27 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
     }).join("\n\n");
 }
 
+// ─── スタッフが実際に呼んでいた名前を会話履歴から抽出 ────────────────────────
+// LINE表示名が短縮・略称の場合（例: "N"）、スタッフが実際に使っていた呼び名を優先する
+function extractPreferredName(
+  messages: Array<{ sender: string; text?: string | null }>,
+  lineDisplayName: string
+): string {
+  // 名前ではなくスキップすべき語句
+  const SKIP_RE = /^(お客様|皆|全|各|担当|スタッフ|こちら|弊社|管理|オーナー|業者|まずは|引き続き|何卒|改めて)/;
+  for (const msg of [...messages].reverse()) {
+    if (msg.sender !== "staff" || !msg.text) continue;
+    const matches = [...msg.text.matchAll(/([^\s、。！？\n【】「」（）・]{2,8}?)さん/g)];
+    for (const m of [...matches].reverse()) {
+      const name = m[1];
+      if (SKIP_RE.test(name)) continue;
+      // LINE表示名より長い（より詳細な）名前が見つかれば採用
+      return name;
+    }
+  }
+  return lineDisplayName;
+}
+
 // ─── POST ────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   if (!process.env.ANTHROPIC_API_KEY) {
@@ -1171,6 +1193,8 @@ export async function POST(req: NextRequest) {
     state = body.state;
     customerName = body.customerName || "";
     recentMessages = body.recentMessages || [];
+    // LINE表示名より会話でスタッフが実際に使った呼び名を優先
+    customerName = extractPreferredName(recentMessages, customerName);
     customerConditions = body.customerConditions || "";
     customerSummary = body.customerSummary || "";
     replyHint = body.replyHint || "";
