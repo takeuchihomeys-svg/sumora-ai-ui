@@ -155,10 +155,16 @@ export async function POST(request: NextRequest) {
 
     // 今日（JST）スタッフが既に送信済みか判定 → 挨拶を切り替える
     const todayJST = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const staffMessagedToday = Array.isArray(recent_messages) && (recent_messages as Array<{ sender: string; rawCreatedAt?: string }>).some((m) => {
-      if (m.sender !== "staff" || !m.rawCreatedAt) return false;
-      return new Date(new Date(m.rawCreatedAt).getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10) === todayJST;
-    });
+    const toJSTDate = (iso: string) => new Date(new Date(iso).getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const staffMessagedToday = (
+      // 主要: recent_messages の中に今日スタッフ送信があるか
+      (Array.isArray(recent_messages) && (recent_messages as Array<{ sender: string; rawCreatedAt?: string }>).some((m) => {
+        if (m.sender !== "staff" || !m.rawCreatedAt) return false;
+        return toJSTDate(m.rawCreatedAt) === todayJST;
+      }))
+      // フォールバック: last_message_at が今日（会話がアクティブなら挨拶不要）
+      || (!!(body as Record<string, unknown>).last_message_at && toJSTDate(String((body as Record<string, unknown>).last_message_at)) === todayJST)
+    );
 
     // 直近の会話履歴テキスト（viewing_invite・application_push で使用）
     const recentHistory = Array.isArray(recent_messages) && recent_messages.length > 0
@@ -1047,7 +1053,7 @@ ${mDate}[時間]に${mName}
     }
 
     // AIが内部メモを出力した場合、顧客向けメッセージと分離してnoticeとして返す
-    const { message: cleanedMessage, notice } = extractNotice(message_text, name);
+    const { message: cleanedMessage, notice } = extractNotice(message_text, familyName || rawName);
 
     return NextResponse.json({
       ok: true,
