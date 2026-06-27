@@ -9,6 +9,7 @@ import {
   GENERATION_SYSTEM,
   SMORA_QUICK_PATTERNS,
   REAL_ESTATE_RULES,
+  STATE_SEARCH_ALIASES,
 } from "@/app/lib/line-reply-prompts";
 
 // ─── モデル定義 ───────────────────────────────────────────────────────────────
@@ -530,14 +531,7 @@ ${conditions}${historyNote}
 }
 
 // ─── DB取得 ─────────────────────────────────────────────────────────────────
-// 新5段階ステートと旧ステートの対応（両方で検索してデータ漏れを防ぐ）
-const STATE_SEARCH_ALIASES: Record<string, string[]> = {
-  first_reply: ["first_reply"],
-  hearing:     ["hearing", "condition_hearing", "property_search"],
-  proposing:   ["proposing", "property_recommendation", "viewing", "estimate_request", "availability_check", "property_send"],
-  applying:    ["applying", "application", "screening", "contract", "application_push"],
-  closed_won:  ["closed_won"],
-};
+// STATE_SEARCH_ALIASES は @/app/lib/line-reply-prompts からインポート済み
 
 type KnowledgeRow = { id: string; title: string; content: string; category: string; conversation_state: string; importance: number };
 

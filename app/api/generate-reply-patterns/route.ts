@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { supabase } from "@/app/lib/supabase";
-import { PHASE_GUIDE, REAL_ESTATE_RULES, SMORA_QUICK_PATTERNS, EMOJI_RULE } from "@/app/lib/line-reply-prompts";
+import { PHASE_GUIDE, REAL_ESTATE_RULES, SMORA_QUICK_PATTERNS, EMOJI_RULE, STATE_SEARCH_ALIASES } from "@/app/lib/line-reply-prompts";
 
 const analysisModel = new ChatAnthropic({
   model: "claude-haiku-4-5-20251001",
@@ -24,13 +24,7 @@ export type AngleKey = (typeof PATTERN_LABELS)[number];
 
 
 // ─── ステート正規化 ──────────────────────────────────────────────────────────
-const STATE_SEARCH_ALIASES: Record<string, string[]> = {
-  first_reply: ["first_reply"],
-  hearing:     ["hearing", "condition_hearing", "property_search"],
-  proposing:   ["proposing", "property_recommendation", "viewing", "estimate_request", "availability_check", "property_send"],
-  applying:    ["applying", "application", "screening", "contract", "application_push"],
-  closed_won:  ["closed_won"],
-};
+// STATE_SEARCH_ALIASES は @/app/lib/line-reply-prompts からインポート済み
 const STATE_ALIAS: Record<string, string> = {
   condition_hearing: "hearing", property_search: "hearing",
   property_recommendation: "proposing", viewing: "proposing",
