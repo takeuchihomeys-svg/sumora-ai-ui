@@ -68,25 +68,30 @@ async function getPropertyKnowledge(): Promise<string> {
   const [{ data: diffLearned }, { data: stateKnowledge }] = await Promise.all([
     // ① 差分学習ルール（最優先）
     supabase.from("ai_reply_knowledge")
-      .select("title, content")
+      .select("id, title, content")
       .ilike("title", "%差分学習%")
       .gte("importance", 7)
       .order("created_at", { ascending: false })
       .limit(15),
     // ② フェーズ別ナレッジ
     supabase.from("ai_reply_knowledge")
-      .select("category, title, content")
+      .select("id, category, title, content")
       .in("conversation_state", ["property_recommendation", "proposing"])
       .gte("importance", 7)
       .not("title", "ilike", "%差分学習%")
       .order("importance", { ascending: false })
       .limit(12),
   ]);
+  // 使用追跡（fire-and-forget）
+  const usedIds = [...(diffLearned ?? []), ...(stateKnowledge ?? [])].map(r => (r as { id: string }).id).filter(Boolean);
+  if (usedIds.length) {
+    supabase.rpc("increment_knowledge_used_count", { p_ids: usedIds }).then(() => {}, () => {});
+  }
   const parts: string[] = [];
   if ((diffLearned?.length ?? 0) > 0)
     parts.push("【🔴 過去の修正パターン（必ず守る）】\n" + diffLearned!.map(r => `・${r.title}: ${r.content}`).join("\n"));
   if ((stateKnowledge?.length ?? 0) > 0)
-    parts.push("【物件オススメのノウハウ】\n" + (stateKnowledge as { category: string; title: string; content: string }[]).map(r => `・${r.content}`).join("\n"));
+    parts.push("【物件オススメのノウハウ】\n" + (stateKnowledge as { id: string; category: string; title: string; content: string }[]).map(r => `・${r.content}`).join("\n"));
   return parts.join("\n\n");
 }
 

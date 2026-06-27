@@ -125,12 +125,23 @@ export async function GET(req: NextRequest) {
     // 処理後に自動クリーンアップ
     const cleanup = toProcess.length > 0 ? await runKnowledgeCleanup() : null;
 
+    // 30日間一度も使われていないエントリを削除（importance>=9は除外）
+    const { data: unusedDeleted, error: unusedErr } = await supabase
+      .from("ai_reply_knowledge")
+      .delete()
+      .eq("used_count", 0)
+      .lt("importance", 9)
+      .lt("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+      .select("id");
+    const unusedDeletedCount = unusedErr ? 0 : (unusedDeleted?.length ?? 0);
+
     return NextResponse.json({
       ok: true,
       newly_processed: toProcess.length,
       remaining: unprocessed.length - toProcess.length,
       knowledge_entries_added: totalAdded,
       cleanup,
+      unused_deleted: unusedDeletedCount,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

@@ -444,6 +444,17 @@ ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS diff_analyzed_at TIMESTAM
 
 -- ai_reply_knowledge: pgvector類似検索用embeddingカラム
 ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS embedding vector(1536);
+
+-- ai_reply_knowledge: 使用回数トラッキング
+ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS used_count INTEGER DEFAULT 0;
+ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ;
+CREATE OR REPLACE FUNCTION increment_knowledge_used_count(p_ids UUID[])
+RETURNS void LANGUAGE sql AS $$
+  UPDATE ai_reply_knowledge
+  SET used_count = COALESCE(used_count, 0) + 1,
+      last_used_at = NOW()
+  WHERE id = ANY(p_ids);
+$$;
 CREATE INDEX IF NOT EXISTS ai_reply_knowledge_embedding_idx ON ai_reply_knowledge USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50);
 CREATE OR REPLACE FUNCTION match_reply_knowledge(query_embedding vector, match_count integer, min_importance integer DEFAULT 7)
 RETURNS TABLE(id uuid, title text, content text, category text, conversation_state text, importance integer, similarity float)

@@ -907,7 +907,13 @@ const STATE_SEARCH_ALIASES: Record<string, string[]> = {
   closed_won:  ["closed_won"],
 };
 
-type KnowledgeRow = { title: string; content: string; category: string; conversation_state: string; importance: number };
+type KnowledgeRow = { id: string; title: string; content: string; category: string; conversation_state: string; importance: number };
+
+function incrementKnowledgeUsage(ids: string[]): void {
+  if (!ids.length) return;
+  // fire-and-forget: used_count を +1、last_used_at を更新
+  supabase.rpc("increment_knowledge_used_count", { p_ids: ids }).then(() => {}, () => {});
+}
 
 async function fetchKnowledge(state: string, customerMessage?: string, analysisContext?: string): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
@@ -933,6 +939,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
         const patterns = vectorResults.filter(r => r.category === "pattern" && !r.title.includes("差分学習") && !r.title.includes("修正対比")).slice(0, 8);
         const phrases = vectorResults.filter(r => r.category === "phrase").slice(0, 6);
 
+        const used = [...diffLearned, ...correctionPairs, ...critical, ...patterns, ...phrases];
+        incrementKnowledgeUsage(used.map(r => r.id).filter(Boolean));
+
         const sections: string[] = [];
         if (diffLearned.length > 0) {
           sections.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned.map(k => `・${k.content}`).join("\n"));
@@ -956,25 +965,25 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
 
   // フォールバック: importance順検索（OPENAI_API_KEY未設定時 or embedding取得失敗時）
   const [{ data: stateDiff }, { data: globalDiff }, { data: correctionPairs }, { data: global }, { data: stateSpecific }] = await Promise.all([
-    supabase.from("ai_reply_knowledge").select("category, title, content, importance")
+    supabase.from("ai_reply_knowledge").select("id, category, title, content, importance")
       .ilike("title", "%差分学習%").gte("importance", 7)
       .in("conversation_state", stateAliases)
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false }).limit(15),
-    supabase.from("ai_reply_knowledge").select("category, title, content, importance")
+    supabase.from("ai_reply_knowledge").select("id, category, title, content, importance")
       .ilike("title", "%差分学習%").gte("importance", 7)
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false }).limit(10),
-    supabase.from("ai_reply_knowledge").select("category, title, content, importance")
+    supabase.from("ai_reply_knowledge").select("id, category, title, content, importance")
       .ilike("title", "%修正対比%").in("conversation_state", stateAliases)
       .order("importance", { ascending: false }).limit(20),
-    supabase.from("ai_reply_knowledge").select("category, title, content, importance")
+    supabase.from("ai_reply_knowledge").select("id, category, title, content, importance")
       .gte("importance", 8)
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
       .not("category", "eq", "principle")
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false }).limit(20),
-    supabase.from("ai_reply_knowledge").select("category, title, content, importance")
+    supabase.from("ai_reply_knowledge").select("id, category, title, content, importance")
       .in("conversation_state", stateAliases).gte("importance", 7)
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
       .not("category", "eq", "principle")
@@ -994,6 +1003,16 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   const critical = all.filter(k => (k.importance || 0) >= 9 && k.category === "principle");
   const patterns = all.filter(k => (k.importance || 0) >= 7 && k.category === "pattern");
   const phrases  = all.filter(k => k.category === "phrase");
+
+  // 使用追跡（fire-and-forget）
+  const usedIds = [
+    ...diffLearned,
+    ...(correctionPairs?.slice(0, 8) ?? []),
+    ...critical.slice(0, 15),
+    ...patterns.slice(0, 8),
+    ...phrases.slice(0, 6),
+  ].map(k => (k as KnowledgeRow).id).filter(Boolean);
+  incrementKnowledgeUsage(usedIds);
 
   const sections: string[] = [];
   if (diffLearned.length > 0) {
