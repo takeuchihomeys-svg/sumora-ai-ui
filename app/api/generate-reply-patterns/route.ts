@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { supabase } from "@/app/lib/supabase";
-import { PHASE_GUIDE, REAL_ESTATE_RULES, SMORA_QUICK_PATTERNS } from "@/app/lib/line-reply-prompts";
+import { PHASE_GUIDE, REAL_ESTATE_RULES, SMORA_QUICK_PATTERNS, EMOJI_RULE } from "@/app/lib/line-reply-prompts";
 
 const analysisModel = new ChatAnthropic({
   model: "claude-haiku-4-5-20251001",
@@ -318,7 +318,7 @@ async function generateAllPatterns(
 
 【共通ルール】
 ・文体・言い回し・文の長さ・絵文字の使い方は⭐実例に完全に合わせる
-・絵文字は 😊 😌 🌟 ✨ の4つのみ・1〜2個まで・文末か区切りのみ
+・${EMOJI_RULE}
 ・感嘆符「！」「！！」を文脈で使い分け
 ・「させて頂きます」「頂きます」を多用する（スモラの文体の核心）
 ・お客様名が「不明」の場合は名前を絶対に使わない
