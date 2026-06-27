@@ -12,6 +12,7 @@ export async function POST(req: NextRequest) {
     recentMessages,
     customerConditions,
     noEmoji,
+    soloEntry,
     pendingScheduledMessages,
     vacatingDate,
     staffMessagedToday,
@@ -22,6 +23,7 @@ export async function POST(req: NextRequest) {
     recentMessages?: Array<{ sender: string; text: string; imageUrl?: string }>;
     customerConditions?: string;
     noEmoji?: boolean;
+    soloEntry?: boolean;
     pendingScheduledMessages?: Array<{ text: string | null }>;
     vacatingDate?: { month: number; day: number } | null;
     staffMessagedToday?: boolean;
@@ -186,7 +188,7 @@ ${history || "なし"}
 ${processedTemplateText}
 
 ━━━━━━━━━━━━━━━━━━━━
-${extraRules ? `${extraRules}\n\n━━━━━━━━━━━━━━━━━━━━\n` : ""}出力は置き換え後のテキストのみ。説明・前置き・補足コメントは一切書かない。`;
+${extraRules ? `${extraRules}\n\n━━━━━━━━━━━━━━━━━━━━\n` : ""}${soloEntry ? `【1人入居モード — 厳守】以下のキーワードを含む行はすべて出力しない（完全に削除）：同居人・配偶者・同居者・家族構成・入居人数・お子様・子ども・子供・同居・ご家族\n\n━━━━━━━━━━━━━━━━━━━━\n` : ""}出力は置き換え後のテキストのみ。説明・前置き・補足コメントは一切書かない。`;
 
   try {
     const msg = await client.messages.create({

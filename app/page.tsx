@@ -68,6 +68,21 @@ function getTodayJST(): string {
   return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
 }
 
+// 会話履歴からスタッフが実際に使っていた呼び名を抽出（LINE表示名より優先）
+function extractPreferredName(messages: Array<{ sender: string; text?: string | null }>, lineDisplayName: string): string {
+  const SKIP_RE = /^(お客様|皆|全|各|担当|スタッフ|こちら|弊社|管理|オーナー|業者|まずは|引き続き|何卒|改めて)/;
+  for (const msg of [...messages].reverse()) {
+    if (msg.sender !== "staff" || !msg.text) continue;
+    const matches = [...msg.text.matchAll(/([^\s、。！？\n【】「」（）・]{2,8}?)さん/g)];
+    for (const m of [...matches].reverse()) {
+      const name = m[1];
+      if (SKIP_RE.test(name)) continue;
+      return name;
+    }
+  }
+  return lineDisplayName;
+}
+
 // ステータス（4段階）
 const DETAIL_STATUSES = [
   { key: "hearing",    label: "初回対応",     color: "bg-blue-100 text-blue-700",     dot: "bg-blue-400" },
@@ -1736,6 +1751,13 @@ export default function Home() {
     return customerMessages[customerMessages.length - 1]?.text ?? "";
   }, [selectedConversation]);
 
+  // スタッフが会話内で使っていた呼び名を優先（generate-reply-patterns / enhance-reply に渡す）
+  const preferredCustomerName = useMemo(
+    () => extractPreferredName(selectedConversation.messages || [], selectedConversation.customerName || ""),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedConversation.id, selectedConversation.messages?.length]
+  );
+
   // 申込フォーム自動検知（お客さんが氏名・フリガナ等を送ってきたとき）
   const isApplyFormDetected = useMemo(() => {
     const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
@@ -2002,7 +2024,7 @@ export default function Home() {
         body: JSON.stringify({
           message: targetMessage,
           state: selectedConversation.status,
-          customerName: selectedConversation.customerName,
+          customerName: preferredCustomerName,
           recentMessages,
           customerConditions: patternConditions,
           customerSummary: patternSummary,
@@ -2039,7 +2061,7 @@ export default function Home() {
           conversationState: selectedConversation.status,
           customerConditions: enhanceConditions,
           customerSummary: linkedCustomerForEnhance?.ai_summary ?? undefined,
-          customerName: selectedConversation.customerName,
+          customerName: preferredCustomerName,
           recentMessages: msgs.slice(-15).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined })),
           activeTasks: activeTaskTypes.length > 0 ? activeTaskTypes : undefined,
         }),
@@ -4874,8 +4896,8 @@ export default function Home() {
                 </div>
               );
 
-              // P2: 申込①（ステータス申込・審査）
-              if (isApplyStatus && !suggestApplyStep2Map[id] && !dismissedApplyStep1Ids.has(id)) return (
+              // P2: 申込①（ステータス=applying のみ）
+              if (selectedConversation.status === "applying" && !suggestApplyStep2Map[id] && !dismissedApplyStep1Ids.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-pink-400 bg-pink-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-pink-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>申込フォーマット ① を送る</span>
                   <button onClick={() => { setTemplateOpenContext("apply_step1"); setShowTemplateModal(true); }}
@@ -4883,6 +4905,30 @@ export default function Home() {
                     style={{ background: "linear-gradient(135deg, #ec4899, #be185d)" }}>①フォーマット</button>
                   <button onClick={() => setDismissedApplyStep1Ids((prev) => new Set([...prev, id]))}
                     className="shrink-0 text-pink-400 text-[11px] font-bold">✕</button>
+                </div>
+              );
+
+              // P2.5: 審査中バナー（書類催促・審査状況テンプレートへ誘導）
+              if (selectedConversation.status === "screening" && !dismissedApplyStep1Ids.has(id)) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-orange-400 bg-orange-50 px-3 py-2 flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-orange-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>審査中：書類確認・審査フォローテンプレートを送る</span>
+                  <button onClick={() => { setTemplateOpenContext("apply_step1"); setShowTemplateModal(true); }}
+                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                    style={{ background: "linear-gradient(135deg, #f97316, #ea580c)" }}>審査フォロー</button>
+                  <button onClick={() => setDismissedApplyStep1Ids((prev) => new Set([...prev, id]))}
+                    className="shrink-0 text-orange-400 text-[11px] font-bold">✕</button>
+                </div>
+              );
+
+              // P2.6: 契約中バナー（契約手続きテンプレートへ誘導）
+              if (selectedConversation.status === "contract" && !dismissedApplyStep1Ids.has(id)) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-purple-400 bg-purple-50 px-3 py-2 flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-purple-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>契約手続き：案内テンプレートを送る</span>
+                  <button onClick={() => { setTemplateOpenContext("apply_step1"); setShowTemplateModal(true); }}
+                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                    style={{ background: "linear-gradient(135deg, #9c27b0, #7b1fa2)" }}>契約テンプレート</button>
+                  <button onClick={() => setDismissedApplyStep1Ids((prev) => new Set([...prev, id]))}
+                    className="shrink-0 text-purple-400 text-[11px] font-bold">✕</button>
                 </div>
               );
 

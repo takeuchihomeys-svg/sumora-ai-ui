@@ -395,6 +395,7 @@ export default function TemplateModal({
           recentMessages,
           customerConditions: linkedCustomer?.conditions,
           noEmoji,
+          soloEntry,
           // 予約送信待ちのAIXメッセージを渡す（物件情報の優先ソース）
           pendingScheduledMessages: (pendingScheduledMessages ?? []).filter(m => m.text),
           vacatingDate: vacatingDates[tmpl.id] ?? null,
