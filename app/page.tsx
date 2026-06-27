@@ -483,7 +483,7 @@ export default function Home() {
   const [editingPromptContent, setEditingPromptContent] = useState("");
   const [promptSaving, setPromptSaving] = useState(false);
   const [aixLogicExpanded, setAixLogicExpanded] = useState(false);
-  const aixLogicSubRef = useRef<HTMLDivElement | null>(null);
+  const aixLogicBtnRef = useRef<HTMLButtonElement | null>(null);
   const [accountChangeConvId, setAccountChangeConvId] = useState<string | null>(null);
   const [assignees, setAssignees] = useState<Record<string, string>>({});
   const [assigneeModalConvId, setAssigneeModalConvId] = useState<string | null>(null);
@@ -7002,12 +7002,13 @@ export default function Home() {
 
                   {/* AIX提案ロジック グループ */}
                   <button
+                    ref={aixLogicBtnRef}
                     onClick={() => {
                       const next = !aixLogicExpanded;
                       setAixLogicExpanded(next);
                       if (next) {
                         setTimeout(() => {
-                          aixLogicSubRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                          aixLogicBtnRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
                         }, 80);
                       }
                     }}
@@ -7025,7 +7026,7 @@ export default function Home() {
                     </svg>
                   </button>
                   {aixLogicExpanded && (
-                    <div ref={aixLogicSubRef} className="flex flex-col gap-1.5 pl-4">
+                    <div className="flex flex-col gap-1.5 pl-4">
                       {[
                         { key: "aix_logic_estimate_sheet", label: "💰 見積書送る", desc: "費用・入居日指定・見積再送の発動条件" },
                         { key: "aix_logic_property_send", label: "🏠 物件送る", desc: "物件希望・追客の発動条件" },
