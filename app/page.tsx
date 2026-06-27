@@ -3960,9 +3960,11 @@ export default function Home() {
               meeting_place: "待ち合わせ",
               property_recommendation: "物件オススメ",
               property_check_result: "物件確認した",
+              alternative_send: "代替物件送る",
             };
             const label = AIX_CHAT_LABEL[nextSugg.action] ?? nextSugg.action;
             const isFollowUp = nextSugg.reason?.includes("未返信");
+            const isAlternativeSend = nextSugg.action === "alternative_send";
             const dismissBtn = (
               <button
                 onClick={() => {
@@ -3978,7 +3980,29 @@ export default function Home() {
                 <svg className="h-3 w-3 shrink-0 text-[#1565c0]" viewBox="0 0 24 24" fill="currentColor">
                   <polygon points="5,3 19,12 5,21" />
                 </svg>
-                {isFollowUp ? (
+                {isAlternativeSend ? (
+                  <>
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[11px] font-bold text-[#1565c0]">代替物件送る</span>
+                      <span className="ml-1 text-[10px] text-[#5c85d6]">複数→物件送る　1件→物件オススメ</span>
+                    </div>
+                    {dismissBtn}
+                    <button
+                      onClick={() => {
+                        setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
+                        openAixDirect("property_send");
+                      }}
+                      className="shrink-0 rounded-full bg-[#1976d2] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
+                    >物件送る</button>
+                    <button
+                      onClick={() => {
+                        setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
+                        openAixDirect("property_recommendation");
+                      }}
+                      className="shrink-0 rounded-full bg-[#0288d1] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
+                    >物件オススメ</button>
+                  </>
+                ) : isFollowUp ? (
                   <>
                     <div className="min-w-0 flex-1">
                       <span className="text-[11px] font-bold text-[#1565c0]">追客</span>

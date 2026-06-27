@@ -43,6 +43,11 @@ export async function POST(req: NextRequest) {
   if (!conv || !messages?.length) return NextResponse.json({ action: null, reason: "" });
   if (SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ action: null, reason: "" });
 
+  // 物件確認結果（unavailable）の後にお客様が返信 → 代替物件送りへ誘導
+  if (last_aix_action === "property_check_result" && conv.last_sender === "customer") {
+    return NextResponse.json({ action: "alternative_send", reason: "代替物件を送る", source: "chain_rule" });
+  }
+
   // スタッフが最後に送信 → 3日以上返信なしなら物件送るを誘導
   if (conv.last_sender === "staff") {
     const latestMsg = messages[0]; // order: desc なので最新が先頭
