@@ -491,7 +491,9 @@ ${SMORA_COMMON_RULES}`;
         const countStr = imgCount > 0 ? `${imgCount}件` : "複数件";
         const greeting = jstHourNow >= 21
           ? `${name}さん夜分遅くに失礼致します！！`
-          : `${name}さんお世話になっております！！`;
+          : isSameDay
+            ? `${name}さんお待たせ致しました！！`
+            : `${name}さんお世話になっております！！`;
         const vacatingSection = vacatingInfo
           ? `\n\n${vacatingInfo}`
           : "";
