@@ -4784,19 +4784,35 @@ export default function Home() {
               )}
 
               {/* 辞書ボタン（本マークのみ） */}
-              <button
-                onClick={() => setShowTemplateModal(true)}
-                className="shrink-0 flex h-8 w-8 items-center justify-center rounded-full shadow-sm transition-colors"
-                style={activeAixFlow
-                  ? { backgroundColor: AIX_ACTION_META[activeAixFlow]?.color, borderColor: "transparent", color: "white" }
-                  : { backgroundColor: "white", border: "1px solid #d1d7db", color: "#54656f" }}
-                title="テンプレート一覧"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
-                  <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
-                </svg>
-              </button>
+              {(() => {
+                const _status = selectedConversation?.status ?? "";
+                const _msgs = selectedConversation?.messages || [];
+                const _lastStaff = [..._msgs].reverse().find((m: Message) => m.sender === "staff");
+                const _applyGlow = !activeAixFlow && (
+                  ["applying", "screening", "contract"].includes(_status) ||
+                  !!(_lastStaff?.text && /お申込み|申込み|申込フォーム/.test(_lastStaff.text))
+                );
+                return (
+                  <button
+                    onClick={() => {
+                      if (_applyGlow) setTemplateOpenContext("apply_step1");
+                      setShowTemplateModal(true);
+                    }}
+                    className={`shrink-0 flex h-8 w-8 items-center justify-center rounded-full shadow-sm transition-colors${_applyGlow ? " animate-pulse" : ""}`}
+                    style={_applyGlow
+                      ? { backgroundColor: "#ec4899", borderColor: "transparent", color: "white", boxShadow: "0 0 0 4px rgba(236,72,153,0.25)" }
+                      : activeAixFlow
+                        ? { backgroundColor: AIX_ACTION_META[activeAixFlow]?.color, borderColor: "transparent", color: "white" }
+                        : { backgroundColor: "white", border: "1px solid #d1d7db", color: "#54656f" }}
+                    title={_applyGlow ? "申込フォーマット①を送る" : "テンプレート一覧"}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                    </svg>
+                  </button>
+                );
+              })()}
 
               {/* 画像添付（＋のみ） */}
               <button
