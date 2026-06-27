@@ -153,6 +153,13 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { action, account, customer_name, conversation_id, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done, vacancy_status, has_estimate, move_out_date, keyword, property_name } = body;
 
+    // 今日（JST）スタッフが既に送信済みか判定 → 挨拶を切り替える
+    const todayJST = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const staffMessagedToday = Array.isArray(recent_messages) && (recent_messages as Array<{ sender: string; rawCreatedAt?: string }>).some((m) => {
+      if (m.sender !== "staff" || !m.rawCreatedAt) return false;
+      return new Date(new Date(m.rawCreatedAt).getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10) === todayJST;
+    });
+
     // 直近の会話履歴テキスト（viewing_invite・application_push で使用）
     const recentHistory = Array.isArray(recent_messages) && recent_messages.length > 0
       ? "\n\n【直近の会話履歴（この流れを踏まえて文を作ること）】\n" +
@@ -918,7 +925,8 @@ ${availableTemplate}`;
 
       // 「物件なかった」は固定テンプレ専用フロー
       } else if (pattern === "unavailable") {
-        const unavailableTemplate = `${name}お世話になっております！！
+        const unavailableGreeting = staffMessagedToday ? "お待たせ致しました！！" : "お世話になっております！！";
+        const unavailableTemplate = `${name}${unavailableGreeting}
 お送り頂きました[物件表現]募集終了しているお部屋となります。`;
 
         const unavailableSystem = `あなたはテキスト置換エンジンです。

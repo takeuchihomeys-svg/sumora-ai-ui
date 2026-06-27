@@ -5979,7 +5979,7 @@ export default function Home() {
           customerName={selectedConversation.customerName}
           conversationState={selectedConversation.status}
           recentMessages={(selectedConversation.messages || []).slice(-15).map((m: Message) => ({
-            sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined,
+            sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined, rawCreatedAt: m.rawCreatedAt,
           }))}
           pendingScheduledMessages={scheduledMsgsList.filter(m => m.text)}
           linkedCustomer={linkedCustomerMap[selectedConversation.id]}

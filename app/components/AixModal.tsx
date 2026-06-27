@@ -27,7 +27,7 @@ interface AixModalProps {
   initialImageFile?: File;
   linkedCustomer?: LinkedCustomer;
   customerConditions?: string;
-  recentMessages?: Array<{ sender: string; text: string }>;
+  recentMessages?: Array<{ sender: string; text: string; imageUrl?: string; rawCreatedAt?: string }>;
   customerSummary?: string | null;
   lineUserId: string;
   lastScheduledAt?: string;
