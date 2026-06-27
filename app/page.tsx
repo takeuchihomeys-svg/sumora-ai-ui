@@ -6079,6 +6079,14 @@ export default function Home() {
           recentMessages={(selectedConversation.messages || []).slice(-15).map((m: Message) => ({
             sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined, rawCreatedAt: m.rawCreatedAt,
           }))}
+          staffMessagedToday={(() => {
+            const msgs = selectedConversation.messages || [];
+            const lastStaff = [...msgs].reverse().find((m: Message) => m.sender === "staff");
+            if (!lastStaff?.rawCreatedAt) return false;
+            const d = new Date(new Date(lastStaff.rawCreatedAt).getTime() + 9 * 3600 * 1000);
+            const t = new Date(Date.now() + 9 * 3600 * 1000);
+            return d.getUTCFullYear() === t.getUTCFullYear() && d.getUTCMonth() === t.getUTCMonth() && d.getUTCDate() === t.getUTCDate();
+          })()}
           pendingScheduledMessages={scheduledMsgsList.filter(m => m.text)}
           linkedCustomer={linkedCustomerMap[selectedConversation.id]}
           initialCategory={

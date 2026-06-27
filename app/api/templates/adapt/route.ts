@@ -14,6 +14,7 @@ export async function POST(req: NextRequest) {
     noEmoji,
     pendingScheduledMessages,
     vacatingDate,
+    staffMessagedToday,
   } = await req.json() as {
     templateText: string;
     customerName?: string;
@@ -23,6 +24,7 @@ export async function POST(req: NextRequest) {
     noEmoji?: boolean;
     pendingScheduledMessages?: Array<{ text: string | null }>;
     vacatingDate?: { month: number; day: number } | null;
+    staffMessagedToday?: boolean;
   };
 
   // 退去予定日を前処理でテンプレートに埋め込む
@@ -39,6 +41,19 @@ export async function POST(req: NextRequest) {
 
   if (!templateText) {
     return NextResponse.json({ ok: false, error: "templateText required" }, { status: 400 });
+  }
+
+  // 挨拶をルールに従って前処理で差し替える
+  const GREETING_RE = /お世話になっております！！?|お待たせ致しました！！?|夜分遅くに失礼致します！！?/g;
+  if (GREETING_RE.test(processedTemplateText)) {
+    const jstHour = (new Date().getUTCHours() + 9) % 24;
+    const correctGreeting = staffMessagedToday
+      ? (jstHour >= 21 ? "夜分遅くに失礼致します！！" : "お待たせ致しました！！")
+      : "お世話になっております！！";
+    processedTemplateText = processedTemplateText.replace(
+      /お世話になっております！！?|お待たせ致しました！！?|夜分遅くに失礼致します！！?/g,
+      correctGreeting,
+    );
   }
 
   // DBからテンプレート追加ルールを取得
