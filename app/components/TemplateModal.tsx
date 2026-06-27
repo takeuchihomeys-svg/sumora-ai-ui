@@ -193,6 +193,17 @@ export default function TemplateModal({
   const categoryEditInputRef = useRef<HTMLInputElement | null>(null);
   // AIXカテゴリ: テンプレートカードごとの訴求ポイント選択状態
   const [focusPointsMap, setFocusPointsMap] = useState<Record<string, string[]>>({});
+  const [soloEntry, setSoloEntry] = useState(false);
+
+  function applySoloEntry(text: string): string {
+    const SOLO_RE = /同居人|配偶者|同居者|家族構成|入居人数|お子様|子ども|子供|同居|ご家族/;
+    return text
+      .split("\n")
+      .filter(line => !SOLO_RE.test(line))
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
 
   function highlightTemplateVars(text: string): React.ReactNode[] {
     const parts = text.split(/(アカウント名|〇〇|○○)/g);
@@ -233,6 +244,7 @@ export default function TemplateModal({
   };
 
   useEffect(() => { loadTemplates(); }, []);
+  useEffect(() => { setSoloEntry(false); }, [category]);
 
   const commitCategoryRename = async () => {
     const oldCat = editingCategory;
@@ -608,6 +620,16 @@ export default function TemplateModal({
                       </div>
                     </div>
                   )}
+                  {!isSearching && (category === "申込・審査" || displayFiltered.some(t => /同居人|配偶者/.test(t.text))) && (
+                    <div className="flex justify-end">
+                      <button
+                        onClick={() => setSoloEntry(v => !v)}
+                        className={`rounded-full px-3 py-1 text-[10px] font-bold border transition-colors ${soloEntry ? "bg-pink-500 text-white border-transparent shadow-sm" : "bg-white text-[#667781] border-[#d1d7db]"}`}
+                      >
+                        {soloEntry ? "✓ 1人入居モード" : "👤 1人入居"}
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
               {loading ? (
@@ -629,7 +651,8 @@ export default function TemplateModal({
                     const idx = filtered.indexOf(tmpl);
                     const adapted = adaptedTexts[tmpl.id];
                     const isOcrTemplate = tmpl.text.includes("[物件名]") && tmpl.text.includes("[住所]");
-                    const displayText = extractedTexts[tmpl.id] || adapted || tmpl.text;
+                    const _rawText = extractedTexts[tmpl.id] || adapted || tmpl.text;
+                    const displayText = soloEntry ? applySoloEntry(_rawText) : _rawText;
                     const isHighlighted = !!highlightKeyword && (tmpl.label.includes(highlightKeyword) || tmpl.text.includes(highlightKeyword));
                     const isVacating = tmpl.label.includes("退去予定") || /[○〇]月[○〇]日退去予定|退去予定|退去後/.test(tmpl.text);
                     return (
