@@ -136,15 +136,31 @@ async function callClaudeVision(system: string, content: unknown[]): Promise<str
 }
 
 // AIが内部メモを出力した場合、顧客向けメッセージと分離する
+// 検出対象: 「名前さん＋挨拶キーワード」または「挨拶キーワード単体」の前にある前置き
+// ※ 名前が本文中に出てくる物件オススメ等では誤検出しないよう、名前は挨拶との直接連接のみ対象
 function extractNotice(text: string, customerName: string): { message: string; notice: string | null } {
   const trimmed = text.trim();
-  const nameIdx = trimmed.indexOf(customerName + "さん");
-  const GREETING_STARTS = ["お世話になっております", "お待たせ致しました", "夜分遅くに失礼"];
-  const greetingIdx = GREETING_STARTS.reduce((min, kw) => {
+  const GREETING_KEYWORDS = ["お世話になっております", "お待たせ致しました", "夜分遅くに失礼"];
+
+  // 「名前さん＋挨拶」の連接パターンを検索（名前＋さん＋空白ゼロ個以上＋挨拶）
+  let nameGreetingIdx = -1;
+  for (const kw of GREETING_KEYWORDS) {
+    const pattern = new RegExp(customerName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "さん\\s*" + kw);
+    const m = trimmed.match(pattern);
+    if (m && m.index !== undefined && (nameGreetingIdx < 0 || m.index < nameGreetingIdx)) {
+      nameGreetingIdx = m.index;
+    }
+  }
+
+  // 名前なし挨拶キーワード単体の最小位置
+  const standaloneIdx = GREETING_KEYWORDS.reduce((min, kw) => {
     const idx = trimmed.indexOf(kw);
     return idx >= 0 && idx < min ? idx : min;
   }, Infinity as number);
-  const startIdx = nameIdx >= 0 ? nameIdx : (greetingIdx < Infinity ? greetingIdx : -1);
+
+  // 名前＋挨拶連接を優先、なければ挨拶単体
+  const startIdx = nameGreetingIdx >= 0 ? nameGreetingIdx : (standaloneIdx < Infinity ? standaloneIdx : -1);
+
   if (startIdx > 0) {
     const notice = trimmed.slice(0, startIdx).trim();
     return { message: trimmed.slice(startIdx).trim(), notice: notice || null };
