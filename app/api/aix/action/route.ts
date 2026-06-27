@@ -526,15 +526,17 @@ ${SMORA_COMMON_RULES}`;
 
       // 挨拶判定: こちらの最後の送信が今日→「お待たせ致しました」、昨日以前→「お世話になっております」
       const jstHourNow = (new Date().getUTCHours() + 9) % 24;
-      const openingLine: string = staffMessagedToday
-        ? (jstHourNow >= 21
-            ? `①「[お客様名]さん夜分遅くに失礼致します！！」で始める`
-            : `①「[お客様名]さんお待たせ致しました！！」で始める`)
-        : `①「[お客様名]さんお世話になっております！！」で始める`;
+      const openingLine: string = jstHourNow >= 21
+        ? `①「[お客様名]さん夜分遅くに失礼致します！！」で始める`
+        : staffMessagedToday
+          ? `①「[お客様名]さんお待たせ致しました！！」で始める`
+          : `①「[お客様名]さんお世話になっております！！」で始める`;
       // 例文・テンプレ用の挨拶文
-      const greetingLine = staffMessagedToday
-        ? (jstHourNow >= 21 ? `${name}さん夜分遅くに失礼致します！！` : `${name}さんお待たせ致しました！！`)
-        : `${name}さんお世話になっております！！`;
+      const greetingLine = jstHourNow >= 21
+        ? `${name}さん夜分遅くに失礼致します！！`
+        : staffMessagedToday
+          ? `${name}さんお待たせ致しました！！`
+          : `${name}さんお世話になっております！！`;
 
       // 新着物件モード: 固定テンプレート（AI不要）
       if (sendMode === "new_arrival") {
@@ -573,7 +575,7 @@ ${openingLine}
 ・感嘆符は「！！」のみ・絵文字は 😌 のみ1個
 
 【出力例】
-${staffMessagedToday ? (jstHourNow >= 21 ? "Rさん夜分遅くに失礼致します！！" : "Rさんお待たせ致しました！！") : "Rさんお世話になっております！！"}
+${jstHourNow >= 21 ? "Rさん夜分遅くに失礼致します！！" : staffMessagedToday ? "Rさんお待たせ致しました！！" : "Rさんお世話になっております！！"}
 
 大阪市内全域からカウンターキッチン付きのお部屋でRさんご希望のご条件に近いお部屋ピックアップさせて頂きました！！
 お手隙の際にご査収ください😌！！${sendExamplesText}`
@@ -595,7 +597,7 @@ ${openingLine}
 ・感嘆符は「！！」（スモラスタイル）・LINEでそのまま送れる完成文のみ出力・絵文字は 😊 😌 のみ・1〜2個まで
 
 【出力例】
-${staffMessagedToday ? (jstHourNow >= 21 ? "Rさん夜分遅くに失礼致します！！" : "Rさんお待たせ致しました！！") : "Rさんお世話になっております！！"}
+${jstHourNow >= 21 ? "Rさん夜分遅くに失礼致します！！" : staffMessagedToday ? "Rさんお待たせ致しました！！" : "Rさんお世話になっております！！"}
 
 大阪駅・難波駅周辺全域からRさんご希望のご条件に合ったお部屋ピックアップさせて頂きました！！
 
