@@ -139,8 +139,12 @@ async function callClaudeVision(system: string, content: unknown[]): Promise<str
 function extractNotice(text: string, customerName: string): { message: string; notice: string | null } {
   const trimmed = text.trim();
   const nameIdx = trimmed.indexOf(customerName + "さん");
-  const greetingIdx = trimmed.indexOf("お世話になっております");
-  const startIdx = nameIdx >= 0 ? nameIdx : greetingIdx;
+  const GREETING_STARTS = ["お世話になっております", "お待たせ致しました", "夜分遅くに失礼"];
+  const greetingIdx = GREETING_STARTS.reduce((min, kw) => {
+    const idx = trimmed.indexOf(kw);
+    return idx >= 0 && idx < min ? idx : min;
+  }, Infinity as number);
+  const startIdx = nameIdx >= 0 ? nameIdx : (greetingIdx < Infinity ? greetingIdx : -1);
   if (startIdx > 0) {
     const notice = trimmed.slice(0, startIdx).trim();
     return { message: trimmed.slice(startIdx).trim(), notice: notice || null };
