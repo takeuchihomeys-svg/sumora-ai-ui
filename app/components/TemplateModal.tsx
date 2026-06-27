@@ -51,6 +51,7 @@ export default function TemplateModal({
   const [editRequiresImage, setEditRequiresImage] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
   const [noEmoji, setNoEmoji] = useState(false);
+  const [aixPurposeFilter, setAixPurposeFilter] = useState<"内覧" | "申込">("内覧");
   const [inspectingId, setInspectingId] = useState<string | null>(null);
   const [templateImages, setTemplateImages] = useState<Record<string, File[]>>({});
   const [templateImagePreviews, setTemplateImagePreviews] = useState<Record<string, string[]>>({});
@@ -145,6 +146,15 @@ export default function TemplateModal({
       )
     : templates.filter((t) => t.category === category)
   ).sort((a, b) => (a.sort_order ?? Number.MAX_SAFE_INTEGER) - (b.sort_order ?? Number.MAX_SAFE_INTEGER));
+
+  const isAixCategory = category === "物件オススメ【AIX】" && !isSearching;
+  const displayFiltered = isAixCategory
+    ? filtered.filter(t => {
+        const els = detectTemplateElements(t.text);
+        if (aixPurposeFilter === "内覧") return els.some(e => e.label === "内覧誘導");
+        return els.some(e => e.label === "申込誘導");
+      })
+    : filtered;
 
   const handleAdd = async () => {
     if (!newLabel.trim() || !newText.trim()) return;
@@ -438,27 +448,43 @@ export default function TemplateModal({
           {!showAddForm && (
             <div className="p-4">
               {!loading && filtered.length > 0 && (
-                <div className="mb-3 flex items-center justify-between gap-2">
-                  <div className={`flex-1 flex items-center gap-1.5 rounded-xl px-3 py-2 ${linkedCustomer ? "bg-emerald-50 border border-emerald-200" : "bg-amber-50 border border-amber-200"}`}>
-                    <span className={`text-[11px] ${linkedCustomer ? "text-emerald-700" : "text-amber-700"}`}>
-                      {linkedCustomer ? `🔗 ${linkedCustomer.name}さんの希望条件で最適化します` : "👤 お客様を紐付けると駅名・間取りが自動で合わせられます"}
-                    </span>
+                <div className="mb-3 flex flex-col gap-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className={`flex-1 flex items-center gap-1.5 rounded-xl px-3 py-2 ${linkedCustomer ? "bg-emerald-50 border border-emerald-200" : "bg-amber-50 border border-amber-200"}`}>
+                      <span className={`text-[11px] ${linkedCustomer ? "text-emerald-700" : "text-amber-700"}`}>
+                        {linkedCustomer ? `🔗 ${linkedCustomer.name}さんの希望条件で最適化します` : "👤 お客様を紐付けると駅名・間取りが自動で合わせられます"}
+                      </span>
+                    </div>
+                    <div className="flex rounded-full border border-[#d1d7db] overflow-hidden text-[10px] font-bold shrink-0">
+                      <button
+                        onClick={() => setNoEmoji(false)}
+                        className={`px-2.5 py-1 transition-colors ${!noEmoji ? "bg-[#1565C0] text-white" : "bg-white text-[#888]"}`}
+                      >絵文字あり</button>
+                      <button
+                        onClick={() => setNoEmoji(true)}
+                        className={`px-2.5 py-1 transition-colors ${noEmoji ? "bg-[#1565C0] text-white" : "bg-white text-[#888]"}`}
+                      >絵文字なし</button>
+                    </div>
                   </div>
-                  <div className="flex rounded-full border border-[#d1d7db] overflow-hidden text-[10px] font-bold shrink-0">
-                    <button
-                      onClick={() => setNoEmoji(false)}
-                      className={`px-2.5 py-1 transition-colors ${!noEmoji ? "bg-[#1565C0] text-white" : "bg-white text-[#888]"}`}
-                    >絵文字あり</button>
-                    <button
-                      onClick={() => setNoEmoji(true)}
-                      className={`px-2.5 py-1 transition-colors ${noEmoji ? "bg-[#1565C0] text-white" : "bg-white text-[#888]"}`}
-                    >絵文字なし</button>
-                  </div>
+                  {isAixCategory && (
+                    <div className="flex justify-end">
+                      <div className="flex rounded-full border border-[#d1d7db] overflow-hidden text-[10px] font-bold shrink-0">
+                        <button
+                          onClick={() => setAixPurposeFilter("内覧")}
+                          className={`px-2.5 py-1 transition-colors ${aixPurposeFilter === "内覧" ? "bg-[#1565C0] text-white" : "bg-white text-[#888]"}`}
+                        >内覧誘導</button>
+                        <button
+                          onClick={() => setAixPurposeFilter("申込")}
+                          className={`px-2.5 py-1 transition-colors ${aixPurposeFilter === "申込" ? "bg-[#1565C0] text-white" : "bg-white text-[#888]"}`}
+                        >申込誘導</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
               {loading ? (
                 <div className="py-8 text-center text-[13px] text-[#aaa]">読み込み中...</div>
-              ) : filtered.length === 0 ? (
+              ) : displayFiltered.length === 0 ? (
                 <div className="py-8 text-center">
                   <div className="text-[13px] text-[#aaa] mb-3">このカテゴリにテンプレートがありません</div>
                   <button
@@ -471,7 +497,8 @@ export default function TemplateModal({
                 </div>
               ) : (
                 <div className="flex flex-col gap-3">
-                  {filtered.map((tmpl, idx) => {
+                  {displayFiltered.map((tmpl) => {
+                    const idx = filtered.indexOf(tmpl);
                     const adapted = adaptedTexts[tmpl.id];
                     const isOcrTemplate = tmpl.text.includes("[物件名]") && tmpl.text.includes("[住所]");
                     const displayText = extractedTexts[tmpl.id] || adapted || tmpl.text;
