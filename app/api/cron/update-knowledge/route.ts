@@ -125,15 +125,26 @@ export async function GET(req: NextRequest) {
     // 処理後に自動クリーンアップ
     const cleanup = toProcess.length > 0 ? await runKnowledgeCleanup() : null;
 
-    // 30日間一度も使われていないエントリを削除（importance>=9は除外）
-    const { data: unusedDeleted, error: unusedErr } = await supabase
-      .from("ai_reply_knowledge")
-      .delete()
-      .eq("used_count", 0)
-      .lt("importance", 9)
-      .lt("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
-      .select("id");
-    const unusedDeletedCount = unusedErr ? 0 : (unusedDeleted?.length ?? 0);
+    // 未使用エントリ自動削除
+    // 差分学習・修正対比・importance>=9 は削除しない（最重要知識）
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+
+    // importance<=6（style・低品質フレーズ）: 30日未使用で削除
+    const { data: lowDeleted } = await supabase
+      .from("ai_reply_knowledge").delete()
+      .eq("used_count", 0).lte("importance", 6)
+      .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
+      .lt("created_at", thirtyDaysAgo).select("id");
+
+    // importance 7-8（通常パターン・フレーズ）: 90日未使用で削除
+    const { data: midDeleted } = await supabase
+      .from("ai_reply_knowledge").delete()
+      .eq("used_count", 0).gte("importance", 7).lte("importance", 8)
+      .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
+      .lt("created_at", ninetyDaysAgo).select("id");
+
+    const unusedDeletedCount = (lowDeleted?.length ?? 0) + (midDeleted?.length ?? 0);
 
     return NextResponse.json({
       ok: true,
