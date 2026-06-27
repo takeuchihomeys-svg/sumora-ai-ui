@@ -98,6 +98,13 @@ export async function POST(req: NextRequest) {
     .filter((m) => m.sender === "customer" && (m.text as string)?.trim())
     .at(-1)?.text as string ?? "";
 
+  // 入居日を指定して見積書再送を要求 → 見積書送る（「待ち合わせ」と誤判定しないよう最優先でチェック）
+  const DATE_ENTRY_ESTIMATE_RE = /\d+[\/月]\d+[日]?.*入居|入居.*\d+[\/月]\d+[日]?/;
+  if ((DATE_ENTRY_ESTIMATE_RE.test(lastCustomerMsg) || lastCustomerMsg.includes("入居")) &&
+      (lastCustomerMsg.includes("出して") || lastCustomerMsg.includes("出してほしい") || lastCustomerMsg.includes("で出し") || lastCustomerMsg.includes("見積"))) {
+    return NextResponse.json({ action: "estimate_sheet", reason: "入居日指定・見積書再送", source: "trigger_rule" });
+  }
+
   // 物件画像・動画が送られてきた場合は即座に「物件確認した」を提案
   const IMAGE_CHECK_STATUSES = new Set(["first_reply", "hearing", "proposing", "property_recommendation", "availability_check", "condition_hearing"]);
   if ((lastCustomerMsg === "[画像]" || lastCustomerMsg === "[動画]") && IMAGE_CHECK_STATUSES.has(currentStatus)) {
