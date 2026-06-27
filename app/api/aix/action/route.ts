@@ -333,15 +333,20 @@ ${SMORA_COMMON_RULES}`;
       };
       const accountName = ACCOUNT_NAMES[String(account || "sumora")] ?? "スモラ";
 
-      // 固定フォーマットでテキスト生成（estimate/page.tsx の generateLineText と同じロジック）
       const est = estimate as Record<string, unknown>;
       const propertyName = String(est.property_name || "");
       const roomNumber   = String(est.room_number   || "");
-      const total        = Number(est.total          || 0);
-      const discount     = Number(est.discount       || 0);
-      const rent         = Number(est.rent           || 0);
-      const commission   = Number(est.commission     || 0);
-      const commTax      = Number(est.commission_tax || 0);
+      // 数値として正常に読み取れた値のみ使用（NaN・0は未取得扱い）
+      const totalRaw    = Number(est.total    || 0);
+      const discountRaw = Number(est.discount || 0);
+      const rentRaw     = Number(est.rent     || 0);
+      const commRaw     = Number(est.commission || 0);
+      const commTaxRaw  = Number(est.commission_tax || 0);
+      const total    = isNaN(totalRaw)    || totalRaw    < 0 ? 0 : totalRaw;
+      const discount = isNaN(discountRaw) || discountRaw < 0 ? 0 : discountRaw;
+      const rent     = isNaN(rentRaw)     || rentRaw     < 0 ? 0 : rentRaw;
+      const commission   = isNaN(commRaw)    ? 0 : commRaw;
+      const commTax      = isNaN(commTaxRaw) ? 0 : commTaxRaw;
 
       const standardCommission = Math.round(rent * 1.1);
       const actualCommission   = commission + commTax;
@@ -355,18 +360,22 @@ ${SMORA_COMMON_RULES}`;
         parts.push("");
       }
 
-      if (discount > 0) {
+      if (discount > 0 && total > 0) {
+        // 割引額・合計額が両方読み取れた場合のみ数字を出す
         parts.push("初期費用さらに");
         parts.push(`🌟${discount.toLocaleString()}円割引させて頂き`);
         parts.push(`初期費用：${total.toLocaleString()}円`);
+        parts.push("");
+        if (savings > 0) {
+          parts.push(`${accountName}なら一般的な不動産業者より${savings.toLocaleString()}円節約出来ます！！`);
+          parts.push("");
+        }
       } else if (total > 0) {
         parts.push(`初期費用：${total.toLocaleString()}円`);
-      }
-
-      parts.push("");
-
-      if (savings > 0) {
-        parts.push(`${accountName}なら一般的な不動産業者より${savings.toLocaleString()}円節約出来ます！！`);
+        parts.push("");
+      } else {
+        // 金額が読み取れない場合はシンプルな一文
+        parts.push("最大限割引した初期費用の御見積書をお送りさせて頂きます！！");
         parts.push("");
       }
 
