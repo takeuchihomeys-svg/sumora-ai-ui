@@ -739,7 +739,11 @@ function buildGenerationMessages(
         "・冒頭ルール（★重要・初回返信のため上書き）: 必ず「〇〇さんご連絡頂きありがとうございます😊！！お部屋探しを担当させて頂きます鈴木と申します！！」の形式で始める。「お世話になっております」は絶対禁止"
       );
     }
-    return baseQuickPatterns;
+    // 本日初回メッセージ → 短い承認でも必ず「お世話になっております」で始める
+    return baseQuickPatterns.replace(
+      /・冒頭ルール（★重要）:[\s\S]*?を使う/,
+      "・冒頭ルール（★重要・本日初回メッセージのため上書き）: 返信の長短・内容・承認・条件受け取りを問わず【必ず「〇〇さんお世話になっております！！」で始める】。「かしこまりました！！」「はい！！」単独での書き出しは絶対禁止。必ず先頭に挨拶を置くこと"
+    );
   })();
   const quickPatterns = examples ? "" : `\n${effectiveQuickPatterns}`;
   const realEstateNote = `\n${promptOverrides?.realEstateRules ?? REAL_ESTATE_RULES}`;
