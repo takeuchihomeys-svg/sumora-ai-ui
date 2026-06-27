@@ -175,6 +175,16 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ---- UIで管理しているAIXロジックをDBから取得 ----
+  const { data: aixLogicRows } = await supabase
+    .from("ai_prompts")
+    .select("key, content")
+    .like("key", "aix_logic_%");
+
+  const aixLogicSection = (aixLogicRows ?? [])
+    .map((r) => (r.content as string))
+    .join("\n\n---\n\n");
+
   // ---- 過去パターンデータを取得 ----
   const { data: patternRows } = await supabase
     .from("action_pattern_logs")
@@ -224,8 +234,12 @@ ${examples || "  (なし)"}
 `
     : "";
 
+  const aixLogicGuide = aixLogicSection
+    ? `## 各AIXボタンの発動条件（管理UIで設定済み）\n${aixLogicSection}\n\n`
+    : "";
+
   const prompt = `あなたは不動産営業AIのアドバイザーです。
-${patternSection}## 現在の会話
+${aixLogicGuide}${patternSection}## 現在の会話
 顧客名: ${conv.customer_name as string}
 ステータス: ${statusLabel}
 
@@ -233,15 +247,16 @@ ${patternSection}## 現在の会話
 ${recentText}
 
 ## 指示
-上記の過去実績データ（あれば）と現在の会話内容を総合して、スタッフが次に取るべき最適なアクションを1つ選んでください。
+上記の「各AIXボタンの発動条件」と過去実績データを参照して、スタッフが次に取るべき最適なアクションを1つ選んでください。
 
 選択肢:
-- property_check_result: 物件の空室確認結果を報告する（お客様が物件画像・URLを送ってきた・空室確認を依頼された）
-- property_send: 物件を送る（条件整理済み・物件を求めている）
-- viewing_invite: 内覧を提案する（物件に興味あり）
-- application_push: 申込を促す（内覧後・前向き）
-- estimate_sheet: 見積書を送る（費用・初期費用の質問）
-- meeting_place: 待ち合わせを決める（内覧日時が確定しそう）
+- property_check_result: 物件の空室確認結果を報告する
+- property_send: 物件を送る
+- viewing_invite: 内覧を提案する
+- application_push: 申込を促す
+- estimate_sheet: 見積書を送る
+- meeting_place: 待ち合わせを決める
+- property_recommendation: 物件オススメを送る
 - null: 特に次のアクションなし
 
 ## 出力形式（JSONのみ。reasonは日本語10文字以内）
