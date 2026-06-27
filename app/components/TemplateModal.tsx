@@ -90,7 +90,7 @@ function VacatingDatePicker({ value, onChange }: {
   return (
     <div className="mb-3 rounded-xl border border-[#e0e8ff] bg-[#f0f5ff] px-3 py-2">
       <div className="flex items-center gap-2">
-        <span className="text-[11px] font-bold text-[#5c6bc0]">🏚️ 退去予定日</span>
+        <span className="text-[11px] font-bold text-[#5c6bc0]">退去予定日</span>
         {displayValue ? (
           <>
             <span className="text-[12px] font-bold text-[#1565C0]">{displayValue}</span>
@@ -628,7 +628,7 @@ export default function TemplateModal({
                     const isOcrTemplate = tmpl.text.includes("[物件名]") && tmpl.text.includes("[住所]");
                     const displayText = extractedTexts[tmpl.id] || adapted || tmpl.text;
                     const isHighlighted = !!highlightKeyword && (tmpl.label.includes(highlightKeyword) || tmpl.text.includes(highlightKeyword));
-                    const isVacating = tmpl.label.includes("退去予定");
+                    const isVacating = tmpl.label.includes("退去予定") || /[○〇]月[○〇]日退去予定|退去予定|退去後/.test(tmpl.text);
                     return (
                       <div key={tmpl.id} className={`rounded-2xl p-4 ${isHighlighted ? "border-2 border-orange-400 bg-orange-50" : "border border-[#e9edef] bg-[#f8f9fa]"}`}>
                         {/* タイトル行 */}
