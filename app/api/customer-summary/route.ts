@@ -69,6 +69,14 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json() as SummaryRequest;
 
+    // プロンプト管理UIで編集できるようDBから取得（なければコード定数をフォールバック）
+    const { data: promptRow } = await supabase
+      .from("ai_prompts")
+      .select("content")
+      .eq("key", "customer_summary_system")
+      .single();
+    const systemPrompt = (promptRow?.content as string | null) ?? SYSTEM;
+
     // fetch_from_db: page.tsx からの自動更新など customer_id のみ渡す場合にDBから全データ取得
     let c: SummaryRequest = body;
     if (body.fetch_from_db && body.customer_id) {
@@ -149,7 +157,7 @@ export async function POST(req: NextRequest) {
     ].filter(Boolean).join("\n") + prevSummaryNote + conversationHistory;
 
     const res = await model.invoke([
-      new SystemMessage(SYSTEM),
+      new SystemMessage(systemPrompt),
       new HumanMessage(info),
     ]);
 
