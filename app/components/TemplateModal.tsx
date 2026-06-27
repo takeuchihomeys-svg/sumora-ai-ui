@@ -1,6 +1,129 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+// iOS風スクロールホイールピッカー
+function WheelPicker({ items, selectedIdx, onSelect }: {
+  items: string[];
+  selectedIdx: number;
+  onSelect: (idx: number) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const ITEM_H = 36;
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (ref.current) ref.current.scrollTop = selectedIdx * ITEM_H;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const settle = useCallback(() => {
+    if (!ref.current) return;
+    const idx = Math.round(ref.current.scrollTop / ITEM_H);
+    const clamped = Math.max(0, Math.min(items.length - 1, idx));
+    ref.current.scrollTo({ top: clamped * ITEM_H, behavior: "smooth" });
+    onSelect(clamped);
+  }, [items.length, onSelect]);
+
+  const handleScroll = () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(settle, 200);
+  };
+
+  return (
+    <div className="relative overflow-hidden" style={{ height: ITEM_H * 3 }}>
+      <div className="pointer-events-none absolute inset-x-1" style={{ top: ITEM_H, height: ITEM_H, background: "rgba(21,101,192,0.08)", borderRadius: 8, borderTop: "1px solid #b3d9f7", borderBottom: "1px solid #b3d9f7" }} />
+      <div
+        ref={ref}
+        onScroll={handleScroll}
+        style={{ height: ITEM_H * 3, overflowY: "scroll", scrollSnapType: "y mandatory", scrollbarWidth: "none" }}
+      >
+        <div style={{ height: ITEM_H }} />
+        {items.map((item, i) => (
+          <div key={i} style={{ height: ITEM_H, scrollSnapAlign: "center" }} className={`flex items-center justify-center text-[14px] ${i === selectedIdx ? "font-bold text-[#1565C0]" : "text-[#aaa]"}`}>
+            {item}
+          </div>
+        ))}
+        <div style={{ height: ITEM_H }} />
+      </div>
+    </div>
+  );
+}
+
+function lastDayOfMonth(month: number) {
+  return new Date(new Date().getFullYear(), month, 0).getDate();
+}
+
+// 退去予定日ピッカー（月＋日の2カラム）
+function VacatingDatePicker({ value, onChange }: {
+  value: { month: number; day: number } | null;
+  onChange: (date: { month: number; day: number } | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const currentMonth = new Date().getMonth() + 1;
+  const [selMonth, setSelMonth] = useState(value?.month ?? currentMonth);
+  const [selDay, setSelDay]   = useState(value?.day   ?? 1);
+
+  const months = Array.from({ length: 12 }, (_, i) => `${i + 1}月`);
+  const maxDay = lastDayOfMonth(selMonth);
+  const days   = Array.from({ length: maxDay }, (_, i) => {
+    const d = i + 1;
+    return d === maxDay ? `${d}日（末日）` : `${d}日`;
+  });
+
+  const handleMonthSelect = (idx: number) => {
+    const m = idx + 1;
+    setSelMonth(m);
+    const max = lastDayOfMonth(m);
+    if (selDay > max) setSelDay(max);
+  };
+
+  const handleConfirm = () => {
+    onChange({ month: selMonth, day: selDay });
+    setOpen(false);
+  };
+
+  const displayValue = value
+    ? `${value.month}月${value.day >= lastDayOfMonth(value.month) ? "末日" : `${value.day}日`}`
+    : null;
+
+  return (
+    <div className="mb-3 rounded-xl border border-[#e0e8ff] bg-[#f0f5ff] px-3 py-2">
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] font-bold text-[#5c6bc0]">🏚️ 退去予定日</span>
+        {displayValue ? (
+          <>
+            <span className="text-[12px] font-bold text-[#1565C0]">{displayValue}</span>
+            <button onClick={() => onChange(null)} className="text-[10px] text-[#aaa] underline">クリア</button>
+          </>
+        ) : (
+          <span className="text-[10px] text-[#aaa]">未設定（日付なしで生成）</span>
+        )}
+        <button
+          onClick={() => setOpen(v => !v)}
+          className="ml-auto shrink-0 rounded-full bg-[#1565C0] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
+        >{open ? "閉じる" : "設定"}</button>
+      </div>
+
+      {open && (
+        <div className="mt-2 overflow-hidden rounded-xl border border-[#d0d8f7] bg-white">
+          <div className="flex">
+            <div className="flex-1 border-r border-[#e0e8f7]">
+              <WheelPicker items={months} selectedIdx={selMonth - 1} onSelect={handleMonthSelect} />
+            </div>
+            <div className="flex-1">
+              <WheelPicker key={selMonth} items={days} selectedIdx={Math.min(selDay - 1, days.length - 1)} onSelect={(i) => setSelDay(i + 1)} />
+            </div>
+          </div>
+          <div className="flex border-t border-[#e0e8f7]">
+            <button onClick={() => setOpen(false)} className="flex-1 py-2 text-[12px] text-[#aaa]">キャンセル</button>
+            <button onClick={handleConfirm} className="flex-1 border-l border-[#e0e8f7] py-2 text-[12px] font-bold text-[#1565C0]">決定</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface Template {
   id: string;
@@ -52,6 +175,7 @@ export default function TemplateModal({
   const [editSaving, setEditSaving] = useState(false);
   const [noEmoji, setNoEmoji] = useState(false);
   const [aixPurposeFilter, setAixPurposeFilter] = useState<"内覧" | "申込">("内覧");
+  const [vacatingDates, setVacatingDates] = useState<Record<string, { month: number; day: number } | null>>({});
   const [inspectingId, setInspectingId] = useState<string | null>(null);
   const [templateImages, setTemplateImages] = useState<Record<string, File[]>>({});
   const [templateImagePreviews, setTemplateImagePreviews] = useState<Record<string, string[]>>({});
@@ -259,6 +383,7 @@ export default function TemplateModal({
           noEmoji,
           // 予約送信待ちのAIXメッセージを渡す（物件情報の優先ソース）
           pendingScheduledMessages: (pendingScheduledMessages ?? []).filter(m => m.text),
+          vacatingDate: vacatingDates[tmpl.id] ?? null,
         }),
       });
       const data = await res.json() as { ok: boolean; adapted?: string; error?: string };
@@ -503,6 +628,7 @@ export default function TemplateModal({
                     const isOcrTemplate = tmpl.text.includes("[物件名]") && tmpl.text.includes("[住所]");
                     const displayText = extractedTexts[tmpl.id] || adapted || tmpl.text;
                     const isHighlighted = !!highlightKeyword && (tmpl.label.includes(highlightKeyword) || tmpl.text.includes(highlightKeyword));
+                    const isVacating = tmpl.label.includes("退去予定");
                     return (
                       <div key={tmpl.id} className={`rounded-2xl p-4 ${isHighlighted ? "border-2 border-orange-400 bg-orange-50" : "border border-[#e9edef] bg-[#f8f9fa]"}`}>
                         {/* タイトル行 */}
@@ -547,6 +673,14 @@ export default function TemplateModal({
                             </div>
                           )}
                         </div>
+
+                        {/* 退去予定日ピッカー */}
+                        {isVacating && editingId !== tmpl.id && (
+                          <VacatingDatePicker
+                            value={vacatingDates[tmpl.id] ?? null}
+                            onChange={(date) => setVacatingDates(prev => ({ ...prev, [tmpl.id]: date }))}
+                          />
+                        )}
 
                         {/* インライン編集フォーム */}
                         {editingId === tmpl.id ? (

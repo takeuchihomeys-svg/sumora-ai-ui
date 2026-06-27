@@ -12,6 +12,7 @@ export async function POST(req: NextRequest) {
     customerConditions,
     noEmoji,
     pendingScheduledMessages,
+    vacatingDate,
   } = await req.json() as {
     templateText: string;
     customerName?: string;
@@ -20,7 +21,20 @@ export async function POST(req: NextRequest) {
     customerConditions?: string;
     noEmoji?: boolean;
     pendingScheduledMessages?: Array<{ text: string | null }>;
+    vacatingDate?: { month: number; day: number } | null;
   };
+
+  // 退去予定日を前処理でテンプレートに埋め込む
+  const lastDayOf = (m: number) => new Date(new Date().getFullYear(), m, 0).getDate();
+  let processedTemplateText = templateText;
+  const VACATING_DATE_RE = /[○〇]月[○〇]日退去予定|○月○日退去予定/g;
+  if (vacatingDate) {
+    const last = lastDayOf(vacatingDate.month);
+    const dayLabel = vacatingDate.day >= last ? "末日" : `${vacatingDate.day}日`;
+    processedTemplateText = templateText.replace(VACATING_DATE_RE, `${vacatingDate.month}月${dayLabel}退去予定`);
+  } else {
+    processedTemplateText = templateText.replace(VACATING_DATE_RE, "退去予定");
+  }
 
   if (!templateText) {
     return NextResponse.json({ ok: false, error: "templateText required" }, { status: 400 });
@@ -145,7 +159,7 @@ ${history || "なし"}
 ━━━━━━━━━━━━━━━━━━━━
 【置き換えるテンプレート】
 ━━━━━━━━━━━━━━━━━━━━
-${templateText}
+${processedTemplateText}
 
 ━━━━━━━━━━━━━━━━━━━━
 出力は置き換え後のテキストのみ。説明・前置き・補足コメントは一切書かない。`;
