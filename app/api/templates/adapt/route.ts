@@ -29,17 +29,47 @@ export async function POST(req: NextRequest) {
     staffMessagedToday?: boolean;
   };
 
-  // 退去予定日を前処理でテンプレートに埋め込む
+  // 退去予定日・内覧可能日を前処理でテンプレートに埋め込む
+  // ◯(U+25EF)・○(U+25CB)・〇(U+3007) の3種を統一して扱う
   const lastDayOf = (m: number) => new Date(new Date().getFullYear(), m, 0).getDate();
   let processedTemplateText = templateText;
-  const VACATING_DATE_RE = /[○〇]月[○〇]日退去予定|○月○日退去予定/g;
+  const C = '[◯○〇]'; // 丸文字クラス（DBは◯多用）
+
+  // 退去日・内覧可能日を計算
+  let vacStr: string | null = null;
+  let viewStr: string | null = null;
   if (vacatingDate) {
     const last = lastDayOf(vacatingDate.month);
-    const dayLabel = vacatingDate.day >= last ? "末日" : `${vacatingDate.day}日`;
-    processedTemplateText = templateText.replace(VACATING_DATE_RE, `${vacatingDate.month}月${dayLabel}退去予定`);
-  } else {
-    processedTemplateText = templateText.replace(VACATING_DATE_RE, "退去予定");
+    const vacDay = Math.min(vacatingDate.day, last);
+    vacStr = `${vacatingDate.month}月${vacDay}日`;
+    // 内覧可能日 = 退去日 + 1日（月をまたぐ場合も対応）
+    let vm = vacatingDate.month;
+    let vd = vacDay + 1;
+    if (vd > lastDayOf(vm)) { vd = 1; vm = vm === 12 ? 1 : vm + 1; }
+    viewStr = `${vm}月${vd}日`;
   }
+
+  // パターン優先順: 複合パターン（両日付）を先に処理してから単体パターンへ
+  // 1) 〇月〇日退去の為〇月〇日以降ご内覧可能
+  processedTemplateText = processedTemplateText.replace(
+    new RegExp(`${C}+月${C}+日退去の為${C}+月${C}+日以降ご内覧可能`, 'g'),
+    vacStr && viewStr ? `${vacStr}退去の為${viewStr}以降ご内覧可能` : '退去の為内覧可能日以降ご内覧可能'
+  );
+  // 2) 〇月〇退去予定の為〇月〇日以降ご内覧可能（「日」なしバリアント）
+  processedTemplateText = processedTemplateText.replace(
+    new RegExp(`${C}+月${C}+退去予定の為${C}+月${C}+日以降ご内覧可能`, 'g'),
+    vacStr && viewStr ? `${vacStr}退去予定の為${viewStr}以降ご内覧可能` : '退去予定の為内覧可能日以降ご内覧可能'
+  );
+  // 3) 〇月〇日以降ご内覧可能（単体・上のパターン未処理の残り）
+  processedTemplateText = processedTemplateText.replace(
+    new RegExp(`${C}+月${C}+日以降ご内覧可能`, 'g'),
+    viewStr ? `${viewStr}以降ご内覧可能` : '内覧可能日以降ご内覧可能'
+  );
+  // 4) 〇月〇日退去予定（単体）
+  processedTemplateText = processedTemplateText.replace(
+    new RegExp(`${C}+月${C}+日退去予定`, 'g'),
+    vacStr ? `${vacStr}退去予定` : '退去予定'
+  );
 
   if (!templateText) {
     return NextResponse.json({ ok: false, error: "templateText required" }, { status: 400 });

@@ -195,6 +195,30 @@ export default function TemplateModal({
   const [focusPointsMap, setFocusPointsMap] = useState<Record<string, string[]>>({});
   const [soloEntry, setSoloEntry] = useState(false);
 
+  function applyVacatingDates(text: string, vd: { month: number; day: number } | null): string {
+    const lastDayOf = (m: number) => new Date(new Date().getFullYear(), m, 0).getDate();
+    const C = '[◯○〇]';
+    let t = text;
+    let vacStr: string | null = null;
+    let viewStr: string | null = null;
+    if (vd) {
+      const vacDay = Math.min(vd.day, lastDayOf(vd.month));
+      vacStr = `${vd.month}月${vacDay}日`;
+      let vm = vd.month; let vday = vacDay + 1;
+      if (vday > lastDayOf(vm)) { vday = 1; vm = vm === 12 ? 1 : vm + 1; }
+      viewStr = `${vm}月${vday}日`;
+    }
+    t = t.replace(new RegExp(`${C}+月${C}+日退去の為${C}+月${C}+日以降ご内覧可能`, 'g'),
+      vacStr && viewStr ? `${vacStr}退去の為${viewStr}以降ご内覧可能` : '退去の為内覧可能日以降ご内覧可能');
+    t = t.replace(new RegExp(`${C}+月${C}+退去予定の為${C}+月${C}+日以降ご内覧可能`, 'g'),
+      vacStr && viewStr ? `${vacStr}退去予定の為${viewStr}以降ご内覧可能` : '退去予定の為内覧可能日以降ご内覧可能');
+    t = t.replace(new RegExp(`${C}+月${C}+日以降ご内覧可能`, 'g'),
+      viewStr ? `${viewStr}以降ご内覧可能` : '内覧可能日以降ご内覧可能');
+    t = t.replace(new RegExp(`${C}+月${C}+日退去予定`, 'g'),
+      vacStr ? `${vacStr}退去予定` : '退去予定');
+    return t;
+  }
+
   function applySoloEntry(text: string): string {
     const SOLO_RE = /同居人|配偶者|同居者|家族構成|入居人数|お子様|子ども|子供|同居|ご家族/;
     return text
@@ -653,9 +677,10 @@ export default function TemplateModal({
                     const adapted = adaptedTexts[tmpl.id];
                     const isOcrTemplate = tmpl.text.includes("[物件名]") && tmpl.text.includes("[住所]");
                     const _rawText = extractedTexts[tmpl.id] || adapted || tmpl.text;
-                    const displayText = soloEntry ? applySoloEntry(_rawText) : _rawText;
+                    let displayText = applyVacatingDates(_rawText, vacatingDates[tmpl.id] ?? null);
+                    if (soloEntry) displayText = applySoloEntry(displayText);
                     const isHighlighted = !!highlightKeyword && (tmpl.label.includes(highlightKeyword) || tmpl.text.includes(highlightKeyword));
-                    const isVacating = tmpl.label.includes("退去予定") || /[○〇]月[○〇]日退去予定|退去予定|退去後/.test(tmpl.text);
+                    const isVacating = tmpl.label.includes("退去予定") || /[◯○〇]月[◯○〇]/.test(tmpl.text) || /退去予定|退去後|以降ご内覧可能/.test(tmpl.text);
                     return (
                       <div key={tmpl.id} className={`rounded-2xl p-4 ${isHighlighted ? "border-2 border-orange-400 bg-orange-50" : "border border-[#e9edef] bg-[#f8f9fa]"}`}>
                         {/* タイトル行 */}
