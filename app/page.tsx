@@ -3877,19 +3877,22 @@ export default function Home() {
                 </div>
                 {lc.ai_summary && (() => {
                   const summary = lc.ai_summary as string;
-                  const bullets = summary.split(/(?=・)/);
-                  // 「★決まるパターン」行を最上部に強調表示
-                  const closingBullet = bullets.find(b => b.includes("★決まるパターン"));
-                  // 「次のアクション」は除外（古い形式との互換）
-                  const profileBullets = bullets.filter(b => !b.includes("★決まるパターン") && !b.includes("次のアクション")).join("").trim();
-                  const closingText = closingBullet?.replace(/^・/, "").replace(/^★決まるパターン:\s*/, "").trim() ?? null;
+                  // ★決まるパターン: 以降のテキストをどこにあっても抽出
+                  const closingMatch = summary.match(/★決まるパターン[:：]\s*([\s\S]+?)(?=・|$)/);
+                  const closingText = closingMatch?.[1]?.replace(/\*+/g, "").trim() ?? null;
+                  // 決まるパターン・次のアクション行を除いたプロフィール
+                  const profileBullets = summary
+                    .replace(/★決まるパターン[:：][\s\S]+?(?=・|$)/, "")
+                    .replace(/・?次のアクション[\s\S]+?(?=・|$)/, "")
+                    .replace(/\*+/g, "")
+                    .trim();
                   if (!closingText && !profileBullets) return null;
                   return (
                     <div className="mt-2 border-t border-[#f0f2f5] pt-1.5 space-y-1.5">
                       {closingText && (
-                        <div className="rounded-xl border border-orange-400 bg-orange-50 px-3 py-2">
-                          <p className="text-[11px] font-bold text-orange-500 mb-0.5">★ 決まるパターン</p>
-                          <p className="text-[13px] font-bold leading-snug text-orange-700">{closingText}</p>
+                        <div className="rounded-xl border border-red-400 bg-red-50 px-3 py-2">
+                          <p className="text-[11px] font-bold text-red-500 mb-0.5">🔴 どうやったら決まるか</p>
+                          <p className="text-[13px] font-bold leading-snug text-red-700">{closingText}</p>
                         </div>
                       )}
                       {profileBullets && (
