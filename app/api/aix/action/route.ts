@@ -135,6 +135,19 @@ async function callClaudeVision(system: string, content: unknown[]): Promise<str
   return data.content?.[0]?.text?.trim() || "";
 }
 
+// AIが内部メモを出力した場合、顧客向けメッセージと分離する
+function extractNotice(text: string, customerName: string): { message: string; notice: string | null } {
+  const trimmed = text.trim();
+  const nameIdx = trimmed.indexOf(customerName + "さん");
+  const greetingIdx = trimmed.indexOf("お世話になっております");
+  const startIdx = nameIdx >= 0 ? nameIdx : greetingIdx;
+  if (startIdx > 0) {
+    const notice = trimmed.slice(0, startIdx).trim();
+    return { message: trimmed.slice(startIdx).trim(), notice: notice || null };
+  }
+  return { message: trimmed, notice: null };
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -909,11 +922,12 @@ ${availableTemplate}`;
 お送り頂きました[物件表現]募集終了しているお部屋となります。`;
 
         const unavailableSystem = `あなたはテキスト置換エンジンです。
+【絶対ルール】説明文・メモ・思考プロセスは一切出力しないこと。置換後のテンプレートのみ出力すること。
 以下のテンプレートを出力してください。[物件表現]を下記ルールで置き換えること。
 ・送られてきた物件が1件の場合: 「物件の募集状況確認させて頂きましたところ」
 ・2件の場合: 「2件の募集状況確認させて頂きましたところ2件とも」
 ・3件以上の場合: 「N件の募集状況確認させて頂きましたところN件とも」（Nは実際の件数）
-・件数が不明な場合: 「物件の募集状況確認させて頂きましたところ」
+・件数が不明な場合: 「物件の募集状況確認させて頂きましたところ」（件数についての説明は出力しない）
 ★1件のときは絶対に「1件とも」と書かない。
 それ以外の文字・絵文字・改行は一切変更・追加・削除しないこと。
 
@@ -1022,9 +1036,13 @@ ${mDate}[時間]に${mName}
       return NextResponse.json({ ok: false, error: `Unknown action: ${action}` }, { status: 400 });
     }
 
+    // AIが内部メモを出力した場合、顧客向けメッセージと分離してnoticeとして返す
+    const { message: cleanedMessage, notice } = extractNotice(message_text, name);
+
     return NextResponse.json({
       ok: true,
-      message_text,
+      message_text: cleanedMessage,
+      ...(notice ? { notice } : {}),
       ...(parsed_estimate_result ? { parsed_estimate: parsed_estimate_result } : {}),
     });
   } catch (err) {

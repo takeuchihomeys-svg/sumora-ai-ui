@@ -198,6 +198,7 @@ export default function AixModal({
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<string>("");
   const [aiDraft, setAiDraft] = useState<string>("");
+  const [aixNotice, setAixNotice] = useState<string>("");
   const [parsedEstimate, setParsedEstimate] = useState<Record<string, string> | null>(null);
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [useEmoji, setUseEmoji] = useState(true);
@@ -305,6 +306,7 @@ export default function AixModal({
   useEffect(() => {
     setRecSimpleMode(false);
     setPreview("");
+    setAixNotice("");
   }, [conversationId]);
 
   useEffect(() => {
@@ -837,6 +839,7 @@ export default function AixModal({
       const generatedMsg = data.message_text || "";
       setAiDraft(generatedMsg);
       setPreview(useEmoji ? generatedMsg : stripEmoji(generatedMsg));
+      setAixNotice(data.notice || "");
       if (data.parsed_estimate) setParsedEstimate(data.parsed_estimate);
     } catch (err) {
       setError(err instanceof Error ? err.message : "エラーが発生しました");
@@ -2283,6 +2286,12 @@ export default function AixModal({
               {(preview.includes("[物件名]") || preview.includes("[物件名と号室]")) && (
                 <div className="mt-2 rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-600">
                   ⚠️ 物件名が特定できませんでした。送信前に直接編集してください。
+                </div>
+              )}
+              {aixNotice && (
+                <div className="mt-2 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700 flex items-start gap-1.5">
+                  <span className="mt-0.5 shrink-0">ℹ️</span>
+                  <span>{aixNotice}</span>
                 </div>
               )}
               {/* 物件オススメ: 強調ポイントを生成後にも選択できる */}
