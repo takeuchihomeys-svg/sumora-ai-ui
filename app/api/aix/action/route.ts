@@ -23,7 +23,25 @@ const SMORA_COMMON_RULES = `
 × お客様が条件・希望を送ってきた場合は冒頭に「かしこまりました！！」を入れ、その後「お送り頂きありがとうございます😊！！」を入れて感謝と理解の姿勢を示す
 × 「少々お待ちください」→ 上から目線。「何卒よろしくお願い致します😌！！」で締める
 × 「仲介手数料を割引・最大限割引させて頂きます」→ 仲介手数料はスモラ2,980円・イエヤス0円と最初から格安・固定。割引するのは「初期費用」全体。正しい表現：「初期費用を最大限割引させていただきます」
-× 審査落ち・物件が埋まった等でも謝罪しない（「申し訳ございません」「ご迷惑おかけし」禁止） → 「引き続き〇〇さんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます！！」のようなサポート継続宣言で返す`.trim();
+× 審査落ち・物件が埋まった等でも謝罪しない（「申し訳ございません」「ご迷惑おかけし」禁止） → 「引き続き〇〇さんにご満足頂けるお部屋が見つかるまで全力でサポートさせて頂きます！！」のようなサポート継続宣言で返す
+× 「緊急連絡先設定可」「緊急連絡先可」→ 条件リストに緊急連絡先を含める場合は「緊急連絡先でご入居可能」と表現する（例：「緊急連絡先でご入居可能・家賃〇万以内のご条件」）`.trim();
+
+function extractPreferredName(
+  messages: Array<{ sender: string; text?: string | null }>,
+  lineDisplayName: string
+): string {
+  const SKIP_RE = /^(お客様|皆|全|各|担当|スタッフ|こちら|弊社|管理|オーナー|業者|まずは|引き続き|何卒|改めて)/;
+  for (const msg of [...messages].reverse()) {
+    if (msg.sender !== "staff" || !msg.text) continue;
+    const matches = [...msg.text.matchAll(/([^\s、。！？\n【】「」（）・]{2,8}?)さん/g)];
+    for (const m of [...matches].reverse()) {
+      const name = m[1];
+      if (SKIP_RE.test(name)) continue;
+      return name;
+    }
+  }
+  return lineDisplayName;
+}
 
 async function getPhrases(category: string, customerName?: string): Promise<string> {
   const { data } = await supabase
@@ -198,13 +216,18 @@ export async function POST(request: NextRequest) {
       : "";
 
     const rawName = customer_name ? String(customer_name).trim() : "";
-    const familyName = rawName.includes(" ") || rawName.includes("　")
-      ? rawName.split(/[ 　]/)[0]
+    // スタッフが会話内で実際に使っていた呼び名を優先（LINE表示名より正確）
+    const preferredRawName = extractPreferredName(
+      Array.isArray(recent_messages) ? (recent_messages as Array<{ sender: string; text?: string | null }>) : [],
+      rawName
+    );
+    const familyName = preferredRawName.includes(" ") || preferredRawName.includes("　")
+      ? preferredRawName.split(/[ 　]/)[0]
       // スペースなし漢字フルネーム（4文字以上）は先頭2文字を姓とみなす（例: 他谷遥香→他谷）
       // ※ひらがな・カタカナのみの名前（例: ふりーだむ）は切り取らず全名を使う
-      : rawName.length >= 4 && /^[一-鿿々]+$/.test(rawName)
-        ? rawName.slice(0, 2)
-        : rawName;
+      : preferredRawName.length >= 4 && /^[一-鿿々]+$/.test(preferredRawName)
+        ? preferredRawName.slice(0, 2)
+        : preferredRawName;
     const name = familyName ? `${familyName}さん` : "お客様";
 
     // phrase_dictionary 取得（物件オススメ・内覧・申込のみ）
