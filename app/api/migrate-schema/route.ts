@@ -497,6 +497,7 @@ CREATE INDEX IF NOT EXISTS idx_action_pattern_logs_status ON action_pattern_logs
 CREATE INDEX IF NOT EXISTS idx_action_pattern_logs_action ON action_pattern_logs(action_type);
 CREATE INDEX IF NOT EXISTS idx_action_pattern_logs_created_at ON action_pattern_logs(created_at DESC);
 ALTER TABLE action_pattern_logs DISABLE ROW LEVEL SECURITY;
+ALTER TABLE action_pattern_logs ADD COLUMN IF NOT EXISTS previous_action_type TEXT;
 
 -- line_tasks: estimate_sheet を許可
 ALTER TABLE line_tasks DROP CONSTRAINT IF EXISTS line_tasks_task_type_check;

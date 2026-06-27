@@ -32,6 +32,7 @@ export async function POST(req: NextRequest) {
     conversation_status?: string;
     action_type?: string;
     customer_msg_summary?: string;
+    previous_action_type?: string;
   };
 
   // ① 1件ログ（AIX送信後にフロントから呼ぶ）
@@ -43,6 +44,7 @@ export async function POST(req: NextRequest) {
       conversation_status: body.conversation_status,
       action_type: body.action_type,
       customer_msg_summary: (body.customer_msg_summary ?? "").slice(0, 150),
+      previous_action_type: body.previous_action_type ?? null,
       source: "manual",
     });
     return NextResponse.json({ ok: true });

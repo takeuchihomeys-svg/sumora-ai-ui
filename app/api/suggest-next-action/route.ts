@@ -25,7 +25,7 @@ const STATUS_LABEL: Record<string, string> = {
 const SKIP_STATUSES = new Set(["contract", "lost", "closed_won", "closed_lost"]);
 
 export async function POST(req: NextRequest) {
-  const { conversation_id } = await req.json() as { conversation_id: string };
+  const { conversation_id, last_aix_action } = await req.json() as { conversation_id: string; last_aix_action?: string | null };
   if (!conversation_id) return NextResponse.json({ action: null, reason: "" });
 
   const [{ data: conv }, { data: messages }] = await Promise.all([
@@ -57,6 +57,35 @@ export async function POST(req: NextRequest) {
 
   const currentStatus = (conv.status as string) ?? "hearing";
   const statusLabel = STATUS_LABEL[currentStatus] ?? currentStatus;
+
+  // ---- AIXチェーンルール: 直前のAIXアクションから次を提案 ----
+  if (last_aix_action) {
+    const { data: chainRules } = await supabase
+      .from("trigger_action_rules")
+      .select("action_type, confidence, occurrence_count")
+      .eq("keyword", `AFTER:${last_aix_action}`)
+      .gte("confidence", 0.35)
+      .gte("occurrence_count", 2)
+      .order("confidence", { ascending: false })
+      .limit(3);
+
+    if (chainRules?.length) {
+      const top = chainRules[0];
+      const CHAIN_REASON: Record<string, string> = {
+        property_recommendation: "物件送った後のオススメ",
+        viewing_invite: "物件提案後・内覧誘導",
+        estimate_sheet: "空室確認後・見積書",
+        application_push: "内覧後・申込へ",
+        meeting_place: "内覧日程を決める",
+        property_send: "追加物件を送る",
+      };
+      return NextResponse.json({
+        action: top.action_type,
+        reason: CHAIN_REASON[top.action_type as string] ?? `${last_aix_action}の次`,
+        source: "chain_rule",
+      });
+    }
+  }
 
   // ---- トリガールールで即判定（Haiku不要の場合）----
   const lastCustomerMsg = [...messages]

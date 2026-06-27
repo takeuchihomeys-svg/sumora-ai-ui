@@ -422,6 +422,7 @@ export default function Home() {
   });
   const [dismissedApplyFormIds, setDismissedApplyFormIds] = useState<Set<string>>(new Set());
   const nextActionFetchingRef = useRef<Set<string>>(new Set());
+  const lastAixByConvRef = useRef<Map<string, string>>(new Map());
   const [statusSuggestionMap, setStatusSuggestionMap] = useState<Record<string, { status: string; label: string; reason: string } | null>>({});
   const statusSuggFetchingRef = useRef<Set<string>>(new Set());
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
@@ -2450,7 +2451,7 @@ export default function Home() {
       const res = await fetch("/api/suggest-next-action", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversation_id: convId }),
+        body: JSON.stringify({ conversation_id: convId, last_aix_action: lastAixByConvRef.current.get(convId) ?? null }),
       });
       const data = await res.json() as { action: string | null; reason: string };
       // action が null でも reason が有意義な場合（内覧確定等）はバナー表示できるよう保持
@@ -6071,11 +6072,13 @@ export default function Home() {
                 .reverse()
                 .find((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
                 ?.text ?? "";
+              const _prevAix = lastAixByConvRef.current.get(selectedConversation.id) ?? null;
               fetch("/api/learn-action-patterns", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ action: "log", conversation_status: _ns, action_type: aixModalType, customer_msg_summary: _lastCustomerMsg.slice(0, 150) }),
+                body: JSON.stringify({ action: "log", conversation_status: _ns, action_type: aixModalType, customer_msg_summary: _lastCustomerMsg.slice(0, 150), previous_action_type: _prevAix }),
               }).catch(() => {});
+              lastAixByConvRef.current.set(selectedConversation.id, aixModalType);
               // AIXフロー使用ログ記録（テンプレート名・カテゴリ含む）
               fetch("/api/log-aix-usage", {
                 method: "POST",

@@ -125,9 +125,43 @@ export async function POST() {
     if (!error) learned++;
   }
 
+  // ── AIXチェーンパターン学習: 直前のAIX → 次のAIX ──
+  const { data: chainLogs } = await supabase
+    .from("action_pattern_logs")
+    .select("action_type, previous_action_type")
+    .not("previous_action_type", "is", null)
+    .limit(3000);
+
+  const chainCount: Record<string, Record<string, number>> = {};
+  const prevTotal: Record<string, number> = {};
+  for (const log of chainLogs ?? []) {
+    const prev = log.previous_action_type as string;
+    const curr = log.action_type as string;
+    if (!prev || !curr) continue;
+    chainCount[prev] ??= {};
+    chainCount[prev][curr] = (chainCount[prev][curr] ?? 0) + 1;
+    prevTotal[prev] = (prevTotal[prev] ?? 0) + 1;
+  }
+
+  let chainLearned = 0;
+  for (const [prev, nexts] of Object.entries(chainCount)) {
+    for (const [action, count] of Object.entries(nexts)) {
+      const total = prevTotal[prev] ?? count;
+      const confidence = Math.round((count / total) * 1000) / 1000;
+      if (confidence >= 0.3 && count >= 2) {
+        const { error } = await supabase.from("trigger_action_rules").upsert(
+          { action_type: action, keyword: `AFTER:${prev}`, occurrence_count: count, total_occurrence: total, confidence, updated_at: new Date().toISOString() },
+          { onConflict: "action_type,keyword" }
+        );
+        if (!error) { learned++; chainLearned++; }
+      }
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     learned,
+    chain_learned: chainLearned,
     total_candidates: rulesToUpsert.length,
     by_action: Object.fromEntries(
       Object.keys(byAction).map((a) => [
