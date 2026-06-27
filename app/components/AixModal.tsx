@@ -123,7 +123,7 @@ const CONFIG: Record<
   },
   estimate_sheet: {
     title: "見積書送る",
-    emoji: "📋",
+    emoji: "",
     requiresImage: true,
     imageLabel: "見積書画像を選択",
     description: "見積書の画像をAIが読み取り、初期費用の内訳をLINEで送ります。",
@@ -1087,7 +1087,7 @@ export default function AixModal({
           style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}
         >
           <div className="text-[17px] font-bold text-white">
-            {config.emoji} {config.title}
+            {config.emoji ? `${config.emoji} ` : ""}{config.title}
           </div>
           <div className="flex items-center gap-2">
             <button
