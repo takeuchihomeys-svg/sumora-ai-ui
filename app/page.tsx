@@ -4736,6 +4736,7 @@ export default function Home() {
                           draft: replyDraft,
                           customer_name: selectedConversation.customerName,
                           recent_messages: recentMsgs,
+                          conversation_status: selectedConversation.status,
                         }),
                       });
                       const data = await res.json() as { ok: boolean; polished?: string };
