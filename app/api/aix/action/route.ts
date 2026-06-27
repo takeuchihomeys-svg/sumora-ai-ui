@@ -1046,6 +1046,34 @@ ${templateText}`;
       }
 
     // ── 📍 待ち合わせ（時間なし → LINEから自動抽出） ───────────────
+    } else if (action === "condition_hearing") {
+      // ─── ヒアリング: 条件フォームをテンプレで直接生成（AI不要）────────────
+      const jstHour = new Date(Date.now() + 9 * 60 * 60 * 1000).getUTCHours();
+      const openingLine = jstHour >= 21
+        ? `${name}夜分遅くに失礼致します！！`
+        : staffMessagedToday
+          ? `${name}お待たせ致しました！！`
+          : `${name}お世話になっております！！`;
+
+      const extraLine = extra_input ? `\n${extra_input.trim()}\n` : "";
+
+      message_text = `${openingLine}
+この度はお問い合わせいただきありがとうございます😊！！
+お部屋探しのお手伝いをさせて頂きます！！
+よろしければ下記の条件をお聞かせください！！
+${extraLine}
+（ご希望のお部屋探しご条件）
+①ご入居時期
+②ご希望家賃（管理費込み）
+③ご希望間取り
+④ご希望築年数
+⑤ご希望エリア・最寄り駅
+⑥駅からの徒歩分数
+⑦初期費用ご予算
+⑧その他こだわり条件（ペット・保証人・駐車場等）
+
+何卒よろしくお願い致します😌！！`;
+
     } else if (action === "meeting_place") {
       const mDate = body.meeting_date ? String(body.meeting_date) : "";
       const mName = body.meeting_property_name ? String(body.meeting_property_name) : "";

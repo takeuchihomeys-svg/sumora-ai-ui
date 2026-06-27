@@ -5,6 +5,7 @@ import { supabase } from "../lib/supabase";
 import { fetchCalendarSlots } from "../lib/calendarSlots";
 
 export type AixActionType =
+  | "condition_hearing"
   | "property_recommendation"
   | "property_send"
   | "viewing_invite"
@@ -52,6 +53,10 @@ function stripEmoji(text: string): string {
 }
 
 const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }> = {
+  condition_hearing: {
+    rules: ["挨拶ルールに従い冒頭を自動生成", "①〜⑧の条件フォームを固定テンプレで送信", "一言補足があれば任意入力"],
+    template: "[名前]さんお世話になっております！！\nこの度はお問い合わせいただきありがとうございます😊！！\nお部屋探しのお手伝いをさせて頂きます！！\n\n（ご希望のお部屋探しご条件）\n①ご入居時期\n②ご希望家賃（管理費込み）\n③ご希望間取り\n④ご希望築年数\n⑤ご希望エリア・最寄り駅\n⑥駅からの徒歩分数\n⑦初期費用ご予算\n⑧その他こだわり条件\n\n何卒よろしくお願い致します😌！！",
+  },
   property_recommendation: {
     rules: ["物件資料画像をVisionで読み取り", "お客様希望条件と照合", "退去予定あれば自動案内文を追加"],
     template: "🌟【物件名】\n築年数・間取り・面積・駅徒歩\nオススメ①②③④\n初期費用・退去予定（あれば）\n🙇‍♀️[お客様名]さんお気に召されましたらご案内させて頂きます！！",
@@ -94,6 +99,15 @@ const CONFIG: Record<
     inputPlaceholder?: string;
   }
 > = {
+  condition_hearing: {
+    title: "ヒアリング",
+    emoji: "📋",
+    requiresImage: false,
+    imageLabel: "",
+    description: "お客様に希望条件①〜⑧をヒアリングするフォームを送ります。",
+    inputLabel: "一言補足（任意）",
+    inputPlaceholder: "例：同居人のお部屋探しにあたって...",
+  },
   property_recommendation: {
     title: "物件オススメ",
     emoji: "🏠",
@@ -849,6 +863,7 @@ export default function AixModal({
   };
 
   const ACTION_TO_STATE: Record<AixActionType, string> = {
+    condition_hearing: "hearing",
     property_recommendation: "property_recommendation",
     property_send: "proposing",
     viewing_invite: "viewing",
