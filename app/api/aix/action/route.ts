@@ -174,19 +174,18 @@ export async function POST(request: NextRequest) {
     const { action, account, customer_name, conversation_id, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done, vacancy_status, has_estimate, move_out_date, keyword, property_name } = body;
 
     // 今日（JST）スタッフがすでに挨拶メッセージを送っているか判定 → 挨拶を切り替える
-    // ※ 初期費用テンプレート等の挨拶なしメッセージは対象外。挨拶キーワードを含む場合のみ切り替え
+    // お世話になっておりますは1日1回の挨拶（おはようございますと同じ）
+    // こちら（スタッフ）の最後の送信が今日 → 今日すでに挨拶済み → お待たせ致しました
+    // こちらの最後の送信が昨日以前（または送信なし） → 今日初めての挨拶 → お世話になっております
     const todayJST = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const toJSTDate = (iso: string) => new Date(new Date(iso).getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    // 今日最後のメッセージがお客様から → お客様が返信待ち → 「お待たせ致しました」を使う
-    // 最後が自分（staff）から or 今日メッセージなし → 初回または追伸 → 「お世話になっております」を使う
     const recentMsgArray = Array.isArray(recent_messages)
       ? (recent_messages as Array<{ sender: string; rawCreatedAt?: string }>)
       : [];
-    const lastMsg = recentMsgArray[recentMsgArray.length - 1];
-    const staffMessagedToday = !!lastMsg &&
-      lastMsg.sender === "customer" &&
-      !!lastMsg.rawCreatedAt &&
-      toJSTDate(lastMsg.rawCreatedAt) === todayJST;
+    const lastStaffMsg = [...recentMsgArray].reverse().find(m => m.sender === "staff");
+    const staffMessagedToday = !!lastStaffMsg &&
+      !!lastStaffMsg.rawCreatedAt &&
+      toJSTDate(lastStaffMsg.rawCreatedAt) === todayJST;
 
     // 直近の会話履歴テキスト（viewing_invite・application_push で使用）
     const recentHistory = Array.isArray(recent_messages) && recent_messages.length > 0
@@ -497,23 +496,15 @@ ${SMORA_COMMON_RULES}`;
   条件から主なポイント（エリア・家賃・間取り等）を自然に組み込む`
         : `・「ご希望のご条件に合ったお部屋ピックアップさせて頂きました😊！！」で冒頭を続ける`;
 
-      // 挨拶判定: 前回LINEと同じ日→「お待たせ致しました」、別日→「お世話になっております」
+      // 挨拶判定: こちらの最後の送信が今日→「お待たせ致しました」、昨日以前→「お世話になっております」
       const jstHourNow = (new Date().getUTCHours() + 9) % 24;
-      const lastMsgAt = body.last_message_at ? String(body.last_message_at) : null;
-      const toJSTDate = (iso: string) => {
-        const d = new Date(new Date(iso).getTime() + 9 * 60 * 60 * 1000);
-        return d.toISOString().slice(0, 10);
-      };
-      const todayJST = toJSTDate(new Date().toISOString());
-      const lastMsgDayJST = lastMsgAt ? toJSTDate(lastMsgAt) : null;
-      const isSameDay = lastMsgDayJST === todayJST;
-      const openingLine: string = isSameDay
+      const openingLine: string = staffMessagedToday
         ? (jstHourNow >= 21
             ? `①「[お客様名]さん夜分遅くに失礼致します！！」で始める`
             : `①「[お客様名]さんお待たせ致しました！！」で始める`)
         : `①「[お客様名]さんお世話になっております！！」で始める`;
       // 例文・テンプレ用の挨拶文
-      const greetingLine = isSameDay
+      const greetingLine = staffMessagedToday
         ? (jstHourNow >= 21 ? `${name}さん夜分遅くに失礼致します！！` : `${name}さんお待たせ致しました！！`)
         : `${name}さんお世話になっております！！`;
 
@@ -523,7 +514,7 @@ ${SMORA_COMMON_RULES}`;
         const countStr = imgCount > 0 ? `${imgCount}件` : "複数件";
         const greeting = jstHourNow >= 21
           ? `${name}さん夜分遅くに失礼致します！！`
-          : isSameDay
+          : staffMessagedToday
             ? `${name}さんお待たせ致しました！！`
             : `${name}さんお世話になっております！！`;
         const vacatingSection = vacatingInfo
@@ -554,7 +545,7 @@ ${openingLine}
 ・感嘆符は「！！」のみ・絵文字は 😌 のみ1個
 
 【出力例】
-${isSameDay ? (jstHourNow >= 21 ? "Rさん夜分遅くに失礼致します！！" : "Rさんお待たせ致しました！！") : "Rさんお世話になっております！！"}
+${staffMessagedToday ? (jstHourNow >= 21 ? "Rさん夜分遅くに失礼致します！！" : "Rさんお待たせ致しました！！") : "Rさんお世話になっております！！"}
 
 大阪市内全域からカウンターキッチン付きのお部屋でRさんご希望のご条件に近いお部屋ピックアップさせて頂きました！！
 お手隙の際にご査収ください😌！！${sendExamplesText}`
@@ -576,7 +567,7 @@ ${openingLine}
 ・感嘆符は「！！」（スモラスタイル）・LINEでそのまま送れる完成文のみ出力・絵文字は 😊 😌 のみ・1〜2個まで
 
 【出力例】
-${isSameDay ? (jstHourNow >= 21 ? "Rさん夜分遅くに失礼致します！！" : "Rさんお待たせ致しました！！") : "Rさんお世話になっております！！"}
+${staffMessagedToday ? (jstHourNow >= 21 ? "Rさん夜分遅くに失礼致します！！" : "Rさんお待たせ致しました！！") : "Rさんお世話になっております！！"}
 
 大阪駅・難波駅周辺全域からRさんご希望のご条件に合ったお部屋ピックアップさせて頂きました！！
 
