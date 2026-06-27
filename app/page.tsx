@@ -3599,7 +3599,9 @@ export default function Home() {
                         {(() => {
                           const linked = linkedCustomerMap[conversation.id];
                           if (!linked?.propertyStatus) return null;
-                          const label = PROPERTY_STATUS_LABELS[linked.propertyStatus] ?? linked.propertyStatus;
+                          // 申込以降（PROPERTY_STATUS_LABELSにないステータス）はバッジを表示しない
+                          if (!PROPERTY_STATUS_LABELS[linked.propertyStatus]) return null;
+                          const label = PROPERTY_STATUS_LABELS[linked.propertyStatus];
                           const color = PROPERTY_STATUS_COLORS[linked.propertyStatus] ?? "bg-gray-100 text-gray-400";
                           const needs = propertyNeedsAction(linked.propertyStatus, linked.lastPropertySentAt);
                           return (
