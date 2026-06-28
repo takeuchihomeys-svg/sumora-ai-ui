@@ -1048,15 +1048,6 @@ ${templateText}`;
     // ── 📍 待ち合わせ（時間なし → LINEから自動抽出） ───────────────
     } else if (action === "condition_hearing") {
       // ─── ヒアリング: 条件フォームをテンプレで直接生成（AI不要）────────────
-      const jstHour = new Date(Date.now() + 9 * 60 * 60 * 1000).getUTCHours();
-      const openingLine = jstHour >= 21
-        ? `${name}夜分遅くに失礼致します！！`
-        : staffMessagedToday
-          ? `${name}お待たせ致しました！！`
-          : `${name}お世話になっております！！`;
-
-      const extraLine = extra_input ? `\n${extra_input.trim()}\n` : "";
-
       // 既知の条件を解析して、まだ聞けていない項目だけを番号詰めで表示する
       const condText = (customer_conditions as string | undefined) ?? "";
       const CIRCLE_NUMS = ["①","②","③","④","⑤","⑥","⑦","⑧"];
@@ -1081,15 +1072,9 @@ ${templateText}`;
         .map((item, i) => `${CIRCLE_NUMS[i]}${item.label}`)
         .join("\n");
 
-      message_text = `${openingLine}
-この度はお問い合わせいただきありがとうございます😊！！
-お部屋探しのお手伝いをさせて頂きます！！
-よろしければ下記の条件をお聞かせください！！
-${extraLine}
-（${name}さんご希望のお部屋探しご条件）
-${formItems}
-
-何卒よろしくお願い致します😌！！`;
+      // name は「あさみさん」形式（さん付き）なのでそのまま使う
+      message_text = `（${name}ご希望のお部屋探しご条件）
+${formItems}`;
 
     } else if (action === "meeting_place") {
       const mDate = body.meeting_date ? String(body.meeting_date) : "";
