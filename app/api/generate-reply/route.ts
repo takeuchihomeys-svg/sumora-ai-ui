@@ -815,6 +815,7 @@ export async function POST(req: NextRequest) {
       replyHint?: string;
       screenshotBase64?: string;
       screenshotMediaType?: string;
+      hasViewed?: boolean;
     };
     message = body.message;
     state = body.state;
@@ -825,6 +826,9 @@ export async function POST(req: NextRequest) {
     customerConditions = body.customerConditions || "";
     customerSummary = body.customerSummary || "";
     replyHint = body.replyHint || "";
+    if (body.hasViewed) {
+      customerSummary = (customerSummary ? customerSummary + "\n" : "") + "【内覧済み】このお客様は既に内覧を完了しています。成約に向けて背中を押すフェーズです。";
+    }
     screenshotBase64 = body.screenshotBase64;
     screenshotMediaType = body.screenshotMediaType;
   } catch {

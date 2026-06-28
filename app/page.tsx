@@ -32,6 +32,7 @@ type Conversation = {
   isPostApply?: boolean;
   isHot?: boolean;
   isFlagged?: boolean;
+  hasViewed?: boolean;
   aiDraft?: string | null;
   messages: Message[];
 };
@@ -50,6 +51,7 @@ type SupabaseConversationRow = {
   is_post_apply?: boolean | null;
   is_hot?: boolean | null;
   is_flagged?: boolean | null;
+  has_viewed?: boolean | null;
   ai_draft?: string | null;
 };
 
@@ -1280,6 +1282,7 @@ export default function Home() {
         isPostApply: conversation.is_post_apply ?? false,
         isHot: conversation.is_hot ?? false,
         isFlagged: conversation.is_flagged ?? false,
+        hasViewed: conversation.has_viewed ?? false,
         aiDraft: conversation.ai_draft || null,
         messages: relatedMessages,
       };
@@ -1421,6 +1424,7 @@ export default function Home() {
           aiDraft: null,
           isPostApply: !!c.is_post_apply,
           isHot: !!c.is_hot,
+          hasViewed: !!c.has_viewed,
         } as Conversation;
       });
       setConversations((prev) => {
@@ -1464,7 +1468,12 @@ export default function Home() {
           c.messages.some((m) => m.text?.toLowerCase().includes(q))
       );
     }
-    return result;
+    // 内覧済みを上位に優先表示（同一グループ内は updatedAt 順を維持）
+    return [...result].sort((a, b) => {
+      if (a.hasViewed && !b.hasViewed) return -1;
+      if (!a.hasViewed && b.hasViewed) return 1;
+      return 0;
+    });
   }, [conversations, statusFilter, searchQuery, aiSearchIds, accountFilter, linkedLineUserIds, hotConvIds]);
 
   const needsReplyCount = useMemo(() => {
@@ -1927,6 +1936,7 @@ export default function Home() {
           customerConditions: genConditions,
           customerSummary: linkedCustomerForGen?.ai_summary ?? undefined,
           replyHint: genReplyHint || undefined,
+          hasViewed: selectedConversation.hasViewed ?? false,
           recentMessages: (() => {
             const last20 = contextMsgs.slice(-20);
             // 直近20件にスタッフ返信がない場合のみ、最新のスタッフ返信を先頭に追加
@@ -2210,6 +2220,7 @@ export default function Home() {
           customerConditions: linkedCustomer?.conditions || memos[selectedConversation.id] || undefined,
           customerSummary: linkedCustomer?.ai_summary ?? undefined,
           replyHint: replyHintWithEstimate,
+          hasViewed: selectedConversation.hasViewed ?? false,
           recentMessages: msgs.slice(-20).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined, createdAt: m.rawCreatedAt || undefined })),
           ...(sparkleScreenshot ? { screenshotBase64: sparkleScreenshot.base64, screenshotMediaType: sparkleScreenshot.mediaType } : {}),
         }),
@@ -2849,6 +2860,13 @@ export default function Home() {
       // 物件送る予告メッセージ検知 → AIX「物件送る」誘導
       } else if (textToSend && /ピックアップ|物件.*送|お送りさせて|物件をお送り/.test(textToSend)) {
         setSuggestPropertySendMap((prev) => ({ ...prev, [selectedConversation.id]: true }));
+      }
+
+      // 待ち合わせ確定メッセージ送信 → 内覧済みフラグをセット
+      if (activeAixFlow === "meeting_place" || (textToSend && /現地エントランスお待ち合わせ/.test(textToSend))) {
+        const convId = selectedConversation.id;
+        supabase.from("conversations").update({ has_viewed: true }).eq("id", convId).then(() => {});
+        setConversations((prev) => prev.map((c) => c.id === convId ? { ...c, hasViewed: true } : c));
       }
 
       // 内覧招待メッセージ検知 → 内覧テンプレート辞書を誘導
@@ -3668,6 +3686,11 @@ export default function Home() {
                         )}
                         {hotConvIds.has(conversation.id) && (
                           <span className="shrink-0 leading-none text-sm">🔥</span>
+                        )}
+                        {conversation.hasViewed && (
+                          <span className="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">
+                            👀内覧済
+                          </span>
                         )}
                         {(activeTasks[conversation.id] ?? []).map((task) => {
                           if (task.task_type === "property_check") {
