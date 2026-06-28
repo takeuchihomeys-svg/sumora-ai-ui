@@ -788,7 +788,8 @@ export default function AixModal({
         const hasTime = !!meetingTime.trim();
         if (hasTime) {
           // 時間あり: 即座にローカル生成
-          let msg = `かしこまりました！！\n${meetingDate}ご案内させて頂きます！！\n\n${meetingDate} ${meetingTime}に${meetingPropertyName}\n現地エントランスお待ち合わせで何卒よろしくお願い致します！！`;
+          const meetingDateNoWd = meetingDate.replace(/（[日月火水木金土]）/, "");
+          let msg = `かしこまりました！！\n${meetingDate}ご案内させて頂きます！！\n\n${meetingDateNoWd} ${meetingTime}に${meetingPropertyName}\n現地エントランスお待ち合わせで何卒よろしくお願い致します！！`;
           if (meetingPropertyAddress.trim()) msg += `\n住所: ${meetingPropertyAddress}`;
           setAiDraft(msg);
           setPreview(useEmoji ? msg : stripEmoji(msg));
