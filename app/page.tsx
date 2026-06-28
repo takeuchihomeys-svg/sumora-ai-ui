@@ -3053,6 +3053,25 @@ export default function Home() {
       // LINE送信失敗しても管理画面の動作は続ける
     }
 
+    // 内覧キャンセル承諾 → 翌日リスケ提案タスクを自動生成
+    if (text.trim() && /内覧.*キャンセル.*承り|キャンセル.*承り.*内覧|内見.*キャンセル.*承り|キャンセル.*承り.*内見/.test(text)) {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
+      const customerLabel = selectedConversation.customerName || "お客様";
+      fetch("/api/daily-tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customer_name: customerLabel,
+          content: `${customerLabel} 内覧リスケ提案`,
+          date: tomorrowStr,
+          time: "10:00",
+          end_time: "10:30",
+        }),
+      }).catch(() => {});
+    }
+
     // URLを含む送信 → property_sendタスク自動完了
     // ※ property_checkタスクはお客様から空室確認依頼が来た時のみ作成（スタッフ送信では作らない）
     if (text.trim() && text.includes("http")) {
