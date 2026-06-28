@@ -88,6 +88,12 @@ export default function CalendarPage() {
   });
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
+
+  // 申込ツールタスク編集
+  const [editingTask, setEditingTask] = useState<DailyTask | null>(null);
+  const [taskForm, setTaskForm] = useState({ content: "", time: "", end_time: "", customer_name: "" });
+  const [taskSaving, setTaskSaving] = useState(false);
+
   const notifiedIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -278,6 +284,31 @@ export default function CalendarPage() {
     fetchAll();
   };
 
+  const openEditTask = (task: DailyTask) => {
+    setTaskForm({ content: task.content, time: task.time || "", end_time: task.end_time || "", customer_name: task.customer_name || "" });
+    setEditingTask(task);
+  };
+
+  const saveTask = async () => {
+    if (!taskForm.content.trim()) return;
+    setTaskSaving(true);
+    await fetch(`/api/daily-tasks?id=${editingTask!.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: taskForm.content.trim(), time: taskForm.time, end_time: taskForm.end_time, customer_name: taskForm.customer_name }),
+    });
+    setTaskSaving(false);
+    setEditingTask(null);
+    fetchAll();
+  };
+
+  const deleteTask = async (id: string) => {
+    if (!confirm("このタスクを削除しますか？")) return;
+    await fetch(`/api/daily-tasks?id=${id}`, { method: "DELETE" });
+    setEditingTask(null);
+    fetchAll();
+  };
+
   const toggleTaskDone = async (task: DailyTask) => {
     await fetch(`/api/daily-tasks?id=${task.id}`, {
       method: "PATCH",
@@ -392,9 +423,10 @@ export default function CalendarPage() {
               if (ev._source === "screening_admin") {
                 const task = ev as DailyTask;
                 return (
-                  <div
+                  <button
                     key={task.id}
-                    className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 shadow-sm"
+                    onClick={() => openEditTask(task)}
+                    className="flex w-full items-center gap-3 rounded-2xl bg-white px-4 py-3 shadow-sm text-left"
                   >
                     {/* 時刻 */}
                     <div className="w-12 shrink-0 text-center">
@@ -404,14 +436,14 @@ export default function CalendarPage() {
                         <span className="text-[10px] text-[#aaa]">—</span>
                       )}
                     </div>
-                    {/* チェックボックス */}
-                    <button
-                      onClick={() => toggleTaskDone(task)}
+                    {/* チェックボックス（タップはチェック切り替え・行タップは編集と分離） */}
+                    <span
+                      onClick={(e) => { e.stopPropagation(); toggleTaskDone(task); }}
                       className="flex h-6 w-6 shrink-0 items-center justify-center rounded border-2 transition"
                       style={{ borderColor: task.done ? SCREENING_COLOR : "#d1d7db", backgroundColor: task.done ? SCREENING_COLOR : "white" }}
                     >
                       {task.done && <span className="text-[11px] text-white">✓</span>}
-                    </button>
+                    </span>
                     {/* コンテンツ */}
                     <div className="min-w-0 flex-1">
                       <span className={`text-[14px] font-medium leading-snug ${task.done ? "line-through text-gray-400" : "text-[#111b21]"}`}>
@@ -428,7 +460,7 @@ export default function CalendarPage() {
                     >
                       申込
                     </span>
-                  </div>
+                  </button>
                 );
               }
 
@@ -478,6 +510,92 @@ export default function CalendarPage() {
       </div>
 
       <BottomNav />
+
+      {/* 申込ツール タスク編集モーダル */}
+      {editingTask && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
+          onClick={(e) => { if (e.target === e.currentTarget) setEditingTask(null); }}
+        >
+          <div className="w-full max-w-lg rounded-t-3xl bg-white shadow-2xl">
+            <div
+              className="flex items-center justify-between rounded-t-3xl px-5 py-4"
+              style={{ background: `linear-gradient(135deg, ${SCREENING_COLOR}, #a855f7)` }}
+            >
+              <div className="text-[17px] font-bold text-white">📋 タスクを編集</div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => deleteTask(editingTask.id)}
+                  className="rounded-full bg-red-400/80 px-3 py-1 text-xs font-semibold text-white"
+                >
+                  削除
+                </button>
+                <button
+                  onClick={() => setEditingTask(null)}
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            <div className="p-5">
+              {/* 内容 */}
+              <div className="mb-4">
+                <label className="mb-1 block text-xs font-semibold text-[#54656f]">タスク内容 *</label>
+                <textarea
+                  value={taskForm.content}
+                  onChange={(e) => setTaskForm(f => ({ ...f, content: e.target.value }))}
+                  rows={3}
+                  className="w-full resize-none rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-[#8B5CF6]"
+                />
+              </div>
+
+              {/* 顧客名 */}
+              <div className="mb-4">
+                <label className="mb-1 block text-xs font-semibold text-[#54656f]">顧客名</label>
+                <input
+                  type="text"
+                  value={taskForm.customer_name}
+                  onChange={(e) => setTaskForm(f => ({ ...f, customer_name: e.target.value }))}
+                  className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-[#8B5CF6]"
+                />
+              </div>
+
+              {/* 時刻 */}
+              <div className="mb-4 flex gap-3">
+                <div className="flex-1">
+                  <label className="mb-1 block text-xs font-semibold text-[#54656f]">開始時刻</label>
+                  <input
+                    type="time"
+                    value={taskForm.time}
+                    onChange={(e) => setTaskForm(f => ({ ...f, time: e.target.value }))}
+                    className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-[#8B5CF6]"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="mb-1 block text-xs font-semibold text-[#54656f]">終了時刻</label>
+                  <input
+                    type="time"
+                    value={taskForm.end_time}
+                    onChange={(e) => setTaskForm(f => ({ ...f, end_time: e.target.value }))}
+                    className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-[#8B5CF6]"
+                  />
+                </div>
+              </div>
+
+              <button
+                onClick={saveTask}
+                disabled={taskSaving || !taskForm.content.trim()}
+                className="w-full rounded-full py-3.5 text-sm font-bold text-white disabled:opacity-50"
+                style={{ background: `linear-gradient(135deg, ${SCREENING_COLOR}, #a855f7)` }}
+              >
+                {taskSaving ? "保存中..." : "変更を保存"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 予定作成・編集モーダル */}
       {showModal && (
