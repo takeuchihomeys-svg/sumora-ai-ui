@@ -86,6 +86,15 @@ export async function fetchCalendarSlots(): Promise<{
   const resultDays: CalendarDayResult[] = [];
   const infoLines: string[] = [];
 
+  // 現在時刻（分）- 今日のスロットフィルタリングに使用
+  const nowMin = today.getHours() * 60 + today.getMinutes();
+
+  // スロット文字列（"10:00〜13:00"）の終了時刻を分に変換
+  const slotEndMin = (slot: string): number => {
+    const m = slot.match(/〜(\d{1,2}):(\d{2})/);
+    return m ? parseInt(m[1]) * 60 + parseInt(m[2]) : 0;
+  };
+
   for (let i = 0; i < 3; i++) {
     const day   = days[i];
     const dateKey = fmtDate(day);
@@ -134,13 +143,27 @@ export async function fetchCalendarSlots(): Promise<{
       }
     }
 
-    const slots      = calcSlots(busy);
+    let slots      = calcSlots(busy);
     const noEvents   = busy.length === 0;
+
+    // 今日（i===0）は現在時刻を過ぎたスロットを除外
+    if (i === 0) {
+      slots = slots.filter(s => slotEndMin(s) > nowMin);
+    }
+
     const fullyBooked = !noEvents && slots.length === 0;
 
-    const defaultSlots = ["10:00〜13:00", "13:00〜16:00", "16:00〜18:00"];
+    let defaultSlots = ["10:00〜13:00", "13:00〜16:00", "16:00〜18:00"];
 
-    if (noEvents) {
+    // 今日のデフォルトスロットも現在時刻で絞り込む
+    if (i === 0) {
+      defaultSlots = defaultSlots.filter(s => slotEndMin(s) > nowMin);
+    }
+
+    if (noEvents && defaultSlots.length === 0) {
+      // 今日・予定なし・全スロット時間切れ → 案内不可扱い
+      resultDays.push({ label, slots: [], fullyBooked: true, noEvents: true });
+    } else if (noEvents) {
       infoLines.push(`${shortLabel} ${defaultSlots.join(" / ")}`);
       resultDays.push({ label, slots: defaultSlots, fullyBooked: false, noEvents: true });
     } else if (fullyBooked) {
