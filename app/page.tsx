@@ -5119,8 +5119,6 @@ export default function Home() {
                 // action なし + reason が「内覧」関連 → カレンダー登録ボタン
                 if (nextSugg.reason && (nextSugg.reason.includes("内覧") || nextSugg.reason.includes("予約") || nextSugg.reason.includes("確定"))) {
                   const customerName = selectedConversation.customerName ?? "";
-                  const calTitle = encodeURIComponent(`内覧 ${customerName}`.trim());
-                  const calUrl = `https://calendar.google.com/calendar/r/eventedit?text=${calTitle}`;
                   return (
                     <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-400 bg-teal-50 px-3 py-2 flex items-center gap-2">
                       <span className="text-[12px] font-bold text-teal-700 flex-1">
@@ -5129,7 +5127,10 @@ export default function Home() {
                       </span>
                       <button
                         onClick={() => {
-                          window.open(calUrl, "_blank");
+                          setCalendarModalConvId(selectedConversation.id);
+                          setCalendarTitle(`内覧 ${customerName}`.trim());
+                          setCalendarEventType("viewing");
+                          setCalendarCustomerName(customerName);
                           setDismissedNextActionIds((prev) => new Set([...prev, id]));
                         }}
                         className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
