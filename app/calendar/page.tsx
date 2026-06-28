@@ -358,16 +358,15 @@ export default function CalendarPage() {
                   {date.getDate()}
                 </span>
 
-                <div className="mt-0.5 flex gap-0.5">
-                  {/* ローカルイベントのドット */}
-                  {Array.from({ length: Math.min(localCount, 2) }).map((_, i) => (
-                    <span key={`l${i}`} className="h-1.5 w-1.5 rounded-full bg-blue-400" />
-                  ))}
-                  {/* 申込ツールのドット */}
-                  {screeningCount > 0 && (
-                    <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: SCREENING_COLOR }} />
-                  )}
-                </div>
+                {/* 件数バッジ */}
+                {(localCount + screeningCount) > 0 && (
+                  <span
+                    className="mt-0.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-bold text-white"
+                    style={{ backgroundColor: "#FF9500" }}
+                  >
+                    {localCount + screeningCount}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -395,71 +394,73 @@ export default function CalendarPage() {
                 return (
                   <div
                     key={task.id}
-                    className="flex items-start gap-3 rounded-2xl bg-white px-4 py-3 shadow-sm"
+                    className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 shadow-sm"
                   >
-                    <button
-                      onClick={() => toggleTaskDone(task)}
-                      className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-base"
-                      style={{ backgroundColor: SCREENING_BG }}
-                    >
-                      {task.done ? "✅" : "📋"}
-                    </button>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="rounded-full px-2 py-0.5 text-[10px] font-bold text-white"
-                          style={{ backgroundColor: SCREENING_COLOR }}
-                        >
-                          申込ツール
-                        </span>
-                        <span className={`truncate text-[14px] font-semibold ${task.done ? "line-through text-gray-400" : "text-[#111b21]"}`}>
-                          {task.content}
-                        </span>
-                      </div>
-                      {task.customer_name && (
-                        <div className="mt-0.5 text-xs text-[#667781]">👤 {task.customer_name}</div>
-                      )}
-                      {task.time && (
-                        <div className="mt-0.5 text-xs text-[#667781]">
-                          🕐 {task.time}{task.end_time ? ` 〜 ${task.end_time}` : ""}
-                        </div>
+                    {/* 時刻 */}
+                    <div className="w-12 shrink-0 text-center">
+                      {task.time ? (
+                        <span className="text-[13px] font-bold text-[#2196F3]">{task.time}</span>
+                      ) : (
+                        <span className="text-[10px] text-[#aaa]">—</span>
                       )}
                     </div>
+                    {/* チェックボックス */}
+                    <button
+                      onClick={() => toggleTaskDone(task)}
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded border-2 transition"
+                      style={{ borderColor: task.done ? SCREENING_COLOR : "#d1d7db", backgroundColor: task.done ? SCREENING_COLOR : "white" }}
+                    >
+                      {task.done && <span className="text-[11px] text-white">✓</span>}
+                    </button>
+                    {/* コンテンツ */}
+                    <div className="min-w-0 flex-1">
+                      <span className={`text-[14px] font-medium leading-snug ${task.done ? "line-through text-gray-400" : "text-[#111b21]"}`}>
+                        {task.content}
+                      </span>
+                      {task.customer_name && (
+                        <div className="text-xs text-[#8696a0]">👤 {task.customer_name}</div>
+                      )}
+                    </div>
+                    {/* 申込ツールバッジ */}
+                    <span
+                      className="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold text-white"
+                      style={{ backgroundColor: SCREENING_COLOR }}
+                    >
+                      申込
+                    </span>
                   </div>
                 );
               }
 
               const localEv = ev as CalendarEvent;
               const cfg = EVENT_TYPE_CONFIG[localEv.event_type] ?? EVENT_TYPE_CONFIG.other;
+              const timeStr = localEv.all_day ? "終日" : formatTimeJP(localEv.start_at);
               return (
                 <button
                   key={localEv.id}
                   onClick={() => openEdit(localEv)}
-                  className="flex items-start gap-3 rounded-2xl bg-white px-4 py-3 text-left shadow-sm"
+                  className="flex items-center gap-3 rounded-2xl bg-white px-4 py-3 text-left shadow-sm w-full"
                 >
+                  {/* 時刻 */}
+                  <div className="w-12 shrink-0 text-center">
+                    <span className="text-[13px] font-bold text-[#2196F3]">{timeStr}</span>
+                  </div>
+                  {/* 種別バッジ */}
                   <span
-                    className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-base"
-                    style={{ backgroundColor: cfg.bg }}
+                    className="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold text-white"
+                    style={{ backgroundColor: cfg.color }}
                   >
-                    {cfg.emoji}
+                    {cfg.label}
                   </span>
+                  {/* コンテンツ */}
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="rounded-full px-2 py-0.5 text-[10px] font-bold text-white"
-                        style={{ backgroundColor: cfg.color }}
-                      >
-                        {cfg.label}
-                      </span>
-                      <span className="truncate text-[15px] font-semibold text-[#111b21]">{localEv.title}</span>
-                    </div>
-                    {localEv.customer_name && (
-                      <div className="mt-0.5 text-xs text-[#667781]">👤 {localEv.customer_name}</div>
+                    <span className="text-[14px] font-medium text-[#111b21] leading-snug line-clamp-2">
+                      {localEv.title}
+                      {localEv.customer_name ? `　${localEv.customer_name}` : ""}
+                    </span>
+                    {localEv.notes && (
+                      <div className="truncate text-xs text-[#8696a0]">{localEv.notes}</div>
                     )}
-                    <div className="mt-0.5 text-xs text-[#667781]">
-                      {localEv.all_day ? "終日" : `${formatTimeJP(localEv.start_at)}${localEv.end_at ? ` 〜 ${formatTimeJP(localEv.end_at)}` : ""}`}
-                    </div>
-                    {localEv.notes && <div className="mt-0.5 truncate text-xs text-[#8696a0]">{localEv.notes}</div>}
                   </div>
                 </button>
               );
