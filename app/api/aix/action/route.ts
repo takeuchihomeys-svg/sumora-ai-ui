@@ -1057,20 +1057,34 @@ ${templateText}`;
 
       const extraLine = extra_input ? `\n${extra_input.trim()}\n` : "";
 
+      // 既知の条件を解析して、まだ聞けていない項目だけを表示する
+      const condText = (customer_conditions as string | undefined) ?? "";
+      const ALL_ITEMS = [
+        { num: "①", label: "ご入居時期",                              key: "入居:" },
+        { num: "②", label: "ご希望家賃（管理費込み）",                  key: "家賃:" },
+        { num: "③", label: "ご希望間取り",                             key: "間取り:" },
+        { num: "④", label: "ご希望築年数",                             key: "築年数:" },
+        { num: "⑤", label: "ご希望エリア・最寄り駅",                    key: "エリア:" },
+        { num: "⑥", label: "駅からの徒歩分数",                         key: "駅徒歩:" },
+        { num: "⑦", label: "初期費用ご予算",                           key: "初期費用" },
+        { num: "⑧", label: "その他こだわり条件（ペット・保証人・駐車場等）", key: "その他:" },
+      ];
+      // 条件テキストに key が含まれていれば「既知」→ 除外
+      const missing = condText
+        ? ALL_ITEMS.filter(item => !condText.includes(item.key))
+        : ALL_ITEMS;
+      // 全部埋まっていた場合は全項目を聞く（フォールバック）
+      const formItems = (missing.length > 0 ? missing : ALL_ITEMS)
+        .map(item => `${item.num}${item.label}`)
+        .join("\n");
+
       message_text = `${openingLine}
 この度はお問い合わせいただきありがとうございます😊！！
 お部屋探しのお手伝いをさせて頂きます！！
 よろしければ下記の条件をお聞かせください！！
 ${extraLine}
-（ご希望のお部屋探しご条件）
-①ご入居時期
-②ご希望家賃（管理費込み）
-③ご希望間取り
-④ご希望築年数
-⑤ご希望エリア・最寄り駅
-⑥駅からの徒歩分数
-⑦初期費用ご予算
-⑧その他こだわり条件（ペット・保証人・駐車場等）
+（${name}さんご希望のお部屋探しご条件）
+${formItems}
 
 何卒よろしくお願い致します😌！！`;
 
