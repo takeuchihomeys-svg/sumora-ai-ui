@@ -1057,25 +1057,28 @@ ${templateText}`;
 
       const extraLine = extra_input ? `\n${extra_input.trim()}\n` : "";
 
-      // 既知の条件を解析して、まだ聞けていない項目だけを表示する
+      // 既知の条件を解析して、まだ聞けていない項目だけを番号詰めで表示する
       const condText = (customer_conditions as string | undefined) ?? "";
+      const CIRCLE_NUMS = ["①","②","③","④","⑤","⑥","⑦","⑧"];
       const ALL_ITEMS = [
-        { num: "①", label: "ご入居時期",                              key: "入居:" },
-        { num: "②", label: "ご希望家賃（管理費込み）",                  key: "家賃:" },
-        { num: "③", label: "ご希望間取り",                             key: "間取り:" },
-        { num: "④", label: "ご希望築年数",                             key: "築年数:" },
-        { num: "⑤", label: "ご希望エリア・最寄り駅",                    key: "エリア:" },
-        { num: "⑥", label: "駅からの徒歩分数",                         key: "駅徒歩:" },
-        { num: "⑦", label: "初期費用ご予算",                           key: "初期費用" },
-        { num: "⑧", label: "その他こだわり条件（ペット・保証人・駐車場等）", key: "その他:" },
+        { label: "ご入居時期",                                key: "入居:" },
+        { label: "ご希望家賃（管理費込み）",                    key: "家賃:" },
+        { label: "ご希望間取り",                               key: "間取り:" },
+        { label: "ご希望築年数",                               key: "築年数:" },
+        { label: "ご希望エリア・最寄り駅",                      key: "エリア:" },
+        { label: "駅からの徒歩分数",                           key: "駅徒歩:" },
+        { label: "初期費用ご予算",                             key: "初期費用" },
+        { label: "その他こだわり条件（ペット・保証人・駐車場等）", key: "その他:" },
       ];
       // 条件テキストに key が含まれていれば「既知」→ 除外
       const missing = condText
         ? ALL_ITEMS.filter(item => !condText.includes(item.key))
         : ALL_ITEMS;
       // 全部埋まっていた場合は全項目を聞く（フォールバック）
-      const formItems = (missing.length > 0 ? missing : ALL_ITEMS)
-        .map(item => `${item.num}${item.label}`)
+      const showItems = missing.length > 0 ? missing : ALL_ITEMS;
+      // 番号を①②③…と詰めて振り直す
+      const formItems = showItems
+        .map((item, i) => `${CIRCLE_NUMS[i]}${item.label}`)
         .join("\n");
 
       message_text = `${openingLine}
