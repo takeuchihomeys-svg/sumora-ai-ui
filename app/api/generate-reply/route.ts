@@ -280,12 +280,18 @@ function buildGenerationMessages(
           area_change: "エリア変更",
           rent_change: "家賃変更",
           layout_change: "間取り変更",
-          condition_relax: "条件緩和",
+          condition_relax: "条件緩和（拡大）",
           pickup_request: "物件ピックアップ依頼",
           multi: "複数条件変更",
         };
         const label = typeLabel[p.condition_change_type as string] ?? (p.condition_change_type as string);
-        conditionChangeNote = `\n【🔄 ${label}検出（最重要・絶対遵守）】追加条件を聞き返すことは絶対禁止。変更内容を具体的なエリア名・数字で言葉にして、即座に行動宣言する。「ピックアップします」「お送りします」で2〜3行で完結させること。`;
+        // 拡大・緩和（condition_relax）の場合: ピックアップ宣言 + まだ聞けていない条件を1〜2点確認してよい
+        if (p.condition_change_type === "condition_relax") {
+          conditionChangeNote = `\n【🔄 ${label}検出】エリア拡大・家賃上限UP等で選択肢が広がった。必ずピックアップ宣言を行うこと。さらに「まだ聞けていない重要条件（間取り・築年数など）」が1〜2点あれば追加確認してよい（すでに分かっている条件は聞き返さない）。`;
+        } else {
+          // 条件変更・ピックアップ依頼: 追加質問は禁止、即行動宣言で完結
+          conditionChangeNote = `\n【🔄 ${label}検出（最重要・絶対遵守）】追加条件を聞き返すことは絶対禁止。変更内容を具体的なエリア名・数字で言葉にして、即座に行動宣言する。「ピックアップします」「お送りします」で完結させること。`;
+        }
       }
     } catch { /* ignore */ }
   }
