@@ -882,7 +882,7 @@ export async function POST(req: NextRequest) {
         else if (p.key === "smora_quick_patterns") quickPatterns = p.content;
         else if (p.key === "real_estate_rules") realEstateRules = p.content;
         else if (p.key === "reply_content_rules") replyContentRules = p.content;
-        else if (p.key.startsWith("phase_guide_")) phaseGuide[p.key.slice("phase_guide_".length)] = p.content;
+        // phase_guide_* はコード(line-reply-prompts.ts)を正として使用・DBは無視
       }
       if (generationSystem || quickPatterns || realEstateRules || replyContentRules || Object.keys(phaseGuide).length > 0) {
         promptOverrides = {
