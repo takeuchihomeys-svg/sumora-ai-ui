@@ -172,7 +172,7 @@ function extractNotice(text: string, customerName: string): { message: string; n
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, account, customer_name, conversation_id, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done, vacancy_status, has_estimate, move_out_date, keyword, property_name } = body;
+    const { action, account, customer_name, conversation_id, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done, vacancy_status, has_estimate, move_out_date, keyword, property_name, property_names, property_vacancy_dates, property_count } = body;
 
     // 今日（JST）スタッフがすでに挨拶メッセージを送っているか判定 → 挨拶を切り替える
     // お世話になっておりますは1日1回の挨拶（おはようございますと同じ）
@@ -942,9 +942,26 @@ ${SMORA_COMMON_RULES}
 ${patternExample}${knowledgeText}${examplesText}`;
 
       const available_application = body.available_application as "yes" | "no" | undefined;
+      const propNames = (property_names as string[] | undefined) ?? [];
+      const propVacancyDates = (property_vacancy_dates as string[] | undefined) ?? [];
+      const propCount = (property_count as number | undefined) ?? 1;
 
-      // 「物件あった」申込あり・申込なし・未選択 は固定テンプレ
-      if (pattern === "available") {
+      // 「物件あった」複数物件モード（2件・3件）
+      if (pattern === "available" && propCount > 1) {
+        const bulletLines = propNames.slice(0, propCount).map((n, pi) => {
+          const name_ = n.trim() || `物件${["①", "②", "③"][pi]}`;
+          const vacDate = propVacancyDates[pi]?.trim();
+          return vacDate ? `・${name_}\n  ${vacDate}退去予定のお部屋となります` : `・${name_}`;
+        }).join("\n");
+        const hasAnyEstimate = (body.estimate_image_urls as string[] | undefined)?.length ?? 0;
+        const estimateLine = hasAnyEstimate ? "\n最大限割引しました御見積書同封させて頂きました！！" : "";
+        message_text = `${bulletLines}\nこちら${propCount}件現在募集中となります！！
+現在空室でご内覧可能なお部屋となります！！${estimateLine}
+
+${name}さんご都合よろしいお日にちにご案内させて頂きます😊！！`;
+
+      // 「物件あった」申込あり・申込なし・未選択 は固定テンプレ（1件）
+      } else if (pattern === "available") {
         const estimateLine = estimate_image_url ? "\n最大限割引しました御見積書同封させて頂きました！！" : "";
         const availableTemplate = available_application === "yes"
           ? `[物件名と号室]

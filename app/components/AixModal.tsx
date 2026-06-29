@@ -238,12 +238,14 @@ export default function AixModal({
   // 物件確認した「別の部屋」専用: 見積書画像
   const [checkEstimateFile, setCheckEstimateFile] = useState<File | null>(null);
   const [checkEstimatePreview, setCheckEstimatePreview] = useState<string>("");
-  // 複数物件対応: 件数 + per-property 画像・見積書
+  // 複数物件対応: 件数 + per-property 画像・見積書・物件名・退去予定日
   const [checkPropertyCount, setCheckPropertyCount] = useState<1|2|3>(1);
   const [checkPropImages, setCheckPropImages] = useState<File[][]>([[], [], []]);
   const [checkPropImagePreviews, setCheckPropImagePreviews] = useState<string[][]>([[], [], []]);
   const [checkPropEstimates, setCheckPropEstimates] = useState<(File|null)[]>([null, null, null]);
   const [checkPropEstimatePreviews, setCheckPropEstimatePreviews] = useState<string[]>(["", "", ""]);
+  const [checkPropNames, setCheckPropNames] = useState<string[]>(["", "", ""]);
+  const [checkPropVacancyDates, setCheckPropVacancyDates] = useState<string[]>(["", "", ""]);
   // 物件確認した「空室あり」専用カレンダー
   const [checkCalendarInfo, setCheckCalendarInfo] = useState<string>("");
   const [checkCalendarDays, setCheckCalendarDays] = useState<Array<{
@@ -781,6 +783,9 @@ export default function AixModal({
         if (checkPattern === "available" && checkPropertyCount > 1) {
           // 複数物件モード
           body.property_count = checkPropertyCount;
+          // 物件名・退去予定日を配列で渡す
+          body.property_names = checkPropNames.slice(0, checkPropertyCount);
+          body.property_vacancy_dates = checkPropVacancyDates.slice(0, checkPropertyCount);
           const allImageUrls: string[] = [];
           for (let pi = 0; pi < checkPropertyCount; pi++) {
             if (checkPropImages[pi].length > 0) {
@@ -1860,6 +1865,33 @@ export default function AixModal({
                   {Array.from({ length: checkPropertyCount }, (_, pi) => (
                     <div key={pi} className="rounded-2xl border border-[#d1d7db] bg-[#f8f9fa] p-3">
                       <p className="mb-2 text-xs font-bold text-[#54656f]">物件{"①②③"[pi]}</p>
+                      {/* 物件名 */}
+                      <input
+                        type="text"
+                        placeholder="マンション名・号室（例: KTIレジデンス西中島II 202号室）"
+                        value={checkPropNames[pi]}
+                        onChange={(e) => {
+                          const arr = [...checkPropNames];
+                          arr[pi] = e.target.value;
+                          setCheckPropNames(arr);
+                        }}
+                        className="mb-2 w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-xs outline-none focus:border-[#4CAF50]"
+                      />
+                      {/* 退去予定日（任意） */}
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className="text-[10px] text-[#90a4ae] shrink-0">退去予定日（任意）:</span>
+                        <input
+                          type="text"
+                          placeholder="例: 7月31日"
+                          value={checkPropVacancyDates[pi]}
+                          onChange={(e) => {
+                            const arr = [...checkPropVacancyDates];
+                            arr[pi] = e.target.value;
+                            setCheckPropVacancyDates(arr);
+                          }}
+                          className="flex-1 rounded-xl border border-[#d1d7db] bg-white px-3 py-1.5 text-xs outline-none focus:border-[#4CAF50]"
+                        />
+                      </div>
                       {/* 物件画像 */}
                       {checkPropImagePreviews[pi].length > 0 && (
                         <div className="mb-2 grid grid-cols-3 gap-2">
