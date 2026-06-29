@@ -172,7 +172,7 @@ function extractNotice(text: string, customerName: string): { message: string; n
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, account, customer_name, conversation_id, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done, vacancy_status, has_estimate, move_out_date, keyword, property_name, property_names, property_vacancy_dates, property_count } = body;
+    const { action, account, customer_name, conversation_id, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done, vacancy_status, has_estimate, move_out_date, keyword, property_name, property_names, property_vacancy_dates, property_count, prop_first_image_urls } = body;
 
     // 今日（JST）スタッフがすでに挨拶メッセージを送っているか判定 → 挨拶を切り替える
     // お世話になっておりますは1日1回の挨拶（おはようございますと同じ）
@@ -948,10 +948,42 @@ ${patternExample}${knowledgeText}${examplesText}`;
 
       // 「物件あった」複数物件モード（2件・3件）
       if (pattern === "available" && propCount > 1) {
-        const propList = propNames.slice(0, propCount).map((n, pi) => ({
-          name: n.trim() || `物件${["①", "②", "③"][pi]}`,
-          vacDate: propVacancyDates[pi]?.trim() ?? "",
-        }));
+        const firstImageUrls = (prop_first_image_urls as string[] | undefined) ?? [];
+        // 物件名・退去予定日: 手入力優先、なければ画像からVision読み取り
+        const extractSystem = `あなたは物件資料から情報を抽出するAIです。
+以下の2つをJSON形式で返してください。
+【propertyName】マンション名と号室を「マンション名 号室番号号室」の形式。例: "KTIレジデンス西中島II 202号室"。号室先頭ゼロ省略。不明ならnull。
+【vacancyDate】「現況」「入居時期」「退去予定」欄の退去・空き予定日時を「7月下旬」「8月31日」のように返す。空室で即入居可能なら null。記載なしもnull。年号不要。
+出力はJSONのみ（説明文なし）: {"propertyName":"...","vacancyDate":"..."}`;
+
+        const propList = await Promise.all(
+          propNames.slice(0, propCount).map(async (manualName, pi) => {
+            const manualVac = propVacancyDates[pi]?.trim() ?? "";
+            const imgUrl = firstImageUrls[pi];
+            let resolvedName = manualName.trim();
+            let resolvedVac = manualVac;
+            if (imgUrl && (!resolvedName || !resolvedVac)) {
+              try {
+                const content: Array<{ type: string; text?: string; source?: { type: string; url: string } }> = [
+                  { type: "image", source: { type: "url", url: imgUrl } },
+                  { type: "text", text: "この物件資料から物件名と退去予定日を抽出してください。" },
+                ];
+                const raw = await callClaudeVision(extractSystem, content);
+                const m = raw.match(/\{[\s\S]*\}/);
+                if (m) {
+                  const parsed = JSON.parse(m[0]) as { propertyName?: string; vacancyDate?: string };
+                  if (!resolvedName) resolvedName = parsed.propertyName?.trim() ?? "";
+                  if (!resolvedVac) resolvedVac = parsed.vacancyDate?.trim() ?? "";
+                }
+              } catch { /* Vision失敗は無視 */ }
+            }
+            return {
+              name: resolvedName || `物件${["①", "②", "③"][pi]}`,
+              vacDate: resolvedVac,
+            };
+          })
+        );
+
         // 箇条書き: 退去予定あり → ※表記、なし → そのまま
         const bulletLines = propList.map(p =>
           p.vacDate ? `・${p.name}　※  ${p.vacDate}退去予定` : `・${p.name}`
@@ -970,7 +1002,7 @@ ${patternExample}${knowledgeText}${examplesText}`;
         message_text = `${bulletLines}
 こちら${propCount}件現在募集中となります！！${estimateSection}${vacancySection}
 
-${name}さんご都合よろしいお日にちにご案内させて頂きます😊！！`;
+${name}ご都合よろしいお日にちにご案内させて頂きます😊！！`;
 
       // 「物件あった」申込あり・申込なし・未選択 は固定テンプレ（1件）
       } else if (pattern === "available") {

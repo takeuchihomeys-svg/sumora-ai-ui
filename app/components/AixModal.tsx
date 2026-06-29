@@ -818,19 +818,23 @@ export default function AixModal({
           body.floor_plan_match = checkFloorPlan;
         }
         if (checkPattern === "available" && checkPropertyCount > 1) {
-          // 複数物件モード: 送信時に画像から物件名・退去予定日を読み取る
+          // 複数物件モード: 画像をアップロードしURLをサーバー側に渡す（Vision読み取りはserver側で行う）
           body.property_count = checkPropertyCount;
-          const extractedProps = await extractPropInfoFromImages(checkPropertyCount);
-          body.property_names = extractedProps.map(p => p.name);
-          body.property_vacancy_dates = extractedProps.map(p => p.vacancyDate);
+          body.property_names = checkPropNames.slice(0, checkPropertyCount);
+          body.property_vacancy_dates = checkPropVacancyDates.slice(0, checkPropertyCount);
           const allImageUrls: string[] = [];
+          const propFirstImageUrls: string[] = [];
           for (let pi = 0; pi < checkPropertyCount; pi++) {
             if (checkPropImages[pi].length > 0) {
               const urls = await Promise.all(checkPropImages[pi].map((f, j) => uploadImage(f, j)));
               allImageUrls.push(...urls);
+              propFirstImageUrls.push(urls[0]); // 各物件の最初の画像URLをサーバーに渡す
+            } else {
+              propFirstImageUrls.push("");
             }
           }
           if (allImageUrls.length > 0) { body.image_urls = allImageUrls; body.image_url = allImageUrls[0]; }
+          body.prop_first_image_urls = propFirstImageUrls;
           const estimateUrls: string[] = [];
           for (let pi = 0; pi < checkPropertyCount; pi++) {
             const ef = checkPropEstimates[pi];
