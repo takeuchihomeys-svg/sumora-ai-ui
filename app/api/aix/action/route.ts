@@ -172,7 +172,7 @@ function extractNotice(text: string, customerName: string): { message: string; n
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, account, customer_name, conversation_id, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done, vacancy_status, has_estimate, move_out_date, keyword, property_name, property_names, property_vacancy_dates, property_count, prop_first_image_urls } = body;
+    const { action, account, customer_name, conversation_id, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done, vacancy_status, has_estimate, move_out_date, keyword, property_name, property_names, property_vacancy_dates, property_count, prop_first_image_urls, all_properties_available } = body;
 
     // 今日（JST）スタッフがすでに挨拶メッセージを送っているか判定 → 挨拶を切り替える
     // お世話になっておりますは1日1回の挨拶（おはようございますと同じ）
@@ -970,7 +970,11 @@ ${patternExample}${knowledgeText}${examplesText}`;
           : "\n\n" + vacancyProps.map(p =>
               `${p.name}は空室ですのでご案内出来ます！！\n${name}ご都合よろしいお日にちにご案内させて頂きます😊！！`
             ).join("\n\n");
-        message_text = `${bulletLines}
+        const greeting = staffMessagedToday ? "お待たせ致しました！！" : "お世話になっております！！";
+        const header = (all_properties_available as boolean | undefined)
+          ? `${name}お送り頂きました\n`
+          : `${name}お送り頂きました物件の中で\n`;
+        message_text = `${greeting}\n${header}${bulletLines}
 こちら${propCount}件現在募集中となります！！${estimateSection}${vacancySection}`;
 
       // 「物件あった」申込あり・申込なし・未選択 は固定テンプレ（1件）
