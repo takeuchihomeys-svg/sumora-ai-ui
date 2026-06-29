@@ -683,7 +683,7 @@ export default function AixModal({
   const syncVacatingNote = (props: Array<{name: string; moveOut: string; editingDate: boolean}>) => {
     const note = props
       .filter((p) => p.name.trim())
-      .map((p) => `◎${p.name}: ${p.moveOut ? p.moveOut + "退去予定" : "退去予定"}`)
+      .map((p) => { const d = p.moveOut.replace(/^\d{4}年/, ""); return `◎${p.name}: ${d ? d + "退去予定" : "退去予定"}`; })
       .join("\n");
     setVacatingNote(note);
   };
@@ -712,7 +712,7 @@ export default function AixModal({
         if (data.ok && data.properties) {
           const scheduled = data.properties
             .filter((p) => p.status === "scheduled" && p.name)
-            .map((p) => ({ name: p.name, moveOut: p.move_out || "", editingDate: false }));
+            .map((p) => ({ name: p.name, moveOut: (p.move_out || "").replace(/^\d{4}年/, ""), editingDate: false }));
           results.push(...scheduled);
           setVacatingProperties([...results]);
           syncVacatingNote([...results]);

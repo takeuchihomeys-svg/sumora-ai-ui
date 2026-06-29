@@ -81,7 +81,10 @@ export async function POST(request: NextRequest) {
     // 空室: 記載しない（案内できる物件は通常通り送るだけ）
     const scheduledLines = properties
       .filter((p) => p.status === "scheduled" && p.name)
-      .map((p) => `◎${p.name}は${p.move_out ? p.move_out + "退去予定" : "退去予定"}となりますのでお部屋ご案内出来ない形となります！！`);
+      .map((p) => {
+        const moveOut = (p.move_out || "").replace(/^\d{4}年/, "");
+        return `◎${p.name}は${moveOut ? moveOut + "退去予定" : "退去予定"}となりますのでお部屋ご案内出来ない形となります！！`;
+      });
 
     const vacantLines = properties
       .filter((p) => p.status === "vacant" && p.name)
