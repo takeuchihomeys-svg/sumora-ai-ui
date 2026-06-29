@@ -248,6 +248,7 @@ export default function AixModal({
   const [checkPropVacancyDates, setCheckPropVacancyDates] = useState<string[]>(["", "", ""]);
   const [checkAllAvailable, setCheckAllAvailable] = useState(false);
   const [checkPropStatuses, setCheckPropStatuses] = useState<string[]>(["available", "available", "available"]);
+  const [checkIncludeEstimateText, setCheckIncludeEstimateText] = useState(false);
   // 物件確認した「空室あり」専用カレンダー
   const [checkCalendarInfo, setCheckCalendarInfo] = useState<string>("");
   const [checkCalendarDays, setCheckCalendarDays] = useState<Array<{
@@ -851,6 +852,7 @@ export default function AixModal({
         if (checkPattern === "available" && showCheckCalendar && checkCalendarInfo) body.calendar_info = checkCalendarInfo;
         if (checkPattern === "available" && checkAvailableApp) body.available_application = checkAvailableApp;
         if (checkPattern === "available") body.all_properties_available = checkAllAvailable;
+        if (checkPattern === "available" && checkIncludeEstimateText) body.include_estimate_text = true;
         if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
         if (customerSummary) body.customer_summary = customerSummary;
       } else if (config.requiresImage && imageFile) {
@@ -2069,6 +2071,13 @@ export default function AixModal({
                     className={`mt-2 w-full rounded-xl border py-2 text-sm font-bold transition ${checkAllAvailable ? "border-[#4CAF50] bg-[#e8f5e9] text-[#2e7d32]" : "border-[#d1d7db] bg-white text-[#54656f]"}`}
                   >
                     ✅ 全て募集してた{checkAllAvailable ? "（「物件の中で」なし）" : "（タップでON）"}
+                  </button>
+                  {/* 見積書テキスト同封: 見積書画像から費用テキストを生成・末尾に追加 */}
+                  <button
+                    onClick={() => setCheckIncludeEstimateText(v => !v)}
+                    className={`mt-2 w-full rounded-xl border py-2 text-sm font-bold transition ${checkIncludeEstimateText ? "border-[#7B1FA2] bg-[#f3e5f5] text-[#7B1FA2]" : "border-[#d1d7db] bg-white text-[#54656f]"}`}
+                  >
+                    📋 見積書テキスト同封{checkIncludeEstimateText ? "（オン）" : "（タップでON）"}
                   </button>
                   {showCheckCalendar && (
                     <div className="mt-2 rounded-2xl border border-[#d1d7db] bg-[#f8f9fa] p-3">

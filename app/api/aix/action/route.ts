@@ -172,7 +172,7 @@ function extractNotice(text: string, customerName: string): { message: string; n
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, account, customer_name, conversation_id, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done, vacancy_status, has_estimate, move_out_date, keyword, property_name, property_names, property_vacancy_dates, property_count, prop_first_image_urls, all_properties_available, prop_statuses } = body;
+    const { action, account, customer_name, conversation_id, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done, vacancy_status, has_estimate, move_out_date, keyword, property_name, property_names, property_vacancy_dates, property_count, prop_first_image_urls, all_properties_available, prop_statuses, include_estimate_text } = body;
 
     // 今日（JST）スタッフがすでに挨拶メッセージを送っているか判定 → 挨拶を切り替える
     // お世話になっておりますは1日1回の挨拶（おはようございますと同じ）
@@ -1126,6 +1126,52 @@ ${templateText}`;
           message_text = await callClaudeVision(checkSystem, content);
         } else {
           message_text = await callClaude(checkSystem, userText);
+        }
+      }
+
+      // 見積書テキスト同封: available パターンかつフラグON時、見積書画像から費用テキストを生成・末尾に追加
+      if (pattern === "available" && (include_estimate_text as boolean | undefined) && message_text) {
+        const estUrls = (body.estimate_image_urls as string[] | undefined) ?? [];
+        if (estUrls.length > 0) {
+          const estParts: string[] = [];
+          for (let pi = 0; pi < estUrls.length; pi++) {
+            const url = estUrls[pi];
+            if (!url) continue;
+            const pName = (propNames[pi] as string | undefined)?.trim() || `物件${["①","②","③"][pi] ?? ""}`;
+            try {
+              const estSystem = `この見積書画像から初期費用情報を抽出してください。JSON形式のみ返答（説明文なし）：
+{"discount":"34,000円","initial_cost":"146,000円","savings":"102,200円"}
+- discount: 割引額（「〇〇,〇〇〇円」形式）
+- initial_cost: 初期費用合計（「〇〇〇,〇〇〇円」形式）
+- savings: スモラ節約額（一般業者との差額）
+不明はnull。`;
+              const estContent = [
+                { type: "text", text: "この見積書から初期費用情報を抽出してください。" },
+                { type: "image", source: { type: "url", url } },
+              ];
+              const estRaw = await callClaudeVision(estSystem, estContent);
+              const jsonMatch = estRaw.match(/\{[\s\S]*\}/);
+              if (!jsonMatch) continue;
+              const estData = JSON.parse(jsonMatch[0]) as { discount?: string | null; initial_cost?: string | null; savings?: string | null };
+              const prefix = estUrls.length > 1 ? `${"①②③"[pi]}【${pName}】` : `【${pName}】`;
+              const lines: string[] = [prefix, ""];
+              if (estData.discount) {
+                lines.push("初期費用さらに");
+                lines.push(`🌟${estData.discount}割引させて頂き`);
+              }
+              if (estData.initial_cost) lines.push(`初期費用：${estData.initial_cost}`);
+              if (estData.savings) {
+                lines.push("");
+                lines.push(`スモラなら一般的な不動産業者より${estData.savings}節約出来ます！！`);
+              }
+              estParts.push(lines.join("\n"));
+            } catch {
+              // 読み取りエラーはスキップ
+            }
+          }
+          if (estParts.length > 0) {
+            message_text += "\n\n" + estParts.join("\n\n") + "\n\n※ご入居日によって日割家賃が発生致します。";
+          }
         }
       }
 
