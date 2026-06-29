@@ -238,6 +238,12 @@ export default function AixModal({
   // 物件確認した「別の部屋」専用: 見積書画像
   const [checkEstimateFile, setCheckEstimateFile] = useState<File | null>(null);
   const [checkEstimatePreview, setCheckEstimatePreview] = useState<string>("");
+  // 複数物件対応: 件数 + per-property 画像・見積書
+  const [checkPropertyCount, setCheckPropertyCount] = useState<1|2|3>(1);
+  const [checkPropImages, setCheckPropImages] = useState<File[][]>([[], [], []]);
+  const [checkPropImagePreviews, setCheckPropImagePreviews] = useState<string[][]>([[], [], []]);
+  const [checkPropEstimates, setCheckPropEstimates] = useState<(File|null)[]>([null, null, null]);
+  const [checkPropEstimatePreviews, setCheckPropEstimatePreviews] = useState<string[]>(["", "", ""]);
   // 物件確認した「空室あり」専用カレンダー
   const [checkCalendarInfo, setCheckCalendarInfo] = useState<string>("");
   const [checkCalendarDays, setCheckCalendarDays] = useState<Array<{
@@ -309,6 +315,13 @@ export default function AixModal({
   const conditionFileInputRef = useRef<HTMLInputElement | null>(null);
   const checkFileInputRef = useRef<HTMLInputElement | null>(null);
   const checkEstimateInputRef = useRef<HTMLInputElement | null>(null);
+  // 複数物件対応: 物件①②③の画像・見積書 refs
+  const checkProp1FileRef = useRef<HTMLInputElement | null>(null);
+  const checkProp2FileRef = useRef<HTMLInputElement | null>(null);
+  const checkProp3FileRef = useRef<HTMLInputElement | null>(null);
+  const checkProp1EstRef = useRef<HTMLInputElement | null>(null);
+  const checkProp2EstRef = useRef<HTMLInputElement | null>(null);
+  const checkProp3EstRef = useRef<HTMLInputElement | null>(null);
   const sendFileInputRef = useRef<HTMLInputElement | null>(null);
   const moveInImageInputRef = useRef<HTMLInputElement | null>(null);
   const recommendEstimateInputRef = useRef<HTMLInputElement | null>(null);
@@ -555,6 +568,43 @@ export default function AixModal({
     setPreview("");
   };
 
+  // 複数物件: ref配列（hooks順序は固定なのでここで結合）
+  const checkPropFileRefs = [checkProp1FileRef, checkProp2FileRef, checkProp3FileRef];
+  const checkPropEstRefs = [checkProp1EstRef, checkProp2EstRef, checkProp3EstRef];
+
+  const onSelectPropImages = (propIdx: number, e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    setCheckPropImages(prev => prev.map((arr, i) => i === propIdx ? [...arr, ...files] : arr));
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = () => setCheckPropImagePreviews(prev => prev.map((arr, i) => i === propIdx ? [...arr, String(reader.result ?? "")] : arr));
+      reader.readAsDataURL(file);
+    });
+    if (checkPropFileRefs[propIdx].current) checkPropFileRefs[propIdx].current!.value = "";
+  };
+
+  const removePropImage = (propIdx: number, imgIdx: number) => {
+    setCheckPropImages(prev => prev.map((arr, i) => i === propIdx ? arr.filter((_, j) => j !== imgIdx) : arr));
+    setCheckPropImagePreviews(prev => prev.map((arr, i) => i === propIdx ? arr.filter((_, j) => j !== imgIdx) : arr));
+  };
+
+  const onSelectPropEstimate = (propIdx: number, e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setCheckPropEstimates(prev => prev.map((v, i) => i === propIdx ? f : v));
+    const reader = new FileReader();
+    reader.onload = () => setCheckPropEstimatePreviews(prev => prev.map((v, i) => i === propIdx ? String(reader.result ?? "") : v));
+    reader.readAsDataURL(f);
+    if (checkPropEstRefs[propIdx].current) checkPropEstRefs[propIdx].current!.value = "";
+  };
+
+  const removePropEstimate = (propIdx: number) => {
+    setCheckPropEstimates(prev => prev.map((v, i) => i === propIdx ? null : v));
+    setCheckPropEstimatePreviews(prev => prev.map((v, i) => i === propIdx ? "" : v));
+    if (checkPropEstRefs[propIdx].current) checkPropEstRefs[propIdx].current!.value = "";
+  };
+
   // 物件送る専用: 複数画像追加
   const onSelectSendImages = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
@@ -728,11 +778,30 @@ export default function AixModal({
           if (checkEndedUnit.trim()) body.ended_unit = checkEndedUnit.trim();
           body.floor_plan_match = checkFloorPlan;
         }
-        if (checkEstimateFile) body.estimate_image_url = await uploadImage(checkEstimateFile);
-        if (checkImageFiles.length > 0) {
-          const urls = await Promise.all(checkImageFiles.map((f, i) => uploadImage(f, i)));
-          body.image_urls = urls;
-          body.image_url = urls[0];
+        if (checkPattern === "available" && checkPropertyCount > 1) {
+          // 複数物件モード
+          body.property_count = checkPropertyCount;
+          const allImageUrls: string[] = [];
+          for (let pi = 0; pi < checkPropertyCount; pi++) {
+            if (checkPropImages[pi].length > 0) {
+              const urls = await Promise.all(checkPropImages[pi].map((f, j) => uploadImage(f, j)));
+              allImageUrls.push(...urls);
+            }
+          }
+          if (allImageUrls.length > 0) { body.image_urls = allImageUrls; body.image_url = allImageUrls[0]; }
+          const estimateUrls: string[] = [];
+          for (let pi = 0; pi < checkPropertyCount; pi++) {
+            const ef = checkPropEstimates[pi];
+            if (ef) estimateUrls.push(await uploadImage(ef));
+          }
+          if (estimateUrls.length > 0) body.estimate_image_urls = estimateUrls;
+        } else {
+          if (checkEstimateFile) body.estimate_image_url = await uploadImage(checkEstimateFile);
+          if (checkImageFiles.length > 0) {
+            const urls = await Promise.all(checkImageFiles.map((f, i) => uploadImage(f, i)));
+            body.image_urls = urls;
+            body.image_url = urls[0];
+          }
         }
         if (checkPattern === "available" && showCheckCalendar && checkCalendarInfo) body.calendar_info = checkCalendarInfo;
         if (checkPattern === "available" && checkAvailableApp) body.available_application = checkAvailableApp;
@@ -1709,6 +1778,22 @@ export default function AixModal({
                 </div>
               )}
 
+              {/* 物件あった: 件数セレクター */}
+              {checkPattern === "available" && (
+                <div className="mb-1">
+                  <p className="mb-1.5 text-xs font-bold text-[#54656f]">確認できた物件数</p>
+                  <div className="flex gap-2">
+                    {([1, 2, 3] as const).map((n) => (
+                      <button
+                        key={n}
+                        onClick={() => setCheckPropertyCount(n)}
+                        className={`flex-1 rounded-xl border py-2 text-sm font-bold transition ${checkPropertyCount === n ? "border-[#4CAF50] bg-[#e8f5e9] text-[#2e7d32]" : "border-[#d1d7db] bg-white text-[#54656f]"}`}
+                      >{n}件</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* 物件あった: 申込状況 */}
               {checkPattern === "available" && (
                 <div className="mb-1">
@@ -1768,8 +1853,47 @@ export default function AixModal({
                 </div>
               )}
 
-              {/* 物件あった・別の部屋: 複数画像 */}
-              {(checkPattern === "available" || checkPattern === "alternative") && (
+              {/* 物件あった・別の部屋: 複数画像（1件の場合は既存UI、2件以上は物件別UI） */}
+              {checkPattern === "available" && checkPropertyCount > 1 ? (
+                // 複数物件モード: 物件①②③ それぞれに画像+見積書
+                <div className="flex flex-col gap-3">
+                  {Array.from({ length: checkPropertyCount }, (_, pi) => (
+                    <div key={pi} className="rounded-2xl border border-[#d1d7db] bg-[#f8f9fa] p-3">
+                      <p className="mb-2 text-xs font-bold text-[#54656f]">物件{"①②③"[pi]}</p>
+                      {/* 物件画像 */}
+                      {checkPropImagePreviews[pi].length > 0 && (
+                        <div className="mb-2 grid grid-cols-3 gap-2">
+                          {checkPropImagePreviews[pi].map((src, j) => (
+                            <div key={j} className="relative aspect-square overflow-hidden rounded-xl border border-[#d1d7db]">
+                              <img src={src} alt={`物件${pi+1}-${j+1}`} className="h-full w-full object-cover" />
+                              <button onClick={() => removePropImage(pi, j)} className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-[10px] text-white">✕</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <button
+                        onClick={() => checkPropFileRefs[pi].current?.click()}
+                        className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#d1d7db] py-2 text-xs font-semibold text-[#90a4ae] hover:bg-white mb-2"
+                      >📎 {checkPropImagePreviews[pi].length > 0 ? `資料追加（${checkPropImagePreviews[pi].length}枚）` : "資料画像を追加（スキップ可）"}</button>
+                      <input ref={checkPropFileRefs[pi]} type="file" accept="image/*" multiple onChange={(e) => onSelectPropImages(pi, e)} className="hidden" />
+                      {/* 見積書 */}
+                      {checkPropEstimatePreviews[pi] ? (
+                        <div className="relative overflow-hidden rounded-xl border border-[#d1d7db]">
+                          <img src={checkPropEstimatePreviews[pi]} alt="見積書" className="max-h-28 w-full object-contain" />
+                          <button onClick={() => removePropEstimate(pi)} className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-[10px] text-white">✕</button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => checkPropEstRefs[pi].current?.click()}
+                          className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#b3d0f7] py-2 text-xs font-semibold text-[#2196F3] hover:bg-blue-50"
+                        >📎 見積書を追加（スキップ可）</button>
+                      )}
+                      <input ref={checkPropEstRefs[pi]} type="file" accept="image/*" onChange={(e) => onSelectPropEstimate(pi, e)} className="hidden" />
+                    </div>
+                  ))}
+                </div>
+              ) : (checkPattern === "available" || checkPattern === "alternative") ? (
+                // 1件モード（既存UI）
                 <div>
                   <p className="mb-1 text-xs font-bold text-[#54656f]">
                     物件・部屋の画像 <span className="font-normal text-[#90a4ae]">（複数選択可・任意）</span>
@@ -1795,9 +1919,9 @@ export default function AixModal({
                   </button>
                   <input ref={checkFileInputRef} type="file" accept="image/*" multiple onChange={onSelectCheckImages} className="hidden" />
                 </div>
-              )}
-              {/* 物件あった・別の部屋: 見積書画像（任意） */}
-              {(checkPattern === "available" || checkPattern === "alternative") && (
+              ) : null}
+              {/* 物件あった・別の部屋: 見積書画像（任意）— 1件・alternative のみ */}
+              {(checkPattern === "available" && checkPropertyCount === 1 || checkPattern === "alternative") && (
                 <div>
                   <p className="mb-1 text-xs font-bold text-[#54656f]">
                     見積書の画像 <span className="font-normal text-[#90a4ae]">（任意）</span>
