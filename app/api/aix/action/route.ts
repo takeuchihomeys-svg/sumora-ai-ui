@@ -534,7 +534,7 @@ ${SMORA_COMMON_RULES}`;
         const vacatingSection = vacatingInfo
           ? `\n\n${vacatingInfo}`
           : "";
-        message_text = `${greeting}\n\n新着で${name}さんご希望のご条件に合ったお部屋が${countStr}募集にでました！！${vacatingSection}\n\nお手隙の際にご査収ください😌！！`;
+        message_text = `${greeting}\n\n新着で${name}さんご希望のご条件に合ったお部屋が${countStr}募集にでました！！${vacatingSection}\n\nお気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
         return NextResponse.json({ ok: true, message_text });
       }
 
