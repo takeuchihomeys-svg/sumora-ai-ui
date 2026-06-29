@@ -2109,26 +2109,60 @@ export default function AixModal({
               {/* 空室あり: 内覧誘導ボタン + カレンダー折りたたみ */}
               {checkPattern === "available" && (
                 <div>
-                  <button
-                    onClick={() => setShowCheckCalendar(v => !v)}
-                    className={`w-full rounded-xl border py-2 text-sm font-bold transition ${showCheckCalendar ? "border-[#1565C0] bg-[#e3f0ff] text-[#1565C0]" : "border-[#d1d7db] bg-white text-[#54656f]"}`}
-                  >
-                    📅 内覧誘導{showCheckCalendar ? "（オン）" : "（オフ）"}
-                  </button>
-                  {/* 全て募集してた: 「物件の中で」を省くトグル */}
-                  <button
-                    onClick={() => setCheckAllAvailable(v => !v)}
-                    className={`mt-2 w-full rounded-xl border py-2 text-sm font-bold transition ${checkAllAvailable ? "border-[#4CAF50] bg-[#e8f5e9] text-[#2e7d32]" : "border-[#d1d7db] bg-white text-[#54656f]"}`}
-                  >
-                    ✅ 全て募集してた{checkAllAvailable ? "（「物件の中で」なし）" : "（タップでON）"}
-                  </button>
-                  {/* 見積書テキスト同封: 見積書画像から費用テキストを生成・末尾に追加 */}
-                  <button
-                    onClick={() => setCheckIncludeEstimateText(v => !v)}
-                    className={`mt-2 w-full rounded-xl border py-2 text-sm font-bold transition ${checkIncludeEstimateText ? "border-[#7B1FA2] bg-[#f3e5f5] text-[#7B1FA2]" : "border-[#d1d7db] bg-white text-[#54656f]"}`}
-                  >
-                    📋 見積書テキスト同封{checkIncludeEstimateText ? "（オン）" : "（タップでON）"}
-                  </button>
+                  {/* 内覧誘導 あり/なし */}
+                  <div className="flex items-center justify-between rounded-xl border border-[#d1d7db] bg-white px-3 py-2">
+                    <span className="text-sm font-bold text-[#54656f]">内覧誘導</span>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => setShowCheckCalendar(true)}
+                        className={`rounded-lg px-4 py-1 text-sm font-bold transition ${showCheckCalendar ? "bg-[#1565C0] text-white" : "border border-[#d1d7db] bg-[#f0f2f5] text-[#54656f]"}`}
+                      >
+                        あり
+                      </button>
+                      <button
+                        onClick={() => setShowCheckCalendar(false)}
+                        className={`rounded-lg px-4 py-1 text-sm font-bold transition ${!showCheckCalendar ? "bg-[#54656f] text-white" : "border border-[#d1d7db] bg-[#f0f2f5] text-[#54656f]"}`}
+                      >
+                        なし
+                      </button>
+                    </div>
+                  </div>
+                  {/* 全て募集してた あり/なし */}
+                  <div className="mt-2 flex items-center justify-between rounded-xl border border-[#d1d7db] bg-white px-3 py-2">
+                    <span className="text-sm font-bold text-[#54656f]">全て募集してた</span>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => setCheckAllAvailable(true)}
+                        className={`rounded-lg px-4 py-1 text-sm font-bold transition ${checkAllAvailable ? "bg-[#4CAF50] text-white" : "border border-[#d1d7db] bg-[#f0f2f5] text-[#54656f]"}`}
+                      >
+                        あり
+                      </button>
+                      <button
+                        onClick={() => setCheckAllAvailable(false)}
+                        className={`rounded-lg px-4 py-1 text-sm font-bold transition ${!checkAllAvailable ? "bg-[#54656f] text-white" : "border border-[#d1d7db] bg-[#f0f2f5] text-[#54656f]"}`}
+                      >
+                        なし
+                      </button>
+                    </div>
+                  </div>
+                  {/* 見積書テキスト同封 あり/なし */}
+                  <div className="mt-2 flex items-center justify-between rounded-xl border border-[#d1d7db] bg-white px-3 py-2">
+                    <span className="text-sm font-bold text-[#54656f]">見積書テキスト同封</span>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => setCheckIncludeEstimateText(true)}
+                        className={`rounded-lg px-4 py-1 text-sm font-bold transition ${checkIncludeEstimateText ? "bg-[#7B1FA2] text-white" : "border border-[#d1d7db] bg-[#f0f2f5] text-[#54656f]"}`}
+                      >
+                        あり
+                      </button>
+                      <button
+                        onClick={() => setCheckIncludeEstimateText(false)}
+                        className={`rounded-lg px-4 py-1 text-sm font-bold transition ${!checkIncludeEstimateText ? "bg-[#54656f] text-white" : "border border-[#d1d7db] bg-[#f0f2f5] text-[#54656f]"}`}
+                      >
+                        なし
+                      </button>
+                    </div>
+                  </div>
                   {showCheckCalendar && (
                     <div className="mt-2 rounded-2xl border border-[#d1d7db] bg-[#f8f9fa] p-3">
                       <p className="mb-2 text-xs font-bold text-[#54656f]">内覧可能日時（自動取得）</p>
