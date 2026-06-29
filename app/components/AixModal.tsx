@@ -247,6 +247,7 @@ export default function AixModal({
   const [checkPropNames, setCheckPropNames] = useState<string[]>(["", "", ""]);
   const [checkPropVacancyDates, setCheckPropVacancyDates] = useState<string[]>(["", "", ""]);
   const [checkAllAvailable, setCheckAllAvailable] = useState(false);
+  const [checkPropStatuses, setCheckPropStatuses] = useState<string[]>(["available", "available", "available"]);
   // 物件確認した「空室あり」専用カレンダー
   const [checkCalendarInfo, setCheckCalendarInfo] = useState<string>("");
   const [checkCalendarDays, setCheckCalendarDays] = useState<Array<{
@@ -818,9 +819,10 @@ export default function AixModal({
           if (checkEndedUnit.trim()) body.ended_unit = checkEndedUnit.trim();
           body.floor_plan_match = checkFloorPlan;
         }
-        if (checkPattern === "available" && checkPropertyCount > 1) {
-          // 複数物件モード: 送信時に画像から物件名・退去予定日をbase64で読み取る
+        if (checkPattern === "available") {
+          // 全件数（1件含む）: 物件カードから画像・名前を取得
           body.property_count = checkPropertyCount;
+          body.prop_statuses = checkPropStatuses.slice(0, checkPropertyCount);
           const extractedProps = await extractPropInfoFromImages(checkPropertyCount);
           body.property_names = extractedProps.map(p => p.name);
           body.property_vacancy_dates = extractedProps.map(p => p.vacancyDate);
@@ -1897,13 +1899,12 @@ export default function AixModal({
                 </div>
               )}
 
-              {/* 物件あった・別の部屋: 複数画像（1件の場合は既存UI、2件以上は物件別UI） */}
-              {checkPattern === "available" && checkPropertyCount > 1 ? (
-                // 複数物件モード: 物件①②③ それぞれに画像+見積書
+              {/* 物件あった: 全件数で物件カード（1件含む） */}
+              {checkPattern === "available" ? (
                 <div className="flex flex-col gap-3">
                   {Array.from({ length: checkPropertyCount }, (_, pi) => (
                     <div key={pi} className="rounded-2xl border border-[#d1d7db] bg-[#f8f9fa] p-3">
-                      <p className="mb-2 text-xs font-bold text-[#54656f]">物件{"①②③"[pi]}</p>
+                      <p className="mb-2 text-xs font-bold text-[#54656f]">{checkPropertyCount > 1 ? `物件${"①②③"[pi]}` : "物件情報"}</p>
                       {/* 物件名 */}
                       <input
                         type="text"
@@ -1916,7 +1917,29 @@ export default function AixModal({
                         }}
                         className="mb-2 w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-xs outline-none focus:border-[#4CAF50]"
                       />
-                      {/* 退去予定日（送信時に自動読み取り・手入力で上書き可） */}
+                      {/* 募集状況 */}
+                      <div className="mb-2 flex gap-1">
+                        {([
+                          { k: "available", l: "空室" },
+                          { k: "vacating", l: "退去予定" },
+                          { k: "unavailable", l: "満室" },
+                          { k: "alternative", l: "別の部屋" },
+                        ] as const).map(s => (
+                          <button key={s.k}
+                            onClick={() => { const arr = [...checkPropStatuses]; arr[pi] = s.k; setCheckPropStatuses(arr); }}
+                            className={`flex-1 rounded-xl py-1.5 text-[10px] font-bold border transition ${
+                              checkPropStatuses[pi] === s.k
+                                ? s.k === "available" ? "border-[#4CAF50] bg-[#e8f5e9] text-[#2e7d32]"
+                                : s.k === "vacating" ? "border-[#FF9800] bg-[#fff8e1] text-[#e65100]"
+                                : s.k === "unavailable" ? "border-[#e53935] bg-[#fff5f5] text-[#e53935]"
+                                : "border-[#2196F3] bg-[#e3f0ff] text-[#1565C0]"
+                                : "border-[#d1d7db] bg-white text-[#54656f]"
+                            }`}
+                          >{s.l}</button>
+                        ))}
+                      </div>
+                      {/* 退去予定日: 退去予定ステータスの場合のみ */}
+                      {checkPropStatuses[pi] === "vacating" && (
                       <div className="mb-2 flex items-center gap-2">
                         <span className="text-[10px] text-[#90a4ae] shrink-0">退去予定日（任意）:</span>
                         <input
@@ -1931,6 +1954,7 @@ export default function AixModal({
                           className="flex-1 rounded-xl border border-[#d1d7db] bg-white px-3 py-1.5 text-xs outline-none focus:border-[#4CAF50]"
                         />
                       </div>
+                      )}
                       {/* 物件画像 */}
                       {checkPropImagePreviews[pi].length > 0 && (
                         <div className="mb-2 grid grid-cols-3 gap-2">
@@ -1963,8 +1987,8 @@ export default function AixModal({
                     </div>
                   ))}
                 </div>
-              ) : (checkPattern === "available" || checkPattern === "alternative") ? (
-                // 1件モード（既存UI）
+              ) : checkPattern === "alternative" ? (
+                // 別の部屋あった: 1件画像UI
                 <div>
                   <p className="mb-1 text-xs font-bold text-[#54656f]">
                     物件・部屋の画像 <span className="font-normal text-[#90a4ae]">（複数選択可・任意）</span>
@@ -1991,8 +2015,8 @@ export default function AixModal({
                   <input ref={checkFileInputRef} type="file" accept="image/*" multiple onChange={onSelectCheckImages} className="hidden" />
                 </div>
               ) : null}
-              {/* 物件あった・別の部屋: 見積書画像（任意）— 1件・alternative のみ */}
-              {(checkPattern === "available" && checkPropertyCount === 1 || checkPattern === "alternative") && (
+              {/* 別の部屋あった: 見積書画像（任意） */}
+              {checkPattern === "alternative" && (
                 <div>
                   <p className="mb-1 text-xs font-bold text-[#54656f]">
                     見積書の画像 <span className="font-normal text-[#90a4ae]">（任意）</span>
