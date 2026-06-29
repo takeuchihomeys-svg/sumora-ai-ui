@@ -3891,8 +3891,20 @@ export default function Home() {
                 </button>
               </div>
 
-              {/* 右: ステータス */}
+              {/* 右: 要対応フラグ + ステータス */}
               <div className="ml-auto flex items-center gap-1.5">
+                {selectedConversation.id && (
+                  <button
+                    onClick={() => toggleFlaggedConv(selectedConversation.id)}
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-bold transition ${
+                      flaggedConvIds.has(selectedConversation.id)
+                        ? "bg-red-500 text-white"
+                        : "border border-[#d1d7db] bg-white text-[#8696a0]"
+                    }`}
+                  >
+                    要対応
+                  </button>
+                )}
                 <div className="relative shrink-0">
                   <button
                     onClick={() => {
