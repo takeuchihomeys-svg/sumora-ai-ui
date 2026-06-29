@@ -330,6 +330,8 @@ export default function Home() {
   const [draftIsAi, setDraftIsAi] = useState(false); // AI生成の下書きがテキストエリアに入っているか
   const [draftNoEmoji, setDraftNoEmoji] = useState(false); // 絵文字なしモード
   const [draftOrigText, setDraftOrigText] = useState(""); // 絵文字なし切替前の原文（復元用）
+  const [extraDraftMessages, setExtraDraftMessages] = useState<Array<{text: string; delaySec: number}>>([]);
+  const multiSendTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const [textareaHeightPx, setTextareaHeightPx] = useState(22);
   const [aiDraftExpanded, setAiDraftExpanded] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
@@ -1615,6 +1617,7 @@ export default function Home() {
     selectedPatternAngleRef.current = null;
     setTargetOverrideMessage(null);
     setAiDraftExpanded(false);
+    setExtraDraftMessages([]);
     // 会話切替時は必ず準備中状態をリセット（前の会話のタイムアウト・fetch残留を防ぐ）
     if (draftTimeoutRef.current) { clearTimeout(draftTimeoutRef.current); draftTimeoutRef.current = null; }
     setDraftPreparing(false);
@@ -2914,6 +2917,22 @@ export default function Home() {
 
       // 送信完了後に1.5秒後フェッチ: 送信中に届いたお客様メッセージを確実に反映
       setTimeout(() => fetchConversationsAndMessages(true), 1500);
+
+      // 時間差追加メッセージをスケジュール（extraDraftMessages が設定されていた場合）
+      const extras = extraDraftMessages.filter(e => e.text.trim());
+      if (extras.length > 0) {
+        setExtraDraftMessages([]);
+        multiSendTimersRef.current.forEach(t => clearTimeout(t));
+        multiSendTimersRef.current = [];
+        let cumulativeMs = 0;
+        extras.forEach(extra => {
+          cumulativeMs += extra.delaySec * 1000;
+          const capturedText = extra.text;
+          const t = setTimeout(() => sendMessageText(capturedText), cumulativeMs);
+          multiSendTimersRef.current.push(t);
+        });
+        handleDelayedSend(extras[0].delaySec, async () => {});
+      }
     } catch (sendError) {
       console.error(sendError);
       setError(sendError instanceof Error ? sendError.message : "送信に失敗しました。");
@@ -5398,6 +5417,41 @@ export default function Home() {
                     paddingBottom: "48px", // 最終行をスクロールアップできるよう余白
                   }}
                 />
+                {/* 追加メッセージスロット（時間差送信） */}
+                {extraDraftMessages.map((extra, idx) => (
+                  <div key={idx} className="mt-2 rounded-xl border border-blue-200 bg-white p-2">
+                    <div className="mb-1 flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-blue-500">{idx + 2}通目</span>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] text-[#8696a0]">遅延:</span>
+                        {[30, 60, 120, 300].map(s => (
+                          <button key={s} onClick={() => setExtraDraftMessages(prev => prev.map((e, i) => i === idx ? {...e, delaySec: s} : e))}
+                            className={`rounded px-1.5 py-0.5 text-[10px] font-bold transition ${extra.delaySec === s ? "bg-blue-500 text-white" : "bg-[#f0f2f5] text-[#54656f]"}`}>
+                            {s < 60 ? `${s}秒` : `${s/60}分`}
+                          </button>
+                        ))}
+                        <button onClick={() => setExtraDraftMessages(prev => prev.filter((_, i) => i !== idx))}
+                          className="ml-1 text-[11px] text-red-400 font-bold">✕</button>
+                      </div>
+                    </div>
+                    <textarea
+                      value={extra.text}
+                      onChange={e => setExtraDraftMessages(prev => prev.map((em, i) => i === idx ? {...em, text: e.target.value} : em))}
+                      rows={3}
+                      placeholder={`${idx + 2}通目の内容を入力...`}
+                      className="w-full resize-none rounded bg-[#f8f9fa] px-2 py-1 text-[13px] leading-5 text-[#111b21] outline-none placeholder:text-[#aaa]"
+                    />
+                  </div>
+                ))}
+                {/* + 追加ボタン（AI下書きがある時だけ表示） */}
+                {draftIsAi && replyDraft && (
+                  <button
+                    onClick={() => setExtraDraftMessages(prev => [...prev, {text: "", delaySec: 60}])}
+                    className="mt-1.5 w-full rounded-lg border border-dashed border-blue-300 py-1 text-[11px] font-bold text-blue-500"
+                  >
+                    ＋ {extraDraftMessages.length + 2}通目を追加（時間差送信）
+                  </button>
+                )}
               </div>
               <button
                 onClick={sendReply}
@@ -7380,6 +7434,11 @@ export default function Home() {
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
                   画像 {selectedImageFiles.length}枚
                 </p>
+              )}
+              {extraDraftMessages.filter(e => e.text.trim()).length > 0 && (
+                <div className="mt-2 rounded-lg bg-blue-50 px-3 py-2 text-[11px] text-blue-700">
+                  ＋{extraDraftMessages.filter(e => e.text.trim()).map((e, i) => `${i+2}通目を${e.delaySec < 60 ? e.delaySec + "秒後" : e.delaySec/60 + "分後"}`).join("、")}に時間差送信
+                </div>
               )}
             </div>
             <div className="flex border-t border-[#f0f2f5]">
