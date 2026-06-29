@@ -38,7 +38,7 @@ interface AixModalProps {
   onClose: () => void;
   onSend: (text: string, imageUrl?: string) => Promise<void>;
   onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean }) => void;
-  onDelayedSend?: (seconds: number) => void;
+  onDelayedSend?: (seconds: number, sendFn: () => Promise<void>) => void;
   onScheduled?: () => void;
   onVacatingDetected?: (date: string) => void;
 }
@@ -1126,17 +1126,17 @@ export default function AixModal({
           if (shouldSendEstimateFirst) {
             await onSend(estimateTextReady);
             setEstimateTextReady("");
-            // 送信関数・本文をクロージャでキャプチャしてからモーダルを閉じる
+            // 送信関数・本文をクロージャでキャプチャ（宛先が変わっても元の会話に送られる）
             const capturedOnSend = onSend;
             const capturedPreview = preview;
             const capturedOnAfterSend = onAfterSend;
-            setTimeout(async () => {
+            const sendFn = async () => {
               await capturedOnSend(capturedPreview);
               capturedOnAfterSend?.({
                 suggest2ndHand: actionType === "property_check_result" && checkAvailableApp === "yes",
               });
-            }, 30000);
-            onDelayedSend?.(30); // 親にカウントダウン表示を依頼
+            };
+            onDelayedSend?.(30, sendFn); // 親がsetTimeoutを管理（キャンセル可能）
             setLoading(false);
             onClose();
             return;

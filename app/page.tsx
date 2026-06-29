@@ -379,7 +379,8 @@ export default function Home() {
   const [aixModalType, setAixModalType] = useState<AixActionType | null>(null);
   const [aixInitialFile, setAixInitialFile] = useState<File | null>(null);
   const [delayedSendCountdown, setDelayedSendCountdown] = useState(0);
-  const delayedSendTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const delayedSendIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const delayedSendTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [pendingAixFocusPoints, setPendingAixFocusPoints] = useState<string[]>([]);
   const [pendingTemplateSource, setPendingTemplateSource] = useState<{ name: string; category: string } | null>(null);
@@ -2953,14 +2954,29 @@ export default function Home() {
     }
   };
 
-  const handleDelayedSend = (seconds: number) => {
-    if (delayedSendTimerRef.current) clearInterval(delayedSendTimerRef.current);
+  const cancelDelayedSend = () => {
+    if (delayedSendTimeoutRef.current) { clearTimeout(delayedSendTimeoutRef.current); delayedSendTimeoutRef.current = null; }
+    if (delayedSendIntervalRef.current) { clearInterval(delayedSendIntervalRef.current); delayedSendIntervalRef.current = null; }
+    setDelayedSendCountdown(0);
+  };
+
+  const handleDelayedSend = (seconds: number, sendFn: () => Promise<void>) => {
+    // 既存タイマーがあればキャンセル
+    cancelDelayedSend();
     setDelayedSendCountdown(seconds);
-    delayedSendTimerRef.current = setInterval(() => {
+    // 本体送信は親が管理（clearTimeout でキャンセル可能）
+    delayedSendTimeoutRef.current = setTimeout(async () => {
+      delayedSendTimeoutRef.current = null;
+      if (delayedSendIntervalRef.current) { clearInterval(delayedSendIntervalRef.current); delayedSendIntervalRef.current = null; }
+      setDelayedSendCountdown(0);
+      await sendFn();
+    }, seconds * 1000);
+    // カウントダウン表示用インターバル
+    delayedSendIntervalRef.current = setInterval(() => {
       setDelayedSendCountdown(prev => {
         if (prev <= 1) {
-          clearInterval(delayedSendTimerRef.current!);
-          delayedSendTimerRef.current = null;
+          clearInterval(delayedSendIntervalRef.current!);
+          delayedSendIntervalRef.current = null;
           return 0;
         }
         return prev - 1;
@@ -6214,8 +6230,14 @@ export default function Home() {
 
       {/* 見積書テキスト送信後 30秒カウントダウンバナー */}
       {delayedSendCountdown > 0 && (
-        <div className="pointer-events-none fixed bottom-24 left-1/2 z-[200] -translate-x-1/2 whitespace-nowrap rounded-2xl bg-[#111b21]/90 px-6 py-3 text-sm font-bold text-white shadow-xl">
-          見積書送信済み ✓　本文まで {delayedSendCountdown}秒...
+        <div className="fixed bottom-24 left-1/2 z-[200] flex -translate-x-1/2 items-center gap-3 whitespace-nowrap rounded-2xl bg-[#111b21]/90 pl-5 pr-3 py-3 text-sm font-bold text-white shadow-xl">
+          <span>見積書送信済み ✓　本文まで {delayedSendCountdown}秒...</span>
+          <button
+            onClick={cancelDelayedSend}
+            className="rounded-lg bg-red-500 px-3 py-1 text-xs font-bold text-white"
+          >
+            キャンセル
+          </button>
         </div>
       )}
 
