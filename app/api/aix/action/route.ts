@@ -226,6 +226,14 @@ export async function POST(request: NextRequest) {
     let parsed_estimate_result = null;
     let estimate_text_result = "";
 
+    // アカウント別表示名（全アクション共通）
+    const ACCOUNT_NAMES: Record<string, string> = {
+      sumora: "スモラ",
+      ieyasu: "イエヤス",
+      giga:   "ギガ賃貸",
+    };
+    const accountName = ACCOUNT_NAMES[String(account || "sumora")] ?? "スモラ";
+
     // ── 🏠 物件オススメ ───────────────────────────────────────────
     if (action === "property_recommendation") {
       if (!image_url) throw new Error("物件資料画像が必要です");
@@ -389,13 +397,6 @@ ${SMORA_COMMON_RULES}`;
       }
 
       // アカウント名マッピング
-      const ACCOUNT_NAMES: Record<string, string> = {
-        sumora: "スモラ",
-        ieyasu: "イエヤス",
-        giga:   "ギガ賃貸",
-      };
-      const accountName = ACCOUNT_NAMES[String(account || "sumora")] ?? "スモラ";
-
       const est = estimate as Record<string, unknown>;
       const propertyName = String(est.property_name || "");
       const roomNumber   = String(est.room_number   || "");
@@ -1184,7 +1185,7 @@ ${templateText}`;
               if (estData.initial_cost) lines.push(`初期費用：${estData.initial_cost}`);
               if (estData.savings) {
                 lines.push("");
-                lines.push(`スモラなら一般的な不動産業者より${estData.savings}節約出来ます！！`);
+                lines.push(`${accountName}なら一般的な不動産業者より${estData.savings}節約出来ます！！`);
               }
               estParts.push(lines.join("\n"));
             } catch {
