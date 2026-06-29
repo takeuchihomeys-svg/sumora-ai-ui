@@ -187,7 +187,7 @@ function buildGenerationMessages(
   const greetingNote = alreadyGreeted
     ? `\n【⏰ 挨拶ルール・最優先】本日の会話で冒頭挨拶は既に使用済み。今回は絶対に使わない。「はい！！」「かしこまりました！！」など短い言葉で直接本文から始める。`
     : (state === "first_reply" && isFirstEverReply)
-      ? `\n【⏰ 初回対応ルール・最優先】これはお客様への【はじめての返信】。必ず「〇〇さん、はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！」の形式で始める。「お世話になっております」「夜分遅くに失礼致します」は絶対禁止。`
+      ? `\n【⏰ 初回対応ルール・最優先】これはお客様への【はじめての返信】。必ず「${customerName}さん、はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！」で始める（一字一句変更・省略禁止）。「お世話になっております」「夜分遅くに失礼致します」は絶対禁止。`
       : `\n【⏰ 挨拶ルール・最優先】現在${jstHour}時台（JST）。今回の冒頭は「〇〇さんお世話になっております！！」を使う。「夜分遅くに失礼致します」は返信時には絶対禁止（スタッフから先に連絡するときのみ使う言葉）。`;
 
   const managementNote = isWeekend
@@ -352,7 +352,7 @@ function buildGenerationMessages(
       // 真の初回 → 「お世話になっております」を「ご連絡頂きありがとうございます」に置き換え
       return baseQuickPatterns.replace(
         /・冒頭ルール（★重要）:[\s\S]*?を使う/,
-        "・冒頭ルール（★重要・初回返信のため上書き）: 必ず「〇〇さんご連絡頂きありがとうございます😊！！お部屋探しを担当させて頂きます鈴木と申します！！」の形式で始める。「お世話になっております」は絶対禁止"
+        `・冒頭ルール（★重要・初回返信のため上書き）: 必ず「${customerName}さんご連絡頂きありがとうございます😊！！お部屋探しを担当させて頂きます鈴木と申します！！」で始める（一字一句変更・省略禁止）。「お世話になっております」は絶対禁止`
       );
     }
     // 本日初回メッセージ → 短い承認でも必ず「お世話になっております」で始める
@@ -938,6 +938,10 @@ export async function POST(req: NextRequest) {
       .filter(Boolean)
       .join("\n");
 
+    // 真の初回判定（冒頭挨拶を強制注入するかどうか）
+    const histStaffLines = history.split("\n").filter(l => l.startsWith("スモラ:"));
+    const shouldPrependGreeting = histStaffLines.length === 0 && currentState === "first_reply";
+
     // follow-up検知（履歴末尾がスモラ = 2通目以降の生成）
     const allSpeakersInHistory = [...history.matchAll(/(?:^|\n)(スモラ|お客様):/g)];
     const isFollowUp = allSpeakersInHistory.length > 0 && allSpeakersInHistory[allSpeakersInHistory.length - 1][1] === "スモラ";
@@ -1027,9 +1031,22 @@ export async function POST(req: NextRequest) {
             JSON.stringify({ ok: true, detected_intent: detectedIntent }) + "\n"
           ));
           try {
-            for await (const chunk of await genStream) {
-              const text = typeof chunk.content === "string" ? chunk.content : "";
-              if (text) controller.enqueue(encoder.encode(text));
+            if (shouldPrependGreeting) {
+              // 真の初回: 全バッファして冒頭挨拶を強制置換（AIが誤生成しても確実に正しい名前を出す）
+              let fullText = "";
+              for await (const chunk of await genStream) {
+                const text = typeof chunk.content === "string" ? chunk.content : "";
+                fullText += text;
+              }
+              const firstBreak = fullText.indexOf("\n\n");
+              const bodyPart = firstBreak >= 0 ? fullText.slice(firstBreak + 2) : fullText;
+              const fixedGreeting = `${customerName}さん、はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！\n\n`;
+              controller.enqueue(encoder.encode(fixedGreeting + bodyPart));
+            } else {
+              for await (const chunk of await genStream) {
+                const text = typeof chunk.content === "string" ? chunk.content : "";
+                if (text) controller.enqueue(encoder.encode(text));
+              }
             }
           } catch (streamErr) {
             console.error("generate-reply stream error:", streamErr);
