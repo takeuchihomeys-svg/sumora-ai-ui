@@ -38,6 +38,7 @@ interface AixModalProps {
   onClose: () => void;
   onSend: (text: string, imageUrl?: string) => Promise<void>;
   onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean }) => void;
+  onDelayedSend?: (seconds: number) => void;
   onScheduled?: () => void;
   onVacatingDetected?: (date: string) => void;
 }
@@ -186,6 +187,7 @@ export default function AixModal({
   onClose,
   onSend,
   onAfterSend,
+  onDelayedSend,
   onScheduled,
   onVacatingDetected,
 }: AixModalProps) {
@@ -1120,23 +1122,24 @@ export default function AixModal({
               await onSend("", estUrl);
             }
           }
-          // 見積書テキスト先送り → 30秒カウントダウン → 本文
+          // 見積書テキスト先送り → モーダルを閉じてバックグラウンドで30秒後に本文送信
           if (shouldSendEstimateFirst) {
             await onSend(estimateTextReady);
             setEstimateTextReady("");
-            await new Promise<void>((resolve) => {
-              let c = 30;
-              setSendCountdown(c);
-              const timer = setInterval(() => {
-                c--;
-                setSendCountdown(c);
-                if (c <= 0) {
-                  clearInterval(timer);
-                  setSendCountdown(0);
-                  resolve();
-                }
-              }, 1000);
-            });
+            // 送信関数・本文をクロージャでキャプチャしてからモーダルを閉じる
+            const capturedOnSend = onSend;
+            const capturedPreview = preview;
+            const capturedOnAfterSend = onAfterSend;
+            setTimeout(async () => {
+              await capturedOnSend(capturedPreview);
+              capturedOnAfterSend?.({
+                suggest2ndHand: actionType === "property_check_result" && checkAvailableApp === "yes",
+              });
+            }, 30000);
+            onDelayedSend?.(30); // 親にカウントダウン表示を依頼
+            setLoading(false);
+            onClose();
+            return;
           }
           await onSend(preview);
         } else {

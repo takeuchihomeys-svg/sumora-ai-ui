@@ -378,6 +378,8 @@ export default function Home() {
   const [selectedImagePreviews, setSelectedImagePreviews] = useState<string[]>([]);
   const [aixModalType, setAixModalType] = useState<AixActionType | null>(null);
   const [aixInitialFile, setAixInitialFile] = useState<File | null>(null);
+  const [delayedSendCountdown, setDelayedSendCountdown] = useState(0);
+  const delayedSendTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [pendingAixFocusPoints, setPendingAixFocusPoints] = useState<string[]>([]);
   const [pendingTemplateSource, setPendingTemplateSource] = useState<{ name: string; category: string } | null>(null);
@@ -2949,6 +2951,21 @@ export default function Home() {
     } finally {
       setAiSearchLoading(false);
     }
+  };
+
+  const handleDelayedSend = (seconds: number) => {
+    if (delayedSendTimerRef.current) clearInterval(delayedSendTimerRef.current);
+    setDelayedSendCountdown(seconds);
+    delayedSendTimerRef.current = setInterval(() => {
+      setDelayedSendCountdown(prev => {
+        if (prev <= 1) {
+          clearInterval(delayedSendTimerRef.current!);
+          delayedSendTimerRef.current = null;
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
   };
 
   const sendMessageText = async (text: string, imageUrl?: string) => {
@@ -6183,6 +6200,13 @@ export default function Home() {
         </div>
       )}
 
+      {/* 見積書テキスト送信後 30秒カウントダウンバナー */}
+      {delayedSendCountdown > 0 && (
+        <div className="pointer-events-none fixed bottom-24 left-1/2 z-[200] -translate-x-1/2 whitespace-nowrap rounded-2xl bg-[#111b21]/90 px-6 py-3 text-sm font-bold text-white shadow-xl">
+          見積書送信済み ✓　本文まで {delayedSendCountdown}秒...
+        </div>
+      )}
+
       {showTemplateModal && (
         <TemplateModal
           onClose={() => { setShowTemplateModal(false); setTemplateOpenContext(null); setPendingNextTemplateInfo(null); }}
@@ -6313,6 +6337,7 @@ export default function Home() {
             setDetectedVacatingDate(null);
           }}
           onSend={sendMessageText}
+          onDelayedSend={handleDelayedSend}
           onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean }) => {
             // AIX送信をパターン学習データとして記録（半自動化ループ）
             if (aixModalType) {
