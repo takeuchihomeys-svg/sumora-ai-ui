@@ -246,7 +246,6 @@ export default function AixModal({
   const [checkPropEstimatePreviews, setCheckPropEstimatePreviews] = useState<string[]>(["", "", ""]);
   const [checkPropNames, setCheckPropNames] = useState<string[]>(["", "", ""]);
   const [checkPropVacancyDates, setCheckPropVacancyDates] = useState<string[]>(["", "", ""]);
-  const [checkPropVacancyLoading, setCheckPropVacancyLoading] = useState<boolean[]>([false, false, false]);
   // 物件確認した「空室あり」専用カレンダー
   const [checkCalendarInfo, setCheckCalendarInfo] = useState<string>("");
   const [checkCalendarDays, setCheckCalendarDays] = useState<Array<{
@@ -585,33 +584,43 @@ export default function AixModal({
       reader.readAsDataURL(file);
     });
     if (checkPropFileRefs[propIdx].current) checkPropFileRefs[propIdx].current!.value = "";
-    // 退去予定日が未入力の場合、最初の画像からAI自動読み取り
-    if (!checkPropVacancyDates[propIdx]) {
-      const firstFile = files[0];
-      if (firstFile) {
-        setCheckPropVacancyLoading(prev => prev.map((v, i) => i === propIdx ? true : v));
-        const reader = new FileReader();
-        reader.onload = async () => {
-          try {
-            const dataUrl = String(reader.result ?? "");
-            const base64 = dataUrl.split(",")[1];
-            const mediaType = firstFile.type || "image/jpeg";
-            const res = await fetch("/api/extract-vacancy-date", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ imageBase64: base64, mediaType }),
-            });
-            const data = await res.json() as { vacancyDate: string | null };
-            if (data.vacancyDate && data.vacancyDate !== "空室") {
-              setCheckPropVacancyDates(prev => prev.map((v, i) => i === propIdx && !v ? (data.vacancyDate ?? "") : v));
-            }
-          } finally {
-            setCheckPropVacancyLoading(prev => prev.map((v, i) => i === propIdx ? false : v));
-          }
-        };
-        reader.readAsDataURL(firstFile);
+    // 読み取りは送信ボタン押下時に行う（onSelectPropImagesでは画像のプレビューのみ）
+  };
+
+  // 物件画像から物件名・退去予定日をまとめて読み取るヘルパー（submit時に呼ぶ）
+  const extractPropInfoFromImages = async (count: number): Promise<{ name: string; vacancyDate: string }[]> => {
+    const results: { name: string; vacancyDate: string }[] = [];
+    for (let pi = 0; pi < count; pi++) {
+      const manualName = checkPropNames[pi].trim();
+      const manualDate = checkPropVacancyDates[pi].trim();
+      const firstFile = checkPropImages[pi]?.[0];
+      if (firstFile && (!manualName || !manualDate)) {
+        try {
+          const dataUrl = await new Promise<string>(resolve => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result ?? ""));
+            reader.readAsDataURL(firstFile);
+          });
+          const base64 = dataUrl.split(",")[1];
+          const mediaType = firstFile.type || "image/jpeg";
+          const res = await fetch("/api/extract-vacancy-date", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ imageBase64: base64, mediaType }),
+          });
+          const data = await res.json() as { propertyName: string | null; vacancyDate: string | null };
+          results.push({
+            name: manualName || data.propertyName || `物件${["①", "②", "③"][pi]}`,
+            vacancyDate: manualDate || data.vacancyDate || "",
+          });
+        } catch {
+          results.push({ name: manualName || `物件${["①", "②", "③"][pi]}`, vacancyDate: manualDate });
+        }
+      } else {
+        results.push({ name: manualName || `物件${["①", "②", "③"][pi]}`, vacancyDate: manualDate });
       }
     }
+    return results;
   };
 
   const removePropImage = (propIdx: number, imgIdx: number) => {
@@ -809,11 +818,11 @@ export default function AixModal({
           body.floor_plan_match = checkFloorPlan;
         }
         if (checkPattern === "available" && checkPropertyCount > 1) {
-          // 複数物件モード
+          // 複数物件モード: 送信時に画像から物件名・退去予定日を読み取る
           body.property_count = checkPropertyCount;
-          // 物件名・退去予定日を配列で渡す
-          body.property_names = checkPropNames.slice(0, checkPropertyCount);
-          body.property_vacancy_dates = checkPropVacancyDates.slice(0, checkPropertyCount);
+          const extractedProps = await extractPropInfoFromImages(checkPropertyCount);
+          body.property_names = extractedProps.map(p => p.name);
+          body.property_vacancy_dates = extractedProps.map(p => p.vacancyDate);
           const allImageUrls: string[] = [];
           for (let pi = 0; pi < checkPropertyCount; pi++) {
             if (checkPropImages[pi].length > 0) {
@@ -1905,24 +1914,20 @@ export default function AixModal({
                         }}
                         className="mb-2 w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-xs outline-none focus:border-[#4CAF50]"
                       />
-                      {/* 退去予定日（自動読み取り or 手入力） */}
+                      {/* 退去予定日（送信時に自動読み取り・手入力で上書き可） */}
                       <div className="mb-2 flex items-center gap-2">
                         <span className="text-[10px] text-[#90a4ae] shrink-0">退去予定日（任意）:</span>
-                        {checkPropVacancyLoading[pi] ? (
-                          <span className="flex-1 rounded-xl border border-[#d1d7db] bg-[#f5f6f7] px-3 py-1.5 text-xs text-[#90a4ae] animate-pulse">読み取り中...</span>
-                        ) : (
-                          <input
-                            type="text"
-                            placeholder="画像から自動読み取り / 例: 7月31日"
-                            value={checkPropVacancyDates[pi]}
-                            onChange={(e) => {
-                              const arr = [...checkPropVacancyDates];
-                              arr[pi] = e.target.value;
-                              setCheckPropVacancyDates(arr);
-                            }}
-                            className="flex-1 rounded-xl border border-[#d1d7db] bg-white px-3 py-1.5 text-xs outline-none focus:border-[#4CAF50]"
-                          />
-                        )}
+                        <input
+                          type="text"
+                          placeholder="送信時に自動読み取り / 例: 7月下旬"
+                          value={checkPropVacancyDates[pi]}
+                          onChange={(e) => {
+                            const arr = [...checkPropVacancyDates];
+                            arr[pi] = e.target.value;
+                            setCheckPropVacancyDates(arr);
+                          }}
+                          className="flex-1 rounded-xl border border-[#d1d7db] bg-white px-3 py-1.5 text-xs outline-none focus:border-[#4CAF50]"
+                        />
                       </div>
                       {/* 物件画像 */}
                       {checkPropImagePreviews[pi].length > 0 && (
@@ -2575,12 +2580,12 @@ export default function AixModal({
                         onMouseDown={() => { aixLongPressTimerRef.current = setTimeout(() => { aixLongPressedRef.current = true; openAixScheduleModal(); }, 600); }}
                         onMouseUp={() => { if (aixLongPressTimerRef.current) { clearTimeout(aixLongPressTimerRef.current); aixLongPressTimerRef.current = null; } }}
                         onMouseLeave={() => { if (aixLongPressTimerRef.current) { clearTimeout(aixLongPressTimerRef.current); aixLongPressTimerRef.current = null; } }}
-                        disabled={loading || checkPropVacancyLoading.some(Boolean)}
+                        disabled={loading}
                         className="flex-1 rounded-full bg-[#06c755] py-3 text-sm font-bold text-white disabled:opacity-50 select-none"
                         style={{ WebkitUserSelect: "none", touchAction: "manipulation" }}
                         title="送信（長押しで予約送信）"
                       >
-                        {loading ? "送信中..." : checkPropVacancyLoading.some(Boolean) ? "退去日読み取り中..." : "送信する"}
+                        {loading ? "送信中..." : "送信する"}
                       </button>
                     )}
                   </>
