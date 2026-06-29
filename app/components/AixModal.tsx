@@ -2575,12 +2575,12 @@ export default function AixModal({
                         onMouseDown={() => { aixLongPressTimerRef.current = setTimeout(() => { aixLongPressedRef.current = true; openAixScheduleModal(); }, 600); }}
                         onMouseUp={() => { if (aixLongPressTimerRef.current) { clearTimeout(aixLongPressTimerRef.current); aixLongPressTimerRef.current = null; } }}
                         onMouseLeave={() => { if (aixLongPressTimerRef.current) { clearTimeout(aixLongPressTimerRef.current); aixLongPressTimerRef.current = null; } }}
-                        disabled={loading}
+                        disabled={loading || checkPropVacancyLoading.some(Boolean)}
                         className="flex-1 rounded-full bg-[#06c755] py-3 text-sm font-bold text-white disabled:opacity-50 select-none"
                         style={{ WebkitUserSelect: "none", touchAction: "manipulation" }}
                         title="送信（長押しで予約送信）"
                       >
-                        {loading ? "送信中..." : "送信する"}
+                        {loading ? "送信中..." : checkPropVacancyLoading.some(Boolean) ? "退去日読み取り中..." : "送信する"}
                       </button>
                     )}
                   </>
