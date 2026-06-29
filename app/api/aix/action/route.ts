@@ -948,15 +948,27 @@ ${patternExample}${knowledgeText}${examplesText}`;
 
       // 「物件あった」複数物件モード（2件・3件）
       if (pattern === "available" && propCount > 1) {
-        const bulletLines = propNames.slice(0, propCount).map((n, pi) => {
-          const name_ = n.trim() || `物件${["①", "②", "③"][pi]}`;
-          const vacDate = propVacancyDates[pi]?.trim();
-          return vacDate ? `・${name_}\n  ${vacDate}退去予定のお部屋となります` : `・${name_}`;
-        }).join("\n");
-        const hasAnyEstimate = (body.estimate_image_urls as string[] | undefined)?.length ?? 0;
-        const estimateLine = hasAnyEstimate ? "\n最大限割引しました御見積書同封させて頂きました！！" : "";
-        message_text = `${bulletLines}\nこちら${propCount}件現在募集中となります！！
-現在空室でご内覧可能なお部屋となります！！${estimateLine}
+        const propList = propNames.slice(0, propCount).map((n, pi) => ({
+          name: n.trim() || `物件${["①", "②", "③"][pi]}`,
+          vacDate: propVacancyDates[pi]?.trim() ?? "",
+        }));
+        // 箇条書き: 退去予定あり → ※表記、なし → そのまま
+        const bulletLines = propList.map(p =>
+          p.vacDate ? `・${p.name}　※  ${p.vacDate}退去予定` : `・${p.name}`
+        ).join("\n");
+        // 見積書セクション（1件でもあれば表示）
+        const hasAnyEstimate = ((body.estimate_image_urls as string[] | undefined)?.length ?? 0) > 0;
+        const estimateSection = hasAnyEstimate
+          ? "\n最大限割引しました初期費用御見積書同封させて頂きました。\nお手隙の際にご査収ください！！"
+          : "";
+        // 空室物件（退去予定なし）は個別に「現在空室でご内覧可能」を表示
+        const vacancyLines = propList
+          .filter(p => !p.vacDate)
+          .map(p => `${p.name}\n現在空室でご内覧可能なお部屋となります！！`)
+          .join("\n\n");
+        const vacancySection = vacancyLines ? `\n\n${vacancyLines}` : "";
+        message_text = `${bulletLines}
+こちら${propCount}件現在募集中となります！！${estimateSection}${vacancySection}
 
 ${name}さんご都合よろしいお日にちにご案内させて頂きます😊！！`;
 
