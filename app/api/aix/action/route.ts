@@ -16,8 +16,12 @@ function extractPreferredName(
     for (const m of [...matches].reverse()) {
       const name = m[1];
       if (SKIP_RE.test(name)) continue;
-      // 1文字・英字のみは LINE表示名の頭文字の可能性が高いのでスキップ
-      if (name.length <= 1 || /^[a-zA-Z]+$/.test(name)) continue;
+      // 1文字はスキップ
+      if (name.length <= 1) continue;
+      // 日本語文字と英字が混在する場合はスキップ（「方でHitomi」等の誤マッチ防止）
+      const hasJp = /[ぁ-んァ-ン一-鿿]/.test(name);
+      const hasLatin = /[a-zA-Z]/.test(name);
+      if (hasJp && hasLatin) continue;
       return name;
     }
   }
@@ -955,12 +959,14 @@ ${patternExample}${knowledgeText}${examplesText}`;
         const statuses = propStatusesArr;
         const propList = Array.from({ length: propCount }, (_, pi) => {
           const rawVacDate = (propVacancyDates[pi] as string | undefined)?.trim() ?? "";
+          // 年号を除去（「2026年7月下旬」→「7月下旬」）
+          const vacDate = rawVacDate.replace(/^\d{4}年/, "");
           const rawStatus = statuses[pi] ?? "available";
           // Vision読み取りで退去予定日があればボタン状態に関わらず退去予定扱い
-          const resolvedStatus = rawVacDate && rawStatus === "available" ? "vacating" : rawStatus;
+          const resolvedStatus = vacDate && rawStatus === "available" ? "vacating" : rawStatus;
           return {
             name: (propNames[pi] as string | undefined)?.trim() ?? "",
-            vacDate: rawVacDate,
+            vacDate,
             status: resolvedStatus,
           };
         });

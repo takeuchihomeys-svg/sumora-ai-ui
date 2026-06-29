@@ -788,7 +788,12 @@ function extractPreferredName(
     for (const m of [...matches].reverse()) {
       const name = m[1];
       if (SKIP_RE.test(name)) continue;
-      // LINE表示名より長い（より詳細な）名前が見つかれば採用
+      // 1文字はスキップ
+      if (name.length <= 1) continue;
+      // 日本語文字と英字が混在する場合はスキップ（「方でHitomi」等の誤マッチ防止）
+      const hasJp = /[ぁ-んァ-ン一-鿿]/.test(name);
+      const hasLatin = /[a-zA-Z]/.test(name);
+      if (hasJp && hasLatin) continue;
       return name;
     }
   }
