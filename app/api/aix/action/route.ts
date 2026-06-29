@@ -948,41 +948,10 @@ ${patternExample}${knowledgeText}${examplesText}`;
 
       // 「物件あった」複数物件モード（2件・3件）
       if (pattern === "available" && propCount > 1) {
-        const firstImageUrls = (prop_first_image_urls as string[] | undefined) ?? [];
-        // 物件名・退去予定日: 手入力優先、なければ画像からVision読み取り
-        const extractSystem = `あなたは物件資料から情報を抽出するAIです。
-以下の2つをJSON形式で返してください。
-【propertyName】マンション名と号室を「マンション名 号室番号号室」の形式。例: "KTIレジデンス西中島II 202号室"。号室先頭ゼロ省略。不明ならnull。
-【vacancyDate】「現況」「入居時期」「退去予定」欄の退去・空き予定日時を「7月下旬」「8月31日」のように返す。空室で即入居可能なら null。記載なしもnull。年号不要。
-出力はJSONのみ（説明文なし）: {"propertyName":"...","vacancyDate":"..."}`;
-
-        const propList = await Promise.all(
-          propNames.slice(0, propCount).map(async (manualName, pi) => {
-            const manualVac = propVacancyDates[pi]?.trim() ?? "";
-            const imgUrl = firstImageUrls[pi];
-            let resolvedName = manualName.trim();
-            let resolvedVac = manualVac;
-            if (imgUrl && (!resolvedName || !resolvedVac)) {
-              try {
-                const content: Array<{ type: string; text?: string; source?: { type: string; url: string } }> = [
-                  { type: "image", source: { type: "url", url: imgUrl } },
-                  { type: "text", text: "この物件資料から物件名と退去予定日を抽出してください。" },
-                ];
-                const raw = await callClaudeVision(extractSystem, content);
-                const m = raw.match(/\{[\s\S]*\}/);
-                if (m) {
-                  const parsed = JSON.parse(m[0]) as { propertyName?: string; vacancyDate?: string };
-                  if (!resolvedName) resolvedName = parsed.propertyName?.trim() ?? "";
-                  if (!resolvedVac) resolvedVac = parsed.vacancyDate?.trim() ?? "";
-                }
-              } catch { /* Vision失敗は無視 */ }
-            }
-            return {
-              name: resolvedName || `物件${["①", "②", "③"][pi]}`,
-              vacDate: resolvedVac,
-            };
-          })
-        );
+        const propList = propNames.slice(0, propCount).map((n, pi) => ({
+          name: (n as string).trim() || `物件${["①", "②", "③"][pi]}`,
+          vacDate: (propVacancyDates[pi] as string | undefined)?.trim() ?? "",
+        }));
 
         // 箇条書き: 退去予定あり → ※表記、なし → そのまま
         const bulletLines = propList.map(p =>

@@ -13,25 +13,30 @@ export async function POST(req: Request) {
     const response = await anthropic.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 128,
-      system: `あなたは物件資料から情報を抽出するAIです。
-以下の2つをJSON形式で返してください。
+      system: `あなたは日本の物件資料（不動産マイソク・物件概要書）から情報を抽出するAIです。
+以下の2つをJSONで返してください。
 
 【propertyName】
-- 「物件名」「マンション名」と号室を「マンション名 ○○○号室」の形式で返す
-- 例: "KTIレジデンス西中島II 202号室"
+物件名を「マンション名 号室番号号室」の形式で返す。
+探し方：
+- 資料の最上部・タイトル行に大きく書かれたマンション名（例「エスリード新大阪グランファースト 208 号室」）
+- 「物件名」「マンション名」と書かれた欄の値
+- 「号室名」欄がある場合はマンション名と組み合わせる（例「KTIレジデンス西中島II 202号室」）
 - 号室番号の先頭ゼロは省略（0202→202）
-- 不明なら null
+- 不明な場合のみ null
 
 【vacancyDate】
-- 「現況」「入居時期」「退去予定」の欄を確認する
-- 「空室 / ○月○旬」「○月○日退去予定」など退去・空室時期が記載されていれば日付部分のみ返す
-  - 例: "7月下旬" "8月31日" "8月上旬"
-- 「空室」「即入居可」など今すぐ入れる場合は null を返す
-- 退去予定の記載がない場合も null を返す
-- 「2026年」などの西暦は含めない（「7月下旬」のみ）
+退去・空室予定時期を返す。
+探し方：
+- 「現況」「現況/入居時期」「入居可能時期」「退去予定」欄を確認
+- 「空室 / 7月下旬」のようにスラッシュで区切られている場合は日付部分（「7月下旬」）のみ返す
+- 「8月下旬退去予定」「7月31日退去予定」の場合は「8月下旬」「7月31日」を返す
+- 「空室」「即入居可」「即時」のみで日付がない場合は null
+- 年号（2026年等）は不要・月日のみ返す
+- 記載がない・読み取れない場合は null
 
-出力形式（JSONのみ・説明文なし）:
-{"propertyName":"...","vacancyDate":"..."}`,
+出力はJSONのみ・説明文なし：
+{"propertyName":"KTIレジデンス西中島II 202号室","vacancyDate":"7月下旬"}`,
       messages: [{
         role: "user",
         content: [
@@ -54,8 +59,8 @@ export async function POST(req: Request) {
     const parsed = JSON.parse(jsonMatch[0]) as { propertyName?: string; vacancyDate?: string };
 
     return NextResponse.json({
-      propertyName: parsed.propertyName || null,
-      vacancyDate: parsed.vacancyDate || null,
+      propertyName: parsed.propertyName?.trim() || null,
+      vacancyDate: parsed.vacancyDate?.trim() || null,
     });
   } catch {
     return NextResponse.json({ propertyName: null, vacancyDate: null });
