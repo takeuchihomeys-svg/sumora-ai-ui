@@ -332,6 +332,7 @@ export default function Home() {
   const [draftOrigText, setDraftOrigText] = useState(""); // 絵文字なし切替前の原文（復元用）
   const [extraDraftMessages, setExtraDraftMessages] = useState<Array<{text: string; delaySec: number}>>([]);
   const multiSendTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const [splitLoading, setSplitLoading] = useState(false);
   const [textareaHeightPx, setTextareaHeightPx] = useState(22);
   const [aiDraftExpanded, setAiDraftExpanded] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
@@ -5443,13 +5444,39 @@ export default function Home() {
                     />
                   </div>
                 ))}
-                {/* + 追加ボタン（AI下書きがある時だけ表示） */}
-                {draftIsAi && replyDraft && (
+                {/* 2通に分けるボタン（AI下書きがある時だけ表示） */}
+                {draftIsAi && replyDraft && extraDraftMessages.length === 0 && (
+                  <button
+                    disabled={splitLoading}
+                    onClick={async () => {
+                      setSplitLoading(true);
+                      try {
+                        const res = await fetch("/api/split-draft", {
+                          method: "POST",
+                          headers: {"Content-Type": "application/json"},
+                          body: JSON.stringify({text: replyDraft})
+                        });
+                        const data = await res.json() as {msg1?: string; msg2?: string; error?: string};
+                        if (data.msg1 && data.msg2) {
+                          setReplyDraft(data.msg1);
+                          setExtraDraftMessages([{text: data.msg2, delaySec: 60}]);
+                        }
+                      } finally {
+                        setSplitLoading(false);
+                      }
+                    }}
+                    className="mt-1.5 w-full rounded-lg border border-dashed border-blue-300 py-1.5 text-[11px] font-bold text-blue-500 disabled:opacity-50"
+                  >
+                    {splitLoading ? "分割中..." : "✂️ 2通に分ける"}
+                  </button>
+                )}
+                {/* 追加ボタン（すでに分けてある場合） */}
+                {draftIsAi && replyDraft && extraDraftMessages.length > 0 && (
                   <button
                     onClick={() => setExtraDraftMessages(prev => [...prev, {text: "", delaySec: 60}])}
-                    className="mt-1.5 w-full rounded-lg border border-dashed border-blue-300 py-1 text-[11px] font-bold text-blue-500"
+                    className="mt-1 w-full rounded-lg border border-dashed border-blue-200 py-1 text-[10px] font-bold text-blue-400"
                   >
-                    ＋ {extraDraftMessages.length + 2}通目を追加（時間差送信）
+                    ＋ {extraDraftMessages.length + 2}通目を追加
                   </button>
                 )}
               </div>
