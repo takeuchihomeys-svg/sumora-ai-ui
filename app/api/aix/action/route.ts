@@ -962,13 +962,14 @@ ${patternExample}${knowledgeText}${examplesText}`;
         const estimateSection = hasAnyEstimate
           ? "\n最大限割引しました初期費用御見積書同封させて頂きました。\nお手隙の際にご査収ください！！"
           : "";
-        // 空室物件（退去予定なし）のみ案内文を表示
+        // 空室物件（退去予定なし）は案内文、全て退去予定なら申込訴求
         const vacancyProps = propList.filter(p => !p.vacDate);
-        const vacancySection = vacancyProps.length > 0
-          ? "\n\n" + vacancyProps.map(p =>
+        const allVacating = vacancyProps.length === 0;
+        const vacancySection = allVacating
+          ? "\n\nお気に召されましたらお申込みしお部屋抑えさせていただきます！！\nお手隙の際にご査収ください！！"
+          : "\n\n" + vacancyProps.map(p =>
               `${p.name}は空室ですのでご案内出来ます！！\n${name}ご都合よろしいお日にちにご案内させて頂きます😊！！`
-            ).join("\n\n")
-          : "";
+            ).join("\n\n");
         message_text = `${bulletLines}
 こちら${propCount}件現在募集中となります！！${estimateSection}${vacancySection}`;
 
