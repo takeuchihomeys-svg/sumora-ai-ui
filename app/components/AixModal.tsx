@@ -1096,12 +1096,34 @@ export default function AixModal({
         if (checkPattern === "move_in_date") {
           // 入居日確認: テキストのみ送信（物件資料はお客さんに送らない）
           await onSend(preview);
-        } else {
-          // 見積書テキスト同封ONの場合: 見積書テキストを先送り → 30秒後に本文
-          if (estimateTextReady) {
+        } else if (checkPattern === "available") {
+          // available: 物件①資料→見積書①→物件②資料→見積書②→[見積書テキスト→30s]→本文
+          const shouldSendEstimateFirst = !!(estimateTextReady && checkIncludeEstimateText);
+          // ② 見積書テキストONだが見積書未アップロードの場合は警告
+          if (checkIncludeEstimateText && !shouldSendEstimateFirst) {
+            const hasEst = checkPropEstimates.slice(0, checkPropertyCount).some(ef => ef !== null);
+            if (!hasEst) {
+              setError("見積書テキスト同封がONですが、見積書ファイルがアップロードされていません。各物件カードに見積書を追加するか、同封をOFFにしてください。");
+              setLoading(false);
+              return;
+            }
+          }
+          // 物件ごとに: 資料画像 → 見積書画像 の順で送信
+          for (let pi = 0; pi < checkPropertyCount; pi++) {
+            for (const file of (checkPropImages[pi] ?? [])) {
+              const url = await uploadImage(file, pi);
+              await onSend("", url);
+            }
+            const ef = checkPropEstimates[pi];
+            if (ef) {
+              const estUrl = await uploadImage(ef);
+              await onSend("", estUrl);
+            }
+          }
+          // 見積書テキスト先送り → 30秒カウントダウン → 本文
+          if (shouldSendEstimateFirst) {
             await onSend(estimateTextReady);
             setEstimateTextReady("");
-            // 30秒カウントダウン
             await new Promise<void>((resolve) => {
               let c = 30;
               setSendCountdown(c);
@@ -1116,7 +1138,9 @@ export default function AixModal({
               }, 1000);
             });
           }
-          // ①物件資料画像 → ②見積書画像 → ③本文 の順で送信
+          await onSend(preview);
+        } else {
+          // alternative / その他: 物件資料画像 → 見積書 → 本文
           for (const file of checkImageFiles) {
             const url = await uploadImage(file);
             await onSend("", url);
@@ -1235,6 +1259,7 @@ export default function AixModal({
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 md:items-center"
       onClick={(e) => {
+        if (sendCountdown > 0) return;
         if (e.target === e.currentTarget) onClose();
       }}
     >
@@ -1255,7 +1280,8 @@ export default function AixModal({
             </button>
             <button
               onClick={onClose}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white hover:bg-white/30"
+              disabled={sendCountdown > 0}
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white hover:bg-white/30 disabled:opacity-30 disabled:cursor-not-allowed"
             >
               ✕
             </button>
