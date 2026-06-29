@@ -280,6 +280,7 @@ export default function AixModal({
   const [calendarLoading, setCalendarLoading] = useState(false);
   // 物件送る専用: 新着物件 / 内覧誘導 / 申込み誘導 モード + 編集可能スロット（未選択 = null）
   const [sendMode, setSendMode] = useState<"viewing" | "application" | "new_arrival" | "short" | null>(null);
+  const [newArrivalApply, setNewArrivalApply] = useState(false);
   const [editableCalendarSlots, setEditableCalendarSlots] = useState<string[]>([]);
   const [includeCalendar, setIncludeCalendar] = useState(true);
   // 内覧へ！専用: カレンダースロット選択
@@ -784,6 +785,7 @@ export default function AixModal({
         }
         if (vacatingNote.trim()) body.vacating_note = vacatingNote.trim();
         body.send_mode = sendMode;
+        if (sendMode === "new_arrival" && newArrivalApply) body.new_arrival_apply = true;
         if (sendMode === "viewing" && includeCalendar) {
           const finalCalendarInfo = calendarDays
             .map((d, i) => {
@@ -1459,6 +1461,18 @@ export default function AixModal({
                   >
                     新着物件
                   </button>
+                  {sendMode === "new_arrival" && (
+                    <button
+                      onClick={() => setNewArrivalApply(prev => !prev)}
+                      className={`rounded-full px-4 py-2.5 text-sm font-bold transition-all ${
+                        newArrivalApply
+                          ? "bg-[#06c755] text-white shadow-sm"
+                          : "border border-[#d1d7db] bg-white text-[#54656f]"
+                      }`}
+                    >
+                      申込み誘導
+                    </button>
+                  )}
                 </div>
                 <div className="flex gap-2">
                   <button
