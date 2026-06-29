@@ -5467,7 +5467,7 @@ export default function Home() {
                     }}
                     className="mt-1.5 w-full rounded-lg border border-dashed border-blue-300 py-1.5 text-[11px] font-bold text-blue-500 disabled:opacity-50"
                   >
-                    {splitLoading ? "分割中..." : "✂️ 2通に分ける"}
+                    {splitLoading ? "分割中..." : "2通に分ける"}
                   </button>
                 )}
                 {/* 追加ボタン（すでに分けてある場合） */}
