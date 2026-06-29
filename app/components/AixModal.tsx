@@ -249,6 +249,8 @@ export default function AixModal({
   const [checkAllAvailable, setCheckAllAvailable] = useState(false);
   const [checkPropStatuses, setCheckPropStatuses] = useState<string[]>(["available", "available", "available"]);
   const [checkIncludeEstimateText, setCheckIncludeEstimateText] = useState(false);
+  const [estimateTextReady, setEstimateTextReady] = useState("");
+  const [sendCountdown, setSendCountdown] = useState(0);
   // 物件確認した「空室あり」専用カレンダー
   const [checkCalendarInfo, setCheckCalendarInfo] = useState<string>("");
   const [checkCalendarDays, setCheckCalendarDays] = useState<Array<{
@@ -974,6 +976,8 @@ export default function AixModal({
       setPreview(useEmoji ? generatedMsg : stripEmoji(generatedMsg));
       setAixNotice(data.notice || "");
       if (data.parsed_estimate) setParsedEstimate(data.parsed_estimate);
+      setEstimateTextReady(data.estimate_text || "");
+      setSendCountdown(0);
     } catch (err) {
       setError(err instanceof Error ? err.message : "エラーが発生しました");
     } finally {
@@ -1093,7 +1097,26 @@ export default function AixModal({
           // 入居日確認: テキストのみ送信（物件資料はお客さんに送らない）
           await onSend(preview);
         } else {
-          // ①物件資料画像 → ②見積書画像 → ③文書 の順で送信
+          // 見積書テキスト同封ONの場合: 見積書テキストを先送り → 30秒後に本文
+          if (estimateTextReady) {
+            await onSend(estimateTextReady);
+            setEstimateTextReady("");
+            // 30秒カウントダウン
+            await new Promise<void>((resolve) => {
+              let c = 30;
+              setSendCountdown(c);
+              const timer = setInterval(() => {
+                c--;
+                setSendCountdown(c);
+                if (c <= 0) {
+                  clearInterval(timer);
+                  setSendCountdown(0);
+                  resolve();
+                }
+              }, 1000);
+            });
+          }
+          // ①物件資料画像 → ②見積書画像 → ③本文 の順で送信
           for (const file of checkImageFiles) {
             const url = await uploadImage(file);
             await onSend("", url);
@@ -2628,7 +2651,11 @@ export default function AixModal({
                         style={{ WebkitUserSelect: "none", touchAction: "manipulation" }}
                         title="送信（長押しで予約送信）"
                       >
-                        {loading ? "送信中..." : "送信する"}
+                        {loading
+                          ? sendCountdown > 0
+                            ? `見積書送信済み ✓ 本文まで${sendCountdown}秒...`
+                            : "送信中..."
+                          : "送信する"}
                       </button>
                     )}
                   </>

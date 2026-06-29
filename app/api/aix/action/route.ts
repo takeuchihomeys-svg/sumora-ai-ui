@@ -224,6 +224,7 @@ export async function POST(request: NextRequest) {
 
     let message_text = "";
     let parsed_estimate_result = null;
+    let estimate_text_result = "";
 
     // ── 🏠 物件オススメ ───────────────────────────────────────────
     if (action === "property_recommendation") {
@@ -1185,7 +1186,7 @@ ${templateText}`;
             }
           }
           if (estParts.length > 0) {
-            message_text += "\n\n" + estParts.join("\n\n") + "\n\n※ご入居日によって日割家賃が発生致します。";
+            estimate_text_result = estParts.join("\n\n") + "\n\n※ご入居日によって日割家賃が発生致します。";
           }
         }
       }
@@ -1256,6 +1257,7 @@ ${mDate}[時間]に${mName}
       message_text: cleanedMessage,
       ...(notice ? { notice } : {}),
       ...(parsed_estimate_result ? { parsed_estimate: parsed_estimate_result } : {}),
+      ...(estimate_text_result ? { estimate_text: estimate_text_result } : {}),
     });
   } catch (err) {
     console.error("[aix/action]", err);
