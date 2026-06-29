@@ -21,8 +21,8 @@ function extractPreferredName(
       return name;
     }
   }
-  // LINE表示名も1文字・英字のみの場合は空文字（→ 呼び名なし・会話履歴から読み取らせる）
-  if (lineDisplayName.length <= 1 || /^[a-zA-Z]+$/.test(lineDisplayName)) return "";
+  // 1文字のみは頭文字の可能性があるのでスキップ（英字2文字以上はYUMAなど実名として使う）
+  if (lineDisplayName.length <= 1) return "";
   return lineDisplayName;
 }
 
@@ -952,11 +952,17 @@ ${patternExample}${knowledgeText}${examplesText}`;
       // 「物件あった」per-propertyステータス対応（①改善・④改善）
       if (pattern === "available" && propStatusesArr && (propCount > 1 || (propNames[0] as string | undefined)?.trim())) {
         const statuses = propStatusesArr;
-        const propList = Array.from({ length: propCount }, (_, pi) => ({
-          name: (propNames[pi] as string | undefined)?.trim() ?? "",
-          vacDate: (propVacancyDates[pi] as string | undefined)?.trim() ?? "",
-          status: statuses[pi] ?? "available",
-        }));
+        const propList = Array.from({ length: propCount }, (_, pi) => {
+          const rawVacDate = (propVacancyDates[pi] as string | undefined)?.trim() ?? "";
+          const rawStatus = statuses[pi] ?? "available";
+          // Vision読み取りで退去予定日があればボタン状態に関わらず退去予定扱い
+          const resolvedStatus = rawVacDate && rawStatus === "available" ? "vacating" : rawStatus;
+          return {
+            name: (propNames[pi] as string | undefined)?.trim() ?? "",
+            vacDate: rawVacDate,
+            status: resolvedStatus,
+          };
+        });
         const fallbackNames = ["①", "②", "③"];
         const hasAnyEstimate = ((body.estimate_image_urls as string[] | undefined)?.length ?? 0) > 0 || !!(estimate_image_url as string | undefined);
 
