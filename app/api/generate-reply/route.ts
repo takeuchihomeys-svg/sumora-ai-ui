@@ -816,6 +816,7 @@ export async function POST(req: NextRequest) {
       screenshotBase64?: string;
       screenshotMediaType?: string;
       hasViewed?: boolean;
+      activeTaskTypes?: string[];
     };
     message = body.message;
     state = body.state;
@@ -826,6 +827,11 @@ export async function POST(req: NextRequest) {
     customerConditions = body.customerConditions || "";
     customerSummary = body.customerSummary || "";
     replyHint = body.replyHint || "";
+    // アクティブタスク状態をreplyHintに反映（動的コンテキスト注入）
+    if (body.activeTaskTypes?.includes("property_check")) {
+      replyHint = "【募集状況確認中★最重要】現在スタッフが物件の募集状況を確認している最中です。内覧日程・物件提案・見積書の話は絶対にしない。お客様の短い返信（「すいません」「ありがとう」「わかりました」等）には「大丈夫ですよ！！確認でき次第すぐにご連絡させて頂きます！！😊」のような短い返しのみ行う。"
+        + (replyHint ? "\n" + replyHint : "");
+    }
     screenshotBase64 = body.screenshotBase64;
     screenshotMediaType = body.screenshotMediaType;
   } catch {

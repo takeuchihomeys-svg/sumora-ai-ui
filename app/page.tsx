@@ -1913,12 +1913,6 @@ export default function Home() {
 
       let genReplyHint = "";
 
-      // 募集状況確認中（property_checkタスクあり）→ 内覧・物件提案・見積書の話を禁止
-      const hasPendingPropertyCheck = (activeTasks[selectedConversation.id] ?? []).some(t => t.task_type === "property_check");
-      if (hasPendingPropertyCheck) {
-        genReplyHint = "【募集状況確認中★最重要】現在スタッフが物件の募集状況を確認している最中です。内覧日程・物件提案・見積書の話は絶対にしない。お客様の短い返信（「すいません」「ありがとう」「わかりました」等）には「大丈夫ですよ！！確認でき次第すぐにご連絡させて頂きます！！😊」のような短い返しのみ行う。";
-      }
-
       if (estimatePropertyFromMsg) {
         genReplyHint = (genReplyHint ? genReplyHint + "\n" : "") + `【見積書の物件名固定】直近に送った見積書の物件「${estimatePropertyFromMsg}」を使うこと。会話に出てくる他の物件名は絶対に使わない`;
       }
@@ -1944,6 +1938,7 @@ export default function Home() {
           customerSummary: linkedCustomerForGen?.ai_summary ?? undefined,
           replyHint: genReplyHint || undefined,
           hasViewed: selectedConversation.hasViewed ?? false,
+          activeTaskTypes: (activeTasks[selectedConversation.id] ?? []).map(t => t.task_type),
           recentMessages: (() => {
             const last20 = contextMsgs.slice(-20);
             // 直近20件にスタッフ返信がない場合のみ、最新のスタッフ返信を先頭に追加
@@ -2228,6 +2223,7 @@ export default function Home() {
           customerSummary: linkedCustomer?.ai_summary ?? undefined,
           replyHint: replyHintWithEstimate,
           hasViewed: selectedConversation.hasViewed ?? false,
+          activeTaskTypes: (activeTasks[selectedConversation.id] ?? []).map(t => t.task_type),
           recentMessages: msgs.slice(-20).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined, createdAt: m.rawCreatedAt || undefined })),
           ...(sparkleScreenshot ? { screenshotBase64: sparkleScreenshot.base64, screenshotMediaType: sparkleScreenshot.mediaType } : {}),
         }),
