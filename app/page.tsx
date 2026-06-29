@@ -3072,8 +3072,29 @@ export default function Home() {
       }).catch(() => {});
     }
 
+    // 募集状況確認メッセージを送った → property_checkタスクを自動生成
+    if (text.trim() && /募集状況確認|空室確認|空き確認|募集確認/.test(text)) {
+      const convId = selectedConversation.id;
+      const alreadyHasCheck = (activeTasks[convId] ?? []).some((t) => t.task_type === "property_check");
+      if (!alreadyHasCheck) {
+        fetch("/api/line-tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ conversation_id: convId, task_type: "property_check", customer_name: selectedConversation.customerName }),
+        }).then((r) => r.json()).then((data: unknown) => {
+          const d = data as { ok: boolean; id?: string; created_at?: string };
+          if (d.ok && d.id && d.created_at) {
+            setActiveTasks((prev) => {
+              const existing = prev[convId] ?? [];
+              if (existing.some((x) => x.task_type === "property_check")) return prev;
+              return { ...prev, [convId]: [...existing, { id: d.id!, task_type: "property_check" as const, created_at: d.created_at!, customer_name: selectedConversation.customerName }] };
+            });
+          }
+        }).catch(() => {});
+      }
+    }
+
     // URLを含む送信 → property_sendタスク自動完了
-    // ※ property_checkタスクはお客様から空室確認依頼が来た時のみ作成（スタッフ送信では作らない）
     if (text.trim() && text.includes("http")) {
       const convId = selectedConversation.id;
       const sendTask = (activeTasks[convId] ?? []).find((t) => t.task_type === "property_send");
