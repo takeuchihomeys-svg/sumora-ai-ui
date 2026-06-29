@@ -849,6 +849,7 @@ export default function AixModal({
             body.image_url = urls[0];
           }
         }
+        if (checkPattern === "available") body.show_viewing_invite = showCheckCalendar;
         if (checkPattern === "available" && showCheckCalendar && checkCalendarInfo) body.calendar_info = checkCalendarInfo;
         if (checkPattern === "available" && checkAvailableApp) body.available_application = checkAvailableApp;
         if (checkPattern === "available") body.all_properties_available = checkAllAvailable;

@@ -172,7 +172,7 @@ function extractNotice(text: string, customerName: string): { message: string; n
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, account, customer_name, conversation_id, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done, vacancy_status, has_estimate, move_out_date, keyword, property_name, property_names, property_vacancy_dates, property_count, prop_first_image_urls, all_properties_available, prop_statuses, include_estimate_text } = body;
+    const { action, account, customer_name, conversation_id, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done, vacancy_status, has_estimate, move_out_date, keyword, property_name, property_names, property_vacancy_dates, property_count, prop_first_image_urls, all_properties_available, prop_statuses, include_estimate_text, show_viewing_invite } = body;
 
     // 今日（JST）スタッフがすでに挨拶メッセージを送っているか判定 → 挨拶を切り替える
     // お世話になっておりますは1日1回の挨拶（おはようございますと同じ）
@@ -964,11 +964,13 @@ ${patternExample}${knowledgeText}${examplesText}`;
           const p = propList[0];
           const pName = p.name;
           const estimate1 = hasAnyEstimate ? "\n最大限割引しました御見積書同封させて頂きました！！" : "";
+          const showVI1 = !!(show_viewing_invite as boolean | undefined);
           if (p.status === "vacating") {
             const vacLine = p.vacDate ? `${p.vacDate}退去予定のお部屋となります！！` : "退去予定のお部屋となります！！";
             message_text = `${pName}現在募集中となります！！\n${vacLine}${estimate1}\n\nお気に召されましたらお申込みしお部屋を抑えさせていただきます！！`;
           } else {
-            message_text = `${pName}現在募集中となります！！\n現在空室でご内覧可能なお部屋となります！！${estimate1}\n\n${name}ご都合よろしいお日にちにご案内させて頂きます😊！！`;
+            const inviteText = showVI1 ? `\n\n${name}ご都合よろしいお日にちにご案内させて頂きます😊！！` : "";
+            message_text = `${pName}現在募集中となります！！\n現在空室でご内覧可能なお部屋となります！！${estimate1}${inviteText}`;
           }
         } else {
           // 複数物件モード: per-property ステータスで箇条書き + クロージング
@@ -983,14 +985,27 @@ ${patternExample}${knowledgeText}${examplesText}`;
             ? "\n最大限割引しました初期費用御見積書同封させて頂きました。\nお手隙の際にご査収ください！！"
             : "";
           const toureableList = propList.map((p, pi) => ({ ...p, pi })).filter(p => p.status === "available" || p.status === "alternative");
-          const vacancySection = toureableList.length === 0
-            ? "\n\nお気に召されましたらお申込みしお部屋抑えさせていただきます！！\nお手隙の際にご査収ください！！"
-            : "\n\n" + toureableList.map(p => {
+          const showViewingInvite = !!(show_viewing_invite as boolean | undefined);
+          let vacancySection = "";
+          if (toureableList.length === 0) {
+            // 全て退去予定 or 満室 → 申込訴求
+            vacancySection = "\n\nお気に召されましたらお申込みしお部屋抑えさせていただきます！！\nお手隙の際にご査収ください！！";
+          } else if (showViewingInvite) {
+            // 内覧誘導ON: 全て空室なら1行にまとめる
+            const allVacant = toureableList.every(p => p.status === "available");
+            if (allVacant) {
+              vacancySection = `\n\n${name}ご都合よろしいお日にちにご案内させて頂きます😊！！`;
+            } else {
+              // alternative混じり → 個別表示
+              vacancySection = "\n\n" + toureableList.map(p => {
                 const n = p.name || `物件${fallbackNames[p.pi] ?? ""}`;
                 return p.status === "alternative"
                   ? `${n}は別のお部屋ですがご案内出来ます！！\n${name}ご都合よろしいお日にちにご案内させて頂きます😊！！`
                   : `${n}は空室ですのでご案内出来ます！！\n${name}ご都合よろしいお日にちにご案内させて頂きます😊！！`;
               }).join("\n\n");
+            }
+          }
+          // 内覧誘導OFF → vacancySection = "" (内覧テキストなし)
           const greeting = staffMessagedToday ? "お待たせ致しました！！" : "お世話になっております！！";
           const header = (all_properties_available as boolean | undefined)
             ? `${name}お送り頂きました\n`
