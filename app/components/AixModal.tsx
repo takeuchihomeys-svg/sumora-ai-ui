@@ -246,6 +246,7 @@ export default function AixModal({
   const [checkPropEstimatePreviews, setCheckPropEstimatePreviews] = useState<string[]>(["", "", ""]);
   const [checkPropNames, setCheckPropNames] = useState<string[]>(["", "", ""]);
   const [checkPropVacancyDates, setCheckPropVacancyDates] = useState<string[]>(["", "", ""]);
+  const [checkPropVacancyLoading, setCheckPropVacancyLoading] = useState<boolean[]>([false, false, false]);
   // 物件確認した「空室あり」専用カレンダー
   const [checkCalendarInfo, setCheckCalendarInfo] = useState<string>("");
   const [checkCalendarDays, setCheckCalendarDays] = useState<Array<{
@@ -584,6 +585,33 @@ export default function AixModal({
       reader.readAsDataURL(file);
     });
     if (checkPropFileRefs[propIdx].current) checkPropFileRefs[propIdx].current!.value = "";
+    // 退去予定日が未入力の場合、最初の画像からAI自動読み取り
+    if (!checkPropVacancyDates[propIdx]) {
+      const firstFile = files[0];
+      if (firstFile) {
+        setCheckPropVacancyLoading(prev => prev.map((v, i) => i === propIdx ? true : v));
+        const reader = new FileReader();
+        reader.onload = async () => {
+          try {
+            const dataUrl = String(reader.result ?? "");
+            const base64 = dataUrl.split(",")[1];
+            const mediaType = firstFile.type || "image/jpeg";
+            const res = await fetch("/api/extract-vacancy-date", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ imageBase64: base64, mediaType }),
+            });
+            const data = await res.json() as { vacancyDate: string | null };
+            if (data.vacancyDate && data.vacancyDate !== "空室") {
+              setCheckPropVacancyDates(prev => prev.map((v, i) => i === propIdx && !v ? (data.vacancyDate ?? "") : v));
+            }
+          } finally {
+            setCheckPropVacancyLoading(prev => prev.map((v, i) => i === propIdx ? false : v));
+          }
+        };
+        reader.readAsDataURL(firstFile);
+      }
+    }
   };
 
   const removePropImage = (propIdx: number, imgIdx: number) => {
@@ -1877,20 +1905,24 @@ export default function AixModal({
                         }}
                         className="mb-2 w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-xs outline-none focus:border-[#4CAF50]"
                       />
-                      {/* 退去予定日（任意） */}
+                      {/* 退去予定日（自動読み取り or 手入力） */}
                       <div className="mb-2 flex items-center gap-2">
                         <span className="text-[10px] text-[#90a4ae] shrink-0">退去予定日（任意）:</span>
-                        <input
-                          type="text"
-                          placeholder="例: 7月31日"
-                          value={checkPropVacancyDates[pi]}
-                          onChange={(e) => {
-                            const arr = [...checkPropVacancyDates];
-                            arr[pi] = e.target.value;
-                            setCheckPropVacancyDates(arr);
-                          }}
-                          className="flex-1 rounded-xl border border-[#d1d7db] bg-white px-3 py-1.5 text-xs outline-none focus:border-[#4CAF50]"
-                        />
+                        {checkPropVacancyLoading[pi] ? (
+                          <span className="flex-1 rounded-xl border border-[#d1d7db] bg-[#f5f6f7] px-3 py-1.5 text-xs text-[#90a4ae] animate-pulse">読み取り中...</span>
+                        ) : (
+                          <input
+                            type="text"
+                            placeholder="画像から自動読み取り / 例: 7月31日"
+                            value={checkPropVacancyDates[pi]}
+                            onChange={(e) => {
+                              const arr = [...checkPropVacancyDates];
+                              arr[pi] = e.target.value;
+                              setCheckPropVacancyDates(arr);
+                            }}
+                            className="flex-1 rounded-xl border border-[#d1d7db] bg-white px-3 py-1.5 text-xs outline-none focus:border-[#4CAF50]"
+                          />
+                        )}
                       </div>
                       {/* 物件画像 */}
                       {checkPropImagePreviews[pi].length > 0 && (
