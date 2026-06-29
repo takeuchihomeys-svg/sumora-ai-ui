@@ -5112,6 +5112,17 @@ export default function Home() {
                 </div>
               );
 
+              // P5.5: 物件確認した（property_checkタスクがある場合は物件送るより優先）
+              const hasPropertyCheckTask = (activeTasks[id] ?? []).some(t => t.task_type === "property_check");
+              if (hasPropertyCheckTask) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-[#4CAF50] bg-[#e8f5e9] px-3 py-2 flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-[#2e7d32] flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>次のアクション → AIX 物件確認した</span>
+                  <button onClick={() => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); }}
+                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                    style={{ background: "linear-gradient(135deg, #388e3c, #4CAF50)" }}>AIX 物件確認した</button>
+                </div>
+              );
+
               // P6: 物件送る（タスクあり or サジェスト or フォーマット受信）
               const isCustomerFormatMsg = (lastCustomerText.match(/[①②③④⑤⑥⑦⑧⑨⑩]/g) ?? []).length >= 2;
               if ((suggestPropertySendMap[id] || hasPropertySendTask || isCustomerFormatMsg) && !suggest2ndHandMap[id] && !dismissedPropertySendIds.has(id)) return (
