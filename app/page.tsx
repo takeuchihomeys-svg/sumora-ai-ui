@@ -417,6 +417,8 @@ export default function Home() {
   const [dismissedNewListingIds, setDismissedNewListingIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedNewListingIds") || "[]") as string[]); } catch { return new Set(); }
   });
+  const [dismissedViewingSpecificIds, setDismissedViewingSpecificIds] = useState<Set<string>>(new Set());
+  const [aixInitViewingSpecific, setAixInitViewingSpecific] = useState(false);
   const [dismissedEstimateSheetIds, setDismissedEstimateSheetIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedEstimateSheetIds") || "[]") as string[]); } catch { return new Set(); }
   });
@@ -1574,6 +1576,10 @@ export default function Home() {
     const customerConfirmedTime = /(\d+日.*\d+時|\d+時.*からお願い|からお願いします|でお願いします|時からお願い|時にします|時で大丈夫|でいきます|で行きます|でお伺い)/.test(lastCustomer.text);
     if (customerConfirmedTime) return true;
 
+    // 質問形（日付のみ）の場合は待ち合わせではなく内覧日指定ありへ誘導するためここでreturn false
+    const isAskingForm = /(いけますか|いけます？|どうですか|大丈夫ですか|可能ですか|できますか|はどう|ですか[？?]|いけそう|いかがでしょ)/.test(lastCustomer.text);
+    if (isAskingForm) return false;
+
     // パターン2: お客様のメッセージが日付を含む + 直近スタッフ5件のいずれかが内覧日程を送った
     const customerHasDate = /\d+[\/月]\d+|(\d+日)|(日曜|月曜|火曜|水曜|木曜|金曜|土曜)|[（(][日月火水木金土][）)]/.test(lastCustomer.text);
     if (!customerHasDate) return false;
@@ -1585,6 +1591,24 @@ export default function Home() {
       m.text?.includes("ご内覧") ||
       /\d+\/\d+.*\d+\/\d+/.test(m.text || "") ||
       /\d+日.*\d+日/.test(m.text || "")
+    );
+  }, [selectedConversation, activeAixFlow]);
+
+  // お客様が特定日を質問形で提案 → 内覧日指定ありで時間調整へ誘導
+  const guideToViewingSpecific = useMemo(() => {
+    if (activeAixFlow) return false;
+    const msgs: Message[] = selectedConversation.messages || [];
+    const reversed = [...msgs].reverse();
+    const lastCustomer = reversed.find((m: Message) => m.sender === "customer");
+    if (!lastCustomer?.text) return false;
+    // 日付を含む質問形メッセージ
+    const customerHasDate = /\d+[\/月]\d+|(\d+日)|(日曜|月曜|火曜|水曜|木曜|金曜|土曜)|[（(][日月火水木金土][）)]/.test(lastCustomer.text);
+    const isAskingForm = /(いけますか|いけます？|どうですか|大丈夫ですか|可能ですか|できますか|はどう|ですか[？?]|いけそう|いかがでしょ)/.test(lastCustomer.text);
+    if (!customerHasDate || !isAskingForm) return false;
+    // スタッフが内覧日程を送った後の文脈
+    const recentStaff = reversed.filter((m: Message) => m.sender === "staff").slice(0, 5);
+    return recentStaff.some(m =>
+      m.text?.includes("ご案内") || m.text?.includes("ご内覧") || m.text?.includes("ご都合")
     );
   }, [selectedConversation, activeAixFlow]);
 
@@ -5097,6 +5121,18 @@ export default function Home() {
                 </div>
               );
 
+              // P3.2.5: お客様が特定日を質問形で提案 → AIX 内覧へ！内覧日指定ありで時間調整
+              if (guideToViewingSpecific && !dismissedViewingSpecificIds.has(id)) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-blue-500 bg-blue-50 px-3 py-2 flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-blue-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>日付が届いた → 内覧日指定ありで時間を返す</span>
+                  <button onClick={() => { setDismissedViewingSpecificIds((prev) => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setAixInitViewingSpecific(true); openAixDirect("viewing_invite"); }}
+                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                    style={{ background: "linear-gradient(135deg, #1565C0, #1976D2)" }}>AIX 内覧へ！</button>
+                  <button onClick={() => setDismissedViewingSpecificIds((prev) => new Set([...prev, id]))}
+                    className="shrink-0 text-blue-400 text-[11px] font-bold">✕</button>
+                </div>
+              );
+
               // P3.3: お客様が内覧日時を確定 → AIX 待ち合わせへ！
               if (guideToMeetingPlace && !dismissedMeetingPlaceIds.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-600 bg-teal-50 px-3 py-2 flex items-center gap-2">
@@ -6466,12 +6502,14 @@ export default function Home() {
           lastMessageAt={(selectedConversation.messages || []).slice(-1)[0]?.rawCreatedAt}
           customerSummary={linkedCustomerMap[selectedConversation.id]?.ai_summary ?? null}
           initialFocusPoints={pendingAixFocusPoints.length > 0 ? pendingAixFocusPoints : undefined}
+          initialViewingSpecificMode={aixInitViewingSpecific}
           onClose={() => {
             setAixModalType(null);
             setAixInitialFile(null);
             setPendingAixFocusPoints([]);
             setPendingTemplateSource(null);
             setDetectedVacatingDate(null);
+            setAixInitViewingSpecific(false);
           }}
           onSend={sendMessageText}
           onDelayedSend={handleDelayedSend}

@@ -35,6 +35,7 @@ interface AixModalProps {
   lastMessageAt?: string;
   conversationStatus?: string;
   initialFocusPoints?: string[];
+  initialViewingSpecificMode?: boolean;
   onClose: () => void;
   onSend: (text: string, imageUrl?: string) => Promise<void>;
   onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean }) => void;
@@ -184,6 +185,7 @@ export default function AixModal({
   lastMessageAt,
   conversationStatus,
   initialFocusPoints,
+  initialViewingSpecificMode,
   onClose,
   onSend,
   onAfterSend,
@@ -317,7 +319,7 @@ export default function AixModal({
   const [viewingVacancyOcrLoading, setViewingVacancyOcrLoading] = useState(false);
 
   // 内覧へ！内覧日指定あり専用
-  const [viewingSpecificMode, setViewingSpecificMode] = useState(false);
+  const [viewingSpecificMode, setViewingSpecificMode] = useState(!!initialViewingSpecificMode);
   const [viewingSpecificDate, setViewingSpecificDate] = useState("");
   const [viewingSpecificStart, setViewingSpecificStart] = useState("");
   const [viewingSpecificEnd, setViewingSpecificEnd] = useState("");
