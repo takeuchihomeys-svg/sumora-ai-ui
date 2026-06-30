@@ -316,6 +316,12 @@ export default function AixModal({
   const [viewingVacancyPreview, setViewingVacancyPreview] = useState("");
   const [viewingVacancyOcrLoading, setViewingVacancyOcrLoading] = useState(false);
 
+  // 内覧へ！内覧日指定あり専用
+  const [viewingSpecificMode, setViewingSpecificMode] = useState(false);
+  const [viewingSpecificDate, setViewingSpecificDate] = useState("");
+  const [viewingSpecificStart, setViewingSpecificStart] = useState("");
+  const [viewingSpecificEnd, setViewingSpecificEnd] = useState("");
+
   // 物件オススメ専用: 見積書（任意）
   const [recommendEstimateFile, setRecommendEstimateFile] = useState<File | null>(null);
   const [recommendEstimatePreview, setRecommendEstimatePreview] = useState<string>("");
@@ -427,6 +433,25 @@ export default function AixModal({
       }
     })();
   }, [actionType]);
+
+  // 内覧日指定あり: ONになったら会話からお客様指定日を自動抽出
+  useEffect(() => {
+    if (!viewingSpecificMode || !recentMessages) return;
+    if (viewingSpecificDate) return; // 既に入力済みならスキップ
+    // お客様メッセージから日付を逆順に探す
+    const customerMsgs = [...recentMessages].filter(m => m.sender === "customer" && m.text).reverse();
+    for (const msg of customerMsgs) {
+      const m = (msg.text || "").match(/(\d{1,2})月(\d{1,2})日/);
+      if (m) { setViewingSpecificDate(`${m[1]}月${m[2]}日`); break; }
+    }
+    // カレンダーから時間をプリセット（最初の有効スロット）
+    const firstSlot = viewingCalendarDays.find((d, i) => d.fullyBooked ? viewingSlotOverride[i] : viewingSlotEnabled[i]);
+    const firstIdx = viewingCalendarDays.indexOf(firstSlot!);
+    if (firstSlot) {
+      if (!viewingSpecificStart) setViewingSpecificStart(viewingSlotStarts[firstIdx] || "");
+      if (!viewingSpecificEnd)   setViewingSpecificEnd(viewingSlotEnds[firstIdx] || "");
+    }
+  }, [viewingSpecificMode]);
 
   // 待ち合わせ: 会話から日程・時間を自動抽出してプリセット（お客様確定メッセージ最優先）
   useEffect(() => {
@@ -868,6 +893,19 @@ export default function AixModal({
         if (customerSummary) body.customer_summary = customerSummary;
       } else if (config.requiresImage && imageFile) {
         body.image_url = await uploadImage(imageFile);
+      }
+
+      // 内覧へ！内覧日指定ありモード → テンプレで即生成（AI不要）
+      if (actionType === "viewing_invite" && viewingSpecificMode) {
+        if (!viewingSpecificDate.trim()) throw new Error("日程を入力してください");
+        const s = viewingSpecificStart.trim();
+        const e = viewingSpecificEnd.trim();
+        const timeText = s && e ? `${s}〜${e}` : s || "";
+        const msg = `はい！！\n\n${viewingSpecificDate.trim()}ですと${timeText}ご内覧可能です！！\n\n${customerName}さんご都合如何でしょうか😌！！`;
+        setAiDraft(msg);
+        setPreview(useEmoji ? msg : stripEmoji(msg));
+        setLoading(false);
+        return;
       }
 
       // 内覧へ！退去予定物件モード → テンプレで即生成（AI不要）
@@ -2296,16 +2334,61 @@ export default function AixModal({
             </div>
           ) : null}
 
-          {/* 内覧へ！: 退去予定物件トグル */}
+          {/* 内覧へ！: 退去予定物件 / 内覧日指定ありトグル */}
           {actionType === "viewing_invite" && (
             <div className="mb-3">
-              <button
-                type="button"
-                onClick={() => setViewingIsVacancy(v => !v)}
-                className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition-all ${viewingIsVacancy ? "bg-orange-500 text-white" : "bg-[#f0f2f5] text-[#54656f]"}`}
-              >
-                🏚️ 退去予定物件
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setViewingIsVacancy(v => !v)}
+                  className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition-all ${viewingIsVacancy ? "bg-orange-500 text-white" : "bg-[#f0f2f5] text-[#54656f]"}`}
+                >
+                  🏚️ 退去予定物件
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setViewingSpecificMode(v => !v); setViewingSpecificDate(""); setViewingSpecificStart(""); setViewingSpecificEnd(""); }}
+                  className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition-all ${viewingSpecificMode ? "bg-blue-500 text-white" : "bg-[#f0f2f5] text-[#54656f]"}`}
+                >
+                  📅 内覧日指定あり
+                </button>
+              </div>
+
+              {viewingSpecificMode && (
+                <div className="mt-2 rounded-xl border border-blue-200 bg-blue-50 p-3">
+                  <p className="mb-2 text-xs font-bold text-blue-700">お客様が希望した日付で「はい！！◯日ですと〜」を生成します</p>
+                  <div className="mb-2">
+                    <label className="mb-1 block text-xs font-semibold text-[#54656f]">日程 <span className="text-red-400">*</span></label>
+                    <input
+                      value={viewingSpecificDate}
+                      onChange={(e) => setViewingSpecificDate(e.target.value)}
+                      placeholder="例：7月5日"
+                      className="w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-sm outline-none focus:border-blue-400"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1">
+                      <label className="mb-1 block text-xs font-semibold text-[#54656f]">開始時間</label>
+                      <input
+                        value={viewingSpecificStart}
+                        onChange={(e) => setViewingSpecificStart(e.target.value)}
+                        placeholder="13:00"
+                        className="w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-sm outline-none focus:border-blue-400"
+                      />
+                    </div>
+                    <span className="mt-4 text-sm text-[#54656f]">〜</span>
+                    <div className="flex-1">
+                      <label className="mb-1 block text-xs font-semibold text-[#54656f]">終了時間</label>
+                      <input
+                        value={viewingSpecificEnd}
+                        onChange={(e) => setViewingSpecificEnd(e.target.value)}
+                        placeholder="14:00"
+                        className="w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-sm outline-none focus:border-blue-400"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {viewingIsVacancy && (
                 <div className="mt-2 rounded-xl border border-orange-200 bg-orange-50 p-3">
