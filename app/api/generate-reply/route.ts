@@ -11,6 +11,8 @@ import {
   SMORA_RULES,
   REAL_ESTATE_RULES,
   REPLY_CONTENT_RULES,
+  AIX_PROPERTY_RECOMMENDATION_RULES,
+  AIX_PROPERTY_SEND_RULES,
   STATE_SEARCH_ALIASES,
 } from "@/app/lib/line-reply-prompts";
 
@@ -143,6 +145,8 @@ type PromptOverrides = {
   realEstateRules?: string;
   smoraRules?: string;
   replyContentRules?: string;
+  aixPropertyRecommendationRules?: string;
+  aixPropertySendRules?: string;
 };
 
 function buildGenerationMessages(
@@ -369,6 +373,8 @@ function buildGenerationMessages(
   const realEstateNote = `\n${promptOverrides?.realEstateRules ?? REAL_ESTATE_RULES}`;
   const smoraRulesNote = `\n${promptOverrides?.smoraRules ?? SMORA_RULES}`;
   const replyContentNote = `\n${promptOverrides?.replyContentRules ?? REPLY_CONTENT_RULES}`;
+  const aixPropertyRecommendationNote = `\n${promptOverrides?.aixPropertyRecommendationRules ?? AIX_PROPERTY_RECOMMENDATION_RULES}`;
+  const aixPropertySendNote = `\n${promptOverrides?.aixPropertySendRules ?? AIX_PROPERTY_SEND_RULES}`;
 
   // 申込フォーム検出（applying フェーズのみ・氏名・緊急連絡先・住所等のキーワード）＋直近の画像なし → 身分証リクエスト注入
   const isApplicationFormText = /緊急連絡|氏名|フリガナ|生年月日|現住所|住居年数|続柄|勤務先/.test(customerMessage);
@@ -410,6 +416,8 @@ ${quickPatterns}
 ${smoraRulesNote}
 ${realEstateNote}
 ${replyContentNote}
+${aixPropertyRecommendationNote}
+${aixPropertySendNote}
 ${knowledge}
 ${phrases}
 
@@ -896,21 +904,27 @@ export async function POST(req: NextRequest) {
       let realEstateRules: string | undefined;
       let smoraRules: string | undefined;
       let replyContentRules: string | undefined;
+      let aixPropertyRecommendationRules: string | undefined;
+      let aixPropertySendRules: string | undefined;
       for (const p of dbPrompts as { key: string; content: string }[]) {
         if (p.key === "generation_system") generationSystem = p.content;
         else if (p.key === "smora_quick_patterns") quickPatterns = p.content;
         else if (p.key === "real_estate_rules") realEstateRules = p.content;
         else if (p.key === "smora_rules") smoraRules = p.content;
         else if (p.key === "reply_content_rules") replyContentRules = p.content;
+        else if (p.key === "aix_property_recommendation_rules") aixPropertyRecommendationRules = p.content;
+        else if (p.key === "aix_property_send_rules") aixPropertySendRules = p.content;
         // phase_guide_* はコード(line-reply-prompts.ts)を正として使用・DBは無視
       }
-      if (generationSystem || quickPatterns || realEstateRules || smoraRules || replyContentRules || Object.keys(phaseGuide).length > 0) {
+      if (generationSystem || quickPatterns || realEstateRules || smoraRules || replyContentRules || aixPropertyRecommendationRules || aixPropertySendRules || Object.keys(phaseGuide).length > 0) {
         promptOverrides = {
           generationSystem,
           quickPatterns,
           realEstateRules,
           smoraRules,
           replyContentRules,
+          aixPropertyRecommendationRules,
+          aixPropertySendRules,
           phaseGuide: Object.keys(phaseGuide).length > 0 ? phaseGuide : undefined,
         };
       }
