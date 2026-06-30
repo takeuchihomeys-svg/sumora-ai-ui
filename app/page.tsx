@@ -7226,6 +7226,7 @@ export default function Home() {
                     { key: "phase_guide_proposing", label: "提案フェーズガイド", desc: "物件提案・確認フェーズの返し方（A〜Eパターン）" },
                     { key: "phase_guide_applying", label: "申込フェーズガイド", desc: "内覧・申込手続きの返し方" },
                     { key: "real_estate_rules", label: "不動産ルール", desc: "仲介手数料・敷礼金・保証会社・申込フロー等" },
+                    { key: "smora_rules", label: "スモラルール", desc: "初期費用が安い理由・TikTok流入ルール・割引表現ルール" },
                     { key: "smora_quick_patterns", label: "スモラ返信パターン集", desc: "実例から抽出した定型返信フレーズ一覧" },
                     { key: "template_adapt_rules", label: "テンプレートAI最適化ルール", desc: "テンプレートAI生成時のルール（物件名置換・禁止事項）" },
                     { key: "reply_content_rules", label: "返信ルール（内容について）", desc: "何を言う・言わないかの判断基準" },
