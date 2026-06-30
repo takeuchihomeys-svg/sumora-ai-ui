@@ -141,6 +141,7 @@ type PromptOverrides = {
   quickPatterns?: string;
   phaseGuide?: Record<string, string>;
   realEstateRules?: string;
+  smoraRules?: string;
   replyContentRules?: string;
 };
 
@@ -365,7 +366,7 @@ function buildGenerationMessages(
   })();
   const quickPatterns = examples ? "" : `\n${effectiveQuickPatterns}`;
   const realEstateNote = `\n${promptOverrides?.realEstateRules ?? REAL_ESTATE_RULES}`;
-  const smoraRulesNote = `\n${(promptOverrides as Record<string, string> | null)?.smoraRules ?? SMORA_RULES}`;
+  const smoraRulesNote = `\n${promptOverrides?.smoraRules ?? SMORA_RULES}`;
   const replyContentNote = `\n${promptOverrides?.replyContentRules ?? REPLY_CONTENT_RULES}`;
 
   // 申込フォーム検出（applying フェーズのみ・氏名・緊急連絡先・住所等のキーワード）＋直近の画像なし → 身分証リクエスト注入
@@ -892,19 +893,22 @@ export async function POST(req: NextRequest) {
       let generationSystem: string | undefined;
       let quickPatterns: string | undefined;
       let realEstateRules: string | undefined;
+      let smoraRules: string | undefined;
       let replyContentRules: string | undefined;
       for (const p of dbPrompts as { key: string; content: string }[]) {
         if (p.key === "generation_system") generationSystem = p.content;
         else if (p.key === "smora_quick_patterns") quickPatterns = p.content;
         else if (p.key === "real_estate_rules") realEstateRules = p.content;
+        else if (p.key === "smora_rules") smoraRules = p.content;
         else if (p.key === "reply_content_rules") replyContentRules = p.content;
         // phase_guide_* はコード(line-reply-prompts.ts)を正として使用・DBは無視
       }
-      if (generationSystem || quickPatterns || realEstateRules || replyContentRules || Object.keys(phaseGuide).length > 0) {
+      if (generationSystem || quickPatterns || realEstateRules || smoraRules || replyContentRules || Object.keys(phaseGuide).length > 0) {
         promptOverrides = {
           generationSystem,
           quickPatterns,
           realEstateRules,
+          smoraRules,
           replyContentRules,
           phaseGuide: Object.keys(phaseGuide).length > 0 ? phaseGuide : undefined,
         };
