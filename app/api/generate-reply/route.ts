@@ -1051,8 +1051,15 @@ export async function POST(req: NextRequest) {
                 const text = typeof chunk.content === "string" ? chunk.content : "";
                 fullText += text;
               }
-              const firstBreak = fullText.indexOf("\n\n");
-              const bodyPart = firstBreak >= 0 ? fullText.slice(firstBreak + 2) : fullText;
+              // AIが生成した1行目（挨拶行）を除去して正しい挨拶に置き換える
+              // \n\n（段落区切り）があればその後を本文として使う。なければ最初の\n以降を使う
+              const doubleBreak = fullText.indexOf("\n\n");
+              const singleBreak = fullText.indexOf("\n");
+              const bodyPart = doubleBreak >= 0
+                ? fullText.slice(doubleBreak + 2)
+                : singleBreak >= 0
+                  ? fullText.slice(singleBreak + 1)
+                  : "";
               const fixedGreeting = `${customerName}さん、はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！\n\n`;
               controller.enqueue(encoder.encode(fixedGreeting + bodyPart));
             } else {
