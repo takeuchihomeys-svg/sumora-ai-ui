@@ -10,6 +10,7 @@ import {
   SMORA_QUICK_PATTERNS,
   SMORA_RULES,
   REAL_ESTATE_RULES,
+  REPLY_CONTENT_RULES,
   STATE_SEARCH_ALIASES,
 } from "@/app/lib/line-reply-prompts";
 
@@ -365,7 +366,7 @@ function buildGenerationMessages(
   const quickPatterns = examples ? "" : `\n${effectiveQuickPatterns}`;
   const realEstateNote = `\n${promptOverrides?.realEstateRules ?? REAL_ESTATE_RULES}`;
   const smoraRulesNote = `\n${(promptOverrides as Record<string, string> | null)?.smoraRules ?? SMORA_RULES}`;
-  const replyContentNote = promptOverrides?.replyContentRules ? `\n${promptOverrides.replyContentRules}` : "";
+  const replyContentNote = `\n${promptOverrides?.replyContentRules ?? REPLY_CONTENT_RULES}`;
 
   // 申込フォーム検出（applying フェーズのみ・氏名・緊急連絡先・住所等のキーワード）＋直近の画像なし → 身分証リクエスト注入
   const isApplicationFormText = /緊急連絡|氏名|フリガナ|生年月日|現住所|住居年数|続柄|勤務先/.test(customerMessage);
