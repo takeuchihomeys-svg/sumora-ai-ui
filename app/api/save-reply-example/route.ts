@@ -566,10 +566,5 @@ export async function POST(req: NextRequest) {
   }
   if (analysisJobs.length > 0) await Promise.all(analysisJobs);
 
-  // ① AI差分学習：スタッフが修正して送った場合（最高品質の学習信号）
-  if (wasAiModified && data?.id && aiDraft) {
-    await analyzeDiff(data.id, conversationState, customerMessage, aiDraft, sentReply, sim);
-  }
-
   return NextResponse.json({ ok: true, id: data?.id, conversation_state: conversationState });
 }
