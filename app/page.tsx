@@ -5502,32 +5502,6 @@ export default function Home() {
                     />
                   </div>
                 ))}
-                {/* 2通に分けるボタン（AI下書きがある時だけ表示） */}
-                {draftIsAi && replyDraft && extraDraftMessages.length === 0 && (
-                  <button
-                    disabled={splitLoading}
-                    onClick={async () => {
-                      setSplitLoading(true);
-                      try {
-                        const res = await fetch("/api/split-draft", {
-                          method: "POST",
-                          headers: {"Content-Type": "application/json"},
-                          body: JSON.stringify({text: replyDraft})
-                        });
-                        const data = await res.json() as {msg1?: string; msg2?: string; error?: string};
-                        if (data.msg1 && data.msg2) {
-                          setReplyDraft(data.msg1);
-                          setExtraDraftMessages([{text: data.msg2, delaySec: 60}]);
-                        }
-                      } finally {
-                        setSplitLoading(false);
-                      }
-                    }}
-                    className="mt-1.5 w-full rounded-lg border border-dashed border-blue-300 py-1.5 text-[11px] font-bold text-blue-500 disabled:opacity-50"
-                  >
-                    {splitLoading ? "分割中..." : "2通に分ける"}
-                  </button>
-                )}
                 {/* 追加ボタン（すでに分けてある場合） */}
                 {draftIsAi && replyDraft && extraDraftMessages.length > 0 && (
                   <button
