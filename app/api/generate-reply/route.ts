@@ -335,12 +335,12 @@ function buildGenerationMessages(
       ? `\n【⚠️ スモラが直前に送った内容（必ず踏まえること）】「${lastStaffMsg}」\n→ この返信の後にお客様が上記メッセージを送った。会話の流れを引き継いで自然な続きを生成すること。`
       : "";
 
-  // ⭐実例がある場合: より強い指示に変更
+  // ⭐実例がある場合: 文体参考として使うが、ルール（禁止ワード・挨拶等）は常に最優先
   const examplesInstruction = examples
-    ? "\n\n【🔴 最重要】上記⭐実例が唯一の文体基準。実例の言い回し・感嘆符(！！)・絵文字・長さをそのまま再現すること。phrase_dictやパターン集より実例を最優先。"
+    ? "\n\n【⭐実例の使い方】上記実例は文体・テンポ・絵文字・感嘆符の参考。言い回しの雰囲気を再現すること。ただし実例に「今すぐ」「すぐに」「即入居可能」「お世話になっております（初回時）」等の古いパターンが含まれていても、現行の禁止ルール・挨拶ルールを必ず優先すること。"
     : "";
 
-  // 実例がある場合はQUICK_PATTERNSを省略（実例を真の最優先にする・競合を排除）
+  // 実例があってもQUICK_PATTERNSの核心ルール（挨拶・禁止ワード）は維持する
   // 挨拶状態に応じて QUICK_PATTERNS の冒頭ルールを上書き（greetingNote との競合を解消）
   const baseQuickPatterns = promptOverrides?.quickPatterns ?? SMORA_QUICK_PATTERNS;
   const effectiveQuickPatterns = (() => {
@@ -364,7 +364,8 @@ function buildGenerationMessages(
       "・冒頭ルール（★重要・本日初回メッセージのため上書き）: 返信の長短・内容・承認・条件受け取りを問わず【必ず「〇〇さんお世話になっております！！」で始める】。「かしこまりました！！」「はい！！」単独での書き出しは絶対禁止。必ず先頭に挨拶を置くこと"
     );
   })();
-  const quickPatterns = examples ? "" : `\n${effectiveQuickPatterns}`;
+  // 実例がある場合も冒頭ルール（挨拶・禁止ワード）を維持するためQUICK_PATTERNSは常に注入する
+  const quickPatterns = `\n${effectiveQuickPatterns}`;
   const realEstateNote = `\n${promptOverrides?.realEstateRules ?? REAL_ESTATE_RULES}`;
   const smoraRulesNote = `\n${promptOverrides?.smoraRules ?? SMORA_RULES}`;
   const replyContentNote = `\n${promptOverrides?.replyContentRules ?? REPLY_CONTENT_RULES}`;
@@ -417,7 +418,7 @@ ${customerMessage}${applicationFormNote}
 
 ${examples}${examplesInstruction}
 
-↑${isFollowUp ? "スモラは既にこのメッセージに返信済み。前の返信内容を繰り返さず、続きとして自然につながるメッセージを1つ生成すること。" : "スモラの直前返信の流れを踏まえ、⭐実例の文体・言い回しを最優先で忠実に再現しながら、このメッセージへのスモラらしい返信を1つ生成してください。"}
+↑${isFollowUp ? "スモラは既にこのメッセージに返信済み。前の返信内容を繰り返さず、続きとして自然につながるメッセージを1つ生成すること。" : "スモラの直前返信の流れを踏まえ、⭐実例の文体・テンポを参考にしながら、上記の挨拶ルール・禁止ワードを必ず守って、このメッセージへのスモラらしい返信を1つ生成してください。"}
 長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。絶対に担当者名（鈴木など）を入れない。${replyHintNote}`;
 
   return [new SystemMessage(promptOverrides?.generationSystem ?? GENERATION_SYSTEM), new HumanMessage(prompt)];
