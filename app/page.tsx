@@ -4874,7 +4874,7 @@ export default function Home() {
                   <div className="fixed inset-0 z-40" onClick={() => setShowSparkleMenu(false)} />
                 )}
                 {showSparkleMenu && (
-                  <div className="absolute bottom-10 right-0 z-50 flex flex-col overflow-hidden rounded-2xl border border-[#e0d4ff] bg-white shadow-lg">
+                  <div className="fixed bottom-24 right-4 z-50 flex flex-col overflow-hidden rounded-2xl border border-[#e0d4ff] bg-white shadow-xl">
                     <button
                       onClick={async () => {
                         setShowSparkleMenu(false);
