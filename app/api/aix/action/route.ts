@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
-import { SMORA_COMMON_RULES } from "@/app/lib/line-reply-prompts";
+import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEND_RULES } from "@/app/lib/line-reply-prompts";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY!;
 const MODEL = "claude-sonnet-4-6";
@@ -202,6 +202,18 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { action, account, customer_name, conversation_id, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done, vacancy_status, has_estimate, move_out_date, keyword, property_name, property_names, property_vacancy_dates, property_count, prop_first_image_urls, all_properties_available, prop_statuses, include_estimate_text, show_viewing_invite } = body;
 
+    // プロンプト管理UIのDB上書きを取得（なければコード定数をフォールバック）
+    const { data: promptRows } = await supabase
+      .from("ai_prompts")
+      .select("key, content")
+      .in("key", ["aix_property_recommendation_rules", "aix_property_send_rules"]);
+    const promptMap: Record<string, string> = {};
+    for (const row of (promptRows ?? []) as { key: string; content: string }[]) {
+      promptMap[row.key] = row.content;
+    }
+    const aixPropertyRecommendationRules = promptMap["aix_property_recommendation_rules"] ?? AIX_PROPERTY_RECOMMENDATION_RULES;
+    const aixPropertySendRules = promptMap["aix_property_send_rules"] ?? AIX_PROPERTY_SEND_RULES;
+
     // 今日（JST）スタッフがすでに挨拶メッセージを送っているか判定 → 挨拶を切り替える
     // お世話になっておりますは1日1回の挨拶（おはようございますと同じ）
     // こちら（スタッフ）の最後の送信が今日 → 今日すでに挨拶済み → お待たせ致しました
@@ -320,35 +332,9 @@ export async function POST(request: NextRequest) {
 ・お客様の条件より家賃・広さが劣る物件の場合は「〜より一回り狭くなってしまいますが、〜の点がかなりオススメ出来るお部屋となります！！」と正直に伝えながら強みを前面に出す
 ・「！！」（全角感嘆符2つ）を積極的に使う（スモラスタイル）
 
-【絶対禁止ルール】
-・バルコニー付きはオススメポイントに書かない（全物件共通のため）
-・エレベーターはオススメポイント・下の文のどちらにも書かない（全物件共通のため）
-・バストイレ別（バス・トイレ別）はオススメポイントにも設備欄にも書かない（賃貸では当たり前の仕様のため）
-・防犯カメラはオススメポイントに書かない（設備欄への記載は可）
-・インターネット無料はオススメポイントに書かない（必ず（設備）欄に記載する）
-・（設備）欄の項目は「・」ではなく「、」で区切る
-・保証金はオススメポイントに書かない（初期コストであり強みではない）
-・【敷金・礼金の正しい理解】敷金は退去時に清算されて返還される預かり金であり、お客様の財布から永久に消える費用ではない。礼金は返還されない費用であり、礼金なしは本当の初期費用削減になる。この区別を常に守ること
-・【🔴 絶対禁止】「敷金なし」「敷金○ヶ月のみで初期費用を抑えられる」など敷金を初期費用削減のメリットとして表現することは絶対禁止（敷金は返還されるため「節約」にならない）
-・敷金・礼金が両方とも0円・なし・ーの場合のみ「敷金礼金なし」としてオススメポイントに記載可（upfront支払いがゼロという意味で使用可）。片方でも金額がある場合は「敷金礼金なし」は絶対に書かない
-・礼金がある場合、礼金に関する記述は一切書かない。礼金なしの場合のみ「礼金なしで初期費用を抑えてご入居頂けます」と書いてよい
-・【🔴 絶対禁止】「管理費なし、礼金なし」「礼金なし・管理費なし」など管理費と礼金を並べて初期費用の安さを表現することは絶対禁止（管理費は月額費用であり初期費用ではない）
-・お客様が希望エリア・希望駅・徒歩分数を一切指定していない場合、駅情報はオススメポイントに書かない（駅を求めていないお客様に不要な情報を入れない）。希望がある場合のみ、希望徒歩分数以内の駅を記載する
-・【階数・方角】お客様が「〇階以上」「高層階」などと階数を明示指定していない限り、階数（「3階のお部屋」「高層階」等）はオススメポイントにも下の文にも書かない。方角（「西北向き」「東向き」等）も同様で、「南向き」で採光・日当たりが特に良い場合のみ書いてよい。それ以外の方角は書かない
-・インターネット無料・エアコン付き・駐車場など設備の価値を「月額〇〇円分お得」「年間〇〇円節約」等の金額換算で表現しない（根拠のない数字になるため絶対禁止）
-・ペット飼育可・ペット相談可・ペット可は【絶対禁止】：お客様がチャットで「ペットを飼いたい」「ペット可の部屋を探している」と明示的に言及した場合のみオススメポイントに記載する。希望条件DBにペット可が含まれていても、お客様自身がペットを飼う旨を会話で言及していない限りオススメポイントに一切書いてはいけない（ペット可物件であってもペット関連の記述は完全に省く）
-・築年数はオススメポイントに書くのは築10年以内（新築・築浅）のみ。築11年以上の物件の築年数はオススメポイントにも下の文にも書かない（お客様が「築年数は気にしない」「古くてもOK」などと明示している場合を除く）
-・「鉄筋コンクリート造」「RC造」「鉄骨造」などの構造はオススメポイントに書かない
-・お客様の条件は「どの特徴を強調するか」の判断に使う。ただし「ご希望の○○以内で〜」「ご希望エリアで〜」など条件をそのまま言葉として繰り返す表現は使わない（条件を踏まえて訴求するが、条件の復唱はしない）
-・曖昧な情報を書かない（駐車場が空きナシなら明記しない・「空き待ちのご相談も可能」などの曖昧な言い方禁止）
+${aixPropertyRecommendationRules}
 ・敷金・礼金なしを説明する場合は「敷金・礼金なしのため初期費用をかなり抑えてご入居頂けます！！」の表現を使う（「〜抑える事ができ」等の言い回しは使わない）
 ・下の文で家賃・管理費に触れる場合は「家賃管理費込○○円と毎月の費用をしっかり抑えられ〜」のように必ず「毎月の費用」と入れる（「家賃管理費込○○円と費用を〜」のように「毎月の」を省くのは禁止）
-・「お手隙の際にご査収ください」は使わない
-・【🔴 絶対禁止】「即入居可能」「今すぐ入居可能」「現在即入居可能」などの表現は、物件資料に「即入居可」「空室」と明示されている場合のみ使用可。新築・築浅・竣工済みという理由だけで「即入居可能」と書くのは絶対禁止（竣工済みでも空室確認・入居審査が必要なため）
-・描写段落（設備欄の下の文章）はサマリー文をそのまま繰り返すことは禁止。サマリー文と重複しない視点・情報で書くこと。「〜のお部屋となります！！」で終わるサマリー文の内容を再度コピーしないこと
-・描写段落に事実確認できない情報・推測・想像を書かない（「スーパーが近い」「生活利便性が高い」など物件資料に記載のない立地情報は書かない）
-・「ご希望条件に合致しており」「ご希望の〇〇をしっかり満たしており」「ご条件がクリアしており」などの確認文は使わない（条件を踏まえて訴求するが、条件の確認・復唱はしない）
-・「家具家電付きプランあり（月額+〇〇円）」はオススメポイントに書かない（本体の家賃と混乱するため）
 ・下の文（サマリー文・描写段落）でオススメポイントに書いた内容を省いたり矛盾させたりしない
 ・「築浅」という言葉だけで書くことは絶対禁止。新築・築浅物件は「2022年築で築年数浅く」の形で。古い物件は「2006年1月築（築20年）」の括弧形式で記載
 
@@ -584,10 +570,7 @@ ${SMORA_COMMON_RULES}`;
 ${nameNote}
 ${SMORA_COMMON_RULES}
 
-【物件提案文の絶対禁止事項】
-・「動画みていただきありがとうございます」は絶対に含めない（物件提案文では不要）
-・「初期費用最大限割引させて頂き」は絶対に含めない（物件提案文では不要）
-・TikTok・SNS関連のフレーズは一切使わない
+${aixPropertySendRules}
 
 【構成（厳守）】
 ${openingLine}
@@ -612,10 +595,7 @@ ${(!customerInitiated && jstHourNow >= 21) ? "Rさん夜分遅くに失礼致し
 ${nameNote}
 ${SMORA_COMMON_RULES}
 
-【物件提案文の絶対禁止事項】
-・「動画みていただきありがとうございます」は絶対に含めない（物件提案文では不要）
-・「初期費用最大限割引させて頂き」は絶対に含めない（物件提案文では不要）
-・TikTok・SNS関連のフレーズは一切使わない
+${aixPropertySendRules}
 
 【構成（この順番で必ず守ること）】
 ${openingLine}
@@ -641,10 +621,7 @@ ${(!customerInitiated && jstHourNow >= 21) ? "Rさん夜分遅くに失礼致し
 ${nameNote}
 ${SMORA_COMMON_RULES}
 
-【物件提案文の絶対禁止事項】
-・「動画みていただきありがとうございます」は絶対に含めない（物件提案文では不要）
-・「初期費用最大限割引させて頂き」は絶対に含めない（物件提案文では不要）
-・TikTok・SNS関連のフレーズは一切使わない
+${aixPropertySendRules}
 
 【構成（この順番で必ず守ること）】
 ${openingLine}
@@ -671,10 +648,7 @@ ${greetingLine}
 ${nameNote}
 ${SMORA_COMMON_RULES}
 
-【物件提案文の絶対禁止事項】
-・「動画みていただきありがとうございます」は絶対に含めない（物件提案文では不要）
-・「初期費用最大限割引させて頂き」は絶対に含めない（物件提案文では不要）
-・TikTok・SNS関連のフレーズは一切使わない
+${aixPropertySendRules}
 
 【構成（この順番で必ず守ること）】
 ${openingLine}

@@ -7,6 +7,8 @@ import {
   REAL_ESTATE_RULES,
   REPLY_CONTENT_RULES,
   PHASE_GUIDE,
+  AIX_PROPERTY_RECOMMENDATION_RULES,
+  AIX_PROPERTY_SEND_RULES,
 } from "@/app/lib/line-reply-prompts";
 
 const PROMPT_DEFAULTS: Record<string, { label: string; content: string; readonly?: boolean; auto?: boolean; group?: string }> = {
@@ -248,6 +250,16 @@ AIXを選ぶ → 生成された文を確認 → 送信`,
   smora_quick_patterns: {
     label: "スモラ返信パターン集",
     content: SMORA_QUICK_PATTERNS,
+  },
+  aix_property_recommendation_rules: {
+    label: "物件オススメ 絶対禁止ルール【AIX共通】",
+    group: "aix_logic",
+    content: AIX_PROPERTY_RECOMMENDATION_RULES,
+  },
+  aix_property_send_rules: {
+    label: "物件送る 絶対禁止ルール【AIX共通】",
+    group: "aix_logic",
+    content: AIX_PROPERTY_SEND_RULES,
   },
 };
 
