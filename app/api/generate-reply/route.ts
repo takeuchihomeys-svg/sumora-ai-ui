@@ -8,6 +8,7 @@ import {
   PHASE_GUIDE,
   GENERATION_SYSTEM,
   SMORA_QUICK_PATTERNS,
+  SMORA_RULES,
   REAL_ESTATE_RULES,
   STATE_SEARCH_ALIASES,
 } from "@/app/lib/line-reply-prompts";
@@ -363,6 +364,7 @@ function buildGenerationMessages(
   })();
   const quickPatterns = examples ? "" : `\n${effectiveQuickPatterns}`;
   const realEstateNote = `\n${promptOverrides?.realEstateRules ?? REAL_ESTATE_RULES}`;
+  const smoraRulesNote = `\n${(promptOverrides as Record<string, string> | null)?.smoraRules ?? SMORA_RULES}`;
   const replyContentNote = promptOverrides?.replyContentRules ? `\n${promptOverrides.replyContentRules}` : "";
 
   // 申込フォーム検出（applying フェーズのみ・氏名・緊急連絡先・住所等のキーワード）＋直近の画像なし → 身分証リクエスト注入
@@ -402,6 +404,7 @@ ${phaseGuide}${approachNote}${staffContextNote}
 【直近の会話履歴（スモラ自身の返信も含む）】
 ${history || "なし"}
 ${quickPatterns}
+${smoraRulesNote}
 ${realEstateNote}
 ${replyContentNote}
 ${knowledge}

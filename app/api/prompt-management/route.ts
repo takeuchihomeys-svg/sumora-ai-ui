@@ -3,6 +3,7 @@ import { supabase } from "@/app/lib/supabase";
 import {
   GENERATION_SYSTEM,
   SMORA_QUICK_PATTERNS,
+  SMORA_RULES,
   REAL_ESTATE_RULES,
   PHASE_GUIDE,
 } from "@/app/lib/line-reply-prompts";
@@ -31,6 +32,10 @@ const PROMPT_DEFAULTS: Record<string, { label: string; content: string; readonly
   real_estate_rules: {
     label: "不動産ルール",
     content: REAL_ESTATE_RULES,
+  },
+  smora_rules: {
+    label: "スモラルール",
+    content: SMORA_RULES,
   },
   management_company_hours: {
     label: "管理会社の営業時間ルール",
