@@ -1012,19 +1012,14 @@ export async function POST(req: NextRequest) {
     // createdAt が含まれるメッセージだけを使用（タイムスタンプなしはフォールバックへ）
     const greetingStart = getGreetingSessionStart();
     const hasTimestamps = recentMessages.some(m => !!m.createdAt);
+    // 今日のセッション中にスタッフメッセージが1件でもあれば挨拶済みとみなす
+    // （挨拶フレーズの有無は問わない — 空室確認・募集確認等でも同様）
     const alreadyGreetedToday = hasTimestamps
       ? recentMessages.some(m =>
           m.sender === "staff" &&
           m.createdAt &&
           new Date(m.createdAt) >= greetingStart &&
-          m.text && m.text !== "[画像]" && m.text !== "[動画]" &&
-          (
-            m.text.includes("お世話になっております") ||
-            m.text.includes("夜分遅くに失礼") ||
-            m.text.includes("はじめまして") ||
-            m.text.includes("ご連絡頂きありがとうございます") ||
-            /^[^\s]{1,10}さん/.test(m.text)
-          )
+          m.text && m.text !== "[画像]" && m.text !== "[動画]"
         )
       : undefined;
 
