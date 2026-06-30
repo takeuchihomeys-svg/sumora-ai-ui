@@ -6379,7 +6379,9 @@ export default function Home() {
             }
           }}
           onSelect={(text, imageFiles, label, category) => {
-            setReplyDraft(text);
+            // テンプレート内「アカウント名」→ preferredCustomerName に置換
+            const resolvedText = text.replace(/アカウント名/g, preferredCustomerName);
+            setReplyDraft(resolvedText);
             if (imageFiles && imageFiles.length > 0) setSelectedImageFiles((prev) => [...prev, ...imageFiles]);
             // ①申込フォーマット選択 → ②を次に誘導
             if (label?.includes("①申込")) {
@@ -6397,7 +6399,7 @@ export default function Home() {
             setTemplateOpenContext(null);
             setShowTemplateModal(false);
           }}
-          customerName={selectedConversation.customerName}
+          customerName={preferredCustomerName}
           conversationState={selectedConversation.status}
           recentMessages={(selectedConversation.messages || []).slice(-15).map((m: Message) => ({
             sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined, rawCreatedAt: m.rawCreatedAt,
@@ -6470,7 +6472,7 @@ export default function Home() {
         <AixModal
           actionType={aixModalType}
           conversationId={selectedConversation.id}
-          customerName={selectedConversation.customerName}
+          customerName={preferredCustomerName}
           account={selectedConversation.account ?? currentAccount.id}
           lineUserId={selectedConversation.lineUserId}
           lastScheduledAt={scheduledMsgsList.at(-1)?.scheduled_at}
