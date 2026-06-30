@@ -4525,7 +4525,7 @@ export default function Home() {
             className="border-t border-[#e9edef] bg-white px-2 pt-1.5 md:px-3"
             style={{
               paddingBottom: keyboardHeight > 100 ? "4px" : "max(10px, env(safe-area-inset-bottom))",
-              overflowY: (keyboardHeight > 100 && inputFocused) ? "hidden" : keyboardHeight > 100 ? "auto" : "visible",
+              overflowY: keyboardHeight > 100 ? "auto" : "visible",
               maxHeight: keyboardHeight > 100 ? `${Math.min((viewportHeight ?? 500) - 80, 520)}px` : "none",
               touchAction: keyboardHeight > 100 ? "pan-y" : "auto",
             }}
@@ -5457,9 +5457,11 @@ export default function Home() {
                   }}
                   onFocus={() => {
                     setInputFocused(true);
-                    requestAnimationFrame(() => {
-                      if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
-                    });
+                    // キーボードが開いたら focused textarea がキーボードの上に来るようスクロール
+                    setTimeout(() => {
+                      const ta = textareaRef.current;
+                      if (ta) ta.scrollIntoView({ behavior: "smooth", block: "end" });
+                    }, 300);
                   }}
                   onBlur={() => setInputFocused(false)}
                   rows={1}
@@ -5496,6 +5498,12 @@ export default function Home() {
                     <textarea
                       value={extra.text}
                       onChange={e => setExtraDraftMessages(prev => prev.map((em, i) => i === idx ? {...em, text: e.target.value} : em))}
+                      onFocus={e => {
+                        setInputFocused(true);
+                        const el = e.currentTarget;
+                        setTimeout(() => { el.scrollIntoView({ behavior: "smooth", block: "end" }); }, 300);
+                      }}
+                      onBlur={() => setInputFocused(false)}
                       rows={3}
                       placeholder={`${idx + 2}通目の内容を入力...`}
                       className="w-full resize-none rounded bg-[#f8f9fa] px-2 py-1 text-[13px] leading-5 text-[#111b21] outline-none placeholder:text-[#aaa]"
