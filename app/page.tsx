@@ -536,6 +536,7 @@ export default function Home() {
   const [savingScheduledEdit, setSavingScheduledEdit] = useState(false);
   const [enhancing, setEnhancing] = useState(false);
   const [showSparkleModal, setShowSparkleModal] = useState(false);
+  const [showSparkleMenu, setShowSparkleMenu] = useState(false);
   const [sparkleKeywords, setSparkleKeywords] = useState<string[]>([]);
   const [sparkleKeywordInput, setSparkleKeywordInput] = useState("");
   const [sparkleKeywordHistory, setSparkleKeywordHistory] = useState<string[]>([]);
@@ -4867,48 +4868,64 @@ export default function Home() {
                 {activeAixFlow ? `${AIX_ACTION_META[activeAixFlow]?.label} ×` : "AIX"}
               </button>
 
-              {/* ✨ sparkleボタン（本文あり→整形・本文なし→スパークルモーダル） */}
-              <button
-                onClick={async () => {
-                  if (!selectedConversation?.id) return;
-                  if (replyDraft.trim()) {
-                    // 本文が入っている → スモラスタイルに整形
-                    setGenerating(true);
-                    try {
-                      const recentMsgs = (selectedConversation.messages || [])
-                        .slice(-10)
-                        .map((m) => ({ sender: m.sender, text: m.text || "" }));
-                      const res = await fetch("/api/polish-draft", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          draft: replyDraft,
-                          customer_name: selectedConversation.customerName,
-                          recent_messages: recentMsgs,
-                          conversation_status: selectedConversation.status,
-                        }),
-                      });
-                      const data = await res.json() as { ok: boolean; polished?: string };
-                      if (data.ok && data.polished) {
-                        setReplyDraft(data.polished);
-                        setDraftIsAi(true);
-                      }
-                    } catch (err) {
-                      console.error("[polish-draft]", err);
-                    } finally {
-                      setGenerating(false);
+              {/* ✨ sparkleボタン（本文あり→メニュー・本文なし→スパークルモーダル） */}
+              <div className="relative shrink-0">
+                {showSparkleMenu && (
+                  <div className="fixed inset-0 z-40" onClick={() => setShowSparkleMenu(false)} />
+                )}
+                {showSparkleMenu && (
+                  <div className="absolute bottom-10 right-0 z-50 flex flex-col overflow-hidden rounded-2xl border border-[#e0d4ff] bg-white shadow-lg">
+                    <button
+                      onClick={async () => {
+                        setShowSparkleMenu(false);
+                        if (!selectedConversation?.id) return;
+                        setGenerating(true);
+                        try {
+                          const recentMsgs = (selectedConversation.messages || []).slice(-10).map((m) => ({ sender: m.sender, text: m.text || "" }));
+                          const res = await fetch("/api/polish-draft", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ draft: replyDraft, customer_name: selectedConversation.customerName, recent_messages: recentMsgs, conversation_status: selectedConversation.status }),
+                          });
+                          const data = await res.json() as { ok: boolean; polished?: string };
+                          if (data.ok && data.polished) { setReplyDraft(data.polished); setDraftIsAi(true); }
+                        } catch (err) { console.error("[polish-draft]", err); }
+                        finally { setGenerating(false); }
+                      }}
+                      className="px-5 py-3 text-left text-[13px] font-bold text-[#6c3fc7] hover:bg-[#f5f0ff] active:bg-[#ede7ff]"
+                    >文加工</button>
+                    <div className="h-px bg-[#f0f0f0]" />
+                    <button
+                      onClick={async () => {
+                        setShowSparkleMenu(false);
+                        setSplitLoading(true);
+                        try {
+                          const res = await fetch("/api/split-draft", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: replyDraft }) });
+                          const data = await res.json() as { msg1?: string; msg2?: string; error?: string };
+                          if (data.msg1 && data.msg2) { setReplyDraft(data.msg1); setExtraDraftMessages([{ text: data.msg2, delaySec: 60 }]); }
+                        } finally { setSplitLoading(false); }
+                      }}
+                      disabled={splitLoading}
+                      className="px-5 py-3 text-left text-[13px] font-bold text-blue-500 hover:bg-blue-50 active:bg-blue-100 disabled:opacity-50"
+                    >{splitLoading ? "分割中..." : "2通に分ける"}</button>
+                  </div>
+                )}
+                <button
+                  onClick={() => {
+                    if (!selectedConversation?.id) return;
+                    if (replyDraft.trim()) {
+                      setShowSparkleMenu(v => !v);
+                    } else {
+                      setShowSparkleModal(true);
                     }
-                  } else {
-                    // 本文なし → 従来のスパークルモーダル
-                    setShowSparkleModal(true);
-                  }
-                }}
-                disabled={!selectedConversation?.id || generating}
-                className="shrink-0 flex h-8 items-center gap-1 rounded-full border border-[#c8b8ff] bg-gradient-to-r from-[#ede7ff] to-[#e3f0ff] px-3 text-xs font-bold text-[#6c3fc7] shadow-sm active:scale-95 transition-transform duration-75 disabled:opacity-40"
-                title={replyDraft.trim() ? "入力中の文をスモラスタイルに整形" : "キーワード・状況を指定してAI生成"}
-              >
-                {generating && replyDraft.trim() ? "…" : "✨"}
-              </button>
+                  }}
+                  disabled={!selectedConversation?.id || generating || splitLoading}
+                  className="flex h-8 items-center gap-1 rounded-full border border-[#c8b8ff] bg-gradient-to-r from-[#ede7ff] to-[#e3f0ff] px-3 text-xs font-bold text-[#6c3fc7] shadow-sm active:scale-95 transition-transform duration-75 disabled:opacity-40"
+                  title={replyDraft.trim() ? "文加工 / 2通に分ける" : "キーワード・状況を指定してAI生成"}
+                >
+                  {(generating && replyDraft.trim()) || splitLoading ? "…" : "✨"}
+                </button>
+              </div>
 
               {/* 文章クリアボタン（入力/AI文案があるときのみ表示） */}
               {replyDraft && (

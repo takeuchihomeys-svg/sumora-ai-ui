@@ -5,6 +5,30 @@ import { SMORA_COMMON_RULES } from "@/app/lib/line-reply-prompts";
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY!;
 const MODEL = "claude-sonnet-4-6";
 
+// 退去予定日が過去かどうか判定（「7月下旬」「2026年7月15日」等の日本語表記対応）
+function isPastVacancyDate(dateStr: string): boolean {
+  if (!dateStr) return false;
+  const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const currentYear = jstNow.getUTCFullYear();
+  const currentMonth = jstNow.getUTCMonth(); // 0-indexed
+  const currentDay = jstNow.getUTCDate();
+  const yearMatch = dateStr.match(/(\d{4})年/);
+  const year = yearMatch ? parseInt(yearMatch[1]) : currentYear;
+  const monthMatch = dateStr.match(/(\d+)月/);
+  if (!monthMatch) return false;
+  const month = parseInt(monthMatch[1]) - 1; // 0-indexed
+  if (year < currentYear) return true;
+  if (year > currentYear) return false;
+  if (month < currentMonth) return true;
+  if (month > currentMonth) return false;
+  // 同月: 日付・旬で判定
+  const dayMatch = dateStr.match(/(\d+)日/);
+  if (dayMatch) return parseInt(dayMatch[1]) < currentDay;
+  if (dateStr.includes("初旬")) return currentDay > 10;
+  if (dateStr.includes("中旬")) return currentDay > 20;
+  return false; // 下旬・不明は過去とみなさない
+}
+
 function extractPreferredName(
   messages: Array<{ sender: string; text?: string | null }>,
   lineDisplayName: string
@@ -964,7 +988,9 @@ ${patternExample}${knowledgeText}${examplesText}`;
         const propList = Array.from({ length: propCount }, (_, pi) => {
           const rawVacDate = (propVacancyDates[pi] as string | undefined)?.trim() ?? "";
           // 年号を除去（「2026年7月下旬」→「7月下旬」）
-          const vacDate = rawVacDate.replace(/^\d{4}年/, "");
+          const vacDateRaw = rawVacDate.replace(/^\d{4}年/, "");
+          // 過去の退去予定日は表示しない
+          const vacDate = isPastVacancyDate(rawVacDate) ? "" : vacDateRaw;
           const rawStatus = statuses[pi] ?? "available";
           // Vision読み取りで退去予定日があればボタン状態に関わらず退去予定扱い
           const resolvedStatus = vacDate && rawStatus === "available" ? "vacating" : rawStatus;
@@ -983,31 +1009,45 @@ ${patternExample}${knowledgeText}${examplesText}`;
           const pName = p.name;
           const estimate1 = hasAnyEstimate ? "\n最大限割引しました御見積書同封させて頂きました！！" : "";
           const showVI1 = !!(show_viewing_invite as boolean | undefined);
+          const showAppInvite1 = !!(body.check_application_invite as boolean | undefined);
+          const greeting1 = staffMessagedToday ? "お待たせ致しました！！" : "お世話になっております！！";
           if (p.status === "vacating") {
             const vacLine = p.vacDate ? `${p.vacDate}退去予定のお部屋となります！！` : "退去予定のお部屋となります！！";
             message_text = `${pName}現在募集中となります！！\n${vacLine}${estimate1}\n\nお気に召されましたらお申込みしお部屋を抑えさせていただきます！！`;
+          } else if (showAppInvite1) {
+            const estimateApp = hasAnyEstimate ? "\n🌟最大限割引しました初期費用の御見積書同封させて頂きました！" : "";
+            message_text = `${name}さん${greeting1}\n${pName}\n現在募集中となります！！${estimateApp}\n\n${name}さんお気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
           } else {
             const inviteText = showVI1 ? `\n\n${name}ご都合よろしいお日にちにご案内させて頂きます😊！！` : "";
             message_text = `${pName}現在募集中となります！！\n現在空室でご内覧可能なお部屋となります！！${estimate1}${inviteText}`;
           }
         } else {
           // 複数物件モード: per-property ステータスで箇条書き + クロージング
+          const recommendIdx = (body.recommend_prop_index as number | undefined) ?? -1;
           const bulletLines = propList.map((p, pi) => {
             const n = p.name || `物件${fallbackNames[pi] ?? ""}`;
-            if (p.status === "vacating") return p.vacDate ? `・${n}　※ ${p.vacDate}退去予定` : `・${n}`;
-            if (p.status === "unavailable") return `・${n}　※ 満室`;
-            if (p.status === "alternative") return `・${n}　※ 別のお部屋が募集中`;
-            return `・${n}`;
+            const prefix = pi === recommendIdx ? "🌟" : "・";
+            if (p.status === "vacating") return p.vacDate ? `${prefix}${n}　※ ${p.vacDate}退去予定` : `${prefix}${n}`;
+            if (p.status === "unavailable") return `${prefix}${n}　※ 申込あり`;
+            if (p.status === "alternative") return `${prefix}${n}　※ 別のお部屋が募集中`;
+            return `${prefix}${n}`;
           }).join("\n");
+          const recommendNote = recommendIdx >= 0 && recommendIdx < propList.length
+            ? `\n\n特に🌟の${propList[recommendIdx].name || fallbackNames[recommendIdx] || "こちら"}が${name}さんに特にオススメです！！`
+            : "";
           const estimateSection = hasAnyEstimate
             ? "\n最大限割引しました初期費用御見積書同封させて頂きました。\nお手隙の際にご査収ください！！"
             : "";
           const toureableList = propList.map((p, pi) => ({ ...p, pi })).filter(p => p.status === "available" || p.status === "alternative");
           const showViewingInvite = !!(show_viewing_invite as boolean | undefined);
+          const showAppInviteMulti = !!(body.check_application_invite as boolean | undefined);
           let vacancySection = "";
           if (toureableList.length === 0) {
-            // 全て退去予定 or 満室 → 申込訴求
+            // 全て退去予定 or 申込あり → 申込訴求
             vacancySection = "\n\nお気に召されましたらお申込みしお部屋抑えさせていただきます！！\nお手隙の際にご査収ください！！";
+          } else if (showAppInviteMulti) {
+            // 申込誘導ON
+            vacancySection = `\n\n${name}さんお気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
           } else if (showViewingInvite) {
             // 内覧誘導ON: 全て空室なら1行にまとめる
             const allVacant = toureableList.every(p => p.status === "available");
@@ -1028,7 +1068,7 @@ ${patternExample}${knowledgeText}${examplesText}`;
           const header = (all_properties_available as boolean | undefined)
             ? `${name}お送り頂きました\n`
             : `${name}お送り頂きました物件の中で\n`;
-          message_text = `${greeting}\n${header}${bulletLines}\nこちら${propCount}件現在募集中となります！！${estimateSection}${vacancySection}`;
+          message_text = `${greeting}\n${header}${bulletLines}\nこちら${propCount}件現在募集中となります！！${recommendNote}${estimateSection}${vacancySection}`;
         }
 
       // 「物件あった」申込あり・申込なし・未選択 は固定テンプレ（1件）

@@ -250,7 +250,9 @@ export default function AixModal({
   const [checkPropVacancyDates, setCheckPropVacancyDates] = useState<string[]>(["", "", ""]);
   const [checkAllAvailable, setCheckAllAvailable] = useState(false);
   const [checkPropStatuses, setCheckPropStatuses] = useState<string[]>(["available", "available", "available"]);
+  const [checkRecommendProp, setCheckRecommendProp] = useState<number | null>(null);
   const [checkIncludeEstimateText, setCheckIncludeEstimateText] = useState(false);
+  const [checkApplicationInvite, setCheckApplicationInvite] = useState(false);
   const [estimateTextReady, setEstimateTextReady] = useState("");
   const [sendCountdown, setSendCountdown] = useState(0);
   // 物件確認した「空室あり」専用カレンダー
@@ -856,9 +858,11 @@ export default function AixModal({
           }
         }
         if (checkPattern === "available") body.show_viewing_invite = showCheckCalendar;
+        if (checkPattern === "available") body.check_application_invite = checkApplicationInvite;
         if (checkPattern === "available" && showCheckCalendar && checkCalendarInfo) body.calendar_info = checkCalendarInfo;
         if (checkPattern === "available" && checkAvailableApp) body.available_application = checkAvailableApp;
         if (checkPattern === "available") body.all_properties_available = checkAllAvailable;
+        if (checkPattern === "available" && checkRecommendProp !== null) body.recommend_prop_index = checkRecommendProp;
         if (checkPattern === "available" && checkIncludeEstimateText) body.include_estimate_text = true;
         if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
         if (customerSummary) body.customer_summary = customerSummary;
@@ -1972,8 +1976,18 @@ export default function AixModal({
               {checkPattern === "available" ? (
                 <div className="flex flex-col gap-3">
                   {Array.from({ length: checkPropertyCount }, (_, pi) => (
-                    <div key={pi} className="rounded-2xl border border-[#d1d7db] bg-[#f8f9fa] p-3">
-                      <p className="mb-2 text-xs font-bold text-[#54656f]">{checkPropertyCount > 1 ? `物件${"①②③"[pi]}` : "物件情報"}</p>
+                    <div key={pi} className={`rounded-2xl border p-3 ${checkRecommendProp === pi ? "border-[#FFB300] bg-[#fffde7]" : "border-[#d1d7db] bg-[#f8f9fa]"}`}>
+                      <div className="mb-2 flex items-center justify-between">
+                        <p className="text-xs font-bold text-[#54656f]">{checkPropertyCount > 1 ? `物件${"①②③"[pi]}` : "物件情報"}</p>
+                        {checkPropertyCount > 1 && (
+                          <button
+                            onClick={() => setCheckRecommendProp(checkRecommendProp === pi ? null : pi)}
+                            className={`rounded-full px-2.5 py-1 text-[10px] font-bold transition ${checkRecommendProp === pi ? "bg-[#FFB300] text-white" : "border border-[#d1d7db] bg-white text-[#90a4ae]"}`}
+                          >
+                            {checkRecommendProp === pi ? "⭐ オススメ中" : "☆ オススメ"}
+                          </button>
+                        )}
+                      </div>
                       {/* 物件名 */}
                       <input
                         type="text"
@@ -1991,7 +2005,7 @@ export default function AixModal({
                         {([
                           { k: "available", l: "空室" },
                           { k: "vacating", l: "退去予定" },
-                          { k: "unavailable", l: "満室" },
+                          { k: "unavailable", l: "申込あり" },
                           { k: "alternative", l: "別の部屋" },
                         ] as const).map(s => (
                           <button key={s.k}
@@ -2131,7 +2145,7 @@ export default function AixModal({
                     <span className="text-sm font-bold text-[#54656f]">内覧誘導</span>
                     <div className="flex gap-1">
                       <button
-                        onClick={() => setShowCheckCalendar(true)}
+                        onClick={() => { setShowCheckCalendar(true); setCheckApplicationInvite(false); }}
                         className={`rounded-lg px-4 py-1 text-sm font-bold transition ${showCheckCalendar ? "bg-[#1565C0] text-white" : "border border-[#d1d7db] bg-[#f0f2f5] text-[#54656f]"}`}
                       >
                         あり
@@ -2139,6 +2153,24 @@ export default function AixModal({
                       <button
                         onClick={() => setShowCheckCalendar(false)}
                         className={`rounded-lg px-4 py-1 text-sm font-bold transition ${!showCheckCalendar ? "bg-[#54656f] text-white" : "border border-[#d1d7db] bg-[#f0f2f5] text-[#54656f]"}`}
+                      >
+                        なし
+                      </button>
+                    </div>
+                  </div>
+                  {/* 申込誘導 あり/なし */}
+                  <div className="mt-2 flex items-center justify-between rounded-xl border border-[#d1d7db] bg-white px-3 py-2">
+                    <span className="text-sm font-bold text-[#54656f]">申込誘導</span>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => { setCheckApplicationInvite(true); setShowCheckCalendar(false); }}
+                        className={`rounded-lg px-4 py-1 text-sm font-bold transition ${checkApplicationInvite ? "bg-[#06c755] text-white" : "border border-[#d1d7db] bg-[#f0f2f5] text-[#54656f]"}`}
+                      >
+                        あり
+                      </button>
+                      <button
+                        onClick={() => setCheckApplicationInvite(false)}
+                        className={`rounded-lg px-4 py-1 text-sm font-bold transition ${!checkApplicationInvite ? "bg-[#54656f] text-white" : "border border-[#d1d7db] bg-[#f0f2f5] text-[#54656f]"}`}
                       >
                         なし
                       </button>
