@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
 ・冒頭の挨拶（「お世話になっております」等）は1通目にのみ残す
 ・2通目は内容から自然につながる書き出しにする
 ・「！！」などスモラの文体・絵文字はそのまま維持する
+・「---」「===」「───」等の区切り線・セパレーターは絶対に入れない
 ・JSONのみ返す（説明文不要）
 
 返信文:
@@ -47,7 +48,8 @@ ${text}
     const result = JSON.parse(jsonMatch[0]) as { msg1?: string; msg2?: string };
     if (!result.msg1 || !result.msg2) return NextResponse.json({ error: "split failed" }, { status: 500 });
 
-    return NextResponse.json({ msg1: result.msg1.trim(), msg2: result.msg2.trim() });
+    const clean = (s: string) => s.trim().replace(/^[-─―=＝\s]+$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
+    return NextResponse.json({ msg1: clean(result.msg1), msg2: clean(result.msg2) });
   } catch {
     return NextResponse.json({ error: "server error" }, { status: 500 });
   }
