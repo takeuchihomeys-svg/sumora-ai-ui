@@ -903,7 +903,7 @@ export default function AixModal({
         const s = viewingSpecificStart.trim();
         const e = viewingSpecificEnd.trim();
         const timeText = s && e ? `${s}〜${e}` : s || "";
-        const msg = `はい！！\n\n${viewingSpecificDate.trim()}ですと${timeText}ご内覧可能です！！\n\n${customerName}さんご都合如何でしょうか😌！！`;
+        const msg = `はい！！\n${viewingSpecificDate.trim()}ですと${timeText}ご内覧可能です！！\n${customerName}さんご都合如何でしょうか😌！！`;
         setAiDraft(msg);
         setPreview(useEmoji ? msg : stripEmoji(msg));
         setLoading(false);
