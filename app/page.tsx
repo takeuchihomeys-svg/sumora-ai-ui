@@ -537,6 +537,7 @@ export default function Home() {
   const [enhancing, setEnhancing] = useState(false);
   const [showSparkleModal, setShowSparkleModal] = useState(false);
   const [showSparkleMenu, setShowSparkleMenu] = useState(false);
+  const sparkleMenuRef = useRef<HTMLDivElement | null>(null);
   const [sparkleKeywords, setSparkleKeywords] = useState<string[]>([]);
   const [sparkleKeywordInput, setSparkleKeywordInput] = useState("");
   const [sparkleKeywordHistory, setSparkleKeywordHistory] = useState<string[]>([]);
@@ -694,6 +695,25 @@ export default function Home() {
     document.addEventListener("click", block, { capture: true });
     return () => document.removeEventListener("click", block, { capture: true });
   }, []);
+
+  // ✨メニュー: 外タップで閉じる（バックドロップ不要・z-index問題を回避）
+  useEffect(() => {
+    if (!showSparkleMenu) return;
+    const close = (e: MouseEvent | TouchEvent) => {
+      if (sparkleMenuRef.current && !sparkleMenuRef.current.contains(e.target as Node)) {
+        setShowSparkleMenu(false);
+      }
+    };
+    const timer = setTimeout(() => {
+      document.addEventListener("mousedown", close);
+      document.addEventListener("touchstart", close);
+    }, 50);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("touchstart", close);
+    };
+  }, [showSparkleMenu]);
 
   useEffect(() => {
     // SW登録 + 通知許可 + Web Push登録
@@ -4869,12 +4889,9 @@ export default function Home() {
               </button>
 
               {/* ✨ sparkleボタン（本文あり→メニュー・本文なし→スパークルモーダル） */}
-              <div className="relative shrink-0">
+              <div ref={sparkleMenuRef} className="relative shrink-0">
                 {showSparkleMenu && (
-                  <div className="fixed inset-0 z-40" onClick={() => setShowSparkleMenu(false)} />
-                )}
-                {showSparkleMenu && (
-                  <div className="fixed bottom-24 right-4 z-50 flex flex-col overflow-hidden rounded-2xl border border-[#e0d4ff] bg-white shadow-xl">
+                  <div className="fixed bottom-28 right-4 z-50 flex flex-col overflow-hidden rounded-2xl border border-[#e0d4ff] bg-white shadow-xl">
                     <button
                       onClick={async () => {
                         setShowSparkleMenu(false);
