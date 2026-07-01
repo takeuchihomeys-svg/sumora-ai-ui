@@ -39,7 +39,7 @@ interface AixModalProps {
   initialTemplateSample?: string;
   initialViewingSpecificMode?: boolean;
   onClose: () => void;
-  onSend: (text: string, imageUrl?: string) => Promise<void>;
+  onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
   onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean }) => void;
   onDelayedSend?: (seconds: number, sendFn: () => Promise<void>) => void;
   onScheduled?: () => void;
@@ -249,6 +249,8 @@ export default function AixModal({
   onOpenTemplateFiltered,
 }: AixModalProps) {
   const config = CONFIG[actionType];
+  // AIX経由の全送信に isAix=true フラグを付与（挨拶判定から除外するため）
+  const sendAsAix = (text: string, imageUrl?: string) => onSend(text, imageUrl, true);
 
   const [showAixScheduleModal, setShowAixScheduleModal] = useState(false);
   const [aixScheduleDateTime, setAixScheduleDateTime] = useState("");
@@ -1237,20 +1239,20 @@ export default function AixModal({
         // 物件画像を先に送信 → テキストを後で送信
         for (const file of sendImageFiles) {
           const url = await uploadImage(file);
-          await onSend("", url);
+          await sendAsAix("", url);
         }
-        await onSend(preview);
+        await sendAsAix(preview);
       } else if (actionType === "property_check_result") {
         if (checkPattern === "interior_photo") {
           // 室内写真: 写真→テキストの順で送信（URLの場合はテキストのみ）
           if (interiorPhotoFile) {
             const photoUrl = await uploadImage(interiorPhotoFile);
-            await onSend("", photoUrl);
+            await sendAsAix("", photoUrl);
           }
-          await onSend(preview);
+          await sendAsAix(preview);
         } else if (checkPattern === "move_in_date") {
           // 入居日確認: テキストのみ送信（物件資料はお客さんに送らない）
-          await onSend(preview);
+          await sendAsAix(preview);
         } else if (checkPattern === "available") {
           // available: 物件①資料→見積書①→物件②資料→見積書②→[見積書テキスト→30s]→本文
           const shouldSendEstimateFirst = !!(estimateTextReady && checkIncludeEstimateText);
@@ -1267,17 +1269,17 @@ export default function AixModal({
           for (let pi = 0; pi < checkPropertyCount; pi++) {
             for (const file of (checkPropImages[pi] ?? [])) {
               const url = await uploadImage(file, pi);
-              await onSend("", url);
+              await sendAsAix("", url);
             }
             const ef = checkPropEstimates[pi];
             if (ef) {
               const estUrl = await uploadImage(ef);
-              await onSend("", estUrl);
+              await sendAsAix("", estUrl);
             }
           }
           // 見積書テキスト先送り → モーダルを閉じてバックグラウンドで30秒後に本文送信
           if (shouldSendEstimateFirst) {
-            await onSend(estimateTextReady);
+            await sendAsAix(estimateTextReady);
             setEstimateTextReady("");
             // 送信関数・本文をクロージャでキャプチャ（宛先が変わっても元の会話に送られる）
             const capturedOnSend = onSend;
@@ -1294,18 +1296,18 @@ export default function AixModal({
             onClose();
             return;
           }
-          await onSend(preview);
+          await sendAsAix(preview);
         } else {
           // alternative / その他: 物件資料画像 → 見積書 → 本文
           for (const file of checkImageFiles) {
             const url = await uploadImage(file);
-            await onSend("", url);
+            await sendAsAix("", url);
           }
           if (checkEstimateFile) {
             const estUrl = await uploadImage(checkEstimateFile);
-            await onSend("", estUrl);
+            await sendAsAix("", estUrl);
           }
-          await onSend(preview);
+          await sendAsAix(preview);
         }
       } else {
         // 物件オススメは物件資料画像をLINEに添付
@@ -1317,23 +1319,23 @@ export default function AixModal({
         }
         // 物件オススメ送信順: 物件資料画像 → 見積書 → 室内URL → テキスト
         if (actionType === "property_recommendation") {
-          if (uploadedImageUrl) await onSend("", uploadedImageUrl);
+          if (uploadedImageUrl) await sendAsAix("", uploadedImageUrl);
           if (recommendEstimateFile) {
             const estUrl = await uploadImage(recommendEstimateFile);
-            await onSend("", estUrl);
+            await sendAsAix("", estUrl);
           }
-          if (propertyImageUrl.trim()) await onSend(`（室内イメージ）\n${propertyImageUrl.trim()}`);
-          await onSend(preview);
+          if (propertyImageUrl.trim()) await sendAsAix(`（室内イメージ）\n${propertyImageUrl.trim()}`);
+          await sendAsAix(preview);
         } else if (actionType === "estimate_sheet") {
           // 送信順: ①物件資料（任意）→ ②見積書 → ③テキスト
           if (estimatePropertyFile) {
             const propUrl = await uploadImage(estimatePropertyFile);
-            await onSend("", propUrl);
+            await sendAsAix("", propUrl);
           }
-          if (uploadedImageUrl) await onSend("", uploadedImageUrl);
-          await onSend(preview);
+          if (uploadedImageUrl) await sendAsAix("", uploadedImageUrl);
+          await sendAsAix(preview);
         } else {
-          await onSend(preview, uploadedImageUrl);
+          await sendAsAix(preview, uploadedImageUrl);
         }
       }
 

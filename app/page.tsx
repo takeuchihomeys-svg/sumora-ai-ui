@@ -16,6 +16,7 @@ type Message = {
   imageExpiresAt?: string;
   time: string;
   rawCreatedAt?: string;
+  isAix?: boolean;
 };
 
 type Conversation = {
@@ -63,6 +64,7 @@ type SupabaseMessageRow = {
   image_url?: string | null;
   image_expires_at?: string | null;
   created_at: string;
+  is_aix_generated?: boolean | null;
 };
 
 // JST基準で今日の日付を YYYY-MM-DD で返す
@@ -1012,6 +1014,7 @@ export default function Home() {
                   imageExpiresAt: m.image_expires_at || undefined,
                   time: formatTime(m.created_at),
                   rawCreatedAt: m.created_at,
+                  isAix: m.is_aix_generated || false,
                 }));
                 setConversations((prev) =>
                   prev.map((c) => (c.id === selectedId ? { ...c, messages: msgs } : c))
@@ -1035,6 +1038,7 @@ export default function Home() {
           imageExpiresAt: m.image_expires_at || undefined,
           time: formatTime(m.created_at),
           rawCreatedAt: m.created_at,
+          isAix: m.is_aix_generated || false,
         }));
         scrollAfterFetchRef.current = selectedId;
         setConversations((prev) =>
@@ -3052,7 +3056,7 @@ export default function Home() {
     }, 1000);
   };
 
-  const sendMessageText = async (text: string, imageUrl?: string) => {
+  const sendMessageText = async (text: string, imageUrl?: string, isAix?: boolean) => {
     if (!selectedConversation.id || (!text.trim() && !imageUrl)) return;
     // AIX送信時も含めて、送信後は次アクション提案をリセット（状況が変わったため）
     setNextActionMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; });
@@ -3071,6 +3075,7 @@ export default function Home() {
           text: "[画像]",
           image_url: imageUrl,
           created_at: imgNow.toISOString(),
+          is_aix_generated: isAix ?? false,
         })
         .select();
       if (imgError) throw imgError;
@@ -3081,6 +3086,7 @@ export default function Home() {
         imageUrl,
         time: formatTime(imgNow.toISOString()),
         rawCreatedAt: imgNow.toISOString(),
+        isAix: isAix ?? false,
       });
     }
 
@@ -3092,6 +3098,7 @@ export default function Home() {
           sender: "staff",
           text: text.trim(),
           created_at: now.toISOString(),
+          is_aix_generated: isAix ?? false,
         })
         .select();
       if (insertError) throw insertError;
@@ -3101,6 +3108,7 @@ export default function Home() {
         text: text.trim(),
         time: formatTime(now.toISOString()),
         rawCreatedAt: now.toISOString(),
+        isAix: isAix ?? false,
       });
     }
 
@@ -6412,7 +6420,10 @@ export default function Home() {
           }))}
           staffMessagedToday={(() => {
             const msgs = selectedConversation.messages || [];
-            const lastStaff = [...msgs].reverse().find((m: Message) => m.sender === "staff");
+            // AIX生成メッセージ（案A）と画像のみメッセージ（案B）は除外して判定
+            const lastStaff = [...msgs].reverse().find((m: Message) =>
+              m.sender === "staff" && !m.isAix && m.text !== "[画像]"
+            );
             if (!lastStaff?.rawCreatedAt) return false;
             const d = new Date(new Date(lastStaff.rawCreatedAt).getTime() + 9 * 3600 * 1000);
             const t = new Date(Date.now() + 9 * 3600 * 1000);

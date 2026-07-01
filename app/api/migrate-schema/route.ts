@@ -75,6 +75,9 @@ ALTER TABLE messages DISABLE ROW LEVEL SECURITY;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS line_message_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_messages_line_message_id ON messages(line_message_id);
 
+-- AIX生成メッセージフラグ（挨拶判定から除外するため）
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_aix_generated BOOLEAN DEFAULT FALSE;
+
 -- property_customers テーブル（物件出しツール用）
 CREATE TABLE IF NOT EXISTS property_customers (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
