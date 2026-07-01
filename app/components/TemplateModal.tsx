@@ -179,6 +179,7 @@ export default function TemplateModal({
   const [editRequiresImage, setEditRequiresImage] = useState(false);
   const [editStructure, setEditStructure] = useState<StructureBlock[]>([]);
   const [structureViewId, setStructureViewId] = useState<string | null>(null);
+  const [sampleViewIds, setSampleViewIds] = useState<Set<string>>(new Set());
   const [editSaving, setEditSaving] = useState(false);
   const [noEmoji, setNoEmoji] = useState(false);
   const [aixPurposeFilter, setAixPurposeFilter] = useState<"内覧" | "申込">("内覧");
@@ -868,35 +869,48 @@ export default function TemplateModal({
                           </div>
                         )}
 
-                        {/* 例文 / 構成 トグル（構成ブロックがある場合のみ） */}
-                        {tmpl.structure && tmpl.structure.length > 0 && (
-                          <div className="mb-2 flex gap-1">
-                            <button
-                              onClick={() => setStructureViewId(null)}
-                              className={`rounded-full px-3 py-1 text-[10px] font-bold transition ${structureViewId !== tmpl.id ? "bg-[#1565C0] text-white" : "border border-[#d1d7db] bg-white text-[#54656f]"}`}
-                            >例文</button>
-                            <button
-                              onClick={() => setStructureViewId(tmpl.id)}
-                              className={`rounded-full px-3 py-1 text-[10px] font-bold transition ${structureViewId === tmpl.id ? "bg-[#7B1FA2] text-white" : "border border-[#d1d7db] bg-white text-[#54656f]"}`}
-                            >📐 構成</button>
-                          </div>
-                        )}
-                        {/* 構成ビュー or 例文 */}
-                        {structureViewId === tmpl.id && tmpl.structure && tmpl.structure.length > 0
-                          ? (
-                            <div className="mb-3 flex flex-col gap-2">
-                              {tmpl.structure.map((block, bi) => (
-                                <div key={bi} className="rounded-xl border border-[#e3eaf2] bg-white p-2.5">
-                                  <p className="mb-1 text-[10px] font-bold text-[#7B1FA2]">{block.label}</p>
-                                  <p className="whitespace-pre-wrap text-[12px] leading-5 text-[#111b21]">{block.text ? block.text : <span className="text-[#aaa]">（例文未設定）</span>}</p>
-                                </div>
-                              ))}
+                        {/* 例文 / 構成 トグル */}
+                        {tmpl.structure && tmpl.structure.length > 0 && (() => {
+                          const isAix = tmpl.category.includes("AIX");
+                          const showingSample = isAix ? sampleViewIds.has(tmpl.id) : structureViewId !== tmpl.id;
+                          return (
+                            <div className="mb-2 flex gap-1">
+                              <button
+                                onClick={() => {
+                                  if (isAix) setSampleViewIds(prev => { const n = new Set(prev); n.add(tmpl.id); return n; });
+                                  else setStructureViewId(null);
+                                }}
+                                className={`rounded-full px-3 py-1 text-[10px] font-bold transition ${showingSample ? "bg-[#1565C0] text-white" : "border border-[#d1d7db] bg-white text-[#54656f]"}`}
+                              >{isAix ? "見本" : "例文"}</button>
+                              <button
+                                onClick={() => {
+                                  if (isAix) setSampleViewIds(prev => { const n = new Set(prev); n.delete(tmpl.id); return n; });
+                                  else setStructureViewId(tmpl.id);
+                                }}
+                                className={`rounded-full px-3 py-1 text-[10px] font-bold transition ${!showingSample ? "bg-[#7B1FA2] text-white" : "border border-[#d1d7db] bg-white text-[#54656f]"}`}
+                              >📐 構成</button>
                             </div>
-                          )
-                          : (
-                            <p className="whitespace-pre-wrap text-[13px] leading-5 text-[#111b21] mb-3">{displayText}</p>
-                          )
-                        }
+                          );
+                        })()}
+                        {/* 構成ビュー or テキスト */}
+                        {(() => {
+                          const isAix = tmpl.category.includes("AIX");
+                          const hasStructure = !!(tmpl.structure && tmpl.structure.length > 0);
+                          const showStructure = hasStructure && (isAix ? !sampleViewIds.has(tmpl.id) : structureViewId === tmpl.id);
+                          if (showStructure) {
+                            return (
+                              <div className="mb-3 flex flex-col gap-2">
+                                {tmpl.structure!.map((block, bi) => (
+                                  <div key={bi} className="rounded-xl border border-[#e3eaf2] bg-white p-2.5">
+                                    <p className="mb-1 text-[10px] font-bold text-[#7B1FA2]">{block.label}</p>
+                                    <p className="whitespace-pre-wrap text-[12px] leading-5 text-[#111b21]">{block.text ? block.text : <span className="text-[#aaa]">（説明未設定）</span>}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          }
+                          return <p className="whitespace-pre-wrap text-[13px] leading-5 text-[#111b21] mb-3">{displayText}</p>;
+                        })()}
 
                         {/* 確認パネル */}
                         {inspectingId === tmpl.id && (() => {
