@@ -182,7 +182,7 @@ export default function TemplateModal({
   const [sampleViewIds, setSampleViewIds] = useState<Set<string>>(new Set());
   const [editSaving, setEditSaving] = useState(false);
   const [noEmoji, setNoEmoji] = useState(false);
-  const [aixPurposeFilter, setAixPurposeFilter] = useState<"内覧" | "申込">("内覧");
+  const [aixPurposeFilter, setAixPurposeFilter] = useState<"内覧" | "申込" | null>(null);
   const [vacatingDates, setVacatingDates] = useState<Record<string, { month: number; day: number } | null>>({});
   const [inspectingId, setInspectingId] = useState<string | null>(null);
   const [templateImages, setTemplateImages] = useState<Record<string, File[]>>({});
@@ -319,7 +319,7 @@ export default function TemplateModal({
   ).sort((a, b) => (a.sort_order ?? Number.MAX_SAFE_INTEGER) - (b.sort_order ?? Number.MAX_SAFE_INTEGER));
 
   const isAixCategory = category === "物件オススメ【AIX】" && !isSearching;
-  const displayFiltered = isAixCategory
+  const displayFiltered = isAixCategory && aixPurposeFilter !== null
     ? filtered.filter(t => {
         const els = detectTemplateElements(t.text);
         if (aixPurposeFilter === "内覧") return els.some(e => e.label === "内覧誘導");
@@ -719,19 +719,19 @@ export default function TemplateModal({
                       <p className="text-center text-[12px] font-bold text-[#667781]">訴求方法を選択する！！</p>
                       <div className="flex gap-2">
                         <button
-                          onClick={() => setAixPurposeFilter("内覧")}
+                          onClick={() => setAixPurposeFilter(prev => prev === "内覧" ? null : "内覧")}
                           className={`flex-1 py-3.5 rounded-2xl text-[15px] font-bold transition-all shadow-sm ${
                             aixPurposeFilter === "内覧"
                               ? "bg-[#1565C0] text-white scale-[1.02] shadow-md"
-                              : "bg-white text-[#1565C0] border-2 border-[#1565C0]"
+                              : "bg-white text-[#667781] border-2 border-[#d1d7db]"
                           }`}
                         >🏃 内覧に誘う！！</button>
                         <button
-                          onClick={() => setAixPurposeFilter("申込")}
+                          onClick={() => setAixPurposeFilter(prev => prev === "申込" ? null : "申込")}
                           className={`flex-1 py-3.5 rounded-2xl text-[15px] font-bold transition-all shadow-sm ${
                             aixPurposeFilter === "申込"
                               ? "bg-purple-600 text-white scale-[1.02] shadow-md"
-                              : "bg-white text-purple-600 border-2 border-purple-500"
+                              : "bg-white text-[#667781] border-2 border-[#d1d7db]"
                           }`}
                         >🚀 申込へ押し込む！！</button>
                       </div>
