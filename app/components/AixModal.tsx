@@ -356,6 +356,7 @@ export default function AixModal({
   const [appPropertyName, setAppPropertyName] = useState("");
   const [appVacancyStatus, setAppVacancyStatus] = useState<"vacant" | "scheduled" | null>(null);
   const [appMoveOutDate, setAppMoveOutDate] = useState("");
+  const [appSubMode, setAppSubMode] = useState<"push" | "confirm" | null>(null);
   // 物件オススメ専用: analyze-propertyで自動抽出した退去予定日
   const [propMoveOutDate, setPropMoveOutDate] = useState("");
 
@@ -413,6 +414,7 @@ export default function AixModal({
     setPreview("");
     setAixNotice("");
   }, [conversationId]);
+  useEffect(() => { setAppSubMode(null); setPreview(""); }, [actionType]);
 
   useEffect(() => {
     if (initialImageFile) {
@@ -834,6 +836,14 @@ export default function AixModal({
   };
 
   const generate = async (extraFlags?: Record<string, unknown>) => {
+    // 申込確定モード: クライアントサイドで即時生成（API不要）
+    if (actionType === "application_push" && appSubMode === "confirm") {
+      const prop = appPropertyName.trim();
+      const text = `かしこまりました！！\n${prop ? `${prop}お申込みさせて頂きます！！` : "お申込みさせて頂きます！！"}`;
+      setAiDraft(text);
+      setPreview(useEmoji ? text : stripEmoji(text));
+      return;
+    }
     try {
       setLoading(true);
       setError("");
@@ -1399,7 +1409,7 @@ export default function AixModal({
     : actionType === "property_send"
     ? true
     : actionType === "application_push"
-    ? !!appVacancyStatus
+    ? appSubMode === "confirm" ? true : !!appVacancyStatus
     : actionType === "meeting_place"
     ? (!!meetingDate.trim() && !!meetingPropertyName.trim())
     : !config.requiresImage || !!imageFile;
@@ -1853,108 +1863,172 @@ export default function AixModal({
               </div>
             </div>
           ) : actionType === "application_push" ? (
-            /* 申込へ！: 物件名 + シンプルボタン + AI生成 */
+            /* 申込へ！: 申込誘導 / 申込確定 2分割 */
             <div className="mb-4 flex flex-col gap-3">
-              {/* 物件名（任意） */}
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-[#54656f]">
-                  物件名 <span className="font-normal text-[#90a4ae]">（任意）</span>
-                </label>
-                <input
-                  type="text"
-                  value={appPropertyName}
-                  onChange={(e) => setAppPropertyName(e.target.value)}
-                  placeholder="例：プレサンス心斎橋ブライト"
-                  className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
-                />
+              {/* モード選択ボタン */}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { setAppSubMode("push"); setPreview(""); }}
+                  className={`flex-1 rounded-2xl border-2 px-3 py-3 text-center transition-all ${
+                    appSubMode === "push" ? "border-[#1565C0] bg-blue-50" : "border-[#e9edef] bg-[#f8f9fa]"
+                  }`}
+                >
+                  <div className="text-[12px] font-bold text-[#1565C0]">📋 申込誘導</div>
+                  <div className="mt-0.5 text-[9px] text-[#8696a0]">お申込みを後押しするメッセージ</div>
+                </button>
+                <button
+                  onClick={() => {
+                    setAppSubMode("confirm");
+                    // 会話履歴から物件名を自動検出
+                    let detected = appPropertyName.trim();
+                    if (!detected) {
+                      const staffMsgs = (recentMessages || []).filter(m => m.sender === "staff").reverse();
+                      for (const msg of staffMsgs) {
+                        const m = msg.text.match(/^【(.+?)(?:\s+[\d]+号室)?】/);
+                        if (m) { detected = m[1].trim(); break; }
+                      }
+                    }
+                    if (detected) setAppPropertyName(detected);
+                    const text = `かしこまりました！！\n${detected ? `${detected}お申込みさせて頂きます！！` : "お申込みさせて頂きます！！"}`;
+                    setAiDraft(text);
+                    setPreview(useEmoji ? text : stripEmoji(text));
+                  }}
+                  className={`flex-1 rounded-2xl border-2 px-3 py-3 text-center transition-all ${
+                    appSubMode === "confirm" ? "border-emerald-500 bg-emerald-50" : "border-[#e9edef] bg-[#f8f9fa]"
+                  }`}
+                >
+                  <div className="text-[12px] font-bold text-emerald-600">✅ 申込確定</div>
+                  <div className="mt-0.5 text-[9px] text-[#8696a0]">お申込み確定のご連絡をする</div>
+                </button>
               </div>
-              {/* シンプルボタン */}
-              <button
-                onClick={() => {
-                  const name = customerName || "お客様";
-                  const prop = appPropertyName.trim();
-                  const text = prop
-                    ? `はい！！\n${name}さん${prop}につきまして、お気に召されましたらお申込しお部屋抑えさせて頂きます😌！！\nお気軽にお申し付けください！！`
-                    : `はい！！\n${name}さんお気に召されましたらお申込しお部屋抑えさせて頂きます😌！！\nお気軽にお申し付けください！！`;
-                  setPreview(text);
-                }}
-                className="w-full rounded-2xl border-2 border-[#E53935] bg-[#fff5f5] px-4 py-3 text-left transition-all active:bg-[#ffebee]"
-              >
-                <div className="text-[13px] font-bold text-[#E53935]">⚡ シンプル送信</div>
-                <div className="mt-0.5 text-[10px] text-[#8696a0]">
-                  {appPropertyName.trim()
-                    ? `はい！！ ${customerName || "〇〇"}さん${appPropertyName.trim()}につきまして、お気に召されましたら…`
-                    : "はい！！〇〇さんお気に召されましたらお申込し…"}
-                </div>
-              </button>
-              {/* 区切り */}
-              <div className="flex items-center gap-2">
-                <div className="h-px flex-1 bg-[#e9edef]" />
-                <span className="text-[10px] text-[#8696a0]">またはAIで詳しく作成</span>
-                <div className="h-px flex-1 bg-[#e9edef]" />
-              </div>
-              {/* 見積書送信済み自動検出 */}
-              {(() => {
-                const staffMsgs = (recentMessages || []).filter(m => m.sender === "staff").slice(-15);
-                const hasEstimate = staffMsgs.some(m => /見積|御見積|初期費用/.test(m.text));
-                return (
-                  <div className={`flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs ${
-                    hasEstimate ? "bg-emerald-50 text-emerald-700" : "bg-[#f0f2f5] text-[#8696a0]"
-                  }`}>
-                    <span>{hasEstimate ? "✓" : "−"}</span>
-                    <span className="font-semibold">
-                      {hasEstimate ? "見積書送信済み（直近メッセージより検出）" : "見積書未送信（見積書のくだりは省略されます）"}
-                    </span>
-                  </div>
-                );
-              })()}
-              {/* 空室状況選択 */}
-              <div>
-                <p className="mb-2 text-xs font-bold text-[#54656f]">空室状況を選択</p>
-                <div className="flex flex-col gap-2">
-                  {([
-                    { key: "vacant",    label: "空室（内覧できる）",   sub: "お申込みで抑えてご内覧もできます", color: "emerald" },
-                    { key: "scheduled", label: "退去予定（内覧不可）", sub: "先にお申込みでお部屋確保を推奨",   color: "orange"  },
-                  ] as const).map((p) => (
-                    <button
-                      key={p.key}
-                      onClick={() => { setAppVacancyStatus(p.key); setPreview(""); }}
-                      className={`flex items-center gap-3 rounded-2xl border-2 px-4 py-3 text-left transition-all ${
-                        appVacancyStatus === p.key
-                          ? p.color === "emerald" ? "border-emerald-400 bg-emerald-50"
-                          : "border-orange-400 bg-orange-50"
-                          : "border-[#e9edef] bg-[#f8f9fa]"
-                      }`}
-                    >
-                      <span className={`flex h-5 w-5 items-center justify-center rounded-full border-2 flex-shrink-0 ${
-                        appVacancyStatus === p.key
-                          ? p.color === "emerald" ? "border-emerald-500 bg-emerald-500" : "border-orange-500 bg-orange-500"
-                          : "border-[#d1d7db]"
-                      }`}>
-                        {appVacancyStatus === p.key && <span className="h-2 w-2 rounded-full bg-white" />}
-                      </span>
-                      <div>
-                        <div className="text-[13px] font-bold text-[#111b21]">{p.label}</div>
-                        <div className="text-[10px] text-[#8696a0]">{p.sub}</div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {/* 退去予定日（退去予定選択時のみ） */}
-              {appVacancyStatus === "scheduled" && (
+
+              {/* 申込確定: 物件名（自動検出・修正可） */}
+              {appSubMode === "confirm" && (
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-[#54656f]">
-                    退去予定日 <span className="font-normal text-[#90a4ae]">（任意）</span>
+                    物件名 <span className="font-normal text-[#90a4ae]">（自動検出・修正可）</span>
                   </label>
                   <input
                     type="text"
-                    value={appMoveOutDate}
-                    onChange={(e) => setAppMoveOutDate(e.target.value)}
-                    placeholder="例：7月末、8月1日"
-                    className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
+                    value={appPropertyName}
+                    onChange={(e) => {
+                      setAppPropertyName(e.target.value);
+                      const prop = e.target.value.trim();
+                      const text = `かしこまりました！！\n${prop ? `${prop}お申込みさせて頂きます！！` : "お申込みさせて頂きます！！"}`;
+                      setAiDraft(text);
+                      setPreview(useEmoji ? text : stripEmoji(text));
+                    }}
+                    placeholder="例：プレサンス心斎橋ブライト"
+                    className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-emerald-400 placeholder:text-[#8696a0]"
                   />
                 </div>
+              )}
+
+              {/* 申込誘導: 既存フォーム */}
+              {appSubMode === "push" && (
+                <>
+                  {/* 物件名（任意） */}
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-[#54656f]">
+                      物件名 <span className="font-normal text-[#90a4ae]">（任意）</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={appPropertyName}
+                      onChange={(e) => setAppPropertyName(e.target.value)}
+                      placeholder="例：プレサンス心斎橋ブライト"
+                      className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
+                    />
+                  </div>
+                  {/* シンプルボタン */}
+                  <button
+                    onClick={() => {
+                      const name = customerName || "お客様";
+                      const prop = appPropertyName.trim();
+                      const text = prop
+                        ? `はい！！\n${name}さん${prop}につきまして、お気に召されましたらお申込しお部屋抑えさせて頂きます😌！！\nお気軽にお申し付けください！！`
+                        : `はい！！\n${name}さんお気に召されましたらお申込しお部屋抑えさせて頂きます😌！！\nお気軽にお申し付けください！！`;
+                      setPreview(text);
+                    }}
+                    className="w-full rounded-2xl border-2 border-[#E53935] bg-[#fff5f5] px-4 py-3 text-left transition-all active:bg-[#ffebee]"
+                  >
+                    <div className="text-[13px] font-bold text-[#E53935]">⚡ シンプル送信</div>
+                    <div className="mt-0.5 text-[10px] text-[#8696a0]">
+                      {appPropertyName.trim()
+                        ? `はい！！ ${customerName || "〇〇"}さん${appPropertyName.trim()}につきまして、お気に召されましたら…`
+                        : "はい！！〇〇さんお気に召されましたらお申込し…"}
+                    </div>
+                  </button>
+                  {/* 区切り */}
+                  <div className="flex items-center gap-2">
+                    <div className="h-px flex-1 bg-[#e9edef]" />
+                    <span className="text-[10px] text-[#8696a0]">またはAIで詳しく作成</span>
+                    <div className="h-px flex-1 bg-[#e9edef]" />
+                  </div>
+                  {/* 見積書送信済み自動検出 */}
+                  {(() => {
+                    const staffMsgs = (recentMessages || []).filter(m => m.sender === "staff").slice(-15);
+                    const hasEstimate = staffMsgs.some(m => /見積|御見積|初期費用/.test(m.text));
+                    return (
+                      <div className={`flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs ${
+                        hasEstimate ? "bg-emerald-50 text-emerald-700" : "bg-[#f0f2f5] text-[#8696a0]"
+                      }`}>
+                        <span>{hasEstimate ? "✓" : "−"}</span>
+                        <span className="font-semibold">
+                          {hasEstimate ? "見積書送信済み（直近メッセージより検出）" : "見積書未送信（見積書のくだりは省略されます）"}
+                        </span>
+                      </div>
+                    );
+                  })()}
+                  {/* 空室状況選択 */}
+                  <div>
+                    <p className="mb-2 text-xs font-bold text-[#54656f]">空室状況を選択</p>
+                    <div className="flex flex-col gap-2">
+                      {([
+                        { key: "vacant",    label: "空室（内覧できる）",   sub: "お申込みで抑えてご内覧もできます", color: "emerald" },
+                        { key: "scheduled", label: "退去予定（内覧不可）", sub: "先にお申込みでお部屋確保を推奨",   color: "orange"  },
+                      ] as const).map((p) => (
+                        <button
+                          key={p.key}
+                          onClick={() => { setAppVacancyStatus(p.key); setPreview(""); }}
+                          className={`flex items-center gap-3 rounded-2xl border-2 px-4 py-3 text-left transition-all ${
+                            appVacancyStatus === p.key
+                              ? p.color === "emerald" ? "border-emerald-400 bg-emerald-50"
+                              : "border-orange-400 bg-orange-50"
+                              : "border-[#e9edef] bg-[#f8f9fa]"
+                          }`}
+                        >
+                          <span className={`flex h-5 w-5 items-center justify-center rounded-full border-2 flex-shrink-0 ${
+                            appVacancyStatus === p.key
+                              ? p.color === "emerald" ? "border-emerald-500 bg-emerald-500" : "border-orange-500 bg-orange-500"
+                              : "border-[#d1d7db]"
+                          }`}>
+                            {appVacancyStatus === p.key && <span className="h-2 w-2 rounded-full bg-white" />}
+                          </span>
+                          <div>
+                            <div className="text-[13px] font-bold text-[#111b21]">{p.label}</div>
+                            <div className="text-[10px] text-[#8696a0]">{p.sub}</div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {/* 退去予定日（退去予定選択時のみ） */}
+                  {appVacancyStatus === "scheduled" && (
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-[#54656f]">
+                        退去予定日 <span className="font-normal text-[#90a4ae]">（任意）</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={appMoveOutDate}
+                        onChange={(e) => setAppMoveOutDate(e.target.value)}
+                        placeholder="例：7月末、8月1日"
+                        className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
+                      />
+                    </div>
+                  )}
+                </>
               )}
             </div>
           ) : actionType === "property_check_result" ? (
