@@ -307,6 +307,9 @@ export default function TemplateModal({
   }, [category]);
 
   const categories = Array.from(new Set(templates.map((t) => t.category)));
+  const normalCategories = categories.filter(c => !c.includes("AIX"));
+  const aixCategories = categories.filter(c => c.includes("AIX"));
+  const isAixCategoryActive = category.includes("AIX");
   const isSearching = searchQuery.trim().length > 0;
   const filtered = (isSearching
     ? templates.filter((t) =>
@@ -487,55 +490,125 @@ export default function TemplateModal({
 
         {/* カテゴリタブ（検索中は非表示） */}
         {!showAddForm && !isSearching && (
-          <div ref={categoryScrollRef} className="flex gap-1.5 overflow-x-auto border-b border-[#f0f2f5] bg-white px-4 py-2.5 shrink-0 scroll-smooth" style={{ scrollbarWidth: "none" }}>
-            {categories.length === 0 && !loading && (
-              <span className="text-[12px] text-[#aaa] py-1">カテゴリなし（テンプレートを追加してください）</span>
-            )}
-            {categories.map((cat) => (
-              <div
-                key={cat}
-                ref={el => { categoryTabRefs.current[cat] = el as unknown as HTMLButtonElement; }}
-                className="shrink-0 flex items-center rounded-full text-[11px] font-bold transition overflow-hidden"
-                style={
-                  category === cat
-                    ? { background: "linear-gradient(135deg, #1565C0, #4BA8E8)", color: "white" }
-                    : { backgroundColor: "#f0f2f5", color: "#54656f" }
-                }
-              >
-                {editingCategory === cat ? (
-                  <input
-                    ref={categoryEditInputRef}
-                    value={editingCategoryName}
-                    onChange={e => setEditingCategoryName(e.target.value)}
-                    onBlur={commitCategoryRename}
-                    onKeyDown={e => {
-                      if (e.key === "Enter") { e.preventDefault(); void commitCategoryRename(); }
-                      if (e.key === "Escape") { setEditingCategory(null); }
-                    }}
-                    className="bg-transparent outline-none min-w-[60px] max-w-[120px] px-3 py-1.5 text-[11px] font-bold"
-                    style={{ color: "white" }}
-                  />
-                ) : (
-                  <>
-                    <button
-                      onClick={() => setCategory(cat)}
-                      className="pl-3 py-1.5 pr-1"
-                    >{cat}</button>
-                    <button
-                      onClick={() => {
-                        setCategory(cat);
-                        setEditingCategory(cat);
-                        setEditingCategoryName(cat);
-                        setTimeout(() => { categoryEditInputRef.current?.select(); }, 20);
+          <>
+            {/* メインタブ行（通常カテゴリ + AIXまとめボタン） */}
+            <div ref={categoryScrollRef} className="flex gap-1.5 overflow-x-auto border-b border-[#f0f2f5] bg-white px-4 py-2.5 shrink-0 scroll-smooth" style={{ scrollbarWidth: "none" }}>
+              {categories.length === 0 && !loading && (
+                <span className="text-[12px] text-[#aaa] py-1">カテゴリなし（テンプレートを追加してください）</span>
+              )}
+              {normalCategories.map((cat) => (
+                <div
+                  key={cat}
+                  ref={el => { categoryTabRefs.current[cat] = el as unknown as HTMLButtonElement; }}
+                  className="shrink-0 flex items-center rounded-full text-[11px] font-bold transition overflow-hidden"
+                  style={
+                    category === cat
+                      ? { background: "linear-gradient(135deg, #1565C0, #4BA8E8)", color: "white" }
+                      : { backgroundColor: "#f0f2f5", color: "#54656f" }
+                  }
+                >
+                  {editingCategory === cat ? (
+                    <input
+                      ref={categoryEditInputRef}
+                      value={editingCategoryName}
+                      onChange={e => setEditingCategoryName(e.target.value)}
+                      onBlur={commitCategoryRename}
+                      onKeyDown={e => {
+                        if (e.key === "Enter") { e.preventDefault(); void commitCategoryRename(); }
+                        if (e.key === "Escape") { setEditingCategory(null); }
                       }}
-                      className="pr-2 py-1.5 opacity-60 hover:opacity-100"
-                      title="カテゴリ名を編集"
-                    >✏️</button>
-                  </>
-                )}
+                      className="bg-transparent outline-none min-w-[60px] max-w-[120px] px-3 py-1.5 text-[11px] font-bold"
+                      style={{ color: "white" }}
+                    />
+                  ) : (
+                    <>
+                      <button onClick={() => setCategory(cat)} className="pl-3 py-1.5 pr-1">
+                        {cat}
+                        <span className={`ml-1 text-[9px] ${category === cat ? "opacity-70" : "opacity-50"}`}>
+                          ({templates.filter(t => t.category === cat).length})
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setCategory(cat);
+                          setEditingCategory(cat);
+                          setEditingCategoryName(cat);
+                          setTimeout(() => { categoryEditInputRef.current?.select(); }, 20);
+                        }}
+                        className="pr-2 py-1.5 opacity-60 hover:opacity-100"
+                        title="カテゴリ名を編集"
+                      >✏️</button>
+                    </>
+                  )}
+                </div>
+              ))}
+              {/* AIXまとめボタン */}
+              {aixCategories.length > 0 && (
+                <button
+                  onClick={() => { if (!isAixCategoryActive) setCategory(aixCategories[0]); }}
+                  className="shrink-0 rounded-full px-3 py-1.5 text-[11px] font-bold transition"
+                  style={
+                    isAixCategoryActive
+                      ? { background: "linear-gradient(135deg, #7B1FA2, #9C27B0)", color: "white" }
+                      : { backgroundColor: "#f0f2f5", color: "#54656f" }
+                  }
+                >
+                  ✨ AIX ({templates.filter(t => t.category.includes("AIX")).length})
+                </button>
+              )}
+            </div>
+            {/* AIXサブタブ行（AIXカテゴリ選択中のみ表示） */}
+            {isAixCategoryActive && aixCategories.length > 0 && (
+              <div className="flex gap-1.5 overflow-x-auto border-b border-purple-100 bg-[#faf5ff] px-4 py-2 shrink-0 scroll-smooth" style={{ scrollbarWidth: "none" }}>
+                {aixCategories.map((cat) => (
+                  <div
+                    key={cat}
+                    ref={el => { categoryTabRefs.current[cat] = el as unknown as HTMLButtonElement; }}
+                    className="shrink-0 flex items-center rounded-full text-[11px] font-bold transition overflow-hidden"
+                    style={
+                      category === cat
+                        ? { background: "linear-gradient(135deg, #7B1FA2, #9C27B0)", color: "white" }
+                        : { backgroundColor: "#ede7f6", color: "#7B1FA2" }
+                    }
+                  >
+                    {editingCategory === cat ? (
+                      <input
+                        ref={categoryEditInputRef}
+                        value={editingCategoryName}
+                        onChange={e => setEditingCategoryName(e.target.value)}
+                        onBlur={commitCategoryRename}
+                        onKeyDown={e => {
+                          if (e.key === "Enter") { e.preventDefault(); void commitCategoryRename(); }
+                          if (e.key === "Escape") { setEditingCategory(null); }
+                        }}
+                        className="bg-transparent outline-none min-w-[60px] max-w-[120px] px-3 py-1.5 text-[11px] font-bold"
+                        style={{ color: "white" }}
+                      />
+                    ) : (
+                      <>
+                        <button onClick={() => setCategory(cat)} className="pl-3 py-1.5 pr-1">
+                          {cat.replace("【AIX】", "").trim()}
+                          <span className={`ml-1 text-[9px] ${category === cat ? "opacity-70" : "opacity-50"}`}>
+                            ({templates.filter(t => t.category === cat).length})
+                          </span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setCategory(cat);
+                            setEditingCategory(cat);
+                            setEditingCategoryName(cat);
+                            setTimeout(() => { categoryEditInputRef.current?.select(); }, 20);
+                          }}
+                          className="pr-2 py-1.5 opacity-60 hover:opacity-100"
+                          title="カテゴリ名を編集"
+                        >✏️</button>
+                      </>
+                    )}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
 
         {/* スクロール領域 */}
@@ -621,6 +694,30 @@ export default function TemplateModal({
             <div className="p-4">
               {!loading && filtered.length > 0 && (
                 <div className="mb-3 flex flex-col gap-2">
+                  {/* AIXカテゴリ：大きな内覧誘導/申込誘導セレクター */}
+                  {isAixCategory && (
+                    <div className="flex flex-col gap-1">
+                      <p className="text-center text-[12px] font-bold text-[#667781]">訴求方法を選択する！！</p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setAixPurposeFilter("内覧")}
+                          className={`flex-1 py-3.5 rounded-2xl text-[15px] font-bold transition-all shadow-sm ${
+                            aixPurposeFilter === "内覧"
+                              ? "bg-[#1565C0] text-white scale-[1.02] shadow-md"
+                              : "bg-white text-[#1565C0] border-2 border-[#1565C0]"
+                          }`}
+                        >🏃 内覧に誘う！！</button>
+                        <button
+                          onClick={() => setAixPurposeFilter("申込")}
+                          className={`flex-1 py-3.5 rounded-2xl text-[15px] font-bold transition-all shadow-sm ${
+                            aixPurposeFilter === "申込"
+                              ? "bg-purple-600 text-white scale-[1.02] shadow-md"
+                              : "bg-white text-purple-600 border-2 border-purple-500"
+                          }`}
+                        >🚀 申込へ押し込む！！</button>
+                      </div>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between gap-2">
                     <div className={`flex-1 flex items-center gap-1.5 rounded-xl px-3 py-2 ${linkedCustomer ? "bg-emerald-50 border border-emerald-200" : "bg-amber-50 border border-amber-200"}`}>
                       <span className={`text-[11px] ${linkedCustomer ? "text-emerald-700" : "text-amber-700"}`}>
@@ -638,20 +735,6 @@ export default function TemplateModal({
                       >絵文字なし</button>
                     </div>
                   </div>
-                  {isAixCategory && (
-                    <div className="flex justify-end">
-                      <div className="flex rounded-full border border-[#d1d7db] overflow-hidden text-[10px] font-bold shrink-0">
-                        <button
-                          onClick={() => setAixPurposeFilter("内覧")}
-                          className={`px-2.5 py-1 transition-colors ${aixPurposeFilter === "内覧" ? "bg-[#1565C0] text-white" : "bg-white text-[#888]"}`}
-                        >内覧誘導</button>
-                        <button
-                          onClick={() => setAixPurposeFilter("申込")}
-                          className={`px-2.5 py-1 transition-colors ${aixPurposeFilter === "申込" ? "bg-[#1565C0] text-white" : "bg-white text-[#888]"}`}
-                        >申込誘導</button>
-                      </div>
-                    </div>
-                  )}
                   {!isSearching && (category === "申込・審査" || displayFiltered.some(t => /同居人|配偶者/.test(t.text))) && (
                     <div className="flex justify-end">
                       <button
@@ -686,6 +769,7 @@ export default function TemplateModal({
                     const _rawText = extractedTexts[tmpl.id] || adapted || tmpl.text;
                     let displayText = applyVacatingDates(_rawText, vacatingDates[tmpl.id] ?? null);
                     if (soloEntry) displayText = applySoloEntry(displayText);
+                    if (customerName) displayText = displayText.replace(/アカウント名/g, customerName);
                     const isHighlighted = !!highlightKeyword && (tmpl.label.includes(highlightKeyword) || tmpl.text.includes(highlightKeyword));
                     const isVacating = tmpl.label.includes("退去予定") || /[◯○〇]月[◯○〇]/.test(tmpl.text) || /退去予定|退去後|以降ご内覧可能/.test(tmpl.text);
                     return (
