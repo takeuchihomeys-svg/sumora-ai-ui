@@ -733,12 +733,12 @@ export default function TemplateModal({
                       <p className="text-center text-[12px] font-bold text-[#667781]">確認結果を選択する</p>
                       <div className="flex gap-1.5 overflow-x-auto pb-0.5" style={{ scrollbarWidth: "none" }}>
                         {([
-                          { key: "物件あった",          emoji: "✅", bg: "#059669" },
-                          { key: "別の部屋",            emoji: "🔄", bg: "#1565C0" },
-                          { key: "物件なかった",        emoji: "❌", bg: "#DC2626" },
-                          { key: "入居日確認した",      emoji: "📅", bg: "#D97706" },
-                          { key: "室内写真を確認した",  emoji: "📷", bg: "#7C3AED" },
-                        ] as const).map(({ key, emoji, bg }) => {
+                          { key: "物件あった",          bg: "#059669" },
+                          { key: "別の部屋",            bg: "#1565C0" },
+                          { key: "物件なかった",        bg: "#DC2626" },
+                          { key: "入居日確認した",      bg: "#D97706" },
+                          { key: "室内写真を確認した",  bg: "#7C3AED" },
+                        ] as const).map(({ key, bg }) => {
                           const selected = availCheckFilter === key;
                           return (
                             <button
@@ -748,7 +748,7 @@ export default function TemplateModal({
                                 selected ? "text-white border-transparent shadow-sm" : "bg-white text-[#54656f] border-[#d1d7db]"
                               }`}
                               style={selected ? { backgroundColor: bg, borderColor: bg } : undefined}
-                            >{emoji} {key}</button>
+                            >{key}</button>
                           );
                         })}
                       </div>
