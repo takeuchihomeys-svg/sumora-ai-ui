@@ -36,6 +36,7 @@ interface AixModalProps {
   conversationStatus?: string;
   initialFocusPoints?: string[];
   initialTemplateStructure?: Array<{ label: string; text: string }>;
+  initialTemplateSample?: string;
   initialViewingSpecificMode?: boolean;
   onClose: () => void;
   onSend: (text: string, imageUrl?: string) => Promise<void>;
@@ -236,6 +237,7 @@ export default function AixModal({
   conversationStatus,
   initialFocusPoints,
   initialTemplateStructure,
+  initialTemplateSample,
   initialViewingSpecificMode,
   onClose,
   onSend,
@@ -1072,6 +1074,7 @@ export default function AixModal({
       if (extraFlags) Object.assign(body, extraFlags);
       if (parsedEstimate) body.parsed_estimate = parsedEstimate;
       if (initialTemplateStructure && initialTemplateStructure.length > 0) body.template_structure = initialTemplateStructure;
+      if (initialTemplateSample) body.template_sample = initialTemplateSample;
 
       // 60秒タイムアウト（AI生成が遅いと loading=true のまま固まるのを防ぐ）
       const aborter = new AbortController();
