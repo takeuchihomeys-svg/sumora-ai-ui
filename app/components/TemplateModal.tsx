@@ -183,6 +183,7 @@ export default function TemplateModal({
   const [editSaving, setEditSaving] = useState(false);
   const [noEmoji, setNoEmoji] = useState(false);
   const [aixPurposeFilter, setAixPurposeFilter] = useState<"内覧" | "申込" | null>(null);
+  const [availCheckFilter, setAvailCheckFilter] = useState<string | null>(null);
   const [vacatingDates, setVacatingDates] = useState<Record<string, { month: number; day: number } | null>>({});
   const [inspectingId, setInspectingId] = useState<string | null>(null);
   const [templateImages, setTemplateImages] = useState<Record<string, File[]>>({});
@@ -258,6 +259,15 @@ export default function TemplateModal({
     return el;
   }
 
+  function matchAvailCheckFilter(label: string, filter: string): boolean {
+    if (filter === "別の部屋") return /別の部屋|2番手/.test(label);
+    if (filter === "物件なかった") return /物件なし|物件なかった/.test(label);
+    if (filter === "入居日確認した") return /入居日|退去日/.test(label);
+    if (filter === "室内写真を確認した") return /写真/.test(label);
+    // 物件あった = 上記以外
+    return !/別の部屋|2番手|物件なし|物件なかった|入居日|退去日|写真/.test(label);
+  }
+
   const loadTemplates = async () => {
     setLoading(true);
     try {
@@ -319,12 +329,16 @@ export default function TemplateModal({
   ).sort((a, b) => (a.sort_order ?? Number.MAX_SAFE_INTEGER) - (b.sort_order ?? Number.MAX_SAFE_INTEGER));
 
   const isAixCategory = category === "物件オススメ【AIX】" && !isSearching;
-  const displayFiltered = isAixCategory && aixPurposeFilter !== null
-    ? filtered.filter(t => {
-        const els = detectTemplateElements(t.text);
-        if (aixPurposeFilter === "内覧") return els.some(e => e.label === "内覧誘導");
-        return els.some(e => e.label === "申込誘導");
-      })
+  const isAvailCheckCategory = category === "物件確認した【AIX】" && !isSearching;
+  const displayFiltered =
+    isAixCategory && aixPurposeFilter !== null
+      ? filtered.filter(t => {
+          const els = detectTemplateElements(t.text);
+          if (aixPurposeFilter === "内覧") return els.some(e => e.label === "内覧誘導");
+          return els.some(e => e.label === "申込誘導");
+        })
+    : isAvailCheckCategory && availCheckFilter !== null
+      ? filtered.filter(t => matchAvailCheckFilter(t.label, availCheckFilter))
     : filtered;
 
   const handleAdd = async () => {
@@ -713,6 +727,33 @@ export default function TemplateModal({
             <div className="p-4">
               {!loading && filtered.length > 0 && (
                 <div className="mb-3 flex flex-col gap-2">
+                  {/* 物件確認したカテゴリ：確認結果で絞り込み */}
+                  {isAvailCheckCategory && (
+                    <div className="flex flex-col gap-1.5">
+                      <p className="text-center text-[12px] font-bold text-[#667781]">確認結果を選択する</p>
+                      <div className="flex gap-1.5 overflow-x-auto pb-0.5" style={{ scrollbarWidth: "none" }}>
+                        {([
+                          { key: "物件あった",          emoji: "✅", bg: "#059669" },
+                          { key: "別の部屋",            emoji: "🔄", bg: "#1565C0" },
+                          { key: "物件なかった",        emoji: "❌", bg: "#DC2626" },
+                          { key: "入居日確認した",      emoji: "📅", bg: "#D97706" },
+                          { key: "室内写真を確認した",  emoji: "📷", bg: "#7C3AED" },
+                        ] as const).map(({ key, emoji, bg }) => {
+                          const selected = availCheckFilter === key;
+                          return (
+                            <button
+                              key={key}
+                              onClick={() => setAvailCheckFilter(prev => prev === key ? null : key)}
+                              className={`shrink-0 rounded-full px-3 py-2 text-[12px] font-bold transition-all border-2 ${
+                                selected ? "text-white border-transparent shadow-sm" : "bg-white text-[#54656f] border-[#d1d7db]"
+                              }`}
+                              style={selected ? { backgroundColor: bg, borderColor: bg } : undefined}
+                            >{emoji} {key}</button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   {/* AIXカテゴリ：大きな内覧誘導/申込誘導セレクター */}
                   {isAixCategory && (
                     <div className="flex flex-col gap-1">
