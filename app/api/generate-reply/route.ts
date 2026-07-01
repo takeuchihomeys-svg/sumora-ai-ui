@@ -798,12 +798,11 @@ function extractPreferredName(
   const SKIP_RE = /^(お客様|皆|全|各|担当|スタッフ|こちら|弊社|管理|オーナー|業者|まずは|引き続き|何卒|改めて)/;
   for (const msg of [...messages].reverse()) {
     if (msg.sender !== "staff" || !msg.text) continue;
-    const matches = [...msg.text.matchAll(/([^\s、。！？\n【】「」（）・]{2,8}?)さん/g)];
+    const matches = [...msg.text.matchAll(/([^\s、。！？\n【】「」（）・]{1,8}?)さん/g)];
     for (const m of [...matches].reverse()) {
       const name = m[1];
       if (SKIP_RE.test(name)) continue;
-      // 1文字はスキップ
-      if (name.length <= 1) continue;
+      if (!name) continue;
       // 日本語文字と英字が混在する場合はスキップ（「方でHitomi」等の誤マッチ防止）
       const hasJp = /[ぁ-んァ-ン一-鿿]/.test(name);
       const hasLatin = /[a-zA-Z]/.test(name);
@@ -811,7 +810,8 @@ function extractPreferredName(
       return name;
     }
   }
-  return lineDisplayName;
+  // フォールバック: LINE表示名末尾の「さん」を除去してから返す（二重さん防止）
+  return lineDisplayName.replace(/さん$/, "");
 }
 
 // ─── POST ────────────────────────────────────────────────────────────────────
