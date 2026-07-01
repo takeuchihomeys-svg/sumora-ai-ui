@@ -1039,7 +1039,7 @@ ${patternExample}${knowledgeText}${examplesText}`;
             message_text = `${pName}募集中となります！！\n現在1番手でお申込みが入っている為、2番手以降でのお申込となります！！${estimateApp}\n\n※2番手お申込の場合1番手の方が審査否決となった場合1番手に繰り上がります。`;
           } else {
             const inviteText = showVI1 ? `\n\n${name}ご都合よろしいお日にちにご案内させて頂きます😊！！` : "";
-            message_text = `${pName}現在募集中となります！！\n現在空室でご内覧可能なお部屋となります！！${estimate1}${inviteText}`;
+            message_text = `${pName}現在募集中となります！！${estimate1}${inviteText}`;
           }
         } else {
           // 複数物件モード: per-property ステータスで箇条書き + クロージング
@@ -1099,8 +1099,7 @@ ${patternExample}${knowledgeText}${examplesText}`;
 現在1番手でお申込みが入っている為、2番手以降でのお申込となります！！${estimateLine}
 
 ※2番手お申込の場合1番手の方が審査否決となった場合1番手に繰り上がります。`
-          : `[物件名と号室]現在募集中となります！！
-現在空室でご内覧可能なお部屋となります！！${estimateLine}
+          : `[物件名と号室]現在募集中となります！！${estimateLine}
 
 ${name}さんご都合よろしいお日にちにご案内させて頂きます😊！！`;
 
