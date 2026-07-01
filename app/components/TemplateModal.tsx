@@ -154,6 +154,38 @@ interface TemplateModalProps {
   staffMessagedToday?: boolean;
 }
 
+const AVAIL_CHECK_TYPES = [
+  { key: "物件あった",         color: "#059669" },
+  { key: "別の部屋",           color: "#1565C0" },
+  { key: "物件なかった",       color: "#DC2626" },
+  { key: "入居日確認した",     color: "#D97706" },
+  { key: "室内写真を確認した", color: "#7C3AED" },
+] as const;
+
+function getAvailCheckTag(label: string): string | null {
+  for (const { key } of AVAIL_CHECK_TYPES) {
+    if (label.startsWith(`【${key}】`)) return key;
+  }
+  return null;
+}
+
+function stripAvailCheckTag(label: string): string {
+  for (const { key } of AVAIL_CHECK_TYPES) {
+    if (label.startsWith(`【${key}】`)) return label.slice(`【${key}】`.length);
+  }
+  return label;
+}
+
+function inferAvailCheckType(label: string): string | null {
+  const tag = getAvailCheckTag(label);
+  if (tag) return tag;
+  if (/別の部屋|2番手/.test(label)) return "別の部屋";
+  if (/物件なし|物件なかった/.test(label)) return "物件なかった";
+  if (/入居日|退去日/.test(label)) return "入居日確認した";
+  if (/写真/.test(label)) return "室内写真を確認した";
+  return "物件あった";
+}
+
 export default function TemplateModal({
   onClose, onSelect, onOpenAixWithFocus, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword, highlightLabel, pendingScheduledMessages, staffMessagedToday,
 }: TemplateModalProps) {
@@ -184,6 +216,7 @@ export default function TemplateModal({
   const [noEmoji, setNoEmoji] = useState(false);
   const [aixPurposeFilter, setAixPurposeFilter] = useState<"内覧" | "申込" | null>(null);
   const [availCheckFilter, setAvailCheckFilter] = useState<string | null>(null);
+  const [editAvailCheckType, setEditAvailCheckType] = useState<string | null>(null);
   const [vacatingDates, setVacatingDates] = useState<Record<string, { month: number; day: number } | null>>({});
   const [inspectingId, setInspectingId] = useState<string | null>(null);
   const [templateImages, setTemplateImages] = useState<Record<string, File[]>>({});
@@ -260,11 +293,12 @@ export default function TemplateModal({
   }
 
   function matchAvailCheckFilter(label: string, filter: string): boolean {
+    const tag = getAvailCheckTag(label);
+    if (tag) return tag === filter;
     if (filter === "別の部屋") return /別の部屋|2番手/.test(label);
     if (filter === "物件なかった") return /物件なし|物件なかった/.test(label);
     if (filter === "入居日確認した") return /入居日|退去日/.test(label);
     if (filter === "室内写真を確認した") return /写真/.test(label);
-    // 物件あった = 上記以外
     return !/別の部屋|2番手|物件なし|物件なかった|入居日|退去日|写真/.test(label);
   }
 
@@ -362,7 +396,8 @@ export default function TemplateModal({
 
   const startEdit = (tmpl: Template) => {
     setEditingId(tmpl.id);
-    setEditLabel(tmpl.label);
+    setEditAvailCheckType(getAvailCheckTag(tmpl.label));
+    setEditLabel(stripAvailCheckTag(tmpl.label));
     setEditText(tmpl.text);
     setEditCategory(tmpl.category);
     setEditRequiresImage(tmpl.requires_image);
@@ -377,7 +412,7 @@ export default function TemplateModal({
       const res = await fetch("/api/templates", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: editingId, category: editCategory || "全般", label: editLabel, text: editText, structure: editStructure.length > 0 ? editStructure : null, requires_image: editRequiresImage }),
+        body: JSON.stringify({ id: editingId, category: editCategory || "全般", label: (editAvailCheckType && editCategory === "物件確認した【AIX】" ? `【${editAvailCheckType}】` : "") + editLabel, text: editText, structure: editStructure.length > 0 ? editStructure : null, requires_image: editRequiresImage }),
       });
       const data = await res.json() as { ok: boolean };
       if (data.ok) {
@@ -729,25 +764,19 @@ export default function TemplateModal({
                 <div className="mb-3 flex flex-col gap-2">
                   {/* 物件確認したカテゴリ：確認結果で絞り込み */}
                   {isAvailCheckCategory && (
-                    <div className="flex flex-col gap-1.5">
-                      <p className="text-center text-[12px] font-bold text-[#667781]">確認結果を選択する</p>
-                      <div className="flex gap-1.5 overflow-x-auto pb-0.5" style={{ scrollbarWidth: "none" }}>
-                        {([
-                          { key: "物件あった",          bg: "#059669" },
-                          { key: "別の部屋",            bg: "#1565C0" },
-                          { key: "物件なかった",        bg: "#DC2626" },
-                          { key: "入居日確認した",      bg: "#D97706" },
-                          { key: "室内写真を確認した",  bg: "#7C3AED" },
-                        ] as const).map(({ key, bg }) => {
+                    <div className="flex flex-col gap-1">
+                      <p className="text-[10px] font-bold text-[#8696a0] text-center">確認結果で絞り込む</p>
+                      <div className="flex gap-1 overflow-x-auto pb-0.5 flex-wrap" style={{ scrollbarWidth: "none" }}>
+                        {AVAIL_CHECK_TYPES.map(({ key, color }) => {
                           const selected = availCheckFilter === key;
                           return (
                             <button
                               key={key}
                               onClick={() => setAvailCheckFilter(prev => prev === key ? null : key)}
-                              className={`shrink-0 rounded-full px-3 py-2 text-[12px] font-bold transition-all border-2 ${
-                                selected ? "text-white border-transparent shadow-sm" : "bg-white text-[#54656f] border-[#d1d7db]"
+                              className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-bold transition-all border-2 ${
+                                selected ? "text-white border-transparent" : "bg-white text-[#54656f] border-[#d1d7db]"
                               }`}
-                              style={selected ? { backgroundColor: bg, borderColor: bg } : undefined}
+                              style={selected ? { backgroundColor: color, borderColor: color } : undefined}
                             >{key}</button>
                           );
                         })}
@@ -836,7 +865,18 @@ export default function TemplateModal({
                       <div key={tmpl.id} className={`rounded-2xl p-4 ${isHighlighted ? "border-2 border-orange-400 bg-orange-50" : "border border-[#e9edef] bg-[#f8f9fa]"}`}>
                         {/* タイトル行 */}
                         <div className="mb-2 flex items-center justify-between gap-2">
-                          <span className="text-xs font-bold text-[#1565C0] flex-1 min-w-0 break-words leading-snug">{tmpl.label}</span>
+                          <div className="flex-1 min-w-0">
+                            <span className="text-xs font-bold text-[#1565C0] break-words leading-snug">
+                              {isAvailCheckCategory ? stripAvailCheckTag(tmpl.label) : tmpl.label}
+                            </span>
+                            {isAvailCheckCategory && (() => {
+                              const type = inferAvailCheckType(tmpl.label);
+                              const info = AVAIL_CHECK_TYPES.find(t => t.key === type);
+                              return info ? (
+                                <span className="mt-0.5 block w-fit rounded-full px-2 py-0.5 text-[9px] font-bold text-white" style={{ backgroundColor: info.color }}>{type}</span>
+                              ) : null;
+                            })()}
+                          </div>
                           {isHighlighted && (
                             <span className="shrink-0 rounded-full bg-orange-400 px-2 py-0.5 text-[10px] font-bold text-white">{highlightLabel ?? "💡 次のアクション"}</span>
                           )}
@@ -899,6 +939,26 @@ export default function TemplateModal({
                                 >{c}</button>
                               ))}
                             </div>
+                            {/* 物件確認した種別タグ選択 */}
+                            {editCategory === "物件確認した【AIX】" && (
+                              <div>
+                                <p className="mb-1 text-[10px] font-bold text-[#54656f]">確認結果の種別</p>
+                                <div className="flex gap-1 flex-wrap">
+                                  {AVAIL_CHECK_TYPES.map(({ key, color }) => {
+                                    const sel = editAvailCheckType === key;
+                                    return (
+                                      <button
+                                        key={key}
+                                        type="button"
+                                        onClick={() => setEditAvailCheckType(prev => prev === key ? null : key)}
+                                        className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold border-2 transition ${sel ? "text-white border-transparent" : "bg-white text-[#54656f] border-[#d1d7db]"}`}
+                                        style={sel ? { backgroundColor: color, borderColor: color } : undefined}
+                                      >{key}</button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
                             <input
                               className="w-full rounded-xl border border-[#b3d0f7] px-3 py-2 text-[12px] outline-none focus:border-[#2196F3]"
                               value={editLabel}
