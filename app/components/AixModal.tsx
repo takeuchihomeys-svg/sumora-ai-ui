@@ -2945,7 +2945,7 @@ export default function AixModal({
                 <label className="text-xs font-semibold text-[#54656f] shrink-0">{config.inputLabel}</label>
                 {actionType === "property_recommendation" && (
                   <>
-                    {(["家賃", "初期費用", "お部屋の条件"] as const).map((pt) => {
+                    {(["家賃", "初期費用", "お部屋の条件", "設備", "地域・駅"] as const).map((pt) => {
                       const selected = recommendFocusPoints.includes(pt);
                       return (
                         <button
@@ -3034,7 +3034,7 @@ export default function AixModal({
                 <div className="mt-3 rounded-2xl border border-[#e8eaed] bg-white px-3 py-2.5">
                   <p className="mb-2 text-[11px] font-semibold text-[#8696a0]">強調ポイントを変えて再生成</p>
                   <div className="flex flex-wrap gap-1.5">
-                    {(["家賃", "初期費用", "お部屋の条件"] as const).map((pt) => {
+                    {(["家賃", "初期費用", "お部屋の条件", "設備", "地域・駅"] as const).map((pt) => {
                       const selected = recommendFocusPoints.includes(pt);
                       return (
                         <button
