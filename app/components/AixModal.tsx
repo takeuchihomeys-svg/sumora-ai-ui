@@ -44,6 +44,55 @@ interface AixModalProps {
   onVacatingDetected?: (date: string) => void;
 }
 
+// 待ち合わせ送信後にカレンダーイベントを作成（fire-and-forget）
+function createViewingCalendarEvent(params: {
+  meetingDate: string;
+  meetingTime: string;
+  meetingPropertyName: string;
+  meetingPropertyAddress: string;
+  customerName: string;
+}): void {
+  const { meetingDate, meetingTime, meetingPropertyName, meetingPropertyAddress, customerName } = params;
+  if (!meetingDate || !meetingTime || !meetingPropertyName) return;
+
+  // 日付パース: "7/2（水）" / "7月2日（水）" → month, day
+  const dateMatch = meetingDate.match(/(\d{1,2})[\/月](\d{1,2})/);
+  if (!dateMatch) return;
+  const month = parseInt(dateMatch[1], 10);
+  const day = parseInt(dateMatch[2], 10);
+  const year = new Date().getFullYear();
+
+  // 時刻パース: "13:15〜13:45" / "13:15"
+  const timeMatch = meetingTime.match(/(\d{1,2}):(\d{2})(?:[〜~-](\d{1,2}):(\d{2}))?/);
+  if (!timeMatch) return;
+  const startH = parseInt(timeMatch[1], 10);
+  const startM = parseInt(timeMatch[2], 10);
+  let endH: number, endM: number;
+  if (timeMatch[3] && timeMatch[4]) {
+    endH = parseInt(timeMatch[3], 10);
+    endM = parseInt(timeMatch[4], 10);
+  } else {
+    const totalMin = startH * 60 + startM + 30;
+    endH = Math.floor(totalMin / 60);
+    endM = totalMin % 60;
+  }
+
+  // JST → UTC（JST = UTC+9）
+  const startJST = new Date(year, month - 1, day, startH, startM, 0);
+  const endJST   = new Date(year, month - 1, day, endH, endM, 0);
+  const toUTC = (d: Date) => new Date(d.getTime() - 9 * 60 * 60 * 1000).toISOString();
+
+  supabase.from("calendar_events").insert({
+    title: `${customerName} 内覧 ${meetingPropertyName}`,
+    event_type: "viewing",
+    customer_name: customerName || null,
+    start_at: toUTC(startJST),
+    end_at: toUTC(endJST),
+    all_day: false,
+    notes: meetingPropertyAddress ? `住所: ${meetingPropertyAddress}` : null,
+  }).then(() => {}, () => {});
+}
+
 function stripEmoji(text: string): string {
   return text
     .replace(/[\u{1F300}-\u{1FAFF}]/gu, "")
@@ -1111,6 +1160,11 @@ export default function AixModal({
         }).catch(() => {});
       }
 
+      // 待ち合わせ確定後にカレンダーイベントを作成（予約送信の場合も同様）
+      if (actionType === "meeting_place" && meetingDate && meetingTime && meetingPropertyName) {
+        createViewingCalendarEvent({ meetingDate, meetingTime, meetingPropertyName, meetingPropertyAddress, customerName });
+      }
+
       onAfterSend?.({
         suggest2ndHand: actionType === "property_check_result" && checkAvailableApp === "yes",
         suggestViewingTemplate: actionType === "viewing_invite",
@@ -1228,6 +1282,11 @@ export default function AixModal({
         } else {
           await onSend(preview, uploadedImageUrl);
         }
+      }
+
+      // 待ち合わせ確定後にカレンダーイベントを作成
+      if (actionType === "meeting_place" && meetingDate && meetingTime && meetingPropertyName) {
+        createViewingCalendarEvent({ meetingDate, meetingTime, meetingPropertyName, meetingPropertyAddress, customerName });
       }
 
       // 学習ループに保存（fire-and-forget）
