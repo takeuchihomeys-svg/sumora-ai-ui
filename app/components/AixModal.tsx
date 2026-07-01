@@ -1073,6 +1073,7 @@ export default function AixModal({
       if (recSimpleMode) body.simple_mode = true;
       if (extraFlags) Object.assign(body, extraFlags);
       if (parsedEstimate) body.parsed_estimate = parsedEstimate;
+      if (!body.recent_messages && recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
       if (initialTemplateStructure && initialTemplateStructure.length > 0) body.template_structure = initialTemplateStructure;
       if (initialTemplateSample) body.template_sample = initialTemplateSample;
 
