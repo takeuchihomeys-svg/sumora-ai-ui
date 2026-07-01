@@ -207,7 +207,7 @@ function buildGenerationMessages(
 
   const nameNote = customerName ? `お客様名：${customerName}さん` : "お客様名：不明";
   const conditionsNote = customerConditions
-    ? `\n【お客様の希望条件（DB登録済み・必ず考慮すること）】\n${customerConditions}\n⚠️ 上記の数字・金額（家賃・築年数・駅徒歩等）は一文字も変えずにそのまま引用すること。「13万円」を「3万円」に変形する等の誤変換は絶対禁止。文中で条件に言及する場合は1回のみ記載し、同じ情報を2度書かない。`
+    ? `\n【お客様の希望条件（DB登録済み・必ず考慮すること）】\n${customerConditions}\n⚠️ 上記の数字・金額（家賃・築年数・駅徒歩等）は一文字も変えずにそのまま引用すること。「13万円」を「3万円」に変形する等の誤変換は絶対禁止。条件の重複記載はしない。`
     : "";
   const summaryNote = customerSummary
     ? `\n【このお客さんのAI要約 — 今の状況・次の必須対応を最優先で文案に反映すること。人物像・文体も合わせること】\n${customerSummary}`
