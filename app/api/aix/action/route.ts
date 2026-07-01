@@ -1035,8 +1035,8 @@ ${patternExample}${knowledgeText}${examplesText}`;
             const vacLine = p.vacDate ? `${p.vacDate}退去予定のお部屋となります！！` : "退去予定のお部屋となります！！";
             message_text = `${pName}現在募集中となります！！\n${vacLine}${estimate1}\n\nお気に召されましたらお申込みしお部屋を抑えさせていただきます！！`;
           } else if (showAppInvite1) {
-            const estimateApp = hasAnyEstimate ? "\n🌟最大限割引しました初期費用の御見積書同封させて頂きました！" : "";
-            message_text = `${name}さん${greeting1}\n${pName}\n現在募集中となります！！${estimateApp}\n\n${name}さんお気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
+            const estimateApp = hasAnyEstimate ? "\n\n🌟最大限割引しました初期費用の御見積書同封させて頂きました！" : "";
+            message_text = `${pName}募集中となります！！\n現在1番手でお申込みが入っている為、2番手以降でのお申込となります！！${estimateApp}\n\n※2番手お申込の場合1番手の方が審査否決となった場合1番手に繰り上がります。`;
           } else {
             const inviteText = showVI1 ? `\n\n${name}ご都合よろしいお日にちにご案内させて頂きます😊！！` : "";
             message_text = `${pName}現在募集中となります！！\n現在空室でご内覧可能なお部屋となります！！${estimate1}${inviteText}`;
@@ -1095,10 +1095,10 @@ ${patternExample}${knowledgeText}${examplesText}`;
       } else if (pattern === "available") {
         const estimateLine = estimate_image_url ? "\n最大限割引しました御見積書同封させて頂きました！！" : "";
         const availableTemplate = available_application === "yes"
-          ? `[物件名と号室]
-2番手お申込み可能で募集中となります！！${estimateLine}
+          ? `[物件名と号室]募集中となります！！
+現在1番手でお申込みが入っている為、2番手以降でのお申込となります！！${estimateLine}
 
-1番手でお申込みがはいっておりますので、2番手以降でのお申込みとなります。`
+※2番手お申込の場合1番手の方が審査否決となった場合1番手に繰り上がります。`
           : `[物件名と号室]現在募集中となります！！
 現在空室でご内覧可能なお部屋となります！！${estimateLine}
 
