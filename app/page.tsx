@@ -387,6 +387,7 @@ export default function Home() {
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [pendingAixFocusPoints, setPendingAixFocusPoints] = useState<string[]>([]);
   const [pendingTemplateSource, setPendingTemplateSource] = useState<{ name: string; category: string } | null>(null);
+  const [pendingTemplateStructure, setPendingTemplateStructure] = useState<Array<{ label: string; text: string }> | null>(null);
   const [suggest2ndHandMap, setSuggest2ndHandMap] = useState<Record<string, boolean>>(() => {
     try { return JSON.parse(sessionStorage.getItem("suggest2ndHandMap") || "{}") as Record<string, boolean>; } catch { return {}; }
   });
@@ -6368,6 +6369,7 @@ export default function Home() {
           onOpenAixWithFocus={(fps, templateInfo) => {
             setPendingAixFocusPoints(fps);
             setPendingTemplateSource(templateInfo ?? null);
+            setPendingTemplateStructure(templateInfo?.structure ?? null);
             setShowTemplateModal(false);
             setTemplateOpenContext(null);
             // activeAixFlowに応じて正しいAIXアクションを開く
@@ -6486,11 +6488,13 @@ export default function Home() {
           lastMessageAt={(selectedConversation.messages || []).slice(-1)[0]?.rawCreatedAt}
           customerSummary={linkedCustomerMap[selectedConversation.id]?.ai_summary ?? null}
           initialFocusPoints={pendingAixFocusPoints.length > 0 ? pendingAixFocusPoints : undefined}
+          initialTemplateStructure={pendingTemplateStructure ?? undefined}
           initialViewingSpecificMode={aixInitViewingSpecific}
           onClose={() => {
             setAixModalType(null);
             setAixInitialFile(null);
             setPendingAixFocusPoints([]);
+            setPendingTemplateStructure(null);
             setPendingTemplateSource(null);
             setDetectedVacatingDate(null);
             setAixInitViewingSpecific(false);
