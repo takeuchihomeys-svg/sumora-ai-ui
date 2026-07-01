@@ -866,7 +866,7 @@ export default function TemplateModal({
                         {/* タイトル行 */}
                         <div className="mb-2 flex items-center justify-between gap-2">
                           <div className="flex-1 min-w-0">
-                            <span className="text-xs font-bold text-[#1565C0] break-words leading-snug">
+                            <span className="text-xs font-bold text-[#1565C0] leading-snug line-clamp-2">
                               {isAvailCheckCategory ? stripAvailCheckTag(tmpl.label) : tmpl.label}
                             </span>
                             {isAvailCheckCategory && (() => {
@@ -883,36 +883,38 @@ export default function TemplateModal({
                           {isSearching && !isHighlighted && (
                             <span className="shrink-0 rounded-full bg-[#e8f0fe] px-2 py-0.5 text-[10px] font-bold text-[#1565C0]">{tmpl.category}</span>
                           )}
-                          {tmpl.requires_image && (
-                            <span className="shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold text-orange-600">📸 画像必要</span>
-                          )}
                           {editingId !== tmpl.id && (
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <button
-                                onClick={() => handleReorder(idx, "up")}
-                                disabled={idx === 0}
-                                className="flex h-5 w-5 items-center justify-center rounded text-[11px] text-[#bbb] hover:text-[#1565C0] disabled:opacity-20 transition"
-                                title="上へ"
-                              >↑</button>
-                              <button
-                                onClick={() => handleReorder(idx, "down")}
-                                disabled={idx === filtered.length - 1}
-                                className="flex h-5 w-5 items-center justify-center rounded text-[11px] text-[#bbb] hover:text-[#1565C0] disabled:opacity-20 transition"
-                                title="下へ"
-                              >↓</button>
-                              <div className="w-px h-3 bg-[#e0e0e0] mx-0.5" />
-                              <button
-                                onClick={() => setInspectingId(inspectingId === tmpl.id ? null : tmpl.id)}
-                                className={`text-[11px] transition font-medium ${inspectingId === tmpl.id ? "text-[#1565C0]" : "text-[#aaa] hover:text-[#1565C0]"}`}
-                              >確認</button>
-                              <button
-                                onClick={() => startEdit(tmpl)}
-                                className="text-[11px] text-[#aaa] hover:text-[#1565C0] transition font-medium"
-                              >編集</button>
-                              <button
-                                onClick={() => setConfirmDeleteId(tmpl.id)}
-                                className="text-[11px] text-[#ccc] hover:text-red-400 transition font-medium"
-                              >削除</button>
+                            <div className="flex flex-col items-end gap-1 shrink-0">
+                              {tmpl.requires_image && (
+                                <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold text-orange-600">📸 画像必要</span>
+                              )}
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  onClick={() => handleReorder(idx, "up")}
+                                  disabled={idx === 0}
+                                  className="flex h-5 w-5 items-center justify-center rounded text-[11px] text-[#bbb] hover:text-[#1565C0] disabled:opacity-20 transition"
+                                  title="上へ"
+                                >↑</button>
+                                <button
+                                  onClick={() => handleReorder(idx, "down")}
+                                  disabled={idx === filtered.length - 1}
+                                  className="flex h-5 w-5 items-center justify-center rounded text-[11px] text-[#bbb] hover:text-[#1565C0] disabled:opacity-20 transition"
+                                  title="下へ"
+                                >↓</button>
+                                <div className="w-px h-3 bg-[#e0e0e0] mx-0.5" />
+                                <button
+                                  onClick={() => setInspectingId(inspectingId === tmpl.id ? null : tmpl.id)}
+                                  className={`text-[11px] transition font-medium ${inspectingId === tmpl.id ? "text-[#1565C0]" : "text-[#aaa] hover:text-[#1565C0]"}`}
+                                >確認</button>
+                                <button
+                                  onClick={() => startEdit(tmpl)}
+                                  className="text-[11px] text-[#aaa] hover:text-[#1565C0] transition font-medium"
+                                >編集</button>
+                                <button
+                                  onClick={() => setConfirmDeleteId(tmpl.id)}
+                                  className="text-[11px] text-[#ccc] hover:text-red-400 transition font-medium"
+                                >削除</button>
+                              </div>
                             </div>
                           )}
                         </div>
