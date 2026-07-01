@@ -1325,6 +1325,9 @@ ${mDate}[時間]に${mName}
       return NextResponse.json({ ok: false, error: `Unknown action: ${action}` }, { status: 400 });
     }
 
+    // 号室の先頭ゼロを除去（日本の号室は0始まりにならない: 0906→906）
+    message_text = message_text.replace(/(?<!\d)0+(\d+)号室/g, "$1号室");
+
     // AIが内部メモを出力した場合、顧客向けメッセージと分離してnoticeとして返す
     const { message: cleanedMessage, notice } = extractNotice(message_text, familyName || rawName);
 
