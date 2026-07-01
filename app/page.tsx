@@ -385,6 +385,7 @@ export default function Home() {
   const delayedSendIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const delayedSendTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [templateInitialSearch, setTemplateInitialSearch] = useState("");
   const [pendingAixFocusPoints, setPendingAixFocusPoints] = useState<string[]>([]);
   const [pendingTemplateSource, setPendingTemplateSource] = useState<{ name: string; category: string } | null>(null);
   const [pendingTemplateStructure, setPendingTemplateStructure] = useState<Array<{ label: string; text: string }> | null>(null);
@@ -6366,7 +6367,8 @@ export default function Home() {
 
       {showTemplateModal && (
         <TemplateModal
-          onClose={() => { setShowTemplateModal(false); setTemplateOpenContext(null); setPendingNextTemplateInfo(null); }}
+          onClose={() => { setShowTemplateModal(false); setTemplateOpenContext(null); setPendingNextTemplateInfo(null); setTemplateInitialSearch(""); }}
+          initialSearch={templateInitialSearch}
           onOpenAixWithFocus={(fps, templateInfo) => {
             setPendingAixFocusPoints(fps);
             setPendingTemplateSource(templateInfo ?? null);
@@ -6502,6 +6504,10 @@ export default function Home() {
             setPendingTemplateSource(null);
             setDetectedVacatingDate(null);
             setAixInitViewingSpecific(false);
+          }}
+          onOpenTemplateFiltered={(search) => {
+            setTemplateInitialSearch(search);
+            setShowTemplateModal(true);
           }}
           onSend={sendMessageText}
           onDelayedSend={handleDelayedSend}

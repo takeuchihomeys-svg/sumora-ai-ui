@@ -44,6 +44,7 @@ interface AixModalProps {
   onDelayedSend?: (seconds: number, sendFn: () => Promise<void>) => void;
   onScheduled?: () => void;
   onVacatingDetected?: (date: string) => void;
+  onOpenTemplateFiltered?: (search: string) => void;
 }
 
 // 待ち合わせ送信後にカレンダーイベントを作成（fire-and-forget）
@@ -245,6 +246,7 @@ export default function AixModal({
   onDelayedSend,
   onScheduled,
   onVacatingDetected,
+  onOpenTemplateFiltered,
 }: AixModalProps) {
   const config = CONFIG[actionType];
 
@@ -256,6 +258,8 @@ export default function AixModal({
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>("");
+  // 物件オススメ専用: 新着フラグ
+  const [isNewArrival, setIsNewArrival] = useState(false);
   // 物件オススメ専用: お客さんの条件スクショ
   const [conditionImageFile, setConditionImageFile] = useState<File | null>(null);
   const [conditionImagePreview, setConditionImagePreview] = useState<string>("");
@@ -1496,7 +1500,17 @@ export default function AixModal({
 
               {/* ②物件資料 */}
               <div>
-                <p className="mb-1 text-xs font-bold text-[#54656f]">② 物件資料</p>
+                <div className="mb-1 flex items-center justify-between">
+                  <p className="text-xs font-bold text-[#54656f]">② 物件資料</p>
+                  {onOpenTemplateFiltered && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenTemplateFiltered("新着")}
+                      className="rounded-full px-2.5 py-0.5 text-[11px] font-bold transition"
+                      style={{ background: "linear-gradient(135deg, #059669, #10b981)", color: "white" }}
+                    >新着</button>
+                  )}
+                </div>
                 {imagePreview ? (
                   <div className="relative overflow-hidden rounded-2xl border border-[#d1d7db]">
                     <img src={imagePreview} alt="物件" className="max-h-36 w-full object-contain" />

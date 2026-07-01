@@ -152,6 +152,8 @@ interface TemplateModalProps {
   pendingScheduledMessages?: Array<{ text: string | null }>;
   // 今日スタッフがすでに送信済みか（挨拶切り替えに使用）
   staffMessagedToday?: boolean;
+  // 開いた時に検索をプリセットする（新着フィルター等）
+  initialSearch?: string;
 }
 
 const AVAIL_CHECK_TYPES = [
@@ -187,13 +189,13 @@ function inferAvailCheckType(label: string): string | null {
 }
 
 export default function TemplateModal({
-  onClose, onSelect, onOpenAixWithFocus, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword, highlightLabel, pendingScheduledMessages, staffMessagedToday,
+  onClose, onSelect, onOpenAixWithFocus, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword, highlightLabel, pendingScheduledMessages, staffMessagedToday, initialSearch,
 }: TemplateModalProps) {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
   const [category, setCategory] = useState(initialCategory || "全般");
   const [showAddForm, setShowAddForm] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(initialSearch ?? "");
   const [newLabel, setNewLabel] = useState("");
   const [newCategory, setNewCategory] = useState("全般");
   const [newText, setNewText] = useState("");
