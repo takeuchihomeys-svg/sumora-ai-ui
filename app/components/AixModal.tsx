@@ -273,7 +273,12 @@ export default function AixModal({
   const [topPhrases, setTopPhrases] = useState<{ phrase: string; usage_count: number }[]>([]);
   const [floorPlanTouched, setFloorPlanTouched] = useState(false);
   // 物件確認した専用
-  const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | "move_in_date" | null>(null);
+  const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | "move_in_date" | "interior_photo" | null>(null);
+  // 室内写真確認した専用
+  const [interiorPhotoUrl, setInteriorPhotoUrl] = useState<string>("");
+  const [interiorPhotoFile, setInteriorPhotoFile] = useState<File | null>(null);
+  const [interiorPhotoPreview, setInteriorPhotoPreview] = useState<string>("");
+  const [interiorPropertyName, setInteriorPropertyName] = useState<string>("");
   // 入居日確認専用: 物件資料画像
   const [moveInImageFile, setMoveInImageFile] = useState<File | null>(null);
   const [moveInImagePreview, setMoveInImagePreview] = useState<string>("");
@@ -892,6 +897,26 @@ export default function AixModal({
         body.has_estimate = hasEstimate;
         if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
         if (customerSummary) body.customer_summary = customerSummary;
+      } else if (actionType === "property_check_result" && checkPattern === "interior_photo") {
+        // 室内写真確認: AIなしでプレビュー直接生成
+        if (interiorPhotoUrl.trim()) {
+          const msg = `（室内イメージ）\n${interiorPhotoUrl.trim()}`;
+          setAiDraft(msg);
+          setPreview(useEmoji ? msg : stripEmoji(msg));
+          setLoading(false);
+          return;
+        }
+        if (interiorPhotoFile) {
+          const name = interiorPropertyName.trim();
+          const msg = name
+            ? `こちら${name}の室内写真となります😌！！`
+            : "こちら室内写真となります😌！！";
+          setAiDraft(msg);
+          setPreview(useEmoji ? msg : stripEmoji(msg));
+          setLoading(false);
+          return;
+        }
+        throw new Error("URLまたは写真を入力してください");
       } else if (actionType === "property_check_result") {
         if (!checkPattern) throw new Error("確認結果を選択してください");
         body.check_pattern = checkPattern;
@@ -1195,7 +1220,14 @@ export default function AixModal({
         }
         await onSend(preview);
       } else if (actionType === "property_check_result") {
-        if (checkPattern === "move_in_date") {
+        if (checkPattern === "interior_photo") {
+          // 室内写真: 写真→テキストの順で送信（URLの場合はテキストのみ）
+          if (interiorPhotoFile) {
+            const photoUrl = await uploadImage(interiorPhotoFile);
+            await onSend("", photoUrl);
+          }
+          await onSend(preview);
+        } else if (checkPattern === "move_in_date") {
           // 入居日確認: テキストのみ送信（物件資料はお客さんに送らない）
           await onSend(preview);
         } else if (checkPattern === "available") {
@@ -1354,7 +1386,9 @@ export default function AixModal({
   const canGenerate = actionType === "property_recommendation"
     ? !!imageFile
     : actionType === "property_check_result"
-    ? (checkPattern === "move_in_date" ? !!moveInImageFile : !!checkPattern)
+    ? (checkPattern === "move_in_date" ? !!moveInImageFile
+      : checkPattern === "interior_photo" ? (!!interiorPhotoUrl.trim() || !!interiorPhotoFile)
+      : !!checkPattern)
     : actionType === "property_send"
     ? true
     : actionType === "application_push"
@@ -1923,10 +1957,11 @@ export default function AixModal({
                 <p className="mb-2 text-xs font-bold text-[#54656f]">確認結果を選択</p>
                 <div className="flex flex-col gap-2">
                   {([
-                    { key: "available",    label: "物件あった",         sub: "入居可能",                       color: "emerald" },
-                    { key: "alternative",  label: "別の部屋が募集してた", sub: "満室だが代替あり",              color: "blue"    },
-                    { key: "unavailable",  label: "物件なかった",        sub: "満室・空きなし（画像不要）",     color: "orange"  },
-                    { key: "move_in_date", label: "入居日確認した",      sub: "退去日から入居可能日を計算送信", color: "purple"  },
+                    { key: "available",       label: "物件あった",           sub: "入居可能",                       color: "emerald" },
+                    { key: "alternative",     label: "別の部屋が募集してた", sub: "満室だが代替あり",               color: "blue"    },
+                    { key: "unavailable",     label: "物件なかった",         sub: "満室・空きなし（画像不要）",     color: "orange"  },
+                    { key: "move_in_date",    label: "入居日確認した",       sub: "退去日から入居可能日を計算送信", color: "purple"  },
+                    { key: "interior_photo",  label: "室内写真を確認した",   sub: "写真またはURLをお客さんに送る",  color: "pink"    },
                   ] as const).map((p) => (
                     <button
                       key={p.key}
@@ -1936,6 +1971,7 @@ export default function AixModal({
                           ? p.color === "emerald" ? "border-emerald-400 bg-emerald-50"
                           : p.color === "blue"    ? "border-blue-400 bg-blue-50"
                           : p.color === "purple"  ? "border-purple-400 bg-purple-50"
+                          : p.color === "pink"    ? "border-pink-400 bg-pink-50"
                           :                         "border-orange-400 bg-orange-50"
                           : "border-[#e9edef] bg-[#f8f9fa]"
                       }`}
@@ -1945,6 +1981,7 @@ export default function AixModal({
                           ? p.color === "emerald" ? "border-emerald-500 bg-emerald-500"
                           : p.color === "blue"    ? "border-blue-500 bg-blue-500"
                           : p.color === "purple"  ? "border-purple-500 bg-purple-500"
+                          : p.color === "pink"    ? "border-pink-500 bg-pink-500"
                           :                         "border-orange-500 bg-orange-500"
                           : "border-[#d1d7db]"
                       }`}>
@@ -1958,6 +1995,95 @@ export default function AixModal({
                   ))}
                 </div>
               </div>
+              {/* 室内写真を確認した: URLまたは写真 */}
+              {checkPattern === "interior_photo" && (
+                <div className="flex flex-col gap-3">
+                  {/* URL入力 */}
+                  <div>
+                    <p className="mb-1 text-xs font-bold text-[#54656f]">室内イメージURL</p>
+                    <input
+                      type="url"
+                      value={interiorPhotoUrl}
+                      onChange={(e) => {
+                        setInteriorPhotoUrl(e.target.value);
+                        setInteriorPhotoFile(null);
+                        setInteriorPhotoPreview("");
+                        setPreview("");
+                      }}
+                      placeholder="https://suumo.jp/..."
+                      className={`w-full rounded-xl border px-4 py-3 text-[14px] outline-none transition-colors ${interiorPhotoUrl ? "border-pink-400 bg-pink-50 text-pink-700 focus:border-pink-500" : "border-[#d1d7db] bg-white text-[#111b21] focus:border-[#2196F3]"}`}
+                    />
+                    {interiorPhotoUrl.trim() && (
+                      <p className="mt-1 text-[11px] text-pink-600">
+                        送信文: 「（室内イメージ）<br />{interiorPhotoUrl.trim()}」
+                      </p>
+                    )}
+                  </div>
+
+                  {/* 区切り */}
+                  {!interiorPhotoUrl.trim() && (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 border-t border-[#e9edef]" />
+                        <span className="text-[11px] text-[#8696a0]">または</span>
+                        <div className="flex-1 border-t border-[#e9edef]" />
+                      </div>
+
+                      {/* 写真アップロード */}
+                      <div>
+                        <p className="mb-1 text-xs font-bold text-[#54656f]">室内写真</p>
+                        {interiorPhotoPreview ? (
+                          <div className="relative overflow-hidden rounded-2xl border border-[#d1d7db]">
+                            <img src={interiorPhotoPreview} alt="室内写真" className="max-h-44 w-full object-contain" />
+                            <button
+                              onClick={() => { setInteriorPhotoFile(null); setInteriorPhotoPreview(""); setPreview(""); }}
+                              className="absolute right-2 top-2 rounded-full bg-black/50 px-3 py-1 text-xs text-white"
+                            >変更</button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => { const el = document.getElementById("interior-photo-input"); if (el) (el as HTMLInputElement).click(); }}
+                            className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-pink-200 py-5 text-sm font-semibold text-pink-500 hover:bg-pink-50"
+                          >📷 室内写真を選択</button>
+                        )}
+                        <input
+                          id="interior-photo-input"
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            setInteriorPhotoFile(f);
+                            setInteriorPhotoUrl("");
+                            const reader = new FileReader();
+                            reader.onload = () => setInteriorPhotoPreview(String(reader.result ?? ""));
+                            reader.readAsDataURL(f);
+                          }}
+                          className="hidden"
+                        />
+                      </div>
+
+                      {/* 物件名入力（写真の場合のみ） */}
+                      {interiorPhotoFile && (
+                        <div>
+                          <p className="mb-1 text-xs font-bold text-[#54656f]">物件名 <span className="font-normal text-[#90a4ae]">（任意）</span></p>
+                          <input
+                            type="text"
+                            value={interiorPropertyName}
+                            onChange={(e) => { setInteriorPropertyName(e.target.value); setPreview(""); }}
+                            placeholder="例: ヴィーナス今里"
+                            className="w-full rounded-xl border border-[#d1d7db] px-4 py-3 text-[14px] outline-none focus:border-[#2196F3]"
+                          />
+                          <p className="mt-1 text-[11px] text-[#8696a0]">
+                            送信文: 「こちら{interiorPropertyName || "●●"}の室内写真となります😌！！」
+                          </p>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+
               {/* 入居日確認した: 物件資料画像（テキストのみ送信・画像はAI読み込み用） */}
               {checkPattern === "move_in_date" && (
                 <div>
