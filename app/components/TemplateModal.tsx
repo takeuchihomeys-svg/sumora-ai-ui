@@ -692,7 +692,7 @@ export default function TemplateModal({
                       <div key={tmpl.id} className={`rounded-2xl p-4 ${isHighlighted ? "border-2 border-orange-400 bg-orange-50" : "border border-[#e9edef] bg-[#f8f9fa]"}`}>
                         {/* タイトル行 */}
                         <div className="mb-2 flex items-center justify-between gap-2">
-                          <span className="text-xs font-bold text-[#1565C0] flex-1 min-w-0 truncate">{tmpl.label}</span>
+                          <span className="text-xs font-bold text-[#1565C0] flex-1 min-w-0 break-words leading-snug">{tmpl.label}</span>
                           {isHighlighted && (
                             <span className="shrink-0 rounded-full bg-orange-400 px-2 py-0.5 text-[10px] font-bold text-white">{highlightLabel ?? "💡 次のアクション"}</span>
                           )}
@@ -1066,10 +1066,10 @@ export default function TemplateModal({
                         {/* AIXカテゴリ: 構成ブロック常時表示（見本の下・訴求ポイントの上） */}
                         {editingId !== tmpl.id && tmpl.category.includes("AIX") && tmpl.structure && tmpl.structure.length > 0 && (
                           <div className="mb-3">
-                            <p className="mb-1.5 text-[10px] font-bold text-[#7B1FA2]">📐 構成</p>
-                            <div className="flex flex-col gap-1.5">
+                            <p className="mb-1.5 text-[10px] font-bold text-[#7B1FA2]">構成</p>
+                            <div className="rounded-xl border border-[#e3eaf2] bg-white overflow-hidden">
                               {tmpl.structure.map((block, bi) => (
-                                <div key={bi} className="rounded-xl border border-[#e3eaf2] bg-white px-3 py-2">
+                                <div key={bi} className={`px-3 py-2 ${bi > 0 ? "border-t border-[#f0f2f5]" : ""}`}>
                                   <p className="mb-0.5 text-[10px] font-bold text-[#7B1FA2]">{block.label}</p>
                                   {block.text ? (
                                     <p className="whitespace-pre-wrap text-[11px] leading-4 text-[#54656f]">{block.text}</p>
