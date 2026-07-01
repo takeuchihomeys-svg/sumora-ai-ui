@@ -371,6 +371,18 @@ export default function TemplateModal({
           if (aixPurposeFilter === "内覧") return els.some(e => e.label === "内覧誘導");
           return els.some(e => e.label === "申込誘導");
         })
+    : isAixCategory
+      ? [...filtered].sort((a, b) => {
+          const getOrder = (t: typeof a) => {
+            const els = detectTemplateElements(t.text);
+            if (els.some(e => e.label === "内覧誘導")) return 0;
+            if (els.some(e => e.label === "申込誘導")) return 1;
+            return 2;
+          };
+          const oa = getOrder(a), ob = getOrder(b);
+          if (oa !== ob) return oa - ob;
+          return (a.sort_order ?? 0) - (b.sort_order ?? 0);
+        })
     : isAvailCheckCategory && availCheckFilter !== null
       ? filtered.filter(t => matchAvailCheckFilter(t.label, availCheckFilter))
     : isAvailCheckCategory
@@ -882,6 +894,14 @@ export default function TemplateModal({
                               return info ? (
                                 <span className="mt-0.5 block w-fit rounded-full px-2 py-0.5 text-[9px] font-bold text-white" style={{ backgroundColor: info.color }}>{type}</span>
                               ) : null;
+                            })()}
+                            {isAixCategory && (() => {
+                              const els = detectTemplateElements(tmpl.text);
+                              const isNairan = els.some(e => e.label === "内覧誘導");
+                              const isMoushikomi = els.some(e => e.label === "申込誘導");
+                              if (isNairan) return <span className="mt-0.5 block w-fit rounded-full px-2 py-0.5 text-[9px] font-bold text-white" style={{ backgroundColor: "#1565C0" }}>内覧誘導</span>;
+                              if (isMoushikomi) return <span className="mt-0.5 block w-fit rounded-full px-2 py-0.5 text-[9px] font-bold text-white" style={{ backgroundColor: "#7B1FA2" }}>申込誘導</span>;
+                              return null;
                             })()}
                           </div>
                           {isHighlighted && (
