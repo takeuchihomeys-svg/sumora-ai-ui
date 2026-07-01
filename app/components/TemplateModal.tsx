@@ -384,7 +384,7 @@ export default function TemplateModal({
           return (a.sort_order ?? 0) - (b.sort_order ?? 0);
         })
     : isAvailCheckCategory && availCheckFilter !== null
-      ? filtered.filter(t => matchAvailCheckFilter(t.label, availCheckFilter))
+      ? filtered.filter(t => inferAvailCheckType(t.label) === availCheckFilter)
     : isAvailCheckCategory
       ? [...filtered].sort((a, b) => {
           const ia = AVAIL_CHECK_TYPES.findIndex(t => t.key === inferAvailCheckType(a.label));
