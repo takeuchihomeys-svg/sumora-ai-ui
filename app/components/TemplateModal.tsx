@@ -869,24 +869,17 @@ export default function TemplateModal({
                           </div>
                         )}
 
-                        {/* 例文 / 構成 トグル */}
-                        {tmpl.structure && tmpl.structure.length > 0 && (() => {
-                          const isAix = tmpl.category.includes("AIX");
-                          const showingSample = isAix ? sampleViewIds.has(tmpl.id) : structureViewId !== tmpl.id;
+                        {/* 例文 / 構成 トグル（非AIXのみ） */}
+                        {tmpl.structure && tmpl.structure.length > 0 && !tmpl.category.includes("AIX") && (() => {
+                          const showingSample = structureViewId !== tmpl.id;
                           return (
                             <div className="mb-2 flex gap-1">
                               <button
-                                onClick={() => {
-                                  if (isAix) setSampleViewIds(prev => { const n = new Set(prev); n.add(tmpl.id); return n; });
-                                  else setStructureViewId(null);
-                                }}
+                                onClick={() => setStructureViewId(null)}
                                 className={`rounded-full px-3 py-1 text-[10px] font-bold transition ${showingSample ? "bg-[#1565C0] text-white" : "border border-[#d1d7db] bg-white text-[#54656f]"}`}
-                              >{isAix ? "見本" : "例文"}</button>
+                              >例文</button>
                               <button
-                                onClick={() => {
-                                  if (isAix) setSampleViewIds(prev => { const n = new Set(prev); n.delete(tmpl.id); return n; });
-                                  else setStructureViewId(tmpl.id);
-                                }}
+                                onClick={() => setStructureViewId(tmpl.id)}
                                 className={`rounded-full px-3 py-1 text-[10px] font-bold transition ${!showingSample ? "bg-[#7B1FA2] text-white" : "border border-[#d1d7db] bg-white text-[#54656f]"}`}
                               >📐 構成</button>
                             </div>
@@ -896,7 +889,8 @@ export default function TemplateModal({
                         {(() => {
                           const isAix = tmpl.category.includes("AIX");
                           const hasStructure = !!(tmpl.structure && tmpl.structure.length > 0);
-                          const showStructure = hasStructure && (isAix ? !sampleViewIds.has(tmpl.id) : structureViewId === tmpl.id);
+                          // AIXは常に見本テキストを表示（構成は訴求ポイントの上で別途表示）
+                          const showStructure = hasStructure && !isAix && structureViewId === tmpl.id;
                           if (showStructure) {
                             return (
                               <div className="mb-3 flex flex-col gap-2">
@@ -1066,6 +1060,25 @@ export default function TemplateModal({
                                 }
                               }}
                             />
+                          </div>
+                        )}
+
+                        {/* AIXカテゴリ: 構成ブロック常時表示（見本の下・訴求ポイントの上） */}
+                        {editingId !== tmpl.id && tmpl.category.includes("AIX") && tmpl.structure && tmpl.structure.length > 0 && (
+                          <div className="mb-3">
+                            <p className="mb-1.5 text-[10px] font-bold text-[#7B1FA2]">📐 構成</p>
+                            <div className="flex flex-col gap-1.5">
+                              {tmpl.structure.map((block, bi) => (
+                                <div key={bi} className="rounded-xl border border-[#e3eaf2] bg-white px-3 py-2">
+                                  <p className="mb-0.5 text-[10px] font-bold text-[#7B1FA2]">{block.label}</p>
+                                  {block.text ? (
+                                    <p className="whitespace-pre-wrap text-[11px] leading-4 text-[#54656f]">{block.text}</p>
+                                  ) : (
+                                    <p className="text-[10px] text-[#aaa]">（説明未設定）</p>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         )}
 
