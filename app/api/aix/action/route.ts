@@ -1627,12 +1627,29 @@ ${formItems}`;
       const viewing_time = body.viewing_time ? String(body.viewing_time) : "";
 
       if (sub_mode === "before") {
-        // 内覧前挨拶は固定3行テンプレート
-        const timePart = viewing_time ? viewing_time : "";
-        const guideLine = timePart
-          ? `本日${timePart}お部屋ご案内させて頂きます！`
-          : `本日お部屋ご案内させて頂きます！`;
-        message_text = `${name}お世話になっております！！\n${guideLine}\n本日は何卒よろしくお願い致します！！`;
+        const dateInfo = viewing_date
+          ? `・内覧日: ${viewing_date}${viewing_time ? ` ${viewing_time}` : ""}`
+          : "";
+
+        const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
+内覧当日に送る「内覧前挨拶」LINEメッセージを生成してください。
+
+【出力構成（この3行構成を厳守・一字一句このフォーマット）】
+①「${name}お世話になっております！！」
+②「本日〇〇時お部屋ご案内させて頂きます！」（〇〇を時刻に置き換え。時刻がなければ「本日お部屋ご案内させて頂きます！」）
+③「本日は何卒よろしくお願い致します！！」
+
+【時刻フォーマット】
+・「14:00」→「14時」、「14:30」→「14時半」のように自然な日本語に変換する
+・「！！」は①③のみ。②は「！」1つ
+
+【禁止】
+・3行以外の追加は一切しない。解説・絵文字・補足は不要`;
+
+        message_text = await callClaude(
+          system,
+          `${name}への内覧前挨拶を生成してください。${dateInfo}${recentHistory}`
+        );
 
       } else {
         const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
