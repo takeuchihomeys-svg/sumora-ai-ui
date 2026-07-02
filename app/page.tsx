@@ -8577,20 +8577,22 @@ export default function Home() {
           className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
           onClick={(e) => { if (e.target === e.currentTarget) { setShowAixMenu(false); setAixInspectLabel(null); } }}
         >
-          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl flex flex-col" style={{ maxHeight: "82vh" }}>
+          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl flex flex-col overflow-hidden" style={{ maxHeight: "85vh" }}>
+            {/* ヘッダー（固定） */}
             <div
-              className="flex items-center justify-between rounded-t-3xl px-5 py-4 flex-shrink-0"
+              className="flex items-center justify-between px-5 py-5 flex-shrink-0"
               style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}
             >
-              <div className="text-[17px] font-bold text-white">AIX</div>
+              <div className="text-[18px] font-bold text-white tracking-wide">AIX</div>
               <button
                 onClick={() => { setShowAixMenu(false); setAixInspectLabel(null); }}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white"
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-white text-[15px]"
               >
                 ✕
               </button>
             </div>
-            <div className="p-3 flex flex-col gap-2 overflow-y-auto flex-1 pb-8">
+            {/* ボタン一覧（スクロール） */}
+            <div className="px-3 pt-3 flex flex-col gap-2.5 overflow-y-auto flex-1 pb-10">
               {(() => {
                 const AIX_INSPECT: Record<string, { inputs: string; process: string; data: string }> = {
                   "1件特にオススメする": {
@@ -8673,16 +8675,16 @@ export default function Home() {
                           onClick={item.action}
                           className="flex flex-1 items-center gap-0 text-left active:bg-[#f5f6f7] transition-colors"
                         >
-                          <span className="w-1 self-stretch flex-shrink-0" style={{ background: item.color }} />
-                          <div className="px-4 py-4 flex-1">
-                            <div className="text-[14px] font-bold text-[#111b21] leading-tight">{item.label}</div>
-                            <div className="text-[10px] text-[#8696a0] leading-tight mt-0.5">{item.sub}</div>
+                          <span className="w-[4px] self-stretch flex-shrink-0 rounded-l-xl" style={{ background: item.color }} />
+                          <div className="px-4 py-5 flex-1">
+                            <div className="text-[15px] font-bold text-[#111b21] leading-snug">{item.label}</div>
+                            <div className="text-[11px] text-[#8696a0] leading-snug mt-1">{item.sub}</div>
                           </div>
                         </button>
                         {/* 確認ボタン（全アイテム共通） */}
                         <button
                           onClick={() => setAixInspectLabel(isOpen ? null : item.label)}
-                          className={`flex h-full items-center px-3 py-4 text-[11px] font-bold transition-colors ${isOpen ? "text-[#1565c0]" : "text-[#b0bec5]"}`}
+                          className={`flex h-full items-center px-3 py-5 text-[11px] font-bold transition-colors ${isOpen ? "text-[#1565c0]" : "text-[#b0bec5]"}`}
                         >
                           {isOpen ? "▲" : "確認"}
                         </button>
