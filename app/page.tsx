@@ -8327,8 +8327,8 @@ export default function Home() {
                 };
                 return [
                   { color: "#0288D1", label: "条件ヒアリング", sub: "条件フォーム①〜⑧をワンタップで送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("condition_hearing"); openAixDirect("condition_hearing"); } },
-                  { color: "#2196F3", label: "物件オススメ", sub: "おすすめ物件をAIが提案", action: () => { openPropertyRecommendationPicker("withImage"); } },
                   { color: "#00897B", label: "物件ピックアップ", sub: "ピックアップした物件を送る・退去予定も自動案内", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); setShowPropertySendPicker(true); } },
+                  { color: "#2196F3", label: "物件オススメ", sub: "おすすめ物件をAIが提案", action: () => { openPropertyRecommendationPicker("withImage"); } },
                   { color: "#4CAF50", label: "物件確認した", sub: "確認結果を3パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); } },
                   { color: "#FF9800", label: "見積書送る", sub: "費用の見積書を作成", action: () => {
                     setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet");
