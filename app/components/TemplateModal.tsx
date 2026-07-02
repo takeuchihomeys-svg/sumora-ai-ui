@@ -392,7 +392,21 @@ export default function TemplateModal({
 
   const categories = Array.from(new Set(templates.map((t) => t.category)));
   const normalCategories = categories.filter(c => !c.includes("AIX"));
-  const aixCategories = categories.filter(c => c.includes("AIX"));
+  const AIX_CATEGORY_ORDER = [
+    "物件送る【AIX】",
+    "物件オススメ【AIX】",
+    "物件確認した【AIX】",
+    "見積書送る【AIX】",
+    "ヒアリング【AIX】",
+    "内覧へ！【AIX】",
+    "内覧【AIX】",
+    "申込へ！【AIX】",
+  ];
+  const rawAixCategories = categories.filter(c => c.includes("AIX"));
+  const aixCategories = [
+    ...AIX_CATEGORY_ORDER.filter(c => rawAixCategories.includes(c)),
+    ...rawAixCategories.filter(c => !AIX_CATEGORY_ORDER.includes(c)),
+  ];
   const isAixCategoryActive = category.includes("AIX");
   const isSearching = searchQuery.trim().length > 0;
   const filtered = (isSearching
