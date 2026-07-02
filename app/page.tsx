@@ -8577,7 +8577,7 @@ export default function Home() {
           className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
           onClick={(e) => { if (e.target === e.currentTarget) { setShowAixMenu(false); setAixInspectLabel(null); } }}
         >
-          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl flex flex-col overflow-hidden" style={{ height: "92vh", maxHeight: "92vh" }}>
+          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl flex flex-col overflow-hidden" style={{ height: "67vh", maxHeight: "67vh" }}>
             {/* ヘッダー（固定・スクロールしない） */}
             <div
               className="flex items-center justify-between px-5 py-5 flex-shrink-0"
@@ -8591,8 +8591,11 @@ export default function Home() {
                 ✕
               </button>
             </div>
-            {/* ボタン一覧（ここだけスクロール） */}
-            <div className="px-3 pt-3 flex flex-col gap-2.5 overflow-y-auto flex-1 pb-10">
+            {/* ボタン一覧（ここだけスクロール・右にスクロールバー表示） */}
+            <div
+              className="aix-scroll-area px-3 pt-3 flex flex-col gap-2.5 overflow-y-scroll flex-1 pb-10"
+              style={{ scrollbarWidth: "thin", scrollbarColor: "#90a4ae #eef1f5" }}
+            >
               {(() => {
                 const AIX_INSPECT: Record<string, { inputs: string; process: string; data: string }> = {
                   "1件特にオススメする": {
@@ -8676,15 +8679,15 @@ export default function Home() {
                           className="flex flex-1 items-center gap-0 text-left active:bg-[#f5f6f7] transition-colors"
                         >
                           <span className="w-[4px] self-stretch flex-shrink-0 rounded-l-xl" style={{ background: item.color }} />
-                          <div className="px-4 py-5 flex-1">
+                          <div className="px-4 py-[18px] flex-1">
                             <div className="text-[15px] font-bold text-[#111b21] leading-snug">{item.label}</div>
-                            <div className="text-[11px] text-[#8696a0] leading-snug mt-1">{item.sub}</div>
+                            <div className="text-[12px] text-[#607d8b] leading-relaxed mt-1.5">{item.sub}</div>
                           </div>
                         </button>
                         {/* 確認ボタン（全アイテム共通） */}
                         <button
                           onClick={() => setAixInspectLabel(isOpen ? null : item.label)}
-                          className={`flex h-full items-center px-3 py-5 text-[11px] font-bold transition-colors ${isOpen ? "text-[#1565c0]" : "text-[#b0bec5]"}`}
+                          className={`flex h-full items-center px-3 py-[18px] text-[11px] font-bold transition-colors ${isOpen ? "text-[#1565c0]" : "text-[#b0bec5]"}`}
                         >
                           {isOpen ? "▲" : "確認"}
                         </button>
