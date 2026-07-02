@@ -39,7 +39,7 @@ interface AixModalProps {
   initialTemplateSample?: string;
   initialViewingSpecificMode?: boolean;
   initialIsNewArrival?: boolean;
-  initialPickupType?: "新規ピックアップ" | "追客ピックアップ" | "新着1件" | null;
+  initialPickupType?: "新規ピックアップ" | "継続ピックアップ" | "新着1件" | null;
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
   onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean }) => void;
@@ -885,7 +885,7 @@ export default function AixModal({
         }
         // 新着フラグ
         if (isNewArrival) body.is_new_arrival = true;
-        // ピックアップ種別（追客ピックアップの場合に追客向けプロンプトを使用）
+        // ピックアップ種別（継続ピックアップの場合に追客向けプロンプトを使用）
         if (initialPickupType && initialPickupType !== "新着1件") body.pickup_type = initialPickupType;
         // 自動抽出した退去予定日を注入（OCR誤読防止）
         if (propMoveOutDate) body.move_out_date = propMoveOutDate;
