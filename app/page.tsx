@@ -436,6 +436,8 @@ export default function Home() {
   const [aixInitEstimateMulti, setAixInitEstimateMulti] = useState(false);
   const [showApplicationPicker, setShowApplicationPicker] = useState(false);
   const [aixInitAppSubMode, setAixInitAppSubMode] = useState<"push" | "confirm" | null>(null);
+  const [showPropertyCheckPicker, setShowPropertyCheckPicker] = useState(false);
+  const [aixInitInputText, setAixInitInputText] = useState("");
   const [aixInitSendMode, setAixInitSendMode] = useState<"normal" | "new_arrival" | "widen" | null>(null);
   const [aixInitialSendImages, setAixInitialSendImages] = useState<File[]>([]);
   const [dismissedEstimateSheetIds, setDismissedEstimateSheetIds] = useState<Set<string>>(() => {
@@ -6575,6 +6577,7 @@ export default function Home() {
           initialPickupType={aixInitialPickupType}
           initialEstimateMulti={aixInitEstimateMulti}
           initialAppSubMode={aixInitAppSubMode}
+          initialInputText={aixInitInputText || undefined}
           onClose={() => {
             setAixModalType(null);
             setAixInitialFile(null);
@@ -6589,6 +6592,7 @@ export default function Home() {
             setAixInitialSendImages([]);
             setAixInitEstimateMulti(false);
             setAixInitAppSubMode(null);
+            setAixInitInputText("");
           }}
           onOpenTemplateFiltered={(search) => {
             setTemplateInitialSearch(search);
@@ -7948,6 +7952,81 @@ export default function Home() {
         </div>
       )}
 
+      {/* 管理会社に確認した 種類選択ピッカー */}
+      {showPropertyCheckPicker && (
+        <div
+          className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
+          onClick={() => setShowPropertyCheckPicker(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-5 flex justify-center">
+              <svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="36" cy="36" r="36" fill="#ECEFF1"/>
+                <rect x="22" y="20" width="28" height="32" rx="3" fill="#CFD8DC" stroke="#546E7A" strokeWidth="1.5"/>
+                <path d="M29 30h14M29 36h14M29 42h8" stroke="#546E7A" strokeWidth="1.5" strokeLinecap="round"/>
+                <circle cx="50" cy="22" r="9" fill="#546E7A"/>
+                <path d="M46 22l3 3 5-5" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+            <p className="mb-1 text-center text-[20px] font-bold text-[#111827]">管理会社に確認した</p>
+            <p className="mb-6 text-center text-[13px] leading-snug text-[#6B7280]">何について確認しましたか？</p>
+            <div className="flex flex-col gap-2.5">
+              {([
+                {
+                  key: "vacate_date",
+                  label: "退去予定日について",
+                  desc: "退去予定日を管理会社に確認した結果を報告",
+                  hint: "退去予定日：",
+                  icon: <><rect x="24" y="22" width="24" height="22" rx="3" stroke="#546E7A" strokeWidth="1.8"/><path d="M30 22v-4M42 22v-4M24 30h24" stroke="#546E7A" strokeWidth="1.8" strokeLinecap="round"/><path d="M30 38h12M36 34v4" stroke="#546E7A" strokeWidth="1.5" strokeLinecap="round"/></>
+                },
+                {
+                  key: "move_in_date",
+                  label: "入居日について",
+                  desc: "入居可能日・入居日を管理会社に確認した結果を報告",
+                  hint: "入居可能日：",
+                  icon: <><path d="M36 20L50 30V52H22V30L36 20Z" stroke="#546E7A" strokeWidth="1.8" strokeLinejoin="round"/><rect x="30" y="38" width="12" height="14" rx="1.5" fill="#ECEFF1" stroke="#546E7A" strokeWidth="1.5"/><path d="M36 38v14" stroke="#546E7A" strokeWidth="1.3" strokeLinecap="round"/></>
+                },
+                {
+                  key: "initial_cost",
+                  label: "初期費用について",
+                  desc: "初期費用・礼金・敷金などを管理会社に確認した結果",
+                  hint: "初期費用：",
+                  icon: <><circle cx="36" cy="36" r="14" stroke="#546E7A" strokeWidth="1.8"/><path d="M36 28v16M31 32h7.5a2.5 2.5 0 010 5H31m0 0h7.5a2.5 2.5 0 010 5H31" stroke="#546E7A" strokeWidth="1.5" strokeLinecap="round"/></>
+                },
+              ]).map(({ key, label, desc, hint, icon }) => (
+                <button
+                  key={key}
+                  onClick={() => {
+                    setShowPropertyCheckPicker(false);
+                    setAixInitInputText(hint);
+                    openAixDirect("property_check_result");
+                  }}
+                  className="flex items-center gap-3.5 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3.5 text-left transition active:bg-[#ECEFF1] active:border-[#546E7A]"
+                >
+                  <div className="shrink-0">
+                    <svg width="36" height="36" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <circle cx="36" cy="36" r="36" fill="#ECEFF1"/>
+                      {icon}
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                    <p className="text-[11px] text-[#9CA3AF]">{desc}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setShowPropertyCheckPicker(false)}
+              className="mt-4 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
+            >キャンセル</button>
+          </div>
+        </div>
+      )}
+
       {/* 送信確認ダイアログ */}
       {showSendConfirm && (
         <div
@@ -8350,7 +8429,7 @@ export default function Home() {
                   { color: "#9C27B0", label: "内覧へ！", sub: "カレンダーから日程を選択→AIで文生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setShowViewingPicker(true); } },
                   { color: "#00838F", label: "待ち合わせ", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); } },
                   { color: "#E53935", label: "申込へ！", sub: "物件名入力orシンプル送信→AI生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); setShowApplicationPicker(true); } },
-                  { color: "#78909C", label: "管理会社に確認した", sub: "空室・礼金・ペット可否など確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); } },
+                  { color: "#78909C", label: "管理会社に確認した", sub: "空室・礼金・ペット可否など確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); setShowPropertyCheckPicker(true); } },
                 ].map((item) => {
                   const info = AIX_INSPECT[item.label];
                   const isOpen = aixInspectLabel === item.label;

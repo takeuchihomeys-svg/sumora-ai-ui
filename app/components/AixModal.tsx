@@ -45,6 +45,7 @@ interface AixModalProps {
   initialPickupType?: "新規ピックアップ" | "継続ピックアップ" | "条件広げピックアップ" | "新着1件" | null;
   initialEstimateMulti?: boolean;
   initialAppSubMode?: "push" | "confirm" | null;
+  initialInputText?: string;
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
   onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean }) => void;
@@ -254,6 +255,7 @@ export default function AixModal({
   initialPickupType,
   initialEstimateMulti,
   initialAppSubMode,
+  initialInputText,
   onClose,
   onSend,
   onAfterSend,
@@ -281,7 +283,7 @@ export default function AixModal({
   const [conditionImagePreview, setConditionImagePreview] = useState<string>("");
   // 物件オススメ専用: 室内イメージURL（任意）
   const [propertyImageUrl, setPropertyImageUrl] = useState("");
-  const [inputText, setInputText] = useState("");
+  const [inputText, setInputText] = useState(initialInputText ?? "");
   // 物件オススメ専用: 特に強調するポイント（複数選択可）。テンプレートモーダルから引き継ぐ場合は initialFocusPoints で渡す
   const [recommendFocusPoints, setRecommendFocusPoints] = useState<string[]>(initialFocusPoints ?? []);
   const [recSimpleMode, setRecSimpleMode] = useState(false);
