@@ -38,6 +38,8 @@ interface AixModalProps {
   initialTemplateStructure?: Array<{ label: string; text: string }>;
   initialTemplateSample?: string;
   initialViewingSpecificMode?: boolean;
+  initialIsNewArrival?: boolean;
+  initialPickupType?: "新規ピックアップ" | "追客ピックアップ" | "新着1件" | null;
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
   onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean }) => void;
@@ -240,6 +242,8 @@ export default function AixModal({
   initialTemplateStructure,
   initialTemplateSample,
   initialViewingSpecificMode,
+  initialIsNewArrival,
+  initialPickupType,
   onClose,
   onSend,
   onAfterSend,
@@ -260,8 +264,8 @@ export default function AixModal({
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>("");
-  // 物件オススメ専用: 新着フラグ
-  const [isNewArrival, setIsNewArrival] = useState(false);
+  // 物件オススメ専用: 新着フラグ（ピッカーから新着1件が選ばれた場合は初期ON）
+  const [isNewArrival, setIsNewArrival] = useState(initialIsNewArrival ?? false);
   // 物件オススメ専用: お客さんの条件スクショ
   const [conditionImageFile, setConditionImageFile] = useState<File | null>(null);
   const [conditionImagePreview, setConditionImagePreview] = useState<string>("");
@@ -881,6 +885,8 @@ export default function AixModal({
         }
         // 新着フラグ
         if (isNewArrival) body.is_new_arrival = true;
+        // ピックアップ種別（追客ピックアップの場合に追客向けプロンプトを使用）
+        if (initialPickupType && initialPickupType !== "新着1件") body.pickup_type = initialPickupType;
         // 自動抽出した退去予定日を注入（OCR誤読防止）
         if (propMoveOutDate) body.move_out_date = propMoveOutDate;
       } else if (actionType === "property_send") {

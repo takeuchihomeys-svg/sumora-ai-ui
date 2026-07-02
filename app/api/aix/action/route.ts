@@ -396,7 +396,10 @@ ${SMORA_COMMON_RULES}`;
       const newArrivalNote = body.is_new_arrival
         ? `\n\n【🆕 新着物件 — 必ず守ること】この物件は新着物件です。物件名の直後の冒頭一文（「〜さんにかなりオススメ出来るお部屋となります！！」の前）に「新着でかなり条件のいいお部屋となります！！」を自然に盛り込むこと。`
         : "";
-      const userText = `お客様名は「${name}」です。「${name}さん」と完全な名前で使うこと（助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${extra_input ? `\n追加情報: ${extra_input}` : ""}${templateSampleNote}${templateStructureNote}${openingPointNote}${moveOutNote}${simpleModeNote}${skipConfirmationNote}${newArrivalNote}`;
+      const pickupTypeNote = body.pickup_type === "追客ピックアップ"
+        ? `\n\n【追客モード — 必ず守ること】このお客様には以前から物件を送っており、しばらく時間があいた追客連絡です。\n・冒頭の「[ポイント]、${name}さんにかなりオススメ出来るお部屋となります！！」の前に「お久しぶりです！引き続きお部屋探し頑張らせて頂いております！！」のような追客感のある一言を自然に入れること\n・「はじめまして」等の初回挨拶は絶対禁止\n・物件オススメ本文は通常通りでOK`
+        : "";
+      const userText = `お客様名は「${name}」です。「${name}さん」と完全な名前で使うこと（助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${extra_input ? `\n追加情報: ${extra_input}` : ""}${templateSampleNote}${templateStructureNote}${openingPointNote}${moveOutNote}${simpleModeNote}${skipConfirmationNote}${newArrivalNote}${pickupTypeNote}`;
 
       const content = [
         { type: "text", text: userText },

@@ -356,6 +356,10 @@ export default function Home() {
   const [showCondPanel, setShowCondPanel] = useState(false);
   const [aixInspectLabel, setAixInspectLabel] = useState<string | null>(null);
   const [activeAixFlow, setActiveAixFlow] = useState<string | null>(null);
+  const [showPropertyPicker, setShowPropertyPicker] = useState(false);
+  const [aixInitialIsNewArrival, setAixInitialIsNewArrival] = useState(false);
+  const [aixInitialPickupType, setAixInitialPickupType] = useState<"新規ピックアップ" | "追客ピックアップ" | "新着1件" | null>(null);
+  const propertyPickerOpenFnRef = useRef<"direct" | "withImage">("direct");
   const [showGroupFilter, setShowGroupFilter] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>(() => {
     try { return sessionStorage.getItem("statusFilter") || "all"; } catch { return "all"; }
@@ -3339,6 +3343,28 @@ export default function Home() {
     setAixModalType(type);
   };
 
+  // 物件オススメ専用ピッカー（新規/追客/新着1件を選択してからAIXを開く）
+  const openPropertyRecommendationPicker = (via: "direct" | "withImage") => {
+    propertyPickerOpenFnRef.current = via;
+    setAixInitialIsNewArrival(false);
+    setAixInitialPickupType(null);
+    setShowPropertyPicker(true);
+  };
+
+  const handlePropertyPickerSelect = (pickupType: "新規ピックアップ" | "追客ピックアップ" | "新着1件") => {
+    setShowPropertyPicker(false);
+    setAixInitialPickupType(pickupType);
+    setAixInitialIsNewArrival(pickupType === "新着1件");
+    setShowAixMenu(false);
+    setAixInspectLabel(null);
+    setActiveAixFlow("property_recommendation");
+    if (propertyPickerOpenFnRef.current === "withImage") {
+      openAixWithImagePicker("property_recommendation");
+    } else {
+      openAixDirect("property_recommendation");
+    }
+  };
+
   // 物件確認した：提案バーから「まだある/なかった」をワンタップで生成
   const handleQuickPropertyCheck = async (pattern: "available" | "unavailable") => {
     if (!selectedConversation) return;
@@ -4252,7 +4278,7 @@ export default function Home() {
                     <button
                       onClick={() => {
                         setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
-                        openAixDirect("property_recommendation");
+                        openPropertyRecommendationPicker("direct");
                       }}
                       className="shrink-0 rounded-full bg-[#0288d1] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
                     >物件オススメ</button>
@@ -4274,7 +4300,7 @@ export default function Home() {
                     <button
                       onClick={() => {
                         setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
-                        openAixDirect("property_recommendation");
+                        openPropertyRecommendationPicker("direct");
                       }}
                       className="shrink-0 rounded-full bg-[#0288d1] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
                     >物件オススメ</button>
@@ -5173,7 +5199,7 @@ export default function Home() {
               if (guideToNewListingRecommend && !dismissedNewListingIds.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-blue-500 bg-blue-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-blue-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>新着物件が見つかったら → AIX 物件オススメで即送る</span>
-                  <button onClick={() => { setDismissedNewListingIds((prev) => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_recommendation"); openAixWithImagePicker("property_recommendation"); }}
+                  <button onClick={() => { setDismissedNewListingIds((prev) => new Set([...prev, id])); openPropertyRecommendationPicker("withImage"); }}
                     className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
                     style={{ background: "linear-gradient(135deg, #1565C0, #1976D2)" }}>AIX 物件オススメ</button>
                   <button onClick={() => { setDismissedNewListingIds((prev) => { const n = new Set([...prev, id]); sessionStorage.setItem("dismissedNewListingIds", JSON.stringify([...n])); return n; }) }}
@@ -5225,7 +5251,7 @@ export default function Home() {
               if (suggestPropertyRecommendMap[id] && !dismissedPropertyRecommendIds.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-indigo-500 bg-indigo-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-indigo-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>次のアクション → AIX 物件オススメ で文案を送る</span>
-                  <button onClick={() => { setSuggestPropertyRecommendMap((prev) => { const n = { ...prev }; delete n[id]; return n; }); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_recommendation"); openAixWithImagePicker("property_recommendation"); }}
+                  <button onClick={() => { setSuggestPropertyRecommendMap((prev) => { const n = { ...prev }; delete n[id]; return n; }); openPropertyRecommendationPicker("withImage"); }}
                     className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
                     style={{ background: "linear-gradient(135deg, #4f46e5, #7c3aed)" }}>AIX 物件オススメ</button>
                   <button onClick={() => setDismissedPropertyRecommendIds((prev) => new Set([...prev, id]))}
@@ -6523,6 +6549,8 @@ export default function Home() {
           initialTemplateStructure={pendingTemplateStructure ?? undefined}
           initialTemplateSample={pendingTemplateSample ?? undefined}
           initialViewingSpecificMode={aixInitViewingSpecific}
+          initialIsNewArrival={aixInitialIsNewArrival}
+          initialPickupType={aixInitialPickupType}
           onClose={() => {
             setAixModalType(null);
             setAixInitialFile(null);
@@ -7529,6 +7557,47 @@ export default function Home() {
         </div>
       )}
 
+      {/* 物件オススメ 種類選択ピッカー */}
+      {showPropertyPicker && (
+        <div
+          className="fixed inset-0 z-[150] flex items-end justify-center bg-black/40"
+          onClick={() => setShowPropertyPicker(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-t-3xl bg-white px-4 pb-10 pt-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 text-center">
+              <p className="text-[16px] font-bold text-[#1a1a1a]">物件オススメ</p>
+              <p className="text-[12px] text-[#667781]">どの種類で送りますか？</p>
+            </div>
+            <div className="flex flex-col gap-2">
+              {([
+                { key: "新規ピックアップ", emoji: "🆕", desc: "新規のお客様への物件提案" },
+                { key: "追客ピックアップ",  emoji: "🔄", desc: "しばらく間があいたお客様への再提案" },
+                { key: "新着1件",           emoji: "⭐", desc: "新着物件として強調して送る" },
+              ] as const).map(({ key, emoji, desc }) => (
+                <button
+                  key={key}
+                  onClick={() => handlePropertyPickerSelect(key)}
+                  className="flex items-center gap-3 rounded-2xl border border-[#d1d7db] bg-white px-4 py-3 text-left active:bg-[#f0f2f5] transition"
+                >
+                  <span className="text-[22px]">{emoji}</span>
+                  <div>
+                    <p className="text-[13px] font-bold text-[#1a1a1a]">{key}</p>
+                    <p className="text-[11px] text-[#667781]">{desc}</p>
+                  </div>
+                </button>
+              ))}
+              <button
+                onClick={() => setShowPropertyPicker(false)}
+                className="mt-1 w-full rounded-2xl py-3 text-[13px] text-[#667781] active:opacity-60"
+              >キャンセル</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 送信確認ダイアログ */}
       {showSendConfirm && (
         <div
@@ -7908,7 +7977,7 @@ export default function Home() {
                 };
                 return [
                   { color: "#0288D1", label: "ヒアリング", sub: "条件フォーム①〜⑧をワンタップで送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("condition_hearing"); openAixDirect("condition_hearing"); } },
-                  { color: "#2196F3", label: "物件オススメ", sub: "おすすめ物件をAIが提案", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_recommendation"); openAixWithImagePicker("property_recommendation"); } },
+                  { color: "#2196F3", label: "物件オススメ", sub: "おすすめ物件をAIが提案", action: () => { openPropertyRecommendationPicker("withImage"); } },
                   { color: "#00897B", label: "物件送る", sub: "ピックアップした物件を送る・退去予定も自動案内", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); openAixDirect("property_send"); } },
                   { color: "#4CAF50", label: "物件確認した", sub: "確認結果を3パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); } },
                   { color: "#FF9800", label: "見積書送る", sub: "費用の見積書を作成", action: () => {
