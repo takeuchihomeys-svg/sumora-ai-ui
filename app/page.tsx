@@ -433,6 +433,7 @@ export default function Home() {
   const [showViewingPicker, setShowViewingPicker] = useState(false);
   const [showPropertySendPicker, setShowPropertySendPicker] = useState(false);
   const [aixInitSendMode, setAixInitSendMode] = useState<"normal" | "new_arrival" | "widen" | null>(null);
+  const [aixInitialSendImages, setAixInitialSendImages] = useState<File[]>([]);
   const [dismissedEstimateSheetIds, setDismissedEstimateSheetIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedEstimateSheetIds") || "[]") as string[]); } catch { return new Set(); }
   });
@@ -584,6 +585,7 @@ export default function Home() {
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const aixFileInputRef = useRef<HTMLInputElement | null>(null);
+  const aixMultiFileInputRef = useRef<HTMLInputElement | null>(null);
   const accountLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingAixTypeRef = useRef<AixActionType | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -3467,6 +3469,14 @@ export default function Home() {
     if (aixFileInputRef.current) aixFileInputRef.current.value = "";
   };
 
+  const onAixMultiImagesSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    setAixInitialSendImages(files);
+    setAixModalType("property_send");
+    if (aixMultiFileInputRef.current) aixMultiFileInputRef.current.value = "";
+  };
+
   const handleTouchStart = (e: React.TouchEvent) => {
     if (listRef.current && listRef.current.scrollTop === 0) {
       setPullStartY(e.touches[0].clientY);
@@ -5078,6 +5088,7 @@ export default function Home() {
 
               <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={onSelectImage} className="hidden" />
               <input ref={aixFileInputRef} type="file" accept="image/*" onChange={onAixImageSelected} className="hidden" />
+              <input ref={aixMultiFileInputRef} type="file" accept="image/*" multiple onChange={onAixMultiImagesSelected} className="hidden" />
             </div>
 
             {/* ===== アクション誘導バナー（優先度制御：1つだけ表示） — 入力中キーボード表示時は非表示 ===== */}
@@ -6553,6 +6564,7 @@ export default function Home() {
           initialTemplateStructure={pendingTemplateStructure ?? undefined}
           initialTemplateSample={pendingTemplateSample ?? undefined}
           initialSendMode={aixInitSendMode}
+          initialSendImages={aixInitialSendImages.length > 0 ? aixInitialSendImages : undefined}
           initialViewingSpecificMode={aixInitViewingSpecific}
           initialViewingVacancy={aixInitViewingVacancy}
           initialIsNewArrival={aixInitialIsNewArrival}
@@ -6568,6 +6580,7 @@ export default function Home() {
             setAixInitViewingSpecific(false);
             setAixInitViewingVacancy(false);
             setAixInitSendMode(null);
+            setAixInitialSendImages([]);
           }}
           onOpenTemplateFiltered={(search) => {
             setTemplateInitialSearch(search);
@@ -7764,7 +7777,8 @@ export default function Home() {
                   onClick={() => {
                     setShowPropertySendPicker(false);
                     setAixInitSendMode(key);
-                    openAixWithImagePicker("property_send");
+                    setAixInitialSendImages([]);
+                    aixMultiFileInputRef.current?.click();
                   }}
                   className="flex items-center gap-3.5 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3.5 text-left transition active:bg-[#E8F5E9] active:border-[#2E7D32]"
                 >

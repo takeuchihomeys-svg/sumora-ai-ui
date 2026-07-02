@@ -38,6 +38,7 @@ interface AixModalProps {
   initialTemplateStructure?: Array<{ label: string; text: string }>;
   initialTemplateSample?: string;
   initialSendMode?: "normal" | "new_arrival" | "widen" | null;
+  initialSendImages?: File[];
   initialViewingSpecificMode?: boolean;
   initialViewingVacancy?: boolean;
   initialIsNewArrival?: boolean;
@@ -244,6 +245,7 @@ export default function AixModal({
   initialTemplateStructure,
   initialTemplateSample,
   initialSendMode,
+  initialSendImages,
   initialViewingSpecificMode,
   initialViewingVacancy,
   initialIsNewArrival,
@@ -336,7 +338,7 @@ export default function AixModal({
   }>>([]);
   const [checkCalendarLoading, setCheckCalendarLoading] = useState(false);
   // 物件送る専用: 複数画像 + 退去予定メモ + カレンダー自動取得
-  const [sendImageFiles, setSendImageFiles] = useState<File[]>([]);
+  const [sendImageFiles, setSendImageFiles] = useState<File[]>(initialSendImages ?? []);
   const [sendImagePreviews, setSendImagePreviews] = useState<string[]>([]);
   const [vacatingNote, setVacatingNote] = useState("");
   const [sendKeyword, setSendKeyword] = useState("");
@@ -437,6 +439,16 @@ export default function AixModal({
       reader.onload = () => setImagePreview(String(reader.result ?? ""));
       reader.readAsDataURL(initialImageFile);
     }
+  }, []);
+
+  useEffect(() => {
+    if (!initialSendImages || initialSendImages.length === 0) return;
+    const readPromises = initialSendImages.map(file => new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result ?? ""));
+      reader.readAsDataURL(file);
+    }));
+    Promise.all(readPromises).then(urls => setSendImagePreviews(urls));
   }, []);
 
   // 物件確認した「空室あり」: 直近3日のカレンダーを取得して内覧日程をアナウンス
