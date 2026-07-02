@@ -429,6 +429,8 @@ export default function Home() {
   });
   const [dismissedViewingSpecificIds, setDismissedViewingSpecificIds] = useState<Set<string>>(new Set());
   const [aixInitViewingSpecific, setAixInitViewingSpecific] = useState(false);
+  const [aixInitViewingVacancy, setAixInitViewingVacancy] = useState(false);
+  const [showViewingPicker, setShowViewingPicker] = useState(false);
   const [dismissedEstimateSheetIds, setDismissedEstimateSheetIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedEstimateSheetIds") || "[]") as string[]); } catch { return new Set(); }
   });
@@ -6549,6 +6551,7 @@ export default function Home() {
           initialTemplateStructure={pendingTemplateStructure ?? undefined}
           initialTemplateSample={pendingTemplateSample ?? undefined}
           initialViewingSpecificMode={aixInitViewingSpecific}
+          initialViewingVacancy={aixInitViewingVacancy}
           initialIsNewArrival={aixInitialIsNewArrival}
           initialPickupType={aixInitialPickupType}
           onClose={() => {
@@ -6560,6 +6563,7 @@ export default function Home() {
             setPendingTemplateSource(null);
             setDetectedVacatingDate(null);
             setAixInitViewingSpecific(false);
+            setAixInitViewingVacancy(false);
           }}
           onOpenTemplateFiltered={(search) => {
             setTemplateInitialSearch(search);
@@ -7618,6 +7622,92 @@ export default function Home() {
         </div>
       )}
 
+      {/* 内覧へ！種類選択ピッカー */}
+      {showViewingPicker && (
+        <div
+          className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
+          onClick={() => setShowViewingPicker(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* イラスト */}
+            <div className="mb-5 flex justify-center">
+              <svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="36" cy="36" r="36" fill="#F3E8FF"/>
+                <path d="M36 18L50 28V52H22V28L36 18Z" fill="#E9D5FF" stroke="#9333EA" strokeWidth="1.5" strokeLinejoin="round"/>
+                <rect x="30" y="38" width="12" height="14" rx="1.5" fill="#9333EA"/>
+                <rect x="32" y="40" width="3" height="3" rx="0.5" fill="white"/>
+                <rect x="37" y="40" width="3" height="3" rx="0.5" fill="white"/>
+                <circle cx="50" cy="24" r="8" fill="#9333EA"/>
+                <path d="M47 24h6M50 21v6" stroke="white" strokeWidth="1.8" strokeLinecap="round"/>
+              </svg>
+            </div>
+            {/* タイトル */}
+            <p className="mb-1 text-center text-[20px] font-bold text-[#111827]">内覧へ！</p>
+            <p className="mb-6 text-center text-[13px] leading-snug text-[#6B7280]">どの種類で日程調整しますか？</p>
+            {/* 選択肢 */}
+            <div className="flex flex-col gap-2.5">
+              {([
+                {
+                  key: "通常" as const,
+                  label: "内覧へ！",
+                  desc: "カレンダーから日程を選択してAI生成",
+                  icon: <><rect x="24" y="22" width="24" height="22" rx="3" stroke="#9333EA" strokeWidth="1.8"/><path d="M30 22v-4M42 22v-4M24 30h24" stroke="#9333EA" strokeWidth="1.8" strokeLinecap="round"/><path d="M29 38h4M39 38h4M29 44h4" stroke="#9333EA" strokeWidth="1.5" strokeLinecap="round"/></>
+                },
+                {
+                  key: "退去予定物件" as const,
+                  label: "退去予定物件",
+                  desc: "退去予定物件として物件名・退去日を入力",
+                  icon: <><path d="M36 20L50 30V52H22V30L36 20Z" stroke="#9333EA" strokeWidth="1.8" strokeLinejoin="round"/><path d="M30 44v-8h12v8" stroke="#9333EA" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/><path d="M26 30l10-7 10 7" stroke="#9333EA" strokeWidth="1.5" strokeLinecap="round"/><circle cx="36" cy="25" r="3" fill="#E9D5FF" stroke="#9333EA" strokeWidth="1.5"/></>
+                },
+                {
+                  key: "内覧日指定あり" as const,
+                  label: "内覧日指定あり",
+                  desc: "お客様から届いた日付で時間を調整",
+                  icon: <><rect x="24" y="22" width="24" height="22" rx="3" stroke="#9333EA" strokeWidth="1.8"/><path d="M30 22v-4M42 22v-4M24 30h24" stroke="#9333EA" strokeWidth="1.8" strokeLinecap="round"/><path d="M30 38l4 4 8-8" stroke="#9333EA" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></>
+                },
+              ]).map(({ key, label, desc, icon }) => (
+                <button
+                  key={key}
+                  onClick={() => {
+                    setShowViewingPicker(false);
+                    if (key === "退去予定物件") {
+                      setAixInitViewingVacancy(true);
+                      setAixInitViewingSpecific(false);
+                    } else if (key === "内覧日指定あり") {
+                      setAixInitViewingSpecific(true);
+                      setAixInitViewingVacancy(false);
+                    } else {
+                      setAixInitViewingVacancy(false);
+                      setAixInitViewingSpecific(false);
+                    }
+                    openAixDirect("viewing_invite");
+                  }}
+                  className="flex items-center gap-3.5 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3.5 text-left transition active:bg-[#F3E8FF] active:border-[#9333EA]"
+                >
+                  <div className="shrink-0">
+                    <svg width="36" height="36" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <circle cx="36" cy="36" r="36" fill="#F3E8FF"/>
+                      {icon}
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                    <p className="text-[11px] text-[#9CA3AF]">{desc}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setShowViewingPicker(false)}
+              className="mt-4 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
+            >キャンセル</button>
+          </div>
+        </div>
+      )}
+
       {/* 送信確認ダイアログ */}
       {showSendConfirm && (
         <div
@@ -8017,7 +8107,7 @@ export default function Home() {
                     }
                     openAixWithImagePicker("estimate_sheet");
                   } },
-                  { color: "#9C27B0", label: "内覧へ！", sub: "カレンダーから日程を選択→AIで文生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); openAixDirect("viewing_invite"); } },
+                  { color: "#9C27B0", label: "内覧へ！", sub: "カレンダーから日程を選択→AIで文生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setShowViewingPicker(true); } },
                   { color: "#00838F", label: "待ち合わせ", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixDirect("meeting_place"); } },
                   { color: "#E53935", label: "申込へ！", sub: "物件名入力orシンプル送信→AI生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); openAixDirect("application_push"); } },
                 ].map((item) => {

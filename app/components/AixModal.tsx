@@ -38,6 +38,7 @@ interface AixModalProps {
   initialTemplateStructure?: Array<{ label: string; text: string }>;
   initialTemplateSample?: string;
   initialViewingSpecificMode?: boolean;
+  initialViewingVacancy?: boolean;
   initialIsNewArrival?: boolean;
   initialPickupType?: "新規ピックアップ" | "継続ピックアップ" | "新着1件" | null;
   onClose: () => void;
@@ -242,6 +243,7 @@ export default function AixModal({
   initialTemplateStructure,
   initialTemplateSample,
   initialViewingSpecificMode,
+  initialViewingVacancy,
   initialIsNewArrival,
   initialPickupType,
   onClose,
@@ -380,7 +382,7 @@ export default function AixModal({
   const [meetingOcrLoading, setMeetingOcrLoading] = useState(false);
 
   // 内覧へ！退去予定物件専用
-  const [viewingIsVacancy, setViewingIsVacancy] = useState(false);
+  const [viewingIsVacancy, setViewingIsVacancy] = useState(!!initialViewingVacancy);
   const [viewingVacancyName, setViewingVacancyName] = useState("");
   const [viewingVacancyMoveOut, setViewingVacancyMoveOut] = useState("");
   const [viewingVacancyFile, setViewingVacancyFile] = useState<File | null>(null);
