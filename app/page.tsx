@@ -5031,10 +5031,20 @@ export default function Home() {
                     }
                   }}
                   disabled={!selectedConversation?.id || generating || splitLoading}
-                  className="flex h-8 items-center gap-1 rounded-full border border-[#c8b8ff] bg-gradient-to-r from-[#ede7ff] to-[#e3f0ff] px-3 text-xs font-bold text-[#6c3fc7] shadow-sm active:scale-95 transition-transform duration-75 disabled:opacity-40"
+                  className="flex h-8 w-9 shrink-0 flex-col overflow-hidden rounded-lg border border-[#b8e4f9] shadow-sm active:scale-95 transition-transform duration-75 disabled:opacity-40"
                   title={replyDraft.trim() ? "文加工 / 2通に分ける" : "キーワード・状況を指定してAI生成"}
                 >
-                  {(generating && replyDraft.trim()) || splitLoading ? "…" : "✨"}
+                  {(generating && replyDraft.trim()) || splitLoading ? (
+                    <div className="flex h-full w-full items-center justify-center bg-[#29B6F6]">
+                      <span className="text-[10px] font-bold text-white">…</span>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex-1 w-full bg-[#29B6F6]" />
+                      <div className="h-px w-full bg-[#b8e4f9]" />
+                      <div className="flex-1 w-full bg-[#E8F6FD]" />
+                    </>
+                  )}
                 </button>
               </div>
 
