@@ -495,11 +495,13 @@ ${SMORA_COMMON_RULES}`;
       const calendarData = body.calendar_info ? String(body.calendar_info) : null;
       const vacatingInfo = vacating_note ? String(vacating_note) : null;
       const customerSummary = body.customer_summary as string | undefined;
-      const sendMode: "viewing" | "application" | "new_arrival" | "simple" | "short" =
+      const sendMode: "viewing" | "application" | "new_arrival" | "simple" | "short" | "normal" | "widen" =
         body.send_mode === "application" ? "application"
         : body.send_mode === "viewing" ? "viewing"
         : body.send_mode === "new_arrival" ? "new_arrival"
         : body.send_mode === "short" ? "short"
+        : body.send_mode === "normal" ? "normal"
+        : body.send_mode === "widen" ? "widen"
         : "simple";
 
       const summaryNote = customerSummary
@@ -532,6 +534,8 @@ ${SMORA_COMMON_RULES}`;
         "礼金": "物件に限り御座いましたので礼金がある物件を含めてピックアップさせて頂きました！！",
         "家賃": "物件に限り御座いましたので少し家賃を広げてピックアップさせて頂きました！！",
         "築年数": "物件に限り御座いましたので築年数を少し広げてピックアップさせて頂きました！！",
+        "地域": "物件に限り御座いましたので少しエリアを広げてピックアップさせて頂きました！！",
+        "初期費用": "物件に限り御座いましたので初期費用が少し高めになってしまう物件も含めてピックアップさせて頂きました！！",
       };
       const expandedConditions = Array.isArray(body.expanded_conditions) ? (body.expanded_conditions as string[]) : [];
       const expandedCondNote = expandedConditions.length > 0

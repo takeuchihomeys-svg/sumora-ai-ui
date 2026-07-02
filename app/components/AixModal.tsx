@@ -200,7 +200,7 @@ const CONFIG: Record<
     description: "見積書の画像をAIが読み取り、初期費用の内訳をLINEで送ります。",
   },
   property_send: {
-    title: "物件送る",
+    title: "物件ピックアップ",
     emoji: "📤",
     requiresImage: false,
     imageLabel: "",
@@ -352,8 +352,8 @@ export default function AixModal({
     label: string; slots: string[]; fullyBooked: boolean; noEvents: boolean;
   }>>([]);
   const [calendarLoading, setCalendarLoading] = useState(false);
-  // 物件送る専用: 新着物件 / 内覧誘導 / 申込み誘導 モード + 編集可能スロット（未選択 = null）
-  const [sendMode, setSendMode] = useState<"viewing" | "application" | "new_arrival" | "short" | null>(null);
+  // 物件ピックアップ専用: 新規物件 / 新着物件 / 条件を広げた モード
+  const [sendMode, setSendMode] = useState<"normal" | "new_arrival" | "widen" | null>(null);
   const [newArrivalApply, setNewArrivalApply] = useState(false);
   const [editableCalendarSlots, setEditableCalendarSlots] = useState<string[]>([]);
   const [includeCalendar, setIncludeCalendar] = useState(true);
@@ -899,7 +899,7 @@ export default function AixModal({
         if (vacatingNote.trim()) body.vacating_note = vacatingNote.trim();
         body.send_mode = sendMode;
         if (sendMode === "new_arrival" && newArrivalApply) body.new_arrival_apply = true;
-        if (sendMode === "viewing" && includeCalendar) {
+        if (false && includeCalendar) {
           const finalCalendarInfo = calendarDays
             .map((d, i) => {
               if (d.fullyBooked) return "";
@@ -1632,16 +1632,36 @@ export default function AixModal({
               {/* モード選択 */}
               <div>
                 <p className="mb-1.5 text-xs font-bold text-[#54656f]">送るモードを選択</p>
-                <div className="flex gap-2 mb-2">
+                <div className="flex flex-col gap-2 mb-2">
+                  <button
+                    onClick={() => { setSendMode(sendMode === "normal" ? null : "normal"); setPreview(""); }}
+                    className={`w-full rounded-full py-2.5 text-sm font-bold transition-all ${
+                      sendMode === "normal"
+                        ? "bg-[#1565C0] text-white shadow-sm"
+                        : "border border-[#d1d7db] bg-white text-[#54656f]"
+                    }`}
+                  >
+                    新規物件
+                  </button>
                   <button
                     onClick={() => { setSendMode(sendMode === "new_arrival" ? null : "new_arrival"); setPreview(""); }}
-                    className={`flex-1 rounded-full py-2.5 text-sm font-bold transition-all ${
+                    className={`w-full rounded-full py-2.5 text-sm font-bold transition-all ${
                       sendMode === "new_arrival"
                         ? "bg-[#FF6F00] text-white shadow-sm"
                         : "border border-[#d1d7db] bg-white text-[#54656f]"
                     }`}
                   >
                     新着物件
+                  </button>
+                  <button
+                    onClick={() => { setSendMode(sendMode === "widen" ? null : "widen"); setPreview(""); if (sendMode !== "widen") setSendExpandedConds(new Set()); }}
+                    className={`w-full rounded-full py-2.5 text-sm font-bold transition-all ${
+                      sendMode === "widen"
+                        ? "bg-[#F57C00] text-white shadow-sm"
+                        : "border border-[#d1d7db] bg-white text-[#54656f]"
+                    }`}
+                  >
+                    条件を広げた
                   </button>
                   {sendMode === "new_arrival" && (
                     <button
@@ -1656,41 +1676,31 @@ export default function AixModal({
                     </button>
                   )}
                 </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => { setSendMode(sendMode === "short" ? null : "short"); setPreview(""); }}
-                    className={`flex-1 rounded-full py-2.5 text-sm font-bold transition-all ${
-                      sendMode === "short"
-                        ? "bg-[#607d8b] text-white shadow-sm"
-                        : "border border-[#d1d7db] bg-white text-[#54656f]"
-                    }`}
-                  >
-                    シンプル
-                  </button>
-                  <button
-                    onClick={() => { setSendMode(sendMode === "viewing" ? null : "viewing"); setPreview(""); }}
-                    className={`flex-1 rounded-full py-2.5 text-sm font-bold transition-all ${
-                      sendMode === "viewing"
-                        ? "bg-[#2196F3] text-white shadow-sm"
-                        : "border border-[#d1d7db] bg-white text-[#54656f]"
-                    }`}
-                  >
-                    内覧誘導
-                  </button>
-                  <button
-                    onClick={() => { setSendMode(sendMode === "application" ? null : "application"); setPreview(""); }}
-                    className={`flex-1 rounded-full py-2.5 text-sm font-bold transition-all ${
-                      sendMode === "application"
-                        ? "bg-[#06c755] text-white shadow-sm"
-                        : "border border-[#d1d7db] bg-white text-[#54656f]"
-                    }`}
-                  >
-                    申込み誘導
-                  </button>
-                </div>
               </div>
-              {/* カレンダー自動取得（内覧誘導時のみ） */}
-              {sendMode === "viewing" && (
+              {/* 条件を広げたモード: チップを直接表示 */}
+              {sendMode === "widen" && (
+                <div className="flex flex-wrap gap-2">
+                  {(["家賃", "礼金", "築年数", "地域", "初期費用"] as const).map((cond) => {
+                    const selected = sendExpandedConds.has(cond);
+                    return (
+                      <button
+                        key={cond}
+                        onClick={() => {
+                          setSendExpandedConds(prev => {
+                            const next = new Set(prev);
+                            if (next.has(cond)) next.delete(cond); else next.add(cond);
+                            return next;
+                          });
+                          setPreview("");
+                        }}
+                        className={`rounded-full border px-4 py-1.5 text-[13px] font-bold transition-colors ${selected ? "border-orange-500 bg-orange-500 text-white" : "border-[#d1d7db] bg-white text-[#555]"}`}
+                      >{cond}</button>
+                    );
+                  })}
+                </div>
+              )}
+              {/* カレンダー自動取得（削除済み: 旧内覧誘導モード用） */}
+              {false && (
                 <div>
                   <div className="mb-1 flex items-center justify-between">
                     <p className="text-xs font-bold text-[#54656f]">📅 内覧可能な時間帯（自動計算）</p>
@@ -1748,7 +1758,7 @@ export default function AixModal({
                   ) : null}
                   <p className="mt-1 text-[10px] text-[#8696a0]">calendar_events＋screening予定を合算・AIが自動アナウンスします</p>
                 </div>
-              )}
+              ) /* end false */}
               {/* 退去予定・案内できない物件 */}
               <div>
                 <div className="mb-2 flex items-center justify-between">
@@ -1833,45 +1843,6 @@ export default function AixModal({
                 {/* 退去確認前は何も表示しない（押したら1枚ずつ順番に読み取り結果が表示される） */}
                 {vacatingProperties.length === 0 && !vacatingCheckLoading && (
                   <p className="text-[11px] text-[#b0bec5]">退去確認ボタンを押すと画像を1枚ずつ読み取ります</p>
-                )}
-              </div>
-              {/* 条件を広げた */}
-              <div>
-                <button
-                  onClick={() => setShowExpandedCond(v => !v)}
-                  className={`flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-[13px] font-bold transition-colors ${sendExpandedConds.size > 0 ? "border-orange-400 bg-orange-50 text-orange-700" : "border-[#d1d7db] bg-white text-[#444]"}`}
-                >
-                  <span className="flex items-center gap-2">
-                    条件を広げた
-                    {sendExpandedConds.size > 0 && (
-                      <span className="rounded-full bg-orange-500 px-2 py-0.5 text-[10px] font-bold text-white">{Array.from(sendExpandedConds).join("・")}</span>
-                    )}
-                  </span>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-                    className={`transition-transform duration-200 ${showExpandedCond ? "rotate-180" : ""}`}>
-                    <polyline points="6 9 12 15 18 9" />
-                  </svg>
-                </button>
-                {showExpandedCond && (
-                  <div className="mt-2 flex gap-2">
-                    {(["家賃", "礼金", "築年数"] as const).map((cond) => {
-                      const selected = sendExpandedConds.has(cond);
-                      return (
-                        <button
-                          key={cond}
-                          onClick={() => {
-                            setSendExpandedConds(prev => {
-                              const next = new Set(prev);
-                              if (next.has(cond)) next.delete(cond); else next.add(cond);
-                              return next;
-                            });
-                            setPreview("");
-                          }}
-                          className={`rounded-full border px-4 py-1.5 text-[13px] font-bold transition-colors ${selected ? "border-orange-500 bg-orange-500 text-white" : "border-[#d1d7db] bg-white text-[#555]"}`}
-                        >{cond}</button>
-                      );
-                    })}
-                  </div>
                 )}
               </div>
 

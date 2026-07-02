@@ -4211,7 +4211,7 @@ export default function Home() {
             const nextSugg = nextActionMap[selectedConversation.id];
             if (!nextSugg?.action || dismissedNextActionIds.has(selectedConversation.id)) return null;
             const AIX_CHAT_LABEL: Record<string, string> = {
-              property_send: "物件送る",
+              property_send: "物件ピックアップ",
               viewing_invite: "内覧へ！",
               application_push: "申込へ！",
               estimate_sheet: "見積書送る",
@@ -5330,7 +5330,7 @@ export default function Home() {
               const nextSugg = nextActionMap[id];
               if (nextSugg && !dismissedNextActionIds.has(id)) {
                 const AIX_ACTION_LABEL: Record<string, string> = {
-                  property_send: "物件送る",
+                  property_send: "物件ピックアップ",
                   viewing_invite: "内覧へ！",
                   application_push: "申込へ！",
                   estimate_sheet: "見積書送る",
@@ -7149,7 +7149,7 @@ export default function Home() {
             <div className="flex gap-1.5 px-4 py-2.5 overflow-x-auto shrink-0 border-b border-[#f0f2f5]" style={{ scrollbarWidth: "none" }}>
               {[
                 { key: "all", label: "すべて" },
-                { key: "property_send", label: "物件送る" },
+                { key: "property_send", label: "物件ピックアップ" },
                 { key: "viewing_invite", label: "内覧へ！" },
                 { key: "application_push", label: "申込へ！" },
                 { key: "meeting_place", label: "待ち合わせ" },
@@ -7183,7 +7183,7 @@ export default function Home() {
                   property_recommendation: "bg-teal-100 text-teal-700",
                 };
                 const ACTION_LABEL: Record<string, string> = {
-                  property_send: "物件送る",
+                  property_send: "物件ピックアップ",
                   viewing_invite: "内覧へ！",
                   application_push: "申込へ！",
                   meeting_place: "待ち合わせ",
