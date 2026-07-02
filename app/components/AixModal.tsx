@@ -376,7 +376,8 @@ export default function AixModal({
   const [viewingSlotOverride, setViewingSlotOverride] = useState<boolean[]>([]); // 案内不可日を手動で追加
   // 申込へ！専用: 物件名 + 空室状況 + 退去予定日
   const [appPropertyName, setAppPropertyName] = useState("");
-  const [appVacancyStatus, setAppVacancyStatus] = useState<"vacant" | "scheduled" | null>(null);
+  const [appPushType, setAppPushType] = useState<"simple" | "scheduled" | "hold_view" | null>(null);
+  const [appAppealPoints, setAppAppealPoints] = useState<string[]>([]);
   const [appMoveOutDate, setAppMoveOutDate] = useState("");
   const [appSubMode, setAppSubMode] = useState<"push" | "confirm" | null>(initialAppSubMode ?? null);
   // 物件オススメ専用: analyze-propertyで自動抽出した退去予定日
@@ -580,11 +581,16 @@ export default function AixModal({
   useEffect(() => {
     if (!viewingSpecificMode || !recentMessages) return;
     if (viewingSpecificDate) return; // 既に入力済みならスキップ
-    // お客様メッセージから日付を逆順に探す
+    // お客様メッセージから日付を逆順に探す（「7月5日」「7/5」「7/5(土)」形式に対応）
     const customerMsgs = [...recentMessages].filter(m => m.sender === "customer" && m.text).reverse();
     for (const msg of customerMsgs) {
-      const m = (msg.text || "").match(/(\d{1,2})月(\d{1,2})日/);
-      if (m) { setViewingSpecificDate(`${m[1]}月${m[2]}日`); break; }
+      const text = msg.text || "";
+      // 「7月5日」形式
+      const m1 = text.match(/(\d{1,2})月(\d{1,2})日?/);
+      if (m1) { setViewingSpecificDate(`${m1[1]}月${m1[2]}日`); break; }
+      // 「7/5」「7/5(土)」形式
+      const m2 = text.match(/(\d{1,2})\/(\d{1,2})/);
+      if (m2) { setViewingSpecificDate(`${m2[1]}月${m2[2]}日`); break; }
     }
     // カレンダーから時間をプリセット（最初の有効スロット）
     const firstSlot = viewingCalendarDays.find((d, i) => d.fullyBooked ? viewingSlotOverride[i] : viewingSlotEnabled[i]);
@@ -985,8 +991,10 @@ export default function AixModal({
         if (lastMessageAt) body.last_message_at = lastMessageAt;
         if (sendExpandedConds.size > 0) body.expanded_conditions = Array.from(sendExpandedConds);
       } else if (actionType === "application_push") {
-        if (!appVacancyStatus) throw new Error("空室状況を選択してください");
-        body.vacancy_status = appVacancyStatus;
+        if (!appPushType) throw new Error("申込パターンを選択してください");
+        body.vacancy_status = appPushType === "scheduled" ? "scheduled" : "vacant";
+        body.app_push_type = appPushType;
+        if (appAppealPoints.length > 0) body.appeal_points = appAppealPoints;
         if (appMoveOutDate.trim()) body.move_out_date = appMoveOutDate.trim();
         if (appPropertyName.trim()) body.property_name = appPropertyName.trim();
         // 直近スタッフメッセージから見積書送信済みを自動検出
@@ -1080,7 +1088,7 @@ export default function AixModal({
         const s = viewingSpecificStart.trim();
         const e = viewingSpecificEnd.trim();
         const timeText = s && e ? `${s}〜${e}` : s || "";
-        const msg = `はい！！\n${viewingSpecificDate.trim()}ですと${timeText}ご内覧可能です！！\n${customerName}さんご都合如何でしょうか😌！！`;
+        const msg = `はい😊！！\n${viewingSpecificDate.trim()}ですと${timeText}ご内覧可能です！！\n${customerName}さんご都合如何でしょうか😌！！`;
         setAiDraft(msg);
         setPreview(useEmoji ? msg : stripEmoji(msg));
         setLoading(false);
@@ -1092,16 +1100,27 @@ export default function AixModal({
         if (!viewingVacancyName.trim()) throw new Error("物件名を入力してください");
         if (!viewingVacancyMoveOut.trim()) throw new Error("退去予定日を入力してください");
 
-        // 退去翌日を計算（◯月◯日 形式）
+        // 月日から近傍の日付を解決（半年以上過去なら翌年とみなす＝年跨ぎ対応）
+        const resolveNearDate = (month: number, day: number): Date => {
+          const now = new Date();
+          const d = new Date(now.getFullYear(), month - 1, day);
+          if (d.getTime() < now.getTime() - 1000 * 60 * 60 * 24 * 180) {
+            return new Date(now.getFullYear() + 1, month - 1, day);
+          }
+          return d;
+        };
+
+        // 退去翌日を計算（◯月◯日 形式）※「7月20」（日なし）にも対応
         const moveOutText = viewingVacancyMoveOut.trim();
         let viewingFromText = "";
-        const jpMatch = moveOutText.match(/(\d{1,2})月(\d{1,2})日/);
+        let viewingFromDate: Date | null = null;
+        const jpMatch = moveOutText.match(/(\d{1,2})月(\d{1,2})日?/);
         if (jpMatch) {
-          const d = new Date(new Date().getFullYear(), parseInt(jpMatch[1]) - 1, parseInt(jpMatch[2]) + 1);
-          viewingFromText = `${d.getMonth() + 1}月${d.getDate()}日`;
+          viewingFromDate = resolveNearDate(parseInt(jpMatch[1]), parseInt(jpMatch[2]) + 1);
+          viewingFromText = `${viewingFromDate.getMonth() + 1}月${viewingFromDate.getDate()}日`;
         }
 
-        // カレンダースロット取得
+        // カレンダースロット取得（退去翌日より前の日付は除外）
         const selectedSlots = viewingCalendarDays
           .map((d, i) => {
             const isEnabled = d.fullyBooked ? viewingSlotOverride[i] : viewingSlotEnabled[i];
@@ -1109,16 +1128,24 @@ export default function AixModal({
             const start = viewingSlotStarts[i] || "";
             const end = viewingSlotEnds[i] || "";
             if (!start) return "";
+            // 退去前の日付スロットを除外（label例: "7/3(金)" / "明日 7/3(金)"）
+            if (viewingFromDate) {
+              const slotMatch = d.label.match(/(\d{1,2})\/(\d{1,2})/);
+              if (slotMatch) {
+                const slotDate = resolveNearDate(parseInt(slotMatch[1]), parseInt(slotMatch[2]));
+                if (slotDate.getTime() < viewingFromDate.getTime()) return "";
+              }
+            }
             return `${d.label} ${start}${end ? "〜" + end : ""}`;
           })
           .filter(Boolean);
 
-        const fromLine = viewingFromText ? `${viewingFromText}以降ご内覧できます！！` : "退去後よりご内覧できます！！";
-        let msg = `${viewingVacancyName.trim()} ${moveOutText}退去予定のお部屋となりますので\n${fromLine}\n${customerName}さん`;
+        const fromPhrase = viewingFromText ? `${viewingFromText}以降` : "退去後";
+        let msg: string;
         if (selectedSlots.length > 0) {
-          msg += `直近ですと\n${selectedSlots.join("\n")}\nご都合如何でしょうか！！`;
+          msg = `${viewingVacancyName.trim()}現在募集中となります！！\n${moveOutText}退去予定のお部屋で${fromPhrase}でお部屋ご案内可能です！！\n\n直近ですと\n${selectedSlots.join("\n")}\nご案内出来ます！！\n\n${customerName}さんご都合如何でしょうか！！`;
         } else {
-          msg += `ご都合如何でしょうか！！`;
+          msg = `${viewingVacancyName.trim()}現在募集中となります！！\n${moveOutText}退去予定のお部屋で${fromPhrase}でお部屋ご案内可能です！！\n${customerName}さん${fromPhrase}のご都合よろしいお日にちにご案内させて頂きます😊！！`;
         }
 
         setAiDraft(msg);
@@ -1507,7 +1534,7 @@ export default function AixModal({
     : actionType === "property_send"
     ? true
     : actionType === "application_push"
-    ? appSubMode === "confirm" ? true : !!appVacancyStatus
+    ? appSubMode === "confirm" ? true : !!appPushType
     : actionType === "meeting_place"
     ? (!!meetingDate.trim() && !!meetingPropertyName.trim())
     : !config.requiresImage || !!imageFile;
@@ -2027,31 +2054,6 @@ export default function AixModal({
                       className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
                     />
                   </div>
-                  {/* シンプルボタン */}
-                  <button
-                    onClick={() => {
-                      const name = customerName || "お客様";
-                      const prop = appPropertyName.trim();
-                      const text = prop
-                        ? `はい！！\n${name}さん${prop}につきまして、お気に召されましたらお申込しお部屋抑えさせて頂きます😌！！\nお気軽にお申し付けください！！`
-                        : `はい！！\n${name}さんお気に召されましたらお申込しお部屋抑えさせて頂きます😌！！\nお気軽にお申し付けください！！`;
-                      setPreview(text);
-                    }}
-                    className="w-full rounded-2xl border-2 border-[#E53935] bg-[#fff5f5] px-4 py-3 text-left transition-all active:bg-[#ffebee]"
-                  >
-                    <div className="text-[13px] font-bold text-[#E53935]">⚡ シンプル送信</div>
-                    <div className="mt-0.5 text-[10px] text-[#8696a0]">
-                      {appPropertyName.trim()
-                        ? `はい！！ ${customerName || "〇〇"}さん${appPropertyName.trim()}につきまして、お気に召されましたら…`
-                        : "はい！！〇〇さんお気に召されましたらお申込し…"}
-                    </div>
-                  </button>
-                  {/* 区切り */}
-                  <div className="flex items-center gap-2">
-                    <div className="h-px flex-1 bg-[#e9edef]" />
-                    <span className="text-[10px] text-[#8696a0]">またはAIで詳しく作成</span>
-                    <div className="h-px flex-1 bg-[#e9edef]" />
-                  </div>
                   {/* 見積書送信済み自動検出 */}
                   {(() => {
                     const staffMsgs = (recentMessages || []).filter(m => m.sender === "staff").slice(-15);
@@ -2067,30 +2069,34 @@ export default function AixModal({
                       </div>
                     );
                   })()}
-                  {/* 空室状況選択 */}
+                  {/* 申込パターン選択 */}
                   <div>
-                    <p className="mb-2 text-xs font-bold text-[#54656f]">空室状況を選択</p>
+                    <p className="mb-2 text-xs font-bold text-[#54656f]">申込パターンを選択</p>
                     <div className="flex flex-col gap-2">
                       {([
-                        { key: "vacant",    label: "空室（内覧できる）",   sub: "お申込みで抑えてご内覧もできます", color: "emerald" },
-                        { key: "scheduled", label: "退去予定（内覧不可）", sub: "先にお申込みでお部屋確保を推奨",   color: "orange"  },
+                        { key: "simple",    label: "シンプル申込",  sub: "内覧済み・検討中の方へ申込みを後押し",   color: "emerald" },
+                        { key: "scheduled", label: "退去予定",      sub: "内覧不可・先にお申込みでお部屋確保",     color: "orange"  },
+                        { key: "hold_view", label: "部屋抑えて内覧", sub: "申込で30日間確保→その状態でご内覧",    color: "blue"    },
                       ] as const).map((p) => (
                         <button
                           key={p.key}
-                          onClick={() => { setAppVacancyStatus(p.key); setPreview(""); }}
+                          onClick={() => { setAppPushType(p.key); setPreview(""); setAppAppealPoints([]); }}
                           className={`flex items-center gap-3 rounded-2xl border-2 px-4 py-3 text-left transition-all ${
-                            appVacancyStatus === p.key
+                            appPushType === p.key
                               ? p.color === "emerald" ? "border-emerald-400 bg-emerald-50"
-                              : "border-orange-400 bg-orange-50"
+                              : p.color === "orange"  ? "border-orange-400 bg-orange-50"
+                              :                         "border-blue-400 bg-blue-50"
                               : "border-[#e9edef] bg-[#f8f9fa]"
                           }`}
                         >
                           <span className={`flex h-5 w-5 items-center justify-center rounded-full border-2 flex-shrink-0 ${
-                            appVacancyStatus === p.key
-                              ? p.color === "emerald" ? "border-emerald-500 bg-emerald-500" : "border-orange-500 bg-orange-500"
+                            appPushType === p.key
+                              ? p.color === "emerald" ? "border-emerald-500 bg-emerald-500"
+                              : p.color === "orange"  ? "border-orange-500 bg-orange-500"
+                              :                         "border-blue-500 bg-blue-500"
                               : "border-[#d1d7db]"
                           }`}>
-                            {appVacancyStatus === p.key && <span className="h-2 w-2 rounded-full bg-white" />}
+                            {appPushType === p.key && <span className="h-2 w-2 rounded-full bg-white" />}
                           </span>
                           <div>
                             <div className="text-[13px] font-bold text-[#111b21]">{p.label}</div>
@@ -2100,8 +2106,34 @@ export default function AixModal({
                       ))}
                     </div>
                   </div>
+                  {/* 訴求ポイント選択（シンプル申込・部屋抑えて内覧のみ） */}
+                  {(appPushType === "simple" || appPushType === "hold_view") && (
+                    <div>
+                      <p className="mb-2 text-xs font-bold text-[#54656f]">
+                        訴求ポイントを選択
+                        <span className="ml-1 font-normal text-[#90a4ae]">（複数可）</span>
+                      </p>
+                      <div className="flex gap-2 flex-wrap">
+                        {(["部屋の条件", "初期費用", "家賃"] as const).map((pt) => (
+                          <button
+                            key={pt}
+                            onClick={() => setAppAppealPoints(prev =>
+                              prev.includes(pt) ? prev.filter(p => p !== pt) : [...prev, pt]
+                            )}
+                            className={`rounded-full border-2 px-3 py-1.5 text-xs font-bold transition-all ${
+                              appAppealPoints.includes(pt)
+                                ? "border-purple-400 bg-purple-50 text-purple-700"
+                                : "border-[#e9edef] bg-[#f8f9fa] text-[#54656f]"
+                            }`}
+                          >
+                            {pt}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {/* 退去予定日（退去予定選択時のみ） */}
-                  {appVacancyStatus === "scheduled" && (
+                  {appPushType === "scheduled" && (
                     <div>
                       <label className="mb-1 block text-xs font-semibold text-[#54656f]">
                         退去予定日 <span className="font-normal text-[#90a4ae]">（任意）</span>

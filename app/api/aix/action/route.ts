@@ -200,7 +200,7 @@ function extractNotice(text: string, customerName: string): { message: string; n
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, account, customer_name, conversation_id, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done, vacancy_status, has_estimate, move_out_date, keyword, property_name, property_names, property_vacancy_dates, property_count, prop_first_image_urls, all_properties_available, prop_statuses, include_estimate_text, show_viewing_invite } = body;
+    const { action, account, customer_name, conversation_id, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done, vacancy_status, has_estimate, move_out_date, keyword, property_name, property_names, property_vacancy_dates, property_count, prop_first_image_urls, all_properties_available, prop_statuses, include_estimate_text, show_viewing_invite, app_push_type, appeal_points } = body;
 
     // テンプレート構成ノート（テンプレートモーダルから渡された場合）
     const template_structure = Array.isArray(body.template_structure)
@@ -913,25 +913,67 @@ ${phraseText || "なし"}
             .join("\n\n")
         : "";
 
-      // 4パターン: (見積書あり/なし) × (空室/退去予定)
-      const isVacant = vacancy_status === "vacant";
+      // 3パターン: simple / scheduled / hold_view（デフォルト・後方互換）
+      const pushType = app_push_type as string | undefined;
+      const isSimple = pushType === "simple";
       const isScheduled = vacancy_status === "scheduled";
       const hasEst = has_estimate === true;
       const moveOut = move_out_date ? move_out_date : "●月●日";
+
+      // 訴求ポイント（simple / hold_view のみ有効）
+      const appealPts: string[] = Array.isArray(appeal_points)
+        ? (appeal_points as unknown[]).filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+        : [];
+      const hasAppeal = appealPts.length > 0;
+      const appealLabel = appealPts.join("・");
 
       let templateLines: string[] = [];
       if (hasEst) {
         templateLines.push("[物件名]の最大限割引しました初期費用の御見積書となります！！");
       }
-      if (isScheduled) {
+      if (isSimple) {
+        if (hasAppeal) {
+          templateLines.push(`[物件名]${appealLabel}がかなり良いお部屋となります！！`);
+        } else {
+          templateLines.push("[物件名]かなりご条件の良いお部屋となります！！");
+        }
+        templateLines.push(`${name}さんお気に召されましたらお申込み是非ご検討ください😊！！`);
+        templateLines.push("ご不明点ございましたらお気軽にお申し付けください！！");
+      } else if (isScheduled) {
         templateLines.push(`お部屋は${moveOut}退去の為ご内覧はまだ出来ないお部屋となります！！`);
         templateLines.push(`お気に召されましたらお申込しお部屋抑えさせて頂きます😌！！`);
       } else {
+        // hold_view またはデフォルト（後方互換）
         templateLines.push(`空室ですので${name}さんご都合よろしいお日にちにご案内させて頂きます！！`);
-        templateLines.push(`ご条件がよくお申込みが入る可能性が高いお部屋となります。`);
-        templateLines.push(`${name}さんお気に召されましたらお申込し一度お部屋抑えた状態でご内覧いただくのがオススメです😌！！`);
+        templateLines.push("ご条件がよくお申込みが入る可能性が高いお部屋となります！！");
+        templateLines.push(`${name}さんお気に召されましたら一度お申込みし抑えさせてご内覧いただくのがオススメです😌！！`);
       }
       const template = templateLines.join("\n");
+
+      // 訴求ポイント強化指示（選択されている場合のみプロンプトに追加）
+      let appealNote = "";
+      if (hasAppeal && isSimple) {
+        appealNote = `
+
+【訴求ポイント強化指示】
+選択された訴求ポイント：${appealLabel}
+テンプレート1行目の「[物件名]${appealLabel}がかなり良いお部屋となります！！」を、会話履歴から読み取れる具体的な内容に置き換えること。
+- 「部屋の条件」が含まれる → 築年数・間取り・設備・広さなど会話から読み取れる特徴を入れる（例:「2023年築・2LDKで設備充実のかなり条件の良いお部屋」）
+- 「初期費用」が含まれる → 会話から読み取れる初期費用の安さを入れる（例:「初期費用153,000円とかなりお得なお部屋」）
+- 「家賃」が含まれる → 会話から読み取れる家賃・管理費込みの金額を入れる（例:「家賃管理費込65,000円とかなりお得なお部屋」）
+複数ポイントが選択された場合は自然に組み合わせる。数字が会話に見つからない場合は「かなりお得な」「かなり条件の良い」などのスモラ文体表現を使う。`;
+      } else if (hasAppeal && !isScheduled) {
+        // hold_view
+        appealNote = `
+
+【訴求ポイント強化指示】
+選択された訴求ポイント：${appealLabel}
+テンプレートの「ご条件がよくお申込みが入る可能性が高いお部屋となります！！」を、会話履歴の具体的な情報を使って書き換えること。
+- 「部屋の条件」→ 例:「築年数・設備が良くお申込みが入る可能性が高いお部屋となります！！」
+- 「初期費用」→ 例:「初期費用153,000円とお得でお申込みが入る可能性が高いお部屋となります！！」
+- 「家賃」→ 例:「家賃管理費込65,000円とお得でお申込みが入る可能性が高いお部屋となります！！」
+数字が見つからない場合はスモラ文体（かなり〜、非常に〜）で補う。`;
+      }
 
       const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。
 以下のテンプレートを使って、会話履歴から物件名を特定し、完成したLINEメッセージを1つだけ出力してください。
@@ -942,8 +984,8 @@ ${template}
 【穴埋めルール】
 ・「[物件名]」→ ${property_name ? `「${property_name}」を使う（ユーザーが指定済み）` : '会話履歴の最新スタッフメッセージ冒頭「【物件名 号室】」（見積書フォーマット）から物件名のみを抽出して使う（例: 「【ASK-6 201号室】」→「ASK-6」）。このフォーマットが見つかればそれを最優先にすること。古い会話に出てくる別の物件名は絶対に使わない。見積書フォーマットが見つからない場合のみ会話全体から特定し、それもなければ「こちらのお部屋」に置換。'}
 ・お客様名は既にテンプレートに入っているのでそのまま使う
-・テンプレートの文言・改行・絵文字は変えない
-・LINEでそのまま送れる完成文のみ出力（解説・候補複数は禁止）
+・テンプレートの文言・改行・絵文字は変えない${appealNote ? "（ただし下記【訴求ポイント強化指示】で書き換えを指示された行のみ書き換え可）" : ""}
+・LINEでそのまま送れる完成文のみ出力（解説・候補複数は禁止）${appealNote}
 
 【スモラの言葉・表現】
 ${phraseText || "なし"}${examplesText}`;
