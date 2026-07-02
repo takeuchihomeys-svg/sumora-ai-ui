@@ -7675,7 +7675,7 @@ export default function Home() {
               {([
                 {
                   key: "通常" as const,
-                  label: "内覧へ！",
+                  label: "内覧へ！（内覧日調整）",
                   desc: "カレンダーから日程を選択してAI生成",
                   icon: <><rect x="24" y="22" width="24" height="22" rx="3" stroke="#9333EA" strokeWidth="1.8"/><path d="M30 22v-4M42 22v-4M24 30h24" stroke="#9333EA" strokeWidth="1.8" strokeLinecap="round"/><path d="M29 38h4M39 38h4M29 44h4" stroke="#9333EA" strokeWidth="1.5" strokeLinecap="round"/></>
                 },
@@ -7687,7 +7687,7 @@ export default function Home() {
                 },
                 {
                   key: "内覧日指定あり" as const,
-                  label: "内覧日指定あり",
+                  label: "内覧日指定あり（お客様から）",
                   desc: "お客様から届いた日付で時間を調整",
                   icon: <><rect x="24" y="22" width="24" height="22" rx="3" stroke="#9333EA" strokeWidth="1.8"/><path d="M30 22v-4M42 22v-4M24 30h24" stroke="#9333EA" strokeWidth="1.8" strokeLinecap="round"/><path d="M30 38l4 4 8-8" stroke="#9333EA" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></>
                 },
