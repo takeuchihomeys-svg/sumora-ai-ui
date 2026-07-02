@@ -7589,13 +7589,13 @@ export default function Home() {
             {/* 選択肢 */}
             <div className="flex flex-col gap-2.5">
               {([
-                { key: "新規ピックアップ" as const, desc: "新規のお客様への物件提案",
+                { key: "新規ピックアップ" as const, label: "新規ピックアップの中で１件オススメ", desc: "新規のお客様への物件提案",
                   icon: <path d="M20 32h12M26 26v12M40 26h12v12H40z" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/> },
-                { key: "継続ピックアップ" as const, desc: "継続してお部屋を探しているお客様への提案",
+                { key: "継続ピックアップ" as const, label: "新着ピックアップの中で１件オススメ", desc: "継続してお部屋を探しているお客様への提案",
                   icon: <><path d="M22 30a10 10 0 0114.14-1.41" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round"/><path d="M50 42a10 10 0 01-14.14 1.41" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round"/><path d="M33 24l3 5-5 1M39 48l-3-5 5-1" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></> },
-                { key: "新着1件" as const, desc: "新着物件として強調して送る",
+                { key: "新着1件" as const, label: "新着１件だけ送る", desc: "新着物件として強調して送る",
                   icon: <path d="M36 22l3.09 6.26 6.91 1-5 4.87 1.18 6.87L36 38l-6.18 3-0.82.5 1.18-6.87-5-4.87 6.91-1z" stroke="#6366F1" strokeWidth="1.8" strokeLinejoin="round"/> },
-              ]).map(({ key, desc, icon }) => (
+              ]).map(({ key, label, desc, icon }) => (
                 <button
                   key={key}
                   onClick={() => handlePropertyPickerSelect(key)}
@@ -7608,7 +7608,7 @@ export default function Home() {
                     </svg>
                   </div>
                   <div>
-                    <p className="text-[14px] font-semibold text-[#111827]">{key}</p>
+                    <p className="text-[13px] font-semibold text-[#111827]">{label}</p>
                     <p className="text-[11px] text-[#9CA3AF]">{desc}</p>
                   </div>
                 </button>
