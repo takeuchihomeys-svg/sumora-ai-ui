@@ -7593,13 +7593,13 @@ export default function Home() {
             {/* 選択肢 */}
             <div className="flex flex-col gap-2.5">
               {([
-                { key: "新規ピックアップ" as const, label: "新規の中で1件", desc: "初回のお客様へのピックアップから1件だけオススメ",
+                { key: "新規ピックアップ" as const, label: "初回・1件訴求", desc: "初回のお客様へのピックアップから1件だけオススメ",
                   icon: <path d="M20 32h12M26 26v12M40 26h12v12H40z" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/> },
-                { key: "継続ピックアップ" as const, label: "新着の中で1件", desc: "継続してお部屋を探しているお客様へのピックアップから1件オススメ",
+                { key: "継続ピックアップ" as const, label: "新着・1件訴求", desc: "継続してお部屋を探しているお客様へのピックアップから1件オススメ",
                   icon: <><path d="M22 30a10 10 0 0114.14-1.41" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round"/><path d="M50 42a10 10 0 01-14.14 1.41" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round"/><path d="M33 24l3 5-5 1M39 48l-3-5 5-1" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></> },
-                { key: "条件広げピックアップ" as const, label: "条件広げた中で1件", desc: "希望条件を少し広げたピックアップの中から1件オススメ",
+                { key: "条件広げピックアップ" as const, label: "条件広げ・1件訴求", desc: "希望条件を少し広げたピックアップの中から1件オススメ",
                   icon: <><rect x="22" y="28" width="28" height="18" rx="3" stroke="#6366F1" strokeWidth="1.8"/><path d="M28 28v-4h16v4" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/><path d="M28 37h16M28 42h10" stroke="#6366F1" strokeWidth="1.5" strokeLinecap="round"/><path d="M46 40l4-4 4 4" stroke="#6366F1" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></> },
-                { key: "新着1件" as const, label: "1件だけ（新着物件）", desc: "新着物件として強調して1件だけ送る",
+                { key: "新着1件" as const, label: "新着1件のみ", desc: "新着物件として強調して1件だけ送る",
                   icon: <path d="M36 22l3.09 6.26 6.91 1-5 4.87 1.18 6.87L36 38l-6.18 3-0.82.5 1.18-6.87-5-4.87 6.91-1z" stroke="#6366F1" strokeWidth="1.8" strokeLinejoin="round"/> },
               ]).map(({ key, label, desc, icon }) => (
                 <button
@@ -7742,19 +7742,19 @@ export default function Home() {
               {([
                 {
                   key: "normal" as const,
-                  label: "初回ピックアップ",
+                  label: "初回まとめ",
                   desc: "新規のお客様への物件ピックアップ",
                   icon: <><rect x="24" y="24" width="24" height="24" rx="3" stroke="#2E7D32" strokeWidth="1.8"/><path d="M30 36h12M36 30v12" stroke="#2E7D32" strokeWidth="1.8" strokeLinecap="round"/></>
                 },
                 {
                   key: "new_arrival" as const,
-                  label: "新着ピックアップ",
+                  label: "新着まとめ",
                   desc: "新着物件として強調してピックアップ",
                   icon: <><path d="M36 22l2.47 5.01 5.53.8-4 3.9.94 5.49L36 34.51l-4.94 2.69.94-5.49-4-3.9 5.53-.8z" stroke="#2E7D32" strokeWidth="1.8" strokeLinejoin="round"/><path d="M26 46h20" stroke="#2E7D32" strokeWidth="1.5" strokeLinecap="round"/></>
                 },
                 {
                   key: "widen" as const,
-                  label: "条件を広げた",
+                  label: "条件広げまとめ",
                   desc: "家賃・地域・築年数などを少し広げてピックアップ",
                   icon: <><rect x="22" y="26" width="28" height="20" rx="3" stroke="#2E7D32" strokeWidth="1.8"/><path d="M28 36h16M28 41h10" stroke="#2E7D32" strokeWidth="1.5" strokeLinecap="round"/><path d="M46 32l4-4" stroke="#2E7D32" strokeWidth="1.5" strokeLinecap="round"/><path d="M46 28h4v4" stroke="#2E7D32" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></>
                 },
