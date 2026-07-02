@@ -7560,40 +7560,60 @@ export default function Home() {
       {/* 物件オススメ 種類選択ピッカー */}
       {showPropertyPicker && (
         <div
-          className="fixed inset-0 z-[150] flex items-end justify-center bg-black/40"
+          className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
           onClick={() => setShowPropertyPicker(false)}
         >
           <div
-            className="w-full max-w-md rounded-t-3xl bg-white px-4 pb-10 pt-5 shadow-2xl"
+            className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="mb-4 text-center">
-              <p className="text-[16px] font-bold text-[#1a1a1a]">物件オススメ</p>
-              <p className="text-[12px] text-[#667781]">どの種類で送りますか？</p>
+            {/* イラスト */}
+            <div className="mb-5 flex justify-center">
+              <svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="36" cy="36" r="36" fill="#EEF2FF"/>
+                <path d="M36 18L50 28V52H22V28L36 18Z" fill="#C7D2FE" stroke="#6366F1" strokeWidth="1.5" strokeLinejoin="round"/>
+                <rect x="29" y="38" width="6" height="14" rx="1" fill="#6366F1"/>
+                <rect x="37" y="34" width="8" height="6" rx="1" fill="#818CF8"/>
+                <path d="M26 28H46" stroke="#6366F1" strokeWidth="1.2" strokeLinecap="round"/>
+                <circle cx="50" cy="50" r="9" fill="#6366F1"/>
+                <path d="M47 50h6M50 47v6" stroke="white" strokeWidth="1.8" strokeLinecap="round"/>
+              </svg>
             </div>
-            <div className="flex flex-col gap-2">
+            {/* タイトル */}
+            <p className="mb-1 text-center text-[20px] font-bold text-[#111827]">物件オススメ</p>
+            <p className="mb-6 text-center text-[13px] leading-snug text-[#6B7280]">どの種類で送りますか？</p>
+            {/* 選択肢 */}
+            <div className="flex flex-col gap-2.5">
               {([
-                { key: "新規ピックアップ", emoji: "🆕", desc: "新規のお客様への物件提案" },
-                { key: "追客ピックアップ",  emoji: "🔄", desc: "しばらく間があいたお客様への再提案" },
-                { key: "新着1件",           emoji: "⭐", desc: "新着物件として強調して送る" },
-              ] as const).map(({ key, emoji, desc }) => (
+                { key: "新規ピックアップ" as const, desc: "新規のお客様への物件提案",
+                  icon: <path d="M20 32h12M26 26v12M40 26h12v12H40z" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/> },
+                { key: "追客ピックアップ" as const, desc: "しばらく間があいたお客様への再提案",
+                  icon: <><path d="M22 30a10 10 0 0114.14-1.41" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round"/><path d="M50 42a10 10 0 01-14.14 1.41" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round"/><path d="M33 24l3 5-5 1M39 48l-3-5 5-1" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></> },
+                { key: "新着1件" as const, desc: "新着物件として強調して送る",
+                  icon: <path d="M36 22l3.09 6.26 6.91 1-5 4.87 1.18 6.87L36 38l-6.18 3-0.82.5 1.18-6.87-5-4.87 6.91-1z" stroke="#6366F1" strokeWidth="1.8" strokeLinejoin="round"/> },
+              ]).map(({ key, desc, icon }) => (
                 <button
                   key={key}
                   onClick={() => handlePropertyPickerSelect(key)}
-                  className="flex items-center gap-3 rounded-2xl border border-[#d1d7db] bg-white px-4 py-3 text-left active:bg-[#f0f2f5] transition"
+                  className="flex items-center gap-3.5 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3.5 text-left transition active:bg-[#EEF2FF] active:border-[#6366F1]"
                 >
-                  <span className="text-[22px]">{emoji}</span>
+                  <div className="shrink-0">
+                    <svg width="36" height="36" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <circle cx="36" cy="36" r="36" fill="#EEF2FF"/>
+                      {icon}
+                    </svg>
+                  </div>
                   <div>
-                    <p className="text-[13px] font-bold text-[#1a1a1a]">{key}</p>
-                    <p className="text-[11px] text-[#667781]">{desc}</p>
+                    <p className="text-[14px] font-semibold text-[#111827]">{key}</p>
+                    <p className="text-[11px] text-[#9CA3AF]">{desc}</p>
                   </div>
                 </button>
               ))}
-              <button
-                onClick={() => setShowPropertyPicker(false)}
-                className="mt-1 w-full rounded-2xl py-3 text-[13px] text-[#667781] active:opacity-60"
-              >キャンセル</button>
             </div>
+            <button
+              onClick={() => setShowPropertyPicker(false)}
+              className="mt-4 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
+            >キャンセル</button>
           </div>
         </div>
       )}
