@@ -7742,13 +7742,13 @@ export default function Home() {
               {([
                 {
                   key: "normal" as const,
-                  label: "新規物件",
+                  label: "初回ピックアップ",
                   desc: "新規のお客様への物件ピックアップ",
                   icon: <><rect x="24" y="24" width="24" height="24" rx="3" stroke="#2E7D32" strokeWidth="1.8"/><path d="M30 36h12M36 30v12" stroke="#2E7D32" strokeWidth="1.8" strokeLinecap="round"/></>
                 },
                 {
                   key: "new_arrival" as const,
-                  label: "新着物件",
+                  label: "新着ピックアップ",
                   desc: "新着物件として強調してピックアップ",
                   icon: <><path d="M36 22l2.47 5.01 5.53.8-4 3.9.94 5.49L36 34.51l-4.94 2.69.94-5.49-4-3.9 5.53-.8z" stroke="#2E7D32" strokeWidth="1.8" strokeLinejoin="round"/><path d="M26 46h20" stroke="#2E7D32" strokeWidth="1.5" strokeLinecap="round"/></>
                 },
