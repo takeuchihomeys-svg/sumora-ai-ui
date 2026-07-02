@@ -169,7 +169,7 @@ async function callClaudeVision(system: string, content: unknown[]): Promise<str
 // ※ 名前が本文中に出てくる物件オススメ等では誤検出しないよう、名前は挨拶との直接連接のみ対象
 function extractNotice(text: string, customerName: string): { message: string; notice: string | null } {
   const trimmed = text.trim();
-  const GREETING_KEYWORDS = ["お世話になっております", "お待たせ致しました", "夜分遅くに失礼"];
+  const GREETING_KEYWORDS = ["お世話になっております", "お待たせ致しました", "夜分遅くに失礼", "ご連絡頂きありがとうございます"];
 
   // 「名前さん＋挨拶」の連接パターンを検索（名前＋さん＋空白ゼロ個以上＋挨拶）
   let nameGreetingIdx = -1;
@@ -241,6 +241,10 @@ export async function POST(request: NextRequest) {
     const staffMessagedToday = !!lastStaffMsg &&
       !!lastStaffMsg.rawCreatedAt &&
       toJSTDate(lastStaffMsg.rawCreatedAt) === todayJST;
+    // 真の初回判定: AIXメッセージ以外のスタッフ返信が一度もない = 初めてのスタッフ返信
+    const isFirstEverReply = !(recentMsgArray as Array<{ sender?: string; isAix?: boolean; is_aix_generated?: boolean; text?: string }>).some(
+      m => m.sender === "staff" && !m.isAix && !m.is_aix_generated && m.text && m.text !== "[画像]" && m.text !== "[動画]"
+    );
     // お客様が最後に送ったメッセージ（= スタッフが返信する場面）かどうか
     // 向こうから連絡が来た場合は何時でも「お世話になっております」（「夜分遅くに」は使わない）
     const lastMsgSender = [...recentMsgArray].reverse().find(m => m.sender === "customer" || m.sender === "staff")?.sender ?? "staff";
@@ -598,31 +602,37 @@ ${SMORA_COMMON_RULES}`;
   条件から主なポイント（エリア・家賃・間取り等）を自然に組み込む`
         : `・「ご希望のご条件に合ったお部屋ピックアップさせて頂きました😊！！」で冒頭を続ける`;
 
-      // 挨拶判定: こちらの最後の送信が今日→「お待たせ致しました」、昨日以前→「お世話になっております」
+      // 挨拶判定: 初回→「ご連絡頂きありがとうございます」、今日挨拶済み→「お待たせ致しました」、それ以外→「お世話になっております」
       const jstHourNow = (new Date().getUTCHours() + 9) % 24;
       // 「夜分遅くに失礼致します」はスタッフからプロアクティブに連絡するときのみ使用
       // お客様から連絡が来た（返信する）場面では何時でも「お世話になっております」
-      const openingLine: string = (!customerInitiated && jstHourNow >= 21)
-        ? `①「[お客様名]さん夜分遅くに失礼致します！！」で始める`
-        : staffMessagedToday
-          ? `①「[お客様名]さんお待たせ致しました！！」で始める`
-          : `①「[お客様名]さんお世話になっております！！」で始める`;
+      const openingLine: string = isFirstEverReply
+        ? `①「[お客様名]さんご連絡頂きありがとうございます😊！！」で始める`
+        : (!customerInitiated && jstHourNow >= 21)
+          ? `①「[お客様名]さん夜分遅くに失礼致します！！」で始める`
+          : staffMessagedToday
+            ? `①「[お客様名]さんお待たせ致しました！！」で始める`
+            : `①「[お客様名]さんお世話になっております！！」で始める`;
       // 例文・テンプレ用の挨拶文
-      const greetingLine = (!customerInitiated && jstHourNow >= 21)
-        ? `${name}さん夜分遅くに失礼致します！！`
-        : staffMessagedToday
-          ? `${name}さんお待たせ致しました！！`
-          : `${name}さんお世話になっております！！`;
+      const greetingLine = isFirstEverReply
+        ? `${name}さんご連絡頂きありがとうございます😊！！`
+        : (!customerInitiated && jstHourNow >= 21)
+          ? `${name}さん夜分遅くに失礼致します！！`
+          : staffMessagedToday
+            ? `${name}さんお待たせ致しました！！`
+            : `${name}さんお世話になっております！！`;
 
       // 新着物件モード: 固定テンプレート（AI不要）
       if (sendMode === "new_arrival") {
         const imgCount = Array.isArray(image_urls) ? (image_urls as string[]).length : (image_url ? 1 : 0);
         const countStr = imgCount > 0 ? `${imgCount}件` : "複数件";
-        const greeting = (!customerInitiated && jstHourNow >= 21)
-          ? `${name}さん夜分遅くに失礼致します！！`
-          : staffMessagedToday
-            ? `${name}さんお待たせ致しました！！`
-            : `${name}さんお世話になっております！！`;
+        const greeting = isFirstEverReply
+          ? `${name}さんご連絡頂きありがとうございます😊！！`
+          : (!customerInitiated && jstHourNow >= 21)
+            ? `${name}さん夜分遅くに失礼致します！！`
+            : staffMessagedToday
+              ? `${name}さんお待たせ致しました！！`
+              : `${name}さんお世話になっております！！`;
         const vacatingSection = vacatingInfo
           ? `\n\n${vacatingInfo}`
           : "";
@@ -654,7 +664,7 @@ ${openingLine}
 ・感嘆符は「！！」のみ・絵文字は 😌 のみ1個
 
 【出力例】
-${(!customerInitiated && jstHourNow >= 21) ? "Rさん夜分遅くに失礼致します！！" : staffMessagedToday ? "Rさんお待たせ致しました！！" : "Rさんお世話になっております！！"}
+${greetingLine}
 
 大阪市内全域からカウンターキッチン付きのお部屋でRさんご希望のご条件に近いお部屋ピックアップさせて頂きました！！
 お手隙の際にご査収ください😌！！${sendExamplesText}`
@@ -678,7 +688,7 @@ ${openingLine}
 ・感嘆符は「！！」（スモラスタイル）・LINEでそのまま送れる完成文のみ出力・絵文字は 😊 😌 のみ・1〜2個まで
 
 【出力例】
-${(!customerInitiated && jstHourNow >= 21) ? "Rさん夜分遅くに失礼致します！！" : staffMessagedToday ? "Rさんお待たせ致しました！！" : "Rさんお世話になっております！！"}
+${greetingLine}
 
 大阪駅・難波駅周辺全域からRさんご希望のご条件に合ったお部屋ピックアップさせて頂きました！！
 
@@ -1065,7 +1075,7 @@ ${examplesText}`;
     ) {
       const mgmtInfo = extra_input ? String(extra_input).trim() : "";
       if (!mgmtInfo) throw new Error("確認結果のテキストが必要です");
-      const mgmtGreeting = staffMessagedToday ? "お待たせ致しました！！" : "お世話になっております！！";
+      const mgmtGreeting = isFirstEverReply ? "ご連絡頂きありがとうございます😊！！" : staffMessagedToday ? "お待たせ致しました！！" : "お世話になっております！！";
 
       // パターン別のフォーマット・ルール（スモラ実データ由来）
       const MGMT_PATTERNS: Record<string, { label: string; format: string; rules: string }> = {
@@ -1343,7 +1353,7 @@ ${patternExample}${knowledgeText}${examplesText}`;
           const estimate1 = hasAnyEstimate ? "\n最大限割引しました御見積書同封させて頂きました！！" : "";
           const showVI1 = !!(show_viewing_invite as boolean | undefined);
           const showAppInvite1 = !!(body.check_application_invite as boolean | undefined);
-          const greeting1 = staffMessagedToday ? "お待たせ致しました！！" : "お世話になっております！！";
+          const greeting1 = isFirstEverReply ? "ご連絡頂きありがとうございます😊！！" : staffMessagedToday ? "お待たせ致しました！！" : "お世話になっております！！";
           if (p.status === "vacating") {
             const vacLine = p.vacDate ? `${p.vacDate}退去予定のお部屋となります！！` : "退去予定のお部屋となります！！";
             message_text = `${pName}現在募集中となります！！\n${vacLine}${estimate1}\n\nお気に召されましたらお申込みしお部屋を抑えさせていただきます！！`;
@@ -1397,7 +1407,7 @@ ${patternExample}${knowledgeText}${examplesText}`;
             }
           }
           // 内覧誘導OFF → vacancySection = "" (内覧テキストなし)
-          const greeting = staffMessagedToday ? "お待たせ致しました！！" : "お世話になっております！！";
+          const greeting = isFirstEverReply ? "ご連絡頂きありがとうございます😊！！" : staffMessagedToday ? "お待たせ致しました！！" : "お世話になっております！！";
           const header = (all_properties_available as boolean | undefined)
             ? `${name}お送り頂きました\n`
             : `${name}お送り頂きました物件の中で\n`;
@@ -1443,7 +1453,7 @@ ${availableTemplate}`;
 
       // 「物件なかった」は固定テンプレ専用フロー
       } else if (pattern === "unavailable") {
-        const unavailableGreeting = staffMessagedToday ? "お待たせ致しました！！" : "お世話になっております！！";
+        const unavailableGreeting = isFirstEverReply ? "ご連絡頂きありがとうございます😊！！" : staffMessagedToday ? "お待たせ致しました！！" : "お世話になっております！！";
         const unavailableTemplate = `${name}${unavailableGreeting}
 お送り頂きました[物件表現]募集終了しているお部屋となります。`;
 
