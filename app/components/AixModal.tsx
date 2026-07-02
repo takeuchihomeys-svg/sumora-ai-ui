@@ -607,80 +607,29 @@ export default function AixModal({
     }
   }, [viewingSpecificMode]);
 
-  // 待ち合わせ: 会話から日程・時間を自動抽出してプリセット（お客様確定メッセージ最優先）
+  // 待ち合わせ: 会話から日程・時間をAIで抽出してプリセット
   useEffect(() => {
     if (actionType !== "meeting_place") return;
     if (meetingDate) return; // 既に入力済みならスキップ
 
-    const allMsgs = recentMessages || [];
-    const customerMsgs = [...allMsgs].filter(m => m.sender === "customer" && m.text).reverse();
-    const staffMsgs    = [...allMsgs].filter(m => m.sender === "staff"    && m.text).reverse();
+    const allMsgs = (recentMessages || []).filter(
+      (m: { sender?: string; text?: string }) => m.text && m.text !== "[画像]" && m.text !== "[動画]"
+    );
+    if (!allMsgs.length) return;
 
-    // スタッフの提示日程から月を取得（お客様が「2日」とだけ言った場合の補完用）
-    let contextMonth = "";
-    for (const s of staffMsgs.slice(0, 8)) {
-      const mo = s.text.match(/(\d{1,2})[\/月]\d{1,2}/);
-      if (mo) { contextMonth = mo[1]; break; }
-    }
-    // スタッフの提示スロットから曜日マップを構築: {"2": "木", "1": "水", "3": "金"} など
-    const dayWeekMap: Record<string, string> = {};
-    for (const s of staffMsgs.slice(0, 8)) {
-      const dayWeekMatches = s.text.matchAll(/(\d{1,2})[\/月](\d{1,2})(?:日)?[（(]?([月火水木金土日])[）)]?/g);
-      for (const m of dayWeekMatches) { dayWeekMap[m[2]] = m[3]; }
-    }
-
-    // ── Step1: お客様の確定メッセージから抽出（最優先）──
-    // 例: "2日16時〜からお願いします" / "7/2 16時でお願いします" / "2日の16時でいきます"
-    for (const m of customerMsgs.slice(0, 5)) {
-      const text = m.text;
-      const isConfirmation = /お願い|でいい|大丈夫|にします|でいきます|で行き|でお伺い|確定|にて/.test(text);
-      if (!isConfirmation && !/\d+日.*\d+時|\d+時.*お願い/.test(text)) continue;
-
-      // フルパターン: "7/2 16時" "7月2日16時"
-      const fullMatch = text.match(/(\d{1,2})[\/月](\d{1,2})日?[^\d]*(\d{1,2})[時:]/);
-      if (fullMatch) {
-        const [, mo, day, hour] = fullMatch;
-        const minMatch = text.slice(text.indexOf(fullMatch[3] + "時")).match(/[時:](\d{2})/);
-        const min = (minMatch?.[1] || "00").padStart(2, "0");
-        const wd = dayWeekMap[day];
-        setMeetingDate(wd ? `${mo}/${day}（${wd}）` : `${mo}/${day}`);
-        setMeetingTime(`${hour.padStart(2,"0")}:${min}`);
-        return;
-      }
-
-      // 日のみ + 時間: "2日16時〜" "2日の16時"
-      const dayTimeMatch = text.match(/(\d{1,2})日[^\d]*(\d{1,2})[時:]/);
-      if (dayTimeMatch) {
-        const [, day, hour] = dayTimeMatch;
-        const minMatch = text.slice(text.indexOf(dayTimeMatch[2] + "時")).match(/[時:](\d{2})/);
-        const min = (minMatch?.[1] || "00").padStart(2, "0");
-        const mo = contextMonth;
-        const wd = dayWeekMap[day];
-        const dateStr = mo
-          ? (wd ? `${mo}/${day}（${wd}）` : `${mo}/${day}`)
-          : (wd ? `${day}日（${wd}）` : `${day}日`);
-        setMeetingDate(dateStr);
-        setMeetingTime(`${hour.padStart(2,"0")}:${min}`);
-        return;
-      }
-    }
-
-    // ── Step2: スタッフメッセージから最初のスロットを取得（フォールバック）──
-    for (const m of staffMsgs) {
-      const match = m.text.match(/(\d{1,2})[\/月](\d{1,2})(?:日)?(?:[（(]([月火水木金土日])[）)])?/);
-      if (match) {
-        const [, mo, day, wd] = match;
-        const dateStr = wd ? `${mo}/${day}（${wd}）` : `${mo}/${day}`;
-        setMeetingDate(dateStr);
-        const timeMatch = m.text.match(/(\d{1,2})[時:](\d{2})?/);
-        if (timeMatch) {
-          const h = timeMatch[1].padStart(2, "0");
-          const min = (timeMatch[2] || "00").padStart(2, "0");
-          setMeetingTime(`${h}:${min}`);
+    fetch("/api/aix/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "extract_datetime", recent_messages: allMsgs }),
+    })
+      .then(r => r.json())
+      .then((d: { ok: boolean; date?: string; time?: string }) => {
+        if (d.ok) {
+          if (d.date) setMeetingDate(d.date);
+          if (d.time) setMeetingTime(d.time);
         }
-        break;
-      }
-    }
+      })
+      .catch(() => {});
   }, [actionType]);
 
   // テンプレート画面を開いたときによく使われるフレーズを取得

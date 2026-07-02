@@ -144,6 +144,26 @@ async function callClaude(system: string, user: string): Promise<string> {
   return data.content?.[0]?.text?.trim() || "";
 }
 
+async function callClaudeHaiku(system: string, user: string): Promise<string> {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 256,
+      system,
+      messages: [{ role: "user", content: user }],
+    }),
+  });
+  if (!res.ok) throw new Error(`Claude Haiku error: ${await res.text()}`);
+  const data = await res.json();
+  return data.content?.[0]?.text?.trim() || "";
+}
+
 async function callClaudeVision(system: string, content: unknown[]): Promise<string> {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -1620,6 +1640,39 @@ ${templateText}`;
       // name は「あさみさん」形式（さん付き）なのでそのまま使う
       message_text = `（${name}ご希望のお部屋探しご条件）
 ${formItems}`;
+
+    } else if (action === "extract_datetime") {
+      // 会話履歴から内覧日時をAIで抽出（待ち合わせ場所の日程・時間フィールド自動補完用）
+      const msgs = (recent_messages as Array<{ sender?: string; text?: string }>)
+        .filter(m => m.text && m.text !== "[画像]" && m.text !== "[動画]")
+        .slice(-20)
+        .map(m => `${m.sender === "customer" ? "お客様" : "スモラ"}: ${m.text}`)
+        .join("\n");
+
+      if (!msgs) return NextResponse.json({ ok: true, date: "", time: "" });
+
+      const system = `あなたは会話テキストから内覧の日程と時間を抽出するアシスタントです。
+以下の会話から、内覧・案内の日程と時間を抽出してください。
+
+【出力ルール（JSON1行のみ）】
+{"date":"7/3（金）","time":"10:00"}
+
+・dateは「月/日（曜日）」形式（例: 7/3（金）、7/3）
+・timeは「HH:MM」の24時間表記（例: 10:00、14:30）
+・お客様が確定・承諾した日時を最優先で抽出する
+・日程は見つかるが時間が不明な場合はtimeを空文字に
+・どちらも不明な場合は両方空文字に
+・JSONのみ返す（説明文・コメント不要）`;
+
+      try {
+        const raw = await callClaudeHaiku(system, msgs);
+        const jsonMatch = raw.match(/\{[^}]+\}/);
+        if (!jsonMatch) return NextResponse.json({ ok: true, date: "", time: "" });
+        const parsed = JSON.parse(jsonMatch[0]) as { date?: string; time?: string };
+        return NextResponse.json({ ok: true, date: parsed.date || "", time: parsed.time || "" });
+      } catch {
+        return NextResponse.json({ ok: true, date: "", time: "" });
+      }
 
     } else if (action === "greeting_viewing") {
       const sub_mode = body.sub_mode as "before" | "after";
