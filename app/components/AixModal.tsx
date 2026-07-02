@@ -46,6 +46,7 @@ interface AixModalProps {
   initialEstimateMulti?: boolean;
   initialAppSubMode?: "push" | "confirm" | null;
   initialInputText?: string;
+  initialCheckPattern?: "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost";
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
   onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean }) => void;
@@ -256,6 +257,7 @@ export default function AixModal({
   initialEstimateMulti,
   initialAppSubMode,
   initialInputText,
+  initialCheckPattern,
   onClose,
   onSend,
   onAfterSend,
@@ -298,8 +300,12 @@ export default function AixModal({
   const [showTemplateInfo, setShowTemplateInfo] = useState(false);
   const [topPhrases, setTopPhrases] = useState<{ phrase: string; usage_count: number }[]>([]);
   const [floorPlanTouched, setFloorPlanTouched] = useState(false);
-  // 物件確認した専用
-  const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | "move_in_date" | "interior_photo" | null>(null);
+  // 物件確認した専用（vacate_date / mgmt_move_in / mgmt_initial_cost は「管理会社に確認した」ピッカー経由の専用パターン）
+  const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | "move_in_date" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | null>(initialCheckPattern ?? null);
+  // 管理会社確認パターンかどうか（テキスト入力のみで生成できる簡易フロー）
+  const isMgmtCheck = checkPattern === "vacate_date" || checkPattern === "mgmt_move_in" || checkPattern === "mgmt_initial_cost";
+  // 初期費用確認: サブパターン選択
+  const [mgmtCostType, setMgmtCostType] = useState<"estimate" | "negotiation" | null>(null);
   // 室内写真確認した専用
   const [interiorPhotoUrl, setInteriorPhotoUrl] = useState<string>("");
   const [interiorPhotoFile, setInteriorPhotoFile] = useState<File | null>(null);
@@ -922,14 +928,6 @@ export default function AixModal({
   };
 
   const generate = async (extraFlags?: Record<string, unknown>) => {
-    // 申込確定モード: クライアントサイドで即時生成（API不要）
-    if (actionType === "application_push" && appSubMode === "confirm") {
-      const prop = appPropertyName.trim();
-      const text = `かしこまりました！！\n${prop ? `${prop}お申込みさせて頂きます！！` : "お申込みさせて頂きます！！"}`;
-      setAiDraft(text);
-      setPreview(useEmoji ? text : stripEmoji(text));
-      return;
-    }
     try {
       setLoading(true);
       setError("");
@@ -991,18 +989,25 @@ export default function AixModal({
         if (lastMessageAt) body.last_message_at = lastMessageAt;
         if (sendExpandedConds.size > 0) body.expanded_conditions = Array.from(sendExpandedConds);
       } else if (actionType === "application_push") {
-        if (!appPushType) throw new Error("申込パターンを選択してください");
-        body.vacancy_status = appPushType === "scheduled" ? "scheduled" : "vacant";
-        body.app_push_type = appPushType;
-        if (appAppealPoints.length > 0) body.appeal_points = appAppealPoints;
-        if (appMoveOutDate.trim()) body.move_out_date = appMoveOutDate.trim();
-        if (appPropertyName.trim()) body.property_name = appPropertyName.trim();
-        // 直近スタッフメッセージから見積書送信済みを自動検出
-        const staffMsgs = (recentMessages || []).filter(m => m.sender === "staff").slice(-15);
-        const hasEstimate = staffMsgs.some(m => /見積|御見積|初期費用/.test(m.text));
-        body.has_estimate = hasEstimate;
-        if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
-        if (customerSummary) body.customer_summary = customerSummary;
+        if (appSubMode === "confirm") {
+          body.app_sub_mode = "confirm";
+          if (appPropertyName.trim()) body.property_name = appPropertyName.trim();
+          if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
+          if (customerSummary) body.customer_summary = customerSummary;
+        } else {
+          if (!appPushType) throw new Error("申込パターンを選択してください");
+          body.vacancy_status = appPushType === "scheduled" ? "scheduled" : "vacant";
+          body.app_push_type = appPushType;
+          if (appAppealPoints.length > 0) body.appeal_points = appAppealPoints;
+          if (appMoveOutDate.trim()) body.move_out_date = appMoveOutDate.trim();
+          if (appPropertyName.trim()) body.property_name = appPropertyName.trim();
+          // 直近スタッフメッセージから見積書送信済みを自動検出
+          const staffMsgs = (recentMessages || []).filter(m => m.sender === "staff").slice(-15);
+          const hasEstimate = staffMsgs.some(m => /見積|御見積|初期費用/.test(m.text));
+          body.has_estimate = hasEstimate;
+          if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
+          if (customerSummary) body.customer_summary = customerSummary;
+        }
       } else if (actionType === "property_check_result" && checkPattern === "interior_photo") {
         // 室内写真確認: AIなしでプレビュー直接生成
         if (interiorPhotoUrl.trim()) {
@@ -1026,6 +1031,9 @@ export default function AixModal({
       } else if (actionType === "property_check_result") {
         if (!checkPattern) throw new Error("確認結果を選択してください");
         body.check_pattern = checkPattern;
+        if (checkPattern === "mgmt_initial_cost" && !mgmtCostType) throw new Error("パターンを選択してください");
+        if (checkPattern === "mgmt_initial_cost" && mgmtCostType) body.mgmt_cost_type = mgmtCostType;
+        if (isMgmtCheck && checkPattern !== "mgmt_initial_cost" && !inputText.trim()) throw new Error("管理会社に確認した内容を入力してください");
         if (checkPattern === "move_in_date") {
           if (!moveInImageFile) throw new Error("物件資料を選択してください");
           body.image_url = await uploadImage(moveInImageFile);
@@ -1530,6 +1538,11 @@ export default function AixModal({
     : actionType === "property_check_result"
     ? (checkPattern === "move_in_date" ? !!moveInImageFile
       : checkPattern === "interior_photo" ? (!!interiorPhotoUrl.trim() || !!interiorPhotoFile)
+      : isMgmtCheck ? (
+          checkPattern === "mgmt_initial_cost"
+            ? !!mgmtCostType && (mgmtCostType === "estimate" || !!inputText.trim())
+            : !!inputText.trim()
+        )
       : !!checkPattern)
     : actionType === "property_send"
     ? true
@@ -2148,6 +2161,103 @@ export default function AixModal({
                     </div>
                   )}
                 </>
+              )}
+            </div>
+          ) : actionType === "property_check_result" && isMgmtCheck ? (
+            /* 管理会社に確認した: パターン選択不要・日付選択またはテキスト入力で生成 */
+            <div className="mb-4 flex flex-col gap-3">
+              <div className="flex items-center gap-2 rounded-2xl border-2 border-teal-400 bg-teal-50 px-4 py-3">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full border-2 border-teal-500 bg-teal-500 flex-shrink-0">
+                  <span className="h-2 w-2 rounded-full bg-white" />
+                </span>
+                <div>
+                  <div className="text-[13px] font-bold text-[#111b21]">
+                    管理会社に確認した：{checkPattern === "vacate_date" ? "退去予定日" : checkPattern === "mgmt_move_in" ? "入居可能日" : "初期費用"}
+                  </div>
+                  <div className="text-[10px] text-[#8696a0]">確認内容を入力するだけでAIが報告文を作成します</div>
+                </div>
+              </div>
+
+              {/* 退去予定日・入居可能日: 日付ピッカー */}
+              {(checkPattern === "vacate_date" || checkPattern === "mgmt_move_in") && (
+                <div>
+                  <p className="mb-2 text-xs font-bold text-[#54656f]">
+                    {checkPattern === "vacate_date" ? "退去予定日" : "入居可能日"}を選択
+                  </p>
+                  <div className="relative">
+                    <input
+                      type="date"
+                      onChange={(e) => {
+                        if (!e.target.value) return;
+                        const d = new Date(e.target.value + "T00:00:00");
+                        const m = d.getMonth() + 1;
+                        const day = d.getDate();
+                        const dateStr = `${m}月${day}日`;
+                        const prefix = checkPattern === "vacate_date" ? "退去予定日：" : "入居可能日：";
+                        setInputText(prefix + dateStr);
+                        setPreview("");
+                      }}
+                      className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-teal-400"
+                      style={{ colorScheme: "light" }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* 初期費用: サブパターン選択 */}
+              {checkPattern === "mgmt_initial_cost" && (
+                <div>
+                  <p className="mb-2 text-xs font-bold text-[#54656f]">パターンを選択 <span className="text-red-400">*</span></p>
+                  <div className="flex flex-col gap-2">
+                    {([
+                      { key: "estimate", label: "見積書おくる", sub: "条件確認した・見積書を送る" },
+                      { key: "negotiation", label: "管理会社交渉", sub: "交渉した結果を報告する" },
+                    ] as const).map(({ key, label, sub }) => (
+                      <button
+                        key={key}
+                        onClick={() => { setMgmtCostType(key); setInputText(""); setPreview(""); }}
+                        className={`flex items-center gap-3 rounded-2xl border-2 px-4 py-3 text-left transition-all ${
+                          mgmtCostType === key
+                            ? "border-teal-400 bg-teal-50"
+                            : "border-[#e9edef] bg-[#f8f9fa]"
+                        }`}
+                      >
+                        <div>
+                          <div className={`text-[13px] font-bold ${mgmtCostType === key ? "text-teal-700" : "text-[#111b21]"}`}>{label}</div>
+                          <div className="text-[10px] text-[#8696a0]">{sub}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* テキスト入力（初期費用は見積書以外で表示、他パターンは常時表示） */}
+              {(checkPattern !== "mgmt_initial_cost" || mgmtCostType === "negotiation") && (
+                <div>
+                  <p className="mb-1 text-xs font-bold text-[#54656f]">
+                    {(checkPattern === "vacate_date" || checkPattern === "mgmt_move_in") ? "または直接入力・補足" : "確認した内容"}
+                    {checkPattern === "mgmt_initial_cost" && <span className="text-red-400 ml-1">*</span>}
+                  </p>
+                  <textarea
+                    value={inputText}
+                    onChange={(e) => { setInputText(e.target.value); setPreview(""); }}
+                    placeholder={
+                      checkPattern === "vacate_date" ? "例：退去予定日：7月31日退去確定"
+                      : checkPattern === "mgmt_move_in" ? "例：入居可能日：8月上旬〜"
+                      : "例：礼金なし交渉成功、または礼金交渉できなかった等"
+                    }
+                    rows={2}
+                    className="w-full resize-none rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
+                  />
+                  <p className="mt-1 text-[10px] text-[#8696a0]">
+                    {checkPattern === "vacate_date"
+                      ? "退去日を選ぶとAIが内覧可能時期も自動で計算します"
+                      : checkPattern === "mgmt_move_in"
+                      ? "「即入居可」「7月上旬〜」など管理会社から聞いた内容を入力"
+                      : "交渉の結果を入力してください（例：礼金1→0に交渉成功）"}
+                  </p>
+                </div>
               )}
             </div>
           ) : actionType === "property_check_result" ? (

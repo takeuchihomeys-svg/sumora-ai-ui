@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import AixModal, { type AixActionType } from "./components/AixModal";
 import BottomNav from "./components/BottomNav";
 import TemplateModal from "./components/TemplateModal";
@@ -439,6 +439,8 @@ export default function Home() {
   const [showPropertyCheckPicker, setShowPropertyCheckPicker] = useState(false);
   const [showDaihyoCheckPicker, setShowDaihyoCheckPicker] = useState(false);
   const [aixInitInputText, setAixInitInputText] = useState("");
+  // 管理会社に確認したピッカー: 選択した確認種別をAIXモーダルへ引き継ぐ
+  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | null>(null);
   const [aixInitSendMode, setAixInitSendMode] = useState<"normal" | "new_arrival" | "widen" | null>(null);
   const [aixInitialSendImages, setAixInitialSendImages] = useState<File[]>([]);
   const [dismissedEstimateSheetIds, setDismissedEstimateSheetIds] = useState<Set<string>>(() => {
@@ -6589,6 +6591,7 @@ export default function Home() {
           initialEstimateMulti={aixInitEstimateMulti}
           initialAppSubMode={aixInitAppSubMode}
           initialInputText={aixInitInputText || undefined}
+          initialCheckPattern={aixInitCheckPattern ?? undefined}
           onClose={() => {
             setAixModalType(null);
             setAixInitialFile(null);
@@ -6604,6 +6607,7 @@ export default function Home() {
             setAixInitEstimateMulti(false);
             setAixInitAppSubMode(null);
             setAixInitInputText("");
+            setAixInitCheckPattern(null);
           }}
           onOpenTemplateFiltered={(search) => {
             setTemplateInitialSearch(search);
@@ -8062,24 +8066,25 @@ export default function Home() {
                   icon: <><rect x="24" y="22" width="24" height="22" rx="3" stroke="#546E7A" strokeWidth="1.8"/><path d="M30 22v-4M42 22v-4M24 30h24" stroke="#546E7A" strokeWidth="1.8" strokeLinecap="round"/><path d="M30 38h12M36 34v4" stroke="#546E7A" strokeWidth="1.5" strokeLinecap="round"/></>
                 },
                 {
-                  key: "move_in_date",
+                  key: "mgmt_move_in",
                   label: "入居日について",
                   desc: "入居可能日・入居日を管理会社に確認した結果を報告",
                   hint: "入居可能日：",
                   icon: <><path d="M36 20L50 30V52H22V30L36 20Z" stroke="#546E7A" strokeWidth="1.8" strokeLinejoin="round"/><rect x="30" y="38" width="12" height="14" rx="1.5" fill="#ECEFF1" stroke="#546E7A" strokeWidth="1.5"/><path d="M36 38v14" stroke="#546E7A" strokeWidth="1.3" strokeLinecap="round"/></>
                 },
                 {
-                  key: "initial_cost",
+                  key: "mgmt_initial_cost",
                   label: "初期費用について",
                   desc: "初期費用・礼金・敷金などを管理会社に確認した結果",
                   hint: "初期費用：",
                   icon: <><circle cx="36" cy="36" r="14" stroke="#546E7A" strokeWidth="1.8"/><path d="M36 28v16M31 32h7.5a2.5 2.5 0 010 5H31m0 0h7.5a2.5 2.5 0 010 5H31" stroke="#546E7A" strokeWidth="1.5" strokeLinecap="round"/></>
                 },
-              ]).map(({ key, label, desc, hint, icon }) => (
+              ] as Array<{ key: "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost"; label: string; desc: string; hint: string; icon: ReactNode }>).map(({ key, label, desc, hint, icon }) => (
                 <button
                   key={key}
                   onClick={() => {
                     setShowPropertyCheckPicker(false);
+                    setAixInitCheckPattern(key);
                     setAixInitInputText(hint);
                     openAixDirect("property_check_result");
                   }}
@@ -8431,7 +8436,7 @@ export default function Home() {
           className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
           onClick={(e) => { if (e.target === e.currentTarget) { setShowAixMenu(false); setAixInspectLabel(null); } }}
         >
-          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl flex flex-col overflow-hidden" style={{ maxHeight: "93vh" }}>
+          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl flex flex-col" style={{ maxHeight: "82vh" }}>
             <div
               className="flex items-center justify-between rounded-t-3xl px-5 py-4 flex-shrink-0"
               style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}
@@ -8444,7 +8449,7 @@ export default function Home() {
                 ✕
               </button>
             </div>
-            <div className="p-3 flex flex-col gap-2 overflow-y-auto pb-6" style={{ maxHeight: "560px" }}>
+            <div className="p-3 flex flex-col gap-2 overflow-y-auto flex-1 pb-8">
               {(() => {
                 const AIX_INSPECT: Record<string, { inputs: string; process: string; data: string }> = {
                   "1件特にオススメする": {
