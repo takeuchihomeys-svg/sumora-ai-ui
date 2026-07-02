@@ -8577,8 +8577,8 @@ export default function Home() {
           className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
           onClick={(e) => { if (e.target === e.currentTarget) { setShowAixMenu(false); setAixInspectLabel(null); } }}
         >
-          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl flex flex-col overflow-hidden" style={{ maxHeight: "85vh" }}>
-            {/* ヘッダー（固定） */}
+          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl flex flex-col overflow-hidden" style={{ height: "92vh", maxHeight: "92vh" }}>
+            {/* ヘッダー（固定・スクロールしない） */}
             <div
               className="flex items-center justify-between px-5 py-5 flex-shrink-0"
               style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}
@@ -8591,7 +8591,7 @@ export default function Home() {
                 ✕
               </button>
             </div>
-            {/* ボタン一覧（スクロール） */}
+            {/* ボタン一覧（ここだけスクロール） */}
             <div className="px-3 pt-3 flex flex-col gap-2.5 overflow-y-auto flex-1 pb-10">
               {(() => {
                 const AIX_INSPECT: Record<string, { inputs: string; process: string; data: string }> = {
