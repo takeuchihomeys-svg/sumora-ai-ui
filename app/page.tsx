@@ -7593,7 +7593,7 @@ export default function Home() {
             {/* 選択肢 */}
             <div className="flex flex-col gap-2.5">
               {([
-                { key: "新規ピックアップ" as const, label: "新規ピックアップの中で１件オススメ", desc: "新規のお客様への物件提案",
+                { key: "新規ピックアップ" as const, label: "初回ピックアップの中で１件オススメ", desc: "初回のお客様への物件提案",
                   icon: <path d="M20 32h12M26 26v12M40 26h12v12H40z" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/> },
                 { key: "継続ピックアップ" as const, label: "新着ピックアップの中で１件オススメ", desc: "継続してお部屋を探しているお客様への提案",
                   icon: <><path d="M22 30a10 10 0 0114.14-1.41" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round"/><path d="M50 42a10 10 0 01-14.14 1.41" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round"/><path d="M33 24l3 5-5 1M39 48l-3-5 5-1" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></> },
