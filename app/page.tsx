@@ -7685,7 +7685,7 @@ export default function Home() {
                 },
                 {
                   key: "退去予定物件" as const,
-                  label: "退去予定物件",
+                  label: "退去予定物件（退去後の内覧日調整）",
                   desc: "退去予定物件として物件名・退去日を入力",
                   icon: <><path d="M36 20L50 30V52H22V30L36 20Z" stroke="#9333EA" strokeWidth="1.8" strokeLinejoin="round"/><path d="M30 44v-8h12v8" stroke="#9333EA" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/><path d="M26 30l10-7 10 7" stroke="#9333EA" strokeWidth="1.5" strokeLinecap="round"/><circle cx="36" cy="25" r="3" fill="#E9D5FF" stroke="#9333EA" strokeWidth="1.5"/></>
                 },
