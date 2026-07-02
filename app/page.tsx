@@ -432,6 +432,8 @@ export default function Home() {
   const [aixInitViewingVacancy, setAixInitViewingVacancy] = useState(false);
   const [showViewingPicker, setShowViewingPicker] = useState(false);
   const [showPropertySendPicker, setShowPropertySendPicker] = useState(false);
+  const [showEstimatePicker, setShowEstimatePicker] = useState(false);
+  const [aixInitEstimateMulti, setAixInitEstimateMulti] = useState(false);
   const [aixInitSendMode, setAixInitSendMode] = useState<"normal" | "new_arrival" | "widen" | null>(null);
   const [aixInitialSendImages, setAixInitialSendImages] = useState<File[]>([]);
   const [dismissedEstimateSheetIds, setDismissedEstimateSheetIds] = useState<Set<string>>(() => {
@@ -6569,6 +6571,7 @@ export default function Home() {
           initialViewingVacancy={aixInitViewingVacancy}
           initialIsNewArrival={aixInitialIsNewArrival}
           initialPickupType={aixInitialPickupType}
+          initialEstimateMulti={aixInitEstimateMulti}
           onClose={() => {
             setAixModalType(null);
             setAixInitialFile(null);
@@ -6581,6 +6584,7 @@ export default function Home() {
             setAixInitViewingVacancy(false);
             setAixInitSendMode(null);
             setAixInitialSendImages([]);
+            setAixInitEstimateMulti(false);
           }}
           onOpenTemplateFiltered={(search) => {
             setTemplateInitialSearch(search);
@@ -7803,6 +7807,76 @@ export default function Home() {
         </div>
       )}
 
+      {/* 見積書送る 1件/複数件ピッカー */}
+      {showEstimatePicker && (
+        <div
+          className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
+          onClick={() => setShowEstimatePicker(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-5 flex justify-center">
+              <svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="36" cy="36" r="36" fill="#FFF3E0"/>
+                <rect x="24" y="20" width="24" height="30" rx="3" fill="#FFE0B2" stroke="#FF9800" strokeWidth="1.5"/>
+                <path d="M30 30h12M30 35h12M30 40h8" stroke="#FF9800" strokeWidth="1.5" strokeLinecap="round"/>
+                <circle cx="50" cy="50" r="9" fill="#FF9800"/>
+                <path d="M47 50h6M50 47v6" stroke="white" strokeWidth="1.8" strokeLinecap="round"/>
+              </svg>
+            </div>
+            <p className="mb-1 text-center text-[20px] font-bold text-[#111827]">見積書送る</p>
+            <p className="mb-6 text-center text-[13px] leading-snug text-[#6B7280]">何件分の見積書を送りますか？</p>
+            <div className="flex flex-col gap-2.5">
+              {([
+                {
+                  key: "single" as const,
+                  label: "1件",
+                  desc: "1枚の見積書から初期費用テキストを生成",
+                  icon: <><rect x="28" y="22" width="16" height="22" rx="2" stroke="#FF9800" strokeWidth="1.8"/><path d="M31 30h10M31 34h10M31 38h7" stroke="#FF9800" strokeWidth="1.5" strokeLinecap="round"/></>
+                },
+                {
+                  key: "multi" as const,
+                  label: "複数件",
+                  desc: "①②③の見積書をまとめて1メッセージに",
+                  icon: <><rect x="22" y="26" width="13" height="18" rx="2" stroke="#FF9800" strokeWidth="1.6"/><rect x="27" y="22" width="13" height="18" rx="2" fill="#FFF3E0" stroke="#FF9800" strokeWidth="1.6"/><rect x="32" y="18" width="13" height="18" rx="2" fill="#FFF3E0" stroke="#FF9800" strokeWidth="1.6"/><path d="M35 24h7M35 28h7M35 32h5" stroke="#FF9800" strokeWidth="1.3" strokeLinecap="round"/></>
+                },
+              ]).map(({ key, label, desc, icon }) => (
+                <button
+                  key={key}
+                  onClick={() => {
+                    setShowEstimatePicker(false);
+                    setAixInitEstimateMulti(key === "multi");
+                    if (key === "single") {
+                      openAixWithImagePicker("estimate_sheet");
+                    } else {
+                      openAixDirect("estimate_sheet");
+                    }
+                  }}
+                  className="flex items-center gap-3.5 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3.5 text-left transition active:bg-[#FFF3E0] active:border-[#FF9800]"
+                >
+                  <div className="shrink-0">
+                    <svg width="36" height="36" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <circle cx="36" cy="36" r="36" fill="#FFF3E0"/>
+                      {icon}
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                    <p className="text-[11px] text-[#9CA3AF]">{desc}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setShowEstimatePicker(false)}
+              className="mt-4 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
+            >キャンセル</button>
+          </div>
+        </div>
+      )}
+
       {/* 送信確認ダイアログ */}
       {showSendConfirm && (
         <div
@@ -8200,7 +8274,7 @@ export default function Home() {
                         });
                       }).catch(() => {});
                     }
-                    openAixWithImagePicker("estimate_sheet");
+                    setShowEstimatePicker(true);
                   } },
                   { color: "#9C27B0", label: "内覧へ！", sub: "カレンダーから日程を選択→AIで文生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setShowViewingPicker(true); } },
                   { color: "#00838F", label: "待ち合わせ", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixDirect("meeting_place"); } },

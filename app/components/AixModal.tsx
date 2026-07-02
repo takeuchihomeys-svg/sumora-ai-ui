@@ -43,6 +43,7 @@ interface AixModalProps {
   initialViewingVacancy?: boolean;
   initialIsNewArrival?: boolean;
   initialPickupType?: "新規ピックアップ" | "継続ピックアップ" | "条件広げピックアップ" | "新着1件" | null;
+  initialEstimateMulti?: boolean;
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
   onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean }) => void;
@@ -250,6 +251,7 @@ export default function AixModal({
   initialViewingVacancy,
   initialIsNewArrival,
   initialPickupType,
+  initialEstimateMulti,
   onClose,
   onSend,
   onAfterSend,
@@ -405,6 +407,10 @@ export default function AixModal({
   // 見積書送る専用: 物件資料（任意）
   const [estimatePropertyFile, setEstimatePropertyFile] = useState<File | null>(null);
   const [estimatePropertyPreview, setEstimatePropertyPreview] = useState<string>("");
+  // 見積書送る複数件モード
+  const [estimateMultiMode] = useState(initialEstimateMulti ?? false);
+  const [estimateMultiFiles, setEstimateMultiFiles] = useState<File[]>([]);
+  const [estimateMultiPreviews, setEstimateMultiPreviews] = useState<string[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const conditionFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -421,6 +427,10 @@ export default function AixModal({
   const moveInImageInputRef = useRef<HTMLInputElement | null>(null);
   const recommendEstimateInputRef = useRef<HTMLInputElement | null>(null);
   const estimatePropertyInputRef = useRef<HTMLInputElement | null>(null);
+  const estimateMulti1Ref = useRef<HTMLInputElement | null>(null);
+  const estimateMulti2Ref = useRef<HTMLInputElement | null>(null);
+  const estimateMulti3Ref = useRef<HTMLInputElement | null>(null);
+  const estimateMultiRefs = [estimateMulti1Ref, estimateMulti2Ref, estimateMulti3Ref];
   const meetingPropertyInputRef = useRef<HTMLInputElement | null>(null);
   const viewingVacancyInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -1011,6 +1021,11 @@ export default function AixModal({
         if (checkPattern === "available" && checkIncludeEstimateText) body.include_estimate_text = true;
         if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
         if (customerSummary) body.customer_summary = customerSummary;
+      } else if (actionType === "estimate_sheet" && estimateMultiMode) {
+        if (estimateMultiFiles.length === 0) throw new Error("見積書を1枚以上選択してください");
+        const urls = await Promise.all(estimateMultiFiles.map((f, i) => uploadImage(f, i)));
+        body.image_urls = urls;
+        body.multi_estimate = true;
       } else if (config.requiresImage && imageFile) {
         body.image_url = await uploadImage(imageFile);
       }
@@ -1196,6 +1211,8 @@ export default function AixModal({
         if (imageFile) imageUrls.push(await uploadImage(imageFile));
         if (recommendEstimateFile) imageUrls.push(await uploadImage(recommendEstimateFile));
         if (propertyImageUrl.trim()) textToSend = `（室内イメージ）\n${propertyImageUrl.trim()}\n\n${preview}`;
+      } else if (actionType === "estimate_sheet" && estimateMultiMode) {
+        for (let i = 0; i < estimateMultiFiles.length; i++) imageUrls.push(await uploadImage(estimateMultiFiles[i], i));
       } else if (actionType === "estimate_sheet") {
         if (estimatePropertyFile) imageUrls.push(await uploadImage(estimatePropertyFile));
         if (imageFile) imageUrls.push(await uploadImage(imageFile));
@@ -1349,6 +1366,13 @@ export default function AixModal({
             await sendAsAix("", estUrl);
           }
           if (propertyImageUrl.trim()) await sendAsAix(`（室内イメージ）\n${propertyImageUrl.trim()}`);
+          await sendAsAix(preview);
+        } else if (actionType === "estimate_sheet" && estimateMultiMode) {
+          // 複数件: 見積書を順に送ってから合算テキスト
+          for (const f of estimateMultiFiles) {
+            const url = await uploadImage(f);
+            await sendAsAix("", url);
+          }
           await sendAsAix(preview);
         } else if (actionType === "estimate_sheet") {
           // 送信順: ①物件資料（任意）→ ②見積書 → ③テキスト
@@ -2556,6 +2580,56 @@ export default function AixModal({
                   )}
                 </div>
               )}
+            </div>
+          ) : estimateMultiMode ? (
+            /* 見積書送る 複数件モード */
+            <div className="mb-4">
+              <label className="mb-2 block text-xs font-semibold text-[#54656f]">見積書（①〜③枚）</label>
+              <div className="flex flex-col gap-2">
+                {[0, 1, 2].map((idx) => (
+                  <div key={idx} className="rounded-xl border border-[#e9edef] bg-[#f8f9fa] px-3 py-2">
+                    <p className="mb-1.5 text-xs font-bold text-[#54656f]">{"①②③"[idx]} 物件{idx + 1}</p>
+                    {estimateMultiPreviews[idx] ? (
+                      <div className="relative mb-1 overflow-hidden rounded-xl border border-[#d1d7db]">
+                        <img src={estimateMultiPreviews[idx]} alt={`見積書${idx + 1}`} className="max-h-24 w-full object-contain" />
+                        <button
+                          onClick={() => {
+                            setEstimateMultiFiles(prev => prev.filter((_, i) => i !== idx));
+                            setEstimateMultiPreviews(prev => prev.filter((_, i) => i !== idx));
+                            if (estimateMultiRefs[idx]?.current) estimateMultiRefs[idx].current!.value = "";
+                          }}
+                          className="absolute right-1 top-1 rounded-full bg-black/50 px-2 py-0.5 text-[10px] text-white"
+                        >削除</button>
+                      </div>
+                    ) : estimateMultiFiles.length > idx ? null : (
+                      <button
+                        onClick={() => estimateMultiRefs[idx]?.current?.click()}
+                        className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[#90a4ae] py-2 text-xs text-[#546e7a]"
+                      >📎 見積書を追加{idx > 0 ? "（任意）" : ""}</button>
+                    )}
+                    <input
+                      ref={estimateMultiRefs[idx]}
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (!f) return;
+                        const newFiles = [...estimateMultiFiles];
+                        newFiles[idx] = f;
+                        setEstimateMultiFiles(newFiles.filter(Boolean));
+                        const r = new FileReader();
+                        r.onload = () => {
+                          const newPreviews = [...estimateMultiPreviews];
+                          newPreviews[idx] = String(r.result ?? "");
+                          setEstimateMultiPreviews(newPreviews);
+                        };
+                        r.readAsDataURL(f);
+                      }}
+                      className="hidden"
+                    />
+                  </div>
+                ))}
+              </div>
             </div>
           ) : config.requiresImage ? (
             /* その他の画像あきアクション */

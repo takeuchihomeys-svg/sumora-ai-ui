@@ -408,6 +408,52 @@ ${SMORA_COMMON_RULES}`;
 
     // ── 💰 見積書送る ─────────────────────────────────────────────
     } else if (action === "estimate_sheet") {
+
+      // 複数件モード: 各見積書をOCRして①②③付きでまとめる
+      if (body.multi_estimate && Array.isArray(image_urls) && image_urls.length > 0) {
+        const estParts: string[] = [];
+        for (let pi = 0; pi < image_urls.length; pi++) {
+          const url = image_urls[pi] as string;
+          if (!url) continue;
+          try {
+            const estSystem = `この見積書画像から初期費用情報を抽出してください。JSON形式のみ返答（説明文なし）：
+{"property_name":"物件名","room_number":"号室","discount":"34,000円","initial_cost":"146,000円","savings":"102,200円"}
+- property_name: マンション名のみ（号室なし）。不明は""
+- room_number: 号室番号のみ（例: 502）。不明は""
+- discount: 割引額（「〇〇,〇〇〇円」形式）。なければnull
+- initial_cost: 初期費用合計（「〇〇〇,〇〇〇円」形式）。不明はnull
+- savings: スモラ節約額（一般業者との差額）。不明はnull`;
+            const estContent = [
+              { type: "text", text: "この見積書から初期費用情報を抽出してください。" },
+              { type: "image", source: { type: "url", url } },
+            ];
+            const estRaw = await callClaudeVision(estSystem, estContent);
+            const jsonMatch = estRaw.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) continue;
+            const estData = JSON.parse(jsonMatch[0]) as { property_name?: string | null; room_number?: string | null; discount?: string | null; initial_cost?: string | null; savings?: string | null };
+            const pName = estData.property_name?.trim() || `物件${["①","②","③"][pi] ?? ""}`;
+            const roomSuffix = estData.room_number?.trim() ? ` ${estData.room_number.trim()}号室` : "";
+            const prefix = image_urls.length > 1 ? `${"①②③"[pi]}【${pName}${roomSuffix}】` : `【${pName}${roomSuffix}】`;
+            const lines: string[] = [prefix, ""];
+            if (estData.discount) {
+              lines.push("初期費用さらに");
+              lines.push(`🌟${estData.discount}割引させて頂き`);
+            }
+            if (estData.initial_cost) lines.push(`初期費用：${estData.initial_cost}`);
+            if (estData.savings) {
+              lines.push("");
+              lines.push(`${accountName}なら一般的な不動産業者より${estData.savings}節約出来ます！！`);
+            }
+            estParts.push(lines.join("\n"));
+          } catch { /* 読み取りエラーはスキップ */ }
+        }
+        if (estParts.length === 0) {
+          message_text = "最大限割引した初期費用の御見積書をお送りさせて頂きます！！\n\n※ご入居日によって日割家賃が発生致します。";
+        } else {
+          message_text = estParts.join("\n\n") + "\n\n※ご入居日によって日割家賃が発生致します。";
+        }
+      } else {
+
       let estimate = parsed_estimate;
 
       if (!estimate) {
@@ -489,6 +535,8 @@ ${SMORA_COMMON_RULES}`;
 
       message_text = parts.join("\n");
       parsed_estimate_result = estimate;
+
+      } // end single-mode
 
     // ── 📤 物件送る ──────────────────────────────────────────────
     } else if (action === "property_send") {
