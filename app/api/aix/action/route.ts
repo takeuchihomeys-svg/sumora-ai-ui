@@ -1627,32 +1627,12 @@ ${formItems}`;
       const viewing_time = body.viewing_time ? String(body.viewing_time) : "";
 
       if (sub_mode === "before") {
-        const dateInfo = viewing_date
-          ? `・内覧日: ${viewing_date}${viewing_time ? ` ${viewing_time}〜` : ""}`
-          : "";
-
-        const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
-内覧当日（または前日）に送る「内覧前挨拶」LINEメッセージを生成してください。
-
-【出力構成（この4行構成を厳守）】
-①挨拶行：「お世話になっております！！」または時間帯が夜なら「夜分遅くに失礼致します！！」
-②本日よろしく行：「本日はよろしくお願い致します！！」
-③楽しみ行：「${name}気に入って頂けると嬉しいです😊！！」（呼びかけ＋期待感）
-④フォロー行：「気になる点ございましたらお気軽にお申し付けください！！」
-
-【スモラ文体ルール】
-・「！！」を文末に使う（「！」単独は使わない）
-・😊 は③の行のみ
-・物件名・住所・号室は書かない（情報がないため）
-
-【禁止】
-・書類・審査・申込の話は一切しない
-・解説・補足を付け加えない。4行のみ出力`;
-
-        message_text = await callClaude(
-          system,
-          `${name}への内覧前挨拶を生成してください。${dateInfo}${recentHistory}`
-        );
+        // 内覧前挨拶は固定3行テンプレート
+        const timePart = viewing_time ? viewing_time : "";
+        const guideLine = timePart
+          ? `本日${timePart}お部屋ご案内させて頂きます！`
+          : `本日お部屋ご案内させて頂きます！`;
+        message_text = `${name}お世話になっております！！\n${guideLine}\n本日は何卒よろしくお願い致します！！`;
 
       } else {
         const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
