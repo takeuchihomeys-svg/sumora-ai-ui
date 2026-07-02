@@ -8378,17 +8378,17 @@ export default function Home() {
             <div className="p-4 flex flex-col gap-2 overflow-y-auto pb-8 max-h-[560px]">
               {(() => {
                 const AIX_INSPECT: Record<string, { inputs: string; process: string; data: string }> = {
-                  "物件オススメ": {
+                  "1件特にオススメする": {
                     inputs: "物件資料画像（必須）/ お客様条件スクショ（任意）/ 室内イメージURL（任意）",
                     process: "Claude Vision で物件情報を読み取り → 🌟物件名・オススメポイント4〜5項目・退去予定対応の固定フォーマットで生成",
                     data: "☆実例（proposing）/ 差分学習ナレッジ / フレーズ辞書",
                   },
-                  "物件送る": {
+                  "物件ピックアップした": {
                     inputs: "物件画像（複数・任意）/ 内覧カレンダー（自動取得）/ 退去予定メモ（画像から自動読み取り）",
                     process: "内覧誘導 or 申込み誘導の2モードで生成。退去予定ありなら自動案内文を含める",
                     data: "☆実例（property_send）/ カレンダー情報 / お客様希望条件",
                   },
-                  "物件確認した": {
+                  "物件確認した（募集状況）": {
                     inputs: "確認結果（物件あった / 別の部屋 / なかった）/ 物件画像（任意）",
                     process: "パターン別プロンプトで生成。「物件あった」時はカレンダー自動取得して内覧日程を含める",
                     data: "パターン別実例 / ノウハウ（availability_check）",
@@ -8416,9 +8416,9 @@ export default function Home() {
                 };
                 return [
                   { color: "#0288D1", label: "お部屋探し条件ヒアリング", sub: "条件フォーム①〜⑧をワンタップで送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("condition_hearing"); openAixDirect("condition_hearing"); } },
-                  { color: "#00897B", label: "物件ピックアップ", sub: "ピックアップした物件を送る・退去予定も自動案内", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); setShowPropertySendPicker(true); } },
-                  { color: "#2196F3", label: "物件オススメ", sub: "おすすめ物件をAIが提案", action: () => { openPropertyRecommendationPicker("withImage"); } },
-                  { color: "#4CAF50", label: "物件確認した", sub: "確認結果を3パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); } },
+                  { color: "#00897B", label: "物件ピックアップした", sub: "ピックアップした物件を送る・退去予定も自動案内", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); setShowPropertySendPicker(true); } },
+                  { color: "#2196F3", label: "1件特にオススメする", sub: "おすすめ物件をAIが提案", action: () => { openPropertyRecommendationPicker("withImage"); } },
+                  { color: "#4CAF50", label: "物件確認した（募集状況）", sub: "確認結果を3パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); } },
                   { color: "#FF9800", label: "見積書送る", sub: "費用の見積書を作成", action: () => {
                     setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet");
                     const cid = selectedConversation.id; const cname = selectedConversation.customerName;
@@ -8446,7 +8446,7 @@ export default function Home() {
                   const isOpen = aixInspectLabel === item.label;
                   return (
                     <div key={item.label} className={`overflow-hidden rounded-xl border bg-white transition-all ${
-                        guideToCheckResult && item.label === "物件確認した" ? "border-2 border-[#4CAF50] shadow-[0_0_0_3px_rgba(76,175,80,0.15)]" :
+                        guideToCheckResult && item.label === "物件確認した（募集状況）" ? "border-2 border-[#4CAF50] shadow-[0_0_0_3px_rgba(76,175,80,0.15)]" :
                         guideToMeetingPlace && item.label === "待ち合わせ" ? "border-2 border-[#00838F] shadow-[0_0_0_3px_rgba(0,131,143,0.15)]" :
                         guideToEstimate && item.label === "見積書送る" ? "border-2 border-[#FF9800] shadow-[0_0_0_3px_rgba(255,152,0,0.15)]" :
                         "border-[#e9edef]"
