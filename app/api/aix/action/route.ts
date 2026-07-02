@@ -1611,6 +1611,64 @@ ${templateText}`;
       message_text = `（${name}ご希望のお部屋探しご条件）
 ${formItems}`;
 
+    } else if (action === "greeting_viewing") {
+      const sub_mode = body.sub_mode as "before" | "after";
+      const viewing_date = body.viewing_date ? String(body.viewing_date) : "";
+      const viewing_time = body.viewing_time ? String(body.viewing_time) : "";
+
+      if (sub_mode === "before") {
+        const dateInfo = viewing_date
+          ? `・内覧日: ${viewing_date}${viewing_time ? ` ${viewing_time}〜` : ""}`
+          : "";
+
+        const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
+内覧当日（または前日）に送る「内覧前挨拶」LINEメッセージを生成してください。
+
+【出力構成（この4行構成を厳守）】
+①挨拶行：「お世話になっております！！」または時間帯が夜なら「夜分遅くに失礼致します！！」
+②本日よろしく行：「本日はよろしくお願い致します！！」
+③楽しみ行：「${name}気に入って頂けると嬉しいです😊！！」（呼びかけ＋期待感）
+④フォロー行：「気になる点ございましたらお気軽にお申し付けください！！」
+
+【スモラ文体ルール】
+・「！！」を文末に使う（「！」単独は使わない）
+・😊 は③の行のみ
+・物件名・住所・号室は書かない（情報がないため）
+
+【禁止】
+・書類・審査・申込の話は一切しない
+・解説・補足を付け加えない。4行のみ出力`;
+
+        message_text = await callClaude(
+          system,
+          `${name}への内覧前挨拶を生成してください。${dateInfo}${recentHistory}`
+        );
+
+      } else {
+        const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
+内覧後に送る「内覧後挨拶」LINEメッセージを生成してください。
+
+【出力構成（この3行構成を厳守）】
+①感謝行：「本日はお忙しいところご内覧頂きありがとうございます！！」
+②感想行：「いかがでしたでしょうか？！」（お客様の印象・感想を尋ねる）
+③フォロー行：「気になる点ございましたらお気軽にお申し付けください！！」
+
+【スモラ文体ルール】
+・「！！」を文末に使う
+・😊 は①か②に1回のみ使ってOK
+・申込を急かさない。感謝と次につながる気軽さだけ
+・3行構成を崩さない
+
+【禁止】
+・物件名・金額・審査の話は書かない
+・解説・補足を付けない。3行のみ出力`;
+
+        message_text = await callClaude(
+          system,
+          `${name}への内覧後挨拶を生成してください。${recentHistory}`
+        );
+      }
+
     } else if (action === "meeting_place") {
       const mDate = body.meeting_date ? String(body.meeting_date) : "";
       const mName = body.meeting_property_name ? String(body.meeting_property_name) : "";

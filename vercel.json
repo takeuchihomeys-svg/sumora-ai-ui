@@ -13,6 +13,10 @@
       "schedule": "*/30 * * * *"
     },
     {
+      "path": "/api/cron/viewing-announce",
+      "schedule": "*/30 * * * *"
+    },
+    {
       "path": "/api/cleanup-images",
       "schedule": "23 3 * * *"
     },

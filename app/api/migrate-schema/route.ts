@@ -555,6 +555,22 @@ CREATE INDEX IF NOT EXISTS idx_aix_usage_logs_created_at ON aix_usage_logs(creat
 CREATE INDEX IF NOT EXISTS idx_aix_usage_logs_aix_type ON aix_usage_logs(aix_type);
 ALTER TABLE aix_usage_logs DISABLE ROW LEVEL SECURITY;
 
+-- viewings テーブル（内覧予定管理・アナウンス自動化用）
+CREATE TABLE IF NOT EXISTS viewings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id TEXT NOT NULL,
+  customer_name TEXT,
+  viewing_date DATE NOT NULL,
+  viewing_time TIME,
+  status TEXT DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'done', 'cancelled')),
+  pre_announce_sent BOOLEAN DEFAULT FALSE,
+  post_announce_sent BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_viewings_date ON viewings(viewing_date);
+CREATE INDEX IF NOT EXISTS idx_viewings_conversation ON viewings(conversation_id);
+ALTER TABLE viewings DISABLE ROW LEVEL SECURITY;
+
 -- match_reply_examples: reply_angleを返り値に追加（選ばれた実例のブースト用）
 -- 戻り値型変更のためDROP→CREATEが必要
 DROP FUNCTION IF EXISTS match_reply_examples(vector, int, text[]);

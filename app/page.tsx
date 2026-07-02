@@ -442,6 +442,11 @@ export default function Home() {
   // 管理会社に確認したピッカー: 選択した確認種別をAIXモーダルへ引き継ぐ
   const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | null>(null);
   const [aixInitSendMode, setAixInitSendMode] = useState<"normal" | "new_arrival" | "widen" | null>(null);
+  const [showGreetingViewingPicker, setShowGreetingViewingPicker] = useState(false);
+  const [greetingViewingMode, setGreetingViewingMode] = useState<"before" | "after" | null>(null);
+  const [greetingViewingDate, setGreetingViewingDate] = useState("");
+  const [greetingViewingTime, setGreetingViewingTime] = useState("");
+  const [greetingViewingGenerating, setGreetingViewingGenerating] = useState(false);
   const [aixInitialSendImages, setAixInitialSendImages] = useState<File[]>([]);
   const [dismissedEstimateSheetIds, setDismissedEstimateSheetIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedEstimateSheetIds") || "[]") as string[]); } catch { return new Set(); }
@@ -3411,6 +3416,59 @@ export default function Home() {
       console.error("[quickPropertyCheck]", err);
     } finally {
       setGenerating(false);
+    }
+  };
+
+  // 内覧前・後挨拶を生成してreplyDraftに反映
+  const handleGreetingViewingGenerate = async () => {
+    if (!selectedConversation || !greetingViewingMode) return;
+    setGreetingViewingGenerating(true);
+    try {
+      const recentMsgs = (selectedConversation.messages || [])
+        .slice(-15)
+        .map((m) => ({ sender: m.sender, text: m.text || "", rawCreatedAt: (m as { created_at?: string }).created_at || "" }));
+
+      // 内覧前かつ日付あり → viewingsテーブルに登録（アナウンス用）
+      if (greetingViewingMode === "before" && greetingViewingDate) {
+        fetch("/api/viewings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversation_id: selectedConversation.id,
+            customer_name: selectedConversation.customerName,
+            viewing_date: greetingViewingDate,
+            viewing_time: greetingViewingTime || undefined,
+          }),
+        }).catch(console.error);
+      }
+
+      const res = await fetch("/api/aix/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "greeting_viewing",
+          sub_mode: greetingViewingMode,
+          ...(greetingViewingDate ? { viewing_date: greetingViewingDate } : {}),
+          ...(greetingViewingTime ? { viewing_time: greetingViewingTime } : {}),
+          customer_name: selectedConversation.customerName,
+          conversation_id: selectedConversation.id,
+          recent_messages: recentMsgs,
+        }),
+      });
+
+      const data = await res.json() as { ok: boolean; message_text?: string };
+      if (data.ok && data.message_text) {
+        setReplyDraft(data.message_text);
+        setDraftIsAi(true);
+      }
+      setShowGreetingViewingPicker(false);
+      setGreetingViewingMode(null);
+      setGreetingViewingDate("");
+      setGreetingViewingTime("");
+    } catch (err) {
+      console.error("[greetingViewing]", err);
+    } finally {
+      setGreetingViewingGenerating(false);
     }
   };
 
@@ -7967,6 +8025,89 @@ export default function Home() {
         </div>
       )}
 
+      {/* 挨拶（内覧前・内覧後）ピッカー */}
+      {showGreetingViewingPicker && (
+        <div
+          className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
+          onClick={() => { setShowGreetingViewingPicker(false); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); }}
+        >
+          <div
+            className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-5 flex justify-center">
+              <svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="36" cy="36" r="36" fill="#E0F2F1"/>
+                <path d="M22 44c0-7.732 6.268-14 14-14s14 6.268 14 14" stroke="#00796B" strokeWidth="1.8" strokeLinecap="round"/>
+                <circle cx="36" cy="24" r="8" fill="#B2DFDB" stroke="#00796B" strokeWidth="1.5"/>
+                <path d="M28 54h16M36 44v10" stroke="#00796B" strokeWidth="1.8" strokeLinecap="round"/>
+                <circle cx="50" cy="22" r="9" fill="#00796B"/>
+                <path d="M46 22l3 3 5-5" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+            <p className="mb-1 text-center text-[20px] font-bold text-[#111827]">挨拶</p>
+            <p className="mb-5 text-center text-[13px] leading-snug text-[#6B7280]">内覧前・後どちらの挨拶ですか？</p>
+            {/* モード選択 */}
+            <div className="flex gap-2.5 mb-4">
+              {([
+                { key: "before" as const, label: "内覧前", desc: "当日・前日の挨拶" },
+                { key: "after" as const, label: "内覧後", desc: "内覧終了後の挨拶" },
+              ]).map(({ key, label, desc }) => (
+                <button
+                  key={key}
+                  onClick={() => setGreetingViewingMode(key)}
+                  className={`flex-1 rounded-2xl border-2 px-3 py-3 text-center transition-all ${
+                    greetingViewingMode === key
+                      ? "border-teal-500 bg-teal-50"
+                      : "border-[#E5E7EB] bg-[#FAFAFA]"
+                  }`}
+                >
+                  <div className={`text-[14px] font-bold ${greetingViewingMode === key ? "text-teal-700" : "text-[#111827]"}`}>{label}</div>
+                  <div className="text-[10px] text-[#9CA3AF] mt-0.5">{desc}</div>
+                </button>
+              ))}
+            </div>
+            {/* 内覧前: 日時入力（任意 → viewingsテーブルに登録してアナウンス自動化） */}
+            {greetingViewingMode === "before" && (
+              <div className="mb-4 rounded-2xl border border-[#E5E7EB] bg-[#F8FFFE] px-4 py-3">
+                <p className="mb-2 text-[11px] font-bold text-[#00796B]">内覧日時を入力するとアナウンス自動化されます</p>
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <p className="mb-1 text-[10px] text-[#6B7280]">内覧日</p>
+                    <input
+                      type="date"
+                      value={greetingViewingDate}
+                      onChange={(e) => setGreetingViewingDate(e.target.value)}
+                      className="w-full rounded-xl border border-[#D1D5DB] px-2.5 py-2 text-[13px] focus:border-teal-400 focus:outline-none"
+                    />
+                  </div>
+                  <div className="w-[100px]">
+                    <p className="mb-1 text-[10px] text-[#6B7280]">時間（任意）</p>
+                    <input
+                      type="time"
+                      value={greetingViewingTime}
+                      onChange={(e) => setGreetingViewingTime(e.target.value)}
+                      className="w-full rounded-xl border border-[#D1D5DB] px-2.5 py-2 text-[13px] focus:border-teal-400 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+            <button
+              onClick={handleGreetingViewingGenerate}
+              disabled={!greetingViewingMode || greetingViewingGenerating}
+              className="w-full rounded-2xl bg-teal-600 py-3.5 text-[15px] font-bold text-white transition active:opacity-80 disabled:opacity-40"
+            >
+              {greetingViewingGenerating ? "生成中…" : "生成する"}
+            </button>
+            <button
+              onClick={() => { setShowGreetingViewingPicker(false); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); }}
+              className="mt-3 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
+            >キャンセル</button>
+          </div>
+        </div>
+      )}
+
       {/* 代表に確認した 種類選択ピッカー */}
       {showDaihyoCheckPicker && (
         <div
@@ -8513,6 +8654,7 @@ export default function Home() {
                   { color: "#9C27B0", label: "内覧へ（内覧日調整）", sub: "カレンダーから日程を選択→AIで文生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setShowViewingPicker(true); } },
                   { color: "#00838F", label: "待ち合わせ場所", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); } },
                   { color: "#E53935", label: "申込（誘導・決定）", sub: "物件名入力orシンプル送信→AI生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); setShowApplicationPicker(true); } },
+                  { color: "#00796B", label: "挨拶（内覧前・内覧後）", sub: "内覧前後の挨拶をAI生成。内覧前は日時登録でアナウンス自動化", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("greeting_viewing"); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); setShowGreetingViewingPicker(true); } },
                   { color: "#78909C", label: "管理会社に確認した", sub: "空室・礼金・ペット可否など確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); setShowPropertyCheckPicker(true); } },
                   { color: "#5D4037", label: "代表に確認した", sub: "代表への確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); setShowDaihyoCheckPicker(true); } },
                 ].map((item) => {
