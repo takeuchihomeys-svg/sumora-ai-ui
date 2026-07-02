@@ -44,6 +44,7 @@ interface AixModalProps {
   initialIsNewArrival?: boolean;
   initialPickupType?: "新規ピックアップ" | "継続ピックアップ" | "条件広げピックアップ" | "新着1件" | null;
   initialEstimateMulti?: boolean;
+  initialAppSubMode?: "push" | "confirm" | null;
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
   onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean }) => void;
@@ -252,6 +253,7 @@ export default function AixModal({
   initialIsNewArrival,
   initialPickupType,
   initialEstimateMulti,
+  initialAppSubMode,
   onClose,
   onSend,
   onAfterSend,
@@ -374,7 +376,7 @@ export default function AixModal({
   const [appPropertyName, setAppPropertyName] = useState("");
   const [appVacancyStatus, setAppVacancyStatus] = useState<"vacant" | "scheduled" | null>(null);
   const [appMoveOutDate, setAppMoveOutDate] = useState("");
-  const [appSubMode, setAppSubMode] = useState<"push" | "confirm" | null>(null);
+  const [appSubMode, setAppSubMode] = useState<"push" | "confirm" | null>(initialAppSubMode ?? null);
   // 物件オススメ専用: analyze-propertyで自動抽出した退去予定日
   const [propMoveOutDate, setPropMoveOutDate] = useState("");
 
@@ -484,6 +486,21 @@ export default function AixModal({
       reader.readAsDataURL(file);
     }));
     Promise.all(readPromises).then(urls => setSendImagePreviews(urls));
+  }, []);
+
+  // 申込確定モードでpicker経由で開いた場合: mount時に物件名自動検出・プレビュー生成
+  useEffect(() => {
+    if (initialAppSubMode !== "confirm") return;
+    const staffMsgs = (recentMessages || []).filter(m => m.sender === "staff").reverse();
+    let detected = "";
+    for (const msg of staffMsgs) {
+      const m = msg.text.match(/^【(.+?)(?:\s+[\d]+号室)?】/);
+      if (m) { detected = m[1].trim(); break; }
+    }
+    if (detected) setAppPropertyName(detected);
+    const text = `かしこまりました！！\n${detected ? `${detected}お申込みさせて頂きます！！` : "お申込みさせて頂きます！！"}`;
+    setAiDraft(text);
+    setPreview(text);
   }, []);
 
   // 物件確認した「空室あり」: 直近3日のカレンダーを取得して内覧日程をアナウンス

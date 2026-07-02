@@ -434,6 +434,8 @@ export default function Home() {
   const [showPropertySendPicker, setShowPropertySendPicker] = useState(false);
   const [showEstimatePicker, setShowEstimatePicker] = useState(false);
   const [aixInitEstimateMulti, setAixInitEstimateMulti] = useState(false);
+  const [showApplicationPicker, setShowApplicationPicker] = useState(false);
+  const [aixInitAppSubMode, setAixInitAppSubMode] = useState<"push" | "confirm" | null>(null);
   const [aixInitSendMode, setAixInitSendMode] = useState<"normal" | "new_arrival" | "widen" | null>(null);
   const [aixInitialSendImages, setAixInitialSendImages] = useState<File[]>([]);
   const [dismissedEstimateSheetIds, setDismissedEstimateSheetIds] = useState<Set<string>>(() => {
@@ -6572,6 +6574,7 @@ export default function Home() {
           initialIsNewArrival={aixInitialIsNewArrival}
           initialPickupType={aixInitialPickupType}
           initialEstimateMulti={aixInitEstimateMulti}
+          initialAppSubMode={aixInitAppSubMode}
           onClose={() => {
             setAixModalType(null);
             setAixInitialFile(null);
@@ -6585,6 +6588,7 @@ export default function Home() {
             setAixInitSendMode(null);
             setAixInitialSendImages([]);
             setAixInitEstimateMulti(false);
+            setAixInitAppSubMode(null);
           }}
           onOpenTemplateFiltered={(search) => {
             setTemplateInitialSearch(search);
@@ -7877,6 +7881,73 @@ export default function Home() {
         </div>
       )}
 
+      {/* 申込へ！ 申込誘導/申込確定ピッカー */}
+      {showApplicationPicker && (
+        <div
+          className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
+          onClick={() => setShowApplicationPicker(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-5 flex justify-center">
+              <svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="36" cy="36" r="36" fill="#FFEBEE"/>
+                <rect x="22" y="18" width="28" height="36" rx="3" fill="#FFCDD2" stroke="#E53935" strokeWidth="1.5"/>
+                <path d="M28 28h16M28 34h16M28 40h10" stroke="#E53935" strokeWidth="1.5" strokeLinecap="round"/>
+                <path d="M44 44l5 5M49 44l-5 5" stroke="#E53935" strokeWidth="1.8" strokeLinecap="round"/>
+                <circle cx="50" cy="22" r="8" fill="#E53935"/>
+                <path d="M47 22l2 2 4-4" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+            <p className="mb-1 text-center text-[20px] font-bold text-[#111827]">申込へ！</p>
+            <p className="mb-6 text-center text-[13px] leading-snug text-[#6B7280]">どちらのパターンで送りますか？</p>
+            <div className="flex flex-col gap-2.5">
+              {([
+                {
+                  key: "push" as const,
+                  label: "申込誘導",
+                  desc: "お申込みを後押しするメッセージを生成",
+                  icon: <><rect x="24" y="22" width="24" height="28" rx="3" stroke="#E53935" strokeWidth="1.8"/><path d="M30 30h12M30 36h12M30 42h7" stroke="#E53935" strokeWidth="1.5" strokeLinecap="round"/><path d="M40 18l4 4-4 4" stroke="#E53935" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></>
+                },
+                {
+                  key: "confirm" as const,
+                  label: "申込確定",
+                  desc: "お申込み確定のご連絡をするメッセージ",
+                  icon: <><rect x="24" y="22" width="24" height="28" rx="3" stroke="#16A34A" strokeWidth="1.8"/><path d="M30 38l4 4 8-8" stroke="#16A34A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></>
+                },
+              ]).map(({ key, label, desc, icon }) => (
+                <button
+                  key={key}
+                  onClick={() => {
+                    setShowApplicationPicker(false);
+                    setAixInitAppSubMode(key);
+                    openAixDirect("application_push");
+                  }}
+                  className="flex items-center gap-3.5 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3.5 text-left transition active:bg-[#FFEBEE] active:border-[#E53935]"
+                >
+                  <div className="shrink-0">
+                    <svg width="36" height="36" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <circle cx="36" cy="36" r="36" fill="#FFEBEE"/>
+                      {icon}
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                    <p className="text-[11px] text-[#9CA3AF]">{desc}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setShowApplicationPicker(false)}
+              className="mt-4 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
+            >キャンセル</button>
+          </div>
+        </div>
+      )}
+
       {/* 送信確認ダイアログ */}
       {showSendConfirm && (
         <div
@@ -8278,7 +8349,7 @@ export default function Home() {
                   } },
                   { color: "#9C27B0", label: "内覧へ！", sub: "カレンダーから日程を選択→AIで文生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setShowViewingPicker(true); } },
                   { color: "#00838F", label: "待ち合わせ", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); } },
-                  { color: "#E53935", label: "申込へ！", sub: "物件名入力orシンプル送信→AI生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); openAixDirect("application_push"); } },
+                  { color: "#E53935", label: "申込へ！", sub: "物件名入力orシンプル送信→AI生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); setShowApplicationPicker(true); } },
                   { color: "#78909C", label: "管理会社に確認した", sub: "空室・礼金・ペット可否など確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); } },
                 ].map((item) => {
                   const info = AIX_INSPECT[item.label];
