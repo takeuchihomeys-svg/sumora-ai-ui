@@ -334,6 +334,7 @@ export default function Home() {
   const [draftOrigText, setDraftOrigText] = useState(""); // 絵文字なし切替前の原文（復元用）
   const [extraDraftMessages, setExtraDraftMessages] = useState<Array<{text: string; delaySec: number}>>([]);
   const multiSendTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const pendingSecondMsgRef = useRef<{ type: string; delay: number } | null>(null);
   const [splitLoading, setSplitLoading] = useState(false);
   const [textareaHeightPx, setTextareaHeightPx] = useState(22);
   const [aiDraftExpanded, setAiDraftExpanded] = useState(false);
@@ -2696,6 +2697,9 @@ export default function Home() {
     setShowSendConfirm(false);
     if (!selectedConversation.id) return;
     if (!replyDraft.trim() && selectedImageFiles.length === 0) return;
+    // 2通目設定をキャプチャ（非同期処理中に変わらないよう先に取得）
+    const secondMsgCapture = pendingSecondMsgRef.current;
+    pendingSecondMsgRef.current = null;
 
     try {
       setSending(true);
@@ -2843,6 +2847,15 @@ export default function Home() {
           if (!lineRes.ok) {
             const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string };
             setError(`⚠️ LINE送信失敗: ${lineErr.error || lineRes.statusText}`);
+          }
+          // 2通目自動送信スケジュール
+          if (secondMsgCapture) {
+            const customerName = preferredCustomerName;
+            const secondText = secondMsgCapture.type === "内覧誘導"
+              ? `${customerName}ご都合よろしいお日にちにご案内させて頂きます😊！！`
+              : `${customerName}さんお気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
+            const t = setTimeout(() => sendMessageText(secondText), secondMsgCapture.delay * 1000);
+            multiSendTimersRef.current.push(t);
           }
         }
       } catch (lineEx) {
@@ -6382,6 +6395,8 @@ export default function Home() {
             setPendingTemplateSource(templateInfo ?? null);
             setPendingTemplateStructure(templateInfo?.structure ?? null);
             setPendingTemplateSample(templateInfo?.sample ?? null);
+            // 2通目設定をキャプチャ（AIX送信後に使用）
+            pendingSecondMsgRef.current = templateInfo?.secondMsg ?? null;
             setShowTemplateModal(false);
             setTemplateOpenContext(null);
             // activeAixFlowに応じて正しいAIXアクションを開く
@@ -6392,11 +6407,13 @@ export default function Home() {
               openAixWithImagePicker(action);
             }
           }}
-          onSelect={(text, imageFiles, label, category) => {
+          onSelect={(text, imageFiles, label, category, secondMsg) => {
             // テンプレート内「アカウント名」→ preferredCustomerName に置換
             const resolvedText = text.replace(/アカウント名/g, preferredCustomerName);
             setReplyDraft(resolvedText);
             if (imageFiles && imageFiles.length > 0) setSelectedImageFiles((prev) => [...prev, ...imageFiles]);
+            // 2通目設定をキャプチャ（送信時に使用）
+            pendingSecondMsgRef.current = secondMsg ?? null;
             // ①申込フォーマット選択 → ②を次に誘導
             if (label?.includes("①申込")) {
               setSuggestApplyStep2Map((prev) => ({ ...prev, [selectedConversation.id]: true }));
@@ -6523,6 +6540,17 @@ export default function Home() {
           onSend={sendMessageText}
           onDelayedSend={handleDelayedSend}
           onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean }) => {
+            // 2通目自動送信スケジュール（AIXフロー用・予約送信は対象外）
+            if (pendingSecondMsgRef.current && !meta?.scheduled) {
+              const config = pendingSecondMsgRef.current;
+              pendingSecondMsgRef.current = null;
+              const customerName = preferredCustomerName;
+              const secondText = config.type === "内覧誘導"
+                ? `${customerName}ご都合よろしいお日にちにご案内させて頂きます😊！！`
+                : `${customerName}さんお気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
+              const t = setTimeout(() => sendMessageText(secondText), config.delay * 1000);
+              multiSendTimersRef.current.push(t);
+            }
             // AIX送信をパターン学習データとして記録（半自動化ループ）
             if (aixModalType) {
               const _ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;

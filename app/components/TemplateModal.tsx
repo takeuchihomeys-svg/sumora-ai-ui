@@ -135,12 +135,14 @@ interface Template {
   structure: StructureBlock[] | null;
   sort_order: number | null;
   requires_image: boolean;
+  second_msg_type: string | null;
+  second_msg_delay: number | null;
 }
 
 interface TemplateModalProps {
   onClose: () => void;
-  onSelect?: (text: string, imageFiles?: File[], label?: string, category?: string) => void;
-  onOpenAixWithFocus?: (focusPoints: string[], templateInfo?: { name: string; category: string; structure?: Array<{ label: string; text: string }>; sample?: string }) => void;
+  onSelect?: (text: string, imageFiles?: File[], label?: string, category?: string, secondMsg?: { type: string; delay: number } | null) => void;
+  onOpenAixWithFocus?: (focusPoints: string[], templateInfo?: { name: string; category: string; structure?: Array<{ label: string; text: string }>; sample?: string; secondMsg?: { type: string; delay: number } | null }) => void;
   customerName?: string;
   conversationState?: string;
   recentMessages?: Array<{ sender: string; text: string; imageUrl?: string }>;
@@ -182,6 +184,13 @@ const AIX_PURPOSE_TAGS = [
   { key: "内覧誘導", color: "#1565C0" },
   { key: "申込誘導", color: "#7B1FA2" },
 ] as const;
+
+const SECOND_MSG_TYPES = [
+  { key: "内覧誘導", color: "#059669", text: "[お客様名]ご都合よろしいお日にちにご案内させて頂きます😊！！" },
+  { key: "申込誘導", color: "#7B1FA2", text: "[お客様名]さんお気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！" },
+] as const;
+
+const SECOND_MSG_DELAYS = [15, 30, 60] as const;
 
 function getAixPurposeTag(label: string): string | null {
   for (const { key } of AIX_PURPOSE_TAGS) {
@@ -239,6 +248,8 @@ export default function TemplateModal({
   const [availCheckFilter, setAvailCheckFilter] = useState<string | null>(null);
   const [editAvailCheckType, setEditAvailCheckType] = useState<string | null>(null);
   const [editAixPurposeTag, setEditAixPurposeTag] = useState<string | null>(null);
+  const [editSecondMsgType, setEditSecondMsgType] = useState<string | null>(null);
+  const [editSecondMsgDelay, setEditSecondMsgDelay] = useState<number | null>(null);
   const [vacatingDates, setVacatingDates] = useState<Record<string, { month: number; day: number } | null>>({});
   const [inspectingId, setInspectingId] = useState<string | null>(null);
   const [templateImages, setTemplateImages] = useState<Record<string, File[]>>({});
@@ -447,6 +458,8 @@ export default function TemplateModal({
     setEditCategory(tmpl.category);
     setEditRequiresImage(tmpl.requires_image);
     setEditStructure(tmpl.structure ?? []);
+    setEditSecondMsgType(tmpl.second_msg_type);
+    setEditSecondMsgDelay(tmpl.second_msg_delay);
     setConfirmDeleteId(null);
   };
 
@@ -457,7 +470,7 @@ export default function TemplateModal({
       const res = await fetch("/api/templates", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: editingId, category: editCategory || "全般", label: (editAvailCheckType && editCategory === "物件確認した【AIX】" ? `【${editAvailCheckType}】` : "") + (editAixPurposeTag && editCategory.includes("AIX") && editCategory !== "物件確認した【AIX】" ? `【${editAixPurposeTag}】` : "") + editLabel, text: editText, structure: editStructure.length > 0 ? editStructure : null, requires_image: editRequiresImage }),
+        body: JSON.stringify({ id: editingId, category: editCategory || "全般", label: (editAvailCheckType && editCategory === "物件確認した【AIX】" ? `【${editAvailCheckType}】` : "") + (editAixPurposeTag && editCategory.includes("AIX") && editCategory !== "物件確認した【AIX】" ? `【${editAixPurposeTag}】` : "") + editLabel, text: editText, structure: editStructure.length > 0 ? editStructure : null, requires_image: editRequiresImage, second_msg_type: editSecondMsgType, second_msg_delay: editSecondMsgType ? editSecondMsgDelay : null }),
       });
       const data = await res.json() as { ok: boolean };
       if (data.ok) {
@@ -1052,6 +1065,51 @@ export default function TemplateModal({
                               onClick={() => setEditRequiresImage(v => !v)}
                               className={`w-full rounded-xl border py-1.5 text-[11px] font-bold transition ${editRequiresImage ? "border-orange-400 bg-orange-50 text-orange-600" : "border-[#d1d7db] bg-white text-[#54656f]"}`}
                             >📸 {editRequiresImage ? "画像添付必要（オン）" : "画像添付必要（オフ）"}</button>
+                            {/* 2通目設定 */}
+                            <div className="rounded-xl border border-[#d1d7db] bg-white p-2.5">
+                              <p className="mb-1.5 text-[10px] font-bold text-[#54656f]">📤 2通目設定（自動送信）</p>
+                              <div className="flex gap-1 flex-wrap mb-2">
+                                <button
+                                  type="button"
+                                  onClick={() => { setEditSecondMsgType(null); setEditSecondMsgDelay(null); }}
+                                  className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold border-2 transition ${!editSecondMsgType ? "text-white border-transparent bg-[#90a4ae]" : "bg-white text-[#54656f] border-[#d1d7db]"}`}
+                                >なし</button>
+                                {SECOND_MSG_TYPES.map(({ key, color }) => {
+                                  const sel = editSecondMsgType === key;
+                                  return (
+                                    <button
+                                      key={key}
+                                      type="button"
+                                      onClick={() => { setEditSecondMsgType(key); if (!editSecondMsgDelay) setEditSecondMsgDelay(30); }}
+                                      className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold border-2 transition ${sel ? "text-white border-transparent" : "bg-white text-[#54656f] border-[#d1d7db]"}`}
+                                      style={sel ? { backgroundColor: color, borderColor: color } : undefined}
+                                    >{key}</button>
+                                  );
+                                })}
+                              </div>
+                              {editSecondMsgType && (
+                                <>
+                                  <p className="mb-1 text-[10px] text-[#90a4ae]">時間差</p>
+                                  <div className="flex gap-1 mb-2">
+                                    {SECOND_MSG_DELAYS.map(sec => {
+                                      const sel = editSecondMsgDelay === sec;
+                                      return (
+                                        <button
+                                          key={sec}
+                                          type="button"
+                                          onClick={() => setEditSecondMsgDelay(sec)}
+                                          className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold border-2 transition ${sel ? "text-white border-transparent" : "bg-white text-[#54656f] border-[#d1d7db]"}`}
+                                          style={sel ? { backgroundColor: "#1565C0", borderColor: "#1565C0" } : undefined}
+                                        >{sec === 60 ? "1分" : `${sec}秒`}</button>
+                                      );
+                                    })}
+                                  </div>
+                                  <p className="text-[10px] text-[#90a4ae] leading-relaxed whitespace-pre-line">
+                                    {SECOND_MSG_TYPES.find(t => t.key === editSecondMsgType)?.text ?? ""}
+                                  </p>
+                                </>
+                              )}
+                            </div>
                             {/* 構成ブロック編集 */}
                             <div className="rounded-xl border border-[#d1d7db] bg-white p-2">
                               <div className="mb-1.5 flex items-center justify-between">
@@ -1394,14 +1452,36 @@ export default function TemplateModal({
                           </div>
                         )}
 
+                        {/* 2通目設定表示 */}
+                        {editingId !== tmpl.id && tmpl.second_msg_type && tmpl.second_msg_delay && (
+                          <div className="mb-2 rounded-xl border border-emerald-200 bg-emerald-50 p-2.5">
+                            <div className="mb-1 flex items-center gap-1.5">
+                              <span className="text-[11px] font-bold text-emerald-700">📤 2通目</span>
+                              <span
+                                className="rounded-full px-2 py-0.5 text-[9px] font-bold text-white"
+                                style={{ backgroundColor: SECOND_MSG_TYPES.find(t => t.key === tmpl.second_msg_type)?.color ?? "#888" }}
+                              >{tmpl.second_msg_type}</span>
+                              <span className="text-[10px] text-emerald-600 font-bold">
+                                {tmpl.second_msg_delay === 60 ? "1分後" : `${tmpl.second_msg_delay}秒後`}に自動送信
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-emerald-700 leading-relaxed whitespace-pre-line">
+                              {SECOND_MSG_TYPES.find(t => t.key === tmpl.second_msg_type)?.text ?? ""}
+                            </p>
+                          </div>
+                        )}
+
                         {/* ボタン行 */}
                         {editingId !== tmpl.id && <div className="flex items-center gap-2 flex-wrap">
                           {onSelect && (
                             <button
                               onClick={() => {
                                 // AIXカテゴリはAIXモーダルを開く（訴求ポイント引き継ぎ）
+                                const secondMsg = tmpl.second_msg_type && tmpl.second_msg_delay
+                                  ? { type: tmpl.second_msg_type, delay: tmpl.second_msg_delay }
+                                  : null;
                                 if (tmpl.category.includes("AIX") && onOpenAixWithFocus) {
-                                  onOpenAixWithFocus(focusPointsMap[tmpl.id] ?? [], { name: tmpl.label, category: tmpl.category, structure: tmpl.structure ?? undefined, sample: tmpl.text || undefined });
+                                  onOpenAixWithFocus(focusPointsMap[tmpl.id] ?? [], { name: tmpl.label, category: tmpl.category, structure: tmpl.structure ?? undefined, sample: tmpl.text || undefined, secondMsg });
                                   onClose();
                                   return;
                                 }
@@ -1411,7 +1491,7 @@ export default function TemplateModal({
                                 }
                                 if (isOcrTemplate && extractingId === tmpl.id) return;
                                 // OCRテンプレートは画像をLINEに添付しない（物件名・住所抽出のみ）
-                                onSelect(displayText, isOcrTemplate ? undefined : (templateImages[tmpl.id] ?? []), tmpl.label, tmpl.category);
+                                onSelect(displayText, isOcrTemplate ? undefined : (templateImages[tmpl.id] ?? []), tmpl.label, tmpl.category, secondMsg);
                                 onClose();
                               }}
                               disabled={isOcrTemplate && extractingId === tmpl.id}

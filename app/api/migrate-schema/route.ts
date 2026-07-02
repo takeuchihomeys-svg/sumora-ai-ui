@@ -211,6 +211,9 @@ CREATE INDEX IF NOT EXISTS idx_templates_sort_order ON templates(sort_order);
 
 ALTER TABLE templates DISABLE ROW LEVEL SECURITY;
 
+ALTER TABLE templates ADD COLUMN IF NOT EXISTS second_msg_type TEXT DEFAULT NULL;
+ALTER TABLE templates ADD COLUMN IF NOT EXISTS second_msg_delay INTEGER DEFAULT NULL;
+
 -- estimates テーブル（見積書作成ツール）
 CREATE TABLE IF NOT EXISTS estimates (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

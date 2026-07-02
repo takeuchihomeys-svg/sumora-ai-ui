@@ -6,7 +6,7 @@ export type StructureBlock = { label: string; text: string };
 export async function GET() {
   const { data, error } = await supabase
     .from("templates")
-    .select("id, category, label, text, structure, sort_order, requires_image, created_at")
+    .select("id, category, label, text, structure, sort_order, requires_image, second_msg_type, second_msg_delay, created_at")
     .order("category")
     .order("sort_order")
     .order("created_at");
@@ -57,14 +57,14 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
-  const { id, category, label, text, structure, requires_image } = await req.json() as { id: string; category: string; label: string; text: string; structure?: StructureBlock[] | null; requires_image?: boolean };
+  const { id, category, label, text, structure, requires_image, second_msg_type, second_msg_delay } = await req.json() as { id: string; category: string; label: string; text: string; structure?: StructureBlock[] | null; requires_image?: boolean; second_msg_type?: string | null; second_msg_delay?: number | null };
   if (!id || !label?.trim() || !text?.trim()) {
     return NextResponse.json({ ok: false, error: "id, label, text は必須" }, { status: 400 });
   }
 
   const { error } = await supabase
     .from("templates")
-    .update({ category: category?.trim() || "全般", label: label.trim(), text: text.trim(), structure: structure ?? null, requires_image: requires_image ?? false })
+    .update({ category: category?.trim() || "全般", label: label.trim(), text: text.trim(), structure: structure ?? null, requires_image: requires_image ?? false, second_msg_type: second_msg_type ?? null, second_msg_delay: second_msg_type ? (second_msg_delay ?? null) : null })
     .eq("id", id);
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
