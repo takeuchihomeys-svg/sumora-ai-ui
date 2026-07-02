@@ -444,10 +444,35 @@ export default function AixModal({
 
   useEffect(() => {
     if (initialImageFile) {
-      setImageFile(initialImageFile);
-      const reader = new FileReader();
-      reader.onload = () => setImagePreview(String(reader.result ?? ""));
-      reader.readAsDataURL(initialImageFile);
+      if (actionType === "meeting_place") {
+        setMeetingPropertyFile(initialImageFile);
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const dataUrl = String(reader.result ?? "");
+          setMeetingPropertyPreview(dataUrl);
+          setMeetingOcrLoading(true);
+          try {
+            const base64 = dataUrl.split(",")[1];
+            const mime = (dataUrl.split(";")[0].split(":")[1] || "image/jpeg") as "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+            const res = await fetch("/api/extract-meeting-place", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ image_base64: base64, media_type: mime }),
+            });
+            const data = await res.json() as { ok: boolean; name?: string; address?: string };
+            if (data.ok) {
+              if (data.name) setMeetingPropertyName(data.name);
+              if (data.address) setMeetingPropertyAddress(data.address);
+            }
+          } catch { /* silent */ } finally { setMeetingOcrLoading(false); }
+        };
+        reader.readAsDataURL(initialImageFile);
+      } else {
+        setImageFile(initialImageFile);
+        const reader = new FileReader();
+        reader.onload = () => setImagePreview(String(reader.result ?? ""));
+        reader.readAsDataURL(initialImageFile);
+      }
     }
   }, []);
 

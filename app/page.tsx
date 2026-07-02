@@ -5204,7 +5204,7 @@ export default function Home() {
               if (guideToMeetingPlace && !dismissedMeetingPlaceIds.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-600 bg-teal-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-teal-800 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>内覧日時が確定 → AIX 待ち合わせで確定文を送る</span>
-                  <button onClick={() => { setDismissedMeetingPlaceIds((prev) => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixDirect("meeting_place"); }}
+                  <button onClick={() => { setDismissedMeetingPlaceIds((prev) => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); }}
                     className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
                     style={{ background: "linear-gradient(135deg, #00838F, #006064)" }}>AIX 待ち合わせ</button>
                   <button onClick={() => setDismissedMeetingPlaceIds((prev) => new Set([...prev, id]))}
@@ -8277,7 +8277,7 @@ export default function Home() {
                     setShowEstimatePicker(true);
                   } },
                   { color: "#9C27B0", label: "内覧へ！", sub: "カレンダーから日程を選択→AIで文生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setShowViewingPicker(true); } },
-                  { color: "#00838F", label: "待ち合わせ", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixDirect("meeting_place"); } },
+                  { color: "#00838F", label: "待ち合わせ", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); } },
                   { color: "#E53935", label: "申込へ！", sub: "物件名入力orシンプル送信→AI生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); openAixDirect("application_push"); } },
                   { color: "#78909C", label: "管理会社に確認した", sub: "空室・礼金・ペット可否など確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); } },
                 ].map((item) => {
