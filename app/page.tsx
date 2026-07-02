@@ -8430,6 +8430,7 @@ export default function Home() {
                   { color: "#00838F", label: "待ち合わせ", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); } },
                   { color: "#E53935", label: "申込へ！", sub: "物件名入力orシンプル送信→AI生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); setShowApplicationPicker(true); } },
                   { color: "#78909C", label: "管理会社に確認した", sub: "空室・礼金・ペット可否など確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); setShowPropertyCheckPicker(true); } },
+                  { color: "#5D4037", label: "代表に確認した", sub: "代表への確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); setAixInitInputText("代表に確認しました。"); openAixDirect("property_check_result"); } },
                 ].map((item) => {
                   const info = AIX_INSPECT[item.label];
                   const isOpen = aixInspectLabel === item.label;
