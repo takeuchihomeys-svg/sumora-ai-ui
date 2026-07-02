@@ -879,6 +879,8 @@ export default function AixModal({
           // 条件スクショなし: 物件資料のみで生成
           body.image_url = await uploadImage(imageFile);
         }
+        // 新着フラグ
+        if (isNewArrival) body.is_new_arrival = true;
         // 自動抽出した退去予定日を注入（OCR誤読防止）
         if (propMoveOutDate) body.move_out_date = propMoveOutDate;
       } else if (actionType === "property_send") {
@@ -1504,14 +1506,16 @@ export default function AixModal({
               <div>
                 <div className="mb-1 flex items-center justify-between">
                   <p className="text-xs font-bold text-[#54656f]">② 物件資料</p>
-                  {onOpenTemplateFiltered && (
-                    <button
-                      type="button"
-                      onClick={() => onOpenTemplateFiltered("新着")}
-                      className="rounded-full px-2.5 py-0.5 text-[11px] font-bold transition"
-                      style={{ background: "linear-gradient(135deg, #059669, #10b981)", color: "white" }}
-                    >新着</button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => setIsNewArrival(prev => !prev)}
+                    className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold transition ${
+                      isNewArrival
+                        ? "border-transparent text-white"
+                        : "border-[#d1d7db] bg-white text-[#90a4ae]"
+                    }`}
+                    style={isNewArrival ? { background: "linear-gradient(135deg, #059669, #10b981)" } : {}}
+                  >新着</button>
                 </div>
                 {imagePreview ? (
                   <div className="relative overflow-hidden rounded-2xl border border-[#d1d7db]">
