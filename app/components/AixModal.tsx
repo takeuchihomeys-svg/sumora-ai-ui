@@ -1715,36 +1715,42 @@ export default function AixModal({
               <div>
                 <p className="mb-1.5 text-xs font-bold text-[#54656f]">送るモードを選択</p>
                 <div className="flex flex-col gap-2 mb-2">
-                  <button
-                    onClick={() => { setSendMode(sendMode === "normal" ? null : "normal"); setPreview(""); }}
-                    className={`w-full rounded-full py-2.5 text-sm font-bold transition-all ${
-                      sendMode === "normal"
-                        ? "bg-[#1565C0] text-white shadow-sm"
-                        : "border border-[#d1d7db] bg-white text-[#54656f]"
-                    }`}
-                  >
-                    新規物件
-                  </button>
-                  <button
-                    onClick={() => { setSendMode(sendMode === "new_arrival" ? null : "new_arrival"); setPreview(""); }}
-                    className={`w-full rounded-full py-2.5 text-sm font-bold transition-all ${
-                      sendMode === "new_arrival"
-                        ? "bg-[#FF6F00] text-white shadow-sm"
-                        : "border border-[#d1d7db] bg-white text-[#54656f]"
-                    }`}
-                  >
-                    新着物件
-                  </button>
-                  <button
-                    onClick={() => { setSendMode(sendMode === "widen" ? null : "widen"); setPreview(""); if (sendMode !== "widen") setSendExpandedConds(new Set()); }}
-                    className={`w-full rounded-full py-2.5 text-sm font-bold transition-all ${
-                      sendMode === "widen"
-                        ? "bg-[#F57C00] text-white shadow-sm"
-                        : "border border-[#d1d7db] bg-white text-[#54656f]"
-                    }`}
-                  >
-                    条件を広げた
-                  </button>
+                  {(sendMode === null || sendMode === "normal") && (
+                    <button
+                      onClick={() => { setSendMode(sendMode === "normal" ? null : "normal"); setPreview(""); }}
+                      className={`w-full rounded-full py-2.5 text-sm font-bold transition-all ${
+                        sendMode === "normal"
+                          ? "bg-[#1565C0] text-white shadow-sm"
+                          : "border border-[#d1d7db] bg-white text-[#54656f]"
+                      }`}
+                    >
+                      新規物件
+                    </button>
+                  )}
+                  {(sendMode === null || sendMode === "new_arrival") && (
+                    <button
+                      onClick={() => { setSendMode(sendMode === "new_arrival" ? null : "new_arrival"); setPreview(""); }}
+                      className={`w-full rounded-full py-2.5 text-sm font-bold transition-all ${
+                        sendMode === "new_arrival"
+                          ? "bg-[#FF6F00] text-white shadow-sm"
+                          : "border border-[#d1d7db] bg-white text-[#54656f]"
+                      }`}
+                    >
+                      新着物件
+                    </button>
+                  )}
+                  {(sendMode === null || sendMode === "widen") && (
+                    <button
+                      onClick={() => { setSendMode(sendMode === "widen" ? null : "widen"); setPreview(""); if (sendMode !== "widen") setSendExpandedConds(new Set()); }}
+                      className={`w-full rounded-full py-2.5 text-sm font-bold transition-all ${
+                        sendMode === "widen"
+                          ? "bg-[#F57C00] text-white shadow-sm"
+                          : "border border-[#d1d7db] bg-white text-[#54656f]"
+                      }`}
+                    >
+                      条件を広げた
+                    </button>
+                  )}
                   {sendMode === "new_arrival" && (
                     <button
                       onClick={() => setNewArrivalApply(prev => !prev)}
