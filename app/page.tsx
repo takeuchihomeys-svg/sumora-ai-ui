@@ -8114,9 +8114,9 @@ export default function Home() {
           className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
           onClick={(e) => { if (e.target === e.currentTarget) { setShowAixMenu(false); setAixInspectLabel(null); } }}
         >
-          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl">
+          <div className="w-full max-w-md rounded-t-3xl bg-white shadow-2xl flex flex-col max-h-[85vh]">
             <div
-              className="flex items-center justify-between rounded-t-3xl px-5 py-4"
+              className="flex items-center justify-between rounded-t-3xl px-5 py-4 flex-shrink-0"
               style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}
             >
               <div className="text-[17px] font-bold text-white">AIX</div>
@@ -8127,7 +8127,7 @@ export default function Home() {
                 ✕
               </button>
             </div>
-            <div className="p-4 flex flex-col gap-2">
+            <div className="p-4 flex flex-col gap-2 overflow-y-auto pb-8">
               {(() => {
                 const AIX_INSPECT: Record<string, { inputs: string; process: string; data: string }> = {
                   "物件オススメ": {
@@ -8191,6 +8191,7 @@ export default function Home() {
                   { color: "#9C27B0", label: "内覧へ！", sub: "カレンダーから日程を選択→AIで文生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setShowViewingPicker(true); } },
                   { color: "#00838F", label: "待ち合わせ", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixDirect("meeting_place"); } },
                   { color: "#E53935", label: "申込へ！", sub: "物件名入力orシンプル送信→AI生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); openAixDirect("application_push"); } },
+                  { color: "#78909C", label: "管理会社に確認した", sub: "空室・礼金・ペット可否など確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); } },
                 ].map((item) => {
                   const info = AIX_INSPECT[item.label];
                   const isOpen = aixInspectLabel === item.label;
