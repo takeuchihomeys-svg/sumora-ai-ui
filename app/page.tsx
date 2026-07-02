@@ -447,6 +447,11 @@ export default function Home() {
   const [greetingViewingDate, setGreetingViewingDate] = useState("");
   const [greetingViewingTime, setGreetingViewingTime] = useState("");
   const [greetingViewingGenerating, setGreetingViewingGenerating] = useState(false);
+  const [greetingViewingAfterType, setGreetingViewingAfterType] = useState<"apply" | "apply_guide" | "confirm" | "search" | null>(null);
+  const [greetingViewingConfirmType, setGreetingViewingConfirmType] = useState<"estimate" | "freeword" | null>(null);
+  const [greetingViewingSearchType, setGreetingViewingSearchType] = useState<"new" | "expand" | "change" | null>(null);
+  const [greetingViewingPropertyInput, setGreetingViewingPropertyInput] = useState("");
+  const [greetingViewingFreeword, setGreetingViewingFreeword] = useState("");
   const [aixInitialSendImages, setAixInitialSendImages] = useState<File[]>([]);
   const [dismissedEstimateSheetIds, setDismissedEstimateSheetIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedEstimateSheetIds") || "[]") as string[]); } catch { return new Set(); }
@@ -3442,6 +3447,12 @@ export default function Home() {
         }).catch(console.error);
       }
 
+      const afterTypeForApi = greetingViewingAfterType === "confirm"
+        ? (greetingViewingConfirmType === "estimate" ? "confirm_estimate" : "confirm_freeword")
+        : greetingViewingAfterType === "search"
+          ? (greetingViewingSearchType === "new" ? "search_new" : greetingViewingSearchType === "expand" ? "search_expand" : "search_change")
+          : greetingViewingAfterType ?? undefined;
+
       const res = await fetch("/api/aix/action", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -3450,6 +3461,9 @@ export default function Home() {
           sub_mode: greetingViewingMode,
           ...(greetingViewingDate ? { viewing_date: greetingViewingDate } : {}),
           ...(greetingViewingTime ? { viewing_time: greetingViewingTime } : {}),
+          ...(afterTypeForApi ? { after_type: afterTypeForApi } : {}),
+          ...(greetingViewingPropertyInput ? { property_label: greetingViewingPropertyInput } : {}),
+          ...(greetingViewingFreeword ? { freeword: greetingViewingFreeword } : {}),
           customer_name: selectedConversation.customerName,
           conversation_id: selectedConversation.id,
           recent_messages: recentMsgs,
@@ -3465,6 +3479,11 @@ export default function Home() {
       setGreetingViewingMode(null);
       setGreetingViewingDate("");
       setGreetingViewingTime("");
+      setGreetingViewingAfterType(null);
+      setGreetingViewingConfirmType(null);
+      setGreetingViewingSearchType(null);
+      setGreetingViewingPropertyInput("");
+      setGreetingViewingFreeword("");
     } catch (err) {
       console.error("[greetingViewing]", err);
     } finally {
@@ -8029,14 +8048,14 @@ export default function Home() {
       {showGreetingViewingPicker && (
         <div
           className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
-          onClick={() => { setShowGreetingViewingPicker(false); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); }}
+          onClick={() => { setShowGreetingViewingPicker(false); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); setGreetingViewingAfterType(null); setGreetingViewingConfirmType(null); setGreetingViewingSearchType(null); setGreetingViewingPropertyInput(""); setGreetingViewingFreeword(""); }}
         >
           <div
             className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="mb-5 flex justify-center">
-              <svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <div className="mb-4 flex justify-center">
+              <svg width="60" height="60" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <circle cx="36" cy="36" r="36" fill="#E0F2F1"/>
                 <path d="M22 44c0-7.732 6.268-14 14-14s14 6.268 14 14" stroke="#00796B" strokeWidth="1.8" strokeLinecap="round"/>
                 <circle cx="36" cy="24" r="8" fill="#B2DFDB" stroke="#00796B" strokeWidth="1.5"/>
@@ -8045,65 +8064,222 @@ export default function Home() {
                 <path d="M46 22l3 3 5-5" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             </div>
-            <p className="mb-1 text-center text-[20px] font-bold text-[#111827]">挨拶</p>
-            <p className="mb-5 text-center text-[13px] leading-snug text-[#6B7280]">内覧前・後どちらの挨拶ですか？</p>
-            {/* モード選択 */}
-            <div className="flex gap-2.5 mb-4">
-              {([
-                { key: "before" as const, label: "内覧前", desc: "当日・前日の挨拶" },
-                { key: "after" as const, label: "内覧後", desc: "内覧終了後の挨拶" },
-              ]).map(({ key, label, desc }) => (
-                <button
-                  key={key}
-                  onClick={() => setGreetingViewingMode(key)}
-                  className={`flex-1 rounded-2xl border-2 px-3 py-3 text-center transition-all ${
-                    greetingViewingMode === key
-                      ? "border-teal-500 bg-teal-50"
-                      : "border-[#E5E7EB] bg-[#FAFAFA]"
-                  }`}
-                >
-                  <div className={`text-[14px] font-bold ${greetingViewingMode === key ? "text-teal-700" : "text-[#111827]"}`}>{label}</div>
-                  <div className="text-[10px] text-[#9CA3AF] mt-0.5">{desc}</div>
-                </button>
-              ))}
-            </div>
-            {/* 内覧前: 日時入力（任意 → viewingsテーブルに登録してアナウンス自動化） */}
+
+            {/* Step 1: 前/後 選択 */}
+            {!greetingViewingMode && (
+              <>
+                <p className="mb-1 text-center text-[19px] font-bold text-[#111827]">挨拶</p>
+                <p className="mb-5 text-center text-[13px] text-[#6B7280]">内覧前・後どちらの挨拶ですか？</p>
+                <div className="flex gap-2.5 mb-4">
+                  {([
+                    { key: "before" as const, label: "内覧前", desc: "当日・前日の挨拶" },
+                    { key: "after" as const, label: "内覧後", desc: "内覧終了後の挨拶" },
+                  ]).map(({ key, label, desc }) => (
+                    <button
+                      key={key}
+                      onClick={() => setGreetingViewingMode(key)}
+                      className="flex-1 rounded-2xl border-2 border-[#E5E7EB] bg-[#FAFAFA] px-3 py-4 text-center transition-all active:bg-teal-50"
+                    >
+                      <div className="text-[15px] font-bold text-[#111827]">{label}</div>
+                      <div className="text-[10px] text-[#9CA3AF] mt-0.5">{desc}</div>
+                    </button>
+                  ))}
+                </div>
+                <button onClick={() => { setShowGreetingViewingPicker(false); }} className="mt-1 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60">キャンセル</button>
+              </>
+            )}
+
+            {/* Step 2a: 内覧前 → 日時入力 */}
             {greetingViewingMode === "before" && (
-              <div className="mb-4 rounded-2xl border border-[#E5E7EB] bg-[#F8FFFE] px-4 py-3">
-                <p className="mb-2 text-[11px] font-bold text-[#00796B]">内覧日時を入力するとアナウンス自動化されます</p>
-                <div className="flex gap-2">
-                  <div className="flex-1">
-                    <p className="mb-1 text-[10px] text-[#6B7280]">内覧日</p>
-                    <input
-                      type="date"
-                      value={greetingViewingDate}
-                      onChange={(e) => setGreetingViewingDate(e.target.value)}
-                      className="w-full rounded-xl border border-[#D1D5DB] px-2.5 py-2 text-[13px] focus:border-teal-400 focus:outline-none"
-                    />
-                  </div>
-                  <div className="w-[100px]">
-                    <p className="mb-1 text-[10px] text-[#6B7280]">時間（任意）</p>
-                    <input
-                      type="time"
-                      value={greetingViewingTime}
-                      onChange={(e) => setGreetingViewingTime(e.target.value)}
-                      className="w-full rounded-xl border border-[#D1D5DB] px-2.5 py-2 text-[13px] focus:border-teal-400 focus:outline-none"
-                    />
+              <>
+                <p className="mb-1 text-center text-[18px] font-bold text-[#111827]">内覧前の挨拶</p>
+                <div className="mb-4 rounded-2xl border border-[#E5E7EB] bg-[#F8FFFE] px-4 py-3 mt-4">
+                  <p className="mb-2 text-[11px] font-bold text-[#00796B]">日時を入力するとアナウンスが自動化されます</p>
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <p className="mb-1 text-[10px] text-[#6B7280]">内覧日</p>
+                      <input type="date" value={greetingViewingDate} onChange={(e) => setGreetingViewingDate(e.target.value)} className="w-full rounded-xl border border-[#D1D5DB] px-2.5 py-2 text-[13px] focus:border-teal-400 focus:outline-none" />
+                    </div>
+                    <div className="w-[100px]">
+                      <p className="mb-1 text-[10px] text-[#6B7280]">時間（任意）</p>
+                      <input type="time" value={greetingViewingTime} onChange={(e) => setGreetingViewingTime(e.target.value)} className="w-full rounded-xl border border-[#D1D5DB] px-2.5 py-2 text-[13px] focus:border-teal-400 focus:outline-none" />
+                    </div>
                   </div>
                 </div>
-              </div>
+                <button onClick={handleGreetingViewingGenerate} disabled={greetingViewingGenerating} className="w-full rounded-2xl bg-teal-600 py-3.5 text-[15px] font-bold text-white transition active:opacity-80 disabled:opacity-40">
+                  {greetingViewingGenerating ? "生成中…" : "生成する"}
+                </button>
+                <button onClick={() => setGreetingViewingMode(null)} className="mt-3 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60">← 戻る</button>
+              </>
             )}
-            <button
-              onClick={handleGreetingViewingGenerate}
-              disabled={!greetingViewingMode || greetingViewingGenerating}
-              className="w-full rounded-2xl bg-teal-600 py-3.5 text-[15px] font-bold text-white transition active:opacity-80 disabled:opacity-40"
-            >
-              {greetingViewingGenerating ? "生成中…" : "生成する"}
-            </button>
-            <button
-              onClick={() => { setShowGreetingViewingPicker(false); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); }}
-              className="mt-3 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
-            >キャンセル</button>
+
+            {/* Step 2b: 内覧後 → 4択 */}
+            {greetingViewingMode === "after" && !greetingViewingAfterType && (
+              <>
+                <p className="mb-1 text-center text-[18px] font-bold text-[#111827]">内覧後の挨拶</p>
+                <p className="mb-4 text-center text-[12px] text-[#6B7280]">内覧後の状況を選んでください</p>
+                <div className="flex flex-col gap-2 mb-4">
+                  {([
+                    { key: "apply" as const, label: "申込", desc: "お申込みでお部屋を抑える", color: "#1565C0" },
+                    { key: "apply_guide" as const, label: "申込誘導", desc: "気に入ったら申込みを促す", color: "#7B1FA2" },
+                    { key: "confirm" as const, label: "確認事項を確認した", desc: "見積書 or フリーワードで送る", color: "#E65100" },
+                    { key: "search" as const, label: "引き続き物件探す", desc: "新着・条件広げる・条件変更", color: "#2E7D32" },
+                  ]).map(({ key, label, desc, color }) => (
+                    <button key={key} onClick={() => setGreetingViewingAfterType(key)}
+                      className="flex items-center gap-3 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3.5 text-left transition active:bg-gray-100">
+                      <span className="w-1.5 self-stretch rounded-full flex-shrink-0" style={{ background: color }} />
+                      <div>
+                        <div className="text-[14px] font-bold text-[#111827]">{label}</div>
+                        <div className="text-[11px] text-[#6B7280] mt-0.5">{desc}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                <button onClick={() => setGreetingViewingMode(null)} className="w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60">← 戻る</button>
+              </>
+            )}
+
+            {/* Step 3a: 申込 / 申込誘導 → 物件名入力 */}
+            {greetingViewingMode === "after" && (greetingViewingAfterType === "apply" || greetingViewingAfterType === "apply_guide") && (
+              <>
+                <p className="mb-1 text-center text-[18px] font-bold text-[#111827]">{greetingViewingAfterType === "apply" ? "申込" : "申込誘導"}</p>
+                <div className="mt-4 mb-4">
+                  <p className="mb-1.5 text-[12px] font-bold text-[#374151]">物件名・号室（任意）</p>
+                  <input
+                    type="text"
+                    value={greetingViewingPropertyInput}
+                    onChange={(e) => setGreetingViewingPropertyInput(e.target.value)}
+                    placeholder="例: ファーストプレイス國田 302号室"
+                    className="w-full rounded-xl border border-[#D1D5DB] px-3 py-2.5 text-[13px] focus:border-teal-400 focus:outline-none"
+                  />
+                </div>
+                <button onClick={handleGreetingViewingGenerate} disabled={greetingViewingGenerating} className="w-full rounded-2xl bg-teal-600 py-3.5 text-[15px] font-bold text-white transition active:opacity-80 disabled:opacity-40">
+                  {greetingViewingGenerating ? "生成中…" : "生成する"}
+                </button>
+                <button onClick={() => setGreetingViewingAfterType(null)} className="mt-3 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60">← 戻る</button>
+              </>
+            )}
+
+            {/* Step 3b: 確認事項 → 見積書 or フリーワード */}
+            {greetingViewingMode === "after" && greetingViewingAfterType === "confirm" && !greetingViewingConfirmType && (
+              <>
+                <p className="mb-1 text-center text-[18px] font-bold text-[#111827]">確認事項を確認した</p>
+                <p className="mb-4 text-center text-[12px] text-[#6B7280]">何を送りますか？</p>
+                <div className="flex gap-2.5 mb-4">
+                  {([
+                    { key: "estimate" as const, label: "初期費用見積書", desc: "御見積書と一緒に送る" },
+                    { key: "freeword" as const, label: "フリーワード", desc: "自由入力でメッセージ" },
+                  ]).map(({ key, label, desc }) => (
+                    <button key={key} onClick={() => setGreetingViewingConfirmType(key)}
+                      className="flex-1 rounded-2xl border-2 border-[#E5E7EB] bg-[#FAFAFA] px-3 py-4 text-center transition active:bg-orange-50">
+                      <div className="text-[13px] font-bold text-[#111827]">{label}</div>
+                      <div className="text-[10px] text-[#9CA3AF] mt-0.5">{desc}</div>
+                    </button>
+                  ))}
+                </div>
+                <button onClick={() => setGreetingViewingAfterType(null)} className="w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60">← 戻る</button>
+              </>
+            )}
+
+            {/* Step 4a: 確認事項/見積書 → 物件名入力 */}
+            {greetingViewingMode === "after" && greetingViewingAfterType === "confirm" && greetingViewingConfirmType === "estimate" && (
+              <>
+                <p className="mb-1 text-center text-[18px] font-bold text-[#111827]">初期費用見積書</p>
+                <p className="mb-3 text-center text-[11px] text-[#6B7280]">御見積書と一緒に送る2通目のメッセージを生成します</p>
+                <div className="mb-4">
+                  <p className="mb-1.5 text-[12px] font-bold text-[#374151]">物件名・号室（任意）</p>
+                  <input
+                    type="text"
+                    value={greetingViewingPropertyInput}
+                    onChange={(e) => setGreetingViewingPropertyInput(e.target.value)}
+                    placeholder="例: ファーストプレイス國田 302号室"
+                    className="w-full rounded-xl border border-[#D1D5DB] px-3 py-2.5 text-[13px] focus:border-teal-400 focus:outline-none"
+                  />
+                </div>
+                <button onClick={handleGreetingViewingGenerate} disabled={greetingViewingGenerating} className="w-full rounded-2xl bg-teal-600 py-3.5 text-[15px] font-bold text-white transition active:opacity-80 disabled:opacity-40">
+                  {greetingViewingGenerating ? "生成中…" : "生成する"}
+                </button>
+                <button onClick={() => setGreetingViewingConfirmType(null)} className="mt-3 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60">← 戻る</button>
+              </>
+            )}
+
+            {/* Step 4b: 確認事項/フリーワード → テキスト入力 */}
+            {greetingViewingMode === "after" && greetingViewingAfterType === "confirm" && greetingViewingConfirmType === "freeword" && (
+              <>
+                <p className="mb-1 text-center text-[18px] font-bold text-[#111827]">確認事項</p>
+                <div className="mb-4 mt-3">
+                  <p className="mb-1.5 text-[12px] font-bold text-[#374151]">確認内容を入力</p>
+                  <textarea
+                    value={greetingViewingFreeword}
+                    onChange={(e) => setGreetingViewingFreeword(e.target.value)}
+                    placeholder="例: 審査条件について確認済み。問題なし。"
+                    rows={3}
+                    className="w-full rounded-xl border border-[#D1D5DB] px-3 py-2.5 text-[13px] focus:border-teal-400 focus:outline-none resize-none"
+                  />
+                </div>
+                <button onClick={handleGreetingViewingGenerate} disabled={!greetingViewingFreeword || greetingViewingGenerating} className="w-full rounded-2xl bg-teal-600 py-3.5 text-[15px] font-bold text-white transition active:opacity-80 disabled:opacity-40">
+                  {greetingViewingGenerating ? "生成中…" : "生成する"}
+                </button>
+                <button onClick={() => setGreetingViewingConfirmType(null)} className="mt-3 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60">← 戻る</button>
+              </>
+            )}
+
+            {/* Step 3c: 引き続き物件探す → 3択 */}
+            {greetingViewingMode === "after" && greetingViewingAfterType === "search" && !greetingViewingSearchType && (
+              <>
+                <p className="mb-1 text-center text-[18px] font-bold text-[#111827]">引き続き物件探す</p>
+                <p className="mb-4 text-center text-[12px] text-[#6B7280]">どのように探しますか？</p>
+                <div className="flex flex-col gap-2 mb-4">
+                  {([
+                    { key: "new" as const, label: "新着探す", desc: "新着物件が出たらお送りします" },
+                    { key: "expand" as const, label: "条件広げる", desc: "条件を広げてピックアップ" },
+                    { key: "change" as const, label: "条件変更", desc: "新しい条件で物件を探す" },
+                  ]).map(({ key, label, desc }) => (
+                    <button key={key} onClick={() => setGreetingViewingSearchType(key)}
+                      className="flex items-center gap-3 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3.5 text-left transition active:bg-gray-100">
+                      <div>
+                        <div className="text-[14px] font-bold text-[#111827]">{label}</div>
+                        <div className="text-[11px] text-[#6B7280] mt-0.5">{desc}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                <button onClick={() => setGreetingViewingAfterType(null)} className="w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60">← 戻る</button>
+              </>
+            )}
+
+            {/* Step 4c-new: 新着探す → 生成ボタン */}
+            {greetingViewingMode === "after" && greetingViewingAfterType === "search" && greetingViewingSearchType === "new" && (
+              <>
+                <p className="mb-1 text-center text-[18px] font-bold text-[#111827]">新着探す</p>
+                <p className="mb-5 text-center text-[12px] text-[#6B7280]">新着物件が出次第ご連絡する旨のメッセージを生成します</p>
+                <button onClick={handleGreetingViewingGenerate} disabled={greetingViewingGenerating} className="w-full rounded-2xl bg-teal-600 py-3.5 text-[15px] font-bold text-white transition active:opacity-80 disabled:opacity-40">
+                  {greetingViewingGenerating ? "生成中…" : "生成する"}
+                </button>
+                <button onClick={() => setGreetingViewingSearchType(null)} className="mt-3 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60">← 戻る</button>
+              </>
+            )}
+
+            {/* Step 4c: 条件広げる / 条件変更 → フリーワード入力 */}
+            {greetingViewingMode === "after" && greetingViewingAfterType === "search" && (greetingViewingSearchType === "expand" || greetingViewingSearchType === "change") && (
+              <>
+                <p className="mb-1 text-center text-[18px] font-bold text-[#111827]">{greetingViewingSearchType === "expand" ? "条件広げる" : "条件変更"}</p>
+                <div className="mb-4 mt-3">
+                  <p className="mb-1.5 text-[12px] font-bold text-[#374151]">{greetingViewingSearchType === "expand" ? "広げた条件を入力" : "変更後の条件を入力"}</p>
+                  <textarea
+                    value={greetingViewingFreeword}
+                    onChange={(e) => setGreetingViewingFreeword(e.target.value)}
+                    placeholder={greetingViewingSearchType === "expand" ? "例: 築年数を20年以内に広げる、エリアを大阪市内全域に" : "例: 浪速区・中央区、家賃8万以下、2LDK"}
+                    rows={3}
+                    className="w-full rounded-xl border border-[#D1D5DB] px-3 py-2.5 text-[13px] focus:border-teal-400 focus:outline-none resize-none"
+                  />
+                </div>
+                <button onClick={handleGreetingViewingGenerate} disabled={!greetingViewingFreeword || greetingViewingGenerating} className="w-full rounded-2xl bg-teal-600 py-3.5 text-[15px] font-bold text-white transition active:opacity-80 disabled:opacity-40">
+                  {greetingViewingGenerating ? "生成中…" : "生成する"}
+                </button>
+                <button onClick={() => { setGreetingViewingSearchType(null); }} className="mt-3 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60">← 戻る</button>
+              </>
+            )}
           </div>
         </div>
       )}

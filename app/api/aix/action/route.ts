@@ -1652,28 +1652,72 @@ ${formItems}`;
         );
 
       } else {
-        const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
-内覧後に送る「内覧後挨拶」LINEメッセージを生成してください。
+        // 内覧後 4択フロー
+        const after_type = body.after_type as string | undefined;
+        const property_label = body.property_label ? String(body.property_label).trim() : "";
+        const freeword = body.freeword ? String(body.freeword).trim() : "";
+        const thankLine = `${name}本日お時間頂きありがとうございました！！`;
 
-【出力構成（この3行構成を厳守）】
-①感謝行：「本日はお忙しいところご内覧頂きありがとうございます！！」
-②感想行：「いかがでしたでしょうか？！」（お客様の印象・感想を尋ねる）
-③フォロー行：「気になる点ございましたらお気軽にお申し付けください！！」
+        if (after_type === "apply") {
+          // 申込
+          const propLine = property_label ? `${property_label}お申込しお部屋抑えさせて頂きます！` : "お申込しお部屋抑えさせて頂きます！";
+          message_text = `${thankLine}\n${propLine}`;
 
-【スモラ文体ルール】
-・「！！」を文末に使う
-・😊 は①か②に1回のみ使ってOK
-・申込を急かさない。感謝と次につながる気軽さだけ
-・3行構成を崩さない
+        } else if (after_type === "apply_guide") {
+          // 申込誘導
+          const propLine = property_label
+            ? `${property_label}お気に召されましたらお申込しお部屋抑えさせて頂きます！気になる点出てきましたらお気軽にご連絡ください！`
+            : "お気に召されましたらお申込しお部屋抑えさせて頂きます！気になる点出てきましたらお気軽にご連絡ください！";
+          message_text = `${thankLine}\n${propLine}`;
 
-【禁止】
-・物件名・金額・審査の話は書かない
-・解説・補足を付けない。3行のみ出力`;
+        } else if (after_type === "confirm_estimate") {
+          // 確認事項 / 見積書 → 2通目テキスト生成
+          const propLine = property_label
+            ? `${property_label}の御見積書となります。${name}お気に召されましたらお申込しお部屋抑えさせて頂きます！！お手隙の際にご査収ください！！`
+            : `御見積書となります。${name}お気に召されましたらお申込しお部屋抑えさせて頂きます！！お手隙の際にご査収ください！！`;
+          message_text = `本日ご内覧頂きありがとうございました！！\n${propLine}`;
 
-        message_text = await callClaude(
-          system,
-          `${name}への内覧後挨拶を生成してください。${recentHistory}`
-        );
+        } else if (after_type === "confirm_freeword") {
+          // 確認事項 / フリーワード → AI生成
+          const sys = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
+内覧後に送るメッセージを1つ生成してください。
+1行目: 「${name}本日お時間頂きありがとうございました！！」（固定）
+2行目以降: 以下の確認事項を踏まえた自然なメッセージ（2〜3行まで）
+・感嘆符は「！！」スモラ文体で。補足・解説は不要`;
+          message_text = await callClaude(sys, `確認事項: ${freeword}${recentHistory}`);
+
+        } else if (after_type === "search_new") {
+          // 引き続き物件探す / 新着探す
+          message_text = `${thankLine}\n引き続き新着でおすすめできる物件が出次第ご連絡させて頂きます！`;
+
+        } else if (after_type === "search_expand") {
+          // 引き続き物件探す / 条件広げる → AI生成
+          const sys = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
+内覧後に送るメッセージを生成してください。
+1行目: 「${name}本日お時間頂きありがとうございました！！」（固定）
+2行目: 「{条件情報}でご条件に合ったお部屋ピックアップしご連絡させて頂きます！」の形で条件を自然に組み込む
+・スモラ文体・感嘆符「！！」・補足不要`;
+          message_text = await callClaude(sys, `条件: ${freeword}${recentHistory}`);
+
+        } else if (after_type === "search_change") {
+          // 引き続き物件探す / 条件変更 → AI生成
+          const sys = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
+内覧後に送るメッセージを生成してください。
+1行目: 「${name}本日お時間頂きありがとうございました！！」（固定）
+2行目: 「{変更後条件}で物件ピックアップしお送りさせて頂きます！」の形で条件を自然に組み込む
+・スモラ文体・感嘆符「！！」・補足不要`;
+          message_text = await callClaude(sys, `変更条件: ${freeword}${recentHistory}`);
+
+        } else {
+          // フォールバック（after_type未指定 = 旧フロー）
+          const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
+内覧後に送る「内覧後挨拶」LINEメッセージを3行で生成してください。
+①「本日はお忙しいところご内覧頂きありがとうございます！！」
+②「いかがでしたでしょうか？！」
+③「気になる点ございましたらお気軽にお申し付けください！！」
+・「！！」を文末に使う・3行のみ出力`;
+          message_text = await callClaude(system, `${name}への内覧後挨拶を生成してください。${recentHistory}`);
+        }
       }
 
     } else if (action === "meeting_place") {
