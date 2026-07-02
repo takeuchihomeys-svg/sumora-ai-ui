@@ -34,6 +34,11 @@ select {
   font: inherit;
 }
 
+/* AIXメニュー: flex子要素を縮小させない */
+.aix-scroll-area > * {
+  flex-shrink: 0;
+}
+
 /* AIXメニュー スクロールバー（横に見えるインジケーター） */
 .aix-scroll-area::-webkit-scrollbar {
   width: 5px;
