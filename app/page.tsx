@@ -8365,7 +8365,7 @@ export default function Home() {
                 ✕
               </button>
             </div>
-            <div className="p-4 flex flex-col gap-2 overflow-y-auto pb-8">
+            <div className="p-4 flex flex-col gap-2 overflow-y-auto pb-8 max-h-[560px]">
               {(() => {
                 const AIX_INSPECT: Record<string, { inputs: string; process: string; data: string }> = {
                   "物件オススメ": {
