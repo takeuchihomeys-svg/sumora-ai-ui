@@ -40,7 +40,7 @@ interface AixModalProps {
   initialViewingSpecificMode?: boolean;
   initialViewingVacancy?: boolean;
   initialIsNewArrival?: boolean;
-  initialPickupType?: "新規ピックアップ" | "継続ピックアップ" | "新着1件" | null;
+  initialPickupType?: "新規ピックアップ" | "継続ピックアップ" | "条件広げピックアップ" | "新着1件" | null;
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
   onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean }) => void;

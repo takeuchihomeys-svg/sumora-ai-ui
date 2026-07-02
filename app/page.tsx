@@ -358,7 +358,7 @@ export default function Home() {
   const [activeAixFlow, setActiveAixFlow] = useState<string | null>(null);
   const [showPropertyPicker, setShowPropertyPicker] = useState(false);
   const [aixInitialIsNewArrival, setAixInitialIsNewArrival] = useState(false);
-  const [aixInitialPickupType, setAixInitialPickupType] = useState<"新規ピックアップ" | "継続ピックアップ" | "新着1件" | null>(null);
+  const [aixInitialPickupType, setAixInitialPickupType] = useState<"新規ピックアップ" | "継続ピックアップ" | "条件広げピックアップ" | "新着1件" | null>(null);
   const propertyPickerOpenFnRef = useRef<"direct" | "withImage">("direct");
   const [showGroupFilter, setShowGroupFilter] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>(() => {
@@ -3353,7 +3353,7 @@ export default function Home() {
     setShowPropertyPicker(true);
   };
 
-  const handlePropertyPickerSelect = (pickupType: "新規ピックアップ" | "継続ピックアップ" | "新着1件") => {
+  const handlePropertyPickerSelect = (pickupType: "新規ピックアップ" | "継続ピックアップ" | "条件広げピックアップ" | "新着1件") => {
     setShowPropertyPicker(false);
     setAixInitialPickupType(pickupType);
     setAixInitialIsNewArrival(pickupType === "新着1件");
@@ -7593,6 +7593,8 @@ export default function Home() {
                   icon: <path d="M20 32h12M26 26v12M40 26h12v12H40z" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/> },
                 { key: "継続ピックアップ" as const, label: "新着ピックアップの中で１件オススメ", desc: "継続してお部屋を探しているお客様への提案",
                   icon: <><path d="M22 30a10 10 0 0114.14-1.41" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round"/><path d="M50 42a10 10 0 01-14.14 1.41" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round"/><path d="M33 24l3 5-5 1M39 48l-3-5 5-1" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></> },
+                { key: "条件広げピックアップ" as const, label: "条件広げてピックアップの中で１件オススメ", desc: "希望条件を少し広げてお客様に合う物件を提案",
+                  icon: <><rect x="22" y="28" width="28" height="18" rx="3" stroke="#6366F1" strokeWidth="1.8"/><path d="M28 28v-4h16v4" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/><path d="M28 37h16M28 42h10" stroke="#6366F1" strokeWidth="1.5" strokeLinecap="round"/><path d="M46 40l4-4 4 4" stroke="#6366F1" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></> },
                 { key: "新着1件" as const, label: "新着１件だけ送る", desc: "新着物件として強調して送る",
                   icon: <path d="M36 22l3.09 6.26 6.91 1-5 4.87 1.18 6.87L36 38l-6.18 3-0.82.5 1.18-6.87-5-4.87 6.91-1z" stroke="#6366F1" strokeWidth="1.8" strokeLinejoin="round"/> },
               ]).map(({ key, label, desc, icon }) => (
