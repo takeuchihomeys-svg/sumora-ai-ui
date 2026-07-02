@@ -178,6 +178,25 @@ function stripAvailCheckTag(label: string): string {
   return label;
 }
 
+const AIX_PURPOSE_TAGS = [
+  { key: "内覧誘導", color: "#1565C0" },
+  { key: "申込誘導", color: "#7B1FA2" },
+] as const;
+
+function getAixPurposeTag(label: string): string | null {
+  for (const { key } of AIX_PURPOSE_TAGS) {
+    if (label.startsWith(`【${key}】`)) return key;
+  }
+  return null;
+}
+
+function stripAixPurposeTag(label: string): string {
+  for (const { key } of AIX_PURPOSE_TAGS) {
+    if (label.startsWith(`【${key}】`)) return label.slice(`【${key}】`.length);
+  }
+  return label;
+}
+
 function inferAvailCheckType(label: string): string | null {
   const tag = getAvailCheckTag(label);
   if (tag) return tag;
@@ -219,6 +238,7 @@ export default function TemplateModal({
   const [aixPurposeFilter, setAixPurposeFilter] = useState<"内覧" | "申込" | null>(null);
   const [availCheckFilter, setAvailCheckFilter] = useState<string | null>(null);
   const [editAvailCheckType, setEditAvailCheckType] = useState<string | null>(null);
+  const [editAixPurposeTag, setEditAixPurposeTag] = useState<string | null>(null);
   const [vacatingDates, setVacatingDates] = useState<Record<string, { month: number; day: number } | null>>({});
   const [inspectingId, setInspectingId] = useState<string | null>(null);
   const [templateImages, setTemplateImages] = useState<Record<string, File[]>>({});
@@ -369,16 +389,18 @@ export default function TemplateModal({
   const displayFiltered =
     isAixCategory && aixPurposeFilter !== null
       ? filtered.filter(t => {
+          const tagFromLabel = getAixPurposeTag(stripAvailCheckTag(t.label));
           const els = detectTemplateElements(t.text);
-          if (aixPurposeFilter === "内覧") return els.some(e => e.label === "内覧誘導");
-          return els.some(e => e.label === "申込誘導");
+          if (aixPurposeFilter === "内覧") return tagFromLabel === "内覧誘導" || els.some(e => e.label === "内覧誘導");
+          return tagFromLabel === "申込誘導" || els.some(e => e.label === "申込誘導");
         })
     : isAixCategory
       ? [...filtered].sort((a, b) => {
           const getOrder = (t: typeof a) => {
+            const tagFromLabel = getAixPurposeTag(stripAvailCheckTag(t.label));
             const els = detectTemplateElements(t.text);
-            if (els.some(e => e.label === "内覧誘導")) return 0;
-            if (els.some(e => e.label === "申込誘導")) return 1;
+            if (tagFromLabel === "内覧誘導" || els.some(e => e.label === "内覧誘導")) return 0;
+            if (tagFromLabel === "申込誘導" || els.some(e => e.label === "申込誘導")) return 1;
             return 2;
           };
           const oa = getOrder(a), ob = getOrder(b);
@@ -418,7 +440,9 @@ export default function TemplateModal({
   const startEdit = (tmpl: Template) => {
     setEditingId(tmpl.id);
     setEditAvailCheckType(getAvailCheckTag(tmpl.label));
-    setEditLabel(stripAvailCheckTag(tmpl.label));
+    const withoutAvail = stripAvailCheckTag(tmpl.label);
+    setEditAixPurposeTag(getAixPurposeTag(withoutAvail));
+    setEditLabel(stripAixPurposeTag(withoutAvail));
     setEditText(tmpl.text);
     setEditCategory(tmpl.category);
     setEditRequiresImage(tmpl.requires_image);
@@ -433,7 +457,7 @@ export default function TemplateModal({
       const res = await fetch("/api/templates", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: editingId, category: editCategory || "全般", label: (editAvailCheckType && editCategory === "物件確認した【AIX】" ? `【${editAvailCheckType}】` : "") + editLabel, text: editText, structure: editStructure.length > 0 ? editStructure : null, requires_image: editRequiresImage }),
+        body: JSON.stringify({ id: editingId, category: editCategory || "全般", label: (editAvailCheckType && editCategory === "物件確認した【AIX】" ? `【${editAvailCheckType}】` : "") + (editAixPurposeTag && editCategory.includes("AIX") && editCategory !== "物件確認した【AIX】" ? `【${editAixPurposeTag}】` : "") + editLabel, text: editText, structure: editStructure.length > 0 ? editStructure : null, requires_image: editRequiresImage }),
       });
       const data = await res.json() as { ok: boolean };
       if (data.ok) {
@@ -898,9 +922,10 @@ export default function TemplateModal({
                               ) : null;
                             })()}
                             {isAixCategory && (() => {
+                              const tagFromLabel = getAixPurposeTag(stripAvailCheckTag(tmpl.label));
                               const els = detectTemplateElements(tmpl.text);
-                              const isNairan = els.some(e => e.label === "内覧誘導");
-                              const isMoushikomi = els.some(e => e.label === "申込誘導");
+                              const isNairan = tagFromLabel === "内覧誘導" || els.some(e => e.label === "内覧誘導");
+                              const isMoushikomi = tagFromLabel === "申込誘導" || els.some(e => e.label === "申込誘導");
                               if (isNairan) return <span className="mt-0.5 block w-fit rounded-full px-2 py-0.5 text-[9px] font-bold text-white" style={{ backgroundColor: "#1565C0" }}>内覧誘導</span>;
                               if (isMoushikomi) return <span className="mt-0.5 block w-fit rounded-full px-2 py-0.5 text-[9px] font-bold text-white" style={{ backgroundColor: "#7B1FA2" }}>申込誘導</span>;
                               return null;
@@ -982,6 +1007,26 @@ export default function TemplateModal({
                                         key={key}
                                         type="button"
                                         onClick={() => setEditAvailCheckType(prev => prev === key ? null : key)}
+                                        className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold border-2 transition ${sel ? "text-white border-transparent" : "bg-white text-[#54656f] border-[#d1d7db]"}`}
+                                        style={sel ? { backgroundColor: color, borderColor: color } : undefined}
+                                      >{key}</button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                            {/* AIX用途タグ選択（物件確認した以外のAIXカテゴリ） */}
+                            {editCategory.includes("AIX") && editCategory !== "物件確認した【AIX】" && (
+                              <div>
+                                <p className="mb-1 text-[10px] font-bold text-[#54656f]">用途タグ（内覧誘導 / 申込誘導）</p>
+                                <div className="flex gap-1 flex-wrap">
+                                  {AIX_PURPOSE_TAGS.map(({ key, color }) => {
+                                    const sel = editAixPurposeTag === key;
+                                    return (
+                                      <button
+                                        key={key}
+                                        type="button"
+                                        onClick={() => setEditAixPurposeTag(prev => prev === key ? null : key)}
                                         className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold border-2 transition ${sel ? "text-white border-transparent" : "bg-white text-[#54656f] border-[#d1d7db]"}`}
                                         style={sel ? { backgroundColor: color, borderColor: color } : undefined}
                                       >{key}</button>
