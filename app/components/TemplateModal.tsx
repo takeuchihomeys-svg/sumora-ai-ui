@@ -383,6 +383,13 @@ export default function TemplateModal({
     }, 80);
   }, [category]);
 
+  const CATEGORY_DISPLAY_NAMES: Record<string, string> = {
+    "ヒアリング【AIX】": "お部屋探し条件ヒアリング",
+    "物件オススメ【AIX】": "1件特にオススメする",
+    "物件確認した【AIX】": "物件確認した（募集状況）",
+    "物件送る【AIX】": "物件ピックアップした",
+  };
+
   const categories = Array.from(new Set(templates.map((t) => t.category)));
   const normalCategories = categories.filter(c => !c.includes("AIX"));
   const aixCategories = categories.filter(c => c.includes("AIX"));
@@ -713,7 +720,7 @@ export default function TemplateModal({
                     ) : (
                       <>
                         <button onClick={() => setCategory(cat)} className="pl-3 py-1.5 pr-1">
-                          {cat.replace("【AIX】", "").trim()}
+                          {CATEGORY_DISPLAY_NAMES[cat] ?? cat.replace("【AIX】", "").trim()}
                           <span className={`ml-1 text-[9px] ${category === cat ? "opacity-70" : "opacity-50"}`}>
                             ({templates.filter(t => t.category === cat).length})
                           </span>
