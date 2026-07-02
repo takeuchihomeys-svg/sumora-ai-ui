@@ -8679,15 +8679,15 @@ export default function Home() {
                           className="flex flex-1 items-center gap-0 text-left active:bg-[#f5f6f7] transition-colors"
                         >
                           <span className="w-[4px] self-stretch flex-shrink-0 rounded-l-xl" style={{ background: item.color }} />
-                          <div className="px-4 py-[18px] flex-1">
+                          <div className="px-4 py-6 flex-1">
                             <div className="text-[15px] font-bold text-[#111b21] leading-snug">{item.label}</div>
-                            <div className="text-[12px] text-[#607d8b] leading-relaxed mt-1.5">{item.sub}</div>
+                            <div className="text-[13px] text-[#546e7a] leading-relaxed mt-2">{item.sub}</div>
                           </div>
                         </button>
                         {/* 確認ボタン（全アイテム共通） */}
                         <button
                           onClick={() => setAixInspectLabel(isOpen ? null : item.label)}
-                          className={`flex h-full items-center px-3 py-[18px] text-[11px] font-bold transition-colors ${isOpen ? "text-[#1565c0]" : "text-[#b0bec5]"}`}
+                          className={`flex h-full items-center px-3 py-6 text-[11px] font-bold transition-colors ${isOpen ? "text-[#1565c0]" : "text-[#b0bec5]"}`}
                         >
                           {isOpen ? "▲" : "確認"}
                         </button>
