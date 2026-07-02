@@ -8375,7 +8375,7 @@ export default function Home() {
                 ✕
               </button>
             </div>
-            <div className="p-4 flex flex-col gap-2 overflow-y-auto pb-8 max-h-[560px]">
+            <div className="p-3 flex flex-col gap-1.5 overflow-y-auto pb-6 max-h-[460px] min-h-0">
               {(() => {
                 const AIX_INSPECT: Record<string, { inputs: string; process: string; data: string }> = {
                   "1件特にオススメする": {
@@ -8458,15 +8458,15 @@ export default function Home() {
                           className="flex flex-1 items-center gap-0 text-left active:bg-[#f5f6f7] transition-colors"
                         >
                           <span className="w-1 self-stretch flex-shrink-0" style={{ background: item.color }} />
-                          <div className="px-4 py-3 flex-1">
-                            <div className="text-[14px] font-bold text-[#111b21]">{item.label}</div>
-                            <div className="text-[11px] text-[#8696a0]">{item.sub}</div>
+                          <div className="px-4 py-2.5 flex-1">
+                            <div className="text-[14px] font-bold text-[#111b21] leading-tight">{item.label}</div>
+                            <div className="text-[11px] text-[#8696a0] leading-tight">{item.sub}</div>
                           </div>
                         </button>
                         {/* 確認ボタン（全アイテム共通） */}
                         <button
                           onClick={() => setAixInspectLabel(isOpen ? null : item.label)}
-                          className={`flex h-full items-center px-3 py-3 text-[11px] font-bold transition-colors ${isOpen ? "text-[#1565c0]" : "text-[#b0bec5]"}`}
+                          className={`flex h-full items-center px-3 py-2.5 text-[11px] font-bold transition-colors ${isOpen ? "text-[#1565c0]" : "text-[#b0bec5]"}`}
                         >
                           {isOpen ? "▲" : "確認"}
                         </button>
