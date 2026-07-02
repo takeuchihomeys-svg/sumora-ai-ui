@@ -8398,17 +8398,17 @@ export default function Home() {
                     process: "Vision OCR で初期費用・割引額・仲介手数料を数値抽出 → 節約額を計算して固定フォーマット出力",
                     data: "固定テンプレート（AI文生成なし・計算値のみ）",
                   },
-                  "内覧へ！": {
+                  "内覧へ（内覧日調整）": {
                     inputs: "なし（会話履歴・カレンダーを自動取得）",
                     process: "ワンタップで即生成 → 確認画面を経て送信。カレンダー情報があれば内覧可能日時を自動で含める",
                     data: "フレーズ辞書（viewing_invite）/ 直近会話履歴",
                   },
-                  "申込へ！": {
+                  "申込（誘導・決定）": {
                     inputs: "空室状況（空室 / 退去予定）/ 退去予定日（任意）",
                     process: "ワンタップで即生成 → 確認後送信。見積書送信済みかを直近メッセージから自動検出してテンプレートを切り替え",
                     data: "☆実例（application_push）/ 直近会話履歴",
                   },
-                  "待ち合わせ": {
+                  "待ち合わせ場所": {
                     inputs: "物件資料画像（任意）/ 物件名・住所 / 日程（必須）/ 時間（任意）",
                     process: "物件資料画像からOCRで物件名・住所を自動取得 → 日時を入力 → テンプレートを組み立て",
                     data: "AI不使用（クライアント側で生成）",
@@ -8436,9 +8436,9 @@ export default function Home() {
                     }
                     setShowEstimatePicker(true);
                   } },
-                  { color: "#9C27B0", label: "内覧へ！", sub: "カレンダーから日程を選択→AIで文生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setShowViewingPicker(true); } },
-                  { color: "#00838F", label: "待ち合わせ", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); } },
-                  { color: "#E53935", label: "申込へ！", sub: "物件名入力orシンプル送信→AI生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); setShowApplicationPicker(true); } },
+                  { color: "#9C27B0", label: "内覧へ（内覧日調整）", sub: "カレンダーから日程を選択→AIで文生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setShowViewingPicker(true); } },
+                  { color: "#00838F", label: "待ち合わせ場所", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); } },
+                  { color: "#E53935", label: "申込（誘導・決定）", sub: "物件名入力orシンプル送信→AI生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); setShowApplicationPicker(true); } },
                   { color: "#78909C", label: "管理会社に確認した", sub: "空室・礼金・ペット可否など確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); setShowPropertyCheckPicker(true); } },
                   { color: "#5D4037", label: "代表に確認した", sub: "代表への確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); setAixInitInputText("代表に確認しました。"); openAixDirect("property_check_result"); } },
                 ].map((item) => {
@@ -8447,7 +8447,7 @@ export default function Home() {
                   return (
                     <div key={item.label} className={`overflow-hidden rounded-xl border bg-white transition-all ${
                         guideToCheckResult && item.label === "物件確認した（募集状況）" ? "border-2 border-[#4CAF50] shadow-[0_0_0_3px_rgba(76,175,80,0.15)]" :
-                        guideToMeetingPlace && item.label === "待ち合わせ" ? "border-2 border-[#00838F] shadow-[0_0_0_3px_rgba(0,131,143,0.15)]" :
+                        guideToMeetingPlace && item.label === "待ち合わせ場所" ? "border-2 border-[#00838F] shadow-[0_0_0_3px_rgba(0,131,143,0.15)]" :
                         guideToEstimate && item.label === "見積書送る" ? "border-2 border-[#FF9800] shadow-[0_0_0_3px_rgba(255,152,0,0.15)]" :
                         "border-[#e9edef]"
                       }`}>
