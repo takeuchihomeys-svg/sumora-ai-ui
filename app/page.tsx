@@ -5031,7 +5031,7 @@ export default function Home() {
                     }
                   }}
                   disabled={!selectedConversation?.id || generating || splitLoading}
-                  className="flex h-8 w-9 shrink-0 flex-col overflow-hidden rounded-lg border border-[#b8e4f9] shadow-sm active:scale-95 transition-transform duration-75 disabled:opacity-40"
+                  className="flex h-8 w-8 shrink-0 flex-col overflow-hidden rounded-full border border-[#b8e4f9] shadow-sm active:scale-95 transition-transform duration-75 disabled:opacity-40"
                   title={replyDraft.trim() ? "文加工 / 2通に分ける" : "キーワード・状況を指定してAI生成"}
                 >
                   {(generating && replyDraft.trim()) || splitLoading ? (
@@ -5040,9 +5040,9 @@ export default function Home() {
                     </div>
                   ) : (
                     <>
-                      <div className="flex-1 w-full bg-[#29B6F6]" />
+                      <div className="flex-1 w-full bg-white" />
                       <div className="h-px w-full bg-[#b8e4f9]" />
-                      <div className="flex-1 w-full bg-[#E8F6FD]" />
+                      <div className="flex-1 w-full bg-[#29B6F6]" />
                     </>
                   )}
                 </button>
