@@ -163,7 +163,8 @@ function buildGenerationMessages(
   promptOverrides?: PromptOverrides,
   isFollowUp = false,
   replyHint = "",
-  alreadyGreetedToday?: boolean
+  alreadyGreetedToday?: boolean,
+  isFirstEverReplyOverride?: boolean
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   const jstDay = getJSTDayOfWeek();
@@ -173,7 +174,10 @@ function buildGenerationMessages(
   const historyLines = (history || "").split("\n").filter(Boolean);
   const lastStaffLines = historyLines.filter((l) => l.startsWith("スモラ:"));
   // スタッフ返信が一度もない = 真の初回（お客様への最初の返信）
-  const isFirstEverReply = lastStaffLines.length === 0;
+  // isFirstEverReplyOverride が渡された場合はそちらを優先（AIXメッセージを除外した精度高い判定）
+  const isFirstEverReply = isFirstEverReplyOverride !== undefined
+    ? isFirstEverReplyOverride
+    : lastStaffLines.length === 0;
 
   // 本日（JST 9時リセット）の会話で挨拶済みか
   // alreadyGreetedToday が渡された場合はそちらを優先（タイムスタンプ精度が高い）
@@ -820,7 +824,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "ANTHROPIC_API_KEY not set" }, { status: 500 });
   }
 
-  type RecentMessage = { sender: string; text: string; imageUrl?: string; createdAt?: string };
+  type RecentMessage = { sender: string; text: string; imageUrl?: string; createdAt?: string; isAix?: boolean };
   let message: string, state: string, customerName: string, recentMessages: RecentMessage[], customerConditions: string, customerSummary: string, replyHint: string;
   let screenshotBase64: string | undefined, screenshotMediaType: string | undefined;
   try {
@@ -967,8 +971,11 @@ export async function POST(req: NextRequest) {
       .join("\n");
 
     // 真の初回判定（冒頭挨拶を強制注入するかどうか）
-    const histStaffLines = history.split("\n").filter(l => l.startsWith("スモラ:"));
-    const shouldPrependGreeting = histStaffLines.length === 0 && currentState === "first_reply";
+    // AIX生成メッセージ・画像のみは「スタッフが返信した」とみなさない
+    const isFirstEverReplyFromMsgs = !recentMessages.some(
+      m => m.sender === "staff" && !m.isAix && m.text && m.text !== "[画像]" && m.text !== "[動画]"
+    );
+    const shouldPrependGreeting = isFirstEverReplyFromMsgs && currentState === "first_reply";
 
     // follow-up検知（履歴末尾がスモラ = 2通目以降の生成）
     const allSpeakersInHistory = [...history.matchAll(/(?:^|\n)(スモラ|お客様):/g)];
@@ -1027,10 +1034,11 @@ export async function POST(req: NextRequest) {
     const greetingStart = getGreetingSessionStart();
     const hasTimestamps = recentMessages.some(m => !!m.createdAt);
     // 今日のセッション中にスタッフメッセージが1件でもあれば挨拶済みとみなす
-    // （挨拶フレーズの有無は問わない — 空室確認・募集確認等でも同様）
+    // AIX生成メッセージは「挨拶済み」としてカウントしない（初回挨拶を正しく生成するため）
     const alreadyGreetedToday = hasTimestamps
       ? recentMessages.some(m =>
           m.sender === "staff" &&
+          !m.isAix &&
           m.createdAt &&
           new Date(m.createdAt) >= greetingStart &&
           m.text && m.text !== "[画像]" && m.text !== "[動画]"
@@ -1041,7 +1049,8 @@ export async function POST(req: NextRequest) {
     const messages = buildGenerationMessages(
       message, customerName, history, currentState,
       analysis, knowledge, examples, phrases, customerConditions, resolvedSummary,
-      promptOverrides, isFollowUp, replyHint, alreadyGreetedToday
+      promptOverrides, isFollowUp, replyHint, alreadyGreetedToday,
+      isFirstEverReplyFromMsgs
     );
     const genStream = generationModel.stream(messages);
 

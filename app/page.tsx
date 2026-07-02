@@ -2006,7 +2006,7 @@ export default function Home() {
               ? [...contextMsgs].reverse().find((m) => m.sender === "staff")
               : undefined;
             const finalMsgs = lastStaff ? [lastStaff, ...last20] : last20;
-            return finalMsgs.map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined, createdAt: m.rawCreatedAt || undefined }));
+            return finalMsgs.map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined, createdAt: m.rawCreatedAt || undefined, isAix: m.isAix || false }));
           })(),
         }),
       });
@@ -2283,7 +2283,7 @@ export default function Home() {
           replyHint: replyHintWithEstimate,
           hasViewed: selectedConversation.hasViewed ?? false,
           activeTaskTypes: (activeTasks[selectedConversation.id] ?? []).map(t => t.task_type),
-          recentMessages: msgs.slice(-20).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined, createdAt: m.rawCreatedAt || undefined })),
+          recentMessages: msgs.slice(-20).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined, createdAt: m.rawCreatedAt || undefined, isAix: m.isAix || false })),
           ...(sparkleScreenshot ? { screenshotBase64: sparkleScreenshot.base64, screenshotMediaType: sparkleScreenshot.mediaType } : {}),
         }),
       });
