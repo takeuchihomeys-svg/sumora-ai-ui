@@ -431,6 +431,8 @@ export default function Home() {
   const [aixInitViewingSpecific, setAixInitViewingSpecific] = useState(false);
   const [aixInitViewingVacancy, setAixInitViewingVacancy] = useState(false);
   const [showViewingPicker, setShowViewingPicker] = useState(false);
+  const [showPropertySendPicker, setShowPropertySendPicker] = useState(false);
+  const [aixInitSendMode, setAixInitSendMode] = useState<"normal" | "new_arrival" | "widen" | null>(null);
   const [dismissedEstimateSheetIds, setDismissedEstimateSheetIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedEstimateSheetIds") || "[]") as string[]); } catch { return new Set(); }
   });
@@ -6550,6 +6552,7 @@ export default function Home() {
           initialFocusPoints={pendingAixFocusPoints.length > 0 ? pendingAixFocusPoints : undefined}
           initialTemplateStructure={pendingTemplateStructure ?? undefined}
           initialTemplateSample={pendingTemplateSample ?? undefined}
+          initialSendMode={aixInitSendMode}
           initialViewingSpecificMode={aixInitViewingSpecific}
           initialViewingVacancy={aixInitViewingVacancy}
           initialIsNewArrival={aixInitialIsNewArrival}
@@ -6564,6 +6567,7 @@ export default function Home() {
             setDetectedVacatingDate(null);
             setAixInitViewingSpecific(false);
             setAixInitViewingVacancy(false);
+            setAixInitSendMode(null);
           }}
           onOpenTemplateFiltered={(search) => {
             setTemplateInitialSearch(search);
@@ -7710,6 +7714,81 @@ export default function Home() {
         </div>
       )}
 
+      {/* 物件ピックアップ 種類選択ピッカー */}
+      {showPropertySendPicker && (
+        <div
+          className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
+          onClick={() => setShowPropertySendPicker(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-5 flex justify-center">
+              <svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="36" cy="36" r="36" fill="#E8F5E9"/>
+                <path d="M36 18L50 28V52H22V28L36 18Z" fill="#C8E6C9" stroke="#2E7D32" strokeWidth="1.5" strokeLinejoin="round"/>
+                <rect x="30" y="38" width="12" height="14" rx="1.5" fill="#2E7D32"/>
+                <rect x="32" y="40" width="3" height="3" rx="0.5" fill="white"/>
+                <rect x="37" y="40" width="3" height="3" rx="0.5" fill="white"/>
+                <path d="M28 28h16" stroke="#2E7D32" strokeWidth="1.5" strokeLinecap="round"/>
+                <circle cx="50" cy="50" r="9" fill="#2E7D32"/>
+                <path d="M46 50h8M50 46v8" stroke="white" strokeWidth="1.8" strokeLinecap="round"/>
+              </svg>
+            </div>
+            <p className="mb-1 text-center text-[20px] font-bold text-[#111827]">物件ピックアップ</p>
+            <p className="mb-6 text-center text-[13px] leading-snug text-[#6B7280]">どの種類で送りますか？</p>
+            <div className="flex flex-col gap-2.5">
+              {([
+                {
+                  key: "normal" as const,
+                  label: "新規物件",
+                  desc: "新規のお客様への物件ピックアップ",
+                  icon: <><rect x="24" y="24" width="24" height="24" rx="3" stroke="#2E7D32" strokeWidth="1.8"/><path d="M30 36h12M36 30v12" stroke="#2E7D32" strokeWidth="1.8" strokeLinecap="round"/></>
+                },
+                {
+                  key: "new_arrival" as const,
+                  label: "新着物件",
+                  desc: "新着物件として強調してピックアップ",
+                  icon: <><path d="M36 22l2.47 5.01 5.53.8-4 3.9.94 5.49L36 34.51l-4.94 2.69.94-5.49-4-3.9 5.53-.8z" stroke="#2E7D32" strokeWidth="1.8" strokeLinejoin="round"/><path d="M26 46h20" stroke="#2E7D32" strokeWidth="1.5" strokeLinecap="round"/></>
+                },
+                {
+                  key: "widen" as const,
+                  label: "条件を広げた",
+                  desc: "家賃・地域・築年数などを少し広げてピックアップ",
+                  icon: <><rect x="22" y="26" width="28" height="20" rx="3" stroke="#2E7D32" strokeWidth="1.8"/><path d="M28 36h16M28 41h10" stroke="#2E7D32" strokeWidth="1.5" strokeLinecap="round"/><path d="M46 32l4-4" stroke="#2E7D32" strokeWidth="1.5" strokeLinecap="round"/><path d="M46 28h4v4" stroke="#2E7D32" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></>
+                },
+              ]).map(({ key, label, desc, icon }) => (
+                <button
+                  key={key}
+                  onClick={() => {
+                    setShowPropertySendPicker(false);
+                    setAixInitSendMode(key);
+                    openAixWithImagePicker("property_send");
+                  }}
+                  className="flex items-center gap-3.5 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3.5 text-left transition active:bg-[#E8F5E9] active:border-[#2E7D32]"
+                >
+                  <div className="shrink-0">
+                    <svg width="36" height="36" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <circle cx="36" cy="36" r="36" fill="#E8F5E9"/>
+                      {icon}
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                    <p className="text-[11px] text-[#9CA3AF]">{desc}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setShowPropertySendPicker(false)}
+              className="mt-4 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
+            >キャンセル</button>
+          </div>
+        </div>
+      )}
+
       {/* 送信確認ダイアログ */}
       {showSendConfirm && (
         <div
@@ -8090,7 +8169,7 @@ export default function Home() {
                 return [
                   { color: "#0288D1", label: "ヒアリング", sub: "条件フォーム①〜⑧をワンタップで送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("condition_hearing"); openAixDirect("condition_hearing"); } },
                   { color: "#2196F3", label: "物件オススメ", sub: "おすすめ物件をAIが提案", action: () => { openPropertyRecommendationPicker("withImage"); } },
-                  { color: "#00897B", label: "物件送る", sub: "ピックアップした物件を送る・退去予定も自動案内", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); openAixDirect("property_send"); } },
+                  { color: "#00897B", label: "物件ピックアップ", sub: "ピックアップした物件を送る・退去予定も自動案内", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); setShowPropertySendPicker(true); } },
                   { color: "#4CAF50", label: "物件確認した", sub: "確認結果を3パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); } },
                   { color: "#FF9800", label: "見積書送る", sub: "費用の見積書を作成", action: () => {
                     setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet");

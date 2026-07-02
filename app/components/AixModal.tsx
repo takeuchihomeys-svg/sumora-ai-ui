@@ -37,6 +37,7 @@ interface AixModalProps {
   initialFocusPoints?: string[];
   initialTemplateStructure?: Array<{ label: string; text: string }>;
   initialTemplateSample?: string;
+  initialSendMode?: "normal" | "new_arrival" | "widen" | null;
   initialViewingSpecificMode?: boolean;
   initialViewingVacancy?: boolean;
   initialIsNewArrival?: boolean;
@@ -242,6 +243,7 @@ export default function AixModal({
   initialFocusPoints,
   initialTemplateStructure,
   initialTemplateSample,
+  initialSendMode,
   initialViewingSpecificMode,
   initialViewingVacancy,
   initialIsNewArrival,
@@ -353,7 +355,7 @@ export default function AixModal({
   }>>([]);
   const [calendarLoading, setCalendarLoading] = useState(false);
   // 物件ピックアップ専用: 新規物件 / 新着物件 / 条件を広げた モード
-  const [sendMode, setSendMode] = useState<"normal" | "new_arrival" | "widen" | null>(null);
+  const [sendMode, setSendMode] = useState<"normal" | "new_arrival" | "widen" | null>(initialSendMode ?? null);
   const [newArrivalApply, setNewArrivalApply] = useState(false);
   const [editableCalendarSlots, setEditableCalendarSlots] = useState<string[]>([]);
   const [includeCalendar, setIncludeCalendar] = useState(true);
