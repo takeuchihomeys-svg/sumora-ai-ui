@@ -301,6 +301,13 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ---- P8フォールバック（Haiku AI判断）----
+  // ガード①: 会話履歴が5件未満の場合はデータ不足のためAI判断をスキップ
+  // （少ない情報で幻覚ガイドに従い誤ったアクションを提案するリスクを防ぐ）
+  if ((messages?.length ?? 0) < 5) {
+    return NextResponse.json({ action: null, reason: "" });
+  }
+
   // ---- UIで管理しているAIXロジック＋過去パターンデータ＋フロー運用ガイドを並列取得 ----
   const [{ data: aixLogicRows }, { data: patternRows }, { data: flowGuideRow }] = await Promise.all([
     supabase.from("ai_prompts")
@@ -319,6 +326,11 @@ export async function POST(req: NextRequest) {
   ]);
 
   const aixFlowGuide = ((flowGuideRow?.content as string | undefined) ?? "").trim();
+
+  // ガード②: フロー運用ガイドが未学習（空）の場合もAI判断をスキップ
+  if (!aixFlowGuide) {
+    return NextResponse.json({ action: null, reason: "" });
+  }
 
   const aixLogicSection = (aixLogicRows ?? [])
     .map((r) => (r.content as string))
@@ -349,9 +361,25 @@ export async function POST(req: NextRequest) {
     .map((r) => `  顧客:「${(r.customer_msg_summary as string).slice(0, 60)}」→ ${r.action_type}`)
     .join("\n");
 
+  // created_at から相対時刻（X分前/X時間前/X日前）を計算
+  const relativeTime = (createdAt: string | null | undefined): string => {
+    if (!createdAt) return "";
+    const diffMs = Date.now() - new Date(createdAt).getTime();
+    if (diffMs < 0) return "たった今";
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 1) return "たった今";
+    if (mins < 60) return `${mins}分前`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}時間前`;
+    return `${Math.floor(hours / 24)}日前`;
+  };
+
   const recentText = [...messages]
     .reverse()
-    .map((m) => `[${m.sender === "staff" ? "スタッフ" : "顧客"}] ${(m.text as string) || "(画像)"}`)
+    .map((m) => {
+      const rel = relativeTime(m.created_at as string | null | undefined);
+      return `[${m.sender === "staff" ? "スタッフ" : "顧客"}${rel ? ` ${rel}` : ""}] ${(m.text as string) || "(画像)"}`;
+    })
     .join("\n");
 
   const patternSection = totalPatterns >= 3
@@ -379,17 +407,24 @@ ${examples || "  (なし)"}
     customer?.ai_summary ? `サマリー: ${customer.ai_summary as string}` : "",
   ].filter(Boolean).join("\n");
 
+  // フロー運用ガイドは「## 指示」やJSON出力指示より前に注入する（後置するとフォーマット遵守が弱まる）
+  const flowGuideSection = `## AIXフロー運用ガイド（学習済み）
+${aixFlowGuide.slice(0, 800)}
+
+`;
+
   const prompt = `あなたは不動産営業AIのアドバイザーです。
 現在日時（JST）: ${jstNowStr}
-${customerContext ? customerContext + "\n" : ""}${aixLogicGuide}${patternSection}## 現在の会話
+${customerContext ? customerContext + "\n" : ""}${aixLogicGuide}${flowGuideSection}${patternSection}## 現在の会話
 顧客名: ${conv.customer_name as string}
 ステータス: ${statusLabel}
+直前のAIXアクション: ${last_aix_action || "なし"}
 
 直近の会話（古い順）:
 ${recentText}
 
 ## 指示
-上記の「各AIXボタンの発動条件」と過去実績データを参照して、スタッフが次に取るべき最適なアクションを1つ選んでください。
+上記の「各AIXボタンの発動条件」「AIXフロー運用ガイド」と過去実績データを参照して、スタッフが次に取るべき最適なアクションを1つ選んでください。
 
 選択肢:
 - property_check_result: 物件の空室確認結果を報告する
@@ -402,13 +437,14 @@ ${recentText}
 - null: 特に次のアクションなし
 
 ## 出力形式（JSONのみ。reasonは日本語10文字以内）
-{"action": "viewing_invite", "reason": "内覧希望が出た"}`
-    + (aixFlowGuide ? "\n\n【AIXフロー運用ガイド（学習済み）】\n" + aixFlowGuide.slice(0, 500) : "");
+{"action": "viewing_invite", "reason": "内覧希望が出た"}`;
 
   try {
     const message = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 80,
+      max_tokens: 1200,
+      // 営業フロー基礎知識をハードコード（DBの学習ガイドに全依存しないフォールバック知識）
+      system: "不動産賃貸営業の基本フロー: ヒアリング → 物件提案 → 内覧 → 見積 → 申込 の順で顧客を次のステップへ進める。",
       messages: [{ role: "user", content: prompt }],
     });
 

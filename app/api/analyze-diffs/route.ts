@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
-import { upsertKnowledge } from "@/app/lib/knowledge-utils";
+import { upsertKnowledge, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
@@ -28,7 +28,7 @@ async function analyzeDiff(
   aiDraft: string,
   sentReply: string,
   conversationState: string,
-): Promise<{ skip: boolean; title?: string; rule?: string; category?: string } | null> {
+): Promise<{ skip: boolean; title?: string; rule?: string; category?: string; trigger_example?: string } | null> {
   try {
     const res = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
@@ -61,7 +61,7 @@ ${sentReply}
 - 役割・構成・意図に実質的な差がない（ほぼ同じ）
 
 ▼ 学習ルールがある場合のJSON出力
-{"skip":false,"title":"差分学習: [構成パターン名（30文字以内・具体的に）]","rule":"[役割レベルのルール。NG構成→OK構成、なぜその順番が正解かの理由を含む。250文字以内]","category":"[pattern=構成テンプレート / style=文体・トーン / phrase=言い回し のいずれかのみ。principle は絶対に選ばないこと]"}
+{"skip":false,"title":"差分学習: [構成パターン名（30文字以内・具体的に）]","rule":"[役割レベルのルール。NG構成→OK構成、なぜその順番が正解かの理由を含む。250文字以内]","category":"[pattern=構成テンプレート / style=文体・トーン / phrase=言い回し のいずれかのみ。principle は絶対に選ばないこと]","trigger_example":"[このルールが適用される典型的なお客様メッセージの例文（1〜2文）。お客様が実際に送ってきそうな言葉で書く。ルールの説明文ではなくお客様側のメッセージそのものを書くこと]"}
 
 JSONのみを返す。分析の途中経過は不要。`,
       }],
@@ -70,7 +70,7 @@ JSONのみを返す。分析の途中経過は不要。`,
     const text = res.content[0].type === "text" ? res.content[0].text.trim() : "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return null;
-    return JSON.parse(jsonMatch[0]) as { skip: boolean; title?: string; rule?: string; category?: string };
+    return JSON.parse(jsonMatch[0]) as { skip: boolean; title?: string; rule?: string; category?: string; trigger_example?: string };
   } catch {
     return null;
   }
@@ -156,7 +156,12 @@ export async function POST(req: NextRequest) {
       const ALLOWED_CATEGORIES = new Set(["pattern", "style", "phrase"]);
       const rawCategory = (result.category ?? "pattern").split("=")[0].trim();
       const safeCategory = ALLOWED_CATEGORIES.has(rawCategory) ? rawCategory : "pattern";
-      const embeddingInput = `${conversation_state ?? "proposing"}: ${result.rule}`;
+      // #21: 検索クエリ（顧客メッセージ）と意味空間を揃えるため trigger_example を優先して embedding 化
+      const embeddingInput = buildKnowledgeEmbeddingInput({
+        trigger_example: result.trigger_example,
+        rule: result.rule,
+        conversation_state: conversation_state ?? "proposing",
+      });
       const embedding = await getEmbedding(embeddingInput);
       // ☆つき or 大幅修正ほど importance を上げる
       const baseImp = diffImportance(sim);

@@ -412,10 +412,12 @@ function buildGenerationMessages(
       );
     }
     if (state === "first_reply" && isFirstEverReply) {
-      // 真の初回 → 「お世話になっております」を「ご連絡頂きありがとうございます」に置き換え
+      // 真の初回 → 初回挨拶文は greetingNote（【⏰ 初回対応ルール・最優先】の「はじめまして」版）に統一。
+      // 以前はここで別文面のテンプレートを「一字一句変更禁止」で注入しており、greetingNote と相互排他になっていた。
+      // 二重定義を避けるため、ここでは greetingNote への参照と禁止事項のみ記載する。
       return overrideOpeningRule(
         baseQuickPatterns,
-        `・冒頭ルール（★重要・初回返信のため上書き）: 必ず「${customerName ? `${customerName}さん` : ""}ご連絡頂きありがとうございます😊！！お部屋探しを担当させて頂きます鈴木と申します！！」で始める（一字一句変更・省略禁止）。「お世話になっております」は絶対禁止`
+        "・冒頭ルール（★重要・初回返信のため上書き）: 冒頭挨拶は【⏰ 初回対応ルール・最優先】に記載の初回挨拶文（「はじめまして😊！！…鈴木と申します！！」）に必ず従う。「お世話になっております」は絶対禁止"
       );
     }
     // 本日初回メッセージ → 短い承認でも必ず「お世話になっております」で始める
@@ -489,7 +491,7 @@ ${customerMessage}${applicationFormNote}${viewingFactNote}
 ${examples}${examplesInstruction}
 
 ↑${isFollowUp ? "スモラは既にこのメッセージに返信済み。前の返信内容を繰り返さず、続きとして自然につながるメッセージを1つ生成すること。" : "スモラの直前返信の流れを踏まえ、⭐実例の文体・テンポを参考にしながら、上記の挨拶ルール・禁止ワードを必ず守って、このメッセージへのスモラらしい返信を1つ生成してください。"}
-長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。絶対に担当者名（鈴木など）を入れない。${replyHintNote}`;
+長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。初回挨拶の「鈴木と申します」を除き、本文中に担当者名（鈴木など）を入れない。${replyHintNote}`;
 
   return [new SystemMessage(promptOverrides?.generationSystem ?? GENERATION_SYSTEM), new HumanMessage(prompt)];
 }

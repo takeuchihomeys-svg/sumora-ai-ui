@@ -8,7 +8,32 @@ export type UpsertKnowledgeParams = {
   conversation_state?: string;
   embedding?: number[];
   source_example_id?: string;
+  /**
+   * このルールが適用される「顧客メッセージの例文」。
+   * embedding 生成の入力にのみ使用（DBカラムなし・保存しない）。#21
+   * 検索時のクエリ（顧客メッセージ）と意味空間を揃えるため、
+   * ルール文ではなくこちらを embedding 化する。
+   */
+  trigger_example?: string;
 };
+
+/**
+ * ナレッジの embedding 入力を組み立てる（#21 embedding入力の非対称問題対策）。
+ *
+ * 検索側（generate-reply）は「`${state}: ${顧客メッセージ}`」をクエリに embedding 検索するため、
+ * 保存側も trigger_example（=顧客メッセージの例文）を優先して同じ形式で embedding 化する。
+ * trigger_example がない場合は従来通り rule/content にフォールバック。
+ */
+export function buildKnowledgeEmbeddingInput(params: {
+  trigger_example?: string;
+  rule?: string;
+  content?: string;
+  conversation_state?: string;
+}): string {
+  const base = params.trigger_example || params.rule || params.content || "";
+  if (!base) return "";
+  return params.conversation_state ? `${params.conversation_state}: ${base}` : base;
+}
 
 type MatchRpcRow = {
   id: string;

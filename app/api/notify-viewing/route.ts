@@ -50,16 +50,19 @@ async function recordSuccessPattern(conversationId: string, eventType: string): 
         content: `以下の賃貸仲介LINEの会話で「${label}」が決まりました。
 この会話でお客さんが${label}に至った決め手・スタッフの対応パターンを3行以内で要約してください。
 「★決まるパターン:」で始め、次回同じ状況のお客さんへの示唆を含めること。
+顧客名・物件名・住所は出力に含めないこと（「お客さん」「物件」など一般化した表現に置き換える）。
+会話からパターンを抽出できない場合（会話が短い・決め手が読み取れない等）は「null」とだけ出力すること（推測でパターンを作らない）。
 
 【会話履歴】
 ${history}
 
-出力: ★決まるパターン: から始まる3行以内の文章のみ`,
+出力: ★決まるパターン: から始まる3行以内の文章のみ（抽出不能時は null のみ）`,
       }],
     });
 
     const pattern = resp.content[0].type === "text" ? resp.content[0].text.trim() : null;
-    if (!pattern) return;
+    // 出口: 抽出不能（null / 空文字 / ★決まるパターンで始まらない出力）は knowledge保存・ai_summary反映をスキップ
+    if (!pattern || pattern.toLowerCase() === "null" || !pattern.startsWith("★決まるパターン")) return;
 
     // ai_reply_knowledgeに保存（embeddingも即座に付与してRAG検索対象にする）
     const now = new Date().toISOString().slice(0, 10);

@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
 // source ごとの重み（採択の質を confidence に反映）
-// suggestion_accepted: スタッフが積極的に選択した最強シグナル
+// suggestion_accepted: スタッフが積極的に選択した強シグナル
+//   （#24: 2.0だと提案2回採択でルール成立する過剰な正帰還のため1.2に抑制）
 // prediction_match:    予測が当たった良いシグナル
 // manual:              手動選択ベースライン
 // suggestion_dismissed: 却下は弱い負シグナル（0にすると除算で問題）
@@ -10,7 +11,7 @@ import { supabase } from "@/app/lib/supabase";
 // send_cancelled:      送信キャンセルは最弱シグナル（集計への影響を最小化）
 // suggestion_bypassed: 提案を無視して別行動 = 弱い負シグナル
 const SOURCE_WEIGHTS: Record<string, number> = {
-  suggestion_accepted: 2.0,
+  suggestion_accepted: 1.2,
   prediction_match: 1.5,
   manual: 1.0,
   suggestion_dismissed: 0.2,
@@ -24,16 +25,26 @@ function sourceWeight(source: string | null | undefined): number {
   return SOURCE_WEIGHTS[source ?? ""] ?? DEFAULT_WEIGHT;
 }
 
+// #24 修正D: confidence < 0.4 かつ occurrence_count < 5 の低品質ルールは登録・維持しない
+function isLowQualityRule(confidence: number, occurrenceCount: number): boolean {
+  return confidence < 0.4 && occurrenceCount < 5;
+}
+
 // 日本語テキストから意味のある n-gram を抽出
+// ノイズ対策(#24): 2文字断片（「お願」等）が無意味ルール化するため最小3文字
+const MIN_NGRAM_LENGTH = 3;
+
 function extractNgrams(text: string): string[] {
   // 記号・スペースを除去
   const cleaned = text.replace(/[。、,.!?！？\s　\[\]【】「」『』（）()0-9０-９]/g, "");
-  const result: string[] = [];
+  let result: string[] = [];
   for (let n = 2; n <= 5; n++) {
     for (let i = 0; i <= cleaned.length - n; i++) {
       result.push(cleaned.slice(i, i + n));
     }
   }
+  // 2文字以下のn-gramは除外
+  result = result.filter((ng) => ng.length >= MIN_NGRAM_LENGTH);
   return result;
 }
 
@@ -48,7 +59,21 @@ const STOP_NGRAMS = new Set([
   "まで", "もし", "もの", "やっ", "よう", "より", "られ", "りが",
   "るか", "ると", "るの", "れが", "れた", "れて", "れる", "わか",
   "をお", "をし", "んが", "んだ", "んで", "んな",
+  // #24 ノイズ対策: 一般的な挨拶・敬語・語尾（トリガーとして無意味）
+  "ございます", "ございまし", "いたします", "いただき", "よろしく",
+  "お願い", "お世話", "ありがとう", "よろしくお", "失礼しま",
+  "こんにちは", "こんばんは", "はじめまし", "お客様", "させていた",
 ]);
+
+// n-gram がストップリストのいずれかを含む/含まれる場合も除外
+// （例: 「よろしくお願」は「よろしく」を含むので除外）
+function isStopNgram(ngram: string): boolean {
+  if (STOP_NGRAMS.has(ngram)) return true;
+  for (const stop of STOP_NGRAMS) {
+    if (stop.length >= 3 && (ngram.includes(stop) || stop.includes(ngram))) return true;
+  }
+  return false;
+}
 
 export async function POST() {
   // action_pattern_logs から全データ取得（source で重み付け）
@@ -110,12 +135,12 @@ export async function POST() {
     }
 
     for (const [ngram, weightedCount] of Object.entries(actionNgramCount)) {
-      if (STOP_NGRAMS.has(ngram)) continue;
+      if (isStopNgram(ngram)) continue;
       const total = totalNgramCount[ngram] ?? weightedCount;
       const confidence = weightedCount / total;
 
-      // 信頼度60%以上 & 重み付きスコア3以上 & 2文字以上
-      if (confidence >= 0.6 && weightedCount >= 3 && ngram.length >= 2) {
+      // 信頼度60%以上 & 重み付きスコア3以上 & 3文字以上
+      if (confidence >= 0.6 && weightedCount >= 3 && ngram.length >= MIN_NGRAM_LENGTH) {
         rulesToUpsert.push({
           action_type: action,
           keyword: ngram,
@@ -143,7 +168,53 @@ export async function POST() {
   const sorted = byActionSorted;
   let learned = 0;
 
+  // ── #24 修正D: 蓄積済みノイズルールの定期削除 ──
+  let cleaned = 0;
+
+  // 1) confidence閾値割れ（confidence < 0.4 かつ occurrence_count < 5）の既存ルールを削除
+  {
+    const { data: lowRules } = await supabase
+      .from("trigger_action_rules")
+      .select("keyword")
+      .lt("confidence", 0.4)
+      .lt("occurrence_count", 5);
+    if (lowRules?.length) {
+      const { error } = await supabase
+        .from("trigger_action_rules")
+        .delete()
+        .lt("confidence", 0.4)
+        .lt("occurrence_count", 5);
+      if (!error) cleaned += lowRules.length;
+    }
+  }
+
+  // 2) 過去に蓄積した 2文字以下・ストップリスト該当キーワードのルールを削除
+  {
+    const { data: allRules } = await supabase
+      .from("trigger_action_rules")
+      .select("keyword")
+      .not("keyword", "like", "AFTER:%")
+      .limit(5000);
+    const noiseKeywords = [
+      ...new Set(
+        (allRules ?? [])
+          .map((r) => r.keyword as string)
+          .filter((k) => k.length < MIN_NGRAM_LENGTH || isStopNgram(k))
+      ),
+    ];
+    for (let i = 0; i < noiseKeywords.length; i += 200) {
+      const chunk = noiseKeywords.slice(i, i + 200);
+      const { error } = await supabase
+        .from("trigger_action_rules")
+        .delete()
+        .in("keyword", chunk);
+      if (!error) cleaned += chunk.length;
+    }
+  }
+
   for (const rule of sorted) {
+    // #24 修正D: 低品質ルールは upsert 対象外
+    if (isLowQualityRule(rule.confidence, rule.occurrence_count)) continue;
     const { error } = await supabase.from("trigger_action_rules").upsert(
       { ...rule, updated_at: new Date().toISOString() },
       { onConflict: "action_type,keyword" }
@@ -174,7 +245,8 @@ export async function POST() {
     for (const [action, count] of Object.entries(nexts)) {
       const total = prevTotal[prev] ?? count;
       const confidence = Math.round((count / total) * 1000) / 1000;
-      if (confidence >= 0.3 && count >= 2) {
+      // #24 修正D: 低品質ルール（confidence < 0.4 かつ count < 5）は upsert 対象外
+      if (confidence >= 0.3 && count >= 2 && !isLowQualityRule(confidence, count)) {
         const { error } = await supabase.from("trigger_action_rules").upsert(
           { action_type: action, keyword: `AFTER:${prev}`, occurrence_count: count, total_occurrence: total, confidence, updated_at: new Date().toISOString() },
           { onConflict: "action_type,keyword" }
@@ -188,6 +260,7 @@ export async function POST() {
     ok: true,
     learned,
     chain_learned: chainLearned,
+    cleaned,
     total_candidates: rulesToUpsert.length,
     by_action: Object.fromEntries(
       Object.keys(byAction).map((a) => [
