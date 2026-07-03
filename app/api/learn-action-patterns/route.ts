@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { normalizeStatus } from "@/app/lib/status-normalize";
 
 // AIX送信後に呼び出す（1件ログ）または既存データをブートストラップ
 // POST { action: "log", conversation_status, action_type, customer_msg_summary }
@@ -45,7 +46,7 @@ export async function POST(req: NextRequest) {
     const ALLOWED_SOURCES = new Set(["manual", "suggestion_accepted", "suggestion_dismissed"]);
     const source = body.source && ALLOWED_SOURCES.has(body.source) ? body.source : "manual";
     await supabase.from("action_pattern_logs").insert({
-      conversation_status: body.conversation_status,
+      conversation_status: normalizeStatus(body.conversation_status),
       action_type: body.action_type,
       customer_msg_summary: (body.customer_msg_summary ?? "").slice(0, 150),
       previous_action_type: body.previous_action_type ?? null,
@@ -85,7 +86,7 @@ export async function POST(req: NextRequest) {
         .eq("id", task.conversation_id as string)
         .single();
 
-      const status = (conv?.status as string) ?? "hearing";
+      const status = normalizeStatus((conv?.status as string) ?? "hearing");
       const actionType = task.task_type as string;
       const msgText = ((msgRow?.text as string) ?? "").slice(0, 150);
 
@@ -119,7 +120,8 @@ export async function POST(req: NextRequest) {
 
       // viewing = proposing → viewing の遷移で viewing_invite が使われた
       // application/contract = viewing → application で application_push が使われた
-      const prevStatus = (conv.status as string) === "viewing" ? "proposing" : "viewing";
+      const rawPrevStatus = (conv.status as string) === "viewing" ? "proposing" : "viewing";
+      const prevStatus = normalizeStatus(rawPrevStatus);
       const actionType = (conv.status as string) === "viewing" ? "viewing_invite" : "application_push";
       const msgText = ((msgRow?.text as string) ?? "").slice(0, 150);
 

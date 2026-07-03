@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { normalizeStatus } from "@/app/lib/status-normalize";
 
 const ANTHROPIC_API_KEY = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
 const HAIKU = "claude-haiku-4-5-20251001";
@@ -33,15 +34,8 @@ export async function POST(req: NextRequest) {
 
   const rawStatus = (conv.status as string) ?? "hearing";
 
-  // 旧ステータスキーを正規化
-  const STATUS_ALIAS: Record<string, string> = {
-    first_reply: "hearing", condition_hearing: "hearing",
-    property_search: "hearing", property_recommendation: "proposing",
-    viewing: "proposing", estimate_request: "proposing",
-    availability_check: "proposing", application: "applying",
-    screening: "applying", contract: "applying",
-  };
-  const currentStatus = STATUS_ALIAS[rawStatus] ?? rawStatus;
+  // 旧ステータスキーを正規化（共通モジュールを使用）
+  const currentStatus = normalizeStatus(rawStatus);
 
   // ---- キーワード即時検知（Haiku不要・B-3-②）----
   const msgsAsc = [...messages].reverse(); // 古い順

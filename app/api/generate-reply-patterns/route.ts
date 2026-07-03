@@ -3,6 +3,7 @@ import { ChatAnthropic } from "@langchain/anthropic";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { supabase } from "@/app/lib/supabase";
 import { PHASE_GUIDE, REAL_ESTATE_RULES, SMORA_QUICK_PATTERNS, EMOJI_RULE, STATE_SEARCH_ALIASES, CRITICAL_RULES_COMPACT } from "@/app/lib/line-reply-prompts";
+import { validateAndClean } from "@/app/lib/validate-reply";
 
 const analysisModel = new ChatAnthropic({
   model: "claude-haiku-4-5-20251001",
@@ -42,6 +43,16 @@ function getJSTHour(): number {
 }
 function getJSTDayOfWeek(): number {
   return new Date(Date.now() + 9 * 60 * 60 * 1000).getUTCDay();
+}
+// JST 当日（0:00〜23:59）の開始時刻（UTC）を返す
+function getJSTDayStart(): Date {
+  const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  return new Date(Date.UTC(jstNow.getUTCFullYear(), jstNow.getUTCMonth(), jstNow.getUTCDate(), 0, 0, 0, 0));
+}
+// JST 当日の終了時刻（UTC）を返す
+function getJSTDayEnd(): Date {
+  const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  return new Date(Date.UTC(jstNow.getUTCFullYear(), jstNow.getUTCMonth(), jstNow.getUTCDate(), 23, 59, 59, 999));
 }
 
 // ─── Haiku 分析（1案と同じフィールド数に拡張）───────────────────────────────
@@ -117,12 +128,45 @@ async function fetchExamples(state: string, message: string, analysisCtx?: strin
 }
 
 // ─── ナレッジ取得（3層）────────────────────────────────────────────────────
-async function fetchKnowledge(state: string): Promise<string> {
+async function fetchKnowledge(state: string, customerMessage?: string): Promise<string> {
   const aliases = STATE_SEARCH_ALIASES[state] || [state];
+
+  // pgvector検索（customerMessageがある場合・OPENAI_API_KEYが設定済みの場合）
+  if (customerMessage && process.env.OPENAI_API_KEY) {
+    const embedding = await getEmbedding(`${state}: ${customerMessage}`.slice(0, 2000));
+    if (embedding) {
+      const { data: vectorResults } = await supabase.rpc("match_reply_knowledge", {
+        query_embedding: embedding,
+        match_count: 20,
+        min_importance: 7,
+      }) as { data: Array<{ id: string; title: string; content: string; category: string; conversation_state: string; importance: number; similarity: number }> | null };
+
+      if (vectorResults && vectorResults.length > 0) {
+        // 差分学習ルールを類似度降順・上位8件に絞る
+        const diffLearned = vectorResults.filter(r => r.title.includes("差分学習")).slice(0, 8);
+        const correctionPairs = vectorResults.filter(r => r.title.includes("修正対比")).slice(0, 8);
+        const stateSpecific = vectorResults.filter(r => !r.title.includes("差分学習") && !r.title.includes("修正対比") && aliases.includes(r.conversation_state)).slice(0, 12);
+        const globalKnowledge = vectorResults.filter(r => !r.title.includes("差分学習") && !r.title.includes("修正対比") && !aliases.includes(r.conversation_state) && r.importance >= 8).slice(0, 8);
+
+        const stateKeys = new Set(stateSpecific.map(k => k.content));
+        const globalDeduped = globalKnowledge.filter(k => !stateKeys.has(k.content));
+
+        const parts: string[] = [];
+        if (diffLearned.length > 0) parts.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned.map(k => `・${k.content}`).join("\n"));
+        if (correctionPairs.length > 0) parts.push("【🟠 スタッフが修正したポイント】\n" + correctionPairs.map(k => `・${k.content}`).join("\n"));
+        if (stateSpecific.length > 0) parts.push("【スモラの営業ルール】\n" + stateSpecific.map(k => `・${k.content}`).join("\n"));
+        if (globalDeduped.length > 0) parts.push("【スモラ共通ノウハウ】\n" + globalDeduped.map(k => `・${k.content}`).join("\n"));
+        if (parts.length > 0) return parts.join("\n\n");
+      }
+    }
+  }
+
+  // フォールバック: created_at/importance順検索
   const [{ data: diffLearned }, { data: correctionPairs }, { data: stateSpecific }, { data: global }] = await Promise.all([
     // ① 差分学習: AIが間違えた→正解ルール（最優先）
     supabase.from("ai_reply_knowledge").select("content")
       .ilike("title", "%差分学習%").gte("importance", 7)
+      .order("importance", { ascending: false })
       .order("created_at", { ascending: false }).limit(20),
     // ② 修正対比: スタッフがどう直したかのパターン
     supabase.from("ai_reply_knowledge").select("content")
@@ -165,17 +209,33 @@ async function generateAllPatterns(
   examples: string,
   customerConditions: string,
   customerSummary: string,
+  recentMessages: Array<{ sender: string; text: string; imageUrl?: string; createdAt?: string }>,
 ): Promise<string[]> {
   const jstHour = getJSTHour();
   const jstDay = getJSTDayOfWeek();
   const isWeekend = jstDay === 0 || jstDay === 6;
 
-  // 挨拶使用済み判定
-  const historyLines = (history || "").split("\n").filter(Boolean);
-  const staffLines = historyLines.filter(l => l.startsWith("スモラ:"));
-  const alreadyGreeted = staffLines.some(l =>
-    l.includes("お世話になっております") || l.includes("夜分遅くに失礼")
-  );
+  // 挨拶使用済み判定: タイムスタンプがある場合はJST当日のメッセージのみで判定
+  const hasTimestamps = recentMessages.some(m => !!m.createdAt);
+  let alreadyGreeted: boolean;
+  if (hasTimestamps) {
+    const jstDayStart = getJSTDayStart();
+    const jstDayEnd = getJSTDayEnd();
+    // JST当日のスタッフメッセージのみを対象に挨拶済みチェック
+    alreadyGreeted = recentMessages.some(m => {
+      if (m.sender !== "staff" || !m.text || !m.createdAt) return false;
+      const ts = new Date(m.createdAt);
+      if (ts < jstDayStart || ts > jstDayEnd) return false;
+      return m.text.includes("お世話になっております") || m.text.includes("夜分遅くに失礼");
+    });
+  } else {
+    // フォールバック: タイムスタンプなしの場合は履歴全体から判定（既存動作）
+    const historyLines = (history || "").split("\n").filter(Boolean);
+    const staffLines = historyLines.filter(l => l.startsWith("スモラ:"));
+    alreadyGreeted = staffLines.some(l =>
+      l.includes("お世話になっております") || l.includes("夜分遅くに失礼")
+    );
+  }
 
   const greetingNote = alreadyGreeted
     ? `\n【⏰ 挨拶ルール最優先】本日の会話で冒頭挨拶は使用済み。今回は「はい！！」「かしこまりました！！」など短い言葉で直接始める。`
@@ -380,7 +440,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "ANTHROPIC_API_KEY not set" }, { status: 500 });
   }
 
-  type RecentMessage = { sender: string; text: string; imageUrl?: string };
+  type RecentMessage = { sender: string; text: string; imageUrl?: string; createdAt?: string };
   const body = await req.json() as {
     message: string;
     state: string;
@@ -434,7 +494,7 @@ export async function POST(req: NextRequest) {
 
   // Step2: knowledge + examples を並列取得
   const [knowledge, examples] = await Promise.all([
-    fetchKnowledge(currentState),
+    fetchKnowledge(currentState, message),
     fetchExamples(currentState, message, analysisCtx, lastStaffMsg),
   ]);
 
@@ -442,14 +502,19 @@ export async function POST(req: NextRequest) {
   const variants = await generateAllPatterns(
     message, customerName, history, currentState,
     analysis, knowledge, examples, customerConditions, customerSummary,
+    recentMessages,
   );
 
   const PATTERN_DISPLAY_LABELS = ["王道", "シンプル", "C案"];
-  const patterns = variants.map((text, i) => ({
-    angle: PATTERN_LABELS[i] ?? String(i + 1),
-    label: PATTERN_DISPLAY_LABELS[i] ?? `${i + 1}案`,
-    text,
-  })).filter(p => p.text.length > 0);
+  const patterns = variants.map((text, i) => {
+    const { cleaned, issues } = validateAndClean(text);
+    if (issues.length > 0) console.warn(`[validate-reply] pattern ${PATTERN_LABELS[i] ?? i + 1} issues:`, issues);
+    return {
+      angle: PATTERN_LABELS[i] ?? String(i + 1),
+      label: PATTERN_DISPLAY_LABELS[i] ?? `${i + 1}案`,
+      text: cleaned,
+    };
+  }).filter(p => p.text.length > 0);
 
   return NextResponse.json({ ok: true, patterns });
 }

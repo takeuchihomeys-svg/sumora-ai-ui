@@ -13,6 +13,7 @@ import {
   REPLY_CONTENT_RULES,
   STATE_SEARCH_ALIASES,
 } from "@/app/lib/line-reply-prompts";
+import { validateAndClean } from "@/app/lib/validate-reply";
 
 // ─── モデル定義 ───────────────────────────────────────────────────────────────
 // Step1（分析）: Haiku — 速度重視
@@ -1082,21 +1083,23 @@ export async function POST(req: NextRequest) {
     ]);
     const resolvedSummary = customerSummary || autoSummary;
 
-    // JST 9時リセット基準で今日の挨拶済み判定
+    // JST 当日（0:00〜23:59）で挨拶済み判定
     // createdAt が含まれるメッセージだけを使用（タイムスタンプなしはフォールバックへ）
-    const greetingStart = getGreetingSessionStart();
     const hasTimestamps = recentMessages.some(m => !!m.createdAt);
-    // 今日のセッション中にスタッフメッセージが1件でもあれば挨拶済みとみなす
-    // AIX生成メッセージは「挨拶済み」としてカウントしない（初回挨拶を正しく生成するため）
-    const alreadyGreetedToday = hasTimestamps
-      ? recentMessages.some(m =>
-          m.sender === "staff" &&
-          !m.isAix &&
-          m.createdAt &&
-          new Date(m.createdAt) >= greetingStart &&
-          m.text && m.text !== "[画像]" && m.text !== "[動画]"
-        )
-      : undefined;
+    const alreadyGreetedToday = (() => {
+      if (!hasTimestamps) return undefined;
+      // JST 当日の 0:00〜23:59（UTC換算）
+      const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+      const jstDayStart = new Date(Date.UTC(jstNow.getUTCFullYear(), jstNow.getUTCMonth(), jstNow.getUTCDate(), 0, 0, 0, 0));
+      const jstDayEnd = new Date(Date.UTC(jstNow.getUTCFullYear(), jstNow.getUTCMonth(), jstNow.getUTCDate(), 23, 59, 59, 999));
+      // AIX生成メッセージは「挨拶済み」としてカウントしない（初回挨拶を正しく生成するため）
+      return recentMessages.some(m => {
+        if (m.sender !== "staff" || m.isAix || !m.createdAt) return false;
+        if (!m.text || m.text === "[画像]" || m.text === "[動画]") return false;
+        const ts = new Date(m.createdAt);
+        return ts >= jstDayStart && ts <= jstDayEnd;
+      });
+    })();
 
     // Sonnetでストリーミング生成
     const messages = buildGenerationMessages(
@@ -1144,12 +1147,20 @@ export async function POST(req: NextRequest) {
                   ? fullText.slice(singleBreak + 1)
                   : "";
               const fixedGreeting = `${customerName}さん、はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！\n\n`;
-              controller.enqueue(encoder.encode(fixedGreeting + bodyPart));
+              const rawOutput = fixedGreeting + bodyPart;
+              const { cleaned, issues } = validateAndClean(rawOutput);
+              if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
+              controller.enqueue(encoder.encode(cleaned));
             } else {
+              // 非初回: 全テキストをバッファしてから validateAndClean を適用してストリーム出力
+              let fullText = "";
               for await (const chunk of await genStream) {
                 const text = typeof chunk.content === "string" ? chunk.content : "";
-                if (text) controller.enqueue(encoder.encode(text));
+                fullText += text;
               }
+              const { cleaned, issues } = validateAndClean(fullText);
+              if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
+              if (cleaned) controller.enqueue(encoder.encode(cleaned));
             }
           } catch (streamErr) {
             console.error("generate-reply stream error:", streamErr);

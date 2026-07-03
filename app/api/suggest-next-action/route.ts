@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
+import { normalizeStatus } from "@/app/lib/status-normalize";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -108,7 +109,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const currentStatus = (conv.status as string) ?? "hearing";
+  const currentStatus = normalizeStatus((conv.status as string) ?? "hearing");
   const statusLabel = STATUS_LABEL[currentStatus] ?? currentStatus;
 
   // ---- AIXチェーンルール: 直前のAIXアクションから次を提案 ----
