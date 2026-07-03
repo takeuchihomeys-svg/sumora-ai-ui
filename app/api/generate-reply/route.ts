@@ -628,13 +628,24 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
 
   // 失注パターン専用バケット（auto-analyze-losers が category=principle / importance=8 で保存するため、
   // pgvector経路の importance>=9 フィルタ・フォールバック経路の principle 除外の両方から漏れる → 専用クエリで必ず届ける）
-  const { data: lossPatterns } = await supabase
-    .from("ai_reply_knowledge")
-    .select("id, title, content, importance, category")
-    .ilike("title", "失注パターン%")
-    .order("importance", { ascending: false })
-    .order("created_at", { ascending: false })
-    .limit(4);
+  const [{ data: lossPatterns }, { data: topPrinciples }] = await Promise.all([
+    supabase
+      .from("ai_reply_knowledge")
+      .select("id, title, content, importance, category")
+      .ilike("title", "失注パターン%")
+      .order("importance", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(4),
+    // importance>=9 の principle は embedding 検索の取りこぼし（similarity<0.5）に関わらず必ず注入する保証バケット。
+    // pgvector経路・フォールバック経路の両方で使う
+    supabase
+      .from("ai_reply_knowledge")
+      .select("id, category, title, content, importance")
+      .eq("category", "principle")
+      .gte("importance", 9)
+      .order("importance", { ascending: false })
+      .limit(5),
+  ]);
   const lossList = (lossPatterns ?? []).filter(p => (p.content ?? "").trim().length > 0);
   const lossIds = lossList.map(p => p.id).filter(Boolean);
   const lossBlock = lossList.length > 0
@@ -655,12 +666,19 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
         min_importance: 7,
       }) as { data: Array<KnowledgeRow & { similarity: number }> | null };
 
-      // 類似度0.5未満のノイズを除外
-      const filteredResults = (vectorResults ?? []).filter(r => (r.similarity ?? 0) >= 0.5);
+      // 類似度0.5未満のノイズを除外し、importance×similarity の複合スコアで並べ替え
+      // （RPCの similarity 順のままだと importance の低い近似ルールが各バケットの枠を食うため）
+      const filteredResults = (vectorResults ?? [])
+        .filter(r => (r.similarity ?? 0) >= 0.5)
+        .map(r => ({ ...r, score: (r.similarity ?? 0.5) * ((r.importance || 5) / 10) }))
+        .sort((a, b) => b.score - a.score);
       if (filteredResults.length > 0) {
         const diffLearned = filteredResults.filter(r => r.title.includes("差分学習")).slice(0, 8);
         const correctionPairs = filteredResults.filter(r => r.title.includes("修正対比")).slice(0, 8);
-        const critical = filteredResults.filter(r => r.importance >= 9 && r.category === "principle").slice(0, 15);
+        // importance>=9 の principle は embedding 検索に漏れても必ず注入する（topPrinciples で保証）
+        const criticalVector = filteredResults.filter(r => r.importance >= 9 && r.category === "principle").slice(0, 10);
+        const criticalGuaranteed = (topPrinciples ?? []).filter(p => !criticalVector.some(c => c.id === p.id));
+        const critical = [...criticalVector, ...criticalGuaranteed].slice(0, 15);
         const patterns = filteredResults.filter(r => r.category === "pattern" && !r.title.includes("差分学習") && !r.title.includes("修正対比")).slice(0, 8);
         const phrases = filteredResults.filter(r => r.category === "phrase").slice(0, 6);
 
@@ -692,9 +710,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   }
 
   // フォールバック: importance順検索（OPENAI_API_KEY未設定時 or embedding取得失敗時）
-  // fallbackPrinciples: global/stateSpecific クエリは principle を除外しているため、
-  // 【⚠️絶対ルール】用に principle 専用クエリを別途走らせる（除外したものを後で filter しても常に空になるバグの修正）
-  const [{ data: stateDiff }, { data: globalDiff }, { data: correctionPairs }, { data: global }, { data: stateSpecific }, { data: fallbackPrinciples }] = await Promise.all([
+  // principle は global/stateSpecific クエリから除外しているため、
+  // 【⚠️絶対ルール】には冒頭で取得済みの topPrinciples（category=principle・importance>=9）を使う
+  const [{ data: stateDiff }, { data: globalDiff }, { data: correctionPairs }, { data: global }, { data: stateSpecific }] = await Promise.all([
     supabase.from("ai_reply_knowledge").select("id, category, title, content, importance")
       .ilike("title", "%差分学習%").gte("importance", 7)
       .in("conversation_state", stateAliases)
@@ -719,11 +737,6 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       .not("category", "eq", "principle")
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false }).limit(24),
-    supabase.from("ai_reply_knowledge").select("id, category, title, content, importance")
-      .eq("category", "principle")
-      .gte("importance", 9)
-      .order("importance", { ascending: false })
-      .limit(5),
   ]);
 
   const stateDiffList = stateDiff || [];
@@ -733,7 +746,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   const stateSpecificList = stateSpecific || [];
   const globalList = (global || []).filter(g => !stateSpecificList.some(s => s.content === g.content));
   const all = [...stateSpecificList, ...globalList];
-  const principlesList = fallbackPrinciples || [];
+  const principlesList = topPrinciples || [];
   if (diffLearned.length === 0 && (correctionPairs?.length ?? 0) === 0 && all.length === 0 && principlesList.length === 0 && !lossBlock) return "";
 
   // principle は global/stateSpecific クエリで除外済みのため、専用クエリの結果をそのまま使う
@@ -919,6 +932,9 @@ export async function POST(req: NextRequest) {
   let screenshotBase64: string | undefined, screenshotMediaType: string | undefined;
   let viewingNote = "";
   let customerStructured: CustomerStructured | undefined;
+  // conversationId が渡された場合のみ、成功時に ai_draft 保存 + draft_pending_at クリア、
+  // 失敗時にも draft_pending_at をクリアする（毎分Cronが永遠に再試行する永続pendingバグの防止）
+  let conversationId = "";
   try {
     const body = await req.json() as {
       message: string;
@@ -933,9 +949,11 @@ export async function POST(req: NextRequest) {
       screenshotBase64?: string;
       screenshotMediaType?: string;
       activeTaskTypes?: string[];
+      conversationId?: string;
     };
     message = body.message;
     state = body.state;
+    conversationId = body.conversationId || "";
     customerName = body.customerName || "";
     recentMessages = body.recentMessages || [];
     // LINE表示名より会話でスタッフが実際に使った呼び名を優先
@@ -1174,6 +1192,8 @@ export async function POST(req: NextRequest) {
           controller.enqueue(encoder.encode(
             JSON.stringify({ ok: true, detected_intent: detectedIntent, quality: qualityFlags }) + "\n"
           ));
+          // 生成完了テキスト（conversationId 指定時の ai_draft 保存用）
+          let finalDraftText = "";
           try {
             const genInputLength = messages.reduce(
               (n, m) => n + (typeof m.content === "string" ? m.content.length : 0), 0
@@ -1212,6 +1232,7 @@ export async function POST(req: NextRequest) {
               const { cleaned, issues } = validateAndClean(rawOutput);
               if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
               controller.enqueue(encoder.encode(cleaned));
+              finalDraftText = cleaned;
             } else {
               // 非初回: 全テキストをバッファしてから validateAndClean を適用してストリーム出力
               let fullText = "";
@@ -1225,9 +1246,32 @@ export async function POST(req: NextRequest) {
               const { cleaned, issues } = validateAndClean(fullText);
               if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
               if (cleaned) controller.enqueue(encoder.encode(cleaned));
+              finalDraftText = cleaned;
+            }
+            // ✅ 成功時: ai_draft 保存 + draft_pending_at クリア（次のCronでスキップさせる）
+            // ※ draft_updated_at カラムは conversations に存在しないため未使用（追加時はここで更新すること）
+            if (conversationId) {
+              const { error: saveErr } = await supabase
+                .from("conversations")
+                .update(
+                  finalDraftText.trim()
+                    ? { ai_draft: finalDraftText.trim(), draft_pending_at: null }
+                    : { draft_pending_at: null } // 空生成でも pending は解除（永続pending防止）
+                )
+                .eq("id", conversationId);
+              if (saveErr) console.error("[generate-reply] ai_draft save error:", conversationId, saveErr.message);
             }
           } catch (streamErr) {
             console.error("generate-reply stream error:", streamErr);
+            // ❌ 失敗時: draft_pending_at をクリアして永続pendingを防止
+            // ※ draft_error_at カラムは conversations に存在しないためエラー時刻は記録しない（追加時はここで記録すること）
+            if (conversationId) {
+              const { error: clearErr } = await supabase
+                .from("conversations")
+                .update({ draft_pending_at: null })
+                .eq("id", conversationId);
+              if (clearErr) console.error("[generate-reply] draft_pending_at clear error:", conversationId, clearErr.message);
+            }
           }
           controller.close();
         },
@@ -1237,6 +1281,15 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : "返信生成エラー";
     console.error("generate-reply error:", msg);
+    // ❌ 失敗時: draft_pending_at をクリアして永続pendingを防止（毎分Cronの無限再試行対策）
+    // ※ draft_error_at カラムは conversations に存在しないためエラー時刻は記録しない（追加時はここで記録すること）
+    if (conversationId) {
+      try {
+        await supabase.from("conversations").update({ draft_pending_at: null }).eq("id", conversationId);
+      } catch (clearErr) {
+        console.error("[generate-reply] draft_pending_at clear error:", conversationId, clearErr);
+      }
+    }
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
 }

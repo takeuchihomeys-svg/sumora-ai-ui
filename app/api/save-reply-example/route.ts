@@ -493,6 +493,23 @@ export async function POST(req: NextRequest) {
     // 既存なし → 通常通り新規作成
   }
 
+  // ─── 冪等ガード: 同一 conversation_id + sent_at + sent_reply は重複保存しない ───
+  // クライアントのリトライ・二重送信で同じレコードが複数INSERTされ、
+  // Haiku分析チェーンが再実行されるのを防ぐ（DBにユニーク制約がないためアプリ側で担保）
+  if (conversationId && sentAt) {
+    const { data: dup } = await supabase
+      .from("ai_reply_examples")
+      .select("id, conversation_state")
+      .eq("conversation_id", conversationId)
+      .eq("sent_at", sentAt)
+      .eq("sent_reply", sentReply)
+      .limit(1)
+      .maybeSingle();
+    if (dup) {
+      return NextResponse.json({ ok: true, id: dup.id, duplicate: true, conversation_state: dup.conversation_state });
+    }
+  }
+
   // ④ state が未指定または "auto" の場合は自動判定 → 常に新5段階に正規化して保存
   const rawResolved = !rawState || rawState === "auto"
     ? await autoClassifyState(customerMessage, sentReply)
@@ -523,6 +540,15 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (splitCandidate) {
+    // 冪等ガード: 同一 sentReply が既にレコードに含まれる場合（リトライ・二重送信）は
+    // 再結合しない（同じ文が2回連結されて sent_reply が汚染されるのを防止）
+    const candidateReply = splitCandidate.sent_reply as string;
+    if (candidateReply === sentReply || candidateReply.endsWith("\n" + sentReply)) {
+      if (isStarred) {
+        await supabase.from("ai_reply_examples").update({ is_starred: true }).eq("id", splitCandidate.id);
+      }
+      return NextResponse.json({ ok: true, id: splitCandidate.id, duplicate: true });
+    }
     const mergedReply = splitCandidate.sent_reply + "\n" + sentReply;
     const mergedEmbeddingInput = previousStaffMessage
       ? `${conversationState}: [前返信]${previousStaffMessage.slice(0, 100)} [顧客]${customerMessage}`

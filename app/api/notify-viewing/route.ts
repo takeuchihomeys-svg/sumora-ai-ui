@@ -3,7 +3,12 @@ import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, generateEmbedding } from "@/app/lib/knowledge-utils";
 import Anthropic from "@anthropic-ai/sdk";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "") });
+// after() 内のバックグラウンド実行のため上限を明示（SDKデフォルトはリトライ2回・タイムアウト10分と長い）
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
+  maxRetries: 1,
+  timeout: 30_000,
+});
 
 // 内覧・申込・契約確定後に成功パターンを学習してai_reply_knowledgeへ保存
 async function recordSuccessPattern(conversationId: string, eventType: string): Promise<void> {
@@ -12,6 +17,26 @@ async function recordSuccessPattern(conversationId: string, eventType: string): 
       viewing: "内覧予約", contract: "契約", application: "申込", key_handover: "鍵渡し",
     };
     const label = eventLabel[eventType] ?? eventType;
+
+    // ─── 重複実行ガード: 同一会話で10分以内に学習済みならスキップ ───
+    // 二重クリック・クライアントリトライで同じ viewing 情報の POST が複数来ても
+    // Haiku分析＋knowledge保存が重複実行されないようにする
+    const { data: convGuard } = await supabase
+      .from("conversations")
+      .select("success_pattern_at")
+      .eq("id", conversationId)
+      .maybeSingle();
+    const lastLearnedAt = convGuard?.success_pattern_at
+      ? new Date(convGuard.success_pattern_at as string).getTime()
+      : 0;
+    if (Date.now() - lastLearnedAt < 10 * 60 * 1000) {
+      console.log(`[recordSuccessPattern] skipped: learned within 10min (${conversationId})`);
+      return;
+    }
+    // 先にマーカーを立てる（並行二重実行の抑止・カラム未作成でも既存処理は続行）
+    await supabase.from("conversations")
+      .update({ success_pattern_at: new Date().toISOString() })
+      .eq("id", conversationId);
 
     // 直近の会話を取得（最大40件）
     const { data: msgs } = await supabase

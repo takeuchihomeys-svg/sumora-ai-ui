@@ -623,7 +623,10 @@ ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS suggested_action TEXT DEFAUL
 ALTER TABLE action_pattern_logs ADD COLUMN IF NOT EXISTS predicted_action TEXT DEFAULT NULL;
 
 -- 失注分析済みフラグ（auto-analyze-losers の毎日再課金防止）
-ALTER TABLE conversations ADD COLUMN IF NOT EXISTS loss_analyzed_at TIMESTAMPTZ
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS loss_analyzed_at TIMESTAMPTZ;
+
+-- 成功パターン学習の重複実行ガード（notify-viewing の after() 二重起動・リトライ防止）
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS success_pattern_at TIMESTAMPTZ
 `.trim();
 
 export async function GET() {
