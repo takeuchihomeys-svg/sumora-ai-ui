@@ -11,8 +11,6 @@ import {
   SMORA_RULES,
   REAL_ESTATE_RULES,
   REPLY_CONTENT_RULES,
-  AIX_PROPERTY_RECOMMENDATION_RULES,
-  AIX_PROPERTY_SEND_RULES,
   STATE_SEARCH_ALIASES,
 } from "@/app/lib/line-reply-prompts";
 
@@ -27,7 +25,7 @@ const analysisModel = new ChatAnthropic({
 // Step2（生成）: Sonnet — 品質重視
 const generationModel = new ChatAnthropic({
   model: "claude-sonnet-4-6",
-  maxTokens: 800,
+  maxTokens: 1500,
   temperature: 0.3,
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
 });
@@ -240,6 +238,7 @@ function buildGenerationMessages(
     try {
       const p = JSON.parse(analysis) as Record<string, unknown>;
       // ② Step1分析の closing_strategy を抽出
+      // ※ここでparseに失敗する場合はStep1の出力形式を確認すること
       if (p.closing_strategy && typeof p.closing_strategy === "string") {
         closingStrategyFromAnalysis = p.closing_strategy;
       }
@@ -304,7 +303,7 @@ function buildGenerationMessages(
           conditionChangeNote = `\n【🔄 ${label}検出（最重要・絶対遵守）】追加条件を聞き返すことは絶対禁止。変更内容を具体的なエリア名・数字で言葉にして、即座に行動宣言する。「ピックアップします」「お送りします」で完結させること。`;
         }
       }
-    } catch { /* ignore */ }
+    } catch (e) { console.warn("[generate-reply] Step1 JSON parse failed:", e); }
   }
 
   // スモラの全過去返信を抽出（連続する複数送信は1つにまとめる・スプリット送信対応）
@@ -377,8 +376,10 @@ function buildGenerationMessages(
   const realEstateNote = `\n${promptOverrides?.realEstateRules ?? REAL_ESTATE_RULES}`;
   const smoraRulesNote = `\n${promptOverrides?.smoraRules ?? SMORA_RULES}`;
   const replyContentNote = `\n${promptOverrides?.replyContentRules ?? REPLY_CONTENT_RULES}`;
-  const aixPropertyRecommendationNote = `\n${promptOverrides?.aixPropertyRecommendationRules ?? AIX_PROPERTY_RECOMMENDATION_RULES}`;
-  const aixPropertySendNote = `\n${promptOverrides?.aixPropertySendRules ?? AIX_PROPERTY_SEND_RULES}`;
+  // AIXルールはgenerate-reply（一般LINE返信）には注入しない（aix/action専用）
+  // 管理UIでオーバーライドが明示設定された場合のみ注入
+  const aixPropertyRecommendationNote = promptOverrides?.aixPropertyRecommendationRules ? `\n${promptOverrides.aixPropertyRecommendationRules}` : "";
+  const aixPropertySendNote = promptOverrides?.aixPropertySendRules ? `\n${promptOverrides.aixPropertySendRules}` : "";
 
   // 申込フォーム検出（applying フェーズのみ・氏名・緊急連絡先・住所等のキーワード）＋直近の画像なし → 身分証リクエスト注入
   const isApplicationFormText = /緊急連絡|氏名|フリガナ|生年月日|現住所|住居年数|続柄|勤務先/.test(customerMessage);
@@ -870,7 +871,7 @@ export async function POST(req: NextRequest) {
         headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
-          max_tokens: 800,
+          max_tokens: 1500,
           messages: [{
             role: "user",
             content: [

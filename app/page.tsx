@@ -3282,6 +3282,10 @@ export default function Home() {
     setConversations((prev) =>
       prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null } : c)
     );
+    // 送信後に次アクション提案を再フェッチ（チェーンルール発火のため）
+    const _convIdForNext = selectedConversation.id;
+    nextActionFetchingRef.current.delete(_convIdForNext);
+    void fetchNextAction(_convIdForNext);
   };
 
   const onAccountImageSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -6759,12 +6763,14 @@ export default function Home() {
                 }),
               }).catch(() => {});
               setPendingTemplateSource(null);
-              // AI提案バナーを一旦消す（次回選択時に再フェッチされる）
+              // AI提案バナーを消してチェーンルール再フェッチ（S-1修正: 送信直後に発火）
               setNextActionMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; });
               nextActionFetchingRef.current.delete(selectedConversation.id);
-              // 物件あった → 即座に「内覧へ！」を次のAIX提案としてセット
+              // 物件あった → 即座に「内覧へ！」を次のAIX提案としてセット（再フェッチで上書きしない）
               if (meta?.suggestViewing) {
                 setNextActionMap((prev) => ({ ...prev, [selectedConversation.id]: { action: "viewing_invite", reason: "物件が空室でした", source: "trigger_rule" } }));
+              } else {
+                void fetchNextAction(selectedConversation.id);
               }
             }
             // AIXボタンからLINE送信 → 全ての未完了タスクを即座に完了

@@ -48,22 +48,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ action: "alternative_send", reason: "代替物件を送る", source: "chain_rule" });
   }
 
-  // スタッフが最後に送信 → 3日以上返信なしなら物件送るを誘導
-  if (conv.last_sender === "staff") {
-    const latestMsg = messages[0]; // order: desc なので最新が先頭
-    const daysSince = latestMsg?.created_at
-      ? (Date.now() - new Date(latestMsg.created_at as string).getTime()) / (1000 * 60 * 60 * 24)
-      : 0;
-    if (daysSince >= 3) {
-      return NextResponse.json({ action: "property_send", reason: `${Math.floor(daysSince)}日間未返信・追客` });
-    }
-    return NextResponse.json({ action: null, reason: "" });
-  }
-
   const currentStatus = (conv.status as string) ?? "hearing";
   const statusLabel = STATUS_LABEL[currentStatus] ?? currentStatus;
 
   // ---- AIXチェーンルール: 直前のAIXアクションから次を提案 ----
+  // ※ staff early return より前に置くことで送信直後にも発火する（Fable5 S-1修正）
   if (last_aix_action) {
     const { data: chainRules } = await supabase
       .from("trigger_action_rules")
@@ -90,6 +79,18 @@ export async function POST(req: NextRequest) {
         source: "chain_rule",
       });
     }
+  }
+
+  // スタッフが最後に送信 → チェーンルール未マッチなら3日以上経過時のみ追客
+  if (conv.last_sender === "staff") {
+    const latestMsg = messages[0]; // order: desc なので最新が先頭
+    const daysSince = latestMsg?.created_at
+      ? (Date.now() - new Date(latestMsg.created_at as string).getTime()) / (1000 * 60 * 60 * 24)
+      : 0;
+    if (daysSince >= 3) {
+      return NextResponse.json({ action: "property_send", reason: `${Math.floor(daysSince)}日間未返信・追客` });
+    }
+    return NextResponse.json({ action: null, reason: "" });
   }
 
   // ---- トリガールールで即判定（Haiku不要の場合）----
