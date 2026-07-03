@@ -299,8 +299,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ---- UIで管理しているAIXロジック＋過去パターンデータを並列取得 ----
-  const [{ data: aixLogicRows }, { data: patternRows }] = await Promise.all([
+  // ---- UIで管理しているAIXロジック＋過去パターンデータ＋フロー運用ガイドを並列取得 ----
+  const [{ data: aixLogicRows }, { data: patternRows }, { data: flowGuideRow }] = await Promise.all([
     supabase.from("ai_prompts")
       .select("key, content")
       .like("key", "aix_logic_%"),
@@ -309,7 +309,14 @@ export async function POST(req: NextRequest) {
       .eq("conversation_status", currentStatus)
       .order("created_at", { ascending: false })
       .limit(60),
+    // aix_flow_guide（analyze-aix-flow cron の学習成果）
+    supabase.from("ai_prompts")
+      .select("content")
+      .eq("key", "aix_flow_guide")
+      .maybeSingle(),
   ]);
+
+  const aixFlowGuide = ((flowGuideRow?.content as string | undefined) ?? "").trim();
 
   const aixLogicSection = (aixLogicRows ?? [])
     .map((r) => (r.content as string))
@@ -393,7 +400,8 @@ ${recentText}
 - null: 特に次のアクションなし
 
 ## 出力形式（JSONのみ。reasonは日本語10文字以内）
-{"action": "viewing_invite", "reason": "内覧希望が出た"}`;
+{"action": "viewing_invite", "reason": "内覧希望が出た"}`
+    + (aixFlowGuide ? "\n\n【AIXフロー運用ガイド（学習済み）】\n" + aixFlowGuide.slice(0, 500) : "");
 
   try {
     const message = await client.messages.create({
