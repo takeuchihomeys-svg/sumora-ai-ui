@@ -19,12 +19,14 @@ function isPastVacancyDate(dateStr: string): boolean {
   const month = parseInt(monthMatch[1]) - 1; // 0-indexed
   if (year < currentYear) return true;
   if (year > currentYear) return false;
+  // 年跨ぎ補正: 年の記載がなく月差が-6以下（例: 12月に「1月末」）は翌年扱い → 過去とみなさない
+  if (!yearMatch && month - currentMonth <= -6) return false;
   if (month < currentMonth) return true;
   if (month > currentMonth) return false;
   // 同月: 日付・旬で判定
   const dayMatch = dateStr.match(/(\d+)日/);
   if (dayMatch) return parseInt(dayMatch[1]) < currentDay;
-  if (dateStr.includes("初旬")) return currentDay > 10;
+  if (dateStr.includes("初旬") || dateStr.includes("上旬")) return currentDay > 10;
   if (dateStr.includes("中旬")) return currentDay > 20;
   return false; // 下旬・不明は過去とみなさない
 }
@@ -272,7 +274,7 @@ async function callClaudeVision(system: string, content: unknown[]): Promise<str
 // ※ 名前が本文中に出てくる物件オススメ等では誤検出しないよう、名前は挨拶との直接連接のみ対象
 function extractNotice(text: string, customerName: string): { message: string; notice: string | null } {
   const trimmed = text.trim();
-  const GREETING_KEYWORDS = ["お世話になっております", "お待たせ致しました", "夜分遅くに失礼", "ご連絡頂きありがとうございます"];
+  const GREETING_KEYWORDS = ["お世話になっております", "お待たせ致しました", "お待たせいたしました", "かしこまりました", "夜分遅くに失礼", "ご連絡頂きありがとうございます"];
 
   // 「名前さん＋挨拶」の連接パターンを検索（名前＋さん＋空白ゼロ個以上＋挨拶）
   let nameGreetingIdx = -1;
@@ -423,7 +425,7 @@ export async function POST(request: NextRequest) {
 
 🌟[物件名]（部屋番号がある場合は半角スペースを空けて記載）
 
-[物件の最大の強みを1〜2点・簡潔に。お客様の希望条件に最も響くポイントを選ぶ。例：「敷礼0円・家賃8万円台」「築浅・室内綺麗」など。★お客様が駅・エリアを希望していない場合は「〇〇駅徒歩〇分」をここに入れない]、[お客様名]さんにかなりオススメ出来るお部屋となります！！
+[物件の最大の強みを1〜2点・簡潔に。お客様の希望条件に最も響くポイントを選ぶ。例：「敷礼0円・家賃8万円台」「築浅・室内綺麗」など。★お客様が駅・エリアを希望していない場合は「〇〇駅徒歩〇分」をここに入れない]、[お客様名]にかなりオススメ出来るお部屋となります！！
 
 （オススメポイント）
 ・家賃[金額]円（管理費別の場合は「家賃[金額]円・管理費[金額]円（合計[金額]円）」の形式）
@@ -447,7 +449,7 @@ export async function POST(request: NextRequest) {
 
 【フォーマットルール — 必ず全て守ること】
 ・物件名は先頭に必ず🌟をつける（🌟の後に半角スペースは入れない）
-・[お客様名]は必ず実際の名前に置き換える（「さん」付け）・呼び方は最初から最後まで一貫して変えない
+・[お客様名]は渡されたお客様名（${name}）をそのまま使うこと（すでに「さん」が付いているため「さん」を重ねて付けない）・呼び方は最初から最後まで一貫して変えない
 ・お客様名の前後に助詞（「にも」「からも」「ても」等）が来る場合でも、名前を省略・切断しない。例：「〜のお部屋となります！！もえかさんにかなりオススメ〜」のように名前全体を必ず使うこと
 ・「！！」（全角感嘆符2つ）を使用する（スモラスタイル）・「！」1つは使わない
 ・絵文字は 😊 のみ・最大1個まで・なくてもよい
@@ -509,12 +511,12 @@ ${SMORA_COMMON_RULES}`;
       const extraInputStr = extra_input ? String(extra_input) : "";
       const manualOpeningText = extraInputStr.replace(/^【特に強調するポイント:[^\n]*】\n?/, "").trim();
       const openingPointNote = manualOpeningText
-        ? `\n\n【冒頭ポイント指定 — 最優先・必ず守ること】冒頭の「[ポイント]、${name}さんにかなりオススメ出来るお部屋となります！！」の[ポイント]部分は必ず「${manualOpeningText}」をそのまま使う。AIで独自のポイントを考えず、指定された文言をそのまま使うこと。`
+        ? `\n\n【冒頭ポイント指定 — 最優先・必ず守ること】冒頭の「[ポイント]、${name}にかなりオススメ出来るお部屋となります！！」の[ポイント]部分は必ず「${manualOpeningText}」をそのまま使う。AIで独自のポイントを考えず、指定された文言をそのまま使うこと。`
         : "";
       const newArrivalNote = body.is_new_arrival
         ? `\n\n【🆕 新着物件 — 必ず守ること】この物件は新着物件です。物件名の直後の冒頭一文（「〜さんにかなりオススメ出来るお部屋となります！！」の前）に「新着でかなり条件のいいお部屋となります！！」を自然に盛り込むこと。`
         : "";
-      const userText = `お客様名は「${name}」です。「${name}さん」と完全な名前で使うこと（助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${extra_input ? `\n追加情報: ${extra_input}` : ""}${templateSampleNote}${templateStructureNote}${openingPointNote}${moveOutNote}${simpleModeNote}${skipConfirmationNote}${newArrivalNote}`;
+      const userText = `お客様名は「${name}」です。お客様名は「${name}」をそのまま使うこと（すでに「さん」付きのため「さん」を重ねない・助詞の後でも省略禁止）。\n${name}へのオススメ物件メッセージを作成してください。${conditionsText ? `\n\nお客様の希望条件:\n${conditionsText}` : ""}${summaryNoteForRec}${extra_input ? `\n追加情報: ${extra_input}` : ""}${templateSampleNote}${templateStructureNote}${openingPointNote}${moveOutNote}${simpleModeNote}${skipConfirmationNote}${newArrivalNote}`;
 
       const content = [
         { type: "text", text: userText },
@@ -553,9 +555,9 @@ ${SMORA_COMMON_RULES}`;
             const jsonMatch = estRaw.match(/\{[\s\S]*\}/);
             if (!jsonMatch) continue;
             const estData = JSON.parse(jsonMatch[0]) as { property_name?: string | null; room_number?: string | null; discount?: string | null; initial_cost?: string | null; savings?: string | null };
-            const pName = estData.property_name?.trim() || `物件${["①","②","③"][pi] ?? ""}`;
+            const pName = estData.property_name?.trim() || `物件${["①","②","③","④","⑤"][pi] ?? String(pi + 1)}`;
             const roomSuffix = estData.room_number?.trim() ? ` ${estData.room_number.trim()}号室` : "";
-            const prefix = image_urls.length > 1 ? `${"①②③"[pi]}【${pName}${roomSuffix}】` : `【${pName}${roomSuffix}】`;
+            const prefix = image_urls.length > 1 ? `${["①","②","③","④","⑤"][pi] ?? (pi + 1) + "."}【${pName}${roomSuffix}】` : `【${pName}${roomSuffix}】`;
             const lines: string[] = [prefix, ""];
             if (estData.discount) {
               lines.push("初期費用さらに");
@@ -624,7 +626,8 @@ ${SMORA_COMMON_RULES}`;
 
       const standardCommission = Math.round(rent * 1.1);
       const actualCommission   = commission + commTax;
-      const savings = Math.max(0, standardCommission - actualCommission + discount);
+      // 仲介手数料がOCRで読み取れない/0円の場合、家賃×1.1がそのまま節約額に乗り過大表示になるため節約額表示をスキップ
+      const savings = actualCommission === 0 ? 0 : Math.max(0, standardCommission - actualCommission + discount);
 
       const parts: string[] = [];
 
@@ -755,37 +758,37 @@ ${SMORA_COMMON_RULES}`;
       // 「夜分遅くに失礼致します」はスタッフからプロアクティブに連絡するときのみ使用
       // お客様から連絡が来た（返信する）場面では何時でも「お世話になっております」
       const openingLine: string = isFirstEverReply
-        ? `①「[お客様名]さんご連絡頂きありがとうございます😊！！」で始める`
+        ? `①「[お客様名]ご連絡頂きありがとうございます😊！！」で始める`
         : (!customerInitiated && jstHourNow >= 21)
-          ? `①「[お客様名]さん夜分遅くに失礼致します！！」で始める`
+          ? `①「[お客様名]夜分遅くに失礼致します！！」で始める`
           : staffMessagedToday
-            ? `①「[お客様名]さんお待たせ致しました！！」で始める`
-            : `①「[お客様名]さんお世話になっております！！」で始める`;
+            ? `①「[お客様名]お待たせ致しました！！」で始める`
+            : `①「[お客様名]お世話になっております！！」で始める`;
       // 例文・テンプレ用の挨拶文
       const greetingLine = isFirstEverReply
-        ? `${name}さんご連絡頂きありがとうございます😊！！`
+        ? `${name}ご連絡頂きありがとうございます😊！！`
         : (!customerInitiated && jstHourNow >= 21)
-          ? `${name}さん夜分遅くに失礼致します！！`
+          ? `${name}夜分遅くに失礼致します！！`
           : staffMessagedToday
-            ? `${name}さんお待たせ致しました！！`
-            : `${name}さんお世話になっております！！`;
+            ? `${name}お待たせ致しました！！`
+            : `${name}お世話になっております！！`;
 
       // 新着物件モード: 固定テンプレート（AI不要）
       if (sendMode === "new_arrival") {
         const imgCount = Array.isArray(image_urls) ? (image_urls as string[]).length : (image_url ? 1 : 0);
         const countStr = imgCount > 0 ? `${imgCount}件` : "複数件";
         const greeting = isFirstEverReply
-          ? `${name}さんご連絡頂きありがとうございます😊！！`
+          ? `${name}ご連絡頂きありがとうございます😊！！`
           : (!customerInitiated && jstHourNow >= 21)
-            ? `${name}さん夜分遅くに失礼致します！！`
+            ? `${name}夜分遅くに失礼致します！！`
             : staffMessagedToday
-              ? `${name}さんお待たせ致しました！！`
-              : `${name}さんお世話になっております！！`;
+              ? `${name}お待たせ致しました！！`
+              : `${name}お世話になっております！！`;
         const vacatingSection = vacatingInfo
           ? `\n\n${vacatingInfo}`
           : "";
         const applyLine = body.new_arrival_apply ? "\nお気に召されましたらお申込みしお部屋抑えさせて頂きます！！" : "";
-        message_text = `${greeting}\n\n新着で${name}さんご希望のご条件に合ったお部屋が${countStr}募集にでました！！${vacatingSection}${applyLine}\n\nお手隙の際にご査収ください😌！！`;
+        message_text = `${greeting}\n\n新着で${name}ご希望のご条件に合ったお部屋が${countStr}募集にでました！！${vacatingSection}${applyLine}\n\nお手隙の際にご査収ください😌！！`;
         return NextResponse.json({ ok: true, message_text });
       }
 
@@ -795,7 +798,7 @@ ${SMORA_COMMON_RULES}`;
         getStarredExamplesForAction(AIX_ACTION_TO_STATES.property_send, latestCustomerMsg),
       ]);
 
-      const nameNote = `\n\n【お客様名 — 最重要】お客様名は「${name}」です。文中では必ず「${name}さん」と完全な名前で使うこと。「〇〇から${name}さんご希望の」のように助詞の直後に名前が続く場合でも、名前を途中で切ったり省略したりしない（例：「梅田から」→「もえかさん」→ 「梅田から${name}さん」と正確につなぐ）。`;
+      const nameNote = `\n\n【お客様名 — 最重要】お客様名は「${name}」です。文中では必ず「${name}」をそのまま使うこと（すでに「さん」付きのため「さん」を重ねて付けない）。「〇〇から${name}ご希望の」のように助詞の直後に名前が続く場合でも、名前を途中で切ったり省略したりしない（例：「梅田から」→「もえかさん」→ 「梅田から${name}」と正確につなぐ）。`;
 
       const sendSystem = sendMode === "short"
         ? `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
@@ -807,7 +810,7 @@ ${aixPropertySendRules}
 
 【構成（厳守）】
 ${openingLine}
-②エリア（条件から読み取り）+「から」+最もキャッチーな条件1つ（間取りより生活感のある特徴優先：カウンターキッチン・ペット可・駐車場付き等）+「のお部屋で${name}さんご希望のご条件に近いお部屋ピックアップさせて頂きました！！」
+②エリア（条件から読み取り）+「から」+最もキャッチーな条件1つ（間取りより生活感のある特徴優先：カウンターキッチン・ペット可・駐車場付き等）+「のお部屋で${name}ご希望のご条件に近いお部屋ピックアップさせて頂きました！！」
 ③直後に改行して（空行なし）「お手隙の際にご査収ください😌！！」
 
 【厳守ルール】
@@ -838,7 +841,7 @@ ${openingLine}
 
 【厳守ルール】
 ・①〜④の構成のみ出力。内覧誘導・申込誘導・日程・その他の質問や補足は一切追加しない
-・②は「〇〇から${name}さんご希望のご条件に合ったお部屋ピックアップさせて頂きました！！」の形で1行に完結させる
+・②は「〇〇から${name}ご希望のご条件に合ったお部屋ピックアップさせて頂きました！！」の形で1行に完結させる
 ・感嘆符は「！！」（スモラスタイル）・LINEでそのまま送れる完成文のみ出力・絵文字は 😊 😌 のみ・1〜2個まで
 
 【出力例】
@@ -865,13 +868,13 @@ ${openingLine}
 
 【厳守ルール】
 ・①〜⑤の構成のみ出力。入居時期・条件確認・その他の質問や補足は一切追加しない
-・②は「〇〇から${name}さんご希望のご条件に合ったお部屋ピックアップさせて頂きました！！」の形で1行に完結させる
+・②は「〇〇から${name}ご希望のご条件に合ったお部屋ピックアップさせて頂きました！！」の形で1行に完結させる
 ・感嘆符は「！！」（スモラスタイル）・LINEでそのまま送れる完成文のみ出力・絵文字は 😊 😌 のみ・1〜2個まで
 
 【出力例（申込モード）】
 ${greetingLine}
 
-梅田・難波周辺から${name}さんご希望のご条件に合ったお部屋ピックアップさせて頂きました！！
+梅田・難波周辺から${name}ご希望のご条件に合ったお部屋ピックアップさせて頂きました！！
 
 お気に召されましたらそのままお申込みでお部屋を抑えることが可能です！！
 
@@ -887,7 +890,7 @@ ${aixPropertySendRules}
 ${openingLine}
 ②${conditionsRule.replace(/^・/, "")}
 ③退去予定物件がある場合：「◎〇〇マンション\n[退去日]退去予定となりますので[退去日の翌日]以降ご内覧可能です！」（退去日の翌日＝内覧解禁日。6月30日退去なら7月1日以降。複数あれば全て列挙）
-④内覧誘導：「[お客様名]さんお気に召されましたらお部屋ご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！」
+④内覧誘導：「[お客様名]お気に召されましたらお部屋ご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！」
 ⑤カレンダー情報がある場合は④の後に内覧日時を縦並びで追加：
   「直近ですと
   M/D（曜日）HH:MM〜HH:MM
@@ -897,24 +900,24 @@ ${openingLine}
 
 【厳守ルール】
 ・①〜⑥の構成のみ出力。入居時期・条件確認・その他の質問や補足は一切追加しない
-・②は「〇〇から${name}さんご希望のご条件に合ったお部屋ピックアップさせて頂きました！！」の形で1行に完結させる
+・②は「〇〇から${name}ご希望のご条件に合ったお部屋ピックアップさせて頂きました！！」の形で1行に完結させる
 ・感嘆符は「！！」（スモラスタイル）・LINEでそのまま送れる完成文のみ出力・絵文字は 😊 😌 のみ・1〜2個まで
 
 【出力例（カレンダーなし）】
 ${greetingLine}
 
-大阪駅・難波駅周辺全域から${name}さんご希望のご条件に合ったお部屋ピックアップさせて頂きました！！
+大阪駅・難波駅周辺全域から${name}ご希望のご条件に合ったお部屋ピックアップさせて頂きました！！
 
-${name}さんお気に召されましたらお部屋ご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！
+${name}お気に召されましたらお部屋ご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！
 
 お手隙の際にご査収ください😌！！
 
 【出力例（カレンダーあり）】
 ${greetingLine}
 
-大阪駅・難波駅周辺全域から${name}さんご希望のご条件に合ったお部屋ピックアップさせて頂きました！！
+大阪駅・難波駅周辺全域から${name}ご希望のご条件に合ったお部屋ピックアップさせて頂きました！！
 
-${name}さんお気に召されましたらお部屋ご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！
+${name}お気に召されましたらお部屋ご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！
 
 直近ですと
 6/19（木）15:00〜17:00
@@ -1117,7 +1120,8 @@ ${SMORA_COMMON_RULES}`;
       const isSimple = pushType === "simple";
       const isScheduled = vacancy_status === "scheduled";
       const hasEst = has_estimate === true;
-      const moveOut = move_out_date ? move_out_date : "●月●日";
+      // move_out_date 未指定時に「●月●日退去」がそのまま顧客に出るのを防ぐ
+      const moveOut = move_out_date ? String(move_out_date) : "";
 
       // 訴求ポイント（simple / hold_view のみ有効）
       const appealPts: string[] = Array.isArray(appeal_points)
@@ -1133,7 +1137,9 @@ ${SMORA_COMMON_RULES}`;
         // ── 退去予定: 固定テンプレート方式（従来通り）
         const templateLines: string[] = [];
         if (hasEst) templateLines.push("[物件名]の最大限割引しました初期費用の御見積書となります！！");
-        templateLines.push(`お部屋は${moveOut}退去の為ご内覧はまだ出来ないお部屋となります！！`);
+        templateLines.push(moveOut
+          ? `お部屋は${moveOut}退去の為ご内覧はまだ出来ないお部屋となります！！`
+          : `お部屋は退去予定の物件の為ご内覧はまだ出来ないお部屋となります！！`);
         templateLines.push(`お気に召されましたらお申込しお部屋抑えさせて頂きます😌！！`);
         const template = templateLines.join("\n");
         system = `あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。
@@ -1161,12 +1167,12 @@ ${phraseText || "なし"}${examplesText}`;
         const structureNote = isSimple
           ? `【メッセージ構成 — この順番を厳守】
 ①物件アピール（1〜2行）：物件名 + お客様の希望に合っている理由を具体的に
-②申込み後押し：「${name}さんお気に召されましたらお申込み是非ご検討ください😊！！」
+②申込み後押し：「${name}お気に召されましたらお申込み是非ご検討ください😊！！」
 ③締め：「気になる点ございましたらお気軽にお申し付けください！！」`
           : `【メッセージ構成 — この順番を厳守】
-①内覧案内：「空室ですので${name}さんご都合よろしいお日にちにご案内させて頂きます！！」
+①内覧案内：「空室ですので${name}ご都合よろしいお日にちにご案内させて頂きます！！」
 ②物件アピール（1行）：お客様の希望に合っている理由を具体的に + 「お申込みが入る可能性が高いお部屋となります！！」
-③申込み推奨：「${name}さんお気に召されましたら一度お申込みし抑えさせてご内覧いただくのがオススメです😌！！」`;
+③申込み推奨：「${name}お気に召されましたら一度お申込みし抑えさせてご内覧いただくのがオススメです😌！！」`;
 
         system = `あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。
 会話履歴を読み取り、お客様に申込みを後押しするLINEメッセージを1つだけ作成してください。
@@ -1522,7 +1528,7 @@ ${patternExample}${knowledgeText}${examplesText}`;
             status: resolvedStatus,
           };
         });
-        const fallbackNames = ["①", "②", "③"];
+        const fallbackNames = ["①", "②", "③", "④", "⑤"];
         const hasAnyEstimate = ((body.estimate_image_urls as string[] | undefined)?.length ?? 0) > 0 || !!(estimate_image_url as string | undefined);
 
         if (propCount === 1) {
@@ -1543,6 +1549,8 @@ ${patternExample}${knowledgeText}${examplesText}`;
             const inviteText = showVI1 ? `\n\n${name}ご都合よろしいお日にちにご案内させて頂きます😊！！` : "";
             message_text = `${pName}現在募集中となります！！${estimate1}${inviteText}`;
           }
+          // greeting1 を先頭に連結（1件モードで挨拶が抜けていたバグ修正）
+          message_text = `${greeting1}\n${message_text}`;
         } else {
           // 複数物件モード: per-property ステータスで箇条書き + クロージング
           const recommendIdx = (body.recommend_prop_index as number | undefined) ?? -1;
@@ -1555,7 +1563,7 @@ ${patternExample}${knowledgeText}${examplesText}`;
             return `${prefix}${n}`;
           }).join("\n");
           const recommendNote = recommendIdx >= 0 && recommendIdx < propList.length
-            ? `\n\n特に🌟の${propList[recommendIdx].name || fallbackNames[recommendIdx] || "こちら"}が${name}さんに特にオススメです！！`
+            ? `\n\n特に🌟の${propList[recommendIdx].name || fallbackNames[recommendIdx] || "こちら"}が${name}に特にオススメです！！`
             : "";
           const estimateSection = hasAnyEstimate
             ? "\n最大限割引しました初期費用御見積書同封させて頂きました。\nお手隙の際にご査収ください！！"
@@ -1569,7 +1577,7 @@ ${patternExample}${knowledgeText}${examplesText}`;
             vacancySection = "\n\nお気に召されましたらお申込みしお部屋抑えさせていただきます！！\nお手隙の際にご査収ください！！";
           } else if (showAppInviteMulti) {
             // 申込誘導ON
-            vacancySection = `\n\n${name}さんお気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
+            vacancySection = `\n\n${name}お気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
           } else if (showViewingInvite) {
             // 内覧誘導ON: 全て空室なら1行にまとめる
             const allVacant = toureableList.every(p => p.status === "available");
@@ -1603,7 +1611,7 @@ ${patternExample}${knowledgeText}${examplesText}`;
 ※2番手お申込の場合1番手の方が審査否決となった場合1番手に繰り上がります。`
           : `[物件名と号室]現在募集中となります！！${estimateLine}
 
-${name}さんご都合よろしいお日にちにご案内させて頂きます😊！！`;
+${name}ご都合よろしいお日にちにご案内させて頂きます😊！！`;
 
         const availableFixedSystem = `あなたはテキスト置換エンジンです。
 以下のテンプレートを一字一句そのまま出力してください。
@@ -1734,7 +1742,7 @@ ${templateText}`;
           for (let pi = 0; pi < estUrls.length; pi++) {
             const url = estUrls[pi];
             if (!url) continue;
-            const pName = (propNames[pi] as string | undefined)?.trim() || `物件${["①","②","③"][pi] ?? ""}`;
+            const pName = (propNames[pi] as string | undefined)?.trim() || `物件${["①","②","③","④","⑤"][pi] ?? String(pi + 1)}`;
             try {
               const estSystem = `この見積書画像から初期費用情報を抽出してください。JSON形式のみ返答（説明文なし）：
 {"discount":"34,000円","initial_cost":"146,000円","savings":"102,200円"}
@@ -1750,7 +1758,7 @@ ${templateText}`;
               const jsonMatch = estRaw.match(/\{[\s\S]*\}/);
               if (!jsonMatch) continue;
               const estData = JSON.parse(jsonMatch[0]) as { discount?: string | null; initial_cost?: string | null; savings?: string | null };
-              const prefix = estUrls.length > 1 ? `${"①②③"[pi]}【${pName}】` : `【${pName}】`;
+              const prefix = estUrls.length > 1 ? `${["①","②","③","④","⑤"][pi] ?? (pi + 1) + "."}【${pName}】` : `【${pName}】`;
               const lines: string[] = [prefix, ""];
               if (estData.discount) {
                 lines.push("初期費用さらに");
@@ -1841,7 +1849,7 @@ ${SMORA_COMMON_RULES}
 
     } else if (action === "extract_datetime") {
       // 会話履歴から内覧日時をAIで抽出（待ち合わせ場所の日程・時間フィールド自動補完用）
-      const msgs = (recent_messages as Array<{ sender?: string; text?: string }>)
+      const msgs = (Array.isArray(recent_messages) ? (recent_messages as Array<{ sender?: string; text?: string }>) : [])
         .filter(m => m.text && m.text !== "[画像]" && m.text !== "[動画]")
         .slice(-20)
         .map(m => `${m.sender === "customer" ? "お客様" : "スモラ"}: ${m.text}`)

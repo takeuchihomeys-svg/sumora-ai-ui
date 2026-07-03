@@ -29,6 +29,10 @@ export async function POST(req: NextRequest) {
     staffMessagedToday?: boolean;
   };
 
+  if (!templateText) {
+    return NextResponse.json({ ok: false, error: "templateText is required" }, { status: 400 });
+  }
+
   // 退去予定日・内覧可能日を前処理でテンプレートに埋め込む
   // ◯(U+25EF)・○(U+25CB)・〇(U+3007) の3種を統一して扱う
   const lastDayOf = (m: number) => new Date(new Date().getFullYear(), m, 0).getDate();
@@ -70,10 +74,6 @@ export async function POST(req: NextRequest) {
     new RegExp(`${C}+月${C}+日退去予定`, 'g'),
     vacStr ? `${vacStr}退去予定` : '退去予定'
   );
-
-  if (!templateText) {
-    return NextResponse.json({ ok: false, error: "templateText required" }, { status: 400 });
-  }
 
   // 挨拶をルールに従って前処理で差し替える
   const GREETING_RE = /お世話になっております！！?|お待たせ致しました！！?|夜分遅くに失礼致します！！?/g;

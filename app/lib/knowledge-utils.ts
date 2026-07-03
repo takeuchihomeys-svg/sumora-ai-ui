@@ -23,7 +23,7 @@ type MatchRpcRow = {
  * ai_reply_knowledge への重複排除 upsert。
  *
  * 1. embedding が提供されている場合: match_reply_knowledge RPC で類似度チェック
- *    → similarity > 0.92 かつ同カテゴリの既存ルールがあれば importance を +1 して UPDATE → "merged"
+ *    → similarity > 0.92 かつ同カテゴリの既存ルールがあれば importance を「既存と新規の高い方」に UPDATE → "merged"
  * 2. embedding なし or 類似なし: タイトル先頭15文字の ilike チェック
  *    → タイトル重複あり → "skipped"
  * 3. 上記いずれでも重複なし → INSERT → "inserted"
@@ -48,7 +48,8 @@ export async function upsertKnowledge(
       );
 
       if (similar) {
-        const newImportance = Math.min(9, similar.importance + 1);
+        // importanceインフレ防止: 加算はせず「既存 vs 新規」の高い方を維持（上限9）
+        const newImportance = Math.min(9, Math.max(similar.importance || 0, importance || 0));
         await supabase
           .from("ai_reply_knowledge")
           .update({ importance: newImportance })

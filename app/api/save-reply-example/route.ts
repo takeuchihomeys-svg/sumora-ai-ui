@@ -441,10 +441,15 @@ export async function POST(req: NextRequest) {
   // これにより「AI生成→修正→送信」時に保存された aiDraft 付きレコードが正しく☆される。
   if (isStarred && !aiDraft) {
     // sent_replyのみで検索（customer_messageは連続メッセージ連結により不一致になる場合がある）
-    const { data: existingRecord } = await supabase
+    // conversation_id でも絞り込む（別会話の同一 sent_reply レコードに☆が付く混線を防止）
+    let starQuery = supabase
       .from("ai_reply_examples")
       .select("id, conversation_state, customer_message, sent_reply, ai_draft, was_ai_modified, is_starred")
-      .eq("sent_reply", sentReply)
+      .eq("sent_reply", sentReply);
+    if (conversationId) {
+      starQuery = starQuery.eq("conversation_id", conversationId);
+    }
+    const { data: existingRecord } = await starQuery
       .order("created_at", { ascending: false })
       .limit(1)
       .single();
@@ -481,12 +486,20 @@ export async function POST(req: NextRequest) {
   // LINEでは1つの返信を複数メッセージに分けて送ることが多い。別レコードにすると
   // RAGが断片的な文のみ参照してしまうため、1つの完全な返信として結合して保存する。
   const ninetySecondsAgo = new Date(Date.now() - 90 * 1000).toISOString();
-  const { data: splitCandidate } = await supabase
+  // conversation_id で絞り込む（定型 customer_message「（初回連絡）」等での別顧客データ混線を防止）
+  let splitQuery = supabase
     .from("ai_reply_examples")
     .select("id, sent_reply")
     .eq("customer_message", customerMessage)
     .eq("conversation_state", conversationState)
-    .gte("created_at", ninetySecondsAgo)
+    .gte("created_at", ninetySecondsAgo);
+  if (conversationId) {
+    splitQuery = splitQuery.eq("conversation_id", conversationId);
+  } else {
+    // conversationId 未指定の保存は conversation_id が null のレコードのみマージ対象
+    splitQuery = splitQuery.is("conversation_id", null);
+  }
+  const { data: splitCandidate } = await splitQuery
     .order("created_at", { ascending: false })
     .limit(1)
     .single();
@@ -564,8 +577,14 @@ export async function POST(req: NextRequest) {
   // AI文案をそのまま使用（wasAiUsed）→ フレーズ抽出のみ（自己強化防止: 深層分析は行わない）
   // AI文案を修正して送った → 差分学習のみ（修正内容が最良の教師信号）
   const effectiveStarred = isStarred === true;
-  const shouldDeepAnalyze = effectiveStarred || !aiDraft;
-  const shouldExtractPhrases = shouldDeepAnalyze || wasAiModified || wasAiUsed;
+  let shouldDeepAnalyze = effectiveStarred || !aiDraft;
+  let shouldExtractPhrases = shouldDeepAnalyze || wasAiModified || wasAiUsed;
+  // 🚫 AI自己強化ループ防止: AI文をそのまま送信（wasAiUsed && !wasAiModified）した場合は
+  // ☆有無に関わらず深層分析・フレーズ抽出を行わない（AIが書いた文をお手本として学習する循環を遮断）
+  if (wasAiUsed && !wasAiModified) {
+    shouldDeepAnalyze = false;
+    shouldExtractPhrases = false;
+  }
 
   const analysisJobs: Promise<void>[] = [];
   if (shouldDeepAnalyze && data?.id) {

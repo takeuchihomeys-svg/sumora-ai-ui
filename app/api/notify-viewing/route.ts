@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -87,7 +87,7 @@ ${history}
         const oldSummary: string = (pc.ai_summary as string) ?? "";
         // 既存の★決まるパターン行を置換、なければ末尾に追加
         const updated = oldSummary.match(/★決まるパターン/)
-          ? oldSummary.replace(/★決まるパターン[：:].*/, pattern)
+          ? oldSummary.replace(/★決まるパターン[：:][\s\S]*/, pattern)
           : `${oldSummary}\n${pattern}`.trim();
         await supabase.from("property_customers")
           .update({ ai_summary: updated, ai_summary_at: new Date().toISOString() })
@@ -180,9 +180,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: errText }, { status: 500 });
     }
 
-    // 内覧・申込・契約確定 → 成功パターンを非同期で学習（fire-and-forget）
+    // 内覧・申込・契約確定 → 成功パターンをレスポンス送信後に学習（after=Vercelのレスポンス後も実行保証）
     if (conversation_id && ["viewing", "application", "contract"].includes(event_type)) {
-      void recordSuccessPattern(conversation_id, event_type);
+      after(recordSuccessPattern(conversation_id, event_type));
     }
 
     return NextResponse.json({ ok: true, text });

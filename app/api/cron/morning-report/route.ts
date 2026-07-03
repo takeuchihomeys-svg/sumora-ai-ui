@@ -108,9 +108,12 @@ export async function GET(req: NextRequest) {
   }
 
   // ③ 今日物件を出すべき顧客
-  const todayStart = new Date();
-  todayStart.setUTCHours(todayStart.getUTCHours() - (todayStart.getUTCHours() % 24), 0, 0, 0);
-  todayStart.setTime(todayStart.getTime() - 9 * 60 * 60 * 1000); // JST today start
+  const nowJst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const todayStart = new Date(Date.UTC(
+    nowJst.getUTCFullYear(),
+    nowJst.getUTCMonth(),
+    nowJst.getUTCDate()
+  ) - 9 * 60 * 60 * 1000); // JST today 00:00
 
   const needsProp = (hotCustomers ?? []).filter((c) => {
     if (c.status === "new_inquiry") return true;

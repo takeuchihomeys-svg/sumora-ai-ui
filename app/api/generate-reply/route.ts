@@ -222,14 +222,16 @@ function buildGenerationMessages(
   const greetingNote = alreadyGreeted
     ? `\n【⏰ 挨拶ルール・最優先】本日の会話で冒頭挨拶は既に使用済み。今回は絶対に使わない。「はい！！」「かしこまりました！！」など短い言葉で直接本文から始める。`
     : (state === "first_reply" && isFirstEverReply)
-      ? `\n【⏰ 初回対応ルール・最優先】これはお客様への【はじめての返信】。必ず「${customerName}さん、はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！」で始める（一字一句変更・省略禁止）。「お世話になっております」「夜分遅くに失礼致します」は絶対禁止。`
+      ? `\n【⏰ 初回対応ルール・最優先】これはお客様への【はじめての返信】。必ず「${customerName ? `${customerName}さん、` : ""}はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！」で始める（一字一句変更・省略禁止）。「お世話になっております」「夜分遅くに失礼致します」は絶対禁止。`
       : `\n【⏰ 挨拶ルール・最優先】現在${jstHour}時台（JST）。今回の冒頭は「〇〇さんお世話になっております！！」を使う。「夜分遅くに失礼致します」は返信時には絶対禁止（スタッフから先に連絡するときのみ使う言葉）。`;
 
   const managementNote = isWeekend
     ? `\n【管理会社の状況・必ず守ること】本日は土日。物件の募集状況確認（空室確認）は土日でも可能なので「確認させていただきます！確認出来次第ご連絡させていただきます！！」と伝えてよい。ただし交渉（フリーレント・値引き・条件変更・審査再挑戦など）は土日不可。交渉が必要な場合は「月曜日一番で管理会社に交渉させていただきます！！」と伝える。`
     : jstHour >= 18
       ? `\n【管理会社の状況・必ず守ること】現在${jstHour}時台（JST）。18時以降のため管理会社の営業時間が終了している。確認が必要な場合は「本日は管理会社の営業時間が終了しておりますので、明日一番でご確認しご連絡させて頂きます！！」と伝える。当日中の回答を約束しない。`
-      : `\n【管理会社の状況】現在${jstHour}時台（JST）。管理会社営業中（平日〜18時）。確認が必要な場合は「管理会社に確認させていただきます！！確認出来次第ご連絡させていただきます！！」と伝えてよい。`;
+      : jstHour < 9
+        ? `\n【管理会社の状況・必ず守ること】現在${jstHour}時台（JST）。管理会社の営業時間前（営業は9時〜18時）。確認が必要な場合は「本日、管理会社の営業開始後に確認し、確認出来次第ご連絡させて頂きます！！」と伝える。営業時間前の即時確認・即時回答を約束しない。`
+        : `\n【管理会社の状況】現在${jstHour}時台（JST）。管理会社営業中（平日9時〜18時）。確認が必要な場合は「管理会社に確認させていただきます！！確認出来次第ご連絡させていただきます！！」と伝えてよい。`;
 
   const dateNote = `\n【📅 今日の日付（JST・必ず基準にすること）】${getJSTDateString()} — 「明日」「明後日」「今週」などの相対表現や具体的な日付（○日）は全てこの日付を起点に計算すること`;
 
@@ -391,24 +393,34 @@ function buildGenerationMessages(
   // 実例があってもQUICK_PATTERNSの核心ルール（挨拶・禁止ワード）は維持する
   // 挨拶状態に応じて QUICK_PATTERNS の冒頭ルールを上書き（greetingNote との競合を解消）
   const baseQuickPatterns = promptOverrides?.quickPatterns ?? SMORA_QUICK_PATTERNS;
+  // 冒頭ルール置換ヘルパー: DBオーバーライド文字列の空白・改行・コロン揺れを許容した正規表現でマッチ。
+  // 置換対象が見つからない場合はサイレント失敗せず console.warn + 上書きルールを末尾に追記して確実に届ける
+  const overrideOpeningRule = (base: string, replacement: string): string => {
+    const openingRulePattern = /・\s*冒頭ルール\s*（\s*★\s*重要\s*）\s*[:：][\s\S]*?を使う/;
+    if (openingRulePattern.test(base)) {
+      return base.replace(openingRulePattern, replacement);
+    }
+    console.warn("[generate-reply] QUICK_PATTERNS冒頭ルールの置換に失敗（DBオーバーライド文字列にパターン不一致）。上書きルールを末尾に追記します。");
+    return `${base}\n${replacement}`;
+  };
   const effectiveQuickPatterns = (() => {
     if (alreadyGreeted) {
       // 同日挨拶済み → 「長い返信はお世話になっております」を「挨拶なし」に置き換え
-      return baseQuickPatterns.replace(
-        /・冒頭ルール（★重要）:[\s\S]*?を使う/,
+      return overrideOpeningRule(
+        baseQuickPatterns,
         "・冒頭ルール（★重要・本日挨拶済みのため上書き）: 返信の長短にかかわらず【冒頭挨拶は一切使わない】。「はい！！」「かしこまりました！！」または直接本文から始める。「お世話になっております」「ありがとうございます」「夜分遅くに」は絶対禁止"
       );
     }
     if (state === "first_reply" && isFirstEverReply) {
       // 真の初回 → 「お世話になっております」を「ご連絡頂きありがとうございます」に置き換え
-      return baseQuickPatterns.replace(
-        /・冒頭ルール（★重要）:[\s\S]*?を使う/,
-        `・冒頭ルール（★重要・初回返信のため上書き）: 必ず「${customerName}さんご連絡頂きありがとうございます😊！！お部屋探しを担当させて頂きます鈴木と申します！！」で始める（一字一句変更・省略禁止）。「お世話になっております」は絶対禁止`
+      return overrideOpeningRule(
+        baseQuickPatterns,
+        `・冒頭ルール（★重要・初回返信のため上書き）: 必ず「${customerName ? `${customerName}さん` : ""}ご連絡頂きありがとうございます😊！！お部屋探しを担当させて頂きます鈴木と申します！！」で始める（一字一句変更・省略禁止）。「お世話になっております」は絶対禁止`
       );
     }
     // 本日初回メッセージ → 短い承認でも必ず「お世話になっております」で始める
-    return baseQuickPatterns.replace(
-      /・冒頭ルール（★重要）:[\s\S]*?を使う/,
+    return overrideOpeningRule(
+      baseQuickPatterns,
       "・冒頭ルール（★重要・本日初回メッセージのため上書き）: 返信の長短・内容・承認・条件受け取りを問わず【必ず「〇〇さんお世話になっております！！」で始める】。「かしこまりました！！」「はい！！」単独での書き出しは絶対禁止。必ず先頭に挨拶を置くこと"
     );
   })();
@@ -680,7 +692,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   }
 
   // フォールバック: importance順検索（OPENAI_API_KEY未設定時 or embedding取得失敗時）
-  const [{ data: stateDiff }, { data: globalDiff }, { data: correctionPairs }, { data: global }, { data: stateSpecific }] = await Promise.all([
+  // fallbackPrinciples: global/stateSpecific クエリは principle を除外しているため、
+  // 【⚠️絶対ルール】用に principle 専用クエリを別途走らせる（除外したものを後で filter しても常に空になるバグの修正）
+  const [{ data: stateDiff }, { data: globalDiff }, { data: correctionPairs }, { data: global }, { data: stateSpecific }, { data: fallbackPrinciples }] = await Promise.all([
     supabase.from("ai_reply_knowledge").select("id, category, title, content, importance")
       .ilike("title", "%差分学習%").gte("importance", 7)
       .in("conversation_state", stateAliases)
@@ -705,6 +719,11 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       .not("category", "eq", "principle")
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false }).limit(24),
+    supabase.from("ai_reply_knowledge").select("id, category, title, content, importance")
+      .eq("category", "principle")
+      .gte("importance", 9)
+      .order("importance", { ascending: false })
+      .limit(5),
   ]);
 
   const stateDiffList = stateDiff || [];
@@ -714,9 +733,11 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   const stateSpecificList = stateSpecific || [];
   const globalList = (global || []).filter(g => !stateSpecificList.some(s => s.content === g.content));
   const all = [...stateSpecificList, ...globalList];
-  if (diffLearned.length === 0 && (correctionPairs?.length ?? 0) === 0 && all.length === 0 && !lossBlock) return "";
+  const principlesList = fallbackPrinciples || [];
+  if (diffLearned.length === 0 && (correctionPairs?.length ?? 0) === 0 && all.length === 0 && principlesList.length === 0 && !lossBlock) return "";
 
-  const critical = all.filter(k => (k.importance || 0) >= 9 && k.category === "principle");
+  // principle は global/stateSpecific クエリで除外済みのため、専用クエリの結果をそのまま使う
+  const critical = principlesList;
   const patterns = all.filter(k => (k.importance || 0) >= 7 && k.category === "pattern");
   const phrases  = all.filter(k => k.category === "phrase");
 
@@ -1110,9 +1131,14 @@ export async function POST(req: NextRequest) {
     const alreadyGreetedToday = (() => {
       if (!hasTimestamps) return undefined;
       // JST 当日の 0:00〜23:59（UTC換算）
-      const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
-      const jstDayStart = new Date(Date.UTC(jstNow.getUTCFullYear(), jstNow.getUTCMonth(), jstNow.getUTCDate(), 0, 0, 0, 0));
-      const jstDayEnd = new Date(Date.UTC(jstNow.getUTCFullYear(), jstNow.getUTCMonth(), jstNow.getUTCDate(), 23, 59, 59, 999));
+      // JST 0:00 = UTC 前日15:00 なので、JST日付の 0:00 UTC から 9時間引いて実際のUTC境界に変換する
+      // （旧実装は Date.UTC(JST日付, 0:00) をそのまま使っており JST 9:00 起点になっていた = JST 0〜9時に当日判定が常にfalse）
+      const jst = new Date(Date.now() + 9 * 3600 * 1000);
+      const dayStartUtc = Date.UTC(
+        jst.getUTCFullYear(), jst.getUTCMonth(), jst.getUTCDate()
+      ) - 9 * 3600 * 1000;
+      const jstDayStart = new Date(dayStartUtc);
+      const jstDayEnd = new Date(dayStartUtc + 24 * 3600 * 1000 - 1);
       // AIX生成メッセージは「挨拶済み」としてカウントしない（初回挨拶を正しく生成するため）
       return recentMessages.some(m => {
         if (m.sender !== "staff" || m.isAix || !m.createdAt) return false;
@@ -1158,16 +1184,26 @@ export async function POST(req: NextRequest) {
                 const text = typeof chunk.content === "string" ? chunk.content : "";
                 fullText += text;
               }
-              // AIが生成した1行目（挨拶行）を除去して正しい挨拶に置き換える
-              // \n\n（段落区切り）があればその後を本文として使う。なければ最初の\n以降を使う
-              const doubleBreak = fullText.indexOf("\n\n");
-              const singleBreak = fullText.indexOf("\n");
-              const bodyPart = doubleBreak >= 0
-                ? fullText.slice(doubleBreak + 2)
-                : singleBreak >= 0
-                  ? fullText.slice(singleBreak + 1)
-                  : "";
-              const fixedGreeting = `${customerName}さん、はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！\n\n`;
+              // AIの本文先頭が挨拶パターンなら除去して固定挨拶に置き換え、
+              // 挨拶で始まっていなければ全文を本文として保持し先頭に固定挨拶を追加する
+              // （旧実装は無条件に1行目を捨てていたため、AIが改行なし1行で返すと本文が全消滅していた）
+              const trimmedText = fullText.trimStart();
+              const aiGreetingPattern = /^(?:「?[^\n]{0,15}(?:さん|様)[、,。\s]*)?(?:はじめまして|初めまして|お世話に|ご連絡|この度|こんにちは|こんばんは|おはよう|夜分遅く)/;
+              let bodyPart: string;
+              if (aiGreetingPattern.test(trimmedText)) {
+                // 先頭段落（\n\n区切り）があればその後、なければ最初の\n以降を本文とする
+                const doubleBreak = trimmedText.indexOf("\n\n");
+                const singleBreak = trimmedText.indexOf("\n");
+                bodyPart = doubleBreak >= 0
+                  ? trimmedText.slice(doubleBreak + 2)
+                  : singleBreak >= 0
+                    ? trimmedText.slice(singleBreak + 1)
+                    : "";
+              } else {
+                bodyPart = trimmedText;
+              }
+              // customerName が空の場合は「さん、」部分を除去（「さん、はじめまして」の防止）
+              const fixedGreeting = `${customerName ? `${customerName}さん、` : ""}はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！\n\n`;
               const rawOutput = fixedGreeting + bodyPart;
               const { cleaned, issues } = validateAndClean(rawOutput);
               if (issues.length > 0) console.warn("[validate-reply] issues:", issues);

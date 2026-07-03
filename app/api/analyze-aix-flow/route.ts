@@ -39,6 +39,20 @@ export async function POST() {
     type UsageLog = { aix_type: string; template_name: string | null; template_category: string | null; conversation_id: string; conversation_status: string | null; suggested_action: string | null };
     const logs = (usageLogs ?? []) as UsageLog[];
 
+    // 3-a. conversation_status はAIX送信時点のスナップショットで closed_won はほぼ含まれない。
+    // conversations テーブルの「現在の」status を別クエリで取得して突合する。
+    const convIds = [...new Set(logs.map((l) => l.conversation_id).filter(Boolean))];
+    const statusMap: Record<string, string> = {};
+    if (convIds.length > 0) {
+      const { data: convStatuses } = await supabase
+        .from("conversations")
+        .select("id, status")
+        .in("id", convIds);
+      for (const c of (convStatuses ?? []) as { id: string; status: string | null }[]) {
+        if (c.status) statusMap[c.id] = c.status;
+      }
+    }
+
     const aixCount: Record<string, number> = {};
     const templateCount: Record<string, number> = {};
     // aix_type別: closed_won / closed_lost / その他 のカウント
@@ -51,10 +65,11 @@ export async function POST() {
         const key = `${log.aix_type}→${log.template_name}`;
         templateCount[key] = (templateCount[key] ?? 0) + 1;
       }
-      // 成約ステータス集計
+      // 成約ステータス集計（conversationsテーブルの現在のstatusで判定。なければ送信時スナップショットにフォールバック）
+      const currentStatus = statusMap[log.conversation_id] ?? log.conversation_status;
       const sc = statusCount[log.aix_type] ?? { won: 0, lost: 0, other: 0 };
-      if (log.conversation_status === "closed_won") sc.won += 1;
-      else if (log.conversation_status === "closed_lost") sc.lost += 1;
+      if (currentStatus === "closed_won") sc.won += 1;
+      else if (currentStatus === "closed_lost") sc.lost += 1;
       else sc.other += 1;
       statusCount[log.aix_type] = sc;
       // 予測一致集計（suggested_actionが記録されているログのみ対象）
@@ -72,13 +87,15 @@ export async function POST() {
     const templateCountText = Object.entries(templateCount).sort((a, b) => b[1] - a[1]).slice(0, 10)
       .map(([k, v]) => `${k}: ${v}回`).join("\n") || "テンプレート使用記録なし";
 
-    // closed_won率 = won / (won + lost)。決着済み会話があるaix_typeのみ、率の降順
+    // closed_won率 = won / (won + lost)。決着済みサンプルが3件以上あるaix_typeのみ、率の降順
+    // （won+lost < 3 はサンプル不足として率を出さない：1件の偶然で0%/100%になるのを防ぐ）
+    const MIN_DECIDED_SAMPLES = 3;
     const winRateText = Object.entries(statusCount)
-      .filter(([, s]) => s.won + s.lost > 0)
+      .filter(([, s]) => s.won + s.lost >= MIN_DECIDED_SAMPLES)
       .map(([k, s]) => ({ k, rate: s.won / (s.won + s.lost), won: s.won, lost: s.lost }))
       .sort((a, b) => b.rate - a.rate)
       .map((e) => `${e.k}: ${Math.round(e.rate * 100)}%（成約${e.won}件/失注${e.lost}件）`)
-      .join(", ") || "成約データなし（決着済み会話がまだない）";
+      .join(", ") || "成約データ不足（決着済み会話が3件未満のため集計なし）";
 
     // 予測一致率 = matched / predicted（aix_type別）
     const matchRateText = Object.entries(matchCount)

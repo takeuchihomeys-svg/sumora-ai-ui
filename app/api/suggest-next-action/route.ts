@@ -62,10 +62,11 @@ export async function POST(req: NextRequest) {
   );
 
   // 採択率が 30% 未満のアクションは抑制する
+  // ※ confidence が null の場合は「データなし」として抑制しない（null < 0.3 は true になるため typeof ガード必須）
   function shouldSuppressAction(actionType: string | null | undefined): boolean {
     if (!actionType) return false;
     const rate = acceptanceRateMap[actionType];
-    return rate !== undefined && rate < 0.3;
+    return typeof rate === "number" && rate < 0.3;
   }
 
   if (!conv || !messages?.length) return NextResponse.json({ action: null, reason: "" });
@@ -112,12 +113,13 @@ export async function POST(req: NextRequest) {
       if (nextAction) {
         return NextResponse.json({ action: nextAction, reason: nextAction === "estimate_sheet" ? "空室確認後・見積書" : "空室確認後・内覧へ", source: "chain_rule", params: buildParams(nextAction), acceptanceRate: acceptanceRateMap[nextAction] ?? null });
       }
-    } else {
-      // available === false または未指定（unavailable / 不明）→ 代替物件送りへ誘導
+    } else if (available === false) {
+      // 空室なしが明示された場合のみ → 代替物件送りへ誘導
       if (!shouldSuppressAction("alternative_send")) {
         return NextResponse.json({ action: "alternative_send", reason: "代替物件を送る", source: "chain_rule", params: buildParams("alternative_send"), acceptanceRate: acceptanceRateMap["alternative_send"] ?? null });
       }
     }
+    // available が undefined/null（クライアント未送信）の場合はフォールスルーして後続フェーズで判定
   }
 
   const currentStatus = normalizeStatus((conv.status as string) ?? "hearing");

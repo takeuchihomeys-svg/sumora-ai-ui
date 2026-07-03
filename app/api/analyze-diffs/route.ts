@@ -61,7 +61,7 @@ ${sentReply}
 - 役割・構成・意図に実質的な差がない（ほぼ同じ）
 
 ▼ 学習ルールがある場合のJSON出力
-{"skip":false,"title":"差分学習: [構成パターン名（30文字以内・具体的に）]","rule":"[役割レベルのルール。NG構成→OK構成、なぜその順番が正解かの理由を含む。250文字以内]","category":"[pattern=構成テンプレート / principle=顧客心理の原則 のどちらか]"}
+{"skip":false,"title":"差分学習: [構成パターン名（30文字以内・具体的に）]","rule":"[役割レベルのルール。NG構成→OK構成、なぜその順番が正解かの理由を含む。250文字以内]","category":"[pattern=構成テンプレート / style=文体・トーン / phrase=言い回し のいずれかのみ。principle は絶対に選ばないこと]"}
 
 JSONのみを返す。分析の途中経過は不要。`,
       }],
@@ -152,7 +152,8 @@ export async function POST(req: NextRequest) {
     const result = await analyzeDiff(customer_message, ai_draft, sent_reply, conversation_state);
 
     if (result && !result.skip && result.title && result.rule) {
-      const ALLOWED_CATEGORIES = new Set(["pattern", "style", "phrase", "principle"]);
+      // principle は diff 由来ルールの「絶対ルール」昇格を防ぐため許可しない（#4）
+      const ALLOWED_CATEGORIES = new Set(["pattern", "style", "phrase"]);
       const rawCategory = (result.category ?? "pattern").split("=")[0].trim();
       const safeCategory = ALLOWED_CATEGORIES.has(rawCategory) ? rawCategory : "pattern";
       const embeddingInput = `${conversation_state ?? "proposing"}: ${result.rule}`;
@@ -198,5 +199,11 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
+  // Vercel Cron からの呼び出しを CRON_SECRET で認証（#15）
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers.get("authorization");
+  if (cronSecret && authHeader !== "Bearer " + cronSecret) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
   return POST(req);
 }

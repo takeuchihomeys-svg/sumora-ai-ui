@@ -519,6 +519,8 @@ export default function Home() {
   const [dismissedApplyFormIds, setDismissedApplyFormIds] = useState<Set<string>>(new Set());
   const nextActionFetchingRef = useRef<Set<string>>(new Set());
   const lastAixByConvRef = useRef<Map<string, string>>(new Map());
+  // 物件確認結果（空室か否か）を会話ごとに保持 → suggest-next-action のチェーンルール分岐に使用
+  const propertyAvailableByConvRef = useRef<Map<string, boolean>>(new Map());
   const [statusSuggestionMap, setStatusSuggestionMap] = useState<Record<string, { status: string; label: string; reason: string } | null>>({});
   const statusSuggFetchingRef = useRef<Set<string>>(new Set());
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
@@ -2660,7 +2662,7 @@ export default function Home() {
       const res = await fetch("/api/suggest-next-action", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversation_id: convId, last_aix_action: lastAixByConvRef.current.get(convId) ?? null }),
+        body: JSON.stringify({ conversation_id: convId, last_aix_action: lastAixByConvRef.current.get(convId) ?? null, available: propertyAvailableByConvRef.current.get(convId) ?? null }),
       });
       const data = await res.json() as { action: string | null; reason: string; source?: string; params?: NextActionParams };
       // action が null でも reason が有意義な場合（内覧確定等）はバナー表示できるよう保持
@@ -3068,8 +3070,8 @@ export default function Home() {
             aiDraft: capturedAiDraft,
             replyAngle: selectedPatternAngleRef.current || undefined,
             previousStaffMessage: prevStaffMsgForEmbed,
-            // 4パターンから選んで送った場合は自動☆（パターン学習を確実に起動）
-            isStarred: selectedPatternAngleRef.current ? true : undefined,
+            // 自動☆は廃止（☆はユーザーが明示的に付けた場合のみ深層分析）
+            isStarred: false,
             sentAt: new Date().toISOString(),
           }),
         }).then(async (r) => {
@@ -3597,6 +3599,8 @@ export default function Home() {
   const handleQuickPropertyCheck = async (pattern: "available" | "unavailable") => {
     if (!selectedConversation) return;
     setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
+    // 空室確認結果を保持（suggest-next-action の available 分岐用）
+    propertyAvailableByConvRef.current.set(selectedConversation.id, pattern === "available");
     setGenerating(true);
     setReplyDraft("");
     setDraftIsAi(false);
@@ -7004,6 +7008,10 @@ export default function Home() {
                 body: JSON.stringify({ action: "log", conversation_status: _ns, action_type: aixModalType, customer_msg_summary: _lastCustomerMsg.slice(0, 150), previous_action_type: _prevAix, source: _learnSource, predicted_action: _predictedAction }),
               }).catch(() => {});
               lastAixByConvRef.current.set(selectedConversation.id, aixModalType);
+              // 物件確認結果の空室有無を保持（suggestViewing=空室あり / suggest2ndHand=空室ありだが申込あり）
+              if (aixModalType === "property_check_result") {
+                propertyAvailableByConvRef.current.set(selectedConversation.id, Boolean(meta?.suggestViewing || meta?.suggest2ndHand));
+              }
               // AIXフロー使用ログ記録（テンプレート名・カテゴリ含む）
               fetch("/api/log-aix-usage", {
                 method: "POST",

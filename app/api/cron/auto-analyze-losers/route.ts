@@ -17,6 +17,7 @@ async function run() {
     .from("conversations")
     .select("id, customer_name")
     .eq("status", "closed_lost")
+    .is("loss_analyzed_at", null)
     .gte("updated_at", since)
     .order("updated_at", { ascending: false })
     .limit(20);
@@ -57,9 +58,17 @@ async function run() {
         continue;
       }
 
-      const transcript = [...msgs]
-        .reverse()
-        .filter((m) => (m.text as string)?.trim())
+      const validMsgs = [...msgs].reverse().filter((m) => (m.text as string)?.trim());
+
+      // 短会話ガード：顧客発言3通未満 or 合計200字未満は分析材料不足（幻覚防止）
+      const customerMsgs = validMsgs.filter((m) => m.sender !== "staff");
+      const totalChars = validMsgs.reduce((sum, m) => sum + (m.text as string).trim().length, 0);
+      if (customerMsgs.length < 3 || totalChars < 200) {
+        skipped++;
+        continue;
+      }
+
+      const transcript = validMsgs
         .map((m) => `[${m.sender === "staff" ? "スタッフ" : "顧客"}] ${m.text as string}`)
         .join("\n");
 
@@ -76,11 +85,17 @@ async function run() {
 ${transcript}
 
 ## 指示
-この会話を分析し、失注につながった可能性のある「避けるべき対応パターン」を最大3点、箇条書きで抽出してください。
-- 各項目は「〜しない。代わりに〜する」の形式で、具体的な改善行動まで書く
+この会話を分析し、失注につながった可能性のある「避けるべき対応パターン」を最大3点抽出してください。
+- 各パターンは「〜しない。代わりに〜する」の形式で、具体的な改善行動まで書く
 - スタッフの対応（返信の遅さ・提案のズレ・押しの弱さ/強さ・情報不足など）に着目する
-- 顧客都合のみで失注した場合（転勤中止など、対応に問題がない場合）は「対応に問題なし」とだけ書く
-- 前置きや結論のまとめは不要。箇条書きのみ出力する`;
+- 顧客都合のみで失注した場合（転勤中止など、対応に問題がない場合）は no_fault を true にし、patterns は空配列にする
+
+## 出力形式
+以下のJSONのみを出力してください。前置き・コードブロック・説明は一切不要です。
+{
+  "no_fault": true または false,
+  "patterns": ["避けるべきパターン1", "パターン2", "パターン3"]
+}`;
 
       const message = await client.messages.create({
         model: "claude-haiku-4-5-20251001",
@@ -96,7 +111,30 @@ ${transcript}
 
       analyzed++;
 
-      if (!analysisText || analysisText.includes("対応に問題なし")) {
+      // JSONパース（コードブロック囲み等の揺れに対応）
+      let parsed: { no_fault?: boolean; patterns?: string[] } | null = null;
+      try {
+        const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch {
+        parsed = null;
+      }
+
+      if (!parsed) {
+        console.warn("[auto-analyze-losers] JSON parse failed:", convId, analysisText.slice(0, 100));
+        failed++;
+        continue;
+      }
+
+      // 分析済みフラグ（毎日の再課金防止）
+      await supabase
+        .from("conversations")
+        .update({ loss_analyzed_at: new Date().toISOString() })
+        .eq("id", convId);
+
+      const patterns = (parsed.patterns ?? []).filter((p) => typeof p === "string" && p.trim());
+
+      if (parsed.no_fault === true || !patterns.length) {
         skipped++;
         continue;
       }
@@ -105,7 +143,7 @@ ${transcript}
 
       const result = await upsertKnowledge(supabase, {
         title,
-        content: analysisText,
+        content: patterns.map((p) => `- ${p.trim()}`).join("\n"),
         category: "principle",
         importance: 8,
       });
@@ -141,7 +179,12 @@ export async function GET(req: NextRequest) {
   return run();
 }
 
-// POST: 手動実行用
-export async function POST() {
+// POST: 手動実行用（CRON_SECRET認証必須）
+export async function POST(req: NextRequest) {
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers.get("authorization");
+  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
   return run();
 }
