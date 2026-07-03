@@ -63,6 +63,10 @@
     {
       "path": "/api/analyze-aix-flow",
       "schedule": "0 18 * * *"
+    },
+    {
+      "path": "/api/cron/auto-star-winners",
+      "schedule": "15 16 * * *"
     }
   ]
 }
