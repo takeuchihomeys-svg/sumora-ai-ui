@@ -125,9 +125,9 @@ function VacatingDatePicker({ value, onChange }: {
   );
 }
 
-type StructureBlock = { label: string; text: string };
+export type StructureBlock = { label: string; text: string };
 
-interface Template {
+export interface Template {
   id: string;
   category: string;
   label: string;
@@ -143,6 +143,10 @@ interface TemplateModalProps {
   onClose: () => void;
   onSelect?: (text: string, imageFiles?: File[], label?: string, category?: string, secondMsg?: { type: string; delay: number } | null) => void;
   onOpenAixWithFocus?: (focusPoints: string[], templateInfo?: { name: string; category: string; structure?: Array<{ label: string; text: string }>; sample?: string; secondMsg?: { type: string; delay: number } | null }) => void;
+  /** 親からのキャッシュデータ（提供されれば即時表示・背景で再検証） */
+  initialTemplates?: Template[];
+  /** テンプレ一覧更新時に親のキャッシュを更新するコールバック */
+  onCacheUpdate?: (templates: Template[]) => void;
   customerName?: string;
   conversationState?: string;
   recentMessages?: Array<{ sender: string; text: string; imageUrl?: string }>;
@@ -218,9 +222,11 @@ function inferAvailCheckType(label: string): string | null {
 
 export default function TemplateModal({
   onClose, onSelect, onOpenAixWithFocus, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword, highlightLabel, pendingScheduledMessages, staffMessagedToday, initialSearch,
+  initialTemplates, onCacheUpdate,
 }: TemplateModalProps) {
-  const [templates, setTemplates] = useState<Template[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [templates, setTemplates] = useState<Template[]>(initialTemplates ?? []);
+  // キャッシュがあれば即時表示、なければローディング表示
+  const [loading, setLoading] = useState(!initialTemplates || initialTemplates.length === 0);
   const [category, setCategory] = useState(initialCategory || "全般");
   const [showAddForm, setShowAddForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState(initialSearch ?? "");
@@ -233,6 +239,7 @@ export default function TemplateModal({
   const [adaptingId, setAdaptingId] = useState<string | null>(null);
   const [adaptedTexts, setAdaptedTexts] = useState<Record<string, string>>({});
   const [adaptErrors, setAdaptErrors] = useState<Record<string, string>>({});
+  const [displaySource, setDisplaySource] = useState<Record<string, "extracted" | "adapted" | "raw">>({});
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState("");
@@ -339,9 +346,11 @@ export default function TemplateModal({
     setLoading(true);
     try {
       const res = await fetch("/api/templates");
+      if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
       const data = await res.json() as { ok: boolean; templates: Template[] };
       if (data.ok) {
         setTemplates(data.templates);
+        onCacheUpdate?.(data.templates); // 親のキャッシュを更新（次回オープン時に即時表示）
         const cats = Array.from(new Set(data.templates.map((t) => t.category)));
         if (cats.length > 0 && !cats.includes(category)) setCategory(cats[0]);
       }
@@ -358,13 +367,18 @@ export default function TemplateModal({
     const newCat = editingCategoryName.trim();
     setEditingCategory(null);
     if (!oldCat || !newCat || oldCat === newCat) return;
-    await fetch("/api/templates/rename-category", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ oldCategory: oldCat, newCategory: newCat }),
-    });
-    setTemplates(prev => prev.map(t => t.category === oldCat ? { ...t, category: newCat } : t));
-    setCategory(newCat);
+    try {
+      const res = await fetch("/api/templates/rename-category", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ oldCategory: oldCat, newCategory: newCat }),
+      });
+      if (!res.ok) throw new Error("rename failed");
+      setTemplates(prev => prev.map(t => t.category === oldCat ? { ...t, category: newCat } : t));
+      setCategory(newCat);
+    } catch {
+      alert("カテゴリ名の変更に失敗しました");
+    }
   };
 
   useEffect(() => {
@@ -463,6 +477,8 @@ export default function TemplateModal({
       if (data.ok) {
         setNewLabel(""); setNewText(""); setNewCategory("全般"); setNewRequiresImage(false); setShowAddForm(false);
         await loadTemplates();
+      } else {
+        alert("テンプレートの追加に失敗しました");
       }
     } finally {
       setSaving(false);
@@ -497,6 +513,8 @@ export default function TemplateModal({
       if (data.ok) {
         setEditingId(null);
         await loadTemplates();
+      } else {
+        alert("テンプレートの更新に失敗しました");
       }
     } finally {
       setEditSaving(false);
@@ -513,6 +531,7 @@ export default function TemplateModal({
     const aOrder = a.sort_order ?? index * 10;
     const bOrder = b.sort_order ?? swapIndex * 10;
 
+    const prevTemplates = templates;
     setTemplates((prev) =>
       prev.map((t) =>
         t.id === a.id ? { ...t, sort_order: bOrder } :
@@ -520,11 +539,16 @@ export default function TemplateModal({
       )
     );
 
-    await fetch("/api/templates", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ updates: [{ id: a.id, sort_order: bOrder }, { id: b.id, sort_order: aOrder }] }),
-    });
+    try {
+      const res = await fetch("/api/templates", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ updates: [{ id: a.id, sort_order: bOrder }, { id: b.id, sort_order: aOrder }] }),
+      });
+      if (!res.ok) throw new Error("reorder failed");
+    } catch {
+      setTemplates(prevTemplates);
+    }
   };
 
   const handleDelete = async (id: string) => {
@@ -567,6 +591,7 @@ export default function TemplateModal({
       const data = await res.json() as { ok: boolean; adapted?: string; error?: string };
       if (data.ok && data.adapted) {
         setAdaptedTexts((prev) => ({ ...prev, [tmpl.id]: data.adapted! }));
+        setDisplaySource((prev) => ({ ...prev, [tmpl.id]: "adapted" }));
       } else {
         setAdaptErrors((prev) => ({ ...prev, [tmpl.id]: data.error || "AI最適化に失敗しました" }));
       }
@@ -933,8 +958,12 @@ export default function TemplateModal({
                   {displayFiltered.map((tmpl) => {
                     const idx = displayFiltered.indexOf(tmpl);
                     const adapted = adaptedTexts[tmpl.id];
+                    const extracted = extractedTexts[tmpl.id];
                     const isOcrTemplate = tmpl.text.includes("[物件名]") && tmpl.text.includes("[住所]");
-                    const _rawText = extractedTexts[tmpl.id] || adapted || tmpl.text;
+                    const src = displaySource[tmpl.id];
+                    const _rawText = src === "extracted" ? (extracted || tmpl.text)
+                      : src === "adapted" ? (adapted || tmpl.text)
+                      : (extracted || adapted || tmpl.text);
                     let displayText = applyVacatingDates(_rawText, vacatingDates[tmpl.id] ?? null);
                     if (soloEntry) displayText = applySoloEntry(displayText);
                     if (customerName) displayText = displayText.replace(/アカウント名/g, customerName);
@@ -1220,7 +1249,7 @@ export default function TemplateModal({
                           <div className="mb-1.5 flex items-center gap-1">
                             <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">✨ AIで最適化済み</span>
                             <button
-                              onClick={() => setAdaptedTexts((p) => { const n = { ...p }; delete n[tmpl.id]; return n; })}
+                              onClick={() => { setAdaptedTexts((p) => { const n = { ...p }; delete n[tmpl.id]; return n; }); setDisplaySource((p) => { const n = { ...p }; delete n[tmpl.id]; return n; }); }}
                               className="text-[10px] text-[#aaa] underline"
                             >
                               元に戻す
@@ -1403,6 +1432,7 @@ export default function TemplateModal({
                                               .replace("[物件名]", data.name || "[物件名]")
                                               .replace("[住所]", data.address || "[住所]");
                                             setExtractedTexts(prev => ({ ...prev, [tmpl.id]: filled }));
+                                            setDisplaySource(prev => ({ ...prev, [tmpl.id]: "extracted" }));
                                           } else {
                                             setExtractErrors(prev => ({ ...prev, [tmpl.id]: data.error || "読み取り失敗 — 手動で入力してください" }));
                                           }

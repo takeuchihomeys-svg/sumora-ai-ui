@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import AixModal, { type AixActionType } from "./components/AixModal";
 import BottomNav from "./components/BottomNav";
-import TemplateModal from "./components/TemplateModal";
+import TemplateModal, { type Template as CachedTemplate } from "./components/TemplateModal";
 import { supabase } from "./lib/supabase";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
@@ -340,6 +340,8 @@ export default function Home() {
   const multiSendTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   // 2通目専用タイマー（extrasのclearTimeoutに巻き添えされないよう分離）
   const secondMsgTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // テンプレートキャッシュ（モーダルを開くたびの再フェッチを防ぐ）
+  const [templateCache, setTemplateCache] = useState<CachedTemplate[]>([]);
   const pendingSecondMsgRef = useRef<{ type: string; delay: number } | null>(null);
   const [splitLoading, setSplitLoading] = useState(false);
   const [textareaHeightPx, setTextareaHeightPx] = useState(22);
@@ -481,6 +483,12 @@ export default function Home() {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedNextTemplateIds") || "[]") as string[]); } catch { return new Set(); }
   });
   const [pendingNextTemplateInfo, setPendingNextTemplateInfo] = useState<{ num: string; category: string } | null>(null);
+  const closeTemplateModal = () => {
+    setShowTemplateModal(false);
+    setTemplateOpenContext(null);
+    setPendingNextTemplateInfo(null);
+    setTemplateInitialSearch("");
+  };
   const [nextActionMap, setNextActionMap] = useState<Record<string, { action: string | null; reason: string } | null>>({});
   const [dismissedNextActionIds, setDismissedNextActionIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedNextActionIds") || "[]") as string[]); } catch { return new Set(); }
@@ -6534,7 +6542,9 @@ export default function Home() {
 
       {showTemplateModal && (
         <TemplateModal
-          onClose={() => { setShowTemplateModal(false); setTemplateOpenContext(null); setPendingNextTemplateInfo(null); setTemplateInitialSearch(""); }}
+          initialTemplates={templateCache.length > 0 ? templateCache : undefined}
+          onCacheUpdate={setTemplateCache}
+          onClose={closeTemplateModal}
           initialSearch={templateInitialSearch}
           onOpenAixWithFocus={(fps, templateInfo) => {
             setPendingAixFocusPoints(fps);
@@ -6543,8 +6553,7 @@ export default function Home() {
             setPendingTemplateSample(templateInfo?.sample ?? null);
             // 2通目設定をキャプチャ（AIX送信後に使用）
             pendingSecondMsgRef.current = templateInfo?.secondMsg ?? null;
-            setShowTemplateModal(false);
-            setTemplateOpenContext(null);
+            closeTemplateModal();
             // テンプレのcategoryから優先でAIXアクションを決定（残留activeAixFlowの誤ルーティング防止）
             const categoryDerivedAction = templateInfo?.category ? TEMPLATE_CATEGORY_TO_ACTION[templateInfo.category] : undefined;
             const validActiveFlow = activeAixFlow && Object.keys(AIX_ACTION_META).includes(activeAixFlow) ? activeAixFlow as AixActionType : undefined;
@@ -6575,8 +6584,7 @@ export default function Home() {
               setSuggestNextTemplateMap((prev) => ({ ...prev, [selectedConversation.id]: { num: nextNum, category } }));
               setDismissedNextTemplateIds((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
             }
-            setTemplateOpenContext(null);
-            setShowTemplateModal(false);
+            closeTemplateModal();
           }}
           customerName={preferredCustomerName}
           conversationState={selectedConversation.status}
