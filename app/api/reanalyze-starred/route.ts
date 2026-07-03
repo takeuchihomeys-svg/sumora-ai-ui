@@ -126,8 +126,12 @@ ${sentReply}
 }
 
 export async function POST(req: NextRequest) {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   const secret = req.headers.get("x-cron-secret");
-  if (secret !== process.env.SYNC_SECRET && secret !== "hasu-cron-secret-2024") {
+  if (secret !== cronSecret && secret !== process.env.SYNC_SECRET) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

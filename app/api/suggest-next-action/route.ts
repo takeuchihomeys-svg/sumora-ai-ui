@@ -34,7 +34,7 @@ const ACTION_PARAMS: Record<string, { check_pattern?: string; send_mode?: string
 };
 
 export async function POST(req: NextRequest) {
-  const { conversation_id, last_aix_action: clientLastAixAction } = await req.json() as { conversation_id: string; last_aix_action?: string | null };
+  const { conversation_id, last_aix_action: clientLastAixAction, available } = await req.json() as { conversation_id: string; last_aix_action?: string | null; available?: boolean | null };
   if (!conversation_id) return NextResponse.json({ action: null, reason: "" });
 
   // ---- 採択率フェッチ（毎日 update-action-confidence cron が更新する値を参照）----
@@ -102,10 +102,21 @@ export async function POST(req: NextRequest) {
     ...(lastCustomerImageUrl ? { imageUrl: lastCustomerImageUrl } : {}),
   });
 
-  // 物件確認結果（unavailable）の後にお客様が返信 → 代替物件送りへ誘導
+  // 物件確認結果の後にお客様が返信 → available フィールドで分岐
   if (last_aix_action === "property_check_result" && conv.last_sender === "customer") {
-    if (!shouldSuppressAction("alternative_send")) {
-      return NextResponse.json({ action: "alternative_send", reason: "代替物件を送る", source: "chain_rule", params: buildParams("alternative_send"), acceptanceRate: acceptanceRateMap["alternative_send"] ?? null });
+    if (available === true) {
+      // 空室あり → 見積書または内覧誘導
+      const nextAction = !shouldSuppressAction("estimate_sheet") ? "estimate_sheet"
+        : !shouldSuppressAction("viewing_invite") ? "viewing_invite"
+        : null;
+      if (nextAction) {
+        return NextResponse.json({ action: nextAction, reason: nextAction === "estimate_sheet" ? "空室確認後・見積書" : "空室確認後・内覧へ", source: "chain_rule", params: buildParams(nextAction), acceptanceRate: acceptanceRateMap[nextAction] ?? null });
+      }
+    } else {
+      // available === false または未指定（unavailable / 不明）→ 代替物件送りへ誘導
+      if (!shouldSuppressAction("alternative_send")) {
+        return NextResponse.json({ action: "alternative_send", reason: "代替物件を送る", source: "chain_rule", params: buildParams("alternative_send"), acceptanceRate: acceptanceRateMap["alternative_send"] ?? null });
+      }
     }
   }
 
@@ -115,14 +126,30 @@ export async function POST(req: NextRequest) {
   // ---- AIXチェーンルール: 直前のAIXアクションから次を提案 ----
   // ※ staff early return より前に置くことで送信直後にも発火する（Fable5 S-1修正）
   if (last_aix_action) {
-    const { data: chainRules } = await supabase
+    // Step A: フェーズ特定ルール優先 ("AFTER:{action}|{phase}")
+    const phaseSpecificKeyword = `AFTER:${last_aix_action}|${currentStatus}`;
+    const { data: phaseChainRules } = await supabase
       .from("trigger_action_rules")
       .select("action_type, confidence, occurrence_count")
-      .eq("keyword", `AFTER:${last_aix_action}`)
+      .eq("keyword", phaseSpecificKeyword)
       .gte("confidence", 0.35)
       .gte("occurrence_count", 2)
       .order("confidence", { ascending: false })
       .limit(3);
+
+    // Step B: フェーズ特定ルールが見つからない場合は汎用ルールにフォールバック
+    let chainRules = phaseChainRules?.length ? phaseChainRules : null;
+    if (!chainRules) {
+      const { data: genericChainRules } = await supabase
+        .from("trigger_action_rules")
+        .select("action_type, confidence, occurrence_count")
+        .eq("keyword", `AFTER:${last_aix_action}`)
+        .gte("confidence", 0.35)
+        .gte("occurrence_count", 2)
+        .order("confidence", { ascending: false })
+        .limit(3);
+      chainRules = genericChainRules ?? null;
+    }
 
     if (chainRules?.length) {
       const CHAIN_REASON: Record<string, string> = {

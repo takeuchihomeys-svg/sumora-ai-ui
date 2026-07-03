@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { upsertKnowledge } from "@/app/lib/knowledge-utils";
 
 // ─── OpenAI 埋め込み生成 ─────────────────────────────────────────────────────
 async function getEmbedding(text: string): Promise<number[] | null> {
@@ -161,7 +162,7 @@ export async function POST(req: NextRequest) {
       // embedding生成失敗時はnullのままにして既存ロジックを維持
     }
 
-    const { error } = await supabase.from("ai_reply_knowledge").insert({
+    const upsertResult = await upsertKnowledge(supabase, {
       title: "差分学習 [自動]",
       category: "principle",
       importance: 9,
@@ -170,11 +171,13 @@ export async function POST(req: NextRequest) {
       ...(embedding !== null ? { embedding } : {}),
     });
 
-    if (error) {
-      return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    if (upsertResult === "merged") {
+      console.log(`[auto-knowledge] 既存ルール強化: "${rule.slice(0, 50)}"`);
+    } else if (upsertResult === "skipped") {
+      console.log(`[auto-knowledge] スキップ（重複）: "${rule.slice(0, 50)}"`);
     }
 
-    return NextResponse.json({ ok: true, rule });
+    return NextResponse.json({ ok: true, rule, upsertResult });
   } catch (e) {
     console.error("auto-knowledge error:", e);
     return NextResponse.json({ ok: false, error: String(e) }, { status: 500 });

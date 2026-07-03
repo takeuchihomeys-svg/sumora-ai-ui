@@ -347,11 +347,11 @@ async function generateAllPatterns(
 → URLを受け取ったら「空室確認＋初期費用見積もり＋内覧確認」をセットで宣言
 → お客様がすべきことは最小限（フォーム入力・承認・日程を言うだけ）。それ以外はすべてスタッフがやる
 
-【3案の違いについて — 最重要】
-・3案全て: 全体の方向性・意図・ニュアンスは同じ
-・違う点: 1文1文の言い回し・言葉の選び方・文の組み合わせ方だけ
-・「同じことを少し違う言葉・順序・表現で書いた3バリエーション」
-・全て⭐実例と同じスモラの返信スタイルで書く
+【3案の役割 — 最重要・それぞれ明確に異なる案を書く】
+・[A]王道案: 最短・最もシンプル。余計な説明ゼロで核心だけ伝える。3〜5行以内。
+・[B]安心案: A案に理由や一言の補足を加えて不安を解消するバージョン。A案より少し長くなってよい。
+・[C]別切り口案: AとBとは全く異なるアプローチ・別の角度から提案。例：Aが即アクション宣言なら、Cは状況確認・共感・別提案など。
+・全て⭐実例と同じスモラの返信スタイル（文体・絵文字・感嘆符）で書く
 
 【質問・相談への回答ルール — 最重要】
 お客様から質問・相談（名義貸し・審査・費用・退去・キャンセル等）を受けた場合は「本質的・具体的」に答える。
@@ -382,22 +382,22 @@ async function generateAllPatterns(
 
 【出力フォーマット（必ず守る・余計な説明・注釈禁止）】
 
-[A] ← 黄金パターン（最重要・絶対に守る）
-⭐実例から引き出した最もシンプル・直接・短い文。「余計な説明ゼロ」「お客様の要望に直接答えて即アクション宣言のみ」。
+[A] ← 王道案（最重要・絶対に守る）
+最短・最もシンプル。「余計な説明ゼロ」「お客様の要望に直接答えて即アクション宣言のみ」。
 目安：3〜5行以内。長い説明・他社比較・制度解説は一切書かない。
 例のトーン：「かしこまりました！！最大限割引させていただいたお見積書を明日一番でお送りさせていただきます！！何卒よろしくお願い致します😌！！」
 
-[B] ← シンプルパターン（Aよりさらに短く・絶対に守る）
-・8行以内厳守。超えたら失敗。
-・お客様の言葉をまず受け取る（承認）→ 全力サポートの姿勢を一言 → 即アクション宣言のみ
-・変な言い回し・遠回し表現・他社比較・制度説明は一切入れない
-・普段スタッフが何百回も送ってきたような「ごく自然な短い返信」
-例のトーン：「〇〇さんお世話になっております！！かしこまりました！！全力でサポートさせていただきます！！何卒よろしくお願い致します😌！！」
+[B] ← 安心案（A案に補足を加えて不安を解消・絶対に守る）
+・A案の内容に「理由・根拠・一言の補足」を加えて不安を解消するバージョン
+・A案より少し長くなってよい（8行以内厳守）
+・「なぜそうするのか」「どのくらいかかるか」「どうなるか」など一言の安心材料を追加
+・文体・絵文字・感嘆符はスモラスタイルを守る
+例のトーン：「〇〇さんお世話になっております！！かしこまりました！！〇〇の理由から△△させていただきます！！全力でサポートさせていただきますので何卒よろしくお願い致します😌！！」
 
-[C] ← 別アプローチパターン（Aと全く異なる切り口・絶対に守る）
-・Aとは方向性・アプローチ・構成が全く異なる案
-・「同じ状況でスタッフが次に考える2番目のアプローチ」
-・例：Aが即アクション宣言なら、Cは状況確認や共感を先に出してから動く、など
+[C] ← 別切り口案（AとBとは全く異なるアプローチ・絶対に守る）
+・AともBとも異なる方向性・アプローチ・構成の案
+・「同じ状況でスタッフが次に考える全く別のアプローチ」
+・例：A/Bが即アクション宣言なら、Cは状況確認・共感・別の選択肢提示など
 ・文体・絵文字・感嘆符はスモラスタイルを守る
 
 【現在の営業フェーズ: ${state}】
@@ -413,7 +413,7 @@ ${examples}
 【お客様の最新メッセージ】
 ${customerMessage}
 
-上記⭐実例の文体・言い回し・感嘆符・絵文字を完全に再現しながら、[A]黄金パターン・[B]シンプルパターン・[C]別アプローチパターンの3案を生成してください。[C]はAと全く異なる切り口で書くこと。`;
+上記⭐実例の文体・言い回し・感嘆符・絵文字を完全に再現しながら、[A]王道案・[B]安心案・[C]別切り口案の3案を生成してください。[B]はAに補足を加えて不安を解消する案、[C]はA・Bと全く異なる切り口で書くこと。`;
 
   try {
     const res = await generationModel.invoke([
@@ -421,13 +421,39 @@ ${customerMessage}
       new HumanMessage(userPrompt),
     ]);
     const text = typeof res.content === "string" ? res.content : "";
-    const variants: string[] = [];
+
+    // ── パース: 1次試行 ── \[A\]\n 等で区切る厳密パターン
+    let variants: string[] = [];
     const regex = /\[([ABC])\]\n([\s\S]*?)(?=\n\[[ABC]\]|$)/g;
     let match;
     while ((match = regex.exec(text)) !== null) {
       const body = match[2].trim();
       if (body) variants.push(body);
     }
+
+    // ── パース: 2次フォールバック ── [A][B][C] を区切りとしてsplit
+    if (variants.length < 3) {
+      console.warn("[generate-reply-patterns] parse fallback used (split by [A][B][C])");
+      const parts = text.split(/\[([ABC])\]/).filter(Boolean);
+      const fallbackVariants: string[] = [];
+      for (let i = 0; i < parts.length - 1; i++) {
+        if (/^[ABC]$/.test(parts[i])) {
+          const body = (parts[i + 1] || "").trim();
+          if (body) fallbackVariants.push(body);
+        }
+      }
+      if (fallbackVariants.length >= variants.length) {
+        variants = fallbackVariants;
+      }
+    }
+
+    // ── パース: 3次フォールバック ── 全テキストをA案として返す
+    if (variants.length === 0) {
+      console.warn("[generate-reply-patterns] parse fallback used (full text as A)");
+      const trimmed = text.trim();
+      if (trimmed) variants = [trimmed, "", ""];
+    }
+
     return variants;
   } catch {
     return [];
@@ -505,7 +531,7 @@ export async function POST(req: NextRequest) {
     recentMessages,
   );
 
-  const PATTERN_DISPLAY_LABELS = ["王道", "シンプル", "C案"];
+  const PATTERN_DISPLAY_LABELS = ["王道案", "安心案", "別切り口案"];
   const patterns = variants.map((text, i) => {
     const { cleaned, issues } = validateAndClean(text);
     if (issues.length > 0) console.warn(`[validate-reply] pattern ${PATTERN_LABELS[i] ?? i + 1} issues:`, issues);

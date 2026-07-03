@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { upsertKnowledge } from "@/app/lib/knowledge-utils";
 import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
@@ -151,33 +152,32 @@ export async function POST(req: NextRequest) {
     const result = await analyzeDiff(customer_message, ai_draft, sent_reply, conversation_state);
 
     if (result && !result.skip && result.title && result.rule) {
-      // 重複チェック（同じキーワードのタイトルが既にあれば登録しない）
-      const keyword = result.title.replace("差分学習: ", "").slice(0, 12);
-      const { data: existing } = await supabase
-        .from("ai_reply_knowledge")
-        .select("id")
-        .ilike("title", `%${keyword}%`)
-        .limit(1);
+      const ALLOWED_CATEGORIES = new Set(["pattern", "style", "phrase", "principle"]);
+      const rawCategory = (result.category ?? "pattern").split("=")[0].trim();
+      const safeCategory = ALLOWED_CATEGORIES.has(rawCategory) ? rawCategory : "pattern";
+      const embeddingInput = `${conversation_state ?? "proposing"}: ${result.rule}`;
+      const embedding = await getEmbedding(embeddingInput);
+      // ☆つき or 大幅修正ほど importance を上げる
+      const baseImp = diffImportance(sim);
+      const imp = is_starred ? Math.min(9, baseImp + 1) : baseImp;
 
-      if (!existing || existing.length === 0) {
-        const ALLOWED_CATEGORIES = new Set(["pattern", "style", "phrase", "principle"]);
-        const rawCategory = (result.category ?? "pattern").split("=")[0].trim();
-        const safeCategory = ALLOWED_CATEGORIES.has(rawCategory) ? rawCategory : "pattern";
-        const embeddingInput = `${conversation_state ?? "proposing"}: ${result.rule}`;
-        const embedding = await getEmbedding(embeddingInput);
-        // ☆つき or 大幅修正ほど importance を上げる
-        const baseImp = diffImportance(sim);
-        const imp = is_starred ? Math.min(9, baseImp + 1) : baseImp;
-        await supabase.from("ai_reply_knowledge").insert({
-          title: result.title,
-          content: result.rule,
-          category: safeCategory,
-          conversation_state: conversation_state ?? "proposing",
-          importance: imp,
-          source_example_id: id,
-          ...(embedding ? { embedding: JSON.stringify(embedding) } : {}),
-        });
+      const upsertResult = await upsertKnowledge(supabase, {
+        title: result.title,
+        content: result.rule,
+        category: safeCategory,
+        importance: imp,
+        conversation_state: conversation_state ?? "proposing",
+        source_example_id: id,
+        ...(embedding ? { embedding } : {}),
+      });
+
+      if (upsertResult === "inserted") {
         learned++;
+      } else if (upsertResult === "merged") {
+        console.log(`[analyze-diffs] 既存ルール強化: "${result.title}"`);
+        learned++;
+      } else {
+        console.log(`[analyze-diffs] スキップ（重複）: "${result.title}"`);
       }
     }
 
