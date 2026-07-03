@@ -1252,6 +1252,49 @@ export default function AixModal({
     }).catch(() => {}); // エラーはサイレントに無視
   };
 
+  // AIX送信後の学習処理をまとめて実行（fire-and-forget）
+  // 通常送信パス・estimate-first（見積書テキスト先送り）パスの両方から呼ぶ（G-05: 早期returnによる学習スキップ防止）
+  const runLearning = (sentText: string) => {
+    const lastCustomerMsg = (recentMessages ?? [])
+      .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
+      .at(-1)?.text;
+
+    // 学習ループに保存
+    fetch("/api/save-reply-example", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildSaveReplyPayload(sentText, inputText.trim() || `（AIX: ${config?.title ?? actionType}）`)),
+    }).catch((e) => { console.warn("[AixModal] save-reply-example保存失敗:", e); });
+    saveTemplateCandidate(sentText);
+
+    // テンプレートフレーズ学習ログ
+    if (sentText.trim()) {
+      fetch("/api/learn-template-phrases", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action_type: actionType,
+          conversation_status: conversationStatus ?? "hearing",
+          sent_text: sentText,
+        }),
+      }).catch(() => {});
+    }
+
+    // 次アクション学習ログ（過去パターンとして蓄積）
+    if (conversationStatus) {
+      fetch("/api/learn-action-patterns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "log",
+          conversation_status: conversationStatus,
+          action_type: actionType,
+          customer_msg_summary: (lastCustomerMsg || inputText.trim()).slice(0, 150),
+        }),
+      }).catch(() => {});
+    }
+  };
+
   const openAixScheduleModal = () => {
     if (!preview.trim()) return;
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -1424,6 +1467,8 @@ export default function AixModal({
               });
             };
             onDelayedSend?.(30, sendFn); // 親がsetTimeoutを管理（キャンセル可能）
+            // G-05: 早期returnで学習がスキップされないよう、本文（30秒後に送信される文面）で学習を実行
+            runLearning(capturedPreview);
             setLoading(false);
             onClose();
             return;
@@ -1489,43 +1534,8 @@ export default function AixModal({
         createViewingCalendarEvent({ meetingDate, meetingTime, meetingPropertyName, meetingPropertyAddress, customerName });
       }
 
-      // 学習ループに保存（fire-and-forget）
-      const lastCustomerMsg = (recentMessages ?? [])
-        .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
-        .at(-1)?.text;
-      fetch("/api/save-reply-example", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildSaveReplyPayload(preview, inputText.trim() || `（AIX: ${config.title}）`)),
-      }).catch((e) => { console.warn("[AixModal] save-reply-example保存失敗:", e); });
-      saveTemplateCandidate(preview);
-
-      // テンプレートフレーズ学習ログ
-      if (preview.trim()) {
-        fetch("/api/learn-template-phrases", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action_type: actionType,
-            conversation_status: conversationStatus ?? "hearing",
-            sent_text: preview,
-          }),
-        }).catch(() => {});
-      }
-
-      // 次アクション学習ログ（過去パターンとして蓄積）
-      if (conversationStatus) {
-        fetch("/api/learn-action-patterns", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "log",
-            conversation_status: conversationStatus,
-            action_type: actionType,
-            customer_msg_summary: (lastCustomerMsg || inputText.trim()).slice(0, 150),
-          }),
-        }).catch(() => {});
-      }
+      // 学習処理（fire-and-forget、G-05: runLearningに集約）
+      runLearning(preview);
 
       onAfterSend?.({
         suggest2ndHand: actionType === "property_check_result" && checkAvailableApp === "yes",

@@ -588,6 +588,12 @@ $func$;
 ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_ai_reply_examples_conv_id ON ai_reply_examples(conversation_id);
 
+-- ai_reply_examples: 実際の送信時刻（G-04: page.tsx から sentAt を受け取り保存）
+ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ;
+
+-- ai_reply_examples: 自動品質チェック結果フラグ
+ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS quality_auto_ok BOOLEAN;
+
 -- conversations: 自動送信フラグ（Phase3 auto-send準備用）
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS auto_send_enabled BOOLEAN DEFAULT FALSE;
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS auto_sent_at TIMESTAMPTZ;

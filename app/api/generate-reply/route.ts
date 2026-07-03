@@ -614,6 +614,21 @@ function incrementKnowledgeUsage(ids: string[]): void {
 async function fetchKnowledge(state: string, customerMessage?: string, analysisContext?: string): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
+  // 失注パターン専用バケット（auto-analyze-losers が category=principle / importance=8 で保存するため、
+  // pgvector経路の importance>=9 フィルタ・フォールバック経路の principle 除外の両方から漏れる → 専用クエリで必ず届ける）
+  const { data: lossPatterns } = await supabase
+    .from("ai_reply_knowledge")
+    .select("id, title, content, importance, category")
+    .ilike("title", "失注パターン%")
+    .order("importance", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(4);
+  const lossList = (lossPatterns ?? []).filter(p => (p.content ?? "").trim().length > 0);
+  const lossIds = lossList.map(p => p.id).filter(Boolean);
+  const lossBlock = lossList.length > 0
+    ? "【🚫 避けるべき対応（失注実例より）】\n" + lossList.map(p => `・${p.content}`).join("\n")
+    : "";
+
   // pgvector検索（customerMessageがある場合・OPENAI_API_KEYが設定済みの場合）
   if (customerMessage && process.env.OPENAI_API_KEY) {
     const searchQuery = analysisContext
@@ -638,7 +653,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
         const phrases = filteredResults.filter(r => r.category === "phrase").slice(0, 6);
 
         const used = [...diffLearned, ...correctionPairs, ...critical, ...patterns, ...phrases];
-        incrementKnowledgeUsage(used.map(r => r.id).filter(Boolean));
+        incrementKnowledgeUsage([...used.map(r => r.id).filter(Boolean), ...lossIds]);
 
         const sections: string[] = [];
         if (diffLearned.length > 0) {
@@ -655,6 +670,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
         }
         if (phrases.length > 0) {
           sections.push("【スモラのフレーズ】\n" + phrases.map(k => `「${k.content}」`).join("　"));
+        }
+        if (lossBlock) {
+          sections.push(lossBlock);
         }
         return sections.length > 0 ? "\n\n" + sections.join("\n\n") : "";
       }
@@ -696,7 +714,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   const stateSpecificList = stateSpecific || [];
   const globalList = (global || []).filter(g => !stateSpecificList.some(s => s.content === g.content));
   const all = [...stateSpecificList, ...globalList];
-  if (diffLearned.length === 0 && (correctionPairs?.length ?? 0) === 0 && all.length === 0) return "";
+  if (diffLearned.length === 0 && (correctionPairs?.length ?? 0) === 0 && all.length === 0 && !lossBlock) return "";
 
   const critical = all.filter(k => (k.importance || 0) >= 9 && k.category === "principle");
   const patterns = all.filter(k => (k.importance || 0) >= 7 && k.category === "pattern");
@@ -710,7 +728,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
     ...patterns.slice(0, 8),
     ...phrases.slice(0, 6),
   ].map(k => (k as KnowledgeRow).id).filter(Boolean);
-  incrementKnowledgeUsage(usedIds);
+  incrementKnowledgeUsage([...usedIds, ...lossIds]);
 
   const sections: string[] = [];
   if (diffLearned.length > 0) {
@@ -727,6 +745,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   }
   if (phrases.length > 0) {
     sections.push("【スモラのフレーズ】\n" + phrases.slice(0, 6).map(k => `「${k.content}」`).join("　"));
+  }
+  if (lossBlock) {
+    sections.push(lossBlock);
   }
   return sections.length > 0 ? "\n\n" + sections.join("\n\n") : "";
 }

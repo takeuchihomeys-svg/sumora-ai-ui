@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -119,4 +119,15 @@ AIXを選ぶ → 生成を確認 → 送信`,
     console.error("[analyze-aix-flow]", e);
     return NextResponse.json({ ok: false, error: "internal error" }, { status: 500 });
   }
+}
+
+// GET /api/analyze-aix-flow
+// Vercel CronはGETでリクエストするため、認証チェック後POSTへ委譲
+export async function GET(req: NextRequest) {
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers.get("authorization");
+  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+  return POST();
 }

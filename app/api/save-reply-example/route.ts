@@ -414,6 +414,7 @@ export async function POST(req: NextRequest) {
     replyAngle,
     previousStaffMessage,
     conversationId,
+    sentAt,
   } = await req.json() as {
     conversationState: string;
     customerMessage: string;
@@ -423,6 +424,7 @@ export async function POST(req: NextRequest) {
     replyAngle?: string;
     previousStaffMessage?: string;
     conversationId?: string;
+    sentAt?: string;
   };
 
   if (!customerMessage || !sentReply) {
@@ -534,6 +536,7 @@ export async function POST(req: NextRequest) {
         is_starred: isStarred ?? false,
         reply_angle: replyAngle || null,
         conversation_id: conversationId || null,
+        sent_at: sentAt ?? new Date().toISOString(),
       })
       .select("id")
       .single(),

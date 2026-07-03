@@ -68,3 +68,14 @@ export async function POST(req: NextRequest) {
     cleanedAt: now,
   });
 }
+
+// GET /api/cleanup-images
+// Vercel CronはGETでリクエストするため、認証チェック後POSTへ委譲
+export async function GET(req: NextRequest) {
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers.get("authorization");
+  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+  return POST(req);
+}

@@ -96,6 +96,7 @@ const DETAIL_STATUSES = [
   { key: "proposing",  label: "物件提案中",   color: "bg-orange-100 text-orange-700", dot: "bg-orange-400" },
   { key: "applying",   label: "申込・審査中", color: "bg-pink-100 text-pink-700",     dot: "bg-pink-500" },
   { key: "closed_won", label: "ご成約",       color: "bg-yellow-100 text-yellow-700", dot: "bg-yellow-400" },
+  { key: "closed_lost", label: "失注", color: "bg-gray-200 text-gray-600", dot: "bg-gray-400" },
 ];
 
 // 旧ステータスキーの後方互換マッピング
@@ -2777,6 +2778,22 @@ export default function Home() {
         scheduled_at: scheduledAt,
       });
       if (insertErr) throw insertErr;
+      // 学習データ保存（予約送信もexecuteSendと同様に記録・fire-and-forget）
+      if (textToSend) {
+        const lastCustomerMsg = replyTargetCustomerMsgRef.current || latestCustomerMessage;
+        fetch("/api/save-reply-example", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversationId: selectedConversation.id,
+            customerMessage: lastCustomerMsg || "（初回連絡）",
+            sentReply: textToSend,
+            aiDraft: aiDraftRef.current || undefined,
+            conversationState: selectedConversation.status,
+            isScheduled: true,
+          }),
+        }).catch(() => {});
+      }
       // 予約リストを即更新（DB再取得せずローカルに追加）
       const { data: inserted } = await supabase.from("scheduled_messages")
         .select("id, text, image_urls, scheduled_at")
@@ -2996,21 +3013,6 @@ export default function Home() {
         const capturedAiDraft = aiDraftRef.current || undefined;
         // 顧客メッセージがない場合（初回・プロアクティブ送信）も「（初回連絡）」として保存
         const customerMsgToSave = lastCustomerMsg || "（初回連絡）";
-        // B-2: 品質判定ログ（AI文案があり品質判定もある場合のみ・auto_ok文案を修正したか否かを記録）
-        // 注意: save-reply-example APIが受け取れないフィールドは無視される（既存APIを壊さない）
-        if (capturedAiDraft && replyQuality) {
-          const wasModified = textToSend !== capturedAiDraft.trim();
-          void fetch("/api/save-reply-example", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              conversation_id: selectedConversation.id,
-              quality_auto_ok: replyQuality.auto_ok,
-              was_modified: wasModified,
-              sent_at: new Date().toISOString(),
-            }),
-          }).catch(() => {});
-        }
         // 直前のスタッフ返信をembeddingコンテキストとして保存（類似検索の精度向上）
         const prevStaffMsgForEmbed = selectedConversation.messages
           .filter(m => m.sender === "staff" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
@@ -3029,6 +3031,7 @@ export default function Home() {
             previousStaffMessage: prevStaffMsgForEmbed,
             // 4パターンから選んで送った場合は自動☆（パターン学習を確実に起動）
             isStarred: selectedPatternAngleRef.current ? true : undefined,
+            sentAt: new Date().toISOString(),
           }),
         }).then(async (r) => {
           if (!r.ok) return;
@@ -3543,6 +3546,7 @@ export default function Home() {
       const data = await res.json() as { ok: boolean; message_text?: string };
       if (data.ok && data.message_text) {
         setReplyDraft(data.message_text);
+        aiDraftRef.current = data.message_text;
         setDraftIsAi(true);
       }
     } catch (err) {
@@ -3601,6 +3605,7 @@ export default function Home() {
       const data = await res.json() as { ok: boolean; message_text?: string };
       if (data.ok && data.message_text) {
         setReplyDraft(data.message_text);
+        aiDraftRef.current = data.message_text;
         setDraftIsAi(true);
       }
       setShowGreetingViewingPicker(false);
@@ -5216,7 +5221,7 @@ export default function Home() {
                             body: JSON.stringify({ draft: replyDraft, customer_name: selectedConversation.customerName, recent_messages: recentMsgs, conversation_status: selectedConversation.status }),
                           });
                           const data = await res.json() as { ok: boolean; polished?: string };
-                          if (data.ok && data.polished) { setReplyDraft(data.polished); setDraftIsAi(true); }
+                          if (data.ok && data.polished) { setReplyDraft(data.polished); aiDraftRef.current = data.polished; setDraftIsAi(true); }
                         } catch (err) { console.error("[polish-draft]", err); }
                         finally { setGenerating(false); }
                       }}
