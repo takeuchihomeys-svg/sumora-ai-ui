@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
   const { conversation_id, last_aix_action } = await req.json() as { conversation_id: string; last_aix_action?: string | null };
   if (!conversation_id) return NextResponse.json({ action: null, reason: "" });
 
-  const [{ data: conv }, { data: messages }] = await Promise.all([
+  const [{ data: conv }, { data: messages }, { data: customer }] = await Promise.all([
     supabase.from("conversations")
       .select("status, customer_name, last_sender")
       .eq("id", conversation_id)
@@ -38,6 +38,10 @@ export async function POST(req: NextRequest) {
       .eq("conversation_id", conversation_id)
       .order("created_at", { ascending: false })
       .limit(10),
+    supabase.from("property_customers")
+      .select("conditions, ai_summary")
+      .eq("conversation_id", conversation_id)
+      .maybeSingle(),
   ]);
 
   if (!conv || !messages?.length) return NextResponse.json({ action: null, reason: "" });
@@ -108,7 +112,7 @@ export async function POST(req: NextRequest) {
 
   // 物件画像・動画が送られてきた場合は即座に「物件確認した」を提案
   const IMAGE_CHECK_STATUSES = new Set(["first_reply", "hearing", "proposing", "property_recommendation", "availability_check", "condition_hearing"]);
-  if ((lastCustomerMsg === "[画像]" || lastCustomerMsg === "[動画]") && IMAGE_CHECK_STATUSES.has(currentStatus)) {
+  if ((lastCustomerMsg.includes("[画像]") || lastCustomerMsg.includes("[動画]")) && IMAGE_CHECK_STATUSES.has(currentStatus)) {
     return NextResponse.json({ action: "property_check_result", reason: "物件画像が送られた", source: "trigger_rule" });
   }
 
@@ -239,8 +243,19 @@ ${examples || "  (なし)"}
     ? `## 各AIXボタンの発動条件（管理UIで設定済み）\n${aixLogicSection}\n\n`
     : "";
 
+  // JST現在日時（YYYY/M/D H:MM形式）
+  const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const jstNowStr = `${jstNow.getUTCFullYear()}/${jstNow.getUTCMonth() + 1}/${jstNow.getUTCDate()} ${jstNow.getUTCHours()}:${String(jstNow.getUTCMinutes()).padStart(2, "0")}`;
+
+  // 顧客コンテキスト（property_customers の条件・AIサマリー）
+  const customerContext = [
+    customer?.conditions ? `条件: ${customer.conditions as string}` : "",
+    customer?.ai_summary ? `サマリー: ${customer.ai_summary as string}` : "",
+  ].filter(Boolean).join("\n");
+
   const prompt = `あなたは不動産営業AIのアドバイザーです。
-${aixLogicGuide}${patternSection}## 現在の会話
+現在日時（JST）: ${jstNowStr}
+${customerContext ? customerContext + "\n" : ""}${aixLogicGuide}${patternSection}## 現在の会話
 顧客名: ${conv.customer_name as string}
 ステータス: ${statusLabel}
 

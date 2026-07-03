@@ -1651,8 +1651,17 @@ ${formItems}`;
 
       if (!msgs) return NextResponse.json({ ok: true, date: "", time: "" });
 
+      // 本日のJST日付（相対日付「明日」「来週」等の解決用）
+      const jstToday = new Date(Date.now() + 9 * 60 * 60 * 1000);
+      const jstWeekday = ["日", "月", "火", "水", "木", "金", "土"][jstToday.getUTCDay()];
+      const jstTodayStr = `${jstToday.getUTCFullYear()}/${jstToday.getUTCMonth() + 1}/${jstToday.getUTCDate()}(${jstWeekday})`;
+
       const system = `あなたは会話テキストから内覧の日程と時間を抽出するアシスタントです。
 以下の会話から、内覧・案内の日程と時間を抽出してください。
+
+【本日の日付（JST）】
+${jstTodayStr}
+・「明日」「明後日」「来週」「今週土曜」などの相対的な日付表現は、本日の日付を基準に実際の日付へ変換すること
 
 【出力ルール（JSON1行のみ）】
 {"date":"7/3（金）","time":"10:00"}

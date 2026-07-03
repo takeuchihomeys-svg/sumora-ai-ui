@@ -385,6 +385,15 @@ export default function TemplateModal({
     if (showAddForm) setTimeout(() => addFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
   }, [showAddForm]);
 
+  // ハイライト対象カードを中央にスクロール
+  useEffect(() => {
+    if (!highlightKeyword || loading) return;
+    const timer = setTimeout(() => {
+      document.querySelector('[data-highlighted="true"]')?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [highlightKeyword, loading]);
+
   useEffect(() => {
     if (!category) return;
     setTimeout(() => {
@@ -575,7 +584,8 @@ export default function TemplateModal({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          templateText: tmpl.text,
+          // OCR抽出済みテキストがあれば優先（物件名・住所の消失防止）
+          templateText: extractedTexts[tmpl.id] ?? tmpl.text,
           customerName,
           conversationState,
           recentMessages,
@@ -970,7 +980,7 @@ export default function TemplateModal({
                     const isHighlighted = !!highlightKeyword && (tmpl.label.includes(highlightKeyword) || tmpl.text.includes(highlightKeyword));
                     const isVacating = tmpl.label.includes("退去予定") || /[◯○〇]月[◯○〇]/.test(tmpl.text) || /退去予定|退去後|以降ご内覧可能/.test(tmpl.text);
                     return (
-                      <div key={tmpl.id} className={`rounded-2xl p-4 ${isHighlighted ? "border-2 border-orange-400 bg-orange-50" : "border border-[#e9edef] bg-[#f8f9fa]"}`}>
+                      <div key={tmpl.id} data-highlighted={isHighlighted ? "true" : undefined} className={`rounded-2xl p-4 ${isHighlighted ? "border-2 border-orange-400 bg-orange-50" : "border border-[#e9edef] bg-[#f8f9fa]"}`}>
                         {/* タイトル行 */}
                         <div className="mb-2 flex items-center justify-between gap-2">
                           <div className="flex-1 min-w-0">

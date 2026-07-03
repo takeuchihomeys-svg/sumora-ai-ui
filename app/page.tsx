@@ -144,6 +144,8 @@ function getAccountMeta(account?: string | null) {
 
 // AIX\u30a2\u30af\u30b7\u30e7\u30f3\u3054\u3068\u306e\u30e1\u30bf\u60c5\u5831\uff08\u30dc\u30bf\u30f3\u30e9\u30d9\u30eb\u30fb\u8272\u30fb\u30c6\u30f3\u30d7\u30ec\u30fc\u30c8\u30ab\u30c6\u30b4\u30ea\uff09
 const AIX_ACTION_META: Record<string, { label: string; color: string; templateCategory: string }> = {
+  condition_hearing:       { label: "\u30d2\u30a2\u30ea\u30f3\u30b0",   color: "#0288D1", templateCategory: "\u30d2\u30a2\u30ea\u30f3\u30b0\u3010AIX\u3011" },
+  greeting_viewing:        { label: "\u5185\u89a7\u6328\u62f6",     color: "#00796B", templateCategory: "" },
   property_recommendation: { label: "\u7269\u4ef6\u30aa\u30b9\u30b9\u30e1",  color: "#2196F3", templateCategory: "\u7269\u4ef6\u30aa\u30b9\u30b9\u30e1\u3010AIX\u3011" },
   property_send:           { label: "\u7269\u4ef6\u9001\u308b",      color: "#00897B", templateCategory: "\u7269\u4ef6\u9001\u308b\u3010AIX\u3011" },
   property_check_result:   { label: "\u7269\u4ef6\u78ba\u8a8d\u3057\u305f",  color: "#4CAF50", templateCategory: "\u7269\u4ef6\u78ba\u8a8d\u3057\u305f\u3010AIX\u3011" },
@@ -154,7 +156,10 @@ const AIX_ACTION_META: Record<string, { label: string; color: string; templateCa
 };
 // templateCategory \u2192 AixActionType \u306e\u9006\u5f15\u304d\uff08\u30c6\u30f3\u30d7\u30ec\u9078\u629e\u6642\u306e\u30a2\u30af\u30b7\u30e7\u30f3\u6c7a\u5b9a\u306b\u4f7f\u7528\uff09
 const TEMPLATE_CATEGORY_TO_ACTION: Record<string, AixActionType> = Object.fromEntries(
-  Object.entries(AIX_ACTION_META).map(([action, meta]) => [meta.templateCategory, action as AixActionType])
+  Object.entries(AIX_ACTION_META)
+    // greeting_viewing は専用ピッカーで完結（AixModal非対応）のため除外。空カテゴリも除外
+    .filter(([action, meta]) => meta.templateCategory && action !== "greeting_viewing")
+    .map(([action, meta]) => [meta.templateCategory, action as AixActionType])
 ) as Record<string, AixActionType>;
 
 type PropertyCustomerRow = {
@@ -5717,7 +5722,7 @@ export default function Home() {
                 onMouseUp={() => { if (sendLongPressTimer.current) { clearTimeout(sendLongPressTimer.current); sendLongPressTimer.current = null; } }}
                 onMouseLeave={() => { if (sendLongPressTimer.current) { clearTimeout(sendLongPressTimer.current); sendLongPressTimer.current = null; } }}
                 disabled={sending || (!replyDraft.trim() && selectedImageFiles.length === 0)}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#29B6F6] text-white shadow-sm disabled:opacity-50"
+                className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#29B6F6] text-white shadow-sm disabled:opacity-50"
                 title="送信（長押しで予約送信）"
               >
                 {sending ? (
@@ -5728,6 +5733,13 @@ export default function Home() {
                     <polygon points="22 2 15 22 11 13 2 9 22 2"/>
                   </svg>
                 )}
+                {/* 長押しで予約送信できることの可視化（時計バッジ） */}
+                <span className="pointer-events-none absolute -right-0.5 -top-0.5 flex h-3 w-3 items-center justify-center rounded-full bg-white shadow-sm" aria-hidden="true">
+                  <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#0288D1" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12 6 12 12 16 14"/>
+                  </svg>
+                </span>
               </button>
             </div>
           </div>
@@ -6567,9 +6579,10 @@ export default function Home() {
             closeTemplateModal();
             // テンプレのcategoryから優先でAIXアクションを決定（残留activeAixFlowの誤ルーティング防止）
             const categoryDerivedAction = templateInfo?.category ? TEMPLATE_CATEGORY_TO_ACTION[templateInfo.category] : undefined;
-            const validActiveFlow = activeAixFlow && Object.keys(AIX_ACTION_META).includes(activeAixFlow) ? activeAixFlow as AixActionType : undefined;
+            // greeting_viewing はAixModal非対応（専用ピッカーで完結）のため除外
+            const validActiveFlow = activeAixFlow && activeAixFlow !== "greeting_viewing" && Object.keys(AIX_ACTION_META).includes(activeAixFlow) ? activeAixFlow as AixActionType : undefined;
             const action: AixActionType = categoryDerivedAction ?? validActiveFlow ?? "property_recommendation";
-            if (action === "estimate_sheet" || action === "property_check_result" || action === "property_send" || action === "meeting_place") {
+            if (action === "estimate_sheet" || action === "property_check_result" || action === "property_send" || action === "meeting_place" || action === "condition_hearing") {
               openAixDirect(action);
             } else {
               openAixWithImagePicker(action);
@@ -6802,14 +6815,7 @@ export default function Home() {
             (
             aixModalType === "property_check_result"
               ? (meta: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean } | undefined) => {
-                  const task = (activeTasks[selectedConversation.id] ?? []).find((t) => t.task_type === "property_check");
-                  if (task) {
-                    fetch("/api/line-tasks/complete", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ id: task.id, source: "aix" }),
-                    }).catch(() => {});
-                  }
+                  // タスク完了POSTは上の共通ブロック（全未完了タスク完了）で実施済み（二重POST防止）
                   if (meta?.suggest2ndHand) {
                     setSuggest2ndHandMap((prev) => ({ ...prev, [selectedConversation.id]: true }));
                   }
@@ -6826,15 +6832,7 @@ export default function Home() {
                     setSuggestPropertyRecommendMap((prev) => ({ ...prev, [convId]: true }));
                     setDismissedPropertyRecommendIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
                   }
-                  // property_sendタスクを完了
-                  const sendTask = (activeTasks[convId] ?? []).find((t) => t.task_type === "property_send");
-                  if (sendTask) {
-                    fetch("/api/line-tasks/complete", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ id: sendTask.id, source: "aix" }),
-                    }).catch(() => {});
-                  }
+                  // property_sendタスクの完了POSTは上の共通ブロックで実施済み（二重POST防止）
                   // property_checkタスクを自動作成（次の工程）- 予約送信時はスキップ
                   if (!meta?.scheduled) {
                     // property_checkタスクを自動作成（即時送信時のみ）
@@ -6885,19 +6883,7 @@ export default function Home() {
                   // 物件送るバナーを消去（property_send タスク完了 + ローカル state 即時クリア）
                   setSuggestPropertySendMap((prev) => { const n = { ...prev }; delete n[convId]; return n; });
                   setDismissedPropertySendIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
-                  const sendTask = (activeTasks[convId] ?? []).find((t) => t.task_type === "property_send");
-                  if (sendTask) {
-                    fetch("/api/line-tasks/complete", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ id: sendTask.id, source: "aix" }),
-                    }).catch(() => {});
-                    // ローカル activeTasks からも即時除去（API応答待ちでバナーが残らないよう）
-                    setActiveTasks((prev) => ({
-                      ...prev,
-                      [convId]: (prev[convId] ?? []).filter((t) => t.task_type !== "property_send"),
-                    }));
-                  }
+                  // property_sendタスクの完了POST・ローカル除去は上の共通ブロックで実施済み（二重POST防止）
                   // property_checkタスクを自動作成（次の工程：物件確認）
                   const alreadyHasCheck = (activeTasks[convId] ?? []).some((t) => t.task_type === "property_check");
                   if (!alreadyHasCheck) {
@@ -6918,22 +6904,7 @@ export default function Home() {
                     }).catch(() => {});
                   }
                 }
-              : aixModalType === "estimate_sheet"
-              ? () => {
-                  const convId = selectedConversation.id;
-                  const estTask = (activeTasks[convId] ?? []).find((t) => t.task_type === "estimate_sheet");
-                  if (estTask) {
-                    fetch("/api/line-tasks/complete", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ id: estTask.id, source: "aix" }),
-                    }).catch(() => {});
-                    setActiveTasks((prev) => ({
-                      ...prev,
-                      [convId]: (prev[convId] ?? []).filter((t) => t.task_type !== "estimate_sheet"),
-                    }));
-                  }
-                }
+              // estimate_sheet のタスク完了POSTは上の共通ブロックで実施済み（二重POST防止のため個別処理なし）
               : aixModalType === "viewing_invite"
               ? (meta: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; scheduled?: boolean } | undefined) => {
                   if (meta?.suggestViewingTemplate) {
@@ -7789,7 +7760,7 @@ export default function Home() {
       {showViewingPicker && (
         <div
           className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
-          onClick={() => setShowViewingPicker(false)}
+          onClick={() => { setShowViewingPicker(false); setActiveAixFlow(null); }}
         >
           <div
             className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
@@ -7864,7 +7835,7 @@ export default function Home() {
               ))}
             </div>
             <button
-              onClick={() => setShowViewingPicker(false)}
+              onClick={() => { setShowViewingPicker(false); setActiveAixFlow(null); }}
               className="mt-4 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
             >キャンセル</button>
           </div>
@@ -7875,7 +7846,7 @@ export default function Home() {
       {showPropertySendPicker && (
         <div
           className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
-          onClick={() => setShowPropertySendPicker(false)}
+          onClick={() => { setShowPropertySendPicker(false); setActiveAixFlow(null); }}
         >
           <div
             className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
@@ -7940,7 +7911,7 @@ export default function Home() {
               ))}
             </div>
             <button
-              onClick={() => setShowPropertySendPicker(false)}
+              onClick={() => { setShowPropertySendPicker(false); setActiveAixFlow(null); }}
               className="mt-4 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
             >キャンセル</button>
           </div>
@@ -7951,7 +7922,7 @@ export default function Home() {
       {showEstimatePicker && (
         <div
           className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
-          onClick={() => setShowEstimatePicker(false)}
+          onClick={() => { setShowEstimatePicker(false); setActiveAixFlow(null); }}
         >
           <div
             className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
@@ -8010,7 +7981,7 @@ export default function Home() {
               ))}
             </div>
             <button
-              onClick={() => setShowEstimatePicker(false)}
+              onClick={() => { setShowEstimatePicker(false); setActiveAixFlow(null); }}
               className="mt-4 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
             >キャンセル</button>
           </div>
@@ -8021,7 +7992,7 @@ export default function Home() {
       {showApplicationPicker && (
         <div
           className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
-          onClick={() => setShowApplicationPicker(false)}
+          onClick={() => { setShowApplicationPicker(false); setActiveAixFlow(null); }}
         >
           <div
             className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
@@ -8077,7 +8048,7 @@ export default function Home() {
               ))}
             </div>
             <button
-              onClick={() => setShowApplicationPicker(false)}
+              onClick={() => { setShowApplicationPicker(false); setActiveAixFlow(null); }}
               className="mt-4 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
             >キャンセル</button>
           </div>
@@ -8088,7 +8059,7 @@ export default function Home() {
       {showGreetingViewingPicker && (
         <div
           className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
-          onClick={() => { setShowGreetingViewingPicker(false); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); setGreetingViewingAfterType(null); setGreetingViewingConfirmType(null); setGreetingViewingSearchType(null); setGreetingViewingPropertyInput(""); setGreetingViewingFreeword(""); }}
+          onClick={() => { setShowGreetingViewingPicker(false); setActiveAixFlow(null); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); setGreetingViewingAfterType(null); setGreetingViewingConfirmType(null); setGreetingViewingSearchType(null); setGreetingViewingPropertyInput(""); setGreetingViewingFreeword(""); }}
         >
           <div
             className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
@@ -8125,7 +8096,7 @@ export default function Home() {
                     </button>
                   ))}
                 </div>
-                <button onClick={() => { setShowGreetingViewingPicker(false); }} className="mt-1 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60">キャンセル</button>
+                <button onClick={() => { setShowGreetingViewingPicker(false); setActiveAixFlow(null); }} className="mt-1 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60">キャンセル</button>
               </>
             )}
 
@@ -8328,7 +8299,7 @@ export default function Home() {
       {showDaihyoCheckPicker && (
         <div
           className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
-          onClick={() => setShowDaihyoCheckPicker(false)}
+          onClick={() => { setShowDaihyoCheckPicker(false); setActiveAixFlow(null); }}
         >
           <div
             className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
@@ -8385,7 +8356,7 @@ export default function Home() {
               ))}
             </div>
             <button
-              onClick={() => setShowDaihyoCheckPicker(false)}
+              onClick={() => { setShowDaihyoCheckPicker(false); setActiveAixFlow(null); }}
               className="mt-4 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
             >キャンセル</button>
           </div>
@@ -8396,7 +8367,7 @@ export default function Home() {
       {showPropertyCheckPicker && (
         <div
           className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
-          onClick={() => setShowPropertyCheckPicker(false)}
+          onClick={() => { setShowPropertyCheckPicker(false); setActiveAixFlow(null); }}
         >
           <div
             className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
@@ -8461,7 +8432,7 @@ export default function Home() {
               ))}
             </div>
             <button
-              onClick={() => setShowPropertyCheckPicker(false)}
+              onClick={() => { setShowPropertyCheckPicker(false); setActiveAixFlow(null); }}
               className="mt-4 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
             >キャンセル</button>
           </div>

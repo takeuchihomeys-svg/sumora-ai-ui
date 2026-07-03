@@ -588,12 +588,14 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
         min_importance: 7,
       }) as { data: Array<KnowledgeRow & { similarity: number }> | null };
 
-      if (vectorResults && vectorResults.length > 0) {
-        const diffLearned = vectorResults.filter(r => r.title.includes("差分学習")).slice(0, 20);
-        const correctionPairs = vectorResults.filter(r => r.title.includes("修正対比")).slice(0, 8);
-        const critical = vectorResults.filter(r => r.importance >= 9 && r.category === "principle").slice(0, 15);
-        const patterns = vectorResults.filter(r => r.category === "pattern" && !r.title.includes("差分学習") && !r.title.includes("修正対比")).slice(0, 8);
-        const phrases = vectorResults.filter(r => r.category === "phrase").slice(0, 6);
+      // 類似度0.5未満のノイズを除外
+      const filteredResults = (vectorResults ?? []).filter(r => (r.similarity ?? 0) >= 0.5);
+      if (filteredResults.length > 0) {
+        const diffLearned = filteredResults.filter(r => r.title.includes("差分学習")).slice(0, 8);
+        const correctionPairs = filteredResults.filter(r => r.title.includes("修正対比")).slice(0, 8);
+        const critical = filteredResults.filter(r => r.importance >= 9 && r.category === "principle").slice(0, 15);
+        const patterns = filteredResults.filter(r => r.category === "pattern" && !r.title.includes("差分学習") && !r.title.includes("修正対比")).slice(0, 8);
+        const phrases = filteredResults.filter(r => r.category === "phrase").slice(0, 6);
 
         const used = [...diffLearned, ...correctionPairs, ...critical, ...patterns, ...phrases];
         incrementKnowledgeUsage(used.map(r => r.id).filter(Boolean));
@@ -632,13 +634,13 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       .order("created_at", { ascending: false }).limit(10),
     supabase.from("ai_reply_knowledge").select("id, category, title, content, importance")
       .ilike("title", "%修正対比%").in("conversation_state", stateAliases)
-      .order("importance", { ascending: false }).limit(20),
+      .order("importance", { ascending: false }).limit(8),
     supabase.from("ai_reply_knowledge").select("id, category, title, content, importance")
       .gte("importance", 8)
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
       .not("category", "eq", "principle")
       .order("importance", { ascending: false })
-      .order("created_at", { ascending: false }).limit(20),
+      .order("created_at", { ascending: false }).limit(8),
     supabase.from("ai_reply_knowledge").select("id, category, title, content, importance")
       .in("conversation_state", stateAliases).gte("importance", 7)
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
@@ -649,7 +651,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
 
   const stateDiffList = stateDiff || [];
   const globalDiffDeduped = (globalDiff || []).filter(g => !stateDiffList.some(s => s.content === g.content));
-  const diffLearned = [...stateDiffList, ...globalDiffDeduped].slice(0, 20);
+  const diffLearned = [...stateDiffList, ...globalDiffDeduped].slice(0, 8);
 
   const stateSpecificList = stateSpecific || [];
   const globalList = (global || []).filter(g => !stateSpecificList.some(s => s.content === g.content));
