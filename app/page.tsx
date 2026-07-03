@@ -2476,6 +2476,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           conversationState: selectedConversation.status,
+          conversationId: selectedConversation.id,
           customerMessage: prevCustomerMsg.text,
           sentReply: staffText,
           isStarred: true,
@@ -3012,6 +3013,7 @@ export default function Home() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             conversationState: selectedConversation.status,
+            conversationId: selectedConversation.id,
             customerMessage: customerMsgToSave,
             sentReply: textToSend,
             aiDraft: capturedAiDraft,

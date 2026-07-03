@@ -1432,6 +1432,7 @@ export default function AixModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           conversationState: ACTION_TO_STATE[actionType],
+          conversationId,
           customerMessage: lastCustomerMsg || inputText.trim() || `（AIX: ${config.title}）`,
           sentReply: preview,
           aiDraft,
