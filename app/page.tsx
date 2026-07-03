@@ -6779,6 +6779,19 @@ export default function Home() {
               return undefined;
             })()
           }
+          suggestedCategory={(() => {
+            const action = nextActionMap[selectedConversation.id]?.action;
+            return action ? (AIX_ACTION_META[action]?.templateCategory ?? undefined) : undefined;
+          })()}
+          suggestedColor={(() => {
+            const action = nextActionMap[selectedConversation.id]?.action;
+            return action ? (AIX_ACTION_META[action]?.color ?? undefined) : undefined;
+          })()}
+          suggestedLabel={(() => {
+            const action = nextActionMap[selectedConversation.id]?.action;
+            const meta = action ? AIX_ACTION_META[action] : null;
+            return meta ? `💡 ${meta.label}がオススメ` : undefined;
+          })()}
         />
       )}
 

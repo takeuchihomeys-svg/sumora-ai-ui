@@ -154,6 +154,9 @@ interface TemplateModalProps {
   initialCategory?: string;
   highlightKeyword?: string;
   highlightLabel?: string;
+  suggestedCategory?: string;   // suggest-next-action由来の推薦カテゴリ
+  suggestedColor?: string;      // アクション別カラー（hex）
+  suggestedLabel?: string;      // バッジテキスト
   // 予約送信待ちのAIXメッセージ（物件情報の読み取り元）
   pendingScheduledMessages?: Array<{ text: string | null }>;
   // 今日スタッフがすでに送信済みか（挨拶切り替えに使用）
@@ -221,7 +224,7 @@ function inferAvailCheckType(label: string): string | null {
 }
 
 export default function TemplateModal({
-  onClose, onSelect, onOpenAixWithFocus, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword, highlightLabel, pendingScheduledMessages, staffMessagedToday, initialSearch,
+  onClose, onSelect, onOpenAixWithFocus, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword, highlightLabel, suggestedCategory, suggestedColor, suggestedLabel, pendingScheduledMessages, staffMessagedToday, initialSearch,
   initialTemplates, onCacheUpdate,
 }: TemplateModalProps) {
   const [templates, setTemplates] = useState<Template[]>(initialTemplates ?? []);
@@ -271,6 +274,8 @@ export default function TemplateModal({
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
   const [editingCategoryName, setEditingCategoryName] = useState("");
   const categoryEditInputRef = useRef<HTMLInputElement | null>(null);
+  // 推薦/ハイライトカードへの自動スクロールを1回に制限
+  const hasScrolled = useRef(false);
   // AIXカテゴリ: テンプレートカードごとの訴求ポイント選択状態
   const [focusPointsMap, setFocusPointsMap] = useState<Record<string, string[]>>({});
   const [soloEntry, setSoloEntry] = useState(false);
@@ -360,7 +365,7 @@ export default function TemplateModal({
   };
 
   useEffect(() => { loadTemplates(); }, []);
-  useEffect(() => { setSoloEntry(false); }, [category]);
+  useEffect(() => { setSoloEntry(false); hasScrolled.current = false; }, [category]);
 
   const commitCategoryRename = async () => {
     const oldCat = editingCategory;
@@ -977,10 +982,30 @@ export default function TemplateModal({
                     let displayText = applyVacatingDates(_rawText, vacatingDates[tmpl.id] ?? null);
                     if (soloEntry) displayText = applySoloEntry(displayText);
                     if (customerName) displayText = displayText.replace(/アカウント名/g, customerName);
-                    const isHighlighted = !!highlightKeyword && (tmpl.label.includes(highlightKeyword) || tmpl.text.includes(highlightKeyword));
+                    const isSuggested = !!suggestedCategory && tmpl.category === suggestedCategory;
+                    const isHighlighted = !isSuggested && !!highlightKeyword && (tmpl.label.includes(highlightKeyword) || tmpl.text.includes(highlightKeyword));
                     const isVacating = tmpl.label.includes("退去予定") || /[◯○〇]月[◯○〇]/.test(tmpl.text) || /退去予定|退去後|以降ご内覧可能/.test(tmpl.text);
                     return (
-                      <div key={tmpl.id} data-highlighted={isHighlighted ? "true" : undefined} className={`rounded-2xl p-4 ${isHighlighted ? "border-2 border-orange-400 bg-orange-50" : "border border-[#e9edef] bg-[#f8f9fa]"}`}>
+                      <div
+                        key={tmpl.id}
+                        ref={(el) => {
+                          // 最初の推薦/ハイライトカードにスクロール（1回のみ）
+                          if ((isSuggested || isHighlighted) && el && !hasScrolled.current) {
+                            hasScrolled.current = true;
+                            setTimeout(() => el.scrollIntoView({ behavior: "smooth", block: "nearest" }), 150);
+                          }
+                        }}
+                        data-highlighted={isHighlighted ? "true" : undefined}
+                        className={`rounded-2xl p-4 ${
+                          isSuggested ? "border-2" :
+                          isHighlighted ? "border-2 border-orange-400 bg-orange-50" :
+                          "border border-[#e9edef] bg-[#f8f9fa]"
+                        }`}
+                        style={isSuggested && suggestedColor ? {
+                          borderColor: suggestedColor,
+                          backgroundColor: suggestedColor + "18",  // 約10%透過
+                        } : undefined}
+                      >
                         {/* タイトル行 */}
                         <div className="mb-2 flex items-center justify-between gap-2">
                           <div className="flex-1 min-w-0">
@@ -1004,6 +1029,14 @@ export default function TemplateModal({
                               return null;
                             })()}
                           </div>
+                          {isSuggested && suggestedColor && (
+                            <span
+                              className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold text-white"
+                              style={{ backgroundColor: suggestedColor }}
+                            >
+                              {suggestedLabel ?? "💡 AIオススメ"}
+                            </span>
+                          )}
                           {isHighlighted && (
                             <span className="shrink-0 rounded-full bg-orange-400 px-2 py-0.5 text-[10px] font-bold text-white">{highlightLabel ?? "💡 次のアクション"}</span>
                           )}
