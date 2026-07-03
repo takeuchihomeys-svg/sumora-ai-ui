@@ -239,8 +239,8 @@ function warnIfTruncated(data: { stop_reason?: string }, inputLength: number): v
 // アクション別 max_tokens（一律4096から適正値に削減・トークンコスト削減）
 // 尻切れは warnIfTruncated がログ検知するので、発生したらここの値を引き上げる
 const ACTION_MAX_TOKENS: Record<string, number> = {
-  property_send: 1500,          // 物件紹介文（複数物件あり得るため多め）
-  property_recommendation: 1500, // 物件オススメ文
+  property_send: 2000,          // 物件紹介文（最大5件×約200字＋前後文＝約1,500字。自動化運用の途中切れ防止で2000）
+  property_recommendation: 2000, // 物件オススメ文（複数物件紹介あり得るため途中切れ防止で2000）
   estimate_sheet: 2000,          // 見積書テキスト（OCR＋整形で長め）
   property_check_result: 1500,   // 空き確認結果（見積OCR分岐を含むため多め）
   viewing_invite: 1000,          // 内覧お誘い

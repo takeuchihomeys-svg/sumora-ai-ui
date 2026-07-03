@@ -23,15 +23,25 @@ const STATUS_ALIAS: Record<string, string> = {
   contract:                "applying",
 };
 
-// Cooldown: 同じ会話が毎分再処理されるのを防ぐ（インメモリ・毎分Cronでインスタンスが温存される前提のベストエフォート）
-const COOLDOWN_MS = 5 * 60 * 1000; // 5分
-const recentAttempts = new Map<string, number>(); // convId -> 最終処理試行時刻(ms)
+// メッセージ基準の重複防止（旧: 時刻固定5分cooldownは廃止）
+// 「どのメッセージ（draft_pending_at / orphanedはupdated_at）まで生成試行済みか」を会話ごとに記録し、
+// 記録済みマーカー以下ならスキップ、新しい顧客メッセージが来てマーカーが進めば即座に再生成対象にする。
+// インメモリ・ベストエフォート（インスタンス再起動でリセットされるが、①はdraft_pending_atクリア・②はai_draft有無がDB側の防波堤）。
+const MARKER_RETENTION_MS = 24 * 60 * 60 * 1000; // 記録の保持期限（メモリ肥大防止のみが目的）
+const attemptedMarkers = new Map<string, { markerMs: number; recordedAt: number }>(); // convId -> 生成試行済みメッセージマーカー
 
-function pruneRecentAttempts() {
-  const cutoff = Date.now() - COOLDOWN_MS;
-  for (const [id, ts] of recentAttempts) {
-    if (ts < cutoff) recentAttempts.delete(id);
+function pruneAttemptedMarkers() {
+  const cutoff = Date.now() - MARKER_RETENTION_MS;
+  for (const [id, rec] of attemptedMarkers) {
+    if (rec.recordedAt < cutoff) attemptedMarkers.delete(id);
   }
+}
+
+// 会話の「最新顧客メッセージ」を表すマーカー（ms）。pendingはdraft_pending_at、orphanedはupdated_atで代用
+function markerOf(c: { draft_pending_at?: string | null; updated_at?: string | null }): number {
+  const iso = c.draft_pending_at ?? c.updated_at;
+  const ms = iso ? Date.parse(iso) : NaN;
+  return Number.isNaN(ms) ? Date.now() : ms;
 }
 
 // 60秒デバウンス経過済みの会話に対してまとめ下書き生成（毎分Cronから呼ばれる）
@@ -46,7 +56,7 @@ export async function GET() {
   // ① 60秒以上前〜10分以内にpendingになった会話（デバウンス経過・古すぎるものは除外）
   const { data: pendingConvs, error } = await db
     .from("conversations")
-    .select("id, status, property_customer_id, last_sender")
+    .select("id, status, property_customer_id, last_sender, draft_pending_at, updated_at")
     .not("draft_pending_at", "is", null)
     .lte("draft_pending_at", threshold)
     .gte("draft_pending_at", tenMinutesAgo)
@@ -55,7 +65,7 @@ export async function GET() {
   // ② 取りこぼし救済: pending_atなし（または10分以上前の古いpending）・下書きなし・24時間以内・未返信
   const { data: orphanedConvs, error: orphanedError } = await db
     .from("conversations")
-    .select("id, status, property_customer_id, last_sender")
+    .select("id, status, property_customer_id, last_sender, draft_pending_at, updated_at")
     .eq("last_sender", "customer")
     .is("ai_draft", null)
     .or("draft_pending_at.is.null,draft_pending_at.lt." + tenMinutesAgo)
@@ -72,16 +82,16 @@ export async function GET() {
   }
   console.log("[generate-pending-drafts] pending:", pendingConvs?.length ?? 0, "orphaned:", orphanedConvs?.length ?? 0, "yesterday:", yesterday);
 
-  // 重複除外してまとめる ＋ Cooldown: 直近5分以内に処理試行済みの会話はスキップ
-  pruneRecentAttempts();
-  const cooldownCutoff = Date.now() - COOLDOWN_MS;
+  // 重複除外してまとめる ＋ メッセージ基準スキップ: 最新の顧客メッセージ（マーカー）に対して生成試行済みならスキップ。
+  // 記録より新しいマーカー（＝生成後に届いた新メッセージ）なら経過時間に関係なく即座に処理対象になる。
+  pruneAttemptedMarkers();
   const pendingIds = new Set((pendingConvs || []).map(c => c.id as string));
   const combined = [
     ...(pendingConvs || []),
     ...(orphanedConvs || []).filter(c => !pendingIds.has(c.id as string)),
   ].filter(c => {
-    const last = recentAttempts.get(c.id as string);
-    return last === undefined || last < cooldownCutoff;
+    const rec = attemptedMarkers.get(c.id as string);
+    return rec === undefined || markerOf(c) > rec.markerMs;
   });
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
@@ -108,8 +118,8 @@ export async function GET() {
     if (!isFirst) await new Promise(r => setTimeout(r, 1000));
     isFirst = false;
 
-    // Cooldown記録（成否に関わらず試行時刻を記録し、5分間は再処理しない）
-    recentAttempts.set(convId, Date.now());
+    // このメッセージ（マーカー）への生成試行を記録（成否に関わらず記録。新しいメッセージが来れば即再処理される）
+    attemptedMarkers.set(convId, { markerMs: markerOf(conv), recordedAt: Date.now() });
 
     // 先にpendingをクリアして重複処理を防ぐ
     await db.from("conversations")
