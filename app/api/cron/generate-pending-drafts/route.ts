@@ -23,49 +23,71 @@ const STATUS_ALIAS: Record<string, string> = {
   contract:                "applying",
 };
 
+// Cooldown: 同じ会話が毎分再処理されるのを防ぐ（インメモリ・毎分Cronでインスタンスが温存される前提のベストエフォート）
+const COOLDOWN_MS = 5 * 60 * 1000; // 5分
+const recentAttempts = new Map<string, number>(); // convId -> 最終処理試行時刻(ms)
+
+function pruneRecentAttempts() {
+  const cutoff = Date.now() - COOLDOWN_MS;
+  for (const [id, ts] of recentAttempts) {
+    if (ts < cutoff) recentAttempts.delete(id);
+  }
+}
+
 // 60秒デバウンス経過済みの会話に対してまとめ下書き生成（毎分Cronから呼ばれる）
 export async function GET() {
   const db = getDb();
   const threshold = new Date(Date.now() - 60 * 1000).toISOString();
+  // 10分以上前のpendingは対象外（処理失敗した会話が毎分再処理され続けるのを防ぐ上限）
+  const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
 
   const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-  // ① 60秒以上前にpendingになった会話（デバウンス経過）
+  // ① 60秒以上前〜10分以内にpendingになった会話（デバウンス経過・古すぎるものは除外）
   const { data: pendingConvs, error } = await db
     .from("conversations")
     .select("id, status, property_customer_id, last_sender")
     .not("draft_pending_at", "is", null)
     .lte("draft_pending_at", threshold)
-    .limit(8);
+    .gte("draft_pending_at", tenMinutesAgo)
+    .limit(3);
 
-  // ② 取りこぼし救済: pending_atなし・下書きなし・24時間以内・未返信
+  // ② 取りこぼし救済: pending_atなし（または10分以上前の古いpending）・下書きなし・24時間以内・未返信
   const { data: orphanedConvs, error: orphanedError } = await db
     .from("conversations")
     .select("id, status, property_customer_id, last_sender")
     .eq("last_sender", "customer")
     .is("ai_draft", null)
-    .is("draft_pending_at", null)
+    .or("draft_pending_at.is.null,draft_pending_at.lt." + tenMinutesAgo)
     .gte("updated_at", yesterday)
     .neq("status", "applying")
     .neq("status", "screening")
     .neq("status", "contract")
     .neq("status", "closed_won")
     .neq("status", "closed_lost")
-    .limit(5);
+    .limit(2);
 
   if (orphanedError) {
     console.error("[generate-pending-drafts] orphaned query error:", orphanedError);
   }
   console.log("[generate-pending-drafts] pending:", pendingConvs?.length ?? 0, "orphaned:", orphanedConvs?.length ?? 0, "yesterday:", yesterday);
 
-  // 重複除外してまとめる
+  // 重複除外してまとめる ＋ Cooldown: 直近5分以内に処理試行済みの会話はスキップ
+  pruneRecentAttempts();
+  const cooldownCutoff = Date.now() - COOLDOWN_MS;
   const pendingIds = new Set((pendingConvs || []).map(c => c.id as string));
   const combined = [
     ...(pendingConvs || []),
     ...(orphanedConvs || []).filter(c => !pendingIds.has(c.id as string)),
-  ];
+  ].filter(c => {
+    const last = recentAttempts.get(c.id as string);
+    return last === undefined || last < cooldownCutoff;
+  });
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+
+  console.log("[generate-pending-drafts] processing:", combined.length, "conversations at", new Date().toISOString());
+
   if (combined.length === 0) {
     return NextResponse.json({ ok: true, processed: 0, debug: { pending: pendingConvs?.length ?? 0, orphaned: orphanedConvs?.length ?? 0, orphanedError: orphanedError?.message ?? null, yesterday } });
   }
@@ -76,10 +98,18 @@ export async function GET() {
   let processed = 0;
   let skipped = 0;
 
+  let isFirst = true;
   for (const conv of combined) {
     const convId = conv.id as string;
     const convStatus = conv.status as string;
     const pcId = conv.property_customer_id as string | null;
+
+    // 処理間に小スリープを入れてAPI負荷を分散（直列処理）
+    if (!isFirst) await new Promise(r => setTimeout(r, 1000));
+    isFirst = false;
+
+    // Cooldown記録（成否に関わらず試行時刻を記録し、5分間は再処理しない）
+    recentAttempts.set(convId, Date.now());
 
     // 先にpendingをクリアして重複処理を防ぐ
     await db.from("conversations")

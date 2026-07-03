@@ -371,8 +371,14 @@ ${sentReply}${existingList}
 }
 
 // ─── PATCH: 既存レコードを☆に更新して差分学習を再実行 ────────────────────────
+// isAutoStar=true（auto-star-winners等のバッチ経由）の場合はAnthropic分析チェーンを
+// 実行しない（☆フラグ更新のみ）。大量☆付与時のコスト暴発を防止する。
 export async function PATCH(req: NextRequest) {
-  const { id, is_starred } = await req.json() as { id: string; is_starred: boolean };
+  const { id, is_starred, isAutoStar } = await req.json() as {
+    id: string;
+    is_starred: boolean;
+    isAutoStar?: boolean;
+  };
   if (!id) return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
 
   // 既存レコードを取得
@@ -388,6 +394,12 @@ export async function PATCH(req: NextRequest) {
   await supabase.from("ai_reply_examples").update({ is_starred }).eq("id", id);
 
   if (!is_starred) return NextResponse.json({ ok: true });
+
+  // 🚫 バッチ☆（auto-star-winners）→ LLM分析はスキップ（☆フラグのみで完了）
+  // 手動☆1件ずつと違い、バッチは一度に数十件走るためHaiku×3/件のコストが暴発する
+  if (isAutoStar) {
+    return NextResponse.json({ ok: true, skippedAnalysis: true });
+  }
 
   // ☆追加時 → 星ブーストで再分析（aiDraft があれば差分学習も実行）
   const jobs: Promise<void>[] = [
@@ -416,6 +428,7 @@ export async function POST(req: NextRequest) {
     conversationId,
     sentAt,
     skipNormalize,
+    isAutoStar,
   } = await req.json() as {
     conversationState: string;
     customerMessage: string;
@@ -427,6 +440,7 @@ export async function POST(req: NextRequest) {
     conversationId?: string;
     sentAt?: string;
     skipNormalize?: boolean;
+    isAutoStar?: boolean; // バッチ経由（auto-star-winners等）→ LLM分析チェーンを抑止
   };
 
   if (!customerMessage || !sentReply) {
@@ -457,6 +471,10 @@ export async function POST(req: NextRequest) {
     if (existingRecord && !existingRecord.is_starred) {
       // 既存レコードを☆に更新してPATH相当の分析を実行
       await supabase.from("ai_reply_examples").update({ is_starred: true }).eq("id", existingRecord.id);
+      // 🚫 バッチ☆はLLM分析をスキップ（コスト暴発防止）
+      if (isAutoStar) {
+        return NextResponse.json({ ok: true, id: existingRecord.id, merged: true, skippedAnalysis: true });
+      }
       const existConvState = existingRecord.conversation_state as string;
       const existSentReply = existingRecord.sent_reply as string;
       const existCustMsg   = existingRecord.customer_message as string;
@@ -582,6 +600,11 @@ export async function POST(req: NextRequest) {
   // 🚫 AI自己強化ループ防止: AI文をそのまま送信（wasAiUsed && !wasAiModified）した場合は
   // ☆有無に関わらず深層分析・フレーズ抽出を行わない（AIが書いた文をお手本として学習する循環を遮断）
   if (wasAiUsed && !wasAiModified) {
+    shouldDeepAnalyze = false;
+    shouldExtractPhrases = false;
+  }
+  // 🚫 バッチ経由（isAutoStar）はLLM分析チェーンを全て抑止（コスト暴発防止）
+  if (isAutoStar) {
     shouldDeepAnalyze = false;
     shouldExtractPhrases = false;
   }

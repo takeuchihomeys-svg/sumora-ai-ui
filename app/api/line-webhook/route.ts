@@ -31,6 +31,26 @@ const ACCOUNTS: AccountConfig[] = [
   },
 ];
 
+// ── 同一ユーザーのレート制限（3秒以内の連続AI解析をスキップ）─────────────
+const recentLineUsers = new Map<string, number>(); // userId → lastProcessedMs
+const RATE_LIMIT_WINDOW_MS = 3000;
+
+function isRateLimited(userId: string): boolean {
+  const now = Date.now();
+  const lastTime = recentLineUsers.get(userId);
+  if (lastTime && now - lastTime < RATE_LIMIT_WINDOW_MS) {
+    return true;
+  }
+  recentLineUsers.set(userId, now);
+
+  // Map肥大化防止（最も古いエントリから削除）
+  if (recentLineUsers.size > 1000) {
+    const oldestKey = recentLineUsers.keys().next().value;
+    if (oldestKey !== undefined) recentLineUsers.delete(oldestKey);
+  }
+  return false;
+}
+
 // ── LINE 署名検証 ──────────────────────────────────────────────────────
 async function verifySignature(body: string, signature: string, secret: string): Promise<boolean> {
   const encoder = new TextEncoder();
@@ -356,6 +376,12 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, tex
     .eq("raw_format_text", text)
     .maybeSingle();
   if (alreadyDone?.id) return;
+
+  // ── レート制限: 同一ユーザーの3秒以内の連続送信はAI解析をスキップ ──
+  if (isRateLimited(userId)) {
+    console.log("[line-webhook] rate-limit skip (AI解析):", userId);
+    return;
+  }
 
   // ── AI でフォーマット解析 ──────────────────────────────────────────
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -934,11 +960,16 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   for (const ev of events) {
     const event = ev as {
       type: string;
-      source?: { userId?: string };
+      source?: { type?: string; userId?: string };
       message?: { type: string; id?: string; text?: string };
     };
 
     if (event.type !== "message") continue;
+    // 自分自身（bot）からのメッセージはスキップ（返信送信時のエコーバック対策）
+    if (event.source?.type === "bot") {
+      console.log("[line-webhook] botメッセージをスキップ");
+      continue;
+    }
     if (event.source?.userId == null) continue;
 
     const msgType = event.message?.type;

@@ -46,19 +46,26 @@ export async function GET() {
     return NextResponse.json({ ok: true, starred: 0, convs: convIds.length, message: "all examples already starred" });
   }
 
-  // PATCH /api/save-reply-example → is_starred=true でフル分析パイプラインを起動
+  // PATCH /api/save-reply-example → is_starred=true
+  // 💰 コスト制御: フル分析（Haiku×最大3回/件）は1回の実行につき先頭 MAX_ANALYZE_PER_RUN 件まで。
+  // それ以降は isAutoStar: true で☆フラグのみ更新（LLM分析スキップ）。
+  // 大量の closed_won が一度に発生してもAnthropic呼び出しが暴発しない。
+  const MAX_ANALYZE_PER_RUN = 10;
   let starred = 0;
   let failed = 0;
+  let analyzed = 0;
 
-  for (const ex of examples) {
+  for (const [i, ex] of examples.entries()) {
+    const isAutoStar = i >= MAX_ANALYZE_PER_RUN;
     try {
       const res = await fetch(`${baseUrl}/api/save-reply-example`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: ex.id, is_starred: true }),
+        body: JSON.stringify({ id: ex.id, is_starred: true, isAutoStar }),
       });
       if (res.ok) {
         starred++;
+        if (!isAutoStar) analyzed++;
       } else {
         failed++;
         console.warn("[auto-star-winners] PATCH failed for:", ex.id, res.status);
@@ -69,6 +76,6 @@ export async function GET() {
     }
   }
 
-  console.log(`[auto-star-winners] done: starred=${starred} failed=${failed} convs=${convIds.length}`);
-  return NextResponse.json({ ok: true, starred, failed, total: examples.length, convs: convIds.length });
+  console.log(`[auto-star-winners] done: starred=${starred} analyzed=${analyzed} failed=${failed} convs=${convIds.length}`);
+  return NextResponse.json({ ok: true, starred, analyzed, failed, total: examples.length, convs: convIds.length });
 }

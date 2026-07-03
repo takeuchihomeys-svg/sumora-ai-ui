@@ -236,6 +236,24 @@ function warnIfTruncated(data: { stop_reason?: string }, inputLength: number): v
   }
 }
 
+// アクション別 max_tokens（一律4096から適正値に削減・トークンコスト削減）
+// 尻切れは warnIfTruncated がログ検知するので、発生したらここの値を引き上げる
+const ACTION_MAX_TOKENS: Record<string, number> = {
+  property_send: 1500,          // 物件紹介文（複数物件あり得るため多め）
+  property_recommendation: 1500, // 物件オススメ文
+  estimate_sheet: 2000,          // 見積書テキスト（OCR＋整形で長め）
+  property_check_result: 1500,   // 空き確認結果（見積OCR分岐を含むため多め）
+  viewing_invite: 1000,          // 内覧お誘い
+  application_push: 1000,        // 申込促進
+  greeting_viewing: 800,         // 内覧挨拶
+  condition_hearing: 800,        // 条件ヒアリング
+  meeting_place: 600,            // 待ち合わせ案内
+};
+
+function maxTokensForAction(): number {
+  return ACTION_MAX_TOKENS[currentAction] ?? 1500;
+}
+
 async function callClaude(system: string, user: string): Promise<string> {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -246,7 +264,7 @@ async function callClaude(system: string, user: string): Promise<string> {
     },
     body: JSON.stringify({
       model: MODEL,
-      max_tokens: 4096,
+      max_tokens: maxTokensForAction(),
       system,
       messages: [{ role: "user", content: user }],
     }),
@@ -288,7 +306,7 @@ async function callClaudeVision(system: string, content: unknown[]): Promise<str
     },
     body: JSON.stringify({
       model: MODEL,
-      max_tokens: 4096,
+      max_tokens: maxTokensForAction(),
       system,
       messages: [{ role: "user", content }],
     }),
