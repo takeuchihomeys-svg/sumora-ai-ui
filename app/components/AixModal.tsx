@@ -298,6 +298,7 @@ export default function AixModal({
   const [aixNotice, setAixNotice] = useState<string>("");
   const [parsedEstimate, setParsedEstimate] = useState<Record<string, string> | null>(null);
   const [previewExpanded, setPreviewExpanded] = useState(false);
+  const [previewBackup, setPreviewBackup] = useState<string>("");
   const [useEmoji, setUseEmoji] = useState(true);
   const [showTemplateInfo, setShowTemplateInfo] = useState(false);
   const [topPhrases, setTopPhrases] = useState<{ phrase: string; usage_count: number }[]>([]);
@@ -1214,6 +1215,26 @@ export default function AixModal({
     meeting_place: "viewing",
   };
 
+  // save-reply-example の保存ペイロードを構築（即時送信・予約送信で共通利用）
+  // aiDraft / previousStaffMessage を必ず含めることで、差分学習（analyze-diffs）の対象から漏れないようにする
+  const buildSaveReplyPayload = (sentReply: string, fallbackCustomerMessage: string) => {
+    const lastCustomerMsg = (recentMessages ?? [])
+      .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
+      .at(-1)?.text;
+    const lastStaffMsg = (recentMessages ?? [])
+      .filter((m) => m.sender === "staff" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
+      .at(-1)?.text;
+    return {
+      conversationState: ACTION_TO_STATE[actionType] ?? "hearing",
+      conversationId,
+      customerMessage: lastCustomerMsg || fallbackCustomerMessage,
+      sentReply,
+      aiDraft,
+      previousStaffMessage: lastStaffMsg,
+      isStarred: true,
+    };
+  };
+
   const openAixScheduleModal = () => {
     if (!preview.trim()) return;
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -1287,13 +1308,7 @@ export default function AixModal({
       fetch("/api/save-reply-example", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          conversationState: ACTION_TO_STATE[actionType] ?? "hearing",
-          conversationId,
-          customerMessage: lastCustomerMsg || `（AIX予約: ${config?.title ?? actionType}）`,
-          sentReply: textToSend,
-          isStarred: true,
-        }),
+        body: JSON.stringify(buildSaveReplyPayload(textToSend, `（AIX予約: ${config?.title ?? actionType}）`)),
       }).catch((e) => { console.warn("[AixModal] save-reply-example保存失敗（予約送信）:", e); });
 
       // 待ち合わせ確定後にカレンダーイベントを作成（予約送信の場合も同様）
@@ -1460,21 +1475,10 @@ export default function AixModal({
       const lastCustomerMsg = (recentMessages ?? [])
         .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
         .at(-1)?.text;
-      const lastStaffMsg = (recentMessages ?? [])
-        .filter((m) => m.sender === "staff" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
-        .at(-1)?.text;
       fetch("/api/save-reply-example", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          conversationState: ACTION_TO_STATE[actionType],
-          conversationId,
-          customerMessage: lastCustomerMsg || inputText.trim() || `（AIX: ${config.title}）`,
-          sentReply: preview,
-          aiDraft,
-          previousStaffMessage: lastStaffMsg,
-          isStarred: true,
-        }),
+        body: JSON.stringify(buildSaveReplyPayload(preview, inputText.trim() || `（AIX: ${config.title}）`)),
       }).catch((e) => { console.warn("[AixModal] save-reply-example保存失敗:", e); });
 
       // テンプレートフレーズ学習ログ
@@ -3260,7 +3264,7 @@ export default function AixModal({
           {preview && (
             <div className="mb-4">
               <button
-                onClick={() => setPreviewExpanded(true)}
+                onClick={() => { setPreviewBackup(preview); setPreviewExpanded(true); }}
                 className="w-full rounded-2xl bg-[#f0f2f5] px-4 py-3 text-left active:bg-[#e8eaed] transition-colors"
               >
                 <div className="mb-1.5 flex items-center justify-between">
@@ -3269,12 +3273,22 @@ export default function AixModal({
                     <div className="flex overflow-hidden rounded-full border border-[#d1d7db] text-[10px] font-bold">
                       <button
                         type="button"
-                        onClick={(e) => { e.stopPropagation(); setUseEmoji(true); if (aiDraft) setPreview(aiDraft); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setUseEmoji(true);
+                          if (!aiDraft) return;
+                          // 手動編集されていない場合のみAI原文を復元（編集内容を無警告で消さない）
+                          if (preview === aiDraft || preview === stripEmoji(aiDraft)) {
+                            setPreview(aiDraft);
+                          } else {
+                            setAixNotice("手動編集された文章を保持したため、絵文字の復元はスキップしました。絵文字が必要な場合は直接編集してください。");
+                          }
+                        }}
                         className={`px-2.5 py-0.5 transition-colors ${useEmoji ? "bg-[#2196F3] text-white" : "bg-white text-[#8696a0]"}`}
                       >絵文字あり</button>
                       <button
                         type="button"
-                        onClick={(e) => { e.stopPropagation(); setUseEmoji(false); if (aiDraft) setPreview(stripEmoji(aiDraft)); }}
+                        onClick={(e) => { e.stopPropagation(); setUseEmoji(false); setPreview(stripEmoji(preview)); }}
                         className={`px-2.5 py-0.5 transition-colors ${!useEmoji ? "bg-[#667781] text-white" : "bg-white text-[#8696a0]"}`}
                       >なし</button>
                     </div>
@@ -3485,7 +3499,7 @@ export default function AixModal({
           <div className="flex items-center justify-between border-b border-[#f0f2f5] px-4 py-3"
             style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
             <button
-              onClick={() => setPreviewExpanded(false)}
+              onClick={() => { setPreview(previewBackup); setPreviewExpanded(false); }}
               className="rounded-full bg-white/20 px-4 py-1.5 text-sm font-bold text-white active:opacity-70"
             >
               キャンセル
