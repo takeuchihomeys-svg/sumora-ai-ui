@@ -395,7 +395,7 @@ function buildGenerationMessages(
 
   const viewingFactNote = viewingNote
     ? `\n\n【📅 内覧可能日時（確定事実）】\n${viewingNote}\n※ 内覧を提案する場合はこの日時のみ使用。[日付][時間帯]はこの内容で必ず置き換えること。`
-    : "";
+    : `\n\n【📅 内覧日時について】内覧可能日時の情報がないため、[日付][時間帯]プレースホルダーは使用禁止。内覧を提案する場合は「ご都合のよい日時をお聞かせください！！」等の表現に置き換えること。架空の日時・曜日は絶対に記載しない。`;
 
   const replyHintNote = replyHint
     ? `\n\n【🔴✨ 指定生成モード（通常の生成ルールをすべて上書き）】

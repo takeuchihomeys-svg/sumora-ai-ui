@@ -24,8 +24,16 @@ const STATUS_LABEL: Record<string, string> = {
 
 const SKIP_STATUSES = new Set(["contract", "lost", "closed_won", "closed_lost"]);
 
+// アクション別の初期化パラメータ（クライアントのAIXモーダル初期状態に引き継ぐ）
+const ACTION_PARAMS: Record<string, { check_pattern?: string; send_mode?: string }> = {
+  property_check_result: { check_pattern: "available" },
+  property_send: { send_mode: "normal" },
+  property_recommendation: { send_mode: "pickup" },
+  viewing_invite: { send_mode: "normal" },
+};
+
 export async function POST(req: NextRequest) {
-  const { conversation_id, last_aix_action } = await req.json() as { conversation_id: string; last_aix_action?: string | null };
+  const { conversation_id, last_aix_action: clientLastAixAction } = await req.json() as { conversation_id: string; last_aix_action?: string | null };
   if (!conversation_id) return NextResponse.json({ action: null, reason: "" });
 
   const [{ data: conv }, { data: messages }, { data: customer }] = await Promise.all([
@@ -34,7 +42,7 @@ export async function POST(req: NextRequest) {
       .eq("id", conversation_id)
       .single(),
     supabase.from("messages")
-      .select("sender, text, created_at")
+      .select("sender, text, image_url, created_at")
       .eq("conversation_id", conversation_id)
       .order("created_at", { ascending: false })
       .limit(10),
@@ -47,9 +55,39 @@ export async function POST(req: NextRequest) {
   if (!conv || !messages?.length) return NextResponse.json({ action: null, reason: "" });
   if (SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ action: null, reason: "" });
 
+  // クライアントが last_aix_action を持っていない場合はDB（aix_usage_logs）から補完
+  // ※古すぎるログでチェーンルールが誤発火しないよう直近24時間に限定
+  let last_aix_action: string | null = clientLastAixAction ?? null;
+  if (!last_aix_action) {
+    try {
+      const { data: latestAix } = await supabase
+        .from("aix_usage_logs")
+        .select("aix_type")
+        .eq("conversation_id", conversation_id)
+        .gte("created_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      last_aix_action = (latestAix?.aix_type as string | null) ?? null;
+    } catch {
+      // テーブル未作成等のエラーは無視してクライアント値のみ使用
+    }
+  }
+
+  // 直近の顧客画像URL（messages は created_at 降順なので find で最新が取れる）
+  const lastCustomerImageUrl = (messages ?? [])
+    .find((m) => m.sender === "customer" && (m.image_url as string))
+    ?.image_url as string | undefined;
+
+  // アクション返却時に付与する params を組み立てる
+  const buildParams = (actionType: string | null | undefined) => ({
+    ...(actionType ? (ACTION_PARAMS[actionType] ?? {}) : {}),
+    ...(lastCustomerImageUrl ? { imageUrl: lastCustomerImageUrl } : {}),
+  });
+
   // 物件確認結果（unavailable）の後にお客様が返信 → 代替物件送りへ誘導
   if (last_aix_action === "property_check_result" && conv.last_sender === "customer") {
-    return NextResponse.json({ action: "alternative_send", reason: "代替物件を送る", source: "chain_rule" });
+    return NextResponse.json({ action: "alternative_send", reason: "代替物件を送る", source: "chain_rule", params: buildParams("alternative_send") });
   }
 
   const currentStatus = (conv.status as string) ?? "hearing";
@@ -81,6 +119,7 @@ export async function POST(req: NextRequest) {
         action: top.action_type,
         reason: CHAIN_REASON[top.action_type as string] ?? `${last_aix_action}の次`,
         source: "chain_rule",
+        params: buildParams(top.action_type as string),
       });
     }
   }
@@ -92,7 +131,7 @@ export async function POST(req: NextRequest) {
       ? (Date.now() - new Date(latestMsg.created_at as string).getTime()) / (1000 * 60 * 60 * 24)
       : 0;
     if (daysSince >= 3) {
-      return NextResponse.json({ action: "property_send", reason: `${Math.floor(daysSince)}日間未返信・追客` });
+      return NextResponse.json({ action: "property_send", reason: `${Math.floor(daysSince)}日間未返信・追客`, params: buildParams("property_send") });
     }
     return NextResponse.json({ action: null, reason: "" });
   }
@@ -107,13 +146,13 @@ export async function POST(req: NextRequest) {
   const DATE_ENTRY_ESTIMATE_RE = /\d+[\/月]\d+[日]?.*入居|入居.*\d+[\/月]\d+[日]?/;
   if ((DATE_ENTRY_ESTIMATE_RE.test(lastCustomerMsg) || lastCustomerMsg.includes("入居")) &&
       (lastCustomerMsg.includes("出して") || lastCustomerMsg.includes("出してほしい") || lastCustomerMsg.includes("で出し") || lastCustomerMsg.includes("見積"))) {
-    return NextResponse.json({ action: "estimate_sheet", reason: "入居日指定・見積書再送", source: "trigger_rule" });
+    return NextResponse.json({ action: "estimate_sheet", reason: "入居日指定・見積書再送", source: "trigger_rule", params: buildParams("estimate_sheet") });
   }
 
   // 物件画像・動画が送られてきた場合は即座に「物件確認した」を提案
   const IMAGE_CHECK_STATUSES = new Set(["first_reply", "hearing", "proposing", "property_recommendation", "availability_check", "condition_hearing"]);
   if ((lastCustomerMsg.includes("[画像]") || lastCustomerMsg.includes("[動画]")) && IMAGE_CHECK_STATUSES.has(currentStatus)) {
-    return NextResponse.json({ action: "property_check_result", reason: "物件画像が送られた", source: "trigger_rule" });
+    return NextResponse.json({ action: "property_check_result", reason: "物件画像が送られた", source: "trigger_rule", params: buildParams("property_check_result") });
   }
 
   // 物件URLの送信 or 空室確認の質問 → 物件確認を提案
@@ -124,7 +163,7 @@ export async function POST(req: NextRequest) {
   const hasPropertyUrl = recentCustomerMsgs.some((t) => PROPERTY_URL_RE.test(t));
   const hasAvailabilityQuestion = AVAILABILITY_KEYWORDS.some((kw) => lastCustomerMsg.includes(kw));
   if ((hasPropertyUrl || hasAvailabilityQuestion) && IMAGE_CHECK_STATUSES.has(currentStatus)) {
-    return NextResponse.json({ action: "property_check_result", reason: "物件の空室確認依頼", source: "trigger_rule" });
+    return NextResponse.json({ action: "property_check_result", reason: "物件の空室確認依頼", source: "trigger_rule", params: buildParams("property_check_result") });
   }
 
   if (lastCustomerMsg) {
@@ -175,6 +214,7 @@ export async function POST(req: NextRequest) {
           action: top[0],
           reason: ACTION_REASON[top[0]] ?? top[1].topKeyword,
           source: "trigger_rule",
+          params: buildParams(top[0]),
         });
       }
     }
@@ -292,7 +332,8 @@ ${recentText}
     const result = JSON.parse(match[0]) as { action: string | null; reason?: string };
     // AIが "null" を文字列で返すケースを null に正規化
     const action = (!result.action || result.action === "null") ? null : result.action;
-    return NextResponse.json({ action, reason: result.reason ?? "" });
+    if (!action) return NextResponse.json({ action: null, reason: result.reason ?? "" });
+    return NextResponse.json({ action, reason: result.reason ?? "", params: buildParams(action) });
   } catch {
     return NextResponse.json({ action: null, reason: "" });
   }

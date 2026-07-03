@@ -8,6 +8,9 @@ import { supabase } from "./lib/supabase";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 
+// suggest-next-action APIが返すAIX初期化パラメータ
+type NextActionParams = { imageUrl?: string; check_pattern?: string; send_mode?: string };
+
 type Message = {
   id: string;
   sender: "customer" | "staff";
@@ -453,7 +456,7 @@ export default function Home() {
   const [showDaihyoCheckPicker, setShowDaihyoCheckPicker] = useState(false);
   const [aixInitInputText, setAixInitInputText] = useState("");
   // 管理会社に確認したピッカー: 選択した確認種別をAIXモーダルへ引き継ぐ
-  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | null>(null);
+  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | null>(null);
   const [aixInitSendMode, setAixInitSendMode] = useState<"normal" | "new_arrival" | "widen" | null>(null);
   const [showGreetingViewingPicker, setShowGreetingViewingPicker] = useState(false);
   const [greetingViewingMode, setGreetingViewingMode] = useState<"before" | "after" | null>(null);
@@ -494,7 +497,7 @@ export default function Home() {
     setPendingNextTemplateInfo(null);
     setTemplateInitialSearch("");
   };
-  const [nextActionMap, setNextActionMap] = useState<Record<string, { action: string | null; reason: string } | null>>({});
+  const [nextActionMap, setNextActionMap] = useState<Record<string, { action: string | null; reason: string; source?: string; params?: NextActionParams } | null>>({});
   const [dismissedNextActionIds, setDismissedNextActionIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedNextActionIds") || "[]") as string[]); } catch { return new Set(); }
   });
@@ -2606,9 +2609,9 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ conversation_id: convId, last_aix_action: lastAixByConvRef.current.get(convId) ?? null }),
       });
-      const data = await res.json() as { action: string | null; reason: string };
+      const data = await res.json() as { action: string | null; reason: string; source?: string; params?: NextActionParams };
       // action が null でも reason が有意義な場合（内覧確定等）はバナー表示できるよう保持
-      setNextActionMap((prev) => ({ ...prev, [convId]: (data.action || data.reason?.trim()) ? { action: data.action ?? null, reason: data.reason } : null }));
+      setNextActionMap((prev) => ({ ...prev, [convId]: (data.action || data.reason?.trim()) ? { action: data.action ?? null, reason: data.reason, source: data.source, params: data.params } : null }));
     } catch {
       setNextActionMap((prev) => ({ ...prev, [convId]: null }));
     } finally {
@@ -3399,6 +3402,28 @@ export default function Home() {
   const openAixDirect = (type: AixActionType) => {
     setAixInitialFile(null);
     setAixModalType(type);
+  };
+
+  // 次アクション提案バナー経由でAIXを開く（paramsからaixInit系stateを初期化してから開く）
+  const openAixWithParams = (type: AixActionType, params?: NextActionParams) => {
+    if (params?.check_pattern === "available" || params?.check_pattern === "vacate_date" || params?.check_pattern === "mgmt_move_in" || params?.check_pattern === "mgmt_initial_cost") {
+      setAixInitCheckPattern(params.check_pattern);
+    }
+    if (params?.send_mode === "normal" || params?.send_mode === "new_arrival" || params?.send_mode === "widen") {
+      setAixInitSendMode(params.send_mode);
+    }
+    if (params?.imageUrl) {
+      // AixModalはmount時にinitialSendImagesを読むため、画像取得完了後に開く（失敗時はそのまま開く）
+      void fetch(params.imageUrl)
+        .then((r) => r.blob())
+        .then((blob) => {
+          setAixInitialSendImages([new File([blob], "customer_image.jpg", { type: blob.type || "image/jpeg" })]);
+        })
+        .catch(() => {})
+        .finally(() => openAixDirect(type));
+      return;
+    }
+    openAixDirect(type);
   };
 
   // 物件オススメ専用ピッカー（新規/追客/新着1件を選択してからAIXを開く）
@@ -4388,7 +4413,7 @@ export default function Home() {
                           className="w-full rounded-full bg-[#FF5722] px-3 py-0.5 text-[10px] font-bold text-white active:opacity-70"
                         >なかった</button>
                         <button
-                          onClick={() => { setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id])); openAixDirect("property_check_result"); }}
+                          onClick={() => { setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id])); openAixWithParams("property_check_result", nextSugg.params); }}
                           className="w-full rounded-full bg-[#607D8B] px-3 py-0.5 text-[10px] text-white active:opacity-70"
                         >詳細</button>
                       </div>
@@ -4404,7 +4429,7 @@ export default function Home() {
                     <button
                       onClick={() => {
                         setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
-                        openAixDirect("property_send");
+                        openAixWithParams("property_send", nextSugg.params);
                       }}
                       className="shrink-0 rounded-full bg-[#1976d2] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
                     >物件送る</button>
@@ -4426,7 +4451,7 @@ export default function Home() {
                     <button
                       onClick={() => {
                         setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
-                        openAixDirect("property_send");
+                        openAixWithParams("property_send", nextSugg.params);
                       }}
                       className="shrink-0 rounded-full bg-[#1976d2] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
                     >物件送る</button>
@@ -4450,7 +4475,7 @@ export default function Home() {
                       onClick={() => {
                         const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
                         fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_accepted" }) }).catch(() => {});
-                        openAixDirect(nextSugg.action as AixActionType);
+                        openAixWithParams(nextSugg.action as AixActionType, nextSugg.params);
                       }}
                       className="shrink-0 rounded-full bg-[#1976d2] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
                     >開く</button>
@@ -5495,7 +5520,7 @@ export default function Home() {
                           setDismissedNextActionIds((prev) => new Set([...prev, id]));
                           setShowAixMenu(false);
                           setAixInspectLabel(null);
-                          openAixDirect(nextSugg.action as AixActionType);
+                          openAixWithParams(nextSugg.action as AixActionType, nextSugg.params);
                         }}
                         className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
                         style={{ background: "linear-gradient(135deg, #f59e0b, #d97706)" }}
