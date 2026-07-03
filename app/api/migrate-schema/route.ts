@@ -582,7 +582,16 @@ LANGUAGE sql STABLE AS $func$
   WHERE ae.conversation_state = ANY(filter_states) AND ae.embedding IS NOT NULL
   ORDER BY ae.embedding <=> query_embedding
   LIMIT match_count
-$func$
+$func$;
+
+-- ai_reply_examples: 会話紐付け（返信→成果の帰属追跡・ループ学習用）
+ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_ai_reply_examples_conv_id ON ai_reply_examples(conversation_id);
+
+-- conversations: 自動送信フラグ（Phase3 auto-send準備用）
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS auto_send_enabled BOOLEAN DEFAULT FALSE;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS auto_sent_at TIMESTAMPTZ;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS auto_sent_draft TEXT
 `.trim();
 
 export async function GET() {

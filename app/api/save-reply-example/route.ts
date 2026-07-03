@@ -413,6 +413,7 @@ export async function POST(req: NextRequest) {
     isStarred,
     replyAngle,
     previousStaffMessage,
+    conversationId,
   } = await req.json() as {
     conversationState: string;
     customerMessage: string;
@@ -421,6 +422,7 @@ export async function POST(req: NextRequest) {
     isStarred?: boolean;
     replyAngle?: string;
     previousStaffMessage?: string;
+    conversationId?: string;
   };
 
   if (!customerMessage || !sentReply) {
@@ -531,6 +533,7 @@ export async function POST(req: NextRequest) {
         was_ai_modified: wasAiModified,
         is_starred: isStarred ?? false,
         reply_angle: replyAngle || null,
+        conversation_id: conversationId || null,
       })
       .select("id")
       .single(),

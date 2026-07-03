@@ -225,6 +225,23 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // S-5: 費用・内覧・申込キーワード即判定（DBルール不要・Haiku流入削減）
+  if (/費用|初期費用|いくら/.test(lastCustomerMsg)) {
+    if (!shouldSuppressAction("estimate_sheet")) {
+      return NextResponse.json({ action: "estimate_sheet", reason: "費用に関する質問を検出", source: "keyword_trigger", params: buildParams("estimate_sheet"), acceptanceRate: acceptanceRateMap["estimate_sheet"] ?? null });
+    }
+  }
+  if (/内覧.*したい|内覧.*希望|内覧.*できますか|見学.*したい|内覧.*お願い/.test(lastCustomerMsg)) {
+    if (!shouldSuppressAction("viewing_invite")) {
+      return NextResponse.json({ action: "viewing_invite", reason: "内覧希望を検出", source: "keyword_trigger", params: buildParams("viewing_invite"), acceptanceRate: acceptanceRateMap["viewing_invite"] ?? null });
+    }
+  }
+  if (/申し込み.*たい|申込.*したい|申込.*希望|入居申込|申し込みたい/.test(lastCustomerMsg)) {
+    if (!shouldSuppressAction("application_push")) {
+      return NextResponse.json({ action: "application_push", reason: "申込意向を検出", source: "keyword_trigger", params: buildParams("application_push"), acceptanceRate: acceptanceRateMap["application_push"] ?? null });
+    }
+  }
+
   if (lastCustomerMsg) {
     // conversation_status が NULL（全フェーズ共通）またはこのフェーズ限定のルールのみ取得
     const { data: triggerRules } = await supabase

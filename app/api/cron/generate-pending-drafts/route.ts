@@ -97,7 +97,7 @@ export async function GET() {
           .order("created_at", { ascending: false }).limit(20),
         pcId
           ? db.from("property_customers")
-            .select("customer_name, desired_area, floor_plan, rent_min, rent_max, ai_summary, preferences, ng_points")
+            .select("customer_name, desired_area, floor_plan, rent_min, rent_max, ai_summary, preferences, ng_points, walk_minutes, move_in_time, building_age, other_requests, additional_conditions")
             .eq("id", pcId).single()
           : Promise.resolve({ data: null }),
       ]);
@@ -114,12 +114,12 @@ export async function GET() {
       const targetMessage = unreplied.map(m => m.text).join("\n");
       if (!targetMessage.trim()) { skipped++; continue; }
 
-      type PC = { customer_name?: string; desired_area?: string; floor_plan?: string; rent_min?: number; rent_max?: number; ai_summary?: string; preferences?: string; ng_points?: string } | null;
+      type PC = { customer_name?: string; desired_area?: string; floor_plan?: string; rent_min?: number; rent_max?: number; ai_summary?: string; preferences?: string; ng_points?: string; walk_minutes?: number; move_in_time?: string; building_age?: number; other_requests?: string; additional_conditions?: string } | null;
       const pcData = pc as PC;
 
       const hasStaffMsg = recentMsgs.some(m => m.sender === "staff");
       const normalizedStatus = STATUS_ALIAS[convStatus] ?? convStatus;
-      const effectiveState = !hasStaffMsg && normalizedStatus === "hearing" ? "first_reply" : convStatus;
+      const effectiveState = !hasStaffMsg && normalizedStatus === "hearing" ? "first_reply" : normalizedStatus;
 
       const customerConditions = [
         pcData?.desired_area && `エリア: ${pcData.desired_area}`,
@@ -127,6 +127,11 @@ export async function GET() {
         (pcData?.rent_min || pcData?.rent_max) && `家賃: ${pcData?.rent_min ? Math.floor(pcData.rent_min / 10000) + "万〜" : ""}${pcData?.rent_max ? Math.floor(pcData.rent_max / 10000) + "万" : ""}`,
         pcData?.preferences && `こだわり: ${pcData.preferences}`,
         pcData?.ng_points && `NG: ${pcData.ng_points}`,
+        pcData?.walk_minutes && `駅徒歩: ${pcData.walk_minutes}分以内`,
+        pcData?.move_in_time && `入居時期: ${pcData.move_in_time}`,
+        pcData?.building_age && `築年数: ${pcData.building_age}年以内`,
+        pcData?.other_requests && `その他希望: ${pcData.other_requests}`,
+        pcData?.additional_conditions && `追加条件: ${pcData.additional_conditions}`,
       ].filter(Boolean).join(", ");
 
       const draftRes = await fetch(`${baseUrl}/api/generate-reply`, {
