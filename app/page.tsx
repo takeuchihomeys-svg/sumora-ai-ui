@@ -348,7 +348,6 @@ export default function Home() {
   const [aiDraftExpanded, setAiDraftExpanded] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
-  const [viewingNote, setViewingNote] = useState("");
   const [hasMoreConversations, setHasMoreConversations] = useState(false);
   const [loadingMoreConv, setLoadingMoreConv] = useState(false);
   const [patternLoading, setPatternLoading] = useState(false);
@@ -2031,6 +2030,12 @@ export default function Home() {
         }
       }
 
+      let autoViewingNote: string | undefined;
+      try {
+        const { infoString } = await fetchCalendarSlots();
+        if (infoString) autoViewingNote = infoString;
+      } catch { /* カレンダー取得失敗は無視 */ }
+
       const res = await fetch("/api/generate-reply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2041,7 +2046,7 @@ export default function Home() {
           customerConditions: genConditions,
           customerSummary: linkedCustomerForGen?.ai_summary ?? undefined,
           replyHint: genReplyHint || undefined,
-          viewingNote: viewingNote || undefined,
+          viewingNote: autoViewingNote,
           hasViewed: selectedConversation.hasViewed ?? false,
           activeTaskTypes: (activeTasks[selectedConversation.id] ?? []).map(t => t.task_type),
           recentMessages: (() => {
@@ -5041,18 +5046,6 @@ export default function Home() {
                 </button>
               </div>
             )}
-
-            {/* 内覧可能日時入力（AI文案に事実として注入） */}
-            <div className="mb-1 flex items-center gap-1.5">
-              <span className="shrink-0 text-[10px] text-gray-400">📅</span>
-              <input
-                type="text"
-                value={viewingNote}
-                onChange={(e) => setViewingNote(e.target.value)}
-                placeholder="内覧可能日時（例: 7/5 10時、7/6 14時）"
-                className="min-w-0 flex-1 rounded border border-gray-200 bg-white px-2 py-0.5 text-[11px] text-gray-700 placeholder-gray-300 outline-none focus:border-blue-300"
-              />
-            </div>
 
             {/* アクションボタン列（入力欄の上）- overflow-x-auto で幅固定・横スクロール */}
             <div className="mb-1.5 flex items-center gap-1.5 overflow-x-auto">
