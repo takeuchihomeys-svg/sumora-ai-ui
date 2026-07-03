@@ -1204,15 +1204,18 @@ export default function AixModal({
     }
   };
 
-  const ACTION_TO_STATE: Record<AixActionType, string> = {
-    condition_hearing: "hearing",
+  // AIX専用stateを使う（save-reply-exampleのSTATE_NORMALIZEに入らないstateにする）
+  // → aix/action/route.ts の AIX_ACTION_TO_STATES と一致させ、☆実例・差分学習ルールを次回生成に届ける
+  const ACTION_TO_STATE: Record<string, string> = {
+    property_send: "property_send",
     property_recommendation: "property_recommendation",
-    property_send: "proposing",
-    viewing_invite: "viewing",
-    application_push: "application",
-    estimate_sheet: "estimate_request",
-    property_check_result: "proposing",
-    meeting_place: "viewing",
+    property_check_result: "property_check_result",
+    estimate_sheet: "estimate_sheet",
+    viewing_invite: "viewing_invite",
+    application_push: "application_push",
+    meeting_place: "meeting_place",
+    condition_hearing: "condition_hearing",
+    greeting_viewing: "greeting_viewing",
   };
 
   // save-reply-example の保存ペイロードを構築（即時送信・予約送信で共通利用）
@@ -1231,7 +1234,7 @@ export default function AixModal({
       sentReply,
       aiDraft,
       previousStaffMessage: lastStaffMsg,
-      isStarred: true,
+      isStarred: false,
     };
   };
 

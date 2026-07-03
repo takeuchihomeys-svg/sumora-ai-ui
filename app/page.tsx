@@ -6697,6 +6697,8 @@ export default function Home() {
             }
           }}
           onSelect={(text, imageFiles, label, category, secondMsg) => {
+            // テンプレート選択時はAI下書きをクリア（偽差分学習を防止）
+            aiDraftRef.current = "";
             // テンプレート内「アカウント名」→ preferredCustomerName に置換
             const resolvedText = text.replace(/アカウント名/g, preferredCustomerName);
             setReplyDraft(resolvedText);
