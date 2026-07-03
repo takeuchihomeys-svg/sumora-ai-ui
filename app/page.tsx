@@ -8841,23 +8841,37 @@ export default function Home() {
                 ].map((item) => {
                   const info = AIX_INSPECT[item.label];
                   const isOpen = aixInspectLabel === item.label;
+                  const isHighlighted =
+                    (guideToCheckResult && item.label === "物件確認した（募集状況）") ||
+                    (guideToMeetingPlace && item.label === "待ち合わせ場所") ||
+                    (guideToEstimate && item.label === "見積書送る");
+                  const highlightColor =
+                    guideToCheckResult && item.label === "物件確認した（募集状況）" ? "#4CAF50" :
+                    guideToMeetingPlace && item.label === "待ち合わせ場所" ? "#00838F" :
+                    guideToEstimate && item.label === "見積書送る" ? "#FF9800" : "";
                   return (
-                    <div key={item.label} className={`overflow-hidden rounded-xl border bg-white transition-all ${
-                        guideToCheckResult && item.label === "物件確認した（募集状況）" ? "border-2 border-[#4CAF50] shadow-[0_0_0_3px_rgba(76,175,80,0.15)]" :
-                        guideToMeetingPlace && item.label === "待ち合わせ場所" ? "border-2 border-[#00838F] shadow-[0_0_0_3px_rgba(0,131,143,0.15)]" :
-                        guideToEstimate && item.label === "見積書送る" ? "border-2 border-[#FF9800] shadow-[0_0_0_3px_rgba(255,152,0,0.15)]" :
-                        "border-[#e9edef]"
-                      }`}>
+                    <div
+                      key={item.label}
+                      className="overflow-hidden rounded-xl transition-all"
+                      style={isHighlighted ? {
+                        border: `3px solid ${highlightColor}`,
+                        boxShadow: `0 0 0 4px ${highlightColor}28, 0 2px 8px ${highlightColor}30`,
+                      } : {
+                        border: "1.5px solid #dde1e5",
+                        boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+                      }}
+                    >
                       <div className="flex items-center gap-0">
                         {/* メインボタン */}
                         <button
                           onClick={item.action}
-                          className="flex flex-1 items-center gap-0 text-left active:bg-[#f5f6f7] transition-colors"
+                          className="flex flex-1 items-center gap-0 text-left transition-all active:scale-[0.98] active:brightness-95"
+                          style={{ background: isHighlighted ? `${highlightColor}08` : "white" }}
                         >
-                          <span className="w-[5px] self-stretch flex-shrink-0 rounded-l-xl" style={{ background: item.color }} />
-                          <div className="px-4 py-7 flex-1">
+                          <span className="w-[10px] self-stretch flex-shrink-0 rounded-l-[10px]" style={{ background: item.color }} />
+                          <div className="px-4 py-5 flex-1">
                             <div className="text-[15px] font-bold text-[#111b21] leading-snug">{item.label}</div>
-                            <div className="text-[13px] text-[#546e7a] leading-normal mt-2">{item.sub}</div>
+                            <div className="text-[12px] text-[#546e7a] leading-normal mt-1.5">{item.sub}</div>
                           </div>
                         </button>
                         {/* 確認ボタン（全アイテム共通） */}
