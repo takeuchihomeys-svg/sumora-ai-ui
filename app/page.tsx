@@ -4450,6 +4450,11 @@ export default function Home() {
             const isFollowUp = nextSugg.reason?.includes("未返信");
             const isAlternativeSend = nextSugg.action === "alternative_send";
             const isPropertyCheck = nextSugg.action === "property_check_result";
+            // LX-5: 提案採択をどのボタン経由でも記録する共通ヘルパー
+            const logSuggestionAccepted = (actionType: string) => {
+              const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
+              fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: actionType, source: "suggestion_accepted", predicted_action: nextSugg.action ?? null }) }).catch(() => {});
+            };
             const dismissBtn = (
               <button
                 onClick={() => {
@@ -4475,15 +4480,15 @@ export default function Home() {
                       {dismissBtn}
                       <div className="flex flex-col items-end gap-1">
                         <button
-                          onClick={() => void handleQuickPropertyCheck("available")}
+                          onClick={() => { logSuggestionAccepted("property_check_result"); void handleQuickPropertyCheck("available"); }}
                           className="w-full rounded-full bg-[#4CAF50] px-3 py-0.5 text-[10px] font-bold text-white active:opacity-70"
                         >まだある</button>
                         <button
-                          onClick={() => void handleQuickPropertyCheck("unavailable")}
+                          onClick={() => { logSuggestionAccepted("property_check_result"); void handleQuickPropertyCheck("unavailable"); }}
                           className="w-full rounded-full bg-[#FF5722] px-3 py-0.5 text-[10px] font-bold text-white active:opacity-70"
                         >なかった</button>
                         <button
-                          onClick={() => { setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id])); openAixWithParams("property_check_result", nextSugg.params); }}
+                          onClick={() => { logSuggestionAccepted("property_check_result"); setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id])); openAixWithParams("property_check_result", nextSugg.params); }}
                           className="w-full rounded-full bg-[#607D8B] px-3 py-0.5 text-[10px] text-white active:opacity-70"
                         >詳細</button>
                       </div>
@@ -4498,6 +4503,7 @@ export default function Home() {
                     {dismissBtn}
                     <button
                       onClick={() => {
+                        logSuggestionAccepted("property_send");
                         setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
                         openAixWithParams("property_send", nextSugg.params);
                       }}
@@ -4505,6 +4511,7 @@ export default function Home() {
                     >物件送る</button>
                     <button
                       onClick={() => {
+                        logSuggestionAccepted("property_recommendation");
                         setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
                         openPropertyRecommendationPicker("direct");
                       }}
@@ -4520,6 +4527,7 @@ export default function Home() {
                     {dismissBtn}
                     <button
                       onClick={() => {
+                        logSuggestionAccepted("property_send");
                         setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
                         openAixWithParams("property_send", nextSugg.params);
                       }}
@@ -4527,6 +4535,7 @@ export default function Home() {
                     >物件送る</button>
                     <button
                       onClick={() => {
+                        logSuggestionAccepted("property_recommendation");
                         setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
                         openPropertyRecommendationPicker("direct");
                       }}
@@ -4544,7 +4553,7 @@ export default function Home() {
                     <button
                       onClick={() => {
                         const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
-                        fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_accepted" }) }).catch(() => {});
+                        fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_accepted", predicted_action: nextSugg.action ?? null }) }).catch(() => {});
                         openAixWithParams(nextSugg.action as AixActionType, nextSugg.params);
                       }}
                       className="shrink-0 rounded-full bg-[#1976d2] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
@@ -5587,6 +5596,9 @@ export default function Home() {
                       </span>
                       <button
                         onClick={() => {
+                          // LX-5: P8バナーからの採択も学習ログに記録
+                          const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
+                          fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_accepted", predicted_action: nextSugg.action ?? null }) }).catch(() => {});
                           setDismissedNextActionIds((prev) => new Set([...prev, id]));
                           setShowAixMenu(false);
                           setAixInspectLabel(null);
@@ -5598,7 +5610,12 @@ export default function Home() {
                         AIX {AIX_ACTION_LABEL[nextSugg.action] ?? nextSugg.action}
                       </button>
                       <button
-                        onClick={() => setDismissedNextActionIds((prev) => new Set([...prev, id]))}
+                        onClick={() => {
+                          // LX-5: P8バナーの✕も却下として学習ログに記録
+                          const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
+                          fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_dismissed" }) }).catch(() => {});
+                          setDismissedNextActionIds((prev) => new Set([...prev, id]));
+                        }}
                         className="shrink-0 text-amber-400 text-[11px] font-bold"
                       >✕</button>
                     </div>
@@ -6891,10 +6908,15 @@ export default function Home() {
                 .find((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
                 ?.text ?? "";
               const _prevAix = lastAixByConvRef.current.get(selectedConversation.id) ?? null;
+              // LX-4: 直前のAI予測と実際に送信したAIXを突合して source を4値化
+              const _predictedAction = nextActionMap[selectedConversation.id]?.action ?? null;
+              const _learnSource = _predictedAction
+                ? (_predictedAction === aixModalType ? "prediction_match" : "prediction_mismatch")
+                : "manual";
               fetch("/api/learn-action-patterns", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ action: "log", conversation_status: _ns, action_type: aixModalType, customer_msg_summary: _lastCustomerMsg.slice(0, 150), previous_action_type: _prevAix }),
+                body: JSON.stringify({ action: "log", conversation_status: _ns, action_type: aixModalType, customer_msg_summary: _lastCustomerMsg.slice(0, 150), previous_action_type: _prevAix, source: _learnSource, predicted_action: _predictedAction }),
               }).catch(() => {});
               lastAixByConvRef.current.set(selectedConversation.id, aixModalType);
               // AIXフロー使用ログ記録（テンプレート名・カテゴリ含む）
@@ -6907,6 +6929,7 @@ export default function Home() {
                   template_name: pendingTemplateSource?.name ?? null,
                   template_category: pendingTemplateSource?.category ?? null,
                   conversation_status: _ns,
+                  suggested_action: _predictedAction,
                 }),
               }).catch(() => {});
               setPendingTemplateSource(null);

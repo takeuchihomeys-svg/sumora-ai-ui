@@ -34,6 +34,7 @@ export async function POST(req: NextRequest) {
     action_type?: string;
     customer_msg_summary?: string;
     previous_action_type?: string;
+    predicted_action?: string;
     source?: string;
   };
 
@@ -43,13 +44,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "missing fields" });
     }
     // フロントから渡された source を尊重（提案採択学習ループ用）
-    const ALLOWED_SOURCES = new Set(["manual", "suggestion_accepted", "suggestion_dismissed"]);
+    const ALLOWED_SOURCES = new Set(["manual", "suggestion_accepted", "suggestion_dismissed", "prediction_match", "prediction_mismatch"]);
     const source = body.source && ALLOWED_SOURCES.has(body.source) ? body.source : "manual";
     await supabase.from("action_pattern_logs").insert({
       conversation_status: normalizeStatus(body.conversation_status),
       action_type: body.action_type,
       customer_msg_summary: (body.customer_msg_summary ?? "").slice(0, 150),
       previous_action_type: body.previous_action_type ?? null,
+      predicted_action: body.predicted_action ?? null,
       source,
     });
     return NextResponse.json({ ok: true });

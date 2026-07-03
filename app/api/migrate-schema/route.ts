@@ -608,7 +608,11 @@ CREATE TABLE IF NOT EXISTS ai_template_candidates (
 );
 CREATE INDEX IF NOT EXISTS idx_ai_template_candidates_action ON ai_template_candidates(action_type);
 CREATE INDEX IF NOT EXISTS idx_ai_template_candidates_pending ON ai_template_candidates(is_adopted, is_dismissed);
-ALTER TABLE ai_template_candidates DISABLE ROW LEVEL SECURITY
+ALTER TABLE ai_template_candidates DISABLE ROW LEVEL SECURITY;
+
+-- LX-4: 予測アクション追跡カラム
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS suggested_action TEXT DEFAULT NULL;
+ALTER TABLE action_pattern_logs ADD COLUMN IF NOT EXISTS predicted_action TEXT DEFAULT NULL
 `.trim();
 
 export async function GET() {
