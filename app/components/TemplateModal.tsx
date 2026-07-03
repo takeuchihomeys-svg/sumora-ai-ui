@@ -931,7 +931,7 @@ export default function TemplateModal({
               ) : (
                 <div className="flex flex-col gap-3">
                   {displayFiltered.map((tmpl) => {
-                    const idx = filtered.indexOf(tmpl);
+                    const idx = displayFiltered.indexOf(tmpl);
                     const adapted = adaptedTexts[tmpl.id];
                     const isOcrTemplate = tmpl.text.includes("[物件名]") && tmpl.text.includes("[住所]");
                     const _rawText = extractedTexts[tmpl.id] || adapted || tmpl.text;
@@ -985,7 +985,7 @@ export default function TemplateModal({
                                 >↑</button>
                                 <button
                                   onClick={() => handleReorder(idx, "down")}
-                                  disabled={idx === filtered.length - 1}
+                                  disabled={idx === displayFiltered.length - 1}
                                   className="flex h-5 w-5 items-center justify-center rounded text-[11px] text-[#bbb] hover:text-[#1565C0] disabled:opacity-20 transition"
                                   title="下へ"
                                 >↓</button>
@@ -1544,7 +1544,18 @@ export default function TemplateModal({
                           </button>
                           {adapted && onSelect && (
                             <button
-                              onClick={() => { onSelect(adapted, templateImages[tmpl.id] ?? []); onClose(); }}
+                              onClick={() => {
+                                const secondMsg = tmpl.second_msg_type && tmpl.second_msg_delay
+                                  ? { type: tmpl.second_msg_type, delay: tmpl.second_msg_delay }
+                                  : null;
+                                if (tmpl.requires_image && (templateImages[tmpl.id] ?? []).length === 0) {
+                                  alert("📎 物件資料を画像で読み込んでください");
+                                  return;
+                                }
+                                // displayText は adapted を applyVacatingDates/applySoloEntry/customerName 置換済み
+                                onSelect(displayText, isOcrTemplate ? undefined : (templateImages[tmpl.id] ?? []), tmpl.label, tmpl.category, secondMsg);
+                                onClose();
+                              }}
                               className="rounded-full px-3 py-1.5 text-[11px] font-bold text-white"
                               style={{ background: "linear-gradient(135deg, #06c755, #06a043)" }}
                             >

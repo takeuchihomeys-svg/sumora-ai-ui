@@ -152,6 +152,10 @@ const AIX_ACTION_META: Record<string, { label: string; color: string; templateCa
   application_push:        { label: "\u7533\u8fbc\u3078\uff01",      color: "#E53935", templateCategory: "\u7533\u8fbc\u3078\uff01\u3010AIX\u3011" },
   meeting_place:           { label: "\u5f85\u3061\u5408\u308f\u305b", color: "#00838F", templateCategory: "\u5185\u89a7\u3010AIX\u3011" },
 };
+// templateCategory \u2192 AixActionType \u306e\u9006\u5f15\u304d\uff08\u30c6\u30f3\u30d7\u30ec\u9078\u629e\u6642\u306e\u30a2\u30af\u30b7\u30e7\u30f3\u6c7a\u5b9a\u306b\u4f7f\u7528\uff09
+const TEMPLATE_CATEGORY_TO_ACTION: Record<string, AixActionType> = Object.fromEntries(
+  Object.entries(AIX_ACTION_META).map(([action, meta]) => [meta.templateCategory, action as AixActionType])
+) as Record<string, AixActionType>;
 
 type PropertyCustomerRow = {
   id: string;
@@ -334,6 +338,8 @@ export default function Home() {
   const [draftOrigText, setDraftOrigText] = useState(""); // 絵文字なし切替前の原文（復元用）
   const [extraDraftMessages, setExtraDraftMessages] = useState<Array<{text: string; delaySec: number}>>([]);
   const multiSendTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  // 2通目専用タイマー（extrasのclearTimeoutに巻き添えされないよう分離）
+  const secondMsgTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSecondMsgRef = useRef<{ type: string; delay: number } | null>(null);
   const [splitLoading, setSplitLoading] = useState(false);
   const [textareaHeightPx, setTextareaHeightPx] = useState(22);
@@ -2877,14 +2883,17 @@ export default function Home() {
             const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string };
             setError(`⚠️ LINE送信失敗: ${lineErr.error || lineRes.statusText}`);
           }
-          // 2通目自動送信スケジュール
+          // 2通目自動送信スケジュール（extrasClearと分離した専用refで管理）
           if (secondMsgCapture) {
             const customerName = preferredCustomerName;
             const secondText = secondMsgCapture.type === "内覧誘導"
               ? `${customerName}ご都合よろしいお日にちにご案内させて頂きます😊！！`
               : `${customerName}さんお気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
-            const t = setTimeout(() => sendMessageText(secondText), secondMsgCapture.delay * 1000);
-            multiSendTimersRef.current.push(t);
+            if (secondMsgTimerRef.current) clearTimeout(secondMsgTimerRef.current);
+            secondMsgTimerRef.current = setTimeout(() => {
+              secondMsgTimerRef.current = null;
+              sendMessageText(secondText);
+            }, secondMsgCapture.delay * 1000);
           }
         }
       } catch (lineEx) {
@@ -6536,8 +6545,10 @@ export default function Home() {
             pendingSecondMsgRef.current = templateInfo?.secondMsg ?? null;
             setShowTemplateModal(false);
             setTemplateOpenContext(null);
-            // activeAixFlowに応じて正しいAIXアクションを開く
-            const action = (activeAixFlow ?? "property_recommendation") as AixActionType;
+            // テンプレのcategoryから優先でAIXアクションを決定（残留activeAixFlowの誤ルーティング防止）
+            const categoryDerivedAction = templateInfo?.category ? TEMPLATE_CATEGORY_TO_ACTION[templateInfo.category] : undefined;
+            const validActiveFlow = activeAixFlow && Object.keys(AIX_ACTION_META).includes(activeAixFlow) ? activeAixFlow as AixActionType : undefined;
+            const action: AixActionType = categoryDerivedAction ?? validActiveFlow ?? "property_recommendation";
             if (action === "estimate_sheet" || action === "property_check_result" || action === "property_send" || action === "meeting_place") {
               openAixDirect(action);
             } else {
@@ -6685,6 +6696,9 @@ export default function Home() {
             setAixInitAppSubMode(null);
             setAixInitInputText("");
             setAixInitCheckPattern(null);
+            // 未使用の2通目設定をクリア（キャンセル時に手動送信で誤発火しないよう）
+            pendingSecondMsgRef.current = null;
+            setActiveAixFlow(null);
           }}
           onOpenTemplateFiltered={(search) => {
             setTemplateInitialSearch(search);
@@ -6694,15 +6708,20 @@ export default function Home() {
           onDelayedSend={handleDelayedSend}
           onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean }) => {
             // 2通目自動送信スケジュール（AIXフロー用・予約送信は対象外）
-            if (pendingSecondMsgRef.current && !meta?.scheduled) {
+            if (pendingSecondMsgRef.current) {
               const config = pendingSecondMsgRef.current;
-              pendingSecondMsgRef.current = null;
-              const customerName = preferredCustomerName;
-              const secondText = config.type === "内覧誘導"
-                ? `${customerName}ご都合よろしいお日にちにご案内させて頂きます😊！！`
-                : `${customerName}さんお気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
-              const t = setTimeout(() => sendMessageText(secondText), config.delay * 1000);
-              multiSendTimersRef.current.push(t);
+              pendingSecondMsgRef.current = null; // 常に消費してクリア（予約送信・キャンセルいずれの経路でも残留しない）
+              if (!meta?.scheduled) {
+                const customerName = preferredCustomerName;
+                const secondText = config.type === "内覧誘導"
+                  ? `${customerName}ご都合よろしいお日にちにご案内させて頂きます😊！！`
+                  : `${customerName}さんお気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
+                if (secondMsgTimerRef.current) clearTimeout(secondMsgTimerRef.current);
+                secondMsgTimerRef.current = setTimeout(() => {
+                  secondMsgTimerRef.current = null;
+                  sendMessageText(secondText);
+                }, config.delay * 1000);
+              }
             }
             // AIX送信をパターン学習データとして記録（半自動化ループ）
             if (aixModalType) {
