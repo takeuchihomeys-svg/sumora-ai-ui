@@ -71,6 +71,10 @@
     {
       "path": "/api/cron/auto-analyze-losers",
       "schedule": "25 16 * * *"
+    },
+    {
+      "path": "/api/cron/calc-ai-attribution",
+      "schedule": "30 16 * * *"
     }
   ]
 }

@@ -1,6 +1,25 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
+// source ごとの重み（採択の質を confidence に反映）
+// suggestion_accepted: スタッフが積極的に選択した最強シグナル
+// prediction_match:    予測が当たった良いシグナル
+// manual:              手動選択ベースライン
+// suggestion_dismissed: 却下は弱い負シグナル（0にすると除算で問題）
+// prediction_mismatch: 予測外れ
+const SOURCE_WEIGHTS: Record<string, number> = {
+  suggestion_accepted: 2.0,
+  prediction_match: 1.5,
+  manual: 1.0,
+  suggestion_dismissed: 0.2,
+  prediction_mismatch: 0.5,
+};
+const DEFAULT_WEIGHT = 1.0;
+
+function sourceWeight(source: string | null | undefined): number {
+  return SOURCE_WEIGHTS[source ?? ""] ?? DEFAULT_WEIGHT;
+}
+
 // 日本語テキストから意味のある n-gram を抽出
 function extractNgrams(text: string): string[] {
   // 記号・スペースを除去
@@ -28,35 +47,37 @@ const STOP_NGRAMS = new Set([
 ]);
 
 export async function POST() {
-  // action_pattern_logs から全データ取得
+  // action_pattern_logs から全データ取得（source で重み付け）
   const { data: logs } = await supabase
     .from("action_pattern_logs")
-    .select("action_type, customer_msg_summary")
+    .select("action_type, customer_msg_summary, source")
     .not("customer_msg_summary", "is", null)
     .limit(3000);
 
   if (!logs?.length) return NextResponse.json({ ok: true, learned: 0 });
 
-  // action_type ごとにテキストをグループ化
-  const byAction: Record<string, string[]> = {};
-  const allTexts: string[] = [];
+  // action_type ごとにテキストをグループ化（source重み付き）
+  type WeightedText = { text: string; weight: number };
+  const byAction: Record<string, WeightedText[]> = {};
+  const allTexts: WeightedText[] = [];
 
   for (const log of logs) {
     const action = log.action_type as string;
     const text = ((log.customer_msg_summary as string) ?? "").trim();
     if (!text || text.length < 3) continue;
+    const weight = sourceWeight(log.source as string | null);
     byAction[action] ??= [];
-    byAction[action].push(text);
-    allTexts.push(text);
+    byAction[action].push({ text, weight });
+    allTexts.push({ text, weight });
   }
 
-  // 全テキストの n-gram カウント（母数）
+  // 全テキストの n-gram 重み付きカウント（母数）
   const totalNgramCount: Record<string, number> = {};
-  for (const text of allTexts) {
+  for (const { text, weight } of allTexts) {
     const seen = new Set<string>();
     for (const ngram of extractNgrams(text)) {
       if (!seen.has(ngram)) {
-        totalNgramCount[ngram] = (totalNgramCount[ngram] ?? 0) + 1;
+        totalNgramCount[ngram] = (totalNgramCount[ngram] ?? 0) + weight;
         seen.add(ngram);
       }
     }
@@ -74,28 +95,29 @@ export async function POST() {
   for (const [action, texts] of Object.entries(byAction)) {
     const actionNgramCount: Record<string, number> = {};
 
-    for (const text of texts) {
+    for (const { text, weight } of texts) {
       const seen = new Set<string>();
       for (const ngram of extractNgrams(text)) {
         if (!seen.has(ngram)) {
-          actionNgramCount[ngram] = (actionNgramCount[ngram] ?? 0) + 1;
+          actionNgramCount[ngram] = (actionNgramCount[ngram] ?? 0) + weight;
           seen.add(ngram);
         }
       }
     }
 
-    for (const [ngram, count] of Object.entries(actionNgramCount)) {
+    for (const [ngram, weightedCount] of Object.entries(actionNgramCount)) {
       if (STOP_NGRAMS.has(ngram)) continue;
-      const total = totalNgramCount[ngram] ?? count;
-      const confidence = count / total;
+      const total = totalNgramCount[ngram] ?? weightedCount;
+      const confidence = weightedCount / total;
 
-      // 信頼度60%以上 & 3件以上出現 & 2文字以上
-      if (confidence >= 0.6 && count >= 3 && ngram.length >= 2) {
+      // 信頼度60%以上 & 重み付きスコア3以上 & 2文字以上
+      if (confidence >= 0.6 && weightedCount >= 3 && ngram.length >= 2) {
         rulesToUpsert.push({
           action_type: action,
           keyword: ngram,
-          occurrence_count: count,
-          total_occurrence: total,
+          // DBカラムはINTEGERのため丸め（confidence計算は丸め前の重み付き値で実施済み）
+          occurrence_count: Math.round(weightedCount),
+          total_occurrence: Math.round(total),
           confidence: Math.round(confidence * 1000) / 1000,
         });
       }
