@@ -275,6 +275,8 @@ export default function AixModal({
   const [aixScheduleSaving, setAixScheduleSaving] = useState(false);
   const aixLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const aixLongPressedRef = useRef(false);
+  // NAV-05: 最後に送信成功した画像のindex。送信失敗→「送信する」再押下時に送信済み画像をスキップして重複送信を防ぐ
+  const sentImageIndexRef = useRef<number>(-1);
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>("");
@@ -476,7 +478,7 @@ export default function AixModal({
               if (data.name) setMeetingPropertyName(data.name);
               if (data.address) setMeetingPropertyAddress(data.address);
             }
-          } catch { /* silent */ } finally { setMeetingOcrLoading(false); }
+          } catch (e) { console.error("[AixModal] 待ち合わせOCR失敗:", e); } finally { setMeetingOcrLoading(false); }
         };
         reader.readAsDataURL(initialImageFile);
       } else {
@@ -642,7 +644,7 @@ export default function AixModal({
       .then((d: { ok: boolean; phrases?: { phrase: string; usage_count: number }[] }) => {
         if (d.ok && d.phrases?.length) setTopPhrases(d.phrases);
       })
-      .catch(() => {});
+      .catch((e) => { console.error("[AixModal] フレーズ取得失敗:", e); });
   }, [showTemplateInfo, actionType, conversationStatus]);
 
   const onSelectImage = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -707,6 +709,7 @@ export default function AixModal({
     setCheckImageFiles(prev => prev.filter((_, idx) => idx !== i));
     setCheckImagePreviews(prev => prev.filter((_, idx) => idx !== i));
     setPreview("");
+    sentImageIndexRef.current = -1; // 画像リストが変わるとindexがずれるためリセット
   };
 
   // 複数物件: ref配列（hooks順序は固定なのでここで結合）
@@ -765,6 +768,7 @@ export default function AixModal({
   const removePropImage = (propIdx: number, imgIdx: number) => {
     setCheckPropImages(prev => prev.map((arr, i) => i === propIdx ? arr.filter((_, j) => j !== imgIdx) : arr));
     setCheckPropImagePreviews(prev => prev.map((arr, i) => i === propIdx ? arr.filter((_, j) => j !== imgIdx) : arr));
+    sentImageIndexRef.current = -1; // 画像リストが変わるとindexがずれるためリセット
   };
 
   const onSelectPropEstimate = (propIdx: number, e: React.ChangeEvent<HTMLInputElement>) => {
@@ -809,6 +813,7 @@ export default function AixModal({
     setSendImageFiles(prev => prev.filter((_, idx) => idx !== i));
     setSendImagePreviews(prev => prev.filter((_, idx) => idx !== i));
     setPreview("");
+    sentImageIndexRef.current = -1; // 画像リストが変わるとindexがずれるためリセット
   };
 
   // 退去予定リストから vacatingNote テキストを再生成
@@ -1262,10 +1267,10 @@ export default function AixModal({
       if (insertErr) throw insertErr;
 
       // 予約送信もパターンとして記録（実際に送る意図が確定しているため）
+      const lastCustomerMsg = (recentMessages ?? [])
+        .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]")
+        .at(-1)?.text ?? "";
       if (conversationStatus) {
-        const lastCustomerMsg = (recentMessages ?? [])
-          .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]")
-          .at(-1)?.text ?? "";
         fetch("/api/learn-action-patterns", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1277,6 +1282,19 @@ export default function AixModal({
           }),
         }).catch(() => {});
       }
+
+      // 予約送信後の学習ループ保存（fire-and-forget）
+      fetch("/api/save-reply-example", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationState: ACTION_TO_STATE[actionType] ?? "hearing",
+          conversationId,
+          customerMessage: lastCustomerMsg || `（AIX予約: ${config?.title ?? actionType}）`,
+          sentReply: textToSend,
+          isStarred: true,
+        }),
+      }).catch((e) => { console.warn("[AixModal] save-reply-example保存失敗（予約送信）:", e); });
 
       // 待ち合わせ確定後にカレンダーイベントを作成（予約送信の場合も同様）
       if (actionType === "meeting_place" && meetingDate && meetingTime && meetingPropertyName) {
@@ -1306,12 +1324,14 @@ export default function AixModal({
       setLoading(true);
 
       if (actionType === "property_send") {
-        // 物件画像を先に送信 → テキストを後で送信
-        for (const file of sendImageFiles) {
-          const url = await uploadImage(file);
+        // 物件画像を先に送信 → テキストを後で送信（送信済みindexはスキップ＝再押下時の重複送信防止）
+        for (let imgIdx = sentImageIndexRef.current + 1; imgIdx < sendImageFiles.length; imgIdx++) {
+          const url = await uploadImage(sendImageFiles[imgIdx]);
           await sendAsAix("", url);
+          sentImageIndexRef.current = imgIdx;
         }
         await sendAsAix(preview);
+        sentImageIndexRef.current = -1;
       } else if (actionType === "property_check_result") {
         if (checkPattern === "interior_photo") {
           // 室内写真: 写真→テキストの順で送信（URLの場合はテキストのみ）
@@ -1335,21 +1355,30 @@ export default function AixModal({
               return;
             }
           }
-          // 物件ごとに: 資料画像 → 見積書画像 の順で送信
+          // 物件ごとに: 資料画像 → 見積書画像 の順で送信（送信済みindexはスキップ＝再押下時の重複送信防止）
+          let flatImgIdx = -1;
           for (let pi = 0; pi < checkPropertyCount; pi++) {
             for (const file of (checkPropImages[pi] ?? [])) {
+              flatImgIdx++;
+              if (flatImgIdx <= sentImageIndexRef.current) continue;
               const url = await uploadImage(file, pi);
               await sendAsAix("", url);
+              sentImageIndexRef.current = flatImgIdx;
             }
             const ef = checkPropEstimates[pi];
             if (ef) {
-              const estUrl = await uploadImage(ef);
-              await sendAsAix("", estUrl);
+              flatImgIdx++;
+              if (flatImgIdx > sentImageIndexRef.current) {
+                const estUrl = await uploadImage(ef);
+                await sendAsAix("", estUrl);
+                sentImageIndexRef.current = flatImgIdx;
+              }
             }
           }
           // 見積書テキスト先送り → モーダルを閉じてバックグラウンドで30秒後に本文送信
           if (shouldSendEstimateFirst) {
             await sendAsAix(estimateTextReady);
+            sentImageIndexRef.current = -1; // 画像は全件送信済みなのでリセット
             setEstimateTextReady("");
             // 送信関数・本文をクロージャでキャプチャ（宛先が変わっても元の会話に送られる）
             const capturedOnSend = onSend;
@@ -1367,17 +1396,21 @@ export default function AixModal({
             return;
           }
           await sendAsAix(preview);
+          sentImageIndexRef.current = -1;
         } else {
-          // alternative / その他: 物件資料画像 → 見積書 → 本文
-          for (const file of checkImageFiles) {
-            const url = await uploadImage(file);
+          // alternative / その他: 物件資料画像 → 見積書 → 本文（送信済みindexはスキップ＝再押下時の重複送信防止）
+          for (let imgIdx = sentImageIndexRef.current + 1; imgIdx < checkImageFiles.length; imgIdx++) {
+            const url = await uploadImage(checkImageFiles[imgIdx]);
             await sendAsAix("", url);
+            sentImageIndexRef.current = imgIdx;
           }
-          if (checkEstimateFile) {
+          if (checkEstimateFile && sentImageIndexRef.current < checkImageFiles.length) {
             const estUrl = await uploadImage(checkEstimateFile);
             await sendAsAix("", estUrl);
+            sentImageIndexRef.current = checkImageFiles.length;
           }
           await sendAsAix(preview);
+          sentImageIndexRef.current = -1;
         }
       } else {
         // 物件オススメは物件資料画像をLINEに添付
@@ -1397,12 +1430,14 @@ export default function AixModal({
           if (propertyImageUrl.trim()) await sendAsAix(`（室内イメージ）\n${propertyImageUrl.trim()}`);
           await sendAsAix(preview);
         } else if (actionType === "estimate_sheet" && estimateMultiMode) {
-          // 複数件: 見積書を順に送ってから合算テキスト
-          for (const f of estimateMultiFiles) {
-            const url = await uploadImage(f);
+          // 複数件: 見積書を順に送ってから合算テキスト（送信済みindexはスキップ＝再押下時の重複送信防止）
+          for (let imgIdx = sentImageIndexRef.current + 1; imgIdx < estimateMultiFiles.length; imgIdx++) {
+            const url = await uploadImage(estimateMultiFiles[imgIdx]);
             await sendAsAix("", url);
+            sentImageIndexRef.current = imgIdx;
           }
           await sendAsAix(preview);
+          sentImageIndexRef.current = -1;
         } else if (actionType === "estimate_sheet") {
           // 送信順: ①物件資料（任意）→ ②見積書 → ③テキスト
           if (estimatePropertyFile) {
@@ -1440,7 +1475,7 @@ export default function AixModal({
           previousStaffMessage: lastStaffMsg,
           isStarred: true,
         }),
-      }).catch(() => {});
+      }).catch((e) => { console.warn("[AixModal] save-reply-example保存失敗:", e); });
 
       // テンプレートフレーズ学習ログ
       if (preview.trim()) {
@@ -2936,7 +2971,7 @@ export default function AixModal({
                           });
                           const data = await res.json() as { ok: boolean; name?: string };
                           if (data.ok && data.name) setViewingVacancyName(data.name);
-                        } catch { /* silent */ } finally { setViewingVacancyOcrLoading(false); }
+                        } catch (e) { console.error("[AixModal] 物件資料OCR失敗:", e); } finally { setViewingVacancyOcrLoading(false); }
                       };
                       reader.readAsDataURL(f);
                     }}
@@ -3098,7 +3133,7 @@ export default function AixModal({
                           if (data.name) setMeetingPropertyName(data.name);
                           if (data.address) setMeetingPropertyAddress(data.address);
                         }
-                      } catch { /* silent */ } finally { setMeetingOcrLoading(false); }
+                      } catch (e) { console.error("[AixModal] 待ち合わせOCR失敗:", e); } finally { setMeetingOcrLoading(false); }
                     };
                     reader.readAsDataURL(f);
                   }}

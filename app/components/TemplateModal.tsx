@@ -230,6 +230,7 @@ export default function TemplateModal({
   const [templates, setTemplates] = useState<Template[]>(initialTemplates ?? []);
   // キャッシュがあれば即時表示、なければローディング表示
   const [loading, setLoading] = useState(!initialTemplates || initialTemplates.length === 0);
+  const [templateLoadError, setTemplateLoadError] = useState<string | null>(null);
   const [category, setCategory] = useState(initialCategory || "全般");
   const [showAddForm, setShowAddForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState(initialSearch ?? "");
@@ -349,6 +350,7 @@ export default function TemplateModal({
 
   const loadTemplates = async () => {
     setLoading(true);
+    setTemplateLoadError(null);
     try {
       const res = await fetch("/api/templates");
       if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
@@ -358,7 +360,12 @@ export default function TemplateModal({
         onCacheUpdate?.(data.templates); // 親のキャッシュを更新（次回オープン時に即時表示）
         const cats = Array.from(new Set(data.templates.map((t) => t.category)));
         if (cats.length > 0 && !cats.includes(category)) setCategory(cats[0]);
+      } else {
+        throw new Error("API returned ok: false");
       }
+    } catch (e) {
+      console.error("[TemplateModal] テンプレート取得失敗:", e);
+      setTemplateLoadError("テンプレートの読み込みに失敗しました");
     } finally {
       setLoading(false);
     }
@@ -957,6 +964,16 @@ export default function TemplateModal({
               )}
               {loading ? (
                 <div className="py-8 text-center text-[13px] text-[#aaa]">読み込み中...</div>
+              ) : templateLoadError && templates.length === 0 ? (
+                <div className="flex flex-col items-center gap-3 py-8 text-center">
+                  <p className="text-sm text-red-500">{templateLoadError}</p>
+                  <button
+                    onClick={() => { setTemplateLoadError(null); void loadTemplates(); }}
+                    className="rounded-lg bg-gray-100 px-4 py-2 text-sm text-gray-700 hover:bg-gray-200"
+                  >
+                    再試行
+                  </button>
+                </div>
               ) : displayFiltered.length === 0 ? (
                 <div className="py-8 text-center">
                   <div className="text-[13px] text-[#aaa] mb-3">このカテゴリにテンプレートがありません</div>

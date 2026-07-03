@@ -37,23 +37,8 @@ export async function POST(req: NextRequest) {
   const { conversation_id, last_aix_action: clientLastAixAction, available } = await req.json() as { conversation_id: string; last_aix_action?: string | null; available?: boolean | null };
   if (!conversation_id) return NextResponse.json({ action: null, reason: "" });
 
-  // ---- 採択率フェッチ（毎日 update-action-confidence cron が更新する値を参照）----
-  const { data: acceptanceRows } = await supabase
-    .from("trigger_action_rules")
-    .select("action_type, confidence")
-    .eq("keyword", "SUGGESTION_ACCEPT_RATE");
-  const acceptanceRateMap = Object.fromEntries(
-    (acceptanceRows || []).map((r) => [r.action_type as string, r.confidence as number])
-  );
-
-  // 採択率が 30% 未満のアクションは抑制する
-  function shouldSuppressAction(actionType: string | null | undefined): boolean {
-    if (!actionType) return false;
-    const rate = acceptanceRateMap[actionType];
-    return rate !== undefined && rate < 0.3;
-  }
-
-  const [{ data: conv }, { data: messages }, { data: customer }] = await Promise.all([
+  // 会話・メッセージ・顧客・採択率（毎日 update-action-confidence cron が更新）を並列取得
+  const [{ data: conv }, { data: messages }, { data: customer }, { data: acceptanceRows }] = await Promise.all([
     supabase.from("conversations")
       .select("status, customer_name, last_sender")
       .eq("id", conversation_id)
@@ -67,7 +52,21 @@ export async function POST(req: NextRequest) {
       .select("conditions, ai_summary")
       .eq("conversation_id", conversation_id)
       .maybeSingle(),
+    supabase.from("trigger_action_rules")
+      .select("action_type, confidence")
+      .eq("keyword", "SUGGESTION_ACCEPT_RATE"),
   ]);
+
+  const acceptanceRateMap = Object.fromEntries(
+    (acceptanceRows || []).map((r) => [r.action_type as string, r.confidence as number])
+  );
+
+  // 採択率が 30% 未満のアクションは抑制する
+  function shouldSuppressAction(actionType: string | null | undefined): boolean {
+    if (!actionType) return false;
+    const rate = acceptanceRateMap[actionType];
+    return rate !== undefined && rate < 0.3;
+  }
 
   if (!conv || !messages?.length) return NextResponse.json({ action: null, reason: "" });
   if (SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ action: null, reason: "" });
@@ -86,8 +85,9 @@ export async function POST(req: NextRequest) {
         .limit(1)
         .maybeSingle();
       last_aix_action = (latestAix?.aix_type as string | null) ?? null;
-    } catch {
-      // テーブル未作成等のエラーは無視してクライアント値のみ使用
+    } catch (e) {
+      // テーブル未作成等のエラーは無視してクライアント値のみ使用（ログだけ残す）
+      console.error("[suggest-next-action] aix_usage_logs 補完に失敗:", e);
     }
   }
 
@@ -126,30 +126,22 @@ export async function POST(req: NextRequest) {
   // ---- AIXチェーンルール: 直前のAIXアクションから次を提案 ----
   // ※ staff early return より前に置くことで送信直後にも発火する（Fable5 S-1修正）
   if (last_aix_action) {
-    // Step A: フェーズ特定ルール優先 ("AFTER:{action}|{phase}")
+    // フェーズ特定ルール ("AFTER:{action}|{phase}") と汎用ルール ("AFTER:{action}") を1クエリで取得し、コードで振り分け
     const phaseSpecificKeyword = `AFTER:${last_aix_action}|${currentStatus}`;
-    const { data: phaseChainRules } = await supabase
+    const genericKeyword = `AFTER:${last_aix_action}`;
+
+    const { data: allChainRules } = await supabase
       .from("trigger_action_rules")
-      .select("action_type, confidence, occurrence_count")
-      .eq("keyword", phaseSpecificKeyword)
+      .select("action_type, confidence, occurrence_count, keyword")
+      .in("keyword", [phaseSpecificKeyword, genericKeyword])
       .gte("confidence", 0.35)
       .gte("occurrence_count", 2)
       .order("confidence", { ascending: false })
-      .limit(3);
+      .limit(6);
 
-    // Step B: フェーズ特定ルールが見つからない場合は汎用ルールにフォールバック
-    let chainRules = phaseChainRules?.length ? phaseChainRules : null;
-    if (!chainRules) {
-      const { data: genericChainRules } = await supabase
-        .from("trigger_action_rules")
-        .select("action_type, confidence, occurrence_count")
-        .eq("keyword", `AFTER:${last_aix_action}`)
-        .gte("confidence", 0.35)
-        .gte("occurrence_count", 2)
-        .order("confidence", { ascending: false })
-        .limit(3);
-      chainRules = genericChainRules ?? null;
-    }
+    // フェーズ特定を優先、なければ汎用にフォールバック
+    const phaseChain = (allChainRules || []).filter((r) => r.keyword === phaseSpecificKeyword);
+    const chainRules = phaseChain.length ? phaseChain : (allChainRules || []).filter((r) => r.keyword === genericKeyword);
 
     if (chainRules?.length) {
       const CHAIN_REASON: Record<string, string> = {
@@ -231,14 +223,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ action: "estimate_sheet", reason: "費用に関する質問を検出", source: "keyword_trigger", params: buildParams("estimate_sheet"), acceptanceRate: acceptanceRateMap["estimate_sheet"] ?? null });
     }
   }
-  if (/内覧.*したい|内覧.*希望|内覧.*できますか|見学.*したい|内覧.*お願い/.test(lastCustomerMsg)) {
+  // 内覧: 「内見」（内覧より多い表記）「見学」「現地確認」もカバー
+  if (/内覧|内見|見学.*したい|見学.*希望|見学.*できますか|現地.*確認|現地.*見た/.test(lastCustomerMsg)) {
     if (!shouldSuppressAction("viewing_invite")) {
       return NextResponse.json({ action: "viewing_invite", reason: "内覧希望を検出", source: "keyword_trigger", params: buildParams("viewing_invite"), acceptanceRate: acceptanceRateMap["viewing_invite"] ?? null });
     }
   }
-  if (/申し込み.*たい|申込.*したい|申込.*希望|入居申込|申し込みたい/.test(lastCustomerMsg)) {
+  // 申込: 「申込みたい」（送り仮名違い）「決めます」「決めたい」「こちらで申」もカバー
+  if (/申し込み.*たい|申込.*したい|申込.*希望|申込みたい|入居申込|決めます|決めたい|こちらで申/.test(lastCustomerMsg)) {
     if (!shouldSuppressAction("application_push")) {
       return NextResponse.json({ action: "application_push", reason: "申込意向を検出", source: "keyword_trigger", params: buildParams("application_push"), acceptanceRate: acceptanceRateMap["application_push"] ?? null });
+    }
+  }
+  // 日程確定 → meeting_place（「◯曜◯時」「◯月◯日」「AM/PM/午前/午後」+ 確定系の言い回し）
+  if (/[月火水木金土日]曜.*[0-9０-９時]|[0-9０-９]+月[0-9０-９]+日|AM|PM|午前|午後/.test(lastCustomerMsg) &&
+      /いかがでしょう|で大丈夫|でお願い|伺います|行きます|確定|来られ|来れ/.test(lastCustomerMsg)) {
+    if (!shouldSuppressAction("meeting_place")) {
+      return NextResponse.json({ action: "meeting_place", reason: "日程確定の意向を検出", source: "keyword_trigger", params: buildParams("meeting_place"), acceptanceRate: acceptanceRateMap["meeting_place"] ?? null });
     }
   }
 
@@ -298,23 +299,21 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ---- UIで管理しているAIXロジックをDBから取得 ----
-  const { data: aixLogicRows } = await supabase
-    .from("ai_prompts")
-    .select("key, content")
-    .like("key", "aix_logic_%");
+  // ---- UIで管理しているAIXロジック＋過去パターンデータを並列取得 ----
+  const [{ data: aixLogicRows }, { data: patternRows }] = await Promise.all([
+    supabase.from("ai_prompts")
+      .select("key, content")
+      .like("key", "aix_logic_%"),
+    supabase.from("action_pattern_logs")
+      .select("action_type, customer_msg_summary")
+      .eq("conversation_status", currentStatus)
+      .order("created_at", { ascending: false })
+      .limit(60),
+  ]);
 
   const aixLogicSection = (aixLogicRows ?? [])
     .map((r) => (r.content as string))
     .join("\n\n---\n\n");
-
-  // ---- 過去パターンデータを取得 ----
-  const { data: patternRows } = await supabase
-    .from("action_pattern_logs")
-    .select("action_type, customer_msg_summary")
-    .eq("conversation_status", currentStatus)
-    .order("created_at", { ascending: false })
-    .limit(60);
 
   // アクション頻度集計
   const freq: Record<string, number> = {};
@@ -414,7 +413,8 @@ ${recentText}
     // Haiku が提案したアクションも採択率が 30% 未満なら抑制
     if (shouldSuppressAction(action)) return NextResponse.json({ action: null, reason: "" });
     return NextResponse.json({ action, reason: result.reason ?? "", params: buildParams(action), acceptanceRate: acceptanceRateMap[action] ?? null });
-  } catch {
+  } catch (e) {
+    console.error("[suggest-next-action] Haiku 呼び出しに失敗:", e);
     return NextResponse.json({ action: null, reason: "" });
   }
 }
