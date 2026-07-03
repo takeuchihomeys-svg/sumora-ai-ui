@@ -862,6 +862,11 @@ export default function Home() {
               const convId = String(upd.id);
               setNextActionMap((prev) => { const n = { ...prev }; delete n[convId]; return n; });
               setDismissedNextActionIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
+              // 選択中の会話は useEffect([selectedId]) が再実行されないため、削除だけだとバナーが消えたままになる → 即再フェッチ
+              if (selectedIdRef.current === convId) {
+                nextActionFetchingRef.current.delete(convId);
+                void fetchNextAction(convId);
+              }
             }
           }
           fetchConversationsAndMessages(true);
@@ -2919,6 +2924,9 @@ export default function Home() {
       // 返信後はAI次アクション提案をリセット（状況が変わったため）
       setNextActionMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; });
       setDismissedNextActionIds((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
+      // 同一会話を開いたままだと useEffect([selectedId]) が再実行されないため即再フェッチ（sendMessageText と同パターン）
+      nextActionFetchingRef.current.delete(selectedConversation.id);
+      void fetchNextAction(selectedConversation.id);
 
       // 初期費用訴求メッセージ送信後 → 追客テンプレートバナーを表示
       const SHOKI_KEYWORDS = ["初期費用", "敷金礼金なし", "敷金・礼金なし", "敷礼なし", "費用を抑え", "費用が抑え"];
@@ -6734,7 +6742,11 @@ export default function Home() {
             templateOpenContext === "apply_step1" || templateOpenContext === "apply_step2" ? "申込・審査" :
             suggest2ndHandMap[selectedConversation.id] ? "物件確認した【AIX】" :
             activeAixFlow ? AIX_ACTION_META[activeAixFlow]?.templateCategory :
-            undefined
+            (() => {
+              // AI提案（nextActionMap）があれば推薦カテゴリで開く（suggestedCategoryバッジと同じ導出）
+              const action = nextActionMap[selectedConversation.id]?.action;
+              return action ? (AIX_ACTION_META[action]?.templateCategory ?? undefined) : undefined;
+            })()
           }
           highlightKeyword={
             templateOpenContext === "next_numbered" ? (

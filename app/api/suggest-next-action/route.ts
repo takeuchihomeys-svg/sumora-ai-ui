@@ -214,9 +214,9 @@ export async function POST(req: NextRequest) {
 
   // 物件URLの送信 or 空室確認の質問 → 物件確認を提案
   const PROPERTY_URL_RE = /athome\.co\.jp|suumo\.jp|homes\.co\.jp|lifull\.com|chintai\.net|reins\.|realestate\.|rakumachi\.jp/i;
-  const AVAILABILITY_KEYWORDS = ["まだありますか", "まだありますか", "空いていますか", "空いてますか", "空いてますか", "空室ですか", "空室確認", "空き確認", "まだ空い", "まだ残って", "空室はありますか", "こちらの物件"];
-  // 直近3件の顧客メッセージを確認
-  const recentCustomerMsgs = [...messages].reverse().filter((m) => m.sender === "customer").slice(0, 3).map((m) => (m.text as string) ?? "");
+  const AVAILABILITY_KEYWORDS = ["まだありますか", "空いていますか", "空いてますか", "空室ですか", "空室確認", "空き確認", "まだ空い", "まだ残って", "空室はありますか", "こちらの物件"];
+  // 直近3件の顧客メッセージを確認（昇順化後の末尾3件＝最新3件）
+  const recentCustomerMsgs = [...messages].reverse().filter((m) => m.sender === "customer").slice(-3).map((m) => (m.text as string) ?? "");
   const hasPropertyUrl = recentCustomerMsgs.some((t) => PROPERTY_URL_RE.test(t));
   const hasAvailabilityQuestion = AVAILABILITY_KEYWORDS.some((kw) => lastCustomerMsg.includes(kw));
   if ((hasPropertyUrl || hasAvailabilityQuestion) && IMAGE_CHECK_STATUSES.has(currentStatus)) {

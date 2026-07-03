@@ -451,7 +451,8 @@ export default function AixModal({
     setPreview("");
     setAixNotice("");
   }, [conversationId]);
-  useEffect(() => { setAppSubMode(null); setPreview(""); }, [actionType]);
+  // initialAppSubMode（picker/バナー経由の指定）をマウント時に潰さないよう、初期値を尊重してリセット
+  useEffect(() => { setAppSubMode(initialAppSubMode ?? null); setPreview(""); }, [actionType, initialAppSubMode]);
 
   useEffect(() => {
     if (initialImageFile) {
