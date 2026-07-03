@@ -136,6 +136,29 @@ function getJSTDateString(): string {
 // GENERATION_SYSTEM / SMORA_QUICK_PATTERNS / REAL_ESTATE_RULES は @/app/lib/line-reply-prompts からインポート済み
 
 
+// 顧客の構造化条件（property_customersのフィールド）— 未取得項目の計算に使う
+type CustomerStructured = {
+  move_in_time?: string | null;
+  rent_max?: number | null;
+  desired_area?: string | null;
+  walk_minutes?: number | null;
+  floor_plan?: string | null;
+  initial_cost_limit?: number | null;
+  building_age?: number | null;
+  other_requests?: string | null;
+};
+
+const CONDITION_LABELS: Record<string, string> = {
+  move_in_time: "①入居時期",
+  rent_max: "②ご希望家賃",
+  desired_area: "③エリア・沿線",
+  walk_minutes: "④駅徒歩",
+  floor_plan: "⑤間取り",
+  initial_cost_limit: "⑥初期費用",
+  building_age: "⑦築年数",
+  other_requests: "⑧その他こだわり",
+};
+
 type PromptOverrides = {
   generationSystem?: string;
   quickPatterns?: string;
@@ -163,7 +186,8 @@ function buildGenerationMessages(
   replyHint = "",
   alreadyGreetedToday?: boolean,
   isFirstEverReplyOverride?: boolean,
-  viewingNote = ""
+  viewingNote = "",
+  customerStructured?: CustomerStructured
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   const jstDay = getJSTDayOfWeek();
@@ -214,6 +238,21 @@ function buildGenerationMessages(
     : "";
   const summaryNote = customerSummary
     ? `\n【このお客さんのAI要約 — 今の状況・次の必須対応を最優先で文案に反映すること。人物像・文体も合わせること】\n${customerSummary}`
+    : "";
+
+  // 構造化条件から未取得項目を計算（hearing系フェーズのみプロンプト注入）
+  const missingItems = customerStructured
+    ? Object.entries(CONDITION_LABELS)
+        .filter(([key]) => !customerStructured[key as keyof CustomerStructured])
+        .map(([, label]) => label)
+    : [];
+  const confirmedItems = customerStructured
+    ? Object.entries(CONDITION_LABELS)
+        .filter(([key]) => !!customerStructured[key as keyof CustomerStructured])
+        .map(([, label]) => label)
+    : [];
+  const missingConditionsNote = (missingItems.length > 0 && (state === "hearing" || state === "first_reply" || state === "condition_hearing"))
+    ? `\n【📋 条件ヒアリング状況】\n確認済み: ${confirmedItems.length > 0 ? confirmedItems.join(" / ") : "なし"}\n未確認: ${missingItems.join(" / ")}\n※ 確認済み項目は絶対に聞き返さない。未確認項目を自然な流れで1〜2個まで聞く。`
     : "";
 
   // ① ai_summaryの「★決まるパターン」行を抽出して最優先注入
@@ -416,7 +455,7 @@ function buildGenerationMessages(
   })();
 
   const prompt = `
-${closingNote}${nameNote}${conditionsNote}${summaryNote}${dateNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}
+${closingNote}${nameNote}${conditionsNote}${missingConditionsNote}${summaryNote}${dateNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${approachNote}${staffContextNote}
 
@@ -836,6 +875,7 @@ export async function POST(req: NextRequest) {
   let message: string, state: string, customerName: string, recentMessages: RecentMessage[], customerConditions: string, customerSummary: string, replyHint: string;
   let screenshotBase64: string | undefined, screenshotMediaType: string | undefined;
   let viewingNote = "";
+  let customerStructured: CustomerStructured | undefined;
   try {
     const body = await req.json() as {
       message: string;
@@ -844,6 +884,7 @@ export async function POST(req: NextRequest) {
       recentMessages?: RecentMessage[];
       customerConditions?: string;
       customerSummary?: string;
+      customerStructured?: CustomerStructured;
       replyHint?: string;
       viewingNote?: string;
       screenshotBase64?: string;
@@ -859,6 +900,7 @@ export async function POST(req: NextRequest) {
     customerName = extractPreferredName(recentMessages, customerName);
     customerConditions = body.customerConditions || "";
     customerSummary = body.customerSummary || "";
+    customerStructured = body.customerStructured;
     replyHint = body.replyHint || "";
     // アクティブタスク状態をreplyHintに反映（動的コンテキスト注入）
     if (body.activeTaskTypes?.includes("property_check")) {
@@ -1061,9 +1103,20 @@ export async function POST(req: NextRequest) {
       message, customerName, history, currentState,
       analysis, knowledge, examples, phrases, customerConditions, resolvedSummary,
       promptOverrides, isFollowUp, replyHint, alreadyGreetedToday,
-      isFirstEverReplyFromMsgs, viewingNote
+      isFirstEverReplyFromMsgs, viewingNote, customerStructured
     );
     const genStream = generationModel.stream(messages);
+
+    // B-2: 品質判定フラグ（自動返信ハードゲート用）
+    // is_applying_docs は静的に判定可能なのでここで計算。
+    // has_placeholder / is_truncated はストリーミングをバッファしないため、
+    // 生成完了後にクライアント側で判定する（サーバーでは常に false を返す）。
+    const qualityFlags = {
+      has_placeholder: false,  // [日付]等が残っているか（生成後にクライアントで判定）
+      is_truncated: false,     // finish_reason=lengthか（生成後にクライアントで判定）
+      is_applying_docs: currentState === "applying" && /審査|書類|申込書|保証人/.test(message),
+      auto_ok: false,          // 全チェックfalseなら送信OK候補（クライアントで確定）
+    };
 
     const encoder = new TextEncoder();
     return new Response(
@@ -1071,7 +1124,7 @@ export async function POST(req: NextRequest) {
         async start(controller) {
           // 1行目: メタデータJSON（フロントエンドがok確認に使用）
           controller.enqueue(encoder.encode(
-            JSON.stringify({ ok: true, detected_intent: detectedIntent }) + "\n"
+            JSON.stringify({ ok: true, detected_intent: detectedIntent, quality: qualityFlags }) + "\n"
           ));
           try {
             if (shouldPrependGreeting) {

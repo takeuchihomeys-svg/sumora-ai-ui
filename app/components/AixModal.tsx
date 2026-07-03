@@ -46,7 +46,7 @@ interface AixModalProps {
   initialEstimateMulti?: boolean;
   initialAppSubMode?: "push" | "confirm" | null;
   initialInputText?: string;
-  initialCheckPattern?: "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost";
+  initialCheckPattern?: "available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost";
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
   onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean }) => void;

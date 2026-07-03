@@ -180,8 +180,21 @@ type PropertyCustomerRow = {
   ng_points?: string | null;
   other_requests?: string | null;
   building_age?: number | null;
+  initial_cost_limit?: number | null;
   additional_conditions?: string | null;
   ai_summary?: string | null;
+};
+
+// generate-reply に渡す構造化条件（未取得項目の計算用）
+type CustomerStructuredForGen = {
+  move_in_time: string | null;
+  rent_max: number | null;
+  desired_area: string | null;
+  walk_minutes: number | null;
+  floor_plan: string | null;
+  initial_cost_limit: number | null;
+  building_age: number | null;
+  other_requests: string | null;
 };
 
 // 物件出しステータス（売上サポのStatusと対応）
@@ -342,6 +355,7 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState<string>("");
   const [replyDraft, setReplyDraft] = useState("");
   const [draftIsAi, setDraftIsAi] = useState(false); // AI生成の下書きがテキストエリアに入っているか
+  const [replyQuality, setReplyQuality] = useState<{ auto_ok: boolean; is_applying_docs: boolean } | null>(null); // B-2: AI文案の品質判定バッジ
   const [draftNoEmoji, setDraftNoEmoji] = useState(false); // 絵文字なしモード
   const [draftOrigText, setDraftOrigText] = useState(""); // 絵文字なし切替前の原文（復元用）
   const [extraDraftMessages, setExtraDraftMessages] = useState<Array<{text: string; delaySec: number}>>([]);
@@ -621,7 +635,7 @@ export default function Home() {
   const [linkSearchQuery, setLinkSearchQuery] = useState("");
   const [propertyCustomers, setPropertyCustomers] = useState<Array<{ id: string; customer_name: string; desired_area?: string | null; floor_plan?: string | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; other_requests?: string | null; rent_min?: number | null; building_age?: number | null }>>([]);
   // convId → linked property customer（条件テキスト含む）
-  const [linkedCustomerMap, setLinkedCustomerMap] = useState<Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null; additional_conditions?: string | null }>>({});
+  const [linkedCustomerMap, setLinkedCustomerMap] = useState<Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null; additional_conditions?: string | null; structured?: CustomerStructuredForGen }>>({});
   const [reflectLoadingChat, setReflectLoadingChat] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1426,10 +1440,10 @@ export default function Home() {
     if (propCustomerIds.length > 0) {
       const { data: pcData } = await supabase
         .from("property_customers")
-        .select("id,customer_name,status,last_property_sent_at,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age,additional_conditions,ai_summary")
+        .select("id,customer_name,status,last_property_sent_at,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age,initial_cost_limit,additional_conditions,ai_summary")
         .in("id", propCustomerIds);
       if (pcData) {
-        const map: Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null; additional_conditions?: string | null }> = {};
+        const map: Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null; additional_conditions?: string | null; structured?: CustomerStructuredForGen }> = {};
         for (const conv of formatted) {
           if (!conv.propertyCustomerId) continue;
           const pc = (pcData as PropertyCustomerRow[]).find((d) => d.id === conv.propertyCustomerId);
@@ -1442,6 +1456,16 @@ export default function Home() {
               lastPropertySentAt: pc.last_property_sent_at || null,
               ai_summary: pc.ai_summary || null,
               additional_conditions: pc.additional_conditions ?? null,
+              structured: {
+                move_in_time: pc.move_in_time ?? null,
+                rent_max: pc.rent_max ?? null,
+                desired_area: pc.desired_area ?? null,
+                walk_minutes: pc.walk_minutes ?? null,
+                floor_plan: pc.floor_plan ?? null,
+                initial_cost_limit: pc.initial_cost_limit ?? null,
+                building_age: pc.building_age ?? null,
+                other_requests: pc.other_requests ?? pc.preferences ?? null,
+              },
             };
           }
         }
@@ -1993,6 +2017,7 @@ export default function Home() {
       setGenerating(true);
       setError("");
       setReplyDraft("");
+      setReplyQuality(null);
 
       // スタッフ返信ゼロ & 初回対応中 → first_reply としてAPIに渡す（初回挨拶文を生成するため）
       const hasAnyStaffMsg = selectedConversation.messages.some((m) => m.sender === "staff");
@@ -2053,6 +2078,7 @@ export default function Home() {
           customerName: selectedConversation.customerName,
           customerConditions: genConditions,
           customerSummary: linkedCustomerForGen?.ai_summary ?? undefined,
+          customerStructured: linkedCustomerForGen?.structured ?? undefined,
           replyHint: genReplyHint || undefined,
           viewingNote: autoViewingNote,
           hasViewed: selectedConversation.hasViewed ?? false,
@@ -2081,6 +2107,7 @@ export default function Home() {
       let buffer = "";
       let metaDone = false;
       let fullText = "";
+      let qualityFromMeta: { is_applying_docs?: boolean } | undefined;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -2093,8 +2120,9 @@ export default function Home() {
           const nl = buffer.indexOf("\n");
           if (nl >= 0) {
             const metaLine = buffer.slice(0, nl);
-            const meta = JSON.parse(metaLine) as { ok: boolean; error?: string };
+            const meta = JSON.parse(metaLine) as { ok: boolean; error?: string; quality?: { is_applying_docs?: boolean } };
             if (!meta.ok) throw new Error(meta.error || "返信案取得失敗");
+            qualityFromMeta = meta.quality;
             metaDone = true;
             fullText = buffer.slice(nl + 1);
             if (fullText) setReplyDraft(fullText);
@@ -2109,6 +2137,12 @@ export default function Home() {
       aiDraftRef.current = finalDraft;
       replyTargetCustomerMsgRef.current = targetMessage;
       setReplyDraft(finalDraft);
+
+      // B-2: 品質判定（生成完了後の静的チェック — プレースホルダー残存・短すぎ・申込書類フェーズ）
+      const hasPlaceholder = /\[[^\]]{1,20}\]/.test(finalDraft);
+      const isSuspiciouslyShort = finalDraft.length < 20;
+      const autoOk = !hasPlaceholder && !isSuspiciouslyShort && !qualityFromMeta?.is_applying_docs;
+      setReplyQuality({ auto_ok: autoOk, is_applying_docs: qualityFromMeta?.is_applying_docs ?? false });
 
       // 生成完了後にテキストエリアへフォーカスしてスクロール
       setTimeout(() => {
@@ -2350,11 +2384,13 @@ export default function Home() {
       if (!res.ok || !res.body) throw new Error("生成失敗");
 
       setReplyDraft("");
+      setReplyQuality(null);
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
       let metaDone = false;
       let fullText = "";
+      let qualityFromMeta: { is_applying_docs?: boolean } | undefined;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -2363,8 +2399,9 @@ export default function Home() {
           buffer += chunk;
           const nl = buffer.indexOf("\n");
           if (nl >= 0) {
-            const meta = JSON.parse(buffer.slice(0, nl)) as { ok: boolean; error?: string };
+            const meta = JSON.parse(buffer.slice(0, nl)) as { ok: boolean; error?: string; quality?: { is_applying_docs?: boolean } };
             if (!meta.ok) throw new Error(meta.error || "生成失敗");
+            qualityFromMeta = meta.quality;
             metaDone = true;
             fullText = buffer.slice(nl + 1);
             if (fullText) setReplyDraft(fullText);
@@ -2382,6 +2419,13 @@ export default function Home() {
       } else {
         setReplyDraft(finalDraft);
       }
+      // B-2: 品質判定（生成完了後の静的チェック）
+      const sparkleHasPlaceholder = /\[[^\]]{1,20}\]/.test(finalDraft);
+      const sparkleTooShort = finalDraft.length < 20;
+      setReplyQuality({
+        auto_ok: !sparkleHasPlaceholder && !sparkleTooShort && !qualityFromMeta?.is_applying_docs,
+        is_applying_docs: qualityFromMeta?.is_applying_docs ?? false,
+      });
       setDraftIsAi(true);
       setShowSparkleModal(false);
       setSparkleKeywords([]);
@@ -2943,6 +2987,21 @@ export default function Home() {
         const capturedAiDraft = aiDraftRef.current || undefined;
         // 顧客メッセージがない場合（初回・プロアクティブ送信）も「（初回連絡）」として保存
         const customerMsgToSave = lastCustomerMsg || "（初回連絡）";
+        // B-2: 品質判定ログ（AI文案があり品質判定もある場合のみ・auto_ok文案を修正したか否かを記録）
+        // 注意: save-reply-example APIが受け取れないフィールドは無視される（既存APIを壊さない）
+        if (capturedAiDraft && replyQuality) {
+          const wasModified = textToSend !== capturedAiDraft.trim();
+          void fetch("/api/save-reply-example", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              conversation_id: selectedConversation.id,
+              quality_auto_ok: replyQuality.auto_ok,
+              was_modified: wasModified,
+              sent_at: new Date().toISOString(),
+            }),
+          }).catch(() => {});
+        }
         // 直前のスタッフ返信をembeddingコンテキストとして保存（類似検索の精度向上）
         const prevStaffMsgForEmbed = selectedConversation.messages
           .filter(m => m.sender === "staff" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
@@ -2978,6 +3037,7 @@ export default function Home() {
       }
 
       setReplyDraft("");
+      setReplyQuality(null); // B-2: 送信後は品質判定をリセット
       removeSelectedImage();
 
       // 物件送り完了メッセージ検知（「ご査収ください」はAIX物件送る完了文の固定フレーズ）
@@ -5189,7 +5249,7 @@ export default function Home() {
               {/* 文章クリアボタン（入力/AI文案があるときのみ表示） */}
               {replyDraft && (
                 <button
-                  onClick={() => { setReplyDraft(""); aiDraftRef.current = ""; setDraftIsAi(false); }}
+                  onClick={() => { setReplyDraft(""); aiDraftRef.current = ""; setDraftIsAi(false); setReplyQuality(null); }}
                   className="shrink-0 flex h-8 w-8 items-center justify-center rounded-full border border-[#d1d7db] bg-white text-[#54656f] shadow-sm active:scale-95 transition-transform duration-75"
                   title="文章を消す"
                 >
@@ -5644,6 +5704,19 @@ export default function Home() {
                 </button>
               );
             })()}
+
+            {/* B-2: AI文案の品質判定バッジ（そのまま送信OK / 要確認） */}
+            {replyQuality && replyDraft.trim() && (
+              <div className="mb-1 flex">
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                  replyQuality.auto_ok
+                    ? "bg-green-100 text-green-700"
+                    : "bg-yellow-100 text-yellow-700"
+                }`}>
+                  {replyQuality.auto_ok ? "✅ そのまま送信OK" : replyQuality.is_applying_docs ? "⚠️ 申込書類・要確認" : "⚠️ 要確認"}
+                </span>
+              </div>
+            )}
 
             {/* テキスト入力 */}
             <div className={`flex items-center gap-2 rounded-[24px] px-4 py-2 transition-all ${inputFocused ? "rounded-[16px]" : ""} ${draftIsAi && replyDraft ? "bg-[#e8f4ff] border border-blue-200" : "bg-[#f0f2f5]"}`}>

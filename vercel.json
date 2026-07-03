@@ -53,6 +53,10 @@
       "schedule": "10 6 * * *"
     },
     {
+      "path": "/api/cron/update-action-confidence",
+      "schedule": "50 18 * * *"
+    },
+    {
       "path": "/api/analyze-aix-flow",
       "schedule": "0 6 * * *"
     },

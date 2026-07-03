@@ -43,6 +43,55 @@ export async function POST(req: NextRequest) {
   };
   const currentStatus = STATUS_ALIAS[rawStatus] ?? rawStatus;
 
+  // ---- キーワード即時検知（Haiku不要・B-3-②）----
+  const msgsAsc = [...messages].reverse(); // 古い順
+  const lastCustomerMsg = ((msgsAsc.filter((m) => m.sender === "customer").at(-1)?.text as string) ?? "");
+  const recentStaffMsgs = msgsAsc.filter((m) => m.sender === "staff").slice(-5).map((m) => (m.text as string) ?? "");
+
+  // ① 失注検知（顧客発言・クローズ済み以外の全ステータスで発火）
+  if (!["closed_lost", "closed_won"].includes(currentStatus) && conv.last_sender === "customer") {
+    const LOST_KEYWORDS = [
+      "他で決まり", "他に決まり", "他社で決め", "他の不動産", "別の不動産",
+      "キャンセルします", "キャンセルさせて", "キャンセルでお願い", "キャンセルで",
+      "やめます", "やめときます", "やめておきます", "見送ります", "見送らせて",
+    ];
+    // 「決まりました」単体は文脈次第（内覧日程が決まった等）なので、
+    // 他社/別を示す語を伴う場合のみ失注扱い
+    const decidedElsewhere =
+      /決まりました|決めました/.test(lastCustomerMsg) &&
+      /他|別|よそ/.test(lastCustomerMsg) &&
+      !/内覧|見学|日程|時間|入居日|申込|審査/.test(lastCustomerMsg);
+    if (LOST_KEYWORDS.some((kw) => lastCustomerMsg.includes(kw)) || decidedElsewhere) {
+      return NextResponse.json({
+        suggested: { status: "closed_lost", label: "失注", reason: "失注の可能性", current: currentStatus },
+      });
+    }
+  }
+
+  // ② 内覧完了検知（スタッフ発言・proposing のみ → applying へ）
+  if (currentStatus === "proposing") {
+    const VIEWING_DONE_KEYWORDS = [
+      "お越しいただき", "お越し頂き", "ご来場", "ご来店いただき", "ご来店頂き",
+      "ご案内させて頂き", "ご案内させていただき", "ご案内いたしました",
+    ];
+    if (recentStaffMsgs.some((t) => VIEWING_DONE_KEYWORDS.some((kw) => t.includes(kw)))) {
+      return NextResponse.json({
+        suggested: { status: "applying", label: "申込・審査中", reason: "内覧完了", current: currentStatus },
+      });
+    }
+
+    // ③ 申込完了検知（申込書・審査・書類のキーワードが続く流れ → applying へ）
+    const APPLY_KEYWORDS = ["申込書", "審査", "必要書類", "ご記入", "身分証"];
+    const applyMsgCount = msgsAsc.filter((m) =>
+      APPLY_KEYWORDS.some((kw) => (((m.text as string) ?? "")).includes(kw))
+    ).length;
+    if (applyMsgCount >= 2) {
+      return NextResponse.json({
+        suggested: { status: "applying", label: "申込・審査中", reason: "申込手続き検知", current: currentStatus },
+      });
+    }
+  }
+
   if (SKIP.has(currentStatus)) return NextResponse.json({ suggested: null });
   const next = NEXT_STATUS[currentStatus];
   if (!next) return NextResponse.json({ suggested: null });
