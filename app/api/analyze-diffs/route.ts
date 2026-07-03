@@ -187,7 +187,9 @@ export async function POST(req: NextRequest) {
 
   // 学習済みナレッジのembeddingを即座にバックフィル
   if (learned > 0) {
-    void fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/api/backfill-embeddings`, {
+    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
+      ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:3000");
+    void fetch(`${baseUrl}/api/backfill-embeddings`, {
       method: "POST",
     }).catch(() => {});
   }

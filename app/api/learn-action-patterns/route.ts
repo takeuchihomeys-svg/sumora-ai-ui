@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "missing fields" });
     }
     // フロントから渡された source を尊重（提案採択学習ループ用）
-    const ALLOWED_SOURCES = new Set(["manual", "suggestion_accepted", "suggestion_dismissed", "prediction_match", "prediction_mismatch"]);
+    const ALLOWED_SOURCES = new Set(["manual", "suggestion_accepted", "suggestion_dismissed", "prediction_match", "prediction_mismatch", "send_cancelled", "suggestion_bypassed"]);
     const source = body.source && ALLOWED_SOURCES.has(body.source) ? body.source : "manual";
     await supabase.from("action_pattern_logs").insert({
       conversation_status: normalizeStatus(body.conversation_status),

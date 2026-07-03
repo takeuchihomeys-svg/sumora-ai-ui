@@ -4,7 +4,7 @@ import { runKnowledgeCleanup } from "@/app/lib/knowledge-cleanup";
 
 export const maxDuration = 60;
 
-const CRON_SECRET = "hasu-cron-secret-2024";
+const CRON_SECRET = process.env.CRON_SECRET;
 
 async function callHaiku(prompt: string, maxTokens = 1024): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "");

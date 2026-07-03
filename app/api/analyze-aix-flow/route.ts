@@ -20,7 +20,7 @@ export async function POST() {
     // 1. 直近30日のAIX使用ログ（テンプレート情報含む）
     const { data: usageLogs } = await supabase
       .from("aix_usage_logs")
-      .select("aix_type, template_name, template_category, conversation_id, conversation_status")
+      .select("aix_type, template_name, template_category, conversation_id, conversation_status, suggested_action")
       .gte("created_at", since)
       .order("created_at", { ascending: false })
       .limit(200);
@@ -35,17 +35,34 @@ export async function POST() {
       .order("created_at", { ascending: false })
       .limit(15);
 
-    // 3. AIX種類ごとの使用回数・テンプレート別集計
-    type UsageLog = { aix_type: string; template_name: string | null; template_category: string | null; conversation_id: string; conversation_status: string | null };
+    // 3. AIX種類ごとの使用回数・テンプレート別・成約率・予測一致率の集計
+    type UsageLog = { aix_type: string; template_name: string | null; template_category: string | null; conversation_id: string; conversation_status: string | null; suggested_action: string | null };
     const logs = (usageLogs ?? []) as UsageLog[];
 
     const aixCount: Record<string, number> = {};
     const templateCount: Record<string, number> = {};
+    // aix_type別: closed_won / closed_lost / その他 のカウント
+    const statusCount: Record<string, { won: number; lost: number; other: number }> = {};
+    // aix_type別: suggested_action（AI予測）と実際のaix_typeが一致した件数
+    const matchCount: Record<string, { matched: number; predicted: number }> = {};
     for (const log of logs) {
       aixCount[log.aix_type] = (aixCount[log.aix_type] ?? 0) + 1;
       if (log.template_name) {
         const key = `${log.aix_type}→${log.template_name}`;
         templateCount[key] = (templateCount[key] ?? 0) + 1;
+      }
+      // 成約ステータス集計
+      const sc = statusCount[log.aix_type] ?? { won: 0, lost: 0, other: 0 };
+      if (log.conversation_status === "closed_won") sc.won += 1;
+      else if (log.conversation_status === "closed_lost") sc.lost += 1;
+      else sc.other += 1;
+      statusCount[log.aix_type] = sc;
+      // 予測一致集計（suggested_actionが記録されているログのみ対象）
+      if (log.suggested_action) {
+        const mc = matchCount[log.aix_type] ?? { matched: 0, predicted: 0 };
+        mc.predicted += 1;
+        if (log.suggested_action === log.aix_type) mc.matched += 1;
+        matchCount[log.aix_type] = mc;
       }
     }
 
@@ -54,6 +71,21 @@ export async function POST() {
 
     const templateCountText = Object.entries(templateCount).sort((a, b) => b[1] - a[1]).slice(0, 10)
       .map(([k, v]) => `${k}: ${v}回`).join("\n") || "テンプレート使用記録なし";
+
+    // closed_won率 = won / (won + lost)。決着済み会話があるaix_typeのみ、率の降順
+    const winRateText = Object.entries(statusCount)
+      .filter(([, s]) => s.won + s.lost > 0)
+      .map(([k, s]) => ({ k, rate: s.won / (s.won + s.lost), won: s.won, lost: s.lost }))
+      .sort((a, b) => b.rate - a.rate)
+      .map((e) => `${e.k}: ${Math.round(e.rate * 100)}%（成約${e.won}件/失注${e.lost}件）`)
+      .join(", ") || "成約データなし（決着済み会話がまだない）";
+
+    // 予測一致率 = matched / predicted（aix_type別）
+    const matchRateText = Object.entries(matchCount)
+      .map(([k, m]) => ({ k, rate: m.matched / m.predicted, matched: m.matched, predicted: m.predicted }))
+      .sort((a, b) => b.rate - a.rate)
+      .map((e) => `${e.k}: ${Math.round(e.rate * 100)}%（${e.matched}/${e.predicted}件）`)
+      .join(", ") || "予測データなし";
 
     const patternsText = (patterns ?? [])
       .map((p) => `${p.title}: ${(p.content as string).slice(0, 100)}`)
@@ -73,6 +105,12 @@ ${aixCountText}
 【AIX × テンプレートの組み合わせ実績（よく使われた順）】
 ${templateCountText}
 
+【成約率の高いAIXアクション（closed_won率降順・過去30日）】
+${winRateText}
+
+【予測一致率（AIが提案したアクションが実際に使われた割合・aix_type別）】
+${matchRateText}
+
 【直近の成約パターン（内覧・申込が決まった会話から学習）】
 ${patternsText}
 
@@ -90,7 +128,10 @@ ${patternsText}
 【AIXフロー誘導ガイド — 更新日: ${today}】
 
 ▶ [お客様の状況] → [AIXボタン名] + [理由/使うタイミング]
-（3〜5フェーズ、実績データに基づいて）
+（3〜5フェーズ、実績データに基づいて。成約率の高いAIXアクションを優先的に組み込むこと）
+
+【成約につながりやすいアクション】
+・[AIXボタン名]: 成約率[%]（成約率データがあれば上位1〜2件を挙げ、活用のコツを一言。データがなければ省略）
 
 【よく使われるテンプレートの組み合わせ】
 ・[AIX名] × [テンプレート名]: [使うシーン]

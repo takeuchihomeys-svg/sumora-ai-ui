@@ -1235,6 +1235,9 @@ export default function AixModal({
       aiDraft,
       previousStaffMessage: lastStaffMsg,
       isStarred: false,
+      // AIXからの送信は AIX固有のstate名（property_recommendation / condition_hearing 等）のまま保存する
+      // （save-reply-example の STATE_NORMALIZE による proposing / hearing への変換をスキップ）
+      skipNormalize: true,
     };
   };
 

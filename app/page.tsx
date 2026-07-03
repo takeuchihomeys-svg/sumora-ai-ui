@@ -655,6 +655,8 @@ export default function Home() {
   const aiDraftRef = useRef<string>("");
   const selectedPatternAngleRef = useRef<string | null>(null);
   const replyTargetCustomerMsgRef = useRef<string>("");
+  // G-10: 直近に選択したテンプレートID（送信成功時に使用回数をインクリメント）
+  const selectedTemplateIdRef = useRef<string>("");
   // Effect1（会話切替）がai_draft自動セット済みの場合、Effect2（Realtime）の二重処理を防ぐフラグ
   const suppressAiDraftAutoLoad = useRef(false);
   // 送信済みメッセージID → save-reply-example の ID（☆PATCH に使用）
@@ -2818,6 +2820,24 @@ export default function Home() {
     }
   };
 
+  // G-13: 送信確認ダイアログのキャンセル（キャンセルボタン・背景タップ共通）
+  // AI下書きの送信を取りやめた場合は学習ログに記録（fire-and-forget）
+  const cancelSendConfirm = () => {
+    if (draftIsAi && replyDraft) {
+      fetch("/api/learn-action-patterns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationId: selectedConversation?.id,
+          actionType: aixModalType || "unknown",
+          customerMessage: replyTargetCustomerMsgRef.current || latestCustomerMessage || "",
+          source: "send_cancelled",
+        }),
+      }).catch(() => {});
+    }
+    setShowSendConfirm(false);
+  };
+
   const executeSend = async () => {
     setShowSendConfirm(false);
     if (!selectedConversation.id) return;
@@ -2938,6 +2958,22 @@ export default function Home() {
 
       // 返信したら要対応フラグをクリア
       setFlaggedConvIds((prev) => { const next = new Set(prev); next.delete(selectedConversation.id); return next; });
+      // G-14: AI提案バナーを無視して手動送信した場合をログ記録（fire-and-forget）
+      {
+        const bypassedAction = nextActionMap[selectedConversation.id]?.action;
+        if (bypassedAction) {
+          fetch("/api/learn-action-patterns", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              conversationId: selectedConversation.id,
+              actionType: bypassedAction,
+              customerMessage: replyTargetCustomerMsgRef.current || latestCustomerMessage || "",
+              source: "suggestion_bypassed",
+            }),
+          }).catch(() => {});
+        }
+      }
       // 返信後はAI次アクション提案をリセット（状況が変わったため）
       setNextActionMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; });
       setDismissedNextActionIds((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
@@ -2982,10 +3018,13 @@ export default function Home() {
             const secondText = secondMsgCapture.type === "内覧誘導"
               ? `${customerName}ご都合よろしいお日にちにご案内させて頂きます😊！！`
               : `${customerName}さんお気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
+            // G-08: 2通目学習用にこの時点の顧客メッセージ・状態をキャプチャ（timer発火時にはrefがクリア済みのため）
+            const secondLearnMsg = replyTargetCustomerMsgRef.current || latestCustomerMessage || "";
+            const secondLearnState = (newStatus ?? selectedConversation.status);
             if (secondMsgTimerRef.current) clearTimeout(secondMsgTimerRef.current);
             secondMsgTimerRef.current = setTimeout(() => {
               secondMsgTimerRef.current = null;
-              sendMessageText(secondText);
+              sendMessageText(secondText, undefined, undefined, { customerMessage: secondLearnMsg, conversationState: secondLearnState });
             }, secondMsgCapture.delay * 1000);
           }
         }
@@ -3047,6 +3086,16 @@ export default function Home() {
         setDraftIsAi(false);
         selectedPatternAngleRef.current = null;
         replyTargetCustomerMsgRef.current = "";
+      }
+
+      // G-10: テンプレートから送信した場合は使用回数をインクリメント（fire-and-forget）
+      if (selectedTemplateIdRef.current) {
+        fetch("/api/templates/increment-use", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ templateId: selectedTemplateIdRef.current }),
+        }).catch(() => {});
+        selectedTemplateIdRef.current = "";
       }
 
       setReplyDraft("");
@@ -3124,11 +3173,14 @@ export default function Home() {
         setExtraDraftMessages([]);
         multiSendTimersRef.current.forEach(t => clearTimeout(t));
         multiSendTimersRef.current = [];
+        // G-08: 2通目学習用にこの時点の顧客メッセージ・状態をキャプチャ
+        const extrasLearnMsg = latestCustomerMessage || "";
+        const extrasLearnState = (newStatus ?? selectedConversation.status);
         let cumulativeMs = 0;
         extras.forEach(extra => {
           cumulativeMs += extra.delaySec * 1000;
           const capturedText = extra.text;
-          const t = setTimeout(() => sendMessageText(capturedText), cumulativeMs);
+          const t = setTimeout(() => sendMessageText(capturedText, undefined, undefined, { customerMessage: extrasLearnMsg, conversationState: extrasLearnState }), cumulativeMs);
           multiSendTimersRef.current.push(t);
         });
         handleDelayedSend(extras[0].delaySec, async () => {});
@@ -3203,7 +3255,12 @@ export default function Home() {
     }, 1000);
   };
 
-  const sendMessageText = async (text: string, imageUrl?: string, isAix?: boolean) => {
+  const sendMessageText = async (
+    text: string,
+    imageUrl?: string,
+    isAix?: boolean,
+    learnPayload?: { customerMessage?: string; conversationState?: string }
+  ) => {
     if (!selectedConversation.id || (!text.trim() && !imageUrl)) return;
     // AIX送信時も含めて、送信後は次アクション提案をリセット（状況が変わったため）
     setNextActionMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; });
@@ -3257,6 +3314,21 @@ export default function Home() {
         rawCreatedAt: now.toISOString(),
         isAix: isAix ?? false,
       });
+
+      // G-08: 2通目学習 — learnPayload が渡された場合のみ save-reply-example に記録（fire-and-forget）
+      if (learnPayload) {
+        fetch("/api/save-reply-example", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversationId: selectedConversation.id,
+            customerMessage: learnPayload.customerMessage || "（初回連絡）",
+            sentReply: text.trim(),
+            conversationState: learnPayload.conversationState || selectedConversation.status,
+            sentAt: new Date().toISOString(),
+          }),
+        }).catch(() => {});
+      }
     }
 
     const lastText = text.trim() || "[画像]";
@@ -6718,9 +6790,11 @@ export default function Home() {
               openAixWithImagePicker(action);
             }
           }}
-          onSelect={(text, imageFiles, label, category, secondMsg) => {
+          onSelect={(text, imageFiles, label, category, secondMsg, templateId?: string) => {
             // テンプレート選択時はAI下書きをクリア（偽差分学習を防止）
             aiDraftRef.current = "";
+            // G-10: 選択したテンプレートIDを記録（送信成功時に使用回数をインクリメント）
+            selectedTemplateIdRef.current = templateId ?? "";
             // テンプレート内「アカウント名」→ preferredCustomerName に置換
             const resolvedText = text.replace(/アカウント名/g, preferredCustomerName);
             setReplyDraft(resolvedText);
@@ -6897,10 +6971,16 @@ export default function Home() {
                 const secondText = config.type === "内覧誘導"
                   ? `${customerName}ご都合よろしいお日にちにご案内させて頂きます😊！！`
                   : `${customerName}さんお気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
+                // G-08: 2通目学習用にこの時点の顧客メッセージ・状態をキャプチャ
+                const secondLearnMsg = [...selectedConversation.messages]
+                  .reverse()
+                  .find((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
+                  ?.text ?? "";
+                const secondLearnState = selectedConversation.status;
                 if (secondMsgTimerRef.current) clearTimeout(secondMsgTimerRef.current);
                 secondMsgTimerRef.current = setTimeout(() => {
                   secondMsgTimerRef.current = null;
-                  sendMessageText(secondText);
+                  sendMessageText(secondText, undefined, undefined, { customerMessage: secondLearnMsg, conversationState: secondLearnState });
                 }, config.delay * 1000);
               }
             }
@@ -6938,6 +7018,19 @@ export default function Home() {
                 }),
               }).catch(() => {});
               setPendingTemplateSource(null);
+              // G-14: 提案と異なるAIXを送った場合はバイパスとしてログ記録（一致時はprediction_matchで記録済み）
+              if (_predictedAction && _predictedAction !== aixModalType) {
+                fetch("/api/learn-action-patterns", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    conversationId: selectedConversation.id,
+                    actionType: _predictedAction,
+                    customerMessage: _lastCustomerMsg,
+                    source: "suggestion_bypassed",
+                  }),
+                }).catch(() => {});
+              }
               // AI提案バナーを消してチェーンルール再フェッチ（S-1修正: 送信直後に発火）
               setNextActionMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; });
               nextActionFetchingRef.current.delete(selectedConversation.id);
@@ -8598,7 +8691,7 @@ export default function Home() {
       {showSendConfirm && (
         <div
           className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50"
-          onClick={() => setShowSendConfirm(false)}
+          onClick={cancelSendConfirm}
         >
           <div
             className="mx-4 w-full max-w-xs rounded-2xl bg-white shadow-2xl overflow-hidden"
@@ -8633,7 +8726,7 @@ export default function Home() {
             </div>
             <div className="flex border-t border-[#f0f2f5]">
               <button
-                onClick={() => setShowSendConfirm(false)}
+                onClick={cancelSendConfirm}
                 className="flex-1 py-3.5 text-[14px] font-semibold text-[#8696a0] border-r border-[#f0f2f5]"
               >
                 キャンセル

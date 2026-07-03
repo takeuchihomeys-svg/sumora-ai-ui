@@ -2,16 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
 // AIXアクション → テンプレートカテゴリ変換
+// ※ 値は TemplateModal.tsx の AIX_CATEGORY_ORDER（実カテゴリ名）と一致させること
 const ACTION_TO_CATEGORY: Record<string, string> = {
   property_send: "物件送る【AIX】",
   property_recommendation: "物件オススメ【AIX】",
   property_check_result: "物件確認した【AIX】",
-  viewing_invite: "内覧誘導【AIX】",
-  application_push: "申込誘導【AIX】",
-  meeting_place: "待ち合わせ【AIX】",
+  viewing_invite: "内覧へ！【AIX】",
+  application_push: "申込へ！【AIX】",
+  meeting_place: "内覧【AIX】",
   condition_hearing: "ヒアリング【AIX】",
-  estimate_sheet: "見積書【AIX】",
-  greeting_viewing: "内覧挨拶【AIX】",
+  estimate_sheet: "見積書送る【AIX】",
+  greeting_viewing: "内覧【AIX】",
 };
 
 // AIXアクション → デフォルトタイトル

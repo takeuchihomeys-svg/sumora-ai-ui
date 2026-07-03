@@ -38,6 +38,7 @@ export async function GET(req: NextRequest) {
     { data: pendingTasks },
     { data: unrepliedConvs },
     { data: hotCustomers },
+    { data: attributionRow },
   ] = await Promise.all([
     // ① 未完了タスク
     supabase
@@ -63,7 +64,25 @@ export async function GET(req: NextRequest) {
       .in("status", ["hot", "new_inquiry"])
       .order("last_property_sent_at", { ascending: true, nullsFirst: true })
       .limit(10),
+
+    // ④ AI貢献率メトリクス（calc-ai-attribution が毎日計算）
+    supabase
+      .from("ai_prompts")
+      .select("content")
+      .eq("key", "ai_attribution_metrics")
+      .maybeSingle(),
   ]);
+
+  // AI貢献率フッター（メトリクスがあれば1行追加）
+  let attributionLine = "";
+  try {
+    const m = attributionRow?.content ? JSON.parse(attributionRow.content as string) : null;
+    if (m && typeof m.rate === "number" && typeof m.total === "number") {
+      attributionLine = `\n\n🤖 AI貢献率: ${Math.round(m.rate * 100)}%（直近30日成約${m.total}件中${m.ai_assisted ?? 0}件AI貢献）`;
+    }
+  } catch {
+    // JSONパース失敗時はスキップ（レポート本体は送る）
+  }
 
   const sections: string[] = [];
 
@@ -111,7 +130,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (sections.length === 0) {
-    const text = "🌅 おはようございます！\n今日は未完了タスク・未返信ともにゼロです🎉\n引き続きよろしくお願いします！";
+    const text = `🌅 おはようございます！\n今日は未完了タスク・未返信ともにゼロです🎉\n引き続きよろしくお願いします！${attributionLine}`;
     await fetch("https://api.line.me/v2/bot/message/push", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -120,7 +139,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, tasks: 0, unreplied: 0, needsProp: 0 });
   }
 
-  const text = `🌅 おはようございます！今日のタスクレポートです\n\n${sections.join("\n\n——————\n\n")}\n\n全員対応よろしくお願いします！`;
+  const text = `🌅 おはようございます！今日のタスクレポートです\n\n${sections.join("\n\n——————\n\n")}\n\n全員対応よろしくお願いします！${attributionLine}`;
 
   const res = await fetch("https://api.line.me/v2/bot/message/push", {
     method: "POST",

@@ -152,7 +152,7 @@ interface AiTemplateCandidate {
 
 interface TemplateModalProps {
   onClose: () => void;
-  onSelect?: (text: string, imageFiles?: File[], label?: string, category?: string, secondMsg?: { type: string; delay: number } | null) => void;
+  onSelect?: (text: string, imageFiles?: File[], label?: string, category?: string, secondMsg?: { type: string; delay: number } | null, templateId?: string) => void;
   onOpenAixWithFocus?: (focusPoints: string[], templateInfo?: { name: string; category: string; structure?: Array<{ label: string; text: string }>; sample?: string; secondMsg?: { type: string; delay: number } | null }) => void;
   /** 親からのキャッシュデータ（提供されれば即時表示・背景で再検証） */
   initialTemplates?: Template[];
@@ -974,14 +974,21 @@ export default function TemplateModal({
                             onClick={async () => {
                               setAdoptingId(candidate.id);
                               try {
-                                await fetch("/api/ai-template-candidates", {
+                                const res = await fetch("/api/ai-template-candidates", {
                                   method: "PATCH",
                                   headers: { "Content-Type": "application/json" },
                                   body: JSON.stringify({ id: candidate.id, action: "adopt" }),
                                 });
+                                const json = await res.json() as { ok: boolean };
                                 setCandidates(prev =>
                                   prev.map(c => c.id === candidate.id ? { ...c, is_adopted: true } : c)
                                 );
+                                if (json.ok) {
+                                  // 採用したテンプレを一覧に即反映して該当カテゴリへ移動
+                                  setIsCandidateTabActive(false);
+                                  setCategory(candidate.category);
+                                  await loadTemplates();
+                                }
                               } finally { setAdoptingId(null); }
                             }}
                             className="flex-1 py-1.5 rounded-lg bg-emerald-500 text-white text-sm font-semibold hover:bg-emerald-600 disabled:opacity-50 transition"
@@ -1731,7 +1738,7 @@ export default function TemplateModal({
                                 }
                                 if (isOcrTemplate && extractingId === tmpl.id) return;
                                 // OCRテンプレートは画像をLINEに添付しない（物件名・住所抽出のみ）
-                                onSelect(displayText, isOcrTemplate ? undefined : (templateImages[tmpl.id] ?? []), tmpl.label, tmpl.category, secondMsg);
+                                onSelect(displayText, isOcrTemplate ? undefined : (templateImages[tmpl.id] ?? []), tmpl.label, tmpl.category, secondMsg, tmpl.id);
                                 onClose();
                               }}
                               disabled={isOcrTemplate && extractingId === tmpl.id}
@@ -1772,7 +1779,7 @@ export default function TemplateModal({
                                   return;
                                 }
                                 // displayText は adapted を applyVacatingDates/applySoloEntry/customerName 置換済み
-                                onSelect(displayText, isOcrTemplate ? undefined : (templateImages[tmpl.id] ?? []), tmpl.label, tmpl.category, secondMsg);
+                                onSelect(displayText, isOcrTemplate ? undefined : (templateImages[tmpl.id] ?? []), tmpl.label, tmpl.category, secondMsg, tmpl.id);
                                 onClose();
                               }}
                               className="rounded-full px-3 py-1.5 text-[11px] font-bold text-white"

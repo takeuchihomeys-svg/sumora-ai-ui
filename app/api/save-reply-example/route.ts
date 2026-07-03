@@ -415,6 +415,7 @@ export async function POST(req: NextRequest) {
     previousStaffMessage,
     conversationId,
     sentAt,
+    skipNormalize,
   } = await req.json() as {
     conversationState: string;
     customerMessage: string;
@@ -425,6 +426,7 @@ export async function POST(req: NextRequest) {
     previousStaffMessage?: string;
     conversationId?: string;
     sentAt?: string;
+    skipNormalize?: boolean;
   };
 
   if (!customerMessage || !sentReply) {
@@ -472,7 +474,8 @@ export async function POST(req: NextRequest) {
   const rawResolved = !rawState || rawState === "auto"
     ? await autoClassifyState(customerMessage, sentReply)
     : rawState;
-  const conversationState = STATE_NORMALIZE[rawResolved] ?? rawResolved;
+  // skipNormalize=true の場合（AixModal側で既に正規化済み）はノーマライズをスキップ
+  const conversationState = skipNormalize ? rawResolved : (STATE_NORMALIZE[rawResolved] ?? rawResolved);
 
   // ─── 分割送信マージ: 90秒以内に同じcustomerMessageで送ったものは1レコードに結合 ───
   // LINEでは1つの返信を複数メッセージに分けて送ることが多い。別レコードにすると

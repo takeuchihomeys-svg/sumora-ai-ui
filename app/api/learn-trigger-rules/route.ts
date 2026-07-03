@@ -7,12 +7,16 @@ import { supabase } from "@/app/lib/supabase";
 // manual:              手動選択ベースライン
 // suggestion_dismissed: 却下は弱い負シグナル（0にすると除算で問題）
 // prediction_mismatch: 予測外れ
+// send_cancelled:      送信キャンセルは最弱シグナル（集計への影響を最小化）
+// suggestion_bypassed: 提案を無視して別行動 = 弱い負シグナル
 const SOURCE_WEIGHTS: Record<string, number> = {
   suggestion_accepted: 2.0,
   prediction_match: 1.5,
   manual: 1.0,
   suggestion_dismissed: 0.2,
   prediction_mismatch: 0.5,
+  send_cancelled: 0.1,
+  suggestion_bypassed: 0.2,
 };
 const DEFAULT_WEIGHT = 1.0;
 

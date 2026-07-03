@@ -3,7 +3,7 @@ import { supabase } from "@/app/lib/supabase";
 
 export const maxDuration = 60;
 
-const CRON_SECRET = "hasu-cron-secret-2024";
+const CRON_SECRET = process.env.CRON_SECRET;
 
 async function callHaiku(prompt: string): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "");

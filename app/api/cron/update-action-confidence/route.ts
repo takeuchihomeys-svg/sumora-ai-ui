@@ -8,7 +8,7 @@ export const maxDuration = 60;
 // suggestion_accepted / suggestion_dismissed / prediction_match / prediction_mismatch）
 // を集計して trigger_action_rules に action_type ごとの「真の予測一致率」を upsert する。
 // - accepted 側: suggestion_accepted（バナー「開く」）+ prediction_match（予測一致）
-// - rejected 側: suggestion_dismissed（バナー「✕」）+ prediction_mismatch（予測外れ）
+// - rejected 側: suggestion_dismissed（バナー「✕」）+ prediction_mismatch（予測外れ）+ suggestion_bypassed（提案無視で別行動）
 //
 // keyword は特殊キー "SUGGESTION_ACCEPT_RATE" を使用:
 // - n-gram学習ルール（learn-trigger-rules）を上書きしない
@@ -25,7 +25,7 @@ async function run() {
   const { data: logs, error } = await supabase
     .from("action_pattern_logs")
     .select("action_type, source")
-    .in("source", ["suggestion_accepted", "suggestion_dismissed", "prediction_match", "prediction_mismatch"])
+    .in("source", ["suggestion_accepted", "suggestion_dismissed", "prediction_match", "prediction_mismatch", "suggestion_bypassed"])
     .gte("created_at", thirtyDaysAgo)
     .limit(5000);
 
@@ -39,7 +39,7 @@ async function run() {
 
   // action_type ごとに採択/却下を集計
   // accepted: suggestion_accepted + prediction_match
-  // dismissed: suggestion_dismissed + prediction_mismatch
+  // dismissed: suggestion_dismissed + prediction_mismatch + suggestion_bypassed
   const stats: Record<string, { accepted: number; dismissed: number }> = {};
   for (const log of logs) {
     const action = (log.action_type as string) ?? "";
