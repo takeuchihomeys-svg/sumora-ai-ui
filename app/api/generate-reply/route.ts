@@ -3,8 +3,6 @@ import { ChatAnthropic } from "@langchain/anthropic";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { supabase } from "@/app/lib/supabase";
 import {
-  EMOJI_RULE,
-  STYLE_RULE,
   PHASE_GUIDE,
   GENERATION_SYSTEM,
   SMORA_QUICK_PATTERNS,
@@ -31,7 +29,17 @@ const generationModel = new ChatAnthropic({
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
 });
 
-// EMOJI_RULE / STYLE_RULE は @/app/lib/line-reply-prompts からインポート済み
+// ─── 初回挨拶文（greetingNote と冒頭強制置換で共用・二重定義禁止）─────────────
+function buildFirstGreeting(customerName: string): string {
+  return `${customerName ? `${customerName}さん、` : ""}はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！`;
+}
+
+// ─── max_tokens 尻切れ検知（ログのみ・レスポンスには影響させない）─────────────
+function warnIfTruncated(stopReason: unknown, inputLength: number): void {
+  if (stopReason === "max_tokens" || stopReason === "length") {
+    console.warn("[generate-reply] max_tokens truncation detected:", { inputLength, stopReason });
+  }
+}
 
 // ─── Step1: お客様状況の深層分析（Haiku）───────────────────────────────────
 const ANALYSIS_SYSTEM = `あなたは賃貸仲介の営業コーチです。
@@ -95,6 +103,7 @@ ${customerMessage}
       new SystemMessage(ANALYSIS_SYSTEM),
       new HumanMessage(prompt),
     ]);
+    warnIfTruncated(res.response_metadata?.stop_reason, prompt.length);
     const text = typeof res.content === "string" ? res.content : JSON.stringify(res.content);
     const match = text.match(/\{[\s\S]*\}/);
     return match ? match[0] : "";
@@ -108,18 +117,6 @@ ${customerMessage}
 // ─── JST時刻取得 ─────────────────────────────────────────────────────────────
 function getJSTHour(): number {
   return new Date(Date.now() + 9 * 60 * 60 * 1000).getUTCHours();
-}
-// JST 9:00 AM リセット基準時刻（UTC）を返す
-// 9時以降なら今日の0:00 UTC、9時前なら昨日の0:00 UTC（= JST 9:00 AM の直前のリセット点）
-function getGreetingSessionStart(): Date {
-  const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
-  const h = jstNow.getUTCHours();
-  const y = jstNow.getUTCFullYear();
-  const mo = jstNow.getUTCMonth();
-  const d = jstNow.getUTCDate();
-  return h >= 9
-    ? new Date(Date.UTC(y, mo, d, 0, 0, 0, 0))
-    : new Date(Date.UTC(y, mo, d - 1, 0, 0, 0, 0));
 }
 // 0=日, 1=月, ..., 6=土
 function getJSTDayOfWeek(): number {
@@ -163,7 +160,6 @@ const CONDITION_LABELS: Record<string, string> = {
 type PromptOverrides = {
   generationSystem?: string;
   quickPatterns?: string;
-  phaseGuide?: Record<string, string>;
   realEstateRules?: string;
   smoraRules?: string;
   replyContentRules?: string;
@@ -222,7 +218,7 @@ function buildGenerationMessages(
   const greetingNote = alreadyGreeted
     ? `\n【⏰ 挨拶ルール・最優先】本日の会話で冒頭挨拶は既に使用済み。今回は絶対に使わない。「はい！！」「かしこまりました！！」など短い言葉で直接本文から始める。`
     : (state === "first_reply" && isFirstEverReply)
-      ? `\n【⏰ 初回対応ルール・最優先】これはお客様への【はじめての返信】。必ず「${customerName ? `${customerName}さん、` : ""}はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！」で始める（一字一句変更・省略禁止）。「お世話になっております」「夜分遅くに失礼致します」は絶対禁止。`
+      ? `\n【⏰ 初回対応ルール・最優先】これはお客様への【はじめての返信】。必ず「${buildFirstGreeting(customerName)}」で始める（一字一句変更・省略禁止）。「お世話になっております」「夜分遅くに失礼致します」は絶対禁止。`
       : `\n【⏰ 挨拶ルール・最優先】現在${jstHour}時台（JST）。今回の冒頭は「〇〇さんお世話になっております！！」を使う。「夜分遅くに失礼致します」は返信時には絶対禁止（スタッフから先に連絡するときのみ使う言葉）。`;
 
   const managementNote = isWeekend
@@ -265,8 +261,8 @@ function buildGenerationMessages(
     return m ? m[1].trim() : "";
   })();
 
-  // フェーズ別の行動指針を取得（DBオーバーライド優先）
-  const phaseGuide = promptOverrides?.phaseGuide?.[state] ?? PHASE_GUIDE[state] ?? PHASE_GUIDE["first_reply"];
+  // フェーズ別の行動指針を取得（phase_guide はコード側 line-reply-prompts.ts を正とする・DBオーバーライドなし）
+  const phaseGuide = PHASE_GUIDE[state] ?? PHASE_GUIDE["first_reply"];
 
 
   // 分析結果から各フィールドを抽出
@@ -403,18 +399,18 @@ function buildGenerationMessages(
     console.warn("[generate-reply] QUICK_PATTERNS冒頭ルールの置換に失敗（DBオーバーライド文字列にパターン不一致）。上書きルールを末尾に追記します。");
     return `${base}\n${replacement}`;
   };
+  // 冒頭ルールの本文は greetingNote（【⏰ 挨拶ルール／初回対応ルール・最優先】）に一本化。
+  // ここでは QUICK_PATTERNS 内の競合する冒頭ルールを greetingNote への参照に置き換えるだけにする（二重定義禁止）。
   const effectiveQuickPatterns = (() => {
     if (alreadyGreeted) {
-      // 同日挨拶済み → 「長い返信はお世話になっております」を「挨拶なし」に置き換え
+      // 同日挨拶済み → 「長い返信はお世話になっております」ルールを無効化
       return overrideOpeningRule(
         baseQuickPatterns,
-        "・冒頭ルール（★重要・本日挨拶済みのため上書き）: 返信の長短にかかわらず【冒頭挨拶は一切使わない】。「はい！！」「かしこまりました！！」または直接本文から始める。「お世話になっております」「ありがとうございます」「夜分遅くに」は絶対禁止"
+        "・冒頭ルール（★重要・本日挨拶済みのため上書き）: 【⏰ 挨拶ルール・最優先】に従い、返信の長短にかかわらず冒頭挨拶は一切使わない（「お世話になっております」「ありがとうございます」「夜分遅くに」も禁止）"
       );
     }
     if (state === "first_reply" && isFirstEverReply) {
-      // 真の初回 → 初回挨拶文は greetingNote（【⏰ 初回対応ルール・最優先】の「はじめまして」版）に統一。
-      // 以前はここで別文面のテンプレートを「一字一句変更禁止」で注入しており、greetingNote と相互排他になっていた。
-      // 二重定義を避けるため、ここでは greetingNote への参照と禁止事項のみ記載する。
+      // 真の初回 → 初回挨拶文は greetingNote の【⏰ 初回対応ルール・最優先】に統一
       return overrideOpeningRule(
         baseQuickPatterns,
         "・冒頭ルール（★重要・初回返信のため上書き）: 冒頭挨拶は【⏰ 初回対応ルール・最優先】に記載の初回挨拶文（「はじめまして😊！！…鈴木と申します！！」）に必ず従う。「お世話になっております」は絶対禁止"
@@ -423,7 +419,7 @@ function buildGenerationMessages(
     // 本日初回メッセージ → 短い承認でも必ず「お世話になっております」で始める
     return overrideOpeningRule(
       baseQuickPatterns,
-      "・冒頭ルール（★重要・本日初回メッセージのため上書き）: 返信の長短・内容・承認・条件受け取りを問わず【必ず「〇〇さんお世話になっております！！」で始める】。「かしこまりました！！」「はい！！」単独での書き出しは絶対禁止。必ず先頭に挨拶を置くこと"
+      "・冒頭ルール（★重要・本日初回メッセージのため上書き）: 【⏰ 挨拶ルール・最優先】に従い、返信の長短・内容を問わず必ず「〇〇さんお世話になっております！！」で始める。「かしこまりました！！」「はい！！」単独での書き出しは絶対禁止"
     );
   })();
   // 実例がある場合も冒頭ルール（挨拶・禁止ワード）を維持するためQUICK_PATTERNSは常に注入する
@@ -537,10 +533,12 @@ conditions_incomplete, property_available, property_unavailable, screening_passe
 必ず {"intent_key":"..."} のみ返すこと。`;
 
   try {
+    const intentPrompt = `state: ${state}\n履歴:\n${history || "なし"}\nメッセージ: ${message}`;
     const res = await analysisModel.invoke([
       new SystemMessage(system),
-      new HumanMessage(`state: ${state}\n履歴:\n${history || "なし"}\nメッセージ: ${message}`),
+      new HumanMessage(intentPrompt),
     ]);
+    warnIfTruncated(res.response_metadata?.stop_reason, intentPrompt.length);
     const text = typeof res.content === "string" ? res.content : "";
     const match = text.match(/\{[\s\S]*?\}/);
     if (match) {
@@ -599,15 +597,15 @@ async function synthesizeCustomerContext(conditions: string, customerName: strin
     const historyNote = history
       ? `\n直近の会話:\n${history.split("\n").slice(-10).join("\n")}`
       : "";
-    const res = await analysisModel.invoke([
-      new HumanMessage(`以下の賃貸希望条件と会話履歴から、お客様の状況を1〜2文で要約してください。
+    const summaryPrompt = `以下の賃貸希望条件と会話履歴から、お客様の状況を1〜2文で要約してください。
 お客様名: ${customerName || "不明"}
 条件:
 ${conditions}${historyNote}
 
 例: 「梅田エリアで1LDK・家賃8万以内を探している。内覧済みで申込を検討中。審査に不安あり。」
-要約のみ返答（説明不要）:`),
-    ]);
+要約のみ返答（説明不要）:`;
+    const res = await analysisModel.invoke([new HumanMessage(summaryPrompt)]);
+    warnIfTruncated(res.response_metadata?.stop_reason, summaryPrompt.length);
     return typeof res.content === "string" ? res.content.trim() : "";
   } catch {
     return "";
@@ -934,7 +932,6 @@ export async function POST(req: NextRequest) {
       viewingNote?: string;
       screenshotBase64?: string;
       screenshotMediaType?: string;
-      hasViewed?: boolean;
       activeTaskTypes?: string[];
     };
     message = body.message;
@@ -981,7 +978,8 @@ export async function POST(req: NextRequest) {
         }),
       });
       if (visionRes.ok) {
-        const visionData = await visionRes.json() as { content?: Array<{ text: string }> };
+        const visionData = await visionRes.json() as { content?: Array<{ text: string }>; stop_reason?: string };
+        warnIfTruncated(visionData.stop_reason, screenshotBase64.length);
         const extracted = visionData.content?.[0]?.text?.trim() ?? "";
         if (extracted && !extracted.includes("読み取れませんでした")) {
           replyHint = [
@@ -1000,7 +998,6 @@ export async function POST(req: NextRequest) {
   try {
     const { data: dbPrompts } = await supabase.from("ai_prompts").select("key, content");
     if (dbPrompts && dbPrompts.length > 0) {
-      const phaseGuide: Record<string, string> = {};
       let generationSystem: string | undefined;
       let quickPatterns: string | undefined;
       let realEstateRules: string | undefined;
@@ -1018,7 +1015,7 @@ export async function POST(req: NextRequest) {
         else if (p.key === "aix_property_send_rules") aixPropertySendRules = p.content;
         // phase_guide_* はコード(line-reply-prompts.ts)を正として使用・DBは無視
       }
-      if (generationSystem || quickPatterns || realEstateRules || smoraRules || replyContentRules || aixPropertyRecommendationRules || aixPropertySendRules || Object.keys(phaseGuide).length > 0) {
+      if (generationSystem || quickPatterns || realEstateRules || smoraRules || replyContentRules || aixPropertyRecommendationRules || aixPropertySendRules) {
         promptOverrides = {
           generationSystem,
           quickPatterns,
@@ -1027,7 +1024,6 @@ export async function POST(req: NextRequest) {
           replyContentRules,
           aixPropertyRecommendationRules,
           aixPropertySendRules,
-          phaseGuide: Object.keys(phaseGuide).length > 0 ? phaseGuide : undefined,
         };
       }
     }
@@ -1179,13 +1175,19 @@ export async function POST(req: NextRequest) {
             JSON.stringify({ ok: true, detected_intent: detectedIntent, quality: qualityFlags }) + "\n"
           ));
           try {
+            const genInputLength = messages.reduce(
+              (n, m) => n + (typeof m.content === "string" ? m.content.length : 0), 0
+            );
             if (shouldPrependGreeting) {
               // 真の初回: 全バッファして冒頭挨拶を強制置換（AIが誤生成しても確実に正しい名前を出す）
               let fullText = "";
+              let genStopReason: unknown;
               for await (const chunk of await genStream) {
                 const text = typeof chunk.content === "string" ? chunk.content : "";
                 fullText += text;
+                if (chunk.response_metadata?.stop_reason) genStopReason = chunk.response_metadata.stop_reason;
               }
+              warnIfTruncated(genStopReason, genInputLength);
               // AIの本文先頭が挨拶パターンなら除去して固定挨拶に置き換え、
               // 挨拶で始まっていなければ全文を本文として保持し先頭に固定挨拶を追加する
               // （旧実装は無条件に1行目を捨てていたため、AIが改行なし1行で返すと本文が全消滅していた）
@@ -1205,7 +1207,7 @@ export async function POST(req: NextRequest) {
                 bodyPart = trimmedText;
               }
               // customerName が空の場合は「さん、」部分を除去（「さん、はじめまして」の防止）
-              const fixedGreeting = `${customerName ? `${customerName}さん、` : ""}はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！\n\n`;
+              const fixedGreeting = `${buildFirstGreeting(customerName)}\n\n`;
               const rawOutput = fixedGreeting + bodyPart;
               const { cleaned, issues } = validateAndClean(rawOutput);
               if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
@@ -1213,10 +1215,13 @@ export async function POST(req: NextRequest) {
             } else {
               // 非初回: 全テキストをバッファしてから validateAndClean を適用してストリーム出力
               let fullText = "";
+              let genStopReason: unknown;
               for await (const chunk of await genStream) {
                 const text = typeof chunk.content === "string" ? chunk.content : "";
                 fullText += text;
+                if (chunk.response_metadata?.stop_reason) genStopReason = chunk.response_metadata.stop_reason;
               }
+              warnIfTruncated(genStopReason, genInputLength);
               const { cleaned, issues } = validateAndClean(fullText);
               if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
               if (cleaned) controller.enqueue(encoder.encode(cleaned));

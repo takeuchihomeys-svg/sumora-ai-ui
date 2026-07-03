@@ -226,6 +226,16 @@ async function getStarredExamplesForAction(states: string[], customerMsg: string
   }
 }
 
+// #30: max_tokens 尻切れ検知（ログのみ・エラーは投げない）
+// POST冒頭でセットされる現在処理中のアクション名（ログのコンテキスト用）
+let currentAction = "";
+
+function warnIfTruncated(data: { stop_reason?: string }, inputLength: number): void {
+  if (data?.stop_reason === "max_tokens") {
+    console.warn("[aix/action] max_tokens truncation:", { action: currentAction, inputLength });
+  }
+}
+
 async function callClaude(system: string, user: string): Promise<string> {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -243,6 +253,7 @@ async function callClaude(system: string, user: string): Promise<string> {
   });
   if (!res.ok) throw new Error(`Claude error: ${await res.text()}`);
   const data = await res.json();
+  warnIfTruncated(data, system.length + user.length);
   return data.content?.[0]?.text?.trim() || "";
 }
 
@@ -263,6 +274,7 @@ async function callClaudeHaiku(system: string, user: string): Promise<string> {
   });
   if (!res.ok) throw new Error(`Claude Haiku error: ${await res.text()}`);
   const data = await res.json();
+  warnIfTruncated(data, system.length + user.length);
   return data.content?.[0]?.text?.trim() || "";
 }
 
@@ -283,6 +295,7 @@ async function callClaudeVision(system: string, content: unknown[]): Promise<str
   });
   if (!res.ok) throw new Error(`Claude Vision error: ${await res.text()}`);
   const data = await res.json();
+  warnIfTruncated(data, system.length + JSON.stringify(content).length);
   return data.content?.[0]?.text?.trim() || "";
 }
 
@@ -322,7 +335,11 @@ function extractNotice(text: string, customerName: string): { message: string; n
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, account, customer_name, conversation_id, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, viewing_done, vacancy_status, has_estimate, move_out_date, keyword, property_name, property_names, property_vacancy_dates, property_count, prop_first_image_urls, all_properties_available, prop_statuses, include_estimate_text, show_viewing_invite, app_push_type, appeal_points } = body;
+    // #36: 未使用フィールド（conversation_id / viewing_done / prop_first_image_urls）は分割代入から削除済み
+    const { action, account, customer_name, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, vacancy_status, has_estimate, move_out_date, keyword, property_name, property_names, property_vacancy_dates, property_count, all_properties_available, prop_statuses, include_estimate_text, show_viewing_invite, app_push_type, appeal_points } = body;
+
+    // #30: max_tokens 尻切れ検知ログ用に現在のアクション名を保持
+    currentAction = String(action ?? "");
 
     // テンプレート構成ノート（テンプレートモーダルから渡された場合）
     const template_structure = Array.isArray(body.template_structure)
@@ -986,8 +1003,9 @@ ${SMORA_COMMON_RULES}
 ②ご案内の意思：物件名が読み取れる場合は入れる
   - 物件名あり → 「〇〇マンションご案内させて頂きます！！」
   - 物件名不明 → 「お部屋ご案内させて頂きます！！」
-③日程（★必ず改行して書く）：
+③日程（★必ず改行して書く・カレンダー情報に案内可能日が3日分以上ある場合は必ず最低3日分の候補を提示する。3日分ない場合はある分すべて提示。1件だけに絞るのは禁止）：
   直近ですと
+  M/D（曜日）HH:MM〜HH:MM
   M/D（曜日）HH:MM〜HH:MM
   M/D（曜日）HH:MM〜HH:MM
   ご案内出来ます！！
@@ -1062,7 +1080,7 @@ ${phraseText || "なし"}
 ・LINEでそのまま送れる完成文のみ出力（解説・候補複数は禁止）`;
 
       const calendarPart = calendarNote
-        ? `\n\n【直近の内覧可能日時（案内可能な日のみ・1行1日形式）】\n${calendarNote}`
+        ? `\n\n【直近の内覧可能日時（案内可能な日のみ・1行1日形式・3日分以上ある場合は最低3日分を候補として提示すること）】\n${calendarNote}`
         : extra_input ? `候補日時: ${extra_input}` : "";
       const vacancyPart = vacancy_status === "scheduled" && move_out_date
         ? `\n【物件状況】退去予定日：${move_out_date}（この日以降に内覧可能になる）`

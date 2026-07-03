@@ -1,20 +1,9 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { upsertKnowledge, generateEmbedding } from "@/app/lib/knowledge-utils";
 import Anthropic from "@anthropic-ai/sdk";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "") });
-
-async function getEmbedding(text: string): Promise<number[] | null> {
-  try {
-    const res = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
-    });
-    const data = await res.json() as { data: Array<{ embedding: number[] }> };
-    return data.data[0]?.embedding ?? null;
-  } catch { return null; }
-}
 
 // 内覧・申込・契約確定後に成功パターンを学習してai_reply_knowledgeへ保存
 async function recordSuccessPattern(conversationId: string, eventType: string): Promise<void> {
@@ -64,15 +53,17 @@ ${history}
     // 出口: 抽出不能（null / 空文字 / ★決まるパターンで始まらない出力）は knowledge保存・ai_summary反映をスキップ
     if (!pattern || pattern.toLowerCase() === "null" || !pattern.startsWith("★決まるパターン")) return;
 
-    // ai_reply_knowledgeに保存（embeddingも即座に付与してRAG検索対象にする）
+    // ai_reply_knowledgeに保存（#32: upsertKnowledge経由でdedup・importanceインフレ防止・embedding付与）
     const now = new Date().toISOString().slice(0, 10);
-    const embedding = await getEmbedding(`pattern: ${pattern}`);
-    await supabase.from("ai_reply_knowledge").insert({
-      category: "pattern",
+    const embedding = await generateEmbedding(pattern);
+    const upsertResult = await upsertKnowledge(supabase, {
       title: `成約パターン_${label}_${now}`,
       content: pattern,
-      ...(embedding ? { embedding: JSON.stringify(embedding) } : {}),
+      category: "pattern",
+      importance: 8,
+      ...(embedding ? { embedding } : {}),
     });
+    console.log(`[recordSuccessPattern] upsertKnowledge: ${upsertResult} (${label})`);
 
     // 紐付き顧客のai_summaryにも★決まるパターンを上書き反映
     const { data: conv } = await supabase

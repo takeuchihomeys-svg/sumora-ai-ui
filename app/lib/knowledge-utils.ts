@@ -1,5 +1,53 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+// ─── テキスト類似度（bigram Jaccard）#31 ─────────────────────────────────────
+// 空白除去後の2文字グラム集合の Jaccard 係数（0〜1）。語順の入れ替えに頑健。
+function buildBigrams(s: string): Set<string> {
+  const set = new Set<string>();
+  const text = s.replace(/\s+/g, "");
+  for (let i = 0; i < text.length - 1; i++) {
+    set.add(text.slice(i, i + 2));
+  }
+  return set;
+}
+
+export function textSimilarity(a: string, b: string): number {
+  if (!a || !b) return 0;
+  const biA = buildBigrams(a);
+  const biB = buildBigrams(b);
+  let intersection = 0;
+  for (const g of biA) { if (biB.has(g)) intersection++; }
+  const union = biA.size + biB.size - intersection;
+  return union === 0 ? 1 : intersection / union;
+}
+
+// ─── OpenAI 埋め込み生成（text-embedding-3-small・1536次元）＋キャッシュ #29 ──
+// 同一テキストの再生成を防ぐモジュールスコープキャッシュ（最大500件・FIFO削除）。
+const embeddingCache = new Map<string, number[]>();
+
+export async function generateEmbedding(text: string): Promise<number[] | null> {
+  if (embeddingCache.has(text)) return embeddingCache.get(text)!;
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  try {
+    const res = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { data: Array<{ embedding: number[] }> };
+    const embedding = data.data[0]?.embedding ?? null;
+    if (embedding) {
+      embeddingCache.set(text, embedding);
+      if (embeddingCache.size > 500) embeddingCache.delete(embeddingCache.keys().next().value!);
+    }
+    return embedding;
+  } catch {
+    return null;
+  }
+}
+
 export type UpsertKnowledgeParams = {
   title: string;
   content: string;

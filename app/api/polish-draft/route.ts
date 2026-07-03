@@ -115,9 +115,11 @@ export async function POST(req: NextRequest) {
       system,
     });
 
-    const polished = message.content[0].type === "text"
-      ? message.content[0].text.trim()
-      : draft;
+    // テキストブロックを探して抽出（先頭ブロックがtext以外でも取りこぼさない）
+    const textBlock = message.content.find(
+      (b): b is Extract<typeof message.content[number], { type: "text" }> => b.type === "text",
+    );
+    const polished = textBlock ? textBlock.text.trim() : draft;
     return NextResponse.json({ ok: true, polished });
   } catch (err) {
     return NextResponse.json({ ok: false, error: String(err) }, { status: 500 });

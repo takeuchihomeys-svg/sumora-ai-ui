@@ -5,22 +5,12 @@ import { normalizeStatus } from "@/app/lib/status-normalize";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+// ラベル参照は normalizeStatus() 適用後のみ行うため、正規化後に到達しうるキーだけ持つ
+// （contract/lost/closed_* は SKIP_STATUSES で先に除外され、旧名は normalizeStatus で吸収される）
 const STATUS_LABEL: Record<string, string> = {
   hearing: "ヒアリング中",
   proposing: "物件提案中",
-  viewing: "内覧調整中",
-  application: "申込手続き中",
-  contract: "契約済み",
-  lost: "失注",
-  // 追加ステータス（実DB値）
-  first_reply: "初回対応中",
-  condition_hearing: "条件ヒアリング中",
-  property_recommendation: "物件提案中",
-  availability_check: "空き確認中",
-  estimate_request: "見積依頼中",
   applying: "申込手続き中",
-  closed_won: "契約成立",
-  closed_lost: "失注",
 };
 
 const SKIP_STATUSES = new Set(["contract", "lost", "closed_won", "closed_lost"]);
@@ -104,22 +94,23 @@ export async function POST(req: NextRequest) {
   });
 
   // 物件確認結果の後にお客様が返信 → available フィールドで分岐
+  // ※ available が true/false で確定している場合はこのフェーズで必ず判定を完結させる
+  //   （フォールスルーすると汎用チェーンルールが同じ状態に二重マッチして提案が揺れるため）
   if (last_aix_action === "property_check_result" && conv.last_sender === "customer") {
     if (available === true) {
-      // 空室あり → 見積書または内覧誘導
+      // 空室あり → 見積書または内覧誘導（両方抑制時は提案なしで確定）
       const nextAction = !shouldSuppressAction("estimate_sheet") ? "estimate_sheet"
         : !shouldSuppressAction("viewing_invite") ? "viewing_invite"
         : null;
-      if (nextAction) {
-        return NextResponse.json({ action: nextAction, reason: nextAction === "estimate_sheet" ? "空室確認後・見積書" : "空室確認後・内覧へ", source: "chain_rule", params: buildParams(nextAction), acceptanceRate: acceptanceRateMap[nextAction] ?? null });
-      }
-    } else if (available === false) {
-      // 空室なしが明示された場合のみ → 代替物件送りへ誘導
-      if (!shouldSuppressAction("alternative_send")) {
-        return NextResponse.json({ action: "alternative_send", reason: "代替物件を送る", source: "chain_rule", params: buildParams("alternative_send"), acceptanceRate: acceptanceRateMap["alternative_send"] ?? null });
-      }
+      if (!nextAction) return NextResponse.json({ action: null, reason: "" });
+      return NextResponse.json({ action: nextAction, reason: nextAction === "estimate_sheet" ? "空室確認後・見積書" : "空室確認後・内覧へ", source: "chain_rule", params: buildParams(nextAction), acceptanceRate: acceptanceRateMap[nextAction] ?? null });
     }
-    // available が undefined/null（クライアント未送信）の場合はフォールスルーして後続フェーズで判定
+    if (available === false) {
+      // 空室なしが明示された場合のみ → 代替物件送りへ誘導（抑制時は提案なしで確定）
+      if (shouldSuppressAction("alternative_send")) return NextResponse.json({ action: null, reason: "" });
+      return NextResponse.json({ action: "alternative_send", reason: "代替物件を送る", source: "chain_rule", params: buildParams("alternative_send"), acceptanceRate: acceptanceRateMap["alternative_send"] ?? null });
+    }
+    // available が undefined/null（クライアント未送信）の場合のみ後続フェーズにフォールスルー
   }
 
   const currentStatus = normalizeStatus((conv.status as string) ?? "hearing");
@@ -138,7 +129,10 @@ export async function POST(req: NextRequest) {
       .in("keyword", [phaseSpecificKeyword, genericKeyword])
       .gte("confidence", 0.35)
       .gte("occurrence_count", 2)
+      // confidence 同値タイで返却順が不定にならないよう occurrence_count → action_type で決定的に並べる
       .order("confidence", { ascending: false })
+      .order("occurrence_count", { ascending: false })
+      .order("action_type", { ascending: true })
       .limit(6);
 
     // フェーズ特定を優先、なければ汎用にフォールバック
@@ -184,65 +178,55 @@ export async function POST(req: NextRequest) {
   }
 
   // ---- トリガールールで即判定（Haiku不要の場合）----
-  const lastCustomerMsg = [...messages]
-    .reverse()
-    .filter((m) => m.sender === "customer" && (m.text as string)?.trim())
-    .at(-1)?.text as string ?? "";
+  // messages は created_at 降順なので find で最新のテキスト付き顧客メッセージが取れる
+  const lastCustomerMsg = (messages.find((m) => m.sender === "customer" && (m.text as string)?.trim())?.text as string) ?? "";
 
   // 入居日を指定して見積書再送を要求 → 見積書送る（「待ち合わせ」と誤判定しないよう最優先でチェック）
-  const DATE_ENTRY_ESTIMATE_RE = /\d+[\/月]\d+[日]?.*入居|入居.*\d+[\/月]\d+[日]?/;
-  if ((DATE_ENTRY_ESTIMATE_RE.test(lastCustomerMsg) || lastCustomerMsg.includes("入居")) &&
-      (lastCustomerMsg.includes("出して") || lastCustomerMsg.includes("出してほしい") || lastCustomerMsg.includes("で出し") || lastCustomerMsg.includes("見積"))) {
-    if (!shouldSuppressAction("estimate_sheet")) {
-      return NextResponse.json({ action: "estimate_sheet", reason: "入居日指定・見積書再送", source: "trigger_rule", params: buildParams("estimate_sheet"), acceptanceRate: acceptanceRateMap["estimate_sheet"] ?? null });
-    }
+  if (lastCustomerMsg.includes("入居") &&
+      (lastCustomerMsg.includes("出して") || lastCustomerMsg.includes("で出し") || lastCustomerMsg.includes("見積"))) {
+    // 状態は確定しているので、抑制時はフォールスルーせず提案なしで確定（P8誤提案防止）
+    if (shouldSuppressAction("estimate_sheet")) return NextResponse.json({ action: null, reason: "" });
+    return NextResponse.json({ action: "estimate_sheet", reason: "入居日指定・見積書再送", source: "trigger_rule", params: buildParams("estimate_sheet"), acceptanceRate: acceptanceRateMap["estimate_sheet"] ?? null });
   }
 
-  // 物件画像・動画が送られてきた場合は即座に「物件確認した」を提案
-  const IMAGE_CHECK_STATUSES = new Set(["first_reply", "hearing", "proposing", "property_recommendation", "availability_check", "condition_hearing"]);
-  if ((lastCustomerMsg.includes("[画像]") || lastCustomerMsg.includes("[動画]")) && IMAGE_CHECK_STATUSES.has(currentStatus)) {
-    if (!shouldSuppressAction("property_check_result")) {
-      return NextResponse.json({ action: "property_check_result", reason: "物件画像が送られた", source: "trigger_rule", params: buildParams("property_check_result"), acceptanceRate: acceptanceRateMap["property_check_result"] ?? null });
-    }
-  }
-
-  // 物件URLの送信 or 空室確認の質問 → 物件確認を提案
+  // 物件画像・動画・物件URL・空室確認の質問 → 「物件確認した」を提案
+  // ※ currentStatus は正規化済みのため hearing / proposing の2値でカバーできる
+  //   （first_reply/condition_hearing→hearing, property_recommendation/availability_check→proposing）
+  const PROPERTY_CHECK_STATUSES = new Set(["hearing", "proposing"]);
   const PROPERTY_URL_RE = /athome\.co\.jp|suumo\.jp|homes\.co\.jp|lifull\.com|chintai\.net|reins\.|realestate\.|rakumachi\.jp/i;
   const AVAILABILITY_KEYWORDS = ["まだありますか", "空いていますか", "空いてますか", "空室ですか", "空室確認", "空き確認", "まだ空い", "まだ残って", "空室はありますか", "こちらの物件"];
-  // 直近3件の顧客メッセージを確認（昇順化後の末尾3件＝最新3件）
-  const recentCustomerMsgs = [...messages].reverse().filter((m) => m.sender === "customer").slice(-3).map((m) => (m.text as string) ?? "");
+  const hasPropertyMedia = lastCustomerMsg.includes("[画像]") || lastCustomerMsg.includes("[動画]");
+  // 直近3件（messages は降順なので先頭3件）の顧客メッセージにURLがあるか確認
+  const recentCustomerMsgs = messages.filter((m) => m.sender === "customer").slice(0, 3).map((m) => (m.text as string) ?? "");
   const hasPropertyUrl = recentCustomerMsgs.some((t) => PROPERTY_URL_RE.test(t));
   const hasAvailabilityQuestion = AVAILABILITY_KEYWORDS.some((kw) => lastCustomerMsg.includes(kw));
-  if ((hasPropertyUrl || hasAvailabilityQuestion) && IMAGE_CHECK_STATUSES.has(currentStatus)) {
-    if (!shouldSuppressAction("property_check_result")) {
-      return NextResponse.json({ action: "property_check_result", reason: "物件の空室確認依頼", source: "trigger_rule", params: buildParams("property_check_result"), acceptanceRate: acceptanceRateMap["property_check_result"] ?? null });
-    }
+  if ((hasPropertyMedia || hasPropertyUrl || hasAvailabilityQuestion) && PROPERTY_CHECK_STATUSES.has(currentStatus)) {
+    if (shouldSuppressAction("property_check_result")) return NextResponse.json({ action: null, reason: "" });
+    return NextResponse.json({ action: "property_check_result", reason: hasPropertyMedia ? "物件画像が送られた" : "物件の空室確認依頼", source: "trigger_rule", params: buildParams("property_check_result"), acceptanceRate: acceptanceRateMap["property_check_result"] ?? null });
   }
 
   // S-5: 費用・内覧・申込キーワード即判定（DBルール不要・Haiku流入削減）
-  if (/費用|初期費用|いくら/.test(lastCustomerMsg)) {
-    if (!shouldSuppressAction("estimate_sheet")) {
-      return NextResponse.json({ action: "estimate_sheet", reason: "費用に関する質問を検出", source: "keyword_trigger", params: buildParams("estimate_sheet"), acceptanceRate: acceptanceRateMap["estimate_sheet"] ?? null });
-    }
+  // 各判定は「申込 > 内覧 > 日程確定 > 費用」の優先順で early-exit（複数マッチ時の揺れを防止）。
+  // マッチしたのに採択率で抑制された場合もフォールスルーせず null で確定させる（P8誤提案防止）。
+  const keywordHit = (actionType: string, reason: string) => {
+    if (shouldSuppressAction(actionType)) return NextResponse.json({ action: null, reason: "" });
+    return NextResponse.json({ action: actionType, reason, source: "keyword_trigger", params: buildParams(actionType), acceptanceRate: acceptanceRateMap[actionType] ?? null });
+  };
+  // 申込: 「申込みたい」（送り仮名違い）「決めます」「決めたい」「こちらで申」もカバー（最も後工程＝最優先）
+  if (/申し込み.*たい|申込.*したい|申込.*希望|申込みたい|入居申込|決めます|決めたい|こちらで申/.test(lastCustomerMsg)) {
+    return keywordHit("application_push", "申込意向を検出");
   }
   // 内覧: 「内見」（内覧より多い表記）「見学」「現地確認」もカバー
   if (/内覧|内見|見学.*したい|見学.*希望|見学.*できますか|現地.*確認|現地.*見た/.test(lastCustomerMsg)) {
-    if (!shouldSuppressAction("viewing_invite")) {
-      return NextResponse.json({ action: "viewing_invite", reason: "内覧希望を検出", source: "keyword_trigger", params: buildParams("viewing_invite"), acceptanceRate: acceptanceRateMap["viewing_invite"] ?? null });
-    }
-  }
-  // 申込: 「申込みたい」（送り仮名違い）「決めます」「決めたい」「こちらで申」もカバー
-  if (/申し込み.*たい|申込.*したい|申込.*希望|申込みたい|入居申込|決めます|決めたい|こちらで申/.test(lastCustomerMsg)) {
-    if (!shouldSuppressAction("application_push")) {
-      return NextResponse.json({ action: "application_push", reason: "申込意向を検出", source: "keyword_trigger", params: buildParams("application_push"), acceptanceRate: acceptanceRateMap["application_push"] ?? null });
-    }
+    return keywordHit("viewing_invite", "内覧希望を検出");
   }
   // 日程確定 → meeting_place（「◯曜◯時」「◯月◯日」「AM/PM/午前/午後」+ 確定系の言い回し）
   if (/[月火水木金土日]曜.*[0-9０-９時]|[0-9０-９]+月[0-9０-９]+日|AM|PM|午前|午後/.test(lastCustomerMsg) &&
       /いかがでしょう|で大丈夫|でお願い|伺います|行きます|確定|来られ|来れ/.test(lastCustomerMsg)) {
-    if (!shouldSuppressAction("meeting_place")) {
-      return NextResponse.json({ action: "meeting_place", reason: "日程確定の意向を検出", source: "keyword_trigger", params: buildParams("meeting_place"), acceptanceRate: acceptanceRateMap["meeting_place"] ?? null });
-    }
+    return keywordHit("meeting_place", "日程確定の意向を検出");
+  }
+  if (/費用|初期費用|いくら/.test(lastCustomerMsg)) {
+    return keywordHit("estimate_sheet", "費用に関する質問を検出");
   }
 
   if (lastCustomerMsg) {
@@ -253,7 +237,10 @@ export async function POST(req: NextRequest) {
       .gte("confidence", 0.65)
       .gte("occurrence_count", 1)
       .or(`conversation_status.is.null,conversation_status.eq.${currentStatus}`)
+      // confidence 同値タイで limit(500) の取得セットが揺れないよう決定的に並べる
       .order("confidence", { ascending: false })
+      .order("occurrence_count", { ascending: false })
+      .order("keyword", { ascending: true })
       .limit(500);
 
     if (triggerRules?.length) {
@@ -287,7 +274,10 @@ export async function POST(req: NextRequest) {
         property_recommendation: "物件提案タイミング",
       };
       // スコア降順で並べて、抑制対象をスキップして最初の非抑制アクションを返却
-      const sortedScores = Object.entries(scores).sort((a, b) => b[1].score - a[1].score);
+      // （同スコア時は topConf 降順 → action_type 昇順で決定的にタイブレーク）
+      const sortedScores = Object.entries(scores).sort(
+        (a, b) => b[1].score - a[1].score || b[1].topConf - a[1].topConf || a[0].localeCompare(b[0])
+      );
       const topValid = sortedScores.find(([actionType, s]) => s.score >= 0.85 && !shouldSuppressAction(actionType));
       if (topValid) {
         return NextResponse.json({
@@ -299,6 +289,14 @@ export async function POST(req: NextRequest) {
         });
       }
     }
+  }
+
+  // ---- ステータス既定アクション（P8 Haiku流入削減）----
+  // applying（申込手続き中）はキーワード・DBルール不一致でも次アクションが自明なため決定的に返す。
+  // 採択率が30%を下回れば shouldSuppressAction が自動的に抑制する（自己修正）。
+  if (currentStatus === "applying") {
+    if (shouldSuppressAction("application_push")) return NextResponse.json({ action: null, reason: "" });
+    return NextResponse.json({ action: "application_push", reason: "申込手続きを進める", source: "status_rule", params: buildParams("application_push"), acceptanceRate: acceptanceRateMap["application_push"] ?? null });
   }
 
   // ---- P8フォールバック（Haiku AI判断）----

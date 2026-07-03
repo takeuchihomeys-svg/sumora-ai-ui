@@ -1,26 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
-import { upsertKnowledge, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
+import { upsertKnowledge, buildKnowledgeEmbeddingInput, generateEmbedding } from "@/app/lib/knowledge-utils";
 import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
-
-async function getEmbedding(text: string): Promise<number[] | null> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return null;
-  try {
-    const res = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { data: Array<{ embedding: number[] }> };
-    return data.data[0]?.embedding ?? null;
-  } catch {
-    return null;
-  }
-}
 
 // AIドラフトと実送信の差分を比較して学習ルールを抽出
 async function analyzeDiff(
@@ -162,7 +145,7 @@ export async function POST(req: NextRequest) {
         rule: result.rule,
         conversation_state: conversation_state ?? "proposing",
       });
-      const embedding = await getEmbedding(embeddingInput);
+      const embedding = await generateEmbedding(embeddingInput);
       // ☆つき or 大幅修正ほど importance を上げる
       const baseImp = diffImportance(sim);
       const imp = is_starred ? Math.min(9, baseImp + 1) : baseImp;

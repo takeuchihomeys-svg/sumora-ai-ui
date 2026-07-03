@@ -32,6 +32,16 @@ export async function GET(req: NextRequest) {
   }
 
   const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  // JST今日00:00 / 昨日00:00 をUTCで計算
+  const nowJst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const todayStart = new Date(Date.UTC(
+    nowJst.getUTCFullYear(),
+    nowJst.getUTCMonth(),
+    nowJst.getUTCDate()
+  ) - 9 * 60 * 60 * 1000); // JST today 00:00
+  const yesterdayStart = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000); // JST yesterday 00:00
 
   // 並列取得
   const [
@@ -39,6 +49,10 @@ export async function GET(req: NextRequest) {
     { data: unrepliedConvs },
     { data: hotCustomers },
     { data: attributionRow },
+    { data: adoptionLogs },
+    { data: lossPatterns },
+    { data: topTemplates },
+    { count: wonCount },
   ] = await Promise.all([
     // ① 未完了タスク
     supabase
@@ -71,6 +85,36 @@ export async function GET(req: NextRequest) {
       .select("content")
       .eq("key", "ai_attribution_metrics")
       .maybeSingle(),
+
+    // ⑤ 提案採択/却下ログ（直近7日）
+    supabase
+      .from("action_pattern_logs")
+      .select("source")
+      .in("source", ["suggestion_accepted", "suggestion_dismissed"])
+      .gte("created_at", sevenDaysAgo),
+
+    // ⑥ 失注パターントップ3
+    supabase
+      .from("ai_reply_knowledge")
+      .select("title, importance")
+      .ilike("title", "失注パターン%")
+      .order("importance", { ascending: false })
+      .limit(3),
+
+    // ⑦ テンプレ使用ランキング（上位3件）
+    supabase
+      .from("templates")
+      .select("name, use_count")
+      .order("use_count", { ascending: false })
+      .limit(3),
+
+    // ⑧ 昨日の成約数（closed_won になった件数）
+    supabase
+      .from("conversations")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "closed_won")
+      .gte("updated_at", yesterdayStart.toISOString())
+      .lt("updated_at", todayStart.toISOString()),
   ]);
 
   // AI貢献率フッター（メトリクスがあれば1行追加）
@@ -83,6 +127,37 @@ export async function GET(req: NextRequest) {
   } catch {
     // JSONパース失敗時はスキップ（レポート本体は送る）
   }
+
+  // 📊 統計サマリー（昨日の成約・提案採択率・失注パターン・テンプレランキング）
+  const statsLines: string[] = [];
+
+  // 昨日の成約数
+  statsLines.push(`🎉 昨日の成約: ${wonCount ?? 0}件`);
+
+  // 提案採択率（直近7日）
+  const accepted = adoptionLogs?.filter((l) => l.source === "suggestion_accepted").length || 0;
+  const dismissed = adoptionLogs?.filter((l) => l.source === "suggestion_dismissed").length || 0;
+  const adoptionRate = (accepted + dismissed) > 0
+    ? Math.round(accepted / (accepted + dismissed) * 100) : null;
+  if (adoptionRate !== null) {
+    statsLines.push(`✅ 提案採択率: ${adoptionRate}%（採択${accepted}件 / 却下${dismissed}件）`);
+  }
+
+  // 失注パターントップ3
+  if (lossPatterns && lossPatterns.length > 0) {
+    const lines = lossPatterns.map((p, i) => `  ${i + 1}. ${(p.title as string).replace(/^失注パターン[:：]?\s*/, "")}`);
+    statsLines.push(`⚠️ 失注パターントップ3:\n${lines.join("\n")}`);
+  }
+
+  // テンプレ使用ランキング
+  if (topTemplates && topTemplates.length > 0) {
+    const rank = topTemplates.map((t, i) => `${i + 1}位 ${t.name}(${t.use_count ?? 0}回)`).join(" / ");
+    statsLines.push(`📄 テンプレ使用ランキング: ${rank}`);
+  }
+
+  const statsBlock = statsLines.length > 0
+    ? `\n\n——————\n\n📊 統計サマリー\n\n${statsLines.join("\n")}`
+    : "";
 
   const sections: string[] = [];
 
@@ -108,13 +183,6 @@ export async function GET(req: NextRequest) {
   }
 
   // ③ 今日物件を出すべき顧客
-  const nowJst = new Date(Date.now() + 9 * 60 * 60 * 1000);
-  const todayStart = new Date(Date.UTC(
-    nowJst.getUTCFullYear(),
-    nowJst.getUTCMonth(),
-    nowJst.getUTCDate()
-  ) - 9 * 60 * 60 * 1000); // JST today 00:00
-
   const needsProp = (hotCustomers ?? []).filter((c) => {
     if (c.status === "new_inquiry") return true;
     if (c.status === "hot") {
@@ -133,7 +201,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (sections.length === 0) {
-    const text = `🌅 おはようございます！\n今日は未完了タスク・未返信ともにゼロです🎉\n引き続きよろしくお願いします！${attributionLine}`;
+    const text = `🌅 おはようございます！\n今日は未完了タスク・未返信ともにゼロです🎉\n引き続きよろしくお願いします！${statsBlock}${attributionLine}`;
     await fetch("https://api.line.me/v2/bot/message/push", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -142,7 +210,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, tasks: 0, unreplied: 0, needsProp: 0 });
   }
 
-  const text = `🌅 おはようございます！今日のタスクレポートです\n\n${sections.join("\n\n——————\n\n")}\n\n全員対応よろしくお願いします！${attributionLine}`;
+  const text = `🌅 おはようございます！今日のタスクレポートです\n\n${sections.join("\n\n——————\n\n")}${statsBlock}\n\n全員対応よろしくお願いします！${attributionLine}`;
 
   const res = await fetch("https://api.line.me/v2/bot/message/push", {
     method: "POST",
