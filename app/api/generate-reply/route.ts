@@ -162,7 +162,8 @@ function buildGenerationMessages(
   isFollowUp = false,
   replyHint = "",
   alreadyGreetedToday?: boolean,
-  isFirstEverReplyOverride?: boolean
+  isFirstEverReplyOverride?: boolean,
+  viewingNote = ""
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   const jstDay = getJSTDayOfWeek();
@@ -392,6 +393,10 @@ function buildGenerationMessages(
     ? `\n\n【🚨 申込フォーム受取・身分証なし検出】お客様からフォーム（個人情報テキスト）が送られてきたが、身分証明書の写真がない。返信には必ず「身分証明書（運転免許証またはマイナンバーカード）の表裏のお写真もお送りいただけますでしょうか！！」を含めること。フォーム未記入欄（勤務先等）があれば同時に確認する。パターンG-1で対応。`
     : "";
 
+  const viewingFactNote = viewingNote
+    ? `\n\n【📅 内覧可能日時（確定事実）】\n${viewingNote}\n※ 内覧を提案する場合はこの日時のみ使用。[日付][時間帯]はこの内容で必ず置き換えること。`
+    : "";
+
   const replyHintNote = replyHint
     ? `\n\n【🔴✨ 指定生成モード（通常の生成ルールをすべて上書き）】
 以下の指定内容のみに従い返信を生成すること。フェーズ別の行動パターン・物件送る・ピックアップ・長い説明は一切不要。
@@ -427,7 +432,7 @@ ${knowledge}
 ${phrases}
 
 ${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}
-${customerMessage}${applicationFormNote}
+${customerMessage}${applicationFormNote}${viewingFactNote}
 
 ${examples}${examplesInstruction}
 
@@ -828,6 +833,7 @@ export async function POST(req: NextRequest) {
   type RecentMessage = { sender: string; text: string; imageUrl?: string; createdAt?: string; isAix?: boolean };
   let message: string, state: string, customerName: string, recentMessages: RecentMessage[], customerConditions: string, customerSummary: string, replyHint: string;
   let screenshotBase64: string | undefined, screenshotMediaType: string | undefined;
+  let viewingNote = "";
   try {
     const body = await req.json() as {
       message: string;
@@ -837,6 +843,7 @@ export async function POST(req: NextRequest) {
       customerConditions?: string;
       customerSummary?: string;
       replyHint?: string;
+      viewingNote?: string;
       screenshotBase64?: string;
       screenshotMediaType?: string;
       hasViewed?: boolean;
@@ -858,6 +865,7 @@ export async function POST(req: NextRequest) {
     }
     screenshotBase64 = body.screenshotBase64;
     screenshotMediaType = body.screenshotMediaType;
+    viewingNote = body.viewingNote || "";
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid request body" }, { status: 400 });
   }
@@ -1051,7 +1059,7 @@ export async function POST(req: NextRequest) {
       message, customerName, history, currentState,
       analysis, knowledge, examples, phrases, customerConditions, resolvedSummary,
       promptOverrides, isFollowUp, replyHint, alreadyGreetedToday,
-      isFirstEverReplyFromMsgs
+      isFirstEverReplyFromMsgs, viewingNote
     );
     const genStream = generationModel.stream(messages);
 
