@@ -36,6 +36,22 @@ export async function POST(req: NextRequest) {
   const { conversation_id, last_aix_action: clientLastAixAction } = await req.json() as { conversation_id: string; last_aix_action?: string | null };
   if (!conversation_id) return NextResponse.json({ action: null, reason: "" });
 
+  // ---- 採択率フェッチ（毎日 update-action-confidence cron が更新する値を参照）----
+  const { data: acceptanceRows } = await supabase
+    .from("trigger_action_rules")
+    .select("action_type, confidence")
+    .eq("keyword", "SUGGESTION_ACCEPT_RATE");
+  const acceptanceRateMap = Object.fromEntries(
+    (acceptanceRows || []).map((r) => [r.action_type as string, r.confidence as number])
+  );
+
+  // 採択率が 30% 未満のアクションは抑制する
+  function shouldSuppressAction(actionType: string | null | undefined): boolean {
+    if (!actionType) return false;
+    const rate = acceptanceRateMap[actionType];
+    return rate !== undefined && rate < 0.3;
+  }
+
   const [{ data: conv }, { data: messages }, { data: customer }] = await Promise.all([
     supabase.from("conversations")
       .select("status, customer_name, last_sender")
@@ -87,7 +103,9 @@ export async function POST(req: NextRequest) {
 
   // 物件確認結果（unavailable）の後にお客様が返信 → 代替物件送りへ誘導
   if (last_aix_action === "property_check_result" && conv.last_sender === "customer") {
-    return NextResponse.json({ action: "alternative_send", reason: "代替物件を送る", source: "chain_rule", params: buildParams("alternative_send") });
+    if (!shouldSuppressAction("alternative_send")) {
+      return NextResponse.json({ action: "alternative_send", reason: "代替物件を送る", source: "chain_rule", params: buildParams("alternative_send"), acceptanceRate: acceptanceRateMap["alternative_send"] ?? null });
+    }
   }
 
   const currentStatus = (conv.status as string) ?? "hearing";
@@ -106,7 +124,6 @@ export async function POST(req: NextRequest) {
       .limit(3);
 
     if (chainRules?.length) {
-      const top = chainRules[0];
       const CHAIN_REASON: Record<string, string> = {
         property_recommendation: "物件送った後のオススメ",
         viewing_invite: "物件提案後・内覧誘導",
@@ -115,12 +132,17 @@ export async function POST(req: NextRequest) {
         meeting_place: "内覧日程を決める",
         property_send: "追加物件を送る",
       };
-      return NextResponse.json({
-        action: top.action_type,
-        reason: CHAIN_REASON[top.action_type as string] ?? `${last_aix_action}の次`,
-        source: "chain_rule",
-        params: buildParams(top.action_type as string),
-      });
+      // 抑制対象をスキップして最初の非抑制アクションを採用
+      const validChainRule = chainRules.find((r) => !shouldSuppressAction(r.action_type as string));
+      if (validChainRule) {
+        return NextResponse.json({
+          action: validChainRule.action_type,
+          reason: CHAIN_REASON[validChainRule.action_type as string] ?? `${last_aix_action}の次`,
+          source: "chain_rule",
+          params: buildParams(validChainRule.action_type as string),
+          acceptanceRate: acceptanceRateMap[validChainRule.action_type as string] ?? null,
+        });
+      }
     }
   }
 
@@ -131,7 +153,10 @@ export async function POST(req: NextRequest) {
       ? (Date.now() - new Date(latestMsg.created_at as string).getTime()) / (1000 * 60 * 60 * 24)
       : 0;
     if (daysSince >= 3) {
-      return NextResponse.json({ action: "property_send", reason: `${Math.floor(daysSince)}日間未返信・追客`, params: buildParams("property_send") });
+      if (shouldSuppressAction("property_send")) {
+        return NextResponse.json({ action: null, reason: "" });
+      }
+      return NextResponse.json({ action: "property_send", reason: `${Math.floor(daysSince)}日間未返信・追客`, params: buildParams("property_send"), acceptanceRate: acceptanceRateMap["property_send"] ?? null });
     }
     return NextResponse.json({ action: null, reason: "" });
   }
@@ -146,13 +171,17 @@ export async function POST(req: NextRequest) {
   const DATE_ENTRY_ESTIMATE_RE = /\d+[\/月]\d+[日]?.*入居|入居.*\d+[\/月]\d+[日]?/;
   if ((DATE_ENTRY_ESTIMATE_RE.test(lastCustomerMsg) || lastCustomerMsg.includes("入居")) &&
       (lastCustomerMsg.includes("出して") || lastCustomerMsg.includes("出してほしい") || lastCustomerMsg.includes("で出し") || lastCustomerMsg.includes("見積"))) {
-    return NextResponse.json({ action: "estimate_sheet", reason: "入居日指定・見積書再送", source: "trigger_rule", params: buildParams("estimate_sheet") });
+    if (!shouldSuppressAction("estimate_sheet")) {
+      return NextResponse.json({ action: "estimate_sheet", reason: "入居日指定・見積書再送", source: "trigger_rule", params: buildParams("estimate_sheet"), acceptanceRate: acceptanceRateMap["estimate_sheet"] ?? null });
+    }
   }
 
   // 物件画像・動画が送られてきた場合は即座に「物件確認した」を提案
   const IMAGE_CHECK_STATUSES = new Set(["first_reply", "hearing", "proposing", "property_recommendation", "availability_check", "condition_hearing"]);
   if ((lastCustomerMsg.includes("[画像]") || lastCustomerMsg.includes("[動画]")) && IMAGE_CHECK_STATUSES.has(currentStatus)) {
-    return NextResponse.json({ action: "property_check_result", reason: "物件画像が送られた", source: "trigger_rule", params: buildParams("property_check_result") });
+    if (!shouldSuppressAction("property_check_result")) {
+      return NextResponse.json({ action: "property_check_result", reason: "物件画像が送られた", source: "trigger_rule", params: buildParams("property_check_result"), acceptanceRate: acceptanceRateMap["property_check_result"] ?? null });
+    }
   }
 
   // 物件URLの送信 or 空室確認の質問 → 物件確認を提案
@@ -163,7 +192,9 @@ export async function POST(req: NextRequest) {
   const hasPropertyUrl = recentCustomerMsgs.some((t) => PROPERTY_URL_RE.test(t));
   const hasAvailabilityQuestion = AVAILABILITY_KEYWORDS.some((kw) => lastCustomerMsg.includes(kw));
   if ((hasPropertyUrl || hasAvailabilityQuestion) && IMAGE_CHECK_STATUSES.has(currentStatus)) {
-    return NextResponse.json({ action: "property_check_result", reason: "物件の空室確認依頼", source: "trigger_rule", params: buildParams("property_check_result") });
+    if (!shouldSuppressAction("property_check_result")) {
+      return NextResponse.json({ action: "property_check_result", reason: "物件の空室確認依頼", source: "trigger_rule", params: buildParams("property_check_result"), acceptanceRate: acceptanceRateMap["property_check_result"] ?? null });
+    }
   }
 
   if (lastCustomerMsg) {
@@ -197,24 +228,26 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      const top = Object.entries(scores).sort((a, b) => b[1].score - a[1].score)[0];
-      // スコアが閾値を超えたら Haiku を呼ばずに即返却
-      if (top && top[1].score >= 0.85) {
-        const ACTION_REASON: Record<string, string> = {
-          property_send: "物件希望が来た",
-          viewing_invite: "内覧希望が出た",
-          application_push: "申込意欲あり",
-          estimate_sheet: "費用の質問あり",
-          meeting_place: "日程が決まりそう",
-          property_check: "物件確認依頼",
-          property_check_result: "物件画像が送られた",
-          property_recommendation: "物件提案タイミング",
-        };
+      const ACTION_REASON: Record<string, string> = {
+        property_send: "物件希望が来た",
+        viewing_invite: "内覧希望が出た",
+        application_push: "申込意欲あり",
+        estimate_sheet: "費用の質問あり",
+        meeting_place: "日程が決まりそう",
+        property_check: "物件確認依頼",
+        property_check_result: "物件画像が送られた",
+        property_recommendation: "物件提案タイミング",
+      };
+      // スコア降順で並べて、抑制対象をスキップして最初の非抑制アクションを返却
+      const sortedScores = Object.entries(scores).sort((a, b) => b[1].score - a[1].score);
+      const topValid = sortedScores.find(([actionType, s]) => s.score >= 0.85 && !shouldSuppressAction(actionType));
+      if (topValid) {
         return NextResponse.json({
-          action: top[0],
-          reason: ACTION_REASON[top[0]] ?? top[1].topKeyword,
+          action: topValid[0],
+          reason: ACTION_REASON[topValid[0]] ?? topValid[1].topKeyword,
           source: "trigger_rule",
-          params: buildParams(top[0]),
+          params: buildParams(topValid[0]),
+          acceptanceRate: acceptanceRateMap[topValid[0]] ?? null,
         });
       }
     }
@@ -333,7 +366,9 @@ ${recentText}
     // AIが "null" を文字列で返すケースを null に正規化
     const action = (!result.action || result.action === "null") ? null : result.action;
     if (!action) return NextResponse.json({ action: null, reason: result.reason ?? "" });
-    return NextResponse.json({ action, reason: result.reason ?? "", params: buildParams(action) });
+    // Haiku が提案したアクションも採択率が 30% 未満なら抑制
+    if (shouldSuppressAction(action)) return NextResponse.json({ action: null, reason: "" });
+    return NextResponse.json({ action, reason: result.reason ?? "", params: buildParams(action), acceptanceRate: acceptanceRateMap[action] ?? null });
   } catch {
     return NextResponse.json({ action: null, reason: "" });
   }

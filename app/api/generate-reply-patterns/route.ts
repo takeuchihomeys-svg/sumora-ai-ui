@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { supabase } from "@/app/lib/supabase";
-import { PHASE_GUIDE, REAL_ESTATE_RULES, SMORA_QUICK_PATTERNS, EMOJI_RULE, STATE_SEARCH_ALIASES } from "@/app/lib/line-reply-prompts";
+import { PHASE_GUIDE, REAL_ESTATE_RULES, SMORA_QUICK_PATTERNS, EMOJI_RULE, STATE_SEARCH_ALIASES, CRITICAL_RULES_COMPACT } from "@/app/lib/line-reply-prompts";
 
 const analysisModel = new ChatAnthropic({
   model: "claude-haiku-4-5-20251001",
@@ -275,7 +275,9 @@ async function generateAllPatterns(
   // 不安系質問検出時のみREAL_ESTATE_RULESを注入
   const realEstateSection = isAnxietyDetected ? `\n\n${REAL_ESTATE_RULES}` : "";
 
-  const systemPrompt = `あなたはスモラ（賃貸仲介）のLINE営業担当です。
+  const systemPrompt = `${CRITICAL_RULES_COMPACT}
+
+あなたはスモラ（賃貸仲介）のLINE営業担当です。
 同じ内容・意図のLINE返信を3つ生成してください。
 
 【スモラの営業スタイル — 最重要】

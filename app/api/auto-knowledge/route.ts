@@ -1,6 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
+// ─── OpenAI 埋め込み生成 ─────────────────────────────────────────────────────
+async function getEmbedding(text: string): Promise<number[] | null> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), 6000);
+  try {
+    const res = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
+      signal: controller.signal,
+    });
+    clearTimeout(tid);
+    if (!res.ok) return null;
+    const data = await res.json() as { data: Array<{ embedding: number[] }> };
+    return data.data[0]?.embedding ?? null;
+  } catch {
+    clearTimeout(tid);
+    return null;
+  }
+}
+
 const STATE_NORMALIZE: Record<string, string> = {
   condition_hearing: "hearing", property_search: "hearing",
   property_recommendation: "proposing", viewing: "proposing",
@@ -122,12 +145,29 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, reason: "extraction skipped or failed" });
     }
 
+    // contentフィールド強化: customerMessageがある場合、先頭に例文を付加
+    const enrichedContent = customerMessage
+      ? `例: 顧客が「${customerMessage.slice(0, 100)}」と言った場合。${rule}`
+      : rule;
+
+    // embedding生成（失敗した場合はnullのままinsert）
+    let embedding: number[] | null = null;
+    try {
+      const embeddingInput = customerMessage
+        ? `${normalized}: ${customerMessage} ${enrichedContent}`.slice(0, 2000)
+        : enrichedContent.slice(0, 2000);
+      embedding = await getEmbedding(embeddingInput);
+    } catch {
+      // embedding生成失敗時はnullのままにして既存ロジックを維持
+    }
+
     const { error } = await supabase.from("ai_reply_knowledge").insert({
       title: "差分学習 [自動]",
       category: "principle",
       importance: 9,
       conversation_state: normalized,
-      content: rule,
+      content: enrichedContent,
+      ...(embedding !== null ? { embedding } : {}),
     });
 
     if (error) {

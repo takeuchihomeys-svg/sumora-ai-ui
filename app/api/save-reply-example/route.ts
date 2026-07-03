@@ -529,7 +529,7 @@ export async function POST(req: NextRequest) {
         ai_draft: aiDraft || null,
         was_ai_used: wasAiUsed,
         was_ai_modified: wasAiModified,
-        is_starred: isStarred ?? wasAiUsed,
+        is_starred: isStarred ?? false,
         reply_angle: replyAngle || null,
       })
       .select("id")
@@ -551,11 +551,12 @@ export async function POST(req: NextRequest) {
   }
 
   // 学習トリガー判定
-  // ⭐ 手動インポート or ☆ or AI文案そのまま使用 → 深層分析 + フレーズ抽出（wasAiUsed=trueも☆として扱う）
+  // ⭐ 手動インポート or 手動☆ → 深層分析 + フレーズ抽出
+  // AI文案をそのまま使用（wasAiUsed）→ フレーズ抽出のみ（自己強化防止: 深層分析は行わない）
   // AI文案を修正して送った → 差分学習のみ（修正内容が最良の教師信号）
-  const effectiveStarred = (isStarred ?? wasAiUsed) === true;
-  const shouldDeepAnalyze = effectiveStarred || !aiDraft || wasAiUsed;
-  const shouldExtractPhrases = shouldDeepAnalyze || wasAiModified;
+  const effectiveStarred = isStarred === true;
+  const shouldDeepAnalyze = effectiveStarred || !aiDraft;
+  const shouldExtractPhrases = shouldDeepAnalyze || wasAiModified || wasAiUsed;
 
   const analysisJobs: Promise<void>[] = [];
   if (shouldDeepAnalyze && data?.id) {
