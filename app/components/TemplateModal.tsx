@@ -139,6 +139,17 @@ export interface Template {
   second_msg_delay: number | null;
 }
 
+interface AiTemplateCandidate {
+  id: string;
+  action_type: string;
+  category: string;
+  suggested_title: string;
+  template_text: string;
+  created_at: string;
+  is_adopted: boolean;
+  is_dismissed: boolean;
+}
+
 interface TemplateModalProps {
   onClose: () => void;
   onSelect?: (text: string, imageFiles?: File[], label?: string, category?: string, secondMsg?: { type: string; delay: number } | null) => void;
@@ -280,6 +291,11 @@ export default function TemplateModal({
   // AIXカテゴリ: テンプレートカードごとの訴求ポイント選択状態
   const [focusPointsMap, setFocusPointsMap] = useState<Record<string, string[]>>({});
   const [soloEntry, setSoloEntry] = useState(false);
+  // AI候補タブ
+  const [isCandidateTabActive, setIsCandidateTabActive] = useState(false);
+  const [candidates, setCandidates] = useState<AiTemplateCandidate[]>([]);
+  const [candidateLoading, setCandidateLoading] = useState(false);
+  const [adoptingId, setAdoptingId] = useState<string | null>(null);
 
   function applyVacatingDates(text: string, vd: { month: number; day: number } | null): string {
     const lastDayOf = (m: number) => new Date(new Date().getFullYear(), m, 0).getDate();
@@ -373,6 +389,20 @@ export default function TemplateModal({
 
   useEffect(() => { loadTemplates(); }, []);
   useEffect(() => { setSoloEntry(false); hasScrolled.current = false; }, [category]);
+
+  const loadCandidates = useCallback(async () => {
+    setCandidateLoading(true);
+    try {
+      const res = await fetch("/api/ai-template-candidates");
+      const json = await res.json() as { ok: boolean; candidates: AiTemplateCandidate[] };
+      if (json.ok) setCandidates(json.candidates);
+    } catch { /* silent */ }
+    finally { setCandidateLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    if (isCandidateTabActive) loadCandidates();
+  }, [isCandidateTabActive, loadCandidates]);
 
   const commitCategoryRename = async () => {
     const oldCat = editingCategory;
@@ -674,10 +704,13 @@ export default function TemplateModal({
               {/* 一般まとめボタン */}
               {normalCategories.length > 0 && (
                 <button
-                  onClick={() => { if (isAixCategoryActive) setCategory(normalCategories[0]); }}
+                  onClick={() => {
+                    setIsCandidateTabActive(false);
+                    if (isAixCategoryActive || !category) setCategory(normalCategories[0]);
+                  }}
                   className="shrink-0 rounded-full px-4 py-1.5 text-[12px] font-bold transition"
                   style={
-                    !isAixCategoryActive
+                    !isAixCategoryActive && !isCandidateTabActive
                       ? { background: "linear-gradient(135deg, #1565C0, #4BA8E8)", color: "white" }
                       : { backgroundColor: "#f0f2f5", color: "#54656f" }
                   }
@@ -688,10 +721,13 @@ export default function TemplateModal({
               {/* AIXまとめボタン */}
               {aixCategories.length > 0 && (
                 <button
-                  onClick={() => { if (!isAixCategoryActive) setCategory(aixCategories[0]); }}
+                  onClick={() => {
+                    setIsCandidateTabActive(false);
+                    if (!isAixCategoryActive) setCategory(aixCategories[0]);
+                  }}
                   className="shrink-0 rounded-full px-4 py-1.5 text-[12px] font-bold transition"
                   style={
-                    isAixCategoryActive
+                    isAixCategoryActive && !isCandidateTabActive
                       ? { background: "linear-gradient(135deg, #7B1FA2, #9C27B0)", color: "white" }
                       : { backgroundColor: "#f0f2f5", color: "#54656f" }
                   }
@@ -699,9 +735,26 @@ export default function TemplateModal({
                   【AIX】
                 </button>
               )}
+              {/* AI候補タブ */}
+              <button
+                onClick={() => {
+                  setIsCandidateTabActive(true);
+                  setCategory(""); // 一般・AIXタブを非アクティブに
+                }}
+                className={
+                  "px-3 py-1.5 rounded-full text-sm font-medium transition-all shrink-0 " +
+                  (isCandidateTabActive
+                    ? "bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow"
+                    : "bg-gray-100 text-gray-600 hover:bg-gray-200")
+                }
+              >
+                ✨AI候補 {candidates.filter(c => !c.is_adopted && !c.is_dismissed).length > 0
+                  ? `(${candidates.filter(c => !c.is_adopted && !c.is_dismissed).length})`
+                  : ""}
+              </button>
             </div>
             {/* 一般サブタブ行（一般カテゴリ選択中のみ表示） */}
-            {!isAixCategoryActive && normalCategories.length > 0 && (
+            {!isCandidateTabActive && !isAixCategoryActive && normalCategories.length > 0 && (
               <div className="flex gap-1.5 overflow-x-auto border-b border-[#e3e8ef] bg-[#f8f9fb] px-4 py-2 shrink-0 scroll-smooth" style={{ scrollbarWidth: "none" }}>
                 {normalCategories.map((cat) => (
                   <div
@@ -752,7 +805,7 @@ export default function TemplateModal({
               </div>
             )}
             {/* AIXサブタブ行（AIXカテゴリ選択中のみ表示） */}
-            {isAixCategoryActive && aixCategories.length > 0 && (
+            {!isCandidateTabActive && isAixCategoryActive && aixCategories.length > 0 && (
               <div className="flex gap-1.5 overflow-x-auto border-b border-purple-100 bg-[#faf5ff] px-4 py-2 shrink-0 scroll-smooth" style={{ scrollbarWidth: "none" }}>
                 {aixCategories.map((cat) => (
                   <div
@@ -883,8 +936,84 @@ export default function TemplateModal({
             </div>
           )}
 
+          {/* AI候補一覧 */}
+          {!showAddForm && isCandidateTabActive && (
+            <div className="flex-1 overflow-y-auto p-3 space-y-3">
+              {candidateLoading && (
+                <p className="text-center text-gray-400 py-8">読み込み中...</p>
+              )}
+              {!candidateLoading && candidates.filter(c => !c.is_adopted && !c.is_dismissed).length === 0 && (
+                <div className="text-center text-gray-400 py-12">
+                  <p className="text-2xl mb-2">🤖</p>
+                  <p className="text-sm">AIXボタンで送信した文が候補として表示されます</p>
+                </div>
+              )}
+              {!candidateLoading && (() => {
+                const pending = candidates.filter(c => !c.is_adopted && !c.is_dismissed);
+                // カテゴリ順でグルーピング
+                const byCategory: Record<string, AiTemplateCandidate[]> = {};
+                for (const c of pending) {
+                  if (!byCategory[c.category]) byCategory[c.category] = [];
+                  byCategory[c.category].push(c);
+                }
+                return Object.entries(byCategory).map(([cat, items]) => (
+                  <div key={cat}>
+                    <p className="text-xs font-semibold text-emerald-600 mb-2 px-1">{cat}</p>
+                    {items.map(candidate => (
+                      <div
+                        key={candidate.id}
+                        className="bg-white rounded-xl border border-gray-200 p-3 mb-2 shadow-sm"
+                      >
+                        <p className="text-xs text-gray-500 mb-1 font-medium">{candidate.suggested_title}</p>
+                        <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed mb-3">
+                          {candidate.template_text}
+                        </p>
+                        <div className="flex gap-2">
+                          <button
+                            disabled={adoptingId === candidate.id}
+                            onClick={async () => {
+                              setAdoptingId(candidate.id);
+                              try {
+                                await fetch("/api/ai-template-candidates", {
+                                  method: "PATCH",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ id: candidate.id, action: "adopt" }),
+                                });
+                                setCandidates(prev =>
+                                  prev.map(c => c.id === candidate.id ? { ...c, is_adopted: true } : c)
+                                );
+                              } finally { setAdoptingId(null); }
+                            }}
+                            className="flex-1 py-1.5 rounded-lg bg-emerald-500 text-white text-sm font-semibold hover:bg-emerald-600 disabled:opacity-50 transition"
+                          >
+                            {adoptingId === candidate.id ? "採用中..." : "✅ 採用"}
+                          </button>
+                          <button
+                            onClick={async () => {
+                              await fetch("/api/ai-template-candidates", {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ id: candidate.id, action: "dismiss" }),
+                              });
+                              setCandidates(prev =>
+                                prev.map(c => c.id === candidate.id ? { ...c, is_dismissed: true } : c)
+                              );
+                            }}
+                            className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-500 text-sm hover:bg-gray-200 transition"
+                          >
+                            却下
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ));
+              })()}
+            </div>
+          )}
+
           {/* テンプレート一覧 */}
-          {!showAddForm && (
+          {!showAddForm && !isCandidateTabActive && (
             <div className="p-4">
               {!loading && filtered.length > 0 && (
                 <div className="mb-3 flex flex-col gap-2">

@@ -591,7 +591,24 @@ CREATE INDEX IF NOT EXISTS idx_ai_reply_examples_conv_id ON ai_reply_examples(co
 -- conversations: 自動送信フラグ（Phase3 auto-send準備用）
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS auto_send_enabled BOOLEAN DEFAULT FALSE;
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS auto_sent_at TIMESTAMPTZ;
-ALTER TABLE conversations ADD COLUMN IF NOT EXISTS auto_sent_draft TEXT
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS auto_sent_draft TEXT;
+
+-- AI テンプレート候補テーブル（AIXボタン送信後に候補として蓄積し、採用でtemplatesに昇格）
+CREATE TABLE IF NOT EXISTS ai_template_candidates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  action_type TEXT NOT NULL,
+  category TEXT NOT NULL,
+  suggested_title TEXT NOT NULL,
+  template_text TEXT NOT NULL,
+  conversation_id TEXT,
+  is_adopted BOOLEAN DEFAULT FALSE,
+  is_dismissed BOOLEAN DEFAULT FALSE,
+  adopted_template_id UUID REFERENCES templates(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ai_template_candidates_action ON ai_template_candidates(action_type);
+CREATE INDEX IF NOT EXISTS idx_ai_template_candidates_pending ON ai_template_candidates(is_adopted, is_dismissed);
+ALTER TABLE ai_template_candidates DISABLE ROW LEVEL SECURITY
 `.trim();
 
 export async function GET() {

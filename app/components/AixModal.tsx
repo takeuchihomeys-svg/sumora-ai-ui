@@ -1235,6 +1235,20 @@ export default function AixModal({
     };
   };
 
+  // AIX送信文をテンプレート候補として保存（fire-and-forget）
+  const saveTemplateCandidate = (sentText: string) => {
+    if (!sentText.trim() || sentText.length < 20) return; // 短すぎるものはスキップ
+    fetch("/api/ai-template-candidates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        actionType,
+        templateText: sentText,
+        conversationId,
+      }),
+    }).catch(() => {}); // エラーはサイレントに無視
+  };
+
   const openAixScheduleModal = () => {
     if (!preview.trim()) return;
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -1310,6 +1324,7 @@ export default function AixModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(buildSaveReplyPayload(textToSend, `（AIX予約: ${config?.title ?? actionType}）`)),
       }).catch((e) => { console.warn("[AixModal] save-reply-example保存失敗（予約送信）:", e); });
+      saveTemplateCandidate(textToSend);
 
       // 待ち合わせ確定後にカレンダーイベントを作成（予約送信の場合も同様）
       if (actionType === "meeting_place" && meetingDate && meetingTime && meetingPropertyName) {
@@ -1480,6 +1495,7 @@ export default function AixModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(buildSaveReplyPayload(preview, inputText.trim() || `（AIX: ${config.title}）`)),
       }).catch((e) => { console.warn("[AixModal] save-reply-example保存失敗:", e); });
+      saveTemplateCandidate(preview);
 
       // テンプレートフレーズ学習ログ
       if (preview.trim()) {
