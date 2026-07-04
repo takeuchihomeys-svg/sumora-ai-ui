@@ -1248,15 +1248,15 @@ export async function POST(req: NextRequest) {
               if (cleaned) controller.enqueue(encoder.encode(cleaned));
               finalDraftText = cleaned;
             }
-            // ✅ 成功時: ai_draft 保存 + draft_pending_at クリア（次のCronでスキップさせる）
+            // ✅ 成功時: ai_draft 保存 + draft_pending_at クリア（次のCronでスキップさせる）+ draft_attempted_at クリア（orphanedクエリで拾われないように）
             // ※ draft_updated_at カラムは conversations に存在しないため未使用（追加時はここで更新すること）
             if (conversationId) {
               const { error: saveErr } = await supabase
                 .from("conversations")
                 .update(
                   finalDraftText.trim()
-                    ? { ai_draft: finalDraftText.trim(), draft_pending_at: null }
-                    : { draft_pending_at: null } // 空生成でも pending は解除（永続pending防止）
+                    ? { ai_draft: finalDraftText.trim(), draft_pending_at: null, draft_attempted_at: null }
+                    : { draft_pending_at: null } // 空生成でも pending は解除（永続pending防止）。attempted_at は残す＝10分間リトライしない
                 )
                 .eq("id", conversationId);
               if (saveErr) console.error("[generate-reply] ai_draft save error:", conversationId, saveErr.message);
@@ -1264,6 +1264,7 @@ export async function POST(req: NextRequest) {
           } catch (streamErr) {
             console.error("generate-reply stream error:", streamErr);
             // ❌ 失敗時: draft_pending_at をクリアして永続pendingを防止
+            // ※ draft_attempted_at は意図的に触らない（残す＝10分間はorphanedクエリでリトライされない）
             // ※ draft_error_at カラムは conversations に存在しないためエラー時刻は記録しない（追加時はここで記録すること）
             if (conversationId) {
               const { error: clearErr } = await supabase
@@ -1282,6 +1283,7 @@ export async function POST(req: NextRequest) {
     const msg = err instanceof Error ? err.message : "返信生成エラー";
     console.error("generate-reply error:", msg);
     // ❌ 失敗時: draft_pending_at をクリアして永続pendingを防止（毎分Cronの無限再試行対策）
+    // ※ draft_attempted_at は意図的に触らない（残す＝10分間はorphanedクエリでリトライされない）
     // ※ draft_error_at カラムは conversations に存在しないためエラー時刻は記録しない（追加時はここで記録すること）
     if (conversationId) {
       try {

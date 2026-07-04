@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 function getDb() {
@@ -45,7 +45,16 @@ function markerOf(c: { draft_pending_at?: string | null; updated_at?: string | n
 }
 
 // 60秒デバウンス経過済みの会話に対してまとめ下書き生成（毎分Cronから呼ばれる）
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const cronSecret = process.env.CRON_SECRET;
+  const auth = req.headers.get("authorization");
+  if (cronSecret && auth !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+  return run();
+}
+
+async function run() {
   const db = getDb();
   const threshold = new Date(Date.now() - 60 * 1000).toISOString();
   // 10分以上前のpendingは対象外（処理失敗した会話が毎分再処理され続けるのを防ぐ上限）
@@ -69,6 +78,9 @@ export async function GET() {
     .eq("last_sender", "customer")
     .is("ai_draft", null)
     .or("draft_pending_at.is.null,draft_pending_at.lt." + tenMinutesAgo)
+    // DB側リトライ制御: 10分以内に生成試行済み（draft_attempted_at）ならスキップ
+    // （インメモリMapはVercelサーバーレスでインスタンス間共有されないため、DBフラグが本命の防波堤）
+    .or("draft_attempted_at.is.null,draft_attempted_at.lt." + tenMinutesAgo)
     .gte("updated_at", yesterday)
     .neq("status", "applying")
     .neq("status", "screening")
@@ -121,9 +133,10 @@ export async function GET() {
     // このメッセージ（マーカー）への生成試行を記録（成否に関わらず記録。新しいメッセージが来れば即再処理される）
     attemptedMarkers.set(convId, { markerMs: markerOf(conv), recordedAt: Date.now() });
 
-    // 先にpendingをクリアして重複処理を防ぐ
+    // 先にpendingをクリアして重複処理を防ぐ ＋ 生成試行時刻をDBに記録
+    // （失敗しても draft_attempted_at から10分間はorphanedクエリの再試行対象外になる）
     await db.from("conversations")
-      .update({ draft_pending_at: null })
+      .update({ draft_pending_at: null, draft_attempted_at: new Date().toISOString() })
       .eq("id", convId);
 
     if (SKIP_STATUSES.has(convStatus) || conv.last_sender !== "customer") {
@@ -211,7 +224,8 @@ export async function GET() {
 
       const finalDraft = fullText.trim();
       if (finalDraft) {
-        await db.from("conversations").update({ ai_draft: finalDraft }).eq("id", convId);
+        // 成功時: 下書き保存 ＋ attempted_at クリア（次の新着メッセージで即座に生成対象に戻す）
+        await db.from("conversations").update({ ai_draft: finalDraft, draft_attempted_at: null }).eq("id", convId);
         processed++;
       }
     } catch (e) {

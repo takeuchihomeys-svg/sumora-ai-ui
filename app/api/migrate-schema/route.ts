@@ -626,7 +626,11 @@ ALTER TABLE action_pattern_logs ADD COLUMN IF NOT EXISTS predicted_action TEXT D
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS loss_analyzed_at TIMESTAMPTZ;
 
 -- 成功パターン学習の重複実行ガード（notify-viewing の after() 二重起動・リトライ防止）
-ALTER TABLE conversations ADD COLUMN IF NOT EXISTS success_pattern_at TIMESTAMPTZ
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS success_pattern_at TIMESTAMPTZ;
+
+-- 下書き生成の試行時刻（generate-pending-drafts のorphaned救済リトライ制御。
+-- インメモリMapはVercelサーバーレスでインスタンス間共有不可のためDB側フラグで10分スキップを実現）
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS draft_attempted_at TIMESTAMPTZ
 `.trim();
 
 export async function GET() {
