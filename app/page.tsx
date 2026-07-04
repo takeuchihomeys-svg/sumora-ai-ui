@@ -5709,7 +5709,7 @@ export default function Home() {
                 <div className="mx-1 mb-1 rounded-2xl border-2 px-3 py-2 flex items-center gap-2" style={{ borderColor: postAixTmpl.color, backgroundColor: `${postAixTmpl.color}14` }}>
                   <span className="text-[12px] font-bold flex-1" style={{ color: postAixTmpl.color }}>
                     <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
-                    ✉️ {postAixTmpl.category}のテンプレートを続けて送る
+                    ✉️ {postAixTmpl.category}の続きを送る
                   </span>
                   <button onClick={() => {
                       // バナーは消すがmapは残す（テンプレモーダルのinitialCategory参照用。次のAIX送信で上書きされる）
