@@ -1074,6 +1074,7 @@ export default function TemplateModal({
                           <button
                             disabled={adoptingId === candidate.id}
                             onClick={async () => {
+                              if (!window.confirm("このテンプレートを採用しますか？\n採用するとテンプレート一覧に追加されます。")) return;
                               setAdoptingId(candidate.id);
                               try {
                                 const res = await fetch("/api/ai-template-candidates", {
@@ -1173,6 +1174,7 @@ export default function TemplateModal({
                           <button
                             disabled={adoptingId === candidate.id}
                             onClick={async () => {
+                              if (!window.confirm("このテンプレートを採用しますか？\n採用するとテンプレート一覧に追加されます。")) return;
                               setAdoptingId(candidate.id);
                               try {
                                 const res = await fetch("/api/ai-template-candidates", {
