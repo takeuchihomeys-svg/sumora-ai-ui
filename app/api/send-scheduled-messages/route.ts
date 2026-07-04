@@ -56,6 +56,15 @@ export async function GET(req: NextRequest) {
 
   for (const msg of pending) {
     try {
+      // アトミッククレーム: 並行実行での二重送信を防止
+      const { data: claimed } = await supabase
+        .from("scheduled_messages")
+        .update({ status: "sending" })
+        .eq("id", msg.id as string)
+        .eq("status", "pending")
+        .select("id");
+      if (!claimed?.length) continue;
+
       const accountKey = resolveAccountKey(msg.account as string | undefined);
       const token = getToken(accountKey);
       if (!token) throw new Error(`LINE token not configured: ${accountKey}`);
@@ -104,8 +113,12 @@ export async function GET(req: NextRequest) {
         .update({ last_message: lastText, last_sender: "staff", updated_at: sentAt.toISOString(), ai_draft: null, is_flagged: false })
         .eq("id", msg.conversation_id as string);
 
-      await supabase.from("scheduled_messages").update({ status: "sent" }).eq("id", msg.id as string);
-      processed++;
+      const { error: sentErr } = await supabase.from("scheduled_messages").update({ status: "sent" }).eq("id", msg.id as string);
+      if (sentErr) {
+        await supabase.from("scheduled_messages").update({ status: "failed", error: sentErr.message }).eq("id", msg.id as string);
+      } else {
+        processed++;
+      }
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       await supabase.from("scheduled_messages").update({ status: "failed", error: errMsg }).eq("id", msg.id as string);

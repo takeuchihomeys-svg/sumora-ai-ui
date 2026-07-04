@@ -19,7 +19,12 @@ async function getEmbedding(text: string): Promise<number[] | null> {
 }
 
 // POST: embeddingがない既存ナレッジルールに一括生成・保存（200件ずつ）
-export async function POST() {
+export async function POST(req: Request) {
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers.get("authorization");
+  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
   if (!process.env.OPENAI_API_KEY) {
     return NextResponse.json({ ok: false, error: "OPENAI_API_KEY not set" }, { status: 500 });
   }

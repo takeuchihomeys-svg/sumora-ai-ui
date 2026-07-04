@@ -25,7 +25,8 @@ async function run() {
     .from("conversations")
     .select("id")
     .eq("status", "closed_won")
-    .gte("updated_at", since);
+    .gte("updated_at", since)
+    .limit(10000);
 
   if (convErr) {
     console.error("[calc-ai-attribution] conv fetch error:", convErr.message);
@@ -40,18 +41,24 @@ async function run() {
   let aiMessageCount = 0;
 
   if (total > 0) {
-    const { data: examples, error: exErr } = await supabase
-      .from("ai_reply_examples")
-      .select("conversation_id")
-      .in("conversation_id", convIds)
-      .eq("was_ai_modified", true);
-
-    if (exErr) {
-      console.error("[calc-ai-attribution] examples fetch error:", exErr.message);
-      return NextResponse.json({ ok: false, error: exErr.message }, { status: 500 });
+    // URLの長さ制限を避けるためconvIdsを200件ずつチャンクしてクエリ
+    const CHUNK = 200;
+    const allExamples: Array<{ conversation_id: string | null }> = [];
+    for (let i = 0; i < convIds.length; i += CHUNK) {
+      const chunk = convIds.slice(i, i + CHUNK);
+      const { data: chunkData, error: chunkErr } = await supabase
+        .from("ai_reply_examples")
+        .select("conversation_id")
+        .in("conversation_id", chunk)
+        .eq("was_ai_modified", true)
+        .limit(10000);
+      if (chunkErr) {
+        console.error("[calc-ai-attribution] examples fetch error:", chunkErr.message);
+        return NextResponse.json({ ok: false, error: chunkErr.message }, { status: 500 });
+      }
+      allExamples.push(...(chunkData ?? []));
     }
-
-    for (const ex of examples ?? []) {
+    for (const ex of allExamples) {
       if (ex.conversation_id) {
         assistedConvIds.add(ex.conversation_id as string);
         aiMessageCount++;

@@ -88,6 +88,11 @@ ${sentReply.slice(0, 500)}`,
 }
 
 export async function POST(req: NextRequest) {
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers.get("authorization");
+  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
   try {
     const body = await req.json() as {
       example_id?: string;

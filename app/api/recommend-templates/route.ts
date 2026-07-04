@@ -85,7 +85,7 @@ ${templates.map((t, i) => `[${i}] ${t.label}\n${(t.text || "").slice(0, 150)}`).
 [{"index": 0, "score": 95, "reason": "内覧を自然に提案できる流れ"}]`;
 
     const response = await client.messages.create({
-      model: "claude-haiku-4-5",
+      model: "claude-haiku-4-5-20251001",
       max_tokens: 500,
       messages: [{ role: "user", content: prompt }],
     });

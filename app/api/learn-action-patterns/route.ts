@@ -85,6 +85,15 @@ export async function POST(req: NextRequest) {
 
   // ② ブートストラップ（一度だけ呼ぶ）
   if (body.action === "bootstrap") {
+    // 冪等ガード: bootstrap行が既に存在する場合はスキップ
+    const { count: existingCount } = await supabase
+      .from("action_pattern_logs")
+      .select("id", { count: "exact", head: true })
+      .in("source", ["bootstrap", "bootstrap_inferred"]);
+    if ((existingCount ?? 0) > 0) {
+      return NextResponse.json({ ok: false, error: "already bootstrapped", count: existingCount });
+    }
+
     const inserted: { status: string; action: string; msg: string }[] = [];
 
     // ---- A: line_tasks → property_check / property_send / estimate_sheet ----

@@ -3,11 +3,10 @@ import { runKnowledgeCleanup } from "@/app/lib/knowledge-cleanup";
 
 export const maxDuration = 60;
 
-const CRON_SECRET = "hasu-cron-secret-2024";
-
 export async function POST(req: NextRequest) {
-  const secret = req.headers.get("x-cron-secret");
-  if (secret !== CRON_SECRET) {
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers.get("authorization");
+  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
   try {

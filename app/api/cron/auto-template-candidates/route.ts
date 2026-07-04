@@ -391,6 +391,13 @@ export async function GET(req: NextRequest) {
 }
 
 // POST: 手動実行
-export async function POST() {
+export async function POST(req: NextRequest) {
+  const secret = process.env.CRON_SECRET;
+  if (secret) {
+    const auth = req.headers.get("authorization");
+    if (auth !== `Bearer ${secret}`) {
+      return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+    }
+  }
   return run();
 }

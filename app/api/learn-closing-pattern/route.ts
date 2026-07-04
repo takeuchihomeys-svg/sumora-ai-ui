@@ -106,6 +106,17 @@ ${history}
 教訓: ${learned.lesson}
 ${learned.pattern_label}`;
 
+    // 重複INSERT防止: 同一タイトルが既に存在する場合はスキップ
+    const titleKey = `${eventLabel}パターン_${customer_name ?? "不明"}_${new Date().toISOString().slice(0, 10)}`;
+    const { data: existingPattern } = await supabase
+      .from("ai_reply_knowledge")
+      .select("id")
+      .eq("title", titleKey)
+      .limit(1);
+    if (existingPattern?.length) {
+      return NextResponse.json({ ok: true, learned, skipped: true });
+    }
+
     const embedding = await getEmbedding(`pattern: ${content}`);
     await supabase.from("ai_reply_knowledge").insert({
       category: "pattern",

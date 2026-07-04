@@ -125,7 +125,9 @@ export async function POST(req: NextRequest) {
     const { data: examples, error: exErr } = await supabase
       .from("ai_reply_examples")
       .select("id, conversation_state, customer_message, sent_reply")
-      .eq("is_starred", true);
+      .eq("is_starred", true)
+      .order("created_at", { ascending: false })
+      .limit(1000);
 
     if (exErr || !examples) {
       return NextResponse.json(

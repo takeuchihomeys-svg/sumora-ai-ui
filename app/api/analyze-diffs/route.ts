@@ -83,6 +83,11 @@ function diffImportance(sim: number): number {
 }
 
 export async function POST(req: NextRequest) {
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers.get("authorization");
+  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
   // ?limit=N で件数を指定可能（デフォルト30・最大200）
   // maxDuration=60秒 / 1件あたり約2秒 → 30件が上限目安
   const url = new URL(req.url);
