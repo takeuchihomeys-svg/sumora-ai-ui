@@ -5,6 +5,19 @@ const ACCOUNT_LABEL: Record<string, string> = {
   sumora: "スモラ", ieyasu: "イエヤス", giga: "ギガ賃貸", hasu: "ハス",
 };
 
+// AIXアクション種別の表示ラベル（auto-template-candidates と同一マッピング）
+const AIX_ACTION_LABEL: Record<string, string> = {
+  property_send: "物件送る",
+  property_recommendation: "オススメ",
+  property_check_result: "物件確認",
+  viewing_invite: "内覧誘導",
+  application_push: "申込誘導",
+  meeting_place: "待ち合わせ",
+  condition_hearing: "ヒアリング",
+  estimate_sheet: "見積書",
+  greeting_viewing: "内覧挨拶",
+};
+
 function relTime(d?: string | null): string {
   if (!d) return "不明";
   const diff = Date.now() - new Date(d).getTime();
@@ -53,6 +66,9 @@ export async function GET(req: NextRequest) {
     { data: lossPatterns },
     { data: topTemplates },
     { count: wonCount },
+    { count: pendingCandidates },
+    { data: aixLogs },
+    { data: attributionRows },
   ] = await Promise.all([
     // ① 未完了タスク
     supabase
@@ -116,6 +132,27 @@ export async function GET(req: NextRequest) {
       .eq("status", "closed_won")
       .gte("updated_at", yesterdayStart.toISOString())
       .lt("updated_at", todayStart.toISOString()),
+
+    // ⑨ AIXテンプレート候補の未レビュー件数
+    supabase
+      .from("ai_template_candidates")
+      .select("*", { count: "exact", head: true })
+      .eq("is_adopted", false)
+      .eq("is_dismissed", false),
+
+    // ⑩ 昨日のAIX使用ログ（アクション別サマリー用）
+    supabase
+      .from("aix_usage_logs")
+      .select("aix_type")
+      .gte("created_at", yesterdayStart.toISOString())
+      .lt("created_at", todayStart.toISOString()),
+
+    // ⑪ 成果アトリビューション（週次集計。最新期間はJS側で絞り込む）
+    supabase
+      .from("aix_action_attribution")
+      .select("action_type, template_label, win_rate, usage_count, period_start")
+      .order("period_start", { ascending: false })
+      .limit(50),
   ]);
 
   // AI貢献率フッター（メトリクスがあれば1行追加）
@@ -155,6 +192,43 @@ export async function GET(req: NextRequest) {
   if (usedTemplates.length > 0) {
     const rank = usedTemplates.map((t, i) => `${i + 1}位 ${t.label}(${t.use_count ?? 0}回)`).join(" / ");
     statsLines.push(`📄 テンプレ使用ランキング: ${rank}`);
+  }
+
+  // 昨日のAIX使用状況サマリー（アクション別件数）
+  if (aixLogs && aixLogs.length > 0) {
+    const typeCounts = new Map<string, number>();
+    for (const log of aixLogs) {
+      const t = (log.aix_type as string) ?? "unknown";
+      typeCounts.set(t, (typeCounts.get(t) ?? 0) + 1);
+    }
+    const summary = [...typeCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([type, n]) => `${AIX_ACTION_LABEL[type] ?? type}${n}回`)
+      .join(" / ");
+    statsLines.push(`🤖 昨日のAIX: ${summary}（計${aixLogs.length}回）`);
+  }
+
+  // AIXテンプレート候補の未レビュー件数（5件以上は警告マーク）
+  if ((pendingCandidates ?? 0) > 0) {
+    const mark = (pendingCandidates ?? 0) >= 5 ? " ⚠️ 溜まっています！レビューをお願いします" : "";
+    statsLines.push(`📋 AIXテンプレート候補: ${pendingCandidates}件未レビュー${mark}`);
+  }
+
+  // 成果アトリビューション（最新週の成約率上位3テンプレ）
+  const latestPeriod = attributionRows?.[0]?.period_start as string | undefined;
+  if (latestPeriod) {
+    const topAttribution = (attributionRows ?? [])
+      .filter((r) => r.period_start === latestPeriod && (r.usage_count ?? 0) > 0 && r.win_rate != null)
+      .sort((a, b) => (b.win_rate as number) - (a.win_rate as number))
+      .slice(0, 3);
+    if (topAttribution.length > 0) {
+      const lines = topAttribution.map((r, i) => {
+        const label = (r.template_label as string) ?? AIX_ACTION_LABEL[r.action_type as string] ?? r.action_type;
+        const pct = Math.round((r.win_rate as number) * 100);
+        return `  ${i + 1}. ${AIX_ACTION_LABEL[r.action_type as string] ?? r.action_type}「${label}」— 成約率${pct}%（${r.usage_count}回使用）`;
+      });
+      statsLines.push(`🏆 先週の成果テンプレTOP3:\n${lines.join("\n")}`);
+    }
   }
 
   const statsBlock = statsLines.length > 0

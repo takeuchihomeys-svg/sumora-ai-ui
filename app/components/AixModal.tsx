@@ -154,8 +154,8 @@ const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }
     template: "[お客様名]さんいかがでしょうか！！\nぜひご内覧させていただきたいのですが\n直近ですと\n[日程]\nご都合いかがでしょうか！！",
   },
   application_push: {
-    rules: ["空室 or 退去予定を選択", "見積書送信済みか会話から自動検出", "ワンタップで即生成 → 確認後送信"],
-    template: "お申込みを進めて頂ければと思います！！\n[空室状況]\n審査は最短〇〇日で結果が出ます！！\nよろしければご検討ください！！",
+    rules: ["申込誘導（シンプル/退去予定/部屋抑えて内覧）or 申込確定を選択", "見積書送信済みか会話から自動検出", "初めての申込のお客様には審査・キャンセル無料の不安解消を1行追加", "ワンタップで即生成 → 確認後送信"],
+    template: "[物件名]は[具体的な根拠]でかなりオススメのお部屋となります！！\n[お客様名]さんお気に召されましたらお申込み是非ご検討ください😊！！\n気になる点ございましたらお気軽にお申し付けください！！",
   },
   meeting_place: {
     rules: ["物件資料画像から物件名・住所をAIが自動読み取り", "日程・時間を入力して待ち合わせ文を生成", "時間あり→確定文 / 時間なし→調整文 の2パターン対応"],
@@ -398,7 +398,8 @@ export default function AixModal({
   const [viewingSlotOverride, setViewingSlotOverride] = useState<boolean[]>([]); // 案内不可日を手動で追加
   // 申込へ！専用: 物件名 + 空室状況 + 退去予定日
   const [appPropertyName, setAppPropertyName] = useState("");
-  const [appPushType, setAppPushType] = useState<"simple" | "scheduled" | "hold_view" | null>(null);
+  // 申込パターンはデフォルトで「シンプル申込」を選択済みにする（最頻パターン・生成までのタップ数を減らす）
+  const [appPushType, setAppPushType] = useState<"simple" | "scheduled" | "hold_view" | null>("simple");
   const [appAppealPoints, setAppAppealPoints] = useState<string[]>([]);
   const [appMoveOutDate, setAppMoveOutDate] = useState("");
   const [appSubMode, setAppSubMode] = useState<"push" | "confirm" | null>(initialAppSubMode ?? null);

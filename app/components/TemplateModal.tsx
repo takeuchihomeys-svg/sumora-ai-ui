@@ -134,6 +134,8 @@ export interface Template {
   text: string;
   structure: StructureBlock[] | null;
   sort_order: number | null;
+  use_count?: number | null;
+  win_rate?: number | null;
   requires_image: boolean;
   second_msg_type: string | null;
   second_msg_delay: number | null;
@@ -501,12 +503,20 @@ export default function TemplateModal({
   ];
   const isAixCategoryActive = category.includes("AIX");
   const isSearching = searchQuery.trim().length > 0;
+  // 複合スコア: 使用回数(40%) + 成約率(60%)。実績のあるテンプレを上位に表示する。
+  // 全テンプレがスコア0のうちは従来どおり sort_order 順（手動並べ替えも有効）。
+  const templateScore = (t: Template) => (t.use_count ?? 0) * 0.4 + (t.win_rate ?? 0) * 100 * 0.6;
+  const compareTemplates = (a: Template, b: Template) => {
+    const diff = templateScore(b) - templateScore(a);
+    if (diff !== 0) return diff;
+    return (a.sort_order ?? Number.MAX_SAFE_INTEGER) - (b.sort_order ?? Number.MAX_SAFE_INTEGER);
+  };
   const filtered = (isSearching
     ? templates.filter((t) =>
         t.label.includes(searchQuery) || t.text.includes(searchQuery) || t.category.includes(searchQuery)
       )
     : templates.filter((t) => t.category === category)
-  ).sort((a, b) => (a.sort_order ?? Number.MAX_SAFE_INTEGER) - (b.sort_order ?? Number.MAX_SAFE_INTEGER));
+  ).sort(compareTemplates);
 
   const isAixCategory = category === "物件オススメ【AIX】" && !isSearching;
   const isAvailCheckCategory = category === "物件確認した【AIX】" && !isSearching;
@@ -529,7 +539,7 @@ export default function TemplateModal({
           };
           const oa = getOrder(a), ob = getOrder(b);
           if (oa !== ob) return oa - ob;
-          return (a.sort_order ?? 0) - (b.sort_order ?? 0);
+          return compareTemplates(a, b);
         })
     : isAvailCheckCategory && availCheckFilter !== null
       ? filtered.filter(t => inferAvailCheckType(t.label) === availCheckFilter)
@@ -538,7 +548,7 @@ export default function TemplateModal({
           const ia = AVAIL_CHECK_TYPES.findIndex(t => t.key === inferAvailCheckType(a.label));
           const ib = AVAIL_CHECK_TYPES.findIndex(t => t.key === inferAvailCheckType(b.label));
           if (ia !== ib) return ia - ib;
-          return (a.sort_order ?? 0) - (b.sort_order ?? 0);
+          return compareTemplates(a, b);
         })
     : filtered;
 

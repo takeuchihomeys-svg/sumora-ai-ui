@@ -510,7 +510,7 @@ export default function Home() {
   const [dismissedApplyStep2Ids, setDismissedApplyStep2Ids] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedApplyStep2Ids") || "[]") as string[]); } catch { return new Set(); }
   });
-  const [templateOpenContext, setTemplateOpenContext] = useState<null | "apply_step1" | "apply_step2" | "viewing_follow" | "next_numbered">(null);
+  const [templateOpenContext, setTemplateOpenContext] = useState<null | "apply_step1" | "apply_step2" | "viewing_follow" | "next_numbered" | "post_aix">(null);
   // AIX物件オススメで退去予定が検知されたときに保持（テンプレート一覧ハイライト用）
   const [detectedVacatingDate, setDetectedVacatingDate] = useState<string | null>(null);
   const [suggestNextTemplateMap, setSuggestNextTemplateMap] = useState<Record<string, { num: string; category: string }>>(() => {
@@ -520,6 +520,9 @@ export default function Home() {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedNextTemplateIds") || "[]") as string[]); } catch { return new Set(); }
   });
   const [pendingNextTemplateInfo, setPendingNextTemplateInfo] = useState<{ num: string; category: string } | null>(null);
+  // B5: AIX送信完了後に「同カテゴリのテンプレートを続けて送る」バナーを出す（会話ID → カテゴリ・色）
+  const [postAixTemplateMap, setPostAixTemplateMap] = useState<Record<string, { category: string; color: string }>>({});
+  const [dismissedPostAixTemplateIds, setDismissedPostAixTemplateIds] = useState<Set<string>>(new Set());
   // A-2: テンプレートモーダルを閉じる処理の一本化（クローズ時のクリーンアップはここに集約）
   const closeTemplateModal = useCallback(() => {
     setShowTemplateModal(false);
@@ -3601,6 +3604,10 @@ export default function Home() {
     if (params?.send_mode === "normal" || params?.send_mode === "new_arrival" || params?.send_mode === "widen") {
       setAixInitSendMode(params.send_mode);
     }
+    // 申込へ！: 提案バナー経由は「申込誘導」モードで直接開く（モード選択の1タップを省く）
+    if (type === "application_push") {
+      setAixInitAppSubMode("push");
+    }
     if (params?.imageUrl) {
       // AixModalはmount時にinitialSendImagesを読むため、画像取得完了後に開く（失敗時はそのまま開く）
       void fetch(params.imageUrl)
@@ -5696,6 +5703,27 @@ export default function Home() {
                 </div>
               );
 
+              // P7.5: B5 AIX送信完了後 → 同カテゴリのテンプレートを続けて送る（専用チェーンバナーが無い場合の汎用フォロー）
+              const postAixTmpl = postAixTemplateMap[id];
+              if (postAixTmpl && !dismissedPostAixTemplateIds.has(id)) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 px-3 py-2 flex items-center gap-2" style={{ borderColor: postAixTmpl.color, backgroundColor: `${postAixTmpl.color}14` }}>
+                  <span className="text-[12px] font-bold flex-1" style={{ color: postAixTmpl.color }}>
+                    <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
+                    ✉️ {postAixTmpl.category}のテンプレートを続けて送る
+                  </span>
+                  <button onClick={() => {
+                      // バナーは消すがmapは残す（テンプレモーダルのinitialCategory参照用。次のAIX送信で上書きされる）
+                      setDismissedPostAixTemplateIds((prev) => new Set([...prev, id]));
+                      setTemplateOpenContext("post_aix");
+                      setShowTemplateModal(true);
+                    }}
+                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                    style={{ background: postAixTmpl.color }}>テンプレを開く</button>
+                  <button onClick={() => setDismissedPostAixTemplateIds((prev) => new Set([...prev, id]))}
+                    className="shrink-0 text-[11px] font-bold" style={{ color: postAixTmpl.color, opacity: 0.6 }}>✕</button>
+                </div>
+              );
+
               // P8: AI次アクション提案（P1〜P7いずれも表示されない時のフォールバック）
               const nextSugg = nextActionMap[id];
               if (nextSugg && !dismissedNextActionIds.has(id)) {
@@ -6900,6 +6928,7 @@ export default function Home() {
           linkedCustomer={linkedCustomerMap[selectedConversation.id]}
           initialCategory={
             templateOpenContext === "next_numbered" ? (pendingNextTemplateInfo?.category) :
+            templateOpenContext === "post_aix" ? (postAixTemplateMap[selectedConversation.id]?.category) :
             templateOpenContext === "viewing_follow" ? "内覧" :
             templateOpenContext === "apply_step1" || templateOpenContext === "apply_step2" ? "申込・審査" :
             suggest2ndHandMap[selectedConversation.id] ? "物件確認した【AIX】" :
@@ -6936,6 +6965,7 @@ export default function Home() {
             })()
           }
           highlightLabel={
+            templateOpenContext === "post_aix" ? "💡 続きのテンプレート" :
             templateOpenContext === "next_numbered" ? `💡 次は${pendingNextTemplateInfo?.num ?? ""}` :
             templateOpenContext === "apply_step2" ? "💡 次のステップ" :
             templateOpenContext === "apply_step1" ? "💡 次のアクション" :
@@ -7122,6 +7152,14 @@ export default function Home() {
                 setNextActionMap((prev) => ({ ...prev, [selectedConversation.id]: { action: "viewing_invite", reason: "物件が空室でした", source: "trigger_rule" } }));
               } else {
                 void fetchNextAction(selectedConversation.id);
+              }
+              // B5: AIX送信完了 → 同カテゴリのテンプレートを続けて送るバナーをセット（予約送信時は出さない）
+              // ※専用チェーンバナー（P0/P3/P4/P5.5/P7）がある場合はそちらが優先表示される（バナー優先度P7.5）
+              const _b5Meta = AIX_ACTION_META[aixModalType];
+              if (!meta?.scheduled && _b5Meta?.templateCategory) {
+                const _b5ConvId = selectedConversation.id;
+                setPostAixTemplateMap((prev) => ({ ...prev, [_b5ConvId]: { category: _b5Meta.templateCategory, color: _b5Meta.color } }));
+                setDismissedPostAixTemplateIds((prev) => { const n = new Set(prev); n.delete(_b5ConvId); return n; });
               }
             }
             // AIXボタンからLINE送信 → 全ての未完了タスクを即座に完了

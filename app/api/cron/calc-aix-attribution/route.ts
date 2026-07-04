@@ -198,10 +198,45 @@ async function run() {
     }
   }
 
+  // 5. templates.win_rate を全期間の実績から再計算して同期
+  //    （テンプレ一覧の複合スコアソート use_count*0.4 + win_rate*100*0.6 で使用）
+  let winRateSynced = 0;
+  const { data: attrRows, error: attrErr } = await supabase
+    .from("aix_action_attribution")
+    .select("template_id, closed_won, unique_conversations")
+    .not("template_id", "is", null)
+    .limit(10000);
+  if (attrErr) {
+    console.error("[calc-aix-attribution] attribution fetch for win_rate sync error:", attrErr.message);
+  } else {
+    const byTemplate = new Map<string, { won: number; convs: number }>();
+    for (const r of attrRows ?? []) {
+      const tid = r.template_id as string | null;
+      if (!tid) continue;
+      const cur = byTemplate.get(tid) ?? { won: 0, convs: 0 };
+      cur.won += (r.closed_won as number) ?? 0;
+      cur.convs += (r.unique_conversations as number) ?? 0;
+      byTemplate.set(tid, cur);
+    }
+    for (const [templateId, v] of byTemplate) {
+      const winRate = v.convs > 0 ? round3(v.won / v.convs) : 0;
+      const { error: updErr } = await supabase
+        .from("templates")
+        .update({ win_rate: winRate })
+        .eq("id", templateId);
+      if (updErr) {
+        console.error(`[calc-aix-attribution] win_rate update error (template ${templateId}):`, updErr.message);
+      } else {
+        winRateSynced++;
+      }
+    }
+  }
+
   const summary = {
     logs: usageLogs.length,
     conversations: convIds.length,
     groups: rows.length,
+    win_rate_synced: winRateSynced,
     viewing_reached: rows.reduce((s, r) => s + r.viewing_reached, 0),
     application_reached: rows.reduce((s, r) => s + r.application_reached, 0),
     closed_won: rows.reduce((s, r) => s + r.closed_won, 0),
