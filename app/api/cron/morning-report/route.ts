@@ -7,7 +7,7 @@ const ACCOUNT_LABEL: Record<string, string> = {
 
 // AIXアクション種別の表示ラベル（auto-template-candidates と同一マッピング）
 const AIX_ACTION_LABEL: Record<string, string> = {
-  property_send: "物件送る",
+  property_send: "物件ピックアップした",
   property_recommendation: "オススメ",
   property_check_result: "物件確認",
   viewing_invite: "内覧誘導",

@@ -753,7 +753,7 @@ ${SMORA_COMMON_RULES}
         // カバーレター生成失敗はサイレントに無視（見積書本体は送れる）
       }
 
-    // ── 📤 物件送る ──────────────────────────────────────────────
+    // ── 📤 物件ピックアップした ──────────────────────────────────────────────
     } else if (action === "property_send") {
       const calendarData = body.calendar_info ? String(body.calendar_info) : null;
       const vacatingInfo = vacating_note ? String(vacating_note) : null;
@@ -771,7 +771,7 @@ ${SMORA_COMMON_RULES}
         ? `\n\n【このお客さんのAI要約 — 今の状況・次の必須対応を最優先で文案に反映すること。人物像・文体も合わせること】\n${customerSummary}`
         : "";
 
-      // 物件送るの実例を取得（property_send + proposing 両方から）
+      // 物件ピックアップしたの実例を取得（property_send + proposing 両方から）
       const { data: sendExamples } = await supabase
         .from("ai_reply_examples")
         .select("sent_reply")

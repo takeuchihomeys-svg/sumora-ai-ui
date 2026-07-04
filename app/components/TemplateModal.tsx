@@ -481,13 +481,13 @@ export default function TemplateModal({
     "ヒアリング【AIX】": "お部屋探し条件ヒアリング",
     "物件オススメ【AIX】": "1件特にオススメする",
     "物件確認した【AIX】": "物件確認した（募集状況）",
-    "物件送る【AIX】": "物件ピックアップした",
+    "物件ピックアップした【AIX】": "物件ピックアップした",
   };
 
   const categories = Array.from(new Set(templates.map((t) => t.category)));
   const normalCategories = categories.filter(c => !c.includes("AIX"));
   const AIX_CATEGORY_ORDER = [
-    "物件送る【AIX】",
+    "物件ピックアップした【AIX】",
     "物件オススメ【AIX】",
     "物件確認した【AIX】",
     "見積書送る【AIX】",

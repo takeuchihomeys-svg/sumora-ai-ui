@@ -151,7 +151,7 @@ const AIX_ACTION_META: Record<string, { label: string; color: string; templateCa
   condition_hearing:       { label: "\u30d2\u30a2\u30ea\u30f3\u30b0",   color: "#0288D1", templateCategory: "\u30d2\u30a2\u30ea\u30f3\u30b0\u3010AIX\u3011" },
   greeting_viewing:        { label: "\u5185\u89a7\u6328\u62f6",     color: "#00796B", templateCategory: "" },
   property_recommendation: { label: "\u7269\u4ef6\u30aa\u30b9\u30b9\u30e1",  color: "#2196F3", templateCategory: "\u7269\u4ef6\u30aa\u30b9\u30b9\u30e1\u3010AIX\u3011" },
-  property_send:           { label: "\u7269\u4ef6\u9001\u308b",      color: "#00897B", templateCategory: "\u7269\u4ef6\u9001\u308b\u3010AIX\u3011" },
+  property_send:           { label: "\u7269\u4ef6\u30d4\u30c3\u30af\u30a2\u30c3\u30d7\u3057\u305f", color: "#00897B", templateCategory: "\u7269\u4ef6\u30d4\u30c3\u30af\u30a2\u30c3\u30d7\u3057\u305f\u3010AIX\u3011" },
   property_check_result:   { label: "\u7269\u4ef6\u78ba\u8a8d\u3057\u305f",  color: "#4CAF50", templateCategory: "\u7269\u4ef6\u78ba\u8a8d\u3057\u305f\u3010AIX\u3011" },
   estimate_sheet:          { label: "\u898b\u7a4d\u66f8\u9001\u308b",    color: "#FF9800", templateCategory: "\u898b\u7a4d\u66f8\u9001\u308b\u3010AIX\u3011" },
   viewing_invite:          { label: "\u5185\u89a7\u3078\uff01",      color: "#9C27B0", templateCategory: "\u5185\u89a7\u3078\uff01\u3010AIX\u3011" },
@@ -3135,8 +3135,8 @@ export default function Home() {
       setReplyQuality(null); // B-2: 送信後は品質判定をリセット
       removeSelectedImage();
 
-      // 物件送り完了メッセージ検知（「ご査収ください」はAIX物件送る完了文の固定フレーズ）
-      // → P6「物件送る」を消してP4「物件オススメ」へ切り替え
+      // 物件送り完了メッセージ検知（「ご査収ください」はAIX物件ピックアップした完了文の固定フレーズ）
+      // → P6「物件ピックアップした」を消してP4「物件オススメ」へ切り替え
       if (textToSend && textToSend.includes("ご査収ください")) {
         const convId = selectedConversation.id;
         setSuggestPropertyRecommendMap((prev) => ({ ...prev, [convId]: true }));
@@ -3148,7 +3148,7 @@ export default function Home() {
           if (tasks.length === 0) { const n = { ...prev }; delete n[convId]; return n; }
           return { ...prev, [convId]: tasks };
         });
-      // 物件送る予告メッセージ検知 → AIX「物件送る」誘導
+      // 物件送付予告メッセージ検知 → AIX「物件ピックアップした」誘導
       } else if (textToSend && /ピックアップ|物件.*送|お送りさせて|物件をお送り/.test(textToSend)) {
         setSuggestPropertySendMap((prev) => ({ ...prev, [selectedConversation.id]: true }));
       }
@@ -4549,7 +4549,7 @@ export default function Home() {
                 やること: {(() => {
                   const TASK_LABEL_MAP: Record<string, string> = {
                     property_check: "物件確認",
-                    property_send: "物件ピックアップ",
+                    property_send: "物件ピックアップした",
                     estimate_sheet: "見積書対応中",
                   };
                   const counts: Record<string, number> = {};
@@ -4567,7 +4567,7 @@ export default function Home() {
             const nextSugg = nextActionMap[selectedConversation.id];
             if (!nextSugg?.action || dismissedNextActionIds.has(selectedConversation.id)) return null;
             const AIX_CHAT_LABEL: Record<string, string> = {
-              property_send: "物件ピックアップ",
+              property_send: "物件ピックアップした",
               viewing_invite: "内覧へ！",
               application_push: "申込へ！",
               estimate_sheet: "見積書送る",
@@ -4628,7 +4628,7 @@ export default function Home() {
                   <>
                     <div className="min-w-0 flex-1">
                       <span className="text-[11px] font-bold text-[#1565c0]">代替物件送る</span>
-                      <span className="ml-1 text-[10px] text-[#5c85d6]">複数→物件送る　1件→物件オススメ</span>
+                      <span className="ml-1 text-[10px] text-[#5c85d6]">複数→物件ピックアップした　1件→物件オススメ</span>
                     </div>
                     {dismissBtn}
                     <button
@@ -4638,7 +4638,7 @@ export default function Home() {
                         openAixWithParams("property_send", nextSugg.params);
                       }}
                       className="shrink-0 rounded-full bg-[#1976d2] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
-                    >物件送る</button>
+                    >物件ピックアップした</button>
                     <button
                       onClick={() => {
                         logSuggestionAccepted("property_recommendation");
@@ -4662,7 +4662,7 @@ export default function Home() {
                         openAixWithParams("property_send", nextSugg.params);
                       }}
                       className="shrink-0 rounded-full bg-[#1976d2] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
-                    >物件送る</button>
+                    >物件ピックアップした</button>
                     <button
                       onClick={() => {
                         logSuggestionAccepted("property_recommendation");
@@ -5626,7 +5626,7 @@ export default function Home() {
                 </div>
               );
 
-              // P4: 物件オススメ（物件送る完了後）
+              // P4: 物件オススメ（物件ピックアップした完了後）
               if (suggestPropertyRecommendMap[id] && !dismissedPropertyRecommendIds.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-indigo-500 bg-indigo-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-indigo-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>次のアクション → AIX 物件オススメ で文案を送る</span>
@@ -5667,7 +5667,7 @@ export default function Home() {
                 </div>
               );
 
-              // P5.5: 物件確認した（property_checkタスクがある場合は物件送るより優先）
+              // P5.5: 物件確認した（property_checkタスクがある場合は物件ピックアップしたより優先）
               const hasPropertyCheckTask = (activeTasks[id] ?? []).some(t => t.task_type === "property_check");
               if (hasPropertyCheckTask) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-[#4CAF50] bg-[#e8f5e9] px-3 py-2 flex items-center gap-2">
@@ -5678,14 +5678,14 @@ export default function Home() {
                 </div>
               );
 
-              // P6: 物件送る（タスクあり or サジェスト or フォーマット受信）
+              // P6: 物件ピックアップした（タスクあり or サジェスト or フォーマット受信）
               const isCustomerFormatMsg = (lastCustomerText.match(/[①②③④⑤⑥⑦⑧⑨⑩]/g) ?? []).length >= 2;
               if ((suggestPropertySendMap[id] || hasPropertySendTask || isCustomerFormatMsg) && !suggest2ndHandMap[id] && !dismissedPropertySendIds.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-500 bg-teal-50 px-3 py-2 flex items-center gap-2">
-                  <span className="text-[12px] font-bold text-teal-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>次のアクション → AIX 物件を送る</span>
+                  <span className="text-[12px] font-bold text-teal-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>次のアクション → AIX 物件ピックアップした</span>
                   <button onClick={() => { setDismissedPropertySendIds((prev) => { const n = new Set(prev); n.delete(id); return n; }); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); openAixDirect("property_send"); setSuggestPropertySendMap((prev) => { const n = { ...prev }; delete n[id]; return n; }); }}
                     className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
-                    style={{ background: "linear-gradient(135deg, #00897B, #26a69a)" }}>AIX 物件送る</button>
+                    style={{ background: "linear-gradient(135deg, #00897B, #26a69a)" }}>AIX 物件ピックアップした</button>
                   <button onClick={() => setDismissedPropertySendIds((prev) => new Set([...prev, id]))}
                     className="shrink-0 text-teal-400 text-[11px] font-bold">✕</button>
                 </div>
@@ -5728,7 +5728,7 @@ export default function Home() {
               const nextSugg = nextActionMap[id];
               if (nextSugg && !dismissedNextActionIds.has(id)) {
                 const AIX_ACTION_LABEL: Record<string, string> = {
-                  property_send: "物件ピックアップ",
+                  property_send: "物件ピックアップした",
                   viewing_invite: "内覧へ！",
                   application_push: "申込へ！",
                   estimate_sheet: "見積書送る",
@@ -7193,7 +7193,7 @@ export default function Home() {
               ? (meta: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; scheduled?: boolean } | undefined) => {
                   const convId = selectedConversation.id;
                   const customerName = selectedConversation.customerName;
-                  // 物件送るバナーを消去（dismissed も解除して次回のために備える）
+                  // 物件ピックアップしたバナーを消去（dismissed も解除して次回のために備える）
                   setSuggestPropertySendMap((prev) => { const n = { ...prev }; delete n[convId]; return n; });
                   setDismissedPropertySendIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
                   if (!meta?.scheduled) {
@@ -7249,7 +7249,7 @@ export default function Home() {
                     setSuggestNextTemplateMap(prev => ({ ...prev, [convId]: { num: "追客初期費用", category: "追客" } }));
                     setDismissedNextTemplateIds(prev => { const n = new Set(prev); n.delete(convId); return n; });
                   }
-                  // 物件送るバナーを消去（property_send タスク完了 + ローカル state 即時クリア）
+                  // 物件ピックアップしたバナーを消去（property_send タスク完了 + ローカル state 即時クリア）
                   setSuggestPropertySendMap((prev) => { const n = { ...prev }; delete n[convId]; return n; });
                   setDismissedPropertySendIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
                   // property_sendタスクの完了POST・ローカル除去は上の共通ブロックで実施済み（二重POST防止）
@@ -7675,7 +7675,7 @@ export default function Home() {
             <div className="flex gap-1.5 px-4 py-2.5 overflow-x-auto shrink-0 border-b border-[#f0f2f5]" style={{ scrollbarWidth: "none" }}>
               {[
                 { key: "all", label: "すべて" },
-                { key: "property_send", label: "物件ピックアップ" },
+                { key: "property_send", label: "物件ピックアップした" },
                 { key: "viewing_invite", label: "内覧へ！" },
                 { key: "application_push", label: "申込へ！" },
                 { key: "meeting_place", label: "待ち合わせ" },
@@ -7709,7 +7709,7 @@ export default function Home() {
                   property_recommendation: "bg-teal-100 text-teal-700",
                 };
                 const ACTION_LABEL: Record<string, string> = {
-                  property_send: "物件ピックアップ",
+                  property_send: "物件ピックアップした",
                   viewing_invite: "内覧へ！",
                   application_push: "申込へ！",
                   meeting_place: "待ち合わせ",
@@ -7794,7 +7794,7 @@ export default function Home() {
                   >
                     <option value="viewing_invite">内覧へ！</option>
                     <option value="application_push">申込へ！</option>
-                    <option value="property_send">物件送る</option>
+                    <option value="property_send">物件ピックアップした</option>
                     <option value="estimate_sheet">見積書</option>
                     <option value="meeting_place">待ち合わせ</option>
                     <option value="property_recommendation">物件オススメ</option>
@@ -7976,7 +7976,7 @@ export default function Home() {
                     <div className="flex flex-col gap-1.5 pl-4">
                       {[
                         { key: "aix_logic_estimate_sheet", label: "💰 見積書送る", desc: "費用・入居日指定・見積再送の発動条件" },
-                        { key: "aix_logic_property_send", label: "🏠 物件送る", desc: "物件希望・追客の発動条件" },
+                        { key: "aix_logic_property_send", label: "🏠 物件ピックアップした", desc: "物件希望・追客の発動条件" },
                         { key: "aix_logic_property_check", label: "🔍 物件確認した", desc: "URL送付・空室確認依頼の発動条件" },
                         { key: "aix_logic_viewing_invite", label: "📅 内覧へ！", desc: "内覧希望・日程調整の発動条件" },
                         { key: "aix_logic_application_push", label: "✍️ 申込へ！", desc: "内覧後・申込意欲の発動条件" },
@@ -8247,7 +8247,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* 物件ピックアップ 種類選択ピッカー */}
+      {/* 物件ピックアップした 種類選択ピッカー */}
       {showPropertySendPicker && (
         <div
           className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
@@ -8269,7 +8269,7 @@ export default function Home() {
                 <path d="M46 50h8M50 46v8" stroke="white" strokeWidth="1.8" strokeLinecap="round"/>
               </svg>
             </div>
-            <p className="mb-1 text-center text-[20px] font-bold text-[#111827]">物件ピックアップ</p>
+            <p className="mb-1 text-center text-[20px] font-bold text-[#111827]">物件ピックアップした</p>
             <p className="mb-6 text-center text-[13px] leading-snug text-[#6B7280]">どの種類で送りますか？</p>
             <div className="flex flex-col gap-2.5">
               {([

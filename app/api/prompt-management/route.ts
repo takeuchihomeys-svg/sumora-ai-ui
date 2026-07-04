@@ -99,9 +99,9 @@ const PROMPT_DEFAULTS: Record<string, { label: string; content: string; readonly
 ・既に見積書を送った後に「ありがとうございます」など反応が来た場合 → 申込誘導`,
   },
   aix_logic_property_send: {
-    label: "物件送る",
+    label: "物件ピックアップした",
     group: "aix_logic",
-    content: `【AIX「物件送る」の発動条件】
+    content: `【AIX「物件ピックアップした」の発動条件】
 
 ■ 発動するキーワード・状況
 ・「物件」「部屋」「お部屋」「探して」「紹介して」「ピックアップ」
@@ -183,7 +183,7 @@ const PROMPT_DEFAULTS: Record<string, { label: string; content: string; readonly
 ・物件確認した後（空室あり）にオススメ文を添えて送る時
 
 ■ 代替物件の場合（2ボタン誘導）
-・複数物件を送る → 「物件送る」を選択
+・複数物件を送る → 「物件ピックアップした」を選択
 ・1件のみオススメする → 「物件オススメ」を選択`,
   },
   customer_summary_system: {
@@ -257,7 +257,7 @@ AIXを選ぶ → 生成された文を確認 → 送信`,
     content: AIX_PROPERTY_RECOMMENDATION_RULES,
   },
   aix_property_send_rules: {
-    label: "物件送る 絶対禁止ルール【AIX共通】",
+    label: "物件ピックアップした 絶対禁止ルール【AIX共通】",
     group: "aix_logic",
     content: AIX_PROPERTY_SEND_RULES,
   },

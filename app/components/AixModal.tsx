@@ -219,7 +219,7 @@ const CONFIG: Record<
     description: "見積書の画像をAIが読み取り、初期費用の内訳をLINEで送ります。",
   },
   property_send: {
-    title: "物件ピックアップ",
+    title: "物件ピックアップした",
     emoji: "📤",
     requiresImage: false,
     imageLabel: "",
@@ -365,7 +365,7 @@ export default function AixModal({
     label: string; slots: string[]; fullyBooked: boolean; noEvents: boolean;
   }>>([]);
   const [checkCalendarLoading, setCheckCalendarLoading] = useState(false);
-  // 物件送る専用: 複数画像 + 退去予定メモ + カレンダー自動取得
+  // 物件ピックアップした専用: 複数画像 + 退去予定メモ + カレンダー自動取得
   const [sendImageFiles, setSendImageFiles] = useState<File[]>(initialSendImages ?? []);
   const [sendImagePreviews, setSendImagePreviews] = useState<string[]>([]);
   const [vacatingNote, setVacatingNote] = useState("");
@@ -553,7 +553,7 @@ export default function AixModal({
     })();
   }, [actionType, checkPattern]);
 
-  // 物件送る: 直近3日のカレンダー（calendar_events + daily_tasks）を取得して空き枠を計算
+  // 物件ピックアップした: 直近3日のカレンダー（calendar_events + daily_tasks）を取得して空き枠を計算
   useEffect(() => {
     if (actionType !== "property_send") return;
     setCalendarLoading(true);
@@ -807,7 +807,7 @@ export default function AixModal({
     if (checkPropEstRefs[propIdx].current) checkPropEstRefs[propIdx].current!.value = "";
   };
 
-  // 物件送る専用: 複数画像追加
+  // 物件ピックアップした専用: 複数画像追加
   const onSelectSendImages = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
@@ -1773,7 +1773,7 @@ export default function AixModal({
               </div>
             </div>
           ) : actionType === "property_send" ? (
-            /* 物件送る: モード選択 + カレンダー自動取得 + 複数画像 + 退去予定メモ */
+            /* 物件ピックアップした: モード選択 + カレンダー自動取得 + 複数画像 + 退去予定メモ */
             <div className="mb-4 flex flex-col gap-3">
               {/* 物件画像（複数） */}
               <div>

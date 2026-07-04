@@ -4,7 +4,7 @@ import { supabase } from "@/app/lib/supabase";
 // AIXアクション → テンプレートカテゴリ変換
 // ※ 値は TemplateModal.tsx の AIX_CATEGORY_ORDER（実カテゴリ名）と一致させること
 const ACTION_TO_CATEGORY: Record<string, string> = {
-  property_send: "物件送る【AIX】",
+  property_send: "物件ピックアップした【AIX】",
   property_recommendation: "物件オススメ【AIX】",
   property_check_result: "物件確認した【AIX】",
   viewing_invite: "内覧へ！【AIX】",
@@ -17,7 +17,7 @@ const ACTION_TO_CATEGORY: Record<string, string> = {
 
 // AIXアクション → デフォルトタイトル
 const ACTION_TO_DEFAULT_TITLE: Record<string, string> = {
-  property_send: "物件ピックアップ",
+  property_send: "物件ピックアップした",
   property_recommendation: "イチオシ物件",
   property_check_result: "物件確認結果",
   viewing_invite: "内覧誘導",
