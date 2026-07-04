@@ -38,9 +38,10 @@ export async function GET(req: NextRequest) {
   // 今日の内覧を取得
   const { data: viewings, error } = await supabase
     .from("viewings")
-    .select("*")
+    .select("id, customer_name, viewing_time, pre_announce_sent, post_announce_sent")
     .eq("viewing_date", todayJST)
-    .eq("status", "scheduled");
+    .eq("status", "scheduled")
+    .limit(50);
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   if (!viewings || viewings.length === 0) return NextResponse.json({ ok: true, announced: 0 });

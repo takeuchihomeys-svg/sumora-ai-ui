@@ -75,7 +75,8 @@ export async function GET(req: NextRequest) {
       .from("line_tasks")
       .select("id, conversation_id, task_type, customer_name, created_at")
       .eq("status", "pending")
-      .order("created_at", { ascending: true }),
+      .order("created_at", { ascending: true })
+      .limit(100),
 
     // ② 未返信の会話（お客さんが最後に送信 & 2日以内）
     supabase
@@ -107,7 +108,8 @@ export async function GET(req: NextRequest) {
       .from("action_pattern_logs")
       .select("source")
       .in("source", ["suggestion_accepted", "suggestion_dismissed"])
-      .gte("created_at", sevenDaysAgo),
+      .gte("created_at", sevenDaysAgo)
+      .limit(500),
 
     // ⑥ 失注パターントップ3
     supabase

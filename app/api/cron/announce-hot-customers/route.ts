@@ -66,7 +66,8 @@ export async function GET(req: NextRequest) {
       .from("conversations")
       .select("id, customer_name, account, last_message, last_sender, updated_at, property_customer_id, property_customers(last_property_sent_at, hot_confirmed_at)")
       .eq("is_hot", true)
-      .order("updated_at", { ascending: false }),
+      .order("updated_at", { ascending: false })
+      .limit(30),
 
     // ② 物件出し要のお客さん（hot/new_inquiry/property_search）
     supabase

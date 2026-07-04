@@ -39,7 +39,8 @@ export async function GET(req: NextRequest) {
     .select("id, customer_name, status, last_message, last_sender, updated_at")
     .eq("is_flagged", true)
     .not("status", "in", "(closed_won,closed_lost)")
-    .order("updated_at", { ascending: true });
+    .order("updated_at", { ascending: true })
+    .limit(50);
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   if (!flagged || flagged.length === 0) {
