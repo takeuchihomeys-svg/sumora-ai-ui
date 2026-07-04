@@ -49,9 +49,11 @@ export async function POST(req: NextRequest) {
     templateText: string;
     conversationId?: string;
     suggestedTitle?: string;
+    source?: string;
+    originalText?: string;
   };
 
-  const { actionType, templateText, conversationId, suggestedTitle } = body;
+  const { actionType, templateText, conversationId, suggestedTitle, source, originalText } = body;
   if (!actionType || !templateText?.trim()) {
     return NextResponse.json({ ok: false, error: "actionType and templateText required" }, { status: 400 });
   }
@@ -81,6 +83,8 @@ export async function POST(req: NextRequest) {
     suggested_title: title,
     template_text: text,
     conversation_id: conversationId ?? null,
+    source: source ?? "manual",
+    original_text: originalText ?? null,
   });
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

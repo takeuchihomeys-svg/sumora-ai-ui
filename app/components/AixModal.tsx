@@ -1271,7 +1271,8 @@ export default function AixModal({
   };
 
   // AIX送信文をテンプレート候補として保存（fire-and-forget）
-  const saveTemplateCandidate = (sentText: string) => {
+  // wasEdited=true の場合は source="aix_edit" + originalText を付加して保存（スタッフ編集の追跡）
+  const saveTemplateCandidate = (sentText: string, wasEdited?: boolean, originalDraft?: string) => {
     if (!sentText.trim() || sentText.length < 20) return; // 短すぎるものはスキップ
     fetch("/api/ai-template-candidates", {
       method: "POST",
@@ -1280,6 +1281,9 @@ export default function AixModal({
         actionType,
         templateText: sentText,
         conversationId,
+        ...(wasEdited && originalDraft
+          ? { source: "aix_edit", originalText: originalDraft }
+          : {}),
       }),
     }).then(ensureOk).catch((e) => { console.warn("[AixModal] テンプレ候補保存失敗:", e); }); // 送信自体は妨げない
   };
@@ -1297,7 +1301,12 @@ export default function AixModal({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(buildSaveReplyPayload(sentText, inputText.trim() || `（AIX: ${config?.title ?? actionType}）`)),
     }).then(ensureOk).catch((e) => { console.warn("[AixModal] save-reply-example保存失敗:", e); });
-    saveTemplateCandidate(sentText);
+
+    // スタッフ編集検知: aiDraft（AI生成原文）と sentText（実際に送った文）が違う場合は source="aix_edit" で記録
+    const trimmedDraft = aiDraft.trim();
+    const trimmedSent = sentText.trim();
+    const wasEdited = trimmedDraft.length > 0 && trimmedSent !== trimmedDraft;
+    saveTemplateCandidate(sentText, wasEdited, wasEdited ? trimmedDraft : undefined);
 
     // テンプレートフレーズ学習ログ
     if (sentText.trim()) {
@@ -1402,7 +1411,12 @@ export default function AixModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(buildSaveReplyPayload(textToSend, `（AIX予約: ${config?.title ?? actionType}）`)),
       }).then(ensureOk).catch((e) => { console.warn("[AixModal] save-reply-example保存失敗（予約送信）:", e); });
-      saveTemplateCandidate(textToSend);
+
+      // スタッフ編集検知（予約送信）
+      const schedTrimmedDraft = aiDraft.trim();
+      const schedTrimmedSent = textToSend.trim();
+      const schedWasEdited = schedTrimmedDraft.length > 0 && schedTrimmedSent !== schedTrimmedDraft;
+      saveTemplateCandidate(textToSend, schedWasEdited, schedWasEdited ? schedTrimmedDraft : undefined);
 
       // 待ち合わせ確定後にカレンダーイベントを作成（予約送信の場合も同様）
       if (actionType === "meeting_place" && meetingDate && meetingTime && meetingPropertyName) {

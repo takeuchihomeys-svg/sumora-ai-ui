@@ -150,6 +150,8 @@ interface AiTemplateCandidate {
   created_at: string;
   is_adopted: boolean;
   is_dismissed: boolean;
+  source?: string;
+  original_text?: string | null;
 }
 
 interface TemplateModalProps {
@@ -305,6 +307,8 @@ export default function TemplateModal({
   const [soloEntry, setSoloEntry] = useState(false);
   // AIXテンプレート候補タブ
   const [isCandidateTabActive, setIsCandidateTabActive] = useState(false);
+  // AIX候補サブタブ: "all" = 全候補（従来のAIXテンプレ候補タブ）, "aix_edit" = スタッフ編集候補のみ
+  const [candidateSubTab, setCandidateSubTab] = useState<"all" | "aix_edit">("all");
   const [candidates, setCandidates] = useState<AiTemplateCandidate[]>([]);
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [adoptingId, setAdoptingId] = useState<string | null>(null);
@@ -818,17 +822,36 @@ export default function TemplateModal({
               <button
                 onClick={() => {
                   setIsCandidateTabActive(true);
+                  setCandidateSubTab("all");
                   setCategory(""); // 一般・AIXタブを非アクティブに
                 }}
                 className={
                   "px-3 py-1.5 rounded-full text-sm font-medium transition-all shrink-0 " +
-                  (isCandidateTabActive
+                  (isCandidateTabActive && candidateSubTab === "all"
                     ? "bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow"
                     : "bg-gray-100 text-gray-600 hover:bg-gray-200")
                 }
               >
-                ✨AIXテンプレート候補 {candidates.filter(c => !c.is_adopted && !c.is_dismissed).length > 0
-                  ? `(${candidates.filter(c => !c.is_adopted && !c.is_dismissed).length})`
+                ✨AIXテンプレート候補 {candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source !== "aix_edit").length > 0
+                  ? `(${candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source !== "aix_edit").length})`
+                  : ""}
+              </button>
+              {/* AIX候補タブ（スタッフ編集版） */}
+              <button
+                onClick={() => {
+                  setIsCandidateTabActive(true);
+                  setCandidateSubTab("aix_edit");
+                  setCategory(""); // 一般・AIXタブを非アクティブに
+                }}
+                className={
+                  "px-3 py-1.5 rounded-full text-sm font-medium transition-all shrink-0 " +
+                  (isCandidateTabActive && candidateSubTab === "aix_edit"
+                    ? "bg-gradient-to-r from-orange-400 to-amber-400 text-white shadow"
+                    : "bg-gray-100 text-gray-600 hover:bg-gray-200")
+                }
+              >
+                ✏️AIX候補 {candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source === "aix_edit").length > 0
+                  ? `(${candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source === "aix_edit").length})`
                   : ""}
               </button>
             </div>
@@ -1015,20 +1038,20 @@ export default function TemplateModal({
             </div>
           )}
 
-          {/* AIXテンプレート候補一覧 */}
-          {!showAddForm && isCandidateTabActive && (
+          {/* AIXテンプレート候補一覧（✨ 全候補タブ） */}
+          {!showAddForm && isCandidateTabActive && candidateSubTab === "all" && (
             <div className="flex-1 overflow-y-auto p-3 space-y-3">
               {candidateLoading && (
                 <p className="text-center text-gray-400 py-8">読み込み中...</p>
               )}
-              {!candidateLoading && candidates.filter(c => !c.is_adopted && !c.is_dismissed).length === 0 && (
+              {!candidateLoading && candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source !== "aix_edit").length === 0 && (
                 <div className="text-center text-gray-400 py-12">
                   <p className="text-2xl mb-2">🤖</p>
                   <p className="text-sm">AIXボタンで送信した文が候補として表示されます</p>
                 </div>
               )}
               {!candidateLoading && (() => {
-                const pending = candidates.filter(c => !c.is_adopted && !c.is_dismissed);
+                const pending = candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source !== "aix_edit");
                 // カテゴリ順でグルーピング
                 const byCategory: Record<string, AiTemplateCandidate[]> = {};
                 for (const c of pending) {
@@ -1073,6 +1096,104 @@ export default function TemplateModal({
                             className="flex-1 py-1.5 rounded-lg bg-emerald-500 text-white text-sm font-semibold hover:bg-emerald-600 disabled:opacity-50 transition"
                           >
                             {adoptingId === candidate.id ? "採用中..." : "✅ 採用"}
+                          </button>
+                          <button
+                            onClick={async () => {
+                              await fetch("/api/ai-template-candidates", {
+                                method: "PATCH",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ id: candidate.id, action: "dismiss" }),
+                              });
+                              setCandidates(prev =>
+                                prev.map(c => c.id === candidate.id ? { ...c, is_dismissed: true } : c)
+                              );
+                            }}
+                            className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-500 text-sm hover:bg-gray-200 transition"
+                          >
+                            却下
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ));
+              })()}
+            </div>
+          )}
+
+          {/* AIX候補一覧（✏️ スタッフ編集タブ） */}
+          {!showAddForm && isCandidateTabActive && candidateSubTab === "aix_edit" && (
+            <div className="flex-1 overflow-y-auto p-3 space-y-3">
+              {candidateLoading && (
+                <p className="text-center text-gray-400 py-8">読み込み中...</p>
+              )}
+              {!candidateLoading && candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source === "aix_edit").length === 0 && (
+                <div className="text-center text-gray-400 py-12">
+                  <p className="text-2xl mb-2">✏️</p>
+                  <p className="text-sm font-medium text-gray-500">AIが生成した文をスタッフが編集して送信すると</p>
+                  <p className="text-sm text-gray-400">ここに候補として表示されます</p>
+                </div>
+              )}
+              {!candidateLoading && (() => {
+                const pending = candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source === "aix_edit");
+                // カテゴリ順でグルーピング
+                const byCategory: Record<string, AiTemplateCandidate[]> = {};
+                for (const c of pending) {
+                  if (!byCategory[c.category]) byCategory[c.category] = [];
+                  byCategory[c.category].push(c);
+                }
+                return Object.entries(byCategory).map(([cat, items]) => (
+                  <div key={cat}>
+                    <p className="text-xs font-semibold text-orange-500 mb-2 px-1">{cat}</p>
+                    {items.map(candidate => (
+                      <div
+                        key={candidate.id}
+                        className="bg-white rounded-xl border border-orange-200 p-3 mb-2 shadow-sm"
+                      >
+                        <p className="text-xs text-gray-500 mb-2 font-medium">{candidate.suggested_title}</p>
+                        {/* 差分ビュー: AI原文 → スタッフ編集後 */}
+                        {candidate.original_text && (
+                          <div className="mb-2 rounded-lg overflow-hidden border border-gray-100 text-xs">
+                            <div className="bg-gray-50 px-2 py-1 text-[10px] font-bold text-gray-400 tracking-wide">AIが生成した原文</div>
+                            <p className="px-2 py-2 text-gray-400 whitespace-pre-wrap leading-relaxed line-through decoration-gray-300">
+                              {candidate.original_text}
+                            </p>
+                            <div className="bg-orange-50 px-2 py-1 text-[10px] font-bold text-orange-400 tracking-wide">スタッフが編集した文（送信済み）</div>
+                            <p className="px-2 py-2 text-gray-800 whitespace-pre-wrap leading-relaxed">
+                              {candidate.template_text}
+                            </p>
+                          </div>
+                        )}
+                        {!candidate.original_text && (
+                          <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed mb-3">
+                            {candidate.template_text}
+                          </p>
+                        )}
+                        <div className="flex gap-2 mt-2">
+                          <button
+                            disabled={adoptingId === candidate.id}
+                            onClick={async () => {
+                              setAdoptingId(candidate.id);
+                              try {
+                                const res = await fetch("/api/ai-template-candidates", {
+                                  method: "PATCH",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ id: candidate.id, action: "adopt" }),
+                                });
+                                const json = await res.json() as { ok: boolean };
+                                setCandidates(prev =>
+                                  prev.map(c => c.id === candidate.id ? { ...c, is_adopted: true } : c)
+                                );
+                                if (json.ok) {
+                                  setIsCandidateTabActive(false);
+                                  setCategory(candidate.category);
+                                  await refreshTemplates();
+                                }
+                              } finally { setAdoptingId(null); }
+                            }}
+                            className="flex-1 py-1.5 rounded-lg bg-orange-400 text-white text-sm font-semibold hover:bg-orange-500 disabled:opacity-50 transition"
+                          >
+                            {adoptingId === candidate.id ? "採用中..." : "✅ テンプレに採用"}
                           </button>
                           <button
                             onClick={async () => {

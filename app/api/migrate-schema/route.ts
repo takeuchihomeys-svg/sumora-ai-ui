@@ -619,6 +619,10 @@ CREATE INDEX IF NOT EXISTS idx_ai_template_candidates_action ON ai_template_cand
 CREATE INDEX IF NOT EXISTS idx_ai_template_candidates_pending ON ai_template_candidates(is_adopted, is_dismissed);
 ALTER TABLE ai_template_candidates DISABLE ROW LEVEL SECURITY;
 
+-- AIX編集検知カラム（ユーザーがAI生成文を編集して送信した場合にaix_editとして記録）
+ALTER TABLE ai_template_candidates ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manual';
+ALTER TABLE ai_template_candidates ADD COLUMN IF NOT EXISTS original_text TEXT NULL;
+
 -- LX-4: 予測アクション追跡カラム
 ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS suggested_action TEXT DEFAULT NULL;
 
