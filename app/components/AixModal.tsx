@@ -1303,10 +1303,15 @@ export default function AixModal({
     }).then(ensureOk).catch((e) => { console.warn("[AixModal] save-reply-example保存失敗:", e); });
 
     // スタッフ編集検知: aiDraft（AI生成原文）と sentText（実際に送った文）が違う場合は source="aix_edit" で記録
+    // property_send / property_recommendation は物件固有テキストのため候補保存しない
+    // （後続メッセージの汎用化はauto-template-candidates Cronが担当）
     const trimmedDraft = aiDraft.trim();
     const trimmedSent = sentText.trim();
     const wasEdited = trimmedDraft.length > 0 && trimmedSent !== trimmedDraft;
-    saveTemplateCandidate(sentText, wasEdited, wasEdited ? trimmedDraft : undefined);
+    const PROPERTY_SPECIFIC_ACTIONS = new Set(["property_send", "property_recommendation"]);
+    if (wasEdited && !PROPERTY_SPECIFIC_ACTIONS.has(actionType)) {
+      saveTemplateCandidate(sentText, true, trimmedDraft);
+    }
 
     // テンプレートフレーズ学習ログ
     if (sentText.trim()) {
@@ -1416,7 +1421,9 @@ export default function AixModal({
       const schedTrimmedDraft = aiDraft.trim();
       const schedTrimmedSent = textToSend.trim();
       const schedWasEdited = schedTrimmedDraft.length > 0 && schedTrimmedSent !== schedTrimmedDraft;
-      saveTemplateCandidate(textToSend, schedWasEdited, schedWasEdited ? schedTrimmedDraft : undefined);
+      if (schedWasEdited && !new Set(["property_send", "property_recommendation"]).has(actionType)) {
+        saveTemplateCandidate(textToSend, true, schedTrimmedDraft);
+      }
 
       // 待ち合わせ確定後にカレンダーイベントを作成（予約送信の場合も同様）
       if (actionType === "meeting_place" && meetingDate && meetingTime && meetingPropertyName) {
