@@ -1314,6 +1314,10 @@ export default function AixModal({
   // wasEdited=true の場合は source="aix_edit" + originalText を付加して保存（スタッフ編集の追跡）
   const saveTemplateCandidate = (sentText: string, wasEdited?: boolean, originalDraft?: string) => {
     if (!sentText.trim() || sentText.length < 20) return; // 短すぎるものはスキップ
+    // 意味のあるタイトルを自動生成（1行目 or 先頭25文字）
+    const firstLine = sentText.split("\n").find(l => l.trim().length > 0) ?? sentText;
+    const baseTitle = firstLine.slice(0, 25).trim();
+    const suggestedTitle = wasEdited ? `[編集] ${baseTitle}` : baseTitle;
     fetch("/api/ai-template-candidates", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1321,6 +1325,7 @@ export default function AixModal({
         actionType,
         templateText: sentText,
         conversationId,
+        suggestedTitle,
         ...(wasEdited && originalDraft
           ? { source: "aix_edit", originalText: originalDraft }
           : {}),
@@ -1355,11 +1360,14 @@ export default function AixModal({
     }
 
     // スタッフ編集検知: aiDraft（AI生成原文）と sentText（実際に送った文）が違う場合は source="aix_edit" で記録
+    // emoji正規化: 絵文字オフで送信しただけの場合（本文は同じ）は「編集なし」と判定する
     // property_send / property_recommendation は物件固有テキストのため候補保存しない
     // （後続メッセージの汎用化はauto-template-candidates Cronが担当）
     const trimmedDraft = aiDraft.trim();
     const trimmedSent = sentText.trim();
-    const wasEdited = trimmedDraft.length > 0 && trimmedSent !== trimmedDraft;
+    const wasEdited = trimmedDraft.length > 0
+      && trimmedSent !== trimmedDraft
+      && stripEmoji(trimmedSent) !== stripEmoji(trimmedDraft);
     const PROPERTY_SPECIFIC_ACTIONS = new Set(["property_send", "property_recommendation"]);
     if (wasEdited && !PROPERTY_SPECIFIC_ACTIONS.has(actionType)) {
       saveTemplateCandidate(sentText, true, trimmedDraft);
@@ -1470,10 +1478,25 @@ export default function AixModal({
         body: JSON.stringify(buildSaveReplyPayload(textToSend, `（AIX予約: ${config?.title ?? actionType}）`)),
       }).then(ensureOk).catch((e) => { console.warn("[AixModal] save-reply-example保存失敗（予約送信）:", e); });
 
-      // スタッフ編集検知（予約送信）
+      // フレーズ学習ログ（予約送信パスでも通常送信パスと同様に記録）
+      if (textToSend.trim()) {
+        fetch("/api/learn-template-phrases", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action_type: actionType,
+            conversation_status: conversationStatus ?? "hearing",
+            sent_text: textToSend,
+          }),
+        }).then(ensureOk).catch((e) => { console.warn("[AixModal] フレーズ学習ログ保存失敗（予約送信）:", e); });
+      }
+
+      // スタッフ編集検知（予約送信）: emoji正規化してから比較（絵文字オフのみの変更は編集扱いしない）
       const schedTrimmedDraft = aiDraft.trim();
       const schedTrimmedSent = textToSend.trim();
-      const schedWasEdited = schedTrimmedDraft.length > 0 && schedTrimmedSent !== schedTrimmedDraft;
+      const schedWasEdited = schedTrimmedDraft.length > 0
+        && schedTrimmedSent !== schedTrimmedDraft
+        && stripEmoji(schedTrimmedSent) !== stripEmoji(schedTrimmedDraft);
       if (schedWasEdited && !new Set(["property_send", "property_recommendation"]).has(actionType)) {
         saveTemplateCandidate(textToSend, true, schedTrimmedDraft);
       }
