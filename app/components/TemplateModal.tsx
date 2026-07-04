@@ -153,7 +153,7 @@ interface AiTemplateCandidate {
 interface TemplateModalProps {
   onClose: () => void;
   onSelect?: (text: string, imageFiles?: File[], label?: string, category?: string, secondMsg?: { type: string; delay: number } | null, templateId?: string) => void;
-  onOpenAixWithFocus?: (focusPoints: string[], templateInfo?: { name: string; category: string; structure?: Array<{ label: string; text: string }>; sample?: string; secondMsg?: { type: string; delay: number } | null }) => void;
+  onOpenAixWithFocus?: (focusPoints: string[], templateInfo?: { id?: string; name: string; category: string; structure?: Array<{ label: string; text: string }>; sample?: string; secondMsg?: { type: string; delay: number } | null }) => void;
   /** 親からのキャッシュデータ（提供されれば即時表示・背景で再検証） */
   initialTemplates?: Template[];
   /** テンプレ一覧更新時に親のキャッシュを更新するコールバック */
@@ -1757,7 +1757,7 @@ export default function TemplateModal({
                                   ? { type: tmpl.second_msg_type, delay: tmpl.second_msg_delay }
                                   : null;
                                 if (tmpl.category.includes("AIX") && onOpenAixWithFocus) {
-                                  onOpenAixWithFocus(focusPointsMap[tmpl.id] ?? [], { name: tmpl.label, category: tmpl.category, structure: tmpl.structure ?? undefined, sample: tmpl.text || undefined, secondMsg });
+                                  onOpenAixWithFocus(focusPointsMap[tmpl.id] ?? [], { id: tmpl.id, name: tmpl.label, category: tmpl.category, structure: tmpl.structure ?? undefined, sample: tmpl.text || undefined, secondMsg });
                                   onClose();
                                   return;
                                 }

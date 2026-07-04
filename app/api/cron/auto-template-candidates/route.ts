@@ -11,12 +11,14 @@ const MODEL = "claude-haiku-4-5-20251001";
 //
 // 過去14日間の messages.is_aix_generated=true（AIX生成文のスタッフ送信）を起点に、
 // その直後15分以内に送られた非AIXスタッフ送信（=2通目・後続テンプレ）を抽出し、
-// Claude Haiku で「テンプレとして再利用可能か」を判定して
-// ai_template_candidates に候補として追加する。
+// Claude Haiku で固有情報（物件名・住所・日付・顧客名等）を汎用プレースホルダーに
+// 「変換」して ai_template_candidates に候補として追加する。
 //
 // ※ 設計当初は「成功会話（closed_won / success_pattern_at）のみ」を対象とする案だったが、
-//    実測で86ペア中0件が成功会話に該当したため、全ペアを対象にし
-//    Haiku判定を品質ゲートとして使う方式に変更（2026-07-04 DB実測に基づく）。
+//    実測で86ペア中0件が成功会話に該当したため、全ペアを対象に変更（2026-07-04 DB実測）。
+// ※ 当初は Haiku に「使えるか判定」させていたが、実際のLINE文は物件名・日付を含むため
+//    ほぼ全て「固有情報あり→使えない」と落とされ、86ペア中2件しか候補にならなかった
+//    （スループット2.3%）。「判定」→「変換」方式に変更（2026-07-04）。
 
 // AIXアクション → テンプレートカテゴリ変換
 // ※ app/api/ai-template-candidates/route.ts の ACTION_TO_CATEGORY と一致させること
@@ -47,13 +49,72 @@ const ACTION_LABEL: Record<string, string> = {
 
 const LOOKBACK_DAYS = 14;
 const FOLLOWUP_WINDOW_MS = 15 * 60 * 1000; // AIX送信から15分以内
-const LOG_MATCH_WINDOW_MS = 10 * 60 * 1000; // aix_usage_logs との突合許容ズレ
+const LOG_MATCH_WINDOW_MS = 10 * 60 * 1000; // aix_usage_logs との突合許容ズレ（sent_at無し旧レコード用フォールバック）
+// P4: sent_at ベース厳密マッチ（LINE送信タイムラグを考慮して sent_at の30秒前〜5分後を許容）
+const SENT_AT_BEFORE_MS = 30 * 1000;
+const SENT_AT_AFTER_MS = 5 * 60 * 1000;
 const MIN_FOLLOWUP_LEN = 20;
-const MAX_JUDGE_PER_RUN = 12; // Haiku判定に回す最大件数（コスト制御）
-const MAX_INSERT_PER_RUN = 5; // 1回の実行で追加する候補の上限
+const MAX_CONVERT_PER_RUN = 30; // Haiku変換に回す最大件数（並列呼び出し・コスト制御）
+const MAX_INSERT_PER_RUN = 10; // 1回の実行で追加する候補の上限
 const MAX_GENERATE_PER_RUN = 2; // 後続例ゼロのアクション向けAI生成の上限
 
+// Haiku 変換用システムプロンプト（判定ではなく「汎用テンプレへの変換」を依頼する）
+const CONVERT_SYSTEM_PROMPT = `あなたは不動産賃貸仲介LINEテンプレートの編集者です。
+スタッフが実際にお客様へ送った文を、他のお客様にもそのまま使い回せる汎用テンプレートに変換します。
+
+## 変換ルール
+1. 固有の物件名 → 「〇〇物件」または「ご紹介の物件」
+2. 固有の住所・駅名 → 「〇〇駅付近」または「ご紹介のエリア」
+3. 日時 → 「〇月〇日」または「近日中」
+4. 顧客名 → 「アカウント名さん」（既にプレースホルダーの場合はそのまま）
+5. 担当者名 → 削除または「担当」に変換
+6. 金額の具体的な数字 → 「〇万円」
+7. 個別URL → 削除（削除しても文が成立する場合のみ）
+
+文のトーン・絵文字・改行・言い回しは極力そのまま残すこと。
+
+## スキップ条件（変換しても意味をなさない場合のみ skip=true）
+- 固有情報を除くと文が成立しない（例：「はい、〇〇物件は空室です」だけになる）
+- 挨拶だけで内容がない（例：「よろしくお願いします！！」のみ）
+- 既存テンプレートと重複・類似している
+
+## 出力形式（JSONのみ・説明文・コードフェンス不要）
+{"converted": "変換後の汎用テンプレ文", "title": "12文字以内の日本語タイトル", "skip": false, "skip_reason": null}
+skip=true の場合:
+{"converted": null, "title": null, "skip": true, "skip_reason": "理由"}`;
+
 type Msg = { id: string; conversation_id: string; text: string | null; created_at: string; is_aix_generated: boolean | null };
+type UsageLog = { conversation_id: string; aix_type: string; created_at: string; sent_at: string | null };
+
+// AIXメッセージ（created_at=aixAt）に対応する aix_usage_logs レコードの aix_type を特定する。
+// P4: sent_at があるログは厳密マッチ（message.created_at が sent_at-30秒〜sent_at+5分）を優先し、
+//     sent_at 無しの旧ログのみ ±10分ヒューリスティックでフォールバック。
+function matchAixType(logs: UsageLog[], conversationId: string, aixAt: number): string | null {
+  let bestType: string | null = null;
+  let bestDiff = Infinity;
+  let bestIsExact = false;
+  for (const log of logs) {
+    if (log.conversation_id !== conversationId) continue;
+    if (log.sent_at) {
+      const delta = aixAt - new Date(log.sent_at).getTime();
+      if (delta >= -SENT_AT_BEFORE_MS && delta <= SENT_AT_AFTER_MS) {
+        const diff = Math.abs(delta);
+        if (!bestIsExact || diff < bestDiff) {
+          bestIsExact = true;
+          bestDiff = diff;
+          bestType = log.aix_type;
+        }
+      }
+    } else if (!bestIsExact) {
+      const diff = Math.abs(new Date(log.created_at).getTime() - aixAt);
+      if (diff < bestDiff && diff < LOG_MATCH_WINDOW_MS) {
+        bestDiff = diff;
+        bestType = log.aix_type;
+      }
+    }
+  }
+  return bestType;
+}
 
 function dedupeKey(category: string, text: string): string {
   return `${category}::${text.trim().slice(0, 50)}`;
@@ -93,7 +154,7 @@ async function run() {
       .limit(3000),
     supabase
       .from("aix_usage_logs")
-      .select("conversation_id, aix_type, created_at")
+      .select("conversation_id, aix_type, created_at, sent_at")
       .in("conversation_id", convIds)
       .gte("created_at", since)
       .limit(1000),
@@ -129,17 +190,8 @@ async function run() {
     });
     if (!follow?.text) continue;
 
-    // aix_type: 同一会話で created_at が最も近いログ（±10分）
-    let bestType: string | null = null;
-    let bestDiff = Infinity;
-    for (const log of logs ?? []) {
-      if (log.conversation_id !== aix.conversation_id) continue;
-      const diff = Math.abs(new Date(log.created_at as string).getTime() - aixAt);
-      if (diff < bestDiff && diff < LOG_MATCH_WINDOW_MS) {
-        bestDiff = diff;
-        bestType = log.aix_type as string;
-      }
-    }
+    // aix_type: P4 sent_at 厳密マッチ（旧レコードは ±10分フォールバック）
+    const bestType = matchAixType((logs ?? []) as UsageLog[], aix.conversation_id as string, aixAt);
     if (!bestType || !ACTION_TO_CATEGORY[bestType]) continue;
 
     pairs.push({
@@ -166,70 +218,89 @@ async function run() {
     if (seen.has(key)) continue;
     seen.add(key);
     fresh.push(p);
-    if (fresh.length >= MAX_JUDGE_PER_RUN) break;
+    if (fresh.length >= MAX_CONVERT_PER_RUN) break;
   }
 
-  // 5. Haiku で「テンプレとして再利用可能か」を一括判定 + タイトル付与
+  // 5. Haiku で固有情報を汎用プレースホルダーに「変換」（並列呼び出し）
+  //    変換不能で意味をなさない文のみスキップ。既存テンプレ一覧を渡して重複・類似もスキップ。
   let saved = 0;
-  let judged = 0;
+  let converted = 0;
+  let skipped = 0;
   const savedItems: Array<{ category: string; title: string }> = [];
 
   if (fresh.length > 0) {
-    judged = fresh.length;
-    const listText = fresh
-      .map((p, i) => `【${i}】アクション: ${ACTION_LABEL[p.aixType] ?? p.aixType}\nAIX文(冒頭): ${p.aixText.replace(/\n/g, " ").slice(0, 120)}\n後続文:\n${p.followText}`)
-      .join("\n\n---\n\n");
+    // カテゴリ別の既存テンプレ一覧（重複・類似スキップ判定用にプロンプトへ渡す）
+    const templatesByCategory = new Map<string, string[]>();
+    for (const t of existingTemplates ?? []) {
+      const cat = t.category as string;
+      const arr = templatesByCategory.get(cat) ?? [];
+      if (arr.length < 10) arr.push(((t.text as string) ?? "").replace(/\n/g, " ").slice(0, 50));
+      templatesByCategory.set(cat, arr);
+    }
 
-    try {
-      const res = await client.messages.create({
-        model: MODEL,
-        max_tokens: 1500,
-        messages: [{
-          role: "user",
-          content: `不動産賃貸仲介のLINE接客で、AIが生成した1通目（AIX文）の直後にスタッフが手動で送った「後続文」の一覧です。
-それぞれについて、他のお客様にもそのまま使い回せる「テンプレート」として登録する価値があるか判定してください。
+    type ConvertResult = { converted: string | null; title?: string | null; skip: boolean; skip_reason?: string | null };
 
-判定基準:
-- useful=true: 汎用的な案内・誘導・締め文など、顧客や物件を入れ替えても使える文
-- useful=false: 特定の物件名・顧客名・日付・URL・個別事情に強く依存していて使い回せない文
+    const results = await Promise.allSettled(
+      fresh.map(async (p): Promise<ConvertResult> => {
+        const existing = templatesByCategory.get(ACTION_TO_CATEGORY[p.aixType]) ?? [];
+        const res = await client.messages.create({
+          model: MODEL,
+          max_tokens: 800,
+          system: CONVERT_SYSTEM_PROMPT,
+          messages: [{
+            role: "user",
+            content: `アクション: ${ACTION_LABEL[p.aixType] ?? p.aixType}
+AIX文（1通目・冒頭）: ${p.aixText.replace(/\n/g, " ").slice(0, 120)}
 
-usefulなものには12文字以内の日本語タイトルを付けてください。
+変換対象の後続文:
+${p.followText}
 
-${listText}
-
-以下のJSON配列のみを出力（説明文・コードフェンス不要）:
-[{"index": 0, "useful": true, "title": "内覧誘導の締め"}, ...]`,
-        }],
-      });
-
-      const raw = res.content[0]?.type === "text" ? res.content[0].text : "[]";
-      const parsed = JSON.parse(stripCodeFence(raw)) as Array<{ index: number; useful: boolean; title?: string }>;
-
-      for (const j of parsed) {
-        if (!j.useful) continue;
-        if (saved >= MAX_INSERT_PER_RUN) break;
-        const p = fresh[j.index];
-        if (!p) continue;
-
-        const category = ACTION_TO_CATEGORY[p.aixType];
-        const title = `${(j.title?.trim() || ACTION_LABEL[p.aixType] || p.aixType).slice(0, 20)}（後続）`;
-
-        const { error: insErr } = await supabase.from("ai_template_candidates").insert({
-          action_type: p.aixType,
-          category,
-          suggested_title: title,
-          template_text: p.followText,
-          conversation_id: p.conversationId,
+既存テンプレート（重複・類似する場合は skip=true にすること）:
+${existing.length > 0 ? existing.map((t) => `- ${t}`).join("\n") : "（なし）"}`,
+          }],
         });
-        if (insErr) {
-          console.error("[auto-template-candidates] insert error:", insErr.message);
-          continue;
-        }
-        saved++;
-        savedItems.push({ category, title });
+        const raw = res.content[0]?.type === "text" ? res.content[0].text : "{}";
+        return JSON.parse(stripCodeFence(raw)) as ConvertResult;
+      })
+    );
+
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      const p = fresh[i];
+      if (r.status !== "fulfilled") {
+        console.error("[auto-template-candidates] convert error:", r.reason);
+        continue;
       }
-    } catch (e) {
-      console.error("[auto-template-candidates] judge error:", e);
+      if (r.value.skip || !r.value.converted?.trim()) {
+        skipped++;
+        continue;
+      }
+      converted++;
+      if (saved >= MAX_INSERT_PER_RUN) continue;
+
+      const category = ACTION_TO_CATEGORY[p.aixType];
+      const templateText = r.value.converted.trim();
+
+      // 変換後テキストでも重複チェック（変換前キーとは別物になるため）
+      const key = dedupeKey(category, templateText);
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const title = `${(r.value.title?.trim() || ACTION_LABEL[p.aixType] || p.aixType).slice(0, 20)}（後続）`;
+
+      const { error: insErr } = await supabase.from("ai_template_candidates").insert({
+        action_type: p.aixType,
+        category,
+        suggested_title: title,
+        template_text: templateText,
+        conversation_id: p.conversationId,
+      });
+      if (insErr) {
+        console.error("[auto-template-candidates] insert error:", insErr.message);
+        continue;
+      }
+      saved++;
+      savedItems.push({ category, title });
     }
   }
 
@@ -240,16 +311,7 @@ ${listText}
     const typeCounts = new Map<string, { count: number; samples: string[] }>();
     for (const aix of aixMsgs as Msg[]) {
       const aixAt = new Date(aix.created_at).getTime();
-      let bestType: string | null = null;
-      let bestDiff = Infinity;
-      for (const log of logs ?? []) {
-        if (log.conversation_id !== aix.conversation_id) continue;
-        const diff = Math.abs(new Date(log.created_at as string).getTime() - aixAt);
-        if (diff < bestDiff && diff < LOG_MATCH_WINDOW_MS) {
-          bestDiff = diff;
-          bestType = log.aix_type as string;
-        }
-      }
+      const bestType = matchAixType((logs ?? []) as UsageLog[], aix.conversation_id as string, aixAt);
       if (!bestType || !ACTION_TO_CATEGORY[bestType]) continue;
       const entry = typeCounts.get(bestType) ?? { count: 0, samples: [] };
       entry.count++;
@@ -312,8 +374,8 @@ ${entry.samples.map((s) => `- ${s.replace(/\n/g, " ")}`).join("\n")}
     console.error("[auto-template-candidates] generate error:", e);
   }
 
-  console.log(`[auto-template-candidates] done: pairs=${pairs.length} judged=${judged} saved=${saved} generated=${generated}`);
-  return NextResponse.json({ ok: true, pairs: pairs.length, judged, saved, generated, savedItems });
+  console.log(`[auto-template-candidates] done: pairs=${pairs.length} sent=${fresh.length} converted=${converted} skipped=${skipped} saved=${saved} generated=${generated}`);
+  return NextResponse.json({ ok: true, pairs: pairs.length, sent: fresh.length, converted, skipped, saved, generated, savedItems });
 }
 
 // GET: Vercel cron から（CRON_SECRET が設定されていれば Bearer 認証）

@@ -84,6 +84,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: text }, { status: 500 });
   }
 
+  // P4: LINE push レスポンスの sentMessages から message id を取得
+  // （aix_usage_logs.line_message_id に記録し、AIX送信メッセージの厳密特定に使う）
+  let sentMessageIds: string[] = [];
+  try {
+    const lineJson = await res.json() as { sentMessages?: Array<{ id?: string }> };
+    sentMessageIds = (lineJson.sentMessages ?? [])
+      .map((m) => m.id)
+      .filter((x): x is string => Boolean(x));
+  } catch {
+    // レスポンスがJSONでなくても送信自体は成功しているので続行
+  }
+
   // スタッフ送信メッセージに「物件ピックアップ・お送り」フレーズ → 物件出しタスク自動作成 + ステータス変更
   if (message) {
     const STAFF_SEND_KEYWORDS = [
@@ -194,5 +206,5 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, account: accountKey });
+  return NextResponse.json({ ok: true, account: accountKey, sentMessageIds });
 }

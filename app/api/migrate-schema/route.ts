@@ -620,6 +620,14 @@ ALTER TABLE ai_template_candidates DISABLE ROW LEVEL SECURITY;
 
 -- LX-4: 予測アクション追跡カラム
 ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS suggested_action TEXT DEFAULT NULL;
+
+-- P1: AIX経由テンプレのuse_count計測（どのテンプレIDが使われたか記録）
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS template_id UUID DEFAULT NULL;
+
+-- P4: AIX送信メッセージの厳密特定（LINE message id + 送信時刻）
+-- auto-template-candidates が ±10分ヒューリスティックではなく sent_at ベースの厳密マッチを行える
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS line_message_id TEXT DEFAULT NULL;
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ DEFAULT NULL;
 ALTER TABLE action_pattern_logs ADD COLUMN IF NOT EXISTS predicted_action TEXT DEFAULT NULL;
 
 -- 失注分析済みフラグ（auto-analyze-losers の毎日再課金防止）
@@ -630,7 +638,31 @@ ALTER TABLE conversations ADD COLUMN IF NOT EXISTS success_pattern_at TIMESTAMPT
 
 -- 下書き生成の試行時刻（generate-pending-drafts のorphaned救済リトライ制御。
 -- インメモリMapはVercelサーバーレスでインスタンス間共有不可のためDB側フラグで10分スキップを実現）
-ALTER TABLE conversations ADD COLUMN IF NOT EXISTS draft_attempted_at TIMESTAMPTZ
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS draft_attempted_at TIMESTAMPTZ;
+
+-- P5: 成果アトリビューション週次集計（どのAIXアクション・テンプレが内覧/申込/成約に繋がったか）
+-- calc-aix-attribution cron（毎週日曜 JST 04:00）が過去7日分を集計して保存
+CREATE TABLE IF NOT EXISTS aix_action_attribution (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  action_type TEXT NOT NULL,
+  template_id UUID,
+  template_label TEXT,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  usage_count INTEGER DEFAULT 0,
+  unique_conversations INTEGER DEFAULT 0,
+  viewing_reached INTEGER DEFAULT 0,
+  application_reached INTEGER DEFAULT 0,
+  closed_won INTEGER DEFAULT 0,
+  viewing_rate NUMERIC(5,3),
+  application_rate NUMERIC(5,3),
+  win_rate NUMERIC(5,3),
+  calculated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_aix_action_attribution_unique
+  ON aix_action_attribution (action_type, COALESCE(template_id::text, 'none'), period_start);
+CREATE INDEX IF NOT EXISTS idx_aix_action_attribution_period ON aix_action_attribution(period_start DESC);
+ALTER TABLE aix_action_attribution DISABLE ROW LEVEL SECURITY
 `.trim();
 
 export async function GET() {

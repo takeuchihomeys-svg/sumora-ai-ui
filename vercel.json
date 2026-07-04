@@ -75,6 +75,10 @@
     {
       "path": "/api/cron/auto-template-candidates",
       "schedule": "0 17 * * *"
+    },
+    {
+      "path": "/api/cron/calc-aix-attribution",
+      "schedule": "0 19 * * 0"
     }
   ]
 }

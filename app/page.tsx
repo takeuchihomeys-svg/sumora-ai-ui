@@ -439,7 +439,7 @@ export default function Home() {
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [templateInitialSearch, setTemplateInitialSearch] = useState("");
   const [pendingAixFocusPoints, setPendingAixFocusPoints] = useState<string[]>([]);
-  const [pendingTemplateSource, setPendingTemplateSource] = useState<{ name: string; category: string } | null>(null);
+  const [pendingTemplateSource, setPendingTemplateSource] = useState<{ id?: string; name: string; category: string } | null>(null);
   const [pendingTemplateStructure, setPendingTemplateStructure] = useState<Array<{ label: string; text: string }> | null>(null);
   const [pendingTemplateSample, setPendingTemplateSample] = useState<string | null>(null);
   const [suggest2ndHandMap, setSuggest2ndHandMap] = useState<Record<string, boolean>>(() => {
@@ -534,6 +534,9 @@ export default function Home() {
   const [dismissedApplyFormIds, setDismissedApplyFormIds] = useState<Set<string>>(new Set());
   const nextActionFetchingRef = useRef<Set<string>>(new Set());
   const lastAixByConvRef = useRef<Map<string, string>>(new Map());
+  // P4: 直近のLINE送信のmessage id・送信時刻（aix_usage_logsに記録して送信メッセージを厳密特定）
+  // sendMessageTextが設定し、onAfterSendのlog-aix-usageで消費するワンショットref
+  const lastLineSendRef = useRef<{ messageId: string | null; sentAt: string } | null>(null);
   // 物件確認結果（空室か否か）を会話ごとに保持 → suggest-next-action のチェーンルール分岐に使用
   const propertyAvailableByConvRef = useRef<Map<string, boolean>>(new Map());
   const [statusSuggestionMap, setStatusSuggestionMap] = useState<Record<string, { status: string; label: string; reason: string } | null>>({});
@@ -3394,18 +3397,24 @@ export default function Home() {
     // LINEに送信（画像→テキストの順）
     try {
       if (imageUrl) {
-        await fetch("/api/send-line-message", {
+        const imgRes = await fetch("/api/send-line-message", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, image_url: imageUrl, account: selectedConversation.account }),
         });
+        // P4: LINE message idを記録（テキストも送る場合はテキスト側で上書きされる）
+        const imgJson = await imgRes.json().catch(() => null) as { sentMessageIds?: string[] } | null;
+        lastLineSendRef.current = { messageId: imgJson?.sentMessageIds?.[0] ?? null, sentAt: now.toISOString() };
       }
       if (text.trim()) {
-        await fetch("/api/send-line-message", {
+        const txtRes = await fetch("/api/send-line-message", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: text.trim(), account: selectedConversation.account }),
         });
+        // P4: LINE message idを記録（AIX本文＝最後のテキスト送信が最終的にrefに残る）
+        const txtJson = await txtRes.json().catch(() => null) as { sentMessageIds?: string[] } | null;
+        lastLineSendRef.current = { messageId: txtJson?.sentMessageIds?.[0] ?? null, sentAt: now.toISOString() };
       }
     } catch {
       // LINE送信失敗しても管理画面の動作は続ける
@@ -7064,18 +7073,33 @@ export default function Home() {
                 propertyAvailableByConvRef.current.set(selectedConversation.id, Boolean(meta?.suggestViewing || meta?.suggest2ndHand));
               }
               // AIXフロー使用ログ記録（テンプレート名・カテゴリ含む）
+              // P4: LINE message id・送信時刻をワンショット消費（予約送信時は未送信なので使わない）
+              const _lineSend = meta?.scheduled ? null : lastLineSendRef.current;
+              lastLineSendRef.current = null;
               fetch("/api/log-aix-usage", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   conversation_id: selectedConversation.id,
                   aix_type: aixModalType,
+                  template_id: pendingTemplateSource?.id ?? null,
                   template_name: pendingTemplateSource?.name ?? null,
                   template_category: pendingTemplateSource?.category ?? null,
                   conversation_status: _ns,
                   suggested_action: _predictedAction,
+                  line_message_id: _lineSend?.messageId ?? null,
+                  sent_at: _lineSend?.sentAt ?? null,
                 }),
               }).catch(() => {});
+              // P1: AIX経由テンプレの使用回数をインクリメント（fire-and-forget）
+              // ※通常テンプレ送信のselectedTemplateIdRef経路とは独立（AIX動線ではrefを使わないため二重加算なし）
+              if (pendingTemplateSource?.id) {
+                fetch("/api/templates/increment-use", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ templateId: pendingTemplateSource.id }),
+                }).catch(() => {});
+              }
               setPendingTemplateSource(null);
               // G-14: 提案と異なるAIXを送った場合はバイパスとしてログ記録（一致時はprediction_matchで記録済み）
               if (_predictedAction && _predictedAction !== aixModalType) {
