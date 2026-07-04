@@ -5391,7 +5391,23 @@ export default function Home() {
                         try {
                           const res = await fetch("/api/split-draft", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: replyDraft }) });
                           const data = await res.json() as { msg1?: string; msg2?: string; error?: string };
-                          if (data.msg1 && data.msg2) { setReplyDraft(data.msg1); setExtraDraftMessages([{ text: data.msg2, delaySec: 60 }]); }
+                          if (data.msg1 && data.msg2) {
+                            setReplyDraft(data.msg1);
+                            setExtraDraftMessages([{ text: data.msg2, delaySec: 60 }]);
+                            // ② split-draft学習: どのような場面で2通に分けるか記録
+                            if (selectedConversation?.id) {
+                              const _sdConvId = selectedConversation.id;
+                              const _sdActionType = lastAixByConvRef.current.get(_sdConvId) ?? activeAixFlow ?? null;
+                              const _sdStatus = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status ?? "";
+                              const _sdCustomerMsg = latestCustomerMessage ?? "";
+                              fetch("/api/learn-action-patterns", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                keepalive: true,
+                                body: JSON.stringify({ action: "log", conversation_status: _sdStatus, action_type: _sdActionType, source: "split_draft_used", customer_msg_summary: _sdCustomerMsg.slice(0, 150), conversation_id: _sdConvId }),
+                              }).catch(() => {});
+                            }
+                          }
                         } catch (err) { console.error("[split-draft]", err); }
                         finally { setSplitLoading(false); }
                       }}
