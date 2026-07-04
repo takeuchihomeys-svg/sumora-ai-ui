@@ -147,16 +147,16 @@ function getAccountMeta(account?: string | null) {
 }
 
 // AIX\u30a2\u30af\u30b7\u30e7\u30f3\u3054\u3068\u306e\u30e1\u30bf\u60c5\u5831\uff08\u30dc\u30bf\u30f3\u30e9\u30d9\u30eb\u30fb\u8272\u30fb\u30c6\u30f3\u30d7\u30ec\u30fc\u30c8\u30ab\u30c6\u30b4\u30ea\uff09
-const AIX_ACTION_META: Record<string, { label: string; color: string; templateCategory: string }> = {
-  condition_hearing:       { label: "\u30d2\u30a2\u30ea\u30f3\u30b0",   color: "#0288D1", templateCategory: "\u30d2\u30a2\u30ea\u30f3\u30b0\u3010AIX\u3011" },
-  greeting_viewing:        { label: "\u5185\u89a7\u6328\u62f6",     color: "#00796B", templateCategory: "\u6328\u62f6\u3010AIX\u3011" },
-  property_recommendation: { label: "\u7269\u4ef6\u30aa\u30b9\u30b9\u30e1",  color: "#2196F3", templateCategory: "\u7269\u4ef6\u30aa\u30b9\u30b9\u30e1\u3010AIX\u3011" },
-  property_send:           { label: "\u7269\u4ef6\u30d4\u30c3\u30af\u30a2\u30c3\u30d7\u3057\u305f", color: "#00897B", templateCategory: "\u7269\u4ef6\u30d4\u30c3\u30af\u30a2\u30c3\u30d7\u3057\u305f\u3010AIX\u3011" },
-  property_check_result:   { label: "\u7269\u4ef6\u78ba\u8a8d\u3057\u305f",  color: "#4CAF50", templateCategory: "\u7269\u4ef6\u78ba\u8a8d\u3057\u305f\u3010AIX\u3011" },
-  estimate_sheet:          { label: "\u898b\u7a4d\u66f8\u9001\u308b",    color: "#FF9800", templateCategory: "\u898b\u7a4d\u66f8\u9001\u308b\u3010AIX\u3011" },
-  viewing_invite:          { label: "\u5185\u89a7\u3078\uff01",      color: "#9C27B0", templateCategory: "\u5185\u89a7\u3078\uff01\u3010AIX\u3011" },
-  application_push:        { label: "\u7533\u8fbc\u3078\uff01",      color: "#E53935", templateCategory: "\u7533\u8fbc\u3078\uff01\u3010AIX\u3011" },
-  meeting_place:           { label: "\u5f85\u3061\u5408\u308f\u305b", color: "#00838F", templateCategory: "\u5185\u89a7\u3010AIX\u3011" },
+const AIX_ACTION_META: Record<string, { label: string; subtitle?: string; color: string; templateCategory: string }> = {
+  condition_hearing:       { label: "\u30d2\u30a2\u30ea\u30f3\u30b0",           color: "#0288D1", templateCategory: "\u30d2\u30a2\u30ea\u30f3\u30b0\u3010AIX\u3011" },
+  greeting_viewing:        { label: "\u5185\u89a7\u6328\u62f6",             color: "#00796B", templateCategory: "\u6328\u62f6\u3010AIX\u3011" },
+  property_recommendation: { label: "\u7269\u4ef6\u30aa\u30b9\u30b9\u30e1",          color: "#2196F3", templateCategory: "\u7269\u4ef6\u30aa\u30b9\u30b9\u30e1\u3010AIX\u3011" },
+  property_send:           { label: "\u7269\u4ef6\u30d4\u30c3\u30af\u30a2\u30c3\u30d7\u3057\u305f",   color: "#00897B", templateCategory: "\u7269\u4ef6\u30d4\u30c3\u30af\u30a2\u30c3\u30d7\u3057\u305f\u3010AIX\u3011" },
+  property_check_result:   { label: "\u7269\u4ef6\u78ba\u8a8d\u3057\u305f",          color: "#4CAF50", templateCategory: "\u7269\u4ef6\u78ba\u8a8d\u3057\u305f\u3010AIX\u3011" },
+  estimate_sheet:          { label: "\u898b\u7a4d\u66f8\u9001\u308b",            color: "#FF9800", templateCategory: "\u898b\u7a4d\u66f8\u9001\u308b\u3010AIX\u3011" },
+  viewing_invite:          { label: "\u5185\u89a7\u65e5\u8abf\u6574",            subtitle: "\u65e5\u7a0b\u9078\u629e\u2192AI\u751f\u6210\u2192\u5185\u89a7\u6848\u5185LINE\u3092\u9001\u4fe1", color: "#9C27B0", templateCategory: "\u5185\u89a7\u3078\uff01\u3010AIX\u3011" },
+  application_push:        { label: "\u7533\u8fbc\u3078\uff01",              color: "#E53935", templateCategory: "\u7533\u8fbc\u3078\uff01\u3010AIX\u3011" },
+  meeting_place:           { label: "\u5f85\u3061\u5408\u308f\u305b",            color: "#00838F", templateCategory: "\u5185\u89a7\u3010AIX\u3011" },
 };
 // templateCategory \u2192 AixActionType \u306e\u9006\u5f15\u304d\uff08\u30c6\u30f3\u30d7\u30ec\u9078\u629e\u6642\u306e\u30a2\u30af\u30b7\u30e7\u30f3\u6c7a\u5b9a\u306b\u4f7f\u7528\uff09
 const TEMPLATE_CATEGORY_TO_ACTION: Record<string, AixActionType> = Object.fromEntries(
@@ -4581,7 +4581,7 @@ export default function Home() {
             if (!nextSugg?.action || dismissedNextActionIds.has(selectedConversation.id)) return null;
             const AIX_CHAT_LABEL: Record<string, string> = {
               property_send: "物件ピックアップした",
-              viewing_invite: "内覧へ！",
+              viewing_invite: "内覧日調整",
               application_push: "申込へ！",
               estimate_sheet: "見積書送る",
               meeting_place: "待ち合わせ",
@@ -4590,6 +4590,7 @@ export default function Home() {
               alternative_send: "代替物件送る",
             };
             const label = AIX_CHAT_LABEL[nextSugg.action] ?? nextSugg.action;
+            const nextActionSubtitle = AIX_ACTION_META[nextSugg.action ?? ""]?.subtitle;
             const isFollowUp = nextSugg.reason?.includes("未返信");
             const isAlternativeSend = nextSugg.action === "alternative_send";
             const isPropertyCheck = nextSugg.action === "property_check_result";
@@ -4708,7 +4709,8 @@ export default function Home() {
                     <div className="min-w-0 flex-1">
                       <span className="text-[11px] font-bold text-[#1565c0]">AIXおすすめ</span>
                       <span className="mx-1 text-[11px] text-[#1976d2]">→ {label}</span>
-                      {nextSugg.reason && <span className="text-[10px] text-[#5c85d6]">({nextSugg.reason})</span>}
+                      {nextActionSubtitle && <span className="text-[10px] text-[#7c4dff]">（{nextActionSubtitle}）</span>}
+                      {!nextActionSubtitle && nextSugg.reason && <span className="text-[10px] text-[#5c85d6]">({nextSugg.reason})</span>}
                     </div>
                     {dismissBtn}
                     <button
@@ -9321,7 +9323,7 @@ export default function Home() {
                     setShowEstimatePicker(true);
                   } },
                   { color: "#0288D1", label: "お部屋探し条件ヒアリング", sub: "条件フォーム①〜⑧をワンタップで送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("condition_hearing"); openAixDirect("condition_hearing"); } },
-                  { color: "#9C27B0", label: "内覧へ（内覧日調整）", sub: "カレンダーから日程を選択→AIで文生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setShowViewingPicker(true); } },
+                  { color: "#9C27B0", label: "内覧日を調整する", sub: "日程をタップして選択→AI文生成→内覧案内LINEを送信。内覧率UPに直結！", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setShowViewingPicker(true); } },
                   { color: "#00838F", label: "待ち合わせ場所", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); } },
                   { color: "#E53935", label: "申込（誘導・決定）", sub: "物件名入力orシンプル送信→AI生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); setShowApplicationPicker(true); } },
                   { color: "#00796B", label: "挨拶（内覧前・内覧後）", sub: "内覧前後の挨拶をAI生成。内覧前は日時登録でアナウンス自動化", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("greeting_viewing"); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); setShowGreetingViewingPicker(true); } },
