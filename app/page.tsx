@@ -149,7 +149,7 @@ function getAccountMeta(account?: string | null) {
 // AIX\u30a2\u30af\u30b7\u30e7\u30f3\u3054\u3068\u306e\u30e1\u30bf\u60c5\u5831\uff08\u30dc\u30bf\u30f3\u30e9\u30d9\u30eb\u30fb\u8272\u30fb\u30c6\u30f3\u30d7\u30ec\u30fc\u30c8\u30ab\u30c6\u30b4\u30ea\uff09
 const AIX_ACTION_META: Record<string, { label: string; color: string; templateCategory: string }> = {
   condition_hearing:       { label: "\u30d2\u30a2\u30ea\u30f3\u30b0",   color: "#0288D1", templateCategory: "\u30d2\u30a2\u30ea\u30f3\u30b0\u3010AIX\u3011" },
-  greeting_viewing:        { label: "\u5185\u89a7\u6328\u62f6",     color: "#00796B", templateCategory: "" },
+  greeting_viewing:        { label: "\u5185\u89a7\u6328\u62f6",     color: "#00796B", templateCategory: "\u6328\u62f6\u3010AIX\u3011" },
   property_recommendation: { label: "\u7269\u4ef6\u30aa\u30b9\u30b9\u30e1",  color: "#2196F3", templateCategory: "\u7269\u4ef6\u30aa\u30b9\u30b9\u30e1\u3010AIX\u3011" },
   property_send:           { label: "\u7269\u4ef6\u30d4\u30c3\u30af\u30a2\u30c3\u30d7\u3057\u305f", color: "#00897B", templateCategory: "\u7269\u4ef6\u30d4\u30c3\u30af\u30a2\u30c3\u30d7\u3057\u305f\u3010AIX\u3011" },
   property_check_result:   { label: "\u7269\u4ef6\u78ba\u8a8d\u3057\u305f",  color: "#4CAF50", templateCategory: "\u7269\u4ef6\u78ba\u8a8d\u3057\u305f\u3010AIX\u3011" },
@@ -540,6 +540,8 @@ export default function Home() {
   const lastAixByConvRef = useRef<Map<string, string>>(new Map());
   // 会話ごとの直近AIX送信テキスト（sendMessageTextが設定・post_aixテンプレのAIおすすめコンテキストに使用）
   const lastAixSentTextRef = useRef<Map<string, string>>(new Map());
+  // property_check_result のサブフロー追跡（管理会社=mgmt / 代表=daihyo）→ postAixTemplateMap のカテゴリ上書きに使用
+  const propertyCheckSubTypeRef = useRef<"mgmt" | "daihyo" | null>(null);
   // P4: 直近のLINE送信のmessage id・送信時刻（aix_usage_logsに記録して送信メッセージを厳密特定）
   // sendMessageTextが設定し、onAfterSendのlog-aix-usageで消費するワンショットref
   const lastLineSendRef = useRef<{ messageId: string | null; sentAt: string } | null>(null);
@@ -7208,7 +7210,12 @@ export default function Home() {
               const _b5Meta = AIX_ACTION_META[aixModalType];
               if (!meta?.scheduled && _b5Meta?.templateCategory) {
                 const _b5ConvId = selectedConversation.id;
-                setPostAixTemplateMap((prev) => ({ ...prev, [_b5ConvId]: { category: _b5Meta.templateCategory, color: _b5Meta.color, actionType: aixModalType, sentMessage: lastAixSentTextRef.current.get(_b5ConvId) ?? "" } }));
+                let _b5Category = _b5Meta.templateCategory;
+                if (aixModalType === "property_check_result") {
+                  if (propertyCheckSubTypeRef.current === "mgmt") _b5Category = "管理会社に確認した【AIX】";
+                  else if (propertyCheckSubTypeRef.current === "daihyo") _b5Category = "代表に確認した【AIX】";
+                }
+                setPostAixTemplateMap((prev) => ({ ...prev, [_b5ConvId]: { category: _b5Category, color: _b5Meta.color, actionType: aixModalType, sentMessage: lastAixSentTextRef.current.get(_b5ConvId) ?? "" } }));
                 setDismissedPostAixTemplateIds((prev) => { const n = new Set(prev); n.delete(_b5ConvId); return n; });
               }
             }
@@ -9302,8 +9309,8 @@ export default function Home() {
                   { color: "#00838F", label: "待ち合わせ場所", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); } },
                   { color: "#E53935", label: "申込（誘導・決定）", sub: "物件名入力orシンプル送信→AI生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); setShowApplicationPicker(true); } },
                   { color: "#00796B", label: "挨拶（内覧前・内覧後）", sub: "内覧前後の挨拶をAI生成。内覧前は日時登録でアナウンス自動化", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("greeting_viewing"); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); setShowGreetingViewingPicker(true); } },
-                  { color: "#78909C", label: "管理会社に確認した", sub: "空室・礼金・ペット可否など確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); setShowPropertyCheckPicker(true); } },
-                  { color: "#5D4037", label: "代表に確認した", sub: "代表への確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); setShowDaihyoCheckPicker(true); } },
+                  { color: "#78909C", label: "管理会社に確認した", sub: "空室・礼金・ペット可否など確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); propertyCheckSubTypeRef.current = "mgmt"; setShowPropertyCheckPicker(true); } },
+                  { color: "#5D4037", label: "代表に確認した", sub: "代表への確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); propertyCheckSubTypeRef.current = "daihyo"; setShowDaihyoCheckPicker(true); } },
                 ].map((item) => {
                   const info = AIX_INSPECT[item.label];
                   const isOpen = aixInspectLabel === item.label;
