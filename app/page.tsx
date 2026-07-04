@@ -1014,7 +1014,7 @@ export default function Home() {
     const pollInterval = setInterval(() => {
       fetchConversationsAndMessages(true);
       refreshActiveTasks();
-    }, 3_000);
+    }, 6_000);
 
     // カレンダーアラーム（1分ごとに予定開始15分前・開始時刻を通知）
     const calendarAlarm = setInterval(async () => {
