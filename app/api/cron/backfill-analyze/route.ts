@@ -27,6 +27,11 @@ export async function GET(req: NextRequest) {
 }
 
 // 手動実行用
-export async function POST() {
+export async function POST(req: NextRequest) {
+  const cronSecret = process.env.CRON_SECRET;
+  const auth = req.headers.get("authorization");
+  if (cronSecret && auth !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
   return runBackfill();
 }
