@@ -295,7 +295,7 @@ export default function TemplateModal({
   // AIXカテゴリ: テンプレートカードごとの訴求ポイント選択状態
   const [focusPointsMap, setFocusPointsMap] = useState<Record<string, string[]>>({});
   const [soloEntry, setSoloEntry] = useState(false);
-  // AI候補タブ
+  // AIXテンプレート候補タブ
   const [isCandidateTabActive, setIsCandidateTabActive] = useState(false);
   const [candidates, setCandidates] = useState<AiTemplateCandidate[]>([]);
   const [candidateLoading, setCandidateLoading] = useState(false);
@@ -764,7 +764,7 @@ export default function TemplateModal({
                   【AIX】
                 </button>
               )}
-              {/* AI候補タブ */}
+              {/* AIXテンプレート候補タブ */}
               <button
                 onClick={() => {
                   setIsCandidateTabActive(true);
@@ -777,7 +777,7 @@ export default function TemplateModal({
                     : "bg-gray-100 text-gray-600 hover:bg-gray-200")
                 }
               >
-                ✨AI候補 {candidates.filter(c => !c.is_adopted && !c.is_dismissed).length > 0
+                ✨AIXテンプレート候補 {candidates.filter(c => !c.is_adopted && !c.is_dismissed).length > 0
                   ? `(${candidates.filter(c => !c.is_adopted && !c.is_dismissed).length})`
                   : ""}
               </button>
@@ -965,7 +965,7 @@ export default function TemplateModal({
             </div>
           )}
 
-          {/* AI候補一覧 */}
+          {/* AIXテンプレート候補一覧 */}
           {!showAddForm && isCandidateTabActive && (
             <div className="flex-1 overflow-y-auto p-3 space-y-3">
               {candidateLoading && (
