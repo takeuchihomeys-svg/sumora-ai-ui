@@ -102,7 +102,20 @@ function createViewingCalendarEvent(params: {
     end_at: toUTC(endJST),
     all_day: false,
     notes: meetingPropertyAddress ? `住所: ${meetingPropertyAddress}` : null,
-  }).then(() => {}, () => {});
+  }).then(
+    ({ error }) => { if (error) console.warn("[AixModal] カレンダーイベント作成失敗:", error.message); },
+    (e) => { console.warn("[AixModal] カレンダーイベント作成失敗:", e); }
+  );
+}
+
+// fetchレスポンスのHTTPエラー（4xx/5xx）を例外に変換する共通ヘルパー
+// 呼び出し側の catch / .catch でエラー処理する（fire-and-forget系はログのみ、UI系はsetError）
+async function ensureOk(res: Response): Promise<Response> {
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({} as { error?: string }));
+    throw new Error((err as { error?: string }).error ?? `HTTPエラー: ${res.status}`);
+  }
+  return res;
 }
 
 function stripEmoji(text: string): string {
@@ -474,6 +487,7 @@ export default function AixModal({
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ image_base64: base64, media_type: mime }),
             });
+            await ensureOk(res);
             const data = await res.json() as { ok: boolean; name?: string; address?: string };
             if (data.ok) {
               if (data.name) setMeetingPropertyName(data.name);
@@ -626,6 +640,7 @@ export default function AixModal({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "extract_datetime", recent_messages: allMsgs }),
     })
+      .then(ensureOk)
       .then(r => r.json())
       .then((d: { ok: boolean; date?: string; time?: string }) => {
         if (d.ok) {
@@ -633,7 +648,7 @@ export default function AixModal({
           if (d.time) setMeetingTime(d.time);
         }
       })
-      .catch(() => {});
+      .catch((e) => { console.warn("[AixModal] 待ち合わせ日時の自動抽出失敗:", e); });
   }, [actionType]);
 
   // テンプレート画面を開いたときによく使われるフレーズを取得
@@ -641,6 +656,7 @@ export default function AixModal({
     if (!showTemplateInfo) return;
     const status = conversationStatus ?? "hearing";
     fetch(`/api/learn-template-phrases?action_type=${encodeURIComponent(actionType)}&conversation_status=${encodeURIComponent(status)}`)
+      .then(ensureOk)
       .then((r) => r.json())
       .then((d: { ok: boolean; phrases?: { phrase: string; usage_count: number }[] }) => {
         if (d.ok && d.phrases?.length) setTopPhrases(d.phrases);
@@ -665,7 +681,8 @@ export default function AixModal({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ images: [{ base64, mediaType }] }),
-        }).then(res => res.json() as Promise<{ ok: boolean; properties?: Array<{ name: string; status: string; move_out: string }> }>)
+        }).then(ensureOk)
+          .then(res => res.json() as Promise<{ ok: boolean; properties?: Array<{ name: string; status: string; move_out: string }> }>)
           .then(data => {
             if (data.ok && data.properties?.length) {
               const prop = data.properties[0];
@@ -674,7 +691,7 @@ export default function AixModal({
                 onVacatingDetected?.(prop.move_out);
               }
             }
-          }).catch(() => {});
+          }).catch((e) => { console.warn("[AixModal] 退去予定日の自動抽出失敗:", e); });
       }
     };
     reader.readAsDataURL(file);
@@ -751,6 +768,7 @@ export default function AixModal({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ imageBase64: base64, mediaType }),
           });
+          await ensureOk(res);
           const data = await res.json() as { propertyName: string | null; vacancyDate: string | null };
           results.push({
             name: manualName || data.propertyName || `物件${["①", "②", "③"][pi]}`,
@@ -832,8 +850,10 @@ export default function AixModal({
     setVacatingCheckLoading(true);
     setVacatingProperties([]);
     setVacatingNote("");
+    setError("");
     const results: Array<{name: string; moveOut: string; editingDate: boolean}> = [];
     const total = sendImagePreviews.length;
+    let failedCount = 0;
 
     for (let i = 0; i < total; i++) {
       setVacatingCheckProgress(`${i + 1}/${total}`);
@@ -846,6 +866,7 @@ export default function AixModal({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ images: [{ base64, mediaType }] }),
         });
+        await ensureOk(res);
         const data = await res.json() as { ok: boolean; properties?: Array<{name: string; status: string; move_out: string}> };
         if (data.ok && data.properties) {
           const scheduled = data.properties
@@ -855,9 +876,16 @@ export default function AixModal({
           setVacatingProperties([...results]);
           syncVacatingNote([...results]);
         }
-      } catch {
-        // 1枚失敗しても続ける
+      } catch (e) {
+        // 1枚失敗しても続ける（ログのみ残す）
+        failedCount++;
+        console.warn(`[AixModal] 退去確認: ${i + 1}枚目の解析失敗:`, e);
       }
+    }
+
+    // 全枚失敗した場合はユーザーに通知（「退去予定なし」と誤解させない）
+    if (failedCount === total && total > 0) {
+      setError("退去確認の画像解析に失敗しました。通信状況を確認してもう一度お試しください");
     }
 
     setVacatingCheckProgress("");
@@ -1187,8 +1215,8 @@ export default function AixModal({
         clearTimeout(tid);
       }
 
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || "生成に失敗しました");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.error || `生成に失敗しました（HTTP ${res.status}）`);
 
       const generatedMsg = data.message_text || "";
       setAiDraft(generatedMsg);
@@ -1252,7 +1280,7 @@ export default function AixModal({
         templateText: sentText,
         conversationId,
       }),
-    }).catch(() => {}); // エラーはサイレントに無視
+    }).then(ensureOk).catch((e) => { console.warn("[AixModal] テンプレ候補保存失敗:", e); }); // 送信自体は妨げない
   };
 
   // AIX送信後の学習処理をまとめて実行（fire-and-forget）
@@ -1267,7 +1295,7 @@ export default function AixModal({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(buildSaveReplyPayload(sentText, inputText.trim() || `（AIX: ${config?.title ?? actionType}）`)),
-    }).catch((e) => { console.warn("[AixModal] save-reply-example保存失敗:", e); });
+    }).then(ensureOk).catch((e) => { console.warn("[AixModal] save-reply-example保存失敗:", e); });
     saveTemplateCandidate(sentText);
 
     // テンプレートフレーズ学習ログ
@@ -1280,7 +1308,7 @@ export default function AixModal({
           conversation_status: conversationStatus ?? "hearing",
           sent_text: sentText,
         }),
-      }).catch(() => {});
+      }).then(ensureOk).catch((e) => { console.warn("[AixModal] フレーズ学習ログ保存失敗:", e); });
     }
 
     // 次アクション学習ログ（過去パターンとして蓄積）
@@ -1294,7 +1322,7 @@ export default function AixModal({
           action_type: actionType,
           customer_msg_summary: (lastCustomerMsg || inputText.trim()).slice(0, 150),
         }),
-      }).catch(() => {});
+      }).then(ensureOk).catch((e) => { console.warn("[AixModal] アクションパターン学習ログ保存失敗:", e); });
     }
   };
 
@@ -1364,7 +1392,7 @@ export default function AixModal({
             action_type: actionType,
             customer_msg_summary: lastCustomerMsg.slice(0, 150),
           }),
-        }).catch(() => {});
+        }).then(ensureOk).catch((e) => { console.warn("[AixModal] アクションパターン学習ログ保存失敗（予約送信）:", e); });
       }
 
       // 予約送信後の学習ループ保存（fire-and-forget）
@@ -1372,7 +1400,7 @@ export default function AixModal({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(buildSaveReplyPayload(textToSend, `（AIX予約: ${config?.title ?? actionType}）`)),
-      }).catch((e) => { console.warn("[AixModal] save-reply-example保存失敗（予約送信）:", e); });
+      }).then(ensureOk).catch((e) => { console.warn("[AixModal] save-reply-example保存失敗（予約送信）:", e); });
       saveTemplateCandidate(textToSend);
 
       // 待ち合わせ確定後にカレンダーイベントを作成（予約送信の場合も同様）
@@ -3005,6 +3033,7 @@ export default function AixModal({
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({ image_base64: base64, media_type: mime }),
                           });
+                          await ensureOk(res);
                           const data = await res.json() as { ok: boolean; name?: string };
                           if (data.ok && data.name) setViewingVacancyName(data.name);
                         } catch (e) { console.error("[AixModal] 物件資料OCR失敗:", e); } finally { setViewingVacancyOcrLoading(false); }
@@ -3164,6 +3193,7 @@ export default function AixModal({
                           headers: { "Content-Type": "application/json" },
                           body: JSON.stringify({ image_base64: base64, media_type: mime }),
                         });
+                        await ensureOk(res);
                         const data = await res.json() as { ok: boolean; name?: string; address?: string };
                         if (data.ok) {
                           if (data.name) setMeetingPropertyName(data.name);

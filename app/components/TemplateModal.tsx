@@ -158,6 +158,10 @@ interface TemplateModalProps {
   initialTemplates?: Template[];
   /** テンプレ一覧更新時に親のキャッシュを更新するコールバック */
   onCacheUpdate?: (templates: Template[]) => void;
+  /** 親が管理するテンプレ一覧（SSoT）。渡された場合モーダル側ではfetchしない */
+  templates?: Template[];
+  /** テンプレ追加・採用・更新・削除後に親へ再取得を通知するコールバック */
+  onRefresh?: () => void;
   customerName?: string;
   conversationState?: string;
   recentMessages?: Array<{ sender: string; text: string; imageUrl?: string }>;
@@ -236,11 +240,11 @@ function inferAvailCheckType(label: string): string | null {
 
 export default function TemplateModal({
   onClose, onSelect, onOpenAixWithFocus, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword, highlightLabel, suggestedCategory, suggestedColor, suggestedLabel, pendingScheduledMessages, staffMessagedToday, initialSearch,
-  initialTemplates, onCacheUpdate,
+  initialTemplates, onCacheUpdate, templates: templatesProp, onRefresh,
 }: TemplateModalProps) {
-  const [templates, setTemplates] = useState<Template[]>(initialTemplates ?? []);
-  // キャッシュがあれば即時表示、なければローディング表示
-  const [loading, setLoading] = useState(!initialTemplates || initialTemplates.length === 0);
+  const [templates, setTemplates] = useState<Template[]>(templatesProp ?? initialTemplates ?? []);
+  // 親からのデータ（props/キャッシュ）があれば即時表示、なければローディング表示
+  const [loading, setLoading] = useState(!templatesProp && (!initialTemplates || initialTemplates.length === 0));
   const [templateLoadError, setTemplateLoadError] = useState<string | null>(null);
   const [category, setCategory] = useState(initialCategory || "全般");
   const [showAddForm, setShowAddForm] = useState(false);
@@ -387,7 +391,29 @@ export default function TemplateModal({
     }
   };
 
-  useEffect(() => { loadTemplates(); }, []);
+  // props優先: 親からtemplatesが渡されていればそれを使い、渡されていなければ従来通りfetch（後方互換）
+  useEffect(() => {
+    if (templatesProp) {
+      setTemplates(templatesProp);
+      setLoading(false);
+      setTemplateLoadError(null);
+      const cats = Array.from(new Set(templatesProp.map((t) => t.category)));
+      if (cats.length > 0 && !cats.includes(category)) setCategory(cats[0]);
+    } else {
+      loadTemplates();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [templatesProp]);
+
+  // テンプレ変更後の再取得: 親管理（props）なら親に通知、単独利用なら自前でfetch
+  const refreshTemplates = async () => {
+    if (templatesProp) {
+      onRefresh?.();
+    } else {
+      await loadTemplates();
+      onRefresh?.();
+    }
+  };
   useEffect(() => { setSoloEntry(false); hasScrolled.current = false; }, [category]);
 
   const loadCandidates = useCallback(async () => {
@@ -418,6 +444,7 @@ export default function TemplateModal({
       if (!res.ok) throw new Error("rename failed");
       setTemplates(prev => prev.map(t => t.category === oldCat ? { ...t, category: newCat } : t));
       setCategory(newCat);
+      onRefresh?.();
     } catch {
       alert("カテゴリ名の変更に失敗しました");
     }
@@ -527,7 +554,7 @@ export default function TemplateModal({
       const data = await res.json() as { ok: boolean };
       if (data.ok) {
         setNewLabel(""); setNewText(""); setNewCategory("全般"); setNewRequiresImage(false); setShowAddForm(false);
-        await loadTemplates();
+        await refreshTemplates();
       } else {
         alert("テンプレートの追加に失敗しました");
       }
@@ -563,7 +590,7 @@ export default function TemplateModal({
       const data = await res.json() as { ok: boolean };
       if (data.ok) {
         setEditingId(null);
-        await loadTemplates();
+        await refreshTemplates();
       } else {
         alert("テンプレートの更新に失敗しました");
       }
@@ -597,6 +624,7 @@ export default function TemplateModal({
         body: JSON.stringify({ updates: [{ id: a.id, sort_order: bOrder }, { id: b.id, sort_order: aOrder }] }),
       });
       if (!res.ok) throw new Error("reorder failed");
+      onRefresh?.();
     } catch {
       setTemplates(prevTemplates);
     }
@@ -613,6 +641,7 @@ export default function TemplateModal({
         return next;
       });
       setConfirmDeleteId(null);
+      onRefresh?.();
     } finally {
       setDeletingId(null);
     }
@@ -987,7 +1016,7 @@ export default function TemplateModal({
                                   // 採用したテンプレを一覧に即反映して該当カテゴリへ移動
                                   setIsCandidateTabActive(false);
                                   setCategory(candidate.category);
-                                  await loadTemplates();
+                                  await refreshTemplates();
                                 }
                               } finally { setAdoptingId(null); }
                             }}

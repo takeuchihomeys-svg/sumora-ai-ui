@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import AixModal, { type AixActionType } from "./components/AixModal";
 import BottomNav from "./components/BottomNav";
 import TemplateModal, { type Template as CachedTemplate } from "./components/TemplateModal";
@@ -355,7 +355,9 @@ export default function Home() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [replyDraft, setReplyDraft] = useState("");
-  const [draftIsAi, setDraftIsAi] = useState(false); // AI生成の下書きがテキストエリアに入っているか
+  // A-6: テキストエリア表示テキストのソース排他管理（AI下書き / ✨最適化 / 手動=null）
+  const [displaySource, setDisplaySource] = useState<"ai_draft" | "optimized" | null>(null);
+  const draftIsAi = displaySource !== null; // AI生成の下書きがテキストエリアに入っているか（displaySourceから導出）
   const [replyQuality, setReplyQuality] = useState<{ auto_ok: boolean; is_applying_docs: boolean } | null>(null); // B-2: AI文案の品質判定バッジ
   const [draftNoEmoji, setDraftNoEmoji] = useState(false); // 絵文字なしモード
   const [draftOrigText, setDraftOrigText] = useState(""); // 絵文字なし切替前の原文（復元用）
@@ -363,8 +365,20 @@ export default function Home() {
   const multiSendTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   // 2通目専用タイマー（extrasのclearTimeoutに巻き添えされないよう分離）
   const secondMsgTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // テンプレートキャッシュ（モーダルを開くたびの再フェッチを防ぐ）
+  // A-1: テンプレート一覧のSSoT（fetch責務を親に一本化。モーダルには templates + onRefresh を渡す）
   const [templateCache, setTemplateCache] = useState<CachedTemplate[]>([]);
+  const fetchTemplates = useCallback(async () => {
+    try {
+      const res = await fetch("/api/templates");
+      if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
+      const data = await res.json() as { ok: boolean; templates: CachedTemplate[] };
+      if (data.ok) setTemplateCache(data.templates);
+    } catch (e) {
+      console.error("[fetchTemplates] テンプレート取得失敗:", e);
+    }
+  }, []);
+  // 初回マウント時にプリフェッチ（初回モーダルオープンから即時表示にする）
+  useEffect(() => { void fetchTemplates(); }, [fetchTemplates]);
   const pendingSecondMsgRef = useRef<{ type: string; delay: number } | null>(null);
   const [splitLoading, setSplitLoading] = useState(false);
   const [textareaHeightPx, setTextareaHeightPx] = useState(22);
@@ -506,12 +520,13 @@ export default function Home() {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedNextTemplateIds") || "[]") as string[]); } catch { return new Set(); }
   });
   const [pendingNextTemplateInfo, setPendingNextTemplateInfo] = useState<{ num: string; category: string } | null>(null);
-  const closeTemplateModal = () => {
+  // A-2: テンプレートモーダルを閉じる処理の一本化（クローズ時のクリーンアップはここに集約）
+  const closeTemplateModal = useCallback(() => {
     setShowTemplateModal(false);
     setTemplateOpenContext(null);
     setPendingNextTemplateInfo(null);
     setTemplateInitialSearch("");
-  };
+  }, []);
   const [nextActionMap, setNextActionMap] = useState<Record<string, { action: string | null; reason: string; source?: string; params?: NextActionParams } | null>>({});
   const [dismissedNextActionIds, setDismissedNextActionIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedNextActionIds") || "[]") as string[]); } catch { return new Set(); }
@@ -1770,7 +1785,7 @@ export default function Home() {
       setDraftPreparing(false);
       setReplyDraft(selectedConversation.aiDraft);
       aiDraftRef.current = selectedConversation.aiDraft;
-      setDraftIsAi(true);
+      setDisplaySource("ai_draft");
       setConversations((prev) =>
         prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null } : c)
       );
@@ -1778,7 +1793,7 @@ export default function Home() {
     } else {
       setReplyDraft("");
       aiDraftRef.current = "";
-      setDraftIsAi(false);
+      setDisplaySource(null);
       // 未読 + ai_draft未生成 → 同期APIで生成してレスポンスから直接セット（Realtime不要）
       if (selectedConversation.lastSender === "customer" && selectedConversation.id) {
         const rAt = manuallyReadAtRef.current[selectedConversation.id];
@@ -1852,7 +1867,7 @@ export default function Home() {
     setDraftPreparing(false);
     setReplyDraft(selectedConversation.aiDraft);
     aiDraftRef.current = selectedConversation.aiDraft;
-    setDraftIsAi(true);
+    setDisplaySource("ai_draft");
     setDraftNoEmoji(false);
     setDraftOrigText("");
     setConversations((prev) =>
@@ -1955,7 +1970,7 @@ export default function Home() {
             customer_name: selectedConversation.customerName ?? "",
             event_type: nextStatus === "closed_won" ? "contract" : "application",
           }),
-        });
+        }).catch(() => {});
       }
 
       setConversations((prev) =>
@@ -2436,7 +2451,7 @@ export default function Home() {
         auto_ok: !sparkleHasPlaceholder && !sparkleTooShort && !qualityFromMeta?.is_applying_docs,
         is_applying_docs: qualityFromMeta?.is_applying_docs ?? false,
       });
-      setDraftIsAi(true);
+      setDisplaySource("ai_draft");
       setShowSparkleModal(false);
       setSparkleKeywords([]);
       setSparkleKeywordInput("");
@@ -2616,18 +2631,23 @@ export default function Home() {
     const conv = conversations.find((c) => c.id === convMenuConvId);
     if (!conv) return;
     setConvMenuConvId(null);
-    const res = await fetch("/api/line-tasks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ conversation_id: conv.id, task_type: taskType, customer_name: conv.customerName }),
-    });
-    const data = await res.json() as { ok: boolean; id?: string; created_at?: string };
-    if (data.ok && data.id && data.created_at) {
-      setActiveTasks((prev) => {
-        const existing = prev[conv.id] ?? [];
-        if (existing.some((x) => x.task_type === taskType)) return prev;
-        return { ...prev, [conv.id]: [...existing, { id: data.id!, task_type: taskType, created_at: data.created_at!, customer_name: conv.customerName }] };
+    try {
+      const res = await fetch("/api/line-tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation_id: conv.id, task_type: taskType, customer_name: conv.customerName }),
       });
+      const data = await res.json() as { ok: boolean; id?: string; created_at?: string };
+      if (data.ok && data.id && data.created_at) {
+        setActiveTasks((prev) => {
+          const existing = prev[conv.id] ?? [];
+          if (existing.some((x) => x.task_type === taskType)) return prev;
+          return { ...prev, [conv.id]: [...existing, { id: data.id!, task_type: taskType, created_at: data.created_at!, customer_name: conv.customerName }] };
+        });
+      }
+    } catch (err) {
+      console.error("[createLineTask]", err);
+      setError("⚠️ タスクの作成に失敗しました");
     }
   };
 
@@ -2637,16 +2657,21 @@ export default function Home() {
     const task = (activeTasks[convId] ?? []).find((t) => t.task_type === taskType);
     if (!task) return;
     setConvMenuConvId(null);
-    await fetch("/api/line-tasks", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: task.id }),
-    });
-    setActiveTasks((prev) => {
-      const filtered = (prev[convId] ?? []).filter((x) => x.id !== task.id);
-      if (filtered.length === 0) { const next = { ...prev }; delete next[convId]; return next; }
-      return { ...prev, [convId]: filtered };
-    });
+    try {
+      await fetch("/api/line-tasks", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: task.id }),
+      });
+      setActiveTasks((prev) => {
+        const filtered = (prev[convId] ?? []).filter((x) => x.id !== task.id);
+        if (filtered.length === 0) { const next = { ...prev }; delete next[convId]; return next; }
+        return { ...prev, [convId]: filtered };
+      });
+    } catch (err) {
+      console.error("[cancelLineTask]", err);
+      setError("⚠️ タスクの解除に失敗しました");
+    }
   };
 
   const sendReply = () => {
@@ -3085,7 +3110,7 @@ export default function Home() {
         }).catch(() => {});
 
         aiDraftRef.current = "";
-        setDraftIsAi(false);
+        setDisplaySource(null);
         selectedPatternAngleRef.current = null;
         replyTargetCustomerMsgRef.current = "";
       }
@@ -3522,6 +3547,9 @@ export default function Home() {
         ...prev,
         [convId]: { ...prev[convId], additional_conditions: logified || null, conditions: formatConditions(updatedPc) },
       }));
+    } catch (err) {
+      console.error("[applyCondInChat]", err);
+      setError("⚠️ 条件の反映に失敗しました");
     } finally {
       setReflectLoadingChat(false);
     }
@@ -3533,11 +3561,16 @@ export default function Home() {
   const clearAdditionalInChat = async (convId: string) => {
     const lc = linkedCustomerMap[convId];
     if (!lc) return;
-    await fetch("/api/property-customers", {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: lc.id, additional_conditions: null }),
-    });
-    setLinkedCustomerMap(prev => ({ ...prev, [convId]: { ...prev[convId], additional_conditions: null } }));
+    try {
+      await fetch("/api/property-customers", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: lc.id, additional_conditions: null }),
+      });
+      setLinkedCustomerMap(prev => ({ ...prev, [convId]: { ...prev[convId], additional_conditions: null } }));
+    } catch (err) {
+      console.error("[clearAdditionalInChat]", err);
+      setError("⚠️ 追加条件のクリアに失敗しました");
+    }
   };
 
   const openAixWithImagePicker = (type: AixActionType) => {
@@ -3603,7 +3636,7 @@ export default function Home() {
     propertyAvailableByConvRef.current.set(selectedConversation.id, pattern === "available");
     setGenerating(true);
     setReplyDraft("");
-    setDraftIsAi(false);
+    setDisplaySource(null);
     try {
       const recentMsgs = (selectedConversation.messages || [])
         .slice(-15)
@@ -3623,7 +3656,7 @@ export default function Home() {
       if (data.ok && data.message_text) {
         setReplyDraft(data.message_text);
         aiDraftRef.current = data.message_text;
-        setDraftIsAi(true);
+        setDisplaySource("ai_draft");
       }
     } catch (err) {
       console.error("[quickPropertyCheck]", err);
@@ -3682,7 +3715,7 @@ export default function Home() {
       if (data.ok && data.message_text) {
         setReplyDraft(data.message_text);
         aiDraftRef.current = data.message_text;
-        setDraftIsAi(true);
+        setDisplaySource("ai_draft");
       }
       setShowGreetingViewingPicker(false);
       setGreetingViewingMode(null);
@@ -5297,7 +5330,7 @@ export default function Home() {
                             body: JSON.stringify({ draft: replyDraft, customer_name: selectedConversation.customerName, recent_messages: recentMsgs, conversation_status: selectedConversation.status }),
                           });
                           const data = await res.json() as { ok: boolean; polished?: string };
-                          if (data.ok && data.polished) { setReplyDraft(data.polished); aiDraftRef.current = data.polished; setDraftIsAi(true); }
+                          if (data.ok && data.polished) { setReplyDraft(data.polished); aiDraftRef.current = data.polished; setDisplaySource("optimized"); }
                         } catch (err) { console.error("[polish-draft]", err); }
                         finally { setGenerating(false); }
                       }}
@@ -5312,7 +5345,8 @@ export default function Home() {
                           const res = await fetch("/api/split-draft", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: replyDraft }) });
                           const data = await res.json() as { msg1?: string; msg2?: string; error?: string };
                           if (data.msg1 && data.msg2) { setReplyDraft(data.msg1); setExtraDraftMessages([{ text: data.msg2, delaySec: 60 }]); }
-                        } finally { setSplitLoading(false); }
+                        } catch (err) { console.error("[split-draft]", err); }
+                        finally { setSplitLoading(false); }
                       }}
                       disabled={splitLoading}
                       className="px-5 py-3 text-left text-[13px] font-bold text-blue-500 hover:bg-blue-50 active:bg-blue-100 disabled:opacity-50"
@@ -5349,7 +5383,7 @@ export default function Home() {
               {/* 文章クリアボタン（入力/AI文案があるときのみ表示） */}
               {replyDraft && (
                 <button
-                  onClick={() => { setReplyDraft(""); aiDraftRef.current = ""; setDraftIsAi(false); setReplyQuality(null); }}
+                  onClick={() => { setReplyDraft(""); aiDraftRef.current = ""; setDisplaySource(null); setReplyQuality(null); }}
                   className="shrink-0 flex h-8 w-8 items-center justify-center rounded-full border border-[#d1d7db] bg-white text-[#54656f] shadow-sm active:scale-95 transition-transform duration-75"
                   title="文章を消す"
                 >
@@ -5762,7 +5796,7 @@ export default function Home() {
                     onClick={() => {
                       aiDraftRef.current = selectedConversation.aiDraft!;
                       setReplyDraft(selectedConversation.aiDraft!);
-                      setDraftIsAi(true);
+                      setDisplaySource("ai_draft");
                       setAiDraftExpanded(false);
                       setConversations((prev) => prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null } : c));
                       supabase.from("conversations").update({ ai_draft: null }).eq("id", selectedConversation.id).then(() => {});
@@ -5849,7 +5883,7 @@ export default function Home() {
                   value={replyDraft}
                   onChange={(e) => {
                     setReplyDraft(e.target.value);
-                    setDraftIsAi(false); // 編集開始でAI下書きインジケーター解除
+                    setDisplaySource(null); // 編集開始でAI下書きインジケーター解除
                     e.target.style.height = "auto";
                     const newH = e.target.scrollHeight; // CSSのmaxHeightで制御するのでJS上限なし
                     e.target.style.height = `${newH}px`;
@@ -6301,15 +6335,20 @@ export default function Home() {
                 <button
                   onClick={async () => {
                     const convId = linkModalConvId;
-                    const res = await fetch("/api/link-conversation", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ conversationId: convId, propertyCustomerId: null }),
-                    });
-                    if ((await res.json()).ok) {
-                      setConversations((prev) => prev.map((c) => c.id === convId ? { ...c, propertyCustomerId: undefined } : c));
-                      setLinkedCustomerMap((prev) => { const next = { ...prev }; delete next[convId]; return next; });
-                      setLinkModalConvId(null);
+                    try {
+                      const res = await fetch("/api/link-conversation", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ conversationId: convId, propertyCustomerId: null }),
+                      });
+                      if ((await res.json()).ok) {
+                        setConversations((prev) => prev.map((c) => c.id === convId ? { ...c, propertyCustomerId: undefined } : c));
+                        setLinkedCustomerMap((prev) => { const next = { ...prev }; delete next[convId]; return next; });
+                        setLinkModalConvId(null);
+                      }
+                    } catch (err) {
+                      console.error("[link-conversation]", err);
+                      setError("⚠️ 紐付けの解除に失敗しました");
                     }
                   }}
                   className="w-full rounded-full border border-red-200 py-2 text-[13px] font-semibold text-red-500"
@@ -6336,16 +6375,21 @@ export default function Home() {
                       key={pc.id}
                       onClick={async () => {
                         const convId = linkModalConvId;
-                        const res = await fetch("/api/link-conversation", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ conversationId: convId, propertyCustomerId: pc.id }),
-                        });
-                        if ((await res.json()).ok) {
-                          setConversations((prev) => prev.map((c) => c.id === convId ? { ...c, propertyCustomerId: pc.id } : c));
-                          const conds = formatConditions(pc);
-                          setLinkedCustomerMap((prev) => ({ ...prev, [convId]: { id: pc.id, name: pc.customer_name, conditions: conds } }));
-                          setLinkModalConvId(null);
+                        try {
+                          const res = await fetch("/api/link-conversation", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ conversationId: convId, propertyCustomerId: pc.id }),
+                          });
+                          if ((await res.json()).ok) {
+                            setConversations((prev) => prev.map((c) => c.id === convId ? { ...c, propertyCustomerId: pc.id } : c));
+                            const conds = formatConditions(pc);
+                            setLinkedCustomerMap((prev) => ({ ...prev, [convId]: { id: pc.id, name: pc.customer_name, conditions: conds } }));
+                            setLinkModalConvId(null);
+                          }
+                        } catch (err) {
+                          console.error("[link-conversation]", err);
+                          setError("⚠️ 紐付けに失敗しました");
                         }
                       }}
                       className="flex w-full items-start gap-3 rounded-2xl border border-[#e9edef] bg-[#f8f9fa] px-4 py-3 text-left active:scale-[0.98] transition-transform"
@@ -6636,45 +6680,51 @@ export default function Home() {
                     builtNotes = calendarNote.trim() ? `${propLines}\n${calendarNote.trim()}` : propLines;
                   }
 
-                  await Promise.all([
-                    supabase.from("calendar_events").insert({
-                      title: calendarTitle.trim(),
-                      event_type: calendarEventType,
-                      customer_name: calendarCustomerName,
-                      start_at: startAt,
-                      end_at: endAt,
-                      all_day: isAllDay,
-                      notes: builtNotes,
-                    }),
-                    fetch("/api/daily-tasks", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        customer_name: calendarCustomerName,
-                        content: `【${labelMap[calendarEventType]}】${calendarTitle.trim()}${builtNotes ? ` — ${builtNotes}` : ""}`,
-                        date: calendarDate,
-                        time: calendarTime,
-                        end_time: calendarEndTime || "",
-                      }),
-                    }),
-                    // 売上番長から物件出しグループへ通知（内覧・申込・契約は成功パターンも学習）
-                    fetch("/api/notify-viewing", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        customer_name: calendarCustomerName,
+                  try {
+                    await Promise.all([
+                      supabase.from("calendar_events").insert({
+                        title: calendarTitle.trim(),
                         event_type: calendarEventType,
-                        date: calendarDate,
-                        time: calendarTime || undefined,
-                        notes: builtNotes || undefined,
-                        conversation_id: convId,
+                        customer_name: calendarCustomerName,
+                        start_at: startAt,
+                        end_at: endAt,
+                        all_day: isAllDay,
+                        notes: builtNotes,
                       }),
-                    }).catch(() => {}),
-                    supabase.from("conversations").update({ is_flagged: true }).eq("id", convId),
-                  ]);
-                  setFlaggedConvIds((prev) => { const next = new Set(prev); next.add(convId); return next; });
-                  setCalendarSaving(false);
-                  setCalendarModalConvId(null);
+                      fetch("/api/daily-tasks", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          customer_name: calendarCustomerName,
+                          content: `【${labelMap[calendarEventType]}】${calendarTitle.trim()}${builtNotes ? ` — ${builtNotes}` : ""}`,
+                          date: calendarDate,
+                          time: calendarTime,
+                          end_time: calendarEndTime || "",
+                        }),
+                      }),
+                      // 売上番長から物件出しグループへ通知（内覧・申込・契約は成功パターンも学習）
+                      fetch("/api/notify-viewing", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          customer_name: calendarCustomerName,
+                          event_type: calendarEventType,
+                          date: calendarDate,
+                          time: calendarTime || undefined,
+                          notes: builtNotes || undefined,
+                          conversation_id: convId,
+                        }),
+                      }).catch(() => {}),
+                      supabase.from("conversations").update({ is_flagged: true }).eq("id", convId),
+                    ]);
+                    setFlaggedConvIds((prev) => { const next = new Set(prev); next.add(convId); return next; });
+                    setCalendarModalConvId(null);
+                  } catch (err) {
+                    console.error("[calendar-save]", err);
+                    setError("⚠️ カレンダー保存に失敗しました");
+                  } finally {
+                    setCalendarSaving(false);
+                  }
                 }}
                 className="w-full rounded-full py-3 text-[14px] font-bold text-white disabled:opacity-40"
                 style={{ background: "linear-gradient(135deg, #2E7D32, #43A047)" }}
@@ -6771,7 +6821,8 @@ export default function Home() {
 
       {showTemplateModal && (
         <TemplateModal
-          initialTemplates={templateCache.length > 0 ? templateCache : undefined}
+          templates={templateCache.length > 0 ? templateCache : undefined}
+          onRefresh={fetchTemplates}
           onCacheUpdate={setTemplateCache}
           onClose={closeTemplateModal}
           initialSearch={templateInitialSearch}
@@ -7358,10 +7409,15 @@ export default function Home() {
                   setShowPromptModal(true);
                   setEditingPromptKey(null);
                   setPromptLoading(true);
-                  const d = await fetch("/api/prompt-management").then((r) => r.json()) as { prompts: Array<{ key: string; label: string; content: string; is_custom: boolean; auto?: boolean }>; knowledgeCount: number };
-                  setPromptItems(d.prompts ?? []);
-                  setKnowledgeCount(d.knowledgeCount ?? null);
-                  setPromptLoading(false);
+                  try {
+                    const d = await fetch("/api/prompt-management").then((r) => r.json()) as { prompts: Array<{ key: string; label: string; content: string; is_custom: boolean; auto?: boolean }>; knowledgeCount: number };
+                    setPromptItems(d.prompts ?? []);
+                    setKnowledgeCount(d.knowledgeCount ?? null);
+                  } catch (err) {
+                    console.error("[prompt-management]", err);
+                  } finally {
+                    setPromptLoading(false);
+                  }
                 }}
                 className="flex w-full items-center gap-3 rounded-2xl border border-[#e9edef] bg-[#f8f9fa] px-4 py-3 mb-2 text-left active:scale-[0.98] transition-all"
               >
@@ -7384,9 +7440,14 @@ export default function Home() {
                   setShowHamburgerMenu(false);
                   setShowKnowledgeModal(true);
                   setKnowledgeLoading(true);
-                  const d = await fetch("/api/knowledge-review").then((r) => r.json()) as { rules: Array<{ id: string; content: string; conversation_state: string; created_at: string; title: string }> };
-                  setKnowledgeRules(d.rules ?? []);
-                  setKnowledgeLoading(false);
+                  try {
+                    const d = await fetch("/api/knowledge-review").then((r) => r.json()) as { rules: Array<{ id: string; content: string; conversation_state: string; created_at: string; title: string }> };
+                    setKnowledgeRules(d.rules ?? []);
+                  } catch (err) {
+                    console.error("[knowledge-review]", err);
+                  } finally {
+                    setKnowledgeLoading(false);
+                  }
                 }}
                 className="flex w-full items-center gap-3 rounded-2xl border border-[#e9edef] bg-[#f8f9fa] px-4 py-3 mb-2 text-left active:scale-[0.98] transition-all"
               >
@@ -7410,10 +7471,15 @@ export default function Home() {
                   setShowTriggerRulesModal(true);
                   setTriggerRulesLoading(true);
                   setTriggerRulesFilter("all");
-                  const d = await fetch("/api/trigger-rules").then((r) => r.json()) as { rules: Array<{ id: string; action_type: string; keyword: string; confidence: number; occurrence_count: number; conversation_status: string | null }>; acceptStats?: Record<string, { accepted: number; dismissed: number }> };
-                  setTriggerRules(d.rules ?? []);
-                  setTriggerAcceptStats(d.acceptStats ?? {});
-                  setTriggerRulesLoading(false);
+                  try {
+                    const d = await fetch("/api/trigger-rules").then((r) => r.json()) as { rules: Array<{ id: string; action_type: string; keyword: string; confidence: number; occurrence_count: number; conversation_status: string | null }>; acceptStats?: Record<string, { accepted: number; dismissed: number }> };
+                    setTriggerRules(d.rules ?? []);
+                    setTriggerAcceptStats(d.acceptStats ?? {});
+                  } catch (err) {
+                    console.error("[trigger-rules]", err);
+                  } finally {
+                    setTriggerRulesLoading(false);
+                  }
                 }}
                 className="flex w-full items-center gap-3 rounded-2xl border border-[#e9edef] bg-[#f8f9fa] px-4 py-3 text-left active:scale-[0.98] transition-all"
               >
@@ -7486,8 +7552,13 @@ export default function Home() {
                           {!isApproved && (
                             <button
                               onClick={async () => {
-                                await fetch("/api/knowledge-review", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: rule.id }) });
-                                setKnowledgeRules((prev) => prev.map((r) => r.id === rule.id ? { ...r, title: "差分学習 [承認済]" } : r));
+                                try {
+                                  await fetch("/api/knowledge-review", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: rule.id }) });
+                                  setKnowledgeRules((prev) => prev.map((r) => r.id === rule.id ? { ...r, title: "差分学習 [承認済]" } : r));
+                                } catch (err) {
+                                  console.error("[knowledge-review approve]", err);
+                                  setError("⚠️ ルールの承認に失敗しました");
+                                }
                               }}
                               className="flex-1 rounded-xl bg-indigo-500 py-2 text-[12px] font-bold text-white active:opacity-80"
                             >
@@ -7496,8 +7567,13 @@ export default function Home() {
                           )}
                           <button
                             onClick={async () => {
-                              await fetch("/api/knowledge-review", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: rule.id }) });
-                              setKnowledgeRules((prev) => prev.filter((r) => r.id !== rule.id));
+                              try {
+                                await fetch("/api/knowledge-review", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: rule.id }) });
+                                setKnowledgeRules((prev) => prev.filter((r) => r.id !== rule.id));
+                              } catch (err) {
+                                console.error("[knowledge-review delete]", err);
+                                setError("⚠️ ルールの削除に失敗しました");
+                              }
                             }}
                             className="flex-1 rounded-xl bg-[#f0f2f5] py-2 text-[12px] font-bold text-red-500 active:opacity-80"
                           >
@@ -7615,8 +7691,13 @@ export default function Home() {
                             )}
                             <button
                               onClick={async () => {
-                                await fetch("/api/trigger-rules", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: rule.id }) });
-                                setTriggerRules((prev) => prev.filter((r) => r.id !== rule.id));
+                                try {
+                                  await fetch("/api/trigger-rules", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: rule.id }) });
+                                  setTriggerRules((prev) => prev.filter((r) => r.id !== rule.id));
+                                } catch (err) {
+                                  console.error("[trigger-rules delete]", err);
+                                  setError("⚠️ ルールの削除に失敗しました");
+                                }
                               }}
                               className="ml-auto shrink-0 rounded-lg bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-400 active:opacity-70"
                             >削除</button>
@@ -7674,16 +7755,22 @@ export default function Home() {
                   onClick={async () => {
                     if (!newRuleKeyword.trim()) return;
                     setNewRuleAdding(true);
-                    const d = await fetch("/api/trigger-rules", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ action_type: newRuleAction, keyword: newRuleKeyword.trim(), confidence: 0.9, conversation_status: newRuleStatus || null }),
-                    }).then((r) => r.json()) as { ok: boolean; rule?: { id: string; action_type: string; keyword: string; confidence: number; occurrence_count: number; conversation_status: string | null } };
-                    if (d.ok && d.rule) {
-                      setTriggerRules((prev) => [d.rule!, ...prev]);
-                      setNewRuleKeyword("");
+                    try {
+                      const d = await fetch("/api/trigger-rules", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ action_type: newRuleAction, keyword: newRuleKeyword.trim(), confidence: 0.9, conversation_status: newRuleStatus || null }),
+                      }).then((r) => r.json()) as { ok: boolean; rule?: { id: string; action_type: string; keyword: string; confidence: number; occurrence_count: number; conversation_status: string | null } };
+                      if (d.ok && d.rule) {
+                        setTriggerRules((prev) => [d.rule!, ...prev]);
+                        setNewRuleKeyword("");
+                      }
+                    } catch (err) {
+                      console.error("[trigger-rules add]", err);
+                      setError("⚠️ ルールの追加に失敗しました");
+                    } finally {
+                      setNewRuleAdding(false);
                     }
-                    setNewRuleAdding(false);
                   }}
                   className="rounded-xl bg-emerald-500 py-2 text-[13px] font-bold text-white active:opacity-80 disabled:opacity-40"
                 >{newRuleAdding ? "追加中…" : "追加する"}</button>
