@@ -248,6 +248,43 @@ function inferAvailCheckType(label: string): string | null {
   return "物件あった";
 }
 
+const PROPERTY_SEND_SUB_TYPES = [
+  { key: "初回まとめ",     color: "#2196F3" },
+  { key: "新着まとめ",     color: "#4CAF50" },
+  { key: "条件広げまとめ", color: "#FF9800" },
+  { key: "代替物件送り",   color: "#9C27B0" },
+] as const;
+
+const VIEWING_SUB_TYPES = [
+  { key: "通常内覧", color: "#9C27B0" },
+  { key: "日程変更", color: "#E53935" },
+] as const;
+
+function getPropertySendSubTag(label: string): string | null {
+  for (const { key } of PROPERTY_SEND_SUB_TYPES) {
+    if (label.startsWith(`【${key}】`)) return key;
+  }
+  return null;
+}
+function stripPropertySendSubTag(label: string): string {
+  for (const { key } of PROPERTY_SEND_SUB_TYPES) {
+    if (label.startsWith(`【${key}】`)) return label.slice(`【${key}】`.length);
+  }
+  return label;
+}
+function getViewingSubTag(label: string): string | null {
+  for (const { key } of VIEWING_SUB_TYPES) {
+    if (label.startsWith(`【${key}】`)) return key;
+  }
+  return null;
+}
+function stripViewingSubTag(label: string): string {
+  for (const { key } of VIEWING_SUB_TYPES) {
+    if (label.startsWith(`【${key}】`)) return label.slice(`【${key}】`.length);
+  }
+  return label;
+}
+
 export default function TemplateModal({
   onClose, onSelect, onOpenAixWithFocus, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword, highlightLabel, suggestedCategory, suggestedColor, suggestedLabel, pendingScheduledMessages, staffMessagedToday, initialSearch,
   initialTemplates, onCacheUpdate, templates: templatesProp, onRefresh, postAixContext,
@@ -282,8 +319,12 @@ export default function TemplateModal({
   const [noEmoji, setNoEmoji] = useState(false);
   const [aixPurposeFilter, setAixPurposeFilter] = useState<"内覧" | "申込" | null>(null);
   const [availCheckFilter, setAvailCheckFilter] = useState<string | null>(null);
+  const [propertySendSubFilter, setPropertySendSubFilter] = useState<string | null>(null);
+  const [viewingSubFilter, setViewingSubFilter] = useState<string | null>(null);
   const [editAvailCheckType, setEditAvailCheckType] = useState<string | null>(null);
   const [editAixPurposeTag, setEditAixPurposeTag] = useState<string | null>(null);
+  const [editPropertySendSub, setEditPropertySendSub] = useState<string | null>(null);
+  const [editViewingSub, setEditViewingSub] = useState<string | null>(null);
   const [editSecondMsgType, setEditSecondMsgType] = useState<string | null>(null);
   const [editSecondMsgDelay, setEditSecondMsgDelay] = useState<number | null>(null);
   const [vacatingDates, setVacatingDates] = useState<Record<string, { month: number; day: number } | null>>({});
@@ -564,6 +605,8 @@ export default function TemplateModal({
 
   const isAixCategory = category === "物件オススメ【AIX】" && !isSearching;
   const isAvailCheckCategory = category === "物件確認した【AIX】" && !isSearching;
+  const isPropertySendCategory = category === "物件ピックアップした【AIX】" && !isSearching;
+  const isViewingCategory = (category === "内覧へ！【AIX】" || category === "内覧【AIX】") && !isSearching;
   const displayFiltered =
     isAixCategory && aixPurposeFilter !== null
       ? filtered.filter(t => {
@@ -594,6 +637,28 @@ export default function TemplateModal({
           if (ia !== ib) return ia - ib;
           return compareTemplates(a, b);
         })
+    : isPropertySendCategory && propertySendSubFilter !== null
+      ? filtered.filter(t => getPropertySendSubTag(t.label) === propertySendSubFilter)
+    : isPropertySendCategory
+      ? [...filtered].sort((a, b) => {
+          const ia = PROPERTY_SEND_SUB_TYPES.findIndex(t => t.key === getPropertySendSubTag(a.label));
+          const ib = PROPERTY_SEND_SUB_TYPES.findIndex(t => t.key === getPropertySendSubTag(b.label));
+          const ia2 = ia === -1 ? PROPERTY_SEND_SUB_TYPES.length : ia;
+          const ib2 = ib === -1 ? PROPERTY_SEND_SUB_TYPES.length : ib;
+          if (ia2 !== ib2) return ia2 - ib2;
+          return compareTemplates(a, b);
+        })
+    : isViewingCategory && viewingSubFilter !== null
+      ? filtered.filter(t => getViewingSubTag(t.label) === viewingSubFilter)
+    : isViewingCategory
+      ? [...filtered].sort((a, b) => {
+          const ia = VIEWING_SUB_TYPES.findIndex(t => t.key === getViewingSubTag(a.label));
+          const ib = VIEWING_SUB_TYPES.findIndex(t => t.key === getViewingSubTag(b.label));
+          const ia2 = ia === -1 ? VIEWING_SUB_TYPES.length : ia;
+          const ib2 = ib === -1 ? VIEWING_SUB_TYPES.length : ib;
+          if (ia2 !== ib2) return ia2 - ib2;
+          return compareTemplates(a, b);
+        })
     : filtered;
 
   const handleAdd = async () => {
@@ -621,8 +686,12 @@ export default function TemplateModal({
     setEditingId(tmpl.id);
     setEditAvailCheckType(getAvailCheckTag(tmpl.label));
     const withoutAvail = stripAvailCheckTag(tmpl.label);
-    setEditAixPurposeTag(getAixPurposeTag(withoutAvail));
-    setEditLabel(stripAixPurposeTag(withoutAvail));
+    setEditPropertySendSub(getPropertySendSubTag(withoutAvail));
+    const withoutPropSend = stripPropertySendSubTag(withoutAvail);
+    setEditViewingSub(getViewingSubTag(withoutPropSend));
+    const withoutViewing = stripViewingSubTag(withoutPropSend);
+    setEditAixPurposeTag(getAixPurposeTag(withoutViewing));
+    setEditLabel(stripAixPurposeTag(withoutViewing));
     setEditText(tmpl.text);
     setEditCategory(tmpl.category);
     setEditRequiresImage(tmpl.requires_image);
@@ -639,7 +708,7 @@ export default function TemplateModal({
       const res = await fetch("/api/templates", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: editingId, category: editCategory || "全般", label: (editAvailCheckType && editCategory === "物件確認した【AIX】" ? `【${editAvailCheckType}】` : "") + (editAixPurposeTag && editCategory.includes("AIX") && editCategory !== "物件確認した【AIX】" ? `【${editAixPurposeTag}】` : "") + editLabel, text: editText, structure: editStructure.length > 0 ? editStructure : null, requires_image: editRequiresImage, second_msg_type: editSecondMsgType, second_msg_delay: editSecondMsgType ? editSecondMsgDelay : null }),
+        body: JSON.stringify({ id: editingId, category: editCategory || "全般", label: (editAvailCheckType && editCategory === "物件確認した【AIX】" ? `【${editAvailCheckType}】` : "") + (editPropertySendSub && editCategory === "物件ピックアップした【AIX】" ? `【${editPropertySendSub}】` : "") + (editViewingSub && (editCategory === "内覧へ！【AIX】" || editCategory === "内覧【AIX】") ? `【${editViewingSub}】` : "") + (editAixPurposeTag && editCategory.includes("AIX") && editCategory !== "物件確認した【AIX】" && editCategory !== "物件ピックアップした【AIX】" && editCategory !== "内覧へ！【AIX】" && editCategory !== "内覧【AIX】" ? `【${editAixPurposeTag}】` : "") + editLabel, text: editText, structure: editStructure.length > 0 ? editStructure : null, requires_image: editRequiresImage, second_msg_type: editSecondMsgType, second_msg_delay: editSecondMsgType ? editSecondMsgDelay : null }),
       });
       const data = await res.json() as { ok: boolean };
       if (data.ok) {
@@ -1247,6 +1316,48 @@ export default function TemplateModal({
                       </div>
                     </div>
                   )}
+                  {/* 物件ピックアップした：送り方サブカテゴリで絞り込み */}
+                  {isPropertySendCategory && (
+                    <div className="flex flex-col gap-1">
+                      <p className="text-[10px] font-bold text-[#8696a0] text-center">送り方で絞り込む</p>
+                      <div className="flex gap-1 overflow-x-auto pb-0.5 flex-wrap" style={{ scrollbarWidth: "none" }}>
+                        {PROPERTY_SEND_SUB_TYPES.map(({ key, color }) => {
+                          const selected = propertySendSubFilter === key;
+                          return (
+                            <button
+                              key={key}
+                              onClick={() => setPropertySendSubFilter(prev => prev === key ? null : key)}
+                              className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-bold transition-all border-2 ${
+                                selected ? "text-white border-transparent" : "bg-white text-[#54656f] border-[#d1d7db]"
+                              }`}
+                              style={selected ? { backgroundColor: color, borderColor: color } : undefined}
+                            >{key}</button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {/* 内覧カテゴリ：通常内覧/日程変更で絞り込み */}
+                  {isViewingCategory && (
+                    <div className="flex flex-col gap-1">
+                      <p className="text-[10px] font-bold text-[#8696a0] text-center">内覧種別で絞り込む</p>
+                      <div className="flex gap-2">
+                        {VIEWING_SUB_TYPES.map(({ key, color }) => {
+                          const selected = viewingSubFilter === key;
+                          return (
+                            <button
+                              key={key}
+                              onClick={() => setViewingSubFilter(prev => prev === key ? null : key)}
+                              className={`flex-1 py-2.5 rounded-xl text-[13px] font-bold transition-all shadow-sm ${
+                                selected ? "text-white scale-[1.02] shadow-md" : "bg-white text-[#667781] border-2 border-[#d1d7db]"
+                              }`}
+                              style={selected ? { backgroundColor: color, borderColor: color } : undefined}
+                            >{key === "通常内覧" ? "📅 通常内覧" : "🔄 日程変更"}</button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   {/* AIXカテゴリ：大きな内覧誘導/申込誘導セレクター */}
                   {isAixCategory && (
                     <div className="flex flex-col gap-1">
@@ -1371,13 +1482,30 @@ export default function TemplateModal({
                         <div className="mb-2 flex items-center justify-between gap-2">
                           <div className="flex-1 min-w-0">
                             <span className="text-xs font-bold text-[#1565C0] leading-snug line-clamp-2">
-                              {isAvailCheckCategory ? stripAvailCheckTag(tmpl.label) : tmpl.label}
+                              {isAvailCheckCategory ? stripAvailCheckTag(tmpl.label)
+                                : isPropertySendCategory ? stripPropertySendSubTag(tmpl.label)
+                                : isViewingCategory ? stripViewingSubTag(tmpl.label)
+                                : tmpl.label}
                             </span>
                             {isAvailCheckCategory && (() => {
                               const type = inferAvailCheckType(tmpl.label);
                               const info = AVAIL_CHECK_TYPES.find(t => t.key === type);
                               return info ? (
                                 <span className="mt-0.5 block w-fit rounded-full px-2 py-0.5 text-[9px] font-bold text-white" style={{ backgroundColor: info.color }}>{type}</span>
+                              ) : null;
+                            })()}
+                            {isPropertySendCategory && (() => {
+                              const sub = getPropertySendSubTag(tmpl.label);
+                              const info = PROPERTY_SEND_SUB_TYPES.find(t => t.key === sub);
+                              return info ? (
+                                <span className="mt-0.5 block w-fit rounded-full px-2 py-0.5 text-[9px] font-bold text-white" style={{ backgroundColor: info.color }}>{sub}</span>
+                              ) : null;
+                            })()}
+                            {isViewingCategory && (() => {
+                              const sub = getViewingSubTag(tmpl.label);
+                              const info = VIEWING_SUB_TYPES.find(t => t.key === sub);
+                              return info ? (
+                                <span className="mt-0.5 block w-fit rounded-full px-2 py-0.5 text-[9px] font-bold text-white" style={{ backgroundColor: info.color }}>{sub}</span>
                               ) : null;
                             })()}
                             {isAixCategory && (() => {
@@ -1490,8 +1618,48 @@ export default function TemplateModal({
                                 </div>
                               </div>
                             )}
-                            {/* AIX用途タグ選択（物件確認した以外のAIXカテゴリ） */}
-                            {editCategory.includes("AIX") && editCategory !== "物件確認した【AIX】" && (
+                            {/* 物件ピックアップした：送り方サブカテゴリ選択 */}
+                            {editCategory === "物件ピックアップした【AIX】" && (
+                              <div>
+                                <p className="mb-1 text-[10px] font-bold text-[#54656f]">送り方サブカテゴリ</p>
+                                <div className="flex gap-1 flex-wrap">
+                                  {PROPERTY_SEND_SUB_TYPES.map(({ key, color }) => {
+                                    const sel = editPropertySendSub === key;
+                                    return (
+                                      <button
+                                        key={key}
+                                        type="button"
+                                        onClick={() => setEditPropertySendSub(prev => prev === key ? null : key)}
+                                        className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold border-2 transition ${sel ? "text-white border-transparent" : "bg-white text-[#54656f] border-[#d1d7db]"}`}
+                                        style={sel ? { backgroundColor: color, borderColor: color } : undefined}
+                                      >{key}</button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                            {/* 内覧カテゴリ：内覧種別サブカテゴリ選択 */}
+                            {(editCategory === "内覧へ！【AIX】" || editCategory === "内覧【AIX】") && (
+                              <div>
+                                <p className="mb-1 text-[10px] font-bold text-[#54656f]">内覧種別サブカテゴリ</p>
+                                <div className="flex gap-1 flex-wrap">
+                                  {VIEWING_SUB_TYPES.map(({ key, color }) => {
+                                    const sel = editViewingSub === key;
+                                    return (
+                                      <button
+                                        key={key}
+                                        type="button"
+                                        onClick={() => setEditViewingSub(prev => prev === key ? null : key)}
+                                        className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold border-2 transition ${sel ? "text-white border-transparent" : "bg-white text-[#54656f] border-[#d1d7db]"}`}
+                                        style={sel ? { backgroundColor: color, borderColor: color } : undefined}
+                                      >{key}</button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                            {/* AIX用途タグ選択（物件確認した・物件ピックアップした・内覧以外のAIXカテゴリ） */}
+                            {editCategory.includes("AIX") && editCategory !== "物件確認した【AIX】" && editCategory !== "物件ピックアップした【AIX】" && editCategory !== "内覧へ！【AIX】" && editCategory !== "内覧【AIX】" && (
                               <div>
                                 <p className="mb-1 text-[10px] font-bold text-[#54656f]">用途タグ（内覧誘導 / 申込誘導）</p>
                                 <div className="flex gap-1 flex-wrap">
