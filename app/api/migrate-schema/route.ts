@@ -631,6 +631,11 @@ ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS line_message_id TEXT DEFAULT
 ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ DEFAULT NULL;
 ALTER TABLE action_pattern_logs ADD COLUMN IF NOT EXISTS predicted_action TEXT DEFAULT NULL;
 
+-- PA-1: previous_action_type の確実な記録（in-memory refのリロード消失対策）
+-- aix_usage_logs にも前アクションを持たせ、action_pattern_logs は conversation_id でDB復元・バックフィル可能にする
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS previous_action_type TEXT DEFAULT NULL;
+ALTER TABLE action_pattern_logs ADD COLUMN IF NOT EXISTS conversation_id TEXT DEFAULT NULL;
+
 -- 失注分析済みフラグ（auto-analyze-losers の毎日再課金防止）
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS loss_analyzed_at TIMESTAMPTZ;
 

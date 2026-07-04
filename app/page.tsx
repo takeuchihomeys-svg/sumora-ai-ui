@@ -2696,7 +2696,13 @@ export default function Home() {
       const res = await fetch("/api/suggest-next-action", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversation_id: convId, last_aix_action: lastAixByConvRef.current.get(convId) ?? null, available: propertyAvailableByConvRef.current.get(convId) ?? null }),
+        body: JSON.stringify({
+          conversation_id: convId,
+          last_aix_action: lastAixByConvRef.current.get(convId) ?? null,
+          available: propertyAvailableByConvRef.current.get(convId) ?? null,
+          // 表示中の会話と一致する場合のみ最新の顧客メッセージを渡す（別会話のメッセージ混入防止。空ならサーバー側がDBから補完）
+          customer_message: convId === selectedConversation.id ? (latestCustomerMessage || "") : "",
+        }),
       });
       const data = await res.json() as { action: string | null; reason: string; source?: string; params?: NextActionParams };
       // action が null でも reason が有意義な場合（内覧確定等）はバナー表示できるよう保持
@@ -4585,17 +4591,35 @@ export default function Home() {
             const isFollowUp = nextSugg.reason?.includes("未返信");
             const isAlternativeSend = nextSugg.action === "alternative_send";
             const isPropertyCheck = nextSugg.action === "property_check_result";
-            // LX-5: 提案採択をどのボタン経由でも記録する共通ヘルパー
-            const logSuggestionAccepted = (actionType: string) => {
+            // LX-5: 提案採択/却下をどのボタン経由でも確実に記録する共通ヘルパー
+            // customer_msg_summary・previous_action_type を必ず含め、keepalive で画面遷移時も送信を保証
+            const logSuggestion = (actionType: string, source: "suggestion_accepted" | "suggestion_dismissed") => {
               const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
-              fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: actionType, source: "suggestion_accepted", predicted_action: nextSugg.action ?? null }) }).catch(() => {});
+              const lastCustomerMsg = [...selectedConversation.messages]
+                .reverse()
+                .find((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
+                ?.text ?? "";
+              return fetch("/api/learn-action-patterns", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                keepalive: true,
+                body: JSON.stringify({
+                  action: "log",
+                  conversation_status: ns,
+                  action_type: actionType,
+                  source,
+                  predicted_action: nextSugg.action ?? null,
+                  customer_msg_summary: lastCustomerMsg.slice(0, 150),
+                  previous_action_type: lastAixByConvRef.current.get(selectedConversation.id) ?? null,
+                }),
+              }).catch(() => {});
             };
+            const logSuggestionAccepted = (actionType: string) => logSuggestion(actionType, "suggestion_accepted");
             const dismissBtn = (
               <button
                 onClick={() => {
                   setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
-                  const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
-                  fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_dismissed" }) }).catch(() => {});
+                  void logSuggestion(nextSugg.action ?? "", "suggestion_dismissed");
                 }}
                 className="shrink-0 text-[10px] text-[#8696a0] active:opacity-60"
               >✕</button>
@@ -4686,9 +4710,9 @@ export default function Home() {
                     </div>
                     {dismissBtn}
                     <button
-                      onClick={() => {
-                        const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
-                        fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_accepted", predicted_action: nextSugg.action ?? null }) }).catch(() => {});
+                      onClick={async () => {
+                        // 採択ログを確実に記録してからAIXモーダルを開く
+                        await logSuggestionAccepted(nextSugg.action ?? "");
                         openAixWithParams(nextSugg.action as AixActionType, nextSugg.params);
                       }}
                       className="shrink-0 rounded-full bg-[#1976d2] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
@@ -5753,10 +5777,14 @@ export default function Home() {
                         {nextSugg.reason}
                       </span>
                       <button
-                        onClick={() => {
-                          // LX-5: P8バナーからの採択も学習ログに記録
+                        onClick={async () => {
+                          // LX-5: P8バナーからの採択も学習ログに記録（記録完了を待ってからAIXを開く）
                           const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
-                          fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_accepted", predicted_action: nextSugg.action ?? null }) }).catch(() => {});
+                          const lastCustomerMsg = [...selectedConversation.messages]
+                            .reverse()
+                            .find((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
+                            ?.text ?? "";
+                          await fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_accepted", predicted_action: nextSugg.action ?? null, customer_msg_summary: lastCustomerMsg.slice(0, 150), previous_action_type: lastAixByConvRef.current.get(id) ?? null }) }).catch(() => {});
                           setDismissedNextActionIds((prev) => new Set([...prev, id]));
                           setShowAixMenu(false);
                           setAixInspectLabel(null);
@@ -5769,9 +5797,13 @@ export default function Home() {
                       </button>
                       <button
                         onClick={() => {
-                          // LX-5: P8バナーの✕も却下として学習ログに記録
+                          // LX-5: P8バナーの✕も却下として学習ログに記録（keepaliveで確実に送信）
                           const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
-                          fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_dismissed" }) }).catch(() => {});
+                          const lastCustomerMsg = [...selectedConversation.messages]
+                            .reverse()
+                            .find((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
+                            ?.text ?? "";
+                          fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_dismissed", predicted_action: nextSugg.action ?? null, customer_msg_summary: lastCustomerMsg.slice(0, 150), previous_action_type: lastAixByConvRef.current.get(id) ?? null }) }).catch(() => {});
                           setDismissedNextActionIds((prev) => new Set([...prev, id]));
                         }}
                         className="shrink-0 text-amber-400 text-[11px] font-bold"
@@ -7110,7 +7142,8 @@ export default function Home() {
               fetch("/api/learn-action-patterns", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ action: "log", conversation_status: _ns, action_type: aixModalType, customer_msg_summary: _lastCustomerMsg.slice(0, 150), previous_action_type: _prevAix, source: _learnSource, predicted_action: _predictedAction }),
+                // PA-1: conversation_id を渡す → ref が空（リロード後）でもサーバー側で aix_usage_logs から前アクションを復元
+                body: JSON.stringify({ action: "log", conversation_status: _ns, action_type: aixModalType, customer_msg_summary: _lastCustomerMsg.slice(0, 150), previous_action_type: _prevAix, source: _learnSource, predicted_action: _predictedAction, conversation_id: selectedConversation.id }),
               }).catch(() => {});
               lastAixByConvRef.current.set(selectedConversation.id, aixModalType);
               // 物件確認結果の空室有無を保持（suggestViewing=空室あり / suggest2ndHand=空室ありだが申込あり）
@@ -7134,6 +7167,8 @@ export default function Home() {
                   suggested_action: _predictedAction,
                   line_message_id: _lineSend?.messageId ?? null,
                   sent_at: _lineSend?.sentAt ?? null,
+                  // PA-1: aix_usage_logs にも前アクションを記録（未指定時はサーバー側でDB復元）
+                  previous_action_type: _prevAix,
                 }),
               }).catch(() => {});
               // P1: AIX経由テンプレの使用回数をインクリメント（fire-and-forget）

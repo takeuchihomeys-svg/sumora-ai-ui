@@ -24,7 +24,7 @@ const ACTION_PARAMS: Record<string, { check_pattern?: string; send_mode?: string
 };
 
 export async function POST(req: NextRequest) {
-  const { conversation_id, last_aix_action: clientLastAixAction, available } = await req.json() as { conversation_id: string; last_aix_action?: string | null; available?: boolean | null };
+  const { conversation_id, last_aix_action: clientLastAixAction, available, customer_message } = await req.json() as { conversation_id: string; last_aix_action?: string | null; available?: boolean | null; customer_message?: string | null };
   if (!conversation_id) return NextResponse.json({ action: null, reason: "" });
 
   // 会話・メッセージ・顧客・採択率（毎日 update-action-confidence cron が更新）を並列取得
@@ -178,8 +178,10 @@ export async function POST(req: NextRequest) {
   }
 
   // ---- トリガールールで即判定（Haiku不要の場合）----
-  // messages は created_at 降順なので find で最新のテキスト付き顧客メッセージが取れる
-  const lastCustomerMsg = (messages.find((m) => m.sender === "customer" && (m.text as string)?.trim())?.text as string) ?? "";
+  // クライアントから customer_message が渡されていれば優先（表示中会話の最新メッセージ）。
+  // 未指定/空の場合は DB の messages（created_at 降順）から最新のテキスト付き顧客メッセージにフォールバック
+  const lastCustomerMsg = ((customer_message ?? "").trim())
+    || ((messages.find((m) => m.sender === "customer" && (m.text as string)?.trim())?.text as string) ?? "");
 
   // 入居日を指定して見積書再送を要求 → 見積書送る（「待ち合わせ」と誤判定しないよう最優先でチェック）
   if (lastCustomerMsg.includes("入居") &&
@@ -417,6 +419,7 @@ ${customerContext ? customerContext + "\n" : ""}${aixLogicGuide}${flowGuideSecti
 顧客名: ${conv.customer_name as string}
 ステータス: ${statusLabel}
 直前のAIXアクション: ${last_aix_action || "なし"}
+顧客の最新メッセージ: ${lastCustomerMsg ? `「${lastCustomerMsg.slice(0, 200)}」` : "(なし)"}
 
 直近の会話（古い順）:
 ${recentText}

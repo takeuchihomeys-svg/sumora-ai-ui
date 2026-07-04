@@ -36,6 +36,7 @@ export async function POST(req: NextRequest) {
     previous_action_type?: string;
     predicted_action?: string;
     source?: string;
+    conversation_id?: string;
   };
 
   // ① 1件ログ（AIX送信後にフロントから呼ぶ）
@@ -46,12 +47,37 @@ export async function POST(req: NextRequest) {
     // フロントから渡された source を尊重（提案採択学習ループ用）
     const ALLOWED_SOURCES = new Set(["manual", "suggestion_accepted", "suggestion_dismissed", "prediction_match", "prediction_mismatch", "send_cancelled", "suggestion_bypassed"]);
     const source = body.source && ALLOWED_SOURCES.has(body.source) ? body.source : "manual";
+
+    // PA-1: previous_action_type の確実な記録
+    // フロントの lastAixByConvRef はリロードで消える（921/937件がNULLの根本原因）ため、
+    // 未指定時は aix_usage_logs からサーバー側で復元する
+    let previousAction: string | null = body.previous_action_type ?? null;
+    if (!previousAction && body.conversation_id) {
+      const { data: recentUsage } = await supabase
+        .from("aix_usage_logs")
+        .select("aix_type, created_at")
+        .eq("conversation_id", body.conversation_id)
+        .order("created_at", { ascending: false })
+        .limit(2);
+      if (recentUsage && recentUsage.length > 0) {
+        // 競合ガード: フロントは /api/log-aix-usage を並行で叩くため、
+        // 「今回の送信ログ」（同一action_typeかつ直近30秒以内）が既にINSERT済みならスキップして1つ前を採用
+        const first = recentUsage[0];
+        const isCurrentSend =
+          first.aix_type === body.action_type &&
+          Date.now() - new Date(first.created_at as string).getTime() < 30_000;
+        const prevRow = isCurrentSend ? recentUsage[1] : first;
+        previousAction = (prevRow?.aix_type as string) ?? null;
+      }
+    }
+
     await supabase.from("action_pattern_logs").insert({
       conversation_status: normalizeStatus(body.conversation_status),
       action_type: body.action_type,
       customer_msg_summary: (body.customer_msg_summary ?? "").slice(0, 150),
-      previous_action_type: body.previous_action_type ?? null,
+      previous_action_type: previousAction,
       predicted_action: body.predicted_action ?? null,
+      conversation_id: body.conversation_id ?? null,
       source,
     });
     return NextResponse.json({ ok: true });
