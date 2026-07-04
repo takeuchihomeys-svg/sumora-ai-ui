@@ -12,7 +12,9 @@ export type AixActionType =
   | "application_push"
   | "estimate_sheet"
   | "property_check_result"
-  | "meeting_place";
+  | "meeting_place"
+  | "acknowledge_check"
+  | "followup_revive";
 
 interface LinkedCustomer {
   id: string;
@@ -37,7 +39,8 @@ interface AixModalProps {
   initialFocusPoints?: string[];
   initialTemplateStructure?: Array<{ label: string; text: string }>;
   initialTemplateSample?: string;
-  initialSendMode?: "normal" | "new_arrival" | "widen" | null;
+  initialSendMode?: "normal" | "new_arrival" | "widen" | "alternative" | null;
+  initialViewingReschedule?: boolean;
   initialSendImages?: File[];
   initialViewingSpecificMode?: boolean;
   initialViewingVacancy?: boolean;
@@ -49,7 +52,7 @@ interface AixModalProps {
   initialCheckPattern?: "available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost";
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
-  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean }) => void;
+  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean }) => void;
   onDelayedSend?: (seconds: number, sendFn: () => Promise<void>) => void;
   onScheduled?: () => void;
   onVacatingDetected?: (date: string) => void;
@@ -161,6 +164,14 @@ const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }
     rules: ["物件資料画像から物件名・住所をAIが自動読み取り", "日程・時間を入力して待ち合わせ文を生成", "時間あり→確定文 / 時間なし→調整文 の2パターン対応"],
     template: "かしこまりました！！\n〇〇日ご案内させて頂きます！！\n\n〇〇日〇〇時に[物件名]\n現地エントランスお待ち合わせで何卒よろしくお願い致します！！\n住所: [住所]",
   },
+  acknowledge_check: {
+    rules: ["確認する旨をシンプルに伝える", "補足があれば追加"],
+    template: "[名前]確認いたします！！\nお待ちくださいませ！！",
+  },
+  followup_revive: {
+    rules: ["反応が途絶えたお客様への追客メッセージ", "興味を再燃させる一言"],
+    template: "[名前]その後いかがでしょうか！！\nお部屋お探しのお手伝いをさせて頂きます！！",
+  },
 };
 
 const CONFIG: Record<
@@ -241,6 +252,24 @@ const CONFIG: Record<
     imageLabel: "",
     description: "物件資料画像から物件名・住所を読み取り、日程・時間を指定して待ち合わせメッセージを生成します。",
   },
+  acknowledge_check: {
+    title: "確認します",
+    emoji: "✅",
+    requiresImage: false,
+    imageLabel: "",
+    description: "確認する旨をお客様にLINEで伝えます。",
+    inputLabel: "補足情報（任意）",
+    inputPlaceholder: "例：少々お時間いただきます",
+  },
+  followup_revive: {
+    title: "追客する",
+    emoji: "📣",
+    requiresImage: false,
+    imageLabel: "",
+    description: "反応が途絶えたお客様への追客メッセージをAIが生成します。",
+    inputLabel: "追記メモ（任意）",
+    inputPlaceholder: "例：先日送った物件について、新着物件あり",
+  },
 };
 
 
@@ -265,6 +294,7 @@ export default function AixModal({
   initialSendImages,
   initialViewingSpecificMode,
   initialViewingVacancy,
+  initialViewingReschedule,
   initialIsNewArrival,
   initialPickupType,
   initialEstimateMulti,
@@ -385,7 +415,7 @@ export default function AixModal({
   }>>([]);
   const [calendarLoading, setCalendarLoading] = useState(false);
   // 物件ピックアップ専用: 新規物件 / 新着物件 / 条件を広げた モード
-  const [sendMode, setSendMode] = useState<"normal" | "new_arrival" | "widen" | null>(initialSendMode ?? null);
+  const [sendMode, setSendMode] = useState<"normal" | "new_arrival" | "widen" | "alternative" | null>(initialSendMode ?? null);
   const [newArrivalApply, setNewArrivalApply] = useState(false);
   const [editableCalendarSlots, setEditableCalendarSlots] = useState<string[]>([]);
   const [includeCalendar, setIncludeCalendar] = useState(true);
@@ -425,6 +455,8 @@ export default function AixModal({
 
   // 内覧へ！内覧日指定あり専用
   const [viewingSpecificMode, setViewingSpecificMode] = useState(!!initialViewingSpecificMode);
+  // 内覧へ！日程変更モード専用
+  const [viewingRescheduleMode, setViewingRescheduleMode] = useState(!!initialViewingReschedule);
   const [viewingSpecificDate, setViewingSpecificDate] = useState("");
   const [viewingSpecificStart, setViewingSpecificStart] = useState("");
   const [viewingSpecificEnd, setViewingSpecificEnd] = useState("");
@@ -1169,6 +1201,10 @@ export default function AixModal({
         // fall through to API call
       }
 
+      if (actionType === "viewing_invite" && viewingRescheduleMode) {
+        body.reschedule_mode = true;
+      }
+
       if (actionType === "viewing_invite" && viewingCalendarDays.length > 0) {
         const selectedSlots = viewingCalendarDays
           .map((d, i) => {
@@ -1435,6 +1471,7 @@ export default function AixModal({
         suggestViewingTemplate: actionType === "viewing_invite",
         suggestViewing: actionType === "property_check_result" && checkPattern === "available" && checkAvailableApp !== "yes",
         suggestInitialCostTemplate: actionType === "property_recommendation" && recommendFocusPoints.includes("初期費用"),
+        suggestAlternativeSend: actionType === "property_check_result" && checkPattern === "unavailable",
         scheduled: true,
       });
       onScheduled?.();
@@ -1595,6 +1632,7 @@ export default function AixModal({
         suggestViewingTemplate: actionType === "viewing_invite",
         suggestViewing: actionType === "property_check_result" && checkPattern === "available" && checkAvailableApp !== "yes",
         suggestInitialCostTemplate: actionType === "property_recommendation" && recommendFocusPoints.includes("初期費用"),
+        suggestAlternativeSend: actionType === "property_check_result" && checkPattern === "unavailable",
       });
       onClose();
     } catch (err) {

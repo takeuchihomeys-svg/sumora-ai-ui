@@ -157,6 +157,8 @@ const AIX_ACTION_META: Record<string, { label: string; subtitle?: string; color:
   viewing_invite:          { label: "\u5185\u89a7\u65e5\u8abf\u6574",            subtitle: "\u65e5\u7a0b\u9078\u629e\u2192AI\u751f\u6210\u2192\u5185\u89a7\u6848\u5185LINE\u3092\u9001\u4fe1", color: "#9C27B0", templateCategory: "\u5185\u89a7\u3078\uff01\u3010AIX\u3011" },
   application_push:        { label: "\u7533\u8fbc\u3078\uff01",              color: "#E53935", templateCategory: "\u7533\u8fbc\u3078\uff01\u3010AIX\u3011" },
   meeting_place:           { label: "\u5f85\u3061\u5408\u308f\u305b",            color: "#00838F", templateCategory: "\u5185\u89a7\u3010AIX\u3011" },
+  acknowledge_check:       { label: "\u78ba\u8a8d\u3057\u307e\u3059",           color: "#607D8B", templateCategory: "\u78ba\u8a8d\u3057\u307e\u3059\u3010AIX\u3011" },
+  followup_revive:         { label: "\u8ffd\u5ba2\u3059\u308b",                 color: "#8E24AA", templateCategory: "\u8ffd\u5ba2\u3059\u308b\u3010AIX\u3011" },
 };
 // templateCategory \u2192 AixActionType \u306e\u9006\u5f15\u304d\uff08\u30c6\u30f3\u30d7\u30ec\u9078\u629e\u6642\u306e\u30a2\u30af\u30b7\u30e7\u30f3\u6c7a\u5b9a\u306b\u4f7f\u7528\uff09
 const TEMPLATE_CATEGORY_TO_ACTION: Record<string, AixActionType> = Object.fromEntries(
@@ -483,10 +485,13 @@ export default function Home() {
   const [aixInitAppSubMode, setAixInitAppSubMode] = useState<"push" | "confirm" | null>(null);
   const [showPropertyCheckPicker, setShowPropertyCheckPicker] = useState(false);
   const [showDaihyoCheckPicker, setShowDaihyoCheckPicker] = useState(false);
+  const [showKoshoParentPicker, setShowKoshoParentPicker] = useState(false);
+  const [showOwnerCheckPicker, setShowOwnerCheckPicker] = useState(false);
+  const [aixInitViewingReschedule, setAixInitViewingReschedule] = useState(false);
   const [aixInitInputText, setAixInitInputText] = useState("");
   // 管理会社に確認したピッカー: 選択した確認種別をAIXモーダルへ引き継ぐ
   const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | null>(null);
-  const [aixInitSendMode, setAixInitSendMode] = useState<"normal" | "new_arrival" | "widen" | null>(null);
+  const [aixInitSendMode, setAixInitSendMode] = useState<"normal" | "new_arrival" | "widen" | "alternative" | null>(null);
   const [showGreetingViewingPicker, setShowGreetingViewingPicker] = useState(false);
   const [greetingViewingMode, setGreetingViewingMode] = useState<"before" | "after" | null>(null);
   const [greetingViewingDate, setGreetingViewingDate] = useState("");
@@ -541,7 +546,7 @@ export default function Home() {
   // 会話ごとの直近AIX送信テキスト（sendMessageTextが設定・post_aixテンプレのAIおすすめコンテキストに使用）
   const lastAixSentTextRef = useRef<Map<string, string>>(new Map());
   // property_check_result のサブフロー追跡（管理会社=mgmt / 代表=daihyo）→ postAixTemplateMap のカテゴリ上書きに使用
-  const propertyCheckSubTypeRef = useRef<"mgmt" | "daihyo" | null>(null);
+  const propertyCheckSubTypeRef = useRef<"mgmt" | "daihyo" | "owner" | null>(null);
   // P4: 直近のLINE送信のmessage id・送信時刻（aix_usage_logsに記録して送信メッセージを厳密特定）
   // sendMessageTextが設定し、onAfterSendのlog-aix-usageで消費するワンショットref
   const lastLineSendRef = useRef<{ messageId: string | null; sentAt: string } | null>(null);
@@ -7090,6 +7095,7 @@ export default function Home() {
           initialSendImages={aixInitialSendImages.length > 0 ? aixInitialSendImages : undefined}
           initialViewingSpecificMode={aixInitViewingSpecific}
           initialViewingVacancy={aixInitViewingVacancy}
+          initialViewingReschedule={aixInitViewingReschedule}
           initialIsNewArrival={aixInitialIsNewArrival}
           initialPickupType={aixInitialPickupType}
           initialEstimateMulti={aixInitEstimateMulti}
@@ -7106,6 +7112,7 @@ export default function Home() {
             setDetectedVacatingDate(null);
             setAixInitViewingSpecific(false);
             setAixInitViewingVacancy(false);
+            setAixInitViewingReschedule(false);
             setAixInitSendMode(null);
             setAixInitialSendImages([]);
             setAixInitEstimateMulti(false);
@@ -7122,7 +7129,7 @@ export default function Home() {
           }}
           onSend={sendMessageText}
           onDelayedSend={handleDelayedSend}
-          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean }) => {
+          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean }) => {
             // 2通目自動送信スケジュール（AIXフロー用・予約送信は対象外）
             if (pendingSecondMsgRef.current) {
               const config = pendingSecondMsgRef.current;
@@ -7220,6 +7227,10 @@ export default function Home() {
               // 物件あった → 即座に「内覧へ！」を次のAIX提案としてセット（再フェッチで上書きしない）
               if (meta?.suggestViewing) {
                 setNextActionMap((prev) => ({ ...prev, [selectedConversation.id]: { action: "viewing_invite", reason: "物件が空室でした", source: "trigger_rule" } }));
+              } else if (meta?.suggestAlternativeSend) {
+                // 物件なかった → 代替物件送りへ誘導（property_send ピッカーを自動表示）
+                setActiveAixFlow("property_send");
+                setShowPropertySendPicker(true);
               } else {
                 void fetchNextAction(selectedConversation.id);
               }
@@ -7232,6 +7243,7 @@ export default function Home() {
                 if (aixModalType === "property_check_result") {
                   if (propertyCheckSubTypeRef.current === "mgmt") _b5Category = "管理会社に確認した【AIX】";
                   else if (propertyCheckSubTypeRef.current === "daihyo") _b5Category = "代表に確認した【AIX】";
+                  else if (propertyCheckSubTypeRef.current === "owner") _b5Category = "オーナーに確認した【AIX】";
                 }
                 setPostAixTemplateMap((prev) => ({ ...prev, [_b5ConvId]: { category: _b5Category, color: _b5Meta.color, actionType: aixModalType, sentMessage: lastAixSentTextRef.current.get(_b5ConvId) ?? "" } }));
                 setDismissedPostAixTemplateIds((prev) => { const n = new Set(prev); n.delete(_b5ConvId); return n; });
@@ -7258,7 +7270,7 @@ export default function Home() {
             }
             (
             aixModalType === "property_check_result"
-              ? (meta: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean } | undefined) => {
+              ? (meta: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestAlternativeSend?: boolean } | undefined) => {
                   // タスク完了POSTは上の共通ブロック（全未完了タスク完了）で実施済み（二重POST防止）
                   if (meta?.suggest2ndHand) {
                     setSuggest2ndHandMap((prev) => ({ ...prev, [selectedConversation.id]: true }));
@@ -8282,6 +8294,12 @@ export default function Home() {
                   desc: "お客様から届いた日付で時間を調整",
                   icon: <><rect x="24" y="22" width="24" height="22" rx="3" stroke="#9333EA" strokeWidth="1.8"/><path d="M30 22v-4M42 22v-4M24 30h24" stroke="#9333EA" strokeWidth="1.8" strokeLinecap="round"/><path d="M30 38l4 4 8-8" stroke="#9333EA" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></>
                 },
+                {
+                  key: "日程変更" as const,
+                  label: "日程変更",
+                  desc: "内覧日程の変更をお客様にお伝えする",
+                  icon: <><rect x="24" y="22" width="24" height="22" rx="3" stroke="#9333EA" strokeWidth="1.8"/><path d="M30 22v-4M42 22v-4M24 30h24" stroke="#9333EA" strokeWidth="1.8" strokeLinecap="round"/><path d="M33 36l-3 3 3 3M39 36l3 3-3 3" stroke="#9333EA" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></>
+                },
               ]).map(({ key, label, desc, icon }) => (
                 <button
                   key={key}
@@ -8290,12 +8308,19 @@ export default function Home() {
                     if (key === "退去予定物件") {
                       setAixInitViewingVacancy(true);
                       setAixInitViewingSpecific(false);
+                      setAixInitViewingReschedule(false);
                     } else if (key === "内覧日指定あり") {
                       setAixInitViewingSpecific(true);
                       setAixInitViewingVacancy(false);
+                      setAixInitViewingReschedule(false);
+                    } else if (key === "日程変更") {
+                      setAixInitViewingReschedule(true);
+                      setAixInitViewingVacancy(false);
+                      setAixInitViewingSpecific(false);
                     } else {
                       setAixInitViewingVacancy(false);
                       setAixInitViewingSpecific(false);
+                      setAixInitViewingReschedule(false);
                     }
                     openAixDirect("viewing_invite");
                   }}
@@ -8365,6 +8390,12 @@ export default function Home() {
                   label: "条件広げまとめ",
                   desc: "家賃・地域・築年数などを少し広げてピックアップ",
                   icon: <><rect x="22" y="26" width="28" height="20" rx="3" stroke="#2E7D32" strokeWidth="1.8"/><path d="M28 36h16M28 41h10" stroke="#2E7D32" strokeWidth="1.5" strokeLinecap="round"/><path d="M46 32l4-4" stroke="#2E7D32" strokeWidth="1.5" strokeLinecap="round"/><path d="M46 28h4v4" stroke="#2E7D32" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></>
+                },
+                {
+                  key: "alternative" as const,
+                  label: "代替物件送り",
+                  desc: "元の物件が空室なし→代替物件をAIが紹介文生成",
+                  icon: <><path d="M28 44h16M36 26v18" stroke="#2E7D32" strokeWidth="1.8" strokeLinecap="round"/><path d="M30 32l6-6 6 6" stroke="#2E7D32" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/><circle cx="44" cy="30" r="8" fill="#E8F5E9" stroke="#2E7D32" strokeWidth="1.5"/><path d="M41 30l2 2 4-4" stroke="#2E7D32" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></>
                 },
               ]).map(({ key, label, desc, icon }) => (
                 <button
@@ -8919,6 +8950,152 @@ export default function Home() {
         </div>
       )}
 
+      {/* 確認した（条件・交渉）親ピッカー */}
+      {showKoshoParentPicker && (
+        <div
+          className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
+          onClick={() => { setShowKoshoParentPicker(false); setActiveAixFlow(null); }}
+        >
+          <div
+            className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-5 flex justify-center">
+              <svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="36" cy="36" r="36" fill="#ECEFF1"/>
+                <rect x="22" y="20" width="28" height="32" rx="3" fill="#CFD8DC" stroke="#546E7A" strokeWidth="1.5"/>
+                <path d="M29 30h14M29 36h14M29 42h8" stroke="#546E7A" strokeWidth="1.5" strokeLinecap="round"/>
+                <circle cx="50" cy="22" r="9" fill="#546E7A"/>
+                <path d="M46 22l3 3 5-5" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+            <p className="mb-1 text-center text-[20px] font-bold text-[#111827]">確認した（条件・交渉）</p>
+            <p className="mb-6 text-center text-[13px] leading-snug text-[#6B7280]">誰に確認しましたか？</p>
+            <div className="flex flex-col gap-2.5">
+              {([
+                {
+                  key: "mgmt" as const,
+                  label: "管理会社に確認した",
+                  desc: "空室・礼金・ペット可否など確認結果をAIが報告文を生成",
+                  color: "#546E7A",
+                  icon: <><rect x="22" y="20" width="28" height="32" rx="3" stroke="#546E7A" strokeWidth="1.8"/><path d="M29 30h14M29 36h14M29 42h8" stroke="#546E7A" strokeWidth="1.5" strokeLinecap="round"/></>
+                },
+                {
+                  key: "daihyo" as const,
+                  label: "代表に確認した",
+                  desc: "代表への確認結果をAIが報告文を生成",
+                  color: "#5D4037",
+                  icon: <><circle cx="36" cy="28" r="9" stroke="#5D4037" strokeWidth="1.5"/><path d="M18 54c0-9.941 8.059-18 18-18s18 8.059 18 18" stroke="#5D4037" strokeWidth="1.8" strokeLinecap="round"/></>
+                },
+                {
+                  key: "owner" as const,
+                  label: "オーナーに確認した",
+                  desc: "物件オーナーへの確認結果をAIが報告文を生成",
+                  color: "#1565C0",
+                  icon: <><path d="M36 20L50 30V52H22V30L36 20Z" stroke="#1565C0" strokeWidth="1.8" strokeLinejoin="round"/><rect x="30" y="38" width="12" height="14" rx="1.5" fill="#E3F2FD" stroke="#1565C0" strokeWidth="1.5"/><circle cx="50" cy="22" r="9" fill="#1565C0"/><path d="M46 22l3 3 5-5" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></>
+                },
+              ]).map(({ key, label, desc, color, icon }) => (
+                <button
+                  key={key}
+                  onClick={() => {
+                    setShowKoshoParentPicker(false);
+                    setActiveAixFlow("property_check_result");
+                    propertyCheckSubTypeRef.current = key;
+                    if (key === "mgmt") setShowPropertyCheckPicker(true);
+                    else if (key === "daihyo") setShowDaihyoCheckPicker(true);
+                    else if (key === "owner") setShowOwnerCheckPicker(true);
+                  }}
+                  className="flex items-center gap-3.5 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3.5 text-left transition active:bg-[#ECEFF1] active:border-[#546E7A]"
+                >
+                  <div className="shrink-0">
+                    <svg width="36" height="36" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <circle cx="36" cy="36" r="36" fill="#ECEFF1"/>
+                      {icon}
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                    <p className="text-[11px] text-[#9CA3AF]">{desc}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => { setShowKoshoParentPicker(false); setActiveAixFlow(null); }}
+              className="mt-4 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
+            >キャンセル</button>
+          </div>
+        </div>
+      )}
+
+      {/* オーナーに確認した 種類選択ピッカー */}
+      {showOwnerCheckPicker && (
+        <div
+          className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
+          onClick={() => { setShowOwnerCheckPicker(false); setActiveAixFlow(null); }}
+        >
+          <div
+            className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-5 flex justify-center">
+              <svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="36" cy="36" r="36" fill="#E3F2FD"/>
+                <path d="M36 20L50 30V52H22V30L36 20Z" fill="#BBDEFB" stroke="#1565C0" strokeWidth="1.5" strokeLinejoin="round"/>
+                <rect x="30" y="38" width="12" height="14" rx="1.5" fill="#E3F2FD" stroke="#1565C0" strokeWidth="1.5"/>
+                <circle cx="50" cy="22" r="9" fill="#1565C0"/>
+                <path d="M46 22l3 3 5-5" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+            <p className="mb-1 text-center text-[20px] font-bold text-[#111827]">オーナーに確認した</p>
+            <p className="mb-6 text-center text-[13px] leading-snug text-[#6B7280]">何について確認しましたか？</p>
+            <div className="flex flex-col gap-2.5">
+              {([
+                {
+                  key: "initial_cost",
+                  label: "初期費用について確認した",
+                  desc: "礼金・敷金などオーナーに確認した結果を報告",
+                  hint: "初期費用（オーナー確認）：",
+                  icon: <><circle cx="36" cy="36" r="14" stroke="#1565C0" strokeWidth="1.8"/><path d="M36 28v16M31 32h7.5a2.5 2.5 0 010 5H31m0 0h7.5a2.5 2.5 0 010 5H31" stroke="#1565C0" strokeWidth="1.5" strokeLinecap="round"/></>
+                },
+                {
+                  key: "other",
+                  label: "その他",
+                  desc: "その他の内容をオーナーに確認した結果を報告",
+                  hint: "オーナーに確認しました。",
+                  icon: <><rect x="24" y="22" width="24" height="28" rx="3" stroke="#1565C0" strokeWidth="1.8"/><path d="M30 32h12M30 38h8" stroke="#1565C0" strokeWidth="1.5" strokeLinecap="round"/></>
+                },
+              ]).map(({ key, label, desc, hint, icon }) => (
+                <button
+                  key={key}
+                  onClick={() => {
+                    setShowOwnerCheckPicker(false);
+                    setAixInitInputText(hint);
+                    openAixDirect("property_check_result");
+                  }}
+                  className="flex items-center gap-3.5 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3.5 text-left transition active:bg-[#E3F2FD] active:border-[#1565C0]"
+                >
+                  <div className="shrink-0">
+                    <svg width="36" height="36" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <circle cx="36" cy="36" r="36" fill="#E3F2FD"/>
+                      {icon}
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                    <p className="text-[11px] text-[#9CA3AF]">{desc}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => { setShowOwnerCheckPicker(false); setActiveAixFlow(null); }}
+              className="mt-4 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
+            >キャンセル</button>
+          </div>
+        </div>
+      )}
+
       {/* 送信確認ダイアログ */}
       {showSendConfirm && (
         <div
@@ -9327,8 +9504,9 @@ export default function Home() {
                   { color: "#00838F", label: "待ち合わせ場所", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); } },
                   { color: "#E53935", label: "申込（誘導・決定）", sub: "物件名入力orシンプル送信→AI生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); setShowApplicationPicker(true); } },
                   { color: "#00796B", label: "挨拶（内覧前・内覧後）", sub: "内覧前後の挨拶をAI生成。内覧前は日時登録でアナウンス自動化", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("greeting_viewing"); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); setShowGreetingViewingPicker(true); } },
-                  { color: "#78909C", label: "管理会社に確認した", sub: "空室・礼金・ペット可否など確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); propertyCheckSubTypeRef.current = "mgmt"; setShowPropertyCheckPicker(true); } },
-                  { color: "#5D4037", label: "代表に確認した", sub: "代表への確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); propertyCheckSubTypeRef.current = "daihyo"; setShowDaihyoCheckPicker(true); } },
+                  { color: "#546E7A", label: "確認した（条件・交渉）", sub: "管理会社・代表・オーナーへの確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setShowKoshoParentPicker(true); } },
+                  { color: "#607D8B", label: "確認します", sub: "ワンタップで確認する旨をAI生成して送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("acknowledge_check"); openAixDirect("acknowledge_check"); } },
+                  { color: "#8E24AA", label: "追客する", sub: "反応が途絶えたお客様への追客LINEをAI生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("followup_revive"); openAixDirect("followup_revive"); } },
                 ].map((item) => {
                   const info = AIX_INSPECT[item.label];
                   const isOpen = aixInspectLabel === item.label;
