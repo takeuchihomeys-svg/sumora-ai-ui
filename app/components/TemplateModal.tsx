@@ -180,6 +180,12 @@ interface TemplateModalProps {
   staffMessagedToday?: boolean;
   // 開いた時に検索をプリセットする（新着フィルター等）
   initialSearch?: string;
+  // AIX送信後（post_aix）に開かれた場合のコンテキスト。AIおすすめテンプレのハイライトに使用
+  postAixContext?: {
+    conversationId: string;
+    actionType: string;
+    sentMessage: string;
+  };
 }
 
 const AVAIL_CHECK_TYPES = [
@@ -242,7 +248,7 @@ function inferAvailCheckType(label: string): string | null {
 
 export default function TemplateModal({
   onClose, onSelect, onOpenAixWithFocus, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword, highlightLabel, suggestedCategory, suggestedColor, suggestedLabel, pendingScheduledMessages, staffMessagedToday, initialSearch,
-  initialTemplates, onCacheUpdate, templates: templatesProp, onRefresh,
+  initialTemplates, onCacheUpdate, templates: templatesProp, onRefresh, postAixContext,
 }: TemplateModalProps) {
   const [templates, setTemplates] = useState<Template[]>(templatesProp ?? initialTemplates ?? []);
   // 親からのデータ（props/キャッシュ）があれば即時表示、なければローディング表示
@@ -302,6 +308,11 @@ export default function TemplateModal({
   const [candidates, setCandidates] = useState<AiTemplateCandidate[]>([]);
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [adoptingId, setAdoptingId] = useState<string | null>(null);
+  // AIおすすめテンプレ（post_aix時のみ）: recommend-templates APIの結果（最大3件）
+  const [aiRecommendations, setAiRecommendations] = useState<Array<{ id: string; score: number; reason: string }>>([]);
+  const [recommendLoading, setRecommendLoading] = useState(false);
+  // モーダル1回のオープンにつき1回だけフェッチする
+  const recommendFetchedRef = useRef(false);
 
   function applyVacatingDates(text: string, vd: { month: number; day: number } | null): string {
     const lastDayOf = (m: number) => new Date(new Date().getFullYear(), m, 0).getDate();
@@ -406,6 +417,32 @@ export default function TemplateModal({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [templatesProp]);
+
+  // post_aix でモーダルが開いたら AIおすすめテンプレを取得（失敗しても通常表示にフォールバック）
+  useEffect(() => {
+    if (!postAixContext || recommendFetchedRef.current) return;
+    const candidateTemplates = templates.filter((t) => t.category === category);
+    if (candidateTemplates.length === 0) return;
+    recommendFetchedRef.current = true;
+    setRecommendLoading(true);
+    fetch("/api/recommend-templates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversation_id: postAixContext.conversationId,
+        action_type: postAixContext.actionType,
+        sent_message: postAixContext.sentMessage,
+        category,
+        templates: candidateTemplates.map((t) => ({ id: t.id, label: t.label, text: t.text })),
+      }),
+    })
+      .then((res) => res.json())
+      .then((data: { ok: boolean; recommendations?: Array<{ id: string; score: number; reason: string }> }) => {
+        if (data.ok && Array.isArray(data.recommendations)) setAiRecommendations(data.recommendations);
+      })
+      .catch((e) => console.error("recommend-templates error:", e))
+      .finally(() => setRecommendLoading(false));
+  }, [postAixContext, templates, category]);
 
   // テンプレ変更後の再取得: 親管理（props）なら親に通知、単独利用なら自前でfetch
   const refreshTemplates = async () => {
@@ -1162,6 +1199,9 @@ export default function TemplateModal({
                 </div>
               ) : (
                 <div className="flex flex-col gap-3">
+                  {recommendLoading && (
+                    <div className="py-2 text-center text-[12px] text-[#6b7280]">✨ AIがおすすめを選定中...</div>
+                  )}
                   {displayFiltered.map((tmpl) => {
                     const idx = displayFiltered.indexOf(tmpl);
                     const adapted = adaptedTexts[tmpl.id];
@@ -1174,8 +1214,10 @@ export default function TemplateModal({
                     let displayText = applyVacatingDates(_rawText, vacatingDates[tmpl.id] ?? null);
                     if (soloEntry) displayText = applySoloEntry(displayText);
                     if (customerName) displayText = displayText.replace(/アカウント名/g, customerName);
-                    const isSuggested = !!suggestedCategory && tmpl.category === suggestedCategory;
-                    const isHighlighted = !isSuggested && !!highlightKeyword && (tmpl.label.includes(highlightKeyword) || tmpl.text.includes(highlightKeyword));
+                    // AIおすすめ（post_aix時のみ・最大3件）。順番は変えず色枠＋バッジのみ
+                    const aiRec = postAixContext ? aiRecommendations.find((r) => r.id === tmpl.id) : undefined;
+                    const isSuggested = !aiRec && !!suggestedCategory && tmpl.category === suggestedCategory;
+                    const isHighlighted = !aiRec && !isSuggested && !!highlightKeyword && (tmpl.label.includes(highlightKeyword) || tmpl.text.includes(highlightKeyword));
                     const isVacating = tmpl.label.includes("退去予定") || /[◯○〇]月[◯○〇]/.test(tmpl.text) || /退去予定|退去後|以降ご内覧可能/.test(tmpl.text);
                     return (
                       <div
@@ -1189,6 +1231,7 @@ export default function TemplateModal({
                         }}
                         data-highlighted={isHighlighted ? "true" : undefined}
                         className={`rounded-2xl p-4 ${
+                          aiRec ? "border-2 border-emerald-500 bg-emerald-50" :
                           isSuggested ? "border-2" :
                           isHighlighted ? "border-2 border-orange-400 bg-orange-50" :
                           "border border-[#e9edef] bg-[#f8f9fa]"
@@ -1221,6 +1264,14 @@ export default function TemplateModal({
                               return null;
                             })()}
                           </div>
+                          {aiRec && (
+                            <span
+                              className="shrink-0 rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white"
+                              title={aiRec.reason || undefined}
+                            >
+                              ✨ AIおすすめ{aiRec.score >= 90 ? "★★★" : aiRec.score >= 80 ? "★★" : "★"}
+                            </span>
+                          )}
                           {isSuggested && suggestedColor && (
                             <span
                               className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold text-white"

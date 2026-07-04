@@ -520,8 +520,9 @@ export default function Home() {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedNextTemplateIds") || "[]") as string[]); } catch { return new Set(); }
   });
   const [pendingNextTemplateInfo, setPendingNextTemplateInfo] = useState<{ num: string; category: string } | null>(null);
-  // B5: AIX送信完了後に「同カテゴリのテンプレートを続けて送る」バナーを出す（会話ID → カテゴリ・色）
-  const [postAixTemplateMap, setPostAixTemplateMap] = useState<Record<string, { category: string; color: string }>>({});
+  // B5: AIX送信完了後に「同カテゴリのテンプレートを続けて送る」バナーを出す（会話ID → カテゴリ・色・AIXコンテキスト）
+  // actionType / sentMessage は「AIおすすめテンプレ」（recommend-templates API）のコンテキストとして使用
+  const [postAixTemplateMap, setPostAixTemplateMap] = useState<Record<string, { category: string; color: string; actionType?: string; sentMessage?: string }>>({});
   const [dismissedPostAixTemplateIds, setDismissedPostAixTemplateIds] = useState<Set<string>>(new Set());
   // A-2: テンプレートモーダルを閉じる処理の一本化（クローズ時のクリーンアップはここに集約）
   const closeTemplateModal = useCallback(() => {
@@ -537,6 +538,8 @@ export default function Home() {
   const [dismissedApplyFormIds, setDismissedApplyFormIds] = useState<Set<string>>(new Set());
   const nextActionFetchingRef = useRef<Set<string>>(new Set());
   const lastAixByConvRef = useRef<Map<string, string>>(new Map());
+  // 会話ごとの直近AIX送信テキスト（sendMessageTextが設定・post_aixテンプレのAIおすすめコンテキストに使用）
+  const lastAixSentTextRef = useRef<Map<string, string>>(new Map());
   // P4: 直近のLINE送信のmessage id・送信時刻（aix_usage_logsに記録して送信メッセージを厳密特定）
   // sendMessageTextが設定し、onAfterSendのlog-aix-usageで消費するワンショットref
   const lastLineSendRef = useRef<{ messageId: string | null; sentAt: string } | null>(null);
@@ -3295,6 +3298,8 @@ export default function Home() {
     learnPayload?: { customerMessage?: string; conversationState?: string }
   ) => {
     if (!selectedConversation.id || (!text.trim() && !imageUrl)) return;
+    // AIX送信テキストを会話ごとに記録（post_aixテンプレのAIおすすめコンテキストに使用）
+    if (isAix && text.trim()) lastAixSentTextRef.current.set(selectedConversation.id, text.trim());
     // AIX送信時も含めて、送信後は次アクション提案をリセット（状況が変わったため）
     setNextActionMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; });
     setDismissedNextActionIds((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
@@ -6863,6 +6868,15 @@ export default function Home() {
           onCacheUpdate={setTemplateCache}
           onClose={closeTemplateModal}
           initialSearch={templateInitialSearch}
+          postAixContext={
+            templateOpenContext === "post_aix" && postAixTemplateMap[selectedConversation.id]
+              ? {
+                  conversationId: selectedConversation.id,
+                  actionType: postAixTemplateMap[selectedConversation.id]?.actionType ?? "",
+                  sentMessage: postAixTemplateMap[selectedConversation.id]?.sentMessage ?? "",
+                }
+              : undefined
+          }
           onOpenAixWithFocus={(fps, templateInfo) => {
             setPendingAixFocusPoints(fps);
             setPendingTemplateSource(templateInfo ?? null);
@@ -7158,7 +7172,7 @@ export default function Home() {
               const _b5Meta = AIX_ACTION_META[aixModalType];
               if (!meta?.scheduled && _b5Meta?.templateCategory) {
                 const _b5ConvId = selectedConversation.id;
-                setPostAixTemplateMap((prev) => ({ ...prev, [_b5ConvId]: { category: _b5Meta.templateCategory, color: _b5Meta.color } }));
+                setPostAixTemplateMap((prev) => ({ ...prev, [_b5ConvId]: { category: _b5Meta.templateCategory, color: _b5Meta.color, actionType: aixModalType, sentMessage: lastAixSentTextRef.current.get(_b5ConvId) ?? "" } }));
                 setDismissedPostAixTemplateIds((prev) => { const n = new Set(prev); n.delete(_b5ConvId); return n; });
               }
             }
