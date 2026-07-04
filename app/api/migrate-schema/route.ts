@@ -672,7 +672,15 @@ CREATE TABLE IF NOT EXISTS aix_action_attribution (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_aix_action_attribution_unique
   ON aix_action_attribution (action_type, COALESCE(template_id::text, 'none'), period_start);
 CREATE INDEX IF NOT EXISTS idx_aix_action_attribution_period ON aix_action_attribution(period_start DESC);
-ALTER TABLE aix_action_attribution DISABLE ROW LEVEL SECURITY
+ALTER TABLE aix_action_attribution DISABLE ROW LEVEL SECURITY;
+
+-- ⑥ embedding_cache テーブル（OpenAI embedding の永続キャッシュ・再起動後も再利用）
+CREATE TABLE IF NOT EXISTS embedding_cache (
+  text_key TEXT PRIMARY KEY,
+  embedding JSONB NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE embedding_cache DISABLE ROW LEVEL SECURITY
 `.trim();
 
 export async function GET() {

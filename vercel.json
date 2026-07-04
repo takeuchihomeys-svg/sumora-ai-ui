@@ -46,11 +46,11 @@
     },
     {
       "path": "/api/learn-trigger-rules",
-      "schedule": "35 18 * * *"
+      "schedule": "35 19 * * *"
     },
     {
       "path": "/api/cron/update-action-confidence",
-      "schedule": "50 18 * * *"
+      "schedule": "50 20 * * *"
     },
     {
       "path": "/api/analyze-aix-flow",

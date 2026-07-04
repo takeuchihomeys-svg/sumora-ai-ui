@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { supabase } from "@/app/lib/supabase";
 
 // ─── テキスト類似度（bigram Jaccard）#31 ─────────────────────────────────────
 // 空白除去後の2文字グラム集合の Jaccard 係数（0〜1）。語順の入れ替えに頑健。
@@ -22,25 +23,50 @@ export function textSimilarity(a: string, b: string): number {
 }
 
 // ─── OpenAI 埋め込み生成（text-embedding-3-small・1536次元）＋キャッシュ #29 ──
-// 同一テキストの再生成を防ぐモジュールスコープキャッシュ（最大500件・FIFO削除）。
+// ⑥ メモリキャッシュ（最大500件FIFO）+ Supabase embedding_cache テーブルで永続化。
+// 優先順: メモリ → DB → OpenAI API生成 → DB+メモリに保存。
 const embeddingCache = new Map<string, number[]>();
 
 export async function generateEmbedding(text: string): Promise<number[] | null> {
-  if (embeddingCache.has(text)) return embeddingCache.get(text)!;
+  const cacheKey = text.slice(0, 2000);
+
+  // メモリキャッシュ確認（最速）
+  if (embeddingCache.has(cacheKey)) return embeddingCache.get(cacheKey)!;
+
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
+
+  // ⑥ DBキャッシュ確認（再起動後も有効）
+  try {
+    const { data: cached } = await supabase
+      .from("embedding_cache")
+      .select("embedding")
+      .eq("text_key", cacheKey)
+      .maybeSingle();
+    if (cached?.embedding) {
+      const emb = cached.embedding as number[];
+      embeddingCache.set(cacheKey, emb);
+      return emb;
+    }
+  } catch {
+    // DBキャッシュ失敗はスキップして通常生成へ
+  }
+
   try {
     const res = await fetch("https://api.openai.com/v1/embeddings", {
       method: "POST",
       headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
+      body: JSON.stringify({ model: "text-embedding-3-small", input: cacheKey }),
     });
     if (!res.ok) return null;
     const data = await res.json() as { data: Array<{ embedding: number[] }> };
     const embedding = data.data[0]?.embedding ?? null;
     if (embedding) {
-      embeddingCache.set(text, embedding);
+      // メモリキャッシュ更新（FIFO 500件上限）
+      embeddingCache.set(cacheKey, embedding);
       if (embeddingCache.size > 500) embeddingCache.delete(embeddingCache.keys().next().value!);
+      // ⑥ DBキャッシュに永続保存（fire-and-forget）
+      void supabase.from("embedding_cache").upsert({ text_key: cacheKey, embedding });
     }
     return embedding;
   } catch {

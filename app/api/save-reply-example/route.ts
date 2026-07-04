@@ -19,7 +19,7 @@ async function getEmbedding(text: string): Promise<number[] | null> {
   }
 }
 
-// conversationState → phrase_dictionary カテゴリ（新5段階 + 旧ステート）
+// conversationState → phrase_dictionary カテゴリ（新5段階 + 旧ステート + AIXステート）
 const STATE_TO_PHRASE_CATEGORY: Record<string, string> = {
   // 新5段階
   first_reply:            "hearing_start",
@@ -35,6 +35,15 @@ const STATE_TO_PHRASE_CATEGORY: Record<string, string> = {
   estimate_request:       "estimate_send",
   availability_check:     "availability_check",
   application:            "application_push",
+  // ④ AIXアクション固有ステート（AixModal の ACTION_TO_STATE と一致）
+  estimate_sheet:         "estimate_send",
+  property_send:          "property_search_start",
+  viewing_invite:         "viewing_invite",
+  application_push:       "application_push",
+  property_check_result:  "property_recommendation",
+  meeting_place:          "viewing_invite",
+  acknowledge_check:      "hearing_followup",
+  followup_revive:        "hearing_followup",
 };
 
 const VALID_STATES = [

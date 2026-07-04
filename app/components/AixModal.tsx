@@ -340,6 +340,8 @@ export default function AixModal({
   const [aiDraft, setAiDraft] = useState<string>("");
   const [aixNotice, setAixNotice] = useState<string>("");
   const [parsedEstimate, setParsedEstimate] = useState<Record<string, string> | null>(null);
+  // ① LL-07: 見積書カバーレター（AI生成・送信+学習ループ対象）
+  const [estimateCoverLetter, setEstimateCoverLetter] = useState<string>("");
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [previewBackup, setPreviewBackup] = useState<string>("");
   const [useEmoji, setUseEmoji] = useState(true);
@@ -1261,6 +1263,8 @@ export default function AixModal({
       setAixNotice(data.notice || "");
       if (data.parsed_estimate) setParsedEstimate(data.parsed_estimate);
       setEstimateTextReady(data.estimate_text || "");
+      // ① LL-07: カバーレターを保存（見積書に添える挨拶文）
+      if (data.coverLetter) setEstimateCoverLetter(data.coverLetter as string);
       setSendCountdown(0);
     } catch (err) {
       setError(err instanceof Error ? err.message : "エラーが発生しました");
@@ -1338,6 +1342,18 @@ export default function AixModal({
       body: JSON.stringify(buildSaveReplyPayload(sentText, inputText.trim() || `（AIX: ${config?.title ?? actionType}）`)),
     }).then(ensureOk).catch((e) => { console.warn("[AixModal] save-reply-example保存失敗:", e); });
 
+    // ① LL-07: 見積書カバーレターを学習ループに別途保存（sentText=estimate表・coverLetter=AI挨拶文で別個学習）
+    if (actionType === "estimate_sheet" && estimateCoverLetter.trim()) {
+      fetch("/api/save-reply-example", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...buildSaveReplyPayload(estimateCoverLetter, "（見積書カバーレター）"),
+          aiDraft: estimateCoverLetter,
+        }),
+      }).then(ensureOk).catch((e) => { console.warn("[AixModal] カバーレター学習保存失敗:", e); });
+    }
+
     // スタッフ編集検知: aiDraft（AI生成原文）と sentText（実際に送った文）が違う場合は source="aix_edit" で記録
     // property_send / property_recommendation は物件固有テキストのため候補保存しない
     // （後続メッセージの汎用化はauto-template-candidates Cronが担当）
@@ -1372,6 +1388,7 @@ export default function AixModal({
           conversation_status: conversationStatus,
           action_type: actionType,
           customer_msg_summary: (lastCustomerMsg || inputText.trim()).slice(0, 150),
+          conversation_id: conversationId, // ⑦ previous_action_type のサーバー側復元に使用
         }),
       }).then(ensureOk).catch((e) => { console.warn("[AixModal] アクションパターン学習ログ保存失敗:", e); });
     }
@@ -1607,7 +1624,8 @@ export default function AixModal({
           await sendAsAix(preview);
           sentImageIndexRef.current = -1;
         } else if (actionType === "estimate_sheet") {
-          // 送信順: ①物件資料（任意）→ ②見積書 → ③テキスト
+          // 送信順: ①カバーレター（AI挨拶文・任意）→ ②物件資料（任意）→ ③見積書 → ④テキスト
+          if (estimateCoverLetter.trim()) await sendAsAix(estimateCoverLetter);
           if (estimatePropertyFile) {
             const propUrl = await uploadImage(estimatePropertyFile);
             await sendAsAix("", propUrl);
