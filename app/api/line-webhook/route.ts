@@ -200,7 +200,6 @@ async function handleTextMessage(
       .eq("line_message_id", lineMessageId)
       .maybeSingle();
     if (existingMsg) {
-      console.log("[line-webhook] テキスト重複スキップ:", lineMessageId);
       return true; // 既に保存済み = 正常
     }
   }
@@ -215,7 +214,6 @@ async function handleTextMessage(
   if (msgErr) {
     if (msgErr.code === "23505") {
       // UNIQUE制約違反 = sync-from-screeningが同時に保存済み。正常扱い
-      console.log("[line-webhook] DB UNIQUE制約で重複を検知・スキップ:", lineMessageId);
     } else {
       console.error("[line-webhook] message保存失敗:", msgErr.message);
       return false;
@@ -393,7 +391,6 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, tex
 
   // ── レート制限: 同一ユーザーの3秒以内の連続送信はAI解析をスキップ ──
   if (isRateLimited(userId)) {
-    console.log("[line-webhook] rate-limit skip (AI解析):", userId);
     return;
   }
 
@@ -656,10 +653,10 @@ async function notifyFormatReceived(
 
 // ── 物件確認済みキーワード検出 ────────────────────────────────────────────
 const PROPERTY_VIEWED_KEYWORDS = [
-  "確認しました", "確認できました", "確認取れました", "確認しました",
+  "確認しました", "確認できました", "確認取れました",
   "見ました", "見てみました", "見てます", "見てました",
-  "チェックしました", "拝見しました", "拝見しました", "拝見できました",
-  "見せてもらいました", "確認できました", "見れました",
+  "チェックしました", "拝見しました", "拝見できました",
+  "見せてもらいました", "見れました",
 ];
 
 function isPropertyViewedMessage(text: string): boolean {
@@ -812,7 +809,6 @@ async function handleImageMessageSave(
     .eq("line_message_id", lineMessageId)
     .maybeSingle();
   if (existing) {
-    console.log("[line-webhook] 重複スキップ:", lineMessageId);
     return "duplicate"; // 既に保存済み = 正常（リトライ不要）
   }
 
@@ -892,8 +888,6 @@ async function fetchAndUploadLineImage(
 
     if (updateErr) {
       console.error("[line-webhook] image_url更新失敗:", updateErr.message);
-    } else {
-      console.log("[line-webhook] 画像保存完了:", lineMessageId);
     }
   } catch (e) {
     console.error("[line-webhook] 画像処理エラー:", e);
@@ -924,7 +918,6 @@ async function expireOldImagesIfOverLimit(
     .from("messages")
     .update({ image_expires_at: new Date().toISOString() })
     .in("id", overflowIds);
-  console.log(`[line-webhook] 画像上限超過: ${overflowIds.length}件を期限切れにしました`);
 }
 
 // destination → account key のマッピング（各LINE公式アカウントのBot User ID）
@@ -981,7 +974,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     if (event.type !== "message") continue;
     // 自分自身（bot）からのメッセージはスキップ（返信送信時のエコーバック対策）
     if (event.source?.type === "bot") {
-      console.log("[line-webhook] botメッセージをスキップ");
       continue;
     }
     if (event.source?.userId == null) continue;

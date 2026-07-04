@@ -107,7 +107,8 @@ ${customerMessage}
     const text = typeof res.content === "string" ? res.content : JSON.stringify(res.content);
     const match = text.match(/\{[\s\S]*\}/);
     return match ? match[0] : "";
-  } catch {
+  } catch (err) {
+    console.error("[generate-reply] Step1分析（Haiku）失敗 — 分析なしで生成を続行:", err);
     return "";
   }
 }
@@ -325,6 +326,7 @@ function buildGenerationMessages(
 
       // ③ 条件変更/ピックアップ依頼検出
       if (p.condition_change_type && typeof p.condition_change_type === "string") {
+        const changeType = p.condition_change_type; // typeof ガードで string に絞り込み済み（as 不要）
         const typeLabel: Record<string, string> = {
           area_change: "エリア変更",
           rent_change: "家賃変更",
@@ -333,9 +335,9 @@ function buildGenerationMessages(
           pickup_request: "物件ピックアップ依頼",
           multi: "複数条件変更",
         };
-        const label = typeLabel[p.condition_change_type as string] ?? (p.condition_change_type as string);
+        const label = typeLabel[changeType] ?? changeType;
         // 拡大・緩和（condition_relax）の場合: ピックアップ宣言 + まだ聞けていない条件を1〜2点確認してよい
-        if (p.condition_change_type === "condition_relax") {
+        if (changeType === "condition_relax") {
           conditionChangeNote = `\n【🔄 ${label}検出】エリア拡大・家賃上限UP等で選択肢が広がった。必ずピックアップ宣言を行うこと。さらに「まだ聞けていない重要条件（間取り・築年数など）」が1〜2点あれば追加確認してよい（すでに分かっている条件は聞き返さない）。`;
         } else {
           // 条件変更・ピックアップ依頼: 追加質問は禁止、即行動宣言で完結
@@ -456,6 +458,11 @@ function buildGenerationMessages(
 指定内容: ${replyHint}`
     : "";
 
+  // knowledge注入フォーマット統一: 空でなければ「## 参照すべき重要ルール」ヘッダーで括る（ただのテキスト連結を防止）
+  const knowledgeNote = knowledge
+    ? `\n\n## 参照すべき重要ルール（DB学習ナレッジ・セクション順に優先度が高い）${knowledge}`
+    : "";
+
   // ①②統合: closing_strategy（Step1分析）と★決まるパターン（ai_summary）を冒頭に最優先注入
   const closingNote = (() => {
     const parts: string[] = [];
@@ -478,7 +485,7 @@ ${realEstateNote}
 ${replyContentNote}
 ${aixPropertyRecommendationNote}
 ${aixPropertySendNote}
-${knowledge}
+${knowledgeNote}
 ${phrases}
 
 ${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}
@@ -547,7 +554,8 @@ conditions_incomplete, property_available, property_unavailable, screening_passe
       return ALLOWED_INTENTS.has(intent) ? intent : "other";
     }
     return "other";
-  } catch {
+  } catch (err) {
+    console.error("[generate-reply] intent分類失敗 — \"other\" にフォールバック:", err);
     return "other";
   }
 }
@@ -607,7 +615,8 @@ ${conditions}${historyNote}
     const res = await analysisModel.invoke([new HumanMessage(summaryPrompt)]);
     warnIfTruncated(res.response_metadata?.stop_reason, summaryPrompt.length);
     return typeof res.content === "string" ? res.content.trim() : "";
-  } catch {
+  } catch (err) {
+    console.error("[generate-reply] 即席サマリー合成失敗 — サマリーなしで続行:", err);
     return "";
   }
 }
@@ -649,7 +658,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   const lossList = (lossPatterns ?? []).filter(p => (p.content ?? "").trim().length > 0);
   const lossIds = lossList.map(p => p.id).filter(Boolean);
   const lossBlock = lossList.length > 0
-    ? "【🚫 避けるべき対応（失注実例より）】\n" + lossList.map(p => `・${p.content}`).join("\n")
+    ? "【🚫 避けるべき対応（失注実例より）】\n" + lossList.map((p, i) => `${i + 1}. ${p.content}`).join("\n")
     : "";
 
   // pgvector検索（customerMessageがある場合・OPENAI_API_KEYが設定済みの場合）
@@ -687,16 +696,16 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
 
         const sections: string[] = [];
         if (diffLearned.length > 0) {
-          sections.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned.map(k => `・${k.content}`).join("\n"));
+          sections.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
         }
         if (correctionPairs.length > 0) {
-          sections.push("【🟠 スタッフが修正したポイント（このフェーズ専用）】\n" + correctionPairs.map(k => `・${k.content}`).join("\n"));
+          sections.push("【🟠 スタッフが修正したポイント（このフェーズ専用）】\n" + correctionPairs.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
         }
         if (critical.length > 0) {
-          sections.push("【⚠️ 絶対ルール】\n" + critical.map(k => `・${k.content}`).join("\n"));
+          sections.push("【⚠️ 絶対ルール】\n" + critical.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
         }
         if (patterns.length > 0) {
-          sections.push("【スモラの営業パターン・原則】\n" + patterns.map(k => `・${k.content}`).join("\n"));
+          sections.push("【スモラの営業パターン・原則】\n" + patterns.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
         }
         if (phrases.length > 0) {
           sections.push("【スモラのフレーズ】\n" + phrases.map(k => `「${k.content}」`).join("　"));
@@ -739,15 +748,16 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       .order("created_at", { ascending: false }).limit(24),
   ]);
 
-  const stateDiffList = stateDiff || [];
-  const globalDiffDeduped = (globalDiff || []).filter(g => !stateDiffList.some(s => s.content === g.content));
+  const stateDiffList = stateDiff ?? [];
+  const globalDiffDeduped = (globalDiff ?? []).filter(g => !stateDiffList.some(s => s.content === g.content));
   const diffLearned = [...stateDiffList, ...globalDiffDeduped].slice(0, 8);
 
-  const stateSpecificList = stateSpecific || [];
-  const globalList = (global || []).filter(g => !stateSpecificList.some(s => s.content === g.content));
+  const correctionList = correctionPairs ?? [];
+  const stateSpecificList = stateSpecific ?? [];
+  const globalList = (global ?? []).filter(g => !stateSpecificList.some(s => s.content === g.content));
   const all = [...stateSpecificList, ...globalList];
-  const principlesList = topPrinciples || [];
-  if (diffLearned.length === 0 && (correctionPairs?.length ?? 0) === 0 && all.length === 0 && principlesList.length === 0 && !lossBlock) return "";
+  const principlesList = topPrinciples ?? [];
+  if (diffLearned.length === 0 && correctionList.length === 0 && all.length === 0 && principlesList.length === 0 && !lossBlock) return "";
 
   // principle は global/stateSpecific クエリで除外済みのため、専用クエリの結果をそのまま使う
   const critical = principlesList;
@@ -757,7 +767,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   // 使用追跡（fire-and-forget）
   const usedIds = [
     ...diffLearned,
-    ...(correctionPairs?.slice(0, 8) ?? []),
+    ...correctionList.slice(0, 8),
     ...critical.slice(0, 15),
     ...patterns.slice(0, 8),
     ...phrases.slice(0, 6),
@@ -766,16 +776,16 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
 
   const sections: string[] = [];
   if (diffLearned.length > 0) {
-    sections.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned.map(k => `・${k.content}`).join("\n"));
+    sections.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
   }
-  if ((correctionPairs?.length ?? 0) > 0) {
-    sections.push("【🟠 スタッフが修正したポイント（このフェーズ専用）】\n" + correctionPairs!.slice(0, 8).map(k => `・${k.content}`).join("\n"));
+  if (correctionList.length > 0) {
+    sections.push("【🟠 スタッフが修正したポイント（このフェーズ専用）】\n" + correctionList.slice(0, 8).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
   }
   if (critical.length > 0) {
-    sections.push("【⚠️ 絶対ルール】\n" + critical.slice(0, 15).map(k => `・${k.content}`).join("\n"));
+    sections.push("【⚠️ 絶対ルール】\n" + critical.slice(0, 15).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
   }
   if (patterns.length > 0) {
-    sections.push("【スモラの営業パターン・原則】\n" + patterns.slice(0, 8).map(k => `・${k.content}`).join("\n"));
+    sections.push("【スモラの営業パターン・原則】\n" + patterns.slice(0, 8).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
   }
   if (phrases.length > 0) {
     sections.push("【スモラのフレーズ】\n" + phrases.slice(0, 6).map(k => `「${k.content}」`).join("　"));
@@ -801,8 +811,8 @@ async function getEmbedding(text: string): Promise<number[] | null> {
     });
     clearTimeout(tid);
     if (!res.ok) return null;
-    const data = await res.json() as { data: Array<{ embedding: number[] }> };
-    return data.data[0]?.embedding ?? null;
+    const data = await res.json() as { data?: Array<{ embedding?: number[] }> };
+    return data.data?.[0]?.embedding ?? null;
   } catch {
     clearTimeout(tid);
     return null;
@@ -871,8 +881,8 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
       .limit(120),
   ]);
 
-  const sameStateList = sameStateFull || [];
-  const allStateList = (allStateFull || []).filter(
+  const sameStateList = sameStateFull ?? [];
+  const allStateList = (allStateFull ?? []).filter(
     (ex) => !sameStateList.some((s) => s.sent_reply === ex.sent_reply)
   );
 
@@ -1006,7 +1016,7 @@ export async function POST(req: NextRequest) {
           ].filter(Boolean).join(" / ");
         }
       }
-    } catch { /* スクショ読み取り失敗時は無視して通常生成 */ }
+    } catch (err) { console.error("[generate-reply] スクショ読み取り失敗 — 通常生成にフォールバック:", err); }
   }
 
   if (!message) return NextResponse.json({ ok: false, error: "message required" }, { status: 400 });
@@ -1045,7 +1055,7 @@ export async function POST(req: NextRequest) {
         };
       }
     }
-  } catch { /* use hardcoded fallback */ }
+  } catch (err) { console.error("[generate-reply] ai_prompts取得失敗 — ハードコード値にフォールバック:", err); }
 
   try {
     const currentState = normalizeState(state || "first_reply");
@@ -1129,11 +1139,15 @@ export async function POST(req: NextRequest) {
     })();
 
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
+    // 各フェッチはエラーでも生成を止めない（knowledgeなし・実例なしで生成続行）
     const [detectedIntent, knowledge, examples, phrases, autoSummary] = await Promise.all([
       classifyIntent(message, currentState, history),
-      fetchKnowledge(currentState, message, analysisContext),
-      fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext),
-      fetchPhrases(currentState),
+      fetchKnowledge(currentState, message, analysisContext)
+        .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return ""; }),
+      fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext)
+        .catch((err) => { console.error("[generate-reply] fetchExamples失敗 — 実例なしで生成続行:", err); return ""; }),
+      fetchPhrases(currentState)
+        .catch((err) => { console.error("[generate-reply] fetchPhrases失敗 — フレーズなしで生成続行:", err); return ""; }),
       // ai_summaryがない場合のみ条件テキスト+履歴から即席合成（Haiku・並列なので遅延ゼロ）
       !customerSummary && customerConditions
         ? synthesizeCustomerContext(customerConditions, customerName, history)
@@ -1263,6 +1277,10 @@ export async function POST(req: NextRequest) {
             }
           } catch (streamErr) {
             console.error("generate-reply stream error:", streamErr);
+            // フォールバックテキストを返す（無言クローズだとフロントが空ドラフト表示になるため）
+            try {
+              controller.enqueue(encoder.encode("（AI返信の生成に失敗しました。再生成をお試しください）"));
+            } catch { /* controller already closed */ }
             // ❌ 失敗時: draft_pending_at をクリアして永続pendingを防止
             // ※ draft_attempted_at は意図的に触らない（残す＝10分間はorphanedクエリでリトライされない）
             // ※ draft_error_at カラムは conversations に存在しないためエラー時刻は記録しない（追加時はここで記録すること）
