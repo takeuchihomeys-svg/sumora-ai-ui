@@ -463,6 +463,24 @@ export default function TemplateModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [templatesProp]);
 
+  // post_aix でモーダルが開いたとき、sent_message からサブカテゴリを自動検出してフィルターを適用
+  useEffect(() => {
+    if (!postAixContext) return;
+    const msg = postAixContext.sentMessage ?? "";
+    const at = postAixContext.actionType;
+    if (at === "property_send") {
+      if (/新着/.test(msg)) setPropertySendSubFilter("新着まとめ");
+      else if (/条件.{0,6}(広げ|広め|緩め)|エリア.{0,6}広げ|範囲.{0,6}広/.test(msg)) setPropertySendSubFilter("条件広げまとめ");
+      else if (/代わり|代替|別の物件|別のお部屋|別のお部屋|他の物件/.test(msg)) setPropertySendSubFilter("代替物件送り");
+      // 初回まとめ相当: キーワードなし = フィルターなし（全件表示）
+    } else if (at === "viewing_invite") {
+      if (/日程変更|ご変更|変更させて|別のお日|別の日/.test(msg)) setViewingSubFilter("日程変更");
+      else setViewingSubFilter("通常内覧");
+    }
+  // postAixContext は mount 時に固定されるため初回のみ実行
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [postAixContext?.conversationId]);
+
   // post_aix でモーダルが開いたら AIおすすめテンプレを取得（失敗しても通常表示にフォールバック）
   useEffect(() => {
     if (!postAixContext || recommendFetchedRef.current) return;
@@ -470,6 +488,17 @@ export default function TemplateModal({
     if (candidateTemplates.length === 0) return;
     recommendFetchedRef.current = true;
     setRecommendLoading(true);
+    // sent_message からサブカテゴリを直接計算（stateの非同期更新を避けるため再計算）
+    const _msg = postAixContext.sentMessage ?? "";
+    const _at = postAixContext.actionType;
+    let detectedSubCategory: string | null = null;
+    if (_at === "property_send") {
+      if (/新着/.test(_msg)) detectedSubCategory = "新着まとめ";
+      else if (/条件.{0,6}(広げ|広め|緩め)|エリア.{0,6}広げ|範囲.{0,6}広/.test(_msg)) detectedSubCategory = "条件広げまとめ";
+      else if (/代わり|代替|別の物件|別のお部屋|他の物件/.test(_msg)) detectedSubCategory = "代替物件送り";
+    } else if (_at === "viewing_invite") {
+      detectedSubCategory = /日程変更|ご変更|変更させて|別のお日|別の日/.test(_msg) ? "日程変更" : "通常内覧";
+    }
     fetch("/api/recommend-templates", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -479,6 +508,8 @@ export default function TemplateModal({
         sent_message: postAixContext.sentMessage,
         category,
         templates: candidateTemplates.map((t) => ({ id: t.id, label: t.label, text: t.text })),
+        customer_conditions: linkedCustomer?.conditions ?? null,
+        sub_category: detectedSubCategory,
       }),
     })
       .then((res) => res.json())
