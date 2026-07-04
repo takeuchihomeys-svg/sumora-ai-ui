@@ -3,6 +3,8 @@ import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, buildKnowledgeEmbeddingInput, generateEmbedding } from "@/app/lib/knowledge-utils";
 import Anthropic from "@anthropic-ai/sdk";
 
+export const maxDuration = 60;
+
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
 // AIドラフトと実送信の差分を比較して学習ルールを抽出
@@ -81,10 +83,11 @@ function diffImportance(sim: number): number {
 }
 
 export async function POST(req: NextRequest) {
-  // ?limit=N で件数を指定可能（デフォルト15・最大200）
+  // ?limit=N で件数を指定可能（デフォルト30・最大200）
+  // maxDuration=60秒 / 1件あたり約2秒 → 30件が上限目安
   const url = new URL(req.url);
   const limitParam = url.searchParams.get("limit");
-  const limit = limitParam ? Math.min(parseInt(limitParam, 10) || 15, 200) : 15;
+  const limit = limitParam ? Math.min(parseInt(limitParam, 10) || 30, 200) : 30;
 
   // 未処理の差分を取得（is_starred順で重要な学習から処理）
   const { data: examples } = await supabase

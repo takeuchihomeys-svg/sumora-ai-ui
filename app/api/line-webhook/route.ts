@@ -32,6 +32,11 @@ const ACCOUNTS: AccountConfig[] = [
 ];
 
 // ── 同一ユーザーのレート制限（3秒以内の連続AI解析をスキップ）─────────────
+// 注意: このMapはインスタンス内のみ有効（Vercelサーバーレスでは複数インスタンスが
+// 並行動作するためベストエフォート）。クロスインスタンスの実質的な保護は
+// DBベースの2層で担保している:
+//   1. handleTextMessage の line_message_id 重複チェック（LINEリトライを遮断）
+//   2. autoParseFormat 冒頭の raw_format_text 重複チェック（同一テキスト再解析を遮断）
 const recentLineUsers = new Map<string, number>(); // userId → lastProcessedMs
 const RATE_LIMIT_WINDOW_MS = 3000;
 
@@ -335,7 +340,16 @@ function isFormatMessage(text: string): boolean {
   // 変更フレーズ + 条件キーワード1個以上 → 条件更新メッセージと判定
   if (hasChange && condMatches >= 1) return true;
   // 条件キーワード2個以上 → フォーマット送信
-  if (condMatches >= 2) return true;
+  // ただし「区・市・駅」等の汎用キーワードだけの雑談（例:「渋谷区の駅から近いですか？」）で
+  // 不要なAI解析（Anthropic呼び出し）が走らないよう、強いキーワードか数字の存在を必須にする
+  if (condMatches >= 2) {
+    const GENERIC_KEYWORDS = ["区", "市", "駅", "築", "NG", "以下", "以内"];
+    const hasStrong = conditionKeywords.some(
+      (k) => !GENERIC_KEYWORDS.includes(k) && text.includes(k),
+    );
+    const hasDigit = /[0-9０-９一二三四五六七八九十]/.test(text);
+    return hasStrong || hasDigit;
+  }
   return false;
 }
 

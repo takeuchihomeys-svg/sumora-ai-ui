@@ -41,6 +41,10 @@
       "schedule": "23 18 * * *"
     },
     {
+      "path": "/api/cron/backfill-analyze",
+      "schedule": "0 10 * * *"
+    },
+    {
       "path": "/api/learn-trigger-rules",
       "schedule": "35 18 * * *"
     },

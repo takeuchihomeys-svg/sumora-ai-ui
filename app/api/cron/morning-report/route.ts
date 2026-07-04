@@ -102,10 +102,11 @@ export async function GET(req: NextRequest) {
       .limit(3),
 
     // ⑦ テンプレ使用ランキング（上位3件）
+    // ※カラム名は label（name ではない）。use_count が NULL の行は末尾に回す
     supabase
       .from("templates")
-      .select("name, use_count")
-      .order("use_count", { ascending: false })
+      .select("label, category, use_count")
+      .order("use_count", { ascending: false, nullsFirst: false })
       .limit(3),
 
     // ⑧ 昨日の成約数（closed_won になった件数）
@@ -149,9 +150,10 @@ export async function GET(req: NextRequest) {
     statsLines.push(`⚠️ 失注パターントップ3:\n${lines.join("\n")}`);
   }
 
-  // テンプレ使用ランキング
-  if (topTemplates && topTemplates.length > 0) {
-    const rank = topTemplates.map((t, i) => `${i + 1}位 ${t.name}(${t.use_count ?? 0}回)`).join(" / ");
+  // テンプレ使用ランキング（use_count が 0 / NULL のテンプレは除外。クエリ失敗時も安全にスキップ）
+  const usedTemplates = (topTemplates ?? []).filter((t) => (t.use_count ?? 0) > 0);
+  if (usedTemplates.length > 0) {
+    const rank = usedTemplates.map((t, i) => `${i + 1}位 ${t.label}(${t.use_count ?? 0}回)`).join(" / ");
     statsLines.push(`📄 テンプレ使用ランキング: ${rank}`);
   }
 
