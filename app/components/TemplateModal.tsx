@@ -156,7 +156,7 @@ interface AiTemplateCandidate {
 
 interface TemplateModalProps {
   onClose: () => void;
-  onSelect?: (text: string, imageFiles?: File[], label?: string, category?: string, secondMsg?: { type: string; delay: number } | null, templateId?: string) => void;
+  onSelect?: (text: string, imageFiles?: File[], label?: string, category?: string, secondMsg?: { type: string; delay: number } | null, templateId?: string, wasAdapted?: boolean, recommendedRank?: number | null) => void;
   onOpenAixWithFocus?: (focusPoints: string[], templateInfo?: { id?: string; name: string; category: string; structure?: Array<{ label: string; text: string }>; sample?: string; secondMsg?: { type: string; delay: number } | null }) => void;
   /** 親からのキャッシュデータ（提供されれば即時表示・背景で再検証） */
   initialTemplates?: Template[];
@@ -188,6 +188,8 @@ interface TemplateModalProps {
     actionType: string;
     sentMessage: string;
   };
+  // 会話ID（テンプレート選択ログ記録用）
+  conversationId?: string;
 }
 
 const AVAIL_CHECK_TYPES = [
@@ -287,7 +289,7 @@ function stripViewingSubTag(label: string): string {
 
 export default function TemplateModal({
   onClose, onSelect, onOpenAixWithFocus, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword, highlightLabel, suggestedCategory, suggestedColor, suggestedLabel, pendingScheduledMessages, staffMessagedToday, initialSearch,
-  initialTemplates, onCacheUpdate, templates: templatesProp, onRefresh, postAixContext,
+  initialTemplates, onCacheUpdate, templates: templatesProp, onRefresh, postAixContext, conversationId,
 }: TemplateModalProps) {
   const [templates, setTemplates] = useState<Template[]>(templatesProp ?? initialTemplates ?? []);
   // 親からのデータ（props/キャッシュ）があれば即時表示、なければローディング表示
@@ -1484,8 +1486,10 @@ export default function TemplateModal({
                     let displayText = applyVacatingDates(_rawText, vacatingDates[tmpl.id] ?? null);
                     if (soloEntry) displayText = applySoloEntry(displayText);
                     if (customerName) displayText = displayText.replace(/アカウント名/g, customerName);
-                    // AIおすすめ（post_aix時のみ・最大3件）。順番は変えず色枠＋バッジのみ
-                    const aiRec = postAixContext ? aiRecommendations.find((r) => r.id === tmpl.id) : undefined;
+                    // AIおすすめ（post_aix時のみ・上位2件のみ表示）。1位=金「特にオススメ」 2位=緑「オススメ」
+                    const aiRecIdx = postAixContext ? aiRecommendations.findIndex((r) => r.id === tmpl.id) : -1;
+                    const aiRec = aiRecIdx >= 0 && aiRecIdx < 2 ? aiRecommendations[aiRecIdx] : undefined;
+                    const aiRecRank = aiRec ? aiRecIdx + 1 : null; // 1 or 2
                     const isSuggested = !aiRec && !!suggestedCategory && tmpl.category === suggestedCategory;
                     const isHighlighted = !aiRec && !isSuggested && !!highlightKeyword && (tmpl.label.includes(highlightKeyword) || tmpl.text.includes(highlightKeyword));
                     const isVacating = tmpl.label.includes("退去予定") || /[◯○〇]月[◯○〇]/.test(tmpl.text) || /退去予定|退去後|以降ご内覧可能/.test(tmpl.text);
@@ -1493,15 +1497,16 @@ export default function TemplateModal({
                       <div
                         key={tmpl.id}
                         ref={(el) => {
-                          // 最初の推薦/ハイライトカードにスクロール（1回のみ）
-                          if ((isSuggested || isHighlighted) && el && !hasScrolled.current) {
+                          // 最初の推薦/ハイライトカードにスクロール（1回のみ）。特にオススメ優先
+                          if ((aiRecRank === 1 || isSuggested || isHighlighted) && el && !hasScrolled.current) {
                             hasScrolled.current = true;
                             setTimeout(() => el.scrollIntoView({ behavior: "smooth", block: "nearest" }), 150);
                           }
                         }}
                         data-highlighted={isHighlighted ? "true" : undefined}
                         className={`rounded-2xl p-4 ${
-                          aiRec ? "border-2 border-emerald-500 bg-emerald-50" :
+                          aiRec && aiRecRank === 1 ? "border-2 border-amber-400 bg-amber-50" :
+                          aiRec && aiRecRank === 2 ? "border-2 border-emerald-500 bg-emerald-50" :
                           isSuggested ? "border-2" :
                           isHighlighted ? "border-2 border-orange-400 bg-orange-50" :
                           "border border-[#e9edef] bg-[#f8f9fa]"
@@ -1551,12 +1556,20 @@ export default function TemplateModal({
                               return null;
                             })()}
                           </div>
-                          {aiRec && (
+                          {aiRec && aiRecRank === 1 && (
+                            <span
+                              className="shrink-0 rounded-full bg-amber-400 px-2.5 py-0.5 text-[10px] font-bold text-white shadow-sm"
+                              title={aiRec.reason || undefined}
+                            >
+                              ⭐ 特にオススメ
+                            </span>
+                          )}
+                          {aiRec && aiRecRank === 2 && (
                             <span
                               className="shrink-0 rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-white"
                               title={aiRec.reason || undefined}
                             >
-                              ✨ AIおすすめ{aiRec.score >= 90 ? "★★★" : aiRec.score >= 80 ? "★★" : "★"}
+                              ✓ オススメ
                             </span>
                           )}
                           {isSuggested && suggestedColor && (
@@ -2171,7 +2184,10 @@ export default function TemplateModal({
                                     }),
                                   }).catch(() => {});
                                 }
-                                onSelect(displayText, isOcrTemplate ? undefined : (templateImages[tmpl.id] ?? []), tmpl.label, tmpl.category, secondMsg, tmpl.id);
+                                const wasAdapted = displaySource[tmpl.id] === "adapted";
+                                const recIdx = aiRecommendations.findIndex((r) => r.id === tmpl.id);
+                                const recommendedRank = recIdx >= 0 && recIdx < 2 ? recIdx + 1 : null;
+                                onSelect(displayText, isOcrTemplate ? undefined : (templateImages[tmpl.id] ?? []), tmpl.label, tmpl.category, secondMsg, tmpl.id, wasAdapted, recommendedRank);
                                 onClose();
                               }}
                               disabled={isOcrTemplate && extractingId === tmpl.id}

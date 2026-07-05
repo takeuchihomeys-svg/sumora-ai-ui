@@ -504,6 +504,29 @@ CREATE TABLE IF NOT EXISTS template_phrase_logs (
 CREATE INDEX IF NOT EXISTS idx_template_phrase_logs_action ON template_phrase_logs(action_type, conversation_status);
 ALTER TABLE template_phrase_logs DISABLE ROW LEVEL SECURITY;
 
+-- テンプレート選択ログ（どのテンプレを選んだか・AIおすすめと一致したか・修正したか）
+CREATE TABLE IF NOT EXISTS template_selection_logs (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  conversation_id TEXT,
+  conversation_status TEXT,
+  template_id UUID,
+  template_category TEXT,
+  recommended_rank INTEGER,
+  was_recommended BOOLEAN DEFAULT false,
+  was_adapted BOOLEAN DEFAULT false,
+  was_modified_after_adapt BOOLEAN DEFAULT false,
+  original_text TEXT,
+  adapted_text TEXT,
+  final_sent_text TEXT,
+  aix_action_type TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_tsl_conversation_id ON template_selection_logs(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_tsl_template_id ON template_selection_logs(template_id);
+CREATE INDEX IF NOT EXISTS idx_tsl_created_at ON template_selection_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tsl_recommended_rank ON template_selection_logs(recommended_rank);
+ALTER TABLE template_selection_logs DISABLE ROW LEVEL SECURITY;
+
 -- AIXアクションパターン学習テーブル
 -- 「このステータスでこのアクションが取られた」を蓄積して次アクション提案に活用
 CREATE TABLE IF NOT EXISTS action_pattern_logs (

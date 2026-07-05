@@ -691,6 +691,14 @@ export default function Home() {
   const replyTargetCustomerMsgRef = useRef<string>("");
   // G-10: 直近に選択したテンプレートID（送信成功時に使用回数をインクリメント）
   const selectedTemplateIdRef = useRef<string>("");
+  // テンプレート選択ログ（送信時に修正検知して記録）
+  const templateSelectionMetaRef = useRef<{
+    logId: string;
+    originalText: string; // 選択時点のテキスト（適応後を含む）
+    wasAdapted: boolean;
+    conversationStatus: string;
+    convId: string;
+  } | null>(null);
   // Effect1（会話切替）がai_draft自動セット済みの場合、Effect2（Realtime）の二重処理を防ぐフラグ
   const suppressAiDraftAutoLoad = useRef(false);
   // 送信済みメッセージID → save-reply-example の ID（☆PATCH に使用）
@@ -3146,6 +3154,23 @@ export default function Home() {
           body: JSON.stringify({ templateId: selectedTemplateIdRef.current }),
         }).catch(() => {});
         selectedTemplateIdRef.current = "";
+      }
+      // テンプレート選択ログ phase=sent：最終送信テキストと修正有無を記録
+      if (templateSelectionMetaRef.current) {
+        const meta = templateSelectionMetaRef.current;
+        const finalText = textToSend ?? "";
+        const wasModified = meta.wasAdapted && finalText.trim() !== meta.originalText.trim();
+        fetch("/api/learn-template-selection", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            phase: "sent",
+            log_id: meta.logId,
+            final_sent_text: finalText.slice(0, 2000),
+            was_modified_after_adapt: wasModified,
+          }),
+        }).catch(() => {});
+        templateSelectionMetaRef.current = null;
       }
 
       setReplyDraft("");
@@ -6962,7 +6987,7 @@ export default function Home() {
               openAixWithImagePicker(action);
             }
           }}
-          onSelect={(text, imageFiles, label, category, secondMsg, templateId?: string) => {
+          onSelect={(text, imageFiles, label, category, secondMsg, templateId?: string, wasAdapted?: boolean, recommendedRank?: number | null) => {
             // テンプレート選択時はAI下書きをクリア（偽差分学習を防止）
             aiDraftRef.current = "";
             // G-10: 選択したテンプレートIDを記録（送信成功時に使用回数をインクリメント）
@@ -6970,6 +6995,36 @@ export default function Home() {
             // テンプレート内「アカウント名」→ preferredCustomerName に置換
             const resolvedText = text.replace(/アカウント名/g, preferredCustomerName);
             setReplyDraft(resolvedText);
+            // テンプレート選択ログ（phase=select）を記録。送信時に修正有無を追記
+            templateSelectionMetaRef.current = null;
+            if (templateId) {
+              fetch("/api/learn-template-selection", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  phase: "select",
+                  conversation_id: selectedConversation.id,
+                  conversation_status: selectedConversation.status ?? "unknown",
+                  template_id: templateId,
+                  template_category: category ?? null,
+                  recommended_rank: recommendedRank ?? null,
+                  was_recommended: (recommendedRank ?? null) !== null,
+                  was_adapted: wasAdapted ?? false,
+                  original_text: resolvedText.slice(0, 2000),
+                  aix_action_type: activeAixFlow ?? null,
+                }),
+              }).then((r) => r.json()).then((d: { ok: boolean; log_id?: string }) => {
+                if (d.ok && d.log_id) {
+                  templateSelectionMetaRef.current = {
+                    logId: d.log_id,
+                    originalText: resolvedText,
+                    wasAdapted: wasAdapted ?? false,
+                    conversationStatus: selectedConversation.status ?? "unknown",
+                    convId: selectedConversation.id,
+                  };
+                }
+              }).catch(() => {});
+            }
             if (imageFiles && imageFiles.length > 0) setSelectedImageFiles((prev) => [...prev, ...imageFiles]);
             // 2通目設定をキャプチャ（送信時に使用）
             pendingSecondMsgRef.current = secondMsg ?? null;
@@ -7076,6 +7131,7 @@ export default function Home() {
             const meta = action ? AIX_ACTION_META[action] : null;
             return meta ? `💡 ${meta.label}がオススメ` : undefined;
           })()}
+          conversationId={selectedConversation.id}
         />
       )}
 
