@@ -308,7 +308,7 @@ async function autoUpgradeToHot(db: ReturnType<typeof getDb>, userId: string) {
         .eq("line_user_id", userId)
         .eq("is_hot", false),
     ]);
-    void notifyHanbancyoGroup(db, data.customer_name ?? "");
+    notifyHanbancyoGroup(db, data.customer_name ?? "").catch((e) => console.warn("[line-webhook] autoUpgradeToHot notify:", e));
   }
 }
 
@@ -596,7 +596,7 @@ JSONのみ返してください。説明文・コードブロック・マーク�
 
   // 売上番長グループに通知（新規のみ）
   if (isNewCustomer) {
-    void notifyFormatReceived(db, resolvedName, parsedFields);
+    notifyFormatReceived(db, resolvedName, parsedFields).catch((e) => console.warn("[line-webhook] notifyFormatReceived:", e));
   }
 }
 
@@ -609,7 +609,7 @@ async function notifyFormatReceived(
     .from("hanbancyo_settings")
     .select("value")
     .eq("key", "group_id")
-    .single();
+    .maybeSingle();
   const groupId = data?.value as string | undefined;
   const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN;
   if (!groupId || !token) {
@@ -768,7 +768,7 @@ async function notifyHanbancyoGroup(db: ReturnType<typeof getDb>, customerName: 
     .from("hanbancyo_settings")
     .select("value")
     .eq("key", "group_id")
-    .single();
+    .maybeSingle();
   const groupId = data?.value as string | undefined;
   const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN;
   if (!groupId || !token) return;
@@ -786,7 +786,7 @@ async function notifyHanbancyoGroup(db: ReturnType<typeof getDb>, customerName: 
         text: `🔥 ${customerName}さんから返信きた！！\n今が熱いからとことん詰める！！`,
       }],
     }),
-  });
+  }).catch((e) => console.warn("[notifyHanbancyoGroup] push failed:", e));
 }
 
 // ── 画像メッセージ即時保存（LINEへの応答前に完了させる軽量処理）────────────

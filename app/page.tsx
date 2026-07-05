@@ -5,6 +5,7 @@ import AixModal, { type AixActionType } from "./components/AixModal";
 import BottomNav from "./components/BottomNav";
 import TemplateModal, { type Template as CachedTemplate } from "./components/TemplateModal";
 import { supabase } from "./lib/supabase";
+import { detectPlaceholders } from "./lib/validate-reply";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 
@@ -367,6 +368,17 @@ export default function Home() {
   const multiSendTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   // 2通目専用タイマー（extrasのclearTimeoutに巻き添えされないよう分離）
   const secondMsgTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // アンマウント時に全送信タイマーを解除（ページ遷移後の見えない送信・二重送信を防止）
+  useEffect(() => {
+    return () => {
+      if (secondMsgTimerRef.current) {
+        clearTimeout(secondMsgTimerRef.current);
+        secondMsgTimerRef.current = null;
+      }
+      multiSendTimersRef.current.forEach((t) => clearTimeout(t));
+      multiSendTimersRef.current = [];
+    };
+  }, []);
   // A-1: テンプレート一覧のSSoT（fetch責務を親に一本化。モーダルには templates + onRefresh を渡す）
   const [templateCache, setTemplateCache] = useState<CachedTemplate[]>([]);
   const fetchTemplates = useCallback(async () => {
@@ -2915,6 +2927,14 @@ export default function Home() {
     setShowSendConfirm(false);
     if (!selectedConversation.id) return;
     if (!replyDraft.trim() && selectedImageFiles.length === 0) return;
+    // 未置換プレースホルダーの送信ブロック（[日付]等がそのまま顧客に届くのを防ぐ）
+    if (replyDraft.trim()) {
+      const leftover = detectPlaceholders(replyDraft);
+      if (leftover.length > 0) {
+        setError(`未置換のプレースホルダーがあります: ${leftover.join(" ")}。実際の内容に書き換えてから送信してください。`);
+        return;
+      }
+    }
     // 会話切替の競合を防ぐため、関数開始時点の convId をキャプチャして非同期全体で使う
     const convId = selectedConversation.id;
     // 2通目設定をキャプチャ（非同期処理中に変わらないよう先に取得）
@@ -3354,6 +3374,14 @@ export default function Home() {
     learnPayload?: { customerMessage?: string; conversationState?: string }
   ) => {
     if (!selectedConversation.id || (!text.trim() && !imageUrl)) return;
+    // 未置換プレースホルダーの送信ブロック
+    if (text.trim()) {
+      const leftover = detectPlaceholders(text);
+      if (leftover.length > 0) {
+        setError(`未置換のプレースホルダーを検出したため送信を中止しました: ${leftover.join(" ")}`);
+        return;
+      }
+    }
     // AIX送信テキストを会話ごとに記録（post_aixテンプレのAIおすすめコンテキストに使用）
     if (isAix && text.trim()) lastAixSentTextRef.current.set(selectedConversation.id, text.trim());
     // AIX送信時も含めて、送信後は次アクション提案をリセット（状況が変わったため）
@@ -7155,6 +7183,7 @@ export default function Home() {
 
       {aixModalType && selectedConversation.id ? (
         <AixModal
+          key={`${aixModalType}:${selectedConversation.id}`}
           actionType={aixModalType}
           conversationId={selectedConversation.id}
           customerName={preferredCustomerName}

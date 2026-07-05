@@ -538,7 +538,7 @@ export default function AixModal({
         reader.readAsDataURL(initialImageFile);
       }
     }
-  }, []);
+  }, [initialImageFile, actionType]);
 
   useEffect(() => {
     if (!initialSendImages || initialSendImages.length === 0) return;

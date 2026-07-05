@@ -75,7 +75,14 @@ function isStopNgram(ngram: string): boolean {
   return false;
 }
 
-export async function POST() {
+export async function POST(req?: Request) {
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret && req) {
+    const authHeader = (req.headers as Headers).get("authorization");
+    if (authHeader !== `Bearer ${cronSecret}`) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+  }
   // action_pattern_logs から全データ取得（source で重み付け）
   const { data: logs } = await supabase
     .from("action_pattern_logs")
@@ -272,6 +279,11 @@ export async function POST() {
 }
 
 // GET: Vercel cronから呼ばれる → 学習を実行
-export async function GET() {
-  return POST();
+export async function GET(req: Request) {
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = (req.headers as Headers).get("authorization");
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+  return POST(req);
 }

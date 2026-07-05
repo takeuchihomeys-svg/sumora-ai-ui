@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEND_RULES } from "@/app/lib/line-reply-prompts";
 
+export const maxDuration = 60;
+
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY!;
 const MODEL = "claude-sonnet-4-6";
 
@@ -303,6 +305,7 @@ async function callClaude(system: string, user: string, action: string): Promise
       system,
       messages: [{ role: "user", content: user }],
     }),
+    signal: AbortSignal.timeout(45_000),
   });
   if (!res.ok) throw new Error(`Claude error: ${await res.text()}`);
   const data = await res.json();
@@ -324,6 +327,7 @@ async function callClaudeHaiku(system: string, user: string, action: string): Pr
       system,
       messages: [{ role: "user", content: user }],
     }),
+    signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) throw new Error(`Claude Haiku error: ${await res.text()}`);
   const data = await res.json();
@@ -345,6 +349,7 @@ async function callClaudeVision(system: string, content: unknown[], action: stri
       system,
       messages: [{ role: "user", content }],
     }),
+    signal: AbortSignal.timeout(45_000),
   });
   if (!res.ok) throw new Error(`Claude Vision error: ${await res.text()}`);
   const data = await res.json();

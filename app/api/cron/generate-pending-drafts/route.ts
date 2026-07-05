@@ -8,6 +8,11 @@ function getDb() {
   );
 }
 
+export const maxDuration = 60;
+
+const PER_CONV_TIMEOUT_MS = 30_000;
+const TIME_BUDGET_MS = 50_000;
+
 const SKIP_STATUSES = new Set(["applying", "screening", "contract", "closed_won"]);
 
 const STATUS_ALIAS: Record<string, string> = {
@@ -120,8 +125,15 @@ async function run() {
   let processed = 0;
   let skipped = 0;
 
+  const batchStart = Date.now();
   let isFirst = true;
   for (const conv of combined) {
+    // 残り時間が少ない場合は残りを次回Cronに委ねる
+    if (Date.now() - batchStart > TIME_BUDGET_MS) {
+      console.warn("[generate-pending-drafts] time budget exceeded, deferring rest");
+      break;
+    }
+
     const convId = conv.id as string;
     const convStatus = conv.status as string;
     const pcId = conv.property_customer_id as string | null;
@@ -135,9 +147,15 @@ async function run() {
 
     // 先にpendingをクリアして重複処理を防ぐ ＋ 生成試行時刻をDBに記録
     // （失敗しても draft_attempted_at から10分間はorphanedクエリの再試行対象外になる）
-    await db.from("conversations")
+    const { error: markErr } = await db.from("conversations")
       .update({ draft_pending_at: null, draft_attempted_at: new Date().toISOString() })
       .eq("id", convId);
+    if (markErr) {
+      // マーク失敗のまま生成すると毎分再処理＋二重生成になるためスキップ
+      console.error("[generate-pending-drafts] mark update failed:", convId, markErr.message);
+      skipped++;
+      continue;
+    }
 
     if (SKIP_STATUSES.has(convStatus) || conv.last_sender !== "customer") {
       skipped++;
@@ -198,6 +216,7 @@ async function run() {
           customerConditions,
           customerSummary: pcData?.ai_summary || "",
         }),
+        signal: AbortSignal.timeout(PER_CONV_TIMEOUT_MS),
       });
 
       if (!draftRes.ok || !draftRes.body) continue;
