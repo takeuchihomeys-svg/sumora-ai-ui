@@ -650,6 +650,19 @@ CREATE INDEX IF NOT EXISTS idx_ai_reply_examples_conv_id ON ai_reply_examples(co
 -- ai_reply_examples: 実際の送信時刻（G-04: page.tsx から sentAt を受け取り保存）
 ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ;
 
+-- 路線別駅順序テーブル（隣駅展開・広げて検索用）
+-- popup-maps.js の LINE_STATION_ORDER を正規化してDB管理
+-- order_idx から order_idx ± 1 で隣駅を導出（prev/next カラムは正規化しない）
+CREATE TABLE IF NOT EXISTS line_stations (
+  line_name TEXT NOT NULL,
+  station_name TEXT NOT NULL,
+  order_idx INT NOT NULL,
+  PRIMARY KEY (line_name, station_name)
+);
+CREATE INDEX IF NOT EXISTS idx_line_stations_line ON line_stations(line_name);
+CREATE INDEX IF NOT EXISTS idx_line_stations_station ON line_stations(station_name);
+ALTER TABLE line_stations DISABLE ROW LEVEL SECURITY;
+
 -- ai_reply_examples: 自動品質チェック結果フラグ
 ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS quality_auto_ok BOOLEAN;
 

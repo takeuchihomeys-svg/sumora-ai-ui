@@ -5,6 +5,7 @@ const API_BASE = "https://sumora-ai-ui.vercel.app";
 // ── 自動学習マップ（Supabase から起動時に取得・未知トークンは Web検索で自動解決）──
 const LEARNED_WARD_MAP    = {};  // 地名 → 市区
 const LEARNED_STATION_MAP = {};  // 駅名 → { ward, realpro_lines[], itandi_lines[], reins_line }
+const LEARNED_LINE_ORDER  = {};  // 路線名 → 駅配列（順序付き）- DBのline_stationsから起動時にロード
 
 // ハードコードマップとSupabase DBを差分sync（DBにないtokenだけupsert）
 async function seedMapsIfEmpty() {
@@ -56,9 +57,10 @@ async function fetchLearnedMaps() {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 6000);
     try {
-      const [regionRes, stationRes] = await Promise.all([
-        fetch(`${API_BASE}/api/region-map`,  { cache: "no-store", signal: ctrl.signal }),
-        fetch(`${API_BASE}/api/station-map`, { cache: "no-store", signal: ctrl.signal }),
+      const [regionRes, stationRes, lineRes] = await Promise.all([
+        fetch(`${API_BASE}/api/region-map`,    { cache: "no-store", signal: ctrl.signal }),
+        fetch(`${API_BASE}/api/station-map`,   { cache: "no-store", signal: ctrl.signal }),
+        fetch(`${API_BASE}/api/line-stations`, { cache: "no-store", signal: ctrl.signal }),
       ]);
       clearTimeout(timer);
       if (regionRes.ok) {
@@ -74,8 +76,13 @@ async function fetchLearnedMaps() {
           };
         }
       }
+      if (lineRes.ok) {
+        const d = await lineRes.json();
+        Object.assign(LEARNED_LINE_ORDER, d.lines || {});
+      }
       console.log("[AX] 学習済みロード: 地名", Object.keys(LEARNED_WARD_MAP).length,
-        "件 / 駅", Object.keys(LEARNED_STATION_MAP).length, "件");
+        "件 / 駅", Object.keys(LEARNED_STATION_MAP).length,
+        "件 / 路線", Object.keys(LEARNED_LINE_ORDER).length, "本");
       return true;
     } catch {
       clearTimeout(timer);
@@ -295,10 +302,11 @@ function findStationLines(areaText) {
 
 
 // 当駅が属する路線上の前後各1駅を返す（重複なし）
+// LINE_STATION_ORDER（ハードコード）→ LEARNED_LINE_ORDER（DB）の順で参照
 function getAdjacentStations(stationName, lines) {
   const adj = new Set();
   for (const line of (lines || [])) {
-    const order = LINE_STATION_ORDER[line] || [];
+    const order = LINE_STATION_ORDER[line] || LEARNED_LINE_ORDER[line] || [];
     const idx = order.indexOf(stationName);
     if (idx > 0) adj.add(order[idx - 1]);
     if (idx >= 0 && idx < order.length - 1) adj.add(order[idx + 1]);
@@ -311,13 +319,15 @@ function getAdjacentStations(stationName, lines) {
 // ② ない場合 → 1ホップ探索（A路線の駅 X が B路線にも属する → X〜Bの中間駅を返す）
 function expandStationRange(stationA, stationB) {
   const result = [];
-  const linesA = STATION_LINE_MAP[stationA] || [];
-  const linesB = STATION_LINE_MAP[stationB] || [];
+  const linesA = STATION_LINE_MAP[stationA] || LEARNED_STATION_MAP[stationA]?.realpro_lines || [];
+  const linesB = STATION_LINE_MAP[stationB] || LEARNED_STATION_MAP[stationB]?.realpro_lines || [];
+
+  const getOrder = (line) => LINE_STATION_ORDER[line] || LEARNED_LINE_ORDER[line] || [];
 
   // ① 直接共通路線
   for (const line of linesA) {
     if (!linesB.includes(line)) continue;
-    const order = LINE_STATION_ORDER[line] || [];
+    const order = getOrder(line);
     const idxA = order.indexOf(stationA), idxB = order.indexOf(stationB);
     if (idxA === -1 || idxB === -1) continue;
     const from = Math.min(idxA, idxB), to = Math.max(idxA, idxB);
@@ -329,20 +339,18 @@ function expandStationRange(stationA, stationB) {
 
   // ② 1ホップ探索: A側の各路線を走査して B側の路線につながる中間駅を探す
   for (const lineA of linesA) {
-    const orderA = LINE_STATION_ORDER[lineA] || [];
+    const orderA = getOrder(lineA);
     const idxA = orderA.indexOf(stationA);
     if (idxA === -1) continue;
     for (const mid of orderA) {
       if (mid === stationA) continue;
-      const linesMid = STATION_LINE_MAP[mid] || [];
+      const linesMid = STATION_LINE_MAP[mid] || LEARNED_STATION_MAP[mid]?.realpro_lines || [];
       for (const lineMid of linesMid) {
         if (!linesB.includes(lineMid)) continue;
-        const orderMid = LINE_STATION_ORDER[lineMid] || [];
+        const orderMid = getOrder(lineMid);
         const idxMid = orderMid.indexOf(mid), idxB = orderMid.indexOf(stationB);
         if (idxMid === -1 || idxB === -1) continue;
-        // 中間駅 mid を追加
         if (!result.includes(mid)) result.push(mid);
-        // mid〜stationB の中間駅を追加
         const from = Math.min(idxMid, idxB), to = Math.max(idxMid, idxB);
         for (let i = from + 1; i < to; i++) {
           if (!result.includes(orderMid[i])) result.push(orderMid[i]);
