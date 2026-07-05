@@ -119,6 +119,7 @@ ${templates.map((t, i) => {
     const response = await client.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 1200,
+      system: "あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。指定されたJSON形式のみで回答し、説明文は一切付けないでください。",
       messages: [{ role: "user", content: prompt }],
     });
 

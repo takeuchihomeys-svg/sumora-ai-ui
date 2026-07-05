@@ -8059,7 +8059,7 @@ export default function Home() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-0.5">
                         <span className="text-[13px] font-bold text-[#111b21]">AIX提案ロジック</span>
-                        <span className="shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-[9px] font-bold text-orange-700">7ボタン</span>
+                        <span className="shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-[9px] font-bold text-orange-700">9項目</span>
                       </div>
                       <div className="text-[11px] text-[#8696a0]">各AIXボタンの発動条件・キーワード管理</div>
                     </div>
@@ -8077,6 +8077,8 @@ export default function Home() {
                         { key: "aix_logic_application_push", label: "✍️ 申込へ！", desc: "内覧後・申込意欲の発動条件" },
                         { key: "aix_logic_meeting_place", label: "📍 待ち合わせ", desc: "内覧日時確定後の発動条件" },
                         { key: "aix_logic_property_recommendation", label: "⭐ 物件オススメ", desc: "条件整理後・代替物件の発動条件" },
+                        { key: "aix_property_recommendation_rules", label: "🚫 物件オススメ 絶対禁止ルール", desc: "物件オススメAIXの禁止事項・品質ルール" },
+                        { key: "aix_property_send_rules", label: "🚫 物件ピックアップ 絶対禁止ルール", desc: "物件ピックアップAIXの禁止事項・品質ルール" },
                       ].map((sub) => {
                         const item = promptItems.find((p) => p.key === sub.key);
                         const isCustom = item?.is_custom ?? false;
