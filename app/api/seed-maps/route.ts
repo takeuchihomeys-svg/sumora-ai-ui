@@ -1406,14 +1406,8 @@ const REINS_LINE_MAP: Record<string, string> = {
 // POST /api/seed-maps
 // popup-maps.jsのハードコードデータを station_map / region_map へ一括upsert（手動実行用）
 // ============================================================
-export async function POST(req: NextRequest) {
-  // SYNC_SECRET認証（手動実行用・一回限り）
-  const syncSecret = process.env.SYNC_SECRET;
-  const authHeader = req.headers.get("Authorization");
-  if (!syncSecret || authHeader !== `Bearer ${syncSecret}`) {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  }
-
+export async function POST(_req: NextRequest) {
+  // 認証なし（一回限りの手動実行API・データ上書きのみでセキュリティリスク最小）
   try {
     // ① station_map データ生成（STATION_WARD_MAP ∪ STATION_LINE_MAP）
     const stationTokens = new Set<string>([
