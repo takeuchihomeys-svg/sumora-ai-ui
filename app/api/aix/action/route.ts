@@ -446,7 +446,7 @@ export async function POST(request: NextRequest) {
     const jstHourNow = (new Date().getUTCHours() + 9) % 24;
     const greetingPhrase = buildGreeting(jstHourNow, isFirstEverReply, staffMessagedToday, customerInitiated);
     // AI自由生成プロンプトに注入する挨拶時間ルール（挨拶を含みうるアクションで使用）
-    const greetingTimeNote = `\n\n【挨拶の時間ルール（共通・必ず守る）】現在時刻はJST${jstHourNow}時台。メッセージに挨拶を入れる場合は必ず「${greetingPhrase}」を使うこと（21時以降・早朝5時以前にこちらからプロアクティブに連絡する場合は「夜分遅くに失礼致します！！」）。挨拶が不要な構成・固定フォーマットの場合は挨拶を追加しないこと。`;
+    const greetingTimeNote = `\n\n【挨拶の時間ルール（共通・必ず守る）】現在時刻はJST${jstHourNow}時台。メッセージに挨拶を入れる場合は必ず「${greetingPhrase}」を使うこと（21時以降・早朝5時以前にこちらからプロアクティブに連絡する場合は「夜分遅くに失礼致します！！」）。挨拶が不要な構成・固定フォーマットの場合は挨拶を追加しないこと。\n・名前と挨拶文は必ず同じ行につなげて書くこと（例：「〇〇さん${greetingPhrase}」）。名前だけを単独の行・単独の一文に置くのは絶対禁止。`;
 
     // 直近の会話履歴テキスト（viewing_invite・application_push で使用）
     const recentHistory = Array.isArray(recent_messages) && recent_messages.length > 0
@@ -2052,7 +2052,7 @@ ${jstTodayStr}
 内覧当日に送る「内覧前挨拶」LINEメッセージを生成してください。
 
 【出力構成（この3行構成を厳守・一字一句このフォーマット）】
-①「${name}お世話になっております！！」
+①「${name}${greetingPhrase}」
 ②「本日〇〇時お部屋ご案内させて頂きます！」（〇〇を時刻に置き換え。時刻がなければ「本日お部屋ご案内させて頂きます！」）
 ③「本日は何卒よろしくお願い致します！！」
 
