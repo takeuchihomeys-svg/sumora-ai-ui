@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
 // LINE アカウント → チャンネルアクセストークンのマッピング
@@ -109,7 +109,7 @@ export async function POST(req: NextRequest) {
 
     // 実際に物件を送った → pending の property_send タスクをサーバー側でも自動完了（安全網）
     if (isActualSend) {
-      void (async () => {
+      after(async () => {
         try {
           const { data: convRow } = await supabase
             .from("conversations")
@@ -134,12 +134,12 @@ export async function POST(req: NextRequest) {
             }).catch(() => {});
           }
         } catch {}
-      })();
+      });
     }
 
     const triggered = !isActualSend && STAFF_SEND_KEYWORDS.some((k) => message.includes(k));
     if (triggered) {
-      void (async () => {
+      after(async () => {
         try {
           const { data: convRow } = await supabase
             .from("conversations")
@@ -202,7 +202,7 @@ export async function POST(req: NextRequest) {
             }
           }
         } catch {}
-      })();
+      });
     }
   }
 

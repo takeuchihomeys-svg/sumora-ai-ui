@@ -1,5 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+
+export const maxDuration = 300;
 
 // アカウント定義（send-line-message と同じキー体系）
 const ACCOUNTS = [
@@ -14,13 +16,21 @@ async function detectAccount(lineUserId: string): Promise<string> {
     if (!account.token) continue;
     const res = await fetch(`https://api.line.me/v2/bot/profile/${lineUserId}`, {
       headers: { Authorization: `Bearer ${account.token}` },
+      signal: AbortSignal.timeout(10_000),
     });
     if (res.ok) return account.key;
   }
   return "sumora"; // フォールバック
 }
 
-export async function POST() {
+export async function POST(req: NextRequest) {
+  // CRON_SECRET fail-closed認証（未設定時も拒否）
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers.get("Authorization");
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
   // 全会話を取得
   const { data: conversations, error } = await supabase
     .from("conversations")

@@ -51,17 +51,26 @@ function formatDateKey(date: Date) {
 }
 
 function formatTimeJP(dateStr: string) {
-  const d = new Date(dateStr);
-  return `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const jst = new Date(new Date(dateStr).getTime() + 9 * 60 * 60 * 1000);
+  return `${jst.getUTCHours()}:${String(jst.getUTCMinutes()).padStart(2, "0")}`;
 }
 
-function toLocalInputValue(date: Date) {
-  const y = date.getFullYear();
-  const mo = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  const h = String(date.getHours()).padStart(2, "0");
-  const mi = String(date.getMinutes()).padStart(2, "0");
-  return `${y}-${mo}-${d}T${h}:${mi}`;
+// UTCのDateをJSTの日付キー（YYYY-MM-DD）に変換する
+function toJSTDateKey(date: Date): string {
+  return date
+    .toLocaleDateString("ja-JP", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" })
+    .replace(/\//g, "-");
+}
+
+// UTCのDateをJSTのdatetime-local値（YYYY-MM-DDTHH:mm）に変換する
+function toLocalInputValue(date: Date): string {
+  const jst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+  return jst.toISOString().slice(0, 16);
+}
+
+// datetime-localの値（JSTの壁時計時刻）をUTC ISO文字列に変換する
+function jstInputToISO(value: string): string {
+  return new Date(`${value}:00+09:00`).toISOString();
 }
 
 export default function CalendarPage() {
@@ -134,28 +143,32 @@ export default function CalendarPage() {
 
   const fetchAll = async () => {
     setLoading(true);
-    const startOfMonth = new Date(year, month, 1).toISOString();
-    const endOfMonth = new Date(year, month + 1, 0, 23, 59, 59).toISOString();
     const fromDate = `${year}-${String(month + 1).padStart(2, "0")}-01`;
     const toDate = `${year}-${String(month + 1).padStart(2, "0")}-${String(new Date(year, month + 1, 0).getDate()).padStart(2, "0")}`;
+    // JSTの月初0:00〜月末23:59:59をUTCに変換して問い合わせる
+    const startOfMonth = new Date(`${fromDate}T00:00:00+09:00`).toISOString();
+    const endOfMonth = new Date(`${toDate}T23:59:59+09:00`).toISOString();
 
-    const [localResult, screeningResult] = await Promise.all([
-      supabase
-        .from("calendar_events")
-        .select("*")
-        .gte("start_at", startOfMonth)
-        .lte("start_at", endOfMonth)
-        .order("start_at", { ascending: true }),
-      fetch(`/api/daily-tasks?from=${fromDate}&to=${toDate}`).then(r => r.ok ? r.json() : []),
-    ]);
+    try {
+      const [localResult, screeningResult] = await Promise.all([
+        supabase
+          .from("calendar_events")
+          .select("*")
+          .gte("start_at", startOfMonth)
+          .lte("start_at", endOfMonth)
+          .order("start_at", { ascending: true }),
+        fetch(`/api/daily-tasks?from=${fromDate}&to=${toDate}`).then(r => r.ok ? r.json() : []).catch(() => []),
+      ]);
 
-    if (!localResult.error && localResult.data) {
-      setEvents((localResult.data as Omit<CalendarEvent, "_source">[]).map(e => ({ ...e, _source: "local" as const })));
+      if (!localResult.error && localResult.data) {
+        setEvents((localResult.data as Omit<CalendarEvent, "_source">[]).map(e => ({ ...e, _source: "local" as const })));
+      }
+      if (Array.isArray(screeningResult)) {
+        setDailyTasks(screeningResult.map((t: Omit<DailyTask, "_source">) => ({ ...t, _source: "screening_admin" as const })));
+      }
+    } finally {
+      setLoading(false);
     }
-    if (Array.isArray(screeningResult)) {
-      setDailyTasks(screeningResult.map((t: Omit<DailyTask, "_source">) => ({ ...t, _source: "screening_admin" as const })));
-    }
-    setLoading(false);
   };
 
   const firstDay = new Date(year, month, 1).getDay();
@@ -168,7 +181,7 @@ export default function CalendarPage() {
 
   const eventsByDate: Record<string, AnyEvent[]> = {};
   for (const ev of events) {
-    const key = ev.start_at.slice(0, 10);
+    const key = toJSTDateKey(new Date(ev.start_at));
     if (!eventsByDate[key]) eventsByDate[key] = [];
     eventsByDate[key].push(ev);
   }
@@ -213,8 +226,8 @@ export default function CalendarPage() {
       title: ev.title,
       event_type: ev.event_type,
       customer_name: ev.customer_name || "",
-      start_at: ev.start_at.slice(0, 16),
-      end_at: ev.end_at ? ev.end_at.slice(0, 16) : "",
+      start_at: toLocalInputValue(new Date(ev.start_at)),
+      end_at: ev.end_at ? toLocalInputValue(new Date(ev.end_at)) : "",
       all_day: ev.all_day,
       notes: ev.notes || "",
       sync_to_screening: false,
@@ -231,16 +244,16 @@ export default function CalendarPage() {
     setSaving(true);
     setFormError("");
 
-    const startDate = new Date(form.start_at);
+    // form.start_at / form.end_at はJSTの壁時計時刻（datetime-local値）
     const dateStr = form.start_at.slice(0, 10);
-    const timeStr = form.all_day ? "" : `${String(startDate.getHours()).padStart(2, "0")}:${String(startDate.getMinutes()).padStart(2, "0")}`;
+    const timeStr = form.all_day ? "" : form.start_at.slice(11, 16);
 
     const payload = {
       title: form.title.trim(),
       event_type: form.event_type,
       customer_name: form.customer_name.trim(),
-      start_at: new Date(form.start_at).toISOString(),
-      end_at: form.end_at ? new Date(form.end_at).toISOString() : null,
+      start_at: jstInputToISO(form.start_at),
+      end_at: form.end_at ? jstInputToISO(form.end_at) : null,
       all_day: form.all_day,
       notes: form.notes.trim(),
     };
@@ -257,9 +270,7 @@ export default function CalendarPage() {
     // 申込ツールにも同期
     if (form.sync_to_screening && !editingEvent) {
       const cfg = EVENT_TYPE_CONFIG[form.event_type];
-      const endTimeStr = form.end_at
-        ? `${String(new Date(form.end_at).getHours()).padStart(2, "0")}:${String(new Date(form.end_at).getMinutes()).padStart(2, "0")}`
-        : "";
+      const endTimeStr = form.end_at ? form.end_at.slice(11, 16) : "";
       await fetch("/api/daily-tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

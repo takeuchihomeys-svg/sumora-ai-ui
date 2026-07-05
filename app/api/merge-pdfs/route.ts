@@ -2,7 +2,42 @@ import { NextRequest, NextResponse } from "next/server";
 import { PDFDocument } from "pdf-lib";
 import { supabase } from "@/app/lib/supabase";
 
+export const maxDuration = 60;
+
 const HANBANCYO_TOKEN = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? "";
+
+// SSRF対策: pdf_urls のドメイン allowlist
+// - realnetpro.com（リアプロ）
+// - vercel-storage.com / blob.vercel-storage.com（Vercel Blob の一時アップロード先）
+const ALLOWED_PDF_HOST_SUFFIXES = ["realnetpro.com", "vercel-storage.com"];
+
+// Cookie（リアプロ認証情報）を送信してよいホスト（リアプロのみ）
+const COOKIE_ALLOWED_HOST_SUFFIXES = ["realnetpro.com"];
+
+function hostMatchesSuffix(hostname: string, suffixes: string[]): boolean {
+  const host = hostname.toLowerCase();
+  return suffixes.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
+}
+
+function isAllowedPdfUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") return false;
+    return hostMatchesSuffix(parsed.hostname, ALLOWED_PDF_HOST_SUFFIXES);
+  } catch {
+    return false;
+  }
+}
+
+function isCookieAllowedUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") return false;
+    return hostMatchesSuffix(parsed.hostname, COOKIE_ALLOWED_HOST_SUFFIXES);
+  } catch {
+    return false;
+  }
+}
 
 async function getGroupId(): Promise<string | null> {
   const { data } = await supabase
@@ -65,14 +100,19 @@ async function pushLineMessage(groupId: string, text: string) {
 }
 
 async function fetchPdfAsBase64(url: string, cookieStr: string): Promise<string> {
+  const headers: Record<string, string> = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    Referer: "https://www.realnetpro.com/",
+    Accept: "application/pdf,*/*",
+  };
+  // Cookie（リアプロ認証情報）は許可ドメイン（リアプロ）にのみ送信する
+  if (cookieStr && isCookieAllowedUrl(url)) {
+    headers.Cookie = cookieStr;
+  }
   const res = await fetch(url, {
-    headers: {
-      Cookie: cookieStr,
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      Referer: "https://www.realnetpro.com/",
-      Accept: "application/pdf,*/*",
-    },
+    headers,
     redirect: "follow",
+    signal: AbortSignal.timeout(15_000),
   });
 
   if (!res.ok) {
@@ -106,6 +146,14 @@ export async function POST(req: NextRequest) {
     let pdfBase64List: string[] = [];
 
     if (pdf_urls && pdf_urls.length > 0) {
+      // SSRF対策: 許可ドメイン以外のURLは拒否
+      const invalidUrl = pdf_urls.find((url) => !isAllowedPdfUrl(url));
+      if (invalidUrl) {
+        return NextResponse.json(
+          { error: `許可されていないURLです: ${invalidUrl}（realnetpro.com / Vercel Blob のみ許可）` },
+          { status: 400 }
+        );
+      }
       // cookie_str なしでも公開URL（Vercel Blob等）は取得可能
       pdfBase64List = await Promise.all(
         pdf_urls.map((url) => fetchPdfAsBase64(url, cookie_str ?? ""))

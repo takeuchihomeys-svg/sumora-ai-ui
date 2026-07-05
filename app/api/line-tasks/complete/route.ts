@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
 const TASK_LABEL: Record<string, string> = {
@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
 
   // 物件出し完了時：紐付き顧客の property_send_count を自動+1
   if (task.task_type === "property_send") {
-    void (async () => {
+    after(async () => {
       try {
         const { data: conv } = await supabase
           .from("conversations")
@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
           })
           .eq("id", conv.property_customer_id as string);
       } catch {}
-    })();
+    });
   }
 
   return NextResponse.json({ ok: true });

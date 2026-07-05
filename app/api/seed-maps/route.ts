@@ -12,6 +12,13 @@ type RegionRow  = { token: string; ward: string; source: string; confidence: num
 type StationRow = { token: string; ward: string | null; realpro_lines: string[]; itandi_lines: string[]; reins_line: string | null; source: string; confidence: number };
 
 export async function POST(req: NextRequest) {
+  // CRON_SECRET認証（fail-closed: 未設定時は常に401）
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers.get("Authorization");
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
   const { regions, stations } = await req.json() as { regions: RegionRow[]; stations: StationRow[] };
   const db = getDb();
 

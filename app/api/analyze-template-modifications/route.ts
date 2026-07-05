@@ -193,7 +193,7 @@ async function runAnalysis(limit: number): Promise<{ analyzed: number; learned: 
 export async function POST(req: NextRequest) {
   const auth = req.headers.get("authorization") ?? "";
   const secret = process.env.CRON_SECRET ?? "";
-  if (secret && auth !== `Bearer ${secret}`) {
+  if (!secret || auth !== `Bearer ${secret}`) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
@@ -213,7 +213,7 @@ export async function POST(req: NextRequest) {
 export async function GET(req: NextRequest) {
   const auth = req.headers.get("authorization") ?? "";
   const secret = process.env.CRON_SECRET ?? "";
-  if (secret && auth !== `Bearer ${secret}`) {
+  if (!secret || auth !== `Bearer ${secret}`) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
   return POST(req);
