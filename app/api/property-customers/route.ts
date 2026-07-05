@@ -26,7 +26,7 @@ async function checkAllDone(): Promise<void> {
     if (!token) return;
     let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? null;
     if (!groupId) {
-      const { data: grp } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").single();
+      const { data: grp } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();
       groupId = (grp?.value as string) ?? null;
     }
     if (!groupId) return;
@@ -97,7 +97,7 @@ export async function PATCH(req: NextRequest) {
       .from("property_customers")
       .select("id, status, property_send_count, line_user_id")
       .eq("id", id)
-      .single();
+      .maybeSingle();
 
     if (current?.status === "new_inquiry") {
       // 新規問い合わせ → 毎日物件出しに自動昇格
@@ -116,7 +116,7 @@ export async function PATCH(req: NextRequest) {
           .eq("line_user_id", current.line_user_id as string)
           .order("updated_at", { ascending: false })
           .limit(1)
-          .single();
+          .maybeSingle();
         lastSender = conv?.last_sender ?? null;
       }
 
@@ -139,7 +139,7 @@ export async function PATCH(req: NextRequest) {
     .update(fields)
     .eq("id", id)
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });

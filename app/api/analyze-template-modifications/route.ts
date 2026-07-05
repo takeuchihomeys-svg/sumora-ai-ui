@@ -143,7 +143,7 @@ async function runAnalysis(limit: number): Promise<{ analyzed: number; learned: 
     // ルールを adaptation_improvement_rules に保存
     for (const { rule, confidence } of rules) {
       // 同カテゴリ内で類似ルールが直近30日に存在するか確認（短縮版テキスト一致）
-      const ruleKey = rule.slice(0, 50); // 先頭50文字で近似チェック
+      const ruleKey = rule.slice(0, 50).replace(/[%_\\]/g, "\\$&"); // 先頭50文字で近似チェック（ilike特殊文字エスケープ）
       const { data: existing } = await supabase
         .from("adaptation_improvement_rules")
         .select("id, example_count, confidence")
@@ -199,7 +199,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const url = new URL(req.url);
-    const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "40"), 100);
+    const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "40") || 40, 100);
     const result = await runAnalysis(limit);
 
     console.log(`[analyze-template-modifications] analyzed=${result.analyzed} learned=${result.learned} categories=${result.categories.join(",")}`);

@@ -1,6 +1,8 @@
 ﻿import { NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
+export const maxDuration = 300;
+
 async function getEmbedding(text: string): Promise<number[] | null> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;

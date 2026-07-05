@@ -1,6 +1,8 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
+export const maxDuration = 60;
+
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
@@ -31,7 +33,7 @@ export async function GET(req: NextRequest) {
   // LINEグループ設定
   let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? null;
   if (!groupId) {
-    const { data } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").single();
+    const { data } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();
     groupId = (data?.value as string) ?? null;
   }
   const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN;
@@ -50,16 +52,21 @@ export async function GET(req: NextRequest) {
     text = `⚠️ まだ対応できていない🔥あついお客さんがいます！\n\n${names}\n\n物件を送るか、確認して「👀 本日確認済み」を押してください！`;
   }
 
-  const res = await fetch("https://api.line.me/v2/bot/message/push", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ to: groupId, messages: [{ type: "text", text }] }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    console.error("[evening-reminder] LINE push error:", body);
-    return NextResponse.json({ ok: false, error: body }, { status: 500 });
+  try {
+    const res = await fetch("https://api.line.me/v2/bot/message/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ to: groupId, messages: [{ type: "text", text }] }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      console.error("[evening-reminder] LINE push failed:", res.status, body);
+      return NextResponse.json({ ok: false, error: body }, { status: 500 });
+    }
+  } catch (err) {
+    console.error("[evening-reminder] LINE push error:", err);
+    return NextResponse.json({ ok: false, error: "LINE push failed" }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true, unattended: unattended.length });

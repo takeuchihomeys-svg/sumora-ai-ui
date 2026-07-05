@@ -142,7 +142,13 @@ export async function POST(req: NextRequest) {
 
     const result = await analyzeDiff(customer_message, ai_draft, sent_reply, conversation_state);
 
-    if (result && !result.skip && result.title && result.rule) {
+    // AI呼び出し失敗時は diff_analyzed_at をマークせず、次回Cronで再試行
+    if (result === null) {
+      processed++;
+      continue;
+    }
+
+    if (!result.skip && result.title && result.rule) {
       // principle は diff 由来ルールの「絶対ルール」昇格を防ぐため許可しない（#4）
       const ALLOWED_CATEGORIES = new Set(["pattern", "style", "phrase"]);
       const rawCategory = (result.category ?? "pattern").split("=")[0].trim();

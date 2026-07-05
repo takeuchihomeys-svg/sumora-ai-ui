@@ -1,6 +1,8 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
+export const maxDuration = 60;
+
 const ACCOUNT_LABEL: Record<string, string> = {
   sumora: "スモラ", ieyasu: "イエヤス", giga: "ギガ賃貸", hasu: "ハス",
 };
@@ -36,7 +38,7 @@ export async function GET(req: NextRequest) {
   // LINEグループ設定
   let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? null;
   if (!groupId) {
-    const { data } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").single();
+    const { data } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();
     groupId = (data?.value as string) ?? null;
   }
   const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN;
@@ -278,27 +280,25 @@ export async function GET(req: NextRequest) {
     sections.push(`🏠 今日物件を出すべきお客さん（${needsProp.length}件）\n\n${lines.join("\n")}`);
   }
 
-  if (sections.length === 0) {
-    const text = `🌅 おはようございます！\n今日は未完了タスク・未返信ともにゼロです🎉\n引き続きよろしくお願いします！${statsBlock}${attributionLine}`;
-    await fetch("https://api.line.me/v2/bot/message/push", {
+  const text = sections.length === 0
+    ? `🌅 おはようございます！\n今日は未完了タスク・未返信ともにゼロです🎉\n引き続きよろしくお願いします！${statsBlock}${attributionLine}`
+    : `🌅 おはようございます！今日のタスクレポートです\n\n${sections.join("\n\n——————\n\n")}${statsBlock}\n\n全員対応よろしくお願いします！${attributionLine}`;
+
+  try {
+    const res = await fetch("https://api.line.me/v2/bot/message/push", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ to: groupId, messages: [{ type: "text", text }] }),
+      signal: AbortSignal.timeout(10_000),
     });
-    return NextResponse.json({ ok: true, tasks: 0, unreplied: 0, needsProp: 0 });
-  }
-
-  const text = `🌅 おはようございます！今日のタスクレポートです\n\n${sections.join("\n\n——————\n\n")}${statsBlock}\n\n全員対応よろしくお願いします！${attributionLine}`;
-
-  const res = await fetch("https://api.line.me/v2/bot/message/push", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ to: groupId, messages: [{ type: "text", text }] }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    return NextResponse.json({ ok: false, error: body }, { status: 500 });
+    if (!res.ok) {
+      const body = await res.text();
+      console.error("[morning-report] LINE push failed:", res.status, body);
+      return NextResponse.json({ ok: false, error: body }, { status: 500 });
+    }
+  } catch (err) {
+    console.error("[morning-report] LINE push error:", err);
+    return NextResponse.json({ ok: false, error: "LINE push failed" }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true, tasks: tasks.length, unreplied: unreplied.length, needsProp: needsProp.length });

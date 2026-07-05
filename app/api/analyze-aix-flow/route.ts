@@ -2,7 +2,9 @@
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "") });
+export const maxDuration = 60;
+
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""), timeout: 45_000 });
 
 // JST日付文字列を返す
 function jstDateStr(): string {

@@ -3,7 +3,9 @@ import { supabase } from "@/app/lib/supabase";
 import webpush from "web-push";
 import Anthropic from "@anthropic-ai/sdk";
 
-const anthropic = new Anthropic();
+export const maxDuration = 60;
+
+const anthropic = new Anthropic({ timeout: 30_000 });
 
 if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
   webpush.setVapidDetails(
@@ -41,7 +43,7 @@ async function resolveAccountByLineUserId(lineUserId: string): Promise<string | 
     .select("account")
     .eq("line_user_id", lineUserId)
     .limit(1)
-    .single();
+    .maybeSingle();
   if (contact?.account) {
     return ACCOUNT_MAP[contact.account as string] ?? null;
   }
@@ -119,7 +121,7 @@ async function handleFormatMessage(conversationId: string, msgText: string): Pro
     .from("conversations")
     .select("id, customer_name, property_customer_id, line_user_id, account")
     .eq("id", conversationId)
-    .single();
+    .maybeSingle();
   if (!conv) return;
 
   if (!conv.property_customer_id) {
@@ -136,7 +138,7 @@ async function handleFormatMessage(conversationId: string, msgText: string): Pro
         ...(conditions || {}),
       })
       .select()
-      .single();
+      .maybeSingle();
     if (newCustomer) {
       await supabase
         .from("conversations")
@@ -149,7 +151,7 @@ async function handleFormatMessage(conversationId: string, msgText: string): Pro
       .from("property_customers")
       .select("additional_conditions")
       .eq("id", conv.property_customer_id)
-      .single();
+      .maybeSingle();
     const prev = (existing as { additional_conditions?: string } | null)?.additional_conditions || "";
     const ts = new Date().toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" });
     const updated = prev ? `${prev}\n\n[${ts}]\n${msgText}` : `[${ts}]\n${msgText}`;
@@ -303,7 +305,7 @@ export async function POST(req: NextRequest) {
           .from("conversations")
           .select("account")
           .eq("id", String(record.conversation_id))
-          .single();
+          .maybeSingle();
 
         const TOKEN_MAP: Record<string, string | undefined> = {
           sumora: process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN,
@@ -402,7 +404,7 @@ export async function POST(req: NextRequest) {
         .from("conversations")
         .select("is_hot")
         .eq("id", String(record.conversation_id))
-        .single();
+        .maybeSingle();
       if (convData && !convData.is_hot) {
         await supabase
           .from("conversations")

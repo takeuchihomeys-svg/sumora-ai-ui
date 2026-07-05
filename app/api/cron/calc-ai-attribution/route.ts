@@ -7,6 +7,8 @@ import { supabase } from "@/app/lib/supabase";
 // generate-reply やダッシュボードが参照できる「AI貢献率」の定量化。
 // 毎日1回（vercel.json cron: 30 16 * * * = JST 01:30）
 
+export const maxDuration = 60;
+
 const METRICS_KEY = "ai_attribution_metrics";
 
 function isAuthorized(req: NextRequest): boolean {

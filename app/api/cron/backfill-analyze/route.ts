@@ -8,12 +8,27 @@ function getBaseUrl(): string {
 }
 
 async function runBackfill() {
-  const res = await fetch(`${getBaseUrl()}/api/analyze-diffs`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-  });
-  const data = await res.json();
-  return NextResponse.json({ ok: true, backfill: data });
+  try {
+    const cronSecret = process.env.CRON_SECRET;
+    const res = await fetch(`${getBaseUrl()}/api/analyze-diffs`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(cronSecret ? { Authorization: `Bearer ${cronSecret}` } : {}),
+      },
+      signal: AbortSignal.timeout(55_000),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error("[backfill-analyze] analyze-diffs error:", res.status, body);
+      return NextResponse.json({ ok: false, error: body }, { status: 500 });
+    }
+    const data = await res.json();
+    return NextResponse.json({ ok: true, backfill: data });
+  } catch (err) {
+    console.error("[backfill-analyze] fetch error:", err);
+    return NextResponse.json({ ok: false, error: String(err) }, { status: 500 });
+  }
 }
 
 // バックフィル専用: analyze-diffsを内部で呼び出して未分析を消化する

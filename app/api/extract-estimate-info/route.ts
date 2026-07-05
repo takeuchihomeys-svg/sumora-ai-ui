@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest, NextResponse } from "next/server";
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 60_000 });
 
 export interface ExtractedEstimate {
   propertyName: string;
@@ -75,6 +75,15 @@ export async function POST(req: NextRequest) {
     const { images = [], supplementaryText = "" } = body;
     if (images.length === 0 && !supplementaryText) {
       return NextResponse.json({ error: "画像またはテキストを入力してください" }, { status: 400 });
+    }
+
+    const SUPPORTED_MIME = new Set(["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"]);
+    const unsupported = images.find((img) => !SUPPORTED_MIME.has(img.mimeType));
+    if (unsupported) {
+      return NextResponse.json(
+        { error: `非対応の画像形式です（${unsupported.mimeType}）。JPEG / PNG / PDF に変換して再度お試しください。` },
+        { status: 400 }
+      );
     }
 
     const systemPrompt = `あなたは不動産賃貸の費用明細・見積書を読み取るAIです。

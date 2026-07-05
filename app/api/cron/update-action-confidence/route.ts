@@ -74,7 +74,9 @@ async function run() {
       { onConflict: "action_type,keyword" }
     );
 
-    if (!upsertError) {
+    if (upsertError) {
+      console.error("[update-action-confidence] upsert error:", action, upsertError.message);
+    } else {
       updated++;
       breakdown[action] = { accepted, dismissed, confidence };
     }

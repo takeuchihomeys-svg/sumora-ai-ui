@@ -334,7 +334,13 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json() as { account: Account; items: ItemData };
     const { account = "sumora", items: d } = body;
-    const templateFile = TEMPLATE_FILES[account] || TEMPLATE_FILES.sumora;
+
+    if (!d || typeof d !== "object") {
+      return NextResponse.json({ error: "items が指定されていません" }, { status: 400 });
+    }
+    const validAccounts = Object.keys(TEMPLATE_FILES) as Account[];
+    const safeAccount: Account = validAccounts.includes(account) ? account : "sumora";
+    const templateFile = TEMPLATE_FILES[safeAccount];
 
     const templatePath = findTemplatePath(templateFile);
     if (!templatePath) {
@@ -362,7 +368,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "見積書シートが見つかりません" }, { status: 500 });
     }
 
-    const savings = fillEstimateSheet(targetSheet, d, account);
+    const savings = fillEstimateSheet(targetSheet, d, safeAccount);
 
     // 見積書シート以外を削除
     const keepId = targetSheet.id;
@@ -374,7 +380,7 @@ export async function POST(req: NextRequest) {
     try {
       buf = Buffer.from(await wb.xlsx.writeBuffer());
       // 元テンプレートのテキスト図形を移植し節約金額を動的書き換え
-      buf = await patchSavingsInDrawing(buf, templatePath, account, savings);
+      buf = await patchSavingsInDrawing(buf, templatePath, safeAccount, savings);
     } catch (writeErr) {
       console.error("[fill-estimate] write error:", writeErr);
       return NextResponse.json(
@@ -383,7 +389,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const accountLabel = ACCOUNT_LABELS[account];
+    const accountLabel = ACCOUNT_LABELS[safeAccount];
     const customerLabel = d.customerName ? `${d.customerName}様` : "見積書";
     const fileName = `${accountLabel}見積書_${customerLabel}.xlsx`;
 

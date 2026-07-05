@@ -1,5 +1,7 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+
+export const maxDuration = 60;
 
 // JSTの現在時刻を分で返す (例: 10:30 → 630)
 function getJSTMinutes(): { todayJST: string; nowMinutes: number } {
@@ -9,21 +11,38 @@ function getJSTMinutes(): { todayJST: string; nowMinutes: number } {
   return { todayJST, nowMinutes };
 }
 
-async function sendGroupMessage(text: string): Promise<void> {
+// グループID/tokenをループ外で1回だけ解決（N+1解消）
+async function resolveLineConfig(): Promise<{ targetId: string; token: string } | null> {
   let targetId = process.env.LINE_STAFF_GROUP_ID ?? null;
   if (!targetId) {
-    const { data } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").single();
+    const { data } = await supabase
+      .from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();
     targetId = (data?.value as string) ?? null;
   }
-  if (!targetId) return;
-  const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN;
-  if (!token) return;
+  const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN
+    ?? process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN;
+  if (!targetId || !token) return null;
+  return { targetId, token };
+}
 
-  await fetch("https://api.line.me/v2/bot/message/push", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ to: targetId, messages: [{ type: "text", text }] }),
-  });
+// 成否を boolean で返す（送信失敗時はフラグを立てない設計に対応）
+async function sendGroupMessage(cfg: { targetId: string; token: string }, text: string): Promise<boolean> {
+  try {
+    const res = await fetch("https://api.line.me/v2/bot/message/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.token}` },
+      body: JSON.stringify({ to: cfg.targetId, messages: [{ type: "text", text }] }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) {
+      console.error("[viewing-announce] LINE push failed:", res.status, await res.text().catch(() => ""));
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error("[viewing-announce] LINE push error:", err);
+    return false;
+  }
 }
 
 export async function GET(req: NextRequest) {
@@ -46,62 +65,81 @@ export async function GET(req: NextRequest) {
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   if (!viewings || viewings.length === 0) return NextResponse.json({ ok: true, announced: 0 });
 
+  // LINE設定をループ外で1回解決
+  const cfg = await resolveLineConfig();
+  if (!cfg) {
+    console.warn("[viewing-announce] LINE group_id or token not configured — skipping");
+    return NextResponse.json({ ok: false, error: "LINE config missing" }, { status: 500 });
+  }
+
   let announced = 0;
 
   for (const v of viewings) {
-    const customerName = (v.customer_name as string) || "お客様";
-    const timeStr = (v.viewing_time as string) || "";
+    try {
+      const customerName = (v.customer_name as string) || "お客様";
+      const timeStr = (v.viewing_time as string) || "";
 
-    // 内覧時刻を分で取得
-    let viewingMinutes: number | null = null;
-    if (timeStr) {
-      const parts = timeStr.split(":");
-      if (parts.length >= 2) {
-        viewingMinutes = parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
-      }
-    }
-
-    // ── 内覧前アナウンス ──
-    if (!v.pre_announce_sent) {
-      let shouldPre = false;
-
-      if (viewingMinutes !== null) {
-        // 内覧1時間前〜内覧時刻の間、または朝9時台（まだ内覧前）
-        const oneHourBefore = viewingMinutes - 60;
-        if (nowMinutes >= oneHourBefore && nowMinutes < viewingMinutes) shouldPre = true;
-        if (nowMinutes >= 9 * 60 && nowMinutes < 9 * 60 + 30 && nowMinutes < viewingMinutes) shouldPre = true;
-      } else {
-        // 時刻未指定: 朝9〜9:30 JSTに送る
-        if (nowMinutes >= 9 * 60 && nowMinutes < 9 * 60 + 30) shouldPre = true;
+      // 内覧時刻を分で取得
+      let viewingMinutes: number | null = null;
+      if (timeStr) {
+        const parts = timeStr.split(":");
+        if (parts.length >= 2) {
+          const h = parseInt(parts[0], 10);
+          const m = parseInt(parts[1], 10);
+          if (Number.isFinite(h) && Number.isFinite(m)) viewingMinutes = h * 60 + m;
+        }
       }
 
-      if (shouldPre) {
-        const timeLabel = timeStr ? ` ${timeStr}〜` : "";
-        const text = `📅【内覧前アナウンス】\n今日${customerName}さん${timeLabel}内覧！！\n内覧前挨拶を送ってあげて！！`;
-        await sendGroupMessage(text);
-        await supabase.from("viewings").update({ pre_announce_sent: true }).eq("id", v.id as string);
-        announced++;
-      }
-    }
+      // ── 内覧前アナウンス ──
+      if (!v.pre_announce_sent) {
+        let shouldPre = false;
 
-    // ── 内覧後アナウンス ──
-    if (!v.post_announce_sent) {
-      let shouldPost = false;
+        if (viewingMinutes !== null) {
+          const oneHourBefore = viewingMinutes - 60;
+          if (nowMinutes >= oneHourBefore && nowMinutes < viewingMinutes) shouldPre = true;
+          if (nowMinutes >= 9 * 60 && nowMinutes < 9 * 60 + 30 && nowMinutes < viewingMinutes) shouldPre = true;
+        } else {
+          if (nowMinutes >= 9 * 60 && nowMinutes < 9 * 60 + 30) shouldPre = true;
+        }
 
-      if (viewingMinutes !== null) {
-        // 内覧時刻の30分後以降
-        if (nowMinutes >= viewingMinutes + 30) shouldPost = true;
-      } else {
-        // 時刻未指定: 夕方18〜18:30 JSTに送る
-        if (nowMinutes >= 18 * 60 && nowMinutes < 18 * 60 + 30) shouldPost = true;
+        if (shouldPre) {
+          const timeLabel = timeStr ? ` ${timeStr}〜` : "";
+          const text = `📅【内覧前アナウンス】\n今日${customerName}さん${timeLabel}内覧！！\n内覧前挨拶を送ってあげて！！`;
+          const sent = await sendGroupMessage(cfg, text);
+          if (sent) {
+            // 送信成功時のみフラグを立てる（失敗時は次回Cronで再試行）
+            const { error: upErr } = await supabase
+              .from("viewings").update({ pre_announce_sent: true }).eq("id", v.id as string);
+            if (upErr) console.error("[viewing-announce] pre_announce_sent update error:", upErr.message);
+            else announced++;
+          }
+        }
       }
 
-      if (shouldPost) {
-        const text = `🏠【内覧後アナウンス】\n${customerName}さん内覧終わり！！\nAIX→挨拶（内覧後）で挨拶送って！！😊`;
-        await sendGroupMessage(text);
-        await supabase.from("viewings").update({ post_announce_sent: true }).eq("id", v.id as string);
-        announced++;
+      // ── 内覧後アナウンス ──
+      if (!v.post_announce_sent) {
+        let shouldPost = false;
+
+        if (viewingMinutes !== null) {
+          if (nowMinutes >= viewingMinutes + 30) shouldPost = true;
+        } else {
+          if (nowMinutes >= 18 * 60 && nowMinutes < 18 * 60 + 30) shouldPost = true;
+        }
+
+        if (shouldPost) {
+          const text = `🏠【内覧後アナウンス】\n${customerName}さん内覧終わり！！\nAIX→挨拶（内覧後）で挨拶送って！！😊`;
+          const sent = await sendGroupMessage(cfg, text);
+          if (sent) {
+            const { error: upErr } = await supabase
+              .from("viewings").update({ post_announce_sent: true }).eq("id", v.id as string);
+            if (upErr) console.error("[viewing-announce] post_announce_sent update error:", upErr.message);
+            else announced++;
+          }
+        }
       }
+    } catch (err) {
+      // 1件の失敗で残りの内覧処理を止めない
+      console.error("[viewing-announce] viewing処理エラー:", v.id, err);
     }
   }
 

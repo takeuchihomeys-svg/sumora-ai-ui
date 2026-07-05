@@ -4,7 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 60;
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY!, timeout: 30_000 });
 const MODEL = "claude-haiku-4-5-20251001";
 
 // AIX後続テンプレートのAI候補自動生成バッチ
