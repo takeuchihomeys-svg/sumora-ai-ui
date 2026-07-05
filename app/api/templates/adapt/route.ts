@@ -7,6 +7,7 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\
 export async function POST(req: NextRequest) {
   const {
     templateText,
+    templateCategory,
     customerName,
     conversationState,
     recentMessages,
@@ -18,6 +19,7 @@ export async function POST(req: NextRequest) {
     staffMessagedToday,
   } = await req.json() as {
     templateText: string;
+    templateCategory?: string;
     customerName?: string;
     conversationState?: string;
     recentMessages?: Array<{ sender: string; text: string; imageUrl?: string }>;
@@ -85,13 +87,31 @@ export async function POST(req: NextRequest) {
     processedTemplateText = processedTemplateText.replace(GREETING_RE, correctGreeting);
   }
 
-  // DBからテンプレート追加ルールを取得
-  const { data: dbRule } = await supabase
-    .from("ai_prompts")
-    .select("content")
-    .eq("key", "template_adapt_rules")
-    .single();
+  // DBからテンプレート追加ルール + 学習済み改善ルールを並列取得
+  const [{ data: dbRule }, { data: learnedRules }] = await Promise.all([
+    supabase.from("ai_prompts").select("content").eq("key", "template_adapt_rules").single(),
+    templateCategory
+      ? supabase
+          .from("adaptation_improvement_rules")
+          .select("rule_text, confidence, example_count")
+          .eq("category", templateCategory)
+          .eq("is_active", true)
+          .order("example_count", { ascending: false })
+          .order("confidence", { ascending: false })
+          .limit(5)
+      : Promise.resolve({ data: null }),
+  ]);
   const extraRules = dbRule?.content ?? "";
+  // 学習済みルール（スタッフの修正パターンから自動抽出）を注入
+  const learnedRulesText = (learnedRules && learnedRules.length > 0)
+    ? `━━━━━━━━━━━━━━━━━━━━
+【📚 このカテゴリで学習した改善ルール — 必ず守ること】
+━━━━━━━━━━━━━━━━━━━━
+過去にスタッフがAI最適化後に繰り返し修正したパターンです。次回は最初からこのように生成してください。
+${(learnedRules as Array<{ rule_text: string; example_count: number }>).map((r, i) => `${i + 1}. ${r.rule_text}（${r.example_count}回確認済み）`).join("\n")}
+
+`
+    : "";
 
   const history = (recentMessages || [])
     .slice(-15)
@@ -260,7 +280,7 @@ ${history || "なし"}
 ${processedTemplateText}
 
 ━━━━━━━━━━━━━━━━━━━━
-${extraRules ? `${extraRules}\n\n━━━━━━━━━━━━━━━━━━━━\n` : ""}${soloEntry ? `【1人入居モード — 厳守】以下のキーワードを含む行はすべて出力しない（完全に削除）：同居人・配偶者・同居者・家族構成・入居人数・お子様・子ども・子供・同居・ご家族\n\n━━━━━━━━━━━━━━━━━━━━\n` : ""}出力は置き換え後のテキストのみ。説明・前置き・補足コメントは一切書かない。`;
+${extraRules ? `${extraRules}\n\n━━━━━━━━━━━━━━━━━━━━\n` : ""}${learnedRulesText}${soloEntry ? `【1人入居モード — 厳守】以下のキーワードを含む行はすべて出力しない（完全に削除）：同居人・配偶者・同居者・家族構成・入居人数・お子様・子ども・子供・同居・ご家族\n\n━━━━━━━━━━━━━━━━━━━━\n` : ""}出力は置き換え後のテキストのみ。説明・前置き・補足コメントは一切書かない。`;
 
   try {
     const msg = await client.messages.create({

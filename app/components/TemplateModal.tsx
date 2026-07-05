@@ -815,6 +815,7 @@ export default function TemplateModal({
         body: JSON.stringify({
           // OCR抽出済みテキストがあれば優先（物件名・住所の消失防止）
           templateText: extractedTexts[tmpl.id] ?? tmpl.text,
+          templateCategory: tmpl.category,
           customerName,
           conversationState,
           recentMessages,

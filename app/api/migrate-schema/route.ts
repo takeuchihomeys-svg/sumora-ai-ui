@@ -525,7 +525,23 @@ CREATE INDEX IF NOT EXISTS idx_tsl_conversation_id ON template_selection_logs(co
 CREATE INDEX IF NOT EXISTS idx_tsl_template_id ON template_selection_logs(template_id);
 CREATE INDEX IF NOT EXISTS idx_tsl_created_at ON template_selection_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tsl_recommended_rank ON template_selection_logs(recommended_rank);
+ALTER TABLE template_selection_logs ADD COLUMN IF NOT EXISTS modification_analyzed BOOLEAN DEFAULT false;
+CREATE INDEX IF NOT EXISTS idx_tsl_not_analyzed ON template_selection_logs(modification_analyzed) WHERE modification_analyzed = false;
 ALTER TABLE template_selection_logs DISABLE ROW LEVEL SECURITY;
+
+-- AI最適化後修正パターンの学習ルールテーブル（カテゴリ別・自動蓄積）
+CREATE TABLE IF NOT EXISTS adaptation_improvement_rules (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  last_triggered_at TIMESTAMPTZ DEFAULT now(),
+  category TEXT NOT NULL,
+  rule_text TEXT NOT NULL,
+  confidence FLOAT DEFAULT 0.5,
+  example_count INTEGER DEFAULT 1,
+  is_active BOOLEAN DEFAULT true
+);
+CREATE INDEX IF NOT EXISTS idx_air_category ON adaptation_improvement_rules(category) WHERE is_active = true;
+ALTER TABLE adaptation_improvement_rules DISABLE ROW LEVEL SECURITY;
 
 -- AIXアクションパターン学習テーブル
 -- 「このステータスでこのアクションが取られた」を蓄積して次アクション提案に活用

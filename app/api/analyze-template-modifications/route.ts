@@ -1,0 +1,214 @@
+// GET /api/analyze-template-modifications  ← Vercel Cron（毎日深夜）
+// POST /api/analyze-template-modifications ← 手動実行
+//
+// 「AIで最適化」後にスタッフが手修正したテキストのパターンを分析し、
+// adaptation_improvement_rules テーブルにルールを蓄積する。
+// 次回以降の「AIで最適化」時にこれらのルールが自動注入される。
+
+import { NextRequest, NextResponse } from "next/server";
+import { supabase } from "@/app/lib/supabase";
+import Anthropic from "@anthropic-ai/sdk";
+
+export const maxDuration = 60;
+
+type ModLog = {
+  id: string;
+  template_category: string | null;
+  adapted_text: string | null;
+  final_sent_text: string | null;
+  conversation_status: string | null;
+};
+
+type ExtractedRule = {
+  rule: string;
+  confidence: number;
+};
+
+// カテゴリ内の複数差分をまとめてClaudeに送り、共通パターンを抽出する
+async function extractRulesFromBatch(
+  client: Anthropic,
+  category: string,
+  logs: ModLog[]
+): Promise<ExtractedRule[]> {
+  const diffExamples = logs
+    .map((log, i) => {
+      const adapted = (log.adapted_text ?? "").slice(0, 500);
+      const final = (log.final_sent_text ?? "").slice(0, 500);
+      if (adapted.trim() === final.trim()) return null;
+      return `【例${i + 1}】\n▼ AIが生成した文:\n${adapted}\n\n▼ スタッフが実際に送った文:\n${final}`;
+    })
+    .filter(Boolean)
+    .join("\n\n────────────────\n\n");
+
+  if (!diffExamples) return [];
+
+  const prompt = `あなたはLINE賃貸営業AIの「改善ルール抽出エンジン」です。
+
+## カテゴリ: ${category}
+
+## スタッフによる修正事例（${logs.length}件）
+
+${diffExamples}
+
+## 指示
+
+上記の修正事例を分析して、AIが次回から自動的に守るべきルールを抽出してください。
+
+### 抽出条件（厳守）
+- 「固有名詞（物件名・人名）だけが違う」修正はスキップ
+- 「誤字・句読点だけ」の修正はスキップ
+- 「文の順序の細かい入れ替え」はスキップ
+- 複数の事例に共通するパターンを優先して抽出する
+- 1つの事例にしか見られないパターンは confidence を 0.5 以下にする
+
+### ルールの書き方
+- 「〇〇の場合は△△と書く」「AIが□□と書いても、スタッフは□□に直している」
+- 具体的かつ次のAI最適化で即使えるルール
+- 1〜3件まで（多すぎない）
+
+出力形式（JSONのみ・前置き禁止）:
+[{"rule":"○○のときは△△と表現する。「□□」という表現はスタッフが毎回削除している。","confidence":0.85}]
+
+ルールが抽出できない場合: []`;
+
+  try {
+    const response = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 600,
+      system: "JSON配列のみで回答してください。説明文は一切付けないでください。",
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const text = response.content[0]?.type === "text" ? response.content[0].text : "[]";
+    const match = text.match(/\[[\s\S]*\]/);
+    if (!match) return [];
+
+    const parsed = JSON.parse(match[0]) as ExtractedRule[];
+    return Array.isArray(parsed)
+      ? parsed.filter((r) => r.rule && typeof r.confidence === "number" && r.confidence >= 0.5)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+async function runAnalysis(limit: number): Promise<{ analyzed: number; learned: number; categories: string[] }> {
+  // 未処理の修正ログを取得（modification_analyzed=false かつ was_modified_after_adapt=true）
+  const { data: logs, error } = await supabase
+    .from("template_selection_logs")
+    .select("id, template_category, adapted_text, final_sent_text, conversation_status")
+    .eq("was_modified_after_adapt", true)
+    .eq("modification_analyzed", false)
+    .not("adapted_text", "is", null)
+    .not("final_sent_text", "is", null)
+    .order("created_at", { ascending: true })
+    .limit(limit);
+
+  if (error) throw new Error(`fetch logs: ${error.message}`);
+  if (!logs || logs.length === 0) return { analyzed: 0, learned: 0, categories: [] };
+
+  // カテゴリ別にグループ化
+  const byCategory = new Map<string, ModLog[]>();
+  for (const log of logs as ModLog[]) {
+    const cat = log.template_category ?? "全般";
+    if (!byCategory.has(cat)) byCategory.set(cat, []);
+    byCategory.get(cat)!.push(log);
+  }
+
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "") });
+  let learned = 0;
+  const processedCategories: string[] = [];
+
+  for (const [category, categoryLogs] of byCategory.entries()) {
+    // 完全一致（=実質修正なし）を除外
+    const realDiffs = categoryLogs.filter(
+      (l) => l.adapted_text?.trim() !== l.final_sent_text?.trim()
+    );
+
+    if (realDiffs.length === 0) {
+      // 全て完全一致 → analyzed マークだけ付けてスキップ
+      await supabase
+        .from("template_selection_logs")
+        .update({ modification_analyzed: true })
+        .in("id", categoryLogs.map((l) => l.id));
+      continue;
+    }
+
+    // Claude でパターン抽出
+    const rules = await extractRulesFromBatch(client, category, realDiffs);
+
+    // ルールを adaptation_improvement_rules に保存
+    for (const { rule, confidence } of rules) {
+      // 同カテゴリ内で類似ルールが直近30日に存在するか確認（短縮版テキスト一致）
+      const ruleKey = rule.slice(0, 50); // 先頭50文字で近似チェック
+      const { data: existing } = await supabase
+        .from("adaptation_improvement_rules")
+        .select("id, example_count, confidence")
+        .eq("category", category)
+        .ilike("rule_text", `${ruleKey}%`)
+        .limit(1)
+        .maybeSingle();
+
+      if (existing) {
+        await supabase
+          .from("adaptation_improvement_rules")
+          .update({
+            example_count: existing.example_count + realDiffs.length,
+            confidence: Math.min(Math.max(existing.confidence, confidence) + 0.03, 0.99),
+            last_triggered_at: new Date().toISOString(),
+            is_active: true,
+          })
+          .eq("id", existing.id);
+      } else {
+        await supabase.from("adaptation_improvement_rules").insert({
+          category,
+          rule_text: rule,
+          confidence,
+          example_count: realDiffs.length,
+          is_active: confidence >= 0.5,
+          last_triggered_at: new Date().toISOString(),
+        });
+      }
+      learned++;
+    }
+
+    // 処理済みマーク
+    await supabase
+      .from("template_selection_logs")
+      .update({ modification_analyzed: true })
+      .in("id", categoryLogs.map((l) => l.id));
+
+    processedCategories.push(category);
+  }
+
+  return { analyzed: (logs as ModLog[]).length, learned, categories: processedCategories };
+}
+
+export async function POST(req: NextRequest) {
+  const auth = req.headers.get("authorization") ?? "";
+  const secret = process.env.CRON_SECRET ?? "";
+  if (secret && auth !== `Bearer ${secret}`) {
+    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+
+  try {
+    const url = new URL(req.url);
+    const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "40"), 100);
+    const result = await runAnalysis(limit);
+
+    console.log(`[analyze-template-modifications] analyzed=${result.analyzed} learned=${result.learned} categories=${result.categories.join(",")}`);
+    return NextResponse.json({ ok: true, ...result });
+  } catch (e) {
+    console.error("[analyze-template-modifications] error:", e);
+    return NextResponse.json({ ok: false, error: String(e) }, { status: 500 });
+  }
+}
+
+export async function GET(req: NextRequest) {
+  const auth = req.headers.get("authorization") ?? "";
+  const secret = process.env.CRON_SECRET ?? "";
+  if (secret && auth !== `Bearer ${secret}`) {
+    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+  return POST(req);
+}
