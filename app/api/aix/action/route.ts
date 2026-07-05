@@ -198,7 +198,7 @@ async function getKnowledgeForState(states: string[]): Promise<string> {
         (diffLearned as { title: string; content: string }[]).map(r => `・${r.title}: ${r.content}`).join("\n"));
     }
     if ((otherKnowledge?.length ?? 0) > 0) {
-      parts.push("【📚 ノウハウ・鉄則（参考にすること）】\n" +
+      parts.push("【📚 ノウハウ・鉄則（言い回し・表現の参考にすること。ただし上記の【構成】ルールと矛盾する場合は【構成】ルールを最優先にすること）】\n" +
         (otherKnowledge as { title: string; content: string }[]).map(r => `・${r.content}`).join("\n"));
     }
     return parts.length > 0 ? "\n\n" + parts.join("\n\n") : "";
