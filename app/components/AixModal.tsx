@@ -1361,15 +1361,14 @@ export default function AixModal({
 
     // スタッフ編集検知: aiDraft（AI生成原文）と sentText（実際に送った文）が違う場合は source="aix_edit" で記録
     // emoji正規化: 絵文字オフで送信しただけの場合（本文は同じ）は「編集なし」と判定する
-    // property_send / property_recommendation は物件固有テキストのため候補保存しない
-    // （後続メッセージの汎用化はauto-template-candidates Cronが担当）
+    // property_recommendation のみ除外（テキスト自体に物件固有情報が入るため）
+    // property_send はテキスト部分（「ピックアップしました！！」等）が汎用化できるため除外しない
     const trimmedDraft = aiDraft.trim();
     const trimmedSent = sentText.trim();
     const wasEdited = trimmedDraft.length > 0
       && trimmedSent !== trimmedDraft
       && stripEmoji(trimmedSent) !== stripEmoji(trimmedDraft);
-    const PROPERTY_SPECIFIC_ACTIONS = new Set(["property_send", "property_recommendation"]);
-    if (wasEdited && !PROPERTY_SPECIFIC_ACTIONS.has(actionType)) {
+    if (wasEdited && actionType !== "property_recommendation") {
       saveTemplateCandidate(sentText, true, trimmedDraft);
     }
 
@@ -1497,7 +1496,7 @@ export default function AixModal({
       const schedWasEdited = schedTrimmedDraft.length > 0
         && schedTrimmedSent !== schedTrimmedDraft
         && stripEmoji(schedTrimmedSent) !== stripEmoji(schedTrimmedDraft);
-      if (schedWasEdited && !new Set(["property_send", "property_recommendation"]).has(actionType)) {
+      if (schedWasEdited && actionType !== "property_recommendation") {
         saveTemplateCandidate(textToSend, true, schedTrimmedDraft);
       }
 
