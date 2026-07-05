@@ -33,6 +33,8 @@ const ACTION_TO_CATEGORY: Record<string, string> = {
   condition_hearing: "ヒアリング【AIX】",
   estimate_sheet: "見積書送る【AIX】",
   greeting_viewing: "内覧【AIX】",
+  followup_revive: "追客【AIX】",
+  acknowledge_check: "確認します【AIX】",
 };
 
 const ACTION_LABEL: Record<string, string> = {
@@ -45,6 +47,8 @@ const ACTION_LABEL: Record<string, string> = {
   condition_hearing: "条件ヒアリング",
   estimate_sheet: "見積書送付",
   greeting_viewing: "内覧挨拶",
+  followup_revive: "追客メッセージ",
+  acknowledge_check: "確認します",
 };
 
 const LOOKBACK_DAYS = 14;
@@ -294,6 +298,7 @@ ${existing.length > 0 ? existing.map((t) => `- ${t}`).join("\n") : "（なし）
         suggested_title: title,
         template_text: templateText,
         conversation_id: p.conversationId,
+        source: "auto",
       });
       if (insErr) {
         console.error("[auto-template-candidates] insert error:", insErr.message);
@@ -363,6 +368,7 @@ ${entry.samples.map((s) => `- ${s.replace(/\n/g, " ")}`).join("\n")}
         suggested_title: `${(gen.title?.trim() || ACTION_LABEL[actionType] || actionType).slice(0, 20)}（AI生成・後続）`,
         template_text: gen.text.trim(),
         conversation_id: null,
+        source: "auto",
       });
       if (insErr) {
         console.error("[auto-template-candidates] gen insert error:", insErr.message);

@@ -13,6 +13,8 @@ const ACTION_TO_CATEGORY: Record<string, string> = {
   condition_hearing: "ヒアリング【AIX】",
   estimate_sheet: "見積書送る【AIX】",
   greeting_viewing: "内覧【AIX】",
+  followup_revive: "追客【AIX】",
+  acknowledge_check: "確認します【AIX】",
 };
 
 // AIXアクション → デフォルトタイトル
@@ -26,6 +28,8 @@ const ACTION_TO_DEFAULT_TITLE: Record<string, string> = {
   condition_hearing: "条件ヒアリング",
   estimate_sheet: "見積書送付",
   greeting_viewing: "内覧挨拶",
+  followup_revive: "追客メッセージ",
+  acknowledge_check: "確認します",
 };
 
 // GET: 未採用・未却下の候補を全件返す（カテゴリ順）

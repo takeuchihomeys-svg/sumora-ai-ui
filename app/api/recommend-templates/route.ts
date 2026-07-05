@@ -99,7 +99,7 @@ ${conversationHistory}
 
 ## 候補テンプレート一覧${category ? `（カテゴリ: ${category}）` : ""}
 ※ 【】内のタグはサブカテゴリを示します（例:【初回まとめ】【通常内覧】など）
-${templates.map((t, i) => `[${i}] ${t.label}\n${(t.text || "").slice(0, 150)}`).join("\n\n")}
+${templates.map((t, i) => `[${i}] ${t.label}\n${(t.text || "").slice(0, 300)}`).join("\n\n")}
 
 ## 指示
 希望条件・1通目の内容・ギャップ分析を踏まえて、続けて送るのに最も適切なテンプレートを
@@ -112,7 +112,7 @@ ${templates.map((t, i) => `[${i}] ${t.label}\n${(t.text || "").slice(0, 150)}`).
 
     const response = await client.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 800,
+      max_tokens: 1200,
       messages: [{ role: "user", content: prompt }],
     });
 

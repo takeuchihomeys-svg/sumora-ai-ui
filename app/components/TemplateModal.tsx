@@ -611,6 +611,8 @@ export default function TemplateModal({
     "内覧へ！【AIX】",
     "内覧【AIX】",
     "申込へ！【AIX】",
+    "追客【AIX】",
+    "確認します【AIX】",
   ];
   const rawAixCategories = categories.filter(c => c.includes("AIX"));
   const aixCategories = [
