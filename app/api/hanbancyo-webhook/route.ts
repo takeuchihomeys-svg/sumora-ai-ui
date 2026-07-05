@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
   let body: {
     events: Array<{
       type: string;
-      source: { type: string; groupId?: string; userId?: string };
+      source?: { type?: string; groupId?: string; userId?: string };
       message?: { type: string; text?: string };
       replyToken?: string;
     }>;
@@ -75,10 +75,13 @@ export async function POST(req: NextRequest) {
 
   for (const event of body.events ?? []) {
     // グループIDを取得・保存
-    if (event.source.type === "group" && event.source.groupId) {
-      await supabase
+    if (event.source?.type === "group" && event.source?.groupId) {
+      const { error: upsertErr } = await supabase
         .from("hanbancyo_settings")
         .upsert({ key: "group_id", value: event.source.groupId }, { onConflict: "key" });
+      if (upsertErr) {
+        console.error("[hanbancyo-webhook] hanbancyo_settings upsert失敗:", upsertErr.message);
+      }
     }
 
     if (event.type !== "message" || event.message?.type !== "text") continue;

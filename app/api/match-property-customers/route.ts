@@ -20,6 +20,7 @@ interface ParsedProperty {
 async function parsePropertyFromImage(base64: string, mediaType: string): Promise<ParsedProperty | null> {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
+    signal: AbortSignal.timeout(60_000),
     headers: {
       "Content-Type": "application/json",
       "x-api-key": ANTHROPIC_API_KEY,
@@ -195,7 +196,7 @@ function calcScore(customer: Record<string, unknown>, prop: ParsedProperty): Sco
 
   // ── ⑤ 築年数（1点） ──
   const ageLim = customer.building_age as number | null;
-  if (prop.building_age) {
+  if (prop.building_age != null) {
     if (ageLim && prop.building_age > ageLim) {
       hardNG = `築年数超過（築${prop.building_age}年 > 上限築${ageLim}年）`;
       breakdown.push({ label: "築年数", point: 0, note: `築${prop.building_age}年 > 上限${ageLim}年` });
@@ -230,10 +231,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, property: prop });
     }
 
-    const { data: customers } = await supabase
+    const { data: customers, error } = await supabase
       .from("property_customers")
       .select("id, customer_name, desired_area, area, rent_max, max_rent, floor_plan, layout, building_age, walk_minutes, floor_area_min, floor_area_max, pet, status")
       .in("status", ["hot", "property_search", "new_inquiry"]);
+    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
     const results: Array<{
       id: string;

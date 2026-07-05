@@ -19,7 +19,8 @@ export async function GET(req: NextRequest) {
   const { data: hotCustomers, error } = await supabase
     .from("property_customers")
     .select("id, customer_name, last_property_sent_at, hot_confirmed_at")
-    .eq("status", "hot");
+    .eq("status", "hot")
+    .limit(100);
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 

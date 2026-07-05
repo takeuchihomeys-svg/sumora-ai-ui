@@ -1,15 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 
-const client = new Anthropic();
+const client = new Anthropic({ timeout: 30_000 });
 
 export async function POST(req: NextRequest) {
-  const { text } = await req.json();
+  let text: string;
+  try {
+    ({ text } = await req.json());
+  } catch {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  }
   if (!text) {
     return NextResponse.json({ error: "text is required" }, { status: 400 });
   }
 
-  const message = await client.messages.create({
+  let message;
+  try {
+    message = await client.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 1024,
     messages: [
@@ -54,9 +61,13 @@ ${text}
 JSONのみ返してください。説明文・コードブロック・マークダウンは一切不要です。`,
       },
     ],
-  });
+    });
+  } catch (err) {
+    console.error("[parse-format] Anthropic API error:", err);
+    return NextResponse.json({ error: "AI解析に失敗しました" }, { status: 500 });
+  }
 
-  const raw = message.content[0].type === "text" ? message.content[0].text : "";
+  const raw = message.content[0]?.type === "text" ? message.content[0].text : "";
 
   // コードブロックを除去してJSONだけ取り出す
   const cleaned = raw

@@ -2574,6 +2574,12 @@ export default function Home() {
   const onSelectImage = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []).slice(0, 10);
     if (files.length === 0) return;
+    const oversized = files.find((file) => file.size > 10 * 1024 * 1024);
+    if (oversized) {
+      setError(`「${oversized.name}」は10MBを超えています。LINE送信できません。`);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
     setSelectedImageFiles(files);
     const previews: string[] = new Array(files.length).fill("");
     let loaded = 0;
@@ -2844,6 +2850,11 @@ export default function Home() {
 
   const executeScheduleSend = async () => {
     if (!selectedConversation.id || !scheduleDateTime) return;
+    const leftover = detectPlaceholders(replyDraft);
+    if (leftover.length > 0) {
+      setError(`未置換のプレースホルダーがあります: ${leftover.join(" ")}`);
+      return;
+    }
     setScheduleSaving(true);
     try {
       const textToSend = replyDraft.trim();

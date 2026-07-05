@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { fetchCalendarSlots } from "../lib/calendarSlots";
+import { detectPlaceholders } from "../lib/validate-reply";
 
 export type AixActionType =
   | "condition_hearing"
@@ -1420,6 +1421,11 @@ export default function AixModal({
 
   const executeAixScheduleSend = async () => {
     if (!preview.trim() || !aixScheduleDateTime) return;
+    const leftover = detectPlaceholders(preview);
+    if (leftover.length > 0) {
+      setError(`未置換のプレースホルダーがあります: ${leftover.join(" ")}`);
+      return;
+    }
     setAixScheduleSaving(true);
     try {
       const imageUrls: string[] = [];
@@ -1527,6 +1533,11 @@ export default function AixModal({
 
   const handleSend = async () => {
     if (!preview.trim()) return;
+    const leftover = detectPlaceholders(preview);
+    if (leftover.length > 0) {
+      setError(`未置換のプレースホルダーがあります: ${leftover.join(" ")}`);
+      return;
+    }
     try {
       setLoading(true);
 

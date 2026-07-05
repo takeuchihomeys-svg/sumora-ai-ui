@@ -44,7 +44,7 @@ async function checkAllDone(): Promise<void> {
 
   let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? null;
   if (!groupId) {
-    const { data } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").single();
+    const { data } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();
     groupId = (data?.value as string) ?? null;
   }
   if (!groupId) return;
@@ -62,6 +62,7 @@ async function checkAllDone(): Promise<void> {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ to: groupId, messages: [{ type: "text", text: "🎉 本日の物件出し全員完了！\nお疲れ様でした！" }] }),
+    signal: AbortSignal.timeout(10_000),
   });
 }
 
@@ -88,11 +89,22 @@ export async function GET() {
 
 // POST: 完了マーク（物件送信 or 確認済み）+ LINEグループ✅通知
 export async function POST(req: NextRequest) {
-  const { customer_id, upgrade_to_hot, action } = await req.json() as {
-    customer_id: string;
-    upgrade_to_hot?: boolean;
-    action?: "send" | "confirm";
-  };
+  let customer_id: string;
+  let upgrade_to_hot: boolean | undefined;
+  let action: "send" | "confirm" | undefined;
+  try {
+    ({ customer_id, upgrade_to_hot, action } = await req.json() as {
+      customer_id: string;
+      upgrade_to_hot?: boolean;
+      action?: "send" | "confirm";
+    });
+  } catch {
+    return NextResponse.json({ ok: false, error: "invalid JSON body" }, { status: 400 });
+  }
+
+  if (!customer_id) {
+    return NextResponse.json({ ok: false, error: "customer_id required" }, { status: 400 });
+  }
 
   const now = new Date().toISOString();
   const update: Record<string, unknown> = { updated_at: now };

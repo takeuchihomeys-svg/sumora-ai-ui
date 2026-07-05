@@ -1001,7 +1001,10 @@ function needsActionToday(c) {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   if (c.status === "hot") {
-    return !c.last_property_sent_at || new Date(c.last_property_sent_at) < todayStart;
+    const sentToday      = c.last_property_sent_at && new Date(c.last_property_sent_at) >= todayStart;
+    const confirmedToday = c.hot_confirmed_at      && new Date(c.hot_confirmed_at)      >= todayStart;
+    const viewedToday    = c.property_viewed_at    && new Date(c.property_viewed_at)    >= todayStart;
+    return !sentToday && !confirmedToday && !viewedToday;
   }
   if (c.status === "property_search") {
     if (!c.last_property_sent_at) return true;
@@ -1512,11 +1515,14 @@ function openInstructions(siteKey) {
             const resolved = unresolvedTokens.map(t => {
               const w = LEARNED_WARD_MAP[t] || LEARNED_STATION_MAP[t]?.ward;
               const type = LEARNED_STATION_MAP[t] ? "駅" : "地名";
-              return w ? `<span style="color:#1a73e8;font-weight:bold">${t}→${w}(${type})</span>
-                <button onclick="deleteLearnedToken('${t}','${LEARNED_STATION_MAP[t] ? 'station' : 'region'}')"
-                  style="margin-left:4px;font-size:10px;padding:1px 5px;background:#f44336;color:white;border:none;border-radius:3px;cursor:pointer">✗ 間違い</button>` : t;
+              return w ? `<span style="color:#1a73e8;font-weight:bold">${esc(t)}→${esc(w)}(${type})</span>
+                <button class="learned-token-del" data-token="${esc(t)}" data-type="${LEARNED_STATION_MAP[t] ? 'station' : 'region'}"
+                  style="margin-left:4px;font-size:10px;padding:1px 5px;background:#f44336;color:white;border:none;border-radius:3px;cursor:pointer">✗ 間違い</button>` : esc(t);
             }).join("　");
             el.innerHTML = `✅ 自動解決: ${resolved}`;
+            el.querySelectorAll(".learned-token-del").forEach(btn => {
+              btn.addEventListener("click", () => deleteLearnedToken(btn.dataset.token, btn.dataset.type));
+            });
           } else {
             showUnknownWarn(stillUnknown);
           }
@@ -1710,7 +1716,14 @@ function openInstructions(siteKey) {
         window.parent.postMessage({ from: "aixlinx-underbar", action: "itandi-autofill", conditions }, "*");
       } else {
         chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-          if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: "axlx-itandi-autofill", conditions });
+          if (tabs[0]) chrome.tabs.sendMessage(tabs[0].id, { type: "axlx-itandi-autofill", conditions }, () => {
+            if (chrome.runtime.lastError) {
+              console.warn("[popup] sendMessage failed:", chrome.runtime.lastError.message);
+              autofillBtn.textContent = "⚠ itandiのタブで開いてください";
+              autofillBtn.classList.remove("done");
+              return;
+            }
+          });
         });
       }
       autofillBtn.textContent = "✓ 自動検索中...";
@@ -1970,6 +1983,13 @@ function openInstructions(siteKey) {
         chrome.tabs.sendMessage(tabs[0].id, {
           type: "axlx-reins-autofill",
           conditions,
+        }, () => {
+          if (chrome.runtime.lastError) {
+            console.warn("[popup] sendMessage failed:", chrome.runtime.lastError.message);
+            autofillBtn.textContent = "⚠ REINSのタブで開いてください";
+            autofillBtn.classList.remove("done");
+            return;
+          }
         });
       });
 

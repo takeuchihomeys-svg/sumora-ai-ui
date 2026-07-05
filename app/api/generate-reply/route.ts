@@ -504,14 +504,6 @@ ${examples}${examplesInstruction}
   return [new SystemMessage(promptOverrides?.generationSystem ?? GENERATION_SYSTEM), new HumanMessage(prompt)];
 }
 
-// ─── Intent分類（Haiku）──────────────────────────────────────────────────────
-const ALLOWED_INTENTS = new Set([
-  "condition_share", "consult_property_search", "estimate_request",
-  "like_property", "dislike_property", "viewing_request", "application_interest",
-  "search_more_properties", "conditions_complete", "conditions_incomplete",
-  "property_available", "property_unavailable", "screening_passed", "screening_failed", "other",
-]);
-
 const ALLOWED_STATES = new Set([
   "first_reply", "hearing", "proposing", "applying", "closed_won",
   // 旧キーも受け付ける（後方互換）
@@ -535,34 +527,6 @@ const STATE_ALIAS: Record<string, string> = {
 function normalizeState(k: string): string {
   const resolved = STATE_ALIAS[k] ?? k;
   return ALLOWED_STATES.has(resolved) ? resolved : "first_reply";
-}
-
-async function classifyIntent(message: string, state: string, history: string): Promise<string> {
-  const system = `賃貸仲介LINE営業のintent分類器。以下のintent_keyのどれか1つをJSONで返す。
-condition_share, consult_property_search, estimate_request, like_property, dislike_property,
-viewing_request, application_interest, search_more_properties, conditions_complete,
-conditions_incomplete, property_available, property_unavailable, screening_passed, screening_failed, other
-必ず {"intent_key":"..."} のみ返すこと。`;
-
-  try {
-    const intentPrompt = `state: ${state}\n履歴:\n${history || "なし"}\nメッセージ: ${message}`;
-    const res = await analysisModel.invoke([
-      new SystemMessage(system),
-      new HumanMessage(intentPrompt),
-    ]);
-    warnIfTruncated(res.response_metadata?.stop_reason, intentPrompt.length);
-    const text = typeof res.content === "string" ? res.content : "";
-    const match = text.match(/\{[\s\S]*?\}/);
-    if (match) {
-      const parsed = JSON.parse(match[0]) as { intent_key?: string };
-      const intent = parsed.intent_key || "other";
-      return ALLOWED_INTENTS.has(intent) ? intent : "other";
-    }
-    return "other";
-  } catch (err) {
-    console.error("[generate-reply] intent分類失敗 — \"other\" にフォールバック:", err);
-    return "other";
-  }
 }
 
 // ─── phrase_dictionary → conversationState マッピング（複数カテゴリ対応）────
@@ -674,11 +638,12 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
 
     const embedding = await getEmbedding(searchQuery);
     if (embedding) {
-      const { data: vectorResults } = await supabase.rpc("match_reply_knowledge", {
+      const { data: vectorResults, error: rpcError } = await supabase.rpc("match_reply_knowledge", {
         query_embedding: embedding,
         match_count: 40,
         min_importance: 7,
-      }) as { data: Array<KnowledgeRow & { similarity: number }> | null };
+      }) as { data: Array<KnowledgeRow & { similarity: number }> | null; error: { message: string } | null };
+      if (rpcError) console.warn("[generate-reply] RPC error:", rpcError.message);
 
       // 類似度0.5未満のノイズを除外し、importance×similarity の複合スコアで並べ替え
       // （RPCの similarity 順のままだと importance の低い近似ルールが各バケットの枠を食うため）
@@ -920,7 +885,7 @@ function extractPreferredName(
   const SKIP_RE = /^(お客様|皆|全|各|担当|スタッフ|こちら|弊社|管理|オーナー|業者|まずは|引き続き|何卒|改めて)/;
   for (const msg of [...messages].reverse()) {
     if (msg.sender !== "staff" || !msg.text) continue;
-    const matches = [...msg.text.matchAll(/([^\s、。！？\n【】「」（）・]{1,8}?)さん/g)];
+    const matches = [...msg.text.matchAll(/([^\s、。！？\n【】「」（）・]{2,8}?)さん/g)];
     for (const m of [...matches].reverse()) {
       const name = m[1];
       if (SKIP_RE.test(name)) continue;

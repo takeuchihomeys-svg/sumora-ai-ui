@@ -169,7 +169,7 @@ async function run() {
         pcId
           ? db.from("property_customers")
             .select("customer_name, desired_area, floor_plan, rent_min, rent_max, ai_summary, preferences, ng_points, walk_minutes, move_in_time, building_age, other_requests, additional_conditions")
-            .eq("id", pcId).single()
+            .eq("id", pcId).maybeSingle()
           : Promise.resolve({ data: null }),
       ]);
 

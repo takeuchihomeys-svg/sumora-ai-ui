@@ -60,17 +60,17 @@ export async function GET(req: NextRequest) {
 
   // 並列取得
   const [
-    { data: pendingTasks },
-    { data: unrepliedConvs },
-    { data: hotCustomers },
-    { data: attributionRow },
-    { data: adoptionLogs },
-    { data: lossPatterns },
-    { data: topTemplates },
-    { count: wonCount },
-    { count: pendingCandidates },
-    { data: aixLogs },
-    { data: attributionRows },
+    { data: pendingTasks, error: tasksErr },
+    { data: unrepliedConvs, error: unrepliedErr },
+    { data: hotCustomers, error: hotErr },
+    { data: attributionRow, error: attributionRowErr },
+    { data: adoptionLogs, error: adoptionErr },
+    { data: lossPatterns, error: lossErr },
+    { data: topTemplates, error: templatesErr },
+    { count: wonCount, error: wonErr },
+    { count: pendingCandidates, error: candidatesErr },
+    { data: aixLogs, error: aixErr },
+    { data: attributionRows, error: attributionRowsErr },
   ] = await Promise.all([
     // ① 未完了タスク
     supabase
@@ -158,6 +158,19 @@ export async function GET(req: NextRequest) {
       .order("period_start", { ascending: false })
       .limit(50),
   ]);
+
+  // クエリエラーのログ（レポート本体は送る。失敗したセクションは空になるだけ）
+  if (tasksErr) console.error("[morning-report] tasks query:", tasksErr.message);
+  if (unrepliedErr) console.error("[morning-report] unreplied query:", unrepliedErr.message);
+  if (hotErr) console.error("[morning-report] hotCustomers query:", hotErr.message);
+  if (attributionRowErr) console.error("[morning-report] attributionRow query:", attributionRowErr.message);
+  if (adoptionErr) console.error("[morning-report] adoptionLogs query:", adoptionErr.message);
+  if (lossErr) console.error("[morning-report] lossPatterns query:", lossErr.message);
+  if (templatesErr) console.error("[morning-report] topTemplates query:", templatesErr.message);
+  if (wonErr) console.error("[morning-report] wonCount query:", wonErr.message);
+  if (candidatesErr) console.error("[morning-report] pendingCandidates query:", candidatesErr.message);
+  if (aixErr) console.error("[morning-report] aixLogs query:", aixErr.message);
+  if (attributionRowsErr) console.error("[morning-report] attributionRows query:", attributionRowsErr.message);
 
   // AI貢献率フッター（メトリクスがあれば1行追加）
   let attributionLine = "";
@@ -284,11 +297,14 @@ export async function GET(req: NextRequest) {
     ? `🌅 おはようございます！\n今日は未完了タスク・未返信ともにゼロです🎉\n引き続きよろしくお願いします！${statsBlock}${attributionLine}`
     : `🌅 おはようございます！今日のタスクレポートです\n\n${sections.join("\n\n——————\n\n")}${statsBlock}\n\n全員対応よろしくお願いします！${attributionLine}`;
 
+  // LINEのtextメッセージ上限は5000字。超過時は切り詰めて送信（保険）
+  const safeText = text.length > 4900 ? text.slice(0, 4900) + "\n…（以下省略）" : text;
+
   try {
     const res = await fetch("https://api.line.me/v2/bot/message/push", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ to: groupId, messages: [{ type: "text", text }] }),
+      body: JSON.stringify({ to: groupId, messages: [{ type: "text", text: safeText }] }),
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {

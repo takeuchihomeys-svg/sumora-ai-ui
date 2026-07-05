@@ -21,6 +21,7 @@ async function callHaiku(prompt: string): Promise<string> {
         max_tokens: 1024,
         messages: [{ role: "user", content: prompt }],
       }),
+      signal: AbortSignal.timeout(30_000),
     });
     if (!res.ok) return "";
     const data = (await res.json()) as { content?: Array<{ text: string }> };

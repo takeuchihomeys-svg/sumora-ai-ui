@@ -16,7 +16,12 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const { category, label, text, structure, requires_image } = await req.json() as { category: string; label: string; text: string; structure?: StructureBlock[] | null; requires_image?: boolean };
+  let category: string, label: string, text: string, structure: StructureBlock[] | null | undefined, requires_image: boolean | undefined;
+  try {
+    ({ category, label, text, structure, requires_image } = await req.json() as { category: string; label: string; text: string; structure?: StructureBlock[] | null; requires_image?: boolean });
+  } catch {
+    return NextResponse.json({ ok: false, error: "invalid JSON body" }, { status: 400 });
+  }
   if (!label?.trim() || !text?.trim()) {
     return NextResponse.json({ ok: false, error: "label と text は必須" }, { status: 400 });
   }
@@ -44,7 +49,12 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
-  const { updates } = await req.json() as { updates: Array<{ id: string; sort_order: number }> };
+  let updates: Array<{ id: string; sort_order: number }>;
+  try {
+    ({ updates } = await req.json() as { updates: Array<{ id: string; sort_order: number }> });
+  } catch {
+    return NextResponse.json({ ok: false, error: "invalid JSON body" }, { status: 400 });
+  }
   if (!Array.isArray(updates) || updates.length === 0) {
     return NextResponse.json({ ok: false, error: "updates required" }, { status: 400 });
   }
@@ -57,7 +67,12 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
-  const { id, category, label, text, structure, requires_image, second_msg_type, second_msg_delay } = await req.json() as { id: string; category: string; label: string; text: string; structure?: StructureBlock[] | null; requires_image?: boolean; second_msg_type?: string | null; second_msg_delay?: number | null };
+  let id: string, category: string, label: string, text: string, structure: StructureBlock[] | null | undefined, requires_image: boolean | undefined, second_msg_type: string | null | undefined, second_msg_delay: number | null | undefined;
+  try {
+    ({ id, category, label, text, structure, requires_image, second_msg_type, second_msg_delay } = await req.json() as { id: string; category: string; label: string; text: string; structure?: StructureBlock[] | null; requires_image?: boolean; second_msg_type?: string | null; second_msg_delay?: number | null });
+  } catch {
+    return NextResponse.json({ ok: false, error: "invalid JSON body" }, { status: 400 });
+  }
   if (!id || !label?.trim() || !text?.trim()) {
     return NextResponse.json({ ok: false, error: "id, label, text は必須" }, { status: 400 });
   }

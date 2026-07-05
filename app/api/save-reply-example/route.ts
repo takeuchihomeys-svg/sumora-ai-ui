@@ -200,15 +200,17 @@ JSONのみで返答（説明不要）：
         })),
     ];
 
-    for (const entry of entries) {
-      await supabase.from("ai_reply_knowledge").insert({
-        category: entry.category,
-        title: entry.title,
-        content: entry.content,
-        importance: entry.importance,
-        conversation_state: conversationState || null,
-        source_example_id: exampleId,
-      });
+    if (entries.length > 0) {
+      await supabase.from("ai_reply_knowledge").insert(
+        entries.map((entry) => ({
+          category: entry.category,
+          title: entry.title,
+          content: entry.content,
+          importance: entry.importance,
+          conversation_state: conversationState || null,
+          source_example_id: exampleId,
+        }))
+      );
     }
   } catch (e) {
     console.error("analyzeAndSaveKnowledge error:", e);

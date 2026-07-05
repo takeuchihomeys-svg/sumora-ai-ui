@@ -46,6 +46,14 @@ export async function GET(req: NextRequest) {
 
   const now = new Date().toISOString();
 
+  // stale sending リカバリ（タイムアウトや前回クラッシュで stuck したものを回収）
+  const staleThreshold = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  await supabase
+    .from("scheduled_messages")
+    .update({ status: "failed", error: "stale sending (timeout recovery)" })
+    .eq("status", "sending")
+    .lt("updated_at", staleThreshold);
+
   const { data: pending, error: fetchErr } = await supabase
     .from("scheduled_messages")
     .select("*")
@@ -93,30 +101,39 @@ export async function GET(req: NextRequest) {
       // messages テーブルに記録
       if (imageUrls.length > 0) {
         const imageUrlData = imageUrls.length === 1 ? imageUrls[0] : JSON.stringify(imageUrls);
-        await supabase.from("messages").insert({
+        const { error: imgInsertErr } = await supabase.from("messages").insert({
           conversation_id: msg.conversation_id,
           sender: "staff",
           text: "[画像]",
           image_url: imageUrlData,
           created_at: sentAt.toISOString(),
         });
+        if (imgInsertErr) {
+          console.error("[send-scheduled] 画像message記録失敗（LINE送信は成功）:", imgInsertErr.message, "id:", msg.id);
+        }
       }
       if (text) {
         const textAt = imageUrls.length > 0 ? new Date(sentAt.getTime() + 1000) : sentAt;
-        await supabase.from("messages").insert({
+        const { error: textInsertErr } = await supabase.from("messages").insert({
           conversation_id: msg.conversation_id,
           sender: "staff",
           text,
           created_at: textAt.toISOString(),
         });
+        if (textInsertErr) {
+          console.error("[send-scheduled] message記録失敗（LINE送信は成功）:", textInsertErr.message, "id:", msg.id);
+        }
       }
 
       // conversations 更新
       const lastText = text || (imageUrls.length > 0 ? "[画像]" : "");
-      await supabase
+      const { error: convUpdateErr } = await supabase
         .from("conversations")
         .update({ last_message: lastText, last_sender: "staff", updated_at: sentAt.toISOString(), ai_draft: null, is_flagged: false })
         .eq("id", msg.conversation_id as string);
+      if (convUpdateErr) {
+        console.error("[send-scheduled] conversations更新失敗:", convUpdateErr.message, "id:", msg.id);
+      }
 
       const { error: sentErr } = await supabase.from("scheduled_messages").update({ status: "sent" }).eq("id", msg.id as string);
       if (sentErr) {

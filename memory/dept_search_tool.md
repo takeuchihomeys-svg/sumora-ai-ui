@@ -467,6 +467,11 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 - **itandi自動入力をchrome.tabs→postMessage中継に変更（v1.5.7）**
 - **itandi 広げて検索で当駅が選択されないバグを修正（v1.5.8）**
 - **レインズ手順を実際のフォーム画面をもとに実装（v1.6.0）** → 実機確認が必要
+- **2026-07-05 保守修正4件**:
+  - popup-maps.js: REINS_LINE_MAP に「南海電鉄南海本線」キー追加（「南海電鉄南本線」のみで欠落していた）
+  - popup.js: needsActionToday の hot 判定をサーバー版（property-tasks/property-customers の route.ts）と統一（hot_confirmed_at / property_viewed_at も見る）
+  - popup.js: itandi/REINS 自動入力の chrome.tabs.sendMessage に chrome.runtime.lastError チェック追加（失敗時ボタンに「⚠ ○○のタブで開いてください」表示）
+  - popup.js: 学習済みトークン自動解決表示の innerHTML に esc() 適用＋インライン onclick を data-token 属性 + addEventListener に変更（XSS対策）
 - フロー: 路線・駅で絞り込み → 近畿(完全一致) → 大阪府(完全一致) → 路線チェック → 駅列描画待ち(800ms) → 駅を全選択 → 確定
 - 広げて検索: 当駅＋前後各1駅を `clickLabel` で全選択（LINE_STATION_ORDER で隣駅を自動取得）
 - ピンポイント検索: 当駅のみ選択
