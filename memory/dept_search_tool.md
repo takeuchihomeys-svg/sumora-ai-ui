@@ -472,6 +472,10 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
   - popup.js: needsActionToday の hot 判定をサーバー版（property-tasks/property-customers の route.ts）と統一（hot_confirmed_at / property_viewed_at も見る）
   - popup.js: itandi/REINS 自動入力の chrome.tabs.sendMessage に chrome.runtime.lastError チェック追加（失敗時ボタンに「⚠ ○○のタブで開いてください」表示）
   - popup.js: 学習済みトークン自動解決表示の innerHTML に esc() 適用＋インライン onclick を data-token 属性 + addEventListener に変更（XSS対策）
+- **2026-07-05 レインズ一括DL 信頼性修正3件（未コミット）**:
+  - background.js: `axlx-reins-watch-tab` ハンドラで既存watcherの旧タイマーを clearTimeout せず上書きしていたレース修正（逐次モードで旧タイマーが35秒後に新watcherを削除→2件目以降のPDF捕捉が失敗するバグ。onCreated側と同じ clearTimeout パターンに統一）
+  - background.js: `uploadPdfToBlob` / `callMergeApi` の fetch に `signal: AbortSignal.timeout(60000)` 追加（サーバー無応答時に「Blobアップ中...」で最大5分固まる問題を60秒タイムアウトに）
+  - reins-bulk-dl.js: `captureOnePdf` の `!freshBtn` rejectパスで `customEvtHdlr` の removeEventListener 漏れを修正（リークしたハンドラが次物件のPDFイベントで発火し進行中キャプチャに干渉）
 - フロー: 路線・駅で絞り込み → 近畿(完全一致) → 大阪府(完全一致) → 路線チェック → 駅列描画待ち(800ms) → 駅を全選択 → 確定
 - 広げて検索: 当駅＋前後各1駅を `clickLabel` で全選択（LINE_STATION_ORDER で隣駅を自動取得）
 - ピンポイント検索: 当駅のみ選択

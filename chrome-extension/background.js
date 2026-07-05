@@ -315,6 +315,7 @@ async function uploadPdfToBlob(b64, fileName) {
     method: "POST",
     headers: { "Content-Type": "application/pdf" },
     body: bytes,
+    signal: AbortSignal.timeout(60000),
   });
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
@@ -331,6 +332,7 @@ async function callMergeApi(payload) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(60000),
   });
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
@@ -348,6 +350,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "axlx-reins-watch-tab") {
     const tabId = sender.tab?.id;
     if (!tabId) { sendResponse({ ok: false }); return true; }
+    // 既存watcherの旧タイマーを解除（逐次モードで旧タイマーが新watcherを削除するレース防止）
+    const existing = reinsTabWatchers.get(tabId);
+    if (existing) clearTimeout(existing.timerId);
     const timerId = setTimeout(() => reinsTabWatchers.delete(tabId), 35000);
     reinsTabWatchers.set(tabId, { senderTabId: tabId, timerId });
     console.log("[AXLX BG] 新タブ監視開始 tabId=" + tabId);

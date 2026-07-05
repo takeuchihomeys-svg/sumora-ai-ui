@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
+export const maxDuration = 300;
+
 const ANTHROPIC_API_KEY = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
 const HAIKU = "claude-haiku-4-5-20251001";
 
@@ -56,6 +58,7 @@ async function parseConditionText(text: string): Promise<Record<string, unknown>
 ${text}`,
       }],
     }),
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!res.ok) return null;

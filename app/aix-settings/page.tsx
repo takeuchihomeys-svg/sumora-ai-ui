@@ -33,22 +33,33 @@ export default function AixSettingsPage() {
 
   const handleSave = async (key: string) => {
     setSaving(key);
-    const res = await fetch("/api/aix/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key, value: editValues[key] }),
-    });
-    const d = await res.json() as { ok: boolean; error?: string };
-    if (d.ok) {
-      setSavedKey(key);
-      setSettings((prev) =>
-        prev.map((s) => s.key === key ? { ...s, is_default: false, updated_at: new Date().toISOString() } : s)
-      );
-      setTimeout(() => setSavedKey(null), 2500);
-    } else {
-      alert(`保存失敗: ${d.error}`);
+    try {
+      const res = await fetch("/api/aix/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key, value: editValues[key] }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        alert(`保存失敗: ${err.error ?? `HTTP ${res.status}`}`);
+        return;
+      }
+      const d = await res.json() as { ok: boolean; error?: string };
+      if (d.ok) {
+        setSavedKey(key);
+        setSettings((prev) =>
+          prev.map((s) => s.key === key ? { ...s, is_default: false, updated_at: new Date().toISOString() } : s)
+        );
+        setTimeout(() => setSavedKey(null), 2500);
+      } else {
+        alert(`保存失敗: ${d.error}`);
+      }
+    } catch (e) {
+      console.error("[handleSave] error:", e);
+      alert("保存に失敗しました。通信環境を確認してください");
+    } finally {
+      setSaving(null);
     }
-    setSaving(null);
   };
 
   const handleReset = (key: string) => {

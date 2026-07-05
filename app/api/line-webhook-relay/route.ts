@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+export const maxDuration = 30;
+
 // LINE webhook を受け取り、2つの宛先に並行転送する
 const SCREENING_URL = "https://sumora-screening-admin.vercel.app/api/line-webhook";
 const AI_UI_URL     = "https://sumora-ai-ui.vercel.app/api/line-webhook";
@@ -15,8 +17,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   // 両方に並行転送
   const [screeningResult, aiUiResult] = await Promise.allSettled([
-    fetch(SCREENING_URL, { method: "POST", headers, body: rawBody }),
-    fetch(AI_UI_URL,     { method: "POST", headers, body: rawBody }),
+    fetch(SCREENING_URL, { method: "POST", headers, body: rawBody, signal: AbortSignal.timeout(8_000) }),
+    fetch(AI_UI_URL,     { method: "POST", headers, body: rawBody, signal: AbortSignal.timeout(8_000) }),
   ]);
 
   // screening-admin のエラーはログだけ（sumora-ai-ui が主管轄）

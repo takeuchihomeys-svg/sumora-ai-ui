@@ -75,15 +75,34 @@ export async function DELETE(req: NextRequest) {
   return NextResponse.json({ ok: true });
 }
 
+// PATCH で更新を許可するカラム（id / screening_id / created_at は変更禁止）
+const PATCH_ALLOWED_COLUMNS = [
+  "customer_name",
+  "content",
+  "date",
+  "time",
+  "end_time",
+  "done",
+  "management_company",
+] as const;
+
 // PATCH /api/daily-tasks?id=xxx  (done切り替え等)
 export async function PATCH(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const id = searchParams.get("id");
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
 
-  const body = await req.json();
+  const body = await req.json() as Record<string, unknown>;
+  const updates: Record<string, unknown> = {};
+  for (const key of PATCH_ALLOWED_COLUMNS) {
+    if (key in body) updates[key] = body[key];
+  }
+  if (Object.keys(updates).length === 0) {
+    return NextResponse.json({ error: "no updatable fields" }, { status: 400 });
+  }
+
   const sb = getScreeningClient();
-  const { error } = await sb.from("daily_tasks").update(body).eq("id", id);
+  const { error } = await sb.from("daily_tasks").update(updates).eq("id", id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });
 }

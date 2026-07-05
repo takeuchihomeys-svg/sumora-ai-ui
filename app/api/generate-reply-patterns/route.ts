@@ -5,6 +5,8 @@ import { supabase } from "@/app/lib/supabase";
 import { PHASE_GUIDE, REAL_ESTATE_RULES, SMORA_QUICK_PATTERNS, EMOJI_RULE, STATE_SEARCH_ALIASES, CRITICAL_RULES_COMPACT } from "@/app/lib/line-reply-prompts";
 import { validateAndClean } from "@/app/lib/validate-reply";
 
+export const maxDuration = 30;
+
 const analysisModel = new ChatAnthropic({
   model: "claude-haiku-4-5-20251001",
   maxTokens: 1024,
@@ -18,8 +20,7 @@ const generationModel = new ChatAnthropic({
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
 });
 
-export const PATTERN_LABELS = ["A", "B", "C"] as const;
-export type AngleKey = (typeof PATTERN_LABELS)[number];
+const PATTERN_LABELS = ["A", "B", "C"] as const;
 
 
 
@@ -467,7 +468,7 @@ export async function POST(req: NextRequest) {
   }
 
   type RecentMessage = { sender: string; text: string; imageUrl?: string; createdAt?: string };
-  const body = await req.json() as {
+  let body: {
     message: string;
     state: string;
     customerName?: string;
@@ -475,6 +476,11 @@ export async function POST(req: NextRequest) {
     customerConditions?: string;
     customerSummary?: string;
   };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ ok: false, error: "不正なJSONです" }, { status: 400 });
+  }
   const {
     message,
     state,

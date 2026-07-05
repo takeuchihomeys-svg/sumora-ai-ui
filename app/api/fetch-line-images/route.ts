@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
+export const maxDuration = 300;
+
 // 過去に届いたお客さん画像メッセージ（image_url = null）を一括で取得・保存する
 // GET /api/fetch-line-images?limit=50
 export async function GET(req: NextRequest) {
@@ -55,7 +57,7 @@ export async function GET(req: NextRequest) {
     try {
       const contentRes = await fetch(
         `https://api-data.line.me/v2/bot/message/${lineMessageId}/content`,
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) }
       );
       if (!contentRes.ok) {
         console.warn(`[fetch-line-images] ${lineMessageId}: status=${contentRes.status}`);

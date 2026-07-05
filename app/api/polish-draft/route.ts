@@ -4,13 +4,21 @@ import { supabase } from "@/app/lib/supabase";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "") });
 
+export const maxDuration = 30;
+
 export async function POST(req: NextRequest) {
-  const { draft, customer_name, recent_messages, conversation_status } = await req.json() as {
+  let body: {
     draft: string;
     customer_name?: string;
     recent_messages?: Array<{ sender: string; text: string }>;
     conversation_status?: string;
   };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ ok: false, error: "不正なJSONです" }, { status: 400 });
+  }
+  const { draft, customer_name, recent_messages, conversation_status } = body;
 
   if (!draft?.trim()) {
     return NextResponse.json({ ok: false, error: "draft required" }, { status: 400 });

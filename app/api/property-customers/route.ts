@@ -5,7 +5,10 @@ import { supabase } from "@/app/lib/supabase";
 function needsActionToday(c: { status: string; last_property_sent_at: string | null; hot_confirmed_at?: string | null; property_viewed_at?: string | null }): boolean {
   if (c.status === "new_inquiry") return true;
   const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  // JSTでの「今日の0時」をUTC基準で正しく計算（サーバーがUTCでも9時間ズレない）
+  const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const jstDateStr = jstNow.toISOString().slice(0, 10); // 例: "2026-07-05"（JSTの今日）
+  const todayStart = new Date(`${jstDateStr}T00:00:00+09:00`);
   if (c.status === "hot") {
     const sent     = c.last_property_sent_at && new Date(c.last_property_sent_at) >= todayStart;
     const confirmed = c.hot_confirmed_at      && new Date(c.hot_confirmed_at)      >= todayStart;

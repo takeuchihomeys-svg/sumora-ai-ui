@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
+export const maxDuration = 60;
+
 const STATE_NORMALIZE: Record<string, string> = {
   condition_hearing:       "hearing",
   property_search:         "hearing",
@@ -29,6 +31,7 @@ async function callHaiku(prompt: string): Promise<string> {
         max_tokens: 1024,
         messages: [{ role: "user", content: prompt }],
       }),
+      signal: AbortSignal.timeout(30_000),
     });
     if (!res.ok) return "";
     const data = await res.json() as { content?: Array<{ text: string }> };
@@ -167,7 +170,7 @@ export async function POST(req: NextRequest) {
     .from("ai_reply_examples")
     .select("id, conversation_state, customer_message, sent_reply")
     .order("created_at", { ascending: false })
-    .limit(Math.min(limitParam, 50));
+    .limit(Math.min(limitParam, 20));
 
   if (mode === "starred") {
     query.eq("is_starred", true);

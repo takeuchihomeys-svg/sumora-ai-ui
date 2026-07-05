@@ -11,7 +11,8 @@ export async function GET(req: Request) {
   const [examplesRes, knowledgeRes, phraseRes, knowledgeCatRes] = await Promise.all([
     supabase
       .from("ai_reply_examples")
-      .select("was_ai_used, is_starred, was_ai_modified, conversation_state, created_at"),
+      .select("was_ai_used, is_starred, was_ai_modified, conversation_state, created_at", { count: "exact" })
+      .limit(10000),
     supabase
       .from("ai_reply_knowledge")
       .select("id, category, importance, conversation_state", { count: "exact" }),

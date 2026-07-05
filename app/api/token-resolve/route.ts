@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
 
+export const maxDuration = 60;
+
 function getDb() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -104,7 +106,7 @@ export async function POST(req: NextRequest) {
   "reins_line": "REINS路線名（大阪メトロ〇〇線 等）または null"
 }`,
         }],
-      });
+      }, { signal: AbortSignal.timeout(25_000) });
 
       // toolUseブロックとtextブロック両方からJSON抽出
       let jsonText = "";
@@ -141,7 +143,7 @@ export async function POST(req: NextRequest) {
 JSONのみ返してください:
 {"type":"station"または"region"または"unknown","ward":"大阪市〇〇区など または null","realpro_lines":[],"itandi_lines":[],"reins_line":null}`,
           }],
-        });
+        }, { signal: AbortSignal.timeout(25_000) });
         const raw = fallbackRes.content[0].type === "text" ? fallbackRes.content[0].text : "";
         const m = raw.match(/\{[\s\S]*\}/);
         if (m) {

@@ -38,60 +38,85 @@ export default function PropertyTasksPage() {
 
   const fetchTasks = async () => {
     setLoading(true);
-    const res = await fetch("/api/property-tasks");
-    const data = await res.json() as { ok: boolean; customers: Task[] };
-    if (data.ok) setTasks(data.customers);
-    setLoading(false);
+    try {
+      const res = await fetch("/api/property-tasks");
+      if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
+      const data = await res.json() as { ok: boolean; customers: Task[] };
+      if (data.ok) setTasks(data.customers);
+    } catch (e) {
+      console.error("[fetchTasks] error:", e);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { fetchTasks(); }, []);
 
   const handleComplete = async (task: Task) => {
     setCompleting(task.id);
-    const res = await fetch("/api/property-tasks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ customer_id: task.id, action: "send" }),
-    });
-    if (res.ok) {
+    try {
+      const res = await fetch("/api/property-tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customer_id: task.id, action: "send" }),
+      });
+      if (!res.ok) throw new Error(`complete failed: ${res.status}`);
       setCompleted((prev) => new Set([...prev, task.id]));
+    } catch (e) {
+      console.error("[handleComplete] error:", e);
+    } finally {
+      setCompleting(null);
     }
-    setCompleting(null);
   };
 
   const handleConfirm = async (task: Task) => {
     setCompleting(task.id);
-    const res = await fetch("/api/property-tasks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ customer_id: task.id, action: "confirm" }),
-    });
-    if (res.ok) {
+    try {
+      const res = await fetch("/api/property-tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customer_id: task.id, action: "confirm" }),
+      });
+      if (!res.ok) throw new Error(`confirm failed: ${res.status}`);
       setCompleted((prev) => new Set([...prev, task.id]));
+    } catch (e) {
+      console.error("[handleConfirm] error:", e);
+    } finally {
+      setCompleting(null);
     }
-    setCompleting(null);
   };
 
   const handleUpgradeAndComplete = async (task: Task) => {
     setCompleting(task.id);
-    const res = await fetch("/api/property-tasks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ customer_id: task.id, upgrade_to_hot: true, action: "send" }),
-    });
-    if (res.ok) {
+    try {
+      const res = await fetch("/api/property-tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customer_id: task.id, upgrade_to_hot: true, action: "send" }),
+      });
+      if (!res.ok) throw new Error(`upgrade failed: ${res.status}`);
       setCompleted((prev) => new Set([...prev, task.id]));
+    } catch (e) {
+      console.error("[handleUpgradeAndComplete] error:", e);
+    } finally {
+      setCompleting(null);
     }
-    setCompleting(null);
   };
 
   const handleSendToLine = async () => {
     setSending(true);
     setSendResult("");
-    const res = await fetch("/api/send-property-list", { method: "POST" });
-    const data = await res.json() as { ok: boolean; count?: number; error?: string };
-    setSendResult(data.ok ? `✅ ${data.count}名のリストをLINEに送信しました` : `❌ ${data.error}`);
-    setSending(false);
+    try {
+      const res = await fetch("/api/send-property-list", { method: "POST" });
+      if (!res.ok) throw new Error(`send failed: ${res.status}`);
+      const data = await res.json() as { ok: boolean; count?: number; error?: string };
+      setSendResult(data.ok ? `✅ ${data.count}名のリストをLINEに送信しました` : `❌ ${data.error}`);
+    } catch (e) {
+      console.error("[handleSendToLine] error:", e);
+      setSendResult("❌ 送信に失敗しました。通信環境を確認してください");
+    } finally {
+      setSending(false);
+    }
   };
 
   const visibleTasks = tasks.filter((t) => !completed.has(t.id));

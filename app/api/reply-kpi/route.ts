@@ -3,7 +3,8 @@ import { supabase } from "@/app/lib/supabase";
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
-  const weeks = Math.min(52, Math.max(1, parseInt(url.searchParams.get("weeks") ?? "12", 10)));
+  const weeksRaw = parseInt(url.searchParams.get("weeks") ?? "12", 10);
+  const weeks = Number.isFinite(weeksRaw) ? Math.min(52, Math.max(1, weeksRaw)) : 12;
 
   const since = new Date(Date.now() - weeks * 7 * 24 * 60 * 60 * 1000).toISOString();
 

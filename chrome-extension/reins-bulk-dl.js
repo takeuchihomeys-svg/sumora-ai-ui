@@ -598,6 +598,7 @@
               clearTimeout(timer);
               if (reinjTimer) { clearInterval(reinjTimer); reinjTimer = null; }
               window.removeEventListener("message", pdfHandler);
+              document.removeEventListener("axlx-pdf-ready", customEvtHdlr);
               reject(new Error("図面ボタンが見つかりません: " + target.rowKey.slice(0, 20)));
               return;
             }

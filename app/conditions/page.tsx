@@ -173,14 +173,22 @@ export default function ConditionsPage() {
   const handleMarkSent = async (e: React.MouseEvent, customerId: string) => {
     e.stopPropagation();
     setSentMarkingId(customerId);
-    await fetch("/api/property-tasks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ customer_id: customerId }),
-    });
-    const now = new Date().toISOString();
-    setCustomers((prev) => prev.map((c) => c.id === customerId ? { ...c, last_property_sent_at: now } : c));
-    setSentMarkingId(null);
+    try {
+      const res = await fetch("/api/property-tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customer_id: customerId }),
+      });
+      if (!res.ok) throw new Error(`mark sent failed: ${res.status}`);
+      // API成功を確認してからstateを更新（楽観更新しない）
+      const now = new Date().toISOString();
+      setCustomers((prev) => prev.map((c) => c.id === customerId ? { ...c, last_property_sent_at: now } : c));
+    } catch (err) {
+      console.error("[handleMarkSent] error:", err);
+      alert("送信済みの記録に失敗しました。通信環境を確認してください");
+    } finally {
+      setSentMarkingId(null);
+    }
   };
 
   // 紐付け済み property_customer_id セット
@@ -276,26 +284,30 @@ export default function ConditionsPage() {
 
   async function load() {
     setLoading(true);
-    const [res, { data: convData }] = await Promise.all([
-      fetch("/api/property-customers"),
-      supabase.from("conversations").select("property_customer_id").not("property_customer_id", "is", null),
-    ]);
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({})) as { error?: string };
-      if (err.error?.includes("does not exist") || err.error?.includes("relation")) {
-        setDbReady(false);
-      } else {
-        console.error("[load] property-customers fetch error:", err.error);
+    try {
+      const [res, { data: convData }] = await Promise.all([
+        fetch("/api/property-customers"),
+        supabase.from("conversations").select("property_customer_id").not("property_customer_id", "is", null),
+      ]);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        if (err.error?.includes("does not exist") || err.error?.includes("relation")) {
+          setDbReady(false);
+        } else {
+          console.error("[load] property-customers fetch error:", err.error);
+        }
+        return;
       }
+      const data: Customer[] = await res.json();
+      setCustomers(data);
+      if (convData) {
+        setLinkedIds(new Set(convData.map((r: { property_customer_id: string }) => r.property_customer_id)));
+      }
+    } catch (e) {
+      console.error("[load] error:", e);
+    } finally {
       setLoading(false);
-      return;
     }
-    const data: Customer[] = await res.json();
-    setCustomers(data);
-    if (convData) {
-      setLinkedIds(new Set(convData.map((r: { property_customer_id: string }) => r.property_customer_id)));
-    }
-    setLoading(false);
   }
 
   useEffect(() => { load(); }, []);
@@ -373,30 +385,35 @@ export default function ConditionsPage() {
       building_age: form.building_age || null,
     };
 
-    let res: Response;
-    if (editTarget) {
-      res = await fetch("/api/property-customers", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: editTarget.id, ...payload }),
-      });
-    } else {
-      res = await fetch("/api/property-customers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-    }
+    try {
+      let res: Response;
+      if (editTarget) {
+        res = await fetch("/api/property-customers", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: editTarget.id, ...payload }),
+        });
+      } else {
+        res = await fetch("/api/property-customers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      }
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      setError(err.error ?? "保存に失敗しました");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        setError(err.error ?? "保存に失敗しました");
+        return;
+      }
+      setShowModal(false);
+      load();
+    } catch (e) {
+      console.error("[save] error:", e);
+      setError("保存に失敗しました。通信環境を確認してください");
+    } finally {
       setSaving(false);
-      return;
     }
-    setSaving(false);
-    setShowModal(false);
-    load();
   }
 
   async function deleteCustomer(id: string) {
@@ -601,7 +618,7 @@ export default function ConditionsPage() {
               {/* ── STEP1: 画像アップロード ── */}
               {!propFilterParsing && !propFilterResult && (
                 <label className="flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#d1d7db] bg-[#f8f9fa] py-10 cursor-pointer active:bg-[#f0f2f5] transition-colors">
-                  <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePropFilterImage(f); }} />
+                  <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (!f) return; if (f.size > 10 * 1024 * 1024) { alert("10MB以内の画像を選択してください"); e.target.value = ""; return; } handlePropFilterImage(f); }} />
                   <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#8696a0" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
                   <p className="text-[13px] font-bold text-[#54656f]">物件資料の画像を貼り付け</p>
                   <p className="text-[11px] text-[#8696a0]">タップしてカメラロールから選択</p>
@@ -893,10 +910,14 @@ export default function ConditionsPage() {
 
                     return (
                       <div key={c.id}>
-                        {/* サマリー行（タップで展開） */}
-                        <button
+                        {/* サマリー行（タップで展開）
+                            ※ 内側に「送った」<button>があるため、外側は<div>にする（button内buttonはHTML違反） */}
+                        <div
+                          role="button"
+                          tabIndex={0}
                           onClick={() => setExpandedListId(isExpanded ? null : c.id)}
-                          className="w-full text-left flex items-center gap-3 px-4 py-3.5 active:bg-slate-50 transition-colors"
+                          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setExpandedListId(isExpanded ? null : c.id); } }}
+                          className="w-full text-left flex items-center gap-3 px-4 py-3.5 active:bg-slate-50 transition-colors cursor-pointer"
                         >
                           <div className={`w-3 h-3 rounded-full flex-shrink-0 ${meta.dot}`} />
                           <div className="flex-1 min-w-0">
@@ -953,7 +974,7 @@ export default function ConditionsPage() {
                           >
                             <polyline points="6 9 12 15 18 9" />
                           </svg>
-                        </button>
+                        </div>
 
                         {/* 展開：全条件表示 */}
                         {isExpanded && (

@@ -68,13 +68,15 @@ export async function POST(req: NextRequest) {
   const text = templateText.trim();
 
   // 重複チェック: 同じカテゴリ・同じ本文（先頭50文字）が既に候補にあればスキップ
+  // LIKE特殊文字（% _ \）をエスケープして誤マッチを防ぐ
   const textKey = text.slice(0, 50);
+  const escapedKey = textKey.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
   const { data: existing } = await supabase
     .from("ai_template_candidates")
     .select("id")
     .eq("category", category)
     .eq("is_dismissed", false)
-    .ilike("template_text", `${textKey}%`)
+    .ilike("template_text", `${escapedKey}%`)
     .limit(1);
 
   if (existing && existing.length > 0) {

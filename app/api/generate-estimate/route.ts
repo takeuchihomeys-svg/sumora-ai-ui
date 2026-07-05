@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
 
+export const maxDuration = 60;
+
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 type Account = "sumora" | "ieyasu" | "giga";
@@ -258,7 +260,7 @@ ${supplementaryNotes ? `\n【補足情報】\n${supplementaryNotes}` : ""}
     const total = ai.total ?? subtotal - discountAmount;
 
     // DB保存
-    const { data: saved } = await supabase
+    const { data: saved, error: insertError } = await supabase
       .from("estimates")
       .insert({
         account,
@@ -285,6 +287,14 @@ ${supplementaryNotes ? `\n【補足情報】\n${supplementaryNotes}` : ""}
       })
       .select("id")
       .single();
+
+    if (insertError) {
+      console.error("[generate-estimate] DB保存エラー:", insertError);
+      return NextResponse.json(
+        { error: `見積書の保存に失敗しました: ${insertError.message}` },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({
       ok: true,

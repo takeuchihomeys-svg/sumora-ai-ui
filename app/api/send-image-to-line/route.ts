@@ -53,14 +53,24 @@ export async function POST(req: NextRequest) {
       messages.unshift({ type: "text", text: caption });
     }
 
-    await fetch("https://api.line.me/v2/bot/message/push", {
+    const res = await fetch("https://api.line.me/v2/bot/message/push", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${TOKEN}`,
       },
       body: JSON.stringify({ to: groupId, messages }),
+      signal: AbortSignal.timeout(10_000),
     });
+
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "");
+      console.error("[send-image-to-line] LINE push失敗:", res.status, errBody);
+      return NextResponse.json(
+        { error: `LINE送信に失敗しました (status ${res.status})`, url: blob.url, line_sent: false },
+        { status: 502 }
+      );
+    }
 
     return NextResponse.json({ ok: true, url: blob.url, line_sent: true });
   } catch (e) {
