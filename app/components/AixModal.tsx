@@ -45,7 +45,7 @@ interface AixModalProps {
   initialViewingSpecificMode?: boolean;
   initialViewingVacancy?: boolean;
   initialIsNewArrival?: boolean;
-  initialPickupType?: "新規ピックアップ" | "継続ピックアップ" | "条件広げピックアップ" | "新着1件" | null;
+  initialPickupType?: "新規ピックアップ" | "継続ピックアップ" | "条件広げピックアップ" | "新着1件" | "代替ピックアップ" | null;
   initialEstimateMulti?: boolean;
   initialAppSubMode?: "push" | "confirm" | null;
   initialInputText?: string;

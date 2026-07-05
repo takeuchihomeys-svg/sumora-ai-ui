@@ -406,7 +406,7 @@ export default function Home() {
   const [activeAixFlow, setActiveAixFlow] = useState<string | null>(null);
   const [showPropertyPicker, setShowPropertyPicker] = useState(false);
   const [aixInitialIsNewArrival, setAixInitialIsNewArrival] = useState(false);
-  const [aixInitialPickupType, setAixInitialPickupType] = useState<"新規ピックアップ" | "継続ピックアップ" | "条件広げピックアップ" | "新着1件" | null>(null);
+  const [aixInitialPickupType, setAixInitialPickupType] = useState<"新規ピックアップ" | "継続ピックアップ" | "条件広げピックアップ" | "新着1件" | "代替ピックアップ" | null>(null);
   const propertyPickerOpenFnRef = useRef<"direct" | "withImage">("direct");
   const [showGroupFilter, setShowGroupFilter] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>(() => {
@@ -3649,7 +3649,7 @@ export default function Home() {
     setShowPropertyPicker(true);
   };
 
-  const handlePropertyPickerSelect = (pickupType: "新規ピックアップ" | "継続ピックアップ" | "条件広げピックアップ" | "新着1件") => {
+  const handlePropertyPickerSelect = (pickupType: "新規ピックアップ" | "継続ピックアップ" | "条件広げピックアップ" | "新着1件" | "代替ピックアップ") => {
     setShowPropertyPicker(false);
     setAixInitialPickupType(pickupType);
     setAixInitialIsNewArrival(pickupType === "新着1件");
@@ -8229,8 +8229,8 @@ export default function Home() {
                   icon: <><path d="M22 30a10 10 0 0114.14-1.41" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round"/><path d="M50 42a10 10 0 01-14.14 1.41" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round"/><path d="M33 24l3 5-5 1M39 48l-3-5 5-1" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></> },
                 { key: "条件広げピックアップ" as const, label: "条件広げ・1件訴求", desc: "希望条件を少し広げたピックアップの中から1件オススメ",
                   icon: <><rect x="22" y="28" width="28" height="18" rx="3" stroke="#6366F1" strokeWidth="1.8"/><path d="M28 28v-4h16v4" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/><path d="M28 37h16M28 42h10" stroke="#6366F1" strokeWidth="1.5" strokeLinecap="round"/><path d="M46 40l4-4 4 4" stroke="#6366F1" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></> },
-                { key: "新着1件" as const, label: "新着1件のみ", desc: "新着物件として強調して1件だけ送る",
-                  icon: <path d="M36 22l3.09 6.26 6.91 1-5 4.87 1.18 6.87L36 38l-6.18 3-0.82.5 1.18-6.87-5-4.87 6.91-1z" stroke="#6366F1" strokeWidth="1.8" strokeLinejoin="round"/> },
+                { key: "代替ピックアップ" as const, label: "代替・1件訴求", desc: "元の物件が空室なし→代替物件の中から1件を特にオススメ",
+                  icon: <><path d="M36 20L22 30v22h28V30z" stroke="#6366F1" strokeWidth="1.8" strokeLinejoin="round"/><path d="M30 36l4 4 8-8" stroke="#6366F1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></> },
               ]).map(({ key, label, desc, icon }) => (
                 <button
                   key={key}
@@ -8430,6 +8430,27 @@ export default function Home() {
                   </div>
                 </button>
               ))}
+              {/* 新着1件のみ：property_recommendation APIを使用（物件オススメAIで1件訴求） */}
+              <button
+                onClick={() => {
+                  propertyPickerOpenFnRef.current = "withImage";
+                  handlePropertyPickerSelect("新着1件");
+                }}
+                className="flex items-center gap-3.5 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3.5 text-left transition active:bg-[#E8F5E9] active:border-[#2E7D32]"
+              >
+                <div className="shrink-0">
+                  <svg width="36" height="36" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="36" cy="36" r="36" fill="#E8F5E9"/>
+                    <path d="M36 22l2.47 5.01 5.53.8-4 3.9.94 5.49L36 34.51l-4.94 2.69.94-5.49-4-3.9 5.53-.8z" stroke="#2E7D32" strokeWidth="1.8" strokeLinejoin="round"/>
+                    <path d="M26 48h20" stroke="#2E7D32" strokeWidth="1.5" strokeLinecap="round"/>
+                    <path d="M30 43h12" stroke="#2E7D32" strokeWidth="1.2" strokeLinecap="round"/>
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-[14px] font-semibold text-[#111827]">新着1件のみ</p>
+                  <p className="text-[11px] text-[#9CA3AF]">新着物件を1件だけ強調して送る（物件オススメAI使用）</p>
+                </div>
+              </button>
             </div>
             <button
               onClick={() => { setShowPropertySendPicker(false); setActiveAixFlow(null); }}
