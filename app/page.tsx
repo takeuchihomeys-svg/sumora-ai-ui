@@ -400,6 +400,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [showAixMenu, setShowAixMenu] = useState(false);
+  const [suggestedAixAction, setSuggestedAixAction] = useState<string | null>(null);
   const [showCondPanel, setShowCondPanel] = useState(false);
   const [aixInspectLabel, setAixInspectLabel] = useState<string | null>(null);
   const [activeAixFlow, setActiveAixFlow] = useState<string | null>(null);
@@ -5348,6 +5349,13 @@ export default function Home() {
                     setActiveAixFlow(null);
                   } else {
                     setShowAixMenu(true); setShowStatusMenu(false);
+                    setSuggestedAixAction(null);
+                    if (selectedConversation?.id && selectedConversation?.status) {
+                      fetch(`/api/aix/suggest?conversation_status=${encodeURIComponent(selectedConversation.status)}&conversation_id=${encodeURIComponent(selectedConversation.id)}`)
+                        .then((r) => r.json() as Promise<{ ok: boolean; suggested_action?: string | null }>)
+                        .then((d) => { if (d.ok && d.suggested_action) setSuggestedAixAction(d.suggested_action); })
+                        .catch(() => {});
+                    }
                   }
                 }}
                 className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-bold shadow-sm active:scale-95 transition-all duration-75 ${
@@ -9479,10 +9487,10 @@ export default function Home() {
                   },
                 };
                 return [
-                  { color: "#00897B", label: "物件ピックアップした", sub: "ピックアップした物件を送る・退去予定も自動案内", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); setShowPropertySendPicker(true); } },
-                  { color: "#2196F3", label: "1件特にオススメする", sub: "おすすめ物件をAIが提案", action: () => { openPropertyRecommendationPicker("withImage"); } },
-                  { color: "#4CAF50", label: "物件確認した（募集状況）", sub: "確認結果を3パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); } },
-                  { color: "#FF9800", label: "見積書送る", sub: "費用の見積書を作成", action: () => {
+                  { color: "#00897B", label: "物件ピックアップした", actionType: "property_send", sub: "ピックアップした物件を送る・退去予定も自動案内", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); setShowPropertySendPicker(true); } },
+                  { color: "#2196F3", label: "1件特にオススメする", actionType: "property_recommendation", sub: "おすすめ物件をAIが提案", action: () => { openPropertyRecommendationPicker("withImage"); } },
+                  { color: "#4CAF50", label: "物件確認した（募集状況）", actionType: "property_check_result", sub: "確認結果を3パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); } },
+                  { color: "#FF9800", label: "見積書送る", actionType: "estimate_sheet", sub: "費用の見積書を作成", action: () => {
                     setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet");
                     const cid = selectedConversation.id; const cname = selectedConversation.customerName;
                     if (!(activeTasks[cid] ?? []).some((t) => t.task_type === "estimate_sheet")) {
@@ -9499,22 +9507,25 @@ export default function Home() {
                     }
                     setShowEstimatePicker(true);
                   } },
-                  { color: "#0288D1", label: "お部屋探し条件ヒアリング", sub: "条件フォーム①〜⑧をワンタップで送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("condition_hearing"); openAixDirect("condition_hearing"); } },
-                  { color: "#9C27B0", label: "内覧日を調整する", sub: "日程をタップして選択→AI文生成→内覧案内LINEを送信。内覧率UPに直結！", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setShowViewingPicker(true); } },
-                  { color: "#00838F", label: "待ち合わせ場所", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); } },
-                  { color: "#E53935", label: "申込（誘導・決定）", sub: "物件名入力orシンプル送信→AI生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); setShowApplicationPicker(true); } },
-                  { color: "#00796B", label: "挨拶（内覧前・内覧後）", sub: "内覧前後の挨拶をAI生成。内覧前は日時登録でアナウンス自動化", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("greeting_viewing"); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); setShowGreetingViewingPicker(true); } },
-                  { color: "#546E7A", label: "確認した（条件・交渉）", sub: "管理会社・代表・オーナーへの確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setShowKoshoParentPicker(true); } },
-                  { color: "#607D8B", label: "確認します", sub: "ワンタップで確認する旨をAI生成して送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("acknowledge_check"); openAixDirect("acknowledge_check"); } },
-                  { color: "#8E24AA", label: "追客する", sub: "反応が途絶えたお客様への追客LINEをAI生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("followup_revive"); openAixDirect("followup_revive"); } },
+                  { color: "#0288D1", label: "お部屋探し条件ヒアリング", actionType: "condition_hearing", sub: "条件フォーム①〜⑧をワンタップで送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("condition_hearing"); openAixDirect("condition_hearing"); } },
+                  { color: "#9C27B0", label: "内覧日を調整する", actionType: "viewing_invite", sub: "日程をタップして選択→AI文生成→内覧案内LINEを送信。内覧率UPに直結！", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("viewing_invite"); setShowViewingPicker(true); } },
+                  { color: "#00838F", label: "待ち合わせ場所", actionType: "meeting_place", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); } },
+                  { color: "#E53935", label: "申込（誘導・決定）", actionType: "application_push", sub: "物件名入力orシンプル送信→AI生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); setShowApplicationPicker(true); } },
+                  { color: "#00796B", label: "挨拶（内覧前・内覧後）", actionType: "greeting_viewing", sub: "内覧前後の挨拶をAI生成。内覧前は日時登録でアナウンス自動化", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("greeting_viewing"); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); setShowGreetingViewingPicker(true); } },
+                  { color: "#546E7A", label: "確認した（条件・交渉）", actionType: "acknowledge_result", sub: "管理会社・代表・オーナーへの確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setShowKoshoParentPicker(true); } },
+                  { color: "#607D8B", label: "確認します", actionType: "acknowledge_check", sub: "ワンタップで確認する旨をAI生成して送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("acknowledge_check"); openAixDirect("acknowledge_check"); } },
+                  { color: "#8E24AA", label: "追客する", actionType: "followup_revive", sub: "反応が途絶えたお客様への追客LINEをAI生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("followup_revive"); openAixDirect("followup_revive"); } },
                 ].map((item) => {
                   const info = AIX_INSPECT[item.label];
                   const isOpen = aixInspectLabel === item.label;
+                  const isSuggested = !!(suggestedAixAction && item.actionType === suggestedAixAction);
                   const isHighlighted =
+                    isSuggested ||
                     (guideToCheckResult && item.label === "物件確認した（募集状況）") ||
                     (guideToMeetingPlace && item.label === "待ち合わせ場所") ||
                     (guideToEstimate && item.label === "見積書送る");
                   const highlightColor =
+                    isSuggested ? item.color :
                     guideToCheckResult && item.label === "物件確認した（募集状況）" ? "#4CAF50" :
                     guideToMeetingPlace && item.label === "待ち合わせ場所" ? "#00838F" :
                     guideToEstimate && item.label === "見積書送る" ? "#FF9800" : "";
@@ -9533,13 +9544,31 @@ export default function Home() {
                       <div className="flex items-center gap-0">
                         {/* メインボタン */}
                         <button
-                          onClick={item.action}
+                          onClick={() => {
+                            if (suggestedAixAction && selectedConversation?.id && selectedConversation?.status) {
+                              fetch("/api/learn-action-patterns", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                  action: "log",
+                                  conversation_status: selectedConversation.status,
+                                  action_type: item.actionType,
+                                  source: item.actionType === suggestedAixAction ? "suggestion_accepted" : "suggestion_bypassed",
+                                  conversation_id: selectedConversation.id,
+                                }),
+                              }).catch(() => {});
+                            }
+                            item.action();
+                          }}
                           className="flex flex-1 items-center gap-0 text-left transition-all active:scale-[0.98] active:brightness-95"
                           style={{ background: isHighlighted ? `${highlightColor}08` : "white" }}
                         >
                           <span className="w-[10px] self-stretch flex-shrink-0 rounded-l-[10px]" style={{ background: item.color }} />
                           <div className="px-4 py-5 flex-1">
-                            <div className="text-[15px] font-bold text-[#111b21] leading-snug">{item.label}</div>
+                            <div className="text-[15px] font-bold text-[#111b21] leading-snug flex items-center gap-2">
+                              {item.label}
+                              {isSuggested && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full text-white shrink-0" style={{ background: item.color }}>おすすめ</span>}
+                            </div>
                             <div className="text-[12px] text-[#546e7a] leading-normal mt-1.5">{item.sub}</div>
                           </div>
                         </button>
