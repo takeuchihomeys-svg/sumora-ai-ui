@@ -52,7 +52,7 @@ const ACTION_LABEL: Record<string, string> = {
 };
 
 const LOOKBACK_DAYS = 14;
-const FOLLOWUP_WINDOW_MS = 15 * 60 * 1000; // AIX送信から15分以内
+const FOLLOWUP_WINDOW_MS = 30 * 60 * 1000; // AIX送信から30分以内（15分では短すぎてキャプチャ率が低かったため拡張）
 const LOG_MATCH_WINDOW_MS = 10 * 60 * 1000; // aix_usage_logs との突合許容ズレ（sent_at無し旧レコード用フォールバック）
 // P4: sent_at ベース厳密マッチ（LINE送信タイムラグを考慮して sent_at の30秒前〜5分後を許容）
 const SENT_AT_BEFORE_MS = 30 * 1000;

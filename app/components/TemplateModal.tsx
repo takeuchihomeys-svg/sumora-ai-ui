@@ -507,7 +507,7 @@ export default function TemplateModal({
         action_type: postAixContext.actionType,
         sent_message: postAixContext.sentMessage,
         category,
-        templates: candidateTemplates.map((t) => ({ id: t.id, label: t.label, text: t.text })),
+        templates: candidateTemplates.map((t) => ({ id: t.id, label: t.label, text: t.text, use_count: t.use_count ?? 0, win_rate: t.win_rate ?? null })),
         customer_conditions: linkedCustomer?.conditions ?? null,
         sub_category: detectedSubCategory,
       }),
@@ -2155,6 +2155,22 @@ export default function TemplateModal({
                                 }
                                 if (isOcrTemplate && extractingId === tmpl.id) return;
                                 // OCRテンプレートは画像をLINEに添付しない（物件名・住所抽出のみ）
+                                // AIX推薦採否ログ（postAixContext時のみ）
+                                if (postAixContext?.conversationId) {
+                                  const recMatch = aiRecommendations.find((r) => r.id === tmpl.id);
+                                  fetch("/api/learn-action-patterns", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                      action: "log",
+                                      conversation_status: `post_aix_${postAixContext.actionType}`,
+                                      action_type: tmpl.category,
+                                      customer_msg_summary: tmpl.label,
+                                      source: recMatch ? "recommendation_accepted" : "recommendation_bypassed",
+                                      conversation_id: postAixContext.conversationId,
+                                    }),
+                                  }).catch(() => {});
+                                }
                                 onSelect(displayText, isOcrTemplate ? undefined : (templateImages[tmpl.id] ?? []), tmpl.label, tmpl.category, secondMsg, tmpl.id);
                                 onClose();
                               }}

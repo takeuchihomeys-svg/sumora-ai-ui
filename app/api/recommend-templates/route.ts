@@ -19,7 +19,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 30;
 
-type TemplateCandidate = { id: string; label: string; text: string };
+type TemplateCandidate = { id: string; label: string; text: string; use_count?: number | null; win_rate?: number | null };
 type RankedItem = { index: number; score: number; reason: string };
 
 export async function POST(req: NextRequest) {
@@ -99,7 +99,13 @@ ${conversationHistory}
 
 ## 候補テンプレート一覧${category ? `（カテゴリ: ${category}）` : ""}
 ※ 【】内のタグはサブカテゴリを示します（例:【初回まとめ】【通常内覧】など）
-${templates.map((t, i) => `[${i}] ${t.label}\n${(t.text || "").slice(0, 300)}`).join("\n\n")}
+${templates.map((t, i) => {
+      const stats = [
+        (t.use_count ?? 0) > 0 ? `使用${t.use_count}回` : null,
+        t.win_rate != null ? `成約率${Math.round((t.win_rate as number) * 100)}%` : null,
+      ].filter(Boolean).join("・");
+      return `[${i}] ${t.label}${stats ? ` (${stats})` : ""}\n${(t.text || "").slice(0, 300)}`;
+    }).join("\n\n")}
 
 ## 指示
 希望条件・1通目の内容・ギャップ分析を踏まえて、続けて送るのに最も適切なテンプレートを
