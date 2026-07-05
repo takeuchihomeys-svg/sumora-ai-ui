@@ -5,11 +5,9 @@ import { supabase } from "@/app/lib/supabase";
 // POST /api/cleanup-images  (x-cron-secret or Vercel cron auth)
 // 毎日3:23 AM にVercel Cronで自動実行
 export async function POST(req: NextRequest) {
-  const secret = req.headers.get("x-cron-secret");
   const authHeader = req.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
-  const isVercelCron = cronSecret ? authHeader === `Bearer ${cronSecret}` : false;
-  if (secret !== "hasu-cron-secret-2024" && !isVercelCron) {
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

@@ -722,12 +722,22 @@ CREATE TABLE IF NOT EXISTS embedding_cache (
 ALTER TABLE embedding_cache DISABLE ROW LEVEL SECURITY
 `.trim();
 
-export async function GET() {
+export async function GET(req: Request) {
+  const secret = process.env.CRON_SECRET;
+  const auth = (req.headers as Headers).get("authorization");
+  if (!secret || auth !== `Bearer ${secret}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   return NextResponse.json({ sql: SQL });
 }
 
 // POST: 実際にマイグレーションを実行（デプロイ後に一度叩く）
-export async function POST() {
+export async function POST(req: Request) {
+  const secret = process.env.CRON_SECRET;
+  const auth = (req.headers as Headers).get("authorization");
+  if (!secret || auth !== `Bearer ${secret}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   const { supabase } = await import("@/app/lib/supabase");
   const statements = SQL.split(";").map(s => s.trim()).filter(Boolean);
   const errors: string[] = [];

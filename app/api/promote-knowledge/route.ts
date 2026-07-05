@@ -20,7 +20,12 @@ async function callHaiku(prompt: string): Promise<string> {
   return res.content[0].type === "text" ? res.content[0].text.trim() : "";
 }
 
-export async function POST() {
+export async function POST(req: Request) {
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = (req.headers as Headers).get("authorization");
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   const phases: Array<"first_reply" | "hearing" | "proposing" | "applying"> = [
     "first_reply", "hearing", "proposing", "applying",
   ];

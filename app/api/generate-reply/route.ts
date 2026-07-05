@@ -1140,8 +1140,7 @@ export async function POST(req: NextRequest) {
 
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
     // 各フェッチはエラーでも生成を止めない（knowledgeなし・実例なしで生成続行）
-    const [detectedIntent, knowledge, examples, phrases, autoSummary] = await Promise.all([
-      classifyIntent(message, currentState, history),
+    const [knowledge, examples, phrases, autoSummary] = await Promise.all([
       fetchKnowledge(currentState, message, analysisContext)
         .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return ""; }),
       fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext)
@@ -1204,7 +1203,7 @@ export async function POST(req: NextRequest) {
         async start(controller) {
           // 1行目: メタデータJSON（フロントエンドがok確認に使用）
           controller.enqueue(encoder.encode(
-            JSON.stringify({ ok: true, detected_intent: detectedIntent, quality: qualityFlags }) + "\n"
+            JSON.stringify({ ok: true, quality: qualityFlags }) + "\n"
           ));
           // 生成完了テキスト（conversationId 指定時の ai_draft 保存用）
           let finalDraftText = "";

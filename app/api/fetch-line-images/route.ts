@@ -4,8 +4,10 @@ import { supabase } from "@/app/lib/supabase";
 // 過去に届いたお客さん画像メッセージ（image_url = null）を一括で取得・保存する
 // GET /api/fetch-line-images?limit=50
 export async function GET(req: NextRequest) {
-  const secret = req.headers.get("x-cron-secret");
-  if (secret !== process.env.SYNC_SECRET && secret !== "hasu-cron-secret-2024") {
+  const authHeader = req.headers.get("authorization");
+  const cronSecret = process.env.CRON_SECRET;
+  const syncSecret = req.headers.get("x-cron-secret");
+  if ((!cronSecret || authHeader !== `Bearer ${cronSecret}`) && syncSecret !== process.env.SYNC_SECRET) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
