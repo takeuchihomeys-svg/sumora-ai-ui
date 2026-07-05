@@ -115,10 +115,10 @@ export async function GET(req: NextRequest) {
 
       const { error: sentErr } = await supabase.from("scheduled_messages").update({ status: "sent" }).eq("id", msg.id as string);
       if (sentErr) {
-        await supabase.from("scheduled_messages").update({ status: "failed", error: sentErr.message }).eq("id", msg.id as string);
-      } else {
-        processed++;
+        // LINE送信は成功済み。DBステータス更新が失敗しても "failed" にしない（次回Cronで重複送信されるのを防ぐ）
+        console.error("[send-scheduled] status更新失敗（LINE送信は成功）:", sentErr.message, "id:", msg.id);
       }
+      processed++;
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       await supabase.from("scheduled_messages").update({ status: "failed", error: errMsg }).eq("id", msg.id as string);

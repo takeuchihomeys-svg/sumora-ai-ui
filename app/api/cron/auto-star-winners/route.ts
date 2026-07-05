@@ -60,26 +60,37 @@ export async function GET(req: NextRequest) {
   let failed = 0;
   let analyzed = 0;
 
-  for (const [i, ex] of examples.entries()) {
-    const isAutoStar = i >= MAX_ANALYZE_PER_RUN;
+  // フル分析枠（先頭 MAX_ANALYZE_PER_RUN 件）: HTTP経由でHaiku分析込みの☆付与
+  for (const [i, ex] of examples.slice(0, MAX_ANALYZE_PER_RUN).entries()) {
     try {
       const res = await fetch(`${baseUrl}/api/save-reply-example`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: ex.id, is_starred: true, isAutoStar }),
+        body: JSON.stringify({ id: ex.id, is_starred: true, isAutoStar: false }),
       });
-      if (res.ok) {
-        starred++;
-        if (!isAutoStar) analyzed++;
-      } else {
-        failed++;
-        console.warn("[auto-star-winners] PATCH failed for:", ex.id, res.status);
-      }
+      if (res.ok) { starred++; analyzed++; }
+      else { failed++; console.warn("[auto-star-winners] PATCH failed for:", ex.id, res.status); }
     } catch (e) {
       failed++;
       console.error("[auto-star-winners] PATCH error:", ex.id, e);
     }
   }
+
+  // 超過分（MAX_ANALYZE_PER_RUN 以降）: DB直接バルク更新（HTTP直列ループを排除してタイムアウト防止）
+  const bulkIds = examples.slice(MAX_ANALYZE_PER_RUN).map((e) => e.id as string);
+  if (bulkIds.length > 0) {
+    const { error: bulkErr } = await supabase
+      .from("ai_reply_examples")
+      .update({ is_starred: true })
+      .in("id", bulkIds);
+    if (bulkErr) {
+      console.error("[auto-star-winners] bulk update error:", bulkErr.message);
+      failed += bulkIds.length;
+    } else {
+      starred += bulkIds.length;
+    }
+  }
+
 
   console.log(`[auto-star-winners] done: starred=${starred} analyzed=${analyzed} failed=${failed} convs=${convIds.length}`);
   return NextResponse.json({ ok: true, starred, analyzed, failed, total: examples.length, convs: convIds.length });

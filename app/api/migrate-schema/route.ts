@@ -465,6 +465,15 @@ RETURNS void LANGUAGE sql AS $$
       last_used_at = NOW()
   WHERE id = ANY(p_ids);
 $$;
+
+-- テンプレート使用回数アトミックインクリメント（RMW競合を排除）
+CREATE OR REPLACE FUNCTION increment_template_use_count(p_id UUID)
+RETURNS void LANGUAGE sql SECURITY DEFINER AS $$
+  UPDATE templates
+  SET use_count = COALESCE(use_count, 0) + 1,
+      last_used_at = NOW()
+  WHERE id = p_id;
+$$;
 CREATE INDEX IF NOT EXISTS ai_reply_knowledge_embedding_idx ON ai_reply_knowledge USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50);
 CREATE OR REPLACE FUNCTION match_reply_knowledge(query_embedding vector, match_count integer, min_importance integer DEFAULT 7)
 RETURNS TABLE(id uuid, title text, content text, category text, conversation_state text, importance integer, similarity float)
@@ -595,6 +604,14 @@ CREATE TABLE IF NOT EXISTS aix_usage_logs (
 CREATE INDEX IF NOT EXISTS idx_aix_usage_logs_conversation_id ON aix_usage_logs(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_aix_usage_logs_created_at ON aix_usage_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_aix_usage_logs_aix_type ON aix_usage_logs(aix_type);
+CREATE INDEX IF NOT EXISTS idx_aix_usage_logs_conv_created ON aix_usage_logs(conversation_id, created_at DESC);
+
+-- パフォーマンス強化: 毎分Cronが叩くカラムのインデックス
+CREATE INDEX IF NOT EXISTS idx_conversations_draft_pending_at ON conversations(draft_pending_at) WHERE draft_pending_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_conversations_draft_attempted_at ON conversations(draft_attempted_at) WHERE draft_attempted_at IS NOT NULL;
+
+-- ai_reply_knowledge の ilike '%差分学習%' / '%修正対比%' 全件スキャン削減
+CREATE INDEX IF NOT EXISTS idx_ai_reply_knowledge_title_pattern ON ai_reply_knowledge(title text_pattern_ops);
 ALTER TABLE aix_usage_logs DISABLE ROW LEVEL SECURITY;
 
 -- viewings テーブル（内覧予定管理・アナウンス自動化用）

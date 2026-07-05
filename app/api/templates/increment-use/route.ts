@@ -10,20 +10,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "templateId required" }, { status: 400 });
   }
 
-  // Supabaseの.updateは直接インクリメントできないため、現在値取得 → +1 の2ステップ
-  const { data: tmpl } = await supabase
-    .from("templates")
-    .select("use_count")
-    .eq("id", templateId)
-    .single();
-
-  const { error } = await supabase
-    .from("templates")
-    .update({
-      use_count: (tmpl?.use_count ?? 0) + 1,
-      last_used_at: new Date().toISOString(),
-    })
-    .eq("id", templateId);
+  // RPC でアトミックインクリメント（Read-Modify-Write 競合を排除）
+  const { error } = await supabase.rpc("increment_template_use_count", { p_id: templateId });
 
   if (error) {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

@@ -475,7 +475,7 @@ export async function POST(req: NextRequest) {
     const { data: existingRecord } = await starQuery
       .order("created_at", { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
 
     if (existingRecord && !existingRecord.is_starred) {
       // 既存レコードを☆に更新してPATH相当の分析を実行
@@ -546,7 +546,7 @@ export async function POST(req: NextRequest) {
   const { data: splitCandidate } = await splitQuery
     .order("created_at", { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
 
   if (splitCandidate) {
     // 冪等ガード: 同一 sentReply が既にレコードに含まれる場合（リトライ・二重送信）は

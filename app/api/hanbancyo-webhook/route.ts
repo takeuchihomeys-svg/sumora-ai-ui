@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false }, { status: 401 });
   }
 
-  const body = JSON.parse(rawBody) as {
+  let body: {
     events: Array<{
       type: string;
       source: { type: string; groupId?: string; userId?: string };
@@ -60,6 +60,11 @@ export async function POST(req: NextRequest) {
       replyToken?: string;
     }>;
   };
+  try {
+    body = JSON.parse(rawBody) as typeof body;
+  } catch {
+    return NextResponse.json({ ok: false }, { status: 400 });
+  }
 
   for (const event of body.events ?? []) {
     // グループIDを取得・保存
@@ -83,7 +88,7 @@ export async function POST(req: NextRequest) {
         .select("id, customer_name")
         .ilike("customer_name", `%${name}%`)
         .limit(1)
-        .single();
+        .maybeSingle();
 
       if (data?.id) {
         await supabase
@@ -112,7 +117,7 @@ export async function POST(req: NextRequest) {
         .select("id, customer_name")
         .ilike("customer_name", `%${name}%`)
         .limit(1)
-        .single();
+        .maybeSingle();
 
       if (data?.id) {
         await supabase

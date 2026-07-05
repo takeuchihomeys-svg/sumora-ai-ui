@@ -61,14 +61,13 @@ ${sentReply}
       ...analysis.style_elements.map((el) => ({ category: "style" as const, title: "口調・スタイル", content: el, importance: 6 })),
       ...analysis.key_phrases.map((p)  => ({ category: "phrase" as const,   title: "フレーズ",      content: p,  importance: 6 })),
     ];
-    let inserted = 0;
-    for (const entry of entries) {
-      const { error } = await supabase.from("ai_reply_knowledge").insert({
-        ...entry, conversation_state: conversationState || null, source_example_id: exampleId,
-      });
-      if (!error) inserted++;
-    }
-    return inserted;
+    const rows = entries.map((entry) => ({
+      ...entry,
+      conversation_state: conversationState || null,
+      source_example_id: exampleId,
+    }));
+    const { error, data } = await supabase.from("ai_reply_knowledge").insert(rows).select("id");
+    return error ? 0 : (data?.length ?? 0);
   } catch { return 0; }
 }
 
