@@ -281,9 +281,11 @@ export default function ConditionsPage() {
       supabase.from("conversations").select("property_customer_id").not("property_customer_id", "is", null),
     ]);
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
+      const err = await res.json().catch(() => ({})) as { error?: string };
       if (err.error?.includes("does not exist") || err.error?.includes("relation")) {
         setDbReady(false);
+      } else {
+        console.error("[load] property-customers fetch error:", err.error);
       }
       setLoading(false);
       return;
@@ -318,7 +320,7 @@ export default function ConditionsPage() {
         .select("line_user_id")
         .eq("property_customer_id", c.id)
         .limit(1)
-        .single();
+        .maybeSingle();
       if (data?.line_user_id) lineUserId = data.line_user_id as string;
     }
 
@@ -406,14 +408,23 @@ export default function ConditionsPage() {
 
   async function markSent(id: string) {
     setMarkingId(id);
-    await fetch("/api/property-customers", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, last_property_sent_at: new Date().toISOString() }),
-    });
-    setMarkingId(null);
-    setQuickTarget(null);
-    load();
+    try {
+      const res = await fetch("/api/property-customers", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, last_property_sent_at: new Date().toISOString() }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { error?: string };
+        console.error("[markSent] failed:", err.error);
+      }
+    } catch (e) {
+      console.error("[markSent] error:", e);
+    } finally {
+      setMarkingId(null);
+      setQuickTarget(null);
+      load();
+    }
   }
 
   async function parseFormat() {

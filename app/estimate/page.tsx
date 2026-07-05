@@ -250,7 +250,12 @@ export default function EstimatePage() {
 
   const handleFileSelect = (files: FileList | null) => {
     if (!files) return;
+    const MAX_SIZE = 3 * 1024 * 1024; // 3MB
     Array.from(files).forEach((file) => {
+      if (file.size > MAX_SIZE) {
+        setExtractError(`「${file.name}」は3MBを超えています。圧縮してから再選択してください。`);
+        return;
+      }
       const reader = new FileReader();
       reader.onload = (e) => {
         const base64 = (e.target?.result as string).split(",")[1];
@@ -258,6 +263,9 @@ export default function EstimatePage() {
           ...prev,
           { base64, mimeType: file.type, name: file.name },
         ]);
+      };
+      reader.onerror = () => {
+        setExtractError(`「${file.name}」の読み込みに失敗しました。`);
       };
       reader.readAsDataURL(file);
     });
