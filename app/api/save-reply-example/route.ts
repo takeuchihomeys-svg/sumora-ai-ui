@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
+// Vercel Functions のタイムアウト上限（秒）— Haiku分析チェーン×3に余裕を持たせる
+export const maxDuration = 60;
+
 // ─── OpenAI 埋め込み生成（text-embedding-3-small・1536次元）────────────────────
 async function getEmbedding(text: string): Promise<number[] | null> {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -8,6 +11,7 @@ async function getEmbedding(text: string): Promise<number[] | null> {
   try {
     const res = await fetch("https://api.openai.com/v1/embeddings", {
       method: "POST",
+      signal: AbortSignal.timeout(6_000),
       headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
     });
@@ -90,6 +94,7 @@ async function callHaiku(prompt: string, maxTokens = 1024): Promise<string> {
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
+      signal: AbortSignal.timeout(30_000),
       headers: {
         "Content-Type": "application/json",
         "x-api-key": apiKey,
@@ -383,11 +388,16 @@ ${sentReply}${existingList}
 // isAutoStar=true（auto-star-winners等のバッチ経由）の場合はAnthropic分析チェーンを
 // 実行しない（☆フラグ更新のみ）。大量☆付与時のコスト暴発を防止する。
 export async function PATCH(req: NextRequest) {
-  const { id, is_starred, isAutoStar } = await req.json() as {
-    id: string;
-    is_starred: boolean;
-    isAutoStar?: boolean;
-  };
+  let id: string, is_starred: boolean, isAutoStar: boolean | undefined;
+  try {
+    ({ id, is_starred, isAutoStar } = await req.json() as {
+      id: string;
+      is_starred: boolean;
+      isAutoStar?: boolean;
+    });
+  } catch {
+    return NextResponse.json({ ok: false, error: "Invalid request body" }, { status: 400 });
+  }
   if (!id) return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
 
   // 既存レコードを取得
@@ -395,7 +405,7 @@ export async function PATCH(req: NextRequest) {
     .from("ai_reply_examples")
     .select("id, conversation_state, customer_message, sent_reply, ai_draft, was_ai_used, was_ai_modified")
     .eq("id", id)
-    .single();
+    .maybeSingle();
 
   if (!existing) return NextResponse.json({ ok: false, error: "not found" }, { status: 404 });
 
@@ -426,19 +436,7 @@ export async function PATCH(req: NextRequest) {
 
 // ─── POST ────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
-  const {
-    conversationState: rawState,
-    customerMessage,
-    sentReply,
-    aiDraft,
-    isStarred,
-    replyAngle,
-    previousStaffMessage,
-    conversationId,
-    sentAt,
-    skipNormalize,
-    isAutoStar,
-  } = await req.json() as {
+  type PostBody = {
     conversationState: string;
     customerMessage: string;
     sentReply: string;
@@ -451,6 +449,25 @@ export async function POST(req: NextRequest) {
     skipNormalize?: boolean;
     isAutoStar?: boolean; // バッチ経由（auto-star-winners等）→ LLM分析チェーンを抑止
   };
+  let body: PostBody;
+  try {
+    body = await req.json() as PostBody;
+  } catch {
+    return NextResponse.json({ ok: false, error: "Invalid request body" }, { status: 400 });
+  }
+  const {
+    conversationState: rawState,
+    customerMessage,
+    sentReply,
+    aiDraft,
+    isStarred,
+    replyAngle,
+    previousStaffMessage,
+    conversationId,
+    sentAt,
+    skipNormalize,
+    isAutoStar,
+  } = body;
 
   if (!customerMessage || !sentReply) {
     return NextResponse.json(

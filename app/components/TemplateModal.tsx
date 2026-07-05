@@ -757,13 +757,13 @@ export default function TemplateModal({
     }
   };
 
-  const handleReorder = async (index: number, direction: "up" | "down") => {
+  const handleReorder = async (list: Template[], index: number, direction: "up" | "down") => {
     const swapIndex = direction === "up" ? index - 1 : index + 1;
-    if (swapIndex < 0 || swapIndex >= filtered.length) return;
+    if (swapIndex < 0 || swapIndex >= list.length) return;
 
-    const a = filtered[index];
-    const b = filtered[swapIndex];
-    // filtered はソート済みなのでインデックスに * 10 を掛けてスパースな値を確保
+    const a = list[index];
+    const b = list[swapIndex];
+    // list はソート済みなのでインデックスに * 10 を掛けてスパースな値を確保
     const aOrder = a.sort_order ?? index * 10;
     const bOrder = b.sort_order ?? swapIndex * 10;
 
@@ -1594,13 +1594,13 @@ export default function TemplateModal({
                               )}
                               <div className="flex items-center gap-1.5">
                                 <button
-                                  onClick={() => handleReorder(idx, "up")}
+                                  onClick={() => handleReorder(displayFiltered, idx, "up")}
                                   disabled={idx === 0}
                                   className="flex h-5 w-5 items-center justify-center rounded text-[11px] text-[#bbb] hover:text-[#1565C0] disabled:opacity-20 transition"
                                   title="上へ"
                                 >↑</button>
                                 <button
-                                  onClick={() => handleReorder(idx, "down")}
+                                  onClick={() => handleReorder(displayFiltered, idx, "down")}
                                   disabled={idx === displayFiltered.length - 1}
                                   className="flex h-5 w-5 items-center justify-center rounded text-[11px] text-[#bbb] hover:text-[#1565C0] disabled:opacity-20 transition"
                                   title="下へ"

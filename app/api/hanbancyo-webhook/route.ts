@@ -6,20 +6,27 @@ const SECRET = process.env.LINE_HANBANCYO_CHANNEL_SECRET ?? "";
 const TOKEN = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? "";
 
 function verifySignature(body: string, signature: string): boolean {
-  if (!SECRET) return true;
+  if (!SECRET) return false;
   const hash = crypto.createHmac("sha256", SECRET).update(body).digest("base64");
   return hash === signature;
 }
 
 async function replyToLine(replyToken: string, text: string) {
-  await fetch("https://api.line.me/v2/bot/message/reply", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${TOKEN}`,
-    },
-    body: JSON.stringify({ replyToken, messages: [{ type: "text", text }] }),
-  });
+  try {
+    const res = await fetch("https://api.line.me/v2/bot/message/reply", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${TOKEN}`,
+      },
+      body: JSON.stringify({ replyToken, messages: [{ type: "text", text }] }),
+    });
+    if (!res.ok) {
+      console.error("[hanbancyo-webhook] LINE reply failed:", res.status, await res.text());
+    }
+  } catch (e) {
+    console.error("[hanbancyo-webhook] LINE reply error:", e);
+  }
 }
 
 async function getRemainingCount(): Promise<number> {

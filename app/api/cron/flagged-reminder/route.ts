@@ -1,6 +1,8 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
+export const maxDuration = 60;
+
 const STATUS_LABELS: Record<string, string> = {
   hearing:              "ヒアリング中",
   first_reply:          "初回返信",
@@ -50,7 +52,7 @@ export async function GET(req: NextRequest) {
   // LINEグループ設定（物件出しグループ）
   let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? null;
   if (!groupId) {
-    const { data } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").single();
+    const { data } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();
     groupId = (data?.value as string) ?? null;
   }
   const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN;
@@ -81,6 +83,7 @@ export async function GET(req: NextRequest) {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ to: groupId, messages: [{ type: "text", text }] }),
+    signal: AbortSignal.timeout(10_000),
   });
 
   if (!res.ok) {

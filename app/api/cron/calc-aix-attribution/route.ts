@@ -51,7 +51,7 @@ function round3(n: number): number {
 
 function isAuthorized(req: NextRequest): boolean {
   const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return true; // 未設定時（ローカル開発等）は許可
+  if (!cronSecret) return false; // 未設定時は全拒否（fail-closed）
   const authHeader = req.headers.get("authorization");
   const xSecret = req.headers.get("x-cron-secret");
   return authHeader === `Bearer ${cronSecret}` || xSecret === cronSecret;

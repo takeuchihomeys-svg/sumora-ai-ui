@@ -747,7 +747,7 @@ async function autoDetectTask(
   ]);
 
   // 売上番長グループへアナウンス
-  const { data: grpRow } = await db.from("hanbancyo_settings").select("value").eq("key", "group_id").single();
+  const { data: grpRow } = await db.from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();
   const groupId = grpRow?.value as string | undefined;
   const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN;
   if (!groupId || !token) return;
@@ -950,12 +950,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   // 2. 署名検証（セキュリティ確保）
-  if (matchedAccount.secret) {
-    const valid = await verifySignature(rawBody, signature, matchedAccount.secret);
-    if (!valid) {
-      console.warn("[line-webhook] 署名検証失敗:", matchedAccount.key);
-      return NextResponse.json({ error: "invalid signature" }, { status: 400 });
-    }
+  // secret未設定のアカウントは検証不能のため処理を拒否（fail-close）
+  if (!matchedAccount.secret) {
+    console.error("[line-webhook] channel secret未設定のため処理を拒否:", matchedAccount.key);
+    return NextResponse.json({ error: "channel secret not configured" }, { status: 500 });
+  }
+  const valid = await verifySignature(rawBody, signature, matchedAccount.secret);
+  if (!valid) {
+    console.warn("[line-webhook] 署名検証失敗:", matchedAccount.key);
+    return NextResponse.json({ error: "invalid signature" }, { status: 400 });
   }
 
   const events = body.events ?? [];

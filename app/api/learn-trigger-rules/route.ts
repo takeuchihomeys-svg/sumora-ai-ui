@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
+// Vercel Functions のタイムアウト上限（秒）
+export const maxDuration = 60;
+
 // source ごとの重み（採択の質を confidence に反映）
 // suggestion_accepted: スタッフが積極的に選択した強シグナル
 //   （#24: 2.0だと提案2回採択でルール成立する過剰な正帰還のため1.2に抑制）

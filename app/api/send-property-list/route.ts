@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -38,12 +38,12 @@ async function getGroupId(): Promise<string | null> {
     .from("hanbancyo_settings")
     .select("value")
     .eq("key", "group_id")
-    .single();
+    .maybeSingle();
   return data?.value ?? null;
 }
 
 async function pushToLine(to: string, text: string) {
-  await fetch("https://api.line.me/v2/bot/message/push", {
+  const res = await fetch("https://api.line.me/v2/bot/message/push", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -53,7 +53,11 @@ async function pushToLine(to: string, text: string) {
       to,
       messages: [{ type: "text", text }],
     }),
+    signal: AbortSignal.timeout(10_000),
   });
+  if (!res.ok) {
+    console.error("[send-property-list] LINE push failed:", res.status, await res.text());
+  }
 }
 
 async function generateQuote(hotCount: number, totalCount: number): Promise<string> {
@@ -93,7 +97,7 @@ async function generateQuote(hotCount: number, totalCount: number): Promise<stri
   }
 }
 
-export async function POST() {
+export async function POST(req: NextRequest) {
   const groupId = await getGroupId();
   if (!groupId) {
     return NextResponse.json({ ok: false, error: "グループIDが未設定です" }, { status: 400 });

@@ -1,6 +1,8 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
+export const maxDuration = 60;
+
 const ACCOUNT_LABEL: Record<string, string> = {
   sumora: "スモラ", ieyasu: "イエヤス", giga: "ギガ賃貸", hasu: "ハス",
 };
@@ -47,7 +49,7 @@ export async function GET(req: NextRequest) {
   let targetId = process.env.LINE_STAFF_GROUP_ID ?? null;
   // フォールバック: hanbancyo_settings テーブルの group_id を使う
   if (!targetId) {
-    const { data: grpRow } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").single();
+    const { data: grpRow } = await supabase.from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();
     targetId = grpRow?.value ?? null;
   }
   if (!targetId) {
@@ -190,6 +192,7 @@ export async function GET(req: NextRequest) {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ to: targetId, messages: [{ type: "text", text: message }] }),
+    signal: AbortSignal.timeout(10_000),
   });
 
   if (!res.ok) {

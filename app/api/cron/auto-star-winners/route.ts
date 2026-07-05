@@ -1,6 +1,8 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
+export const maxDuration = 300;
+
 // 成果連動☆自動付与バッチ
 // closed_won になった会話の AI 返信を自動☆ → analyzeAndSaveKnowledge + analyzeDiff が起動
 // 毎日1回（vercel.json cron）
@@ -67,6 +69,7 @@ export async function GET(req: NextRequest) {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: ex.id, is_starred: true, isAutoStar: false }),
+        signal: AbortSignal.timeout(30_000),
       });
       if (res.ok) { starred++; analyzed++; }
       else { failed++; console.warn("[auto-star-winners] PATCH failed for:", ex.id, res.status); }

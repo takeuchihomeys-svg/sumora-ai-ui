@@ -7,7 +7,9 @@ import { upsertKnowledge } from "@/app/lib/knowledge-utils";
 // closed_lost になった会話を Haiku で分析し「避けるべき対応パターン」を ai_reply_knowledge に記録
 // 毎日1回（vercel.json cron: auto-star-winners の10分後）
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+export const maxDuration = 300;
+
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 30_000, maxRetries: 1 });
 
 async function run() {
   // 過去14日以内に closed_lost になった会話（最大20件）

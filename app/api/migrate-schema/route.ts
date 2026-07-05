@@ -743,6 +743,26 @@ export async function GET() {
   return NextResponse.json({ sql: SQL });
 }
 
+// SQLをステートメント単位に分割する（ドル引用符 $$...$$ / $func$...$func$ 内のセミコロンでは分割しない）
+// ※単純な split(";") だと関数定義本体が破壊されるため必須
+function splitSql(sql: string): string[] {
+  const stmts: string[] = [];
+  let buf = "";
+  let inDollar = false;
+  for (const line of sql.split("\n")) {
+    // $$の出現数が奇数なら引用符ブロックの開始/終了
+    const dollarCount = (line.match(/\$\$|\$func\$/g) || []).length;
+    if (dollarCount % 2 === 1) inDollar = !inDollar;
+    buf += line + "\n";
+    if (!inDollar && /;\s*$/.test(line.trimEnd())) {
+      if (buf.trim()) stmts.push(buf.trim());
+      buf = "";
+    }
+  }
+  if (buf.trim()) stmts.push(buf.trim());
+  return stmts;
+}
+
 // POST: 実際にマイグレーションを実行（デプロイ後に一度叩く）
 export async function POST(req: Request) {
   const secret = process.env.CRON_SECRET;
@@ -751,13 +771,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const { supabase } = await import("@/app/lib/supabase");
-  const statements = SQL.split(";").map(s => s.trim()).filter(Boolean);
+  const statements = splitSql(SQL);
   const errors: string[] = [];
   for (const stmt of statements) {
     try {
-      const { error } = await supabase.rpc("exec_sql", { sql: stmt + ";" });
+      const { error } = await supabase.rpc("exec_sql", { sql: stmt.endsWith(";") ? stmt : stmt + ";" });
       if (error) errors.push(error.message);
-    } catch { /* ignore */ }
+    } catch (e) {
+      errors.push(e instanceof Error ? e.message : String(e));
+    }
   }
-  return NextResponse.json({ ok: true, errors });
+  return NextResponse.json({ ok: errors.length === 0, errors });
 }

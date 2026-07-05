@@ -387,11 +387,10 @@ ${entry.samples.map((s) => `- ${s.replace(/\n/g, " ")}`).join("\n")}
 // GET: Vercel cron から（CRON_SECRET が設定されていれば Bearer 認証）
 export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET;
-  if (secret) {
-    const auth = req.headers.get("authorization");
-    if (auth !== `Bearer ${secret}`) {
-      return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
-    }
+  const auth = req.headers.get("authorization");
+  if (!secret || auth !== `Bearer ${secret}`) {
+    // CRON_SECRET 未設定時も全拒否（fail-closed）
+    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
   return run();
 }
@@ -399,11 +398,10 @@ export async function GET(req: NextRequest) {
 // POST: 手動実行
 export async function POST(req: NextRequest) {
   const secret = process.env.CRON_SECRET;
-  if (secret) {
-    const auth = req.headers.get("authorization");
-    if (auth !== `Bearer ${secret}`) {
-      return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
-    }
+  const auth = req.headers.get("authorization");
+  if (!secret || auth !== `Bearer ${secret}`) {
+    // CRON_SECRET 未設定時も全拒否（fail-closed）
+    return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
   return run();
 }

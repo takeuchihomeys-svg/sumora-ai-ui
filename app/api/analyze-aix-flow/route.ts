@@ -14,7 +14,12 @@ function jstDateStr(): string {
 // POST /api/analyze-aix-flow
 // 成功会話を分析してAIXフロー誘導ガイドを自動更新
 // Cron: 毎日 06:00 UTC (15:00 JST) と 18:00 UTC (03:00 JST翌日) に実行
-export async function POST() {
+export async function POST(req: NextRequest) {
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers.get("authorization");
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
   try {
     const since = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
     const today = jstDateStr();
@@ -189,5 +194,5 @@ export async function GET(req: NextRequest) {
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
-  return POST();
+  return POST(req);
 }

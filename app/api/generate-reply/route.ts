@@ -13,12 +13,16 @@ import {
 } from "@/app/lib/line-reply-prompts";
 import { validateAndClean } from "@/app/lib/validate-reply";
 
+// Vercel Functions のタイムアウト上限（秒）— Vision + 2段LLM呼び出しに余裕を持たせる
+export const maxDuration = 60;
+
 // ─── モデル定義 ───────────────────────────────────────────────────────────────
 // Step1（分析）: Haiku — 速度重視
 const analysisModel = new ChatAnthropic({
   model: "claude-haiku-4-5-20251001",
   maxTokens: 1024,
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
+  clientOptions: { timeout: 45_000 },
 });
 
 // Step2（生成）: Sonnet — 品質重視
@@ -27,6 +31,7 @@ const generationModel = new ChatAnthropic({
   maxTokens: 1500,
   temperature: 0.3,
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
+  clientOptions: { timeout: 45_000 },
 });
 
 // ─── 初回挨拶文（greetingNote と冒頭強制置換で共用・二重定義禁止）─────────────
@@ -984,12 +989,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Invalid request body" }, { status: 400 });
   }
 
+  // 空メッセージは Vision 呼び出しより前に弾く（無駄な API 課金・待ち時間の防止）
+  if (!message) return NextResponse.json({ ok: false, error: "message required" }, { status: 400 });
+
   // スクショがある場合: Sonnet Vision でトーク内容を抽出して replyHint に注入
   if (screenshotBase64) {
     try {
       const apiKey = (process.env.ANTHROPIC_API_KEY ?? "").replace(/\s/g, "");
       const visionRes = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
+        signal: AbortSignal.timeout(30_000),
         headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
@@ -1018,8 +1027,6 @@ export async function POST(req: NextRequest) {
       }
     } catch (err) { console.error("[generate-reply] スクショ読み取り失敗 — 通常生成にフォールバック:", err); }
   }
-
-  if (!message) return NextResponse.json({ ok: false, error: "message required" }, { status: 400 });
 
   // DBカスタムプロンプトを取得（失敗時はハードコード値にフォールバック）
   let promptOverrides: PromptOverrides | undefined;

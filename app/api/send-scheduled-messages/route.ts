@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
+// Vercel Functions のタイムアウト上限（秒）— 最大100件のLINE push送信に余裕を持たせる
+export const maxDuration = 300;
+
 const ACCOUNT_KEY_MAP: Record<string, string> = {
   "イエヤス": "ieyasu",
   "ギガ賃貸": "giga",
@@ -34,8 +37,10 @@ async function pushToLine(lineUserId: string, messages: unknown[], token: string
 
 export async function GET(req: NextRequest) {
   // Vercel Cron は Authorization: Bearer <CRON_SECRET> を送る
-  const auth = req.headers.get("authorization");
-  if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
+  // fail-closed: CRON_SECRET 未設定時も拒否（未認証実行を防ぐ）
+  const cronSecret = process.env.CRON_SECRET;
+  const auth = req.headers.get("authorization") ?? "";
+  if (!cronSecret || auth !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 

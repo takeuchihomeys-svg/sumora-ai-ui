@@ -3,7 +3,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
 import { normalizeStatus } from "@/app/lib/status-normalize";
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+export const maxDuration = 30;
+
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 15_000 });
 
 // ラベル参照は normalizeStatus() 適用後のみ行うため、正規化後に到達しうるキーだけ持つ
 // （contract/lost/closed_* は SKIP_STATUSES で先に除外され、旧名は normalizeStatus で吸収される）
@@ -24,24 +26,37 @@ const ACTION_PARAMS: Record<string, { check_pattern?: string; send_mode?: string
 };
 
 export async function POST(req: NextRequest) {
-  const { conversation_id, last_aix_action: clientLastAixAction, available, customer_message } = await req.json() as { conversation_id: string; last_aix_action?: string | null; available?: boolean | null; customer_message?: string | null };
+  let body: { conversation_id?: string; last_aix_action?: string | null; available?: boolean | null; customer_message?: string | null };
+  try {
+    body = await req.json() as typeof body;
+  } catch {
+    return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
+  }
+  const { conversation_id, last_aix_action: clientLastAixAction, available, customer_message } = body;
   if (!conversation_id) return NextResponse.json({ action: null, reason: "" });
 
-  // 会話・メッセージ・顧客・採択率（毎日 update-action-confidence cron が更新）を並列取得
-  const [{ data: conv }, { data: messages }, { data: customer }, { data: acceptanceRows }] = await Promise.all([
-    supabase.from("conversations")
-      .select("status, customer_name, last_sender")
-      .eq("id", conversation_id)
-      .single(),
+  // 会話を先に取得（property_customers への紐付けは conversations.property_customer_id 経由で辿る）
+  const { data: conv } = await supabase.from("conversations")
+    .select("status, customer_name, last_sender, property_customer_id")
+    .eq("id", conversation_id)
+    .maybeSingle();
+
+  if (!conv) return NextResponse.json({ action: null, reason: "" });
+  if (SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ action: null, reason: "" });
+
+  // メッセージ・顧客（property_customer_id で引く）・採択率（毎日 update-action-confidence cron が更新）を並列取得
+  const [{ data: messages }, { data: customer }, { data: acceptanceRows }] = await Promise.all([
     supabase.from("messages")
       .select("sender, text, image_url, created_at")
       .eq("conversation_id", conversation_id)
       .order("created_at", { ascending: false })
       .limit(10),
-    supabase.from("property_customers")
-      .select("conditions, ai_summary")
-      .eq("conversation_id", conversation_id)
-      .maybeSingle(),
+    conv.property_customer_id
+      ? supabase.from("property_customers")
+          .select("preferences, other_requests, move_in_time, ai_summary")
+          .eq("id", conv.property_customer_id as string)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
     supabase.from("trigger_action_rules")
       .select("action_type, confidence")
       .eq("keyword", "SUGGESTION_ACCEPT_RATE"),
@@ -59,8 +74,7 @@ export async function POST(req: NextRequest) {
     return typeof rate === "number" && rate < 0.3;
   }
 
-  if (!conv || !messages?.length) return NextResponse.json({ action: null, reason: "" });
-  if (SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ action: null, reason: "" });
+  if (!messages?.length) return NextResponse.json({ action: null, reason: "" });
 
   // クライアントが last_aix_action を持っていない場合はDB（aix_usage_logs）から補完
   // ※古すぎるログでチェーンルールが誤発火しないよう直近24時間に限定
@@ -401,9 +415,11 @@ ${examples || "  (なし)"}
   const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
   const jstNowStr = `${jstNow.getUTCFullYear()}/${jstNow.getUTCMonth() + 1}/${jstNow.getUTCDate()} ${jstNow.getUTCHours()}:${String(jstNow.getUTCMinutes()).padStart(2, "0")}`;
 
-  // 顧客コンテキスト（property_customers の条件・AIサマリー）
+  // 顧客コンテキスト（property_customers の希望条件・要望・入居時期・AIサマリー）
   const customerContext = [
-    customer?.conditions ? `条件: ${customer.conditions as string}` : "",
+    customer?.preferences ? `希望条件: ${customer.preferences as string}` : "",
+    customer?.other_requests ? `その他要望: ${customer.other_requests as string}` : "",
+    customer?.move_in_time ? `入居時期: ${customer.move_in_time as string}` : "",
     customer?.ai_summary ? `サマリー: ${customer.ai_summary as string}` : "",
   ].filter(Boolean).join("\n");
 

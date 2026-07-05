@@ -429,8 +429,13 @@ export default function Home() {
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
   const [currentAccount, setCurrentAccount] = useState<{ id: string; name: string; icon: string; profileImage?: string }>(() => {
     if (typeof window === "undefined") return { id: "sumora", name: "スモラ", icon: "🦄" };
-    const saved = localStorage.getItem("sumora_account_profile");
-    return saved ? JSON.parse(saved) : { id: "sumora", name: "スモラ", icon: "🦄", profileImage: "/icon-192.png" };
+    const DEFAULT_PROFILE = { id: "sumora", name: "スモラ", icon: "🦄", profileImage: "/icon-192.png" };
+    try {
+      const saved = localStorage.getItem("sumora_account_profile");
+      return saved ? JSON.parse(saved) : DEFAULT_PROFILE;
+    } catch {
+      return DEFAULT_PROFILE;
+    }
   });
   const accountImageInputRef = useRef<HTMLInputElement | null>(null);
   const [mobileView, setMobileView] = useState<"list" | "chat">("list");
@@ -2924,6 +2929,7 @@ export default function Home() {
   };
 
   const executeSend = async () => {
+    if (sending) return; // 二重送信防止（再入ガード）
     setShowSendConfirm(false);
     if (!selectedConversation.id) return;
     if (!replyDraft.trim() && selectedImageFiles.length === 0) return;
@@ -9276,7 +9282,8 @@ export default function Home() {
               </button>
               <button
                 onClick={executeSend}
-                className="flex-1 py-3.5 text-[14px] font-bold text-[#1565C0]"
+                disabled={sending}
+                className="flex-1 py-3.5 text-[14px] font-bold text-[#1565C0] disabled:opacity-50"
               >
                 送信する
               </button>
