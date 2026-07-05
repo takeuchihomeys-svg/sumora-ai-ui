@@ -651,8 +651,6 @@ CREATE INDEX IF NOT EXISTS idx_ai_reply_examples_conv_id ON ai_reply_examples(co
 ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ;
 
 -- 路線別駅順序テーブル（隣駅展開・広げて検索用）
--- popup-maps.js の LINE_STATION_ORDER を正規化してDB管理
--- order_idx から order_idx ± 1 で隣駅を導出（prev/next カラムは正規化しない）
 CREATE TABLE IF NOT EXISTS line_stations (
   line_name TEXT NOT NULL,
   station_name TEXT NOT NULL,
@@ -662,6 +660,43 @@ CREATE TABLE IF NOT EXISTS line_stations (
 CREATE INDEX IF NOT EXISTS idx_line_stations_line ON line_stations(line_name);
 CREATE INDEX IF NOT EXISTS idx_line_stations_station ON line_stations(station_name);
 ALTER TABLE line_stations DISABLE ROW LEVEL SECURITY;
+
+-- pg_trgm 拡張（表記ゆれ吸収・類似検索）
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS idx_station_map_token_trgm ON station_map USING gin (token gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_region_map_token_trgm ON region_map USING gin (token gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_line_stations_station_trgm ON line_stations USING gin (station_name gin_trgm_ops);
+
+CREATE OR REPLACE FUNCTION find_similar_station(query_text TEXT, threshold FLOAT DEFAULT 0.35)
+RETURNS TABLE(token TEXT, ward TEXT, realpro_lines JSONB, itandi_lines JSONB, reins_line TEXT, similarity_score FLOAT)
+LANGUAGE sql STABLE AS $$
+  SELECT token, ward, realpro_lines, itandi_lines, reins_line,
+         similarity(token, query_text) AS similarity_score
+  FROM station_map
+  WHERE similarity(token, query_text) >= threshold
+  ORDER BY similarity_score DESC LIMIT 3;
+$$;
+
+CREATE OR REPLACE FUNCTION find_similar_region(query_text TEXT, threshold FLOAT DEFAULT 0.35)
+RETURNS TABLE(token TEXT, ward TEXT, similarity_score FLOAT)
+LANGUAGE sql STABLE AS $$
+  SELECT token, ward, similarity(token, query_text) AS similarity_score
+  FROM region_map
+  WHERE similarity(token, query_text) >= threshold
+  ORDER BY similarity_score DESC LIMIT 3;
+$$;
+
+CREATE OR REPLACE FUNCTION find_similar_line_station(query_text TEXT, threshold FLOAT DEFAULT 0.35)
+RETURNS TABLE(station_name TEXT, line_name TEXT, token TEXT, ward TEXT, realpro_lines JSONB, itandi_lines JSONB, reins_line TEXT, similarity_score FLOAT)
+LANGUAGE sql STABLE AS $$
+  SELECT ls.station_name, ls.line_name, sm.token, sm.ward,
+         sm.realpro_lines, sm.itandi_lines, sm.reins_line,
+         similarity(ls.station_name, query_text) AS similarity_score
+  FROM line_stations ls
+  LEFT JOIN station_map sm ON sm.token = ls.station_name
+  WHERE similarity(ls.station_name, query_text) >= threshold
+  ORDER BY similarity_score DESC LIMIT 5;
+$$;
 
 -- ai_reply_examples: 自動品質チェック結果フラグ
 ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS quality_auto_ok BOOLEAN;

@@ -111,6 +111,66 @@ export async function POST(req: NextRequest) {
   const unknown = tokens.filter((t) => !resolvedTokens.has(t));
   if (unknown.length === 0) return NextResponse.json({ result });
 
+  // ── ② pg_trgm 類似検索（完全一致しなかったトークンの表記ゆれを吸収）──────────
+  // station_map → region_map → line_stations の順で類似検索
+  // ヒットすれば DeepSeek/Claude を呼ばずに解決できる（コスト0）
+  const fuzzyUnresolved: string[] = [];
+  await Promise.all(unknown.map(async (token) => {
+    // station_map で fuzzy search（すでに3サイト分の路線名が入っている）
+    const { data: simStations } = await db.rpc("find_similar_station", {
+      query_text: token, threshold: 0.35,
+    });
+    if (simStations && simStations.length > 0) {
+      const best = simStations[0] as { token: string; ward: string | null; realpro_lines: string[]; itandi_lines: string[]; reins_line: string | null; similarity_score: number };
+      result[token] = {
+        type: "station", ward: best.ward,
+        realpro_lines: best.realpro_lines ?? [],
+        itandi_lines: best.itandi_lines ?? [],
+        reins_line: best.reins_line ?? null,
+        source: "db",
+      };
+      resolvedTokens.add(token);
+      console.log(`[token-resolve] fuzzy station: "${token}"→"${best.token}" (${best.similarity_score.toFixed(2)})`);
+      return;
+    }
+
+    // region_map で fuzzy search
+    const { data: simRegions } = await db.rpc("find_similar_region", {
+      query_text: token, threshold: 0.35,
+    });
+    if (simRegions && simRegions.length > 0) {
+      const best = simRegions[0] as { token: string; ward: string | null; similarity_score: number };
+      result[token] = { type: "region", ward: best.ward, realpro_lines: [], itandi_lines: [], reins_line: null, source: "db" };
+      resolvedTokens.add(token);
+      console.log(`[token-resolve] fuzzy region: "${token}"→"${best.token}" (${best.similarity_score.toFixed(2)})`);
+      return;
+    }
+
+    // line_stations で fuzzy search（station_mapにない525駅もカバー）
+    const { data: simLineStations } = await db.rpc("find_similar_line_station", {
+      query_text: token, threshold: 0.35,
+    });
+    if (simLineStations && simLineStations.length > 0) {
+      const best = simLineStations[0] as { station_name: string; line_name: string; token: string | null; ward: string | null; realpro_lines: string[] | null; itandi_lines: string[] | null; reins_line: string | null; similarity_score: number };
+      result[token] = {
+        type: "station",
+        ward: best.ward ?? null,
+        realpro_lines: best.realpro_lines ?? [best.line_name],
+        itandi_lines: best.itandi_lines ?? [],
+        reins_line: best.reins_line ?? null,
+        source: "db",
+      };
+      resolvedTokens.add(token);
+      console.log(`[token-resolve] fuzzy line_station: "${token}"→"${best.station_name}" (${best.similarity_score.toFixed(2)})`);
+      return;
+    }
+
+    fuzzyUnresolved.push(token);
+  }));
+
+  const trulyUnknown = fuzzyUnresolved;
+  if (trulyUnknown.length === 0) return NextResponse.json({ result });
+
   // ── 1日30回のレート制限（Web検索コスト保護）──────────────────────────
   const DAILY_LIMIT = 30;
   const today = new Date().toISOString().slice(0, 10);
@@ -131,7 +191,7 @@ export async function POST(req: NextRequest) {
 
   let dailyCount = savedCount;
 
-  for (const token of unknown) {
+  for (const token of trulyUnknown) {
     let resolved: ResolvedToken = { type: "unknown", ward: null, realpro_lines: [], itandi_lines: [], reins_line: null, source: "web_search" };
 
     // ── ① DeepSeek で判定（成功したらClaudeスキップ・dailyCountも消費しない）──
