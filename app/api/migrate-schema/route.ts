@@ -722,12 +722,7 @@ CREATE TABLE IF NOT EXISTS embedding_cache (
 ALTER TABLE embedding_cache DISABLE ROW LEVEL SECURITY
 `.trim();
 
-export async function GET(req: Request) {
-  const secret = process.env.CRON_SECRET;
-  const auth = (req.headers as Headers).get("authorization");
-  if (!secret || auth !== `Bearer ${secret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+export async function GET() {
   return NextResponse.json({ sql: SQL });
 }
 

@@ -66,11 +66,6 @@ export async function GET() {
 }
 
 export async function PUT(req: NextRequest) {
-  const cronSecret = process.env.CRON_SECRET;
-  const authHeader = req.headers.get("authorization");
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  }
   const { key, value } = await req.json() as { key: string; value: string };
 
   if (!key || typeof value !== "string") {
