@@ -20,6 +20,57 @@ type ResolvedToken = {
   source: "db" | "web_search" | "ai";
 };
 
+// ── ① DeepSeek-V3 で判定（安い・速い）─────────────────────────────────
+// 解決できたら ResolvedToken、unknown・失敗時は null（Claudeにフォールバック）
+async function callDeepSeek(token: string): Promise<ResolvedToken | null> {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  if (!apiKey) return null;
+
+  try {
+    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
+      method: "POST",
+      signal: AbortSignal.timeout(15_000),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        max_tokens: 512,
+        messages: [{
+          role: "user",
+          content: `大阪府の「${token}」は駅名ですか、地名ですか？確信がなければ"unknown"にしてください。
+JSONのみ返してください（説明不要）:
+{"type":"station"または"region"または"unknown","ward":"大阪市〇〇区など または null","realpro_lines":["リアプロ内部路線名"],"itandi_lines":["itandi正式路線名"],"reins_line":"REINS路線名またはnull"}
+
+リアプロ内部路線名の例：「大阪市高速軌道御堂筋線」「阪急電鉄阪急神戸線」
+itandi正式路線名の例：「高速電気軌道第1号線(大阪メトロ御堂筋線)」「阪急電鉄神戸本線」
+REINS路線名の例：「大阪メトロ御堂筋線」「阪急神戸線」`,
+        }],
+        temperature: 0,
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { choices: Array<{ message: { content: string } }> };
+    const text = data.choices[0]?.message?.content ?? "";
+    const match = text.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]) as Partial<ResolvedToken>;
+    // unknown なら null を返す（Claudeにフォールバック）
+    if (!parsed.type || parsed.type === "unknown") return null;
+    return {
+      type: parsed.type,
+      ward: parsed.ward ?? null,
+      realpro_lines: parsed.realpro_lines ?? [],
+      itandi_lines: parsed.itandi_lines ?? [],
+      reins_line: parsed.reins_line ?? null,
+      source: "ai", // DeepSeekはAI知識なので"ai"
+    };
+  } catch {
+    return null; // タイムアウト・エラー時はClaudeにフォールバック
+  }
+}
+
 export async function POST(req: NextRequest) {
   let tokens: string[];
   try {
@@ -72,7 +123,7 @@ export async function POST(req: NextRequest) {
   const webSearchAllowed = savedCount < DAILY_LIMIT;
 
   if (!webSearchAllowed) {
-    console.warn(`[token-resolve] 1日${DAILY_LIMIT}回制限に達した。AI知識のみで解決。`);
+    console.warn(`[token-resolve] 1日${DAILY_LIMIT}回制限に達した。DeepSeekのみで解決（Claude web_searchスキップ）。`);
   }
 
   // ── Web検索部隊: Claude + web_search でトークンを解決 ──────────────
@@ -83,8 +134,12 @@ export async function POST(req: NextRequest) {
   for (const token of unknown) {
     let resolved: ResolvedToken = { type: "unknown", ward: null, realpro_lines: [], itandi_lines: [], reins_line: null, source: "web_search" };
 
-    try {
-      // Web検索を使って調査（レート制限内の場合のみ）
+    // ── ① DeepSeek で判定（成功したらClaudeスキップ・dailyCountも消費しない）──
+    const deepseekResult = await callDeepSeek(token);
+    if (deepseekResult) {
+      resolved = deepseekResult;
+    } else try {
+      // ── ② Claude + web_search で調査（レート制限内の場合のみ）──
       if (!webSearchAllowed || dailyCount >= DAILY_LIMIT) throw new Error("rate_limit");
       const searchRes = await anthropic.messages.create({
         model: "claude-haiku-4-5-20251001",
@@ -132,25 +187,7 @@ export async function POST(req: NextRequest) {
         ]);
       }
     } catch {
-      // web_searchが使えない・制限超過の場合はAI知識のみでフォールバック
-      try {
-        const fallbackRes = await anthropic.messages.create({
-          model: "claude-haiku-4-5-20251001",
-          max_tokens: 512,
-          messages: [{
-            role: "user",
-            content: `大阪府の「${token}」は駅名ですか、地名ですか？
-JSONのみ返してください:
-{"type":"station"または"region"または"unknown","ward":"大阪市〇〇区など または null","realpro_lines":[],"itandi_lines":[],"reins_line":null}`,
-          }],
-        }, { signal: AbortSignal.timeout(25_000) });
-        const raw = fallbackRes.content[0].type === "text" ? fallbackRes.content[0].text : "";
-        const m = raw.match(/\{[\s\S]*\}/);
-        if (m) {
-          const p = JSON.parse(m[0]) as Partial<ResolvedToken>;
-          resolved = { type: p.type ?? "unknown", ward: p.ward ?? null, realpro_lines: p.realpro_lines ?? [], itandi_lines: p.itandi_lines ?? [], reins_line: p.reins_line ?? null, source: "ai" };
-        }
-      } catch { /* 完全失敗 */ }
+      // 制限超過・web_search失敗時は unknown のまま保存（DeepSeekで安価に処理済みのためフォールバックなし）
     }
 
     result[token] = resolved;
