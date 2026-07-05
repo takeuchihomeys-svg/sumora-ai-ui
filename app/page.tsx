@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import AixModal, { type AixActionType } from "./components/AixModal";
 import BottomNav from "./components/BottomNav";
 import TemplateModal, { type Template as CachedTemplate } from "./components/TemplateModal";
@@ -413,6 +413,7 @@ export default function Home() {
     try { return sessionStorage.getItem("statusFilter") || "all"; } catch { return "all"; }
   });
   const [searchQuery, setSearchQuery] = useState("");
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
   const [currentAccount, setCurrentAccount] = useState<{ id: string; name: string; icon: string; profileImage?: string }>(() => {
     if (typeof window === "undefined") return { id: "sumora", name: "スモラ", icon: "🦄" };
@@ -720,6 +721,8 @@ export default function Home() {
   const preGenInProgress = useRef<Set<string>>(new Set());
   // 下書き生成タイムアウト（60秒でdraftPreparingをリセット）
   const draftTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // generate-reply ストリーミング中断用（会話切替時にabort）
+  const generateAbortRef = useRef<AbortController | null>(null);
   const handleListScroll = () => {
     // スクロール時もBottomNavは常に表示（pull-to-refreshトリガー用）
     if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
@@ -1621,8 +1624,8 @@ export default function Home() {
     if (aiSearchIds !== null) {
       return result.filter((c) => aiSearchIds.includes(c.id));
     }
-    if (searchQuery.trim()) {
-      const q = searchQuery.trim().toLowerCase();
+    if (deferredSearchQuery.trim()) {
+      const q = deferredSearchQuery.trim().toLowerCase();
       result = result.filter(
         (c) =>
           c.customerName.toLowerCase().includes(q) ||
@@ -1636,7 +1639,7 @@ export default function Home() {
       if (!a.hasViewed && b.hasViewed) return 1;
       return 0;
     });
-  }, [conversations, statusFilter, searchQuery, aiSearchIds, accountFilter, linkedLineUserIds, hotConvIds]);
+  }, [conversations, statusFilter, deferredSearchQuery, aiSearchIds, accountFilter, hotConvIds]);
 
   const needsReplyCount = useMemo(() => {
     return conversations.filter((c) => {
@@ -1796,6 +1799,9 @@ export default function Home() {
     selectedPatternAngleRef.current = null;
     selectedTemplateIdRef.current = "";
     templateSelectionMetaRef.current = null;
+    // 会話切替時に前の generateReply ストリームを中断（別会話への下書き流入を防止）
+    generateAbortRef.current?.abort();
+    generateAbortRef.current = null;
     setTargetOverrideMessage(null);
     setAiDraftExpanded(false);
     setExtraDraftMessages([]);
@@ -2071,6 +2077,11 @@ export default function Home() {
       setReplyDraft("");
       setReplyQuality(null);
 
+      // 前の生成ストリームを中断（高速切替で二重生成しない）
+      generateAbortRef.current?.abort();
+      const genAbortController = new AbortController();
+      generateAbortRef.current = genAbortController;
+
       // スタッフ返信ゼロ & 初回対応中 → first_reply としてAPIに渡す（初回挨拶文を生成するため）
       const hasAnyStaffMsg = selectedConversation.messages.some((m) => m.sender === "staff");
       const normalizedStatus = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
@@ -2123,6 +2134,7 @@ export default function Home() {
 
       const res = await fetch("/api/generate-reply", {
         method: "POST",
+        signal: genAbortController.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: targetMessage,
@@ -2205,6 +2217,7 @@ export default function Home() {
         }
       }, 50);
     } catch (requestError) {
+      if (requestError instanceof Error && requestError.name === "AbortError") return; // 会話切替による正常中断
       const msg = requestError instanceof Error ? requestError.message : "返信案の作成に失敗しました。";
       console.error("generateReply error:", msg);
       setError(`返信案の作成に失敗しました: ${msg}`);
@@ -2902,6 +2915,8 @@ export default function Home() {
     setShowSendConfirm(false);
     if (!selectedConversation.id) return;
     if (!replyDraft.trim() && selectedImageFiles.length === 0) return;
+    // 会話切替の競合を防ぐため、関数開始時点の convId をキャプチャして非同期全体で使う
+    const convId = selectedConversation.id;
     // 2通目設定をキャプチャ（非同期処理中に変わらないよう先に取得）
     const secondMsgCapture = pendingSecondMsgRef.current;
     pendingSecondMsgRef.current = null;
@@ -2936,7 +2951,7 @@ export default function Home() {
         const { data: imgRow, error: imgInsertError } = await supabase
           .from("messages")
           .insert({
-            conversation_id: selectedConversation.id,
+            conversation_id: convId,
             sender: "staff",
             text: "[画像]",
             image_url: imageUrlData,
@@ -2960,7 +2975,7 @@ export default function Home() {
         const { data: textRow, error: textInsertError } = await supabase
           .from("messages")
           .insert({
-            conversation_id: selectedConversation.id,
+            conversation_id: convId,
             sender: "staff",
             text: textToSend,
             created_at: textNow.toISOString(),
@@ -2991,12 +3006,12 @@ export default function Home() {
       await supabase
         .from("conversations")
         .update(convUpdate)
-        .eq("id", selectedConversation.id);
+        .eq("id", convId);
 
       setConversations((prev) =>
         prev
           .map((conversation) => {
-            if (conversation.id !== selectedConversation.id) return conversation;
+            if (conversation.id !== convId) return conversation;
             // リアルタイムが既に追加済みの場合の重複防止（同じIDのメッセージを2回追加しない）
             const existingIds = new Set(conversation.messages.map((m) => m.id));
             const dedupedNew = newMessages.filter((m) => !existingIds.has(m.id));

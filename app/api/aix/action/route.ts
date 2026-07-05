@@ -583,7 +583,7 @@ ${SMORA_COMMON_RULES}`;
         .replace("{{examples}}", examples ? `【スモラの実際の物件オススメ文（実例）】\n${examples}` : "")
         .replace("{{knowledge}}", knowledge ? `【物件オススメ時のノウハウ】\n${knowledge}` : "")
         .replace("{{phrases}}", phraseText ? `【よく使うフレーズ】\n${phraseText}` : "")
-        + recStarNote + greetingTimeNote;
+        + recStarNote; // greetingTimeNote は固定フォーマット（物件オススメ文）に注入しない
 
       const conditionsText = customer_conditions as string | undefined;
       const recCustomerSummary = body.customer_summary as string | undefined;

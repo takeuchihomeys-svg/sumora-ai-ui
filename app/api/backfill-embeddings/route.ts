@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
 async function getEmbedding(text: string): Promise<number[] | null> {
@@ -22,7 +22,7 @@ async function getEmbedding(text: string): Promise<number[] | null> {
 export async function POST(req: Request) {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.get("authorization");
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
   if (!process.env.OPENAI_API_KEY) {
