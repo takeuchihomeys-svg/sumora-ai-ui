@@ -1407,11 +1407,10 @@ const REINS_LINE_MAP: Record<string, string> = {
 // popup-maps.jsのハードコードデータを station_map / region_map へ一括upsert（手動実行用）
 // ============================================================
 export async function POST(req: NextRequest) {
-  // CRON_SECRET認証（fail-closed: 未設定時は常に401）
-  // ※ Round 7 セキュリティ修正で追加された認証を維持（DB書き込みAPIのため）
-  const cronSecret = process.env.CRON_SECRET;
+  // SYNC_SECRET認証（手動実行用・一回限り）
+  const syncSecret = process.env.SYNC_SECRET;
   const authHeader = req.headers.get("Authorization");
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+  if (!syncSecret || authHeader !== `Bearer ${syncSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
