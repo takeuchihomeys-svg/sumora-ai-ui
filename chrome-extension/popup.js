@@ -1487,10 +1487,10 @@ function openInstructions(siteKey) {
     const analyzed = tokens.map(t => ({ original: t, suggestion: resolveWithLinePrefixes(t) }));
     const hasResolvable = analyzed.some(r => r.suggestion);
 
-    let html = "⚠️ 未登録地名: <b>" + tokens.join("・") + "</b>";
+    let html = "⚠️ 未登録地名: <b>" + tokens.map(t => esc(t)).join("・") + "</b>";
     if (hasResolvable) {
       const hints = analyzed.filter(r => r.suggestion)
-        .map(r => r.original + "→<b>" + r.suggestion.resolved + "</b>("
+        .map(r => esc(r.original) + "→<b>" + esc(r.suggestion.resolved) + "</b>("
           + (r.suggestion.type === "station" ? "駅" : "地域") + ")");
       html += "<br>🔄 解決候補: " + hints.join("、")
         + ' <button id="unknown-resolve-btn" style="margin-left:6px;padding:2px 8px;'

@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
 
+export const maxDuration = 30;
+
 const TOKEN = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? "";
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 15_000 });
 
 type Customer = {
   id: string;
@@ -28,7 +30,9 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 async function getTodayList(): Promise<Customer[]> {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL ?? "https://sumora-ai-ui.vercel.app"}/api/property-tasks`);
+  const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL ?? "https://sumora-ai-ui.vercel.app"}/api/property-tasks`, {
+    signal: AbortSignal.timeout(10_000),
+  });
   const data = await res.json() as { ok: boolean; customers: Customer[] };
   return data.ok ? data.customers : [];
 }
@@ -98,6 +102,9 @@ async function generateQuote(hotCount: number, totalCount: number): Promise<stri
 }
 
 export async function POST(req: NextRequest) {
+  if (!TOKEN) {
+    return NextResponse.json({ ok: false, error: "LINE token not configured" }, { status: 500 });
+  }
   const groupId = await getGroupId();
   if (!groupId) {
     return NextResponse.json({ ok: false, error: "グループIDが未設定です" }, { status: 400 });

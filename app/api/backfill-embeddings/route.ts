@@ -11,6 +11,7 @@ async function getEmbedding(text: string): Promise<number[] | null> {
       method: "POST",
       headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return null;
     const data = await res.json() as { data: Array<{ embedding: number[] }> };

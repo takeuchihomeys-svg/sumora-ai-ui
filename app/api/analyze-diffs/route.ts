@@ -5,7 +5,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 60;
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY!, timeout: 30_000, maxRetries: 1 });
 
 // AIドラフトと実送信の差分を比較して学習ルールを抽出
 async function analyzeDiff(
@@ -95,7 +95,7 @@ export async function POST(req: NextRequest) {
   const limit = limitParam ? Math.min(parseInt(limitParam, 10) || 30, 200) : 30;
 
   // 未処理の差分を取得（is_starred順で重要な学習から処理）
-  const { data: examples } = await supabase
+  const { data: examples, error: examplesError } = await supabase
     .from("ai_reply_examples")
     .select("id, customer_message, ai_draft, sent_reply, conversation_state, is_starred")
     .eq("was_ai_modified", true)
@@ -105,6 +105,11 @@ export async function POST(req: NextRequest) {
     .order("is_starred", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(limit);
+
+  // DBエラーを空配列として握りつぶさず、明示的にエラーを返す
+  if (examplesError) {
+    return NextResponse.json({ ok: false, error: examplesError.message }, { status: 500 });
+  }
 
   if (!examples || examples.length === 0) {
     return NextResponse.json({ ok: true, processed: 0, learned: 0, message: "処理対象なし" });
@@ -194,6 +199,7 @@ export async function POST(req: NextRequest) {
       ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:3000");
     void fetch(`${baseUrl}/api/backfill-embeddings`, {
       method: "POST",
+      headers: cronSecret ? { Authorization: `Bearer ${cronSecret}` } : {},
     }).catch(() => {});
   }
 

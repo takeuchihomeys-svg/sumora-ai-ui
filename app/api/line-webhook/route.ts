@@ -231,7 +231,7 @@ async function handleTextMessage(
   updateProfileAsync(db, userId, convId, account, text, now);
 
   // 返信きたお客さんを自動で毎日物件出し（hot）に格上げ
-  autoUpgradeToHot(db, userId);
+  void autoUpgradeToHot(db, userId).catch((e) => console.warn("[line-webhook] autoUpgradeToHot:", e));
 
   // LINEフォーマット自動検知・解析 → ステータスを物件提案中に自動昇格
   if (isFormatMessage(text)) {
@@ -651,6 +651,7 @@ async function notifyFormatReceived(
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ to: groupId, messages: [{ type: "text", text }] }),
+    signal: AbortSignal.timeout(10_000),
   });
 
   if (!res.ok) {
@@ -768,6 +769,7 @@ async function autoDetectTask(
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ to: groupId, messages: [{ type: "text", text: msgText }] }),
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {
       console.error("[autoDetectTask] LINE push failed:", res.status, await res.text());
@@ -801,6 +803,7 @@ async function notifyHanbancyoGroup(db: ReturnType<typeof getDb>, customerName: 
           text: `🔥 ${customerName}さんから返信きた！！\n今が熱いからとことん詰める！！`,
         }],
       }),
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {
       console.error("[notifyHanbancyoGroup] LINE push failed:", res.status, await res.text());

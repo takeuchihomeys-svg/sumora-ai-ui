@@ -80,11 +80,9 @@ function isStopNgram(ngram: string): boolean {
 
 export async function POST(req?: Request) {
   const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret && req) {
-    const authHeader = (req.headers as Headers).get("authorization");
-    if (authHeader !== `Bearer ${cronSecret}`) {
-      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    }
+  const authHeader = req ? (req.headers as Headers).get("authorization") : null;
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
   // action_pattern_logs から全データ取得（source で重み付け）
   const { data: logs } = await supabase

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import crypto from "crypto";
 
+export const maxDuration = 30;
+
 const SECRET = process.env.LINE_HANBANCYO_CHANNEL_SECRET ?? "";
 const TOKEN = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? "";
 
@@ -20,6 +22,7 @@ async function replyToLine(replyToken: string, text: string) {
         Authorization: `Bearer ${TOKEN}`,
       },
       body: JSON.stringify({ replyToken, messages: [{ type: "text", text }] }),
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {
       console.error("[hanbancyo-webhook] LINE reply failed:", res.status, await res.text());

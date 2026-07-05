@@ -53,6 +53,7 @@ async function resolveAccountByLineUserId(lineUserId: string): Promise<string | 
     try {
       const res = await fetch(`https://api.line.me/v2/bot/profile/${lineUserId}`, {
         headers: { Authorization: `Bearer ${acct.token}` },
+        signal: AbortSignal.timeout(10_000),
       });
       if (res.ok) return acct.key;
     } catch { /* skip */ }
@@ -318,7 +319,7 @@ export async function POST(req: NextRequest) {
           try {
             const contentRes = await fetch(
               `https://api-data.line.me/v2/bot/message/${lineMessageId}/content`,
-              { headers: { Authorization: `Bearer ${token}` } }
+              { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) }
             );
             if (contentRes.ok) {
               const contentType = contentRes.headers.get("content-type") || "image/jpeg";
