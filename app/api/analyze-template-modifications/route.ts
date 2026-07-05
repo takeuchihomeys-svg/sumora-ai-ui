@@ -85,7 +85,9 @@ ${diffExamples}
 
     const parsed = JSON.parse(match[0]) as ExtractedRule[];
     return Array.isArray(parsed)
-      ? parsed.filter((r) => r.rule && typeof r.confidence === "number" && r.confidence >= 0.5)
+      ? parsed
+          .map((r) => ({ rule: r.rule, confidence: Number(r.confidence) }))
+          .filter((r) => r.rule && !isNaN(r.confidence) && r.confidence >= 0.5)
       : [];
   } catch {
     return [];
@@ -120,6 +122,7 @@ async function runAnalysis(limit: number): Promise<{ analyzed: number; learned: 
   const processedCategories: string[] = [];
 
   for (const [category, categoryLogs] of byCategory.entries()) {
+    try {
     // 完全一致（=実質修正なし）を除外
     const realDiffs = categoryLogs.filter(
       (l) => l.adapted_text?.trim() !== l.final_sent_text?.trim()
@@ -154,7 +157,7 @@ async function runAnalysis(limit: number): Promise<{ analyzed: number; learned: 
           .from("adaptation_improvement_rules")
           .update({
             example_count: existing.example_count + realDiffs.length,
-            confidence: Math.min(Math.max(existing.confidence, confidence) + 0.03, 0.99),
+            confidence: Math.min(Math.max(Number(existing.confidence), confidence) + 0.03, 0.99),
             last_triggered_at: new Date().toISOString(),
             is_active: true,
           })
@@ -177,6 +180,9 @@ async function runAnalysis(limit: number): Promise<{ analyzed: number; learned: 
       .from("template_selection_logs")
       .update({ modification_analyzed: true })
       .in("id", categoryLogs.map((l) => l.id));
+    } catch (catErr) {
+      console.error(`[analyze-template-modifications] category ${category} error:`, catErr);
+    }
 
     processedCategories.push(category);
   }

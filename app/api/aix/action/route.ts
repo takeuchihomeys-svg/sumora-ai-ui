@@ -429,7 +429,7 @@ export async function POST(request: NextRequest) {
     const recentMsgArray = Array.isArray(recent_messages)
       ? (recent_messages as Array<{ sender: string; rawCreatedAt?: string }>)
       : [];
-    const lastStaffMsg = [...recentMsgArray].reverse().find(m => m.sender === "staff");
+    const lastStaffMsg = [...recentMsgArray].reverse().find(m => m.sender === "staff" && !(m as { isAix?: boolean }).isAix && !(m as { is_aix_generated?: boolean }).is_aix_generated);
     const staffMessagedToday = !!lastStaffMsg &&
       !!lastStaffMsg.rawCreatedAt &&
       toJSTDate(lastStaffMsg.rawCreatedAt) === todayJST;
@@ -2067,7 +2067,7 @@ ${jstTodayStr}
         const beforeDiffNote = await getKnowledgeForState(AIX_ACTION_TO_STATES.greeting_viewing, currentAction);
 
         message_text = await callClaude(
-          system + beforeDiffNote,
+          system + beforeDiffNote + greetingTimeNote,
           `${name}への内覧前挨拶を生成してください。${dateInfo}${recentHistory}`,
           currentAction
         );
@@ -2187,7 +2187,7 @@ ${mDate}[時間]に${mName}
 【スモラLINE営業ルール（必ず守る・ただし上記の出力形式が最優先）】
 ${SMORA_COMMON_RULES}`;
 
-      message_text = await callClaude(system + meetingDiffNote + meetingStarNote, `会話履歴から待ち合わせ時間を読み取り、メッセージを生成してください。${recentHistory}`, currentAction);
+      message_text = await callClaude(system + greetingTimeNote + meetingDiffNote + meetingStarNote, `会話履歴から待ち合わせ時間を読み取り、メッセージを生成してください。${recentHistory}`, currentAction);
 
     // ── ✅ 確認します ──────────────────────────────────────────────
     } else if (action === "acknowledge_check") {

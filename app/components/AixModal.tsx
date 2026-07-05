@@ -1285,6 +1285,8 @@ export default function AixModal({
     meeting_place: "meeting_place",
     condition_hearing: "condition_hearing",
     greeting_viewing: "greeting_viewing",
+    acknowledge_check: "acknowledge_check",
+    followup_revive: "followup_revive",
   };
 
   // save-reply-example の保存ペイロードを構築（即時送信・予約送信で共通利用）

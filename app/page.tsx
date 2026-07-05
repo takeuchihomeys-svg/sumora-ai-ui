@@ -1794,6 +1794,8 @@ export default function Home() {
     setSelectedImagePreviews([]);
     replyTargetCustomerMsgRef.current = "";
     selectedPatternAngleRef.current = null;
+    selectedTemplateIdRef.current = "";
+    templateSelectionMetaRef.current = null;
     setTargetOverrideMessage(null);
     setAiDraftExpanded(false);
     setExtraDraftMessages([]);
@@ -3159,7 +3161,7 @@ export default function Home() {
       if (templateSelectionMetaRef.current) {
         const meta = templateSelectionMetaRef.current;
         const finalText = textToSend ?? "";
-        const wasModified = meta.wasAdapted && finalText.trim() !== meta.originalText.trim();
+        const wasModified = finalText.trim() !== meta.originalText.trim();
         fetch("/api/learn-template-selection", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -7011,6 +7013,7 @@ export default function Home() {
                   was_recommended: (recommendedRank ?? null) !== null,
                   was_adapted: wasAdapted ?? false,
                   original_text: resolvedText.slice(0, 2000),
+                  adapted_text: (wasAdapted ?? false) ? resolvedText.slice(0, 2000) : null,
                   aix_action_type: activeAixFlow ?? null,
                 }),
               }).then((r) => r.json()).then((d: { ok: boolean; log_id?: string }) => {
@@ -7149,7 +7152,7 @@ export default function Home() {
           initialImageFile={aixInitialFile ?? undefined}
           linkedCustomer={aixModalType === "property_recommendation" ? linkedCustomerMap[selectedConversation.id] : undefined}
           customerConditions={linkedCustomerMap[selectedConversation.id]?.conditions || memos[selectedConversation.id] || undefined}
-          recentMessages={(selectedConversation.messages || []).slice(-20).map((m: Message) => ({ sender: m.sender, text: m.text || "", rawCreatedAt: m.rawCreatedAt }))}
+          recentMessages={(selectedConversation.messages || []).slice(-20).map((m: Message) => ({ sender: m.sender, text: m.text || "", rawCreatedAt: m.rawCreatedAt, isAix: m.isAix }))}
           lastMessageAt={(selectedConversation.messages || []).slice(-1)[0]?.rawCreatedAt}
           customerSummary={linkedCustomerMap[selectedConversation.id]?.ai_summary ?? null}
           initialFocusPoints={pendingAixFocusPoints.length > 0 ? pendingAixFocusPoints : undefined}
@@ -8255,7 +8258,7 @@ export default function Home() {
       {showPropertyPicker && (
         <div
           className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
-          onClick={() => setShowPropertyPicker(false)}
+          onClick={() => { setShowPropertyPicker(false); setActiveAixFlow(null); }}
         >
           <div
             className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
@@ -8307,7 +8310,7 @@ export default function Home() {
               ))}
             </div>
             <button
-              onClick={() => setShowPropertyPicker(false)}
+              onClick={() => { setShowPropertyPicker(false); setActiveAixFlow(null); }}
               className="mt-4 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
             >キャンセル</button>
           </div>
