@@ -4,7 +4,7 @@
 //       customer_conditions (任意): お客様の希望条件テキスト
 // 出力: { ok: boolean, recommendations: [{ id, reason, score }] }（スコア降順・上位3件）
 //
-// Claude Haiku で以下を判断:
+// Claude Sonnet で以下を判断:
 // - お客様の希望条件（customer_conditions）
 // - AIX生成文（sent_message）: 希望条件のどこがマッチしたか・どこが足りなかったか
 // - 直近の会話メッセージ（messages テーブル: customer / staff）
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 2. Haiku でおすすめを判断
+    // 2. Sonnet でおすすめを判断（ギャップ分析が複雑なため）
     const client = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
     });
@@ -111,8 +111,8 @@ ${templates.map((t, i) => `[${i}] ${t.label}\n${(t.text || "").slice(0, 150)}`).
 [{"index": 0, "score": 95, "reason": "家賃条件はカバー済み・エリアの補足が必要なため"}]`;
 
     const response = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 600,
+      model: "claude-sonnet-4-6",
+      max_tokens: 800,
       messages: [{ role: "user", content: prompt }],
     });
 
