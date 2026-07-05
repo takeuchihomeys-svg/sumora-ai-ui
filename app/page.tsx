@@ -3600,7 +3600,12 @@ export default function Home() {
     reader.onload = () => {
       const updated = { ...currentAccount, profileImage: String(reader.result) };
       setCurrentAccount(updated);
-      localStorage.setItem("sumora_account_profile", JSON.stringify(updated));
+      try {
+        localStorage.setItem("sumora_account_profile", JSON.stringify(updated));
+      } catch (err) {
+        console.warn("[onAccountImageSelected] localStorage save failed:", err);
+        alert("画像が大きすぎて保存できませんでした。より小さい画像を選択してください");
+      }
     };
     reader.readAsDataURL(file);
     if (accountImageInputRef.current) accountImageInputRef.current.value = "";

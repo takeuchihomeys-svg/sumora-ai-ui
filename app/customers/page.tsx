@@ -237,6 +237,7 @@ export default function CustomersPage() {
   const [statusMenuId, setStatusMenuId] = useState<string | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressStartPos = useRef<{ x: number; y: number } | null>(null);
+  const longPressActivated = useRef(false);
 
   const [showAdd, setShowAdd]       = useState(false);
   const [newName, setNewName]       = useState("");
@@ -266,9 +267,14 @@ export default function CustomersPage() {
   const [summaryLoading, setSummaryLoading] = useState<Set<string>>(new Set());
 
   const fetchCustomers = async () => {
-    const res = await fetch("/api/property-customers");
-    if (res.ok) setCustomers(await res.json());
-    setLoading(false);
+    try {
+      const res = await fetch("/api/property-customers");
+      if (res.ok) setCustomers(await res.json());
+    } catch (err) {
+      console.error("[fetchCustomers] failed:", err);
+    } finally {
+      setLoading(false);
+    }
   };
   useEffect(() => { fetchCustomers(); }, []);
 
@@ -341,17 +347,24 @@ export default function CustomersPage() {
   const markSent = async (id: string) => {
     setSentUpdating(id);
     const now = new Date().toISOString();
-    const res = await fetch("/api/property-customers", {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, last_property_sent_at: now }),
-    });
-    if (res.ok) {
-      const updated = await res.json();
-      setCustomers((p) => p.map((c) => c.id === id ? { ...c, ...updated } : c));
-    } else {
-      setCustomers((p) => p.map((c) => c.id === id ? { ...c, last_property_sent_at: now } : c));
+    try {
+      const res = await fetch("/api/property-customers", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, last_property_sent_at: now }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setCustomers((p) => p.map((c) => c.id === id ? { ...c, ...updated } : c));
+      } else {
+        console.error("[markSent] API failed:", res.status);
+        alert("送信済みの更新に失敗しました。もう一度お試しください。");
+      }
+    } catch (err) {
+      console.error("[markSent] failed:", err);
+      alert("送信済みの更新に失敗しました。もう一度お試しください。");
+    } finally {
+      setSentUpdating(null);
     }
-    setSentUpdating(null);
   };
 
   const addCustomer = async () => {
@@ -893,10 +906,14 @@ export default function CustomersPage() {
                 {/* ── ヘッダー行 ── */}
                 <button
                   className="flex w-full items-center gap-3 px-4 py-3 text-left active:bg-[#f5f6f6]"
-                  onClick={() => setExpandedId(isExp ? null : c.id)}
+                  onClick={() => {
+                    if (longPressActivated.current) { longPressActivated.current = false; return; }
+                    setExpandedId(isExp ? null : c.id);
+                  }}
                   onPointerDown={(e) => {
                     longPressStartPos.current = { x: e.clientX, y: e.clientY };
                     longPressTimer.current = setTimeout(() => {
+                      longPressActivated.current = true;
                       setStatusMenuId(c.id);
                       longPressTimer.current = null;
                     }, 500);
@@ -1462,6 +1479,11 @@ export default function CustomersPage() {
                       onChange={(e) => {
                         const file = e.target.files?.[0];
                         if (!file) return;
+                        if (file.size > 10 * 1024 * 1024) {
+                          alert("10MB以内の画像を選択してください");
+                          e.target.value = "";
+                          return;
+                        }
                         const reader = new FileReader();
                         reader.onload = () => {
                           const dataUrl = String(reader.result ?? "");

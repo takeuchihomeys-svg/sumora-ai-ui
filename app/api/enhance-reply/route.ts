@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
+export const maxDuration = 30;
+
 const STATE_SEARCH_ALIASES: Record<string, string[]> = {
   first_reply: ["first_reply"],
   hearing:     ["hearing", "condition_hearing", "property_search"],
@@ -25,6 +27,7 @@ async function getEmbedding(text: string): Promise<number[] | null> {
       method: "POST",
       headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return null;
     const data = await res.json() as { data: Array<{ embedding: number[] }> };
@@ -238,6 +241,7 @@ ${currentDraft.trim()}
         system,
         messages: [{ role: "user", content: userPrompt }],
       }),
+      signal: AbortSignal.timeout(25_000),
     });
 
     if (!res.ok) {

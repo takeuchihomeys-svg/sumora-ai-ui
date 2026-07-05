@@ -4,7 +4,31 @@ import { supabase } from "@/app/lib/supabase";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "") });
 
+// Haiku呼び出しがあるためタイムアウトを延長
+export const maxDuration = 30;
+
+type AdaptRequestBody = {
+  templateText: string;
+  templateCategory?: string;
+  customerName?: string;
+  conversationState?: string;
+  recentMessages?: Array<{ sender: string; text: string; imageUrl?: string }>;
+  customerConditions?: string;
+  noEmoji?: boolean;
+  soloEntry?: boolean;
+  pendingScheduledMessages?: Array<{ text: string | null }>;
+  vacatingDate?: { month: number; day: number } | null;
+  staffMessagedToday?: boolean;
+};
+
 export async function POST(req: NextRequest) {
+  let body: AdaptRequestBody;
+  try {
+    body = await req.json() as AdaptRequestBody;
+  } catch {
+    return NextResponse.json({ ok: false, error: "invalid JSON body" }, { status: 400 });
+  }
+
   const {
     templateText,
     templateCategory,
@@ -17,19 +41,7 @@ export async function POST(req: NextRequest) {
     pendingScheduledMessages,
     vacatingDate,
     staffMessagedToday,
-  } = await req.json() as {
-    templateText: string;
-    templateCategory?: string;
-    customerName?: string;
-    conversationState?: string;
-    recentMessages?: Array<{ sender: string; text: string; imageUrl?: string }>;
-    customerConditions?: string;
-    noEmoji?: boolean;
-    soloEntry?: boolean;
-    pendingScheduledMessages?: Array<{ text: string | null }>;
-    vacatingDate?: { month: number; day: number } | null;
-    staffMessagedToday?: boolean;
-  };
+  } = body;
 
   if (!templateText) {
     return NextResponse.json({ ok: false, error: "templateText is required" }, { status: 400 });

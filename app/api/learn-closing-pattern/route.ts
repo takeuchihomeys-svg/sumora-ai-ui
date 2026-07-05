@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
+// Sonnet呼び出し（80件履歴）+ embedding生成で15〜30秒かかるため延長
+export const maxDuration = 60;
+
 async function getEmbedding(text: string): Promise<number[] | null> {
   try {
     const res = await fetch("https://api.openai.com/v1/embeddings", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
       body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
+      signal: AbortSignal.timeout(10_000),
     });
     const data = await res.json() as { data: Array<{ embedding: number[] }> };
     return data.data[0]?.embedding ?? null;
@@ -81,6 +85,7 @@ ${history}
         max_tokens: 512,
         messages: [{ role: "user", content: prompt }],
       }),
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!res.ok) return NextResponse.json({ ok: false, error: "AI error" }, { status: 500 });

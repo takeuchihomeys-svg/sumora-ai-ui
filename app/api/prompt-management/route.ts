@@ -313,6 +313,8 @@ export async function DELETE(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const key = searchParams.get("key");
   if (!key) return NextResponse.json({ ok: false, error: "key required" }, { status: 400 });
+  if (!(key in PROMPT_DEFAULTS)) return NextResponse.json({ ok: false, error: "unknown key" }, { status: 400 });
+  if (PROMPT_DEFAULTS[key].readonly) return NextResponse.json({ ok: false, error: "readonly" }, { status: 403 });
 
   const { error } = await supabase.from("ai_prompts").delete().eq("key", key);
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

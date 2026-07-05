@@ -82,7 +82,8 @@ export async function POST(req: NextRequest) {
     .eq("conversation_id", conversation_id)
     .eq("task_type", task_type)
     .eq("status", "pending")
-    .single();
+    .limit(1)
+    .maybeSingle();
 
   if (existing) {
     return NextResponse.json({ ok: true, id: existing.id, created_at: existing.created_at, already_exists: true });

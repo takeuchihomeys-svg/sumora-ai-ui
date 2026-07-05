@@ -279,6 +279,10 @@ export default function EstimatePage() {
     imageItems.forEach((item) => {
       const file = item.getAsFile();
       if (!file) return;
+      if (file.size > 3 * 1024 * 1024) {
+        alert("3MB以内の画像を貼り付けてください");
+        return;
+      }
       const reader = new FileReader();
       reader.onload = (ev) => {
         const base64 = (ev.target?.result as string).split(",")[1];
@@ -286,6 +290,9 @@ export default function EstimatePage() {
           ...prev,
           { base64, mimeType: file.type, name: `貼付け画像${prev.length + 1}` },
         ]);
+      };
+      reader.onerror = () => {
+        console.error("[handlePaste] FileReader error");
       };
       reader.readAsDataURL(file);
     });

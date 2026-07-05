@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 
+export const maxDuration = 30;
+
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "") });
 
 export async function POST(req: NextRequest) {
@@ -55,7 +57,7 @@ export async function POST(req: NextRequest) {
       ],
     });
 
-    const text = response.content[0].type === "text" ? response.content[0].text.trim() : "";
+    const text = response.content[0]?.type === "text" ? response.content[0].text.trim() : "";
 
     const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
     const nameLine = lines.find((l) => l.startsWith("物件名:"))?.replace("物件名:", "").trim() ?? "";

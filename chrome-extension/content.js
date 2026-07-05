@@ -84,7 +84,7 @@
       if (window.getComputedStyle(el).display === "none") continue;
       let t = el;
       for (let i = 0; i < 6 && t && t !== document.body; t = t.parentElement, i++) {
-        if ("A BUTTON".includes(t.tagName) || t.onclick || t.getAttribute("onclick") ||
+        if (["A", "BUTTON"].includes(t.tagName) || t.onclick || t.getAttribute("onclick") ||
             window.getComputedStyle(t).cursor === "pointer") {
           t.click();
           return true;

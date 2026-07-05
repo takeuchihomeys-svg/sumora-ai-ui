@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
+export const maxDuration = 60;
+
 function getDb() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -104,6 +106,7 @@ export async function POST(req: NextRequest) {
         customerSummary: pcData?.ai_summary || "",
         replyHint,
       }),
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!draftRes.ok || !draftRes.body) {

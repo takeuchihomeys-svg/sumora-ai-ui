@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+export const maxDuration = 60;
+
 const PARSE_PROMPT = (text: string) => `以下はお客さんからの条件テキストです。
 ここから更新したい物件条件を読み取り、JSONで返してください。
 
@@ -107,6 +109,7 @@ export async function POST(req: NextRequest) {
           ],
         }],
       }),
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!extractRes.ok) return NextResponse.json({ ok: false, error: "Vision error" }, { status: 500 });
@@ -131,6 +134,7 @@ export async function POST(req: NextRequest) {
         max_tokens: 512,
         messages: [{ role: "user", content: PARSE_PROMPT(extractedText) }],
       }),
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!parseRes.ok) return NextResponse.json({ ok: false, error: "AI error" }, { status: 500 });
@@ -140,7 +144,12 @@ export async function POST(req: NextRequest) {
     const match = raw.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\{[\s\S]*\}/);
     if (!match) return NextResponse.json({ ok: false, error: "parse error" }, { status: 500 });
 
-    const parsed = JSON.parse(match[0]) as Record<string, unknown>;
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(match[0]) as Record<string, unknown>;
+    } catch {
+      return NextResponse.json({ ok: false, error: "parse error" }, { status: 500 });
+    }
     for (const f of ["rent_min", "rent_max", "initial_cost_limit"]) {
       const v = parsed[f];
       if (typeof v === "number" && v > 0 && v <= 300) parsed[f] = v * 10000;
@@ -165,6 +174,7 @@ export async function POST(req: NextRequest) {
       max_tokens: 512,
       messages: [{ role: "user", content: PARSE_PROMPT(body.text) }],
     }),
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!res.ok) return NextResponse.json({ ok: false, error: "AI error" }, { status: 500 });
@@ -174,7 +184,12 @@ export async function POST(req: NextRequest) {
   const match = raw.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\{[\s\S]*\}/);
   if (!match) return NextResponse.json({ ok: false, error: "parse error" }, { status: 500 });
 
-  const parsed = JSON.parse(match[0]) as Record<string, unknown>;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(match[0]) as Record<string, unknown>;
+  } catch {
+    return NextResponse.json({ ok: false, error: "parse error" }, { status: 500 });
+  }
   for (const f of ["rent_min", "rent_max", "initial_cost_limit"]) {
     const v = parsed[f];
     if (typeof v === "number" && v > 0 && v <= 300) parsed[f] = v * 10000;

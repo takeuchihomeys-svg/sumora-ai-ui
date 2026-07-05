@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
       // アトミッククレーム: 並行実行での二重送信を防止
       const { data: claimed } = await supabase
         .from("scheduled_messages")
-        .update({ status: "sending" })
+        .update({ status: "sending", updated_at: new Date().toISOString() })
         .eq("id", msg.id as string)
         .eq("status", "pending")
         .select("id");

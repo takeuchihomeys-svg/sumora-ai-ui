@@ -31,14 +31,19 @@ export async function POST(req: NextRequest) {
   let failedStorage = 0;
 
   // Storageからファイルを削除（パスをimage_urlから逆引き）
-  const storagePaths: string[] = [];
+  // message id → Storageパス の対応を保持し、削除成功した行だけDB更新する
+  const pathByMsgId = new Map<string, string>();
+  const noStoragePathIds: string[] = []; // line-images外のURL（Storage削除対象なし）
   for (const msg of expired) {
     const url = msg.image_url as string;
     // URL例: https://xxx.supabase.co/storage/v1/object/public/line-images/abc123.jpg
     const match = url.match(/\/line-images\/(.+)$/);
-    if (match?.[1]) storagePaths.push(match[1]);
+    if (match?.[1]) pathByMsgId.set(msg.id as string, match[1]);
+    else noStoragePathIds.push(msg.id as string);
   }
 
+  const storagePaths = Array.from(new Set(pathByMsgId.values()));
+  let storageRemoveFailed = false;
   if (storagePaths.length > 0) {
     const { error: removeErr } = await supabase.storage
       .from("line-images")
@@ -46,17 +51,24 @@ export async function POST(req: NextRequest) {
     if (removeErr) {
       console.error("[cleanup-images] Storage削除エラー:", removeErr.message);
       failedStorage = storagePaths.length;
+      storageRemoveFailed = true;
     } else {
       deletedStorage = storagePaths.length;
     }
   }
 
   // messages.image_url を null にする（UIで「保存期間終了」表示のため）
-  const ids = expired.map((m) => m.id as string);
-  await supabase
-    .from("messages")
-    .update({ image_url: null })
-    .in("id", ids);
+  // Storage削除に失敗した行はDBを更新しない → 次回Cronで再試行される（孤児ファイル防止）
+  const ids = [
+    ...noStoragePathIds,
+    ...(storageRemoveFailed ? [] : Array.from(pathByMsgId.keys())),
+  ];
+  if (ids.length > 0) {
+    await supabase
+      .from("messages")
+      .update({ image_url: null })
+      .in("id", ids);
+  }
 
   return NextResponse.json({
     ok: true,

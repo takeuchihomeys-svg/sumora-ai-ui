@@ -2,6 +2,8 @@
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge } from "@/app/lib/knowledge-utils";
 
+export const maxDuration = 60;
+
 // ─── OpenAI 埋め込み生成 ─────────────────────────────────────────────────────
 async function getEmbedding(text: string): Promise<number[] | null> {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -75,6 +77,7 @@ ${aiDraft.slice(0, 500)}
 ${sentReply.slice(0, 500)}`,
         }],
       }),
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!res.ok) return null;

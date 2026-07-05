@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { normalizeStatus } from "@/app/lib/status-normalize";
 
+// bootstrapは最大1200超のDB往復が発生するため延長（Vercel Pro上限300秒）
+export const maxDuration = 300;
+
 // AIX送信後に呼び出す（1件ログ）または既存データをブートストラップ
 // POST { action: "log", conversation_status, action_type, customer_msg_summary }
 // POST { action: "bootstrap" }  → 既存データから一括学習
@@ -11,6 +14,7 @@ export async function GET() {
   const { data, error } = await supabase
     .from("action_pattern_logs")
     .select("conversation_status, action_type")
+    .neq("source", "bootstrap_done") // 完了マーカー行は統計から除外
     .order("created_at", { ascending: false })
     .limit(1000);
 
@@ -85,16 +89,25 @@ export async function POST(req: NextRequest) {
 
   // ② ブートストラップ（一度だけ呼ぶ）
   if (body.action === "bootstrap") {
-    // 冪等ガード: bootstrap行が既に存在する場合はスキップ
-    const { count: existingCount } = await supabase
+    // 冪等ガード: 「完了マーカー」が存在する場合のみスキップ
+    // （途中失敗で部分挿入されたまま永久に再実行拒否になるのを防ぐため、
+    //   マーカーは全件完了時のみセットする）
+    const { count: doneCount } = await supabase
       .from("action_pattern_logs")
       .select("id", { count: "exact", head: true })
-      .in("source", ["bootstrap", "bootstrap_inferred"]);
-    if ((existingCount ?? 0) > 0) {
-      return NextResponse.json({ ok: false, error: "already bootstrapped", count: existingCount });
+      .eq("source", "bootstrap_done");
+    if ((doneCount ?? 0) > 0) {
+      return NextResponse.json({ ok: false, error: "already bootstrapped" });
     }
 
+    // 前回途中失敗の部分挿入データを削除してから再実行（重複防止）
+    await supabase
+      .from("action_pattern_logs")
+      .delete()
+      .in("source", ["bootstrap", "bootstrap_inferred"]);
+
     const inserted: { status: string; action: string; msg: string }[] = [];
+    let failed = 0;
 
     // ---- A: line_tasks → property_check / property_send / estimate_sheet ----
     const { data: tasks } = await supabase
@@ -105,35 +118,41 @@ export async function POST(req: NextRequest) {
       .limit(400);
 
     for (const task of tasks ?? []) {
-      // タスク作成直前の顧客メッセージを取得
-      const { data: msgRow } = await supabase
-        .from("messages")
-        .select("text")
-        .eq("conversation_id", task.conversation_id as string)
-        .eq("sender", "customer")
-        .lt("created_at", task.created_at as string)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      try {
+        // タスク作成直前の顧客メッセージを取得
+        const { data: msgRow } = await supabase
+          .from("messages")
+          .select("text")
+          .eq("conversation_id", task.conversation_id as string)
+          .eq("sender", "customer")
+          .lt("created_at", task.created_at as string)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-      // この会話の現在のステータス
-      const { data: conv } = await supabase
-        .from("conversations")
-        .select("status")
-        .eq("id", task.conversation_id as string)
-        .single();
+        // この会話の現在のステータス
+        const { data: conv } = await supabase
+          .from("conversations")
+          .select("status")
+          .eq("id", task.conversation_id as string)
+          .maybeSingle();
 
-      const status = normalizeStatus((conv?.status as string) ?? "hearing");
-      const actionType = task.task_type as string;
-      const msgText = ((msgRow?.text as string) ?? "").slice(0, 150);
+        const status = normalizeStatus((conv?.status as string) ?? "hearing");
+        const actionType = task.task_type as string;
+        const msgText = ((msgRow?.text as string) ?? "").slice(0, 150);
 
-      await supabase.from("action_pattern_logs").insert({
-        conversation_status: status,
-        action_type: actionType,
-        customer_msg_summary: msgText,
-        source: "bootstrap",
-      });
-      inserted.push({ status, action: actionType, msg: msgText.slice(0, 30) });
+        const { error: insertError } = await supabase.from("action_pattern_logs").insert({
+          conversation_status: status,
+          action_type: actionType,
+          customer_msg_summary: msgText,
+          source: "bootstrap",
+        });
+        if (insertError) throw new Error(insertError.message);
+        inserted.push({ status, action: actionType, msg: msgText.slice(0, 30) });
+      } catch (e) {
+        failed++;
+        console.error(`[bootstrap] task ${task.id} failed:`, e instanceof Error ? e.message : e);
+      }
     }
 
     // ---- B: 内覧・申込フェーズの会話から viewing_invite / application_push を推定 ----
@@ -145,33 +164,51 @@ export async function POST(req: NextRequest) {
       .limit(200);
 
     for (const conv of viewingConvs ?? []) {
-      // その会話の最後の顧客メッセージを取得（タイミング推定用）
-      const { data: msgRow } = await supabase
-        .from("messages")
-        .select("text")
-        .eq("conversation_id", conv.id as string)
-        .eq("sender", "customer")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      try {
+        // その会話の最後の顧客メッセージを取得（タイミング推定用）
+        const { data: msgRow } = await supabase
+          .from("messages")
+          .select("text")
+          .eq("conversation_id", conv.id as string)
+          .eq("sender", "customer")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-      // viewing = proposing → viewing の遷移で viewing_invite が使われた
-      // application/contract = viewing → application で application_push が使われた
-      const rawPrevStatus = (conv.status as string) === "viewing" ? "proposing" : "viewing";
-      const prevStatus = normalizeStatus(rawPrevStatus);
-      const actionType = (conv.status as string) === "viewing" ? "viewing_invite" : "application_push";
-      const msgText = ((msgRow?.text as string) ?? "").slice(0, 150);
+        // viewing = proposing → viewing の遷移で viewing_invite が使われた
+        // application/contract = viewing → application で application_push が使われた
+        const rawPrevStatus = (conv.status as string) === "viewing" ? "proposing" : "viewing";
+        const prevStatus = normalizeStatus(rawPrevStatus);
+        const actionType = (conv.status as string) === "viewing" ? "viewing_invite" : "application_push";
+        const msgText = ((msgRow?.text as string) ?? "").slice(0, 150);
 
-      await supabase.from("action_pattern_logs").insert({
-        conversation_status: prevStatus,
-        action_type: actionType,
-        customer_msg_summary: msgText,
-        source: "bootstrap_inferred",
-      });
-      inserted.push({ status: prevStatus, action: actionType, msg: msgText.slice(0, 30) });
+        const { error: insertError } = await supabase.from("action_pattern_logs").insert({
+          conversation_status: prevStatus,
+          action_type: actionType,
+          customer_msg_summary: msgText,
+          source: "bootstrap_inferred",
+        });
+        if (insertError) throw new Error(insertError.message);
+        inserted.push({ status: prevStatus, action: actionType, msg: msgText.slice(0, 30) });
+      } catch (e) {
+        failed++;
+        console.error(`[bootstrap] conv ${conv.id} failed:`, e instanceof Error ? e.message : e);
+      }
     }
 
-    return NextResponse.json({ ok: true, inserted: inserted.length, breakdown: inserted.slice(0, 20) });
+    // 冪等フラグ: 全件エラーなしで完了した場合のみ完了マーカーをセット
+    // （失敗があった場合はマーカー未設定のまま → 次回再実行で部分データを削除してやり直せる）
+    if (failed === 0) {
+      const { error: markerError } = await supabase.from("action_pattern_logs").insert({
+        conversation_status: "_meta",
+        action_type: "_bootstrap_done",
+        customer_msg_summary: "",
+        source: "bootstrap_done",
+      });
+      if (markerError) console.error("[bootstrap] failed to set done marker:", markerError.message);
+    }
+
+    return NextResponse.json({ ok: true, inserted: inserted.length, failed, complete: failed === 0, breakdown: inserted.slice(0, 20) });
   }
 
   return NextResponse.json({ ok: false, error: "unknown action" });
