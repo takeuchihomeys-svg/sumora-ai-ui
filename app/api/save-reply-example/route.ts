@@ -72,6 +72,23 @@ const STATE_NORMALIZE: Record<string, string> = {
   contract:                "applying",
 };
 
+// ─── コンポーネント変化タイプ判定（パターン変化 vs 文字変化）──────────────────
+// probe(先頭15文字)が見つからない = 変化あり。さらにどう変わったかを分類:
+//   phrase   = 構成は同じ・言い回しが変わった（中間/末尾プローブが sent_reply に存在）
+//   structure = コンポーネントごと省略・大幅再構成（全プローブが不在）
+function detectComponentChangeType(compNorm: string, sentNorm: string): "phrase" | "structure" {
+  if (compNorm.length < 20) return "phrase"; // 短すぎると判定不能 → phrase扱い
+  const len = compNorm.length;
+  const probes = [
+    compNorm.slice(0, 10),
+    compNorm.slice(Math.floor(len / 2) - 5, Math.floor(len / 2) + 5),
+    compNorm.slice(-10),
+  ].filter(p => p.length >= 6);
+  const foundCount = probes.filter(p => sentNorm.includes(p)).length;
+  // 1つでもプローブが見つかれば「一部残存 = 文字変化」、全不在なら「構成変化」
+  return foundCount >= 1 ? "phrase" : "structure";
+}
+
 // ─── テキスト類似度（AI文案と送信文を比較してwasAiUsedを判定）─────────────────
 // グリーディー文字マッチで一致率を算出（空白除去・順序保持）
 function textSimilarity(a: string, b: string): number {
@@ -634,14 +651,19 @@ export async function POST(req: NextRequest) {
   const aiComponentsObj = aiComponents && typeof aiComponents === "object" ? aiComponents as Record<string, string> : null;
   if (aiComponentsObj && wasAiModified && !replyAngle) {
     const FIXED_INFO = FIXED_INFO_BY_STATE[conversationState as string] ?? new Set(["dates", "calendar", "vacating"]);
-    const changed: string[] = [];
+    const changedWithType: string[] = [];
     const sentNorm = (sentReply as string).replace(/\s+/g, "");
     for (const [key, val] of Object.entries(aiComponentsObj)) {
       if (FIXED_INFO.has(key) || !val || (val as string).length < 5) continue;
-      const probe = (val as string).replace(/\s+/g, "").slice(0, 15);
-      if (!sentNorm.includes(probe)) changed.push(key);
+      const compNorm = (val as string).replace(/\s+/g, "");
+      const probe = compNorm.slice(0, 15);
+      if (!sentNorm.includes(probe)) {
+        // パターン変化 or 文字変化を分類して記録
+        const changeType = detectComponentChangeType(compNorm, sentNorm);
+        changedWithType.push(`${key}(${changeType})`);
+      }
     }
-    if (changed.length > 0) replyAngle = `component_diff:${changed.join(",")}`;
+    if (changedWithType.length > 0) replyAngle = `component_diff:${changedWithType.join(",")}`;
   }
 
   const [embedding, insertResult] = await Promise.all([

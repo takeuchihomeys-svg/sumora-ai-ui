@@ -7,6 +7,51 @@ export const maxDuration = 60;
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY!, timeout: 30_000, maxRetries: 1 });
 
+// コンポーネントが省略・大幅再構成された場合（structure変化）の学習ルール抽出
+//「なぜこのパーツを省いたか」を学ぶ → カテゴリ=pattern
+async function analyzeStructureDiff(
+  customerMessage: string,
+  aiComponentText: string,
+  sentReply: string,
+  componentState: string,
+  componentName: string,
+): Promise<{ skip: boolean; title?: string; rule?: string } | null> {
+  try {
+    const res = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 400,
+      messages: [{
+        role: "user",
+        content: `物件送り文の「${componentName}」をスタッフが省略または大きく変更しました。なぜそうしたか学習ルールを抽出してください。
+
+【AIが生成した「${componentName}」】
+${aiComponentText}
+
+【スタッフが実際に送った全文】
+${sentReply}
+
+【お客様のメッセージ・状況】
+${customerMessage || "不明"}
+
+スキップ条件（以下なら {"skip":true} のみ返す）：
+- 文が短すぎて判断できない
+- 全文が固有情報（物件名・日付）のみ
+
+学習ルールがある場合：
+{"skip":false,"title":"${componentName}構成: [パターン名・30文字以内]","rule":"[どの状況でこのパーツを省く/変えるかの具体ルール・150文字以内]"}
+
+JSONのみ返す。`,
+      }],
+    });
+    const text = res.content[0].type === "text" ? res.content[0].text.trim() : "";
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    return JSON.parse(jsonMatch[0]) as { skip: boolean; title?: string; rule?: string };
+  } catch {
+    return null;
+  }
+}
+
 // 物件ピックアップした: 特定のコンポーネント（intro/pickup/invite/closing）単位で差分分析
 // aiComponentText = AIが生成したそのパーツのテキスト、sentReply = スタッフが送った全文
 // Haikuがsentifyの中から該当パーツを特定して比較する
@@ -197,32 +242,58 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    // 物件ピックアップした: コンポーネント単位の差分分析
-    // ai_components + reply_angle="component_diff:..." があればパーツごとに学習ルールを生成・保存
+    // コンポーネント単位の2層学習
+    // reply_angle="component_diff:pickup(phrase),invite(structure)" などが対象
     if (ai_components && reply_angle?.startsWith("component_diff:")) {
-      const changedComponents = reply_angle.replace("component_diff:", "").split(",");
-      const LEARNABLE = ["intro", "pickup", "invite", "closing"];
-      const learnableChanged = changedComponents.filter(c => LEARNABLE.includes(c));
-      if (learnableChanged.length === 0) {
-        // vacating/calendarだけ変化 → 固有情報のみ。学習不要
+      const rawChanged = reply_angle.replace("component_diff:", "").split(",");
+
+      // 新フォーマット "pickup(phrase)" / 旧フォーマット "pickup" に対応
+      type CompChange = { comp: string; changeType: "phrase" | "structure" };
+      const parsedChanges: CompChange[] = rawChanged.map(c => {
+        const m = c.match(/^(\w+)\((\w+)\)$/);
+        return m
+          ? { comp: m[1], changeType: m[2] as "phrase" | "structure" }
+          : { comp: c, changeType: "phrase" as const }; // 旧フォーマットはphrase扱い
+      });
+
+      // アクション別の学習対象コンポーネント
+      const STATE_LEARNABLE: Record<string, string[]> = {
+        property_send:  ["intro", "pickup", "invite", "closing"],
+        viewing_invite: ["greeting", "situation", "invite", "closing"],
+      };
+      const learnableList = STATE_LEARNABLE[conversation_state] ?? STATE_LEARNABLE["property_send"];
+      const learnableSet = new Set(learnableList);
+      const learnableChanges = parsedChanges.filter(({ comp }) => learnableSet.has(comp));
+
+      if (learnableChanges.length === 0) {
+        // 固有情報コンポーネントのみ変化 → 学習不要
         await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
         processed++;
         continue;
       }
+
       const COMPONENT_NAMES: Record<string, string> = {
-        intro:   "挨拶文",
-        pickup:  "ピックアップ行（条件説明）",
-        invite:  "内覧誘導文",
-        closing: "締め文",
+        intro:     "挨拶文",
+        pickup:    "ピックアップ行（条件説明）",
+        invite:    "内覧誘導文",
+        closing:   "締め文",
+        greeting:  "挨拶文",
+        situation: "状況・背景説明",
       };
-      // コンポーネントごとに差分分析（最大2件: Haiku コスト抑制）
-      for (const comp of learnableChanged.slice(0, 2)) {
+
+      // ── 誤差学習: 変化したコンポーネントをタイプ別に分析（最大2件）──
+      const learnableChangedNames = new Set(learnableChanges.map(c => c.comp));
+      for (const { comp, changeType } of learnableChanges.slice(0, 2)) {
         const aiCompText = (ai_components as Record<string, string>)[comp] ?? "";
         if (!aiCompText || aiCompText.length < 5) continue;
-        const compState = `property_send_${comp}`;
-        const compResult = await analyzeComponentDiff(
-          customer_message, aiCompText, sent_reply, compState, COMPONENT_NAMES[comp] ?? comp,
-        );
+        const compState = `${conversation_state}_${comp}`;
+        const compName = COMPONENT_NAMES[comp] ?? comp;
+
+        // phrase=文字変化（言い回し）/ structure=パターン変化（省略・構成変更）
+        const compResult = changeType === "structure"
+          ? await analyzeStructureDiff(customer_message, aiCompText, sent_reply, compState, compName)
+          : await analyzeComponentDiff(customer_message, aiCompText, sent_reply, compState, compName);
+
         if (compResult && !compResult.skip && compResult.title && compResult.rule) {
           const embInput = buildKnowledgeEmbeddingInput({
             trigger_example: customer_message,
@@ -234,7 +305,8 @@ export async function POST(req: NextRequest) {
           const upsertResult = await upsertKnowledge(supabase, {
             title: compResult.title,
             content: compResult.rule,
-            category: "pattern",
+            // structure変化 → pattern（構成ルール） / phrase変化 → phrase（言い回しルール）
+            category: changeType === "structure" ? "pattern" : "phrase",
             importance: imp,
             conversation_state: compState,
             source_example_id: id,
@@ -243,6 +315,31 @@ export async function POST(req: NextRequest) {
           if (upsertResult === "inserted" || upsertResult === "merged") learned++;
         }
       }
+
+      // ── 予測スコア: 変化しなかったコンポーネントのルールをブースト ──
+      // 「AIの予測どおりだった」コンポーネント → 直近ルールの importance +1
+      const correctComponents = learnableList.filter(c =>
+        (ai_components as Record<string, string>)[c] && !learnableChangedNames.has(c),
+      );
+      for (const comp of correctComponents.slice(0, 2)) {
+        const compState = `${conversation_state}_${comp}`;
+        const { data: rules } = await supabase
+          .from("ai_reply_knowledge")
+          .select("id, importance")
+          .eq("conversation_state", compState)
+          .order("created_at", { ascending: false })
+          .limit(2);
+        for (const rule of rules ?? []) {
+          const imp = (rule.importance as number) ?? 7;
+          if (imp < 9) {
+            await supabase
+              .from("ai_reply_knowledge")
+              .update({ importance: Math.min(9, imp + 1) })
+              .eq("id", rule.id);
+          }
+        }
+      }
+
       await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
       processed++;
       continue; // 通常の full-message analyzeDiff はスキップ
