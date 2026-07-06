@@ -450,6 +450,11 @@ export async function PATCH(req: NextRequest) {
   }
   await Promise.all(jobs);
 
+  // PATCH分析後に diff_analyzed_at を更新 → 翌朝cronの二重処理を防止
+  await supabase.from("ai_reply_examples")
+    .update({ diff_analyzed_at: new Date().toISOString() })
+    .eq("id", id);
+
   return NextResponse.json({ ok: true });
 }
 
@@ -535,6 +540,10 @@ export async function POST(req: NextRequest) {
         jobs.push(analyzeDiff(existingRecord.id, existConvState, existCustMsg, existAiDraft, existSentReply, mergeSim));
       }
       await Promise.all(jobs);
+      // ☆マージ分析後に diff_analyzed_at を更新 → cronの二重処理を防止
+      await supabase.from("ai_reply_examples")
+        .update({ diff_analyzed_at: new Date().toISOString() })
+        .eq("id", existingRecord.id);
       return NextResponse.json({ ok: true, id: existingRecord.id, merged: true });
     }
     // 既存なし → 通常通り新規作成
