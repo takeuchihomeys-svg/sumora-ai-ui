@@ -497,6 +497,7 @@ export default function Home() {
   const [aixInitViewingSpecific, setAixInitViewingSpecific] = useState(false);
   const [aixInitViewingVacancy, setAixInitViewingVacancy] = useState(false);
   const [showViewingPicker, setShowViewingPicker] = useState(false);
+  const [suggestedViewingMode, setSuggestedViewingMode] = useState<"通常" | "退去予定物件" | "内覧日指定あり" | "日程変更" | null>(null);
   const [showPropertySendPicker, setShowPropertySendPicker] = useState(false);
   const [showEstimatePicker, setShowEstimatePicker] = useState(false);
   const [aixInitEstimateMulti, setAixInitEstimateMulti] = useState(false);
@@ -1976,6 +1977,35 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [selectedConversation.id, selectedConversation.messages?.length]
   );
+
+  // viewing picker を開く時にrecentMessagesを解析して推奨サブモードを自動検知
+  useEffect(() => {
+    if (!showViewingPicker) { setSuggestedViewingMode(null); return; }
+    const msgs = (selectedConversation.messages ?? []).slice(-20);
+    const customerMsgs = msgs.filter((m) => m.sender === "customer").reverse();
+    const allText = msgs.map((m) => m.text || "").join(" ");
+
+    // 日程変更: キャンセル・変更系（最優先）
+    if (/変更|キャンセル|別の日|日程.*変え|予定.*合わな|都合.*悪|厳しい.*日程|日程.*厳しい/.test(allText)) {
+      setSuggestedViewingMode("日程変更"); return;
+    }
+    // お客様から日付が届いている
+    for (const msg of customerMsgs) {
+      const t = msg.text || "";
+      if (/\d{1,2}月\d{1,2}日/.test(t) || /\d{1,2}\/\d{1,2}/.test(t)) {
+        setSuggestedViewingMode("内覧日指定あり"); return;
+      }
+      if (/[土日月火水木金]曜/.test(t) && /\d{1,2}時/.test(t)) {
+        setSuggestedViewingMode("内覧日指定あり"); return;
+      }
+    }
+    // 退去予定物件の文脈
+    if (/退去予定|退去日|退去後|退去済|退去月|月末退去/.test(allText)) {
+      setSuggestedViewingMode("退去予定物件"); return;
+    }
+    setSuggestedViewingMode("通常");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showViewingPicker]);
 
   // 申込フォーム自動検知（お客さんが氏名・フリガナ等を送ってきたとき）
   const isApplyFormDetected = useMemo(() => {
@@ -8435,10 +8465,28 @@ export default function Home() {
                   desc: "内覧日程の変更をお客様にお伝えする",
                   icon: <><rect x="24" y="22" width="24" height="22" rx="3" stroke="#9333EA" strokeWidth="1.8"/><path d="M30 22v-4M42 22v-4M24 30h24" stroke="#9333EA" strokeWidth="1.8" strokeLinecap="round"/><path d="M33 36l-3 3 3 3M39 36l3 3-3 3" stroke="#9333EA" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></>
                 },
-              ]).map(({ key, label, desc, icon }) => (
+              ]).map(({ key, label, desc, icon }) => {
+                const isSuggested = suggestedViewingMode === key;
+                return (
                 <button
                   key={key}
                   onClick={() => {
+                    // 予測 vs 実選択をログ（学習ループ）
+                    if (suggestedViewingMode && selectedConversation?.id && selectedConversation?.status) {
+                      fetch("/api/learn-action-patterns", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          action: "log",
+                          conversation_status: selectedConversation.status,
+                          action_type: "viewing_invite_submode",
+                          predicted_action: `viewing_invite:${suggestedViewingMode}`,
+                          source: key === suggestedViewingMode ? "prediction_accepted" : "prediction_bypassed",
+                          conversation_id: selectedConversation.id,
+                          customer_msg_summary: key,
+                        }),
+                      }).catch(() => {});
+                    }
                     setShowViewingPicker(false);
                     if (key === "退去予定物件") {
                       setAixInitViewingVacancy(true);
@@ -8459,7 +8507,15 @@ export default function Home() {
                     }
                     openAixDirect("viewing_invite");
                   }}
-                  className="flex items-center gap-3.5 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3.5 text-left transition active:bg-[#F3E8FF] active:border-[#9333EA]"
+                  className="flex items-center gap-3.5 rounded-2xl border px-4 py-3.5 text-left transition active:bg-[#F3E8FF] active:border-[#9333EA]"
+                  style={isSuggested ? {
+                    border: "2px solid #9333EA",
+                    background: "#FAF5FF",
+                    boxShadow: "0 0 0 3px #9333EA22",
+                  } : {
+                    border: "1px solid #E5E7EB",
+                    background: "#FAFAFA",
+                  }}
                 >
                   <div className="shrink-0">
                     <svg width="36" height="36" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -8467,12 +8523,18 @@ export default function Home() {
                       {icon}
                     </svg>
                   </div>
-                  <div>
-                    <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                      {isSuggested && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full text-white shrink-0" style={{ background: "#9333EA" }}>おすすめ</span>
+                      )}
+                    </div>
                     <p className="text-[11px] text-[#9CA3AF]">{desc}</p>
                   </div>
                 </button>
-              ))}
+                );
+              })}
             </div>
             <button
               onClick={() => { setShowViewingPicker(false); setActiveAixFlow(null); }}
