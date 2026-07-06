@@ -14,6 +14,16 @@ type LinkedConv = {
   customer_name?: string | null;
 };
 
+type SummaryJson = {
+  situation?: string;
+  inspection?: { requested?: boolean; done?: boolean; properties?: string[] };
+  estimate?: { requested?: boolean };
+  requirements?: string[];
+  opinions?: string[];
+  our_actions?: string[];
+  winning_pattern?: string;
+};
+
 type Customer = {
   id: string;
   customer_name: string;
@@ -42,6 +52,7 @@ type Customer = {
   property_viewed_at?: string | null;
   additional_conditions?: string | null;
   ai_summary?: string | null;
+  ai_summary_json?: SummaryJson | null;
   ai_summary_at?: string | null;
   created_at: string;
   updated_at: string;
@@ -264,6 +275,7 @@ export default function CustomersPage() {
   const [addCondImagePreview, setAddCondImagePreview] = useState<string>("");
 
   const [summaries, setSummaries]           = useState<Record<string, string>>({});
+  const [summaryJsons, setSummaryJsons]     = useState<Record<string, SummaryJson>>({});
   const [summaryLoading, setSummaryLoading] = useState<Set<string>>(new Set());
 
   const fetchCustomers = async () => {
@@ -284,10 +296,13 @@ export default function CustomersPage() {
     summaryInitDone.current = true;
 
     const fromDb: Record<string, string> = {};
+    const fromDbJson: Record<string, SummaryJson> = {};
     for (const c of customers) {
       if (c.ai_summary) fromDb[c.id] = c.ai_summary;
+      if (c.ai_summary_json) fromDbJson[c.id] = c.ai_summary_json;
     }
     if (Object.keys(fromDb).length > 0) setSummaries(fromDb);
+    if (Object.keys(fromDbJson).length > 0) setSummaryJsons(fromDbJson);
 
     const toGenerate = customers.filter((c) => c.is_linked && !c.ai_summary).slice(0, 8);
     if (toGenerate.length === 0) return;
@@ -686,8 +701,9 @@ export default function CustomersPage() {
         }),
       });
       if (res.ok) {
-        const data = await res.json() as { summary: string };
-        setSummaries((prev) => ({ ...prev, [c.id]: data.summary }));
+        const data = await res.json() as { summary: string; summaryJson?: SummaryJson | null };
+        if (data.summary) setSummaries((prev) => ({ ...prev, [c.id]: data.summary }));
+        if (data.summaryJson) setSummaryJsons((prev) => ({ ...prev, [c.id]: data.summaryJson! }));
         const generatedAt = new Date().toISOString();
         setCustomers((prev) => prev.map((cust) => cust.id === c.id ? { ...cust, ai_summary_at: generatedAt } : cust));
       }
@@ -1150,36 +1166,111 @@ export default function CustomersPage() {
                       })()}
                     </div>
 
-                    {/* ── AI要約 ── */}
-                    {summaries[c.id] && (
-                      <div className="border-t border-purple-100" style={{ background: "linear-gradient(to bottom, #faf5ff, #fefeff)" }}>
-                        <button
-                          className="flex w-full items-center justify-between px-4 py-2 active:opacity-70"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setExpandedSummaryIds((prev) => {
-                              const s = new Set(prev);
-                              s.has(c.id) ? s.delete(c.id) : s.add(c.id);
-                              return s;
-                            });
-                          }}
-                        >
-                          <div className="flex items-center gap-1.5">
-                            <p className="text-[10px] font-bold text-purple-400 tracking-wide">✨ AI要約（LINE参考用）</p>
-                            {c.ai_summary_at && <span className="text-[9px] text-purple-300">{relTime(c.ai_summary_at)}</span>}
-                          </div>
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#c084fc" strokeWidth="2.5" strokeLinecap="round"
-                            className={`transition-transform duration-200 ${expandedSummaryIds.has(c.id) ? "rotate-180" : ""}`}>
-                            <polyline points="6 9 12 15 18 9" />
-                          </svg>
-                        </button>
-                        {expandedSummaryIds.has(c.id) && (
-                          <div className="px-4 pb-3">
-                            <p className="text-[12px] text-[#333] whitespace-pre-line leading-relaxed">{summaries[c.id]}</p>
-                          </div>
-                        )}
-                      </div>
-                    )}
+                    {/* ── AI要約（構造化カード） ── */}
+                    {(summaryJsons[c.id] || summaries[c.id]) && (() => {
+                      const sj = summaryJsons[c.id];
+                      const isExpanded = expandedSummaryIds.has(c.id);
+                      return (
+                        <div className="border-t border-purple-100" style={{ background: "linear-gradient(to bottom, #faf5ff, #fefeff)" }}>
+                          <button
+                            className="flex w-full items-center justify-between px-4 py-2 active:opacity-70"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setExpandedSummaryIds((prev) => {
+                                const s = new Set(prev);
+                                s.has(c.id) ? s.delete(c.id) : s.add(c.id);
+                                return s;
+                              });
+                            }}
+                          >
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="text-[10px] font-bold text-purple-400 tracking-wide flex-shrink-0">✨ AI状況</span>
+                              {sj?.situation && (
+                                <span className="text-[10px] text-purple-600 font-medium truncate">{sj.situation}</span>
+                              )}
+                              {c.ai_summary_at && <span className="text-[9px] text-purple-300 flex-shrink-0 ml-auto mr-1">{relTime(c.ai_summary_at)}</span>}
+                            </div>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#c084fc" strokeWidth="2.5" strokeLinecap="round"
+                              className={`transition-transform duration-200 flex-shrink-0 ${isExpanded ? "rotate-180" : ""}`}>
+                              <polyline points="6 9 12 15 18 9" />
+                            </svg>
+                          </button>
+                          {isExpanded && (
+                            <div className="px-4 pb-3 space-y-1.5">
+                              {sj ? (
+                                <>
+                                  {/* 内覧 */}
+                                  {sj.inspection && (
+                                    <div className="flex items-start gap-1.5">
+                                      <span className="text-[11px] flex-shrink-0">🏠</span>
+                                      <div className="min-w-0">
+                                        <span className="text-[11px] font-semibold text-gray-500">内覧: </span>
+                                        <span className="text-[11px] text-gray-700">
+                                          {sj.inspection.requested
+                                            ? (sj.inspection.done ? "済み" : "希望あり")
+                                            : "なし"}
+                                          {sj.inspection.properties && sj.inspection.properties.length > 0 && (
+                                            <span className="text-purple-600"> → {sj.inspection.properties.join("・")}</span>
+                                          )}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {/* 見積 */}
+                                  {sj.estimate?.requested && (
+                                    <div className="flex items-start gap-1.5">
+                                      <span className="text-[11px] flex-shrink-0">💴</span>
+                                      <span className="text-[11px] font-semibold text-gray-500">見積: </span>
+                                      <span className="text-[11px] text-gray-700">希望あり</span>
+                                    </div>
+                                  )}
+                                  {/* 要望 */}
+                                  {sj.requirements && sj.requirements.length > 0 && (
+                                    <div className="flex items-start gap-1.5">
+                                      <span className="text-[11px] flex-shrink-0">📋</span>
+                                      <div className="min-w-0">
+                                        <span className="text-[11px] font-semibold text-gray-500">要望: </span>
+                                        <span className="text-[11px] text-gray-700">{sj.requirements.join(" · ")}</span>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {/* 意見・タイプ */}
+                                  {sj.opinions && sj.opinions.length > 0 && (
+                                    <div className="flex items-start gap-1.5">
+                                      <span className="text-[11px] flex-shrink-0">💬</span>
+                                      <div className="min-w-0">
+                                        <span className="text-[11px] font-semibold text-gray-500">意見: </span>
+                                        <span className="text-[11px] text-gray-700">{sj.opinions.join(" · ")}</span>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {/* こちらのアクション */}
+                                  {sj.our_actions && sj.our_actions.length > 0 && (
+                                    <div className="flex items-start gap-1.5">
+                                      <span className="text-[11px] flex-shrink-0">📤</span>
+                                      <div className="min-w-0">
+                                        <span className="text-[11px] font-semibold text-gray-500">アクション: </span>
+                                        <span className="text-[11px] text-gray-700">{sj.our_actions.join(" → ")}</span>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {/* 決まるパターン */}
+                                  {sj.winning_pattern && (
+                                    <div className="mt-2 rounded-lg bg-red-50 border border-red-200 px-2.5 py-1.5">
+                                      <span className="text-[10px] font-bold text-red-500">★ 決まるパターン: </span>
+                                      <span className="text-[11px] text-red-700 font-medium">{sj.winning_pattern}</span>
+                                    </div>
+                                  )}
+                                </>
+                              ) : (
+                                /* 旧テキスト形式のフォールバック */
+                                <p className="text-[12px] text-[#333] whitespace-pre-line leading-relaxed">{summaries[c.id]}</p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </>
                 )}
 

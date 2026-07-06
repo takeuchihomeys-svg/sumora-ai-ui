@@ -409,6 +409,7 @@ ALTER TABLE aix_settings DISABLE ROW LEVEL SECURITY;
 -- AI要約カラム（お客さん一覧のAI要約機能用）
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS ai_summary TEXT;
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS ai_summary_at TIMESTAMPTZ;
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS ai_summary_json JSONB;
 
 -- pgvector 拡張（類似例検索用）
 CREATE EXTENSION IF NOT EXISTS vector;

@@ -9,30 +9,40 @@ const model = new ChatAnthropic({
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
 });
 
+// ── 構造化JSON出力プロンプト ──────────────────────────────────────────────
 const SYSTEM = `あなたは賃貸仲介の営業アシスタントです。
-担当者がLINEを送る直前に確認する「このお客さんの特徴まとめ」を作成してください。
+お客さんの会話・条件・メモから状況を分析し、以下のJSON形式のみで出力してください。
+説明文・マークダウン・前後のテキストは一切付けず、JSONのみ出力すること。
 
-ルール：
-・4〜6項目の箇条書き（「・」で始める）
-・条件の羅列は禁止（エリア・家賃・間取り等はすでに画面表示済み）
-・必ず以下の2つをカバーする：
-  ①お客さんの性格・タイプ・感情状態・営業上のヒント（条件ではなく人物像）
-  ②【決まるパターン認識】会話・状況を読んで「今どうすれば成約に繋がるか」を1行で書く
-・前回の要約がある場合は、変わっていない情報はそのまま維持し、変化した部分のみ更新すること
-・入力にない情報は書かない
-・各項目は1行以内で簡潔に
-・**（アスタリスク2つの太字）・# 見出し・_イタリック_ 等のmarkdown記法は絶対に使わない
-・「・」での箇条書きと「★決まるパターン: 〜」の形式だけを使うこと
+{
+  "situation": "現在の状況を10〜15文字（例: 内覧3物件の日程調整中）",
+  "inspection": {
+    "requested": true,
+    "done": false,
+    "properties": ["内覧予定or済みの物件名（最大3件）"]
+  },
+  "estimate": {
+    "requested": false
+  },
+  "requirements": ["お客さんの要望・こだわり（最大3件・各15文字以内）"],
+  "opinions": ["お客さんの性格・傾向・感情（最大2件・各15文字以内）"],
+  "our_actions": ["スタッフがやったこと（最大2件・各15文字以内）"],
+  "winning_pattern": "成約につながる行動を20文字以内"
+}
 
-【②決まるパターン認識の判断基準 — 必ずどれか1つを選んで「★決まるパターン: 〜」の形で書く】
-・条件が絞られていて合う物件がまだない → 「★決まるパターン: 条件に合う1件を出せば申込む。物件探しが鍵」
-・気に入った物件があって内覧前 → 「★決まるパターン: 内覧に誘えば決まる。日程提案が最優先」
-・物件は気に入っているが迷っている → 「★決まるパターン: 申込みでお部屋を抑えるよう促せば動く」
-・交渉が失敗した直後・NGが出た → 「★決まるパターン: 別物件の内覧に誘導すればリカバリーできる」
-・申込み済みで書類待ち → 「★決まるパターン: 書類（身分証・緊急連絡先）を揃えれば次に進む」
-・物件送付後まだ反応が薄い → 「★決まるパターン: 追客LINEを送って反応を確認する」
-・条件が厳しくて物件がない → 「★決まるパターン: 条件緩和を提案して再ピックアップが鍵」
-・内覧済みで申込み前 → 「★決まるパターン: 今すぐ申込みを促せば決まる」`;
+判断ルール：
+・inspection.requested: お客さんが内覧したいと言っている or 内覧日程を調整中なら true
+・inspection.done: 実際に内覧済みなら true
+・estimate.requested: 初期費用・見積計算を求めているなら true
+・winning_pattern の候補：
+  - 条件に合う物件がまだない → 「条件ピッタリの1件を出せば申込む」
+  - 気に入った物件があって内覧前 → 「内覧日程を提案すれば決まる」
+  - 内覧済みで申込み前 → 「今すぐ申込みを促せば決まる」
+  - 物件は気に入っているが迷い中 → 「申込みでお部屋を抑えるよう促せば動く」
+  - 申込み済みで書類待ち → 「書類を揃えれば次に進む」
+  - 物件送付後反応薄い → 「追客LINEで反応を確認する」
+  - 条件が厳しくて物件なし → 「条件緩和を提案して再ピックアップ」
+  - 交渉失敗・NG直後 → 「別物件の内覧に誘導してリカバリー」`;
 
 const STATUS_LABEL: Record<string, string> = {
   new_inquiry:     "新規問い合わせ",
@@ -40,6 +50,52 @@ const STATUS_LABEL: Record<string, string> = {
   property_search: "物件探し中",
   pending:         "検討中",
 };
+
+// ai_summary_json のスキーマ定義
+export type SummaryJson = {
+  situation?: string;
+  inspection?: { requested?: boolean; done?: boolean; properties?: string[] };
+  estimate?: { requested?: boolean };
+  requirements?: string[];
+  opinions?: string[];
+  our_actions?: string[];
+  winning_pattern?: string;
+};
+
+// JSON → テキスト変換（generate-reply の ★決まるパターン抽出との後方互換を維持）
+function jsonToText(j: SummaryJson): string {
+  const lines: string[] = [];
+
+  if (j.situation) lines.push(`・${j.situation}`);
+
+  if (j.inspection) {
+    const parts: string[] = [];
+    if (j.inspection.requested) parts.push(j.inspection.done ? "希望あり・実施済み" : "希望あり・未実施");
+    else parts.push("希望なし");
+    if (j.inspection.properties && j.inspection.properties.length > 0) {
+      parts.push(j.inspection.properties.join("・"));
+    }
+    lines.push(`・内覧: ${parts.join(" → ")}`);
+  }
+
+  if (j.requirements && j.requirements.length > 0) {
+    lines.push(`・要望: ${j.requirements.join(" / ")}`);
+  }
+
+  if (j.opinions && j.opinions.length > 0) {
+    lines.push(`・意見: ${j.opinions.join(" / ")}`);
+  }
+
+  if (j.our_actions && j.our_actions.length > 0) {
+    lines.push(`・アクション: ${j.our_actions.join(" → ")}`);
+  }
+
+  if (j.winning_pattern) {
+    lines.push(`★決まるパターン: ${j.winning_pattern}`);
+  }
+
+  return lines.join("\n");
+}
 
 type SummaryRequest = {
   customer_id?:         string;
@@ -63,7 +119,6 @@ type SummaryRequest = {
   last_message?:        string | null;
   last_message_sender?: string | null;
   conversation_id?:     string | null;
-  previous_summary?:    string | null;
   fetch_from_db?:       boolean;
 };
 
@@ -71,7 +126,62 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json() as SummaryRequest;
 
-    // プロンプト管理UIで編集できるようDBから取得（なければコード定数をフォールバック）
+    // fetch_from_db: webhook などから customer_id のみ渡す場合 → DBから全データ取得
+    let c: SummaryRequest = body;
+    if (body.fetch_from_db && body.customer_id) {
+      const { data: dbC } = await supabase
+        .from("property_customers")
+        .select("customer_name, status, desired_area, floor_plan, floor_area_min, rent_min, rent_max, walk_minutes, move_in_time, building_age, initial_cost_limit, preferences, ng_points, other_requests, property_memo, property_send_count, additional_conditions, ai_summary_at")
+        .eq("id", body.customer_id)
+        .single();
+      if (dbC) {
+        c = { ...body, ...(dbC as Partial<SummaryRequest & { ai_summary_at?: string }>) };
+
+        // スロットリング: 2時間以内に生成済みなら会話件数チェック
+        const summaryAt = (dbC as Record<string, unknown>).ai_summary_at as string | null;
+        if (summaryAt) {
+          const ageMs = Date.now() - new Date(summaryAt).getTime();
+          if (ageMs < 2 * 60 * 60 * 1000) {
+            // 直近の新着メッセージ数を確認（3件未満ならスキップ）
+            if (body.conversation_id) {
+              const { count } = await supabase
+                .from("messages")
+                .select("id", { count: "exact", head: true })
+                .eq("conversation_id", body.conversation_id)
+                .gt("created_at", summaryAt);
+              if ((count ?? 0) < 3) {
+                const { data: existing } = await supabase
+                  .from("property_customers")
+                  .select("ai_summary, ai_summary_json")
+                  .eq("id", body.customer_id)
+                  .single();
+                return NextResponse.json({
+                  summary: existing?.ai_summary ?? "",
+                  summaryJson: existing?.ai_summary_json ?? null,
+                  cached: true,
+                });
+              }
+            } else {
+              // conversation_id なしのスロットリングは1時間
+              if (ageMs < 1 * 60 * 60 * 1000) {
+                const { data: existing } = await supabase
+                  .from("property_customers")
+                  .select("ai_summary, ai_summary_json")
+                  .eq("id", body.customer_id)
+                  .single();
+                return NextResponse.json({
+                  summary: existing?.ai_summary ?? "",
+                  summaryJson: existing?.ai_summary_json ?? null,
+                  cached: true,
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // プロンプト管理UIで上書き可能（なければコード定数をフォールバック）
     const { data: promptRow } = await supabase
       .from("ai_prompts")
       .select("content")
@@ -79,20 +189,7 @@ export async function POST(req: NextRequest) {
       .single();
     const systemPrompt = (promptRow?.content as string | null) ?? SYSTEM;
 
-    // fetch_from_db: page.tsx からの自動更新など customer_id のみ渡す場合にDBから全データ取得
-    let c: SummaryRequest = body;
-    if (body.fetch_from_db && body.customer_id) {
-      const { data: dbC } = await supabase
-        .from("property_customers")
-        .select("customer_name, status, desired_area, floor_plan, floor_area_min, rent_min, rent_max, walk_minutes, move_in_time, building_age, initial_cost_limit, preferences, ng_points, other_requests, property_memo, property_send_count, additional_conditions")
-        .eq("id", body.customer_id)
-        .single();
-      if (dbC) {
-        c = { ...body, ...(dbC as Partial<SummaryRequest>) };
-      }
-    }
-
-    // 会話履歴を取得（conversation_id がある場合のみ）
+    // 会話履歴を取得
     let conversationHistory = "";
     if (c.conversation_id) {
       const { data: msgs } = await supabase
@@ -113,18 +210,18 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 学習済み成約パターンを取得（直近10件）
+    // 過去の成約パターン（学習済み）
     const { data: learnedPatterns } = await supabase
       .from("ai_reply_knowledge")
       .select("content")
       .eq("category", "pattern")
       .ilike("title", "成約パターン_%")
       .order("created_at", { ascending: false })
-      .limit(10);
+      .limit(5);
 
     const learnedPatternsNote = learnedPatterns && learnedPatterns.length > 0
-      ? `\n\n【過去の実際の成約パターン（学習済み・最優先で参照すること）】\n${
-          (learnedPatterns as Array<{ content: string }>).map(p => p.content).join("\n\n---\n")
+      ? `\n\n【過去の成約パターン（学習済み・最優先で参照）】\n${
+          (learnedPatterns as Array<{ content: string }>).map(p => p.content).join("\n---\n")
         }`
       : "";
 
@@ -132,14 +229,8 @@ export async function POST(req: NextRequest) {
       ? `${c.rent_min ? Math.floor(c.rent_min / 10000) + "万〜" : "〜"}${c.rent_max ? Math.floor(c.rent_max / 10000) + "万" : ""}`
       : null;
 
-    // 前回要約がある場合は引き継ぎ指示として追加
-    const prevSummaryNote = c.previous_summary
-      ? `\n\n【前回の要約（引き継いで更新すること）】\n${c.previous_summary}`
-      : "";
-
     const info = [
       `名前: ${c.customer_name}`,
-      learnedPatternsNote && learnedPatternsNote,
       `ステータス: ${STATUS_LABEL[c.status ?? ""] ?? c.status}`,
       c.desired_area         && `希望エリア: ${c.desired_area}`,
       c.floor_plan           && `間取り: ${c.floor_plan}`,
@@ -156,24 +247,36 @@ export async function POST(req: NextRequest) {
       c.property_send_count != null && `物件送付回数: ${c.property_send_count}回`,
       c.additional_conditions && `追加・変更履歴:\n${c.additional_conditions}`,
       c.last_message         && `最後のメッセージ（${c.last_message_sender === "customer" ? "お客さん" : "スタッフ"}）:「${c.last_message}」`,
-    ].filter(Boolean).join("\n") + prevSummaryNote + conversationHistory;
+    ].filter(Boolean).join("\n") + learnedPatternsNote + conversationHistory;
 
     const res = await model.invoke([
       new SystemMessage(systemPrompt),
       new HumanMessage(info),
     ]);
 
-    const text = typeof res.content === "string" ? res.content : JSON.stringify(res.content);
-    const summary = text.trim();
+    const rawText = typeof res.content === "string" ? res.content : JSON.stringify(res.content);
+
+    // JSON抽出
+    let summaryJson: SummaryJson = {};
+    try {
+      const match = rawText.match(/\{[\s\S]*\}/);
+      if (match) summaryJson = JSON.parse(match[0]) as SummaryJson;
+    } catch {
+      // JSON解析失敗時は空オブジェクト
+    }
+
+    // テキスト変換（generate-reply との後方互換）
+    const summary = jsonToText(summaryJson) || rawText.trim();
 
     if (c.customer_id) {
       await supabase.from("property_customers").update({
         ai_summary: summary,
+        ai_summary_json: summaryJson,
         ai_summary_at: new Date().toISOString(),
       }).eq("id", c.customer_id);
     }
 
-    return NextResponse.json({ summary });
+    return NextResponse.json({ summary, summaryJson });
   } catch (e) {
     console.error("customer-summary error:", e);
     return NextResponse.json({ error: "Failed" }, { status: 500 });
