@@ -624,10 +624,16 @@ export async function POST(req: NextRequest) {
       : `${conversationState}: ${customerMessage}`;
   const embeddingPromise = getEmbedding(embeddingInput);
 
-  // 物件ピックアップした: 変更されたコンポーネントを reply_angle に記録（analyze-diffs が固有情報スキップを精密化）
+  // 各ピッカー: 変更されたコンポーネントを reply_angle に記録（analyze-diffs が固有情報スキップを精密化）
+  // アクション別の固有情報パーツ（日時・物件名等 — 変化しても学習不要）
+  const FIXED_INFO_BY_STATE: Record<string, Set<string>> = {
+    property_send:   new Set(["vacating", "calendar"]),
+    viewing_invite:  new Set(["dates"]),
+    application_push: new Set(["property"]),
+  };
   const aiComponentsObj = aiComponents && typeof aiComponents === "object" ? aiComponents as Record<string, string> : null;
-  if (aiComponentsObj && conversationState === "property_send" && wasAiModified && !replyAngle) {
-    const FIXED_INFO = new Set(["vacating", "calendar"]);
+  if (aiComponentsObj && wasAiModified && !replyAngle) {
+    const FIXED_INFO = FIXED_INFO_BY_STATE[conversationState as string] ?? new Set(["dates", "calendar", "vacating"]);
     const changed: string[] = [];
     const sentNorm = (sentReply as string).replace(/\s+/g, "");
     for (const [key, val] of Object.entries(aiComponentsObj)) {
