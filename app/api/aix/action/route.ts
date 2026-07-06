@@ -633,44 +633,46 @@ ${SMORA_COMMON_RULES}`;
     //   getDiffKnowledgeForState / getStarredExamplesForAction を注入して学習ループ対象にする。
     } else if (action === "estimate_sheet") {
 
-      // 複数件モード: 各見積書をOCRして①②③付きでまとめる
+      // 複数件モード: 各見積書をOCRして①②③付きでまとめる（並列実行）
       if (body.multi_estimate && Array.isArray(image_urls) && image_urls.length > 0) {
-        const estParts: string[] = [];
-        for (let pi = 0; pi < image_urls.length; pi++) {
-          const url = image_urls[pi] as string;
-          if (!url) continue;
-          try {
-            const estSystem = `この見積書画像から初期費用情報を抽出してください。JSON形式のみ返答（説明文なし）：
+        const multiEstSystem = `この見積書画像から初期費用情報を抽出してください。JSON形式のみ返答（説明文なし）：
 {"property_name":"物件名","room_number":"号室","discount":"34,000円","initial_cost":"146,000円","savings":"102,200円"}
 - property_name: マンション名のみ（号室なし）。不明は""
 - room_number: 号室番号のみ（例: 502）。不明は""
 - discount: 割引額（「〇〇,〇〇〇円」形式）。なければnull
 - initial_cost: 初期費用合計（「〇〇〇,〇〇〇円」形式）。不明はnull
 - savings: スモラ節約額（一般業者との差額）。不明はnull`;
-            const estContent = [
-              { type: "text", text: "この見積書から初期費用情報を抽出してください。" },
-              { type: "image", source: { type: "url", url } },
-            ];
-            const estRaw = await callClaudeVision(estSystem, estContent, currentAction);
-            const jsonMatch = estRaw.match(/\{[\s\S]*\}/);
-            if (!jsonMatch) continue;
-            const estData = JSON.parse(jsonMatch[0]) as { property_name?: string | null; room_number?: string | null; discount?: string | null; initial_cost?: string | null; savings?: string | null };
-            const pName = estData.property_name?.trim() || `物件${["①","②","③","④","⑤"][pi] ?? String(pi + 1)}`;
-            const roomSuffix = estData.room_number?.trim() ? ` ${estData.room_number.trim()}号室` : "";
-            const prefix = image_urls.length > 1 ? `${["①","②","③","④","⑤"][pi] ?? (pi + 1) + "."}【${pName}${roomSuffix}】` : `【${pName}${roomSuffix}】`;
-            const lines: string[] = [prefix, ""];
-            if (estData.discount) {
-              lines.push("初期費用さらに");
-              lines.push(`🌟${estData.discount}割引させて頂き`);
-            }
-            if (estData.initial_cost) lines.push(`初期費用：${estData.initial_cost}`);
-            if (estData.savings) {
-              lines.push("");
-              lines.push(`${accountName}なら一般的な不動産業者より${estData.savings}節約出来ます！！`);
-            }
-            estParts.push(lines.join("\n"));
-          } catch { /* 読み取りエラーはスキップ */ }
-        }
+        const multiEstBadges = ["①","②","③","④","⑤"];
+        const multiEstResults = await Promise.all(
+          (image_urls as string[]).map(async (url, pi) => {
+            if (!url) return null;
+            try {
+              const estContent = [
+                { type: "text", text: "この見積書から初期費用情報を抽出してください。" },
+                { type: "image", source: { type: "url", url } },
+              ];
+              const estRaw = await callClaudeVision(multiEstSystem, estContent, currentAction);
+              const jsonMatch = estRaw.match(/\{[\s\S]*\}/);
+              if (!jsonMatch) return null;
+              const estData = JSON.parse(jsonMatch[0]) as { property_name?: string | null; room_number?: string | null; discount?: string | null; initial_cost?: string | null; savings?: string | null };
+              const pName = estData.property_name?.trim() || `物件${multiEstBadges[pi] ?? String(pi + 1)}`;
+              const roomSuffix = estData.room_number?.trim() ? ` ${estData.room_number.trim()}号室` : "";
+              const prefix = (image_urls as string[]).length > 1 ? `${multiEstBadges[pi] ?? (pi + 1) + "."}【${pName}${roomSuffix}】` : `【${pName}${roomSuffix}】`;
+              const lines: string[] = [prefix, ""];
+              if (estData.discount) {
+                lines.push("初期費用さらに");
+                lines.push(`🌟${estData.discount}割引させて頂き`);
+              }
+              if (estData.initial_cost) lines.push(`初期費用：${estData.initial_cost}`);
+              if (estData.savings) {
+                lines.push("");
+                lines.push(`${accountName}なら一般的な不動産業者より${estData.savings}節約出来ます！！`);
+              }
+              return lines.join("\n");
+            } catch { return null; }
+          })
+        );
+        const estParts = multiEstResults.filter((r): r is string => r !== null);
         if (estParts.length === 0) {
           message_text = "最大限割引した初期費用の御見積書をお送りさせて頂きます！！\n\n※ご入居日によって日割家賃が発生致します。";
         } else {
@@ -877,12 +879,13 @@ ${SMORA_COMMON_RULES}
       }
 
       // 学習済み差分ルール（スタッフ修正から学習したパターン）＋☆成功返信パターンをプロンプト末尾に注入
-      // + コンポーネント単位の学習ルール（property_send_pickup / property_send_invite 等で個別保存されたもの）
+      // + コンポーネント単位の学習ルール（normal/widen/viewingモードのみ: JSON出力でコンポーネント学習が機能するモード）
+      const useCompKnowledge = sendMode === "normal" || sendMode === "widen" || sendMode === "viewing";
       const [sendDiffNote, sendStarNote, compPickupNote, compInviteNote] = await Promise.all([
         getKnowledgeForState(AIX_ACTION_TO_STATES.property_send, currentAction),
         getStarredExamplesForAction(AIX_ACTION_TO_STATES.property_send, latestCustomerMsg),
-        getKnowledgeForState(["property_send_pickup"], currentAction),
-        getKnowledgeForState(["property_send_invite"], currentAction),
+        useCompKnowledge ? getKnowledgeForState(["property_send_pickup"], currentAction) : Promise.resolve(""),
+        useCompKnowledge ? getKnowledgeForState(["property_send_invite"], currentAction) : Promise.resolve(""),
       ]);
       // normal/widenモード専用: パーツ別の過去改善ルールを構成ラベル付きで注入
       const componentKnowledgeNote = (sendMode === "normal" || sendMode === "widen" || sendMode === "viewing")
@@ -1958,48 +1961,48 @@ ${templateText}`;
         }
       }
 
-      // 見積書テキスト同封: available パターンかつフラグON時、見積書画像から費用テキストを生成・末尾に追加
+      // 見積書テキスト同封: available パターンかつフラグON時、見積書画像から費用テキストを生成・末尾に追加（並列実行）
       if (pattern === "available" && (include_estimate_text as boolean | undefined) && message_text) {
         const estUrls = (body.estimate_image_urls as string[] | undefined) ?? [];
         if (estUrls.length > 0) {
-          const estParts: string[] = [];
-          for (let pi = 0; pi < estUrls.length; pi++) {
-            const url = estUrls[pi];
-            if (!url) continue;
-            const pName = (propNames[pi] as string | undefined)?.trim() || `物件${["①","②","③","④","⑤"][pi] ?? String(pi + 1)}`;
-            try {
-              const estSystem = `この見積書画像から初期費用情報を抽出してください。JSON形式のみ返答（説明文なし）：
+          const checkEstSystem = `この見積書画像から初期費用情報を抽出してください。JSON形式のみ返答（説明文なし）：
 {"discount":"34,000円","initial_cost":"146,000円","savings":"102,200円"}
 - discount: 割引額（「〇〇,〇〇〇円」形式）
 - initial_cost: 初期費用合計（「〇〇〇,〇〇〇円」形式）
 - savings: スモラ節約額（一般業者との差額）
 不明はnull。`;
-              const estContent = [
-                { type: "text", text: "この見積書から初期費用情報を抽出してください。" },
-                { type: "image", source: { type: "url", url } },
-              ];
-              const estRaw = await callClaudeVision(estSystem, estContent, currentAction);
-              const jsonMatch = estRaw.match(/\{[\s\S]*\}/);
-              if (!jsonMatch) continue;
-              const estData = JSON.parse(jsonMatch[0]) as { discount?: string | null; initial_cost?: string | null; savings?: string | null };
-              const prefix = estUrls.length > 1 ? `${["①","②","③","④","⑤"][pi] ?? (pi + 1) + "."}【${pName}】` : `【${pName}】`;
-              const lines: string[] = [prefix, ""];
-              if (estData.discount) {
-                lines.push("初期費用さらに");
-                lines.push(`🌟${estData.discount}割引させて頂き`);
-              }
-              if (estData.initial_cost) lines.push(`初期費用：${estData.initial_cost}`);
-              if (estData.savings) {
-                lines.push("");
-                lines.push(`${accountName}なら一般的な不動産業者より${estData.savings}節約出来ます！！`);
-              }
-              estParts.push(lines.join("\n"));
-            } catch {
-              // 読み取りエラーはスキップ
-            }
-          }
-          if (estParts.length > 0) {
-            estimate_text_result = estParts.join("\n\n") + "\n\n※ご入居日によって日割家賃が発生致します。";
+          const checkEstBadges = ["①","②","③","④","⑤"];
+          const checkEstResults = await Promise.all(
+            estUrls.map(async (url, pi) => {
+              if (!url) return null;
+              const pName = (propNames[pi] as string | undefined)?.trim() || `物件${checkEstBadges[pi] ?? String(pi + 1)}`;
+              try {
+                const estContent = [
+                  { type: "text", text: "この見積書から初期費用情報を抽出してください。" },
+                  { type: "image", source: { type: "url", url } },
+                ];
+                const estRaw = await callClaudeVision(checkEstSystem, estContent, currentAction);
+                const jsonMatch = estRaw.match(/\{[\s\S]*\}/);
+                if (!jsonMatch) return null;
+                const estData = JSON.parse(jsonMatch[0]) as { discount?: string | null; initial_cost?: string | null; savings?: string | null };
+                const prefix = estUrls.length > 1 ? `${checkEstBadges[pi] ?? (pi + 1) + "."}【${pName}】` : `【${pName}】`;
+                const lines: string[] = [prefix, ""];
+                if (estData.discount) {
+                  lines.push("初期費用さらに");
+                  lines.push(`🌟${estData.discount}割引させて頂き`);
+                }
+                if (estData.initial_cost) lines.push(`初期費用：${estData.initial_cost}`);
+                if (estData.savings) {
+                  lines.push("");
+                  lines.push(`${accountName}なら一般的な不動産業者より${estData.savings}節約出来ます！！`);
+                }
+                return lines.join("\n");
+              } catch { return null; }
+            })
+          );
+          const checkEstParts = checkEstResults.filter((r): r is string => r !== null);
+          if (checkEstParts.length > 0) {
+            estimate_text_result = checkEstParts.join("\n\n") + "\n\n※ご入居日によって日割家賃が発生致します。";
           }
         }
       }

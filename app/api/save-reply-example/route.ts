@@ -624,7 +624,8 @@ export async function POST(req: NextRequest) {
   const wasAiUsed    = !!aiDraft && aiDraft.trim().length > 0 && sim >= 0.9;
   // スプリット送信判定: sentReplyがaiDraftの55%未満 かつ 類似度30%以上 → 分割送信の可能性が高い
   // この場合、差分学習を実行しない（「削った」と誤判定を防ぐ）
-  const likelySplit  = !!aiDraft && sentReply.trim().length < aiDraft.trim().length * 0.55 && sim >= 0.3;
+  // 分割送信判定: 送信文が40%未満 かつ 類似度50%以上のみスキップ（閾値緩和で「意図的な短縮」を誤判定しない）
+  const likelySplit  = !!aiDraft && sentReply.trim().length < aiDraft.trim().length * 0.4 && sim >= 0.5;
   const wasAiModified = !!aiDraft && aiDraft.trim().length > 0 && sim >= 0.05 && sim < 0.9 && !likelySplit;
 
   // RLHF: 仮説検証フィードバック（conversationId + aiDraft がある場合のみ・fire-and-forget）

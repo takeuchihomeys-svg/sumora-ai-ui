@@ -235,7 +235,7 @@ export async function POST(req: NextRequest) {
 
     // 分割送信っぽい場合（sentReplyがaiDraftの55%未満かつ類似度30%以上）はスキップ
     const sim = textSimilarity((ai_draft ?? "").trim(), (sent_reply ?? "").trim());
-    const likelySplit = (sent_reply ?? "").trim().length < (ai_draft ?? "").trim().length * 0.55 && sim >= 0.3;
+    const likelySplit = (sent_reply ?? "").trim().length < (ai_draft ?? "").trim().length * 0.4 && sim >= 0.5;
     if (likelySplit) {
       await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
       processed++;
