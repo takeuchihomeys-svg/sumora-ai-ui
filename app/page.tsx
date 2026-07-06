@@ -499,20 +499,28 @@ export default function Home() {
   const [showViewingPicker, setShowViewingPicker] = useState(false);
   const [suggestedViewingMode, setSuggestedViewingMode] = useState<"通常" | "退去予定物件" | "内覧日指定あり" | "日程変更" | null>(null);
   const [showPropertySendPicker, setShowPropertySendPicker] = useState(false);
+  const [suggestedPropertySendMode, setSuggestedPropertySendMode] = useState<"normal" | "new_arrival" | "widen" | "alternative" | null>(null);
   const [showEstimatePicker, setShowEstimatePicker] = useState(false);
+  const [suggestedEstimateMode, setSuggestedEstimateMode] = useState<"single" | "multi" | null>(null);
   const [aixInitEstimateMulti, setAixInitEstimateMulti] = useState(false);
   const [showApplicationPicker, setShowApplicationPicker] = useState(false);
+  const [suggestedAppMode, setSuggestedAppMode] = useState<"push" | "confirm" | null>(null);
   const [aixInitAppSubMode, setAixInitAppSubMode] = useState<"push" | "confirm" | null>(null);
   const [showPropertyCheckPicker, setShowPropertyCheckPicker] = useState(false);
+  const [suggestedPropertyCheckMode, setSuggestedPropertyCheckMode] = useState<"vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | null>(null);
   const [showDaihyoCheckPicker, setShowDaihyoCheckPicker] = useState(false);
+  const [suggestedDaihyoCostMode, setSuggestedDaihyoCostMode] = useState<"initial_cost" | "other" | null>(null);
   const [showKoshoParentPicker, setShowKoshoParentPicker] = useState(false);
+  const [suggestedKoshoMode, setSuggestedKoshoMode] = useState<"mgmt" | "daihyo" | "owner" | null>(null);
   const [showOwnerCheckPicker, setShowOwnerCheckPicker] = useState(false);
+  const [suggestedOwnerCostMode, setSuggestedOwnerCostMode] = useState<"initial_cost" | "other" | null>(null);
   const [aixInitViewingReschedule, setAixInitViewingReschedule] = useState(false);
   const [aixInitInputText, setAixInitInputText] = useState("");
   // 管理会社に確認したピッカー: 選択した確認種別をAIXモーダルへ引き継ぐ
   const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | null>(null);
   const [aixInitSendMode, setAixInitSendMode] = useState<"normal" | "new_arrival" | "widen" | "alternative" | null>(null);
   const [showGreetingViewingPicker, setShowGreetingViewingPicker] = useState(false);
+  const [suggestedGreetingMode, setSuggestedGreetingMode] = useState<"before" | "after" | null>(null);
   const [greetingViewingMode, setGreetingViewingMode] = useState<"before" | "after" | null>(null);
   const [greetingViewingDate, setGreetingViewingDate] = useState("");
   const [greetingViewingTime, setGreetingViewingTime] = useState("");
@@ -1978,34 +1986,109 @@ export default function Home() {
     [selectedConversation.id, selectedConversation.messages?.length]
   );
 
-  // viewing picker を開く時にrecentMessagesを解析して推奨サブモードを自動検知
+  // ===== 各picker開く時の推奨サブモード自動検知 =====
+  // viewing picker
   useEffect(() => {
     if (!showViewingPicker) { setSuggestedViewingMode(null); return; }
     const msgs = (selectedConversation.messages ?? []).slice(-20);
     const customerMsgs = msgs.filter((m) => m.sender === "customer").reverse();
     const allText = msgs.map((m) => m.text || "").join(" ");
-
-    // 日程変更: キャンセル・変更系（最優先）
-    if (/変更|キャンセル|別の日|日程.*変え|予定.*合わな|都合.*悪|厳しい.*日程|日程.*厳しい/.test(allText)) {
-      setSuggestedViewingMode("日程変更"); return;
-    }
-    // お客様から日付が届いている
+    if (/変更|キャンセル|別の日|日程.*変え|予定.*合わな|都合.*悪|厳しい.*日程|日程.*厳しい/.test(allText)) { setSuggestedViewingMode("日程変更"); return; }
     for (const msg of customerMsgs) {
       const t = msg.text || "";
-      if (/\d{1,2}月\d{1,2}日/.test(t) || /\d{1,2}\/\d{1,2}/.test(t)) {
-        setSuggestedViewingMode("内覧日指定あり"); return;
-      }
-      if (/[土日月火水木金]曜/.test(t) && /\d{1,2}時/.test(t)) {
-        setSuggestedViewingMode("内覧日指定あり"); return;
-      }
+      if (/\d{1,2}月\d{1,2}日/.test(t) || /\d{1,2}\/\d{1,2}/.test(t)) { setSuggestedViewingMode("内覧日指定あり"); return; }
+      if (/[土日月火水木金]曜/.test(t) && /\d{1,2}時/.test(t)) { setSuggestedViewingMode("内覧日指定あり"); return; }
     }
-    // 退去予定物件の文脈
-    if (/退去予定|退去日|退去後|退去済|退去月|月末退去/.test(allText)) {
-      setSuggestedViewingMode("退去予定物件"); return;
-    }
+    if (/退去予定|退去日|退去後|退去済|退去月|月末退去/.test(allText)) { setSuggestedViewingMode("退去予定物件"); return; }
     setSuggestedViewingMode("通常");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showViewingPicker]);
+
+  // 物件ピックアップした picker
+  useEffect(() => {
+    if (!showPropertySendPicker) { setSuggestedPropertySendMode(null); return; }
+    const msgs = (selectedConversation.messages ?? []).slice(-20);
+    const allText = msgs.map((m) => m.text || "").join(" ");
+    if (/代替|別の物件|空室なし|空きなし|募集終了/.test(allText)) { setSuggestedPropertySendMode("alternative"); return; }
+    if (/条件広げ|エリア広げ|家賃.*上げ|家賃.*上限|築年数.*広げ|条件.*変更|少し広げ/.test(allText)) { setSuggestedPropertySendMode("widen"); return; }
+    if (/新着|新しく出た|新しいお部屋|新規募集|新しい物件|さっき出た/.test(allText)) { setSuggestedPropertySendMode("new_arrival"); return; }
+    setSuggestedPropertySendMode("normal");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showPropertySendPicker]);
+
+  // 見積書 picker
+  useEffect(() => {
+    if (!showEstimatePicker) { setSuggestedEstimateMode(null); return; }
+    const msgs = (selectedConversation.messages ?? []).slice(-20);
+    const allText = msgs.map((m) => m.text || "").join(" ");
+    if (/複数|2件|3件|両方|①.*②|複数の物件|まとめて/.test(allText)) { setSuggestedEstimateMode("multi"); return; }
+    setSuggestedEstimateMode("single");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showEstimatePicker]);
+
+  // 申込へ！ picker
+  useEffect(() => {
+    if (!showApplicationPicker) { setSuggestedAppMode(null); return; }
+    const msgs = (selectedConversation.messages ?? []).slice(-20);
+    const customerMsgs = msgs.filter((m) => m.sender === "customer");
+    const customerText = customerMsgs.map((m) => m.text || "").join(" ");
+    if (/申込します|申し込みます|申込みます|お申込みします|決めます|決めました|申し込みたい|お願いします/.test(customerText)) { setSuggestedAppMode("confirm"); return; }
+    setSuggestedAppMode("push");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showApplicationPicker]);
+
+  // 確認した（条件・交渉）親picker
+  useEffect(() => {
+    if (!showKoshoParentPicker) { setSuggestedKoshoMode(null); return; }
+    const msgs = (selectedConversation.messages ?? []).slice(-20);
+    const allText = msgs.map((m) => m.text || "").join(" ");
+    if (/オーナー|大家/.test(allText)) { setSuggestedKoshoMode("owner"); return; }
+    if (/代表/.test(allText)) { setSuggestedKoshoMode("daihyo"); return; }
+    setSuggestedKoshoMode("mgmt");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showKoshoParentPicker]);
+
+  // 管理会社に確認した picker
+  useEffect(() => {
+    if (!showPropertyCheckPicker) { setSuggestedPropertyCheckMode(null); return; }
+    const msgs = (selectedConversation.messages ?? []).slice(-20);
+    const allText = msgs.map((m) => m.text || "").join(" ");
+    if (/初期費用|礼金|敷金|仲介|費用/.test(allText)) { setSuggestedPropertyCheckMode("mgmt_initial_cost"); return; }
+    if (/入居日|入居可能|いつから|入居時期/.test(allText)) { setSuggestedPropertyCheckMode("mgmt_move_in"); return; }
+    if (/退去予定|退去日|退去月|いつ退去|退去/.test(allText)) { setSuggestedPropertyCheckMode("vacate_date"); return; }
+    setSuggestedPropertyCheckMode(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showPropertyCheckPicker]);
+
+  // 代表に確認した picker
+  useEffect(() => {
+    if (!showDaihyoCheckPicker) { setSuggestedDaihyoCostMode(null); return; }
+    const msgs = (selectedConversation.messages ?? []).slice(-20);
+    const allText = msgs.map((m) => m.text || "").join(" ");
+    if (/初期費用|礼金|敷金|仲介|費用/.test(allText)) { setSuggestedDaihyoCostMode("initial_cost"); return; }
+    setSuggestedDaihyoCostMode("other");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showDaihyoCheckPicker]);
+
+  // オーナーに確認した picker
+  useEffect(() => {
+    if (!showOwnerCheckPicker) { setSuggestedOwnerCostMode(null); return; }
+    const msgs = (selectedConversation.messages ?? []).slice(-20);
+    const allText = msgs.map((m) => m.text || "").join(" ");
+    if (/初期費用|礼金|敷金|仲介|費用/.test(allText)) { setSuggestedOwnerCostMode("initial_cost"); return; }
+    setSuggestedOwnerCostMode("other");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showOwnerCheckPicker]);
+
+  // 挨拶（内覧前後）picker - Step1の前後判定
+  useEffect(() => {
+    if (!showGreetingViewingPicker) { setSuggestedGreetingMode(null); return; }
+    const msgs = (selectedConversation.messages ?? []).slice(-20);
+    const allText = msgs.map((m) => m.text || "").join(" ");
+    if (/ありがとうございました|いかがでしたか|お申込|申込.*ご検討|内覧.*終わ|終わりました|いかがでしょう.*内覧/.test(allText)) { setSuggestedGreetingMode("after"); return; }
+    setSuggestedGreetingMode("before");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showGreetingViewingPicker]);
 
   // 申込フォーム自動検知（お客さんが氏名・フリガナ等を送ってきたとき）
   const isApplyFormDetected = useMemo(() => {
@@ -8594,16 +8677,24 @@ export default function Home() {
                   desc: "元の物件が空室なし→代替物件をAIが紹介文生成",
                   icon: <><path d="M28 44h16M36 26v18" stroke="#2E7D32" strokeWidth="1.8" strokeLinecap="round"/><path d="M30 32l6-6 6 6" stroke="#2E7D32" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/><circle cx="44" cy="30" r="8" fill="#E8F5E9" stroke="#2E7D32" strokeWidth="1.5"/><path d="M41 30l2 2 4-4" stroke="#2E7D32" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></>
                 },
-              ]).map(({ key, label, desc, icon }) => (
+              ]).map(({ key, label, desc, icon }) => {
+                const isSuggested = suggestedPropertySendMode === key;
+                return (
                 <button
                   key={key}
                   onClick={() => {
+                    if (suggestedPropertySendMode && selectedConversation?.id && selectedConversation?.status) {
+                      fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ action: "log", conversation_status: selectedConversation.status, action_type: "property_send_submode", predicted_action: `property_send:${suggestedPropertySendMode}`, source: key === suggestedPropertySendMode ? "prediction_accepted" : "prediction_bypassed", conversation_id: selectedConversation.id, customer_msg_summary: key }),
+                      }).catch(() => {});
+                    }
                     setShowPropertySendPicker(false);
                     setAixInitSendMode(key);
                     setAixInitialSendImages([]);
                     aixMultiFileInputRef.current?.click();
                   }}
-                  className="flex items-center gap-3.5 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3.5 text-left transition active:bg-[#E8F5E9] active:border-[#2E7D32]"
+                  className="flex items-center gap-3.5 rounded-2xl border px-4 py-3.5 text-left transition active:bg-[#E8F5E9] active:border-[#2E7D32]"
+                  style={isSuggested ? { border: "2px solid #2E7D32", background: "#F1F8E9", boxShadow: "0 0 0 3px #2E7D3222" } : { border: "1px solid #E5E7EB", background: "#FAFAFA" }}
                 >
                   <div className="shrink-0">
                     <svg width="36" height="36" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -8611,12 +8702,16 @@ export default function Home() {
                       {icon}
                     </svg>
                   </div>
-                  <div>
-                    <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                      {isSuggested && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full text-white shrink-0" style={{ background: "#2E7D32" }}>おすすめ</span>}
+                    </div>
                     <p className="text-[11px] text-[#9CA3AF]">{desc}</p>
                   </div>
                 </button>
-              ))}
+                );
+              })}
               {/* 新着1件のみ：property_recommendation APIを使用（物件オススメAIで1件訴求） */}
               <button
                 onClick={() => {
@@ -8682,19 +8777,23 @@ export default function Home() {
                   desc: "①②③の見積書をまとめて1メッセージに",
                   icon: <><rect x="22" y="26" width="13" height="18" rx="2" stroke="#FF9800" strokeWidth="1.6"/><rect x="27" y="22" width="13" height="18" rx="2" fill="#FFF3E0" stroke="#FF9800" strokeWidth="1.6"/><rect x="32" y="18" width="13" height="18" rx="2" fill="#FFF3E0" stroke="#FF9800" strokeWidth="1.6"/><path d="M35 24h7M35 28h7M35 32h5" stroke="#FF9800" strokeWidth="1.3" strokeLinecap="round"/></>
                 },
-              ]).map(({ key, label, desc, icon }) => (
+              ]).map(({ key, label, desc, icon }) => {
+                const isSuggested = suggestedEstimateMode === key;
+                return (
                 <button
                   key={key}
                   onClick={() => {
+                    if (suggestedEstimateMode && selectedConversation?.id && selectedConversation?.status) {
+                      fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ action: "log", conversation_status: selectedConversation.status, action_type: "estimate_submode", predicted_action: `estimate:${suggestedEstimateMode}`, source: key === suggestedEstimateMode ? "prediction_accepted" : "prediction_bypassed", conversation_id: selectedConversation.id, customer_msg_summary: key }),
+                      }).catch(() => {});
+                    }
                     setShowEstimatePicker(false);
                     setAixInitEstimateMulti(key === "multi");
-                    if (key === "single") {
-                      openAixWithImagePicker("estimate_sheet");
-                    } else {
-                      openAixDirect("estimate_sheet");
-                    }
+                    if (key === "single") { openAixWithImagePicker("estimate_sheet"); } else { openAixDirect("estimate_sheet"); }
                   }}
-                  className="flex items-center gap-3.5 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3.5 text-left transition active:bg-[#FFF3E0] active:border-[#FF9800]"
+                  className="flex items-center gap-3.5 rounded-2xl border px-4 py-3.5 text-left transition active:bg-[#FFF3E0] active:border-[#FF9800]"
+                  style={isSuggested ? { border: "2px solid #FF9800", background: "#FFF8E7", boxShadow: "0 0 0 3px #FF980022" } : { border: "1px solid #E5E7EB", background: "#FAFAFA" }}
                 >
                   <div className="shrink-0">
                     <svg width="36" height="36" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -8702,12 +8801,16 @@ export default function Home() {
                       {icon}
                     </svg>
                   </div>
-                  <div>
-                    <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                      {isSuggested && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full text-white shrink-0" style={{ background: "#FF9800" }}>おすすめ</span>}
+                    </div>
                     <p className="text-[11px] text-[#9CA3AF]">{desc}</p>
                   </div>
                 </button>
-              ))}
+                );
+              })}
             </div>
             <button
               onClick={() => { setShowEstimatePicker(false); setActiveAixFlow(null); }}
@@ -8753,15 +8856,24 @@ export default function Home() {
                   desc: "お申込み確定のご連絡をするメッセージ",
                   icon: <><rect x="24" y="22" width="24" height="28" rx="3" stroke="#16A34A" strokeWidth="1.8"/><path d="M30 38l4 4 8-8" stroke="#16A34A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></>
                 },
-              ]).map(({ key, label, desc, icon }) => (
+              ]).map(({ key, label, desc, icon }) => {
+                const isSuggested = suggestedAppMode === key;
+                const accentColor = key === "confirm" ? "#16A34A" : "#E53935";
+                return (
                 <button
                   key={key}
                   onClick={() => {
+                    if (suggestedAppMode && selectedConversation?.id && selectedConversation?.status) {
+                      fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ action: "log", conversation_status: selectedConversation.status, action_type: "application_submode", predicted_action: `application:${suggestedAppMode}`, source: key === suggestedAppMode ? "prediction_accepted" : "prediction_bypassed", conversation_id: selectedConversation.id, customer_msg_summary: key }),
+                      }).catch(() => {});
+                    }
                     setShowApplicationPicker(false);
                     setAixInitAppSubMode(key);
                     openAixDirect("application_push");
                   }}
-                  className="flex items-center gap-3.5 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3.5 text-left transition active:bg-[#FFEBEE] active:border-[#E53935]"
+                  className="flex items-center gap-3.5 rounded-2xl border px-4 py-3.5 text-left transition active:bg-[#FFEBEE] active:border-[#E53935]"
+                  style={isSuggested ? { border: `2px solid ${accentColor}`, background: key === "confirm" ? "#F0FDF4" : "#FFF5F5", boxShadow: `0 0 0 3px ${accentColor}22` } : { border: "1px solid #E5E7EB", background: "#FAFAFA" }}
                 >
                   <div className="shrink-0">
                     <svg width="36" height="36" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -8769,12 +8881,16 @@ export default function Home() {
                       {icon}
                     </svg>
                   </div>
-                  <div>
-                    <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                      {isSuggested && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full text-white shrink-0" style={{ background: accentColor }}>おすすめ</span>}
+                    </div>
                     <p className="text-[11px] text-[#9CA3AF]">{desc}</p>
                   </div>
                 </button>
-              ))}
+                );
+              })}
             </div>
             <button
               onClick={() => { setShowApplicationPicker(false); setActiveAixFlow(null); }}
@@ -8814,16 +8930,27 @@ export default function Home() {
                   {([
                     { key: "before" as const, label: "内覧前", desc: "当日・前日の挨拶" },
                     { key: "after" as const, label: "内覧後", desc: "内覧終了後の挨拶" },
-                  ]).map(({ key, label, desc }) => (
+                  ]).map(({ key, label, desc }) => {
+                    const isSuggested = suggestedGreetingMode === key;
+                    return (
                     <button
                       key={key}
-                      onClick={() => setGreetingViewingMode(key)}
-                      className="flex-1 rounded-2xl border-2 border-[#E5E7EB] bg-[#FAFAFA] px-3 py-4 text-center transition-all active:bg-teal-50"
+                      onClick={() => {
+                        if (suggestedGreetingMode && selectedConversation?.id && selectedConversation?.status) {
+                          fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ action: "log", conversation_status: selectedConversation.status, action_type: "greeting_submode", predicted_action: `greeting:${suggestedGreetingMode}`, source: key === suggestedGreetingMode ? "prediction_accepted" : "prediction_bypassed", conversation_id: selectedConversation.id, customer_msg_summary: key }),
+                          }).catch(() => {});
+                        }
+                        setGreetingViewingMode(key);
+                      }}
+                      className="flex-1 rounded-2xl px-3 py-4 text-center transition-all active:bg-teal-50"
+                      style={isSuggested ? { border: "2px solid #00796B", background: "#E0F2F1", boxShadow: "0 0 0 3px #00796B22" } : { border: "2px solid #E5E7EB", background: "#FAFAFA" }}
                     >
                       <div className="text-[15px] font-bold text-[#111827]">{label}</div>
-                      <div className="text-[10px] text-[#9CA3AF] mt-0.5">{desc}</div>
+                      <div className="text-[10px] mt-0.5" style={{ color: isSuggested ? "#00796B" : "#9CA3AF" }}>{isSuggested ? "おすすめ" : desc}</div>
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
                 <button onClick={() => { setShowGreetingViewingPicker(false); setActiveAixFlow(null); }} className="mt-1 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60">キャンセル</button>
               </>
@@ -9061,15 +9188,23 @@ export default function Home() {
                   hint: "代表に確認しました。",
                   icon: <><rect x="24" y="22" width="24" height="28" rx="3" stroke="#5D4037" strokeWidth="1.8"/><path d="M30 32h12M30 38h8" stroke="#5D4037" strokeWidth="1.5" strokeLinecap="round"/></>
                 },
-              ]).map(({ key, label, desc, hint, icon }) => (
+              ]).map(({ key, label, desc, hint, icon }) => {
+                const isSuggested = suggestedDaihyoCostMode === key;
+                return (
                 <button
                   key={key}
                   onClick={() => {
+                    if (suggestedDaihyoCostMode && selectedConversation?.id && selectedConversation?.status) {
+                      fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ action: "log", conversation_status: selectedConversation.status, action_type: "daihyo_check_submode", predicted_action: `daihyo_check:${suggestedDaihyoCostMode}`, source: key === suggestedDaihyoCostMode ? "prediction_accepted" : "prediction_bypassed", conversation_id: selectedConversation.id, customer_msg_summary: key }),
+                      }).catch(() => {});
+                    }
                     setShowDaihyoCheckPicker(false);
                     setAixInitInputText(hint);
                     openAixDirect("property_check_result");
                   }}
-                  className="flex items-center gap-3.5 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3.5 text-left transition active:bg-[#EFEBE9] active:border-[#5D4037]"
+                  className="flex items-center gap-3.5 rounded-2xl border px-4 py-3.5 text-left transition active:bg-[#EFEBE9] active:border-[#5D4037]"
+                  style={isSuggested ? { border: "2px solid #5D4037", background: "#EFEBE9", boxShadow: "0 0 0 3px #5D403722" } : { border: "1px solid #E5E7EB", background: "#FAFAFA" }}
                 >
                   <div className="shrink-0">
                     <svg width="36" height="36" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -9077,12 +9212,16 @@ export default function Home() {
                       {icon}
                     </svg>
                   </div>
-                  <div>
-                    <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                      {isSuggested && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full text-white shrink-0" style={{ background: "#5D4037" }}>おすすめ</span>}
+                    </div>
                     <p className="text-[11px] text-[#9CA3AF]">{desc}</p>
                   </div>
                 </button>
-              ))}
+                );
+              })}
             </div>
             <button
               onClick={() => { setShowDaihyoCheckPicker(false); setActiveAixFlow(null); }}
@@ -9136,16 +9275,24 @@ export default function Home() {
                   hint: "初期費用：",
                   icon: <><circle cx="36" cy="36" r="14" stroke="#546E7A" strokeWidth="1.8"/><path d="M36 28v16M31 32h7.5a2.5 2.5 0 010 5H31m0 0h7.5a2.5 2.5 0 010 5H31" stroke="#546E7A" strokeWidth="1.5" strokeLinecap="round"/></>
                 },
-              ] as Array<{ key: "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost"; label: string; desc: string; hint: string; icon: ReactNode }>).map(({ key, label, desc, hint, icon }) => (
+              ] as Array<{ key: "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost"; label: string; desc: string; hint: string; icon: ReactNode }>).map(({ key, label, desc, hint, icon }) => {
+                const isSuggested = suggestedPropertyCheckMode === key;
+                return (
                 <button
                   key={key}
                   onClick={() => {
+                    if (suggestedPropertyCheckMode && selectedConversation?.id && selectedConversation?.status) {
+                      fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ action: "log", conversation_status: selectedConversation.status, action_type: "mgmt_check_submode", predicted_action: `mgmt_check:${suggestedPropertyCheckMode}`, source: key === suggestedPropertyCheckMode ? "prediction_accepted" : "prediction_bypassed", conversation_id: selectedConversation.id, customer_msg_summary: key }),
+                      }).catch(() => {});
+                    }
                     setShowPropertyCheckPicker(false);
                     setAixInitCheckPattern(key);
                     setAixInitInputText(hint);
                     openAixDirect("property_check_result");
                   }}
-                  className="flex items-center gap-3.5 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3.5 text-left transition active:bg-[#ECEFF1] active:border-[#546E7A]"
+                  className="flex items-center gap-3.5 rounded-2xl border px-4 py-3.5 text-left transition active:bg-[#ECEFF1] active:border-[#546E7A]"
+                  style={isSuggested ? { border: "2px solid #546E7A", background: "#ECEFF1", boxShadow: "0 0 0 3px #546E7A22" } : { border: "1px solid #E5E7EB", background: "#FAFAFA" }}
                 >
                   <div className="shrink-0">
                     <svg width="36" height="36" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -9153,12 +9300,16 @@ export default function Home() {
                       {icon}
                     </svg>
                   </div>
-                  <div>
-                    <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                      {isSuggested && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full text-white shrink-0" style={{ background: "#546E7A" }}>おすすめ</span>}
+                    </div>
                     <p className="text-[11px] text-[#9CA3AF]">{desc}</p>
                   </div>
                 </button>
-              ))}
+                );
+              })}
             </div>
             <button
               onClick={() => { setShowPropertyCheckPicker(false); setActiveAixFlow(null); }}
@@ -9212,10 +9363,17 @@ export default function Home() {
                   color: "#1565C0",
                   icon: <><path d="M36 20L50 30V52H22V30L36 20Z" stroke="#1565C0" strokeWidth="1.8" strokeLinejoin="round"/><rect x="30" y="38" width="12" height="14" rx="1.5" fill="#E3F2FD" stroke="#1565C0" strokeWidth="1.5"/><circle cx="50" cy="22" r="9" fill="#1565C0"/><path d="M46 22l3 3 5-5" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></>
                 },
-              ]).map(({ key, label, desc, color, icon }) => (
+              ]).map(({ key, label, desc, color, icon }) => {
+                const isSuggested = suggestedKoshoMode === key;
+                return (
                 <button
                   key={key}
                   onClick={() => {
+                    if (suggestedKoshoMode && selectedConversation?.id && selectedConversation?.status) {
+                      fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ action: "log", conversation_status: selectedConversation.status, action_type: "kosho_who_submode", predicted_action: `kosho_who:${suggestedKoshoMode}`, source: key === suggestedKoshoMode ? "prediction_accepted" : "prediction_bypassed", conversation_id: selectedConversation.id, customer_msg_summary: key }),
+                      }).catch(() => {});
+                    }
                     setShowKoshoParentPicker(false);
                     setActiveAixFlow("property_check_result");
                     propertyCheckSubTypeRef.current = key;
@@ -9223,7 +9381,8 @@ export default function Home() {
                     else if (key === "daihyo") setShowDaihyoCheckPicker(true);
                     else if (key === "owner") setShowOwnerCheckPicker(true);
                   }}
-                  className="flex items-center gap-3.5 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3.5 text-left transition active:bg-[#ECEFF1] active:border-[#546E7A]"
+                  className="flex items-center gap-3.5 rounded-2xl border px-4 py-3.5 text-left transition active:bg-[#ECEFF1] active:border-[#546E7A]"
+                  style={isSuggested ? { border: `2px solid ${color}`, background: "#F5F5F5", boxShadow: `0 0 0 3px ${color}22` } : { border: "1px solid #E5E7EB", background: "#FAFAFA" }}
                 >
                   <div className="shrink-0">
                     <svg width="36" height="36" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -9231,12 +9390,16 @@ export default function Home() {
                       {icon}
                     </svg>
                   </div>
-                  <div>
-                    <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                      {isSuggested && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full text-white shrink-0" style={{ background: color }}>おすすめ</span>}
+                    </div>
                     <p className="text-[11px] text-[#9CA3AF]">{desc}</p>
                   </div>
                 </button>
-              ))}
+                );
+              })}
             </div>
             <button
               onClick={() => { setShowKoshoParentPicker(false); setActiveAixFlow(null); }}
@@ -9283,15 +9446,23 @@ export default function Home() {
                   hint: "オーナーに確認しました。",
                   icon: <><rect x="24" y="22" width="24" height="28" rx="3" stroke="#1565C0" strokeWidth="1.8"/><path d="M30 32h12M30 38h8" stroke="#1565C0" strokeWidth="1.5" strokeLinecap="round"/></>
                 },
-              ]).map(({ key, label, desc, hint, icon }) => (
+              ]).map(({ key, label, desc, hint, icon }) => {
+                const isSuggested = suggestedOwnerCostMode === key;
+                return (
                 <button
                   key={key}
                   onClick={() => {
+                    if (suggestedOwnerCostMode && selectedConversation?.id && selectedConversation?.status) {
+                      fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ action: "log", conversation_status: selectedConversation.status, action_type: "owner_check_submode", predicted_action: `owner_check:${suggestedOwnerCostMode}`, source: key === suggestedOwnerCostMode ? "prediction_accepted" : "prediction_bypassed", conversation_id: selectedConversation.id, customer_msg_summary: key }),
+                      }).catch(() => {});
+                    }
                     setShowOwnerCheckPicker(false);
                     setAixInitInputText(hint);
                     openAixDirect("property_check_result");
                   }}
-                  className="flex items-center gap-3.5 rounded-2xl border border-[#E5E7EB] bg-[#FAFAFA] px-4 py-3.5 text-left transition active:bg-[#E3F2FD] active:border-[#1565C0]"
+                  className="flex items-center gap-3.5 rounded-2xl border px-4 py-3.5 text-left transition active:bg-[#E3F2FD] active:border-[#1565C0]"
+                  style={isSuggested ? { border: "2px solid #1565C0", background: "#EFF6FF", boxShadow: "0 0 0 3px #1565C022" } : { border: "1px solid #E5E7EB", background: "#FAFAFA" }}
                 >
                   <div className="shrink-0">
                     <svg width="36" height="36" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -9299,12 +9470,16 @@ export default function Home() {
                       {icon}
                     </svg>
                   </div>
-                  <div>
-                    <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                      {isSuggested && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full text-white shrink-0" style={{ background: "#1565C0" }}>おすすめ</span>}
+                    </div>
                     <p className="text-[11px] text-[#9CA3AF]">{desc}</p>
                   </div>
                 </button>
-              ))}
+                );
+              })}
             </div>
             <button
               onClick={() => { setShowOwnerCheckPicker(false); setActiveAixFlow(null); }}
