@@ -7,6 +7,55 @@ export const maxDuration = 60;
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY!, timeout: 30_000, maxRetries: 1 });
 
+// 物件ピックアップした: 特定のコンポーネント（intro/pickup/invite/closing）単位で差分分析
+// aiComponentText = AIが生成したそのパーツのテキスト、sentReply = スタッフが送った全文
+// Haikuがsentifyの中から該当パーツを特定して比較する
+async function analyzeComponentDiff(
+  customerMessage: string,
+  aiComponentText: string,
+  sentReply: string,
+  componentState: string, // "property_send_pickup" 等
+  componentName: string,  // "ピックアップ行（条件説明）" 等
+): Promise<{ skip: boolean; title?: string; rule?: string } | null> {
+  try {
+    const res = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 500,
+      messages: [{
+        role: "user",
+        content: `物件ピックアップメッセージの「${componentName}」パーツについて、スタッフがAI文案を改善した差分から学習ルールを抽出してください。
+
+【AIが生成した「${componentName}」】
+${aiComponentText}
+
+【スタッフが実際に送った全文（この中から「${componentName}」に対応する部分を見つけて比較する）】
+${sentReply}
+
+分析手順：
+① スタッフの全文の中からAIの「${componentName}」に対応する部分を特定する
+② AIの生成と比較して変わった点（言い回し・強調・省略・言葉の選択）を特定する
+③ その変化が次回の生成に活かせるルールかを判断する
+
+スキップ条件（以下のみなら {"skip":true}）：
+- 物件名・エリア・日時・顧客名などの固有情報だけが違う
+- ほぼ同じ（90%以上一致）
+- スタッフの文中に対応するパーツが見当たらない
+
+学習ルールがある場合のJSON（スキップ以外）：
+{"skip":false,"title":"${componentName}改善: [パターン名・30文字以内]","rule":"[次回から守るべきルール・200文字以内。NG表現→OK表現の対比で書く]"}
+
+JSONのみを返す。説明不要。`,
+      }],
+    });
+    const text = res.content[0].type === "text" ? res.content[0].text.trim() : "";
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    return JSON.parse(jsonMatch[0]) as { skip: boolean; title?: string; rule?: string };
+  } catch {
+    return null;
+  }
+}
+
 // AIドラフトと実送信の差分を比較して学習ルールを抽出
 async function analyzeDiff(
   customerMessage: string,
@@ -148,24 +197,58 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    // 物件ピックアップした: コンポーネント別差分チェック
-    // vacating/calendar（固有情報）だけが変わった場合は学習しない
-    // intro/pickup/invite/closing が変わった場合のみ学習（構成の質が改善された証拠）
-    let componentHint = "";
+    // 物件ピックアップした: コンポーネント単位の差分分析
+    // ai_components + reply_angle="component_diff:..." があればパーツごとに学習ルールを生成・保存
     if (ai_components && reply_angle?.startsWith("component_diff:")) {
       const changedComponents = reply_angle.replace("component_diff:", "").split(",");
-      const LEARNABLE = new Set(["intro", "pickup", "invite", "closing"]);
-      const learnableChanged = changedComponents.filter(c => LEARNABLE.has(c));
+      const LEARNABLE = ["intro", "pickup", "invite", "closing"];
+      const learnableChanged = changedComponents.filter(c => LEARNABLE.includes(c));
       if (learnableChanged.length === 0) {
-        // カレンダー日時・退去日だけの変更 → 固有情報のみ。学習不要
+        // vacating/calendarだけ変化 → 固有情報のみ。学習不要
         await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
         processed++;
         continue;
       }
-      componentHint = `\n\n【変更されたコンポーネント: ${learnableChanged.join(", ")}】カレンダー日時・退去予定日等の固有情報の変化は無視して、${learnableChanged.join("・")}の文体・言い回し・構成の変化に集中して分析してください。`;
+      const COMPONENT_NAMES: Record<string, string> = {
+        intro:   "挨拶文",
+        pickup:  "ピックアップ行（条件説明）",
+        invite:  "内覧誘導文",
+        closing: "締め文",
+      };
+      // コンポーネントごとに差分分析（最大2件: Haiku コスト抑制）
+      for (const comp of learnableChanged.slice(0, 2)) {
+        const aiCompText = (ai_components as Record<string, string>)[comp] ?? "";
+        if (!aiCompText || aiCompText.length < 5) continue;
+        const compState = `property_send_${comp}`;
+        const compResult = await analyzeComponentDiff(
+          customer_message, aiCompText, sent_reply, compState, COMPONENT_NAMES[comp] ?? comp,
+        );
+        if (compResult && !compResult.skip && compResult.title && compResult.rule) {
+          const embInput = buildKnowledgeEmbeddingInput({
+            trigger_example: customer_message,
+            rule: compResult.rule,
+            conversation_state: compState,
+          });
+          const embedding = await generateEmbedding(embInput);
+          const imp = is_starred ? Math.min(9, diffImportance(sim) + 1) : diffImportance(sim);
+          const upsertResult = await upsertKnowledge(supabase, {
+            title: compResult.title,
+            content: compResult.rule,
+            category: "pattern",
+            importance: imp,
+            conversation_state: compState,
+            source_example_id: id,
+            ...(embedding ? { embedding } : {}),
+          });
+          if (upsertResult === "inserted" || upsertResult === "merged") learned++;
+        }
+      }
+      await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
+      processed++;
+      continue; // 通常の full-message analyzeDiff はスキップ
     }
 
-    const result = await analyzeDiff(customer_message, ai_draft, sent_reply, conversation_state, componentHint);
+    const result = await analyzeDiff(customer_message, ai_draft, sent_reply, conversation_state);
 
     // AI呼び出し失敗時は diff_analyzed_at をマークせず、次回Cronで再試行
     if (result === null) {
