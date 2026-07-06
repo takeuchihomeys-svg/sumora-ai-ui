@@ -608,7 +608,7 @@ export default function AixModal({
     })();
   }, [actionType]);
 
-  // 内覧へ！: カレンダー取得
+  // 内覧へ！: カレンダー取得 + お客様指定日の自動検出
   useEffect(() => {
     if (actionType !== "viewing_invite") return;
     setViewingCalendarLoading(true);
@@ -625,6 +625,32 @@ export default function AixModal({
         setViewingSlotStarts(days.map(d => parseTime(d.slots[0] || "").start));
         setViewingSlotEnds(days.map(d => parseTime(d.slots[0] || "").end));
         setViewingSlotOverride(days.map(() => false));
+
+        // ★ お客様が内覧日を指定していたら自動でトグルON + 日時プリセット
+        if (recentMessages) {
+          const customerMsgs = [...recentMessages].filter(m => m.sender === "customer" && m.text).reverse();
+          let detectedDate = "";
+          for (const msg of customerMsgs) {
+            const text = msg.text || "";
+            // 「7月5日」形式
+            const m1 = text.match(/(\d{1,2})月(\d{1,2})日/);
+            if (m1) { detectedDate = `${m1[1]}月${m1[2]}日`; break; }
+            // 「7/5」「7/5(土)」形式
+            const m2 = text.match(/(\d{1,2})\/(\d{1,2})/);
+            if (m2) { detectedDate = `${m2[1]}月${m2[2]}日`; break; }
+          }
+          if (detectedDate) {
+            setViewingSpecificMode(true);
+            setViewingSpecificDate(detectedDate);
+            // 最初の有効スロットの時間をプリセット
+            const firstAvail = days.find(d => !d.fullyBooked);
+            if (firstAvail) {
+              const t = parseTime(firstAvail.slots[0] || "");
+              setViewingSpecificStart(t.start);
+              setViewingSpecificEnd(t.end);
+            }
+          }
+        }
       } catch {
         setViewingCalendarDays([]);
         setViewingSlotEnabled([]);
