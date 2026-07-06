@@ -239,11 +239,11 @@ body {
 .site-sub { font-size: 12px; color: #8696a0; margin-top: 1px; }
 
 /* ── View 3: Instructions ── */
-#view-instructions { position: relative; }
+#view-instructions { /* flex column は .view から継承 */ }
 
 .instr-scroll {
   flex: 1; overflow-y: auto;
-  padding-bottom: 72px;
+  min-height: 0; /* flex コンテナ内でのオーバーフロースクロールに必要 */
 }
 
 .instr-card {
@@ -296,7 +296,8 @@ body {
 
 /* ── Copy all bar ── */
 .copy-all-bar {
-  position: absolute; bottom: 0; left: 0; right: 0;
+  /* position: absolute を廃止 → flex の子要素として自然にスクロール領域を押し上げる */
+  flex-shrink: 0;
   padding: 8px 12px;
   background: white; border-top: 1px solid #e9edef;
   display: flex; flex-direction: column; gap: 6px;
