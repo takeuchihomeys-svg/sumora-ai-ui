@@ -601,7 +601,15 @@ function incrementKnowledgeUsage(ids: string[]): void {
   supabase.rpc("increment_knowledge_used_count", { p_ids: ids }).then(() => {}, () => {});
 }
 
-async function fetchKnowledge(state: string, customerMessage?: string, analysisContext?: string): Promise<string> {
+function logKnowledgeApply(ids: string[], conversationId: string): void {
+  if (!ids.length || !conversationId) return;
+  // fire-and-forget: knowledge_apply_log に適用記録（result=pending）
+  supabase.from("knowledge_apply_log").insert(
+    ids.map(id => ({ knowledge_id: id, conversation_id: conversationId }))
+  ).then(() => {}, () => {});
+}
+
+async function fetchKnowledge(state: string, customerMessage?: string, analysisContext?: string, conversationId?: string): Promise<string> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
   // 失注パターン専用バケット（auto-analyze-losers が category=principle / importance=8 で保存するため、
@@ -611,6 +619,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       .from("ai_reply_knowledge")
       .select("id, title, content, importance, category")
       .ilike("title", "失注パターン%")
+      .neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false })
       .limit(4),
@@ -621,6 +630,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       .select("id, category, title, content, importance")
       .eq("category", "principle")
       .gte("importance", 9)
+      .neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false })
       .limit(5),
   ]);
@@ -662,7 +672,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
         const phrases = filteredResults.filter(r => r.category === "phrase").slice(0, 6);
 
         const used = [...diffLearned, ...correctionPairs, ...critical, ...patterns, ...phrases];
-        incrementKnowledgeUsage([...used.map(r => r.id).filter(Boolean), ...lossIds]);
+        const usedAndLossIds = [...used.map(r => r.id).filter(Boolean), ...lossIds];
+        incrementKnowledgeUsage(usedAndLossIds);
+        if (conversationId) logKnowledgeApply(usedAndLossIds, conversationId);
 
         const sections: string[] = [];
         if (diffLearned.length > 0) {
@@ -694,26 +706,26 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   const [{ data: stateDiff }, { data: globalDiff }, { data: correctionPairs }, { data: global }, { data: stateSpecific }] = await Promise.all([
     supabase.from("ai_reply_knowledge").select("id, category, title, content, importance")
       .ilike("title", "%差分学習%").gte("importance", 7)
-      .in("conversation_state", stateAliases)
+      .in("conversation_state", stateAliases).neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false }).limit(15),
     supabase.from("ai_reply_knowledge").select("id, category, title, content, importance")
-      .ilike("title", "%差分学習%").gte("importance", 7)
+      .ilike("title", "%差分学習%").gte("importance", 7).neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false }).limit(10),
     supabase.from("ai_reply_knowledge").select("id, category, title, content, importance")
-      .ilike("title", "%修正対比%").in("conversation_state", stateAliases)
+      .ilike("title", "%修正対比%").in("conversation_state", stateAliases).neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false }).limit(8),
     supabase.from("ai_reply_knowledge").select("id, category, title, content, importance")
       .gte("importance", 8)
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
-      .not("category", "eq", "principle")
+      .not("category", "eq", "principle").neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false }).limit(8),
     supabase.from("ai_reply_knowledge").select("id, category, title, content, importance")
       .in("conversation_state", stateAliases).gte("importance", 7)
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
-      .not("category", "eq", "principle")
+      .not("category", "eq", "principle").neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false }).limit(24),
   ]);
@@ -742,7 +754,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
     ...patterns.slice(0, 8),
     ...phrases.slice(0, 6),
   ].map(k => (k as KnowledgeRow).id).filter(Boolean);
-  incrementKnowledgeUsage([...usedIds, ...lossIds]);
+  const allFallbackIds = [...usedIds, ...lossIds];
+  incrementKnowledgeUsage(allFallbackIds);
+  if (conversationId) logKnowledgeApply(allFallbackIds, conversationId);
 
   const sections: string[] = [];
   if (diffLearned.length > 0) {
@@ -1113,7 +1127,7 @@ export async function POST(req: NextRequest) {
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
     // 各フェッチはエラーでも生成を止めない（knowledgeなし・実例なしで生成続行）
     const [knowledge, examples, phrases, autoSummary] = await Promise.all([
-      fetchKnowledge(currentState, message, analysisContext)
+      fetchKnowledge(currentState, message, analysisContext, conversationId)
         .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return ""; }),
       fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext)
         .catch((err) => { console.error("[generate-reply] fetchExamples失敗 — 実例なしで生成続行:", err); return ""; }),

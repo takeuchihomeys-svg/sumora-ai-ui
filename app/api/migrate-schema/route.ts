@@ -482,6 +482,7 @@ LANGUAGE sql STABLE AS $$
     (1 - (ak.embedding <=> query_embedding))::float AS similarity
   FROM ai_reply_knowledge ak
   WHERE ak.embedding IS NOT NULL AND ak.importance >= min_importance
+    AND COALESCE(ak.hypothesis_status, 'hypothesis') != 'rejected'
   ORDER BY ak.embedding <=> query_embedding LIMIT match_count
 $$;
 
@@ -784,7 +785,59 @@ CREATE TABLE IF NOT EXISTS embedding_cache (
   embedding JSONB NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
-ALTER TABLE embedding_cache DISABLE ROW LEVEL SECURITY
+ALTER TABLE embedding_cache DISABLE ROW LEVEL SECURITY;
+
+-- ai_reply_knowledge: 仮説検証ループ（RLHF学習）
+-- hypothesis → 確認中 / confirmed → 5回以上・正解率70%以上 / rejected → 5回以上・外れ率70%以上
+ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS hypothesis_status TEXT DEFAULT 'hypothesis';
+ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS apply_count INT DEFAULT 0;
+ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS correct_count INT DEFAULT 0;
+ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS wrong_count INT DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_ai_reply_knowledge_hypothesis ON ai_reply_knowledge(hypothesis_status);
+
+-- knowledge_apply_log: どのルールをどの会話で適用したか追跡（フィードバックループの橋渡し）
+CREATE TABLE IF NOT EXISTS knowledge_apply_log (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  knowledge_id UUID REFERENCES ai_reply_knowledge(id) ON DELETE CASCADE,
+  conversation_id TEXT NOT NULL,
+  example_id UUID REFERENCES ai_reply_examples(id) ON DELETE SET NULL,
+  applied_at TIMESTAMPTZ DEFAULT NOW(),
+  result TEXT DEFAULT 'pending' CHECK (result IN ('pending', 'correct', 'wrong'))
+);
+CREATE INDEX IF NOT EXISTS idx_knowledge_apply_log_knowledge ON knowledge_apply_log(knowledge_id);
+CREATE INDEX IF NOT EXISTS idx_knowledge_apply_log_conversation ON knowledge_apply_log(conversation_id);
+ALTER TABLE knowledge_apply_log DISABLE ROW LEVEL SECURITY;
+
+-- confirm_knowledge_feedback: 正解/外れを記録し自動昇格/降格する
+CREATE OR REPLACE FUNCTION confirm_knowledge_feedback(
+  p_conversation_id TEXT,
+  p_result TEXT
+) RETURNS void LANGUAGE plpgsql AS $$
+DECLARE
+  v_knowledge_ids UUID[];
+BEGIN
+  SELECT ARRAY_AGG(DISTINCT knowledge_id) INTO v_knowledge_ids
+  FROM knowledge_apply_log
+  WHERE conversation_id = p_conversation_id AND result = 'pending';
+  IF v_knowledge_ids IS NULL OR ARRAY_LENGTH(v_knowledge_ids, 1) = 0 THEN RETURN; END IF;
+  UPDATE knowledge_apply_log
+  SET result = p_result
+  WHERE conversation_id = p_conversation_id AND result = 'pending';
+  UPDATE ai_reply_knowledge
+  SET
+    apply_count   = COALESCE(apply_count, 0) + 1,
+    correct_count = CASE WHEN p_result = 'correct' THEN COALESCE(correct_count, 0) + 1 ELSE COALESCE(correct_count, 0) END,
+    wrong_count   = CASE WHEN p_result = 'wrong'   THEN COALESCE(wrong_count, 0)   + 1 ELSE COALESCE(wrong_count, 0) END
+  WHERE id = ANY(v_knowledge_ids);
+  UPDATE ai_reply_knowledge
+  SET hypothesis_status = CASE
+    WHEN apply_count >= 5 AND correct_count::float / NULLIF(apply_count::float, 0) >= 0.7 THEN 'confirmed'
+    WHEN apply_count >= 5 AND wrong_count::float   / NULLIF(apply_count::float, 0) >= 0.7 THEN 'rejected'
+    ELSE hypothesis_status
+  END
+  WHERE id = ANY(v_knowledge_ids) AND apply_count >= 5;
+END;
+$$
 `.trim();
 
 export async function GET() {

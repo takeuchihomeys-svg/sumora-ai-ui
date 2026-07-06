@@ -599,6 +599,18 @@ export async function POST(req: NextRequest) {
   const likelySplit  = !!aiDraft && sentReply.trim().length < aiDraft.trim().length * 0.55 && sim >= 0.3;
   const wasAiModified = !!aiDraft && aiDraft.trim().length > 0 && sim >= 0.05 && sim < 0.9 && !likelySplit;
 
+  // RLHF: 仮説検証フィードバック（conversationId + aiDraft がある場合のみ・fire-and-forget）
+  // wasAiUsed（修正なし送信）→ correct、wasAiModified（修正して送信）→ wrong
+  if (conversationId && aiDraft) {
+    const feedbackResult = wasAiUsed ? "correct" : wasAiModified ? "wrong" : null;
+    if (feedbackResult) {
+      supabase.rpc("confirm_knowledge_feedback", {
+        p_conversation_id: conversationId,
+        p_result: feedbackResult,
+      }).then(() => {}, () => {});
+    }
+  }
+
   // 埋め込み生成（バックグラウンドで並列実行・失敗してもINSERTは続行）
   // [画像][動画]メッセージはテキスト意味がないのでsentReplyをembeddingの主成分にする
   const isImageMsg = customerMessage === "[画像]" || customerMessage === "[動画]" || !customerMessage.trim();
