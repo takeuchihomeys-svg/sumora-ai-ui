@@ -48,7 +48,7 @@ interface AixModalProps {
   initialIsNewArrival?: boolean;
   initialPickupType?: "新規ピックアップ" | "継続ピックアップ" | "条件広げピックアップ" | "新着1件" | "代替ピックアップ" | null;
   initialEstimateMulti?: boolean;
-  initialAppSubMode?: "push" | "confirm" | null;
+  initialAppSubMode?: "push" | "confirm" | "format" | null;
   initialInputText?: string;
   initialCheckPattern?: "available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost";
   onClose: () => void;
@@ -273,6 +273,68 @@ const CONFIG: Record<
   },
 };
 
+const APP_FORMAT_SECTIONS = {
+  applicant: `【お申込者様記入欄】
+・入居希望日
+・氏名、フリガナ
+・生年月日
+・現住所 〒（住民票記載）
+・住居年数
+・住居形態
+・携帯番号
+・メールアドレス
+・配偶者
+・勤務先名
+・勤務先所在地 〒
+・勤続年数
+・年収
+・雇用形態
+・勤務先電話番号
+・業種
+・職種
+・保険種類
+・駐輪場利用の有無（台数）
+・駐車場利用の有無（台数）
+・ペット飼育有無`,
+  roommate: `【同居人記入欄】
+・氏名、フリガナ
+・生年月日
+・現住所 （住民票記載〒）
+・住居年数
+・住居形態
+・携帯番号
+・メールアドレス
+・勤務先名
+・勤務先所在地
+・勤続年数
+・年収
+・雇用形態
+・勤務先電話番号
+・保険種類`,
+  emergency: `【緊急連絡先欄】
+・氏名、フリガナ
+・生年月日
+・現住所
+・住居年数
+・携帯番号
+・続柄
+・勤務先名
+・勤務先所在地`,
+  guarantor: `【連帯保証人欄】
+・氏名、フリガナ
+・生年月日
+・現住所 〒（住民票記載）
+・住居年数
+・住居形態
+・携帯番号
+・続柄
+・勤務先名
+・勤務先所在地
+・勤続年数
+・年収
+・雇用形態
+・勤務先電話番号`,
+};
 
 export default function AixModal({
   actionType,
@@ -437,7 +499,9 @@ export default function AixModal({
   const [appPushType, setAppPushType] = useState<"simple" | "scheduled" | "hold_view" | null>("simple");
   const [appAppealPoints, setAppAppealPoints] = useState<string[]>([]);
   const [appMoveOutDate, setAppMoveOutDate] = useState("");
-  const [appSubMode, setAppSubMode] = useState<"push" | "confirm" | null>(initialAppSubMode ?? null);
+  const [appSubMode, setAppSubMode] = useState<"push" | "confirm" | "format" | null>(initialAppSubMode ?? null);
+  const [appFormatLivingType, setAppFormatLivingType] = useState<"single" | "shared" | null>(null);
+  const [appFormatGuarantorType, setAppFormatGuarantorType] = useState<"emergency" | "guarantor" | null>(null);
   // 物件オススメ専用: analyze-propertyで自動抽出した退去予定日
   const [propMoveOutDate, setPropMoveOutDate] = useState("");
 
@@ -1038,7 +1102,16 @@ export default function AixModal({
         if (lastMessageAt) body.last_message_at = lastMessageAt;
         if (sendExpandedConds.size > 0) body.expanded_conditions = Array.from(sendExpandedConds);
       } else if (actionType === "application_push") {
-        if (appSubMode === "confirm") {
+        if (appSubMode === "format") {
+          const parts = [APP_FORMAT_SECTIONS.applicant];
+          if (appFormatLivingType === "shared") parts.push(APP_FORMAT_SECTIONS.roommate);
+          parts.push(appFormatGuarantorType === "emergency" ? APP_FORMAT_SECTIONS.emergency : APP_FORMAT_SECTIONS.guarantor);
+          const text = parts.join("\n\n");
+          setAiDraft(text);
+          setPreview(text);
+          setLoading(false);
+          return;
+        } else if (appSubMode === "confirm") {
           body.app_sub_mode = "confirm";
           if (appPropertyName.trim()) body.property_name = appPropertyName.trim();
           if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
@@ -1348,6 +1421,7 @@ export default function AixModal({
   // AIX送信文をテンプレート候補として保存（fire-and-forget）
   // wasEdited=true の場合は source="aix_edit" + originalText を付加して保存（スタッフ編集の追跡）
   const saveTemplateCandidate = (sentText: string, wasEdited?: boolean, originalDraft?: string) => {
+    if ((account ?? "").toLowerCase() === "yuma") return; // テストアカウントは学習除外
     if (!sentText.trim() || sentText.length < 20) return; // 短すぎるものはスキップ
     // 意味のあるタイトルを自動生成（1行目 or 先頭25文字）
     const firstLine = sentText.split("\n").find(l => l.trim().length > 0) ?? sentText;
@@ -1371,6 +1445,7 @@ export default function AixModal({
   // AIX送信後の学習処理をまとめて実行（fire-and-forget）
   // 通常送信パス・estimate-first（見積書テキスト先送り）パスの両方から呼ぶ（G-05: 早期returnによる学習スキップ防止）
   const runLearning = (sentText: string) => {
+    if ((account ?? "").toLowerCase() === "yuma") return; // テストアカウントは学習除外
     const lastCustomerMsg = (recentMessages ?? [])
       .filter((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
       .at(-1)?.text;
@@ -1742,7 +1817,7 @@ export default function AixModal({
     : actionType === "property_send"
     ? true
     : actionType === "application_push"
-    ? appSubMode === "confirm" ? true : !!appPushType
+    ? appSubMode === "confirm" ? true : appSubMode === "format" ? !!(appFormatLivingType && appFormatGuarantorType) : !!appPushType
     : actionType === "meeting_place"
     ? (!!meetingDate.trim() && !!meetingPropertyName.trim())
     : !config.requiresImage || !!imageFile;
@@ -2188,15 +2263,15 @@ export default function AixModal({
             /* 申込へ！: 申込誘導 / 申込確定 2分割 */
             <div className="mb-4 flex flex-col gap-3">
               {/* モード選択ボタン */}
-              <div className="flex gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <button
                   onClick={() => { setAppSubMode("push"); setPreview(""); }}
-                  className={`flex-1 rounded-2xl border-2 px-3 py-3 text-center transition-all ${
+                  className={`rounded-2xl border-2 px-2 py-3 text-center transition-all ${
                     appSubMode === "push" ? "border-[#1565C0] bg-blue-50" : "border-[#e9edef] bg-[#f8f9fa]"
                   }`}
                 >
-                  <div className="text-[12px] font-bold text-[#1565C0]">📋 申込誘導</div>
-                  <div className="mt-0.5 text-[9px] text-[#8696a0]">お申込みを後押しするメッセージ</div>
+                  <div className="text-[11px] font-bold text-[#1565C0]">📋 申込誘導</div>
+                  <div className="mt-0.5 text-[8px] text-[#8696a0]">後押しメッセージ</div>
                 </button>
                 <button
                   onClick={() => {
@@ -2215,12 +2290,21 @@ export default function AixModal({
                     setAiDraft(text);
                     setPreview(useEmoji ? text : stripEmoji(text));
                   }}
-                  className={`flex-1 rounded-2xl border-2 px-3 py-3 text-center transition-all ${
+                  className={`rounded-2xl border-2 px-2 py-3 text-center transition-all ${
                     appSubMode === "confirm" ? "border-emerald-500 bg-emerald-50" : "border-[#e9edef] bg-[#f8f9fa]"
                   }`}
                 >
-                  <div className="text-[12px] font-bold text-emerald-600">✅ 申込確定</div>
-                  <div className="mt-0.5 text-[9px] text-[#8696a0]">お申込み確定のご連絡をする</div>
+                  <div className="text-[11px] font-bold text-emerald-600">✅ 申込確定</div>
+                  <div className="mt-0.5 text-[8px] text-[#8696a0]">確定のご連絡</div>
+                </button>
+                <button
+                  onClick={() => { setAppSubMode("format"); setAppFormatLivingType(null); setAppFormatGuarantorType(null); setPreview(""); }}
+                  className={`rounded-2xl border-2 px-2 py-3 text-center transition-all ${
+                    appSubMode === "format" ? "border-purple-500 bg-purple-50" : "border-[#e9edef] bg-[#f8f9fa]"
+                  }`}
+                >
+                  <div className="text-[11px] font-bold text-purple-600">📄 フォーマット</div>
+                  <div className="mt-0.5 text-[8px] text-[#8696a0]">申込書を送る</div>
                 </button>
               </div>
 
@@ -2243,6 +2327,64 @@ export default function AixModal({
                     placeholder="例：プレサンス心斎橋ブライト"
                     className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-emerald-400 placeholder:text-[#8696a0]"
                   />
+                </div>
+              )}
+
+              {/* 申込フォーマット: 入居形態・保証人タイプ */}
+              {appSubMode === "format" && (
+                <div className="flex flex-col gap-3">
+                  {/* 単独 / 同居 */}
+                  <div>
+                    <p className="mb-2 text-xs font-bold text-[#54656f]">入居形態を選択 <span className="text-red-400">*</span></p>
+                    <div className="flex gap-2">
+                      {([
+                        { key: "single", label: "単独", sub: "同居人なし" },
+                        { key: "shared", label: "同居あり", sub: "同居人記入欄を追加" },
+                      ] as const).map((p) => (
+                        <button
+                          key={p.key}
+                          onClick={() => { setAppFormatLivingType(p.key); setPreview(""); }}
+                          className={`flex-1 rounded-2xl border-2 px-4 py-3 text-left transition-all ${
+                            appFormatLivingType === p.key ? "border-purple-400 bg-purple-50" : "border-[#e9edef] bg-[#f8f9fa]"
+                          }`}
+                        >
+                          <span className={`mr-2 inline-flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border-2 ${
+                            appFormatLivingType === p.key ? "border-purple-500 bg-purple-500" : "border-[#d1d7db]"
+                          }`}>
+                            {appFormatLivingType === p.key && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                          </span>
+                          <span className="text-[13px] font-bold text-[#111b21]">{p.label}</span>
+                          <div className="mt-0.5 text-[10px] text-[#8696a0]">{p.sub}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {/* 緊急連絡先 / 連帯保証人 */}
+                  <div>
+                    <p className="mb-2 text-xs font-bold text-[#54656f]">保証人タイプを選択 <span className="text-red-400">*</span></p>
+                    <div className="flex gap-2">
+                      {([
+                        { key: "emergency", label: "緊急連絡先", sub: "電話のみ・支払い義務なし" },
+                        { key: "guarantor", label: "連帯保証人", sub: "実印+印鑑証明・支払い義務あり" },
+                      ] as const).map((p) => (
+                        <button
+                          key={p.key}
+                          onClick={() => { setAppFormatGuarantorType(p.key); setPreview(""); }}
+                          className={`flex-1 rounded-2xl border-2 px-4 py-3 text-left transition-all ${
+                            appFormatGuarantorType === p.key ? "border-purple-400 bg-purple-50" : "border-[#e9edef] bg-[#f8f9fa]"
+                          }`}
+                        >
+                          <span className={`mr-2 inline-flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border-2 ${
+                            appFormatGuarantorType === p.key ? "border-purple-500 bg-purple-500" : "border-[#d1d7db]"
+                          }`}>
+                            {appFormatGuarantorType === p.key && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                          </span>
+                          <span className="text-[13px] font-bold text-[#111b21]">{p.label}</span>
+                          <div className="mt-0.5 text-[10px] text-[#8696a0]">{p.sub}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
 

@@ -505,7 +505,7 @@ export default function Home() {
   const [aixInitEstimateMulti, setAixInitEstimateMulti] = useState(false);
   const [showApplicationPicker, setShowApplicationPicker] = useState(false);
   const [suggestedAppMode, setSuggestedAppMode] = useState<"push" | "confirm" | null>(null);
-  const [aixInitAppSubMode, setAixInitAppSubMode] = useState<"push" | "confirm" | null>(null);
+  const [aixInitAppSubMode, setAixInitAppSubMode] = useState<"push" | "confirm" | "format" | null>(null);
   const [showPropertyCheckPicker, setShowPropertyCheckPicker] = useState(false);
   const [suggestedPropertyCheckMode, setSuggestedPropertyCheckMode] = useState<"vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | null>(null);
   const [showDaihyoCheckPicker, setShowDaihyoCheckPicker] = useState(false);
@@ -8848,17 +8848,31 @@ export default function Home() {
                   key: "push" as const,
                   label: "申込誘導",
                   desc: "お申込みを後押しするメッセージを生成",
+                  accentColor: "#E53935",
+                  bgColor: "#FFF5F5",
+                  circleFill: "#FFEBEE",
                   icon: <><rect x="24" y="22" width="24" height="28" rx="3" stroke="#E53935" strokeWidth="1.8"/><path d="M30 30h12M30 36h12M30 42h7" stroke="#E53935" strokeWidth="1.5" strokeLinecap="round"/><path d="M40 18l4 4-4 4" stroke="#E53935" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></>
                 },
                 {
                   key: "confirm" as const,
                   label: "申込確定",
                   desc: "お申込み確定のご連絡をするメッセージ",
+                  accentColor: "#16A34A",
+                  bgColor: "#F0FDF4",
+                  circleFill: "#DCFCE7",
                   icon: <><rect x="24" y="22" width="24" height="28" rx="3" stroke="#16A34A" strokeWidth="1.8"/><path d="M30 38l4 4 8-8" stroke="#16A34A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></>
                 },
-              ]).map(({ key, label, desc, icon }) => {
+                {
+                  key: "format" as const,
+                  label: "申込フォーマット送る",
+                  desc: "申込書フォーマットをLINEで送信",
+                  accentColor: "#7C3AED",
+                  bgColor: "#F5F3FF",
+                  circleFill: "#EDE9FE",
+                  icon: <><rect x="24" y="20" width="24" height="32" rx="3" stroke="#7C3AED" strokeWidth="1.8"/><path d="M30 28h12M30 34h12M30 40h7" stroke="#7C3AED" strokeWidth="1.5" strokeLinecap="round"/><path d="M44 44l5 5M49 44l-5 5" stroke="#7C3AED" strokeWidth="1.8" strokeLinecap="round"/></>
+                },
+              ]).map(({ key, label, desc, accentColor, bgColor, circleFill, icon }) => {
                 const isSuggested = suggestedAppMode === key;
-                const accentColor = key === "confirm" ? "#16A34A" : "#E53935";
                 return (
                 <button
                   key={key}
@@ -8872,12 +8886,12 @@ export default function Home() {
                     setAixInitAppSubMode(key);
                     openAixDirect("application_push");
                   }}
-                  className="flex items-center gap-3.5 rounded-2xl border px-4 py-3.5 text-left transition active:bg-[#FFEBEE] active:border-[#E53935]"
-                  style={isSuggested ? { border: `2px solid ${accentColor}`, background: key === "confirm" ? "#F0FDF4" : "#FFF5F5", boxShadow: `0 0 0 3px ${accentColor}22` } : { border: "1px solid #E5E7EB", background: "#FAFAFA" }}
+                  className="flex items-center gap-3.5 rounded-2xl border px-4 py-3.5 text-left transition"
+                  style={isSuggested ? { border: `2px solid ${accentColor}`, background: bgColor, boxShadow: `0 0 0 3px ${accentColor}22` } : { border: "1px solid #E5E7EB", background: "#FAFAFA" }}
                 >
                   <div className="shrink-0">
                     <svg width="36" height="36" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <circle cx="36" cy="36" r="36" fill="#FFEBEE"/>
+                      <circle cx="36" cy="36" r="36" fill={circleFill}/>
                       {icon}
                     </svg>
                   </div>
