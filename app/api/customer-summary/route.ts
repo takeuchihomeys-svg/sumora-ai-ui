@@ -4,7 +4,7 @@ import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { supabase } from "@/app/lib/supabase";
 
 const model = new ChatAnthropic({
-  model: "claude-haiku-4-5-20251001",
+  model: "claude-sonnet-4-6",
   maxTokens: 600,
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
 });
