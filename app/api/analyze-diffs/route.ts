@@ -258,8 +258,9 @@ export async function POST(req: NextRequest) {
 
       // アクション別の学習対象コンポーネント
       const STATE_LEARNABLE: Record<string, string[]> = {
-        property_send:  ["intro", "pickup", "invite", "closing"],
-        viewing_invite: ["greeting", "situation", "invite", "closing"],
+        property_send:    ["intro", "pickup", "invite", "closing"],
+        viewing_invite:   ["greeting", "situation", "invite", "closing"],
+        application_push: ["appeal", "cta", "invite", "closing"],
       };
       const learnableList = STATE_LEARNABLE[conversation_state] ?? STATE_LEARNABLE["property_send"];
       const learnableSet = new Set(learnableList);
@@ -279,6 +280,8 @@ export async function POST(req: NextRequest) {
         closing:   "締め文",
         greeting:  "挨拶文",
         situation: "状況・背景説明",
+        appeal:    "物件アピール文",
+        cta:       "申込み後押し文",
       };
 
       // ── 誤差学習: 変化したコンポーネントをタイプ別に分析（最大2件）──
