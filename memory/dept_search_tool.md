@@ -106,6 +106,7 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 
 | 日付 | 内容 |
 |---|---|
+| 2026-07-06 | score-overlay.js 新規追加: 物件検索結果に条件マッチ度スコア表示（◎85+/○70+/△55+/×）。API不使用・コスト0・MutationObserver自動再スコア |
 | 2026-06-09 | itandi PDF キャプチャ時にAdobeが開く問題を修正: onCreated内でchrome.downloads.cancel()を即座に呼ぶことでファイル保存をキャンセル（LINEにだけ送る用途なのでファイル不要） |
 | 2026-06-08 | ミニボタン→パネル再展開バグ修正: doExpand()のcross-origin contentDocument=null問題を修正（`!fr.contentDocument\|\|` 削除）✅ |
 | 2026-06-04 | parseAreaTokens に「か・や」区切り対応追加（「豊崎か北区」→「豊崎,北区」に分割） |
