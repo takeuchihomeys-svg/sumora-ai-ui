@@ -855,7 +855,24 @@ $$;
 CREATE OR REPLACE FUNCTION increment_template_recommend_picked(p_id UUID)
 RETURNS void LANGUAGE sql AS $$
   UPDATE templates SET recommend_picked_count = COALESCE(recommend_picked_count,0)+1 WHERE id = p_id
-$$
+$$;
+
+-- next_action_logs: 次のアクション予測 vs 実際の行動を記録し差分学習するためのテーブル
+CREATE TABLE IF NOT EXISTS next_action_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  customer_id UUID REFERENCES property_customers(id) ON DELETE CASCADE,
+  conversation_id TEXT,
+  predicted_action TEXT NOT NULL,
+  predicted_at TIMESTAMPTZ DEFAULT NOW(),
+  validated BOOLEAN DEFAULT FALSE,
+  actual_aix_type TEXT,
+  actual_message_preview TEXT,
+  was_accurate BOOLEAN,
+  gap_analysis TEXT,
+  validated_at TIMESTAMPTZ
+);
+ALTER TABLE next_action_logs DISABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_next_action_logs_customer ON next_action_logs(customer_id, validated, predicted_at DESC);
 `.trim();
 
 export async function GET() {

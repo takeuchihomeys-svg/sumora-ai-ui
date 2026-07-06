@@ -218,18 +218,33 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 過去の成約パターン（学習済み）
-    const { data: learnedPatterns } = await supabase
-      .from("ai_reply_knowledge")
-      .select("content")
-      .eq("category", "pattern")
-      .ilike("title", "成約パターン_%")
-      .order("created_at", { ascending: false })
-      .limit(5);
+    // 過去の成約パターン（学習済み）と next_action 改善ルール を並列取得
+    const [learnedPatternsRes, nextActionRulesRes] = await Promise.all([
+      supabase
+        .from("ai_reply_knowledge")
+        .select("content")
+        .eq("category", "pattern")
+        .ilike("title", "成約パターン_%")
+        .order("created_at", { ascending: false })
+        .limit(5),
+      supabase
+        .from("ai_reply_knowledge")
+        .select("content")
+        .eq("category", "next_action_pattern")
+        .neq("hypothesis_status", "rejected")
+        .order("apply_count", { ascending: false })
+        .limit(8),
+    ]);
 
-    const learnedPatternsNote = learnedPatterns && learnedPatterns.length > 0
+    const learnedPatternsNote = (learnedPatternsRes.data ?? []).length > 0
       ? `\n\n【過去の成約パターン（学習済み・最優先で参照）】\n${
-          (learnedPatterns as Array<{ content: string }>).map(p => p.content).join("\n---\n")
+          (learnedPatternsRes.data as Array<{ content: string }>).map(p => p.content).join("\n---\n")
+        }`
+      : "";
+
+    const nextActionRulesNote = (nextActionRulesRes.data ?? []).length > 0
+      ? `\n\n【next_action予測の改善ルール（実際の行動との差分から学習済み・next_action生成時に必ず参照すること）】\n${
+          (nextActionRulesRes.data as Array<{ content: string }>).map(p => p.content).join("\n---\n")
         }`
       : "";
 
@@ -255,7 +270,7 @@ export async function POST(req: NextRequest) {
       c.property_send_count != null && `物件送付回数: ${c.property_send_count}回`,
       c.additional_conditions && `追加・変更履歴:\n${c.additional_conditions}`,
       c.last_message         && `最後のメッセージ（${c.last_message_sender === "customer" ? "お客さん" : "スタッフ"}）:「${c.last_message}」`,
-    ].filter(Boolean).join("\n") + learnedPatternsNote + conversationHistory;
+    ].filter(Boolean).join("\n") + learnedPatternsNote + nextActionRulesNote + conversationHistory;
 
     const res = await model.invoke([
       new SystemMessage(systemPrompt),
@@ -282,6 +297,15 @@ export async function POST(req: NextRequest) {
         ai_summary_json: summaryJson,
         ai_summary_at: new Date().toISOString(),
       }).eq("id", c.customer_id);
+
+      // next_action 予測をログに保存（差分学習の基準点）
+      if (summaryJson.next_action) {
+        supabase.from("next_action_logs").insert({
+          customer_id: c.customer_id,
+          conversation_id: c.conversation_id ?? null,
+          predicted_action: summaryJson.next_action,
+        }).then(() => {}, () => {});
+      }
     }
 
     return NextResponse.json({ summary, summaryJson });
