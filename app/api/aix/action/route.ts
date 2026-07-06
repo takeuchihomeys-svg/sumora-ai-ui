@@ -5,7 +5,7 @@ import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEN
 export const maxDuration = 60;
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY!;
-const MODEL = "claude-fable-5";
+const MODEL = "claude-sonnet-4-6";
 
 // 退去予定日が過去かどうか判定（「7月下旬」「2026年7月15日」等の日本語表記対応）
 function isPastVacancyDate(dateStr: string): boolean {
