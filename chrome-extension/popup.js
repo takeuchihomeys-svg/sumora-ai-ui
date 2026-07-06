@@ -1211,6 +1211,18 @@ function openSiteView(customer) {
   selectedCustomer = customer;
   document.getElementById("site-customer-name").textContent = customer.customer_name;
 
+  // スコアオーバーレイ用にお客さん条件をセッションに保存
+  try {
+    chrome.storage.session.set({ axlx_score_data: {
+      rent_max:     customer.rent_max || customer.max_rent || null,
+      walk_minutes: customer.walk_minutes || null,
+      floor_plan:   customer.floor_plan || customer.layout || null,
+      building_age: customer.building_age || null,
+      area_min:     customer.floor_area_min || customer.area_min || null,
+      customer_name: customer.customer_name,
+    }});
+  } catch (_) { /* ignore（非extension環境での実行対策）*/ }
+
   const d = buildCondData(customer);
   const chips = [d.area, d.rentRange, d.floorPlan, d.walkMin && "徒歩" + d.walkMin, d.buildingAge && "築" + d.buildingAge]
     .filter(Boolean);
@@ -1719,6 +1731,17 @@ function openInstructions(siteKey) {
         station_names: stationNames,
         unknown_tokens: unknownTokens.length > 0 ? unknownTokens : null,
       };
+      // スコアオーバーレイ用に有効条件（adj後）で上書き保存
+      try {
+        chrome.storage.session.set({ axlx_score_data: {
+          rent_max:     conditions.rent_max,
+          walk_minutes: conditions.walk_minutes || null,
+          floor_plan:   conditions.floor_plan || null,
+          building_age: conditions.building_age || null,
+          area_min:     conditions.area_min || null,
+          customer_name: selectedCustomer.customer_name,
+        }});
+      } catch (_) { /* ignore */ }
       // underbar（iframe）モード: postMessage経由 / サイドパネルモード: chrome.tabs.sendMessage経由
       if (isUnderbar) {
         window.parent.postMessage({ from: "aixlinx-underbar", action: "itandi-autofill", conditions }, "*");
@@ -1902,6 +1925,17 @@ function openInstructions(siteKey) {
           unknown_tokens: rpUnknownTokens.length > 0 ? rpUnknownTokens : null,
         },
       }, "*");
+      // スコアオーバーレイ用に有効条件（adj後）で上書き保存
+      try {
+        chrome.storage.session.set({ axlx_score_data: {
+          rent_max:     rpEffectiveRentMax,
+          walk_minutes: adjC.walk_minutes || null,
+          floor_plan:   adjC.floor_plan || null,
+          building_age: adjC.building_age || null,
+          area_min:     adjAreaMin ? Number(adjAreaMin) : (c.floor_area_min || c.area_min || c.min_area || null),
+          customer_name: selectedCustomer.customer_name,
+        }});
+      } catch (_) { /* ignore */ }
       autofillBtn.textContent = "⏳ 検索中...";
       autofillBtn.classList.remove("done");
       autofillBtn.classList.add("searching");
@@ -1986,6 +2020,17 @@ function openInstructions(siteKey) {
         reins_reg_date: adjRegDate || null,
       };
 
+      // スコアオーバーレイ用に有効条件（adj後）で上書き保存
+      try {
+        chrome.storage.session.set({ axlx_score_data: {
+          rent_max:     conditions.rent_max,
+          walk_minutes: conditions.walk_minutes || null,
+          floor_plan:   conditions.floor_plan || null,
+          building_age: conditions.building_age || null,
+          area_min:     conditions.area_min || null,
+          customer_name: selectedCustomer.customer_name,
+        }});
+      } catch (_) { /* ignore */ }
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (!tabs[0]) return;
         chrome.tabs.sendMessage(tabs[0].id, {
