@@ -419,6 +419,8 @@ export default function AixModal({
   const [calendarLoading, setCalendarLoading] = useState(false);
   // 物件ピックアップ専用: 新規物件 / 新着物件 / 条件を広げた モード
   const [sendMode, setSendMode] = useState<"normal" | "new_arrival" | "widen" | "alternative" | null>(initialSendMode ?? null);
+  // 物件ピックアップした コンポーネント別生成結果（差分学習ループ用）
+  const [propertySendComponents, setPropertySendComponents] = useState<Record<string, string> | null>(null);
   const [newArrivalApply, setNewArrivalApply] = useState(false);
   const [editableCalendarSlots, setEditableCalendarSlots] = useState<string[]>([]);
   const [includeCalendar, setIncludeCalendar] = useState(true);
@@ -505,6 +507,7 @@ export default function AixModal({
   }, [conversationId]);
   // initialAppSubMode（picker/バナー経由の指定）をマウント時に潰さないよう、初期値を尊重してリセット
   useEffect(() => { setAppSubMode(initialAppSubMode ?? null); setPreview(""); }, [actionType, initialAppSubMode]);
+  useEffect(() => { setPropertySendComponents(null); }, [actionType, conversationId]);
 
   useEffect(() => {
     if (initialImageFile) {
@@ -1287,6 +1290,7 @@ export default function AixModal({
       const generatedMsg = data.message_text || "";
       setAiDraft(generatedMsg);
       setPreview(useEmoji ? generatedMsg : stripEmoji(generatedMsg));
+      if (data.property_send_components) setPropertySendComponents(data.property_send_components as Record<string, string>);
       setAixNotice(data.notice || "");
       if (data.parsed_estimate) setParsedEstimate(data.parsed_estimate);
       setEstimateTextReady(data.estimate_text || "");
@@ -1336,6 +1340,8 @@ export default function AixModal({
       // AIXからの送信は AIX固有のstate名（property_recommendation / condition_hearing 等）のまま保存する
       // （save-reply-example の STATE_NORMALIZE による proposing / hearing への変換をスキップ）
       skipNormalize: true,
+      // 物件ピックアップした: コンポーネント別AI生成結果（差分学習ループ用）
+      ...(actionType === "property_send" && propertySendComponents ? { aiComponents: propertySendComponents } : {}),
     };
   };
 

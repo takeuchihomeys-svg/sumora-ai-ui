@@ -873,6 +873,10 @@ CREATE TABLE IF NOT EXISTS next_action_logs (
 );
 ALTER TABLE next_action_logs DISABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_next_action_logs_customer ON next_action_logs(customer_id, validated, predicted_at DESC);
+
+-- ai_reply_examples: 物件ピックアップした の構成パーツ別JSON（コンポーネント学習ループ用）
+-- intro / pickup / vacating / invite / calendar / closing の各パーツを保存し差分を構成単位で追跡
+ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS ai_components JSONB;
 `.trim();
 
 export async function GET() {

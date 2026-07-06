@@ -450,6 +450,7 @@ export async function POST(req: NextRequest) {
     sentAt?: string;
     skipNormalize?: boolean;
     isAutoStar?: boolean; // バッチ経由（auto-star-winners等）→ LLM分析チェーンを抑止
+    aiComponents?: Record<string, string> | null; // 物件ピックアップした コンポーネント別生成結果
   };
   let body: PostBody;
   try {
@@ -463,13 +464,14 @@ export async function POST(req: NextRequest) {
     sentReply,
     aiDraft,
     isStarred,
-    replyAngle,
     previousStaffMessage,
     conversationId,
     sentAt,
     skipNormalize,
     isAutoStar,
+    aiComponents,
   } = body;
+  let replyAngle = typeof body.replyAngle === "string" ? body.replyAngle : null;
 
   if (!customerMessage || !sentReply) {
     return NextResponse.json(
@@ -622,6 +624,20 @@ export async function POST(req: NextRequest) {
       : `${conversationState}: ${customerMessage}`;
   const embeddingPromise = getEmbedding(embeddingInput);
 
+  // 物件ピックアップした: 変更されたコンポーネントを reply_angle に記録（analyze-diffs が固有情報スキップを精密化）
+  const aiComponentsObj = aiComponents && typeof aiComponents === "object" ? aiComponents as Record<string, string> : null;
+  if (aiComponentsObj && conversationState === "property_send" && wasAiModified && !replyAngle) {
+    const FIXED_INFO = new Set(["vacating", "calendar"]);
+    const changed: string[] = [];
+    const sentNorm = (sentReply as string).replace(/\s+/g, "");
+    for (const [key, val] of Object.entries(aiComponentsObj)) {
+      if (FIXED_INFO.has(key) || !val || (val as string).length < 5) continue;
+      const probe = (val as string).replace(/\s+/g, "").slice(0, 15);
+      if (!sentNorm.includes(probe)) changed.push(key);
+    }
+    if (changed.length > 0) replyAngle = `component_diff:${changed.join(",")}`;
+  }
+
   const [embedding, insertResult] = await Promise.all([
     embeddingPromise,
     supabase
@@ -637,6 +653,7 @@ export async function POST(req: NextRequest) {
         reply_angle: replyAngle || null,
         conversation_id: conversationId || null,
         sent_at: sentAt ?? new Date().toISOString(),
+        ai_components: aiComponentsObj || null,
       })
       .select("id")
       .single(),

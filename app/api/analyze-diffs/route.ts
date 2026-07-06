@@ -13,6 +13,7 @@ async function analyzeDiff(
   aiDraft: string,
   sentReply: string,
   conversationState: string,
+  componentHint = "",
 ): Promise<{ skip: boolean; title?: string; rule?: string; category?: string; trigger_example?: string } | null> {
   try {
     const res = await client.messages.create({
@@ -20,7 +21,7 @@ async function analyzeDiff(
       max_tokens: 900,
       messages: [{
         role: "user",
-        content: `スタッフが実際に送った返信とAIの下書きを「構成・文の役割」レベルで比較分析し、改善パターンを抽出してください。
+        content: `スタッフが実際に送った返信とAIの下書きを「構成・文の役割」レベルで比較分析し、改善パターンを抽出してください。${componentHint}
 
 【お客様のメッセージ】
 ${customerMessage || "不明"}
@@ -97,7 +98,7 @@ export async function POST(req: NextRequest) {
   // 未処理の差分を取得（is_starred順で重要な学習から処理）
   const { data: examples, error: examplesError } = await supabase
     .from("ai_reply_examples")
-    .select("id, customer_message, ai_draft, sent_reply, conversation_state, is_starred")
+    .select("id, customer_message, ai_draft, sent_reply, conversation_state, is_starred, ai_components, reply_angle")
     .eq("was_ai_modified", true)
     .is("diff_analyzed_at", null)
     .not("ai_draft", "is", null)
@@ -120,13 +121,15 @@ export async function POST(req: NextRequest) {
   const now = new Date().toISOString();
 
   for (const ex of examples) {
-    const { id, customer_message, ai_draft, sent_reply, conversation_state, is_starred } = ex as {
+    const { id, customer_message, ai_draft, sent_reply, conversation_state, is_starred, ai_components, reply_angle } = ex as {
       id: string;
       customer_message: string;
       ai_draft: string;
       sent_reply: string;
       conversation_state: string;
       is_starred: boolean;
+      ai_components: Record<string, string> | null;
+      reply_angle: string | null;
     };
 
     // 完全一致はスキップ（構成が同じなので学習不要）
@@ -145,7 +148,24 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    const result = await analyzeDiff(customer_message, ai_draft, sent_reply, conversation_state);
+    // 物件ピックアップした: コンポーネント別差分チェック
+    // vacating/calendar（固有情報）だけが変わった場合は学習しない
+    // intro/pickup/invite/closing が変わった場合のみ学習（構成の質が改善された証拠）
+    let componentHint = "";
+    if (ai_components && reply_angle?.startsWith("component_diff:")) {
+      const changedComponents = reply_angle.replace("component_diff:", "").split(",");
+      const LEARNABLE = new Set(["intro", "pickup", "invite", "closing"]);
+      const learnableChanged = changedComponents.filter(c => LEARNABLE.has(c));
+      if (learnableChanged.length === 0) {
+        // カレンダー日時・退去日だけの変更 → 固有情報のみ。学習不要
+        await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
+        processed++;
+        continue;
+      }
+      componentHint = `\n\n【変更されたコンポーネント: ${learnableChanged.join(", ")}】カレンダー日時・退去予定日等の固有情報の変化は無視して、${learnableChanged.join("・")}の文体・言い回し・構成の変化に集中して分析してください。`;
+    }
+
+    const result = await analyzeDiff(customer_message, ai_draft, sent_reply, conversation_state, componentHint);
 
     // AI呼び出し失敗時は diff_analyzed_at をマークせず、次回Cronで再試行
     if (result === null) {
