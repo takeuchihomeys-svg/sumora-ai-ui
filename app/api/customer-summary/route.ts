@@ -27,7 +27,8 @@ const SYSTEM = `あなたは賃貸仲介の営業アシスタントです。
   "requirements": ["お客さんの要望・こだわり（最大3件・各30文字以内・具体的に）"],
   "opinions": ["お客さんの性格・傾向・感情・営業ヒント（最大2件・各30文字以内・具体的に）"],
   "our_actions": ["スタッフがやったこと（最大2件・各20文字以内）"],
-  "winning_pattern": "今この瞬間に成約につながる具体的な行動を50文字以内で。物件名・理由・タイミングまで含めて詳しく書く"
+  "winning_pattern": "今この瞬間に成約につながる具体的な行動を50文字以内で。物件名・理由・タイミングまで含めて詳しく書く",
+  "next_action": "今すぐスタッフが打つべき具体的な次の1手を40文字以内で（いつ・何を・どうする）"
 }
 
 品質ルール：
@@ -62,6 +63,7 @@ export type SummaryJson = {
   opinions?: string[];
   our_actions?: string[];
   winning_pattern?: string;
+  next_action?: string;
 };
 
 // JSON → テキスト変換（generate-reply の ★決まるパターン抽出との後方互換を維持）
@@ -94,6 +96,10 @@ function jsonToText(j: SummaryJson): string {
 
   if (j.winning_pattern) {
     lines.push(`★決まるパターン: ${j.winning_pattern}`);
+  }
+
+  if (j.next_action) {
+    lines.push(`🎯次のアクション: ${j.next_action}`);
   }
 
   return lines.join("\n");

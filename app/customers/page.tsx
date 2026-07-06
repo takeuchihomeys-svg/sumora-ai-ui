@@ -22,6 +22,7 @@ type SummaryJson = {
   opinions?: string[];
   our_actions?: string[];
   winning_pattern?: string;
+  next_action?: string;
 };
 
 type Customer = {
@@ -1259,6 +1260,13 @@ export default function CustomersPage() {
                                     <div className="mt-2 rounded-lg bg-red-50 border border-red-200 px-2.5 py-1.5">
                                       <span className="text-[10px] font-bold text-red-500">★ 決まるパターン: </span>
                                       <span className="text-[11px] text-red-700 font-medium">{sj.winning_pattern}</span>
+                                    </div>
+                                  )}
+                                  {/* 次のアクション */}
+                                  {sj.next_action && (
+                                    <div className="rounded-lg bg-amber-50 border border-amber-300 px-2.5 py-1.5">
+                                      <span className="text-[10px] font-bold text-amber-600">🎯 次のアクション: </span>
+                                      <span className="text-[11px] text-amber-800 font-medium">{sj.next_action}</span>
                                     </div>
                                   )}
                                 </>

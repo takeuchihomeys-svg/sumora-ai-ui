@@ -260,10 +260,15 @@ function buildGenerationMessages(
     ? `\n【📋 条件ヒアリング状況】\n確認済み: ${confirmedItems.length > 0 ? confirmedItems.join(" / ") : "なし"}\n未確認: ${missingItems.join(" / ")}\n※ 確認済み項目は絶対に聞き返さない。未確認項目を自然な流れで1〜2個まで聞く。`
     : "";
 
-  // ① ai_summaryの「★決まるパターン」行を抽出して最優先注入
+  // ① ai_summaryの「★決まるパターン」と「🎯次のアクション」を抽出して最優先注入
   const closingPatternFromSummary = (() => {
     if (!customerSummary) return "";
     const m = customerSummary.match(/★決まるパターン[：:]\s*(.+)/);
+    return m ? m[1].trim() : "";
+  })();
+  const nextActionFromSummary = (() => {
+    if (!customerSummary) return "";
+    const m = customerSummary.match(/🎯次のアクション[：:]\s*(.+)/);
     return m ? m[1].trim() : "";
   })();
 
@@ -468,11 +473,12 @@ function buildGenerationMessages(
     ? `\n\n## 参照すべき重要ルール（DB学習ナレッジ・セクション順に優先度が高い）${knowledge}`
     : "";
 
-  // ①②統合: closing_strategy（Step1分析）と★決まるパターン（ai_summary）を冒頭に最優先注入
+  // ①②統合: closing_strategy（Step1分析）・★決まるパターン・🎯次のアクション（ai_summary）を冒頭に最優先注入
   const closingNote = (() => {
     const parts: string[] = [];
     if (closingStrategyFromAnalysis) parts.push(`AIが判断した成約への一手: ${closingStrategyFromAnalysis}`);
     if (closingPatternFromSummary) parts.push(`この会話の成約ポイント: ${closingPatternFromSummary}`);
+    if (nextActionFromSummary) parts.push(`今すぐ打つべき次の一手: ${nextActionFromSummary}`);
     if (parts.length === 0) return "";
     return `【🎯 最優先指示 — フェーズ別パターンより上位・この返信で必ず実行すること】\n${parts.join("\n")}\n`;
   })();

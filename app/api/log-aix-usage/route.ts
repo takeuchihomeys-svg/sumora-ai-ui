@@ -53,6 +53,24 @@ export async function POST(req: NextRequest) {
     });
 
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+
+    // ③ AIX送信後に要約を再生成（状況が変わったタイミングで最新化 / fire-and-forget）
+    const { data: convRow } = await supabase
+      .from("conversations")
+      .select("property_customer_id")
+      .eq("id", conversation_id)
+      .maybeSingle();
+    const pcId = convRow?.property_customer_id as string | null;
+    if (pcId) {
+      const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
+        ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+      fetch(`${baseUrl}/api/customer-summary`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customer_id: pcId, conversation_id, fetch_from_db: true }),
+      }).catch(() => {});
+    }
+
     return NextResponse.json({ ok: true, previous_action_type: previousAction });
   } catch (e) {
     console.error("[log-aix-usage]", e);
