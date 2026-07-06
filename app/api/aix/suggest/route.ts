@@ -11,7 +11,19 @@ export const maxDuration = 10;
 // post_aix_* のステータスは推薦ログであり、ボタン押下パターンではないので除外
 const EXCLUDE_STATUS_PREFIX = "post_aix_";
 
-type PatternRow = { conversation_status: string; action_type: string };
+type PatternRow = { conversation_status: string; action_type: string; source?: string };
+
+// sourceごとのスコア重み（予測が当たったデータ=高信頼、キャンセル=低信頼）
+const SOURCE_WEIGHT: Record<string, number> = {
+  prediction_accepted: 1.5,  // 予測✓ + 実際に押した → 最強シグナル
+  suggestion_accepted: 1.5,  // 同上（旧命名）
+  manual: 1.0,
+  suggestion_bypassed: 1.0,  // 予測外れたが実際に押した行動は有効
+  prediction_bypassed: 1.0,
+  bootstrap: 1.0,
+  bootstrap_inferred: 0.8,
+  send_cancelled: 0.0,       // キャンセル = 学習しない
+};
 
 export async function GET(req: NextRequest) {
   try {
@@ -28,7 +40,7 @@ export async function GET(req: NextRequest) {
     // ① 同ステータスでのボタン押下パターンを集計（最新500件）
     const { data: logs } = await supabase
       .from("action_pattern_logs")
-      .select("conversation_status, action_type")
+      .select("conversation_status, action_type, source")
       .eq("conversation_status", status)
       .not("conversation_status", "ilike", `${EXCLUDE_STATUS_PREFIX}%`)
       .order("created_at", { ascending: false })
@@ -38,13 +50,15 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: true, suggested_action: null, confidence: 0, message: "データ不足" });
     }
 
-    // ② 頻度集計
+    // ② 重み付き頻度集計（prediction_accepted は1.5倍、send_cancelledは除外）
     const freq: Record<string, number> = {};
     for (const row of logs as PatternRow[]) {
       const a = row.action_type;
-      freq[a] = (freq[a] ?? 0) + 1;
+      const w = SOURCE_WEIGHT[row.source ?? "manual"] ?? 1.0;
+      if (w <= 0) continue; // send_cancelled等は除外
+      freq[a] = (freq[a] ?? 0) + w;
     }
-    const total = logs.length;
+    const total = Object.values(freq).reduce((s, v) => s + v, 0);
     const sorted = Object.entries(freq)
       .sort((a, b) => b[1] - a[1])
       .map(([action, count]) => ({ action, count, confidence: Math.round((count / total) * 100) / 100 }));

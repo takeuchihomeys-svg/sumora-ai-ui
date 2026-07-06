@@ -9939,6 +9939,7 @@ export default function Home() {
                                   action: "log",
                                   conversation_status: selectedConversation.status,
                                   action_type: item.actionType,
+                                  predicted_action: suggestedAixAction,
                                   source: item.actionType === suggestedAixAction ? "suggestion_accepted" : "suggestion_bypassed",
                                   conversation_id: selectedConversation.id,
                                 }),
