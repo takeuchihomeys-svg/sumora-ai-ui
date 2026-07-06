@@ -403,6 +403,21 @@ export async function POST(req: NextRequest) {
     }).catch(() => {});
   }
 
+  // ── stale decay: 90日間 used_count=0 のルールを自動 rejected に ──
+  // apply_count>=5 判定(RPC)だけでは使われないまま放置されたルールは永遠に残る。
+  // 一度も使われず90日経過 → 実運用に合わない可能性が高い → hypothesis_status=rejected
+  try {
+    const staleThreshold = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    await supabase
+      .from("ai_reply_knowledge")
+      .update({ hypothesis_status: "rejected" })
+      .lt("importance", 8)                          // 高importance（8-9）は守る
+      .eq("used_count", 0)                          // 一度も使われていない
+      .lt("created_at", staleThreshold)             // 90日以上前に作成
+      .neq("hypothesis_status", "confirmed")        // 確認済みは除外
+      .neq("hypothesis_status", "rejected");        // 既にrejectは除外
+  } catch { /* decay 失敗は無視して処理完了を返す */ }
+
   return NextResponse.json({ ok: true, processed, learned, message: `${processed}件処理・${learned}件学習` });
 }
 
