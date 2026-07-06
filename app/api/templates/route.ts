@@ -6,7 +6,7 @@ export type StructureBlock = { label: string; text: string };
 export async function GET() {
   const { data, error } = await supabase
     .from("templates")
-    .select("id, category, label, text, structure, sort_order, use_count, win_rate, requires_image, second_msg_type, second_msg_delay, created_at")
+    .select("id, category, label, text, structure, sort_order, use_count, win_rate, requires_image, second_msg_type, second_msg_delay, recommend_shown_count, recommend_picked_count, created_at")
     .order("category")
     .order("sort_order")
     .order("created_at");

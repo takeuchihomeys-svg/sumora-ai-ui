@@ -19,7 +19,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 30;
 
-type TemplateCandidate = { id: string; label: string; text: string; use_count?: number | null; win_rate?: number | null };
+type TemplateCandidate = { id: string; label: string; text: string; use_count?: number | null; win_rate?: number | null; recommend_shown_count?: number | null; recommend_picked_count?: number | null };
 type RankedItem = { index: number; score: number; reason: string };
 
 export async function POST(req: NextRequest) {
@@ -100,9 +100,13 @@ ${conversationHistory}
 ## 候補テンプレート一覧${category ? `（カテゴリ: ${category}）` : ""}
 ※ 【】内のタグはサブカテゴリを示します（例:【初回まとめ】【通常内覧】など）
 ${templates.map((t, i) => {
+      const adoptionRate = (t.recommend_shown_count ?? 0) > 0
+        ? Math.round(((t.recommend_picked_count ?? 0) / (t.recommend_shown_count ?? 1)) * 100)
+        : null;
       const stats = [
         (t.use_count ?? 0) > 0 ? `使用${t.use_count}回` : null,
         t.win_rate != null ? `成約率${Math.round((t.win_rate as number) * 100)}%` : null,
+        adoptionRate !== null ? `採用率${adoptionRate}%（おすすめ提示→選択率）` : null,
       ].filter(Boolean).join("・");
       return `[${i}] ${t.label}${stats ? ` (${stats})` : ""}\n${(t.text || "").slice(0, 300)}`;
     }).join("\n\n")}

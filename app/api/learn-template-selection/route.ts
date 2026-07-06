@@ -9,7 +9,7 @@ import { supabase } from "@/app/lib/supabase";
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json() as {
-      phase: "select" | "sent";
+      phase: "select" | "sent" | "shown";
       // select フェーズ
       log_id?: string;
       conversation_id?: string;
@@ -25,7 +25,18 @@ export async function POST(req: NextRequest) {
       // sent フェーズ
       final_sent_text?: string;
       was_modified_after_adapt?: boolean;
+      // shown フェーズ
+      template_ids?: string[];
     };
+
+    // おすすめとして提示したテンプレのshown_countを一括インクリメント
+    if (body.phase === "shown") {
+      if (!Array.isArray(body.template_ids) || body.template_ids.length === 0) {
+        return NextResponse.json({ ok: false, error: "template_ids required" });
+      }
+      await supabase.rpc("increment_template_recommend_shown", { p_ids: body.template_ids });
+      return NextResponse.json({ ok: true });
+    }
 
     if (body.phase === "select") {
       const { data, error } = await supabase
@@ -48,6 +59,10 @@ export async function POST(req: NextRequest) {
       if (error) {
         console.error("[learn-template-selection] insert error:", error);
         return NextResponse.json({ ok: false, error: error.message });
+      }
+      // おすすめから選んだ場合: picked_countをインクリメント（採用率の分子）
+      if (body.was_recommended && body.template_id) {
+        void supabase.rpc("increment_template_recommend_picked", { p_id: body.template_id });
       }
       return NextResponse.json({ ok: true, log_id: data?.id });
 

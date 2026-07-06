@@ -837,6 +837,23 @@ BEGIN
   END
   WHERE id = ANY(v_knowledge_ids) AND apply_count >= 5;
 END;
+$$;
+
+-- templates: テンプレート採用率トラッキング（RLHFループ）
+-- おすすめとして提示された回数・実際に選ばれた回数を記録し採用率を算出する
+ALTER TABLE templates ADD COLUMN IF NOT EXISTS recommend_shown_count INT DEFAULT 0;
+ALTER TABLE templates ADD COLUMN IF NOT EXISTS recommend_picked_count INT DEFAULT 0;
+
+-- increment_template_recommend_shown: おすすめ提示時に shown_count を一括 +1
+CREATE OR REPLACE FUNCTION increment_template_recommend_shown(p_ids UUID[])
+RETURNS void LANGUAGE sql AS $$
+  UPDATE templates SET recommend_shown_count = COALESCE(recommend_shown_count,0)+1 WHERE id = ANY(p_ids)
+$$;
+
+-- increment_template_recommend_picked: おすすめから選択時に picked_count を +1
+CREATE OR REPLACE FUNCTION increment_template_recommend_picked(p_id UUID)
+RETURNS void LANGUAGE sql AS $$
+  UPDATE templates SET recommend_picked_count = COALESCE(recommend_picked_count,0)+1 WHERE id = p_id
 $$
 `.trim();
 

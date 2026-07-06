@@ -136,6 +136,8 @@ export interface Template {
   sort_order: number | null;
   use_count?: number | null;
   win_rate?: number | null;
+  recommend_shown_count?: number | null;
+  recommend_picked_count?: number | null;
   requires_image: boolean;
   second_msg_type: string | null;
   second_msg_delay: number | null;
@@ -509,14 +511,27 @@ export default function TemplateModal({
         action_type: postAixContext.actionType,
         sent_message: postAixContext.sentMessage,
         category,
-        templates: candidateTemplates.map((t) => ({ id: t.id, label: t.label, text: t.text, use_count: t.use_count ?? 0, win_rate: t.win_rate ?? null })),
+        templates: candidateTemplates.map((t) => ({ id: t.id, label: t.label, text: t.text, use_count: t.use_count ?? 0, win_rate: t.win_rate ?? null, recommend_shown_count: t.recommend_shown_count ?? null, recommend_picked_count: t.recommend_picked_count ?? null })),
         customer_conditions: linkedCustomer?.conditions ?? null,
         sub_category: detectedSubCategory,
       }),
     })
       .then((res) => res.json())
       .then((data: { ok: boolean; recommendations?: Array<{ id: string; score: number; reason: string }> }) => {
-        if (data.ok && Array.isArray(data.recommendations)) setAiRecommendations(data.recommendations);
+        if (data.ok && Array.isArray(data.recommendations)) {
+          setAiRecommendations(data.recommendations);
+          // おすすめとして表示したテンプレのshown_countをインクリメント（fire-and-forget）
+          if (data.recommendations.length > 0) {
+            fetch("/api/learn-template-selection", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                phase: "shown",
+                template_ids: data.recommendations.map((r) => r.id),
+              }),
+            }).catch(() => {});
+          }
+        }
       })
       .catch((e) => console.error("recommend-templates error:", e))
       .finally(() => setRecommendLoading(false));
@@ -623,9 +638,14 @@ export default function TemplateModal({
   ];
   const isAixCategoryActive = category.includes("AIX");
   const isSearching = searchQuery.trim().length > 0;
-  // 複合スコア: 使用回数(40%) + 成約率(60%)。実績のあるテンプレを上位に表示する。
-  // 全テンプレがスコア0のうちは従来どおり sort_order 順（手動並べ替えも有効）。
-  const templateScore = (t: Template) => (t.use_count ?? 0) * 0.4 + (t.win_rate ?? 0) * 100 * 0.6;
+  // 複合スコア: 使用回数(40%) + 成約率(40%) + 採用率(20%)。実績のあるテンプレを上位に表示する。
+  // 採用率 = おすすめとして提示→実際に選ばれた率。全テンプレがスコア0のうちは sort_order 順。
+  const templateScore = (t: Template) => {
+    const adoptionRate = (t.recommend_shown_count ?? 0) > 0
+      ? (t.recommend_picked_count ?? 0) / (t.recommend_shown_count ?? 1)
+      : 0;
+    return (t.use_count ?? 0) * 0.4 + (t.win_rate ?? 0) * 100 * 0.4 + adoptionRate * 100 * 0.2;
+  };
   const compareTemplates = (a: Template, b: Template) => {
     const diff = templateScore(b) - templateScore(a);
     if (diff !== 0) return diff;
