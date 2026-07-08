@@ -675,6 +675,24 @@ export default function AixModal({
     })();
   }, [actionType]);
 
+  // 申込へ！: 直近3日のカレンダー取得（hold_view 内覧案内に使用）
+  useEffect(() => {
+    if (actionType !== "application_push") return;
+    setCalendarLoading(true);
+    (async () => {
+      try {
+        const { days, infoString } = await fetchCalendarSlots();
+        setCalendarInfo(infoString);
+        setCalendarDays(days);
+      } catch {
+        setCalendarInfo("");
+        setCalendarDays([]);
+      } finally {
+        setCalendarLoading(false);
+      }
+    })();
+  }, [actionType]);
+
   // 内覧へ！: カレンダー取得 + お客様指定日の自動検出
   useEffect(() => {
     if (actionType !== "viewing_invite") return;
@@ -1106,7 +1124,7 @@ export default function AixModal({
         if (vacatingNote.trim()) body.vacating_note = vacatingNote.trim();
         body.send_mode = sendMode;
         if (sendMode === "new_arrival" && newArrivalApply) body.new_arrival_apply = true;
-        if (false && includeCalendar) {
+        if (includeCalendar) {
           const finalCalendarInfo = calendarDays
             .map((d, i) => {
               if (d.fullyBooked) return "";
@@ -1155,6 +1173,8 @@ export default function AixModal({
           body.has_estimate = hasEstimate;
           if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
           if (customerSummary) body.customer_summary = customerSummary;
+          // カレンダー情報（hold_view: 空室の場合に具体的な内覧時間をAIに渡す）
+          if (appPushType === "hold_view" && calendarInfo) body.calendar_info = calendarInfo;
         }
       } else if (actionType === "property_check_result" && checkPattern === "interior_photo") {
         // 室内写真確認: AIなしでプレビュー直接生成
