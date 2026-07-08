@@ -502,6 +502,8 @@ export default function AixModal({
   const [appSubMode, setAppSubMode] = useState<"push" | "confirm" | "format" | null>(initialAppSubMode ?? null);
   const [appFormatLivingType, setAppFormatLivingType] = useState<"single" | "shared" | null>(null);
   const [appFormatGuarantorType, setAppFormatGuarantorType] = useState<"emergency" | "guarantor" | null>(null);
+  const [appConfirmImagePreview, setAppConfirmImagePreview] = useState("");
+  const [appConfirmExtractLoading, setAppConfirmExtractLoading] = useState(false);
   // 物件オススメ専用: analyze-propertyで自動抽出した退去予定日
   const [propMoveOutDate, setPropMoveOutDate] = useState("");
 
@@ -562,6 +564,7 @@ export default function AixModal({
   const estimateMultiRefs = [estimateMulti1Ref, estimateMulti2Ref, estimateMulti3Ref];
   const meetingPropertyInputRef = useRef<HTMLInputElement | null>(null);
   const viewingVacancyInputRef = useRef<HTMLInputElement | null>(null);
+  const confirmImageInputRef = useRef<HTMLInputElement | null>(null);
 
   // 会話が変わったらシンプルモードをリセット
   useEffect(() => {
@@ -618,7 +621,7 @@ export default function AixModal({
     Promise.all(readPromises).then(urls => setSendImagePreviews(urls));
   }, []);
 
-  // 申込確定モードでpicker経由で開いた場合: mount時に物件名自動検出・プレビュー生成
+  // 申込確定モードでpicker経由で開いた場合: mount時に物件名自動検出（テキスト生成はAIに任せる）
   useEffect(() => {
     if (initialAppSubMode !== "confirm") return;
     const staffMsgs = (recentMessages || []).filter(m => m.sender === "staff").reverse();
@@ -628,9 +631,6 @@ export default function AixModal({
       if (m) { detected = m[1].trim(); break; }
     }
     if (detected) setAppPropertyName(detected);
-    const text = `かしこまりました！！\n${detected ? `${detected}お申込みさせて頂きます！！` : "お申込みさせて頂きます！！"}`;
-    setAiDraft(text);
-    setPreview(text);
   }, []);
 
   // 物件確認した「空室あり」: 直近3日のカレンダーを取得して内覧日程をアナウンス
@@ -792,6 +792,28 @@ export default function AixModal({
       })
       .catch((e) => { console.error("[AixModal] フレーズ取得失敗:", e); });
   }, [showTemplateInfo, actionType, conversationStatus]);
+
+  const handleConfirmImageUpload = async (file: File) => {
+    const dataUrl = await new Promise<string>(resolve => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result ?? ""));
+      reader.readAsDataURL(file);
+    });
+    setAppConfirmImagePreview(dataUrl);
+    setAppConfirmExtractLoading(true);
+    try {
+      const base64 = dataUrl.split(",")[1];
+      const mime = (dataUrl.split(";")[0].split(":")[1] || "image/jpeg") as "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+      const res = await fetch("/api/extract-meeting-place", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image_base64: base64, media_type: mime }),
+      });
+      const data = await res.json() as { ok: boolean; name?: string };
+      if (data.ok && data.name) setAppPropertyName(data.name);
+    } catch (e) { console.error("[AixModal] 申込確定 物件名OCR失敗:", e); }
+    setAppConfirmExtractLoading(false);
+  };
 
   const onSelectImage = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -2276,19 +2298,18 @@ export default function AixModal({
                 <button
                   onClick={() => {
                     setAppSubMode("confirm");
-                    // 会話履歴から物件名を自動検出
+                    setPreview("");
+                    setAiDraft("");
+                    // 会話履歴から物件名を自動検出（スタッフメッセージの【物件名 号室】形式）
                     let detected = appPropertyName.trim();
                     if (!detected) {
                       const staffMsgs = (recentMessages || []).filter(m => m.sender === "staff").reverse();
                       for (const msg of staffMsgs) {
-                        const m = msg.text.match(/^【(.+?)(?:\s+[\d]+号室)?】/);
+                        const m = msg.text.match(/^【(.+?)(?:\s*[\d]+号室)?】/);
                         if (m) { detected = m[1].trim(); break; }
                       }
                     }
                     if (detected) setAppPropertyName(detected);
-                    const text = `かしこまりました！！\n${detected ? `${detected}お申込みさせて頂きます！！` : "お申込みさせて頂きます！！"}`;
-                    setAiDraft(text);
-                    setPreview(useEmoji ? text : stripEmoji(text));
                   }}
                   className={`rounded-2xl border-2 px-2 py-3 text-center transition-all ${
                     appSubMode === "confirm" ? "border-emerald-500 bg-emerald-50" : "border-[#e9edef] bg-[#f8f9fa]"
@@ -2308,25 +2329,54 @@ export default function AixModal({
                 </button>
               </div>
 
-              {/* 申込確定: 物件名（自動検出・修正可） */}
+              {/* 申込確定: 物件名（自動検出・修正可）＋物件資料読み込み */}
               {appSubMode === "confirm" && (
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-[#54656f]">
-                    物件名 <span className="font-normal text-[#90a4ae]">（自動検出・修正可）</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={appPropertyName}
-                    onChange={(e) => {
-                      setAppPropertyName(e.target.value);
-                      const prop = e.target.value.trim();
-                      const text = `かしこまりました！！\n${prop ? `${prop}お申込みさせて頂きます！！` : "お申込みさせて頂きます！！"}`;
-                      setAiDraft(text);
-                      setPreview(useEmoji ? text : stripEmoji(text));
-                    }}
-                    placeholder="例：プレサンス心斎橋ブライト"
-                    className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-emerald-400 placeholder:text-[#8696a0]"
-                  />
+                <div className="flex flex-col gap-3">
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-[#54656f]">
+                      物件名 <span className="font-normal text-[#90a4ae]">（自動検出・修正可）</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={appPropertyName}
+                      onChange={(e) => setAppPropertyName(e.target.value)}
+                      placeholder="例：マルシェ九条 402号室"
+                      className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-emerald-400 placeholder:text-[#8696a0]"
+                    />
+                  </div>
+                  {/* 物件資料から物件名を読み込む */}
+                  <div>
+                    <p className="mb-1.5 text-xs font-semibold text-[#54656f]">
+                      物件資料から読み込む <span className="font-normal text-[#90a4ae]">（物件名が不明な場合）</span>
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => confirmImageInputRef.current?.click()}
+                        className="flex items-center gap-1.5 rounded-xl border border-[#d1d7db] bg-[#f8f9fa] px-3 py-2 text-xs text-[#54656f] transition hover:bg-[#e9edef]"
+                      >
+                        <span>📎</span>
+                        <span>物件資料を選択</span>
+                      </button>
+                      {appConfirmExtractLoading && (
+                        <span className="text-[11px] text-[#8696a0]">物件名を読み取り中...</span>
+                      )}
+                      {appConfirmImagePreview && !appConfirmExtractLoading && (
+                        <img src={appConfirmImagePreview} className="h-10 w-10 rounded-lg object-cover border border-[#d1d7db]" alt="物件資料" />
+                      )}
+                    </div>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      ref={confirmImageInputRef}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) void handleConfirmImageUpload(f);
+                        e.target.value = "";
+                      }}
+                    />
+                  </div>
                 </div>
               )}
 
