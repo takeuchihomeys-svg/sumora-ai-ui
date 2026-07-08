@@ -2682,6 +2682,7 @@ export default function Home() {
       }).catch(() => {});
     } else {
       // 記録がない場合（古いメッセージや別セッション）は従来通り POST
+      // HIGH-03: aiDraft を渡して差分学習を有効化 + レスポンスから example_id を取得して auto-knowledge も実行
       fetch("/api/save-reply-example", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2690,8 +2691,19 @@ export default function Home() {
           conversationId: selectedConversation.id,
           customerMessage: prevCustomerMsg.text,
           sentReply: staffText,
+          aiDraft: aiDraftRef.current || null,
           isStarred: true,
         }),
+      }).then(async (r) => {
+        if (!r.ok) return;
+        const saved = await r.json() as { id?: string };
+        if (saved.id) {
+          fetch("/api/auto-knowledge", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ example_id: saved.id }),
+          }).catch(() => {});
+        }
       }).catch(() => {});
     }
   };

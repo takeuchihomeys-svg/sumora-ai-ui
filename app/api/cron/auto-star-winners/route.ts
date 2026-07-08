@@ -37,20 +37,35 @@ export async function GET(req: NextRequest) {
   const convIds = wonConvs.map((c) => c.id as string);
 
   // 未☆ かつ AI が貢献した例（was_ai_used か was_ai_modified）
+  // MED-08: 品質フィルター
+  //  - was_ai_modified=false（AIドラフトをそのまま使った）優先: 差分学習ノイズなし・信号が明確
+  //  - ai_draft IS NOT NULL: 差分比較できる例のみ（ai_draftがないと差分学習が機能しない）
+  //  - sent_reply が短すぎる（30字未満）のショートメッセージは除外（「了解です！」等の意味なし学習を防ぐ）
   const { data: examples, error: exErr } = await supabase
     .from("ai_reply_examples")
-    .select("id")
+    .select("id, sent_reply, was_ai_modified, ai_draft")
     .in("conversation_id", convIds)
     .eq("is_starred", false)
+    .not("ai_draft", "is", null)
     .or("was_ai_used.eq.true,was_ai_modified.eq.true");
+
+  // 短すぎる返信はJS側で除外（DBにlength関数で WHERE できないため）
+  const qualityExamples = (examples ?? []).filter(ex =>
+    (ex.sent_reply as string | null)?.length ?? 0 >= 30
+  );
+  // was_ai_modified=false を先頭に（純粋なAI承認シグナルを優先分析）
+  const sortedExamples = [
+    ...qualityExamples.filter(ex => ex.was_ai_modified === false),
+    ...qualityExamples.filter(ex => ex.was_ai_modified !== false),
+  ];
 
   if (exErr) {
     console.error("[auto-star-winners] examples fetch error:", exErr.message);
     return NextResponse.json({ ok: false, error: exErr.message }, { status: 500 });
   }
 
-  if (!examples?.length) {
-    return NextResponse.json({ ok: true, starred: 0, convs: convIds.length, message: "all examples already starred" });
+  if (!sortedExamples.length) {
+    return NextResponse.json({ ok: true, starred: 0, convs: convIds.length, skipped: (examples?.length ?? 0) - sortedExamples.length, message: "no quality examples to star" });
   }
 
   // PATCH /api/save-reply-example → is_starred=true
@@ -63,7 +78,7 @@ export async function GET(req: NextRequest) {
   let analyzed = 0;
 
   // フル分析枠（先頭 MAX_ANALYZE_PER_RUN 件）: HTTP経由でHaiku分析込みの☆付与
-  for (const [i, ex] of examples.slice(0, MAX_ANALYZE_PER_RUN).entries()) {
+  for (const ex of sortedExamples.slice(0, MAX_ANALYZE_PER_RUN)) {
     try {
       const res = await fetch(`${baseUrl}/api/save-reply-example`, {
         method: "PATCH",
@@ -80,7 +95,7 @@ export async function GET(req: NextRequest) {
   }
 
   // 超過分（MAX_ANALYZE_PER_RUN 以降）: DB直接バルク更新（HTTP直列ループを排除してタイムアウト防止）
-  const bulkIds = examples.slice(MAX_ANALYZE_PER_RUN).map((e) => e.id as string);
+  const bulkIds = sortedExamples.slice(MAX_ANALYZE_PER_RUN).map((e) => e.id as string);
   if (bulkIds.length > 0) {
     const { error: bulkErr } = await supabase
       .from("ai_reply_examples")
@@ -94,7 +109,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-
-  console.log(`[auto-star-winners] done: starred=${starred} analyzed=${analyzed} failed=${failed} convs=${convIds.length}`);
-  return NextResponse.json({ ok: true, starred, analyzed, failed, total: examples.length, convs: convIds.length });
+  const skipped = (examples?.length ?? 0) - sortedExamples.length;
+  console.log(`[auto-star-winners] done: starred=${starred} analyzed=${analyzed} failed=${failed} skipped=${skipped}(品質未達) convs=${convIds.length}`);
+  return NextResponse.json({ ok: true, starred, analyzed, failed, skipped, total: examples?.length ?? 0, convs: convIds.length });
 }

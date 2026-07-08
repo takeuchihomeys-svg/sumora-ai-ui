@@ -208,6 +208,12 @@ const STATE_LEARNABLE: Record<string, string[]> = {
   meeting_place:                    ["greeting", "confirmation", "location", "closing"],
   estimate_sheet:                   ["greeting", "estimate_note", "invite", "closing"],
   followup_revive:                  ["greeting", "reminder", "invite", "cta", "closing"],
+  // MED-10: ACTION_TO_STATE にあるが STATE_LEARNABLE に抜けていたエントリ
+  greeting_viewing:                 ["greeting", "reminder", "closing"],
+  property_check_result_vacate_date:       ["greeting", "result", "calendar", "invite", "closing"],
+  property_check_result_mgmt_guarantor:    ["greeting", "result", "invite", "closing"],
+  property_check_result_mgmt_move_in:      ["greeting", "result", "closing"],
+  property_check_result_mgmt_initial_cost: ["greeting", "result", "invite", "closing"],
 };
 
 const COMPONENT_NAMES: Record<string, string> = {
@@ -555,6 +561,7 @@ export async function POST(req: NextRequest) {
   // ── stale decay: 90日間 used_count=0 のルールを自動 rejected に ──
   // apply_count>=5 判定(RPC)だけでは使われないまま放置されたルールは永遠に残る。
   // 一度も使われず90日経過 → 実運用に合わない可能性が高い → hypothesis_status=rejected
+  // MED-02: correct_count>0 のルールは decay 対象外（一度でも正しく使われた実績あり = まだ有効）
   try {
     const staleThreshold = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
     await supabase
@@ -562,6 +569,7 @@ export async function POST(req: NextRequest) {
       .update({ hypothesis_status: "rejected" })
       .lt("importance", 8)                          // 高importance（8-9）は守る
       .eq("used_count", 0)                          // 一度も使われていない
+      .eq("correct_count", 0)                       // MED-02: 正答実績があるルールは除外
       .lt("created_at", staleThreshold)             // 90日以上前に作成
       .neq("hypothesis_status", "confirmed")        // 確認済みは除外
       .neq("hypothesis_status", "rejected");        // 既にrejectは除外
