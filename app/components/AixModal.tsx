@@ -789,11 +789,14 @@ export default function AixModal({
     }
     // カレンダーから時間をプリセット（最初の有効スロット）
     const firstSlot = viewingCalendarDays.find((d, i) => d.fullyBooked ? viewingSlotOverride[i] : viewingSlotEnabled[i]);
-    const firstIdx = viewingCalendarDays.indexOf(firstSlot!);
     if (firstSlot) {
-      if (!viewingSpecificStart) setViewingSpecificStart(viewingSlotStarts[firstIdx] || "");
-      if (!viewingSpecificEnd)   setViewingSpecificEnd(viewingSlotEnds[firstIdx] || "");
+      const firstIdx = viewingCalendarDays.indexOf(firstSlot);
+      if (firstIdx >= 0) {
+        if (!viewingSpecificStart) setViewingSpecificStart(viewingSlotStarts[firstIdx] || "");
+        if (!viewingSpecificEnd)   setViewingSpecificEnd(viewingSlotEnds[firstIdx] || "");
+      }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewingSpecificMode]);
 
   // 待ち合わせ: 会話から日程・時間をAIで抽出してプリセット
@@ -820,7 +823,8 @@ export default function AixModal({
         }
       })
       .catch((e) => { console.warn("[AixModal] 待ち合わせ日時の自動抽出失敗:", e); });
-  }, [actionType]);
+  // recentMessages を deps に含める（メッセージ読み込み後に再実行。meetingDate 設定後は早期リターンで冪等）
+  }, [actionType, recentMessages]);
 
   // テンプレート画面を開いたときによく使われるフレーズを取得
   useEffect(() => {
@@ -2848,14 +2852,18 @@ export default function AixModal({
                               const fd = new FormData();
                               fd.append("file", mgmtDocImage);
                               const res = await fetch("/api/extract-guarantor-info", { method: "POST", body: fd });
-                              const ocrData = await res.json() as { property_name?: string; company_name?: string; guarantor_type?: string };
+                              if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                              const ocrData = await res.json() as { ok?: boolean; property_name?: string; company_name?: string; guarantor_type?: string; error?: string };
+                              if (!ocrData.ok) throw new Error(ocrData.error ?? "読み取り失敗");
                               if (ocrData.property_name) setMgmtGuarantorPropertyName(ocrData.property_name);
                               if (ocrData.company_name) setMgmtGuarantorCompanyName(ocrData.company_name);
                               if (ocrData.guarantor_type && (["独立系","LICC系","信販系","不明"] as string[]).includes(ocrData.guarantor_type)) {
                                 setMgmtGuarantorType(ocrData.guarantor_type as "独立系" | "LICC系" | "信販系" | "不明");
                               }
-                            } catch { /* エラーは無視 */ }
-                            finally { setMgmtDocOcrLoading(false); }
+                            } catch (err) {
+                              console.error("[AixModal] OCR error:", err);
+                              alert("読み取りに失敗しました。手動で入力してください。");
+                            } finally { setMgmtDocOcrLoading(false); }
                           }}
                           disabled={mgmtDocOcrLoading}
                           className="flex items-center gap-1 rounded-xl bg-[#546E7A] px-3 py-2 text-xs font-bold text-white disabled:opacity-50"

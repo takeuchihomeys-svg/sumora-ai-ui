@@ -18,12 +18,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "ファイルが見つかりません" }, { status: 400 });
     }
 
+    // ファイルサイズチェック（10MB上限）
+    if (file.size > 10 * 1024 * 1024) {
+      return NextResponse.json({ ok: false, error: "ファイルサイズが大きすぎます（10MB以下にしてください）" }, { status: 400 });
+    }
+
+    // MIMEタイプチェック
+    const supportedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+    const rawMimeType = file.type || "image/jpeg";
+    if (!supportedTypes.includes(rawMimeType)) {
+      return NextResponse.json({ ok: false, error: "対応フォーマットはJPEG・PNG・WebP・GIFのみです" }, { status: 400 });
+    }
+
     // ファイルをbase64に変換
     const arrayBuffer = await file.arrayBuffer();
     const base64Data = Buffer.from(arrayBuffer).toString("base64");
 
     // MIMEタイプを取得（デフォルト: image/jpeg）
-    const mediaType = (file.type || "image/jpeg") as
+    const mediaType = rawMimeType as
       | "image/jpeg"
       | "image/png"
       | "image/gif"

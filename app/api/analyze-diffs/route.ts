@@ -159,14 +159,24 @@ JSONのみを返す。分析の途中経過は不要。`,
 function textSimilarity(a: string, b: string): number {
   const s1 = a.replace(/\s+/g, "");
   const s2 = b.replace(/\s+/g, "");
-  if (s1 === s2) return 1;
   if (!s1 || !s2) return 0;
-  let j = 0, matches = 0;
-  for (let i = 0; i < s1.length; i++) {
-    while (j < s2.length && s2[j] !== s1[i]) j++;
-    if (j < s2.length) { matches++; j++; }
+  if (s1 === s2) return 1;
+  // 文字レベルLCS（Dice係数）— 旧実装は j がループをまたいでリセットされず不正確だった
+  const la = [...s1], lb = [...s2];
+  const m = la.length, n = lb.length;
+  // メモリ節約のため1次元DP
+  const dp = new Array(n + 1).fill(0);
+  let prev = 0;
+  for (let i = 1; i <= m; i++) {
+    prev = 0;
+    for (let j = 1; j <= n; j++) {
+      const temp = dp[j];
+      dp[j] = la[i - 1] === lb[j - 1] ? prev + 1 : Math.max(dp[j], dp[j - 1]);
+      prev = temp;
+    }
   }
-  return matches / Math.max(s1.length, s2.length);
+  const lcs = dp[n];
+  return (2 * lcs) / (m + n); // Dice係数
 }
 
 // 修正量に応じて importance を変動（save-reply-example と統一）

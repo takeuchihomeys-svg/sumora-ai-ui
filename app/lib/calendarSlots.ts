@@ -63,8 +63,8 @@ export async function fetchCalendarSlots(): Promise<{
   const fromDate = fmtDate(days[0]);
   const toDate   = fmtDate(days[2]);
 
-  const startISO = new Date(`${fromDate}T00:00:00`).toISOString();
-  const endISO   = new Date(`${toDate}T23:59:59`).toISOString();
+  const startISO = new Date(`${fromDate}T00:00:00+09:00`).toISOString();
+  const endISO   = new Date(`${toDate}T23:59:59+09:00`).toISOString();
 
   const [evResult, tasksRaw] = await Promise.all([
     supabase
