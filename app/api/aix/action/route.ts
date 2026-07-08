@@ -2020,6 +2020,56 @@ ${mgmtInfo}${recentHistory}`,
       message_text = message_text.replace(/(?<!\d)0+(\d+)号室/g, "$1号室");
 
     } else if (action === "property_check_result") {
+      // conversation_match: 会話に合わせた自然文生成（テンプレ固定なし・GENERATION_SYSTEM品質）
+      if (body.conversation_match) {
+        const calendarNoteForPCR = calendar_info ? String(calendar_info) : "";
+        const pcrCalendarBlock = calendarNoteForPCR
+          ? `【内覧可能日時（カレンダー自動取得・空室時はこの日程で案内すること）】\n${calendarNoteForPCR}`
+          : "";
+        const pcrDiffNote = await getKnowledgeForState(AIX_ACTION_TO_STATES.property_check_result, currentAction, conversationId);
+
+        const pcrSystem = `${GENERATION_SYSTEM}
+
+${SMORA_COMMON_RULES}
+
+【お客様名】「${name}」
+
+${pcrCalendarBlock}
+
+【この返信の目的】
+・お客様からリクエストされた物件の確認結果を伝える
+・空室あり → 内覧誘導（カレンダー日程を提示）
+・満室/募集終了 → 正直に伝えつつ「引き続き探します！！」で前向きに締める
+・謝罪表現（「申し訳ございません」等）は使わない。「残念ながら」で自然に伝える
+
+【重要：会話読解ルール（必ず守ること）】
+・お客様の直近メッセージから「どの物件・号室」の確認を求めているか読み取る
+・物件名・号室が会話に登場する場合は必ず含める（創作禁止）
+・テンプレ的な返信は絶対禁止。会話に直接応答する文から始める
+
+【絶対禁止】
+・🙏 絵文字は絶対に使わない
+・「申し訳ございません」等の謝罪表現
+・物件名の創作
+
+【出力形式（必須・JSONのみ・説明不要）】
+{"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
+
+        const rawPCR = await callClaude(
+          pcrSystem + pcrDiffNote,
+          `${recentHistory}\n\n上記の会話を深く読み取り、${name}への物件確認結果の返信を生成してください。`,
+          currentAction
+        );
+        try {
+          const mPCR = rawPCR.match(/\{[\s\S]*?\}/);
+          if (mPCR) {
+            const dPCR = JSON.parse(mPCR[0]) as { message?: string };
+            message_text = (dPCR.message || rawPCR).replace(/\\n/g, "\n");
+          } else { message_text = rawPCR; }
+        } catch { message_text = rawPCR; }
+        return NextResponse.json({ ok: true, message_text });
+      }
+
       const pattern = check_pattern as "available" | "alternative" | "unavailable";
       const customerSummary = body.customer_summary as string | undefined;
       const ended_floor = body.ended_floor as number | undefined;
@@ -2432,6 +2482,49 @@ ${templateText}`;
 
     // ── 📋 条件ヒアリング（フォームをテンプレ生成 + AI導入メッセージ） ───
     } else if (action === "condition_hearing") {
+      // conversation_match: 会話に合わせた自然な挨拶＋ヒアリング導入メッセージを生成（固定フォームなし）
+      if (body.conversation_match) {
+        const hearingCMDiffNote = await getKnowledgeForState([...AIX_ACTION_TO_STATES.condition_hearing, "first_reply"], currentAction, conversationId);
+
+        const hearingCMSystem = `${GENERATION_SYSTEM}
+
+${SMORA_COMMON_RULES}
+
+【お客様名】「${name}」
+
+【この返信の目的】
+・お客様への最初の挨拶と、お部屋探しのお手伝い宣言をする
+・次のメッセージでヒアリングフォームを送る予告をする
+・「ご希望条件を教えてください」という流れに自然につなぐ
+・条件項目の箇条書き（①②③…）は含めない（フォームは別送するため）
+
+【重要：会話読解ルール（必ず守ること）】
+・お客様の最初のメッセージ（問い合わせ内容・雰囲気）を必ず読み取ってから書く
+・お客様がすでに何か条件を話している場合はそれに言及する
+・テンプレ的な「お世話になっております」で始めない
+・50〜100文字程度・2〜3行まで
+
+【絶対禁止】
+・🙏 絵文字は絶対に使わない
+・条件項目の箇条書き（①②③…）を含める
+
+【出力形式（必須・JSONのみ・説明不要）】
+{"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
+
+        const rawHCM = await callClaude(
+          hearingCMSystem + hearingCMDiffNote,
+          `${recentHistory}\n\n上記の会話を読み取り、${name}への挨拶＋ヒアリング導入メッセージを生成してください。`,
+          currentAction
+        );
+        try {
+          const mHCM = rawHCM.match(/\{[\s\S]*?\}/);
+          if (mHCM) {
+            const dHCM = JSON.parse(mHCM[0]) as { message?: string };
+            message_text = (dHCM.message || rawHCM).replace(/\\n/g, "\n");
+          } else { message_text = rawHCM; }
+        } catch { message_text = rawHCM; }
+        return NextResponse.json({ ok: true, message_text });
+      }
       // ─── ヒアリング: 条件フォームはテンプレで直接生成（従来通り）＋ AI導入メッセージ（LL-09）────────────
       // フォーム本体は固定テンプレのまま。フォームに添える「導入メッセージ」のみAI生成し、
       // getDiffKnowledgeForState / getStarredExamplesForAction を注入して学習ループの対象にする。
@@ -2660,6 +2753,53 @@ ${SMORA_COMMON_RULES}`;
       }
 
     } else if (action === "meeting_place") {
+      // conversation_match: テンプレ固定なし・会話から日時・物件を読んで自然な待ち合わせ文を生成
+      if (body.conversation_match) {
+        const mpDiffNote = await getKnowledgeForState(AIX_ACTION_TO_STATES.meeting_place, currentAction, conversationId);
+        const mpPropertyName = body.meeting_property_name ? String(body.meeting_property_name) : "";
+        const mpAddress = body.meeting_property_address ? String(body.meeting_property_address) : "";
+        const mpDate = body.meeting_date ? String(body.meeting_date) : "";
+
+        const mpSystem = `${GENERATION_SYSTEM}
+
+${SMORA_COMMON_RULES}
+
+【お客様名】「${name}」
+${mpPropertyName ? `【物件名】${mpPropertyName}` : ""}
+${mpAddress ? `【住所】${mpAddress}` : ""}
+${mpDate ? `【内覧日】${mpDate}` : ""}
+
+【この返信の目的】
+・内覧の日程・時間が確定したので「かしこまりました！！」で承認し、待ち合わせ場所を確定する
+・現地エントランスが待ち合わせ場所（物件名＋住所があれば含める）
+・会話から時間を読み取って「〇時に〇〇物件 現地エントランスお待ち合わせ」の形で締める
+
+【重要：会話読解ルール（必ず守ること）】
+・会話から内覧の確定日時を読み取り、そのまま確定メッセージに使う
+・時間が会話に出ていない場合は「[お時間]」としてプレースホルダーを残す
+・テンプレ的な返信は絶対禁止
+
+【絶対禁止】
+・🙏 絵文字は絶対に使わない
+
+【出力形式（必須・JSONのみ・説明不要）】
+{"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
+
+        const rawMP = await callClaude(
+          mpSystem + greetingTimeNote + mpDiffNote,
+          `${recentHistory}\n\n上記の会話を読み取り、${name}への待ち合わせ確定メッセージを生成してください。`,
+          currentAction
+        );
+        try {
+          const mMP = rawMP.match(/\{[\s\S]*?\}/);
+          if (mMP) {
+            const dMP = JSON.parse(mMP[0]) as { message?: string };
+            message_text = (dMP.message || rawMP).replace(/\\n/g, "\n");
+          } else { message_text = rawMP; }
+        } catch { message_text = rawMP; }
+        return NextResponse.json({ ok: true, message_text });
+      }
+
       const mDate = body.meeting_date ? String(body.meeting_date) : "";
       const mName = body.meeting_property_name ? String(body.meeting_property_name) : "";
       const mAddr = body.meeting_property_address ? String(body.meeting_property_address) : "";
@@ -2693,6 +2833,48 @@ ${SMORA_COMMON_RULES}`;
 
     // ── ✅ 確認します ──────────────────────────────────────────────
     } else if (action === "acknowledge_check") {
+      // conversation_match: 会話から確認内容を正確に読み取って自然な管理会社向けメッセージを生成
+      if (body.conversation_match) {
+        const ackCMDiffNote = await getKnowledgeForState(AIX_ACTION_TO_STATES.acknowledge_check, currentAction, conversationId);
+        const ackCMLabel = familyName ? `${familyName}さん` : "お客様";
+
+        const ackCMSystem = `あなたは賃貸仲介サービス「スモラ」のLINE担当スタッフです。
+管理会社・オーナーへの物件確認メッセージ（LINE）を生成してください。
+
+${SMORA_COMMON_RULES}
+
+【メッセージの宛先】管理会社またはオーナー（お客様宛てではない）
+【案内しているお客様名】「${ackCMLabel}」
+
+【重要：会話読解ルール（必ず守ること）】
+・会話から「どの物件・号室・何を確認したいのか」を正確に読み取る
+・物件名・号室が会話に出ていれば必ず含める（創作禁止）
+・お客様の具体的な疑問・状況に合わせた確認内容を1〜2行で書く
+
+【構成ルール（この順番で・必ず守ること）】
+① 書き出し: 「${ackCMLabel}のご案内をしております！！」
+② 確認内容: 会話から読み取った物件名・号室・確認事項を正確に1〜2行
+③ 初期費用（必須）: 「あわせて最大限割引した初期費用の御見積もりもお願いできますでしょうか！！」
+④ 締め: 「ご確認頂けますと幸いです！！よろしくお願い致します！！」
+
+【禁止事項】
+・「お世話になっております」は使わない
+・「様」を使わない（「さん」で統一）
+・物件名・号室を創作しない
+・🙏絵文字は絶対禁止
+・絵文字は😊のみ1個まで
+
+【文字数】4〜6行のコンパクトなメッセージ${greetingTimeNote}${ackCMDiffNote}`;
+
+        const rawACM = await callClaude(
+          ackCMSystem,
+          `${ackCMLabel}のご案内について、物件の管理会社へ送る確認メッセージを生成してください。${extra_input ? `\n補足: ${extra_input}` : ""}${recentHistory}`,
+          currentAction
+        );
+        message_text = rawACM;
+        return NextResponse.json({ ok: true, message_text });
+      }
+
       const ackDiffNote = await getKnowledgeForState(AIX_ACTION_TO_STATES.acknowledge_check, currentAction, conversationId);
       // ★宛先はお客様ではなく物件の管理会社・オーナー。スモラは全LINEで「さん」表記のため familyName＋さん で組み立てる
       const ackCustomerLabel = familyName ? `${familyName}さん` : "お客様";
@@ -2731,6 +2913,53 @@ ${SMORA_COMMON_RULES}
 
     // ── 📣 追客する ──────────────────────────────────────────────
     } else if (action === "followup_revive") {
+      // conversation_match: 過去の会話文脈を最大活用した自然な追客メッセージを生成
+      if (body.conversation_match) {
+        const [followupCMDiffNote, followupCMStarNote] = await Promise.all([
+          getKnowledgeForState(AIX_ACTION_TO_STATES.followup_revive, currentAction, conversationId),
+          getStarredExamplesForAction(AIX_ACTION_TO_STATES.followup_revive, latestCustomerMsg),
+        ]);
+
+        const followupCMSystem = `${GENERATION_SYSTEM}
+
+${SMORA_COMMON_RULES}
+
+【お客様名】「${name}」
+
+【この返信の目的】
+・しばらく連絡が取れていないお客様への追客メッセージ
+・お客様の直近の会話内容（条件・物件・懸念点）を引き合いに出して、具体的に再接触する
+・「その後いかがでしょうか！！」から始めつつ、過去の会話から1つ具体的な話題を引き出す
+・補足情報（新着物件・条件変更提案等）があれば自然に盛り込む
+・2〜4行程度・押しつけがましくないトーン
+
+【重要：会話読解ルール（必ず守ること）】
+・過去の会話で話題になっていた物件名・条件・懸念点を必ず1つ以上引き出す
+・「前回お送りした〇〇の件ですが」等、具体的な言及で再接触の必然性を作る
+・テンプレ的な返信は絶対禁止
+
+【絶対禁止】
+・🙏 絵文字は絶対に使わない
+・会話を読まずに汎用的な「その後いかがでしょうか」だけで終わる
+
+【出力形式（必須・JSONのみ・説明不要）】
+{"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
+
+        const rawFCM = await callClaude(
+          followupCMSystem + followupCMDiffNote + followupCMStarNote,
+          `${recentHistory}\n\n上記の会話を深く読み取り、${name}への追客メッセージを生成してください。${extra_input ? `\n補足情報: ${extra_input}` : ""}`,
+          currentAction
+        );
+        try {
+          const mFCM = rawFCM.match(/\{[\s\S]*?\}/);
+          if (mFCM) {
+            const dFCM = JSON.parse(mFCM[0]) as { message?: string };
+            message_text = (dFCM.message || rawFCM).replace(/\\n/g, "\n");
+          } else { message_text = rawFCM; }
+        } catch { message_text = rawFCM; }
+        return NextResponse.json({ ok: true, message_text });
+      }
+
       const [followupDiffNote, followupStarNote] = await Promise.all([
         getKnowledgeForState(AIX_ACTION_TO_STATES.followup_revive, currentAction, conversationId),
         getStarredExamplesForAction(AIX_ACTION_TO_STATES.followup_revive, latestCustomerMsg),

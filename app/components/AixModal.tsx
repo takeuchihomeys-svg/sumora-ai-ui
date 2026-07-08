@@ -4160,7 +4160,15 @@ export default function AixModal({
                   </>
                 );
               })()
-            ) : (actionType === "application_push" && appPushType === "hold_view") || actionType === "viewing_invite" ? (
+            ) : (
+              actionType === "viewing_invite" ||
+              actionType === "application_push" ||
+              actionType === "property_check_result" ||
+              actionType === "meeting_place" ||
+              actionType === "condition_hearing" ||
+              actionType === "acknowledge_check" ||
+              actionType === "followup_revive"
+            ) ? (
               <div className="flex flex-col gap-2 w-full">
                 <button
                   onClick={() => void generate({ conversation_match: true })}
