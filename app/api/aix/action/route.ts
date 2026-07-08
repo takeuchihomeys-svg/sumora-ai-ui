@@ -1458,6 +1458,55 @@ ${SMORA_COMMON_RULES}`;
       const hasAppeal = appealPts.length > 0;
       const appealLabel = appealPts.join("・");
 
+      // conversation_match: 会話に合わせた自然文生成（hold_view モード専用・早期 return）
+      const conversationMatch = body.conversation_match as boolean | undefined;
+      if (conversationMatch) {
+        const calendarNoteForApp = calendar_info
+          ? String(calendar_info)
+          : "（カレンダー未取得）";
+
+        const conversationSystem = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
+会話の流れを読んで、内覧案内の返信LINEを1通だけ生成してください。
+
+${SMORA_COMMON_RULES}
+
+【お客様名】「${name}」
+
+【内覧可能日時】
+${calendarNoteForApp}
+
+【メッセージ生成ルール】
+・会話の直前メッセージ内容を踏まえた自然な返信にする
+・日程は「○日(曜)であれば○時〜○時にご案内可能です！！」のように自然に埋め込む
+・複数の候補日がある場合は「直近ですと〜」でまとめる
+・お客様が日時を指定してきた場合はその日時に沿って「はい！！〇日ですと〜」形式にする
+・絵文字は😊を1〜2個、文末に「！！」スタイルを維持
+・挨拶・本文・日程提案・締めの文が一体となった一つの流れにすること
+・改行は自然に。箇条書き禁止。
+
+【重要】JSON出力形式: {"message":"〜（実際のLINEメッセージ全文）"}`;
+
+        const raw = await callClaude(
+          conversationSystem + appDiffNote + appStarNote,
+          `${name}への内覧案内メッセージ。\n${recentHistory}`,
+          currentAction
+        );
+
+        try {
+          const m = raw.match(/\{[\s\S]*\}/);
+          if (m) {
+            const d = JSON.parse(m[0]) as { message?: string };
+            message_text = d.message || raw;
+          } else {
+            message_text = raw;
+          }
+        } catch {
+          message_text = raw;
+        }
+
+        return NextResponse.json({ ok: true, message_text });
+      }
+
       let system: string;
       let userMsg: string;
 

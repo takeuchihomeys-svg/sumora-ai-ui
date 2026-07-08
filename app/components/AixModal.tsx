@@ -4047,6 +4047,23 @@ export default function AixModal({
                   </>
                 );
               })()
+            ) : actionType === "application_push" && appPushType === "hold_view" ? (
+              <div className="flex flex-col gap-2 w-full">
+                <button
+                  onClick={() => void generate({ conversation_match: true })}
+                  disabled={loading || !canGenerate}
+                  className="w-full rounded-2xl bg-[#546E7A] py-3.5 text-sm font-bold text-white disabled:opacity-40"
+                >
+                  {loading ? "生成中..." : "💬 会話を合わせる"}
+                </button>
+                <button
+                  onClick={() => void generate()}
+                  disabled={loading || !canGenerate}
+                  className="w-full rounded-full bg-[#111b21] py-3 text-sm font-bold text-white disabled:opacity-50"
+                >
+                  {loading ? "生成中..." : "AIX 生成"}
+                </button>
+              </div>
             ) : (
               <button
                 onClick={() => void generate()}

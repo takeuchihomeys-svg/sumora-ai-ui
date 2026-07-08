@@ -153,7 +153,7 @@ export async function fetchCalendarSlots(): Promise<{
 
     const fullyBooked = !noEvents && slots.length === 0;
 
-    let defaultSlots = ["10:00〜13:00", "13:00〜16:00", "16:00〜18:00"];
+    let defaultSlots = ["13:00〜16:00", "16:00〜18:00"];
 
     // 今日のデフォルトスロットも現在時刻で絞り込む
     if (i === 0) {
