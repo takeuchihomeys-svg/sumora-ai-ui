@@ -1139,7 +1139,10 @@ ${SMORA_COMMON_RULES}
       const conversationMatchVI = body.conversation_match as boolean | undefined;
       if (conversationMatchVI) {
         const calendarNoteForVI = calendarNote || "";
-        const viewingConvMatchDiffNote = await getKnowledgeForState(AIX_ACTION_TO_STATES.viewing_invite, currentAction, conversationId);
+        const [viewingConvMatchDiffNote, viewingConvMatchStarNote] = await Promise.all([
+          getKnowledgeForState(AIX_ACTION_TO_STATES.viewing_invite, currentAction, conversationId),
+          getStarredExamplesForAction(AIX_ACTION_TO_STATES.viewing_invite, latestCustomerMsg),
+        ]);
 
         const calendarBlock = calendarNoteForVI
           ? `【内覧可能日時（カレンダー自動取得・この時間で案内すること）】\n${calendarNoteForVI}`
@@ -1177,7 +1180,7 @@ ${calendarBlock}
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
         const rawVI = await callClaude(
-          convMatchVISystem + viewingConvMatchDiffNote,
+          convMatchVISystem + greetingTimeNote + viewingConvMatchDiffNote + viewingConvMatchStarNote,
           `${recentHistory}\n\n上記の会話を深く読み取り、${name}への内覧案内返信を生成してください。`,
           currentAction
         );
@@ -2026,7 +2029,10 @@ ${mgmtInfo}${recentHistory}`,
         const pcrCalendarBlock = calendarNoteForPCR
           ? `【内覧可能日時（カレンダー自動取得・空室時はこの日程で案内すること）】\n${calendarNoteForPCR}`
           : "";
-        const pcrDiffNote = await getKnowledgeForState(AIX_ACTION_TO_STATES.property_check_result, currentAction, conversationId);
+        const [pcrDiffNote, pcrStarNote] = await Promise.all([
+          getKnowledgeForState(AIX_ACTION_TO_STATES.property_check_result, currentAction, conversationId),
+          getStarredExamplesForAction(AIX_ACTION_TO_STATES.property_check_result, latestCustomerMsg),
+        ]);
 
         const pcrSystem = `${GENERATION_SYSTEM}
 
@@ -2056,7 +2062,7 @@ ${pcrCalendarBlock}
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
         const rawPCR = await callClaude(
-          pcrSystem + pcrDiffNote,
+          pcrSystem + greetingTimeNote + pcrDiffNote + pcrStarNote,
           `${recentHistory}\n\n上記の会話を深く読み取り、${name}への物件確認結果の返信を生成してください。`,
           currentAction
         );
@@ -2484,7 +2490,10 @@ ${templateText}`;
     } else if (action === "condition_hearing") {
       // conversation_match: 会話に合わせた自然な挨拶＋ヒアリング導入メッセージを生成（固定フォームなし）
       if (body.conversation_match) {
-        const hearingCMDiffNote = await getKnowledgeForState([...AIX_ACTION_TO_STATES.condition_hearing, "first_reply"], currentAction, conversationId);
+        const [hearingCMDiffNote, hearingCMStarNote] = await Promise.all([
+          getKnowledgeForState([...AIX_ACTION_TO_STATES.condition_hearing, "first_reply"], currentAction, conversationId),
+          getStarredExamplesForAction([...AIX_ACTION_TO_STATES.condition_hearing, "first_reply"], latestCustomerMsg),
+        ]);
 
         const hearingCMSystem = `${GENERATION_SYSTEM}
 
@@ -2512,7 +2521,7 @@ ${SMORA_COMMON_RULES}
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
         const rawHCM = await callClaude(
-          hearingCMSystem + hearingCMDiffNote,
+          hearingCMSystem + greetingTimeNote + hearingCMDiffNote + hearingCMStarNote,
           `${recentHistory}\n\n上記の会話を読み取り、${name}への挨拶＋ヒアリング導入メッセージを生成してください。`,
           currentAction
         );
@@ -2755,7 +2764,10 @@ ${SMORA_COMMON_RULES}`;
     } else if (action === "meeting_place") {
       // conversation_match: テンプレ固定なし・会話から日時・物件を読んで自然な待ち合わせ文を生成
       if (body.conversation_match) {
-        const mpDiffNote = await getKnowledgeForState(AIX_ACTION_TO_STATES.meeting_place, currentAction, conversationId);
+        const [mpDiffNote, mpStarNote] = await Promise.all([
+          getKnowledgeForState(AIX_ACTION_TO_STATES.meeting_place, currentAction, conversationId),
+          getStarredExamplesForAction(AIX_ACTION_TO_STATES.meeting_place, latestCustomerMsg),
+        ]);
         const mpPropertyName = body.meeting_property_name ? String(body.meeting_property_name) : "";
         const mpAddress = body.meeting_property_address ? String(body.meeting_property_address) : "";
         const mpDate = body.meeting_date ? String(body.meeting_date) : "";
@@ -2786,7 +2798,7 @@ ${mpDate ? `【内覧日】${mpDate}` : ""}
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
         const rawMP = await callClaude(
-          mpSystem + greetingTimeNote + mpDiffNote,
+          mpSystem + greetingTimeNote + mpDiffNote + mpStarNote,
           `${recentHistory}\n\n上記の会話を読み取り、${name}への待ち合わせ確定メッセージを生成してください。`,
           currentAction
         );
@@ -2946,7 +2958,7 @@ ${SMORA_COMMON_RULES}
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
         const rawFCM = await callClaude(
-          followupCMSystem + followupCMDiffNote + followupCMStarNote,
+          followupCMSystem + greetingTimeNote + followupCMDiffNote + followupCMStarNote,
           `${recentHistory}\n\n上記の会話を深く読み取り、${name}への追客メッセージを生成してください。${extra_input ? `\n補足情報: ${extra_input}` : ""}`,
           currentAction
         );
