@@ -2269,6 +2269,7 @@ export default function Home() {
         body: JSON.stringify({
           message: targetMessage,
           state: effectiveState,
+          conversationId: selectedConversation.id,
           customerName: selectedConversation.customerName,
           customerConditions: genConditions,
           customerSummary: linkedCustomerForGen?.ai_summary ?? undefined,
