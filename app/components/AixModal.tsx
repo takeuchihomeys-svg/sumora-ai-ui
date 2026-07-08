@@ -132,6 +132,56 @@ function stripEmoji(text: string): string {
     .trim();
 }
 
+// 「明日」「明後日」「〇曜日」等の相対日付を実際の月日に変換する
+// 解決できない場合は raw をそのまま返す
+function resolveDateStr(raw: string): string {
+  const today = new Date();
+
+  if (/明日|あした/.test(raw)) {
+    const d = new Date(today);
+    d.setDate(d.getDate() + 1);
+    return `${d.getMonth() + 1}月${d.getDate()}日`;
+  }
+  if (/明後日|あさって/.test(raw)) {
+    const d = new Date(today);
+    d.setDate(d.getDate() + 2);
+    return `${d.getMonth() + 1}月${d.getDate()}日`;
+  }
+  if (/今日|本日/.test(raw)) {
+    return `${today.getMonth() + 1}月${today.getDate()}日`;
+  }
+  // 「来週〇曜日」
+  if (/来週([月火水木金土日])曜/.test(raw)) {
+    const dayNames = ["日", "月", "火", "水", "木", "金", "土"];
+    const m = raw.match(/来週([月火水木金土日])曜/);
+    if (m) {
+      const targetDay = dayNames.indexOf(m[1]);
+      if (targetDay >= 0) {
+        const d = new Date(today);
+        d.setDate(d.getDate() + (targetDay - d.getDay() + 7) % 7 + 7);
+        return `${d.getMonth() + 1}月${d.getDate()}日`;
+      }
+    }
+  }
+  // 「〇曜日」（次回の該当曜日）
+  if (/([月火水木金土日])曜/.test(raw)) {
+    const dayNames = ["日", "月", "火", "水", "木", "金", "土"];
+    const m = raw.match(/([月火水木金土日])曜/);
+    if (m) {
+      const targetDay = dayNames.indexOf(m[1]);
+      if (targetDay >= 0) {
+        const d = new Date(today);
+        let diff = targetDay - d.getDay();
+        if (diff <= 0) diff += 7;
+        d.setDate(d.getDate() + diff);
+        return `${d.getMonth() + 1}月${d.getDate()}日`;
+      }
+    }
+  }
+
+  return raw;
+}
+
 const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }> = {
   condition_hearing: {
     rules: ["挨拶ルールに従い冒頭を自動生成", "①〜⑧の条件フォームを固定テンプレで送信", "一言補足があれば任意入力"],
@@ -741,6 +791,9 @@ export default function AixModal({
           let detectedDate = "";
           for (const msg of customerMsgs) {
             const text = msg.text || "";
+            // 「明日」「明後日」「今日」「〇曜日」等の相対日付を先に解決
+            const rel = resolveDateStr(text);
+            if (rel !== text) { detectedDate = rel; break; }
             // 「7月5日」形式
             const m1 = text.match(/(\d{1,2})月(\d{1,2})日/);
             if (m1) { detectedDate = `${m1[1]}月${m1[2]}日`; break; }
@@ -780,6 +833,9 @@ export default function AixModal({
     const customerMsgs = [...recentMessages].filter(m => m.sender === "customer" && m.text).reverse();
     for (const msg of customerMsgs) {
       const text = msg.text || "";
+      // 「明日」「明後日」「今日」「〇曜日」等の相対日付を先に解決
+      const rel = resolveDateStr(text);
+      if (rel !== text) { setViewingSpecificDate(rel); break; }
       // 「7月5日」形式
       const m1 = text.match(/(\d{1,2})月(\d{1,2})日?/);
       if (m1) { setViewingSpecificDate(`${m1[1]}月${m1[2]}日`); break; }
@@ -4055,7 +4111,7 @@ export default function AixModal({
                   </>
                 );
               })()
-            ) : actionType === "application_push" && appPushType === "hold_view" ? (
+            ) : (actionType === "application_push" && appPushType === "hold_view") || actionType === "viewing_invite" ? (
               <div className="flex flex-col gap-2 w-full">
                 <button
                   onClick={() => void generate({ conversation_match: true })}
