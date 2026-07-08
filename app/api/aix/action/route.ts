@@ -1491,13 +1491,17 @@ ${SMORA_COMMON_RULES}`;
 
         const rawDocsText = await callClaude(docsRequestSystem + appDiffNote + appStarNote, `${name}への書類依頼メッセージ。${recentHistory}`, "docs_request");
         // JSONパース → コンポーネント結合
+        // ※ docs_request は aiComponents を返さない（conversation_state が application_push と同じため
+        //   STATE_LEARNABLEが一致せず component_diff 学習がゼロになるのを防ぐ）。
+        //   代わりに message_text = aiDraft として保存されるため全文 analyzeDiff が機能する。
         try {
           const m = rawDocsText.match(/\{[\s\S]*\}/);
           if (m) {
             const c = JSON.parse(m[0]) as Record<string, string>;
             const componentOrder = ["thanks", "missing_items", "closing"];
             message_text = componentOrder.map(k => c[k] ?? "").filter(Boolean).join("\n");
-            aiComponents = c;
+            // aiComponents は意図的にセットしない → フロントが ai_components を保存しない
+            // → analyze-diffs が全文 analyzeDiff パスで処理 → 正常に学習される
           } else {
             message_text = rawDocsText;
           }

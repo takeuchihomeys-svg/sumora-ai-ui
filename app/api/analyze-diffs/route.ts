@@ -267,10 +267,13 @@ export async function POST(req: NextRequest) {
       });
 
       // アクション別の学習対象コンポーネント
+      // ※ FIXED_INFO_BY_STATE（save-reply-example）で除外される固有情報パーツ（dates/vacating/calendar等）は
+      //   component_diffに出現しないためここに追加しても意味がない（calendar のみ正強化用に残している）
       const STATE_LEARNABLE: Record<string, string[]> = {
         property_send:    ["intro", "pickup", "invite", "calendar", "closing"],
         viewing_invite:   ["greeting", "situation", "invite", "closing"],
-        application_push: ["appeal", "cta", "invite", "closing"],
+        // reassurance（不安解消）・movein_date（入居日安心）: simple/hold_viewで生成されるが未登録だったため追加
+        application_push: ["movein_date", "appeal", "cta", "invite", "reassurance", "closing"],
         acknowledge_check: ["greeting", "property_info", "estimate_request", "closing"],
       };
       const learnableList = STATE_LEARNABLE[conversation_state] ?? STATE_LEARNABLE["property_send"];
@@ -294,6 +297,9 @@ export async function POST(req: NextRequest) {
         situation:        "状況・背景説明",
         appeal:           "物件アピール文",
         cta:              "申込み後押し文",
+        // application_push 追加分: reassurance（不安解消一言）/ movein_date（入居日安心文）
+        reassurance:      "不安解消・フォロー一言（保証会社審査〜キャンセル料なし等）",
+        movein_date:      "入居日安心（〇月〇日のご入居で問題ございません！！）",
         property_info:    "物件・確認内容の記載",
         estimate_request: "最大限割引した初期費用の御見積もり依頼",
       };
