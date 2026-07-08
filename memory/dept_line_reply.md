@@ -1,6 +1,24 @@
 # LINE返信AI部署 倉庫（#L）
 
-最終更新: 2026-07-02
+最終更新: 2026-07-08
+
+---
+
+## 引き継ぎ（2026-07-08）
+
+### mgmt_guarantor 大型改善 — 完了
+変更対象4ファイル:
+1. `app/lib/line-reply-prompts.ts` — 株式会社日本トラストコーポレーション（日本トラスト）を独立系リストに追加
+2. `app/components/AixModal.tsx` — 新state追加・canGenerate更新・generate()分岐更新・UI全刷新（テキスト入力・タイプ選択・任意画像OCR・任意誘導ボタン）
+3. `app/api/aix/action/route.ts` — mgmt_guarantorハンドラー全刷新：テキスト入力優先・画像OCRはフォールバック・独立系の説明強化・誘導任意化・画像あり時early return（doc_image_url付き）
+4. `app/api/extract-guarantor-info/route.ts` — 新規作成：FormData受信→Claude Haiku Vision→{ok, property_name, company_name, guarantor_type}返却
+
+主な改善点:
+- 保証会社名と物件名をテキスト入力で渡せる（OCR不要）
+- 独立系の説明: 「審査基準緩く、審査通過する可能性十分に御座います！！」
+- 誘導（申込/内覧）は任意（報告のみで送れる）
+- 画像がある場合は画像を先に送る（doc_image_url経由）
+- 日本トラストが「不明」→「独立系」に正しく分類
 
 ---
 

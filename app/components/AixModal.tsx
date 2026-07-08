@@ -419,6 +419,13 @@ export default function AixModal({
   const [mgmtCostType, setMgmtCostType] = useState<"estimate" | "negotiation" | null>(null);
   // 保証会社確認専用: 誘導方向
   const [mgmtGuarantorPushType, setMgmtGuarantorPushType] = useState<"apply" | "viewing" | null>(null);
+  // 保証会社確認専用: テキスト入力 + タイプ + OCRローディング
+  const [mgmtGuarantorPropertyName, setMgmtGuarantorPropertyName] = useState<string>("");
+  const [mgmtGuarantorCompanyName, setMgmtGuarantorCompanyName] = useState<string>("");
+  const [mgmtGuarantorType, setMgmtGuarantorType] = useState<"独立系" | "LICC系" | "信販系" | "不明" | "">("");
+  const [mgmtDocOcrLoading, setMgmtDocOcrLoading] = useState(false);
+  // 保証会社確認専用: 画像先送り用URL（generate()後にセット）
+  const [previewDocImageUrl, setPreviewDocImageUrl] = useState<string>("");
   // 管理会社確認 全パターン共通: 物件資料添付
   const [mgmtDocImage, setMgmtDocImage] = useState<File | null>(null);
   const [mgmtDocPreview, setMgmtDocPreview] = useState<string>("");
@@ -586,6 +593,11 @@ export default function AixModal({
     setMgmtDocImage(null);
     setMgmtDocPreview("");
     setMgmtGuarantorPushType(null);
+    setMgmtGuarantorPropertyName("");
+    setMgmtGuarantorCompanyName("");
+    setMgmtGuarantorType("");
+    setMgmtDocOcrLoading(false);
+    setPreviewDocImageUrl("");
   }, [actionType, conversationId]);
 
   useEffect(() => {
@@ -1245,11 +1257,17 @@ export default function AixModal({
           }
           if (estimateUrls.length > 0) body.estimate_image_urls = estimateUrls;
         } else if (checkPattern === "mgmt_guarantor") {
-          if (!mgmtDocImage) throw new Error("物件資料画像が必要です");
-          if (!mgmtGuarantorPushType) throw new Error("申込誘導/内覧誘導を選択してください");
-          const docUrl = await uploadImage(mgmtDocImage, 0);
-          body.image_url = docUrl;
-          body.guarantor_push_type = mgmtGuarantorPushType;
+          // 画像がある場合はアップロード（任意）
+          if (mgmtDocImage) {
+            const docUrl = await uploadImage(mgmtDocImage, 0);
+            body.image_url = docUrl;
+          }
+          // テキストフィールドの値を渡す
+          if (mgmtGuarantorPropertyName.trim()) body.property_name = mgmtGuarantorPropertyName.trim();
+          if (mgmtGuarantorCompanyName.trim()) body.guarantor_company_name = mgmtGuarantorCompanyName.trim();
+          if (mgmtGuarantorType) body.guarantor_type = mgmtGuarantorType;
+          // 誘導方向（任意）
+          if (mgmtGuarantorPushType) body.guarantor_push_type = mgmtGuarantorPushType;
         } else {
           if (checkEstimateFile) body.estimate_image_url = await uploadImage(checkEstimateFile);
           if (checkImageFiles.length > 0) {
@@ -1438,6 +1456,8 @@ export default function AixModal({
       setEstimateTextReady(data.estimate_text || "");
       // ① LL-07: カバーレターを保存（見積書に添える挨拶文）
       if (data.coverLetter) setEstimateCoverLetter(data.coverLetter as string);
+      // 保証会社確認: 画像URLをstateに保存（TODO: 画像→本文の順で送る際に使用）
+      if (data.doc_image_url) setPreviewDocImageUrl(data.doc_image_url as string);
       setSendCountdown(0);
     } catch (err) {
       setError(err instanceof Error ? err.message : "エラーが発生しました");
@@ -1881,7 +1901,7 @@ export default function AixModal({
           checkPattern === "mgmt_initial_cost"
             ? !!mgmtCostType && (mgmtCostType === "estimate" || !!inputText.trim())
             : checkPattern === "mgmt_guarantor"
-            ? !!mgmtDocImage && !!mgmtGuarantorPushType
+            ? mgmtGuarantorCompanyName.trim().length > 0
             : !!inputText.trim()
         )
       : !!checkPattern)
@@ -2714,59 +2734,163 @@ export default function AixModal({
                 </div>
               )}
 
-              {/* 物件資料アップロード（全mgmtパターン共通・保証会社確認は必須） */}
-              <div className="mt-1">
-                <p className="mb-1 text-xs font-bold text-[#54656f]">
-                  {checkPattern === "mgmt_guarantor" ? "物件資料（必須・保証会社名を読み取ります）" : "物件資料（任意）"}
-                  {checkPattern === "mgmt_guarantor" && <span className="text-red-400 ml-1">*</span>}
-                </p>
-                <input
-                  type="file"
-                  accept="image/*"
-                  ref={mgmtDocInputRef}
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (!f) return;
-                    setMgmtDocImage(f);
-                    const reader = new FileReader();
-                    reader.onload = (ev) => setMgmtDocPreview(ev.target?.result as string);
-                    reader.readAsDataURL(f);
-                    setPreview("");
-                  }}
-                />
-                {mgmtDocPreview ? (
-                  <div className="relative inline-block">
-                    <img src={mgmtDocPreview} className="h-24 w-auto rounded-xl object-cover border border-[#d1d7db]" />
-                    <button
-                      onClick={() => { setMgmtDocImage(null); setMgmtDocPreview(""); setPreview(""); }}
-                      className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] text-white"
-                    >x</button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => mgmtDocInputRef.current?.click()}
-                    className="flex items-center gap-1.5 rounded-xl bg-[#f0f2f5] px-3 py-2 text-xs text-[#54656f]"
-                  >
-                    <span>+ 画像を選択</span>
-                  </button>
-                )}
-              </div>
-
-              {/* 誘導方向（保証会社確認のみ） */}
-              {checkPattern === "mgmt_guarantor" && (
+              {/* 物件資料アップロード（保証会社確認以外の mgmt パターン共通・任意） */}
+              {checkPattern !== "mgmt_guarantor" && (
                 <div className="mt-1">
-                  <p className="mb-1.5 text-xs font-bold text-[#54656f]">誘導方向 <span className="text-red-400">*</span></p>
-                  <div className="flex gap-2">
-                    {(["apply", "viewing"] as const).map(t => (
+                  <p className="mb-1 text-xs font-bold text-[#54656f]">物件資料（任意）</p>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    ref={mgmtDocInputRef}
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (!f) return;
+                      setMgmtDocImage(f);
+                      const reader = new FileReader();
+                      reader.onload = (ev) => setMgmtDocPreview(ev.target?.result as string);
+                      reader.readAsDataURL(f);
+                      setPreview("");
+                    }}
+                  />
+                  {mgmtDocPreview ? (
+                    <div className="relative inline-block">
+                      <img src={mgmtDocPreview} className="h-24 w-auto rounded-xl object-cover border border-[#d1d7db]" />
                       <button
-                        key={t}
-                        onClick={() => { setMgmtGuarantorPushType(t); setPreview(""); }}
-                        className={`flex-1 rounded-xl border py-2.5 text-xs font-semibold transition ${mgmtGuarantorPushType === t ? "border-[#546E7A] bg-[#ECEFF1] text-[#37474F]" : "border-[#E5E7EB] text-[#9CA3AF]"}`}
+                        onClick={() => { setMgmtDocImage(null); setMgmtDocPreview(""); setPreview(""); }}
+                        className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] text-white"
+                      >×</button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => mgmtDocInputRef.current?.click()}
+                      className="flex items-center gap-1.5 rounded-xl bg-[#f0f2f5] px-3 py-2 text-xs text-[#54656f]"
+                    >
+                      <span>＋ 画像を選択</span>
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* 保証会社確認専用: テキスト入力 + タイプ選択 + 任意添付 + 任意誘導 */}
+              {checkPattern === "mgmt_guarantor" && (
+                <div className="flex flex-col gap-3 mt-1">
+                  {/* テキスト入力欄 */}
+                  <div className="flex flex-col gap-2">
+                    <input
+                      type="text"
+                      placeholder="物件名（例: レジュールアッシュ梅田AXIA）"
+                      value={mgmtGuarantorPropertyName}
+                      onChange={e => { setMgmtGuarantorPropertyName(e.target.value); setPreview(""); }}
+                      className="w-full rounded-xl border border-[#E5E7EB] bg-white px-3 py-2.5 text-sm placeholder-[#9CA3AF] outline-none focus:border-[#546E7A]"
+                    />
+                    <input
+                      type="text"
+                      placeholder="保証会社名（例: 株式会社日本トラストコーポレーション）"
+                      value={mgmtGuarantorCompanyName}
+                      onChange={e => { setMgmtGuarantorCompanyName(e.target.value); setPreview(""); }}
+                      className="w-full rounded-xl border border-[#E5E7EB] bg-white px-3 py-2.5 text-sm placeholder-[#9CA3AF] outline-none focus:border-[#546E7A]"
+                    />
+                    {/* 保証会社の種類 */}
+                    <div className="flex gap-1.5">
+                      {(["独立系", "LICC系", "信販系", "不明"] as const).map(t => (
+                        <button
+                          key={t}
+                          onClick={() => { setMgmtGuarantorType(prev => prev === t ? "" : t); setPreview(""); }}
+                          className={`flex-1 rounded-xl border py-2 text-[11px] font-semibold transition ${
+                            mgmtGuarantorType === t
+                              ? t === "独立系" ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+                                : t === "LICC系" ? "border-blue-400 bg-blue-50 text-blue-700"
+                                : t === "信販系" ? "border-red-400 bg-red-50 text-red-700"
+                                : "border-[#546E7A] bg-[#ECEFF1] text-[#546E7A]"
+                              : "border-[#E5E7EB] text-[#9CA3AF]"
+                          }`}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 物件資料アップロード（任意・読み取りで自動入力） */}
+                  <div>
+                    <p className="mb-1 text-[10px] text-[#8696a0]">📎 物件資料（任意・読み取りで自動入力）</p>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      ref={mgmtDocInputRef}
+                      className="hidden"
+                      onChange={async (e) => {
+                        const f = e.target.files?.[0];
+                        if (!f) return;
+                        setMgmtDocImage(f);
+                        const reader = new FileReader();
+                        reader.onload = ev => setMgmtDocPreview(ev.target?.result as string);
+                        reader.readAsDataURL(f);
+                        setPreview("");
+                      }}
+                    />
+                    {mgmtDocPreview ? (
+                      <div className="flex items-center gap-2">
+                        <div className="relative">
+                          <img src={mgmtDocPreview} className="h-16 w-auto rounded-xl object-cover border" />
+                          <button
+                            onClick={() => { setMgmtDocImage(null); setMgmtDocPreview(""); setPreview(""); }}
+                            className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] text-white"
+                          >×</button>
+                        </div>
+                        {/* 読み取りボタン */}
+                        <button
+                          onClick={async () => {
+                            if (!mgmtDocImage || mgmtDocOcrLoading) return;
+                            setMgmtDocOcrLoading(true);
+                            try {
+                              const fd = new FormData();
+                              fd.append("file", mgmtDocImage);
+                              const res = await fetch("/api/extract-guarantor-info", { method: "POST", body: fd });
+                              const ocrData = await res.json() as { property_name?: string; company_name?: string; guarantor_type?: string };
+                              if (ocrData.property_name) setMgmtGuarantorPropertyName(ocrData.property_name);
+                              if (ocrData.company_name) setMgmtGuarantorCompanyName(ocrData.company_name);
+                              if (ocrData.guarantor_type && (["独立系","LICC系","信販系","不明"] as string[]).includes(ocrData.guarantor_type)) {
+                                setMgmtGuarantorType(ocrData.guarantor_type as "独立系" | "LICC系" | "信販系" | "不明");
+                              }
+                            } catch { /* エラーは無視 */ }
+                            finally { setMgmtDocOcrLoading(false); }
+                          }}
+                          disabled={mgmtDocOcrLoading}
+                          className="flex items-center gap-1 rounded-xl bg-[#546E7A] px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
+                        >
+                          {mgmtDocOcrLoading ? "読み取り中..." : "🔍 読み取る"}
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => mgmtDocInputRef.current?.click()}
+                        className="flex items-center gap-1.5 rounded-xl bg-[#f0f2f5] px-3 py-2 text-xs text-[#54656f]"
                       >
-                        {t === "apply" ? "申込誘導" : "内覧誘導"}
+                        ＋ 物件資料を添付
                       </button>
-                    ))}
+                    )}
+                  </div>
+
+                  {/* 誘導方向（任意） */}
+                  <div>
+                    <p className="mb-1 text-[10px] text-[#8696a0]">誘導方向（任意・選択しない場合は報告のみ）</p>
+                    <div className="flex gap-2">
+                      {(["apply", "viewing"] as const).map(t => (
+                        <button
+                          key={t}
+                          onClick={() => { setMgmtGuarantorPushType(prev => prev === t ? null : t); setPreview(""); }}
+                          className={`flex-1 rounded-xl border py-2.5 text-xs font-semibold transition ${
+                            mgmtGuarantorPushType === t
+                              ? "border-[#546E7A] bg-[#ECEFF1] text-[#37474F]"
+                              : "border-[#E5E7EB] text-[#9CA3AF]"
+                          }`}
+                        >
+                          {t === "apply" ? "📝 申込誘導" : "🏠 内覧誘導"}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
