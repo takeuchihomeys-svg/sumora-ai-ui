@@ -599,7 +599,7 @@ ${conditions}${historyNote}
 // ─── DB取得 ─────────────────────────────────────────────────────────────────
 // STATE_SEARCH_ALIASES は @/app/lib/line-reply-prompts からインポート済み
 
-type KnowledgeRow = { id: string; title: string; content: string; category: string; conversation_state: string; importance: number };
+type KnowledgeRow = { id: string; title: string; content: string; category: string; conversation_state: string; importance: number; hypothesis_status?: string };
 
 function incrementKnowledgeUsage(ids: string[]): void {
   if (!ids.length) return;
@@ -620,7 +620,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
 
   // 失注パターン専用バケット（auto-analyze-losers が category=principle / importance=8 で保存するため、
   // pgvector経路の importance>=9 フィルタ・フォールバック経路の principle 除外の両方から漏れる → 専用クエリで必ず届ける）
-  const [{ data: lossPatterns }, { data: topPrinciples }] = await Promise.all([
+  const [{ data: lossPatterns }, { data: topPrinciples }, { data: adaptRules }] = await Promise.all([
     supabase
       .from("ai_reply_knowledge")
       .select("id, title, content, importance, category")
@@ -638,6 +638,14 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       .gte("importance", 9)
       .neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false })
+      .limit(5),
+    // HIGH-05: テンプレート修正学習ルール（テンプレ適用→スタッフ編集→送信から学習したパターン）
+    supabase
+      .from("adaptation_improvement_rules")
+      .select("rule_text, confidence, category")
+      .eq("is_active", true)
+      .gte("confidence", 0.7)
+      .order("confidence", { ascending: false })
       .limit(5),
   ]);
   const lossList = (lossPatterns ?? []).filter(p => (p.content ?? "").trim().length > 0);
@@ -701,6 +709,11 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
         if (lossBlock) {
           sections.push(lossBlock);
         }
+        // HIGH-05: テンプレート修正学習ルール注入
+        if ((adaptRules?.length ?? 0) > 0) {
+          sections.push("【📘 テンプレート修正学習ルール（テンプレ活用時の改善パターン — テンプレを使う場合は必ず参照）】\n" +
+            (adaptRules as { rule_text: string; category: string }[]).map(r => `・[${r.category}] ${r.rule_text}`).join("\n"));
+        }
         return sections.length > 0 ? "\n\n" + sections.join("\n\n") : "";
       }
     }
@@ -710,39 +723,48 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   // principle は global/stateSpecific クエリから除外しているため、
   // 【⚠️絶対ルール】には冒頭で取得済みの topPrinciples（category=principle・importance>=9）を使う
   const [{ data: stateDiff }, { data: globalDiff }, { data: correctionPairs }, { data: global }, { data: stateSpecific }] = await Promise.all([
-    supabase.from("ai_reply_knowledge").select("id, category, title, content, importance")
+    // HIGH-07: hypothesis_status を取得してconfirmed優先ソートに使う
+    supabase.from("ai_reply_knowledge").select("id, category, title, content, importance, hypothesis_status")
       .ilike("title", "%差分学習%").gte("importance", 7)
       .in("conversation_state", stateAliases).neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false })
-      .order("created_at", { ascending: false }).limit(15),
-    supabase.from("ai_reply_knowledge").select("id, category, title, content, importance")
+      .order("created_at", { ascending: false }).limit(17),
+    supabase.from("ai_reply_knowledge").select("id, category, title, content, importance, hypothesis_status")
       .ilike("title", "%差分学習%").gte("importance", 7).neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false })
-      .order("created_at", { ascending: false }).limit(10),
-    supabase.from("ai_reply_knowledge").select("id, category, title, content, importance")
+      .order("created_at", { ascending: false }).limit(12),
+    supabase.from("ai_reply_knowledge").select("id, category, title, content, importance, hypothesis_status")
       .ilike("title", "%修正対比%").in("conversation_state", stateAliases).neq("hypothesis_status", "rejected")
-      .order("importance", { ascending: false }).limit(8),
-    supabase.from("ai_reply_knowledge").select("id, category, title, content, importance")
+      .order("importance", { ascending: false }).limit(10),
+    supabase.from("ai_reply_knowledge").select("id, category, title, content, importance, hypothesis_status")
       .gte("importance", 8)
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
       .not("category", "eq", "principle").neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false })
-      .order("created_at", { ascending: false }).limit(8),
-    supabase.from("ai_reply_knowledge").select("id, category, title, content, importance")
+      .order("created_at", { ascending: false }).limit(10),
+    supabase.from("ai_reply_knowledge").select("id, category, title, content, importance, hypothesis_status")
       .in("conversation_state", stateAliases).gte("importance", 7)
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
       .not("category", "eq", "principle").neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false })
-      .order("created_at", { ascending: false }).limit(24),
+      .order("created_at", { ascending: false }).limit(26),
   ]);
 
-  const stateDiffList = stateDiff ?? [];
-  const globalDiffDeduped = (globalDiff ?? []).filter(g => !stateDiffList.some(s => s.content === g.content));
+  // HIGH-07: confirmed を hypothesis より優先してソート
+  const sortConfirmedFirst = <T extends { hypothesis_status?: string }>(arr: T[]): T[] =>
+    [...arr].sort((a, b) => {
+      if (a.hypothesis_status === "confirmed" && b.hypothesis_status !== "confirmed") return -1;
+      if (b.hypothesis_status === "confirmed" && a.hypothesis_status !== "confirmed") return 1;
+      return 0;
+    });
+
+  const stateDiffList = sortConfirmedFirst(stateDiff ?? []);
+  const globalDiffDeduped = sortConfirmedFirst((globalDiff ?? []).filter(g => !stateDiffList.some(s => s.content === g.content)));
   const diffLearned = [...stateDiffList, ...globalDiffDeduped].slice(0, 8);
 
-  const correctionList = correctionPairs ?? [];
-  const stateSpecificList = stateSpecific ?? [];
-  const globalList = (global ?? []).filter(g => !stateSpecificList.some(s => s.content === g.content));
+  const correctionList = sortConfirmedFirst(correctionPairs ?? []);
+  const stateSpecificList = sortConfirmedFirst(stateSpecific ?? []);
+  const globalList = sortConfirmedFirst((global ?? []).filter(g => !stateSpecificList.some(s => s.content === g.content)));
   const all = [...stateSpecificList, ...globalList];
   const principlesList = topPrinciples ?? [];
   if (diffLearned.length === 0 && correctionList.length === 0 && all.length === 0 && principlesList.length === 0 && !lossBlock) return "";
@@ -782,6 +804,11 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   }
   if (lossBlock) {
     sections.push(lossBlock);
+  }
+  // HIGH-05: テンプレート修正学習ルール注入
+  if ((adaptRules?.length ?? 0) > 0) {
+    sections.push("【📘 テンプレート修正学習ルール（テンプレ活用時の改善パターン — テンプレを使う場合は必ず参照）】\n" +
+      (adaptRules as { rule_text: string; category: string }[]).map(r => `・[${r.category}] ${r.rule_text}`).join("\n"));
   }
   return sections.length > 0 ? "\n\n" + sections.join("\n\n") : "";
 }

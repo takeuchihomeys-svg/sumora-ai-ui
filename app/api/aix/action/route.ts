@@ -174,26 +174,27 @@ const AIX_ACTION_TO_STATES: Record<string, string[]> = {
 async function getKnowledgeForState(states: string[], actionType?: string, conversationId?: string): Promise<string> {
   if (!states || states.length === 0) return "";
   try {
-    const [{ data: diffLearned }, { data: otherKnowledge }, editResult] = await Promise.all([
+    const [{ data: diffLearned }, { data: otherKnowledge }, editResult, { data: adaptRules }] = await Promise.all([
       // ① 差分学習ルール（最優先: スタッフが修正したパターン）
+      // HIGH-07: hypothesis_status を取得してconfirmed優先ソートに使う。limit+2で余分に取得
       supabase.from("ai_reply_knowledge")
-        .select("id, title, content")
+        .select("id, title, content, hypothesis_status")
         .ilike("title", "%差分学習%")
         .gte("importance", 7)
         .in("conversation_state", states)
         .neq("hypothesis_status", "rejected")
         .order("importance", { ascending: false })
         .order("created_at", { ascending: false })
-        .limit(10),
+        .limit(12),
       // ② その他のナレッジ（pattern/principle/phrase — 手動登録・analyze-diffsのパターン）
       supabase.from("ai_reply_knowledge")
-        .select("id, title, content")
+        .select("id, title, content, hypothesis_status")
         .not("title", "ilike", "%差分学習%")
         .gte("importance", 7)
         .in("conversation_state", states)
         .neq("hypothesis_status", "rejected")
         .order("importance", { ascending: false })
-        .limit(8),
+        .limit(10),
       // ③ スタッフがAIX生成文を編集した実例（リアルタイム品質フィードバック）
       actionType
         ? supabase.from("ai_template_candidates")
@@ -203,12 +204,30 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
             .order("created_at", { ascending: false })
             .limit(3)
         : Promise.resolve({ data: null, error: null }),
+      // ④ テンプレート修正学習ルール（HIGH-05: テンプレ適用→スタッフ編集→送信のパターンから学習）
+      supabase.from("adaptation_improvement_rules")
+        .select("rule_text, confidence, category")
+        .eq("is_active", true)
+        .gte("confidence", 0.7)
+        .order("confidence", { ascending: false })
+        .limit(5),
     ]);
+
+    // HIGH-07: confirmed を hypothesis より優先してソート
+    type KRow = { id: string; title: string; content: string; hypothesis_status?: string };
+    const sortConfirmedFirst = (arr: KRow[]): KRow[] =>
+      [...arr].sort((a, b) => {
+        if (a.hypothesis_status === "confirmed" && b.hypothesis_status !== "confirmed") return -1;
+        if (b.hypothesis_status === "confirmed" && a.hypothesis_status !== "confirmed") return 1;
+        return 0;
+      });
+    const sortedDiff = sortConfirmedFirst((diffLearned ?? []) as KRow[]).slice(0, 10);
+    const sortedOther = sortConfirmedFirst((otherKnowledge ?? []) as KRow[]).slice(0, 8);
+
     // 使用追跡（fire-and-forget）
-    const allIds = [...(diffLearned ?? []), ...(otherKnowledge ?? [])].map(r => (r as { id: string }).id).filter(Boolean);
+    const allIds = [...sortedDiff, ...sortedOther].map(r => r.id).filter(Boolean);
     if (allIds.length) {
       supabase.rpc("increment_knowledge_used_count", { p_ids: allIds }).then(() => {}, () => {});
-      // knowledge_apply_log に記録 → confirm_knowledge_feedback でcorrect/wrong判定に使われる
       if (conversationId) {
         supabase.from("knowledge_apply_log").insert(
           allIds.map(id => ({ knowledge_id: id, conversation_id: conversationId }))
@@ -217,19 +236,24 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
     }
     const editExamples = editResult.data;
     const parts: string[] = [];
-    if ((diffLearned?.length ?? 0) > 0) {
+    if (sortedDiff.length > 0) {
       parts.push("【🔴 過去の修正パターン（必ず守る）】\n" +
-        (diffLearned as { title: string; content: string }[]).map(r => `・${r.title}: ${r.content}`).join("\n"));
+        sortedDiff.map(r => `・${r.title}: ${r.content}`).join("\n"));
     }
-    if ((otherKnowledge?.length ?? 0) > 0) {
+    if (sortedOther.length > 0) {
       parts.push("【📚 ノウハウ・鉄則（言い回し・表現の参考にすること。ただし上記の【構成】ルールと矛盾する場合は【構成】ルールを最優先にすること）】\n" +
-        (otherKnowledge as { title: string; content: string }[]).map(r => `・${r.content}`).join("\n"));
+        sortedOther.map(r => `・${r.content}`).join("\n"));
     }
     if ((editExamples?.length ?? 0) > 0) {
       parts.push("【✏️ スタッフが実際に改善した送信例（この質感・表現を目指すこと。ただし上記の【構成】ルールを最優先にすること）】\n" +
         (editExamples as { template_text: string }[])
           .map((r, i) => `[改善例${i + 1}]\n${r.template_text.slice(0, 250)}`)
           .join("\n\n"));
+    }
+    // HIGH-05: テンプレート修正学習ルール注入
+    if ((adaptRules?.length ?? 0) > 0) {
+      parts.push("【📘 テンプレート修正学習ルール（テンプレ活用時の改善パターン — テンプレを使う場合は必ず参照）】\n" +
+        (adaptRules as { rule_text: string; category: string }[]).map(r => `・[${r.category}] ${r.rule_text}`).join("\n"));
     }
     return parts.length > 0 ? "\n\n" + parts.join("\n\n") : "";
   } catch {
