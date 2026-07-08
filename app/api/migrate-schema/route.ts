@@ -746,6 +746,14 @@ ALTER TABLE action_pattern_logs ADD COLUMN IF NOT EXISTS predicted_action TEXT D
 ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS previous_action_type TEXT DEFAULT NULL;
 ALTER TABLE action_pattern_logs ADD COLUMN IF NOT EXISTS conversation_id TEXT DEFAULT NULL;
 
+-- SUB-1: AIXピッカー選択のサブパターンを記録（学習精度・成果集計の粒度向上）
+-- check_pattern: property_check_result のサブパターン（available/unavailable/alternative/vacate_date等）
+-- app_sub_mode: application_push のサブモード（push/confirm/docs_request/format）
+-- send_mode: property_send のモード（normal/new_arrival/widen/alternative）
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS check_pattern TEXT DEFAULT NULL;
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS app_sub_mode TEXT DEFAULT NULL;
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS send_mode TEXT DEFAULT NULL;
+
 -- 失注分析済みフラグ（auto-analyze-losers の毎日再課金防止）
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS loss_analyzed_at TIMESTAMPTZ;
 

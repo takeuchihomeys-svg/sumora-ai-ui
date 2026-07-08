@@ -53,7 +53,7 @@ interface AixModalProps {
   initialCheckPattern?: "available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor";
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
-  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean }) => void;
+  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string }) => void;
   onDelayedSend?: (seconds: number, sendFn: () => Promise<void>) => void;
   onScheduled?: () => void;
   onVacatingDetected?: (date: string) => void;
@@ -1572,8 +1572,18 @@ export default function AixModal({
     const lastStaffMsg = (recentMessages ?? [])
       .filter((m) => m.sender === "staff" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
       .at(-1)?.text;
+    // サブパターンをconversationStateに埋め込む（ピッカー選択別に差分学習ルールを分離）
+    // property_check_result_available / application_push_confirm / property_send_widen 等
+    const stateSubKey =
+      actionType === "property_check_result" && checkPattern && checkPattern !== "interior_photo" && checkPattern !== "move_in_date"
+        ? `property_check_result_${checkPattern}`
+        : actionType === "application_push" && appSubMode
+        ? `application_push_${appSubMode}`
+        : actionType === "property_send" && sendMode && sendMode !== "normal"
+        ? `property_send_${sendMode}`
+        : null;
     return {
-      conversationState: ACTION_TO_STATE[actionType] ?? "hearing",
+      conversationState: stateSubKey ?? ACTION_TO_STATE[actionType] ?? "hearing",
       conversationId,
       customerMessage: lastCustomerMsg || fallbackCustomerMessage,
       sentReply,
@@ -1796,6 +1806,11 @@ export default function AixModal({
         suggestViewing: actionType === "property_check_result" && checkPattern === "available" && checkAvailableApp !== "yes",
         suggestInitialCostTemplate: actionType === "property_recommendation" && recommendFocusPoints.includes("初期費用"),
         suggestAlternativeSend: actionType === "property_check_result" && checkPattern === "unavailable",
+        suggestPropertySend: actionType === "condition_hearing",
+        suggestApplicationPush: actionType === "estimate_sheet",
+        checkPattern: checkPattern ?? undefined,
+        appSubMode: appSubMode ?? undefined,
+        sendMode: sendMode ?? undefined,
         scheduled: true,
       });
       onScheduled?.();
@@ -1963,6 +1978,11 @@ export default function AixModal({
         suggestViewing: actionType === "property_check_result" && checkPattern === "available" && checkAvailableApp !== "yes",
         suggestInitialCostTemplate: actionType === "property_recommendation" && recommendFocusPoints.includes("初期費用"),
         suggestAlternativeSend: actionType === "property_check_result" && checkPattern === "unavailable",
+        suggestPropertySend: actionType === "condition_hearing",
+        suggestApplicationPush: actionType === "estimate_sheet",
+        checkPattern: checkPattern ?? undefined,
+        appSubMode: appSubMode ?? undefined,
+        sendMode: sendMode ?? undefined,
       });
       onClose();
     } catch (err) {

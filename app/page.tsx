@@ -472,6 +472,13 @@ export default function Home() {
   const [dismissedPropertySendIds, setDismissedPropertySendIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedPropertySendIds") || "[]") as string[]); } catch { return new Set(); }
   });
+  // estimate_sheet 後の申込AIX誘導バナー（見積書送付後 → 次は申込へ！）
+  const [suggestApplicationPushMap, setSuggestApplicationPushMap] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(sessionStorage.getItem("suggestApplicationPushMap") || "{}") as Record<string, boolean>; } catch { return {}; }
+  });
+  const [dismissedApplicationPushIds, setDismissedApplicationPushIds] = useState<Set<string>>(() => {
+    try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedApplicationPushIds") || "[]") as string[]); } catch { return new Set(); }
+  });
   const [suggestPropertyRecommendMap, setSuggestPropertyRecommendMap] = useState<Record<string, boolean>>(() => {
     try { return JSON.parse(sessionStorage.getItem("suggestPropertyRecommendMap") || "{}") as Record<string, boolean>; } catch { return {}; }
   });
@@ -778,6 +785,14 @@ export default function Home() {
   useEffect(() => {
     try { sessionStorage.setItem("dismissedPropertySendIds", JSON.stringify([...dismissedPropertySendIds])); } catch {}
   }, [dismissedPropertySendIds]);
+
+  useEffect(() => {
+    try { sessionStorage.setItem("suggestApplicationPushMap", JSON.stringify(suggestApplicationPushMap)); } catch {}
+  }, [suggestApplicationPushMap]);
+
+  useEffect(() => {
+    try { sessionStorage.setItem("dismissedApplicationPushIds", JSON.stringify([...dismissedApplicationPushIds])); } catch {}
+  }, [dismissedApplicationPushIds]);
 
   useEffect(() => {
     try { sessionStorage.setItem("statusFilter", statusFilter); } catch {}
@@ -5960,6 +5975,18 @@ export default function Home() {
                 </div>
               );
 
+              // P6.5: 見積書送付後 → 申込へ！AIX誘導バナー
+              if (suggestApplicationPushMap[id] && !dismissedApplicationPushIds.has(id)) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-red-400 bg-red-50 px-3 py-2 flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-red-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>見積書送付後 → AIX 申込へ！でクロージング</span>
+                  <button onClick={() => { setShowAixMenu(false); setAixInspectLabel(null); openAixDirect("application_push"); setSuggestApplicationPushMap((prev) => { const n = { ...prev }; delete n[id]; return n; }); }}
+                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                    style={{ background: "linear-gradient(135deg, #c62828, #E53935)" }}>AIX 申込へ！</button>
+                  <button onClick={() => setDismissedApplicationPushIds((prev) => new Set([...prev, id]))}
+                    className="shrink-0 text-red-400 text-[11px] font-bold">✕</button>
+                </div>
+              );
+
               // P7: 2番手
               if (suggest2ndHandMap[id]) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-orange-400 bg-orange-50 px-3 py-2 flex items-center gap-2">
@@ -7382,7 +7409,7 @@ export default function Home() {
           }}
           onSend={sendMessageText}
           onDelayedSend={handleDelayedSend}
-          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean }) => {
+          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string }) => {
             // 2通目自動送信スケジュール（AIXフロー用・予約送信は対象外）
             if (pendingSecondMsgRef.current) {
               const config = pendingSecondMsgRef.current;
@@ -7449,6 +7476,10 @@ export default function Home() {
                   sent_at: _lineSend?.sentAt ?? null,
                   // PA-1: aix_usage_logs にも前アクションを記録（未指定時はサーバー側でDB復元）
                   previous_action_type: _prevAix,
+                  // SUB-1: ピッカー選択のサブパターン記録（成果集計・学習精度向上）
+                  check_pattern: meta?.checkPattern ?? null,
+                  app_sub_mode: meta?.appSubMode ?? null,
+                  send_mode: meta?.sendMode ?? null,
                 }),
               }).catch(() => {});
               // P1: AIX経由テンプレの使用回数をインクリメント（fire-and-forget）
@@ -7484,6 +7515,14 @@ export default function Home() {
                 // 物件なかった → 代替物件送りへ誘導（property_send ピッカーを自動表示）
                 setActiveAixFlow("property_send");
                 setShowPropertySendPicker(true);
+              } else if (meta?.suggestPropertySend) {
+                // condition_hearing 完了後 → 物件ピックアップAIXバナーを表示
+                setSuggestPropertySendMap((prev) => ({ ...prev, [selectedConversation.id]: true }));
+                setDismissedPropertySendIds((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
+              } else if (meta?.suggestApplicationPush) {
+                // estimate_sheet 完了後 → 申込へ！AIXバナーを表示
+                setSuggestApplicationPushMap((prev) => ({ ...prev, [selectedConversation.id]: true }));
+                setDismissedApplicationPushIds((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
               } else {
                 void fetchNextAction(selectedConversation.id);
               }

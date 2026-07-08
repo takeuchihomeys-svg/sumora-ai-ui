@@ -189,10 +189,25 @@ function diffImportance(sim: number): number {
 
 // ── モジュールレベル定数（コンポーネント学習・ポジティブ強化で共用）──
 const STATE_LEARNABLE: Record<string, string[]> = {
-  property_send:    ["intro", "pickup", "invite", "calendar", "closing"],
-  viewing_invite:   ["greeting", "situation", "invite", "closing"],
-  application_push: ["movein_date", "appeal", "cta", "invite", "reassurance", "closing"],
-  acknowledge_check: ["greeting", "property_info", "estimate_request", "closing"],
+  property_send:                    ["intro", "pickup", "invite", "calendar", "closing"],
+  property_send_new_arrival:        ["intro", "pickup", "invite", "calendar", "closing"],
+  property_send_widen:              ["intro", "widen_note", "pickup", "invite", "closing"],
+  viewing_invite:                   ["greeting", "situation", "invite", "closing"],
+  application_push:                 ["movein_date", "appeal", "cta", "invite", "reassurance", "closing"],
+  application_push_push:            ["greeting", "appeal", "cta", "reassurance", "closing"],
+  application_push_confirm:         ["greeting", "confirmation", "closing"],
+  application_push_docs_request:    ["greeting", "doc_list", "cta", "closing"],
+  acknowledge_check:                ["greeting", "property_info", "estimate_request", "closing"],
+  // 全アクション網羅（ポジティブ強化・差分学習の抜け防止）
+  property_recommendation:          ["intro", "recommendation", "appeal", "invite", "closing"],
+  property_check_result:            ["intro", "result", "calendar", "invite", "closing"],
+  property_check_result_available:  ["intro", "result", "calendar", "invite", "closing"],
+  property_check_result_unavailable:["intro", "result", "closing"],
+  property_check_result_alternative:["intro", "result", "invite", "closing"],
+  condition_hearing:                ["greeting", "intro", "cta", "closing"],
+  meeting_place:                    ["greeting", "confirmation", "location", "closing"],
+  estimate_sheet:                   ["greeting", "estimate_note", "invite", "closing"],
+  followup_revive:                  ["greeting", "reminder", "invite", "cta", "closing"],
 };
 
 const COMPONENT_NAMES: Record<string, string> = {
@@ -209,6 +224,14 @@ const COMPONENT_NAMES: Record<string, string> = {
   movein_date:      "入居日安心（〇月〇日のご入居で問題ございません！！）",
   property_info:    "物件・確認内容の記載",
   estimate_request: "最大限割引した初期費用の御見積もり依頼",
+  recommendation:   "おすすめ物件の紹介文",
+  result:           "物件確認結果（空室あり/満室等）",
+  confirmation:     "日程・内容の確認文",
+  location:         "待ち合わせ場所の案内",
+  reminder:         "久しぶり連絡・状況確認文",
+  estimate_note:    "見積書の補足説明文",
+  doc_list:         "必要書類リスト",
+  widen_note:       "条件広げ説明文",
 };
 
 // 【textSimilarity 案C】数字・肯否変化がある場合のみ true（意味的変化の有無を低コストで判定）

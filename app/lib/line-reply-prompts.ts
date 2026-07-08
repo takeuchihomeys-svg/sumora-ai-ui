@@ -421,8 +421,17 @@ export const PHASE_GUIDE: Record<string, string> = {
 export const STATE_SEARCH_ALIASES: Record<string, string[]> = {
   first_reply: ["first_reply"],
   hearing:     ["hearing", "condition_hearing", "property_search"],
-  proposing:   ["proposing", "property_recommendation", "viewing", "estimate_request", "availability_check", "property_send"],
-  applying:    ["applying", "application", "screening", "contract", "application_push"],
+  proposing:   [
+    "proposing", "property_recommendation", "viewing", "estimate_request", "availability_check", "property_send",
+    // AIX固有ステート（AIXで学習したルールをgenerate-replyにも届ける）
+    "viewing_invite", "property_check_result", "estimate_sheet", "meeting_place", "followup_revive",
+    "property_check_result_available", "property_check_result_unavailable", "property_check_result_alternative",
+    "property_send_new_arrival", "property_send_widen",
+  ],
+  applying:    [
+    "applying", "application", "screening", "contract", "application_push",
+    "acknowledge_check", "application_push_push", "application_push_confirm", "application_push_docs_request",
+  ],
   closed_won:  ["closed_won"],
 };
 

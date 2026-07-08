@@ -1375,9 +1375,13 @@ ${phraseText || "なし"}
 
       // 学習済み差分ルール（スタッフ修正から学習したパターン）＋☆成功返信パターンをプロンプト末尾に注入
       // + コンポーネント単位の学習ルール（application_push_appeal 等）
+      // + サブモード別ルール（application_push_push / application_push_confirm 等）
+      const _appSubModeKey = body.app_sub_mode as string | undefined;
+      const appKnowledgeStates = [...AIX_ACTION_TO_STATES.application_push];
+      if (_appSubModeKey && _appSubModeKey !== "format") appKnowledgeStates.push(`application_push_${_appSubModeKey}`);
       const [appDiffNote, appStarNote, compAppealRaw] = await Promise.all([
-        getKnowledgeForState(AIX_ACTION_TO_STATES.application_push, currentAction, conversationId),
-        getStarredExamplesForAction(AIX_ACTION_TO_STATES.application_push, latestCustomerMsg),
+        getKnowledgeForState(appKnowledgeStates, currentAction, conversationId),
+        getStarredExamplesForAction(appKnowledgeStates, latestCustomerMsg),
         getKnowledgeForState(["application_push_appeal"], currentAction),
       ]);
       const compAppealNote = compAppealRaw
@@ -2417,9 +2421,15 @@ ${templateText}`;
         }
       } else {
         // 学習済みナレッジ＋☆実例をプロンプト末尾に注入（自由生成パスのみ）
+        // サブパターン別ナレッジも追加（property_check_result_available 等）
+        const checkResultStates = [...AIX_ACTION_TO_STATES.property_check_result];
+        const patternStr = pattern as string;
+        if (patternStr && patternStr !== "interior_photo" && patternStr !== "move_in_date") {
+          checkResultStates.push(`property_check_result_${patternStr}`);
+        }
         const [checkDiffNote, checkStarNote] = await Promise.all([
-          getKnowledgeForState(AIX_ACTION_TO_STATES.property_check_result, currentAction, conversationId),
-          getStarredExamplesForAction(AIX_ACTION_TO_STATES.property_check_result, latestCustomerMsg),
+          getKnowledgeForState(checkResultStates, currentAction, conversationId),
+          getStarredExamplesForAction(checkResultStates, latestCustomerMsg),
         ]);
 
         const instruction = PATTERN_INSTRUCTION[pattern] ?? PATTERN_INSTRUCTION.unavailable;
