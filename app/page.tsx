@@ -3312,6 +3312,8 @@ export default function Home() {
             // 自動☆は廃止（☆はユーザーが明示的に付けた場合のみ深層分析）
             isStarred: false,
             sentAt: new Date().toISOString(),
+            // テンプレート経由の場合は template_id を記録（☆・差分学習をテンプレに紐付ける）
+            ...(selectedTemplateIdRef.current ? { template_id: selectedTemplateIdRef.current } : {}),
           }),
         }).then(async (r) => {
           if (!r.ok) return;
@@ -3353,6 +3355,22 @@ export default function Home() {
             was_modified_after_adapt: wasModified,
           }),
         }).catch(() => {});
+        // B5バナー経由でテンプレートを編集して送った場合 → テンプレート候補に登録（学習ループへ）
+        if (wasModified && postAixTemplateMap[selectedConversation.id] && finalText.length >= 20) {
+          const _postAixAction = postAixTemplateMap[selectedConversation.id]?.actionType ?? "general";
+          fetch("/api/ai-template-candidates", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              actionType: _postAixAction,
+              templateText: finalText,
+              conversationId: selectedConversation.id,
+              suggestedTitle: `[B5編集] ${finalText.split("\n").find(l => l.trim().length > 0)?.slice(0, 25) ?? finalText.slice(0, 25)}`,
+              source: "template_edit",
+              originalText: meta.originalText,
+            }),
+          }).catch(() => {});
+        }
         templateSelectionMetaRef.current = null;
       }
 
@@ -7226,7 +7244,8 @@ export default function Home() {
                   was_adapted: wasAdapted ?? false,
                   original_text: resolvedText.slice(0, 2000),
                   adapted_text: (wasAdapted ?? false) ? resolvedText.slice(0, 2000) : null,
-                  aix_action_type: activeAixFlow ?? null,
+                  // B5バナー経由（AIXModal閉じた後）は postAixTemplateMap から actionType を補完
+                  aix_action_type: activeAixFlow ?? postAixTemplateMap[selectedConversation.id]?.actionType ?? null,
                 }),
               }).then((r) => r.json()).then((d: { ok: boolean; log_id?: string }) => {
                 if (d.ok && d.log_id) {

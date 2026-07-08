@@ -885,6 +885,13 @@ CREATE INDEX IF NOT EXISTS idx_next_action_logs_customer ON next_action_logs(cus
 -- ai_reply_examples: 物件ピックアップした の構成パーツ別JSON（コンポーネント学習ループ用）
 -- intro / pickup / vacating / invite / calendar / closing の各パーツを保存し差分を構成単位で追跡
 ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS ai_components JSONB;
+
+-- ai_reply_examples: テンプレートIDの紐付け（テンプレート→送信→成果の学習ループ用）
+ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS template_id UUID DEFAULT NULL;
+-- aix_usage_logs: サブパターン詳細列（どのピッカー選択をしたか）
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS check_pattern TEXT DEFAULT NULL;
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS app_sub_mode TEXT DEFAULT NULL;
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS send_mode TEXT DEFAULT NULL;
 `.trim();
 
 export async function GET() {

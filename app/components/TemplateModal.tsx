@@ -638,7 +638,7 @@ export default function TemplateModal({
   ];
   const isAixCategoryActive = category.includes("AIX");
   const isSearching = searchQuery.trim().length > 0;
-  // 複合スコア: 使用回数(40%) + 成約率(40%) + 採用率(20%)。実績のあるテンプレを上位に表示する。
+  // 複合スコア: use_count*0.4 + win_rate*100*0.4 + adoptionRate*100*0.2
   // 採用率 = おすすめとして提示→実際に選ばれた率。全テンプレがスコア0のうちは sort_order 順。
   const templateScore = (t: Template) => {
     const adoptionRate = (t.recommend_shown_count ?? 0) > 0

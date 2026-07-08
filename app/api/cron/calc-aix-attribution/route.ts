@@ -199,36 +199,84 @@ async function run() {
   }
 
   // 5. templates.win_rate を全期間の実績から再計算して同期
-  //    （テンプレ一覧の複合スコアソート use_count*0.4 + win_rate*100*0.6 で使用）
+  //    ソース①: aix_action_attribution（AIX文案生成経由・template_id付き）
+  //    ソース②: template_selection_logs（B5バナー経由一般テンプレ選択・phase=sent）
+  //    両ソースを合算して win_rate = closed_won / unique_conversations を設定する
   let winRateSynced = 0;
+
+  // ソース①: aix_action_attribution から集計
   const { data: attrRows, error: attrErr } = await supabase
     .from("aix_action_attribution")
     .select("template_id, closed_won, unique_conversations")
     .not("template_id", "is", null)
     .limit(10000);
-  if (attrErr) {
-    console.error("[calc-aix-attribution] attribution fetch for win_rate sync error:", attrErr.message);
-  } else {
-    const byTemplate = new Map<string, { won: number; convs: number }>();
-    for (const r of attrRows ?? []) {
+
+  // ソース②: template_selection_logs から集計（過去全期間・B5バナー経由テンプレのsent記録）
+  const { data: tslRows, error: tslErr } = await supabase
+    .from("template_selection_logs")
+    .select("template_id, conversation_id, conversation_status, created_at")
+    .eq("phase", "sent")
+    .not("template_id", "is", null)
+    .limit(20000);
+
+  if (attrErr) console.error("[calc-aix-attribution] attribution fetch error:", attrErr.message);
+  if (tslErr) console.error("[calc-aix-attribution] tsl fetch error:", tslErr.message);
+
+  const byTemplate = new Map<string, { won: number; convs: number }>();
+
+  // ソース①を投入
+  for (const r of attrRows ?? []) {
+    const tid = r.template_id as string | null;
+    if (!tid) continue;
+    const cur = byTemplate.get(tid) ?? { won: 0, convs: 0 };
+    cur.won += (r.closed_won as number) ?? 0;
+    cur.convs += (r.unique_conversations as number) ?? 0;
+    byTemplate.set(tid, cur);
+  }
+
+  // ソース②を投入（template_selection_logs: 会話ごとに到達判定して合算）
+  if ((tslRows ?? []).length > 0) {
+    const tslConvIds = Array.from(new Set((tslRows ?? []).map(r => r.conversation_id as string).filter(Boolean)));
+    const tslCurrentStatus = new Map<string, string>();
+    for (let i = 0; i < tslConvIds.length; i += 200) {
+      const chunk = tslConvIds.slice(i, i + 200);
+      const { data: tslConvs } = await supabase
+        .from("conversations").select("id, status").in("id", chunk);
+      for (const c of tslConvs ?? []) {
+        if (c.id && c.status) tslCurrentStatus.set(c.id as string, c.status as string);
+      }
+    }
+    // テンプレ別に会話×到達判定（重複除外）
+    const tslByTemplate = new Map<string, { convs: Set<string>; wonConvs: Set<string> }>();
+    for (const r of tslRows ?? []) {
       const tid = r.template_id as string | null;
-      if (!tid) continue;
+      const cid = r.conversation_id as string | null;
+      if (!tid || !cid) continue;
+      const entry = tslByTemplate.get(tid) ?? { convs: new Set(), wonConvs: new Set() };
+      entry.convs.add(cid);
+      if (rankOf(tslCurrentStatus.get(cid)) >= WON_RANK && rankOf(r.conversation_status as string) < WON_RANK) {
+        entry.wonConvs.add(cid);
+      }
+      tslByTemplate.set(tid, entry);
+    }
+    for (const [tid, v] of tslByTemplate) {
       const cur = byTemplate.get(tid) ?? { won: 0, convs: 0 };
-      cur.won += (r.closed_won as number) ?? 0;
-      cur.convs += (r.unique_conversations as number) ?? 0;
+      cur.won += v.wonConvs.size;
+      cur.convs += v.convs.size;
       byTemplate.set(tid, cur);
     }
-    for (const [templateId, v] of byTemplate) {
-      const winRate = v.convs > 0 ? round3(v.won / v.convs) : 0;
-      const { error: updErr } = await supabase
-        .from("templates")
-        .update({ win_rate: winRate })
-        .eq("id", templateId);
-      if (updErr) {
-        console.error(`[calc-aix-attribution] win_rate update error (template ${templateId}):`, updErr.message);
-      } else {
-        winRateSynced++;
-      }
+  }
+
+  for (const [templateId, v] of byTemplate) {
+    const winRate = v.convs > 0 ? round3(v.won / v.convs) : 0;
+    const { error: updErr } = await supabase
+      .from("templates")
+      .update({ win_rate: winRate })
+      .eq("id", templateId);
+    if (updErr) {
+      console.error(`[calc-aix-attribution] win_rate update error (template ${templateId}):`, updErr.message);
+    } else {
+      winRateSynced++;
     }
   }
 
