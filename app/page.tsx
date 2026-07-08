@@ -3023,8 +3023,12 @@ export default function Home() {
             aiDraft: aiDraftRef.current || undefined,
             conversationState: selectedConversation.status,
             isScheduled: true,
+            // MED-05修正: 予約送信もtemplate_id を記録（通常送信と対称化）
+            ...(selectedTemplateIdRef.current ? { template_id: selectedTemplateIdRef.current } : {}),
           }),
         }).catch(() => {});
+        // 予約送信後もtemplate_idをクリア（通常送信の line:3341 と対称化）
+        selectedTemplateIdRef.current = "";
       }
       // 予約リストを即更新（DB再取得せずローカルに追加）
       const { data: inserted } = await supabase.from("scheduled_messages")
@@ -3345,12 +3349,13 @@ export default function Home() {
         const meta = templateSelectionMetaRef.current;
         const finalText = textToSend ?? "";
         const wasModified = finalText.trim() !== meta.originalText.trim();
+        // CRIT-01修正: PENDING（fetch未完了）でも conversation_id で送信してログを残す
         fetch("/api/learn-template-selection", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             phase: "sent",
-            log_id: meta.logId,
+            ...(meta.logId !== "PENDING" ? { log_id: meta.logId } : { conversation_id: meta.convId }),
             final_sent_text: finalText.slice(0, 2000),
             was_modified_after_adapt: wasModified,
           }),
@@ -7228,8 +7233,16 @@ export default function Home() {
             const resolvedText = text.replace(/アカウント名/g, preferredCustomerName);
             setReplyDraft(resolvedText);
             // テンプレート選択ログ（phase=select）を記録。送信時に修正有無を追記
-            templateSelectionMetaRef.current = null;
+            // CRIT-01修正: 先に PENDING 状態をセットして race condition を防ぐ
+            // (fetch の .then() より executeSend が先に動くと null のまま phase=sent が消滅する問題)
             if (templateId) {
+              templateSelectionMetaRef.current = {
+                logId: "PENDING",
+                originalText: resolvedText,
+                wasAdapted: wasAdapted ?? false,
+                conversationStatus: selectedConversation.status ?? "unknown",
+                convId: selectedConversation.id,
+              };
               fetch("/api/learn-template-selection", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -7248,16 +7261,12 @@ export default function Home() {
                   aix_action_type: activeAixFlow ?? postAixTemplateMap[selectedConversation.id]?.actionType ?? null,
                 }),
               }).then((r) => r.json()).then((d: { ok: boolean; log_id?: string }) => {
-                if (d.ok && d.log_id) {
-                  templateSelectionMetaRef.current = {
-                    logId: d.log_id,
-                    originalText: resolvedText,
-                    wasAdapted: wasAdapted ?? false,
-                    conversationStatus: selectedConversation.status ?? "unknown",
-                    convId: selectedConversation.id,
-                  };
+                if (d.ok && d.log_id && templateSelectionMetaRef.current?.logId === "PENDING") {
+                  templateSelectionMetaRef.current = { ...templateSelectionMetaRef.current, logId: d.log_id };
                 }
               }).catch(() => {});
+            } else {
+              templateSelectionMetaRef.current = null;
             }
             if (imageFiles && imageFiles.length > 0) setSelectedImageFiles((prev) => [...prev, ...imageFiles]);
             // 2通目設定をキャプチャ（送信時に使用）
@@ -7401,6 +7410,7 @@ export default function Home() {
           initialAppSubMode={aixInitAppSubMode}
           initialInputText={aixInitInputText || undefined}
           initialCheckPattern={aixInitCheckPattern ?? undefined}
+          templateId={pendingTemplateSource?.id ?? undefined}
           onClose={() => {
             setAixModalType(null);
             setAixInitialFile(null);

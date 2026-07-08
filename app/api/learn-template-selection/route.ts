@@ -67,8 +67,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, log_id: data?.id });
 
     } else if (body.phase === "sent") {
-      if (!body.log_id) {
-        return NextResponse.json({ ok: false, error: "log_id required for sent phase" });
+      if (!body.log_id && !body.conversation_id) {
+        return NextResponse.json({ ok: false, error: "log_id or conversation_id required for sent phase" });
+      }
+      // CRIT-01修正: log_id が未確定（PENDING）の場合は conversation_id で直近レコードを特定して更新
+      let targetLogId = body.log_id;
+      if (!targetLogId && body.conversation_id) {
+        const { data: recent } = await supabase
+          .from("template_selection_logs")
+          .select("id")
+          .eq("conversation_id", body.conversation_id)
+          .is("final_sent_text", null)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        targetLogId = recent?.id as string | undefined;
+      }
+      if (!targetLogId) {
+        return NextResponse.json({ ok: false, error: "no matching log found" });
       }
       const { error } = await supabase
         .from("template_selection_logs")
@@ -76,7 +92,7 @@ export async function POST(req: NextRequest) {
           final_sent_text: (body.final_sent_text ?? "").slice(0, 2000),
           was_modified_after_adapt: body.was_modified_after_adapt ?? false,
         })
-        .eq("id", body.log_id);
+        .eq("id", targetLogId);
 
       if (error) {
         console.error("[learn-template-selection] update error:", error);

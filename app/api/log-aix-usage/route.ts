@@ -119,7 +119,7 @@ ${msgContext}
       category: "next_action_pattern",
       content: parsed.learning_rule,
       state: null,
-      importance: 3,
+      importance: 7, // HIGH-06修正: importance=3 は min_importance=7 フィルタで除外されるため 7 に引き上げ
       hypothesis_status: "hypothesis",
       apply_count: 0,
       correct_count: 0,

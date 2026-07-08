@@ -310,7 +310,7 @@ ${sentReply}
     const diffImp = diffImportance(sim);
     await supabase.from("ai_reply_knowledge").insert([
       {
-        category: "principle",
+        category: "pattern",  // MED-03修正: analyze-diffsのポリシーと統一（principleはフォールバック経路で除外される）
         title: `[差分学習] ${(analysis.ai_mistake || "").slice(0, 30)}`,
         content: analysis.rule,
         importance: diffImp,

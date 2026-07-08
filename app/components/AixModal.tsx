@@ -51,6 +51,7 @@ interface AixModalProps {
   initialAppSubMode?: "push" | "confirm" | "format" | "docs_request" | null;
   initialInputText?: string;
   initialCheckPattern?: "available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor";
+  templateId?: string; // テンプレートモーダル経由で開いた場合のtemplate_id（学習ループ紐付け用）
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
   onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string }) => void;
@@ -438,6 +439,7 @@ export default function AixModal({
   initialAppSubMode,
   initialInputText,
   initialCheckPattern,
+  templateId,
   onClose,
   onSend,
   onAfterSend,
@@ -1595,6 +1597,8 @@ export default function AixModal({
       skipNormalize: true,
       // 各ピッカー: コンポーネント別AI生成結果（差分学習ループ用・全アクション共通）
       ...(aiActionComponents ? { aiComponents: aiActionComponents } : {}),
+      // CRIT-02修正: テンプレートモーダル経由で開いた場合はtemplate_idを付与（テンプレート成果学習ループ用）
+      ...(templateId ? { template_id: templateId } : {}),
     };
   };
 
@@ -1675,20 +1679,8 @@ export default function AixModal({
       }).then(ensureOk).catch((e) => { console.warn("[AixModal] フレーズ学習ログ保存失敗:", e); });
     }
 
-    // 次アクション学習ログ（過去パターンとして蓄積）
-    if (conversationStatus) {
-      fetch("/api/learn-action-patterns", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "log",
-          conversation_status: conversationStatus,
-          action_type: actionType,
-          customer_msg_summary: (lastCustomerMsg || inputText.trim()).slice(0, 150),
-          conversation_id: conversationId, // ⑦ previous_action_type のサーバー側復元に使用
-        }),
-      }).then(ensureOk).catch((e) => { console.warn("[AixModal] アクションパターン学習ログ保存失敗:", e); });
-    }
+    // MED-06修正: learn-action-patterns の POST を削除（page.tsx の onAfterSend 側に統一して2重INSERTを防ぐ）
+    // page.tsx:7468 の onAfterSend で source/predicted_action 等のリッチな情報付きで記録している
   };
 
   const openAixScheduleModal = () => {

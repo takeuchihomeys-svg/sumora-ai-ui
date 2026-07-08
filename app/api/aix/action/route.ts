@@ -159,7 +159,11 @@ const AIX_ACTION_TO_STATES: Record<string, string[]> = {
   estimate_sheet: ["estimate_sheet", "estimate_request"],
   meeting_place: ["meeting_place", "viewing"],
   // AixModal保存側は property_check_result → "proposing" で保存するため proposing を必ず含める
-  property_check_result: ["property_check_result", "proposing"],
+  // MED-01修正: サブステート別学習ルールも検索対象に追加（generate-reply の STATE_SEARCH_ALIASES.proposing と対称化）
+  property_check_result: [
+    "property_check_result", "proposing",
+    "property_check_result_available", "property_check_result_unavailable", "property_check_result_alternative",
+  ],
   greeting_viewing: ["greeting_viewing", "viewing"],
   // ※ property_recommendation は getPropertyKnowledge() 内で同等の差分学習ルール取得済み（states: property_recommendation/proposing）
 };
@@ -1216,15 +1220,19 @@ ${calendarBlock}
         : "";
 
       // 学習済み差分ルール（スタッフ修正から学習したパターン）＋☆成功返信パターンをプロンプト末尾に注入
-      // + コンポーネント単位の学習ルール（viewing_invite_invite / viewing_invite_greeting 等）
-      const [viewingDiffNote, viewingStarNote, compViewingInvite] = await Promise.all([
+      // HIGH-02修正: viewing_invite の全コンポーネント（greeting/situation/invite/closing）を個別に取得
+      const [viewingDiffNote, viewingStarNote, compViewingGreeting, compViewingInvite, compViewingClosing] = await Promise.all([
         getKnowledgeForState(AIX_ACTION_TO_STATES.viewing_invite, currentAction, conversationId),
         getStarredExamplesForAction(AIX_ACTION_TO_STATES.viewing_invite, latestCustomerMsg),
+        getKnowledgeForState(["viewing_invite_greeting"], currentAction),
         getKnowledgeForState(["viewing_invite_invite"], currentAction),
+        getKnowledgeForState(["viewing_invite_closing"], currentAction),
       ]);
-      const viewingComponentNote = compViewingInvite
-        ? `\n\n【📌 内覧誘導文(invite)の過去改善ルール — inviteパーツに適用すること】${compViewingInvite}`
-        : "";
+      const viewingComponentNote = [
+        compViewingGreeting ? `\n\n【📌 挨拶(greeting)の過去改善ルール — greetingパーツに適用すること】${compViewingGreeting}` : "",
+        compViewingInvite ? `\n\n【📌 内覧誘導文(invite)の過去改善ルール — inviteパーツに適用すること】${compViewingInvite}` : "",
+        compViewingClosing ? `\n\n【📌 締め文(closing)の過去改善ルール — closingパーツに適用すること】${compViewingClosing}` : "",
+      ].join("");
 
       const system = `あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。
 会話の前後の流れを深く読み取り、内覧日調整を核心としたLINEメッセージを1つだけ作成してください。
@@ -1379,14 +1387,19 @@ ${phraseText || "なし"}
       const _appSubModeKey = body.app_sub_mode as string | undefined;
       const appKnowledgeStates = [...AIX_ACTION_TO_STATES.application_push];
       if (_appSubModeKey && _appSubModeKey !== "format") appKnowledgeStates.push(`application_push_${_appSubModeKey}`);
-      const [appDiffNote, appStarNote, compAppealRaw] = await Promise.all([
+      // HIGH-02修正: application_push の全コンポーネントを取得（appeal/cta/reassurance/closing）
+      const [appDiffNote, appStarNote, compAppealRaw, compCtaRaw, compReassuranceRaw] = await Promise.all([
         getKnowledgeForState(appKnowledgeStates, currentAction, conversationId),
         getStarredExamplesForAction(appKnowledgeStates, latestCustomerMsg),
         getKnowledgeForState(["application_push_appeal"], currentAction),
+        getKnowledgeForState(["application_push_cta"], currentAction),
+        getKnowledgeForState(["application_push_reassurance"], currentAction),
       ]);
-      const compAppealNote = compAppealRaw
-        ? `\n\n【📌 物件アピール(appeal)の過去改善ルール — appealパーツに適用すること】${compAppealRaw}`
-        : "";
+      const compAppealNote = [
+        compAppealRaw ? `\n\n【📌 物件アピール(appeal)の過去改善ルール — appealパーツに適用すること】${compAppealRaw}` : "",
+        compCtaRaw ? `\n\n【📌 行動誘導(cta)の過去改善ルール — ctaパーツに適用すること】${compCtaRaw}` : "",
+        compReassuranceRaw ? `\n\n【📌 不安解消(reassurance)の過去改善ルール — reassuranceパーツに適用すること】${compReassuranceRaw}` : "",
+      ].join("");
 
       const appSubMode = body.app_sub_mode as string | undefined;
 
