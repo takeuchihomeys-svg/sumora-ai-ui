@@ -48,7 +48,7 @@ interface AixModalProps {
   initialIsNewArrival?: boolean;
   initialPickupType?: "新規ピックアップ" | "継続ピックアップ" | "条件広げピックアップ" | "新着1件" | "代替ピックアップ" | null;
   initialEstimateMulti?: boolean;
-  initialAppSubMode?: "push" | "confirm" | "format" | null;
+  initialAppSubMode?: "push" | "confirm" | "format" | "docs_request" | null;
   initialInputText?: string;
   initialCheckPattern?: "available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost";
   onClose: () => void;
@@ -499,7 +499,7 @@ export default function AixModal({
   const [appPushType, setAppPushType] = useState<"simple" | "scheduled" | "hold_view" | null>("simple");
   const [appAppealPoints, setAppAppealPoints] = useState<string[]>([]);
   const [appMoveOutDate, setAppMoveOutDate] = useState("");
-  const [appSubMode, setAppSubMode] = useState<"push" | "confirm" | "format" | null>(initialAppSubMode ?? null);
+  const [appSubMode, setAppSubMode] = useState<"push" | "confirm" | "format" | "docs_request" | null>(initialAppSubMode ?? null);
   const [appFormatLivingType, setAppFormatLivingType] = useState<"single" | "shared" | null>(null);
   const [appFormatGuarantorType, setAppFormatGuarantorType] = useState<"emergency" | "guarantor" | null>(null);
   const [appConfirmImagePreview, setAppConfirmImagePreview] = useState("");
@@ -1136,6 +1136,10 @@ export default function AixModal({
         } else if (appSubMode === "confirm") {
           body.app_sub_mode = "confirm";
           if (appPropertyName.trim()) body.property_name = appPropertyName.trim();
+          if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
+          if (customerSummary) body.customer_summary = customerSummary;
+        } else if (appSubMode === "docs_request") {
+          body.app_sub_mode = "docs_request";
           if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
           if (customerSummary) body.customer_summary = customerSummary;
         } else {
@@ -1839,7 +1843,7 @@ export default function AixModal({
     : actionType === "property_send"
     ? true
     : actionType === "application_push"
-    ? appSubMode === "confirm" ? true : appSubMode === "format" ? !!(appFormatLivingType && appFormatGuarantorType) : !!appPushType
+    ? appSubMode === "confirm" ? true : appSubMode === "docs_request" ? true : appSubMode === "format" ? !!(appFormatLivingType && appFormatGuarantorType) : !!appPushType
     : actionType === "meeting_place"
     ? (!!meetingDate.trim() && !!meetingPropertyName.trim())
     : !config.requiresImage || !!imageFile;
@@ -2284,8 +2288,8 @@ export default function AixModal({
           ) : actionType === "application_push" ? (
             /* 申込へ！: 申込誘導 / 申込確定 2分割 */
             <div className="mb-4 flex flex-col gap-3">
-              {/* モード選択ボタン */}
-              <div className="grid grid-cols-3 gap-2">
+              {/* モード選択ボタン (2×2グリッド) */}
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={() => { setAppSubMode("push"); setPreview(""); }}
                   className={`rounded-2xl border-2 px-2 py-3 text-center transition-all ${
@@ -2300,7 +2304,6 @@ export default function AixModal({
                     setAppSubMode("confirm");
                     setPreview("");
                     setAiDraft("");
-                    // 会話履歴から物件名を自動検出（スタッフメッセージの【物件名 号室】形式）
                     let detected = appPropertyName.trim();
                     if (!detected) {
                       const staffMsgs = (recentMessages || []).filter(m => m.sender === "staff").reverse();
@@ -2326,6 +2329,15 @@ export default function AixModal({
                 >
                   <div className="text-[11px] font-bold text-purple-600">📄 フォーマット</div>
                   <div className="mt-0.5 text-[8px] text-[#8696a0]">申込書を送る</div>
+                </button>
+                <button
+                  onClick={() => { setAppSubMode("docs_request"); setPreview(""); setAiDraft(""); }}
+                  className={`rounded-2xl border-2 px-2 py-3 text-center transition-all ${
+                    appSubMode === "docs_request" ? "border-orange-500 bg-orange-50" : "border-[#e9edef] bg-[#f8f9fa]"
+                  }`}
+                >
+                  <div className="text-[11px] font-bold text-orange-600">🔖 書類依頼</div>
+                  <div className="mt-0.5 text-[8px] text-[#8696a0]">不足書類の確認・依頼</div>
                 </button>
               </div>
 
@@ -2435,6 +2447,16 @@ export default function AixModal({
                       ))}
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* 書類依頼: 説明 */}
+              {appSubMode === "docs_request" && (
+                <div className="rounded-xl bg-orange-50 border border-orange-200 px-4 py-3">
+                  <p className="text-[12px] font-bold text-orange-700 mb-1">🔖 書類依頼メッセージを生成します</p>
+                  <p className="text-[11px] text-orange-600 leading-relaxed">
+                    直近の会話から申込フォームの受信状況・本人確認書類（表裏2枚）の到着状況を自動判断し、不足している書類の依頼文を生成します。
+                  </p>
                 </div>
               )}
 

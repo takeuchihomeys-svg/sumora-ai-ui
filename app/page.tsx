@@ -505,7 +505,7 @@ export default function Home() {
   const [aixInitEstimateMulti, setAixInitEstimateMulti] = useState(false);
   const [showApplicationPicker, setShowApplicationPicker] = useState(false);
   const [suggestedAppMode, setSuggestedAppMode] = useState<"push" | "confirm" | null>(null);
-  const [aixInitAppSubMode, setAixInitAppSubMode] = useState<"push" | "confirm" | "format" | null>(null);
+  const [aixInitAppSubMode, setAixInitAppSubMode] = useState<"push" | "confirm" | "format" | "docs_request" | null>(null);
   const [showPropertyCheckPicker, setShowPropertyCheckPicker] = useState(false);
   const [suggestedPropertyCheckMode, setSuggestedPropertyCheckMode] = useState<"vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | null>(null);
   const [showDaihyoCheckPicker, setShowDaihyoCheckPicker] = useState(false);
