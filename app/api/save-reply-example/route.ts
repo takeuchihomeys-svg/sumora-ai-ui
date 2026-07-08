@@ -90,18 +90,26 @@ function detectComponentChangeType(compNorm: string, sentNorm: string): "phrase"
 }
 
 // ─── テキスト類似度（AI文案と送信文を比較してwasAiUsedを判定）─────────────────
-// グリーディー文字マッチで一致率を算出（空白除去・順序保持）
+// LCS Dice係数（analyze-diffsと統一）— 旧グリーディーマッチは j がループをまたいで不正確だった
 function textSimilarity(a: string, b: string): number {
   const s1 = a.replace(/\s+/g, "");
   const s2 = b.replace(/\s+/g, "");
-  if (s1 === s2) return 1;
   if (!s1 || !s2) return 0;
-  let j = 0, matches = 0;
-  for (let i = 0; i < s1.length; i++) {
-    while (j < s2.length && s2[j] !== s1[i]) j++;
-    if (j < s2.length) { matches++; j++; }
+  if (s1 === s2) return 1;
+  const la = [...s1], lb = [...s2];
+  const m = la.length, n = lb.length;
+  const dp = new Array(n + 1).fill(0);
+  let prev = 0;
+  for (let i = 1; i <= m; i++) {
+    prev = 0;
+    for (let j = 1; j <= n; j++) {
+      const temp = dp[j];
+      dp[j] = la[i - 1] === lb[j - 1] ? prev + 1 : Math.max(dp[j], dp[j - 1]);
+      prev = temp;
+    }
   }
-  return matches / Math.max(s1.length, s2.length);
+  const lcs = dp[n];
+  return (2 * lcs) / (m + n);
 }
 
 // ─── Claude Haiku 共通ヘルパー ────────────────────────────────────────────────

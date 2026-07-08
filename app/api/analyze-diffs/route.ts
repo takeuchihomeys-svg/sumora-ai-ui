@@ -187,6 +187,62 @@ function diffImportance(sim: number): number {
   return 7;
 }
 
+// ── モジュールレベル定数（コンポーネント学習・ポジティブ強化で共用）──
+const STATE_LEARNABLE: Record<string, string[]> = {
+  property_send:    ["intro", "pickup", "invite", "calendar", "closing"],
+  viewing_invite:   ["greeting", "situation", "invite", "closing"],
+  application_push: ["movein_date", "appeal", "cta", "invite", "reassurance", "closing"],
+  acknowledge_check: ["greeting", "property_info", "estimate_request", "closing"],
+};
+
+const COMPONENT_NAMES: Record<string, string> = {
+  intro:            "挨拶文",
+  pickup:           "ピックアップ行（条件説明）",
+  invite:           "内覧誘導文",
+  calendar:         "内覧可能日時の記載（直近ですと〜ご案内可能です）",
+  closing:          "締め文",
+  greeting:         "挨拶文",
+  situation:        "状況・背景説明",
+  appeal:           "物件アピール文",
+  cta:              "申込み後押し文",
+  reassurance:      "不安解消・フォロー一言（保証会社審査〜キャンセル料なし等）",
+  movein_date:      "入居日安心（〇月〇日のご入居で問題ございません！！）",
+  property_info:    "物件・確認内容の記載",
+  estimate_request: "最大限割引した初期費用の御見積もり依頼",
+};
+
+// 【textSimilarity 案C】数字・肯否変化がある場合のみ true（意味的変化の有無を低コストで判定）
+// 言い回しが変わっても数字・Yes/Noが同じなら意味的に同じとみなす
+function hasSemanticChange(a: string, b: string): boolean {
+  const numsA = a.match(/\d+/g) ?? [];
+  const numsB = b.match(/\d+/g) ?? [];
+  if (JSON.stringify(numsA) !== JSON.stringify(numsB)) return true;
+  const negA = (a.match(/(?:できません|ございません|ありません|いません|しません|ません)/g) ?? []).length;
+  const negB = (b.match(/(?:できません|ございません|ありません|いません|しません|ません)/g) ?? []).length;
+  return negA !== negB;
+}
+
+// 【textSimilarity 案B】グレーゾーン（sim 0.7〜0.95）のみ Haiku で意味的同一性を判定
+// 「大倉さんご都合如何」vs「はいかが」など言い回し差分の誤学習を防止
+async function isMeaningfullySame(aiText: string, sentText: string): Promise<boolean> {
+  try {
+    const res = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 50,
+      messages: [{ role: "user", content:
+        `以下2つの文章は意味・意図が実質的に同じですか？言い回しが違うだけかどうか判断してください。\n【A】${aiText.slice(0, 200)}\n【B】${sentText.slice(0, 200)}\nJSONのみ: {"same": true}または{"same": false}`,
+      }],
+    });
+    const text = res.content[0].type === "text" ? res.content[0].text.trim() : "";
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return false;
+    const parsed = JSON.parse(match[0]) as { same: boolean };
+    return parsed.same === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.get("authorization");
@@ -252,6 +308,37 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
+    // 【textSimilarity 案C+B】グレーゾーン（sim 0.7〜0.95）かつ意味的変化なし → Haiku で確認 → 誤学習スキップ
+    // 数字・肯否変化のない言い回し差分（如何→いかが等）を誤学習させない
+    if (sim >= 0.7 && sim < 0.95 && !hasSemanticChange(ai_draft ?? "", sent_reply ?? "")) {
+      const same = await isMeaningfullySame(ai_draft ?? "", sent_reply ?? "");
+      if (same) {
+        // 意味的に同じ = AIが実質正解 → コンポーネントをポジティブ強化してスキップ
+        if (ai_components) {
+          const posLearnList = STATE_LEARNABLE[conversation_state] ?? [];
+          for (const comp of posLearnList.slice(0, 3)) {
+            if (!(ai_components as Record<string, string>)[comp]) continue;
+            const { data: posRules } = await supabase
+              .from("ai_reply_knowledge")
+              .select("id, importance")
+              .eq("conversation_state", `${conversation_state}_${comp}`)
+              .order("apply_count", { ascending: false })
+              .limit(2);
+            for (const rule of posRules ?? []) {
+              const imp = (rule.importance as number) ?? 7;
+              if (imp < 9) {
+                await supabase.from("ai_reply_knowledge")
+                  .update({ importance: Math.min(9, imp + 1) }).eq("id", rule.id);
+              }
+            }
+          }
+        }
+        await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
+        processed++;
+        continue;
+      }
+    }
+
     // コンポーネント単位の2層学習
     // reply_angle="component_diff:pickup(phrase),invite(structure)" などが対象
     if (ai_components && reply_angle?.startsWith("component_diff:")) {
@@ -266,17 +353,8 @@ export async function POST(req: NextRequest) {
           : { comp: c, changeType: "phrase" as const }; // 旧フォーマットはphrase扱い
       });
 
-      // アクション別の学習対象コンポーネント
-      // ※ FIXED_INFO_BY_STATE（save-reply-example）で除外される固有情報パーツ（dates/vacating/calendar等）は
-      //   component_diffに出現しないためここに追加しても意味がない（calendar のみ正強化用に残している）
-      const STATE_LEARNABLE: Record<string, string[]> = {
-        property_send:    ["intro", "pickup", "invite", "calendar", "closing"],
-        viewing_invite:   ["greeting", "situation", "invite", "closing"],
-        // reassurance（不安解消）・movein_date（入居日安心）: simple/hold_viewで生成されるが未登録だったため追加
-        application_push: ["movein_date", "appeal", "cta", "invite", "reassurance", "closing"],
-        acknowledge_check: ["greeting", "property_info", "estimate_request", "closing"],
-      };
-      const learnableList = STATE_LEARNABLE[conversation_state] ?? STATE_LEARNABLE["property_send"];
+      // STATE_LEARNABLE / COMPONENT_NAMES はモジュールレベルで定義済み
+      const learnableList = STATE_LEARNABLE[conversation_state] ?? STATE_LEARNABLE["property_send"] ?? [];
       const learnableSet = new Set(learnableList);
       const learnableChanges = parsedChanges.filter(({ comp }) => learnableSet.has(comp));
 
@@ -286,23 +364,6 @@ export async function POST(req: NextRequest) {
         processed++;
         continue;
       }
-
-      const COMPONENT_NAMES: Record<string, string> = {
-        intro:            "挨拶文",
-        pickup:           "ピックアップ行（条件説明）",
-        invite:           "内覧誘導文",
-        calendar:         "内覧可能日時の記載（直近ですと〜ご案内可能です）",
-        closing:          "締め文",
-        greeting:         "挨拶文",
-        situation:        "状況・背景説明",
-        appeal:           "物件アピール文",
-        cta:              "申込み後押し文",
-        // application_push 追加分: reassurance（不安解消一言）/ movein_date（入居日安心文）
-        reassurance:      "不安解消・フォロー一言（保証会社審査〜キャンセル料なし等）",
-        movein_date:      "入居日安心（〇月〇日のご入居で問題ございません！！）",
-        property_info:    "物件・確認内容の記載",
-        estimate_request: "最大限割引した初期費用の御見積もり依頼",
-      };
 
       // ── 誤差学習: 変化したコンポーネントをタイプ別に分析（最大2件）──
       const learnableChangedNames = new Set(learnableChanges.map(c => c.comp));
@@ -340,7 +401,7 @@ export async function POST(req: NextRequest) {
       }
 
       // ── 予測スコア: 変化しなかったコンポーネントのルールをブースト ──
-      // 「AIの予測どおりだった」コンポーネント → 直近ルールの importance +1
+      // 「AIの予測どおりだった」コンポーネント → 最多適用ルールの importance +1（穴3修正: 盲目的な直近2件→apply_count順）
       const correctComponents = learnableList.filter(c =>
         (ai_components as Record<string, string>)[c] && !learnableChangedNames.has(c),
       );
@@ -350,6 +411,7 @@ export async function POST(req: NextRequest) {
           .from("ai_reply_knowledge")
           .select("id, importance")
           .eq("conversation_state", compState)
+          .order("apply_count", { ascending: false })
           .order("created_at", { ascending: false })
           .limit(2);
         for (const rule of rules ?? []) {
@@ -416,6 +478,47 @@ export async function POST(req: NextRequest) {
     processed++;
   }
 
+  // ── ポジティブ強化 A: was_ai_used=true（AIそのまま送信）→ コンポーネントルールをブースト ──
+  // スタッフが修正せず送信 = AI予想が正解 = 各コンポーネントのルールを強化する
+  // was_ai_modified=false かつ ai_components あり のレコードが対象（最大20件）
+  {
+    const { data: usedExamples } = await supabase
+      .from("ai_reply_examples")
+      .select("id, conversation_state, ai_components")
+      .eq("was_ai_modified", false)
+      .eq("was_ai_used", true)
+      .is("diff_analyzed_at", null)
+      .not("ai_components", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    for (const ue of usedExamples ?? []) {
+      const ueState = ue.conversation_state as string;
+      const ueComps = ue.ai_components as Record<string, string>;
+      const ueLearnList = STATE_LEARNABLE[ueState] ?? [];
+      for (const comp of ueLearnList.slice(0, 3)) {
+        if (!ueComps[comp]) continue;
+        const compState = `${ueState}_${comp}`;
+        const { data: posRules } = await supabase
+          .from("ai_reply_knowledge")
+          .select("id, importance")
+          .eq("conversation_state", compState)
+          .order("apply_count", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(2);
+        for (const rule of posRules ?? []) {
+          const imp = (rule.importance as number) ?? 7;
+          if (imp < 9) {
+            await supabase.from("ai_reply_knowledge")
+              .update({ importance: Math.min(9, imp + 1) }).eq("id", rule.id);
+          }
+        }
+      }
+      await supabase.from("ai_reply_examples")
+        .update({ diff_analyzed_at: now }).eq("id", ue.id);
+    }
+  }
+
   // 学習済みナレッジのembeddingを即座にバックフィル
   if (learned > 0) {
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
@@ -440,6 +543,83 @@ export async function POST(req: NextRequest) {
       .neq("hypothesis_status", "confirmed")        // 確認済みは除外
       .neq("hypothesis_status", "rejected");        // 既にrejectは除外
   } catch { /* decay 失敗は無視して処理完了を返す */ }
+
+  // ── ポジティブ強化 B: correct_count >= 3 のルールを importance 昇格 ──
+  // confirm_knowledge_feedback RPC で蓄積された correct_count を importance に反映する
+  try {
+    const { data: correctRules } = await supabase
+      .from("ai_reply_knowledge")
+      .select("id, importance")
+      .gte("correct_count", 3)
+      .lt("importance", 9)
+      .neq("hypothesis_status", "rejected")
+      .order("correct_count", { ascending: false })
+      .limit(50);
+    for (const rule of correctRules ?? []) {
+      await supabase.from("ai_reply_knowledge")
+        .update({ importance: Math.min(9, (rule.importance as number) + 1) })
+        .eq("id", rule.id);
+    }
+  } catch { /* ignore */ }
+
+  // ── ポジティブ強化 C: 過去30日の変更率（mod_rate）でステート単位スコア調整 ──
+  // 変更率 <= 20% = AIが当たり続けている → 上位ルール +1
+  // 変更率 >= 70% = AIが外れ続けている → 下位ルール -1
+  try {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: examples30 } = await supabase
+      .from("ai_reply_examples")
+      .select("conversation_state, was_ai_modified")
+      .gte("created_at", thirtyDaysAgo)
+      .not("ai_draft", "is", null);
+
+    if (examples30 && examples30.length >= 10) {
+      const stateStats = new Map<string, { total: number; modified: number }>();
+      for (const row of examples30) {
+        const s = row.conversation_state as string;
+        if (!s) continue;
+        const st = stateStats.get(s) ?? { total: 0, modified: 0 };
+        st.total++;
+        if (row.was_ai_modified) st.modified++;
+        stateStats.set(s, st);
+      }
+      for (const [state, stats] of stateStats) {
+        if (stats.total < 5) continue; // データ少なすぎる場合はスキップ
+        const modRate = stats.modified / stats.total;
+        if (modRate <= 0.2) {
+          // AIが当たり続けている → 上位ルールを +1
+          const { data: topRules } = await supabase
+            .from("ai_reply_knowledge")
+            .select("id, importance")
+            .like("conversation_state", `${state}%`)
+            .lt("importance", 9)
+            .neq("hypothesis_status", "rejected")
+            .order("apply_count", { ascending: false })
+            .limit(3);
+          for (const rule of topRules ?? []) {
+            await supabase.from("ai_reply_knowledge")
+              .update({ importance: Math.min(9, (rule.importance as number) + 1) })
+              .eq("id", rule.id);
+          }
+        } else if (modRate >= 0.7) {
+          // AIが外れ続けている → 下位ルールを -1
+          const { data: lowRules } = await supabase
+            .from("ai_reply_knowledge")
+            .select("id, importance")
+            .like("conversation_state", `${state}%`)
+            .gt("importance", 5)
+            .neq("hypothesis_status", "confirmed")
+            .order("apply_count", { ascending: true })
+            .limit(3);
+          for (const rule of lowRules ?? []) {
+            await supabase.from("ai_reply_knowledge")
+              .update({ importance: Math.max(5, (rule.importance as number) - 1) })
+              .eq("id", rule.id);
+          }
+        }
+      }
+    }
+  } catch { /* ignore */ }
 
   return NextResponse.json({ ok: true, processed, learned, message: `${processed}件処理・${learned}件学習` });
 }
