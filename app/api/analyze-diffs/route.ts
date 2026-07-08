@@ -576,8 +576,9 @@ export async function POST(req: NextRequest) {
   } catch { /* decay 失敗は無視して処理完了を返す */ }
 
   // ── ポジティブ強化 B: correct_count >= 3 のルールを importance 昇格 ──
+  // MED-09: learned>0 の場合のみ実行（二重実行時は2回目 learned=0 → スキップで冪等保証）
   // confirm_knowledge_feedback RPC で蓄積された correct_count を importance に反映する
-  try {
+  if (learned > 0) try {
     const { data: correctRules } = await supabase
       .from("ai_reply_knowledge")
       .select("id, importance")
@@ -594,9 +595,10 @@ export async function POST(req: NextRequest) {
   } catch { /* ignore */ }
 
   // ── ポジティブ強化 C: 過去30日の変更率（mod_rate）でステート単位スコア調整 ──
+  // MED-09: learned>0 の場合のみ実行（二重実行防止）
   // 変更率 <= 20% = AIが当たり続けている → 上位ルール +1
   // 変更率 >= 70% = AIが外れ続けている → 下位ルール -1
-  try {
+  if (learned > 0) try {
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     const { data: examples30 } = await supabase
       .from("ai_reply_examples")

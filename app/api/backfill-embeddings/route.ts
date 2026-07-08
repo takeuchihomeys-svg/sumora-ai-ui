@@ -84,14 +84,22 @@ export async function POST(req: Request) {
   });
 }
 
-// GET: 未処理件数を確認
-export async function GET() {
-  const { count } = await supabase
-    .from("ai_reply_examples")
-    .select("id", { count: "exact", head: true })
-    .is("embedding", null);
-  const { count: total } = await supabase
-    .from("ai_reply_examples")
-    .select("id", { count: "exact", head: true });
-  return NextResponse.json({ remaining: count ?? 0, total: total ?? 0 });
+// GET: Vercel Cron 向け（認証付きバックフィル実行 / MED-04）
+// 毎日未処理の embedding を自動補完する。未処理0件なら即返却。
+export async function GET(req: Request) {
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers.get("authorization");
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    // 認証なしなら件数確認のみ（従来の GET 動作）
+    const { count } = await supabase
+      .from("ai_reply_examples")
+      .select("id", { count: "exact", head: true })
+      .is("embedding", null);
+    const { count: total } = await supabase
+      .from("ai_reply_examples")
+      .select("id", { count: "exact", head: true });
+    return NextResponse.json({ remaining: count ?? 0, total: total ?? 0 });
+  }
+  // 認証あり（Vercel Cron）: POST と同じバックフィル処理を実行
+  return POST(req as unknown as Request);
 }

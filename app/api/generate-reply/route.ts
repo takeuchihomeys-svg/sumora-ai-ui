@@ -724,30 +724,31 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   // 【⚠️絶対ルール】には冒頭で取得済みの topPrinciples（category=principle・importance>=9）を使う
   const [{ data: stateDiff }, { data: globalDiff }, { data: correctionPairs }, { data: global }, { data: stateSpecific }] = await Promise.all([
     // HIGH-07: hypothesis_status を取得してconfirmed優先ソートに使う
+    // MED-07: limit を削減（取得後にsliceするため余分フェッチを最小化）
     supabase.from("ai_reply_knowledge").select("id, category, title, content, importance, hypothesis_status")
       .ilike("title", "%差分学習%").gte("importance", 7)
       .in("conversation_state", stateAliases).neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false })
-      .order("created_at", { ascending: false }).limit(17),
+      .order("created_at", { ascending: false }).limit(12),
     supabase.from("ai_reply_knowledge").select("id, category, title, content, importance, hypothesis_status")
       .ilike("title", "%差分学習%").gte("importance", 7).neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false })
-      .order("created_at", { ascending: false }).limit(12),
+      .order("created_at", { ascending: false }).limit(8),
     supabase.from("ai_reply_knowledge").select("id, category, title, content, importance, hypothesis_status")
       .ilike("title", "%修正対比%").in("conversation_state", stateAliases).neq("hypothesis_status", "rejected")
-      .order("importance", { ascending: false }).limit(10),
+      .order("importance", { ascending: false }).limit(8),
     supabase.from("ai_reply_knowledge").select("id, category, title, content, importance, hypothesis_status")
       .gte("importance", 8)
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
       .not("category", "eq", "principle").neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false })
-      .order("created_at", { ascending: false }).limit(10),
+      .order("created_at", { ascending: false }).limit(8),
     supabase.from("ai_reply_knowledge").select("id, category, title, content, importance, hypothesis_status")
       .in("conversation_state", stateAliases).gte("importance", 7)
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
       .not("category", "eq", "principle").neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false })
-      .order("created_at", { ascending: false }).limit(26),
+      .order("created_at", { ascending: false }).limit(20),
   ]);
 
   // HIGH-07: confirmed を hypothesis より優先してソート

@@ -8,6 +8,7 @@ import { supabase } from "./lib/supabase";
 import { detectPlaceholders } from "./lib/validate-reply";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
+import { retryFetchResponse } from "./lib/retry-fetch";
 
 // suggest-next-action APIが返すAIX初期化パラメータ
 type NextActionParams = { imageUrl?: string; check_pattern?: string; send_mode?: string };
@@ -3314,7 +3315,8 @@ export default function Home() {
           .filter(m => m.sender === "staff" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
           .at(-1)?.text || undefined;
         // 送信したメッセージの example ID を記録して、後で☆を押したとき PATCH で更新できるようにする
-        fetch("/api/save-reply-example", {
+        // HIGH-04: retryFetchResponse でネットワーク障害時も学習データを確実に保存（最大2リトライ）
+        retryFetchResponse("/api/save-reply-example", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -3332,7 +3334,7 @@ export default function Home() {
             ...(selectedTemplateIdRef.current ? { template_id: selectedTemplateIdRef.current } : {}),
           }),
         }).then(async (r) => {
-          if (!r.ok) return;
+          if (!r || !r.ok) return;
           const saved = await r.json() as { id?: string };
           // 直近の送信メッセージIDが確定してから記録（newMessages の最初のテキストメッセージ）
           const textMsgId = newMessages.find((m) => m.sender === "staff" && m.text === textToSend)?.id;
