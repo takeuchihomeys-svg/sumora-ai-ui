@@ -132,54 +132,78 @@ function stripEmoji(text: string): string {
     .trim();
 }
 
-// 「明日」「明後日」「〇曜日」等の相対日付を実際の月日に変換する
-// 解決できない場合は raw をそのまま返す
-function resolveDateStr(raw: string): string {
+// 会話テキストから複数日を抽出する（「明日」「明後日」両方あれば両方返す）
+function extractMultipleDates(text: string): string[] {
   const today = new Date();
+  const results: string[] = [];
 
-  if (/明日|あした/.test(raw)) {
+  // 「明日」「明後日」が両方ある場合は両方追加
+  if (/明日|あした/.test(text)) {
     const d = new Date(today);
     d.setDate(d.getDate() + 1);
-    return `${d.getMonth() + 1}月${d.getDate()}日`;
+    results.push(`${d.getMonth() + 1}月${d.getDate()}日`);
   }
-  if (/明後日|あさって/.test(raw)) {
+  if (/明後日|あさって/.test(text)) {
     const d = new Date(today);
     d.setDate(d.getDate() + 2);
-    return `${d.getMonth() + 1}月${d.getDate()}日`;
+    results.push(`${d.getMonth() + 1}月${d.getDate()}日`);
   }
-  if (/今日|本日/.test(raw)) {
-    return `${today.getMonth() + 1}月${today.getDate()}日`;
+  // 「今日」「本日」
+  if (results.length === 0 && /今日|本日/.test(text)) {
+    results.push(`${today.getMonth() + 1}月${today.getDate()}日`);
   }
-  // 「来週〇曜日」
-  if (/来週([月火水木金土日])曜/.test(raw)) {
-    const dayNames = ["日", "月", "火", "水", "木", "金", "土"];
-    const m = raw.match(/来週([月火水木金土日])曜/);
-    if (m) {
-      const targetDay = dayNames.indexOf(m[1]);
-      if (targetDay >= 0) {
-        const d = new Date(today);
-        d.setDate(d.getDate() + (targetDay - d.getDay() + 7) % 7 + 7);
-        return `${d.getMonth() + 1}月${d.getDate()}日`;
+  // 「〇月〇日」の直接記載（複数可）
+  const directMatches = text.match(/\d{1,2}月\d{1,2}日/g);
+  if (directMatches) {
+    for (const d of directMatches) {
+      if (!results.includes(d)) results.push(d);
+    }
+  }
+  // 「〇/〇」形式（複数可）
+  const slashMatches = text.match(/(\d{1,2})\/(\d{1,2})/g);
+  if (slashMatches) {
+    for (const sm of slashMatches) {
+      const mm = sm.match(/(\d{1,2})\/(\d{1,2})/);
+      if (mm) {
+        const ds = `${parseInt(mm[1])}月${parseInt(mm[2])}日`;
+        if (!results.includes(ds)) results.push(ds);
       }
     }
   }
-  // 「〇曜日」（次回の該当曜日）
-  if (/([月火水木金土日])曜/.test(raw)) {
+  // 「〇曜日」（今週・来週）
+  if (results.length === 0) {
     const dayNames = ["日", "月", "火", "水", "木", "金", "土"];
-    const m = raw.match(/([月火水木金土日])曜/);
-    if (m) {
-      const targetDay = dayNames.indexOf(m[1]);
-      if (targetDay >= 0) {
-        const d = new Date(today);
-        let diff = targetDay - d.getDay();
-        if (diff <= 0) diff += 7;
-        d.setDate(d.getDate() + diff);
-        return `${d.getMonth() + 1}月${d.getDate()}日`;
+    const dayMatches = text.match(/([月火水木金土日])曜/g);
+    if (dayMatches) {
+      for (const dm of dayMatches) {
+        const targetDay = dayNames.indexOf(dm[0]);
+        if (targetDay >= 0) {
+          const d = new Date(today);
+          let diff = targetDay - d.getDay();
+          if (diff <= 0) diff += 7;
+          d.setDate(d.getDate() + diff);
+          const ds = `${d.getMonth() + 1}月${d.getDate()}日`;
+          if (!results.includes(ds)) results.push(ds);
+        }
       }
     }
   }
 
-  return raw;
+  return results;
+}
+
+// 抽出した日付リストに一致するカレンダー日のみ true にする配列を返す
+function slotsMatchingDates(
+  days: Array<{ label: string }>,
+  extracted: string[],
+): boolean[] {
+  return days.map((day) =>
+    extracted.some((dateStr) => {
+      const mm = dateStr.match(/(\d+)月(\d+)日/);
+      if (!mm) return false;
+      return day.label.includes(`${parseInt(mm[1])}/${parseInt(mm[2])}`);
+    }),
+  );
 }
 
 const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }> = {
@@ -775,7 +799,6 @@ export default function AixModal({
       try {
         const { days } = await fetchCalendarSlots();
         setViewingCalendarDays(days);
-        setViewingSlotEnabled(days.map(d => !d.fullyBooked));
         // "11:00〜14:00" → start: "11:00", end: "14:00"
         const parseTime = (slot: string) => {
           const m = slot.match(/(\d{1,2}:\d{2})[〜~\-](\d{1,2}:\d{2})/);
@@ -785,33 +808,31 @@ export default function AixModal({
         setViewingSlotEnds(days.map(d => parseTime(d.slots[0] || "").end));
         setViewingSlotOverride(days.map(() => false));
 
-        // ★ お客様が内覧日を指定していたら自動でトグルON + 日時プリセット
-        if (recentMessages) {
-          const customerMsgs = [...recentMessages].filter(m => m.sender === "customer" && m.text).reverse();
-          let detectedDate = "";
-          for (const msg of customerMsgs) {
-            const text = msg.text || "";
-            // 「明日」「明後日」「今日」「〇曜日」等の相対日付を先に解決
-            const rel = resolveDateStr(text);
-            if (rel !== text) { detectedDate = rel; break; }
-            // 「7月5日」形式
-            const m1 = text.match(/(\d{1,2})月(\d{1,2})日/);
-            if (m1) { detectedDate = `${m1[1]}月${m1[2]}日`; break; }
-            // 「7/5」「7/5(土)」形式
-            const m2 = text.match(/(\d{1,2})\/(\d{1,2})/);
-            if (m2) { detectedDate = `${m2[1]}月${m2[2]}日`; break; }
+        // ★ お客様が内覧日を指定していたら自動でトグルON + 日時プリセット（複数日対応）
+        const allCustomerText = (recentMessages || [])
+          .filter(m => m.sender === "customer" && m.text)
+          .map(m => m.text)
+          .join(" ");
+        const extracted = extractMultipleDates(allCustomerText);
+
+        if (extracted.length > 0) {
+          // 内覧日指定あり: 抽出した日付に一致するカレンダー日のみチェック（本日は指定がなければチェックしない）
+          setViewingSpecificMode(true);
+          setViewingSpecificDate(extracted.join("・"));
+          setViewingSlotEnabled(slotsMatchingDates(days, extracted));
+          // 最初の有効スロットの時間をプリセット
+          const firstAvail = days.find(d => !d.fullyBooked);
+          if (firstAvail) {
+            const t = parseTime(firstAvail.slots[0] || "");
+            setViewingSpecificStart(t.start);
+            setViewingSpecificEnd(t.end);
           }
-          if (detectedDate) {
-            setViewingSpecificMode(true);
-            setViewingSpecificDate(detectedDate);
-            // 最初の有効スロットの時間をプリセット
-            const firstAvail = days.find(d => !d.fullyBooked);
-            if (firstAvail) {
-              const t = parseTime(firstAvail.slots[0] || "");
-              setViewingSpecificStart(t.start);
-              setViewingSpecificEnd(t.end);
-            }
-          }
+        } else if (viewingSpecificMode) {
+          // 内覧日指定ありモードで日付を抽出できない → 本日(index 0)はチェックしない
+          setViewingSlotEnabled(days.map((d, i) => i > 0 && !d.fullyBooked));
+        } else {
+          // 通常モード: 空きのある日を全てチェック
+          setViewingSlotEnabled(days.map(d => !d.fullyBooked));
         }
       } catch {
         setViewingCalendarDays([]);
@@ -825,23 +846,22 @@ export default function AixModal({
     })();
   }, [actionType]);
 
-  // 内覧日指定あり: ONになったら会話からお客様指定日を自動抽出
+  // 内覧日指定あり: ONになったら会話からお客様指定日を自動抽出（複数日対応）
   useEffect(() => {
     if (!viewingSpecificMode || !recentMessages) return;
     if (viewingSpecificDate) return; // 既に入力済みならスキップ
-    // お客様メッセージから日付を逆順に探す（「7月5日」「7/5」「7/5(土)」形式に対応）
-    const customerMsgs = [...recentMessages].filter(m => m.sender === "customer" && m.text).reverse();
-    for (const msg of customerMsgs) {
-      const text = msg.text || "";
-      // 「明日」「明後日」「今日」「〇曜日」等の相対日付を先に解決
-      const rel = resolveDateStr(text);
-      if (rel !== text) { setViewingSpecificDate(rel); break; }
-      // 「7月5日」形式
-      const m1 = text.match(/(\d{1,2})月(\d{1,2})日?/);
-      if (m1) { setViewingSpecificDate(`${m1[1]}月${m1[2]}日`); break; }
-      // 「7/5」「7/5(土)」形式
-      const m2 = text.match(/(\d{1,2})\/(\d{1,2})/);
-      if (m2) { setViewingSpecificDate(`${m2[1]}月${m2[2]}日`); break; }
+    // お客様メッセージ全体から複数日を抽出（「明日・明後日」等を両方拾う）
+    const allCustomerText = [...recentMessages]
+      .filter(m => m.sender === "customer" && m.text)
+      .map(m => m.text)
+      .join(" ");
+    const extracted = extractMultipleDates(allCustomerText);
+    if (extracted.length > 0) {
+      setViewingSpecificDate(extracted.join("・"));
+      // 抽出した日付に一致するカレンダー日のみチェック（本日は指定がなければチェックしない）
+      if (viewingCalendarDays.length > 0) {
+        setViewingSlotEnabled(slotsMatchingDates(viewingCalendarDays, extracted));
+      }
     }
     // カレンダーから時間をプリセット（最初の有効スロット）
     const firstSlot = viewingCalendarDays.find((d, i) => d.fullyBooked ? viewingSlotOverride[i] : viewingSlotEnabled[i]);
@@ -3593,7 +3613,35 @@ export default function AixModal({
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setViewingSpecificMode(v => !v); setViewingSpecificDate(""); setViewingSpecificStart(""); setViewingSpecificEnd(""); }}
+                  onClick={() => {
+                    setViewingSpecificMode(prev => {
+                      const next = !prev;
+                      setViewingSpecificStart("");
+                      setViewingSpecificEnd("");
+                      if (next) {
+                        // 内覧日指定あり ON: 会話から複数日を抽出してカレンダーに反映
+                        const allText = (recentMessages || [])
+                          .filter(m => m.sender === "customer" && m.text)
+                          .map(m => m.text)
+                          .join(" ");
+                        const extracted = extractMultipleDates(allText);
+                        if (extracted.length > 0) {
+                          setViewingSpecificDate(extracted.join("・"));
+                          // 抽出した日付に一致する日のみチェック（本日は指定がなければチェックしない）
+                          setViewingSlotEnabled(slotsMatchingDates(viewingCalendarDays, extracted));
+                        } else {
+                          setViewingSpecificDate("");
+                          // 抽出できない場合は本日以外をチェック
+                          setViewingSlotEnabled(viewingCalendarDays.map((d, i) => i > 0 && !d.fullyBooked));
+                        }
+                      } else {
+                        // OFF: 通常モードに戻す
+                        setViewingSpecificDate("");
+                        setViewingSlotEnabled(viewingCalendarDays.map(d => !d.fullyBooked));
+                      }
+                      return next;
+                    });
+                  }}
                   className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition-all ${viewingSpecificMode ? "bg-blue-500 text-white" : "bg-[#f0f2f5] text-[#54656f]"}`}
                 >
                   📅 内覧日指定あり
