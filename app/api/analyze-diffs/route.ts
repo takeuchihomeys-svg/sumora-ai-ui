@@ -258,7 +258,7 @@ export async function POST(req: NextRequest) {
 
       // アクション別の学習対象コンポーネント
       const STATE_LEARNABLE: Record<string, string[]> = {
-        property_send:    ["intro", "pickup", "invite", "closing"],
+        property_send:    ["intro", "pickup", "invite", "calendar", "closing"],
         viewing_invite:   ["greeting", "situation", "invite", "closing"],
         application_push: ["appeal", "cta", "invite", "closing"],
       };
@@ -277,6 +277,7 @@ export async function POST(req: NextRequest) {
         intro:     "挨拶文",
         pickup:    "ピックアップ行（条件説明）",
         invite:    "内覧誘導文",
+        calendar:  "内覧可能日時の記載（直近ですと〜ご案内可能です）",
         closing:   "締め文",
         greeting:  "挨拶文",
         situation: "状況・背景説明",
