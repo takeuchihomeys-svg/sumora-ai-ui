@@ -271,6 +271,7 @@ export async function POST(req: NextRequest) {
         property_send:    ["intro", "pickup", "invite", "calendar", "closing"],
         viewing_invite:   ["greeting", "situation", "invite", "closing"],
         application_push: ["appeal", "cta", "invite", "closing"],
+        acknowledge_check: ["greeting", "property_info", "estimate_request", "closing"],
       };
       const learnableList = STATE_LEARNABLE[conversation_state] ?? STATE_LEARNABLE["property_send"];
       const learnableSet = new Set(learnableList);
@@ -284,15 +285,17 @@ export async function POST(req: NextRequest) {
       }
 
       const COMPONENT_NAMES: Record<string, string> = {
-        intro:     "挨拶文",
-        pickup:    "ピックアップ行（条件説明）",
-        invite:    "内覧誘導文",
-        calendar:  "内覧可能日時の記載（直近ですと〜ご案内可能です）",
-        closing:   "締め文",
-        greeting:  "挨拶文",
-        situation: "状況・背景説明",
-        appeal:    "物件アピール文",
-        cta:       "申込み後押し文",
+        intro:            "挨拶文",
+        pickup:           "ピックアップ行（条件説明）",
+        invite:           "内覧誘導文",
+        calendar:         "内覧可能日時の記載（直近ですと〜ご案内可能です）",
+        closing:          "締め文",
+        greeting:         "挨拶文",
+        situation:        "状況・背景説明",
+        appeal:           "物件アピール文",
+        cta:              "申込み後押し文",
+        property_info:    "物件・確認内容の記載",
+        estimate_request: "最大限割引した初期費用の御見積もり依頼",
       };
 
       // ── 誤差学習: 変化したコンポーネントをタイプ別に分析（最大2件）──
