@@ -7155,6 +7155,12 @@ export default function Home() {
             setPendingTemplateSample(templateInfo?.sample ?? null);
             // 2通目設定をキャプチャ（AIX送信後に使用）
             pendingSecondMsgRef.current = templateInfo?.secondMsg ?? null;
+            // 書類依頼テンプレは docs_request サブモードを自動セット
+            if (templateInfo?.name?.includes("書類依頼")) {
+              setAixInitAppSubMode("docs_request");
+            } else {
+              setAixInitAppSubMode(null);
+            }
             closeTemplateModal();
             // テンプレのcategoryから優先でAIXアクションを決定（残留activeAixFlowの誤ルーティング防止）
             const categoryDerivedAction = templateInfo?.category ? TEMPLATE_CATEGORY_TO_ACTION[templateInfo.category] : undefined;
