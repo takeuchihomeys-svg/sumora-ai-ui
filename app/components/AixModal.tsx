@@ -133,11 +133,12 @@ function stripEmoji(text: string): string {
 }
 
 // 会話テキストから複数日を抽出する（「明日」「明後日」両方あれば両方返す）
+// 入居・引越・退去文脈の日付は内覧日として抽出しない
 function extractMultipleDates(text: string): string[] {
   const today = new Date();
   const results: string[] = [];
 
-  // 「明日」「明後日」が両方ある場合は両方追加
+  // 「明日」「明後日」は常に内覧文脈 → 最優先で抽出（入居文脈の判定不要）
   if (/明日|あした/.test(text)) {
     const d = new Date(today);
     d.setDate(d.getDate() + 1);
@@ -148,28 +149,27 @@ function extractMultipleDates(text: string): string[] {
     d.setDate(d.getDate() + 2);
     results.push(`${d.getMonth() + 1}月${d.getDate()}日`);
   }
+
   // 「今日」「本日」
   if (results.length === 0 && /今日|本日/.test(text)) {
     results.push(`${today.getMonth() + 1}月${today.getDate()}日`);
   }
-  // 「〇月〇日」の直接記載（複数可）
-  const directMatches = text.match(/\d{1,2}月\d{1,2}日/g);
-  if (directMatches) {
-    for (const d of directMatches) {
-      if (!results.includes(d)) results.push(d);
-    }
-  }
-  // 「〇/〇」形式（複数可）
-  const slashMatches = text.match(/(\d{1,2})\/(\d{1,2})/g);
-  if (slashMatches) {
-    for (const sm of slashMatches) {
-      const mm = sm.match(/(\d{1,2})\/(\d{1,2})/);
-      if (mm) {
-        const ds = `${parseInt(mm[1])}月${parseInt(mm[2])}日`;
-        if (!results.includes(ds)) results.push(ds);
+
+  // 「〇月〇日」の直接記載 — 明日・明後日・今日が取れている場合はスキップ
+  // 入居・引越・退去を含む文節を丸ごと除去してから日付を抽出（入居希望日の誤抽出防止）
+  if (results.length === 0) {
+    const withoutMoveInContext = text
+      .replace(/[^。\n]*入居[^。\n]*/g, "")
+      .replace(/[^。\n]*引越[^。\n]*/g, "")
+      .replace(/[^。\n]*退去[^。\n]*/g, "");
+    const directMatches = withoutMoveInContext.match(/\d{1,2}月\d{1,2}日/g);
+    if (directMatches) {
+      for (const d of directMatches) {
+        if (!results.includes(d)) results.push(d);
       }
     }
   }
+
   // 「〇曜日」（今週・来週）
   if (results.length === 0) {
     const dayNames = ["日", "月", "火", "水", "木", "金", "土"];
@@ -1380,7 +1380,8 @@ export default function AixModal({
       }
 
       // 内覧へ！内覧日指定ありモード → テンプレで即生成（AI不要）
-      if (actionType === "viewing_invite" && viewingSpecificMode) {
+      // ただし「会話を合わせる」(conversation_match: true)のときはAI生成を優先するためスキップ
+      if (actionType === "viewing_invite" && viewingSpecificMode && !extraFlags?.conversation_match) {
         if (!viewingSpecificDate.trim()) throw new Error("日程を入力してください");
         const s = viewingSpecificStart.trim();
         const e = viewingSpecificEnd.trim();

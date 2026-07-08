@@ -1467,8 +1467,12 @@ ${SMORA_COMMON_RULES}`;
           : "";
 
         // カレンダー情報ブロック（全日程を提示・未取得時は空）
+        // お客様指定日（参考）は conversation_match では AI が会話履歴から読む
+        const specifiedDateStr = body.customer_requested_date ? String(body.customer_requested_date) : "";
         const calendarBlock = calendarNoteForApp
-          ? `【内覧可能日時（カレンダー自動取得・全日程を案内すること）】\n${calendarNoteForApp}`
+          ? `【内覧可能日時（スタッフのカレンダーから自動取得・この時間で案内すること）】\n${calendarNoteForApp}`
+          : specifiedDateStr
+          ? `【お客様指定日程（参考）】${specifiedDateStr}`
           : "";
 
         // generate-reply と同等の高品質システムプロンプト構造
