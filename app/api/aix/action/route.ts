@@ -1622,6 +1622,106 @@ ${SMORA_COMMON_RULES}`;
       ];
       message_text = await callClaudeVision(moveInSystem + moveInDiffNote, content, currentAction);
 
+    // ── 🔒 保証会社審査確認 ──────────────────────────────────────────────────
+    } else if (action === "property_check_result" && check_pattern === "mgmt_guarantor") {
+      const guarantorPushType = body.guarantor_push_type as string | undefined;
+
+      if (!image_url) throw new Error("物件資料画像が必要です");
+
+      // Step 1: 画像から保証会社情報をOCR抽出
+      const GUARANTOR_COMPANY_LIST = `【保証会社タイプ一覧】
+信販系（最も厳しい）: エポスカード、オリコフォレントインシュア、アプラス、ジャックス、フォーレント
+LICC系（一般的）: 日本セーフティー、JID、全国保証、アート・プランニング、青山ライフデザイン、保証ベース
+独立系（最も緩い）: ジェイリース、エルズサポート、Casa、フォーシーズンズ、ルームバンク、全保連、いえらぶ保証、スマートタカミ、イントラスト、レジデンシャルパートナーズ`;
+
+      const extractSystem = `賃貸物件資料の画像から保証会社情報を抽出してください。
+${GUARANTOR_COMPANY_LIST}
+
+画像を分析し、以下のJSON形式のみで返答してください（説明不要）：
+{"company_name":"保証会社名（資料から読み取った正確な名前・見当たらなければ空文字）","guarantor_type":"独立系|LICC系|信販系|不明","reasoning":"判断理由（1行）"}
+
+会社名が上記リストにない場合はguarantor_type="不明"にする。`;
+
+      const extractRaw = await callClaudeVision(
+        extractSystem,
+        [
+          { type: "text", text: "この物件資料から保証会社名とタイプを特定してください。" },
+          { type: "image", source: { type: "url", url: String(image_url) } },
+        ],
+        currentAction
+      );
+
+      let companyName = "";
+      let guarantorType = "不明";
+      try {
+        const m = extractRaw.match(/\{[\s\S]*\}/);
+        if (m) {
+          const d = JSON.parse(m[0]) as { company_name?: string; guarantor_type?: string };
+          companyName = d.company_name || "";
+          guarantorType = d.guarantor_type || "不明";
+        }
+      } catch { /* 解析失敗時はデフォルト値を使用 */ }
+
+      const typeDesc =
+        guarantorType === "独立系" ? "独立系保証会社の為審査基準が比較的緩い物件となります！！" :
+        guarantorType === "LICC系" ? "LICC系保証会社の為一般的な審査基準の物件となります！！" :
+        guarantorType === "信販系" ? "信販系保証会社の為クレジット情報が参照される物件となります！！" :
+        "保証会社詳細については直接ご確認頂く形となります！！";
+
+      const pushLine = guarantorPushType === "apply"
+        ? `${name}お気に召されましたらお申込みしお部屋抑えさせて頂きます！！`
+        : `${name}お気に召されましたらご都合よろしいお日にちにご案内させて頂きます😊！！`;
+
+      const reportLine = companyName
+        ? `[物件名]の保証会社は${companyName}となります！！`
+        : `[物件名]の保証会社を確認させて頂きました！！`;
+
+      // Step 2: AI生成（物件名の特定 + メッセージ組み立て）
+      const guarantorDiffNote = await getKnowledgeForState(
+        AIX_ACTION_TO_STATES.property_check_result,
+        currentAction, conversationId
+      );
+
+      const guarantorSystem = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
+管理会社に確認した保証会社情報をお客様に報告するLINEメッセージを1つだけ作成してください。
+
+${SMORA_COMMON_RULES}
+
+【お客様名】「${name}」
+
+【確定情報（変更禁止）】
+保証会社名: ${companyName || "資料より確認済み"}
+保証タイプ: ${guarantorType}
+
+【メッセージ構成（厳守・この4行のみ）】
+①挨拶: 「${greetingPhrase}」
+②確認報告: 「${reportLine}」（[物件名]は会話履歴の最新スタッフメッセージ「【物件名 号室】」から物件名のみ抽出。見つからなければ「こちらのお部屋」）
+③タイプ説明: 「${typeDesc}」
+④誘導: 「${pushLine}」
+
+【出力形式（必須）】
+JSONのみ: {"greeting":"①","report":"②","type_desc":"③","cta":"④"}`;
+
+      const rawGuarantorText = await callClaude(
+        guarantorSystem + guarantorDiffNote,
+        `${name}への保証会社確認報告メッセージ。${recentHistory}`,
+        currentAction
+      );
+
+      try {
+        const m = rawGuarantorText.match(/\{[\s\S]*\}/);
+        if (m) {
+          const c = JSON.parse(m[0]) as Record<string, string>;
+          message_text = ["greeting", "report", "type_desc", "cta"].map(k => c[k] ?? "").filter(Boolean).join("\n");
+        } else {
+          message_text = rawGuarantorText;
+        }
+      } catch {
+        message_text = rawGuarantorText;
+      }
+      // 号室の先頭ゼロを除去
+      message_text = message_text.replace(/\b0+(\d+)号室/g, "$1号室");
+
     // ── 🏢 管理会社に確認した（退去予定日・入居可能日・初期費用） ──────────
     } else if (
       action === "property_check_result" &&

@@ -50,7 +50,7 @@ interface AixModalProps {
   initialEstimateMulti?: boolean;
   initialAppSubMode?: "push" | "confirm" | "format" | "docs_request" | null;
   initialInputText?: string;
-  initialCheckPattern?: "available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost";
+  initialCheckPattern?: "available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor";
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
   onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean }) => void;
@@ -412,11 +412,16 @@ export default function AixModal({
   const [topPhrases, setTopPhrases] = useState<{ phrase: string; usage_count: number }[]>([]);
   const [floorPlanTouched, setFloorPlanTouched] = useState(false);
   // 物件確認した専用（vacate_date / mgmt_move_in / mgmt_initial_cost は「管理会社に確認した」ピッカー経由の専用パターン）
-  const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | "move_in_date" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | null>(initialCheckPattern ?? null);
+  const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | "move_in_date" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | null>(initialCheckPattern ?? null);
   // 管理会社確認パターンかどうか（テキスト入力のみで生成できる簡易フロー）
-  const isMgmtCheck = checkPattern === "vacate_date" || checkPattern === "mgmt_move_in" || checkPattern === "mgmt_initial_cost";
+  const isMgmtCheck = checkPattern === "vacate_date" || checkPattern === "mgmt_move_in" || checkPattern === "mgmt_initial_cost" || checkPattern === "mgmt_guarantor";
   // 初期費用確認: サブパターン選択
   const [mgmtCostType, setMgmtCostType] = useState<"estimate" | "negotiation" | null>(null);
+  // 保証会社確認専用: 誘導方向
+  const [mgmtGuarantorPushType, setMgmtGuarantorPushType] = useState<"apply" | "viewing" | null>(null);
+  // 管理会社確認 全パターン共通: 物件資料添付
+  const [mgmtDocImage, setMgmtDocImage] = useState<File | null>(null);
+  const [mgmtDocPreview, setMgmtDocPreview] = useState<string>("");
   // 室内写真確認した専用
   const [interiorPhotoUrl, setInteriorPhotoUrl] = useState<string>("");
   const [interiorPhotoFile, setInteriorPhotoFile] = useState<File | null>(null);
@@ -565,6 +570,7 @@ export default function AixModal({
   const meetingPropertyInputRef = useRef<HTMLInputElement | null>(null);
   const viewingVacancyInputRef = useRef<HTMLInputElement | null>(null);
   const confirmImageInputRef = useRef<HTMLInputElement | null>(null);
+  const mgmtDocInputRef = useRef<HTMLInputElement | null>(null);
 
   // 会話が変わったらシンプルモードをリセット
   useEffect(() => {
@@ -575,6 +581,12 @@ export default function AixModal({
   // initialAppSubMode（picker/バナー経由の指定）をマウント時に潰さないよう、初期値を尊重してリセット
   useEffect(() => { setAppSubMode(initialAppSubMode ?? null); setPreview(""); }, [actionType, initialAppSubMode]);
   useEffect(() => { setAiActionComponents(null); }, [actionType, conversationId]);
+  // actionType 変更時に保証会社確認用ステートをリセット
+  useEffect(() => {
+    setMgmtDocImage(null);
+    setMgmtDocPreview("");
+    setMgmtGuarantorPushType(null);
+  }, [actionType, conversationId]);
 
   useEffect(() => {
     if (initialImageFile) {
@@ -1201,7 +1213,7 @@ export default function AixModal({
         body.check_pattern = checkPattern;
         if (checkPattern === "mgmt_initial_cost" && !mgmtCostType) throw new Error("パターンを選択してください");
         if (checkPattern === "mgmt_initial_cost" && mgmtCostType) body.mgmt_cost_type = mgmtCostType;
-        if (isMgmtCheck && checkPattern !== "mgmt_initial_cost" && !inputText.trim()) throw new Error("管理会社に確認した内容を入力してください");
+        if (isMgmtCheck && checkPattern !== "mgmt_initial_cost" && checkPattern !== "mgmt_guarantor" && !inputText.trim()) throw new Error("管理会社に確認した内容を入力してください");
         if (checkPattern === "move_in_date") {
           if (!moveInImageFile) throw new Error("物件資料を選択してください");
           body.image_url = await uploadImage(moveInImageFile);
@@ -1232,12 +1244,23 @@ export default function AixModal({
             if (ef) estimateUrls.push(await uploadImage(ef));
           }
           if (estimateUrls.length > 0) body.estimate_image_urls = estimateUrls;
+        } else if (checkPattern === "mgmt_guarantor") {
+          if (!mgmtDocImage) throw new Error("物件資料画像が必要です");
+          if (!mgmtGuarantorPushType) throw new Error("申込誘導/内覧誘導を選択してください");
+          const docUrl = await uploadImage(mgmtDocImage, 0);
+          body.image_url = docUrl;
+          body.guarantor_push_type = mgmtGuarantorPushType;
         } else {
           if (checkEstimateFile) body.estimate_image_url = await uploadImage(checkEstimateFile);
           if (checkImageFiles.length > 0) {
             const urls = await Promise.all(checkImageFiles.map((f, i) => uploadImage(f, i)));
             body.image_urls = urls;
             body.image_url = urls[0];
+          }
+          // 管理会社確認パターン: 物件資料を任意添付
+          if (isMgmtCheck && mgmtDocImage) {
+            const docUrl = await uploadImage(mgmtDocImage, 0);
+            (body as Record<string, unknown>).doc_image_url = docUrl;
           }
         }
         if (checkPattern === "available") body.show_viewing_invite = showCheckCalendar;
@@ -1857,6 +1880,8 @@ export default function AixModal({
       : isMgmtCheck ? (
           checkPattern === "mgmt_initial_cost"
             ? !!mgmtCostType && (mgmtCostType === "estimate" || !!inputText.trim())
+            : checkPattern === "mgmt_guarantor"
+            ? !!mgmtDocImage && !!mgmtGuarantorPushType
             : !!inputText.trim()
         )
       : !!checkPattern)
@@ -2601,7 +2626,7 @@ export default function AixModal({
                 </span>
                 <div>
                   <div className="text-[13px] font-bold text-[#111b21]">
-                    管理会社に確認した：{checkPattern === "vacate_date" ? "退去予定日" : checkPattern === "mgmt_move_in" ? "入居可能日" : "初期費用"}
+                    管理会社に確認した：{checkPattern === "vacate_date" ? "退去予定日" : checkPattern === "mgmt_move_in" ? "入居可能日" : checkPattern === "mgmt_guarantor" ? "保証会社（審査面）" : "初期費用"}
                   </div>
                   <div className="text-[10px] text-[#8696a0]">確認内容を入力するだけでAIが報告文を作成します</div>
                 </div>
@@ -2661,8 +2686,8 @@ export default function AixModal({
                 </div>
               )}
 
-              {/* テキスト入力（初期費用は見積書以外で表示、他パターンは常時表示） */}
-              {(checkPattern !== "mgmt_initial_cost" || mgmtCostType === "negotiation") && (
+              {/* テキスト入力（初期費用は見積書以外で表示、保証会社確認・他パターンは条件付き表示） */}
+              {((checkPattern !== "mgmt_initial_cost" && checkPattern !== "mgmt_guarantor") || mgmtCostType === "negotiation") && (
                 <div>
                   <p className="mb-1 text-xs font-bold text-[#54656f]">
                     {(checkPattern === "vacate_date" || checkPattern === "mgmt_move_in") ? "または直接入力・補足" : "確認した内容"}
@@ -2686,6 +2711,63 @@ export default function AixModal({
                       ? "「即入居可」「7月上旬〜」など管理会社から聞いた内容を入力"
                       : "交渉の結果を入力してください（例：礼金1→0に交渉成功）"}
                   </p>
+                </div>
+              )}
+
+              {/* 物件資料アップロード（全mgmtパターン共通・保証会社確認は必須） */}
+              <div className="mt-1">
+                <p className="mb-1 text-xs font-bold text-[#54656f]">
+                  {checkPattern === "mgmt_guarantor" ? "物件資料（必須・保証会社名を読み取ります）" : "物件資料（任意）"}
+                  {checkPattern === "mgmt_guarantor" && <span className="text-red-400 ml-1">*</span>}
+                </p>
+                <input
+                  type="file"
+                  accept="image/*"
+                  ref={mgmtDocInputRef}
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    setMgmtDocImage(f);
+                    const reader = new FileReader();
+                    reader.onload = (ev) => setMgmtDocPreview(ev.target?.result as string);
+                    reader.readAsDataURL(f);
+                    setPreview("");
+                  }}
+                />
+                {mgmtDocPreview ? (
+                  <div className="relative inline-block">
+                    <img src={mgmtDocPreview} className="h-24 w-auto rounded-xl object-cover border border-[#d1d7db]" />
+                    <button
+                      onClick={() => { setMgmtDocImage(null); setMgmtDocPreview(""); setPreview(""); }}
+                      className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] text-white"
+                    >x</button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => mgmtDocInputRef.current?.click()}
+                    className="flex items-center gap-1.5 rounded-xl bg-[#f0f2f5] px-3 py-2 text-xs text-[#54656f]"
+                  >
+                    <span>+ 画像を選択</span>
+                  </button>
+                )}
+              </div>
+
+              {/* 誘導方向（保証会社確認のみ） */}
+              {checkPattern === "mgmt_guarantor" && (
+                <div className="mt-1">
+                  <p className="mb-1.5 text-xs font-bold text-[#54656f]">誘導方向 <span className="text-red-400">*</span></p>
+                  <div className="flex gap-2">
+                    {(["apply", "viewing"] as const).map(t => (
+                      <button
+                        key={t}
+                        onClick={() => { setMgmtGuarantorPushType(t); setPreview(""); }}
+                        className={`flex-1 rounded-xl border py-2.5 text-xs font-semibold transition ${mgmtGuarantorPushType === t ? "border-[#546E7A] bg-[#ECEFF1] text-[#37474F]" : "border-[#E5E7EB] text-[#9CA3AF]"}`}
+                      >
+                        {t === "apply" ? "申込誘導" : "内覧誘導"}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

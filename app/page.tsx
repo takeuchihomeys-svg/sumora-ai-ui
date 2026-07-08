@@ -507,7 +507,7 @@ export default function Home() {
   const [suggestedAppMode, setSuggestedAppMode] = useState<"push" | "confirm" | null>(null);
   const [aixInitAppSubMode, setAixInitAppSubMode] = useState<"push" | "confirm" | "format" | "docs_request" | null>(null);
   const [showPropertyCheckPicker, setShowPropertyCheckPicker] = useState(false);
-  const [suggestedPropertyCheckMode, setSuggestedPropertyCheckMode] = useState<"vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | null>(null);
+  const [suggestedPropertyCheckMode, setSuggestedPropertyCheckMode] = useState<"vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | null>(null);
   const [showDaihyoCheckPicker, setShowDaihyoCheckPicker] = useState(false);
   const [suggestedDaihyoCostMode, setSuggestedDaihyoCostMode] = useState<"initial_cost" | "other" | null>(null);
   const [showKoshoParentPicker, setShowKoshoParentPicker] = useState(false);
@@ -517,7 +517,7 @@ export default function Home() {
   const [aixInitViewingReschedule, setAixInitViewingReschedule] = useState(false);
   const [aixInitInputText, setAixInitInputText] = useState("");
   // 管理会社に確認したピッカー: 選択した確認種別をAIXモーダルへ引き継ぐ
-  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | null>(null);
+  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | null>(null);
   const [aixInitSendMode, setAixInitSendMode] = useState<"normal" | "new_arrival" | "widen" | "alternative" | null>(null);
   const [showGreetingViewingPicker, setShowGreetingViewingPicker] = useState(false);
   const [suggestedGreetingMode, setSuggestedGreetingMode] = useState<"before" | "after" | null>(null);
@@ -3822,7 +3822,7 @@ export default function Home() {
 
   // 次アクション提案バナー経由でAIXを開く（paramsからaixInit系stateを初期化してから開く）
   const openAixWithParams = (type: AixActionType, params?: NextActionParams) => {
-    if (params?.check_pattern === "available" || params?.check_pattern === "vacate_date" || params?.check_pattern === "mgmt_move_in" || params?.check_pattern === "mgmt_initial_cost") {
+    if (params?.check_pattern === "available" || params?.check_pattern === "vacate_date" || params?.check_pattern === "mgmt_move_in" || params?.check_pattern === "mgmt_initial_cost" || params?.check_pattern === "mgmt_guarantor") {
       setAixInitCheckPattern(params.check_pattern);
     }
     if (params?.send_mode === "normal" || params?.send_mode === "new_arrival" || params?.send_mode === "widen") {
@@ -9295,7 +9295,17 @@ export default function Home() {
                   hint: "初期費用：",
                   icon: <><circle cx="36" cy="36" r="14" stroke="#546E7A" strokeWidth="1.8"/><path d="M36 28v16M31 32h7.5a2.5 2.5 0 010 5H31m0 0h7.5a2.5 2.5 0 010 5H31" stroke="#546E7A" strokeWidth="1.5" strokeLinecap="round"/></>
                 },
-              ] as Array<{ key: "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost"; label: string; desc: string; hint: string; icon: ReactNode }>).map(({ key, label, desc, hint, icon }) => {
+                {
+                  key: "mgmt_guarantor",
+                  label: "保証会社について（審査面）",
+                  desc: "保証会社名・タイプ（独立系/LICC系/信販系）を物件資料から確認",
+                  hint: "",
+                  icon: <>
+                    <path d="M36 20L50 28V36C50 44.8 43.6 52.4 36 55C28.4 52.4 22 44.8 22 36V28L36 20Z" stroke="#546E7A" strokeWidth="1.8" strokeLinejoin="round"/>
+                    <path d="M30 36l4 4 8-8" stroke="#546E7A" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                  </>
+                },
+              ] as Array<{ key: "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor"; label: string; desc: string; hint: string; icon: ReactNode }>).map(({ key, label, desc, hint, icon }) => {
                 const isSuggested = suggestedPropertyCheckMode === key;
                 return (
                 <button
