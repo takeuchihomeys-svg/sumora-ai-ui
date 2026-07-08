@@ -1135,6 +1135,68 @@ ${SMORA_COMMON_RULES}
         return NextResponse.json({ ok: true, message_text: rescheduleClean, ...(rescheduleNotice ? { notice: rescheduleNotice } : {}) });
       }
 
+      // conversation_match: 会話に合わせた自然文生成（generate-reply同等品質・早期 return）
+      const conversationMatchVI = body.conversation_match as boolean | undefined;
+      if (conversationMatchVI) {
+        const calendarNoteForVI = calendarNote || "";
+        const viewingConvMatchDiffNote = await getKnowledgeForState(AIX_ACTION_TO_STATES.viewing_invite, currentAction, conversationId);
+
+        const calendarBlock = calendarNoteForVI
+          ? `【内覧可能日時（カレンダー自動取得・この時間で案内すること）】\n${calendarNoteForVI}`
+          : "";
+
+        const convMatchVISystem = `${GENERATION_SYSTEM}
+
+${SMORA_COMMON_RULES}
+
+【お客様名】「${name}」
+
+${calendarBlock}
+
+【内覧日程を案内する際のルール（最優先）】
+・カレンダーに複数日がある場合は全日を自然な文章で案内する（1日だけ案内して他の日を省略するのは絶対禁止）
+・フォーマット例：「明日7/9(木)ですと13:00〜16:00、明後日7/10(金)ですと13:00〜15:00にてご案内可能です！！」
+・お客様が日程を指定してきた場合は「はい！！〇日ですと〜」でその日程に直接答える
+・来店すれば内覧〜審査まで一気に進められることをさりげなく伝える
+・カレンダー未取得または空の場合は「ご都合のよろしいお日にちをお知らせください😊！！」で締める
+
+【重要：会話読解ルール（必ず守ること）】
+・お客様の直近メッセージの意図・感情・urgencyを必ず読み取ってから返信を構成する
+・お客様が「早く進めたい」「一気に手続きしたい」「今日行けますか」等と言っている → その意欲を真正面から受け止め、「もちろんです！！」「ぜひ！！」から始めて背中を押す
+・お客様が不安・疑問を示している → その不安に直接答えてから日程案内に移る
+・お客様が具体的な日付を指定している → 「はい！！〇日ですと〜」とその日程に直接答える
+・お客様の語彙・テンションに合わせる（丁寧語 → 丁寧に、くだけた表現 → 少し柔らかく）
+・テンプレ的な返信は絶対禁止。お客様のメッセージに直接応答する文から始める
+
+【絶対禁止】
+・🙏 絵文字は絶対に使わない（スモラ禁止絵文字）
+・お客様のメッセージを読まずにテンプレを出力する
+・複数の案内可能日があるのに1日だけ案内する
+
+【出力形式（必須・JSONのみ・説明不要）】
+{"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
+
+        const rawVI = await callClaude(
+          convMatchVISystem + viewingConvMatchDiffNote,
+          `${recentHistory}\n\n上記の会話を深く読み取り、${name}への内覧案内返信を生成してください。`,
+          currentAction
+        );
+
+        try {
+          const mVI = rawVI.match(/\{[\s\S]*?\}/);
+          if (mVI) {
+            const dVI = JSON.parse(mVI[0]) as { message?: string };
+            message_text = (dVI.message || rawVI).replace(/\\n/g, "\n");
+          } else {
+            message_text = rawVI;
+          }
+        } catch {
+          message_text = rawVI;
+        }
+
+        return NextResponse.json({ ok: true, message_text });
+      }
+
       // ☆つき内覧実例をDBから取得
       const { data: viewingExamples } = await supabase
         .from("ai_reply_examples")
