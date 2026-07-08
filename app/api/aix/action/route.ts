@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
-import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEND_RULES } from "@/app/lib/line-reply-prompts";
+import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEND_RULES, GENERATION_SYSTEM } from "@/app/lib/line-reply-prompts";
 
 export const maxDuration = 60;
 
@@ -1459,54 +1459,53 @@ ${SMORA_COMMON_RULES}`;
       const hasAppeal = appealPts.length > 0;
       const appealLabel = appealPts.join("・");
 
-      // conversation_match: 会話に合わせた自然文生成（hold_view モード専用・早期 return）
+      // conversation_match: 会話に合わせた自然文生成（generate-reply同等品質・早期 return）
       const conversationMatch = body.conversation_match as boolean | undefined;
       if (conversationMatch) {
         const calendarNoteForApp = calendar_info
           ? String(calendar_info)
-          : "（カレンダー未取得）";
+          : "";
 
-        const conversationSystem = `あなたは賃貸仲介サービス「スモラ」の熟練LINE営業担当です。
-お客様との直近の会話を読み込み、お客様の言葉・意図・感情に直接応答するLINEメッセージを1通生成してください。
+        // カレンダー情報ブロック（全日程を提示・未取得時は空）
+        const calendarBlock = calendarNoteForApp
+          ? `【内覧可能日時（カレンダー自動取得・全日程を案内すること）】\n${calendarNoteForApp}`
+          : "";
+
+        // generate-reply と同等の高品質システムプロンプト構造
+        const convMatchSystem = `${GENERATION_SYSTEM}
 
 ${SMORA_COMMON_RULES}
 
 【お客様名】「${name}」
 
-【内覧可能日時（カレンダー自動取得）】
-${calendarNoteForApp}
+${calendarBlock}
 
-【生成ルール（必ず守ること）】
+【内覧日程を案内する際のルール（最優先）】
+・カレンダーに複数日がある場合は全日を自然な文章で案内する（1日だけ案内して他の日を省略するのは絶対禁止）
+・フォーマット例：「明日7/9(木)ですと13:00〜16:00、明後日7/10(金)ですと13:00〜15:00にてご案内可能です！！」
+・お客様が日程を指定してきた場合は「はい！！〇日ですと〜」でその日程に直接答える
+・来店すれば内覧〜審査まで一気に進められることをさりげなく伝える
+・カレンダー未取得または空の場合は「ご都合のよろしいお日にちをお知らせください😊！！」で締める
 
-① お客様の直近メッセージを必ず読んで、その内容・意図・気持ちに正面から応答する
-  - 例: お客様が「早く進めたい」「内覧から審査まで一気に進めたい」と言っている → 「もちろん！！」と背中を押し、来店すれば当日中に内覧〜審査まで進められる旨を伝える
-  - 例: お客様が具体的な日付を指定している → 「はい！！〇日ですと〜」とその日程に直接答える
-  - 例: お客様が不安・疑問を示している → その不安に直接答えてから日程案内に移る
-  - お客様の最後のメッセージを読まずにテンプレ的な返信を出すのは絶対禁止
+【重要：会話読解ルール（必ず守ること）】
+・お客様の直近メッセージの意図・感情・urgencyを必ず読み取ってから返信を構成する
+・お客様が「早く進めたい」「一気に手続きしたい」「今日行けますか」等と言っている → その意欲を真正面から受け止め、「もちろんです！！」「ぜひ！！」から始めて背中を押す
+・お客様が不安・疑問を示している → その不安に直接答えてから日程案内に移る
+・お客様が具体的な日付を指定している → 「はい！！〇日ですと〜」とその日程に直接答える
+・お客様の語彙・テンションに合わせる（丁寧語 → 丁寧に、くだけた表現 → 少し柔らかく）
+・テンプレ的な返信は絶対禁止。お客様のメッセージに直接応答する文から始める
 
-② 内覧可能日時を全て（複数日）案内する
-  - 上記【内覧可能日時】に複数日がある場合は全日を提示する
-  - 形式: 「明日○/○(曜)ですと○時〜○時、明後日○/○(曜)ですと○時〜○時にてご案内可能です！！」
-  - 1日だけ案内して他の日を省略するのは絶対禁止
-  - カレンダー未取得の場合は「ご都合のよろしいお日にちをお知らせください😊！！」で締める
+【絶対禁止】
+・🙏 絵文字は絶対に使わない（スモラ禁止絵文字）
+・お客様のメッセージを読まずにテンプレを出力する
+・複数の案内可能日があるのに1日だけ案内する
 
-③ メッセージの流れ
-  - 冒頭: お客様の意図・気持ちへの肯定・共感（「もちろんご来店可能です！！」「ぜひ！！」等）
-  - 中盤: 内覧可能日時を全日案内（複数日を自然な文章で提示）
-  - 末尾: 次のアクションへの誘導（「ご都合のよろしいお日にちをお知らせください😊！！」等）
-
-④ スタイル
-  - 文末は「！！」
-  - 絵文字は😊を1〜2個
-  - 改行は自然に（LINEらしい読みやすさ）
-  - 箇条書き禁止。一つの流れるような文章にする
-
-【出力形式（必須・JSONのみ）】
-{"message":"〜（実際のLINEメッセージ全文・改行は\\nで表現）"}`;
+【出力形式（必須・JSONのみ・説明不要）】
+{"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
         const raw = await callClaude(
-          conversationSystem + appDiffNote + appStarNote,
-          `【最近の会話内容】\n${recentHistory}\n\n上記の会話を踏まえて、${name}への返信を生成してください。`,
+          convMatchSystem + appDiffNote + appStarNote,
+          `${recentHistory}\n\n上記の会話を深く読み取り、${name}への内覧案内返信を生成してください。`,
           currentAction
         );
 
