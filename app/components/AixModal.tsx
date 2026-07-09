@@ -737,7 +737,7 @@ export default function AixModal({
     const staffMsgs = (recentMessages || []).filter(m => m.sender === "staff").reverse();
     let detected = "";
     for (const msg of staffMsgs) {
-      const m = msg.text.match(/^【(.+?)(?:\s+[\d]+号室)?】/);
+      const m = msg.text.match(/^【(.+?)】/);
       if (m) { detected = m[1].trim(); break; }
     }
     if (detected) setAppPropertyName(detected);
@@ -943,9 +943,11 @@ export default function AixModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image_base64: base64, media_type: mime }),
       });
+      await ensureOk(res);
       const data = await res.json() as { ok: boolean; name?: string };
       if (data.ok && data.name) setAppPropertyName(data.name);
-    } catch (e) { console.error("[AixModal] 申込確定 物件名OCR失敗:", e); }
+      else if (!data.ok) setError("物件名の自動読み取りに失敗しました");
+    } catch (e) { console.error("[AixModal] 申込確定 物件名OCR失敗:", e); setError("物件名の自動読み取りに失敗しました"); }
     setAppConfirmExtractLoading(false);
   };
 

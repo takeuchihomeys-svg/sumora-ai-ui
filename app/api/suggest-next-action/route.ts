@@ -460,6 +460,7 @@ ${recentText}
     const message = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 100,
+      temperature: 0,
       // 営業フロー基礎知識をハードコード（DBの学習ガイドに全依存しないフォールバック知識）
       system: "不動産賃貸営業の基本フロー: ヒアリング → 物件提案 → 内覧 → 見積 → 申込 の順で顧客を次のステップへ進める。",
       messages: [{ role: "user", content: prompt }],

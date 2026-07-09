@@ -2363,6 +2363,7 @@ export default function Home() {
       const finalDraft = fullText.trim();
       aiDraftRef.current = finalDraft;
       replyTargetCustomerMsgRef.current = targetMessage;
+      setDisplaySource("ai_draft");
       setReplyDraft(finalDraft);
 
       // B-2: 品質判定（生成完了後の静的チェック — プレースホルダー残存・短すぎ・申込書類フェーズ）
@@ -2461,7 +2462,12 @@ export default function Home() {
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || "改善失敗");
       const enhanced = data.enhanced || replyDraft;
-      setReplyDraft(enhanced);
+      if (draftNoEmoji) {
+        setDraftOrigText(enhanced);
+        setReplyDraft(stripEmoji(enhanced));
+      } else {
+        setReplyDraft(enhanced);
+      }
       // ✨が出した文をAI提案として記録（スタッフがさらに編集した差分を学習）
       aiDraftRef.current = enhanced;
       setTimeout(() => {
@@ -3063,6 +3069,8 @@ export default function Home() {
       const [, month, day] = datePart.split("-");
       setReplyDraft("");
       setSelectedImageFiles([]);
+      setSelectedImagePreviews([]);
+      if (fileInputRef.current) fileInputRef.current.value = "";
       setShowScheduleModal(false);
       setScheduleSuccessInfo({ month: String(parseInt(month)), day: String(parseInt(day)), time: timePart, imageCount: savedImageCount, text: savedText });
       setTimeout(() => setScheduleSuccessInfo(null), 3500);
@@ -9379,6 +9387,7 @@ export default function Home() {
                     setShowFollowupPicker(false);
                     if (key === "apply_push") {
                       setAixInitAppSubMode("push");
+                      setActiveAixFlow("application_push");
                       openAixDirect("application_push");
                     } else {
                       setAixInitFollowupSubMode(key);

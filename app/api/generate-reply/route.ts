@@ -22,6 +22,7 @@ export const maxDuration = 60;
 const analysisModel = new ChatAnthropic({
   model: "claude-haiku-4-5-20251001",
   maxTokens: 1024,
+  temperature: 0,
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
   clientOptions: { timeout: 45_000 },
 });
@@ -1171,7 +1172,7 @@ export async function POST(req: NextRequest) {
 
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
     // 各フェッチはエラーでも生成を止めない（knowledgeなし・実例なしで生成続行）
-    const [knowledge, examples, phrases, autoSummary] = await Promise.all([
+    const [knowledge, examples, phrases, autoSummary, dbRules] = await Promise.all([
       fetchKnowledge(currentState, message, analysisContext, conversationId)
         .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return ""; }),
       fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext)
@@ -1182,6 +1183,8 @@ export async function POST(req: NextRequest) {
       !customerSummary && customerConditions
         ? synthesizeCustomerContext(customerConditions, customerName, history)
         : Promise.resolve(""),
+      fetchPromptRules("generate_reply", { conversation_state: currentState })
+        .catch((err) => { console.error("[generate-reply] fetchPromptRules失敗 — ルールなしで生成続行:", err); return ""; }),
     ]);
     const resolvedSummary = customerSummary || autoSummary;
 
@@ -1209,7 +1212,6 @@ export async function POST(req: NextRequest) {
     })();
 
     // Sonnetでストリーミング生成
-    const dbRules = await fetchPromptRules("generate_reply", { conversation_state: currentState });
     const messages = buildGenerationMessages(
       message, customerName, history, currentState,
       analysis, knowledge, examples, phrases, customerConditions, resolvedSummary,

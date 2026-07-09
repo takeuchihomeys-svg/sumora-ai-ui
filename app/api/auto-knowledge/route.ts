@@ -29,8 +29,9 @@ async function extractCorrectionRule(
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-6",
+        model: "claude-haiku-4-5-20251001",
         max_tokens: 300,
+        temperature: 0,
         system: `賃貸仲介LINEのAI文案とスタッフが実際に送った文を比較し、次回以降のAIが学べる改善ルールを抽出してください。
 
 出力形式（JSONのみ）:
