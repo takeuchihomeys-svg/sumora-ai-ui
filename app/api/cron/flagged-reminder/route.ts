@@ -91,17 +91,26 @@ export async function GET(req: NextRequest) {
     "⚡ 今すぐLINEで返信してあげよ！！",
   ].join("\n");
 
-  const res = await fetch("https://api.line.me/v2/bot/message/push", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ to: groupId, messages: [{ type: "text", text }] }),
-    signal: AbortSignal.timeout(10_000),
-  });
+  try {
+    const res = await fetch("https://api.line.me/v2/bot/message/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ to: groupId, messages: [{ type: "text", text }] }),
+      signal: AbortSignal.timeout(10_000),
+    });
 
-  if (!res.ok) {
-    const body = await res.text();
-    console.error("[flagged-reminder] LINE push error:", body);
-    return NextResponse.json({ ok: false, error: body }, { status: 500 });
+    if (!res.ok) {
+      const body = await res.text();
+      console.error("[flagged-reminder] LINE push failed:", res.status, body);
+      return NextResponse.json({ ok: false, error: body }, { status: 500 });
+    }
+  } catch (e) {
+    // AbortSignal.timeout（10秒）やネットワークエラーをここで捕捉
+    console.error("[flagged-reminder] LINE push error:", e);
+    return NextResponse.json(
+      { ok: false, error: e instanceof Error ? e.message : String(e) },
+      { status: 500 }
+    );
   }
 
   // B02: 送信成功後にタイムスタンプを記録（次回 Cron の冪等チェック用）

@@ -70,6 +70,7 @@ export async function GET(req: NextRequest) {
 
     // ③ この会話の直近AIXを参照して「前回と同じ」を避ける
     let suggestedAction = top.action;
+    let suggestedConfidence = top.confidence;
     if (conversationId) {
       const { data: lastUsage } = await supabase
         .from("aix_usage_logs")
@@ -80,15 +81,16 @@ export async function GET(req: NextRequest) {
         .maybeSingle();
       const lastAction = (lastUsage as { aix_type: string } | null)?.aix_type ?? null;
       if (lastAction && top.action === lastAction && sorted.length > 1) {
-        // 直前と同じボタンなら2位を推薦
+        // 直前と同じボタンなら2位を推薦（confidenceも2位のものに合わせる）
         suggestedAction = sorted[1].action;
+        suggestedConfidence = sorted[1].confidence ?? 0.4;
       }
     }
 
     return NextResponse.json({
       ok: true,
       suggested_action: suggestedAction,
-      confidence: top.confidence,
+      confidence: suggestedConfidence,
       alternatives: sorted.slice(0, 3),
       sample_size: total,
     });

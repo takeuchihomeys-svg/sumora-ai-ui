@@ -231,12 +231,14 @@ async function handleTextMessage(
   updateProfileAsync(db, userId, convId, account, text, now);
 
   // 返信きたお客さんを自動で毎日物件出し（hot）に格上げ
-  void autoUpgradeToHot(db, userId).catch((e) => console.warn("[line-webhook] autoUpgradeToHot:", e));
+  after(async () => {
+    await autoUpgradeToHot(db, userId).catch((e) => console.warn("[line-webhook] autoUpgradeToHot:", e));
+  });
 
   // LINEフォーマット自動検知・解析 → ステータスを物件提案中に自動昇格
   if (isFormatMessage(text)) {
     void (async () => {
-      try { await autoParseFormat(db, userId, text, account); } catch {}
+      try { await autoParseFormat(db, userId, text, account); } catch (e) { console.error("[autoParseFormat]", e); }
     })();
     // hearing/first_reply 状態なら proposing に自動昇格
     await db

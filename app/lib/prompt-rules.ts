@@ -31,11 +31,15 @@ export async function fetchPromptRules(
       query = query.is("action_type", null);
     }
 
-    const { data: rules } = await query;
+    const { data: rules, error } = await query;
+    if (error) {
+      console.error("[fetchPromptRules]", error);
+      return "";
+    }
     if (!rules?.length) return "";
 
     const applicable = (rules as PromptRuleRow[]).filter(r => {
-      if (!r.condition_key) return true;
+      if (!r.condition_key || r.condition_value === null) return true;
       const actual = conditions[r.condition_key];
       if (actual === undefined || actual === null) return false;
       return String(actual) === r.condition_value;
@@ -45,7 +49,8 @@ export async function fetchPromptRules(
 
     const ruleLines = applicable.map(r => `・${r.rule_text}`).join("\n");
     return `\n\n【管理者追加ルール（最優先 — 以下を必ず守ること）】\n${ruleLines}`;
-  } catch {
+  } catch (error) {
+    console.error("[fetchPromptRules]", error);
     return "";
   }
 }

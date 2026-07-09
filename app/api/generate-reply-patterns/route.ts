@@ -423,9 +423,9 @@ ${customerMessage}
     ]);
     const text = typeof res.content === "string" ? res.content : "";
 
-    // ── パース: 1次試行 ── \[A\]\n 等で区切る厳密パターン
+    // ── パース: 1次試行 ── \[A\] 等で区切るパターン（ラベル直後の改行は任意）
     let variants: string[] = [];
-    const regex = /\[([ABC])\]\n([\s\S]*?)(?=\n\[[ABC]\]|$)/g;
+    const regex = /\[([ABC])\]\n?([\s\S]*?)(?=\n?\[[ABC]\]|$)/g;
     let match;
     while ((match = regex.exec(text)) !== null) {
       const body = match[2].trim();

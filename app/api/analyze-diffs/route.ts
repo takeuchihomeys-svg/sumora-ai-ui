@@ -466,8 +466,11 @@ export async function POST(req: NextRequest) {
 
     const result = await analyzeDiff(customer_message, ai_draft, sent_reply, conversation_state);
 
-    // AI呼び出し失敗時は diff_analyzed_at をマークせず、次回Cronで再試行
+    // AI呼び出し失敗時も diff_analyzed_at をマークして「試行済み」扱いにする
+    // （マークしないと毎日同じレコードを拾い続け、常に失敗するレコードでキューが詰まるため）
     if (result === null) {
+      console.error(`[analyze-diffs] analyzeDiff failed for example id=${id} — marking diff_analyzed_at to prevent infinite retry`);
+      await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
       processed++;
       continue;
     }
