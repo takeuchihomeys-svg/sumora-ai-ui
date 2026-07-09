@@ -208,6 +208,9 @@ const STATE_LEARNABLE: Record<string, string[]> = {
   meeting_place:                    ["greeting", "confirmation", "location", "closing"],
   estimate_sheet:                   ["greeting", "estimate_note", "invite", "closing"],
   followup_revive:                  ["greeting", "reminder", "invite", "cta", "closing"],
+  // F05: followup_revive の states に含まれるが STATE_LEARNABLE に未定義だったエントリ
+  hearing:                          ["greeting", "questions", "proposal", "closing"],
+  proposing:                        ["greeting", "recommendation", "appeal", "invite", "closing"],
   // MED-10: ACTION_TO_STATE にあるが STATE_LEARNABLE に抜けていたエントリ
   greeting_viewing:                 ["greeting", "reminder", "closing"],
   property_check_result_vacate_date:       ["greeting", "result", "calendar", "invite", "closing"],
@@ -501,6 +504,32 @@ export async function POST(req: NextRequest) {
       } else {
         console.log(`[analyze-diffs] スキップ（重複）: "${result.title}"`);
       }
+
+      // F02: importance>=8 かつ pattern ルールを adaptation_improvement_rules にも同期
+      // LINE/AIX修正からの学習をテンプレート修正学習ルールとして両方のAIに届ける
+      if ((upsertResult === "inserted" || upsertResult === "merged") && imp >= 8 && safeCategory === "pattern" && result.rule) {
+        const adaptCategory = conversation_state ?? "general";
+        const adaptConfidence = imp >= 9 ? 0.9 : 0.75;
+        const ruleKey = result.rule.slice(0, 50).replace(/[%_\\]/g, "\\$&");
+        const { data: existingAdapt } = await supabase
+          .from("adaptation_improvement_rules")
+          .select("id, example_count, confidence")
+          .eq("category", adaptCategory)
+          .ilike("rule_text", `${ruleKey}%`)
+          .limit(1).maybeSingle();
+        if (existingAdapt) {
+          await supabase.from("adaptation_improvement_rules").update({
+            example_count: (existingAdapt.example_count as number) + 1,
+            confidence: Math.min(Math.max(Number(existingAdapt.confidence), adaptConfidence) + 0.02, 0.99),
+            last_triggered_at: now, is_active: true,
+          }).eq("id", existingAdapt.id);
+        } else {
+          await supabase.from("adaptation_improvement_rules").insert({
+            category: adaptCategory, rule_text: result.rule,
+            confidence: adaptConfidence, example_count: 1, is_active: true, last_triggered_at: now,
+          });
+        }
+      }
     }
 
     await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
@@ -567,13 +596,29 @@ export async function POST(req: NextRequest) {
     await supabase
       .from("ai_reply_knowledge")
       .update({ hypothesis_status: "rejected" })
-      .lt("importance", 8)                          // 高importance（8-9）は守る
+      .lte("importance", 8)                          // importance=9以外を対象（F09: update-knowledgeの物理削除範囲と統一）
       .eq("used_count", 0)                          // 一度も使われていない
       .eq("correct_count", 0)                       // MED-02: 正答実績があるルールは除外
       .lt("created_at", staleThreshold)             // 90日以上前に作成
       .neq("hypothesis_status", "confirmed")        // 確認済みは除外
       .neq("hypothesis_status", "rejected");        // 既にrejectは除外
   } catch { /* decay 失敗は無視して処理完了を返す */ }
+
+  // ── F06: importance=9 の放置ルールを 180 日で soft-delete ──
+  // importance=9 は通常の stale decay（lt("importance", 8)）と物理削除（update-knowledge cron）の
+  // 両方から除外されるため、際限なく蓄積する。180日未使用なら rejected へ。
+  try {
+    const staleThreshold180 = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
+    await supabase
+      .from("ai_reply_knowledge")
+      .update({ hypothesis_status: "rejected" })
+      .eq("importance", 9)
+      .eq("used_count", 0)
+      .eq("correct_count", 0)
+      .lt("created_at", staleThreshold180)
+      .neq("hypothesis_status", "confirmed")
+      .neq("hypothesis_status", "rejected");
+  } catch { /* ignore */ }
 
   // ── ポジティブ強化 B: correct_count >= 3 のルールを importance 昇格 ──
   // MED-09: learned>0 の場合のみ実行（二重実行時は2回目 learned=0 → スキップで冪等保証）

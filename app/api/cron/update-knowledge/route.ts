@@ -149,10 +149,11 @@ export async function GET(req: NextRequest) {
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
       .lt("created_at", thirtyDaysAgo).select("id");
 
-    // importance 7-8（通常パターン・フレーズ）: 90日未使用で削除
+    // importance=7（通常パターン・フレーズ）: 90日未使用で削除
+    // importance=8 は analyze-diffs の stale decay（lte("importance", 8)）に委任（F09 統一）
     const { data: midDeleted } = await supabase
       .from("ai_reply_knowledge").delete()
-      .eq("used_count", 0).gte("importance", 7).lte("importance", 8)
+      .eq("used_count", 0).eq("importance", 7)
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
       .lt("created_at", ninetyDaysAgo).select("id");
 

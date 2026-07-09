@@ -163,17 +163,20 @@ export async function upsertKnowledge(
     }
   }
 
-  // Step 2: タイトル先頭15文字の ilike 重複チェック
-  const keyword = title.slice(0, 15);
-  const { data: existing } = await supabase
-    .from("ai_reply_knowledge")
-    .select("id")
-    .ilike("title", `%${keyword}%`)
-    .limit(1);
+  // Step 2: タイトル先頭25文字の ilike 重複チェック（F08: embeddingありはStep1で済み・embeddingなし時のみ実行）
+  // embedding がある場合は Step1（similarity>0.92）で重複排除済みのため ilike は実行しない（誤スキップ防止）
+  if (!embedding || embedding.length === 0) {
+    const keyword = title.slice(0, 25);
+    const { data: existing } = await supabase
+      .from("ai_reply_knowledge")
+      .select("id")
+      .ilike("title", `%${keyword}%`)
+      .limit(1);
 
-  if (existing && existing.length > 0) {
-    console.log(`[upsertKnowledge] skipped: タイトル重複 "${keyword}"`);
-    return "skipped";
+    if (existing && existing.length > 0) {
+      console.log(`[upsertKnowledge] skipped: タイトル重複 "${keyword}"`);
+      return "skipped";
+    }
   }
 
   // Step 3: INSERT
