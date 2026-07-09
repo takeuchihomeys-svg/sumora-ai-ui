@@ -506,6 +506,9 @@ export default function Home() {
   const [aixInitViewingVacancy, setAixInitViewingVacancy] = useState(false);
   const [showViewingPicker, setShowViewingPicker] = useState(false);
   const [suggestedViewingMode, setSuggestedViewingMode] = useState<"通常" | "退去予定物件" | "内覧日指定あり" | "日程変更" | null>(null);
+  // 追客ピッカー
+  const [showFollowupPicker, setShowFollowupPicker] = useState(false);
+  const [aixInitFollowupSubMode, setAixInitFollowupSubMode] = useState<"apply_supplement" | "search_continue" | null>(null);
   // 内覧誘導ピッカー
   const [showViewingGuidePicker, setShowViewingGuidePicker] = useState(false);
   const [viewingGuideImage, setViewingGuideImage] = useState<File | null>(null);
@@ -7425,6 +7428,7 @@ export default function Home() {
           initialPickupType={aixInitialPickupType}
           initialEstimateMulti={aixInitEstimateMulti}
           initialAppSubMode={aixInitAppSubMode}
+          initialFollowupSubMode={aixInitFollowupSubMode ?? undefined}
           initialInputText={aixInitInputText || undefined}
           initialCheckPattern={aixInitCheckPattern ?? undefined}
           templateId={pendingTemplateSource?.id ?? undefined}
@@ -7443,6 +7447,7 @@ export default function Home() {
             setAixInitialSendImages([]);
             setAixInitEstimateMulti(false);
             setAixInitAppSubMode(null);
+            setAixInitFollowupSubMode(null);
             setAixInitInputText("");
             setAixInitCheckPattern(null);
             // 未使用の2通目設定をクリア（キャンセル時に手動送信で誤発火しないよう）
@@ -9256,6 +9261,93 @@ export default function Home() {
         </div>
       )}
 
+      {/* 追客する 種類選択ピッカー */}
+      {showFollowupPicker && (
+        <div
+          className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
+          onClick={() => { setShowFollowupPicker(false); setActiveAixFlow(null); }}
+        >
+          <div
+            className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-5 flex justify-center">
+              <svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="36" cy="36" r="36" fill="#F3E8FF"/>
+                <path d="M22 52V26l14-10 14 10v26H22z" fill="#E9D5FF" stroke="#8E24AA" strokeWidth="1.5" strokeLinejoin="round"/>
+                <path d="M30 52V38h12v14" stroke="#8E24AA" strokeWidth="1.5" strokeLinejoin="round"/>
+                <circle cx="50" cy="22" r="9" fill="#8E24AA"/>
+                <path d="M46 22l3 3 5-5" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+            <p className="mb-1 text-center text-[20px] font-bold text-[#111827]">追客する</p>
+            <p className="mb-6 text-center text-[13px] leading-snug text-[#6B7280]">どの種類の追客を送りますか？</p>
+            <div className="flex flex-col gap-2.5">
+              {([
+                {
+                  key: "apply_push" as const,
+                  label: "申込について催促",
+                  desc: "申込誘導と同じ内容のメッセージを生成",
+                  accentColor: "#E53935",
+                  bgColor: "#FFF5F5",
+                  circleFill: "#FFEBEE",
+                  icon: <><rect x="24" y="22" width="24" height="28" rx="3" stroke="#E53935" strokeWidth="1.8"/><path d="M30 30h12M30 36h12M30 42h7" stroke="#E53935" strokeWidth="1.5" strokeLinecap="round"/><path d="M40 18l4 4-4 4" stroke="#E53935" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></>
+                },
+                {
+                  key: "apply_supplement" as const,
+                  label: "申込補足情報について催促",
+                  desc: "不足書類・補足情報の提出をアナウンス",
+                  accentColor: "#D97706",
+                  bgColor: "#FFFBEB",
+                  circleFill: "#FEF3C7",
+                  icon: <><rect x="24" y="20" width="24" height="32" rx="3" stroke="#D97706" strokeWidth="1.8"/><path d="M30 28h12M30 34h12M30 40h8" stroke="#D97706" strokeWidth="1.5" strokeLinecap="round"/><circle cx="47" cy="45" r="6" fill="#FEF3C7" stroke="#D97706" strokeWidth="1.5"/><path d="M47 42v4M47 47.5v1" stroke="#D97706" strokeWidth="1.8" strokeLinecap="round"/></>
+                },
+                {
+                  key: "search_continue" as const,
+                  label: "物件探し継続中か催促",
+                  desc: "新着物件を添えてお部屋探しの継続を確認",
+                  accentColor: "#16A34A",
+                  bgColor: "#F0FDF4",
+                  circleFill: "#DCFCE7",
+                  icon: <><path d="M36 20L50 30V52H22V30L36 20Z" stroke="#16A34A" strokeWidth="1.8" strokeLinejoin="round"/><path d="M29 38h5v10h-5zM38 38h5v10h-5z" fill="#16A34A"/><circle cx="36" cy="27" r="3" fill="#16A34A"/><path d="M30 30l6-4 6 4" stroke="#16A34A" strokeWidth="1.3" strokeLinecap="round"/></>
+                },
+              ]).map(({ key, label, desc, accentColor, bgColor, circleFill, icon }) => (
+                <button
+                  key={key}
+                  onClick={() => {
+                    setShowFollowupPicker(false);
+                    if (key === "apply_push") {
+                      setAixInitAppSubMode("push");
+                      openAixDirect("application_push");
+                    } else {
+                      setAixInitFollowupSubMode(key);
+                      openAixDirect("followup_revive");
+                    }
+                  }}
+                  className="flex items-center gap-3.5 rounded-2xl border px-4 py-3.5 text-left transition active:opacity-80"
+                  style={{ border: "1px solid #E5E7EB", background: "#FAFAFA" }}
+                >
+                  <div className="shrink-0">
+                    <svg width="36" height="36" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <circle cx="36" cy="36" r="36" fill={circleFill}/>
+                      {icon}
+                    </svg>
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-[14px] font-semibold text-[#111827]">{label}</p>
+                    <p className="text-[11px] text-[#9CA3AF]">{desc}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => { setShowFollowupPicker(false); setActiveAixFlow(null); }}
+              className="mt-4 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
+            >キャンセル</button>
+          </div>
+        </div>
+      )}
+
       {/* 挨拶（内覧前・内覧後）ピッカー */}
       {showGreetingViewingPicker && (
         <div
@@ -10266,7 +10358,7 @@ export default function Home() {
                   { color: "#00796B", label: "挨拶（内覧前・内覧後）", actionType: "greeting_viewing", sub: "内覧前後の挨拶をAI生成。内覧前は日時登録でアナウンス自動化", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("greeting_viewing"); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); setShowGreetingViewingPicker(true); } },
                   { color: "#546E7A", label: "確認した（条件・交渉）", actionType: "acknowledge_result", sub: "管理会社・代表・オーナーへの確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setShowKoshoParentPicker(true); } },
                   { color: "#607D8B", label: "確認します", actionType: "acknowledge_check", sub: "ワンタップで確認する旨をAI生成して送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("acknowledge_check"); openAixDirect("acknowledge_check"); } },
-                  { color: "#8E24AA", label: "追客する", actionType: "followup_revive", sub: "反応が途絶えたお客様への追客LINEをAI生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("followup_revive"); openAixDirect("followup_revive"); } },
+                  { color: "#8E24AA", label: "追客する", actionType: "followup_revive", sub: "反応が途絶えたお客様への追客LINEをAI生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("followup_revive"); setShowFollowupPicker(true); } },
                 ].map((item) => {
                   const info = AIX_INSPECT[item.label];
                   const isOpen = aixInspectLabel === item.label;

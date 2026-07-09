@@ -3007,8 +3007,84 @@ ${SMORA_COMMON_RULES}
 
     // ── 📣 追客する ──────────────────────────────────────────────
     } else if (action === "followup_revive") {
+      const followSubMode = body.follow_sub_mode as string | undefined;
+      const followPropertyName = (body.property_name as string | undefined) || "";
+
+      // ── 申込補足情報催促 ────────────────────────────────────────────────────
+      if (followSubMode === "apply_supplement") {
+        const [supDiffNote, supStarNote] = await Promise.all([
+          getKnowledgeForState(AIX_ACTION_TO_STATES.followup_revive, currentAction, conversationId, latestCustomerMsg),
+          getStarredExamplesForAction(AIX_ACTION_TO_STATES.followup_revive, latestCustomerMsg),
+        ]);
+
+        const supSystem = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
+お申込み手続き中のお客様へ、まだ頂けていない申込書類・情報のご提出をお願いするLINEメッセージを1つ生成してください。
+
+【スモラLINE営業ルール（必ず守る）】
+${SMORA_COMMON_RULES}
+
+【構成ルール（この順番で・必ず守ること）】
+① 書き出し: 「${name}お世話になっております！！」
+② 依頼の導入: 「お申込みに際しまして以下のものをご準備いただく必要がございます！！」
+③ 必要書類・情報を「・」の箇条書きで列挙する
+  ※補足情報に「まだ頂けていない書類」の指定がある場合は、それだけを列挙する（最優先・勝手に追加しない）
+  ※補足情報がない場合は以下の一般的な申込書類を列挙する:
+  ・身分証明書（免許証・マイナンバーカード等）
+  ・収入証明書（源泉徴収票等）
+  ・緊急連絡先のご情報（氏名・続柄・携帯番号）
+  ※連帯保証人を立てるお申込みと会話・補足から読み取れる場合のみ「・連帯保証人の印鑑証明書」を追加する
+④ 締め: 「上記お送り頂き次第お申込み完了致します！！」（書類が1点だけの場合はその書類名を入れる。例:「収入証明書頂き次第お申込み完了致します！！」）
+⑤ 最終行: 「どうぞよろしくお願いいたします！！」
+
+【禁止事項】
+・会話履歴で既にご提出済みの書類・情報を再度求めない
+・同じ書類を重複して列挙しない
+・補足情報に指定がある場合、指定にない書類を勝手に追加しない
+・「様」を使わない（「さん」で統一）
+・🙏絵文字は絶対禁止
+・「承りました」「少々お待ちください」「確認中です」禁止
+
+【文字数】箇条書きを含めて2〜5行程度・完成したLINEメッセージのみを出力（JSONや説明文は不要）`;
+
+        const supUser = `${name}への「お申込みに必要な書類・情報のご提出をお願いする」催促メッセージを生成してください。${extra_input ? `\n【まだ頂けていない書類・補足情報（最優先で使うこと）】${extra_input}` : ""}${recentHistory}`;
+        message_text = await callClaude(supSystem + greetingTimeNote + supDiffNote + supStarNote, supUser, currentAction);
+
+      // ── 物件探し継続確認 ──────────────────────────────────────────────────
+      } else if (followSubMode === "search_continue") {
+        const [scDiffNote, scStarNote] = await Promise.all([
+          getKnowledgeForState(AIX_ACTION_TO_STATES.followup_revive, currentAction, conversationId, latestCustomerMsg),
+          getStarredExamplesForAction(AIX_ACTION_TO_STATES.followup_revive, latestCustomerMsg),
+        ]);
+
+        const scSystem = `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
+しばらく連絡が取れていないお客様へ、新着物件をきっかけにお部屋探しを継続されているか軽く確認するLINEメッセージを1つ生成してください。
+
+【スモラLINE営業ルール（必ず守る）】
+${SMORA_COMMON_RULES}
+
+【構成ルール（この順番で・必ず守ること）】
+① 書き出し: 「${name}お世話になっております！！」
+② 新着のご連絡: ${followPropertyName ? `「新しく${followPropertyName}が募集にでましたのでご連絡させていただきました！！」` : `「新しくオススメ出来る物件が募集にでましたのでご連絡させていただきました！！」`}
+  ※補足情報に物件の特徴（駅近・築浅・家賃など）があれば、②に一言だけ自然に添えてよい
+③ 締め: 「お部屋お探し継続されていますでしょうか！！」
+
+【トーン】
+・押しつけがましくない・軽いタッチ
+・返信を強要する表現（「ご返信ください」「お早めに」等）は使わない・③の一文で終える
+
+【禁止事項】
+・補足情報にない物件の設備・家賃・条件を創作しない
+・物件名を創作しない（${followPropertyName ? `「${followPropertyName}」以外の物件名を出さない` : "物件名が不明な場合は「オススメ出来る物件」のままにする"}）
+・「様」を使わない（「さん」で統一）
+・🙏絵文字は絶対禁止
+
+【文字数】2〜3行程度・完成したLINEメッセージのみを出力（JSONや説明文は不要）`;
+
+        const scUser = `${name}への物件探し継続確認メッセージを生成してください。${followPropertyName ? `\n物件名: ${followPropertyName}` : ""}${extra_input ? `\n補足（物件の特徴など）: ${extra_input}` : ""}${recentHistory}`;
+        message_text = await callClaude(scSystem + greetingTimeNote + scDiffNote + scStarNote, scUser, currentAction);
+
       // conversation_match: 過去の会話文脈を最大活用した自然な追客メッセージを生成
-      if (body.conversation_match) {
+      } else if (body.conversation_match) {
         const [followupCMDiffNote, followupCMStarNote] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.followup_revive, currentAction, conversationId, latestCustomerMsg),
           getStarredExamplesForAction(AIX_ACTION_TO_STATES.followup_revive, latestCustomerMsg),
@@ -3052,7 +3128,7 @@ ${SMORA_COMMON_RULES}
           } else { message_text = rawFCM; }
         } catch { message_text = rawFCM; }
         return NextResponse.json({ ok: true, message_text });
-      }
+      } else {
 
       const [followupDiffNote, followupStarNote] = await Promise.all([
         getKnowledgeForState(AIX_ACTION_TO_STATES.followup_revive, currentAction, conversationId, latestCustomerMsg),
@@ -3076,6 +3152,7 @@ ${SMORA_COMMON_RULES}
         `${name}への追客メッセージを生成してください。${extra_input ? `\n補足: ${extra_input}` : ""}${recentHistory}`,
         currentAction
       );
+      }
 
     } else {
       return NextResponse.json({ ok: false, error: `Unknown action: ${action}` }, { status: 400 });

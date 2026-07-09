@@ -49,6 +49,7 @@ interface AixModalProps {
   initialPickupType?: "新規ピックアップ" | "継続ピックアップ" | "条件広げピックアップ" | "新着1件" | "代替ピックアップ" | null;
   initialEstimateMulti?: boolean;
   initialAppSubMode?: "push" | "confirm" | "format" | "docs_request" | null;
+  initialFollowupSubMode?: "apply_supplement" | "search_continue" | null;
   initialInputText?: string;
   initialCheckPattern?: "available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor";
   templateId?: string; // テンプレートモーダル経由で開いた場合のtemplate_id（学習ループ紐付け用）
@@ -437,6 +438,7 @@ export default function AixModal({
   initialPickupType,
   initialEstimateMulti,
   initialAppSubMode,
+  initialFollowupSubMode,
   initialInputText,
   initialCheckPattern,
   templateId,
@@ -617,6 +619,10 @@ export default function AixModal({
   // 内覧へ！日程変更モード専用
   const [viewingRescheduleMode, setViewingRescheduleMode] = useState(!!initialViewingReschedule);
   const [viewingSpecificDate, setViewingSpecificDate] = useState("");
+  // 追客サブモード
+  const [followupSubMode] = useState<"apply_supplement" | "search_continue" | null>(initialFollowupSubMode ?? null);
+  const [followupPropertyName, setFollowupPropertyName] = useState("");
+  const [extraInput, setExtraInput] = useState("");
   const [viewingSpecificStart, setViewingSpecificStart] = useState("");
   const [viewingSpecificEnd, setViewingSpecificEnd] = useState("");
 
@@ -1282,6 +1288,14 @@ export default function AixModal({
           // カレンダー情報（hold_view: 空室の場合に具体的な内覧時間をAIに渡す）
           if (appPushType === "hold_view" && calendarInfo) body.calendar_info = calendarInfo;
         }
+      } else if (actionType === "followup_revive") {
+        if (followupSubMode === "apply_supplement" || followupSubMode === "search_continue") {
+          body.follow_sub_mode = followupSubMode;
+          if (followupPropertyName.trim()) body.property_name = followupPropertyName.trim();
+        }
+        if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
+        if (customerSummary) body.customer_summary = customerSummary;
+        if (extraInput.trim()) body.extra_input = extraInput.trim();
       } else if (actionType === "property_check_result" && checkPattern === "interior_photo") {
         // 室内写真確認: AIなしでプレビュー直接生成
         if (interiorPhotoUrl.trim()) {
@@ -3638,6 +3652,34 @@ export default function AixModal({
               <input ref={fileInputRef} type="file" accept="image/*" onChange={onSelectImage} className="hidden" />
             </div>
           ) : null}
+
+          {/* 追客: サブモード専用UI */}
+          {actionType === "followup_revive" && followupSubMode === "apply_supplement" && (
+            <div className="mb-3 rounded-xl border border-orange-200 bg-orange-50 p-3">
+              <p className="mb-1 text-xs font-bold text-orange-700">📋 申込補足情報 催促モード</p>
+              <p className="mb-2 text-[11px] text-orange-600 leading-relaxed">
+                不足している書類・情報を確認してからAI生成してください。<br/>
+                追記メモに「まだ頂けていない書類」を入力すると精度が上がります。
+              </p>
+            </div>
+          )}
+          {actionType === "followup_revive" && followupSubMode === "search_continue" && (
+            <div className="mb-3">
+              <div className="mb-2 rounded-xl border border-green-200 bg-green-50 p-3">
+                <p className="mb-1 text-xs font-bold text-green-700">🏠 物件探し継続確認モード</p>
+                <p className="text-[11px] text-green-600">新着物件をアナウンスして継続を確認するメッセージを生成します</p>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-[#54656f]">新しい物件名<span className="ml-1 font-normal text-[#90a4ae]">（任意）</span></label>
+                <input
+                  value={followupPropertyName}
+                  onChange={(e) => setFollowupPropertyName(e.target.value)}
+                  placeholder="例：グランドコート渋谷 301号室"
+                  className="w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-sm outline-none focus:border-green-400"
+                />
+              </div>
+            </div>
+          )}
 
           {/* 内覧へ！: 退去予定物件 / 内覧日指定ありトグル */}
           {actionType === "viewing_invite" && (
