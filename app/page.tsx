@@ -8,7 +8,7 @@ import { supabase } from "./lib/supabase";
 import { detectPlaceholders } from "./lib/validate-reply";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
-import { retryFetchResponse } from "./lib/retry-fetch";
+import { retryFetch, retryFetchResponse } from "./lib/retry-fetch";
 
 // suggest-next-action APIが返すAIX初期化パラメータ
 type NextActionParams = { imageUrl?: string; check_pattern?: string; send_mode?: string };
@@ -2683,7 +2683,8 @@ export default function Home() {
       }).catch(() => {});
     } else {
       // 記録がない場合（古いメッセージや別セッション）は従来通り POST
-      // HIGH-03: aiDraft を渡して差分学習を有効化 + レスポンスから example_id を取得して auto-knowledge も実行
+      // T03: aiDraftRef.current は現在のドラフト（別メッセージ用の可能性）を指すため渡さない。
+      //      diff 学習は existingExampleId パス（送信時に保存済み）のみで有効化する。
       fetch("/api/save-reply-example", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2692,19 +2693,8 @@ export default function Home() {
           conversationId: selectedConversation.id,
           customerMessage: prevCustomerMsg.text,
           sentReply: staffText,
-          aiDraft: aiDraftRef.current || null,
           isStarred: true,
         }),
-      }).then(async (r) => {
-        if (!r.ok) return;
-        const saved = await r.json() as { id?: string };
-        if (saved.id) {
-          fetch("/api/auto-knowledge", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ example_id: saved.id }),
-          }).catch(() => {});
-        }
       }).catch(() => {});
     }
   };
@@ -3364,7 +3354,8 @@ export default function Home() {
         const finalText = textToSend ?? "";
         const wasModified = finalText.trim() !== meta.originalText.trim();
         // CRIT-01修正: PENDING（fetch未完了）でも conversation_id で送信してログを残す
-        fetch("/api/learn-template-selection", {
+        // T06: retryFetch でネットワーク障害時も修正ログを確実に記録（最大2リトライ）
+        void retryFetch("/api/learn-template-selection", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -3373,7 +3364,7 @@ export default function Home() {
             final_sent_text: finalText.slice(0, 2000),
             was_modified_after_adapt: wasModified,
           }),
-        }).catch(() => {});
+        });
         // B5バナー経由でテンプレートを編集して送った場合 → テンプレート候補に登録（学習ループへ）
         if (wasModified && postAixTemplateMap[selectedConversation.id] && finalText.length >= 20) {
           const _postAixAction = postAixTemplateMap[selectedConversation.id]?.actionType ?? "general";

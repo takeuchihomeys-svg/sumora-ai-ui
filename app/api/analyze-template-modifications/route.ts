@@ -180,11 +180,10 @@ async function runAnalysis(limit: number): Promise<{ analyzed: number; learned: 
       .from("template_selection_logs")
       .update({ modification_analyzed: true })
       .in("id", categoryLogs.map((l) => l.id));
+      processedCategories.push(category);
     } catch (catErr) {
       console.error(`[analyze-template-modifications] category ${category} error:`, catErr);
     }
-
-    processedCategories.push(category);
   }
 
   return { analyzed: (logs as ModLog[]).length, learned, categories: processedCategories };

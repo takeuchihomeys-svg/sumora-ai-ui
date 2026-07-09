@@ -262,7 +262,7 @@ async function isMeaningfullySame(aiText: string, sentText: string): Promise<boo
       model: "claude-haiku-4-5-20251001",
       max_tokens: 50,
       messages: [{ role: "user", content:
-        `以下2つの文章は意味・意図が実質的に同じですか？言い回しが違うだけかどうか判断してください。\n【A】${aiText.slice(0, 200)}\n【B】${sentText.slice(0, 200)}\nJSONのみ: {"same": true}または{"same": false}`,
+        `以下2つの文章は意味・意図が実質的に同じですか？言い回しが違うだけかどうか判断してください。\n【A】${aiText.slice(0, 400)}\n【B】${sentText.slice(0, 400)}\nJSONのみ: {"same": true}または{"same": false}`,
       }],
     });
     const text = res.content[0].type === "text" ? res.content[0].text.trim() : "";
@@ -331,7 +331,7 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    // 分割送信っぽい場合（sentReplyがaiDraftの55%未満かつ類似度30%以上）はスキップ
+    // 分割送信っぽい場合（sentReplyがaiDraftの40%未満かつ類似度50%以上）はスキップ
     const sim = textSimilarity((ai_draft ?? "").trim(), (sent_reply ?? "").trim());
     const likelySplit = (sent_reply ?? "").trim().length < (ai_draft ?? "").trim().length * 0.4 && sim >= 0.5;
     if (likelySplit) {
@@ -591,6 +591,9 @@ export async function POST(req: NextRequest) {
   // apply_count>=5 判定(RPC)だけでは使われないまま放置されたルールは永遠に残る。
   // 一度も使われず90日経過 → 実運用に合わない可能性が高い → hypothesis_status=rejected
   // MED-02: correct_count>0 のルールは decay 対象外（一度でも正しく使われた実績あり = まだ有効）
+  // S04: apply_count>0 条件追加 — 一度も検索でヒットしていないルールは除外。
+  //      greeting_viewing / property_check_result_vacate_date 等の稀少ステートは90日以内に
+  //      発火チャンスがなく rejected 化する恐れがあるため、apply 実績のあるルールのみを対象とする。
   try {
     const staleThreshold = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
     await supabase
@@ -599,6 +602,7 @@ export async function POST(req: NextRequest) {
       .lte("importance", 8)                          // importance=9以外を対象（F09: update-knowledgeの物理削除範囲と統一）
       .eq("used_count", 0)                          // 一度も使われていない
       .eq("correct_count", 0)                       // MED-02: 正答実績があるルールは除外
+      .gt("apply_count", 0)                         // S04: apply実績がないルールは対象外（稀少ステート保護）
       .lt("created_at", staleThreshold)             // 90日以上前に作成
       .neq("hypothesis_status", "confirmed")        // 確認済みは除外
       .neq("hypothesis_status", "rejected");        // 既にrejectは除外

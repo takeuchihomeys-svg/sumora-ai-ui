@@ -49,6 +49,11 @@ export async function GET(req: NextRequest) {
     .not("ai_draft", "is", null)
     .or("was_ai_used.eq.true,was_ai_modified.eq.true");
 
+  if (exErr) {
+    console.error("[auto-star-winners] examples fetch error:", exErr.message);
+    return NextResponse.json({ ok: false, error: exErr.message }, { status: 500 });
+  }
+
   // 短すぎる返信はJS側で除外（DBにlength関数で WHERE できないため）
   const qualityExamples = (examples ?? []).filter(ex =>
     ((ex.sent_reply as string | null)?.length ?? 0) >= 30
@@ -58,11 +63,6 @@ export async function GET(req: NextRequest) {
     ...qualityExamples.filter(ex => ex.was_ai_modified === false),
     ...qualityExamples.filter(ex => ex.was_ai_modified !== false),
   ];
-
-  if (exErr) {
-    console.error("[auto-star-winners] examples fetch error:", exErr.message);
-    return NextResponse.json({ ok: false, error: exErr.message }, { status: 500 });
-  }
 
   if (!sortedExamples.length) {
     return NextResponse.json({ ok: true, starred: 0, convs: convIds.length, skipped: (examples?.length ?? 0) - sortedExamples.length, message: "no quality examples to star" });

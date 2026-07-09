@@ -39,7 +39,7 @@ async function extractCorrectionRule(
   sentReply: string,
   state: string,
   customerMessage: string,
-): Promise<string | null> {
+): Promise<{ rule: string; category: string } | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "");
   if (!apiKey) return null;
 
@@ -53,18 +53,23 @@ async function extractCorrectionRule(
       },
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
-        max_tokens: 200,
-        system: `賃貸仲介LINEのAI文案とスタッフが実際に送った文を比較し、次回以降のAIが学べる改善ルールを1文で抽出してください。
+        max_tokens: 300,
+        system: `賃貸仲介LINEのAI文案とスタッフが実際に送った文を比較し、次回以降のAIが学べる改善ルールを抽出してください。
 
-出力形式: 「AIは〜としたが、正しくは〜」（60字以内・具体的に）
+出力形式（JSONのみ）:
+{"rule":"AIは〜としたが、正しくは〜（60字以内・具体的に）","category":"pattern|style|phrase|principle のいずれか"}
 
-以下の場合は「SKIP」とだけ返すこと:
+categoryの判断基準:
+- pattern: 何を書くか・何を省くか・構成順序
+- style: 丁寧さ・語調・言い回しの傾向
+- phrase: 特定のフレーズを使う/避ける
+- principle: 顧客対応の原則・考え方
+
+以下の場合は {"skip":true} のみ返すこと:
 ・誤字修正・句読点・絵文字だけの変更
 ・本質的に同じ内容の言い換えのみ
 ・「もっと丁寧に」など抽象的すぎてAIが再現できないもの
-・個別案件にしか当てはまらない内容
-
-良いルール例: 「AIは物件の間取りを先に説明したが、正しくはお客様の希望条件への合致を先に述べてから詳細を補足する」`,
+・個別案件にしか当てはまらない内容`,
         messages: [{
           role: "user",
           content: `【営業フェーズ】${state}
@@ -83,8 +88,15 @@ ${sentReply.slice(0, 500)}`,
     if (!res.ok) return null;
     const data = await res.json() as { content?: Array<{ text: string }> };
     const text = data.content?.[0]?.text?.trim() || "";
-    if (!text || text.startsWith("SKIP") || text.length < 15) return null;
-    return text;
+    if (!text) return null;
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    const parsed = JSON.parse(jsonMatch[0]) as { skip?: boolean; rule?: string; category?: string };
+    if (parsed.skip || !parsed.rule || parsed.rule.length < 15) return null;
+    const category = ["pattern", "style", "phrase", "principle"].includes(parsed.category ?? "")
+      ? (parsed.category as string)
+      : "pattern";
+    return { rule: parsed.rule, category };
   } catch {
     return null;
   }
@@ -141,18 +153,28 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, reason: "no diff" });
     }
 
-    // 差分が小さすぎる場合はスキップ（20文字未満の差分）
+    // S10: 差分が小さすぎる場合は、数字/否定の意味変化がなければスキップ
+    // （単純な言い回し変更を誤学習させない）
     if (Math.abs(aiDraft.length - sentReply.length) < 20) {
-      return NextResponse.json({ ok: false, reason: "diff too small" });
+      const numsA = aiDraft.match(/\d+/g) ?? [];
+      const numsB = sentReply.match(/\d+/g) ?? [];
+      const negA = (aiDraft.match(/(?:できません|ございません|ありません|いません|しません|ません)/g) ?? []).length;
+      const negB = (sentReply.match(/(?:できません|ございません|ありません|いません|しません|ません)/g) ?? []).length;
+      const hasSemanticChange = JSON.stringify(numsA) !== JSON.stringify(numsB) || negA !== negB;
+      if (!hasSemanticChange) {
+        return NextResponse.json({ ok: false, reason: "diff too small" });
+      }
     }
 
     const normalized = STATE_NORMALIZE[conversationState] ?? conversationState ?? "hearing";
 
-    const rule = await extractCorrectionRule(aiDraft, sentReply, normalized, customerMessage);
+    const extracted = await extractCorrectionRule(aiDraft, sentReply, normalized, customerMessage);
 
-    if (!rule) {
+    if (!extracted) {
       return NextResponse.json({ ok: false, reason: "extraction skipped or failed" });
     }
+
+    const { rule, category } = extracted;
 
     // contentフィールド強化: customerMessageがある場合、先頭に例文を付加
     const enrichedContent = customerMessage
@@ -172,7 +194,7 @@ export async function POST(req: NextRequest) {
 
     const upsertResult = await upsertKnowledge(supabase, {
       title: "差分学習 [自動]",
-      category: "principle",
+      category,
       importance: 9,
       conversation_state: normalized,
       content: enrichedContent,
