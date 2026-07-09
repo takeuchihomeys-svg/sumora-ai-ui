@@ -609,6 +609,10 @@ CREATE INDEX IF NOT EXISTS idx_aix_usage_logs_created_at ON aix_usage_logs(creat
 CREATE INDEX IF NOT EXISTS idx_aix_usage_logs_aix_type ON aix_usage_logs(aix_type);
 CREATE INDEX IF NOT EXISTS idx_aix_usage_logs_conv_created ON aix_usage_logs(conversation_id, created_at DESC);
 
+-- draft_pending_at ADD COLUMN（後続のインデックスより前に必要）
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS draft_pending_at TIMESTAMPTZ;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS draft_attempted_at TIMESTAMPTZ;
+
 -- パフォーマンス強化: 毎分Cronが叩くカラムのインデックス
 CREATE INDEX IF NOT EXISTS idx_conversations_draft_pending_at ON conversations(draft_pending_at) WHERE draft_pending_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_conversations_draft_attempted_at ON conversations(draft_attempted_at) WHERE draft_attempted_at IS NOT NULL;
@@ -816,6 +820,7 @@ CREATE TABLE IF NOT EXISTS knowledge_apply_log (
 );
 CREATE INDEX IF NOT EXISTS idx_knowledge_apply_log_knowledge ON knowledge_apply_log(knowledge_id);
 CREATE INDEX IF NOT EXISTS idx_knowledge_apply_log_conversation ON knowledge_apply_log(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_knowledge_apply_log_conv_pending ON knowledge_apply_log(conversation_id, result) WHERE result = 'pending';
 ALTER TABLE knowledge_apply_log DISABLE ROW LEVEL SECURITY;
 -- C05: generate-reply と aix/action が同一 conversation_id に書くため、どちら由来かを区別するカラムを追加
 --      confirm_knowledge_feedback を source でスコープすることで誤フィードバック混入を防ぐ
@@ -997,6 +1002,24 @@ ALTER TABLE cron_run_logs DISABLE ROW LEVEL SECURITY;
 -- ④ AIX生成文案ログ（AIXが生成した文案を保存しAI改善ループを完成させる）
 -- generated_text: AIXが生成したが実際に送られたかどうかは line_message_id で照合
 ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS generated_text TEXT;
+
+-- ⑤ ai_prompt_rules.updated_at（手動編集時刻を追跡）
+ALTER TABLE ai_prompt_rules ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
+
+-- ⑥ match_reply_knowledge を hypothesis_status ADD COLUMN の後に再定義
+--    （line 479 での定義は hypothesis_status が存在しない新規環境で失敗するため、
+--      hypothesis_status ADD COLUMN（line 802）の後にも CREATE OR REPLACE で再実行する）
+CREATE OR REPLACE FUNCTION match_reply_knowledge(query_embedding vector, match_count integer, min_importance integer DEFAULT 7)
+RETURNS TABLE(id uuid, title text, content text, category text, conversation_state text, importance integer, similarity float, hypothesis_status text)
+LANGUAGE sql STABLE AS $$
+  SELECT ak.id, ak.title, ak.content, ak.category, ak.conversation_state, ak.importance,
+    (1 - (ak.embedding <=> query_embedding))::float AS similarity,
+    ak.hypothesis_status
+  FROM ai_reply_knowledge ak
+  WHERE ak.embedding IS NOT NULL AND ak.importance >= min_importance
+    AND COALESCE(ak.hypothesis_status, 'hypothesis') != 'rejected'
+  ORDER BY ak.embedding <=> query_embedding LIMIT match_count
+$$;
 `.trim();
 
 export async function GET() {

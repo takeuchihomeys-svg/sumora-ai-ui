@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 
 // P5: 成果アトリビューション週次集計
 // 過去7日間の aix_usage_logs を (aix_type, template_id) でグルーピングし、
@@ -67,6 +68,7 @@ type UsageLog = {
 };
 
 async function run() {
+  const runLogId = await startCronLog("calc-aix-attribution");
   const now = new Date();
   // C03: period_start をローリング日付（再実行時に period が変わる問題）ではなく
   //      月曜起算の ISO 週に固定することで、同じ週内に何度実行しても同一 period を参照する。
@@ -282,6 +284,7 @@ async function run() {
   console.log(
     `[calc-aix-attribution] done: period=${periodStart}..${periodEnd} groups=${summary.groups} logs=${summary.logs} viewing=${summary.viewing_reached} apply=${summary.application_reached} won=${summary.closed_won}`
   );
+  await finishCronLog(runLogId, true, { period: `${periodStart}..${periodEnd}`, ...summary });
   return NextResponse.json({ ok: true, period: { periodStart, periodEnd }, ...summary });
 }
 

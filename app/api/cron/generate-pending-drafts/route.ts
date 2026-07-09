@@ -13,7 +13,7 @@ export const maxDuration = 60;
 const PER_CONV_TIMEOUT_MS = 30_000;
 const TIME_BUDGET_MS = 50_000;
 
-const SKIP_STATUSES = new Set(["applying", "screening", "contract", "closed_won"]);
+const SKIP_STATUSES = new Set(["applying", "screening", "contract", "closed_won", "closed_lost"]);
 
 const STATUS_ALIAS: Record<string, string> = {
   first_reply:             "hearing",

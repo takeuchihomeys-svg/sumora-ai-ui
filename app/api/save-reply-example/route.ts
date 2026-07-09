@@ -470,6 +470,12 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ ok: true, skippedAnalysis: true });
   }
 
+  // 🚫 AI自己強化ループ防止: AIが生成してスタッフが無修正で送った例はLLM分析スキップ
+  // was_ai_used=true && was_ai_modified=false = AIドラフトそのまま → 差分なし → 学習ノイズのみ
+  if ((existing.was_ai_used as boolean) && !(existing.was_ai_modified as boolean)) {
+    return NextResponse.json({ ok: true, skippedAnalysis: true });
+  }
+
   // ☆追加時 → 星ブーストで再分析（aiDraft があれば差分学習も実行）
   const jobs: Promise<void>[] = [
     analyzeAndSaveKnowledge(existing.id, existing.conversation_state, existing.customer_message, existing.sent_reply, true),

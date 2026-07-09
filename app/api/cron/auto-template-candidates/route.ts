@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
+import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 
 export const maxDuration = 60;
 
@@ -129,6 +130,7 @@ function stripCodeFence(s: string): string {
 }
 
 async function run() {
+  const runLogId = await startCronLog("auto-template-candidates");
   const since = new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
   // 1. 過去14日のAIX生成スタッフ送信を取得
@@ -208,7 +210,7 @@ async function run() {
 
   // 4. 重複除去：既存候補（採用済み・却下済み含む）＋既存テンプレ＋今回実行内
   const [{ data: existingCands }, { data: existingTemplates }] = await Promise.all([
-    supabase.from("ai_template_candidates").select("category, template_text").limit(1000),
+    supabase.from("ai_template_candidates").select("category, template_text, is_dismissed, is_adopted").limit(1000),
     supabase.from("templates").select("category, text").like("category", "%【AIX】%").limit(500),
   ]);
 
@@ -330,7 +332,11 @@ ${existing.length > 0 ? existing.map((t) => `- ${t}`).join("\n") : "（なし）
     }
 
     const typesWithFollowups = new Set(pairs.map((p) => p.aixType));
-    const pendingByCategory = new Set((existingCands ?? []).map((c) => c.category as string));
+    const pendingByCategory = new Set(
+      (existingCands ?? [])
+        .filter((c) => !c.is_dismissed && !c.is_adopted)
+        .map((c) => c.category as string)
+    );
 
     for (const [actionType, entry] of typeCounts) {
       if (generated >= MAX_GENERATE_PER_RUN) break;
@@ -386,6 +392,7 @@ ${entry.samples.map((s) => `- ${s.replace(/\n/g, " ")}`).join("\n")}
   }
 
   console.log(`[auto-template-candidates] done: pairs=${pairs.length} sent=${fresh.length} converted=${converted} skipped=${skipped} saved=${saved} generated=${generated}`);
+  await finishCronLog(runLogId, true, { pairs: pairs.length, sent: fresh.length, converted, skipped, saved, generated });
   return NextResponse.json({ ok: true, pairs: pairs.length, sent: fresh.length, converted, skipped, saved, generated, savedItems });
 }
 

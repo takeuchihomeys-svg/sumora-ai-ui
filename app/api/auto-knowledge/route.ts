@@ -144,7 +144,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const normalized = STATE_NORMALIZE[conversationState] ?? conversationState ?? "hearing";
+    const normalized = (STATE_NORMALIZE[conversationState] ?? conversationState) || "hearing";
 
     const extracted = await extractCorrectionRule(aiDraft, sentReply, normalized, customerMessage);
 

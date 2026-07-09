@@ -6,7 +6,7 @@ export async function GET() {
   const { data, error } = await supabase
     .from("ai_reply_knowledge")
     .select("id, title, content, category, conversation_state, importance, created_at")
-    .like("title", "差分学習%")
+    .ilike("title", "%差分学習%")
     .order("created_at", { ascending: false })
     .limit(100);
 
@@ -35,7 +35,7 @@ export async function PATCH(req: NextRequest) {
 
   const { error } = await supabase
     .from("ai_reply_knowledge")
-    .update({ title: "差分学習 [承認済]", importance: 10 })
+    .update({ title: "差分学習 [承認済]", importance: 9, hypothesis_status: "confirmed" })
     .eq("id", id);
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

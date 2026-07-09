@@ -48,12 +48,12 @@ function getJSTDayOfWeek(): number {
 // JST 当日（0:00〜23:59）の開始時刻（UTC）を返す
 function getJSTDayStart(): Date {
   const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
-  return new Date(Date.UTC(jstNow.getUTCFullYear(), jstNow.getUTCMonth(), jstNow.getUTCDate(), 0, 0, 0, 0));
+  return new Date(Date.UTC(jstNow.getUTCFullYear(), jstNow.getUTCMonth(), jstNow.getUTCDate(), 0, 0, 0, 0) - 9 * 3600 * 1000);
 }
 // JST 当日の終了時刻（UTC）を返す
 function getJSTDayEnd(): Date {
   const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
-  return new Date(Date.UTC(jstNow.getUTCFullYear(), jstNow.getUTCMonth(), jstNow.getUTCDate(), 23, 59, 59, 999));
+  return new Date(Date.UTC(jstNow.getUTCFullYear(), jstNow.getUTCMonth(), jstNow.getUTCDate(), 23, 59, 59, 999) - 9 * 3600 * 1000);
 }
 
 // ─── Haiku 分析（1案と同じフィールド数に拡張）───────────────────────────────
@@ -241,7 +241,7 @@ async function generateAllPatterns(
   const greetingNote = alreadyGreeted
     ? `\n【⏰ 挨拶ルール最優先】本日の会話で冒頭挨拶は使用済み。今回は「はい！！」「かしこまりました！！」など短い言葉で直接始める。`
     : jstHour >= 21
-      ? `\n【⏰ 時刻ルール最優先】現在${jstHour}時台（JST）。冒頭は「〇〇さん夜分遅くに失礼致します！！」を使う。`
+      ? `\n【⏰ 時刻ルール最優先】現在${jstHour}時台（JST）。冒頭挨拶は「〇〇さんお世話になっております！！」を使う。「夜分遅くに失礼致します」は返信時には絶対禁止。`
       : `\n【⏰ 時刻ルール最優先】現在${jstHour}時台（JST）。冒頭挨拶は「〇〇さんお世話になっております！！」を使う。「夜分遅くに」は使用禁止。`;
 
   const managementNote = isWeekend
