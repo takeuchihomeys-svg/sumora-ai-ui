@@ -75,10 +75,14 @@ async function run() {
   const dowJst = (jstNow.getUTCDay() + 6) % 7; // 月=0, 火=1, ... 日=6
   const mondayJst = new Date(jstNow.getTime() - dowJst * 86400 * 1000);
   mondayJst.setUTCHours(0, 0, 0, 0);
-  const periodStartDate = new Date(mondayJst.getTime() - 9 * 3600 * 1000); // → UTC
-  const sevenDaysAgo = periodStartDate; // 月曜起算の週頭（同じ週内で安定）
-  const periodStart = new Date(mondayJst.getTime()).toISOString().slice(0, 10); // JST 月曜の日付文字列
-  const periodEnd = now.toISOString().slice(0, 10);
+  const periodStartDate = new Date(mondayJst.getTime() - 9 * 3600 * 1000); // 今週月曜 00:00 JST → UTC
+  // CRON-001: sevenDaysAgo を「今週月曜 00:00」ではなく「前週月曜 00:00」に修正
+  //           Cron は JST 月曜 04:00 に実行されるため、sevenDaysAgo=今週月曜では約4時間分しかログを取得できない
+  const sevenDaysAgo = new Date(periodStartDate.getTime() - 7 * 86400 * 1000); // 前週月曜 00:00 JST
+  // CRON-001: period_start も前週月曜（=集計対象週の開始）に合わせる
+  const periodStart = new Date(mondayJst.getTime() - 7 * 86400 * 1000).toISOString().slice(0, 10);
+  // CRON-002: periodEnd は UTC 日付（=前日）になり period_start > period_end の逆転が起きていた → JST 日付に統一
+  const periodEnd = jstNow.toISOString().slice(0, 10);
 
   // 1. 過去7日間のAIX使用ログ
   const { data: logs, error: logsErr } = await supabase

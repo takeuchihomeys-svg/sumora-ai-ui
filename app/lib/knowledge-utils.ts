@@ -117,6 +117,7 @@ type MatchRpcRow = {
   importance: number;
   similarity: number;
   hypothesis_status?: string;
+  conversation_state?: string;
 };
 
 /**
@@ -143,8 +144,9 @@ export async function upsertKnowledge(
     }) as { data: MatchRpcRow[] | null; error: unknown };
 
     if (!rpcError && matches && matches.length > 0) {
+      // BUG-04: conversation_state が異なるルールとのマージを防ぐ
       const similar = matches.find(
-        (m) => m.similarity > 0.92 && m.category === category,
+        (m) => m.similarity > 0.92 && m.category === category && (!conversation_state || m.conversation_state === conversation_state),
       );
 
       if (similar) {
@@ -163,23 +165,25 @@ export async function upsertKnowledge(
     }
   }
 
-  // Step 2: タイトル先頭25文字の ilike 重複チェック（F08: embeddingありはStep1で済み・embeddingなし時のみ実行）
+  // Step 2: タイトル先頭25文字の ilike 重複チェック（embeddingありはStep1で済み・embeddingなし時のみ実行）
   // embedding がある場合は Step1（similarity>0.92）で重複排除済みのため ilike は実行しない（誤スキップ防止）
+  // BUG-11: conversation_state でスコープを絞ることでクロスステート誤スキップを防ぐ
   if (!embedding || embedding.length === 0) {
     const keyword = title.slice(0, 25);
-    const { data: existing } = await supabase
+    let ilq = supabase
       .from("ai_reply_knowledge")
       .select("id")
-      .ilike("title", `%${keyword}%`)
-      .limit(1);
+      .ilike("title", `%${keyword}%`);
+    if (conversation_state) ilq = ilq.eq("conversation_state", conversation_state);
+    const { data: existing } = await ilq.limit(1);
 
     if (existing && existing.length > 0) {
-      console.log(`[upsertKnowledge] skipped: タイトル重複 "${keyword}"`);
+      console.log(`[upsertKnowledge] skipped: タイトル重複 "${keyword}" (state=${conversation_state ?? "any"})`);
       return "skipped";
     }
   }
 
-  // Step 3: INSERT
+  // Step 3: INSERT — BUG-02: Supabase は失敗時に例外を投げず { error } を返すため必ず検査する
   const insertPayload: Record<string, unknown> = {
     title,
     content,
@@ -190,7 +194,11 @@ export async function upsertKnowledge(
     ...(embedding ? { embedding: JSON.stringify(embedding) } : {}),
   };
 
-  await supabase.from("ai_reply_knowledge").insert(insertPayload);
+  const { error: insertError } = await supabase.from("ai_reply_knowledge").insert(insertPayload);
+  if (insertError) {
+    console.error(`[upsertKnowledge] insert failed: "${title}"`, insertError.message);
+    throw new Error(`upsertKnowledge insert failed: ${insertError.message}`);
+  }
 
   console.log(`[upsertKnowledge] inserted: "${title}" (category=${category}, importance=${importance})`);
   return "inserted";

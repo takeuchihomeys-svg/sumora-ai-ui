@@ -672,8 +672,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
 
       // 類似度0.5未満のノイズを除外し、importance×similarity の複合スコアで並べ替え
       // （RPCの similarity 順のままだと importance の低い近似ルールが各バケットの枠を食うため）
+      // BUG-01: pgvector経路にも rejected フィルタを追加（フォールバック経路は .neq('hypothesis_status','rejected') 済みだが pgvector 経路だけ欠落していた）
       const filteredResults = (vectorResults ?? [])
-        .filter(r => (r.similarity ?? 0) >= 0.5)
+        .filter(r => (r.similarity ?? 0) >= 0.5 && r.hypothesis_status !== "rejected")
         .map(r => ({ ...r, score: (r.similarity ?? 0.5) * ((r.importance || 5) / 10) }))
         .sort((a, b) => {
           if (b.score !== a.score) return b.score - a.score;

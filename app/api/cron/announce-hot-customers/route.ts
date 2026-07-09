@@ -49,6 +49,20 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
+  // CRON-004: クールダウンガード（90分以内の重複送信を防ぐ）
+  // Vercel cron は失敗時リトライするため同じ内容が二重送信される可能性がある
+  const { data: cooldownRow } = await supabase
+    .from("hanbancyo_settings")
+    .select("value")
+    .eq("key", "announce_hot_last_sent_at")
+    .maybeSingle();
+  if (cooldownRow?.value) {
+    const lastSentAt = new Date(cooldownRow.value).getTime();
+    if (Date.now() - lastSentAt < 90 * 60 * 1000) {
+      return NextResponse.json({ ok: true, skipped: true, reason: "cooldown (90min)" });
+    }
+  }
+
   let targetId = process.env.LINE_STAFF_GROUP_ID ?? null;
   // フォールバック: hanbancyo_settings テーブルの group_id を使う
   if (!targetId) {
@@ -175,10 +189,10 @@ export async function GET(req: NextRequest) {
     sections.push(`📦 物件出し要（${needsPropList.length}人）\n\n${lines.join("\n")}`);
   }
 
-  // ⏰ 3日以上未返信セクション（朝9時のみ表示 — B05: コメントのみだった時間ガードを実装）
+  // ⏰ 3日以上未返信セクション（朝10時のみ表示 — CRON-003: cronはUTC 01:00=JST 10:00起動のため10時が正）
   type StaleConvRow = { id: string; customer_name: string | null; account: string | null; last_message: string | null; updated_at: string | null };
   const staleList = staleConvs as StaleConvRow[] ?? [];
-  if (staleList.length > 0 && hour >= 9 && hour < 10) {
+  if (staleList.length > 0 && hour >= 10 && hour < 11) {
     const lines = staleList.map((c, i) => {
       const name = c.customer_name || "名称未設定";
       const acct = ACCOUNT_LABEL[c.account ?? "sumora"] ?? "スモラ";
@@ -203,6 +217,12 @@ export async function GET(req: NextRequest) {
     console.error("announce-hot-customers LINE error:", text);
     return NextResponse.json({ ok: false, error: text }, { status: 500 });
   }
+
+  // CRON-004: 送信成功後にクールダウン用タイムスタンプを更新（upsert）
+  void supabase.from("hanbancyo_settings").upsert(
+    { key: "announce_hot_last_sent_at", value: new Date().toISOString() },
+    { onConflict: "key" }
+  );
 
   return NextResponse.json({ ok: true, hot: hotConvs?.length ?? 0, needsProp: needsPropList.length, stale: staleList.length });
 }

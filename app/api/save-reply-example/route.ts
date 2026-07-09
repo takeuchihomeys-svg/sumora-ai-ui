@@ -367,8 +367,9 @@ async function extractAndSavePhrases(conversationState: string, sentReply: strin
     (existing || []).map((r) => [r.phrase as string, { id: r.id as number, priority: r.priority as number }])
   );
 
+  // F3: インデックスベースのboost選択。Claudeが文字列を微妙に変えて完全一致ミスするのを防ぐ
   const existingList = existingPhrases.length > 0
-    ? `\n\n【既存フレーズ（類似・重複は除外してboostへ）】\n${existingPhrases.map((p) => `- ${p}`).join("\n")}`
+    ? `\n\n【既存フレーズ（類似はboostに番号で指定）】\n${existingPhrases.map((p, i) => `${i + 1}: ${p}`).join("\n")}`
     : "";
 
   const text = await callHaiku(`以下のLINE賃貸営業メッセージから再利用できるフレーズを抽出してください。
@@ -380,19 +381,24 @@ ${sentReply}${existingList}
 ・15〜50文字程度のスモラらしいフレーズを抽出
 ・固有情報（物件名・金額・部屋番号・人名）は含めない
 ・お客様の名前が入っている場合は除去して汎用的なフレーズにする（テンプレート変数は使わない）
-・既存フレーズと同一・類似のものは "boost" に入れる（既存の文字列をそのまま）
+・既存フレーズと同一・類似のものは "boost" に番号で入れる（例: [1, 3]）
 ・完全に新しいものだけ "new" に入れる（0件でもOK）
 ・JSONのみ返答
 
-{"new": ["新フレーズ1"], "boost": ["既存フレーズ文字列"]}`, 512);
+{"new": ["新フレーズ1"], "boost": [1, 3]}`, 512);
 
   try {
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return;
-    const { new: newPhrases = [], boost: boostPhrases = [] } = JSON.parse(match[0]) as {
+    const { new: newPhrases = [], boost: boostRaw = [] } = JSON.parse(match[0]) as {
       new: string[];
-      boost: string[];
+      boost: (number | string)[];
     };
+    // F3: 番号→フレーズ文字列に変換（後方互換で文字列のままの場合も文字列一致にフォールバック）
+    const boostPhrases = boostRaw.map((b) => {
+      if (typeof b === "number") return existingPhrases[b - 1] ?? null;
+      return existingPhrases.find((p) => p === b) ?? null;
+    }).filter((p): p is string => p != null);
 
     // ☆の場合は高priority(18)で即反映、通常は5で累積昇格
     const newPriority = isStarred ? 18 : 5;
@@ -652,12 +658,18 @@ export async function POST(req: NextRequest) {
         const mergedWasAiModified = mergedSim >= 0.05 && mergedSim < 0.9;
         const feedbackResult = mergedWasAiUsed ? "correct" : mergedWasAiModified ? "wrong" : null;
         if (feedbackResult) {
-          // C05: p_source='generate_reply' で aix/action 由来エントリへの混入を防ぐ
-          supabase.rpc("confirm_knowledge_feedback", {
+          // RLHF-002: マージパスは直後に return するため fire-and-forget だと Vercel Function が終了前に RPC がキャンセルされる → await
+          await supabase.rpc("confirm_knowledge_feedback", {
             p_conversation_id: conversationId,
             p_result: feedbackResult,
             p_source: "generate_reply",
-          }).then(() => {}, () => {});
+          });
+          // RLHF-001: aix_action 経由ナレッジも同じフィードバック結果で更新（これがないと AIX ループが機能しない）
+          await supabase.rpc("confirm_knowledge_feedback", {
+            p_conversation_id: conversationId,
+            p_result: feedbackResult,
+            p_source: "aix_action",
+          });
         }
       }
     }
@@ -680,11 +692,17 @@ export async function POST(req: NextRequest) {
   if (conversationId && aiDraft) {
     const feedbackResult = wasAiUsed ? "correct" : wasAiModified ? "wrong" : null;
     if (feedbackResult) {
-      // C05: p_source='generate_reply' で aix/action 由来エントリへの混入を防ぐ
+      // generate_reply ナレッジへのフィードバック
       supabase.rpc("confirm_knowledge_feedback", {
         p_conversation_id: conversationId,
         p_result: feedbackResult,
         p_source: "generate_reply",
+      }).then(() => {}, () => {});
+      // RLHF-001: aix_action ナレッジへのフィードバック（これがないと AIX フロー経由の仮説が永久に pending）
+      supabase.rpc("confirm_knowledge_feedback", {
+        p_conversation_id: conversationId,
+        p_result: feedbackResult,
+        p_source: "aix_action",
       }).then(() => {}, () => {});
     }
   }

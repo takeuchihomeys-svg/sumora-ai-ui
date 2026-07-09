@@ -619,6 +619,7 @@ export async function POST(req: NextRequest) {
       .eq("importance", 9)
       .eq("used_count", 0)
       .eq("correct_count", 0)
+      .gt("apply_count", 0)                         // BUG-03: 90日decayと同様、apply実績ゼロは除外
       .lt("created_at", staleThreshold180)
       .neq("hypothesis_status", "confirmed")
       .neq("hypothesis_status", "rejected");

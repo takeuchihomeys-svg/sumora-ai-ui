@@ -212,15 +212,18 @@ async function run() {
     supabase.from("templates").select("category, text").like("category", "%【AIX】%").limit(500),
   ]);
 
+  // `seen` = 変換後テキストのdedup（DBレコード + バッチ内変換後）
   const seen = new Set<string>();
   for (const c of existingCands ?? []) seen.add(dedupeKey(c.category as string, c.template_text as string));
   for (const t of existingTemplates ?? []) seen.add(dedupeKey(t.category as string, (t.text as string) ?? ""));
 
+  // F2: `seenPre` = 変換前テキストのバッチ内dedup。seen と混在させると pre/post キーが衝突する
+  const seenPre = new Set<string>();
   const fresh: Pair[] = [];
   for (const p of pairs) {
-    const key = dedupeKey(ACTION_TO_CATEGORY[p.aixType], p.followText);
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const preKey = dedupeKey(ACTION_TO_CATEGORY[p.aixType], p.followText);
+    if (seenPre.has(preKey)) continue;
+    seenPre.add(preKey);
     fresh.push(p);
     // C04: 変換上限を保存上限に揃える（MAX_CONVERT_PER_RUN=30 に対し MAX_INSERT_PER_RUN=10 で
     //      20件分の Haiku 呼び出しが無駄になるため）

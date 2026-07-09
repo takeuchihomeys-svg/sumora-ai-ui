@@ -1,31 +1,8 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
-import { upsertKnowledge } from "@/app/lib/knowledge-utils";
+import { upsertKnowledge, generateEmbedding } from "@/app/lib/knowledge-utils";
 
 export const maxDuration = 60;
-
-// ─── OpenAI 埋め込み生成 ─────────────────────────────────────────────────────
-async function getEmbedding(text: string): Promise<number[] | null> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return null;
-  const controller = new AbortController();
-  const tid = setTimeout(() => controller.abort(), 6000);
-  try {
-    const res = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
-      signal: controller.signal,
-    });
-    clearTimeout(tid);
-    if (!res.ok) return null;
-    const data = await res.json() as { data: Array<{ embedding: number[] }> };
-    return data.data[0]?.embedding ?? null;
-  } catch {
-    clearTimeout(tid);
-    return null;
-  }
-}
 
 const STATE_NORMALIZE: Record<string, string> = {
   condition_hearing: "hearing", property_search: "hearing",
@@ -93,7 +70,8 @@ ${sentReply.slice(0, 500)}`,
     if (!jsonMatch) return null;
     const parsed = JSON.parse(jsonMatch[0]) as { skip?: boolean; rule?: string; category?: string };
     if (parsed.skip || !parsed.rule || parsed.rule.length < 15) return null;
-    const category = ["pattern", "style", "phrase", "principle"].includes(parsed.category ?? "")
+    // BUG-10: principleはsave-reply-exampleで審査済みのものだけ保存。auto-knowledgeからは除外
+    const category = ["pattern", "style", "phrase"].includes(parsed.category ?? "")
       ? (parsed.category as string)
       : "pattern";
     return { rule: parsed.rule, category };
@@ -181,24 +159,22 @@ export async function POST(req: NextRequest) {
       ? `例: 顧客が「${customerMessage.slice(0, 100)}」と言った場合。${rule}`
       : rule;
 
-    // embedding生成（失敗した場合はnullのままinsert）
-    let embedding: number[] | null = null;
-    try {
-      const embeddingInput = customerMessage
-        ? `${normalized}: ${customerMessage} ${enrichedContent}`.slice(0, 2000)
-        : enrichedContent.slice(0, 2000);
-      embedding = await getEmbedding(embeddingInput);
-    } catch {
-      // embedding生成失敗時はnullのままにして既存ロジックを維持
-    }
+    // BUG-08+09: customerMessageが重複しないよう generate-reply の検索クエリと形式を揃える。
+    // 検索側は `${state}: ${顧客メッセージ}` で embedding するため保存側も同じ形式。
+    // BUG-09: ローカルgetEmbeddingをgenerateEmbedding（キャッシュ付き）に統一。
+    const embeddingInput = customerMessage
+      ? `${normalized}: ${customerMessage}`.slice(0, 2000)
+      : enrichedContent.slice(0, 2000);
+    const embedding = await generateEmbedding(embeddingInput).catch(() => null);
 
     const upsertResult = await upsertKnowledge(supabase, {
       title: "差分学習 [自動]",
       category,
-      importance: 9,
+      importance: 8,       // BUG-07: 自動生成ルールは8スタート（save-reply-exampleの手動確認済みより1低く）
       conversation_state: normalized,
       content: enrichedContent,
       ...(embedding !== null ? { embedding } : {}),
+      ...(body.example_id ? { source_example_id: body.example_id } : {}), // BUG-12: 元実例IDを記録
     });
 
     if (upsertResult === "merged") {

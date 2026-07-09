@@ -44,61 +44,63 @@ export async function POST(req: NextRequest) {
   if (!phrases.length) return NextResponse.json({ ok: true, logged: 0 });
 
   const status = body.conversation_status || "hearing";
-  let logged = 0;
+  const phraseCategory = ACTION_TO_PHRASE_CATEGORY[body.action_type];
 
-  for (const phrase of phrases) {
-    // upsert: 既存なら usage_count +1
-    const { data: existing } = await supabase
+  // F1: バッチSELECTで N+1 を解消（phrases件数分のラウンドトリップ → 2回のSELECT）
+  const [{ data: existingLogs }, { data: dictEntries }] = await Promise.all([
+    supabase
       .from("template_phrase_logs")
-      .select("id, usage_count")
+      .select("id, phrase, usage_count")
       .eq("action_type", body.action_type)
       .eq("conversation_status", status)
-      .eq("phrase", phrase)
-      .maybeSingle();
-
-    if (existing) {
-      await supabase
-        .from("template_phrase_logs")
-        .update({ usage_count: (existing.usage_count as number) + 1, updated_at: new Date().toISOString() })
-        .eq("id", existing.id as string);
-    } else {
-      await supabase.from("template_phrase_logs").insert({
-        action_type: body.action_type,
-        conversation_status: status,
-        phrase,
-        usage_count: 1,
-      });
-    }
-
-    // ④ phrase_dictionary にも同期（generate-reply が参照する本流テーブルへ連携）
-    const phraseCategory = ACTION_TO_PHRASE_CATEGORY[body.action_type];
-    if (phraseCategory) {
-      const { data: dictEntry } = await supabase
-        .from("phrase_dictionary")
-        .select("id, priority")
-        .eq("category", phraseCategory)
-        .eq("phrase", phrase)
-        .maybeSingle();
-
-      if (dictEntry) {
-        await supabase
+      .in("phrase", phrases),
+    phraseCategory
+      ? supabase
           .from("phrase_dictionary")
-          .update({ priority: Math.min(15, (dictEntry.priority as number) + 1) })
-          .eq("id", dictEntry.id as number);
-      } else {
-        await supabase.from("phrase_dictionary").insert({
-          category: phraseCategory,
-          phrase,
-          priority: 3,
-          role: "auto_usage",
-        });
-      }
-    }
+          .select("id, phrase, priority")
+          .eq("category", phraseCategory)
+          .in("phrase", phrases)
+      : Promise.resolve({ data: [] as { id: number; phrase: string; priority: number }[] }),
+  ]);
 
-    logged++;
+  const logMap = Object.fromEntries((existingLogs ?? []).map(r => [r.phrase as string, r]));
+  const dictMap = Object.fromEntries((dictEntries ?? []).map(r => [r.phrase as string, r]));
+
+  // 新規フレーズをバルクINSERT
+  const newLogPhrases = phrases.filter(p => !logMap[p]);
+  if (newLogPhrases.length > 0) {
+    await supabase.from("template_phrase_logs").insert(
+      newLogPhrases.map(phrase => ({ action_type: body.action_type, conversation_status: status, phrase, usage_count: 1 }))
+    );
+  }
+  if (phraseCategory) {
+    const newDictPhrases = phrases.filter(p => !dictMap[p]);
+    if (newDictPhrases.length > 0) {
+      await supabase.from("phrase_dictionary").insert(
+        newDictPhrases.map(phrase => ({ category: phraseCategory, phrase, priority: 3, role: "auto_usage" }))
+      );
+    }
   }
 
-  return NextResponse.json({ ok: true, logged, phrases });
+  // 既存フレーズのカウンタをインクリメント（SUPABASEはbulk incrementをサポートしないため個別UPDATE）
+  for (const phrase of phrases.filter(p => logMap[p])) {
+    const r = logMap[phrase];
+    await supabase
+      .from("template_phrase_logs")
+      .update({ usage_count: (r.usage_count as number) + 1, updated_at: new Date().toISOString() })
+      .eq("id", r.id as string);
+  }
+  if (phraseCategory) {
+    for (const phrase of phrases.filter(p => dictMap[p])) {
+      const r = dictMap[phrase];
+      await supabase
+        .from("phrase_dictionary")
+        .update({ priority: Math.min(15, (r.priority as number) + 1) })
+        .eq("id", r.id as number);
+    }
+  }
+
+  return NextResponse.json({ ok: true, logged: phrases.length, phrases });
 }
 
 // GET: アクション×ステータスのよく使われるフレーズ Top5
