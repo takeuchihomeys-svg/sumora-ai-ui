@@ -901,6 +901,71 @@ ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS template_id UUID DEFAULT 
 ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS check_pattern TEXT DEFAULT NULL;
 ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS app_sub_mode TEXT DEFAULT NULL;
 ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS send_mode TEXT DEFAULT NULL;
+
+-- ai_prompt_rules: オペレーター設定ルール（動的プロンプト注入・コード外管理）
+-- action_type=NULL → 全アクション・generate-reply にも適用（グローバルルール）
+-- condition_key=NULL → 常時適用（条件なし）
+-- 冪等性: rule_key UNIQUE + ON CONFLICT DO NOTHING で migration 再実行しても重複しない
+CREATE TABLE IF NOT EXISTS ai_prompt_rules (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  rule_key TEXT UNIQUE NOT NULL,
+  action_type TEXT,
+  condition_key TEXT,
+  condition_value TEXT,
+  rule_text TEXT NOT NULL,
+  reason TEXT,
+  priority INT DEFAULT 5,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_ai_prompt_rules_action ON ai_prompt_rules(action_type);
+CREATE INDEX IF NOT EXISTS idx_ai_prompt_rules_active ON ai_prompt_rules(is_active) WHERE is_active = TRUE;
+ALTER TABLE ai_prompt_rules DISABLE ROW LEVEL SECURITY;
+
+-- 初期ルール（ON CONFLICT DO NOTHING で冪等・重複挿入しない）
+INSERT INTO ai_prompt_rules (rule_key, action_type, condition_key, condition_value, rule_text, reason, priority) VALUES
+
+('APP-EST-001', 'application_push', 'has_estimate', 'true',
+ '物件アピール（①）では「費用」「見積書」「初期費用」への言及は絶対禁止。お客様はすでに見積書を受け取っており、①で再言及するのは信頼低下の原因。②CTAのみ「初期費用面もお気に召されましたら」と一言触れる。',
+ '申込誘導で見積書を再言及するバグをユーザーが報告（2026-07-09）。hasEst=true時は①での費用言及を完全禁止にする最重要ルール。',
+ 10),
+
+('APP-DOCS-001', 'application_push', 'app_sub_mode', 'docs_request',
+ '書類依頼リストに「保険証」を絶対に含めないこと（申込時不要）。本人確認書類は「運転免許証」または「マイナンバーカード」の2種のみ明記。「等」を付けて曖昧にしない。',
+ '保険証は申込時不要。誤って依頼するとお客様が混乱し信頼を失う。2種類のみ明記が必須。',
+ 9),
+
+('APP-CONF-001', 'application_push', 'app_sub_mode', 'confirm',
+ '申込確認メッセージは2行のみ厳守。①「かしこまりました！！」②「[物件名]お申込みさせて頂きます😊！！」。書類案内・費用・審査説明は一切追加しない。',
+ 'confirmでは短い確認文が自然。長い返信はお客様を混乱させ次工程への信頼を損なう。',
+ 8),
+
+('VIEW-MULTI-001', 'viewing_invite', NULL, NULL,
+ 'カレンダーに複数の案内可能日時がある場合は、全日程を漏れなく提示すること。1日だけ案内して他の日程を省略することは絶対禁止。',
+ '1日しか提示しないとお客様の都合が合わず内覧キャンセルになりやすい。全日程提示が成約率に直結する。',
+ 9),
+
+('PROP-VCC-001', 'property_recommendation', 'vacancy_status', 'scheduled',
+ '退去予定物件（現在入居中）を紹介する際は、内覧がまだできないことを必ず明記すること。「現在入居中のため内覧はまだできないお部屋ですが、お申込みで確保可能です」の旨を含める。',
+ '内覧できないと知らずに来店するトラブルを防ぐ。透明性がお客様の信頼に繋がる。',
+ 9),
+
+('GLOB-PREAMBLE-001', NULL, NULL, NULL,
+ '「お伝えしたいことがあります」「一点お知らせ」「実は〜なのですが」などの前振り表現は使わない。本題から直接入ること。',
+ 'LINEでは前振りは回りくどく不自然。直接本題に入ることがスモラのトーンに合う。',
+ 7),
+
+('GLOB-PUNCT-001', NULL, NULL, NULL,
+ '文末を「？」で終わることは禁止。必ず「！！」で締めること。例: 「いかがでしょうか！！」「ご確認いただけますでしょうか！！」',
+ 'スモラのブランドトーンは「！！」で統一。「？」は消極的な印象を与え成約率が下がる。',
+ 7),
+
+('GLOB-TIKTOK-001', NULL, NULL, NULL,
+ 'TikTok・YouTube・SNS・インターネット上の情報への言及は絶対禁止。不動産仲介のプロとして直接的な情報のみを提供する。',
+ 'SNS言及はプロフェッショナリズムを損なう。スモラはSNS経由の問い合わせもあるため混乱を招く。',
+ 8)
+
+ON CONFLICT (rule_key) DO NOTHING;
 `.trim();
 
 export async function GET() {

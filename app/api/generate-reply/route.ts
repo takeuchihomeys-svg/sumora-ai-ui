@@ -12,6 +12,7 @@ import {
   STATE_SEARCH_ALIASES,
 } from "@/app/lib/line-reply-prompts";
 import { validateAndClean } from "@/app/lib/validate-reply";
+import { fetchPromptRules } from "@/app/lib/prompt-rules";
 
 // Vercel Functions のタイムアウト上限（秒）— Vision + 2段LLM呼び出しに余裕を持たせる
 export const maxDuration = 60;
@@ -190,7 +191,8 @@ function buildGenerationMessages(
   alreadyGreetedToday?: boolean,
   isFirstEverReplyOverride?: boolean,
   viewingNote = "",
-  customerStructured?: CustomerStructured
+  customerStructured?: CustomerStructured,
+  dbRules = ""
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   const jstDay = getJSTDayOfWeek();
@@ -497,6 +499,7 @@ ${replyContentNote}
 ${aixPropertyRecommendationNote}
 ${aixPropertySendNote}
 ${knowledgeNote}
+${dbRules}
 ${phrases}
 
 ${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}
@@ -1206,11 +1209,12 @@ export async function POST(req: NextRequest) {
     })();
 
     // Sonnetでストリーミング生成
+    const dbRules = await fetchPromptRules("generate_reply", { conversation_state: currentState });
     const messages = buildGenerationMessages(
       message, customerName, history, currentState,
       analysis, knowledge, examples, phrases, customerConditions, resolvedSummary,
       promptOverrides, isFollowUp, replyHint, alreadyGreetedToday,
-      isFirstEverReplyFromMsgs, viewingNote, customerStructured
+      isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules
     );
     const genStream = generationModel.stream(messages);
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEND_RULES, GENERATION_SYSTEM } from "@/app/lib/line-reply-prompts";
+import { fetchPromptRules } from "@/app/lib/prompt-rules";
 
 export const maxDuration = 60;
 
@@ -1453,6 +1454,12 @@ ${phraseText || "なし"}
 
       const appSubMode = body.app_sub_mode as string | undefined;
 
+      // ai_prompt_rules からアクション別・条件別ルールを取得（プロンプト注入用）
+      const appDbRules = await fetchPromptRules("application_push", {
+        has_estimate: String(has_estimate === true),
+        app_sub_mode: appSubMode || "push",
+      });
+
       if (appSubMode === "confirm") {
         // ── 申込確定: 会話を読んでお申込み確定メッセージを生成
         const confirmSystem = `あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。
@@ -1479,7 +1486,7 @@ ${property_name ? `物件名は「${property_name}」を使う（指定済み）
 【スモラLINE営業ルール（必ず守る・ただし上記の2行構成が最優先）】
 ${SMORA_COMMON_RULES}`;
 
-        message_text = await callClaude(confirmSystem + appDiffNote + appStarNote, `${name}への申込確定メッセージ。${property_name ? `物件名:${property_name}。` : ""}${recentHistory}`, currentAction);
+        message_text = await callClaude(confirmSystem + appDbRules + appDiffNote + appStarNote, `${name}への申込確定メッセージ。${property_name ? `物件名:${property_name}。` : ""}${recentHistory}`, currentAction);
 
       } else if (appSubMode === "docs_request") {
         // ── 書類依頼: 申込フォーム返送後の会話から不足書類を特定して追加依頼メッセージを生成
@@ -1559,7 +1566,7 @@ ${SMORA_COMMON_RULES}`;
 【スモラLINE営業ルール（必ず守る・ただし上記の3パーツ構成が最優先）】
 ${SMORA_COMMON_RULES}`;
 
-        const rawDocsText = await callClaude(docsRequestSystem + appDiffNote + appStarNote, `${name}への書類依頼メッセージ。${recentHistory}`, "docs_request");
+        const rawDocsText = await callClaude(docsRequestSystem + appDbRules + appDiffNote + appStarNote, `${name}への書類依頼メッセージ。${recentHistory}`, "docs_request");
         // JSONパース → コンポーネント結合
         // ※ docs_request は aiComponents を返さない（conversation_state が application_push と同じため
         //   STATE_LEARNABLEが一致せず component_diff 学習がゼロになるのを防ぐ）。
@@ -1766,7 +1773,7 @@ ${examplesText}${greetingTimeNote}`;
         userMsg = `${name}への申込後押しメッセージ。${property_name ? `物件名:${property_name}。` : ""}${extra_input ? `補足:${extra_input}。` : ""}${calendarNoteForApp}${templateStructureNote}${recentHistory}`;
       }
 
-      const rawAppText = await callClaude(system + appDiffNote + compAppealNote + appStarNote, userMsg, currentAction);
+      const rawAppText = await callClaude(system + appDbRules + appDiffNote + compAppealNote + appStarNote, userMsg, currentAction);
       if (!isScheduled) {
         // simple/hold_view: JSONパーツを解析してコンポーネント学習ループに渡す
         let appComps: Record<string, string> | null = null;
