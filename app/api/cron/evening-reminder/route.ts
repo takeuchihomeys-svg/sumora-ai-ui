@@ -15,6 +15,14 @@ export async function GET(req: NextRequest) {
   _jstNow.setUTCHours(0, 0, 0, 0);
   const todayStart = new Date(_jstNow.getTime() - 9 * 60 * 60 * 1000);
 
+  // B03: 当日 JST 内に既に送信済みなら重複送信しない（Cron リトライ対策）
+  const SENT_KEY = "evening_reminder_last_sent_at";
+  const { data: lastSentRow } = await supabase
+    .from("hanbancyo_settings").select("value").eq("key", SENT_KEY).maybeSingle();
+  if (lastSentRow?.value && new Date(lastSentRow.value as string) >= todayStart) {
+    return NextResponse.json({ ok: true, skipped: true, reason: "本日送信済み" });
+  }
+
   // 🔥ステータスの顧客を全取得
   const { data: hotCustomers, error } = await supabase
     .from("property_customers")
@@ -69,6 +77,12 @@ export async function GET(req: NextRequest) {
     console.error("[evening-reminder] LINE push error:", err);
     return NextResponse.json({ ok: false, error: "LINE push failed" }, { status: 500 });
   }
+
+  // B03: 送信成功後に当日送信済みタイムスタンプを記録
+  await supabase.from("hanbancyo_settings").upsert(
+    { key: SENT_KEY, value: new Date().toISOString() },
+    { onConflict: "key" }
+  );
 
   return NextResponse.json({ ok: true, unattended: unattended.length });
 }

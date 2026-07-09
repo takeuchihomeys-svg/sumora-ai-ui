@@ -105,14 +105,25 @@ export async function GET(req: NextRequest) {
         if (shouldPre) {
           const timeLabel = timeStr ? ` ${timeStr}〜` : "";
           const text = `📅【内覧前アナウンス】\n今日${customerName}さん${timeLabel}内覧！！\n内覧前挨拶を送ってあげて！！`;
-          const sent = await sendGroupMessage(cfg, text);
-          if (sent) {
-            // 送信成功時のみフラグを立てる（失敗時は次回Cronで再試行）
-            const { error: upErr } = await supabase
-              .from("viewings").update({ pre_announce_sent: true }).eq("id", v.id as string);
-            if (upErr) console.error("[viewing-announce] pre_announce_sent update error:", upErr.message);
-            else announced++;
+          // B01: CAS更新（pre_announce_sent=false 条件付き）で先にフラグを立ててから送信
+          // → 複数インスタンス同時実行時の二重送信を防ぐ（負けた側は 0行更新でスキップ）
+          const { data: casData, error: upErr } = await supabase
+            .from("viewings")
+            .update({ pre_announce_sent: true })
+            .eq("id", v.id as string)
+            .eq("pre_announce_sent", false)
+            .select("id");
+          if (upErr) { console.error("[viewing-announce] pre_announce_sent CAS error:", upErr.message); }
+          else if (casData && casData.length > 0) {
+            // 更新できた = 今回のインスタンスが送信権を獲得
+            const sent = await sendGroupMessage(cfg, text);
+            if (sent) announced++;
+            else {
+              // LINE送信失敗時はフラグを戻して次回再試行できるようにする
+              await supabase.from("viewings").update({ pre_announce_sent: false }).eq("id", v.id as string);
+            }
           }
+          // casData.length === 0 の場合は別インスタンスが送信済み → スキップ
         }
       }
 
@@ -128,12 +139,20 @@ export async function GET(req: NextRequest) {
 
         if (shouldPost) {
           const text = `🏠【内覧後アナウンス】\n${customerName}さん内覧終わり！！\nAIX→挨拶（内覧後）で挨拶送って！！😊`;
-          const sent = await sendGroupMessage(cfg, text);
-          if (sent) {
-            const { error: upErr } = await supabase
-              .from("viewings").update({ post_announce_sent: true }).eq("id", v.id as string);
-            if (upErr) console.error("[viewing-announce] post_announce_sent update error:", upErr.message);
-            else announced++;
+          // B01: CAS更新で先にフラグを立ててから送信（pre と同じパターン）
+          const { data: casData, error: upErr } = await supabase
+            .from("viewings")
+            .update({ post_announce_sent: true })
+            .eq("id", v.id as string)
+            .eq("post_announce_sent", false)
+            .select("id");
+          if (upErr) { console.error("[viewing-announce] post_announce_sent CAS error:", upErr.message); }
+          else if (casData && casData.length > 0) {
+            const sent = await sendGroupMessage(cfg, text);
+            if (sent) announced++;
+            else {
+              await supabase.from("viewings").update({ post_announce_sent: false }).eq("id", v.id as string);
+            }
           }
         }
       }

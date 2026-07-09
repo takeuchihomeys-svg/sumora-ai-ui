@@ -35,6 +35,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, skipped: true, reason: `JST ${jstHour}時 — 配信時間外（9:00〜19:00のみ）` });
   }
 
+  // B02: 30分以内に既に送信済みなら重複送信しない（Cron リトライ対策）
+  const COOLDOWN_KEY = "flagged_reminder_last_sent_at";
+  const cooldownMins = 30;
+  const { data: lastSentRow } = await supabase
+    .from("hanbancyo_settings").select("value").eq("key", COOLDOWN_KEY).maybeSingle();
+  if (lastSentRow?.value) {
+    const lastSentMs = new Date(lastSentRow.value as string).getTime();
+    if (Date.now() - lastSentMs < cooldownMins * 60 * 1000) {
+      return NextResponse.json({ ok: true, skipped: true, reason: `${cooldownMins}分以内に送信済み` });
+    }
+  }
+
   // 要対応の会話を全取得
   const { data: flagged, error } = await supabase
     .from("conversations")
@@ -91,6 +103,12 @@ export async function GET(req: NextRequest) {
     console.error("[flagged-reminder] LINE push error:", body);
     return NextResponse.json({ ok: false, error: body }, { status: 500 });
   }
+
+  // B02: 送信成功後にタイムスタンプを記録（次回 Cron の冪等チェック用）
+  await supabase.from("hanbancyo_settings").upsert(
+    { key: COOLDOWN_KEY, value: new Date().toISOString() },
+    { onConflict: "key" }
+  );
 
   return NextResponse.json({ ok: true, sent: true, count: flagged.length });
 }

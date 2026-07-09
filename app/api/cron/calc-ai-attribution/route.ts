@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
 // AI貢献率（アトリビューション）日次計算バッチ
-// 直近30日の closed_won 会話のうち、AIが貢献（was_ai_modified=true の返信例あり）した割合を算出し、
+// 直近30日の closed_won 会話のうち、AIが貢献（was_ai_used=true または was_ai_modified=true）した割合を算出し、
 // ai_prompts (key='ai_attribution_metrics') に JSON で保存する。
+// C01修正: was_ai_modified=true のみは「スタッフが大幅修正した会話」を数えており過大評価。
+//         was_ai_used=true（AIをほぼそのまま採用）を追加して正確な貢献率を算出する。
 // generate-reply やダッシュボードが参照できる「AI貢献率」の定量化。
 // 毎日1回（vercel.json cron: 30 16 * * * = JST 01:30）
 
@@ -38,7 +40,10 @@ async function run() {
   const convIds = (wonConvs ?? []).map((c) => c.id as string);
   const total = convIds.length;
 
-  // 2. AIが貢献した返信例（was_ai_modified=true）を取得
+  // 2. AIが貢献した返信例（was_ai_used=true または was_ai_modified=true）を取得
+  // C01: was_ai_used=true はAI文をほぼそのまま採用（最も確実な貢献シグナル）
+  //      was_ai_modified=true はスタッフが大幅修正したが参考にした（貢献あり）
+  //      両方をカバーすることで正確な「AI貢献率」を算出する
   const assistedConvIds = new Set<string>();
   let aiMessageCount = 0;
 
@@ -52,7 +57,7 @@ async function run() {
         .from("ai_reply_examples")
         .select("conversation_id")
         .in("conversation_id", chunk)
-        .eq("was_ai_modified", true)
+        .or("was_ai_used.eq.true,was_ai_modified.eq.true")
         .limit(10000);
       if (chunkErr) {
         console.error("[calc-ai-attribution] examples fetch error:", chunkErr.message);
