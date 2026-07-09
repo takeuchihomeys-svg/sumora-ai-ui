@@ -48,6 +48,23 @@ const STATE_TO_PHRASE_CATEGORY: Record<string, string> = {
   meeting_place:          "viewing_invite",
   acknowledge_check:      "hearing_followup",
   followup_revive:        "hearing_followup",
+  // T02: AIXサブパターン（property_check_result サブモード）
+  property_check_result_available:        "property_recommendation",
+  property_check_result_unavailable:      "property_recommendation",
+  property_check_result_alternative:      "property_recommendation",
+  property_check_result_vacate_date:      "property_recommendation",
+  property_check_result_mgmt_guarantor:   "property_recommendation",
+  property_check_result_mgmt_move_in:     "property_recommendation",
+  property_check_result_mgmt_initial_cost:"property_recommendation",
+  // T02: AIXサブパターン（application_push サブモード）
+  application_push_push:          "application_push",
+  application_push_confirm:       "application_push",
+  application_push_docs_request:  "application_push",
+  // T02: AIXサブパターン（property_send サブモード）
+  property_send_new_arrival:  "property_search_start",
+  property_send_widen:        "property_search_start",
+  // T02: その他AIXサブパターン
+  greeting_viewing:   "viewing_invite",
 };
 
 const VALID_STATES = [

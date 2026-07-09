@@ -621,9 +621,10 @@ export async function POST(req: NextRequest) {
   } catch { /* ignore */ }
 
   // ── ポジティブ強化 B: correct_count >= 3 のルールを importance 昇格 ──
-  // MED-09: learned>0 の場合のみ実行（二重実行時は2回目 learned=0 → スキップで冪等保証）
-  // confirm_knowledge_feedback RPC で蓄積された correct_count を importance に反映する
-  if (learned > 0) try {
+  // S02: learned>0 → (learned+processed)>0 に緩和
+  // AI精度が高い期間（was_ai_modified=false ばかりでlearned=0）でも確認済みルールが昇格されるようになる
+  // 二重実行防止: 2回目は processed=0 になるためスキップされる
+  if ((learned + processed) > 0) try {
     const { data: correctRules } = await supabase
       .from("ai_reply_knowledge")
       .select("id, importance")
@@ -640,10 +641,10 @@ export async function POST(req: NextRequest) {
   } catch { /* ignore */ }
 
   // ── ポジティブ強化 C: 過去30日の変更率（mod_rate）でステート単位スコア調整 ──
-  // MED-09: learned>0 の場合のみ実行（二重実行防止）
+  // S02: learned>0 → (learned+processed)>0 に緩和（閑散期でもスコア調整が機能する）
   // 変更率 <= 20% = AIが当たり続けている → 上位ルール +1
   // 変更率 >= 70% = AIが外れ続けている → 下位ルール -1
-  if (learned > 0) try {
+  if ((learned + processed) > 0) try {
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     const { data: examples30 } = await supabase
       .from("ai_reply_examples")
@@ -664,12 +665,15 @@ export async function POST(req: NextRequest) {
       for (const [state, stats] of stateStats) {
         if (stats.total < 5) continue; // データ少なすぎる場合はスキップ
         const modRate = stats.modified / stats.total;
+        // S03: .like('${state}%') → .in([state, ...compStates]) で兄弟ステートへの誤ブースト/降格を防止
+        const compStates = (STATE_LEARNABLE[state] ?? []).map(c => `${state}_${c}`);
+        const matchStates = [state, ...compStates];
         if (modRate <= 0.2) {
           // AIが当たり続けている → 上位ルールを +1
           const { data: topRules } = await supabase
             .from("ai_reply_knowledge")
             .select("id, importance")
-            .like("conversation_state", `${state}%`)
+            .in("conversation_state", matchStates)
             .lt("importance", 9)
             .neq("hypothesis_status", "rejected")
             .order("apply_count", { ascending: false })
@@ -684,7 +688,7 @@ export async function POST(req: NextRequest) {
           const { data: lowRules } = await supabase
             .from("ai_reply_knowledge")
             .select("id, importance")
-            .like("conversation_state", `${state}%`)
+            .in("conversation_state", matchStates)
             .gt("importance", 5)
             .neq("hypothesis_status", "confirmed")
             .order("apply_count", { ascending: true })

@@ -1763,6 +1763,17 @@ export default function AixModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(buildSaveReplyPayload(textToSend, `（AIX予約: ${config?.title ?? actionType}）`)),
       }).then(ensureOk).catch((e) => { console.warn("[AixModal] save-reply-example保存失敗（予約送信）:", e); });
+      // T05: LL-07 見積書カバーレターを予約送信パスでも学習（通常送信パスと対称化）
+      if (actionType === "estimate_sheet" && estimateCoverLetter.trim()) {
+        fetch("/api/save-reply-example", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...buildSaveReplyPayload(estimateCoverLetter, "（見積書カバーレター）"),
+            aiDraft: estimateCoverLetter,
+          }),
+        }).then(ensureOk).catch((e) => { console.warn("[AixModal] カバーレター学習保存失敗（予約送信）:", e); });
+      }
 
       // フレーズ学習ログ（予約送信パスでも通常送信パスと同様に記録）
       if (textToSend.trim()) {
