@@ -2506,7 +2506,7 @@ export default function AixModal({
                     if (!detected) {
                       const staffMsgs = (recentMessages || []).filter(m => m.sender === "staff").reverse();
                       for (const msg of staffMsgs) {
-                        const m = msg.text.match(/^【(.+?)(?:\s*[\d]+号室)?】/);
+                        const m = msg.text.match(/^【(.+?)】/);
                         if (m) { detected = m[1].trim(); break; }
                       }
                     }

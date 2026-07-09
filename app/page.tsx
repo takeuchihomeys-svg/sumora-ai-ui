@@ -519,6 +519,7 @@ export default function Home() {
   const [viewingGuideResult, setViewingGuideResult] = useState<{ type: "available" | "vacating"; vacateDate: string; text: string } | null>(null);
   const [viewingGuideAdaptLoading, setViewingGuideAdaptLoading] = useState(false);
   const viewingGuideImageRef = useRef<HTMLInputElement | null>(null);
+  const [showCompletePicker, setShowCompletePicker] = useState(false);
   const [showPropertySendPicker, setShowPropertySendPicker] = useState(false);
   const [suggestedPropertySendMode, setSuggestedPropertySendMode] = useState<"normal" | "new_arrival" | "widen" | "alternative" | null>(null);
   const [showEstimatePicker, setShowEstimatePicker] = useState(false);
@@ -8660,7 +8661,7 @@ export default function Home() {
               {([
                 {
                   key: "通常" as const,
-                  label: "内覧確定（内覧日調整）",
+                  label: "内覧確定！（内覧日調整）",
                   desc: "カレンダーから日程を選択してAI生成",
                   icon: <><rect x="24" y="22" width="24" height="22" rx="3" stroke="#9333EA" strokeWidth="1.8"/><path d="M30 22v-4M42 22v-4M24 30h24" stroke="#9333EA" strokeWidth="1.8" strokeLinecap="round"/><path d="M29 38h4M39 38h4M29 44h4" stroke="#9333EA" strokeWidth="1.5" strokeLinecap="round"/></>
                 },
@@ -9256,6 +9257,64 @@ export default function Home() {
             <button
               onClick={() => { setShowApplicationPicker(false); setActiveAixFlow(null); }}
               className="mt-4 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
+            >キャンセル</button>
+          </div>
+        </div>
+      )}
+
+      {/* 完了した ピッカー */}
+      {showCompletePicker && (
+        <div
+          className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
+          onClick={() => setShowCompletePicker(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-5 flex justify-center">
+              <svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="36" cy="36" r="36" fill="#E8F5E9"/>
+                <path d="M20 37l12 12L52 24" stroke="#4CAF50" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+            <p className="mb-1 text-center text-[20px] font-bold text-[#111827]">完了した</p>
+            <p className="mb-6 text-center text-[13px] leading-snug text-[#6B7280]">どちらの完了ですか？</p>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={async () => {
+                  setShowCompletePicker(false);
+                  await updateConversationStatus("applying");
+                }}
+                className="flex items-center gap-4 rounded-2xl border border-[#E5E7EB] bg-[#FFFBEB] px-4 py-4 text-left transition active:opacity-80"
+              >
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#FEF3C7]">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="4" y="3" width="16" height="20" rx="2" stroke="#D97706" strokeWidth="2"/><path d="M8 8h8M8 12h8M8 16h5" stroke="#D97706" strokeWidth="1.8" strokeLinecap="round"/></svg>
+                </div>
+                <div>
+                  <p className="text-[16px] font-bold text-[#111827]">申込完了</p>
+                  <p className="text-[12px] text-[#9CA3AF]">ステータスを「申込」に変更</p>
+                </div>
+              </button>
+              <button
+                onClick={async () => {
+                  setShowCompletePicker(false);
+                  await updateConversationStatus("closed_won");
+                }}
+                className="flex items-center gap-4 rounded-2xl border-2 border-[#4CAF50] bg-[#F0FDF4] px-4 py-4 text-left transition active:opacity-80"
+              >
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#DCFCE7]">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" fill="#16A34A"/></svg>
+                </div>
+                <div>
+                  <p className="text-[16px] font-bold text-[#16A34A]">契約完了</p>
+                  <p className="text-[12px] text-[#9CA3AF]">ステータスを「ご成約」に変更</p>
+                </div>
+              </button>
+            </div>
+            <button
+              onClick={() => setShowCompletePicker(false)}
+              className="mt-5 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
             >キャンセル</button>
           </div>
         </div>
@@ -10446,6 +10505,24 @@ export default function Home() {
                   );
                 });
               })()}
+              {/* 完了した ボタン（AIXメニュー末尾・ステータス変更専用） */}
+              <div className="mt-1 overflow-hidden rounded-xl border border-[#E8F5E9]">
+                <button
+                  onClick={() => { setShowAixMenu(false); setShowCompletePicker(true); }}
+                  className="flex w-full items-center gap-0 text-left transition-all active:scale-[0.98] active:brightness-95"
+                >
+                  <span className="w-[10px] self-stretch flex-shrink-0 rounded-l-[10px] bg-[#4CAF50]" />
+                  <div className="flex flex-1 items-center gap-3 px-4 py-4">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#E8F5E9]">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5L19 7" stroke="#4CAF50" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                    </div>
+                    <div>
+                      <div className="text-[15px] font-bold text-[#2E7D32] leading-snug">完了した</div>
+                      <div className="text-[12px] text-[#546e7a] leading-normal mt-0.5">申込完了・契約完了でステータスを更新</div>
+                    </div>
+                  </div>
+                </button>
+              </div>
             </div>
           </div>
         </div>
