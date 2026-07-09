@@ -8660,7 +8660,7 @@ export default function Home() {
               {([
                 {
                   key: "通常" as const,
-                  label: "内覧へ！（内覧日調整）",
+                  label: "内覧確定（内覧日調整）",
                   desc: "カレンダーから日程を選択してAI生成",
                   icon: <><rect x="24" y="22" width="24" height="22" rx="3" stroke="#9333EA" strokeWidth="1.8"/><path d="M30 22v-4M42 22v-4M24 30h24" stroke="#9333EA" strokeWidth="1.8" strokeLinecap="round"/><path d="M29 38h4M39 38h4M29 44h4" stroke="#9333EA" strokeWidth="1.5" strokeLinecap="round"/></>
                 },
