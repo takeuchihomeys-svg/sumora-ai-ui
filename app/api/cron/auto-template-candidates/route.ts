@@ -10,7 +10,7 @@ const MODEL = "claude-haiku-4-5-20251001";
 // AIX後続テンプレートのAI候補自動生成バッチ
 //
 // 過去14日間の messages.is_aix_generated=true（AIX生成文のスタッフ送信）を起点に、
-// その直後15分以内に送られた非AIXスタッフ送信（=2通目・後続テンプレ）を抽出し、
+// その直後30分以内に送られた非AIXスタッフ送信（=2通目・後続テンプレ）を抽出し、
 // Claude Haiku で固有情報（物件名・住所・日付・顧客名等）を汎用プレースホルダーに
 // 「変換」して ai_template_candidates に候補として追加する。
 //
@@ -174,7 +174,7 @@ async function run() {
     msgsByConv.set(m.conversation_id, arr);
   }
 
-  // 3. AIX送信ごとに「直後15分以内の非AIXスタッフ送信」を後続候補として抽出し、
+  // 3. AIX送信ごとに「直後30分以内の非AIXスタッフ送信」を後続候補として抽出し、
   //    aix_usage_logs の最近接レコードから aix_type を付与
   type Pair = { aixType: string; aixText: string; followText: string; conversationId: string };
   const pairs: Pair[] = [];

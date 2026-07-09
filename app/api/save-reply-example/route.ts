@@ -652,9 +652,11 @@ export async function POST(req: NextRequest) {
         const mergedWasAiModified = mergedSim >= 0.05 && mergedSim < 0.9;
         const feedbackResult = mergedWasAiUsed ? "correct" : mergedWasAiModified ? "wrong" : null;
         if (feedbackResult) {
+          // C05: p_source='generate_reply' で aix/action 由来エントリへの混入を防ぐ
           supabase.rpc("confirm_knowledge_feedback", {
             p_conversation_id: conversationId,
             p_result: feedbackResult,
+            p_source: "generate_reply",
           }).then(() => {}, () => {});
         }
       }
@@ -668,9 +670,8 @@ export async function POST(req: NextRequest) {
   // 5%未満 → ほぼ手書き（AIは参考のみ）
   const sim = aiDraft ? textSimilarity(aiDraft.trim(), sentReply.trim()) : 0;
   const wasAiUsed    = !!aiDraft && aiDraft.trim().length > 0 && sim >= 0.9;
-  // スプリット送信判定: sentReplyがaiDraftの55%未満 かつ 類似度30%以上 → 分割送信の可能性が高い
-  // この場合、差分学習を実行しない（「削った」と誤判定を防ぐ）
-  // 分割送信判定: 送信文が40%未満 かつ 類似度50%以上のみスキップ（閾値緩和で「意図的な短縮」を誤判定しない）
+  // 分割送信判定: 送信文が aiDraft の 40%未満 かつ 類似度 50%以上 → 分割送信の可能性が高いためスキップ
+  // （「意図的な短縮編集」との誤判定を防ぐため閾値を緩め、100%一致短縮のみ誤判定しないよう調整済み）
   const likelySplit  = !!aiDraft && sentReply.trim().length < aiDraft.trim().length * 0.4 && sim >= 0.5;
   const wasAiModified = !!aiDraft && aiDraft.trim().length > 0 && sim >= 0.05 && sim < 0.9 && !likelySplit;
 
@@ -679,9 +680,11 @@ export async function POST(req: NextRequest) {
   if (conversationId && aiDraft) {
     const feedbackResult = wasAiUsed ? "correct" : wasAiModified ? "wrong" : null;
     if (feedbackResult) {
+      // C05: p_source='generate_reply' で aix/action 由来エントリへの混入を防ぐ
       supabase.rpc("confirm_knowledge_feedback", {
         p_conversation_id: conversationId,
         p_result: feedbackResult,
+        p_source: "generate_reply",
       }).then(() => {}, () => {});
     }
   }

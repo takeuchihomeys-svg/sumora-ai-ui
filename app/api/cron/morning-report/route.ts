@@ -49,6 +49,14 @@ export async function GET(req: NextRequest) {
   const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
+  // B10: aix_action_attribution の最新期間フィルターをDB側に移動（JS-only limit:50 では大量テンプレ時に欠損する）
+  //      直近2週分（今週 + 先週）のみ取得することで limit を超える前に正確に絞り込む
+  const _jstNowW = new Date(Date.now() + 9 * 3600 * 1000);
+  const _dowW = (_jstNowW.getUTCDay() + 6) % 7; // 月=0
+  const _mondayJst = new Date(_jstNowW.getTime() - _dowW * 86400 * 1000);
+  _mondayJst.setUTCHours(0, 0, 0, 0);
+  const twoWeeksAgoMondayStr = new Date(_mondayJst.getTime() - 7 * 86400 * 1000).toISOString().slice(0, 10);
+
   // JST今日00:00 / 昨日00:00 をUTCで計算
   const nowJst = new Date(Date.now() + 9 * 60 * 60 * 1000);
   const todayStart = new Date(Date.UTC(
@@ -151,12 +159,13 @@ export async function GET(req: NextRequest) {
       .gte("created_at", yesterdayStart.toISOString())
       .lt("created_at", todayStart.toISOString()),
 
-    // ⑪ 成果アトリビューション（週次集計。最新期間はJS側で絞り込む）
+    // ⑪ 成果アトリビューション（直近2週分をDB側で絞り込む — B10: JS-only limit では大量テンプレ時に欠損）
     supabase
       .from("aix_action_attribution")
       .select("action_type, template_label, win_rate, usage_count, period_start")
+      .gte("period_start", twoWeeksAgoMondayStr)
       .order("period_start", { ascending: false })
-      .limit(50),
+      .limit(200),
   ]);
 
   // クエリエラーのログ（レポート本体は送る。失敗したセクションは空になるだけ）

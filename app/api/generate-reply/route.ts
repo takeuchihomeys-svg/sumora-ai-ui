@@ -610,8 +610,9 @@ function incrementKnowledgeUsage(ids: string[]): void {
 function logKnowledgeApply(ids: string[], conversationId: string): void {
   if (!ids.length || !conversationId) return;
   // fire-and-forget: knowledge_apply_log に適用記録（result=pending）
+  // C05: source='generate_reply' を付与して aix/action 由来のログと混在しないようスコープ
   supabase.from("knowledge_apply_log").insert(
-    ids.map(id => ({ knowledge_id: id, conversation_id: conversationId }))
+    ids.map(id => ({ knowledge_id: id, conversation_id: conversationId, source: "generate_reply" }))
   ).then(() => {}, () => {});
 }
 

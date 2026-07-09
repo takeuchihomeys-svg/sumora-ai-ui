@@ -24,23 +24,33 @@ export async function POST(req: NextRequest) {
     const since = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
     const today = jstDateStr();
 
-    // 1. 直近30日のAIX使用ログ（テンプレート情報含む）
-    const { data: usageLogs } = await supabase
-      .from("aix_usage_logs")
-      .select("aix_type, template_name, template_category, conversation_id, conversation_status, suggested_action")
-      .gte("created_at", since)
-      .order("created_at", { ascending: false })
-      .limit(200);
-
-    // 2. 成功した会話ID（成約パターンが記録されたもの）を取得
-    const { data: patterns } = await supabase
-      .from("ai_reply_knowledge")
-      .select("title, content")
-      .eq("category", "pattern")
-      .ilike("title", "成約パターン%")
-      .gte("created_at", since)
-      .order("created_at", { ascending: false })
-      .limit(15);
+    // 1. 直近30日のAIX使用ログ・2. 成約パターン・3. 蓄積ノウハウ を並列取得
+    //    B07: ③を追加することで analyze-diffs/auto-knowledge が蓄積した原則/修正ルールをガイドに反映する
+    const [{ data: usageLogs }, { data: patterns }, { data: principles }] = await Promise.all([
+      supabase
+        .from("aix_usage_logs")
+        .select("aix_type, template_name, template_category, conversation_id, conversation_status, suggested_action")
+        .gte("created_at", since)
+        .order("created_at", { ascending: false })
+        .limit(200),
+      supabase
+        .from("ai_reply_knowledge")
+        .select("title, content")
+        .eq("category", "pattern")
+        .ilike("title", "成約パターン%")
+        .gte("created_at", since)
+        .order("created_at", { ascending: false })
+        .limit(15),
+      // B07: 高重要度の原則・修正ルール（仮説未却下・適用実績降順）
+      supabase
+        .from("ai_reply_knowledge")
+        .select("title, content, category")
+        .in("category", ["principle", "correction"])
+        .neq("hypothesis_status", "rejected")
+        .gte("importance", 7)
+        .order("apply_count", { ascending: false })
+        .limit(10),
+    ]);
 
     // 3. AIX種類ごとの使用回数・テンプレート別・成約率・予測一致率の集計
     type UsageLog = { aix_type: string; template_name: string | null; template_category: string | null; conversation_id: string; conversation_status: string | null; suggested_action: string | null };
@@ -51,12 +61,16 @@ export async function POST(req: NextRequest) {
     const convIds = [...new Set(logs.map((l) => l.conversation_id).filter(Boolean))];
     const statusMap: Record<string, string> = {};
     if (convIds.length > 0) {
-      const { data: convStatuses } = await supabase
-        .from("conversations")
-        .select("id, status")
-        .in("id", convIds);
-      for (const c of (convStatuses ?? []) as { id: string; status: string | null }[]) {
-        if (c.status) statusMap[c.id] = c.status;
+      // B09: IN 句の URL 長制限回避のため 200 件ずつチャンク（usageLogs limit=200 超に備える）
+      for (let i = 0; i < convIds.length; i += 200) {
+        const chunk = convIds.slice(i, i + 200);
+        const { data: convStatuses } = await supabase
+          .from("conversations")
+          .select("id, status")
+          .in("id", chunk);
+        for (const c of (convStatuses ?? []) as { id: string; status: string | null }[]) {
+          if (c.status) statusMap[c.id] = c.status;
+        }
       }
     }
 
@@ -115,6 +129,11 @@ export async function POST(req: NextRequest) {
       .map((p) => `${p.title}: ${(p.content as string).slice(0, 100)}`)
       .join("\n") || "成約パターンデータなし";
 
+    // B07: 蓄積済みノウハウ（原則・修正ルール）をガイド生成に注入
+    const principlesText = (principles ?? [])
+      .map((p) => `[${(p.category as string) === "correction" ? "修正" : "原則"}] ${(p.content as string).slice(0, 120)}`)
+      .join("\n") || "蓄積ノウハウなし";
+
     // 4. Claude Haikuで分析・ガイド更新
     const resp = await anthropic.messages.create({
       model: "claude-haiku-4-5-20251001",
@@ -137,6 +156,9 @@ ${matchRateText}
 
 【直近の成約パターン（内覧・申込が決まった会話から学習）】
 ${patternsText}
+
+【学習済みノウハウ（原則・修正ルール・適用実績降順）】
+${principlesText}
 
 【AIXボタン一覧（参考）】
 - property_recommendation（物件オススメ）: 条件揃った後

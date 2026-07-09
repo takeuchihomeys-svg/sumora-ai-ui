@@ -817,22 +817,30 @@ CREATE TABLE IF NOT EXISTS knowledge_apply_log (
 CREATE INDEX IF NOT EXISTS idx_knowledge_apply_log_knowledge ON knowledge_apply_log(knowledge_id);
 CREATE INDEX IF NOT EXISTS idx_knowledge_apply_log_conversation ON knowledge_apply_log(conversation_id);
 ALTER TABLE knowledge_apply_log DISABLE ROW LEVEL SECURITY;
+-- C05: generate-reply と aix/action が同一 conversation_id に書くため、どちら由来かを区別するカラムを追加
+--      confirm_knowledge_feedback を source でスコープすることで誤フィードバック混入を防ぐ
+ALTER TABLE knowledge_apply_log ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'generate_reply';
+CREATE INDEX IF NOT EXISTS idx_knowledge_apply_log_source ON knowledge_apply_log(source);
 
 -- confirm_knowledge_feedback: 正解/外れを記録し自動昇格/降格する
+-- C05: p_source (NULL=全ソース対象 / 'generate_reply' | 'aix_action' = 絞り込み) を追加
 CREATE OR REPLACE FUNCTION confirm_knowledge_feedback(
   p_conversation_id TEXT,
-  p_result TEXT
+  p_result TEXT,
+  p_source TEXT DEFAULT NULL
 ) RETURNS void LANGUAGE plpgsql AS $$
 DECLARE
   v_knowledge_ids UUID[];
 BEGIN
   SELECT ARRAY_AGG(DISTINCT knowledge_id) INTO v_knowledge_ids
   FROM knowledge_apply_log
-  WHERE conversation_id = p_conversation_id AND result = 'pending';
+  WHERE conversation_id = p_conversation_id AND result = 'pending'
+    AND (p_source IS NULL OR source = p_source);
   IF v_knowledge_ids IS NULL OR ARRAY_LENGTH(v_knowledge_ids, 1) = 0 THEN RETURN; END IF;
   UPDATE knowledge_apply_log
   SET result = p_result
-  WHERE conversation_id = p_conversation_id AND result = 'pending';
+  WHERE conversation_id = p_conversation_id AND result = 'pending'
+    AND (p_source IS NULL OR source = p_source);
   UPDATE ai_reply_knowledge
   SET
     apply_count   = COALESCE(apply_count, 0) + 1,

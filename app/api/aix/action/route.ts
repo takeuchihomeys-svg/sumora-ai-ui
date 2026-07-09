@@ -249,8 +249,9 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
     if (allIds.length) {
       supabase.rpc("increment_knowledge_used_count", { p_ids: allIds }).then(() => {}, () => {});
       if (conversationId) {
+        // C05: source='aix_action' を付与して generate-reply 由来のログと区別する
         supabase.from("knowledge_apply_log").insert(
-          allIds.map(id => ({ knowledge_id: id, conversation_id: conversationId }))
+          allIds.map(id => ({ knowledge_id: id, conversation_id: conversationId, source: "aix_action" }))
         ).then(() => {}, () => {});
       }
     }
