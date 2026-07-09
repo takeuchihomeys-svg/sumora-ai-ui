@@ -1,6 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, buildKnowledgeEmbeddingInput, generateEmbedding } from "@/app/lib/knowledge-utils";
+import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 60;
@@ -281,6 +282,7 @@ export async function POST(req: NextRequest) {
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
+  const runLogId = await startCronLog("analyze-diffs");
   // ?limit=N で件数を指定可能（デフォルト30・最大200）
   // maxDuration=60秒 / 1件あたり約2秒 → 30件が上限目安
   const url = new URL(req.url);
@@ -750,6 +752,7 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* ignore - プロンプトルール同期失敗はメイン処理を止めない */ }
 
+  await finishCronLog(runLogId, true, { processed, learned, synced });
   return NextResponse.json({ ok: true, processed, learned, synced, message: `${processed}件処理・${learned}件学習・${synced}件ルール同期` });
 }
 

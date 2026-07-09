@@ -998,6 +998,30 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       message?: { type: string; id?: string; text?: string };
     };
 
+    // フォロー/ブロック/フォロー解除 → line_status を更新
+    if (event.type === "follow") {
+      const uid = event.source?.userId;
+      if (uid) {
+        const db = getDb();
+        await Promise.all([
+          db.from("conversations").update({ line_status: "active" }).eq("line_user_id", uid),
+          db.from("line_contacts").update({ line_status: "active" }).eq("line_user_id", uid).eq("account", matchedAccount.key),
+        ]).catch(() => {});
+      }
+      continue;
+    }
+    if (event.type === "unfollow") {
+      const uid = event.source?.userId;
+      if (uid) {
+        const db = getDb();
+        await Promise.all([
+          db.from("conversations").update({ line_status: "unfollowed" }).eq("line_user_id", uid),
+          db.from("line_contacts").update({ line_status: "unfollowed" }).eq("line_user_id", uid).eq("account", matchedAccount.key),
+        ]).catch(() => {});
+      }
+      continue;
+    }
+
     if (event.type !== "message") continue;
     // 自分自身（bot）からのメッセージはスキップ（返信送信時のエコーバック対策）
     if (event.source?.type === "bot") {

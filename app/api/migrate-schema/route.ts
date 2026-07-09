@@ -966,6 +966,37 @@ INSERT INTO ai_prompt_rules (rule_key, action_type, condition_key, condition_val
  8)
 
 ON CONFLICT (rule_key) DO NOTHING;
+
+-- ① conversations.draft_pending_at ADD COLUMN 漏れ修正
+-- （インデックスは613行目に先行して追加されていたが ADD COLUMN が抜けていた）
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS draft_pending_at TIMESTAMPTZ;
+
+-- ② LINE ブロック/フォロー解除ステータス管理
+-- line_status: 'active'（通常）| 'blocked'（ブロック済み）| 'unfollowed'（フォロー解除）
+-- unfollow イベント受信時に自動更新 → フォロー解除済みお客様への送信を防止
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS line_status TEXT DEFAULT 'active';
+ALTER TABLE line_contacts ADD COLUMN IF NOT EXISTS line_status TEXT DEFAULT 'active';
+CREATE INDEX IF NOT EXISTS idx_conversations_line_status ON conversations(line_status) WHERE line_status != 'active';
+CREATE INDEX IF NOT EXISTS idx_line_contacts_line_status ON line_contacts(line_status) WHERE line_status != 'active';
+
+-- ③ cron実行ログ（14個のcronが動いているが実行記録が全くない問題を解決）
+-- cron_name: 'analyze-diffs' | 'calc-aix-attribution' | 'morning-report' 等
+-- ok=false + error_message でサイレント失敗を検知可能
+CREATE TABLE IF NOT EXISTS cron_run_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  cron_name TEXT NOT NULL,
+  started_at TIMESTAMPTZ DEFAULT NOW(),
+  finished_at TIMESTAMPTZ,
+  ok BOOLEAN,
+  result_json JSONB,
+  error_message TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cron_run_logs_name_at ON cron_run_logs(cron_name, started_at DESC);
+ALTER TABLE cron_run_logs DISABLE ROW LEVEL SECURITY;
+
+-- ④ AIX生成文案ログ（AIXが生成した文案を保存しAI改善ループを完成させる）
+-- generated_text: AIXが生成したが実際に送られたかどうかは line_message_id で照合
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS generated_text TEXT;
 `.trim();
 
 export async function GET() {

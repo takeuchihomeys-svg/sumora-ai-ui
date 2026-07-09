@@ -586,6 +586,8 @@ export default function Home() {
   // P4: 直近のLINE送信のmessage id・送信時刻（aix_usage_logsに記録して送信メッセージを厳密特定）
   // sendMessageTextが設定し、onAfterSendのlog-aix-usageで消費するワンショットref
   const lastLineSendRef = useRef<{ messageId: string | null; sentAt: string } | null>(null);
+  // AIX生成文案ログ: onSendで取得し onAfterSendのlog-aix-usageに渡すワンショットref（既存lastAixSentTextRefとは別用途）
+  const lastAixLogTextRef = useRef<string | null>(null);
   // 物件確認結果（空室か否か）を会話ごとに保持 → suggest-next-action のチェーンルール分岐に使用
   const propertyAvailableByConvRef = useRef<Map<string, boolean>>(new Map());
   const [statusSuggestionMap, setStatusSuggestionMap] = useState<Record<string, { status: string; label: string; reason: string } | null>>({});
@@ -7441,7 +7443,10 @@ export default function Home() {
             setTemplateInitialSearch(search);
             setShowTemplateModal(true);
           }}
-          onSend={sendMessageText}
+          onSend={(text, imageUrl, isAix) => {
+            lastAixLogTextRef.current = text || null;
+            return sendMessageText(text, imageUrl, isAix);
+          }}
           onDelayedSend={handleDelayedSend}
           onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string }) => {
             // 2通目自動送信スケジュール（AIXフロー用・予約送信は対象外）
@@ -7514,8 +7519,10 @@ export default function Home() {
                   check_pattern: meta?.checkPattern ?? null,
                   app_sub_mode: meta?.appSubMode ?? null,
                   send_mode: meta?.sendMode ?? null,
+                  generated_text: lastAixLogTextRef.current,
                 }),
               }).catch(() => {});
+              lastAixLogTextRef.current = null;
               // P1: AIX経由テンプレの使用回数をインクリメント（fire-and-forget）
               // ※通常テンプレ送信のselectedTemplateIdRef経路とは独立（AIX動線ではrefを使わないため二重加算なし）
               if (pendingTemplateSource?.id) {

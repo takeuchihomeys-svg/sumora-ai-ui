@@ -1,5 +1,6 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 
 export const maxDuration = 60;
 
@@ -34,6 +35,7 @@ export async function GET(req: NextRequest) {
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
+  const runLogId = await startCronLog("morning-report");
 
   // LINEグループ設定
   let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? null;
@@ -334,5 +336,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "LINE push failed" }, { status: 500 });
   }
 
+  await finishCronLog(runLogId, true, { tasks: tasks.length, unreplied: unreplied.length, needsProp: needsProp.length });
   return NextResponse.json({ ok: true, tasks: tasks.length, unreplied: unreplied.length, needsProp: needsProp.length });
 }
