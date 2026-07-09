@@ -130,16 +130,15 @@ ${transcript}
         continue;
       }
 
-      // 分析済みフラグ（毎日の再課金防止）
-      await supabase
-        .from("conversations")
-        .update({ loss_analyzed_at: new Date().toISOString() })
-        .eq("id", convId);
-
       const patterns = (parsed.patterns ?? []).filter((p) => typeof p === "string" && p.trim());
 
       // no_fault: true または patterns 空配列（顧客都合の失注・判断材料不足）→ knowledge保存をスキップ
       if (parsed.no_fault === true || !patterns.length) {
+        // A02: no_fault/空パターンは knowledge 保存なし → ここで分析済みフラグを立てる
+        await supabase
+          .from("conversations")
+          .update({ loss_analyzed_at: new Date().toISOString() })
+          .eq("id", convId);
         skipped++;
         continue;
       }
@@ -156,6 +155,12 @@ ${transcript}
       if (result === "inserted") inserted++;
       else if (result === "merged") merged++;
       else skipped++;
+
+      // A02: upsertKnowledge 成功後に分析済みフラグを立てる（失敗時の永続的データロス防止）
+      await supabase
+        .from("conversations")
+        .update({ loss_analyzed_at: new Date().toISOString() })
+        .eq("id", convId);
     } catch (e) {
       failed++;
       console.error("[auto-analyze-losers] analyze error:", convId, e);

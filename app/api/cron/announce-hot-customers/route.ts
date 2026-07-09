@@ -24,8 +24,11 @@ function getJSTHour(): number {
 // 物件出しが必要か判定
 function needsPropertyAction(status: string, lastSentAt: string | null): boolean {
   if (status === "new_inquiry") return true;
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  if (status === "hot") return !lastSentAt || new Date(lastSentAt) < today;
+  // B04: setHours はサーバー（UTC）ローカルタイムを使うため JST と 9h ずれる。
+  //      UTC ms に +9h して UTC midnight を JST midnight として扱う。
+  const jstOffsetMs = 9 * 3600 * 1000;
+  const todayJst = new Date(Math.floor((Date.now() + jstOffsetMs) / 86400000) * 86400000 - jstOffsetMs);
+  if (status === "hot") return !lastSentAt || new Date(lastSentAt) < todayJst;
   if (status === "property_search") {
     if (!lastSentAt) return true;
     return (Date.now() - new Date(lastSentAt).getTime()) / 86400000 >= 3;

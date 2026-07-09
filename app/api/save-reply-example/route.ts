@@ -607,7 +607,7 @@ export async function POST(req: NextRequest) {
   // conversation_id で絞り込む（定型 customer_message「（初回連絡）」等での別顧客データ混線を防止）
   let splitQuery = supabase
     .from("ai_reply_examples")
-    .select("id, sent_reply")
+    .select("id, sent_reply, ai_draft")
     .eq("customer_message", customerMessage)
     .eq("conversation_state", conversationState)
     .gte("created_at", ninetySecondsAgo);
@@ -641,6 +641,25 @@ export async function POST(req: NextRequest) {
     if (mergedEmbedding) updatePayload.embedding = JSON.stringify(mergedEmbedding);
     if (isStarred) updatePayload.is_starred = true;
     await supabase.from("ai_reply_examples").update(updatePayload).eq("id", splitCandidate.id);
+
+    // A01: マージパスでも RLHF フィードバックを発火（分割送信でループが止まるのを防止）
+    // splitCandidate.ai_draft（1通目保存時の ai_draft）と mergedReply を比較して判定
+    if (conversationId) {
+      const candidateAiDraft = (splitCandidate.ai_draft as string | null) ?? aiDraft ?? null;
+      if (candidateAiDraft) {
+        const mergedSim = textSimilarity(candidateAiDraft.trim(), mergedReply.trim());
+        const mergedWasAiUsed = mergedSim >= 0.9;
+        const mergedWasAiModified = mergedSim >= 0.05 && mergedSim < 0.9;
+        const feedbackResult = mergedWasAiUsed ? "correct" : mergedWasAiModified ? "wrong" : null;
+        if (feedbackResult) {
+          supabase.rpc("confirm_knowledge_feedback", {
+            p_conversation_id: conversationId,
+            p_result: feedbackResult,
+          }).then(() => {}, () => {});
+        }
+      }
+    }
+
     return NextResponse.json({ ok: true, id: splitCandidate.id, merged: true });
   }
 
