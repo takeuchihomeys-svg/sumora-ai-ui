@@ -293,9 +293,17 @@ export async function GET(req: NextRequest) {
     sections.push(`🏠 今日物件を出すべきお客さん（${needsProp.length}件）\n\n${lines.join("\n")}`);
   }
 
+  // B06: 主要データクエリの失敗数を集計（3件以上失敗時は偽陰性「ゼロです🎉」を防ぐ）
+  const mainQueryErrors = [tasksErr, unrepliedErr, hotErr].filter(Boolean).length;
+  const errorWarning = mainQueryErrors >= 3
+    ? "\n\n⚠️ データ取得に失敗しました。実際のタスクは確認してください。"
+    : mainQueryErrors > 0
+    ? `\n\n⚠️ 一部データの取得に失敗しました（${mainQueryErrors}件）。`
+    : "";
+
   const text = sections.length === 0
-    ? `🌅 おはようございます！\n今日は未完了タスク・未返信ともにゼロです🎉\n引き続きよろしくお願いします！${statsBlock}${attributionLine}`
-    : `🌅 おはようございます！今日のタスクレポートです\n\n${sections.join("\n\n——————\n\n")}${statsBlock}\n\n全員対応よろしくお願いします！${attributionLine}`;
+    ? `🌅 おはようございます！\n今日は未完了タスク・未返信ともにゼロです🎉\n引き続きよろしくお願いします！${statsBlock}${attributionLine}${errorWarning}`
+    : `🌅 おはようございます！今日のタスクレポートです\n\n${sections.join("\n\n——————\n\n")}${statsBlock}\n\n全員対応よろしくお願いします！${attributionLine}${errorWarning}`;
 
   // LINEのtextメッセージ上限は5000字。超過時は切り詰めて送信（保険）
   const safeText = text.length > 4900 ? text.slice(0, 4900) + "\n…（以下省略）" : text;

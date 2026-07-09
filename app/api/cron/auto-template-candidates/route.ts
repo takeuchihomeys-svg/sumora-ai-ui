@@ -222,7 +222,9 @@ async function run() {
     if (seen.has(key)) continue;
     seen.add(key);
     fresh.push(p);
-    if (fresh.length >= MAX_CONVERT_PER_RUN) break;
+    // C04: 変換上限を保存上限に揃える（MAX_CONVERT_PER_RUN=30 に対し MAX_INSERT_PER_RUN=10 で
+    //      20件分の Haiku 呼び出しが無駄になるため）
+    if (fresh.length >= MAX_INSERT_PER_RUN) break;
   }
 
   // 5. Haiku で固有情報を汎用プレースホルダーに「変換」（並列呼び出し）

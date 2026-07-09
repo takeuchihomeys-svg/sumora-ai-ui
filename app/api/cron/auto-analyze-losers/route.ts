@@ -1,7 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
-import { upsertKnowledge } from "@/app/lib/knowledge-utils";
+import { upsertKnowledge, generateEmbedding } from "@/app/lib/knowledge-utils";
 
 // 失注パターン自動学習バッチ
 // closed_lost になった会話を Haiku で分析し「避けるべき対応パターン」を ai_reply_knowledge に記録
@@ -144,12 +144,18 @@ ${transcript}
       }
 
       const title = `失注パターン_${convId.slice(-6)}_${ymd}`;
+      const contentText = patterns.map((p) => `- ${p.trim()}`).join("\n");
+
+      // A04: embedding を生成して upsertKnowledge に渡すことで意味的重複チェックを有効化
+      //      （embedding なしでは ilike タイトル一致しか機能せず重複知識が蓄積する）
+      const embedding = await generateEmbedding(contentText.slice(0, 2000)).catch(() => null);
 
       const result = await upsertKnowledge(supabase, {
         title,
-        content: patterns.map((p) => `- ${p.trim()}`).join("\n"),
+        content: contentText,
         category: "principle",
         importance: 8,
+        ...(embedding ? { embedding } : {}),
       });
 
       if (result === "inserted") inserted++;
