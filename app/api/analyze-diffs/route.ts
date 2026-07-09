@@ -19,7 +19,7 @@ async function analyzeStructureDiff(
 ): Promise<{ skip: boolean; title?: string; rule?: string } | null> {
   try {
     const res = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: "claude-sonnet-4-6",
       max_tokens: 400,
       messages: [{
         role: "user",
@@ -65,7 +65,7 @@ async function analyzeComponentDiff(
 ): Promise<{ skip: boolean; title?: string; rule?: string } | null> {
   try {
     const res = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: "claude-sonnet-4-6",
       max_tokens: 500,
       messages: [{
         role: "user",
@@ -112,7 +112,7 @@ async function analyzeDiff(
 ): Promise<{ skip: boolean; title?: string; rule?: string; category?: string; trigger_example?: string } | null> {
   try {
     const res = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: "claude-sonnet-4-6",
       max_tokens: 900,
       messages: [{
         role: "user",

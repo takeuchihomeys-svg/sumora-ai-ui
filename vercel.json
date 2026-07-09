@@ -83,6 +83,10 @@
     {
       "path": "/api/backfill-embeddings",
       "schedule": "0 20 * * *"
+    },
+    {
+      "path": "/api/corpus2skill",
+      "schedule": "0 20 * * 6"
     }
   ]
 }
