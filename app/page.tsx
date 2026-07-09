@@ -8951,6 +8951,15 @@ export default function Home() {
                   circleFill: "#EDE9FE",
                   icon: <><rect x="24" y="20" width="24" height="32" rx="3" stroke="#7C3AED" strokeWidth="1.8"/><path d="M30 28h12M30 34h12M30 40h7" stroke="#7C3AED" strokeWidth="1.5" strokeLinecap="round"/><path d="M44 44l5 5M49 44l-5 5" stroke="#7C3AED" strokeWidth="1.8" strokeLinecap="round"/></>
                 },
+                {
+                  key: "docs_request" as const,
+                  label: "書類依頼",
+                  desc: "不足書類の確認・依頼",
+                  accentColor: "#D97706",
+                  bgColor: "#FFFBEB",
+                  circleFill: "#FEF3C7",
+                  icon: <><rect x="24" y="20" width="24" height="32" rx="3" stroke="#D97706" strokeWidth="1.8"/><path d="M30 28h12M30 34h12M30 40h8" stroke="#D97706" strokeWidth="1.5" strokeLinecap="round"/><circle cx="47" cy="45" r="6" fill="#FEF3C7" stroke="#D97706" strokeWidth="1.5"/><path d="M47 42v4M47 47.5v1" stroke="#D97706" strokeWidth="1.8" strokeLinecap="round"/></>
+                },
               ]).map(({ key, label, desc, accentColor, bgColor, circleFill, icon }) => {
                 const isSuggested = suggestedAppMode === key;
                 return (
