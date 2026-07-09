@@ -181,6 +181,32 @@ export async function POST(req: NextRequest) {
       console.log(`[auto-knowledge] 既存ルール強化: "${rule.slice(0, 50)}"`);
     } else if (upsertResult === "skipped") {
       console.log(`[auto-knowledge] スキップ（重複）: "${rule.slice(0, 50)}"`);
+    } else if (upsertResult === "inserted") {
+      // 新規ルール → ai_prompt_rules に非アクティブ候補として即座に登録
+      // （翌朝 analyze-diffs で confirmed になると is_active=true・priority=8 に昇格）
+      try {
+        const { data: newRow } = await supabase
+          .from("ai_reply_knowledge")
+          .select("id")
+          .eq("title", "差分学習 [自動]")
+          .eq("conversation_state", normalized)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (newRow?.id) {
+          await supabase.from("ai_prompt_rules").upsert({
+            rule_key: `LEARN-${newRow.id as string}`,
+            action_type: "generate_reply",
+            condition_key: normalized ? "conversation_state" : null,
+            condition_value: normalized ?? null,
+            rule_text: enrichedContent.slice(0, 500),
+            reason: `auto-knowledge候補（importance=8）。confirmed後に自動アクティブ化`,
+            priority: 4,
+            is_active: false,
+          }, { onConflict: "rule_key", ignoreDuplicates: true });
+          console.log(`[auto-knowledge] ai_prompt_rules候補登録: LEARN-${newRow.id as string}`);
+        }
+      } catch { /* ignore */ }
     }
 
     return NextResponse.json({ ok: true, rule, upsertResult });

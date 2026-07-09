@@ -708,7 +708,49 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* ignore */ }
 
-  return NextResponse.json({ ok: true, processed, learned, message: `${processed}件処理・${learned}件学習` });
+  // ── 確認済みルール → ai_prompt_rules 自動同期 ──
+  // importance>=8 かつ hypothesis_status='confirmed' のルールをプロンプトルールとして自動登録
+  let synced = 0;
+  try {
+    const { data: confirmedRules } = await supabase
+      .from("ai_reply_knowledge")
+      .select("id, title, content, conversation_state")
+      .eq("hypothesis_status", "confirmed")
+      .gte("importance", 8)
+      .limit(100);
+
+    if (confirmedRules && confirmedRules.length > 0) {
+      const upserts = confirmedRules.map((r) => ({
+        rule_key: `LEARN-${r.id as string}`,
+        action_type: "generate_reply",
+        condition_key: r.conversation_state ? "conversation_state" : null,
+        condition_value: (r.conversation_state as string | null) ?? null,
+        rule_text: (r.content as string).slice(0, 500),
+        reason: `ai_reply_knowledge自動昇格: ${(r.title as string).slice(0, 100)}`,
+        priority: 8,
+        is_active: true,
+      }));
+      const { error: upsertError } = await supabase
+        .from("ai_prompt_rules")
+        .upsert(upserts, { onConflict: "rule_key" });
+      if (!upsertError) synced = confirmedRules.length;
+    }
+
+    // rejected ルールは ai_prompt_rules でも非アクティブ化
+    const { data: rejectedRules } = await supabase
+      .from("ai_reply_knowledge")
+      .select("id")
+      .eq("hypothesis_status", "rejected")
+      .limit(100);
+    if (rejectedRules && rejectedRules.length > 0) {
+      const keys = rejectedRules.map((r) => `LEARN-${r.id as string}`);
+      await supabase.from("ai_prompt_rules")
+        .update({ is_active: false })
+        .in("rule_key", keys);
+    }
+  } catch { /* ignore - プロンプトルール同期失敗はメイン処理を止めない */ }
+
+  return NextResponse.json({ ok: true, processed, learned, synced, message: `${processed}件処理・${learned}件学習・${synced}件ルール同期` });
 }
 
 export async function GET(req: NextRequest) {
