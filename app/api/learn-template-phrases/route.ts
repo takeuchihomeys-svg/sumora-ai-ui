@@ -39,7 +39,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "missing fields" });
   }
 
-  const phrases = extractPhrases(body.sent_text);
+  // A06: extractPhrases が同一文中で重複フレーズを返す場合がある → Set で重複除去して usage_count の二重加算を防ぐ
+  const phrases = [...new Set(extractPhrases(body.sent_text))];
   if (!phrases.length) return NextResponse.json({ ok: true, logged: 0 });
 
   const status = body.conversation_status || "hearing";

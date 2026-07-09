@@ -414,8 +414,8 @@ ${sentReply}${existingList}
     // 類似フレーズの priority を昇格（☆は+5、通常は+1）
     for (const boostPhrase of boostPhrases) {
       if (typeof boostPhrase !== "string") continue;
-      const found = existingMap[boostPhrase]
-        ?? existingMap[Object.keys(existingMap).find((k) => k.includes(boostPhrase.slice(0, 8)) || boostPhrase.includes(k.slice(0, 8))) ?? ""];
+      // A03: 8文字プレフィックス部分一致は誤マッチを生む（「ご内覧ありがとう」が「ご内覧のご案内」にヒット等）→ 完全一致のみ
+      const found = existingMap[boostPhrase];
       if (found) {
         await supabase
           .from("phrase_dictionary")
