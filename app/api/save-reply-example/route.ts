@@ -129,8 +129,8 @@ function textSimilarity(a: string, b: string): number {
   return (2 * lcs) / (m + n);
 }
 
-// ─── Claude Haiku 共通ヘルパー ────────────────────────────────────────────────
-async function callHaiku(prompt: string, maxTokens = 1024): Promise<string> {
+// ─── Claudeモデル共通ヘルパー ────────────────────────────────────────────────
+async function callClaude(model: string, prompt: string, maxTokens = 1024): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "");
   if (!apiKey) return "";
   try {
@@ -143,7 +143,7 @@ async function callHaiku(prompt: string, maxTokens = 1024): Promise<string> {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
+        model,
         max_tokens: maxTokens,
         messages: [{ role: "user", content: prompt }],
       }),
@@ -155,6 +155,9 @@ async function callHaiku(prompt: string, maxTokens = 1024): Promise<string> {
     return "";
   }
 }
+
+const callHaiku = (prompt: string, maxTokens = 1024) => callClaude("claude-haiku-4-5-20251001", prompt, maxTokens);
+const callSonnet = (prompt: string, maxTokens = 1024) => callClaude("claude-sonnet-4-6", prompt, maxTokens);
 
 // ─── ④ state 自動判定 ────────────────────────────────────────────────────────
 async function autoClassifyState(customerMessage: string, sentReply: string): Promise<string> {
@@ -200,7 +203,7 @@ async function analyzeAndSaveKnowledge(
   sentReply: string,
   isStarred = false
 ) {
-  const text = await callHaiku(`以下のLINE賃貸営業のやりとりから、次回即使えるルールを抽出してください。
+  const text = await callSonnet(`以下のLINE賃貸営業のやりとりから、次回即使えるルールを抽出してください。
 
 【お客様のメッセージ】
 ${customerMessage}
@@ -276,7 +279,7 @@ async function analyzeDiff(
   sentReply: string,
   sim = 0.5
 ) {
-  const text = await callHaiku(`あなたはスモラ（賃貸仲介）のLINE営業AIのトレーナーです。
+  const text = await callSonnet(`あなたはスモラ（賃貸仲介）のLINE営業AIのトレーナーです。
 スタッフが修正した内容から、次回のAI生成を改善するルールを抽出してください。
 
 【スモラのLINEスタイル（前提として必ず守ること）】

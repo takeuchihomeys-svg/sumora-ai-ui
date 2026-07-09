@@ -18,9 +18,9 @@ import { fetchPromptRules } from "@/app/lib/prompt-rules";
 export const maxDuration = 60;
 
 // ─── モデル定義 ───────────────────────────────────────────────────────────────
-// Step1（分析）: Haiku — 速度重視
+// Step1（分析）: Sonnet — 感情・本音・成約戦略の精度重視
 const analysisModel = new ChatAnthropic({
-  model: "claude-haiku-4-5-20251001",
+  model: "claude-sonnet-4-6",
   maxTokens: 1024,
   temperature: 0,
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
