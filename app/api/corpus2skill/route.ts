@@ -19,6 +19,7 @@ type Example = {
   ai_draft: string | null;
   conversation_state: string;
   customer_message: string;
+  was_ai_modified: boolean;
 };
 
 type Skill = {
@@ -28,10 +29,15 @@ type Skill = {
 };
 
 async function synthesizeSkills(state: string, examples: Example[]): Promise<Skill[]> {
-  const examplesText = examples.slice(0, 15).map((e, i) => `
---- 例${i + 1} ---
+  const examplesText = examples.slice(0, 15).map((e, i) => {
+    const label = e.was_ai_modified
+      ? "🔴 スタッフがAIを改善（AIがまだ弱いパターン）"
+      : "✅ AIをそのまま使用（スタッフが承認した良い例）";
+    return `
+--- 例${i + 1} [${label}] ---
 顧客: ${(e.customer_message || "").slice(0, 150)}
-${e.ai_draft ? `AI案: ${e.ai_draft.slice(0, 300)}\n` : ""}実際に送った返信: ${e.sent_reply.slice(0, 300)}`).join("\n");
+${e.ai_draft ? `AI案: ${e.ai_draft.slice(0, 300)}\n` : ""}実際に送った返信: ${e.sent_reply.slice(0, 300)}`;
+  }).join("\n");
 
   const res = await client.messages.create({
     model: "claude-opus-4-8",
@@ -44,13 +50,17 @@ ${e.ai_draft ? `AI案: ${e.ai_draft.slice(0, 300)}\n` : ""}実際に送った返
 
 ${examplesText}
 
-これらから「優秀な賃貸営業担当者が使う普遍的なスキル・パターン」を、意味のあるものを全て抽出してください。数は自分で判断してください。
+各例には2種類のラベルが付いています：
+- ✅ AIをそのまま使用 → AIが既に習得済みの良いパターン（強化すべき）
+- 🔴 スタッフがAIを改善 → AIがまだ弱いパターン（特に学ぶべき）
+
+この2つのコントラストを活かして「優秀な賃貸営業担当者が使う普遍的なスキル・パターン」を、意味のあるものを全て抽出してください。数は自分で判断してください。
 
 条件：
 - 固有名詞・物件名・日時に依存しない、どの顧客にも使える普遍パターンのみ
 - 薄い・当たり前すぎるものは除外（本当に価値のあるものだけ）
 - 「できる営業担当者は〇〇する」という形式で書く
-- AIが間違えたことではなく、スタッフが実践している「良い習慣・技術」にフォーカス
+- 🔴の例からは「AIが苦手なこと」、✅の例からは「既に正解しているパターン」として区別して抽出
 
 JSON配列のみ返す（説明不要）：
 [
@@ -84,7 +94,7 @@ export async function POST(req: NextRequest) {
 
   const { data: examples } = await supabase
     .from("ai_reply_examples")
-    .select("sent_reply, ai_draft, conversation_state, customer_message")
+    .select("sent_reply, ai_draft, conversation_state, customer_message, was_ai_modified")
     .gte("created_at", since)
     .not("sent_reply", "is", null)
     .limit(200) as { data: Example[] | null };
