@@ -68,8 +68,16 @@ type UsageLog = {
 
 async function run() {
   const now = new Date();
-  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const periodStart = sevenDaysAgo.toISOString().slice(0, 10);
+  // C03: period_start をローリング日付（再実行時に period が変わる問題）ではなく
+  //      月曜起算の ISO 週に固定することで、同じ週内に何度実行しても同一 period を参照する。
+  const jstNow = new Date(now.getTime() + 9 * 3600 * 1000);
+  // 月曜日を週の起点とする（0=日〜6=土 → 月曜=1 基準にシフト）
+  const dowJst = (jstNow.getUTCDay() + 6) % 7; // 月=0, 火=1, ... 日=6
+  const mondayJst = new Date(jstNow.getTime() - dowJst * 86400 * 1000);
+  mondayJst.setUTCHours(0, 0, 0, 0);
+  const periodStartDate = new Date(mondayJst.getTime() - 9 * 3600 * 1000); // → UTC
+  const sevenDaysAgo = periodStartDate; // 月曜起算の週頭（同じ週内で安定）
+  const periodStart = new Date(mondayJst.getTime()).toISOString().slice(0, 10); // JST 月曜の日付文字列
   const periodEnd = now.toISOString().slice(0, 10);
 
   // 1. 過去7日間のAIX使用ログ

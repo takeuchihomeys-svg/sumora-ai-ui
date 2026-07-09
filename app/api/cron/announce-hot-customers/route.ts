@@ -175,10 +175,10 @@ export async function GET(req: NextRequest) {
     sections.push(`📦 物件出し要（${needsPropList.length}人）\n\n${lines.join("\n")}`);
   }
 
-  // ⏰ 3日以上未返信セクション（朝9時のタイミングのみ表示）
+  // ⏰ 3日以上未返信セクション（朝9時のみ表示 — B05: コメントのみだった時間ガードを実装）
   type StaleConvRow = { id: string; customer_name: string | null; account: string | null; last_message: string | null; updated_at: string | null };
   const staleList = staleConvs as StaleConvRow[] ?? [];
-  if (staleList.length > 0) {
+  if (staleList.length > 0 && hour >= 9 && hour < 10) {
     const lines = staleList.map((c, i) => {
       const name = c.customer_name || "名称未設定";
       const acct = ACCOUNT_LABEL[c.account ?? "sumora"] ?? "スモラ";
