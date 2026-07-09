@@ -287,7 +287,9 @@ async function handleTextMessage(
       await db.from("conversations")
         .update({ draft_pending_at: new Date().toISOString(), ai_draft: null })
         .eq("id", convId);
-    } catch {}
+    } catch (e) {
+      console.error("[line-webhook] after() draft_pending_at update failed:", e);
+    }
   });
 
   return true;
@@ -947,11 +949,13 @@ async function expireOldImagesIfOverLimit(
 }
 
 // destination → account key のマッピング（各LINE公式アカウントのBot User ID）
-const DESTINATION_MAP: Record<string, string> = {
-  [process.env.LINE_SUMORA_DESTINATION ?? ""]: "sumora",
-  [process.env.LINE_IEYASU_DESTINATION ?? ""]: "ieyasu",
-  [process.env.LINE_GIGA_DESTINATION ?? ""]: "giga",
-};
+const DESTINATION_MAP: Record<string, string> = Object.fromEntries(
+  ([
+    [process.env.LINE_SUMORA_DESTINATION, "sumora"],
+    [process.env.LINE_IEYASU_DESTINATION, "ieyasu"],
+    [process.env.LINE_GIGA_DESTINATION, "giga"],
+  ] as [string | undefined, string][]).filter(([k]) => !!k)
+);
 
 // ── POST ──────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest): Promise<NextResponse> {

@@ -9282,11 +9282,12 @@ export default function Home() {
             <p className="mb-6 text-center text-[13px] leading-snug text-[#6B7280]">どちらの完了ですか？</p>
             <div className="flex flex-col gap-3">
               <button
+                disabled={statusSaving}
                 onClick={async () => {
                   setShowCompletePicker(false);
                   await updateConversationStatus("applying");
                 }}
-                className="flex items-center gap-4 rounded-2xl border border-[#E5E7EB] bg-[#FFFBEB] px-4 py-4 text-left transition active:opacity-80"
+                className="flex items-center gap-4 rounded-2xl border border-[#E5E7EB] bg-[#FFFBEB] px-4 py-4 text-left transition active:opacity-80 disabled:opacity-40"
               >
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#FEF3C7]">
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="4" y="3" width="16" height="20" rx="2" stroke="#D97706" strokeWidth="2"/><path d="M8 8h8M8 12h8M8 16h5" stroke="#D97706" strokeWidth="1.8" strokeLinecap="round"/></svg>
@@ -9297,11 +9298,12 @@ export default function Home() {
                 </div>
               </button>
               <button
+                disabled={statusSaving}
                 onClick={async () => {
                   setShowCompletePicker(false);
                   await updateConversationStatus("closed_won");
                 }}
-                className="flex items-center gap-4 rounded-2xl border-2 border-[#4CAF50] bg-[#F0FDF4] px-4 py-4 text-left transition active:opacity-80"
+                className="flex items-center gap-4 rounded-2xl border-2 border-[#4CAF50] bg-[#F0FDF4] px-4 py-4 text-left transition active:opacity-80 disabled:opacity-40"
               >
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#DCFCE7]">
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" fill="#16A34A"/></svg>

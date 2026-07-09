@@ -6,7 +6,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 60;
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY!, timeout: 30_000, maxRetries: 1 });
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 30_000, maxRetries: 1 });
 
 // コンポーネントが省略・大幅再構成された場合（structure変化）の学習ルール抽出
 //「なぜこのパーツを省いたか」を学ぶ → カテゴリ=pattern

@@ -78,7 +78,11 @@ function createViewingCalendarEvent(params: {
   if (!dateMatch) return;
   const month = parseInt(dateMatch[1], 10);
   const day = parseInt(dateMatch[2], 10);
-  const year = new Date().getFullYear();
+  const now = new Date();
+  const candidate = new Date(now.getFullYear(), month - 1, day);
+  const year = candidate.getTime() < now.getTime() - 90 * 24 * 3600 * 1000
+    ? now.getFullYear() + 1
+    : now.getFullYear();
 
   // 時刻パース: "13:15〜13:45" / "13:15"
   const timeMatch = meetingTime.match(/(\d{1,2}):(\d{2})(?:[〜~-](\d{1,2}):(\d{2}))?/);
@@ -2489,7 +2493,7 @@ export default function AixModal({
               {/* モード選択ボタン (2×2グリッド) */}
               <div className="grid grid-cols-2 gap-2">
                 <button
-                  onClick={() => { setAppSubMode("push"); setPreview(""); }}
+                  onClick={() => { setAppSubMode("push"); setPreview(""); setAppConfirmImagePreview(""); setAppConfirmExtractLoading(false); setAppFormatLivingType(null); setAppFormatGuarantorType(null); }}
                   className={`rounded-2xl border-2 px-2 py-3 text-center transition-all ${
                     appSubMode === "push" ? "border-[#1565C0] bg-blue-50" : "border-[#e9edef] bg-[#f8f9fa]"
                   }`}
@@ -2529,7 +2533,7 @@ export default function AixModal({
                   <div className="mt-0.5 text-[8px] text-[#8696a0]">申込書を送る</div>
                 </button>
                 <button
-                  onClick={() => { setAppSubMode("docs_request"); setPreview(""); setAiDraft(""); }}
+                  onClick={() => { setAppSubMode("docs_request"); setPreview(""); setAiDraft(""); setAppConfirmImagePreview(""); setAppConfirmExtractLoading(false); setAppFormatLivingType(null); setAppFormatGuarantorType(null); }}
                   className={`rounded-2xl border-2 px-2 py-3 text-center transition-all ${
                     appSubMode === "docs_request" ? "border-orange-500 bg-orange-50" : "border-[#e9edef] bg-[#f8f9fa]"
                   }`}

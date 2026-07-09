@@ -167,15 +167,18 @@ export async function POST(req: NextRequest) {
   const apiKey = process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "");
   if (!apiKey) return NextResponse.json({ ok: false, error: "ANTHROPIC_API_KEY not set" }, { status: 500 });
 
-  const { currentDraft, conversationState, customerName, recentMessages, customerConditions, customerSummary, activeTasks } = await req.json() as {
-    currentDraft: string;
-    conversationState?: string;
-    customerName?: string;
-    recentMessages?: Array<{ sender: string; text: string }>;
-    customerConditions?: string;
-    customerSummary?: string;
-    activeTasks?: string[];
-  };
+  let currentDraft: string, conversationState: string | undefined, customerName: string | undefined,
+    recentMessages: Array<{ sender: string; text: string }> | undefined, customerConditions: string | undefined,
+    customerSummary: string | undefined, activeTasks: string[] | undefined;
+  try {
+    ({ currentDraft, conversationState, customerName, recentMessages, customerConditions, customerSummary, activeTasks } = await req.json() as {
+      currentDraft: string; conversationState?: string; customerName?: string;
+      recentMessages?: Array<{ sender: string; text: string }>; customerConditions?: string;
+      customerSummary?: string; activeTasks?: string[];
+    });
+  } catch {
+    return NextResponse.json({ ok: false, error: "invalid request body" }, { status: 400 });
+  }
 
   if (!currentDraft?.trim()) {
     return NextResponse.json({ ok: false, error: "currentDraft required" }, { status: 400 });
@@ -246,7 +249,8 @@ ${currentDraft.trim()}
 
     if (!res.ok) {
       const err = await res.text();
-      return NextResponse.json({ ok: false, error: err }, { status: 500 });
+      console.error("[enhance-reply] Anthropic API error:", err);
+      return NextResponse.json({ ok: false, error: "AI処理に失敗しました" }, { status: 500 });
     }
 
     const data = await res.json() as { content?: Array<{ text: string }> };
