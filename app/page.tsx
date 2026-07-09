@@ -506,6 +506,16 @@ export default function Home() {
   const [aixInitViewingVacancy, setAixInitViewingVacancy] = useState(false);
   const [showViewingPicker, setShowViewingPicker] = useState(false);
   const [suggestedViewingMode, setSuggestedViewingMode] = useState<"通常" | "退去予定物件" | "内覧日指定あり" | "日程変更" | null>(null);
+  // 内覧誘導ピッカー
+  const [showViewingGuidePicker, setShowViewingGuidePicker] = useState(false);
+  const [viewingGuideImage, setViewingGuideImage] = useState<File | null>(null);
+  const [viewingGuideImagePreview, setViewingGuideImagePreview] = useState("");
+  const [viewingGuidePropertyName, setViewingGuidePropertyName] = useState("");
+  const [viewingGuideRoomNumber, setViewingGuideRoomNumber] = useState("");
+  const [viewingGuideLoading, setViewingGuideLoading] = useState(false);
+  const [viewingGuideResult, setViewingGuideResult] = useState<{ type: "available" | "vacating"; vacateDate: string; text: string } | null>(null);
+  const [viewingGuideAdaptLoading, setViewingGuideAdaptLoading] = useState(false);
+  const viewingGuideImageRef = useRef<HTMLInputElement | null>(null);
   const [showPropertySendPicker, setShowPropertySendPicker] = useState(false);
   const [suggestedPropertySendMode, setSuggestedPropertySendMode] = useState<"normal" | "new_arrival" | "widen" | "alternative" | null>(null);
   const [showEstimatePicker, setShowEstimatePicker] = useState(false);
@@ -8610,6 +8620,38 @@ export default function Home() {
             <p className="mb-6 text-center text-[13px] leading-snug text-[#6B7280]">どの種類で日程調整しますか？</p>
             {/* 選択肢 */}
             <div className="flex flex-col gap-2.5">
+              {/* 内覧誘導ボタン（ピッカー上部） */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowViewingPicker(false);
+                  setViewingGuideImage(null);
+                  setViewingGuideImagePreview("");
+                  setViewingGuidePropertyName("");
+                  setViewingGuideRoomNumber("");
+                  setViewingGuideResult(null);
+                  setShowViewingGuidePicker(true);
+                }}
+                className="flex items-center gap-3.5 rounded-2xl border-2 border-[#7C3AED] bg-[#FAF5FF] px-4 py-3.5 text-left transition active:bg-[#F3E8FF]"
+              >
+                <div className="shrink-0">
+                  <svg width="36" height="36" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="36" cy="36" r="36" fill="#F3E8FF"/>
+                    <path d="M36 20L50 30V52H22V30L36 20Z" fill="#E9D5FF" stroke="#7C3AED" strokeWidth="1.8" strokeLinejoin="round"/>
+                    <path d="M29 38h5v10h-5zM38 38h5v10h-5z" fill="#7C3AED"/>
+                    <circle cx="36" cy="28" r="3" fill="#7C3AED"/>
+                    <path d="M44 20l4 4M28 20l-4 4" stroke="#7C3AED" strokeWidth="1.5" strokeLinecap="round"/>
+                  </svg>
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-[14px] font-bold text-[#7C3AED]">内覧誘導</p>
+                    <span className="rounded-full bg-[#7C3AED] px-1.5 py-0.5 text-[10px] font-bold text-white">NEW</span>
+                  </div>
+                  <p className="text-[11px] text-[#9CA3AF]">物件写真からAIが内覧可否を判定してメッセージを自動生成</p>
+                </div>
+              </button>
+              <div className="my-0.5 border-t border-[#E5E7EB]" />
               {([
                 {
                   key: "通常" as const,
@@ -8713,6 +8755,210 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/* 内覧誘導ピッカー */}
+      {showViewingGuidePicker && (() => {
+        const conv = selectedConversation;
+        const custName = conv?.customerName ?? "お客様";
+        const recentMsgs = (conv?.messages ?? []).slice(-10).map(m => ({ sender: m.sender, text: m.text ?? "" }));
+
+        const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          setViewingGuideImage(file);
+          const reader = new FileReader();
+          reader.onload = (ev) => setViewingGuideImagePreview(ev.target?.result as string);
+          reader.readAsDataURL(file);
+        };
+
+        const handleAnalyze = async () => {
+          setViewingGuideLoading(true);
+          setViewingGuideResult(null);
+          try {
+            let imagePayload: { base64: string; mediaType: string } | undefined;
+            if (viewingGuideImage) {
+              const buf = await viewingGuideImage.arrayBuffer();
+              const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+              imagePayload = { base64: b64, mediaType: viewingGuideImage.type || "image/jpeg" };
+            }
+            const res = await fetch("/api/aix/viewing-guide", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "analyze",
+                image: imagePayload,
+                propertyName: viewingGuidePropertyName,
+                roomNumber: viewingGuideRoomNumber,
+                customerName: custName,
+              }),
+            });
+            const data = await res.json() as { ok: boolean; type?: string; vacateDate?: string; text?: string; status?: string };
+            if (data.ok && data.text) {
+              setViewingGuideResult({
+                type: data.status === "vacating" ? "vacating" : "available",
+                vacateDate: data.vacateDate ?? "",
+                text: data.text,
+              });
+            }
+          } finally {
+            setViewingGuideLoading(false);
+          }
+        };
+
+        const handleAdapt = async () => {
+          if (!viewingGuideResult) return;
+          setViewingGuideAdaptLoading(true);
+          try {
+            const res = await fetch("/api/aix/viewing-guide", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "adapt",
+                baseText: viewingGuideResult.text,
+                customerName: custName,
+                recentMessages: recentMsgs,
+              }),
+            });
+            const data = await res.json() as { ok: boolean; text?: string };
+            if (data.ok && data.text) {
+              setViewingGuideResult(prev => prev ? { ...prev, text: data.text! } : prev);
+            }
+          } finally {
+            setViewingGuideAdaptLoading(false);
+          }
+        };
+
+        const handleSend = async () => {
+          if (!viewingGuideResult?.text || !conv) return;
+          setShowViewingGuidePicker(false);
+          setActiveAixFlow(null);
+          await sendMessageText(viewingGuideResult.text, undefined, false);
+        };
+
+        return (
+          <div
+            className="fixed inset-0 z-[150] flex items-end justify-center bg-black/50"
+            onClick={() => { setShowViewingGuidePicker(false); setActiveAixFlow(null); }}
+          >
+            <div
+              className="w-full max-w-sm rounded-t-3xl bg-white px-5 pb-8 pt-6 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* ヘッダー */}
+              <div className="mb-4 flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#F3E8FF]">
+                  <svg width="18" height="18" viewBox="0 0 72 72" fill="none">
+                    <path d="M36 20L50 30V52H22V30L36 20Z" fill="#E9D5FF" stroke="#7C3AED" strokeWidth="3" strokeLinejoin="round"/>
+                    <path d="M29 38h5v10h-5zM38 38h5v10h-5z" fill="#7C3AED"/>
+                    <circle cx="36" cy="28" r="3.5" fill="#7C3AED"/>
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-[15px] font-bold text-[#111827]">内覧誘導</p>
+                  <p className="text-[11px] text-[#9CA3AF]">物件写真からAIが内覧可否を判定</p>
+                </div>
+              </div>
+
+              {/* 物件写真アップロード */}
+              <div className="mb-3">
+                <label className="mb-1.5 block text-xs font-semibold text-[#54656f]">物件写真<span className="ml-1 font-normal text-[#90a4ae]">（任意）</span></label>
+                {viewingGuideImagePreview ? (
+                  <div className="relative overflow-hidden rounded-xl border border-[#E5E7EB]">
+                    <img src={viewingGuideImagePreview} alt="物件写真" className="max-h-32 w-full object-contain bg-[#F9FAFB]" />
+                    <button
+                      onClick={() => { setViewingGuideImage(null); setViewingGuideImagePreview(""); setViewingGuideResult(null); if (viewingGuideImageRef.current) viewingGuideImageRef.current.value = ""; }}
+                      className="absolute right-2 top-2 rounded-full bg-black/50 px-2.5 py-0.5 text-[11px] font-bold text-white"
+                    >変更</button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => viewingGuideImageRef.current?.click()}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-[#7C3AED]/40 py-5 text-sm font-semibold text-[#7C3AED] hover:bg-[#FAF5FF]"
+                  >
+                    📷 写真を選択
+                  </button>
+                )}
+                <input ref={viewingGuideImageRef} type="file" accept="image/*" onChange={handleImageSelect} className="hidden" />
+              </div>
+
+              {/* 物件名・号室 */}
+              <div className="mb-3 flex gap-2">
+                <div className="flex-1">
+                  <label className="mb-1 block text-xs font-semibold text-[#54656f]">物件名</label>
+                  <input
+                    value={viewingGuidePropertyName}
+                    onChange={(e) => { setViewingGuidePropertyName(e.target.value); setViewingGuideResult(null); }}
+                    placeholder="例：グランドコート渋谷"
+                    className="w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-sm outline-none focus:border-[#7C3AED]"
+                  />
+                </div>
+                <div className="w-24">
+                  <label className="mb-1 block text-xs font-semibold text-[#54656f]">号室</label>
+                  <input
+                    value={viewingGuideRoomNumber}
+                    onChange={(e) => { setViewingGuideRoomNumber(e.target.value); setViewingGuideResult(null); }}
+                    placeholder="例：301"
+                    className="w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-sm outline-none focus:border-[#7C3AED]"
+                  />
+                </div>
+              </div>
+
+              {/* 判定ボタン */}
+              {!viewingGuideResult && (
+                <button
+                  onClick={handleAnalyze}
+                  disabled={viewingGuideLoading || (!viewingGuideImage && !viewingGuidePropertyName)}
+                  className="mb-3 w-full rounded-xl bg-[#7C3AED] py-3 text-sm font-bold text-white disabled:opacity-40"
+                >
+                  {viewingGuideLoading ? (
+                    <span className="flex items-center justify-center gap-2"><span className="inline-block animate-spin">⏳</span> AIが判定中...</span>
+                  ) : "🔍 AIで判定する"}
+                </button>
+              )}
+
+              {/* 判定結果 */}
+              {viewingGuideResult && (
+                <div className="mb-3">
+                  {/* ステータスバッジ */}
+                  <div className={`mb-2 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${viewingGuideResult.type === "available" ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"}`}>
+                    {viewingGuideResult.type === "available" ? "✅ 内覧可能" : `🏚️ 退去予定${viewingGuideResult.vacateDate ? "（" + viewingGuideResult.vacateDate + "）" : ""}`}
+                  </div>
+                  {/* 生成テキスト */}
+                  <textarea
+                    value={viewingGuideResult.text}
+                    onChange={(e) => setViewingGuideResult(prev => prev ? { ...prev, text: e.target.value } : prev)}
+                    rows={4}
+                    className="w-full resize-none rounded-xl border border-[#d1d7db] bg-[#f9fafb] px-3 py-2.5 text-sm leading-relaxed outline-none focus:border-[#7C3AED]"
+                  />
+                  {/* アクションボタン群 */}
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      onClick={handleAdapt}
+                      disabled={viewingGuideAdaptLoading}
+                      className="flex-1 rounded-xl border border-[#7C3AED] py-2.5 text-xs font-bold text-[#7C3AED] disabled:opacity-40"
+                    >
+                      {viewingGuideAdaptLoading ? "⏳ 調整中..." : "💬 会話を合わせる"}
+                    </button>
+                    <button
+                      onClick={() => { setViewingGuideResult(null); }}
+                      className="rounded-xl border border-[#d1d7db] px-4 py-2.5 text-xs font-bold text-[#54656f]"
+                    >再判定</button>
+                  </div>
+                  <button
+                    onClick={handleSend}
+                    className="mt-2 w-full rounded-xl bg-[#7C3AED] py-3 text-sm font-bold text-white"
+                  >送る</button>
+                </div>
+              )}
+
+              <button
+                onClick={() => { setShowViewingGuidePicker(false); setActiveAixFlow(null); }}
+                className="w-full py-2.5 text-[13px] text-[#9CA3AF]"
+              >キャンセル</button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 物件ピックアップした 種類選択ピッカー */}
       {showPropertySendPicker && (
