@@ -116,6 +116,7 @@ type MatchRpcRow = {
   category: string;
   importance: number;
   similarity: number;
+  hypothesis_status?: string;
 };
 
 /**

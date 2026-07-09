@@ -674,7 +674,13 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       const filteredResults = (vectorResults ?? [])
         .filter(r => (r.similarity ?? 0) >= 0.5)
         .map(r => ({ ...r, score: (r.similarity ?? 0.5) * ((r.importance || 5) / 10) }))
-        .sort((a, b) => b.score - a.score);
+        .sort((a, b) => {
+          if (b.score !== a.score) return b.score - a.score;
+          // confirmed を同スコア内で優先（HIGH-07 pgvector経路対応）
+          const aConf = a.hypothesis_status === "confirmed" ? 1 : 0;
+          const bConf = b.hypothesis_status === "confirmed" ? 1 : 0;
+          return bConf - aConf;
+        });
       if (filteredResults.length > 0) {
         const diffLearned = filteredResults.filter(r => r.title.includes("差分学習")).slice(0, 8);
         const correctionPairs = filteredResults.filter(r => r.title.includes("修正対比")).slice(0, 8);

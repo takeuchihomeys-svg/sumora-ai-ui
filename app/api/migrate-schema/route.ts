@@ -477,10 +477,11 @@ RETURNS void LANGUAGE sql SECURITY DEFINER AS $$
 $$;
 CREATE INDEX IF NOT EXISTS ai_reply_knowledge_embedding_idx ON ai_reply_knowledge USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50);
 CREATE OR REPLACE FUNCTION match_reply_knowledge(query_embedding vector, match_count integer, min_importance integer DEFAULT 7)
-RETURNS TABLE(id uuid, title text, content text, category text, conversation_state text, importance integer, similarity float)
+RETURNS TABLE(id uuid, title text, content text, category text, conversation_state text, importance integer, similarity float, hypothesis_status text)
 LANGUAGE sql STABLE AS $$
   SELECT ak.id, ak.title, ak.content, ak.category, ak.conversation_state, ak.importance,
-    (1 - (ak.embedding <=> query_embedding))::float AS similarity
+    (1 - (ak.embedding <=> query_embedding))::float AS similarity,
+    ak.hypothesis_status
   FROM ai_reply_knowledge ak
   WHERE ak.embedding IS NOT NULL AND ak.importance >= min_importance
     AND COALESCE(ak.hypothesis_status, 'hypothesis') != 'rejected'

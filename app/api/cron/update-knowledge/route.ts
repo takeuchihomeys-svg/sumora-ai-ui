@@ -1,6 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { runKnowledgeCleanup } from "@/app/lib/knowledge-cleanup";
+import { generateEmbedding, upsertKnowledge, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 
 export const maxDuration = 60;
 
@@ -62,13 +63,22 @@ ${sentReply}
       ...analysis.style_elements.map((el) => ({ category: "style" as const, title: "口調・スタイル", content: el, importance: 6 })),
       ...analysis.key_phrases.map((p)  => ({ category: "phrase" as const,   title: "フレーズ",      content: p,  importance: 6 })),
     ];
-    const rows = entries.map((entry) => ({
-      ...entry,
-      conversation_state: conversationState || null,
-      source_example_id: exampleId,
-    }));
-    const { error, data } = await supabase.from("ai_reply_knowledge").insert(rows).select("id");
-    return error ? 0 : (data?.length ?? 0);
+    let inserted = 0;
+    for (const entry of entries) {
+      const embeddingInput = buildKnowledgeEmbeddingInput({
+        content: entry.content,
+        conversation_state: conversationState || undefined,
+      });
+      const embedding = embeddingInput ? await generateEmbedding(embeddingInput) : null;
+      const result = await upsertKnowledge(supabase, {
+        ...entry,
+        conversation_state: conversationState || undefined,
+        source_example_id: exampleId,
+        ...(embedding ? { embedding } : {}),
+      });
+      if (result === "inserted") inserted++;
+    }
+    return inserted;
   } catch { return 0; }
 }
 

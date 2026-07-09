@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
 
   // 短すぎる返信はJS側で除外（DBにlength関数で WHERE できないため）
   const qualityExamples = (examples ?? []).filter(ex =>
-    (ex.sent_reply as string | null)?.length ?? 0 >= 30
+    ((ex.sent_reply as string | null)?.length ?? 0) >= 30
   );
   // was_ai_modified=false を先頭に（純粋なAI承認シグナルを優先分析）
   const sortedExamples = [

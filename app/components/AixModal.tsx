@@ -1886,10 +1886,25 @@ export default function AixModal({
             const capturedOnSend = onSend;
             const capturedPreview = preview;
             const capturedOnAfterSend = onAfterSend;
+            const capturedActionType: string = actionType;
+            const capturedCheckAvailableApp: string | null = checkAvailableApp;
+            const capturedCheckPattern: string | null = checkPattern;
+            const capturedRecommendFocusPoints: string[] = recommendFocusPoints;
+            const capturedAppSubMode: string | null | undefined = appSubMode;
+            const capturedSendMode: string | null | undefined = sendMode;
             const sendFn = async () => {
               await capturedOnSend(capturedPreview);
               capturedOnAfterSend?.({
-                suggest2ndHand: actionType === "property_check_result" && checkAvailableApp === "yes",
+                suggest2ndHand: capturedActionType === "property_check_result" && capturedCheckAvailableApp === "yes",
+                suggestViewingTemplate: capturedActionType === "viewing_invite",
+                suggestViewing: capturedActionType === "property_check_result" && capturedCheckPattern === "available" && capturedCheckAvailableApp !== "yes",
+                suggestInitialCostTemplate: capturedActionType === "property_recommendation" && capturedRecommendFocusPoints.includes("初期費用"),
+                suggestAlternativeSend: capturedActionType === "property_check_result" && capturedCheckPattern === "unavailable",
+                suggestPropertySend: capturedActionType === "condition_hearing",
+                suggestApplicationPush: capturedActionType === "estimate_sheet",
+                checkPattern: capturedCheckPattern ?? undefined,
+                appSubMode: capturedAppSubMode ?? undefined,
+                sendMode: capturedSendMode ?? undefined,
               });
             };
             onDelayedSend?.(30, sendFn); // 親がsetTimeoutを管理（キャンセル可能）
