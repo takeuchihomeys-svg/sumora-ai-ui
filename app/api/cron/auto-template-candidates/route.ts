@@ -59,7 +59,7 @@ const SENT_AT_BEFORE_MS = 30 * 1000;
 const SENT_AT_AFTER_MS = 5 * 60 * 1000;
 const MIN_FOLLOWUP_LEN = 20;
 const MAX_CONVERT_PER_RUN = 30; // Haiku変換に回す最大件数（並列呼び出し・コスト制御）
-const MAX_INSERT_PER_RUN = 10; // 1回の実行で追加する候補の上限
+const MAX_INSERT_PER_RUN = 30; // 1回の実行で追加する候補の上限
 const MAX_GENERATE_PER_RUN = 2; // 後続例ゼロのアクション向けAI生成の上限
 
 // Haiku 変換用システムプロンプト（判定ではなく「汎用テンプレへの変換」を依頼する）
