@@ -6,6 +6,7 @@ import { supabase } from "@/app/lib/supabase";
 const model = new ChatAnthropic({
   model: "claude-sonnet-4-6",
   maxTokens: 600,
+  temperature: 0, // JSON構造化出力のため決定的にする
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
 });
 
@@ -28,7 +29,10 @@ const SYSTEM = `あなたは賃貸仲介の営業アシスタントです。
   "opinions": ["お客さんの性格・傾向・感情・営業ヒント（最大2件・各30文字以内・具体的に）"],
   "our_actions": ["スタッフがやったこと（最大2件・各20文字以内）"],
   "winning_pattern": "今この瞬間に成約につながる具体的な行動を50文字以内で。物件名・理由・タイミングまで含めて詳しく書く",
-  "next_action": "今すぐスタッフが打つべき具体的な次の1手を40文字以内で（いつ・何を・どうする）"
+  "next_action": "今すぐスタッフが打つべき具体的な次の1手を40文字以内で（いつ・何を・どうする）",
+  "emotion": "顧客の温度感（前向き/不安/冷めかけ/普通 のいずれか）",
+  "urgency": "引越し・入居希望の時期感（今月中/3ヶ月以内/半年以上/未確認 のいずれか）",
+  "style": "顧客メッセージの文体傾向（絵文字多用/短文/ビジネスライク/丁寧/普通 のいずれか）"
 }
 
 品質ルール：
@@ -45,7 +49,10 @@ const SYSTEM = `あなたは賃貸仲介の営業アシスタントです。
 
 ・inspection.requested: お客さんが内覧したいと言っている or 内覧日程を調整中なら true
 ・inspection.done: 実際に内覧済みなら true。スタッフが内覧当日の挨拶文（「本日はよろしくお願いします」「内覧前挨拶」等、当日の待ち合わせや挨拶を送った記録）を送った場合も true とみなす。ただし、その後に「キャンセル」「流れました」「流れちゃいました」「行けなくなりました」「やっぱりやめます」「中止」等のキャンセルを示す発言がお客さんまたはスタッフから確認できる場合は false に戻す
-・estimate.requested: 初期費用・見積計算を求めているなら true`;
+・estimate.requested: 初期費用・見積計算を求めているなら true
+・emotion: 顧客の温度感。会話トーン全体から判断（前向き/不安/冷めかけ/普通）
+・urgency: 引越し・入居希望の時期感（今月中/3ヶ月以内/半年以上/未確認）
+・style: 顧客メッセージの文体傾向（絵文字多用/短文/ビジネスライク/丁寧/普通）`;
 
 const STATUS_LABEL: Record<string, string> = {
   new_inquiry:     "新規問い合わせ",
@@ -64,6 +71,9 @@ export type SummaryJson = {
   our_actions?: string[];
   winning_pattern?: string;
   next_action?: string;
+  emotion?: string;
+  urgency?: string;
+  style?: string;
 };
 
 // JSON → テキスト変換（generate-reply の ★決まるパターン抽出との後方互換を維持）
@@ -96,6 +106,18 @@ function jsonToText(j: SummaryJson): string {
 
   if (j.estimate?.requested) {
     lines.push(`・見積依頼: あり`);
+  }
+
+  if (j.emotion) {
+    lines.push(`・顧客温度感: ${j.emotion}`);
+  }
+
+  if (j.urgency) {
+    lines.push(`・入居希望時期: ${j.urgency}`);
+  }
+
+  if (j.style) {
+    lines.push(`・文体傾向: ${j.style}`);
   }
 
   if (j.winning_pattern) {
@@ -216,7 +238,11 @@ export async function POST(req: NextRequest) {
       if (msgs && msgs.length > 0) {
         const lines = (msgs as Array<{ sender: string; text: string }>)
           .reverse()
-          .map((m) => `${m.sender === "customer" ? "お客さん" : "スタッフ"}: ${(m.text || "").slice(0, 120)}`)
+          // 顧客メッセージは300字（ニーズ・感情の把握に重要）、スタッフメッセージは150字（送信済み内容のため据え置き）
+          .map((m) => {
+            const isCustomer = m.sender === "customer";
+            return `${isCustomer ? "お客さん" : "スタッフ"}: ${(m.text || "").slice(0, isCustomer ? 300 : 150)}`;
+          })
           .join("\n");
         conversationHistory = `\n\n【直近の会話履歴】\n${lines}`;
       }

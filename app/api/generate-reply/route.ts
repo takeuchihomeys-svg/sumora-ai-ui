@@ -41,6 +41,47 @@ function buildFirstGreeting(customerName: string): string {
   return `${customerName ? `${customerName}さん、` : ""}はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！`;
 }
 
+// ─── ai_summary_json の構造化サマリー（customer-summary/route.ts の SummaryJson と互換）──
+type ReplySummaryJson = {
+  winning_pattern?: string;
+  next_action?: string;
+  opinions?: string[];
+  emotion?: string;
+  urgency?: string;
+  style?: string;
+};
+
+// ─── 顧客文体ミラーリング（純ロジック・LLMコール不要）───────────────────────
+// 顧客メッセージから平均文長・絵文字率・敬語率を算出し、文体ラベルを生成する
+function buildCustomerStyleNote(messages: Array<{ sender: string; text?: string | null }>): string {
+  const customerTexts = messages
+    .filter(m => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
+    .map(m => (m.text as string).trim())
+    .filter(t => t.length > 0);
+  if (customerTexts.length === 0) return "";
+
+  // 平均文長（文字数）
+  const avgLen = customerTexts.reduce((n, t) => n + t.length, 0) / customerTexts.length;
+  // 絵文字使用率（絵文字を含むメッセージ数 / 総メッセージ数）
+  // サロゲートペア絵文字 + 記号系絵文字（U+2600-27BF, U+2B00-2BFF）+ 異体字セレクタ（uフラグ不要の範囲指定）
+  const EMOJI_RE = new RegExp(
+    "[" + String.fromCharCode(0xd83c) + "-" + String.fromCharCode(0xd83e) + "][" + String.fromCharCode(0xdc00) + "-" + String.fromCharCode(0xdfff) + "]" +
+    "|[" + String.fromCharCode(0x2600) + "-" + String.fromCharCode(0x27bf) + String.fromCharCode(0x2b00) + "-" + String.fromCharCode(0x2bff) + "]" +
+    "|" + String.fromCharCode(0xfe0f)
+  );
+  const emojiRate = customerTexts.filter(t => EMOJI_RE.test(t)).length / customerTexts.length;
+  // 敬語率（「です」「ます」「ございます」を含むメッセージ数 / 総メッセージ数）
+  const keigoRate = customerTexts.filter(t => /です|ます|ございます/.test(t)).length / customerTexts.length;
+
+  const labels: string[] = [];
+  labels.push(avgLen < 20 ? "短文中心" : avgLen <= 60 ? "中文" : "長文中心");
+  if (emojiRate > 0.3) labels.push("絵文字多用");
+  if (keigoRate < 0.3) labels.push("カジュアル寄り");
+  else if (keigoRate > 0.7) labels.push("丁寧語中心");
+
+  return `\n【お客様の文体】${labels.join(", ")}\n→ 返信はこの文体に合わせてトーンを調整すること`;
+}
+
 // ─── max_tokens 尻切れ検知（ログのみ・レスポンスには影響させない）─────────────
 function warnIfTruncated(stopReason: unknown, inputLength: number): void {
   if (stopReason === "max_tokens" || stopReason === "length") {
@@ -193,7 +234,9 @@ function buildGenerationMessages(
   isFirstEverReplyOverride?: boolean,
   viewingNote = "",
   customerStructured?: CustomerStructured,
-  dbRules = ""
+  dbRules = "",
+  summaryJson?: ReplySummaryJson,
+  customerStyleNote = ""
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   const jstDay = getJSTDayOfWeek();
@@ -263,17 +306,25 @@ function buildGenerationMessages(
     ? `\n【📋 条件ヒアリング状況】\n確認済み: ${confirmedItems.length > 0 ? confirmedItems.join(" / ") : "なし"}\n未確認: ${missingItems.join(" / ")}\n※ 確認済み項目は絶対に聞き返さない。未確認項目を自然な流れで1〜2個まで聞く。`
     : "";
 
-  // ① ai_summaryの「★決まるパターン」と「🎯次のアクション」を抽出して最優先注入
+  // ① ai_summary_json の winning_pattern / next_action を直接参照して最優先注入
+  //    （summaryJson が無い場合のみ旧テキストからの regex 抽出にフォールバック — 後方互換）
   const closingPatternFromSummary = (() => {
+    if (summaryJson?.winning_pattern?.trim()) return summaryJson.winning_pattern.trim();
     if (!customerSummary) return "";
     const m = customerSummary.match(/★決まるパターン[：:]\s*(.+)/);
     return m ? m[1].trim() : "";
   })();
   const nextActionFromSummary = (() => {
+    if (summaryJson?.next_action?.trim()) return summaryJson.next_action.trim();
     if (!customerSummary) return "";
     const m = customerSummary.match(/🎯次のアクション[：:]\s*(.+)/);
     return m ? m[1].trim() : "";
   })();
+
+  // opinions（顧客の性格・営業ヒント）を構造化してプロンプトに注入
+  const opinionsNote = (summaryJson?.opinions && summaryJson.opinions.length > 0)
+    ? `\n【👤 お客様の人物像・営業ヒント（AI要約より）】${summaryJson.opinions.join(" / ")}\n→ 返信のトーン・提案の切り口はこの人物像に合わせること`
+    : "";
 
   // フェーズ別の行動指針を取得（phase_guide はコード側 line-reply-prompts.ts を正とする・DBオーバーライドなし）
   const phaseGuide = PHASE_GUIDE[state] ?? PHASE_GUIDE["first_reply"];
@@ -487,7 +538,7 @@ function buildGenerationMessages(
   })();
 
   const prompt = `
-${closingNote}${nameNote}${conditionsNote}${missingConditionsNote}${summaryNote}${dateNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}
+${closingNote}${nameNote}${conditionsNote}${missingConditionsNote}${customerStyleNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${approachNote}${staffContextNote}
 
@@ -674,11 +725,11 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       }) as { data: Array<KnowledgeRow & { similarity: number }> | null; error: { message: string } | null };
       if (rpcError) console.warn("[generate-reply] RPC error:", rpcError.message);
 
-      // 類似度0.5未満のノイズを除外し、importance×similarity の複合スコアで並べ替え
+      // 類似度0.6未満のノイズを除外し、importance×similarity の複合スコアで並べ替え
       // （RPCの similarity 順のままだと importance の低い近似ルールが各バケットの枠を食うため）
       // BUG-01: pgvector経路にも rejected フィルタを追加（フォールバック経路は .neq('hypothesis_status','rejected') 済みだが pgvector 経路だけ欠落していた）
       const filteredResults = (vectorResults ?? [])
-        .filter(r => (r.similarity ?? 0) >= 0.5 && r.hypothesis_status !== "rejected")
+        .filter(r => (r.similarity ?? 0) >= 0.6 && r.hypothesis_status !== "rejected")
         .map(r => ({ ...r, score: (r.similarity ?? 0.5) * ((r.importance || 5) / 10) }))
         .sort((a, b) => {
           if (b.score !== a.score) return b.score - a.score;
@@ -688,13 +739,14 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
           return bConf - aConf;
         });
       if (filteredResults.length > 0) {
-        const diffLearned = filteredResults.filter(r => r.title.includes("差分学習")).slice(0, 8);
-        const correctionPairs = filteredResults.filter(r => r.title.includes("修正対比")).slice(0, 8);
+        // ナレッジ洪水対策: 差分学習5件・修正対比5件・絶対ルール8件・パターン5件に上限を削減
+        const diffLearned = filteredResults.filter(r => r.title.includes("差分学習")).slice(0, 5);
+        const correctionPairs = filteredResults.filter(r => r.title.includes("修正対比")).slice(0, 5);
         // importance>=9 の principle は embedding 検索に漏れても必ず注入する（topPrinciples で保証）
-        const criticalVector = filteredResults.filter(r => r.importance >= 9 && r.category === "principle").slice(0, 10);
+        const criticalVector = filteredResults.filter(r => r.importance >= 9 && r.category === "principle").slice(0, 8);
         const criticalGuaranteed = (topPrinciples ?? []).filter(p => !criticalVector.some(c => c.id === p.id));
-        const critical = [...criticalVector, ...criticalGuaranteed].slice(0, 15);
-        const patterns = filteredResults.filter(r => r.category === "pattern" && !r.title.includes("差分学習") && !r.title.includes("修正対比")).slice(0, 8);
+        const critical = [...criticalVector, ...criticalGuaranteed].slice(0, 8);
+        const patterns = filteredResults.filter(r => r.category === "pattern" && !r.title.includes("差分学習") && !r.title.includes("修正対比")).slice(0, 5);
         const phrases = filteredResults.filter(r => r.category === "phrase").slice(0, 6);
 
         const used = [...diffLearned, ...correctionPairs, ...critical, ...patterns, ...phrases];
@@ -773,7 +825,8 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
 
   const stateDiffList = sortConfirmedFirst(stateDiff ?? []);
   const globalDiffDeduped = sortConfirmedFirst((globalDiff ?? []).filter(g => !stateDiffList.some(s => s.content === g.content)));
-  const diffLearned = [...stateDiffList, ...globalDiffDeduped].slice(0, 8);
+  // ナレッジ洪水対策: 差分学習は最大5件（pgvector経路と同じ上限）
+  const diffLearned = [...stateDiffList, ...globalDiffDeduped].slice(0, 5);
 
   const correctionList = sortConfirmedFirst(correctionPairs ?? []);
   const stateSpecificList = sortConfirmedFirst(stateSpecific ?? []);
@@ -790,9 +843,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   // 使用追跡（fire-and-forget）
   const usedIds = [
     ...diffLearned,
-    ...correctionList.slice(0, 8),
-    ...critical.slice(0, 15),
-    ...patterns.slice(0, 8),
+    ...correctionList.slice(0, 5),
+    ...critical.slice(0, 8),
+    ...patterns.slice(0, 5),
     ...phrases.slice(0, 6),
   ].map(k => (k as KnowledgeRow).id).filter(Boolean);
   const allFallbackIds = [...usedIds, ...lossIds];
@@ -804,13 +857,13 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
     sections.push("【🔴 AIが過去に間違えたパターン（最優先・必ず守る）】\n" + diffLearned.map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
   }
   if (correctionList.length > 0) {
-    sections.push("【🟠 スタッフが修正したポイント（このフェーズ専用）】\n" + correctionList.slice(0, 8).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
+    sections.push("【🟠 スタッフが修正したポイント（このフェーズ専用）】\n" + correctionList.slice(0, 5).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
   }
   if (critical.length > 0) {
-    sections.push("【⚠️ 絶対ルール】\n" + critical.slice(0, 15).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
+    sections.push("【⚠️ 絶対ルール】\n" + critical.slice(0, 8).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
   }
   if (patterns.length > 0) {
-    sections.push("【スモラの営業パターン・原則】\n" + patterns.slice(0, 8).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
+    sections.push("【スモラの営業パターン・原則】\n" + patterns.slice(0, 5).map((k, i) => `${i + 1}. ${k.content}`).join("\n"));
   }
   if (phrases.length > 0) {
     sections.push("【スモラのフレーズ】\n" + phrases.slice(0, 6).map(k => `「${k.content}」`).join("　"));
@@ -961,6 +1014,30 @@ function extractPreferredName(
   return lineDisplayName.replace(/さん$/, "");
 }
 
+// ─── conversationId → ai_summary_json 取得（regex往復の廃止・構造化サマリー直接参照）──
+// クライアントが summaryJson を渡さない場合のフォールバック。
+// conversations.property_customer_id 経由で property_customers.ai_summary_json を引く
+async function fetchSummaryJsonByConversation(conversationId: string): Promise<ReplySummaryJson | null> {
+  try {
+    const { data: conv } = await supabase
+      .from("conversations")
+      .select("property_customer_id")
+      .eq("id", conversationId)
+      .single();
+    const pcId = (conv as { property_customer_id?: string | null } | null)?.property_customer_id;
+    if (!pcId) return null;
+    const { data: pc } = await supabase
+      .from("property_customers")
+      .select("ai_summary_json")
+      .eq("id", pcId)
+      .single();
+    return ((pc as { ai_summary_json?: ReplySummaryJson | null } | null)?.ai_summary_json) ?? null;
+  } catch (err) {
+    console.warn("[generate-reply] ai_summary_json取得失敗 — テキストregexフォールバックで続行:", err);
+    return null;
+  }
+}
+
 // ─── POST ────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   if (!process.env.ANTHROPIC_API_KEY) {
@@ -972,6 +1049,7 @@ export async function POST(req: NextRequest) {
   let screenshotBase64: string | undefined, screenshotMediaType: string | undefined;
   let viewingNote = "";
   let customerStructured: CustomerStructured | undefined;
+  let bodySummaryJson: ReplySummaryJson | undefined;
   // conversationId が渡された場合のみ、成功時に ai_draft 保存 + draft_pending_at クリア、
   // 失敗時にも draft_pending_at をクリアする（毎分Cronが永遠に再試行する永続pendingバグの防止）
   let conversationId = "";
@@ -983,6 +1061,7 @@ export async function POST(req: NextRequest) {
       recentMessages?: RecentMessage[];
       customerConditions?: string;
       customerSummary?: string;
+      summaryJson?: ReplySummaryJson;
       customerStructured?: CustomerStructured;
       replyHint?: string;
       viewingNote?: string;
@@ -1000,6 +1079,7 @@ export async function POST(req: NextRequest) {
     customerName = extractPreferredName(recentMessages, customerName);
     customerConditions = body.customerConditions || "";
     customerSummary = body.customerSummary || "";
+    bodySummaryJson = body.summaryJson;
     customerStructured = body.customerStructured;
     replyHint = body.replyHint || "";
     // アクティブタスク状態をreplyHintに反映（動的コンテキスト注入）
@@ -1172,7 +1252,7 @@ export async function POST(req: NextRequest) {
 
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
     // 各フェッチはエラーでも生成を止めない（knowledgeなし・実例なしで生成続行）
-    const [knowledge, examples, phrases, autoSummary, dbRules] = await Promise.all([
+    const [knowledge, examples, phrases, autoSummary, dbRules, fetchedSummaryJson] = await Promise.all([
       fetchKnowledge(currentState, message, analysisContext, conversationId)
         .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return ""; }),
       fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext)
@@ -1185,8 +1265,15 @@ export async function POST(req: NextRequest) {
         : Promise.resolve(""),
       fetchPromptRules("generate_reply", { conversation_state: currentState })
         .catch((err) => { console.error("[generate-reply] fetchPromptRules失敗 — ルールなしで生成続行:", err); return ""; }),
+      // 構造化サマリー: body未指定かつconversationIdありならDBから直接取得（regex往復の廃止）
+      !bodySummaryJson && conversationId
+        ? fetchSummaryJsonByConversation(conversationId)
+        : Promise.resolve(null),
     ]);
     const resolvedSummary = customerSummary || autoSummary;
+    const resolvedSummaryJson = bodySummaryJson ?? fetchedSummaryJson ?? undefined;
+    // 顧客文体ミラーリング（会話ログの顧客メッセージから純ロジックで算出）
+    const customerStyleNote = buildCustomerStyleNote(recentMessages);
 
     // JST 当日（0:00〜23:59）で挨拶済み判定
     // createdAt が含まれるメッセージだけを使用（タイムスタンプなしはフォールバックへ）
@@ -1216,7 +1303,8 @@ export async function POST(req: NextRequest) {
       message, customerName, history, currentState,
       analysis, knowledge, examples, phrases, customerConditions, resolvedSummary,
       promptOverrides, isFollowUp, replyHint, alreadyGreetedToday,
-      isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules
+      isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules,
+      resolvedSummaryJson, customerStyleNote
     );
     const genStream = generationModel.stream(messages);
 
