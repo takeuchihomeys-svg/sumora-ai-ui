@@ -472,8 +472,9 @@ ${examples || "  (なし)"}
     : "";
 
   // フロー運用ガイドは「## 指示」やJSON出力指示より前に注入する（後置するとフォーマット遵守が弱まる）
+  // 改善15: analyze-aix-flow の出力上限（800字指示・max_tokens 1000）と整合させて末尾切れを防ぐ
   const flowGuideSection = `## AIXフロー運用ガイド（学習済み）
-${aixFlowGuide.slice(0, 800)}
+${aixFlowGuide.slice(0, 1000)}
 
 `;
 

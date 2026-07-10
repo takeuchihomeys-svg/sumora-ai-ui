@@ -24,9 +24,10 @@ export async function POST(req: NextRequest) {
     const since = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
     const today = jstDateStr();
 
-    // 1. 直近30日のAIX使用ログ・2. 成約パターン・3. 蓄積ノウハウ を並列取得
+    // 1. 直近30日のAIX使用ログ・2. 成約パターン・3. 蓄積ノウハウ・4. readinessスナップショット を並列取得
     //    B07: ③を追加することで analyze-diffs/auto-knowledge が蓄積した原則/修正ルールをガイドに反映する
-    const [{ data: usageLogs }, { data: patterns }, { data: principles }] = await Promise.all([
+    //    改善12: ④で週次スナップショットから採択率トレンド（改善中/悪化中）を検知してガイド生成に注入する
+    const [{ data: usageLogs }, { data: patterns }, { data: principles }, { data: readinessSnaps }] = await Promise.all([
       supabase
         .from("aix_usage_logs")
         .select("aix_type, template_name, template_category, conversation_id, conversation_status, suggested_action, was_edited")
@@ -51,6 +52,14 @@ export async function POST(req: NextRequest) {
         .gte("importance", 7)
         .order("apply_count", { ascending: false })
         .limit(10),
+      // 改善12: 直近4週分の自動返信化準備スナップショット（週次cronがaix_type別に採択率を記録）
+      // report_date降順で取得し、後段でaix_type別に最新2件を比較してトレンド判定する
+      supabase
+        .from("aix_readiness_snapshots")
+        .select("aix_type, report_date, acceptance_rate")
+        .gte("report_date", new Date(Date.now() - 28 * 24 * 3600 * 1000).toISOString().slice(0, 10))
+        .order("report_date", { ascending: false })
+        .limit(100),
     ]);
 
     // 3. AIX種類ごとの使用回数・テンプレート別・成約率・予測一致率の集計
@@ -166,10 +175,42 @@ export async function POST(req: NextRequest) {
       })
       .join("\n") || "蓄積ノウハウなし";
 
+    // 改善12: aix_type別に最新2件（別日付）のacceptance_rateを比較して採択率トレンドを判定
+    // スナップショットが2件未満（またはrateがnull=サンプル不足）のaix_typeは「データ蓄積中」扱い
+    type ReadinessSnap = { aix_type: string; report_date: string; acceptance_rate: number | null };
+    const snapsByType: Record<string, ReadinessSnap[]> = {};
+    for (const s of (readinessSnaps ?? []) as ReadinessSnap[]) {
+      const arr = snapsByType[s.aix_type] ?? [];
+      // report_date降順で取得済み。同一日付の重複は無視して最新2件のみ保持
+      if (arr.length < 2 && !arr.some((x) => x.report_date === s.report_date)) arr.push(s);
+      snapsByType[s.aix_type] = arr;
+    }
+    const improving: string[] = [];
+    const declining: string[] = [];
+    const accumulating: string[] = [];
+    for (const [aixType, snaps] of Object.entries(snapsByType)) {
+      if (snaps.length < 2 || snaps[0].acceptance_rate === null || snaps[1].acceptance_rate === null) {
+        accumulating.push(aixType);
+        continue;
+      }
+      const latest = Number(snaps[0].acceptance_rate);
+      const prevRate = Number(snaps[1].acceptance_rate);
+      const label = `${aixType}（採択率${Math.round(prevRate * 100)}%→${Math.round(latest * 100)}%）`;
+      if (latest > prevRate) improving.push(label);
+      else if (latest < prevRate) declining.push(label);
+      // 横ばい（latest === prevRate）は特筆事項なしとして省略
+    }
+    const trendText = [
+      improving.length > 0 ? `改善中: ${improving.join(", ")}` : "",
+      declining.length > 0 ? `悪化中: ${declining.join(", ")}` : "",
+      accumulating.length > 0 ? `データ蓄積中（比較可能なスナップショット2件未満）: ${accumulating.join(", ")}` : "",
+    ].filter(Boolean).join("\n") || "トレンドデータなし（週次スナップショット蓄積中）";
+
     // 4. Claude Opus 4.8で分析・ガイド更新
     const resp = await anthropic.messages.create({
       model: "claude-opus-4-8",
-      max_tokens: 700,
+      // 改善15: 消費側 suggest-next-action の flowGuide.slice(0, 1000) と整合させる（800字指示+見出しでも切れない余裕）
+      max_tokens: 1000,
       messages: [{
         role: "user",
         content: `以下の実際の使用データを分析して、スモラの賃貸仲介スタッフ向け「AIXボタン誘導ガイド」を更新してください。
@@ -189,6 +230,9 @@ ${matchRateText}
 【AIX別の編集率（AIが生成した文をスタッフが編集して送った割合・少ないほど自動返信化に近い）】
 ${editRateText}
 
+【自動返信化トレンド（週次スナップショットの採択率推移・aix_type別）】
+${trendText}
+
 【直近の成約パターン（内覧・申込が決まった会話から学習）】
 ${patternsText}
 
@@ -204,7 +248,7 @@ ${principlesText}
 - meeting_place（待ち合わせ）: 内覧確定後の待ち合わせ案内
 - application_push（申込へ！）: 申込を促す
 
-実際の使用データに基づいて、以下の形式でガイドを出力してください（500文字以内）:
+実際の使用データに基づいて、以下の形式でガイドを出力してください（800字以内）:
 
 【AIXフロー誘導ガイド — 更新日: ${today}】
 

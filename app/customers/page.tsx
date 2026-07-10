@@ -286,6 +286,16 @@ export default function CustomersPage() {
   const [loadingMsgs, setLoadingMsgs] = useState<Set<string>>(new Set());
   const [msgErrors, setMsgErrors] = useState<Set<string>>(new Set());
 
+  // 改善13: 会話ログの自動スクロール用。顧客IDごとにスクロールコンテナのDOM参照を保持し、
+  // メッセージ読み込み完了（msgCache更新）時に最下部（最新メッセージ）へスクロールする
+  const msgLogRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  useEffect(() => {
+    for (const id of Object.keys(msgCache)) {
+      const el = msgLogRefs.current[id];
+      if (el) el.scrollTop = el.scrollHeight;
+    }
+  }, [msgCache]);
+
   const fetchCustomers = async () => {
     try {
       const res = await fetch("/api/property-customers");
@@ -1332,24 +1342,71 @@ export default function CustomersPage() {
                                   )}
                                 </div>
                               ) : (
-                                /* 会話ログ */
+                                /* 会話ログ（改善13: 自動スクロール・日付セパレータ・送信者ラベル） */
                                 <div className="px-4 pb-3 pt-2">
-                                  <div className="space-y-1 max-h-60 overflow-y-auto">
+                                  <div
+                                    ref={(el) => {
+                                      // マウント時（タブを開いた瞬間）は即座に最下部へ。以降の更新はuseEffect側が担当
+                                      const prevEl = msgLogRefs.current[c.id];
+                                      msgLogRefs.current[c.id] = el;
+                                      if (el && el !== prevEl) el.scrollTop = el.scrollHeight;
+                                    }}
+                                    className="space-y-1 max-h-60 overflow-y-auto"
+                                  >
                                     {loadingMsgs.has(c.id) && msgCache[c.id] === undefined
                                       ? <p className="text-xs text-gray-400 text-center py-4">読み込み中...</p>
                                       : msgErrors.has(c.id)
-                                        ? <p className="text-xs text-gray-400 text-center py-4">メッセージを取得できませんでした</p>
+                                        ? (
+                                          <div className="text-center py-4">
+                                            <p className="text-xs text-gray-400">⚠️ メッセージを取得できませんでした</p>
+                                            <p className="text-[10px] text-gray-300 mt-0.5">通信状況を確認して再度お試しください</p>
+                                            {convId && (
+                                              <button
+                                                onClick={(e) => { e.stopPropagation(); void loadMessages(c.id, convId); }}
+                                                className="mt-2 rounded-lg border border-gray-200 bg-white px-3 py-1 text-[11px] font-medium text-gray-500 active:opacity-70"
+                                              >再読み込み</button>
+                                            )}
+                                          </div>
+                                        )
                                         : (msgCache[c.id] ?? []).length === 0
-                                        ? <p className="text-xs text-gray-400 text-center py-4">メッセージがありません</p>
-                                        : msgCache[c.id].map(msg => (
-                                            <div key={msg.id} className={`flex ${msg.sender === "customer" ? "justify-start" : "justify-end"}`}>
-                                              <div className={`max-w-[75%] rounded-lg px-2 py-1 text-xs whitespace-pre-wrap break-words ${
-                                                msg.sender === "customer" ? "bg-gray-100 text-gray-800" : "bg-blue-100 text-blue-800"
-                                              }`}>
-                                                {msg.text ?? "（画像）"}
+                                        ? (
+                                          <div className="text-center py-4">
+                                            <p className="text-xs text-gray-400">💬 まだメッセージがありません</p>
+                                            <p className="text-[10px] text-gray-300 mt-0.5">LINEでやり取りが始まるとここに表示されます</p>
+                                          </div>
+                                        )
+                                        : msgCache[c.id].map((msg, i, arr) => {
+                                            const d = new Date(msg.created_at);
+                                            const prevD = i > 0 ? new Date(arr[i - 1].created_at) : null;
+                                            // 日付（年/月/日）が変わったタイミングでセパレータを表示
+                                            const showDate = !prevD
+                                              || prevD.getFullYear() !== d.getFullYear()
+                                              || prevD.getMonth() !== d.getMonth()
+                                              || prevD.getDate() !== d.getDate();
+                                            // 送信者が切り替わった（または日付が変わった）ときだけラベルを表示
+                                            const showSender = showDate || arr[i - 1].sender !== msg.sender;
+                                            const isCustomer = msg.sender === "customer";
+                                            const dateLabel = `${d.getFullYear() !== new Date().getFullYear() ? `${d.getFullYear()}/` : ""}${d.getMonth() + 1}/${d.getDate()}`;
+                                            return (
+                                              <div key={msg.id}>
+                                                {showDate && (
+                                                  <div className="text-center text-[10px] text-gray-400 my-1">{dateLabel}</div>
+                                                )}
+                                                {showSender && (
+                                                  <div className={`text-[9px] text-gray-400 mb-0.5 ${isCustomer ? "text-left pl-1" : "text-right pr-1"}`}>
+                                                    {isCustomer ? "お客様" : "スタッフ"}
+                                                  </div>
+                                                )}
+                                                <div className={`flex ${isCustomer ? "justify-start" : "justify-end"}`}>
+                                                  <div className={`max-w-[75%] rounded-lg px-2 py-1 text-xs whitespace-pre-wrap break-words ${
+                                                    isCustomer ? "bg-gray-100 text-gray-800" : "bg-blue-100 text-blue-800"
+                                                  }`}>
+                                                    {msg.text ?? "（画像）"}
+                                                  </div>
+                                                </div>
                                               </div>
-                                            </div>
-                                          ))
+                                            );
+                                          })
                                     }
                                   </div>
                                 </div>
