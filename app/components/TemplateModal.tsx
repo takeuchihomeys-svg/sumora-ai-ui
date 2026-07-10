@@ -194,9 +194,9 @@ interface TemplateModalProps {
   };
   // 会話ID（テンプレート選択ログ記録用）
   conversationId?: string;
-  // CHAIN-1: suggest-next-action の aix_template_chain_stats 由来の推奨テンプレID。
-  // このIDのテンプレを最上位に昇格して「この流れの定番」バッジを表示する
-  priorityTemplateId?: string | null;
+  // CHAIN-1/CHAIN-2: suggest-next-action 由来の推奨テンプレID配列（送る順番の定番シーケンス）。
+  // 配列順で最上位に昇格し、1番目に「🎯 この流れの定番」、2番目以降に「📋 次に続けて送ることが多い」バッジを表示する
+  priorityTemplateIds?: string[] | null;
 }
 
 const AVAIL_CHECK_TYPES = [
@@ -296,7 +296,7 @@ function stripViewingSubTag(label: string): string {
 
 export default function TemplateModal({
   onClose, onSelect, onOpenAixWithFocus, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword, highlightLabel, suggestedCategory, suggestedColor, suggestedLabel, pendingScheduledMessages, staffMessagedToday, initialSearch,
-  initialTemplates, onCacheUpdate, templates: templatesProp, onRefresh, postAixContext, conversationId, priorityTemplateId,
+  initialTemplates, onCacheUpdate, templates: templatesProp, onRefresh, postAixContext, conversationId, priorityTemplateIds,
 }: TemplateModalProps) {
   const [templates, setTemplates] = useState<Template[]>(templatesProp ?? initialTemplates ?? []);
   // 親からのデータ（props/キャッシュ）があれば即時表示、なければローディング表示
@@ -655,10 +655,15 @@ export default function TemplateModal({
   const scenePickCount = (t: Template): number =>
     conversationState && t.status_pick_stats ? (t.status_pick_stats[conversationState] ?? 0) : 0;
   const compareTemplates = (a: Template, b: Template) => {
-    // CHAIN-1: AIX→テンプレのチェーン統計で推奨されたテンプレを最優先で昇格
-    if (priorityTemplateId) {
-      if (a.id === priorityTemplateId && b.id !== priorityTemplateId) return -1;
-      if (b.id === priorityTemplateId && a.id !== priorityTemplateId) return 1;
+    // CHAIN-1/CHAIN-2: AIX→テンプレのチェーン統計で推奨されたテンプレを配列順（=送る順番）で最優先昇格
+    if (priorityTemplateIds?.length) {
+      const ai = priorityTemplateIds.indexOf(a.id);
+      const bi = priorityTemplateIds.indexOf(b.id);
+      if (ai !== -1 || bi !== -1) {
+        if (ai === -1) return 1;
+        if (bi === -1) return -1;
+        if (ai !== bi) return ai - bi;
+      }
     }
     // H4: このシーン（ステータス）でよく送信されているテンプレを最上部に昇格
     const sceneDiff = scenePickCount(b) - scenePickCount(a);
@@ -1622,8 +1627,11 @@ export default function TemplateModal({
                           {isHighlighted && (
                             <span className="shrink-0 rounded-full bg-orange-400 px-2 py-0.5 text-[10px] font-bold text-white">{highlightLabel ?? "💡 次のアクション"}</span>
                           )}
-                          {priorityTemplateId === tmpl.id && !aiRec && (
+                          {priorityTemplateIds?.[0] === tmpl.id && !aiRec && (
                             <span className="shrink-0 rounded-full bg-[#7B1FA2] px-2 py-0.5 text-[10px] font-bold text-white">🎯 この流れの定番</span>
+                          )}
+                          {(priorityTemplateIds ? priorityTemplateIds.indexOf(tmpl.id) : -1) >= 1 && !aiRec && (
+                            <span className="shrink-0 rounded-full bg-[#0D9488] px-2 py-0.5 text-[10px] font-bold text-white">📋 次に続けて送ることが多い</span>
                           )}
                           {scenePicks > 0 && !aiRec && (
                             <span

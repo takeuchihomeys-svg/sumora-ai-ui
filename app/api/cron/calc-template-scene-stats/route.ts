@@ -25,7 +25,7 @@ async function run() {
   // テンプレ選択ログ（select フェーズ全件。sent 判定は final_sent_text の有無で行う）
   const { data: logs, error } = await supabase
     .from("template_selection_logs")
-    .select("template_id, conversation_status, aix_action_type, picker_mode, was_adapted, final_sent_text")
+    .select("template_id, conversation_status, aix_action_type, picker_mode, was_adapted, final_sent_text, prev_template_id, aix_session_id, sequence_no")
     .not("template_id", "is", null)
     .gte("created_at", since90d)
     .limit(10000);
@@ -161,6 +161,40 @@ async function run() {
     { onConflict: "key" }
   );
 
+  // ---- CHAIN-2: テンプレート連続送信の遷移集計 ----
+  // 「テンプレAを送った直後にテンプレBを送る」頻度を prev_template_id から集計し、
+  // ai_prompts key=template_chain_transitions に保存する。
+  // suggest-next-action がここから recommended_template_sequence（送る順番の定番）を導出する。
+  // ※ prev_template_id はクライアントが「同一AIXセッション内で直前に実送信したテンプレID」を記録したもの。
+  //   送信確定した（final_sent_text あり）ログのみ遷移としてカウントする。
+  const transitionCounts: Record<string, Record<string, number>> = {}; // from → { to: count }
+  for (const log of logs ?? []) {
+    const prev = log.prev_template_id as string | null;
+    const tid = log.template_id as string;
+    if (!prev || !tid || prev === tid || !log.final_sent_text) continue;
+    transitionCounts[prev] ??= {};
+    transitionCounts[prev][tid] = (transitionCounts[prev][tid] ?? 0) + 1;
+  }
+  // 各テンプレの最頻 next を抽出（同数タイは template_id 昇順で決定的に）
+  const transitions: Record<string, { next: string; count: number }> = {};
+  for (const [from, tos] of Object.entries(transitionCounts)) {
+    const best = Object.entries(tos).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+    if (best) transitions[from] = { next: best[0], count: best[1] };
+  }
+
+  await supabase.from("ai_prompts").upsert(
+    {
+      key: "template_chain_transitions",
+      label: "テンプレ連続送信 遷移統計",
+      content: JSON.stringify({
+        updated: new Date().toISOString(),
+        transitions,
+      }),
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "key" }
+  );
+
   // 集計サマリーを ai_prompts に保存（俯瞰確認用）
   await supabase.from("ai_prompts").upsert(
     {
@@ -184,6 +218,7 @@ async function run() {
     templates_updated: updated,
     chain_combos: chains.length,
     chain_recommended_scopes: Object.keys(recommended).length,
+    template_transitions: Object.keys(transitions).length,
     aix_logs_error: aixError?.message ?? null,
     errors: updateErrors,
   });

@@ -544,6 +544,12 @@ ALTER TABLE template_selection_logs ADD COLUMN IF NOT EXISTS open_context TEXT;
 -- AIXピッカーのサブモード（check_pattern / app_sub_mode / send_mode / followup submode / pickup type）
 ALTER TABLE template_selection_logs ADD COLUMN IF NOT EXISTS picker_mode TEXT;
 CREATE INDEX IF NOT EXISTS idx_tsl_aix_chain ON template_selection_logs(aix_action_type, picker_mode) WHERE aix_action_type IS NOT NULL;
+-- CHAIN-2: テンプレート連続送信のチェーン学習（同一AIXセッション内の何番目か・直前テンプレ・セッショングルーピングID）
+ALTER TABLE template_selection_logs ADD COLUMN IF NOT EXISTS sequence_no INTEGER DEFAULT 1;
+ALTER TABLE template_selection_logs ADD COLUMN IF NOT EXISTS prev_template_id UUID;
+ALTER TABLE template_selection_logs ADD COLUMN IF NOT EXISTS aix_session_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_tsl_aix_session ON template_selection_logs(aix_session_id) WHERE aix_session_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_tsl_prev_template ON template_selection_logs(prev_template_id) WHERE prev_template_id IS NOT NULL;
 ALTER TABLE template_selection_logs DISABLE ROW LEVEL SECURITY;
 
 -- AI最適化後修正パターンの学習ルールテーブル（カテゴリ別・自動蓄積）

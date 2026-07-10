@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
   // メッセージ・顧客（property_customer_id で引く）・採択率（毎日 update-action-confidence cron が更新）
   // ・成約貢献率（calc-aix-attribution cron が毎週計算・直近1ヶ月分）を並列取得
   // ※ 改善6: 成約貢献率は Sonnet フォールバックだけでなくチェーンルール・キーワードルールにも効かせるため、ここで一度だけ取得する
-  const [{ data: messages }, { data: customer }, { data: acceptanceRows }, { data: attributionRows }, { data: accuracyRows }, { data: submodeRows }, { data: chainStatsRow }] = await Promise.all([
+  const [{ data: messages }, { data: customer }, { data: acceptanceRows }, { data: attributionRows }, { data: accuracyRows }, { data: submodeRows }, { data: chainStatsRow }, { data: chainTransRow }] = await Promise.all([
     supabase.from("messages")
       .select("sender, text, image_url, created_at")
       .eq("conversation_id", conversation_id)
@@ -95,6 +95,12 @@ export async function POST(req: NextRequest) {
       .select("content")
       .eq("key", "aix_template_chain_stats")
       .maybeSingle(),
+    // CHAIN-2: テンプレ連続送信の遷移統計（calc-template-scene-stats cron が週1更新）
+    // transitions[template_id] → { next: 次に最もよく送られるテンプレID, count }
+    supabase.from("ai_prompts")
+      .select("content")
+      .eq("key", "template_chain_transitions")
+      .maybeSingle(),
   ]);
 
   // CHAIN-1: 推奨テンプレマップをパース（status特定 → 全status共通 の順でフォールバック）
@@ -103,6 +109,13 @@ export async function POST(req: NextRequest) {
     const parsed = JSON.parse((chainStatsRow?.content as string | undefined) ?? "{}") as { recommended?: Record<string, string> };
     if (parsed.recommended && typeof parsed.recommended === "object") chainRecommended = parsed.recommended;
   } catch { /* 統計未生成・壊れたJSONは無視（recommended_template_id は null になる） */ }
+
+  // CHAIN-2: テンプレ連続送信の遷移マップをパース
+  let chainTransitions: Record<string, { next: string; count: number }> = {};
+  try {
+    const parsedTrans = JSON.parse((chainTransRow?.content as string | undefined) ?? "{}") as { transitions?: Record<string, { next: string; count: number }> };
+    if (parsedTrans.transitions && typeof parsedTrans.transitions === "object") chainTransitions = parsedTrans.transitions;
+  } catch { /* 統計未生成・壊れたJSONは無視（recommended_template_sequence は先頭1件のみになる） */ }
 
   // H2: SUBMODE_ACCEPT:{action_type}_submode → { rate, n } のマップ（提案レスポンスに添付）
   const subModeStats = Object.fromEntries(
@@ -176,6 +189,30 @@ export async function POST(req: NextRequest) {
     return chainRecommended[`${currentStatus}|${actionType}`] ?? chainRecommended[`*|${actionType}`] ?? null;
   };
 
+  // CHAIN-2: 「このAIXではAを送ってからBを続けて送るのが定番」の連続シーケンスを導出する。
+  // 先頭は CHAIN-1 の recommended_template_id、以降は template_chain_transitions を辿る（最大3件・循環防止・count>=2 のみ）。
+  const recommendedSequenceFor = (actionType: string | null | undefined): Array<{ id: string; seq: number }> | null => {
+    const first = recommendedTemplateFor(actionType);
+    if (!first) return null;
+    const seq: Array<{ id: string; seq: number }> = [{ id: first, seq: 1 }];
+    const visited = new Set<string>([first]);
+    let cur = first;
+    while (seq.length < 3) {
+      const t = chainTransitions[cur];
+      if (!t || t.count < 2 || visited.has(t.next)) break;
+      seq.push({ id: t.next, seq: seq.length + 1 });
+      visited.add(t.next);
+      cur = t.next;
+    }
+    return seq;
+  };
+
+  // 返却レスポンスに付与するテンプレ推奨フィールド（単発ID＋連続シーケンス）をまとめて組み立てる
+  const templateRec = (actionType: string | null | undefined) => ({
+    recommended_template_id: recommendedTemplateFor(actionType),
+    recommended_template_sequence: recommendedSequenceFor(actionType),
+  });
+
   // クライアントが last_aix_action を持っていない場合はDB（aix_usage_logs）から補完
   // ※古すぎるログでチェーンルールが誤発火しないよう直近24時間に限定
   let last_aix_action: string | null = clientLastAixAction ?? null;
@@ -217,12 +254,12 @@ export async function POST(req: NextRequest) {
         : !shouldSuppressAction("viewing_invite") ? "viewing_invite"
         : null;
       if (!nextAction) return NextResponse.json({ action: null, reason: "" });
-      return NextResponse.json({ action: nextAction, reason: nextAction === "estimate_sheet" ? "空室確認後・見積書" : "空室確認後・内覧へ", source: "chain_rule", params: buildParams(nextAction), acceptanceRate: acceptanceRateMap[nextAction] ?? null, sub_mode_stats: subModeStats, recommended_template_id: recommendedTemplateFor(nextAction) });
+      return NextResponse.json({ action: nextAction, reason: nextAction === "estimate_sheet" ? "空室確認後・見積書" : "空室確認後・内覧へ", source: "chain_rule", params: buildParams(nextAction), acceptanceRate: acceptanceRateMap[nextAction] ?? null, sub_mode_stats: subModeStats, ...templateRec(nextAction) });
     }
     if (available === false) {
       // 空室なしが明示された場合のみ → 代替物件送りへ誘導（抑制時は提案なしで確定）
       if (shouldSuppressAction("alternative_send")) return NextResponse.json({ action: null, reason: "" });
-      return NextResponse.json({ action: "alternative_send", reason: "代替物件を送る", source: "chain_rule", params: buildParams("alternative_send"), acceptanceRate: acceptanceRateMap["alternative_send"] ?? null, sub_mode_stats: subModeStats, recommended_template_id: recommendedTemplateFor("alternative_send") });
+      return NextResponse.json({ action: "alternative_send", reason: "代替物件を送る", source: "chain_rule", params: buildParams("alternative_send"), acceptanceRate: acceptanceRateMap["alternative_send"] ?? null, sub_mode_stats: subModeStats, ...templateRec("alternative_send") });
     }
     // available が undefined/null（クライアント未送信）の場合のみ後続フェーズにフォールスルー
   }
@@ -274,7 +311,7 @@ export async function POST(req: NextRequest) {
           params: buildParams(validChainRule.action_type as string),
           acceptanceRate: acceptanceRateMap[validChainRule.action_type as string] ?? null,
           sub_mode_stats: subModeStats,
-          recommended_template_id: recommendedTemplateFor(validChainRule.action_type as string),
+          ...templateRec(validChainRule.action_type as string),
         });
       }
     }
@@ -290,7 +327,7 @@ export async function POST(req: NextRequest) {
       if (shouldSuppressAction("property_send")) {
         return NextResponse.json({ action: null, reason: "" });
       }
-      return NextResponse.json({ action: "property_send", reason: `${Math.floor(daysSince)}日間未返信・追客`, source: "followup_rule", params: buildParams("property_send"), acceptanceRate: acceptanceRateMap["property_send"] ?? null, sub_mode_stats: subModeStats, recommended_template_id: recommendedTemplateFor("property_send") });
+      return NextResponse.json({ action: "property_send", reason: `${Math.floor(daysSince)}日間未返信・追客`, source: "followup_rule", params: buildParams("property_send"), acceptanceRate: acceptanceRateMap["property_send"] ?? null, sub_mode_stats: subModeStats, ...templateRec("property_send") });
     }
     return NextResponse.json({ action: null, reason: "" });
   }
@@ -306,7 +343,7 @@ export async function POST(req: NextRequest) {
       (lastCustomerMsg.includes("出して") || lastCustomerMsg.includes("で出し") || lastCustomerMsg.includes("見積"))) {
     // 状態は確定しているので、抑制時はフォールスルーせず提案なしで確定（P8誤提案防止）
     if (shouldSuppressAction("estimate_sheet")) return NextResponse.json({ action: null, reason: "" });
-    return NextResponse.json({ action: "estimate_sheet", reason: "入居日指定・見積書再送", source: "keyword_hardcode", params: buildParams("estimate_sheet"), acceptanceRate: acceptanceRateMap["estimate_sheet"] ?? null, sub_mode_stats: subModeStats, recommended_template_id: recommendedTemplateFor("estimate_sheet") });
+    return NextResponse.json({ action: "estimate_sheet", reason: "入居日指定・見積書再送", source: "keyword_hardcode", params: buildParams("estimate_sheet"), acceptanceRate: acceptanceRateMap["estimate_sheet"] ?? null, sub_mode_stats: subModeStats, ...templateRec("estimate_sheet") });
   }
 
   // 物件画像・動画・物件URL・空室確認の質問 → 「物件確認した」を提案
@@ -322,7 +359,7 @@ export async function POST(req: NextRequest) {
   const hasAvailabilityQuestion = AVAILABILITY_KEYWORDS.some((kw) => lastCustomerMsg.includes(kw));
   if ((hasPropertyMedia || hasPropertyUrl || hasAvailabilityQuestion) && PROPERTY_CHECK_STATUSES.has(currentStatus)) {
     if (shouldSuppressAction("property_check_result")) return NextResponse.json({ action: null, reason: "" });
-    return NextResponse.json({ action: "property_check_result", reason: hasPropertyMedia ? "物件画像が送られた" : "物件の空室確認依頼", source: "keyword_hardcode", params: buildParams("property_check_result"), acceptanceRate: acceptanceRateMap["property_check_result"] ?? null, sub_mode_stats: subModeStats, recommended_template_id: recommendedTemplateFor("property_check_result") });
+    return NextResponse.json({ action: "property_check_result", reason: hasPropertyMedia ? "物件画像が送られた" : "物件の空室確認依頼", source: "keyword_hardcode", params: buildParams("property_check_result"), acceptanceRate: acceptanceRateMap["property_check_result"] ?? null, sub_mode_stats: subModeStats, ...templateRec("property_check_result") });
   }
 
   // S-5: 費用・内覧・申込キーワード即判定（DBルール不要・Haiku流入削減）
@@ -330,7 +367,7 @@ export async function POST(req: NextRequest) {
   // マッチしたのに採択率で抑制された場合もフォールスルーせず null で確定させる（P8誤提案防止）。
   const keywordHit = (actionType: string, reason: string) => {
     if (shouldSuppressAction(actionType)) return NextResponse.json({ action: null, reason: "" });
-    return NextResponse.json({ action: actionType, reason, source: "keyword_hardcode", params: buildParams(actionType), acceptanceRate: acceptanceRateMap[actionType] ?? null, sub_mode_stats: subModeStats, recommended_template_id: recommendedTemplateFor(actionType) });
+    return NextResponse.json({ action: actionType, reason, source: "keyword_hardcode", params: buildParams(actionType), acceptanceRate: acceptanceRateMap[actionType] ?? null, sub_mode_stats: subModeStats, ...templateRec(actionType) });
   };
   // 申込: 「申込みたい」（送り仮名違い）「決めます」「決めたい」「こちらで申」もカバー（最も後工程＝最優先）
   if (/申し込み.*たい|申込.*したい|申込.*希望|申込みたい|入居申込|決めます|決めたい|こちらで申/.test(lastCustomerMsg)) {
@@ -412,7 +449,7 @@ export async function POST(req: NextRequest) {
           params: buildParams(topValid[0]),
           acceptanceRate: acceptanceRateMap[topValid[0]] ?? null,
           sub_mode_stats: subModeStats,
-          recommended_template_id: recommendedTemplateFor(topValid[0]),
+          ...templateRec(topValid[0]),
         });
       }
     }
@@ -423,7 +460,7 @@ export async function POST(req: NextRequest) {
   // 採択率が30%を下回れば shouldSuppressAction が自動的に抑制する（自己修正）。
   if (currentStatus === "applying") {
     if (shouldSuppressAction("application_push")) return NextResponse.json({ action: null, reason: "" });
-    return NextResponse.json({ action: "application_push", reason: "申込手続きを進める", source: "status_rule", params: buildParams("application_push"), acceptanceRate: acceptanceRateMap["application_push"] ?? null, sub_mode_stats: subModeStats, recommended_template_id: recommendedTemplateFor("application_push") });
+    return NextResponse.json({ action: "application_push", reason: "申込手続きを進める", source: "status_rule", params: buildParams("application_push"), acceptanceRate: acceptanceRateMap["application_push"] ?? null, sub_mode_stats: subModeStats, ...templateRec("application_push") });
   }
 
   // ---- P8フォールバック（Sonnet 4.6 AI判断）----
@@ -613,7 +650,7 @@ ${recentText}
     if (!action) return NextResponse.json({ action: null, reason: result.reason ?? "" });
     // Sonnet が提案したアクションも採択率が 30% 未満なら抑制
     if (shouldSuppressAction(action)) return NextResponse.json({ action: null, reason: "" });
-    return NextResponse.json({ action, reason: result.reason ?? "", source: "ai_fallback", params: buildParams(action), acceptanceRate: acceptanceRateMap[action] ?? null, sub_mode_stats: subModeStats, recommended_template_id: recommendedTemplateFor(action) });
+    return NextResponse.json({ action, reason: result.reason ?? "", source: "ai_fallback", params: buildParams(action), acceptanceRate: acceptanceRateMap[action] ?? null, sub_mode_stats: subModeStats, ...templateRec(action) });
   } catch (e) {
     console.error("[suggest-next-action] Sonnet 呼び出しに失敗:", e);
     return NextResponse.json({ action: null, reason: "" });

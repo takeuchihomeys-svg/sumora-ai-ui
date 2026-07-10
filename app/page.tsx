@@ -573,7 +573,7 @@ export default function Home() {
   const [dismissedApplyStep2Ids, setDismissedApplyStep2Ids] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedApplyStep2Ids") || "[]") as string[]); } catch { return new Set(); }
   });
-  const [templateOpenContext, setTemplateOpenContext] = useState<null | "apply_step1" | "apply_step2" | "viewing_follow" | "next_numbered" | "post_aix">(null);
+  const [templateOpenContext, setTemplateOpenContext] = useState<null | "apply_step1" | "apply_step2" | "viewing_follow" | "next_numbered" | "post_aix" | "chain_next">(null);
   // AIX物件オススメで退去予定が検知されたときに保持（テンプレート一覧ハイライト用）
   const [detectedVacatingDate, setDetectedVacatingDate] = useState<string | null>(null);
   const [suggestNextTemplateMap, setSuggestNextTemplateMap] = useState<Record<string, { num: string; category: string }>>(() => {
@@ -587,6 +587,9 @@ export default function Home() {
   // actionType / sentMessage は「AIおすすめテンプレ」（recommend-templates API）のコンテキストとして使用
   const [postAixTemplateMap, setPostAixTemplateMap] = useState<Record<string, { category: string; color: string; actionType?: string; sentMessage?: string }>>({});
   const [dismissedPostAixTemplateIds, setDismissedPostAixTemplateIds] = useState<Set<string>>(new Set());
+  // CHAIN-2: テンプレ送信後、学習済みシーケンス（recommended_template_sequence）の次テンプレを誘導するバナー（会話ID → 次テンプレID）
+  const [chainNextTemplateMap, setChainNextTemplateMap] = useState<Record<string, string>>({});
+  const [dismissedChainNextIds, setDismissedChainNextIds] = useState<Set<string>>(new Set());
   // A-2: テンプレートモーダルを閉じる処理の一本化（クローズ時のクリーンアップはここに集約）
   const closeTemplateModal = useCallback(() => {
     setShowTemplateModal(false);
@@ -594,7 +597,7 @@ export default function Home() {
     setPendingNextTemplateInfo(null);
     setTemplateInitialSearch("");
   }, []);
-  const [nextActionMap, setNextActionMap] = useState<Record<string, { action: string | null; reason: string; source?: string; params?: NextActionParams; recommendedTemplateId?: string | null } | null>>({});
+  const [nextActionMap, setNextActionMap] = useState<Record<string, { action: string | null; reason: string; source?: string; params?: NextActionParams; recommendedTemplateId?: string | null; recommendedTemplateSequence?: Array<{ id: string; seq: number }> | null } | null>>({});
   const [dismissedNextActionIds, setDismissedNextActionIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedNextActionIds") || "[]") as string[]); } catch { return new Set(); }
   });
@@ -615,6 +618,11 @@ export default function Home() {
   // CHAIN-1: 会話ごとの直近AIXピッカーサブモード（check_pattern / app_sub_mode / send_mode）。
   // AixModalクローズで aixInit* がリセットされた後の post_aix テンプレ選択時に picker_mode を補完する
   const lastPickerModeByConvRef = useRef<Map<string, string | null>>(new Map());
+  // CHAIN-2: テンプレ連続送信チェーンのセッション管理（会話ID → セッション）。
+  // AIXボタン押下で新規セッションIDを発行し、そこから続く全テンプレ選択に同じIDを付与する。
+  // sentCount = このセッションで実送信済みのテンプレ数（次の選択の sequence_no = sentCount + 1）
+  // lastSentTemplateId = 直前に実送信したテンプレID（次の選択の prev_template_id）
+  const aixSessionByConvRef = useRef<Map<string, { sessionId: string; sentCount: number; lastSentTemplateId: string | null; lastActivityAt: number }>>(new Map());
   const [statusSuggestionMap, setStatusSuggestionMap] = useState<Record<string, { status: string; label: string; reason: string } | null>>({});
   const statusSuggFetchingRef = useRef<Set<string>>(new Set());
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
@@ -760,6 +768,7 @@ export default function Home() {
     wasAdapted: boolean;
     conversationStatus: string;
     convId: string;
+    templateId: string; // CHAIN-2: 送信確定時にチェーンセッションの lastSentTemplateId に反映
   } | null>(null);
   // Effect1（会話切替）がai_draft自動セット済みの場合、Effect2（Realtime）の二重処理を防ぐフラグ
   const suppressAiDraftAutoLoad = useRef(false);
@@ -2934,10 +2943,11 @@ export default function Home() {
           customer_message: convId === selectedConversation.id ? (latestCustomerMessage || "") : "",
         }),
       });
-      const data = await res.json() as { action: string | null; reason: string; source?: string; params?: NextActionParams; recommended_template_id?: string | null };
+      const data = await res.json() as { action: string | null; reason: string; source?: string; params?: NextActionParams; recommended_template_id?: string | null; recommended_template_sequence?: Array<{ id: string; seq: number }> | null };
       // action が null でも reason が有意義な場合（内覧確定等）はバナー表示できるよう保持
-      // CHAIN-1: recommended_template_id（このAIXの後に最頻のテンプレ）も保持 → TemplateModal の priorityTemplateId に使用
-      setNextActionMap((prev) => ({ ...prev, [convId]: (data.action || data.reason?.trim()) ? { action: data.action ?? null, reason: data.reason, source: data.source, params: data.params, recommendedTemplateId: data.recommended_template_id ?? null } : null }));
+      // CHAIN-1: recommended_template_id（このAIXの後に最頻のテンプレ）も保持 → TemplateModal の priorityTemplateIds に使用
+      // CHAIN-2: recommended_template_sequence（A→Bと続けて送る定番の順番）も保持 → 1枚送信後の「次はこれ」誘導に使用
+      setNextActionMap((prev) => ({ ...prev, [convId]: (data.action || data.reason?.trim()) ? { action: data.action ?? null, reason: data.reason, source: data.source, params: data.params, recommendedTemplateId: data.recommended_template_id ?? null, recommendedTemplateSequence: data.recommended_template_sequence ?? null } : null }));
     } catch {
       setNextActionMap((prev) => ({ ...prev, [convId]: null }));
     } finally {
@@ -3437,6 +3447,29 @@ export default function Home() {
             }),
           }).catch(() => {});
         }
+        // CHAIN-2: 送信確定 → チェーンセッションを進める（次のテンプレ選択の sequence_no / prev_template_id に反映）
+        if (meta.templateId) {
+          const chainSession = getOrCreateAixSession(meta.convId);
+          chainSession.sentCount += 1;
+          chainSession.lastSentTemplateId = meta.templateId;
+          chainSession.lastActivityAt = Date.now();
+          // CHAIN-2: AI推奨シーケンス（suggest-next-action の recommended_template_sequence）に沿って
+          // 今送ったテンプレの「次」があれば誘導バナーをセット、シーケンス末尾ならバナーを消す
+          const seqArr = nextActionMap[meta.convId]?.recommendedTemplateSequence;
+          if (seqArr?.length) {
+            const seqIdx = seqArr.findIndex((s) => s.id === meta.templateId);
+            const nextTemplateId = seqIdx >= 0 ? seqArr[seqIdx + 1]?.id : undefined;
+            if (nextTemplateId) {
+              setChainNextTemplateMap((prev) => ({ ...prev, [meta.convId]: nextTemplateId }));
+              setDismissedChainNextIds((prev) => { const n = new Set(prev); n.delete(meta.convId); return n; });
+            } else if (seqIdx >= 0) {
+              setChainNextTemplateMap((prev) => { const n = { ...prev }; delete n[meta.convId]; return n; });
+            }
+          } else if (chainNextTemplateMap[meta.convId] === meta.templateId) {
+            // シーケンス情報が消えた後でも、誘導していたテンプレを送ったらバナーを消す
+            setChainNextTemplateMap((prev) => { const n = { ...prev }; delete n[meta.convId]; return n; });
+          }
+        }
         templateSelectionMetaRef.current = null;
       }
 
@@ -3909,13 +3942,38 @@ export default function Home() {
     }
   };
 
+  // CHAIN-2: テンプレ連続送信チェーンのセッション管理
+  // AIXボタン押下 → 新規セッション発行。テンプレ選択時はセッションが無い/30分無操作なら新規発行（AIXを経由しない連続テンプレも同一セッションで束ねる）
+  const AIX_SESSION_IDLE_MS = 30 * 60 * 1000;
+  const newAixSessionId = () =>
+    (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
+      ? crypto.randomUUID()
+      : `s-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const startAixSession = (convId: string) => {
+    const session = { sessionId: newAixSessionId(), sentCount: 0, lastSentTemplateId: null, lastActivityAt: Date.now() };
+    aixSessionByConvRef.current.set(convId, session);
+    return session;
+  };
+  const getOrCreateAixSession = (convId: string) => {
+    const s = aixSessionByConvRef.current.get(convId);
+    if (s && Date.now() - s.lastActivityAt < AIX_SESSION_IDLE_MS) {
+      s.lastActivityAt = Date.now();
+      return s;
+    }
+    return startAixSession(convId);
+  };
+
   const openAixWithImagePicker = (type: AixActionType) => {
+    // CHAIN-2: AIXボタンを押した瞬間に新しいチェーンセッションを開始
+    if (selectedConversation?.id) startAixSession(selectedConversation.id);
     pendingAixTypeRef.current = type;
     setAixInitialFile(null);
     aixFileInputRef.current?.click();
   };
 
   const openAixDirect = (type: AixActionType) => {
+    // CHAIN-2: AIXボタンを押した瞬間に新しいチェーンセッションを開始
+    if (selectedConversation?.id) startAixSession(selectedConversation.id);
     setAixInitialFile(null);
     setAixModalType(type);
   };
@@ -5888,6 +5946,25 @@ export default function Home() {
                 );
               }
 
+              // P0.6: CHAIN-2 テンプレ連続送信チェーン（1枚目送信後 → 学習済みシーケンスの次テンプレを誘導）
+              const chainNextId = chainNextTemplateMap[id];
+              if (chainNextId && !dismissedChainNextIds.has(id)) {
+                const chainNextTmpl = templateCache.find((t) => t.id === chainNextId);
+                return (
+                  <div className="mx-1 mb-1 rounded-2xl border-2 border-violet-500 bg-violet-50 px-3 py-2 flex items-center gap-2">
+                    <span className="text-[12px] font-bold text-violet-800 flex-1">
+                      <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
+                      次に続けて送る定番{chainNextTmpl ? `「${chainNextTmpl.label}」` : "テンプレ"}
+                    </span>
+                    <button onClick={() => { setTemplateOpenContext("chain_next"); setShowTemplateModal(true); }}
+                      className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                      style={{ background: "linear-gradient(135deg, #7c3aed, #6d28d9)" }}>続きを送る</button>
+                    <button onClick={() => setDismissedChainNextIds((prev) => new Set([...prev, id]))}
+                      className="shrink-0 text-violet-400 text-[11px] font-bold">✕</button>
+                  </div>
+                );
+              }
+
               // P1: 申込②（フロー途中 → 必ず完結させる）
               if (suggestApplyStep2Map[id] && !dismissedApplyStep2Ids.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-pink-500 bg-pink-50 px-3 py-2 flex items-center gap-2">
@@ -7328,12 +7405,15 @@ export default function Home() {
             // CRIT-01修正: 先に PENDING 状態をセットして race condition を防ぐ
             // (fetch の .then() より executeSend が先に動くと null のまま phase=sent が消滅する問題)
             if (templateId) {
+              // CHAIN-2: チェーンセッションを取得（AIX未経由の連続テンプレ送信もここで自動発行して束ねる）
+              const chainSession = getOrCreateAixSession(selectedConversation.id);
               templateSelectionMetaRef.current = {
                 logId: "PENDING",
                 originalText: resolvedText,
                 wasAdapted: wasAdapted ?? false,
                 conversationStatus: selectedConversation.status ?? "unknown",
                 convId: selectedConversation.id,
+                templateId,
               };
               fetch("/api/learn-template-selection", {
                 method: "POST",
@@ -7356,6 +7436,10 @@ export default function Home() {
                   // CHAIN-1: AIXピッカーのサブモード。AixModalクローズ後（post_aix）は直近AIX送信時の値で補完
                   picker_mode: aixInitCheckPattern ?? aixInitAppSubMode ?? aixInitSendMode ?? aixInitFollowupSubMode ?? aixInitialPickupType
                     ?? (templateOpenContext === "post_aix" ? (lastPickerModeByConvRef.current.get(selectedConversation.id) ?? null) : null),
+                  // CHAIN-2: テンプレ連続送信チェーン（同一AIXセッション内の何番目か・直前に実送信したテンプレID）
+                  aix_session_id: chainSession.sessionId,
+                  sequence_no: chainSession.sentCount + 1,
+                  prev_template_id: chainSession.lastSentTemplateId,
                 }),
               }).then((r) => r.json()).then((d: { ok: boolean; log_id?: string }) => {
                 if (d.ok && d.log_id && templateSelectionMetaRef.current?.logId === "PENDING") {
@@ -7402,6 +7486,8 @@ export default function Home() {
           pendingScheduledMessages={scheduledMsgsList.filter(m => m.text)}
           linkedCustomer={linkedCustomerMap[selectedConversation.id]}
           initialCategory={
+            // CHAIN-2: チェーン誘導経由は次テンプレのカテゴリで開く
+            templateOpenContext === "chain_next" ? (templateCache.find((t) => t.id === chainNextTemplateMap[selectedConversation.id])?.category) :
             templateOpenContext === "next_numbered" ? (pendingNextTemplateInfo?.category) :
             templateOpenContext === "post_aix" ? (postAixTemplateMap[selectedConversation.id]?.category) :
             templateOpenContext === "viewing_follow" ? "内覧" :
@@ -7472,7 +7558,18 @@ export default function Home() {
             return meta ? `💡 ${meta.label}がオススメ` : undefined;
           })()}
           conversationId={selectedConversation.id}
-          priorityTemplateId={nextActionMap[selectedConversation.id]?.recommendedTemplateId ?? undefined}
+          priorityTemplateIds={(() => {
+            // CHAIN-2: チェーン誘導バナー経由なら「次のテンプレ」を最優先で昇格
+            const chainNext = chainNextTemplateMap[selectedConversation.id];
+            const seq = nextActionMap[selectedConversation.id]?.recommendedTemplateSequence?.map((s) => s.id);
+            if (templateOpenContext === "chain_next" && chainNext) {
+              return [chainNext, ...(seq ?? []).filter((tid) => tid !== chainNext)];
+            }
+            // AI提案のシーケンス（1番目=この流れの定番、2番目以降=次に続けて送ることが多い）
+            if (seq?.length) return seq;
+            const single = nextActionMap[selectedConversation.id]?.recommendedTemplateId;
+            return single ? [single] : undefined;
+          })()}
         />
       )}
 

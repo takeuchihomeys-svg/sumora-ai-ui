@@ -25,6 +25,10 @@ export async function POST(req: NextRequest) {
       // AIX→テンプレート全チェーン学習: どのバナー/フローから開いたか・どのピッカーサブモードだったか
       open_context?: string;
       picker_mode?: string;
+      // CHAIN-2: テンプレート連続送信のチェーン学習
+      sequence_no?: number;         // 同一AIXセッション内の何番目の送信か（1始まり）
+      prev_template_id?: string;    // 直前に送ったテンプレートID（連続送信の場合のみ）
+      aix_session_id?: string;      // 同一AIXセッションをグルーピングするID
       // sent フェーズ
       final_sent_text?: string;
       was_modified_after_adapt?: boolean;
@@ -57,6 +61,10 @@ export async function POST(req: NextRequest) {
           aix_action_type: body.aix_action_type ?? null,
           open_context: body.open_context ?? null,
           picker_mode: body.picker_mode ?? null,
+          // CHAIN-2: 連続送信チェーン（不正値はデフォルトに落とす）
+          sequence_no: typeof body.sequence_no === "number" && body.sequence_no >= 1 ? Math.floor(body.sequence_no) : 1,
+          prev_template_id: body.prev_template_id ?? null,
+          aix_session_id: body.aix_session_id ?? null,
         })
         .select("id")
         .single();
