@@ -32,7 +32,8 @@ const SYSTEM = `あなたは賃貸仲介の営業アシスタントです。
   "next_action": "今すぐスタッフが打つべき具体的な次の1手を40文字以内で（いつ・何を・どうする）",
   "emotion": "顧客の温度感（前向き/不安/冷めかけ/普通 のいずれか）",
   "urgency": "引越し・入居希望の時期感（今月中/3ヶ月以内/半年以上/未確認 のいずれか）",
-  "style": "顧客メッセージの文体傾向（絵文字多用/短文/ビジネスライク/丁寧/普通 のいずれか）"
+  "style": "顧客メッセージの文体傾向（絵文字多用/短文/ビジネスライク/丁寧/普通 のいずれか）",
+  "personality_profile": "顧客の人間性・行動パターンを100字以内で端的に"
 }
 
 品質ルール：
@@ -52,7 +53,15 @@ const SYSTEM = `あなたは賃貸仲介の営業アシスタントです。
 ・estimate.requested: 初期費用・見積計算を求めているなら true
 ・emotion: 顧客の温度感。会話トーン全体から判断（前向き/不安/冷めかけ/普通）
 ・urgency: 引越し・入居希望の時期感（今月中/3ヶ月以内/半年以上/未確認）
-・style: 顧客メッセージの文体傾向（絵文字多用/短文/ビジネスライク/丁寧/普通）`;
+・style: 顧客メッセージの文体傾向（絵文字多用/短文/ビジネスライク/丁寧/普通）
+
+・personality_profile: 顧客の人間性・コミュニケーション傾向（以下の観点で分析して1つの文字列に凝縮）
+  * response_style: 即レス/ゆっくり/忙しそう/丁寧/短文/絵文字多め 等の傾向
+  * decision_style: 即決型/比較検討型/不安が多い/誰かに相談する/なかなか動かない 等
+  * emotional_trigger: 何に反応するか（値段/立地/初期費用/スタッフの熱量/物件の希少性/安心感 等）
+  * hesitation_pattern: どこで止まりやすいか（物件選び/内覧調整/申込/費用面/保証人 等）
+  * engagement_level: 高（毎日連絡）/中（数日に1回）/低（なかなか返信こない）
+  → 100字以内で端的に。例：「比較検討型・安心感重視・費用面で止まりやすい・数日おきに丁寧な長文」`;
 
 // ── OpenAI 埋め込み生成（成約パターン類似検索用・text-embedding-3-small 1536次元）──
 async function getEmbedding(text: string): Promise<number[] | null> {
@@ -73,34 +82,114 @@ async function getEmbedding(text: string): Promise<number[] | null> {
   }
 }
 
-// 中2: 過去の成約パターンを pgvector 類似検索で取得（顧客条件に似た成約事例を優先注入）
-// ・match_reply_knowledge RPC（query_embedding / match_count / min_importance）を使用
-//   ※ match_ai_reply_knowledge という名前のRPCは存在しないため既存RPCを使用。
-//     match_threshold 相当（similarity >= 0.5）と category='pattern' はクライアント側でフィルタ
-// ・fallback: OPENAI_API_KEY 未設定・embedding 失敗・該当0件の場合は従来の最新5件
-async function fetchWinningPatterns(queryText: string): Promise<Array<{ content: string }>> {
+// ── 文字列類似度（bigram Dice係数）— 人間性プロファイル同士の部分一致スコアリング用 ──
+function bigrams(s: string): Set<string> {
+  const t = s.replace(/[\s・、。/／]/g, "");
+  const set = new Set<string>();
+  for (let i = 0; i < t.length - 1; i++) set.add(t.slice(i, i + 2));
+  return set;
+}
+function diceSimilarity(a: string, b: string): number {
+  const A = bigrams(a);
+  const B = bigrams(b);
+  if (A.size === 0 || B.size === 0) return 0;
+  let inter = 0;
+  for (const g of A) if (B.has(g)) inter++;
+  return (2 * inter) / (A.size + B.size);
+}
+
+// 高5: 成約パターン検索を「人間性・行動パターン中心」に再設計
+// 方針（竹内）: 人間はパターンでだいたい動きが決まっている。家賃・エリア・間取りは2の次。
+// 「今の顧客がどういう人間か」（コミュニケーションスタイル・迷い方・決断の仕方）が似ている
+// 過去の成約事例を引き、「この人タイプには何が刺さったか」を winning_pattern に反映する。
+//
+// 段階1: personality_profile（前回サマリーの人間性プロファイル）で pgvector 類似検索
+//        （profileが無い初回顧客は従来の条件テキストで代用）
+// 段階2: 段階1が3件未満なら winning_pattern_logs の was_correct=true（実際に当たった予測）から
+//        人間性プロファイルの文字列類似度（bigram Dice）で上位3件を補完
+// フォールバック: どちらも0件なら従来の最新5件
+async function fetchWinningPatterns(
+  personalityProfile: string,
+  conditionQueryText: string
+): Promise<Array<{ content: string }>> {
+  const results: Array<{ content: string }> = [];
+  const isWonTitle = (t: string) => /成約パターン|決まった|closed_won/.test(t);
+
+  // ── 段階1: 人間性プロファイルで pgvector 類似検索（match_reply_knowledge RPC）──
+  const queryText = personalityProfile || conditionQueryText;
   if (queryText && process.env.OPENAI_API_KEY) {
     const embedding = await getEmbedding(queryText);
     if (embedding) {
       const { data: vectorHits, error: rpcError } = await supabase.rpc("match_reply_knowledge", {
         query_embedding: embedding,
-        match_count: 40,
-        min_importance: 8,
+        match_count: 8,
+        min_importance: 7,
       }) as {
         data: Array<{ content: string; category: string; title: string; importance: number; similarity: number }> | null;
         error: { message: string } | null;
       };
       if (rpcError) console.warn("[customer-summary] match_reply_knowledge RPC error:", rpcError.message);
       const patterns = (vectorHits ?? [])
-        .filter(r =>
-          r.category === "pattern" &&
-          (r.title ?? "").startsWith("成約パターン") &&
-          (r.similarity ?? 0) >= 0.5
-        )
+        .filter(r => r.category === "pattern" && (r.similarity ?? 0) >= 0.5)
+        // 成約系タイトル（成約パターン/決まった/closed_won）を優先、同格なら類似度順
+        .sort((a, b) => {
+          const aWon = isWonTitle(a.title ?? "") ? 1 : 0;
+          const bWon = isWonTitle(b.title ?? "") ? 1 : 0;
+          if (aWon !== bWon) return bWon - aWon;
+          return (b.similarity ?? 0) - (a.similarity ?? 0);
+        })
         .slice(0, 5);
-      if (patterns.length > 0) return patterns;
+      results.push(...patterns.map(p => ({ content: p.content })));
     }
   }
+
+  // ── 段階2: 3件未満なら winning_pattern_logs の「実際に当たった予測」を人間性類似で補完 ──
+  if (personalityProfile && results.length < 3) {
+    const { data: logs } = await supabase
+      .from("winning_pattern_logs")
+      .select("customer_id, predicted_pattern, personality_profile")
+      .eq("was_correct", true)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    const logRows = (logs ?? []) as Array<{
+      customer_id: string | null;
+      predicted_pattern: string;
+      personality_profile: string | null;
+    }>;
+
+    // personality_profile 未保存の旧レコードは property_customers.ai_summary_json から補完
+    const missingIds = [...new Set(
+      logRows.filter(l => !l.personality_profile && l.customer_id).map(l => l.customer_id as string)
+    )];
+    const profileByCustomer = new Map<string, string>();
+    if (missingIds.length > 0) {
+      const { data: pcs } = await supabase
+        .from("property_customers")
+        .select("id, ai_summary_json")
+        .in("id", missingIds);
+      for (const pc of (pcs ?? []) as Array<{ id: string; ai_summary_json: SummaryJson | null }>) {
+        const prof = pc.ai_summary_json?.personality_profile;
+        if (prof) profileByCustomer.set(pc.id, prof);
+      }
+    }
+
+    const scored = logRows
+      .map(l => {
+        const prof = l.personality_profile
+          ?? (l.customer_id ? profileByCustomer.get(l.customer_id) : undefined)
+          ?? "";
+        return { prof, pattern: l.predicted_pattern, score: prof ? diceSimilarity(personalityProfile, prof) : 0 };
+      })
+      .filter(l => l.score >= 0.15)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
+    results.push(...scored.map(l => ({
+      content: `【人間性が似た顧客で実際に当たった一手】人間性: ${l.prof} → 当たった一手: ${l.pattern}`,
+    })));
+  }
+
+  if (results.length > 0) return results;
+
   // フォールバック: 従来通り最新5件
   const { data } = await supabase
     .from("ai_reply_knowledge")
@@ -132,6 +221,7 @@ export type SummaryJson = {
   emotion?: string;
   urgency?: string;
   style?: string;
+  personality_profile?: string;
 };
 
 // JSON → テキスト変換（generate-reply の ★決まるパターン抽出との後方互換を維持）
@@ -176,6 +266,10 @@ function jsonToText(j: SummaryJson): string {
 
   if (j.style) {
     lines.push(`・文体傾向: ${j.style}`);
+  }
+
+  if (j.personality_profile) {
+    lines.push(`・人間性プロファイル: ${j.personality_profile}`);
   }
 
   if (j.winning_pattern) {
@@ -310,7 +404,19 @@ export async function POST(req: NextRequest) {
       ? `${c.rent_min ? Math.floor(c.rent_min / 10000) + "万〜" : "〜"}${c.rent_max ? Math.floor(c.rent_max / 10000) + "万" : ""}`
       : null;
 
-    // 中2: 顧客プロフィール（条件・こだわり）→ 成約パターン類似検索クエリ（先頭200字）
+    // 高5: 前回サマリーの personality_profile を取得（人間性ベース成約パターン検索の主クエリ）
+    let priorPersonalityProfile = "";
+    if (c.customer_id) {
+      const { data: prevRow } = await supabase
+        .from("property_customers")
+        .select("ai_summary_json")
+        .eq("id", c.customer_id)
+        .single();
+      const prevJson = ((prevRow as { ai_summary_json?: SummaryJson | null } | null)?.ai_summary_json) ?? null;
+      priorPersonalityProfile = prevJson?.personality_profile?.trim() ?? "";
+    }
+
+    // 中2: 顧客プロフィール（条件・こだわり）→ 成約パターン類似検索の副次クエリ（personality_profile が無い初回顧客用・先頭200字）
     const patternQueryText = [
       c.desired_area   && `エリア:${c.desired_area}`,
       c.floor_plan     && `間取り:${c.floor_plan}`,
@@ -323,7 +429,7 @@ export async function POST(req: NextRequest) {
 
     // 過去の成約パターン（pgvector類似検索）・next_action 改善ルール・内覧DB事実 を並列取得
     const [learnedPatterns, nextActionRulesRes, viewingsRes] = await Promise.all([
-      fetchWinningPatterns(patternQueryText)
+      fetchWinningPatterns(priorPersonalityProfile, patternQueryText)
         .catch((err) => { console.warn("[customer-summary] fetchWinningPatterns失敗:", err); return [] as Array<{ content: string }>; }),
       supabase
         .from("ai_reply_knowledge")
@@ -343,10 +449,13 @@ export async function POST(req: NextRequest) {
         : Promise.resolve({ data: null }),
     ]);
 
+    // 高5: 人間性中心の成約パターン注入（家賃・エリアより「どんな人が・何で決めたか」を重視させる）
     const learnedPatternsNote = learnedPatterns.length > 0
-      ? `\n\n【過去の成約パターン（学習済み・最優先で参照）】\n${
+      ? `\n\n【参考: 似た人間性タイプで成約した事例】\n${
           learnedPatterns.map(p => p.content).join("\n---\n")
-        }`
+        }${
+          priorPersonalityProfile ? `\n\nこの顧客の人間性プロファイル: ${priorPersonalityProfile}` : ""
+        }\n\n↑ 家賃・エリアより「どんな人が・何で決めたか」のパターンを重視して winning_pattern を生成すること。`
       : "";
 
     // 中4: viewings に確定レコードがあれば inspection の確定値としてプロンプトに注入
@@ -428,6 +537,8 @@ export async function POST(req: NextRequest) {
           conversation_id: c.conversation_id,
           customer_id: c.customer_id,
           predicted_pattern: summaryJson.winning_pattern,
+          // 高5: 予測時点の人間性プロファイルを一緒に保存（人間性類似の成約事例検索・段階2で使用）
+          personality_profile: summaryJson.personality_profile ?? null,
           actual_outcome: null,
           was_correct: null,
         }).then(() => {}, () => {});

@@ -1098,6 +1098,14 @@ RETURNS void LANGUAGE sql AS $$
   WHERE id = ANY(p_ids);
 $$;
 
+-- 高5: 成約パターン検索の人間性中心化
+-- 成約事例の人間性プロファイルを保存（pgvectorの類似検索をproperty条件ではなく人間性で行うため）
+ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS personality_tags TEXT;
+
+-- winning_pattern_logs: 予測時点の顧客の人間性プロファイルを保存
+-- （customer-summary が INSERT 時に付与。was_correct=true になった行を「人間性が似た顧客で当たった一手」として検索する）
+ALTER TABLE winning_pattern_logs ADD COLUMN IF NOT EXISTS personality_profile TEXT;
+
 `.trim();
 
 export async function GET() {
