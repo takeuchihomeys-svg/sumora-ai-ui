@@ -61,36 +61,6 @@ type ReplySummaryJson = {
   style?: string;
 };
 
-// ─── 顧客文体ミラーリング（純ロジック・LLMコール不要）───────────────────────
-// 顧客メッセージから平均文長・絵文字率・敬語率を算出し、文体ラベルを生成する
-function buildCustomerStyleNote(messages: Array<{ sender: string; text?: string | null }>): string {
-  const customerTexts = messages
-    .filter(m => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
-    .map(m => (m.text as string).trim())
-    .filter(t => t.length > 0);
-  if (customerTexts.length === 0) return "";
-
-  // 平均文長（文字数）
-  const avgLen = customerTexts.reduce((n, t) => n + t.length, 0) / customerTexts.length;
-  // 絵文字使用率（絵文字を含むメッセージ数 / 総メッセージ数）
-  // サロゲートペア絵文字 + 記号系絵文字（U+2600-27BF, U+2B00-2BFF）+ 異体字セレクタ（uフラグ不要の範囲指定）
-  const EMOJI_RE = new RegExp(
-    "[" + String.fromCharCode(0xd83c) + "-" + String.fromCharCode(0xd83e) + "][" + String.fromCharCode(0xdc00) + "-" + String.fromCharCode(0xdfff) + "]" +
-    "|[" + String.fromCharCode(0x2600) + "-" + String.fromCharCode(0x27bf) + String.fromCharCode(0x2b00) + "-" + String.fromCharCode(0x2bff) + "]" +
-    "|" + String.fromCharCode(0xfe0f)
-  );
-  const emojiRate = customerTexts.filter(t => EMOJI_RE.test(t)).length / customerTexts.length;
-  // 敬語率（「です」「ます」「ございます」を含むメッセージ数 / 総メッセージ数）
-  const keigoRate = customerTexts.filter(t => /です|ます|ございます/.test(t)).length / customerTexts.length;
-
-  const labels: string[] = [];
-  labels.push(avgLen < 20 ? "短文中心" : avgLen <= 60 ? "中文" : "長文中心");
-  if (emojiRate > 0.3) labels.push("絵文字多用");
-  if (keigoRate < 0.3) labels.push("カジュアル寄り");
-  else if (keigoRate > 0.7) labels.push("丁寧語中心");
-
-  return `\n【お客様の文体】${labels.join(", ")}\n→ スモラらしい明るさ・絵文字・積極性・感嘆符は常に維持すること。短文のお客様には簡潔に返す、カジュアルなお客様には少し砕けた言い回しにするなど「テンポ・距離感」のみ参考にすること（冷たくしたり敬語を崩しすぎたりしない）`;
-}
 
 // ─── max_tokens 尻切れ検知（ログのみ・レスポンスには影響させない）─────────────
 function warnIfTruncated(stopReason: unknown, inputLength: number): void {
@@ -245,8 +215,7 @@ function buildGenerationMessages(
   viewingNote = "",
   customerStructured?: CustomerStructured,
   dbRules = "",
-  summaryJson?: ReplySummaryJson,
-  customerStyleNote = ""
+  summaryJson?: ReplySummaryJson
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   const jstDay = getJSTDayOfWeek();
@@ -548,7 +517,7 @@ function buildGenerationMessages(
   })();
 
   const prompt = `
-${closingNote}${nameNote}${conditionsNote}${missingConditionsNote}${customerStyleNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}
+${closingNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${approachNote}${staffContextNote}
 
@@ -1282,8 +1251,7 @@ export async function POST(req: NextRequest) {
     ]);
     const resolvedSummary = customerSummary || autoSummary;
     const resolvedSummaryJson = bodySummaryJson ?? fetchedSummaryJson ?? undefined;
-    // 顧客文体ミラーリング（会話ログの顧客メッセージから純ロジックで算出）
-    const customerStyleNote = buildCustomerStyleNote(recentMessages);
+
 
     // JST 当日（0:00〜23:59）で挨拶済み判定
     // createdAt が含まれるメッセージだけを使用（タイムスタンプなしはフォールバックへ）
@@ -1314,7 +1282,7 @@ export async function POST(req: NextRequest) {
       analysis, knowledge, examples, phrases, customerConditions, resolvedSummary,
       promptOverrides, isFollowUp, replyHint, alreadyGreetedToday,
       isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules,
-      resolvedSummaryJson, customerStyleNote
+      resolvedSummaryJson
     );
     // 中6: 顧客の温度感（ai_summary_json.emotion）に応じて生成temperatureを可変にする（Step1分析は temperature:0 のまま）
     const genTemperature = emotionTemperature(resolvedSummaryJson?.emotion);
