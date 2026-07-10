@@ -3084,15 +3084,18 @@ export default function Home() {
   // G-13: 送信確認ダイアログのキャンセル（キャンセルボタン・背景タップ共通）
   // AI下書きの送信を取りやめた場合は学習ログに記録（fire-and-forget）
   const cancelSendConfirm = () => {
-    if (draftIsAi && replyDraft) {
+    // 高1同種修正: 旧camelCase形式は unknown action で全件破棄されていたため snake_case + action:"log" に統一
+    if (draftIsAi && replyDraft && selectedConversation?.id) {
       fetch("/api/learn-action-patterns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          conversationId: selectedConversation?.id,
-          actionType: aixModalType || "unknown",
-          customerMessage: replyTargetCustomerMsgRef.current || latestCustomerMessage || "",
+          action: "log",
+          conversation_status: selectedConversation.status,
+          action_type: aixModalType || "unknown",
           source: "send_cancelled",
+          customer_msg_summary: (replyTargetCustomerMsgRef.current || latestCustomerMessage || "").slice(0, 150),
+          conversation_id: selectedConversation.id,
         }),
       }).catch(() => {});
     }
@@ -3231,17 +3234,23 @@ export default function Home() {
       // 返信したら要対応フラグをクリア
       setFlaggedConvIds((prev) => { const next = new Set(prev); next.delete(selectedConversation.id); return next; });
       // G-14: AI提案バナーを無視して手動送信した場合をログ記録（fire-and-forget）
+      // 高1: APIが期待する snake_case + action:"log" 形式で送る（旧camelCase形式は unknown action で全件破棄されていた）
       {
         const bypassedAction = nextActionMap[selectedConversation.id]?.action;
         if (bypassedAction) {
+          const _bypMsg = replyTargetCustomerMsgRef.current || latestCustomerMessage || "";
           fetch("/api/learn-action-patterns", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              conversationId: selectedConversation.id,
-              actionType: bypassedAction,
-              customerMessage: replyTargetCustomerMsgRef.current || latestCustomerMessage || "",
+              action: "log",
+              conversation_status: newStatus ?? currentStatus,
+              action_type: bypassedAction,
               source: "suggestion_bypassed",
+              customer_msg_summary: _bypMsg.slice(0, 150),
+              predicted_action: bypassedAction,
+              previous_action_type: lastAixByConvRef.current.get(selectedConversation.id) ?? null,
+              conversation_id: selectedConversation.id,
             }),
           }).catch(() => {});
         }
@@ -7591,15 +7600,20 @@ export default function Home() {
               }
               setPendingTemplateSource(null);
               // G-14: 提案と異なるAIXを送った場合はバイパスとしてログ記録（一致時はprediction_matchで記録済み）
+              // 高1: APIが期待する snake_case + action:"log" 形式で送る（旧camelCase形式は unknown action で全件破棄されていた）
               if (_predictedAction && _predictedAction !== aixModalType) {
                 fetch("/api/learn-action-patterns", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
-                    conversationId: selectedConversation.id,
-                    actionType: _predictedAction,
-                    customerMessage: _lastCustomerMsg,
+                    action: "log",
+                    conversation_status: _ns,
+                    action_type: _predictedAction,
                     source: "suggestion_bypassed",
+                    customer_msg_summary: _lastCustomerMsg.slice(0, 150),
+                    predicted_action: _predictedAction,
+                    previous_action_type: _prevAix,
+                    conversation_id: selectedConversation.id,
                   }),
                 }).catch(() => {});
               }

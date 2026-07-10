@@ -17,6 +17,17 @@ const STATUS_LABEL: Record<string, string> = {
 
 const SKIP_STATUSES = new Set(["contract", "lost", "closed_won", "closed_lost"]);
 
+// 高3: 既知 aix_type の正規リスト（ホワイトリスト）。
+// サブモードログ（%_submode 等）から生成された汚染ルールを提案に使わないため、
+// trigger_action_rules 参照時はこのリストに含まれる action_type のみ採用する
+const KNOWN_AIX_TYPES = new Set([
+  "property_send", "viewing_invite", "property_recommendation", "hearing",
+  "follow_up", "application", "document_request", "contract", "greeting",
+  "property_check_result", "estimate_sheet", "meeting_place",
+  "acknowledge_check", "followup_revive", "application_push",
+  "condition_hearing", "alternative_send",
+]);
+
 // アクション別の初期化パラメータ（クライアントのAIXモーダル初期状態に引き継ぐ）
 const ACTION_PARAMS: Record<string, { check_pattern?: string; send_mode?: string }> = {
   property_check_result: { check_pattern: "available" },
@@ -181,9 +192,11 @@ export async function POST(req: NextRequest) {
       .order("action_type", { ascending: true })
       .limit(6);
 
+    // 高3: 既知 aix_type ホワイトリスト外（%_submode 等の汚染ルール）を除外
+    const knownChainRules = (allChainRules || []).filter((r) => KNOWN_AIX_TYPES.has(r.action_type as string));
     // フェーズ特定を優先、なければ汎用にフォールバック
-    const phaseChain = (allChainRules || []).filter((r) => r.keyword === phaseSpecificKeyword);
-    const chainRules = phaseChain.length ? phaseChain : (allChainRules || []).filter((r) => r.keyword === genericKeyword);
+    const phaseChain = knownChainRules.filter((r) => r.keyword === phaseSpecificKeyword);
+    const chainRules = phaseChain.length ? phaseChain : knownChainRules.filter((r) => r.keyword === genericKeyword);
 
     if (chainRules?.length) {
       const CHAIN_REASON: Record<string, string> = {
@@ -294,9 +307,11 @@ export async function POST(req: NextRequest) {
       .limit(500);
 
     if (triggerRules?.length) {
+      // 高3: 既知 aix_type ホワイトリスト外（%_submode 等の汚染ルール）を除外
+      const knownTriggerRules = triggerRules.filter((r) => KNOWN_AIX_TYPES.has(r.action_type as string));
       // キーワードが含まれるルールをスコアリング
       const scores: Record<string, { score: number; topKeyword: string; topConf: number }> = {};
-      for (const rule of triggerRules) {
+      for (const rule of knownTriggerRules) {
         const kw = rule.keyword as string;
         if (lastCustomerMsg.includes(kw)) {
           const a = rule.action_type as string;

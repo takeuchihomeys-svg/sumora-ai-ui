@@ -49,7 +49,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "missing fields" });
     }
     // フロントから渡された source を尊重（提案採択学習ループ用）
-    const ALLOWED_SOURCES = new Set(["manual", "suggestion_accepted", "suggestion_dismissed", "prediction_match", "prediction_mismatch", "send_cancelled", "suggestion_bypassed"]);
+    // 高2: page.tsx が送る全 source を許可（未登録だと manual に化けて学習の重み付けが壊れる）
+    const ALLOWED_SOURCES = new Set(["manual", "suggestion_accepted", "suggestion_dismissed", "prediction_match", "prediction_mismatch", "send_cancelled", "suggestion_bypassed", "prediction_accepted", "prediction_bypassed", "split_draft_used"]);
     const source = body.source && ALLOWED_SOURCES.has(body.source) ? body.source : "manual";
 
     // PA-1: previous_action_type の確実な記録

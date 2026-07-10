@@ -84,11 +84,18 @@ export async function POST(req?: Request) {
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
+  // 高6: order なしだと limit(3000) がDB任意順の3000件になるため、直近90日窓 + created_at 降順で「最新の3000件」を確定させる
+  const NINETY_DAYS_AGO = new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString();
+
   // action_pattern_logs から全データ取得（source で重み付け）
+  // 高3: サブモードログ（viewing_invite_submode 等）は customer_msg_summary にモードキーが入っており n-gram を汚染するため除外
   const { data: logs } = await supabase
     .from("action_pattern_logs")
     .select("action_type, customer_msg_summary, source")
     .not("customer_msg_summary", "is", null)
+    .not("action_type", "like", "%_submode")
+    .gte("created_at", NINETY_DAYS_AGO)
+    .order("created_at", { ascending: false })
     .limit(3000);
 
   if (!logs?.length) return NextResponse.json({ ok: true, learned: 0 });
@@ -180,18 +187,24 @@ export async function POST(req?: Request) {
   let cleaned = 0;
 
   // 1) confidence閾値割れ（confidence < 0.4 かつ occurrence_count < 5）の既存ルールを削除
+  // 高5: SUGGESTION_ACCEPT_RATE（update-action-confidence cron が管理する採択率行）と
+  //      AFTER:%（チェーンルール）は n-gram ルールではないため cleanup 対象から保護する
   {
     const { data: lowRules } = await supabase
       .from("trigger_action_rules")
       .select("keyword")
       .lt("confidence", 0.4)
-      .lt("occurrence_count", 5);
+      .lt("occurrence_count", 5)
+      .not("keyword", "eq", "SUGGESTION_ACCEPT_RATE")
+      .not("keyword", "like", "AFTER:%");
     if (lowRules?.length) {
       const { error } = await supabase
         .from("trigger_action_rules")
         .delete()
         .lt("confidence", 0.4)
-        .lt("occurrence_count", 5);
+        .lt("occurrence_count", 5)
+        .not("keyword", "eq", "SUGGESTION_ACCEPT_RATE")
+        .not("keyword", "like", "AFTER:%");
       if (!error) cleaned += lowRules.length;
     }
   }
@@ -231,15 +244,24 @@ export async function POST(req?: Request) {
   }
 
   // ── AIXチェーンパターン学習: 直前のAIX → 次のAIX ──
+  // 高3: サブモードログ（%_submode）は実際のAIX遷移ではないため集計から除外
+  // 高6: 直近90日窓 + created_at 降順で「最新の3000件」を確定させる
   const { data: chainLogs } = await supabase
     .from("action_pattern_logs")
-    .select("action_type, previous_action_type")
+    .select("action_type, previous_action_type, source")
     .not("previous_action_type", "is", null)
+    .not("action_type", "like", "%_submode")
+    .gte("created_at", NINETY_DAYS_AGO)
+    .order("created_at", { ascending: false })
     .limit(3000);
+
+  // 高4: 却下・キャンセル・バイパス系は「実際に取られた遷移」ではないためチェーン学習から除外
+  const CHAIN_EXCLUDED_SOURCES = new Set(["suggestion_dismissed", "send_cancelled", "suggestion_bypassed", "prediction_bypassed"]);
 
   const chainCount: Record<string, Record<string, number>> = {};
   const prevTotal: Record<string, number> = {};
   for (const log of chainLogs ?? []) {
+    if (CHAIN_EXCLUDED_SOURCES.has((log.source as string) ?? "")) continue;
     const prev = log.previous_action_type as string;
     const curr = log.action_type as string;
     if (!prev || !curr) continue;
