@@ -594,7 +594,7 @@ export default function Home() {
     setPendingNextTemplateInfo(null);
     setTemplateInitialSearch("");
   }, []);
-  const [nextActionMap, setNextActionMap] = useState<Record<string, { action: string | null; reason: string; source?: string; params?: NextActionParams } | null>>({});
+  const [nextActionMap, setNextActionMap] = useState<Record<string, { action: string | null; reason: string; source?: string; params?: NextActionParams; recommendedTemplateId?: string | null } | null>>({});
   const [dismissedNextActionIds, setDismissedNextActionIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedNextActionIds") || "[]") as string[]); } catch { return new Set(); }
   });
@@ -612,6 +612,9 @@ export default function Home() {
   const lastAixLogTextRef = useRef<string | null>(null);
   // 物件確認結果（空室か否か）を会話ごとに保持 → suggest-next-action のチェーンルール分岐に使用
   const propertyAvailableByConvRef = useRef<Map<string, boolean>>(new Map());
+  // CHAIN-1: 会話ごとの直近AIXピッカーサブモード（check_pattern / app_sub_mode / send_mode）。
+  // AixModalクローズで aixInit* がリセットされた後の post_aix テンプレ選択時に picker_mode を補完する
+  const lastPickerModeByConvRef = useRef<Map<string, string | null>>(new Map());
   const [statusSuggestionMap, setStatusSuggestionMap] = useState<Record<string, { status: string; label: string; reason: string } | null>>({});
   const statusSuggFetchingRef = useRef<Set<string>>(new Set());
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
@@ -2931,9 +2934,10 @@ export default function Home() {
           customer_message: convId === selectedConversation.id ? (latestCustomerMessage || "") : "",
         }),
       });
-      const data = await res.json() as { action: string | null; reason: string; source?: string; params?: NextActionParams };
+      const data = await res.json() as { action: string | null; reason: string; source?: string; params?: NextActionParams; recommended_template_id?: string | null };
       // action が null でも reason が有意義な場合（内覧確定等）はバナー表示できるよう保持
-      setNextActionMap((prev) => ({ ...prev, [convId]: (data.action || data.reason?.trim()) ? { action: data.action ?? null, reason: data.reason, source: data.source, params: data.params } : null }));
+      // CHAIN-1: recommended_template_id（このAIXの後に最頻のテンプレ）も保持 → TemplateModal の priorityTemplateId に使用
+      setNextActionMap((prev) => ({ ...prev, [convId]: (data.action || data.reason?.trim()) ? { action: data.action ?? null, reason: data.reason, source: data.source, params: data.params, recommendedTemplateId: data.recommended_template_id ?? null } : null }));
     } catch {
       setNextActionMap((prev) => ({ ...prev, [convId]: null }));
     } finally {
@@ -7347,6 +7351,11 @@ export default function Home() {
                   adapted_text: (wasAdapted ?? false) ? resolvedText.slice(0, 2000) : null,
                   // B5バナー経由（AIXModal閉じた後）は postAixTemplateMap から actionType を補完
                   aix_action_type: activeAixFlow ?? postAixTemplateMap[selectedConversation.id]?.actionType ?? null,
+                  // CHAIN-1: どのバナー/フローからテンプレモーダルを開いたか（AIXフロー中は aix_flow・単独オープンは direct）
+                  open_context: templateOpenContext ?? (activeAixFlow ? "aix_flow" : "direct"),
+                  // CHAIN-1: AIXピッカーのサブモード。AixModalクローズ後（post_aix）は直近AIX送信時の値で補完
+                  picker_mode: aixInitCheckPattern ?? aixInitAppSubMode ?? aixInitSendMode ?? aixInitFollowupSubMode ?? aixInitialPickupType
+                    ?? (templateOpenContext === "post_aix" ? (lastPickerModeByConvRef.current.get(selectedConversation.id) ?? null) : null),
                 }),
               }).then((r) => r.json()).then((d: { ok: boolean; log_id?: string }) => {
                 if (d.ok && d.log_id && templateSelectionMetaRef.current?.logId === "PENDING") {
@@ -7463,6 +7472,7 @@ export default function Home() {
             return meta ? `💡 ${meta.label}がオススメ` : undefined;
           })()}
           conversationId={selectedConversation.id}
+          priorityTemplateId={nextActionMap[selectedConversation.id]?.recommendedTemplateId ?? undefined}
         />
       )}
 
@@ -7583,6 +7593,8 @@ export default function Home() {
               // P4: LINE message id・送信時刻をワンショット消費（予約送信時は未送信なので使わない）
               const _lineSend = meta?.scheduled ? null : lastLineSendRef.current;
               lastLineSendRef.current = null;
+              // CHAIN-1: このAIX送信のピッカーサブモードを保持（post_aixテンプレ選択時の picker_mode 補完用）
+              lastPickerModeByConvRef.current.set(selectedConversation.id, meta?.checkPattern ?? meta?.appSubMode ?? meta?.sendMode ?? null);
               fetch("/api/log-aix-usage", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },

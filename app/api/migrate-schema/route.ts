@@ -539,6 +539,11 @@ CREATE INDEX IF NOT EXISTS idx_tsl_created_at ON template_selection_logs(created
 CREATE INDEX IF NOT EXISTS idx_tsl_recommended_rank ON template_selection_logs(recommended_rank);
 ALTER TABLE template_selection_logs ADD COLUMN IF NOT EXISTS modification_analyzed BOOLEAN DEFAULT false;
 CREATE INDEX IF NOT EXISTS idx_tsl_not_analyzed ON template_selection_logs(modification_analyzed) WHERE modification_analyzed = false;
+-- AIX→テンプレート全チェーン学習: どのバナー/フローからモーダルを開いたか（post_aix / apply_step1 / aix_flow / direct 等）
+ALTER TABLE template_selection_logs ADD COLUMN IF NOT EXISTS open_context TEXT;
+-- AIXピッカーのサブモード（check_pattern / app_sub_mode / send_mode / followup submode / pickup type）
+ALTER TABLE template_selection_logs ADD COLUMN IF NOT EXISTS picker_mode TEXT;
+CREATE INDEX IF NOT EXISTS idx_tsl_aix_chain ON template_selection_logs(aix_action_type, picker_mode) WHERE aix_action_type IS NOT NULL;
 ALTER TABLE template_selection_logs DISABLE ROW LEVEL SECURITY;
 
 -- AI最適化後修正パターンの学習ルールテーブル（カテゴリ別・自動蓄積）

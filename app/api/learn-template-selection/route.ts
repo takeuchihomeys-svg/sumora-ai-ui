@@ -22,6 +22,9 @@ export async function POST(req: NextRequest) {
       original_text?: string;
       adapted_text?: string;
       aix_action_type?: string;
+      // AIX→テンプレート全チェーン学習: どのバナー/フローから開いたか・どのピッカーサブモードだったか
+      open_context?: string;
+      picker_mode?: string;
       // sent フェーズ
       final_sent_text?: string;
       was_modified_after_adapt?: boolean;
@@ -52,6 +55,8 @@ export async function POST(req: NextRequest) {
           original_text: (body.original_text ?? "").slice(0, 2000),
           adapted_text: body.adapted_text ? body.adapted_text.slice(0, 2000) : null,
           aix_action_type: body.aix_action_type ?? null,
+          open_context: body.open_context ?? null,
+          picker_mode: body.picker_mode ?? null,
         })
         .select("id")
         .single();

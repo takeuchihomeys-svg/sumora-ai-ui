@@ -194,6 +194,9 @@ interface TemplateModalProps {
   };
   // 会話ID（テンプレート選択ログ記録用）
   conversationId?: string;
+  // CHAIN-1: suggest-next-action の aix_template_chain_stats 由来の推奨テンプレID。
+  // このIDのテンプレを最上位に昇格して「この流れの定番」バッジを表示する
+  priorityTemplateId?: string | null;
 }
 
 const AVAIL_CHECK_TYPES = [
@@ -293,7 +296,7 @@ function stripViewingSubTag(label: string): string {
 
 export default function TemplateModal({
   onClose, onSelect, onOpenAixWithFocus, customerName, conversationState, recentMessages, linkedCustomer, initialCategory, highlightKeyword, highlightLabel, suggestedCategory, suggestedColor, suggestedLabel, pendingScheduledMessages, staffMessagedToday, initialSearch,
-  initialTemplates, onCacheUpdate, templates: templatesProp, onRefresh, postAixContext, conversationId,
+  initialTemplates, onCacheUpdate, templates: templatesProp, onRefresh, postAixContext, conversationId, priorityTemplateId,
 }: TemplateModalProps) {
   const [templates, setTemplates] = useState<Template[]>(templatesProp ?? initialTemplates ?? []);
   // 親からのデータ（props/キャッシュ）があれば即時表示、なければローディング表示
@@ -652,6 +655,11 @@ export default function TemplateModal({
   const scenePickCount = (t: Template): number =>
     conversationState && t.status_pick_stats ? (t.status_pick_stats[conversationState] ?? 0) : 0;
   const compareTemplates = (a: Template, b: Template) => {
+    // CHAIN-1: AIX→テンプレのチェーン統計で推奨されたテンプレを最優先で昇格
+    if (priorityTemplateId) {
+      if (a.id === priorityTemplateId && b.id !== priorityTemplateId) return -1;
+      if (b.id === priorityTemplateId && a.id !== priorityTemplateId) return 1;
+    }
     // H4: このシーン（ステータス）でよく送信されているテンプレを最上部に昇格
     const sceneDiff = scenePickCount(b) - scenePickCount(a);
     if (sceneDiff !== 0) return sceneDiff;
@@ -1613,6 +1621,9 @@ export default function TemplateModal({
                           )}
                           {isHighlighted && (
                             <span className="shrink-0 rounded-full bg-orange-400 px-2 py-0.5 text-[10px] font-bold text-white">{highlightLabel ?? "💡 次のアクション"}</span>
+                          )}
+                          {priorityTemplateId === tmpl.id && !aiRec && (
+                            <span className="shrink-0 rounded-full bg-[#7B1FA2] px-2 py-0.5 text-[10px] font-bold text-white">🎯 この流れの定番</span>
                           )}
                           {scenePicks > 0 && !aiRec && (
                             <span
