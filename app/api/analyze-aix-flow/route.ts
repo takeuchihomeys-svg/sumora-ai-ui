@@ -228,6 +228,12 @@ AIXを選ぶ → 生成を確認 → 送信`,
 
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
+    // バージョン履歴に追記（upsertで最新1件になるai_promptsとは別に変遷を保存）
+    await supabase.from("ai_prompt_versions").insert({
+      prompt_key: "aix_flow_guide",
+      content: generated,
+    });
+
     return NextResponse.json({ ok: true, updated: today, content: generated });
   } catch (e) {
     console.error("[analyze-aix-flow]", e);

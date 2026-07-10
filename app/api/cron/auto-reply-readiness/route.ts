@@ -126,6 +126,17 @@ export async function POST(req: NextRequest) {
 
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
+    // 時系列スナップショットに追記（upsertで日付×aix_type単位の重複防止）
+    const snapshots = scores.map((s) => ({
+      report_date: reportDate,
+      aix_type: s.aix_type,
+      acceptance_rate: s.acceptance_rate,
+      edit_rate: s.edit_rate,
+      ready: s.ready,
+      reason: s.reason,
+    }));
+    await supabase.from("aix_readiness_snapshots").upsert(snapshots, { onConflict: "report_date,aix_type" });
+
     const readyTypes = scores.filter((s) => s.ready).map((s) => s.aix_type);
     return NextResponse.json({ ok: true, report_date: reportDate, total: scores.length, ready: readyTypes });
   } catch (e) {

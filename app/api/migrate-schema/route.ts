@@ -1024,6 +1024,29 @@ LANGUAGE sql STABLE AS $$
     AND COALESCE(ak.hypothesis_status, 'hypothesis') != 'rejected'
   ORDER BY ak.embedding <=> query_embedding LIMIT match_count
 $$;
+
+-- 自動返信化準備スコアの時系列スナップショット（週次 upsert で最新1件になるのを防ぐ）
+CREATE TABLE IF NOT EXISTS aix_readiness_snapshots (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  report_date date NOT NULL,
+  aix_type text NOT NULL,
+  acceptance_rate numeric,
+  edit_rate numeric,
+  ready boolean NOT NULL DEFAULT false,
+  reason text,
+  created_at timestamptz DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS aix_readiness_snapshots_date_type_idx
+  ON aix_readiness_snapshots (report_date, aix_type);
+
+-- AIXフロー誘導ガイドのバージョン履歴（毎日 upsert で上書きされる aix_flow_guide の変遷を保存）
+CREATE TABLE IF NOT EXISTS ai_prompt_versions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  prompt_key text NOT NULL,
+  content text NOT NULL,
+  created_at timestamptz DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ai_prompt_versions_key_idx ON ai_prompt_versions (prompt_key, created_at DESC);
 `.trim();
 
 export async function GET() {
