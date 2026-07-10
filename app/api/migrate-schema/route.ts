@@ -1098,8 +1098,6 @@ RETURNS void LANGUAGE sql AS $$
   WHERE id = ANY(p_ids);
 $$;
 
--- 中5: スタッフ個性学習（保存側のみ）— 誰が送った返信例かを記録
-ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS sent_by TEXT;
 `.trim();
 
 export async function GET() {

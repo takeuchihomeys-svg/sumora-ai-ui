@@ -551,7 +551,6 @@ export async function POST(req: NextRequest) {
     isAutoStar?: boolean; // バッチ経由（auto-star-winners等）→ LLM分析チェーンを抑止
     aiComponents?: Record<string, string> | null; // 物件ピックアップした コンポーネント別生成結果
     template_id?: string | null; // 使ったテンプレートのID（テンプレート成果学習ループ用）
-    sent_by?: string | null; // 中5: 送信したスタッフのID or 名前（スタッフ個性学習・保存側のみ）
   };
   let body: PostBody;
   try {
@@ -573,8 +572,6 @@ export async function POST(req: NextRequest) {
     aiComponents,
   } = body;
   const templateId = typeof body.template_id === "string" ? body.template_id : null;
-  // 中5: sent_by（スタッフID or 名前）— 空文字は null に正規化
-  const sentBy = typeof body.sent_by === "string" && body.sent_by.trim() ? body.sent_by.trim() : null;
   let replyAngle = typeof body.replyAngle === "string" ? body.replyAngle : null;
 
   if (!customerMessage || !sentReply) {
@@ -815,7 +812,6 @@ export async function POST(req: NextRequest) {
         sent_at: sentAt ?? new Date().toISOString(),
         ai_components: aiComponentsObj || null,
         template_id: templateId || null,
-        sent_by: sentBy, // 中5: スタッフ個性学習（保存側のみ・検索側は将来対応）
       })
       .select("id")
       .single(),

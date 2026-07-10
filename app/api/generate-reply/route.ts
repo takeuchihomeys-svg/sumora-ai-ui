@@ -40,12 +40,10 @@ function createGenerationModel(temperature: number) {
 }
 
 // 中6: 顧客の温度感 → 生成temperature マッピング
-// 前向き/普通 → 0.3（定型的・正確な情報）/ 不安 → 0.4（少し温かみ・ブレすぎない）
-// 冷めかけ → 0.5（個性的・引き付ける文が必要）/ 未定義 → 0.3
+// 前向き/普通/冷めかけ → 0.3 / 不安 → 0.4（少し温かみ・ブレすぎない）/ 未定義 → 0.3
 function emotionTemperature(emotion?: string): number {
   if (emotion === "不安") return 0.4;
-  if (emotion === "冷めかけ") return 0.5;
-  return 0.3; // "前向き" / "普通" / 未定義
+  return 0.3;
 }
 
 // ─── 初回挨拶文（greetingNote と冒頭強制置換で共用・二重定義禁止）─────────────
