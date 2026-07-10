@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
     const [{ data: usageLogs }, { data: patterns }, { data: principles }] = await Promise.all([
       supabase
         .from("aix_usage_logs")
-        .select("aix_type, template_name, template_category, conversation_id, conversation_status, suggested_action")
+        .select("aix_type, template_name, template_category, conversation_id, conversation_status, suggested_action, was_edited")
         .gte("created_at", since)
         .order("created_at", { ascending: false })
         .limit(200),
@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
     ]);
 
     // 3. AIX種類ごとの使用回数・テンプレート別・成約率・予測一致率の集計
-    type UsageLog = { aix_type: string; template_name: string | null; template_category: string | null; conversation_id: string; conversation_status: string | null; suggested_action: string | null };
+    type UsageLog = { aix_type: string; template_name: string | null; template_category: string | null; conversation_id: string; conversation_status: string | null; suggested_action: string | null; was_edited: boolean | null };
     const logs = (usageLogs ?? []) as UsageLog[];
 
     // 3-a. conversation_status はAIX送信時点のスナップショットで closed_won はほぼ含まれない。
@@ -103,6 +103,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // 断線④: aix_type別の編集率（was_edited=trueの割合）
+    const editCount: Record<string, { edited: number; total: number }> = {};
+    for (const log of logs) {
+      if (log.was_edited !== null && log.was_edited !== undefined) {
+        const ec = editCount[log.aix_type] ?? { edited: 0, total: 0 };
+        ec.total += 1;
+        if (log.was_edited) ec.edited += 1;
+        editCount[log.aix_type] = ec;
+      }
+    }
+
     const aixCountText = Object.entries(aixCount).sort((a, b) => b[1] - a[1])
       .map(([k, v]) => `${k}: ${v}回`).join(", ") || "データなし（まだ使用記録なし）";
 
@@ -125,6 +136,14 @@ export async function POST(req: NextRequest) {
       .sort((a, b) => b.rate - a.rate)
       .map((e) => `${e.k}: ${Math.round(e.rate * 100)}%（${e.matched}/${e.predicted}件）`)
       .join(", ") || "予測データなし";
+
+    // 断線④: 編集率テキスト（サンプル3件以上のaix_typeのみ・編集率降順）
+    const editRateText = Object.entries(editCount)
+      .filter(([, e]) => e.total >= 3)
+      .map(([k, e]) => ({ k, rate: e.edited / e.total, edited: e.edited, total: e.total }))
+      .sort((a, b) => b.rate - a.rate)
+      .map((e) => `${e.k}: 編集率${Math.round(e.rate * 100)}%（${e.edited}/${e.total}件）`)
+      .join(", ") || "編集率データなし（was_editedのサンプル不足）";
 
     const patternsText = (patterns ?? [])
       .map((p) => `${p.title}: ${(p.content as string).slice(0, 100)}`)
@@ -158,6 +177,9 @@ ${winRateText}
 
 【予測一致率（AIが提案したアクションが実際に使われた割合・aix_type別）】
 ${matchRateText}
+
+【AIX別の編集率（AIが生成した文をスタッフが編集して送った割合・少ないほど自動返信化に近い）】
+${editRateText}
 
 【直近の成約パターン（内覧・申込が決まった会話から学習）】
 ${patternsText}

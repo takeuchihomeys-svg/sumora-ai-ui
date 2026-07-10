@@ -146,9 +146,10 @@ export async function POST(req: NextRequest) {
       app_sub_mode?: string | null;
       send_mode?: string | null;
       generated_text?: string | null;
+      was_edited?: boolean | null;
     };
 
-    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text } = body;
+    const { conversation_id, aix_type, template_id, template_name, template_category, conversation_status, suggested_action, line_message_id, sent_at, previous_action_type, check_pattern, app_sub_mode, send_mode, generated_text, was_edited } = body;
     if (!conversation_id || !aix_type) {
       return NextResponse.json({ ok: false, error: "conversation_id and aix_type required" }, { status: 400 });
     }
@@ -181,6 +182,7 @@ export async function POST(req: NextRequest) {
       app_sub_mode: app_sub_mode ?? null,
       send_mode: send_mode ?? null,
       generated_text: generated_text ? generated_text.slice(0, 2000) : null,
+      was_edited: was_edited ?? null,
     });
 
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });

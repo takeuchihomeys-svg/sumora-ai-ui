@@ -1006,6 +1006,10 @@ ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS generated_text TEXT;
 -- ⑤ ai_prompt_rules.updated_at（手動編集時刻を追跡）
 ALTER TABLE ai_prompt_rules ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
 
+-- ⑦ was_edited: AIXが生成した文をスタッフが編集して送ったか（断線④修正）
+-- AixModal側でaiDraftとpreviewを比較して算出し、log-aix-usage経由で記録される
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS was_edited BOOLEAN;
+
 -- ⑥ match_reply_knowledge を hypothesis_status ADD COLUMN の後に再定義
 --    （line 479 での定義は hypothesis_status が存在しない新規環境で失敗するため、
 --      hypothesis_status ADD COLUMN（line 802）の後にも CREATE OR REPLACE で再実行する）

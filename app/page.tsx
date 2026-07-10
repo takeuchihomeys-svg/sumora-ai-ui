@@ -7503,7 +7503,7 @@ export default function Home() {
             return sendMessageText(text, imageUrl, isAix);
           }}
           onDelayedSend={handleDelayedSend}
-          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string }) => {
+          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean }) => {
             // 2通目自動送信スケジュール（AIXフロー用・予約送信は対象外）
             if (pendingSecondMsgRef.current) {
               const config = pendingSecondMsgRef.current;
@@ -7575,6 +7575,8 @@ export default function Home() {
                   app_sub_mode: meta?.appSubMode ?? null,
                   send_mode: meta?.sendMode ?? null,
                   generated_text: lastAixLogTextRef.current,
+                  // 断線④: AixModalで計算したwasEditedをそのまま渡す
+                  was_edited: meta?.wasEdited ?? null,
                 }),
               }).catch(() => {});
               lastAixLogTextRef.current = null;

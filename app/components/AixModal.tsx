@@ -55,7 +55,7 @@ interface AixModalProps {
   templateId?: string; // テンプレートモーダル経由で開いた場合のtemplate_id（学習ループ紐付け用）
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
-  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string }) => void;
+  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean }) => void;
   onDelayedSend?: (seconds: number, sendFn: () => Promise<void>) => void;
   onScheduled?: () => void;
   onVacatingDetected?: (date: string) => void;
@@ -1835,6 +1835,7 @@ export default function AixModal({
         appSubMode: appSubMode ?? undefined,
         sendMode: sendMode ?? undefined,
         scheduled: true,
+        wasEdited: schedWasEdited,
       });
       onScheduled?.();
       setShowAixScheduleModal(false);
@@ -1923,6 +1924,12 @@ export default function AixModal({
             const capturedRecommendFocusPoints: string[] = recommendFocusPoints;
             const capturedAppSubMode: string | null | undefined = appSubMode;
             const capturedSendMode: string | null | undefined = sendMode;
+            // 断線④: was_edited を onAfterSend 経由で log-aix-usage に渡す（遅延送信パス）
+            const _capDraft = aiDraft.trim();
+            const _capSent = preview.trim();
+            const capturedWasEdited = _capDraft.length > 0
+              && _capSent !== _capDraft
+              && stripEmoji(_capSent) !== stripEmoji(_capDraft);
             const sendFn = async () => {
               await capturedOnSend(capturedPreview);
               capturedOnAfterSend?.({
@@ -1936,6 +1943,7 @@ export default function AixModal({
                 checkPattern: capturedCheckPattern ?? undefined,
                 appSubMode: capturedAppSubMode ?? undefined,
                 sendMode: capturedSendMode ?? undefined,
+                wasEdited: capturedWasEdited,
               });
             };
             onDelayedSend?.(30, sendFn); // 親がsetTimeoutを管理（キャンセル可能）
@@ -2008,6 +2016,12 @@ export default function AixModal({
       }
 
       // 学習処理（fire-and-forget、G-05: runLearningに集約）
+      // 断線④: was_edited を計算してから runLearning に渡し、onAfterSend 経由で log-aix-usage に渡す
+      const _sendTrimDraft = aiDraft.trim();
+      const _sendTrimSent = preview.trim();
+      const _sendWasEdited = _sendTrimDraft.length > 0
+        && _sendTrimSent !== _sendTrimDraft
+        && stripEmoji(_sendTrimSent) !== stripEmoji(_sendTrimDraft);
       runLearning(preview);
 
       onAfterSend?.({
@@ -2021,6 +2035,7 @@ export default function AixModal({
         checkPattern: checkPattern ?? undefined,
         appSubMode: appSubMode ?? undefined,
         sendMode: sendMode ?? undefined,
+        wasEdited: _sendWasEdited,
       });
       onClose();
     } catch (err) {
