@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
 // Vercel Functions のタイムアウト上限（秒）— Haiku分析チェーン×3に余裕を持たせる
@@ -262,6 +262,43 @@ JSONのみで返答（説明不要）：
   }
 }
 
+// ─── 中3: 負のフィードバック — 注入されたのに送信文から消されたフレーズの importance を減衰 ───
+// generate-reply が knowledge_apply_log に記録した「この会話に注入されたナレッジ」の直近1時間分を取得し、
+// aiDraft には含まれるが sentReply には残らなかった content（部分文字列マッチ）を特定して
+// decay_knowledge_importance RPC で importance を -1 する（最小1で下げ止め）。
+// 対象は category IN ('phrase', 'pattern') のみ（principle 等のルール系は下げない）。
+async function decayRemovedKnowledge(conversationId: string, aiDraft: string, sentReply: string): Promise<void> {
+  try {
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const { data: logs } = await supabase
+      .from("knowledge_apply_log")
+      .select("knowledge_id, ai_reply_knowledge(id, category, content)")
+      .eq("conversation_id", conversationId)
+      .gte("applied_at", oneHourAgo)
+      .limit(100);
+    if (!logs || logs.length === 0) return;
+
+    type KnowledgeRef = { id: string; category: string; content: string };
+    const draftNorm = aiDraft.replace(/\s+/g, "");
+    const sentNorm = sentReply.replace(/\s+/g, "");
+    const decayIds = new Set<string>();
+    for (const row of logs as Array<{ knowledge_id: string; ai_reply_knowledge: KnowledgeRef | KnowledgeRef[] | null }>) {
+      const k = Array.isArray(row.ai_reply_knowledge) ? row.ai_reply_knowledge[0] : row.ai_reply_knowledge;
+      if (!k || !k.content) continue;
+      if (k.category !== "phrase" && k.category !== "pattern") continue;
+      const contentNorm = k.content.replace(/\s+/g, "");
+      if (contentNorm.length < 10) continue; // 短すぎる断片は誤マッチ源になるため除外
+      if (draftNorm.includes(contentNorm) && !sentNorm.includes(contentNorm)) {
+        decayIds.add(k.id);
+      }
+    }
+    if (decayIds.size === 0) return;
+    await supabase.rpc("decay_knowledge_importance", { p_ids: [...decayIds] });
+  } catch (e) {
+    console.warn("[save-reply-example] decayRemovedKnowledge failed:", e);
+  }
+}
+
 // 修正量(sim)に応じてimportanceを変動させる（膨張防止）
 // sim < 0.4 = 大幅修正 → 9 / 0.4〜0.65 = 中程度 → 8 / 0.65〜0.9 = 微修正 → 7
 function diffImportance(sim: number): number {
@@ -514,6 +551,7 @@ export async function POST(req: NextRequest) {
     isAutoStar?: boolean; // バッチ経由（auto-star-winners等）→ LLM分析チェーンを抑止
     aiComponents?: Record<string, string> | null; // 物件ピックアップした コンポーネント別生成結果
     template_id?: string | null; // 使ったテンプレートのID（テンプレート成果学習ループ用）
+    sent_by?: string | null; // 中5: 送信したスタッフのID or 名前（スタッフ個性学習・保存側のみ）
   };
   let body: PostBody;
   try {
@@ -535,6 +573,8 @@ export async function POST(req: NextRequest) {
     aiComponents,
   } = body;
   const templateId = typeof body.template_id === "string" ? body.template_id : null;
+  // 中5: sent_by（スタッフID or 名前）— 空文字は null に正規化
+  const sentBy = typeof body.sent_by === "string" && body.sent_by.trim() ? body.sent_by.trim() : null;
   let replyAngle = typeof body.replyAngle === "string" ? body.replyAngle : null;
 
   if (!customerMessage || !sentReply) {
@@ -716,6 +756,12 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // 中3: スタッフが修正した場合、AI文案に注入されていたのに消されたフレーズ/パターンの importance を減衰
+  // （fire-and-forget: after() でレスポンス返却後に実行し保存処理を遅延させない）
+  if (conversationId && aiDraft && wasAiModified) {
+    after(() => decayRemovedKnowledge(conversationId, aiDraft, sentReply));
+  }
+
   // 埋め込み生成（バックグラウンドで並列実行・失敗してもINSERTは続行）
   // [画像][動画]メッセージはテキスト意味がないのでsentReplyをembeddingの主成分にする
   const isImageMsg = customerMessage === "[画像]" || customerMessage === "[動画]" || !customerMessage.trim();
@@ -769,6 +815,7 @@ export async function POST(req: NextRequest) {
         sent_at: sentAt ?? new Date().toISOString(),
         ai_components: aiComponentsObj || null,
         template_id: templateId || null,
+        sent_by: sentBy, // 中5: スタッフ個性学習（保存側のみ・検索側は将来対応）
       })
       .select("id")
       .single(),

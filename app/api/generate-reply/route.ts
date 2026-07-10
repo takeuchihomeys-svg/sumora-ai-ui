@@ -28,13 +28,25 @@ const analysisModel = new ChatAnthropic({
 });
 
 // Step2（生成）: Sonnet — 品質重視
-const generationModel = new ChatAnthropic({
-  model: "claude-sonnet-4-6",
-  maxTokens: 1500,
-  temperature: 0.3,
-  anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
-  clientOptions: { timeout: 45_000 },
-});
+// 中6: temperature は ai_summary_json.emotion に応じて可変（0.3〜0.5）のためリクエスト毎に生成する
+function createGenerationModel(temperature: number) {
+  return new ChatAnthropic({
+    model: "claude-sonnet-4-6",
+    maxTokens: 1500,
+    temperature,
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
+    clientOptions: { timeout: 45_000 },
+  });
+}
+
+// 中6: 顧客の温度感 → 生成temperature マッピング
+// 前向き/普通 → 0.3（定型的・正確な情報）/ 不安 → 0.4（少し温かみ・ブレすぎない）
+// 冷めかけ → 0.5（個性的・引き付ける文が必要）/ 未定義 → 0.3
+function emotionTemperature(emotion?: string): number {
+  if (emotion === "不安") return 0.4;
+  if (emotion === "冷めかけ") return 0.5;
+  return 0.3; // "前向き" / "普通" / 未定義
+}
 
 // ─── 初回挨拶文（greetingNote と冒頭強制置換で共用・二重定義禁止）─────────────
 function buildFirstGreeting(customerName: string): string {
@@ -1306,7 +1318,9 @@ export async function POST(req: NextRequest) {
       isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules,
       resolvedSummaryJson, customerStyleNote
     );
-    const genStream = generationModel.stream(messages);
+    // 中6: 顧客の温度感（ai_summary_json.emotion）に応じて生成temperatureを可変にする（Step1分析は temperature:0 のまま）
+    const genTemperature = emotionTemperature(resolvedSummaryJson?.emotion);
+    const genStream = createGenerationModel(genTemperature).stream(messages);
 
     // B-2: 品質判定フラグ（自動返信ハードゲート用）
     // is_applying_docs は静的に判定可能なのでここで計算。

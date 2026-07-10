@@ -2722,6 +2722,8 @@ export default function Home() {
           customerMessage: prevCustomerMsg.text,
           sentReply: staffText,
           isStarred: true,
+          // 中5: スタッフ個性学習（担当者が設定されていれば送信者として記録）
+          sent_by: assignees[selectedConversation.id] || null,
         }),
       }).catch(() => {});
     }
@@ -3056,6 +3058,8 @@ export default function Home() {
             isScheduled: true,
             // MED-05修正: 予約送信もtemplate_id を記録（通常送信と対称化）
             ...(selectedTemplateIdRef.current ? { template_id: selectedTemplateIdRef.current } : {}),
+            // 中5: スタッフ個性学習（担当者が設定されていれば送信者として記録）
+            sent_by: assignees[selectedConversation.id] || null,
           }),
         }).catch(() => {});
         // 予約送信後もtemplate_idをクリア（通常送信の line:3341 と対称化）
@@ -3361,6 +3365,8 @@ export default function Home() {
             sentAt: new Date().toISOString(),
             // テンプレート経由の場合は template_id を記録（☆・差分学習をテンプレに紐付ける）
             ...(selectedTemplateIdRef.current ? { template_id: selectedTemplateIdRef.current } : {}),
+            // 中5: スタッフ個性学習（担当者が設定されていれば送信者として記録）
+            sent_by: assignees[selectedConversation.id] || null,
           }),
         }).then(async (r) => {
           if (!r || !r.ok) return;
@@ -3661,6 +3667,8 @@ export default function Home() {
             sentReply: text.trim(),
             conversationState: learnPayload.conversationState || selectedConversation.status,
             sentAt: new Date().toISOString(),
+            // 中5: スタッフ個性学習（担当者が設定されていれば送信者として記録）
+            sent_by: assignees[selectedConversation.id] || null,
           }),
         }).catch(() => {});
       }

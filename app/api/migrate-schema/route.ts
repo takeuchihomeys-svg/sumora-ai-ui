@@ -1071,6 +1071,35 @@ ALTER TABLE aix_shadow_logs DISABLE ROW LEVEL SECURITY;
 -- 将来3: 顧客反応評価（AIX送信後24時間以内に顧客返信があったか / eval-customer-reaction cron が毎日更新）
 -- NULL=未評価 / TRUE=24h以内に顧客返信あり / FALSE=返信なし
 ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS customer_reacted BOOLEAN;
+
+-- 中1: winning_pattern 成果検証ログ（customer-summary が予測を記録し、
+-- eval-winning-pattern cron（毎週月曜 JST 9:00）が conversations.status と突合して答え合わせする）
+CREATE TABLE IF NOT EXISTS winning_pattern_logs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id text NOT NULL,
+  customer_id text,
+  predicted_pattern text NOT NULL,
+  actual_outcome text,
+  was_correct boolean,
+  created_at timestamptz DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_winning_pattern_logs_pending
+  ON winning_pattern_logs(created_at DESC) WHERE actual_outcome IS NULL;
+CREATE INDEX IF NOT EXISTS idx_winning_pattern_logs_conversation
+  ON winning_pattern_logs(conversation_id);
+ALTER TABLE winning_pattern_logs DISABLE ROW LEVEL SECURITY;
+
+-- 中3: 負のフィードバック用RPC — AI文案に注入されたのにスタッフが消したフレーズ/パターンの importance を減衰
+-- （ai_reply_knowledge に priority カラムは存在しないため importance を減衰対象とする。最小1で下げ止め）
+CREATE OR REPLACE FUNCTION decay_knowledge_importance(p_ids UUID[])
+RETURNS void LANGUAGE sql AS $$
+  UPDATE ai_reply_knowledge
+  SET importance = GREATEST(1, COALESCE(importance, 5) - 1)
+  WHERE id = ANY(p_ids);
+$$;
+
+-- 中5: スタッフ個性学習（保存側のみ）— 誰が送った返信例かを記録
+ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS sent_by TEXT;
 `.trim();
 
 export async function GET() {

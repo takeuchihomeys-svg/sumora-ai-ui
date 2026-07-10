@@ -54,6 +54,64 @@ const SYSTEM = `あなたは賃貸仲介の営業アシスタントです。
 ・urgency: 引越し・入居希望の時期感（今月中/3ヶ月以内/半年以上/未確認）
 ・style: 顧客メッセージの文体傾向（絵文字多用/短文/ビジネスライク/丁寧/普通）`;
 
+// ── OpenAI 埋め込み生成（成約パターン類似検索用・text-embedding-3-small 1536次元）──
+async function getEmbedding(text: string): Promise<number[] | null> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  try {
+    const res = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      signal: AbortSignal.timeout(6_000),
+      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { data?: Array<{ embedding?: number[] }> };
+    return data.data?.[0]?.embedding ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// 中2: 過去の成約パターンを pgvector 類似検索で取得（顧客条件に似た成約事例を優先注入）
+// ・match_reply_knowledge RPC（query_embedding / match_count / min_importance）を使用
+//   ※ match_ai_reply_knowledge という名前のRPCは存在しないため既存RPCを使用。
+//     match_threshold 相当（similarity >= 0.5）と category='pattern' はクライアント側でフィルタ
+// ・fallback: OPENAI_API_KEY 未設定・embedding 失敗・該当0件の場合は従来の最新5件
+async function fetchWinningPatterns(queryText: string): Promise<Array<{ content: string }>> {
+  if (queryText && process.env.OPENAI_API_KEY) {
+    const embedding = await getEmbedding(queryText);
+    if (embedding) {
+      const { data: vectorHits, error: rpcError } = await supabase.rpc("match_reply_knowledge", {
+        query_embedding: embedding,
+        match_count: 40,
+        min_importance: 8,
+      }) as {
+        data: Array<{ content: string; category: string; title: string; importance: number; similarity: number }> | null;
+        error: { message: string } | null;
+      };
+      if (rpcError) console.warn("[customer-summary] match_reply_knowledge RPC error:", rpcError.message);
+      const patterns = (vectorHits ?? [])
+        .filter(r =>
+          r.category === "pattern" &&
+          (r.title ?? "").startsWith("成約パターン") &&
+          (r.similarity ?? 0) >= 0.5
+        )
+        .slice(0, 5);
+      if (patterns.length > 0) return patterns;
+    }
+  }
+  // フォールバック: 従来通り最新5件
+  const { data } = await supabase
+    .from("ai_reply_knowledge")
+    .select("content")
+    .eq("category", "pattern")
+    .ilike("title", "成約パターン_%")
+    .order("created_at", { ascending: false })
+    .limit(5);
+  return (data as Array<{ content: string }> | null) ?? [];
+}
+
 const STATUS_LABEL: Record<string, string> = {
   new_inquiry:     "新規問い合わせ",
   hot:             "毎日物件出し中",
@@ -248,15 +306,25 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 過去の成約パターン（学習済み）と next_action 改善ルール を並列取得
-    const [learnedPatternsRes, nextActionRulesRes] = await Promise.all([
-      supabase
-        .from("ai_reply_knowledge")
-        .select("content")
-        .eq("category", "pattern")
-        .ilike("title", "成約パターン_%")
-        .order("created_at", { ascending: false })
-        .limit(5),
+    const rentStr = (c.rent_min || c.rent_max)
+      ? `${c.rent_min ? Math.floor(c.rent_min / 10000) + "万〜" : "〜"}${c.rent_max ? Math.floor(c.rent_max / 10000) + "万" : ""}`
+      : null;
+
+    // 中2: 顧客プロフィール（条件・こだわり）→ 成約パターン類似検索クエリ（先頭200字）
+    const patternQueryText = [
+      c.desired_area   && `エリア:${c.desired_area}`,
+      c.floor_plan     && `間取り:${c.floor_plan}`,
+      rentStr          && `家賃:${rentStr}`,
+      c.move_in_time   && `入居:${c.move_in_time}`,
+      c.preferences,
+      c.other_requests,
+      c.ng_points      && `NG:${c.ng_points}`,
+    ].filter(Boolean).join(" ").slice(0, 200);
+
+    // 過去の成約パターン（pgvector類似検索）・next_action 改善ルール・内覧DB事実 を並列取得
+    const [learnedPatterns, nextActionRulesRes, viewingsRes] = await Promise.all([
+      fetchWinningPatterns(patternQueryText)
+        .catch((err) => { console.warn("[customer-summary] fetchWinningPatterns失敗:", err); return [] as Array<{ content: string }>; }),
       supabase
         .from("ai_reply_knowledge")
         .select("content")
@@ -264,23 +332,39 @@ export async function POST(req: NextRequest) {
         .neq("hypothesis_status", "rejected")
         .order("apply_count", { ascending: false })
         .limit(8),
+      // 中4: 内覧事実のDB突合（property_customers に内覧日時カラムは存在しないため viewings テーブルを参照）
+      c.conversation_id
+        ? supabase
+            .from("viewings")
+            .select("viewing_date, status")
+            .eq("conversation_id", c.conversation_id)
+            .order("viewing_date", { ascending: false })
+            .limit(5)
+        : Promise.resolve({ data: null }),
     ]);
 
-    const learnedPatternsNote = (learnedPatternsRes.data ?? []).length > 0
+    const learnedPatternsNote = learnedPatterns.length > 0
       ? `\n\n【過去の成約パターン（学習済み・最優先で参照）】\n${
-          (learnedPatternsRes.data as Array<{ content: string }>).map(p => p.content).join("\n---\n")
+          learnedPatterns.map(p => p.content).join("\n---\n")
         }`
       : "";
+
+    // 中4: viewings に確定レコードがあれば inspection の確定値としてプロンプトに注入
+    // （status='done' → done=true 確定 / 'scheduled' → requested=true 確定。なければ従来のキーワード判定のまま）
+    const viewingRows = ((viewingsRes as { data: Array<{ viewing_date: string; status: string }> | null }).data ?? []);
+    const doneViewing = viewingRows.find(v => v.status === "done");
+    const scheduledViewing = viewingRows.find(v => v.status === "scheduled");
+    const inspectionFactNote = doneViewing
+      ? `\n\n【内覧ステータス（DB確定値・会話からの推測より必ず優先）】内覧は実施済み（${doneViewing.viewing_date}）。inspection.requested と inspection.done は必ず true にすること。`
+      : scheduledViewing
+        ? `\n\n【内覧ステータス（DB確定値・会話からの推測より必ず優先）】内覧予定が登録済み（${scheduledViewing.viewing_date}・未実施）。inspection.requested は必ず true。実施済みと確認できる会話がない限り inspection.done は false のままにすること。`
+        : "";
 
     const nextActionRulesNote = (nextActionRulesRes.data ?? []).length > 0
       ? `\n\n【next_action予測の改善ルール（実際の行動との差分から学習済み・next_action生成時に必ず参照すること）】\n${
           (nextActionRulesRes.data as Array<{ content: string }>).map(p => p.content).join("\n---\n")
         }`
       : "";
-
-    const rentStr = (c.rent_min || c.rent_max)
-      ? `${c.rent_min ? Math.floor(c.rent_min / 10000) + "万〜" : "〜"}${c.rent_max ? Math.floor(c.rent_max / 10000) + "万" : ""}`
-      : null;
 
     const info = [
       `名前: ${c.customer_name}`,
@@ -300,7 +384,7 @@ export async function POST(req: NextRequest) {
       c.property_send_count != null && `物件送付回数: ${c.property_send_count}回`,
       c.additional_conditions && `追加・変更履歴:\n${c.additional_conditions}`,
       c.last_message         && `最後のメッセージ（${c.last_message_sender === "customer" ? "お客さん" : "スタッフ"}）:「${c.last_message}」`,
-    ].filter(Boolean).join("\n") + learnedPatternsNote + nextActionRulesNote + conversationHistory;
+    ].filter(Boolean).join("\n") + learnedPatternsNote + nextActionRulesNote + inspectionFactNote + conversationHistory;
 
     const res = await model.invoke([
       new SystemMessage(systemPrompt),
@@ -334,6 +418,18 @@ export async function POST(req: NextRequest) {
           customer_id: c.customer_id,
           conversation_id: c.conversation_id ?? null,
           predicted_action: summaryJson.next_action,
+        }).then(() => {}, () => {});
+      }
+
+      // 中1: winning_pattern 予測をログに保存（週次 eval-winning-pattern cron が成約/失注結果と突合して答え合わせ）
+      // conversation_id は NOT NULL のため、会話に紐付く予測のみ記録する
+      if (summaryJson.winning_pattern && c.conversation_id) {
+        supabase.from("winning_pattern_logs").insert({
+          conversation_id: c.conversation_id,
+          customer_id: c.customer_id,
+          predicted_pattern: summaryJson.winning_pattern,
+          actual_outcome: null,
+          was_correct: null,
         }).then(() => {}, () => {});
       }
     }
