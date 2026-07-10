@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
+import type { SummaryJson } from "@/app/api/customer-summary/route";
 
 // POST /api/log-aix-usage
 // AIX送信時にどのAIX+テンプレートを使ったか記録する（analyze-aix-flowで分析に使用）
@@ -228,6 +229,59 @@ export async function POST(req: NextRequest) {
           customerId:      pcId,
         }).catch(() => {});
       }
+
+      // AIX送信内容を ai_summary_json.our_actions に直接記録（fire-and-forget）
+      // ai_summary_at は更新しない（customer-summary のスロットリングに影響させない）
+      void (async (_pcId: string) => {
+        try {
+          const OUR_ACTION_LABELS: Record<string, string> = {
+            property_send:            "物件送付",
+            viewing_invite:           "内覧誘導",
+            property_recommendation:  "物件おすすめ",
+            condition_hearing:        "条件ヒアリング",
+            application_push:         "申込促進",
+            estimate_sheet:           "見積書送付",
+            property_check_result:    "物件確認",
+            meeting_place:            "待ち合わせ案内",
+            acknowledge_check:        "確認フォロー",
+            followup_revive:          "追客フォロー",
+            application:              "申込案内",
+            document_request:         "書類案内",
+            contract:                 "契約手続き",
+            greeting:                 "初回挨拶",
+            hearing:                  "ヒアリング",
+            follow_up:                "フォローアップ",
+          };
+          const PROPERTY_RELATED = new Set(["property_send", "viewing_invite", "property_recommendation"]);
+
+          const baseLabel = OUR_ACTION_LABELS[aix_type] ?? "AIX送信";
+          let actionText: string;
+          if (PROPERTY_RELATED.has(aix_type) && template_name) {
+            // 物件名を付与（全体20文字以内）
+            const maxPropLen = 20 - baseLabel.length - 1;
+            const propName = maxPropLen > 0 ? template_name.slice(0, maxPropLen) : "";
+            actionText = propName ? `${baseLabel} ${propName}` : baseLabel;
+          } else {
+            actionText = baseLabel;
+          }
+
+          const { data: pcRow } = await supabase
+            .from("property_customers")
+            .select("ai_summary_json")
+            .eq("id", _pcId)
+            .maybeSingle();
+
+          if (!pcRow) return;
+
+          const existing = ((pcRow as Record<string, unknown>).ai_summary_json ?? {}) as SummaryJson;
+          const newActions = [actionText, ...(existing.our_actions ?? [])].slice(0, 3);
+
+          await supabase
+            .from("property_customers")
+            .update({ ai_summary_json: { ...existing, our_actions: newActions } })
+            .eq("id", _pcId);
+        } catch { /* ignore - AIX本体に影響させない */ }
+      })(pcId);
     }
 
     return NextResponse.json({ ok: true, previous_action_type: previousAction });
