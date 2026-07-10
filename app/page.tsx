@@ -4025,6 +4025,37 @@ export default function Home() {
         aiDraftRef.current = data.message_text;
         setDisplaySource("ai_draft");
       }
+
+      // 内覧前挨拶を生成した時点で inspection.done=true を直接セット（fire-and-forget）
+      // キャンセル後に customer-summary が再実行されると AI がキャンセルを検知して false に戻す
+      if (greetingViewingMode === "before" && selectedConversation.propertyCustomerId) {
+        const _pcId = selectedConversation.propertyCustomerId;
+        void (async () => {
+          try {
+            const { data: _pcRow } = await supabase
+              .from("property_customers")
+              .select("ai_summary_json")
+              .eq("id", _pcId)
+              .maybeSingle();
+            if (!_pcRow) return;
+            const _existing = ((_pcRow as Record<string, unknown>).ai_summary_json ?? {}) as Record<string, unknown>;
+            const _existingInspection = ((_existing.inspection ?? {}) as Record<string, unknown>);
+            const _existingActions = (_existing.our_actions ?? []) as string[];
+            const _newActions = ["内覧前挨拶", ..._existingActions].slice(0, 3);
+            await supabase
+              .from("property_customers")
+              .update({
+                ai_summary_json: {
+                  ..._existing,
+                  inspection: { ..._existingInspection, requested: true, done: true },
+                  our_actions: _newActions,
+                },
+              })
+              .eq("id", _pcId);
+          } catch { /* ignore - 本体フローに影響させない */ }
+        })();
+      }
+
       setShowGreetingViewingPicker(false);
       setGreetingViewingMode(null);
       setGreetingViewingDate("");

@@ -44,7 +44,7 @@ const SYSTEM = `あなたは賃貸仲介の営業アシスタントです。
   悪い例: 「内覧日程を提案すれば決まる」
 
 ・inspection.requested: お客さんが内覧したいと言っている or 内覧日程を調整中なら true
-・inspection.done: 実際に内覧済みなら true
+・inspection.done: 実際に内覧済みなら true。スタッフが内覧当日の挨拶文（「本日はよろしくお願いします」「内覧前挨拶」等、当日の待ち合わせや挨拶を送った記録）を送った場合も true とみなす。ただし、その後に「キャンセル」「流れました」「流れちゃいました」「行けなくなりました」「やっぱりやめます」「中止」等のキャンセルを示す発言がお客さんまたはスタッフから確認できる場合は false に戻す
 ・estimate.requested: 初期費用・見積計算を求めているなら true`;
 
 const STATUS_LABEL: Record<string, string> = {
