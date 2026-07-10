@@ -1106,6 +1106,10 @@ ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS personality_tags TEXT;
 -- （customer-summary が INSERT 時に付与。was_correct=true になった行を「人間性が似た顧客で当たった一手」として検索する）
 ALTER TABLE winning_pattern_logs ADD COLUMN IF NOT EXISTS personality_profile TEXT;
 
+-- 成約分析（analyze-closed-conversation）: 申込/成約確定時に Opus 4.8 が
+-- 会話全体から抽出した「確定人間性プロファイル」を顧客に保存する
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS personality_profile TEXT;
+
 `.trim();
 
 export async function GET() {

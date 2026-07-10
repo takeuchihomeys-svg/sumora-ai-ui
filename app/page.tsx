@@ -2172,6 +2172,17 @@ export default function Home() {
             event_type: nextStatus === "closed_won" ? "contract" : "application",
           }),
         }).catch(() => {});
+
+        // 会話全体を Opus 4.8 で分析し成約パターンを高品質蓄積（fire-and-forget・UIに影響なし）
+        // 取りこぼしは cron/analyze-closed-conversations（毎日 JST 21:00）が拾う
+        void fetch("/api/analyze-closed-conversation", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            conversationId: selectedConversation.id,
+            outcome: nextStatus,
+          }),
+        }).catch(() => {});
       }
 
       setConversations((prev) =>
