@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo, useRef } from "react";
 import BottomNav from "@/app/components/BottomNav";
+import { supabase } from "@/app/lib/supabase";
 
 type LinkedConv = {
   id: string;
@@ -278,6 +279,10 @@ export default function CustomersPage() {
   const [summaries, setSummaries]           = useState<Record<string, string>>({});
   const [summaryJsons, setSummaryJsons]     = useState<Record<string, SummaryJson>>({});
   const [summaryLoading, setSummaryLoading] = useState<Set<string>>(new Set());
+
+  // 会話ログタブ管理
+  const [activeTabs, setActiveTabs] = useState<Record<string, "summary" | "log">>({});
+  const [msgCache, setMsgCache] = useState<Record<string, Array<{ id: string; text: string | null; sender: string; created_at: string }>>>({});
 
   const fetchCustomers = async () => {
     try {
@@ -716,6 +721,17 @@ export default function CustomersPage() {
     } finally {
       setSummaryLoading((prev) => { const s = new Set(prev); s.delete(c.id); return s; });
     }
+  };
+
+  const loadMessages = async (customerId: string, conversationId: string) => {
+    if (msgCache[customerId] !== undefined) return; // キャッシュあればスキップ
+    const { data } = await supabase
+      .from("messages")
+      .select("id, text, sender, created_at")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: false })
+      .limit(20);
+    if (data) setMsgCache(p => ({ ...p, [customerId]: (data as Array<{ id: string; text: string | null; sender: string; created_at: string }>).reverse() }));
   };
 
   return (
@@ -1181,6 +1197,8 @@ export default function CustomersPage() {
                     {(summaryJsons[c.id] || summaries[c.id]) && (() => {
                       const sj = summaryJsons[c.id];
                       const isExpanded = expandedSummaryIds.has(c.id);
+                      const tab = activeTabs[c.id] ?? "summary";
+                      const convId = conv?.id;
                       return (
                         <div className="border-t border-purple-100" style={{ background: "linear-gradient(to bottom, #faf5ff, #fefeff)" }}>
                           <button
@@ -1207,84 +1225,121 @@ export default function CustomersPage() {
                             </svg>
                           </button>
                           {isExpanded && (
-                            <div className="px-4 pb-3 space-y-1.5">
-                              {sj ? (
-                                <>
-                                  {/* 内覧 */}
-                                  {sj.inspection && (
-                                    <div className="flex items-start gap-1.5">
-                                      <span className="text-[11px] flex-shrink-0">🏠</span>
-                                      <div className="min-w-0">
-                                        <span className="text-[11px] font-semibold text-gray-500">内覧: </span>
-                                        <span className="text-[11px] text-gray-700">
-                                          {sj.inspection.requested
-                                            ? (sj.inspection.done ? "済み" : "希望あり")
-                                            : "なし"}
-                                          {sj.inspection.properties && sj.inspection.properties.length > 0 && (
-                                            <span className="text-purple-600"> → {sj.inspection.properties.join("・")}</span>
-                                          )}
-                                        </span>
-                                      </div>
-                                    </div>
+                            <>
+                              {/* タブ切替 */}
+                              <div className="flex border-b border-purple-100 mx-4">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setActiveTabs(p => ({ ...p, [c.id]: "summary" })); }}
+                                  className={`px-3 py-1.5 text-xs font-medium ${tab !== "log" ? "border-b-2 border-blue-500 text-blue-600" : "text-gray-400"}`}
+                                >✨ AI要約</button>
+                                {convId && (
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); setActiveTabs(p => ({ ...p, [c.id]: "log" })); void loadMessages(c.id, convId); }}
+                                    className={`px-3 py-1.5 text-xs font-medium ${tab === "log" ? "border-b-2 border-blue-500 text-blue-600" : "text-gray-400"}`}
+                                  >💬 会話ログ</button>
+                                )}
+                              </div>
+                              {tab !== "log" ? (
+                                <div className="px-4 pb-3 pt-2 space-y-1.5">
+                                  {sj ? (
+                                    <>
+                                      {/* 内覧 */}
+                                      {sj.inspection && (
+                                        <div className="flex items-start gap-1.5">
+                                          <span className="text-[11px] flex-shrink-0">🏠</span>
+                                          <div className="min-w-0">
+                                            <span className="text-[11px] font-semibold text-gray-500">内覧: </span>
+                                            <span className="text-[11px] text-gray-700">
+                                              {sj.inspection.requested
+                                                ? (sj.inspection.done ? "済み" : "希望あり")
+                                                : "なし"}
+                                              {sj.inspection.properties && sj.inspection.properties.length > 0 && (
+                                                <span className="text-purple-600"> → {sj.inspection.properties.join("・")}</span>
+                                              )}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      )}
+                                      {/* 見積 */}
+                                      {sj.estimate?.requested && (
+                                        <div className="flex items-start gap-1.5">
+                                          <span className="text-[11px] flex-shrink-0">💴</span>
+                                          <span className="text-[11px] font-semibold text-gray-500">見積: </span>
+                                          <span className="text-[11px] text-gray-700">希望あり</span>
+                                        </div>
+                                      )}
+                                      {/* 要望 */}
+                                      {sj.requirements && sj.requirements.length > 0 && (
+                                        <div className="flex items-start gap-1.5">
+                                          <span className="text-[11px] flex-shrink-0">📋</span>
+                                          <div className="min-w-0">
+                                            <span className="text-[11px] font-semibold text-gray-500">要望: </span>
+                                            <span className="text-[11px] text-gray-700">{sj.requirements.join(" · ")}</span>
+                                          </div>
+                                        </div>
+                                      )}
+                                      {/* 意見・タイプ */}
+                                      {sj.opinions && sj.opinions.length > 0 && (
+                                        <div className="flex items-start gap-1.5">
+                                          <span className="text-[11px] flex-shrink-0">💬</span>
+                                          <div className="min-w-0">
+                                            <span className="text-[11px] font-semibold text-gray-500">意見: </span>
+                                            <span className="text-[11px] text-gray-700">{sj.opinions.join(" · ")}</span>
+                                          </div>
+                                        </div>
+                                      )}
+                                      {/* こちらのアクション */}
+                                      {sj.our_actions && sj.our_actions.length > 0 && (
+                                        <div className="flex items-start gap-1.5">
+                                          <span className="text-[11px] flex-shrink-0">📤</span>
+                                          <div className="min-w-0">
+                                            <span className="text-[11px] font-semibold text-gray-500">アクション: </span>
+                                            <span className="text-[11px] text-gray-700">{sj.our_actions.join(" → ")}</span>
+                                          </div>
+                                        </div>
+                                      )}
+                                      {/* 決まるパターン */}
+                                      {sj.winning_pattern && (
+                                        <div className="mt-2 rounded-lg bg-red-50 border border-red-200 px-2.5 py-1.5">
+                                          <span className="text-[10px] font-bold text-red-500">★ 決まるパターン: </span>
+                                          <span className="text-[11px] text-red-700 font-medium">{sj.winning_pattern}</span>
+                                        </div>
+                                      )}
+                                      {/* 次のアクション */}
+                                      {sj.next_action && (
+                                        <div className="rounded-lg bg-amber-50 border border-amber-300 px-2.5 py-1.5">
+                                          <span className="text-[10px] font-bold text-amber-600">🎯 次のアクション: </span>
+                                          <span className="text-[11px] text-amber-800 font-medium">{sj.next_action}</span>
+                                        </div>
+                                      )}
+                                    </>
+                                  ) : (
+                                    /* 旧テキスト形式のフォールバック */
+                                    <p className="text-[12px] text-[#333] whitespace-pre-line leading-relaxed">{summaries[c.id]}</p>
                                   )}
-                                  {/* 見積 */}
-                                  {sj.estimate?.requested && (
-                                    <div className="flex items-start gap-1.5">
-                                      <span className="text-[11px] flex-shrink-0">💴</span>
-                                      <span className="text-[11px] font-semibold text-gray-500">見積: </span>
-                                      <span className="text-[11px] text-gray-700">希望あり</span>
-                                    </div>
-                                  )}
-                                  {/* 要望 */}
-                                  {sj.requirements && sj.requirements.length > 0 && (
-                                    <div className="flex items-start gap-1.5">
-                                      <span className="text-[11px] flex-shrink-0">📋</span>
-                                      <div className="min-w-0">
-                                        <span className="text-[11px] font-semibold text-gray-500">要望: </span>
-                                        <span className="text-[11px] text-gray-700">{sj.requirements.join(" · ")}</span>
-                                      </div>
-                                    </div>
-                                  )}
-                                  {/* 意見・タイプ */}
-                                  {sj.opinions && sj.opinions.length > 0 && (
-                                    <div className="flex items-start gap-1.5">
-                                      <span className="text-[11px] flex-shrink-0">💬</span>
-                                      <div className="min-w-0">
-                                        <span className="text-[11px] font-semibold text-gray-500">意見: </span>
-                                        <span className="text-[11px] text-gray-700">{sj.opinions.join(" · ")}</span>
-                                      </div>
-                                    </div>
-                                  )}
-                                  {/* こちらのアクション */}
-                                  {sj.our_actions && sj.our_actions.length > 0 && (
-                                    <div className="flex items-start gap-1.5">
-                                      <span className="text-[11px] flex-shrink-0">📤</span>
-                                      <div className="min-w-0">
-                                        <span className="text-[11px] font-semibold text-gray-500">アクション: </span>
-                                        <span className="text-[11px] text-gray-700">{sj.our_actions.join(" → ")}</span>
-                                      </div>
-                                    </div>
-                                  )}
-                                  {/* 決まるパターン */}
-                                  {sj.winning_pattern && (
-                                    <div className="mt-2 rounded-lg bg-red-50 border border-red-200 px-2.5 py-1.5">
-                                      <span className="text-[10px] font-bold text-red-500">★ 決まるパターン: </span>
-                                      <span className="text-[11px] text-red-700 font-medium">{sj.winning_pattern}</span>
-                                    </div>
-                                  )}
-                                  {/* 次のアクション */}
-                                  {sj.next_action && (
-                                    <div className="rounded-lg bg-amber-50 border border-amber-300 px-2.5 py-1.5">
-                                      <span className="text-[10px] font-bold text-amber-600">🎯 次のアクション: </span>
-                                      <span className="text-[11px] text-amber-800 font-medium">{sj.next_action}</span>
-                                    </div>
-                                  )}
-                                </>
+                                </div>
                               ) : (
-                                /* 旧テキスト形式のフォールバック */
-                                <p className="text-[12px] text-[#333] whitespace-pre-line leading-relaxed">{summaries[c.id]}</p>
+                                /* 会話ログ */
+                                <div className="px-4 pb-3 pt-2">
+                                  <div className="space-y-1 max-h-60 overflow-y-auto">
+                                    {msgCache[c.id] === undefined
+                                      ? <p className="text-xs text-gray-400 text-center py-4">読み込み中...</p>
+                                      : msgCache[c.id].length === 0
+                                        ? <p className="text-xs text-gray-400 text-center py-4">メッセージがありません</p>
+                                        : msgCache[c.id].map(msg => (
+                                            <div key={msg.id} className={`flex ${msg.sender === "customer" ? "justify-start" : "justify-end"}`}>
+                                              <div className={`max-w-[75%] rounded-lg px-2 py-1 text-xs whitespace-pre-wrap break-words ${
+                                                msg.sender === "customer" ? "bg-gray-100 text-gray-800" : "bg-blue-100 text-blue-800"
+                                              }`}>
+                                                {msg.text ?? "（画像）"}
+                                              </div>
+                                            </div>
+                                          ))
+                                    }
+                                  </div>
+                                </div>
                               )}
-                            </div>
+                            </>
                           )}
                         </div>
                       );
