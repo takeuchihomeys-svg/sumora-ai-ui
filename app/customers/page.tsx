@@ -349,11 +349,16 @@ export default function CustomersPage() {
         const ua = URGENCY_ORDER[urgency(a)];
         const ub = URGENCY_ORDER[urgency(b)];
         if (ua !== ub) return ua - ub;
+        // 同一urgencyグループ内で内覧済み（inspection.done=true）を上位表示
+        const aInspected = summaryJsons[a.id]?.inspection?.done === true;
+        const bInspected = summaryJsons[b.id]?.inspection?.done === true;
+        if (aInspected && !bInspected) return -1;
+        if (!aInspected && bInspected) return 1;
         const ta = a.last_property_sent_at ? new Date(a.last_property_sent_at).getTime() : 0;
         const tb = b.last_property_sent_at ? new Date(b.last_property_sent_at).getTime() : 0;
         return tb - ta;
       }),
-  [base, filterMode]);
+  [base, filterMode, summaryJsons]);
 
   const linkedCount    = customers.filter((c) => c.is_linked && !isApplying(c.status)).length;
   const replyCount     = customers.filter((c) => urgency(c) === "reply" && !isApplying(c.status)).length;
@@ -984,6 +989,11 @@ export default function CustomersPage() {
                       {u === "property" && (
                         <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${days === null || days === undefined ? "bg-red-100 text-red-600" : days >= 7 ? "bg-red-100 text-red-600" : "bg-orange-100 text-orange-600"}`}>
                           {days === null || days === undefined ? "未送信" : `${days}日未送信`}
+                        </span>
+                      )}
+                      {summaryJsons[c.id]?.inspection?.done && (
+                        <span className="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[9px] font-bold text-blue-700">
+                          🏠内覧済
                         </span>
                       )}
                     </div>
