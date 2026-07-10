@@ -94,6 +94,10 @@ function jsonToText(j: SummaryJson): string {
     lines.push(`・アクション: ${j.our_actions.join(" → ")}`);
   }
 
+  if (j.estimate?.requested) {
+    lines.push(`・見積依頼: あり`);
+  }
+
   if (j.winning_pattern) {
     lines.push(`★決まるパターン: ${j.winning_pattern}`);
   }
