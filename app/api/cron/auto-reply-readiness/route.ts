@@ -24,8 +24,10 @@ export async function POST(req: NextRequest) {
     const reportDate = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
 
     // 1. action_pattern_logs から直近30日の採択率をaix_type別に集計
-    //    accepted: suggestion_accepted + prediction_match
-    //    dismissed: suggestion_dismissed + prediction_mismatch + suggestion_bypassed
+    //    中3: 同一AIX送信で suggestion_accepted（バナークリック）と prediction_match（送信完了）の
+    //    2行が入り採択率が上振れするため、prediction_match のみを accepted の正とする
+    //    accepted: prediction_match のみ
+    //    total: suggestion_accepted + suggestion_dismissed + prediction_match + prediction_mismatch + suggestion_bypassed
     const { data: patternLogs } = await supabase
       .from("action_pattern_logs")
       .select("action_type, source")
@@ -45,7 +47,8 @@ export async function POST(req: NextRequest) {
       if (!at) continue;
       acceptanceStats[at] ??= { accepted: 0, total: 0 };
       acceptanceStats[at].total += 1;
-      if (log.source === "suggestion_accepted" || log.source === "prediction_match") {
+      // 中3: suggestion_accepted は total のみ（prediction_match が accepted を代表する）
+      if (log.source === "prediction_match") {
         acceptanceStats[at].accepted += 1;
       }
     }

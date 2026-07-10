@@ -7,14 +7,19 @@ export const maxDuration = 60;
 // 直近30日の採択/却下ログ（action_pattern_logs.source =
 // suggestion_accepted / suggestion_dismissed / prediction_match / prediction_mismatch）
 // を集計して trigger_action_rules に action_type ごとの「真の予測一致率」を upsert する。
-// - accepted 側: suggestion_accepted（バナー「開く」）+ prediction_match（予測一致）
-// - rejected 側: suggestion_dismissed（バナー「✕」）+ prediction_mismatch（予測外れ）+ suggestion_bypassed（提案無視で別行動）
+// - accepted 側: prediction_match（予測一致・送信完了）のみ
+//   ※中3: suggestion_accepted（バナー「開く」）は同一送信で prediction_match と二重計上されるため total のみに含める
+// - total 側: 上記 + suggestion_accepted + suggestion_dismissed（バナー「✕」）+ prediction_mismatch（予測外れ）+ suggestion_bypassed（提案無視で別行動）
 //
 // keyword は特殊キー "SUGGESTION_ACCEPT_RATE" を使用:
 // - n-gram学習ルール（learn-trigger-rules）を上書きしない
 // - suggest-next-action のキーワードマッチ（msg.includes(kw)）にも
 //   チェーンルール（keyword = "AFTER:xxx"）にも誤マッチしない
 const ACCEPT_RATE_KEYWORD = "SUGGESTION_ACCEPT_RATE";
+
+// 中1: next_action_logs.was_accurate（予測精度）を action_type 別に集計して保存する特殊キー。
+// suggest-next-action が読み取り、精度40%未満のアクションをランク下げする（isLowAccuracy）
+const PREDICTION_ACCURACY_KEYWORD = "PREDICTION_ACCURACY";
 
 // 件数が少ないアクションはスキップ（統計的に無意味なため）
 const MIN_SAMPLES = 5;
@@ -33,31 +38,31 @@ async function run() {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
 
-  if (!logs?.length) {
-    return NextResponse.json({ ok: true, updated: 0, skipped: 0, message: "no adoption logs in last 30 days" });
-  }
+  // ※ 採択ログが0件でも中1の予測精度集計（next_action_logs）は実行するため早期returnしない
 
   // action_type ごとに採択/却下を集計
-  // accepted: suggestion_accepted + prediction_match
-  // dismissed: suggestion_dismissed + prediction_mismatch + suggestion_bypassed
-  const stats: Record<string, { accepted: number; dismissed: number }> = {};
-  for (const log of logs) {
+  // 中3: 同一AIX送信で suggestion_accepted（バナークリック）と prediction_match（送信完了）の
+  // 2行が入り採択率が上振れするため、prediction_match のみを accepted の正とする。
+  // - suggestion_accepted: total++ のみ（送信完了時の prediction_match が accepted を代表する）
+  // - prediction_match:    accepted++ かつ total++
+  // - dismissed系（suggestion_dismissed / prediction_mismatch / suggestion_bypassed）: total++ のみ
+  const stats: Record<string, { accepted: number; total: number }> = {};
+  for (const log of logs ?? []) {
     const action = (log.action_type as string) ?? "";
     if (!action) continue;
-    stats[action] ??= { accepted: 0, dismissed: 0 };
-    if (log.source === "suggestion_accepted" || log.source === "prediction_match") stats[action].accepted++;
-    else stats[action].dismissed++;
+    stats[action] ??= { accepted: 0, total: 0 };
+    stats[action].total++;
+    if (log.source === "prediction_match") stats[action].accepted++;
   }
 
   let updated = 0;
   let skipped = 0;
-  const breakdown: Record<string, { accepted: number; dismissed: number; confidence: number | null }> = {};
+  const breakdown: Record<string, { accepted: number; total: number; confidence: number | null }> = {};
 
-  for (const [action, { accepted, dismissed }] of Object.entries(stats)) {
-    const total = accepted + dismissed;
+  for (const [action, { accepted, total }] of Object.entries(stats)) {
     if (total < MIN_SAMPLES) {
       skipped++;
-      breakdown[action] = { accepted, dismissed, confidence: null };
+      breakdown[action] = { accepted, total, confidence: null };
       continue;
     }
 
@@ -78,16 +83,70 @@ async function run() {
       console.error("[update-action-confidence] upsert error:", action, upsertError.message);
     } else {
       updated++;
-      breakdown[action] = { accepted, dismissed, confidence };
+      breakdown[action] = { accepted, total, confidence };
+    }
+  }
+
+  // ── 中1: next_action_logs から action_type 別の was_accurate 率を集計して upsert ──
+  // suggest-next-action が keyword='PREDICTION_ACCURACY' として参照し、
+  // 精度40%未満（かつサンプル5件以上）のアクションをランク下げする
+  let accuracyUpdated = 0;
+  const accuracyBreakdown: Record<string, { accurate: number; total: number; accuracy: number | null }> = {};
+  const { data: accuracyLogs, error: accuracyError } = await supabase
+    .from("next_action_logs")
+    .select("actual_aix_type, was_accurate")
+    .eq("validated", true)
+    .not("actual_aix_type", "is", null)
+    .not("was_accurate", "is", null)
+    .gte("validated_at", thirtyDaysAgo)
+    .limit(5000);
+
+  if (accuracyError) {
+    console.error("[update-action-confidence] next_action_logs 取得エラー:", accuracyError.message);
+  } else {
+    const accuracyStats: Record<string, { accurate: number; total: number }> = {};
+    for (const log of accuracyLogs ?? []) {
+      const action = (log.actual_aix_type as string) ?? "";
+      if (!action) continue;
+      accuracyStats[action] ??= { accurate: 0, total: 0 };
+      accuracyStats[action].total++;
+      if (log.was_accurate === true) accuracyStats[action].accurate++;
+    }
+
+    for (const [action, { accurate, total }] of Object.entries(accuracyStats)) {
+      if (total < MIN_SAMPLES) {
+        accuracyBreakdown[action] = { accurate, total, accuracy: null };
+        continue;
+      }
+      const accuracy = Math.round((accurate / total) * 1000) / 1000;
+      const { error: upsertError } = await supabase.from("trigger_action_rules").upsert(
+        {
+          action_type: action,
+          keyword: PREDICTION_ACCURACY_KEYWORD,
+          occurrence_count: accurate,
+          total_occurrence: total,
+          confidence: accuracy,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "action_type,keyword" }
+      );
+      if (upsertError) {
+        console.error("[update-action-confidence] accuracy upsert error:", action, upsertError.message);
+      } else {
+        accuracyUpdated++;
+        accuracyBreakdown[action] = { accurate, total, accuracy };
+      }
     }
   }
 
   return NextResponse.json({
     ok: true,
-    total_logs: logs.length,
+    total_logs: (logs ?? []).length,
     updated,
     skipped,
     breakdown,
+    accuracy_updated: accuracyUpdated,
+    accuracy_breakdown: accuracyBreakdown,
   });
 }
 

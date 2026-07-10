@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { normalizeStatus } from "@/app/lib/status-normalize";
 
 // Vercel Functions のタイムアウト上限（秒）
 export const maxDuration = 60;
@@ -189,6 +190,7 @@ export async function POST(req?: Request) {
   // 1) confidence閾値割れ（confidence < 0.4 かつ occurrence_count < 5）の既存ルールを削除
   // 高5: SUGGESTION_ACCEPT_RATE（update-action-confidence cron が管理する採択率行）と
   //      AFTER:%（チェーンルール）は n-gram ルールではないため cleanup 対象から保護する
+  // 中1: PREDICTION_ACCURACY（予測精度行）も同様に保護（低精度の行こそ isLowAccuracy の判定材料になるため）
   {
     const { data: lowRules } = await supabase
       .from("trigger_action_rules")
@@ -196,6 +198,7 @@ export async function POST(req?: Request) {
       .lt("confidence", 0.4)
       .lt("occurrence_count", 5)
       .not("keyword", "eq", "SUGGESTION_ACCEPT_RATE")
+      .not("keyword", "eq", "PREDICTION_ACCURACY")
       .not("keyword", "like", "AFTER:%");
     if (lowRules?.length) {
       const { error } = await supabase
@@ -204,6 +207,7 @@ export async function POST(req?: Request) {
         .lt("confidence", 0.4)
         .lt("occurrence_count", 5)
         .not("keyword", "eq", "SUGGESTION_ACCEPT_RATE")
+        .not("keyword", "eq", "PREDICTION_ACCURACY")
         .not("keyword", "like", "AFTER:%");
       if (!error) cleaned += lowRules.length;
     }
@@ -248,7 +252,7 @@ export async function POST(req?: Request) {
   // 高6: 直近90日窓 + created_at 降順で「最新の3000件」を確定させる
   const { data: chainLogs } = await supabase
     .from("action_pattern_logs")
-    .select("action_type, previous_action_type, source")
+    .select("action_type, previous_action_type, conversation_status, source")
     .not("previous_action_type", "is", null)
     .not("action_type", "like", "%_submode")
     .gte("created_at", NINETY_DAYS_AGO)
@@ -258,8 +262,13 @@ export async function POST(req?: Request) {
   // 高4: 却下・キャンセル・バイパス系は「実際に取られた遷移」ではないためチェーン学習から除外
   const CHAIN_EXCLUDED_SOURCES = new Set(["suggestion_dismissed", "send_cancelled", "suggestion_bypassed", "prediction_bypassed"]);
 
+  // 中4: 汎用チェーン（AFTER:{prev}）に加え、フェーズ特定チェーン（AFTER:{prev}|{status}）も集計する。
+  // suggest-next-action はフェーズ特定キーワードを優先参照するため、生成しないと常に空になる。
+  // status は suggest-next-action 側の参照キー（normalizeStatus 適用後）と揃える
   const chainCount: Record<string, Record<string, number>> = {};
   const prevTotal: Record<string, number> = {};
+  const phaseChainCount: Record<string, Record<string, number>> = {};
+  const phasePrevTotal: Record<string, number> = {};
   for (const log of chainLogs ?? []) {
     if (CHAIN_EXCLUDED_SOURCES.has((log.source as string) ?? "")) continue;
     const prev = log.previous_action_type as string;
@@ -268,20 +277,36 @@ export async function POST(req?: Request) {
     chainCount[prev] ??= {};
     chainCount[prev][curr] = (chainCount[prev][curr] ?? 0) + 1;
     prevTotal[prev] = (prevTotal[prev] ?? 0) + 1;
+
+    const rawStatus = ((log.conversation_status as string | null) ?? "").trim();
+    if (rawStatus) {
+      const phaseKey = `${prev}|${normalizeStatus(rawStatus)}`;
+      phaseChainCount[phaseKey] ??= {};
+      phaseChainCount[phaseKey][curr] = (phaseChainCount[phaseKey][curr] ?? 0) + 1;
+      phasePrevTotal[phaseKey] = (phasePrevTotal[phaseKey] ?? 0) + 1;
+    }
   }
 
   let chainLearned = 0;
-  for (const [prev, nexts] of Object.entries(chainCount)) {
-    for (const [action, count] of Object.entries(nexts)) {
-      const total = prevTotal[prev] ?? count;
-      const confidence = Math.round((count / total) * 1000) / 1000;
-      // #24 修正D: 低品質ルール（confidence < 0.4 かつ count < 5）は upsert 対象外
-      if (confidence >= 0.3 && count >= 2 && !isLowQualityRule(confidence, count)) {
-        const { error } = await supabase.from("trigger_action_rules").upsert(
-          { action_type: action, keyword: `AFTER:${prev}`, occurrence_count: count, total_occurrence: total, confidence, updated_at: new Date().toISOString() },
-          { onConflict: "action_type,keyword" }
-        );
-        if (!error) { learned++; chainLearned++; }
+  // 汎用チェーン（AFTER:{prev}）とフェーズ特定チェーン（AFTER:{prev}|{status}）を同じ閾値で upsert
+  // フェーズ特定は母数がフェーズで絞られるため汎用より高 confidence になりやすい
+  const chainGroups: Array<{ counts: Record<string, Record<string, number>>; totals: Record<string, number> }> = [
+    { counts: chainCount, totals: prevTotal },
+    { counts: phaseChainCount, totals: phasePrevTotal },
+  ];
+  for (const { counts, totals } of chainGroups) {
+    for (const [prevKey, nexts] of Object.entries(counts)) {
+      for (const [action, count] of Object.entries(nexts)) {
+        const total = totals[prevKey] ?? count;
+        const confidence = Math.round((count / total) * 1000) / 1000;
+        // #24 修正D: 低品質ルール（confidence < 0.4 かつ count < 5）は upsert 対象外
+        if (confidence >= 0.3 && count >= 2 && !isLowQualityRule(confidence, count)) {
+          const { error } = await supabase.from("trigger_action_rules").upsert(
+            { action_type: action, keyword: `AFTER:${prevKey}`, occurrence_count: count, total_occurrence: total, confidence, updated_at: new Date().toISOString() },
+            { onConflict: "action_type,keyword" }
+          );
+          if (!error) { learned++; chainLearned++; }
+        }
       }
     }
   }

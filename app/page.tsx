@@ -311,6 +311,12 @@ function groupImageMessages(messages: Message[]): Message[] {
 
 const URL_REGEX = /(https?:\/\/[^\s\u3000-\u9fff\uff00-\uffef]+)/g;
 
+// 中7: 学習ログ（learn-action-patterns）用の顧客メッセージ要約。
+// URLは n-gram 学習・過去例プロンプトを汚染するため、150字に切る前に除去する
+function summarizeForLearning(msg: string): string {
+  return msg.replace(/https?:\/\/\S+/g, "").trim().slice(0, 150);
+}
+
 function isVideoUrl(url: string) {
   return /\.(mp4|mov|webm|m4v)(\?|$)/i.test(url);
 }
@@ -3094,7 +3100,7 @@ export default function Home() {
           conversation_status: selectedConversation.status,
           action_type: aixModalType || "unknown",
           source: "send_cancelled",
-          customer_msg_summary: (replyTargetCustomerMsgRef.current || latestCustomerMessage || "").slice(0, 150),
+          customer_msg_summary: summarizeForLearning(replyTargetCustomerMsgRef.current || latestCustomerMessage || ""),
           conversation_id: selectedConversation.id,
         }),
       }).catch(() => {});
@@ -3247,7 +3253,7 @@ export default function Home() {
               conversation_status: newStatus ?? currentStatus,
               action_type: bypassedAction,
               source: "suggestion_bypassed",
-              customer_msg_summary: _bypMsg.slice(0, 150),
+              customer_msg_summary: summarizeForLearning(_bypMsg),
               predicted_action: bypassedAction,
               previous_action_type: lastAixByConvRef.current.get(selectedConversation.id) ?? null,
               conversation_id: selectedConversation.id,
@@ -4931,7 +4937,7 @@ export default function Home() {
                   action_type: actionType,
                   source,
                   predicted_action: nextSugg.action ?? null,
-                  customer_msg_summary: lastCustomerMsg.slice(0, 150),
+                  customer_msg_summary: summarizeForLearning(lastCustomerMsg),
                   previous_action_type: lastAixByConvRef.current.get(selectedConversation.id) ?? null,
                 }),
               }).catch(() => {});
@@ -5732,7 +5738,7 @@ export default function Home() {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json" },
                                 keepalive: true,
-                                body: JSON.stringify({ action: "log", conversation_status: _sdStatus, action_type: _sdActionType, source: "split_draft_used", customer_msg_summary: _sdCustomerMsg.slice(0, 150), conversation_id: _sdConvId }),
+                                body: JSON.stringify({ action: "log", conversation_status: _sdStatus, action_type: _sdActionType, source: "split_draft_used", customer_msg_summary: summarizeForLearning(_sdCustomerMsg), conversation_id: _sdConvId }),
                               }).catch(() => {});
                             }
                           }
@@ -6142,7 +6148,7 @@ export default function Home() {
                             .reverse()
                             .find((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
                             ?.text ?? "";
-                          await fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_accepted", predicted_action: nextSugg.action ?? null, customer_msg_summary: lastCustomerMsg.slice(0, 150), previous_action_type: lastAixByConvRef.current.get(id) ?? null }) }).catch(() => {});
+                          await fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_accepted", predicted_action: nextSugg.action ?? null, customer_msg_summary: summarizeForLearning(lastCustomerMsg), previous_action_type: lastAixByConvRef.current.get(id) ?? null }) }).catch(() => {});
                           setDismissedNextActionIds((prev) => new Set([...prev, id]));
                           setShowAixMenu(false);
                           setAixInspectLabel(null);
@@ -6161,7 +6167,7 @@ export default function Home() {
                             .reverse()
                             .find((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
                             ?.text ?? "";
-                          fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_dismissed", predicted_action: nextSugg.action ?? null, customer_msg_summary: lastCustomerMsg.slice(0, 150), previous_action_type: lastAixByConvRef.current.get(id) ?? null }) }).catch(() => {});
+                          fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_dismissed", predicted_action: nextSugg.action ?? null, customer_msg_summary: summarizeForLearning(lastCustomerMsg), previous_action_type: lastAixByConvRef.current.get(id) ?? null }) }).catch(() => {});
                           setDismissedNextActionIds((prev) => new Set([...prev, id]));
                         }}
                         className="shrink-0 text-amber-400 text-[11px] font-bold"
@@ -7553,7 +7559,7 @@ export default function Home() {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 // PA-1: conversation_id を渡す → ref が空（リロード後）でもサーバー側で aix_usage_logs から前アクションを復元
-                body: JSON.stringify({ action: "log", conversation_status: _ns, action_type: aixModalType, customer_msg_summary: _lastCustomerMsg.slice(0, 150), previous_action_type: _prevAix, source: _learnSource, predicted_action: _predictedAction, conversation_id: selectedConversation.id }),
+                body: JSON.stringify({ action: "log", conversation_status: _ns, action_type: aixModalType, customer_msg_summary: summarizeForLearning(_lastCustomerMsg), previous_action_type: _prevAix, source: _learnSource, predicted_action: _predictedAction, conversation_id: selectedConversation.id }),
               }).catch(() => {});
               lastAixByConvRef.current.set(selectedConversation.id, aixModalType);
               // 物件確認結果の空室有無を保持（suggestViewing=空室あり / suggest2ndHand=空室ありだが申込あり）
@@ -7610,7 +7616,7 @@ export default function Home() {
                     conversation_status: _ns,
                     action_type: _predictedAction,
                     source: "suggestion_bypassed",
-                    customer_msg_summary: _lastCustomerMsg.slice(0, 150),
+                    customer_msg_summary: summarizeForLearning(_lastCustomerMsg),
                     predicted_action: _predictedAction,
                     previous_action_type: _prevAix,
                     conversation_id: selectedConversation.id,

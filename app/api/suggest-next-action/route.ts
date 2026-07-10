@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
   // メッセージ・顧客（property_customer_id で引く）・採択率（毎日 update-action-confidence cron が更新）
   // ・成約貢献率（calc-aix-attribution cron が毎週計算・直近1ヶ月分）を並列取得
   // ※ 改善6: 成約貢献率は Sonnet フォールバックだけでなくチェーンルール・キーワードルールにも効かせるため、ここで一度だけ取得する
-  const [{ data: messages }, { data: customer }, { data: acceptanceRows }, { data: attributionRows }] = await Promise.all([
+  const [{ data: messages }, { data: customer }, { data: acceptanceRows }, { data: attributionRows }, { data: accuracyRows }] = await Promise.all([
     supabase.from("messages")
       .select("sender, text, image_url, created_at")
       .eq("conversation_id", conversation_id)
@@ -78,6 +78,10 @@ export async function POST(req: NextRequest) {
       .gte("period_start", new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString().slice(0, 10))
       .order("period_start", { ascending: false })
       .limit(50),
+    // 中1: 予測精度（next_action_logs.was_accurate 率 / update-action-confidence cron が毎日更新）
+    supabase.from("trigger_action_rules")
+      .select("action_type, confidence, total_occurrence")
+      .eq("keyword", "PREDICTION_ACCURACY"),
   ]);
 
   const acceptanceRateMap = Object.fromEntries(
@@ -115,6 +119,19 @@ export async function POST(req: NextRequest) {
     if (!actionType || overallAvgWinRate == null) return false;
     const rate = avgWinRateMap[actionType];
     return typeof rate === "number" && rate < overallAvgWinRate / 2;
+  }
+
+  // 中1: 予測精度（PREDICTION_ACCURACY）が40%未満かつサンプル5件以上のアクションはランク下げ
+  // ※ データ不足（total_occurrence < 5 または行なし）は「実績不明」として低評価しない
+  const accuracyMap: Record<string, { accuracy: number; samples: number }> = {};
+  for (const row of (accuracyRows ?? []) as { action_type: string; confidence: number | null; total_occurrence: number | null }[]) {
+    if (row.confidence == null) continue;
+    accuracyMap[row.action_type] = { accuracy: row.confidence, samples: row.total_occurrence ?? 0 };
+  }
+  function isLowAccuracy(actionType: string | null | undefined): boolean {
+    if (!actionType) return false;
+    const entry = accuracyMap[actionType];
+    return !!entry && entry.samples >= 5 && entry.accuracy < 0.4;
   }
 
   if (!messages?.length) return NextResponse.json({ action: null, reason: "" });
@@ -209,8 +226,9 @@ export async function POST(req: NextRequest) {
       };
       // 抑制対象をスキップして最初の非抑制アクションを採用
       // 改善6: 成約貢献率が全体平均の半分未満（lowWinRate）の候補はランク下げ。他に候補がなければ従来通り採用
+      // 中1: 予測精度40%未満（lowAccuracy）の候補も同様にランク下げ
       const nonSuppressed = chainRules.filter((r) => !shouldSuppressAction(r.action_type as string));
-      const validChainRule = nonSuppressed.find((r) => !isLowWinRate(r.action_type as string)) ?? nonSuppressed[0];
+      const validChainRule = nonSuppressed.find((r) => !isLowWinRate(r.action_type as string) && !isLowAccuracy(r.action_type as string)) ?? nonSuppressed[0];
       if (validChainRule) {
         return NextResponse.json({
           action: validChainRule.action_type,
@@ -344,8 +362,9 @@ export async function POST(req: NextRequest) {
         (a, b) => b[1].score - a[1].score || b[1].topConf - a[1].topConf || a[0].localeCompare(b[0])
       );
       // 改善6: 成約貢献率が全体平均の半分未満（lowWinRate）の候補はランク下げ。他に候補がなければ従来通り採用
+      // 中1: 予測精度40%未満（lowAccuracy）の候補も同様にランク下げ
       const eligibleScores = sortedScores.filter(([actionType, s]) => s.score >= 0.85 && !shouldSuppressAction(actionType));
-      const topValid = eligibleScores.find(([actionType]) => !isLowWinRate(actionType)) ?? eligibleScores[0];
+      const topValid = eligibleScores.find(([actionType]) => !isLowWinRate(actionType) && !isLowAccuracy(actionType)) ?? eligibleScores[0];
       if (topValid) {
         return NextResponse.json({
           action: topValid[0],
@@ -393,11 +412,6 @@ export async function POST(req: NextRequest) {
 
   const aixFlowGuide = ((flowGuideRow?.content as string | undefined) ?? "").trim();
 
-  // ガード②: フロー運用ガイドが未学習（空）の場合もAI判断をスキップ
-  if (!aixFlowGuide) {
-    return NextResponse.json({ action: null, reason: "" });
-  }
-
   const aixLogicSection = (aixLogicRows ?? [])
     .map((r) => (r.content as string))
     .join("\n\n---\n\n");
@@ -409,6 +423,13 @@ export async function POST(req: NextRequest) {
     freq[a] = (freq[a] ?? 0) + 1;
   }
   const totalPatterns = Object.values(freq).reduce((s, n) => s + n, 0);
+
+  // ガード②（中6で緩和）: フロー運用ガイドが未学習（空）でも、過去パターンデータが
+  // 3件以上あれば system プロンプトの基礎フロー知識のみで Sonnet を実行する。
+  // ガイドも過去パターンも無い場合のみAI判断をスキップ
+  if (!aixFlowGuide && totalPatterns < 3) {
+    return NextResponse.json({ action: null, reason: "" });
+  }
 
   // 上位3アクションを頻度付きで表示
   const topActions = Object.entries(freq)
@@ -486,16 +507,27 @@ ${examples || "  (なし)"}
     ? `## 成約貢献率（直近1ヶ月の実績）\n${attributionLines.join("\n")}\n\n`
     : "";
 
+  // 中1: 予測精度が低い（40%未満・サンプル5件以上）アクションを警告として注入
+  const lowAccuracyLines = Object.entries(accuracyMap)
+    .filter(([actionType]) => isLowAccuracy(actionType))
+    .map(([a, v]) => `- ${a}: 予測一致率 ${Math.round(v.accuracy * 100)}%（${v.samples}件）`);
+  const accuracySection = lowAccuracyLines.length
+    ? `## 予測精度が低いアクション（直近30日実績・提案は慎重に。他に妥当な候補があればそちらを優先）\n${lowAccuracyLines.join("\n")}\n\n`
+    : "";
+
   // フロー運用ガイドは「## 指示」やJSON出力指示より前に注入する（後置するとフォーマット遵守が弱まる）
   // 改善15: analyze-aix-flow の出力上限（800字指示・max_tokens 1000）と整合させて末尾切れを防ぐ
-  const flowGuideSection = `## AIXフロー運用ガイド（学習済み）
+  // 中6: ガイド未学習（空）の場合はセクション自体を省略（過去パターン + 基礎フロー知識で判断）
+  const flowGuideSection = aixFlowGuide
+    ? `## AIXフロー運用ガイド（学習済み）
 ${aixFlowGuide.slice(0, 1000)}
 
-`;
+`
+    : "";
 
   const prompt = `あなたは不動産営業AIのアドバイザーです。
 現在日時（JST）: ${jstNowStr}
-${customerContext ? customerContext + "\n" : ""}${aixLogicGuide}${flowGuideSection}${attributionSection}${patternSection}## 現在の会話
+${customerContext ? customerContext + "\n" : ""}${aixLogicGuide}${flowGuideSection}${attributionSection}${accuracySection}${patternSection}## 現在の会話
 顧客名: ${conv.customer_name as string}
 ステータス: ${statusLabel}
 直前のAIXアクション: ${last_aix_action || "なし"}

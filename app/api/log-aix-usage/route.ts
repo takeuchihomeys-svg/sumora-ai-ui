@@ -51,6 +51,8 @@ async function runGapAnalysis(opts: {
     : "（やりとりなし）";
 
   // 一致判定（簡易ベースライン）
+  // 中2: 未定義の aix_type は wasAccurate=false 固定になり、Haiku パース失敗時に
+  // 不要な learning_rule 保存を誘発するため全 aix_type を網羅する
   const matchKeywords: Record<string, string[]> = {
     viewing_invite:          ["内覧", "見学", "日程", "お部屋"],
     property_send:           ["物件", "ご紹介", "新着", "おすすめ"],
@@ -58,6 +60,15 @@ async function runGapAnalysis(opts: {
     follow_up:               ["いかがでし", "確認", "どうでし", "感想"],
     application:             ["申込", "お申し込み", "申し込み"],
     document_request:        ["書類", "身分証", "連帯保証"],
+    estimate_sheet:          ["見積", "費用", "初期費用", "家賃"],
+    meeting_place:           ["待ち合わせ", "案内", "現地", "集合"],
+    property_check_result:   ["空室", "確認", "空き", "退去"],
+    greeting:                ["はじめまして", "よろしく", "担当"],
+    hearing:                 ["条件", "ご希望", "予算", "エリア"],
+    contract:                ["契約", "手続き", "書類", "入居日"],
+    acknowledge_check:       ["確認", "承知", "了解"],
+    followup_revive:         ["いかが", "その後", "近況"],
+    application_push:        ["申込", "お申し込み"],
   };
   const kw = matchKeywords[actualAixType] ?? [];
   const wasAccurate = kw.length > 0 && kw.some(k => predictedAction.includes(k));
@@ -118,6 +129,8 @@ ${msgContext}
   }).eq("id", predId);
 
   // 学習ルールを ai_reply_knowledge に保存（ずれがある場合のみ）
+  // 中2: Haiku パース失敗時（parsed.learning_rule が undefined）は保存をスキップ
+  //      （キーワード簡易判定だけを根拠にした低品質ルールの蓄積を防ぐ）
   if (parsed.learning_rule && !(parsed.was_accurate ?? wasAccurate)) {
     const title = `next_action_rule_${customerId.slice(0, 8)}_${Date.now()}`;
     await supabase.from("ai_reply_knowledge").insert({
