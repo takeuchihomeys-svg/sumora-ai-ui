@@ -323,6 +323,48 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // 📊 テンプレート週次レポート（月曜のみ。analyze-template-chains が月曜JST 8:30に更新 → 9:45のレポートで配信）
+  const jstDay = new Date(Date.now() + 9 * 3600 * 1000).getUTCDay(); // JST曜日。0=日曜、1=月曜
+  if (jstDay === 1) {
+    try {
+      const { data: reportRow } = await supabase
+        .from("ai_prompts")
+        .select("content")
+        .eq("key", "template_improvement_report")
+        .maybeSingle();
+      const report = reportRow?.content
+        ? JSON.parse(reportRow.content as string) as {
+            updated?: string;
+            improvement_proposals?: Array<{ template_label?: string; proposal?: string; priority?: string }>;
+            weekly_changes?: { summary?: string; notable?: string };
+          }
+        : null;
+      // 直近8日以内の更新のみ表示（analyze-template-chains 失敗週に古いレポートを再掲しない）
+      const isRecent = report?.updated
+        ? Date.now() - new Date(report.updated).getTime() < 8 * 24 * 60 * 60 * 1000
+        : false;
+      if (report && isRecent) {
+        const lines: string[] = [];
+        if (report.weekly_changes?.summary) lines.push(`今週の傾向: ${report.weekly_changes.summary}`);
+        if (report.weekly_changes?.notable) lines.push(`注目変化: ${report.weekly_changes.notable}`);
+        const highPriority = (report.improvement_proposals ?? [])
+          .filter((p) => p.priority === "high" && p.proposal)
+          .slice(0, 3);
+        if (highPriority.length > 0) {
+          lines.push("改善提案（優先度高）:");
+          for (const p of highPriority) {
+            lines.push(`・${p.template_label ? `${p.template_label}: ` : ""}${p.proposal}`);
+          }
+        }
+        if (lines.length > 0) {
+          statsLines.push(`📊 テンプレート週次レポート\n${lines.join("\n")}`);
+        }
+      }
+    } catch {
+      // JSONパース失敗時はスキップ（レポート本体は送る）
+    }
+  }
+
   const statsBlock = statsLines.length > 0
     ? `\n\n——————\n\n📊 統計サマリー\n\n${statsLines.join("\n")}`
     : "";

@@ -115,6 +115,10 @@
     {
       "path": "/api/cron/calc-template-scene-stats",
       "schedule": "0 23 * * 0"
+    },
+    {
+      "path": "/api/cron/analyze-template-chains",
+      "schedule": "30 23 * * 0"
     }
   ]
 }
