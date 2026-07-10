@@ -30,6 +30,8 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const rawStatus = searchParams.get("conversation_status") ?? "";
     const conversationId = searchParams.get("conversation_id") ?? null;
+    // aix_type が指定された場合、サブパターン（check_pattern/app_sub_mode/send_mode）を集計して返す
+    const aixType = searchParams.get("aix_type") ?? null;
 
     if (!rawStatus) {
       return NextResponse.json({ ok: false, error: "conversation_status required" }, { status: 400 });
@@ -87,12 +89,43 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // ④ aix_type が指定されている場合、対応するサブパターンの最頻値を集計
+    // property_check_result → check_pattern / application_push → app_sub_mode
+    // property_send / property_recommendation → send_mode
+    let suggested_sub_pattern: string | null = null;
+    if (aixType) {
+      const subField =
+        aixType === "property_check_result" ? "check_pattern"
+        : aixType === "application_push" ? "app_sub_mode"
+        : (aixType === "property_send" || aixType === "property_recommendation") ? "send_mode"
+        : null;
+      if (subField) {
+        const { data: subLogs } = await supabase
+          .from("aix_usage_logs")
+          .select(subField)
+          .eq("aix_type", aixType)
+          .not(subField, "is", null)
+          .order("created_at", { ascending: false })
+          .limit(30);
+        if (subLogs?.length) {
+          const subFreq: Record<string, number> = {};
+          for (const row of subLogs as Record<string, string | null>[]) {
+            const val = row[subField];
+            if (val) subFreq[val] = (subFreq[val] ?? 0) + 1;
+          }
+          const topSub = Object.entries(subFreq).sort((a, b) => b[1] - a[1])[0];
+          suggested_sub_pattern = topSub?.[0] ?? null;
+        }
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       suggested_action: suggestedAction,
       confidence: suggestedConfidence,
       alternatives: sorted.slice(0, 3),
       sample_size: total,
+      suggested_sub_pattern,
     });
   } catch (e) {
     console.error("[aix/suggest]", e);

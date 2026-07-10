@@ -41,11 +41,12 @@ export async function POST(req: NextRequest) {
         .gte("created_at", since)
         .order("created_at", { ascending: false })
         .limit(15),
-      // B07: 高重要度の原則・修正ルール（仮説未却下・適用実績降順）
+      // B07: 高重要度の原則・修正ルール・次アクションパターン（仮説未却下・適用実績降順）
+      // next_action_pattern: log-aix-usage の runGapAnalysis() が保存する予測精度改善ルール
       supabase
         .from("ai_reply_knowledge")
         .select("title, content, category")
-        .in("category", ["principle", "correction"])
+        .in("category", ["principle", "correction", "next_action_pattern"])
         .neq("hypothesis_status", "rejected")
         .gte("importance", 7)
         .order("apply_count", { ascending: false })
@@ -129,9 +130,13 @@ export async function POST(req: NextRequest) {
       .map((p) => `${p.title}: ${(p.content as string).slice(0, 100)}`)
       .join("\n") || "成約パターンデータなし";
 
-    // B07: 蓄積済みノウハウ（原則・修正ルール）をガイド生成に注入
+    // B07: 蓄積済みノウハウ（原則・修正ルール・次アクションパターン）をガイド生成に注入
     const principlesText = (principles ?? [])
-      .map((p) => `[${(p.category as string) === "correction" ? "修正" : "原則"}] ${(p.content as string).slice(0, 120)}`)
+      .map((p) => {
+        const cat = p.category as string;
+        const label = cat === "correction" ? "修正" : cat === "next_action_pattern" ? "次行動ルール" : "原則";
+        return `[${label}] ${(p.content as string).slice(0, 120)}`;
+      })
       .join("\n") || "蓄積ノウハウなし";
 
     // 4. Claude Haikuで分析・ガイド更新

@@ -322,8 +322,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ action: null, reason: "" });
   }
 
-  // ---- UIで管理しているAIXロジック＋過去パターンデータ＋フロー運用ガイドを並列取得 ----
-  const [{ data: aixLogicRows }, { data: patternRows }, { data: flowGuideRow }] = await Promise.all([
+  // ---- UIで管理しているAIXロジック＋過去パターンデータ＋フロー運用ガイド＋成果率を並列取得 ----
+  const [{ data: aixLogicRows }, { data: patternRows }, { data: flowGuideRow }, { data: attributionRows }] = await Promise.all([
     supabase.from("ai_prompts")
       .select("key, content")
       .like("key", "aix_logic_%"),
@@ -337,6 +337,12 @@ export async function POST(req: NextRequest) {
       .select("content")
       .eq("key", "aix_flow_guide")
       .maybeSingle(),
+    // aix_action_attribution（calc-aix-attribution cron が毎週計算する成約貢献率・直近1ヶ月分）
+    supabase.from("aix_action_attribution")
+      .select("action_type, win_rate, usage_count")
+      .gte("period_start", new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString().slice(0, 10))
+      .order("period_start", { ascending: false })
+      .limit(50),
   ]);
 
   const aixFlowGuide = ((flowGuideRow?.content as string | undefined) ?? "").trim();
@@ -423,6 +429,26 @@ ${examples || "  (なし)"}
     customer?.ai_summary ? `サマリー: ${customer.ai_summary as string}` : "",
   ].filter(Boolean).join("\n");
 
+  // aix_action_attribution: action_type別に直近1ヶ月の win_rate を加重平均
+  const attrMap: Record<string, { totalWinRate: number; count: number }> = {};
+  for (const row of (attributionRows ?? []) as { action_type: string; win_rate: number | null; usage_count: number | null }[]) {
+    if (row.win_rate == null) continue;
+    const a = row.action_type;
+    const m = attrMap[a] ?? { totalWinRate: 0, count: 0 };
+    m.totalWinRate += row.win_rate;
+    m.count += 1;
+    attrMap[a] = m;
+  }
+  const attributionLines = Object.entries(attrMap)
+    .map(([a, m]) => ({ action: a, avgWinRate: m.totalWinRate / m.count }))
+    .filter((e) => e.avgWinRate > 0)
+    .sort((a, b) => b.avgWinRate - a.avgWinRate)
+    .slice(0, 5)
+    .map((e) => `- ${e.action}: 成約貢献率 ${Math.round(e.avgWinRate * 100)}%`);
+  const attributionSection = attributionLines.length
+    ? `## 成約貢献率（直近1ヶ月の実績）\n${attributionLines.join("\n")}\n\n`
+    : "";
+
   // フロー運用ガイドは「## 指示」やJSON出力指示より前に注入する（後置するとフォーマット遵守が弱まる）
   const flowGuideSection = `## AIXフロー運用ガイド（学習済み）
 ${aixFlowGuide.slice(0, 800)}
@@ -431,7 +457,7 @@ ${aixFlowGuide.slice(0, 800)}
 
   const prompt = `あなたは不動産営業AIのアドバイザーです。
 現在日時（JST）: ${jstNowStr}
-${customerContext ? customerContext + "\n" : ""}${aixLogicGuide}${flowGuideSection}${patternSection}## 現在の会話
+${customerContext ? customerContext + "\n" : ""}${aixLogicGuide}${flowGuideSection}${attributionSection}${patternSection}## 現在の会話
 顧客名: ${conv.customer_name as string}
 ステータス: ${statusLabel}
 直前のAIXアクション: ${last_aix_action || "なし"}
