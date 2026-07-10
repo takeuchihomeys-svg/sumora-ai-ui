@@ -134,8 +134,10 @@ async function run() {
 
   // 推奨マップ: `${status}|${aix_type}` および `*|${aix_type}` → 最頻テンプレID
   // （suggest-next-action が O(1) で recommended_template_id を引けるように事前導出）
+  // 定義: 「選択」= 送信確定した時点。送信実績ゼロ（選んだだけで送らなかった）のチェーンは推奨に使わない
   const bestByScope: Record<string, { template_id: string; sent: number; selected: number }> = {};
   for (const c of chains) {
+    if (c.sent < 1) continue;
     for (const scope of [`${c.conversation_status}|${c.aix_type}`, `*|${c.aix_type}`]) {
       const cur = bestByScope[scope];
       if (!cur || c.sent > cur.sent || (c.sent === cur.sent && c.selected > cur.selected)) {

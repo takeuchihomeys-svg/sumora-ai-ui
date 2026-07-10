@@ -2286,8 +2286,30 @@ export default function TemplateModal({
                                   alert("📎 物件資料を画像で読み込んでください");
                                   return;
                                 }
-                                // displayText は adapted を applyVacatingDates/applySoloEntry/customerName 置換済み
-                                onSelect(displayText, isOcrTemplate ? undefined : (templateImages[tmpl.id] ?? []), tmpl.label, tmpl.category, secondMsg, tmpl.id);
+                                // AIX推薦採否ログ（postAixContext時のみ）—「そのまま使う」と同一の記録
+                                if (postAixContext?.conversationId) {
+                                  const recMatch = aiRecommendations.find((r) => r.id === tmpl.id);
+                                  fetch("/api/learn-action-patterns", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                      action: "log",
+                                      conversation_status: `post_aix_${postAixContext.actionType}`,
+                                      action_type: tmpl.category,
+                                      customer_msg_summary: tmpl.label,
+                                      source: recMatch ? "recommendation_accepted" : "recommendation_bypassed",
+                                      conversation_id: postAixContext.conversationId,
+                                    }),
+                                  }).catch(() => {});
+                                }
+                                // 「最適化版を使う」は必ず adapted テキストを使用（displaySourceがextracted等でもボタンのラベル通りに動く）
+                                let adaptedText = applyVacatingDates(adapted, vacatingDates[tmpl.id] ?? null);
+                                if (soloEntry) adaptedText = applySoloEntry(adaptedText);
+                                if (customerName) adaptedText = adaptedText.replace(/アカウント名/g, customerName);
+                                // 定義: AIで最適化して送信したものも「選択」。was_adapted=true と推薦順位を必ず記録する
+                                const recIdx = aiRecommendations.findIndex((r) => r.id === tmpl.id);
+                                const recommendedRank = recIdx >= 0 && recIdx < 2 ? recIdx + 1 : null;
+                                onSelect(adaptedText, isOcrTemplate ? undefined : (templateImages[tmpl.id] ?? []), tmpl.label, tmpl.category, secondMsg, tmpl.id, true, recommendedRank);
                                 onClose();
                               }}
                               className="rounded-full px-3 py-1.5 text-[11px] font-bold text-white"
