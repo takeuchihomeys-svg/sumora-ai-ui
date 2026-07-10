@@ -89,7 +89,7 @@ function buildCustomerStyleNote(messages: Array<{ sender: string; text?: string 
   if (keigoRate < 0.3) labels.push("カジュアル寄り");
   else if (keigoRate > 0.7) labels.push("丁寧語中心");
 
-  return `\n【お客様の文体】${labels.join(", ")}\n→ 返信はこの文体に合わせてトーンを調整すること`;
+  return `\n【お客様の文体】${labels.join(", ")}\n→ スモラらしい明るさ・絵文字・積極性・感嘆符は常に維持すること。短文のお客様には簡潔に返す、カジュアルなお客様には少し砕けた言い回しにするなど「テンポ・距離感」のみ参考にすること（冷たくしたり敬語を崩しすぎたりしない）`;
 }
 
 // ─── max_tokens 尻切れ検知（ログのみ・レスポンスには影響させない）─────────────
