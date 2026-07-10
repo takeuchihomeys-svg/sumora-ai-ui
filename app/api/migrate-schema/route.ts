@@ -1047,6 +1047,30 @@ CREATE TABLE IF NOT EXISTS ai_prompt_versions (
   created_at timestamptz DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS ai_prompt_versions_key_idx ON ai_prompt_versions (prompt_key, created_at DESC);
+
+-- 将来1: シャドーモード評価ログ（aix-shadow-eval cron が毎日記録）
+-- 「もし自動送信だったら何を提案したか」vs「スタッフが実際に押したAIX」の一致率を計測する
+-- usage_log_id: 評価対象の aix_usage_logs.id（UNIQUE部分インデックスで再実行時の重複評価を防止）
+-- source: suggest-next-action がどのルートで予測したか（chain_rule / keyword_hardcode / trigger_rule / status_rule / followup_rule / ai_fallback）
+CREATE TABLE IF NOT EXISTS aix_shadow_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  usage_log_id UUID,
+  conversation_id TEXT NOT NULL,
+  predicted_aix_type TEXT,
+  actual_aix_type TEXT NOT NULL,
+  matched BOOLEAN NOT NULL DEFAULT FALSE,
+  source TEXT,
+  predicted_at TIMESTAMPTZ,
+  evaluated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_aix_shadow_logs_usage_log
+  ON aix_shadow_logs(usage_log_id) WHERE usage_log_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_aix_shadow_logs_evaluated_at ON aix_shadow_logs(evaluated_at DESC);
+ALTER TABLE aix_shadow_logs DISABLE ROW LEVEL SECURITY;
+
+-- 将来3: 顧客反応評価（AIX送信後24時間以内に顧客返信があったか / eval-customer-reaction cron が毎日更新）
+-- NULL=未評価 / TRUE=24h以内に顧客返信あり / FALSE=返信なし
+ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS customer_reacted BOOLEAN;
 `.trim();
 
 export async function GET() {

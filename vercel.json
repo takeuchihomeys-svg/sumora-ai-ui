@@ -91,6 +91,18 @@
     {
       "path": "/api/cron/auto-reply-readiness",
       "schedule": "0 5 * * 1"
+    },
+    {
+      "path": "/api/cron/auto-reply-guard",
+      "schedule": "10 5 * * 1"
+    },
+    {
+      "path": "/api/cron/aix-shadow-eval",
+      "schedule": "0 11 * * *"
+    },
+    {
+      "path": "/api/cron/eval-customer-reaction",
+      "schedule": "30 11 * * *"
     }
   ]
 }

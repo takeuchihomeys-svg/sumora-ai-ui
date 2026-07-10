@@ -82,6 +82,7 @@ export async function GET(req: NextRequest) {
     { data: aixLogs, error: aixErr },
     { data: attributionRows, error: attributionRowsErr },
     { data: readinessRow, error: readinessErr },
+    { data: guardRow, error: guardErr },
   ] = await Promise.all([
     // ① 未完了タスク
     supabase
@@ -176,6 +177,13 @@ export async function GET(req: NextRequest) {
       .select("content")
       .eq("key", "auto_reply_readiness")
       .maybeSingle(),
+
+    // ⑬ 自動返信ガードレール発動記録（auto-reply-guard cron が毎週月曜更新）
+    supabase
+      .from("ai_prompts")
+      .select("content")
+      .eq("key", "auto_reply_guard_latest")
+      .maybeSingle(),
   ]);
 
   // クエリエラーのログ（レポート本体は送る。失敗したセクションは空になるだけ）
@@ -191,6 +199,7 @@ export async function GET(req: NextRequest) {
   if (aixErr) console.error("[morning-report] aixLogs query:", aixErr.message);
   if (attributionRowsErr) console.error("[morning-report] attributionRows query:", attributionRowsErr.message);
   if (readinessErr) console.error("[morning-report] readiness query:", readinessErr.message);
+  if (guardErr) console.error("[morning-report] guard query:", guardErr.message);
 
   // AI貢献率フッター（メトリクスがあれば1行追加）
   let attributionLine = "";
@@ -269,6 +278,29 @@ export async function GET(req: NextRequest) {
         return `  ・${label}${metrics ? `（${metrics}）` : ""}`;
       });
       statsLines.push(`🤖 自動返信化候補:\n${lines.join("\n")}`);
+    }
+  } catch {
+    // JSONパース失敗時はスキップ（レポート本体は送る）
+  }
+
+  // ⚠️ 自動返信化の一時停止（auto-reply-guard のキルスイッチ発動時のみ・直近8日以内の記録が対象）
+  try {
+    const guard = guardRow?.content
+      ? JSON.parse(guardRow.content as string) as {
+          report_date?: string;
+          paused?: Array<{ aix_type: string; week1_rate?: number; week2_rate?: number; week3_rate?: number }>;
+        }
+      : null;
+    const isRecent = guard?.report_date
+      ? Date.now() - new Date(guard.report_date).getTime() < 8 * 24 * 60 * 60 * 1000
+      : false;
+    if (isRecent && (guard?.paused?.length ?? 0) > 0) {
+      const pct = (r?: number) => (typeof r === "number" ? `${Math.round(r * 100)}%` : "?");
+      const lines = (guard?.paused ?? []).map((p) => {
+        const label = AIX_ACTION_LABEL[p.aix_type] ?? p.aix_type;
+        return `  ・${label}（採択率 ${pct(p.week1_rate)}→${pct(p.week2_rate)}→${pct(p.week3_rate)}）`;
+      });
+      statsLines.push(`⚠️ 自動返信化を一時停止:\n${lines.join("\n")}`);
     }
   } catch {
     // JSONパース失敗時はスキップ（レポート本体は送る）

@@ -251,7 +251,7 @@ export async function POST(req: NextRequest) {
       if (shouldSuppressAction("property_send")) {
         return NextResponse.json({ action: null, reason: "" });
       }
-      return NextResponse.json({ action: "property_send", reason: `${Math.floor(daysSince)}日間未返信・追客`, params: buildParams("property_send"), acceptanceRate: acceptanceRateMap["property_send"] ?? null });
+      return NextResponse.json({ action: "property_send", reason: `${Math.floor(daysSince)}日間未返信・追客`, source: "followup_rule", params: buildParams("property_send"), acceptanceRate: acceptanceRateMap["property_send"] ?? null });
     }
     return NextResponse.json({ action: null, reason: "" });
   }
@@ -267,7 +267,7 @@ export async function POST(req: NextRequest) {
       (lastCustomerMsg.includes("出して") || lastCustomerMsg.includes("で出し") || lastCustomerMsg.includes("見積"))) {
     // 状態は確定しているので、抑制時はフォールスルーせず提案なしで確定（P8誤提案防止）
     if (shouldSuppressAction("estimate_sheet")) return NextResponse.json({ action: null, reason: "" });
-    return NextResponse.json({ action: "estimate_sheet", reason: "入居日指定・見積書再送", source: "trigger_rule", params: buildParams("estimate_sheet"), acceptanceRate: acceptanceRateMap["estimate_sheet"] ?? null });
+    return NextResponse.json({ action: "estimate_sheet", reason: "入居日指定・見積書再送", source: "keyword_hardcode", params: buildParams("estimate_sheet"), acceptanceRate: acceptanceRateMap["estimate_sheet"] ?? null });
   }
 
   // 物件画像・動画・物件URL・空室確認の質問 → 「物件確認した」を提案
@@ -283,7 +283,7 @@ export async function POST(req: NextRequest) {
   const hasAvailabilityQuestion = AVAILABILITY_KEYWORDS.some((kw) => lastCustomerMsg.includes(kw));
   if ((hasPropertyMedia || hasPropertyUrl || hasAvailabilityQuestion) && PROPERTY_CHECK_STATUSES.has(currentStatus)) {
     if (shouldSuppressAction("property_check_result")) return NextResponse.json({ action: null, reason: "" });
-    return NextResponse.json({ action: "property_check_result", reason: hasPropertyMedia ? "物件画像が送られた" : "物件の空室確認依頼", source: "trigger_rule", params: buildParams("property_check_result"), acceptanceRate: acceptanceRateMap["property_check_result"] ?? null });
+    return NextResponse.json({ action: "property_check_result", reason: hasPropertyMedia ? "物件画像が送られた" : "物件の空室確認依頼", source: "keyword_hardcode", params: buildParams("property_check_result"), acceptanceRate: acceptanceRateMap["property_check_result"] ?? null });
   }
 
   // S-5: 費用・内覧・申込キーワード即判定（DBルール不要・Haiku流入削減）
@@ -291,7 +291,7 @@ export async function POST(req: NextRequest) {
   // マッチしたのに採択率で抑制された場合もフォールスルーせず null で確定させる（P8誤提案防止）。
   const keywordHit = (actionType: string, reason: string) => {
     if (shouldSuppressAction(actionType)) return NextResponse.json({ action: null, reason: "" });
-    return NextResponse.json({ action: actionType, reason, source: "keyword_trigger", params: buildParams(actionType), acceptanceRate: acceptanceRateMap[actionType] ?? null });
+    return NextResponse.json({ action: actionType, reason, source: "keyword_hardcode", params: buildParams(actionType), acceptanceRate: acceptanceRateMap[actionType] ?? null });
   };
   // 申込: 「申込みたい」（送り仮名違い）「決めます」「決めたい」「こちらで申」もカバー（最も後工程＝最優先）
   if (/申し込み.*たい|申込.*したい|申込.*希望|申込みたい|入居申込|決めます|決めたい|こちらで申/.test(lastCustomerMsg)) {
@@ -572,7 +572,7 @@ ${recentText}
     if (!action) return NextResponse.json({ action: null, reason: result.reason ?? "" });
     // Sonnet が提案したアクションも採択率が 30% 未満なら抑制
     if (shouldSuppressAction(action)) return NextResponse.json({ action: null, reason: "" });
-    return NextResponse.json({ action, reason: result.reason ?? "", params: buildParams(action), acceptanceRate: acceptanceRateMap[action] ?? null });
+    return NextResponse.json({ action, reason: result.reason ?? "", source: "ai_fallback", params: buildParams(action), acceptanceRate: acceptanceRateMap[action] ?? null });
   } catch (e) {
     console.error("[suggest-next-action] Sonnet 呼び出しに失敗:", e);
     return NextResponse.json({ action: null, reason: "" });
