@@ -141,7 +141,7 @@ export async function POST(req: NextRequest) {
 
     // 4. Claude Haikuで分析・ガイド更新
     const resp = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-opus-4-8",
       max_tokens: 700,
       messages: [{
         role: "user",
