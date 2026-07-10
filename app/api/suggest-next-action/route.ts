@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
   // メッセージ・顧客（property_customer_id で引く）・採択率（毎日 update-action-confidence cron が更新）
   // ・成約貢献率（calc-aix-attribution cron が毎週計算・直近1ヶ月分）を並列取得
   // ※ 改善6: 成約貢献率は Sonnet フォールバックだけでなくチェーンルール・キーワードルールにも効かせるため、ここで一度だけ取得する
-  const [{ data: messages }, { data: customer }, { data: acceptanceRows }, { data: attributionRows }, { data: accuracyRows }] = await Promise.all([
+  const [{ data: messages }, { data: customer }, { data: acceptanceRows }, { data: attributionRows }, { data: accuracyRows }, { data: submodeRows }] = await Promise.all([
     supabase.from("messages")
       .select("sender, text, image_url, created_at")
       .eq("conversation_id", conversation_id)
@@ -82,7 +82,24 @@ export async function POST(req: NextRequest) {
     supabase.from("trigger_action_rules")
       .select("action_type, confidence, total_occurrence")
       .eq("keyword", "PREDICTION_ACCURACY"),
+    // H2: サブモード予測の採択率（update-action-confidence cron が毎日更新）
+    // フロントに sub_mode_stats として渡し、ピッカーのサブモードデフォルト選択に使う
+    supabase.from("trigger_action_rules")
+      .select("keyword, confidence, total_occurrence")
+      .like("keyword", "SUBMODE_ACCEPT:%")
+      .gte("total_occurrence", 3)
+      .limit(50),
   ]);
+
+  // H2: SUBMODE_ACCEPT:{action_type}_submode → { rate, n } のマップ（提案レスポンスに添付）
+  const subModeStats = Object.fromEntries(
+    ((submodeRows ?? []) as { keyword: string; confidence: number | null; total_occurrence: number | null }[])
+      .filter((r) => typeof r.confidence === "number")
+      .map((r) => [
+        r.keyword.replace("SUBMODE_ACCEPT:", ""),
+        { rate: r.confidence as number, n: r.total_occurrence ?? 0 },
+      ])
+  );
 
   const acceptanceRateMap = Object.fromEntries(
     (acceptanceRows || []).map((r) => [r.action_type as string, r.confidence as number])
@@ -177,12 +194,12 @@ export async function POST(req: NextRequest) {
         : !shouldSuppressAction("viewing_invite") ? "viewing_invite"
         : null;
       if (!nextAction) return NextResponse.json({ action: null, reason: "" });
-      return NextResponse.json({ action: nextAction, reason: nextAction === "estimate_sheet" ? "空室確認後・見積書" : "空室確認後・内覧へ", source: "chain_rule", params: buildParams(nextAction), acceptanceRate: acceptanceRateMap[nextAction] ?? null });
+      return NextResponse.json({ action: nextAction, reason: nextAction === "estimate_sheet" ? "空室確認後・見積書" : "空室確認後・内覧へ", source: "chain_rule", params: buildParams(nextAction), acceptanceRate: acceptanceRateMap[nextAction] ?? null, sub_mode_stats: subModeStats });
     }
     if (available === false) {
       // 空室なしが明示された場合のみ → 代替物件送りへ誘導（抑制時は提案なしで確定）
       if (shouldSuppressAction("alternative_send")) return NextResponse.json({ action: null, reason: "" });
-      return NextResponse.json({ action: "alternative_send", reason: "代替物件を送る", source: "chain_rule", params: buildParams("alternative_send"), acceptanceRate: acceptanceRateMap["alternative_send"] ?? null });
+      return NextResponse.json({ action: "alternative_send", reason: "代替物件を送る", source: "chain_rule", params: buildParams("alternative_send"), acceptanceRate: acceptanceRateMap["alternative_send"] ?? null, sub_mode_stats: subModeStats });
     }
     // available が undefined/null（クライアント未送信）の場合のみ後続フェーズにフォールスルー
   }
@@ -236,6 +253,7 @@ export async function POST(req: NextRequest) {
           source: "chain_rule",
           params: buildParams(validChainRule.action_type as string),
           acceptanceRate: acceptanceRateMap[validChainRule.action_type as string] ?? null,
+          sub_mode_stats: subModeStats,
         });
       }
     }
@@ -251,7 +269,7 @@ export async function POST(req: NextRequest) {
       if (shouldSuppressAction("property_send")) {
         return NextResponse.json({ action: null, reason: "" });
       }
-      return NextResponse.json({ action: "property_send", reason: `${Math.floor(daysSince)}日間未返信・追客`, source: "followup_rule", params: buildParams("property_send"), acceptanceRate: acceptanceRateMap["property_send"] ?? null });
+      return NextResponse.json({ action: "property_send", reason: `${Math.floor(daysSince)}日間未返信・追客`, source: "followup_rule", params: buildParams("property_send"), acceptanceRate: acceptanceRateMap["property_send"] ?? null, sub_mode_stats: subModeStats });
     }
     return NextResponse.json({ action: null, reason: "" });
   }
@@ -267,7 +285,7 @@ export async function POST(req: NextRequest) {
       (lastCustomerMsg.includes("出して") || lastCustomerMsg.includes("で出し") || lastCustomerMsg.includes("見積"))) {
     // 状態は確定しているので、抑制時はフォールスルーせず提案なしで確定（P8誤提案防止）
     if (shouldSuppressAction("estimate_sheet")) return NextResponse.json({ action: null, reason: "" });
-    return NextResponse.json({ action: "estimate_sheet", reason: "入居日指定・見積書再送", source: "keyword_hardcode", params: buildParams("estimate_sheet"), acceptanceRate: acceptanceRateMap["estimate_sheet"] ?? null });
+    return NextResponse.json({ action: "estimate_sheet", reason: "入居日指定・見積書再送", source: "keyword_hardcode", params: buildParams("estimate_sheet"), acceptanceRate: acceptanceRateMap["estimate_sheet"] ?? null, sub_mode_stats: subModeStats });
   }
 
   // 物件画像・動画・物件URL・空室確認の質問 → 「物件確認した」を提案
@@ -283,7 +301,7 @@ export async function POST(req: NextRequest) {
   const hasAvailabilityQuestion = AVAILABILITY_KEYWORDS.some((kw) => lastCustomerMsg.includes(kw));
   if ((hasPropertyMedia || hasPropertyUrl || hasAvailabilityQuestion) && PROPERTY_CHECK_STATUSES.has(currentStatus)) {
     if (shouldSuppressAction("property_check_result")) return NextResponse.json({ action: null, reason: "" });
-    return NextResponse.json({ action: "property_check_result", reason: hasPropertyMedia ? "物件画像が送られた" : "物件の空室確認依頼", source: "keyword_hardcode", params: buildParams("property_check_result"), acceptanceRate: acceptanceRateMap["property_check_result"] ?? null });
+    return NextResponse.json({ action: "property_check_result", reason: hasPropertyMedia ? "物件画像が送られた" : "物件の空室確認依頼", source: "keyword_hardcode", params: buildParams("property_check_result"), acceptanceRate: acceptanceRateMap["property_check_result"] ?? null, sub_mode_stats: subModeStats });
   }
 
   // S-5: 費用・内覧・申込キーワード即判定（DBルール不要・Haiku流入削減）
@@ -291,7 +309,7 @@ export async function POST(req: NextRequest) {
   // マッチしたのに採択率で抑制された場合もフォールスルーせず null で確定させる（P8誤提案防止）。
   const keywordHit = (actionType: string, reason: string) => {
     if (shouldSuppressAction(actionType)) return NextResponse.json({ action: null, reason: "" });
-    return NextResponse.json({ action: actionType, reason, source: "keyword_hardcode", params: buildParams(actionType), acceptanceRate: acceptanceRateMap[actionType] ?? null });
+    return NextResponse.json({ action: actionType, reason, source: "keyword_hardcode", params: buildParams(actionType), acceptanceRate: acceptanceRateMap[actionType] ?? null, sub_mode_stats: subModeStats });
   };
   // 申込: 「申込みたい」（送り仮名違い）「決めます」「決めたい」「こちらで申」もカバー（最も後工程＝最優先）
   if (/申し込み.*たい|申込.*したい|申込.*希望|申込みたい|入居申込|決めます|決めたい|こちらで申/.test(lastCustomerMsg)) {
@@ -372,6 +390,7 @@ export async function POST(req: NextRequest) {
           source: "trigger_rule",
           params: buildParams(topValid[0]),
           acceptanceRate: acceptanceRateMap[topValid[0]] ?? null,
+          sub_mode_stats: subModeStats,
         });
       }
     }
@@ -382,7 +401,7 @@ export async function POST(req: NextRequest) {
   // 採択率が30%を下回れば shouldSuppressAction が自動的に抑制する（自己修正）。
   if (currentStatus === "applying") {
     if (shouldSuppressAction("application_push")) return NextResponse.json({ action: null, reason: "" });
-    return NextResponse.json({ action: "application_push", reason: "申込手続きを進める", source: "status_rule", params: buildParams("application_push"), acceptanceRate: acceptanceRateMap["application_push"] ?? null });
+    return NextResponse.json({ action: "application_push", reason: "申込手続きを進める", source: "status_rule", params: buildParams("application_push"), acceptanceRate: acceptanceRateMap["application_push"] ?? null, sub_mode_stats: subModeStats });
   }
 
   // ---- P8フォールバック（Sonnet 4.6 AI判断）----
@@ -572,7 +591,7 @@ ${recentText}
     if (!action) return NextResponse.json({ action: null, reason: result.reason ?? "" });
     // Sonnet が提案したアクションも採択率が 30% 未満なら抑制
     if (shouldSuppressAction(action)) return NextResponse.json({ action: null, reason: "" });
-    return NextResponse.json({ action, reason: result.reason ?? "", source: "ai_fallback", params: buildParams(action), acceptanceRate: acceptanceRateMap[action] ?? null });
+    return NextResponse.json({ action, reason: result.reason ?? "", source: "ai_fallback", params: buildParams(action), acceptanceRate: acceptanceRateMap[action] ?? null, sub_mode_stats: subModeStats });
   } catch (e) {
     console.error("[suggest-next-action] Sonnet 呼び出しに失敗:", e);
     return NextResponse.json({ action: null, reason: "" });

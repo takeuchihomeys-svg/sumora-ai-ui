@@ -19,6 +19,37 @@ type ModLog = {
   conversation_status: string | null;
 };
 
+// H3: 生テンプレ手修正ログ（adapted_text なし・original_text vs final_sent_text の差分）
+type RawModLog = {
+  id: string;
+  template_id: string | null;
+  template_category: string | null;
+  original_text: string | null;
+  final_sent_text: string | null;
+  conversation_status: string | null;
+};
+
+// H3: 文字bigramのDice係数による簡易テキスト類似度（0〜1）
+function textSimilarity(a: string, b: string): number {
+  const na = a.replace(/\s+/g, "");
+  const nb = b.replace(/\s+/g, "");
+  if (na === nb) return 1;
+  if (na.length < 2 || nb.length < 2) return 0;
+  const bigrams = (s: string) => {
+    const m = new Map<string, number>();
+    for (let i = 0; i < s.length - 1; i++) {
+      const g = s.slice(i, i + 2);
+      m.set(g, (m.get(g) ?? 0) + 1);
+    }
+    return m;
+  };
+  const ma = bigrams(na);
+  const mb = bigrams(nb);
+  let overlap = 0;
+  for (const [g, ca] of ma) overlap += Math.min(ca, mb.get(g) ?? 0);
+  return (2 * overlap) / (na.length - 1 + nb.length - 1);
+}
+
 type ExtractedRule = {
   rule: string;
   confidence: number;
@@ -35,7 +66,7 @@ async function extractRulesFromBatch(
       const adapted = (log.adapted_text ?? "").slice(0, 500);
       const final = (log.final_sent_text ?? "").slice(0, 500);
       if (adapted.trim() === final.trim()) return null;
-      return `【例${i + 1}】\n▼ AIが生成した文:\n${adapted}\n\n▼ スタッフが実際に送った文:\n${final}`;
+      return `【例${i + 1}】\n▼ 元の文（AI生成 or テンプレ原文）:\n${adapted}\n\n▼ スタッフが実際に送った文:\n${final}`;
     })
     .filter(Boolean)
     .join("\n\n────────────────\n\n");
@@ -94,7 +125,7 @@ ${diffExamples}
   }
 }
 
-async function runAnalysis(limit: number): Promise<{ analyzed: number; learned: number; categories: string[] }> {
+async function runAnalysis(limit: number): Promise<{ analyzed: number; learned: number; categories: string[]; raw_analyzed: number; needs_update_templates: number }> {
   // 未処理の修正ログを取得（modification_analyzed=false かつ was_modified_after_adapt=true）
   const { data: logs, error } = await supabase
     .from("template_selection_logs")
@@ -107,11 +138,89 @@ async function runAnalysis(limit: number): Promise<{ analyzed: number; learned: 
     .limit(limit);
 
   if (error) throw new Error(`fetch logs: ${error.message}`);
-  if (!logs || logs.length === 0) return { analyzed: 0, learned: 0, categories: [] };
+
+  // H3: 生テンプレ手修正ログを取得（adapted_text なし・テンプレ選択→直接手修正して送信）
+  const { data: rawLogs, error: rawError } = await supabase
+    .from("template_selection_logs")
+    .select("id, template_id, template_category, original_text, final_sent_text, conversation_status")
+    .eq("modification_analyzed", false)
+    .is("adapted_text", null)
+    .not("final_sent_text", "is", null)
+    .not("original_text", "is", null)
+    .not("template_id", "is", null)
+    .order("created_at", { ascending: true })
+    .limit(limit);
+
+  if (rawError) {
+    console.error("[analyze-template-modifications] raw logs fetch error:", rawError.message);
+  }
+
+  // 類似度0.95以上（=実質未修正）は analyzed マークだけ付けて除外
+  const rawModified: RawModLog[] = [];
+  const rawUnmodifiedIds: string[] = [];
+  for (const log of (rawLogs ?? []) as RawModLog[]) {
+    const sim = textSimilarity(log.original_text ?? "", log.final_sent_text ?? "");
+    if (sim < 0.95) rawModified.push(log);
+    else rawUnmodifiedIds.push(log.id);
+  }
+  if (rawUnmodifiedIds.length > 0) {
+    await supabase
+      .from("template_selection_logs")
+      .update({ modification_analyzed: true })
+      .in("id", rawUnmodifiedIds);
+  }
+
+  // 生テンプレ修正を ModLog 形式に正規化（base=original_text, final=final_sent_text）して既存フローに合流
+  const rawAsModLogs: ModLog[] = rawModified.map((l) => ({
+    id: l.id,
+    template_category: l.template_category,
+    adapted_text: l.original_text, // 比較元 = テンプレ原文
+    final_sent_text: l.final_sent_text,
+    conversation_status: l.conversation_status,
+  }));
+
+  const allLogs: ModLog[] = [...((logs ?? []) as ModLog[]), ...rawAsModLogs];
+
+  // H3: テンプレ単位の修正頻度カウント → 5回以上修正されたテンプレを ai_prompts に記録
+  let needsUpdateTemplates = 0;
+  try {
+    const since90d = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: freqLogs } = await supabase
+      .from("template_selection_logs")
+      .select("template_id, original_text, final_sent_text")
+      .not("template_id", "is", null)
+      .not("original_text", "is", null)
+      .not("final_sent_text", "is", null)
+      .gte("created_at", since90d)
+      .limit(3000);
+
+    const modCountByTemplate: Record<string, number> = {};
+    for (const log of (freqLogs ?? []) as Array<{ template_id: string; original_text: string; final_sent_text: string }>) {
+      if (textSimilarity(log.original_text, log.final_sent_text) >= 0.95) continue;
+      modCountByTemplate[log.template_id] = (modCountByTemplate[log.template_id] ?? 0) + 1;
+    }
+    for (const [templateId, count] of Object.entries(modCountByTemplate)) {
+      if (count < 5) continue;
+      const { error: upsertError } = await supabase.from("ai_prompts").upsert(
+        {
+          key: `template_needs_update_${templateId}`,
+          label: "テンプレ要更新候補（頻繁に手修正されている）",
+          content: JSON.stringify({ template_id: templateId, modified_count: count, period_days: 90, updated: new Date().toISOString() }),
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "key" }
+      );
+      if (!upsertError) needsUpdateTemplates++;
+    }
+  } catch (freqErr) {
+    console.error("[analyze-template-modifications] 修正頻度カウント error:", freqErr);
+  }
+
+  if (allLogs.length === 0) return { analyzed: 0, learned: 0, categories: [], raw_analyzed: rawUnmodifiedIds.length, needs_update_templates: needsUpdateTemplates };
 
   // カテゴリ別にグループ化
   const byCategory = new Map<string, ModLog[]>();
-  for (const log of logs as ModLog[]) {
+  for (const log of allLogs) {
     const cat = log.template_category ?? "全般";
     if (!byCategory.has(cat)) byCategory.set(cat, []);
     byCategory.get(cat)!.push(log);
@@ -186,7 +295,7 @@ async function runAnalysis(limit: number): Promise<{ analyzed: number; learned: 
     }
   }
 
-  return { analyzed: (logs as ModLog[]).length, learned, categories: processedCategories };
+  return { analyzed: allLogs.length, learned, categories: processedCategories, raw_analyzed: rawModified.length + rawUnmodifiedIds.length, needs_update_templates: needsUpdateTemplates };
 }
 
 export async function POST(req: NextRequest) {

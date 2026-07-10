@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { supabase } from "@/app/lib/supabase";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
 const HAIKU_MODEL = "claude-haiku-4-5-20251001";
@@ -98,6 +99,28 @@ export async function POST(request: NextRequest) {
         .map(m => `${m.sender === "customer" ? "お客様" : "スタッフ"}: ${m.text}`)
         .join("\n");
 
+      // H1: 学習済み適応改善ルール（内覧系カテゴリ）を取得してプロンプトに注入
+      // ※ analyze-template-modifications が template_category（日本語）で蓄積するため
+      //   内覧系の実カテゴリ名 + 将来用の英語キーの両方をカバーする
+      let adaptRuleNote = "";
+      try {
+        const { data: adaptRules } = await supabase
+          .from("adaptation_improvement_rules")
+          .select("rule_text")
+          .in("category", ["viewing_invite", "内覧へ！【AIX】", "内覧【AIX】", "挨拶【AIX】"])
+          .eq("is_active", true)
+          .order("example_count", { ascending: false })
+          .order("confidence", { ascending: false })
+          .limit(5);
+        if (adaptRules?.length) {
+          adaptRuleNote =
+            "\n\n【過去の適応改善ルール（スタッフ修正から学習・必ず守る）】\n" +
+            adaptRules.map(r => `・${r.rule_text as string}`).join("\n");
+        }
+      } catch {
+        // ルール取得失敗時は注入なしで続行（adapt自体は成立させる）
+      }
+
       const systemPrompt = `あなたはスモラ賃貸仲介の営業担当です。
 会話の流れに合わせて、内覧誘導メッセージを自然につなげて書き直してください。
 
@@ -106,7 +129,7 @@ export async function POST(request: NextRequest) {
 - 絵文字は控えめ（1〜2個まで）
 - 敬語だが親しみやすい
 - お客様の気持ち・温度感に合わせる
-- 本文のみ出力（説明文は一切不要）`;
+- 本文のみ出力（説明文は一切不要）${adaptRuleNote}`;
 
       const userPrompt = `【直近の会話】\n${conversationText || "（なし）"}\n\n【内覧誘導ベースメッセージ】\n${baseText}\n\n会話の流れに合わせて内覧誘導メッセージを書き直してください。`;
 

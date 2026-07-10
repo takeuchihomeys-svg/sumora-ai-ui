@@ -111,6 +111,10 @@
     {
       "path": "/api/cron/analyze-closed-conversations",
       "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron/calc-template-scene-stats",
+      "schedule": "0 23 * * 0"
     }
   ]
 }

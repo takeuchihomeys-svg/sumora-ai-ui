@@ -525,6 +525,8 @@ export default function Home() {
   const [viewingGuideResult, setViewingGuideResult] = useState<{ type: "available" | "vacating"; vacateDate: string; text: string } | null>(null);
   const [viewingGuideAdaptLoading, setViewingGuideAdaptLoading] = useState(false);
   const viewingGuideImageRef = useRef<HTMLInputElement | null>(null);
+  // H1: 「会話を合わせる」adapt結果（手修正前）を送信時の差分学習に使うワンショットref
+  const adaptedGreetingRef = useRef<string | null>(null);
   const [showCompletePicker, setShowCompletePicker] = useState(false);
   const [showPropertySendPicker, setShowPropertySendPicker] = useState(false);
   const [suggestedPropertySendMode, setSuggestedPropertySendMode] = useState<"normal" | "new_arrival" | "widen" | "alternative" | null>(null);
@@ -8708,6 +8710,7 @@ export default function Home() {
                   setViewingGuidePropertyName("");
                   setViewingGuideRoomNumber("");
                   setViewingGuideResult(null);
+                  adaptedGreetingRef.current = null;
                   setShowViewingGuidePicker(true);
                 }}
                 className="flex items-center gap-3.5 rounded-2xl border-2 border-[#7C3AED] bg-[#FAF5FF] px-4 py-3.5 text-left transition active:bg-[#F3E8FF]"
@@ -8852,6 +8855,7 @@ export default function Home() {
         const handleAnalyze = async () => {
           setViewingGuideLoading(true);
           setViewingGuideResult(null);
+          adaptedGreetingRef.current = null; // 再判定でadapt結果を破棄（偽差分学習防止）
           try {
             let imagePayload: { base64: string; mediaType: string } | undefined;
             if (viewingGuideImage) {
@@ -8900,6 +8904,8 @@ export default function Home() {
             const data = await res.json() as { ok: boolean; text?: string };
             if (data.ok && data.text) {
               setViewingGuideResult(prev => prev ? { ...prev, text: data.text! } : prev);
+              // H1: adapt結果（手修正前）を保持 → 送信時に差分学習へ渡す
+              adaptedGreetingRef.current = data.text;
             }
           } finally {
             setViewingGuideAdaptLoading(false);
@@ -8908,9 +8914,41 @@ export default function Home() {
 
         const handleSend = async () => {
           if (!viewingGuideResult?.text || !conv) return;
+          const sentText = viewingGuideResult.text;
           setShowViewingGuidePicker(false);
           setActiveAixFlow(null);
-          await sendMessageText(viewingGuideResult.text, undefined, false);
+          await sendMessageText(sentText, undefined, false);
+          // H1: 会話を合わせた内覧誘導挨拶の学習（adapt結果 vs 実送信文の差分学習 + AIX使用ログ）
+          if (adaptedGreetingRef.current) {
+            const recentCustomerMessage = [...(conv.messages ?? [])]
+              .reverse()
+              .find((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
+              ?.text ?? "";
+            void fetch("/api/save-reply-example", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                conversationId: conv.id,
+                conversationState: "greeting_viewing",
+                customerMessage: recentCustomerMessage || "（初回連絡）",
+                sentReply: sentText,
+                aiDraft: adaptedGreetingRef.current, // adapt結果（手修正前）
+                skipNormalize: true,
+                sentAt: new Date().toISOString(),
+              }),
+            }).catch(() => {});
+            void fetch("/api/log-aix-usage", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                conversation_id: conv.id,
+                aix_type: "greeting_viewing",
+                conversation_status: conv.status ?? null,
+                generated_text: adaptedGreetingRef.current,
+              }),
+            }).catch(() => {});
+            adaptedGreetingRef.current = null; // リセット
+          }
         };
 
         return (

@@ -138,6 +138,8 @@ export interface Template {
   win_rate?: number | null;
   recommend_shown_count?: number | null;
   recommend_picked_count?: number | null;
+  // H4: conversation_status 別の送信実績（calc-template-scene-stats cron が週1更新）
+  status_pick_stats?: Record<string, number> | null;
   requires_image: boolean;
   second_msg_type: string | null;
   second_msg_delay: number | null;
@@ -646,7 +648,13 @@ export default function TemplateModal({
       : 0;
     return (t.use_count ?? 0) * 0.4 + (t.win_rate ?? 0) * 100 * 0.4 + adoptionRate * 100 * 0.2;
   };
+  // H4: 現在の会話ステータスでの送信実績（calc-template-scene-stats cron 集計・上位5テンプレのみ値あり）
+  const scenePickCount = (t: Template): number =>
+    conversationState && t.status_pick_stats ? (t.status_pick_stats[conversationState] ?? 0) : 0;
   const compareTemplates = (a: Template, b: Template) => {
+    // H4: このシーン（ステータス）でよく送信されているテンプレを最上部に昇格
+    const sceneDiff = scenePickCount(b) - scenePickCount(a);
+    if (sceneDiff !== 0) return sceneDiff;
     const diff = templateScore(b) - templateScore(a);
     if (diff !== 0) return diff;
     return (a.sort_order ?? Number.MAX_SAFE_INTEGER) - (b.sort_order ?? Number.MAX_SAFE_INTEGER);
@@ -1513,6 +1521,8 @@ export default function TemplateModal({
                     const aiRecRank = aiRec ? aiRecIdx + 1 : null; // 1 or 2
                     const isSuggested = !aiRec && !!suggestedCategory && tmpl.category === suggestedCategory;
                     const isHighlighted = !aiRec && !isSuggested && !!highlightKeyword && (tmpl.label.includes(highlightKeyword) || tmpl.text.includes(highlightKeyword));
+                    // H4: このシーン（会話ステータス）での送信実績バッジ（AIおすすめバッジと重複時はそちらを優先）
+                    const scenePicks = scenePickCount(tmpl);
                     const isVacating = tmpl.label.includes("退去予定") || /[◯○〇]月[◯○〇]/.test(tmpl.text) || /退去予定|退去後|以降ご内覧可能/.test(tmpl.text);
                     return (
                       <div
@@ -1603,6 +1613,15 @@ export default function TemplateModal({
                           )}
                           {isHighlighted && (
                             <span className="shrink-0 rounded-full bg-orange-400 px-2 py-0.5 text-[10px] font-bold text-white">{highlightLabel ?? "💡 次のアクション"}</span>
+                          )}
+                          {scenePicks > 0 && !aiRec && (
+                            <span
+                              className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold text-white"
+                              style={{ backgroundColor: "#0891B2" }}
+                              title={`このステータスで${scenePicks}回送信されています`}
+                            >
+                              📈 この状況でよく使われる
+                            </span>
                           )}
                           {isSearching && !isHighlighted && (
                             <span className="shrink-0 rounded-full bg-[#e8f0fe] px-2 py-0.5 text-[10px] font-bold text-[#1565C0]">{tmpl.category}</span>

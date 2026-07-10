@@ -139,6 +139,61 @@ async function run() {
     }
   }
 
+  // ── H2: サブモード予測の採択率集計（%_submode のログから）──
+  // suggest-next-action が keyword='SUBMODE_ACCEPT:{action_type}_submode' として参照し、
+  // ピッカー提案時のサブモードデフォルト選択に使う
+  let submodeUpdated = 0;
+  const submodeBreakdown: Record<string, { accepted: number; total: number; rate: number | null }> = {};
+  const { data: submodeLogs, error: submodeError } = await supabase
+    .from("action_pattern_logs")
+    .select("action_type, source")
+    .like("action_type", "%_submode")
+    .in("source", ["prediction_accepted", "prediction_bypassed", "prediction_match", "suggestion_dismissed"])
+    .gte("created_at", thirtyDaysAgo)
+    .limit(3000);
+
+  if (submodeError) {
+    console.error("[update-action-confidence] submode logs 取得エラー:", submodeError.message);
+  } else {
+    const submodeStats: Record<string, { accepted: number; total: number }> = {};
+    for (const log of submodeLogs ?? []) {
+      const at = (log.action_type as string) ?? "";
+      if (!at) continue;
+      submodeStats[at] ??= { accepted: 0, total: 0 };
+      submodeStats[at].total += 1;
+      if (log.source === "prediction_accepted" || log.source === "prediction_match") {
+        submodeStats[at].accepted += 1;
+      }
+    }
+
+    // SUBMODE_ACCEPT:{action_type} として trigger_action_rules に保存
+    // ※ サンプル3件未満は統計的に無意味なためスキップ
+    for (const [actionType, stats] of Object.entries(submodeStats)) {
+      if (stats.total < 3) {
+        submodeBreakdown[actionType] = { ...stats, rate: null };
+        continue;
+      }
+      const rate = Math.round((stats.accepted / stats.total) * 1000) / 1000;
+      const { error: upsertError } = await supabase.from("trigger_action_rules").upsert(
+        {
+          keyword: `SUBMODE_ACCEPT:${actionType}`,
+          action_type: actionType.replace(/_submode$/, ""), // 親アクション
+          occurrence_count: stats.accepted,
+          total_occurrence: stats.total,
+          confidence: rate,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "action_type,keyword" }
+      );
+      if (upsertError) {
+        console.error("[update-action-confidence] submode upsert error:", actionType, upsertError.message);
+      } else {
+        submodeUpdated++;
+        submodeBreakdown[actionType] = { ...stats, rate };
+      }
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     total_logs: (logs ?? []).length,
@@ -147,6 +202,8 @@ async function run() {
     breakdown,
     accuracy_updated: accuracyUpdated,
     accuracy_breakdown: accuracyBreakdown,
+    submode_updated: submodeUpdated,
+    submode_breakdown: submodeBreakdown,
   });
 }
 

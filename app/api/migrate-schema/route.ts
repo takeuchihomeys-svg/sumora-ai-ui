@@ -1110,6 +1110,11 @@ ALTER TABLE winning_pattern_logs ADD COLUMN IF NOT EXISTS personality_profile TE
 -- 会話全体から抽出した「確定人間性プロファイル」を顧客に保存する
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS personality_profile TEXT;
 
+-- H4: シーン×テンプレの事前分布学習（calc-template-scene-stats cron が週1更新）
+-- { "hearing": 12, "proposing": 5 } 形式で conversation_status 別の送信実績を保持し、
+-- TemplateModal が現在のステータスに合わせて上位テンプレを昇格表示する
+ALTER TABLE templates ADD COLUMN IF NOT EXISTS status_pick_stats JSONB DEFAULT '{}';
+
 `.trim();
 
 export async function GET() {
