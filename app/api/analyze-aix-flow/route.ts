@@ -166,7 +166,7 @@ export async function POST(req: NextRequest) {
       })
       .join("\n") || "蓄積ノウハウなし";
 
-    // 4. Claude Haikuで分析・ガイド更新
+    // 4. Claude Opus 4.8で分析・ガイド更新
     const resp = await anthropic.messages.create({
       model: "claude-opus-4-8",
       max_tokens: 700,
@@ -237,10 +237,21 @@ AIXを選ぶ → 生成を確認 → 送信`,
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
     // バージョン履歴に追記（upsertで最新1件になるai_promptsとは別に変遷を保存）
-    await supabase.from("ai_prompt_versions").insert({
-      prompt_key: "aix_flow_guide",
-      content: generated,
-    });
+    // 改善11: 最新1件と content が完全一致する場合はスキップ（毎日同内容で履歴が水増しされるのを防ぐ）
+    const { data: latestVersion } = await supabase
+      .from("ai_prompt_versions")
+      .select("content")
+      .eq("prompt_key", "aix_flow_guide")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if ((latestVersion?.content as string | undefined) !== generated) {
+      await supabase.from("ai_prompt_versions").insert({
+        prompt_key: "aix_flow_guide",
+        content: generated,
+      });
+    }
 
     return NextResponse.json({ ok: true, updated: today, content: generated });
   } catch (e) {

@@ -44,8 +44,10 @@ export async function POST(req: NextRequest) {
   if (!conv) return NextResponse.json({ action: null, reason: "" });
   if (SKIP_STATUSES.has(conv.status as string)) return NextResponse.json({ action: null, reason: "" });
 
-  // メッセージ・顧客（property_customer_id で引く）・採択率（毎日 update-action-confidence cron が更新）を並列取得
-  const [{ data: messages }, { data: customer }, { data: acceptanceRows }] = await Promise.all([
+  // メッセージ・顧客（property_customer_id で引く）・採択率（毎日 update-action-confidence cron が更新）
+  // ・成約貢献率（calc-aix-attribution cron が毎週計算・直近1ヶ月分）を並列取得
+  // ※ 改善6: 成約貢献率は Sonnet フォールバックだけでなくチェーンルール・キーワードルールにも効かせるため、ここで一度だけ取得する
+  const [{ data: messages }, { data: customer }, { data: acceptanceRows }, { data: attributionRows }] = await Promise.all([
     supabase.from("messages")
       .select("sender, text, image_url, created_at")
       .eq("conversation_id", conversation_id)
@@ -60,6 +62,11 @@ export async function POST(req: NextRequest) {
     supabase.from("trigger_action_rules")
       .select("action_type, confidence")
       .eq("keyword", "SUGGESTION_ACCEPT_RATE"),
+    supabase.from("aix_action_attribution")
+      .select("action_type, win_rate, usage_count")
+      .gte("period_start", new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString().slice(0, 10))
+      .order("period_start", { ascending: false })
+      .limit(50),
   ]);
 
   const acceptanceRateMap = Object.fromEntries(
@@ -72,6 +79,31 @@ export async function POST(req: NextRequest) {
     if (!actionType) return false;
     const rate = acceptanceRateMap[actionType];
     return typeof rate === "number" && rate < 0.3;
+  }
+
+  // aix_action_attribution: action_type別に直近1ヶ月の win_rate を平均
+  const attrMap: Record<string, { totalWinRate: number; count: number }> = {};
+  for (const row of (attributionRows ?? []) as { action_type: string; win_rate: number | null; usage_count: number | null }[]) {
+    if (row.win_rate == null) continue;
+    const a = row.action_type;
+    const m = attrMap[a] ?? { totalWinRate: 0, count: 0 };
+    m.totalWinRate += row.win_rate;
+    m.count += 1;
+    attrMap[a] = m;
+  }
+  const avgWinRateMap: Record<string, number> = {};
+  for (const [a, m] of Object.entries(attrMap)) avgWinRateMap[a] = m.totalWinRate / m.count;
+  const winRateValues = Object.values(avgWinRateMap);
+  const overallAvgWinRate = winRateValues.length
+    ? winRateValues.reduce((s, v) => s + v, 0) / winRateValues.length
+    : null;
+
+  // 改善6: 成約貢献率が全体平均の半分未満のアクションは lowWinRate（候補が他にあればランク下げ・除外）
+  // ※ データがないアクション（avgWinRateMap 未登録）は「実績不明」として低評価しない
+  function isLowWinRate(actionType: string | null | undefined): boolean {
+    if (!actionType || overallAvgWinRate == null) return false;
+    const rate = avgWinRateMap[actionType];
+    return typeof rate === "number" && rate < overallAvgWinRate / 2;
   }
 
   if (!messages?.length) return NextResponse.json({ action: null, reason: "" });
@@ -163,7 +195,9 @@ export async function POST(req: NextRequest) {
         property_send: "追加物件を送る",
       };
       // 抑制対象をスキップして最初の非抑制アクションを採用
-      const validChainRule = chainRules.find((r) => !shouldSuppressAction(r.action_type as string));
+      // 改善6: 成約貢献率が全体平均の半分未満（lowWinRate）の候補はランク下げ。他に候補がなければ従来通り採用
+      const nonSuppressed = chainRules.filter((r) => !shouldSuppressAction(r.action_type as string));
+      const validChainRule = nonSuppressed.find((r) => !isLowWinRate(r.action_type as string)) ?? nonSuppressed[0];
       if (validChainRule) {
         return NextResponse.json({
           action: validChainRule.action_type,
@@ -294,7 +328,9 @@ export async function POST(req: NextRequest) {
       const sortedScores = Object.entries(scores).sort(
         (a, b) => b[1].score - a[1].score || b[1].topConf - a[1].topConf || a[0].localeCompare(b[0])
       );
-      const topValid = sortedScores.find(([actionType, s]) => s.score >= 0.85 && !shouldSuppressAction(actionType));
+      // 改善6: 成約貢献率が全体平均の半分未満（lowWinRate）の候補はランク下げ。他に候補がなければ従来通り採用
+      const eligibleScores = sortedScores.filter(([actionType, s]) => s.score >= 0.85 && !shouldSuppressAction(actionType));
+      const topValid = eligibleScores.find(([actionType]) => !isLowWinRate(actionType)) ?? eligibleScores[0];
       if (topValid) {
         return NextResponse.json({
           action: topValid[0],
@@ -315,15 +351,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ action: "application_push", reason: "申込手続きを進める", source: "status_rule", params: buildParams("application_push"), acceptanceRate: acceptanceRateMap["application_push"] ?? null });
   }
 
-  // ---- P8フォールバック（Haiku AI判断）----
+  // ---- P8フォールバック（Sonnet 4.6 AI判断）----
   // ガード①: 会話履歴が5件未満の場合はデータ不足のためAI判断をスキップ
   // （少ない情報で幻覚ガイドに従い誤ったアクションを提案するリスクを防ぐ）
   if ((messages?.length ?? 0) < 5) {
     return NextResponse.json({ action: null, reason: "" });
   }
 
-  // ---- UIで管理しているAIXロジック＋過去パターンデータ＋フロー運用ガイド＋成果率を並列取得 ----
-  const [{ data: aixLogicRows }, { data: patternRows }, { data: flowGuideRow }, { data: attributionRows }] = await Promise.all([
+  // ---- UIで管理しているAIXロジック＋過去パターンデータ＋フロー運用ガイドを並列取得 ----
+  // ※成約貢献率（aix_action_attribution）は冒頭の並列取得で取得済み（attrMap / avgWinRateMap を再利用）
+  const [{ data: aixLogicRows }, { data: patternRows }, { data: flowGuideRow }] = await Promise.all([
     supabase.from("ai_prompts")
       .select("key, content")
       .like("key", "aix_logic_%"),
@@ -337,12 +374,6 @@ export async function POST(req: NextRequest) {
       .select("content")
       .eq("key", "aix_flow_guide")
       .maybeSingle(),
-    // aix_action_attribution（calc-aix-attribution cron が毎週計算する成約貢献率・直近1ヶ月分）
-    supabase.from("aix_action_attribution")
-      .select("action_type, win_rate, usage_count")
-      .gte("period_start", new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString().slice(0, 10))
-      .order("period_start", { ascending: false })
-      .limit(50),
   ]);
 
   const aixFlowGuide = ((flowGuideRow?.content as string | undefined) ?? "").trim();
@@ -429,18 +460,9 @@ ${examples || "  (なし)"}
     customer?.ai_summary ? `サマリー: ${customer.ai_summary as string}` : "",
   ].filter(Boolean).join("\n");
 
-  // aix_action_attribution: action_type別に直近1ヶ月の win_rate を加重平均
-  const attrMap: Record<string, { totalWinRate: number; count: number }> = {};
-  for (const row of (attributionRows ?? []) as { action_type: string; win_rate: number | null; usage_count: number | null }[]) {
-    if (row.win_rate == null) continue;
-    const a = row.action_type;
-    const m = attrMap[a] ?? { totalWinRate: 0, count: 0 };
-    m.totalWinRate += row.win_rate;
-    m.count += 1;
-    attrMap[a] = m;
-  }
-  const attributionLines = Object.entries(attrMap)
-    .map(([a, m]) => ({ action: a, avgWinRate: m.totalWinRate / m.count }))
+  // aix_action_attribution: 冒頭で集計済みの avgWinRateMap（action_type別・直近1ヶ月の win_rate 平均）を使用
+  const attributionLines = Object.entries(avgWinRateMap)
+    .map(([a, avgWinRate]) => ({ action: a, avgWinRate }))
     .filter((e) => e.avgWinRate > 0)
     .sort((a, b) => b.avgWinRate - a.avgWinRate)
     .slice(0, 5)
@@ -500,11 +522,11 @@ ${recentText}
     // AIが "null" を文字列で返すケースを null に正規化
     const action = (!result.action || result.action === "null") ? null : result.action;
     if (!action) return NextResponse.json({ action: null, reason: result.reason ?? "" });
-    // Haiku が提案したアクションも採択率が 30% 未満なら抑制
+    // Sonnet が提案したアクションも採択率が 30% 未満なら抑制
     if (shouldSuppressAction(action)) return NextResponse.json({ action: null, reason: "" });
     return NextResponse.json({ action, reason: result.reason ?? "", params: buildParams(action), acceptanceRate: acceptanceRateMap[action] ?? null });
   } catch (e) {
-    console.error("[suggest-next-action] Haiku 呼び出しに失敗:", e);
+    console.error("[suggest-next-action] Sonnet 呼び出しに失敗:", e);
     return NextResponse.json({ action: null, reason: "" });
   }
 }

@@ -81,6 +81,7 @@ export async function GET(req: NextRequest) {
     { count: pendingCandidates, error: candidatesErr },
     { data: aixLogs, error: aixErr },
     { data: attributionRows, error: attributionRowsErr },
+    { data: readinessRow, error: readinessErr },
   ] = await Promise.all([
     // ① 未完了タスク
     supabase
@@ -168,6 +169,13 @@ export async function GET(req: NextRequest) {
       .gte("period_start", twoWeeksAgoMondayStr)
       .order("period_start", { ascending: false })
       .limit(200),
+
+    // ⑫ 自動返信化準備スコア（auto-reply-readiness cron が毎日更新）
+    supabase
+      .from("ai_prompts")
+      .select("content")
+      .eq("key", "auto_reply_readiness")
+      .maybeSingle(),
   ]);
 
   // クエリエラーのログ（レポート本体は送る。失敗したセクションは空になるだけ）
@@ -182,6 +190,7 @@ export async function GET(req: NextRequest) {
   if (candidatesErr) console.error("[morning-report] pendingCandidates query:", candidatesErr.message);
   if (aixErr) console.error("[morning-report] aixLogs query:", aixErr.message);
   if (attributionRowsErr) console.error("[morning-report] attributionRows query:", attributionRowsErr.message);
+  if (readinessErr) console.error("[morning-report] readiness query:", readinessErr.message);
 
   // AI貢献率フッター（メトリクスがあれば1行追加）
   let attributionLine = "";
@@ -240,6 +249,29 @@ export async function GET(req: NextRequest) {
   if ((pendingCandidates ?? 0) > 0) {
     const mark = (pendingCandidates ?? 0) >= 5 ? " ⚠️ 溜まっています！レビューをお願いします" : "";
     statsLines.push(`📋 AIXテンプレート候補: ${pendingCandidates}件未レビュー${mark}`);
+  }
+
+  // 🤖 自動返信化候補（auto_reply_readiness で ready: true の aix_type がある場合のみ表示。0件ならセクション省略）
+  try {
+    const readiness = readinessRow?.content
+      ? JSON.parse(readinessRow.content as string) as {
+          scores?: Array<{ aix_type: string; acceptance_rate?: number | null; edit_rate?: number | null; ready?: boolean; reason?: string | null }>;
+        }
+      : null;
+    const readyScores = (readiness?.scores ?? []).filter((s) => s.ready === true);
+    if (readyScores.length > 0) {
+      const lines = readyScores.map((s) => {
+        const label = AIX_ACTION_LABEL[s.aix_type] ?? s.aix_type;
+        const metrics = [
+          typeof s.acceptance_rate === "number" ? `採択${Math.round(s.acceptance_rate * 100)}%` : "",
+          typeof s.edit_rate === "number" ? `編集${Math.round(s.edit_rate * 100)}%` : "",
+        ].filter(Boolean).join("・");
+        return `  ・${label}${metrics ? `（${metrics}）` : ""}`;
+      });
+      statsLines.push(`🤖 自動返信化候補:\n${lines.join("\n")}`);
+    }
+  } catch {
+    // JSONパース失敗時はスキップ（レポート本体は送る）
   }
 
   // 成果アトリビューション（最新週の成約率上位3テンプレ）

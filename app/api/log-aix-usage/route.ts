@@ -212,14 +212,29 @@ export async function POST(req: NextRequest) {
       }).catch(() => {}));
 
       // next_action ギャップ分析（直近の未検証予測を取得して比較 / fire-and-forget）
-      const { data: predRow } = await supabase
+      // 改善10: まず会話スコープ（conversation_id）で検索し、同一顧客の別会話の予測を誤検証しないようにする
+      const { data: convScopedPred } = await supabase
         .from("next_action_logs")
         .select("id, predicted_action, predicted_at, conversation_id")
-        .eq("customer_id", pcId)
+        .eq("conversation_id", conversation_id)
         .eq("validated", false)
         .order("predicted_at", { ascending: false })
         .limit(1)
         .maybeSingle();
+
+      let predRow = convScopedPred;
+      if (!predRow) {
+        // ヒットしない場合のみ customer_id にフォールバック（既存の挙動を維持）
+        const { data: customerScopedPred } = await supabase
+          .from("next_action_logs")
+          .select("id, predicted_action, predicted_at, conversation_id")
+          .eq("customer_id", pcId)
+          .eq("validated", false)
+          .order("predicted_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        predRow = customerScopedPred;
+      }
 
       if (predRow) {
         // 二重処理防止のため先に validated=true にしてから非同期で分析
