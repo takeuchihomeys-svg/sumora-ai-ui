@@ -6,10 +6,12 @@ export const maxDuration = 30;
 // POST /api/cron/auto-reply-readiness
 // 週次（月曜早朝）に各aix_typeの「自動返信化準備スコア」を計算してai_promptsに保存
 //
-// 判定基準:
+// 判定基準（HIGH-04: サンプル3件でready:trueになるのを防止＋成約率を条件に追加）:
 //   - acceptance_rate >= 0.65（提案採択率65%以上）
 //   - edit_rate < 0.30（編集率30%未満 = 7割以上そのまま送っている）
-//   - 両方満たす → ready: true
+//   - サンプル数 >= 15（採択率・編集率とも。rate表示自体は3件から）
+//   - win_rate データがある場合は 全aix_type平均の半分以上
+//   - 全て満たす → ready: true
 export async function POST(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.get("authorization");
@@ -65,9 +67,37 @@ export async function POST(req: NextRequest) {
       if (log.was_edited) editStats[at].edited += 1;
     }
 
+    // 2.5. aix_action_attribution から直近30日の aix_type 別 win_rate 平均を取得
+    //      （HIGH-04: 成約率が低いaix_typeを ready:true にしないための条件）
+    const since30dDate = since30d.slice(0, 10);
+    const { data: attrRows } = await supabase
+      .from("aix_action_attribution")
+      .select("action_type, win_rate")
+      .gte("period_start", since30dDate)
+      .not("win_rate", "is", null)
+      .limit(5000);
+
+    const winRateAgg: Record<string, { sum: number; n: number }> = {};
+    for (const row of (attrRows ?? []) as Array<{ action_type: string; win_rate: number | null }>) {
+      if (!row.action_type || row.win_rate === null) continue;
+      winRateAgg[row.action_type] ??= { sum: 0, n: 0 };
+      winRateAgg[row.action_type].sum += Number(row.win_rate);
+      winRateAgg[row.action_type].n += 1;
+    }
+    const winRateData: Record<string, number> = {};
+    for (const [at, agg] of Object.entries(winRateAgg)) {
+      winRateData[at] = Math.round((agg.sum / agg.n) * 1000) / 1000;
+    }
+    const winRateValues = Object.values(winRateData);
+    const avgWinRate = winRateValues.length > 0
+      ? winRateValues.reduce((a, b) => a + b, 0) / winRateValues.length
+      : 0;
+
     // 3. 全aix_typeを列挙してスコアを計算
-    //    MIN_SAMPLES=3 未満はデータ不足として null（判定不可）
+    //    MIN_SAMPLES=3 未満はデータ不足として null（判定不可・rate計算の下限）
+    //    ready判定はサンプル15件以上を要求（HIGH-04: 3件でready:trueは根拠が弱すぎる）
     const MIN_SAMPLES = 3;
+    const MIN_SAMPLES_FOR_READY = 15;
     const allTypes = new Set([
       ...Object.keys(acceptanceStats),
       ...Object.keys(editStats),
@@ -82,29 +112,45 @@ export async function POST(req: NextRequest) {
       const edit_rate =
         edit && edit.total >= MIN_SAMPLES ? Math.round((edit.edited / edit.total) * 1000) / 1000 : null;
 
+      // win_rateデータがない場合は条件をスキップ（データありなら全aix_type平均の半分以上を要求）
+      const win_rate = winRateData[aix_type] ?? null;
+      const winRateOk = win_rate === null || win_rate >= avgWinRate * 0.5;
+
+      const enoughSamples =
+        (acc?.total ?? 0) >= MIN_SAMPLES_FOR_READY &&
+        (edit?.total ?? 0) >= MIN_SAMPLES_FOR_READY;
+
       const ready =
         acceptance_rate !== null &&
         edit_rate !== null &&
         acceptance_rate >= 0.65 &&
-        edit_rate < 0.30;
+        edit_rate < 0.30 &&
+        winRateOk &&
+        enoughSamples;
+
+      const winRateInfo = win_rate !== null
+        ? `成約率${Math.round(win_rate * 100)}%（全体平均${Math.round(avgWinRate * 100)}%）`
+        : "成約率データなし";
 
       let reason: string;
       if (acceptance_rate === null && edit_rate === null) {
-        reason = "データ不足（採択率・編集率ともサンプル数が3件未満）";
+        reason = `データ不足（採択率・編集率ともサンプル数が3件未満）・${winRateInfo}`;
       } else if (acceptance_rate === null) {
-        reason = `採択率データ不足・編集率${Math.round((edit_rate ?? 0) * 100)}%`;
+        reason = `採択率データ不足・編集率${Math.round((edit_rate ?? 0) * 100)}%・${winRateInfo}`;
       } else if (edit_rate === null) {
-        reason = `採択率${Math.round(acceptance_rate * 100)}%・編集率データ不足`;
+        reason = `採択率${Math.round(acceptance_rate * 100)}%・編集率データ不足・${winRateInfo}`;
       } else if (ready) {
-        reason = `採択率${Math.round(acceptance_rate * 100)}%・編集率${Math.round(edit_rate * 100)}% → 自動返信化OK`;
+        reason = `採択率${Math.round(acceptance_rate * 100)}%・編集率${Math.round(edit_rate * 100)}%・${winRateInfo} → 自動返信化OK`;
       } else {
         const issues: string[] = [];
         if (acceptance_rate < 0.65) issues.push(`採択率${Math.round(acceptance_rate * 100)}%（65%未満）`);
         if (edit_rate >= 0.30) issues.push(`編集率${Math.round(edit_rate * 100)}%（30%以上）`);
-        reason = issues.join("・") + " → まだ学習が必要";
+        if (!winRateOk) issues.push(`${winRateInfo}（平均の半分未満）`);
+        if (!enoughSamples) issues.push(`サンプル数不足（採択${acc?.total ?? 0}件・編集${edit?.total ?? 0}件 / ${MIN_SAMPLES_FOR_READY}件以上必要）`);
+        reason = issues.join("・") + `${winRateOk ? `・${winRateInfo}` : ""} → まだ学習が必要`;
       }
 
-      return { aix_type, acceptance_rate, edit_rate, ready, reason };
+      return { aix_type, acceptance_rate, edit_rate, win_rate, ready, reason };
     }).sort((a, b) => {
       // ready=true を先頭に、次に acceptance_rate の降順
       if (a.ready && !b.ready) return -1;

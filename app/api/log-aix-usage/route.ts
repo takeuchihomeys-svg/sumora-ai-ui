@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
 import type { SummaryJson } from "@/app/api/customer-summary/route";
 
 // POST /api/log-aix-usage
 // AIX送信時にどのAIX+テンプレートを使ったか記録する（analyze-aix-flowで分析に使用）
+// HIGH-01: fire-and-forget は waitUntil で包む（Vercelはレスポンス返却後に処理凍結されるため）
+export const maxDuration = 30;
 
 const AIX_TYPE_LABELS: Record<string, string> = {
   property_send:            "物件紹介を送った",
@@ -74,9 +77,11 @@ ${actualLabel}（AIXボタン: ${actualAixType}）
 【予測後〜実際のAIX送信までの会話】
 ${msgContext}
 
+参考: キーワード簡易判定では「${wasAccurate ? "一致" : "不一致"}」でしたが、会話の文脈を踏まえてあなた自身が判断してください。
+
 以下の形式で分析してください（JSONのみ・説明不要）：
 {
-  "was_accurate": ${wasAccurate ? "true" : "false"},
+  "was_accurate": true または false（予測と実際のアクションが実質的に一致していたか）,
   "gap_summary": "予測と実際の差を1文で",
   "reason": "なぜスタッフが予測と違う行動を取ったかの原因（会話から読み取れる文脈変化など）",
   "learning_rule": "【状況】〜の場合 【正しいアクション】〜 【誤りやすい予測】〜 【理由】〜"
@@ -199,12 +204,12 @@ export async function POST(req: NextRequest) {
       const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
         ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
 
-      // AIX送信後に要約を再生成（状況最新化 / fire-and-forget）
-      fetch(`${baseUrl}/api/customer-summary`, {
+      // AIX送信後に要約を再生成（状況最新化 / fire-and-forget → waitUntilで確実実行）
+      waitUntil(fetch(`${baseUrl}/api/customer-summary`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ customer_id: pcId, conversation_id, fetch_from_db: true }),
-      }).catch(() => {});
+      }).catch(() => {}));
 
       // next_action ギャップ分析（直近の未検証予測を取得して比較 / fire-and-forget）
       const { data: predRow } = await supabase
@@ -222,19 +227,19 @@ export async function POST(req: NextRequest) {
           .update({ validated: true, actual_aix_type: aix_type, validated_at: new Date().toISOString() })
           .eq("id", predRow.id as string);
 
-        runGapAnalysis({
+        waitUntil(runGapAnalysis({
           predId:          predRow.id as string,
           predictedAction: predRow.predicted_action as string,
           predictedAt:     predRow.predicted_at as string,
           actualAixType:   aix_type,
           conversationId:  (predRow.conversation_id as string) ?? conversation_id,
           customerId:      pcId,
-        }).catch(() => {});
+        }).catch(() => {}));
       }
 
-      // AIX送信内容を ai_summary_json.our_actions に直接記録（fire-and-forget）
+      // AIX送信内容を ai_summary_json.our_actions に直接記録（fire-and-forget → waitUntilで確実実行）
       // ai_summary_at は更新しない（customer-summary のスロットリングに影響させない）
-      void (async (_pcId: string) => {
+      waitUntil((async (_pcId: string) => {
         try {
           const OUR_ACTION_LABELS: Record<string, string> = {
             property_send:            "物件送付",
@@ -283,7 +288,7 @@ export async function POST(req: NextRequest) {
             .update({ ai_summary_json: { ...existing, our_actions: newActions } })
             .eq("id", _pcId);
         } catch { /* ignore - AIX本体に影響させない */ }
-      })(pcId);
+      })(pcId).catch(() => {}));
     }
 
     return NextResponse.json({ ok: true, previous_action_type: previousAction });

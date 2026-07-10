@@ -283,6 +283,8 @@ export default function CustomersPage() {
   // 会話ログタブ管理
   const [activeTabs, setActiveTabs] = useState<Record<string, "summary" | "log">>({});
   const [msgCache, setMsgCache] = useState<Record<string, Array<{ id: string; text: string | null; sender: string; created_at: string }>>>({});
+  const [loadingMsgs, setLoadingMsgs] = useState<Set<string>>(new Set());
+  const [msgErrors, setMsgErrors] = useState<Set<string>>(new Set());
 
   const fetchCustomers = async () => {
     try {
@@ -723,15 +725,26 @@ export default function CustomersPage() {
     }
   };
 
+  // HIGH-05: キャッシュチェックを削除（毎回最新を取得）。エラー時は空配列＋エラー表示。
+  // ロード中は loadingMsgs で管理し、ボタンを押したときだけローディング表示する。
   const loadMessages = async (customerId: string, conversationId: string) => {
-    if (msgCache[customerId] !== undefined) return; // キャッシュあればスキップ
-    const { data } = await supabase
-      .from("messages")
-      .select("id, text, sender, created_at")
-      .eq("conversation_id", conversationId)
-      .order("created_at", { ascending: false })
-      .limit(20);
-    if (data) setMsgCache(p => ({ ...p, [customerId]: (data as Array<{ id: string; text: string | null; sender: string; created_at: string }>).reverse() }));
+    setLoadingMsgs(p => new Set(p).add(customerId));
+    try {
+      const { data, error } = await supabase
+        .from("messages")
+        .select("id, text, sender, created_at")
+        .eq("conversation_id", conversationId)
+        .order("created_at", { ascending: false })
+        .limit(20);
+      if (error) throw error;
+      setMsgCache(p => ({ ...p, [customerId]: ((data ?? []) as Array<{ id: string; text: string | null; sender: string; created_at: string }>).reverse() }));
+      setMsgErrors(p => { const s = new Set(p); s.delete(customerId); return s; });
+    } catch {
+      setMsgCache(p => ({ ...p, [customerId]: [] }));
+      setMsgErrors(p => new Set(p).add(customerId));
+    } finally {
+      setLoadingMsgs(p => { const s = new Set(p); s.delete(customerId); return s; });
+    }
   };
 
   return (
@@ -1322,9 +1335,11 @@ export default function CustomersPage() {
                                 /* 会話ログ */
                                 <div className="px-4 pb-3 pt-2">
                                   <div className="space-y-1 max-h-60 overflow-y-auto">
-                                    {msgCache[c.id] === undefined
+                                    {loadingMsgs.has(c.id) && msgCache[c.id] === undefined
                                       ? <p className="text-xs text-gray-400 text-center py-4">読み込み中...</p>
-                                      : msgCache[c.id].length === 0
+                                      : msgErrors.has(c.id)
+                                        ? <p className="text-xs text-gray-400 text-center py-4">メッセージを取得できませんでした</p>
+                                        : (msgCache[c.id] ?? []).length === 0
                                         ? <p className="text-xs text-gray-400 text-center py-4">メッセージがありません</p>
                                         : msgCache[c.id].map(msg => (
                                             <div key={msg.id} className={`flex ${msg.sender === "customer" ? "justify-start" : "justify-end"}`}>

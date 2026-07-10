@@ -15,6 +15,7 @@
     "@supabase/supabase-js": "^2.99.2",
     "@types/web-push": "^3.6.4",
     "@vercel/blob": "^2.4.0",
+    "@vercel/functions": "^3.7.5",
     "exceljs": "^4.4.0",
     "html2canvas": "^1.4.1",
     "jszip": "^3.10.1",

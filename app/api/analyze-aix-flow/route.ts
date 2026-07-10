@@ -81,6 +81,9 @@ export async function POST(req: NextRequest) {
     const statusCount: Record<string, { won: number; lost: number; other: number }> = {};
     // aix_type別: suggested_action（AI予測）と実際のaix_typeが一致した件数
     const matchCount: Record<string, { matched: number; predicted: number }> = {};
+    // HIGH-03: 成約率は (conversation_id, aix_type) 単位でユニーク化して集計する
+    // （1会話で同じAIXを複数回押しても成約/失注が重複カウントされないようにする）
+    const seenConvAix = new Set<string>();
     for (const log of logs) {
       aixCount[log.aix_type] = (aixCount[log.aix_type] ?? 0) + 1;
       if (log.template_name) {
@@ -88,12 +91,17 @@ export async function POST(req: NextRequest) {
         templateCount[key] = (templateCount[key] ?? 0) + 1;
       }
       // 成約ステータス集計（conversationsテーブルの現在のstatusで判定。なければ送信時スナップショットにフォールバック）
-      const currentStatus = statusMap[log.conversation_id] ?? log.conversation_status;
-      const sc = statusCount[log.aix_type] ?? { won: 0, lost: 0, other: 0 };
-      if (currentStatus === "closed_won") sc.won += 1;
-      else if (currentStatus === "closed_lost") sc.lost += 1;
-      else sc.other += 1;
-      statusCount[log.aix_type] = sc;
+      // 同一 (conversation_id, aix_type) は1回のみカウント
+      const convAixKey = `${log.conversation_id}:${log.aix_type}`;
+      if (!seenConvAix.has(convAixKey)) {
+        seenConvAix.add(convAixKey);
+        const currentStatus = statusMap[log.conversation_id] ?? log.conversation_status;
+        const sc = statusCount[log.aix_type] ?? { won: 0, lost: 0, other: 0 };
+        if (currentStatus === "closed_won") sc.won += 1;
+        else if (currentStatus === "closed_lost") sc.lost += 1;
+        else sc.other += 1;
+        statusCount[log.aix_type] = sc;
+      }
       // 予測一致集計（suggested_actionが記録されているログのみ対象）
       if (log.suggested_action) {
         const mc = matchCount[log.aix_type] ?? { matched: 0, predicted: 0 };
