@@ -1232,7 +1232,13 @@ ALTER TABLE calendar_events DISABLE ROW LEVEL SECURITY;
 
 `.trim();
 
-export async function GET() {
+// GET: スキーマSQLを返す（POSTと同じ CRON_SECRET 認証必須 — 無認証でのスキーマ情報開示を防止）
+export async function GET(req: Request) {
+  const secret = process.env.CRON_SECRET;
+  const auth = req.headers.get("authorization");
+  if (!secret || auth !== `Bearer ${secret}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   return NextResponse.json({ sql: SQL });
 }
 

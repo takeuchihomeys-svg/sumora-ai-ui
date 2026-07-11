@@ -1005,6 +1005,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       type: string;
       source?: { type?: string; userId?: string };
       message?: { type: string; id?: string; text?: string; quotedMessageId?: string };
+      unsend?: { messageId?: string };
     };
 
     // フォロー/ブロック/フォロー解除 → line_status を更新
@@ -1027,6 +1028,33 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           db.from("conversations").update({ line_status: "unfollowed" }).eq("line_user_id", uid),
           db.from("line_contacts").update({ line_status: "unfollowed" }).eq("line_user_id", uid).eq("account", matchedAccount.key),
         ]).catch(() => {});
+      }
+      continue;
+    }
+
+    // 送信取消（unsend）→ 該当メッセージを削除し、学習例の☆を外す（学習データ汚染防止）
+    // 取り消されたメッセージを ai_reply_examples の教師データとして残さない
+    if (event.type === "unsend") {
+      const unsendMessageId = event.unsend?.messageId;
+      if (unsendMessageId) {
+        const db = getDb();
+        const { data: unsentMsg } = await db
+          .from("messages")
+          .select("id, text")
+          .eq("line_message_id", unsendMessageId)
+          .maybeSingle();
+        if (unsentMsg) {
+          const unsentText = (unsentMsg.text as string | null) ?? "";
+          // sent_reply が取り消し文と一致する学習例の☆を外す（誤送信文の学習防止）
+          if (unsentText.trim() && unsentText !== "[画像]") {
+            await db
+              .from("ai_reply_examples")
+              .update({ is_starred: false })
+              .eq("sent_reply", unsentText);
+          }
+          // messages から物理削除（取り消されたメッセージは会話履歴・AI文脈から除外）
+          await db.from("messages").delete().eq("id", unsentMsg.id);
+        }
       }
       continue;
     }

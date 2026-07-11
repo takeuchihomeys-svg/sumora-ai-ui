@@ -2761,35 +2761,40 @@ export default function Home() {
 
     setStarredMsgIds((prev) => new Set([...prev, msgId]));
 
+    // 失敗時に500ms待って1回リトライする fetch（☆の学習データ消失防止）
+    const fetchWithRetry = async (url: string, method: string, body: unknown) => {
+      const doFetch = () =>
+        fetch(url, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      try {
+        const res = await doFetch();
+        if (!res.ok) throw new Error(`status ${res.status}`);
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        await doFetch().catch(() => {});
+      }
+    };
+
     const existingExampleId = savedExampleIdByMsgId.current.get(msgId);
     if (existingExampleId) {
       // 送信時に記録した example を PATCH → aiDraft が正しく保存されたまま☆を付ける
-      fetch("/api/save-reply-example", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: existingExampleId, is_starred: true }),
-      }).catch(() => {});
+      void fetchWithRetry("/api/save-reply-example", "PATCH", { id: existingExampleId, is_starred: true });
       // ☆をつけた = スタッフが承認した良い修正 → 差分を自動ナレッジ化
-      fetch("/api/auto-knowledge", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ example_id: existingExampleId }),
-      }).catch(() => {});
+      void fetchWithRetry("/api/auto-knowledge", "POST", { example_id: existingExampleId });
     } else {
       // 記録がない場合（古いメッセージや別セッション）は従来通り POST
       // T03: aiDraftRef.current は現在のドラフト（別メッセージ用の可能性）を指すため渡さない。
       //      diff 学習は existingExampleId パス（送信時に保存済み）のみで有効化する。
-      fetch("/api/save-reply-example", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          conversationState: selectedConversation.status,
-          conversationId: selectedConversation.id,
-          customerMessage: prevCustomerMsg.text,
-          sentReply: staffText,
-          isStarred: true,
-        }),
-      }).catch(() => {});
+      void fetchWithRetry("/api/save-reply-example", "POST", {
+        conversationState: selectedConversation.status,
+        conversationId: selectedConversation.id,
+        customerMessage: prevCustomerMsg.text,
+        sentReply: staffText,
+        isStarred: true,
+      });
     }
   };
 

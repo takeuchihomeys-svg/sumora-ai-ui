@@ -188,6 +188,21 @@ function diffImportance(sim: number): number {
   return 7;
 }
 
+// ── ブーストインフレ防止ガード ──
+// 「よく引かれる（apply_count高い）」だけで正解率を見ずに importance を +1 する盲目ブーストを防ぐ。
+// - apply_count > 0 かつ correct_count/apply_count < 0.5 → ブースト不可（正解率が不十分）
+// - correct+wrong > 0 かつ wrong/(correct+wrong) >= 0.4 → ブースト不可（外れ率が高い）
+// - フィードバック未取得（apply_count=0 かつ correct+wrong=0）は通す（新規ルールの成長を止めない）
+type BoostStats = { apply_count?: number | null; correct_count?: number | null; wrong_count?: number | null };
+function isBoostEligible(rule: BoostStats): boolean {
+  const applyCount = rule.apply_count ?? 0;
+  const correct = rule.correct_count ?? 0;
+  const wrong = rule.wrong_count ?? 0;
+  if (applyCount > 0 && correct / applyCount < 0.5) return false;
+  if (correct + wrong > 0 && wrong / (correct + wrong) >= 0.4) return false;
+  return true;
+}
+
 // ── モジュールレベル定数（コンポーネント学習・ポジティブ強化で共用）──
 const STATE_LEARNABLE: Record<string, string[]> = {
   property_send:                    ["intro", "pickup", "invite", "calendar", "closing"],
@@ -493,11 +508,12 @@ export async function POST(req: NextRequest) {
             if (!(ai_components as Record<string, string>)[comp]) continue;
             const { data: posRules } = await supabase
               .from("ai_reply_knowledge")
-              .select("id, importance")
+              .select("id, importance, apply_count, correct_count, wrong_count")
               .eq("conversation_state", `${conversation_state}_${comp}`)
               .order("apply_count", { ascending: false })
               .limit(2);
             for (const rule of posRules ?? []) {
+              if (!isBoostEligible(rule as BoostStats)) continue; // 正解率不足の盲目ブースト防止
               const imp = (rule.importance as number) ?? 7;
               if (imp < 9) {
                 await supabase.from("ai_reply_knowledge")
@@ -575,6 +591,7 @@ export async function POST(req: NextRequest) {
 
       // ── 予測スコア: 変化しなかったコンポーネントのルールをブースト ──
       // 「AIの予測どおりだった」コンポーネント → 最多適用ルールの importance +1（穴3修正: 盲目的な直近2件→apply_count順）
+      // インフレ修正: 正解率ガード（isBoostEligible）を通過したルールのみブースト
       const correctComponents = learnableList.filter(c =>
         (ai_components as Record<string, string>)[c] && !learnableChangedNames.has(c),
       );
@@ -582,12 +599,13 @@ export async function POST(req: NextRequest) {
         const compState = `${conversation_state}_${comp}`;
         const { data: rules } = await supabase
           .from("ai_reply_knowledge")
-          .select("id, importance")
+          .select("id, importance, apply_count, correct_count, wrong_count")
           .eq("conversation_state", compState)
           .order("apply_count", { ascending: false })
           .order("created_at", { ascending: false })
           .limit(2);
         for (const rule of rules ?? []) {
+          if (!isBoostEligible(rule as BoostStats)) continue; // 外れ率>=40%のルールはブーストしない
           const imp = (rule.importance as number) ?? 7;
           if (imp < 9) {
             await supabase
@@ -703,12 +721,13 @@ export async function POST(req: NextRequest) {
         const compState = `${ueState}_${comp}`;
         const { data: posRules } = await supabase
           .from("ai_reply_knowledge")
-          .select("id, importance")
+          .select("id, importance, apply_count, correct_count, wrong_count")
           .eq("conversation_state", compState)
           .order("apply_count", { ascending: false })
           .order("created_at", { ascending: false })
           .limit(2);
         for (const rule of posRules ?? []) {
+          if (!isBoostEligible(rule as BoostStats)) continue; // correct_count/apply_count >= 0.5 のルールのみブースト
           const imp = (rule.importance as number) ?? 7;
           if (imp < 9) {
             await supabase.from("ai_reply_knowledge")
@@ -779,13 +798,15 @@ export async function POST(req: NextRequest) {
   if ((learned + processed) > 0) try {
     const { data: correctRules } = await supabase
       .from("ai_reply_knowledge")
-      .select("id, importance")
+      .select("id, importance, apply_count, correct_count, wrong_count")
       .gte("correct_count", 3)
       .lt("importance", 9)
       .neq("hypothesis_status", "rejected")
       .order("correct_count", { ascending: false })
       .limit(50);
     for (const rule of correctRules ?? []) {
+      // correct_count>=3 でも apply_count に対する正解率が低い/外れ率が高いルールは昇格しない
+      if (!isBoostEligible(rule as BoostStats)) continue;
       await supabase.from("ai_reply_knowledge")
         .update({ importance: Math.min(9, (rule.importance as number) + 1) })
         .eq("id", rule.id);
@@ -821,16 +842,17 @@ export async function POST(req: NextRequest) {
         const compStates = (STATE_LEARNABLE[state] ?? []).map(c => `${state}_${c}`);
         const matchStates = [state, ...compStates];
         if (modRate <= 0.2) {
-          // AIが当たり続けている → 上位ルールを +1
+          // AIが当たり続けている → 上位ルールを +1（正解率ガード通過ルールのみ）
           const { data: topRules } = await supabase
             .from("ai_reply_knowledge")
-            .select("id, importance")
+            .select("id, importance, apply_count, correct_count, wrong_count")
             .in("conversation_state", matchStates)
             .lt("importance", 9)
             .neq("hypothesis_status", "rejected")
             .order("apply_count", { ascending: false })
             .limit(3);
           for (const rule of topRules ?? []) {
+            if (!isBoostEligible(rule as BoostStats)) continue; // apply_count順の盲目ブースト防止
             await supabase.from("ai_reply_knowledge")
               .update({ importance: Math.min(9, (rule.importance as number) + 1) })
               .eq("id", rule.id);

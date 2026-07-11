@@ -522,6 +522,17 @@ ${answeredSection || "（なし）"}
   return { questionsSaved };
 }
 
+export async function GET(req: NextRequest) {
+  // Vercel Cron は GET でリクエストするため、CRON_SECRET 認証後に POST へ委譲する
+  // （GETエクスポートがないと毎週 405 Method Not Allowed で一度も実行されない）
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers.get("authorization");
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+  return POST(req);
+}
+
 export async function POST(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.get("authorization");

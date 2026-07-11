@@ -541,20 +541,24 @@ export async function PATCH(req: NextRequest) {
   }
 
   // ☆追加時 → 星ブーストで再分析（aiDraft があれば差分学習も実行）
-  const jobs: Promise<void>[] = [
-    analyzeAndSaveKnowledge(existing.id, existing.conversation_state, existing.customer_message, existing.sent_reply, true),
-    extractAndSavePhrases(existing.conversation_state, existing.sent_reply, true),
-  ];
-  if (existing.ai_draft) {
-    const patchSim = textSimilarity((existing.ai_draft as string).trim(), (existing.sent_reply as string).trim());
-    jobs.push(analyzeDiff(existing.id, existing.conversation_state, existing.customer_message, existing.ai_draft, existing.sent_reply, patchSim));
-  }
-  await Promise.all(jobs);
+  // after()化: ☆フラグ更新（最低限の保存）は完了済みのため、Sonnet分析チェーンは
+  // レスポンス返却後に実行する（スタッフがタブを閉じても学習が完走する）
+  after(async () => {
+    const jobs: Promise<void>[] = [
+      analyzeAndSaveKnowledge(existing.id, existing.conversation_state, existing.customer_message, existing.sent_reply, true),
+      extractAndSavePhrases(existing.conversation_state, existing.sent_reply, true),
+    ];
+    if (existing.ai_draft) {
+      const patchSim = textSimilarity((existing.ai_draft as string).trim(), (existing.sent_reply as string).trim());
+      jobs.push(analyzeDiff(existing.id, existing.conversation_state, existing.customer_message, existing.ai_draft, existing.sent_reply, patchSim));
+    }
+    await Promise.all(jobs);
 
-  // PATCH分析後に diff_analyzed_at を更新 → 翌朝cronの二重処理を防止
-  await supabase.from("ai_reply_examples")
-    .update({ diff_analyzed_at: new Date().toISOString() })
-    .eq("id", id);
+    // PATCH分析後に diff_analyzed_at を更新 → 翌朝cronの二重処理を防止
+    await supabase.from("ai_reply_examples")
+      .update({ diff_analyzed_at: new Date().toISOString() })
+      .eq("id", id);
+  });
 
   return NextResponse.json({ ok: true });
 }
@@ -634,19 +638,23 @@ export async function POST(req: NextRequest) {
       const existSentReply = existingRecord.sent_reply as string;
       const existCustMsg   = existingRecord.customer_message as string;
       const existAiDraft   = existingRecord.ai_draft as string | null;
-      const jobs: Promise<void>[] = [
-        analyzeAndSaveKnowledge(existingRecord.id, existConvState, existCustMsg, existSentReply, true),
-        extractAndSavePhrases(existConvState, existSentReply, true),
-      ];
-      if (existAiDraft) {
-        const mergeSim = textSimilarity(existAiDraft.trim(), existSentReply.trim());
-        jobs.push(analyzeDiff(existingRecord.id, existConvState, existCustMsg, existAiDraft, existSentReply, mergeSim));
-      }
-      await Promise.all(jobs);
-      // ☆マージ分析後に diff_analyzed_at を更新 → cronの二重処理を防止
-      await supabase.from("ai_reply_examples")
-        .update({ diff_analyzed_at: new Date().toISOString() })
-        .eq("id", existingRecord.id);
+      // after()化: ☆フラグ更新（最低限の保存）は完了済みのため、Sonnet分析チェーンは
+      // レスポンス返却後に実行（タブが閉じられても学習が完走する）
+      after(async () => {
+        const jobs: Promise<void>[] = [
+          analyzeAndSaveKnowledge(existingRecord.id, existConvState, existCustMsg, existSentReply, true),
+          extractAndSavePhrases(existConvState, existSentReply, true),
+        ];
+        if (existAiDraft) {
+          const mergeSim = textSimilarity(existAiDraft.trim(), existSentReply.trim());
+          jobs.push(analyzeDiff(existingRecord.id, existConvState, existCustMsg, existAiDraft, existSentReply, mergeSim));
+        }
+        await Promise.all(jobs);
+        // ☆マージ分析後に diff_analyzed_at を更新 → cronの二重処理を防止
+        await supabase.from("ai_reply_examples")
+          .update({ diff_analyzed_at: new Date().toISOString() })
+          .eq("id", existingRecord.id);
+      });
       return NextResponse.json({ ok: true, id: existingRecord.id, merged: true });
     }
     // 既存なし → 通常通り新規作成
@@ -879,14 +887,22 @@ export async function POST(req: NextRequest) {
     shouldExtractPhrases = false;
   }
 
-  const analysisJobs: Promise<void>[] = [];
-  if (shouldDeepAnalyze && data?.id) {
-    analysisJobs.push(analyzeAndSaveKnowledge(data.id, conversationState, customerMessage, sentReply, effectiveStarred));
+  // after()化: ai_reply_examples の INSERT（最低限の保存）は上で完了済み。
+  // Sonnet/Haiku 分析チェーン（タグ・カテゴリ付与等の後処理）はレスポンス返却後に実行し、
+  // スタッフがタブを閉じても Vercel Function が分析を完走できるようにする
+  if ((shouldDeepAnalyze || shouldExtractPhrases) && data?.id) {
+    const savedId = data.id as string;
+    after(async () => {
+      const analysisJobs: Promise<void>[] = [];
+      if (shouldDeepAnalyze) {
+        analysisJobs.push(analyzeAndSaveKnowledge(savedId, conversationState, customerMessage, sentReply, effectiveStarred));
+      }
+      if (shouldExtractPhrases) {
+        analysisJobs.push(extractAndSavePhrases(conversationState, sentReply, effectiveStarred));
+      }
+      await Promise.all(analysisJobs);
+    });
   }
-  if (shouldExtractPhrases && data?.id) {
-    analysisJobs.push(extractAndSavePhrases(conversationState, sentReply, effectiveStarred));
-  }
-  if (analysisJobs.length > 0) await Promise.all(analysisJobs);
 
   return NextResponse.json({ ok: true, id: data?.id, conversation_state: conversationState });
 }
