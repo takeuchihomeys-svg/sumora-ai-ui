@@ -743,7 +743,7 @@ export default function AixModal({
               if (data.name) setMeetingPropertyName(data.name);
               if (data.address) setMeetingPropertyAddress(data.address);
             }
-          } catch (e) { console.error("[AixModal] 待ち合わせOCR失敗:", e); } finally { setMeetingOcrLoading(false); }
+          } catch (e) { console.error("[AixModal] 待ち合わせOCR失敗:", e); setError("OCRの読み取りに失敗しました。手動で入力してください。"); } finally { setMeetingOcrLoading(false); }
         };
         reader.readAsDataURL(initialImageFile);
       } else {
@@ -2019,8 +2019,12 @@ export default function AixModal({
             const capturedWasEdited = _capDraft.length > 0
               && _capSent !== _capDraft
               && stripEmoji(_capSent) !== stripEmoji(_capDraft);
+            const capturedRunLearning = runLearning;
             const sendFn = async () => {
               await capturedOnSend(capturedPreview);
+              // UX改善①: 学習は実際に送信が完了した後にのみ実行する
+              // （旧実装はカウントダウン開始時点で学習しており、スタッフがキャンセルしても学習データに残っていた）
+              capturedRunLearning(capturedPreview);
               capturedOnAfterSend?.({
                 suggest2ndHand: capturedActionType === "property_check_result" && capturedCheckAvailableApp === "yes",
                 suggestViewingTemplate: capturedActionType === "viewing_invite",
@@ -2036,8 +2040,8 @@ export default function AixModal({
               });
             };
             onDelayedSend?.(30, sendFn); // 親がsetTimeoutを管理（キャンセル可能）
-            // G-05: 早期returnで学習がスキップされないよう、本文（30秒後に送信される文面）で学習を実行
-            runLearning(capturedPreview);
+            // G-05/UX改善①: 学習は sendFn 内（送信成功後）で実行される。
+            // ここで実行するとキャンセル時にも学習データが記録されてしまうため移動した。
             setLoading(false);
             onClose();
             return;
@@ -3301,7 +3305,7 @@ export default function AixModal({
                               }
                             } catch (err) {
                               console.error("[AixModal] OCR error:", err);
-                              alert("読み取りに失敗しました。手動で入力してください。");
+                              setError("OCRの読み取りに失敗しました。手動で入力してください。");
                             } finally { setMgmtDocOcrLoading(false); }
                           }}
                           disabled={mgmtDocOcrLoading}
@@ -3439,7 +3443,11 @@ export default function AixModal({
                           const data = await res.json();
                           if (data.prop_name) setExclusivePropName(data.prop_name);
                           if (data.room_no) setExclusiveRoomNo(data.room_no);
-                        } catch {}
+                        } catch (ocrErr) {
+                          // UX改善⑤: OCR失敗の握りつぶし防止（スタッフが手入力の必要性に気づけるようにする）
+                          console.error("[AixModal] 専任物件OCR失敗:", ocrErr);
+                          setError("OCRの読み取りに失敗しました。手動で入力してください。");
+                        }
                         setExclusiveOcrLoading(false);
                       }}
                       className="hidden"
@@ -4219,7 +4227,7 @@ export default function AixModal({
                           await ensureOk(res);
                           const data = await res.json() as { ok: boolean; name?: string };
                           if (data.ok && data.name) setViewingVacancyName(data.name);
-                        } catch (e) { console.error("[AixModal] 物件資料OCR失敗:", e); } finally { setViewingVacancyOcrLoading(false); }
+                        } catch (e) { console.error("[AixModal] 物件資料OCR失敗:", e); setError("OCRの読み取りに失敗しました。手動で入力してください。"); } finally { setViewingVacancyOcrLoading(false); }
                       };
                       reader.readAsDataURL(f);
                     }}
@@ -4382,7 +4390,7 @@ export default function AixModal({
                           if (data.name) setMeetingPropertyName(data.name);
                           if (data.address) setMeetingPropertyAddress(data.address);
                         }
-                      } catch (e) { console.error("[AixModal] 待ち合わせOCR失敗:", e); } finally { setMeetingOcrLoading(false); }
+                      } catch (e) { console.error("[AixModal] 待ち合わせOCR失敗:", e); setError("OCRの読み取りに失敗しました。手動で入力してください。"); } finally { setMeetingOcrLoading(false); }
                     };
                     reader.readAsDataURL(f);
                   }}

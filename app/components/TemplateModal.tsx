@@ -370,6 +370,15 @@ export default function TemplateModal({
   initialTemplates, onCacheUpdate, templates: templatesProp, onRefresh, postAixContext, conversationId, priorityTemplateIds,
 }: TemplateModalProps) {
   const [templates, setTemplates] = useState<Template[]>(templatesProp ?? initialTemplates ?? []);
+  // UX改善④: alert() の代替。モーダル上部にトースト表示して4秒で自動消去（モバイルでブロッキングしない）
+  const [modalError, setModalError] = useState<string | null>(null);
+  const modalErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showModalError = useCallback((msg: string) => {
+    setModalError(msg);
+    if (modalErrorTimerRef.current) clearTimeout(modalErrorTimerRef.current);
+    modalErrorTimerRef.current = setTimeout(() => setModalError(null), 4000);
+  }, []);
+  useEffect(() => () => { if (modalErrorTimerRef.current) clearTimeout(modalErrorTimerRef.current); }, []);
   // 親からのデータ（props/キャッシュ）があれば即時表示、なければローディング表示
   const [loading, setLoading] = useState(!templatesProp && (!initialTemplates || initialTemplates.length === 0));
   const [templateLoadError, setTemplateLoadError] = useState<string | null>(null);
@@ -746,7 +755,7 @@ export default function TemplateModal({
       setCategory(newCat);
       onRefresh?.();
     } catch {
-      alert("カテゴリ名の変更に失敗しました");
+      showModalError("カテゴリ名の変更に失敗しました");
     }
   };
 
@@ -914,7 +923,7 @@ export default function TemplateModal({
         setNewLabel(""); setNewText(""); setNewCategory("全般"); setNewRequiresImage(false); setShowAddForm(false);
         await refreshTemplates();
       } else {
-        alert("テンプレートの追加に失敗しました");
+        showModalError("テンプレートの追加に失敗しました");
       }
     } finally {
       setSaving(false);
@@ -954,7 +963,7 @@ export default function TemplateModal({
         setEditingId(null);
         await refreshTemplates();
       } else {
-        alert("テンプレートの更新に失敗しました");
+        showModalError("テンプレートの更新に失敗しました");
       }
     } finally {
       setEditSaving(false);
@@ -1051,6 +1060,15 @@ export default function TemplateModal({
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/50"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
+      {/* UX改善④: alert() 代替のエラートースト */}
+      {modalError && (
+        <div
+          className="fixed top-4 left-1/2 z-[60] max-w-[90vw] -translate-x-1/2 rounded-full bg-red-500 px-5 py-2.5 text-[12px] font-bold text-white shadow-lg"
+          onClick={() => setModalError(null)}
+        >
+          {modalError}
+        </div>
+      )}
       <div className="w-full max-w-lg rounded-t-3xl bg-white shadow-2xl flex flex-col" style={{ maxHeight: "90vh" }}>
         {/* ヘッダー */}
         <div
@@ -2518,9 +2536,10 @@ export default function TemplateModal({
                                           });
                                           const data = await res.json() as { ok: boolean; name?: string; address?: string; error?: string };
                                           if (data.ok && (data.name || data.address)) {
+                                            // UX改善⑥: replaceAll で全出現箇所を置換（replace は最初の1箇所のみで後続が残っていた）
                                             const filled = tmpl.text
-                                              .replace("[物件名]", data.name || "[物件名]")
-                                              .replace("[住所]", data.address || "[住所]");
+                                              .replaceAll("[物件名]", data.name || "[物件名]")
+                                              .replaceAll("[住所]", data.address || "[住所]");
                                             setExtractedTexts(prev => ({ ...prev, [tmpl.id]: filled }));
                                             setDisplaySource(prev => ({ ...prev, [tmpl.id]: "extracted" }));
                                           } else {
@@ -2627,7 +2646,7 @@ export default function TemplateModal({
                                   return;
                                 }
                                 if (tmpl.requires_image && (templateImages[tmpl.id] ?? []).length === 0) {
-                                  alert("📎 物件資料を画像で読み込んでください");
+                                  showModalError("📎 物件資料を画像で読み込んでください");
                                   return;
                                 }
                                 if (isOcrTemplate && extractingId === tmpl.id) return;
@@ -2688,7 +2707,7 @@ export default function TemplateModal({
                                   ? { type: tmpl.second_msg_type, delay: tmpl.second_msg_delay }
                                   : null;
                                 if (tmpl.requires_image && (templateImages[tmpl.id] ?? []).length === 0) {
-                                  alert("📎 物件資料を画像で読み込んでください");
+                                  showModalError("📎 物件資料を画像で読み込んでください");
                                   return;
                                 }
                                 // AIX推薦採否ログ（postAixContext時のみ）—「そのまま使う」と同一の記録

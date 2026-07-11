@@ -2782,6 +2782,7 @@ export default function Home() {
     setStarredMsgIds((prev) => new Set([...prev, msgId]));
 
     // 失敗時に500ms待って1回リトライする fetch（☆の学習データ消失防止）
+    // リトライも失敗した場合は楽観的更新（☆）をロールバックしてエラー表示する
     const fetchWithRetry = async (url: string, method: string, body: unknown) => {
       const doFetch = () =>
         fetch(url, {
@@ -2794,7 +2795,14 @@ export default function Home() {
         if (!res.ok) throw new Error(`status ${res.status}`);
       } catch {
         await new Promise((resolve) => setTimeout(resolve, 500));
-        await doFetch().catch(() => {});
+        try {
+          const retryRes = await doFetch();
+          if (!retryRes.ok) throw new Error(`status ${retryRes.status}`);
+        } catch {
+          // UX改善②: 保存失敗時は☆をロールバック（付いたままだと保存済みと誤認する）
+          setStarredMsgIds((prev) => { const next = new Set(prev); next.delete(msgId); return next; });
+          setError("☆の保存に失敗しました。もう一度お試しください。");
+        }
       }
     };
 
@@ -3202,6 +3210,8 @@ export default function Home() {
     // 2通目設定をキャプチャ（非同期処理中に変わらないよう先に取得）
     const secondMsgCapture = pendingSecondMsgRef.current;
     pendingSecondMsgRef.current = null;
+    // UX改善③: LINE送信が成功した後のDB保存で例外が起きた場合のエラーメッセージ切替用
+    let lineDelivered = false;
 
     try {
       setSending(true);
@@ -3224,15 +3234,85 @@ export default function Home() {
         imageUrls.push(data.publicUrl);
       }
 
+      // === UX改善③: LINEに先に送信し、成功した分だけDBに記録する ===
+      // （旧実装は先にDB insertしていたため、LINE送信失敗時も「送信済み」として履歴・学習データに残っていた）
+      const imageSentFlags: boolean[] = imageUrls.map(() => false);
+      let firstImageLineMsgId: string | null = null;
+      let textSent = false;
+      let textLineMsgId: string | null = null;
+      let lineErrorMsg = "";
+      try {
+        // 画像→テキストの順（LINEの表示順に合わせる）
+        for (let i = 0; i < imageUrls.length; i++) {
+          const lineRes = await fetch("/api/send-line-message", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
+            body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, image_url: imageUrls[i], account: selectedConversation.account }),
+          });
+          if (!lineRes.ok) {
+            const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string };
+            lineErrorMsg = `⚠️ LINE画像送信失敗: ${lineErr.error || lineRes.statusText}`;
+          } else {
+            imageSentFlags[i] = true;
+            if (!firstImageLineMsgId) {
+              // 引用リプライ検出用: 複数画像は1つのDB行にまとまるため、先頭画像のidを代表として記録する
+              const imgJson = await lineRes.json().catch(() => null) as { sentMessageIds?: string[] } | null;
+              firstImageLineMsgId = imgJson?.sentMessageIds?.[0] ?? null;
+            }
+          }
+        }
+        if (textToSend) {
+          const lineRes = await fetch("/api/send-line-message", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
+            body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: textToSend, account: selectedConversation.account }),
+          });
+          if (!lineRes.ok) {
+            const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string };
+            lineErrorMsg = `⚠️ LINE送信失敗: ${lineErr.error || lineRes.statusText}`;
+          } else {
+            textSent = true;
+            const txtJson = await lineRes.json().catch(() => null) as { sentMessageIds?: string[] } | null;
+            textLineMsgId = txtJson?.sentMessageIds?.[0] ?? null;
+          }
+        }
+      } catch (lineEx) {
+        console.error("LINE send error:", lineEx);
+        lineErrorMsg = `⚠️ LINE送信エラー: ${lineEx instanceof Error ? lineEx.message : "通信エラー"}`;
+      }
+
+      const sentImageUrls = imageUrls.filter((_, i) => imageSentFlags[i]);
+      const anyImageSent = sentImageUrls.length > 0;
+      if (lineErrorMsg) setError(`${lineErrorMsg}。未送信の内容は入力欄に残っています。`);
+
+      // 全て送信失敗 → DBに記録せず終了（下書き・画像・2通目設定を残して再送できるようにする）
+      if (!textSent && !anyImageSent) {
+        pendingSecondMsgRef.current = secondMsgCapture;
+        return;
+      }
+      lineDelivered = true;
+
+      // 送信に成功した分だけ入力欄をクリア（失敗した分は残して再送できるようにする）
+      if (textSent || !textToSend) {
+        setReplyDraft("");
+        setReplyQuality(null); // B-2: 送信後は品質判定をリセット
+      }
+      if (imageUrls.length > 0) {
+        if (sentImageUrls.length === imageUrls.length) {
+          removeSelectedImage();
+        } else {
+          setSelectedImageFiles((prev) => prev.filter((_, i) => !imageSentFlags[i]));
+          setSelectedImagePreviews((prev) => prev.filter((_, i) => !imageSentFlags[i]));
+          if (fileInputRef.current) fileInputRef.current.value = "";
+        }
+      }
+
       const newMessages: Message[] = [];
-      // 引用リプライ検出用: 送信前insertのDB行ID（LINE送信後に line_message_id を書き戻す）
-      let insertedImageMsgId: string | null = null;
-      let insertedTextMsgId: string | null = null;
 
       // 画像が先・テキストが後（LINEの表示順に合わせる）
       // 画像は複数でも1メッセージ行にまとめて保存（JSON配列）
-      if (imageUrls.length > 0) {
-        const imageUrlData = imageUrls.length === 1 ? imageUrls[0] : JSON.stringify(imageUrls);
+      if (anyImageSent) {
+        const imageUrlData = sentImageUrls.length === 1 ? sentImageUrls[0] : JSON.stringify(sentImageUrls);
         const { data: imgRow, error: imgInsertError } = await supabase
           .from("messages")
           .insert({
@@ -3241,10 +3321,11 @@ export default function Home() {
             text: "[画像]",
             image_url: imageUrlData,
             created_at: now.toISOString(),
+            // 引用リプライ検出用: LINE送信で確定した message id をそのままinsert（書き戻し不要）
+            ...(firstImageLineMsgId ? { line_message_id: firstImageLineMsgId } : {}),
           })
           .select();
         if (imgInsertError) throw imgInsertError;
-        insertedImageMsgId = imgRow?.[0]?.id ? String(imgRow[0].id) : null;
         newMessages.push({
           id: String(imgRow?.[0]?.id || crypto.randomUUID()),
           sender: "staff",
@@ -3256,8 +3337,8 @@ export default function Home() {
       }
 
       // テキストメッセージを保存（画像の1秒後のタイムスタンプで後ろに表示）
-      if (textToSend) {
-        const textNow = imageUrls.length > 0 ? new Date(now.getTime() + 1000) : now;
+      if (textSent && textToSend) {
+        const textNow = anyImageSent ? new Date(now.getTime() + 1000) : now;
         const { data: textRow, error: textInsertError } = await supabase
           .from("messages")
           .insert({
@@ -3265,10 +3346,11 @@ export default function Home() {
             sender: "staff",
             text: textToSend,
             created_at: textNow.toISOString(),
+            // 引用リプライ検出用: LINE送信で確定した message id をそのままinsert（書き戻し不要）
+            ...(textLineMsgId ? { line_message_id: textLineMsgId } : {}),
           })
           .select();
         if (textInsertError) throw textInsertError;
-        insertedTextMsgId = textRow?.[0]?.id ? String(textRow[0].id) : null;
         newMessages.push({
           id: String(textRow?.[0]?.id || crypto.randomUUID()),
           sender: "staff",
@@ -3278,12 +3360,12 @@ export default function Home() {
         });
       }
 
-      const lastText = textToSend || (imageUrls.length > 0 ? "[画像]" : "");
+      const lastText = (textSent && textToSend) ? textToSend : "[画像]";
 
       // ステータス自動制御
       const isFirstStaffReply = !selectedConversation.messages.some((m) => m.sender === "staff");
       const currentStatus = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
-      const isSendingImages = imageUrls.length > 0;
+      const isSendingImages = anyImageSent;
       const convUpdate: Record<string, unknown> = { last_message: lastText, last_sender: "staff", updated_at: now.toISOString(), ai_draft: null, is_flagged: false };
       if (isFirstStaffReply) convUpdate.status = "hearing";
       // 画像送信時 & 初回対応中 → 物件提案中に自動昇格
@@ -3352,73 +3434,26 @@ export default function Home() {
 
       // 初期費用訴求メッセージ送信後 → 追客テンプレートバナーを表示
       const SHOKI_KEYWORDS = ["初期費用", "敷金礼金なし", "敷金・礼金なし", "敷礼なし", "費用を抑え", "費用が抑え"];
-      if (textToSend && SHOKI_KEYWORDS.some(kw => textToSend.includes(kw))) {
+      if (textSent && textToSend && SHOKI_KEYWORDS.some(kw => textToSend.includes(kw))) {
         const cid = selectedConversation.id;
         setSuggestNextTemplateMap(prev => ({ ...prev, [cid]: { num: "追客初期費用", category: "追客" } }));
         setDismissedNextTemplateIds(prev => { const n = new Set(prev); n.delete(cid); return n; });
       }
 
-      // LINEに送信（画像→テキストの順）
-      try {
-        let isFirstImageSend = true;
-        for (const imageUrl of imageUrls) {
-          const lineRes = await fetch("/api/send-line-message", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
-            body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, image_url: imageUrl, account: selectedConversation.account }),
-          });
-          if (!lineRes.ok) {
-            const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string };
-            setError(`⚠️ LINE画像送信失敗: ${lineErr.error || lineRes.statusText}`);
-          } else if (isFirstImageSend && insertedImageMsgId) {
-            // 引用リプライ検出用: LINE message id をDB行に書き戻す（fire-and-forget）
-            // 複数画像は1つのDB行にまとまるため、先頭画像のidを代表として記録する
-            isFirstImageSend = false;
-            const imgJson = await lineRes.json().catch(() => null) as { sentMessageIds?: string[] } | null;
-            const sentId = imgJson?.sentMessageIds?.[0];
-            if (sentId) {
-              supabase.from("messages").update({ line_message_id: sentId }).eq("id", insertedImageMsgId)
-                .then(() => {}, () => {});
-            }
-          }
-        }
-        if (textToSend) {
-          const lineRes = await fetch("/api/send-line-message", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
-            body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: textToSend, account: selectedConversation.account }),
-          });
-          if (!lineRes.ok) {
-            const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string };
-            setError(`⚠️ LINE送信失敗: ${lineErr.error || lineRes.statusText}`);
-          } else if (insertedTextMsgId) {
-            // 引用リプライ検出用: LINE message id をDB行に書き戻す（fire-and-forget）
-            const txtJson = await lineRes.json().catch(() => null) as { sentMessageIds?: string[] } | null;
-            const sentId = txtJson?.sentMessageIds?.[0];
-            if (sentId) {
-              supabase.from("messages").update({ line_message_id: sentId }).eq("id", insertedTextMsgId)
-                .then(() => {}, () => {});
-            }
-          }
-          // 2通目自動送信スケジュール（extrasClearと分離した専用refで管理）
-          if (secondMsgCapture) {
-            const customerName = preferredCustomerName;
-            const secondText = secondMsgCapture.type === "内覧誘導"
-              ? `${customerName}ご都合よろしいお日にちにご案内させて頂きます😊！！`
-              : `${customerName}さんお気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
-            // G-08: 2通目学習用にこの時点の顧客メッセージ・状態をキャプチャ（timer発火時にはrefがクリア済みのため）
-            const secondLearnMsg = replyTargetCustomerMsgRef.current || latestCustomerMessage || "";
-            const secondLearnState = (newStatus ?? selectedConversation.status);
-            if (secondMsgTimerRef.current) clearTimeout(secondMsgTimerRef.current);
-            secondMsgTimerRef.current = setTimeout(() => {
-              secondMsgTimerRef.current = null;
-              sendMessageText(secondText, undefined, undefined, { customerMessage: secondLearnMsg, conversationState: secondLearnState });
-            }, secondMsgCapture.delay * 1000);
-          }
-        }
-      } catch (lineEx) {
-        console.error("LINE send error:", lineEx);
-        setError(`⚠️ LINE送信エラー: ${lineEx instanceof Error ? lineEx.message : "通信エラー"}`);
+      // 2通目自動送信スケジュール（extrasClearと分離した専用refで管理・テキスト送信成功時のみ）
+      if (textSent && secondMsgCapture) {
+        const customerName = preferredCustomerName;
+        const secondText = secondMsgCapture.type === "内覧誘導"
+          ? `${customerName}ご都合よろしいお日にちにご案内させて頂きます😊！！`
+          : `${customerName}さんお気に召されましたらお申込みしお部屋抑えさせて頂きます！！\nお手隙の際にご査収ください😌！！`;
+        // G-08: 2通目学習用にこの時点の顧客メッセージ・状態をキャプチャ（timer発火時にはrefがクリア済みのため）
+        const secondLearnMsg = replyTargetCustomerMsgRef.current || latestCustomerMessage || "";
+        const secondLearnState = (newStatus ?? selectedConversation.status);
+        if (secondMsgTimerRef.current) clearTimeout(secondMsgTimerRef.current);
+        secondMsgTimerRef.current = setTimeout(() => {
+          secondMsgTimerRef.current = null;
+          sendMessageText(secondText, undefined, undefined, { customerMessage: secondLearnMsg, conversationState: secondLearnState });
+        }, secondMsgCapture.delay * 1000);
       }
 
       // 画像送信時: 物件送った自動記録（fire-and-forget）
@@ -3433,8 +3468,9 @@ export default function Home() {
         }
       }
 
-      // 学習データ保存（テキスト送信時のみ・バックグラウンド）
-      if (textToSend) {
+      // 学習データ保存（テキスト送信がLINEに成功した時のみ・バックグラウンド）
+      // UX改善③: LINE送信失敗時は学習データに記録しない（誤った「送信済み」学習の防止）
+      if (textSent && textToSend) {
         // AI生成時はgenerate時点の顧客メッセージを使う（その後に新メッセージが届いても正しい対応先を記録）
         const lastCustomerMsg = replyTargetCustomerMsgRef.current || latestCustomerMessage;
         const capturedAiDraft = aiDraftRef.current || undefined;
@@ -3480,7 +3516,8 @@ export default function Home() {
       }
 
       // G-10: テンプレートから送信した場合は使用回数をインクリメント（fire-and-forget）
-      if (selectedTemplateIdRef.current) {
+      // テキスト送信が失敗した場合は ref を保持して再送時にカウントする
+      if (selectedTemplateIdRef.current && (textSent || !textToSend)) {
         fetch("/api/templates/increment-use", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -3489,7 +3526,8 @@ export default function Home() {
         selectedTemplateIdRef.current = "";
       }
       // テンプレート選択ログ phase=sent：最終送信テキストと修正有無を記録
-      if (templateSelectionMetaRef.current) {
+      // テキスト送信が失敗した場合は meta を保持して再送時に記録する
+      if (templateSelectionMetaRef.current && (textSent || !textToSend)) {
         const meta = templateSelectionMetaRef.current;
         const finalText = textToSend ?? "";
         const wasModified = finalText.trim() !== meta.originalText.trim();
@@ -3547,13 +3585,11 @@ export default function Home() {
         templateSelectionMetaRef.current = null;
       }
 
-      setReplyDraft("");
-      setReplyQuality(null); // B-2: 送信後は品質判定をリセット
-      removeSelectedImage();
+      // （入力欄クリアはLINE送信成否の判定直後に移動済み・UX改善③）
 
       // 物件送り完了メッセージ検知（「ご査収ください」はAIX物件ピックアップした完了文の固定フレーズ）
       // → P6「物件ピックアップした」を消してP4「物件オススメ」へ切り替え
-      if (textToSend && textToSend.includes("ご査収ください")) {
+      if (textSent && textToSend && textToSend.includes("ご査収ください")) {
         const convId = selectedConversation.id;
         setSuggestPropertyRecommendMap((prev) => ({ ...prev, [convId]: true }));
         setDismissedPropertyRecommendIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
@@ -3565,12 +3601,12 @@ export default function Home() {
           return { ...prev, [convId]: tasks };
         });
       // 物件送付予告メッセージ検知 → AIX「物件ピックアップした」誘導
-      } else if (textToSend && /ピックアップ|物件.*送|お送りさせて|物件をお送り/.test(textToSend)) {
+      } else if (textSent && textToSend && /ピックアップ|物件.*送|お送りさせて|物件をお送り/.test(textToSend)) {
         setSuggestPropertySendMap((prev) => ({ ...prev, [selectedConversation.id]: true }));
       }
 
       // 待ち合わせ確定メッセージ送信 → 内覧済みフラグをセット
-      if (activeAixFlow === "meeting_place" || (textToSend && /現地エントランスお待ち合わせ/.test(textToSend))) {
+      if (activeAixFlow === "meeting_place" || (textSent && textToSend && /現地エントランスお待ち合わせ/.test(textToSend))) {
         const convId = selectedConversation.id;
         supabase.from("conversations").update({ has_viewed: true }).eq("id", convId).then(() => {});
         setConversations((prev) => prev.map((c) => c.id === convId ? { ...c, hasViewed: true } : c));
@@ -3578,7 +3614,7 @@ export default function Home() {
 
       // 内覧招待メッセージ検知 → 内覧テンプレート辞書を誘導
       const isViewingMsg = activeAixFlow === "viewing_invite"
-        || (textToSend && /内覧|ご案内|ご都合.*いかが|ご都合.*如何|お日にち|お部屋ご案内/.test(textToSend));
+        || (textSent && textToSend && /内覧|ご案内|ご都合.*いかが|ご都合.*如何|お日にち|お部屋ご案内/.test(textToSend));
       if (isViewingMsg) {
         setSuggestViewingTemplateMap((prev) => ({ ...prev, [selectedConversation.id]: true }));
         setDismissedViewingTemplateIds((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
@@ -3617,8 +3653,9 @@ export default function Home() {
       setTimeout(() => fetchConversationsAndMessages(true), 1500);
 
       // 時間差追加メッセージをスケジュール（extraDraftMessages が設定されていた場合）
+      // UX改善③: 本文のLINE送信が失敗した場合は追加メッセージを流さない
       const extras = extraDraftMessages.filter(e => e.text.trim());
-      if (extras.length > 0) {
+      if (extras.length > 0 && (textSent || !textToSend)) {
         setExtraDraftMessages([]);
         multiSendTimersRef.current.forEach(t => clearTimeout(t));
         multiSendTimersRef.current = [];
@@ -3636,7 +3673,12 @@ export default function Home() {
       }
     } catch (sendError) {
       console.error(sendError);
-      setError(sendError instanceof Error ? sendError.message : "送信に失敗しました。");
+      // UX改善③: LINE送信成功後のDB保存失敗は「送信自体は完了」と分かるメッセージにする
+      if (lineDelivered) {
+        setError(`LINEへの送信は完了しましたが、履歴の保存に失敗しました: ${sendError instanceof Error ? sendError.message : String(sendError)}`);
+      } else {
+        setError(sendError instanceof Error ? sendError.message : "送信に失敗しました。");
+      }
     } finally {
       setSending(false);
     }
@@ -3689,7 +3731,13 @@ export default function Home() {
       delayedSendTimeoutRef.current = null;
       if (delayedSendIntervalRef.current) { clearInterval(delayedSendIntervalRef.current); delayedSendIntervalRef.current = null; }
       setDelayedSendCountdown(0);
-      await sendFn();
+      // UX改善①: 遅延送信の失敗をスタッフに通知（旧実装は失敗しても無通知だった）
+      try {
+        await sendFn();
+      } catch (delayedErr) {
+        console.error("delayed send error:", delayedErr);
+        setError("⚠️ 自動送信に失敗しました。手動で送信してください。");
+      }
     }, seconds * 1000);
     // カウントダウン表示用インターバル
     delayedSendIntervalRef.current = setInterval(() => {
