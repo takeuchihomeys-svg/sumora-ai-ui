@@ -3158,6 +3158,9 @@ export default function Home() {
       }
 
       const newMessages: Message[] = [];
+      // 引用リプライ検出用: 送信前insertのDB行ID（LINE送信後に line_message_id を書き戻す）
+      let insertedImageMsgId: string | null = null;
+      let insertedTextMsgId: string | null = null;
 
       // 画像が先・テキストが後（LINEの表示順に合わせる）
       // 画像は複数でも1メッセージ行にまとめて保存（JSON配列）
@@ -3174,6 +3177,7 @@ export default function Home() {
           })
           .select();
         if (imgInsertError) throw imgInsertError;
+        insertedImageMsgId = imgRow?.[0]?.id ? String(imgRow[0].id) : null;
         newMessages.push({
           id: String(imgRow?.[0]?.id || crypto.randomUUID()),
           sender: "staff",
@@ -3197,6 +3201,7 @@ export default function Home() {
           })
           .select();
         if (textInsertError) throw textInsertError;
+        insertedTextMsgId = textRow?.[0]?.id ? String(textRow[0].id) : null;
         newMessages.push({
           id: String(textRow?.[0]?.id || crypto.randomUUID()),
           sender: "staff",
@@ -3288,6 +3293,7 @@ export default function Home() {
 
       // LINEに送信（画像→テキストの順）
       try {
+        let isFirstImageSend = true;
         for (const imageUrl of imageUrls) {
           const lineRes = await fetch("/api/send-line-message", {
             method: "POST",
@@ -3297,6 +3303,16 @@ export default function Home() {
           if (!lineRes.ok) {
             const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string };
             setError(`⚠️ LINE画像送信失敗: ${lineErr.error || lineRes.statusText}`);
+          } else if (isFirstImageSend && insertedImageMsgId) {
+            // 引用リプライ検出用: LINE message id をDB行に書き戻す（fire-and-forget）
+            // 複数画像は1つのDB行にまとまるため、先頭画像のidを代表として記録する
+            isFirstImageSend = false;
+            const imgJson = await lineRes.json().catch(() => null) as { sentMessageIds?: string[] } | null;
+            const sentId = imgJson?.sentMessageIds?.[0];
+            if (sentId) {
+              supabase.from("messages").update({ line_message_id: sentId }).eq("id", insertedImageMsgId)
+                .then(() => {}, () => {});
+            }
           }
         }
         if (textToSend) {
@@ -3308,6 +3324,14 @@ export default function Home() {
           if (!lineRes.ok) {
             const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string };
             setError(`⚠️ LINE送信失敗: ${lineErr.error || lineRes.statusText}`);
+          } else if (insertedTextMsgId) {
+            // 引用リプライ検出用: LINE message id をDB行に書き戻す（fire-and-forget）
+            const txtJson = await lineRes.json().catch(() => null) as { sentMessageIds?: string[] } | null;
+            const sentId = txtJson?.sentMessageIds?.[0];
+            if (sentId) {
+              supabase.from("messages").update({ line_message_id: sentId }).eq("id", insertedTextMsgId)
+                .then(() => {}, () => {});
+            }
           }
           // 2通目自動送信スケジュール（extrasClearと分離した専用refで管理）
           if (secondMsgCapture) {
@@ -3635,6 +3659,9 @@ export default function Home() {
     setDismissedNextActionIds((prev) => { const n = new Set(prev); n.delete(selectedConversation.id); return n; });
     const now = new Date();
     const newMessages: Message[] = [];
+    // 引用リプライ検出用: 送信前insertのDB行ID（LINE送信後に line_message_id を書き戻す）
+    let insertedImageMsgId: string | null = null;
+    let insertedTextMsgId: string | null = null;
 
     // 画像が先、テキストが後の順で保存・送信
     if (imageUrl) {
@@ -3651,6 +3678,7 @@ export default function Home() {
         })
         .select();
       if (imgError) throw imgError;
+      insertedImageMsgId = imgRow?.[0]?.id ? String(imgRow[0].id) : null;
       newMessages.push({
         id: String(imgRow?.[0]?.id || crypto.randomUUID()),
         sender: "staff",
@@ -3674,6 +3702,7 @@ export default function Home() {
         })
         .select();
       if (insertError) throw insertError;
+      insertedTextMsgId = insertedRows?.[0]?.id ? String(insertedRows[0].id) : null;
       newMessages.push({
         id: String(insertedRows?.[0]?.id || crypto.randomUUID()),
         sender: "staff",
@@ -3743,6 +3772,11 @@ export default function Home() {
         // P4: LINE message idを記録（テキストも送る場合はテキスト側で上書きされる）
         const imgJson = await imgRes.json().catch(() => null) as { sentMessageIds?: string[] } | null;
         lastLineSendRef.current = { messageId: imgJson?.sentMessageIds?.[0] ?? null, sentAt: now.toISOString() };
+        // 引用リプライ検出用: LINE message id をDB行に書き戻す（fire-and-forget）
+        if (imgJson?.sentMessageIds?.[0] && insertedImageMsgId) {
+          supabase.from("messages").update({ line_message_id: imgJson.sentMessageIds[0] }).eq("id", insertedImageMsgId)
+            .then(() => {}, () => {});
+        }
       }
       if (text.trim()) {
         const txtRes = await fetch("/api/send-line-message", {
@@ -3753,6 +3787,11 @@ export default function Home() {
         // P4: LINE message idを記録（AIX本文＝最後のテキスト送信が最終的にrefに残る）
         const txtJson = await txtRes.json().catch(() => null) as { sentMessageIds?: string[] } | null;
         lastLineSendRef.current = { messageId: txtJson?.sentMessageIds?.[0] ?? null, sentAt: now.toISOString() };
+        // 引用リプライ検出用: LINE message id をDB行に書き戻す（fire-and-forget）
+        if (txtJson?.sentMessageIds?.[0] && insertedTextMsgId) {
+          supabase.from("messages").update({ line_message_id: txtJson.sentMessageIds[0] }).eq("id", insertedTextMsgId)
+            .then(() => {}, () => {});
+        }
       }
     } catch {
       // LINE送信失敗しても管理画面の動作は続ける

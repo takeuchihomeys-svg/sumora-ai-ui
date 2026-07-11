@@ -75,6 +75,11 @@ ALTER TABLE messages DISABLE ROW LEVEL SECURITY;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS line_message_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_messages_line_message_id ON messages(line_message_id);
 
+-- LINEリプライ（引用）機能: お客様が引用したメッセージのLINE message id
+-- （物件カードへの引用リプライ → その物件への興味判定に使う。messages.line_message_id とJOINして引用先を特定）
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS quoted_message_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_messages_quoted_message_id ON messages(quoted_message_id);
+
 -- AIX生成メッセージフラグ（挨拶判定から除外するため）
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_aix_generated BOOLEAN DEFAULT FALSE;
 

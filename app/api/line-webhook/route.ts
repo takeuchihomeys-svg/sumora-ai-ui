@@ -188,6 +188,7 @@ async function handleTextMessage(
   text: string,
   account: AccountConfig,
   lineMessageId?: string,
+  quotedMessageId?: string,
 ): Promise<boolean> {
   const db = getDb();
   const now = new Date().toISOString();
@@ -212,6 +213,8 @@ async function handleTextMessage(
     sender: "customer",
     text,
     ...(lineMessageId ? { line_message_id: lineMessageId } : {}),
+    // LINEリプライ（引用）: 引用元メッセージID（物件カードへの引用→物件興味判定に使う）
+    quoted_message_id: quotedMessageId ?? null,
     created_at: now,
   });
   if (msgErr) {
@@ -1001,7 +1004,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const event = ev as {
       type: string;
       source?: { type?: string; userId?: string };
-      message?: { type: string; id?: string; text?: string };
+      message?: { type: string; id?: string; text?: string; quotedMessageId?: string };
     };
 
     // フォロー/ブロック/フォロー解除 → line_status を更新
@@ -1042,8 +1045,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const lineMessageId = event.message?.id;
       const text = (event.message as { text?: string })?.text;
       if (!text) continue;
+      // LINEリプライ（引用）機能: 引用元メッセージID（LINE API 2023年9月〜）
+      const quotedMessageId = event.message?.quotedMessageId;
       // sync-from-screeningより高速な直接経路で保存（line_message_idで重複防止）
-      const ok = await handleTextMessage(userId, text, matchedAccount, lineMessageId);
+      const ok = await handleTextMessage(userId, text, matchedAccount, lineMessageId, quotedMessageId);
       if (!ok) anyFailed = true;
       continue;
     } else if (msgType === "image") {

@@ -51,6 +51,15 @@ function buildFirstGreeting(customerName: string): string {
   return `${customerName ? `${customerName}さん、` : ""}はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！`;
 }
 
+// ─── パターンB: 物件引用への返信判定（プロンプト常時注入・条件付きルール）─────────
+const QUOTE_REPLY_JUDGE_NOTE = `
+【物件引用への返信判定】
+お客様メッセージが「ここ」「こちら」「気になる」「いいですね」「見たい」等を含み、
+直近のスタッフメッセージに物件画像（【物件資料を送付した】等の[画像]）または物件名・物件URL送付が含まれる場合、
+お客様は直前の物件への興味・内覧希望を示している可能性が高い。
+この場合は「気になる物件のURLをお送りください」ではなく、
+その物件の内覧日程調整の方向で返信を生成すること。`;
+
 // ─── ai_summary_json の構造化サマリー（customer-summary/route.ts の SummaryJson と互換）──
 type ReplySummaryJson = {
   winning_pattern?: string;
@@ -215,7 +224,8 @@ function buildGenerationMessages(
   viewingNote = "",
   customerStructured?: CustomerStructured,
   dbRules = "",
-  summaryJson?: ReplySummaryJson
+  summaryJson?: ReplySummaryJson,
+  quotedContextNote = ""
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   const jstDay = getJSTDayOfWeek();
@@ -533,6 +543,7 @@ ${knowledgeNote}
 ${dbRules}
 ${phrases}
 
+${QUOTE_REPLY_JUDGE_NOTE}${quotedContextNote}
 ${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}
 ${customerMessage}${applicationFormNote}${viewingFactNote}
 
@@ -992,6 +1003,50 @@ function extractPreferredName(
   return lineDisplayName.replace(/さん$/, "");
 }
 
+// ─── パターンA: 引用リプライの引用先メッセージ取得（quoted_message_id → line_message_id JOIN）──
+// お客様の最新メッセージに quoted_message_id があれば、引用先メッセージを特定して
+// 「このメッセージは○○への返信です」というコンテキストをプロンプトに注入する。
+// ※ 現在はデータが貯まり始めた段階（webhook保存 + page.tsx line_message_id 書き戻しは実装済み）。
+//   引用先が見つからない場合は空文字を返して通常生成にフォールバックする。
+async function fetchQuotedContext(conversationId: string): Promise<string> {
+  try {
+    const { data: lastCustomerMsg } = await supabase
+      .from("messages")
+      .select("quoted_message_id")
+      .eq("conversation_id", conversationId)
+      .eq("sender", "customer")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const quotedId = (lastCustomerMsg as { quoted_message_id?: string | null } | null)?.quoted_message_id;
+    if (!quotedId) return "";
+
+    const { data: quoted } = await supabase
+      .from("messages")
+      .select("sender, text, image_url")
+      .eq("line_message_id", quotedId)
+      .maybeSingle();
+    if (!quoted) return "";
+
+    const q = quoted as { sender?: string; text?: string | null; image_url?: string | null };
+    const senderLabel = q.sender === "staff" ? "スモラ（スタッフ）" : "お客様自身";
+    const isImage = !q.text || q.text === "[画像]" || q.text === "[動画]";
+    const contentDesc = isImage
+      ? "【画像（スタッフ送付なら物件カード・物件資料の可能性が高い）】"
+      : `「${String(q.text).slice(0, 300)}」`;
+    return `
+【💬 引用リプライ検出（確定事実・最優先文脈）】
+お客様の最新メッセージは、${senderLabel}が送ったメッセージ ${contentDesc} への引用（リプライ）です。
+お客様は引用先の内容について話している。引用先が物件画像・物件名・物件URLの場合、
+その物件への興味・内覧希望として扱い、「気になる物件のURLをお送りください」等の聞き返しは絶対にせず、
+その物件を前提に内覧日程調整・空室確認の方向で返信を生成すること。`;
+  } catch (err) {
+    // quoted_message_id カラム未作成環境・クエリ失敗時は通常生成にフォールバック
+    console.warn("[generate-reply] 引用コンテキスト取得失敗 — 通常生成で続行:", err);
+    return "";
+  }
+}
+
 // ─── conversationId → ai_summary_json 取得（regex往復の廃止・構造化サマリー直接参照）──
 // クライアントが summaryJson を渡さない場合のフォールバック。
 // conversations.property_customer_id 経由で property_customers.ai_summary_json を引く
@@ -1230,7 +1285,7 @@ export async function POST(req: NextRequest) {
 
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
     // 各フェッチはエラーでも生成を止めない（knowledgeなし・実例なしで生成続行）
-    const [knowledge, examples, phrases, autoSummary, dbRules, fetchedSummaryJson] = await Promise.all([
+    const [knowledge, examples, phrases, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote] = await Promise.all([
       fetchKnowledge(currentState, message, analysisContext, conversationId)
         .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return ""; }),
       fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext)
@@ -1247,6 +1302,10 @@ export async function POST(req: NextRequest) {
       !bodySummaryJson && conversationId
         ? fetchSummaryJsonByConversation(conversationId)
         : Promise.resolve(null),
+      // パターンA: 引用リプライの引用先コンテキスト（quoted_message_id → line_message_id JOIN）
+      conversationId
+        ? fetchQuotedContext(conversationId)
+        : Promise.resolve(""),
     ]);
     const resolvedSummary = customerSummary || autoSummary;
     const resolvedSummaryJson = bodySummaryJson ?? fetchedSummaryJson ?? undefined;
@@ -1281,7 +1340,7 @@ export async function POST(req: NextRequest) {
       analysis, knowledge, examples, phrases, customerConditions, resolvedSummary,
       promptOverrides, isFollowUp, replyHint, alreadyGreetedToday,
       isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules,
-      resolvedSummaryJson
+      resolvedSummaryJson, quotedContextNote
     );
     // 中6: 顧客の温度感（ai_summary_json.emotion）に応じて生成temperatureを可変にする（Step1分析は temperature:0 のまま）
     const genTemperature = emotionTemperature(resolvedSummaryJson?.emotion);

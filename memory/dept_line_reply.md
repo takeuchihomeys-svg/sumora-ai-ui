@@ -1,6 +1,20 @@
 # LINE返信AI部署 倉庫（#L）
 
-最終更新: 2026-07-08
+最終更新: 2026-07-11
+
+---
+
+## LINEリプライ（引用）による物件興味判定（2026-07-11）
+
+お客様が物件カードに引用リプライで「ここも気になるかもです！」→ 従来は「気になる物件のURLをお送りください」と的外れ回答していた問題への対応。パターンB（即効プロンプト）+ パターンA基盤整備（引用データの蓄積）を同時実施。
+
+- **パターンB（即効）**: `generate-reply/route.ts` に `QUOTE_REPLY_JUDGE_NOTE` を常時注入。「ここ/こちら/気になる/いいですね/見たい」+ 直近スタッフの物件画像・物件URL送付 → 直前物件への興味と判定し内覧日程調整の方向で生成
+- **パターンA基盤（4ファイル）**:
+  1. `line-webhook/route.ts` — webhookの `quotedMessageId`（LINE API 2023年9月〜）を `messages.quoted_message_id` に保存（従来は捨てていた）
+  2. `migrate-schema/route.ts` — `messages.quoted_message_id TEXT` + インデックス追加。**本番DBにも適用済み**（execute_sql直接実行）
+  3. `page.tsx` — スタッフ送信後に send-line-message の `sentMessageIds[0]` を送信前insert行の `line_message_id` に書き戻し（executeSend / sendMessageText 両フロー・テキスト+画像。複数画像は1行にまとまるため先頭画像のidを代表記録）
+  4. `generate-reply/route.ts` — `fetchQuotedContext(conversationId)`: 最新顧客メッセージの `quoted_message_id` → `messages.line_message_id` でJOINし「このメッセージは○○への引用です」を最優先文脈としてプロンプト注入（Promise.all並列・失敗時は空文字フォールバック）
+- ⚠️ 引用先特定はスタッフメッセージの `line_message_id` が貯まってから効き始める（実装日以降の送信分から有効）。それまではパターンBが受け皿
 
 ---
 
