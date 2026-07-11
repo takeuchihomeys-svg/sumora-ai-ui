@@ -278,6 +278,129 @@ async function isMeaningfullySame(aiText: string, sentText: string): Promise<boo
   }
 }
 
+// ── 回帰センチネル: 反復削除フレーズの自動検知・ナレッジ降格 ──
+// 特定顧客の特殊ケース返信が文脈を剥がされて汎用フレーズ化 → 別顧客に誤出力される事故
+// （例:「入居の審査まで」が内覧希望客に誤出力）を毎日自動検知する。
+// 直近14日の was_ai_modified 例から「AI案にあってスタッフが削除した文」を文単位で抽出し、
+// 別の conversation_id で2件以上削除されたフレーズを「反復削除フレーズ」と判定。
+// 該当する ai_reply_knowledge を importance=min(現値,3) に降格（削除・rejected化はしない）し、
+// ai_feedback_items（TemplateModal「❓ AI質問」タブ）に竹内さんへの確認質問を起票する。
+
+// 句点・！！・改行で文分割（20文字以上のみ対象 = 固有情報の短文を除外）
+function splitSentences(text: string): string[] {
+  return text
+    .split(/[。\n！!？?]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 20);
+}
+
+async function detectRepeatedDeletions(): Promise<{ detected: number; demoted: number }> {
+  const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: recentExamples, error } = await supabase
+    .from("ai_reply_examples")
+    .select("id, conversation_id, ai_draft, sent_reply")
+    .eq("was_ai_modified", true)
+    .not("ai_draft", "is", null)
+    .not("sent_reply", "is", null)
+    .gte("created_at", fourteenDaysAgo)
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (error || !recentExamples || recentExamples.length === 0) return { detected: 0, demoted: 0 };
+
+  // ① 各例で「ai_draftにあってsent_replyから消えた文」を抽出し、類似フレーズをクラスタ化
+  type Cluster = { phrase: string; convIds: Set<string> };
+  const clusters: Cluster[] = [];
+  for (const ex of recentExamples) {
+    const draftSentences = splitSentences((ex.ai_draft as string) ?? "");
+    const sentSentences = splitSentences((ex.sent_reply as string) ?? "");
+    const sentNorm = ((ex.sent_reply as string) ?? "").replace(/\s+/g, "");
+    const convId = (ex.conversation_id as string | null) ?? `example:${ex.id as string}`;
+    for (const sentence of draftSentences) {
+      if (sentNorm.includes(sentence.replace(/\s+/g, ""))) continue; // そのまま残っている
+      if (sentSentences.some((t) => textSimilarity(sentence, t) >= 0.85)) continue; // 言い換えで残っている
+      // 完全一致 or 類似度>0.85 は同一フレーズとしてクラスタに集約
+      const cluster = clusters.find((c) => c.phrase === sentence || textSimilarity(c.phrase, sentence) > 0.85);
+      if (cluster) cluster.convIds.add(convId);
+      else clusters.push({ phrase: sentence, convIds: new Set([convId]) });
+    }
+  }
+
+  // ② 別の conversation_id で2件以上削除 = 反復削除フレーズ（1回あたり最大10件処理）
+  const repeated = clusters.filter((c) => c.convIds.size >= 2).slice(0, 10);
+  if (repeated.length === 0) return { detected: 0, demoted: 0 };
+
+  // ③ category='phrase' のナレッジを一括取得して照合（テキスト比較のみ・embedding不使用）
+  const { data: phraseRules } = await supabase
+    .from("ai_reply_knowledge")
+    .select("id, content, importance")
+    .eq("category", "phrase")
+    .limit(500);
+
+  let demoted = 0;
+  for (const cluster of repeated) {
+    const phrase = cluster.phrase;
+    const phraseNorm = phrase.replace(/\s+/g, "");
+    const matchedIds = new Map<string, number>(); // knowledge id → importance
+
+    for (const rule of phraseRules ?? []) {
+      const contentNorm = ((rule.content as string) ?? "").replace(/\s+/g, "");
+      if (!contentNorm) continue;
+      if (
+        contentNorm.includes(phraseNorm) ||
+        phraseNorm.includes(contentNorm) ||
+        textSimilarity(phrase, (rule.content as string) ?? "") > 0.85
+      ) {
+        matchedIds.set(rule.id as string, (rule.importance as number) ?? 7);
+      }
+    }
+
+    // phrase 以外のカテゴリでも content にフレーズをそのまま含むナレッジは照合対象
+    const esc = phrase.replace(/[%_\\]/g, "\\$&");
+    const { data: containRules } = await supabase
+      .from("ai_reply_knowledge")
+      .select("id, importance")
+      .ilike("content", `%${esc}%`)
+      .limit(10);
+    for (const rule of containRules ?? []) {
+      if (!matchedIds.has(rule.id as string)) matchedIds.set(rule.id as string, (rule.importance as number) ?? 7);
+    }
+
+    // ④ 降格: importance を min(現値, 3) に（rejected は保持・降格のみ / 物理削除しない）
+    for (const [ruleId, imp] of matchedIds) {
+      if (imp > 3) {
+        const { error: demoteError } = await supabase
+          .from("ai_reply_knowledge")
+          .update({ importance: 3 })
+          .eq("id", ruleId);
+        if (!demoteError) demoted++;
+      }
+    }
+
+    // ⑤ ai_feedback_items へ起票（既存スキーマ: question/category/evidence を使用）
+    //    question 先頭50字（=フレーズ部分）で dedup し、同じフレーズを毎日重複起票しない
+    const question = `「${phrase.slice(0, 60)}」というフレーズが${cluster.convIds.size}件の別会話でスタッフに削除されています。特定顧客の特殊要望由来のフレーズが汎用化した可能性があります。このフレーズは今後のAI返信で使ってよいですか？（使ってよい条件があれば教えてください）`;
+    const dedupKey = question.slice(0, 50).replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+    const { data: existing } = await supabase
+      .from("ai_feedback_items")
+      .select("id")
+      .in("status", ["pending", "answered"])
+      .ilike("question", `${dedupKey}%`)
+      .limit(1);
+    if (existing && existing.length > 0) continue;
+
+    await supabase.from("ai_feedback_items").insert({
+      question,
+      speculation: "特定顧客向けの特殊ケース返信が、文脈を剥がされて汎用フレーズとして学習された可能性があります",
+      category: "phrase_contamination",
+      evidence: `直近14日で${cluster.convIds.size}件の別会話から削除 / 降格ナレッジID: ${matchedIds.size > 0 ? [...matchedIds.keys()].join(", ") : "該当なし"}`,
+      confidence: "high",
+      status: "pending",
+    });
+  }
+
+  return { detected: repeated.length, demoted };
+}
+
 export async function POST(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.get("authorization");
@@ -315,6 +438,13 @@ export async function POST(req: NextRequest) {
   let processed = 0;
   let learned = 0;
   const now = new Date().toISOString();
+
+  // ── 回帰センチネル: メインの差分学習ループと並列実行 ──
+  // LLM不使用（DBクエリ+ローカルテキスト比較のみ）のため maxDuration=60 への影響は軽微
+  const sentinelPromise = detectRepeatedDeletions().catch((e) => {
+    console.error("[analyze-diffs] 回帰センチネル失敗:", e);
+    return { detected: 0, demoted: 0 };
+  });
 
   for (const ex of examples) {
     const { id, customer_message, ai_draft, sent_reply, conversation_state, is_starred, ai_components, reply_angle } = ex as {
@@ -584,6 +714,9 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── 回帰センチネルの結果を回収（反復削除フレーズ検知数・ナレッジ降格数）──
+  const sentinel = await sentinelPromise;
+
   // 学習済みナレッジのembeddingを即座にバックフィル
   if (learned > 0) {
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
@@ -757,8 +890,12 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* ignore - プロンプトルール同期失敗はメイン処理を止めない */ }
 
-  await finishCronLog(runLogId, true, { processed, learned, synced });
-  return NextResponse.json({ ok: true, processed, learned, synced, message: `${processed}件処理・${learned}件学習・${synced}件ルール同期` });
+  await finishCronLog(runLogId, true, { processed, learned, synced, sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted });
+  return NextResponse.json({
+    ok: true, processed, learned, synced,
+    sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted,
+    message: `${processed}件処理・${learned}件学習・${synced}件ルール同期・反復削除フレーズ${sentinel.detected}件検知（${sentinel.demoted}件降格）`,
+  });
 }
 
 export async function GET(req: NextRequest) {

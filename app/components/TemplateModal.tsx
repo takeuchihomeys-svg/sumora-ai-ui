@@ -196,6 +196,7 @@ const FEEDBACK_CATEGORY_LABEL: Record<string, string> = {
   missing_keyword: "未登録キーワード",
   weak_scene: "苦手な場面",
   new_aix_needed: "新AIXが必要",
+  phrase_contamination: "反復削除フレーズ検知",
   general: "一般",
 };
 
