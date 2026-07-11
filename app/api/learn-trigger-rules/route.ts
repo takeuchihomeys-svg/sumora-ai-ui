@@ -4,7 +4,8 @@ import { normalizeStatus } from "@/app/lib/status-normalize";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 
 // Vercel Functions のタイムアウト上限（秒）
-export const maxDuration = 60;
+// 逐次upsert廃止・バッチ化済みのため300秒に引き上げ
+export const maxDuration = 300;
 
 // source ごとの重み（採択の質を confidence に反映）
 // suggestion_accepted: スタッフが積極的に選択した強シグナル
@@ -256,14 +257,15 @@ export async function POST(req?: Request) {
     }
   }
 
-  for (const rule of sorted) {
-    // #24 修正D: 低品質ルールは upsert 対象外
-    if (isLowQualityRule(rule.confidence, rule.occurrence_count)) continue;
-    const { error } = await supabase.from("trigger_action_rules").upsert(
-      { ...rule, updated_at: new Date().toISOString() },
-      { onConflict: "action_type,keyword" }
-    );
-    if (!error) learned++;
+  // 逐次upsert → バッチupsert（100件ずつ）でDB往復を最小化
+  const qualityRules = sorted
+    .filter((r) => !isLowQualityRule(r.confidence, r.occurrence_count))
+    .map((r) => ({ ...r, updated_at: new Date().toISOString() }));
+  const BATCH = 100;
+  for (let i = 0; i < qualityRules.length; i += BATCH) {
+    const chunk = qualityRules.slice(i, i + BATCH);
+    const { error } = await supabase.from("trigger_action_rules").upsert(chunk, { onConflict: "action_type,keyword" });
+    if (!error) learned += chunk.length;
   }
 
   // ── AIXチェーンパターン学習: 直前のAIX → 次のAIX ──
@@ -310,28 +312,27 @@ export async function POST(req?: Request) {
   }
 
   let chainLearned = 0;
-  // 汎用チェーン（AFTER:{prev}）とフェーズ特定チェーン（AFTER:{prev}|{status}）を同じ閾値で upsert
-  // フェーズ特定は母数がフェーズで絞られるため汎用より高 confidence になりやすい
+  // 汎用チェーン（AFTER:{prev}）とフェーズ特定チェーン（AFTER:{prev}|{status}）をバッチupsert
   const chainGroups: Array<{ counts: Record<string, Record<string, number>>; totals: Record<string, number> }> = [
     { counts: chainCount, totals: prevTotal },
     { counts: phaseChainCount, totals: phasePrevTotal },
   ];
+  const chainRules: Array<Record<string, unknown>> = [];
   for (const { counts, totals } of chainGroups) {
     for (const [prevKey, nexts] of Object.entries(counts)) {
       for (const [action, count] of Object.entries(nexts)) {
         const total = totals[prevKey] ?? count;
         const confidence = Math.round((count / total) * 1000) / 1000;
-        // #24 修正D: 低品質ルール（confidence < 0.4 かつ count < 5）は upsert 対象外
-        // 案3: count は鮮度減衰済みの重み付き値（float）。閾値判定は減衰後の値で行い、DBのINTEGERカラムには丸めて保存
         if (confidence >= 0.3 && count >= 2 && !isLowQualityRule(confidence, count)) {
-          const { error } = await supabase.from("trigger_action_rules").upsert(
-            { action_type: action, keyword: `AFTER:${prevKey}`, occurrence_count: Math.round(count), total_occurrence: Math.round(total), confidence, updated_at: new Date().toISOString() },
-            { onConflict: "action_type,keyword" }
-          );
-          if (!error) { learned++; chainLearned++; }
+          chainRules.push({ action_type: action, keyword: `AFTER:${prevKey}`, occurrence_count: Math.round(count), total_occurrence: Math.round(total), confidence, updated_at: new Date().toISOString() });
         }
       }
     }
+  }
+  for (let i = 0; i < chainRules.length; i += BATCH) {
+    const chunk = chainRules.slice(i, i + BATCH);
+    const { error } = await supabase.from("trigger_action_rules").upsert(chunk, { onConflict: "action_type,keyword" });
+    if (!error) { learned += chunk.length; chainLearned += chunk.length; }
   }
 
   await finishCronLog(runLogId, true, { learned, chain_learned: chainLearned, cleaned, total_candidates: rulesToUpsert.length });

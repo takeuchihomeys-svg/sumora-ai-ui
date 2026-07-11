@@ -488,32 +488,28 @@ export async function POST(req: NextRequest) {
     console.error("[corpus2skill] スキル降格失敗:", e);
   }
 
-  // P2: テンプレート品質改善タスク（テンプレ編集差分・AIX編集・採用/却下フィードバックを材料に週次提案）
-  // ai_reply_examples の有無に関係なく実行する（材料が無ければ内部でスキップ）
-  let templateImprovements = { candidatesSaved: 0, suggestionsSaved: 0 };
-  try {
-    templateImprovements = await synthesizeTemplateImprovements();
-    console.log(`[corpus2skill] テンプレ改善: candidates=${templateImprovements.candidatesSaved} suggestions=${templateImprovements.suggestionsSaved}`);
-  } catch (e) {
-    console.error("[corpus2skill] テンプレ改善タスク失敗:", e);
-  }
+  // P2・P3・examplesフェッチを並列実行（順次では300秒を超過するため）
+  const [templateImprovements, blindSpots, examplesResult] = await Promise.all([
+    synthesizeTemplateImprovements().catch((e) => {
+      console.error("[corpus2skill] テンプレ改善タスク失敗:", e);
+      return { candidatesSaved: 0, suggestionsSaved: 0 };
+    }),
+    discoverBlindSpots().catch((e) => {
+      console.error("[corpus2skill] 盲点発見タスク失敗:", e);
+      return { questionsSaved: 0 };
+    }),
+    supabase
+      .from("ai_reply_examples")
+      .select("id, conversation_id, created_at, sent_reply, ai_draft, conversation_state, customer_message, was_ai_modified")
+      .gte("created_at", since)
+      .not("sent_reply", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(200),
+  ]);
+  console.log(`[corpus2skill] テンプレ改善: candidates=${templateImprovements.candidatesSaved} suggestions=${templateImprovements.suggestionsSaved}`);
+  console.log(`[corpus2skill] 盲点発見: questions=${blindSpots.questionsSaved}`);
 
-  // AI盲点フィードバック: 予測外れ・提案無視・fallback依存のデータから竹内さんへの質問を生成
-  let blindSpots = { questionsSaved: 0 };
-  try {
-    blindSpots = await discoverBlindSpots();
-    console.log(`[corpus2skill] 盲点発見: questions=${blindSpots.questionsSaved}`);
-  } catch (e) {
-    console.error("[corpus2skill] 盲点発見タスク失敗:", e);
-  }
-
-  const { data: examples } = await supabase
-    .from("ai_reply_examples")
-    .select("id, conversation_id, created_at, sent_reply, ai_draft, conversation_state, customer_message, was_ai_modified")
-    .gte("created_at", since)
-    .not("sent_reply", "is", null)
-    .order("created_at", { ascending: false })
-    .limit(200) as { data: Example[] | null };
+  const { data: examples } = examplesResult as { data: Example[] | null };
 
   if (!examples || examples.length === 0) {
     await finishCronLog(runLogId, true, {
@@ -582,22 +578,20 @@ ${limitedSequences.map((g) =>
   let totalInserted = 0;
   let totalMerged = 0;
 
-  for (const [state, stateExamples] of byState) {
-    if (stateExamples.length < 3) {
-      console.log(`[corpus2skill] ${state}: ${stateExamples.length}件のためスキップ（3件以上必要）`);
-      continue;
-    }
+  // フェーズ別synthesizeSkillsをPromise.allで並列実行（順次だと300秒を超過するため）
+  const stateEntries = [...byState.entries()].filter(([, exs]) => exs.length >= 3);
+  const skillsByState = await Promise.all(
+    stateEntries.map(async ([state, stateExamples]) => {
+      console.log(`[corpus2skill] ${state}: ${stateExamples.length}件からスキル合成開始`);
+      const skills = await synthesizeSkills(state, stateExamples, chainSection).catch((e) => {
+        console.error(`[corpus2skill] ${state} 合成失敗:`, e);
+        return [] as Skill[];
+      });
+      return { state, skills };
+    })
+  );
 
-    console.log(`[corpus2skill] ${state}: ${stateExamples.length}件からスキル合成開始`);
-
-    let skills: Skill[];
-    try {
-      skills = await synthesizeSkills(state, stateExamples, chainSection);
-    } catch (e) {
-      console.error(`[corpus2skill] ${state} 合成失敗:`, e);
-      continue;
-    }
-
+  for (const { state, skills } of skillsByState) {
     for (const skill of skills) {
       if (!skill.title || !skill.content || skill.content.length < 20) continue;
 
