@@ -1751,7 +1751,7 @@ export default function TemplateModal({
                             onClick={() => openReviewPanel(candidate)}
                             className="flex-1 py-1.5 rounded-lg bg-orange-400 text-white text-sm font-semibold hover:bg-orange-500 disabled:opacity-50 transition"
                           >
-                            {adoptingId === candidate.id ? "採用中..." : "✅ テンプレに採用"}
+                            {adoptingId === candidate.id ? "採用中..." : "✅ 確認して採用"}
                           </button>
                           <button
                             onClick={() => setDismissingId(dismissingId === candidate.id ? null : candidate.id)}
