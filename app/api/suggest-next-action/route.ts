@@ -400,11 +400,16 @@ export async function POST(req: NextRequest) {
   const recentCustomerMsgs = messages.filter((m) => m.sender === "customer").slice(0, 3).map((m) => (m.text as string) ?? "");
   const hasPropertyUrl = recentCustomerMsgs.some((t) => PROPERTY_URL_RE.test(t));
   const hasAvailabilityQuestion = AVAILABILITY_KEYWORDS.some((kw) => lastCustomerMsg.includes(kw));
+  // スモ割/割引キーワード（スモラの初期費用最大限割引サービス）
+  // 物件URL/画像と同時 → property_check_result（先に空室確認が必要・確認後に見積のセット運用）
+  // 単独（物件は前回送付済み等）→ 下の estimate_sheet キーワード判定に合流して見積書を提案
+  const SMOWARI_RE = /スモ割|割引後|割引使え|割引でき|スモ割使|スモ割適用|スモ割確認/;
+  const hasSmowariKeyword = SMOWARI_RE.test(lastCustomerMsg);
   // 中5: keyword_hardcode 経由の採択率が低い場合はこのトリガーをスキップして次の判定へ
   if ((hasPropertyMedia || hasPropertyUrl || hasAvailabilityQuestion) && PROPERTY_CHECK_STATUSES.has(currentStatus) &&
       !isLowSourceRate("property_check_result", "keyword_hardcode")) {
     if (shouldSuppressAction("property_check_result")) return NextResponse.json({ action: null, reason: "" });
-    return NextResponse.json({ action: "property_check_result", reason: hasPropertyMedia ? "物件画像が送られた" : "物件の空室確認依頼", source: "keyword_hardcode", params: buildParams("property_check_result"), acceptanceRate: acceptanceRateMap["property_check_result"] ?? null, sub_mode_stats: subModeStats, ...templateRec("property_check_result") });
+    return NextResponse.json({ action: "property_check_result", reason: hasSmowariKeyword ? "スモ割は空室確認から" : hasPropertyMedia ? "物件画像が送られた" : "物件の空室確認依頼", source: "keyword_hardcode", params: buildParams("property_check_result"), acceptanceRate: acceptanceRateMap["property_check_result"] ?? null, sub_mode_stats: subModeStats, ...templateRec("property_check_result") });
   }
 
   // S-5: 費用・内覧・申込キーワード即判定（DBルール不要・Haiku流入削減）
@@ -433,8 +438,9 @@ export async function POST(req: NextRequest) {
     const hit = keywordHit("meeting_place", "日程確定の意向を検出");
     if (hit) return hit;
   }
-  if (/費用|初期費用|いくら/.test(lastCustomerMsg)) {
-    const hit = keywordHit("estimate_sheet", "費用に関する質問を検出");
+  // スモ割/割引 単独言及（物件URL/画像なし＝上の property_check_result 判定を通過してきた場合）も見積書へ
+  if (/費用|初期費用|いくら/.test(lastCustomerMsg) || hasSmowariKeyword) {
+    const hit = keywordHit("estimate_sheet", hasSmowariKeyword ? "スモ割・割引見積の依頼" : "費用に関する質問を検出");
     if (hit) return hit;
   }
 

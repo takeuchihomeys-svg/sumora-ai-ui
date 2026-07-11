@@ -31,6 +31,9 @@ const ACTION_TO_CATEGORY: Record<string, string> = {
 };
 
 type Example = {
+  id: string;
+  conversation_id: string | null;
+  created_at: string;
   sent_reply: string;
   ai_draft: string | null;
   conversation_state: string;
@@ -44,7 +47,7 @@ type Skill = {
   trigger?: string;
 };
 
-async function synthesizeSkills(state: string, examples: Example[]): Promise<Skill[]> {
+async function synthesizeSkills(state: string, examples: Example[], chainSection = ""): Promise<Skill[]> {
   const examplesText = examples.slice(0, 15).map((e, i) => {
     const label = e.was_ai_modified
       ? "🔴 スタッフがAIを改善（AIがまだ弱いパターン）"
@@ -65,7 +68,7 @@ ${e.ai_draft ? `AI案: ${e.ai_draft.slice(0, 300)}\n` : ""}実際に送った返
       content: `以下は【${state}】フェーズでの過去7日間の返信例です。
 
 ${examplesText}
-
+${chainSection}
 各例には2種類のラベルが付いています：
 - ✅ AIをそのまま使用 → AIが既に習得済みの良いパターン（強化すべき）
 - 🔴 スタッフがAIを改善 → AIがまだ弱いパターン（特に学ぶべき）
@@ -77,6 +80,7 @@ ${examplesText}
 - 薄い・当たり前すぎるものは除外（本当に価値のあるものだけ）
 - 「できる営業担当者は〇〇する」という形式で書く
 - 🔴の例からは「AIが苦手なこと」、✅の例からは「既に正解しているパターン」として区別して抽出
+- 「連続対応シーケンス」がある場合は、単発の返信スキルに加えて「空室確認→見積送付」のような複数アクションのセット運用パターンも抽出対象とする
 
 JSON配列のみ返す（説明不要）：
 [
@@ -321,9 +325,10 @@ export async function POST(req: NextRequest) {
 
   const { data: examples } = await supabase
     .from("ai_reply_examples")
-    .select("sent_reply, ai_draft, conversation_state, customer_message, was_ai_modified")
+    .select("id, conversation_id, created_at, sent_reply, ai_draft, conversation_state, customer_message, was_ai_modified")
     .gte("created_at", since)
     .not("sent_reply", "is", null)
+    .order("created_at", { ascending: false })
     .limit(200) as { data: Example[] | null };
 
   if (!examples || examples.length === 0) {
@@ -334,6 +339,43 @@ export async function POST(req: NextRequest) {
       aixSuggestionsSaved: templateImprovements.suggestionsSaved,
     });
   }
+
+  // ── 連続対応シーケンス抽出（チェーンパターン学習用）──────────────────────
+  // 同一 conversation_id の連続レコードをシーケンスとしてグループ化し、
+  // created_at の差が24時間超のギャップで分割（別日の対応は別シーケンス扱い）
+  const byConversation = new Map<string, Example[]>();
+  for (const ex of examples) {
+    if (!ex.conversation_id) continue;
+    const group = byConversation.get(ex.conversation_id) ?? [];
+    group.push(ex);
+    byConversation.set(ex.conversation_id, group);
+  }
+  const GAP_MS = 24 * 60 * 60 * 1000;
+  const chainSequences: Example[][] = [];
+  for (const group of byConversation.values()) {
+    // 取得は created_at 降順のため昇順に並べ直してから分割する
+    const sorted = [...group].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    let current: Example[] = [];
+    for (const ex of sorted) {
+      const prev = current[current.length - 1];
+      if (prev && new Date(ex.created_at).getTime() - new Date(prev.created_at).getTime() > GAP_MS) {
+        // 2件以上の連続対応のみチェーンパターンとして採用
+        if (current.length >= 2) chainSequences.push(current);
+        current = [];
+      }
+      current.push(ex);
+    }
+    if (current.length >= 2) chainSequences.push(current);
+  }
+  // Opusプロンプト肥大防止のため最大20シーケンス
+  const limitedSequences = chainSequences.slice(0, 20);
+  const chainSection = limitedSequences.length > 0 ? `
+## 連続対応シーケンス（同一顧客への複数アクションのセット・チェーンパターン抽出用）
+${limitedSequences.map((g) =>
+  `【会話 ${g[0].conversation_id?.slice(-6)}】\n` +
+  g.map((e, i) => `  ${i + 1}. [${e.conversation_state}] 顧客:「${(e.customer_message ?? "").slice(0, 50)}」→ 送信:「${(e.sent_reply ?? "").slice(0, 80)}」`).join("\n")
+).join("\n\n")}
+` : "";
 
   // 正規化されたフェーズ別にグループ化
   const byState = new Map<string, Example[]>();
@@ -357,7 +399,7 @@ export async function POST(req: NextRequest) {
 
     let skills: Skill[];
     try {
-      skills = await synthesizeSkills(state, stateExamples);
+      skills = await synthesizeSkills(state, stateExamples, chainSection);
     } catch (e) {
       console.error(`[corpus2skill] ${state} 合成失敗:`, e);
       continue;

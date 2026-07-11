@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
     // 1. 直近30日のAIX使用ログ・2. 成約パターン・3. 蓄積ノウハウ・4. readinessスナップショット を並列取得
     //    B07: ③を追加することで analyze-diffs/auto-knowledge が蓄積した原則/修正ルールをガイドに反映する
     //    改善12: ④で週次スナップショットから採択率トレンド（改善中/悪化中）を検知してガイド生成に注入する
-    const [{ data: usageLogs }, { data: patterns }, { data: principles }, { data: readinessSnaps }] = await Promise.all([
+    const [{ data: usageLogs }, { data: patterns }, { data: principles }, { data: readinessSnaps }, { data: chainRules }] = await Promise.all([
       supabase
         .from("aix_usage_logs")
         .select("aix_type, template_name, template_category, conversation_id, conversation_status, suggested_action, was_edited")
@@ -60,6 +60,15 @@ export async function POST(req: NextRequest) {
         .gte("report_date", new Date(Date.now() - 28 * 24 * 3600 * 1000).toISOString().slice(0, 10))
         .order("report_date", { ascending: false })
         .limit(100),
+      // 学習済みチェーンルール（AFTER:{直前アクション}[|{フェーズ}] → 次アクション）をガイド生成の材料に追加
+      // suggest-next-action のチェーン提案と同じ trigger_action_rules を参照（実績ベースのセット運用パターン）
+      supabase
+        .from("trigger_action_rules")
+        .select("keyword, action_type, confidence, occurrence_count")
+        .like("keyword", "AFTER:%")
+        .gte("confidence", 0.5)
+        .order("occurrence_count", { ascending: false })
+        .limit(20),
     ]);
 
     // 3. AIX種類ごとの使用回数・テンプレート別・成約率・予測一致率の集計
@@ -206,6 +215,11 @@ export async function POST(req: NextRequest) {
       accumulating.length > 0 ? `データ蓄積中（比較可能なスナップショット2件未満）: ${accumulating.join(", ")}` : "",
     ].filter(Boolean).join("\n") || "トレンドデータなし（週次スナップショット蓄積中）";
 
+    // 学習済みチェーンルール（AFTER:%）を「直前アクション → 次アクション」の形に整形
+    const chainRulesText = ((chainRules ?? []) as Array<{ keyword: string; action_type: string; confidence: number | null; occurrence_count: number | null }>)
+      .map((r) => `- ${r.keyword.replace(/^AFTER:/, "")} の後 → ${r.action_type}（確度${Math.round((r.confidence ?? 0) * 100)}%・${r.occurrence_count ?? 0}回）`)
+      .join("\n") || "学習済みチェーンデータなし";
+
     // 4. Claude Opus 4.8で分析・ガイド更新
     const resp = await anthropic.messages.create({
       model: "claude-opus-4-8",
@@ -247,6 +261,15 @@ ${principlesText}
 - viewing_invite（内覧へ！）: 内覧日程の提案
 - meeting_place（待ち合わせ）: 内覧確定後の待ち合わせ案内
 - application_push（申込へ！）: 申込を促す
+
+【重要: セット運用パターン】
+- property_check_result（空室あり）→ estimate_sheet は「セット運用」が定石：
+  空室確認後に最大限割引した初期費用の御見積書を同時または直後に送付する。
+  この2アクションは1つの接客フローとして扱うこと。
+- 顧客が「スモ割」「割引」を求めている場合も同じフロー。
+
+【学習済みアクションチェーン（実績ベース・「直前アクション → 次アクション」）】
+${chainRulesText}
 
 実際の使用データに基づいて、以下の形式でガイドを出力してください（800字以内）:
 
