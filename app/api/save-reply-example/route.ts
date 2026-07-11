@@ -890,7 +890,8 @@ export async function POST(req: NextRequest) {
   // AI文案をそのまま使用（wasAiUsed）→ フレーズ抽出のみ（自己強化防止: 深層分析は行わない）
   // AI文案を修正して送った → 差分学習のみ（修正内容が最良の教師信号）
   const effectiveStarred = isStarred === true;
-  let shouldDeepAnalyze = effectiveStarred || !aiDraft;
+  // 完全書き直し（isFullRewrite）はスタッフの手書き文=最強の正解シグナル → 深層分析する
+  let shouldDeepAnalyze = effectiveStarred || !aiDraft || isFullRewrite;
   let shouldExtractPhrases = shouldDeepAnalyze || wasAiModified || wasAiUsed;
   // 🚫 AI自己強化ループ防止: AI文をそのまま送信（wasAiUsed && !wasAiModified）した場合は
   // ☆有無に関わらず深層分析・フレーズ抽出を行わない（AIが書いた文をお手本として学習する循環を遮断）
