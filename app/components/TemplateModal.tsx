@@ -199,6 +199,7 @@ const FEEDBACK_CATEGORY_LABEL: Record<string, string> = {
   phrase_contamination: "使用条件の確認",
   knowledge_gap: "知識不足（AIの誤事実）",
   prompt_ambiguity: "プロンプト曖昧さ検知",
+  adapt_feedback: "会話を合わせる（追加分析）",
   general: "一般",
 };
 
@@ -1908,7 +1909,9 @@ export default function TemplateModal({
                   <p className="text-sm text-gray-400">（週次corpus2skillで生成されます）</p>
                 </div>
               )}
-              {!feedbackLoading && feedbackItems.map(item => (
+              {/* adapt_feedback（会話を合わせる）は他のカテゴリと分けて一番下にまとめて表示する */}
+              {!feedbackLoading && (() => {
+                const renderFeedbackItem = (item: FeedbackItem) => (
                 <div key={item.id} className="border border-orange-200 rounded-xl p-4 bg-orange-50">
                   {/* カテゴリバッジ */}
                   <div className="flex items-center gap-2 mb-2">
@@ -1968,7 +1971,23 @@ export default function TemplateModal({
                     </div>
                   ) : null}
                 </div>
-              ))}
+                );
+                const normalItems = feedbackItems.filter(f => f.category !== "adapt_feedback");
+                const adaptItems = feedbackItems.filter(f => f.category === "adapt_feedback");
+                return (
+                  <>
+                    {normalItems.map(renderFeedbackItem)}
+                    {adaptItems.length > 0 && (
+                      <div className="pt-3 border-t border-gray-200">
+                        <p className="text-xs font-bold text-gray-500 mb-2">🔁 会話を合わせる（追加分析）</p>
+                        <div className="space-y-4">
+                          {adaptItems.map(renderFeedbackItem)}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           )}
 

@@ -101,6 +101,20 @@ ${adaptedText}`;
           is_active: true,
         });
       }
+
+      // ❓AI質問タブ（ai_feedback_items）にも追加分析用の質問として積む。
+      // 竹内さんが回答すると /api/ai-feedback の Opus 4.8 ルール化フローに乗る。
+      // ※ ai_feedback_items に priority カラムは無いため confidence: "low" で優先度低を表現し、
+      //    UI側（TemplateModal）で adapt_feedback カテゴリを一番下にまとめて表示する
+      const feedbackQuestion = `「会話を合わせる」の結果が修正されました。\n\n【会話の流れ】\n${recentConversation}\n\n【AI生成文（修正前）】\n${adaptedText}\n\n【ユーザーコメント】\n${comment || "（なし）"}\n\nどう改善すれば次回の「会話を合わせる」が自然になりますか？`;
+      const { error: fbError } = await supabase.from("ai_feedback_items").insert({
+        category: "adapt_feedback",
+        question: feedbackQuestion,
+        status: "pending",
+        confidence: "low",
+      });
+      if (fbError) console.error("[adapt-feedback] ai_feedback_items insert error:", fbError.message);
+
       return NextResponse.json({ ok: true, rule });
     }
   } catch {
