@@ -1,0 +1,158 @@
+import { NextRequest, NextResponse } from "next/server";
+import { supabase } from "@/app/lib/supabase";
+import Anthropic from "@anthropic-ai/sdk";
+
+// AI盲点フィードバック（ai_feedback_items）
+// corpus2skill 週次Opusが「分からない部分・憶測」を質問としてINSERTし、
+// TemplateModal の「❓ AI質問」タブで竹内さんが回答 → Sonnet 4.6 が知識化して
+// trigger_action_rules（MANUAL_RULE:接頭辞）/ ai_prompts（feedback_rule_{id}）に保存する
+
+export const maxDuration = 60;
+
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 50_000, maxRetries: 1 });
+
+type ExtractedRule = {
+  rule_text: string;
+  save_target: "trigger_action_rules" | "ai_prompts";
+  action_type: string | null;
+};
+
+// GET: pending + answered を最新30件取得
+export async function GET() {
+  const { data, error } = await supabase
+    .from("ai_feedback_items")
+    .select("*")
+    .in("status", ["pending", "answered"])
+    .order("created_at", { ascending: false })
+    .limit(30);
+
+  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  return NextResponse.json({ ok: true, items: data ?? [] });
+}
+
+// 回答をSonnet 4.6で解釈して業務ルールを1〜3個抽出する
+async function extractRules(question: string, answer: string): Promise<ExtractedRule[]> {
+  const res = await client.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 1500,
+    temperature: 0,
+    system: `あなたはLINE不動産接客AIの知識管理エージェントです。担当者からの回答を、AIが今後使える業務ルールに変換します。`,
+    messages: [{
+      role: "user",
+      content: `以下はAIが担当者（竹内悠馬さん）に質問した内容と、その回答です。
+
+【AIの質問】
+${question}
+
+【竹内さんの回答】
+${answer}
+
+この質問と回答から、AIが今後使える業務ルールを1〜3個抽出してください。
+各ルールについて:
+- rule_text: ルール本文（AIがそのまま参照できる具体的な指示文・150文字以内）
+- save_target: "trigger_action_rules"（特定AIXボタンの発動条件に関わるルール）or "ai_prompts"（返信文面・対応方針の一般ルール）
+- action_type: 該当AIXボタン名（property_send / viewing_invite / application_push / condition_hearing / estimate_sheet / followup_revive / acknowledge_check / property_check_result / property_recommendation / meeting_place 等）、なければ null
+
+JSON配列のみ返してください（説明・コードフェンス不要）:
+[{"rule_text": "...", "save_target": "trigger_action_rules"|"ai_prompts", "action_type": "..."|null}]`,
+    }],
+  });
+
+  const text = res.content[0]?.type === "text" ? res.content[0].text.trim() : "";
+  const match = text.match(/\[[\s\S]*\]/);
+  if (!match) return [];
+  try {
+    const parsed = JSON.parse(match[0]) as ExtractedRule[];
+    return Array.isArray(parsed) ? parsed.filter((r) => r?.rule_text?.trim()).slice(0, 3) : [];
+  } catch {
+    return [];
+  }
+}
+
+// POST: { id, answer } → user_answer保存 + Sonnetで知識化 + status="answered"に更新
+export async function POST(req: NextRequest) {
+  const body = await req.json() as { id?: string; answer?: string };
+  const id = body.id;
+  const answer = body.answer?.trim();
+  if (!id || !answer) {
+    return NextResponse.json({ ok: false, error: "id and answer required" }, { status: 400 });
+  }
+
+  const { data: item, error: fetchError } = await supabase
+    .from("ai_feedback_items")
+    .select("id, question, status")
+    .eq("id", id)
+    .single();
+  if (fetchError || !item) {
+    return NextResponse.json({ ok: false, error: "item not found" }, { status: 404 });
+  }
+
+  // 知識化（失敗しても回答自体は保存する）
+  let rules: ExtractedRule[] = [];
+  try {
+    rules = await extractRules(item.question as string, answer);
+  } catch (e) {
+    console.error("[ai-feedback] ルール抽出失敗:", e);
+  }
+
+  const appliedRules: string[] = [];
+  const promptRuleTexts: string[] = [];
+
+  for (const rule of rules) {
+    const ruleText = rule.rule_text.trim();
+    if (rule.save_target === "trigger_action_rules" && rule.action_type?.trim()) {
+      // 竹内さん確認済みルール → 高confidenceで保存（UNIQUE(action_type, keyword)のためupsert）
+      const { error } = await supabase.from("trigger_action_rules").upsert({
+        keyword: `MANUAL_RULE:${ruleText.slice(0, 200)}`,
+        action_type: rule.action_type.trim(),
+        confidence: 0.9,
+        occurrence_count: 1,
+      }, { onConflict: "action_type,keyword" });
+      if (!error) appliedRules.push(`[${rule.action_type}] ${ruleText}`);
+      else console.error("[ai-feedback] trigger_action_rules upsert error:", error.message);
+    } else {
+      // 一般ルール → ai_prompts にまとめて保存
+      promptRuleTexts.push(ruleText);
+    }
+  }
+
+  if (promptRuleTexts.length > 0) {
+    const { error } = await supabase.from("ai_prompts").upsert({
+      key: `feedback_rule_${id}`,
+      label: `盲点フィードバック回答（${new Date().toISOString().slice(0, 10)}）`,
+      content: `【竹内さん確認済みルール】${item.question}\n→回答: ${answer}\n\n抽出ルール:\n${promptRuleTexts.map((r) => `- ${r}`).join("\n")}`,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "key" });
+    if (!error) appliedRules.push(...promptRuleTexts);
+    else console.error("[ai-feedback] ai_prompts upsert error:", error.message);
+  }
+
+  const { error: updateError } = await supabase
+    .from("ai_feedback_items")
+    .update({
+      user_answer: answer,
+      status: "answered",
+      applied_rule: appliedRules.length > 0 ? appliedRules.join(" / ").slice(0, 500) : null,
+      answered_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+
+  if (updateError) return NextResponse.json({ ok: false, error: updateError.message }, { status: 500 });
+  return NextResponse.json({ ok: true, rulesApplied: appliedRules.length });
+}
+
+// DELETE: { id } → status="dismissed"
+export async function DELETE(req: NextRequest) {
+  const body = await req.json() as { id?: string };
+  if (!body.id) {
+    return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
+  }
+
+  const { error } = await supabase
+    .from("ai_feedback_items")
+    .update({ status: "dismissed" })
+    .eq("id", body.id);
+
+  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  return NextResponse.json({ ok: true });
+}

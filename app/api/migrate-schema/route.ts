@@ -1156,6 +1156,26 @@ CREATE INDEX IF NOT EXISTS idx_aix_feature_suggestions_pending
   ON aix_feature_suggestions(created_at DESC) WHERE status = 'pending';
 ALTER TABLE aix_feature_suggestions DISABLE ROW LEVEL SECURITY;
 
+-- AI盲点フィードバック（corpus2skill 週次Opusが「分からない部分・憶測・発見した抜け」を質問として生成 →
+-- TemplateModal「❓ AI質問」タブで竹内さんが回答 → /api/ai-feedback がSonnetで知識化して
+-- trigger_action_rules（MANUAL_RULE:接頭辞）/ ai_prompts（feedback_rule_{id}）に保存する）
+CREATE TABLE IF NOT EXISTS ai_feedback_items (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  question TEXT NOT NULL,
+  speculation TEXT,
+  category TEXT,  -- 'new_flow' | 'missing_keyword' | 'weak_scene' | 'new_aix_needed' | 'general'
+  evidence TEXT,
+  confidence TEXT DEFAULT 'medium',  -- 'high' | 'medium' | 'low'
+  user_answer TEXT,
+  status TEXT DEFAULT 'pending',  -- 'pending' | 'answered' | 'applied' | 'dismissed'
+  applied_rule TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  answered_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_ai_feedback_items_pending
+  ON ai_feedback_items(created_at DESC) WHERE status = 'pending';
+ALTER TABLE ai_feedback_items DISABLE ROW LEVEL SECURITY;
+
 `.trim();
 
 export async function GET() {

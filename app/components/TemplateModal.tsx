@@ -175,6 +175,36 @@ interface AixFeatureSuggestion {
   created_at: string;
 }
 
+// AI盲点フィードバック（corpus2skill 週次Opusが生成 → ai_feedback_items テーブル）
+// 「❓ AI質問」タブで竹内さんが回答 → /api/ai-feedback がSonnetで知識化する
+interface FeedbackItem {
+  id: string;
+  question: string;
+  speculation: string | null;
+  category: string | null;
+  evidence: string | null;
+  confidence: string | null;
+  user_answer: string | null;
+  status: string;
+  applied_rule: string | null;
+  created_at: string;
+  answered_at: string | null;
+}
+
+const FEEDBACK_CATEGORY_LABEL: Record<string, string> = {
+  new_flow: "新フロー発見",
+  missing_keyword: "未登録キーワード",
+  weak_scene: "苦手な場面",
+  new_aix_needed: "新AIXが必要",
+  general: "一般",
+};
+
+const FEEDBACK_CONFIDENCE_LABEL: Record<string, string> = {
+  high: "高",
+  medium: "中",
+  low: "低",
+};
+
 // P5: 却下理由チップ（dismissed_reason に保存され corpus2skill 週次学習の材料になる）
 const DISMISS_REASONS = [
   "既存テンプレで足りる",
@@ -383,14 +413,19 @@ export default function TemplateModal({
   // AIXテンプレート候補タブ
   const [isCandidateTabActive, setIsCandidateTabActive] = useState(false);
   // AIX候補サブタブ: "all" = 全候補（従来のAIXテンプレ候補タブ）, "aix_edit" = スタッフ編集候補のみ,
-  // "suggestions" = P4 AIX改善案（aix_feature_suggestions）
-  const [candidateSubTab, setCandidateSubTab] = useState<"all" | "aix_edit" | "suggestions">("all");
+  // "suggestions" = P4 AIX改善案（aix_feature_suggestions）, "feedback" = AI盲点フィードバック（ai_feedback_items）
+  const [candidateSubTab, setCandidateSubTab] = useState<"all" | "aix_edit" | "suggestions" | "feedback">("all");
   const [candidates, setCandidates] = useState<AiTemplateCandidate[]>([]);
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [adoptingId, setAdoptingId] = useState<string | null>(null);
   // P4: AIX改善案（aix_feature_suggestions の pending 一覧）
   const [suggestions, setSuggestions] = useState<AixFeatureSuggestion[]>([]);
   const [suggestionLoading, setSuggestionLoading] = useState(false);
+  // AI盲点フィードバック（❓ AI質問タブ）
+  const [feedbackItems, setFeedbackItems] = useState<FeedbackItem[]>([]);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [feedbackAnswers, setFeedbackAnswers] = useState<Record<string, string>>({});
+  const [submittingFeedback, setSubmittingFeedback] = useState<string | null>(null);
   // P5: 却下理由チップを表示中の候補/提案ID
   const [dismissingId, setDismissingId] = useState<string | null>(null);
   // AIおすすめテンプレ（post_aix時のみ）: recommend-templates APIの結果（最大3件）
@@ -612,6 +647,48 @@ export default function TemplateModal({
   useEffect(() => {
     if (isCandidateTabActive && candidateSubTab === "suggestions") loadSuggestions();
   }, [isCandidateTabActive, candidateSubTab, loadSuggestions]);
+
+  // AI盲点フィードバック（pending + answered）の読み込み
+  const loadFeedbackItems = useCallback(async () => {
+    setFeedbackLoading(true);
+    try {
+      const res = await fetch("/api/ai-feedback");
+      const json = await res.json() as { ok: boolean; items: FeedbackItem[] };
+      if (json.ok) setFeedbackItems(json.items ?? []);
+    } catch { /* noop */ }
+    finally { setFeedbackLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    if (isCandidateTabActive && candidateSubTab === "feedback") loadFeedbackItems();
+  }, [isCandidateTabActive, candidateSubTab, loadFeedbackItems]);
+
+  // 回答を送信 → Sonnetが知識化（trigger_action_rules / ai_prompts に保存）
+  const submitFeedbackAnswer = useCallback(async (id: string) => {
+    const answer = feedbackAnswers[id]?.trim();
+    if (!answer) return;
+    setSubmittingFeedback(id);
+    try {
+      await fetch("/api/ai-feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, answer }),
+      });
+      await loadFeedbackItems();
+      setFeedbackAnswers(prev => { const next = { ...prev }; delete next[id]; return next; });
+    } catch { /* noop */ }
+    finally { setSubmittingFeedback(null); }
+  }, [feedbackAnswers, loadFeedbackItems]);
+
+  // スキップ（status="dismissed"）
+  const dismissFeedback = useCallback(async (id: string) => {
+    await fetch("/api/ai-feedback", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    }).catch(() => { /* noop */ });
+    setFeedbackItems(prev => prev.filter(f => f.id !== id));
+  }, []);
 
   // P5: 候補の却下（理由チップ付き）
   const dismissCandidate = useCallback(async (id: string, reason?: string) => {
@@ -1083,6 +1160,24 @@ export default function TemplateModal({
                 }
               >
                 💡 AIX改善案 {suggestions.length > 0 ? `(${suggestions.length})` : ""}
+              </button>
+              {/* AI盲点フィードバックタブ（週次Opusの質問に竹内さんが回答 → Sonnetが知識化） */}
+              <button
+                onClick={() => {
+                  setIsCandidateTabActive(true);
+                  setCandidateSubTab("feedback");
+                  setCategory(""); // 一般・AIXタブを非アクティブに
+                }}
+                className={
+                  "px-3 py-1.5 rounded-full text-sm font-medium transition-all shrink-0 " +
+                  (isCandidateTabActive && candidateSubTab === "feedback"
+                    ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow"
+                    : "bg-gray-100 text-gray-600 hover:bg-gray-200")
+                }
+              >
+                ❓ AI質問 {feedbackItems.filter(f => f.status === "pending").length > 0
+                  ? `(${feedbackItems.filter(f => f.status === "pending").length})`
+                  : ""}
               </button>
             </div>
             {/* 一般サブタブ行（一般カテゴリ選択中のみ表示） */}
@@ -1578,6 +1673,83 @@ export default function TemplateModal({
                       </div>
                     </div>
                   )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* AI盲点フィードバック一覧（❓ ai_feedback_items の pending + answered） */}
+          {!showAddForm && isCandidateTabActive && candidateSubTab === "feedback" && (
+            <div className="flex-1 overflow-y-auto p-3 space-y-4">
+              {feedbackLoading && (
+                <p className="text-center text-gray-400 py-8">読み込み中...</p>
+              )}
+              {!feedbackLoading && feedbackItems.length === 0 && (
+                <div className="text-center text-gray-400 py-12">
+                  <p className="text-2xl mb-2">❓</p>
+                  <p className="text-sm font-medium text-gray-500">AIからの質問はまだありません</p>
+                  <p className="text-sm text-gray-400">（週次corpus2skillで生成されます）</p>
+                </div>
+              )}
+              {!feedbackLoading && feedbackItems.map(item => (
+                <div key={item.id} className="border border-orange-200 rounded-xl p-4 bg-orange-50">
+                  {/* カテゴリバッジ */}
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-bold">
+                      {FEEDBACK_CATEGORY_LABEL[item.category ?? ""] ?? item.category ?? "一般"}
+                    </span>
+                    <span className="text-xs text-gray-400">
+                      確信度: {FEEDBACK_CONFIDENCE_LABEL[item.confidence ?? ""] ?? item.confidence ?? "中"}
+                    </span>
+                  </div>
+
+                  {/* 質問 */}
+                  <p className="font-medium text-gray-800 text-sm mb-1">❓ {item.question}</p>
+
+                  {/* 憶測 */}
+                  {item.speculation && (
+                    <p className="text-xs text-gray-500 mb-1 italic">💭 {item.speculation}</p>
+                  )}
+
+                  {/* 根拠 */}
+                  {item.evidence && (
+                    <p className="text-xs text-gray-400 mb-3">📊 {item.evidence}</p>
+                  )}
+
+                  {item.status === "pending" ? (
+                    <>
+                      {/* テキスト入力 */}
+                      <textarea
+                        value={feedbackAnswers[item.id] ?? ""}
+                        onChange={e => setFeedbackAnswers(prev => ({ ...prev, [item.id]: e.target.value }))}
+                        placeholder="ここに回答を入力してください..."
+                        className="w-full border border-orange-300 rounded-lg px-3 py-2 text-sm resize-none h-20 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white"
+                      />
+                      <div className="flex gap-2 mt-2">
+                        <button
+                          onClick={() => submitFeedbackAnswer(item.id)}
+                          disabled={!feedbackAnswers[item.id]?.trim() || submittingFeedback === item.id}
+                          className="flex-1 bg-orange-500 text-white rounded-lg py-2 text-sm font-medium disabled:opacity-50 hover:bg-orange-600 transition"
+                        >
+                          {submittingFeedback === item.id ? "送信中..." : "✅ 回答して適用"}
+                        </button>
+                        <button
+                          onClick={() => dismissFeedback(item.id)}
+                          disabled={submittingFeedback === item.id}
+                          className="px-3 py-2 text-gray-400 text-sm border border-gray-200 rounded-lg bg-white hover:bg-gray-50 transition"
+                        >
+                          スキップ
+                        </button>
+                      </div>
+                    </>
+                  ) : item.status === "answered" ? (
+                    <div className="bg-green-50 rounded-lg p-2 mt-1 border border-green-100">
+                      <p className="text-xs text-green-700">✅ 回答済み: {item.user_answer}</p>
+                      {item.applied_rule && (
+                        <p className="text-xs text-green-600 mt-1">→ 適用ルール: {item.applied_rule}</p>
+                      )}
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>

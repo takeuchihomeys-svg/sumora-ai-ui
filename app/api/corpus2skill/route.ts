@@ -304,6 +304,153 @@ ${dismissedSection || "（なし）"}
   return { candidatesSaved, suggestionsSaved };
 }
 
+// ============================================================
+// AI盲点フィードバック（週次Opus4.8）
+// 材料①: was_accurate=false の gap_analysis（予測が外れた理由 / 直近30日）
+// 材料②: suggestion_bypassed / prediction_mismatch（スタッフがAI提案を無視・外れ）
+// 材料③: ai_fallback依存度が高いaction（ルール未整備領域）
+// 出力: 竹内さんへの質問 → ai_feedback_items（TemplateModal「❓ AI質問」タブで回答）
+// ============================================================
+
+type BlindSpotItem = {
+  question: string;
+  speculation?: string;
+  category?: string;
+  evidence?: string;
+  confidence?: string;
+};
+
+async function discoverBlindSpots(): Promise<{ questionsSaved: number }> {
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  // ① was_accurate=false の gap_analysis（外れた理由、直近30日）
+  const { data: gapLogs } = await supabase
+    .from("next_action_logs")
+    .select("gap_analysis, validated_at, actual_aix_type, predicted_action")
+    .eq("was_accurate", false)
+    .not("gap_analysis", "is", null)
+    .gte("validated_at", thirtyDaysAgo)
+    .limit(30);
+
+  // ② suggestion_bypassed / prediction_mismatch（無視・外れ）
+  const { data: bypassed } = await supabase
+    .from("action_pattern_logs")
+    .select("conversation_status, customer_msg_summary, source, suggestion_source")
+    .in("source", ["suggestion_bypassed", "prediction_mismatch"])
+    .gte("created_at", thirtyDaysAgo)
+    .limit(30);
+
+  // ③ ai_fallback頻度（ルールの穴）
+  const { data: fallbackRules } = await supabase
+    .from("trigger_action_rules")
+    .select("keyword, action_type, confidence, occurrence_count")
+    .like("keyword", "SOURCE_ACCEPT_RATE:%:ai_fallback")
+    .order("occurrence_count", { ascending: false })
+    .limit(10);
+
+  const hasMaterial = (gapLogs?.length ?? 0) > 0 || (bypassed?.length ?? 0) > 0 || (fallbackRules?.length ?? 0) > 0;
+  if (!hasMaterial) {
+    console.log("[corpus2skill] 盲点発見: 材料なしのためスキップ");
+    return { questionsSaved: 0 };
+  }
+
+  const gapSection = (gapLogs ?? []).map((g, i) =>
+    `【${i + 1}】予測: ${g.predicted_action} → 実際: ${g.actual_aix_type ?? "不明"}\n外れた理由: ${(g.gap_analysis as string).replace(/\n/g, " ").slice(0, 200)}`
+  ).join("\n\n");
+
+  const bypassedSection = (bypassed ?? []).map((b, i) =>
+    `【${i + 1}】status=${b.conversation_status} source=${b.source}${b.suggestion_source ? ` 提案経路=${b.suggestion_source}` : ""}${b.customer_msg_summary ? `\n顧客メッセージ要約: ${(b.customer_msg_summary as string).replace(/\n/g, " ").slice(0, 150)}` : ""}`
+  ).join("\n\n");
+
+  const fallbackSection = (fallbackRules ?? []).map((f) =>
+    `- ${f.keyword}（発生${f.occurrence_count ?? 0}回・採択率${typeof f.confidence === "number" ? Math.round(f.confidence * 100) : "?"}%）`
+  ).join("\n");
+
+  const res = await client.messages.create({
+    model: "claude-opus-4-8",
+    max_tokens: 3000,
+    temperature: 0,
+    system: `あなたはLINE不動産接客AIの「盲点発見エージェント」です。AIが正確に理解できていない業務パターンを発見し、担当者への的確な質問を作ります。`,
+    messages: [{
+      role: "user",
+      content: `以下のデータを分析して、AIが正確に理解できていない業務パターンを発見し、
+担当者（竹内悠馬さん）への質問を生成してください。
+
+【AIの予測が外れた場面（gap_analysis）】
+${gapSection || "（なし）"}
+
+【スタッフがAIの提案を無視して別行動した場面】
+${bypassedSection || "（なし）"}
+
+【Sonnetフォールバック依存度が高い場面（ルール未整備領域）】
+${fallbackSection || "（なし）"}
+
+以下の形式でJSON配列を出力してください（最大5件・説明文・コードフェンス不要）:
+[{
+  "question": "竹内さんへの質問（具体的に・1〜2文）",
+  "speculation": "AIの憶測・仮説（「〜ではないかと思われますが...」形式）",
+  "category": "new_flow|missing_keyword|weak_scene|new_aix_needed|general",
+  "evidence": "根拠となったデータの要約（件数・パターン）",
+  "confidence": "high|medium|low"
+}]
+
+良い質問の例:
+- 「お客様が『審査が不安』と言った場合、どのような対応をするのが正しいですか？AIは現在『ヒアリング継続』と予測していますが、週3回外れています」
+- 「物件URLと『スモ割』が同時に来た時のフローはどうなりますか？AIは憶測で対応しています」
+
+悪い質問の例（避ける）:
+- 「AIをどう改善しますか？」（抽象的すぎる）
+- 「営業方針は？」（業務と無関係）
+
+根拠の薄い質問は出さないこと。質問がない場合は [] を返す。`,
+    }],
+  });
+
+  const text = res.content[0]?.type === "text" ? res.content[0].text.trim() : "";
+  const match = text.match(/\[[\s\S]*\]/);
+  if (!match) return { questionsSaved: 0 };
+
+  let parsed: BlindSpotItem[] = [];
+  try {
+    parsed = JSON.parse(match[0]) as BlindSpotItem[];
+  } catch {
+    return { questionsSaved: 0 };
+  }
+  if (!Array.isArray(parsed)) return { questionsSaved: 0 };
+
+  let questionsSaved = 0;
+  const VALID_CATEGORIES = ["new_flow", "missing_keyword", "weak_scene", "new_aix_needed", "general"];
+  const VALID_CONFIDENCE = ["high", "medium", "low"];
+
+  for (const item of parsed.slice(0, 5)) {
+    if (!item?.question?.trim()) continue;
+    const question = item.question.trim();
+
+    // dedup: question の先頭50字が一致する pending があればスキップ（同じ質問を何度も出さない）
+    const escapedKey = question.slice(0, 50).replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+    const { data: existing } = await supabase
+      .from("ai_feedback_items")
+      .select("id")
+      .eq("status", "pending")
+      .ilike("question", `${escapedKey}%`)
+      .limit(1);
+    if (existing && existing.length > 0) continue;
+
+    const { error } = await supabase.from("ai_feedback_items").insert({
+      question,
+      speculation: item.speculation?.trim() || null,
+      category: VALID_CATEGORIES.includes(item.category ?? "") ? item.category : "general",
+      evidence: item.evidence?.trim() || null,
+      confidence: VALID_CONFIDENCE.includes(item.confidence ?? "") ? item.confidence : "medium",
+      status: "pending",
+    });
+    if (!error) questionsSaved++;
+    else console.error("[corpus2skill] feedback item insert error:", error.message);
+  }
+
+  return { questionsSaved };
+}
+
 export async function POST(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.get("authorization");
@@ -323,6 +470,15 @@ export async function POST(req: NextRequest) {
     console.error("[corpus2skill] テンプレ改善タスク失敗:", e);
   }
 
+  // AI盲点フィードバック: 予測外れ・提案無視・fallback依存のデータから竹内さんへの質問を生成
+  let blindSpots = { questionsSaved: 0 };
+  try {
+    blindSpots = await discoverBlindSpots();
+    console.log(`[corpus2skill] 盲点発見: questions=${blindSpots.questionsSaved}`);
+  } catch (e) {
+    console.error("[corpus2skill] 盲点発見タスク失敗:", e);
+  }
+
   const { data: examples } = await supabase
     .from("ai_reply_examples")
     .select("id, conversation_id, created_at, sent_reply, ai_draft, conversation_state, customer_message, was_ai_modified")
@@ -337,6 +493,7 @@ export async function POST(req: NextRequest) {
       reason: "no examples found",
       templateCandidatesSaved: templateImprovements.candidatesSaved,
       aixSuggestionsSaved: templateImprovements.suggestionsSaved,
+      feedbackQuestionsSaved: blindSpots.questionsSaved,
     });
   }
 
@@ -438,5 +595,6 @@ ${limitedSequences.map((g) =>
     examplesProcessed: examples.length,
     templateCandidatesSaved: templateImprovements.candidatesSaved,
     aixSuggestionsSaved: templateImprovements.suggestionsSaved,
+    feedbackQuestionsSaved: blindSpots.questionsSaved,
   });
 }
