@@ -465,6 +465,10 @@ export default function AixModal({
   const aixLongPressedRef = useRef(false);
   // NAV-05: 最後に送信成功した画像のindex。送信失敗→「送信する」再押下時に送信済み画像をスキップして重複送信を防ぐ
   const sentImageIndexRef = useRef<number>(-1);
+  // ① UX: 同じFileオブジェクトの二重アップロード防止キャッシュ（generate→handleSendで同一画像を2回上げない）
+  const uploadCacheRef = useRef<Map<File, string>>(new Map());
+  // ② UX: actionTypeごとの送信済みステップ番号。送信失敗→「送信する」再押下時に送信済みステップをスキップして重複送信を防ぐ
+  const sentStepRef = useRef<Record<string, number>>({});
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>("");
@@ -564,7 +568,6 @@ export default function AixModal({
   const [checkIncludeEstimateText, setCheckIncludeEstimateText] = useState(false);
   const [checkApplicationInvite, setCheckApplicationInvite] = useState(false);
   const [estimateTextReady, setEstimateTextReady] = useState("");
-  const [sendCountdown, setSendCountdown] = useState(0);
   // 物件確認した「空室あり」専用カレンダー
   const [checkCalendarInfo, setCheckCalendarInfo] = useState<string>("");
   const [checkCalendarDays, setCheckCalendarDays] = useState<Array<{
@@ -655,8 +658,9 @@ export default function AixModal({
   const [estimatePropertyPreview, setEstimatePropertyPreview] = useState<string>("");
   // 見積書送る複数件モード
   const [estimateMultiMode] = useState(initialEstimateMulti ?? false);
-  const [estimateMultiFiles, setEstimateMultiFiles] = useState<File[]>([]);
-  const [estimateMultiPreviews, setEstimateMultiPreviews] = useState<string[]>([]);
+  // ⑥ 固定長3スロットで管理（filter(Boolean)で詰めるとpreviewsとindexがずれるため、詰めるのは送信直前のみ）
+  const [estimateMultiFiles, setEstimateMultiFiles] = useState<(File | null)[]>([null, null, null]);
+  const [estimateMultiPreviews, setEstimateMultiPreviews] = useState<(string | null)[]>([null, null, null]);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const conditionFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -687,7 +691,15 @@ export default function AixModal({
     setRecSimpleMode(false);
     setPreview("");
     setAixNotice("");
+    uploadCacheRef.current.clear(); // ① 会話が変わったら画像アップロードキャッシュをクリア
+    sentStepRef.current = {}; // ② 送信済みステップもリセット
   }, [conversationId]);
+
+  // ① モーダルが閉じる（unmount）時にアップロードキャッシュをクリア
+  useEffect(() => {
+    const cache = uploadCacheRef.current;
+    return () => { cache.clear(); };
+  }, []);
   // initialAppSubMode（picker/バナー経由の指定）をマウント時に潰さないよう、初期値を尊重してリセット
   useEffect(() => { setAppSubMode(initialAppSubMode ?? null); setPreview(""); }, [actionType, initialAppSubMode]);
   useEffect(() => { setAiActionComponents(null); }, [actionType, conversationId]);
@@ -842,27 +854,9 @@ export default function AixModal({
         setViewingSlotEnds(days.map(d => parseTime(d.slots[0] || "").end));
         setViewingSlotOverride(days.map(() => false));
 
-        // ★ お客様が内覧日を指定していたら自動でトグルON + 日時プリセット（複数日対応）
-        const allCustomerText = (recentMessages || [])
-          .filter(m => m.sender === "customer" && m.text)
-          .map(m => m.text)
-          .join(" ");
-        const extracted = extractMultipleDates(allCustomerText);
-
-        if (extracted.length > 0) {
-          // 内覧日指定あり: 抽出した日付に一致するカレンダー日のみチェック（本日は指定がなければチェックしない）
-          setViewingSpecificMode(true);
-          setViewingSpecificDate(extracted.join("・"));
-          setViewingSlotEnabled(slotsMatchingDates(days, extracted));
-          // 最初の有効スロットの時間をプリセット
-          const firstAvail = days.find(d => !d.fullyBooked);
-          if (firstAvail) {
-            const t = parseTime(firstAvail.slots[0] || "");
-            setViewingSpecificStart(t.start);
-            setViewingSpecificEnd(t.end);
-          }
-        } else if (viewingSpecificMode) {
-          // 内覧日指定ありモードで日付を抽出できない → 本日(index 0)はチェックしない
+        // デフォルトの有効スロット（お客様指定日のプリセットは recentMessages を deps に含む下の別effectで行う）
+        if (viewingSpecificMode) {
+          // 内覧日指定ありモード → 本日(index 0)はチェックしない
           setViewingSlotEnabled(days.map((d, i) => i > 0 && !d.fullyBooked));
         } else {
           // 通常モード: 空きのある日を全てチェック
@@ -879,6 +873,33 @@ export default function AixModal({
       }
     })();
   }, [actionType]);
+
+  // ⑤ ★ お客様が内覧日を指定していたら自動でトグルON + 日時プリセット（複数日対応）
+  // recentMessages を deps に含める（マウント時にメッセージ未着でも、到着後に再実行される）
+  // viewingSpecificDate 設定済みなら早期リターンで冪等
+  useEffect(() => {
+    if (actionType !== "viewing_invite") return;
+    if (viewingCalendarDays.length === 0) return; // カレンダー取得完了後に実行
+    if (viewingSpecificDate) return; // 既にプリセット済み（手入力含む）なら何もしない
+    const allCustomerText = (recentMessages || [])
+      .filter(m => m.sender === "customer" && m.text)
+      .map(m => m.text)
+      .join(" ");
+    const extracted = extractMultipleDates(allCustomerText);
+    if (extracted.length === 0) return;
+    // 内覧日指定あり: 抽出した日付に一致するカレンダー日のみチェック（本日は指定がなければチェックしない）
+    setViewingSpecificMode(true);
+    setViewingSpecificDate(extracted.join("・"));
+    setViewingSlotEnabled(slotsMatchingDates(viewingCalendarDays, extracted));
+    // 最初の有効スロットの時間をプリセット
+    const firstAvail = viewingCalendarDays.find(d => !d.fullyBooked);
+    if (firstAvail) {
+      const m = (firstAvail.slots[0] || "").match(/(\d{1,2}:\d{2})[〜~\-](\d{1,2}:\d{2})/);
+      setViewingSpecificStart(m ? m[1].padStart(5, "0") : "10:00");
+      setViewingSpecificEnd(m ? m[2].padStart(5, "0") : "18:00");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionType, recentMessages, viewingCalendarDays]);
 
   // 内覧日指定あり: ONになったら会話からお客様指定日を自動抽出（複数日対応）
   useEffect(() => {
@@ -977,6 +998,7 @@ export default function AixModal({
     const file = e.target.files?.[0];
     if (!file) return;
     setImageFile(file);
+    sentStepRef.current = {}; // ② 添付ファイルが変わったら送信済みステップをリセット
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = String(reader.result ?? "");
@@ -1201,7 +1223,7 @@ export default function AixModal({
     setVacatingCheckLoading(false);
   };
 
-  const uploadImage = async (file: File, idx?: number): Promise<string> => {
+  const uploadImageRaw = async (file: File, idx?: number): Promise<string> => {
     const ext = file.name.split(".").pop() || "jpg";
     const suffix = idx !== undefined ? `_${idx}` : "";
     const path = `aix/${conversationId}/${Date.now()}${suffix}_${Math.random().toString(36).slice(2, 7)}.${ext}`;
@@ -1218,6 +1240,16 @@ export default function AixModal({
 
     const { data } = supabase.storage.from("property-images").getPublicUrl(path);
     return data.publicUrl;
+  };
+
+  // ① UX: uploadImageRaw のキャッシュ付きラッパー。同じFileオブジェクトは一度だけアップロードし、
+  // generate()→handleSend() の二重アップロード（待ち時間2倍）を防ぐ
+  const uploadImageCached = async (file: File, idx?: number): Promise<string> => {
+    const cached = uploadCacheRef.current.get(file);
+    if (cached) return cached;
+    const url = await uploadImageRaw(file, idx);
+    uploadCacheRef.current.set(file, url);
+    return url;
   };
 
   const generate = async (extraFlags?: Record<string, unknown>) => {
@@ -1237,18 +1269,18 @@ export default function AixModal({
         if (linkedCustomer) {
           // 紐付け済み: DBの条件をテキストで渡す（スクショ不要）
           body.customer_conditions = linkedCustomer.conditions;
-          body.image_url = await uploadImage(imageFile);
+          body.image_url = await uploadImageCached(imageFile);
         } else if (conditionImageFile) {
           // 条件スクショあり: 両方アップロード
           const [conditionUrl, propertyUrl] = await Promise.all([
-            uploadImage(conditionImageFile, 0),
-            uploadImage(imageFile, 1),
+            uploadImageCached(conditionImageFile, 0),
+            uploadImageCached(imageFile, 1),
           ]);
           body.condition_image_url = conditionUrl;
           body.image_url = propertyUrl;
         } else {
           // 条件スクショなし: 物件資料のみで生成
-          body.image_url = await uploadImage(imageFile);
+          body.image_url = await uploadImageCached(imageFile);
         }
         // 新着フラグ
         if (isNewArrival) body.is_new_arrival = true;
@@ -1258,7 +1290,7 @@ export default function AixModal({
         if (propMoveOutDate) body.move_out_date = propMoveOutDate;
       } else if (actionType === "property_send") {
         if (sendImageFiles.length > 0) {
-          const urls = await Promise.all(sendImageFiles.map((f, i) => uploadImage(f, i)));
+          const urls = await Promise.all(sendImageFiles.map((f, i) => uploadImageCached(f, i)));
           body.image_urls = urls;
         }
         if (vacatingNote.trim()) body.vacating_note = vacatingNote.trim();
@@ -1370,7 +1402,7 @@ export default function AixModal({
         if (isMgmtCheck && checkPattern !== "mgmt_initial_cost" && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_parking" && checkPattern !== "mgmt_pet" && checkPattern !== "nearby_parking" && !inputText.trim()) throw new Error("管理会社に確認した内容を入力してください");
         if (checkPattern === "move_in_date") {
           if (!moveInImageFile) throw new Error("物件資料を選択してください");
-          body.image_url = await uploadImage(moveInImageFile);
+          body.image_url = await uploadImageCached(moveInImageFile);
         } else if (checkPattern === "alternative") {
           if (!checkFloorPlan) { setFloorPlanTouched(true); throw new Error("代替お部屋の間取りを選択してください"); }
           if (checkEndedFloor !== null) body.ended_floor = checkEndedFloor;
@@ -1387,7 +1419,7 @@ export default function AixModal({
           const allImageUrls: string[] = [];
           for (let pi = 0; pi < checkPropertyCount; pi++) {
             if (checkPropImages[pi].length > 0) {
-              const urls = await Promise.all(checkPropImages[pi].map((f, j) => uploadImage(f, j)));
+              const urls = await Promise.all(checkPropImages[pi].map((f, j) => uploadImageCached(f, j)));
               allImageUrls.push(...urls);
             }
           }
@@ -1395,7 +1427,7 @@ export default function AixModal({
           const estimateUrls: string[] = [];
           for (let pi = 0; pi < checkPropertyCount; pi++) {
             const ef = checkPropEstimates[pi];
-            if (ef) estimateUrls.push(await uploadImage(ef));
+            if (ef) estimateUrls.push(await uploadImageCached(ef));
           }
           if (estimateUrls.length > 0) body.estimate_image_urls = estimateUrls;
         } else if (checkPattern === "exclusive") {
@@ -1406,7 +1438,7 @@ export default function AixModal({
         } else if (checkPattern === "mgmt_guarantor") {
           // 画像がある場合はアップロード（任意）
           if (mgmtDocImage) {
-            const docUrl = await uploadImage(mgmtDocImage, 0);
+            const docUrl = await uploadImageCached(mgmtDocImage, 0);
             body.image_url = docUrl;
           }
           // テキストフィールドの値を渡す
@@ -1416,15 +1448,15 @@ export default function AixModal({
           // 誘導方向（任意）
           if (mgmtGuarantorPushType) body.guarantor_push_type = mgmtGuarantorPushType;
         } else {
-          if (checkEstimateFile) body.estimate_image_url = await uploadImage(checkEstimateFile);
+          if (checkEstimateFile) body.estimate_image_url = await uploadImageCached(checkEstimateFile);
           if (checkImageFiles.length > 0) {
-            const urls = await Promise.all(checkImageFiles.map((f, i) => uploadImage(f, i)));
+            const urls = await Promise.all(checkImageFiles.map((f, i) => uploadImageCached(f, i)));
             body.image_urls = urls;
             body.image_url = urls[0];
           }
           // 管理会社確認パターン: 物件資料を任意添付
           if (isMgmtCheck && mgmtDocImage) {
-            const docUrl = await uploadImage(mgmtDocImage, 0);
+            const docUrl = await uploadImageCached(mgmtDocImage, 0);
             (body as Record<string, unknown>).doc_image_url = docUrl;
           }
         }
@@ -1438,12 +1470,14 @@ export default function AixModal({
         if (recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
         if (customerSummary) body.customer_summary = customerSummary;
       } else if (actionType === "estimate_sheet" && estimateMultiMode) {
-        if (estimateMultiFiles.length === 0) throw new Error("見積書を1枚以上選択してください");
-        const urls = await Promise.all(estimateMultiFiles.map((f, i) => uploadImage(f, i)));
+        // ⑥ 送信直前のみ詰める（固定長3スロット → 実ファイルのみ抽出）
+        const multiFiles = estimateMultiFiles.filter((f): f is File => !!f);
+        if (multiFiles.length === 0) throw new Error("見積書を1枚以上選択してください");
+        const urls = await Promise.all(multiFiles.map((f, i) => uploadImageCached(f, i)));
         body.image_urls = urls;
         body.multi_estimate = true;
       } else if (config.requiresImage && imageFile) {
-        body.image_url = await uploadImage(imageFile);
+        body.image_url = await uploadImageCached(imageFile);
       }
 
       // 内覧へ！内覧日指定ありモード → テンプレで即生成（AI不要）
@@ -1606,7 +1640,6 @@ export default function AixModal({
       if (data.coverLetter) setEstimateCoverLetter(data.coverLetter as string);
       // 保証会社確認: 画像URLをstateに保存（TODO: 画像→本文の順で送る際に使用）
       if (data.doc_image_url) setPreviewDocImageUrl(data.doc_image_url as string);
-      setSendCountdown(0);
     } catch (err) {
       setError(err instanceof Error ? err.message : "エラーが発生しました");
     } finally {
@@ -1781,21 +1814,22 @@ export default function AixModal({
       let textToSend = preview;
 
       if (actionType === "property_send") {
-        for (let i = 0; i < sendImageFiles.length; i++) imageUrls.push(await uploadImage(sendImageFiles[i], i));
+        for (let i = 0; i < sendImageFiles.length; i++) imageUrls.push(await uploadImageCached(sendImageFiles[i], i));
       } else if (actionType === "property_check_result") {
-        for (let i = 0; i < checkImageFiles.length; i++) imageUrls.push(await uploadImage(checkImageFiles[i], i));
-        if (checkEstimateFile) imageUrls.push(await uploadImage(checkEstimateFile));
+        for (let i = 0; i < checkImageFiles.length; i++) imageUrls.push(await uploadImageCached(checkImageFiles[i], i));
+        if (checkEstimateFile) imageUrls.push(await uploadImageCached(checkEstimateFile));
       } else if (actionType === "property_recommendation") {
-        if (imageFile) imageUrls.push(await uploadImage(imageFile));
-        if (recommendEstimateFile) imageUrls.push(await uploadImage(recommendEstimateFile));
+        if (imageFile) imageUrls.push(await uploadImageCached(imageFile));
+        if (recommendEstimateFile) imageUrls.push(await uploadImageCached(recommendEstimateFile));
         if (propertyImageUrl.trim()) textToSend = `（室内イメージ）\n${propertyImageUrl.trim()}\n\n${preview}`;
       } else if (actionType === "estimate_sheet" && estimateMultiMode) {
-        for (let i = 0; i < estimateMultiFiles.length; i++) imageUrls.push(await uploadImage(estimateMultiFiles[i], i));
+        const multiFiles = estimateMultiFiles.filter((f): f is File => !!f);
+        for (let i = 0; i < multiFiles.length; i++) imageUrls.push(await uploadImageCached(multiFiles[i], i));
       } else if (actionType === "estimate_sheet") {
-        if (estimatePropertyFile) imageUrls.push(await uploadImage(estimatePropertyFile));
-        if (imageFile) imageUrls.push(await uploadImage(imageFile));
+        if (estimatePropertyFile) imageUrls.push(await uploadImageCached(estimatePropertyFile));
+        if (imageFile) imageUrls.push(await uploadImageCached(imageFile));
       } else {
-        if (imageFile) imageUrls.push(await uploadImage(imageFile));
+        if (imageFile) imageUrls.push(await uploadImageCached(imageFile));
       }
 
       const cleanDt = aixScheduleDateTime.substring(0, 16);
@@ -1898,19 +1932,24 @@ export default function AixModal({
   };
 
   const handleSend = async () => {
+    if (loading) return; // ② 再入ガード（送信中の連打・多重実行防止）
     if (!preview.trim()) return;
     const leftover = detectPlaceholders(preview);
     if (leftover.length > 0) {
       setError(`未置換のプレースホルダーがあります: ${leftover.join(" ")}`);
       return;
     }
+    // ② 再送信ガード: actionTypeごとに送信済みステップ番号を記録し、
+    // 通信不安定時に「送信する」を押し直しても送信済みの画像・カバーレター等を二重送信しない
+    const stepDone = (step: number) => (sentStepRef.current[actionType] ?? 0) >= step;
+    const markStep = (step: number) => { sentStepRef.current[actionType] = step; };
     try {
       setLoading(true);
 
       if (actionType === "property_send") {
         // 物件画像を先に送信 → テキストを後で送信（送信済みindexはスキップ＝再押下時の重複送信防止）
         for (let imgIdx = sentImageIndexRef.current + 1; imgIdx < sendImageFiles.length; imgIdx++) {
-          const url = await uploadImage(sendImageFiles[imgIdx]);
+          const url = await uploadImageCached(sendImageFiles[imgIdx]);
           await sendAsAix("", url);
           sentImageIndexRef.current = imgIdx;
         }
@@ -1920,7 +1959,7 @@ export default function AixModal({
         if (checkPattern === "interior_photo") {
           // 室内写真: 写真→テキストの順で送信（URLの場合はテキストのみ）
           if (interiorPhotoFile) {
-            const photoUrl = await uploadImage(interiorPhotoFile);
+            const photoUrl = await uploadImageCached(interiorPhotoFile);
             await sendAsAix("", photoUrl);
           }
           await sendAsAix(preview);
@@ -1945,7 +1984,7 @@ export default function AixModal({
             for (const file of (checkPropImages[pi] ?? [])) {
               flatImgIdx++;
               if (flatImgIdx <= sentImageIndexRef.current) continue;
-              const url = await uploadImage(file, pi);
+              const url = await uploadImageCached(file, pi);
               await sendAsAix("", url);
               sentImageIndexRef.current = flatImgIdx;
             }
@@ -1953,7 +1992,7 @@ export default function AixModal({
             if (ef) {
               flatImgIdx++;
               if (flatImgIdx > sentImageIndexRef.current) {
-                const estUrl = await uploadImage(ef);
+                const estUrl = await uploadImageCached(ef);
                 await sendAsAix("", estUrl);
                 sentImageIndexRef.current = flatImgIdx;
               }
@@ -2008,12 +2047,12 @@ export default function AixModal({
         } else {
           // alternative / その他: 物件資料画像 → 見積書 → 本文（送信済みindexはスキップ＝再押下時の重複送信防止）
           for (let imgIdx = sentImageIndexRef.current + 1; imgIdx < checkImageFiles.length; imgIdx++) {
-            const url = await uploadImage(checkImageFiles[imgIdx]);
+            const url = await uploadImageCached(checkImageFiles[imgIdx]);
             await sendAsAix("", url);
             sentImageIndexRef.current = imgIdx;
           }
           if (checkEstimateFile && sentImageIndexRef.current < checkImageFiles.length) {
-            const estUrl = await uploadImage(checkEstimateFile);
+            const estUrl = await uploadImageCached(checkEstimateFile);
             await sendAsAix("", estUrl);
             sentImageIndexRef.current = checkImageFiles.length;
           }
@@ -2024,37 +2063,54 @@ export default function AixModal({
         // 物件オススメは物件資料画像をLINEに添付
         let uploadedImageUrl: string | undefined;
         if (actionType === "property_recommendation" && imageFile) {
-          uploadedImageUrl = await uploadImage(imageFile);
+          uploadedImageUrl = await uploadImageCached(imageFile);
         } else if (config.requiresImage && imageFile) {
-          uploadedImageUrl = await uploadImage(imageFile);
+          uploadedImageUrl = await uploadImageCached(imageFile);
         }
-        // 物件オススメ送信順: 物件資料画像 → 見積書 → 室内URL → テキスト
+        // 物件オススメ送信順: 物件資料画像 → 見積書 → 室内URL → テキスト（送信済みステップはスキップ＝再押下時の重複送信防止）
         if (actionType === "property_recommendation") {
-          if (uploadedImageUrl) await sendAsAix("", uploadedImageUrl);
-          if (recommendEstimateFile) {
-            const estUrl = await uploadImage(recommendEstimateFile);
-            await sendAsAix("", estUrl);
+          if (uploadedImageUrl && !stepDone(1)) {
+            await sendAsAix("", uploadedImageUrl);
+            markStep(1);
           }
-          if (propertyImageUrl.trim()) await sendAsAix(`（室内イメージ）\n${propertyImageUrl.trim()}`);
+          if (recommendEstimateFile && !stepDone(2)) {
+            const estUrl = await uploadImageCached(recommendEstimateFile);
+            await sendAsAix("", estUrl);
+            markStep(2);
+          }
+          if (propertyImageUrl.trim() && !stepDone(3)) {
+            await sendAsAix(`（室内イメージ）\n${propertyImageUrl.trim()}`);
+            markStep(3);
+          }
           await sendAsAix(preview);
+          delete sentStepRef.current[actionType]; // 全ステップ送信完了でリセット
         } else if (actionType === "estimate_sheet" && estimateMultiMode) {
           // 複数件: 見積書を順に送ってから合算テキスト（送信済みindexはスキップ＝再押下時の重複送信防止）
-          for (let imgIdx = sentImageIndexRef.current + 1; imgIdx < estimateMultiFiles.length; imgIdx++) {
-            const url = await uploadImage(estimateMultiFiles[imgIdx]);
+          const multiFiles = estimateMultiFiles.filter((f): f is File => !!f);
+          for (let imgIdx = sentImageIndexRef.current + 1; imgIdx < multiFiles.length; imgIdx++) {
+            const url = await uploadImageCached(multiFiles[imgIdx]);
             await sendAsAix("", url);
             sentImageIndexRef.current = imgIdx;
           }
           await sendAsAix(preview);
           sentImageIndexRef.current = -1;
         } else if (actionType === "estimate_sheet") {
-          // 送信順: ①カバーレター（AI挨拶文・任意）→ ②物件資料（任意）→ ③見積書 → ④テキスト
-          if (estimateCoverLetter.trim()) await sendAsAix(estimateCoverLetter);
-          if (estimatePropertyFile) {
-            const propUrl = await uploadImage(estimatePropertyFile);
-            await sendAsAix("", propUrl);
+          // 送信順: ①カバーレター（AI挨拶文・任意）→ ②物件資料（任意）→ ③見積書 → ④テキスト（送信済みステップはスキップ＝再押下時の重複送信防止）
+          if (estimateCoverLetter.trim() && !stepDone(1)) {
+            await sendAsAix(estimateCoverLetter);
+            markStep(1);
           }
-          if (uploadedImageUrl) await sendAsAix("", uploadedImageUrl);
+          if (estimatePropertyFile && !stepDone(2)) {
+            const propUrl = await uploadImageCached(estimatePropertyFile);
+            await sendAsAix("", propUrl);
+            markStep(2);
+          }
+          if (uploadedImageUrl && !stepDone(3)) {
+            await sendAsAix("", uploadedImageUrl);
+            markStep(3);
+          }
           await sendAsAix(preview);
+          delete sentStepRef.current[actionType]; // 全ステップ送信完了でリセット
         } else {
           await sendAsAix(preview, uploadedImageUrl);
         }
@@ -2128,7 +2184,9 @@ export default function AixModal({
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 md:items-center"
       onClick={(e) => {
-        if (sendCountdown > 0) return;
+        // ③ 誤タップ防止: 生成済みプレビュー・添付画像・ファイルがある間は背景タップで閉じない（✕ボタンでのみ閉じる）
+        const hasContent = !!preview || !!imageFile || sendImageFiles.length > 0 || estimateMultiFiles.some(Boolean);
+        if (hasContent) return;
         if (e.target === e.currentTarget) onClose();
       }}
     >
@@ -2149,8 +2207,7 @@ export default function AixModal({
             </button>
             <button
               onClick={onClose}
-              disabled={sendCountdown > 0}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white hover:bg-white/30 disabled:opacity-30 disabled:cursor-not-allowed"
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white hover:bg-white/30"
             >
               ✕
             </button>
@@ -2285,6 +2342,7 @@ export default function AixModal({
                     const f = e.target.files?.[0];
                     if (!f) return;
                     setRecommendEstimateFile(f);
+                    sentStepRef.current = {}; // ② 添付ファイルが変わったら送信済みステップをリセット
                     const reader = new FileReader();
                     reader.onload = () => setRecommendEstimatePreview(String(reader.result ?? ""));
                     reader.readAsDataURL(f);
@@ -3901,17 +3959,19 @@ export default function AixModal({
                     <p className="mb-1.5 text-xs font-bold text-[#54656f]">{"①②③"[idx]} 物件{idx + 1}</p>
                     {estimateMultiPreviews[idx] ? (
                       <div className="relative mb-1 overflow-hidden rounded-xl border border-[#d1d7db]">
-                        <img src={estimateMultiPreviews[idx]} alt={`見積書${idx + 1}`} className="max-h-24 w-full object-contain" />
+                        <img src={estimateMultiPreviews[idx] ?? undefined} alt={`見積書${idx + 1}`} className="max-h-24 w-full object-contain" />
                         <button
                           onClick={() => {
-                            setEstimateMultiFiles(prev => prev.filter((_, i) => i !== idx));
-                            setEstimateMultiPreviews(prev => prev.filter((_, i) => i !== idx));
+                            // ⑥ 固定長スロット: 詰めずに該当スロットのみnull化（files/previewsのindexずれ防止）
+                            setEstimateMultiFiles(prev => prev.map((f, i) => i === idx ? null : f));
+                            setEstimateMultiPreviews(prev => prev.map((p, i) => i === idx ? null : p));
+                            sentImageIndexRef.current = -1; // 画像リストが変わるとindexがずれるためリセット
                             if (estimateMultiRefs[idx]?.current) estimateMultiRefs[idx].current!.value = "";
                           }}
                           className="absolute right-1 top-1 rounded-full bg-black/50 px-2 py-0.5 text-[10px] text-white"
                         >削除</button>
                       </div>
-                    ) : estimateMultiFiles.length > idx ? null : (
+                    ) : estimateMultiFiles[idx] ? null : (
                       <button
                         onClick={() => estimateMultiRefs[idx]?.current?.click()}
                         className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[#90a4ae] py-2 text-xs text-[#546e7a]"
@@ -3924,14 +3984,12 @@ export default function AixModal({
                       onChange={(e) => {
                         const f = e.target.files?.[0];
                         if (!f) return;
-                        const newFiles = [...estimateMultiFiles];
-                        newFiles[idx] = f;
-                        setEstimateMultiFiles(newFiles.filter(Boolean));
+                        // ⑥ 固定長スロット: filter(Boolean)で詰めない（files/previewsのindexずれ防止）
+                        setEstimateMultiFiles(prev => prev.map((v, i) => i === idx ? f : v));
+                        sentImageIndexRef.current = -1; // 画像リストが変わるとindexがずれるためリセット
                         const r = new FileReader();
                         r.onload = () => {
-                          const newPreviews = [...estimateMultiPreviews];
-                          newPreviews[idx] = String(r.result ?? "");
-                          setEstimateMultiPreviews(newPreviews);
+                          setEstimateMultiPreviews(prev => prev.map((v, i) => i === idx ? String(r.result ?? "") : v));
                         };
                         r.readAsDataURL(f);
                       }}
@@ -3972,6 +4030,7 @@ export default function AixModal({
                       const f = e.target.files?.[0];
                       if (!f) return;
                       setEstimatePropertyFile(f);
+                      sentStepRef.current = {}; // ② 添付ファイルが変わったら送信済みステップをリセット
                       const r = new FileReader();
                       r.onload = () => setEstimatePropertyPreview(String(r.result ?? ""));
                       r.readAsDataURL(f);
@@ -4576,11 +4635,7 @@ export default function AixModal({
                         style={{ WebkitUserSelect: "none", touchAction: "manipulation" }}
                         title="送信（長押しで予約送信）"
                       >
-                        {loading
-                          ? sendCountdown > 0
-                            ? `見積書送信済み ✓ 本文まで${sendCountdown}秒...`
-                            : "送信中..."
-                          : "送信する"}
+                        {loading ? "送信中..." : "送信する"}
                       </button>
                     )}
                   </>
