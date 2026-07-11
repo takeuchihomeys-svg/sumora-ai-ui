@@ -2781,9 +2781,9 @@ export default function Home() {
     const existingExampleId = savedExampleIdByMsgId.current.get(msgId);
     if (existingExampleId) {
       // 送信時に記録した example を PATCH → aiDraft が正しく保存されたまま☆を付ける
+      // ※ 差分の自動ナレッジ化（auto-knowledge）は PATCH ハンドラのサーバー側 after() で実行される
+      //   （旧実装のブラウザからの /api/auto-knowledge fetch は CRON_SECRET なしで常に401だったため廃止）
       void fetchWithRetry("/api/save-reply-example", "PATCH", { id: existingExampleId, is_starred: true });
-      // ☆をつけた = スタッフが承認した良い修正 → 差分を自動ナレッジ化
-      void fetchWithRetry("/api/auto-knowledge", "POST", { example_id: existingExampleId });
     } else {
       // 記録がない場合（古いメッセージや別セッション）は従来通り POST
       // T03: aiDraftRef.current は現在のドラフト（別メッセージ用の可能性）を指すため渡さない。

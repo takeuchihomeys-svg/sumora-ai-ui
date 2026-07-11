@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
+import { learnFromModifiedExample } from "@/app/lib/auto-knowledge";
 
 // Vercel Functions のタイムアウト上限（秒）— Haiku分析チェーン×3に余裕を持たせる
 export const maxDuration = 60;
@@ -551,6 +552,22 @@ export async function PATCH(req: NextRequest) {
     if (existing.ai_draft) {
       const patchSim = textSimilarity((existing.ai_draft as string).trim(), (existing.sent_reply as string).trim());
       jobs.push(analyzeDiff(existing.id, existing.conversation_state, existing.customer_message, existing.ai_draft, existing.sent_reply, patchSim));
+    }
+    // 401修正: 旧実装ではブラウザ（app/page.tsx starMessage）が /api/auto-knowledge を
+    // Authorizationヘッダなしで叩いて常に401だった。サーバー側から直接呼ぶ。
+    // ☆ = スタッフが承認した良い修正 → AI案と送信文の差分を自動ナレッジ化
+    if (existing.ai_draft && (existing.was_ai_modified as boolean)) {
+      jobs.push(
+        learnFromModifiedExample({
+          exampleId: existing.id as string,
+          aiDraft: existing.ai_draft as string,
+          sentReply: existing.sent_reply as string,
+          conversationState: existing.conversation_state as string,
+          customerMessage: existing.customer_message as string,
+        })
+          .then(() => undefined)
+          .catch((e) => console.error("[save-reply-example] auto-knowledge failed:", e))
+      );
     }
     await Promise.all(jobs);
 

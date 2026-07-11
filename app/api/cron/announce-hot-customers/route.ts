@@ -219,7 +219,8 @@ export async function GET(req: NextRequest) {
   }
 
   // CRON-004: 送信成功後にクールダウン用タイムスタンプを更新（upsert）
-  void supabase.from("hanbancyo_settings").upsert(
+  // void だとサーバーレス環境でレスポンス返却後に upsert が完了せず重複送信リスクがあるため await する
+  await supabase.from("hanbancyo_settings").upsert(
     { key: "announce_hot_last_sent_at", value: new Date().toISOString() },
     { onConflict: "key" }
   );
