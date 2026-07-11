@@ -22,6 +22,7 @@ type Message = {
   time: string;
   rawCreatedAt?: string;
   isAix?: boolean;
+  quotedMessageId?: string | null;
 };
 
 type Conversation = {
@@ -70,6 +71,7 @@ type SupabaseMessageRow = {
   image_expires_at?: string | null;
   created_at: string;
   is_aix_generated?: boolean | null;
+  quoted_message_id?: string | null;
 };
 
 // JST基準で今日の日付を YYYY-MM-DD で返す
@@ -1015,7 +1017,7 @@ export default function Home() {
             // 返信入力中でも選択中の会話に届いたなら強制スクロール
             if (cid === selectedIdRef.current) forceScrollForCustomerMsgRef.current = true;
           }
-          const newMsg = payload.new as { id: number; conversation_id: number; sender: string; text: string; image_url?: string; created_at: string };
+          const newMsg = payload.new as { id: number; conversation_id: number; sender: string; text: string; image_url?: string; created_at: string; quoted_message_id?: string | null };
           if (!newMsg?.id) {
             fetchConversationsAndMessages(true);
             return;
@@ -1036,6 +1038,7 @@ export default function Home() {
             imageUrl: newMsg.image_url || undefined,
             time: formatTime(newMsg.created_at),
             rawCreatedAt: newMsg.created_at,
+            quotedMessageId: newMsg.quoted_message_id || undefined,
           };
 
           setConversations((prev) => {
@@ -1188,6 +1191,41 @@ export default function Home() {
     };
   }, []);
 
+  // 引用（リプライ）元メッセージの解決：quoted_message_id → messages.line_message_id でJOIN
+  const [quotedMessageMap, setQuotedMessageMap] = useState<Map<string, { text: string; imageUrl?: string }>>(new Map());
+  const quotedIdsKey = useMemo(() => {
+    if (!selectedId) return "";
+    const conv = conversations.find((c) => c.id === selectedId);
+    const ids = Array.from(new Set(
+      (conv?.messages || [])
+        .map((m) => m.quotedMessageId)
+        .filter((id): id is string => !!id)
+    )).sort();
+    return ids.join(",");
+  }, [conversations, selectedId]);
+  useEffect(() => {
+    // 会話切り替え・引用ID変化のたびにリセット＆再取得
+    setQuotedMessageMap(new Map());
+    if (!quotedIdsKey) return;
+    const quotedIds = quotedIdsKey.split(",");
+    let cancelled = false;
+    void (async () => {
+      const { data } = await supabase
+        .from("messages")
+        .select("line_message_id, text, image_url")
+        .in("line_message_id", quotedIds);
+      if (cancelled || !data) return;
+      const map = new Map<string, { text: string; imageUrl?: string }>();
+      for (const row of data as { line_message_id: string | null; text: string | null; image_url: string | null }[]) {
+        if (row.line_message_id) {
+          map.set(row.line_message_id, { text: row.text || "", imageUrl: row.image_url || undefined });
+        }
+      }
+      setQuotedMessageMap(map);
+    })();
+    return () => { cancelled = true; };
+  }, [selectedId, quotedIdsKey]);
+
   // 会話を開いたとき：その会話の全メッセージを再取得（90日制限を超える古い履歴も表示）
   useEffect(() => {
     if (!selectedId) return;
@@ -1217,6 +1255,7 @@ export default function Home() {
                   time: formatTime(m.created_at),
                   rawCreatedAt: m.created_at,
                   isAix: m.is_aix_generated || false,
+                  quotedMessageId: m.quoted_message_id || undefined,
                 }));
                 setConversations((prev) =>
                   prev.map((c) => (c.id === selectedId ? { ...c, messages: msgs } : c))
@@ -1241,6 +1280,7 @@ export default function Home() {
           time: formatTime(m.created_at),
           rawCreatedAt: m.created_at,
           isAix: m.is_aix_generated || false,
+          quotedMessageId: m.quoted_message_id || undefined,
         }));
         scrollAfterFetchRef.current = selectedId;
         setConversations((prev) =>
@@ -1289,6 +1329,7 @@ export default function Home() {
         imageExpiresAt: m.image_expires_at || undefined,
         time: formatTime(m.created_at),
         rawCreatedAt: m.created_at,
+        quotedMessageId: m.quoted_message_id || undefined,
       }));
       setConversations(prev => prev.map(c =>
         c.id === selectedId ? { ...c, messages: msgs } : c
@@ -1472,6 +1513,7 @@ export default function Home() {
           imageExpiresAt: message.image_expires_at || undefined,
           time: formatTime(message.created_at),
           rawCreatedAt: message.created_at,
+          quotedMessageId: message.quoted_message_id || undefined,
         }))
         .sort((a, b) => (a.rawCreatedAt || "").localeCompare(b.rawCreatedAt || ""));
 
@@ -5082,6 +5124,19 @@ export default function Home() {
                           onTouchMove={cancelLongPress}
                           onContextMenu={(e) => { e.preventDefault(); setContextMenu({ messageId: message.id, x: e.clientX, y: e.clientY, text: message.text, sender: message.sender }); }}
                         >
+                          {/* 引用（リプライ）元メッセージの表示（装飾のみ・クリック不可） */}
+                          {isCustomer && message.quotedMessageId && quotedMessageMap.get(message.quotedMessageId) && (() => {
+                            const quoted = quotedMessageMap.get(message.quotedMessageId)!;
+                            const label = quoted.imageUrl || quoted.text === "[画像]"
+                              ? "[画像]"
+                              : quoted.text.slice(0, 30) + (quoted.text.length > 30 ? "…" : "");
+                            return (
+                              <div className="mb-1 flex items-start gap-1 rounded border-l-2 border-gray-300 bg-gray-100 px-2 py-1 text-[11px] text-gray-500">
+                                <span className="shrink-0">↩ [引用]</span>
+                                <span className="truncate">{label}</span>
+                              </div>
+                            );
+                          })()}
                           <div
                             className={`rounded-2xl text-[15px] leading-6 shadow-sm ${
                               isCustomer
