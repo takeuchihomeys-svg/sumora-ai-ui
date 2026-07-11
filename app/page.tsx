@@ -530,15 +530,14 @@ export default function Home() {
   const [aixInitFollowupSubMode, setAixInitFollowupSubMode] = useState<"apply_supplement" | "search_continue" | null>(null);
   // 内覧誘導ピッカー
   const [showViewingGuidePicker, setShowViewingGuidePicker] = useState(false);
-  const [viewingGuideImage, setViewingGuideImage] = useState<File | null>(null);
-  const [viewingGuideImagePreview, setViewingGuideImagePreview] = useState("");
-  const [viewingGuidePropertyName, setViewingGuidePropertyName] = useState("");
-  const [viewingGuideRoomNumber, setViewingGuideRoomNumber] = useState("");
+  const [viewingGuideProperties, setViewingGuideProperties] = useState<Array<{name: string; roomNumber: string}>>([{name:"",roomNumber:""},{name:"",roomNumber:""},{name:"",roomNumber:""}]);
+  const [viewingGuideImagePreviews, setViewingGuideImagePreviews] = useState<string[]>(["","",""]);
+  const [viewingGuideOcrLoadings, setViewingGuideOcrLoadings] = useState<boolean[]>([false,false,false]);
   const [viewingGuideLoading, setViewingGuideLoading] = useState(false);
-  const [viewingGuideOcrLoading, setViewingGuideOcrLoading] = useState(false);
   const [viewingGuideResult, setViewingGuideResult] = useState<{ type: "available" | "vacating"; vacateDate: string; text: string } | null>(null);
   const [viewingGuideAdaptLoading, setViewingGuideAdaptLoading] = useState(false);
   const viewingGuideImageRef = useRef<HTMLInputElement | null>(null);
+  const viewingGuideUploadIdxRef = useRef<number>(0);
   // H1: 「会話を合わせる」adapt結果（手修正前）を送信時の差分学習に使うワンショットref
   const adaptedGreetingRef = useRef<string | null>(null);
   const [showCompletePicker, setShowCompletePicker] = useState(false);
@@ -8830,10 +8829,9 @@ export default function Home() {
                 type="button"
                 onClick={() => {
                   setShowViewingPicker(false);
-                  setViewingGuideImage(null);
-                  setViewingGuideImagePreview("");
-                  setViewingGuidePropertyName("");
-                  setViewingGuideRoomNumber("");
+                  setViewingGuideProperties([{name:"",roomNumber:""},{name:"",roomNumber:""},{name:"",roomNumber:""}]);
+                  setViewingGuideImagePreviews(["","",""]);
+                  setViewingGuideOcrLoadings([false,false,false]);
                   setViewingGuideResult(null);
                   adaptedGreetingRef.current = null;
                   setShowViewingGuidePicker(true);
@@ -8971,15 +8969,15 @@ export default function Home() {
         const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
           const file = e.target.files?.[0];
           if (!file) return;
-          setViewingGuideImage(file);
+          const idx = viewingGuideUploadIdxRef.current;
           setViewingGuideResult(null);
           const reader = new FileReader();
           reader.onload = async (ev) => {
             const dataUrl = ev.target?.result as string;
-            setViewingGuideImagePreview(dataUrl);
+            setViewingGuideImagePreviews(prev => { const n = [...prev]; n[idx] = dataUrl; return n; });
             const base64 = dataUrl.split(",")[1];
             const mediaType = dataUrl.split(";")[0].split(":")[1] || "image/jpeg";
-            setViewingGuideOcrLoading(true);
+            setViewingGuideOcrLoadings(prev => { const n = [...prev]; n[idx] = true; return n; });
             try {
               const ocrRes = await fetch("/api/aix/viewing-guide", {
                 method: "POST",
@@ -8988,35 +8986,35 @@ export default function Home() {
               });
               const ocrData = await ocrRes.json() as { ok: boolean; propertyName?: string; roomNumber?: string };
               if (ocrData.ok) {
-                if (ocrData.propertyName) setViewingGuidePropertyName(ocrData.propertyName);
-                if (ocrData.roomNumber) setViewingGuideRoomNumber(ocrData.roomNumber);
+                setViewingGuideProperties(prev => {
+                  const n = [...prev];
+                  if (!n[idx]) n[idx] = { name: "", roomNumber: "" };
+                  if (ocrData.propertyName) n[idx] = { ...n[idx], name: ocrData.propertyName! };
+                  if (ocrData.roomNumber) n[idx] = { ...n[idx], roomNumber: ocrData.roomNumber! };
+                  return n;
+                });
               }
             } catch { /* OCR失敗は無視 */ } finally {
-              setViewingGuideOcrLoading(false);
+              setViewingGuideOcrLoadings(prev => { const n = [...prev]; n[idx] = false; return n; });
             }
           };
           reader.readAsDataURL(file);
+          // input値をリセット（同じファイルを再選択可能にする）
+          e.target.value = "";
         };
 
         const handleAnalyze = async () => {
           setViewingGuideLoading(true);
           setViewingGuideResult(null);
-          adaptedGreetingRef.current = null; // 再判定でadapt結果を破棄（偽差分学習防止）
+          adaptedGreetingRef.current = null;
           try {
-            let imagePayload: { base64: string; mediaType: string } | undefined;
-            if (viewingGuideImage) {
-              const buf = await viewingGuideImage.arrayBuffer();
-              const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
-              imagePayload = { base64: b64, mediaType: viewingGuideImage.type || "image/jpeg" };
-            }
+            const validProps = viewingGuideProperties.filter(p => p.name.trim());
             const res = await fetch("/api/aix/viewing-guide", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 action: "analyze",
-                image: imagePayload,
-                propertyName: viewingGuidePropertyName,
-                roomNumber: viewingGuideRoomNumber,
+                properties: validProps,
                 customerName: custName,
               }),
             });
@@ -9121,57 +9119,71 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* 物件写真アップロード */}
-              <div className="mb-3">
-                <label className="mb-1.5 block text-xs font-semibold text-[#54656f]">物件写真<span className="ml-1 font-normal text-[#90a4ae]">（任意）</span></label>
-                {viewingGuideImagePreview ? (
-                  <div className="relative overflow-hidden rounded-xl border border-[#E5E7EB]">
-                    <img src={viewingGuideImagePreview} alt="物件写真" className="max-h-32 w-full object-contain bg-[#F9FAFB]" />
-                    <button
-                      onClick={() => { setViewingGuideImage(null); setViewingGuideImagePreview(""); setViewingGuideResult(null); if (viewingGuideImageRef.current) viewingGuideImageRef.current.value = ""; }}
-                      className="absolute right-2 top-2 rounded-full bg-black/50 px-2.5 py-0.5 text-[11px] font-bold text-white"
-                    >変更</button>
+              {/* 物件スロット（複数対応） */}
+              <div className="mb-2">
+                {viewingGuideProperties.map((prop, idx) => (
+                  <div key={idx} className="mb-2 rounded-xl border border-[#E5E7EB] bg-[#FAFAFA] p-2">
+                    {viewingGuideImagePreviews[idx] ? (
+                      <div className="relative mb-2 overflow-hidden rounded-lg border border-[#E5E7EB]">
+                        <img src={viewingGuideImagePreviews[idx]} alt="物件写真" className="max-h-14 w-full object-contain bg-white" />
+                        <button
+                          onClick={() => {
+                            setViewingGuideImagePreviews(prev => { const n = [...prev]; n[idx] = ""; return n; });
+                            setViewingGuideProperties(prev => { const n = [...prev]; n[idx] = {name:"",roomNumber:""}; return n; });
+                            setViewingGuideResult(null);
+                          }}
+                          className="absolute right-1 top-1 rounded-full bg-black/50 px-2 py-0.5 text-[10px] font-bold text-white"
+                        >変更</button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => { viewingGuideUploadIdxRef.current = idx; viewingGuideImageRef.current?.click(); }}
+                        className="mb-2 flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-[#7C3AED]/30 py-1.5 text-[11px] font-semibold text-[#7C3AED] hover:bg-[#FAF5FF]"
+                      >📷 写真を選択</button>
+                    )}
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        value={prop.name}
+                        onChange={(e) => { setViewingGuideProperties(prev => { const n = [...prev]; n[idx] = {...n[idx], name: e.target.value}; return n; }); setViewingGuideResult(null); }}
+                        placeholder={viewingGuideOcrLoadings[idx] ? "読み取り中..." : `物件名${idx + 1}`}
+                        className="min-w-0 flex-1 rounded-lg border border-[#d1d7db] bg-white px-2.5 py-1.5 text-sm outline-none focus:border-[#7C3AED]"
+                      />
+                      <input
+                        value={prop.roomNumber}
+                        onChange={(e) => { setViewingGuideProperties(prev => { const n = [...prev]; n[idx] = {...n[idx], roomNumber: e.target.value}; return n; }); setViewingGuideResult(null); }}
+                        placeholder="号室"
+                        className="w-16 rounded-lg border border-[#d1d7db] bg-white px-2.5 py-1.5 text-sm outline-none focus:border-[#7C3AED]"
+                      />
+                      {viewingGuideProperties.length > 1 && (
+                        <button
+                          onClick={() => {
+                            setViewingGuideProperties(prev => prev.filter((_, i) => i !== idx));
+                            setViewingGuideImagePreviews(prev => prev.filter((_, i) => i !== idx));
+                            setViewingGuideOcrLoadings(prev => prev.filter((_, i) => i !== idx));
+                            setViewingGuideResult(null);
+                          }}
+                          className="shrink-0 text-[#9CA3AF] text-lg leading-none"
+                        >×</button>
+                      )}
+                    </div>
                   </div>
-                ) : (
-                  <button
-                    onClick={() => viewingGuideImageRef.current?.click()}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-[#7C3AED]/40 py-5 text-sm font-semibold text-[#7C3AED] hover:bg-[#FAF5FF]"
-                  >
-                    📷 写真を選択
-                  </button>
-                )}
-                <input ref={viewingGuideImageRef} type="file" accept="image/*" onChange={handleImageSelect} className="hidden" />
+                ))}
+                <button
+                  onClick={() => {
+                    setViewingGuideProperties(prev => [...prev, {name:"",roomNumber:""}]);
+                    setViewingGuideImagePreviews(prev => [...prev, ""]);
+                    setViewingGuideOcrLoadings(prev => [...prev, false]);
+                  }}
+                  className="mb-1 flex w-full items-center justify-center gap-1 rounded-xl border border-dashed border-[#7C3AED]/40 py-2 text-xs font-semibold text-[#7C3AED] hover:bg-[#FAF5FF]"
+                >＋ 物件を追加</button>
               </div>
-
-              {/* 物件名・号室 */}
-              <div className="mb-3 flex gap-2">
-                <div className="flex-1">
-                  <label className="mb-1 block text-xs font-semibold text-[#54656f]">
-                    物件名{viewingGuideOcrLoading && <span className="ml-1 text-[10px] text-[#7C3AED] animate-pulse">読み取り中...</span>}
-                  </label>
-                  <input
-                    value={viewingGuidePropertyName}
-                    onChange={(e) => { setViewingGuidePropertyName(e.target.value); setViewingGuideResult(null); }}
-                    placeholder="例：グランドコート渋谷"
-                    className="w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-sm outline-none focus:border-[#7C3AED]"
-                  />
-                </div>
-                <div className="w-24">
-                  <label className="mb-1 block text-xs font-semibold text-[#54656f]">号室</label>
-                  <input
-                    value={viewingGuideRoomNumber}
-                    onChange={(e) => { setViewingGuideRoomNumber(e.target.value); setViewingGuideResult(null); }}
-                    placeholder="例：301"
-                    className="w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-sm outline-none focus:border-[#7C3AED]"
-                  />
-                </div>
-              </div>
+              <input ref={viewingGuideImageRef} type="file" accept="image/*" onChange={handleImageSelect} className="hidden" />
 
               {/* 判定ボタン */}
               {!viewingGuideResult && (
                 <button
                   onClick={handleAnalyze}
-                  disabled={viewingGuideLoading || (!viewingGuideImage && !viewingGuidePropertyName)}
+                  disabled={viewingGuideLoading || !viewingGuideProperties.some(p => p.name.trim())}
                   className="mb-3 w-full rounded-xl bg-[#7C3AED] py-3 text-sm font-bold text-white disabled:opacity-40"
                 >
                   {viewingGuideLoading ? (

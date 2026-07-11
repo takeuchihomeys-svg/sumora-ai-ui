@@ -10,6 +10,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json() as {
       action: "analyze" | "adapt" | "ocr_name";
       image?: { base64: string; mediaType: string };
+      properties?: Array<{ name: string; roomNumber: string }>;
       propertyName?: string;
       roomNumber?: string;
       customerName?: string;
@@ -20,6 +21,7 @@ export async function POST(request: NextRequest) {
     const {
       action,
       image,
+      properties: inputProperties,
       propertyName = "",
       roomNumber = "",
       customerName = "お客様",
@@ -28,11 +30,17 @@ export async function POST(request: NextRequest) {
     } = body;
 
     if (action === "analyze") {
+      // 物件リスト構築（複数対応）
+      const propList = (inputProperties && inputProperties.length > 0)
+        ? inputProperties.filter(p => p.name.trim())
+        : propertyName ? [{ name: propertyName, roomNumber }] : [];
+
       let status: "available" | "vacating" = "available";
       let vacateDate = "";
 
-      if (image?.base64) {
-        const systemPrompt = `あなたは賃貸物件の空室状況を読み取るアシスタントです。
+      // 単一物件+画像の場合のみ空室状況チェック
+      if (propList.length <= 1 && image?.base64) {
+        const statusPrompt = `あなたは賃貸物件の空室状況を読み取るアシスタントです。
 送られた物件写真を見て、「内覧可能（空室・即入居）」か「退去予定（退去予定日あり）」かを判定してください。
 
 【出力フォーマット（JSONのみ）】
@@ -41,7 +49,7 @@ export async function POST(request: NextRequest) {
 - vacating: 退去予定・現在入居中
 - 判定できない場合は "available" とする`;
 
-        const res = await fetch("https://api.anthropic.com/v1/messages", {
+        const statusRes = await fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -51,7 +59,7 @@ export async function POST(request: NextRequest) {
           body: JSON.stringify({
             model: HAIKU_MODEL,
             max_tokens: 256,
-            system: systemPrompt,
+            system: statusPrompt,
             messages: [{
               role: "user",
               content: [
@@ -69,11 +77,11 @@ export async function POST(request: NextRequest) {
           }),
         });
 
-        if (res.ok) {
-          const data = await res.json() as { content?: Array<{ text?: string }> };
-          const raw = (data.content?.[0]?.text?.trim() ?? "").replace(/```json\n?|```/g, "").trim();
+        if (statusRes.ok) {
+          const statusData = await statusRes.json() as { content?: Array<{ text?: string }> };
+          const statusRaw = (statusData.content?.[0]?.text?.trim() ?? "").replace(/```json\n?|```/g, "").trim();
           try {
-            const parsed = JSON.parse(raw) as { status?: string; vacate_date?: string };
+            const parsed = JSON.parse(statusRaw) as { status?: string; vacate_date?: string };
             status = parsed.status === "vacating" ? "vacating" : "available";
             vacateDate = parsed.vacate_date ?? "";
           } catch {
@@ -82,12 +90,21 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      const propLabel = [propertyName, roomNumber ? roomNumber + "号室" : ""].filter(Boolean).join(" ");
+      // 物件ラベル生成
+      const propLabels = propList.map(p =>
+        [p.name.trim(), p.roomNumber?.trim() ? p.roomNumber.trim() + "号室" : ""].filter(Boolean).join(" ")
+      );
+      const propStr = propLabels.join("と");
+
       let text = "";
       if (status === "available") {
-        text = `${propLabel ? propLabel + "についてですが、" : ""}${customerName}さんご都合よろしいお日にちにご案内させて頂きます😊！！`;
+        if (propStr) {
+          text = `${propStr}現在ご内覧可能ですので\n${customerName}さんご都合よろしいお日にちにお部屋ご案内させて頂きます😊！！`;
+        } else {
+          text = `${customerName}さんご都合よろしいお日にちにご案内させて頂きます😊！！`;
+        }
       } else {
-        text = `${propLabel ? propLabel + "についてですが、" : ""}${vacateDate}退去予定のお部屋となっております！！\n${vacateDate}以降にご案内可能ですので${customerName}さんご都合よろしいお日にちにご案内させて頂きます😊！！`;
+        text = `${propStr ? propStr + "についてですが、" : ""}${vacateDate}退去予定のお部屋となっております！！\n${vacateDate}以降にご案内可能ですので${customerName}さんご都合よろしいお日にちにご案内させて頂きます😊！！`;
       }
 
       return NextResponse.json({ ok: true, status, vacateDate, text });
