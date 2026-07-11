@@ -116,9 +116,9 @@ export async function POST(req?: Request) {
     const action = log.action_type as string;
     const text = ((log.customer_msg_summary as string) ?? "").trim();
     if (!text || text.length < 3) continue;
-    // 案3: 鮮度重み付け — ログの経過日数で指数減衰（30日で重み半減）。古い行動パターンの影響を自然に薄める
+    // 案3: 鮮度重み付け — ログの経過日数で指数減衰（60日で重み半減）。古い行動パターンの影響を自然に薄める
     const ageDays = (Date.now() - new Date(log.created_at as string).getTime()) / (1000 * 60 * 60 * 24);
-    const decayFactor = Math.pow(0.5, ageDays / 30);
+    const decayFactor = Math.pow(0.5, ageDays / 60);
     const weight = sourceWeight(log.source as string | null) * decayFactor;
     byAction[action] ??= [];
     byAction[action].push({ text, weight });
@@ -293,9 +293,9 @@ export async function POST(req?: Request) {
     const prev = log.previous_action_type as string;
     const curr = log.action_type as string;
     if (!prev || !curr) continue;
-    // 案3: 鮮度重み付け — チェーン遷移も経過日数で指数減衰（30日で半減）
+    // 案3: 鮮度重み付け — チェーン遷移も経過日数で指数減衰（60日で半減）
     const ageDays = (Date.now() - new Date(log.created_at as string).getTime()) / (1000 * 60 * 60 * 24);
-    const decayFactor = Math.pow(0.5, ageDays / 30);
+    const decayFactor = Math.pow(0.5, ageDays / 60);
     chainCount[prev] ??= {};
     chainCount[prev][curr] = (chainCount[prev][curr] ?? 0) + decayFactor;
     prevTotal[prev] = (prevTotal[prev] ?? 0) + decayFactor;
