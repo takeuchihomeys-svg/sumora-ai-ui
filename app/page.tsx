@@ -540,6 +540,11 @@ export default function Home() {
   const viewingGuideUploadIdxRef = useRef<number>(0);
   // H1: 「会話を合わせる」adapt結果（手修正前）を送信時の差分学習に使うワンショットref
   const adaptedGreetingRef = useRef<string | null>(null);
+  // 「会話を合わせる」結果への👍/👎フィードバック
+  const [viewingAdaptFeedbackSent, setViewingAdaptFeedbackSent] = useState(false);
+  const [viewingAdaptFeedbackBad, setViewingAdaptFeedbackBad] = useState(false);
+  const [viewingAdaptFeedbackComment, setViewingAdaptFeedbackComment] = useState("");
+  const [viewingAdaptFeedbackSending, setViewingAdaptFeedbackSending] = useState(false);
   const [showCompletePicker, setShowCompletePicker] = useState(false);
   const [showPropertySendPicker, setShowPropertySendPicker] = useState(false);
   const [suggestedPropertySendMode, setSuggestedPropertySendMode] = useState<"normal" | "new_arrival" | "widen" | "alternative" | null>(null);
@@ -8834,6 +8839,9 @@ export default function Home() {
                   setViewingGuideOcrLoadings([false,false,false]);
                   setViewingGuideResult(null);
                   adaptedGreetingRef.current = null;
+                  setViewingAdaptFeedbackSent(false);
+                  setViewingAdaptFeedbackBad(false);
+                  setViewingAdaptFeedbackComment("");
                   setShowViewingGuidePicker(true);
                 }}
                 className="flex items-center gap-3.5 rounded-2xl border-2 border-[#7C3AED] bg-[#FAF5FF] px-4 py-3.5 text-left transition active:bg-[#F3E8FF]"
@@ -9007,6 +9015,9 @@ export default function Home() {
           setViewingGuideLoading(true);
           setViewingGuideResult(null);
           adaptedGreetingRef.current = null;
+          setViewingAdaptFeedbackSent(false);
+          setViewingAdaptFeedbackBad(false);
+          setViewingAdaptFeedbackComment("");
           try {
             const validProps = viewingGuideProperties.filter(p => p.name.trim());
             const res = await fetch("/api/aix/viewing-guide", {
@@ -9034,6 +9045,8 @@ export default function Home() {
         const handleAdapt = async () => {
           if (!viewingGuideResult) return;
           setViewingGuideAdaptLoading(true);
+          setViewingAdaptFeedbackSent(false);
+          setViewingAdaptFeedbackBad(false);
           try {
             const res = await fetch("/api/aix/viewing-guide", {
               method: "POST",
@@ -9053,6 +9066,34 @@ export default function Home() {
             }
           } finally {
             setViewingGuideAdaptLoading(false);
+          }
+        };
+
+        const sendAdaptFeedback = async (rating: "good" | "bad") => {
+          if (!adaptedGreetingRef.current || viewingAdaptFeedbackSending) return;
+          setViewingAdaptFeedbackSending(true);
+          const recentConvText = recentMsgs
+            .map((m) => `${m.sender === "customer" ? "お客様" : "スタッフ"}: ${m.text}`)
+            .join("\n");
+          try {
+            await fetch("/api/aix/adapt-feedback", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                adaptedText: adaptedGreetingRef.current,
+                baseText: viewingGuideResult?.text ?? "",
+                recentConversation: recentConvText,
+                rating,
+                comment: rating === "bad" ? viewingAdaptFeedbackComment : undefined,
+              }),
+            });
+            setViewingAdaptFeedbackSent(true);
+            setViewingAdaptFeedbackBad(false);
+            setViewingAdaptFeedbackComment("");
+          } catch {
+            // サイレントに失敗
+          } finally {
+            setViewingAdaptFeedbackSending(false);
           }
         };
 
@@ -9219,6 +9260,45 @@ export default function Home() {
                       className="rounded-xl border border-[#d1d7db] px-4 py-2.5 text-xs font-bold text-[#54656f]"
                     >再作成</button>
                   </div>
+                  {/* adapt結果へのフィードバック（adaptedGreetingRef.currentがある場合のみ） */}
+                  {adaptedGreetingRef.current && !viewingAdaptFeedbackSent && (
+                    <div className="mt-2">
+                      {!viewingAdaptFeedbackBad ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-400">会話を合わせた結果：</span>
+                          <button
+                            onClick={() => void sendAdaptFeedback("good")}
+                            disabled={viewingAdaptFeedbackSending}
+                            className="text-xs px-2 py-1 rounded-full bg-green-50 text-green-600 hover:bg-green-100 border border-green-200"
+                          >👍 よかった</button>
+                          <button
+                            onClick={() => setViewingAdaptFeedbackBad(true)}
+                            className="text-xs px-2 py-1 rounded-full bg-red-50 text-red-500 hover:bg-red-100 border border-red-200"
+                          >👎 イマイチ</button>
+                        </div>
+                      ) : (
+                        <div className="flex gap-2 items-center">
+                          <input
+                            type="text"
+                            value={viewingAdaptFeedbackComment}
+                            onChange={e => setViewingAdaptFeedbackComment(e.target.value)}
+                            placeholder="どこが気になった？（任意）"
+                            className="flex-1 min-w-0 text-xs border border-gray-300 rounded-lg px-2 py-1"
+                            onKeyDown={e => { if (e.key === "Enter") void sendAdaptFeedback("bad"); }}
+                          />
+                          <button
+                            onClick={() => void sendAdaptFeedback("bad")}
+                            disabled={viewingAdaptFeedbackSending}
+                            className="shrink-0 text-xs px-2 py-1 rounded-full bg-red-500 text-white hover:bg-red-600"
+                          >送信</button>
+                          <button onClick={() => setViewingAdaptFeedbackBad(false)} className="shrink-0 text-xs text-gray-400">キャンセル</button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {viewingAdaptFeedbackSent && (
+                    <div className="mt-1 text-xs text-green-600">✅ フィードバックを受け取りました。学習に活用します。</div>
+                  )}
                   <button
                     onClick={handleSend}
                     className="mt-2 w-full rounded-xl bg-[#7C3AED] py-3 text-sm font-bold text-white"

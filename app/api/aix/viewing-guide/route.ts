@@ -177,7 +177,7 @@ export async function POST(request: NextRequest) {
         const { data: adaptRules } = await supabase
           .from("adaptation_improvement_rules")
           .select("rule_text")
-          .in("category", ["viewing_invite", "内覧へ！【AIX】", "内覧【AIX】", "挨拶【AIX】"])
+          .in("category", ["viewing_invite", "内覧へ！【AIX】", "内覧【AIX】", "挨拶【AIX】", "greeting_viewing"])
           .eq("is_active", true)
           .order("example_count", { ascending: false })
           .order("confidence", { ascending: false })
