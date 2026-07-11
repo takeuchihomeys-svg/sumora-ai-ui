@@ -229,6 +229,19 @@ function getCategoryColor(actionType: string): string {
   return ACTION_TO_COLOR[actionType] ?? "#54656f";
 }
 
+// AIX候補レビューパネル: action_type → 日本語ラベル（/api/ai-template-review と同一定義）
+const ACTION_LABELS: Record<string, string> = {
+  property_send: "物件ピックアップ送り",
+  property_check_result: "物件確認結果",
+  viewing_invite: "内覧誘導",
+  application_push: "申込み促進",
+  greeting: "挨拶",
+  acknowledge_check: "確認への返答",
+  docs_request: "書類案内",
+  meeting_place: "待ち合わせ",
+  estimate_sheet: "見積書",
+};
+
 interface TemplateModalProps {
   onClose: () => void;
   onSelect?: (text: string, imageFiles?: File[], label?: string, category?: string, secondMsg?: { type: string; delay: number } | null, templateId?: string, wasAdapted?: boolean, recommendedRank?: number | null) => void;
@@ -443,6 +456,11 @@ export default function TemplateModal({
   const [candidates, setCandidates] = useState<AiTemplateCandidate[]>([]);
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [adoptingId, setAdoptingId] = useState<string | null>(null);
+  // 採用前レビューパネル: 対象候補・Opus4.8フィードバック・ユーザーコメント
+  const [reviewCandidate, setReviewCandidate] = useState<AiTemplateCandidate | null>(null);
+  const [reviewFeedback, setReviewFeedback] = useState("");
+  const [reviewFeedbackLoading, setReviewFeedbackLoading] = useState(false);
+  const [reviewComment, setReviewComment] = useState("");
   // P4: AIX改善案（aix_feature_suggestions の pending 一覧）
   const [suggestions, setSuggestions] = useState<AixFeatureSuggestion[]>([]);
   const [suggestionLoading, setSuggestionLoading] = useState(false);
@@ -727,6 +745,55 @@ export default function TemplateModal({
     setCandidates(prev => prev.map(c => c.id === id ? { ...c, is_dismissed: true } : c));
     setDismissingId(null);
   }, []);
+
+  // 採用前レビューパネルを開く（Opus4.8フィードバックを非同期取得）
+  const openReviewPanel = (candidate: AiTemplateCandidate) => {
+    setReviewCandidate(candidate);
+    setReviewFeedback("");
+    setReviewComment("");
+    setReviewFeedbackLoading(true);
+    fetch("/api/ai-template-review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        proposed: candidate.template_text,
+        original: candidate.original_text ?? undefined,
+        actionType: candidate.action_type,
+        reason: candidate.reason ?? undefined,
+        evidenceCount: candidate.evidence_count ?? undefined,
+      }),
+    })
+      .then(r => r.json())
+      .then((data: { ok: boolean; feedback: string }) => {
+        if (data.ok) setReviewFeedback(data.feedback);
+      })
+      .catch(() => setReviewFeedback("フィードバックの取得に失敗しました。"))
+      .finally(() => setReviewFeedbackLoading(false));
+  };
+
+  // レビュー承認後の採用処理（従来の「テンプレに採用」と同じ）
+  const adoptCandidate = async (candidate: AiTemplateCandidate) => {
+    setAdoptingId(candidate.id);
+    setReviewCandidate(null);
+    try {
+      const res = await fetch("/api/ai-template-candidates", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: candidate.id, action: "adopt" }),
+      });
+      const json = await res.json() as { ok: boolean };
+      setCandidates(prev =>
+        prev.map(c => c.id === candidate.id ? { ...c, is_adopted: true } : c)
+      );
+      if (json.ok) {
+        // 採用したテンプレを一覧に即反映して該当カテゴリへ移動
+        setIsCandidateTabActive(false);
+        setCategory(candidate.category);
+        await refreshTemplates();
+      }
+    } catch { /* noop */ }
+    finally { setAdoptingId(null); }
+  };
 
   // P4/P5: AIX改善案のステータス更新（adopted / dismissed + 理由）
   const updateSuggestionStatus = useCallback(async (id: string, status: "adopted" | "dismissed", reason?: string) => {
@@ -1069,7 +1136,112 @@ export default function TemplateModal({
           {modalError}
         </div>
       )}
-      <div className="w-full max-w-lg rounded-t-3xl bg-white shadow-2xl flex flex-col" style={{ maxHeight: "90vh" }}>
+      <div className="relative w-full max-w-lg rounded-t-3xl bg-white shadow-2xl flex flex-col" style={{ maxHeight: "90vh" }}>
+        {/* AIX候補 採用前レビューパネル（モーダル本体全体に重ねる） */}
+        {reviewCandidate && (
+          <div className="absolute inset-0 bg-white z-10 flex flex-col overflow-hidden rounded-t-3xl">
+            {/* ヘッダー */}
+            <div className="flex items-center gap-2 px-4 py-3 border-b bg-orange-50">
+              <button
+                onClick={() => setReviewCandidate(null)}
+                className="text-gray-500 hover:text-gray-700 text-sm"
+              >← 戻る</button>
+              <span className="font-bold text-orange-700 flex-1 text-center">テンプレート採用レビュー</span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {/* AIXボタン・メタ情報 */}
+              <div className="flex flex-wrap gap-2 text-xs">
+                <span className="bg-purple-100 text-purple-700 px-2 py-1 rounded-full">
+                  AIXボタン: {ACTION_LABELS[reviewCandidate.action_type] ?? reviewCandidate.action_type}
+                </span>
+                {reviewCandidate.source && (
+                  <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded-full">
+                    {reviewCandidate.source === "aix_edit" ? "スタッフ編集版" : reviewCandidate.source === "manual" ? "AIX生成" : reviewCandidate.source}
+                  </span>
+                )}
+                {reviewCandidate.evidence_count && reviewCandidate.evidence_count > 1 && (
+                  <span className="bg-green-100 text-green-700 px-2 py-1 rounded-full">
+                    {reviewCandidate.evidence_count}回確認済み
+                  </span>
+                )}
+              </div>
+
+              {/* 提案理由 */}
+              {reviewCandidate.reason && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
+                  <div className="font-bold text-xs mb-1">提案理由</div>
+                  {reviewCandidate.reason}
+                </div>
+              )}
+
+              {/* 現在 vs 提案 */}
+              {reviewCandidate.original_text ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-xs font-bold text-gray-500 mb-1">現在のテンプレ</div>
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm whitespace-pre-wrap text-gray-700">
+                      {reviewCandidate.original_text}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-gray-500 mb-1">提案テンプレ</div>
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm whitespace-pre-wrap text-gray-700">
+                      {reviewCandidate.template_text}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div className="text-xs font-bold text-gray-500 mb-1">提案テンプレ</div>
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm whitespace-pre-wrap text-gray-700">
+                    {reviewCandidate.template_text}
+                  </div>
+                </div>
+              )}
+
+              {/* Opus4.8フィードバック */}
+              <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+                <div className="text-xs font-bold text-indigo-700 mb-2">🤖 Opus 4.8 フィードバック</div>
+                {reviewFeedbackLoading ? (
+                  <div className="text-sm text-indigo-400 animate-pulse">分析中...</div>
+                ) : reviewFeedback ? (
+                  <div className="text-sm text-indigo-900 whitespace-pre-wrap">{reviewFeedback}</div>
+                ) : (
+                  <div className="text-sm text-indigo-400">フィードバックなし</div>
+                )}
+              </div>
+
+              {/* ユーザーコメント */}
+              <div>
+                <div className="text-xs font-bold text-gray-500 mb-1">あなたのコメント（任意）</div>
+                <textarea
+                  value={reviewComment}
+                  onChange={e => setReviewComment(e.target.value)}
+                  placeholder="懸念点・修正したい点など..."
+                  className="w-full border border-gray-300 rounded-lg p-3 text-sm resize-none"
+                  rows={3}
+                />
+              </div>
+            </div>
+
+            {/* フッターボタン */}
+            <div className="border-t p-4 flex gap-2">
+              <button
+                onClick={() => adoptCandidate(reviewCandidate)}
+                className="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-xl"
+              >
+                ✅ 承認して採用する
+              </button>
+              <button
+                onClick={() => setReviewCandidate(null)}
+                className="px-4 py-3 border border-gray-300 rounded-xl text-gray-600 text-sm"
+              >
+                キャンセル
+              </button>
+            </div>
+          </div>
+        )}
         {/* ヘッダー */}
         <div
           className="flex items-center justify-between rounded-t-3xl px-5 py-4 shrink-0"
@@ -1465,27 +1637,7 @@ export default function TemplateModal({
                         <div className="flex gap-2">
                           <button
                             disabled={adoptingId === candidate.id}
-                            onClick={async () => {
-                              if (!window.confirm("このテンプレートを採用しますか？\n採用するとテンプレート一覧に追加されます。")) return;
-                              setAdoptingId(candidate.id);
-                              try {
-                                const res = await fetch("/api/ai-template-candidates", {
-                                  method: "PATCH",
-                                  headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({ id: candidate.id, action: "adopt" }),
-                                });
-                                const json = await res.json() as { ok: boolean };
-                                setCandidates(prev =>
-                                  prev.map(c => c.id === candidate.id ? { ...c, is_adopted: true } : c)
-                                );
-                                if (json.ok) {
-                                  // 採用したテンプレを一覧に即反映して該当カテゴリへ移動
-                                  setIsCandidateTabActive(false);
-                                  setCategory(candidate.category);
-                                  await refreshTemplates();
-                                }
-                              } finally { setAdoptingId(null); }
-                            }}
+                            onClick={() => openReviewPanel(candidate)}
                             className="flex-1 py-1.5 rounded-lg bg-emerald-500 text-white text-sm font-semibold hover:bg-emerald-600 disabled:opacity-50 transition"
                           >
                             {adoptingId === candidate.id ? "採用中..." : "✅ 採用"}
@@ -1596,26 +1748,7 @@ export default function TemplateModal({
                         <div className="flex gap-2 mt-2">
                           <button
                             disabled={adoptingId === candidate.id}
-                            onClick={async () => {
-                              if (!window.confirm("このテンプレートを採用しますか？\n採用するとテンプレート一覧に追加されます。")) return;
-                              setAdoptingId(candidate.id);
-                              try {
-                                const res = await fetch("/api/ai-template-candidates", {
-                                  method: "PATCH",
-                                  headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({ id: candidate.id, action: "adopt" }),
-                                });
-                                const json = await res.json() as { ok: boolean };
-                                setCandidates(prev =>
-                                  prev.map(c => c.id === candidate.id ? { ...c, is_adopted: true } : c)
-                                );
-                                if (json.ok) {
-                                  setIsCandidateTabActive(false);
-                                  setCategory(candidate.category);
-                                  await refreshTemplates();
-                                }
-                              } finally { setAdoptingId(null); }
-                            }}
+                            onClick={() => openReviewPanel(candidate)}
                             className="flex-1 py-1.5 rounded-lg bg-orange-400 text-white text-sm font-semibold hover:bg-orange-500 disabled:opacity-50 transition"
                           >
                             {adoptingId === candidate.id ? "採用中..." : "✅ テンプレに採用"}
