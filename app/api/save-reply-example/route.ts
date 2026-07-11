@@ -56,6 +56,8 @@ const STATE_TO_PHRASE_CATEGORY: Record<string, string> = {
   property_check_result_mgmt_guarantor:   "property_recommendation",
   property_check_result_mgmt_move_in:     "property_recommendation",
   property_check_result_mgmt_initial_cost:"property_recommendation",
+  property_check_result_mgmt_parking:     "property_recommendation",
+  property_check_result_mgmt_pet:         "property_recommendation",
   // T02: AIXサブパターン（application_push サブモード）
   application_push_push:          "application_push",
   application_push_confirm:       "application_push",

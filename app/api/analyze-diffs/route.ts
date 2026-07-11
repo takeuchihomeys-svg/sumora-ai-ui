@@ -218,6 +218,8 @@ const STATE_LEARNABLE: Record<string, string[]> = {
   property_check_result_mgmt_guarantor:    ["greeting", "result", "invite", "closing"],
   property_check_result_mgmt_move_in:      ["greeting", "result", "closing"],
   property_check_result_mgmt_initial_cost: ["greeting", "result", "invite", "closing"],
+  property_check_result_mgmt_parking:      ["greeting", "result", "closing"],
+  property_check_result_mgmt_pet:          ["greeting", "result", "closing"],
 };
 
 const COMPONENT_NAMES: Record<string, string> = {

@@ -537,7 +537,7 @@ export default function Home() {
   const [suggestedAppMode, setSuggestedAppMode] = useState<"push" | "confirm" | null>(null);
   const [aixInitAppSubMode, setAixInitAppSubMode] = useState<"push" | "confirm" | "format" | "docs_request" | null>(null);
   const [showPropertyCheckPicker, setShowPropertyCheckPicker] = useState(false);
-  const [suggestedPropertyCheckMode, setSuggestedPropertyCheckMode] = useState<"vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | null>(null);
+  const [suggestedPropertyCheckMode, setSuggestedPropertyCheckMode] = useState<"vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | null>(null);
   const [showDaihyoCheckPicker, setShowDaihyoCheckPicker] = useState(false);
   const [suggestedDaihyoCostMode, setSuggestedDaihyoCostMode] = useState<"initial_cost" | "other" | null>(null);
   const [showKoshoParentPicker, setShowKoshoParentPicker] = useState(false);
@@ -547,7 +547,7 @@ export default function Home() {
   const [aixInitViewingReschedule, setAixInitViewingReschedule] = useState(false);
   const [aixInitInputText, setAixInitInputText] = useState("");
   // 管理会社に確認したピッカー: 選択した確認種別をAIXモーダルへ引き継ぐ
-  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | null>(null);
+  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | null>(null);
   const [aixInitSendMode, setAixInitSendMode] = useState<"normal" | "new_arrival" | "widen" | "alternative" | null>(null);
   const [showGreetingViewingPicker, setShowGreetingViewingPicker] = useState(false);
   const [suggestedGreetingMode, setSuggestedGreetingMode] = useState<"before" | "after" | null>(null);
@@ -2107,6 +2107,8 @@ export default function Home() {
     const allText = msgs.map((m) => m.text || "").join(" ");
     if (/初期費用|礼金|敷金|仲介|費用/.test(allText)) { setSuggestedPropertyCheckMode("mgmt_initial_cost"); return; }
     if (/入居日|入居可能|いつから|入居時期/.test(allText)) { setSuggestedPropertyCheckMode("mgmt_move_in"); return; }
+    if (/駐車場|パーキング|駐輪/.test(allText)) { setSuggestedPropertyCheckMode("mgmt_parking"); return; }
+    if (/ペット|飼育|犬|猫/.test(allText)) { setSuggestedPropertyCheckMode("mgmt_pet"); return; }
     if (/退去予定|退去日|退去月|いつ退去|退去/.test(allText)) { setSuggestedPropertyCheckMode("vacate_date"); return; }
     setSuggestedPropertyCheckMode(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3986,7 +3988,7 @@ export default function Home() {
     const sm = best.submode;
     if (type === "application_push" && (sm === "push" || sm === "confirm" || sm === "format" || sm === "docs_request")) {
       setAixInitAppSubMode((prev) => prev ?? sm);
-    } else if (type === "property_check_result" && (sm === "available" || sm === "vacate_date" || sm === "mgmt_move_in" || sm === "mgmt_initial_cost" || sm === "mgmt_guarantor")) {
+    } else if (type === "property_check_result" && (sm === "available" || sm === "vacate_date" || sm === "mgmt_move_in" || sm === "mgmt_initial_cost" || sm === "mgmt_guarantor" || sm === "mgmt_parking" || sm === "mgmt_pet")) {
       setAixInitCheckPattern((prev) => prev ?? sm);
     } else if (sm === "normal" || sm === "new_arrival" || sm === "widen" || sm === "alternative") {
       setAixInitSendMode((prev) => prev ?? sm);
@@ -4014,7 +4016,7 @@ export default function Home() {
 
   // 次アクション提案バナー経由でAIXを開く（paramsからaixInit系stateを初期化してから開く）
   const openAixWithParams = (type: AixActionType, params?: NextActionParams) => {
-    if (params?.check_pattern === "available" || params?.check_pattern === "vacate_date" || params?.check_pattern === "mgmt_move_in" || params?.check_pattern === "mgmt_initial_cost" || params?.check_pattern === "mgmt_guarantor") {
+    if (params?.check_pattern === "available" || params?.check_pattern === "vacate_date" || params?.check_pattern === "mgmt_move_in" || params?.check_pattern === "mgmt_initial_cost" || params?.check_pattern === "mgmt_guarantor" || params?.check_pattern === "mgmt_parking" || params?.check_pattern === "mgmt_pet") {
       setAixInitCheckPattern(params.check_pattern);
     }
     if (params?.send_mode === "normal" || params?.send_mode === "new_arrival" || params?.send_mode === "widen") {
@@ -10052,7 +10054,32 @@ export default function Home() {
                     <path d="M30 36l4 4 8-8" stroke="#546E7A" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
                   </>
                 },
-              ] as Array<{ key: "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor"; label: string; desc: string; hint: string; icon: ReactNode }>).map(({ key, label, desc, hint, icon }) => {
+                {
+                  key: "mgmt_parking",
+                  label: "駐車場について",
+                  desc: "駐車場の有無・料金・空きを管理会社に確認した結果",
+                  hint: "",
+                  icon: <>
+                    <path d="M24 38l3.5-8.5A4 4 0 0131.2 27h9.6a4 4 0 013.7 2.5L48 38" stroke="#546E7A" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                    <rect x="21" y="38" width="30" height="9" rx="2.5" stroke="#546E7A" strokeWidth="1.8"/>
+                    <circle cx="28" cy="47" r="3.5" fill="#ECEFF1" stroke="#546E7A" strokeWidth="1.8"/>
+                    <circle cx="44" cy="47" r="3.5" fill="#ECEFF1" stroke="#546E7A" strokeWidth="1.8"/>
+                  </>
+                },
+                {
+                  key: "mgmt_pet",
+                  label: "ペット飼育について",
+                  desc: "ペット可否・飼育条件を管理会社に確認した結果",
+                  hint: "",
+                  icon: <>
+                    <ellipse cx="28" cy="28" rx="3.2" ry="4.2" stroke="#546E7A" strokeWidth="1.8"/>
+                    <ellipse cx="44" cy="28" rx="3.2" ry="4.2" stroke="#546E7A" strokeWidth="1.8"/>
+                    <ellipse cx="21.5" cy="37" rx="2.8" ry="3.8" stroke="#546E7A" strokeWidth="1.8"/>
+                    <ellipse cx="50.5" cy="37" rx="2.8" ry="3.8" stroke="#546E7A" strokeWidth="1.8"/>
+                    <path d="M36 37c-4.8 0-8.5 4-8.5 7.7 0 2.8 2.3 4.8 5.2 4.8 1.4 0 2.3-.5 3.3-.5s1.9.5 3.3.5c2.9 0 5.2-2 5.2-4.8 0-3.7-3.7-7.7-8.5-7.7z" stroke="#546E7A" strokeWidth="1.8" strokeLinejoin="round"/>
+                  </>
+                },
+              ] as Array<{ key: "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet"; label: string; desc: string; hint: string; icon: ReactNode }>).map(({ key, label, desc, hint, icon }) => {
                 const isSuggested = suggestedPropertyCheckMode === key;
                 return (
                 <button
