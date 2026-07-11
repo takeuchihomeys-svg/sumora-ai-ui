@@ -145,8 +145,8 @@ export default function BottomNav({ unreadCount = 0, hidden = false }: Props) {
         ))}
       </div>
 
-      {/* セーフエリアスペーサー: 固定8px */}
-      <div style={{ height: 8 }} />
+      {/* セーフエリアスペーサー: iPhoneホームインジケーター（34px）対応。env()非対応環境は8pxにフォールバック */}
+      <div style={{ height: "max(8px, env(safe-area-inset-bottom))" }} />
     </nav>
   );
 }

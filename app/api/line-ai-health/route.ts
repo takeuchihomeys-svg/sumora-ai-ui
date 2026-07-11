@@ -8,7 +8,9 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const [examplesRes, knowledgeRes, phraseRes, knowledgeCatRes] = await Promise.all([
+  const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+
+  const [examplesRes, knowledgeRes, phraseRes, knowledgeCatRes, pendingStaleRes, accuracyRes, missingEmbRes] = await Promise.all([
     supabase
       .from("ai_reply_examples")
       .select("was_ai_used, is_starred, was_ai_modified, conversation_state, created_at", { count: "exact" })
@@ -23,12 +25,37 @@ export async function GET(req: Request) {
       .from("ai_reply_knowledge")
       .select("category, importance")
       .gte("importance", 8),
+    // 学習健全性①: 48時間以上 pending のまま滞留している適用ログ数
+    supabase
+      .from("knowledge_apply_log")
+      .select("id", { count: "exact", head: true })
+      .eq("result", "pending")
+      .lt("applied_at", fortyEightHoursAgo),
+    // 学習健全性②: apply_count>=5 のナレッジの正解率計算用（低正解率検出）
+    supabase
+      .from("ai_reply_knowledge")
+      .select("id, apply_count, correct_count")
+      .gte("apply_count", 5),
+    // 学習健全性③: embedding 未付与のナレッジ数
+    supabase
+      .from("ai_reply_knowledge")
+      .select("id", { count: "exact", head: true })
+      .is("embedding", null),
   ]);
 
   const examples = examplesRes.data ?? [];
   const knowledge = knowledgeRes.data ?? [];
   const phrases = phraseRes.data ?? [];
   const goldenKnowledge = knowledgeCatRes.data ?? [];
+
+  // 学習健全性指標の集計
+  const pendingStaleCount = pendingStaleRes.count ?? 0;
+  const lowAccuracyCount = (accuracyRes.data ?? []).filter((k) => {
+    const apply = k.apply_count ?? 0;
+    if (apply <= 0) return false; // 0除算ガード
+    return (k.correct_count ?? 0) / apply < 0.3;
+  }).length;
+  const missingEmbeddingCount = missingEmbRes.count ?? 0;
 
   const total = examples.length;
   const aiUsed = examples.filter((e) => e.was_ai_used).length;
@@ -87,6 +114,9 @@ export async function GET(req: Request) {
   if (knowledge.length === 0) warnings.push("❌ ai_reply_knowledge が0件 — 深層分析が動いていない可能性");
   if (knowledge.length < 5 && total > 0) warnings.push(`⚠️ ナレッジが少ない（${knowledge.length}件） — ☆マークを増やすか手動インポートが必要`);
   if (starRate < 0.05 && total > 10) warnings.push(`⚠️ ☆率が低い（${Math.round(starRate * 100)}%） — スタッフがほとんど☆を付けていない`);
+  if (pendingStaleCount > 0) warnings.push(`⚠️ 48時間以上pendingの適用ログが${pendingStaleCount}件 — フィードバックループが回っていない可能性`);
+  if (lowAccuracyCount > 0) warnings.push(`⚠️ 正解率30%未満のナレッジが${lowAccuracyCount}件（apply_count>=5） — 誤知識の可能性`);
+  if (missingEmbeddingCount > 0) warnings.push(`⚠️ embedding未付与のナレッジが${missingEmbeddingCount}件 — backfill-embeddings の実行状況を確認`);
   const weakStates = stateBreakdown.filter((s) => s.ai_use_rate < 0.3 && s.total >= 3);
   if (weakStates.length > 0) warnings.push(`⚠️ AI採用率の低いstate: ${weakStates.map((s) => `${s.state}(${Math.round(s.ai_use_rate * 100)}%)`).join(", ")}`);
 
@@ -102,6 +132,11 @@ export async function GET(req: Request) {
       knowledge_count: knowledge.length,
       golden_knowledge_count: goldenKnowledge.length,
       phrase_count: phrases.length,
+    },
+    learning_health: {
+      pending_stale_count: pendingStaleCount,
+      low_accuracy_count: lowAccuracyCount,
+      missing_embedding_count: missingEmbeddingCount,
     },
     state_breakdown: stateBreakdown,
     knowledge_by_category: knowledgeCatMap,

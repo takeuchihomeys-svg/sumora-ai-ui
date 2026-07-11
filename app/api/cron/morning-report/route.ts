@@ -83,6 +83,7 @@ export async function GET(req: NextRequest) {
     { data: attributionRows, error: attributionRowsErr },
     { data: readinessRow, error: readinessErr },
     { data: guardRow, error: guardErr },
+    { count: failedScheduledCount, error: failedScheduledErr },
   ] = await Promise.all([
     // ① 未完了タスク
     supabase
@@ -184,6 +185,13 @@ export async function GET(req: NextRequest) {
       .select("content")
       .eq("key", "auto_reply_guard_latest")
       .maybeSingle(),
+
+    // ⑭ 予約メッセージ送信失敗（直近24時間・send-scheduled-messages の silent fail 可視化）
+    supabase
+      .from("scheduled_messages")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "failed")
+      .gte("updated_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
   ]);
 
   // クエリエラーのログ（レポート本体は送る。失敗したセクションは空になるだけ）
@@ -200,6 +208,7 @@ export async function GET(req: NextRequest) {
   if (attributionRowsErr) console.error("[morning-report] attributionRows query:", attributionRowsErr.message);
   if (readinessErr) console.error("[morning-report] readiness query:", readinessErr.message);
   if (guardErr) console.error("[morning-report] guard query:", guardErr.message);
+  if (failedScheduledErr) console.error("[morning-report] failedScheduled query:", failedScheduledErr.message);
 
   // AI貢献率フッター（メトリクスがあれば1行追加）
   let attributionLine = "";
@@ -252,6 +261,11 @@ export async function GET(req: NextRequest) {
       .map(([type, n]) => `${AIX_ACTION_LABEL[type] ?? type}${n}回`)
       .join(" / ");
     statsLines.push(`🤖 昨日のAIX: ${summary}（計${aixLogs.length}回）`);
+  }
+
+  // 予約メッセージ送信失敗（直近24時間・0件ならスキップ）
+  if ((failedScheduledCount ?? 0) > 0) {
+    statsLines.push(`❌ failed_scheduled_messages: ${failedScheduledCount}件（直近24hの予約メッセージ送信失敗。予約一覧から再送/確認をお願いします）`);
   }
 
   // AIXテンプレート候補の未レビュー件数（5件以上は警告マーク）

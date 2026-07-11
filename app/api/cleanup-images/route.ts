@@ -1,6 +1,8 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
+export const maxDuration = 60;
+
 // 期限切れ画像をStorageから削除してimage_urlをnullにする
 // POST /api/cleanup-images  (x-cron-secret or Vercel cron auth)
 // 毎日3:23 AM にVercel Cronで自動実行
