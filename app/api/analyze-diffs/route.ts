@@ -378,7 +378,7 @@ async function detectRepeatedDeletions(): Promise<{ detected: number; demoted: n
 
     // ⑤ ai_feedback_items へ起票（既存スキーマ: question/category/evidence を使用）
     //    question 先頭50字（=フレーズ部分）で dedup し、同じフレーズを毎日重複起票しない
-    const question = `「${phrase.slice(0, 60)}」というフレーズが${cluster.convIds.size}件の別会話でスタッフに削除されています。特定顧客の特殊要望由来のフレーズが汎用化した可能性があります。このフレーズは今後のAI返信で使ってよいですか？（使ってよい条件があれば教えてください）`;
+    const question = `「${phrase.slice(0, 60)}」が${cluster.convIds.size}件の別会話でスタッフに修正されています。このフレーズはどういう顧客状況のときに使うべきですか？また現在のプロンプトや知識のどこが曖昧でこのフレーズが不適切な場面で出てしまったと思いますか？`;
     const dedupKey = question.slice(0, 50).replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
     const { data: existing } = await supabase
       .from("ai_feedback_items")
@@ -391,7 +391,7 @@ async function detectRepeatedDeletions(): Promise<{ detected: number; demoted: n
     await supabase.from("ai_feedback_items").insert({
       question,
       speculation: "特定顧客向けの特殊ケース返信が、文脈を剥がされて汎用フレーズとして学習された可能性があります",
-      category: "phrase_contamination",
+      category: "prompt_ambiguity",
       evidence: `直近14日で${cluster.convIds.size}件の別会話から削除 / 降格ナレッジID: ${matchedIds.size > 0 ? [...matchedIds.keys()].join(", ") : "該当なし"}`,
       confidence: "high",
       status: "pending",
