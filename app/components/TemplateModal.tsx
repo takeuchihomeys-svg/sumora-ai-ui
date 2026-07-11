@@ -213,6 +213,19 @@ const DISMISS_REASONS = [
   "情報が古い",
 ];
 
+// 案D: 候補カードのカテゴリバッジ色（action_type → カラー）
+const ACTION_TO_COLOR: Record<string, string> = {
+  property_send: "#2196F3",
+  property_check_result: "#059669",
+  property_recommendation: "#7B1FA2",
+  viewing_invite: "#9C27B0",
+  estimate_sheet: "#D97706",
+  follow_up: "#0891B2",
+};
+function getCategoryColor(actionType: string): string {
+  return ACTION_TO_COLOR[actionType] ?? "#54656f";
+}
+
 interface TemplateModalProps {
   onClose: () => void;
   onSelect?: (text: string, imageFiles?: File[], label?: string, category?: string, secondMsg?: { type: string; delay: number } | null, templateId?: string, wasAdapted?: boolean, recommendedRank?: number | null) => void;
@@ -428,6 +441,8 @@ export default function TemplateModal({
   const [submittingFeedback, setSubmittingFeedback] = useState<string | null>(null);
   // P5: 却下理由チップを表示中の候補/提案ID
   const [dismissingId, setDismissingId] = useState<string | null>(null);
+  // 案1: サブカテゴリ別アコーディオンの折りたたみ状態（key: セクションID, true=折りたたみ中）
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
   // AIおすすめテンプレ（post_aix時のみ）: recommend-templates APIの結果（最大3件）
   const [aiRecommendations, setAiRecommendations] = useState<Array<{ id: string; score: number; reason: string }>>([]);
   const [recommendLoading, setRecommendLoading] = useState(false);
@@ -1109,75 +1124,27 @@ export default function TemplateModal({
                   【AIX】
                 </button>
               )}
-              {/* AIXテンプレート候補タブ */}
+              {/* 🤖AI提案まとめタブ（候補・AIX候補・改善案・AI質問を集約） */}
               <button
                 onClick={() => {
                   setIsCandidateTabActive(true);
                   setCandidateSubTab("all");
                   setCategory(""); // 一般・AIXタブを非アクティブに
                 }}
-                className={
-                  "px-3 py-1.5 rounded-full text-sm font-medium transition-all shrink-0 " +
-                  (isCandidateTabActive && candidateSubTab === "all"
-                    ? "bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow"
-                    : "bg-gray-100 text-gray-600 hover:bg-gray-200")
+                className="shrink-0 rounded-full px-4 py-1.5 text-[12px] font-bold transition"
+                style={
+                  isCandidateTabActive
+                    ? { background: "linear-gradient(135deg, #059669, #10B981)", color: "white" }
+                    : { backgroundColor: "#f0f2f5", color: "#54656f" }
                 }
               >
-                ✨AIXテンプレート候補 {candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source !== "aix_edit").length > 0
-                  ? `(${candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source !== "aix_edit").length})`
-                  : ""}
-              </button>
-              {/* AIX候補タブ（スタッフ編集版） */}
-              <button
-                onClick={() => {
-                  setIsCandidateTabActive(true);
-                  setCandidateSubTab("aix_edit");
-                  setCategory(""); // 一般・AIXタブを非アクティブに
-                }}
-                className={
-                  "px-3 py-1.5 rounded-full text-sm font-medium transition-all shrink-0 " +
-                  (isCandidateTabActive && candidateSubTab === "aix_edit"
-                    ? "bg-gradient-to-r from-orange-400 to-amber-400 text-white shadow"
-                    : "bg-gray-100 text-gray-600 hover:bg-gray-200")
-                }
-              >
-                ✏️AIX候補 {candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source === "aix_edit").length > 0
-                  ? `(${candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source === "aix_edit").length})`
-                  : ""}
-              </button>
-              {/* P4: AIX改善案タブ（週次Opusの新AIX/ピッカー提案） */}
-              <button
-                onClick={() => {
-                  setIsCandidateTabActive(true);
-                  setCandidateSubTab("suggestions");
-                  setCategory(""); // 一般・AIXタブを非アクティブに
-                }}
-                className={
-                  "px-3 py-1.5 rounded-full text-sm font-medium transition-all shrink-0 " +
-                  (isCandidateTabActive && candidateSubTab === "suggestions"
-                    ? "bg-gradient-to-r from-violet-500 to-purple-500 text-white shadow"
-                    : "bg-gray-100 text-gray-600 hover:bg-gray-200")
-                }
-              >
-                💡 AIX改善案 {suggestions.length > 0 ? `(${suggestions.length})` : ""}
-              </button>
-              {/* AI盲点フィードバックタブ（週次Opusの質問に竹内さんが回答 → Sonnetが知識化） */}
-              <button
-                onClick={() => {
-                  setIsCandidateTabActive(true);
-                  setCandidateSubTab("feedback");
-                  setCategory(""); // 一般・AIXタブを非アクティブに
-                }}
-                className={
-                  "px-3 py-1.5 rounded-full text-sm font-medium transition-all shrink-0 " +
-                  (isCandidateTabActive && candidateSubTab === "feedback"
-                    ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white shadow"
-                    : "bg-gray-100 text-gray-600 hover:bg-gray-200")
-                }
-              >
-                ❓ AI質問 {feedbackItems.filter(f => f.status === "pending").length > 0
-                  ? `(${feedbackItems.filter(f => f.status === "pending").length})`
-                  : ""}
+                🤖AI提案{(() => {
+                  const total =
+                    candidates.filter(c => !c.is_adopted && !c.is_dismissed).length +
+                    suggestions.length +
+                    feedbackItems.filter(f => f.status === "pending").length;
+                  return total > 0 ? ` (${total})` : "";
+                })()}
               </button>
             </div>
             {/* 一般サブタブ行（一般カテゴリ選択中のみ表示） */}
@@ -1280,6 +1247,68 @@ export default function TemplateModal({
                     )}
                   </div>
                 ))}
+              </div>
+            )}
+            {/* AI提案サブタブ行（AI提案タブ選択中のみ表示） */}
+            {isCandidateTabActive && (
+              <div className="flex gap-1.5 overflow-x-auto border-b border-emerald-100 bg-[#f0fdf4] px-4 py-2 shrink-0 scroll-smooth" style={{ scrollbarWidth: "none" }}>
+                {/* ✨候補 */}
+                <button
+                  onClick={() => setCandidateSubTab("all")}
+                  className="shrink-0 rounded-full px-3 py-1.5 text-[11px] font-bold transition"
+                  style={
+                    candidateSubTab === "all"
+                      ? { background: "linear-gradient(135deg, #059669, #10B981)", color: "white" }
+                      : { backgroundColor: "#e8edf2", color: "#54656f" }
+                  }
+                >
+                  ✨候補{(() => {
+                    const count = candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source !== "aix_edit").length;
+                    return count > 0 ? ` (${count})` : "";
+                  })()}
+                </button>
+                {/* ✏️AIX候補 */}
+                <button
+                  onClick={() => setCandidateSubTab("aix_edit")}
+                  className="shrink-0 rounded-full px-3 py-1.5 text-[11px] font-bold transition"
+                  style={
+                    candidateSubTab === "aix_edit"
+                      ? { background: "linear-gradient(135deg, #059669, #10B981)", color: "white" }
+                      : { backgroundColor: "#e8edf2", color: "#54656f" }
+                  }
+                >
+                  ✏️AIX候補{(() => {
+                    const count = candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source === "aix_edit").length;
+                    return count > 0 ? ` (${count})` : "";
+                  })()}
+                </button>
+                {/* 💡改善案 */}
+                <button
+                  onClick={() => setCandidateSubTab("suggestions")}
+                  className="shrink-0 rounded-full px-3 py-1.5 text-[11px] font-bold transition"
+                  style={
+                    candidateSubTab === "suggestions"
+                      ? { background: "linear-gradient(135deg, #059669, #10B981)", color: "white" }
+                      : { backgroundColor: "#e8edf2", color: "#54656f" }
+                  }
+                >
+                  💡改善案{suggestions.length > 0 ? ` (${suggestions.length})` : ""}
+                </button>
+                {/* ❓AI質問 */}
+                <button
+                  onClick={() => setCandidateSubTab("feedback")}
+                  className="shrink-0 rounded-full px-3 py-1.5 text-[11px] font-bold transition"
+                  style={
+                    candidateSubTab === "feedback"
+                      ? { background: "linear-gradient(135deg, #059669, #10B981)", color: "white" }
+                      : { backgroundColor: "#e8edf2", color: "#54656f" }
+                  }
+                >
+                  ❓AI質問{(() => {
+                    const count = feedbackItems.filter(f => f.status === "pending").length;
+                    return count > 0 ? ` (${count})` : "";
+                  })()}
+                </button>
               </div>
             )}
           </>
@@ -1392,6 +1421,13 @@ export default function TemplateModal({
                         className="bg-white rounded-xl border border-gray-200 p-3 mb-2 shadow-sm"
                       >
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          {/* カテゴリバッジ */}
+                          {candidate.category && (
+                            <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full font-bold shrink-0"
+                              style={{ backgroundColor: getCategoryColor(candidate.action_type) + "20", color: getCategoryColor(candidate.action_type) }}>
+                              {CATEGORY_DISPLAY_NAMES[candidate.category] ?? candidate.category.replace("【AIX】", "").trim()}
+                            </span>
+                          )}
                           <p className="text-xs text-gray-500 font-medium">{candidate.suggested_title}</p>
                           {(candidate.evidence_count ?? 1) >= 2 && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium shrink-0">
@@ -1501,6 +1537,13 @@ export default function TemplateModal({
                         className="bg-white rounded-xl border border-orange-200 p-3 mb-2 shadow-sm"
                       >
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          {/* カテゴリバッジ */}
+                          {candidate.category && (
+                            <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full font-bold shrink-0"
+                              style={{ backgroundColor: getCategoryColor(candidate.action_type) + "20", color: getCategoryColor(candidate.action_type) }}>
+                              {CATEGORY_DISPLAY_NAMES[candidate.category] ?? candidate.category.replace("【AIX】", "").trim()}
+                            </span>
+                          )}
                           <p className="text-xs text-gray-500 font-medium">{candidate.suggested_title}</p>
                           {(candidate.evidence_count ?? 1) >= 2 && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium shrink-0">
@@ -1760,69 +1803,6 @@ export default function TemplateModal({
             <div className="p-4">
               {!loading && filtered.length > 0 && (
                 <div className="mb-3 flex flex-col gap-2">
-                  {/* 物件確認したカテゴリ：確認結果で絞り込み */}
-                  {isAvailCheckCategory && (
-                    <div className="flex flex-col gap-1">
-                      <p className="text-[10px] font-bold text-[#8696a0] text-center">確認結果で絞り込む</p>
-                      <div className="flex gap-1 overflow-x-auto pb-0.5 flex-wrap" style={{ scrollbarWidth: "none" }}>
-                        {AVAIL_CHECK_TYPES.map(({ key, color }) => {
-                          const selected = availCheckFilter === key;
-                          return (
-                            <button
-                              key={key}
-                              onClick={() => setAvailCheckFilter(prev => prev === key ? null : key)}
-                              className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-bold transition-all border-2 ${
-                                selected ? "text-white border-transparent" : "bg-white text-[#54656f] border-[#d1d7db]"
-                              }`}
-                              style={selected ? { backgroundColor: color, borderColor: color } : undefined}
-                            >{key}</button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                  {/* 物件ピックアップした：送り方サブカテゴリで絞り込み */}
-                  {isPropertySendCategory && (
-                    <div className="flex flex-col gap-1">
-                      <p className="text-[10px] font-bold text-[#8696a0] text-center">送り方で絞り込む</p>
-                      <div className="flex gap-1 overflow-x-auto pb-0.5 flex-wrap" style={{ scrollbarWidth: "none" }}>
-                        {PROPERTY_SEND_SUB_TYPES.map(({ key, color }) => {
-                          const selected = propertySendSubFilter === key;
-                          return (
-                            <button
-                              key={key}
-                              onClick={() => setPropertySendSubFilter(prev => prev === key ? null : key)}
-                              className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-bold transition-all border-2 ${
-                                selected ? "text-white border-transparent" : "bg-white text-[#54656f] border-[#d1d7db]"
-                              }`}
-                              style={selected ? { backgroundColor: color, borderColor: color } : undefined}
-                            >{key}</button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                  {/* 内覧カテゴリ：通常内覧/日程変更で絞り込み */}
-                  {isViewingCategory && (
-                    <div className="flex flex-col gap-1">
-                      <p className="text-[10px] font-bold text-[#8696a0] text-center">内覧種別で絞り込む</p>
-                      <div className="flex gap-2">
-                        {VIEWING_SUB_TYPES.map(({ key, color }) => {
-                          const selected = viewingSubFilter === key;
-                          return (
-                            <button
-                              key={key}
-                              onClick={() => setViewingSubFilter(prev => prev === key ? null : key)}
-                              className={`flex-1 py-2.5 rounded-xl text-[13px] font-bold transition-all shadow-sm ${
-                                selected ? "text-white scale-[1.02] shadow-md" : "bg-white text-[#667781] border-2 border-[#d1d7db]"
-                              }`}
-                              style={selected ? { backgroundColor: color, borderColor: color } : undefined}
-                            >{key === "通常内覧" ? "📅 通常内覧" : "🔄 日程変更"}</button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
                   {/* AIXカテゴリ：大きな内覧誘導/申込誘導セレクター */}
                   {isAixCategory && (
                     <div className="flex flex-col gap-1">
@@ -1904,7 +1884,9 @@ export default function TemplateModal({
                   {recommendLoading && (
                     <div className="py-2 text-center text-[12px] text-[#6b7280]">✨ AIがおすすめを選定中...</div>
                   )}
-                  {displayFiltered.map((tmpl) => {
+                  {(() => {
+                    // テンプレートカード描画（アコーディオン/フラット両方から呼ぶ。中身は従来のまま）
+                    const renderTemplateCard = (tmpl: Template) => {
                     const idx = displayFiltered.indexOf(tmpl);
                     const adapted = adaptedTexts[tmpl.id];
                     const extracted = extractedTexts[tmpl.id];
@@ -2709,7 +2691,70 @@ export default function TemplateModal({
                         </div>}
                       </div>
                     );
-                  })}
+                    };
+
+                    // 案1: サブカテゴリ別アコーディオン表示（フィルター未選択時のみ）
+                    const renderAccordion = (
+                      subTypes: ReadonlyArray<{ readonly key: string; readonly color: string }>,
+                      getTag: (label: string) => string | null,
+                      sectionPrefix: string,
+                    ) => {
+                      const noTag: Template[] = [];
+                      const byTag: Record<string, Template[]> = Object.fromEntries(subTypes.map(s => [s.key, []]));
+                      for (const t of displayFiltered) {
+                        const tag = getTag(t.label);
+                        if (tag && byTag[tag]) byTag[tag].push(t);
+                        else noTag.push(t);
+                      }
+                      return (
+                        <>
+                          {subTypes.map(({ key, color }) => {
+                            const items = byTag[key] ?? [];
+                            if (items.length === 0) return null;
+                            const sectionKey = `${sectionPrefix}_${key}`;
+                            const isCollapsed = !!collapsedSections[sectionKey];
+                            return (
+                              <div key={key} className="mb-3">
+                                {/* セクションヘッダー */}
+                                <button
+                                  onClick={() => setCollapsedSections(prev => ({ ...prev, [sectionKey]: !prev[sectionKey] }))}
+                                  className="w-full flex items-center justify-between px-3 py-2 rounded-xl mb-2 font-bold text-[12px] text-white transition-all"
+                                  style={{ backgroundColor: color }}
+                                >
+                                  <span>{key} ({items.length})</span>
+                                  <span className="text-[14px]">{isCollapsed ? "▶" : "▼"}</span>
+                                </button>
+                                {/* テンプレートカード（折りたたみ時は非表示） */}
+                                {!isCollapsed && (
+                                  <div className="flex flex-col gap-3">
+                                    {items.map((tmpl) => renderTemplateCard(tmpl))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                          {/* タグなしのもの */}
+                          {noTag.length > 0 && (
+                            <div className="flex flex-col gap-3">
+                              {noTag.map((tmpl) => renderTemplateCard(tmpl))}
+                            </div>
+                          )}
+                        </>
+                      );
+                    };
+
+                    if (isPropertySendCategory && propertySendSubFilter === null) {
+                      return renderAccordion(PROPERTY_SEND_SUB_TYPES, getPropertySendSubTag, "prop_send");
+                    }
+                    if (isAvailCheckCategory && availCheckFilter === null) {
+                      return renderAccordion(AVAIL_CHECK_TYPES, inferAvailCheckType, "avail_check");
+                    }
+                    if (isViewingCategory && viewingSubFilter === null) {
+                      return renderAccordion(VIEWING_SUB_TYPES, getViewingSubTag, "viewing");
+                    }
+                    // 従来通りの flat 表示
+                    return displayFiltered.map((tmpl) => renderTemplateCard(tmpl));
+                  })()}
                 </div>
               )}
             </div>
