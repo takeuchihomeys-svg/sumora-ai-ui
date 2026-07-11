@@ -14,6 +14,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 // ステータスキー新旧不整合の修正: ログには旧ステータス名（viewing, property_recommendation 等）が
 // 残っているため、集計前に normalizeStatus で新5段階（hearing/proposing/applying）へ正規化する。
 // suggest-next-action は正規化後のステータスで recommended を引くため、ここで揃えないとミスマッチする。
@@ -24,6 +25,8 @@ export const maxDuration = 60;
 type ChainAgg = { selected: number; sent: number; adapted: number };
 
 async function run() {
+  // 学習ヘルスモニタリング用の実行記録（morning-report が cron_run_logs を読んで状態を報告する）
+  const runLogId = await startCronLog("calc-template-scene-stats");
   const since90d = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
 
   // テンプレ選択ログ（select フェーズ全件。sent 判定は final_sent_text の有無で行う）
@@ -35,6 +38,7 @@ async function run() {
     .limit(10000);
 
   if (error) {
+    await finishCronLog(runLogId, false, undefined, error.message);
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
 
@@ -219,6 +223,19 @@ async function run() {
     { onConflict: "key" }
   );
 
+  await finishCronLog(
+    runLogId,
+    updateErrors.length === 0,
+    {
+      total_logs: (logs ?? []).length,
+      status_count: Object.keys(stats).length,
+      templates_updated: updated,
+      chain_combos: chains.length,
+      chain_recommended_scopes: Object.keys(recommended).length,
+      template_transitions: Object.keys(transitions).length,
+    },
+    updateErrors.length > 0 ? updateErrors.join(" / ") : undefined,
+  );
   return NextResponse.json({
     ok: updateErrors.length === 0,
     total_logs: (logs ?? []).length,

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
+import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 300;
@@ -457,8 +458,38 @@ export async function POST(req: NextRequest) {
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
+  // 学習ヘルスモニタリング用の実行記録（morning-report が cron_run_logs を読んで状態を報告する）
+  const runLogId = await startCronLog("corpus2skill");
 
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  // 案4: 知識ライフサイクル管理 — 4週間使われていない corpus2skill 由来スキルを importance 9→7→5 と段階降格
+  // importance < 7 になると generate-reply の match_reply_knowledge（min_importance=7）で自然に除外される
+  // ※ ai_reply_knowledge に source / updated_at カラムは無いため、title 接頭辞 "[corpus2skill]" と
+  //   created_at（4週間以上前に作成）+ last_used_at（NULL or 4週間以上未使用）で「古い未使用スキル」を判定する
+  let degraded = 0;
+  try {
+    const fourWeeksAgo = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: staleSkills } = await supabase
+      .from("ai_reply_knowledge")
+      .select("id, importance")
+      .like("title", "[corpus2skill]%")
+      .lte("created_at", fourWeeksAgo)
+      .or(`last_used_at.is.null,last_used_at.lte.${fourWeeksAgo}`)
+      .gte("importance", 7); // importance < 7 はすでに降格済み（除外対象）
+
+    for (const skill of staleSkills ?? []) {
+      const newImportance = Math.max(1, (skill.importance as number) - 2); // 9→7→5 と2段階ずつ降格
+      const { error } = await supabase
+        .from("ai_reply_knowledge")
+        .update({ importance: newImportance })
+        .eq("id", skill.id);
+      if (!error) degraded++;
+    }
+    console.log(`[corpus2skill] 古いスキル降格: ${degraded}件`);
+  } catch (e) {
+    console.error("[corpus2skill] スキル降格失敗:", e);
+  }
 
   // P2: テンプレート品質改善タスク（テンプレ編集差分・AIX編集・採用/却下フィードバックを材料に週次提案）
   // ai_reply_examples の有無に関係なく実行する（材料が無ければ内部でスキップ）
@@ -488,9 +519,17 @@ export async function POST(req: NextRequest) {
     .limit(200) as { data: Example[] | null };
 
   if (!examples || examples.length === 0) {
+    await finishCronLog(runLogId, true, {
+      reason: "no examples found",
+      degraded,
+      templateCandidatesSaved: templateImprovements.candidatesSaved,
+      aixSuggestionsSaved: templateImprovements.suggestionsSaved,
+      feedbackQuestionsSaved: blindSpots.questionsSaved,
+    });
     return NextResponse.json({
       ok: false,
       reason: "no examples found",
+      degraded,
       templateCandidatesSaved: templateImprovements.candidatesSaved,
       aixSuggestionsSaved: templateImprovements.suggestionsSaved,
       feedbackQuestionsSaved: blindSpots.questionsSaved,
@@ -587,11 +626,21 @@ ${limitedSequences.map((g) =>
     }
   }
 
-  console.log(`[corpus2skill] 完了: inserted=${totalInserted}, merged=${totalMerged}`);
+  console.log(`[corpus2skill] 完了: inserted=${totalInserted}, merged=${totalMerged}, degraded=${degraded}`);
+  await finishCronLog(runLogId, true, {
+    inserted: totalInserted,
+    merged: totalMerged,
+    degraded,
+    examplesProcessed: examples.length,
+    templateCandidatesSaved: templateImprovements.candidatesSaved,
+    aixSuggestionsSaved: templateImprovements.suggestionsSaved,
+    feedbackQuestionsSaved: blindSpots.questionsSaved,
+  });
   return NextResponse.json({
     ok: true,
     inserted: totalInserted,
     merged: totalMerged,
+    degraded,
     examplesProcessed: examples.length,
     templateCandidatesSaved: templateImprovements.candidatesSaved,
     aixSuggestionsSaved: templateImprovements.suggestionsSaved,

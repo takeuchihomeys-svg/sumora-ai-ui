@@ -606,6 +606,8 @@ export default function Home() {
   const [dismissedNextActionIds, setDismissedNextActionIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedNextActionIds") || "[]") as string[]); } catch { return new Set(); }
   });
+  // 案5: AIX提案バナー✕タップ後に却下理由3択チップを表示する対象の会話ID（nullなら非表示）
+  const [dismissReasonFor, setDismissReasonFor] = useState<string | null>(null);
   const [dismissedApplyFormIds, setDismissedApplyFormIds] = useState<Set<string>>(new Set());
   const nextActionFetchingRef = useRef<Set<string>>(new Set());
   const lastAixByConvRef = useRef<Map<string, string>>(new Map());
@@ -6021,6 +6023,34 @@ export default function Home() {
 
                 // action あり → AIXボタン
                 if (nextSugg.action) {
+                  // 案5: 却下ログ送信（却下理由付き）+ バナー閉じの共通処理
+                  const logDismiss = (dismissedReason: string | null) => {
+                    const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
+                    const lastCustomerMsg = [...selectedConversation.messages]
+                      .reverse()
+                      .find((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
+                      ?.text ?? "";
+                    fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_dismissed", predicted_action: nextSugg.action ?? null, dismissed_reason: dismissedReason, customer_msg_summary: summarizeForLearning(lastCustomerMsg), previous_action_type: lastAixByConvRef.current.get(id) ?? null }) }).catch(() => {});
+                    setDismissedNextActionIds((prev) => new Set([...prev, id]));
+                    setDismissReasonFor(null);
+                  };
+
+                  // 案5: ✕タップ後 → 却下理由3択チップ（理由は学習ログの dismissed_reason に記録される）
+                  if (dismissReasonFor === id) {
+                    return (
+                      <div className="mx-1 mb-1 rounded-2xl border-2 border-amber-400 bg-amber-50 px-3 py-2 flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[11px] font-bold text-amber-700">却下の理由は？</span>
+                        <button onClick={() => logDismiss("timing_early")}
+                          className="shrink-0 rounded-full border border-amber-400 bg-white px-2 py-1 text-[11px] font-bold text-amber-700">⏱️ タイミング早い</button>
+                        <button onClick={() => logDismiss("wrong_action")}
+                          className="shrink-0 rounded-full border border-amber-400 bg-white px-2 py-1 text-[11px] font-bold text-amber-700">🔀 アクション違う</button>
+                        <button onClick={() => logDismiss("already_done")}
+                          className="shrink-0 rounded-full border border-amber-400 bg-white px-2 py-1 text-[11px] font-bold text-amber-700">✅ もう対応済み</button>
+                        <button onClick={() => logDismiss(null)}
+                          className="shrink-0 px-1 text-[11px] font-bold text-amber-400">スキップ</button>
+                      </div>
+                    );
+                  }
                   return (
                     <div className="mx-1 mb-1 rounded-2xl border-2 border-amber-400 bg-amber-50 px-3 py-2 flex items-center gap-2">
                       <span className="text-[12px] font-bold text-amber-700 flex-1">
@@ -6048,14 +6078,8 @@ export default function Home() {
                       </button>
                       <button
                         onClick={() => {
-                          // LX-5: P8バナーの✕も却下として学習ログに記録（keepaliveで確実に送信）
-                          const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
-                          const lastCustomerMsg = [...selectedConversation.messages]
-                            .reverse()
-                            .find((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
-                            ?.text ?? "";
-                          fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_dismissed", predicted_action: nextSugg.action ?? null, customer_msg_summary: summarizeForLearning(lastCustomerMsg), previous_action_type: lastAixByConvRef.current.get(id) ?? null }) }).catch(() => {});
-                          setDismissedNextActionIds((prev) => new Set([...prev, id]));
+                          // LX-5 + 案5: ✕タップで却下理由3択チップを表示（理由選択 or スキップ時に学習ログを記録）
+                          setDismissReasonFor(id);
                         }}
                         className="shrink-0 text-amber-400 text-[11px] font-bold"
                       >✕</button>

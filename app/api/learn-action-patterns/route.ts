@@ -42,6 +42,7 @@ export async function POST(req: NextRequest) {
     source?: string;
     suggestion_source?: string;
     conversation_id?: string;
+    dismissed_reason?: string;
   };
 
   // ① 1件ログ（AIX送信後にフロントから呼ぶ）
@@ -53,6 +54,10 @@ export async function POST(req: NextRequest) {
     // 高2: page.tsx が送る全 source を許可（未登録だと manual に化けて学習の重み付けが壊れる）
     const ALLOWED_SOURCES = new Set(["manual", "suggestion_accepted", "suggestion_dismissed", "prediction_match", "prediction_mismatch", "send_cancelled", "suggestion_bypassed", "prediction_accepted", "prediction_bypassed", "split_draft_used"]);
     const source = body.source && ALLOWED_SOURCES.has(body.source) ? body.source : "manual";
+
+    // 案5: 却下理由（提案バナー✕→3択チップで選択）。想定外の値はnullに落とす
+    const ALLOWED_DISMISS_REASONS = new Set(["timing_early", "wrong_action", "already_done"]);
+    const dismissedReason = body.dismissed_reason && ALLOWED_DISMISS_REASONS.has(body.dismissed_reason) ? body.dismissed_reason : null;
 
     // PA-1: previous_action_type の確実な記録
     // フロントの lastAixByConvRef はリロードで消える（921/937件がNULLの根本原因）ため、
@@ -87,6 +92,8 @@ export async function POST(req: NextRequest) {
       source,
       // 中5: 提案経路（suggest-next-action の source）。どのルール経由の提案が採択されたかの集計に使う
       suggestion_source: body.suggestion_source ?? null,
+      // 案5: 却下理由（timing_early / wrong_action / already_done）。suggestion_dismissed 時のみ入る
+      dismissed_reason: dismissedReason,
     });
     return NextResponse.json({ ok: true });
   }

@@ -1,5 +1,6 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 
 export const maxDuration = 60;
 
@@ -29,6 +30,8 @@ const SOURCE_ACCEPT_RATE_PREFIX = "SOURCE_ACCEPT_RATE";
 const MIN_SAMPLES = 5;
 
 async function run() {
+  // 学習ヘルスモニタリング用の実行記録（morning-report が cron_run_logs を読んで状態を報告する）
+  const runLogId = await startCronLog("update-action-confidence");
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
   const { data: logs, error } = await supabase
@@ -39,6 +42,7 @@ async function run() {
     .limit(5000);
 
   if (error) {
+    await finishCronLog(runLogId, false, undefined, error.message);
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
 
@@ -239,6 +243,14 @@ async function run() {
     }
   }
 
+  await finishCronLog(runLogId, true, {
+    total_logs: (logs ?? []).length,
+    updated,
+    skipped,
+    source_updated: sourceUpdated,
+    accuracy_updated: accuracyUpdated,
+    submode_updated: submodeUpdated,
+  });
   return NextResponse.json({
     ok: true,
     total_logs: (logs ?? []).length,

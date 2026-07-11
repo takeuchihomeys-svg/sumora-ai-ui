@@ -773,6 +773,11 @@ ALTER TABLE action_pattern_logs ADD COLUMN IF NOT EXISTS conversation_id TEXT DE
 -- update-action-confidence cron が action×source 粒度で SOURCE_ACCEPT_RATE:{action}:{source} を集計するのに使う
 ALTER TABLE action_pattern_logs ADD COLUMN IF NOT EXISTS suggestion_source TEXT DEFAULT NULL;
 
+-- 案5: AIX提案バナー却下理由の即時キャプチャ（✕タップ→3択チップ）
+-- 'timing_early'（タイミング早い）| 'wrong_action'（アクション違う）| 'already_done'（もう対応済み）
+-- suggestion_dismissed のログにのみ入る。学習側が「なぜ却下されたか」を区別できるようにする
+ALTER TABLE action_pattern_logs ADD COLUMN IF NOT EXISTS dismissed_reason TEXT DEFAULT NULL;
+
 -- SUB-1: AIXピッカー選択のサブパターンを記録（学習精度・成果集計の粒度向上）
 -- check_pattern: property_check_result のサブパターン（available/unavailable/alternative/vacate_date等）
 -- app_sub_mode: application_push のサブモード（push/confirm/docs_request/format）
@@ -1158,7 +1163,8 @@ ALTER TABLE aix_feature_suggestions DISABLE ROW LEVEL SECURITY;
 
 -- AI盲点フィードバック（corpus2skill 週次Opusが「分からない部分・憶測・発見した抜け」を質問として生成 →
 -- TemplateModal「❓ AI質問」タブで竹内さんが回答 → /api/ai-feedback がSonnetで知識化して
--- trigger_action_rules（MANUAL_RULE:接頭辞）/ ai_prompts（feedback_rule_{id}）に保存する）
+-- trigger_action_rules（trigger_keywords を通常n-gramルールとして高confidence保存）/
+-- ai_prompts（feedback_rule_{id}）+ ai_prompt_rules（FEEDBACK-{id}-{n}）に保存する）
 CREATE TABLE IF NOT EXISTS ai_feedback_items (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   question TEXT NOT NULL,

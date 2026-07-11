@@ -393,6 +393,56 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // 🧠 学習ヘルス（毎日表示）: 学習系Cronの実行状況 + AI質問の未回答数
+  // cron_run_logs は各学習Cron（learn-trigger-rules 等）が startCronLog/finishCronLog で記録する
+  try {
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const [{ data: cronLogs }, { count: pendingFeedbackCount }] = await Promise.all([
+      // 週次Cron（corpus2skill 等）の判定に7日分必要なため7日窓で取得し、日次Cronは24hで判定する
+      supabase
+        .from("cron_run_logs")
+        .select("cron_name, started_at, finished_at, ok")
+        .gte("started_at", sevenDaysAgoIso)
+        .order("started_at", { ascending: false })
+        .limit(100),
+      // AI質問（ai_feedback_items）の未回答数
+      supabase
+        .from("ai_feedback_items")
+        .select("*", { count: "exact", head: true })
+        .eq("status", "pending"),
+    ]);
+
+    // Cron名ごとの最新実行（降順取得済みのため最初に出た行が最新）
+    const latestByName = new Map<string, { started_at: string; ok: boolean | null }>();
+    for (const log of cronLogs ?? []) {
+      const name = (log.cron_name as string) ?? "";
+      if (name && !latestByName.has(name)) {
+        latestByName.set(name, { started_at: log.started_at as string, ok: log.ok as boolean | null });
+      }
+    }
+    const cronStatus = (name: string, sinceIso: string, weeklyLabel = false): string => {
+      const latest = latestByName.get(name);
+      if (!latest || latest.started_at < sinceIso) return "未実行";
+      if (latest.ok === false) return "エラー⚠️";
+      return weeklyLabel ? "完了（週次）" : "完了";
+    };
+
+    const healthLines = [
+      ` learn-trigger-rules: ${cronStatus("learn-trigger-rules", oneDayAgo)}`,
+      ` update-action-confidence: ${cronStatus("update-action-confidence", oneDayAgo)}`,
+      ` corpus2skill: ${cronStatus("corpus2skill", sevenDaysAgoIso, true)}`,
+      ` calc-template-scene-stats: ${cronStatus("calc-template-scene-stats", sevenDaysAgoIso, true)}`,
+    ];
+    const pendingN = pendingFeedbackCount ?? 0;
+    const feedbackLine = pendingN > 0
+      ? `■ AI質問 未回答: ${pendingN}件（テンプレート画面の「❓AI質問」タブから回答できます）`
+      : "■ AI質問 未回答: 0件";
+    statsLines.push(`🧠 学習ヘルス\n■ 直近24h学習Cron:\n${healthLines.join("\n")}\n${feedbackLine}`);
+  } catch (e) {
+    console.error("[morning-report] learning health section:", e);
+  }
+
   const statsBlock = statsLines.length > 0
     ? `\n\n——————\n\n📊 統計サマリー\n\n${statsLines.join("\n")}`
     : "";

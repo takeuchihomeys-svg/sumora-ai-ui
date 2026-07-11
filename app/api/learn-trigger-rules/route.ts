@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { normalizeStatus } from "@/app/lib/status-normalize";
+import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 
 // Vercel Functions のタイムアウト上限（秒）
 export const maxDuration = 60;
@@ -85,21 +86,26 @@ export async function POST(req?: Request) {
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
+  // 学習ヘルスモニタリング用の実行記録（morning-report が cron_run_logs を読んで状態を報告する）
+  const runLogId = await startCronLog("learn-trigger-rules");
   // 高6: order なしだと limit(3000) がDB任意順の3000件になるため、直近90日窓 + created_at 降順で「最新の3000件」を確定させる
   const NINETY_DAYS_AGO = new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString();
 
-  // action_pattern_logs から全データ取得（source で重み付け）
+  // action_pattern_logs から全データ取得（source で重み付け + created_at で鮮度減衰）
   // 高3: サブモードログ（viewing_invite_submode 等）は customer_msg_summary にモードキーが入っており n-gram を汚染するため除外
   const { data: logs } = await supabase
     .from("action_pattern_logs")
-    .select("action_type, customer_msg_summary, source")
+    .select("action_type, customer_msg_summary, source, created_at")
     .not("customer_msg_summary", "is", null)
     .not("action_type", "like", "%_submode")
     .gte("created_at", NINETY_DAYS_AGO)
     .order("created_at", { ascending: false })
     .limit(3000);
 
-  if (!logs?.length) return NextResponse.json({ ok: true, learned: 0 });
+  if (!logs?.length) {
+    await finishCronLog(runLogId, true, { learned: 0, reason: "no logs" });
+    return NextResponse.json({ ok: true, learned: 0 });
+  }
 
   // action_type ごとにテキストをグループ化（source重み付き）
   type WeightedText = { text: string; weight: number };
@@ -110,7 +116,10 @@ export async function POST(req?: Request) {
     const action = log.action_type as string;
     const text = ((log.customer_msg_summary as string) ?? "").trim();
     if (!text || text.length < 3) continue;
-    const weight = sourceWeight(log.source as string | null);
+    // 案3: 鮮度重み付け — ログの経過日数で指数減衰（30日で重み半減）。古い行動パターンの影響を自然に薄める
+    const ageDays = (Date.now() - new Date(log.created_at as string).getTime()) / (1000 * 60 * 60 * 24);
+    const decayFactor = Math.pow(0.5, ageDays / 30);
+    const weight = sourceWeight(log.source as string | null) * decayFactor;
     byAction[action] ??= [];
     byAction[action].push({ text, weight });
     allTexts.push({ text, weight });
@@ -192,6 +201,8 @@ export async function POST(req?: Request) {
   //      AFTER:%（チェーンルール）は n-gram ルールではないため cleanup 対象から保護する
   // 中1: PREDICTION_ACCURACY（予測精度行）も同様に保護（低精度の行こそ isLowAccuracy の判定材料になるため）
   // 中5: SOURCE_ACCEPT_RATE:%（提案経路別採択率行）も保護（低採択率の行こそ isLowSourceRate の判定材料になるため）
+  // 案1: MANUAL_RULE:%（竹内さん確認済み手動ルール・旧形式の残存行）と
+  //      SUBMODE_ACCEPT:%（サブモード採択率行。低採択率の行こそデフォルト判定材料になるため）も保護
   {
     const { data: lowRules } = await supabase
       .from("trigger_action_rules")
@@ -201,7 +212,9 @@ export async function POST(req?: Request) {
       .not("keyword", "eq", "SUGGESTION_ACCEPT_RATE")
       .not("keyword", "eq", "PREDICTION_ACCURACY")
       .not("keyword", "like", "AFTER:%")
-      .not("keyword", "like", "SOURCE_ACCEPT_RATE:%");
+      .not("keyword", "like", "SOURCE_ACCEPT_RATE:%")
+      .not("keyword", "like", "MANUAL_RULE:%")
+      .not("keyword", "like", "SUBMODE_ACCEPT:%");
     if (lowRules?.length) {
       const { error } = await supabase
         .from("trigger_action_rules")
@@ -211,7 +224,9 @@ export async function POST(req?: Request) {
         .not("keyword", "eq", "SUGGESTION_ACCEPT_RATE")
         .not("keyword", "eq", "PREDICTION_ACCURACY")
         .not("keyword", "like", "AFTER:%")
-        .not("keyword", "like", "SOURCE_ACCEPT_RATE:%");
+        .not("keyword", "like", "SOURCE_ACCEPT_RATE:%")
+        .not("keyword", "like", "MANUAL_RULE:%")
+        .not("keyword", "like", "SUBMODE_ACCEPT:%");
       if (!error) cleaned += lowRules.length;
     }
   }
@@ -227,7 +242,8 @@ export async function POST(req?: Request) {
       ...new Set(
         (allRules ?? [])
           .map((r) => r.keyword as string)
-          .filter((k) => k.length < MIN_NGRAM_LENGTH || isStopNgram(k))
+          // 案1: MANUAL_RULE:%（手動ルール）と SUBMODE_ACCEPT:%（サブモード採択率）はノイズ削除から保護
+          .filter((k) => !k.startsWith("MANUAL_RULE:") && !k.startsWith("SUBMODE_ACCEPT:") && (k.length < MIN_NGRAM_LENGTH || isStopNgram(k)))
       ),
     ];
     for (let i = 0; i < noiseKeywords.length; i += 200) {
@@ -255,7 +271,7 @@ export async function POST(req?: Request) {
   // 高6: 直近90日窓 + created_at 降順で「最新の3000件」を確定させる
   const { data: chainLogs } = await supabase
     .from("action_pattern_logs")
-    .select("action_type, previous_action_type, conversation_status, source")
+    .select("action_type, previous_action_type, conversation_status, source, created_at")
     .not("previous_action_type", "is", null)
     .not("action_type", "like", "%_submode")
     .gte("created_at", NINETY_DAYS_AGO)
@@ -277,16 +293,19 @@ export async function POST(req?: Request) {
     const prev = log.previous_action_type as string;
     const curr = log.action_type as string;
     if (!prev || !curr) continue;
+    // 案3: 鮮度重み付け — チェーン遷移も経過日数で指数減衰（30日で半減）
+    const ageDays = (Date.now() - new Date(log.created_at as string).getTime()) / (1000 * 60 * 60 * 24);
+    const decayFactor = Math.pow(0.5, ageDays / 30);
     chainCount[prev] ??= {};
-    chainCount[prev][curr] = (chainCount[prev][curr] ?? 0) + 1;
-    prevTotal[prev] = (prevTotal[prev] ?? 0) + 1;
+    chainCount[prev][curr] = (chainCount[prev][curr] ?? 0) + decayFactor;
+    prevTotal[prev] = (prevTotal[prev] ?? 0) + decayFactor;
 
     const rawStatus = ((log.conversation_status as string | null) ?? "").trim();
     if (rawStatus) {
       const phaseKey = `${prev}|${normalizeStatus(rawStatus)}`;
       phaseChainCount[phaseKey] ??= {};
-      phaseChainCount[phaseKey][curr] = (phaseChainCount[phaseKey][curr] ?? 0) + 1;
-      phasePrevTotal[phaseKey] = (phasePrevTotal[phaseKey] ?? 0) + 1;
+      phaseChainCount[phaseKey][curr] = (phaseChainCount[phaseKey][curr] ?? 0) + decayFactor;
+      phasePrevTotal[phaseKey] = (phasePrevTotal[phaseKey] ?? 0) + decayFactor;
     }
   }
 
@@ -303,9 +322,10 @@ export async function POST(req?: Request) {
         const total = totals[prevKey] ?? count;
         const confidence = Math.round((count / total) * 1000) / 1000;
         // #24 修正D: 低品質ルール（confidence < 0.4 かつ count < 5）は upsert 対象外
+        // 案3: count は鮮度減衰済みの重み付き値（float）。閾値判定は減衰後の値で行い、DBのINTEGERカラムには丸めて保存
         if (confidence >= 0.3 && count >= 2 && !isLowQualityRule(confidence, count)) {
           const { error } = await supabase.from("trigger_action_rules").upsert(
-            { action_type: action, keyword: `AFTER:${prevKey}`, occurrence_count: count, total_occurrence: total, confidence, updated_at: new Date().toISOString() },
+            { action_type: action, keyword: `AFTER:${prevKey}`, occurrence_count: Math.round(count), total_occurrence: Math.round(total), confidence, updated_at: new Date().toISOString() },
             { onConflict: "action_type,keyword" }
           );
           if (!error) { learned++; chainLearned++; }
@@ -314,6 +334,7 @@ export async function POST(req?: Request) {
     }
   }
 
+  await finishCronLog(runLogId, true, { learned, chain_learned: chainLearned, cleaned, total_candidates: rulesToUpsert.length });
   return NextResponse.json({
     ok: true,
     learned,
