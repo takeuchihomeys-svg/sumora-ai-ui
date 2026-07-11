@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
+import { GENERATION_SYSTEM } from "@/app/lib/line-reply-prompts";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "") });
 
@@ -49,12 +50,13 @@ export async function POST(req: NextRequest) {
         : ["proposing", "property_recommendation", "hearing"])
       .order("created_at", { ascending: false })
       .limit(6),
-    // 差分学習ルール（importance高いもの）
+    // 差分学習ルール（importance高いもの・rejected=検証で棄却済みは除外）
     supabase
       .from("ai_reply_knowledge")
       .select("title, content")
       .ilike("title", "%差分学習%")
       .gte("importance", 7)
+      .neq("hypothesis_status", "rejected")
       .order("created_at", { ascending: false })
       .limit(8),
   ]);
@@ -64,7 +66,8 @@ export async function POST(req: NextRequest) {
     promptMap[row.key as string] = row.content as string;
   }
 
-  const styleGuide       = promptMap["generation_system"]    ?? "";
+  // DB障害・ai_prompts未登録時もスモラ文体ルールが消えないようコード側の GENERATION_SYSTEM にフォールバック
+  const styleGuide       = promptMap["generation_system"]    ?? GENERATION_SYSTEM;
   const replyRules       = promptMap["reply_content_rules"]  ?? "";
   const quickPatterns    = promptMap["smora_quick_patterns"] ?? "";
   const realEstateRules  = promptMap["real_estate_rules"]    ?? "";

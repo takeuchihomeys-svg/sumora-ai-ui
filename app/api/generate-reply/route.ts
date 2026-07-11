@@ -21,7 +21,7 @@ export const maxDuration = 60;
 // Step1（分析）: Sonnet — 感情・本音・成約戦略の精度重視
 const analysisModel = new ChatAnthropic({
   model: "claude-sonnet-4-6",
-  maxTokens: 1024,
+  maxTokens: 1536, // 1024だと分析JSONが尻切れになりJSON.parse失敗するリスクがあるため引き上げ
   temperature: 0,
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
   clientOptions: { timeout: 45_000 },
@@ -41,8 +41,9 @@ function createGenerationModel(temperature: number) {
 
 // 中6: 顧客の温度感 → 生成temperature マッピング
 // 前向き/普通/冷めかけ → 0.3 / 不安 → 0.4（少し温かみ・ブレすぎない）/ 未定義 → 0.3
+// 完全一致だと「不安と期待が混在」等がマッチしないため includes 判定にする
 function emotionTemperature(emotion?: string): number {
-  if (emotion === "不安") return 0.4;
+  if (emotion?.includes("不安")) return 0.4;
   return 0.3;
 }
 
@@ -589,9 +590,9 @@ const STATE_TO_PHRASE_CATEGORIES: Record<string, string[]> = {
   closed_won:  ["closing_support"],
 };
 
-async function fetchPhrases(state: string): Promise<string> {
+async function fetchPhrases(state: string): Promise<string[]> {
   const categories = STATE_TO_PHRASE_CATEGORIES[state];
-  if (!categories || categories.length === 0) return "";
+  if (!categories || categories.length === 0) return [];
 
   // 複数カテゴリをまとめて取得・priority 10以上のみ
   const { data } = await supabase
@@ -602,21 +603,26 @@ async function fetchPhrases(state: string): Promise<string> {
     .order("priority", { ascending: false })
     .limit(40);
 
-  if (!data || data.length === 0) return "";
+  if (!data || data.length === 0) return [];
 
   // コード側で問題フレーズを除外：
   // - {{...}} テンプレート変数（未置換で残るため）
   // - 特定会社名ベタ書き（イエヤス・ギガ等）
   // - 不自然に長い（80字超）
   const BAD_PATTERNS = /\{\{|\}\}|イエヤスなら|ギガ賃貸なら|スモラでは契約内容/;
-  const filtered = (data as Array<{ phrase: string; priority: number; category: string }>)
+  return (data as Array<{ phrase: string; priority: number; category: string }>)
     .filter((r) => r.phrase && !BAD_PATTERNS.test(r.phrase) && r.phrase.length <= 80)
-    .slice(0, 12);
+    .slice(0, 12)
+    .map((r) => r.phrase);
+}
 
-  if (filtered.length === 0) return "";
-
+// フレーズ集のプロンプト文字列化。
+// ⑥二重注入対策: pgvector経路で category=phrase のナレッジが3件以上ヒットした場合は limit=4 に絞って呼ぶ
+function formatPhrases(phrases: string[], limit: number): string {
+  const use = phrases.slice(0, limit);
+  if (use.length === 0) return "";
   return "\n\n【スモラのフレーズ集（参考程度に・⭐実例を最優先すること）】\n" +
-    filtered.map((r) => `「${r.phrase}」`).join("　");
+    use.map((p) => `「${p}」`).join("　");
 }
 
 // ─── ai_summaryがない場合の即席コンテキスト合成（Haiku・並列実行）────────────
@@ -644,7 +650,7 @@ ${conditions}${historyNote}
 // ─── DB取得 ─────────────────────────────────────────────────────────────────
 // STATE_SEARCH_ALIASES は @/app/lib/line-reply-prompts からインポート済み
 
-type KnowledgeRow = { id: string; title: string; content: string; category: string; conversation_state: string; importance: number; hypothesis_status?: string };
+type KnowledgeRow = { id: string; title: string; content: string; category: string; conversation_state: string; importance: number; hypothesis_status?: string; created_at?: string };
 
 function incrementKnowledgeUsage(ids: string[]): void {
   if (!ids.length) return;
@@ -661,7 +667,8 @@ function logKnowledgeApply(ids: string[], conversationId: string): void {
   ).then(() => {}, () => {});
 }
 
-async function fetchKnowledge(state: string, customerMessage?: string, analysisContext?: string, conversationId?: string): Promise<string> {
+// 戻り値: text=プロンプト注入用ナレッジ文字列 / phraseHits=category=phrase のヒット件数（fetchPhrases の二重注入削減判定に使用）
+async function fetchKnowledge(state: string, customerMessage?: string, analysisContext?: string, conversationId?: string): Promise<{ text: string; phraseHits: number }> {
   const stateAliases = STATE_SEARCH_ALIASES[state] || [state];
 
   // 失注パターン専用バケット（auto-analyze-losers が category=principle / importance=8 で保存するため、
@@ -715,12 +722,23 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       }) as { data: Array<KnowledgeRow & { similarity: number }> | null; error: { message: string } | null };
       if (rpcError) console.warn("[generate-reply] RPC error:", rpcError.message);
 
-      // 類似度0.6未満のノイズを除外し、importance×similarity の複合スコアで並べ替え
+      // 類似度0.5未満のノイズを除外し、importance×similarity×鮮度 の複合スコアで並べ替え
+      // （閾値は実例側の0.5と統一 — 0.6だと日本語短文でヒット率が低すぎた）
       // （RPCの similarity 順のままだと importance の低い近似ルールが各バケットの枠を食うため）
       // BUG-01: pgvector経路にも rejected フィルタを追加（フォールバック経路は .neq('hypothesis_status','rejected') 済みだが pgvector 経路だけ欠落していた）
       const filteredResults = (vectorResults ?? [])
-        .filter(r => (r.similarity ?? 0) >= 0.6 && r.hypothesis_status !== "rejected")
-        .map(r => ({ ...r, score: (r.similarity ?? 0.5) * ((r.importance || 5) / 10) }))
+        .filter(r => (r.similarity ?? 0) >= 0.5 && r.hypothesis_status !== "rejected")
+        .map(r => {
+          // 鮮度ファクター（半減期180日）: 古い誤傾向ナレッジより新しい修正ナレッジを優先する
+          // created_at 不明時は 180日相当（recencyFactor=0.5）として扱う
+          const daysSince = r.created_at
+            ? (Date.now() - new Date(r.created_at).getTime()) / (1000 * 60 * 60 * 24)
+            : 180;
+          const recencyFactor = Math.pow(0.5, daysSince / 180);
+          // confirmed（検証済み）ナレッジは +0.05 加点して hypothesis より実質的に優先させる
+          const confirmedBonus = r.hypothesis_status === "confirmed" ? 0.05 : 0;
+          return { ...r, score: (r.similarity ?? 0.5) * ((r.importance || 5) / 10) * (0.5 + 0.5 * recencyFactor) + confirmedBonus };
+        })
         .sort((a, b) => {
           if (b.score !== a.score) return b.score - a.score;
           // confirmed を同スコア内で優先（HIGH-07 pgvector経路対応）
@@ -768,7 +786,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
           sections.push("【📘 テンプレート修正学習ルール（テンプレ活用時の改善パターン — テンプレを使う場合は必ず参照）】\n" +
             (adaptRules as { rule_text: string; category: string }[]).map(r => `・[${r.category}] ${r.rule_text}`).join("\n"));
         }
-        return sections.length > 0 ? "\n\n" + sections.join("\n\n") : "";
+        return { text: sections.length > 0 ? "\n\n" + sections.join("\n\n") : "", phraseHits: phrases.length };
       }
     }
   }
@@ -823,7 +841,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   const globalList = sortConfirmedFirst((global ?? []).filter(g => !stateSpecificList.some(s => s.content === g.content)));
   const all = [...stateSpecificList, ...globalList];
   const principlesList = topPrinciples ?? [];
-  if (diffLearned.length === 0 && correctionList.length === 0 && all.length === 0 && principlesList.length === 0 && !lossBlock) return "";
+  if (diffLearned.length === 0 && correctionList.length === 0 && all.length === 0 && principlesList.length === 0 && !lossBlock) return { text: "", phraseHits: 0 };
 
   // principle は global/stateSpecific クエリで除外済みのため、専用クエリの結果をそのまま使う
   const critical = principlesList;
@@ -866,7 +884,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
     sections.push("【📘 テンプレート修正学習ルール（テンプレ活用時の改善パターン — テンプレを使う場合は必ず参照）】\n" +
       (adaptRules as { rule_text: string; category: string }[]).map(r => `・[${r.category}] ${r.rule_text}`).join("\n"));
   }
-  return sections.length > 0 ? "\n\n" + sections.join("\n\n") : "";
+  return { text: sections.length > 0 ? "\n\n" + sections.join("\n\n") : "", phraseHits: Math.min(phrases.length, 6) };
 }
 
 // ─── OpenAI 埋め込み生成（generate-reply 側）────────────────────────────────
@@ -938,17 +956,18 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
   }
 
   // フォールバック: 全件対象（☆優先・フェーズ一致優先）
+  // ⑤ pgvector不発時のフォールバックでは embedding NULL の実例も対象にする
+  // （pgvector経路ではRPC側でNULLが当然除外されるが、importance/☆降順のフォールバックで除外する理由はない。
+  //   .not("embedding","is",null) を付けると embedding未生成の重要データが永久に参照されない）
   const [{ data: sameStateFull }, { data: allStateFull }] = await Promise.all([
     // 同フェーズ全件: ☆降順 → 新着順
     supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state, is_starred, reply_angle")
       .in("conversation_state", stateAliases)
-      .not("embedding", "is", null)
       .order("is_starred", { ascending: false })
       .order("created_at", { ascending: false })
       .limit(60),
     // 全フェーズ全件: ☆降順 → 新着順
     supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state, is_starred, reply_angle")
-      .not("embedding", "is", null)
       .order("is_starred", { ascending: false })
       .order("created_at", { ascending: false })
       .limit(120),
@@ -1285,13 +1304,13 @@ export async function POST(req: NextRequest) {
 
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
     // 各フェッチはエラーでも生成を止めない（knowledgeなし・実例なしで生成続行）
-    const [knowledge, examples, phrases, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote] = await Promise.all([
+    const [knowledgeResult, examples, phraseList, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote] = await Promise.all([
       fetchKnowledge(currentState, message, analysisContext, conversationId)
-        .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return ""; }),
+        .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return { text: "", phraseHits: 0 }; }),
       fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext)
         .catch((err) => { console.error("[generate-reply] fetchExamples失敗 — 実例なしで生成続行:", err); return ""; }),
       fetchPhrases(currentState)
-        .catch((err) => { console.error("[generate-reply] fetchPhrases失敗 — フレーズなしで生成続行:", err); return ""; }),
+        .catch((err) => { console.error("[generate-reply] fetchPhrases失敗 — フレーズなしで生成続行:", err); return [] as string[]; }),
       // ai_summaryがない場合のみ条件テキスト+履歴から即席合成（Haiku・並列なので遅延ゼロ）
       !customerSummary && customerConditions
         ? synthesizeCustomerContext(customerConditions, customerName, history)
@@ -1309,6 +1328,10 @@ export async function POST(req: NextRequest) {
     ]);
     const resolvedSummary = customerSummary || autoSummary;
     const resolvedSummaryJson = bodySummaryJson ?? fetchedSummaryJson ?? undefined;
+    const knowledge = knowledgeResult.text;
+    // ⑥ フレーズ二重注入対策: pgvectorナレッジで phrase 系が3件以上ヒットした場合、
+    // 汎用フレーズ集は 12 → 4 件に絞る（関連性ゼロのフレーズ大量混入を防ぐ）
+    const phrases = formatPhrases(phraseList, knowledgeResult.phraseHits >= 3 ? 4 : 12);
 
 
     // JST 当日（0:00〜23:59）で挨拶済み判定
@@ -1342,8 +1365,15 @@ export async function POST(req: NextRequest) {
       isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules,
       resolvedSummaryJson, quotedContextNote
     );
-    // 中6: 顧客の温度感（ai_summary_json.emotion）に応じて生成temperatureを可変にする（Step1分析は temperature:0 のまま）
-    const genTemperature = emotionTemperature(resolvedSummaryJson?.emotion);
+    // 中6: 顧客の温度感に応じて生成temperatureを可変にする（Step1分析は temperature:0 のまま）
+    // ④ Step1で今まさに分析したフレッシュな emotion を最優先し、なければ ai_summary_json.emotion（過去の要約）を使う
+    const analysisEmotion = (() => {
+      try {
+        const p = JSON.parse(analysis) as Record<string, unknown>;
+        return typeof p.emotion === "string" && p.emotion ? p.emotion : undefined;
+      } catch { return undefined; }
+    })();
+    const genTemperature = emotionTemperature(analysisEmotion ?? resolvedSummaryJson?.emotion);
     const genStream = createGenerationModel(genTemperature).stream(messages);
 
     // B-2: 品質判定フラグ（自動返信ハードゲート用）
@@ -1381,27 +1411,28 @@ export async function POST(req: NextRequest) {
                 if (chunk.response_metadata?.stop_reason) genStopReason = chunk.response_metadata.stop_reason;
               }
               warnIfTruncated(genStopReason, genInputLength);
-              // AIの本文先頭が挨拶パターンなら除去して固定挨拶に置き換え、
-              // 挨拶で始まっていなければ全文を本文として保持し先頭に固定挨拶を追加する
-              // （旧実装は無条件に1行目を捨てていたため、AIが改行なし1行で返すと本文が全消滅していた）
+              // AIの本文先頭が挨拶パターンなら「挨拶センテンスのみ」を正規表現で除去して固定挨拶に置き換え、
+              // 挨拶で始まっていなければ全文を本文として保持し先頭に固定挨拶を追加する。
+              // （旧実装は改行基準で先頭を捨てていたため、AIが挨拶＋本文を改行なし1行で返すと本文が全消滅していた）
               const trimmedText = fullText.trimStart();
               const aiGreetingPattern = /^(?:「?[^\n]{0,15}(?:さん|様)[、,。\s]*)?(?:はじめまして|初めまして|お世話に|ご連絡|この度|こんにちは|こんばんは|おはよう|夜分遅く)/;
+              // 挨拶センテンス1文分（呼びかけ＋挨拶キーワード＋文末「！！」「。」または改行まで）にマッチする
+              const greetingSentencePattern = /^(?:「?[^\n！!。]{0,15}(?:さん|様)[、,。\s]*)?(?:はじめまして|初めまして|お世話に|ご連絡|この度|こんにちは|こんばんは|おはよう|夜分遅く|お部屋探し[^！!。\n]{0,30}申します|[^！!。\n]{0,20}と申します)[^！!。\n]{0,40}?(?:[！!。]+|\n)\s*/;
               let bodyPart: string;
               if (aiGreetingPattern.test(trimmedText)) {
-                // 先頭段落（\n\n区切り）があればその後、なければ最初の\n以降を本文とする
-                const doubleBreak = trimmedText.indexOf("\n\n");
-                const singleBreak = trimmedText.indexOf("\n");
-                bodyPart = doubleBreak >= 0
-                  ? trimmedText.slice(doubleBreak + 2)
-                  : singleBreak >= 0
-                    ? trimmedText.slice(singleBreak + 1)
-                    : "";
+                // 冒頭の挨拶センテンスを最大4文まで除去（「はじめまして😊！！」「この度ご連絡〜！！」「〜鈴木と申します！！」等）
+                let rest = trimmedText;
+                for (let i = 0; i < 4 && greetingSentencePattern.test(rest); i++) {
+                  rest = rest.replace(greetingSentencePattern, "");
+                }
+                bodyPart = rest.trim();
               } else {
-                bodyPart = trimmedText;
+                bodyPart = trimmedText.trim();
               }
               // customerName が空の場合は「さん、」部分を除去（「さん、はじめまして」の防止）
               const fixedGreeting = `${buildFirstGreeting(customerName)}\n\n`;
-              const rawOutput = fixedGreeting + bodyPart;
+              // 除去後が空（挨拶のみ生成・除去しすぎ）の場合はAI出力をそのまま使う（本文ゼロ防止フォールバック）
+              const rawOutput = bodyPart ? fixedGreeting + bodyPart : (trimmedText || fixedGreeting.trim());
               const { cleaned, issues } = validateAndClean(rawOutput);
               if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
               controller.enqueue(encoder.encode(cleaned));

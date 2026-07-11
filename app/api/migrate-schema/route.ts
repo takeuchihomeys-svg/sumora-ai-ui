@@ -481,12 +481,16 @@ RETURNS void LANGUAGE sql SECURITY DEFINER AS $$
   WHERE id = p_id;
 $$;
 CREATE INDEX IF NOT EXISTS ai_reply_knowledge_embedding_idx ON ai_reply_knowledge USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50);
+-- created_at を戻り値に追加（generate-reply の鮮度スコアリングで使用）。
+-- 戻り値の型変更は CREATE OR REPLACE では不可のため既存関数を先に DROP する
+DROP FUNCTION IF EXISTS match_reply_knowledge(vector, integer, integer);
 CREATE OR REPLACE FUNCTION match_reply_knowledge(query_embedding vector, match_count integer, min_importance integer DEFAULT 7)
-RETURNS TABLE(id uuid, title text, content text, category text, conversation_state text, importance integer, similarity float, hypothesis_status text)
+RETURNS TABLE(id uuid, title text, content text, category text, conversation_state text, importance integer, similarity float, hypothesis_status text, created_at timestamptz)
 LANGUAGE sql STABLE AS $$
   SELECT ak.id, ak.title, ak.content, ak.category, ak.conversation_state, ak.importance,
     (1 - (ak.embedding <=> query_embedding))::float AS similarity,
-    ak.hypothesis_status
+    ak.hypothesis_status,
+    ak.created_at
   FROM ai_reply_knowledge ak
   WHERE ak.embedding IS NOT NULL AND ak.importance >= min_importance
     AND COALESCE(ak.hypothesis_status, 'hypothesis') != 'rejected'
@@ -1047,13 +1051,16 @@ ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS was_edited BOOLEAN;
 
 -- ⑥ match_reply_knowledge を hypothesis_status ADD COLUMN の後に再定義
 --    （line 479 での定義は hypothesis_status が存在しない新規環境で失敗するため、
---      hypothesis_status ADD COLUMN（line 802）の後にも CREATE OR REPLACE で再実行する）
+--      hypothesis_status ADD COLUMN（line 802）の後にも再実行する）
+--    戻り値型の変更に備え DROP → CREATE で再定義（created_at は鮮度スコアリング用）
+DROP FUNCTION IF EXISTS match_reply_knowledge(vector, integer, integer);
 CREATE OR REPLACE FUNCTION match_reply_knowledge(query_embedding vector, match_count integer, min_importance integer DEFAULT 7)
-RETURNS TABLE(id uuid, title text, content text, category text, conversation_state text, importance integer, similarity float, hypothesis_status text)
+RETURNS TABLE(id uuid, title text, content text, category text, conversation_state text, importance integer, similarity float, hypothesis_status text, created_at timestamptz)
 LANGUAGE sql STABLE AS $$
   SELECT ak.id, ak.title, ak.content, ak.category, ak.conversation_state, ak.importance,
     (1 - (ak.embedding <=> query_embedding))::float AS similarity,
-    ak.hypothesis_status
+    ak.hypothesis_status,
+    ak.created_at
   FROM ai_reply_knowledge ak
   WHERE ak.embedding IS NOT NULL AND ak.importance >= min_importance
     AND COALESCE(ak.hypothesis_status, 'hypothesis') != 'rejected'

@@ -46,20 +46,24 @@ async function fetchEnhanceContext(state: string, customerMessage?: string, last
   // A: ナレッジを差分学習・修正対比・一般・グローバルの4層で並列取得
   const [{ data: diffLearned }, { data: correctionPairs }, { data: knowledgeRows }, { data: globalKnowledge }, embedding] = await Promise.all([
     // ① 差分学習: AIが間違えた→正解ルール（最優先）
+    // ※ rejected（検証で棄却済み）ナレッジは全クエリで除外する
     supabase.from("ai_reply_knowledge")
       .select("category, title, content, importance")
       .ilike("title", "%差分学習%").gte("importance", 7)
+      .neq("hypothesis_status", "rejected")
       .order("created_at", { ascending: false }).limit(15),
     // ② 修正対比: スタッフがどう直したかのパターン
     supabase.from("ai_reply_knowledge")
       .select("category, title, content, importance")
       .ilike("title", "%修正対比%").in("conversation_state", aliases)
+      .neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false }).limit(12),
     // ③ フェーズ別ナレッジ
     supabase.from("ai_reply_knowledge")
       .select("category, title, content, importance")
       .in("conversation_state", aliases).gte("importance", 8)
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
+      .neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false }).limit(10),
     // ④ グローバル横断ナレッジ（全フェーズ共通・高importance）
@@ -68,6 +72,7 @@ async function fetchEnhanceContext(state: string, customerMessage?: string, last
       .gte("importance", 8)
       .not("title", "ilike", "%差分学習%").not("title", "ilike", "%修正対比%")
       .not("category", "eq", "principle")
+      .neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false }).limit(8),
     customerMessage && process.env.OPENAI_API_KEY
