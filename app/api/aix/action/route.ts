@@ -2152,7 +2152,18 @@ ${pcrCalendarBlock}
         return NextResponse.json({ ok: true, message_text });
       }
 
-      const pattern = check_pattern as "available" | "alternative" | "unavailable";
+      const pattern = check_pattern as "available" | "alternative" | "unavailable" | "exclusive";
+
+      // 「専任物件だった」は固定文専用フロー（AI不要・DB取得もスキップ）
+      // ※ name は「◯◯さん」形式（さん付き）のため、テンプレは ${name}に とする
+      if (pattern === "exclusive") {
+        const exPropName = ((body.exclusive_prop_name as string | undefined) ?? "").trim();
+        const exRoomNo = ((body.exclusive_room_no as string | undefined) ?? "").trim();
+        const propText = `${exPropName}${exRoomNo}`;
+        message_text = `お送りいただきました${propText}は専任のお部屋となっており、弊社ではご紹介ができないお部屋となります！！\n\nよろしければ私の方で${name}にオススメ出来るお部屋ピックアップさせていただきます😊！！`;
+        return NextResponse.json({ ok: true, message_text });
+      }
+
       const customerSummary = body.customer_summary as string | undefined;
       const ended_floor = body.ended_floor as number | undefined;
       const ended_unit = body.ended_unit as string | undefined;
@@ -2208,6 +2219,7 @@ M/D（曜日）HH:MM〜HH:MM
 お手隙の際にご査収ください！！」`
           : `物件を確認した結果「${endedRoomStr}は募集終了でしたが別の間取りのお部屋が募集中」でした。「残念ながら」等で正直に伝えつつ（「申し訳ございません」等の謝罪表現は使用禁止）、代替案への期待感を持たせて内覧誘導で締めてください。募集終了だったお部屋は${endedRoomStr}です。`,
         unavailable: "物件を確認した結果「満室・空きなし」でした。「残念ながら」等で正直に伝えつつ（「申し訳ございません」等の謝罪表現は使用禁止）、引き続き物件探しを続けることを伝え、前向きな雰囲気で締めてください。",
+        exclusive: "専任物件のため紹介不可を伝える",
       };
 
       // knowledgeとDB実例（☆なしも含む）を並列取得

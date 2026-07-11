@@ -494,7 +494,7 @@ export default function AixModal({
   const [topPhrases, setTopPhrases] = useState<{ phrase: string; usage_count: number }[]>([]);
   const [floorPlanTouched, setFloorPlanTouched] = useState(false);
   // 物件確認した専用（vacate_date / mgmt_move_in / mgmt_initial_cost は「管理会社に確認した」ピッカー経由の専用パターン）
-  const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | "move_in_date" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | null>(initialCheckPattern ?? null);
+  const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | "exclusive" | "move_in_date" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | null>(initialCheckPattern ?? null);
   // 管理会社確認パターンかどうか（テキスト入力のみで生成できる簡易フロー）
   const isMgmtCheck = checkPattern === "vacate_date" || checkPattern === "mgmt_move_in" || checkPattern === "mgmt_initial_cost" || checkPattern === "mgmt_guarantor";
   // 初期費用確認: サブパターン選択
@@ -527,6 +527,11 @@ export default function AixModal({
   const [checkEndedFloor, setCheckEndedFloor] = useState<number | null>(null);
   const [checkEndedUnit, setCheckEndedUnit] = useState<string>("");
   const [checkFloorPlan, setCheckFloorPlan] = useState<"same" | "different" | null>(null);
+  // 専任物件だった専用: スクショOCR + 物件名・号室
+  const [exclusiveImageFile, setExclusiveImageFile] = useState<File | null>(null);
+  const [exclusivePropName, setExclusivePropName] = useState("");
+  const [exclusiveRoomNo, setExclusiveRoomNo] = useState("");
+  const [exclusiveOcrLoading, setExclusiveOcrLoading] = useState(false);
   // 物件確認した専用: 複数画像
   const [checkImageFiles, setCheckImageFiles] = useState<File[]>([]);
   const [checkImagePreviews, setCheckImagePreviews] = useState<string[]>([]);
@@ -1358,6 +1363,11 @@ export default function AixModal({
             if (ef) estimateUrls.push(await uploadImage(ef));
           }
           if (estimateUrls.length > 0) body.estimate_image_urls = estimateUrls;
+        } else if (checkPattern === "exclusive") {
+          // 専任物件: 固定文送信（AI不要）。画像はOCR内部用のみでお客さんには送らない
+          if (!exclusivePropName.trim()) throw new Error("物件名を入力してください");
+          body.exclusive_prop_name = exclusivePropName.trim();
+          body.exclusive_room_no = exclusiveRoomNo.trim();
         } else if (checkPattern === "mgmt_guarantor") {
           // 画像がある場合はアップロード（任意）
           if (mgmtDocImage) {
@@ -2051,6 +2061,7 @@ export default function AixModal({
     : actionType === "property_check_result"
     ? (checkPattern === "move_in_date" ? !!moveInImageFile
       : checkPattern === "interior_photo" ? (!!interiorPhotoUrl.trim() || !!interiorPhotoFile)
+      : checkPattern === "exclusive" ? !!exclusivePropName.trim()
       : isMgmtCheck ? (
           checkPattern === "mgmt_initial_cost"
             ? !!mgmtCostType && (mgmtCostType === "estimate" || !!inputText.trim())
@@ -3063,18 +3074,30 @@ export default function AixModal({
                     { key: "available",       label: "物件あった",           sub: "入居可能",                       color: "emerald" },
                     { key: "alternative",     label: "別の部屋が募集してた", sub: "満室だが代替あり",               color: "blue"    },
                     { key: "unavailable",     label: "物件なかった",         sub: "満室・空きなし（画像不要）",     color: "orange"  },
+                    { key: "exclusive",       label: "専任物件だった",       sub: "専任のためご紹介不可",           color: "red"     },
                     { key: "move_in_date",    label: "入居日確認した",       sub: "退去日から入居可能日を計算送信", color: "purple"  },
                     { key: "interior_photo",  label: "室内写真を確認した",   sub: "写真またはURLをお客さんに送る",  color: "pink"    },
                   ] as const).map((p) => (
                     <button
                       key={p.key}
-                      onClick={() => { setCheckPattern(p.key); setPreview(""); setCheckAvailableApp(null); setShowCheckCalendar(false); }}
+                      onClick={() => {
+                        setCheckPattern(p.key);
+                        setPreview("");
+                        setCheckAvailableApp(null);
+                        setShowCheckCalendar(false);
+                        if (p.key !== "exclusive") {
+                          setExclusiveImageFile(null);
+                          setExclusivePropName("");
+                          setExclusiveRoomNo("");
+                        }
+                      }}
                       className={`flex items-center gap-3 rounded-2xl border-2 px-4 py-3 text-left transition-all ${
                         checkPattern === p.key
                           ? p.color === "emerald" ? "border-emerald-400 bg-emerald-50"
                           : p.color === "blue"    ? "border-blue-400 bg-blue-50"
                           : p.color === "purple"  ? "border-purple-400 bg-purple-50"
                           : p.color === "pink"    ? "border-pink-400 bg-pink-50"
+                          : p.color === "red"     ? "border-red-400 bg-red-50"
                           :                         "border-orange-400 bg-orange-50"
                           : "border-[#e9edef] bg-[#f8f9fa]"
                       }`}
@@ -3085,6 +3108,7 @@ export default function AixModal({
                           : p.color === "blue"    ? "border-blue-500 bg-blue-500"
                           : p.color === "purple"  ? "border-purple-500 bg-purple-500"
                           : p.color === "pink"    ? "border-pink-500 bg-pink-500"
+                          : p.color === "red"     ? "border-red-500 bg-red-500"
                           :                         "border-orange-500 bg-orange-500"
                           : "border-[#d1d7db]"
                       }`}>
@@ -3098,6 +3122,87 @@ export default function AixModal({
                   ))}
                 </div>
               </div>
+              {/* 専任物件だった: スクショOCR + 物件名・号室 → 固定文送信（AI不要） */}
+              {checkPattern === "exclusive" && (
+                <div className="flex flex-col gap-3">
+                  {/* 画像アップロード（OCR用・お客さんには送らない） */}
+                  <div>
+                    <p className="mb-1 text-xs font-bold text-[#54656f]">
+                      物件スクショ <span className="font-normal text-[#90a4ae]">（任意・AIが物件名を読み取ります）</span>
+                    </p>
+                    <p className="mb-2 text-[10px] text-[#8696a0]">※ 画像はお客さんには送られません</p>
+                    <button
+                      onClick={() => { const el = document.getElementById("exclusive-image-input"); if (el) (el as HTMLInputElement).click(); }}
+                      className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-red-200 py-5 text-sm font-semibold text-red-500 hover:bg-red-50"
+                    >📷 物件スクショを選択</button>
+                    <input
+                      id="exclusive-image-input"
+                      type="file"
+                      accept="image/*"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        setExclusiveImageFile(file);
+                        setPreview("");
+                        // Opus 4.8 OCRで物件名・号室を自動入力
+                        setExclusiveOcrLoading(true);
+                        try {
+                          const base64 = await new Promise<string>((resolve, reject) => {
+                            const reader = new FileReader();
+                            reader.onload = () => resolve((reader.result as string).split(",")[1]);
+                            reader.onerror = () => reject(new Error("画像の読み込みに失敗しました"));
+                            reader.readAsDataURL(file);
+                          });
+                          const res = await fetch("/api/aix/ocr-property", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ image_base64: base64, media_type: file.type }),
+                          });
+                          const data = await res.json();
+                          if (data.prop_name) setExclusivePropName(data.prop_name);
+                          if (data.room_no) setExclusiveRoomNo(data.room_no);
+                        } catch {}
+                        setExclusiveOcrLoading(false);
+                      }}
+                      className="hidden"
+                    />
+                    {exclusiveOcrLoading && (
+                      <p className="mt-1 text-[11px] text-blue-500">物件名を読み取り中...</p>
+                    )}
+                    {exclusiveImageFile && !exclusiveOcrLoading && (
+                      <p className="mt-1 text-[11px] text-green-600">✓ {exclusiveImageFile.name}</p>
+                    )}
+                  </div>
+                  {/* 物件名（必須） */}
+                  <div>
+                    <p className="mb-1 text-xs font-bold text-[#54656f]">物件名 <span className="text-red-500">*</span></p>
+                    <input
+                      type="text"
+                      value={exclusivePropName}
+                      onChange={(e) => { setExclusivePropName(e.target.value); setPreview(""); }}
+                      placeholder="例: GRAMM竹田"
+                      className="w-full rounded-xl border border-[#d1d7db] px-4 py-3 text-[14px] outline-none focus:border-red-400"
+                    />
+                  </div>
+                  {/* 号室（任意） */}
+                  <div>
+                    <p className="mb-1 text-xs font-bold text-[#54656f]">号室 <span className="font-normal text-[#90a4ae]">（任意）</span></p>
+                    <input
+                      type="text"
+                      value={exclusiveRoomNo}
+                      onChange={(e) => { setExclusiveRoomNo(e.target.value); setPreview(""); }}
+                      placeholder="例: 101号室"
+                      className="w-full rounded-xl border border-[#d1d7db] px-4 py-3 text-[14px] outline-none focus:border-red-400"
+                    />
+                  </div>
+                  {exclusivePropName.trim() && (
+                    <p className="text-[11px] text-[#8696a0]">
+                      送信文: 「お送りいただきました{exclusivePropName.trim()}{exclusiveRoomNo.trim()}は専任のお部屋となっており...」
+                    </p>
+                  )}
+                </div>
+              )}
+
               {/* 室内写真を確認した: URLまたは写真 */}
               {checkPattern === "interior_photo" && (
                 <div className="flex flex-col gap-3">
