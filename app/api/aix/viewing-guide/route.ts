@@ -8,7 +8,7 @@ const SONNET_MODEL = "claude-sonnet-4-6";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json() as {
-      action: "analyze" | "adapt";
+      action: "analyze" | "adapt" | "ocr_name";
       image?: { base64: string; mediaType: string };
       propertyName?: string;
       roomNumber?: string;
@@ -85,12 +85,65 @@ export async function POST(request: NextRequest) {
       const propLabel = [propertyName, roomNumber ? roomNumber + "号室" : ""].filter(Boolean).join(" ");
       let text = "";
       if (status === "available") {
-        text = `${propLabel ? propLabel + "ですが、" : ""}${customerName}さんお気に召されていましたらご都合よろしいお日にちにご案内させていただきます！！\n一度ご内覧如何でしょうか！！`;
+        text = `${propLabel ? propLabel + "についてですが、" : ""}${customerName}さんご都合よろしいお日にちにご案内させて頂きます😊！！`;
       } else {
-        text = `${propLabel ? propLabel + "ですが、" : ""}${vacateDate}退去予定ですので\n${customerName}さんおきにめされていましたら${vacateDate}以降でご都合よろしいお日にちにお部屋ご案内させていただきます！！`;
+        text = `${propLabel ? propLabel + "についてですが、" : ""}${vacateDate}退去予定のお部屋となっております！！\n${vacateDate}以降にご案内可能ですので${customerName}さんご都合よろしいお日にちにご案内させて頂きます😊！！`;
       }
 
       return NextResponse.json({ ok: true, status, vacateDate, text });
+    }
+
+    if (action === "ocr_name") {
+      if (!image?.base64) {
+        return NextResponse.json({ ok: false, error: "no image" }, { status: 400 });
+      }
+      const ocrPrompt = `この賃貸物件の資料画像から物件名と号室を読み取ってください。
+
+【出力フォーマット（JSONのみ）】
+{ "property_name": "物件名（例：ヴェローナI）", "room_number": "号室の数字のみ（例：206）" }
+- 物件名が読み取れない場合は空文字
+- 号室が読み取れない場合は空文字
+- 説明や補足は一切不要`;
+
+      const ocrRes = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: HAIKU_MODEL,
+          max_tokens: 256,
+          system: ocrPrompt,
+          messages: [{
+            role: "user",
+            content: [
+              {
+                type: "image" as const,
+                source: {
+                  type: "base64" as const,
+                  media_type: image.mediaType as "image/jpeg" | "image/png" | "image/webp" | "image/gif",
+                  data: image.base64,
+                },
+              },
+              { type: "text" as const, text: "物件名と号室をJSONで返してください。" },
+            ],
+          }],
+        }),
+      });
+
+      if (!ocrRes.ok) {
+        return NextResponse.json({ ok: true, propertyName: "", roomNumber: "" });
+      }
+      const ocrData = await ocrRes.json() as { content?: Array<{ text?: string }> };
+      const ocrRaw = (ocrData.content?.[0]?.text?.trim() ?? "").replace(/```json\n?|```/g, "").trim();
+      try {
+        const parsed = JSON.parse(ocrRaw) as { property_name?: string; room_number?: string };
+        return NextResponse.json({ ok: true, propertyName: parsed.property_name ?? "", roomNumber: parsed.room_number ?? "" });
+      } catch {
+        return NextResponse.json({ ok: true, propertyName: "", roomNumber: "" });
+      }
     }
 
     if (action === "adapt") {

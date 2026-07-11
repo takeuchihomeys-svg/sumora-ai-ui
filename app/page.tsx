@@ -535,6 +535,7 @@ export default function Home() {
   const [viewingGuidePropertyName, setViewingGuidePropertyName] = useState("");
   const [viewingGuideRoomNumber, setViewingGuideRoomNumber] = useState("");
   const [viewingGuideLoading, setViewingGuideLoading] = useState(false);
+  const [viewingGuideOcrLoading, setViewingGuideOcrLoading] = useState(false);
   const [viewingGuideResult, setViewingGuideResult] = useState<{ type: "available" | "vacating"; vacateDate: string; text: string } | null>(null);
   const [viewingGuideAdaptLoading, setViewingGuideAdaptLoading] = useState(false);
   const viewingGuideImageRef = useRef<HTMLInputElement | null>(null);
@@ -8853,7 +8854,7 @@ export default function Home() {
                     <p className="text-[14px] font-bold text-[#7C3AED]">内覧誘導</p>
                     <span className="rounded-full bg-[#7C3AED] px-1.5 py-0.5 text-[10px] font-bold text-white">NEW</span>
                   </div>
-                  <p className="text-[11px] text-[#9CA3AF]">物件写真からAIが内覧可否を判定してメッセージを自動生成</p>
+                  <p className="text-[11px] text-[#9CA3AF]">写真から物件名を読み取り・内覧誘導文をワンタップ生成</p>
                 </div>
               </button>
               <div className="my-0.5 border-t border-[#E5E7EB]" />
@@ -8971,8 +8972,29 @@ export default function Home() {
           const file = e.target.files?.[0];
           if (!file) return;
           setViewingGuideImage(file);
+          setViewingGuideResult(null);
           const reader = new FileReader();
-          reader.onload = (ev) => setViewingGuideImagePreview(ev.target?.result as string);
+          reader.onload = async (ev) => {
+            const dataUrl = ev.target?.result as string;
+            setViewingGuideImagePreview(dataUrl);
+            const base64 = dataUrl.split(",")[1];
+            const mediaType = dataUrl.split(";")[0].split(":")[1] || "image/jpeg";
+            setViewingGuideOcrLoading(true);
+            try {
+              const ocrRes = await fetch("/api/aix/viewing-guide", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "ocr_name", image: { base64, mediaType } }),
+              });
+              const ocrData = await ocrRes.json() as { ok: boolean; propertyName?: string; roomNumber?: string };
+              if (ocrData.ok) {
+                if (ocrData.propertyName) setViewingGuidePropertyName(ocrData.propertyName);
+                if (ocrData.roomNumber) setViewingGuideRoomNumber(ocrData.roomNumber);
+              }
+            } catch { /* OCR失敗は無視 */ } finally {
+              setViewingGuideOcrLoading(false);
+            }
+          };
           reader.readAsDataURL(file);
         };
 
@@ -9095,7 +9117,7 @@ export default function Home() {
                 </div>
                 <div>
                   <p className="text-[15px] font-bold text-[#111827]">内覧誘導</p>
-                  <p className="text-[11px] text-[#9CA3AF]">物件写真からAIが内覧可否を判定</p>
+                  <p className="text-[11px] text-[#9CA3AF]">写真から物件名を自動読み取り・内覧誘導文を生成</p>
                 </div>
               </div>
 
@@ -9124,7 +9146,9 @@ export default function Home() {
               {/* 物件名・号室 */}
               <div className="mb-3 flex gap-2">
                 <div className="flex-1">
-                  <label className="mb-1 block text-xs font-semibold text-[#54656f]">物件名</label>
+                  <label className="mb-1 block text-xs font-semibold text-[#54656f]">
+                    物件名{viewingGuideOcrLoading && <span className="ml-1 text-[10px] text-[#7C3AED] animate-pulse">読み取り中...</span>}
+                  </label>
                   <input
                     value={viewingGuidePropertyName}
                     onChange={(e) => { setViewingGuidePropertyName(e.target.value); setViewingGuideResult(null); }}
@@ -9151,26 +9175,25 @@ export default function Home() {
                   className="mb-3 w-full rounded-xl bg-[#7C3AED] py-3 text-sm font-bold text-white disabled:opacity-40"
                 >
                   {viewingGuideLoading ? (
-                    <span className="flex items-center justify-center gap-2"><span className="inline-block animate-spin">⏳</span> AIが判定中...</span>
-                  ) : "🔍 AIで判定する"}
+                    <span className="flex items-center justify-center gap-2"><span className="inline-block animate-spin">⏳</span> AI作成中...</span>
+                  ) : "✉️ 内覧文を作成"}
                 </button>
               )}
 
-              {/* 判定結果 */}
+              {/* 生成テキスト（メイン） */}
               {viewingGuideResult && (
                 <div className="mb-3">
-                  {/* ステータスバッジ */}
-                  <div className={`mb-2 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${viewingGuideResult.type === "available" ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"}`}>
-                    {viewingGuideResult.type === "available" ? "✅ 内覧可能" : `🏚️ 退去予定${viewingGuideResult.vacateDate ? "（" + viewingGuideResult.vacateDate + "）" : ""}`}
-                  </div>
-                  {/* 生成テキスト */}
                   <textarea
                     value={viewingGuideResult.text}
                     onChange={(e) => setViewingGuideResult(prev => prev ? { ...prev, text: e.target.value } : prev)}
                     rows={4}
-                    className="w-full resize-none rounded-xl border border-[#d1d7db] bg-[#f9fafb] px-3 py-2.5 text-sm leading-relaxed outline-none focus:border-[#7C3AED]"
+                    className="w-full resize-none rounded-xl border border-[#7C3AED]/40 bg-[#FAF5FF] px-3 py-2.5 text-sm leading-relaxed outline-none focus:border-[#7C3AED]"
                   />
-                  {/* アクションボタン群 */}
+                  <div className="mt-1 flex justify-end">
+                    <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${viewingGuideResult.type === "available" ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"}`}>
+                      {viewingGuideResult.type === "available" ? "✅ 内覧可能" : `🏚️ 退去予定${viewingGuideResult.vacateDate ? "（" + viewingGuideResult.vacateDate + "）" : ""}`}
+                    </span>
+                  </div>
                   <div className="mt-2 flex gap-2">
                     <button
                       onClick={handleAdapt}
@@ -9182,7 +9205,7 @@ export default function Home() {
                     <button
                       onClick={() => { setViewingGuideResult(null); }}
                       className="rounded-xl border border-[#d1d7db] px-4 py-2.5 text-xs font-bold text-[#54656f]"
-                    >再判定</button>
+                    >再作成</button>
                   </div>
                   <button
                     onClick={handleSend}
