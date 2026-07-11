@@ -735,23 +735,25 @@ export async function POST(req: NextRequest) {
   const likelySplit  = !!aiDraft && sentReply.trim().length < aiDraft.trim().length * 0.4 && sim >= 0.5;
   const wasAiModified = !!aiDraft && aiDraft.trim().length > 0 && sim >= 0.05 && sim < 0.9 && !likelySplit;
 
-  // RLHF: 仮説検証フィードバック（conversationId + aiDraft がある場合のみ・fire-and-forget）
-  // wasAiUsed（修正なし送信）→ correct、wasAiModified（修正して送信）→ wrong
+  // RLHF: 仮説検証フィードバック（conversationId + aiDraft がある場合のみ）
+  // sim>=0.65（軽微修正含む）→ correct、5〜65%修正 → wrong
+  // after()でVercelがレスポンス後にキャンセルするのを防ぐ
   if (conversationId && aiDraft) {
-    const feedbackResult = wasAiUsed ? "correct" : wasAiModified ? "wrong" : null;
+    const feedbackResult = (wasAiUsed || sim >= 0.65) ? "correct" : wasAiModified ? "wrong" : null;
     if (feedbackResult) {
-      // generate_reply ナレッジへのフィードバック
-      supabase.rpc("confirm_knowledge_feedback", {
-        p_conversation_id: conversationId,
-        p_result: feedbackResult,
-        p_source: "generate_reply",
-      }).then(() => {}, () => {});
-      // RLHF-001: aix_action ナレッジへのフィードバック（これがないと AIX フロー経由の仮説が永久に pending）
-      supabase.rpc("confirm_knowledge_feedback", {
-        p_conversation_id: conversationId,
-        p_result: feedbackResult,
-        p_source: "aix_action",
-      }).then(() => {}, () => {});
+      after(async () => {
+        await supabase.rpc("confirm_knowledge_feedback", {
+          p_conversation_id: conversationId,
+          p_result: feedbackResult,
+          p_source: "generate_reply",
+        });
+        // RLHF-001: aix_action ナレッジへのフィードバック
+        await supabase.rpc("confirm_knowledge_feedback", {
+          p_conversation_id: conversationId,
+          p_result: feedbackResult,
+          p_source: "aix_action",
+        });
+      });
     }
   }
 
