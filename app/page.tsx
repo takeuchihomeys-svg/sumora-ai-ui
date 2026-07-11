@@ -1879,10 +1879,10 @@ export default function Home() {
         (t.includes("お送り") || t.includes("ご連絡") || t.includes("ご案内") || t.includes("次第"));
     });
     if (!hasNewListingPromise) return false;
-    // お客様の最新メッセージに内覧・申込等の明示的意図があれば P3.4 を非表示（P3.5 に引き継ぐ）
+    // お客様の最新メッセージに内覧・申込・日程確定等の明示的意図があれば P3.4 を非表示（P3.5/P3.6 に引き継ぐ）
     const lastMsg = reversed[0];
     if (lastMsg?.sender === "customer" &&
-        /内覧|内見|見に行|みに行|みにいき|見学|申込|申し込|費用|見積|決めます/.test(lastMsg.text || "")) return false;
+        /内覧|内見|見に行|みに行|みにいき|見学|申込|申し込|費用|見積|決めます|明日|あした|今日|本日|[0-9０-９]+時|でお願い|でいかが/.test(lastMsg.text || "")) return false;
     return true;
   }, [selectedConversation, activeAixFlow]);
 
@@ -5966,6 +5966,26 @@ export default function Home() {
                     style={{ background: "linear-gradient(135deg, #0288d1, #0277bd)" }}>AIX 内覧へ！</button>
                   <button onClick={() => setDismissedViewingInviteIds((prev) => new Set([...prev, id]))}
                     className="shrink-0 text-sky-400 text-[11px] font-bold">✕</button>
+                </div>
+              );
+
+              // P3.6: お客様が内覧日程を確定した（「明日」「今日」+時刻形式）→ AIX 待ち合わせ！
+              if (
+                /明日|あした|今日|本日/.test(lastCustomerText) &&
+                /[0-9０-９]+時|午前|午後|AM|PM/.test(lastCustomerText) &&
+                /お願い|でお願い|で大丈夫|伺います|行きます|行けます|確定/.test(lastCustomerText) &&
+                !dismissedMeetingPlaceIds.has(id)
+              ) return (
+                <div className="mx-1 mb-1 rounded-2xl border-2 border-teal-500 bg-teal-50 px-3 py-2 flex items-center gap-2">
+                  <span className="text-[12px] font-bold text-teal-700 flex-1">
+                    <svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>
+                    お客様が日程確定 → AIX 待ち合わせで場所を確認！
+                  </span>
+                  <button onClick={() => { setDismissedMeetingPlaceIds(prev => new Set([...prev, id])); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixDirect("meeting_place"); }}
+                    className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                    style={{ background: "linear-gradient(135deg, #00838F, #006064)" }}>AIX 待ち合わせ</button>
+                  <button onClick={() => setDismissedMeetingPlaceIds(prev => new Set([...prev, id]))}
+                    className="shrink-0 text-teal-500 text-[11px] font-bold">✕</button>
                 </div>
               );
 

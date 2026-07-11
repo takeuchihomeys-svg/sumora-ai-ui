@@ -310,7 +310,7 @@ export async function POST(req: NextRequest) {
   const lastCustomerMsg = ((customer_message ?? "").trim())
     || ((messages.find((m) => m.sender === "customer" && (m.text as string)?.trim())?.text as string) ?? "");
   // 顧客が内覧・申込・費用等を明示的に意図している場合はチェーンルールをスキップ
-  const EXPLICIT_CUSTOMER_INTENT_RE = /内覧|内見|見に行|みに行|みにいき|見学|申込|申し込|費用|初期費用|見積|決めます/;
+  const EXPLICIT_CUSTOMER_INTENT_RE = /内覧|内見|見に行|みに行|みにいき|見学|申込|申し込|費用|初期費用|見積|決めます|でお願いでき|でお願いします|明日.*時|あした.*時|今日.*時|本日.*時/;
   const hasExplicitCustomerIntent = conv.last_sender === "customer" && EXPLICIT_CUSTOMER_INTENT_RE.test(lastCustomerMsg);
 
   // ---- AIXチェーンルール: 直前のAIXアクションから次を提案 ----
@@ -437,9 +437,9 @@ export async function POST(req: NextRequest) {
     const hit = keywordHit("viewing_invite", "内覧希望を検出");
     if (hit) return hit;
   }
-  // 日程確定 → meeting_place（「◯曜◯時」「◯月◯日」「AM/PM/午前/午後」+ 確定系の言い回し）
-  if (/[月火水木金土日]曜.*[0-9０-９時]|[0-9０-９]+月[0-9０-９]+日|AM|PM|午前|午後/.test(lastCustomerMsg) &&
-      /いかがでしょう|で大丈夫|でお願い|伺います|行きます|確定|来られ|来れ/.test(lastCustomerMsg)) {
+  // 日程確定 → meeting_place（「◯曜◯時」「◯月◯日」「AM/PM/午前/午後」「明日/今日+時刻」+ 確定系の言い回し）
+  if ((/[月火水木金土日]曜.*[0-9０-９時]|[0-9０-９]+月[0-9０-９]+日|AM|PM|午前|午後|明日|あした|今日|本日/.test(lastCustomerMsg)) &&
+      /いかがでしょう|で大丈夫|でお願い|伺います|行きます|行けます|確定|来られ|来れ/.test(lastCustomerMsg)) {
     const hit = keywordHit("meeting_place", "日程確定の意向を検出");
     if (hit) return hit;
   }
