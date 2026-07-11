@@ -1856,6 +1856,38 @@ export default function TemplateModal({
                   )}
                 </div>
               )}
+              {/* サブカテゴリ件数サマリー（物件確認した/ピックアップした/内覧カテゴリのみ） */}
+              {!loading && !isSearching && (isAvailCheckCategory || isPropertySendCategory || isViewingCategory) && displayFiltered.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  {isAvailCheckCategory && AVAIL_CHECK_TYPES.map(({ key, color }) => {
+                    const count = displayFiltered.filter(t => inferAvailCheckType(t.label) === key).length;
+                    if (count === 0) return null;
+                    return (
+                      <span key={key} className="text-[10px] px-2 py-0.5 rounded-full font-bold" style={{ backgroundColor: color + "20", color }}>
+                        {key}({count})
+                      </span>
+                    );
+                  })}
+                  {isPropertySendCategory && PROPERTY_SEND_SUB_TYPES.map(({ key, color }) => {
+                    const count = displayFiltered.filter(t => getPropertySendSubTag(t.label) === key).length;
+                    if (count === 0) return null;
+                    return (
+                      <span key={key} className="text-[10px] px-2 py-0.5 rounded-full font-bold" style={{ backgroundColor: color + "20", color }}>
+                        {key}({count})
+                      </span>
+                    );
+                  })}
+                  {isViewingCategory && VIEWING_SUB_TYPES.map(({ key, color }) => {
+                    const count = displayFiltered.filter(t => getViewingSubTag(t.label) === key).length;
+                    if (count === 0) return null;
+                    return (
+                      <span key={key} className="text-[10px] px-2 py-0.5 rounded-full font-bold" style={{ backgroundColor: color + "20", color }}>
+                        {key}({count})
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
               {loading ? (
                 <div className="py-8 text-center text-[13px] text-[#aaa]">読み込み中...</div>
               ) : templateLoadError && templates.length === 0 ? (
