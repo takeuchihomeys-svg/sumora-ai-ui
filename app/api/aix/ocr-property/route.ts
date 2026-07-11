@@ -5,7 +5,7 @@ export const maxDuration = 30;
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""), timeout: 25_000, maxRetries: 1 });
 
-// 専任物件ピッカー用: 物件スクショから物件名・号室をOCR（Opus 4.8）
+// 専任物件ピッカー用: 物件スクショから物件名・号室をOCR（Sonnet 4.6）
 export async function POST(req: NextRequest) {
   try {
     const { image_base64, media_type } = (await req.json()) as {
@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
     }
 
     const response = await client.messages.create({
-      model: "claude-opus-4-8",
+      model: "claude-sonnet-4-6",
       max_tokens: 300,
       messages: [
         {
