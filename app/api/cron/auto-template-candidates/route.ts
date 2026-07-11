@@ -61,7 +61,11 @@ const SENT_AT_AFTER_MS = 5 * 60 * 1000;
 const MIN_FOLLOWUP_LEN = 20;
 const MAX_CONVERT_PER_RUN = 30; // Haiku変換に回す最大件数（並列呼び出し・コスト制御）
 const MAX_INSERT_PER_RUN = 30; // 1回の実行で追加する候補の上限
-const MAX_GENERATE_PER_RUN = 2; // 後続例ゼロのアクション向けAI生成の上限
+// Haiku架空生成は廃止 - 実データがある場合のみ候補化する（P3: 2026-07-11）
+// const MAX_GENERATE_PER_RUN = 2; // 後続例ゼロのアクション向けAI生成の上限
+// P3: 同一アクション・類似後続パターンが2回以上観測された場合のみ候補化（単発ノイズ排除）
+const MIN_SIMILAR_COUNT = 2;
+const SIMILARITY_THRESHOLD = 0.6;
 
 // Haiku 変換用システムプロンプト（判定ではなく「汎用テンプレへの変換」を依頼する）
 const CONVERT_SYSTEM_PROMPT = `あなたは不動産賃貸仲介LINEテンプレートの編集者です。
@@ -123,6 +127,28 @@ function matchAixType(logs: UsageLog[], conversationId: string, aixAt: number): 
 
 function dedupeKey(category: string, text: string): string {
   return `${category}::${text.trim().slice(0, 50)}`;
+}
+
+// P3: 文字bigramのDice係数による簡易テキスト類似度（0〜1）
+// analyze-template-modifications/route.ts の textSimilarity と同一ロジック
+function textSimilarity(a: string, b: string): number {
+  const na = a.replace(/\s+/g, "");
+  const nb = b.replace(/\s+/g, "");
+  if (na === nb) return 1;
+  if (na.length < 2 || nb.length < 2) return 0;
+  const bigrams = (s: string) => {
+    const m = new Map<string, number>();
+    for (let i = 0; i < s.length - 1; i++) {
+      const g = s.slice(i, i + 2);
+      m.set(g, (m.get(g) ?? 0) + 1);
+    }
+    return m;
+  };
+  const ma = bigrams(na);
+  const mb = bigrams(nb);
+  let overlap = 0;
+  for (const [g, ca] of ma) overlap += Math.min(ca, mb.get(g) ?? 0);
+  return (2 * overlap) / (na.length - 1 + nb.length - 1);
 }
 
 function stripCodeFence(s: string): string {
@@ -226,6 +252,12 @@ async function run() {
     const preKey = dedupeKey(ACTION_TO_CATEGORY[p.aixType], p.followText);
     if (seenPre.has(preKey)) continue;
     seenPre.add(preKey);
+    // P3閾値: 同一アクション・類似パターン（bigram Dice >= 0.6）が2回以上ある場合のみ候補化
+    //（自分自身を含むカウントのため、他に最低1件の類似後続が必要 = 単発の後続文は候補化しない）
+    const similarCount = pairs.filter(
+      (q) => q.aixType === p.aixType && textSimilarity(q.followText, p.followText) >= SIMILARITY_THRESHOLD
+    ).length;
+    if (similarCount < MIN_SIMILAR_COUNT) continue; // 1回だけの場合はスキップ
     fresh.push(p);
     // C04: 変換上限を保存上限に揃える（MAX_CONVERT_PER_RUN=30 に対し MAX_INSERT_PER_RUN=10 で
     //      20件分の Haiku 呼び出しが無駄になるため）
@@ -316,9 +348,11 @@ ${existing.length > 0 ? existing.map((t) => `- ${t}`).join("\n") : "（なし）
     }
   }
 
-  // 6. 後続例が1件も見つからなかったアクション向けに、Haikuで「続きの文」を生成
-  //    （窓内でそのアクションのAIX送信が3回以上あり、かつ後続候補も既存候補も無い場合のみ）
-  let generated = 0;
+  // 6. 後続例が1件も見つからなかったアクション向けのHaiku「続きの文」生成
+  // Haiku架空生成は廃止 - 実データがある場合のみ候補化する（P3: 2026-07-11）
+  // データの裏付けがないゼロベース生成は却下率が高くノイズになるため無効化（削除ではなくコメントアウトで保持）
+  const generated = 0;
+  /*
   try {
     const typeCounts = new Map<string, { count: number; samples: string[] }>();
     for (const aix of aixMsgs as Msg[]) {
@@ -390,6 +424,7 @@ ${entry.samples.map((s) => `- ${s.replace(/\n/g, " ")}`).join("\n")}
   } catch (e) {
     console.error("[auto-template-candidates] generate error:", e);
   }
+  */
 
   console.log(`[auto-template-candidates] done: pairs=${pairs.length} sent=${fresh.length} converted=${converted} skipped=${skipped} saved=${saved} generated=${generated}`);
   await finishCronLog(runLogId, true, { pairs: pairs.length, sent: fresh.length, converted, skipped, saved, generated });

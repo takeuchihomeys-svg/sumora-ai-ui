@@ -745,6 +745,13 @@ ALTER TABLE ai_template_candidates DISABLE ROW LEVEL SECURITY;
 ALTER TABLE ai_template_candidates ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manual';
 ALTER TABLE ai_template_candidates ADD COLUMN IF NOT EXISTS original_text TEXT NULL;
 
+-- P1: テンプレ候補の根拠・証拠カウント・却下理由（候補品質改善）
+-- reason: なぜこの候補が出たか / evidence_count: 同じ編集パターンの観測回数（dedup時にカウントアップ）
+-- dismissed_reason: スタッフが却下した理由（P5理由チップ → corpus2skill週次学習の材料）
+ALTER TABLE ai_template_candidates ADD COLUMN IF NOT EXISTS reason TEXT;
+ALTER TABLE ai_template_candidates ADD COLUMN IF NOT EXISTS evidence_count INTEGER DEFAULT 1;
+ALTER TABLE ai_template_candidates ADD COLUMN IF NOT EXISTS dismissed_reason TEXT;
+
 -- LX-4: 予測アクション追跡カラム
 ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS suggested_action TEXT DEFAULT NULL;
 
@@ -1129,6 +1136,25 @@ ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS personality_profile TEXT
 -- { "hearing": 12, "proposing": 5 } 形式で conversation_status 別の送信実績を保持し、
 -- TemplateModal が現在のステータスに合わせて上位テンプレを昇格表示する
 ALTER TABLE templates ADD COLUMN IF NOT EXISTS status_pick_stats JSONB DEFAULT '{}';
+
+-- P4: AIX機能改善提案テーブル（corpus2skill 週次Opusが「新AIX/新ピッカー/新サブモード」提案を保存）
+-- TemplateModal の「💡 AIX改善案」タブで採用/却下を管理する
+CREATE TABLE IF NOT EXISTS aix_feature_suggestions (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  suggestion_type TEXT NOT NULL, -- 'new_aix' | 'new_picker' | 'new_sub_mode'
+  action_type TEXT,
+  suggested_title TEXT NOT NULL,
+  description TEXT,
+  reason TEXT,
+  evidence_count INTEGER DEFAULT 1,
+  example_diffs JSONB,
+  status TEXT DEFAULT 'pending', -- 'pending' | 'adopted' | 'dismissed'
+  dismissed_reason TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_aix_feature_suggestions_pending
+  ON aix_feature_suggestions(created_at DESC) WHERE status = 'pending';
+ALTER TABLE aix_feature_suggestions DISABLE ROW LEVEL SECURITY;
 
 `.trim();
 

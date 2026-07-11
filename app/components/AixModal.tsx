@@ -1684,6 +1684,8 @@ export default function AixModal({
         templateText: sentText,
         conversationId,
         suggestedTitle,
+        // P1: 候補の根拠（同一パターン再送時はサーバ側で evidence_count がカウントアップされる）
+        reason: wasEdited ? "AIX生成後に編集された文" : "送信テンプレート",
         ...(wasEdited && originalDraft
           ? { source: "aix_edit", originalText: originalDraft }
           : {}),

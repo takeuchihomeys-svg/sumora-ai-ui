@@ -156,7 +156,32 @@ interface AiTemplateCandidate {
   is_dismissed: boolean;
   source?: string;
   original_text?: string | null;
+  // P1: 候補の根拠・同一編集パターンの観測回数
+  reason?: string | null;
+  evidence_count?: number | null;
+  dismissed_reason?: string | null;
 }
+
+// P4: AIX機能改善提案（corpus2skill 週次Opusが生成 → aix_feature_suggestions テーブル）
+interface AixFeatureSuggestion {
+  id: string;
+  suggestion_type: string;
+  action_type: string | null;
+  suggested_title: string;
+  description: string | null;
+  reason: string | null;
+  evidence_count: number | null;
+  status: string;
+  created_at: string;
+}
+
+// P5: 却下理由チップ（dismissed_reason に保存され corpus2skill 週次学習の材料になる）
+const DISMISS_REASONS = [
+  "既存テンプレで足りる",
+  "文が不自然",
+  "場面が違う",
+  "情報が古い",
+];
 
 interface TemplateModalProps {
   onClose: () => void;
@@ -357,11 +382,17 @@ export default function TemplateModal({
   const [soloEntry, setSoloEntry] = useState(false);
   // AIXテンプレート候補タブ
   const [isCandidateTabActive, setIsCandidateTabActive] = useState(false);
-  // AIX候補サブタブ: "all" = 全候補（従来のAIXテンプレ候補タブ）, "aix_edit" = スタッフ編集候補のみ
-  const [candidateSubTab, setCandidateSubTab] = useState<"all" | "aix_edit">("all");
+  // AIX候補サブタブ: "all" = 全候補（従来のAIXテンプレ候補タブ）, "aix_edit" = スタッフ編集候補のみ,
+  // "suggestions" = P4 AIX改善案（aix_feature_suggestions）
+  const [candidateSubTab, setCandidateSubTab] = useState<"all" | "aix_edit" | "suggestions">("all");
   const [candidates, setCandidates] = useState<AiTemplateCandidate[]>([]);
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [adoptingId, setAdoptingId] = useState<string | null>(null);
+  // P4: AIX改善案（aix_feature_suggestions の pending 一覧）
+  const [suggestions, setSuggestions] = useState<AixFeatureSuggestion[]>([]);
+  const [suggestionLoading, setSuggestionLoading] = useState(false);
+  // P5: 却下理由チップを表示中の候補/提案ID
+  const [dismissingId, setDismissingId] = useState<string | null>(null);
   // AIおすすめテンプレ（post_aix時のみ）: recommend-templates APIの結果（最大3件）
   const [aiRecommendations, setAiRecommendations] = useState<Array<{ id: string; score: number; reason: string }>>([]);
   const [recommendLoading, setRecommendLoading] = useState(false);
@@ -566,6 +597,43 @@ export default function TemplateModal({
   useEffect(() => {
     if (isCandidateTabActive) loadCandidates();
   }, [isCandidateTabActive, loadCandidates]);
+
+  // P4: AIX改善案（pending）の読み込み
+  const loadSuggestions = useCallback(async () => {
+    setSuggestionLoading(true);
+    try {
+      const res = await fetch("/api/aix-feature-suggestions");
+      const json = await res.json() as { ok: boolean; suggestions: AixFeatureSuggestion[] };
+      if (json.ok) setSuggestions(json.suggestions);
+    } catch { /* noop */ }
+    finally { setSuggestionLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    if (isCandidateTabActive && candidateSubTab === "suggestions") loadSuggestions();
+  }, [isCandidateTabActive, candidateSubTab, loadSuggestions]);
+
+  // P5: 候補の却下（理由チップ付き）
+  const dismissCandidate = useCallback(async (id: string, reason?: string) => {
+    await fetch("/api/ai-template-candidates", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, action: "dismiss", ...(reason ? { dismissedReason: reason } : {}) }),
+    }).catch(() => { /* noop */ });
+    setCandidates(prev => prev.map(c => c.id === id ? { ...c, is_dismissed: true } : c));
+    setDismissingId(null);
+  }, []);
+
+  // P4/P5: AIX改善案のステータス更新（adopted / dismissed + 理由）
+  const updateSuggestionStatus = useCallback(async (id: string, status: "adopted" | "dismissed", reason?: string) => {
+    await fetch("/api/aix-feature-suggestions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, status, ...(reason ? { dismissedReason: reason } : {}) }),
+    }).catch(() => { /* noop */ });
+    setSuggestions(prev => prev.filter(s => s.id !== id));
+    setDismissingId(null);
+  }, []);
 
   const commitCategoryRename = async () => {
     const oldCat = editingCategory;
@@ -1000,6 +1068,22 @@ export default function TemplateModal({
                   ? `(${candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source === "aix_edit").length})`
                   : ""}
               </button>
+              {/* P4: AIX改善案タブ（週次Opusの新AIX/ピッカー提案） */}
+              <button
+                onClick={() => {
+                  setIsCandidateTabActive(true);
+                  setCandidateSubTab("suggestions");
+                  setCategory(""); // 一般・AIXタブを非アクティブに
+                }}
+                className={
+                  "px-3 py-1.5 rounded-full text-sm font-medium transition-all shrink-0 " +
+                  (isCandidateTabActive && candidateSubTab === "suggestions"
+                    ? "bg-gradient-to-r from-violet-500 to-purple-500 text-white shadow"
+                    : "bg-gray-100 text-gray-600 hover:bg-gray-200")
+                }
+              >
+                💡 AIX改善案 {suggestions.length > 0 ? `(${suggestions.length})` : ""}
+              </button>
             </div>
             {/* 一般サブタブ行（一般カテゴリ選択中のみ表示） */}
             {!isCandidateTabActive && !isAixCategoryActive && normalCategories.length > 0 && (
@@ -1212,7 +1296,17 @@ export default function TemplateModal({
                         key={candidate.id}
                         className="bg-white rounded-xl border border-gray-200 p-3 mb-2 shadow-sm"
                       >
-                        <p className="text-xs text-gray-500 mb-1 font-medium">{candidate.suggested_title}</p>
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <p className="text-xs text-gray-500 font-medium">{candidate.suggested_title}</p>
+                          {(candidate.evidence_count ?? 1) >= 2 && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium shrink-0">
+                              📊 {candidate.evidence_count}回同じ編集パターン
+                            </span>
+                          )}
+                        </div>
+                        {candidate.reason && (
+                          <p className="text-[11px] text-gray-400 mb-1">{candidate.reason}</p>
+                        )}
                         <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed mb-3">
                           {candidate.template_text}
                         </p>
@@ -1245,21 +1339,35 @@ export default function TemplateModal({
                             {adoptingId === candidate.id ? "採用中..." : "✅ 採用"}
                           </button>
                           <button
-                            onClick={async () => {
-                              await fetch("/api/ai-template-candidates", {
-                                method: "PATCH",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ id: candidate.id, action: "dismiss" }),
-                              });
-                              setCandidates(prev =>
-                                prev.map(c => c.id === candidate.id ? { ...c, is_dismissed: true } : c)
-                              );
-                            }}
+                            onClick={() => setDismissingId(dismissingId === candidate.id ? null : candidate.id)}
                             className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-500 text-sm hover:bg-gray-200 transition"
                           >
                             却下
                           </button>
                         </div>
+                        {/* P5: 却下理由チップ */}
+                        {dismissingId === candidate.id && (
+                          <div className="mt-2 rounded-lg bg-gray-50 p-2">
+                            <p className="text-[11px] text-gray-400 mb-1.5">却下理由を選ぶとAIが学習します</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {DISMISS_REASONS.map(r => (
+                                <button
+                                  key={r}
+                                  onClick={() => dismissCandidate(candidate.id, r)}
+                                  className="px-2 py-1 rounded-full bg-white border border-gray-200 text-gray-600 text-[11px] hover:bg-red-50 hover:border-red-200 hover:text-red-500 transition"
+                                >
+                                  {r}
+                                </button>
+                              ))}
+                              <button
+                                onClick={() => dismissCandidate(candidate.id)}
+                                className="px-2 py-1 rounded-full bg-white border border-gray-100 text-gray-400 text-[11px] hover:bg-gray-100 transition"
+                              >
+                                理由なしで却下
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -1297,7 +1405,17 @@ export default function TemplateModal({
                         key={candidate.id}
                         className="bg-white rounded-xl border border-orange-200 p-3 mb-2 shadow-sm"
                       >
-                        <p className="text-xs text-gray-500 mb-2 font-medium">{candidate.suggested_title}</p>
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <p className="text-xs text-gray-500 font-medium">{candidate.suggested_title}</p>
+                          {(candidate.evidence_count ?? 1) >= 2 && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium shrink-0">
+                              📊 {candidate.evidence_count}回同じ編集パターン
+                            </span>
+                          )}
+                        </div>
+                        {candidate.reason && (
+                          <p className="text-[11px] text-gray-400 mb-2">{candidate.reason}</p>
+                        )}
                         {/* 差分ビュー: AI原文 → スタッフ編集後 */}
                         {candidate.original_text && (
                           <div className="mb-2 rounded-lg overflow-hidden border border-gray-100 text-xs">
@@ -1344,26 +1462,124 @@ export default function TemplateModal({
                             {adoptingId === candidate.id ? "採用中..." : "✅ テンプレに採用"}
                           </button>
                           <button
-                            onClick={async () => {
-                              await fetch("/api/ai-template-candidates", {
-                                method: "PATCH",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ id: candidate.id, action: "dismiss" }),
-                              });
-                              setCandidates(prev =>
-                                prev.map(c => c.id === candidate.id ? { ...c, is_dismissed: true } : c)
-                              );
-                            }}
+                            onClick={() => setDismissingId(dismissingId === candidate.id ? null : candidate.id)}
                             className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-500 text-sm hover:bg-gray-200 transition"
                           >
                             却下
                           </button>
                         </div>
+                        {/* P5: 却下理由チップ */}
+                        {dismissingId === candidate.id && (
+                          <div className="mt-2 rounded-lg bg-gray-50 p-2">
+                            <p className="text-[11px] text-gray-400 mb-1.5">却下理由を選ぶとAIが学習します</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {DISMISS_REASONS.map(r => (
+                                <button
+                                  key={r}
+                                  onClick={() => dismissCandidate(candidate.id, r)}
+                                  className="px-2 py-1 rounded-full bg-white border border-gray-200 text-gray-600 text-[11px] hover:bg-red-50 hover:border-red-200 hover:text-red-500 transition"
+                                >
+                                  {r}
+                                </button>
+                              ))}
+                              <button
+                                onClick={() => dismissCandidate(candidate.id)}
+                                className="px-2 py-1 rounded-full bg-white border border-gray-100 text-gray-400 text-[11px] hover:bg-gray-100 transition"
+                              >
+                                理由なしで却下
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
                 ));
               })()}
+            </div>
+          )}
+
+          {/* P4: AIX改善案一覧（💡 aix_feature_suggestions の pending） */}
+          {!showAddForm && isCandidateTabActive && candidateSubTab === "suggestions" && (
+            <div className="flex-1 overflow-y-auto p-3 space-y-3">
+              {suggestionLoading && (
+                <p className="text-center text-gray-400 py-8">読み込み中...</p>
+              )}
+              {!suggestionLoading && suggestions.length === 0 && (
+                <div className="text-center text-gray-400 py-12">
+                  <p className="text-2xl mb-2">💡</p>
+                  <p className="text-sm font-medium text-gray-500">週次AI分析で見つかったAIX/ピッカーの改善提案が</p>
+                  <p className="text-sm text-gray-400">ここに表示されます</p>
+                </div>
+              )}
+              {!suggestionLoading && suggestions.map(suggestion => (
+                <div
+                  key={suggestion.id}
+                  className="bg-white rounded-xl border border-violet-200 p-3 shadow-sm"
+                >
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-500 font-bold shrink-0">
+                      {suggestion.suggestion_type === "new_aix" ? "新AIX"
+                        : suggestion.suggestion_type === "new_sub_mode" ? "新サブモード"
+                        : "新ピッカー"}
+                    </span>
+                    <p className="text-sm text-gray-800 font-semibold">{suggestion.suggested_title}</p>
+                    {(suggestion.evidence_count ?? 1) >= 2 && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium shrink-0">
+                        📊 {suggestion.evidence_count}回同じパターン
+                      </span>
+                    )}
+                  </div>
+                  {suggestion.reason && (
+                    <p className="text-[11px] text-gray-400 mb-1">{suggestion.reason}</p>
+                  )}
+                  {suggestion.description && (
+                    <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed mb-3">
+                      {suggestion.description}
+                    </p>
+                  )}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => {
+                        if (!window.confirm("この改善案を採用しますか？\n（開発タスクとして記録されます）")) return;
+                        updateSuggestionStatus(suggestion.id, "adopted");
+                      }}
+                      className="flex-1 py-1.5 rounded-lg bg-violet-500 text-white text-sm font-semibold hover:bg-violet-600 transition"
+                    >
+                      ✅ 採用
+                    </button>
+                    <button
+                      onClick={() => setDismissingId(dismissingId === suggestion.id ? null : suggestion.id)}
+                      className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-500 text-sm hover:bg-gray-200 transition"
+                    >
+                      却下
+                    </button>
+                  </div>
+                  {/* P5: 却下理由チップ */}
+                  {dismissingId === suggestion.id && (
+                    <div className="mt-2 rounded-lg bg-gray-50 p-2">
+                      <p className="text-[11px] text-gray-400 mb-1.5">却下理由を選ぶとAIが学習します</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {DISMISS_REASONS.map(r => (
+                          <button
+                            key={r}
+                            onClick={() => updateSuggestionStatus(suggestion.id, "dismissed", r)}
+                            className="px-2 py-1 rounded-full bg-white border border-gray-200 text-gray-600 text-[11px] hover:bg-red-50 hover:border-red-200 hover:text-red-500 transition"
+                          >
+                            {r}
+                          </button>
+                        ))}
+                        <button
+                          onClick={() => updateSuggestionStatus(suggestion.id, "dismissed")}
+                          className="px-2 py-1 rounded-full bg-white border border-gray-100 text-gray-400 text-[11px] hover:bg-gray-100 transition"
+                        >
+                          理由なしで却下
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           )}
 

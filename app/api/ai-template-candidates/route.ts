@@ -55,9 +55,10 @@ export async function POST(req: NextRequest) {
     suggestedTitle?: string;
     source?: string;
     originalText?: string;
+    reason?: string;
   };
 
-  const { actionType, templateText, conversationId, suggestedTitle, source, originalText } = body;
+  const { actionType, templateText, conversationId, suggestedTitle, source, originalText, reason } = body;
   if (!actionType || !templateText?.trim()) {
     return NextResponse.json({ ok: false, error: "actionType and templateText required" }, { status: 400 });
   }
@@ -67,20 +68,31 @@ export async function POST(req: NextRequest) {
   const title = suggestedTitle?.trim() || defaultTitle;
   const text = templateText.trim();
 
-  // 重複チェック: 同じカテゴリ・同じ本文（先頭50文字）が既に候補にあればスキップ
+  // 重複チェック: 同じカテゴリ・同じ本文（先頭50文字）が既に候補にあるか
   // LIKE特殊文字（% _ \）をエスケープして誤マッチを防ぐ
   const textKey = text.slice(0, 50);
   const escapedKey = textKey.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
   const { data: existing } = await supabase
     .from("ai_template_candidates")
-    .select("id")
+    .select("id, evidence_count")
     .eq("category", category)
     .eq("is_dismissed", false)
     .ilike("template_text", `${escapedKey}%`)
     .limit(1);
 
   if (existing && existing.length > 0) {
-    return NextResponse.json({ ok: true, skipped: true, reason: "duplicate" });
+    // P1: 重複はスキップではなく「同じ編集パターンの証拠」としてカウントアップ
+    const dup = existing[0] as { id: string; evidence_count: number | null };
+    const newCount = (dup.evidence_count ?? 1) + 1;
+    const { error: updErr } = await supabase
+      .from("ai_template_candidates")
+      .update({
+        evidence_count: newCount,
+        ...(reason?.trim() ? { reason: reason.trim() } : {}),
+      })
+      .eq("id", dup.id);
+    if (updErr) return NextResponse.json({ ok: false, error: updErr.message }, { status: 500 });
+    return NextResponse.json({ ok: true, merged: true, evidenceCount: newCount });
   }
 
   const { error } = await supabase.from("ai_template_candidates").insert({
@@ -91,6 +103,8 @@ export async function POST(req: NextRequest) {
     conversation_id: conversationId ?? null,
     source: source ?? "manual",
     original_text: originalText ?? null,
+    reason: reason?.trim() || null,
+    evidence_count: 1,
   });
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
@@ -104,15 +118,20 @@ export async function PATCH(req: NextRequest) {
     action: "adopt" | "dismiss";
     customTitle?: string;
     customCategory?: string;
+    dismissedReason?: string;
   };
 
-  const { id, action, customTitle, customCategory } = body;
+  const { id, action, customTitle, customCategory, dismissedReason } = body;
   if (!id || !action) return NextResponse.json({ ok: false, error: "id and action required" }, { status: 400 });
 
   if (action === "dismiss") {
+    // P5: 却下理由チップ（既存テンプレで足りる/文が不自然/場面が違う/情報が古い）を保存し週次学習の材料にする
     const { error } = await supabase
       .from("ai_template_candidates")
-      .update({ is_dismissed: true })
+      .update({
+        is_dismissed: true,
+        ...(dismissedReason?.trim() ? { dismissed_reason: dismissedReason.trim() } : {}),
+      })
       .eq("id", id);
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true, dismissed: true });
