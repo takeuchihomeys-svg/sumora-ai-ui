@@ -15,21 +15,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
-  // 1. line_reply_examples から最新100件の sent_text を取得
+  // 1. ai_reply_examples から最新100件の sent_reply を取得
   const { data: examples, error } = await supabase
-    .from("line_reply_examples")
-    .select("sent_text")
-    .not("sent_text", "is", null)
+    .from("ai_reply_examples")
+    .select("sent_reply")
+    .not("sent_reply", "is", null)
     .order("created_at", { ascending: false })
     .limit(100);
 
   if (error || !examples?.length) {
-    return NextResponse.json({ ok: false, error: "no data" }, { status: 500 });
+    return NextResponse.json({ ok: false, error: "no data", detail: error?.message }, { status: 500 });
   }
 
   // nullフィルタ+改行を含む文のみに絞る（改行なし文は参考にならない）
   const texts = examples
-    .map(e => (e.sent_text as string).trim())
+    .map(e => (e.sent_reply as string).trim())
     .filter(t => t && t.includes("\n"));
 
   if (texts.length < 10) {
