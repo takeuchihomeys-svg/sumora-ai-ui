@@ -80,6 +80,8 @@ export async function POST(req: NextRequest) {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ to: line_user_id, messages }),
+    // LINE APIハング時に関数がタイムアウト上限まで滞留するのを防ぐ
+    signal: AbortSignal.timeout(10_000),
   });
 
   if (!res.ok) {
@@ -205,6 +207,7 @@ export async function POST(req: NextRequest) {
                   to: groupId,
                   messages: [{ type: "text", text: `🏠【物件出し開始】\n${customerName}さんへの物件ピックアップを開始しました` }],
                 }),
+                signal: AbortSignal.timeout(10_000),
               }).catch(() => {});
             }
           }

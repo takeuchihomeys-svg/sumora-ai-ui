@@ -53,6 +53,8 @@ export async function POST(req: NextRequest) {
         { type: "image", originalContentUrl: imageUrl, previewImageUrl: imageUrl },
       ],
     }),
+    // LINE APIハング時に関数がタイムアウト上限まで滞留するのを防ぐ
+    signal: AbortSignal.timeout(10_000),
   });
 
   if (!res.ok) {

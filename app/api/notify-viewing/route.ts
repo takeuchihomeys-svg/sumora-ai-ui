@@ -195,6 +195,8 @@ export async function POST(req: NextRequest) {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ to: groupId, messages: [{ type: "text", text }] }),
+      // LINE APIハング時に関数がタイムアウト上限まで滞留するのを防ぐ
+      signal: AbortSignal.timeout(10_000),
     });
 
     if (!res.ok) {

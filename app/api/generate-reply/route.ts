@@ -1105,6 +1105,9 @@ export async function POST(req: NextRequest) {
   // conversationId が渡された場合のみ、成功時に ai_draft 保存 + draft_pending_at クリア、
   // 失敗時にも draft_pending_at をクリアする（毎分Cronが永遠に再試行する永続pendingバグの防止）
   let conversationId = "";
+  // includeStopReason=true（generate-pending-drafts の品質ゲート用）の場合のみ、
+  // 本文の後に <<<STOP_REASON:xxx>>> トレーラーを付加する（UIからの通常呼び出しには影響しない）
+  let includeStopReason = false;
   try {
     const body = await req.json() as {
       message: string;
@@ -1121,10 +1124,12 @@ export async function POST(req: NextRequest) {
       screenshotMediaType?: string;
       activeTaskTypes?: string[];
       conversationId?: string;
+      includeStopReason?: boolean;
     };
     message = body.message;
     state = body.state;
     conversationId = body.conversationId || "";
+    includeStopReason = body.includeStopReason === true;
     customerName = body.customerName || "";
     recentMessages = body.recentMessages || [];
     // LINE表示名より会話でスタッフが実際に使った呼び名を優先
@@ -1397,6 +1402,8 @@ export async function POST(req: NextRequest) {
           ));
           // 生成完了テキスト（conversationId 指定時の ai_draft 保存用）
           let finalDraftText = "";
+          // 生成のstop_reason（includeStopReason=true時にトレーラーで呼び出し元へ返す）
+          let genStopReason: unknown;
           try {
             const genInputLength = messages.reduce(
               (n, m) => n + (typeof m.content === "string" ? m.content.length : 0), 0
@@ -1404,7 +1411,6 @@ export async function POST(req: NextRequest) {
             if (shouldPrependGreeting) {
               // 真の初回: 全バッファして冒頭挨拶を強制置換（AIが誤生成しても確実に正しい名前を出す）
               let fullText = "";
-              let genStopReason: unknown;
               for await (const chunk of await genStream) {
                 const text = typeof chunk.content === "string" ? chunk.content : "";
                 fullText += text;
@@ -1440,7 +1446,6 @@ export async function POST(req: NextRequest) {
             } else {
               // 非初回: 全テキストをバッファしてから validateAndClean を適用してストリーム出力
               let fullText = "";
-              let genStopReason: unknown;
               for await (const chunk of await genStream) {
                 const text = typeof chunk.content === "string" ? chunk.content : "";
                 fullText += text;
@@ -1451,6 +1456,11 @@ export async function POST(req: NextRequest) {
               if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
               if (cleaned) controller.enqueue(encoder.encode(cleaned));
               finalDraftText = cleaned;
+            }
+            // includeStopReason=true（generate-pending-drafts）の場合のみ stop_reason トレーラーを付加
+            // → 呼び出し元が max_tokens 尻切れを検知して保存をスキップできるようにする
+            if (includeStopReason) {
+              controller.enqueue(encoder.encode(`\n<<<STOP_REASON:${String(genStopReason ?? "unknown")}>>>`));
             }
             // ✅ 成功時: ai_draft 保存 + draft_pending_at クリア（次のCronでスキップさせる）+ draft_attempted_at クリア（orphanedクエリで拾われないように）
             // ※ draft_updated_at カラムは conversations に存在しないため未使用（追加時はここで更新すること）

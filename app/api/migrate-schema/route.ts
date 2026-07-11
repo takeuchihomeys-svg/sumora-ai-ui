@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS conversations (
 CREATE INDEX IF NOT EXISTS idx_conversations_line_user_id ON conversations(line_user_id);
 CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations(updated_at DESC);
 
+-- RLS を無効化: このアプリはサービスロールキーのみで接続するサーバーサイド専用のため、
+-- RLS による行単位制御は不要。anon キーによるクライアント直接アクセスは想定しない。
+-- セキュリティは API ルートレベルの認証（CRON_SECRET / INTERNAL_API_SECRET）で担保する。
 ALTER TABLE conversations DISABLE ROW LEVEL SECURITY;
 
 -- accountカラム（sumora / ieyasu / giga）

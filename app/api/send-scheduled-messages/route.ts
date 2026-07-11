@@ -31,6 +31,8 @@ async function pushToLine(lineUserId: string, messages: unknown[], token: string
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({ to: lineUserId, messages }),
+    // LINE APIハング時にmaxDuration(300秒)まで滞留するのを防ぐ
+    signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) throw new Error(await res.text());
 }

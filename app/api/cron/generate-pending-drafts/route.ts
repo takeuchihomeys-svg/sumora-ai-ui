@@ -1,5 +1,6 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { detectPlaceholders } from "@/app/lib/validate-reply";
 
 function getDb() {
   return createClient(
@@ -215,6 +216,8 @@ async function run() {
           recentMessages: recentMsgs.map(m => ({ sender: m.sender, text: m.text || "" })),
           customerConditions,
           customerSummary: pcData?.ai_summary || "",
+          // 本文末尾に <<<STOP_REASON:xxx>>> トレーラーを付けてもらう（尻切れドラフトの品質ゲート用）
+          includeStopReason: true,
         }),
         signal: AbortSignal.timeout(PER_CONV_TIMEOUT_MS),
       });
@@ -241,8 +244,30 @@ async function run() {
         }
       }
 
-      const finalDraft = fullText.trim();
+      // stop_reason トレーラー（<<<STOP_REASON:xxx>>>）を抽出して本文から除去
+      let finalDraft = fullText.trim();
+      let stopReason = "";
+      const trailerMatch = finalDraft.match(/\n?<<<STOP_REASON:([\w-]*)>>>\s*$/);
+      if (trailerMatch) {
+        stopReason = trailerMatch[1];
+        finalDraft = finalDraft.slice(0, trailerMatch.index).trim();
+      }
+
+      // 品質ゲート①: max_tokens 尻切れドラフトは保存しない
+      // draft_attempted_at は処理開始時に記録済みのため、クリアせずそのまま残す
+      // （＝10分間はorphanedクエリの再試行対象外。新しい顧客メッセージが来れば即再生成される）
+      if (stopReason === "max_tokens") {
+        console.warn("[generate-pending-drafts] draft truncated (stop_reason=max_tokens), not saved:", convId);
+        skipped++;
+        continue;
+      }
+
       if (finalDraft) {
+        // 品質ゲート②: プレースホルダ（[日付] [物件名] 等）残存は警告ログのみ（保存はする）
+        const leftover = detectPlaceholders(finalDraft);
+        if (leftover.length > 0) {
+          console.warn("[generate-pending-drafts] placeholder remains in draft:", convId, leftover.join(" "));
+        }
         // 成功時: 下書き保存 ＋ attempted_at クリア（次の新着メッセージで即座に生成対象に戻す）
         await db.from("conversations").update({ ai_draft: finalDraft, draft_attempted_at: null }).eq("id", convId);
         processed++;
