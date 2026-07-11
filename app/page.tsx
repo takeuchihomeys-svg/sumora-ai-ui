@@ -547,7 +547,7 @@ export default function Home() {
   const [aixInitViewingReschedule, setAixInitViewingReschedule] = useState(false);
   const [aixInitInputText, setAixInitInputText] = useState("");
   // 管理会社に確認したピッカー: 選択した確認種別をAIXモーダルへ引き継ぐ
-  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | null>(null);
+  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "nearby_parking" | null>(null);
   const [aixInitSendMode, setAixInitSendMode] = useState<"normal" | "new_arrival" | "widen" | "alternative" | null>(null);
   const [showGreetingViewingPicker, setShowGreetingViewingPicker] = useState(false);
   const [suggestedGreetingMode, setSuggestedGreetingMode] = useState<"before" | "after" | null>(null);
@@ -607,7 +607,7 @@ export default function Home() {
   // 会話ごとの直近AIX送信テキスト（sendMessageTextが設定・post_aixテンプレのAIおすすめコンテキストに使用）
   const lastAixSentTextRef = useRef<Map<string, string>>(new Map());
   // property_check_result のサブフロー追跡（管理会社=mgmt / 代表=daihyo）→ postAixTemplateMap のカテゴリ上書きに使用
-  const propertyCheckSubTypeRef = useRef<"mgmt" | "daihyo" | "owner" | null>(null);
+  const propertyCheckSubTypeRef = useRef<"mgmt" | "daihyo" | "owner" | "nearby_parking" | null>(null);
   // P4: 直近のLINE送信のmessage id・送信時刻（aix_usage_logsに記録して送信メッセージを厳密特定）
   // sendMessageTextが設定し、onAfterSendのlog-aix-usageで消費するワンショットref
   const lastLineSendRef = useRef<{ messageId: string | null; sentAt: string } | null>(null);
@@ -4016,7 +4016,7 @@ export default function Home() {
 
   // 次アクション提案バナー経由でAIXを開く（paramsからaixInit系stateを初期化してから開く）
   const openAixWithParams = (type: AixActionType, params?: NextActionParams) => {
-    if (params?.check_pattern === "available" || params?.check_pattern === "vacate_date" || params?.check_pattern === "mgmt_move_in" || params?.check_pattern === "mgmt_initial_cost" || params?.check_pattern === "mgmt_guarantor" || params?.check_pattern === "mgmt_parking" || params?.check_pattern === "mgmt_pet") {
+    if (params?.check_pattern === "available" || params?.check_pattern === "vacate_date" || params?.check_pattern === "mgmt_move_in" || params?.check_pattern === "mgmt_initial_cost" || params?.check_pattern === "mgmt_guarantor" || params?.check_pattern === "mgmt_parking" || params?.check_pattern === "mgmt_pet" || params?.check_pattern === "nearby_parking") {
       setAixInitCheckPattern(params.check_pattern);
     }
     if (params?.send_mode === "normal" || params?.send_mode === "new_arrival" || params?.send_mode === "widen") {
@@ -7816,6 +7816,7 @@ export default function Home() {
                   if (propertyCheckSubTypeRef.current === "mgmt") _b5Category = "管理会社に確認した【AIX】";
                   else if (propertyCheckSubTypeRef.current === "daihyo") _b5Category = "代表に確認した【AIX】";
                   else if (propertyCheckSubTypeRef.current === "owner") _b5Category = "オーナーに確認した【AIX】";
+                  else if (propertyCheckSubTypeRef.current === "nearby_parking") _b5Category = "近隣の月極駐車場を確認した【AIX】";
                 }
                 setPostAixTemplateMap((prev) => ({ ...prev, [_b5ConvId]: { category: _b5Category, color: _b5Meta.color, actionType: aixModalType, sentMessage: lastAixSentTextRef.current.get(_b5ConvId) ?? "" } }));
                 setDismissedPostAixTemplateIds((prev) => { const n = new Set(prev); n.delete(_b5ConvId); return n; });
@@ -10167,6 +10168,13 @@ export default function Home() {
                   color: "#1565C0",
                   icon: <><path d="M36 20L50 30V52H22V30L36 20Z" stroke="#1565C0" strokeWidth="1.8" strokeLinejoin="round"/><rect x="30" y="38" width="12" height="14" rx="1.5" fill="#E3F2FD" stroke="#1565C0" strokeWidth="1.5"/><circle cx="50" cy="22" r="9" fill="#1565C0"/><path d="M46 22l3 3 5-5" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></>
                 },
+                {
+                  key: "nearby_parking" as const,
+                  label: "近隣の月極駐車場を確認した",
+                  desc: "駐車場名・距離・料金・空き状況をAIが報告文を生成",
+                  color: "#2E7D32",
+                  icon: <><path d="M24 38l3.5-8.5A4 4 0 0131.2 27h9.6a4 4 0 013.7 2.5L48 38" stroke="#2E7D32" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/><rect x="21" y="38" width="30" height="9" rx="2.5" stroke="#2E7D32" strokeWidth="1.8"/><circle cx="28" cy="47" r="3.5" fill="#E8F5E9" stroke="#2E7D32" strokeWidth="1.8"/><circle cx="44" cy="47" r="3.5" fill="#E8F5E9" stroke="#2E7D32" strokeWidth="1.8"/></>
+                },
               ]).map(({ key, label, desc, color, icon }) => {
                 const isSuggested = suggestedKoshoMode === key;
                 return (
@@ -10184,6 +10192,7 @@ export default function Home() {
                     if (key === "mgmt") setShowPropertyCheckPicker(true);
                     else if (key === "daihyo") setShowDaihyoCheckPicker(true);
                     else if (key === "owner") setShowOwnerCheckPicker(true);
+                    else if (key === "nearby_parking") { setAixInitCheckPattern("nearby_parking"); openAixDirect("property_check_result"); }
                   }}
                   className="flex items-center gap-3.5 rounded-2xl border px-4 py-3.5 text-left transition active:bg-[#ECEFF1] active:border-[#546E7A]"
                   style={isSuggested ? { border: `2px solid ${color}`, background: "#F5F5F5", boxShadow: `0 0 0 3px ${color}22` } : { border: "1px solid #E5E7EB", background: "#FAFAFA" }}
@@ -10702,7 +10711,7 @@ export default function Home() {
                   { color: "#00838F", label: "待ち合わせ場所", actionType: "meeting_place", sub: "物件資料から物件名・住所を読み取り→日時指定→待ち合わせ文生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("meeting_place"); openAixWithImagePicker("meeting_place"); } },
                   { color: "#E53935", label: "申込（誘導・決定）", actionType: "application_push", sub: "物件名入力orシンプル送信→AI生成→確認後送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("application_push"); setShowApplicationPicker(true); } },
                   { color: "#00796B", label: "挨拶（内覧前・内覧後）", actionType: "greeting_viewing", sub: "内覧前後の挨拶をAI生成。内覧前は日時登録でアナウンス自動化", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("greeting_viewing"); setGreetingViewingMode(null); setGreetingViewingDate(""); setGreetingViewingTime(""); setShowGreetingViewingPicker(true); } },
-                  { color: "#546E7A", label: "確認した（条件・交渉）", actionType: "acknowledge_result", sub: "管理会社・代表・オーナーへの確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setShowKoshoParentPicker(true); } },
+                  { color: "#546E7A", label: "確認した（条件・交渉）", actionType: "acknowledge_result", sub: "管理会社・代表・オーナー・近隣月極の確認結果をAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setShowKoshoParentPicker(true); } },
                   { color: "#607D8B", label: "確認します", actionType: "acknowledge_check", sub: "ワンタップで確認する旨をAI生成して送信", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("acknowledge_check"); openAixDirect("acknowledge_check"); } },
                   { color: "#8E24AA", label: "追客する", actionType: "followup_revive", sub: "反応が途絶えたお客様への追客LINEをAI生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("followup_revive"); setShowFollowupPicker(true); } },
                 ].map((item) => {
