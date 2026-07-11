@@ -2503,30 +2503,22 @@ ${availableTemplate}`;
         }
         // 号室の先頭ゼロ除去はメインパス末尾の finalize() で一括処理（⑦で共通化）
 
-      // 「物件なかった」は固定テンプレ専用フロー
+      // 「物件なかった」は完全固定テンプレ（AI不要・崩れ防止）
       } else if (pattern === "unavailable") {
-        const unavailableGreeting = greetingPhrase; // 挨拶時間ルール共通化（#19）
-        const unavailableTemplate = `${name}${unavailableGreeting}
-お送り頂きました[物件表現]募集終了しているお部屋となります。`;
-
-        const unavailableSystem = `あなたはテキスト置換エンジンです。
-【絶対ルール】説明文・メモ・思考プロセスは一切出力しないこと。置換後のテンプレートのみ出力すること。
-以下のテンプレートを出力してください。[物件表現]を下記ルールで置き換えること。
-・送られてきた物件が1件の場合: 「物件の募集状況確認させて頂きましたところ」
-・2件の場合: 「2件の募集状況確認させて頂きましたところ2件とも」
-・3件以上の場合: 「N件の募集状況確認させて頂きましたところN件とも」（Nは実際の件数）
-・件数が不明な場合: 「物件の募集状況確認させて頂きましたところ」（件数についての説明は出力しない）
-★1件のときは絶対に「1件とも」と書かない。
-それ以外の文字・絵文字・改行は一切変更・追加・削除しないこと。
-
-テンプレート:
-${unavailableTemplate}`;
-
-        message_text = await callClaude(
-          unavailableSystem,
-          `以下の会話から送られてきた物件の件数を特定して[物件表現]を置き換えてください。${recentHistory}`,
-          currentAction
-        );
+        const unavailPropName = typeof property_name === "string" ? property_name.trim() : "";
+        if (unavailPropName) {
+          // 物件名あり: 「〇〇につきまして」
+          message_text = `お待たせ致しました！！\n${name}お送り頂きました${unavailPropName}につきまして、募集状況確認しましたところ現在募集終了しておりました。\n引き続きご希望条件に合ったお部屋を探させて頂きます😊！！`;
+        } else {
+          // 物件名なし: 会話履歴から件数を簡易判定
+          const countM = recentHistory.match(/([2-9０-９])\s*件/);
+          const cnt = countM ? parseInt(countM[1].replace(/[０-９]/g, (c) => String(c.charCodeAt(0) - 0xFF10))) : 1;
+          if (cnt >= 2) {
+            message_text = `お待たせ致しました！！\n${name}お送り頂きました${cnt}件の物件につきまして、募集状況確認しましたところいずれも募集終了しておりました。\n引き続きご希望条件に合ったお部屋を探させて頂きます😊！！`;
+          } else {
+            message_text = `お待たせ致しました！！\n${name}お送り頂きました物件につきまして、募集状況確認しましたところ現在募集終了しておりました。\n引き続きご希望条件に合ったお部屋を探させて頂きます😊！！`;
+          }
+        }
 
       // 「同じ間取り」「違う間取り」は固定テンプレートを完全に守らせる専用フロー
       } else if (pattern === "alternative" && (floor_plan_match === "same" || floor_plan_match === "different")) {
