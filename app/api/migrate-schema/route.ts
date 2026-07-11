@@ -1172,7 +1172,7 @@ CREATE TABLE IF NOT EXISTS ai_feedback_items (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   question TEXT NOT NULL,
   speculation TEXT,
-  category TEXT,  -- 'new_flow' | 'missing_keyword' | 'weak_scene' | 'new_aix_needed' | 'phrase_contamination'（analyze-diffs回帰センチネル起票） | 'general'
+  category TEXT,  -- 'knowledge_gap'（corpus2skill盲点発見: AIが誤った事実を述べた） | 'prompt_ambiguity'（使用条件の誤解） | 'new_flow' | 'missing_keyword' | 'weak_scene' | 'new_aix_needed' | 'phrase_contamination'（analyze-diffs回帰センチネル起票） | 'general'
   evidence TEXT,
   confidence TEXT DEFAULT 'medium',  -- 'high' | 'medium' | 'low'
   user_answer TEXT,

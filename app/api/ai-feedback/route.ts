@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 import Anthropic from "@anthropic-ai/sdk";
 
 // AI盲点フィードバック（ai_feedback_items）
@@ -85,7 +86,7 @@ export async function POST(req: NextRequest) {
 
   const { data: item, error: fetchError } = await supabase
     .from("ai_feedback_items")
-    .select("id, question, status")
+    .select("id, question, status, category")
     .eq("id", id)
     .single();
   if (fetchError || !item) {
@@ -158,6 +159,26 @@ export async function POST(req: NextRequest) {
         updated_at: new Date().toISOString(),
       }, { onConflict: "rule_key" });
       if (ruleError) console.error("[ai-feedback] ai_prompt_rules upsert error:", ruleError.message);
+    }
+  }
+
+  // knowledge_gap（AIが誤った事実を述べた → 竹内さんが正しい事実を回答）は
+  // ai_prompt_rules（150字ルール）だけでは弱いため、ai_reply_knowledge の principle としても保存する。
+  // question を embedding 化（＝顧客の質問と同じ意味空間）することで generate-reply の pgvector 検索に確実にヒットさせる。
+  if (item.category === "knowledge_gap") {
+    try {
+      const embInput = buildKnowledgeEmbeddingInput({ trigger_example: item.question as string });
+      const embedding = embInput ? await generateEmbedding(embInput) : null;
+      const result = await upsertKnowledge(supabase, {
+        title: `[盲点回答] ${(item.question as string).slice(0, 40)}`,
+        content: `【竹内さん確認済みの正しい知識】\n質問: ${item.question}\n正しい説明: ${answer}${promptRuleTexts.length > 0 ? `\n\n要点:\n${promptRuleTexts.map((r) => `- ${r}`).join("\n")}` : ""}`,
+        category: "principle",
+        importance: 9,
+        ...(embedding ? { embedding } : {}),
+      });
+      if (result !== "skipped") appliedRules.push(`[knowledge_gap→principle知識化: ${result}]`);
+    } catch (e) {
+      console.error("[ai-feedback] knowledge_gap の principle 保存失敗:", e);
     }
   }
 

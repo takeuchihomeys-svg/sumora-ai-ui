@@ -309,7 +309,10 @@ ${dismissedSection || "（なし）"}
 // 材料①: was_accurate=false の gap_analysis（予測が外れた理由 / 直近30日）
 // 材料②: suggestion_bypassed / prediction_mismatch（スタッフがAI提案を無視・外れ）
 // 材料③: ai_fallback依存度が高いaction（ルール未整備領域）
+// 材料④: was_ai_modified=true のAI案vs送信文の対比（AIが誤った事実を述べた根本原因の診断材料）
 // 出力: 竹内さんへの質問 → ai_feedback_items（TemplateModal「❓ AI質問」タブで回答）
+//   - 根本原因が「知識不足（誤った事実）」→ category=knowledge_gap で正しい事実を質問
+//   - 根本原因が「プロンプト・知識の曖昧さ」→ category=prompt_ambiguity で使用条件を質問
 // ============================================================
 
 type BlindSpotItem = {
@@ -348,7 +351,19 @@ async function discoverBlindSpots(): Promise<{ questionsSaved: number }> {
     .order("occurrence_count", { ascending: false })
     .limit(10);
 
-  const hasMaterial = (gapLogs?.length ?? 0) > 0 || (bypassed?.length ?? 0) > 0 || (fallbackRules?.length ?? 0) > 0;
+  // ④ was_ai_modified=true のAI案vs送信文の対比（直近30日）
+  // AIが誤った事実（例: 日割家賃の計算方向）を述べてスタッフが修正した例を根本原因診断の材料にする
+  const { data: modifiedExamples } = await supabase
+    .from("ai_reply_examples")
+    .select("customer_message, ai_draft, sent_reply, conversation_state")
+    .eq("was_ai_modified", true)
+    .not("ai_draft", "is", null)
+    .not("sent_reply", "is", null)
+    .gte("created_at", thirtyDaysAgo)
+    .order("created_at", { ascending: false })
+    .limit(12);
+
+  const hasMaterial = (gapLogs?.length ?? 0) > 0 || (bypassed?.length ?? 0) > 0 || (fallbackRules?.length ?? 0) > 0 || (modifiedExamples?.length ?? 0) > 0;
   if (!hasMaterial) {
     console.log("[corpus2skill] 盲点発見: 材料なしのためスキップ");
     return { questionsSaved: 0 };
@@ -365,6 +380,13 @@ async function discoverBlindSpots(): Promise<{ questionsSaved: number }> {
   const fallbackSection = (fallbackRules ?? []).map((f) =>
     `- ${f.keyword}（発生${f.occurrence_count ?? 0}回・採択率${typeof f.confidence === "number" ? Math.round(f.confidence * 100) : "?"}%）`
   ).join("\n");
+
+  const modifiedSection = (modifiedExamples ?? []).map((m, i) =>
+    `【${i + 1}】state=${m.conversation_state ?? "不明"}
+顧客: ${((m.customer_message as string) ?? "").replace(/\n/g, " ").slice(0, 120)}
+AI案: ${((m.ai_draft as string) ?? "").replace(/\n/g, " ").slice(0, 200)}
+スタッフが実際に送った文: ${((m.sent_reply as string) ?? "").replace(/\n/g, " ").slice(0, 200)}`
+  ).join("\n\n");
 
   const res = await client.messages.create({
     model: "claude-opus-4-8",
@@ -384,22 +406,35 @@ ${bypassedSection || "（なし）"}
 【Sonnetフォールバック依存度が高い場面（ルール未整備領域）】
 ${fallbackSection || "（なし）"}
 
+【スタッフがAIの返信案を修正して送った場面（AI案 vs 実際の送信文）】
+${modifiedSection || "（なし）"}
+
+■ 根本原因の診断（最重要タスク）
+「AI案 vs 実際の送信文」の対比では、単なる言い回しの違いは無視し、以下の2種類の根本原因を診断すること:
+1. 知識不足（knowledge_gap）: AIが明らかに間違った事実・数字・因果関係を述べ、スタッフが事実レベルで訂正している場合
+   （例: 日割家賃・初期費用の計算方法、審査の仕組み、契約手続きの順序など賃貸実務の事実）
+   → その事実の「正しい説明」を竹内さんに質問する。回答がそのままルール化されるので、事実を確認する形の質問にする
+2. プロンプト・知識の曖昧さ（prompt_ambiguity）: 知識自体は正しいがAIが使う場面・条件を誤解している場合
+   → どういう条件・顧客状況でその表現/対応を使うべきかを質問する
+
 以下の形式でJSON配列を出力してください（最大5件・説明文・コードフェンス不要）:
 [{
   "question": "竹内さんへの質問（具体的に・1〜2文）",
   "speculation": "AIの憶測・仮説（「〜ではないかと思われますが...」形式）",
-  "category": "new_flow|missing_keyword|weak_scene|new_aix_needed|general",
-  "evidence": "根拠となったデータの要約（件数・パターン）",
+  "category": "knowledge_gap|prompt_ambiguity|new_flow|missing_keyword|weak_scene|new_aix_needed|general",
+  "evidence": "根拠となったデータの要約（件数・パターン・AIが述べた誤り）",
   "confidence": "high|medium|low"
 }]
 
 良い質問の例:
-- 「お客様が『審査が不安』と言った場合、どのような対応をするのが正しいですか？AIは現在『ヒアリング継続』と予測していますが、週3回外れています」
-- 「物件URLと『スモ割』が同時に来た時のフローはどうなりますか？AIは憶測で対応しています」
+- 「日割家賃は入居日が早い方が高くなりますか？安くなりますか？AIが『入居日が早いほど日割家賃は少ない』と逆に説明してしまい、スタッフが訂正しました。正しい計算方法を教えてください」（knowledge_gap）
+- 「お客様が『審査が不安』と言った場合、どのような対応をするのが正しいですか？AIは現在『ヒアリング継続』と予測していますが、週3回外れています」（weak_scene）
+- 「物件URLと『スモ割』が同時に来た時のフローはどうなりますか？AIは憶測で対応しています」（new_flow）
 
 悪い質問の例（避ける）:
 - 「AIをどう改善しますか？」（抽象的すぎる）
 - 「営業方針は？」（業務と無関係）
+- 「この言い回しでいいですか？」（事実でも条件でもない単なる文体差。文体差は質問化しない）
 
 根拠の薄い質問は出さないこと。質問がない場合は [] を返す。`,
     }],
@@ -418,7 +453,7 @@ ${fallbackSection || "（なし）"}
   if (!Array.isArray(parsed)) return { questionsSaved: 0 };
 
   let questionsSaved = 0;
-  const VALID_CATEGORIES = ["new_flow", "missing_keyword", "weak_scene", "new_aix_needed", "general"];
+  const VALID_CATEGORIES = ["knowledge_gap", "prompt_ambiguity", "new_flow", "missing_keyword", "weak_scene", "new_aix_needed", "general"];
   const VALID_CONFIDENCE = ["high", "medium", "low"];
 
   for (const item of parsed.slice(0, 5)) {
