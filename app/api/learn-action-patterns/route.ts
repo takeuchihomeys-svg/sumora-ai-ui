@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
     previous_action_type?: string;
     predicted_action?: string;
     source?: string;
+    suggestion_source?: string;
     conversation_id?: string;
   };
 
@@ -84,6 +85,8 @@ export async function POST(req: NextRequest) {
       predicted_action: body.predicted_action ?? null,
       conversation_id: body.conversation_id ?? null,
       source,
+      // 中5: 提案経路（suggest-next-action の source）。どのルール経由の提案が採択されたかの集計に使う
+      suggestion_source: body.suggestion_source ?? null,
     });
     return NextResponse.json({ ok: true });
   }

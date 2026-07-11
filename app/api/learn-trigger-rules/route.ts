@@ -191,6 +191,7 @@ export async function POST(req?: Request) {
   // 高5: SUGGESTION_ACCEPT_RATE（update-action-confidence cron が管理する採択率行）と
   //      AFTER:%（チェーンルール）は n-gram ルールではないため cleanup 対象から保護する
   // 中1: PREDICTION_ACCURACY（予測精度行）も同様に保護（低精度の行こそ isLowAccuracy の判定材料になるため）
+  // 中5: SOURCE_ACCEPT_RATE:%（提案経路別採択率行）も保護（低採択率の行こそ isLowSourceRate の判定材料になるため）
   {
     const { data: lowRules } = await supabase
       .from("trigger_action_rules")
@@ -199,7 +200,8 @@ export async function POST(req?: Request) {
       .lt("occurrence_count", 5)
       .not("keyword", "eq", "SUGGESTION_ACCEPT_RATE")
       .not("keyword", "eq", "PREDICTION_ACCURACY")
-      .not("keyword", "like", "AFTER:%");
+      .not("keyword", "like", "AFTER:%")
+      .not("keyword", "like", "SOURCE_ACCEPT_RATE:%");
     if (lowRules?.length) {
       const { error } = await supabase
         .from("trigger_action_rules")
@@ -208,7 +210,8 @@ export async function POST(req?: Request) {
         .lt("occurrence_count", 5)
         .not("keyword", "eq", "SUGGESTION_ACCEPT_RATE")
         .not("keyword", "eq", "PREDICTION_ACCURACY")
-        .not("keyword", "like", "AFTER:%");
+        .not("keyword", "like", "AFTER:%")
+        .not("keyword", "like", "SOURCE_ACCEPT_RATE:%");
       if (!error) cleaned += lowRules.length;
     }
   }

@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
   // メッセージ・顧客（property_customer_id で引く）・採択率（毎日 update-action-confidence cron が更新）
   // ・成約貢献率（calc-aix-attribution cron が毎週計算・直近1ヶ月分）を並列取得
   // ※ 改善6: 成約貢献率は Sonnet フォールバックだけでなくチェーンルール・キーワードルールにも効かせるため、ここで一度だけ取得する
-  const [{ data: messages }, { data: customer }, { data: acceptanceRows }, { data: attributionRows }, { data: accuracyRows }, { data: submodeRows }, { data: chainStatsRow }, { data: chainTransRow }, { data: sceneInsightsRow }] = await Promise.all([
+  const [{ data: messages }, { data: customer }, { data: acceptanceRows }, { data: attributionRows }, { data: accuracyRows }, { data: submodeRows }, { data: chainStatsRow }, { data: chainTransRow }, { data: sceneInsightsRow }, { data: sourceRateRows }] = await Promise.all([
     supabase.from("messages")
       .select("sender, text, image_url, created_at")
       .eq("conversation_id", conversation_id)
@@ -107,6 +107,12 @@ export async function POST(req: NextRequest) {
       .select("content")
       .eq("key", "template_scene_insights")
       .maybeSingle(),
+    // 中5: 提案経路別採択率（SOURCE_ACCEPT_RATE:{action_type}:{source} / update-action-confidence cron が毎日更新）
+    // keyword_hardcode 経由の採択率が低い（30%未満・10件以上）アクションのキーワード判定をスキップする
+    supabase.from("trigger_action_rules")
+      .select("keyword, confidence, total_occurrence")
+      .like("keyword", "SOURCE_ACCEPT_RATE:%")
+      .limit(200),
   ]);
 
   // CHAIN-1: 推奨テンプレマップをパース（status特定 → 全status共通 の順でフォールバック）
@@ -152,6 +158,20 @@ export async function POST(req: NextRequest) {
     if (!actionType) return false;
     const rate = acceptanceRateMap[actionType];
     return typeof rate === "number" && rate < 0.3;
+  }
+
+  // 中5: 提案経路別採択率マップ（"{action_type}:{source}" → { rate, samples }）
+  const sourceRateMap: Record<string, { rate: number; samples: number }> = {};
+  for (const r of (sourceRateRows ?? []) as { keyword: string; confidence: number | null; total_occurrence: number | null }[]) {
+    if (typeof r.confidence !== "number") continue;
+    sourceRateMap[r.keyword.replace("SOURCE_ACCEPT_RATE:", "")] = { rate: r.confidence, samples: r.total_occurrence ?? 0 };
+  }
+  // 中5: この経路（source）経由の提案の採択率が 30% 未満（サンプル10件以上）なら、
+  // その判定をスキップして次の判定にフォールスルーさせる（アクション全体の抑制ではなく経路単位）
+  function isLowSourceRate(actionType: string | null | undefined, source: string): boolean {
+    if (!actionType) return false;
+    const entry = sourceRateMap[`${actionType}:${source}`];
+    return !!entry && entry.samples >= 10 && entry.rate < 0.3;
   }
 
   // aix_action_attribution: action_type別に直近1ヶ月の win_rate を平均
@@ -230,6 +250,8 @@ export async function POST(req: NextRequest) {
     scene_hint: actionType
       ? (sceneInsights.find((s) => s.aix_type === actionType)?.description ?? null)
       : null,
+    // 中1: このアクションの予測一致率（next_action_logs.was_accurate 集計 / データ不足時は null）
+    prediction_accuracy: actionType ? (accuracyMap[actionType]?.accuracy ?? null) : null,
   });
 
   // クライアントが last_aix_action を持っていない場合はDB（aix_usage_logs）から補完
@@ -358,8 +380,10 @@ export async function POST(req: NextRequest) {
     || ((messages.find((m) => m.sender === "customer" && (m.text as string)?.trim())?.text as string) ?? "");
 
   // 入居日を指定して見積書再送を要求 → 見積書送る（「待ち合わせ」と誤判定しないよう最優先でチェック）
+  // 中5: keyword_hardcode 経由の採択率が低い場合はこのトリガーをスキップして次の判定へ
   if (lastCustomerMsg.includes("入居") &&
-      (lastCustomerMsg.includes("出して") || lastCustomerMsg.includes("で出し") || lastCustomerMsg.includes("見積"))) {
+      (lastCustomerMsg.includes("出して") || lastCustomerMsg.includes("で出し") || lastCustomerMsg.includes("見積")) &&
+      !isLowSourceRate("estimate_sheet", "keyword_hardcode")) {
     // 状態は確定しているので、抑制時はフォールスルーせず提案なしで確定（P8誤提案防止）
     if (shouldSuppressAction("estimate_sheet")) return NextResponse.json({ action: null, reason: "" });
     return NextResponse.json({ action: "estimate_sheet", reason: "入居日指定・見積書再送", source: "keyword_hardcode", params: buildParams("estimate_sheet"), acceptanceRate: acceptanceRateMap["estimate_sheet"] ?? null, sub_mode_stats: subModeStats, ...templateRec("estimate_sheet") });
@@ -376,7 +400,9 @@ export async function POST(req: NextRequest) {
   const recentCustomerMsgs = messages.filter((m) => m.sender === "customer").slice(0, 3).map((m) => (m.text as string) ?? "");
   const hasPropertyUrl = recentCustomerMsgs.some((t) => PROPERTY_URL_RE.test(t));
   const hasAvailabilityQuestion = AVAILABILITY_KEYWORDS.some((kw) => lastCustomerMsg.includes(kw));
-  if ((hasPropertyMedia || hasPropertyUrl || hasAvailabilityQuestion) && PROPERTY_CHECK_STATUSES.has(currentStatus)) {
+  // 中5: keyword_hardcode 経由の採択率が低い場合はこのトリガーをスキップして次の判定へ
+  if ((hasPropertyMedia || hasPropertyUrl || hasAvailabilityQuestion) && PROPERTY_CHECK_STATUSES.has(currentStatus) &&
+      !isLowSourceRate("property_check_result", "keyword_hardcode")) {
     if (shouldSuppressAction("property_check_result")) return NextResponse.json({ action: null, reason: "" });
     return NextResponse.json({ action: "property_check_result", reason: hasPropertyMedia ? "物件画像が送られた" : "物件の空室確認依頼", source: "keyword_hardcode", params: buildParams("property_check_result"), acceptanceRate: acceptanceRateMap["property_check_result"] ?? null, sub_mode_stats: subModeStats, ...templateRec("property_check_result") });
   }
@@ -384,25 +410,32 @@ export async function POST(req: NextRequest) {
   // S-5: 費用・内覧・申込キーワード即判定（DBルール不要・Haiku流入削減）
   // 各判定は「申込 > 内覧 > 日程確定 > 費用」の優先順で early-exit（複数マッチ時の揺れを防止）。
   // マッチしたのに採択率で抑制された場合もフォールスルーせず null で確定させる（P8誤提案防止）。
-  const keywordHit = (actionType: string, reason: string) => {
+  // 中5: keyword_hardcode 経由の採択率が低い（30%未満・10件以上）アクションは null を返し、
+  //      呼び出し側でこのトリガーをスキップして次の判定へフォールスルーさせる
+  const keywordHit = (actionType: string, reason: string): NextResponse | null => {
+    if (isLowSourceRate(actionType, "keyword_hardcode")) return null;
     if (shouldSuppressAction(actionType)) return NextResponse.json({ action: null, reason: "" });
     return NextResponse.json({ action: actionType, reason, source: "keyword_hardcode", params: buildParams(actionType), acceptanceRate: acceptanceRateMap[actionType] ?? null, sub_mode_stats: subModeStats, ...templateRec(actionType) });
   };
   // 申込: 「申込みたい」（送り仮名違い）「決めます」「決めたい」「こちらで申」もカバー（最も後工程＝最優先）
   if (/申し込み.*たい|申込.*したい|申込.*希望|申込みたい|入居申込|決めます|決めたい|こちらで申/.test(lastCustomerMsg)) {
-    return keywordHit("application_push", "申込意向を検出");
+    const hit = keywordHit("application_push", "申込意向を検出");
+    if (hit) return hit;
   }
   // 内覧: 「内見」（内覧より多い表記）「見学」「現地確認」もカバー
   if (/内覧|内見|見学.*したい|見学.*希望|見学.*できますか|現地.*確認|現地.*見た/.test(lastCustomerMsg)) {
-    return keywordHit("viewing_invite", "内覧希望を検出");
+    const hit = keywordHit("viewing_invite", "内覧希望を検出");
+    if (hit) return hit;
   }
   // 日程確定 → meeting_place（「◯曜◯時」「◯月◯日」「AM/PM/午前/午後」+ 確定系の言い回し）
   if (/[月火水木金土日]曜.*[0-9０-９時]|[0-9０-９]+月[0-9０-９]+日|AM|PM|午前|午後/.test(lastCustomerMsg) &&
       /いかがでしょう|で大丈夫|でお願い|伺います|行きます|確定|来られ|来れ/.test(lastCustomerMsg)) {
-    return keywordHit("meeting_place", "日程確定の意向を検出");
+    const hit = keywordHit("meeting_place", "日程確定の意向を検出");
+    if (hit) return hit;
   }
   if (/費用|初期費用|いくら/.test(lastCustomerMsg)) {
-    return keywordHit("estimate_sheet", "費用に関する質問を検出");
+    const hit = keywordHit("estimate_sheet", "費用に関する質問を検出");
+    if (hit) return hit;
   }
 
   if (lastCustomerMsg) {
@@ -453,8 +486,11 @@ export async function POST(req: NextRequest) {
       };
       // スコア降順で並べて、抑制対象をスキップして最初の非抑制アクションを返却
       // （同スコア時は topConf 降順 → action_type 昇順で決定的にタイブレーク）
+      // 中1: 予測精度40%未満（isLowAccuracy）のアクションはスコアを0.8倍に減衰して順位付け
+      //      （完全スキップではなく減衰。閾値0.85判定は減衰前の生スコアで行う）
+      const decayedScore = (actionType: string, score: number) => (isLowAccuracy(actionType) ? score * 0.8 : score);
       const sortedScores = Object.entries(scores).sort(
-        (a, b) => b[1].score - a[1].score || b[1].topConf - a[1].topConf || a[0].localeCompare(b[0])
+        (a, b) => decayedScore(b[0], b[1].score) - decayedScore(a[0], a[1].score) || b[1].topConf - a[1].topConf || a[0].localeCompare(b[0])
       );
       // 改善6: 成約貢献率が全体平均の半分未満（lowWinRate）の候補はランク下げ。他に候補がなければ従来通り採用
       // 中1: 予測精度40%未満（lowAccuracy）の候補も同様にランク下げ

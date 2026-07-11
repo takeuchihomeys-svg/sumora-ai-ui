@@ -21,6 +21,10 @@ const ACCEPT_RATE_KEYWORD = "SUGGESTION_ACCEPT_RATE";
 // suggest-next-action が読み取り、精度40%未満のアクションをランク下げする（isLowAccuracy）
 const PREDICTION_ACCURACY_KEYWORD = "PREDICTION_ACCURACY";
 
+// 中5: 提案経路別採択率の特殊キー接頭辞（SOURCE_ACCEPT_RATE:{action_type}:{suggestion_source}）。
+// suggest-next-action が読み取り、keyword_hardcode 経由の採択率が低いアクションのキーワード判定をスキップする
+const SOURCE_ACCEPT_RATE_PREFIX = "SOURCE_ACCEPT_RATE";
+
 // 件数が少ないアクションはスキップ（統計的に無意味なため）
 const MIN_SAMPLES = 5;
 
@@ -29,7 +33,7 @@ async function run() {
 
   const { data: logs, error } = await supabase
     .from("action_pattern_logs")
-    .select("action_type, source")
+    .select("action_type, source, suggestion_source")
     .in("source", ["suggestion_accepted", "suggestion_dismissed", "prediction_match", "prediction_mismatch", "suggestion_bypassed"])
     .gte("created_at", thirtyDaysAgo)
     .limit(5000);
@@ -47,12 +51,24 @@ async function run() {
   // - prediction_match:    accepted++ かつ total++
   // - dismissed系（suggestion_dismissed / prediction_mismatch / suggestion_bypassed）: total++ のみ
   const stats: Record<string, { accepted: number; total: number }> = {};
+  // 中5: action_type × suggestion_source（提案経路）粒度の採択率。
+  // どのルール経由（keyword_hardcode / trigger_rule / chain_rule / ai_fallback 等）の提案が
+  // 実際に採択されているかを測り、suggest-next-action が低採択率ルートをスキップできるようにする
+  const sourceStats: Record<string, { accepted: number; total: number }> = {};
   for (const log of logs ?? []) {
     const action = (log.action_type as string) ?? "";
     if (!action) continue;
     stats[action] ??= { accepted: 0, total: 0 };
     stats[action].total++;
     if (log.source === "prediction_match") stats[action].accepted++;
+
+    const suggSource = (log.suggestion_source as string | null) ?? "";
+    if (suggSource) {
+      const key = `${action}:${suggSource}`;
+      sourceStats[key] ??= { accepted: 0, total: 0 };
+      sourceStats[key].total++;
+      if (log.source === "prediction_match") sourceStats[key].accepted++;
+    }
   }
 
   let updated = 0;
@@ -84,6 +100,35 @@ async function run() {
     } else {
       updated++;
       breakdown[action] = { accepted, total, confidence };
+    }
+  }
+
+  // ── 中5: action_type × suggestion_source 粒度の採択率を SOURCE_ACCEPT_RATE:{action}:{source} で upsert ──
+  let sourceUpdated = 0;
+  const sourceBreakdown: Record<string, { accepted: number; total: number; confidence: number | null }> = {};
+  for (const [key, { accepted, total }] of Object.entries(sourceStats)) {
+    if (total < MIN_SAMPLES) {
+      sourceBreakdown[key] = { accepted, total, confidence: null };
+      continue;
+    }
+    const actionType = key.slice(0, key.indexOf(":"));
+    const confidence = Math.round((accepted / total) * 1000) / 1000;
+    const { error: upsertError } = await supabase.from("trigger_action_rules").upsert(
+      {
+        action_type: actionType,
+        keyword: `${SOURCE_ACCEPT_RATE_PREFIX}:${key}`,
+        occurrence_count: accepted,
+        total_occurrence: total,
+        confidence,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "action_type,keyword" }
+    );
+    if (upsertError) {
+      console.error("[update-action-confidence] source upsert error:", key, upsertError.message);
+    } else {
+      sourceUpdated++;
+      sourceBreakdown[key] = { accepted, total, confidence };
     }
   }
 
@@ -200,6 +245,8 @@ async function run() {
     updated,
     skipped,
     breakdown,
+    source_updated: sourceUpdated,
+    source_breakdown: sourceBreakdown,
     accuracy_updated: accuracyUpdated,
     accuracy_breakdown: accuracyBreakdown,
     submode_updated: submodeUpdated,

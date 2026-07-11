@@ -3281,6 +3281,7 @@ export default function Home() {
               conversation_status: newStatus ?? currentStatus,
               action_type: bypassedAction,
               source: "suggestion_bypassed",
+              suggestion_source: nextActionMap[selectedConversation.id]?.source ?? null,
               customer_msg_summary: summarizeForLearning(_bypMsg),
               predicted_action: bypassedAction,
               previous_action_type: lastAixByConvRef.current.get(selectedConversation.id) ?? null,
@@ -5045,6 +5046,7 @@ export default function Home() {
                   action_type: actionType,
                   source,
                   predicted_action: nextSugg.action ?? null,
+                  suggestion_source: nextSugg.source ?? null,
                   customer_msg_summary: summarizeForLearning(lastCustomerMsg),
                   previous_action_type: lastAixByConvRef.current.get(selectedConversation.id) ?? null,
                 }),
@@ -6275,7 +6277,7 @@ export default function Home() {
                             .reverse()
                             .find((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
                             ?.text ?? "";
-                          await fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_accepted", predicted_action: nextSugg.action ?? null, customer_msg_summary: summarizeForLearning(lastCustomerMsg), previous_action_type: lastAixByConvRef.current.get(id) ?? null }) }).catch(() => {});
+                          await fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_accepted", predicted_action: nextSugg.action ?? null, suggestion_source: nextSugg.source ?? null, customer_msg_summary: summarizeForLearning(lastCustomerMsg), previous_action_type: lastAixByConvRef.current.get(id) ?? null }) }).catch(() => {});
                           setDismissedNextActionIds((prev) => new Set([...prev, id]));
                           setShowAixMenu(false);
                           setAixInspectLabel(null);
@@ -7705,6 +7707,8 @@ export default function Home() {
               const _prevAix = lastAixByConvRef.current.get(selectedConversation.id) ?? null;
               // LX-4: 直前のAI予測と実際に送信したAIXを突合して source を4値化
               const _predictedAction = nextActionMap[selectedConversation.id]?.action ?? null;
+              // 中5: 提案経路（suggest-next-action の source）。予測があった場合のみ意味を持つ
+              const _suggSource = _predictedAction ? (nextActionMap[selectedConversation.id]?.source ?? null) : null;
               const _learnSource = _predictedAction
                 ? (_predictedAction === aixModalType ? "prediction_match" : "prediction_mismatch")
                 : "manual";
@@ -7712,7 +7716,7 @@ export default function Home() {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 // PA-1: conversation_id を渡す → ref が空（リロード後）でもサーバー側で aix_usage_logs から前アクションを復元
-                body: JSON.stringify({ action: "log", conversation_status: _ns, action_type: aixModalType, customer_msg_summary: summarizeForLearning(_lastCustomerMsg), previous_action_type: _prevAix, source: _learnSource, predicted_action: _predictedAction, conversation_id: selectedConversation.id }),
+                body: JSON.stringify({ action: "log", conversation_status: _ns, action_type: aixModalType, customer_msg_summary: summarizeForLearning(_lastCustomerMsg), previous_action_type: _prevAix, source: _learnSource, predicted_action: _predictedAction, suggestion_source: _suggSource, conversation_id: selectedConversation.id }),
               }).catch(() => {});
               lastAixByConvRef.current.set(selectedConversation.id, aixModalType);
               // 物件確認結果の空室有無を保持（suggestViewing=空室あり / suggest2ndHand=空室ありだが申込あり）
@@ -7771,6 +7775,7 @@ export default function Home() {
                     conversation_status: _ns,
                     action_type: _predictedAction,
                     source: "suggestion_bypassed",
+                    suggestion_source: _suggSource,
                     customer_msg_summary: summarizeForLearning(_lastCustomerMsg),
                     predicted_action: _predictedAction,
                     previous_action_type: _prevAix,

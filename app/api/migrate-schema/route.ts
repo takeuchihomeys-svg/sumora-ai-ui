@@ -762,6 +762,10 @@ ALTER TABLE action_pattern_logs ADD COLUMN IF NOT EXISTS predicted_action TEXT D
 ALTER TABLE aix_usage_logs ADD COLUMN IF NOT EXISTS previous_action_type TEXT DEFAULT NULL;
 ALTER TABLE action_pattern_logs ADD COLUMN IF NOT EXISTS conversation_id TEXT DEFAULT NULL;
 
+-- 中5: 提案経路の記録（suggest-next-action レスポンスの source: keyword_hardcode / trigger_rule / chain_rule / ai_fallback 等）
+-- update-action-confidence cron が action×source 粒度で SOURCE_ACCEPT_RATE:{action}:{source} を集計するのに使う
+ALTER TABLE action_pattern_logs ADD COLUMN IF NOT EXISTS suggestion_source TEXT DEFAULT NULL;
+
 -- SUB-1: AIXピッカー選択のサブパターンを記録（学習精度・成果集計の粒度向上）
 -- check_pattern: property_check_result のサブパターン（available/unavailable/alternative/vacate_date等）
 -- app_sub_mode: application_push のサブモード（push/confirm/docs_request/format）
