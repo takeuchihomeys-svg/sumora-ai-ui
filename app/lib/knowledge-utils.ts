@@ -66,7 +66,8 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
       embeddingCache.set(cacheKey, embedding);
       if (embeddingCache.size > 500) embeddingCache.delete(embeddingCache.keys().next().value!);
       // ⑥ DBキャッシュに永続保存（fire-and-forget）
-      void supabase.from("embedding_cache").upsert({ text_key: cacheKey, embedding });
+      // supabase-js v2 はlazy評価のため void では実行されない → .then()で強制実行
+      supabase.from("embedding_cache").upsert({ text_key: cacheKey, embedding }).then(() => {}, () => {});
     }
     return embedding;
   } catch {

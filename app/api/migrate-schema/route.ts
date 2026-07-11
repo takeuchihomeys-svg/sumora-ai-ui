@@ -1182,6 +1182,46 @@ CREATE INDEX IF NOT EXISTS idx_ai_feedback_items_pending
   ON ai_feedback_items(created_at DESC) WHERE status = 'pending';
 ALTER TABLE ai_feedback_items DISABLE ROW LEVEL SECURITY;
 
+-- trigger_action_rules.conversation_status（aix/suggest でステータス別フィルタに使用）
+-- 本番には既に存在するが migrate-schema 未定義だったため追記
+ALTER TABLE trigger_action_rules ADD COLUMN IF NOT EXISTS conversation_status TEXT DEFAULT NULL;
+
+-- scheduled_messages: 予約送信テーブル（screening-admin から sync / send-scheduled-messages cron が送信）
+-- 本番には既に存在するが migrate-schema 未定義だったため追記
+CREATE TABLE IF NOT EXISTS scheduled_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id TEXT NOT NULL,
+  line_user_id TEXT NOT NULL,
+  account TEXT,
+  text TEXT,
+  image_urls JSONB DEFAULT '[]',
+  scheduled_at TIMESTAMPTZ NOT NULL,
+  status TEXT DEFAULT 'pending',
+  error TEXT,
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_scheduled_messages_scheduled_at ON scheduled_messages(scheduled_at, status);
+ALTER TABLE scheduled_messages DISABLE ROW LEVEL SECURITY;
+ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- calendar_events: 内覧カレンダー（screening-admin から sync → calendarSlots.ts が参照）
+-- 本番には既に存在するが migrate-schema 未定義だったため追記
+CREATE TABLE IF NOT EXISTS calendar_events (
+  id BIGSERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
+  event_type TEXT NOT NULL DEFAULT 'other',
+  customer_name TEXT,
+  conversation_id BIGINT,
+  start_at TIMESTAMPTZ NOT NULL,
+  end_at TIMESTAMPTZ,
+  all_day BOOLEAN NOT NULL DEFAULT FALSE,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_start_at ON calendar_events(start_at);
+ALTER TABLE calendar_events DISABLE ROW LEVEL SECURITY;
+
 `.trim();
 
 export async function GET() {
