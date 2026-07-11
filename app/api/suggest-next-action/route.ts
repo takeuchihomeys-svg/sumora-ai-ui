@@ -37,7 +37,7 @@ const KNOWN_AIX_TYPES = new Set([
 const ACTION_PARAMS: Record<string, { check_pattern?: string; send_mode?: string }> = {
   property_check_result: { check_pattern: "available" },
   property_send: { send_mode: "normal" },
-  property_recommendation: { send_mode: "pickup" },
+  // property_recommendation: send_mode "pickup" はフロント・API双方が受理しないモード名のため削除（専用ピッカーで初期化される）
   viewing_invite: { send_mode: "normal" },
 };
 
