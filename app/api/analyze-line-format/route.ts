@@ -88,16 +88,16 @@ JSONのみ出力。説明不要。`,
     parsed.rules.map((r, i) => `${i + 1}. ${r}`).join("\n");
 
   // 3. ai_reply_knowledge に保存（既存があれば上書き）
-  // まず既存の同カテゴリを削除してから再INSERT（毎回最新分析で上書き）
+  // タイトル前方一致で既存の改行スタイル分析を削除してから再INSERT
   await supabase
     .from("ai_reply_knowledge")
     .delete()
-    .eq("category", "line_format");
+    .ilike("title", "改行スタイル:%");
 
   const result = await upsertKnowledge(supabase, {
     title: `改行スタイル: スモラLINE返信フォーマット（${texts.length}件分析）`,
     content,
-    category: "line_format",
+    category: "style",
     importance: 8,
   });
 
