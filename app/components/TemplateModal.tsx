@@ -456,11 +456,12 @@ export default function TemplateModal({
   const [candidates, setCandidates] = useState<AiTemplateCandidate[]>([]);
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [adoptingId, setAdoptingId] = useState<string | null>(null);
-  // 採用前レビューパネル: 対象候補・Opus4.8フィードバック・ユーザーコメント
+  // 採用前ブラッシュアップチャット: 対象候補・会話履歴・現在の提案テキスト・入力欄
   const [reviewCandidate, setReviewCandidate] = useState<AiTemplateCandidate | null>(null);
-  const [reviewFeedback, setReviewFeedback] = useState("");
-  const [reviewFeedbackLoading, setReviewFeedbackLoading] = useState(false);
-  const [reviewComment, setReviewComment] = useState("");
+  const [reviewMessages, setReviewMessages] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
+  const [reviewCurrentText, setReviewCurrentText] = useState(""); // Opusが最後に提案した修正版
+  const [reviewInput, setReviewInput] = useState("");
+  const [reviewSending, setReviewSending] = useState(false);
   // P4: AIX改善案（aix_feature_suggestions の pending 一覧）
   const [suggestions, setSuggestions] = useState<AixFeatureSuggestion[]>([]);
   const [suggestionLoading, setSuggestionLoading] = useState(false);
@@ -746,12 +747,14 @@ export default function TemplateModal({
     setDismissingId(null);
   }, []);
 
-  // 採用前レビューパネルを開く（Opus4.8フィードバックを非同期取得）
+  // ブラッシュアップチャットを開く（初回フィードバックを非同期取得）
   const openReviewPanel = (candidate: AiTemplateCandidate) => {
     setReviewCandidate(candidate);
-    setReviewFeedback("");
-    setReviewComment("");
-    setReviewFeedbackLoading(true);
+    setReviewMessages([]);
+    setReviewCurrentText(candidate.template_text);
+    setReviewInput("");
+    setReviewSending(true);
+    // 初回フィードバックを自動取得
     fetch("/api/ai-template-review", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -761,25 +764,65 @@ export default function TemplateModal({
         actionType: candidate.action_type,
         reason: candidate.reason ?? undefined,
         evidenceCount: candidate.evidence_count ?? undefined,
+        messages: [], // 空=初回
       }),
     })
       .then(r => r.json())
-      .then((data: { ok: boolean; feedback: string }) => {
-        if (data.ok) setReviewFeedback(data.feedback);
+      .then((data: { ok: boolean; reply: string; revisedTemplate?: string | null }) => {
+        if (data.ok) {
+          const assistantMsg = { role: "assistant" as const, content: data.reply };
+          setReviewMessages([assistantMsg]);
+          if (data.revisedTemplate) setReviewCurrentText(data.revisedTemplate);
+        }
       })
-      .catch(() => setReviewFeedback("フィードバックの取得に失敗しました。"))
-      .finally(() => setReviewFeedbackLoading(false));
+      .catch(() => {
+        setReviewMessages([{ role: "assistant", content: "フィードバックの取得に失敗しました。" }]);
+      })
+      .finally(() => setReviewSending(false));
   };
 
-  // レビュー承認後の採用処理（従来の「テンプレに採用」と同じ）
-  const adoptCandidate = async (candidate: AiTemplateCandidate) => {
+  // チャット送信（Opusにブラッシュアップ要望を伝える）
+  const sendReviewMessage = async () => {
+    if (!reviewInput.trim() || reviewSending || !reviewCandidate) return;
+    const userMsg = { role: "user" as const, content: reviewInput.trim() };
+    const nextMessages = [...reviewMessages, userMsg];
+    setReviewMessages(nextMessages);
+    setReviewInput("");
+    setReviewSending(true);
+    try {
+      const res = await fetch("/api/ai-template-review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          proposed: reviewCurrentText, // 最新の提案テキストを渡す
+          original: reviewCandidate.original_text ?? undefined,
+          actionType: reviewCandidate.action_type,
+          reason: reviewCandidate.reason ?? undefined,
+          evidenceCount: reviewCandidate.evidence_count ?? undefined,
+          messages: nextMessages,
+        }),
+      });
+      const data = await res.json() as { ok: boolean; reply: string; revisedTemplate?: string | null };
+      if (data.ok) {
+        setReviewMessages(prev => [...prev, { role: "assistant", content: data.reply }]);
+        if (data.revisedTemplate) setReviewCurrentText(data.revisedTemplate);
+      }
+    } catch {
+      setReviewMessages(prev => [...prev, { role: "assistant", content: "エラーが発生しました。" }]);
+    } finally {
+      setReviewSending(false);
+    }
+  };
+
+  // レビュー承認後の採用処理（customTextでブラッシュアップ後の本文を採用できる）
+  const adoptCandidate = async (candidate: AiTemplateCandidate, customText?: string) => {
     setAdoptingId(candidate.id);
     setReviewCandidate(null);
     try {
       const res = await fetch("/api/ai-template-candidates", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: candidate.id, action: "adopt" }),
+        body: JSON.stringify({ id: candidate.id, action: "adopt", ...(customText ? { customText } : {}) }),
       });
       const json = await res.json() as { ok: boolean };
       setCandidates(prev =>
@@ -1137,107 +1180,84 @@ export default function TemplateModal({
         </div>
       )}
       <div className="relative w-full max-w-lg rounded-t-3xl bg-white shadow-2xl flex flex-col" style={{ maxHeight: "90vh" }}>
-        {/* AIX候補 採用前レビューパネル（モーダル本体全体に重ねる） */}
+        {/* AIX候補 ブラッシュアップチャット（モーダル本体全体に重ねる） */}
         {reviewCandidate && (
           <div className="absolute inset-0 bg-white z-10 flex flex-col overflow-hidden rounded-t-3xl">
             {/* ヘッダー */}
-            <div className="flex items-center gap-2 px-4 py-3 border-b bg-orange-50">
-              <button
-                onClick={() => setReviewCandidate(null)}
-                className="text-gray-500 hover:text-gray-700 text-sm"
-              >← 戻る</button>
-              <span className="font-bold text-orange-700 flex-1 text-center">テンプレート採用レビュー</span>
+            <div className="flex items-center gap-2 px-4 py-3 border-b bg-orange-50 shrink-0">
+              <button onClick={() => setReviewCandidate(null)} className="text-gray-500 hover:text-gray-700 text-sm">← 戻る</button>
+              <span className="font-bold text-orange-700 flex-1 text-center text-sm">テンプレートをブラッシュアップ</span>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {/* AIXボタン・メタ情報 */}
-              <div className="flex flex-wrap gap-2 text-xs">
-                <span className="bg-purple-100 text-purple-700 px-2 py-1 rounded-full">
-                  AIXボタン: {ACTION_LABELS[reviewCandidate.action_type] ?? reviewCandidate.action_type}
-                </span>
-                {reviewCandidate.source && (
-                  <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded-full">
-                    {reviewCandidate.source === "aix_edit" ? "スタッフ編集版" : reviewCandidate.source === "manual" ? "AIX生成" : reviewCandidate.source}
-                  </span>
-                )}
-                {reviewCandidate.evidence_count && reviewCandidate.evidence_count > 1 && (
-                  <span className="bg-green-100 text-green-700 px-2 py-1 rounded-full">
-                    {reviewCandidate.evidence_count}回確認済み
-                  </span>
-                )}
-              </div>
-
-              {/* 提案理由 */}
-              {reviewCandidate.reason && (
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
-                  <div className="font-bold text-xs mb-1">提案理由</div>
-                  {reviewCandidate.reason}
-                </div>
+            {/* バッジ行 */}
+            <div className="flex flex-wrap gap-1.5 px-4 py-2 border-b shrink-0">
+              <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full text-xs">
+                {ACTION_LABELS[reviewCandidate.action_type] ?? reviewCandidate.action_type}
+              </span>
+              {reviewCandidate.source === "aix_edit" && (
+                <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full text-xs">スタッフ編集版</span>
               )}
-
-              {/* 現在 vs 提案 */}
-              {reviewCandidate.original_text ? (
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <div className="text-xs font-bold text-gray-500 mb-1">現在のテンプレ</div>
-                    <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm whitespace-pre-wrap text-gray-700">
-                      {reviewCandidate.original_text}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs font-bold text-gray-500 mb-1">提案テンプレ</div>
-                    <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm whitespace-pre-wrap text-gray-700">
-                      {reviewCandidate.template_text}
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  <div className="text-xs font-bold text-gray-500 mb-1">提案テンプレ</div>
-                  <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm whitespace-pre-wrap text-gray-700">
-                    {reviewCandidate.template_text}
-                  </div>
-                </div>
+              {(reviewCandidate.evidence_count ?? 0) > 1 && (
+                <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-xs">{reviewCandidate.evidence_count}回確認済み</span>
               )}
-
-              {/* Opus4.8フィードバック */}
-              <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
-                <div className="text-xs font-bold text-indigo-700 mb-2">🤖 Opus 4.8 フィードバック</div>
-                {reviewFeedbackLoading ? (
-                  <div className="text-sm text-indigo-400 animate-pulse">分析中...</div>
-                ) : reviewFeedback ? (
-                  <div className="text-sm text-indigo-900 whitespace-pre-wrap">{reviewFeedback}</div>
-                ) : (
-                  <div className="text-sm text-indigo-400">フィードバックなし</div>
-                )}
-              </div>
-
-              {/* ユーザーコメント */}
-              <div>
-                <div className="text-xs font-bold text-gray-500 mb-1">あなたのコメント（任意）</div>
-                <textarea
-                  value={reviewComment}
-                  onChange={e => setReviewComment(e.target.value)}
-                  placeholder="懸念点・修正したい点など..."
-                  className="w-full border border-gray-300 rounded-lg p-3 text-sm resize-none"
-                  rows={3}
-                />
-              </div>
             </div>
 
-            {/* フッターボタン */}
-            <div className="border-t p-4 flex gap-2">
+            {/* 現在の提案テンプレ（Opusが修正するたびに更新） */}
+            <div className="px-4 py-2 border-b bg-green-50 shrink-0">
+              <div className="text-xs font-bold text-green-700 mb-1">現在の提案テンプレ</div>
+              <div className="text-sm text-gray-800 whitespace-pre-wrap max-h-24 overflow-y-auto">{reviewCurrentText}</div>
+            </div>
+
+            {/* チャットエリア */}
+            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+              {reviewMessages.length === 0 && reviewSending && (
+                <div className="text-sm text-indigo-400 animate-pulse">Opus 4.8 が分析中...</div>
+              )}
+              {reviewMessages.map((msg, i) => (
+                <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                  <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap ${
+                    msg.role === "user"
+                      ? "bg-orange-500 text-white rounded-br-sm"
+                      : "bg-gray-100 text-gray-800 rounded-bl-sm"
+                  }`}>
+                    {msg.role === "assistant"
+                      ? msg.content.replace(/【修正版】[\s\S]*?【\/修正版】/g, "↑ テンプレを更新しました").trim()
+                      : msg.content}
+                  </div>
+                </div>
+              ))}
+              {reviewSending && reviewMessages.length > 0 && (
+                <div className="flex justify-start">
+                  <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-3 py-2 text-sm text-gray-400 animate-pulse">入力中...</div>
+                </div>
+              )}
+            </div>
+
+            {/* 入力エリア */}
+            <div className="border-t px-3 py-2 flex gap-2 items-end shrink-0">
+              <textarea
+                value={reviewInput}
+                onChange={e => setReviewInput(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendReviewMessage(); } }}
+                placeholder="「短くして」「もっと丁寧に」など..."
+                className="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-sm resize-none"
+                rows={2}
+                disabled={reviewSending}
+              />
               <button
-                onClick={() => adoptCandidate(reviewCandidate)}
-                className="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-xl"
-              >
-                ✅ 承認して採用する
-              </button>
+                onClick={() => void sendReviewMessage()}
+                disabled={reviewSending || !reviewInput.trim()}
+                className="bg-indigo-500 hover:bg-indigo-600 disabled:opacity-40 text-white rounded-xl px-3 py-2 text-sm font-bold"
+              >送信</button>
+            </div>
+
+            {/* 採用ボタン */}
+            <div className="border-t px-4 py-3 shrink-0">
               <button
-                onClick={() => setReviewCandidate(null)}
-                className="px-4 py-3 border border-gray-300 rounded-xl text-gray-600 text-sm"
+                onClick={() => void adoptCandidate(reviewCandidate, reviewCurrentText !== reviewCandidate.template_text ? reviewCurrentText : undefined)}
+                className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-xl text-sm"
               >
-                キャンセル
+                ✅ 承認して採用する（現在の提案テンプレを採用）
               </button>
             </div>
           </div>

@@ -118,10 +118,11 @@ export async function PATCH(req: NextRequest) {
     action: "adopt" | "dismiss";
     customTitle?: string;
     customCategory?: string;
+    customText?: string;
     dismissedReason?: string;
   };
 
-  const { id, action, customTitle, customCategory, dismissedReason } = body;
+  const { id, action, customTitle, customCategory, customText, dismissedReason } = body;
   if (!id || !action) return NextResponse.json({ ok: false, error: "id and action required" }, { status: 400 });
 
   if (action === "dismiss") {
@@ -163,7 +164,7 @@ export async function PATCH(req: NextRequest) {
       .insert({
         category: customCategory ?? c.category,
         label: customTitle ?? c.suggested_title,
-        text: c.template_text,
+        text: customText?.trim() || c.template_text,
         sort_order: 0,
         requires_image: false,
       })

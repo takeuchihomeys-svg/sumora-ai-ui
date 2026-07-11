@@ -16,20 +16,27 @@ const ACTION_LABELS: Record<string, string> = {
   estimate_sheet: "見積書",
 };
 
+// 修正版テンプレを抽出するヘルパー
+function extractRevised(text: string): string | null {
+  const m = text.match(/【修正版】\s*([\s\S]*?)\s*【\/修正版】/);
+  return m ? m[1].trim() : null;
+}
+
 export async function POST(request: NextRequest) {
-  const { proposed, original, actionType, reason, evidenceCount } = await request.json() as {
+  const { proposed, original, actionType, reason, evidenceCount, messages } = await request.json() as {
     proposed: string;
     original?: string;
     actionType?: string;
     reason?: string;
     evidenceCount?: number;
+    messages?: Array<{ role: "user" | "assistant"; content: string }>;
   };
 
   const actionLabel = ACTION_LABELS[actionType ?? ""] ?? actionType ?? "不明";
   const hasOriginal = original && original.trim();
 
-  const prompt = `あなたはスモラ賃貸仲介のLINE返信テンプレートの品質レビュアーです。
-AIXが提案した新しいテンプレートについてフィードバックを出してください。
+  const systemPrompt = `あなたはスモラ賃貸仲介のLINE返信テンプレート品質改善アドバイザーです。
+担当者（竹内悠馬）と一緒に、AIXが提案したテンプレートをブラッシュアップします。
 
 【対象アクション】${actionLabel}
 ${evidenceCount ? `【観測回数】${evidenceCount}回のスタッフ修正パターンから抽出` : ""}
@@ -37,20 +44,35 @@ ${reason ? `【提案理由】${reason}` : ""}
 
 ${hasOriginal ? `【現在のテンプレート】\n${original}\n\n【提案テンプレート】\n${proposed}` : `【提案テンプレート】\n${proposed}`}
 
-以下の観点でフィードバックを出してください：
-1. ${hasOriginal ? "変更点の妥当性（何が改善されているか）" : "テンプレートとしての品質"}
-2. 懸念点・リスク（あれば）
-3. 採用するなら修正すべき点（あれば）
-4. 総合判断（採用推奨 / 要修正 / 見送り）
+## あなたの役割
+- テンプレートの品質・問題点をフィードバックする
+- 担当者の要望（「短くして」「もっと丁寧に」など）に応えてテンプレートを修正する
+- 修正版を提示する場合は必ず以下の形式で囲む：
+  【修正版】
+  （修正したテンプレート本文）
+  【/修正版】
+- 担当者が納得したら「承認して採用」ボタンを押すよう案内する
 
-簡潔に・箇条書きで答えてください。`;
+## 返答スタイル
+- 簡潔・箇条書き歓迎
+- 修正版は必ず【修正版】タグで囲む
+- 長文説明より具体的な修正案を優先`;
+
+  // 初回（messagesなし or 空）はフィードバックを自動生成
+  const isFirstTurn = !messages || messages.length === 0;
+  const conversationMessages: Array<{ role: "user" | "assistant"; content: string }> = isFirstTurn
+    ? [{ role: "user", content: "このテンプレートについてフィードバックをください。問題点や改善点があれば教えてください。" }]
+    : messages;
 
   const res = await client.messages.create({
     model: "claude-opus-4-8",
-    max_tokens: 600,
-    messages: [{ role: "user", content: prompt }],
+    max_tokens: 800,
+    system: systemPrompt,
+    messages: conversationMessages,
   });
 
-  const feedback = res.content[0].type === "text" ? res.content[0].text.trim() : "";
-  return NextResponse.json({ ok: true, feedback });
+  const reply = res.content[0].type === "text" ? res.content[0].text.trim() : "";
+  const revisedTemplate = extractRevised(reply);
+
+  return NextResponse.json({ ok: true, reply, revisedTemplate });
 }
