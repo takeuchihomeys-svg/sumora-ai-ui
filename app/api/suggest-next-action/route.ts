@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
   // メッセージ・顧客（property_customer_id で引く）・採択率（毎日 update-action-confidence cron が更新）
   // ・成約貢献率（calc-aix-attribution cron が毎週計算・直近1ヶ月分）を並列取得
   // ※ 改善6: 成約貢献率は Sonnet フォールバックだけでなくチェーンルール・キーワードルールにも効かせるため、ここで一度だけ取得する
-  const [{ data: messages }, { data: customer }, { data: acceptanceRows }, { data: attributionRows }, { data: accuracyRows }, { data: submodeRows }, { data: chainStatsRow }, { data: chainTransRow }] = await Promise.all([
+  const [{ data: messages }, { data: customer }, { data: acceptanceRows }, { data: attributionRows }, { data: accuracyRows }, { data: submodeRows }, { data: chainStatsRow }, { data: chainTransRow }, { data: sceneInsightsRow }] = await Promise.all([
     supabase.from("messages")
       .select("sender, text, image_url, created_at")
       .eq("conversation_id", conversation_id)
@@ -101,6 +101,12 @@ export async function POST(req: NextRequest) {
       .select("content")
       .eq("key", "template_chain_transitions")
       .maybeSingle(),
+    // CHAIN-3: 営業シーン別インサイト（analyze-template-chains cron が週1更新・Opus 4.8 のシーン名付け）
+    // 提案アクションの aix_type と一致するパターンの description を scene_hint として添付する
+    supabase.from("ai_prompts")
+      .select("content")
+      .eq("key", "template_scene_insights")
+      .maybeSingle(),
   ]);
 
   // CHAIN-1: 推奨テンプレマップをパース（status特定 → 全status共通 の順でフォールバック）
@@ -116,6 +122,15 @@ export async function POST(req: NextRequest) {
     const parsedTrans = JSON.parse((chainTransRow?.content as string | undefined) ?? "{}") as { transitions?: Record<string, { next: string; count: number }> };
     if (parsedTrans.transitions && typeof parsedTrans.transitions === "object") chainTransitions = parsedTrans.transitions;
   } catch { /* 統計未生成・壊れたJSONは無視（recommended_template_sequence は先頭1件のみになる） */ }
+
+  // CHAIN-3: シーン別インサイトをパース（提案アクションの aix_type 一致で scene_hint を引く）
+  let sceneInsights: Array<{ pattern_name?: string; description?: string; aix_type?: string }> = [];
+  try {
+    const parsedInsights = JSON.parse((sceneInsightsRow?.content as string | undefined) ?? "{}") as {
+      scene_insights?: Array<{ pattern_name?: string; description?: string; aix_type?: string }>;
+    };
+    if (Array.isArray(parsedInsights.scene_insights)) sceneInsights = parsedInsights.scene_insights;
+  } catch { /* 統計未生成・壊れたJSONは無視（scene_hint は null になる） */ }
 
   // H2: SUBMODE_ACCEPT:{action_type}_submode → { rate, n } のマップ（提案レスポンスに添付）
   const subModeStats = Object.fromEntries(
@@ -207,10 +222,14 @@ export async function POST(req: NextRequest) {
     return seq;
   };
 
-  // 返却レスポンスに付与するテンプレ推奨フィールド（単発ID＋連続シーケンス）をまとめて組み立てる
+  // 返却レスポンスに付与するテンプレ推奨フィールド（単発ID＋連続シーケンス＋シーンヒント）をまとめて組み立てる
+  // CHAIN-3: 提案アクションの aix_type と一致する scene_insight の description を scene_hint として添付
   const templateRec = (actionType: string | null | undefined) => ({
     recommended_template_id: recommendedTemplateFor(actionType),
     recommended_template_sequence: recommendedSequenceFor(actionType),
+    scene_hint: actionType
+      ? (sceneInsights.find((s) => s.aix_type === actionType)?.description ?? null)
+      : null,
   });
 
   // クライアントが last_aix_action を持っていない場合はDB（aix_usage_logs）から補完

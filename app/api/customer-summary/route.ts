@@ -113,7 +113,8 @@ async function fetchWinningPatterns(
   conditionQueryText: string
 ): Promise<Array<{ content: string }>> {
   const results: Array<{ content: string }> = [];
-  const isWonTitle = (t: string) => /成約パターン|決まった|closed_won/.test(t);
+  // [成約分析]/[転換点] は analyze-closed-conversation（Opus 4.8）が申込/成約時に書く高価値ナレッジ
+  const isWonTitle = (t: string) => /成約パターン|決まった|closed_won|成約分析|転換点/i.test(t);
 
   // ── 段階1: 人間性プロファイルで pgvector 類似検索（match_reply_knowledge RPC）──
   const queryText = personalityProfile || conditionQueryText;
@@ -190,12 +191,12 @@ async function fetchWinningPatterns(
 
   if (results.length > 0) return results;
 
-  // フォールバック: 従来通り最新5件
+  // フォールバック: 従来通り最新5件（[成約分析]/[転換点] タイトルも対象に含める）
   const { data } = await supabase
     .from("ai_reply_knowledge")
     .select("content")
     .eq("category", "pattern")
-    .ilike("title", "成約パターン_%")
+    .or("title.ilike.成約パターン_%,title.ilike.[成約分析]%,title.ilike.[転換点]%")
     .order("created_at", { ascending: false })
     .limit(5);
   return (data as Array<{ content: string }> | null) ?? [];
@@ -404,16 +405,25 @@ export async function POST(req: NextRequest) {
       ? `${c.rent_min ? Math.floor(c.rent_min / 10000) + "万〜" : "〜"}${c.rent_max ? Math.floor(c.rent_max / 10000) + "万" : ""}`
       : null;
 
-    // 高5: 前回サマリーの personality_profile を取得（人間性ベース成約パターン検索の主クエリ）
+    // 高5: personality_profile を取得（人間性ベース成約パターン検索の主クエリ）
+    // 1. まず property_customers.personality_profile（申込/成約時に Opus 4.8 が確定した版）を優先
+    // 2. なければ ai_summary_json.personality_profile（前回サマリーの推測版）を使う
     let priorPersonalityProfile = "";
+    let profileIsConfirmed = false;
     if (c.customer_id) {
       const { data: prevRow } = await supabase
         .from("property_customers")
-        .select("ai_summary_json")
+        .select("ai_summary_json, personality_profile")
         .eq("id", c.customer_id)
         .single();
-      const prevJson = ((prevRow as { ai_summary_json?: SummaryJson | null } | null)?.ai_summary_json) ?? null;
-      priorPersonalityProfile = prevJson?.personality_profile?.trim() ?? "";
+      const row = prevRow as { ai_summary_json?: SummaryJson | null; personality_profile?: string | null } | null;
+      const confirmedProfile = row?.personality_profile?.trim() ?? "";
+      if (confirmedProfile) {
+        priorPersonalityProfile = confirmedProfile;
+        profileIsConfirmed = true;
+      } else {
+        priorPersonalityProfile = row?.ai_summary_json?.personality_profile?.trim() ?? "";
+      }
     }
 
     // 中2: 顧客プロフィール（条件・こだわり）→ 成約パターン類似検索の副次クエリ（personality_profile が無い初回顧客用・先頭200字）
@@ -449,14 +459,19 @@ export async function POST(req: NextRequest) {
         : Promise.resolve({ data: null }),
     ]);
 
+    // 高5: 人間性プロファイル注入。確定版（Opus分析）は信頼度が高いため推測版と区別して表示する
+    const personalityProfileNote = priorPersonalityProfile
+      ? (profileIsConfirmed
+          ? `\n\n【確定済み人間性プロファイル（Opus分析）】\n${priorPersonalityProfile}\n※ 申込/成約時に確定した高信頼プロファイル。personality_profile 生成時はこれを土台にすること。`
+          : `\n\nこの顧客の人間性プロファイル（前回AI推測）: ${priorPersonalityProfile}`)
+      : "";
+
     // 高5: 人間性中心の成約パターン注入（家賃・エリアより「どんな人が・何で決めたか」を重視させる）
     const learnedPatternsNote = learnedPatterns.length > 0
       ? `\n\n【参考: 似た人間性タイプで成約した事例】\n${
           learnedPatterns.map(p => p.content).join("\n---\n")
-        }${
-          priorPersonalityProfile ? `\n\nこの顧客の人間性プロファイル: ${priorPersonalityProfile}` : ""
-        }\n\n↑ 家賃・エリアより「どんな人が・何で決めたか」のパターンを重視して winning_pattern を生成すること。`
-      : "";
+        }${personalityProfileNote}\n\n↑ 家賃・エリアより「どんな人が・何で決めたか」のパターンを重視して winning_pattern を生成すること。`
+      : personalityProfileNote;
 
     // 中4: viewings に確定レコードがあれば inspection の確定値としてプロンプトに注入
     // （status='done' → done=true 確定 / 'scheduled' → requested=true 確定。なければ従来のキーワード判定のまま）

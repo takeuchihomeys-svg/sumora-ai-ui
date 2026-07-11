@@ -363,6 +363,34 @@ export async function GET(req: NextRequest) {
     } catch {
       // JSONパース失敗時はスキップ（レポート本体は送る）
     }
+
+    // 🎯 テンプレートシーン別パターン（analyze-template-chains の Opus 4.8 シーン名付け・上位3件）
+    try {
+      const { data: insightsRow } = await supabase
+        .from("ai_prompts")
+        .select("content")
+        .eq("key", "template_scene_insights")
+        .maybeSingle();
+      const insights = insightsRow?.content
+        ? JSON.parse(insightsRow.content as string) as {
+            updated?: string;
+            scene_insights?: Array<{ pattern_name?: string; description?: string; aix_type?: string }>;
+          }
+        : null;
+      // 直近8日以内の更新のみ表示（analyze-template-chains 失敗週に古いインサイトを再掲しない）
+      const insightsRecent = insights?.updated
+        ? Date.now() - new Date(insights.updated).getTime() < 8 * 24 * 60 * 60 * 1000
+        : false;
+      const topInsights = (insights?.scene_insights ?? [])
+        .filter((s) => s.pattern_name && s.description)
+        .slice(0, 3);
+      if (insightsRecent && topInsights.length > 0) {
+        const lines = topInsights.map((s) => `・${s.pattern_name}: ${s.description}`);
+        statsLines.push(`🎯 テンプレートシーン別パターン（上位3件）\n${lines.join("\n")}`);
+      }
+    } catch {
+      // JSONパース失敗時はスキップ（レポート本体は送る）
+    }
   }
 
   const statsBlock = statsLines.length > 0

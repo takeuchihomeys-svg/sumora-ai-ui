@@ -14,6 +14,10 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+// ステータスキー新旧不整合の修正: ログには旧ステータス名（viewing, property_recommendation 等）が
+// 残っているため、集計前に normalizeStatus で新5段階（hearing/proposing/applying）へ正規化する。
+// suggest-next-action は正規化後のステータスで recommended を引くため、ここで揃えないとミスマッチする。
+import { normalizeStatus } from "@/app/lib/status-normalize";
 
 export const maxDuration = 60;
 
@@ -35,10 +39,12 @@ async function run() {
   }
 
   // status × template_id の出現回数を集計（H4: 実際に送信された final_sent_text あり のみ）
+  // ※ conversation_status は正規化してから集計する（旧名で分散した実績を新キーに統合。
+  //   templates.status_pick_stats への保存キーも正規化済みステータスで統一される）
   const stats: Record<string, Record<string, number>> = {};
   for (const log of logs ?? []) {
     if (!log.final_sent_text) continue;
-    const status = (log.conversation_status as string) || "unknown";
+    const status = normalizeStatus((log.conversation_status as string) || "unknown");
     const tid = log.template_id as string;
     if (!tid) continue;
     stats[status] ??= {};
@@ -99,7 +105,7 @@ async function run() {
     const tid = log.template_id as string;
     if (!aixType || !tid) continue;
     bump(
-      (log.conversation_status as string) || "unknown",
+      normalizeStatus((log.conversation_status as string) || "unknown"),
       aixType,
       (log.picker_mode as string | null) || "-",
       tid,
@@ -119,7 +125,7 @@ async function run() {
     const aixType = (log.aix_type as string | null)?.trim();
     if (!aixType || !tid) continue;
     const picker = (log.check_pattern as string | null) || (log.app_sub_mode as string | null) || (log.send_mode as string | null) || "-";
-    bump((log.conversation_status as string) || "unknown", aixType, picker, tid, { sent: true, adapted: true });
+    bump(normalizeStatus((log.conversation_status as string) || "unknown"), aixType, picker, tid, { sent: true, adapted: true });
   }
 
   // チェーン一覧: 送信実績 desc → 選択数 desc で上位100件

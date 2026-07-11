@@ -597,7 +597,7 @@ export default function Home() {
     setPendingNextTemplateInfo(null);
     setTemplateInitialSearch("");
   }, []);
-  const [nextActionMap, setNextActionMap] = useState<Record<string, { action: string | null; reason: string; source?: string; params?: NextActionParams; recommendedTemplateId?: string | null; recommendedTemplateSequence?: Array<{ id: string; seq: number }> | null } | null>>({});
+  const [nextActionMap, setNextActionMap] = useState<Record<string, { action: string | null; reason: string; source?: string; params?: NextActionParams; recommendedTemplateId?: string | null; recommendedTemplateSequence?: Array<{ id: string; seq: number }> | null; sub_mode_stats?: Record<string, { rate: number; n: number }> } | null>>({});
   const [dismissedNextActionIds, setDismissedNextActionIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedNextActionIds") || "[]") as string[]); } catch { return new Set(); }
   });
@@ -2943,11 +2943,12 @@ export default function Home() {
           customer_message: convId === selectedConversation.id ? (latestCustomerMessage || "") : "",
         }),
       });
-      const data = await res.json() as { action: string | null; reason: string; source?: string; params?: NextActionParams; recommended_template_id?: string | null; recommended_template_sequence?: Array<{ id: string; seq: number }> | null };
+      const data = await res.json() as { action: string | null; reason: string; source?: string; params?: NextActionParams; recommended_template_id?: string | null; recommended_template_sequence?: Array<{ id: string; seq: number }> | null; sub_mode_stats?: Record<string, { rate: number; n: number }> };
       // action が null でも reason が有意義な場合（内覧確定等）はバナー表示できるよう保持
       // CHAIN-1: recommended_template_id（このAIXの後に最頻のテンプレ）も保持 → TemplateModal の priorityTemplateIds に使用
       // CHAIN-2: recommended_template_sequence（A→Bと続けて送る定番の順番）も保持 → 1枚送信後の「次はこれ」誘導に使用
-      setNextActionMap((prev) => ({ ...prev, [convId]: (data.action || data.reason?.trim()) ? { action: data.action ?? null, reason: data.reason, source: data.source, params: data.params, recommendedTemplateId: data.recommended_template_id ?? null, recommendedTemplateSequence: data.recommended_template_sequence ?? null } : null }));
+      // H2: sub_mode_stats（サブモード別採択率）も保持 → AixModal を開く際のサブモードデフォルト選択に使用
+      setNextActionMap((prev) => ({ ...prev, [convId]: (data.action || data.reason?.trim()) ? { action: data.action ?? null, reason: data.reason, source: data.source, params: data.params, recommendedTemplateId: data.recommended_template_id ?? null, recommendedTemplateSequence: data.recommended_template_sequence ?? null, sub_mode_stats: data.sub_mode_stats } : null }));
     } catch {
       setNextActionMap((prev) => ({ ...prev, [convId]: null }));
     } finally {
@@ -3963,9 +3964,39 @@ export default function Home() {
     return startAixSession(convId);
   };
 
+  // H2: suggest-next-action の sub_mode_stats（キー形式: `{action_type}_{submode}_submode`）から
+  // このアクションで最も採択率が高いサブモードを求め、AixModal の初期サブモードとしてセットする。
+  // ※ 明示指定（openAixWithParams 等の直前 setState）を上書きしないよう functional update（prev ?? best）で適用
+  const applySubModeDefaults = (type: AixActionType) => {
+    const convId = selectedConversation?.id;
+    if (!convId) return;
+    const stats = nextActionMap[convId]?.sub_mode_stats;
+    if (!stats) return;
+    const prefix = `${type}_`;
+    const suffix = "_submode";
+    let best: { submode: string; rate: number } | null = null;
+    for (const [key, v] of Object.entries(stats)) {
+      if (!key.startsWith(prefix) || !key.endsWith(suffix)) continue;
+      const submode = key.slice(prefix.length, key.length - suffix.length);
+      if (!submode || typeof v?.rate !== "number") continue;
+      if (!best || v.rate > best.rate) best = { submode, rate: v.rate };
+    }
+    if (!best) return;
+    const sm = best.submode;
+    if (type === "application_push" && (sm === "push" || sm === "confirm" || sm === "format" || sm === "docs_request")) {
+      setAixInitAppSubMode((prev) => prev ?? sm);
+    } else if (type === "property_check_result" && (sm === "available" || sm === "vacate_date" || sm === "mgmt_move_in" || sm === "mgmt_initial_cost" || sm === "mgmt_guarantor")) {
+      setAixInitCheckPattern((prev) => prev ?? sm);
+    } else if (sm === "normal" || sm === "new_arrival" || sm === "widen" || sm === "alternative") {
+      setAixInitSendMode((prev) => prev ?? sm);
+    }
+  };
+
   const openAixWithImagePicker = (type: AixActionType) => {
     // CHAIN-2: AIXボタンを押した瞬間に新しいチェーンセッションを開始
     if (selectedConversation?.id) startAixSession(selectedConversation.id);
+    // H2: 採択率最高のサブモードをデフォルト選択としてセット（明示指定があればそちらを優先）
+    applySubModeDefaults(type);
     pendingAixTypeRef.current = type;
     setAixInitialFile(null);
     aixFileInputRef.current?.click();
@@ -3974,6 +4005,8 @@ export default function Home() {
   const openAixDirect = (type: AixActionType) => {
     // CHAIN-2: AIXボタンを押した瞬間に新しいチェーンセッションを開始
     if (selectedConversation?.id) startAixSession(selectedConversation.id);
+    // H2: 採択率最高のサブモードをデフォルト選択としてセット（明示指定があればそちらを優先）
+    applySubModeDefaults(type);
     setAixInitialFile(null);
     setAixModalType(type);
   };
