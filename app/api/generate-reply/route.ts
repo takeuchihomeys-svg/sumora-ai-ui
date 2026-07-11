@@ -973,21 +973,20 @@ function extractPreferredName(
   messages: Array<{ sender: string; text?: string | null }>,
   lineDisplayName: string
 ): string {
-  // 名前ではなくスキップすべき語句
-  const SKIP_RE = /^(お客様|皆|全|各|担当|スタッフ|こちら|弊社|管理|オーナー|業者|まずは|引き続き|何卒|改めて)/;
+  // 部分一致で除外（^先頭一致だと「通過後にオーナー」等が素通りするため含有一致に変更）
+  const NON_NAME_RE = /(お客様|オーナー|大家|管理|業者|保証|担当|スタッフ|弊社|不動産|審査|通過|契約|入居|退去|申込|内覧|皆さ|各位|こちら|まずは|引き続き|何卒|改めて)/;
   for (const msg of [...messages].reverse()) {
     if (msg.sender !== "staff" || !msg.text) continue;
-    const matches = [...msg.text.matchAll(/([^\s、。！？\n【】「」（）・]{2,8}?)さん/g)];
-    for (const m of [...matches].reverse()) {
-      const name = m[1];
-      if (SKIP_RE.test(name)) continue;
-      if (!name) continue;
-      // 日本語文字と英字が混在する場合はスキップ（「方でHitomi」等の誤マッチ防止）
-      const hasJp = /[ぁ-んァ-ン一-鿿]/.test(name);
-      const hasLatin = /[a-zA-Z]/.test(name);
-      if (hasJp && hasLatin) continue;
-      return name;
-    }
+    // 冒頭の呼びかけのみ対象（文中の「オーナーさん」等の第三者言及は拾わない）
+    const m = msg.text.match(/^[\s「]*([^\s、。！？\n【】「」（）・]{2,8}?)さん/);
+    if (!m) continue;
+    const name = m[1];
+    if (NON_NAME_RE.test(name)) continue;
+    if (!name) continue;
+    const hasJp = /[ぁ-んァ-ン一-鿿]/.test(name);
+    const hasLatin = /[a-zA-Z]/.test(name);
+    if (hasJp && hasLatin) continue;
+    return name;
   }
   // フォールバック: LINE表示名末尾の「さん」を除去してから返す（二重さん防止）
   return lineDisplayName.replace(/さん$/, "");
