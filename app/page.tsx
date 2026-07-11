@@ -623,8 +623,6 @@ export default function Home() {
   // sentCount = このセッションで実送信済みのテンプレ数（次の選択の sequence_no = sentCount + 1）
   // lastSentTemplateId = 直前に実送信したテンプレID（次の選択の prev_template_id）
   const aixSessionByConvRef = useRef<Map<string, { sessionId: string; sentCount: number; lastSentTemplateId: string | null; lastActivityAt: number }>>(new Map());
-  const [statusSuggestionMap, setStatusSuggestionMap] = useState<Record<string, { status: string; label: string; reason: string } | null>>({});
-  const statusSuggFetchingRef = useRef<Set<string>>(new Set());
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);
   const [announcements, setAnnouncements] = useState<Message[]>([]);
@@ -1297,15 +1295,6 @@ export default function Home() {
     if (!selectedId) return;
     if (nextActionMap[selectedId] === undefined) {
       void fetchNextAction(selectedId);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId]);
-
-  // 会話選択時にステータス昇格提案を取得
-  useEffect(() => {
-    if (!selectedId) return;
-    if (statusSuggestionMap[selectedId] === undefined) {
-      void fetchStatusSuggestion(selectedId);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
@@ -2214,8 +2203,6 @@ export default function Home() {
       );
 
       setShowStatusMenu(false);
-      // ステータスが変わったのでサジェストをリセット
-      setStatusSuggestionMap((prev) => ({ ...prev, [selectedConversation.id]: null }));
     } catch (updateError) {
       console.error(updateError);
       setError("状態の更新に失敗しました。");
@@ -2955,24 +2942,6 @@ export default function Home() {
       setNextActionMap((prev) => ({ ...prev, [convId]: null }));
     } finally {
       nextActionFetchingRef.current.delete(convId);
-    }
-  };
-
-  const fetchStatusSuggestion = async (convId: string) => {
-    if (statusSuggFetchingRef.current.has(convId)) return;
-    statusSuggFetchingRef.current.add(convId);
-    try {
-      const res = await fetch("/api/suggest-status-update", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversation_id: convId }),
-      });
-      const data = await res.json() as { suggested: { status: string; label: string; reason: string } | null };
-      setStatusSuggestionMap((prev) => ({ ...prev, [convId]: data.suggested ?? null }));
-    } catch {
-      setStatusSuggestionMap((prev) => ({ ...prev, [convId]: null }));
-    } finally {
-      statusSuggFetchingRef.current.delete(convId);
     }
   };
 
@@ -4062,43 +4031,6 @@ export default function Home() {
     }
   };
 
-  // 物件確認した：提案バーから「まだある/なかった」をワンタップで生成
-  const handleQuickPropertyCheck = async (pattern: "available" | "unavailable") => {
-    if (!selectedConversation) return;
-    setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
-    // 空室確認結果を保持（suggest-next-action の available 分岐用）
-    propertyAvailableByConvRef.current.set(selectedConversation.id, pattern === "available");
-    setGenerating(true);
-    setReplyDraft("");
-    setDisplaySource(null);
-    try {
-      const recentMsgs = (selectedConversation.messages || [])
-        .slice(-15)
-        .map((m) => ({ sender: m.sender, text: m.text || "" }));
-      const res = await fetch("/api/aix/action", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "property_check_result",
-          check_pattern: pattern,
-          customer_name: selectedConversation.customerName,
-          recent_messages: recentMsgs,
-          conversation_id: selectedConversation.id,
-        }),
-      });
-      const data = await res.json() as { ok: boolean; message_text?: string };
-      if (data.ok && data.message_text) {
-        setReplyDraft(data.message_text);
-        aiDraftRef.current = data.message_text;
-        setDisplaySource("ai_draft");
-      }
-    } catch (err) {
-      console.error("[quickPropertyCheck]", err);
-    } finally {
-      setGenerating(false);
-    }
-  };
-
   // 内覧前・後挨拶を生成してreplyDraftに反映
   const handleGreetingViewingGenerate = async () => {
     if (!selectedConversation || !greetingViewingMode) return;
@@ -4870,35 +4802,6 @@ export default function Home() {
             </div>
           </header>
 
-          {/* ステータス昇格提案バナー */}
-          {(() => {
-            const sugg = statusSuggestionMap[selectedConversation.id];
-            if (!sugg) return null;
-            const nextMeta = DETAIL_STATUSES.find((s) => s.key === sugg.status);
-            if (!nextMeta) return null;
-            return (
-              <div className="flex items-center gap-2 border-b border-[#e9edef] bg-blue-50 px-3 py-1.5">
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#1565C0" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
-                <span className="text-[11px] text-blue-700 flex-1 font-medium">
-                  {sugg.reason} →&nbsp;
-                  <span className={`font-bold px-1.5 py-0.5 rounded-full text-[10px] ${nextMeta.color}`}>{nextMeta.label}</span>
-                  &nbsp;に変更しませんか？
-                </span>
-                <button
-                  onClick={() => void updateConversationStatus(sugg.status)}
-                  disabled={statusSaving}
-                  className="shrink-0 rounded-full bg-blue-600 px-2.5 py-0.5 text-[10px] font-bold text-white disabled:opacity-50"
-                >
-                  変更
-                </button>
-                <button
-                  onClick={() => setStatusSuggestionMap((prev) => ({ ...prev, [selectedConversation.id]: null }))}
-                  className="shrink-0 text-[#aaa] text-xs"
-                >✕</button>
-              </div>
-            );
-          })()}
-
           {/* 条件パネル: ▼ボタンで開閉 */}
           {showCondPanel && (() => {
             const lc = linkedCustomerMap[selectedConversation.id];
@@ -5011,158 +4914,6 @@ export default function Home() {
               </span>
             </div>
           )}
-
-          {(() => {
-            const nextSugg = nextActionMap[selectedConversation.id];
-            if (!nextSugg?.action || dismissedNextActionIds.has(selectedConversation.id)) return null;
-            const AIX_CHAT_LABEL: Record<string, string> = {
-              property_send: "物件ピックアップした",
-              viewing_invite: "内覧日調整",
-              application_push: "申込へ！",
-              estimate_sheet: "見積書送る",
-              meeting_place: "待ち合わせ",
-              property_recommendation: "物件オススメ",
-              property_check_result: "物件確認した",
-              alternative_send: "代替物件送る",
-            };
-            const label = AIX_CHAT_LABEL[nextSugg.action] ?? nextSugg.action;
-            const nextActionSubtitle = AIX_ACTION_META[nextSugg.action ?? ""]?.subtitle;
-            const isFollowUp = nextSugg.reason?.includes("未返信");
-            const isAlternativeSend = nextSugg.action === "alternative_send";
-            const isPropertyCheck = nextSugg.action === "property_check_result";
-            // LX-5: 提案採択/却下をどのボタン経由でも確実に記録する共通ヘルパー
-            // customer_msg_summary・previous_action_type を必ず含め、keepalive で画面遷移時も送信を保証
-            const logSuggestion = (actionType: string, source: "suggestion_accepted" | "suggestion_dismissed") => {
-              const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
-              const lastCustomerMsg = [...selectedConversation.messages]
-                .reverse()
-                .find((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
-                ?.text ?? "";
-              return fetch("/api/learn-action-patterns", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                keepalive: true,
-                body: JSON.stringify({
-                  action: "log",
-                  conversation_status: ns,
-                  action_type: actionType,
-                  source,
-                  predicted_action: nextSugg.action ?? null,
-                  suggestion_source: nextSugg.source ?? null,
-                  customer_msg_summary: summarizeForLearning(lastCustomerMsg),
-                  previous_action_type: lastAixByConvRef.current.get(selectedConversation.id) ?? null,
-                }),
-              }).catch(() => {});
-            };
-            const logSuggestionAccepted = (actionType: string) => logSuggestion(actionType, "suggestion_accepted");
-            const dismissBtn = (
-              <button
-                onClick={() => {
-                  setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
-                  void logSuggestion(nextSugg.action ?? "", "suggestion_dismissed");
-                }}
-                className="shrink-0 text-[10px] text-[#8696a0] active:opacity-60"
-              >✕</button>
-            );
-            return (
-              <div className="flex items-center gap-2 border-b border-[#b3d9f7] px-4 py-2" style={{ background: "linear-gradient(90deg, #e3f2fd, #f0f8ff)" }}>
-                <svg className="h-3 w-3 shrink-0 text-[#1565c0]" viewBox="0 0 24 24" fill="currentColor">
-                  <polygon points="5,3 19,12 5,21" />
-                </svg>
-                {isPropertyCheck ? (
-                  <>
-                    <div className="min-w-0 flex-1">
-                      <span className="text-[11px] font-bold text-[#388e3c]">物件確認した</span>
-                      <span className="ml-1 text-[10px] text-[#5c85d6]">結果を選択</span>
-                    </div>
-                    <div className="flex shrink-0 items-start gap-1">
-                      {dismissBtn}
-                      <div className="flex flex-col items-end gap-1">
-                        <button
-                          onClick={() => { logSuggestionAccepted("property_check_result"); void handleQuickPropertyCheck("available"); }}
-                          className="w-full rounded-full bg-[#4CAF50] px-3 py-0.5 text-[10px] font-bold text-white active:opacity-70"
-                        >まだある</button>
-                        <button
-                          onClick={() => { logSuggestionAccepted("property_check_result"); void handleQuickPropertyCheck("unavailable"); }}
-                          className="w-full rounded-full bg-[#FF5722] px-3 py-0.5 text-[10px] font-bold text-white active:opacity-70"
-                        >なかった</button>
-                        <button
-                          onClick={() => { logSuggestionAccepted("property_check_result"); setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id])); openAixWithParams("property_check_result", nextSugg.params); }}
-                          className="w-full rounded-full bg-[#607D8B] px-3 py-0.5 text-[10px] text-white active:opacity-70"
-                        >詳細</button>
-                      </div>
-                    </div>
-                  </>
-                ) : isAlternativeSend ? (
-                  <>
-                    <div className="min-w-0 flex-1">
-                      <span className="text-[11px] font-bold text-[#1565c0]">代替物件送る</span>
-                      <span className="ml-1 text-[10px] text-[#5c85d6]">複数→物件ピックアップした　1件→物件オススメ</span>
-                    </div>
-                    {dismissBtn}
-                    <button
-                      onClick={() => {
-                        logSuggestionAccepted("property_send");
-                        setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
-                        openAixWithParams("property_send", nextSugg.params);
-                      }}
-                      className="shrink-0 rounded-full bg-[#1976d2] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
-                    >物件ピックアップした</button>
-                    <button
-                      onClick={() => {
-                        logSuggestionAccepted("property_recommendation");
-                        setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
-                        openPropertyRecommendationPicker("direct");
-                      }}
-                      className="shrink-0 rounded-full bg-[#0288d1] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
-                    >物件オススメ</button>
-                  </>
-                ) : isFollowUp ? (
-                  <>
-                    <div className="min-w-0 flex-1">
-                      <span className="text-[11px] font-bold text-[#1565c0]">追客</span>
-                      <span className="ml-1 text-[10px] text-[#5c85d6]">({nextSugg.reason})</span>
-                    </div>
-                    {dismissBtn}
-                    <button
-                      onClick={() => {
-                        logSuggestionAccepted("property_send");
-                        setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
-                        openAixWithParams("property_send", nextSugg.params);
-                      }}
-                      className="shrink-0 rounded-full bg-[#1976d2] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
-                    >物件ピックアップした</button>
-                    <button
-                      onClick={() => {
-                        logSuggestionAccepted("property_recommendation");
-                        setDismissedNextActionIds((prev) => new Set([...prev, selectedConversation.id]));
-                        openPropertyRecommendationPicker("direct");
-                      }}
-                      className="shrink-0 rounded-full bg-[#0288d1] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
-                    >物件オススメ</button>
-                  </>
-                ) : (
-                  <>
-                    <div className="min-w-0 flex-1">
-                      <span className="text-[11px] font-bold text-[#1565c0]">AIXおすすめ</span>
-                      <span className="mx-1 text-[11px] text-[#1976d2]">→ {label}</span>
-                      {nextActionSubtitle && <span className="text-[10px] text-[#7c4dff]">（{nextActionSubtitle}）</span>}
-                      {!nextActionSubtitle && nextSugg.reason && <span className="text-[10px] text-[#5c85d6]">({nextSugg.reason})</span>}
-                    </div>
-                    {dismissBtn}
-                    <button
-                      onClick={async () => {
-                        // 採択ログを確実に記録してからAIXモーダルを開く
-                        await logSuggestionAccepted(nextSugg.action ?? "");
-                        openAixWithParams(nextSugg.action as AixActionType, nextSugg.params);
-                      }}
-                      className="shrink-0 rounded-full bg-[#1976d2] px-2.5 py-0.5 text-[10px] font-bold text-white active:opacity-70"
-                    >開く</button>
-                  </>
-                )}
-              </div>
-            );
-          })()}
 
           {/* 申込フォーム自動検知バナー */}
           {isApplyFormDetected && !dismissedApplyFormIds.has(selectedConversation.id) && (
