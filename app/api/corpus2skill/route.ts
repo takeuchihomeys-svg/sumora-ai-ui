@@ -62,7 +62,6 @@ ${e.ai_draft ? `AI案: ${e.ai_draft.slice(0, 300)}\n` : ""}実際に送った返
   const res = await client.messages.create({
     model: "claude-opus-4-8",
     max_tokens: 2000,
-    temperature: 0,
     system: `あなたは賃貸仲介の営業コーチです。スタッフの実際の返信例を分析し、優秀な担当者が使う普遍的なスキルを抽出します。`,
     messages: [{
       role: "user",
@@ -200,7 +199,6 @@ ${e.original_text ? `AI原文: ${(e.original_text as string).replace(/\n/g, " ")
   const res = await client.messages.create({
     model: "claude-opus-4-8",
     max_tokens: 4000,
-    temperature: 0,
     system: `あなたは賃貸仲介LINE接客のテンプレート・AI機能の品質改善コンサルタントです。実データの編集パターンから改善提案を作ります。`,
     messages: [{
       role: "user",
@@ -370,7 +368,6 @@ async function discoverBlindSpots(): Promise<{ questionsSaved: number }> {
   const res = await client.messages.create({
     model: "claude-opus-4-8",
     max_tokens: 3000,
-    temperature: 0,
     system: `あなたはLINE不動産接客AIの「盲点発見エージェント」です。AIが正確に理解できていない業務パターンを発見し、担当者への的確な質問を作ります。`,
     messages: [{
       role: "user",

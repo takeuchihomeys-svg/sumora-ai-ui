@@ -34,7 +34,7 @@ async function callSonnet(prompt: string, maxTokens = 2048): Promise<string> {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-6",
+        model: "claude-opus-4-8",
         max_tokens: maxTokens,
         messages: [{ role: "user", content: prompt }],
       }),

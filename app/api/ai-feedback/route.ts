@@ -4,7 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 // AI盲点フィードバック（ai_feedback_items）
 // corpus2skill 週次Opusが「分からない部分・憶測」を質問としてINSERTし、
-// TemplateModal の「❓ AI質問」タブで竹内さんが回答 → Sonnet 4.6 が知識化して
+// TemplateModal の「❓ AI質問」タブで竹内さんが回答 → Opus 4.8 が知識化して
 // trigger_action_rules（trigger_keywords を通常n-gramルールとして高confidence保存）/
 // ai_prompts（feedback_rule_{id}）+ ai_prompt_rules（FEEDBACK-{id}-{n}）に保存する
 // ※旧 MANUAL_RULE: 接頭辞は suggest-next-action の msg.includes() に絶対マッチしないため廃止
@@ -33,12 +33,11 @@ export async function GET() {
   return NextResponse.json({ ok: true, items: data ?? [] });
 }
 
-// 回答をSonnet 4.6で解釈して業務ルールを1〜3個抽出する
+// 回答をOpus 4.8で解釈して業務ルールを1〜3個抽出する（高品質な永続ルールを生成するため最上位モデルを使用）
 async function extractRules(question: string, answer: string): Promise<ExtractedRule[]> {
   const res = await client.messages.create({
-    model: "claude-sonnet-4-6",
+    model: "claude-opus-4-8",
     max_tokens: 1500,
-    temperature: 0,
     system: `あなたはLINE不動産接客AIの知識管理エージェントです。担当者からの回答を、AIが今後使える業務ルールに変換します。`,
     messages: [{
       role: "user",
