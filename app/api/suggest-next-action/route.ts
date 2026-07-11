@@ -305,9 +305,17 @@ export async function POST(req: NextRequest) {
     // available が undefined/null（クライアント未送信）の場合のみ後続フェーズにフォールスルー
   }
 
+  // ---- トリガールール即判定のために最新顧客メッセージを事前抽出 ----
+  // チェーンルールより前に置くことで、顧客の明示的意図でチェーンルールをスキップできる
+  const lastCustomerMsg = ((customer_message ?? "").trim())
+    || ((messages.find((m) => m.sender === "customer" && (m.text as string)?.trim())?.text as string) ?? "");
+  // 顧客が内覧・申込・費用等を明示的に意図している場合はチェーンルールをスキップ
+  const EXPLICIT_CUSTOMER_INTENT_RE = /内覧|内見|見に行|みに行|みにいき|見学|申込|申し込|費用|初期費用|見積|決めます/;
+  const hasExplicitCustomerIntent = conv.last_sender === "customer" && EXPLICIT_CUSTOMER_INTENT_RE.test(lastCustomerMsg);
+
   // ---- AIXチェーンルール: 直前のAIXアクションから次を提案 ----
   // ※ staff early return より前に置くことで送信直後にも発火する（Fable5 S-1修正）
-  if (last_aix_action) {
+  if (last_aix_action && !hasExplicitCustomerIntent) {
     // フェーズ特定ルール ("AFTER:{action}|{phase}") と汎用ルール ("AFTER:{action}") を1クエリで取得し、コードで振り分け
     const phaseSpecificKeyword = `AFTER:${last_aix_action}|${currentStatus}`;
     const genericKeyword = `AFTER:${last_aix_action}`;
@@ -374,10 +382,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ---- トリガールールで即判定（Haiku不要の場合）----
-  // クライアントから customer_message が渡されていれば優先（表示中会話の最新メッセージ）。
-  // 未指定/空の場合は DB の messages（created_at 降順）から最新のテキスト付き顧客メッセージにフォールバック
-  const lastCustomerMsg = ((customer_message ?? "").trim())
-    || ((messages.find((m) => m.sender === "customer" && (m.text as string)?.trim())?.text as string) ?? "");
+  // lastCustomerMsg はチェーンルールブロック前に抽出済み
 
   // 入居日を指定して見積書再送を要求 → 見積書送る（「待ち合わせ」と誤判定しないよう最優先でチェック）
   // 中5: keyword_hardcode 経由の採択率が低い場合はこのトリガーをスキップして次の判定へ
@@ -428,7 +433,7 @@ export async function POST(req: NextRequest) {
     if (hit) return hit;
   }
   // 内覧: 「内見」（内覧より多い表記）「見学」「現地確認」もカバー
-  if (/内覧|内見|見学.*したい|見学.*希望|見学.*できますか|現地.*確認|現地.*見た/.test(lastCustomerMsg)) {
+  if (/内覧|内見|見学.*したい|見学.*希望|見学.*できますか|現地.*確認|現地.*見た|見に行|みに行|みにいき/.test(lastCustomerMsg)) {
     const hit = keywordHit("viewing_invite", "内覧希望を検出");
     if (hit) return hit;
   }

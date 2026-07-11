@@ -1837,7 +1837,10 @@ export default function Home() {
         (t.includes("お送り") || t.includes("ご連絡") || t.includes("ご案内") || t.includes("次第"));
     });
     if (!hasNewListingPromise) return false;
-    // 最後のメッセージがお客様 or スタッフの新着宣言（返信待ち状態）
+    // お客様の最新メッセージに内覧・申込等の明示的意図があれば P3.4 を非表示（P3.5 に引き継ぐ）
+    const lastMsg = reversed[0];
+    if (lastMsg?.sender === "customer" &&
+        /内覧|内見|見に行|みに行|みにいき|見学|申込|申し込|費用|見積|決めます/.test(lastMsg.text || "")) return false;
     return true;
   }, [selectedConversation, activeAixFlow]);
 
@@ -5858,7 +5861,7 @@ export default function Home() {
 
               // P3.5: お客様が物件に興味を示した → AIX 内覧へ！
               if (
-                /気になり|気になる|気になっ|興味あり|興味が|見てみたい|見たい|いいですね|よさそう|いいな|行ってみたい|行きたい|ぜひ見|見せて|内覧したい|気に入|行ってみ|見てみ/.test(lastCustomerText) &&
+                /気になり|気になる|気になっ|興味あり|興味が|見てみたい|見たい|いいですね|よさそう|いいな|行ってみたい|行きたい|ぜひ見|見せて|内覧したい|気に入|行ってみ|見てみ|見に行き|みに行き|みにいき/.test(lastCustomerText) &&
                 !suggestViewingTemplateMap[id] &&
                 !dismissedViewingInviteIds.has(id)
               ) return (
