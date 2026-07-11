@@ -482,7 +482,8 @@ export default function EstimatePage() {
       // 自分のLINEに送る
       const res = await fetch("/api/send-estimate-preview", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        // 内部認証: NEXT_PUBLIC_INTERNAL_API_SECRET はサーバー側 INTERNAL_API_SECRET と同じ値を設定
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` },
         body: JSON.stringify({ imageBase64 }),
       });
 

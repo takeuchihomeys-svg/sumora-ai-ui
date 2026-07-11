@@ -10,6 +10,10 @@ import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
 import { retryFetch, retryFetchResponse } from "./lib/retry-fetch";
 
+// LINE送信系API（send-line-message / notify-viewing / line-tasks/complete）の内部認証ヘッダ
+// 環境変数 NEXT_PUBLIC_INTERNAL_API_SECRET にサーバー側 INTERNAL_API_SECRET と同じ値を設定すること
+const INTERNAL_AUTH_HEADER = { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` };
+
 // suggest-next-action APIが返すAIX初期化パラメータ
 type NextActionParams = { imageUrl?: string; check_pattern?: string; send_mode?: string };
 
@@ -514,7 +518,9 @@ export default function Home() {
   const [dismissedNewListingIds, setDismissedNewListingIds] = useState<Set<string>>(() => {
     try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedNewListingIds") || "[]") as string[]); } catch { return new Set(); }
   });
-  const [dismissedViewingSpecificIds, setDismissedViewingSpecificIds] = useState<Set<string>>(new Set());
+  const [dismissedViewingSpecificIds, setDismissedViewingSpecificIds] = useState<Set<string>>(() => {
+    try { return new Set<string>(JSON.parse(sessionStorage.getItem("dismissedViewingSpecificIds") || "[]") as string[]); } catch { return new Set(); }
+  });
   const [aixInitViewingSpecific, setAixInitViewingSpecific] = useState(false);
   const [aixInitViewingVacancy, setAixInitViewingVacancy] = useState(false);
   const [showViewingPicker, setShowViewingPicker] = useState(false);
@@ -863,6 +869,9 @@ export default function Home() {
   useEffect(() => {
     try { sessionStorage.setItem("dismissedMeetingPlaceIds", JSON.stringify([...dismissedMeetingPlaceIds])); } catch {}
   }, [dismissedMeetingPlaceIds]);
+  useEffect(() => {
+    try { sessionStorage.setItem("dismissedViewingSpecificIds", JSON.stringify([...dismissedViewingSpecificIds])); } catch {}
+  }, [dismissedViewingSpecificIds]);
   useEffect(() => {
     try { sessionStorage.setItem("dismissedNextActionIds", JSON.stringify([...dismissedNextActionIds])); } catch {}
   }, [dismissedNextActionIds]);
@@ -1803,6 +1812,16 @@ export default function Home() {
     );
   }, [filteredConversations, selectedId]);
 
+  // AixModal に渡す直近メッセージ。毎レンダーで新配列を作ると AixModal 内の
+  // extract_datetime useEffect（deps: recentMessages）が6秒ポーリングのたびに再発火して
+  // Claude が呼ばれ続けるため、messages の参照が変わった時のみ再計算する
+  const aixRecentMessages = useMemo(
+    () => (selectedConversation.messages || []).slice(-20).map((m: Message) => ({
+      sender: m.sender, text: m.text || "", rawCreatedAt: m.rawCreatedAt, isAix: m.isAix,
+    })),
+    [selectedConversation.messages]
+  );
+
   // 空室確認メッセージを送った後 → AIX「物件確認した」ボタンに誘導
   const guideToCheckResult = useMemo(() => {
     if (activeAixFlow) return false;
@@ -1825,7 +1844,8 @@ export default function Home() {
     if (!lastCustomer?.text) return false;
 
     // パターン1: お客様が「〇日〇時〜からお願いします」等で日時を確定した
-    const customerConfirmedTime = /(\d+日.*\d+時|\d+時.*からお願い|からお願いします|でお願いします|時からお願い|時にします|時で大丈夫|でいきます|で行きます|でお伺い)/.test(lastCustomer.text);
+    // 「〜でお願いします」単独では発火させない（「2LDKでお願いします」等の誤発火防止）。日時トークンとの共起を必須にする
+    const customerConfirmedTime = /(\d+日.*\d+時|\d+時.*からお願い|(\d+日|\d+時|明日|あした|今日|本日).{0,20}(からお願いします|でお願いします)|時からお願い|時にします|時で大丈夫|でいきます|で行きます|でお伺い)/.test(lastCustomer.text);
     if (customerConfirmedTime) return true;
 
     // 質問形（日付のみ）の場合は待ち合わせではなく内覧日指定ありへ誘導するためここでreturn false
@@ -3344,7 +3364,7 @@ export default function Home() {
         for (const imageUrl of imageUrls) {
           const lineRes = await fetch("/api/send-line-message", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
             body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, image_url: imageUrl, account: selectedConversation.account }),
           });
           if (!lineRes.ok) {
@@ -3365,7 +3385,7 @@ export default function Home() {
         if (textToSend) {
           const lineRes = await fetch("/api/send-line-message", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
             body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: textToSend, account: selectedConversation.account }),
           });
           if (!lineRes.ok) {
@@ -3813,7 +3833,7 @@ export default function Home() {
       if (imageUrl) {
         const imgRes = await fetch("/api/send-line-message", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
           body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, image_url: imageUrl, account: selectedConversation.account }),
         });
         // P4: LINE message idを記録（テキストも送る場合はテキスト側で上書きされる）
@@ -3828,7 +3848,7 @@ export default function Home() {
       if (text.trim()) {
         const txtRes = await fetch("/api/send-line-message", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
           body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: text.trim(), account: selectedConversation.account }),
         });
         // P4: LINE message idを記録（AIX本文＝最後のテキスト送信が最終的にrefに残る）
@@ -3892,7 +3912,7 @@ export default function Home() {
       if (sendTask) {
         fetch("/api/line-tasks/complete", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
           body: JSON.stringify({ id: sendTask.id }),
         }).catch(() => {});
       }
@@ -4084,7 +4104,7 @@ export default function Home() {
     if (params?.check_pattern === "available" || params?.check_pattern === "vacate_date" || params?.check_pattern === "mgmt_move_in" || params?.check_pattern === "mgmt_initial_cost" || params?.check_pattern === "mgmt_guarantor" || params?.check_pattern === "mgmt_parking" || params?.check_pattern === "mgmt_pet" || params?.check_pattern === "nearby_parking") {
       setAixInitCheckPattern(params.check_pattern);
     }
-    if (params?.send_mode === "normal" || params?.send_mode === "new_arrival" || params?.send_mode === "widen") {
+    if (params?.send_mode === "normal" || params?.send_mode === "new_arrival" || params?.send_mode === "widen" || params?.send_mode === "alternative") {
       setAixInitSendMode(params.send_mode);
     }
     // 申込へ！: 提案バナー経由は「申込誘導」モードで直接開く（モード選択の1タップを省く）
@@ -5813,6 +5833,8 @@ export default function Home() {
               const id = selectedConversation.id;
               const msgs = selectedConversation.messages || [];
               const lastCustomerText = [...msgs].reverse().find((m: Message) => m.sender === "customer")?.text || "";
+              // 最後の発言者が顧客か（スタッフが返信済みの会話ではlastCustomerText由来のバナーを出さない）
+              const customerIsLastSender = (selectedConversation.lastSender ?? msgs[msgs.length - 1]?.sender) === "customer";
               const hasPropertySendTask = (activeTasks[id] ?? []).some(t => t.task_type === "property_send");
               const isApplyStatus = ["applying", "screening", "contract"].includes(selectedConversation.status ?? "");
 
@@ -5958,8 +5980,9 @@ export default function Home() {
                 </div>
               );
 
-              // P3.5: お客様が物件に興味を示した → AIX 内覧へ！
+              // P3.5: お客様が物件に興味を示した → AIX 内覧へ！（スタッフ返信済みなら出さない）
               if (
+                customerIsLastSender &&
                 /気になり|気になる|気になっ|興味あり|興味が|見てみたい|見たい|いいですね|よさそう|いいな|行ってみたい|行きたい|ぜひ見|見せて|内覧したい|気に入|行ってみ|見てみ|見に行き|みに行き|みにいき/.test(lastCustomerText) &&
                 !suggestViewingTemplateMap[id] &&
                 !dismissedViewingInviteIds.has(id)
@@ -5994,8 +6017,9 @@ export default function Home() {
                 </div>
               );
 
-              // P4.5: お客様が他社と比較中 → 割引見積で差別化！
+              // P4.5: お客様が他社と比較中 → 割引見積で差別化！（スタッフ返信済みなら出さない）
               if (
+                customerIsLastSender &&
                 /他にも.*物件|物件.*他にも|比較.*物件|物件.*比較|他でも.*見|他.*検討|検討させてください|一度検討|比較検討|他社|他の会社/.test(lastCustomerText) &&
                 !dismissedEstimateSheetIds.has(id)
               ) return (
@@ -6030,8 +6054,8 @@ export default function Home() {
                 </div>
               );
 
-              // P5: 見積書（初期費用キーワード検知）※フォーマット送信時は除外（⑦初期費用が含まれるため誤検知する）
-              if (/初期費用|見積|費用.*教|いくら|金額.*教|費用感/.test(lastCustomerText) && !((lastCustomerText.match(/[①②③④⑤⑥⑦⑧⑨⑩]/g) ?? []).length >= 2) && !dismissedEstimateSheetIds.has(id)) return (
+              // P5: 見積書（初期費用キーワード検知）※フォーマット送信時は除外（⑦初期費用が含まれるため誤検知する）／スタッフ返信済みなら出さない
+              if (customerIsLastSender && /初期費用|見積|費用.*教|いくら|金額.*教|費用感/.test(lastCustomerText) && !((lastCustomerText.match(/[①②③④⑤⑥⑦⑧⑨⑩]/g) ?? []).length >= 2) && !dismissedEstimateSheetIds.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-amber-400 bg-amber-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-amber-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>初期費用の確認 → AIX 見積書送る</span>
                   <button onClick={() => {
@@ -6180,14 +6204,14 @@ export default function Home() {
                         {nextSugg.reason}
                       </span>
                       <button
-                        onClick={async () => {
-                          // LX-5: P8バナーからの採択も学習ログに記録（記録完了を待ってからAIXを開く）
+                        onClick={() => {
+                          // LX-5: P8バナーからの採択も学習ログに記録（keepalive付きfire-and-forget。awaitするとタップ後数秒無反応になる）
                           const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
                           const lastCustomerMsg = [...selectedConversation.messages]
                             .reverse()
                             .find((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
                             ?.text ?? "";
-                          await fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_accepted", predicted_action: nextSugg.action ?? null, suggestion_source: nextSugg.source ?? null, customer_msg_summary: summarizeForLearning(lastCustomerMsg), previous_action_type: lastAixByConvRef.current.get(id) ?? null }) }).catch(() => {});
+                          void fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_accepted", predicted_action: nextSugg.action ?? null, suggestion_source: nextSugg.source ?? null, customer_msg_summary: summarizeForLearning(lastCustomerMsg), previous_action_type: lastAixByConvRef.current.get(id) ?? null }) }).catch(() => {});
                           setDismissedNextActionIds((prev) => new Set([...prev, id]));
                           setShowAixMenu(false);
                           setAixInspectLabel(null);
@@ -7177,7 +7201,7 @@ export default function Home() {
                       // 売上番長から物件出しグループへ通知（内覧・申込・契約は成功パターンも学習）
                       fetch("/api/notify-viewing", {
                         method: "POST",
-                        headers: { "Content-Type": "application/json" },
+                        headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
                         body: JSON.stringify({
                           customer_name: calendarCustomerName,
                           event_type: calendarEventType,
@@ -7527,7 +7551,7 @@ export default function Home() {
           initialImageFile={aixInitialFile ?? undefined}
           linkedCustomer={aixModalType === "property_recommendation" ? linkedCustomerMap[selectedConversation.id] : undefined}
           customerConditions={linkedCustomerMap[selectedConversation.id]?.conditions || memos[selectedConversation.id] || undefined}
-          recentMessages={(selectedConversation.messages || []).slice(-20).map((m: Message) => ({ sender: m.sender, text: m.text || "", rawCreatedAt: m.rawCreatedAt, isAix: m.isAix }))}
+          recentMessages={aixRecentMessages}
           lastMessageAt={(selectedConversation.messages || []).slice(-1)[0]?.rawCreatedAt}
           customerSummary={linkedCustomerMap[selectedConversation.id]?.ai_summary ?? null}
           initialFocusPoints={pendingAixFocusPoints.length > 0 ? pendingAixFocusPoints : undefined}
@@ -7731,7 +7755,7 @@ export default function Home() {
               for (const _t of _tasks) {
                 fetch("/api/line-tasks/complete", {
                   method: "POST",
-                  headers: { "Content-Type": "application/json" },
+                  headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
                   body: JSON.stringify({ id: _t.id, source: "aix" }),
                 }).catch(() => {});
               }

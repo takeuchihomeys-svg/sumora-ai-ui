@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { requireInternalAuth } from "@/app/lib/api-auth";
 
 const HANBANCYO_TOKEN = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? "";
 
@@ -13,6 +14,9 @@ async function getGroupId(): Promise<string | null> {
 }
 
 export async function POST(req: NextRequest) {
+  const authError = requireInternalAuth(req);
+  if (authError) return authError;
+
   const { imageBase64 } = await req.json() as { imageBase64: string };
 
   const groupId = await getGroupId();

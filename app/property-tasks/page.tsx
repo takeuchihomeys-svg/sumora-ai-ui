@@ -107,7 +107,11 @@ export default function PropertyTasksPage() {
     setSending(true);
     setSendResult("");
     try {
-      const res = await fetch("/api/send-property-list", { method: "POST" });
+      const res = await fetch("/api/send-property-list", {
+        method: "POST",
+        // 内部認証: NEXT_PUBLIC_INTERNAL_API_SECRET はサーバー側 INTERNAL_API_SECRET と同じ値を設定
+        headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` },
+      });
       if (!res.ok) throw new Error(`send failed: ${res.status}`);
       const data = await res.json() as { ok: boolean; count?: number; error?: string };
       setSendResult(data.ok ? `✅ ${data.count}名のリストをLINEに送信しました` : `❌ ${data.error}`);

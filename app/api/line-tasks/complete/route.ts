@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { requireInternalAuth } from "@/app/lib/api-auth";
 
 const TASK_LABEL: Record<string, string> = {
   property_check: "物件確認",
@@ -26,6 +27,9 @@ async function sendGroupMessage(text: string): Promise<void> {
 
 // POST: タスク完了 + 完了アナウンス
 export async function POST(req: NextRequest) {
+  const authError = requireInternalAuth(req);
+  if (authError) return authError;
+
   const { id, source } = await req.json() as { id: string; source?: string };
   if (!id) return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
 

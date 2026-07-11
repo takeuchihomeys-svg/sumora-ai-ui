@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { requireInternalAuth } from "@/app/lib/api-auth";
 import { upsertKnowledge, generateEmbedding } from "@/app/lib/knowledge-utils";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -150,6 +151,9 @@ const EVENT_LABEL: Record<string, string> = {
 };
 
 export async function POST(req: NextRequest) {
+  const authError = requireInternalAuth(req);
+  if (authError) return authError;
+
   try {
     const { customer_name, event_type, date, time, notes, conversation_id } = await req.json() as {
       customer_name: string;

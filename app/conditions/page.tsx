@@ -12,7 +12,11 @@ function SendTaskListButton() {
     setSending(true);
     setResult("");
     try {
-      const res = await fetch("/api/send-property-list", { method: "POST" });
+      const res = await fetch("/api/send-property-list", {
+        method: "POST",
+        // 内部認証: NEXT_PUBLIC_INTERNAL_API_SECRET はサーバー側 INTERNAL_API_SECRET と同じ値を設定
+        headers: { Authorization: `Bearer ${process.env.NEXT_PUBLIC_INTERNAL_API_SECRET ?? ""}` },
+      });
       const data = await res.json() as { ok: boolean; count?: number; error?: string };
       setResult(data.ok ? `✅ ${data.count}名送信` : `❌ ${data.error}`);
     } catch {

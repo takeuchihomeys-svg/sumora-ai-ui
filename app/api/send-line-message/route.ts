@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { requireInternalAuth } from "@/app/lib/api-auth";
 
 // LINE アカウント → チャンネルアクセストークンのマッピング
 // line_contacts.account（日本語名）→ 英語キー の変換も行う
@@ -49,6 +50,9 @@ async function resolveAccountKey(lineUserId: string, providedAccount?: string): 
 }
 
 export async function POST(req: NextRequest) {
+  const authError = requireInternalAuth(req);
+  if (authError) return authError;
+
   const { line_user_id, message, image_url, account } = await req.json() as {
     line_user_id?: string;
     message?: string;
@@ -129,7 +133,10 @@ export async function POST(req: NextRequest) {
             const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "https://sumora-ai-ui.vercel.app";
             fetch(`${baseUrl}/api/line-tasks/complete`, {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${process.env.INTERNAL_API_SECRET ?? ""}`,
+              },
               body: JSON.stringify({ id: pendingTask.id }),
             }).catch(() => {});
           }

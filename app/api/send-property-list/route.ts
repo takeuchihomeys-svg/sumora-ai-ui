@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
+import { requireInternalAuth } from "@/app/lib/api-auth";
 
 export const maxDuration = 30;
 
@@ -102,6 +103,9 @@ async function generateQuote(hotCount: number, totalCount: number): Promise<stri
 }
 
 export async function POST(req: NextRequest) {
+  const authError = requireInternalAuth(req);
+  if (authError) return authError;
+
   if (!TOKEN) {
     return NextResponse.json({ ok: false, error: "LINE token not configured" }, { status: 500 });
   }

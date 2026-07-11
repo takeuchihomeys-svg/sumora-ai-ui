@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { put } from "@vercel/blob";
+import { requireInternalAuth } from "@/app/lib/api-auth";
 
 const TOKEN = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? "";
 
@@ -14,6 +15,9 @@ async function getGroupId(): Promise<string | null> {
 }
 
 export async function POST(req: NextRequest) {
+  const authError = requireInternalAuth(req);
+  if (authError) return authError;
+
   try {
     const { image_base64, file_name, caption } = await req.json() as {
       image_base64: string;
