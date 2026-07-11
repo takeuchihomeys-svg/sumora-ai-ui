@@ -1656,6 +1656,9 @@ export default function AixModal({
       sentReply,
       aiDraft,
       previousStaffMessage: lastStaffMsg,
+      // 改善⑬: sentAt を付与 → save-reply-example の冪等ガード
+      // （conversation_id + sent_at + sent_reply の重複チェック）がAIX経由保存でも効くようにする
+      sentAt: new Date().toISOString(),
       isStarred: false,
       // AIXからの送信は AIX固有のstate名（property_recommendation / condition_hearing 等）のまま保存する
       // （save-reply-example の STATE_NORMALIZE による proposing / hearing への変換をスキップ）

@@ -330,10 +330,13 @@ async function detectRepeatedDeletions(): Promise<{ detected: number; demoted: n
   if (repeated.length === 0) return { detected: 0, demoted: 0 };
 
   // ③ category='phrase' のナレッジを一括取得して照合（テキスト比較のみ・embedding不使用）
+  // 改善③: hypothesis_status='confirmed'（実績で正しさが検証済み）のナレッジは降格対象から除外する
+  //         （降格せず ai_feedback_items への起票のみで竹内さんに確認を仰ぐ）
   const { data: phraseRules } = await supabase
     .from("ai_reply_knowledge")
     .select("id, content, importance")
     .eq("category", "phrase")
+    .neq("hypothesis_status", "confirmed")
     .limit(500);
 
   let demoted = 0;
@@ -355,11 +358,15 @@ async function detectRepeatedDeletions(): Promise<{ detected: number; demoted: n
     }
 
     // phrase 以外のカテゴリでも content にフレーズをそのまま含むナレッジは照合対象
+    // 改善③: confirmed（検証済み）と principle（絶対ルール）は無差別降格の対象外
+    //         （該当時は降格せず ai_feedback_items 起票のみ = 竹内さんの判断に委ねる）
     const esc = phrase.replace(/[%_\\]/g, "\\$&");
     const { data: containRules } = await supabase
       .from("ai_reply_knowledge")
       .select("id, importance")
       .ilike("content", `%${esc}%`)
+      .neq("hypothesis_status", "confirmed")
+      .neq("category", "principle")
       .limit(10);
     for (const rule of containRules ?? []) {
       if (!matchedIds.has(rule.id as string)) matchedIds.set(rule.id as string, (rule.importance as number) ?? 7);

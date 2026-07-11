@@ -50,9 +50,12 @@ type Skill = {
 
 async function synthesizeSkills(state: string, examples: Example[], chainSection = ""): Promise<Skill[]> {
   const examplesText = examples.slice(0, 15).map((e, i) => {
-    const label = e.was_ai_modified
-      ? "🔴 スタッフがAIを改善（AIがまだ弱いパターン）"
-      : "✅ AIをそのまま使用（スタッフが承認した良い例）";
+    // 改善⑦: 2値→3値ラベル。ai_draftなしの手書き返信を「AIそのまま使用」と誤ラベルしない
+    const label = (!e.ai_draft || !e.ai_draft.trim())
+      ? "✍️ スタッフ手書き（最良の教師データ）"
+      : e.was_ai_modified
+        ? "🔴 AIを修正（修正内容から学習）"
+        : "✅ AIをそのまま使用（スタッフが承認した良い例）";
     return `
 --- 例${i + 1} [${label}] ---
 顧客: ${(e.customer_message || "").slice(0, 150)}
@@ -69,17 +72,18 @@ ${e.ai_draft ? `AI案: ${e.ai_draft.slice(0, 300)}\n` : ""}実際に送った返
 
 ${examplesText}
 ${chainSection}
-各例には2種類のラベルが付いています：
+各例には3種類のラベルが付いています：
+- ✍️ スタッフ手書き → AIを介さずスタッフが自力で書いた返信（最良の教師データ・最も重視する）
 - ✅ AIをそのまま使用 → AIが既に習得済みの良いパターン（強化すべき）
-- 🔴 スタッフがAIを改善 → AIがまだ弱いパターン（特に学ぶべき）
+- 🔴 AIを修正 → AIがまだ弱いパターン（特に学ぶべき）
 
-この2つのコントラストを活かして「優秀な賃貸営業担当者が使う普遍的なスキル・パターン」を、意味のあるものを全て抽出してください。数は自分で判断してください。
+この3つのコントラストを活かして「優秀な賃貸営業担当者が使う普遍的なスキル・パターン」を、意味のあるものを全て抽出してください。数は自分で判断してください。
 
 条件：
 - 固有名詞・物件名・日時に依存しない、どの顧客にも使える普遍パターンのみ
 - 薄い・当たり前すぎるものは除外（本当に価値のあるものだけ）
 - 「できる営業担当者は〇〇する」という形式で書く
-- 🔴の例からは「AIが苦手なこと」、✅の例からは「既に正解しているパターン」として区別して抽出
+- ✍️の例からは「スタッフ独自の型・お手本」、🔴の例からは「AIが苦手なこと」、✅の例からは「既に正解しているパターン」として区別して抽出
 - 🔴の例で「AI案にあってスタッフが削除した文言」がある場合は、禁止スキルとして抽出しない。代わりに、なぜその文言が削除されたか・どういう顧客状況なら使えるかを考察し、プロンプトや知識の曖昧さを補う質問として skill のリストには含めず、別途フィードバックとして扱う（スキル化しない）
 - 「連続対応シーケンス」がある場合は、単発の返信スキルに加えて「空室確認→見積送付」のような複数アクションのセット運用パターンも抽出対象とする
 
@@ -369,6 +373,28 @@ async function discoverBlindSpots(): Promise<{ questionsSaved: number }> {
     return { questionsSaved: 0 };
   }
 
+  // 改善⑩: 既知情報（既存corpus2skillスキル・回答済みQ&A）をOpusに渡して既知の再質問を防ぐ
+  const [{ data: knownSkills }, { data: answeredItems }] = await Promise.all([
+    supabase
+      .from("ai_reply_knowledge")
+      .select("title")
+      .like("title", "[corpus2skill]%")
+      .order("created_at", { ascending: false })
+      .limit(40),
+    supabase
+      .from("ai_feedback_items")
+      .select("question")
+      .in("status", ["answered", "applied"])
+      .order("created_at", { ascending: false })
+      .limit(30),
+  ]);
+  const knownSkillsSection = (knownSkills ?? [])
+    .map((s) => `- ${((s.title as string) ?? "").replace("[corpus2skill] ", "")}`)
+    .join("\n");
+  const answeredSection = (answeredItems ?? [])
+    .map((a) => `- ${((a.question as string) ?? "").replace(/\n/g, " ").slice(0, 80)}`)
+    .join("\n");
+
   const gapSection = (gapLogs ?? []).map((g, i) =>
     `【${i + 1}】予測: ${g.predicted_action} → 実際: ${g.actual_aix_type ?? "不明"}\n外れた理由: ${(g.gap_analysis as string).replace(/\n/g, " ").slice(0, 200)}`
   ).join("\n\n");
@@ -408,6 +434,16 @@ ${fallbackSection || "（なし）"}
 
 【スタッフがAIの返信案を修正して送った場面（AI案 vs 実際の送信文）】
 ${modifiedSection || "（なし）"}
+
+【既に学習済みのスキル（既知 — これらと重複する質問は出さない）】
+${knownSkillsSection || "（なし）"}
+
+【過去に回答済みの質問（既知 — 同じ・類似の質問を出さない）】
+${answeredSection || "（なし）"}
+
+■ 既知は出すな（重要）
+上記の「学習済みスキル」「回答済み質問」でカバー済みの内容は既知として扱い、質問を生成しないこと。
+本当に未知の盲点だけを質問化する。
 
 ■ 根本原因の診断（最重要タスク）
 「AI案 vs 実際の送信文」の対比では、単なる言い回しの違いは無視し、以下の2種類の根本原因を診断すること:
@@ -460,12 +496,13 @@ ${modifiedSection || "（なし）"}
     if (!item?.question?.trim()) continue;
     const question = item.question.trim();
 
-    // dedup: question の先頭50字が一致する pending があればスキップ（同じ質問を何度も出さない）
+    // dedup: question の先頭50字が一致するものがあればスキップ（同じ質問を何度も出さない）
+    // 改善⑩: pending のみ → pending/answered/applied に拡大（回答済みの質問が翌週再起票されるのを防ぐ）
     const escapedKey = question.slice(0, 50).replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
     const { data: existing } = await supabase
       .from("ai_feedback_items")
       .select("id")
-      .eq("status", "pending")
+      .in("status", ["pending", "answered", "applied"])
       .ilike("question", `${escapedKey}%`)
       .limit(1);
     if (existing && existing.length > 0) continue;

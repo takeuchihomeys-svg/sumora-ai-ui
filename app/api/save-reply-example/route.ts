@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 
 // Vercel Functions のタイムアウト上限（秒）— Haiku分析チェーン×3に余裕を持たせる
 export const maxDuration = 60;
@@ -248,17 +249,23 @@ JSONのみで返答（説明不要）：
         })),
     ];
 
-    if (entries.length > 0) {
-      await supabase.from("ai_reply_knowledge").insert(
-        entries.map((entry) => ({
-          category: entry.category,
-          title: entry.title,
-          content: entry.content,
-          importance: entry.importance,
-          conversation_state: conversationState || null,
-          source_example_id: exampleId,
-        }))
-      );
+    // 改善①: insert直書き → upsertKnowledge（embedding付与・類似ルールマージ・重複排除）
+    // pattern は検索クエリ（顧客メッセージ）と意味空間を揃えるため trigger_example を embedding 化、
+    // phrase は各フレーズごとに content を embedding 化（同一embedding同士の誤マージ防止）
+    for (const entry of entries) {
+      const embInput = entry.category === "pattern"
+        ? buildKnowledgeEmbeddingInput({ trigger_example: customerMessage, conversation_state: conversationState || undefined })
+        : buildKnowledgeEmbeddingInput({ content: entry.content, conversation_state: conversationState || undefined });
+      const embedding = embInput ? await generateEmbedding(embInput) : null;
+      await upsertKnowledge(supabase, {
+        title: entry.title,
+        content: entry.content,
+        category: entry.category,
+        importance: entry.importance,
+        ...(conversationState ? { conversation_state: conversationState } : {}),
+        source_example_id: exampleId,
+        ...(embedding ? { embedding } : {}),
+      }).catch((e) => console.error("analyzeAndSaveKnowledge upsert error:", e));
     }
   } catch (e) {
     console.error("analyzeAndSaveKnowledge error:", e);
@@ -368,24 +375,37 @@ ${sentReply}
     };
 
     const diffImp = diffImportance(sim);
-    await supabase.from("ai_reply_knowledge").insert([
+    // 改善①: insert直書き → upsertKnowledge（embedding付与・類似ルールマージ・重複排除）
+    // MED-03修正: analyze-diffsのポリシーと統一で category=pattern（principleはフォールバック経路で除外される）
+    // ※ 2エントリに同一embeddingを与えると upsertKnowledge の similarity>0.92 で相互マージされるため、
+    //   [差分学習]=trigger_example（顧客メッセージ）/ [修正対比]=content ベースで別々に embedding 化する
+    const diffEntries = [
       {
-        category: "pattern",  // MED-03修正: analyze-diffsのポリシーと統一（principleはフォールバック経路で除外される）
         title: `[差分学習] ${(analysis.ai_mistake || "").slice(0, 30)}`,
         content: analysis.rule,
         importance: diffImp,
-        conversation_state: conversationState || null,
-        source_example_id: exampleId,
+        embInput: buildKnowledgeEmbeddingInput({ trigger_example: customerMessage, rule: analysis.rule, conversation_state: conversationState || undefined }),
       },
       {
-        category: "pattern",
         title: `[修正対比] ${conversationState}`,
         content: analysis.correction_pattern,
         importance: Math.max(7, diffImp - 1),
-        conversation_state: conversationState || null,
-        source_example_id: exampleId,
+        embInput: buildKnowledgeEmbeddingInput({ content: analysis.correction_pattern, conversation_state: conversationState || undefined }),
       },
-    ]);
+    ];
+    for (const entry of diffEntries) {
+      if (!entry.content) continue;
+      const embedding = entry.embInput ? await generateEmbedding(entry.embInput) : null;
+      await upsertKnowledge(supabase, {
+        title: entry.title,
+        content: entry.content,
+        category: "pattern",
+        importance: entry.importance,
+        ...(conversationState ? { conversation_state: conversationState } : {}),
+        source_example_id: exampleId,
+        ...(embedding ? { embedding } : {}),
+      }).catch((e) => console.error("analyzeDiff upsert error:", e));
+    }
   } catch (e) {
     console.error("analyzeDiff error:", e);
   }
@@ -704,9 +724,9 @@ export async function POST(req: NextRequest) {
       const candidateAiDraft = (splitCandidate.ai_draft as string | null) ?? aiDraft ?? null;
       if (candidateAiDraft) {
         const mergedSim = textSimilarity(candidateAiDraft.trim(), mergedReply.trim());
-        const mergedWasAiUsed = mergedSim >= 0.9;
-        const mergedWasAiModified = mergedSim >= 0.05 && mergedSim < 0.9;
-        const feedbackResult = mergedWasAiUsed ? "correct" : mergedWasAiModified ? "wrong" : null;
+        // 改善⑨: マージパスのRLHF閾値を通常パスと統一（sim>=0.65 → correct / それ未満 → wrong）
+        // 改善④: sim<0.05（完全書き直し）も wrong として登録（AI案が捨てられた = 強い負のシグナル）
+        const feedbackResult: "correct" | "wrong" | null = mergedSim >= 0.65 ? "correct" : "wrong";
         if (feedbackResult) {
           // RLHF-002: マージパスは直後に return するため fire-and-forget だと Vercel Function が終了前に RPC がキャンセルされる → await
           await supabase.rpc("confirm_knowledge_feedback", {
@@ -739,9 +759,11 @@ export async function POST(req: NextRequest) {
 
   // RLHF: 仮説検証フィードバック（conversationId + aiDraft がある場合のみ）
   // sim>=0.65（軽微修正含む）→ correct、5〜65%修正 → wrong
+  // 改善④: sim<0.05（ほぼ手書き = 完全書き直し）も wrong として登録（AI案が捨てられた = 強い負のシグナル）
   // after()でVercelがレスポンス後にキャンセルするのを防ぐ
+  const isFullRewrite = !!aiDraft && aiDraft.trim().length > 0 && sim < 0.05;
   if (conversationId && aiDraft) {
-    const feedbackResult = (wasAiUsed || sim >= 0.65) ? "correct" : wasAiModified ? "wrong" : null;
+    const feedbackResult = (wasAiUsed || sim >= 0.65) ? "correct" : (wasAiModified || isFullRewrite) ? "wrong" : null;
     if (feedbackResult) {
       after(async () => {
         await supabase.rpc("confirm_knowledge_feedback", {
@@ -760,8 +782,9 @@ export async function POST(req: NextRequest) {
   }
 
   // 中3: スタッフが修正した場合、AI文案に注入されていたのに消されたフレーズ/パターンの importance を減衰
+  // 改善④: 完全書き直し（isFullRewrite）時も注入ナレッジは全て捨てられたとみなして減衰対象にする
   // （fire-and-forget: after() でレスポンス返却後に実行し保存処理を遅延させない）
-  if (conversationId && aiDraft && wasAiModified) {
+  if (conversationId && aiDraft && (wasAiModified || isFullRewrite)) {
     after(() => decayRemovedKnowledge(conversationId, aiDraft, sentReply));
   }
 

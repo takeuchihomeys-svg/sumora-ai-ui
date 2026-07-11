@@ -861,7 +861,7 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_apply_log_source ON knowledge_apply_log
 
 -- confirm_knowledge_feedback: 正解/外れを記録し自動昇格/降格する
 -- C05: p_source (NULL=全ソース対象 / 'generate_reply' | 'aix_action' = 絞り込み) を追加
--- RLHF-002: 直近1時間のpendingのみ対象（会話全体の巻き込み反転を防止）
+-- RLHF-002: 直近24時間のpendingのみ対象（会話全体の巻き込み反転を防止しつつ、翌日返信の学習漏れを防ぐ / 改善②で1時間→24時間に拡大）
 CREATE OR REPLACE FUNCTION confirm_knowledge_feedback(
   p_conversation_id TEXT,
   p_result TEXT,
@@ -874,13 +874,13 @@ BEGIN
   FROM knowledge_apply_log
   WHERE conversation_id = p_conversation_id AND result = 'pending'
     AND (p_source IS NULL OR source = p_source)
-    AND applied_at > NOW() - INTERVAL '1 hour';
+    AND applied_at > NOW() - INTERVAL '24 hours';
   IF v_knowledge_ids IS NULL OR ARRAY_LENGTH(v_knowledge_ids, 1) = 0 THEN RETURN; END IF;
   UPDATE knowledge_apply_log
   SET result = p_result
   WHERE conversation_id = p_conversation_id AND result = 'pending'
     AND (p_source IS NULL OR source = p_source)
-    AND applied_at > NOW() - INTERVAL '1 hour';
+    AND applied_at > NOW() - INTERVAL '24 hours';
   UPDATE ai_reply_knowledge
   SET
     apply_count   = COALESCE(apply_count, 0) + 1,

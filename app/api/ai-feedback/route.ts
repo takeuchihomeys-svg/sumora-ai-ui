@@ -14,6 +14,19 @@ export const maxDuration = 60;
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 50_000, maxRetries: 1 });
 
+// 改善⑧: suggest-next-action/route.ts の KNOWN_AIX_TYPES と同一のwhitelist。
+// Opusが返す未知の action_type をそのまま trigger_action_rules に upsert すると
+// suggest-next-action 側で使われない汚染ルールが蓄積するため、
+// whitelist外は ai_prompts（一般ルール）へフォールバック保存する。
+// ※ suggest-next-action 側のリストを変更した場合はここも同時に更新すること
+const KNOWN_AIX_TYPES = new Set([
+  "property_send", "viewing_invite", "property_recommendation", "hearing",
+  "follow_up", "application", "document_request", "contract", "greeting",
+  "property_check_result", "estimate_sheet", "meeting_place",
+  "acknowledge_check", "followup_revive", "application_push",
+  "condition_hearing", "alternative_send",
+]);
+
 type ExtractedRule = {
   rule_text: string;
   save_target: "trigger_action_rules" | "ai_prompts";
@@ -110,8 +123,17 @@ export async function POST(req: NextRequest) {
       .map((k) => (k ?? "").trim())
       .filter((k) => k.length >= 3)
       .slice(0, 3);
+    const actionType = rule.action_type?.trim() ?? "";
 
-    if (rule.save_target === "trigger_action_rules" && rule.action_type?.trim() && keywords.length > 0) {
+    // 改善⑧: whitelist外の action_type は trigger_action_rules を汚染するため
+    // ai_prompts（一般ルール）へフォールバック保存する
+    if (rule.save_target === "trigger_action_rules" && actionType && !KNOWN_AIX_TYPES.has(actionType)) {
+      console.warn(`[ai-feedback] whitelist外のaction_type "${actionType}" → trigger_action_rules をスキップし ai_prompts へフォールバック保存`);
+      promptRuleTexts.push(ruleText);
+      continue;
+    }
+
+    if (rule.save_target === "trigger_action_rules" && actionType && keywords.length > 0) {
       // 竹内さん確認済みルール → 実際の発動キーワードを通常のn-gramルールとして保存
       // （旧 MANUAL_RULE:接頭辞は顧客メッセージの msg.includes() に絶対マッチしないため廃止）
       // confidence 0.95 / occurrence_count 10 = learn-trigger-rules のクリーンアップで絶対に削除されない
@@ -119,7 +141,7 @@ export async function POST(req: NextRequest) {
       for (const keyword of keywords) {
         const { error } = await supabase.from("trigger_action_rules").upsert({
           keyword: keyword.slice(0, 200),
-          action_type: rule.action_type.trim(),
+          action_type: actionType,
           confidence: 0.95,
           occurrence_count: 10,
           updated_at: new Date().toISOString(),
@@ -127,7 +149,7 @@ export async function POST(req: NextRequest) {
         if (!error) savedKeywords++;
         else console.error("[ai-feedback] trigger_action_rules upsert error:", error.message);
       }
-      if (savedKeywords > 0) appliedRules.push(`[${rule.action_type}] ${ruleText}（キーワード: ${keywords.join("・")}）`);
+      if (savedKeywords > 0) appliedRules.push(`[${actionType}] ${ruleText}（キーワード: ${keywords.join("・")}）`);
     } else {
       // 一般ルール（キーワード抽出できなかった trigger ルールも情報を失わずこちらへ）
       promptRuleTexts.push(ruleText);

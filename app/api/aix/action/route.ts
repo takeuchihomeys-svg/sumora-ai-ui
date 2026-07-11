@@ -118,11 +118,13 @@ async function getAixSystemPrompt(key: string, defaultValue: string): Promise<st
 async function getPropertyKnowledge(): Promise<string> {
   const [{ data: diffLearned }, { data: stateKnowledge }] = await Promise.all([
     // ① 差分学習ルール（最優先）
+    // 改善⑪: rejected（実運用で外れ続けたルール）を注入しない
     supabase.from("ai_reply_knowledge")
       .select("id, title, content")
       .ilike("title", "%差分学習%")
       .gte("importance", 7)
       .in("conversation_state", ["property_recommendation", "proposing"])
+      .neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false })
       .limit(15),
@@ -132,6 +134,7 @@ async function getPropertyKnowledge(): Promise<string> {
       .in("conversation_state", ["property_recommendation", "proposing"])
       .gte("importance", 7)
       .not("title", "ilike", "%差分学習%")
+      .neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false })
       .limit(12),
   ]);
@@ -2301,6 +2304,7 @@ M/D（曜日）HH:MM〜HH:MM
           .select("category, content")
           .in("conversation_state", ["proposing", "availability_check"])
           .gte("importance", 8)
+          .neq("hypothesis_status", "rejected") // 改善⑪: 実運用で外れ続けたルールを注入しない
           .order("importance", { ascending: false })
           .limit(6),
       ]);
