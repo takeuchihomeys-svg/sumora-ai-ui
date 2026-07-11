@@ -443,10 +443,13 @@ export async function POST(req: NextRequest) {
     const [learnedPatterns, nextActionRulesRes, viewingsRes] = await Promise.all([
       fetchWinningPatterns(priorPersonalityProfile, patternQueryText)
         .catch((err) => { console.warn("[customer-summary] fetchWinningPatterns失敗:", err); return [] as Array<{ content: string }>; }),
+      // 次アクションルール: log-aix-usage が category="pattern" + title="next_action_rule_..." で保存
+      // （CHECK制約により旧 category="next_action_pattern" は存在しない）
       supabase
         .from("ai_reply_knowledge")
         .select("content")
-        .eq("category", "next_action_pattern")
+        .eq("category", "pattern")
+        .ilike("title", "next_action_rule_%")
         .neq("hypothesis_status", "rejected")
         .order("apply_count", { ascending: false })
         .limit(8),

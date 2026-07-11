@@ -21,10 +21,15 @@ const SKIP_STATUSES = new Set(["contract", "lost", "closed_won", "closed_lost"])
 // サブモードログ（%_submode 等）から生成された汚染ルールを提案に使わないため、
 // trigger_action_rules 参照時はこのリストに含まれる action_type のみ採用する
 const KNOWN_AIX_TYPES = new Set([
-  "property_send", "viewing_invite", "property_recommendation", "hearing",
-  "follow_up", "application", "document_request", "contract", "greeting",
+  "property_send", "viewing_invite", "property_recommendation",
+  // ※ hearing / follow_up / application / document_request / contract / greeting は
+  //   UI未実装の旧名（AixModalに対応ボタンなし）。DBルール（trigger_action_rules）から
+  //   action_type として来る可能性があるため削除はしない
+  "hearing", "follow_up", "application", "document_request", "contract", "greeting",
   "property_check_result", "estimate_sheet", "meeting_place",
   "acknowledge_check", "followup_revive", "application_push",
+  // ※ alternative_send もUI未実装の旧名。提案時は property_send + send_mode:"alternative" に
+  //   変換して返す（下の available===false 分岐参照）。DBルール由来で残存する可能性があるため削除はしない
   "condition_hearing", "alternative_send",
 ]);
 
@@ -299,8 +304,10 @@ export async function POST(req: NextRequest) {
     }
     if (available === false) {
       // 空室なしが明示された場合のみ → 代替物件送りへ誘導（抑制時は提案なしで確定）
-      if (shouldSuppressAction("alternative_send")) return NextResponse.json({ action: null, reason: "" });
-      return NextResponse.json({ action: "alternative_send", reason: "代替物件を送る", source: "chain_rule", params: buildParams("alternative_send"), acceptanceRate: acceptanceRateMap["alternative_send"] ?? null, sub_mode_stats: subModeStats, ...templateRec("alternative_send") });
+      // ※ "alternative_send" はAixModalに存在しないactionTypeのため、
+      //   property_send + send_mode:"alternative"（代替物件モード）に変換して返す
+      if (shouldSuppressAction("property_send")) return NextResponse.json({ action: null, reason: "" });
+      return NextResponse.json({ action: "property_send", reason: "代替物件を送る", source: "chain_rule", params: { ...buildParams("property_send"), send_mode: "alternative" }, acceptanceRate: acceptanceRateMap["property_send"] ?? null, sub_mode_stats: subModeStats, ...templateRec("property_send") });
     }
     // available が undefined/null（クライアント未送信）の場合のみ後続フェーズにフォールスルー
   }

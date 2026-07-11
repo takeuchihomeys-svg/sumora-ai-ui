@@ -2,9 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
 // 各設定のデフォルト値（DB未設定時のフォールバック）
+// ⚠️ 注意: property_recommendation の設定は【現在無効】。
+//   生成側（app/api/aix/action/route.ts）はコード内固定の DEFAULT_PROP_SYSTEM を直接使用しており、
+//   ここで編集・保存した値は物件オススメ文の生成に一切反映されない
+//   （かつて参照していた getAixSystemPrompt はデッドコードとして削除済み）。
+//   GET/PUT は既存データ保全のためそのまま残す。再度有効化する場合は action/route.ts 側で
+//   aix_settings を読むよう明示的に実装し直すこと。
 export const AIX_DEFAULTS: Record<string, { label: string; value: string }> = {
   property_recommendation: {
-    label: "🏠 物件オススメ — システムプロンプト",
+    label: "🏠 物件オススメ — システムプロンプト（⚠️ 現在この設定は無効です — 生成はコード内固定フォーマットを使用）",
     value: `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
 物件資料の画像を読み取り、お客様へのオススメ物件メッセージをLINEで送る文章を書いてください。
 

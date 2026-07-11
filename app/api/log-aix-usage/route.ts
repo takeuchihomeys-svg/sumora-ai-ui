@@ -19,7 +19,46 @@ const AIX_TYPE_LABELS: Record<string, string> = {
   document_request:         "書類案内をした",
   contract:                 "契約手続きを案内した",
   greeting:                 "初回挨拶を送った",
+  // ⑨-2: 現行AIXボタンの aix_type（欠落していたため追加）
+  estimate_sheet:           "見積書を送った",
+  property_check_result:    "物件の確認結果を報告した",
+  meeting_place:            "待ち合わせ場所を案内した",
+  acknowledge_check:        "確認しますと返信した",
+  followup_revive:          "追客メッセージを送った",
+  application_push:         "申込みを後押しした",
+  condition_hearing:        "条件ヒアリングをした",
+  greeting_viewing:         "内覧挨拶を送った",
 };
+
+// 一致判定（簡易ベースライン）
+// 中2: 未定義の aix_type は wasAccurate=false 固定になり、Haiku パース失敗時に
+// 不要な learning_rule 保存を誘発するため全 aix_type を網羅する
+const MATCH_KEYWORDS: Record<string, string[]> = {
+  viewing_invite:          ["内覧", "見学", "日程", "お部屋"],
+  property_send:           ["物件", "ご紹介", "新着", "おすすめ"],
+  property_recommendation: ["物件", "おすすめ", "おすすめ物件"],
+  follow_up:               ["いかがでし", "確認", "どうでし", "感想"],
+  application:             ["申込", "お申し込み", "申し込み"],
+  document_request:        ["書類", "身分証", "連帯保証"],
+  estimate_sheet:          ["見積", "費用", "初期費用", "家賃"],
+  meeting_place:           ["待ち合わせ", "案内", "現地", "集合"],
+  property_check_result:   ["空室", "確認", "空き", "退去"],
+  greeting:                ["はじめまして", "よろしく", "担当"],
+  hearing:                 ["条件", "ご希望", "予算", "エリア"],
+  condition_hearing:       ["条件", "ご希望", "予算", "エリア", "ヒアリング"],
+  contract:                ["契約", "手続き", "書類", "入居日"],
+  acknowledge_check:       ["確認", "承知", "了解"],
+  followup_revive:         ["いかが", "その後", "近況"],
+  application_push:        ["申込", "お申し込み"],
+  greeting_viewing:        ["内覧", "挨拶", "案内", "当日"],
+};
+
+// キーワード簡易判定（予測テキストに実アクションのキーワードが含まれるか）
+// runGapAnalysis と POST 側の暫定書き込み（⑨-1）の両方から使う
+function keywordAccuracy(actualAixType: string, predictedAction: string): boolean {
+  const kw = MATCH_KEYWORDS[actualAixType] ?? [];
+  return kw.length > 0 && kw.some(k => predictedAction.includes(k));
+}
 
 // next_action 予測 vs 実際の行動 のギャップを Haiku で分析し ai_reply_knowledge に保存
 async function runGapAnalysis(opts: {
@@ -50,28 +89,8 @@ async function runGapAnalysis(opts: {
         .join("\n")
     : "（やりとりなし）";
 
-  // 一致判定（簡易ベースライン）
-  // 中2: 未定義の aix_type は wasAccurate=false 固定になり、Haiku パース失敗時に
-  // 不要な learning_rule 保存を誘発するため全 aix_type を網羅する
-  const matchKeywords: Record<string, string[]> = {
-    viewing_invite:          ["内覧", "見学", "日程", "お部屋"],
-    property_send:           ["物件", "ご紹介", "新着", "おすすめ"],
-    property_recommendation: ["物件", "おすすめ", "おすすめ物件"],
-    follow_up:               ["いかがでし", "確認", "どうでし", "感想"],
-    application:             ["申込", "お申し込み", "申し込み"],
-    document_request:        ["書類", "身分証", "連帯保証"],
-    estimate_sheet:          ["見積", "費用", "初期費用", "家賃"],
-    meeting_place:           ["待ち合わせ", "案内", "現地", "集合"],
-    property_check_result:   ["空室", "確認", "空き", "退去"],
-    greeting:                ["はじめまして", "よろしく", "担当"],
-    hearing:                 ["条件", "ご希望", "予算", "エリア"],
-    contract:                ["契約", "手続き", "書類", "入居日"],
-    acknowledge_check:       ["確認", "承知", "了解"],
-    followup_revive:         ["いかが", "その後", "近況"],
-    application_push:        ["申込", "お申し込み"],
-  };
-  const kw = matchKeywords[actualAixType] ?? [];
-  const wasAccurate = kw.length > 0 && kw.some(k => predictedAction.includes(k));
+  // 一致判定（簡易ベースライン）: モジュールスコープの keywordAccuracy を使用（⑨-1で共通化）
+  const wasAccurate = keywordAccuracy(actualAixType, predictedAction);
 
   const client = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
@@ -133,17 +152,21 @@ ${msgContext}
   //      （キーワード簡易判定だけを根拠にした低品質ルールの蓄積を防ぐ）
   if (parsed.learning_rule && !(parsed.was_accurate ?? wasAccurate)) {
     const title = `next_action_rule_${customerId.slice(0, 8)}_${Date.now()}`;
-    await supabase.from("ai_reply_knowledge").insert({
+    // 断線修正①: state → conversation_state（正しいカラム名）、
+    // category は CHECK制約 IN ('pattern','style','phrase','principle') に合わせて 'pattern' を使用
+    const { error: insertError } = await supabase.from("ai_reply_knowledge").insert({
       title,
-      category: "next_action_pattern",
+      category: "pattern",
       content: parsed.learning_rule,
-      state: null,
+      conversation_state: null,
       importance: 7, // HIGH-06修正: importance=3 は min_importance=7 フィルタで除外されるため 7 に引き上げ
       hypothesis_status: "hypothesis",
       apply_count: 0,
       correct_count: 0,
       wrong_count: 0,
     });
+    // 断線修正①: insert失敗の握りつぶし防止（カラム名・制約違反等を検知できるようにする）
+    if (insertError) console.error("[log-aix-usage] ai_reply_knowledge insert failed:", insertError);
   }
 }
 
@@ -251,8 +274,15 @@ export async function POST(req: NextRequest) {
 
       if (predRow) {
         // 二重処理防止のため先に validated=true にしてから非同期で分析
+        // ⑨-1: Haiku 分析が失敗すると was_accurate が NULL のまま残るため、
+        //      キーワード簡易判定の結果を暫定書き込みしておく（Haiku 成功時に runGapAnalysis が上書き）
         await supabase.from("next_action_logs")
-          .update({ validated: true, actual_aix_type: aix_type, validated_at: new Date().toISOString() })
+          .update({
+            validated: true,
+            actual_aix_type: aix_type,
+            was_accurate: keywordAccuracy(aix_type, (predRow.predicted_action as string) ?? ""),
+            validated_at: new Date().toISOString(),
+          })
           .eq("id", predRow.id as string);
 
         waitUntil(runGapAnalysis({
