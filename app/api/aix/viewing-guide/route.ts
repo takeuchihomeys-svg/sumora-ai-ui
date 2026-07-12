@@ -169,6 +169,15 @@ export async function POST(request: NextRequest) {
         .map(m => `${m.sender === "customer" ? "お客様" : "スタッフ"}: ${m.text}`)
         .join("\n");
 
+      // スタッフの直近メッセージに絵文字があれば絵文字スタイルを合わせる
+      const staffUsesEmoji = recentMessages
+        .slice(-10)
+        .filter(m => m.sender !== "customer")
+        .some(m => /\p{Emoji_Presentation}/u.test(m.text));
+      const emojiRule = staffUsesEmoji
+        ? "- 絵文字はこちらの会話に合わせて自然に使う"
+        : "- 絵文字は控えめ（1〜2個まで）";
+
       // H1: 学習済み適応改善ルール（内覧系カテゴリ）を取得してプロンプトに注入
       // ※ analyze-template-modifications が template_category（日本語）で蓄積するため
       //   内覧系の実カテゴリ名 + 将来用の英語キーの両方をカバーする
@@ -196,7 +205,7 @@ export async function POST(request: NextRequest) {
 
 【スモラの文体ルール】
 - 語尾に「！！」を多用する
-- 絵文字は控えめ（1〜2個まで）
+${emojiRule}
 - 敬語だが親しみやすい
 - お客様の気持ち・温度感に合わせる
 - 本文のみ出力（説明文は一切不要）${adaptRuleNote}`;
