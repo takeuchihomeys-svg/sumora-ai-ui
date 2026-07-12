@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
 // P4: AIX機能改善提案（aix_feature_suggestions）
@@ -46,5 +46,36 @@ export async function POST(req: NextRequest) {
     .eq("id", id);
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+
+  // implemented マーク時: implementation_notes + description を ai_prompt_rules に upsert（fire-and-forget）
+  if (status === "implemented") {
+    const { data: sg } = await supabase
+      .from("aix_feature_suggestions")
+      .select("description, implementation_notes, action_type")
+      .eq("id", id)
+      .maybeSingle();
+    if (sg) {
+      const notes = sg.implementation_notes as string | null;
+      const desc = sg.description as string | null;
+      const ruleText = [notes, desc].filter(Boolean).join("\n").slice(0, 500);
+      if (ruleText.trim()) {
+        after(async () => {
+          try {
+            await supabase.from("ai_prompt_rules").upsert({
+              rule_key: "IMPLEMENT-" + id,
+              action_type: (sg.action_type as string | null) ?? null,
+              rule_text: ruleText,
+              reason: "AIX改善案: 実装完了としてマーク済み",
+              priority: 7,
+              is_active: true,
+            }, { onConflict: "rule_key" });
+          } catch (e) {
+            console.warn("[aix-feature-suggestions] IMPLEMENT ルール登録失敗:", e);
+          }
+        });
+      }
+    }
+  }
+
   return NextResponse.json({ ok: true, updated: true });
 }

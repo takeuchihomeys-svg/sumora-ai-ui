@@ -1,5 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 
 // AIXアクション → テンプレートカテゴリ変換
 // ※ 値は TemplateModal.tsx の AIX_CATEGORY_ORDER（実カテゴリ名）と一致させること
@@ -187,6 +188,25 @@ export async function PATCH(req: NextRequest) {
       .from("ai_template_candidates")
       .update({ is_adopted: true, adopted_template_id: templateId })
       .eq("id", id);
+
+    // 採用後、テンプレート本文を ai_reply_knowledge に正例として学習（fire-and-forget）
+    after(async () => {
+      try {
+        const textToLearn = customText?.trim() || c.template_text;
+        const embInput = buildKnowledgeEmbeddingInput({ content: textToLearn, conversation_state: c.action_type });
+        const embedding = embInput ? await generateEmbedding(embInput) : null;
+        await upsertKnowledge(supabase, {
+          title: "[採用テンプレ] " + (customTitle ?? c.suggested_title).slice(0, 40),
+          content: textToLearn,
+          category: "pattern",
+          importance: 8,
+          conversation_state: c.action_type,
+          ...(embedding ? { embedding } : {}),
+        });
+      } catch (e) {
+        console.warn("[ai-template-candidates] 採用後ナレッジ保存失敗:", e);
+      }
+    });
 
     return NextResponse.json({ ok: true, adopted: true, templateId });
   }

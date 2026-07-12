@@ -6,8 +6,9 @@ import { analyzeClosedConversation, type ClosedOutcome } from "@/app/lib/analyze
 export const maxDuration = 300;
 
 // POST /api/cron/analyze-closed-conversations（毎日 JST 21:00 = UTC 12:00）
-// 取りこぼし防止: 直近48時間に applying / closed_won になったのに
+// 取りこぼし防止: 直近48時間に applying / closed_won / closed_lost になったのに
 // まだ Opus 4.8 分析されていない会話（ai_prompts に closed_analysis_{id} が無いもの）を拾って分析する。
+// closed_lost も対象: 失注会話から「なぜ失注したか」のパターンを学習する。
 // 通常は app/page.tsx のステータス変更時に /api/analyze-closed-conversation が即時実行済み。
 const MAX_PER_RUN = 5; // Opus呼び出しは1件30〜90秒かかるため maxDuration=300 に収まる件数に制限
 
@@ -22,11 +23,11 @@ export async function POST(req: NextRequest) {
   try {
     const since48h = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
 
-    // 直近48時間に applying / closed_won になった会話
+    // 直近48時間に applying / closed_won / closed_lost になった会話
     const { data: convs, error: convErr } = await supabase
       .from("conversations")
       .select("id, status")
-      .in("status", ["applying", "closed_won"])
+      .in("status", ["applying", "closed_won", "closed_lost"])
       .gte("updated_at", since48h);
     if (convErr) {
       await finishCronLog(runLogId, false, undefined, convErr.message);
@@ -54,7 +55,10 @@ export async function POST(req: NextRequest) {
     let failed = 0;
     const errors: string[] = [];
     for (const c of targets) {
-      const outcome: ClosedOutcome = c.status === "closed_won" ? "closed_won" : "applying";
+      const outcome: ClosedOutcome =
+        c.status === "closed_won" ? "closed_won"
+        : c.status === "closed_lost" ? "closed_lost"
+        : "applying";
       try {
         const result = await analyzeClosedConversation(c.id, outcome);
         if (result.ok && !result.skipped) analyzed += 1;

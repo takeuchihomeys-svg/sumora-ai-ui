@@ -2267,6 +2267,23 @@ export default function Home() {
         }).catch(() => {});
       }
 
+      // 失注になったとき: 会話全体を分析し「なぜ失注したか」のパターンを学習（fire-and-forget）
+      // 取りこぼしは cron/analyze-closed-conversations（毎日 JST 21:00）が拾う
+      if (nextStatus === "closed_lost") {
+        void (async () => {
+          try {
+            await fetch("/api/analyze-closed-conversation", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                conversationId: selectedConversation.id,
+                outcome: nextStatus,
+              }),
+            });
+          } catch {}
+        })();
+      }
+
       setConversations((prev) =>
         prev.map((conversation) =>
           conversation.id === selectedConversation.id

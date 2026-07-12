@@ -385,7 +385,16 @@ async function discoverBlindSpots(): Promise<{ questionsSaved: number }> {
     .order("use_count", { ascending: false })
     .limit(8);
 
-  const hasMaterial = (gapLogs?.length ?? 0) > 0 || (bypassed?.length ?? 0) > 0 || (fallbackRules?.length ?? 0) > 0 || (modifiedExamples?.length ?? 0) > 0 || (lowConvTemplates?.length ?? 0) > 0;
+  // ⑥ テンプレート候補の却下理由（よく却下されるパターンを盲点質問化）
+  const { data: dismissedCandidates } = await supabase
+    .from("ai_template_candidates")
+    .select("action_type, suggested_title, dismissed_reason")
+    .eq("is_dismissed", true)
+    .not("dismissed_reason", "is", null)
+    .gte("created_at", thirtyDaysAgo)
+    .limit(15);
+
+  const hasMaterial = (gapLogs?.length ?? 0) > 0 || (bypassed?.length ?? 0) > 0 || (fallbackRules?.length ?? 0) > 0 || (modifiedExamples?.length ?? 0) > 0 || (lowConvTemplates?.length ?? 0) > 0 || (dismissedCandidates?.length ?? 0) > 0;
   if (!hasMaterial) {
     console.log("[corpus2skill] 盲点発見: 材料なしのためスキップ");
     return { questionsSaved: 0 };
@@ -436,6 +445,10 @@ AI案: ${((m.ai_draft as string) ?? "").replace(/\n/g, " ").slice(0, 200)}
     `- [${t.category ?? "?"}]「${t.label}」使用${t.use_count ?? 0}回・成約率${Math.round((t.win_rate as number) * 100)}%`
   ).join("\n");
 
+  const dismissedCandidatesSection = (dismissedCandidates ?? []).map((d) =>
+    `- [${(d.action_type as string | null) ?? "?"}]「${(d.suggested_title as string | null) ?? ""}」→ 却下理由: ${d.dismissed_reason as string}`
+  ).join("\n");
+
   const res = await client.messages.create({
     model: "claude-opus-4-8",
     max_tokens: 3000,
@@ -459,6 +472,9 @@ ${modifiedSection || "（なし）"}
 
 【使用数が多いのに成約率が低いテンプレート・アクション（成果データ）】
 ${lowConvSection || "（なし）"}
+
+【テンプレート候補の却下理由（このパターンは不要とスタッフが判断）】
+${dismissedCandidatesSection || "（なし）"}
 
 【既に学習済みのスキル（既知 — これらと重複する質問は出さない）】
 ${knownSkillsSection || "（なし）"}

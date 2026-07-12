@@ -1,9 +1,10 @@
 import { supabase } from "@/app/lib/supabase";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 
-// ── 申込/成約確定時の会話全体分析（Opus 4.8）─────────────────────────────────
-// conversations.status が applying / closed_won に変わった瞬間に呼ばれ、
-// 問い合わせ〜申込/成約までの全メッセージを分析して成約パターンを高品質に蓄積する。
+// ── 申込/成約/失注確定時の会話全体分析（Opus 4.8）─────────────────────────────────
+// conversations.status が applying / closed_won / closed_lost に変わった瞬間に呼ばれ、
+// 問い合わせ〜申込/成約（または失注）までの全メッセージを分析してパターンを高品質に蓄積する。
+// closed_lost の場合は「なぜ失注したか」の失注パターンを学習する。
 // 保存先（5箇所）:
 //   A. winning_pattern_logs（確定成約事例・was_correct=true）
 //   B. ai_reply_knowledge（成約パターン・importance 9）
@@ -11,7 +12,7 @@ import { generateEmbedding } from "@/app/lib/knowledge-utils";
 //   D. property_customers.personality_profile（確定プロファイル）
 //   E. ai_prompts key=closed_analysis_{conversationId}（重複防止 + 参照用）
 
-export type ClosedOutcome = "applying" | "closed_won";
+export type ClosedOutcome = "applying" | "closed_won" | "closed_lost";
 
 export type ClosedAnalysisResult = {
   ok: boolean;
@@ -139,11 +140,21 @@ export async function analyzeClosedConversation(
     }
   }
 
-  const outcomeLabel = outcome === "closed_won" ? "成約" : "申込";
+  const outcomeLabel = outcome === "closed_won" ? "成約" : outcome === "closed_lost" ? "失注" : "申込";
+  const isLost = outcome === "closed_lost";
 
-  // 3. Opus 4.8 で分析
-  const prompt = `あなたは賃貸仲介営業の成約分析の専門家です。
-以下は問い合わせから${outcomeLabel}までの実際の会話全文です。
+  // 3. Opus 4.8 で分析（失注の場合は失注要因の分析に切り替える）
+  const lostInstruction = isLost
+    ? `
+
+※ この会話は失注（成約に至らなかった）会話です。なぜ失注したかのパターンを分析してください。
+- winning_pattern には「失注の主要因・避けるべき対応パターン」を記載する
+- turning_point には「顧客の態度が後ろ向きに変わった瞬間・きっかけ」を記載する
+- what_worked には「スタッフが本来取るべきだった対応（改善案）」を記載する`
+    : "";
+
+  const prompt = `あなたは賃貸仲介営業の${isLost ? "失注" : "成約"}分析の専門家です。
+以下は問い合わせから${outcomeLabel}までの実際の会話全文です。${lostInstruction}
 
 【会話全文】
 ${formatMessages(msgs)}
@@ -155,9 +166,9 @@ ${customerInfo || "（登録情報なし）"}
 
 {
   "personality_profile": "この顧客の人間性・行動パターンを100字以内で。response_style（即レス/ゆっくり等）・decision_style（即決/比較検討/不安が多い等）・emotional_trigger（何で動いたか）・hesitation_pattern（どこで止まったか）・engagement_level（高/中/低）を含めること",
-  "winning_pattern": "この顧客タイプで${outcomeLabel}に至った決め手・勝ち筋を50字以内で",
-  "turning_point": "会話の中で顧客の態度が前向きに変わった瞬間・きっかけを1〜2文で",
-  "what_worked": "スタッフが取った行動のうち最も効果があったもの（具体的に）",
+  "winning_pattern": "この顧客タイプで${outcomeLabel}に至った${isLost ? "主要因・避けるべき対応パターン" : "決め手・勝ち筋"}を50字以内で",
+  "turning_point": "会話の中で顧客の態度が${isLost ? "後ろ向き" : "前向き"}に変わった瞬間・きっかけを1〜2文で",
+  "what_worked": "${isLost ? "スタッフが本来取るべきだった対応（改善案・具体的に）" : "スタッフが取った行動のうち最も効果があったもの（具体的に）"}",
   "human_type_label": "このタイプの顧客を一言で表すラベル（例：安心重視・慎重派、費用最優先・即決型、比較検討・背中押し型 等）"
 }`;
 
@@ -192,13 +203,14 @@ ${customerInfo || "（登録情報なし）"}
     updated_at: new Date().toISOString(),
   }, { onConflict: "key" });
 
-  // 4-A. winning_pattern_logs に確定成約事例として INSERT
+  // 4-A. winning_pattern_logs に確定事例として INSERT
+  // 失注（closed_lost）の場合は was_correct=false（勝ちパターンとして参照されないようにする）
   const { error: logErr } = await supabase.from("winning_pattern_logs").insert({
     conversation_id: conversationId,
     customer_id: pcId,
     predicted_pattern: result.winning_pattern,
     actual_outcome: outcome,
-    was_correct: true, // 実際に申込/成約したので確定
+    was_correct: !isLost, // 申込/成約は確定 true・失注は false
     personality_profile: result.personality_profile,
   });
   if (logErr) console.warn("[analyze-closed] winning_pattern_logs insert失敗:", logErr.message);
@@ -208,11 +220,14 @@ ${customerInfo || "（登録情報なし）"}
   const embedding = await generateEmbedding(result.personality_profile).catch(() => null);
   const embeddingField = embedding ? { embedding: JSON.stringify(embedding) } : {};
 
-  // 4-B. ai_reply_knowledge: 高品質成約パターン（importance 9）
+  // 4-B. ai_reply_knowledge: 高品質パターン（importance 9）
+  // 失注の場合は「避けるべきパターン」として明示し、正例と混同されないようにする
   const { error: kErr1 } = await supabase.from("ai_reply_knowledge").insert({
     category: "pattern",
-    title: `[成約分析] ${label}`.slice(0, 100),
-    content: `${result.winning_pattern}\n---\n転換点: ${result.turning_point ?? ""}\n効果: ${result.what_worked ?? ""}`,
+    title: `[${isLost ? "失注分析" : "成約分析"}] ${label}`.slice(0, 100),
+    content: isLost
+      ? `【失注パターン・避けるべき対応】${result.winning_pattern}\n---\n後ろ向きになった転換点: ${result.turning_point ?? ""}\n取るべきだった対応: ${result.what_worked ?? ""}`
+      : `${result.winning_pattern}\n---\n転換点: ${result.turning_point ?? ""}\n効果: ${result.what_worked ?? ""}`,
     importance: 9,
     personality_tags: result.personality_profile,
     conversation_state: "applying",
@@ -223,8 +238,10 @@ ${customerInfo || "（登録情報なし）"}
   // 4-C. ai_reply_knowledge: 転換点（importance 8）
   const { error: kErr2 } = await supabase.from("ai_reply_knowledge").insert({
     category: "pattern",
-    title: `[転換点] ${label}`.slice(0, 100),
-    content: `${result.turning_point ?? ""}\n→ ${result.what_worked ?? ""}`,
+    title: `[${isLost ? "失注転換点" : "転換点"}] ${label}`.slice(0, 100),
+    content: isLost
+      ? `【失注の転換点】${result.turning_point ?? ""}\n→ 取るべきだった対応: ${result.what_worked ?? ""}`
+      : `${result.turning_point ?? ""}\n→ ${result.what_worked ?? ""}`,
     importance: 8,
     personality_tags: result.personality_profile,
     conversation_state: "proposing",

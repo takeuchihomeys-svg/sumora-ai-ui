@@ -287,7 +287,7 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
           query_embedding: embedding, match_count: 20, min_importance: 7,
         }) as { data: Array<{ id: string; title: string; content: string; hypothesis_status?: string; importance: number; similarity: number }> | null };
         const filtered = (vectorResults ?? [])
-          .filter(r => r.similarity >= 0.5)
+          .filter(r => r.similarity >= 0.5 && r.hypothesis_status !== "rejected")
           .sort((a, b) => (b.similarity * (b.importance / 10)) - (a.similarity * (a.importance / 10)));
         const existingIds = new Set([...sortedDiff, ...sortedOther].map(r => r.id));
         vectorExtras = filtered.filter(r => !existingIds.has(r.id)).slice(0, 5);
@@ -627,11 +627,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, message_text: message, ...(notice ? { notice } : {}), ...(extra ?? {}) });
     };
 
-    // phrase_dictionary 取得（物件オススメ・内覧・申込のみ）
+    // phrase_dictionary 取得（固定フォーマット出力でないアクションにのみフレーズ注入する）
     const phraseCategoryMap: Record<string, string> = {
       property_recommendation: "property_recommendation",
       viewing_invite: "viewing_invite",
       application_push: "application_push",
+      condition_hearing: "hearing_followup",
+      followup_revive: "urgency_push",
+      acknowledge_check: "hearing_followup",
     };
     const phraseCategory = phraseCategoryMap[action];
     const phraseText = phraseCategory ? await getPhrases(phraseCategory, customer_name) : "";
