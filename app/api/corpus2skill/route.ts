@@ -63,7 +63,7 @@ ${e.ai_draft ? `AI案: ${e.ai_draft.slice(0, 300)}\n` : ""}実際に送った返
   }).join("\n");
 
   const res = await client.messages.create({
-    model: "claude-opus-4-5",
+    model: "claude-opus-4-8",
     max_tokens: 2000,
     system: `あなたは賃貸仲介の営業コーチです。スタッフの実際の返信例を分析し、優秀な担当者が使う普遍的なスキルを抽出します。`,
     messages: [{
@@ -239,7 +239,7 @@ ${e.original_text ? `AI原文: ${(e.original_text as string).replace(/\n/g, " ")
   ).join("\n");
 
   const res = await client.messages.create({
-    model: "claude-opus-4-5",
+    model: "claude-opus-4-8",
     max_tokens: 4000,
     system: `あなたは賃貸仲介LINE接客のテンプレート・AI機能の品質改善コンサルタントです。実データの編集パターンから改善提案を作ります。`,
     messages: [{
@@ -469,7 +469,7 @@ ${JSON.stringify(mismatchPairs.slice(0, 5), null, 2)}
 JSON配列で返す: [{aix_type, description, implementation_notes, proposal_category}]`;
 
   const resp = await client.messages.create({
-    model: "claude-opus-4-5",
+    model: "claude-opus-4-8",
     max_tokens: 2000,
     messages: [{ role: "user", content: analysisPrompt }],
   });
@@ -635,7 +635,7 @@ AI案: ${((m.ai_draft as string) ?? "").replace(/\n/g, " ").slice(0, 200)}
   ).join("\n");
 
   const res = await client.messages.create({
-    model: "claude-opus-4-5",
+    model: "claude-opus-4-8",
     max_tokens: 3000,
     system: `あなたはLINE不動産接客AIの「盲点発見エージェント」です。AIが正確に理解できていない業務パターンを発見し、担当者への的確な質問を作ります。`,
     messages: [{
