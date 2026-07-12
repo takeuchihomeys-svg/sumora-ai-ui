@@ -494,6 +494,7 @@ export async function POST(req: NextRequest) {
   };
 
   let synced = 0;
+  let demotedConfirmed = 0;
   try {
     const { data: confirmedRules } = await supabase
       .from("ai_reply_knowledge")
@@ -540,6 +541,48 @@ export async function POST(req: NextRequest) {
         .in("rule_key", keys);
     }
   } catch { /* ignore - プロンプトルール同期失敗はメイン処理を止めない */ }
+
+  // ── ④ confirmed 再検証: 直近フィードバックで wrong 比率≥50%（計4件以上）→ hypothesis に差し戻し ──
+  // 「昔は正しかったが今は違う」ルールを自動検出。市況変化・方針変更で陳腐化した confirmed を救出する。
+  try {
+    const { data: confirmedRules2 } = await supabase
+      .from("ai_reply_knowledge")
+      .select("id, title, correct_count, wrong_count")
+      .eq("hypothesis_status", "confirmed")
+      .limit(300);
+
+    for (const rule of confirmedRules2 ?? []) {
+      const correct = (rule.correct_count as number) ?? 0;
+      const wrong   = (rule.wrong_count   as number) ?? 0;
+      const total   = correct + wrong;
+      if (total < 4) continue;
+      if (wrong / total < 0.5) continue;
+      // 外れ率50%超え → confirmed を剥奪して hypothesis に差し戻す
+      await supabase.from("ai_reply_knowledge")
+        .update({ hypothesis_status: "hypothesis" })
+        .eq("id", rule.id as string);
+      demotedConfirmed++; // demotedConfirmed は外側のスコープで集計
+      // ai_feedback_items に再確認質問を起票（重複防止）
+      const question = `「${(rule.title as string).slice(0, 50)}」ルールの妥当性を再確認してください（RLHF wrong率${Math.round(wrong / total * 100)}%）`;
+      const dedupKey = question.slice(0, 50).replace(/[%_\\]/g, "\\$&");
+      const { data: existsFb } = await supabase
+        .from("ai_feedback_items")
+        .select("id")
+        .in("status", ["pending", "answered"])
+        .ilike("question", `${dedupKey}%`)
+        .limit(1);
+      if (!existsFb || existsFb.length === 0) {
+        await supabase.from("ai_feedback_items").insert({
+          question,
+          speculation: `このルールは過去に confirmed になりましたが、直近のRLHFフィードバックで外れ率が50%を超えました（correct:${correct}件, wrong:${wrong}件）。市況変化・ルール陳腐化の可能性があります。`,
+          category: "knowledge_gap",
+          evidence: `correct:${correct}, wrong:${wrong}, 外れ率:${Math.round(wrong / total * 100)}%`,
+          confidence: "high",
+          status: "pending",
+        });
+      }
+    }
+  } catch { /* ignore - confirmed再検証失敗はメイン処理を止めない */ }
 
   // ── stale decay: 90日間 used_count=0 のルールを自動 rejected に ──
   // apply_count>=5 判定(RPC)だけでは使われないまま放置されたルールは永遠に残る。
@@ -666,8 +709,8 @@ export async function POST(req: NextRequest) {
 
   if (!examples || examples.length === 0) {
     // 処理対象ゼロでも同期・decayは上で実行済み。cron logも完了させる（ok=null放置を防ぐ）
-    await finishCronLog(runLogId, true, { processed: 0, learned: 0, synced });
-    return NextResponse.json({ ok: true, processed: 0, learned: 0, synced, message: "処理対象なし" });
+    await finishCronLog(runLogId, true, { processed: 0, learned: 0, synced, demotedConfirmed });
+    return NextResponse.json({ ok: true, processed: 0, learned: 0, synced, demotedConfirmed, message: `処理対象なし・confirmed差し戻し${demotedConfirmed}件` });
   }
 
   // ── 回帰センチネル: メインの差分学習ループと並列実行 ──
@@ -957,6 +1000,59 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── ⑤ 再生成シグナル: 同一会話で AIX を複数回生成 → 古いものを discarded に ──
+  // 「気に入らなくて生成し直した」= 強い不満シグナル。生成→送信の窓（30分）を超えた 'generated' も破棄確定。
+  {
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const { data: staleLogs } = await supabase
+      .from("aix_generate_log")
+      .select("id, conversation_id, action_type, generated_at")
+      .eq("status", "generated")
+      .lt("generated_at", twoHoursAgo)
+      .order("generated_at", { ascending: true })
+      .limit(500);
+
+    // ① 2時間超えの未送信 → discarded（送信ウィンドウ30分を大幅超過）
+    const staleIds = (staleLogs ?? []).map(r => r.id as string);
+
+    // ② 2時間以内でも同一 conversation_id + action_type に複数 generated → 古いものを discarded
+    const recentThreshold = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const { data: recentLogs } = await supabase
+      .from("aix_generate_log")
+      .select("id, conversation_id, action_type, generated_at")
+      .eq("status", "generated")
+      .gte("generated_at", recentThreshold)
+      .order("generated_at", { ascending: true })
+      .limit(500);
+
+    const regenMap = new Map<string, Array<{ id: string }>>();
+    for (const row of recentLogs ?? []) {
+      const key = `${(row.conversation_id as string | null) ?? "null"}::${row.action_type as string}`;
+      const arr = regenMap.get(key) ?? [];
+      arr.push({ id: row.id as string });
+      regenMap.set(key, arr);
+    }
+    const regenDiscardIds: string[] = [];
+    for (const [, rows] of regenMap) {
+      if (rows.length >= 2) {
+        // 最新1件を残して古いものを全て discarded に
+        regenDiscardIds.push(...rows.slice(0, -1).map(r => r.id));
+      }
+    }
+
+    const allDiscardIds = [...new Set([...staleIds, ...regenDiscardIds])];
+    if (allDiscardIds.length > 0) {
+      // 500件超えは分割して更新（Supabase .in() の上限対策）
+      for (let i = 0; i < allDiscardIds.length; i += 100) {
+        try {
+          await supabase.from("aix_generate_log")
+            .update({ status: "discarded" })
+            .in("id", allDiscardIds.slice(i, i + 100));
+        } catch { /* ignore - discarded更新失敗はメイン処理を止めない */ }
+      }
+    }
+  }
+
   // ── 回帰センチネルの結果を回収（反復削除フレーズ検知数・ナレッジ降格数）──
   const sentinel = await sentinelPromise;
 
@@ -987,12 +1083,12 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* ignore - 可視化失敗はメイン処理を止めない */ }
 
-  await finishCronLog(runLogId, true, { processed, learned, synced, timedOut, sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted, ...(cronWarning ? { cronWarning } : {}) });
+  await finishCronLog(runLogId, true, { processed, learned, synced, demotedConfirmed, timedOut, sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted, ...(cronWarning ? { cronWarning } : {}) });
   return NextResponse.json({
-    ok: true, processed, learned, synced, timedOut,
+    ok: true, processed, learned, synced, demotedConfirmed, timedOut,
     sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted,
     ...(cronWarning ? { cronWarning } : {}),
-    message: `${processed}件処理・${learned}件学習・${synced}件ルール同期・反復削除フレーズ${sentinel.detected}件検知（${sentinel.demoted}件降格）${timedOut ? "・⏱40秒タイムガードで打ち切り" : ""}${cronWarning ? ` / ${cronWarning}` : ""}`,
+    message: `${processed}件処理・${learned}件学習・${synced}件ルール同期・confirmed差し戻し${demotedConfirmed}件・反復削除フレーズ${sentinel.detected}件検知（${sentinel.demoted}件降格）${timedOut ? "・⏱40秒タイムガードで打ち切り" : ""}${cronWarning ? ` / ${cronWarning}` : ""}`,
   });
 }
 

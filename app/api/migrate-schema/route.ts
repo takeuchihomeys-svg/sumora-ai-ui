@@ -1303,6 +1303,27 @@ CREATE INDEX IF NOT EXISTS idx_aix_generate_log_conversation ON aix_generate_log
 CREATE INDEX IF NOT EXISTS idx_aix_generate_log_status ON aix_generate_log(status, generated_at DESC);
 ALTER TABLE aix_generate_log DISABLE ROW LEVEL SECURITY;
 
+-- ── isFullRewrite tracking + confirmed 再検証 + decay統合（2026-07-12追加）──
+
+-- ai_reply_examples: 完全手書き（AI文案ほぼ不使用）フラグ
+ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS is_full_rewrite BOOLEAN DEFAULT false;
+CREATE INDEX IF NOT EXISTS idx_ai_reply_examples_full_rewrite ON ai_reply_examples(created_at DESC) WHERE is_full_rewrite = true;
+
+-- decay_knowledge_importance: importance が 3以下まで落ちて confirmed の場合は hypothesis に差し戻す
+CREATE OR REPLACE FUNCTION decay_knowledge_importance(p_ids UUID[])
+RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE ai_reply_knowledge
+  SET
+    importance = GREATEST(1, COALESCE(importance, 5) - 1),
+    hypothesis_status = CASE
+      WHEN GREATEST(1, COALESCE(importance, 5) - 1) <= 3 AND hypothesis_status = 'confirmed' THEN 'hypothesis'
+      ELSE hypothesis_status
+    END
+  WHERE id = ANY(p_ids);
+END;
+$$;
+
 `.trim();
 
 // GET: スキーマSQLを返す（POSTと同じ CRON_SECRET 認証必須 — 無認証でのスキーマ情報開示を防止）

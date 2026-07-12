@@ -920,6 +920,7 @@ export async function POST(req: NextRequest) {
         sent_at: sentAt ?? new Date().toISOString(),
         ai_components: aiComponentsObj || null,
         template_id: templateId || null,
+        is_full_rewrite: isFullRewrite,
       })
       .select("id")
       .single(),
@@ -962,7 +963,7 @@ export async function POST(req: NextRequest) {
   // after()化: ai_reply_examples の INSERT（最低限の保存）は上で完了済み。
   // Sonnet/Haiku 分析チェーン（タグ・カテゴリ付与等の後処理）はレスポンス返却後に実行し、
   // スタッフがタブを閉じても Vercel Function が分析を完走できるようにする
-  if ((shouldDeepAnalyze || shouldExtractPhrases) && data?.id) {
+  if ((shouldDeepAnalyze || shouldExtractPhrases || (isFullRewrite && !!aiDraft)) && data?.id) {
     const savedId = data.id as string;
     after(async () => {
       const analysisJobs: Promise<void>[] = [];
@@ -971,6 +972,10 @@ export async function POST(req: NextRequest) {
       }
       if (shouldExtractPhrases) {
         analysisJobs.push(extractAndSavePhrases(conversationState, sentReply, effectiveStarred));
+      }
+      // ② isFullRewrite: AI文案が完全に捨てられた = 最重要失敗ケース → 対比学習で「なぜ外したか」を抽出
+      if (isFullRewrite && aiDraft) {
+        analysisJobs.push(analyzeDiff(savedId, conversationState, customerMessage, aiDraft, sentReply, sim));
       }
       await Promise.all(analysisJobs);
     });
