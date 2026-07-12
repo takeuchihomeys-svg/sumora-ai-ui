@@ -364,6 +364,14 @@ ${approvedSuggestionsSection || "（なし）"}
 // AIX生成文 vs 実送信文のズレ分析（週次）
 // aix_generate_log と ai_reply_examples を conversation_id でJOINし、
 // 30%以上ズレているペアをOpusに渡して改善案を aix_feature_suggestions に登録する
+//
+// 【修正履歴】aix_usage_logs → aix_generate_log に変更
+//   理由: aix_usage_logs.generated_text はスタッフ送信テキスト（編集後）が入るため
+//   ai_reply_examples.sent_reply と同じ値になり bigramJaccardDiff ≈ 0 となる。
+//   正規テーブルは aix/action/route.ts の finalizeResponse が generated_text を INSERT する
+//   aix_generate_log であり、こちらが真の「AIX原文」を持つ。
+//   また generated_text が非 NULL の割合が aix_usage_logs では 18.6% に留まるが、
+//   aix_generate_log は conversationId のある全アクションで INSERT される。
 // ============================================================
 
 // 2文字グラム（bigram）集合を作成
@@ -386,16 +394,17 @@ function bigramJaccardDiff(a: string, b: string): number {
 
 async function analyzeAixMismatch(): Promise<{ pairsFound: number; suggestionsInserted: number }> {
   // 過去14日のAIX生成文 vs 実送信文のズレを分析
-  // aix_usage_logs（generated_text, aix_type カラムあり）を正しいソーステーブルとして使用
+  // aix_generate_log（AIX原文）を使い、ai_reply_examples（実送信）と conversation_id でJOIN する
   const { data: pairs } = await supabase
-    .from("aix_usage_logs")
-    .select("conversation_id, generated_text, aix_type, created_at")
-    .gte("created_at", new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString())
+    .from("aix_generate_log")
+    .select("conversation_id, generated_text, action_type, generated_at")
+    .gte("generated_at", new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString())
     .not("generated_text", "is", null)
+    .not("conversation_id", "is", null)
     .limit(50);
 
   if (!pairs || pairs.length === 0) {
-    console.log("[corpus2skill] analyzeAixMismatch: aix_usage_logs データなし → スキップ");
+    console.log("[corpus2skill] analyzeAixMismatch: aix_generate_log データなし → スキップ");
     return { pairsFound: 0, suggestionsInserted: 0 };
   }
 
@@ -434,7 +443,7 @@ async function analyzeAixMismatch(): Promise<{ pairsFound: number; suggestionsIn
         conversation_id: p.conversation_id,
         generated: gen.slice(0, 200),
         sent: sent.slice(0, 200),
-        aix_type: String((p as { aix_type?: string }).aix_type ?? ""),
+        aix_type: String((p as { action_type?: string }).action_type ?? ""),
         diff_ratio: diffRatio,
       });
     }
