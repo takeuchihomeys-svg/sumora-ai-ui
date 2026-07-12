@@ -62,6 +62,21 @@ type Customer = {
   linked_conversation?: LinkedConv | null;
 };
 
+// 物件比較（🏠 物件比較）の結果型
+type PropRankItem = {
+  index: number;
+  label: string;
+  property_name: string;
+  score: number;
+  hardNG: string | null;
+  breakdown: Array<{ label: string; point: number; note: string }>;
+};
+type PropCompareResult = {
+  best: (PropRankItem & { summary: string }) | null;
+  ranked: PropRankItem[];
+  customer_name: string;
+};
+
 const PROP_STATUS: Record<string, { label: string; dot: string }> = {
   new_inquiry:     { label: "新規",    dot: "bg-red-500" },
   hot:             { label: "毎日",    dot: "bg-orange-400" },
@@ -279,6 +294,12 @@ export default function CustomersPage() {
   const [summaries, setSummaries]           = useState<Record<string, string>>({});
   const [summaryJsons, setSummaryJsons]     = useState<Record<string, SummaryJson>>({});
   const [summaryLoading, setSummaryLoading] = useState<Set<string>>(new Set());
+
+  // 🏠 物件比較: ピックアップ物件の画像を比較してどれが一番合うかAI判定
+  const [propCompareOpen, setPropCompareOpen] = useState<string | null>(null);
+  const [propCompareImages, setPropCompareImages] = useState<Record<string, Array<{ base64: string; mediaType: string; label: string; preview: string }>>>({});
+  const [propCompareLoading, setPropCompareLoading] = useState<string | null>(null);
+  const [propCompareResults, setPropCompareResults] = useState<Record<string, PropCompareResult>>({});
 
   // 会話ログタブ管理
   const [activeTabs, setActiveTabs] = useState<Record<string, "summary" | "log">>({});
@@ -732,6 +753,71 @@ export default function CustomersPage() {
       }
     } finally {
       setSummaryLoading((prev) => { const s = new Set(prev); s.delete(c.id); return s; });
+    }
+  };
+
+  // 🏠 物件比較: 画像アップロード（base64変換・最大5件）
+  const handlePropImageUpload = (customerId: string, files: FileList) => {
+    const current = propCompareImages[customerId] ?? [];
+    const remain = 5 - current.length;
+    if (remain <= 0) return;
+    Array.from(files).slice(0, remain).forEach((file, i) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        const base64 = dataUrl.split(",")[1] ?? "";
+        setPropCompareImages((prev) => {
+          const list = prev[customerId] ?? [];
+          if (list.length >= 5) return prev;
+          return {
+            ...prev,
+            [customerId]: [...list, {
+              base64,
+              mediaType: file.type || "image/jpeg",
+              label: `物件${list.length + 1}`,
+              preview: dataUrl,
+            }],
+          };
+        });
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // 🏠 物件比較: 指定indexの画像を削除
+  const handlePropImageRemove = (customerId: string, index: number) => {
+    setPropCompareImages((prev) => ({
+      ...prev,
+      [customerId]: (prev[customerId] ?? []).filter((_, i) => i !== index),
+    }));
+  };
+
+  // 🏠 物件比較: /api/recommend-property に画像を送って比較実行
+  const handlePropCompare = async (customerId: string) => {
+    const images = propCompareImages[customerId] ?? [];
+    if (images.length === 0 || propCompareLoading) return;
+    setPropCompareLoading(customerId);
+    try {
+      const res = await fetch("/api/recommend-property", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customerId,
+          images: images.map((img) => ({ base64: img.base64, mediaType: img.mediaType, label: img.label })),
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null) as { error?: string } | null;
+        alert(`物件比較に失敗しました: ${err?.error ?? res.status}`);
+        return;
+      }
+      const data = await res.json() as PropCompareResult;
+      setPropCompareResults((prev) => ({ ...prev, [customerId]: data }));
+    } catch (e) {
+      console.error("[handlePropCompare] failed:", e);
+      alert("物件比較に失敗しました（通信エラー）");
+    } finally {
+      setPropCompareLoading(null);
     }
   };
 
@@ -1481,6 +1567,13 @@ export default function CustomersPage() {
                   >
                     {summaryLoading.has(c.id) ? "AI分析中…" : summaries[c.id] ? "✨ 再生成" : "✨ AI要約"}
                   </button>
+                  {/* 物件比較ボタン */}
+                  <button
+                    onClick={() => setPropCompareOpen(propCompareOpen === c.id ? null : c.id)}
+                    className="rounded-xl border border-green-300 bg-green-50 px-3 py-1.5 text-xs font-bold text-green-700 active:scale-95 transition-transform"
+                  >
+                    🏠 物件比較
+                  </button>
                   {c.phone && (
                     <a href={`tel:${c.phone}`}
                       className="rounded-xl border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-bold text-[#444] active:scale-95 transition-transform">
@@ -1494,6 +1587,95 @@ export default function CustomersPage() {
                       : <span className={days >= 3 ? "text-red-400 font-semibold" : ""}>{days}日前</span>}
                   </div>
                 </div>
+
+                {/* ── 🏠 物件比較パネル ── */}
+                {propCompareOpen === c.id && (() => {
+                  const imgs = propCompareImages[c.id] ?? [];
+                  const result = propCompareResults[c.id];
+                  const comparing = propCompareLoading === c.id;
+                  return (
+                    <div className="mx-4 mt-2 mb-3 rounded-xl border border-green-200 bg-green-50 p-3">
+                      <p className="text-xs font-bold text-green-800 mb-2">🏠 物件比較 — 画像をアップロード（最大5件）</p>
+                      <label className="inline-block cursor-pointer rounded-lg border border-green-300 bg-white px-3 py-1.5 text-xs font-bold text-green-700 active:scale-95 transition-transform">
+                        ＋ 画像を追加
+                        <input
+                          type="file"
+                          accept="image/*"
+                          multiple
+                          className="hidden"
+                          disabled={imgs.length >= 5}
+                          onChange={(e) => {
+                            if (e.target.files && e.target.files.length > 0) {
+                              handlePropImageUpload(c.id, e.target.files);
+                            }
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                      {imgs.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {imgs.map((img, i) => (
+                            <div key={i} className="relative">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={img.preview} alt={img.label} className="w-16 h-16 object-cover rounded border border-green-200" />
+                              <span className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[9px] text-center rounded-b">{img.label}</span>
+                              <button
+                                onClick={() => handlePropImageRemove(c.id, i)}
+                                className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full bg-gray-700 text-white text-[10px] leading-none flex items-center justify-center"
+                                aria-label={`${img.label}を削除`}
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <button
+                        onClick={() => handlePropCompare(c.id)}
+                        disabled={imgs.length === 0 || comparing}
+                        className={`mt-2 block rounded-lg px-3 py-1.5 text-xs font-bold text-white active:scale-95 transition-transform ${
+                          imgs.length === 0 || comparing ? "bg-gray-300" : "bg-green-600"
+                        }`}
+                      >
+                        {comparing ? "AI比較中…" : "🔍 どれが一番合う？"}
+                      </button>
+                      {result && (
+                        <div className="mt-3 space-y-1.5">
+                          {result.best ? (
+                            <div className="bg-white border-2 border-green-400 rounded-lg p-2">
+                              <p className="text-xs font-bold text-green-800">🏆 {result.best.property_name} がおすすめ！</p>
+                              <p className="text-[11px] text-gray-700 mt-0.5">{result.best.summary}</p>
+                              {result.best.breakdown.length > 0 && (
+                                <p className="text-[10px] text-gray-500 mt-1">
+                                  内訳: {result.best.breakdown.map((b) => `${b.label}${b.point > 0 ? "✅" : "❌"}`).join(" ")}
+                                </p>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="text-[11px] text-red-500">条件に合う物件がありませんでした</p>
+                          )}
+                          {result.ranked.filter((r) => r.index !== result.best?.index).length > 0 && (
+                            <>
+                              <p className="text-[10px] font-bold text-gray-500">他の物件:</p>
+                              {result.ranked
+                                .filter((r) => r.index !== result.best?.index)
+                                .map((r, i) => (
+                                  <div key={r.index} className="bg-gray-50 border border-gray-200 rounded-lg p-1.5 text-xs">
+                                    {r.hardNG ? (
+                                      <span className="text-red-400 line-through">{r.property_name}</span>
+                                    ) : (
+                                      <span className="text-gray-700">{i + 2}位: {r.property_name}（{r.score}点）</span>
+                                    )}
+                                    {r.hardNG && <span className="ml-1 text-red-400 text-[10px] no-underline">NG: {r.hardNG}</span>}
+                                  </div>
+                                ))}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* ── 展開パネル ── */}
                 {isExp && (
