@@ -162,12 +162,49 @@ export async function POST(req: NextRequest) {
 
     const judged = correct + wrong;
     const accuracy = judged > 0 ? Math.round((correct / judged) * 1000) / 1000 : null;
+
+    // ── 勝ちパターン判定結果を ai_reply_knowledge にフィードバック ──
+    // knowledge_apply_log から該当会話で適用されたナレッジIDを取得し、
+    // was_correct=true → correct_count+1、was_correct=false → wrong_count+1
+    let knowledgeFed = 0;
+    try {
+      const resolvedConvIds = [...new Set(resolved.map(l => l.conversation_id))];
+      const { data: applyLogs } = await supabase
+        .from("knowledge_apply_log")
+        .select("knowledge_id, conversation_id")
+        .in("conversation_id", resolvedConvIds);
+
+      const kCorrect: string[] = [];
+      const kWrong: string[] = [];
+      for (const l of resolved) {
+        const v = verdicts.has(l.id) ? verdicts.get(l.id)! : null;
+        if (v === null) continue;
+        const kids = (applyLogs ?? [])
+          .filter(a => a.conversation_id === l.conversation_id && a.knowledge_id)
+          .map(a => a.knowledge_id as string);
+        if (v) kCorrect.push(...kids);
+        else kWrong.push(...kids);
+      }
+      const uniqueCorrect = [...new Set(kCorrect)];
+      const uniqueWrong = [...new Set(kWrong)];
+      if (uniqueCorrect.length > 0 || uniqueWrong.length > 0) {
+        await supabase.rpc("update_knowledge_feedback_by_ids", {
+          p_correct_ids: uniqueCorrect.length > 0 ? uniqueCorrect : null,
+          p_wrong_ids: uniqueWrong.length > 0 ? uniqueWrong : null,
+        });
+        knowledgeFed = uniqueCorrect.length + uniqueWrong.length;
+      }
+    } catch (e) {
+      console.warn("[eval-winning-pattern] ナレッジフィードバック失敗:", e);
+    }
+
     const summary = {
       evaluated: resolved.length,
       judged,
       correct,
       wrong,
       accuracy,
+      knowledge_fed: knowledgeFed,
       won: resolved.filter(l => l.outcome === "closed_won").length,
       lost: resolved.filter(l => l.outcome === "closed_lost").length,
       pending: logs.length - resolved.length,

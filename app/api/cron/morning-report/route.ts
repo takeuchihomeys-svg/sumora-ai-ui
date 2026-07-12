@@ -84,6 +84,9 @@ export async function GET(req: NextRequest) {
     { data: readinessRow, error: readinessErr },
     { data: guardRow, error: guardErr },
     { count: failedScheduledCount, error: failedScheduledErr },
+    { data: winPatternRow, error: winPatternErr },
+    { count: confirmedKnowledgeCount, error: confirmedKnowledgeErr },
+    { count: discardedAixCount, error: discardedAixErr },
   ] = await Promise.all([
     // ① 未完了タスク
     supabase
@@ -192,6 +195,27 @@ export async function GET(req: NextRequest) {
       .select("id", { count: "exact", head: true })
       .eq("status", "failed")
       .gte("updated_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
+
+    // ⑮ 勝ちパターン週次評価サマリー（eval-winning-pattern が ai_prompts に保存）
+    supabase
+      .from("ai_prompts")
+      .select("content")
+      .eq("key", "winning_pattern_eval_latest")
+      .maybeSingle(),
+
+    // ⑯ 確認済みナレッジ数（hypothesis_status='confirmed'）
+    supabase
+      .from("ai_reply_knowledge")
+      .select("id", { count: "exact", head: true })
+      .eq("hypothesis_status", "confirmed"),
+
+    // ⑰ 昨日の discarded AIX 生成数（aix_generate_log）
+    supabase
+      .from("aix_generate_log")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "discarded")
+      .gte("generated_at", yesterdayStart.toISOString())
+      .lt("generated_at", todayStart.toISOString()),
   ]);
 
   // クエリエラーのログ（レポート本体は送る。失敗したセクションは空になるだけ）
@@ -209,6 +233,9 @@ export async function GET(req: NextRequest) {
   if (readinessErr) console.error("[morning-report] readiness query:", readinessErr.message);
   if (guardErr) console.error("[morning-report] guard query:", guardErr.message);
   if (failedScheduledErr) console.error("[morning-report] failedScheduled query:", failedScheduledErr.message);
+  if (winPatternErr) console.error("[morning-report] winPattern query:", winPatternErr.message);
+  if (confirmedKnowledgeErr) console.error("[morning-report] confirmedKnowledge query:", confirmedKnowledgeErr.message);
+  if (discardedAixErr) console.error("[morning-report] discardedAix query:", discardedAixErr.message);
 
   // AI貢献率フッター（メトリクスがあれば1行追加）
   let attributionLine = "";
@@ -405,6 +432,50 @@ export async function GET(req: NextRequest) {
     } catch {
       // JSONパース失敗時はスキップ（レポート本体は送る）
     }
+  }
+
+  // 📈 学習KPI（毎日表示）: 確認済みナレッジ数・discarded数・勝ちパターン正解率・顧客反応率
+  try {
+    const kpiLines: string[] = [];
+
+    // 確認済みナレッジ数
+    if ((confirmedKnowledgeCount ?? 0) > 0) {
+      kpiLines.push(`確認済みナレッジ: ${confirmedKnowledgeCount}件`);
+    }
+
+    // 昨日の discarded AIX 生成数
+    if ((discardedAixCount ?? 0) > 0) {
+      kpiLines.push(`昨日のAIX破棄数: ${discardedAixCount}件`);
+    }
+
+    // 勝ちパターン正解率（eval-winning-pattern の週次更新から）
+    try {
+      const wp = winPatternRow?.content ? JSON.parse(winPatternRow.content as string) : null;
+      if (wp && typeof wp.accuracy === "number" && typeof wp.judged === "number" && wp.judged > 0) {
+        kpiLines.push(`勝ちパターン正解率: ${Math.round(wp.accuracy * 100)}%（${wp.correct}/${wp.judged}件）`);
+      }
+    } catch {}
+
+    // 顧客反応率（直近7日の aix_usage_logs から集計）
+    try {
+      const { data: reactionSample } = await supabase
+        .from("aix_usage_logs")
+        .select("customer_reacted")
+        .not("customer_reacted", "is", null)
+        .gte("created_at", sevenDaysAgo)
+        .limit(500);
+      const total7d = (reactionSample ?? []).length;
+      if (total7d > 0) {
+        const reacted7d = (reactionSample ?? []).filter(r => r.customer_reacted === true).length;
+        kpiLines.push(`顧客反応率: ${Math.round(reacted7d / total7d * 100)}%（直近7日${total7d}件中${reacted7d}件返信）`);
+      }
+    } catch {}
+
+    if (kpiLines.length > 0) {
+      statsLines.push(`📈 学習KPI\n${kpiLines.map(l => `  ${l}`).join("\n")}`);
+    }
+  } catch (e) {
+    console.error("[morning-report] learning KPI section:", e);
   }
 
   // 🧠 学習ヘルス（毎日表示）: 学習系Cronの実行状況 + AI質問の未回答数

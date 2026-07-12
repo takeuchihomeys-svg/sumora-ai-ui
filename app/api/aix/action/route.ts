@@ -171,7 +171,7 @@ async function getPropertyKnowledge(): Promise<string> {
       .ilike("title", "%差分学習%")
       .gte("importance", 7)
       .in("conversation_state", ["property_recommendation", "proposing"])
-      .neq("hypothesis_status", "rejected")
+      .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false })
       .limit(15),
@@ -181,7 +181,7 @@ async function getPropertyKnowledge(): Promise<string> {
       .in("conversation_state", ["property_recommendation", "proposing"])
       .gte("importance", 7)
       .not("title", "ilike", "%差分学習%")
-      .neq("hypothesis_status", "rejected")
+      .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
       .order("importance", { ascending: false })
       .limit(12),
   ]);
@@ -234,7 +234,7 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
         .ilike("title", "%差分学習%")
         .gte("importance", 7)
         .in("conversation_state", states)
-        .neq("hypothesis_status", "rejected")
+        .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
         .order("importance", { ascending: false })
         .order("created_at", { ascending: false })
         .limit(12),
@@ -244,7 +244,7 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
         .not("title", "ilike", "%差分学習%")
         .gte("importance", 7)
         .in("conversation_state", states)
-        .neq("hypothesis_status", "rejected")
+        .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
         .order("importance", { ascending: false })
         .limit(10),
       // ③ スタッフがAIX生成文を編集した実例（リアルタイム品質フィードバック）
@@ -630,8 +630,11 @@ export async function POST(request: NextRequest) {
     // phrase_dictionary 取得（固定フォーマット出力でないアクションにのみフレーズ注入する）
     const phraseCategoryMap: Record<string, string> = {
       property_recommendation: "property_recommendation",
+      property_send: "property_recommendation",
+      property_check_result: "hearing_followup",
       viewing_invite: "viewing_invite",
       application_push: "application_push",
+      meeting_place: "viewing_invite",
       condition_hearing: "hearing_followup",
       followup_revive: "urgency_push",
       acknowledge_check: "hearing_followup",
@@ -2417,7 +2420,7 @@ M/D（曜日）HH:MM〜HH:MM
           .select("category, content")
           .in("conversation_state", ["proposing", "availability_check"])
           .gte("importance", 8)
-          .neq("hypothesis_status", "rejected") // 改善⑪: 実運用で外れ続けたルールを注入しない
+          .or("hypothesis_status.is.null,hypothesis_status.neq.rejected") // 改善⑪: 実運用で外れ続けたルールを注入しない
           .order("importance", { ascending: false })
           .limit(6),
       ]);

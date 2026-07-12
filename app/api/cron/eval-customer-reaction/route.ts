@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
     // 送信から24h以上経過した未評価ログ（sent_at は NULL がありうるため created_at で範囲抽出）
     const { data: usageLogs, error: usageErr } = await supabase
       .from("aix_usage_logs")
-      .select("id, conversation_id, sent_at, created_at")
+      .select("id, conversation_id, aix_type, sent_at, created_at")
       .is("customer_reacted", null)
       .gte("created_at", since7d)
       .lte("created_at", until24hAgo)
@@ -45,6 +45,7 @@ export async function POST(req: NextRequest) {
     const logs = (usageLogs ?? []) as Array<{
       id: string;
       conversation_id: string;
+      aix_type: string | null;
       sent_at: string | null;
       created_at: string;
     }>;
@@ -89,11 +90,42 @@ export async function POST(req: NextRequest) {
     const evaluated = reactedIds.length + notReactedIds.length;
     const reactionRate = evaluated > 0 ? Math.round((reactedIds.length / evaluated) * 1000) / 1000 : null;
 
+    // ── 低反応 aix_type のナレッジを decay（学習ループへの接続） ──
+    // 今回のバッチで not_reacted が2件以上あった aix_type を特定し、
+    // その conversation_state に対応する ai_reply_knowledge の importance を下げる
+    let decayedTypes = 0;
+    try {
+      const notReactedSet = new Set(notReactedIds);
+      const notReactedByType = new Map<string, number>();
+      for (const log of logs) {
+        if (!log.aix_type || !notReactedSet.has(log.id)) continue;
+        notReactedByType.set(log.aix_type, (notReactedByType.get(log.aix_type) ?? 0) + 1);
+      }
+      for (const [aix_type, count] of notReactedByType.entries()) {
+        if (count < 2) continue; // 2件以上 not_reacted のアクションだけ対象
+        const { data: staleIds } = await supabase
+          .from("ai_reply_knowledge")
+          .select("id")
+          .eq("conversation_state", aix_type)
+          .neq("hypothesis_status", "rejected")
+          .lt("importance", 7) // 高重要度は保護
+          .limit(30);
+        const ids = (staleIds ?? []).map(r => r.id as string).filter(Boolean);
+        if (ids.length > 0) {
+          await supabase.rpc("decay_knowledge_importance", { p_ids: ids });
+          decayedTypes++;
+        }
+      }
+    } catch (e) {
+      console.warn("[eval-customer-reaction] ナレッジdecay失敗:", e);
+    }
+
     await finishCronLog(runLogId, true, {
       evaluated,
       reacted: reactedIds.length,
       not_reacted: notReactedIds.length,
       reaction_rate: reactionRate,
+      decayed_types: decayedTypes,
     });
     return NextResponse.json({
       ok: true,
@@ -101,6 +133,7 @@ export async function POST(req: NextRequest) {
       reacted: reactedIds.length,
       not_reacted: notReactedIds.length,
       reaction_rate: reactionRate,
+      decayed_types: decayedTypes,
     });
   } catch (e) {
     console.error("[eval-customer-reaction]", e);
