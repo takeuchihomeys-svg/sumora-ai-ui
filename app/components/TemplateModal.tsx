@@ -325,6 +325,20 @@ interface AixFeatureSuggestion {
   category?: string;
 }
 
+// hypothesis ナレッジ（手動承認待ち → confirmed で AIX に注入される）
+interface KnowledgeItem {
+  id: string;
+  title: string;
+  content: string;
+  category: string | null;
+  conversation_state: string | null;
+  importance: number | null;
+  correct_count: number | null;
+  wrong_count: number | null;
+  apply_count: number | null;
+  created_at: string;
+}
+
 // AI盲点フィードバック（corpus2skill 週次Opusが生成 → ai_feedback_items テーブル）
 // 「❓ AI質問」タブで竹内さんが回答 → /api/ai-feedback がSonnetで知識化する
 interface FeedbackItem {
@@ -616,7 +630,7 @@ export default function TemplateModal({
   const [isCandidateTabActive, setIsCandidateTabActive] = useState(false);
   // AIX候補サブタブ: "all" = 全候補（従来のAIXテンプレ候補タブ）, "aix_edit" = スタッフ編集候補のみ,
   // "suggestions" = P4 AIX改善案（aix_feature_suggestions）, "feedback" = AI盲点フィードバック（ai_feedback_items）
-  const [candidateSubTab, setCandidateSubTab] = useState<"all" | "aix_edit" | "suggestions" | "feedback">("all");
+  const [candidateSubTab, setCandidateSubTab] = useState<"all" | "aix_edit" | "suggestions" | "feedback" | "knowledge">("all");
   const [candidates, setCandidates] = useState<AiTemplateCandidate[]>([]);
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [adoptingId, setAdoptingId] = useState<string | null>(null);
@@ -638,6 +652,12 @@ export default function TemplateModal({
   const [suggestionLoading, setSuggestionLoading] = useState(false);
   // 改善案タブ カテゴリフィルタ
   const [suggestionCategoryFilter, setSuggestionCategoryFilter] = useState<string>('all');
+  // 🧠ナレッジ承認タブ（hypothesis → confirmed 手動昇格）
+  const [knowledgeItems, setKnowledgeItems] = useState<KnowledgeItem[]>([]);
+  const [knowledgeLoading, setKnowledgeLoading] = useState(false);
+  const [confirmingKnowledgeId, setConfirmingKnowledgeId] = useState<string | null>(null);
+  const [rejectingKnowledgeId, setRejectingKnowledgeId] = useState<string | null>(null);
+
   // AI盲点フィードバック（❓ AI質問タブ）
   const [feedbackItems, setFeedbackItems] = useState<FeedbackItem[]>([]);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
@@ -909,6 +929,47 @@ export default function TemplateModal({
   useEffect(() => {
     if (isCandidateTabActive && candidateSubTab === "feedback") loadFeedbackItems();
   }, [isCandidateTabActive, candidateSubTab, loadFeedbackItems]);
+
+  // 🧠ナレッジ承認: hypothesis ナレッジ一覧の読み込み
+  const loadKnowledgeItems = useCallback(async () => {
+    setKnowledgeLoading(true);
+    try {
+      const res = await fetch("/api/knowledge-review");
+      const json = await res.json() as { rules: KnowledgeItem[] };
+      setKnowledgeItems(json.rules ?? []);
+    } catch { /* noop */ }
+    finally { setKnowledgeLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    if (isCandidateTabActive && candidateSubTab === "knowledge") loadKnowledgeItems();
+  }, [isCandidateTabActive, candidateSubTab, loadKnowledgeItems]);
+
+  const confirmKnowledge = useCallback(async (id: string) => {
+    setConfirmingKnowledgeId(id);
+    try {
+      await fetch("/api/knowledge-review", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, action: "confirm" }),
+      });
+      setKnowledgeItems(prev => prev.filter(k => k.id !== id));
+    } catch { /* noop */ }
+    finally { setConfirmingKnowledgeId(null); }
+  }, []);
+
+  const rejectKnowledge = useCallback(async (id: string) => {
+    setRejectingKnowledgeId(id);
+    try {
+      await fetch("/api/knowledge-review", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, action: "reject" }),
+      });
+      setKnowledgeItems(prev => prev.filter(k => k.id !== id));
+    } catch { /* noop */ }
+    finally { setRejectingKnowledgeId(null); }
+  }, []);
 
   // 回答を送信 → Sonnetが知識化（trigger_action_rules / ai_prompts に保存）
   const submitFeedbackAnswer = useCallback(async (id: string) => {
@@ -1909,6 +1970,18 @@ export default function TemplateModal({
                     return count > 0 ? ` (${count})` : "";
                   })()}
                 </button>
+                {/* 🧠ナレッジ承認 */}
+                <button
+                  onClick={() => setCandidateSubTab("knowledge")}
+                  className="shrink-0 rounded-full px-3 py-1.5 text-[11px] font-bold transition"
+                  style={
+                    candidateSubTab === "knowledge"
+                      ? { background: "linear-gradient(135deg, #7B1FA2, #AB47BC)", color: "white" }
+                      : { backgroundColor: "#e8edf2", color: "#54656f" }
+                  }
+                >
+                  🧠ナレッジ{knowledgeItems.length > 0 ? ` (${knowledgeItems.length})` : ""}
+                </button>
               </div>
             )}
           </>
@@ -2682,6 +2755,74 @@ export default function TemplateModal({
                   </>
                 );
               })()}
+            </div>
+          )}
+
+          {/* 🧠ナレッジ承認タブ */}
+          {!showAddForm && isCandidateTabActive && candidateSubTab === "knowledge" && (
+            <div className="flex-1 overflow-y-auto p-3 space-y-3">
+              <div className="rounded-xl bg-purple-50 border border-purple-200 px-3 py-2 text-[11px] text-purple-700">
+                <span className="font-bold">hypothesis</span> 状態のナレッジを確認して承認（confirmed）または却下してください。<br/>
+                承認されたナレッジは次回のAIX・LINE返信生成時にプロンプトへ注入されます。
+              </div>
+              {knowledgeLoading && (
+                <p className="text-center text-gray-400 py-8">読み込み中...</p>
+              )}
+              {!knowledgeLoading && knowledgeItems.length === 0 && (
+                <div className="text-center text-gray-400 py-12">
+                  <p className="text-2xl mb-2">🧠</p>
+                  <p className="text-sm font-medium text-gray-500">承認待ちのナレッジはありません</p>
+                  <p className="text-sm text-gray-400">（analyze-diffs が毎日自動抽出します）</p>
+                </div>
+              )}
+              {!knowledgeLoading && knowledgeItems.map((item) => (
+                <div key={item.id} className="border border-purple-200 rounded-xl p-3.5 bg-purple-50">
+                  {/* ヘッダー: カテゴリ・会話フェーズ */}
+                  <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+                    {item.conversation_state && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-bold">
+                        {item.conversation_state}
+                      </span>
+                    )}
+                    {item.category && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                        {item.category}
+                      </span>
+                    )}
+                    <span className="ml-auto text-[10px] text-gray-400">
+                      重要度 {item.importance ?? "-"}
+                    </span>
+                  </div>
+                  {/* タイトル */}
+                  <p className="font-bold text-sm text-gray-800 mb-1">{item.title}</p>
+                  {/* 内容 */}
+                  <p className="text-[12px] text-gray-700 whitespace-pre-wrap mb-2">{item.content}</p>
+                  {/* 統計 */}
+                  <div className="flex gap-3 text-[10px] text-gray-400 mb-2.5">
+                    <span>正解 {item.correct_count ?? 0}回</span>
+                    <span>誤 {item.wrong_count ?? 0}回</span>
+                    <span>適用 {item.apply_count ?? 0}回</span>
+                  </div>
+                  {/* ボタン */}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => confirmKnowledge(item.id)}
+                      disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id}
+                      className="flex-1 rounded-lg py-2 text-[12px] font-bold text-white disabled:opacity-50 transition"
+                      style={{ background: "linear-gradient(135deg, #7B1FA2, #AB47BC)" }}
+                    >
+                      {confirmingKnowledgeId === item.id ? "承認中..." : "✅ 承認（confirmed）"}
+                    </button>
+                    <button
+                      onClick={() => rejectKnowledge(item.id)}
+                      disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id}
+                      className="px-4 py-2 text-gray-400 text-[12px] border border-gray-200 rounded-lg bg-white hover:bg-gray-50 transition"
+                    >
+                      {rejectingKnowledgeId === item.id ? "..." : "却下"}
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
 

@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
-// GET: 自動抽出ナレッジ一覧
+// GET: hypothesis ナレッジ一覧（手動承認待ち）
 export async function GET() {
   const { data, error } = await supabase
     .from("ai_reply_knowledge")
-    .select("id, title, content, category, conversation_state, importance, created_at")
-    .ilike("title", "%差分学習%")
+    .select("id, title, content, category, conversation_state, importance, correct_count, wrong_count, apply_count, created_at")
+    .eq("hypothesis_status", "hypothesis")
+    .order("importance", { ascending: false })
     .order("created_at", { ascending: false })
-    .limit(100);
+    .limit(200);
 
   if (error) return NextResponse.json({ rules: [] });
   return NextResponse.json({ rules: data ?? [] });
@@ -28,14 +29,18 @@ export async function DELETE(req: NextRequest) {
   return NextResponse.json({ ok: true });
 }
 
-// PATCH: 承認（タイトルを「差分学習 [承認済]」に変更）
+// PATCH: 承認（hypothesis_status → confirmed）or 却下（hypothesis_status → rejected）
 export async function PATCH(req: NextRequest) {
-  const { id } = await req.json() as { id: string };
+  const { id, action } = await req.json() as { id: string; action?: "confirm" | "reject" };
   if (!id) return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
+
+  const update = action === "reject"
+    ? { hypothesis_status: "rejected" }
+    : { hypothesis_status: "confirmed" };
 
   const { error } = await supabase
     .from("ai_reply_knowledge")
-    .update({ title: "差分学習 [承認済]", importance: 9, hypothesis_status: "confirmed" })
+    .update(update)
     .eq("id", id);
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
