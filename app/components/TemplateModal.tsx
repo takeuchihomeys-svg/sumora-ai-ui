@@ -314,6 +314,7 @@ interface AixFeatureSuggestion {
   evidence_count: number | null;
   status: string;
   created_at: string;
+  proposal_category?: 'new_picker' | 'new_button' | 'text_improvement' | 'mismatch_fix' | 'other';
 }
 
 // AI盲点フィードバック（corpus2skill 週次Opusが生成 → ai_feedback_items テーブル）
@@ -627,6 +628,8 @@ export default function TemplateModal({
   // P4: AIX改善案（aix_feature_suggestions の pending 一覧）
   const [suggestions, setSuggestions] = useState<AixFeatureSuggestion[]>([]);
   const [suggestionLoading, setSuggestionLoading] = useState(false);
+  // 改善案タブ カテゴリフィルタ
+  const [suggestionCategoryFilter, setSuggestionCategoryFilter] = useState<string>('all');
   // AI盲点フィードバック（❓ AI質問タブ）
   const [feedbackItems, setFeedbackItems] = useState<FeedbackItem[]>([]);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
@@ -2172,7 +2175,38 @@ export default function TemplateModal({
                   <p className="text-xs text-center">毎週日曜朝5時にAIが分析して<br/>改善案を自動追加します</p>
                 </div>
               )}
-              {!suggestionLoading && suggestions.map(suggestion => (
+              {!suggestionLoading && suggestions.length > 0 && (
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+                  {[
+                    { key: 'all', label: 'すべて' },
+                    { key: 'new_picker', label: '🔧 新ピッカー' },
+                    { key: 'new_button', label: '✨ 新ボタン' },
+                    { key: 'text_improvement', label: '✏️ 文の改善' },
+                    { key: 'mismatch_fix', label: '🔄 ズレ修正' },
+                    { key: 'other', label: '💡 その他' },
+                  ].map(cat => (
+                    <button
+                      key={cat.key}
+                      onClick={() => setSuggestionCategoryFilter(cat.key)}
+                      style={{
+                        padding: '3px 10px',
+                        borderRadius: 20,
+                        border: '1px solid #ccc',
+                        background: suggestionCategoryFilter === cat.key ? '#1a56db' : '#f3f4f6',
+                        color: suggestionCategoryFilter === cat.key ? '#fff' : '#374151',
+                        fontSize: 12,
+                        cursor: 'pointer',
+                        fontWeight: suggestionCategoryFilter === cat.key ? 600 : 400,
+                      }}
+                    >{cat.label}</button>
+                  ))}
+                </div>
+              )}
+              {!suggestionLoading && (() => {
+                const filteredSuggestions = suggestionCategoryFilter === 'all'
+                  ? suggestions
+                  : suggestions.filter(s => (s.proposal_category ?? 'other') === suggestionCategoryFilter);
+                return filteredSuggestions.map(suggestion => (
                 <div
                   key={suggestion.id}
                   className="bg-white rounded-xl border border-violet-200 p-3 shadow-sm"
@@ -2196,6 +2230,21 @@ export default function TemplateModal({
                         {ACTION_LABELS[suggestion.action_type] ?? suggestion.action_type}
                       </span>
                     )}
+                    {(() => {
+                      const catMap: Record<string, { label: string; color: string }> = {
+                        new_picker: { label: '🔧 新ピッカー', color: '#1a56db' },
+                        new_button: { label: '✨ 新ボタン', color: '#057a55' },
+                        text_improvement: { label: '✏️ 文の改善', color: '#c27803' },
+                        mismatch_fix: { label: '🔄 ズレ修正', color: '#c81e1e' },
+                        other: { label: '💡 改善案', color: '#6b7280' },
+                      };
+                      const cat = catMap[suggestion.proposal_category ?? 'other'] ?? catMap.other;
+                      return (
+                        <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 12, background: cat.color, color: '#fff', fontSize: 11, marginBottom: 4, flexShrink: 0 }}>
+                          {cat.label}
+                        </span>
+                      );
+                    })()}
                     <p className="text-sm text-gray-800 font-semibold">{suggestion.suggested_title}</p>
                     {(suggestion.evidence_count ?? 1) >= 2 && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium shrink-0">
@@ -2275,7 +2324,8 @@ export default function TemplateModal({
                     </div>
                   )}
                 </div>
-              ))}
+              ));
+              })()}
               {/* 追加パターン検出（ai_template_candidates source="improvement"）: スタッフがAI文に情報を追加したパターン */}
               {!suggestionLoading && improvementCandidates.map(candidate => (
                 <div

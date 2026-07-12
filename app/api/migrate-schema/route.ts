@@ -1244,6 +1244,7 @@ ALTER TABLE calendar_events DISABLE ROW LEVEL SECURITY;
 
 -- aix_feature_suggestions: 実装メモ用カラム + 実装完了インデックス
 ALTER TABLE aix_feature_suggestions ADD COLUMN IF NOT EXISTS implementation_notes TEXT;
+ALTER TABLE aix_feature_suggestions ADD COLUMN IF NOT EXISTS proposal_category TEXT DEFAULT 'other';
 CREATE INDEX IF NOT EXISTS idx_aix_feature_suggestions_implemented
   ON aix_feature_suggestions(created_at DESC) WHERE status = 'implemented';
 

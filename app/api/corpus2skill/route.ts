@@ -126,6 +126,14 @@ type TemplateProposal = {
   evidence_count?: number;
 };
 
+function detectCategory(description: string): string {
+  if (description.startsWith("【新ボタン】")) return "new_button";
+  if (/新ピッカー|新しいAIXボタン/.test(description)) return "new_picker";
+  if (/プロンプト|生成文の改善|ルール追加/.test(description)) return "text_improvement";
+  if (/ズレ|乖離/.test(description)) return "mismatch_fix";
+  return "other";
+}
+
 async function synthesizeTemplateImprovements(): Promise<{ candidatesSaved: number; suggestionsSaved: number }> {
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -325,14 +333,16 @@ ${approvedSuggestionsSection || "（なし）"}
         .limit(1);
       if (existing && existing.length > 0) continue;
 
+      const descriptionText = p.template_text?.trim() || "";
       const { error } = await supabase.from("aix_feature_suggestions").insert({
         suggestion_type: "new_picker",
         action_type: p.action_type ?? null,
         suggested_title: p.suggested_title.trim().slice(0, 60),
-        description: p.template_text?.trim() || null,
+        description: descriptionText || null,
         reason: p.reason?.trim() || null,
         evidence_count: Math.max(1, Number(p.evidence_count) || 1),
         status: "pending",
+        proposal_category: detectCategory(descriptionText),
       });
       if (!error) suggestionsSaved++;
       else console.error("[corpus2skill] suggestion insert error:", error.message);
@@ -347,6 +357,100 @@ ${approvedSuggestionsSection || "（なし）"}
   }
 
   return { candidatesSaved, suggestionsSaved };
+}
+
+// ============================================================
+// AIX生成文 vs 実送信文のズレ分析（週次）
+// aix_generate_log と ai_reply_examples を conversation_id でJOINし、
+// 30%以上ズレているペアをOpusに渡して改善案を aix_feature_suggestions に登録する
+// ============================================================
+
+async function analyzeAixMismatch(): Promise<void> {
+  // 過去14日のAIX生成文 vs 実送信文のズレを分析
+  // aix_generate_log と ai_reply_examples をconversation_idでJOIN
+  const { data: pairs } = await supabase
+    .from("aix_generate_log")
+    .select("conversation_id, generated_text, aix_type, created_at")
+    .gte("created_at", new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString())
+    .not("generated_text", "is", null)
+    .limit(50);
+
+  if (!pairs || pairs.length === 0) return;
+
+  const convIds = pairs.map((p: { conversation_id: string }) => p.conversation_id);
+  const { data: examples } = await supabase
+    .from("ai_reply_examples")
+    .select("conversation_id, text, aix_type")
+    .in("conversation_id", convIds)
+    .not("text", "is", null);
+
+  if (!examples || examples.length === 0) return;
+
+  // Pairを作る
+  type MismatchPair = {
+    conversation_id: string;
+    generated: string;
+    sent: string;
+    aix_type: string;
+    diff_ratio: number;
+  };
+  const mismatchPairs: MismatchPair[] = [];
+  for (const p of pairs) {
+    const ex = examples.find((e: { conversation_id: string }) => e.conversation_id === p.conversation_id);
+    if (!ex) continue;
+    const gen = String(p.generated_text ?? "");
+    const sent = String(ex.text ?? "");
+    if (!gen || !sent) continue;
+    // 単純な差分スコア: 共通文字数 / max length
+    const maxLen = Math.max(gen.length, sent.length);
+    if (maxLen === 0) continue;
+    const overlap = gen.split("").filter((c: string) => sent.includes(c)).length;
+    const diffRatio = 1 - overlap / maxLen;
+    if (diffRatio > 0.3) { // 30%以上ズレていたら対象
+      mismatchPairs.push({ conversation_id: p.conversation_id, generated: gen.slice(0, 200), sent: sent.slice(0, 200), aix_type: String(p.aix_type ?? ex.aix_type ?? ""), diff_ratio: diffRatio });
+    }
+  }
+
+  if (mismatchPairs.length === 0) return;
+
+  // Opusにズレ原因分析を依頼
+  const analysisPrompt = `以下はAIが生成したLINEメッセージと、スタッフが実際に送ったメッセージのペアです。
+ズレの原因を分析して、改善提案を生成してください。
+
+ペア一覧:
+${JSON.stringify(mismatchPairs.slice(0, 5), null, 2)}
+
+各ペアについて：
+1. ズレの原因カテゴリ（picker_missing_info / prompt_issue / button_design / style_preference）
+2. 具体的な改善提案（aix_feature_suggestions に登録する改善案文）
+3. proposal_category（mismatch_fix または text_improvement または new_button）
+
+JSON配列で返す: [{aix_type, description, implementation_notes, proposal_category}]`;
+
+  const resp = await client.messages.create({
+    model: "claude-opus-4-8",
+    max_tokens: 2000,
+    messages: [{ role: "user", content: analysisPrompt }],
+  });
+  const content = resp.content[0];
+  if (content.type !== "text") return;
+
+  let proposals: Array<{ aix_type?: string; description?: string; implementation_notes?: string; proposal_category?: string }> = [];
+  try {
+    const match = content.text.match(/\[[\s\S]*\]/);
+    if (match) proposals = JSON.parse(match[0]);
+  } catch { return; }
+
+  for (const p of proposals) {
+    if (!p.description?.trim()) continue;
+    await supabase.from("aix_feature_suggestions").insert({
+      status: "pending",
+      description: p.description.slice(0, 500),
+      action_type: p.aix_type ?? null,
+      implementation_notes: p.implementation_notes?.slice(0, 500) ?? null,
+      proposal_category: p.proposal_category ?? "mismatch_fix",
+    });
+  }
 }
 
 // ============================================================
@@ -668,6 +772,10 @@ export async function POST(req: NextRequest) {
   ]);
   console.log(`[corpus2skill] テンプレ改善: candidates=${templateImprovements.candidatesSaved} suggestions=${templateImprovements.suggestionsSaved}`);
   console.log(`[corpus2skill] 盲点発見: questions=${blindSpots.questionsSaved}`);
+
+  await analyzeAixMismatch().catch((e) => {
+    console.error("[corpus2skill] AIXズレ分析失敗:", e);
+  });
 
   const { data: examples } = examplesResult as { data: Example[] | null };
 
