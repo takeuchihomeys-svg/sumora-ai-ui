@@ -58,6 +58,10 @@ function extractPreferredName(
 ): string {
   // 部分一致で除外（^先頭一致だと「通過後にオーナー」等が素通りするため含有一致に変更）
   const NON_NAME_RE = /(お客様|オーナー|大家|管理|業者|保証|担当|スタッフ|弊社|不動産|審査|通過|契約|入居|退去|申込|内覧|皆さ|各位|こちら|まずは|引き続き|何卒|改めて)/;
+  // 名前の形のみ許可: ひらがな2〜6字 / カタカナ2〜6字 / 漢字1〜4字（スクリプト混在=「頂きサ」等の文断片を排除）
+  const NAME_SHAPE_RE = /^[ぁ-ん]{2,6}$|^[ァ-ン]{2,6}$|^[一-鿿々]{1,4}$/;
+  // 動詞・助詞に使われる文字が中間に混ざる候補は文断片（例:「割引させて頂き」「むらかみ」等の切れ端）
+  const FRAGMENT_CHAR_RE = /[てでにをはがもやかなきしれめとのどこそあいう]/;
   for (const msg of [...messages].reverse()) {
     if (msg.sender !== "staff" || !msg.text) continue;
     // 冒頭の呼びかけのみ対象（文中の「オーナーさん」等の第三者言及は拾わない）
@@ -65,10 +69,11 @@ function extractPreferredName(
     if (!m) continue;
     const name = m[1];
     if (NON_NAME_RE.test(name)) continue;
-    if (name.length <= 1) continue;
-    const hasJp = /[ぁ-んァ-ン一-鿿]/.test(name);
-    const hasLatin = /[a-zA-Z]/.test(name);
-    if (hasJp && hasLatin) continue;
+    if (name.length <= 1 || name.length > 8) continue;
+    // 名前の形（ひらがな/カタカナ/漢字のみ）に一致しない候補は名前ではない
+    if (!NAME_SHAPE_RE.test(name)) continue;
+    // 中間に動詞・助詞文字が混ざる候補は文断片とみなして拒否（先頭・末尾は名前でも使われるため対象外）
+    if (name.length >= 3 && FRAGMENT_CHAR_RE.test(name.slice(1, -1))) continue;
     return name;
   }
   // 1文字のみは頭文字の可能性があるのでスキップ（英字2文字以上はYUMAなど実名として使う）
@@ -718,7 +723,7 @@ ${SMORA_COMMON_RULES}`;
 - room_number: 号室番号のみ（例: 502）。不明は""
 - discount: 割引額（「〇〇,〇〇〇円」形式）。なければnull
 - initial_cost: 初期費用合計（「〇〇〇,〇〇〇円」形式）。不明はnull
-- savings: スモラ節約額（一般業者との差額）。不明はnull`;
+- savings: ${accountName}節約額（一般業者との差額）。不明はnull`;
         const multiEstBadges = ["①","②","③","④","⑤"];
         const multiEstResults = await Promise.all(
           (image_urls as string[]).map(async (url, pi) => {
@@ -858,13 +863,19 @@ ${SMORA_COMMON_RULES}`;
 
 ${SMORA_COMMON_RULES}
 
-【スモラのLINEスタイル】
+【${accountName}のLINEスタイル】
 ・絵文字は 😊 😌 ✨ のみ・1〜2個まで
-・感嘆符は「！！」（スモラスタイル）・「頂きます」を使う
+・感嘆符は「！！」・「頂きます」を使う
 ・お客様の名前（${name}）で始める
 ・30〜80文字程度のコンパクトなメッセージ
 ・「お手隙の際にご査収ください😌！！」または「ご確認よろしくお願いします！！」で締める
-・LINEでそのまま送れる完成文のみ出力（解説・候補複数・見積書の金額の繰り返しは禁止）${greetingTimeNote}${coverDiffNote}${coverStarNote}`;
+・LINEでそのまま送れる完成文のみ出力（解説・候補複数・見積書の金額の繰り返しは禁止）
+
+【ブランド名ルール（絶対厳守）】
+・サービス名に言及する場合は「${accountName}」という名称のみ使用すること。他のサービス名（スモラ・ギガ賃貸・イエヤス・他社名）は絶対に出力しないこと。
+
+【重複禁止ルール（絶対厳守）】
+・節約金額・費用比較の文言（「〇〇円節約出来ます」「一般的な不動産業者より〜」等）はすでに見積書本文に別途表示済みのため、カバーレターには絶対に含めないこと。${greetingTimeNote}${coverDiffNote}${coverStarNote}`;
 
         const coverResult = await callClaude(
           coverSystem + coverDbRules,
@@ -872,6 +883,19 @@ ${SMORA_COMMON_RULES}
           currentAction
         );
         cover_letter = coverResult.trim();
+        // ブランド名混入防止（後処理）: 現在アカウント以外のブランド名がAI出力に混ざった場合は現アカウント名に置換
+        for (const otherBrand of Object.values(ACCOUNT_NAMES)) {
+          if (otherBrand !== accountName && cover_letter.includes(otherBrand)) {
+            cover_letter = cover_letter.split(otherBrand).join(accountName);
+          }
+        }
+        // 重複段落防止（後処理）: 見積書本文にすでに表示済みの節約・費用比較の行がカバーレターに混ざった場合は除去
+        cover_letter = cover_letter
+          .split("\n")
+          .filter(line => !(line.includes("一般的な不動産業者") || (line.includes("節約") && line.includes("円"))))
+          .join("\n")
+          .replace(/\n{3,}/g, "\n\n")
+          .trim();
       } catch {
         // カバーレター生成失敗はサイレントに無視（見積書本体は送れる）
       }
