@@ -657,9 +657,14 @@ export default function TemplateModal({
   const [knowledgeLoading, setKnowledgeLoading] = useState(false);
   const [confirmingKnowledgeId, setConfirmingKnowledgeId] = useState<string | null>(null);
   const [rejectingKnowledgeId, setRejectingKnowledgeId] = useState<string | null>(null);
-  // 🤝 打ち合わせ（Sonnet によるナレッジ分析）
-  const [discussingKnowledgeId, setDiscussingKnowledgeId] = useState<string | null>(null);
-  const [knowledgeDiscussions, setKnowledgeDiscussions] = useState<Record<string, string>>({});
+  // 🤝 打ち合わせ（Sonnet とのチャット形式でナレッジを詰める）
+  const [knowledgeChatOpen, setKnowledgeChatOpen] = useState<string | null>(null);  // 開いているナレッジID
+  const [knowledgeChatMessages, setKnowledgeChatMessages] = useState<Record<string, Array<{ role: "user" | "assistant"; content: string }>>>({});
+  const [knowledgeChatInput, setKnowledgeChatInput] = useState<Record<string, string>>({});
+  const [knowledgeChatSending, setKnowledgeChatSending] = useState<string | null>(null);  // 送信中のID
+  const [knowledgeFinalizing, setKnowledgeFinalizing] = useState<string | null>(null);  // 確定中のID
+  // 打ち合わせチャットの吹き出しコンテナ（最新メッセージへ自動スクロール用。同時に開けるのは1件のみ）
+  const knowledgeChatScrollRef = useRef<HTMLDivElement | null>(null);
 
   // AI盲点フィードバック（❓ AI質問タブ）
   const [feedbackItems, setFeedbackItems] = useState<FeedbackItem[]>([]);
@@ -974,23 +979,80 @@ export default function TemplateModal({
     finally { setRejectingKnowledgeId(null); }
   }, []);
 
-  // 🤝 打ち合わせ: Sonnet にナレッジの妥当性を分析させ、結果をカード内に表示する
-  const discussKnowledge = useCallback(async (item: KnowledgeItem) => {
-    setDiscussingKnowledgeId(item.id);
+  // 打ち合わせチャット: メッセージ追加・送信中インジケータ表示時に最新メッセージまで自動スクロール
+  useEffect(() => {
+    const el = knowledgeChatScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [knowledgeChatMessages, knowledgeChatSending, knowledgeChatOpen]);
+
+  // 🤝 打ち合わせチャット: 履歴 + 入力を Sonnet に送り、返答を吹き出しに追加する
+  const sendKnowledgeChat = useCallback(async (item: KnowledgeItem) => {
+    const input = (knowledgeChatInput[item.id] || "").trim();
+    if (!input || knowledgeChatSending || knowledgeFinalizing) return;
+    const history = knowledgeChatMessages[item.id] || [];
+    const nextMessages: Array<{ role: "user" | "assistant"; content: string }> = [...history, { role: "user", content: input }];
+    setKnowledgeChatMessages(prev => ({ ...prev, [item.id]: nextMessages }));
+    setKnowledgeChatInput(prev => ({ ...prev, [item.id]: "" }));
+    setKnowledgeChatSending(item.id);
     try {
       const res = await fetch("/api/knowledge-discuss", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: item.id, title: item.title, content: item.content, category: item.category }),
+        body: JSON.stringify({
+          id: item.id,
+          title: item.title,
+          content: item.content,
+          category: item.category,
+          conversation_state: item.conversation_state,
+          messages: history,       // 履歴（今回の入力は含めない）
+          userMessage: input,      // 今回の入力は userMessage で渡す（API 必須パラメータ）
+        }),
       });
-      const data = await res.json();
-      setKnowledgeDiscussions(prev => ({ ...prev, [item.id]: data.analysis || "分析に失敗しました" }));
+      const data = await res.json() as { ok?: boolean; reply?: string; error?: string };
+      setKnowledgeChatMessages(prev => ({
+        ...prev,
+        [item.id]: [...nextMessages, { role: "assistant", content: data.reply || `返答の取得に失敗しました${data.error ? `（${data.error}）` : ""}` }],
+      }));
     } catch {
-      setKnowledgeDiscussions(prev => ({ ...prev, [item.id]: "分析に失敗しました" }));
+      setKnowledgeChatMessages(prev => ({
+        ...prev,
+        [item.id]: [...nextMessages, { role: "assistant", content: "返答の取得に失敗しました（通信エラー）" }],
+      }));
     } finally {
-      setDiscussingKnowledgeId(null);
+      setKnowledgeChatSending(null);
     }
-  }, []);
+  }, [knowledgeChatInput, knowledgeChatMessages, knowledgeChatSending, knowledgeFinalizing]);
+
+  // 🤝 打ち合わせ確定: チャット内容を踏まえて ai_prompt_rules に反映し、ナレッジを一覧から除外する
+  const finalizeKnowledge = useCallback(async (item: KnowledgeItem) => {
+    setKnowledgeFinalizing(item.id);
+    try {
+      const res = await fetch("/api/knowledge-discuss?action=finalize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: item.id,
+          title: item.title,
+          content: item.content,
+          category: item.category,
+          conversation_state: item.conversation_state,
+          messages: knowledgeChatMessages[item.id] || [],
+        }),
+      });
+      const data = await res.json().catch(() => null) as { ok?: boolean; error?: string } | null;
+      if (res.ok && data?.ok) {
+        setKnowledgeItems(prev => prev.filter(k => k.id !== item.id));
+        setKnowledgeChatOpen(null);
+        setKnowledgeChatMessages(prev => { const next = { ...prev }; delete next[item.id]; return next; });
+        setKnowledgeChatInput(prev => { const next = { ...prev }; delete next[item.id]; return next; });
+      } else {
+        alert(`確定に失敗しました: ${data?.error || `HTTP ${res.status}`}`);
+      }
+    } catch {
+      alert("確定に失敗しました（通信エラー）。もう一度お試しください。");
+    }
+    finally { setKnowledgeFinalizing(null); }
+  }, [knowledgeChatMessages]);
 
   // 回答を送信 → Sonnetが知識化（trigger_action_rules / ai_prompts に保存）
   const submitFeedbackAnswer = useCallback(async (id: string) => {
@@ -2714,45 +2776,93 @@ export default function TemplateModal({
                     <span>誤 {item.wrong_count ?? 0}回</span>
                     <span>適用 {item.apply_count ?? 0}回</span>
                   </div>
-                  {/* 🤝 打ち合わせ分析結果 */}
-                  {knowledgeDiscussions[item.id] && (
-                    <div className="mb-2.5 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2">
-                      <p className="text-[10px] font-bold text-blue-700 mb-1">🤝 AI分析（Sonnet）</p>
-                      <p className="text-[12px] text-gray-700 whitespace-pre-wrap">{knowledgeDiscussions[item.id]}</p>
-                    </div>
-                  )}
                   {/* ボタン */}
                   <div className="flex gap-2">
                     <button
                       onClick={() => confirmKnowledge(item.id)}
-                      disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id || discussingKnowledgeId === item.id}
+                      disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id || knowledgeFinalizing === item.id}
                       className="flex-1 rounded-lg py-2 text-[12px] font-bold text-white disabled:opacity-50 transition"
                       style={{ background: "linear-gradient(135deg, #7B1FA2, #AB47BC)" }}
                     >
                       {confirmingKnowledgeId === item.id ? "承認中..." : "✅ 承認（confirmed）"}
                     </button>
                     <button
-                      onClick={() => discussKnowledge(item)}
-                      disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id || discussingKnowledgeId === item.id}
-                      className="px-3 py-2 rounded-lg text-[12px] font-bold text-white bg-gradient-to-br from-blue-500 to-blue-700 disabled:opacity-50 transition flex items-center gap-1.5"
+                      onClick={() => setKnowledgeChatOpen(prev => prev === item.id ? null : item.id)}
+                      disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id || knowledgeFinalizing === item.id}
+                      className="px-3 py-2 rounded-lg text-[12px] font-bold text-white bg-blue-600 disabled:opacity-50 transition"
                     >
-                      {discussingKnowledgeId === item.id ? (
-                        <>
-                          <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                          分析中...
-                        </>
-                      ) : (
-                        "🤝 打ち合わせ"
-                      )}
+                      🤝 打ち合わせ
                     </button>
                     <button
                       onClick={() => rejectKnowledge(item.id)}
-                      disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id || discussingKnowledgeId === item.id}
+                      disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id || knowledgeFinalizing === item.id}
                       className="px-4 py-2 text-gray-400 text-[12px] border border-gray-200 rounded-lg bg-white hover:bg-gray-50 transition"
                     >
                       {rejectingKnowledgeId === item.id ? "..." : "却下"}
                     </button>
                   </div>
+                  {/* 🤝 打ち合わせチャット */}
+                  {knowledgeChatOpen === item.id && (
+                    <div className="mt-2.5 rounded-lg border border-blue-200 bg-white p-2.5">
+                      <p className="text-[10px] font-bold text-blue-700 mb-1.5">🤝 打ち合わせ中</p>
+                      <div ref={knowledgeChatScrollRef} className="max-h-64 overflow-y-auto bg-gray-50 rounded-lg p-2 flex flex-col gap-1.5">
+                        {(knowledgeChatMessages[item.id] || []).length === 0 && (
+                          <p className="text-[11px] text-gray-400 text-center py-2">このナレッジについて気になる点を送信してください</p>
+                        )}
+                        {(knowledgeChatMessages[item.id] || []).map((msg, i) => (
+                          msg.role === "user" ? (
+                            <div key={i} className="bg-blue-600 text-white rounded-lg px-3 py-2 ml-auto max-w-[80%] text-[12px] whitespace-pre-wrap">
+                              {msg.content}
+                            </div>
+                          ) : (
+                            <div key={i} className="bg-white border border-gray-200 rounded-lg px-3 py-2 max-w-[80%] text-[12px] text-gray-700 whitespace-pre-wrap">
+                              {msg.content}
+                            </div>
+                          )
+                        ))}
+                        {knowledgeChatSending === item.id && (
+                          <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 max-w-[80%] text-[12px] text-gray-400 flex items-center gap-1.5">
+                            <span className="inline-block w-3 h-3 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" />
+                            考え中...
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex gap-1.5 mt-2">
+                        <input
+                          type="text"
+                          value={knowledgeChatInput[item.id] || ""}
+                          onChange={(e) => setKnowledgeChatInput(prev => ({ ...prev, [item.id]: e.target.value }))}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.nativeEvent.isComposing && knowledgeChatSending !== item.id && knowledgeFinalizing !== item.id) {
+                              e.preventDefault();
+                              sendKnowledgeChat(item);
+                            }
+                          }}
+                          placeholder="メッセージを入力..."
+                          className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-[12px] focus:outline-none focus:border-blue-400"
+                        />
+                        <button
+                          onClick={() => sendKnowledgeChat(item)}
+                          disabled={knowledgeChatSending === item.id || knowledgeFinalizing === item.id || !(knowledgeChatInput[item.id] || "").trim()}
+                          className="px-3 py-2 rounded-lg text-[12px] font-bold text-white bg-blue-600 disabled:opacity-50 transition flex items-center gap-1.5"
+                        >
+                          {knowledgeChatSending === item.id ? (
+                            <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            "送信"
+                          )}
+                        </button>
+                      </div>
+                      <button
+                        onClick={() => finalizeKnowledge(item)}
+                        disabled={knowledgeFinalizing === item.id || knowledgeChatSending === item.id}
+                        className="mt-2 w-full rounded-lg py-2 text-[12px] font-bold text-white disabled:opacity-50 transition"
+                        style={{ background: "linear-gradient(135deg, #2E7D32, #66BB6A)" }}
+                      >
+                        {knowledgeFinalizing === item.id ? "確定中..." : "✅ 確定して ai_prompt_rules に反映"}
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
