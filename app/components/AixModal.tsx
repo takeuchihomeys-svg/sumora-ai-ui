@@ -2247,6 +2247,8 @@ export default function AixModal({
     ? appSubMode === "confirm" ? true : appSubMode === "docs_request" ? true : appSubMode === "format" ? !!(appFormatLivingType && appFormatGuarantorType) : !!appPushType
     : actionType === "meeting_place"
     ? (!!meetingDate.trim() && !!meetingPropertyName.trim())
+    : actionType === "estimate_sheet" && estimateMultiMode
+    ? estimateMultiFiles.some(Boolean)
     : !config.requiresImage || !!imageFile;
 
   return (
