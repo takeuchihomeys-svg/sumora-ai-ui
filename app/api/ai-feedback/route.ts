@@ -14,6 +14,10 @@ export const maxDuration = 60;
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 50_000, maxRetries: 1 });
 
+// FEEDBACKルール上限: アクティブな FEEDBACK-* ルールがこれを超えたら古い順に無効化する
+// （回答のたびに増え続けてプロンプトが肥大化するのを防ぐ）
+const MAX_FEEDBACK_RULES = 40;
+
 // 改善⑧: suggest-next-action/route.ts の KNOWN_AIX_TYPES と同一のwhitelist。
 // Opusが返す未知の action_type をそのまま trigger_action_rules に upsert すると
 // suggest-next-action 側で使われない汚染ルールが蓄積するため、
@@ -150,6 +154,9 @@ export async function POST(req: NextRequest) {
         else console.error("[ai-feedback] trigger_action_rules upsert error:", error.message);
       }
       if (savedKeywords > 0) appliedRules.push(`[${actionType}] ${ruleText}（キーワード: ${keywords.join("・")}）`);
+      // trigger_action_rules に保存したルールも返信内容として ai_prompt_rules に記録する
+      // （キーワード→AIX発動のマッピングだけでは「どう返すか」が失われるため）
+      promptRuleTexts.push(ruleText);
     } else {
       // 一般ルール（キーワード抽出できなかった trigger ルールも情報を失わずこちらへ）
       promptRuleTexts.push(ruleText);
@@ -202,6 +209,30 @@ export async function POST(req: NextRequest) {
     } catch (e) {
       console.error("[ai-feedback] knowledge_gap の principle 保存失敗:", e);
     }
+  }
+
+  // FEEDBACKルール上限管理: アクティブなFEEDBACKルールが MAX_FEEDBACK_RULES 件を超えたら古いものを無効化
+  // （エラーが出ても回答保存自体は止めない）
+  try {
+    const { data: activeFeedbackRules } = await supabase
+      .from("ai_prompt_rules")
+      .select("rule_key, created_at")
+      .like("rule_key", "FEEDBACK-%")
+      .eq("is_active", true)
+      .order("created_at", { ascending: true }); // 古い順
+
+    if (activeFeedbackRules && activeFeedbackRules.length > MAX_FEEDBACK_RULES) {
+      const excessCount = activeFeedbackRules.length - MAX_FEEDBACK_RULES;
+      const oldestKeys = activeFeedbackRules.slice(0, excessCount).map((r) => r.rule_key);
+      const { error: deactivateError } = await supabase
+        .from("ai_prompt_rules")
+        .update({ is_active: false })
+        .in("rule_key", oldestKeys);
+      if (deactivateError) console.error("[ai-feedback] FEEDBACKルール無効化エラー:", deactivateError.message);
+      else console.log(`[ai-feedback] FEEDBACKルール上限超過 → 古い${excessCount}件を無効化: ${oldestKeys.join(", ")}`);
+    }
+  } catch (e) {
+    console.error("[ai-feedback] FEEDBACKルール上限チェック失敗:", e);
   }
 
   const { error: updateError } = await supabase
