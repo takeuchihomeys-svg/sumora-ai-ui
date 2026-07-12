@@ -486,7 +486,19 @@ export async function POST(req: NextRequest) {
     property_check_result_available: "property_check_result",
     property_check_result_unavailable: "property_check_result",
     property_check_result_alternative: "property_check_result",
+    property_check_result_vacate_date: "property_check_result",
+    property_check_result_mgmt_guarantor: "property_check_result",
+    property_check_result_mgmt_move_in: "property_check_result",
+    property_check_result_mgmt_initial_cost: "property_check_result",
+    property_check_result_mgmt_parking: "property_check_result",
+    property_check_result_mgmt_pet: "property_check_result",
     property_recommendation: "property_recommendation",
+    // サブステート（STATE_LEARNABLE に存在するが旧版で未定義だったエントリ）
+    application_push_push: "application_push",
+    application_push_confirm: "application_push",
+    application_push_docs_request: "application_push",
+    property_send_new_arrival: "property_send",
+    property_send_widen: "property_send",
     // generate-reply 汎用ステート
     hearing: "generate_reply", first_reply: "generate_reply",
     proposing: "generate_reply", closed_won: "generate_reply",
@@ -583,6 +595,54 @@ export async function POST(req: NextRequest) {
       }
     }
   } catch { /* ignore - confirmed再検証失敗はメイン処理を止めない */ }
+
+  // ── ⑤ hypothesis → confirmed 自動昇格 ──
+  // correct_count>=5 かつ wrong率<0.3 かつ apply_count>=10 の hypothesis ルールを confirmed に昇格する。
+  // 昇格時は ai_feedback_items に確認起票（竹内さんに承認を仰ぐ）
+  let promoted = 0;
+  try {
+    const { data: promotionCandidates } = await supabase
+      .from("ai_reply_knowledge")
+      .select("id, title, correct_count, wrong_count, apply_count")
+      .eq("hypothesis_status", "hypothesis")
+      .gte("correct_count", 5)
+      .gte("apply_count", 10)
+      .limit(50);
+
+    for (const rule of promotionCandidates ?? []) {
+      const correct = (rule.correct_count as number) ?? 0;
+      const wrong = (rule.wrong_count as number) ?? 0;
+      const wrongRate = correct + wrong > 0 ? wrong / (correct + wrong) : 0;
+      if (wrongRate >= 0.3) continue; // 外れ率30%以上は昇格しない
+
+      const { error: promoteErr } = await supabase
+        .from("ai_reply_knowledge")
+        .update({ hypothesis_status: "confirmed" })
+        .eq("id", rule.id as string);
+      if (promoteErr) continue;
+      promoted++;
+
+      // ai_feedback_items に確認起票（重複防止）
+      const question = `「${(rule.title as string).slice(0, 50)}」ルールが自動confirmed昇格しました（correct:${correct}件 / apply:${rule.apply_count as number}件 / 外れ率:${Math.round(wrongRate * 100)}%）。内容を確認して問題ないか教えてください。`;
+      const dedupKey = question.slice(0, 50).replace(/[%_\\]/g, "\\$&");
+      const { data: existsFb } = await supabase
+        .from("ai_feedback_items")
+        .select("id")
+        .in("status", ["pending", "answered", "applied"])
+        .ilike("question", `${dedupKey}%`)
+        .limit(1);
+      if (!existsFb || existsFb.length === 0) {
+        await supabase.from("ai_feedback_items").insert({
+          question,
+          speculation: `correct_count>=${correct}件 かつ apply_count>=${rule.apply_count as number}件 かつ 外れ率${Math.round(wrongRate * 100)}%のため自動昇格。`,
+          category: "knowledge_gap",
+          evidence: `correct:${correct}, wrong:${wrong}, apply:${rule.apply_count as number}, 外れ率:${Math.round(wrongRate * 100)}%`,
+          confidence: "high",
+          status: "pending",
+        });
+      }
+    }
+  } catch { /* 昇格失敗はメイン処理を止めない */ }
 
   // ── stale decay: 90日間 used_count=0 のルールを自動 rejected に ──
   // apply_count>=5 判定(RPC)だけでは使われないまま放置されたルールは永遠に残る。
@@ -709,8 +769,8 @@ export async function POST(req: NextRequest) {
 
   if (!examples || examples.length === 0) {
     // 処理対象ゼロでも同期・decayは上で実行済み。cron logも完了させる（ok=null放置を防ぐ）
-    await finishCronLog(runLogId, true, { processed: 0, learned: 0, synced, demotedConfirmed });
-    return NextResponse.json({ ok: true, processed: 0, learned: 0, synced, demotedConfirmed, message: `処理対象なし・confirmed差し戻し${demotedConfirmed}件` });
+    await finishCronLog(runLogId, true, { processed: 0, learned: 0, synced, demotedConfirmed, promoted });
+    return NextResponse.json({ ok: true, processed: 0, learned: 0, synced, demotedConfirmed, promoted, message: `処理対象なし・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件` });
   }
 
   // ── 回帰センチネル: メインの差分学習ループと並列実行 ──
@@ -720,13 +780,13 @@ export async function POST(req: NextRequest) {
     return { detected: 0, demoted: 0 };
   });
 
-  // ── メインループ: 40秒タイムガード付き（残り約20秒を後続処理・レスポンスに確保）──
+  // ── メインループ: 30秒タイムガード付き（残り約30秒を後続処理・レスポンスに確保）──
   const startTime = Date.now();
   let timedOut = false;
   for (const ex of examples) {
-    if (Date.now() - startTime > 40_000) {
+    if (Date.now() - startTime > 30_000) {
       timedOut = true;
-      console.warn(`[analyze-diffs] 40秒タイムガード発動 — ${processed}/${examples.length}件で打ち切り（残りは次回実行で処理）`);
+      console.warn(`[analyze-diffs] 30秒タイムガード発動 — ${processed}/${examples.length}件で打ち切り（残りは次回実行で処理）`);
       break;
     }
     const { id, customer_message, ai_draft, sent_reply, conversation_state, is_starred, ai_components, reply_angle } = ex as {
@@ -1083,12 +1143,12 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* ignore - 可視化失敗はメイン処理を止めない */ }
 
-  await finishCronLog(runLogId, true, { processed, learned, synced, demotedConfirmed, timedOut, sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted, ...(cronWarning ? { cronWarning } : {}) });
+  await finishCronLog(runLogId, true, { processed, learned, synced, demotedConfirmed, promoted, timedOut, sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted, ...(cronWarning ? { cronWarning } : {}) });
   return NextResponse.json({
-    ok: true, processed, learned, synced, demotedConfirmed, timedOut,
+    ok: true, processed, learned, synced, demotedConfirmed, promoted, timedOut,
     sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted,
     ...(cronWarning ? { cronWarning } : {}),
-    message: `${processed}件処理・${learned}件学習・${synced}件ルール同期・confirmed差し戻し${demotedConfirmed}件・反復削除フレーズ${sentinel.detected}件検知（${sentinel.demoted}件降格）${timedOut ? "・⏱40秒タイムガードで打ち切り" : ""}${cronWarning ? ` / ${cronWarning}` : ""}`,
+    message: `${processed}件処理・${learned}件学習・${synced}件ルール同期・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件・反復削除フレーズ${sentinel.detected}件検知（${sentinel.demoted}件降格）${timedOut ? "・⏱30秒タイムガードで打ち切り" : ""}${cronWarning ? ` / ${cronWarning}` : ""}`,
   });
 }
 

@@ -176,23 +176,66 @@ export async function POST(req: NextRequest) {
 
       const kCorrect: string[] = [];
       const kWrong: string[] = [];
+      // knowledge_id × conversation_id 単位でデデュプ（同一会話内の重複は除去しつつ、
+      // 異なる会話での適用は別々にカウントする → apply_count が正確に加算される）
+      const correctPairsSeen = new Set<string>();
+      const wrongPairsSeen = new Set<string>();
       for (const l of resolved) {
         const v = verdicts.has(l.id) ? verdicts.get(l.id)! : null;
         if (v === null) continue;
-        const kids = (applyLogs ?? [])
-          .filter(a => a.conversation_id === l.conversation_id && a.knowledge_id)
-          .map(a => a.knowledge_id as string);
-        if (v) kCorrect.push(...kids);
-        else kWrong.push(...kids);
+        // 同一会話内で同じknowledge_idが複数ある場合は1件に絞る
+        const kids = [...new Set(
+          (applyLogs ?? [])
+            .filter(a => a.conversation_id === l.conversation_id && a.knowledge_id)
+            .map(a => a.knowledge_id as string)
+        )];
+        for (const kid of kids) {
+          const pairKey = `${kid}::${l.conversation_id}`;
+          if (v) {
+            if (!correctPairsSeen.has(pairKey)) { correctPairsSeen.add(pairKey); kCorrect.push(kid); }
+          } else {
+            if (!wrongPairsSeen.has(pairKey)) { wrongPairsSeen.add(pairKey); kWrong.push(kid); }
+          }
+        }
       }
-      const uniqueCorrect = [...new Set(kCorrect)];
-      const uniqueWrong = [...new Set(kWrong)];
+      const uniqueCorrect = kCorrect; // 既に (knowledge_id × conversation_id) でデデュプ済み
+      const uniqueWrong = kWrong;
       if (uniqueCorrect.length > 0 || uniqueWrong.length > 0) {
         await supabase.rpc("update_knowledge_feedback_by_ids", {
           p_correct_ids: uniqueCorrect.length > 0 ? uniqueCorrect : null,
           p_wrong_ids: uniqueWrong.length > 0 ? uniqueWrong : null,
         });
         knowledgeFed = uniqueCorrect.length + uniqueWrong.length;
+      }
+
+      // ── hypothesis → confirmed 自動昇格（eval-winning 追加ステップ） ──
+      // analyze-diffs（日次）と二重で走るが条件が異なるため共存可。
+      // eval-winning は「業務成果ベース」のため、apply_count >= 4 + correct_rate >= 0.7 で昇格。
+      try {
+        const { data: promotionCandidates } = await supabase
+          .from("ai_reply_knowledge")
+          .select("id, title, correct_count, wrong_count, apply_count")
+          .eq("hypothesis_status", "hypothesis")
+          .gte("correct_count", 5)
+          .gte("apply_count", 4)
+          .limit(30);
+        let autoPromoted = 0;
+        for (const rule of promotionCandidates ?? []) {
+          const c = (rule.correct_count as number) ?? 0;
+          const w = (rule.wrong_count as number) ?? 0;
+          if (c + w === 0) continue;
+          if (w / (c + w) >= 0.3) continue; // 外れ率30%以上は昇格しない
+          const { error: promoteErr } = await supabase
+            .from("ai_reply_knowledge")
+            .update({ hypothesis_status: "confirmed" })
+            .eq("id", rule.id as string);
+          if (!promoteErr) autoPromoted++;
+        }
+        if (autoPromoted > 0) {
+          console.log(`[eval-winning-pattern] hypothesis→confirmed自動昇格: ${autoPromoted}件`);
+        }
+      } catch (e) {
+        console.warn("[eval-winning-pattern] hypothesis昇格失敗:", e);
       }
     } catch (e) {
       console.warn("[eval-winning-pattern] ナレッジフィードバック失敗:", e);

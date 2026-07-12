@@ -162,7 +162,7 @@ async function getPropertyExamples(): Promise<string> {
 //   物件オススメのフォーマットはコード内固定（DEFAULT_PROP_SYSTEM）を使用しており、DBでは上書きしない。
 
 // 物件オススメ関連のknowledgeを取得（差分学習ルール優先）
-async function getPropertyKnowledge(): Promise<string> {
+async function getPropertyKnowledge(conversationId?: string): Promise<string> {
   const [{ data: diffLearned }, { data: stateKnowledge }] = await Promise.all([
     // ① 差分学習ルール（最優先）
     // 改善⑪: rejected（実運用で外れ続けたルール）を注入しない
@@ -185,10 +185,16 @@ async function getPropertyKnowledge(): Promise<string> {
       .order("importance", { ascending: false })
       .limit(12),
   ]);
-  // 使用追跡（fire-and-forget）
+  // 使用追跡（fire-and-forget）+ knowledge_apply_log への記録（eval-winning でのフィードバックループ接続）
   const usedIds = [...(diffLearned ?? []), ...(stateKnowledge ?? [])].map(r => (r as { id: string }).id).filter(Boolean);
   if (usedIds.length) {
     supabase.rpc("increment_knowledge_used_count", { p_ids: usedIds }).then(() => {}, () => {});
+    if (conversationId) {
+      // C05: source='aix_action' を付与して generate-reply 由来のログと区別する
+      supabase.from("knowledge_apply_log").insert(
+        usedIds.map(id => ({ knowledge_id: id, conversation_id: conversationId, source: "aix_action" }))
+      ).then(() => {}, () => {});
+    }
   }
   const parts: string[] = [];
   if ((diffLearned?.length ?? 0) > 0)
@@ -284,7 +290,7 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
       const embedding = await generateEmbedding(searchQuery);
       if (embedding) {
         const { data: vectorResults } = await supabase.rpc("match_reply_knowledge", {
-          query_embedding: embedding, match_count: 20, min_importance: 7,
+          query_embedding: embedding, match_count: 40, min_importance: 7,
         }) as { data: Array<{ id: string; title: string; content: string; hypothesis_status?: string; importance: number; similarity: number }> | null };
         const filtered = (vectorResults ?? [])
           .filter(r => r.similarity >= 0.5 && r.hypothesis_status !== "rejected")
@@ -618,9 +624,10 @@ export async function POST(request: NextRequest) {
             await supabase.from("aix_generate_log").insert({
               action_type: currentAction,
               conversation_id: conversationId,
+              generated_text: message.slice(0, 2000),
             });
-          } catch {
-            // fire-and-forget: 生成ログのINSERT失敗はレスポンスに影響させない
+          } catch (e) {
+            console.error("[aix/action] aix_generate_log insert failed (after callback):", e);
           }
         });
       }
@@ -729,7 +736,7 @@ ${SMORA_COMMON_RULES}`;
       // フォーマット固定: DEFAULT_PROP_SYSTEM を直接使用（DBで上書きしない）
       const [examples, knowledge, recStarNote, propDbRules] = await Promise.all([
         getPropertyExamples(),
-        getPropertyKnowledge(),
+        getPropertyKnowledge(conversationId),
         getStarredExamplesForAction(["property_recommendation", "proposing"], latestCustomerMsg),
         fetchPromptRules("property_recommendation", {}).catch(() => ""),
       ]);
@@ -2346,6 +2353,14 @@ ${pcrCalendarBlock}
         const exRoomNo = ((body.exclusive_room_no as string | undefined) ?? "").trim();
         const propText = `${exPropName}${exRoomNo}`;
         message_text = `お送りいただきました${propText}は専任のお部屋となっており、弊社ではご紹介ができないお部屋となります！！\n\nよろしければ私の方で${name}にオススメ出来るお部屋ピックアップさせていただきます😊！！`;
+        // aix_generate_log fire-and-forget（finalizeResponse を経由しない早期returnパス）
+        if (conversationId) {
+          supabase.from("aix_generate_log").insert({
+            action_type: currentAction,
+            conversation_id: conversationId,
+            generated_text: message_text.slice(0, 2000),
+          }).then(() => {}, (e: unknown) => console.error("[aix/action] aix_generate_log insert failed (exclusive):", e));
+        }
         return NextResponse.json({ ok: true, message_text });
       }
 
@@ -3387,6 +3402,15 @@ ${SMORA_COMMON_RULES}
 
     // ⑦修正: 共通後処理（号室の先頭ゼロ除去 + 内部メモ分離）を finalize() に統一
     const { message: cleanedMessage, notice } = finalize(message_text);
+
+    // aix_generate_log 記録（メインフロー: finalizeResponse を使わない全アクションパス）
+    if (conversationId) {
+      supabase.from("aix_generate_log").insert({
+        action_type: currentAction,
+        conversation_id: conversationId,
+        generated_text: cleanedMessage.slice(0, 2000),
+      }).then(() => {}, (e: unknown) => console.error("[aix/action] aix_generate_log insert failed (main):", e));
+    }
 
     return NextResponse.json({
       ok: true,

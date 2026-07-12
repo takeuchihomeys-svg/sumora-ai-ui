@@ -91,18 +91,29 @@ export async function POST(req: NextRequest) {
     const reactionRate = evaluated > 0 ? Math.round((reactedIds.length / evaluated) * 1000) / 1000 : null;
 
     // ── 低反応 aix_type のナレッジを decay（学習ループへの接続） ──
-    // 今回のバッチで not_reacted が2件以上あった aix_type を特定し、
+    // 今回のバッチで not_reacted 率>=50% かつ件数>=2 の aix_type を特定し、
     // その conversation_state に対応する ai_reply_knowledge の importance を下げる
-    let decayedTypes = 0;
+    let decaySucceeded = 0;
+    let decayFailed = 0;
     try {
       const notReactedSet = new Set(notReactedIds);
+      const reactedSet = new Set(reactedIds);
       const notReactedByType = new Map<string, number>();
+      const totalByType = new Map<string, number>(); // reacted + not_reacted の合計
       for (const log of logs) {
-        if (!log.aix_type || !notReactedSet.has(log.id)) continue;
+        if (!log.aix_type) continue;
+        // 今回判定できたもの（reactedまたはnot_reacted）のみカウント
+        if (reactedSet.has(log.id) || notReactedSet.has(log.id)) {
+          totalByType.set(log.aix_type, (totalByType.get(log.aix_type) ?? 0) + 1);
+        }
+        if (!notReactedSet.has(log.id)) continue;
         notReactedByType.set(log.aix_type, (notReactedByType.get(log.aix_type) ?? 0) + 1);
       }
       for (const [aix_type, count] of notReactedByType.entries()) {
-        if (count < 2) continue; // 2件以上 not_reacted のアクションだけ対象
+        const total = totalByType.get(aix_type) ?? count;
+        const notReactedRate = count / total;
+        // 件数>=2 かつ 非反応率>=50% の両条件でdecay（バッチの偶然の偏りを防ぐ）
+        if (count < 2 || notReactedRate < 0.5) continue;
         const { data: staleIds } = await supabase
           .from("ai_reply_knowledge")
           .select("id")
@@ -111,9 +122,17 @@ export async function POST(req: NextRequest) {
           .lt("importance", 7) // 高重要度は保護
           .limit(30);
         const ids = (staleIds ?? []).map(r => r.id as string).filter(Boolean);
-        if (ids.length > 0) {
-          await supabase.rpc("decay_knowledge_importance", { p_ids: ids });
-          decayedTypes++;
+        if (ids.length === 0) {
+          // knowledge_apply_log の aix_type と conversation_state のマッピング不一致を検知
+          console.warn(`[eval-customer-reaction] decay skip: aix_type="${aix_type}" に conversation_state一致のknowledgeが見つかりません（マッピング不一致の可能性 / not_reacted=${count}/${total}件）`);
+          continue;
+        }
+        const { error: rpcErr } = await supabase.rpc("decay_knowledge_importance", { p_ids: ids });
+        if (rpcErr) {
+          console.warn(`[eval-customer-reaction] decay RPC失敗: aix_type="${aix_type}"`, rpcErr.message);
+          decayFailed++;
+        } else {
+          decaySucceeded++;
         }
       }
     } catch (e) {
@@ -125,7 +144,8 @@ export async function POST(req: NextRequest) {
       reacted: reactedIds.length,
       not_reacted: notReactedIds.length,
       reaction_rate: reactionRate,
-      decayed_types: decayedTypes,
+      decay_succeeded: decaySucceeded,
+      decay_failed: decayFailed,
     });
     return NextResponse.json({
       ok: true,
@@ -133,7 +153,8 @@ export async function POST(req: NextRequest) {
       reacted: reactedIds.length,
       not_reacted: notReactedIds.length,
       reaction_rate: reactionRate,
-      decayed_types: decayedTypes,
+      decay_succeeded: decaySucceeded,
+      decay_failed: decayFailed,
     });
   } catch (e) {
     console.error("[eval-customer-reaction]", e);

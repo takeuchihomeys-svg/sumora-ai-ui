@@ -280,12 +280,13 @@ JSONのみで返答（説明不要）：
 // 対象は category IN ('phrase', 'pattern') のみ（principle 等のルール系は下げない）。
 async function decayRemovedKnowledge(conversationId: string, aiDraft: string, sentReply: string): Promise<void> {
   try {
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    // 賃貸仲介では確認・検討に数時間かかるため 1h → 6h に拡張（MEDIUM-08修正）
+    const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
     const { data: logs } = await supabase
       .from("knowledge_apply_log")
       .select("knowledge_id, ai_reply_knowledge(id, category, content)")
       .eq("conversation_id", conversationId)
-      .gte("applied_at", oneHourAgo)
+      .gte("applied_at", sixHoursAgo)
       .limit(100);
     if (!logs || logs.length === 0) return;
 
@@ -322,7 +323,8 @@ async function preciseKnowledgeFeedback(
   overallSim: number
 ): Promise<void> {
   try {
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    // 賃貸仲介では確認・検討に数時間かかるため 1h → 6h に拡張（MEDIUM-08修正）
+    const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
     type LogRow = {
       knowledge_id: string;
       ai_reply_knowledge:
@@ -336,7 +338,7 @@ async function preciseKnowledgeFeedback(
       .eq("conversation_id", conversationId)
       .eq("result", "pending")
       .eq("source", source)
-      .gte("applied_at", oneHourAgo)
+      .gte("applied_at", sixHoursAgo)
       .limit(60);
 
     if (!logs || logs.length === 0) {
