@@ -384,6 +384,19 @@ const ACTION_LABELS: Record<string, string> = {
   estimate_sheet: "見積書",
 };
 
+// AIX候補タブ: suggested_title の "[編集] " プレフィックスを表示時のみ除去（DBは変更しない）
+function stripEditPrefix(title: string): string {
+  return title.replace(/^\[編集\]\s*/, "");
+}
+
+// 改善案タブ: suggestion_type → バッジのラベル・色
+const SUGGESTION_TYPE_BADGE: Record<string, { label: string; className: string }> = {
+  new_aix: { label: "新AIX", className: "bg-purple-50 text-purple-600" },
+  new_picker: { label: "新ピッカー", className: "bg-blue-50 text-blue-600" },
+  new_button: { label: "新ボタン", className: "bg-green-50 text-green-600" },
+  new_sub_mode: { label: "新サブモード", className: "bg-orange-50 text-orange-600" },
+};
+
 interface TemplateModalProps {
   onClose: () => void;
   onSelect?: (text: string, imageFiles?: File[], label?: string, category?: string, secondMsg?: { type: string; delay: number } | null, templateId?: string, wasAdapted?: boolean, recommendedRank?: number | null) => void;
@@ -1863,10 +1876,10 @@ export default function TemplateModal({
                 <p className="text-center text-gray-400 py-8">読み込み中...</p>
               )}
               {!candidateLoading && candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source === "aix_edit").length === 0 && (
-                <div className="text-center text-gray-400 py-12">
-                  <p className="text-2xl mb-2">✏️</p>
-                  <p className="text-sm font-medium text-gray-500">AIが生成した文をスタッフが編集して送信すると</p>
-                  <p className="text-sm text-gray-400">ここに候補として表示されます</p>
+                <div className="flex flex-col items-center gap-2 py-12 text-gray-400">
+                  <span className="text-3xl">✏️</span>
+                  <p className="text-sm font-medium">AIX候補はまだありません</p>
+                  <p className="text-xs text-center">同じ編集パターンが2件以上観測されると<br/>ここに候補が追加されます</p>
                 </div>
               )}
               {!candidateLoading && (() => {
@@ -1893,12 +1906,14 @@ export default function TemplateModal({
                               {CATEGORY_DISPLAY_NAMES[candidate.category] ?? candidate.category.replace("【AIX】", "").trim()}
                             </span>
                           )}
-                          <p className="text-xs text-gray-500 font-medium">{candidate.suggested_title}</p>
-                          {(candidate.evidence_count ?? 1) >= 2 && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium shrink-0">
-                              📊 {candidate.evidence_count}回同じ編集パターン
-                            </span>
-                          )}
+                          <p className="text-xs text-gray-500 font-medium">{stripEditPrefix(candidate.suggested_title)}</p>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${
+                            (candidate.evidence_count ?? 1) >= 3
+                              ? "bg-red-50 text-red-600 font-bold"
+                              : "bg-gray-100 text-gray-500 font-medium"
+                          }`}>
+                            ✏️ {candidate.evidence_count ?? 1}件の編集
+                          </span>
                         </div>
                         {candidate.reason && (
                           <p className="text-[11px] text-gray-400 mb-2">{candidate.reason}</p>
@@ -1974,10 +1989,10 @@ export default function TemplateModal({
                 <p className="text-center text-gray-400 py-8">読み込み中...</p>
               )}
               {!suggestionLoading && suggestions.length === 0 && improvementCandidates.length === 0 && (
-                <div className="text-center text-gray-400 py-12">
-                  <p className="text-2xl mb-2">💡</p>
-                  <p className="text-sm font-medium text-gray-500">週次AI分析で見つかったAIX/ピッカーの改善提案が</p>
-                  <p className="text-sm text-gray-400">ここに表示されます</p>
+                <div className="flex flex-col items-center gap-2 py-8 text-gray-400">
+                  <span className="text-3xl">💡</span>
+                  <p className="text-sm font-medium">改善案はまだありません</p>
+                  <p className="text-xs text-center">毎週日曜朝5時にAIが分析して<br/>改善案を自動追加します</p>
                 </div>
               )}
               {!suggestionLoading && suggestions.map(suggestion => (
@@ -1986,11 +2001,10 @@ export default function TemplateModal({
                   className="bg-white rounded-xl border border-violet-200 p-3 shadow-sm"
                 >
                   <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-500 font-bold shrink-0">
-                      {suggestion.suggestion_type === "new_aix" ? "新AIX"
-                        : suggestion.suggestion_type === "new_sub_mode" ? "新サブモード"
-                        : suggestion.suggestion_type === "new_button" ? "新ボタン"
-                        : "新ピッカー"}
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold shrink-0 ${
+                      (SUGGESTION_TYPE_BADGE[suggestion.suggestion_type] ?? SUGGESTION_TYPE_BADGE.new_picker).className
+                    }`}>
+                      {(SUGGESTION_TYPE_BADGE[suggestion.suggestion_type] ?? SUGGESTION_TYPE_BADGE.new_picker).label}
                     </span>
                     {/* AIXボタン名バッジ（action_typeがある場合） */}
                     {suggestion.action_type && (

@@ -43,7 +43,14 @@ export async function GET() {
     .limit(200);
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  return NextResponse.json({ ok: true, candidates: data ?? [] });
+
+  // aix_edit は evidence_count >= 2 のもののみ返す（1件だけのものは顧客名入りノイズになりやすい）
+  // 他のsource（auto / improvement / manual 等）はフィルタなし
+  const candidates = (data ?? []).filter(
+    (c: { source?: string | null; evidence_count?: number | null }) =>
+      c.source !== "aix_edit" || (c.evidence_count ?? 1) >= 2
+  );
+  return NextResponse.json({ ok: true, candidates });
 }
 
 // POST: 新しいテンプレート候補を保存
