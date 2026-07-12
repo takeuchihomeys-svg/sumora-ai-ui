@@ -221,16 +221,12 @@ ${exampleText}
         return NextResponse.json({ ok: false, error: "仕様JSONの生成に失敗しました。もう一度お試しください。" }, { status: 500 });
       }
 
-      // 実装メモは description に併記して保存する（aix_feature_suggestions に専用カラムがないため）
-      const description = spec.implementation_notes
-        ? `${spec.description}\n\n【実装メモ】\n${spec.implementation_notes}`
-        : spec.description;
-
       const { error: insErr } = await supabase.from("aix_feature_suggestions").insert({
         suggestion_type: spec.suggestion_type,
         action_type: candidate.action_type,
         suggested_title: spec.suggested_title.slice(0, 60),
-        description,
+        description: spec.description,
+        implementation_notes: spec.implementation_notes || null, // 専用カラムに分離（migrate-schemaで追加済み）
         reason: spec.reason || candidate.reason || null,
         evidence_count: Math.max(1, candidate.evidence_count ?? 1),
         status: "approved", // 打ち合わせ済みの確定状態（実装待ち）

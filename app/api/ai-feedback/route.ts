@@ -290,17 +290,21 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ ok: true, rulesApplied: appliedRules.length });
 }
 
-// DELETE: { id } → status="dismissed"
+// DELETE: { id, dismissedReason? } → status="dismissed"（理由があれば dismissed_reason に保存してAIの学習材料にする）
 export async function DELETE(req: NextRequest) {
-  const body = await req.json() as { id?: string };
-  if (!body.id) {
+  const body = await req.json() as { id?: string; dismissedReason?: string };
+  const { id, dismissedReason } = body;
+  if (!id) {
     return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
   }
 
   const { error } = await supabase
     .from("ai_feedback_items")
-    .update({ status: "dismissed" })
-    .eq("id", body.id);
+    .update({
+      status: "dismissed",
+      ...(dismissedReason?.trim() ? { dismissed_reason: dismissedReason.trim() } : {}),
+    })
+    .eq("id", id);
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });

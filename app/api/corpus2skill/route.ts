@@ -374,7 +374,18 @@ async function discoverBlindSpots(): Promise<{ questionsSaved: number }> {
     .order("created_at", { ascending: false })
     .limit(12);
 
-  const hasMaterial = (gapLogs?.length ?? 0) > 0 || (bypassed?.length ?? 0) > 0 || (fallbackRules?.length ?? 0) > 0 || (modifiedExamples?.length ?? 0) > 0;
+  // ⑤ 使用数が多いのに win_rate が低いテンプレート（成果起点の盲点）
+  // use_count>=3 で「よく使われている」かつ win_rate<0.15（成約まで15%未満）のものを抽出
+  const { data: lowConvTemplates } = await supabase
+    .from("templates")
+    .select("label, category, use_count, win_rate")
+    .gte("use_count", 3)
+    .lt("win_rate", 0.15)
+    .not("win_rate", "is", null)
+    .order("use_count", { ascending: false })
+    .limit(8);
+
+  const hasMaterial = (gapLogs?.length ?? 0) > 0 || (bypassed?.length ?? 0) > 0 || (fallbackRules?.length ?? 0) > 0 || (modifiedExamples?.length ?? 0) > 0 || (lowConvTemplates?.length ?? 0) > 0;
   if (!hasMaterial) {
     console.log("[corpus2skill] 盲点発見: 材料なしのためスキップ");
     return { questionsSaved: 0 };
@@ -421,6 +432,10 @@ AI案: ${((m.ai_draft as string) ?? "").replace(/\n/g, " ").slice(0, 200)}
 スタッフが実際に送った文: ${((m.sent_reply as string) ?? "").replace(/\n/g, " ").slice(0, 200)}`
   ).join("\n\n");
 
+  const lowConvSection = (lowConvTemplates ?? []).map((t) =>
+    `- [${t.category ?? "?"}]「${t.label}」使用${t.use_count ?? 0}回・成約率${Math.round((t.win_rate as number) * 100)}%`
+  ).join("\n");
+
   const res = await client.messages.create({
     model: "claude-opus-4-8",
     max_tokens: 3000,
@@ -441,6 +456,9 @@ ${fallbackSection || "（なし）"}
 
 【スタッフがAIの返信案を修正して送った場面（AI案 vs 実際の送信文）】
 ${modifiedSection || "（なし）"}
+
+【使用数が多いのに成約率が低いテンプレート・アクション（成果データ）】
+${lowConvSection || "（なし）"}
 
 【既に学習済みのスキル（既知 — これらと重複する質問は出さない）】
 ${knownSkillsSection || "（なし）"}
@@ -464,7 +482,7 @@ ${answeredSection || "（なし）"}
 [{
   "question": "竹内さんへの質問（具体的に・1〜2文）",
   "speculation": "AIの憶測・仮説（「〜ではないかと思われますが...」形式）",
-  "category": "knowledge_gap|prompt_ambiguity|new_flow|missing_keyword|weak_scene|new_aix_needed|general",
+  "category": "knowledge_gap|prompt_ambiguity|new_flow|missing_keyword|weak_scene|new_aix_needed|low_conversion|general",
   "evidence": "根拠となったデータの要約（件数・パターン・AIが述べた誤り）",
   "confidence": "high|medium|low"
 }]
@@ -473,6 +491,7 @@ ${answeredSection || "（なし）"}
 - 「日割家賃は入居日が早い方が高くなりますか？安くなりますか？AIが『入居日が早いほど日割家賃は少ない』と逆に説明してしまい、スタッフが訂正しました。正しい計算方法を教えてください」（knowledge_gap）
 - 「お客様が『審査が不安』と言った場合、どのような対応をするのが正しいですか？AIは現在『ヒアリング継続』と予測していますが、週3回外れています」（weak_scene）
 - 「物件URLと『スモ割』が同時に来た時のフローはどうなりますか？AIは憶測で対応しています」（new_flow）
+- 「『ピックアップ完了（条件明示）』テンプレートは月12回使われているが成約率が8%です。どういう改善が有効だと思いますか？」（low_conversion）
 
 悪い質問の例（避ける）:
 - 「AIをどう改善しますか？」（抽象的すぎる）
@@ -496,7 +515,7 @@ ${answeredSection || "（なし）"}
   if (!Array.isArray(parsed)) return { questionsSaved: 0 };
 
   let questionsSaved = 0;
-  const VALID_CATEGORIES = ["knowledge_gap", "prompt_ambiguity", "new_flow", "missing_keyword", "weak_scene", "new_aix_needed", "general"];
+  const VALID_CATEGORIES = ["knowledge_gap", "prompt_ambiguity", "new_flow", "missing_keyword", "weak_scene", "new_aix_needed", "low_conversion", "general"];
   const VALID_CONFIDENCE = ["high", "medium", "low"];
 
   for (const item of parsed.slice(0, 5)) {
