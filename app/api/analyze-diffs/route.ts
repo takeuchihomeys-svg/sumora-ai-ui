@@ -430,11 +430,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
   const runLogId = await startCronLog("analyze-diffs");
-  // ?limit=N で件数を指定可能（デフォルト30・最大200）
-  // maxDuration=60秒 / 1件あたり約2秒 → 30件が上限目安
+  // ?limit=N で件数を指定可能（デフォルト10・最大200）
+  // maxDuration=60秒 / 1件あたりLLM最大3回（2〜6秒）→ 10件＋40秒タイムガードで後半処理の時間を確保
   const url = new URL(req.url);
   const limitParam = url.searchParams.get("limit");
-  const limit = limitParam ? Math.min(parseInt(limitParam, 10) || 30, 200) : 30;
+  const limit = limitParam ? Math.min(parseInt(limitParam, 10) || 10, 200) : 10;
 
   // 未処理の差分を取得（is_starred順で重要な学習から処理）
   const { data: examples, error: examplesError } = await supabase
@@ -450,16 +450,225 @@ export async function POST(req: NextRequest) {
 
   // DBエラーを空配列として握りつぶさず、明示的にエラーを返す
   if (examplesError) {
+    await finishCronLog(runLogId, false, undefined, examplesError.message);
     return NextResponse.json({ ok: false, error: examplesError.message }, { status: 500 });
-  }
-
-  if (!examples || examples.length === 0) {
-    return NextResponse.json({ ok: true, processed: 0, learned: 0, message: "処理対象なし" });
   }
 
   let processed = 0;
   let learned = 0;
   const now = new Date().toISOString();
+
+  // ══ 【タイムアウト対策】後半処理（確認済みルール同期・stale decay・ポジティブ強化B/C）を
+  //    メインループの「前」に実行する。以前はループの後にあり、ループが60秒を使い切ると
+  //    一度も実行されず confirmed→ai_prompt_rules 同期・decay が永遠に走らなかった。══
+
+  // ── 確認済みルール → ai_prompt_rules 自動同期 ──
+  // importance>=8 かつ hypothesis_status='confirmed' のルールをプロンプトルールとして自動登録
+  // ステートに応じた action_type でスコープ付き保存
+  // （複合ステートはAIXアクション名へ、汎用ステートはgenerate_reply へ、未知はグローバル）
+
+  // confirmed ナレッジの conversation_state → ai_prompt_rules の action_type マップ
+  // AIX固有ステート → AIXのaction_type（scoped注入）
+  // generate-reply 汎用ステート → "generate_reply"（generate-replyのみに注入）
+  // 未知ステート / null → null（全アクションに注入するグローバル）
+  const KNOWLEDGE_STATE_TO_ACTION: Record<string, string | null> = {
+    // AIX アクション固有ステート
+    property_send: "property_send", property_send_pickup: "property_send",
+    viewing_invite: "viewing_invite", viewing: "viewing_invite",
+    viewing_schedule: "viewing_invite", inspection: "viewing_invite",
+    greeting_viewing: "greeting_viewing",
+    application_push: "application_push", applying: "application_push",
+    application: "application_push", screening: "application_push", contract: "application_push",
+    condition_hearing: "condition_hearing",
+    estimate_sheet: "estimate_sheet", estimate_request: "estimate_sheet",
+    meeting_place: "meeting_place",
+    property_check_result: "property_check_result",
+    property_check_result_available: "property_check_result",
+    property_check_result_unavailable: "property_check_result",
+    property_check_result_alternative: "property_check_result",
+    property_recommendation: "property_recommendation",
+    // generate-reply 汎用ステート
+    hearing: "generate_reply", first_reply: "generate_reply",
+    proposing: "generate_reply", closed_won: "generate_reply",
+    // 未知ステート → null（グローバル）
+  };
+
+  let synced = 0;
+  try {
+    const { data: confirmedRules } = await supabase
+      .from("ai_reply_knowledge")
+      .select("id, title, content, conversation_state")
+      .eq("hypothesis_status", "confirmed")
+      .gte("importance", 8)
+      .limit(100);
+
+    if (confirmedRules && confirmedRules.length > 0) {
+      const upserts = confirmedRules.map((r) => {
+        const state = r.conversation_state as string | null;
+        const mappedActionType = state
+          ? (Object.prototype.hasOwnProperty.call(KNOWLEDGE_STATE_TO_ACTION, state)
+              ? KNOWLEDGE_STATE_TO_ACTION[state]
+              : null)
+          : null;
+        return {
+          rule_key: `LEARN-${r.id as string}`,
+          action_type: mappedActionType,   // ← ステートに応じた正しいスコープ
+          condition_key: null,             // ← action_type でスコープ済み。condition は不要
+          condition_value: null,
+          rule_text: (r.content as string).slice(0, 500),
+          reason: `ai_reply_knowledge自動昇格: ${(r.title as string).slice(0, 100)}`,
+          priority: 8,
+          is_active: true,
+        };
+      });
+      const { error: upsertError } = await supabase
+        .from("ai_prompt_rules")
+        .upsert(upserts, { onConflict: "rule_key" });
+      if (!upsertError) synced = confirmedRules.length;
+    }
+
+    // rejected ルールは ai_prompt_rules でも非アクティブ化
+    const { data: rejectedRules } = await supabase
+      .from("ai_reply_knowledge")
+      .select("id")
+      .eq("hypothesis_status", "rejected")
+      .limit(100);
+    if (rejectedRules && rejectedRules.length > 0) {
+      const keys = rejectedRules.map((r) => `LEARN-${r.id as string}`);
+      await supabase.from("ai_prompt_rules")
+        .update({ is_active: false })
+        .in("rule_key", keys);
+    }
+  } catch { /* ignore - プロンプトルール同期失敗はメイン処理を止めない */ }
+
+  // ── stale decay: 90日間 used_count=0 のルールを自動 rejected に ──
+  // apply_count>=5 判定(RPC)だけでは使われないまま放置されたルールは永遠に残る。
+  // 一度も使われず90日経過 → 実運用に合わない可能性が高い → hypothesis_status=rejected
+  // MED-02: correct_count>0 のルールは decay 対象外（一度でも正しく使われた実績あり = まだ有効）
+  // S04: apply_count>0 条件追加 — 一度も検索でヒットしていないルールは除外。
+  //      greeting_viewing / property_check_result_vacate_date 等の稀少ステートは90日以内に
+  //      発火チャンスがなく rejected 化する恐れがあるため、apply 実績のあるルールのみを対象とする。
+  try {
+    const staleThreshold = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    await supabase
+      .from("ai_reply_knowledge")
+      .update({ hypothesis_status: "rejected" })
+      .lte("importance", 8)                          // importance=9以外を対象（F09: update-knowledgeの物理削除範囲と統一）
+      .eq("used_count", 0)                          // 一度も使われていない
+      .eq("correct_count", 0)                       // MED-02: 正答実績があるルールは除外
+      .gt("apply_count", 0)                         // S04: apply実績がないルールは対象外（稀少ステート保護）
+      .lt("created_at", staleThreshold)             // 90日以上前に作成
+      .neq("hypothesis_status", "confirmed")        // 確認済みは除外
+      .neq("hypothesis_status", "rejected");        // 既にrejectは除外
+  } catch { /* decay 失敗は無視して処理を続ける */ }
+
+  // ── F06: importance=9 の放置ルールを 180 日で soft-delete ──
+  // importance=9 は通常の stale decay（lt("importance", 8)）と物理削除（update-knowledge cron）の
+  // 両方から除外されるため、際限なく蓄積する。180日未使用なら rejected へ。
+  try {
+    const staleThreshold180 = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
+    await supabase
+      .from("ai_reply_knowledge")
+      .update({ hypothesis_status: "rejected" })
+      .eq("importance", 9)
+      .eq("used_count", 0)
+      .eq("correct_count", 0)
+      .gt("apply_count", 0)                         // BUG-03: 90日decayと同様、apply実績ゼロは除外
+      .lt("created_at", staleThreshold180)
+      .neq("hypothesis_status", "confirmed")
+      .neq("hypothesis_status", "rejected");
+  } catch { /* ignore */ }
+
+  // ── ポジティブ強化 B: correct_count >= 3 のルールを importance 昇格 ──
+  // タイムアウト対策でループ前に移動。処理対象がある実行のみ昇格する
+  // （旧 (learned+processed)>0 ガードと同等 — 処理対象ゼロの実行では走らず二重実行を防止）
+  if ((examples?.length ?? 0) > 0) try {
+    const { data: correctRules } = await supabase
+      .from("ai_reply_knowledge")
+      .select("id, importance, apply_count, correct_count, wrong_count")
+      .gte("correct_count", 3)
+      .lt("importance", 9)
+      .neq("hypothesis_status", "rejected")
+      .order("correct_count", { ascending: false })
+      .limit(50);
+    for (const rule of correctRules ?? []) {
+      // correct_count>=3 でも apply_count に対する正解率が低い/外れ率が高いルールは昇格しない
+      if (!isBoostEligible(rule as BoostStats)) continue;
+      await supabase.from("ai_reply_knowledge")
+        .update({ importance: Math.min(9, (rule.importance as number) + 1) })
+        .eq("id", rule.id);
+    }
+  } catch { /* ignore */ }
+
+  // ── ポジティブ強化 C: 過去30日の変更率（mod_rate）でステート単位スコア調整 ──
+  // タイムアウト対策でループ前に移動。処理対象がある実行のみスコア調整する
+  // 変更率 <= 20% = AIが当たり続けている → 上位ルール +1
+  // 変更率 >= 70% = AIが外れ続けている → 下位ルール -1
+  if ((examples?.length ?? 0) > 0) try {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: examples30 } = await supabase
+      .from("ai_reply_examples")
+      .select("conversation_state, was_ai_modified")
+      .gte("created_at", thirtyDaysAgo)
+      .not("ai_draft", "is", null);
+
+    if (examples30 && examples30.length >= 10) {
+      const stateStats = new Map<string, { total: number; modified: number }>();
+      for (const row of examples30) {
+        const s = row.conversation_state as string;
+        if (!s) continue;
+        const st = stateStats.get(s) ?? { total: 0, modified: 0 };
+        st.total++;
+        if (row.was_ai_modified) st.modified++;
+        stateStats.set(s, st);
+      }
+      for (const [state, stats] of stateStats) {
+        if (stats.total < 5) continue; // データ少なすぎる場合はスキップ
+        const modRate = stats.modified / stats.total;
+        // S03: .like('${state}%') → .in([state, ...compStates]) で兄弟ステートへの誤ブースト/降格を防止
+        const compStates = (STATE_LEARNABLE[state] ?? []).map(c => `${state}_${c}`);
+        const matchStates = [state, ...compStates];
+        if (modRate <= 0.2) {
+          // AIが当たり続けている → 上位ルールを +1（正解率ガード通過ルールのみ）
+          const { data: topRules } = await supabase
+            .from("ai_reply_knowledge")
+            .select("id, importance, apply_count, correct_count, wrong_count")
+            .in("conversation_state", matchStates)
+            .lt("importance", 9)
+            .neq("hypothesis_status", "rejected")
+            .order("apply_count", { ascending: false })
+            .limit(3);
+          for (const rule of topRules ?? []) {
+            if (!isBoostEligible(rule as BoostStats)) continue; // apply_count順の盲目ブースト防止
+            await supabase.from("ai_reply_knowledge")
+              .update({ importance: Math.min(9, (rule.importance as number) + 1) })
+              .eq("id", rule.id);
+          }
+        } else if (modRate >= 0.7) {
+          // AIが外れ続けている → 下位ルールを -1
+          const { data: lowRules } = await supabase
+            .from("ai_reply_knowledge")
+            .select("id, importance")
+            .in("conversation_state", matchStates)
+            .gt("importance", 5)
+            .neq("hypothesis_status", "confirmed")
+            .order("apply_count", { ascending: true })
+            .limit(3);
+          for (const rule of lowRules ?? []) {
+            await supabase.from("ai_reply_knowledge")
+              .update({ importance: Math.max(5, (rule.importance as number) - 1) })
+              .eq("id", rule.id);
+          }
+        }
+      }
+    }
+  } catch { /* ignore */ }
+
+  if (!examples || examples.length === 0) {
+    // 処理対象ゼロでも同期・decayは上で実行済み。cron logも完了させる（ok=null放置を防ぐ）
+    await finishCronLog(runLogId, true, { processed: 0, learned: 0, synced });
+    return NextResponse.json({ ok: true, processed: 0, learned: 0, synced, message: "処理対象なし" });
+  }
 
   // ── 回帰センチネル: メインの差分学習ループと並列実行 ──
   // LLM不使用（DBクエリ+ローカルテキスト比較のみ）のため maxDuration=60 への影響は軽微
@@ -468,7 +677,15 @@ export async function POST(req: NextRequest) {
     return { detected: 0, demoted: 0 };
   });
 
+  // ── メインループ: 40秒タイムガード付き（残り約20秒を後続処理・レスポンスに確保）──
+  const startTime = Date.now();
+  let timedOut = false;
   for (const ex of examples) {
+    if (Date.now() - startTime > 40_000) {
+      timedOut = true;
+      console.warn(`[analyze-diffs] 40秒タイムガード発動 — ${processed}/${examples.length}件で打ち切り（残りは次回実行で処理）`);
+      break;
+    }
     const { id, customer_message, ai_draft, sent_reply, conversation_state, is_starred, ai_components, reply_angle } = ex as {
       id: string;
       customer_message: string;
@@ -753,177 +970,29 @@ export async function POST(req: NextRequest) {
     }).catch(() => {});
   }
 
-  // ── stale decay: 90日間 used_count=0 のルールを自動 rejected に ──
-  // apply_count>=5 判定(RPC)だけでは使われないまま放置されたルールは永遠に残る。
-  // 一度も使われず90日経過 → 実運用に合わない可能性が高い → hypothesis_status=rejected
-  // MED-02: correct_count>0 のルールは decay 対象外（一度でも正しく使われた実績あり = まだ有効）
-  // S04: apply_count>0 条件追加 — 一度も検索でヒットしていないルールは除外。
-  //      greeting_viewing / property_check_result_vacate_date 等の稀少ステートは90日以内に
-  //      発火チャンスがなく rejected 化する恐れがあるため、apply 実績のあるルールのみを対象とする。
+  // ── cron失敗の可視化: 直近24時間に ok=null（未完了 = タイムアウト/クラッシュ）の実行記録があれば通知 ──
+  let cronWarning = "";
   try {
-    const staleThreshold = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-    await supabase
-      .from("ai_reply_knowledge")
-      .update({ hypothesis_status: "rejected" })
-      .lte("importance", 8)                          // importance=9以外を対象（F09: update-knowledgeの物理削除範囲と統一）
-      .eq("used_count", 0)                          // 一度も使われていない
-      .eq("correct_count", 0)                       // MED-02: 正答実績があるルールは除外
-      .gt("apply_count", 0)                         // S04: apply実績がないルールは対象外（稀少ステート保護）
-      .lt("created_at", staleThreshold)             // 90日以上前に作成
-      .neq("hypothesis_status", "confirmed")        // 確認済みは除外
-      .neq("hypothesis_status", "rejected");        // 既にrejectは除外
-  } catch { /* decay 失敗は無視して処理完了を返す */ }
-
-  // ── F06: importance=9 の放置ルールを 180 日で soft-delete ──
-  // importance=9 は通常の stale decay（lt("importance", 8)）と物理削除（update-knowledge cron）の
-  // 両方から除外されるため、際限なく蓄積する。180日未使用なら rejected へ。
-  try {
-    const staleThreshold180 = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
-    await supabase
-      .from("ai_reply_knowledge")
-      .update({ hypothesis_status: "rejected" })
-      .eq("importance", 9)
-      .eq("used_count", 0)
-      .eq("correct_count", 0)
-      .gt("apply_count", 0)                         // BUG-03: 90日decayと同様、apply実績ゼロは除外
-      .lt("created_at", staleThreshold180)
-      .neq("hypothesis_status", "confirmed")
-      .neq("hypothesis_status", "rejected");
-  } catch { /* ignore */ }
-
-  // ── ポジティブ強化 B: correct_count >= 3 のルールを importance 昇格 ──
-  // S02: learned>0 → (learned+processed)>0 に緩和
-  // AI精度が高い期間（was_ai_modified=false ばかりでlearned=0）でも確認済みルールが昇格されるようになる
-  // 二重実行防止: 2回目は processed=0 になるためスキップされる
-  if ((learned + processed) > 0) try {
-    const { data: correctRules } = await supabase
-      .from("ai_reply_knowledge")
-      .select("id, importance, apply_count, correct_count, wrong_count")
-      .gte("correct_count", 3)
-      .lt("importance", 9)
-      .neq("hypothesis_status", "rejected")
-      .order("correct_count", { ascending: false })
-      .limit(50);
-    for (const rule of correctRules ?? []) {
-      // correct_count>=3 でも apply_count に対する正解率が低い/外れ率が高いルールは昇格しない
-      if (!isBoostEligible(rule as BoostStats)) continue;
-      await supabase.from("ai_reply_knowledge")
-        .update({ importance: Math.min(9, (rule.importance as number) + 1) })
-        .eq("id", rule.id);
-    }
-  } catch { /* ignore */ }
-
-  // ── ポジティブ強化 C: 過去30日の変更率（mod_rate）でステート単位スコア調整 ──
-  // S02: learned>0 → (learned+processed)>0 に緩和（閑散期でもスコア調整が機能する）
-  // 変更率 <= 20% = AIが当たり続けている → 上位ルール +1
-  // 変更率 >= 70% = AIが外れ続けている → 下位ルール -1
-  if ((learned + processed) > 0) try {
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    const { data: examples30 } = await supabase
-      .from("ai_reply_examples")
-      .select("conversation_state, was_ai_modified")
-      .gte("created_at", thirtyDaysAgo)
-      .not("ai_draft", "is", null);
-
-    if (examples30 && examples30.length >= 10) {
-      const stateStats = new Map<string, { total: number; modified: number }>();
-      for (const row of examples30) {
-        const s = row.conversation_state as string;
-        if (!s) continue;
-        const st = stateStats.get(s) ?? { total: 0, modified: 0 };
-        st.total++;
-        if (row.was_ai_modified) st.modified++;
-        stateStats.set(s, st);
-      }
-      for (const [state, stats] of stateStats) {
-        if (stats.total < 5) continue; // データ少なすぎる場合はスキップ
-        const modRate = stats.modified / stats.total;
-        // S03: .like('${state}%') → .in([state, ...compStates]) で兄弟ステートへの誤ブースト/降格を防止
-        const compStates = (STATE_LEARNABLE[state] ?? []).map(c => `${state}_${c}`);
-        const matchStates = [state, ...compStates];
-        if (modRate <= 0.2) {
-          // AIが当たり続けている → 上位ルールを +1（正解率ガード通過ルールのみ）
-          const { data: topRules } = await supabase
-            .from("ai_reply_knowledge")
-            .select("id, importance, apply_count, correct_count, wrong_count")
-            .in("conversation_state", matchStates)
-            .lt("importance", 9)
-            .neq("hypothesis_status", "rejected")
-            .order("apply_count", { ascending: false })
-            .limit(3);
-          for (const rule of topRules ?? []) {
-            if (!isBoostEligible(rule as BoostStats)) continue; // apply_count順の盲目ブースト防止
-            await supabase.from("ai_reply_knowledge")
-              .update({ importance: Math.min(9, (rule.importance as number) + 1) })
-              .eq("id", rule.id);
-          }
-        } else if (modRate >= 0.7) {
-          // AIが外れ続けている → 下位ルールを -1
-          const { data: lowRules } = await supabase
-            .from("ai_reply_knowledge")
-            .select("id, importance")
-            .in("conversation_state", matchStates)
-            .gt("importance", 5)
-            .neq("hypothesis_status", "confirmed")
-            .order("apply_count", { ascending: true })
-            .limit(3);
-          for (const rule of lowRules ?? []) {
-            await supabase.from("ai_reply_knowledge")
-              .update({ importance: Math.max(5, (rule.importance as number) - 1) })
-              .eq("id", rule.id);
-          }
-        }
-      }
-    }
-  } catch { /* ignore */ }
-
-  // ── 確認済みルール → ai_prompt_rules 自動同期 ──
-  // importance>=8 かつ hypothesis_status='confirmed' のルールをプロンプトルールとして自動登録
-  let synced = 0;
-  try {
-    const { data: confirmedRules } = await supabase
-      .from("ai_reply_knowledge")
-      .select("id, title, content, conversation_state")
-      .eq("hypothesis_status", "confirmed")
-      .gte("importance", 8)
-      .limit(100);
-
-    if (confirmedRules && confirmedRules.length > 0) {
-      const upserts = confirmedRules.map((r) => ({
-        rule_key: `LEARN-${r.id as string}`,
-        action_type: "generate_reply",
-        condition_key: r.conversation_state ? "conversation_state" : null,
-        condition_value: (r.conversation_state as string | null) ?? null,
-        rule_text: (r.content as string).slice(0, 500),
-        reason: `ai_reply_knowledge自動昇格: ${(r.title as string).slice(0, 100)}`,
-        priority: 8,
-        is_active: true,
-      }));
-      const { error: upsertError } = await supabase
-        .from("ai_prompt_rules")
-        .upsert(upserts, { onConflict: "rule_key" });
-      if (!upsertError) synced = confirmedRules.length;
-    }
-
-    // rejected ルールは ai_prompt_rules でも非アクティブ化
-    const { data: rejectedRules } = await supabase
-      .from("ai_reply_knowledge")
+    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    let staleQuery = supabase
+      .from("cron_run_logs")
       .select("id")
-      .eq("hypothesis_status", "rejected")
-      .limit(100);
-    if (rejectedRules && rejectedRules.length > 0) {
-      const keys = rejectedRules.map((r) => `LEARN-${r.id as string}`);
-      await supabase.from("ai_prompt_rules")
-        .update({ is_active: false })
-        .in("rule_key", keys);
+      .eq("cron_name", "analyze-diffs")
+      .is("ok", null)
+      .gte("started_at", dayAgo);
+    if (runLogId) staleQuery = staleQuery.neq("id", runLogId); // 実行中の今回レコードは除外
+    const { data: staleRuns } = await staleQuery.limit(10);
+    if (staleRuns && staleRuns.length > 0) {
+      cronWarning = `⚠️ 直近24時間に未完了（ok=null）のcron実行が${staleRuns.length}件あります（タイムアウトの可能性）`;
     }
-  } catch { /* ignore - プロンプトルール同期失敗はメイン処理を止めない */ }
+  } catch { /* ignore - 可視化失敗はメイン処理を止めない */ }
 
-  await finishCronLog(runLogId, true, { processed, learned, synced, sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted });
+  await finishCronLog(runLogId, true, { processed, learned, synced, timedOut, sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted, ...(cronWarning ? { cronWarning } : {}) });
   return NextResponse.json({
-    ok: true, processed, learned, synced,
+    ok: true, processed, learned, synced, timedOut,
     sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted,
-    message: `${processed}件処理・${learned}件学習・${synced}件ルール同期・反復削除フレーズ${sentinel.detected}件検知（${sentinel.demoted}件降格）`,
+    ...(cronWarning ? { cronWarning } : {}),
+    message: `${processed}件処理・${learned}件学習・${synced}件ルール同期・反復削除フレーズ${sentinel.detected}件検知（${sentinel.demoted}件降格）${timedOut ? "・⏱40秒タイムガードで打ち切り" : ""}${cronWarning ? ` / ${cronWarning}` : ""}`,
   });
 }
 

@@ -305,6 +305,13 @@ ${dismissedSection || "（なし）"}
     }
   }
 
+  // 材料A消費: 使用した template_needs_update_* キーを ai_prompts から削除
+  // （削除しないと翌週も同じ改訂案が再提案される無限ループになる）
+  if ((needsUpdateKeys?.length ?? 0) > 0) {
+    const consumedKeys = (needsUpdateKeys ?? []).map((k) => k.key as string);
+    await supabase.from("ai_prompts").delete().in("key", consumedKeys);
+  }
+
   return { candidatesSaved, suggestionsSaved };
 }
 

@@ -31,6 +31,17 @@ const KNOWN_AIX_TYPES = new Set([
   "condition_hearing", "alternative_send",
 ]);
 
+// FEEDBACKルールの action_type スコープ用whitelist。
+// fetchPromptRules("<action>", ...) を実際に呼んでいるAIXアクション名のみ許可する。
+// Opusがこのいずれかを返した場合は ai_prompt_rules.action_type にスコープ付きで保存し、
+// それ以外（general / 未知 / null）はグローバル（null）として保存する。
+// ※ 全ルールをnull（グローバル）で保存すると全アクションのプロンプトに注入されノイズになるため
+const PROMPT_RULE_ACTION_TYPES = new Set([
+  "property_check_result", "property_send", "viewing_invite", "estimate_sheet",
+  "property_recommendation", "condition_hearing", "greeting_viewing",
+  "application_push", "meeting_place", "acknowledge_check", "followup_revive",
+]);
+
 type ExtractedRule = {
   rule_text: string;
   save_target: "trigger_action_rules" | "ai_prompts";
@@ -38,12 +49,13 @@ type ExtractedRule = {
   trigger_keywords?: string[];
 };
 
-// GET: pending + answered を最新30件取得
+// GET: pending + answered + applied を最新30件取得
+// applied = ルール反映済み（UI でグレーアウト表示用に含める）
 export async function GET() {
   const { data, error } = await supabase
     .from("ai_feedback_items")
     .select("*")
-    .in("status", ["pending", "answered"])
+    .in("status", ["pending", "answered", "applied"])
     .order("created_at", { ascending: false })
     .limit(30);
 
@@ -119,7 +131,7 @@ export async function POST(req: NextRequest) {
   }
 
   const appliedRules: string[] = [];
-  const promptRuleTexts: string[] = [];
+  const promptRuleTexts: Array<{ text: string; actionType: string | null }> = [];
 
   for (const rule of rules) {
     const ruleText = rule.rule_text.trim();
@@ -128,12 +140,14 @@ export async function POST(req: NextRequest) {
       .filter((k) => k.length >= 3)
       .slice(0, 3);
     const actionType = rule.action_type?.trim() ?? "";
+    // ai_prompt_rules 保存時のスコープ: 既知AIXアクションならスコープ付き、それ以外はグローバル（null）
+    const scopedActionType = PROMPT_RULE_ACTION_TYPES.has(actionType) ? actionType : null;
 
     // 改善⑧: whitelist外の action_type は trigger_action_rules を汚染するため
     // ai_prompts（一般ルール）へフォールバック保存する
     if (rule.save_target === "trigger_action_rules" && actionType && !KNOWN_AIX_TYPES.has(actionType)) {
       console.warn(`[ai-feedback] whitelist外のaction_type "${actionType}" → trigger_action_rules をスキップし ai_prompts へフォールバック保存`);
-      promptRuleTexts.push(ruleText);
+      promptRuleTexts.push({ text: ruleText, actionType: scopedActionType });
       continue;
     }
 
@@ -156,10 +170,10 @@ export async function POST(req: NextRequest) {
       if (savedKeywords > 0) appliedRules.push(`[${actionType}] ${ruleText}（キーワード: ${keywords.join("・")}）`);
       // trigger_action_rules に保存したルールも返信内容として ai_prompt_rules に記録する
       // （キーワード→AIX発動のマッピングだけでは「どう返すか」が失われるため）
-      promptRuleTexts.push(ruleText);
+      promptRuleTexts.push({ text: ruleText, actionType: scopedActionType });
     } else {
       // 一般ルール（キーワード抽出できなかった trigger ルールも情報を失わずこちらへ）
-      promptRuleTexts.push(ruleText);
+      promptRuleTexts.push({ text: ruleText, actionType: scopedActionType });
     }
   }
 
@@ -167,10 +181,10 @@ export async function POST(req: NextRequest) {
     const { error } = await supabase.from("ai_prompts").upsert({
       key: `feedback_rule_${id}`,
       label: `盲点フィードバック回答（${new Date().toISOString().slice(0, 10)}）`,
-      content: `【竹内さん確認済みルール】${item.question}\n→回答: ${answer}\n\n抽出ルール:\n${promptRuleTexts.map((r) => `- ${r}`).join("\n")}`,
+      content: `【竹内さん確認済みルール】${item.question}\n→回答: ${answer}\n\n抽出ルール:\n${promptRuleTexts.map((r) => `- ${r.text}`).join("\n")}`,
       updated_at: new Date().toISOString(),
     }, { onConflict: "key" });
-    if (!error) appliedRules.push(...promptRuleTexts);
+    if (!error) appliedRules.push(...promptRuleTexts.map((r) => r.text));
     else console.error("[ai-feedback] ai_prompts upsert error:", error.message);
 
     // ai_prompt_rules にも保存 → fetchPromptRules 経由で generate-reply / AIX に実際に注入される
@@ -178,10 +192,13 @@ export async function POST(req: NextRequest) {
     for (let i = 0; i < promptRuleTexts.length; i++) {
       const { error: ruleError } = await supabase.from("ai_prompt_rules").upsert({
         rule_key: `FEEDBACK-${id}-${i + 1}`,
-        action_type: null,
+        // Opusが既知AIXアクションを返した場合はスコープ付きで保存（全アクションへのノイズ注入を防止）。
+        // 受け側の fetchPromptRules は .or(`action_type.eq.${actionType},action_type.is.null`) で
+        // 取得するため、スコープ付きルールは該当アクションのプロンプトにのみ注入される
+        action_type: promptRuleTexts[i].actionType,
         condition_key: null,
         condition_value: null,
-        rule_text: promptRuleTexts[i],
+        rule_text: promptRuleTexts[i].text,
         reason: `AI盲点質問への竹内さん回答（${new Date().toISOString().slice(0, 10)}）: ${item.question}`.slice(0, 500),
         priority: 8,
         is_active: true,
@@ -193,14 +210,15 @@ export async function POST(req: NextRequest) {
 
   // knowledge_gap（AIが誤った事実を述べた → 竹内さんが正しい事実を回答）は
   // ai_prompt_rules（150字ルール）だけでは弱いため、ai_reply_knowledge の principle としても保存する。
-  // question を embedding 化（＝顧客の質問と同じ意味空間）することで generate-reply の pgvector 検索に確実にヒットさせる。
+  // item.question は「AIが〜と誤回答しました」等のメタ文のため embedding が意味空間ズレ。
+  // 正しい知識内容（answer）を embedding 化して顧客の類似質問に pgvector でヒットさせる
   if (item.category === "knowledge_gap") {
     try {
-      const embInput = buildKnowledgeEmbeddingInput({ trigger_example: item.question as string });
+      const embInput = buildKnowledgeEmbeddingInput({ content: answer });
       const embedding = embInput ? await generateEmbedding(embInput) : null;
       const result = await upsertKnowledge(supabase, {
         title: `[盲点回答] ${(item.question as string).slice(0, 40)}`,
-        content: `【竹内さん確認済みの正しい知識】\n質問: ${item.question}\n正しい説明: ${answer}${promptRuleTexts.length > 0 ? `\n\n要点:\n${promptRuleTexts.map((r) => `- ${r}`).join("\n")}` : ""}`,
+        content: `【竹内さん確認済みの正しい知識】\n質問: ${item.question}\n正しい説明: ${answer}${promptRuleTexts.length > 0 ? `\n\n要点:\n${promptRuleTexts.map((r) => `- ${r.text}`).join("\n")}` : ""}`,
         category: "principle",
         importance: 9,
         ...(embedding ? { embedding } : {}),
@@ -239,7 +257,7 @@ export async function POST(req: NextRequest) {
     .from("ai_feedback_items")
     .update({
       user_answer: answer,
-      status: "answered",
+      status: "applied",
       applied_rule: appliedRules.length > 0 ? appliedRules.join(" / ").slice(0, 500) : null,
       answered_at: new Date().toISOString(),
     })
