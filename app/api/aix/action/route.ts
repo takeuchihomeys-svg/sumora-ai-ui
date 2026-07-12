@@ -1356,7 +1356,7 @@ ${calendarBlock}
         );
 
         try {
-          const mVI = rawVI.match(/\{[\s\S]*?\}/);
+          const mVI = rawVI.match(/\{[\s\S]*\}/);
           if (mVI) {
             const dVI = JSON.parse(mVI[0]) as { message?: string };
             message_text = (dVI.message || rawVI).replace(/\\n/g, "\n");
@@ -1774,7 +1774,7 @@ ${calendarBlock}
         );
 
         try {
-          const m = raw.match(/\{[\s\S]*?\}/);
+          const m = raw.match(/\{[\s\S]*\}/);
           if (m) {
             const d = JSON.parse(m[0]) as { message?: string };
             message_text = (d.message || raw).replace(/\\n/g, "\n");
@@ -2031,7 +2031,7 @@ ${GUARANTOR_COMPANY_LIST_OCR}
         : `[物件名]の保証会社について確認させて頂きました！！`;
 
       const [guarantorDiffNote, guarantorDbRules] = await Promise.all([
-        getKnowledgeForState(AIX_ACTION_TO_STATES.property_check_result, currentAction, conversationId),
+        getKnowledgeForState(AIX_ACTION_TO_STATES.property_check_result, currentAction, conversationId, latestCustomerMsg),
         fetchPromptRules("property_check_result", { check_pattern: "mgmt_guarantor" }).catch(() => ""),
       ]);
 
@@ -2334,7 +2334,7 @@ ${pcrCalendarBlock}
           currentAction
         );
         try {
-          const mPCR = rawPCR.match(/\{[\s\S]*?\}/);
+          const mPCR = rawPCR.match(/\{[\s\S]*\}/);
           if (mPCR) {
             const dPCR = JSON.parse(mPCR[0]) as { message?: string };
             message_text = (dPCR.message || rawPCR).replace(/\\n/g, "\n");
@@ -2826,7 +2826,7 @@ ${SMORA_COMMON_RULES}
           currentAction
         );
         try {
-          const mHCM = rawHCM.match(/\{[\s\S]*?\}/);
+          const mHCM = rawHCM.match(/\{[\s\S]*\}/);
           if (mHCM) {
             const dHCM = JSON.parse(mHCM[0]) as { message?: string };
             message_text = (dHCM.message || rawHCM).replace(/\\n/g, "\n");
@@ -3109,7 +3109,7 @@ ${mpDate ? `【内覧日】${mpDate}` : ""}
           currentAction
         );
         try {
-          const mMP = rawMP.match(/\{[\s\S]*?\}/);
+          const mMP = rawMP.match(/\{[\s\S]*\}/);
           if (mMP) {
             const dMP = JSON.parse(mMP[0]) as { message?: string };
             message_text = (dMP.message || rawMP).replace(/\\n/g, "\n");
@@ -3361,7 +3361,7 @@ ${SMORA_COMMON_RULES}
           currentAction
         );
         try {
-          const mFCM = rawFCM.match(/\{[\s\S]*?\}/);
+          const mFCM = rawFCM.match(/\{[\s\S]*\}/);
           if (mFCM) {
             const dFCM = JSON.parse(mFCM[0]) as { message?: string };
             message_text = (dFCM.message || rawFCM).replace(/\\n/g, "\n");

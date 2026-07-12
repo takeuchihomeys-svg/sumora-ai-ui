@@ -1230,7 +1230,7 @@ CREATE TABLE IF NOT EXISTS calendar_events (
   title TEXT NOT NULL,
   event_type TEXT NOT NULL DEFAULT 'other',
   customer_name TEXT,
-  conversation_id BIGINT,
+  conversation_id TEXT,
   start_at TIMESTAMPTZ NOT NULL,
   end_at TIMESTAMPTZ,
   all_day BOOLEAN NOT NULL DEFAULT FALSE,
@@ -1239,6 +1239,7 @@ CREATE TABLE IF NOT EXISTS calendar_events (
 );
 CREATE INDEX IF NOT EXISTS idx_calendar_events_start_at ON calendar_events(start_at);
 ALTER TABLE calendar_events DISABLE ROW LEVEL SECURITY;
+ALTER TABLE calendar_events ALTER COLUMN conversation_id TYPE TEXT USING conversation_id::TEXT;
 
 -- ── 追加カラム（2026-07-12）──
 

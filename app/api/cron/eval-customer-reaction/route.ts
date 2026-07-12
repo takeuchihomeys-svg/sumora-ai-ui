@@ -81,10 +81,12 @@ export async function POST(req: NextRequest) {
 
     // まとめて UPDATE（true / false の2クエリ）
     if (reactedIds.length > 0) {
-      await supabase.from("aix_usage_logs").update({ customer_reacted: true }).in("id", reactedIds);
+      const { error: reactErr } = await supabase.from("aix_usage_logs").update({ customer_reacted: true }).in("id", reactedIds);
+      if (reactErr) console.warn("[eval-customer-reaction] reacted update failed:", reactErr.message);
     }
     if (notReactedIds.length > 0) {
-      await supabase.from("aix_usage_logs").update({ customer_reacted: false }).in("id", notReactedIds);
+      const { error: notReactErr } = await supabase.from("aix_usage_logs").update({ customer_reacted: false }).in("id", notReactedIds);
+      if (notReactErr) console.warn("[eval-customer-reaction] not-reacted update failed:", notReactErr.message);
     }
 
     const evaluated = reactedIds.length + notReactedIds.length;
