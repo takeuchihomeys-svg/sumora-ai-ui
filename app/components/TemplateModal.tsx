@@ -2616,11 +2616,14 @@ export default function TemplateModal({
                         </div>
                       )}
                     </>
-                  ) : item.status === "answered" ? (
-                    <div className="bg-green-50 rounded-lg p-2 mt-1 border border-green-100">
-                      <p className="text-xs text-green-700">✅ 回答済み: {item.user_answer}</p>
+                  ) : (item.status === "answered" || item.status === "applied") ? (
+                    <div className={`rounded-lg p-2 mt-1 border ${item.status === "applied" ? "bg-gray-50 border-gray-200" : "bg-green-50 border-green-100"}`}>
+                      <p className={`text-xs font-semibold ${item.status === "applied" ? "text-gray-500" : "text-green-700"}`}>
+                        ✅ 回答済み{item.status === "applied" ? "（ルール反映済み）" : ""}
+                      </p>
+                      <p className={`text-xs mt-0.5 ${item.status === "applied" ? "text-gray-500" : "text-green-700"}`}>{item.user_answer}</p>
                       {item.applied_rule && (
-                        <p className="text-xs text-green-600 mt-1">→ 適用ルール: {item.applied_rule}</p>
+                        <p className={`text-xs mt-1 ${item.status === "applied" ? "text-gray-400" : "text-green-600"}`}>→ 適用ルール: {item.applied_rule}</p>
                       )}
                     </div>
                   ) : null}
