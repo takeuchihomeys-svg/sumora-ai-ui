@@ -35,6 +35,55 @@ function isPastVacancyDate(dateStr: string): boolean {
   return false; // 下旬・不明は過去とみなさない
 }
 
+// 設備情報テキストを生成するヘルパー（property_check_result available パスで使用）
+type PropFacilityData = {
+  parkingAvail: string | null;
+  parkingFee: string | null;
+  parkingVacancy: string | null;
+  bikeParking: string | null;
+  bikeParkingFee: string | null;
+  bikeParkingNote: string | null;
+  petPolicy: string | null;
+  petCondition: string | null;
+  internet: string | null;
+  internetDetail: string | null;
+  guarantorType: string | null;
+};
+function buildFacilityLines(f: PropFacilityData): string[] {
+  const lines: string[] = [];
+  if (f.parkingAvail === 'あり') {
+    let t = '駐車場：あり';
+    if (f.parkingFee) t += `（${f.parkingFee}）`;
+    if (f.parkingVacancy) t += ` / ${f.parkingVacancy}`;
+    lines.push(t);
+  } else if (f.parkingAvail === 'なし') {
+    lines.push('駐車場：なし');
+  }
+  if (f.bikeParking === 'あり') {
+    let t = 'バイク置き場：あり';
+    if (f.bikeParkingFee) t += `（${f.bikeParkingFee}）`;
+    if (f.bikeParkingNote) t += ` / ${f.bikeParkingNote}`;
+    lines.push(t);
+  } else if (f.bikeParking === 'なし') {
+    lines.push('バイク置き場：なし');
+  }
+  if (f.petPolicy) {
+    let t = `ペット：${f.petPolicy}`;
+    if (f.petCondition && f.petPolicy !== '不可') t += `（${f.petCondition}）`;
+    lines.push(t);
+  }
+  if (f.internet === 'あり') {
+    let t = 'インターネット：あり';
+    if (f.internetDetail) t += `（${f.internetDetail}）`;
+    lines.push(t);
+  } else if (f.internet === 'なし') {
+    lines.push('インターネット：なし');
+  }
+  if (f.guarantorType === '独立系') lines.push('保証会社：独立系（審査が通りやすいです！！）');
+  else if (f.guarantorType === '信用系') lines.push('保証会社：信用系');
+  return lines;
+}
+
 // 挨拶時間ルール（全アクション共通ヘルパー・#19）
 // ・21時以降 または 早朝5時以前にスタッフからプロアクティブに連絡する場合は「夜分遅くに失礼致します」
 // ・お客様から連絡が来た返信場面（customerInitiated=true）では時間帯に関わらず通常挨拶
@@ -2453,6 +2502,8 @@ ${patternExample}${knowledgeText}${examplesText}${greetingTimeNote}`;
         if (propCount === 1) {
           // 1件モード: 物件名があれば直接テンプレ生成（④ 改善）
           const p = propList[0];
+          const propFacilitiesData = body.prop_facilities as PropFacilityData[] | undefined;
+          const facilityText = propFacilitiesData?.[0] ? buildFacilityLines(propFacilitiesData[0]).map(l => `・${l}`).join("\n") : "";
           const pName = p.name;
           const estimate1 = hasAnyEstimate ? "\n最大限割引しました御見積書同封させて頂きました！！" : "";
           const showVI1 = !!(show_viewing_invite as boolean | undefined);
@@ -2460,26 +2511,37 @@ ${patternExample}${knowledgeText}${examplesText}${greetingTimeNote}`;
           const greeting1 = greetingPhrase; // 挨拶時間ルール共通化（#19）
           if (p.status === "vacating") {
             const vacLine = p.vacDate ? `${p.vacDate}退去予定のお部屋となります！！` : "退去予定のお部屋となります！！";
-            message_text = `${pName}現在募集中となります！！\n${vacLine}${estimate1}\n\nお気に召されましたらお申込みしお部屋を抑えさせていただきます！！`;
+            const facSection = facilityText ? `\n\n${facilityText}` : "";
+            message_text = `${pName}現在募集中となります！！\n${vacLine}${estimate1}${facSection}\n\nお気に召されましたらお申込みしお部屋を抑えさせていただきます！！`;
           } else if (showAppInvite1) {
             const estimateApp = hasAnyEstimate ? "\n\n🌟最大限割引しました初期費用の御見積書同封させて頂きました！" : "";
-            message_text = `${pName}募集中となります！！\n現在1番手でお申込みが入っている為、2番手以降でのお申込となります！！${estimateApp}\n\n※2番手お申込の場合1番手の方が審査否決となった場合1番手に繰り上がります。`;
+            const facSection = facilityText ? `\n\n${facilityText}` : "";
+            message_text = `${pName}募集中となります！！\n現在1番手でお申込みが入っている為、2番手以降でのお申込となります！！${estimateApp}${facSection}\n\n※2番手お申込の場合1番手の方が審査否決となった場合1番手に繰り上がります。`;
           } else {
             const inviteText = showVI1 ? `\n\n${name}ご都合よろしいお日にちにご案内させて頂きます😊！！` : "";
-            message_text = `${pName}現在募集中となります！！${estimate1}${inviteText}`;
+            const facSection = facilityText ? `\n\n${facilityText}` : "";
+            message_text = `${pName}現在募集中となります！！${estimate1}${facSection}${inviteText}`;
           }
           // greeting1 を先頭に連結（1件モードで挨拶が抜けていたバグ修正）
           message_text = `${greeting1}\n${message_text}`;
         } else {
           // 複数物件モード: per-property ステータスで箇条書き + クロージング
           const recommendIdx = (body.recommend_prop_index as number | undefined) ?? -1;
+          const propFacilitiesData = body.prop_facilities as PropFacilityData[] | undefined;
           const bulletLines = propList.map((p, pi) => {
             const n = p.name || `物件${fallbackNames[pi] ?? ""}`;
             const prefix = pi === recommendIdx ? "🌟" : "・";
-            if (p.status === "vacating") return p.vacDate ? `${prefix}${n}　※ ${p.vacDate}退去予定` : `${prefix}${n}`;
-            if (p.status === "unavailable") return `${prefix}${n}　※ 申込あり`;
-            if (p.status === "alternative") return `${prefix}${n}　※ 別のお部屋が募集中`;
-            return `${prefix}${n}`;
+            let line: string;
+            if (p.status === "vacating") line = p.vacDate ? `${prefix}${n}　※ ${p.vacDate}退去予定` : `${prefix}${n}`;
+            else if (p.status === "unavailable") line = `${prefix}${n}　※ 申込あり`;
+            else if (p.status === "alternative") line = `${prefix}${n}　※ 別のお部屋が募集中`;
+            else line = `${prefix}${n}`;
+            const fac = propFacilitiesData?.[pi];
+            if (fac) {
+              const facLines = buildFacilityLines(fac);
+              if (facLines.length > 0) line += "\n" + facLines.map(l => `   ・${l}`).join("\n");
+            }
+            return line;
           }).join("\n");
           const recommendNote = recommendIdx >= 0 && recommendIdx < propList.length
             ? `\n\n特に🌟の${propList[recommendIdx].name || fallbackNames[recommendIdx] || "こちら"}が${name}に特にオススメです！！`

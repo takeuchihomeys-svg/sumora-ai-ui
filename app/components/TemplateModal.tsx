@@ -623,6 +623,7 @@ export default function TemplateModal({
   const [meetingInput, setMeetingInput] = useState("");
   const [meetingSending, setMeetingSending] = useState(false);
   const [meetingFinalized, setMeetingFinalized] = useState(false);
+  const [meetingConfirming, setMeetingConfirming] = useState(false);
   // P4: AIX改善案（aix_feature_suggestions の pending 一覧）
   const [suggestions, setSuggestions] = useState<AixFeatureSuggestion[]>([]);
   const [suggestionLoading, setSuggestionLoading] = useState(false);
@@ -1486,6 +1487,21 @@ export default function TemplateModal({
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendMeetingMessage(); } }}
                   disabled={meetingSending}
                 />
+                {meetingConfirming && (
+                  <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 mb-2">
+                    <p className="text-sm text-amber-800 font-medium mb-2.5">⚠️ 本当に転送しますか？<br className="hidden" />転送後は打ち合わせを再開できません。</p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setMeetingConfirming(false)}
+                        className="flex-1 py-2 text-sm rounded-lg border border-gray-200 text-gray-600 bg-white"
+                      >キャンセル</button>
+                      <button
+                        onClick={() => { setMeetingConfirming(false); void finalizeMeeting(); }}
+                        className="flex-1 py-2 text-sm rounded-lg bg-green-600 text-white font-bold"
+                      >確定・転送する</button>
+                    </div>
+                  </div>
+                )}
                 <div className="flex gap-2">
                   <button
                     onClick={() => void sendMeetingMessage()}
@@ -1493,8 +1509,8 @@ export default function TemplateModal({
                     className="flex-1 bg-violet-600 hover:bg-violet-700 text-white text-sm font-bold py-2 rounded-lg disabled:opacity-50 transition"
                   >送信</button>
                   <button
-                    onClick={() => void finalizeMeeting()}
-                    disabled={meetingMessages.length < 2 || meetingSending}
+                    onClick={() => setMeetingConfirming(true)}
+                    disabled={meetingMessages.length < 2 || meetingSending || meetingConfirming}
                     className="flex-1 bg-green-600 hover:bg-green-700 text-white text-sm font-bold py-2 rounded-lg disabled:opacity-50 transition"
                   >✅ 仕様を確定・転送する</button>
                 </div>

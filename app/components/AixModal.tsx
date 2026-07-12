@@ -572,6 +572,30 @@ export default function AixModal({
   const [checkPropEstimatePreviews, setCheckPropEstimatePreviews] = useState<string[]>(["", "", ""]);
   const [checkPropNames, setCheckPropNames] = useState<string[]>(["", "", ""]);
   const [checkPropVacancyDates, setCheckPropVacancyDates] = useState<string[]>(["", "", ""]);
+  // 物件確認「空室あり」専用: per-property 設備情報（駐車場・バイク置き場・ペット・ネット・保証会社）
+  type PropFacility = {
+    parkingAvail: 'あり' | 'なし' | null;
+    parkingFee: string;
+    parkingVacancy: '空きあり' | '空きなし' | '要確認' | null;
+    bikeParking: 'あり' | 'なし' | null;
+    bikeParkingFee: string;
+    bikeParkingNote: string;
+    petPolicy: '可' | '不可' | '相談可' | null;
+    petCondition: string;
+    internet: 'あり' | 'なし' | null;
+    internetDetail: string;
+    guarantorType: '独立系' | '信用系' | null;
+  };
+  const [propFacilities, setPropFacilities] = useState<PropFacility[]>(
+    Array.from({ length: 3 }, () => ({
+      parkingAvail: null, parkingFee: '', parkingVacancy: null,
+      bikeParking: null, bikeParkingFee: '', bikeParkingNote: '',
+      petPolicy: null, petCondition: '',
+      internet: null, internetDetail: '',
+      guarantorType: null,
+    }))
+  );
+  const [propFacilitiesExpanded, setPropFacilitiesExpanded] = useState<boolean[]>([false, false, false]);
   const [checkAllAvailable, setCheckAllAvailable] = useState(false);
   const [checkPropStatuses, setCheckPropStatuses] = useState<string[]>(["available", "available", "available"]);
   const [checkRecommendProp, setCheckRecommendProp] = useState<number | null>(null);
@@ -1429,6 +1453,19 @@ export default function AixModal({
           // 全件数（1件含む）: 物件カードから画像・名前を取得
           body.property_count = checkPropertyCount;
           body.prop_statuses = checkPropStatuses.slice(0, checkPropertyCount);
+          body.prop_facilities = propFacilities.slice(0, checkPropertyCount).map(f => ({
+            parkingAvail: f.parkingAvail,
+            parkingFee: f.parkingFee || null,
+            parkingVacancy: f.parkingVacancy,
+            bikeParking: f.bikeParking,
+            bikeParkingFee: f.bikeParkingFee || null,
+            bikeParkingNote: f.bikeParkingNote || null,
+            petPolicy: f.petPolicy,
+            petCondition: f.petCondition || null,
+            internet: f.internet,
+            internetDetail: f.internetDetail || null,
+            guarantorType: f.guarantorType,
+          }));
           const extractedProps = await extractPropInfoFromImages(checkPropertyCount);
           body.property_names = extractedProps.map(p => p.name);
           body.property_vacancy_dates = extractedProps.map(p => p.vacancyDate);
@@ -3861,6 +3898,142 @@ export default function AixModal({
                         />
                       </div>
                       )}
+                      {/* 設備情報展開 */}
+                      <div className="mt-2 border-t border-gray-100 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = [...propFacilitiesExpanded];
+                            next[pi] = !next[pi];
+                            setPropFacilitiesExpanded(next);
+                          }}
+                          className="w-full flex items-center justify-between text-xs text-gray-500 py-1 hover:text-gray-700"
+                        >
+                          <span>⚙️ 設備情報を追加</span>
+                          <span>{propFacilitiesExpanded[pi] ? '▲' : '▼'}</span>
+                        </button>
+
+                        {propFacilitiesExpanded[pi] && (
+                          <div className="mt-2 flex flex-col gap-3">
+
+                            {/* 駐車場 */}
+                            <div>
+                              <p className="text-[11px] font-bold text-gray-400 mb-1">🚗 駐車場</p>
+                              <div className="flex gap-1 flex-wrap">
+                                {(['あり', 'なし'] as const).map(v => (
+                                  <button key={v} type="button"
+                                    className={`px-3 py-1 rounded-full text-xs border ${propFacilities[pi].parkingAvail === v ? 'bg-blue-500 text-white border-blue-500' : 'bg-white text-gray-600 border-gray-200'}`}
+                                    onClick={() => setPropFacilities(prev => prev.map((f, i) => i === pi ? { ...f, parkingAvail: v } : f))}>
+                                    {v}
+                                  </button>
+                                ))}
+                              </div>
+                              {propFacilities[pi].parkingAvail === 'あり' && (
+                                <div className="mt-1.5 flex flex-col gap-1.5">
+                                  <input type="text" placeholder="料金（例: 月額5,500円）"
+                                    value={propFacilities[pi].parkingFee}
+                                    onChange={e => setPropFacilities(prev => prev.map((f, i) => i === pi ? { ...f, parkingFee: e.target.value } : f))}
+                                    className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 outline-none focus:border-blue-400" />
+                                  <div className="flex gap-1 flex-wrap">
+                                    {(['空きあり', '空きなし', '要確認'] as const).map(v => (
+                                      <button key={v} type="button"
+                                        className={`px-2 py-1 rounded-full text-xs border ${propFacilities[pi].parkingVacancy === v ? 'bg-blue-500 text-white border-blue-500' : 'bg-white text-gray-600 border-gray-200'}`}
+                                        onClick={() => setPropFacilities(prev => prev.map((f, i) => i === pi ? { ...f, parkingVacancy: v } : f))}>
+                                        {v}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* バイク置き場 */}
+                            <div>
+                              <p className="text-[11px] font-bold text-gray-400 mb-1">🏍 バイク置き場</p>
+                              <div className="flex gap-1 flex-wrap">
+                                {(['あり', 'なし'] as const).map(v => (
+                                  <button key={v} type="button"
+                                    className={`px-3 py-1 rounded-full text-xs border ${propFacilities[pi].bikeParking === v ? 'bg-blue-500 text-white border-blue-500' : 'bg-white text-gray-600 border-gray-200'}`}
+                                    onClick={() => setPropFacilities(prev => prev.map((f, i) => i === pi ? { ...f, bikeParking: v } : f))}>
+                                    {v}
+                                  </button>
+                                ))}
+                              </div>
+                              {propFacilities[pi].bikeParking === 'あり' && (
+                                <div className="mt-1.5 flex flex-col gap-1.5">
+                                  <input type="text" placeholder="料金（例: 月額2,200円）"
+                                    value={propFacilities[pi].bikeParkingFee}
+                                    onChange={e => setPropFacilities(prev => prev.map((f, i) => i === pi ? { ...f, bikeParkingFee: e.target.value } : f))}
+                                    className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 outline-none focus:border-blue-400" />
+                                  <input type="text" placeholder="条件（例: 原付のみ・125cc以下）"
+                                    value={propFacilities[pi].bikeParkingNote}
+                                    onChange={e => setPropFacilities(prev => prev.map((f, i) => i === pi ? { ...f, bikeParkingNote: e.target.value } : f))}
+                                    className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 outline-none focus:border-blue-400" />
+                                </div>
+                              )}
+                            </div>
+
+                            {/* ペット */}
+                            <div>
+                              <p className="text-[11px] font-bold text-gray-400 mb-1">🐾 ペット</p>
+                              <div className="flex gap-1 flex-wrap">
+                                {(['可', '不可', '相談可'] as const).map(v => (
+                                  <button key={v} type="button"
+                                    className={`px-3 py-1 rounded-full text-xs border ${propFacilities[pi].petPolicy === v ? 'bg-blue-500 text-white border-blue-500' : 'bg-white text-gray-600 border-gray-200'}`}
+                                    onClick={() => setPropFacilities(prev => prev.map((f, i) => i === pi ? { ...f, petPolicy: v } : f))}>
+                                    {v}
+                                  </button>
+                                ))}
+                              </div>
+                              {propFacilities[pi].petPolicy && propFacilities[pi].petPolicy !== '不可' && (
+                                <input type="text" placeholder="条件（例: 小型犬のみ・ペット敷金1ヶ月）"
+                                  value={propFacilities[pi].petCondition}
+                                  onChange={e => setPropFacilities(prev => prev.map((f, i) => i === pi ? { ...f, petCondition: e.target.value } : f))}
+                                  className="mt-1.5 w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 outline-none focus:border-blue-400" />
+                              )}
+                            </div>
+
+                            {/* インターネット */}
+                            <div>
+                              <p className="text-[11px] font-bold text-gray-400 mb-1">🌐 インターネット</p>
+                              <div className="flex gap-1 flex-wrap">
+                                {(['あり', 'なし'] as const).map(v => (
+                                  <button key={v} type="button"
+                                    className={`px-3 py-1 rounded-full text-xs border ${propFacilities[pi].internet === v ? 'bg-blue-500 text-white border-blue-500' : 'bg-white text-gray-600 border-gray-200'}`}
+                                    onClick={() => setPropFacilities(prev => prev.map((f, i) => i === pi ? { ...f, internet: v } : f))}>
+                                    {v}
+                                  </button>
+                                ))}
+                              </div>
+                              {propFacilities[pi].internet === 'あり' && (
+                                <input type="text" placeholder="詳細（例: 無料・光回線）"
+                                  value={propFacilities[pi].internetDetail}
+                                  onChange={e => setPropFacilities(prev => prev.map((f, i) => i === pi ? { ...f, internetDetail: e.target.value } : f))}
+                                  className="mt-1.5 w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 outline-none focus:border-blue-400" />
+                              )}
+                            </div>
+
+                            {/* 保証会社 */}
+                            <div>
+                              <p className="text-[11px] font-bold text-gray-400 mb-1">🏦 保証会社タイプ</p>
+                              <div className="flex gap-1 flex-wrap">
+                                {([
+                                  { k: null as null, l: '選択なし' },
+                                  { k: '独立系' as const, l: '独立系（審査通りやすい）' },
+                                  { k: '信用系' as const, l: '信用系' },
+                                ]).map(({ k, l }) => (
+                                  <button key={l} type="button"
+                                    className={`px-2 py-1 rounded-full text-xs border ${propFacilities[pi].guarantorType === k ? 'bg-blue-500 text-white border-blue-500' : 'bg-white text-gray-600 border-gray-200'}`}
+                                    onClick={() => setPropFacilities(prev => prev.map((f, i) => i === pi ? { ...f, guarantorType: k } : f))}>
+                                    {l}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                          </div>
+                        )}
+                      </div>
                       {/* 物件画像 */}
                       {checkPropImagePreviews[pi].length > 0 && (
                         <div className="mb-2 grid grid-cols-3 gap-2">
