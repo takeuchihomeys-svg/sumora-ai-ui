@@ -171,7 +171,7 @@ async function getPropertyKnowledge(conversationId?: string): Promise<string> {
       .ilike("title", "%差分学習%")
       .gte("importance", 7)
       .in("conversation_state", ["property_recommendation", "proposing"])
-      .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
+      .eq("hypothesis_status", "confirmed") // AIX生成変化ゲート: confirmed のみ注入
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false })
       .limit(15),
@@ -181,7 +181,7 @@ async function getPropertyKnowledge(conversationId?: string): Promise<string> {
       .in("conversation_state", ["property_recommendation", "proposing"])
       .gte("importance", 7)
       .not("title", "ilike", "%差分学習%")
-      .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
+      .eq("hypothesis_status", "confirmed") // AIX生成変化ゲート: confirmed のみ注入
       .order("importance", { ascending: false })
       .limit(12),
   ]);
@@ -240,7 +240,7 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
         .ilike("title", "%差分学習%")
         .gte("importance", 7)
         .in("conversation_state", states)
-        .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
+        .eq("hypothesis_status", "confirmed") // AIX生成変化ゲート: AI提案→confirmed 経由のみ注入
         .order("importance", { ascending: false })
         .order("created_at", { ascending: false })
         .limit(12),
@@ -250,7 +250,7 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
         .not("title", "ilike", "%差分学習%")
         .gte("importance", 7)
         .in("conversation_state", states)
-        .or("hypothesis_status.is.null,hypothesis_status.neq.rejected")
+        .eq("hypothesis_status", "confirmed") // AIX生成変化ゲート: AI提案→confirmed 経由のみ注入
         .order("importance", { ascending: false })
         .limit(10),
       // ③ スタッフがAIX生成文を編集した実例（リアルタイム品質フィードバック）
@@ -293,7 +293,7 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
           query_embedding: embedding, match_count: 40, min_importance: 7,
         }) as { data: Array<{ id: string; title: string; content: string; hypothesis_status?: string; importance: number; similarity: number }> | null };
         const filtered = (vectorResults ?? [])
-          .filter(r => r.similarity >= 0.5 && r.hypothesis_status !== "rejected")
+          .filter(r => r.similarity >= 0.5 && r.hypothesis_status === "confirmed")
           .sort((a, b) => (b.similarity * (b.importance / 10)) - (a.similarity * (a.importance / 10)));
         const existingIds = new Set([...sortedDiff, ...sortedOther].map(r => r.id));
         vectorExtras = filtered.filter(r => !existingIds.has(r.id)).slice(0, 5);
