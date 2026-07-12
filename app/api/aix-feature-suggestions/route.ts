@@ -103,7 +103,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ ok: true, updated: true });
+    // action_type=nullのルールは全アクション・全generate-replyに適用されます
+    const warning = !sg.action_type ? 'action_type未設定のため全アクションにルールが適用されます' : null;
+    return NextResponse.json({ ok: true, updated: true, ...(warning ? { warning } : {}) });
   }
 
   // implemented 以外のステータス更新（adopted / dismissed）

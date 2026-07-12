@@ -222,9 +222,25 @@ ${exampleText}
         system: buildMeetingSystem(candidate),
         messages: history,
       });
-      const spec = parseSpecJson(extractText(res.content));
+      const firstText = extractText(res.content);
+      let spec = parseSpecJson(firstText);
       if (!spec) {
-        return NextResponse.json({ ok: false, error: "仕様JSONの生成に失敗しました。もう一度お試しください。" }, { status: 500 });
+        // リトライ: JSONとして正確に出力するよう再プロンプト（1回のみ）
+        const retryMessages: ChatMessage[] = [
+          ...history,
+          { role: "assistant", content: firstText },
+          { role: "user", content: "JSONとして正確に出力してください。上記のJSON形式のみを、コードブロックなしで出力してください。" },
+        ];
+        const retryRes = await client.messages.create({
+          model: "claude-opus-4-8",
+          max_tokens: 1200,
+          system: buildMeetingSystem(candidate),
+          messages: retryMessages,
+        });
+        spec = parseSpecJson(extractText(retryRes.content));
+        if (!spec) {
+          return NextResponse.json({ ok: false, error: "仕様JSONの生成に失敗しました。もう一度お試しください。" }, { status: 500 });
+        }
       }
 
       // INSERT して挿入行の id を取得（UPDATE 失敗時の補償 DELETE に使用）

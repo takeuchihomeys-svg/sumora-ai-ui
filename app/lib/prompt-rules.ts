@@ -42,7 +42,11 @@ export async function fetchPromptRules(
     const applicable = (rules as PromptRuleRow[]).filter(r => {
       if (!r.condition_key || r.condition_value === null) return true;
       const actual = conditions[r.condition_key];
-      if (actual === undefined || actual === null) return false;
+      if (actual === undefined) {
+        console.warn(`[fetchPromptRules] unknown condition_key "${r.condition_key}" in rule — rule skipped`);
+        return false;
+      }
+      if (actual === null) return false;
       return String(actual) === r.condition_value;
     });
 
