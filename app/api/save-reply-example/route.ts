@@ -310,6 +310,76 @@ async function decayRemovedKnowledge(conversationId: string, aiDraft: string, se
   }
 }
 
+// RLHF精密化: 注入されたナレッジを個別評価して correct/wrong を付ける
+// phrase/pattern は aiDraft に含まれ sentReply に残っているか否かで判定。
+// それ以外（rule/principle等）は overallSim >= 0.65 を基準にする。
+// ナレッジログが取れない場合は従来の confirm_knowledge_feedback にフォールバック。
+async function preciseKnowledgeFeedback(
+  conversationId: string,
+  source: "generate_reply" | "aix_action",
+  aiDraft: string,
+  sentReply: string,
+  overallSim: number
+): Promise<void> {
+  try {
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    type LogRow = {
+      knowledge_id: string;
+      ai_reply_knowledge:
+        | { id: string; category: string; content: string }
+        | { id: string; category: string; content: string }[]
+        | null;
+    };
+    const { data: logs } = await supabase
+      .from("knowledge_apply_log")
+      .select("knowledge_id, ai_reply_knowledge(id, category, content)")
+      .eq("conversation_id", conversationId)
+      .eq("result", "pending")
+      .eq("source", source)
+      .gte("applied_at", oneHourAgo)
+      .limit(60);
+
+    if (!logs || logs.length === 0) {
+      const fb = overallSim >= 0.65 ? "correct" : "wrong";
+      await supabase.rpc("confirm_knowledge_feedback", { p_conversation_id: conversationId, p_result: fb, p_source: source });
+      return;
+    }
+
+    const draftNorm = aiDraft.replace(/\s+/g, "");
+    const sentNorm  = sentReply.replace(/\s+/g, "");
+    const correctIds: string[] = [];
+    const wrongIds:   string[] = [];
+
+    for (const row of logs as LogRow[]) {
+      const k = Array.isArray(row.ai_reply_knowledge) ? row.ai_reply_knowledge[0] : row.ai_reply_knowledge;
+      const contentNorm = (k?.content ?? "").replace(/\s+/g, "");
+      const isContentMatchable =
+        (k?.category === "phrase" || k?.category === "pattern") && contentNorm.length >= 15;
+
+      if (isContentMatchable && draftNorm.includes(contentNorm)) {
+        (sentNorm.includes(contentNorm) ? correctIds : wrongIds).push(row.knowledge_id);
+      } else {
+        (overallSim >= 0.65 ? correctIds : wrongIds).push(row.knowledge_id);
+      }
+    }
+
+    if (correctIds.length > 0 || wrongIds.length > 0) {
+      await supabase.rpc("update_knowledge_feedback_by_ids", {
+        p_correct_ids: correctIds.length > 0 ? correctIds : null,
+        p_wrong_ids:   wrongIds.length   > 0 ? wrongIds   : null,
+      });
+    }
+  } catch (e) {
+    console.warn("[save-reply-example] preciseKnowledgeFeedback fallback:", e);
+    const fb = overallSim >= 0.65 ? "correct" : "wrong";
+    try {
+      await supabase.rpc("confirm_knowledge_feedback", { p_conversation_id: conversationId, p_result: fb, p_source: source });
+    } catch {
+      // フォールバックRPCの失敗は握りつぶす（保存処理を止めない）
+    }
+  }
+}
+
 // 修正量(sim)に応じてimportanceを変動させる（膨張防止）
 // sim < 0.4 = 大幅修正 → 9 / 0.4〜0.65 = 中程度 → 8 / 0.65〜0.9 = 微修正 → 7
 function diffImportance(sim: number): number {
@@ -749,24 +819,19 @@ export async function POST(req: NextRequest) {
       const candidateAiDraft = (splitCandidate.ai_draft as string | null) ?? aiDraft ?? null;
       if (candidateAiDraft) {
         const mergedSim = textSimilarity(candidateAiDraft.trim(), mergedReply.trim());
-        // 改善⑨: マージパスのRLHF閾値を通常パスと統一（sim>=0.65 → correct / それ未満 → wrong）
-        // 改善④: sim<0.05（完全書き直し）も wrong として登録（AI案が捨てられた = 強い負のシグナル）
-        const feedbackResult: "correct" | "wrong" | null = mergedSim >= 0.65 ? "correct" : "wrong";
-        if (feedbackResult) {
-          // RLHF-002: マージパスは直後に return するため fire-and-forget だと Vercel Function が終了前に RPC がキャンセルされる → await
-          await supabase.rpc("confirm_knowledge_feedback", {
-            p_conversation_id: conversationId,
-            p_result: feedbackResult,
-            p_source: "generate_reply",
-          });
-          // RLHF-001: aix_action 経由ナレッジも同じフィードバック結果で更新（これがないと AIX ループが機能しない）
-          await supabase.rpc("confirm_knowledge_feedback", {
-            p_conversation_id: conversationId,
-            p_result: feedbackResult,
-            p_source: "aix_action",
-          });
-        }
+        // RLHF精密化: ナレッジ単位でcorrect/wrongを判定（await必須: マージパスは直後にreturnするため）
+        await preciseKnowledgeFeedback(conversationId, "generate_reply", candidateAiDraft, mergedReply, mergedSim);
+        await preciseKnowledgeFeedback(conversationId, "aix_action",     candidateAiDraft, mergedReply, mergedSim);
       }
+      // aix_generate_log: 送信確認（after: returnの後でも完走する）
+      after(async () => {
+        const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+        await supabase.from("aix_generate_log")
+          .update({ status: "used" })
+          .eq("conversation_id", conversationId)
+          .eq("status", "generated")
+          .gte("generated_at", thirtyMinAgo);
+      });
     }
 
     return NextResponse.json({ ok: true, id: splitCandidate.id, merged: true });
@@ -787,23 +852,12 @@ export async function POST(req: NextRequest) {
   // 改善④: sim<0.05（ほぼ手書き = 完全書き直し）も wrong として登録（AI案が捨てられた = 強い負のシグナル）
   // after()でVercelがレスポンス後にキャンセルするのを防ぐ
   const isFullRewrite = !!aiDraft && aiDraft.trim().length > 0 && sim < 0.05;
-  if (conversationId && aiDraft) {
-    const feedbackResult = (wasAiUsed || sim >= 0.65) ? "correct" : (wasAiModified || isFullRewrite) ? "wrong" : null;
-    if (feedbackResult) {
-      after(async () => {
-        await supabase.rpc("confirm_knowledge_feedback", {
-          p_conversation_id: conversationId,
-          p_result: feedbackResult,
-          p_source: "generate_reply",
-        });
-        // RLHF-001: aix_action ナレッジへのフィードバック
-        await supabase.rpc("confirm_knowledge_feedback", {
-          p_conversation_id: conversationId,
-          p_result: feedbackResult,
-          p_source: "aix_action",
-        });
-      });
-    }
+  // RLHF精密化: 意味のある操作があった場合のみ実行（likelySplit はフィードバック対象外）
+  if (conversationId && aiDraft && (wasAiUsed || wasAiModified || isFullRewrite)) {
+    after(async () => {
+      await preciseKnowledgeFeedback(conversationId, "generate_reply", aiDraft, sentReply, sim);
+      await preciseKnowledgeFeedback(conversationId, "aix_action",     aiDraft, sentReply, sim);
+    });
   }
 
   // 中3: スタッフが修正した場合、AI文案に注入されていたのに消されたフレーズ/パターンの importance を減衰
@@ -919,6 +973,18 @@ export async function POST(req: NextRequest) {
         analysisJobs.push(extractAndSavePhrases(conversationState, sentReply, effectiveStarred));
       }
       await Promise.all(analysisJobs);
+    });
+  }
+
+  // aix_generate_log: 送信確認（このconversationIdの直近30分の生成ログをusedに更新）
+  if (conversationId && data?.id) {
+    after(async () => {
+      const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+      await supabase.from("aix_generate_log")
+        .update({ status: "used" })
+        .eq("conversation_id", conversationId)
+        .eq("status", "generated")
+        .gte("generated_at", thirtyMinAgo);
     });
   }
 

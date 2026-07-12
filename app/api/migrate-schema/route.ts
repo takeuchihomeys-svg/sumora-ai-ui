@@ -1253,6 +1253,56 @@ ALTER TABLE ai_feedback_items ADD COLUMN IF NOT EXISTS dismissed_reason TEXT;
 -- ai_reply_knowledge: 出所管理（corpus2skill起票・手動・FEEDBACK回答などを区別）
 ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'manual';
 
+-- ── RLHF精密化 + aix_generate_log（2026-07-12）──
+
+-- update_knowledge_feedback_by_ids: ナレッジ単位のRLHF精密フィードバック
+-- phrase/pattern がsentReplyに残っているか個別判定して呼ぶ。confirm_knowledge_feedback の精密版
+CREATE OR REPLACE FUNCTION update_knowledge_feedback_by_ids(
+  p_correct_ids UUID[],
+  p_wrong_ids UUID[]
+) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_correct_ids IS NOT NULL AND ARRAY_LENGTH(p_correct_ids, 1) > 0 THEN
+    UPDATE knowledge_apply_log SET result = 'correct'
+    WHERE knowledge_id = ANY(p_correct_ids) AND result = 'pending';
+    UPDATE ai_reply_knowledge
+    SET apply_count   = COALESCE(apply_count, 0) + 1,
+        correct_count = COALESCE(correct_count, 0) + 1
+    WHERE id = ANY(p_correct_ids);
+  END IF;
+  IF p_wrong_ids IS NOT NULL AND ARRAY_LENGTH(p_wrong_ids, 1) > 0 THEN
+    UPDATE knowledge_apply_log SET result = 'wrong'
+    WHERE knowledge_id = ANY(p_wrong_ids) AND result = 'pending';
+    UPDATE ai_reply_knowledge
+    SET apply_count = COALESCE(apply_count, 0) + 1,
+        wrong_count = COALESCE(wrong_count, 0) + 1
+    WHERE id = ANY(p_wrong_ids);
+  END IF;
+  UPDATE ai_reply_knowledge
+  SET hypothesis_status = CASE
+    WHEN apply_count >= 5 AND correct_count::float / NULLIF(apply_count::float, 0) >= 0.7 THEN 'confirmed'
+    WHEN apply_count >= 5 AND wrong_count::float   / NULLIF(apply_count::float, 0) >= 0.7 THEN 'rejected'
+    ELSE hypothesis_status
+  END
+  WHERE id = ANY(ARRAY_CAT(COALESCE(p_correct_ids, ARRAY[]::UUID[]), COALESCE(p_wrong_ids, ARRAY[]::UUID[])))
+    AND apply_count >= 5;
+END;
+$$;
+
+-- aix_generate_log: AIXアクションが文案を生成したイベントを記録する
+-- status: generated（生成済み・送信確認待ち）/ used（送信確認済み）/ discarded（24h経過で破棄）
+CREATE TABLE IF NOT EXISTS aix_generate_log (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  action_type TEXT NOT NULL,
+  conversation_id TEXT,
+  status TEXT NOT NULL DEFAULT 'generated',
+  generated_at TIMESTAMPTZ DEFAULT now(),
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_aix_generate_log_conversation ON aix_generate_log(conversation_id, status, generated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_aix_generate_log_status ON aix_generate_log(status, generated_at DESC);
+ALTER TABLE aix_generate_log DISABLE ROW LEVEL SECURITY;
+
 `.trim();
 
 // GET: スキーマSQLを返す（POSTと同じ CRON_SECRET 認証必須 — 無認証でのスキーマ情報開示を防止）

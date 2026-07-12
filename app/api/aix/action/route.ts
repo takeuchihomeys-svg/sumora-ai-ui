@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEND_RULES, GENERATION_SYSTEM } from "@/app/lib/line-reply-prompts";
@@ -563,6 +563,18 @@ export async function POST(request: NextRequest) {
     // 早期return用: finalize結果をそのままレスポンスJSONにするショートハンド
     const finalizeResponse = (text: string, extra?: Record<string, unknown>) => {
       const { message, notice } = finalize(text);
+      if (conversationId) {
+        after(async () => {
+          try {
+            await supabase.from("aix_generate_log").insert({
+              action_type: currentAction,
+              conversation_id: conversationId,
+            });
+          } catch {
+            // fire-and-forget: 生成ログのINSERT失敗はレスポンスに影響させない
+          }
+        });
+      }
       return NextResponse.json({ ok: true, message_text: message, ...(notice ? { notice } : {}), ...(extra ?? {}) });
     };
 
