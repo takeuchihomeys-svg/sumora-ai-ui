@@ -20,7 +20,7 @@ type PatternLog = {
   created_at: string;
 };
 
-// ── Sonnet 4.6 呼び出し（save-reply-example の callClaude と同パターン）────────
+// ── Opus 4.8 呼び出し（週1バッチ・高品質判定のため昇格済み）────────
 async function callSonnet(prompt: string, maxTokens = 2048): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "");
   if (!apiKey) return "";
@@ -34,7 +34,7 @@ async function callSonnet(prompt: string, maxTokens = 2048): Promise<string> {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-6",
+        model: "claude-opus-4-8",
         max_tokens: maxTokens,
         messages: [{ role: "user", content: prompt }],
       }),
