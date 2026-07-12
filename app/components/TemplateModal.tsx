@@ -657,6 +657,9 @@ export default function TemplateModal({
   const [knowledgeLoading, setKnowledgeLoading] = useState(false);
   const [confirmingKnowledgeId, setConfirmingKnowledgeId] = useState<string | null>(null);
   const [rejectingKnowledgeId, setRejectingKnowledgeId] = useState<string | null>(null);
+  // 🤝 打ち合わせ（Sonnet によるナレッジ分析）
+  const [discussingKnowledgeId, setDiscussingKnowledgeId] = useState<string | null>(null);
+  const [knowledgeDiscussions, setKnowledgeDiscussions] = useState<Record<string, string>>({});
 
   // AI盲点フィードバック（❓ AI質問タブ）
   const [feedbackItems, setFeedbackItems] = useState<FeedbackItem[]>([]);
@@ -969,6 +972,24 @@ export default function TemplateModal({
       setKnowledgeItems(prev => prev.filter(k => k.id !== id));
     } catch { /* noop */ }
     finally { setRejectingKnowledgeId(null); }
+  }, []);
+
+  // 🤝 打ち合わせ: Sonnet にナレッジの妥当性を分析させ、結果をカード内に表示する
+  const discussKnowledge = useCallback(async (item: KnowledgeItem) => {
+    setDiscussingKnowledgeId(item.id);
+    try {
+      const res = await fetch("/api/knowledge-discuss", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: item.id, title: item.title, content: item.content, category: item.category }),
+      });
+      const data = await res.json();
+      setKnowledgeDiscussions(prev => ({ ...prev, [item.id]: data.analysis || "分析に失敗しました" }));
+    } catch {
+      setKnowledgeDiscussions(prev => ({ ...prev, [item.id]: "分析に失敗しました" }));
+    } finally {
+      setDiscussingKnowledgeId(null);
+    }
   }, []);
 
   // 回答を送信 → Sonnetが知識化（trigger_action_rules / ai_prompts に保存）
@@ -2693,19 +2714,40 @@ export default function TemplateModal({
                     <span>誤 {item.wrong_count ?? 0}回</span>
                     <span>適用 {item.apply_count ?? 0}回</span>
                   </div>
+                  {/* 🤝 打ち合わせ分析結果 */}
+                  {knowledgeDiscussions[item.id] && (
+                    <div className="mb-2.5 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2">
+                      <p className="text-[10px] font-bold text-blue-700 mb-1">🤝 AI分析（Sonnet）</p>
+                      <p className="text-[12px] text-gray-700 whitespace-pre-wrap">{knowledgeDiscussions[item.id]}</p>
+                    </div>
+                  )}
                   {/* ボタン */}
                   <div className="flex gap-2">
                     <button
                       onClick={() => confirmKnowledge(item.id)}
-                      disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id}
+                      disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id || discussingKnowledgeId === item.id}
                       className="flex-1 rounded-lg py-2 text-[12px] font-bold text-white disabled:opacity-50 transition"
                       style={{ background: "linear-gradient(135deg, #7B1FA2, #AB47BC)" }}
                     >
                       {confirmingKnowledgeId === item.id ? "承認中..." : "✅ 承認（confirmed）"}
                     </button>
                     <button
+                      onClick={() => discussKnowledge(item)}
+                      disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id || discussingKnowledgeId === item.id}
+                      className="px-3 py-2 rounded-lg text-[12px] font-bold text-white bg-gradient-to-br from-blue-500 to-blue-700 disabled:opacity-50 transition flex items-center gap-1.5"
+                    >
+                      {discussingKnowledgeId === item.id ? (
+                        <>
+                          <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          分析中...
+                        </>
+                      ) : (
+                        "🤝 打ち合わせ"
+                      )}
+                    </button>
+                    <button
                       onClick={() => rejectKnowledge(item.id)}
-                      disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id}
+                      disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id || discussingKnowledgeId === item.id}
                       className="px-4 py-2 text-gray-400 text-[12px] border border-gray-200 rounded-lg bg-white hover:bg-gray-50 transition"
                     >
                       {rejectingKnowledgeId === item.id ? "..." : "却下"}

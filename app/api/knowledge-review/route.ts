@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { syncConfirmedToPromptRule, deactivatePromptRule } from "@/app/lib/knowledge-promote";
 
 // GET: hypothesis ナレッジ一覧（手動承認待ち）
 export async function GET() {
@@ -44,5 +45,18 @@ export async function PATCH(req: NextRequest) {
     .eq("id", id);
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+
+  // confirm/reject 時に ai_prompt_rules へ即時同期
+  if (action === "confirm") {
+    const { data: row } = await supabase
+      .from("ai_reply_knowledge")
+      .select("id, title, content, conversation_state, importance")
+      .eq("id", id)
+      .single();
+    if (row) await syncConfirmedToPromptRule(row);
+  } else if (action === "reject") {
+    await deactivatePromptRule(id);
+  }
+
   return NextResponse.json({ ok: true });
 }

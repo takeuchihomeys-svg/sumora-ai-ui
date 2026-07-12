@@ -463,7 +463,9 @@ export async function POST(req: NextRequest) {
   //    一度も実行されず confirmed→ai_prompt_rules 同期・decay が永遠に走らなかった。══
 
   // ── 確認済みルール → ai_prompt_rules 自動同期 ──
-  // importance>=8 かつ hypothesis_status='confirmed' のルールをプロンプトルールとして自動登録
+  // importance>=7 かつ hypothesis_status='confirmed' のルールをプロンプトルールとして自動登録
+  // （閾値は lib/knowledge-promote.ts の syncConfirmedToPromptRule と揃える。即時反映は
+  //   knowledge-promote 側が担当し、ここは cron バッチとしての取りこぼし補完を担う）
   // ステートに応じた action_type でスコープ付き保存
   // （複合ステートはAIXアクション名へ、汎用ステートはgenerate_reply へ、未知はグローバル）
 
@@ -512,7 +514,7 @@ export async function POST(req: NextRequest) {
       .from("ai_reply_knowledge")
       .select("id, title, content, conversation_state")
       .eq("hypothesis_status", "confirmed")
-      .gte("importance", 8)
+      .gte("importance", 7)
       .limit(100);
 
     if (confirmedRules && confirmedRules.length > 0) {
