@@ -617,6 +617,12 @@ export default function TemplateModal({
   const [reviewCurrentText, setReviewCurrentText] = useState(""); // Opusが最後に提案した修正版
   const [reviewInput, setReviewInput] = useState("");
   const [reviewSending, setReviewSending] = useState(false);
+  // 改善案打ち合わせパネル: 改善案候補をOpus 4.8と打ち合わせて実装仕様を固め aix_feature_suggestions へ転送する
+  const [meetingCandidate, setMeetingCandidate] = useState<AiTemplateCandidate | null>(null);
+  const [meetingMessages, setMeetingMessages] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
+  const [meetingInput, setMeetingInput] = useState("");
+  const [meetingSending, setMeetingSending] = useState(false);
+  const [meetingFinalized, setMeetingFinalized] = useState(false);
   // P4: AIX改善案（aix_feature_suggestions の pending 一覧）
   const [suggestions, setSuggestions] = useState<AixFeatureSuggestion[]>([]);
   const [suggestionLoading, setSuggestionLoading] = useState(false);
@@ -999,6 +1005,84 @@ export default function TemplateModal({
     finally { setAdoptingId(null); }
   };
 
+  // 改善案打ち合わせパネルを開く（Opus 4.8がパターン分析して打ち合わせ開始）
+  const openMeetingPanel = async (candidate: AiTemplateCandidate) => {
+    setMeetingCandidate(candidate);
+    setMeetingMessages([]);
+    setMeetingInput("");
+    setMeetingFinalized(false);
+    setMeetingSending(true);
+    try {
+      const res = await fetch("/api/aix/improvement-meeting", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "start", candidateId: candidate.id }),
+      });
+      const data = await res.json() as { ok: boolean; message?: string };
+      if (data.ok && data.message) {
+        setMeetingMessages([{ role: "assistant", content: data.message }]);
+      } else {
+        setMeetingMessages([{ role: "assistant", content: "分析の取得に失敗しました。もう一度お試しください。" }]);
+      }
+    } catch {
+      setMeetingMessages([{ role: "assistant", content: "通信エラーが発生しました。" }]);
+    } finally {
+      setMeetingSending(false);
+    }
+  };
+
+  // 打ち合わせチャット送信（Opus 4.8と実装仕様を詰める）
+  const sendMeetingMessage = async () => {
+    if (!meetingInput.trim() || meetingSending || !meetingCandidate) return;
+    const userMsg = meetingInput.trim();
+    setMeetingInput("");
+    const nextMessages = [...meetingMessages, { role: "user" as const, content: userMsg }];
+    setMeetingMessages(nextMessages);
+    setMeetingSending(true);
+    try {
+      const res = await fetch("/api/aix/improvement-meeting", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "chat", candidateId: meetingCandidate.id, messages: nextMessages, userMessage: userMsg }),
+      });
+      const data = await res.json() as { ok: boolean; message?: string };
+      if (data.ok && data.message) {
+        setMeetingMessages(prev => [...prev, { role: "assistant" as const, content: data.message! }]);
+      }
+    } catch {
+      setMeetingMessages(prev => [...prev, { role: "assistant" as const, content: "エラーが発生しました。" }]);
+    } finally {
+      setMeetingSending(false);
+    }
+  };
+
+  // 仕様を確定して aix_feature_suggestions へ転送（実装待ちとして表示される）
+  const finalizeMeeting = async () => {
+    if (!meetingCandidate || meetingSending) return;
+    setMeetingSending(true);
+    try {
+      const res = await fetch("/api/aix/improvement-meeting", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "finalize", candidateId: meetingCandidate.id, messages: meetingMessages }),
+      });
+      const data = await res.json() as { ok: boolean; spec?: unknown; error?: string };
+      if (data.ok) {
+        setMeetingFinalized(true);
+        // 改善案タブから除外（採用済み扱い）
+        setCandidates(prev => prev.map(c => c.id === meetingCandidate.id ? { ...c, is_adopted: true } : c));
+        // 転送された仕様（実装待ち）を改善案タブに反映
+        setTimeout(() => loadSuggestions(), 500);
+      } else {
+        showModalError(data.error || "仕様の転送に失敗しました");
+      }
+    } catch {
+      showModalError("通信エラーが発生しました");
+    } finally {
+      setMeetingSending(false);
+    }
+  };
+
   // P4/P5: AIX改善案のステータス更新（adopted / dismissed + 理由）
   const updateSuggestionStatus = useCallback(async (id: string, status: "adopted" | "dismissed", reason?: string) => {
     await fetch("/api/aix-feature-suggestions", {
@@ -1346,6 +1430,80 @@ export default function TemplateModal({
         </div>
       )}
       <div className="relative w-full max-w-lg rounded-t-3xl bg-white shadow-2xl flex flex-col" style={{ maxHeight: "90vh" }}>
+        {/* 改善案打ち合わせパネル（Opus 4.8と実装仕様を固めて転送する） */}
+        {meetingCandidate && (
+          <div className="absolute inset-0 bg-white z-10 flex flex-col overflow-hidden rounded-t-3xl">
+            {/* ヘッダー */}
+            <div className="flex items-center gap-2 p-3 border-b bg-violet-50 shrink-0">
+              <button onClick={() => { setMeetingCandidate(null); }} className="text-gray-500 hover:text-gray-700 text-sm">← 戻る</button>
+              <span className="font-bold text-violet-700 text-sm flex-1">🤝 Opus 4.8と打ち合わせ</span>
+              <span className="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full shrink-0">{ACTION_LABELS[meetingCandidate.action_type] ?? meetingCandidate.action_type}</span>
+              <span className={`text-xs px-2 py-0.5 rounded-full font-bold shrink-0 ${(meetingCandidate.evidence_count ?? 1) >= 3 ? "bg-red-100 text-red-600" : "bg-gray-100 text-gray-600"}`}>{meetingCandidate.evidence_count ?? 1}件</span>
+            </div>
+
+            {/* パターン理由 */}
+            <div className="mx-3 mt-2 p-2 bg-violet-50 rounded text-xs text-violet-800 shrink-0">
+              📋 {meetingCandidate.reason || "スタッフが繰り返し追加したパターン"}
+            </div>
+
+            {/* チャットエリア */}
+            <div className="flex-1 overflow-y-auto p-3 space-y-3">
+              {meetingMessages.length === 0 && meetingSending && (
+                <div className="text-sm text-gray-400 animate-pulse">Opus 4.8 が分析中...</div>
+              )}
+              {meetingMessages.map((msg, i) => (
+                <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                  <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap ${msg.role === "user" ? "bg-orange-500 text-white rounded-br-sm" : "bg-gray-100 text-gray-800 rounded-bl-sm"}`}>
+                    {msg.content}
+                  </div>
+                </div>
+              ))}
+              {meetingSending && meetingMessages.length > 0 && (
+                <div className="flex justify-start">
+                  <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-3 py-2 text-sm text-gray-400 animate-pulse">入力中...</div>
+                </div>
+              )}
+              {meetingFinalized && (
+                <div className="mx-auto text-center py-4">
+                  <div className="text-green-600 font-bold text-sm">✅ 仕様を転送しました</div>
+                  <div className="text-xs text-gray-500 mt-1">改善案タブ上部に「実装待ち」として表示されます</div>
+                </div>
+              )}
+            </div>
+
+            {/* 入力エリア */}
+            {!meetingFinalized ? (
+              <div className="p-3 border-t space-y-2 shrink-0">
+                <textarea
+                  className="w-full border border-gray-300 rounded-lg p-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-violet-400"
+                  rows={3}
+                  placeholder="Opus 4.8に伝えたいことを入力..."
+                  value={meetingInput}
+                  onChange={e => setMeetingInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendMeetingMessage(); } }}
+                  disabled={meetingSending}
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => void sendMeetingMessage()}
+                    disabled={!meetingInput.trim() || meetingSending}
+                    className="flex-1 bg-violet-600 hover:bg-violet-700 text-white text-sm font-bold py-2 rounded-lg disabled:opacity-50 transition"
+                  >送信</button>
+                  <button
+                    onClick={() => void finalizeMeeting()}
+                    disabled={meetingMessages.length < 2 || meetingSending}
+                    className="flex-1 bg-green-600 hover:bg-green-700 text-white text-sm font-bold py-2 rounded-lg disabled:opacity-50 transition"
+                  >✅ 仕様を確定・転送する</button>
+                </div>
+                <div className="text-xs text-gray-400 text-center">Enterで送信 • 仕様が固まったら「確定・転送」</div>
+              </div>
+            ) : (
+              <div className="p-3 border-t shrink-0">
+                <button onClick={() => setMeetingCandidate(null)} className="w-full bg-gray-200 hover:bg-gray-300 text-gray-700 text-sm font-bold py-2 rounded-lg transition">閉じる</button>
+              </div>
+            )}
+          </div>
+        )}
         {/* AIX候補 ブラッシュアップチャット（モーダル本体全体に重ねる） */}
         {reviewCandidate && (
           <div className="absolute inset-0 bg-white z-10 flex flex-col overflow-hidden rounded-t-3xl">
@@ -2006,6 +2164,12 @@ export default function TemplateModal({
                     }`}>
                       {(SUGGESTION_TYPE_BADGE[suggestion.suggestion_type] ?? SUGGESTION_TYPE_BADGE.new_picker).label}
                     </span>
+                    {/* 打ち合わせ済み（status="approved"）: Opus 4.8との打ち合わせで確定した実装待ち仕様 */}
+                    {suggestion.status === "approved" && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-bold shrink-0">
+                        🤝 打ち合わせ済み
+                      </span>
+                    )}
                     {/* AIXボタン名バッジ（action_typeがある場合） */}
                     {suggestion.action_type && (
                       <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full font-bold shrink-0"
@@ -2131,10 +2295,10 @@ export default function TemplateModal({
                   <div className="flex gap-2 mt-2">
                     <button
                       disabled={adoptingId === candidate.id}
-                      onClick={() => openReviewPanel(candidate)}
-                      className="flex-1 py-1.5 rounded-lg bg-violet-500 text-white text-sm font-semibold hover:bg-violet-600 disabled:opacity-50 transition"
+                      onClick={() => void openMeetingPanel(candidate)}
+                      className="flex-1 py-1.5 rounded-lg bg-violet-600 text-white text-sm font-semibold hover:bg-violet-700 disabled:opacity-50 transition"
                     >
-                      {adoptingId === candidate.id ? "採用中..." : "✅ 確認して採用"}
+                      🤝 Opus 4.8と打ち合わせ
                     </button>
                     <button
                       onClick={() => setDismissingId(dismissingId === candidate.id ? null : candidate.id)}

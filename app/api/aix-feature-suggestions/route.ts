@@ -5,17 +5,23 @@ import { supabase } from "@/app/lib/supabase";
 // corpus2skill 週次Opusが new_aix_picker 提案をINSERTし、
 // TemplateModal の「💡 AIX改善案」タブで採用/却下を管理する
 
-// GET: pending の改善提案を最新20件
+// GET: pending + approved の改善提案を最新20件
+// approved = 改善案打ち合わせ（/api/aix/improvement-meeting）で確定した実装待ち仕様。タブ上部に表示する
 export async function GET() {
   const { data, error } = await supabase
     .from("aix_feature_suggestions")
     .select("*")
-    .eq("status", "pending")
+    .in("status", ["pending", "approved"])
     .order("created_at", { ascending: false })
     .limit(20);
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  return NextResponse.json({ ok: true, suggestions: data ?? [] });
+  // 打ち合わせ済み（approved = 実装待ち）を上部に表示
+  const suggestions = (data ?? []).sort((a, b) => {
+    if (a.status !== b.status) return a.status === "approved" ? -1 : 1;
+    return 0; // created_at 降順（元のDB順）を維持
+  });
+  return NextResponse.json({ ok: true, suggestions });
 }
 
 // POST: status 更新（adopted / dismissed。却下時は dismissedReason も保存）
