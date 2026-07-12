@@ -405,7 +405,7 @@ async function detectRepeatedDeletions(): Promise<{ detected: number; demoted: n
     const { data: existing } = await supabase
       .from("ai_feedback_items")
       .select("id")
-      .in("status", ["pending", "answered"])
+      .in("status", ["pending", "answered", "applied"])
       .ilike("question", `${dedupKey}%`)
       .limit(1);
     if (existing && existing.length > 0) continue;
@@ -568,7 +568,7 @@ export async function POST(req: NextRequest) {
       const { data: existsFb } = await supabase
         .from("ai_feedback_items")
         .select("id")
-        .in("status", ["pending", "answered"])
+        .in("status", ["pending", "answered", "applied"])
         .ilike("question", `${dedupKey}%`)
         .limit(1);
       if (!existsFb || existsFb.length === 0) {

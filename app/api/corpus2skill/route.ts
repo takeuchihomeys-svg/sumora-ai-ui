@@ -161,7 +161,7 @@ async function synthesizeTemplateImprovements(): Promise<{ candidatesSaved: numb
     .order("evidence_count", { ascending: false })
     .limit(30);
 
-  // 材料C: 採用/却下フィードバック
+  // 材料C: 採用/却下フィードバック（テンプレ候補）
   const [{ data: adopted }, { data: dismissed }] = await Promise.all([
     supabase
       .from("ai_template_candidates")
@@ -174,6 +174,26 @@ async function synthesizeTemplateImprovements(): Promise<{ candidatesSaved: numb
       .eq("is_dismissed", true)
       .not("dismissed_reason", "is", null)
       .limit(20),
+  ]);
+
+  // 材料D: 改善案（aix_feature_suggestions）の却下理由・確定仕様
+  const [{ data: dismissedSuggestions }, { data: approvedSuggestions }] = await Promise.all([
+    // 却下された改善案の理由（同じ案を再提案しないため）
+    supabase
+      .from("aix_feature_suggestions")
+      .select("action_type, description, dismissed_reason")
+      .eq("status", "dismissed")
+      .not("dismissed_reason", "is", null)
+      .gte("updated_at", thirtyDaysAgo)
+      .limit(10),
+    // 確定仕様（approved）= improvement-meeting で詰めた実装ノート（参考情報として渡す）
+    supabase
+      .from("aix_feature_suggestions")
+      .select("action_type, description, implementation_notes")
+      .in("status", ["approved", "implemented"])
+      .not("implementation_notes", "is", null)
+      .gte("updated_at", thirtyDaysAgo)
+      .limit(10),
   ]);
 
   const hasMaterial = (needsUpdateKeys?.length ?? 0) > 0 || (aixEdits?.length ?? 0) > 0;
@@ -201,6 +221,14 @@ ${e.original_text ? `AI原文: ${(e.original_text as string).replace(/\n/g, " ")
     `- [${d.action_type}] ${d.suggested_title} → 却下理由: ${d.dismissed_reason}`
   ).join("\n");
 
+  const dismissedSuggestionsSection = (dismissedSuggestions ?? []).map((s) =>
+    `- [${s.action_type ?? "?"}] ${(s.description as string ?? "").slice(0, 80)} → 却下理由: ${s.dismissed_reason as string}`
+  ).join("\n");
+
+  const approvedSuggestionsSection = (approvedSuggestions ?? []).map((s) =>
+    `- [${s.action_type ?? "?"}] ${(s.description as string ?? "").slice(0, 80)}\n  実装ノート: ${((s.implementation_notes as string) ?? "").slice(0, 200)}`
+  ).join("\n");
+
   const res = await client.messages.create({
     model: "claude-opus-4-8",
     max_tokens: 4000,
@@ -221,6 +249,12 @@ ${adoptedSection || "（なし）"}
 
 ### 過去の却下例と理由（出すべきでないパターン）
 ${dismissedSection || "（なし）"}
+
+### 却下されたAIX改善案と理由（同様の提案を避けること）
+${dismissedSuggestionsSection || "（なし）"}
+
+### 確定済みのAIX改善仕様（improvement-meeting で合意済み・参考として）
+${approvedSuggestionsSection || "（なし）"}
 
 上記の分析から、以下の3種類の提案をしてください:
 1. **既存テンプレの改訂案**（頻繁に同じ方向に修正されているもの）: reason（なぜ改訂が必要か・何回修正されたか）付きで

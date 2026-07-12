@@ -61,14 +61,27 @@ export async function POST(req: NextRequest) {
       if (ruleText.trim()) {
         after(async () => {
           try {
+            const actionType = (sg.action_type as string | null) ?? null;
+            // AIXスコープルール（同action_typeのAIXで最優先）
             await supabase.from("ai_prompt_rules").upsert({
               rule_key: "IMPLEMENT-" + id,
-              action_type: (sg.action_type as string | null) ?? null,
+              action_type: actionType,
               rule_text: ruleText,
               reason: "AIX改善案: 実装完了としてマーク済み",
               priority: 7,
               is_active: true,
             }, { onConflict: "rule_key" });
+            // generate-reply コピー: action_type があるルールも LINE 返信生成に届けるため
+            if (actionType) {
+              await supabase.from("ai_prompt_rules").upsert({
+                rule_key: "IMPLEMENT-" + id + "-gr",
+                action_type: "generate_reply",
+                rule_text: ruleText,
+                reason: "AIX改善案: generate-reply コピー",
+                priority: 7,
+                is_active: true,
+              }, { onConflict: "rule_key" });
+            }
           } catch (e) {
             console.warn("[aix-feature-suggestions] IMPLEMENT ルール登録失敗:", e);
           }

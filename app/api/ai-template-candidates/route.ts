@@ -193,7 +193,14 @@ export async function PATCH(req: NextRequest) {
     after(async () => {
       try {
         const textToLearn = customText?.trim() || c.template_text;
-        const embInput = buildKnowledgeEmbeddingInput({ content: textToLearn, conversation_state: c.action_type });
+        // trigger_example = 候補タイトル（どういう状況で使うかのヒント）をベクトルに含めることで
+        // 顧客メッセージクエリとの類似度が上がり vector 検索でヒットしやすくなる
+        const triggerHint = (customTitle ?? c.suggested_title ?? "").slice(0, 60);
+        const embInput = buildKnowledgeEmbeddingInput({
+          content: textToLearn,
+          conversation_state: c.action_type,
+          trigger_example: triggerHint || undefined,
+        });
         const embedding = embInput ? await generateEmbedding(embInput) : null;
         await upsertKnowledge(supabase, {
           title: "[採用テンプレ] " + (customTitle ?? c.suggested_title).slice(0, 40),
