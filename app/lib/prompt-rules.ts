@@ -23,7 +23,8 @@ export async function fetchPromptRules(
       .from("ai_prompt_rules")
       .select("rule_text, condition_key, condition_value, priority")
       .eq("is_active", true)
-      .order("priority", { ascending: false });
+      .order("priority", { ascending: false })
+      .limit(50); // プロンプト肥大化防止の安全上限（priority降順で上位50件を優先）
 
     if (actionType) {
       query = query.or(`action_type.eq.${actionType},action_type.is.null`);

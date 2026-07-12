@@ -541,7 +541,6 @@ ${replyContentNote}
 ${aixPropertyRecommendationNote}
 ${aixPropertySendNote}
 ${knowledgeNote}
-${dbRules}
 ${phrases}
 
 ${QUOTE_REPLY_JUDGE_NOTE}${quotedContextNote}
@@ -553,7 +552,9 @@ ${examples}${examplesInstruction}
 ↑${isFollowUp ? "スモラは既にこのメッセージに返信済み。前の返信内容を繰り返さず、続きとして自然につながるメッセージを1つ生成すること。" : "スモラの直前返信の流れを踏まえ、⭐実例の文体・テンポを参考にしながら、上記の挨拶ルール・禁止ワードを必ず守って、このメッセージへのスモラらしい返信を1つ生成してください。"}
 長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。初回挨拶の「鈴木と申します」を除き、本文中に担当者名（鈴木など）を入れない。${replyHintNote}`;
 
-  return [new SystemMessage(promptOverrides?.generationSystem ?? GENERATION_SYSTEM), new HumanMessage(prompt)];
+  // dbRules を SystemMessage に注入（HumanMessage より優先度が高く aix/action と同じ注入経路）
+  const baseSystem = promptOverrides?.generationSystem ?? GENERATION_SYSTEM;
+  return [new SystemMessage(dbRules ? baseSystem + dbRules : baseSystem), new HumanMessage(prompt)];
 }
 
 const ALLOWED_STATES = new Set([
@@ -1320,8 +1321,10 @@ export async function POST(req: NextRequest) {
       !customerSummary && customerConditions
         ? synthesizeCustomerContext(customerConditions, customerName, history)
         : Promise.resolve(""),
-      fetchPromptRules("generate_reply", { conversation_state: currentState })
-        .catch((err) => { console.error("[generate-reply] fetchPromptRules失敗 — ルールなしで生成続行:", err); return ""; }),
+      fetchPromptRules("generate_reply", {
+        conversation_state: currentState,
+        is_first_reply: String(isFirstEverReplyFromMsgs ?? false),
+      }).catch((err) => { console.error("[generate-reply] fetchPromptRules失敗 — ルールなしで生成続行:", err); return ""; }),
       // 構造化サマリー: body未指定かつconversationIdありならDBから直接取得（regex往復の廃止）
       !bodySummaryJson && conversationId
         ? fetchSummaryJsonByConversation(conversationId)

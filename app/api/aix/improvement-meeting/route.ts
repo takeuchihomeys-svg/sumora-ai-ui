@@ -36,6 +36,7 @@ interface CandidateRow {
   original_text: string | null;
   reason: string | null;
   evidence_count: number | null;
+  is_adopted: boolean | null;
 }
 
 interface MeetingSpec {
@@ -116,7 +117,7 @@ export async function POST(request: NextRequest) {
     // 対象候補を取得
     const { data: candidate, error: candErr } = await supabase
       .from("ai_template_candidates")
-      .select("id, action_type, template_text, original_text, reason, evidence_count")
+      .select("id, action_type, template_text, original_text, reason, evidence_count, is_adopted")
       .eq("id", candidateId)
       .single<CandidateRow>();
 
@@ -196,6 +197,11 @@ ${exampleText}
 
     // ── action: "finalize" ── 打ち合わせ内容をJSON仕様に落として転送
     if (action === "finalize") {
+      // 重複防止: 同候補がすでに採用済み（is_adopted=true）なら 409
+      if (candidate.is_adopted) {
+        return NextResponse.json({ ok: false, error: "この候補はすでに finalize 済みです" }, { status: 409 });
+      }
+
       const history = normalizeHistory(messages ?? []);
       history.push({
         role: "user",
@@ -221,7 +227,8 @@ ${exampleText}
         return NextResponse.json({ ok: false, error: "仕様JSONの生成に失敗しました。もう一度お試しください。" }, { status: 500 });
       }
 
-      const { error: insErr } = await supabase.from("aix_feature_suggestions").insert({
+      // INSERT して挿入行の id を取得（UPDATE 失敗時の補償 DELETE に使用）
+      const { data: inserted, error: insErr } = await supabase.from("aix_feature_suggestions").insert({
         suggestion_type: spec.suggestion_type,
         action_type: candidate.action_type,
         suggested_title: spec.suggested_title.slice(0, 60),
@@ -230,7 +237,7 @@ ${exampleText}
         reason: spec.reason || candidate.reason || null,
         evidence_count: Math.max(1, candidate.evidence_count ?? 1),
         status: "approved", // 打ち合わせ済みの確定状態（実装待ち）
-      });
+      }).select("id").single();
       if (insErr) {
         return NextResponse.json({ ok: false, error: insErr.message }, { status: 500 });
       }
@@ -241,7 +248,10 @@ ${exampleText}
         .update({ is_adopted: true })
         .eq("id", candidate.id);
       if (updErr) {
+        // UPDATE 失敗: INSERT した行を DELETE して補償処理（再 finalize を可能にする）
         console.error("[improvement-meeting] candidate update error:", updErr.message);
+        await supabase.from("aix_feature_suggestions").delete().eq("id", inserted.id);
+        return NextResponse.json({ ok: false, error: "候補の採用マーク失敗: " + updErr.message }, { status: 500 });
       }
 
       return NextResponse.json({ ok: true, spec });

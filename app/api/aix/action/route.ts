@@ -2290,7 +2290,8 @@ ${mgmtInfo}${recentHistory}`,
         const [pcrDiffNote, pcrStarNote, pcrDbRules] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.property_check_result, currentAction, conversationId, latestCustomerMsg),
           getStarredExamplesForAction(AIX_ACTION_TO_STATES.property_check_result, latestCustomerMsg),
-          fetchPromptRules("property_check_result", {}).catch(() => ""),
+          // availability パスにも check_pattern を渡す（空conditionsだと check_pattern 指定ルールが全除外されるため）
+        fetchPromptRules("property_check_result", { check_pattern: "availability" }).catch(() => ""),
         ]);
 
         const pcrSystem = `${GENERATION_SYSTEM}
