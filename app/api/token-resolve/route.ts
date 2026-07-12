@@ -135,6 +135,10 @@ type ResolvedToken = {
   source: "db" | "web_search" | "ai";
 };
 
+// ── 解決不能トークンのネガティブキャッシュ有効期間（7日）──────────────────
+// station_map に source="unknown"・confidence=0 で保存し、期間内はAI再呼び出しをスキップ
+const NEGATIVE_CACHE_MS = 7 * 24 * 60 * 60 * 1000;
+
 // ── ① DeepSeek-V3 で判定（安い・速い）─────────────────────────────────
 // line_stations の登録駅一覧から「検索」させる方式（路線名の自由生成は禁止）。
 // 解決できたら ResolvedToken、該当なし・失敗時は null（Claudeにフォールバック）
@@ -274,7 +278,7 @@ export async function POST(req: NextRequest) {
   // ── DBキャッシュを先に確認 ─────────────────────────────────────────
   const [{ data: cachedRegions }, { data: cachedStations }] = await Promise.all([
     db.from("region_map").select("token, ward").in("token", tokens),
-    db.from("station_map").select("token, ward, realpro_lines, itandi_lines, reins_line").in("token", tokens),
+    db.from("station_map").select("token, ward, realpro_lines, itandi_lines, reins_line, source, created_at").in("token", tokens),
   ]);
 
   const resolvedTokens = new Set<string>();
@@ -284,6 +288,17 @@ export async function POST(req: NextRequest) {
     resolvedTokens.add(row.token);
   }
   for (const row of cachedStations ?? []) {
+    // ── ネガティブキャッシュ（解決不能トークン）──────────────────────
+    if (row.source === "unknown") {
+      const age = Date.now() - new Date(row.created_at as string).getTime();
+      if (age < NEGATIVE_CACHE_MS) {
+        // 7日以内 → AI再呼び出しをスキップして unknown を返す
+        result[row.token] = { type: "unknown", ward: null, realpro_lines: [], itandi_lines: [], reins_line: null, source: "db" };
+        resolvedTokens.add(row.token);
+      }
+      // 7日以上前 → resolvedTokens に入れず再試行させる（自動リセット）
+      continue;
+    }
     result[row.token] = {
       type: "station",
       ward: row.ward,
@@ -307,8 +322,13 @@ export async function POST(req: NextRequest) {
     const { data: simStations } = await db.rpc("find_similar_station", {
       query_text: token, threshold: 0.35,
     });
-    if (simStations && simStations.length > 0) {
-      const best = simStations[0] as { token: string; ward: string | null; realpro_lines: string[]; itandi_lines: string[]; reins_line: string | null; similarity_score: number };
+    // ネガティブキャッシュ行（ward/路線が全て空）は fuzzy マッチ対象から除外
+    // （find_similar_station は source を返さないためフィールドで判定）
+    type SimStation = { token: string; ward: string | null; realpro_lines: string[]; itandi_lines: string[]; reins_line: string | null; similarity_score: number };
+    const best = ((simStations ?? []) as SimStation[]).find(
+      (r) => r.ward || (r.realpro_lines?.length ?? 0) > 0 || (r.itandi_lines?.length ?? 0) > 0 || r.reins_line,
+    );
+    if (best) {
       result[token] = {
         type: "station", ward: best.ward,
         realpro_lines: best.realpro_lines ?? [],
@@ -387,6 +407,7 @@ export async function POST(req: NextRequest) {
 
   for (const token of trulyUnknown) {
     let resolved: ResolvedToken = { type: "unknown", ward: null, realpro_lines: [], itandi_lines: [], reins_line: null, source: "web_search" };
+    let webSearchAttempted = false; // レート制限でClaude未実行の場合はネガティブキャッシュしない
 
     // ── ① DeepSeek で判定（line_stationsから検索・成功したらClaudeスキップ・dailyCountも消費しない）──
     const deepseekResult = await callDeepSeek(token, lineStations);
@@ -395,6 +416,7 @@ export async function POST(req: NextRequest) {
     } else try {
       // ── ② Claude + web_search で調査（レート制限内の場合のみ）──
       if (!webSearchAllowed || dailyCount >= DAILY_LIMIT) throw new Error("rate_limit");
+      webSearchAttempted = true;
       const searchRes = await anthropic.messages.create({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 1024,
@@ -462,6 +484,22 @@ export async function POST(req: NextRequest) {
           reins_line: resolved.reins_line,
           confidence: 80,
           source: resolved.source,
+        },
+        { onConflict: "token" },
+      );
+    } else if (resolved.type === "unknown" && webSearchAttempted) {
+      // ── ネガティブキャッシュ: 全段階（DeepSeek＋Claude web_search）で解決不能 ──
+      // 7日間はAI再呼び出しをスキップ（created_at を更新して期限をリセット）
+      await db.from("station_map").upsert(
+        {
+          token,
+          ward: null,
+          realpro_lines: [],
+          itandi_lines: [],
+          reins_line: null,
+          source: "unknown",
+          confidence: 0,
+          created_at: new Date().toISOString(),
         },
         { onConflict: "token" },
       );

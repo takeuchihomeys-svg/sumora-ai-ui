@@ -98,7 +98,7 @@ export async function PATCH(req: NextRequest) {
   if ("last_property_sent_at" in fields && !("status" in fields)) {
     const { data: current } = await supabase
       .from("property_customers")
-      .select("id, status, property_send_count, line_user_id")
+      .select("id, status, property_send_count")
       .eq("id", id)
       .maybeSingle();
 
@@ -111,17 +111,15 @@ export async function PATCH(req: NextRequest) {
       const newCount = ((current.property_send_count as number) ?? 0) + 1;
 
       // 紐付き会話の最終送信者を確認（返信があればカウントリセット）
-      let lastSender: string | null = null;
-      if (current.line_user_id) {
-        const { data: conv } = await supabase
-          .from("conversations")
-          .select("last_sender")
-          .eq("line_user_id", current.line_user_id as string)
-          .order("updated_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        lastSender = conv?.last_sender ?? null;
-      }
+      // GETと同じく property_customer_id で直接紐付け（line_user_id が null でも判定できる）
+      const { data: conv } = await supabase
+        .from("conversations")
+        .select("last_sender")
+        .eq("property_customer_id", id)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const lastSender: string | null = conv?.last_sender ?? null;
 
       const hasCustomerReply = lastSender === "customer";
       if (hasCustomerReply) {

@@ -756,32 +756,43 @@ export default function CustomersPage() {
     }
   };
 
-  // 🏠 物件比較: 画像アップロード（base64変換・最大5件）
-  const handlePropImageUpload = (customerId: string, files: FileList) => {
+  // 🏠 物件比較: 画像をcanvasでリサイズ（長辺1200px超は縮小・JPEG品質0.85）
+  const resizeImage = (file: File, maxSize = 1200): Promise<{ base64: string; mediaType: string }> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const { width, height } = img;
+        const scale = Math.min(1, maxSize / Math.max(width, height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(width * scale);
+        canvas.height = Math.round(height * scale);
+        canvas.getContext("2d")?.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const base64 = canvas.toDataURL("image/jpeg", 0.85).split(",")[1] ?? "";
+        resolve({ base64, mediaType: "image/jpeg" });
+      };
+      img.src = url;
+    });
+  };
+
+  // 🏠 物件比較: 画像アップロード（リサイズ→base64変換・最大5件）
+  const handlePropImageUpload = async (customerId: string, files: FileList) => {
     const current = propCompareImages[customerId] ?? [];
     const remain = 5 - current.length;
     if (remain <= 0) return;
-    Array.from(files).slice(0, remain).forEach((file, i) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = reader.result as string;
-        const base64 = dataUrl.split(",")[1] ?? "";
-        setPropCompareImages((prev) => {
-          const list = prev[customerId] ?? [];
-          if (list.length >= 5) return prev;
-          return {
-            ...prev,
-            [customerId]: [...list, {
-              base64,
-              mediaType: file.type || "image/jpeg",
-              label: `物件${list.length + 1}`,
-              preview: dataUrl,
-            }],
-          };
-        });
-      };
-      reader.readAsDataURL(file);
-    });
+    const toAdd = Array.from(files).slice(0, remain);
+    const converted = await Promise.all(
+      toAdd.map(async (file, i) => {
+        const { base64, mediaType } = await resizeImage(file);
+        const preview = `data:${mediaType};base64,${base64}`;
+        return { base64, mediaType, label: `物件${current.length + i + 1}`, preview };
+      })
+    );
+    setPropCompareImages((prev) => ({
+      ...prev,
+      [customerId]: [...(prev[customerId] ?? []), ...converted].slice(0, 5),
+    }));
   };
 
   // 🏠 物件比較: 指定indexの画像を削除
