@@ -4,6 +4,121 @@ import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 60;
 
+// ── リアプロ路線名 → itandi 路線名（popup-maps.js から移設）──────────────
+const ITANDI_LINE_MAP: Record<string, string | string[]> = {
+  "大阪市高速軌道御堂筋線": "高速電気軌道第1号線(大阪メトロ御堂筋線)",
+  "大阪市高速軌道谷町線": "高速電気軌道第2号線(大阪メトロ谷町線)",
+  "大阪市高速軌道四つ橋線": "高速電気軌道第3号線(大阪メトロ四つ橋線)",
+  "大阪市高速軌道中央線": "高速電気軌道第4号線(大阪メトロ中央線)",
+  "大阪市高速軌道千日前線": "高速電気軌道第5号線(大阪メトロ千日前線)",
+  "大阪市高速軌道堺筋線": "高速電気軌道第6号線(大阪メトロ堺筋線)",
+  "大阪市高速軌道長堀鶴見緑地線": "高速電気軌道第7号線(大阪メトロ長堀鶴見緑地線)",
+  "大阪市高速軌道今里筋線": "高速電気軌道第8号線(大阪メトロ今里筋線)",
+  "大阪市高速軌道南港ポートタウン線": "大阪市高速電気軌道南港ポートタウン線(大阪メトロ南港ポートタウン線)",
+  "北大阪急行南北線": "北大阪急行電鉄",
+  "阪急電鉄神戸線": "阪急神戸本線",
+  "阪急電鉄宝塚線": "阪急宝塚本線",
+  "阪急電鉄京都線": "阪急京都本線",
+  "阪急電鉄千里線": "阪急千里線",
+  "阪急電鉄箕面線": "阪急箕面線",
+  "阪神電鉄本線": "阪神本線",
+  "阪神電鉄阪神なんば線": "阪神なんば線",
+  "南海電鉄南海本線": "南海本線",
+  "南海電鉄南本線": "南海本線",
+  "南海電鉄高野線": "南海高野線",
+  "南海電鉄泉北線": "南海泉北線(泉北線)",
+  "南海電鉄空港線": "南海空港線",
+  "南海電鉄汐見橋線": "南海汐見橋線",
+  "南海電鉄多奈川線": "南海多奈川線",
+  "南海電鉄高師浜線": "南海高師浜線",
+  "京阪電気鉄道京阪線": "京阪本線",
+  "京阪電気鉄道中之島線": "京阪中之島線",
+  "京阪電気鉄道交野線": "京阪交野線",
+  "大阪環状線": "大阪環状線",
+  "JR東西線": "JR東西線",
+  "片町線": "JR片町線(学研都市線)",
+  "桜島線": "JR桜島線(JRゆめ咲線)",
+  "阪和線": "阪和線(天王寺～和歌山)",
+  "福知山線": "JR福知山線(新大阪～篠山口)(JR宝塚線)",
+  "東海道本線": [
+    "JR東海道本線(京都～大阪)(JR京都線)",
+    "JR東海道本線(大阪～神戸)(JR神戸線(大阪～神戸))",
+  ],
+  "おおさか東線": "おおさか東線",
+  "関西本線": "JR関西本線(加茂～ＪＲ難波)(大和路線)",
+  "近鉄難波・奈良線": [
+    "近鉄難波線",
+    "近鉄奈良線",
+  ],
+  "近鉄南大阪線": "近鉄南大阪線",
+  "近鉄大阪線": "近鉄大阪線",
+  "近鉄長野線": "近鉄長野線",
+  "近鉄道明寺線": "近鉄道明寺線",
+  "近鉄けいはんな線": "近鉄けいはんな線",
+  "阪堺電気軌道阪堺線": "阪堺電軌阪堺線",
+  "阪堺電気軌道上町線": "阪堺電軌上町線",
+  "大阪モノレール本線": "大阪モノレール線",
+  "大阪モノレール彩都線": "国際文化公園都市線(大阪モノレール彩都線)",
+  "能勢電鉄": "能勢電鉄妙見線",
+  "水間鉄道水間線": "水間鉄道水間線",
+  "関西空港線": "JR関西空港線",
+};
+
+// ── リアプロ路線名 → レインズ 路線名（popup-maps.js から移設）─────────────
+const REINS_LINE_MAP: Record<string, string> = {
+  "大阪市高速軌道御堂筋線": "大阪メトロ御堂筋線",
+  "大阪市高速軌道谷町線": "大阪メトロ谷町線",
+  "大阪市高速軌道中央線": "大阪メトロ中央線",
+  "大阪市高速軌道堺筋線": "大阪メトロ堺筋線",
+  "大阪市高速軌道四つ橋線": "大阪メトロ四つ橋線",
+  "大阪市高速軌道千日前線": "大阪メトロ千日前線",
+  "大阪市高速軌道長堀鶴見緑地線": "大阪メトロ長堀鶴見線",
+  "大阪市高速軌道今里筋線": "大阪メトロ今里筋線",
+  "大阪市高速軌道南港ポートタウン線": "南港ポートタウン線",
+  "阪急電鉄神戸線": "阪急神戸線",
+  "阪急電鉄宝塚線": "阪急宝塚線",
+  "阪急電鉄京都線": "阪急京都線",
+  "阪急電鉄千里線": "阪急千里線",
+  "阪急電鉄箕面線": "阪急箕面線",
+  "阪神電鉄本線": "阪神本線",
+  "阪神電鉄阪神なんば線": "阪神なんば線",
+  "南海電鉄南海本線": "南海本線",
+  "南海電鉄南本線": "南海本線",
+  "南海電鉄高野線": "南海高野線",
+  "南海電鉄空港線": "南海空港線",
+  "南海電鉄多奈川線": "南海多奈川線",
+  "南海電鉄汐見橋線": "南海汐見橋線",
+  "南海電鉄高師浜線": "南海高師浜線",
+  "京阪電気鉄道京阪線": "京阪本線",
+  "京阪電気鉄道中之島線": "京阪中之島線",
+  "京阪電気鉄道交野線": "京阪交野線",
+  "北大阪急行南北線": "北大阪急行",
+  "JR東西線": "東西線",
+  "大阪環状線": "大阪環状線",
+  "おおさか東線": "おおさか東線",
+  "片町線": "片町線",
+  "阪和線": "阪和線",
+  "福知山線": "福知山線",
+  "関西線": "関西線",
+  "関西本線": "関西線",
+  "関西空港線": "関西空港線",
+  "桜島線": "桜島線",
+  "大阪モノレール本線": "大阪モノレール本線",
+  "大阪モノレール彩都線": "大阪モノレール彩都線",
+  "近鉄難波・奈良線": "近鉄奈良線",
+  "近鉄南大阪線": "近鉄南大阪線",
+  "近鉄大阪線": "近鉄大阪線",
+  "近鉄けいはんな線": "近鉄けいはんな線",
+  "近鉄信貴線": "近鉄信貴線",
+  "近鉄道明寺線": "近鉄道明寺線",
+  "近鉄長野線": "近鉄長野線",
+  "能勢電鉄": "能勢電鉄",
+  "水間鉄道": "水間鉄道",
+  "泉北高速鉄道線": "泉北線",
+  "阪堺電気軌道上町線": "阪堺電気軌道上町線",
+  "阪堺電気軌道阪堺線": "阪堺電気軌道阪堺線",
+};
+
 function getDb() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -21,8 +136,80 @@ type ResolvedToken = {
 };
 
 // ── ① DeepSeek-V3 で判定（安い・速い）─────────────────────────────────
-// 解決できたら ResolvedToken、unknown・失敗時は null（Claudeにフォールバック）
-async function callDeepSeek(token: string): Promise<ResolvedToken | null> {
+// line_stations の登録駅一覧から「検索」させる方式（路線名の自由生成は禁止）。
+// 解決できたら ResolvedToken、該当なし・失敗時は null（Claudeにフォールバック）
+type LineStation = { station_name: string; line_name: string };
+
+async function callDeepSeek(token: string, lineStations: LineStation[]): Promise<ResolvedToken | null> {
+  // line_stations が空の場合のみ従来の自由生成方式にフォールバック
+  if (lineStations.length === 0) return callDeepSeekLegacy(token);
+
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  if (!apiKey) return null;
+
+  try {
+    const stationList = lineStations.map((s) => `${s.station_name}（${s.line_name}）`).join("\n");
+    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
+      method: "POST",
+      signal: AbortSignal.timeout(15_000),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        max_tokens: 64,
+        messages: [{
+          role: "user",
+          content: `以下は登録済みの大阪府の駅名一覧です。
+「${token}」が指す駅を一覧の中から1つだけ選んでください。
+一覧にない場合は「該当なし」と答えてください。
+絶対に一覧にない駅名を作らないでください。
+
+【登録済み駅名一覧】
+${stationList}
+
+回答形式：駅名のみ（例：梅田）または「該当なし」`,
+        }],
+        temperature: 0,
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { choices: Array<{ message: { content: string } }> };
+    const raw = (data.choices[0]?.message?.content ?? "").trim();
+    if (!raw || raw.includes("該当なし")) return null; // 該当なし → Claudeにフォールバック
+
+    // 「梅田（阪急電鉄神戸線）」のような回答でも駅名部分だけ取り出す
+    const stationName = raw.replace(/^["'「『]+|["'」』]+$/g, "").split(/[（(]/)[0].trim();
+    if (!stationName) return null;
+
+    // line_stations に実在する駅のみ採用（ハルシネーション防止）
+    const matched = lineStations.filter((s) => s.station_name === stationName);
+    if (matched.length === 0) return null; // 一覧にない駅名 → Claudeにフォールバック
+
+    // 同じ駅名が複数路線にある場合（例：梅田）は全路線を配列で返す
+    const lines = Array.from(new Set(matched.map((s) => s.line_name)));
+    const itandiLines = Array.from(new Set(lines.flatMap((l) => {
+      const mapped = ITANDI_LINE_MAP[l] ?? l;
+      return Array.isArray(mapped) ? mapped : [mapped];
+    })));
+    const reinsLine = REINS_LINE_MAP[lines[0]] ?? lines[0];
+
+    return {
+      type: "station",
+      ward: null, // line_stations に区情報はないため null
+      realpro_lines: lines,
+      itandi_lines: itandiLines,
+      reins_line: reinsLine,
+      source: "ai", // DeepSeek経由なので"ai"（路線名自体はDB由来）
+    };
+  } catch {
+    return null; // タイムアウト・エラー時はClaudeにフォールバック
+  }
+}
+
+// ── ①' 従来のDeepSeek自由生成方式（line_stationsが空の時だけ使用）─────────
+async function callDeepSeekLegacy(token: string): Promise<ResolvedToken | null> {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) return null;
 
@@ -186,6 +373,13 @@ export async function POST(req: NextRequest) {
     console.warn(`[token-resolve] 1日${DAILY_LIMIT}回制限に達した。DeepSeekのみで解決（Claude web_searchスキップ）。`);
   }
 
+  // ── DeepSeek検索用: line_stations を1回だけ取得（全トークンで使い回す）──
+  const { data: lineStationsData } = await db
+    .from("line_stations")
+    .select("station_name, line_name")
+    .order("line_name");
+  const lineStations: LineStation[] = (lineStationsData ?? []) as LineStation[];
+
   // ── Web検索部隊: Claude + web_search でトークンを解決 ──────────────
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -194,8 +388,8 @@ export async function POST(req: NextRequest) {
   for (const token of trulyUnknown) {
     let resolved: ResolvedToken = { type: "unknown", ward: null, realpro_lines: [], itandi_lines: [], reins_line: null, source: "web_search" };
 
-    // ── ① DeepSeek で判定（成功したらClaudeスキップ・dailyCountも消費しない）──
-    const deepseekResult = await callDeepSeek(token);
+    // ── ① DeepSeek で判定（line_stationsから検索・成功したらClaudeスキップ・dailyCountも消費しない）──
+    const deepseekResult = await callDeepSeek(token, lineStations);
     if (deepseekResult) {
       resolved = deepseekResult;
     } else try {
