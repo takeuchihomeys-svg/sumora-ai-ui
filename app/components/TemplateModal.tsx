@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { fetchCalendarSlots, type CalendarDayResult } from "../lib/calendarSlots";
 
 // iOS風スクロールホイールピッカー
 function WheelPicker({ items, selectedIdx, onSelect }: {
@@ -120,6 +121,146 @@ function VacatingDatePicker({ value, onChange }: {
             <button onClick={handleConfirm} className="flex-1 border-l border-[#e0e8f7] py-2 text-[12px] font-bold text-[#1565C0]">決定</button>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// "H:MM" / "HH:MM" → "HH:MM"（type="time" 用にゼロ埋め）
+function padCalTime(t: string): string {
+  const [h, m] = (t || "").split(":");
+  return `${(h ?? "0").padStart(2, "0")}:${(m ?? "00").padStart(2, "0")}`;
+}
+
+// CalendarDayResult.label（"本日 7/12(日)"）→ "7月12日（日）"
+function calDateLabel(label: string): string {
+  const m = label.match(/(\d{1,2})\/(\d{1,2})\(?(.)\)?/);
+  if (!m) return label;
+  return `${parseInt(m[1], 10)}月${parseInt(m[2], 10)}日（${m[3]}）`;
+}
+
+interface CalendarDatePickerProps {
+  templateText: string;           // 元テンプレートテキスト（[日程]を含む）
+  customerName: string;
+  onInsert: (resolvedText: string) => void;  // [日程]置換後のテキストを返す
+}
+
+// [日程]プレースホルダー付きテンプレート用カレンダーピッカー
+// VacatingDatePickerと同じパターンで実装
+function CalendarDatePicker({ templateText, customerName, onInsert }: CalendarDatePickerProps) {
+  const [days, setDays]         = useState<CalendarDayResult[]>([]);
+  const [loading, setLoading]   = useState(true);
+  const [enabled, setEnabled]   = useState<boolean[]>([]);
+  const [starts, setStarts]     = useState<string[]>([]);
+  const [ends, setEnds]         = useState<string[]>([]);
+  const [override, setOverride] = useState<boolean[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { days: d } = await fetchCalendarSlots();
+        if (cancelled) return;
+        setDays(d);
+        setEnabled(d.map(x => !x.fullyBooked));
+        setStarts(d.map(x => x.slots.length > 0 ? padCalTime(x.slots[0].split("〜")[0]) : "11:00"));
+        setEnds(d.map(x => x.slots.length > 0 ? padCalTime(x.slots[x.slots.length - 1].split("〜")[1] ?? "18:00") : "18:00"));
+        setOverride(d.map(() => false));
+      } catch {
+        if (!cancelled) setDays([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const activeIdx = days
+    .map((_, i) => i)
+    .filter(i => enabled[i] && (!days[i].fullyBooked || override[i]));
+
+  const handleInsert = () => {
+    const scheduleText = activeIdx
+      .map(i => `${calDateLabel(days[i].label)} ${padCalTime(starts[i] ?? "11:00")}〜${padCalTime(ends[i] ?? "18:00")}`)
+      .join("\n");
+    let resolved = templateText.replace("[日程]", scheduleText);
+    if (customerName) resolved = resolved.replace(/アカウント名/g, customerName);
+    onInsert(resolved);
+  };
+
+  return (
+    <div className="mb-3 rounded-xl border border-[#e0e8ff] bg-[#f0f5ff] px-3 py-2.5">
+      <p className="mb-2 text-[11px] font-bold text-[#5c6bc0]">内覧可能日時（カレンダーから自動取得）</p>
+      {loading ? (
+        <div className="flex items-center gap-2 rounded-xl bg-white/70 px-3 py-2.5 text-[12px] text-[#8696a0]">
+          <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-[#1565C0] border-t-transparent" />
+          カレンダー読み込み中...
+        </div>
+      ) : days.length === 0 ? (
+        <div className="rounded-xl bg-white/70 px-3 py-2 text-[12px] text-[#8696a0]">カレンダー情報を取得できませんでした</div>
+      ) : (
+        <>
+          <div className="flex flex-col gap-2">
+            {days.map((d, i) => {
+              const active = enabled[i] && (!d.fullyBooked || override[i]);
+              return (
+                <div key={i} className={`rounded-xl px-3 py-2 transition-all ${
+                  d.fullyBooked
+                    ? (override[i] ? "border border-[#b3d9f7] bg-white" : "bg-[#fdecea]")
+                    : (enabled[i] ? "border border-[#b3d9f7] bg-white" : "bg-[#f0f2f5]")
+                }`}>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        if (d.fullyBooked) {
+                          setOverride(prev => { const n = [...prev]; n[i] = !n[i]; return n; });
+                          setEnabled(prev => { const n = [...prev]; n[i] = true; return n; });
+                        } else {
+                          setEnabled(prev => { const n = [...prev]; n[i] = !n[i]; return n; });
+                        }
+                      }}
+                      className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[10px] font-bold transition-all ${
+                        d.fullyBooked
+                          ? (override[i] ? "bg-[#1565C0] text-white" : "bg-red-200 text-red-500")
+                          : (enabled[i] ? "bg-[#1565C0] text-white" : "bg-[#d1d7db] text-[#8696a0]")
+                      }`}
+                    >{d.fullyBooked && !override[i] ? "×" : "○"}</button>
+                    <span className={`flex-shrink-0 text-[12px] font-bold ${
+                      active ? "text-[#1565C0]" : (d.fullyBooked && !override[i]) ? "text-red-400" : "text-[#54656f]"
+                    }`}>{d.label}</span>
+                    {d.fullyBooked && !override[i] && (
+                      <span className="text-[10px] text-red-400">予定あり（タップで手動追加）</span>
+                    )}
+                  </div>
+                  {active && (
+                    <div className="mt-2 flex items-center gap-1.5 pl-7">
+                      <input
+                        type="time"
+                        value={starts[i] ?? "11:00"}
+                        onChange={(e) => setStarts(prev => { const n = [...prev]; n[i] = e.target.value; return n; })}
+                        className="rounded-lg border border-[#b3d9f7] bg-white px-2 py-1 text-[12px] font-bold text-[#1565C0] outline-none"
+                      />
+                      <span className="text-[12px] font-bold text-[#8696a0]">〜</span>
+                      <input
+                        type="time"
+                        value={ends[i] ?? "18:00"}
+                        onChange={(e) => setEnds(prev => { const n = [...prev]; n[i] = e.target.value; return n; })}
+                        className="rounded-lg border border-[#b3d9f7] bg-white px-2 py-1 text-[12px] font-bold text-[#1565C0] outline-none"
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <button
+            onClick={handleInsert}
+            disabled={activeIdx.length === 0}
+            className="mt-2.5 w-full rounded-full py-2 text-[12px] font-bold text-white disabled:opacity-40"
+            style={{ background: "linear-gradient(135deg, #1565C0, #4BA8E8)" }}
+          >この日程を挿入する</button>
+        </>
       )}
     </div>
   );
@@ -2132,6 +2273,8 @@ export default function TemplateModal({
                     // H4: このシーン（会話ステータス）での送信実績バッジ（AIおすすめバッジと重複時はそちらを優先）
                     const scenePicks = scenePickCount(tmpl);
                     const isVacating = tmpl.label.includes("退去予定") || /[◯○〇]月[◯○〇]/.test(tmpl.text) || /退去予定|退去後|以降ご内覧可能/.test(tmpl.text);
+                    // [日程]プレースホルダー付きテンプレはカレンダー連携ピッカーで完結
+                    const isScheduled = tmpl.text.includes("[日程]");
                     return (
                       <div
                         key={tmpl.id}
@@ -2281,6 +2424,21 @@ export default function TemplateModal({
                           <VacatingDatePicker
                             value={vacatingDates[tmpl.id] ?? null}
                             onChange={(date) => setVacatingDates(prev => ({ ...prev, [tmpl.id]: date }))}
+                          />
+                        )}
+
+                        {/* [日程]付きテンプレ: カレンダー連携ピッカー */}
+                        {isScheduled && editingId !== tmpl.id && onSelect && (
+                          <CalendarDatePicker
+                            templateText={_rawText}
+                            customerName={customerName ?? ""}
+                            onInsert={(resolved) => {
+                              const secondMsg = tmpl.second_msg_type && tmpl.second_msg_delay
+                                ? { type: tmpl.second_msg_type, delay: tmpl.second_msg_delay }
+                                : null;
+                              onSelect(resolved, [], tmpl.label, tmpl.category, secondMsg, tmpl.id, false, undefined);
+                              onClose();
+                            }}
                           />
                         )}
 
@@ -2803,8 +2961,8 @@ export default function TemplateModal({
                           </div>
                         )}
 
-                        {/* ボタン行 */}
-                        {editingId !== tmpl.id && <div className="flex items-center gap-2 flex-wrap">
+                        {/* ボタン行（[日程]テンプレはCalendarDatePickerで完結するため非表示） */}
+                        {editingId !== tmpl.id && !isScheduled && <div className="flex items-center gap-2 flex-wrap">
                           {onSelect && (
                             <button
                               onClick={() => {
