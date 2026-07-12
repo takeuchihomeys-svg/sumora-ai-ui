@@ -958,6 +958,12 @@ export default function TemplateModal({
 
   // レビュー承認後の採用処理（customTextでブラッシュアップ後の本文を採用できる）
   const adoptCandidate = async (candidate: AiTemplateCandidate, customText?: string) => {
+    // aix_feature_suggestions 由来の擬似候補: templatesにはINSERTせず提案ステータスを採用済みにする
+    if (candidate.source === "suggestion") {
+      setReviewCandidate(null);
+      await updateSuggestionStatus(candidate.id, "adopted");
+      return;
+    }
     setAdoptingId(candidate.id);
     setReviewCandidate(null);
     try {
@@ -1042,6 +1048,11 @@ export default function TemplateModal({
     "物件確認した【AIX】": "物件確認した（募集状況）",
     "物件ピックアップした【AIX】": "物件ピックアップした",
   };
+
+  // 改善案タブ用: source="improvement" の候補（テンプレ変更ではなくAIX/ピッカーの機能改善提案として扱う）
+  const improvementCandidates = candidates.filter(
+    c => !c.is_adopted && !c.is_dismissed && c.source === "improvement"
+  );
 
   const categories = Array.from(new Set(templates.map((t) => t.category)));
   const normalCategories = categories.filter(c => !c.includes("AIX"));
@@ -1618,7 +1629,7 @@ export default function TemplateModal({
                   }
                 >
                   ✨候補{(() => {
-                    const count = candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source !== "aix_edit").length;
+                    const count = candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source !== "aix_edit" && c.source !== "improvement").length;
                     return count > 0 ? ` (${count})` : "";
                   })()}
                 </button>
@@ -1647,7 +1658,10 @@ export default function TemplateModal({
                       : { backgroundColor: "#e8edf2", color: "#54656f" }
                   }
                 >
-                  💡改善案{suggestions.length > 0 ? ` (${suggestions.length})` : ""}
+                  💡改善案{(() => {
+                    const count = suggestions.length + improvementCandidates.length;
+                    return count > 0 ? ` (${count})` : "";
+                  })()}
                 </button>
                 {/* ❓AI質問 */}
                 <button
@@ -1753,14 +1767,14 @@ export default function TemplateModal({
               {candidateLoading && (
                 <p className="text-center text-gray-400 py-8">読み込み中...</p>
               )}
-              {!candidateLoading && candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source !== "aix_edit").length === 0 && (
+              {!candidateLoading && candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source !== "aix_edit" && c.source !== "improvement").length === 0 && (
                 <div className="text-center text-gray-400 py-12">
                   <p className="text-2xl mb-2">🤖</p>
                   <p className="text-sm">AIXボタンで送信した文が候補として表示されます</p>
                 </div>
               )}
               {!candidateLoading && (() => {
-                const pending = candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source !== "aix_edit");
+                const pending = candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source !== "aix_edit" && c.source !== "improvement");
                 // カテゴリ順でグルーピング
                 const byCategory: Record<string, AiTemplateCandidate[]> = {};
                 for (const c of pending) {
@@ -1959,7 +1973,7 @@ export default function TemplateModal({
               {suggestionLoading && (
                 <p className="text-center text-gray-400 py-8">読み込み中...</p>
               )}
-              {!suggestionLoading && suggestions.length === 0 && (
+              {!suggestionLoading && suggestions.length === 0 && improvementCandidates.length === 0 && (
                 <div className="text-center text-gray-400 py-12">
                   <p className="text-2xl mb-2">💡</p>
                   <p className="text-sm font-medium text-gray-500">週次AI分析で見つかったAIX/ピッカーの改善提案が</p>
@@ -1975,8 +1989,16 @@ export default function TemplateModal({
                     <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-500 font-bold shrink-0">
                       {suggestion.suggestion_type === "new_aix" ? "新AIX"
                         : suggestion.suggestion_type === "new_sub_mode" ? "新サブモード"
+                        : suggestion.suggestion_type === "new_button" ? "新ボタン"
                         : "新ピッカー"}
                     </span>
+                    {/* AIXボタン名バッジ（action_typeがある場合） */}
+                    {suggestion.action_type && (
+                      <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full font-bold shrink-0"
+                        style={{ backgroundColor: getCategoryColor(suggestion.action_type) + "20", color: getCategoryColor(suggestion.action_type) }}>
+                        {ACTION_LABELS[suggestion.action_type] ?? suggestion.action_type}
+                      </span>
+                    )}
                     <p className="text-sm text-gray-800 font-semibold">{suggestion.suggested_title}</p>
                     {(suggestion.evidence_count ?? 1) >= 2 && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium shrink-0">
@@ -1995,12 +2017,26 @@ export default function TemplateModal({
                   <div className="flex gap-2">
                     <button
                       onClick={() => {
-                        if (!window.confirm("この改善案を採用しますか？\n（開発タスクとして記録されます）")) return;
-                        updateSuggestionStatus(suggestion.id, "adopted");
+                        // aix_feature_suggestions を AiTemplateCandidate 形式に変換してレビューパネルへ
+                        const pseudoCandidate: AiTemplateCandidate = {
+                          id: suggestion.id,
+                          action_type: suggestion.action_type ?? "",
+                          category: suggestion.action_type ?? "",
+                          suggested_title: suggestion.suggested_title,
+                          template_text: suggestion.description ?? suggestion.suggested_title,  // 改善案の説明をテンプレートとして使う
+                          original_text: null,
+                          reason: suggestion.reason,
+                          evidence_count: suggestion.evidence_count,
+                          created_at: suggestion.created_at,
+                          is_adopted: false,
+                          is_dismissed: false,
+                          source: "suggestion",
+                        };
+                        openReviewPanel(pseudoCandidate);
                       }}
                       className="flex-1 py-1.5 rounded-lg bg-violet-500 text-white text-sm font-semibold hover:bg-violet-600 transition"
                     >
-                      ✅ 採用
+                      ✅ 確認して採用
                     </button>
                     <button
                       onClick={() => setDismissingId(dismissingId === suggestion.id ? null : suggestion.id)}
@@ -2025,6 +2061,90 @@ export default function TemplateModal({
                         ))}
                         <button
                           onClick={() => updateSuggestionStatus(suggestion.id, "dismissed")}
+                          className="px-2 py-1 rounded-full bg-white border border-gray-100 text-gray-400 text-[11px] hover:bg-gray-100 transition"
+                        >
+                          理由なしで却下
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {/* 追加パターン検出（ai_template_candidates source="improvement"）: スタッフがAI文に情報を追加したパターン */}
+              {!suggestionLoading && improvementCandidates.map(candidate => (
+                <div
+                  key={candidate.id}
+                  className="bg-white rounded-xl border border-violet-200 p-3 shadow-sm"
+                >
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    {/* AIXボタン名バッジ */}
+                    {candidate.category && (
+                      <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full font-bold shrink-0"
+                        style={{ backgroundColor: getCategoryColor(candidate.action_type) + "20", color: getCategoryColor(candidate.action_type) }}>
+                        {CATEGORY_DISPLAY_NAMES[candidate.category] ?? candidate.category.replace("【AIX】", "").trim()}
+                      </span>
+                    )}
+                    <p className="text-xs text-gray-500 font-medium">
+                      {candidate.suggested_title || (candidate.reason ?? "").slice(0, 50)}
+                    </p>
+                    {(candidate.evidence_count ?? 1) >= 2 && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium shrink-0">
+                        📊 {candidate.evidence_count}回同じ編集パターン
+                      </span>
+                    )}
+                  </div>
+                  {candidate.reason && (
+                    <p className="text-[11px] text-gray-400 mb-2">{candidate.reason}</p>
+                  )}
+                  {/* 差分ビュー: AI原文 → スタッフが追加した文 */}
+                  {candidate.original_text && (
+                    <div className="mb-2 rounded-lg overflow-hidden border border-gray-100 text-xs">
+                      <div className="bg-gray-50 px-2 py-1 text-[10px] font-bold text-gray-400 tracking-wide">AIが生成した原文</div>
+                      <p className="px-2 py-2 text-gray-400 whitespace-pre-wrap leading-relaxed line-through decoration-gray-300">
+                        {candidate.original_text}
+                      </p>
+                      <div className="bg-orange-50 px-2 py-1 text-[10px] font-bold text-orange-400 tracking-wide">スタッフが編集した文（送信済み）</div>
+                      <p className="px-2 py-2 text-gray-800 whitespace-pre-wrap leading-relaxed">
+                        {candidate.template_text}
+                      </p>
+                    </div>
+                  )}
+                  {!candidate.original_text && (
+                    <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed mb-3">
+                      {candidate.template_text}
+                    </p>
+                  )}
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      disabled={adoptingId === candidate.id}
+                      onClick={() => openReviewPanel(candidate)}
+                      className="flex-1 py-1.5 rounded-lg bg-violet-500 text-white text-sm font-semibold hover:bg-violet-600 disabled:opacity-50 transition"
+                    >
+                      {adoptingId === candidate.id ? "採用中..." : "✅ 確認して採用"}
+                    </button>
+                    <button
+                      onClick={() => setDismissingId(dismissingId === candidate.id ? null : candidate.id)}
+                      className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-500 text-sm hover:bg-gray-200 transition"
+                    >
+                      却下
+                    </button>
+                  </div>
+                  {/* P5: 却下理由チップ */}
+                  {dismissingId === candidate.id && (
+                    <div className="mt-2 rounded-lg bg-gray-50 p-2">
+                      <p className="text-[11px] text-gray-400 mb-1.5">却下理由を選ぶとAIが学習します</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {DISMISS_REASONS.map(r => (
+                          <button
+                            key={r}
+                            onClick={() => dismissCandidate(candidate.id, r)}
+                            className="px-2 py-1 rounded-full bg-white border border-gray-200 text-gray-600 text-[11px] hover:bg-red-50 hover:border-red-200 hover:text-red-500 transition"
+                          >
+                            {r}
+                          </button>
+                        ))}
+                        <button
+                          onClick={() => dismissCandidate(candidate.id)}
                           className="px-2 py-1 rounded-full bg-white border border-gray-100 text-gray-400 text-[11px] hover:bg-gray-100 transition"
                         >
                           理由なしで却下

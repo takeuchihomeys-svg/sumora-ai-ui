@@ -416,6 +416,13 @@ const APP_FORMAT_SECTIONS = {
 ・勤務先電話番号`,
 };
 
+// 物件確認した「物件あった」: 保証会社説明ボタン用の既知保証会社リスト（会話履歴からの自動検出に使用）
+const GUARANTOR_COMPANIES = [
+  "ジェイリース", "全保連", "日本セーフティー", "フォーシーズンズ",
+  "ルームバンク", "Casa", "CASA", "GTN", "オリコフォレント",
+  "エポスカード", "アプラス",
+];
+
 export default function AixModal({
   actionType,
   conversationId,
@@ -570,6 +577,9 @@ export default function AixModal({
   const [checkRecommendProp, setCheckRecommendProp] = useState<number | null>(null);
   const [checkIncludeEstimateText, setCheckIncludeEstimateText] = useState(false);
   const [checkApplicationInvite, setCheckApplicationInvite] = useState(false);
+  // 物件あった専用: 保証会社説明ボタンのON/OFF + 保証会社名（会話履歴から自動検出・手動編集可）
+  const [checkGuarantor, setCheckGuarantor] = useState(false);
+  const [checkGuarantorName, setCheckGuarantorName] = useState("");
   const [estimateTextReady, setEstimateTextReady] = useState("");
   // 物件確認した「空室あり」専用カレンダー
   const [checkCalendarInfo, setCheckCalendarInfo] = useState<string>("");
@@ -1635,7 +1645,12 @@ export default function AixModal({
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) throw new Error(data.error || `生成に失敗しました（HTTP ${res.status}）`);
 
-      const generatedMsg = data.message_text || "";
+      let generatedMsg = data.message_text || "";
+      // 保証会社説明: 物件確認した「物件あった」でONのとき本文末尾に説明文を追加
+      // （available系は固定テンプレ組み立てのためプロンプト注入ではなく生成後テキストに追記する）
+      if (actionType === "property_check_result" && checkPattern === "available" && checkGuarantor && checkGuarantorName.trim() && generatedMsg) {
+        generatedMsg += `\n\n${checkGuarantorName.trim()}という保証会社使用しており、クレジットカードの滞納歴で審査する中級程の保証会社となります！！`;
+      }
       setAiDraft(generatedMsg);
       setPreview(useEmoji ? generatedMsg : stripEmoji(generatedMsg));
       if (data.ai_components) setAiActionComponents(data.ai_components as Record<string, string>);
@@ -3857,6 +3872,38 @@ export default function AixModal({
                       <input ref={checkPropEstRefs[pi]} type="file" accept="image/*" onChange={(e) => onSelectPropEstimate(pi, e)} className="hidden" />
                     </div>
                   ))}
+                  {/* 保証会社について説明（物件カード共通・ONで会話履歴から保証会社名を自動検出） */}
+                  <div className="mt-2">
+                    <button
+                      onClick={() => {
+                        const toggled = !checkGuarantor;
+                        setCheckGuarantor(toggled);
+                        if (toggled) {
+                          // 直近メッセージを新しい順にスキャンして最初に見つかった保証会社名をセット
+                          for (const msg of [...(recentMessages ?? [])].reverse()) {
+                            const found = GUARANTOR_COMPANIES.find(c => msg.text.includes(c));
+                            if (found) { setCheckGuarantorName(found); break; }
+                          }
+                        }
+                      }}
+                      className={`text-sm px-3 py-1.5 rounded-full border ${
+                        checkGuarantor
+                          ? "bg-blue-600 text-white border-blue-600"
+                          : "bg-white text-gray-600 border-gray-300"
+                      }`}
+                    >
+                      🏢 保証会社について説明
+                    </button>
+                    {checkGuarantor && (
+                      <input
+                        type="text"
+                        value={checkGuarantorName}
+                        onChange={e => setCheckGuarantorName(e.target.value)}
+                        placeholder="保証会社名（例：ジェイリース）"
+                        className="mt-2 w-full rounded-xl border border-gray-300 px-3 py-2 text-sm"
+                      />
+                    )}
+                  </div>
                 </div>
               ) : checkPattern === "alternative" ? (
                 // 別の部屋あった: 1件画像UI

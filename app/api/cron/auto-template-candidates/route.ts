@@ -66,6 +66,10 @@ const MAX_INSERT_PER_RUN = 30; // 1回の実行で追加する候補の上限
 // P3: 同一アクション・類似後続パターンが2回以上観測された場合のみ候補化（単発ノイズ排除）
 const MIN_SIMILAR_COUNT = 2;
 const SIMILARITY_THRESHOLD = 0.6;
+// 「追加パターン」検出（source="improvement"）: AI生成文に含まれない追加ブロックの判定閾値
+const ADDED_SIM_THRESHOLD = 0.3;   // AI文のどのブロックともbigram類似度0.3以下 = 純粋な追加分
+const MIN_ADDED_TEXT_LEN = 20;     // 20文字以上の追加テキストのみ対象
+const MAX_IMPROVEMENT_PER_RUN = 5; // 1回の実行で起票する improvement 候補の上限（Haikuコスト制御）
 
 // Haiku 変換用システムプロンプト（判定ではなく「汎用テンプレへの変換」を依頼する）
 const CONVERT_SYSTEM_PROMPT = `あなたは不動産賃貸仲介LINEテンプレートの編集者です。
@@ -93,13 +97,13 @@ skip=true の場合:
 {"converted": null, "title": null, "skip": true, "skip_reason": "理由"}`;
 
 type Msg = { id: string; conversation_id: string; text: string | null; created_at: string; is_aix_generated: boolean | null };
-type UsageLog = { conversation_id: string; aix_type: string; created_at: string; sent_at: string | null };
+type UsageLog = { conversation_id: string; aix_type: string; created_at: string; sent_at: string | null; generated_text: string | null };
 
-// AIXメッセージ（created_at=aixAt）に対応する aix_usage_logs レコードの aix_type を特定する。
+// AIXメッセージ（created_at=aixAt）に対応する aix_usage_logs レコードを特定する。
 // P4: sent_at があるログは厳密マッチ（message.created_at が sent_at-30秒〜sent_at+5分）を優先し、
 //     sent_at 無しの旧ログのみ ±10分ヒューリスティックでフォールバック。
-function matchAixType(logs: UsageLog[], conversationId: string, aixAt: number): string | null {
-  let bestType: string | null = null;
+function matchAixLog(logs: UsageLog[], conversationId: string, aixAt: number): UsageLog | null {
+  let best: UsageLog | null = null;
   let bestDiff = Infinity;
   let bestIsExact = false;
   for (const log of logs) {
@@ -111,18 +115,22 @@ function matchAixType(logs: UsageLog[], conversationId: string, aixAt: number): 
         if (!bestIsExact || diff < bestDiff) {
           bestIsExact = true;
           bestDiff = diff;
-          bestType = log.aix_type;
+          best = log;
         }
       }
     } else if (!bestIsExact) {
       const diff = Math.abs(new Date(log.created_at).getTime() - aixAt);
       if (diff < bestDiff && diff < LOG_MATCH_WINDOW_MS) {
         bestDiff = diff;
-        bestType = log.aix_type;
+        best = log;
       }
     }
   }
-  return bestType;
+  return best;
+}
+
+function matchAixType(logs: UsageLog[], conversationId: string, aixAt: number): string | null {
+  return matchAixLog(logs, conversationId, aixAt)?.aix_type ?? null;
 }
 
 function dedupeKey(category: string, text: string): string {
@@ -153,6 +161,20 @@ function textSimilarity(a: string, b: string): number {
 
 function stripCodeFence(s: string): string {
   return s.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+}
+
+// スタッフ送信文（sentText）のうち、AI生成文（aiDraft）に含まれない「追加された文章ブロック」を抽出する。
+// 空行区切りのブロック単位で比較し、AI文のどのブロックとも bigram類似度 <= ADDED_SIM_THRESHOLD のものを追加分とみなす。
+function extractAddedText(aiDraft: string, sentText: string): string {
+  const draftNorm = aiDraft.replace(/\s+/g, "");
+  const draftBlocks = aiDraft.split(/\n+/).map((s) => s.trim()).filter((s) => s.length >= 2);
+  const sentBlocks = sentText.split(/\n+/).map((s) => s.trim()).filter((s) => s.length >= 2);
+  const added = sentBlocks.filter((b) => {
+    if (draftNorm.includes(b.replace(/\s+/g, ""))) return false; // AI文にそのまま含まれる行は追加ではない
+    const maxSim = draftBlocks.reduce((mx, d) => Math.max(mx, textSimilarity(b, d)), 0);
+    return maxSim <= ADDED_SIM_THRESHOLD;
+  });
+  return added.join("\n").trim();
 }
 
 async function run() {
@@ -186,7 +208,7 @@ async function run() {
       .limit(3000),
     supabase
       .from("aix_usage_logs")
-      .select("conversation_id, aix_type, created_at, sent_at")
+      .select("conversation_id, aix_type, created_at, sent_at, generated_text")
       .in("conversation_id", convIds)
       .gte("created_at", since)
       .limit(1000),
@@ -426,9 +448,144 @@ ${entry.samples.map((s) => `- ${s.replace(/\n/g, " ")}`).join("\n")}
   }
   */
 
-  console.log(`[auto-template-candidates] done: pairs=${pairs.length} sent=${fresh.length} converted=${converted} skipped=${skipped} saved=${saved} generated=${generated}`);
-  await finishCronLog(runLogId, true, { pairs: pairs.length, sent: fresh.length, converted, skipped, saved, generated });
-  return NextResponse.json({ ok: true, pairs: pairs.length, sent: fresh.length, converted, skipped, saved, generated, savedItems });
+  // 7. 「追加パターン」検出 → source="improvement" 起票
+  //    AI生成文（aix_usage_logs.generated_text）に含まれない追加テキストをスタッフが足して送信したケースを検出し、
+  //    同じ aix_type で同じ追加パターン（先頭30文字一致）が2件以上観測されたら「テンプレ変更」ではなく
+  //    「ピッカーにボタン追加」等のAIX機能改善提案（source="improvement"）として ai_template_candidates に起票する。
+  //    ※ 既存の後続文検出（source="auto"）とは独立した処理。失敗しても既存フローの結果は返す。
+  let improvementSaved = 0;
+  let improvementMerged = 0;
+  try {
+    type AddedPattern = { aixType: string; addedText: string; aiDraftText: string; conversationId: string };
+    const addedPatterns: AddedPattern[] = [];
+    for (const aix of aixMsgs as Msg[]) {
+      const sentReply = aix.text?.trim();
+      if (!sentReply) continue;
+      const aixAt = new Date(aix.created_at).getTime();
+      const log = matchAixLog((logs ?? []) as UsageLog[], aix.conversation_id as string, aixAt);
+      if (!log?.aix_type || !ACTION_TO_CATEGORY[log.aix_type]) continue;
+      const aiDraft = (log.generated_text ?? "").trim();
+      if (!aiDraft || aiDraft === sentReply) continue;
+      const addedText = extractAddedText(aiDraft, sentReply);
+      if (addedText.length < MIN_ADDED_TEXT_LEN) continue;
+      addedPatterns.push({
+        aixType: log.aix_type,
+        addedText,
+        aiDraftText: aiDraft.slice(0, 500),
+        conversationId: aix.conversation_id as string,
+      });
+    }
+
+    // 同じ aix_type × 追加テキスト先頭30文字（空白除去・小文字化）でグルーピング → 2件以上のみ起票
+    const groups = new Map<string, AddedPattern[]>();
+    for (const p of addedPatterns) {
+      const key = `${p.aixType}::${p.addedText.replace(/\s+/g, "").slice(0, 30).toLowerCase()}`;
+      const arr = groups.get(key) ?? [];
+      arr.push(p);
+      groups.set(key, arr);
+    }
+    const qualifying = [...groups.values()]
+      .filter((g) => g.length >= MIN_SIMILAR_COUNT)
+      .slice(0, MAX_IMPROVEMENT_PER_RUN);
+
+    // Haiku で追加テキストをプレースホルダー化（並列呼び出し・失敗時は原文のまま起票）
+    const convertedTexts = await Promise.allSettled(
+      qualifying.map(async (group) => {
+        const rep = group[0];
+        const res = await client.messages.create({
+          model: MODEL,
+          max_tokens: 800,
+          system: CONVERT_SYSTEM_PROMPT,
+          messages: [{
+            role: "user",
+            content: `アクション: ${ACTION_LABEL[rep.aixType] ?? rep.aixType}
+AIX文（1通目・冒頭）: ${rep.aiDraftText.replace(/\n/g, " ").slice(0, 120)}
+
+変換対象の後続文:
+${rep.addedText}
+
+既存テンプレート（重複・類似する場合は skip=true にすること）:
+（なし）`,
+          }],
+        });
+        const raw = res.content[0]?.type === "text" ? res.content[0].text : "{}";
+        return JSON.parse(stripCodeFence(raw)) as { converted: string | null; skip: boolean };
+      })
+    );
+
+    for (let gi = 0; gi < qualifying.length; gi++) {
+      const group = qualifying[gi];
+      const rep = group[0];
+      const count = group.length;
+      const category = ACTION_TO_CATEGORY[rep.aixType] ?? rep.aixType;
+
+      // プレースホルダー化に成功した場合は変換後テキスト、失敗・skip時は原文のまま
+      // （追加パターンが2件以上観測された事実自体が改善案の根拠のため skip でも起票する）
+      const conv = convertedTexts[gi];
+      const normalizedAddedText =
+        conv.status === "fulfilled" && conv.value.converted?.trim()
+          ? conv.value.converted.trim()
+          : rep.addedText;
+
+      // 既存 improvement 候補との重複チェック（先頭30文字ilike一致）→ evidence_count 更新のみ
+      const prefix30 = normalizedAddedText.slice(0, 30);
+      const escapedPrefix = prefix30.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+      const { data: existingImp } = await supabase
+        .from("ai_template_candidates")
+        .select("id, evidence_count")
+        .eq("action_type", rep.aixType)
+        .eq("source", "improvement")
+        .ilike("template_text", `${escapedPrefix}%`)
+        .limit(1);
+
+      if (existingImp && existingImp.length > 0) {
+        const dup = existingImp[0] as { id: string; evidence_count: number | null };
+        const { error: updErr } = await supabase
+          .from("ai_template_candidates")
+          .update({
+            evidence_count: Math.max(dup.evidence_count ?? 1, count),
+            reason: `同じ追加パターンが${count}件観測されました`,
+          })
+          .eq("id", dup.id);
+        if (updErr) {
+          console.error("[auto-template-candidates] improvement update error:", updErr.message);
+          continue;
+        }
+        improvementMerged++;
+        continue;
+      }
+
+      // バッチ内・既存候補/テンプレとの重複チェック（変換後テキスト先頭50文字キー）
+      const key = dedupeKey(category, normalizedAddedText);
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const { error: impErr } = await supabase.from("ai_template_candidates").insert({
+        action_type: rep.aixType,
+        category,
+        suggested_title: `${ACTION_TO_CATEGORY[rep.aixType] ?? rep.aixType}に追加情報パターン検出`,
+        template_text: normalizedAddedText,
+        original_text: rep.aiDraftText,
+        reason: `同じ追加パターンが${count}件観測されました`,
+        evidence_count: count,
+        conversation_id: rep.conversationId,
+        source: "improvement",
+        is_adopted: false,
+        is_dismissed: false,
+      });
+      if (impErr) {
+        console.error("[auto-template-candidates] improvement insert error:", impErr.message);
+        continue;
+      }
+      improvementSaved++;
+    }
+  } catch (e) {
+    console.error("[auto-template-candidates] improvement detection error:", e);
+  }
+
+  console.log(`[auto-template-candidates] done: pairs=${pairs.length} sent=${fresh.length} converted=${converted} skipped=${skipped} saved=${saved} generated=${generated} improvementSaved=${improvementSaved} improvementMerged=${improvementMerged}`);
+  await finishCronLog(runLogId, true, { pairs: pairs.length, sent: fresh.length, converted, skipped, saved, generated, improvementSaved, improvementMerged });
+  return NextResponse.json({ ok: true, pairs: pairs.length, sent: fresh.length, converted, skipped, saved, generated, improvementSaved, improvementMerged, savedItems });
 }
 
 // GET: Vercel cron から（CRON_SECRET が設定されていれば Bearer 認証）
