@@ -580,6 +580,8 @@ export default function AixModal({
   // 物件あった専用: 保証会社説明ボタンのON/OFF + 保証会社名（会話履歴から自動検出・手動編集可）
   const [checkGuarantor, setCheckGuarantor] = useState(false);
   const [checkGuarantorName, setCheckGuarantorName] = useState("");
+  // 物件あった専用: 申込有（2番手）ボタンのON/OFF
+  const [checkApplicationOrder, setCheckApplicationOrder] = useState(false);
   const [estimateTextReady, setEstimateTextReady] = useState("");
   // 物件確認した「空室あり」専用カレンダー
   const [checkCalendarInfo, setCheckCalendarInfo] = useState<string>("");
@@ -1308,6 +1310,7 @@ export default function AixModal({
         }
         if (vacatingNote.trim()) body.vacating_note = vacatingNote.trim();
         body.send_mode = sendMode;
+        body.include_viewing_invite = includeCalendar;
         if (sendMode === "new_arrival" && newArrivalApply) body.new_arrival_apply = true;
         if (includeCalendar) {
           const finalCalendarInfo = calendarDays
@@ -1646,6 +1649,10 @@ export default function AixModal({
       if (!res.ok || !data.ok) throw new Error(data.error || `生成に失敗しました（HTTP ${res.status}）`);
 
       let generatedMsg = data.message_text || "";
+      // 申込有（2番手）: 物件確認した「物件あった」でONのとき本文末尾に2番手申込可能の案内を追加
+      if (actionType === "property_check_result" && checkPattern === "available" && checkApplicationOrder && generatedMsg) {
+        generatedMsg += `\n\n現在お申込みが入っており、2番手でのお申込みが可能となっております！！`;
+      }
       // 保証会社説明: 物件確認した「物件あった」でONのとき本文末尾に説明文を追加
       // （available系は固定テンプレ組み立てのためプロンプト注入ではなく生成後テキストに追記する）
       if (actionType === "property_check_result" && checkPattern === "available" && checkGuarantor && checkGuarantorName.trim() && generatedMsg) {
@@ -2459,6 +2466,19 @@ export default function AixModal({
                     </button>
                   )}
                 </div>
+              </div>
+              {/* 内覧提案トグル */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setIncludeCalendar(prev => !prev)}
+                  className={`flex-1 py-2 rounded-xl text-sm font-medium transition-colors ${
+                    includeCalendar
+                      ? "bg-blue-100 text-blue-700 hover:bg-blue-200"
+                      : "bg-gray-200 text-gray-500"
+                  }`}
+                >
+                  {includeCalendar ? "✅ 内覧提案あり" : "内覧提案を省略"}
+                </button>
               </div>
               {/* 条件を広げたモード: チップを直接表示 */}
               {sendMode === "widen" && (
@@ -3872,6 +3892,19 @@ export default function AixModal({
                       <input ref={checkPropEstRefs[pi]} type="file" accept="image/*" onChange={(e) => onSelectPropEstimate(pi, e)} className="hidden" />
                     </div>
                   ))}
+                  {/* 申込有（2番手）ボタン */}
+                  {(checkPattern === "available") && (
+                    <button
+                      onClick={() => setCheckApplicationOrder(prev => !prev)}
+                      className={`mt-2 w-full py-2 rounded-xl text-sm font-medium transition-colors ${
+                        checkApplicationOrder
+                          ? "bg-orange-500 text-white"
+                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                      }`}
+                    >
+                      📋 申込有（2番手）
+                    </button>
+                  )}
                   {/* 保証会社について説明（物件カード共通・ONで会話履歴から保証会社名を自動検出） */}
                   <div className="mt-2">
                     <button
