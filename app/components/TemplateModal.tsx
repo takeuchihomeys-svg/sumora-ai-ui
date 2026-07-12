@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { fetchCalendarSlots, type CalendarDayResult } from "../lib/calendarSlots";
 
 // iOS風スクロールホイールピッカー
@@ -630,7 +630,7 @@ export default function TemplateModal({
   const [isCandidateTabActive, setIsCandidateTabActive] = useState(false);
   // AIX候補サブタブ: "all" = 全候補（従来のAIXテンプレ候補タブ）, "aix_edit" = スタッフ編集候補のみ,
   // "suggestions" = P4 AIX改善案（aix_feature_suggestions）, "feedback" = AI盲点フィードバック（ai_feedback_items）
-  const [candidateSubTab, setCandidateSubTab] = useState<"all" | "aix_edit" | "suggestions" | "feedback" | "knowledge">("all");
+  const [candidateSubTab, setCandidateSubTab] = useState<"all" | "suggestions" | "feedback" | "knowledge">("all");
   const [candidates, setCandidates] = useState<AiTemplateCandidate[]>([]);
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [adoptingId, setAdoptingId] = useState<string | null>(null);
@@ -709,7 +709,7 @@ export default function TemplateModal({
       .trim();
   }
 
-  function highlightTemplateVars(text: string): React.ReactNode[] {
+  function highlightTemplateVars(text: string): ReactNode[] {
     const parts = text.split(/(アカウント名|〇〇|○○)/g);
     return parts.map((part, i) => {
       if (part === "アカウント名") return <mark key={i} className="bg-orange-100 text-orange-700 rounded px-0.5 font-bold not-italic">アカウント名</mark>;
@@ -1929,7 +1929,7 @@ export default function TemplateModal({
                   onClick={() => { setCandidateSubTab("suggestions"); setSuggestionCategoryFilter("new_aix_button"); }}
                   className="shrink-0 rounded-full px-3 py-1.5 text-[11px] font-bold transition"
                   style={
-                    candidateSubTab === "aix_edit"
+                    candidateSubTab === "suggestions" && suggestionCategoryFilter === "new_aix_button"
                       ? { background: "linear-gradient(135deg, #059669, #10B981)", color: "white" }
                       : { backgroundColor: "#e8edf2", color: "#54656f" }
                   }
@@ -2121,119 +2121,6 @@ export default function TemplateModal({
                             className="flex-1 py-1.5 rounded-lg bg-emerald-500 text-white text-sm font-semibold hover:bg-emerald-600 disabled:opacity-50 transition"
                           >
                             {adoptingId === candidate.id ? "採用中..." : "✅ 採用"}
-                          </button>
-                          <button
-                            onClick={() => setDismissingId(dismissingId === candidate.id ? null : candidate.id)}
-                            className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-500 text-sm hover:bg-gray-200 transition"
-                          >
-                            却下
-                          </button>
-                        </div>
-                        {/* P5: 却下理由チップ */}
-                        {dismissingId === candidate.id && (
-                          <div className="mt-2 rounded-lg bg-gray-50 p-2">
-                            <p className="text-[11px] text-gray-400 mb-1.5">却下理由を選ぶとAIが学習します</p>
-                            <div className="flex flex-wrap gap-1.5">
-                              {DISMISS_REASONS.map(r => (
-                                <button
-                                  key={r}
-                                  onClick={() => dismissCandidate(candidate.id, r)}
-                                  className="px-2 py-1 rounded-full bg-white border border-gray-200 text-gray-600 text-[11px] hover:bg-red-50 hover:border-red-200 hover:text-red-500 transition"
-                                >
-                                  {r}
-                                </button>
-                              ))}
-                              <button
-                                onClick={() => dismissCandidate(candidate.id)}
-                                className="px-2 py-1 rounded-full bg-white border border-gray-100 text-gray-400 text-[11px] hover:bg-gray-100 transition"
-                              >
-                                理由なしで却下
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                ));
-              })()}
-            </div>
-          )}
-
-          {/* AIX候補一覧（✏️ スタッフ編集タブ） */}
-          {!showAddForm && isCandidateTabActive && candidateSubTab === "aix_edit" && (
-            <div className="flex-1 overflow-y-auto p-3 space-y-3">
-              {candidateLoading && (
-                <p className="text-center text-gray-400 py-8">読み込み中...</p>
-              )}
-              {!candidateLoading && candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source === "aix_edit").length === 0 && (
-                <div className="flex flex-col items-center gap-2 py-12 text-gray-400">
-                  <span className="text-3xl">✏️</span>
-                  <p className="text-sm font-medium">AIX候補はまだありません</p>
-                  <p className="text-xs text-center">同じ編集パターンが2件以上観測されると<br/>ここに候補が追加されます</p>
-                </div>
-              )}
-              {!candidateLoading && (() => {
-                const pending = candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source === "aix_edit");
-                // カテゴリ順でグルーピング
-                const byCategory: Record<string, AiTemplateCandidate[]> = {};
-                for (const c of pending) {
-                  if (!byCategory[c.category]) byCategory[c.category] = [];
-                  byCategory[c.category].push(c);
-                }
-                return Object.entries(byCategory).map(([cat, items]) => (
-                  <div key={cat}>
-                    <p className="text-xs font-semibold text-orange-500 mb-2 px-1">{cat}</p>
-                    {items.map(candidate => (
-                      <div
-                        key={candidate.id}
-                        className="bg-white rounded-xl border border-orange-200 p-3 mb-2 shadow-sm"
-                      >
-                        <div className="flex items-center gap-2 mb-1 flex-wrap">
-                          {/* カテゴリバッジ */}
-                          {candidate.category && (
-                            <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full font-bold shrink-0"
-                              style={{ backgroundColor: getCategoryColor(candidate.action_type) + "20", color: getCategoryColor(candidate.action_type) }}>
-                              {CATEGORY_DISPLAY_NAMES[candidate.category] ?? candidate.category.replace("【AIX】", "").trim()}
-                            </span>
-                          )}
-                          <p className="text-xs text-gray-500 font-medium">{stripEditPrefix(candidate.suggested_title)}</p>
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${
-                            (candidate.evidence_count ?? 1) >= 3
-                              ? "bg-red-50 text-red-600 font-bold"
-                              : "bg-gray-100 text-gray-500 font-medium"
-                          }`}>
-                            ✏️ {candidate.evidence_count ?? 1}件の編集
-                          </span>
-                        </div>
-                        {candidate.reason && (
-                          <p className="text-[11px] text-gray-400 mb-2">{candidate.reason}</p>
-                        )}
-                        {/* 差分ビュー: AI原文 → スタッフ編集後 */}
-                        {candidate.original_text && (
-                          <div className="mb-2 rounded-lg overflow-hidden border border-gray-100 text-xs">
-                            <div className="bg-gray-50 px-2 py-1 text-[10px] font-bold text-gray-400 tracking-wide">AIが生成した原文</div>
-                            <p className="px-2 py-2 text-gray-400 whitespace-pre-wrap leading-relaxed line-through decoration-gray-300">
-                              {candidate.original_text}
-                            </p>
-                            <div className="bg-orange-50 px-2 py-1 text-[10px] font-bold text-orange-400 tracking-wide">スタッフが編集した文（送信済み）</div>
-                            <p className="px-2 py-2 text-gray-800 whitespace-pre-wrap leading-relaxed">
-                              {candidate.template_text}
-                            </p>
-                          </div>
-                        )}
-                        {!candidate.original_text && (
-                          <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed mb-3">
-                            {candidate.template_text}
-                          </p>
-                        )}
-                        <div className="flex gap-2 mt-2">
-                          <button
-                            disabled={adoptingId === candidate.id}
-                            onClick={() => openReviewPanel(candidate)}
-                            className="flex-1 py-1.5 rounded-lg bg-orange-400 text-white text-sm font-semibold hover:bg-orange-500 disabled:opacity-50 transition"
-                          >
-                            {adoptingId === candidate.id ? "採用中..." : "✅ 確認して採用"}
                           </button>
                           <button
                             onClick={() => setDismissingId(dismissingId === candidate.id ? null : candidate.id)}

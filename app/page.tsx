@@ -8271,8 +8271,8 @@ export default function Home() {
                             <button
                               onClick={async () => {
                                 try {
-                                  await fetch("/api/knowledge-review", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: rule.id }) });
-                                  setKnowledgeRules((prev) => prev.map((r) => r.id === rule.id ? { ...r, title: "差分学習 [承認済]" } : r));
+                                  await fetch("/api/knowledge-review", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: rule.id, action: "confirm" }) });
+                                  setKnowledgeRules((prev) => prev.filter((r) => r.id !== rule.id));
                                 } catch (err) {
                                   console.error("[knowledge-review approve]", err);
                                   setError("⚠️ ルールの承認に失敗しました");
