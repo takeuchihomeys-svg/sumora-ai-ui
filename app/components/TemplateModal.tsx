@@ -304,6 +304,7 @@ interface AiTemplateCandidate {
 }
 
 // P4: AIX機能改善提案（corpus2skill 週次Opusが生成 → aix_feature_suggestions テーブル）
+// + aix_edit候補を統合するために拡張フィールドを追加
 interface AixFeatureSuggestion {
   id: string;
   suggestion_type: string;
@@ -314,7 +315,14 @@ interface AixFeatureSuggestion {
   evidence_count: number | null;
   status: string;
   created_at: string;
-  proposal_category?: 'new_picker' | 'new_button' | 'text_improvement' | 'mismatch_fix' | 'other';
+  proposal_category?: 'new_aix_button' | 'new_picker' | 'new_button' | 'text_improvement' | 'mismatch_fix' | 'other';
+  // 統合フィールド: aix_edit候補をここに統合する際に付与
+  _source?: 'aix_candidates' | 'suggestions';
+  template_text?: string | null;
+  original_text?: string | null;
+  is_adopted?: boolean;
+  is_dismissed?: boolean;
+  category?: string;
 }
 
 // AI盲点フィードバック（corpus2skill 週次Opusが生成 → ai_feedback_items テーブル）
@@ -846,13 +854,39 @@ export default function TemplateModal({
     if (isCandidateTabActive) loadCandidates();
   }, [isCandidateTabActive, loadCandidates]);
 
-  // P4: AIX改善案（pending）の読み込み
+  // P4: AIX改善案（pending）+ AIX候補（aix_edit）を同時取得して統合
   const loadSuggestions = useCallback(async () => {
     setSuggestionLoading(true);
     try {
-      const res = await fetch("/api/aix-feature-suggestions");
-      const json = await res.json() as { ok: boolean; suggestions: AixFeatureSuggestion[] };
-      if (json.ok) setSuggestions(json.suggestions);
+      const [sugRes, aixRes] = await Promise.all([
+        fetch("/api/aix-feature-suggestions"),
+        fetch("/api/ai-template-candidates"),
+      ]);
+      const sugData = await sugRes.json() as { ok: boolean; suggestions: AixFeatureSuggestion[] };
+      const aixData = await aixRes.json() as { ok: boolean; candidates: AiTemplateCandidate[] };
+      const baseList: AixFeatureSuggestion[] = sugData.ok ? sugData.suggestions : [];
+      // aix_edit候補をproposal_category='new_aix_button'として先頭に統合
+      const aixItems: AixFeatureSuggestion[] = (aixData.ok ? aixData.candidates : [])
+        .filter(c => !c.is_adopted && !c.is_dismissed && c.source === "aix_edit")
+        .map(c => ({
+          id: c.id,
+          suggestion_type: "new_aix",
+          action_type: c.action_type,
+          suggested_title: stripEditPrefix(c.suggested_title),
+          description: c.template_text,
+          reason: c.reason ?? null,
+          evidence_count: c.evidence_count ?? null,
+          status: "pending",
+          created_at: c.created_at,
+          proposal_category: "new_aix_button" as const,
+          _source: "aix_candidates" as const,
+          template_text: c.template_text,
+          original_text: c.original_text ?? null,
+          is_adopted: c.is_adopted,
+          is_dismissed: c.is_dismissed,
+          category: c.category,
+        }));
+      setSuggestions([...aixItems, ...baseList]);
     } catch { /* noop */ }
     finally { setSuggestionLoading(false); }
   }, []);
@@ -1002,6 +1036,8 @@ export default function TemplateModal({
       setCandidates(prev =>
         prev.map(c => c.id === candidate.id ? { ...c, is_adopted: true } : c)
       );
+      // 統合表示中のsuggestionsからも除去（aix_edit候補を改善案タブに統合しているため）
+      setSuggestions(prev => prev.filter(s => s.id !== candidate.id));
       if (json.ok) {
         // 採用したテンプレを一覧に即反映して該当カテゴリへ移動
         setIsCandidateTabActive(false);
@@ -1698,8 +1734,9 @@ export default function TemplateModal({
                 }
               >
                 🤖AI提案{(() => {
+                  // aix_edit候補はsuggestionsに統合されているため二重カウントを避ける
                   const total =
-                    candidates.filter(c => !c.is_adopted && !c.is_dismissed).length +
+                    candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source !== "aix_edit").length +
                     suggestions.length +
                     feedbackItems.filter(f => f.status === "pending").length;
                   return total > 0 ? ` (${total})` : "";
@@ -1826,9 +1863,9 @@ export default function TemplateModal({
                     return count > 0 ? ` (${count})` : "";
                   })()}
                 </button>
-                {/* ✏️AIX候補 */}
+                {/* ✏️AIX候補 → 改善案タブ「① AIXボタン」フィルタへリダイレクト */}
                 <button
-                  onClick={() => setCandidateSubTab("aix_edit")}
+                  onClick={() => { setCandidateSubTab("suggestions"); setSuggestionCategoryFilter("new_aix_button"); }}
                   className="shrink-0 rounded-full px-3 py-1.5 text-[11px] font-bold transition"
                   style={
                     candidateSubTab === "aix_edit"
@@ -1837,7 +1874,8 @@ export default function TemplateModal({
                   }
                 >
                   ✏️AIX候補{(() => {
-                    const count = candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source === "aix_edit").length;
+                    const count = suggestions.filter(s => s.proposal_category === "new_aix_button").length
+                      || candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source === "aix_edit").length;
                     return count > 0 ? ` (${count})` : "";
                   })()}
                 </button>
@@ -2179,8 +2217,9 @@ export default function TemplateModal({
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
                   {[
                     { key: 'all', label: 'すべて' },
-                    { key: 'new_picker', label: '🔧 新ピッカー' },
-                    { key: 'new_button', label: '✨ 新ボタン' },
+                    { key: 'new_aix_button', label: '① AIXボタン' },
+                    { key: 'new_picker', label: '② ピッカー' },
+                    { key: 'new_button', label: '③ ボタン追加' },
                     { key: 'text_improvement', label: '✏️ 文の改善' },
                     { key: 'mismatch_fix', label: '🔄 ズレ修正' },
                     { key: 'other', label: '💡 その他' },
@@ -2206,125 +2245,241 @@ export default function TemplateModal({
                 const filteredSuggestions = suggestionCategoryFilter === 'all'
                   ? suggestions
                   : suggestions.filter(s => (s.proposal_category ?? 'other') === suggestionCategoryFilter);
-                return filteredSuggestions.map(suggestion => (
-                <div
-                  key={suggestion.id}
-                  className="bg-white rounded-xl border border-violet-200 p-3 shadow-sm"
-                >
-                  <div className="flex items-center gap-2 mb-1 flex-wrap">
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold shrink-0 ${
-                      (SUGGESTION_TYPE_BADGE[suggestion.suggestion_type] ?? SUGGESTION_TYPE_BADGE.new_picker).className
-                    }`}>
-                      {(SUGGESTION_TYPE_BADGE[suggestion.suggestion_type] ?? SUGGESTION_TYPE_BADGE.new_picker).label}
-                    </span>
-                    {/* 打ち合わせ済み（status="approved"）: Opus 4.8との打ち合わせで確定した実装待ち仕様 */}
-                    {suggestion.status === "approved" && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-bold shrink-0">
-                        🤝 打ち合わせ済み
-                      </span>
-                    )}
-                    {/* AIXボタン名バッジ（action_typeがある場合） */}
-                    {suggestion.action_type && (
-                      <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full font-bold shrink-0"
-                        style={{ backgroundColor: getCategoryColor(suggestion.action_type) + "20", color: getCategoryColor(suggestion.action_type) }}>
-                        {ACTION_LABELS[suggestion.action_type] ?? suggestion.action_type}
-                      </span>
-                    )}
-                    {(() => {
-                      const catMap: Record<string, { label: string; color: string }> = {
-                        new_picker: { label: '🔧 新ピッカー', color: '#1a56db' },
-                        new_button: { label: '✨ 新ボタン', color: '#057a55' },
-                        text_improvement: { label: '✏️ 文の改善', color: '#c27803' },
-                        mismatch_fix: { label: '🔄 ズレ修正', color: '#c81e1e' },
-                        other: { label: '💡 改善案', color: '#6b7280' },
-                      };
-                      const cat = catMap[suggestion.proposal_category ?? 'other'] ?? catMap.other;
-                      return (
-                        <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 12, background: cat.color, color: '#fff', fontSize: 11, marginBottom: 4, flexShrink: 0 }}>
-                          {cat.label}
-                        </span>
-                      );
-                    })()}
-                    <p className="text-sm text-gray-800 font-semibold">{suggestion.suggested_title}</p>
-                    {(suggestion.evidence_count ?? 1) >= 2 && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium shrink-0">
-                        📊 {suggestion.evidence_count}回同じパターン
-                      </span>
-                    )}
-                  </div>
-                  {suggestion.reason && (
-                    <p className="text-[11px] text-gray-400 mb-1">{suggestion.reason}</p>
-                  )}
-                  {suggestion.description && (
-                    <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed mb-3">
-                      {suggestion.description}
-                    </p>
-                  )}
-                  <div className="flex gap-2">
-                    {suggestion.status === "approved" ? (
-                      <button
-                        onClick={() => updateSuggestionStatus(suggestion.id, "implemented")}
-                        className="flex-1 py-1.5 rounded-lg bg-green-500 text-white text-sm font-semibold hover:bg-green-600 transition"
-                      >
-                        🚀 実装完了
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => {
-                          // aix_feature_suggestions を AiTemplateCandidate 形式に変換してレビューパネルへ
-                          const pseudoCandidate: AiTemplateCandidate = {
-                            id: suggestion.id,
-                            action_type: suggestion.action_type ?? "",
-                            category: suggestion.action_type ?? "",
-                            suggested_title: suggestion.suggested_title,
-                            template_text: suggestion.description ?? suggestion.suggested_title,  // 改善案の説明をテンプレートとして使う
-                            original_text: null,
-                            reason: suggestion.reason,
-                            evidence_count: suggestion.evidence_count,
-                            created_at: suggestion.created_at,
-                            is_adopted: false,
-                            is_dismissed: false,
-                            source: "suggestion",
-                          };
-                          openReviewPanel(pseudoCandidate);
-                        }}
-                        className="flex-1 py-1.5 rounded-lg bg-violet-500 text-white text-sm font-semibold hover:bg-violet-600 transition"
-                      >
-                        ✅ 確認して採用
-                      </button>
-                    )}
-                    <button
-                      onClick={() => setDismissingId(dismissingId === suggestion.id ? null : suggestion.id)}
-                      className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-500 text-sm hover:bg-gray-200 transition"
-                    >
-                      却下
-                    </button>
-                  </div>
-                  {/* P5: 却下理由チップ */}
-                  {dismissingId === suggestion.id && (
-                    <div className="mt-2 rounded-lg bg-gray-50 p-2">
-                      <p className="text-[11px] text-gray-400 mb-1.5">却下理由を選ぶとAIが学習します</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {DISMISS_REASONS.map(r => (
+                const PROPOSAL_CAT_MAP: Record<string, { label: string; color: string }> = {
+                  new_aix_button: { label: '① AIXボタン', color: '#7e3af2' },
+                  new_picker: { label: '② ピッカー', color: '#1a56db' },
+                  new_button: { label: '③ ボタン追加', color: '#057a55' },
+                  text_improvement: { label: '✏️ 文の改善', color: '#c27803' },
+                  mismatch_fix: { label: '🔄 ズレ修正', color: '#c81e1e' },
+                  other: { label: '💡 改善案', color: '#6b7280' },
+                };
+                return filteredSuggestions.map(suggestion => {
+                  // --- aix_edit候補（統合）: diff view カードスタイル ---
+                  if (suggestion._source === 'aix_candidates') {
+                    return (
+                      <div key={suggestion.id} className="bg-white rounded-xl border border-orange-200 p-3 mb-2 shadow-sm">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 12, background: '#7e3af2', color: '#fff', fontSize: 11, flexShrink: 0 }}>
+                            ① AIXボタン
+                          </span>
+                          {suggestion.action_type && (
+                            <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full font-bold shrink-0"
+                              style={{ backgroundColor: getCategoryColor(suggestion.action_type) + "20", color: getCategoryColor(suggestion.action_type) }}>
+                              {ACTION_LABELS[suggestion.action_type] ?? suggestion.action_type}
+                            </span>
+                          )}
+                          <p className="text-xs text-gray-500 font-medium">{suggestion.suggested_title}</p>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${
+                            (suggestion.evidence_count ?? 1) >= 3
+                              ? "bg-red-50 text-red-600 font-bold"
+                              : "bg-gray-100 text-gray-500 font-medium"
+                          }`}>
+                            ✏️ {suggestion.evidence_count ?? 1}件の編集
+                          </span>
+                        </div>
+                        {suggestion.reason && (
+                          <p className="text-[11px] text-gray-400 mb-2">{suggestion.reason}</p>
+                        )}
+                        {/* 差分ビュー: AI原文 → スタッフ編集後 */}
+                        {suggestion.original_text ? (
+                          <div className="mb-2 rounded-lg overflow-hidden border border-gray-100 text-xs">
+                            <div className="bg-gray-50 px-2 py-1 text-[10px] font-bold text-gray-400 tracking-wide">AIが生成した原文</div>
+                            <p className="px-2 py-2 text-gray-400 whitespace-pre-wrap leading-relaxed line-through decoration-gray-300">
+                              {suggestion.original_text}
+                            </p>
+                            <div className="bg-orange-50 px-2 py-1 text-[10px] font-bold text-orange-400 tracking-wide">スタッフが編集した文（送信済み）</div>
+                            <p className="px-2 py-2 text-gray-800 whitespace-pre-wrap leading-relaxed">
+                              {suggestion.template_text}
+                            </p>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed mb-3">
+                            {suggestion.template_text}
+                          </p>
+                        )}
+                        <div className="flex gap-2 mt-2">
                           <button
-                            key={r}
-                            onClick={() => updateSuggestionStatus(suggestion.id, "dismissed", r)}
-                            className="px-2 py-1 rounded-full bg-white border border-gray-200 text-gray-600 text-[11px] hover:bg-red-50 hover:border-red-200 hover:text-red-500 transition"
+                            onClick={() => {
+                              const cand: AiTemplateCandidate = {
+                                id: suggestion.id,
+                                action_type: suggestion.action_type ?? "",
+                                category: suggestion.category ?? "",
+                                suggested_title: suggestion.suggested_title,
+                                template_text: suggestion.template_text ?? "",
+                                original_text: suggestion.original_text ?? null,
+                                reason: suggestion.reason ?? null,
+                                evidence_count: suggestion.evidence_count ?? null,
+                                created_at: suggestion.created_at,
+                                is_adopted: false,
+                                is_dismissed: false,
+                                source: "aix_edit",
+                              };
+                              openReviewPanel(cand);
+                            }}
+                            className="flex-1 py-1.5 rounded-lg bg-orange-400 text-white text-sm font-semibold hover:bg-orange-500 transition"
                           >
-                            {r}
+                            ✅ 確認して採用
                           </button>
-                        ))}
-                        <button
-                          onClick={() => updateSuggestionStatus(suggestion.id, "dismissed")}
-                          className="px-2 py-1 rounded-full bg-white border border-gray-100 text-gray-400 text-[11px] hover:bg-gray-100 transition"
-                        >
-                          理由なしで却下
-                        </button>
+                          <button
+                            onClick={() => setDismissingId(dismissingId === suggestion.id ? null : suggestion.id)}
+                            className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-500 text-sm hover:bg-gray-200 transition"
+                          >
+                            却下
+                          </button>
+                        </div>
+                        {dismissingId === suggestion.id && (
+                          <div className="mt-2 rounded-lg bg-gray-50 p-2">
+                            <p className="text-[11px] text-gray-400 mb-1.5">却下理由を選ぶとAIが学習します</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {DISMISS_REASONS.map(r => (
+                                <button
+                                  key={r}
+                                  onClick={async () => {
+                                    await fetch("/api/ai-template-candidates", {
+                                      method: "PATCH",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ id: suggestion.id, action: "dismiss", dismissedReason: r }),
+                                    }).catch(() => {});
+                                    setSuggestions(prev => prev.filter(s => s.id !== suggestion.id));
+                                    setCandidates(prev => prev.map(c => c.id === suggestion.id ? { ...c, is_dismissed: true } : c));
+                                    setDismissingId(null);
+                                  }}
+                                  className="px-2 py-1 rounded-full bg-white border border-gray-200 text-gray-600 text-[11px] hover:bg-red-50 hover:border-red-200 hover:text-red-500 transition"
+                                >
+                                  {r}
+                                </button>
+                              ))}
+                              <button
+                                onClick={async () => {
+                                  await fetch("/api/ai-template-candidates", {
+                                    method: "PATCH",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ id: suggestion.id, action: "dismiss" }),
+                                  }).catch(() => {});
+                                  setSuggestions(prev => prev.filter(s => s.id !== suggestion.id));
+                                  setCandidates(prev => prev.map(c => c.id === suggestion.id ? { ...c, is_dismissed: true } : c));
+                                  setDismissingId(null);
+                                }}
+                                className="px-2 py-1 rounded-full bg-white border border-gray-100 text-gray-400 text-[11px] hover:bg-gray-100 transition"
+                              >
+                                理由なしで却下
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
+                    );
+                  }
+                  // --- 通常の改善案カード（aix_feature_suggestions） ---
+                  const propCat = PROPOSAL_CAT_MAP[suggestion.proposal_category ?? 'other'] ?? PROPOSAL_CAT_MAP.other;
+                  return (
+                  <div
+                    key={suggestion.id}
+                    className="bg-white rounded-xl border border-violet-200 p-3 shadow-sm"
+                  >
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold shrink-0 ${
+                        (SUGGESTION_TYPE_BADGE[suggestion.suggestion_type] ?? SUGGESTION_TYPE_BADGE.new_picker).className
+                      }`}>
+                        {(SUGGESTION_TYPE_BADGE[suggestion.suggestion_type] ?? SUGGESTION_TYPE_BADGE.new_picker).label}
+                      </span>
+                      {/* 打ち合わせ済み（status="approved"）: Opus 4.8との打ち合わせで確定した実装待ち仕様 */}
+                      {suggestion.status === "approved" && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-bold shrink-0">
+                          🤝 打ち合わせ済み
+                        </span>
+                      )}
+                      {/* AIXボタン名バッジ（action_typeがある場合） */}
+                      {suggestion.action_type && (
+                        <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full font-bold shrink-0"
+                          style={{ backgroundColor: getCategoryColor(suggestion.action_type) + "20", color: getCategoryColor(suggestion.action_type) }}>
+                          {ACTION_LABELS[suggestion.action_type] ?? suggestion.action_type}
+                        </span>
+                      )}
+                      <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 12, background: propCat.color, color: '#fff', fontSize: 11, marginBottom: 4, flexShrink: 0 }}>
+                        {propCat.label}
+                      </span>
+                      <p className="text-sm text-gray-800 font-semibold">{suggestion.suggested_title}</p>
+                      {(suggestion.evidence_count ?? 1) >= 2 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium shrink-0">
+                          📊 {suggestion.evidence_count}回同じパターン
+                        </span>
+                      )}
                     </div>
-                  )}
-                </div>
-              ));
+                    {suggestion.reason && (
+                      <p className="text-[11px] text-gray-400 mb-1">{suggestion.reason}</p>
+                    )}
+                    {suggestion.description && (
+                      <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed mb-3">
+                        {suggestion.description}
+                      </p>
+                    )}
+                    <div className="flex gap-2">
+                      {suggestion.status === "approved" ? (
+                        <button
+                          onClick={() => updateSuggestionStatus(suggestion.id, "implemented")}
+                          className="flex-1 py-1.5 rounded-lg bg-green-500 text-white text-sm font-semibold hover:bg-green-600 transition"
+                        >
+                          🚀 実装完了
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            // aix_feature_suggestions を AiTemplateCandidate 形式に変換してレビューパネルへ
+                            const pseudoCandidate: AiTemplateCandidate = {
+                              id: suggestion.id,
+                              action_type: suggestion.action_type ?? "",
+                              category: suggestion.action_type ?? "",
+                              suggested_title: suggestion.suggested_title,
+                              template_text: suggestion.description ?? suggestion.suggested_title,
+                              original_text: null,
+                              reason: suggestion.reason,
+                              evidence_count: suggestion.evidence_count,
+                              created_at: suggestion.created_at,
+                              is_adopted: false,
+                              is_dismissed: false,
+                              source: "suggestion",
+                            };
+                            openReviewPanel(pseudoCandidate);
+                          }}
+                          className="flex-1 py-1.5 rounded-lg bg-violet-500 text-white text-sm font-semibold hover:bg-violet-600 transition"
+                        >
+                          ✅ 確認して採用
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setDismissingId(dismissingId === suggestion.id ? null : suggestion.id)}
+                        className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-500 text-sm hover:bg-gray-200 transition"
+                      >
+                        却下
+                      </button>
+                    </div>
+                    {/* P5: 却下理由チップ */}
+                    {dismissingId === suggestion.id && (
+                      <div className="mt-2 rounded-lg bg-gray-50 p-2">
+                        <p className="text-[11px] text-gray-400 mb-1.5">却下理由を選ぶとAIが学習します</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {DISMISS_REASONS.map(r => (
+                            <button
+                              key={r}
+                              onClick={() => updateSuggestionStatus(suggestion.id, "dismissed", r)}
+                              className="px-2 py-1 rounded-full bg-white border border-gray-200 text-gray-600 text-[11px] hover:bg-red-50 hover:border-red-200 hover:text-red-500 transition"
+                            >
+                              {r}
+                            </button>
+                          ))}
+                          <button
+                            onClick={() => updateSuggestionStatus(suggestion.id, "dismissed")}
+                            className="px-2 py-1 rounded-full bg-white border border-gray-100 text-gray-400 text-[11px] hover:bg-gray-100 transition"
+                          >
+                            理由なしで却下
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  );
+                });
               })()}
               {/* 追加パターン検出（ai_template_candidates source="improvement"）: スタッフがAI文に情報を追加したパターン */}
               {!suggestionLoading && improvementCandidates.map(candidate => (
