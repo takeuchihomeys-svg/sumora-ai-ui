@@ -1240,6 +1240,19 @@ CREATE TABLE IF NOT EXISTS calendar_events (
 CREATE INDEX IF NOT EXISTS idx_calendar_events_start_at ON calendar_events(start_at);
 ALTER TABLE calendar_events DISABLE ROW LEVEL SECURITY;
 
+-- ── 追加カラム（2026-07-12）──
+
+-- aix_feature_suggestions: 実装メモ用カラム + 実装完了インデックス
+ALTER TABLE aix_feature_suggestions ADD COLUMN IF NOT EXISTS implementation_notes TEXT;
+CREATE INDEX IF NOT EXISTS idx_aix_feature_suggestions_implemented
+  ON aix_feature_suggestions(created_at DESC) WHERE status = 'implemented';
+
+-- ai_feedback_items: 却下理由（AI質問の却下パターンを corpus2skill の学習材料に）
+ALTER TABLE ai_feedback_items ADD COLUMN IF NOT EXISTS dismissed_reason TEXT;
+
+-- ai_reply_knowledge: 出所管理（corpus2skill起票・手動・FEEDBACK回答などを区別）
+ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'manual';
+
 `.trim();
 
 // GET: スキーマSQLを返す（POSTと同じ CRON_SECRET 認証必須 — 無認証でのスキーマ情報開示を防止）

@@ -24,17 +24,17 @@ export async function GET() {
   return NextResponse.json({ ok: true, suggestions });
 }
 
-// POST: status 更新（adopted / dismissed。却下時は dismissedReason も保存）
+// POST: status 更新（adopted / dismissed / implemented。却下時は dismissedReason も保存）
 export async function POST(req: NextRequest) {
   const body = await req.json() as {
     id: string;
-    status: "adopted" | "dismissed";
+    status: "adopted" | "dismissed" | "implemented";
     dismissedReason?: string;
   };
 
   const { id, status, dismissedReason } = body;
-  if (!id || (status !== "adopted" && status !== "dismissed")) {
-    return NextResponse.json({ ok: false, error: "id and status (adopted|dismissed) required" }, { status: 400 });
+  if (!id || !["adopted", "dismissed", "implemented"].includes(status)) {
+    return NextResponse.json({ ok: false, error: "id and status (adopted|dismissed|implemented) required" }, { status: 400 });
   }
 
   const { error } = await supabase

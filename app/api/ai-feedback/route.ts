@@ -16,7 +16,7 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", time
 
 // FEEDBACKルール上限: アクティブな FEEDBACK-* ルールがこれを超えたら古い順に無効化する
 // （回答のたびに増え続けてプロンプトが肥大化するのを防ぐ）
-const MAX_FEEDBACK_RULES = 40;
+const MAX_FEEDBACK_RULES = 60;  // AIXスコープ付きルールの generate-reply コピー（-gr）が加わるため
 
 // 改善⑧: suggest-next-action/route.ts の KNOWN_AIX_TYPES と同一のwhitelist。
 // Opusが返す未知の action_type をそのまま trigger_action_rules に upsert すると
@@ -205,6 +205,22 @@ export async function POST(req: NextRequest) {
         updated_at: new Date().toISOString(),
       }, { onConflict: "rule_key" });
       if (ruleError) console.error("[ai-feedback] ai_prompt_rules upsert error:", ruleError.message);
+
+      // AIXスコープ付きFEEDBACKルールは generate-reply にも注入する
+      // （viewing_invite等のルールは LINE文案生成の同フェーズでも有効なため）
+      if (!ruleError && promptRuleTexts[i].actionType !== null) {
+        await supabase.from("ai_prompt_rules").upsert({
+          rule_key: `FEEDBACK-${id as string}-${i + 1}-gr`,
+          action_type: "generate_reply",
+          condition_key: null,
+          condition_value: null,
+          rule_text: promptRuleTexts[i].text,
+          reason: `AI盲点質問generate-replyコピー（${new Date().toISOString().slice(0, 10)}）: ${item.question as string}`.slice(0, 500),
+          priority: 7,   // 元の priority=8 より低く（AIX側と重複するため）
+          is_active: true,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "rule_key" });
+      }
     }
   }
 
@@ -234,14 +250,21 @@ export async function POST(req: NextRequest) {
   try {
     const { data: activeFeedbackRules } = await supabase
       .from("ai_prompt_rules")
-      .select("rule_key, created_at")
+      .select("rule_key, created_at, action_type")
       .like("rule_key", "FEEDBACK-%")
       .eq("is_active", true)
-      .order("created_at", { ascending: true }); // 古い順
+      .order("created_at", { ascending: true }); // 古い順（後でグローバル優先ソートする）
 
     if (activeFeedbackRules && activeFeedbackRules.length > MAX_FEEDBACK_RULES) {
       const excessCount = activeFeedbackRules.length - MAX_FEEDBACK_RULES;
-      const oldestKeys = activeFeedbackRules.slice(0, excessCount).map((r) => r.rule_key);
+      // グローバル（action_type IS NULL）を先に削除、スコープ付きは後（より精密なため）
+      const sortedByPriority = [...activeFeedbackRules].sort((a, b) => {
+        const aIsGlobal = (a as { action_type: string | null }).action_type === null ? 0 : 1;
+        const bIsGlobal = (b as { action_type: string | null }).action_type === null ? 0 : 1;
+        if (aIsGlobal !== bIsGlobal) return aIsGlobal - bIsGlobal;
+        return new Date(a.created_at as string).getTime() - new Date(b.created_at as string).getTime();
+      });
+      const oldestKeys = sortedByPriority.slice(0, excessCount).map((r) => r.rule_key);
       const { error: deactivateError } = await supabase
         .from("ai_prompt_rules")
         .update({ is_active: false })

@@ -1083,8 +1083,8 @@ export default function TemplateModal({
     }
   };
 
-  // P4/P5: AIX改善案のステータス更新（adopted / dismissed + 理由）
-  const updateSuggestionStatus = useCallback(async (id: string, status: "adopted" | "dismissed", reason?: string) => {
+  // P4/P5: AIX改善案のステータス更新（adopted / dismissed / implemented + 理由）
+  const updateSuggestionStatus = useCallback(async (id: string, status: "adopted" | "dismissed" | "implemented", reason?: string) => {
     await fetch("/api/aix-feature-suggestions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2193,29 +2193,38 @@ export default function TemplateModal({
                     </p>
                   )}
                   <div className="flex gap-2">
-                    <button
-                      onClick={() => {
-                        // aix_feature_suggestions を AiTemplateCandidate 形式に変換してレビューパネルへ
-                        const pseudoCandidate: AiTemplateCandidate = {
-                          id: suggestion.id,
-                          action_type: suggestion.action_type ?? "",
-                          category: suggestion.action_type ?? "",
-                          suggested_title: suggestion.suggested_title,
-                          template_text: suggestion.description ?? suggestion.suggested_title,  // 改善案の説明をテンプレートとして使う
-                          original_text: null,
-                          reason: suggestion.reason,
-                          evidence_count: suggestion.evidence_count,
-                          created_at: suggestion.created_at,
-                          is_adopted: false,
-                          is_dismissed: false,
-                          source: "suggestion",
-                        };
-                        openReviewPanel(pseudoCandidate);
-                      }}
-                      className="flex-1 py-1.5 rounded-lg bg-violet-500 text-white text-sm font-semibold hover:bg-violet-600 transition"
-                    >
-                      ✅ 確認して採用
-                    </button>
+                    {suggestion.status === "approved" ? (
+                      <button
+                        onClick={() => updateSuggestionStatus(suggestion.id, "implemented")}
+                        className="flex-1 py-1.5 rounded-lg bg-green-500 text-white text-sm font-semibold hover:bg-green-600 transition"
+                      >
+                        🚀 実装完了
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          // aix_feature_suggestions を AiTemplateCandidate 形式に変換してレビューパネルへ
+                          const pseudoCandidate: AiTemplateCandidate = {
+                            id: suggestion.id,
+                            action_type: suggestion.action_type ?? "",
+                            category: suggestion.action_type ?? "",
+                            suggested_title: suggestion.suggested_title,
+                            template_text: suggestion.description ?? suggestion.suggested_title,  // 改善案の説明をテンプレートとして使う
+                            original_text: null,
+                            reason: suggestion.reason,
+                            evidence_count: suggestion.evidence_count,
+                            created_at: suggestion.created_at,
+                            is_adopted: false,
+                            is_dismissed: false,
+                            source: "suggestion",
+                          };
+                          openReviewPanel(pseudoCandidate);
+                        }}
+                        className="flex-1 py-1.5 rounded-lg bg-violet-500 text-white text-sm font-semibold hover:bg-violet-600 transition"
+                      >
+                        ✅ 確認して採用
+                      </button>
+                    )}
                     <button
                       onClick={() => setDismissingId(dismissingId === suggestion.id ? null : suggestion.id)}
                       className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-500 text-sm hover:bg-gray-200 transition"
