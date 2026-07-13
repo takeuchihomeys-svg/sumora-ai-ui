@@ -769,6 +769,20 @@ export async function POST(req: NextRequest) {
   // 学習ヘルスモニタリング用の実行記録（morning-report が cron_run_logs を読んで状態を報告する）
   const runLogId = await startCronLog("corpus2skill");
 
+  // 20分以内に実行中のcorpus2skillジョブがあればスキップ（重複実行防止）
+  const { data: running } = await supabase
+    .from("cron_run_logs")
+    .select("id")
+    .eq("cron_name", "corpus2skill")
+    .is("ok", null)
+    .neq("id", runLogId)  // 自分自身は除外
+    .gt("started_at", new Date(Date.now() - 20 * 60 * 1000).toISOString())
+    .limit(1);
+  if (running?.length) {
+    await finishCronLog(runLogId, false, undefined, "already running - skipped");
+    return NextResponse.json({ ok: false, error: "already running" }, { status: 409 });
+  }
+
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
   // 案4: 知識ライフサイクル管理 — 4週間使われていない corpus2skill 由来スキルを importance 9→7→5 と段階降格

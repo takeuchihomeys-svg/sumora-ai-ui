@@ -802,6 +802,20 @@ export async function POST(req: NextRequest) {
       reply_angle: string | null;
     };
 
+    // 楽観的ロック: diff_analyzed_at を今の時刻にセット（まだnullの場合のみ）
+    // 2インスタンスが同時に同じレコードをフェッチしても、先にクレームした方のみ続行できる。
+    // 後からきたインスタンスは count=0 になるためスキップし、LLM二重呼び出し・重複insertを防止する。
+    const { data: claimData } = await supabase
+      .from("ai_reply_examples")
+      .update({ diff_analyzed_at: new Date().toISOString() })
+      .eq("id", id)
+      .is("diff_analyzed_at", null)
+      .select("id");
+    if (!claimData || claimData.length === 0) {
+      // 別インスタンスが先にクレーム済み → スキップ
+      continue;
+    }
+
     // 完全一致はスキップ（構成が同じなので学習不要）
     if ((ai_draft ?? "").trim() === (sent_reply ?? "").trim()) {
       await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);

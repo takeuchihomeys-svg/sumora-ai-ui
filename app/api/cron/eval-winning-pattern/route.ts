@@ -11,7 +11,7 @@ export const maxDuration = 60;
 // actual_outcome を記録し、Sonnet で「予測パターンは結果と整合していたか」を判定して was_correct を更新する。
 // 結果サマリーは ai_prompts の key='winning_pattern_eval_latest' に upsert する。
 const BATCH_LIMIT = 200;
-const JUDGE_CHUNK = 20;
+const JUDGE_CHUNK = 5;
 
 type PatternLog = {
   id: string;
@@ -52,7 +52,12 @@ async function judgeWithSonnet(
   items: Array<{ id: string; predicted_pattern: string; actual_outcome: string }>
 ): Promise<Map<string, boolean>> {
   const verdicts = new Map<string, boolean>();
+  const startTime = Date.now();
   for (let i = 0; i < items.length; i += JUDGE_CHUNK) {
+    if (Date.now() - startTime > 45_000) {
+      console.warn("[eval-winning-pattern] 時間制限到達、残りのチャンクをスキップ");
+      break;
+    }
     const chunk = items.slice(i, i + JUDGE_CHUNK);
     const listText = chunk
       .map((it, idx) => `${idx + 1}. [id:${it.id}] 結果:${it.actual_outcome === "closed_won" ? "成約" : "失注"} / 予測パターン:「${it.predicted_pattern}」`)
@@ -154,10 +159,11 @@ export async function POST(req: NextRequest) {
       const wasCorrect = verdicts.has(l.id) ? verdicts.get(l.id)! : null;
       if (wasCorrect === true) correct += 1;
       if (wasCorrect === false) wrong += 1;
-      await supabase
+      const { error: updateErr } = await supabase
         .from("winning_pattern_logs")
         .update({ actual_outcome: l.outcome, was_correct: wasCorrect })
         .eq("id", l.id);
+      if (updateErr) console.warn("[eval-winning-pattern] UPDATE失敗 id:", l.id, updateErr.message);
     }
 
     const judged = correct + wrong;

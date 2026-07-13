@@ -1381,6 +1381,15 @@ BEGIN
 END;
 $$;
 
+-- 誤学習ブロックテーブル（「✗ 間違い」で削除したトークンの再学習を永久に防止）
+CREATE TABLE IF NOT EXISTS token_block (
+  token TEXT PRIMARY KEY,
+  type TEXT NOT NULL CHECK (type IN ('station', 'region')),
+  blocked_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE token_block DISABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_token_block_token ON token_block(token);
+
 `.trim();
 
 // GET: スキーマSQLを返す（POSTと同じ CRON_SECRET 認証必須 — 無認証でのスキーマ情報開示を防止）

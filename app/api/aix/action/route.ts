@@ -188,12 +188,12 @@ async function getPropertyKnowledge(conversationId?: string): Promise<string> {
   // 使用追跡（fire-and-forget）+ knowledge_apply_log への記録（eval-winning でのフィードバックループ接続）
   const usedIds = [...(diffLearned ?? []), ...(stateKnowledge ?? [])].map(r => (r as { id: string }).id).filter(Boolean);
   if (usedIds.length) {
-    supabase.rpc("increment_knowledge_used_count", { p_ids: usedIds }).then(() => {}, () => {});
+    supabase.rpc("increment_knowledge_used_count", { p_ids: usedIds }).then(() => {}, (e) => console.error("[aix/action] increment_knowledge_used_count RPC失敗:", e));
     if (conversationId) {
       // C05: source='aix_action' を付与して generate-reply 由来のログと区別する
       supabase.from("knowledge_apply_log").insert(
         usedIds.map(id => ({ knowledge_id: id, conversation_id: conversationId, source: "aix_action" }))
-      ).then(() => {}, () => {});
+      ).then(() => {}, (e) => console.error("[aix/action] knowledge_apply_log insert失敗:", e));
     }
   }
   const parts: string[] = [];
@@ -303,12 +303,12 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
     // 使用追跡（fire-and-forget）
     const allIds = [...sortedDiff, ...sortedOther, ...vectorExtras].map(r => r.id).filter(Boolean);
     if (allIds.length) {
-      supabase.rpc("increment_knowledge_used_count", { p_ids: allIds }).then(() => {}, () => {});
+      supabase.rpc("increment_knowledge_used_count", { p_ids: allIds }).then(() => {}, (e) => console.error("[aix/action] increment_knowledge_used_count RPC失敗:", e));
       if (conversationId) {
         // C05: source='aix_action' を付与して generate-reply 由来のログと区別する
         supabase.from("knowledge_apply_log").insert(
           allIds.map(id => ({ knowledge_id: id, conversation_id: conversationId, source: "aix_action" }))
-        ).then(() => {}, () => {});
+        ).then(() => {}, (e) => console.error("[aix/action] knowledge_apply_log insert失敗:", e));
       }
     }
     const editExamples = editResult.data;
@@ -338,7 +338,8 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
         vectorExtras.map(r => `・${r.content}`).join("\n"));
     }
     return parts.length > 0 ? "\n\n" + parts.join("\n\n") : "";
-  } catch {
+  } catch (e) {
+    console.error("[aix/action] getKnowledgeForState失敗:", e);
     return ""; // ナレッジ取得失敗は生成自体を止めない
   }
 }

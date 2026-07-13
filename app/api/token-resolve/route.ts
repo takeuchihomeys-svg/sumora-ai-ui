@@ -207,7 +207,8 @@ ${stationList}
       reins_line: reinsLine,
       source: "ai", // DeepSeek経由なので"ai"（路線名自体はDB由来）
     };
-  } catch {
+  } catch (e) {
+    console.warn("[token-resolve] DeepSeek呼び出し失敗:", e instanceof Error ? e.message : e);
     return null; // タイムアウト・エラー時はClaudeにフォールバック
   }
 }
@@ -257,7 +258,8 @@ REINS路線名の例：「大阪メトロ御堂筋線」「阪急神戸線」`,
       reins_line: parsed.reins_line ?? null,
       source: "ai", // DeepSeekはAI知識なので"ai"
     };
-  } catch {
+  } catch (e) {
+    console.warn("[token-resolve] DeepSeek呼び出し失敗:", e instanceof Error ? e.message : e);
     return null; // タイムアウト・エラー時はClaudeにフォールバック
   }
 }
@@ -276,12 +278,23 @@ export async function POST(req: NextRequest) {
   const result: Record<string, ResolvedToken> = {};
 
   // ── DBキャッシュを先に確認 ─────────────────────────────────────────
-  const [{ data: cachedRegions }, { data: cachedStations }] = await Promise.all([
+  const [{ data: cachedRegions }, { data: cachedStations }, { data: blockedRows }] = await Promise.all([
     db.from("region_map").select("token, ward").in("token", tokens),
     db.from("station_map").select("token, ward, realpro_lines, itandi_lines, reins_line, source, created_at").in("token", tokens),
+    db.from("token_block").select("token").in("token", tokens),
   ]);
 
   const resolvedTokens = new Set<string>();
+
+  // ── ブロック済みトークン（「✗ 間違い」で永久ブロック）──────────────────────────
+  // token_block に登録されているトークンは AI による再解決を永久にスキップ
+  const blocked = new Set((blockedRows ?? []).map((r: { token: string }) => r.token));
+  for (const t of tokens) {
+    if (blocked.has(t)) {
+      result[t] = { type: "unknown", ward: null, realpro_lines: [], itandi_lines: [], reins_line: null, source: "db" };
+      resolvedTokens.add(t);
+    }
+  }
 
   for (const row of cachedRegions ?? []) {
     result[row.token] = { type: "region", ward: row.ward, realpro_lines: [], itandi_lines: [], reins_line: null, source: "db" };
@@ -403,6 +416,15 @@ export async function POST(req: NextRequest) {
   // ── Web検索部隊: Claude + web_search でトークンを解決 ──────────────
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+  // 新しい日の場合、DBのカウントをリセット（楽観的ロックが正しく機能するよう事前に同期）
+  // savedDate !== today の間は DB の token_resolve_count が昨日の値のまま残っているため
+  // eq("value", "0") の optimistic UPDATE が必ず失敗してしまう。先に 0 に揃えておく。
+  if (savedDate !== today) {
+    await Promise.all([
+      db.from("hanbancyo_settings").upsert({ key: "token_resolve_date",  value: today }, { onConflict: "key" }),
+      db.from("hanbancyo_settings").upsert({ key: "token_resolve_count", value: "0"   }, { onConflict: "key" }),
+    ]);
+  }
   let dailyCount = savedCount;
 
   for (const token of trulyUnknown) {
@@ -414,9 +436,21 @@ export async function POST(req: NextRequest) {
     if (deepseekResult) {
       resolved = deepseekResult;
     } else try {
-      // ── ② Claude + web_search で調査（レート制限内の場合のみ）──
+      // ── ② Claude + web_search で調査（楽観的ロックで競合を防ぐ）──
+      webSearchAttempted = true; // レート制限・競合でもネガティブキャッシュを書くため、チェックの前に設定
       if (!webSearchAllowed || dailyCount >= DAILY_LIMIT) throw new Error("rate_limit");
-      webSearchAttempted = true;
+      // 楽観的ロック: Claudeを呼ぶ前にカウンターをアトミックにインクリメントする。
+      // 同時リクエストが同じ dailyCount を読んでいても、eq("value", String(dailyCount)) により
+      // 片方しか UPDATE できない（0行更新 = 別リクエストが先に書いた → スキップ）。
+      // これにより「両者が webSearchAllowed=true と判断して両方 Claude を呼ぶ」二重課金を防ぐ。
+      const { count: claimed } = await db
+        .from("hanbancyo_settings")
+        .update({ value: String(dailyCount + 1) })
+        .eq("key", "token_resolve_count")
+        .eq("value", String(dailyCount))
+        .select();
+      if (!claimed || claimed === 0) throw new Error("rate_limit_concurrent");
+      dailyCount++;
       const searchRes = await anthropic.messages.create({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 1024,
@@ -455,12 +489,7 @@ export async function POST(req: NextRequest) {
           reins_line: parsed.reins_line ?? null,
           source: "web_search",
         };
-        // Web検索成功 → カウンターをインクリメント
-        dailyCount++;
-        await Promise.all([
-          db.from("hanbancyo_settings").upsert({ key: "token_resolve_date",  value: today },      { onConflict: "key" }),
-          db.from("hanbancyo_settings").upsert({ key: "token_resolve_count", value: String(dailyCount) }, { onConflict: "key" }),
-        ]);
+        // カウンターは楽観的ロックで呼び出し前にインクリメント済み（再書き込み不要）
       }
     } catch {
       // 制限超過・web_search失敗時は unknown のまま保存（DeepSeekで安価に処理済みのためフォールバックなし）

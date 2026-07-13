@@ -26,6 +26,10 @@ export async function POST(req: NextRequest) {
     if (!body.images || !Array.isArray(body.images) || body.images.length === 0) {
       return NextResponse.json({ ok: false, error: "images が必要です" }, { status: 400 });
     }
+    const MAX_IMAGES = 15;
+    if (body.images.length > MAX_IMAGES) {
+      return NextResponse.json({ ok: false, error: "画像は最大15枚まで" }, { status: 400 });
+    }
 
     // ① 顧客情報を取得
     const { data: customer, error } = await supabase

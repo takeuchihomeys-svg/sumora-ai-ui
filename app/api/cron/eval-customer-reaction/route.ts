@@ -72,10 +72,10 @@ export async function POST(req: NextRequest) {
             .eq("sender", "customer")
             .gt("created_at", sendTime)
             .lte("created_at", windowEnd);
-          if (error) return; // 失敗分は NULL のまま残し次回リトライ
+          if (error) { console.warn("[eval-customer-reaction] per-item失敗 id:", log.id, "error:", error.message); return; } // 失敗分は NULL のまま残し次回リトライ
           if ((count ?? 0) > 0) reactedIds.push(log.id);
           else notReactedIds.push(log.id);
-        } catch { /* 次回リトライ */ }
+        } catch (e) { console.warn("[eval-customer-reaction] per-item失敗 id:", log.id, "error:", (e as Error)?.message); /* 次回リトライ */ }
       }));
     }
 

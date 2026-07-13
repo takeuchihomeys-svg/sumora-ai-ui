@@ -148,12 +148,21 @@ async function run() {
 
     // 先にpendingをクリアして重複処理を防ぐ ＋ 生成試行時刻をDBに記録
     // （失敗しても draft_attempted_at から10分間はorphanedクエリの再試行対象外になる）
-    const { error: markErr } = await db.from("conversations")
+    // MEDIUM-4: draft_pending_at がまだセットされている行のみ更新（楽観的ロック）
+    // → 複数インスタンスが同一会話を同時にクレームしようとしても1つしか成功しない
+    const { data: claimed, error: markErr } = await db.from("conversations")
       .update({ draft_pending_at: null, draft_attempted_at: new Date().toISOString() })
-      .eq("id", convId);
+      .eq("id", convId)
+      .not("draft_pending_at", "is", null)
+      .select("id");
     if (markErr) {
       // マーク失敗のまま生成すると毎分再処理＋二重生成になるためスキップ
       console.error("[generate-pending-drafts] mark update failed:", convId, markErr.message);
+      skipped++;
+      continue;
+    }
+    if (!claimed?.length) {
+      // 別インスタンスが先にクレーム済み → スキップ
       skipped++;
       continue;
     }
@@ -254,10 +263,14 @@ async function run() {
       }
 
       // 品質ゲート①: max_tokens 尻切れドラフトは保存しない
-      // draft_attempted_at は処理開始時に記録済みのため、クリアせずそのまま残す
-      // （＝10分間はorphanedクエリの再試行対象外。新しい顧客メッセージが来れば即再生成される）
+      // MEDIUM-3: センチネル値 "__TRUNCATED__" を保存して再試行を防ぐ
+      // （draft_attempted_at=null にして orphaned クエリの 10 分待ちも解除）
+      // 新しい顧客メッセージが来れば draft_pending_at が再セットされ即再生成される
       if (stopReason === "max_tokens") {
-        console.warn("[generate-pending-drafts] draft truncated (stop_reason=max_tokens), not saved:", convId);
+        console.warn("[generate-pending-drafts] draft truncated (stop_reason=max_tokens), saving sentinel:", convId);
+        await db.from("conversations")
+          .update({ ai_draft: "__TRUNCATED__", draft_attempted_at: null })
+          .eq("id", convId);
         skipped++;
         continue;
       }

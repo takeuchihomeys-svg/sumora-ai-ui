@@ -20,7 +20,7 @@ export async function GET() {
   return NextResponse.json({ stations: data ?? [] });
 }
 
-// DELETE /api/station-map?token=XXX → 間違いエントリを削除して再学習させる
+// DELETE /api/station-map?token=XXX → 間違いエントリを削除し、token_blockで再学習を永久ブロック
 export async function DELETE(req: Request) {
   const { searchParams } = new URL(req.url);
   const token = searchParams.get("token");
@@ -29,6 +29,12 @@ export async function DELETE(req: Request) {
   const db = getDb();
   const { error } = await db.from("station_map").delete().eq("token", token);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  // 誤学習防止: token_block に登録して AI による再解決を永久にブロック
+  await db.from("token_block").upsert(
+    { token, type: "station", blocked_at: new Date().toISOString() },
+    { onConflict: "token" },
+  );
 
   return NextResponse.json({ ok: true, deleted: token });
 }
