@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { syncConfirmedToPromptRule } from "@/app/lib/knowledge-promote";
 
 // P4: AIX機能改善提案（aix_feature_suggestions）
 // corpus2skill 週次Opusが new_aix_picker 提案をINSERTし、
@@ -59,7 +60,7 @@ export async function POST(req: NextRequest) {
         }
         const { data: kRow } = await supabase
           .from("ai_reply_knowledge")
-          .select("content")
+          .select("content, importance, conversation_state, title")
           .eq("id", knowledge_id)
           .maybeSingle();
         const newContent = ((kRow?.content as string | null) ?? "") + "\n" + append_text;
@@ -70,6 +71,14 @@ export async function POST(req: NextRequest) {
         if (kUpdateErr) {
           return NextResponse.json({ ok: false, error: "ナレッジ更新失敗: " + kUpdateErr.message }, { status: 500 });
         }
+        // ai_prompt_rules に即時反映（knowledge_aix_align は content 更新のみで sync を呼ばないバグを修正）
+        await syncConfirmedToPromptRule({
+          id: knowledge_id,
+          title: (kRow?.title as string | null) ?? "",
+          content: newContent,
+          importance: (kRow?.importance as number | null) ?? 0,
+          conversation_state: (kRow?.conversation_state as string | null) ?? null,
+        });
         const { error: sErr } = await supabase
           .from("aix_feature_suggestions")
           .update({ status: "implemented" })

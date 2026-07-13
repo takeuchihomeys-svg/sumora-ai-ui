@@ -138,7 +138,7 @@ async function handleFinalize(body: DiscussBody): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: `DB更新に失敗しました: ${updateError.message}` }, { status: 500 });
   }
 
-  // 4. ai_prompt_rules に即時反映（importance は DB から取得。取得失敗時は閾値の 7 で同期を試みる）
+  // 4. ai_prompt_rules に即時反映（importance は DB から取得。取得失敗時は安全サイドでスキップ）
   const { data: row, error: fetchError } = await supabase
     .from("ai_reply_knowledge")
     .select("importance")
@@ -146,6 +146,8 @@ async function handleFinalize(body: DiscussBody): Promise<NextResponse> {
     .single();
   if (fetchError) {
     console.error("[knowledge-discuss] importance fetch failed:", fetchError.message);
+    // importance 不明時は importance=7 を仮定してサイレント昇格するバグを防ぐため sync をスキップ
+    return NextResponse.json({ ok: true, updatedContent, synced: false, reason: "importance_fetch_failed" });
   }
 
   await syncConfirmedToPromptRule({
@@ -153,10 +155,10 @@ async function handleFinalize(body: DiscussBody): Promise<NextResponse> {
     title,
     content: updatedContent,
     conversation_state: conversation_state ?? null,
-    importance: row?.importance ?? 7,
+    importance: row.importance as number,
   });
 
-  return NextResponse.json({ ok: true, updatedContent });
+  return NextResponse.json({ ok: true, updatedContent, synced: (row.importance as number) >= 7 });
 }
 
 // ─────────────────────────────────────────────

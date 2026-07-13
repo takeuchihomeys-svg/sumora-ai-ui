@@ -223,7 +223,7 @@ export async function POST(req: NextRequest) {
       try {
         const { data: promotionCandidates } = await supabase
           .from("ai_reply_knowledge")
-          .select("id, title, correct_count, wrong_count, apply_count")
+          .select("id, title, content, importance, conversation_state, correct_count, wrong_count, apply_count")
           .eq("hypothesis_status", "hypothesis")
           .gte("correct_count", 5)
           .gte("apply_count", 5)
@@ -244,9 +244,9 @@ export async function POST(req: NextRequest) {
             await syncConfirmedToPromptRule({
               id: rule.id as string,
               title: rule.title as string,
-              content: (rule as Record<string, unknown>).content as string ?? "",
-              importance: (rule.apply_count as number) ?? 0,
-              conversation_state: null,
+              content: (rule.content as string | null) ?? "",
+              importance: (rule.importance as number | null) ?? 0,
+              conversation_state: (rule.conversation_state as string | null) ?? null,
             });
           }
         }

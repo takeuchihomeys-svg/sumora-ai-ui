@@ -517,7 +517,7 @@ export async function POST(req: NextRequest) {
       .eq("hypothesis_status", "confirmed")
       .gte("importance", 7)
       .order("importance", { ascending: false })
-      .limit(100);
+      .limit(500);
 
     if (confirmedRules && confirmedRules.length > 0) {
       const upserts = confirmedRules.map((r) => {

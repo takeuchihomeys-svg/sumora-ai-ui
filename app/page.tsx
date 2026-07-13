@@ -683,8 +683,10 @@ export default function Home() {
   const [convMenuConvId, setConvMenuConvId] = useState<string | null>(null);
   const [activeTasks, setActiveTasks] = useState<Record<string, Array<{ id: string; task_type: string; created_at: string; customer_name: string }>>>({});
   const [showKnowledgeModal, setShowKnowledgeModal] = useState(false);
-  const [knowledgeRules, setKnowledgeRules] = useState<Array<{ id: string; content: string; conversation_state: string; created_at: string; title: string }>>([]);
+  const [knowledgeRules, setKnowledgeRules] = useState<Array<{ id: string; content: string; conversation_state: string; created_at: string; title: string; importance?: number }>>([]);
+  const [knowledgeTotal, setKnowledgeTotal] = useState(0);
   const [knowledgeLoading, setKnowledgeLoading] = useState(false);
+  const [knowledgeToast, setKnowledgeToast] = useState<{ msg: string; synced: boolean } | null>(null);
   const [showTriggerRulesModal, setShowTriggerRulesModal] = useState(false);
   const [triggerRules, setTriggerRules] = useState<Array<{ id: string; action_type: string; keyword: string; confidence: number; occurrence_count: number; conversation_status: string | null }>>([]);
   const [triggerAcceptStats, setTriggerAcceptStats] = useState<Record<string, { accepted: number; dismissed: number }>>({});
@@ -8198,8 +8200,9 @@ export default function Home() {
                   setShowKnowledgeModal(true);
                   setKnowledgeLoading(true);
                   try {
-                    const d = await fetch("/api/knowledge-review").then((r) => r.json()) as { rules: Array<{ id: string; content: string; conversation_state: string; created_at: string; title: string }> };
+                    const d = await fetch("/api/knowledge-review").then((r) => r.json()) as { rules: Array<{ id: string; content: string; conversation_state: string; created_at: string; title: string; importance?: number }>; total?: number };
                     setKnowledgeRules(d.rules ?? []);
+                    setKnowledgeTotal(d.total ?? 0);
                   } catch (err) {
                     console.error("[knowledge-review]", err);
                   } finally {
@@ -8289,16 +8292,15 @@ export default function Home() {
               ) : (
                 <div className="flex flex-col gap-3">
                   {knowledgeRules.map((rule) => {
-                    const isApproved = rule.title.includes("承認済");
                     const stateLabel: Record<string, string> = { first_reply: "初回", hearing: "ヒアリング", proposing: "提案", applying: "申込" };
                     return (
-                      <div key={rule.id} className={`rounded-2xl border px-4 py-3 ${isApproved ? "border-indigo-200 bg-indigo-50" : "border-[#e9edef] bg-[#f8f9fa]"}`}>
+                      <div key={rule.id} className="rounded-2xl border border-[#e9edef] bg-[#f8f9fa] px-4 py-3">
                         <div className="flex items-start gap-2 mb-2">
-                          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-bold ${isApproved ? "bg-indigo-200 text-indigo-800" : "bg-[#e9edef] text-[#667781]"}`}>
+                          <span className="shrink-0 rounded-full bg-[#e9edef] px-2 py-0.5 text-[9px] font-bold text-[#667781]">
                             {stateLabel[rule.conversation_state] ?? rule.conversation_state}
                           </span>
-                          {isApproved && (
-                            <span className="shrink-0 rounded-full bg-indigo-500 px-2 py-0.5 text-[9px] font-bold text-white">承認済</span>
+                          {(rule.importance ?? 0) < 7 && (
+                            <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-bold text-amber-700">imp {rule.importance ?? "?"}</span>
                           )}
                           <span className="ml-auto shrink-0 text-[10px] text-[#8696a0]">
                             {new Date(rule.created_at).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })}
@@ -8306,27 +8308,40 @@ export default function Home() {
                         </div>
                         <p className="text-[12px] text-[#111b21] leading-relaxed mb-3">{rule.content}</p>
                         <div className="flex gap-2">
-                          {!isApproved && (
-                            <button
-                              onClick={async () => {
-                                try {
-                                  await fetch("/api/knowledge-review", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: rule.id, action: "confirm" }) });
-                                  setKnowledgeRules((prev) => prev.filter((r) => r.id !== rule.id));
-                                } catch (err) {
-                                  console.error("[knowledge-review approve]", err);
-                                  setError("⚠️ ルールの承認に失敗しました");
-                                }
-                              }}
-                              className="flex-1 rounded-xl bg-indigo-500 py-2 text-[12px] font-bold text-white active:opacity-80"
-                            >
-                              承認
-                            </button>
-                          )}
                           <button
                             onClick={async () => {
                               try {
-                                await fetch("/api/knowledge-review", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: rule.id }) });
+                                const res = await fetch("/api/knowledge-review", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: rule.id, action: "confirm" }) });
+                                if (!res.ok) {
+                                  const errData = await res.json().catch(() => ({})) as { error?: string };
+                                  throw new Error(errData.error ?? `HTTP ${res.status}`);
+                                }
+                                const result = await res.json() as { synced?: boolean; importance?: number };
                                 setKnowledgeRules((prev) => prev.filter((r) => r.id !== rule.id));
+                                setKnowledgeTotal((prev) => Math.max(0, prev - 1));
+                                const imp = result.importance ?? rule.importance ?? 0;
+                                if (result.synced) {
+                                  setKnowledgeToast({ msg: "承認しました。AIプロンプトに反映されました", synced: true });
+                                } else {
+                                  setKnowledgeToast({ msg: imp < 7 ? `承認しました（importance ${imp} < 7のためプロンプト未反映）` : "承認しました（プロンプト反映に失敗しました）", synced: false });
+                                }
+                                setTimeout(() => setKnowledgeToast(null), 4000);
+                              } catch (err) {
+                                console.error("[knowledge-review approve]", err);
+                                setError("⚠️ ルールの承認に失敗しました");
+                              }
+                            }}
+                            className="flex-1 rounded-xl bg-indigo-500 py-2 text-[12px] font-bold text-white active:opacity-80"
+                          >
+                            承認
+                          </button>
+                          <button
+                            onClick={async () => {
+                              try {
+                                const res = await fetch("/api/knowledge-review", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: rule.id }) });
+                                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                                setKnowledgeRules((prev) => prev.filter((r) => r.id !== rule.id));
+                                setKnowledgeTotal((prev) => Math.max(0, prev - 1));
                               } catch (err) {
                                 console.error("[knowledge-review delete]", err);
                                 setError("⚠️ ルールの削除に失敗しました");
@@ -8343,8 +8358,15 @@ export default function Home() {
                 </div>
               )}
             </div>
+            {knowledgeToast && (
+              <div className={`mx-4 mb-2 rounded-xl px-3 py-2 text-[12px] font-bold ${knowledgeToast.synced ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>
+                {knowledgeToast.synced ? "✓ " : "⚠ "}{knowledgeToast.msg}
+              </div>
+            )}
             <div className="px-4 py-3 border-t border-[#f0f2f5] text-center">
-              <span className="text-[11px] text-[#8696a0]">{knowledgeRules.length}件 / 承認済みはimportance 10になります</span>
+              <span className="text-[11px] text-[#8696a0]">
+                {knowledgeRules.length}件表示 / 残り{knowledgeTotal}件の仮説 — 承認するとAIプロンプトに反映されます（importance 7以上のみ）
+              </span>
             </div>
             <div className="pb-[max(12px,env(safe-area-inset-bottom))]" />
           </div>
