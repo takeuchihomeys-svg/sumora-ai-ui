@@ -79,6 +79,8 @@ export async function POST(req: NextRequest) {
     let evaluated = 0;
     let matchedCount = 0;
     const sourceCounts: Record<string, { total: number; matched: number }> = {};
+    // Fix-1a: collect per-evaluated-row feedback for confidence update
+    const sessionFeedback: Array<{ action_type: string; matched: boolean }> = [];
 
     for (const log of logs) {
       if (evaluatedIds.has(log.id)) continue;
@@ -136,9 +138,69 @@ export async function POST(req: NextRequest) {
         sourceCounts[srcKey] ??= { total: 0, matched: 0 };
         sourceCounts[srcKey].total += 1;
         if (matched) sourceCounts[srcKey].matched += 1;
+        // Fix-1a: record feedback only when a prediction was made (predicted != null)
+        if (predicted !== null) {
+          sessionFeedback.push({ action_type: predicted, matched });
+        }
       } catch (e) {
         // 1件の失敗で全体を止めない（タイムアウト等）
         console.error("[aix-shadow-eval] eval failed for", log.id, e);
+      }
+    }
+
+    // 6. Fix-1a: trigger_action_rules の confidence をフィードバック更新
+    // sessionFeedback は今セッションで新たに評価した行のみを含む（重複評価は evaluatedIds で防止済み）。
+    // predicted_aix_type 単位で matched/mismatched を集計し、差分に応じて
+    //   mismatched 超過 → confidence × 0.95 （フロア 10）
+    //   matched 超過   → confidence × 1.02 （シーリング 100）
+    // を1回だけ適用する。これにより外れ続けるルールを徐々に降格できる。
+    let rulesUpdated = 0;
+    if (sessionFeedback.length > 0) {
+      try {
+        // predicted_aix_type ごとに集計
+        const feedbackByType: Record<string, { matched: number; mismatched: number }> = {};
+        for (const fb of sessionFeedback) {
+          feedbackByType[fb.action_type] ??= { matched: 0, mismatched: 0 };
+          if (fb.matched) feedbackByType[fb.action_type].matched++;
+          else feedbackByType[fb.action_type].mismatched++;
+        }
+
+        for (const [actionType, counts] of Object.entries(feedbackByType)) {
+          const netMismatch = counts.mismatched - counts.matched;
+          if (netMismatch === 0) continue; // 相殺 → 変更なし
+
+          // action_type に紐づくルールをすべて取得
+          const { data: rules } = await supabase
+            .from("trigger_action_rules")
+            .select("id, confidence")
+            .eq("action_type", actionType);
+          if (!rules?.length) continue;
+
+          for (const rule of rules as Array<{ id: string; confidence: number }>) {
+            const current = rule.confidence ?? 50;
+            let next: number;
+            if (netMismatch > 0) {
+              // ミスマッチ超過 → ペナルティ（×0.95 / フロア 10）
+              next = Math.max(current * 0.95, 10);
+            } else {
+              // マッチ超過 → ブースト（×1.02 / シーリング 100）
+              next = Math.min(current * 1.02, 100);
+            }
+            // 丸めて変化があるときだけ書き込む
+            const nextRounded = Math.round(next * 1000) / 1000;
+            if (nextRounded === current) continue;
+
+            const { error: updateErr } = await supabase
+              .from("trigger_action_rules")
+              .update({ confidence: nextRounded, updated_at: new Date().toISOString() })
+              .eq("id", rule.id);
+            if (!updateErr) rulesUpdated++;
+          }
+        }
+        console.log(`[aix-shadow-eval] confidence feedback: ${rulesUpdated} rules updated`);
+      } catch (e) {
+        // フィードバック失敗でも全体は止めない
+        console.error("[aix-shadow-eval] confidence feedback failed:", e);
       }
     }
 
@@ -151,6 +213,7 @@ export async function POST(req: NextRequest) {
       matched: matchedCount,
       match_rate: matchRate,
       by_source: sourceCounts,
+      rules_updated: rulesUpdated,
       evaluated_at: new Date().toISOString(),
     };
     await supabase.from("ai_prompts").upsert(
@@ -163,7 +226,7 @@ export async function POST(req: NextRequest) {
       { onConflict: "key" }
     );
 
-    await finishCronLog(runLogId, true, { evaluated, matched: matchedCount, match_rate: matchRate });
+    await finishCronLog(runLogId, true, { evaluated, matched: matchedCount, match_rate: matchRate, rules_updated: rulesUpdated });
     return NextResponse.json({ ok: true, ...summary });
   } catch (e) {
     console.error("[aix-shadow-eval]", e);

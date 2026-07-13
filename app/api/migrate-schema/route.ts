@@ -1390,6 +1390,11 @@ CREATE TABLE IF NOT EXISTS token_block (
 ALTER TABLE token_block DISABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_token_block_token ON token_block(token);
 
+-- ── Fix-1c: AIX提案キャッシュ（2026-07-13）──
+-- webhook受信時にバックグラウンドで先行計算したAIX提案を保持する。
+-- deriveSuggestedAix() がこのキャッシュを最初に参照することでネットワーク呼び出しを省略できる。
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS suggested_next_aix TEXT;
+
 `.trim();
 
 // GET: スキーマSQLを返す（POSTと同じ CRON_SECRET 認証必須 — 無認証でのスキーマ情報開示を防止）

@@ -53,10 +53,64 @@ function buildFirstGreeting(customerName: string): string {
 }
 
 // ─── AIXボタン誘導ロジック: ドラフトテキスト＋会話状態からスタッフへのメモを生成 ────
-function deriveSuggestedAix(
+
+// action_type → スタッフ向け誘導メモ（suggest-next-action の結果をこの note に変換する）
+const AIX_ACTION_NOTES: Record<string, string> = {
+  acknowledge_check: "送信後 → AIX【確認します】で管理会社への空室確認＋見積書依頼を送ってください（宛先は管理会社です）",
+  property_send: "物件URLが揃ったら → AIX【物件ピックアップした】でカバーメッセージを生成して一緒に送ってください",
+  viewing_invite: "AIX【内覧日調整】ボタンで日時を選択してから送信してください",
+  meeting_place: "AIX【待ち合わせ】ボタンで物件住所入り確定メッセージを生成できます",
+  estimate_sheet: "見積書が届いたら → AIX【見積書送る】で画像を読み取って自動計算＋カバーメッセージを生成できます",
+  application_push: "AIX【申込へ！】でクロージングメッセージを生成できます",
+  property_recommendation: "AIX【1件特にオススメする】で1件に絞った詳細訴求文を生成できます",
+  greeting_viewing: "AIX【挨拶（内覧前後）】でフォローメッセージを生成してください",
+  condition_hearing: "AIX【条件ヒアリング】ボタンで既知情報をスキップした形式で送れます",
+  property_check_result: "管理会社から回答が来たら → AIX【物件確認した】で結果報告文を生成してください",
+  followup_revive: "AIX【追客する】で再接触メッセージを生成できます",
+};
+
+async function deriveSuggestedAix(
   draftText: string,
   conversationState: string,
-): { action: string; note: string } | null {
+  conversationId?: string,
+  internalBaseUrl?: string,
+): Promise<{ action: string; note: string } | null> {
+  // ─── Step 0: webhook が先行計算したキャッシュを確認（最速パス・ネットワーク呼び出し不要）───
+  if (conversationId) {
+    try {
+      const { data: convCache } = await supabase
+        .from("conversations")
+        .select("suggested_next_aix")
+        .eq("id", conversationId)
+        .maybeSingle();
+      const cached = (convCache as { suggested_next_aix?: string | null } | null)?.suggested_next_aix;
+      if (cached && AIX_ACTION_NOTES[cached]) {
+        return { action: cached, note: AIX_ACTION_NOTES[cached] };
+      }
+    } catch { /* DBエラーは無視して次のステップへ */ }
+  }
+
+  // ─── Step 1: suggest-next-action（DB学習ルール）に問い合わせ（3秒タイムアウト） ───
+  if (conversationId && internalBaseUrl) {
+    try {
+      const res = await fetch(`${internalBaseUrl}/api/suggest-next-action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation_id: conversationId }),
+        signal: AbortSignal.timeout(3000),
+      });
+      if (res.ok) {
+        const data = await res.json() as { action?: string | null; reason?: string };
+        if (data.action && AIX_ACTION_NOTES[data.action]) {
+          return { action: data.action, note: AIX_ACTION_NOTES[data.action] };
+        }
+      }
+    } catch {
+      // タイムアウト・ネットワークエラー等は無視してregexフォールバックへ
+    }
+  }
+
+  // ─── Step 2: regexフォールバック（suggest-next-actionが何も返さなかった場合） ───
   const d = draftText;
 
   // ① 確認系 → acknowledge_check（管理会社への連絡）
@@ -1554,7 +1608,9 @@ export async function POST(req: NextRequest) {
               controller.enqueue(encoder.encode(`\n<<<STOP_REASON:${String(genStopReason ?? "unknown")}>>>`));
             }
             // AIXボタン誘導: ドラフト完成後にどのAIXボタンを使うべきか提案（トレーラーとして付加）
-            const suggestedAix = deriveSuggestedAix(finalDraftText, currentState);
+            // suggest-next-action（DB学習ルール）を優先し、失敗時はregexにフォールバック
+            const internalBaseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000";
+            const suggestedAix = await deriveSuggestedAix(finalDraftText, currentState, conversationId || undefined, internalBaseUrl);
             if (suggestedAix) {
               controller.enqueue(encoder.encode(`\n<<<SUGGESTED_AIX:${JSON.stringify(suggestedAix)}>>>`));
             }
