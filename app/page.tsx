@@ -2,6 +2,7 @@
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import AixModal, { type AixActionType } from "./components/AixModal";
+import AixManualModal from "./components/AixManualModal";
 import BottomNav from "./components/BottomNav";
 import TemplateModal, { type Template as CachedTemplate } from "./components/TemplateModal";
 import { supabase } from "./lib/supabase";
@@ -562,6 +563,7 @@ export default function Home() {
   const [viewingAdaptFeedbackComment, setViewingAdaptFeedbackComment] = useState("");
   const [viewingAdaptFeedbackSending, setViewingAdaptFeedbackSending] = useState(false);
   const [showCompletePicker, setShowCompletePicker] = useState(false);
+  const [showAixManual, setShowAixManual] = useState(false);
   const [showPropertySendPicker, setShowPropertySendPicker] = useState(false);
   const [suggestedPropertySendMode, setSuggestedPropertySendMode] = useState<"normal" | "new_arrival" | "widen" | "alternative" | null>(null);
   const [showEstimatePicker, setShowEstimatePicker] = useState(false);
@@ -10816,7 +10818,12 @@ export default function Home() {
               className="flex items-center justify-between px-5 py-5 flex-shrink-0"
               style={{ background: "linear-gradient(135deg, #1565C0, #2196F3, #4BA8E8)" }}
             >
-              <div className="text-[18px] font-bold text-white tracking-wide">AIX</div>
+              <button
+                onClick={() => setShowAixManual(true)}
+                className="text-[18px] font-bold text-white tracking-wide underline decoration-dotted underline-offset-4 active:opacity-80"
+              >
+                AIX
+              </button>
               <button
                 onClick={() => { setShowAixMenu(false); setAixInspectLabel(null); }}
                 className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-white text-[15px]"
@@ -11005,6 +11012,9 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/* AIXマニュアル（AIXメニューの「AIX」タイトルタップで開く） */}
+      {showAixManual && <AixManualModal isOpen={showAixManual} onClose={() => setShowAixManual(false)} />}
 
       {contextMenu && (
         <div
