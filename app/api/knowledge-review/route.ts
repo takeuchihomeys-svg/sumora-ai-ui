@@ -12,13 +12,17 @@ export async function GET(req: NextRequest) {
       .from("ai_reply_knowledge")
       .select("id, title, content, category, conversation_state, importance, correct_count, wrong_count, apply_count, created_at")
       .eq("hypothesis_status", "hypothesis")
+      .neq("category", "phrase")   // フレーズはAIが直接読むため承認不要
+      .gte("importance", 7)         // importance<7はai_prompt_rulesに入らないため承認不要
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false })
-      .limit(500),
+      .limit(200),
     supabase
       .from("ai_reply_knowledge")
       .select("*", { count: "exact", head: true })
-      .eq("hypothesis_status", "hypothesis"),
+      .eq("hypothesis_status", "hypothesis")
+      .neq("category", "phrase")
+      .gte("importance", 7),
   ]);
 
   if (error) return NextResponse.json({ rules: [], total: 0 });
