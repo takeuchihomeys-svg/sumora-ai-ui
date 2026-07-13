@@ -420,6 +420,45 @@ function stripEditPrefix(title: string): string {
   return title.replace(/^\[編集\]\s*/, "");
 }
 
+// 改善案タブ: フィルターで使う表示カテゴリを導出する
+// DBの proposal_category が 'other'・未知値（knowledge_quality等）でも、
+// suggestion_type から正しいフィルター（①AIXボタン/②ピッカー/③ボタン追加/ズレ修正）に割り当てる。
+// これがないと new_picker 提案が「②ピッカー」に出ず全部「その他」に落ちる。
+const KNOWN_PROPOSAL_CATEGORIES = ['new_aix_button', 'new_picker', 'new_button', 'text_improvement', 'mismatch_fix'] as const;
+function getEffectiveProposalCategory(s: AixFeatureSuggestion): string {
+  const pc = s.proposal_category;
+  if (pc && (KNOWN_PROPOSAL_CATEGORIES as readonly string[]).includes(pc)) return pc;
+  switch (s.suggestion_type) {
+    case "new_aix": return "new_aix_button";
+    case "new_picker": return "new_picker";
+    case "new_button": return "new_button";
+    case "alignment_fix":
+    case "mismatch_fix": return "mismatch_fix";
+    default: return "other";
+  }
+}
+
+// 改善案カード: implementation_notes から人間が読める要点を抽出する
+// JSON（knowledge_aix_align の {knowledge_id, append_text} 等）はパースしてテキスト部分のみ、
+// 自由テキストはそのまま返す。表示できる内容がなければ null。
+function extractNotesSummary(notes?: string | null): string | null {
+  const t = notes?.trim();
+  if (!t) return null;
+  if (t.startsWith("{") || t.startsWith("[")) {
+    try {
+      const obj = JSON.parse(t) as Record<string, unknown>;
+      const parts = ["append_text", "summary", "why", "reason", "expected_effect", "spec", "ai_text_preview", "sent_text_preview"]
+        .map((k) => {
+          const v = obj[k];
+          return typeof v === "string" && v.trim() ? `${k === "ai_text_preview" ? "AI文: " : k === "sent_text_preview" ? "実送信: " : ""}${v.trim()}` : null;
+        })
+        .filter((v): v is string => v !== null);
+      return parts.length > 0 ? parts.join("\n") : null;
+    } catch { /* JSONでなければそのまま表示 */ }
+  }
+  return t;
+}
+
 // 改善案タブ: suggestion_type → バッジのラベル・色
 const SUGGESTION_TYPE_BADGE: Record<string, { label: string; className: string }> = {
   new_aix: { label: "新AIX", className: "bg-purple-50 text-purple-600" },
@@ -1189,15 +1228,42 @@ export default function TemplateModal({
   }, []);
 
   // P5: 候補の却下（理由チップ付き）
+  // API失敗時は状態を変えずエラー表示する（silent catchだと「却下したのに翌回復活する」ように見える）
   const dismissCandidate = useCallback(async (id: string, reason?: string) => {
-    await fetch("/api/ai-template-candidates", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, action: "dismiss", ...(reason ? { dismissedReason: reason } : {}) }),
-    }).catch(() => { /* noop */ });
-    setCandidates(prev => prev.map(c => c.id === id ? { ...c, is_dismissed: true } : c));
-    setDismissingId(null);
-  }, []);
+    try {
+      const res = await fetch("/api/ai-template-candidates", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, action: "dismiss", ...(reason ? { dismissedReason: reason } : {}) }),
+      });
+      const json = await res.json() as { ok?: boolean; error?: string };
+      if (!res.ok || !json.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+      setCandidates(prev => prev.map(c => c.id === id ? { ...c, is_dismissed: true } : c));
+    } catch (e) {
+      showModalError(`却下の保存に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDismissingId(null);
+    }
+  }, [showModalError]);
+
+  // 改善案タブに統合表示している aix_edit 候補の却下（suggestions / candidates 両方の状態を更新）
+  const dismissMergedAixCandidate = useCallback(async (id: string, reason?: string) => {
+    try {
+      const res = await fetch("/api/ai-template-candidates", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, action: "dismiss", ...(reason ? { dismissedReason: reason } : {}) }),
+      });
+      const json = await res.json() as { ok?: boolean; error?: string };
+      if (!res.ok || !json.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+      setSuggestions(prev => prev.filter(s => s.id !== id));
+      setCandidates(prev => prev.map(c => c.id === id ? { ...c, is_dismissed: true } : c));
+    } catch (e) {
+      showModalError(`却下の保存に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDismissingId(null);
+    }
+  }, [showModalError]);
 
   // ブラッシュアップチャットを開く（初回フィードバックを非同期取得）
   const openReviewPanel = (candidate: AiTemplateCandidate) => {
@@ -1377,15 +1443,23 @@ export default function TemplateModal({
   };
 
   // P4/P5: AIX改善案のステータス更新（adopted / dismissed / implemented + 理由）
+  // API失敗時は一覧から消さずエラー表示する（silent catchだと却下が効いていないのに消えたように見える）
   const updateSuggestionStatus = useCallback(async (id: string, status: "adopted" | "dismissed" | "implemented", reason?: string) => {
-    await fetch("/api/aix-feature-suggestions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, status, ...(reason ? { dismissedReason: reason } : {}) }),
-    }).catch(() => { /* noop */ });
-    setSuggestions(prev => prev.filter(s => s.id !== id));
-    setDismissingId(null);
-  }, []);
+    try {
+      const res = await fetch("/api/aix-feature-suggestions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, status, ...(reason ? { dismissedReason: reason } : {}) }),
+      });
+      const json = await res.json() as { ok?: boolean; error?: string };
+      if (!res.ok || !json.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
+      setSuggestions(prev => prev.filter(s => s.id !== id));
+    } catch (e) {
+      showModalError(`ステータス更新に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDismissingId(null);
+    }
+  }, [showModalError]);
 
   const commitCategoryRename = async () => {
     const oldCat = editingCategory;
@@ -2371,7 +2445,14 @@ export default function TemplateModal({
                   <p className="text-xs text-center">毎週日曜朝5時にAIが分析して<br/>改善案を自動追加します</p>
                 </div>
               )}
-              {!suggestionLoading && suggestions.length > 0 && (
+              {!suggestionLoading && suggestions.length > 0 && (() => {
+                // 各フィルターの件数を getEffectiveProposalCategory（suggestion_type込みの正しい分類）で集計
+                const catCounts: Record<string, number> = { all: suggestions.length };
+                for (const s of suggestions) {
+                  const c = getEffectiveProposalCategory(s);
+                  catCounts[c] = (catCounts[c] ?? 0) + 1;
+                }
+                return (
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
                   {[
                     { key: 'all', label: 'すべて' },
@@ -2395,14 +2476,17 @@ export default function TemplateModal({
                         cursor: 'pointer',
                         fontWeight: suggestionCategoryFilter === cat.key ? 600 : 400,
                       }}
-                    >{cat.label}</button>
+                    >{cat.label}{(catCounts[cat.key] ?? 0) > 0 ? ` ${catCounts[cat.key]}` : ''}</button>
                   ))}
                 </div>
-              )}
+                );
+              })()}
               {!suggestionLoading && (() => {
+                // 【フィルター分離】proposal_category が 'other'/未知値でも suggestion_type から
+                // 正しいカテゴリに割り当てる（①AIXボタンと②ピッカーに同じカードが出るバグの修正）
                 const filteredSuggestions = suggestionCategoryFilter === 'all'
                   ? suggestions
-                  : suggestions.filter(s => (s.proposal_category ?? 'other') === suggestionCategoryFilter);
+                  : suggestions.filter(s => getEffectiveProposalCategory(s) === suggestionCategoryFilter);
                 const PROPOSAL_CAT_MAP: Record<string, { label: string; color: string }> = {
                   new_aix_button: { label: '① AIXボタン', color: '#7e3af2' },
                   new_picker: { label: '② ピッカー', color: '#1a56db' },
@@ -2411,6 +2495,11 @@ export default function TemplateModal({
                   mismatch_fix: { label: '🔄 ズレ修正', color: '#c81e1e' },
                   other: { label: '💡 改善案', color: '#6b7280' },
                 };
+                if (filteredSuggestions.length === 0 && suggestionCategoryFilter !== 'all' && suggestions.length > 0) {
+                  return (
+                    <p className="text-center text-gray-400 text-sm py-6">このカテゴリの改善案はありません</p>
+                  );
+                }
                 return filteredSuggestions.map(suggestion => {
                   // --- aix_edit候補（統合）: diff view カードスタイル ---
                   if (suggestion._source === 'aix_candidates') {
@@ -2492,32 +2581,14 @@ export default function TemplateModal({
                               {DISMISS_REASONS.map(r => (
                                 <button
                                   key={r}
-                                  onClick={async () => {
-                                    await fetch("/api/ai-template-candidates", {
-                                      method: "PATCH",
-                                      headers: { "Content-Type": "application/json" },
-                                      body: JSON.stringify({ id: suggestion.id, action: "dismiss", dismissedReason: r }),
-                                    }).catch(() => {});
-                                    setSuggestions(prev => prev.filter(s => s.id !== suggestion.id));
-                                    setCandidates(prev => prev.map(c => c.id === suggestion.id ? { ...c, is_dismissed: true } : c));
-                                    setDismissingId(null);
-                                  }}
+                                  onClick={() => void dismissMergedAixCandidate(suggestion.id, r)}
                                   className="px-2 py-1 rounded-full bg-white border border-gray-200 text-gray-600 text-[11px] hover:bg-red-50 hover:border-red-200 hover:text-red-500 transition"
                                 >
                                   {r}
                                 </button>
                               ))}
                               <button
-                                onClick={async () => {
-                                  await fetch("/api/ai-template-candidates", {
-                                    method: "PATCH",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ id: suggestion.id, action: "dismiss" }),
-                                  }).catch(() => {});
-                                  setSuggestions(prev => prev.filter(s => s.id !== suggestion.id));
-                                  setCandidates(prev => prev.map(c => c.id === suggestion.id ? { ...c, is_dismissed: true } : c));
-                                  setDismissingId(null);
-                                }}
+                                onClick={() => void dismissMergedAixCandidate(suggestion.id)}
                                 className="px-2 py-1 rounded-full bg-white border border-gray-100 text-gray-400 text-[11px] hover:bg-gray-100 transition"
                               >
                                 理由なしで却下
@@ -2529,7 +2600,7 @@ export default function TemplateModal({
                     );
                   }
                   // --- 通常の改善案カード（aix_feature_suggestions） ---
-                  const propCat = PROPOSAL_CAT_MAP[suggestion.proposal_category ?? 'other'] ?? PROPOSAL_CAT_MAP.other;
+                  const propCat = PROPOSAL_CAT_MAP[getEffectiveProposalCategory(suggestion)] ?? PROPOSAL_CAT_MAP.other;
                   return (
                   <div
                     key={suggestion.id}
@@ -2564,14 +2635,40 @@ export default function TemplateModal({
                         </span>
                       )}
                     </div>
-                    {suggestion.reason && (
-                      <p className="text-[11px] text-gray-400 mb-1">{suggestion.reason}</p>
-                    )}
+                    {/* 📋 なぜこの改善が必要か: description 全文（承認/却下の判断材料） */}
                     {suggestion.description && (
-                      <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed mb-3">
-                        {suggestion.description}
-                      </p>
+                      <div className="mb-2">
+                        <p className="text-[11px] font-bold text-violet-500 mb-0.5">📋 なぜこの改善が必要か</p>
+                        <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+                          {suggestion.description}
+                        </p>
+                      </div>
                     )}
+                    {/* 📊 根拠: reason ＋ 観察回数 */}
+                    {(suggestion.reason || (suggestion.evidence_count ?? 0) >= 2) && (
+                      <div className="mb-2">
+                        <p className="text-[11px] font-bold text-gray-500 mb-0.5">📊 根拠</p>
+                        <p className="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed">
+                          {[
+                            suggestion.reason,
+                            (suggestion.evidence_count ?? 0) >= 2 ? `同じパターンが${suggestion.evidence_count}回観察されました` : null,
+                          ].filter(Boolean).join("\n")}
+                        </p>
+                      </div>
+                    )}
+                    {/* 🔧 実装メモ: implementation_notes の要点（JSONはパースして表示） */}
+                    {(() => {
+                      const notes = extractNotesSummary(suggestion.implementation_notes);
+                      if (!notes || notes === suggestion.description) return null;
+                      return (
+                        <details className="mb-2">
+                          <summary className="text-[11px] text-gray-400 cursor-pointer select-none">🔧 実装メモ・詳細を見る</summary>
+                          <p className="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed mt-1 bg-gray-50 rounded-lg p-2">
+                            {notes}
+                          </p>
+                        </details>
+                      );
+                    })()}
                     <div className="flex gap-2">
                       {suggestion.status === "approved" ? (
                         <button
@@ -2639,8 +2736,10 @@ export default function TemplateModal({
                   );
                 });
               })()}
-              {/* 追加パターン検出（ai_template_candidates source="improvement"）: スタッフがAI文に情報を追加したパターン */}
-              {!suggestionLoading && improvementCandidates.map(candidate => (
+              {/* 追加パターン検出（ai_template_candidates source="improvement"）: スタッフがAI文に情報を追加したパターン。
+                  カテゴリ未分類の生データのため「すべて」フィルターのみに表示する
+                  （①②③のカテゴリフィルターに漏れて同じカードが全フィルターに出るバグの修正） */}
+              {!suggestionLoading && suggestionCategoryFilter === 'all' && improvementCandidates.map(candidate => (
                 <div
                   key={candidate.id}
                   className="bg-white rounded-xl border border-violet-200 p-3 shadow-sm"
@@ -2662,8 +2761,16 @@ export default function TemplateModal({
                       </span>
                     )}
                   </div>
+                  {/* 📋 なぜこの改善が必要か: 承認/却下の判断材料になる説明 */}
+                  <div className="mb-2">
+                    <p className="text-[11px] font-bold text-violet-500 mb-0.5">📋 なぜこの改善が必要か</p>
+                    <p className="text-xs text-gray-600 leading-relaxed">
+                      スタッフがAIの生成文へ同じ内容を{candidate.evidence_count ?? 1}回手動で追加していました。
+                      この情報をピッカー/ボタンで選べるようにすれば、毎回の手入力が不要になり、AIが最初から完成した文を生成できます。
+                    </p>
+                  </div>
                   {candidate.reason && (
-                    <p className="text-[11px] text-gray-400 mb-2">{candidate.reason}</p>
+                    <p className="text-[11px] text-gray-400 mb-2">📊 根拠: {candidate.reason}</p>
                   )}
                   {/* 差分ビュー: AI原文 → スタッフが追加した文 */}
                   {candidate.original_text && (

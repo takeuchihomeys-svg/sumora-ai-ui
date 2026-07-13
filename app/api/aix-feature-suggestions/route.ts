@@ -6,10 +6,12 @@ import { syncConfirmedToPromptRule } from "@/app/lib/knowledge-promote";
 // corpus2skill 週次Opusが new_aix_picker 提案をINSERTし、
 // TemplateModal の「💡 AIX改善案」タブで採用/却下を管理する
 
-// GET: pending + approved の改善提案を最新20件
+// GET: pending + approved の改善提案を最新100件
 // ?type=<suggestion_type> で suggestion_type フィルタリング可能
 //   例: ?type=knowledge_question → auto-judge で生成されたナレッジ品質確認質問のみ返す
 // approved = 改善案打ち合わせ（/api/aix/improvement-meeting）で確定した実装待ち仕様。タブ上部に表示する
+// limit=100: 20件だと直近の knowledge_aix_align 等で枠が埋まり、古い new_picker 提案が
+// 「②ピッカー」フィルターに1件も出なくなるため拡大した
 export async function GET(req: NextRequest) {
   const type = req.nextUrl.searchParams.get("type");
 
@@ -18,7 +20,7 @@ export async function GET(req: NextRequest) {
     .select("*")
     .in("status", ["pending", "approved"])
     .order("created_at", { ascending: false })
-    .limit(20);
+    .limit(100);
 
   if (type) query = query.eq("suggestion_type", type);
 

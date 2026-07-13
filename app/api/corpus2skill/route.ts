@@ -126,12 +126,14 @@ type TemplateProposal = {
   evidence_count?: number;
 };
 
-function detectCategory(description: string): string {
+// fallback: 判定できなかった時のカテゴリ。new_aix_picker 提案は "new_picker" を渡す
+// （以前は一律 "other" に落ちて改善案タブの「②ピッカー」フィルターに1件も表示されなかった）
+function detectCategory(description: string, fallback: string = "other"): string {
   if (description.startsWith("【新ボタン】")) return "new_button";
   if (/新ピッカー|新しいAIXボタン/.test(description)) return "new_picker";
   if (/プロンプト|生成文の改善|ルール追加/.test(description)) return "text_improvement";
   if (/ズレ|乖離/.test(description)) return "mismatch_fix";
-  return "other";
+  return fallback;
 }
 
 async function synthesizeTemplateImprovements(): Promise<{ candidatesSaved: number; suggestionsSaved: number }> {
@@ -268,7 +270,7 @@ ${approvedSuggestionsSection || "（なし）"}
 上記の分析から、以下の3種類の提案をしてください:
 1. **既存テンプレの改訂案**（頻繁に同じ方向に修正されているもの）: reason（なぜ改訂が必要か・何回修正されたか）付きで
 2. **新テンプレ案**（繰り返し手入力されているが既存テンプレにない場面）: reason付きで
-3. **新AIX/ピッカー案**（毎回同じ固有情報を手入力しているパターン）: どんなフォームが必要か
+3. **新AIX/ピッカー案**（毎回同じ固有情報を手入力しているパターン）: template_text には「①何を観察したか（何を毎回手入力しているか）②なぜ改善が必要か（スタッフの手間・AIの精度低下）③期待される効果」を必ず含めた説明文を書き、どんなフォーム/選択肢が必要かも記述する
 
 各提案はJSON配列で（説明文・コードフェンス不要）:
 [{"type": "template_revision"|"new_template"|"new_aix_picker", "action_type": "...", "suggested_title": "...", "template_text": "...", "reason": "...", "evidence_count": N}]
@@ -343,7 +345,7 @@ ${approvedSuggestionsSection || "（なし）"}
         reason: p.reason?.trim() || null,
         evidence_count: Math.max(1, Number(p.evidence_count) || 1),
         status: "pending",
-        proposal_category: detectCategory(descriptionText),
+        proposal_category: detectCategory(descriptionText, "new_picker"),
       });
       if (!error) suggestionsSaved++;
       else console.error("[corpus2skill] suggestion insert error:", error.message);
@@ -463,7 +465,7 @@ ${JSON.stringify(mismatchPairs.slice(0, 5), null, 2)}
 
 各ペアについて：
 1. ズレの原因カテゴリ（picker_missing_info / prompt_issue / button_design / style_preference）
-2. 具体的な改善提案（aix_feature_suggestions に登録する改善案文）
+2. 具体的な改善提案（aix_feature_suggestions に登録する改善案文。description には「①何を観察したか ②なぜ改善が必要か ③期待される効果」を必ず含めた3〜4文にする）
 3. proposal_category（mismatch_fix または text_improvement または new_button）
 
 JSON配列で返す: [{aix_type, description, implementation_notes, proposal_category}]`;

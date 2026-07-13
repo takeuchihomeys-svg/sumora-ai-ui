@@ -513,6 +513,10 @@ ${rep.addedText}
       })
     );
 
+    // 改善案カードに「なぜ必要か」が伝わる説明文を生成（観察内容・手間・期待効果）
+    const buildImprovementReason = (count: number, addedText: string) =>
+      `スタッフがAIX生成文に「${addedText.replace(/\s+/g, " ").slice(0, 40)}」と同じ内容を${count}回手動で追加していました。ピッカー/ボタン化すれば毎回の手入力が不要になり、AIが最初から完成した文を生成できます`;
+
     for (let gi = 0; gi < qualifying.length; gi++) {
       const group = qualifying[gi];
       const rep = group[0];
@@ -527,24 +531,55 @@ ${rep.addedText}
           ? conv.value.converted.trim()
           : rep.addedText;
 
+      // 【重複起票の根本対策】同一会話・同一アクション由来の improvement 候補が既にあれば再起票しない。
+      // Haiku 変換の揺れで template_text が毎回微妙に変わり、下のプレフィックス一致が外れて
+      // 毎日ほぼ同じカードが起票される（＝却下しても翌日復活して見える）バグがあった。
+      // 却下済み（is_dismissed=true）の場合は何もしない＝復活させない。
+      if (rep.conversationId) {
+        const { data: sameConv } = await supabase
+          .from("ai_template_candidates")
+          .select("id, evidence_count, is_dismissed")
+          .eq("action_type", rep.aixType)
+          .eq("source", "improvement")
+          .eq("conversation_id", rep.conversationId)
+          .limit(1);
+        if (sameConv && sameConv.length > 0) {
+          const dup = sameConv[0] as { id: string; evidence_count: number | null; is_dismissed: boolean };
+          if (!dup.is_dismissed) {
+            const { error: updErr } = await supabase
+              .from("ai_template_candidates")
+              .update({
+                evidence_count: Math.max(dup.evidence_count ?? 1, count),
+                reason: buildImprovementReason(count, normalizedAddedText),
+              })
+              .eq("id", dup.id);
+            if (!updErr) improvementMerged++;
+            else console.error("[auto-template-candidates] improvement update error:", updErr.message);
+          }
+          continue;
+        }
+      }
+
       // 既存 improvement 候補との重複チェック（先頭30文字ilike一致）→ evidence_count 更新のみ
+      // 却下済みにマッチした場合も更新せずスキップ（却下済みカードを復活させない）
       const prefix30 = normalizedAddedText.slice(0, 30);
       const escapedPrefix = prefix30.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
       const { data: existingImp } = await supabase
         .from("ai_template_candidates")
-        .select("id, evidence_count")
+        .select("id, evidence_count, is_dismissed")
         .eq("action_type", rep.aixType)
         .eq("source", "improvement")
         .ilike("template_text", `${escapedPrefix}%`)
         .limit(1);
 
       if (existingImp && existingImp.length > 0) {
-        const dup = existingImp[0] as { id: string; evidence_count: number | null };
+        const dup = existingImp[0] as { id: string; evidence_count: number | null; is_dismissed: boolean };
+        if (dup.is_dismissed) continue;
         const { error: updErr } = await supabase
           .from("ai_template_candidates")
           .update({
             evidence_count: Math.max(dup.evidence_count ?? 1, count),
-            reason: `同じ追加パターンが${count}件観測されました`,
+            reason: buildImprovementReason(count, normalizedAddedText),
           })
           .eq("id", dup.id);
         if (updErr) {
@@ -566,7 +601,7 @@ ${rep.addedText}
         suggested_title: `${ACTION_TO_CATEGORY[rep.aixType] ?? rep.aixType}に追加情報パターン検出`,
         template_text: normalizedAddedText,
         original_text: rep.aiDraftText,
-        reason: `同じ追加パターンが${count}件観測されました`,
+        reason: buildImprovementReason(count, normalizedAddedText),
         evidence_count: count,
         conversation_id: rep.conversationId,
         source: "improvement",

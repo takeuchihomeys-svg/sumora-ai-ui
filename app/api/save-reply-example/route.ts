@@ -463,7 +463,7 @@ async function registerAlignmentFix(params: {
     const { error } = await supabase.from("aix_feature_suggestions").insert({
       suggestion_type: "alignment_fix",
       suggested_title: `[ズレ検出] ${aixType}: ${ALIGNMENT_DIFF_LABEL[diffType]}`,
-      description: `AIX生成ズレ検出: 「${aixType}」フェーズ — AI文「${aiPreview}」→ 実際送信「${sentPreview}」`,
+      description: `「${aixType}」フェーズでAIの生成文とスタッフの実送信文にズレ（${ALIGNMENT_DIFF_LABEL[diffType]}）が発生しています。\nAI文「${aiPreview}」→ 実際送信「${sentPreview}」\nこのズレを解消すればスタッフの手修正が不要になり、AIX生成の精度が上がります。`,
       implementation_notes: JSON.stringify({
         aix_type: aixType,
         ai_text_preview: aiDraft.slice(0, 100),
