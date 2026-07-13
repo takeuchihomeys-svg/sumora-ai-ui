@@ -52,6 +52,81 @@ function buildFirstGreeting(customerName: string): string {
   return `${customerName ? `${customerName}さん、` : ""}はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！`;
 }
 
+// ─── AIXボタン誘導ロジック: ドラフトテキスト＋会話状態からスタッフへのメモを生成 ────
+function deriveSuggestedAix(
+  draftText: string,
+  conversationState: string,
+): { action: string; note: string } | null {
+  const d = draftText;
+
+  // ① 確認系 → acknowledge_check（管理会社への連絡）
+  if (/確認(させていただき|させて|出来|でき|しま)/.test(d)) {
+    return {
+      action: "acknowledge_check",
+      note: "送信後 → AIX【確認します】ボタンで管理会社への空室確認＋見積書依頼を送ってください（宛先は管理会社です）",
+    };
+  }
+  // ② 日程プレースホルダーあり → viewing_invite
+  if (/\[日付\]|\[時間帯\]|\[日時\]/.test(d)) {
+    return {
+      action: "viewing_invite",
+      note: "⚠️ AIX【内覧日調整】ボタンで日時を選択してから送信してください（空欄のまま送らないでください）",
+    };
+  }
+  // ③ ピックアップ・物件送付系 → property_send
+  if (/ピックアップ|お送りします|物件(を|の資料|情報)/.test(d)) {
+    return {
+      action: "property_send",
+      note: "物件URLが揃ったら → AIX【物件ピックアップした】でカバーメッセージを生成して一緒に送ってください",
+    };
+  }
+  // ④ 申込前向き → application_push (confirm)
+  if (/申し込み|申込(みま|ます)|決めます|お願いします/.test(d)) {
+    return {
+      action: "application_push",
+      note: "申込の意思が確認できます → AIX【申込へ！】→ confirmモードで確定文を即送信してください",
+    };
+  }
+  // ⑤ 申込迷い系 → application_push (push)
+  if (/検討|迷って|どうしよう|もう少し/.test(d)) {
+    return {
+      action: "application_push",
+      note: "AIX【申込へ！】→ pushモードで背中を押すメッセージを生成できます",
+    };
+  }
+  // ⑥ 内覧後フォロー → greeting_viewing
+  if (conversationState === "viewing" || /いかがでしたか|いかがでした|感想|内覧(はいかが|後)/.test(d)) {
+    return {
+      action: "greeting_viewing",
+      note: "内覧後フォロー → AIX【挨拶（内覧後）】で結果に応じたフォローメッセージを生成してください",
+    };
+  }
+  // ⑦ 見積書案内 → estimate_sheet
+  if (/見積書|初期費用|費用のご案内|金額/.test(d)) {
+    return {
+      action: "estimate_sheet",
+      note: "見積書が届いたら → AIX【見積書送る】で画像を読み取って自動計算＋カバーメッセージを生成できます（OCR対応）",
+    };
+  }
+  // ⑧ 待ち合わせ確定 → meeting_place
+  if (/お待ちして|現地で|エントランス|お会いしま/.test(d)) {
+    return {
+      action: "meeting_place",
+      note: "AIX【待ち合わせ】ボタンで物件住所入り確定メッセージを生成できます",
+    };
+  }
+  // ⑨ ヒアリング誘導 → condition_hearing
+  if (conversationState === "first_reply" || conversationState === "hearing") {
+    if (/条件|ご希望|間取り|エリア|予算/.test(d)) {
+      return {
+        action: "condition_hearing",
+        note: "条件ヒアリングが必要な場合 → AIX【条件ヒアリング】ボタンで既知情報をスキップした形式で送れます",
+      };
+    }
+  }
+  return null;
+}
+
 // ─── パターンB: 物件引用への返信判定（プロンプト常時注入・条件付きルール）─────────
 const QUOTE_REPLY_JUDGE_NOTE = `
 【物件引用への返信判定】
@@ -1395,13 +1470,26 @@ export async function POST(req: NextRequest) {
       auto_ok: false,          // 全チェックfalseなら送信OK候補（クライアントで確定）
     };
 
+    // スタッフ向けガイドメモ: Step1分析の closing_strategy をメタラインで返す
+    const suggestedAixForMeta = (() => {
+      try {
+        const p = JSON.parse(analysis) as Record<string, unknown>;
+        const note = typeof p.closing_strategy === "string" && p.closing_strategy
+          ? p.closing_strategy
+          : typeof p.approach === "string" && p.approach
+            ? p.approach
+            : null;
+        return note ? { action: "closing", note } : null;
+      } catch { return null; }
+    })();
+
     const encoder = new TextEncoder();
     return new Response(
       new ReadableStream({
         async start(controller) {
           // 1行目: メタデータJSON（フロントエンドがok確認に使用）
           controller.enqueue(encoder.encode(
-            JSON.stringify({ ok: true, quality: qualityFlags }) + "\n"
+            JSON.stringify({ ok: true, quality: qualityFlags, suggested_aix: suggestedAixForMeta }) + "\n"
           ));
           // 生成完了テキスト（conversationId 指定時の ai_draft 保存用）
           let finalDraftText = "";
@@ -1464,6 +1552,11 @@ export async function POST(req: NextRequest) {
             // → 呼び出し元が max_tokens 尻切れを検知して保存をスキップできるようにする
             if (includeStopReason) {
               controller.enqueue(encoder.encode(`\n<<<STOP_REASON:${String(genStopReason ?? "unknown")}>>>`));
+            }
+            // AIXボタン誘導: ドラフト完成後にどのAIXボタンを使うべきか提案（トレーラーとして付加）
+            const suggestedAix = deriveSuggestedAix(finalDraftText, currentState);
+            if (suggestedAix) {
+              controller.enqueue(encoder.encode(`\n<<<SUGGESTED_AIX:${JSON.stringify(suggestedAix)}>>>`));
             }
             // ✅ 成功時: ai_draft 保存 + draft_pending_at クリア（次のCronでスキップさせる）+ draft_attempted_at クリア（orphanedクエリで拾われないように）
             // ※ draft_updated_at カラムは conversations に存在しないため未使用（追加時はここで更新すること）

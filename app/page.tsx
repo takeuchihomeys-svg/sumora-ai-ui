@@ -380,6 +380,7 @@ export default function Home() {
   const [displaySource, setDisplaySource] = useState<"ai_draft" | "optimized" | null>(null);
   const draftIsAi = displaySource !== null; // AI生成の下書きがテキストエリアに入っているか（displaySourceから導出）
   const [replyQuality, setReplyQuality] = useState<{ auto_ok: boolean; is_applying_docs: boolean } | null>(null); // B-2: AI文案の品質判定バッジ
+  const [suggestedAix, setSuggestedAix] = useState<{ action: string; note: string } | null>(null); // AIドラフト生成時のスタッフ向けガイドメモ
   const [draftNoEmoji, setDraftNoEmoji] = useState(false); // 絵文字なしモード
   const [draftOrigText, setDraftOrigText] = useState(""); // 絵文字なし切替前の原文（復元用）
   const [extraDraftMessages, setExtraDraftMessages] = useState<Array<{text: string; delaySec: number}>>([]);
@@ -1955,6 +1956,7 @@ export default function Home() {
     setDraftRetryConvId(null);
     setDraftNoEmoji(false);
     setDraftOrigText("");
+    setSuggestedAix(null);
 
     // 返信待ち + ai_draft あり → テキストエリアに自動セット（「使う」クリック不要）
     if (selectedConversation.aiDraft && selectedConversation.lastSender === "customer") {
@@ -2352,6 +2354,7 @@ export default function Home() {
       setError("");
       setReplyDraft("");
       setReplyQuality(null);
+      setSuggestedAix(null);
 
       // 前の生成ストリームを中断（高速切替で二重生成しない）
       generateAbortRef.current?.abort();
@@ -2461,9 +2464,11 @@ export default function Home() {
           const nl = buffer.indexOf("\n");
           if (nl >= 0) {
             const metaLine = buffer.slice(0, nl);
-            const meta = JSON.parse(metaLine) as { ok: boolean; error?: string; quality?: { is_applying_docs?: boolean } };
+            const meta = JSON.parse(metaLine) as { ok: boolean; error?: string; quality?: { is_applying_docs?: boolean }; suggested_aix?: { action: string; note: string } | null };
             if (!meta.ok) throw new Error(meta.error || "返信案取得失敗");
             qualityFromMeta = meta.quality;
+            if (meta.suggested_aix) setSuggestedAix(meta.suggested_aix);
+            else setSuggestedAix(null);
             metaDone = true;
             fullText = buffer.slice(nl + 1);
             if (fullText) setReplyDraft(fullText);
@@ -2472,6 +2477,13 @@ export default function Home() {
           fullText += chunk;
           setReplyDraft(fullText);
         }
+      }
+
+      // <<<SUGGESTED_AIX:...>>> トレーラーを解析してUIに反映
+      const aixTrailerMatch = fullText.match(/\n<<<SUGGESTED_AIX:(.+?)>>>/);
+      if (aixTrailerMatch) {
+        try { setSuggestedAix(JSON.parse(aixTrailerMatch[1])); } catch { /* ignore parse error */ }
+        fullText = fullText.replace(/\n<<<SUGGESTED_AIX:.+?>>>/, "");
       }
 
       const finalDraft = fullText.trim();
@@ -2733,6 +2745,7 @@ export default function Home() {
 
       setReplyDraft("");
       setReplyQuality(null);
+      setSuggestedAix(null);
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -2747,9 +2760,11 @@ export default function Home() {
           buffer += chunk;
           const nl = buffer.indexOf("\n");
           if (nl >= 0) {
-            const meta = JSON.parse(buffer.slice(0, nl)) as { ok: boolean; error?: string; quality?: { is_applying_docs?: boolean } };
+            const meta = JSON.parse(buffer.slice(0, nl)) as { ok: boolean; error?: string; quality?: { is_applying_docs?: boolean }; suggested_aix?: { action: string; note: string } | null };
             if (!meta.ok) throw new Error(meta.error || "生成失敗");
             qualityFromMeta = meta.quality;
+            if (meta.suggested_aix) setSuggestedAix(meta.suggested_aix);
+            else setSuggestedAix(null);
             metaDone = true;
             fullText = buffer.slice(nl + 1);
             if (fullText) setReplyDraft(fullText);
@@ -2759,6 +2774,13 @@ export default function Home() {
           setReplyDraft(fullText);
         }
       }
+      // <<<SUGGESTED_AIX:...>>> トレーラーを解析してUIに反映（スパークルモーダル経由でも同じ処理）
+      const aixTrailerMatchSparkle = fullText.match(/\n<<<SUGGESTED_AIX:(.+?)>>>/);
+      if (aixTrailerMatchSparkle) {
+        try { setSuggestedAix(JSON.parse(aixTrailerMatchSparkle[1])); } catch { /* ignore parse error */ }
+        fullText = fullText.replace(/\n<<<SUGGESTED_AIX:.+?>>>/, "");
+      }
+
       const finalDraft = fullText.trim();
       aiDraftRef.current = finalDraft;
       if (draftNoEmoji) {
@@ -3318,6 +3340,7 @@ export default function Home() {
       if (textSent || !textToSend) {
         setReplyDraft("");
         setReplyQuality(null); // B-2: 送信後は品質判定をリセット
+        setSuggestedAix(null);
       }
       if (imageUrls.length > 0) {
         if (sentImageUrls.length === imageUrls.length) {
@@ -5842,7 +5865,7 @@ export default function Home() {
               {/* 文章クリアボタン（入力/AI文案があるときのみ表示） */}
               {replyDraft && (
                 <button
-                  onClick={() => { setReplyDraft(""); aiDraftRef.current = ""; setDisplaySource(null); setReplyQuality(null); }}
+                  onClick={() => { setReplyDraft(""); aiDraftRef.current = ""; setDisplaySource(null); setReplyQuality(null); setSuggestedAix(null); }}
                   className="shrink-0 flex h-8 w-8 items-center justify-center rounded-full border border-[#d1d7db] bg-white text-[#54656f] shadow-sm active:scale-95 transition-transform duration-75"
                   title="文章を消す"
                 >
@@ -6478,6 +6501,22 @@ export default function Home() {
                     paddingBottom: "48px", // 最終行をスクロールアップできるよう余白
                   }}
                 />
+                {/* スタッフへのAIガイドメモ（AIドラフト使用時のみ表示） */}
+                {draftIsAi && replyDraft && suggestedAix && (
+                  <div style={{
+                    marginTop: 6,
+                    padding: "8px 12px",
+                    background: "#fff8e1",
+                    border: "1px solid #ffe082",
+                    borderRadius: 6,
+                    fontSize: 12,
+                    color: "#5d4037",
+                    lineHeight: 1.6,
+                  }}>
+                    <span style={{ fontWeight: "bold", marginRight: 4 }}>📌 スタッフへ:</span>
+                    {suggestedAix.note}
+                  </div>
+                )}
                 {/* 追加メッセージスロット（時間差送信） */}
                 {extraDraftMessages.map((extra, idx) => (
                   <div key={idx} className="mt-2 rounded-xl border border-blue-200 bg-white p-2">
