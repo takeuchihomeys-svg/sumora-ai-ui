@@ -122,6 +122,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "item not found" }, { status: 404 });
   }
 
+  // autoJudge・checkContradiction が question 先頭に埋め込む [knowledge_id:UUID] を抽出。
+  // 存在する場合は回答後に当該ナレッジを confirmed 昇格 + HUMAN-* priority=10 で即時反映する（closed-loop）。
+  const knowledgeIdMatch = (item.question as string).match(/\[knowledge_id:([0-9a-f-]{36})\]/i);
+  const linkedKnowledgeId = knowledgeIdMatch ? knowledgeIdMatch[1] : null;
+
   // 知識化（失敗しても回答自体は保存する）
   let rules: ExtractedRule[] = [];
   try {
@@ -224,11 +229,60 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── Closed-loop: 特定 knowledge_id に紐づいた質問への回答 → knowledge を confirm + HUMAN-* priority=10 ──
+  // autoJudge（question/contradiction 判定）や checkContradiction が [knowledge_id:UUID] を question に埋め込む。
+  // 竹内さんが回答することで「そのナレッジが正しい」と確定したとみなし：
+  //   1. ai_reply_knowledge を confirmed 昇格・importance を max(現在値, 9) に
+  //   2. HUMAN-{uuid} を priority=10 でグローバル保存（clarify action と同等）
+  // これにより「質問起票 → 回答 → 知識確定」が analyze-diffs cron を待たず 0h で反映される。
+  if (linkedKnowledgeId) {
+    try {
+      const { data: knowledgeRow } = await supabase
+        .from("ai_reply_knowledge")
+        .select("id, title, content, conversation_state, importance, hypothesis_status")
+        .eq("id", linkedKnowledgeId)
+        .single();
+
+      if (knowledgeRow) {
+        const currentImportance = (knowledgeRow.importance as number) ?? 7;
+        // 1. confirmed 昇格・importance を min(10, max(現在値, 9)) に引き上げ
+        await supabase.from("ai_reply_knowledge")
+          .update({ hypothesis_status: "confirmed", importance: Math.min(10, Math.max(currentImportance, 9)) })
+          .eq("id", linkedKnowledgeId);
+
+        // 2. HUMAN-{id} を priority=10 でグローバル保存（clarify action と同じキー体系）
+        //    rule_text: Opusが抽出した最初のルール → なければ竹内さんの回答そのもの（最大500字）
+        const humanRuleText = promptRuleTexts.length > 0
+          ? promptRuleTexts[0].text.slice(0, 500)
+          : answer.slice(0, 500);
+        const { error: humanRuleErr } = await supabase.from("ai_prompt_rules").upsert({
+          rule_key: `HUMAN-${linkedKnowledgeId}`,
+          action_type: null,   // null = 全アクションにグローバル注入
+          condition_key: null,
+          condition_value: null,
+          rule_text: humanRuleText,
+          reason: `AI質問回答により竹内さん確定（${new Date().toISOString().slice(0, 10)}）: ${(item.question as string).slice(0, 100)}`,
+          priority: 10,
+          is_active: true,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "rule_key" });
+        if (!humanRuleErr) {
+          appliedRules.push(`[HUMAN-${linkedKnowledgeId}] knowledge confirmed + priority=10 グローバル反映`);
+        } else {
+          console.error("[ai-feedback] closed-loop HUMAN rule upsert error:", humanRuleErr.message);
+        }
+      }
+    } catch (e) {
+      console.error("[ai-feedback] closed-loop knowledge confirm 失敗:", e);
+    }
+  }
+
   // knowledge_gap（AIが誤った事実を述べた → 竹内さんが正しい事実を回答）は
   // ai_prompt_rules（150字ルール）だけでは弱いため、ai_reply_knowledge の principle としても保存する。
   // item.question は「AIが〜と誤回答しました」等のメタ文のため embedding が意味空間ズレ。
   // 正しい知識内容（answer）を embedding 化して顧客の類似質問に pgvector でヒットさせる
-  if (item.category === "knowledge_gap") {
+  // ※ linkedKnowledgeId がある場合は上の closed-loop で既に knowledge を confirmed 化済みのためスキップ
+  if (item.category === "knowledge_gap" && !linkedKnowledgeId) {
     try {
       const embInput = buildKnowledgeEmbeddingInput({ content: answer });
       const embedding = embInput ? await generateEmbedding(embInput) : null;

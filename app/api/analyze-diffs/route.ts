@@ -294,11 +294,14 @@ JSONのみで回答: {"verdict":"confirm"|"question"|"contradiction","reason":".
   }
 }
 
-// 矛盾検知: 新ナレッジのNGフレーズが、同じ conversation_state の confirmed ルールに含まれていれば aix_feature_suggestions に起票
+// 矛盾検知: 新ナレッジのNGフレーズが、同じ conversation_state の confirmed ルールや HUMAN-* ルールに
+// 含まれていれば ai_feedback_items（AI質問タブ）に起票する。
+// newKnowledgeId: 矛盾の起因となった新規 hypothesis ナレッジの id（ai-feedback 回答時の closed-loop に使用）
 async function checkContradiction(
   title: string,
   content: string,
   conversationState: string | null,
+  newKnowledgeId?: string,
 ): Promise<void> {
   try {
     const ngPhrases = extractNgPhrases(content);
@@ -319,30 +322,31 @@ async function checkContradiction(
         const ruleContent = ((rule.content as string) ?? "").replace(/\s+/g, "");
         if (!ruleContent.includes(phraseNorm)) continue;
 
-        // 矛盾検知: 重複起票防止
-        const dedupTitle = `矛盾検知: ${title.slice(0, 25)}`;
+        // 矛盾検知: ai_feedback_items で重複起票防止
+        const dedupKey = `[矛盾確認] ${title.slice(0, 20)}`;
         const { data: existing } = await supabase
-          .from("aix_feature_suggestions")
+          .from("ai_feedback_items")
           .select("id")
-          .eq("suggestion_type", "knowledge_contradiction")
-          .ilike("suggested_title", `${dedupTitle.replace(/[%_\\]/g, "\\$&")}%`)
+          .in("status", ["pending", "answered", "applied"])
+          .ilike("question", `${dedupKey.replace(/[%_\\]/g, "\\$&")}%`)
           .limit(1);
         if (existing && existing.length > 0) continue;
 
-        await supabase.from("aix_feature_suggestions").insert({
-          suggestion_type: "knowledge_contradiction",
-          suggested_title: dedupTitle,
-          description: `既存ルール「${(rule.title as string).slice(0, 50)}」と矛盾する可能性: ${content.slice(0, 150)}`,
-          implementation_notes: JSON.stringify({ old_knowledge_id: rule.id as string, new_content: content }),
+        const knowledgePrefix = newKnowledgeId ? `[knowledge_id:${newKnowledgeId}] ` : "";
+        await supabase.from("ai_feedback_items").insert({
+          question: `${knowledgePrefix}[矛盾確認] 新ナレッジ「${title.slice(0, 40)}」が既存ルール「${(rule.title as string).slice(0, 40)}」と矛盾する可能性があります。NGフレーズ「${ngPhrase}」が confirmed ルール本文に含まれています。どちらのルールが正しいですか？`,
+          speculation: `新ナレッジ内のNGフレーズ「${ngPhrase}」が、既存 confirmed ルール「${(rule.title as string).slice(0, 50)}」の本文に含まれていました。新ナレッジは hypothesis のまま保留しています。`,
+          category: "knowledge_gap",
+          evidence: `既存ナレッジID: ${rule.id as string}${newKnowledgeId ? ` / 新ナレッジID: ${newKnowledgeId}` : ""} / 新ナレッジ内容（抜粋）: ${content.slice(0, 120)}`,
+          confidence: "high",
           status: "pending",
-          proposal_category: "knowledge_quality",
         });
       }
     }
 
     // ── HUMAN-* ルール（竹内さん確認済みの最高優先ルール）との矛盾検知 ──
     // 新ナレッジが HUMAN-* ルールの内容と矛盾する可能性がある場合、
-    // どちらが正しいか竹内さんに確認するため knowledge_contradiction として起票する
+    // どちらが正しいか竹内さんに確認するため ai_feedback_items（AI質問タブ）に起票する
     const { data: humanRules } = await supabase
       .from("ai_prompt_rules")
       .select("rule_key, rule_text")
@@ -357,22 +361,23 @@ async function checkContradiction(
           const ruleText = ((humanRule.rule_text as string) ?? "").replace(/\s+/g, "");
           if (!ruleText.includes(phraseNorm)) continue;
 
-          const dedupTitleHuman = `⚠️ HUMANルール矛盾: ${title.slice(0, 20)}`;
+          const dedupKeyHuman = `[HUMAN矛盾] ${title.slice(0, 20)}`;
           const { data: existingHuman } = await supabase
-            .from("aix_feature_suggestions")
+            .from("ai_feedback_items")
             .select("id")
-            .eq("suggestion_type", "knowledge_contradiction")
-            .ilike("suggested_title", `${dedupTitleHuman.replace(/[%_\\]/g, "\\$&")}%`)
+            .in("status", ["pending", "answered", "applied"])
+            .ilike("question", `${dedupKeyHuman.replace(/[%_\\]/g, "\\$&")}%`)
             .limit(1);
           if (existingHuman && existingHuman.length > 0) continue;
 
-          await supabase.from("aix_feature_suggestions").insert({
-            suggestion_type: "knowledge_contradiction",
-            suggested_title: dedupTitleHuman,
-            description: `⚠️ 竹内さんの回答ルール「${(humanRule.rule_key as string)}」と矛盾の可能性: ${content.slice(0, 150)}`,
-            implementation_notes: JSON.stringify({ human_rule_key: humanRule.rule_key as string, new_content: content }),
+          const knowledgePrefixHuman = newKnowledgeId ? `[knowledge_id:${newKnowledgeId}] ` : "";
+          await supabase.from("ai_feedback_items").insert({
+            question: `${knowledgePrefixHuman}[HUMAN矛盾] 新ナレッジ「${title.slice(0, 40)}」が竹内さん確認済み最優先ルール「${humanRule.rule_key as string}」と矛盾する可能性があります。NGフレーズ「${ngPhrase}」が最優先ルール本文に含まれています。どちらが正しいですか？`,
+            speculation: `新ナレッジのNGフレーズ「${ngPhrase}」が HUMAN優先ルール（${humanRule.rule_key as string}）の本文に含まれていました。新ナレッジを採用するには最優先ルールの修正が必要です。`,
+            category: "knowledge_gap",
+            evidence: `HUMANルールkey: ${humanRule.rule_key as string}${newKnowledgeId ? ` / 新ナレッジID: ${newKnowledgeId}` : ""} / HUMANルール本文（抜粋）: ${(humanRule.rule_text as string).slice(0, 80)} / 新ナレッジ内容（抜粋）: ${content.slice(0, 80)}`,
+            confidence: "high",
             status: "pending",
-            proposal_category: "knowledge_quality",
           });
         }
       }
@@ -1202,8 +1207,8 @@ export async function POST(req: NextRequest) {
               }
               // verdict === "skip": hypothesis のまま（stale decayか⑤昇格バッチに委ねる）
             }
-            // 矛盾検知: 同一ステートの confirmed ルールと比較
-            void checkContradiction(compResult.title, compResult.rule, compState);
+            // 矛盾検知: 同一ステートの confirmed ルールと比較（newKnowledgeId を渡して closed-loop を有効化）
+            void checkContradiction(compResult.title, compResult.rule, compState, upsertResult.id);
           }
         }
       }
@@ -1324,8 +1329,8 @@ export async function POST(req: NextRequest) {
             }
             // verdict === "skip": hypothesis のまま（stale decayか⑤昇格バッチに委ねる）
           }
-          // 矛盾検知: 同一ステートの confirmed ルールと比較
-          void checkContradiction(result.title, result.rule, conversation_state ?? null);
+          // 矛盾検知: 同一ステートの confirmed ルールと比較（newKnowledgeId を渡して closed-loop を有効化）
+          void checkContradiction(result.title, result.rule, conversation_state ?? null, upsertResult.id);
         }
       } else if (upsertResult.result === "merged") {
         console.log(`[analyze-diffs] 既存ルール強化: "${result.title}"`);

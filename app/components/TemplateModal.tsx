@@ -572,6 +572,15 @@ export default function TemplateModal({
     modalErrorTimerRef.current = setTimeout(() => setModalError(null), 4000);
   }, []);
   useEffect(() => () => { if (modalErrorTimerRef.current) clearTimeout(modalErrorTimerRef.current); }, []);
+  // 成功トースト（緑・4秒で自動消去）
+  const [modalSuccess, setModalSuccess] = useState<string | null>(null);
+  const modalSuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showModalSuccess = useCallback((msg: string) => {
+    setModalSuccess(msg);
+    if (modalSuccessTimerRef.current) clearTimeout(modalSuccessTimerRef.current);
+    modalSuccessTimerRef.current = setTimeout(() => setModalSuccess(null), 4000);
+  }, []);
+  useEffect(() => () => { if (modalSuccessTimerRef.current) clearTimeout(modalSuccessTimerRef.current); }, []);
   // 親からのデータ（props/キャッシュ）があれば即時表示、なければローディング表示
   const [loading, setLoading] = useState(!templatesProp && (!initialTemplates || initialTemplates.length === 0));
   const [templateLoadError, setTemplateLoadError] = useState<string | null>(null);
@@ -1000,9 +1009,10 @@ export default function TemplateModal({
         delete next[item.id];
         return next;
       });
+      showModalSuccess("回答を反映しました（次の返信生成から即時適用）");
     } catch { /* noop */ }
     finally { setSubmittingKnowledgeQuestion(null); }
-  }, [knowledgeQuestionAnswers]);
+  }, [knowledgeQuestionAnswers, showModalSuccess]);
 
   // 🧠ナレッジ承認: hypothesis ナレッジ一覧の読み込み
   const loadKnowledgeItems = useCallback(async () => {
@@ -1155,9 +1165,10 @@ export default function TemplateModal({
       });
       await loadFeedbackItems();
       setFeedbackAnswers(prev => { const next = { ...prev }; delete next[id]; return next; });
+      showModalSuccess("回答を反映しました（次の返信生成から即時適用）");
     } catch { /* noop */ }
     finally { setSubmittingFeedback(null); }
-  }, [feedbackAnswers, loadFeedbackItems]);
+  }, [feedbackAnswers, loadFeedbackItems, showModalSuccess]);
 
   // スキップ（status="dismissed"・理由があれば dismissed_reason として保存しAIの学習材料にする）
   const dismissFeedback = useCallback(async (id: string, reason?: string) => {
@@ -1702,6 +1713,15 @@ export default function TemplateModal({
           onClick={() => setModalError(null)}
         >
           {modalError}
+        </div>
+      )}
+      {/* 成功トースト（緑・4秒自動消去） */}
+      {modalSuccess && (
+        <div
+          className="fixed top-4 left-1/2 z-[60] max-w-[90vw] -translate-x-1/2 rounded-full bg-green-600 px-5 py-2.5 text-[12px] font-bold text-white shadow-lg"
+          onClick={() => setModalSuccess(null)}
+        >
+          {modalSuccess}
         </div>
       )}
       <div className="relative w-full max-w-lg rounded-t-3xl bg-white shadow-2xl flex flex-col" style={{ maxHeight: "90vh" }}>
