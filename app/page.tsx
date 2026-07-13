@@ -66,6 +66,21 @@ type SupabaseConversationRow = {
   ai_draft?: string | null;
 };
 
+// AI下書きから内部メタタグ（<<<STOP_REASON:...>>> / <<<SUGGESTED_AIX:{...}>>>）を除去する。
+// これらはスタッフ向け内部指示（品質ゲート・次のAIXボタン提案）であり、
+// 顧客向け返信文を入れるテキストボックスには絶対に混入させない。
+function stripInternalTags(text: string): string {
+  return text
+    .replace(/\n?<<<STOP_REASON:[^>]*>>>/g, "")
+    .replace(/\n?<<<SUGGESTED_AIX:[\s\S]*?>>>/g, "")
+    .trim();
+}
+// null許容版（DBから読んだ ai_draft の取り込み用）: 除去後に空文字なら null
+function stripInternalTagsOrNull(text: string | null | undefined): string | null {
+  if (!text) return null;
+  return stripInternalTags(text) || null;
+}
+
 type SupabaseMessageRow = {
   id: string;
   conversation_id: string;
@@ -1002,7 +1017,7 @@ export default function Home() {
           if (upd?.id && upd.ai_draft !== undefined) {
             setConversations((prev) =>
               prev.map((c) =>
-                c.id === String(upd.id) ? { ...c, aiDraft: upd.ai_draft || null } : c
+                c.id === String(upd.id) ? { ...c, aiDraft: stripInternalTagsOrNull(upd.ai_draft) } : c
               )
             );
             // async プリ生成完了 → preGenInProgress をクリア
@@ -1085,7 +1100,7 @@ export default function Home() {
                 const { data: convRow } = await supabase.from("conversations").select("ai_draft").eq("id", convIdForGen).single();
                 if (convRow?.ai_draft) {
                   supabase.from("conversations").update({ ai_draft: null }).eq("id", convIdForGen).then(() => {});
-                  setConversations(prev => prev.map(c => c.id === convIdForGen ? { ...c, aiDraft: convRow.ai_draft } : c));
+                  setConversations(prev => prev.map(c => c.id === convIdForGen ? { ...c, aiDraft: stripInternalTagsOrNull(convRow.ai_draft) } : c));
                 } else {
                   setDraftRetryConvId(convIdForGen);
                 }
@@ -1571,7 +1586,7 @@ export default function Home() {
         isHot: conversation.is_hot ?? false,
         isFlagged: conversation.is_flagged ?? false,
         hasViewed: conversation.has_viewed ?? false,
-        aiDraft: conversation.ai_draft || null,
+        aiDraft: stripInternalTagsOrNull(conversation.ai_draft),
         messages: relatedMessages,
       };
     });
@@ -2000,7 +2015,7 @@ export default function Home() {
               // Realtime が漏れただけで実は生成済み → セットしてDBもクリア
               supabase.from("conversations").update({ ai_draft: null }).eq("id", convIdForGen).then(() => {});
               setConversations((prev) =>
-                prev.map((c) => c.id === convIdForGen ? { ...c, aiDraft: convRow.ai_draft } : c)
+                prev.map((c) => c.id === convIdForGen ? { ...c, aiDraft: stripInternalTagsOrNull(convRow.ai_draft) } : c)
               );
             } else {
               // 本当に生成失敗 → 再生成ボタンを表示
@@ -2482,13 +2497,13 @@ export default function Home() {
       }
 
       // <<<SUGGESTED_AIX:...>>> トレーラーを解析してUIに反映
-      const aixTrailerMatch = fullText.match(/\n<<<SUGGESTED_AIX:(.+?)>>>/);
+      const aixTrailerMatch = fullText.match(/<<<SUGGESTED_AIX:([\s\S]+?)>>>/);
       if (aixTrailerMatch) {
         try { setSuggestedAix(JSON.parse(aixTrailerMatch[1])); } catch { /* ignore parse error */ }
-        fullText = fullText.replace(/\n<<<SUGGESTED_AIX:.+?>>>/, "");
       }
 
-      const finalDraft = fullText.trim();
+      // 内部タグ（STOP_REASON / SUGGESTED_AIX）は順序・有無を問わず全て除去してからテキストボックスへ
+      const finalDraft = stripInternalTags(fullText);
       aiDraftRef.current = finalDraft;
       replyTargetCustomerMsgRef.current = targetMessage;
       setDisplaySource("ai_draft");
@@ -2777,13 +2792,13 @@ export default function Home() {
         }
       }
       // <<<SUGGESTED_AIX:...>>> トレーラーを解析してUIに反映（スパークルモーダル経由でも同じ処理）
-      const aixTrailerMatchSparkle = fullText.match(/\n<<<SUGGESTED_AIX:(.+?)>>>/);
+      const aixTrailerMatchSparkle = fullText.match(/<<<SUGGESTED_AIX:([\s\S]+?)>>>/);
       if (aixTrailerMatchSparkle) {
         try { setSuggestedAix(JSON.parse(aixTrailerMatchSparkle[1])); } catch { /* ignore parse error */ }
-        fullText = fullText.replace(/\n<<<SUGGESTED_AIX:.+?>>>/, "");
       }
 
-      const finalDraft = fullText.trim();
+      // 内部タグ（STOP_REASON / SUGGESTED_AIX）は順序・有無を問わず全て除去してからテキストボックスへ
+      const finalDraft = stripInternalTags(fullText);
       aiDraftRef.current = finalDraft;
       if (draftNoEmoji) {
         setDraftOrigText(finalDraft);

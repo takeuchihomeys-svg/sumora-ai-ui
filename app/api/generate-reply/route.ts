@@ -1602,17 +1602,20 @@ export async function POST(req: NextRequest) {
               if (cleaned) controller.enqueue(encoder.encode(cleaned));
               finalDraftText = cleaned;
             }
-            // includeStopReason=true（generate-pending-drafts）の場合のみ stop_reason トレーラーを付加
-            // → 呼び出し元が max_tokens 尻切れを検知して保存をスキップできるようにする
-            if (includeStopReason) {
-              controller.enqueue(encoder.encode(`\n<<<STOP_REASON:${String(genStopReason ?? "unknown")}>>>`));
-            }
             // AIXボタン誘導: ドラフト完成後にどのAIXボタンを使うべきか提案（トレーラーとして付加）
             // suggest-next-action（DB学習ルール）を優先し、失敗時はregexにフォールバック
             const internalBaseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000";
             const suggestedAix = await deriveSuggestedAix(finalDraftText, currentState, conversationId || undefined, internalBaseUrl);
             if (suggestedAix) {
               controller.enqueue(encoder.encode(`\n<<<SUGGESTED_AIX:${JSON.stringify(suggestedAix)}>>>`));
+            }
+            // includeStopReason=true（generate-pending-drafts）の場合のみ stop_reason トレーラーを付加
+            // → 呼び出し元が max_tokens 尻切れを検知して保存をスキップできるようにする
+            // ⚠️ 必ず【最後】のトレーラーとして出力する（SUGGESTED_AIX より後）。
+            //    以前 STOP_REASON→SUGGESTED_AIX の順で出力していたため、呼び出し元の末尾アンカー抽出が失敗し
+            //    タグ入りドラフトが ai_draft に保存されるバグが発生した（2026-07 修正済み）
+            if (includeStopReason) {
+              controller.enqueue(encoder.encode(`\n<<<STOP_REASON:${String(genStopReason ?? "unknown")}>>>`));
             }
             // ✅ 成功時: ai_draft 保存 + draft_pending_at クリア（次のCronでスキップさせる）+ draft_attempted_at クリア（orphanedクエリで拾われないように）
             // ※ draft_updated_at カラムは conversations に存在しないため未使用（追加時はここで更新すること）

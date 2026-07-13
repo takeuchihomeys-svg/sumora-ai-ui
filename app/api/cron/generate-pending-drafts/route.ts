@@ -258,14 +258,19 @@ async function run() {
         }
       }
 
-      // stop_reason トレーラー（<<<STOP_REASON:xxx>>>）を抽出して本文から除去
+      // 内部タグ（<<<STOP_REASON:xxx>>> / <<<SUGGESTED_AIX:{...}>>>）を抽出して本文から除去
+      // ⚠️ 末尾アンカー（$）での抽出は禁止 — SUGGESTED_AIX が STOP_REASON の後に付くケースがあり、
+      //    $ アンカーだとマッチ失敗してタグ入りのまま ai_draft に保存される（顧客に内部指示が届く事故の原因）
       let finalDraft = fullText.trim();
       let stopReason = "";
-      const trailerMatch = finalDraft.match(/\n?<<<STOP_REASON:([\w-]*)>>>\s*$/);
+      const trailerMatch = finalDraft.match(/<<<STOP_REASON:([\w-]*)>>>/);
       if (trailerMatch) {
         stopReason = trailerMatch[1];
-        finalDraft = finalDraft.slice(0, trailerMatch.index).trim();
       }
+      finalDraft = finalDraft
+        .replace(/\n?<<<STOP_REASON:[\w-]*>>>/g, "")
+        .replace(/\n?<<<SUGGESTED_AIX:[\s\S]*?>>>/g, "")
+        .trim();
 
       // 品質ゲート①: max_tokens 尻切れドラフトは保存しない
       // MEDIUM-3: センチネル値 "__TRUNCATED__" を保存して再試行を防ぐ
