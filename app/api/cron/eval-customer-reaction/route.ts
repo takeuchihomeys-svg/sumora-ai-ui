@@ -5,24 +5,17 @@ import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 export const maxDuration = 60;
 
 // POST /api/cron/eval-customer-reaction（毎日 JST 20:30）
-// 顧客反応ベースの文評価（軽量版）:
-// AIX 送信後24時間以内に顧客が返信したかを messages テーブルで確認し、
-// aix_usage_logs.customer_reacted (boolean) を UPDATE する。
-//
-// 対象: 送信から24時間以上経過し、まだ未評価（customer_reacted IS NULL）のログ。
-// 取りこぼし救済のため過去7日まで遡る（実行失敗日があってもバックフィルされる）。
+// 顧客反応ベースの正誤評価:
+// AI返信後 72時間以内にお客様から返信があれば → 正解（correct_count++）
+// 72時間以内に返信なし → 誤（wrong_count++）
+// 申込中・審査中（applying/screening）は別ツールでやりとりするため除外。
 const BATCH_LIMIT = 200;
 const CONCURRENCY = 10;
 
-// 状態別の顧客反応待ち時間（時間単位）
-// viewing_invite/estimate_sheet は検討に時間がかかるため長め
-const STATE_REACTION_WINDOW_HOURS: Record<string, number> = {
-  viewing_invite: 72,
-  estimate_sheet: 48,
-  contract_schedule: 48,
-  application_push: 36,
-};
-const DEFAULT_REACTION_HOURS = 24;
+// 72時間以内に返信あり → 正解、なし → 誤
+const REACTION_WINDOW_HOURS = 72;
+// 申込中・審査中は screening-admin でやりとりするため LINE沈黙は誤シグナルにしない
+const EXCLUDED_STATUSES = ["applying", "screening"];
 
 export async function POST(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
@@ -35,15 +28,15 @@ export async function POST(req: NextRequest) {
   try {
     const now = Date.now();
     const since7d = new Date(now - 7 * 24 * 3600 * 1000).toISOString();
-    const until24hAgo = new Date(now - 24 * 3600 * 1000).toISOString();
+    const until72hAgo = new Date(now - REACTION_WINDOW_HOURS * 3600 * 1000).toISOString();
 
-    // 送信から24h以上経過した未評価ログ（sent_at は NULL がありうるため created_at で範囲抽出）
+    // 送信から72h以上経過した未評価ログ
     const { data: usageLogs, error: usageErr } = await supabase
       .from("aix_usage_logs")
       .select("id, conversation_id, aix_type, sent_at, created_at")
       .is("customer_reacted", null)
       .gte("created_at", since7d)
-      .lte("created_at", until24hAgo)
+      .lte("created_at", until72hAgo)
       .order("created_at", { ascending: true })
       .limit(BATCH_LIMIT);
 
@@ -52,7 +45,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: usageErr.message }, { status: 500 });
     }
 
-    const logs = (usageLogs ?? []) as Array<{
+    const rawLogs = (usageLogs ?? []) as Array<{
       id: string;
       conversation_id: string;
       aix_type: string | null;
@@ -60,15 +53,34 @@ export async function POST(req: NextRequest) {
       created_at: string;
     }>;
 
-    if (logs.length === 0) {
+    if (rawLogs.length === 0) {
       await finishCronLog(runLogId, true, { evaluated: 0 });
       return NextResponse.json({ ok: true, evaluated: 0 });
+    }
+
+    // 申込中・審査中の会話を除外（別ツールでやりとりしているため）
+    const convIds = [...new Set(rawLogs.map(l => l.conversation_id))];
+    const { data: convStatuses } = await supabase
+      .from("conversations")
+      .select("id, status")
+      .in("id", convIds);
+    const excludedConvIds = new Set(
+      (convStatuses ?? [])
+        .filter(c => EXCLUDED_STATUSES.includes(c.status as string))
+        .map(c => c.id as string)
+    );
+    const logs = rawLogs.filter(l => !excludedConvIds.has(l.conversation_id));
+    const skippedByStatus = rawLogs.length - logs.length;
+
+    if (logs.length === 0) {
+      await finishCronLog(runLogId, true, { evaluated: 0, skipped_by_status: skippedByStatus });
+      return NextResponse.json({ ok: true, evaluated: 0, skipped_by_status: skippedByStatus });
     }
 
     const reactedIds: string[] = [];
     const notReactedIds: string[] = [];
 
-    // 送信後24h以内に顧客返信があったかを確認（CONCURRENCY件ずつ並列）
+    // 送信後72h以内に顧客返信があったかを確認（CONCURRENCY件ずつ並列）
     const startTime = Date.now();
     for (let i = 0; i < logs.length; i += CONCURRENCY) {
       if (Date.now() - startTime > 50_000) {
@@ -78,8 +90,7 @@ export async function POST(req: NextRequest) {
       const chunk = logs.slice(i, i + CONCURRENCY);
       await Promise.all(chunk.map(async (log) => {
         const sendTime = log.sent_at ?? log.created_at;
-        const windowHours = STATE_REACTION_WINDOW_HOURS[log.aix_type ?? ""] ?? DEFAULT_REACTION_HOURS;
-        const windowEnd = new Date(new Date(sendTime).getTime() + windowHours * 3600 * 1000).toISOString();
+        const windowEnd = new Date(new Date(sendTime).getTime() + REACTION_WINDOW_HOURS * 3600 * 1000).toISOString();
         try {
           const { count, error } = await supabase
             .from("messages")
@@ -88,14 +99,14 @@ export async function POST(req: NextRequest) {
             .eq("sender", "customer")
             .gt("created_at", sendTime)
             .lte("created_at", windowEnd);
-          if (error) { console.warn("[eval-customer-reaction] per-item失敗 id:", log.id, "error:", error.message); return; } // 失敗分は NULL のまま残し次回リトライ
+          if (error) { console.warn("[eval-customer-reaction] per-item失敗 id:", log.id, "error:", error.message); return; }
           if ((count ?? 0) > 0) reactedIds.push(log.id);
           else notReactedIds.push(log.id);
-        } catch (e) { console.warn("[eval-customer-reaction] per-item失敗 id:", log.id, "error:", (e as Error)?.message); /* 次回リトライ */ }
+        } catch (e) { console.warn("[eval-customer-reaction] per-item失敗 id:", log.id, "error:", (e as Error)?.message); }
       }));
     }
 
-    // まとめて UPDATE（true / false の2クエリ）
+    // まとめて UPDATE
     if (reactedIds.length > 0) {
       const { error: reactErr } = await supabase.from("aix_usage_logs").update({ customer_reacted: true }).in("id", reactedIds);
       if (reactErr) console.warn("[eval-customer-reaction] reacted update failed:", reactErr.message);
@@ -108,9 +119,61 @@ export async function POST(req: NextRequest) {
     const evaluated = reactedIds.length + notReactedIds.length;
     const reactionRate = evaluated > 0 ? Math.round((reactedIds.length / evaluated) * 1000) / 1000 : null;
 
+    // ── 正誤シグナルを ai_reply_knowledge にフィードバック ──
+    // 72h以内に返信あり → correct_count++、なし → wrong_count++
+    // knowledge_apply_log から適用されたナレッジIDを特定して更新
+    let knowledgeFed = 0;
+    try {
+      const reactedSet = new Set(reactedIds);
+      const notReactedSet = new Set(notReactedIds);
+
+      // aix_usage_log.id → conversation_id マップ
+      const idToConv = new Map<string, string>();
+      for (const log of logs) idToConv.set(log.id, log.conversation_id);
+
+      const reactedConvIds = new Set(reactedIds.map(id => idToConv.get(id) ?? "").filter(Boolean));
+      const notReactedConvIds = new Set(notReactedIds.map(id => idToConv.get(id) ?? "").filter(Boolean));
+      const allConvIds = [...new Set([...reactedConvIds, ...notReactedConvIds])];
+
+      if (allConvIds.length > 0) {
+        const { data: applyLogs } = await supabase
+          .from("knowledge_apply_log")
+          .select("knowledge_id, conversation_id")
+          .in("conversation_id", allConvIds)
+          .eq("result", "pending");
+
+        const kCorrect: string[] = [];
+        const kWrong: string[] = [];
+        const correctPairs = new Set<string>();
+        const wrongPairs = new Set<string>();
+
+        for (const al of (applyLogs ?? [])) {
+          const kid = al.knowledge_id as string;
+          const convId = al.conversation_id as string;
+          if (!kid || !convId) continue;
+          const pairKey = `${kid}::${convId}`;
+          if (reactedConvIds.has(convId) && !correctPairs.has(pairKey)) {
+            correctPairs.add(pairKey);
+            kCorrect.push(kid);
+          } else if (notReactedConvIds.has(convId) && !wrongPairs.has(pairKey)) {
+            wrongPairs.add(pairKey);
+            kWrong.push(kid);
+          }
+        }
+
+        if (kCorrect.length > 0 || kWrong.length > 0) {
+          await supabase.rpc("update_knowledge_feedback_by_ids", {
+            p_correct_ids: kCorrect.length > 0 ? kCorrect : null,
+            p_wrong_ids: kWrong.length > 0 ? kWrong : null,
+          });
+          knowledgeFed = kCorrect.length + kWrong.length;
+        }
+      }
+    } catch (e) {
+      console.warn("[eval-customer-reaction] knowledge feedback失敗:", e);
+    }
+
     // ── 低反応 aix_type のナレッジを decay（学習ループへの接続） ──
-    // 今回のバッチで not_reacted 率>=50% かつ件数>=2 の aix_type を特定し、
-    // その conversation_state に対応する ai_reply_knowledge の importance を下げる
     let decaySucceeded = 0;
     let decayFailed = 0;
     let brushupSucceeded = 0;
@@ -119,10 +182,9 @@ export async function POST(req: NextRequest) {
       const notReactedSet = new Set(notReactedIds);
       const reactedSet = new Set(reactedIds);
       const notReactedByType = new Map<string, number>();
-      const totalByType = new Map<string, number>(); // reacted + not_reacted の合計
+      const totalByType = new Map<string, number>();
       for (const log of logs) {
         if (!log.aix_type) continue;
-        // 今回判定できたもの（reactedまたはnot_reacted）のみカウント
         if (reactedSet.has(log.id) || notReactedSet.has(log.id)) {
           totalByType.set(log.aix_type, (totalByType.get(log.aix_type) ?? 0) + 1);
         }
@@ -132,19 +194,17 @@ export async function POST(req: NextRequest) {
       for (const [aix_type, count] of notReactedByType.entries()) {
         const total = totalByType.get(aix_type) ?? count;
         const notReactedRate = count / total;
-        // 件数>=2 かつ 非反応率>=50% の両条件でdecay（バッチの偶然の偏りを防ぐ）
         if (count < 2 || notReactedRate < 0.5) continue;
         const { data: staleIds } = await supabase
           .from("ai_reply_knowledge")
           .select("id")
           .eq("conversation_state", aix_type)
           .neq("hypothesis_status", "rejected")
-          .lt("importance", 7) // 高重要度は保護
+          .lt("importance", 7)
           .limit(30);
         const ids = (staleIds ?? []).map(r => r.id as string).filter(Boolean);
         if (ids.length === 0) {
-          // knowledge_apply_log の aix_type と conversation_state のマッピング不一致を検知
-          console.warn(`[eval-customer-reaction] decay skip: aix_type="${aix_type}" に conversation_state一致のknowledgeが見つかりません（マッピング不一致の可能性 / not_reacted=${count}/${total}件）`);
+          console.warn(`[eval-customer-reaction] decay skip: aix_type="${aix_type}" に conversation_state一致のknowledgeが見つかりません`);
           continue;
         }
         const { error: rpcErr } = await supabase.rpc("decay_knowledge_importance", { p_ids: ids });
@@ -160,7 +220,6 @@ export async function POST(req: NextRequest) {
     }
 
     // ── confirmed rules (importance>=7) の高非反応率ズレ検知 ──
-    // 非反応率 >= 70% かつ samples >= 5 → knowledge_brushup を aix_feature_suggestions に登録
     try {
       const { data: highImpStats } = await supabase
         .from("aix_usage_logs")
@@ -181,7 +240,6 @@ export async function POST(req: NextRequest) {
         const noReactRate = stats.noReact / stats.total;
         if (noReactRate < 0.7) continue;
 
-        // 対応するconfirmedルールを探す
         const { data: highRules } = await supabase
           .from("ai_reply_knowledge")
           .select("id, title")
@@ -191,7 +249,6 @@ export async function POST(req: NextRequest) {
           .limit(3);
 
         for (const rule of (highRules ?? [])) {
-          // dedup: 同じルールのbrushup提案が既にpendingなら skip
           const { data: existing } = await supabase
             .from("aix_feature_suggestions")
             .select("id")
@@ -225,6 +282,8 @@ export async function POST(req: NextRequest) {
       reacted: reactedIds.length,
       not_reacted: notReactedIds.length,
       reaction_rate: reactionRate,
+      knowledge_fed: knowledgeFed,
+      skipped_by_status: skippedByStatus,
       decay_succeeded: decaySucceeded,
       decay_failed: decayFailed,
       brushup_succeeded: brushupSucceeded,
@@ -236,6 +295,8 @@ export async function POST(req: NextRequest) {
       reacted: reactedIds.length,
       not_reacted: notReactedIds.length,
       reaction_rate: reactionRate,
+      knowledge_fed: knowledgeFed,
+      skipped_by_status: skippedByStatus,
       decay_succeeded: decaySucceeded,
       decay_failed: decayFailed,
       brushup_succeeded: brushupSucceeded,
