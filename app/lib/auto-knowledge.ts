@@ -156,25 +156,19 @@ export async function learnFromModifiedExample(params: {
     ...(params.exampleId ? { source_example_id: params.exampleId } : {}), // BUG-12: 元実例IDを記録
   });
 
-  if (upsertResult === "merged") {
+  if (upsertResult.result === "merged") {
     console.log(`[auto-knowledge] 既存ルール強化: "${rule.slice(0, 50)}"`);
-  } else if (upsertResult === "skipped") {
+  } else if (upsertResult.result === "skipped") {
     console.log(`[auto-knowledge] スキップ（重複）: "${rule.slice(0, 50)}"`);
-  } else if (upsertResult === "inserted") {
+  } else if (upsertResult.result === "inserted") {
     // 新規ルール → ai_prompt_rules に非アクティブ候補として即座に登録
     // （翌朝 analyze-diffs で confirmed になると is_active=true・priority=8 に昇格）
     try {
-      const { data: newRow } = await supabase
-        .from("ai_reply_knowledge")
-        .select("id")
-        .eq("title", "差分学習 [自動]")
-        .eq("conversation_state", normalized)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (newRow?.id) {
+      // upsertKnowledge が id を返すようになったため直接利用（DB再クエリ不要）
+      const newId = upsertResult.id;
+      if (newId) {
         await supabase.from("ai_prompt_rules").upsert({
-          rule_key: `LEARN-${newRow.id as string}`,
+          rule_key: `LEARN-${newId}`,
           action_type: "generate_reply",
           condition_key: normalized ? "conversation_state" : null,
           condition_value: normalized ?? null,
@@ -183,10 +177,10 @@ export async function learnFromModifiedExample(params: {
           priority: 4,
           is_active: false,
         }, { onConflict: "rule_key", ignoreDuplicates: true });
-        console.log(`[auto-knowledge] ai_prompt_rules候補登録: LEARN-${newRow.id as string}`);
+        console.log(`[auto-knowledge] ai_prompt_rules候補登録: LEARN-${newId}`);
       }
     } catch { /* ignore */ }
   }
 
-  return { ok: true, rule, upsertResult };
+  return { ok: true, rule, upsertResult: upsertResult.result };
 }

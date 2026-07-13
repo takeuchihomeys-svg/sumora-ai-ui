@@ -76,7 +76,7 @@ ${sentReply}
         source_example_id: exampleId,
         ...(embedding ? { embedding } : {}),
       });
-      if (result === "inserted") inserted++;
+      if (result.result === "inserted") inserted++;
     }
     return inserted;
   } catch { return 0; }

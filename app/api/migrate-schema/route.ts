@@ -1395,6 +1395,21 @@ CREATE INDEX IF NOT EXISTS idx_token_block_token ON token_block(token);
 -- deriveSuggestedAix() がこのキャッシュを最初に参照することでネットワーク呼び出しを省略できる。
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS suggested_next_aix TEXT;
 
+-- ── スマートナレッジフロー（2026-07-13）──
+
+-- ai_reply_knowledge: 曖昧フラグ（タイトルが短い・条件記述がない hypothesis を UI でフィルタ表示する）
+ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS needs_clarification BOOLEAN DEFAULT false;
+CREATE INDEX IF NOT EXISTS idx_ai_reply_knowledge_needs_clarification
+  ON ai_reply_knowledge(needs_clarification) WHERE needs_clarification = true;
+
+-- ai_reply_knowledge: 矛盾リンク（このナレッジと矛盾する既存ナレッジの id を記録）
+ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS contradicts_id UUID REFERENCES ai_reply_knowledge(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_ai_reply_knowledge_contradicts ON ai_reply_knowledge(contradicts_id) WHERE contradicts_id IS NOT NULL;
+
+-- aix_feature_suggestions: knowledge_contradiction / knowledge_brushup 型を追加
+-- （suggestion_type は TEXT のため ALTER CHECK 不要。既存のインデックスとスキーマはそのまま使用）
+-- note: suggestion_type の新しい値は 'knowledge_contradiction' | 'knowledge_brushup'
+
 `.trim();
 
 // GET: スキーマSQLを返す（POSTと同じ CRON_SECRET 認証必須 — 無認証でのスキーマ情報開示を防止）

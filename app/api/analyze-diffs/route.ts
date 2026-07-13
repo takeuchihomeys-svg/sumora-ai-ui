@@ -1,6 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, buildKnowledgeEmbeddingInput, generateEmbedding } from "@/app/lib/knowledge-utils";
+import { syncConfirmedToPromptRule } from "@/app/lib/knowledge-promote";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -186,6 +187,83 @@ function diffImportance(sim: number): number {
   if (sim < 0.4) return 9;
   if (sim < 0.65) return 8;
   return 7;
+}
+
+// ── スマートナレッジフロー: ヘルパー関数 ──
+
+// アクションキーワードを含むタイトルかどうかを判定（Tier 1 サイレント昇格に使用）
+const ACTION_KEYWORDS = ["内覧", "申込", "物件", "確認", "お客様", "送信", "ピックアップ", "見積", "書類", "挨拶", "クロージング", "誘導", "改善"];
+function isContentClear(title: string): boolean {
+  return ACTION_KEYWORDS.some(kw => title.includes(kw));
+}
+
+// 曖昧ナレッジ判定（タイトルが短すぎる、または内容に条件・場面の記述がない）
+const STRUCTURE_MARKERS = ["→", "する場合", "ときは", "場面", "タイミング", "場合は", "際は", "のは", "すると"];
+function isAmbiguous(title: string, content: string): boolean {
+  if (title.replace(/\s+/g, "").length < 15) return true;
+  if (!STRUCTURE_MARKERS.some(m => content.includes(m))) return true;
+  return false;
+}
+
+// NGフレーズを抽出（「〜はNG」「〜禁止」などのパターン）
+function extractNgPhrases(content: string): string[] {
+  const results: string[] = [];
+  // パターン1: 「〜」はNG / 「〜」は禁止 / 「〜」は使わない
+  const pat1 = /「([^」]{4,40})」(?:はNG|を使わない|は禁止|してはいけない|は不可)/g;
+  let m: RegExpExecArray | null;
+  while ((m = pat1.exec(content)) !== null) results.push(m[1]);
+  // パターン2: 〜はNG / 〜禁止（単純表現）
+  const pat2 = /([^\s。、\n「」]{5,30})(?:はNG|禁止)/g;
+  while ((m = pat2.exec(content)) !== null) results.push(m[1]);
+  return results;
+}
+
+// 矛盾検知: 新ナレッジのNGフレーズが、同じ conversation_state の confirmed ルールに含まれていれば aix_feature_suggestions に起票
+async function checkContradiction(
+  title: string,
+  content: string,
+  conversationState: string | null,
+): Promise<void> {
+  try {
+    const ngPhrases = extractNgPhrases(content);
+    if (ngPhrases.length === 0) return;
+
+    let query = supabase
+      .from("ai_reply_knowledge")
+      .select("id, title, content")
+      .eq("hypothesis_status", "confirmed")
+      .limit(50);
+    if (conversationState) query = query.eq("conversation_state", conversationState);
+    const { data: confirmedRules } = await query;
+    if (!confirmedRules || confirmedRules.length === 0) return;
+
+    for (const ngPhrase of ngPhrases) {
+      const phraseNorm = ngPhrase.replace(/\s+/g, "");
+      for (const rule of confirmedRules) {
+        const ruleContent = ((rule.content as string) ?? "").replace(/\s+/g, "");
+        if (!ruleContent.includes(phraseNorm)) continue;
+
+        // 矛盾検知: 重複起票防止
+        const dedupTitle = `矛盾検知: ${title.slice(0, 25)}`;
+        const { data: existing } = await supabase
+          .from("aix_feature_suggestions")
+          .select("id")
+          .eq("suggestion_type", "knowledge_contradiction")
+          .ilike("suggested_title", `${dedupTitle.replace(/[%_\\]/g, "\\$&")}%`)
+          .limit(1);
+        if (existing && existing.length > 0) continue;
+
+        await supabase.from("aix_feature_suggestions").insert({
+          suggestion_type: "knowledge_contradiction",
+          suggested_title: dedupTitle,
+          description: `既存ルール「${(rule.title as string).slice(0, 50)}」と矛盾する可能性: ${content.slice(0, 150)}`,
+          implementation_notes: JSON.stringify({ old_knowledge_id: rule.id as string, new_content: content }),
+          status: "pending",
+          proposal_category: "knowledge_quality",
+        });
+      }
+    }
+  } catch { /* 矛盾検知失敗はメイン処理を止めない */ }
 }
 
 // ── ブーストインフレ防止ガード ──
@@ -578,6 +656,26 @@ export async function POST(req: NextRequest) {
         .update({ hypothesis_status: "hypothesis" })
         .eq("id", rule.id as string);
       demotedConfirmed++; // demotedConfirmed は外側のスコープで集計
+
+      // Part C demotion-time: knowledge_brushup 提案を起票（重複防止）
+      const brushupTitle = `要ブラッシュアップ: ${(rule.title as string).slice(0, 35)}`;
+      const { data: existsBrushup } = await supabase
+        .from("aix_feature_suggestions")
+        .select("id")
+        .eq("suggestion_type", "knowledge_brushup")
+        .ilike("suggested_title", `${brushupTitle.slice(0, 30).replace(/[%_\\]/g, "\\$&")}%`)
+        .limit(1);
+      if (!existsBrushup || existsBrushup.length === 0) {
+        await supabase.from("aix_feature_suggestions").insert({
+          suggestion_type: "knowledge_brushup",
+          suggested_title: brushupTitle,
+          description: `「${(rule.title as string).slice(0, 50)}」が confirmed から差し戻されました（RLHF wrong率${Math.round(wrong / total * 100)}%）。内容を見直して再確認してください。`,
+          implementation_notes: JSON.stringify({ knowledge_id: rule.id as string }),
+          status: "pending",
+          proposal_category: "knowledge_quality",
+        });
+      }
+
       // ai_feedback_items に再確認質問を起票（重複防止）
       const question = `「${(rule.title as string).slice(0, 50)}」ルールの妥当性を再確認してください（RLHF wrong率${Math.round(wrong / total * 100)}%）`;
       const dedupKey = question.slice(0, 50).replace(/[%_\\]/g, "\\$&");
@@ -601,13 +699,15 @@ export async function POST(req: NextRequest) {
   } catch { /* ignore - confirmed再検証失敗はメイン処理を止めない */ }
 
   // ── ⑤ hypothesis → confirmed 自動昇格 ──
-  // correct_count>=5 かつ wrong率<0.3 かつ apply_count>=10 の hypothesis ルールを confirmed に昇格する。
-  // 昇格時は ai_feedback_items に確認起票（竹内さんに承認を仰ぐ）
+  // correct_count>=5 かつ wrong率<0.3 かつ apply_count>=5 の hypothesis ルールを confirmed に昇格する。
+  // Tier 1: importance>=9 かつ apply>=8 かつ correct>=6 かつ wrong率<15% かつ内容明確 → サイレント昇格（確認不要）
+  // Tier 2: それ以外 → ai_feedback_items に確認起票（竹内さんに承認を仰ぐ）
   let promoted = 0;
+  let promotedSilent = 0;
   try {
     const { data: promotionCandidates } = await supabase
       .from("ai_reply_knowledge")
-      .select("id, title, correct_count, wrong_count, apply_count")
+      .select("id, title, content, conversation_state, importance, correct_count, wrong_count, apply_count")
       .eq("hypothesis_status", "hypothesis")
       .gte("correct_count", 5)
       .gte("apply_count", 5)
@@ -616,6 +716,8 @@ export async function POST(req: NextRequest) {
     for (const rule of promotionCandidates ?? []) {
       const correct = (rule.correct_count as number) ?? 0;
       const wrong = (rule.wrong_count as number) ?? 0;
+      const applyCount = (rule.apply_count as number) ?? 0;
+      const ruleImportance = (rule.importance as number) ?? 0;
       const wrongRate = correct + wrong > 0 ? wrong / (correct + wrong) : 0;
       if (wrongRate >= 0.3) continue; // 外れ率30%以上は昇格しない
 
@@ -626,8 +728,24 @@ export async function POST(req: NextRequest) {
       if (promoteErr) continue;
       promoted++;
 
-      // ai_feedback_items に確認起票（重複防止）
-      const question = `「${(rule.title as string).slice(0, 50)}」ルールが自動confirmed昇格しました（correct:${correct}件 / apply:${rule.apply_count as number}件 / 外れ率:${Math.round(wrongRate * 100)}%）。内容を確認して問題ないか教えてください。`;
+      // ── Tier 1: サイレント昇格（フィードバック起票なし）──
+      // 条件: importance>=9 かつ apply>=8 かつ correct>=6 かつ wrong率<15% かつ内容明確
+      const isTier1 = ruleImportance >= 9 && applyCount >= 8 && correct >= 6 && wrongRate < 0.15
+        && isContentClear((rule.title as string) ?? "");
+      if (isTier1) {
+        await syncConfirmedToPromptRule({
+          id: rule.id as string,
+          title: rule.title as string,
+          content: (rule.content as string) ?? "",
+          conversation_state: (rule.conversation_state as string | null) ?? null,
+          importance: ruleImportance,
+        });
+        promotedSilent++;
+        continue; // ai_feedback_items 起票をスキップ
+      }
+
+      // ── Tier 2: 確認起票あり（既存動作）──
+      const question = `「${(rule.title as string).slice(0, 50)}」ルールが自動confirmed昇格しました（correct:${correct}件 / apply:${applyCount}件 / 外れ率:${Math.round(wrongRate * 100)}%）。内容を確認して問題ないか教えてください。`;
       const dedupKey = question.slice(0, 50).replace(/[%_\\]/g, "\\$&");
       const { data: existsFb } = await supabase
         .from("ai_feedback_items")
@@ -638,9 +756,9 @@ export async function POST(req: NextRequest) {
       if (!existsFb || existsFb.length === 0) {
         await supabase.from("ai_feedback_items").insert({
           question,
-          speculation: `correct_count>=${correct}件 かつ apply_count>=${rule.apply_count as number}件 かつ 外れ率${Math.round(wrongRate * 100)}%のため自動昇格。`,
+          speculation: `correct_count>=${correct}件 かつ apply_count>=${applyCount}件 かつ 外れ率${Math.round(wrongRate * 100)}%のため自動昇格。`,
           category: "knowledge_gap",
-          evidence: `correct:${correct}, wrong:${wrong}, apply:${rule.apply_count as number}, 外れ率:${Math.round(wrongRate * 100)}%`,
+          evidence: `correct:${correct}, wrong:${wrong}, apply:${applyCount}, 外れ率:${Math.round(wrongRate * 100)}%`,
           confidence: "high",
           status: "pending",
         });
@@ -773,8 +891,8 @@ export async function POST(req: NextRequest) {
 
   if (!examples || examples.length === 0) {
     // 処理対象ゼロでも同期・decayは上で実行済み。cron logも完了させる（ok=null放置を防ぐ）
-    await finishCronLog(runLogId, true, { processed: 0, learned: 0, synced, demotedConfirmed, promoted });
-    return NextResponse.json({ ok: true, processed: 0, learned: 0, synced, demotedConfirmed, promoted, message: `処理対象なし・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件` });
+    await finishCronLog(runLogId, true, { processed: 0, learned: 0, synced, demotedConfirmed, promoted, promotedSilent });
+    return NextResponse.json({ ok: true, processed: 0, learned: 0, synced, demotedConfirmed, promoted, promotedSilent, message: `処理対象なし・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件（うちサイレント${promotedSilent}件）` });
   }
 
   // ── 回帰センチネル: メインの差分学習ループと並列実行 ──
@@ -923,7 +1041,30 @@ export async function POST(req: NextRequest) {
             source_example_id: id,
             ...(embedding ? { embedding } : {}),
           });
-          if (upsertResult === "inserted" || upsertResult === "merged") learned++;
+          if (upsertResult.result === "inserted" || upsertResult.result === "merged") learned++;
+          // スマートナレッジフロー: 新規 INSERT 時の後処理
+          if (upsertResult.result === "inserted" && upsertResult.id) {
+            if (imp >= 8 && isContentClear(compResult.title)) {
+              // Tier 1 サイレント昇格: importance>=8 かつ明確なアクションキーワードを含む
+              await supabase.from("ai_reply_knowledge")
+                .update({ hypothesis_status: "confirmed" })
+                .eq("id", upsertResult.id);
+              await syncConfirmedToPromptRule({
+                id: upsertResult.id,
+                title: compResult.title,
+                content: compResult.rule,
+                conversation_state: compState,
+                importance: imp,
+              }).catch(() => {});
+            } else if (isAmbiguous(compResult.title, compResult.rule)) {
+              // 曖昧タグ: needs_clarification フラグを立てる
+              await supabase.from("ai_reply_knowledge")
+                .update({ needs_clarification: true })
+                .eq("id", upsertResult.id);
+            }
+            // 矛盾検知: 同一ステートの confirmed ルールと比較
+            void checkContradiction(compResult.title, compResult.rule, compState);
+          }
         }
       }
 
@@ -996,9 +1137,32 @@ export async function POST(req: NextRequest) {
         ...(embedding ? { embedding } : {}),
       });
 
-      if (upsertResult === "inserted") {
+      if (upsertResult.result === "inserted") {
         learned++;
-      } else if (upsertResult === "merged") {
+        // スマートナレッジフロー: 新規 INSERT 時の後処理
+        if (upsertResult.id) {
+          if (imp >= 8 && isContentClear(result.title)) {
+            // Tier 1 サイレント昇格: importance>=8 かつ明確なアクションキーワードを含む
+            await supabase.from("ai_reply_knowledge")
+              .update({ hypothesis_status: "confirmed" })
+              .eq("id", upsertResult.id);
+            await syncConfirmedToPromptRule({
+              id: upsertResult.id,
+              title: result.title,
+              content: result.rule,
+              conversation_state: conversation_state ?? "proposing",
+              importance: imp,
+            }).catch(() => {});
+          } else if (isAmbiguous(result.title, result.rule)) {
+            // 曖昧タグ: needs_clarification フラグを立てる
+            await supabase.from("ai_reply_knowledge")
+              .update({ needs_clarification: true })
+              .eq("id", upsertResult.id);
+          }
+          // 矛盾検知: 同一ステートの confirmed ルールと比較
+          void checkContradiction(result.title, result.rule, conversation_state ?? null);
+        }
+      } else if (upsertResult.result === "merged") {
         console.log(`[analyze-diffs] 既存ルール強化: "${result.title}"`);
         learned++;
       } else {
@@ -1007,7 +1171,7 @@ export async function POST(req: NextRequest) {
 
       // F02: importance>=8 かつ pattern ルールを adaptation_improvement_rules にも同期
       // LINE/AIX修正からの学習をテンプレート修正学習ルールとして両方のAIに届ける
-      if ((upsertResult === "inserted" || upsertResult === "merged") && imp >= 8 && safeCategory === "pattern" && result.rule) {
+      if ((upsertResult.result === "inserted" || upsertResult.result === "merged") && imp >= 8 && safeCategory === "pattern" && result.rule) {
         const adaptCategory = conversation_state ?? "general";
         const adaptConfidence = imp >= 9 ? 0.9 : 0.75;
         const ruleKey = result.rule.slice(0, 50).replace(/[%_\\]/g, "\\$&");
@@ -1165,12 +1329,12 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* ignore - 可視化失敗はメイン処理を止めない */ }
 
-  await finishCronLog(runLogId, true, { processed, learned, synced, demotedConfirmed, promoted, timedOut, sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted, ...(cronWarning ? { cronWarning } : {}) });
+  await finishCronLog(runLogId, true, { processed, learned, synced, demotedConfirmed, promoted, promotedSilent, timedOut, sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted, ...(cronWarning ? { cronWarning } : {}) });
   return NextResponse.json({
-    ok: true, processed, learned, synced, demotedConfirmed, promoted, timedOut,
+    ok: true, processed, learned, synced, demotedConfirmed, promoted, promotedSilent, timedOut,
     sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted,
     ...(cronWarning ? { cronWarning } : {}),
-    message: `${processed}件処理・${learned}件学習・${synced}件ルール同期・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件・反復削除フレーズ${sentinel.detected}件検知（${sentinel.demoted}件降格）${timedOut ? "・⏱30秒タイムガードで打ち切り" : ""}${cronWarning ? ` / ${cronWarning}` : ""}`,
+    message: `${processed}件処理・${learned}件学習・${synced}件ルール同期・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件（うちサイレント${promotedSilent}件）・反復削除フレーズ${sentinel.detected}件検知（${sentinel.demoted}件降格）${timedOut ? "・⏱30秒タイムガードで打ち切り" : ""}${cronWarning ? ` / ${cronWarning}` : ""}`,
   });
   } catch (e) {
     console.error("[analyze-diffs]", e);

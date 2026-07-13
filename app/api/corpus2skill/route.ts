@@ -948,8 +948,8 @@ ${limitedSequences.map((g) =>
           ...(skill.trigger ? { trigger_example: skill.trigger } : {}),
         });
 
-        if (result === "inserted") totalInserted++;
-        else if (result === "merged") totalMerged++;
+        if (result.result === "inserted") totalInserted++;
+        else if (result.result === "merged") totalMerged++;
       }
     }
   } catch (e) {

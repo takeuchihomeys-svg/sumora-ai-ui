@@ -158,8 +158,8 @@ ${transcript}
         ...(embedding ? { embedding } : {}),
       });
 
-      if (result === "inserted") inserted++;
-      else if (result === "merged") merged++;
+      if (result.result === "inserted") inserted++;
+      else if (result.result === "merged") merged++;
       else skipped++;
 
       // A02: upsertKnowledge 成功後に分析済みフラグを立てる（失敗時の永続的データロス防止）

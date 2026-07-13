@@ -239,7 +239,7 @@ export async function POST(req: NextRequest) {
         importance: 9,
         ...(embedding ? { embedding } : {}),
       });
-      if (result !== "skipped") appliedRules.push(`[knowledge_gap→principle知識化: ${result}]`);
+      if (result.result !== "skipped") appliedRules.push(`[knowledge_gap→principle知識化: ${result.result}]`);
     } catch (e) {
       console.error("[ai-feedback] knowledge_gap の principle 保存失敗:", e);
     }

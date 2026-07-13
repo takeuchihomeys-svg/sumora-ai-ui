@@ -92,6 +92,8 @@ export type UpsertKnowledgeParams = {
   trigger_example?: string;
 };
 
+export type UpsertResult = { result: "inserted" | "merged" | "skipped"; id?: string };
+
 /**
  * ナレッジの embedding 入力を組み立てる（#21 embedding入力の非対称問題対策）。
  *
@@ -133,7 +135,7 @@ type MatchRpcRow = {
 export async function upsertKnowledge(
   supabase: SupabaseClient,
   params: UpsertKnowledgeParams,
-): Promise<"inserted" | "merged" | "skipped"> {
+): Promise<UpsertResult> {
   const { title, content, category, importance, conversation_state, embedding, source_example_id } = params;
 
   // Step 1: embedding による意味的類似チェック
@@ -161,7 +163,7 @@ export async function upsertKnowledge(
         console.log(
           `[upsertKnowledge] merged: "${title}" → 既存ID ${similar.id} (similarity=${similar.similarity.toFixed(3)}, importance ${similar.importance}→${newImportance})`,
         );
-        return "merged";
+        return { result: "merged", id: similar.id };
       }
     }
   }
@@ -180,7 +182,7 @@ export async function upsertKnowledge(
 
     if (existing && existing.length > 0) {
       console.log(`[upsertKnowledge] skipped: タイトル重複 "${keyword}" (state=${conversation_state ?? "any"})`);
-      return "skipped";
+      return { result: "skipped" };
     }
   }
 
@@ -195,12 +197,17 @@ export async function upsertKnowledge(
     ...(embedding ? { embedding: JSON.stringify(embedding) } : {}),
   };
 
-  const { error: insertError } = await supabase.from("ai_reply_knowledge").insert(insertPayload);
+  const { data: inserted, error: insertError } = await supabase
+    .from("ai_reply_knowledge")
+    .insert(insertPayload)
+    .select("id")
+    .single();
   if (insertError) {
     console.error(`[upsertKnowledge] insert failed: "${title}"`, insertError.message);
     throw new Error(`upsertKnowledge insert failed: ${insertError.message}`);
   }
 
-  console.log(`[upsertKnowledge] inserted: "${title}" (category=${category}, importance=${importance})`);
-  return "inserted";
+  const newId = (inserted as { id: string } | null)?.id;
+  console.log(`[upsertKnowledge] inserted: "${title}" (category=${category}, importance=${importance}, id=${newId ?? "unknown"})`);
+  return { result: "inserted", id: newId };
 }
