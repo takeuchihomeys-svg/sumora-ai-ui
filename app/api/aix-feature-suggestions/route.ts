@@ -41,12 +41,44 @@ export async function POST(req: NextRequest) {
   if (status === "implemented") {
     const { data: sg } = await supabase
       .from("aix_feature_suggestions")
-      .select("description, implementation_notes, action_type")
+      .select("description, implementation_notes, action_type, suggestion_type")
       .eq("id", id)
       .maybeSingle();
 
     if (!sg) {
       return NextResponse.json({ ok: false, error: "提案が見つかりません" }, { status: 404 });
+    }
+
+    // knowledge_aix_align: ナレッジコンテンツ直接更新（ai_prompt_rulesは作成しない）
+    if ((sg as Record<string, unknown>).suggestion_type === "knowledge_aix_align") {
+      try {
+        const rawNotes = (sg.implementation_notes as string | null) ?? "{}";
+        const { knowledge_id, append_text } = JSON.parse(rawNotes) as { knowledge_id?: string; append_text?: string };
+        if (!knowledge_id || !append_text) {
+          return NextResponse.json({ ok: false, error: "implementation_notesにknowledge_idまたはappend_textがありません" }, { status: 400 });
+        }
+        const { data: kRow } = await supabase
+          .from("ai_reply_knowledge")
+          .select("content")
+          .eq("id", knowledge_id)
+          .maybeSingle();
+        const newContent = ((kRow?.content as string | null) ?? "") + "\n" + append_text;
+        const { error: kUpdateErr } = await supabase
+          .from("ai_reply_knowledge")
+          .update({ content: newContent })
+          .eq("id", knowledge_id);
+        if (kUpdateErr) {
+          return NextResponse.json({ ok: false, error: "ナレッジ更新失敗: " + kUpdateErr.message }, { status: 500 });
+        }
+        const { error: sErr } = await supabase
+          .from("aix_feature_suggestions")
+          .update({ status: "implemented" })
+          .eq("id", id);
+        if (sErr) console.warn("[aix-feature-suggestions] status更新失敗:", sErr.message);
+        return NextResponse.json({ ok: true, updated: true, type: "knowledge_aix_align" });
+      } catch (e) {
+        return NextResponse.json({ ok: false, error: "knowledge_aix_align処理エラー: " + String(e) }, { status: 500 });
+      }
     }
 
     const notes = (sg.implementation_notes as string | null)?.trim() ?? "";
