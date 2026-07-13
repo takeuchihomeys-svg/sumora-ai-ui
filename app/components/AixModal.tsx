@@ -212,6 +212,43 @@ function slotsMatchingDates(
   );
 }
 
+// 内覧日指定モードの「日程・開始・終了時間」デフォルト値をカレンダー空き枠から解決する
+// - 抽出日がカレンダーの「予定あり（使用不可）」日に該当する場合は除外する（本日不可なのに本日が入るバグ防止）
+// - 残った抽出日があればそれを採用し、時間はその日付に一致する空き枠の最初のスロットから取る
+//   （一致する空き枠がない＝カレンダー期間外の指定日は時間を空欄にして手動入力を促す）
+// - 抽出日が残らない場合は最初の空きカレンダー枠（本日不可なら翌日以降の最初の空き日）を採用
+// - 空き枠が全くない場合は null（日程・時間とも空欄のまま手動入力を促す）
+function resolveViewingSpecificDefaults(
+  days: Array<{ label: string; slots: string[]; fullyBooked: boolean }>,
+  extracted: string[],
+): { date: string; start: string; end: string } | null {
+  const parseSlotTime = (slot: string): { start: string; end: string } | null => {
+    const m = (slot || "").match(/(\d{1,2}:\d{2})[〜~\-](\d{1,2}:\d{2})/);
+    return m ? { start: m[1].padStart(5, "0"), end: m[2].padStart(5, "0") } : null;
+  };
+  const dayMatchesDate = (label: string, dateStr: string): boolean => {
+    const mm = dateStr.match(/(\d+)月(\d+)日/);
+    return !!mm && label.includes(`${parseInt(mm[1])}/${parseInt(mm[2])}`);
+  };
+  // 「予定あり（使用不可）」のカレンダー日に該当する抽出日を除外
+  const usable = extracted.filter(
+    (dateStr) => !days.some((d) => d.fullyBooked && dayMatchesDate(d.label, dateStr)),
+  );
+  if (usable.length > 0) {
+    // 抽出日に一致する空きカレンダー日から時間を取得（期間外指定日は時間空欄）
+    const matched = days.find((d) => !d.fullyBooked && usable.some((ds) => dayMatchesDate(d.label, ds)));
+    const t = matched ? parseSlotTime(matched.slots[0] || "") : null;
+    return { date: usable.join("・"), start: t?.start ?? "", end: t?.end ?? "" };
+  }
+  // 抽出日なし（または全て使用不可日）→ 最初の空きカレンダー枠（本日不可なら自動的に翌日以降）
+  const firstAvail = days.find((d) => !d.fullyBooked);
+  if (!firstAvail) return null;
+  const lm = firstAvail.label.match(/(\d{1,2})\/(\d{1,2})/);
+  if (!lm) return null;
+  const t = parseSlotTime(firstAvail.slots[0] || "");
+  return { date: `${parseInt(lm[1])}月${parseInt(lm[2])}日`, start: t?.start ?? "", end: t?.end ?? "" };
+}
+
 const AIX_TEMPLATES: Record<AixActionType, { rules: string[]; template: string }> = {
   condition_hearing: {
     rules: ["挨拶ルールに従い冒頭を自動生成", "①〜⑧の条件フォームを固定テンプレで送信", "一言補足があれば任意入力"],
@@ -926,48 +963,42 @@ export default function AixModal({
       .join(" ");
     const extracted = extractMultipleDates(allCustomerText);
     if (extracted.length === 0) return;
-    // 内覧日指定あり: 抽出した日付に一致するカレンダー日のみチェック（本日は指定がなければチェックしない）
     setViewingSpecificMode(true);
-    setViewingSpecificDate(extracted.join("・"));
-    setViewingSlotEnabled(slotsMatchingDates(viewingCalendarDays, extracted));
-    // 最初の有効スロットの時間をプリセット
-    const firstAvail = viewingCalendarDays.find(d => !d.fullyBooked);
-    if (firstAvail) {
-      const m = (firstAvail.slots[0] || "").match(/(\d{1,2}:\d{2})[〜~\-](\d{1,2}:\d{2})/);
-      setViewingSpecificStart(m ? m[1].padStart(5, "0") : "10:00");
-      setViewingSpecificEnd(m ? m[2].padStart(5, "0") : "18:00");
-    }
+    // 使用不可日（予定あり）に該当する抽出日は除外し、空き枠に合わせた日付・時間をデフォルトにする
+    // （例: お客様が「今日」と言っていても本日が予定ありなら翌日以降の最初の空き日を採用）
+    const defaults = resolveViewingSpecificDefaults(viewingCalendarDays, extracted);
+    if (!defaults) return; // 空き枠なし → 日程・時間は空欄のまま（手動入力を促す）
+    setViewingSpecificDate(defaults.date);
+    setViewingSpecificStart(defaults.start);
+    setViewingSpecificEnd(defaults.end);
+    // 採用した日付に一致するカレンダー日のみチェック（本日は指定がなければチェックしない）
+    setViewingSlotEnabled(slotsMatchingDates(viewingCalendarDays, defaults.date.split("・")));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actionType, recentMessages, viewingCalendarDays]);
 
   // 内覧日指定あり: ONになったら会話からお客様指定日を自動抽出（複数日対応）
+  // 指定日が抽出できない場合も「最初の空きカレンダー枠」を日程・時間のデフォルトにする
+  // （viewingCalendarDays を deps に含める: ON時にカレンダー未取得でも取得完了後に再実行される）
   useEffect(() => {
-    if (!viewingSpecificMode || !recentMessages) return;
+    if (!viewingSpecificMode) return;
     if (viewingSpecificDate) return; // 既に入力済みならスキップ
+    if (viewingCalendarDays.length === 0) return; // カレンダー取得完了後に実行
     // お客様メッセージ全体から複数日を抽出（「明日・明後日」等を両方拾う）
-    const allCustomerText = [...recentMessages]
+    const allCustomerText = (recentMessages || [])
       .filter(m => m.sender === "customer" && m.text)
       .map(m => m.text)
       .join(" ");
     const extracted = extractMultipleDates(allCustomerText);
-    if (extracted.length > 0) {
-      setViewingSpecificDate(extracted.join("・"));
-      // 抽出した日付に一致するカレンダー日のみチェック（本日は指定がなければチェックしない）
-      if (viewingCalendarDays.length > 0) {
-        setViewingSlotEnabled(slotsMatchingDates(viewingCalendarDays, extracted));
-      }
-    }
-    // カレンダーから時間をプリセット（最初の有効スロット）
-    const firstSlot = viewingCalendarDays.find((d, i) => d.fullyBooked ? viewingSlotOverride[i] : viewingSlotEnabled[i]);
-    if (firstSlot) {
-      const firstIdx = viewingCalendarDays.indexOf(firstSlot);
-      if (firstIdx >= 0) {
-        if (!viewingSpecificStart) setViewingSpecificStart(viewingSlotStarts[firstIdx] || "");
-        if (!viewingSpecificEnd)   setViewingSpecificEnd(viewingSlotEnds[firstIdx] || "");
-      }
-    }
+    // 使用不可日は除外・抽出なしなら最初の空き枠（本日不可なら翌日以降）をデフォルト採用
+    const defaults = resolveViewingSpecificDefaults(viewingCalendarDays, extracted);
+    if (!defaults) return; // 空き枠なし → 日程・時間は空欄のまま（手動入力を促す）
+    setViewingSpecificDate(defaults.date);
+    if (!viewingSpecificStart) setViewingSpecificStart(defaults.start);
+    if (!viewingSpecificEnd)   setViewingSpecificEnd(defaults.end);
+    // 採用した日付に一致するカレンダー日のみチェック
+    setViewingSlotEnabled(slotsMatchingDates(viewingCalendarDays, defaults.date.split("・")));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewingSpecificMode]);
+  }, [viewingSpecificMode, viewingCalendarDays]);
 
   // 待ち合わせ: 会話から日程・時間をAIで抽出してプリセット
   useEffect(() => {
@@ -4443,13 +4474,17 @@ export default function AixModal({
                           .map(m => m.text)
                           .join(" ");
                         const extracted = extractMultipleDates(allText);
-                        if (extracted.length > 0) {
-                          setViewingSpecificDate(extracted.join("・"));
-                          // 抽出した日付に一致する日のみチェック（本日は指定がなければチェックしない）
-                          setViewingSlotEnabled(slotsMatchingDates(viewingCalendarDays, extracted));
+                        // 使用不可日（予定あり）は除外・抽出なしなら最初の空き枠（本日不可なら翌日以降）をデフォルト採用
+                        const defaults = resolveViewingSpecificDefaults(viewingCalendarDays, extracted);
+                        if (defaults) {
+                          setViewingSpecificDate(defaults.date);
+                          setViewingSpecificStart(defaults.start);
+                          setViewingSpecificEnd(defaults.end);
+                          // 採用した日付に一致する日のみチェック（本日は指定がなければチェックしない）
+                          setViewingSlotEnabled(slotsMatchingDates(viewingCalendarDays, defaults.date.split("・")));
                         } else {
+                          // 空き枠なし → 日程・時間は空欄のまま（手動入力を促す）
                           setViewingSpecificDate("");
-                          // 抽出できない場合は本日以外をチェック
                           setViewingSlotEnabled(viewingCalendarDays.map((d, i) => i > 0 && !d.fullyBooked));
                         }
                       } else {

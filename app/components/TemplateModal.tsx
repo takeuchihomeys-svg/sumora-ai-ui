@@ -426,6 +426,7 @@ const SUGGESTION_TYPE_BADGE: Record<string, { label: string; className: string }
   new_picker: { label: "新ピッカー", className: "bg-blue-50 text-blue-600" },
   new_button: { label: "新ボタン", className: "bg-green-50 text-green-600" },
   new_sub_mode: { label: "新サブモード", className: "bg-orange-50 text-orange-600" },
+  alignment_fix: { label: "ズレ自動検出", className: "bg-red-50 text-red-600" },
 };
 
 interface TemplateModalProps {

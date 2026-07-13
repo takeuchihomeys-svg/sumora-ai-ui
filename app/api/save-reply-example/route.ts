@@ -385,6 +385,104 @@ async function preciseKnowledgeFeedback(
   }
 }
 
+// ─── AIXズレ自動検出（was_ai_modified=true の修正内容からズレの種類を判定）──────
+// 1. date_mismatch:   AI文に「X月Y日」があり、送信文にAI文にない日付が登場（日付を直された）
+// 2. time_mismatch:   AI文に「HH:MM」があり、送信文にAI文にない時刻が登場（時刻を直された）
+// 3. number_mismatch: 日付・時刻以外の数値（金額・部屋番号等）が双方向で入れ替わった
+// 4. large_rewrite:   文章の類似度 < 0.5（大幅書き換え）
+type AlignmentDiffType = "date_mismatch" | "time_mismatch" | "number_mismatch" | "large_rewrite";
+
+const ALIGNMENT_DIFF_LABEL: Record<AlignmentDiffType, string> = {
+  date_mismatch:   "日付のズレ",
+  time_mismatch:   "時刻のズレ",
+  number_mismatch: "数値のズレ",
+  large_rewrite:   "大幅書き換え",
+};
+
+function detectAlignmentMismatch(aiDraft: string, sentReply: string, sim: number): AlignmentDiffType | null {
+  const setOf = (text: string, re: RegExp) => new Set(text.match(re) ?? []);
+  const hasNotIn = (a: Set<string>, b: Set<string>) => [...a].some((x) => !b.has(x));
+
+  // 1. 日付のズレ: 送信文にAI文にない日付がある（= スタッフが日付を修正した）
+  const dateRe = /\d{1,2}月\d{1,2}日/g;
+  const aiDates = setOf(aiDraft, dateRe);
+  const sentDates = setOf(sentReply, dateRe);
+  if (aiDates.size > 0 && hasNotIn(sentDates, aiDates)) return "date_mismatch";
+
+  // 2. 時刻のズレ: 送信文にAI文にない時刻がある
+  const timeRe = /\d{1,2}:\d{2}/g;
+  const aiTimes = setOf(aiDraft, timeRe);
+  const sentTimes = setOf(sentReply, timeRe);
+  if (aiTimes.size > 0 && hasNotIn(sentTimes, aiTimes)) return "time_mismatch";
+
+  // 3. 数値のズレ: 日付・時刻を除いた2桁以上の数値が双方向で入れ替わった（金額・部屋番号等）
+  const stripDateTime = (t: string) => t.replace(dateRe, "").replace(timeRe, "");
+  const numRe = /\d{2,}(?:,\d{3})*/g;
+  const normNums = (t: string) => new Set((stripDateTime(t).match(numRe) ?? []).map((n) => n.replace(/,/g, "")));
+  const aiNums = normNums(aiDraft);
+  const sentNums = normNums(sentReply);
+  if (aiNums.size > 0 && sentNums.size > 0 && hasNotIn(sentNums, aiNums) && hasNotIn(aiNums, sentNums)) {
+    return "number_mismatch";
+  }
+
+  // 4. 大幅書き換え
+  if (sim < 0.5) return "large_rewrite";
+
+  return null;
+}
+
+// 検出したズレを aix_feature_suggestions に alignment_fix として自動登録する
+// （feedback_aix_improvement_flow: AIX改善はコード直パッチ禁止・必ずAI提案タブ経由で行う）
+// dedup: 同じ aix_type の alignment_fix が過去7日以内に pending で存在すれば skip
+async function registerAlignmentFix(params: {
+  aixType: string;
+  aiDraft: string;
+  sentReply: string;
+  sim: number;
+  conversationId: string | null;
+}): Promise<void> {
+  const { aixType, aiDraft, sentReply, sim, conversationId } = params;
+  try {
+    const diffType = detectAlignmentMismatch(aiDraft, sentReply, sim);
+    if (!diffType) return;
+
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: exists } = await supabase
+      .from("aix_feature_suggestions")
+      .select("id")
+      .eq("suggestion_type", "alignment_fix")
+      .eq("action_type", aixType)
+      .eq("status", "pending")
+      .gte("created_at", sevenDaysAgo)
+      .limit(1);
+    if (exists && exists.length > 0) return;
+
+    const oneLine = (t: string) => t.replace(/\s+/g, " ").trim();
+    const aiPreview = oneLine(aiDraft).slice(0, 60);
+    const sentPreview = oneLine(sentReply).slice(0, 60);
+    const { error } = await supabase.from("aix_feature_suggestions").insert({
+      suggestion_type: "alignment_fix",
+      suggested_title: `[ズレ検出] ${aixType}: ${ALIGNMENT_DIFF_LABEL[diffType]}`,
+      description: `AIX生成ズレ検出: 「${aixType}」フェーズ — AI文「${aiPreview}」→ 実際送信「${sentPreview}」`,
+      implementation_notes: JSON.stringify({
+        aix_type: aixType,
+        ai_text_preview: aiDraft.slice(0, 100),
+        sent_text_preview: sentReply.slice(0, 100),
+        diff_type: diffType,
+        similarity: Math.round(sim * 100) / 100,
+        conversation_id: conversationId,
+        detected_at: new Date().toISOString(),
+      }),
+      action_type: aixType,
+      status: "pending",
+      proposal_category: "mismatch_fix",
+    });
+    if (error) console.warn("[save-reply-example] registerAlignmentFix insert error:", error.message);
+  } catch (e) {
+    console.warn("[save-reply-example] registerAlignmentFix failed:", e);
+  }
+}
+
 // 修正量(sim)に応じてimportanceを変動させる（膨張防止）
 // sim < 0.4 = 大幅修正 → 9 / 0.4〜0.65 = 中程度 → 8 / 0.65〜0.9 = 微修正 → 7
 function diffImportance(sim: number): number {
@@ -870,6 +968,21 @@ export async function POST(req: NextRequest) {
   // （fire-and-forget: after() でレスポンス返却後に実行し保存処理を遅延させない）
   if (conversationId && aiDraft && (wasAiModified || isFullRewrite)) {
     after(() => decayRemovedKnowledge(conversationId, aiDraft, sentReply));
+  }
+
+  // AIXズレ自動検出: スタッフがAI生成文を修正して送信した場合、日付・時刻・数値・大幅書き換えの
+  // ズレを検出して aix_feature_suggestions(alignment_fix) に自動登録（AI提案タブ経由の改善フロー）
+  // isAutoStar（バッチ経由）は過去データの一括流入でノイズ起票になるため対象外
+  if (aiDraft && (wasAiModified || isFullRewrite) && !isAutoStar) {
+    after(() =>
+      registerAlignmentFix({
+        aixType: conversationState,
+        aiDraft,
+        sentReply,
+        sim,
+        conversationId: conversationId || null,
+      })
+    );
   }
 
   // 埋め込み生成（バックグラウンドで並列実行・失敗してもINSERTは続行）

@@ -1496,6 +1496,10 @@ CREATE INDEX IF NOT EXISTS idx_ai_reply_knowledge_contradicts ON ai_reply_knowle
 -- （suggestion_type は TEXT のため ALTER CHECK 不要。既存のインデックスとスキーマはそのまま使用）
 -- note: suggestion_type の新しい値は 'knowledge_contradiction' | 'knowledge_brushup'
 
+-- aix_feature_suggestions: alignment_fix 型を追加（2026-07-14）
+-- save-reply-example が was_ai_modified=true の送信からズレ（date_mismatch / time_mismatch /
+-- number_mismatch / large_rewrite）を自動検出して起票する。新カラムなし（TEXT のため DDL 不要）
+
 -- ── ai_prompt_rules rule_key プレフィックス規約 ──
 -- HUMAN-{knowledge_id}  : 竹内さんが直接確認・修正した知識。priority=10（最高優先）・グローバル(action_type=null)・永続。
 --                         knowledge-review clarify アクション経由で書き込まれる。削除しない限り常に最上位で注入される。
