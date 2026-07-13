@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { syncConfirmedToPromptRule } from "@/app/lib/knowledge-promote";
 
+export const maxDuration = 300; // Vercel Pro: 5分まで延長
+
 const BATCH_SIZE = 10; // parallel Sonnet calls per batch
 const MAX_AI_QUESTIONS = 100; // AI質問登録の上限
 
@@ -12,7 +14,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  // 1. Fetch all hypothesis items (importance>=7, not phrase)
+  // ページング: 1回の呼び出しで処理する件数 (default 200)
+  const limit = Math.min(parseInt(req.nextUrl.searchParams.get("limit") ?? "200"), 300);
+  const offset = parseInt(req.nextUrl.searchParams.get("offset") ?? "0");
+
+  // 1. Fetch hypothesis items (importance>=7, not phrase) with paging
   const { data: items } = await supabase
     .from("ai_reply_knowledge")
     .select("id, title, content, category, conversation_state, importance, correct_count, wrong_count, apply_count")
@@ -20,7 +26,7 @@ export async function GET(req: NextRequest) {
     .neq("category", "phrase")
     .gte("importance", 7)
     .order("importance", { ascending: false })
-    .limit(2000);
+    .range(offset, offset + limit - 1);
 
   if (!items || items.length === 0) {
     return NextResponse.json({ ok: true, message: "no items to process" });
@@ -175,12 +181,18 @@ JSONのみ回答: {"verdict":"confirm"|"question"|"contradiction","reason":"20�
     if (!error) questionCount++;
   }
 
+  const processed = items.length;
+  const hasMore = processed === limit;
   return NextResponse.json({
     ok: true,
-    total: items.length,
+    offset,
+    processed,
     confirmed: confirmedCount,
     questions_registered: questionCount,
     questions_candidates: questions.length,
-    skipped: items.length - confirmed.length - questions.length,
+    skipped: processed - confirmed.length - questions.length,
+    // 続きがある場合: nextOffset を使って次の呼び出しを行う
+    hasMore,
+    nextOffset: hasMore ? offset + limit : null,
   });
 }
