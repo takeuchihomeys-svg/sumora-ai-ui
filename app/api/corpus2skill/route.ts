@@ -487,6 +487,19 @@ JSON配列で返す: [{aix_type, description, implementation_notes, proposal_cat
   let suggestionsInserted = 0;
   for (const p of proposals) {
     if (!p.description?.trim()) continue;
+
+    // dedup: 同じ aix_type の pending なズレ修正提案が直近7日以内に既にあれば重複起票しない
+    // （週次実行のたびに同じズレが再起票されて改善案タブが埋まるのを防ぐ）
+    let dedupQuery = supabase
+      .from("aix_feature_suggestions")
+      .select("id")
+      .eq("suggestion_type", "mismatch_fix")
+      .eq("status", "pending")
+      .gte("created_at", new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString());
+    dedupQuery = p.aix_type ? dedupQuery.eq("action_type", p.aix_type) : dedupQuery.is("action_type", null);
+    const { data: existingMismatch } = await dedupQuery.limit(1);
+    if (existingMismatch && existingMismatch.length > 0) continue;
+
     const { error } = await supabase.from("aix_feature_suggestions").insert({
       suggestion_type: "mismatch_fix",
       status: "pending",

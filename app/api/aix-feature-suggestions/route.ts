@@ -41,6 +41,10 @@ export async function POST(req: NextRequest) {
     id: string;
     status: "adopted" | "dismissed" | "implemented";
     dismissedReason?: string;
+    // adopted 時のナレッジ連動用（UIが implementation_notes からパースして渡す。無ければDBから補完）
+    suggestion_type?: string;
+    knowledge_id?: string;
+    append_text?: string;
   };
 
   const { id, status, dismissedReason } = body;
@@ -169,6 +173,79 @@ export async function POST(req: NextRequest) {
     // action_type=nullのルールは全アクション・全generate-replyに適用されます
     const warning = !sg.action_type ? 'action_type未設定のため全アクションにルールが適用されます' : null;
     return NextResponse.json({ ok: true, updated: true, ...(warning ? { warning } : {}) });
+  }
+
+  // ── adopted: ナレッジ連動型の提案は「採用」時点で実際にナレッジへ反映する ──
+  // （従来は status を adopted に変えるだけのデッドエンドで、ナレッジ側に何も起きなかった）
+  if (status === "adopted") {
+    try {
+      // suggestion_type / knowledge_id / append_text は UI から渡されるが、
+      // 欠けている場合は DB の実データから補完する（古いUIキャッシュでも動作させる）
+      let suggestionType = body.suggestion_type ?? null;
+      let knowledgeId = body.knowledge_id ?? null;
+      let appendText = body.append_text ?? null;
+      if (!suggestionType || !knowledgeId) {
+        const { data: sg } = await supabase
+          .from("aix_feature_suggestions")
+          .select("suggestion_type, implementation_notes")
+          .eq("id", id)
+          .maybeSingle();
+        suggestionType = suggestionType ?? ((sg?.suggestion_type as string | null) ?? null);
+        if (!knowledgeId && sg?.implementation_notes) {
+          try {
+            const notes = JSON.parse(sg.implementation_notes as string) as { knowledge_id?: string; append_text?: string };
+            knowledgeId = notes.knowledge_id ?? null;
+            appendText = appendText ?? (notes.append_text ?? null);
+          } catch { /* implementation_notes がJSONでない提案は連動対象外 */ }
+        }
+      }
+
+      // knowledge_aix_align: 追記テキストをナレッジ本文に反映 + confirmed 化 + ai_prompt_rules 再同期
+      if (suggestionType === "knowledge_aix_align" && knowledgeId && appendText) {
+        const { data: kRow } = await supabase
+          .from("ai_reply_knowledge")
+          .select("title, content, importance, conversation_state")
+          .eq("id", knowledgeId)
+          .maybeSingle();
+        const newContent = (((kRow?.content as string | null) ?? "") + "\n" + appendText).trim();
+        const { error: kErr } = await supabase
+          .from("ai_reply_knowledge")
+          .update({ content: newContent, hypothesis_status: "confirmed" })
+          .eq("id", knowledgeId);
+        if (!kErr) {
+          await syncConfirmedToPromptRule({
+            id: knowledgeId,
+            title: (kRow?.title as string | null) ?? "",
+            content: newContent,
+            importance: (kRow?.importance as number | null) ?? 0,
+            conversation_state: (kRow?.conversation_state as string | null) ?? null,
+          });
+        } else {
+          console.warn("[aix-feature-suggestions] adopted knowledge_aix_align 更新失敗:", kErr.message);
+        }
+      }
+
+      // knowledge_brushup: 対象ナレッジを confirmed に差し戻して ai_prompt_rules を再同期
+      if (suggestionType === "knowledge_brushup" && knowledgeId) {
+        const { error: kErr } = await supabase
+          .from("ai_reply_knowledge")
+          .update({ hypothesis_status: "confirmed" })
+          .eq("id", knowledgeId);
+        if (kErr) {
+          console.warn("[aix-feature-suggestions] adopted knowledge_brushup 更新失敗:", kErr.message);
+        } else {
+          const { data: kRow } = await supabase
+            .from("ai_reply_knowledge")
+            .select("id, title, content, conversation_state, importance")
+            .eq("id", knowledgeId)
+            .maybeSingle();
+          if (kRow) await syncConfirmedToPromptRule(kRow);
+        }
+      }
+    } catch (e) {
+      // ナレッジ連動の失敗はステータス更新自体を止めない（警告のみ）
+      console.warn("[aix-feature-suggestions] adopted ナレッジ連動処理失敗:", e);
+    }
   }
 
   // implemented 以外のステータス更新（adopted / dismissed）

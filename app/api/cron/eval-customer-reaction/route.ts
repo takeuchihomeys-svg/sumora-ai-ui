@@ -255,17 +255,21 @@ export async function POST(req: NextRequest) {
           .limit(3);
 
         for (const rule of (highRules ?? [])) {
+          // dedup: implementation_notes に knowledge_id が含まれる pending 起票が既にあればスキップ
+          // （旧実装の .filter("cs", ...) はJSON文字列表現に依存して一致せずdedupが効かなかった）
           const { data: existing } = await supabase
             .from("aix_feature_suggestions")
             .select("id")
             .eq("suggestion_type", "knowledge_brushup")
             .eq("status", "pending")
-            .filter("implementation_notes", "cs", JSON.stringify({ knowledge_id: rule.id }).replace("{", "").replace("}", "").trim())
+            .ilike("implementation_notes", `%${rule.id as string}%`)
             .limit(1);
           if (existing && existing.length > 0) continue;
 
           const { error: brushupErr } = await supabase.from("aix_feature_suggestions").insert({
             suggestion_type: "knowledge_brushup",
+            // suggested_title は NOT NULL 制約あり（欠落するとINSERTが100%失敗する）
+            suggested_title: `要見直し: ${(rule.title as string).slice(0, 40)}`,
             description: `⚠️ 顧客非反応率 ${Math.round(noReactRate * 100)}%（${stats.total}件）: 「${(rule.title as string).slice(0, 50)}」のルールを見直してください`,
             implementation_notes: JSON.stringify({ knowledge_id: rule.id as string, aix_type, no_react_rate: noReactRate }),
             action_type: aix_type,

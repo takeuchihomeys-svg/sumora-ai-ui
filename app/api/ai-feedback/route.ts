@@ -49,19 +49,35 @@ type ExtractedRule = {
   trigger_keywords?: string[];
 };
 
-// GET: pending + answered + applied を最新50件取得
+// GET: pending を最大100件 + answered/applied を直近20件取得
 // applied = ルール反映済み（UI でグレーアウト表示用に含める）
-// ※ limit を 30→50 に拡張（34件超で oldest applied が切れるバグ修正）
+// ※ 旧実装は全status混合 limit=50 で、pending が50件を超えると未回答質問が見えなくなっていた。
+//   pending 枠を独立させて優先取得し、total_pending も返す（UIで「全◯件」表示に使える）
 export async function GET() {
-  const { data, error } = await supabase
-    .from("ai_feedback_items")
-    .select("*")
-    .in("status", ["pending", "answered", "applied"])
-    .order("created_at", { ascending: false })
-    .limit(50);
+  const [pendingRes, doneRes, pendingCountRes] = await Promise.all([
+    supabase
+      .from("ai_feedback_items")
+      .select("*")
+      .eq("status", "pending")
+      .order("created_at", { ascending: false })
+      .limit(100),
+    supabase
+      .from("ai_feedback_items")
+      .select("*")
+      .in("status", ["answered", "applied"])
+      .order("created_at", { ascending: false })
+      .limit(20),
+    supabase
+      .from("ai_feedback_items")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "pending"),
+  ]);
 
+  const error = pendingRes.error ?? doneRes.error;
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-  return NextResponse.json({ ok: true, items: data ?? [] });
+
+  const items = [...(pendingRes.data ?? []), ...(doneRes.data ?? [])];
+  return NextResponse.json({ ok: true, items, total_pending: pendingCountRes.count ?? (pendingRes.data ?? []).length });
 }
 
 // 回答をOpus 4.8で解釈して業務ルールを1〜3個抽出する（高品質な永続ルールを生成するため最上位モデルを使用）

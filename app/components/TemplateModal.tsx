@@ -711,6 +711,8 @@ export default function TemplateModal({
   const [suggestionCategoryFilter, setSuggestionCategoryFilter] = useState<string>('all');
   // 🧠ナレッジ承認タブ（hypothesis → confirmed 手動昇格）
   const [knowledgeItems, setKnowledgeItems] = useState<KnowledgeItem[]>([]);
+  // 承認待ちナレッジの総数（knowledge-review API の total。表示中との差 = limit で切れている件数）
+  const [knowledgeTotal, setKnowledgeTotal] = useState<number | null>(null);
   const [knowledgeLoading, setKnowledgeLoading] = useState(false);
   const [confirmingKnowledgeId, setConfirmingKnowledgeId] = useState<string | null>(null);
   const [rejectingKnowledgeId, setRejectingKnowledgeId] = useState<string | null>(null);
@@ -1034,19 +1036,29 @@ export default function TemplateModal({
 
       // 2. clarify: ai_reply_knowledge を更新 + HUMAN-{id} priority=10 ルールを作成
       if (knowledgeId) {
-        await fetch("/api/knowledge-review", {
+        const clarifyRes = await fetch("/api/knowledge-review", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: knowledgeId, action: "clarify", new_content: answer }),
         });
+        const clarifyJson = await clarifyRes.json().catch(() => null) as { ok?: boolean; error?: string } | null;
+        if (!clarifyRes.ok || !clarifyJson?.ok) {
+          showModalError(`回答の反映に失敗しました${clarifyJson?.error ? `（${clarifyJson.error}）` : ""}。もう一度お試しください。`);
+          return; // 回答テキストは保持
+        }
       }
 
       // 3. aix_feature_suggestions を implemented に更新
-      await fetch("/api/aix-feature-suggestions", {
+      const res = await fetch("/api/aix-feature-suggestions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: item.id, status: "implemented" }),
       });
+      const json = await res.json().catch(() => null) as { ok?: boolean; error?: string } | null;
+      if (!res.ok || !json?.ok) {
+        showModalError(`回答の送信に失敗しました${json?.error ? `（${json.error}）` : ""}。もう一度お試しください。`);
+        return; // 回答テキストは保持
+      }
 
       // 4. リストから除外
       setKnowledgeQuestions(prev => prev.filter(q => q.id !== item.id));
@@ -1056,17 +1068,20 @@ export default function TemplateModal({
         return next;
       });
       showModalSuccess("回答を反映しました（次の返信生成から即時適用）");
-    } catch { /* noop */ }
+    } catch {
+      showModalError("回答の送信に失敗しました（通信エラー）。もう一度お試しください。");
+    }
     finally { setSubmittingKnowledgeQuestion(null); }
-  }, [knowledgeQuestionAnswers, showModalSuccess]);
+  }, [knowledgeQuestionAnswers, showModalSuccess, showModalError]);
 
   // 🧠ナレッジ承認: hypothesis ナレッジ一覧の読み込み
   const loadKnowledgeItems = useCallback(async () => {
     setKnowledgeLoading(true);
     try {
       const res = await fetch("/api/knowledge-review");
-      const json = await res.json() as { rules: KnowledgeItem[] };
+      const json = await res.json() as { rules: KnowledgeItem[]; total?: number };
       setKnowledgeItems(json.rules ?? []);
+      setKnowledgeTotal(typeof json.total === "number" ? json.total : null);
     } catch { /* noop */ }
     finally { setKnowledgeLoading(false); }
   }, []);
@@ -1075,31 +1090,42 @@ export default function TemplateModal({
     if (isCandidateTabActive && candidateSubTab === "knowledge") loadKnowledgeItems();
   }, [isCandidateTabActive, candidateSubTab, loadKnowledgeItems]);
 
+  // API失敗時はリストから除去せずエラー表示する（silent catchだと承認できていないのに消えたように見える）
   const confirmKnowledge = useCallback(async (id: string) => {
     setConfirmingKnowledgeId(id);
     try {
-      await fetch("/api/knowledge-review", {
+      const res = await fetch("/api/knowledge-review", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id, action: "confirm" }),
       });
+      const json = await res.json().catch(() => null) as { ok?: boolean; error?: string } | null;
+      if (!res.ok || !json?.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
       setKnowledgeItems(prev => prev.filter(k => k.id !== id));
-    } catch { /* noop */ }
+      setKnowledgeTotal(prev => (prev === null ? prev : Math.max(0, prev - 1)));
+    } catch (e) {
+      showModalError(`承認に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+    }
     finally { setConfirmingKnowledgeId(null); }
-  }, []);
+  }, [showModalError]);
 
   const rejectKnowledge = useCallback(async (id: string) => {
     setRejectingKnowledgeId(id);
     try {
-      await fetch("/api/knowledge-review", {
+      const res = await fetch("/api/knowledge-review", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id, action: "reject" }),
       });
+      const json = await res.json().catch(() => null) as { ok?: boolean; error?: string } | null;
+      if (!res.ok || !json?.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
       setKnowledgeItems(prev => prev.filter(k => k.id !== id));
-    } catch { /* noop */ }
+      setKnowledgeTotal(prev => (prev === null ? prev : Math.max(0, prev - 1)));
+    } catch (e) {
+      showModalError(`却下に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+    }
     finally { setRejectingKnowledgeId(null); }
-  }, []);
+  }, [showModalError]);
 
   // 打ち合わせチャット: メッセージ追加・送信中インジケータ表示時に最新メッセージまで自動スクロール
   useEffect(() => {
@@ -1164,6 +1190,7 @@ export default function TemplateModal({
       const data = await res.json().catch(() => null) as { ok?: boolean; error?: string } | null;
       if (res.ok && data?.ok) {
         setKnowledgeItems(prev => prev.filter(k => k.id !== item.id));
+        setKnowledgeTotal(prev => (prev === null ? prev : Math.max(0, prev - 1)));
         setKnowledgeChatOpen(null);
         setKnowledgeChatMessages(prev => { const next = { ...prev }; delete next[item.id]; return next; });
         setKnowledgeChatInput(prev => { const next = { ...prev }; delete next[item.id]; return next; });
@@ -1191,6 +1218,7 @@ export default function TemplateModal({
       const data = await res.json() as { ok: boolean; rule_key?: string };
       if (data.ok) {
         setKnowledgeItems(prev => prev.filter(k => k.id !== id));
+        setKnowledgeTotal(prev => (prev === null ? prev : Math.max(0, prev - 1)));
         setClarifyingKnowledgeId(null);
         setClarifyContent(prev => { const n = { ...prev }; delete n[id]; return n; });
       }
@@ -1204,28 +1232,44 @@ export default function TemplateModal({
     if (!answer) return;
     setSubmittingFeedback(id);
     try {
-      await fetch("/api/ai-feedback", {
+      const res = await fetch("/api/ai-feedback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id, answer }),
       });
+      const json = await res.json().catch(() => null) as { ok?: boolean; error?: string } | null;
+      if (!res.ok || !json?.ok) {
+        // 失敗時は回答テキストを保持したままエラー表示（偽成功トーストを出さない）
+        showModalError(`回答の送信に失敗しました${json?.error ? `（${json.error}）` : ""}。もう一度お試しください。`);
+        return;
+      }
       await loadFeedbackItems();
       setFeedbackAnswers(prev => { const next = { ...prev }; delete next[id]; return next; });
       showModalSuccess("回答を反映しました（次の返信生成から即時適用）");
-    } catch { /* noop */ }
+    } catch {
+      showModalError("回答の送信に失敗しました（通信エラー）。もう一度お試しください。");
+    }
     finally { setSubmittingFeedback(null); }
-  }, [feedbackAnswers, loadFeedbackItems, showModalSuccess]);
+  }, [feedbackAnswers, loadFeedbackItems, showModalSuccess, showModalError]);
 
   // スキップ（status="dismissed"・理由があれば dismissed_reason として保存しAIの学習材料にする）
+  // API失敗時はリストから除去せずエラー表示する（silent catchだとスキップが効いていないのに消えたように見える）
   const dismissFeedback = useCallback(async (id: string, reason?: string) => {
-    await fetch("/api/ai-feedback", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, ...(reason ? { dismissedReason: reason } : {}) }),
-    }).catch(() => { /* noop */ });
-    setFeedbackItems(prev => prev.filter(f => f.id !== id));
-    setDismissingFeedbackId(null);
-  }, []);
+    try {
+      const res = await fetch("/api/ai-feedback", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, ...(reason ? { dismissedReason: reason } : {}) }),
+      });
+      const json = await res.json().catch(() => null) as { ok?: boolean; error?: string } | null;
+      if (!res.ok || !json?.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
+      setFeedbackItems(prev => prev.filter(f => f.id !== id));
+    } catch (e) {
+      showModalError(`スキップの保存に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDismissingFeedbackId(null);
+    }
+  }, [showModalError]);
 
   // P5: 候補の却下（理由チップ付き）
   // API失敗時は状態を変えずエラー表示する（silent catchだと「却下したのに翌回復活する」ように見える）
@@ -1348,19 +1392,21 @@ export default function TemplateModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: candidate.id, action: "adopt", ...(customText ? { customText } : {}) }),
       });
-      const json = await res.json() as { ok: boolean };
+      const json = await res.json().catch(() => null) as { ok?: boolean; error?: string } | null;
+      // API失敗時は状態を変えずエラー表示（楽観更新で失敗を隠さない）
+      if (!res.ok || !json?.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
       setCandidates(prev =>
         prev.map(c => c.id === candidate.id ? { ...c, is_adopted: true } : c)
       );
       // 統合表示中のsuggestionsからも除去（aix_edit候補を改善案タブに統合しているため）
       setSuggestions(prev => prev.filter(s => s.id !== candidate.id));
-      if (json.ok) {
-        // 採用したテンプレを一覧に即反映して該当カテゴリへ移動
-        setIsCandidateTabActive(false);
-        setCategory(candidate.category);
-        await refreshTemplates();
-      }
-    } catch { /* noop */ }
+      // 採用したテンプレを一覧に即反映して該当カテゴリへ移動
+      setIsCandidateTabActive(false);
+      setCategory(candidate.category);
+      await refreshTemplates();
+    } catch (e) {
+      showModalError(`採用の保存に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+    }
     finally { setAdoptingId(null); }
   };
 
@@ -1446,10 +1492,24 @@ export default function TemplateModal({
   // API失敗時は一覧から消さずエラー表示する（silent catchだと却下が効いていないのに消えたように見える）
   const updateSuggestionStatus = useCallback(async (id: string, status: "adopted" | "dismissed" | "implemented", reason?: string) => {
     try {
+      // adopted 時: ナレッジ連動フィールドを添付する
+      // （knowledge_aix_align / knowledge_brushup を採用したらAPI側で実際にナレッジへ反映されるようにする）
+      const extra: Record<string, string> = {};
+      if (status === "adopted") {
+        const sg = suggestions.find(s => s.id === id);
+        if (sg) {
+          extra.suggestion_type = sg.suggestion_type;
+          try {
+            const notes = JSON.parse(sg.implementation_notes ?? "{}") as { knowledge_id?: string; append_text?: string };
+            if (notes.knowledge_id) extra.knowledge_id = notes.knowledge_id;
+            if (notes.append_text) extra.append_text = notes.append_text;
+          } catch { /* implementation_notes がJSONでない提案は連動対象外 */ }
+        }
+      }
       const res = await fetch("/api/aix-feature-suggestions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, status, ...(reason ? { dismissedReason: reason } : {}) }),
+        body: JSON.stringify({ id, status, ...extra, ...(reason ? { dismissedReason: reason } : {}) }),
       });
       const json = await res.json() as { ok?: boolean; error?: string };
       if (!res.ok || !json.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
@@ -1459,7 +1519,7 @@ export default function TemplateModal({
     } finally {
       setDismissingId(null);
     }
-  }, [showModalError]);
+  }, [showModalError, suggestions]);
 
   const commitCategoryRename = async () => {
     const oldCat = editingCategory;
@@ -3002,6 +3062,11 @@ export default function TemplateModal({
               <div className="rounded-xl bg-purple-50 border border-purple-200 px-3 py-2 text-[11px] text-purple-700">
                 <span className="font-bold">hypothesis</span> 状態のナレッジを確認して承認（confirmed）または却下してください。<br/>
                 承認されたナレッジは次回のAIX・LINE返信生成時にプロンプトへ注入されます。
+                {!knowledgeLoading && knowledgeTotal !== null && (
+                  <span className="block mt-1 text-xs text-gray-500">
+                    （表示中: {knowledgeItems.length}件 / 全{knowledgeTotal}件）
+                  </span>
+                )}
               </div>
               {knowledgeLoading && (
                 <p className="text-center text-gray-400 py-8">読み込み中...</p>

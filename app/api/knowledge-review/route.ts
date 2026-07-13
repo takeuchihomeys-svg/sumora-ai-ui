@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
       .gte("importance", 7)         // importance<7はai_prompt_rulesに入らないため承認不要
       .order("importance", { ascending: false })
       .order("created_at", { ascending: false })
-      .limit(200),
+      .limit(500), // 承認待ち218件超でも全件見えるよう200→500に拡張
     supabase
       .from("ai_reply_knowledge")
       .select("*", { count: "exact", head: true })

@@ -21,34 +21,60 @@ export async function fetchPromptRules(
   excludeLearnRules = false
 ): Promise<string> {
   try {
-    let query = supabase
-      .from("ai_prompt_rules")
-      .select("rule_key, rule_text, condition_key, condition_value, priority")
-      .eq("is_active", true)
-      .order("priority", { ascending: false })
-      .limit(100); // プロンプト肥大化防止の安全上限（priority降順で上位100件を優先）
+    // ── 枠取り方式 ──
+    // LEARN-* が数千件あり、単一クエリ LIMIT 100 だと priority=8 の LEARN-* が枠を埋め尽くして
+    // HUMAN-*(priority=10) / FEEDBACK-*(priority=8) / IMPLEMENT-*(priority=7) が届かなくなる。
+    // → 非LEARN上位40件 + LEARN上位60件を別枠で取得してから priority 降順で結合する。
+    const buildBaseQuery = () => {
+      let q = supabase
+        .from("ai_prompt_rules")
+        .select("rule_key, rule_text, condition_key, condition_value, priority")
+        .eq("is_active", true);
+      if (actionType) {
+        q = q.or(`action_type.eq.${actionType},action_type.is.null`);
+      } else {
+        q = q.is("action_type", null);
+      }
+      return q;
+    };
 
-    if (actionType) {
-      query = query.or(`action_type.eq.${actionType},action_type.is.null`);
-    } else {
-      query = query.is("action_type", null);
+    const [highPrioRes, learnRes] = await Promise.all([
+      // HUMAN-* / FEEDBACK-* / IMPLEMENT-* 等（件数が少ないため上位40件で全件カバーされる想定）
+      buildBaseQuery()
+        .not("rule_key", "like", "LEARN-%")
+        .order("priority", { ascending: false })
+        .order("updated_at", { ascending: false, nullsFirst: false })
+        .limit(40),
+      // LEARN-*（ai_reply_knowledge 同期コピー）は上位60件のみ
+      excludeLearnRules
+        ? Promise.resolve({ data: [] as PromptRuleRow[], error: null })
+        : buildBaseQuery()
+            .like("rule_key", "LEARN-%")
+            .order("priority", { ascending: false })
+            .order("updated_at", { ascending: false, nullsFirst: false })
+            .limit(60),
+    ]);
+
+    if (highPrioRes.error) console.error("[fetchPromptRules] high-prio query", highPrioRes.error);
+    if (learnRes.error) console.error("[fetchPromptRules] learn query", learnRes.error);
+    if (highPrioRes.error && learnRes.error) return "";
+
+    const highPrio = (highPrioRes.data ?? []) as PromptRuleRow[];
+    const learn = (learnRes.data ?? []) as PromptRuleRow[];
+
+    // priority 降順・rule_key 重複除去で結合
+    const seen = new Set<string>();
+    const merged: PromptRuleRow[] = [];
+    for (const r of [...highPrio, ...learn]) {
+      if (seen.has(r.rule_key)) continue;
+      seen.add(r.rule_key);
+      merged.push(r);
     }
+    merged.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
 
-    const { data: rules, error } = await query;
-    if (error) {
-      console.error("[fetchPromptRules]", error);
-      return "";
-    }
-    if (!rules?.length) return "";
+    if (!merged.length) return "";
 
-    // LEARN-* keys are synced copies of ai_reply_knowledge entries; exclude them when
-    // the caller already injects knowledge from that table (e.g. getPropertyKnowledge)
-    // to prevent the same rule from appearing twice in the prompt.
-    const filtered = excludeLearnRules
-      ? (rules as PromptRuleRow[]).filter(r => !r.rule_key.startsWith("LEARN-"))
-      : (rules as PromptRuleRow[]);
-
-    const applicable = filtered.filter(r => {
+    const applicable = merged.filter(r => {
       if (!r.condition_key || r.condition_value === null) return true;
       const actual = conditions[r.condition_key];
       if (actual === undefined) {

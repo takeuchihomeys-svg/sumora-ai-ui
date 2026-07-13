@@ -9,6 +9,47 @@ export const maxDuration = 60;
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 30_000, maxRetries: 1 });
 
+// ── AI質問（ai_feedback_items）起票ガード ──
+// 1日に大量起票されて竹内さんが処理しきれなくなるのを防ぐ:
+// - pending 総数が MAX_PENDING_AI_QUESTIONS 件以上なら新規起票をスキップ
+// - 1回の実行での新規起票は MAX_AI_QUESTIONS_PER_RUN 件まで
+const MAX_PENDING_AI_QUESTIONS = 60;
+const MAX_AI_QUESTIONS_PER_RUN = 5;
+let aiQuestionsInsertedThisRun = 0;
+let pendingAiQuestionCount: number | null = null;
+
+// POST 冒頭で毎回呼ぶ（サーバレスのウォームスタートでモジュール変数が残るため）
+function resetAiQuestionGuard() {
+  aiQuestionsInsertedThisRun = 0;
+  pendingAiQuestionCount = null;
+}
+
+// ai_feedback_items への起票はすべてこの関数経由で行う（上限ガード付き）
+async function insertAiQuestion(row: Record<string, unknown>): Promise<boolean> {
+  if (aiQuestionsInsertedThisRun >= MAX_AI_QUESTIONS_PER_RUN) {
+    console.log(`[analyze-diffs] AI質問 1回あたり起票上限(${MAX_AI_QUESTIONS_PER_RUN}件)到達、新規起票スキップ`);
+    return false;
+  }
+  if (pendingAiQuestionCount === null) {
+    const { count } = await supabase
+      .from("ai_feedback_items")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "pending");
+    pendingAiQuestionCount = count ?? 0;
+  }
+  if (pendingAiQuestionCount + aiQuestionsInsertedThisRun >= MAX_PENDING_AI_QUESTIONS) {
+    console.log(`[analyze-diffs] AI質問pending上限(${MAX_PENDING_AI_QUESTIONS}件)到達、新規起票スキップ`);
+    return false;
+  }
+  const { error } = await supabase.from("ai_feedback_items").insert(row);
+  if (error) {
+    console.warn("[analyze-diffs] AI質問起票失敗:", error.message);
+    return false;
+  }
+  aiQuestionsInsertedThisRun++;
+  return true;
+}
+
 // コンポーネントが省略・大幅再構成された場合（structure変化）の学習ルール抽出
 //「なぜこのパーツを省いたか」を学ぶ → カテゴリ=pattern
 async function analyzeStructureDiff(
@@ -333,7 +374,7 @@ async function checkContradiction(
         if (existing && existing.length > 0) continue;
 
         const knowledgePrefix = newKnowledgeId ? `[knowledge_id:${newKnowledgeId}] ` : "";
-        await supabase.from("ai_feedback_items").insert({
+        await insertAiQuestion({
           question: `${knowledgePrefix}[矛盾確認] 新ナレッジ「${title.slice(0, 40)}」が既存ルール「${(rule.title as string).slice(0, 40)}」と矛盾する可能性があります。NGフレーズ「${ngPhrase}」が confirmed ルール本文に含まれています。どちらのルールが正しいですか？`,
           speculation: `新ナレッジ内のNGフレーズ「${ngPhrase}」が、既存 confirmed ルール「${(rule.title as string).slice(0, 50)}」の本文に含まれていました。新ナレッジは hypothesis のまま保留しています。`,
           category: "knowledge_gap",
@@ -371,7 +412,7 @@ async function checkContradiction(
           if (existingHuman && existingHuman.length > 0) continue;
 
           const knowledgePrefixHuman = newKnowledgeId ? `[knowledge_id:${newKnowledgeId}] ` : "";
-          await supabase.from("ai_feedback_items").insert({
+          await insertAiQuestion({
             question: `${knowledgePrefixHuman}[HUMAN矛盾] 新ナレッジ「${title.slice(0, 40)}」が竹内さん確認済み最優先ルール「${humanRule.rule_key as string}」と矛盾する可能性があります。NGフレーズ「${ngPhrase}」が最優先ルール本文に含まれています。どちらが正しいですか？`,
             speculation: `新ナレッジのNGフレーズ「${ngPhrase}」が HUMAN優先ルール（${humanRule.rule_key as string}）の本文に含まれていました。新ナレッジを採用するには最優先ルールの修正が必要です。`,
             category: "knowledge_gap",
@@ -607,7 +648,7 @@ async function detectRepeatedDeletions(): Promise<{ detected: number; demoted: n
       .limit(1);
     if (existing && existing.length > 0) continue;
 
-    await supabase.from("ai_feedback_items").insert({
+    await insertAiQuestion({
       question,
       speculation: "特定顧客向けの特殊ケース返信が、文脈を剥がされて汎用フレーズとして学習された可能性があります",
       category: "prompt_ambiguity",
@@ -627,6 +668,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
   const runLogId = await startCronLog("analyze-diffs");
+  resetAiQuestionGuard(); // ウォームスタートで前回実行の起票カウントが残らないようリセット
   try {
   // ?limit=N で件数を指定可能（デフォルト10・最大200）
   // maxDuration=60秒 / 1件あたりLLM最大3回（2〜6秒）→ 10件＋40秒タイムガードで後半処理の時間を確保
@@ -805,7 +847,7 @@ export async function POST(req: NextRequest) {
         .ilike("question", `${dedupKey}%`)
         .limit(1);
       if (!existsFb || existsFb.length === 0) {
-        await supabase.from("ai_feedback_items").insert({
+        await insertAiQuestion({
           question,
           speculation: `このルールは過去に confirmed になりましたが、直近のRLHFフィードバックで外れ率が50%を超えました（correct:${correct}件, wrong:${wrong}件）。市況変化・ルール陳腐化の可能性があります。`,
           category: "knowledge_gap",
@@ -873,7 +915,7 @@ export async function POST(req: NextRequest) {
         .ilike("question", `${dedupKey}%`)
         .limit(1);
       if (!existsFb || existsFb.length === 0) {
-        await supabase.from("ai_feedback_items").insert({
+        await insertAiQuestion({
           question,
           speculation: `correct_count>=${correct}件 かつ apply_count>=${applyCount}件 かつ 外れ率${Math.round(wrongRate * 100)}%のため自動昇格。`,
           category: "knowledge_gap",
@@ -1198,7 +1240,7 @@ export async function POST(req: NextRequest) {
                   ? `[knowledge_id:${upsertResult.id}]\n⚠️ 【矛盾の可能性あり】フェーズ: ${compState}\n\nナレッジ: 「${compResult.title}」\n内容: ${contentPreview}...\n\n❓ ${reason}\n\n▶ このナレッジを活かすべきか、既存ルールとどちらを優先すべきか教えてください。`
                   : `[knowledge_id:${upsertResult.id}]\n❓ 【適用場面を確認】フェーズ: ${compState}\n\nナレッジ: 「${compResult.title}」\n内容: ${contentPreview}...\n\n不明点: ${reason}\n\n▶ このナレッジをどんな場面で使うべきか、または修正すべき点があれば教えてください。`;
                 const categoryVal = verdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity";
-                await supabase.from("ai_feedback_items").insert({
+                await insertAiQuestion({
                   question: questionText,
                   speculation: "auto_judge による品質判定",
                   category: categoryVal,
@@ -1323,7 +1365,7 @@ export async function POST(req: NextRequest) {
                 ? `[knowledge_id:${upsertResult.id}]\n⚠️ 【矛盾の可能性あり】フェーズ: ${phase}\n\nナレッジ: 「${result.title}」\n内容: ${contentPreview}...\n\n❓ ${reason}\n\n▶ このナレッジを活かすべきか、既存ルールとどちらを優先すべきか教えてください。`
                 : `[knowledge_id:${upsertResult.id}]\n❓ 【適用場面を確認】フェーズ: ${phase}\n\nナレッジ: 「${result.title}」\n内容: ${contentPreview}...\n\n不明点: ${reason}\n\n▶ このナレッジをどんな場面で使うべきか、または修正すべき点があれば教えてください。`;
               const categoryVal = verdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity";
-              await supabase.from("ai_feedback_items").insert({
+              await insertAiQuestion({
                 question: questionText,
                 speculation: "auto_judge による品質判定",
                 category: categoryVal,
