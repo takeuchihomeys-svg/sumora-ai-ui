@@ -7,14 +7,22 @@ import { syncConfirmedToPromptRule } from "@/app/lib/knowledge-promote";
 // TemplateModal の「💡 AIX改善案」タブで採用/却下を管理する
 
 // GET: pending + approved の改善提案を最新20件
+// ?type=<suggestion_type> で suggestion_type フィルタリング可能
+//   例: ?type=knowledge_question → auto-judge で生成されたナレッジ品質確認質問のみ返す
 // approved = 改善案打ち合わせ（/api/aix/improvement-meeting）で確定した実装待ち仕様。タブ上部に表示する
-export async function GET() {
-  const { data, error } = await supabase
+export async function GET(req: NextRequest) {
+  const type = req.nextUrl.searchParams.get("type");
+
+  let query = supabase
     .from("aix_feature_suggestions")
     .select("*")
     .in("status", ["pending", "approved"])
     .order("created_at", { ascending: false })
     .limit(20);
+
+  if (type) query = query.eq("suggestion_type", type);
+
+  const { data, error } = await query;
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   // 打ち合わせ済み（approved = 実装待ち）を上部に表示
@@ -48,6 +56,18 @@ export async function POST(req: NextRequest) {
 
     if (!sg) {
       return NextResponse.json({ ok: false, error: "提案が見つかりません" }, { status: 404 });
+    }
+
+    // knowledge_question: auto-judgeが生成したナレッジ品質確認質問。
+    // clarify (/api/knowledge-review PATCH) が既に HUMAN-* ルールを作成済みのため、
+    // ここでは status を "implemented" に更新するだけ（重複ルール作成を防ぐ）
+    if ((sg as Record<string, unknown>).suggestion_type === "knowledge_question") {
+      const { error: sErr } = await supabase
+        .from("aix_feature_suggestions")
+        .update({ status: "implemented" })
+        .eq("id", id);
+      if (sErr) console.warn("[aix-feature-suggestions] knowledge_question status更新失敗:", sErr.message);
+      return NextResponse.json({ ok: true, updated: true, type: "knowledge_question" });
     }
 
     // knowledge_aix_align: ナレッジコンテンツ直接更新（ai_prompt_rulesは作成しない）

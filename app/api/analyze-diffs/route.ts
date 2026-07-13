@@ -218,6 +218,78 @@ function extractNgPhrases(content: string): string[] {
   return results;
 }
 
+// ── AUTO-JUDGE: 新規INSERTナレッジをSonnetで即時品質判定 ──
+// importance >= 7 のものを対象に、同一ステートの confirmed ルールと比較して
+// confirm / question / contradiction / skip を返す。
+// 失敗・タイムアウト時は "skip" を返してメインループを止めない。
+const MAX_JUDGE_PER_RUN = 3; // 1クロン実行あたりの最大判定回数（LLM呼び出しコスト・タイムガード対策）
+
+async function autoJudgeKnowledge(
+  knowledgeId: string,
+  title: string,
+  content: string,
+  conversationState: string | null,
+  importance: number,
+): Promise<"confirm" | "question" | "contradiction" | "skip"> {
+  if (importance < 7) return "skip";
+
+  const { data: existing } = await supabase
+    .from("ai_reply_knowledge")
+    .select("title, content")
+    .eq("hypothesis_status", "confirmed")
+    .eq("conversation_state", conversationState ?? "")
+    .order("importance", { ascending: false })
+    .limit(3);
+
+  const existingText = (existing ?? []).map((r, i) =>
+    `${i + 1}. ${(r.title as string)}: ${String(r.content).slice(0, 100)}`
+  ).join("\n") || "（なし）";
+
+  const apiKey = process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "");
+  if (!apiKey) return "skip";
+
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      signal: AbortSignal.timeout(5_000),
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 100,
+        messages: [{
+          role: "user",
+          content: `あなたは賃貸仲介営業AIの品質審査員です。以下のナレッジを判定してください。
+タイトル: ${title}
+内容: ${content.slice(0, 200)}
+既存確定ルール（同じ状況）:
+${existingText}
+JSONのみで回答: {"verdict":"confirm"|"question"|"contradiction","reason":"..."}`,
+        }],
+      }),
+    });
+    if (!res.ok) return "skip";
+    const data = await res.json() as { content?: Array<{ text: string }> };
+    const text = data.content?.[0]?.text ?? "";
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return "skip";
+    const parsed = JSON.parse(match[0]) as { verdict?: string };
+    if (
+      parsed.verdict === "confirm" ||
+      parsed.verdict === "question" ||
+      parsed.verdict === "contradiction"
+    ) {
+      return parsed.verdict as "confirm" | "question" | "contradiction";
+    }
+    return "skip";
+  } catch {
+    return "skip";
+  }
+}
+
 // 矛盾検知: 新ナレッジのNGフレーズが、同じ conversation_state の confirmed ルールに含まれていれば aix_feature_suggestions に起票
 async function checkContradiction(
   title: string,
@@ -261,6 +333,44 @@ async function checkContradiction(
           status: "pending",
           proposal_category: "knowledge_quality",
         });
+      }
+    }
+
+    // ── HUMAN-* ルール（竹内さん確認済みの最高優先ルール）との矛盾検知 ──
+    // 新ナレッジが HUMAN-* ルールの内容と矛盾する可能性がある場合、
+    // どちらが正しいか竹内さんに確認するため knowledge_contradiction として起票する
+    const { data: humanRules } = await supabase
+      .from("ai_prompt_rules")
+      .select("rule_key, rule_text")
+      .like("rule_key", "HUMAN-%")
+      .eq("is_active", true)
+      .limit(50);
+
+    if (humanRules && humanRules.length > 0) {
+      for (const ngPhrase of ngPhrases) {
+        const phraseNorm = ngPhrase.replace(/\s+/g, "");
+        for (const humanRule of humanRules) {
+          const ruleText = ((humanRule.rule_text as string) ?? "").replace(/\s+/g, "");
+          if (!ruleText.includes(phraseNorm)) continue;
+
+          const dedupTitleHuman = `⚠️ HUMANルール矛盾: ${title.slice(0, 20)}`;
+          const { data: existingHuman } = await supabase
+            .from("aix_feature_suggestions")
+            .select("id")
+            .eq("suggestion_type", "knowledge_contradiction")
+            .ilike("suggested_title", `${dedupTitleHuman.replace(/[%_\\]/g, "\\$&")}%`)
+            .limit(1);
+          if (existingHuman && existingHuman.length > 0) continue;
+
+          await supabase.from("aix_feature_suggestions").insert({
+            suggestion_type: "knowledge_contradiction",
+            suggested_title: dedupTitleHuman,
+            description: `⚠️ 竹内さんの回答ルール「${(humanRule.rule_key as string)}」と矛盾の可能性: ${content.slice(0, 150)}`,
+            implementation_notes: JSON.stringify({ human_rule_key: humanRule.rule_key as string, new_content: content }),
+            status: "pending",
+            proposal_category: "knowledge_quality",
+          });
+        }
       }
     }
   } catch { /* 矛盾検知失敗はメイン処理を止めない */ }
@@ -905,6 +1015,7 @@ export async function POST(req: NextRequest) {
   // ── メインループ: 30秒タイムガード付き（残り約30秒を後続処理・レスポンスに確保）──
   const startTime = Date.now();
   let timedOut = false;
+  let judgeCount = 0; // 1クロン実行あたりの autoJudgeKnowledge 呼び出し回数上限管理
   for (const ex of examples) {
     if (Date.now() - startTime > 30_000) {
       timedOut = true;
@@ -1056,11 +1167,34 @@ export async function POST(req: NextRequest) {
                 conversation_state: compState,
                 importance: imp,
               }).catch(() => {});
-            } else if (isAmbiguous(compResult.title, compResult.rule)) {
-              // 曖昧タグ: needs_clarification フラグを立てる
-              await supabase.from("ai_reply_knowledge")
-                .update({ needs_clarification: true })
-                .eq("id", upsertResult.id);
+            } else if (judgeCount < MAX_JUDGE_PER_RUN) {
+              // AUTO-JUDGE: Sonnetで品質判定（Tier1未適用・importance>=7 のみ対象）
+              judgeCount++;
+              const verdict = await autoJudgeKnowledge(upsertResult.id, compResult.title, compResult.rule, compState, imp);
+              if (verdict === "confirm") {
+                await supabase.from("ai_reply_knowledge")
+                  .update({ hypothesis_status: "confirmed" })
+                  .eq("id", upsertResult.id);
+                await syncConfirmedToPromptRule({
+                  id: upsertResult.id,
+                  title: compResult.title,
+                  content: compResult.rule,
+                  conversation_state: compState,
+                  importance: imp,
+                }).catch(() => {});
+              } else if (verdict === "question" || verdict === "contradiction") {
+                const questionText = verdict === "contradiction"
+                  ? `既存ルールと矛盾の可能性: 「${compResult.title}」の内容を確認してください`
+                  : `このナレッジの適用場面を確認したい: 「${compResult.title}」`;
+                await supabase.from("aix_feature_suggestions").insert({
+                  suggestion_type: "knowledge_question",
+                  description: questionText,
+                  implementation_notes: JSON.stringify({ knowledge_id: upsertResult.id, original_content: compResult.rule.slice(0, 300) }),
+                  action_type: compState,
+                  status: "pending",
+                });
+              }
+              // verdict === "skip": hypothesis のまま（stale decayか⑤昇格バッチに委ねる）
             }
             // 矛盾検知: 同一ステートの confirmed ルールと比較
             void checkContradiction(compResult.title, compResult.rule, compState);
@@ -1153,11 +1287,34 @@ export async function POST(req: NextRequest) {
               conversation_state: conversation_state ?? "proposing",
               importance: imp,
             }).catch(() => {});
-          } else if (isAmbiguous(result.title, result.rule)) {
-            // 曖昧タグ: needs_clarification フラグを立てる
-            await supabase.from("ai_reply_knowledge")
-              .update({ needs_clarification: true })
-              .eq("id", upsertResult.id);
+          } else if (judgeCount < MAX_JUDGE_PER_RUN) {
+            // AUTO-JUDGE: Sonnetで品質判定（Tier1未適用・importance>=7 のみ対象）
+            judgeCount++;
+            const verdict = await autoJudgeKnowledge(upsertResult.id, result.title, result.rule, conversation_state ?? null, imp);
+            if (verdict === "confirm") {
+              await supabase.from("ai_reply_knowledge")
+                .update({ hypothesis_status: "confirmed" })
+                .eq("id", upsertResult.id);
+              await syncConfirmedToPromptRule({
+                id: upsertResult.id,
+                title: result.title,
+                content: result.rule,
+                conversation_state: conversation_state ?? "proposing",
+                importance: imp,
+              }).catch(() => {});
+            } else if (verdict === "question" || verdict === "contradiction") {
+              const questionText = verdict === "contradiction"
+                ? `既存ルールと矛盾の可能性: 「${result.title}」の内容を確認してください`
+                : `このナレッジの適用場面を確認したい: 「${result.title}」`;
+              await supabase.from("aix_feature_suggestions").insert({
+                suggestion_type: "knowledge_question",
+                description: questionText,
+                implementation_notes: JSON.stringify({ knowledge_id: upsertResult.id, original_content: result.rule.slice(0, 300) }),
+                action_type: conversation_state ?? null,
+                status: "pending",
+              });
+            }
+            // verdict === "skip": hypothesis のまま（stale decayか⑤昇格バッチに委ねる）
           }
           // 矛盾検知: 同一ステートの confirmed ルールと比較
           void checkContradiction(result.title, result.rule, conversation_state ?? null);

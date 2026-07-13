@@ -316,6 +316,8 @@ interface AixFeatureSuggestion {
   status: string;
   created_at: string;
   proposal_category?: 'new_aix_button' | 'new_picker' | 'new_button' | 'text_improvement' | 'mismatch_fix' | 'other';
+  // auto-judge knowledge_question: { knowledge_id, original_content }
+  implementation_notes?: string | null;
   // 統合フィールド: aix_edit候補をここに統合する際に付与
   _source?: 'aix_candidates' | 'suggestions';
   template_text?: string | null;
@@ -679,6 +681,11 @@ export default function TemplateModal({
   const [dismissingId, setDismissingId] = useState<string | null>(null);
   // AI質問のスキップ理由チップを表示中のフィードバックID
   const [dismissingFeedbackId, setDismissingFeedbackId] = useState<string | null>(null);
+  // AI質問タブ: auto-judgeが生成したナレッジ品質確認質問（aix_feature_suggestions type=knowledge_question）
+  const [knowledgeQuestions, setKnowledgeQuestions] = useState<AixFeatureSuggestion[]>([]);
+  const [knowledgeQuestionsLoading, setKnowledgeQuestionsLoading] = useState(false);
+  const [knowledgeQuestionAnswers, setKnowledgeQuestionAnswers] = useState<Record<string, string>>({});
+  const [submittingKnowledgeQuestion, setSubmittingKnowledgeQuestion] = useState<string | null>(null);
   // 案1: サブカテゴリ別アコーディオンの折りたたみ状態（key: セクションID, true=折りたたみ中）
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
   // AIおすすめテンプレ（post_aix時のみ）: recommend-templates APIの結果（最大3件）
@@ -941,6 +948,61 @@ export default function TemplateModal({
   useEffect(() => {
     if (isCandidateTabActive && candidateSubTab === "feedback") loadFeedbackItems();
   }, [isCandidateTabActive, candidateSubTab, loadFeedbackItems]);
+
+  // auto-judgeが生成したナレッジ品質確認質問（aix_feature_suggestions type=knowledge_question）の読み込み
+  const loadKnowledgeQuestions = useCallback(async () => {
+    setKnowledgeQuestionsLoading(true);
+    try {
+      const res = await fetch("/api/aix-feature-suggestions?type=knowledge_question");
+      const json = await res.json() as { ok: boolean; suggestions: AixFeatureSuggestion[] };
+      if (json.ok) setKnowledgeQuestions(json.suggestions ?? []);
+    } catch { /* noop */ }
+    finally { setKnowledgeQuestionsLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    if (isCandidateTabActive && candidateSubTab === "feedback") loadKnowledgeQuestions();
+  }, [isCandidateTabActive, candidateSubTab, loadKnowledgeQuestions]);
+
+  // ナレッジ品質確認質問への回答送信: clarify (HUMAN-* priority=10) → aix_suggestion を implemented に更新
+  const submitKnowledgeQuestionAnswer = useCallback(async (item: AixFeatureSuggestion) => {
+    const answer = knowledgeQuestionAnswers[item.id]?.trim();
+    if (!answer) return;
+    setSubmittingKnowledgeQuestion(item.id);
+    try {
+      // 1. implementation_notes から knowledge_id を取得
+      let knowledgeId: string | undefined;
+      try {
+        const notes = JSON.parse(item.implementation_notes ?? "{}") as { knowledge_id?: string };
+        knowledgeId = notes.knowledge_id;
+      } catch { /* noop */ }
+
+      // 2. clarify: ai_reply_knowledge を更新 + HUMAN-{id} priority=10 ルールを作成
+      if (knowledgeId) {
+        await fetch("/api/knowledge-review", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: knowledgeId, action: "clarify", new_content: answer }),
+        });
+      }
+
+      // 3. aix_feature_suggestions を implemented に更新
+      await fetch("/api/aix-feature-suggestions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: item.id, status: "implemented" }),
+      });
+
+      // 4. リストから除外
+      setKnowledgeQuestions(prev => prev.filter(q => q.id !== item.id));
+      setKnowledgeQuestionAnswers(prev => {
+        const next = { ...prev };
+        delete next[item.id];
+        return next;
+      });
+    } catch { /* noop */ }
+    finally { setSubmittingKnowledgeQuestion(null); }
+  }, [knowledgeQuestionAnswers]);
 
   // 🧠ナレッジ承認: hypothesis ナレッジ一覧の読み込み
   const loadKnowledgeItems = useCallback(async () => {
@@ -2640,14 +2702,57 @@ export default function TemplateModal({
           {/* AI盲点フィードバック一覧（❓ ai_feedback_items の pending + answered） */}
           {!showAddForm && isCandidateTabActive && candidateSubTab === "feedback" && (
             <div className="flex-1 overflow-y-auto p-3 space-y-4">
-              {feedbackLoading && (
+              {(feedbackLoading || knowledgeQuestionsLoading) && (
                 <p className="text-center text-gray-400 py-8">読み込み中...</p>
               )}
-              {!feedbackLoading && feedbackItems.length === 0 && (
+              {!feedbackLoading && !knowledgeQuestionsLoading && feedbackItems.length === 0 && knowledgeQuestions.length === 0 && (
                 <div className="text-center text-gray-400 py-12">
                   <p className="text-2xl mb-2">❓</p>
                   <p className="text-sm font-medium text-gray-500">AIからの質問はまだありません</p>
                   <p className="text-sm text-gray-400">（週次corpus2skillで生成されます）</p>
+                </div>
+              )}
+              {/* 🔍 ナレッジ品質確認: auto-judgeが生成した quality_question（knowledge_question type） */}
+              {!knowledgeQuestionsLoading && knowledgeQuestions.length > 0 && (
+                <div className="space-y-3">
+                  <p className="text-xs font-bold text-blue-600 flex items-center gap-1">🔍 ナレッジ品質確認 <span className="font-normal text-blue-400">（自動判定で要確認フラグがついたルール）</span></p>
+                  {knowledgeQuestions.map((item) => {
+                    let parsedNotes: { knowledge_id?: string; original_content?: string } = {};
+                    try { parsedNotes = JSON.parse(item.implementation_notes ?? "{}") as { knowledge_id?: string; original_content?: string }; } catch { /* noop */ }
+                    return (
+                      <div key={item.id} className="border border-blue-200 rounded-xl p-4 bg-blue-50">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-bold">
+                            🔍 ナレッジ品質確認
+                          </span>
+                          {item.action_type && (
+                            <span className="text-xs text-blue-400">{item.action_type}</span>
+                          )}
+                        </div>
+                        <p className="font-medium text-gray-800 text-sm mb-2">❓ {item.description}</p>
+                        {parsedNotes.original_content && (
+                          <p className="text-xs text-gray-500 mb-3 bg-white rounded-lg p-2 border border-blue-100 line-clamp-3">
+                            📄 {parsedNotes.original_content.slice(0, 200)}
+                          </p>
+                        )}
+                        <textarea
+                          value={knowledgeQuestionAnswers[item.id] ?? ""}
+                          onChange={e => setKnowledgeQuestionAnswers(prev => ({ ...prev, [item.id]: e.target.value }))}
+                          placeholder="修正内容・確認事項を入力してください（そのままでOKなら「このルールで問題ない」と入力）..."
+                          className="w-full border border-blue-300 rounded-lg px-3 py-2 text-sm resize-none h-20 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                        />
+                        <div className="mt-2">
+                          <button
+                            onClick={() => void submitKnowledgeQuestionAnswer(item)}
+                            disabled={!knowledgeQuestionAnswers[item.id]?.trim() || submittingKnowledgeQuestion === item.id}
+                            className="w-full bg-blue-600 text-white rounded-lg py-2 text-sm font-medium disabled:opacity-50 hover:bg-blue-700 transition"
+                          >
+                            {submittingKnowledgeQuestion === item.id ? "反映中..." : "✅ この回答で最高優先反映（HUMAN-ルール作成）"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
               {/* adapt_feedback（会話を合わせる）は他のカテゴリと分けて一番下にまとめて表示する */}
