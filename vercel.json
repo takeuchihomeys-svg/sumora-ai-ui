@@ -113,6 +113,10 @@
       "schedule": "0 0 * * 1"
     },
     {
+      "path": "/api/cron/eval-winning-pattern",
+      "schedule": "0 0 * * 4"
+    },
+    {
       "path": "/api/cron/analyze-closed-conversations",
       "schedule": "0 12 * * *"
     },

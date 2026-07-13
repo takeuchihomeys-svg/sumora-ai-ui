@@ -222,7 +222,7 @@ function extractNgPhrases(content: string): string[] {
 // importance >= 7 のものを対象に、同一ステートの confirmed ルールと比較して
 // confirm / question / contradiction / skip を返す。
 // 失敗・タイムアウト時は "skip" を返してメインループを止めない。
-const MAX_JUDGE_PER_RUN = 3; // 1クロン実行あたりの最大判定回数（LLM呼び出しコスト・タイムガード対策）
+const MAX_JUDGE_PER_RUN = 5; // 1クロン実行あたりの最大判定回数（LLM呼び出しコスト・タイムガード対策）
 
 async function autoJudgeKnowledge(
   knowledgeId: string,
@@ -230,6 +230,7 @@ async function autoJudgeKnowledge(
   content: string,
   conversationState: string | null,
   importance: number,
+  triggerExample?: string,
 ): Promise<"confirm" | "question" | "contradiction" | "skip"> {
   if (importance < 7) return "skip";
 
@@ -251,7 +252,7 @@ async function autoJudgeKnowledge(
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      signal: AbortSignal.timeout(5_000),
+      signal: AbortSignal.timeout(8_000),
       headers: {
         "Content-Type": "application/json",
         "x-api-key": apiKey,
@@ -265,6 +266,9 @@ async function autoJudgeKnowledge(
           content: `あなたは賃貸仲介営業AIの品質審査員です。以下のナレッジを判定してください。
 タイトル: ${title}
 内容: ${content.slice(0, 200)}
+フェーズ: ${conversationState ?? "不明"}
+重要度: ${importance}
+トリガー例文: ${triggerExample?.slice(0, 100) ?? "不明"}
 既存確定ルール（同じ状況）:
 ${existingText}
 JSONのみで回答: {"verdict":"confirm"|"question"|"contradiction","reason":"..."}`,
@@ -1170,7 +1174,7 @@ export async function POST(req: NextRequest) {
             } else if (judgeCount < MAX_JUDGE_PER_RUN) {
               // AUTO-JUDGE: Sonnetで品質判定（Tier1未適用・importance>=7 のみ対象）
               judgeCount++;
-              const verdict = await autoJudgeKnowledge(upsertResult.id, compResult.title, compResult.rule, compState, imp);
+              const verdict = await autoJudgeKnowledge(upsertResult.id, compResult.title, compResult.rule, compState, imp, customer_message);
               if (verdict === "confirm") {
                 await supabase.from("ai_reply_knowledge")
                   .update({ hypothesis_status: "confirmed" })
@@ -1186,11 +1190,13 @@ export async function POST(req: NextRequest) {
                 const questionText = verdict === "contradiction"
                   ? `既存ルールと矛盾の可能性: 「${compResult.title}」の内容を確認してください`
                   : `このナレッジの適用場面を確認したい: 「${compResult.title}」`;
-                await supabase.from("aix_feature_suggestions").insert({
-                  suggestion_type: "knowledge_question",
-                  description: questionText,
-                  implementation_notes: JSON.stringify({ knowledge_id: upsertResult.id, original_content: compResult.rule.slice(0, 300) }),
-                  action_type: compState,
+                const categoryVal = verdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity";
+                await supabase.from("ai_feedback_items").insert({
+                  question: `[knowledge_id:${upsertResult.id}] ${questionText}`,
+                  speculation: "auto_judge による品質判定",
+                  category: categoryVal,
+                  evidence: `knowledge_id: ${upsertResult.id} / state: ${compState}`,
+                  confidence: "medium",
                   status: "pending",
                 });
               }
@@ -1290,7 +1296,7 @@ export async function POST(req: NextRequest) {
           } else if (judgeCount < MAX_JUDGE_PER_RUN) {
             // AUTO-JUDGE: Sonnetで品質判定（Tier1未適用・importance>=7 のみ対象）
             judgeCount++;
-            const verdict = await autoJudgeKnowledge(upsertResult.id, result.title, result.rule, conversation_state ?? null, imp);
+            const verdict = await autoJudgeKnowledge(upsertResult.id, result.title, result.rule, conversation_state ?? null, imp, result.trigger_example);
             if (verdict === "confirm") {
               await supabase.from("ai_reply_knowledge")
                 .update({ hypothesis_status: "confirmed" })
@@ -1306,11 +1312,13 @@ export async function POST(req: NextRequest) {
               const questionText = verdict === "contradiction"
                 ? `既存ルールと矛盾の可能性: 「${result.title}」の内容を確認してください`
                 : `このナレッジの適用場面を確認したい: 「${result.title}」`;
-              await supabase.from("aix_feature_suggestions").insert({
-                suggestion_type: "knowledge_question",
-                description: questionText,
-                implementation_notes: JSON.stringify({ knowledge_id: upsertResult.id, original_content: result.rule.slice(0, 300) }),
-                action_type: conversation_state ?? null,
+              const categoryVal = verdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity";
+              await supabase.from("ai_feedback_items").insert({
+                question: `[knowledge_id:${upsertResult.id}] ${questionText}`,
+                speculation: "auto_judge による品質判定",
+                category: categoryVal,
+                evidence: `knowledge_id: ${upsertResult.id} / state: ${conversation_state ?? "unknown"}`,
+                confidence: "medium",
                 status: "pending",
               });
             }

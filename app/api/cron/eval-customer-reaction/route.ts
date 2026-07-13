@@ -14,6 +14,16 @@ export const maxDuration = 60;
 const BATCH_LIMIT = 200;
 const CONCURRENCY = 10;
 
+// 状態別の顧客反応待ち時間（時間単位）
+// viewing_invite/estimate_sheet は検討に時間がかかるため長め
+const STATE_REACTION_WINDOW_HOURS: Record<string, number> = {
+  viewing_invite: 72,
+  estimate_sheet: 48,
+  contract_schedule: 48,
+  application_push: 36,
+};
+const DEFAULT_REACTION_HOURS = 24;
+
 export async function POST(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.get("authorization");
@@ -68,7 +78,8 @@ export async function POST(req: NextRequest) {
       const chunk = logs.slice(i, i + CONCURRENCY);
       await Promise.all(chunk.map(async (log) => {
         const sendTime = log.sent_at ?? log.created_at;
-        const windowEnd = new Date(new Date(sendTime).getTime() + 24 * 3600 * 1000).toISOString();
+        const windowHours = STATE_REACTION_WINDOW_HOURS[log.aix_type ?? ""] ?? DEFAULT_REACTION_HOURS;
+        const windowEnd = new Date(new Date(sendTime).getTime() + windowHours * 3600 * 1000).toISOString();
         try {
           const { count, error } = await supabase
             .from("messages")
@@ -102,6 +113,8 @@ export async function POST(req: NextRequest) {
     // その conversation_state に対応する ai_reply_knowledge の importance を下げる
     let decaySucceeded = 0;
     let decayFailed = 0;
+    let brushupSucceeded = 0;
+    let brushupFailed = 0;
     try {
       const notReactedSet = new Set(notReactedIds);
       const reactedSet = new Set(reactedIds);
@@ -146,6 +159,67 @@ export async function POST(req: NextRequest) {
       console.warn("[eval-customer-reaction] ナレッジdecay失敗:", e);
     }
 
+    // ── confirmed rules (importance>=7) の高非反応率ズレ検知 ──
+    // 非反応率 >= 70% かつ samples >= 5 → knowledge_brushup を aix_feature_suggestions に登録
+    try {
+      const { data: highImpStats } = await supabase
+        .from("aix_usage_logs")
+        .select("aix_type, customer_reacted")
+        .not("customer_reacted", "is", null)
+        .gte("created_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+
+      const highImpBuckets: Record<string, { total: number; noReact: number }> = {};
+      for (const row of (highImpStats ?? [])) {
+        const t = (row.aix_type as string) ?? "unknown";
+        if (!highImpBuckets[t]) highImpBuckets[t] = { total: 0, noReact: 0 };
+        highImpBuckets[t].total++;
+        if (!row.customer_reacted) highImpBuckets[t].noReact++;
+      }
+
+      for (const [aix_type, stats] of Object.entries(highImpBuckets)) {
+        if (stats.total < 5) continue;
+        const noReactRate = stats.noReact / stats.total;
+        if (noReactRate < 0.7) continue;
+
+        // 対応するconfirmedルールを探す
+        const { data: highRules } = await supabase
+          .from("ai_reply_knowledge")
+          .select("id, title")
+          .eq("hypothesis_status", "confirmed")
+          .eq("conversation_state", aix_type)
+          .gte("importance", 7)
+          .limit(3);
+
+        for (const rule of (highRules ?? [])) {
+          // dedup: 同じルールのbrushup提案が既にpendingなら skip
+          const { data: existing } = await supabase
+            .from("aix_feature_suggestions")
+            .select("id")
+            .eq("suggestion_type", "knowledge_brushup")
+            .eq("status", "pending")
+            .filter("implementation_notes", "cs", JSON.stringify({ knowledge_id: rule.id }).replace("{", "").replace("}", "").trim())
+            .limit(1);
+          if (existing && existing.length > 0) continue;
+
+          const { error: brushupErr } = await supabase.from("aix_feature_suggestions").insert({
+            suggestion_type: "knowledge_brushup",
+            description: `⚠️ 顧客非反応率 ${Math.round(noReactRate * 100)}%（${stats.total}件）: 「${(rule.title as string).slice(0, 50)}」のルールを見直してください`,
+            implementation_notes: JSON.stringify({ knowledge_id: rule.id as string, aix_type, no_react_rate: noReactRate }),
+            action_type: aix_type,
+            status: "pending",
+          });
+          if (brushupErr) {
+            console.warn("[eval-customer-reaction] brushup insert失敗:", brushupErr.message);
+            brushupFailed++;
+          } else {
+            brushupSucceeded++;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[eval-customer-reaction] confirmed brushup失敗:", e);
+    }
+
     await finishCronLog(runLogId, true, {
       evaluated,
       reacted: reactedIds.length,
@@ -153,6 +227,8 @@ export async function POST(req: NextRequest) {
       reaction_rate: reactionRate,
       decay_succeeded: decaySucceeded,
       decay_failed: decayFailed,
+      brushup_succeeded: brushupSucceeded,
+      brushup_failed: brushupFailed,
     });
     return NextResponse.json({
       ok: true,
@@ -162,6 +238,8 @@ export async function POST(req: NextRequest) {
       reaction_rate: reactionRate,
       decay_succeeded: decaySucceeded,
       decay_failed: decayFailed,
+      brushup_succeeded: brushupSucceeded,
+      brushup_failed: brushupFailed,
     });
   } catch (e) {
     console.error("[eval-customer-reaction]", e);

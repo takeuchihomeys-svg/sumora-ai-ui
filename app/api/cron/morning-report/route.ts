@@ -37,6 +37,19 @@ export async function GET(req: NextRequest) {
   }
   const runLogId = await startCronLog("morning-report");
 
+  // 30日/60日自動クローズ: 溜まったpending項目を自動dismissする（毎朝実行）
+  await Promise.allSettled([
+    supabase.from("ai_feedback_items")
+      .update({ status: "dismissed", updated_at: new Date().toISOString() })
+      .eq("status", "pending")
+      .lt("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()),
+    supabase.from("aix_feature_suggestions")
+      .update({ status: "dismissed", updated_at: new Date().toISOString() })
+      .eq("status", "pending")
+      .eq("suggestion_type", "new_button")
+      .lt("created_at", new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString()),
+  ]);
+
   // LINEグループ設定
   let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? null;
   if (!groupId) {
@@ -483,7 +496,7 @@ export async function GET(req: NextRequest) {
   try {
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const [{ data: cronLogs }, { count: pendingFeedbackCount }] = await Promise.all([
+    const [{ data: cronLogs }, { count: pendingFeedbackCount }, { count: pendingKnowledgeAlignCount }] = await Promise.all([
       // 週次Cron（corpus2skill 等）の判定に7日分必要なため7日窓で取得し、日次Cronは24hで判定する
       supabase
         .from("cron_run_logs")
@@ -496,6 +509,12 @@ export async function GET(req: NextRequest) {
         .from("ai_feedback_items")
         .select("*", { count: "exact", head: true })
         .eq("status", "pending"),
+      // ナレッジAIXアライン未対応数（aix_feature_suggestions の knowledge_aix_align）
+      supabase
+        .from("aix_feature_suggestions")
+        .select("*", { count: "exact", head: true })
+        .eq("status", "pending")
+        .eq("suggestion_type", "knowledge_aix_align"),
     ]);
 
     // Cron名ごとの最新実行（降順取得済みのため最初に出た行が最新）
@@ -523,7 +542,11 @@ export async function GET(req: NextRequest) {
     const feedbackLine = pendingN > 0
       ? `■ AI質問 未回答: ${pendingN}件（テンプレート画面の「❓AI質問」タブから回答できます）`
       : "■ AI質問 未回答: 0件";
-    statsLines.push(`🧠 学習ヘルス\n■ 直近24h学習Cron:\n${healthLines.join("\n")}\n${feedbackLine}`);
+    const alignN = pendingKnowledgeAlignCount ?? 0;
+    const alignLine = alignN > 0
+      ? `■ ナレッジAIXアライン 未対応: ${alignN}件（改善案タブから確認できます）`
+      : "■ ナレッジAIXアライン 未対応: 0件";
+    statsLines.push(`🧠 学習ヘルス\n■ 直近24h学習Cron:\n${healthLines.join("\n")}\n${feedbackLine}\n${alignLine}`);
   } catch (e) {
     console.error("[morning-report] learning health section:", e);
   }
