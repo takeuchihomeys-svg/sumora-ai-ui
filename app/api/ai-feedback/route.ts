@@ -49,15 +49,16 @@ type ExtractedRule = {
   trigger_keywords?: string[];
 };
 
-// GET: pending + answered + applied を最新30件取得
+// GET: pending + answered + applied を最新50件取得
 // applied = ルール反映済み（UI でグレーアウト表示用に含める）
+// ※ limit を 30→50 に拡張（34件超で oldest applied が切れるバグ修正）
 export async function GET() {
   const { data, error } = await supabase
     .from("ai_feedback_items")
     .select("*")
     .in("status", ["pending", "answered", "applied"])
     .order("created_at", { ascending: false })
-    .limit(30);
+    .limit(50);
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true, items: data ?? [] });
