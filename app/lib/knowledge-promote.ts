@@ -72,6 +72,42 @@ export async function syncConfirmedToPromptRule(row: KnowledgeRow): Promise<void
   if (error) console.warn("[knowledge-promote] sync failed:", error.message);
 }
 
+// ⑤ 昇格ロジック一元化: hypothesis → confirmed 昇格の単一エントリポイント
+// promoted_by / promoted_at を記録して「誰が・いつ昇格させたか」を追跡可能にする。
+// row（title/content 等）が渡された場合は ai_prompt_rules への同期も行う。
+export type PromotedBy =
+  | "rpc_auto"            // update_knowledge_feedback_by_pairs / confirm_knowledge_feedback のRPC内自動昇格
+  | "analyze_diffs_tier1" // analyze-diffs cron のTier1昇格
+  | "auto_judge"          // 自動判定
+  | "batch_eval"          // eval-winning-pattern の週次バッチ昇格
+  | "bulk_judge"          // bulk-judge-knowledge のSonnet審査昇格
+  | "human_feedback";     // 竹内さんの手動確認・回答経由
+
+export async function promoteToConfirmed(
+  id: string,
+  promotedBy: PromotedBy,
+  row?: { title?: string; content?: string; conversation_state?: string | null; importance?: number }
+): Promise<void> {
+  const { error } = await supabase.from("ai_reply_knowledge").update({
+    hypothesis_status: "confirmed",
+    promoted_by: promotedBy,
+    promoted_at: new Date().toISOString(),
+  }).eq("id", id);
+  if (error) {
+    console.warn("[knowledge-promote] promoteToConfirmed failed:", error.message);
+    return;
+  }
+  if (row) {
+    await syncConfirmedToPromptRule({
+      id,
+      title: row.title ?? "",
+      content: row.content ?? "",
+      conversation_state: row.conversation_state ?? null,
+      importance: row.importance ?? 0,
+    });
+  }
+}
+
 // 却下された知識の ai_prompt_rules を無効化
 export async function deactivatePromptRule(knowledgeId: string): Promise<void> {
   const { error } = await supabase.from("ai_prompt_rules")

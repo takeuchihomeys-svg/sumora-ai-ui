@@ -131,6 +131,10 @@
     {
       "path": "/api/migrate-schema",
       "schedule": "10 15 * * *"
+    },
+    {
+      "path": "/api/admin/bulk-judge-knowledge",
+      "schedule": "30 20 * * 6"
     }
   ]
 }

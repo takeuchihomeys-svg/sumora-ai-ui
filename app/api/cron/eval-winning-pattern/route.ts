@@ -176,14 +176,18 @@ export async function POST(req: NextRequest) {
     let knowledgeFed = 0;
     try {
       const resolvedConvIds = [...new Set(resolved.map(l => l.conversation_id))];
+      // ④ source フィルタ: winning_pattern 予測は generate-reply フローで記録されるため、
+      // generate-reply 由来の適用ログのみ対象にする（AIX由来と混在させない）
       const { data: applyLogs } = await supabase
         .from("knowledge_apply_log")
         .select("knowledge_id, conversation_id")
         .in("conversation_id", resolvedConvIds)
-        .eq("result", "pending");
+        .eq("result", "pending")
+        .eq("source", "generate_reply");
 
-      const kCorrect: string[] = [];
-      const kWrong: string[] = [];
+      type FeedbackPair = { knowledge_id: string; conversation_id: string };
+      const kCorrect: FeedbackPair[] = [];
+      const kWrong: FeedbackPair[] = [];
       // knowledge_id × conversation_id 単位でデデュプ（同一会話内の重複は除去しつつ、
       // 異なる会話での適用は別々にカウントする → apply_count が正確に加算される）
       const correctPairsSeen = new Set<string>();
@@ -200,20 +204,20 @@ export async function POST(req: NextRequest) {
         for (const kid of kids) {
           const pairKey = `${kid}::${l.conversation_id}`;
           if (v) {
-            if (!correctPairsSeen.has(pairKey)) { correctPairsSeen.add(pairKey); kCorrect.push(kid); }
+            if (!correctPairsSeen.has(pairKey)) { correctPairsSeen.add(pairKey); kCorrect.push({ knowledge_id: kid, conversation_id: l.conversation_id }); }
           } else {
-            if (!wrongPairsSeen.has(pairKey)) { wrongPairsSeen.add(pairKey); kWrong.push(kid); }
+            if (!wrongPairsSeen.has(pairKey)) { wrongPairsSeen.add(pairKey); kWrong.push({ knowledge_id: kid, conversation_id: l.conversation_id }); }
           }
         }
       }
-      const uniqueCorrect = kCorrect; // 既に (knowledge_id × conversation_id) でデデュプ済み
-      const uniqueWrong = kWrong;
-      if (uniqueCorrect.length > 0 || uniqueWrong.length > 0) {
-        await supabase.rpc("update_knowledge_feedback_by_ids", {
-          p_correct_ids: uniqueCorrect.length > 0 ? uniqueCorrect : null,
-          p_wrong_ids: uniqueWrong.length > 0 ? uniqueWrong : null,
+      if (kCorrect.length > 0 || kWrong.length > 0) {
+        // ① ペア単位RPC: (knowledge_id × conversation_id) で更新（別会話の pending ログ巻き込み防止）
+        await supabase.rpc("update_knowledge_feedback_by_pairs", {
+          p_correct_pairs: kCorrect.length > 0 ? kCorrect : null,
+          p_wrong_pairs: kWrong.length > 0 ? kWrong : null,
+          p_feedback_source: "deal_outcome",
         });
-        knowledgeFed = uniqueCorrect.length + uniqueWrong.length;
+        knowledgeFed = kCorrect.length + kWrong.length;
       }
 
       // ── hypothesis → confirmed 自動昇格（eval-winning 追加ステップ） ──

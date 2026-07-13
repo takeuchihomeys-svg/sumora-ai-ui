@@ -1381,6 +1381,92 @@ BEGIN
 END;
 $$;
 
+-- ── ナレッジ品質改善①〜⑤（2026-07-13）──
+
+-- ③ knowledge_apply_log: result に 'expired' を追加（14日超pendingのTTL用・update-knowledge cronが更新）
+ALTER TABLE knowledge_apply_log DROP CONSTRAINT IF EXISTS knowledge_apply_log_result_check;
+ALTER TABLE knowledge_apply_log ADD CONSTRAINT knowledge_apply_log_result_check
+  CHECK (result IN ('pending', 'correct', 'wrong', 'expired'));
+
+-- ④ knowledge_apply_log: フィードバック経路の分離記録
+-- 値: 'text_retention'（送信文への残存判定 = save-reply-example）
+--     | 'reaction_72h'（72h顧客反応 = eval-customer-reaction）
+--     | 'deal_outcome'（成約/失注 = eval-winning-pattern）| null
+ALTER TABLE knowledge_apply_log ADD COLUMN IF NOT EXISTS feedback_source TEXT;
+
+-- ⑤ ai_reply_knowledge: 昇格経路・昇格時刻の記録（promoteToConfirmed が書き込む）
+ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS promoted_by TEXT;
+ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS promoted_at TIMESTAMPTZ;
+
+-- ① update_knowledge_feedback_by_pairs: (knowledge_id × conversation_id) ペア単位のRLHFフィードバック
+-- 旧 update_knowledge_feedback_by_ids は WHERE knowledge_id = ANY(...) AND result='pending' のみで
+-- 更新するため、あるナレッジを1会話で correct 判定すると別会話の pending ログまで塗り替える混線バグがあった。
+-- 互換性のため旧RPCは残し、呼び出し元は本RPCへ移行済み。
+-- p_correct_pairs / p_wrong_pairs: [{"knowledge_id":"...","conversation_id":"..."}] 形式のJSONB配列
+-- p_feedback_source: 'text_retention' | 'reaction_72h' | 'deal_outcome'（渡されれば knowledge_apply_log に記録）
+CREATE OR REPLACE FUNCTION update_knowledge_feedback_by_pairs(
+  p_correct_pairs JSONB DEFAULT NULL,
+  p_wrong_pairs JSONB DEFAULT NULL,
+  p_feedback_source TEXT DEFAULT NULL
+)
+RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_correct_pairs IS NOT NULL AND jsonb_array_length(p_correct_pairs) > 0 THEN
+    UPDATE knowledge_apply_log
+    SET result = 'correct',
+        feedback_source = COALESCE(p_feedback_source, feedback_source)
+    WHERE result = 'pending'
+      AND (knowledge_id::text, conversation_id) IN (
+        SELECT elem->>'knowledge_id', elem->>'conversation_id'
+        FROM jsonb_array_elements(p_correct_pairs) AS elem
+      );
+    -- apply_count / correct_count: そのナレッジが含まれるペア数（=適用会話数）だけ加算
+    UPDATE ai_reply_knowledge k
+    SET correct_count = COALESCE(k.correct_count, 0) + sub.cnt,
+        apply_count   = COALESCE(k.apply_count, 0) + sub.cnt
+    FROM (
+      SELECT (elem->>'knowledge_id')::uuid AS kid, count(*) AS cnt
+      FROM jsonb_array_elements(p_correct_pairs) AS elem
+      GROUP BY 1
+    ) sub
+    WHERE k.id = sub.kid;
+  END IF;
+  IF p_wrong_pairs IS NOT NULL AND jsonb_array_length(p_wrong_pairs) > 0 THEN
+    UPDATE knowledge_apply_log
+    SET result = 'wrong',
+        feedback_source = COALESCE(p_feedback_source, feedback_source)
+    WHERE result = 'pending'
+      AND (knowledge_id::text, conversation_id) IN (
+        SELECT elem->>'knowledge_id', elem->>'conversation_id'
+        FROM jsonb_array_elements(p_wrong_pairs) AS elem
+      );
+    UPDATE ai_reply_knowledge k
+    SET wrong_count = COALESCE(k.wrong_count, 0) + sub.cnt,
+        apply_count = COALESCE(k.apply_count, 0) + sub.cnt
+    FROM (
+      SELECT (elem->>'knowledge_id')::uuid AS kid, count(*) AS cnt
+      FROM jsonb_array_elements(p_wrong_pairs) AS elem
+      GROUP BY 1
+    ) sub
+    WHERE k.id = sub.kid;
+  END IF;
+  -- 5回以上適用で自動昇格/降格（update_knowledge_feedback_by_ids と同一基準）
+  UPDATE ai_reply_knowledge
+  SET hypothesis_status = CASE
+    WHEN apply_count >= 5 AND correct_count::float / NULLIF(apply_count::float, 0) >= 0.7 THEN 'confirmed'
+    WHEN apply_count >= 5 AND wrong_count::float   / NULLIF(apply_count::float, 0) >= 0.7 THEN 'rejected'
+    ELSE hypothesis_status
+  END
+  WHERE id IN (
+    SELECT DISTINCT (elem->>'knowledge_id')::uuid
+    FROM jsonb_array_elements(
+      COALESCE(p_correct_pairs, '[]'::jsonb) || COALESCE(p_wrong_pairs, '[]'::jsonb)
+    ) AS elem
+  )
+    AND apply_count >= 5;
+END;
+$$;
+
 -- 誤学習ブロックテーブル（「✗ 間違い」で削除したトークンの再学習を永久に防止）
 CREATE TABLE IF NOT EXISTS token_block (
   token TEXT PRIMARY KEY,

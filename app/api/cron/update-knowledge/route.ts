@@ -159,6 +159,22 @@ export async function GET(req: NextRequest) {
 
     const unusedDeletedCount = (lowDeleted?.length ?? 0) + (midDeleted?.length ?? 0);
 
+    // ③ pending TTL: 14日超 pending の knowledge_apply_log を expired に更新
+    // （評価されないまま滞留したログが後日のフィードバックで誤って correct/wrong に塗られるのを防止）
+    // ※ knowledge_apply_log のタイムスタンプ列は applied_at（created_at は存在しない）
+    let ttlExpiredCount: number | null = null;
+    const expiredBefore = new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString();
+    const { error: ttlErr, count: ttlCount } = await supabase
+      .from("knowledge_apply_log")
+      .update({ result: "expired" }, { count: "exact" })
+      .eq("result", "pending")
+      .lt("applied_at", expiredBefore);
+    if (ttlErr) {
+      console.warn("[update-knowledge] apply_log TTL失敗:", ttlErr.message);
+    } else {
+      ttlExpiredCount = ttlCount ?? 0;
+    }
+
     return NextResponse.json({
       ok: true,
       newly_processed: toProcess.length,
@@ -166,6 +182,7 @@ export async function GET(req: NextRequest) {
       knowledge_entries_added: totalAdded,
       cleanup,
       unused_deleted: unusedDeletedCount,
+      apply_log_expired: ttlExpiredCount,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

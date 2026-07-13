@@ -366,9 +366,12 @@ async function preciseKnowledgeFeedback(
     }
 
     if (correctIds.length > 0 || wrongIds.length > 0) {
-      await supabase.rpc("update_knowledge_feedback_by_ids", {
-        p_correct_ids: correctIds.length > 0 ? correctIds : null,
-        p_wrong_ids:   wrongIds.length   > 0 ? wrongIds   : null,
+      // ① ペア単位RPC: (knowledge_id × conversation_id) で更新（別会話の pending ログ巻き込み防止）
+      const toPairs = (ids: string[]) => ids.map((kid) => ({ knowledge_id: kid, conversation_id: conversationId }));
+      await supabase.rpc("update_knowledge_feedback_by_pairs", {
+        p_correct_pairs: correctIds.length > 0 ? toPairs(correctIds) : null,
+        p_wrong_pairs:   wrongIds.length   > 0 ? toPairs(wrongIds)   : null,
+        p_feedback_source: "text_retention",
       });
     }
   } catch (e) {

@@ -8,9 +8,12 @@ const BATCH_SIZE = 10; // parallel Sonnet calls per batch
 const MAX_AI_QUESTIONS = 100; // AI質問登録の上限
 
 export async function GET(req: NextRequest) {
-  // Auth check
+  // Auth check: Authorization: Bearer（Vercel cron が自動付与）/ x-cron-secret ヘッダー / ?secret= の3方式対応
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers.get("authorization");
   const secret = req.headers.get("x-cron-secret") ?? req.nextUrl.searchParams.get("secret");
-  if (secret !== process.env.CRON_SECRET) {
+  const bearerOk = !!cronSecret && authHeader === `Bearer ${cronSecret}`;
+  if (!cronSecret || (!bearerOk && secret !== cronSecret)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
@@ -195,4 +198,9 @@ JSONのみ回答: {"verdict":"confirm"|"question"|"contradiction","reason":"20�
     hasMore,
     nextOffset: hasMore ? offset + limit : null,
   });
+}
+
+// POST: 週次 Vercel cron 用（GET と同じ処理に委譲。認証は GET 側で実施）
+export async function POST(req: NextRequest) {
+  return GET(req);
 }

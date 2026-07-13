@@ -136,14 +136,18 @@ export async function POST(req: NextRequest) {
       const allConvIds = [...new Set([...reactedConvIds, ...notReactedConvIds])];
 
       if (allConvIds.length > 0) {
+        // ④ source フィルタ: この cron は AIX 送信（aix_usage_logs）への反応を評価するため、
+        // aix/action 由来の適用ログのみ対象にする（generate-reply 由来と混在させない）
         const { data: applyLogs } = await supabase
           .from("knowledge_apply_log")
           .select("knowledge_id, conversation_id")
           .in("conversation_id", allConvIds)
-          .eq("result", "pending");
+          .eq("result", "pending")
+          .eq("source", "aix_action");
 
-        const kCorrect: string[] = [];
-        const kWrong: string[] = [];
+        type FeedbackPair = { knowledge_id: string; conversation_id: string };
+        const kCorrect: FeedbackPair[] = [];
+        const kWrong: FeedbackPair[] = [];
         const correctPairs = new Set<string>();
         const wrongPairs = new Set<string>();
 
@@ -154,17 +158,19 @@ export async function POST(req: NextRequest) {
           const pairKey = `${kid}::${convId}`;
           if (reactedConvIds.has(convId) && !correctPairs.has(pairKey)) {
             correctPairs.add(pairKey);
-            kCorrect.push(kid);
+            kCorrect.push({ knowledge_id: kid, conversation_id: convId });
           } else if (notReactedConvIds.has(convId) && !wrongPairs.has(pairKey)) {
             wrongPairs.add(pairKey);
-            kWrong.push(kid);
+            kWrong.push({ knowledge_id: kid, conversation_id: convId });
           }
         }
 
         if (kCorrect.length > 0 || kWrong.length > 0) {
-          await supabase.rpc("update_knowledge_feedback_by_ids", {
-            p_correct_ids: kCorrect.length > 0 ? kCorrect : null,
-            p_wrong_ids: kWrong.length > 0 ? kWrong : null,
+          // ① ペア単位RPC: (knowledge_id × conversation_id) で更新（別会話の pending ログ巻き込み防止）
+          await supabase.rpc("update_knowledge_feedback_by_pairs", {
+            p_correct_pairs: kCorrect.length > 0 ? kCorrect : null,
+            p_wrong_pairs: kWrong.length > 0 ? kWrong : null,
+            p_feedback_source: "reaction_72h",
           });
           knowledgeFed = kCorrect.length + kWrong.length;
         }
