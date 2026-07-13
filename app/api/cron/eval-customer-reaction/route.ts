@@ -59,7 +59,12 @@ export async function POST(req: NextRequest) {
     const notReactedIds: string[] = [];
 
     // 送信後24h以内に顧客返信があったかを確認（CONCURRENCY件ずつ並列）
+    const startTime = Date.now();
     for (let i = 0; i < logs.length; i += CONCURRENCY) {
+      if (Date.now() - startTime > 50_000) {
+        console.warn("[eval-customer-reaction] 時間制限到達");
+        break;
+      }
       const chunk = logs.slice(i, i + CONCURRENCY);
       await Promise.all(chunk.map(async (log) => {
         const sendTime = log.sent_at ?? log.created_at;

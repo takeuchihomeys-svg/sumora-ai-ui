@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
+import { syncConfirmedToPromptRule } from "@/app/lib/knowledge-promote";
 
 export const maxDuration = 60;
 
@@ -178,7 +179,8 @@ export async function POST(req: NextRequest) {
       const { data: applyLogs } = await supabase
         .from("knowledge_apply_log")
         .select("knowledge_id, conversation_id")
-        .in("conversation_id", resolvedConvIds);
+        .in("conversation_id", resolvedConvIds)
+        .eq("result", "pending");
 
       const kCorrect: string[] = [];
       const kWrong: string[] = [];
@@ -216,14 +218,15 @@ export async function POST(req: NextRequest) {
 
       // ── hypothesis → confirmed 自動昇格（eval-winning 追加ステップ） ──
       // analyze-diffs（日次）と二重で走るが条件が異なるため共存可。
-      // eval-winning は「業務成果ベース」のため、apply_count >= 4 + correct_rate >= 0.7 で昇格。
+      // eval-winning は「業務成果ベース」のため、apply_count >= 5 + correct_rate >= 0.7 で昇格。
+      // ※ analyze-diffs と閾値を統一（旧: apply_count >= 4）
       try {
         const { data: promotionCandidates } = await supabase
           .from("ai_reply_knowledge")
           .select("id, title, correct_count, wrong_count, apply_count")
           .eq("hypothesis_status", "hypothesis")
           .gte("correct_count", 5)
-          .gte("apply_count", 4)
+          .gte("apply_count", 5)
           .limit(30);
         let autoPromoted = 0;
         for (const rule of promotionCandidates ?? []) {
@@ -235,7 +238,17 @@ export async function POST(req: NextRequest) {
             .from("ai_reply_knowledge")
             .update({ hypothesis_status: "confirmed" })
             .eq("id", rule.id as string);
-          if (!promoteErr) autoPromoted++;
+          if (!promoteErr) {
+            autoPromoted++;
+            // ai_prompt_rules に即時反映（最大24h遅延を解消）
+            await syncConfirmedToPromptRule({
+              id: rule.id as string,
+              title: rule.title as string,
+              content: (rule as Record<string, unknown>).content as string ?? "",
+              importance: (rule.apply_count as number) ?? 0,
+              conversation_state: null,
+            });
+          }
         }
         if (autoPromoted > 0) {
           console.log(`[eval-winning-pattern] hypothesis→confirmed自動昇格: ${autoPromoted}件`);

@@ -486,6 +486,7 @@ JSON配列で返す: [{aix_type, description, implementation_notes, proposal_cat
   for (const p of proposals) {
     if (!p.description?.trim()) continue;
     const { error } = await supabase.from("aix_feature_suggestions").insert({
+      suggestion_type: "mismatch_fix",
       status: "pending",
       description: p.description.slice(0, 500),
       action_type: p.aix_type ?? null,
@@ -813,8 +814,8 @@ export async function POST(req: NextRequest) {
     console.error("[corpus2skill] スキル降格失敗:", e);
   }
 
-  // P2・P3・examplesフェッチを並列実行（順次では300秒を超過するため）
-  const [templateImprovements, blindSpots, examplesResult] = await Promise.all([
+  // P2・P3・examplesフェッチ・AIXズレ分析をすべて並列実行（順次では300秒を超過するため）
+  const [templateImprovements, blindSpots, examplesResult, mismatchResult] = await Promise.all([
     synthesizeTemplateImprovements().catch((e) => {
       console.error("[corpus2skill] テンプレ改善タスク失敗:", e);
       return { candidatesSaved: 0, suggestionsSaved: 0 };
@@ -830,14 +831,13 @@ export async function POST(req: NextRequest) {
       .not("sent_reply", "is", null)
       .order("created_at", { ascending: false })
       .limit(200),
+    analyzeAixMismatch().catch((e) => {
+      console.error("[corpus2skill] AIXズレ分析失敗:", e);
+      return { pairsFound: 0, suggestionsInserted: 0 };
+    }),
   ]);
   console.log(`[corpus2skill] テンプレ改善: candidates=${templateImprovements.candidatesSaved} suggestions=${templateImprovements.suggestionsSaved}`);
   console.log(`[corpus2skill] 盲点発見: questions=${blindSpots.questionsSaved}`);
-
-  const mismatchResult = await analyzeAixMismatch().catch((e) => {
-    console.error("[corpus2skill] AIXズレ分析失敗:", e);
-    return { pairsFound: 0, suggestionsInserted: 0 };
-  });
   console.log(`[corpus2skill] AIXズレ分析: pairsFound=${mismatchResult.pairsFound}, suggestionsInserted=${mismatchResult.suggestionsInserted}`);
 
   const { data: examples } = examplesResult as { data: Example[] | null };
@@ -926,30 +926,35 @@ ${limitedSequences.map((g) =>
     })
   );
 
-  for (const { state, skills } of skillsByState) {
-    for (const skill of skills) {
-      if (!skill.title || !skill.content || skill.content.length < 20) continue;
+  try {
+    for (const { state, skills } of skillsByState) {
+      for (const skill of skills) {
+        if (!skill.title || !skill.content || skill.content.length < 20) continue;
 
-      const embeddingInput = buildKnowledgeEmbeddingInput({
-        trigger_example: skill.trigger,
-        content: skill.content,
-        conversation_state: state,
-      });
-      const embedding = await generateEmbedding(embeddingInput).catch(() => null);
+        const embeddingInput = buildKnowledgeEmbeddingInput({
+          trigger_example: skill.trigger,
+          content: skill.content,
+          conversation_state: state,
+        });
+        const embedding = await generateEmbedding(embeddingInput).catch(() => null);
 
-      const result = await upsertKnowledge(supabase, {
-        title: `[corpus2skill] ${skill.title}`,
-        content: skill.content,
-        category: "pattern",
-        importance: 9,
-        conversation_state: state,
-        ...(embedding ? { embedding } : {}),
-        ...(skill.trigger ? { trigger_example: skill.trigger } : {}),
-      });
+        const result = await upsertKnowledge(supabase, {
+          title: `[corpus2skill] ${skill.title}`,
+          content: skill.content,
+          category: "pattern",
+          importance: 9,
+          conversation_state: state,
+          ...(embedding ? { embedding } : {}),
+          ...(skill.trigger ? { trigger_example: skill.trigger } : {}),
+        });
 
-      if (result === "inserted") totalInserted++;
-      else if (result === "merged") totalMerged++;
+        if (result === "inserted") totalInserted++;
+        else if (result === "merged") totalMerged++;
+      }
     }
+  } catch (e) {
+    await finishCronLog(runLogId, false, undefined, e instanceof Error ? e.message : String(e));
+    return NextResponse.json({ ok: false, error: "internal error" }, { status: 500 });
   }
 
   console.log(`[corpus2skill] 完了: inserted=${totalInserted}, merged=${totalMerged}, degraded=${degraded}`);

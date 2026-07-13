@@ -430,6 +430,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
   const runLogId = await startCronLog("analyze-diffs");
+  try {
   // ?limit=N で件数を指定可能（デフォルト10・最大200）
   // maxDuration=60秒 / 1件あたりLLM最大3回（2〜6秒）→ 10件＋40秒タイムガードで後半処理の時間を確保
   const url = new URL(req.url);
@@ -515,6 +516,7 @@ export async function POST(req: NextRequest) {
       .select("id, title, content, conversation_state")
       .eq("hypothesis_status", "confirmed")
       .gte("importance", 7)
+      .order("importance", { ascending: false })
       .limit(100);
 
     if (confirmedRules && confirmedRules.length > 0) {
@@ -608,7 +610,7 @@ export async function POST(req: NextRequest) {
       .select("id, title, correct_count, wrong_count, apply_count")
       .eq("hypothesis_status", "hypothesis")
       .gte("correct_count", 5)
-      .gte("apply_count", 10)
+      .gte("apply_count", 5)
       .limit(50);
 
     for (const rule of promotionCandidates ?? []) {
@@ -1049,6 +1051,10 @@ export async function POST(req: NextRequest) {
       .limit(20);
 
     for (const ue of usedExamples ?? []) {
+      if (Date.now() - startTime > 50_000) {
+        console.warn("[analyze-diffs] 時間制限到達、ポジティブ強化Aブロックをスキップ");
+        break;
+      }
       const ueState = ue.conversation_state as string;
       const ueComps = ue.ai_components as Record<string, string>;
       const ueLearnList = STATE_LEARNABLE[ueState] ?? [];
@@ -1166,6 +1172,11 @@ export async function POST(req: NextRequest) {
     ...(cronWarning ? { cronWarning } : {}),
     message: `${processed}件処理・${learned}件学習・${synced}件ルール同期・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件・反復削除フレーズ${sentinel.detected}件検知（${sentinel.demoted}件降格）${timedOut ? "・⏱30秒タイムガードで打ち切り" : ""}${cronWarning ? ` / ${cronWarning}` : ""}`,
   });
+  } catch (e) {
+    console.error("[analyze-diffs]", e);
+    await finishCronLog(runLogId, false, undefined, e instanceof Error ? e.message : String(e));
+    return NextResponse.json({ ok: false, error: "internal error" }, { status: 500 });
+  }
 }
 
 export async function GET(req: NextRequest) {

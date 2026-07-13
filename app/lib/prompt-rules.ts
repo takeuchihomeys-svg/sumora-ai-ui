@@ -1,6 +1,7 @@
 import { supabase } from "@/app/lib/supabase";
 
 interface PromptRuleRow {
+  rule_key: string;
   rule_text: string;
   condition_key: string | null;
   condition_value: string | null;
@@ -16,12 +17,13 @@ interface PromptRuleRow {
  */
 export async function fetchPromptRules(
   actionType: string | null,
-  conditions: Record<string, string | boolean | null | undefined> = {}
+  conditions: Record<string, string | boolean | null | undefined> = {},
+  excludeLearnRules = false
 ): Promise<string> {
   try {
     let query = supabase
       .from("ai_prompt_rules")
-      .select("rule_text, condition_key, condition_value, priority")
+      .select("rule_key, rule_text, condition_key, condition_value, priority")
       .eq("is_active", true)
       .order("priority", { ascending: false })
       .limit(100); // プロンプト肥大化防止の安全上限（priority降順で上位100件を優先）
@@ -39,7 +41,14 @@ export async function fetchPromptRules(
     }
     if (!rules?.length) return "";
 
-    const applicable = (rules as PromptRuleRow[]).filter(r => {
+    // LEARN-* keys are synced copies of ai_reply_knowledge entries; exclude them when
+    // the caller already injects knowledge from that table (e.g. getPropertyKnowledge)
+    // to prevent the same rule from appearing twice in the prompt.
+    const filtered = excludeLearnRules
+      ? (rules as PromptRuleRow[]).filter(r => !r.rule_key.startsWith("LEARN-"))
+      : (rules as PromptRuleRow[]);
+
+    const applicable = filtered.filter(r => {
       if (!r.condition_key || r.condition_value === null) return true;
       const actual = conditions[r.condition_key];
       if (actual === undefined) {

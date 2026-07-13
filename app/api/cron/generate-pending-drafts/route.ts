@@ -1,6 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { detectPlaceholders } from "@/app/lib/validate-reply";
+import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 
 function getDb() {
   return createClient(
@@ -61,6 +62,7 @@ export async function GET(req: NextRequest) {
 }
 
 async function run() {
+  const runLogId = await startCronLog("generate-pending-drafts").catch(() => null);
   const db = getDb();
   const threshold = new Date(Date.now() - 60 * 1000).toISOString();
   // 10分以上前のpendingは対象外（処理失敗した会話が毎分再処理され続けるのを防ぐ上限）
@@ -112,7 +114,10 @@ async function run() {
     return rec === undefined || markerOf(c) > rec.markerMs;
   });
 
-  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  if (error) {
+    if (runLogId) await finishCronLog(runLogId, false, undefined, error.message).catch(() => null);
+    return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  }
 
   console.log("[generate-pending-drafts] processing:", combined.length, "conversations at", new Date().toISOString());
 
