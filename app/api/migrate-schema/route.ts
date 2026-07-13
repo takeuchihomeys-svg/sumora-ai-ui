@@ -1410,6 +1410,73 @@ CREATE INDEX IF NOT EXISTS idx_ai_reply_knowledge_contradicts ON ai_reply_knowle
 -- （suggestion_type は TEXT のため ALTER CHECK 不要。既存のインデックスとスキーマはそのまま使用）
 -- note: suggestion_type の新しい値は 'knowledge_contradiction' | 'knowledge_brushup'
 
+-- ── ai_prompt_rules rule_key プレフィックス規約 ──
+-- HUMAN-{knowledge_id}  : 竹内さんが直接確認・修正した知識。priority=10（最高優先）・グローバル(action_type=null)・永続。
+--                         knowledge-review clarify アクション経由で書き込まれる。削除しない限り常に最上位で注入される。
+-- LEARN-{knowledge_id}  : ai_reply_knowledge confirmed昇格時に自動同期。priority=8。conversation_stateに応じてスコープ付き。
+-- FEEDBACK-{id}-{n}     : AI盲点フィードバック（ai-feedback POST）で書き込まれる。priority=8。MAX_FEEDBACK_RULES=60件上限。
+-- FEEDBACK-{id}-{n}-gr  : 同上のgenerate-replyコピー。priority=7。
+-- 優先順位: HUMAN(10) > LEARN(8) = FEEDBACK(8) > FEEDBACK-gr(7)
+
+-- ── confirmed→ai_prompt_rules 一括同期（2026-07-13）──
+-- analyze-diffs cron（JST 3:23 毎日）が毎回実行しているが、
+-- migration 再実行時にも自己修復できるよう、ここにも冪等パスを追加する。
+-- ON CONFLICT (rule_key) DO UPDATE で重複挿入なし・既存行は rule_text と is_active を更新。
+-- KNOWLEDGE_STATE_TO_ACTION（knowledge-promote.ts）と完全に一致したマッピングを使用。
+INSERT INTO ai_prompt_rules (rule_key, action_type, rule_text, reason, priority, is_active)
+SELECT
+  'LEARN-' || k.id::text,
+  CASE k.conversation_state
+    WHEN 'property_send'                           THEN 'property_send'
+    WHEN 'property_send_pickup'                    THEN 'property_send'
+    WHEN 'property_send_new_arrival'               THEN 'property_send'
+    WHEN 'property_send_widen'                     THEN 'property_send'
+    WHEN 'viewing_invite'                          THEN 'viewing_invite'
+    WHEN 'viewing'                                 THEN 'viewing_invite'
+    WHEN 'viewing_schedule'                        THEN 'viewing_invite'
+    WHEN 'inspection'                              THEN 'viewing_invite'
+    WHEN 'greeting_viewing'                        THEN 'greeting_viewing'
+    WHEN 'application_push'                        THEN 'application_push'
+    WHEN 'application_push_push'                   THEN 'application_push'
+    WHEN 'application_push_confirm'                THEN 'application_push'
+    WHEN 'application_push_docs_request'           THEN 'application_push'
+    WHEN 'applying'                                THEN 'application_push'
+    WHEN 'application'                             THEN 'application_push'
+    WHEN 'screening'                               THEN 'application_push'
+    WHEN 'contract'                                THEN 'application_push'
+    WHEN 'condition_hearing'                       THEN 'condition_hearing'
+    WHEN 'estimate_sheet'                          THEN 'estimate_sheet'
+    WHEN 'estimate_request'                        THEN 'estimate_sheet'
+    WHEN 'meeting_place'                           THEN 'meeting_place'
+    WHEN 'property_check_result'                   THEN 'property_check_result'
+    WHEN 'property_check_result_available'         THEN 'property_check_result'
+    WHEN 'property_check_result_unavailable'       THEN 'property_check_result'
+    WHEN 'property_check_result_alternative'       THEN 'property_check_result'
+    WHEN 'property_check_result_vacate_date'       THEN 'property_check_result'
+    WHEN 'property_check_result_mgmt_guarantor'    THEN 'property_check_result'
+    WHEN 'property_check_result_mgmt_move_in'      THEN 'property_check_result'
+    WHEN 'property_check_result_mgmt_initial_cost' THEN 'property_check_result'
+    WHEN 'property_check_result_mgmt_parking'      THEN 'property_check_result'
+    WHEN 'property_check_result_mgmt_pet'          THEN 'property_check_result'
+    WHEN 'property_recommendation'                 THEN 'property_recommendation'
+    WHEN 'hearing'                                 THEN 'generate_reply'
+    WHEN 'first_reply'                             THEN 'generate_reply'
+    WHEN 'proposing'                               THEN 'generate_reply'
+    WHEN 'closed_won'                              THEN 'generate_reply'
+    ELSE NULL
+  END,
+  LEFT(k.content, 500),
+  'ナレッジ一括同期: ' || LEFT(k.title, 100),
+  8,
+  true
+FROM ai_reply_knowledge k
+WHERE k.hypothesis_status = 'confirmed'
+  AND k.importance >= 7
+ON CONFLICT (rule_key) DO UPDATE
+  SET rule_text  = EXCLUDED.rule_text,
+      is_active  = true,
+      updated_at = now();
+
 `.trim();
 
 // GET: スキーマSQLを返す（POSTと同じ CRON_SECRET 認証必須 — 無認証でのスキーマ情報開示を防止）

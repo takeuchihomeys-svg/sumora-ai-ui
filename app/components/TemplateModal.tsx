@@ -663,6 +663,10 @@ export default function TemplateModal({
   const [knowledgeChatInput, setKnowledgeChatInput] = useState<Record<string, string>>({});
   const [knowledgeChatSending, setKnowledgeChatSending] = useState<string | null>(null);  // 送信中のID
   const [knowledgeFinalizing, setKnowledgeFinalizing] = useState<string | null>(null);  // 確定中のID
+  // ✏️ 優先反映（clarify）: HUMAN-{id} priority=10 でグローバルprompt_rulesに注入する直接修正フロー
+  const [clarifyingKnowledgeId, setClarifyingKnowledgeId] = useState<string | null>(null);
+  const [clarifyContent, setClarifyContent] = useState<Record<string, string>>({});
+  const [submittingClarify, setSubmittingClarify] = useState<string | null>(null);
   // 打ち合わせチャットの吹き出しコンテナ（最新メッセージへ自動スクロール用。同時に開けるのは1件のみ）
   const knowledgeChatScrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -1053,6 +1057,28 @@ export default function TemplateModal({
     }
     finally { setKnowledgeFinalizing(null); }
   }, [knowledgeChatMessages]);
+
+  // ✏️ 優先反映（clarify）: 内容を直接修正して HUMAN-{id} priority=10 で ai_prompt_rules に永続保存
+  // HUMAN-* は LEARN-*(priority=8) / FEEDBACK-*(priority=8) より高優先度で全アクションに注入される
+  const submitClarify = useCallback(async (id: string, fallbackContent: string) => {
+    const content = (clarifyContent[id] ?? fallbackContent).trim();
+    if (!content) return;
+    setSubmittingClarify(id);
+    try {
+      const res = await fetch("/api/knowledge-review", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, action: "clarify", new_content: content }),
+      });
+      const data = await res.json() as { ok: boolean; rule_key?: string };
+      if (data.ok) {
+        setKnowledgeItems(prev => prev.filter(k => k.id !== id));
+        setClarifyingKnowledgeId(null);
+        setClarifyContent(prev => { const n = { ...prev }; delete n[id]; return n; });
+      }
+    } catch { /* noop */ }
+    finally { setSubmittingClarify(null); }
+  }, [clarifyContent]);
 
   // 回答を送信 → Sonnetが知識化（trigger_action_rules / ai_prompts に保存）
   const submitFeedbackAnswer = useCallback(async (id: string) => {
@@ -2794,6 +2820,23 @@ export default function TemplateModal({
                       🤝 打ち合わせ
                     </button>
                     <button
+                      onClick={() => {
+                        if (clarifyingKnowledgeId === item.id) {
+                          setClarifyingKnowledgeId(null);
+                        } else {
+                          setClarifyingKnowledgeId(item.id);
+                          setClarifyContent(prev => ({ ...prev, [item.id]: item.content }));
+                        }
+                      }}
+                      disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id || knowledgeFinalizing === item.id}
+                      className="px-3 py-2 rounded-lg text-[12px] font-bold border disabled:opacity-50 transition"
+                      style={clarifyingKnowledgeId === item.id
+                        ? { background: "#f97316", color: "white", borderColor: "transparent" }
+                        : { background: "#fff7ed", color: "#ea580c", borderColor: "#fed7aa" }}
+                    >
+                      ✏️ 優先反映
+                    </button>
+                    <button
                       onClick={() => rejectKnowledge(item.id)}
                       disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id || knowledgeFinalizing === item.id}
                       className="px-4 py-2 text-gray-400 text-[12px] border border-gray-200 rounded-lg bg-white hover:bg-gray-50 transition"
@@ -2801,6 +2844,33 @@ export default function TemplateModal({
                       {rejectingKnowledgeId === item.id ? "..." : "却下"}
                     </button>
                   </div>
+                  {/* ✏️ 優先反映インラインエディタ: 内容を直接修正してHUMAN-{id} priority=10で永続注入 */}
+                  {clarifyingKnowledgeId === item.id && (
+                    <div className="mt-2.5 rounded-lg border border-orange-200 bg-orange-50 p-2.5">
+                      <p className="text-[10px] font-bold text-orange-700 mb-1">✏️ 内容を修正して優先反映（priority=10・全アクションに永続注入）</p>
+                      <p className="text-[10px] text-orange-500 mb-1.5">修正内容は HUMAN-{"{id}"} として保存され、LEARN/FEEDBACK より高優先度で注入されます</p>
+                      <textarea
+                        value={clarifyContent[item.id] ?? item.content}
+                        onChange={e => setClarifyContent(prev => ({ ...prev, [item.id]: e.target.value }))}
+                        className="w-full border border-orange-300 rounded-lg px-3 py-2 text-[12px] resize-none h-24 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white"
+                      />
+                      <div className="flex gap-1.5 mt-1.5">
+                        <button
+                          onClick={() => submitClarify(item.id, item.content)}
+                          disabled={submittingClarify === item.id || !(clarifyContent[item.id] ?? item.content).trim()}
+                          className="flex-1 bg-orange-500 text-white rounded-lg py-1.5 text-[12px] font-bold disabled:opacity-50 hover:bg-orange-600 transition"
+                        >
+                          {submittingClarify === item.id ? "反映中..." : "この内容で優先反映"}
+                        </button>
+                        <button
+                          onClick={() => setClarifyingKnowledgeId(null)}
+                          className="px-3 py-1.5 text-gray-400 text-[12px] border border-gray-200 rounded-lg bg-white hover:bg-gray-50 transition"
+                        >
+                          キャンセル
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {/* 🤝 打ち合わせチャット */}
                   {knowledgeChatOpen === item.id && (
                     <div className="mt-2.5 rounded-lg border border-blue-200 bg-white p-2.5">
