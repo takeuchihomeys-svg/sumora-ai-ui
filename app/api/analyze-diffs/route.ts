@@ -231,8 +231,8 @@ async function autoJudgeKnowledge(
   conversationState: string | null,
   importance: number,
   triggerExample?: string,
-): Promise<"confirm" | "question" | "contradiction" | "skip"> {
-  if (importance < 7) return "skip";
+): Promise<{ verdict: "confirm" | "question" | "contradiction" | "skip"; reason: string }> {
+  if (importance < 7) return { verdict: "skip", reason: "" };
 
   const { data: existing } = await supabase
     .from("ai_reply_knowledge")
@@ -247,7 +247,7 @@ async function autoJudgeKnowledge(
   ).join("\n") || "（なし）";
 
   const apiKey = process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "");
-  if (!apiKey) return "skip";
+  if (!apiKey) return { verdict: "skip", reason: "" };
 
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -260,7 +260,7 @@ async function autoJudgeKnowledge(
       },
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
-        max_tokens: 100,
+        max_tokens: 300,
         messages: [{
           role: "user",
           content: `あなたは賃貸仲介営業AIの品質審査員です。以下のナレッジを判定してください。
@@ -271,26 +271,26 @@ async function autoJudgeKnowledge(
 トリガー例文: ${triggerExample?.slice(0, 100) ?? "不明"}
 既存確定ルール（同じ状況）:
 ${existingText}
-JSONのみで回答: {"verdict":"confirm"|"question"|"contradiction","reason":"..."}`,
+JSONのみで回答: {"verdict":"confirm"|"question"|"contradiction","reason":"何が問題か・竹内さんに何を確認すればよいかを60字以内で具体的に"}`,
         }],
       }),
     });
-    if (!res.ok) return "skip";
+    if (!res.ok) return { verdict: "skip", reason: "" };
     const data = await res.json() as { content?: Array<{ text: string }> };
     const text = data.content?.[0]?.text ?? "";
     const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return "skip";
-    const parsed = JSON.parse(match[0]) as { verdict?: string };
+    if (!match) return { verdict: "skip", reason: "" };
+    const parsed = JSON.parse(match[0]) as { verdict?: string; reason?: string };
     if (
       parsed.verdict === "confirm" ||
       parsed.verdict === "question" ||
       parsed.verdict === "contradiction"
     ) {
-      return parsed.verdict as "confirm" | "question" | "contradiction";
+      return { verdict: parsed.verdict, reason: parsed.reason ?? "" };
     }
-    return "skip";
+    return { verdict: "skip", reason: "" };
   } catch {
-    return "skip";
+    return { verdict: "skip", reason: "" };
   }
 }
 
@@ -1179,7 +1179,7 @@ export async function POST(req: NextRequest) {
             } else if (judgeCount < MAX_JUDGE_PER_RUN) {
               // AUTO-JUDGE: Sonnetで品質判定（Tier1未適用・importance>=7 のみ対象）
               judgeCount++;
-              const verdict = await autoJudgeKnowledge(upsertResult.id, compResult.title, compResult.rule, compState, imp, customer_message);
+              const { verdict, reason: judgeReason } = await autoJudgeKnowledge(upsertResult.id, compResult.title, compResult.rule, compState, imp, customer_message);
               if (verdict === "confirm") {
                 await supabase.from("ai_reply_knowledge")
                   .update({ hypothesis_status: "confirmed" })
@@ -1192,12 +1192,14 @@ export async function POST(req: NextRequest) {
                   importance: imp,
                 }).catch(() => {});
               } else if (verdict === "question" || verdict === "contradiction") {
+                const contentPreview = compResult.rule.slice(0, 150);
+                const reason = judgeReason || "内容の妥当性を確認したい";
                 const questionText = verdict === "contradiction"
-                  ? `既存ルールと矛盾の可能性: 「${compResult.title}」の内容を確認してください`
-                  : `このナレッジの適用場面を確認したい: 「${compResult.title}」`;
+                  ? `[knowledge_id:${upsertResult.id}]\n⚠️ 【矛盾の可能性あり】フェーズ: ${compState}\n\nナレッジ: 「${compResult.title}」\n内容: ${contentPreview}...\n\n❓ ${reason}\n\n▶ このナレッジを活かすべきか、既存ルールとどちらを優先すべきか教えてください。`
+                  : `[knowledge_id:${upsertResult.id}]\n❓ 【適用場面を確認】フェーズ: ${compState}\n\nナレッジ: 「${compResult.title}」\n内容: ${contentPreview}...\n\n不明点: ${reason}\n\n▶ このナレッジをどんな場面で使うべきか、または修正すべき点があれば教えてください。`;
                 const categoryVal = verdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity";
                 await supabase.from("ai_feedback_items").insert({
-                  question: `[knowledge_id:${upsertResult.id}] ${questionText}`,
+                  question: questionText,
                   speculation: "auto_judge による品質判定",
                   category: categoryVal,
                   evidence: `knowledge_id: ${upsertResult.id} / state: ${compState}`,
@@ -1301,7 +1303,7 @@ export async function POST(req: NextRequest) {
           } else if (judgeCount < MAX_JUDGE_PER_RUN) {
             // AUTO-JUDGE: Sonnetで品質判定（Tier1未適用・importance>=7 のみ対象）
             judgeCount++;
-            const verdict = await autoJudgeKnowledge(upsertResult.id, result.title, result.rule, conversation_state ?? null, imp, result.trigger_example);
+            const { verdict, reason: judgeReason } = await autoJudgeKnowledge(upsertResult.id, result.title, result.rule, conversation_state ?? null, imp, result.trigger_example);
             if (verdict === "confirm") {
               await supabase.from("ai_reply_knowledge")
                 .update({ hypothesis_status: "confirmed" })
@@ -1314,12 +1316,15 @@ export async function POST(req: NextRequest) {
                 importance: imp,
               }).catch(() => {});
             } else if (verdict === "question" || verdict === "contradiction") {
+              const contentPreview = result.rule.slice(0, 150);
+              const phase = conversation_state ?? "不明";
+              const reason = judgeReason || "内容の妥当性を確認したい";
               const questionText = verdict === "contradiction"
-                ? `既存ルールと矛盾の可能性: 「${result.title}」の内容を確認してください`
-                : `このナレッジの適用場面を確認したい: 「${result.title}」`;
+                ? `[knowledge_id:${upsertResult.id}]\n⚠️ 【矛盾の可能性あり】フェーズ: ${phase}\n\nナレッジ: 「${result.title}」\n内容: ${contentPreview}...\n\n❓ ${reason}\n\n▶ このナレッジを活かすべきか、既存ルールとどちらを優先すべきか教えてください。`
+                : `[knowledge_id:${upsertResult.id}]\n❓ 【適用場面を確認】フェーズ: ${phase}\n\nナレッジ: 「${result.title}」\n内容: ${contentPreview}...\n\n不明点: ${reason}\n\n▶ このナレッジをどんな場面で使うべきか、または修正すべき点があれば教えてください。`;
               const categoryVal = verdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity";
               await supabase.from("ai_feedback_items").insert({
-                question: `[knowledge_id:${upsertResult.id}] ${questionText}`,
+                question: questionText,
                 speculation: "auto_judge による品質判定",
                 category: categoryVal,
                 evidence: `knowledge_id: ${upsertResult.id} / state: ${conversation_state ?? "unknown"}`,

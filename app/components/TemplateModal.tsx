@@ -357,6 +357,12 @@ interface FeedbackItem {
   answered_at: string | null;
 }
 
+// AI質問の表示整形: [knowledge_id:UUID] プレフィックスは内部解析用に保持しているが、
+// 表示上は非表示にしてそれ以降の読みやすい本文のみを見せる
+function formatAiQuestion(question: string): string {
+  return question.replace(/^\[knowledge_id:[^\]]+\]\n?/, "").trim();
+}
+
 const FEEDBACK_CATEGORY_LABEL: Record<string, string> = {
   new_flow: "新フロー発見",
   missing_keyword: "未登録キーワード",
@@ -2789,8 +2795,8 @@ export default function TemplateModal({
                     </span>
                   </div>
 
-                  {/* 質問 */}
-                  <p className="font-medium text-gray-800 text-sm mb-1">❓ {item.question}</p>
+                  {/* 質問（[knowledge_id:UUID] プレフィックスは非表示・改行を保持して表示） */}
+                  <p className="font-medium text-gray-800 text-sm mb-1 whitespace-pre-wrap">❓ {formatAiQuestion(item.question)}</p>
 
                   {/* 憶測 */}
                   {item.speculation && (
