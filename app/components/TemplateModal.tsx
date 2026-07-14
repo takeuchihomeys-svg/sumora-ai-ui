@@ -421,6 +421,11 @@ function parseAiQuestion(question: string): AiQuestionMeta {
   return { cleanText: text.trim(), phase, importance, embeddedCategory };
 }
 
+// ナレッジタイトルの内部タグ（[修正対比] [差分学習] [原則] [パターン] 等）を除去して表示用タイトルを返す
+function cleanKnowledgeTitle(title: string): string {
+  return title.replace(/^\[.*?\]\s*/, "").trim();
+}
+
 const FEEDBACK_CATEGORY_LABEL: Record<string, string> = {
   new_flow: "新フロー発見",
   missing_keyword: "未登録キーワード",
@@ -881,6 +886,9 @@ export default function TemplateModal({
   const [clarifyingKnowledgeId, setClarifyingKnowledgeId] = useState<string | null>(null);
   const [clarifyContent, setClarifyContent] = useState<Record<string, string>>({});
   const [submittingClarify, setSubmittingClarify] = useState<string | null>(null);
+  // 🔍 ナレッジタブ フィルタ・ソート
+  const [knowledgeCategoryFilter, setKnowledgeCategoryFilter] = useState<string>("all");
+  const [knowledgeSortBy, setKnowledgeSortBy] = useState<"importance" | "created_at">("importance");
   // 打ち合わせチャットの吹き出しコンテナ（最新メッセージへ自動スクロール用。同時に開けるのは1件のみ）
   const knowledgeChatScrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -3391,15 +3399,41 @@ export default function TemplateModal({
           {/* 🧠ナレッジ承認タブ */}
           {!showAddForm && isCandidateTabActive && candidateSubTab === "knowledge" && (
             <div className="flex-1 overflow-y-auto p-3 space-y-3">
-              <div className="rounded-xl bg-purple-50 border border-purple-200 px-3 py-2 text-[11px] text-purple-700">
-                <span className="font-bold">hypothesis</span> 状態のナレッジを確認して承認（confirmed）または却下してください。<br/>
-                承認されたナレッジは次回のAIX・LINE返信生成時にプロンプトへ注入されます。
-                {!knowledgeLoading && knowledgeTotal !== null && (
-                  <span className="block mt-1 text-xs text-gray-500">
-                    （表示中: {knowledgeItems.length}件 / 全{knowledgeTotal}件）
-                  </span>
-                )}
+              {/* 改善6: ヘッダー説明文を日本語のみに改善 */}
+              <div className="bg-pink-50 rounded-xl p-3 mb-1 text-sm text-pink-700">
+                <p className="font-bold mb-0.5">✅ 承認するとAIに即反映されます</p>
+                <p className="text-xs text-pink-500">
+                  確認中のナレッジは AIX・LINE返信生成時にまだ使われていません。
+                  「承認」を押すと次回から自動でプロンプトに注入されます。
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  表示中: {knowledgeItems.length}件 / 全{knowledgeTotal ?? knowledgeItems.length}件
+                </p>
               </div>
+
+              {/* 改善4: カテゴリフィルタ + ソート切り替え */}
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {(["all", "pattern", "rule", "phrase", "principle"] as const).map(cat => (
+                  <button
+                    key={cat}
+                    onClick={() => setKnowledgeCategoryFilter(cat)}
+                    className={`shrink-0 px-3 py-1 rounded-full text-xs font-bold transition ${
+                      knowledgeCategoryFilter === cat
+                        ? "bg-pink-500 text-white"
+                        : "bg-gray-100 text-gray-500"
+                    }`}
+                  >
+                    {cat === "all" ? "すべて" : cat === "pattern" ? "パターン" : cat === "rule" ? "ルール" : cat === "phrase" ? "フレーズ" : "原則"}
+                  </button>
+                ))}
+                <button
+                  onClick={() => setKnowledgeSortBy(s => s === "importance" ? "created_at" : "importance")}
+                  className="shrink-0 px-3 py-1 rounded-full text-xs bg-gray-100 text-gray-500 font-bold"
+                >
+                  {knowledgeSortBy === "importance" ? "重要度順" : "新着順"}
+                </button>
+              </div>
+
               {knowledgeLoading && (
                 <p className="text-center text-gray-400 py-8">読み込み中...</p>
               )}
@@ -3410,167 +3444,198 @@ export default function TemplateModal({
                   <p className="text-sm text-gray-400">（analyze-diffs が毎日自動抽出します）</p>
                 </div>
               )}
-              {!knowledgeLoading && knowledgeItems.map((item) => (
-                <div key={item.id} className="border border-purple-200 rounded-xl p-3.5 bg-purple-50">
-                  {/* ヘッダー: カテゴリ・会話フェーズ */}
-                  <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
-                    {item.conversation_state && (
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-bold">
-                        {item.conversation_state}
-                      </span>
-                    )}
-                    {item.category && (
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
-                        {item.category}
-                      </span>
-                    )}
-                    <span className="ml-auto text-[10px] text-gray-400">
-                      重要度 {item.importance ?? "-"}
-                    </span>
-                  </div>
-                  {/* タイトル */}
-                  <p className="font-bold text-sm text-gray-800 mb-1">{item.title}</p>
-                  {/* 内容 */}
-                  <p className="text-[12px] text-gray-700 whitespace-pre-wrap mb-2">{item.content}</p>
-                  {/* 統計 */}
-                  <div className="flex gap-3 text-[10px] text-gray-400 mb-2.5">
-                    <span>正解 {item.correct_count ?? 0}回</span>
-                    <span>誤 {item.wrong_count ?? 0}回</span>
-                    <span>適用 {item.apply_count ?? 0}回</span>
-                  </div>
-                  {/* ボタン */}
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => confirmKnowledge(item.id)}
-                      disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id || knowledgeFinalizing === item.id}
-                      className="flex-1 rounded-lg py-2 text-[12px] font-bold text-white disabled:opacity-50 transition"
-                      style={{ background: "linear-gradient(135deg, #7B1FA2, #AB47BC)" }}
-                    >
-                      {confirmingKnowledgeId === item.id ? "承認中..." : "✅ 承認（confirmed）"}
-                    </button>
-                    <button
-                      onClick={() => setKnowledgeChatOpen(prev => prev === item.id ? null : item.id)}
-                      disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id || knowledgeFinalizing === item.id}
-                      className="px-3 py-2 rounded-lg text-[12px] font-bold text-white bg-blue-600 disabled:opacity-50 transition"
-                    >
-                      🤝 打ち合わせ
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (clarifyingKnowledgeId === item.id) {
-                          setClarifyingKnowledgeId(null);
-                        } else {
-                          setClarifyingKnowledgeId(item.id);
-                          setClarifyContent(prev => ({ ...prev, [item.id]: item.content }));
-                        }
-                      }}
-                      disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id || knowledgeFinalizing === item.id}
-                      className="px-3 py-2 rounded-lg text-[12px] font-bold border disabled:opacity-50 transition"
-                      style={clarifyingKnowledgeId === item.id
-                        ? { background: "#f97316", color: "white", borderColor: "transparent" }
-                        : { background: "#fff7ed", color: "#ea580c", borderColor: "#fed7aa" }}
-                    >
-                      ✏️ 優先反映
-                    </button>
-                    <button
-                      onClick={() => rejectKnowledge(item.id)}
-                      disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id || knowledgeFinalizing === item.id}
-                      className="px-4 py-2 text-gray-400 text-[12px] border border-gray-200 rounded-lg bg-white hover:bg-gray-50 transition"
-                    >
-                      {rejectingKnowledgeId === item.id ? "..." : "却下"}
-                    </button>
-                  </div>
-                  {/* ✏️ 優先反映インラインエディタ: 内容を直接修正してHUMAN-{id} priority=10で永続注入 */}
-                  {clarifyingKnowledgeId === item.id && (
-                    <div className="mt-2.5 rounded-lg border border-orange-200 bg-orange-50 p-2.5">
-                      <p className="text-[10px] font-bold text-orange-700 mb-1">✏️ 内容を修正して優先反映（priority=10・全アクションに永続注入）</p>
-                      <p className="text-[10px] text-orange-500 mb-1.5">修正内容は HUMAN-{"{id}"} として保存され、LEARN/FEEDBACK より高優先度で注入されます</p>
-                      <textarea
-                        value={clarifyContent[item.id] ?? item.content}
-                        onChange={e => setClarifyContent(prev => ({ ...prev, [item.id]: e.target.value }))}
-                        className="w-full border border-orange-300 rounded-lg px-3 py-2 text-[12px] resize-none h-24 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white"
-                      />
-                      <div className="flex gap-1.5 mt-1.5">
-                        <button
-                          onClick={() => submitClarify(item.id, item.content)}
-                          disabled={submittingClarify === item.id || !(clarifyContent[item.id] ?? item.content).trim()}
-                          className="flex-1 bg-orange-500 text-white rounded-lg py-1.5 text-[12px] font-bold disabled:opacity-50 hover:bg-orange-600 transition"
-                        >
-                          {submittingClarify === item.id ? "反映中..." : "この内容で優先反映"}
-                        </button>
-                        <button
-                          onClick={() => setClarifyingKnowledgeId(null)}
-                          className="px-3 py-1.5 text-gray-400 text-[12px] border border-gray-200 rounded-lg bg-white hover:bg-gray-50 transition"
-                        >
-                          キャンセル
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                  {/* 🤝 打ち合わせチャット */}
-                  {knowledgeChatOpen === item.id && (
-                    <div className="mt-2.5 rounded-lg border border-blue-200 bg-white p-2.5">
-                      <p className="text-[10px] font-bold text-blue-700 mb-1.5">🤝 打ち合わせ中</p>
-                      <div ref={knowledgeChatScrollRef} className="max-h-64 overflow-y-auto bg-gray-50 rounded-lg p-2 flex flex-col gap-1.5">
-                        {(knowledgeChatMessages[item.id] || []).length === 0 && (
-                          <p className="text-[11px] text-gray-400 text-center py-2">このナレッジについて気になる点を送信してください</p>
+              {!knowledgeLoading && (() => {
+                // 改善4: フィルタ + ソート適用
+                const filteredKnowledge = knowledgeItems
+                  .filter(item => knowledgeCategoryFilter === "all" || item.category === knowledgeCategoryFilter)
+                  .sort((a, b) => knowledgeSortBy === "importance"
+                    ? ((b.importance as number) ?? 0) - ((a.importance as number) ?? 0)
+                    : new Date(b.created_at as string).getTime() - new Date(a.created_at as string).getTime()
+                  );
+                return filteredKnowledge.map((item) => {
+                  // 改善1: タイトルから内部タグを除去
+                  const displayTitle = cleanKnowledgeTitle(item.title);
+                  const hasTag = displayTitle !== item.title;
+                  // 改善2: フェーズを日本語表示
+                  const phaseLabel = item.conversation_state
+                    ? (AI_QUESTION_PHASE_LABELS[item.conversation_state] ?? item.conversation_state)
+                    : "全フェーズ共通";
+                  return (
+                    <div key={item.id} className="border border-purple-200 rounded-xl p-3.5 bg-purple-50">
+                      {/* ヘッダー: カテゴリ・会話フェーズ（日本語） */}
+                      <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                          item.conversation_state
+                            ? "bg-purple-100 text-purple-700"
+                            : "bg-gray-100 text-gray-500"
+                        }`}>
+                          {phaseLabel}
+                        </span>
+                        {item.category && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                            {item.category}
+                          </span>
                         )}
-                        {(knowledgeChatMessages[item.id] || []).map((msg, i) => (
-                          msg.role === "user" ? (
-                            <div key={i} className="bg-blue-600 text-white rounded-lg px-3 py-2 ml-auto max-w-[80%] text-[12px] whitespace-pre-wrap">
-                              {msg.content}
-                            </div>
-                          ) : (
-                            <div key={i} className="bg-white border border-gray-200 rounded-lg px-3 py-2 max-w-[80%] text-[12px] text-gray-700 whitespace-pre-wrap">
-                              {msg.content}
-                            </div>
-                          )
-                        ))}
-                        {knowledgeChatSending === item.id && (
-                          <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 max-w-[80%] text-[12px] text-gray-400 flex items-center gap-1.5">
-                            <span className="inline-block w-3 h-3 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" />
-                            考え中...
-                          </div>
+                        <span className="ml-auto text-[10px] text-gray-400">
+                          重要度 {item.importance ?? "-"}
+                        </span>
+                      </div>
+                      {/* 改善1: タグ除去後タイトル + 元タグを出典として薄く表示 */}
+                      <p className="font-bold text-sm text-gray-800 mb-0.5">{displayTitle}</p>
+                      {hasTag && (
+                        <p className="text-[10px] text-gray-400 mb-1.5">{item.title.match(/^\[.*?\]/)?.[0] ?? ""}</p>
+                      )}
+                      {/* 改善3: ナレッジの意味セクション */}
+                      <div className="mb-2 bg-blue-50 rounded-xl p-3">
+                        <p className="text-[11px] font-bold text-blue-500 mb-1">📖 このナレッジの意味</p>
+                        <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+                          {item.content}
+                        </p>
+                      </div>
+                      {/* 改善5: スコア表示を絵文字付きで分かりやすく */}
+                      <div className="flex gap-3 text-xs text-gray-400 mt-1 mb-2.5 flex-wrap">
+                        <span>✅ 正解 {item.correct_count ?? 0}回</span>
+                        <span>❌ 誤り {item.wrong_count ?? 0}回</span>
+                        <span>📊 適用 {item.apply_count ?? 0}回</span>
+                        {(item.apply_count ?? 0) === 0 && (
+                          <span className="text-orange-400 font-bold">⚠️ まだ未使用</span>
                         )}
                       </div>
-                      <div className="flex gap-1.5 mt-2">
-                        <input
-                          type="text"
-                          value={knowledgeChatInput[item.id] || ""}
-                          onChange={(e) => setKnowledgeChatInput(prev => ({ ...prev, [item.id]: e.target.value }))}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && !e.nativeEvent.isComposing && knowledgeChatSending !== item.id && knowledgeFinalizing !== item.id) {
-                              e.preventDefault();
-                              sendKnowledgeChat(item);
+                      {/* ボタン */}
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => confirmKnowledge(item.id)}
+                          disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id || knowledgeFinalizing === item.id}
+                          className="flex-1 rounded-lg py-2 text-[12px] font-bold text-white disabled:opacity-50 transition"
+                          style={{ background: "linear-gradient(135deg, #7B1FA2, #AB47BC)" }}
+                        >
+                          {confirmingKnowledgeId === item.id ? "承認中..." : "✅ 承認（confirmed）"}
+                        </button>
+                        <button
+                          onClick={() => setKnowledgeChatOpen(prev => prev === item.id ? null : item.id)}
+                          disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id || knowledgeFinalizing === item.id}
+                          className="px-3 py-2 rounded-lg text-[12px] font-bold text-white bg-blue-600 disabled:opacity-50 transition"
+                        >
+                          🤝 打ち合わせ
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (clarifyingKnowledgeId === item.id) {
+                              setClarifyingKnowledgeId(null);
+                            } else {
+                              setClarifyingKnowledgeId(item.id);
+                              setClarifyContent(prev => ({ ...prev, [item.id]: item.content }));
                             }
                           }}
-                          placeholder="メッセージを入力..."
-                          className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-[12px] focus:outline-none focus:border-blue-400"
-                        />
-                        <button
-                          onClick={() => sendKnowledgeChat(item)}
-                          disabled={knowledgeChatSending === item.id || knowledgeFinalizing === item.id || !(knowledgeChatInput[item.id] || "").trim()}
-                          className="px-3 py-2 rounded-lg text-[12px] font-bold text-white bg-blue-600 disabled:opacity-50 transition flex items-center gap-1.5"
+                          disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id || knowledgeFinalizing === item.id}
+                          className="px-3 py-2 rounded-lg text-[12px] font-bold border disabled:opacity-50 transition"
+                          style={clarifyingKnowledgeId === item.id
+                            ? { background: "#f97316", color: "white", borderColor: "transparent" }
+                            : { background: "#fff7ed", color: "#ea580c", borderColor: "#fed7aa" }}
                         >
-                          {knowledgeChatSending === item.id ? (
-                            <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                          ) : (
-                            "送信"
-                          )}
+                          ✏️ 優先反映
+                        </button>
+                        <button
+                          onClick={() => rejectKnowledge(item.id)}
+                          disabled={confirmingKnowledgeId === item.id || rejectingKnowledgeId === item.id || knowledgeFinalizing === item.id}
+                          className="px-4 py-2 text-gray-400 text-[12px] border border-gray-200 rounded-lg bg-white hover:bg-gray-50 transition"
+                        >
+                          {rejectingKnowledgeId === item.id ? "..." : "却下"}
                         </button>
                       </div>
-                      <button
-                        onClick={() => finalizeKnowledge(item)}
-                        disabled={knowledgeFinalizing === item.id || knowledgeChatSending === item.id}
-                        className="mt-2 w-full rounded-lg py-2 text-[12px] font-bold text-white disabled:opacity-50 transition"
-                        style={{ background: "linear-gradient(135deg, #2E7D32, #66BB6A)" }}
-                      >
-                        {knowledgeFinalizing === item.id ? "確定中..." : "✅ 確定して ai_prompt_rules に反映"}
-                      </button>
+                      {/* ✏️ 優先反映インラインエディタ */}
+                      {clarifyingKnowledgeId === item.id && (
+                        <div className="mt-2.5 rounded-lg border border-orange-200 bg-orange-50 p-2.5">
+                          <p className="text-[10px] font-bold text-orange-700 mb-1">✏️ 内容を修正して優先反映（priority=10・全アクションに永続注入）</p>
+                          <p className="text-[10px] text-orange-500 mb-1.5">修正内容は HUMAN-{"{id}"} として保存され、LEARN/FEEDBACK より高優先度で注入されます</p>
+                          <textarea
+                            value={clarifyContent[item.id] ?? item.content}
+                            onChange={e => setClarifyContent(prev => ({ ...prev, [item.id]: e.target.value }))}
+                            className="w-full border border-orange-300 rounded-lg px-3 py-2 text-[12px] resize-none h-24 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white"
+                          />
+                          <div className="flex gap-1.5 mt-1.5">
+                            <button
+                              onClick={() => submitClarify(item.id, item.content)}
+                              disabled={submittingClarify === item.id || !(clarifyContent[item.id] ?? item.content).trim()}
+                              className="flex-1 bg-orange-500 text-white rounded-lg py-1.5 text-[12px] font-bold disabled:opacity-50 hover:bg-orange-600 transition"
+                            >
+                              {submittingClarify === item.id ? "反映中..." : "この内容で優先反映"}
+                            </button>
+                            <button
+                              onClick={() => setClarifyingKnowledgeId(null)}
+                              className="px-3 py-1.5 text-gray-400 text-[12px] border border-gray-200 rounded-lg bg-white hover:bg-gray-50 transition"
+                            >
+                              キャンセル
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {/* 🤝 打ち合わせチャット */}
+                      {knowledgeChatOpen === item.id && (
+                        <div className="mt-2.5 rounded-lg border border-blue-200 bg-white p-2.5">
+                          <p className="text-[10px] font-bold text-blue-700 mb-1.5">🤝 打ち合わせ中</p>
+                          <div ref={knowledgeChatScrollRef} className="max-h-64 overflow-y-auto bg-gray-50 rounded-lg p-2 flex flex-col gap-1.5">
+                            {(knowledgeChatMessages[item.id] || []).length === 0 && (
+                              <p className="text-[11px] text-gray-400 text-center py-2">このナレッジについて気になる点を送信してください</p>
+                            )}
+                            {(knowledgeChatMessages[item.id] || []).map((msg, i) => (
+                              msg.role === "user" ? (
+                                <div key={i} className="bg-blue-600 text-white rounded-lg px-3 py-2 ml-auto max-w-[80%] text-[12px] whitespace-pre-wrap">
+                                  {msg.content}
+                                </div>
+                              ) : (
+                                <div key={i} className="bg-white border border-gray-200 rounded-lg px-3 py-2 max-w-[80%] text-[12px] text-gray-700 whitespace-pre-wrap">
+                                  {msg.content}
+                                </div>
+                              )
+                            ))}
+                            {knowledgeChatSending === item.id && (
+                              <div className="bg-white border border-gray-200 rounded-lg px-3 py-2 max-w-[80%] text-[12px] text-gray-400 flex items-center gap-1.5">
+                                <span className="inline-block w-3 h-3 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" />
+                                考え中...
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex gap-1.5 mt-2">
+                            <input
+                              type="text"
+                              value={knowledgeChatInput[item.id] || ""}
+                              onChange={(e) => setKnowledgeChatInput(prev => ({ ...prev, [item.id]: e.target.value }))}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" && !e.nativeEvent.isComposing && knowledgeChatSending !== item.id && knowledgeFinalizing !== item.id) {
+                                  e.preventDefault();
+                                  sendKnowledgeChat(item);
+                                }
+                              }}
+                              placeholder="メッセージを入力..."
+                              className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-[12px] focus:outline-none focus:border-blue-400"
+                            />
+                            <button
+                              onClick={() => sendKnowledgeChat(item)}
+                              disabled={knowledgeChatSending === item.id || knowledgeFinalizing === item.id || !(knowledgeChatInput[item.id] || "").trim()}
+                              className="px-3 py-2 rounded-lg text-[12px] font-bold text-white bg-blue-600 disabled:opacity-50 transition flex items-center gap-1.5"
+                            >
+                              {knowledgeChatSending === item.id ? (
+                                <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                              ) : (
+                                "送信"
+                              )}
+                            </button>
+                          </div>
+                          <button
+                            onClick={() => finalizeKnowledge(item)}
+                            disabled={knowledgeFinalizing === item.id || knowledgeChatSending === item.id}
+                            className="mt-2 w-full rounded-lg py-2 text-[12px] font-bold text-white disabled:opacity-50 transition"
+                            style={{ background: "linear-gradient(135deg, #2E7D32, #66BB6A)" }}
+                          >
+                            {knowledgeFinalizing === item.id ? "確定中..." : "✅ 確定して ai_prompt_rules に反映"}
+                          </button>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              ))}
+                  );
+                });
+              })()}
             </div>
           )}
 
