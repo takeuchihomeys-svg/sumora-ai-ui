@@ -357,10 +357,68 @@ interface FeedbackItem {
   answered_at: string | null;
 }
 
-// AI質問の表示整形: [knowledge_id:UUID] プレフィックスは内部解析用に保持しているが、
-// 表示上は非表示にしてそれ以降の読みやすい本文のみを見せる
-function formatAiQuestion(question: string): string {
-  return question.replace(/^\[knowledge_id:[^\]]+\]\n?/, "").trim();
+// AI質問フェーズ: 英語キー → 日本語ラベル（question本文に埋め込まれた "フェーズ: xxx" を変換）
+const AI_QUESTION_PHASE_LABELS: Record<string, string> = {
+  viewing_invite:    "内見案内",
+  viewing_confirm:   "内見後確認",
+  initial_contact:   "初回接触",
+  follow_up:         "フォローアップ",
+  contract:          "契約手続き",
+  first_reply:       "初回返信",
+  hearing:           "ヒアリング",
+  proposing:         "物件提案中",
+  applying:          "申込",
+  closed_won:        "成約済み",
+  application:       "申込手続き",
+  screening:         "審査中",
+  viewing:           "内覧調整",
+  property_search:   "物件検索中",
+  condition_hearing: "条件ヒアリング",
+  estimate_request:  "見積もり説明",
+};
+
+// AI質問カテゴリ: 英語キー → 日本語ラベル（question本文に埋め込まれた "category: xxx" を変換）
+const AI_QUESTION_CATEGORY_LABELS: Record<string, string> = {
+  pattern:    "パターン学習",
+  rule:       "ルール",
+  knowledge:  "ナレッジ",
+  behavior:   "行動パターン",
+  preference: "顧客傾向",
+  flow:       "会話フロー",
+  phrase:     "フレーズ",
+  scene:      "シーン",
+  general:    "一般",
+};
+
+// AI質問の表示整形: question本文からメタ情報（フェーズ・重要度・category）を抽出して返す
+// [knowledge_id:UUID] タグは全箇所から除去、"フェーズ: xxx / 重要度: x" 行・"category: xxx" 行も取り除く
+type AiQuestionMeta = {
+  cleanText: string;
+  phase: string | null;
+  importance: number | null;
+  embeddedCategory: string | null;
+};
+function parseAiQuestion(question: string): AiQuestionMeta {
+  // [knowledge_id:UUID] タグを全箇所から除去（先頭だけでなく本文内も）
+  let text = question.replace(/\[knowledge_id:[^\]]+\]\n?/g, "");
+
+  // "フェーズ: xxx / 重要度: x" 行を抽出して除去
+  let phase: string | null = null;
+  let importance: number | null = null;
+  text = text.replace(/フェーズ[:：]\s*([A-Za-z_]+)\s*[/／]\s*重要度[:：]\s*(\d+)\s*/g, (_, p, i) => {
+    phase = p.trim();
+    importance = parseInt(i, 10);
+    return "";
+  });
+
+  // "category: xxx" 行を抽出して除去（行単位）
+  let embeddedCategory: string | null = null;
+  text = text.replace(/^category[:：]\s*([A-Za-z_]+)\s*$/gm, (_, c) => {
+    embeddedCategory = c.trim();
+    return "";
+  });
+
+  return { cleanText: text.trim(), phase, importance, embeddedCategory };
 }
 
 const FEEDBACK_CATEGORY_LABEL: Record<string, string> = {
@@ -3102,21 +3160,37 @@ export default function TemplateModal({
               )}
               {/* adapt_feedback（会話を合わせる）は他のカテゴリと分けて一番下にまとめて表示する */}
               {!feedbackLoading && (() => {
-                const renderFeedbackItem = (item: FeedbackItem) => (
+                const renderFeedbackItem = (item: FeedbackItem) => {
+                  const { cleanText, phase, importance, embeddedCategory } = parseAiQuestion(item.question);
+                  return (
                 <div key={item.id} className="border border-orange-200 rounded-xl p-4 bg-orange-50">
-                  {/* カテゴリバッジ */}
-                  <div className="flex items-center gap-2 mb-2">
+                  {/* カテゴリバッジ・フェーズ・重要度・埋め込みカテゴリ */}
+                  <div className="flex flex-wrap items-center gap-1.5 mb-2">
                     <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-bold">
                       {FEEDBACK_CATEGORY_LABEL[item.category ?? ""] ?? item.category ?? "一般"}
                     </span>
-                    <span className="text-xs text-gray-400">
+                    {phase && (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">
+                        {AI_QUESTION_PHASE_LABELS[phase] ?? phase}
+                      </span>
+                    )}
+                    {importance !== null && (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700 font-medium">
+                        重要度 {importance}
+                      </span>
+                    )}
+                    {embeddedCategory && (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">
+                        {AI_QUESTION_CATEGORY_LABELS[embeddedCategory] ?? embeddedCategory}
+                      </span>
+                    )}
+                    <span className="text-xs text-gray-400 ml-auto">
                       確信度: {FEEDBACK_CONFIDENCE_LABEL[item.confidence ?? ""] ?? item.confidence ?? "中"}
                     </span>
                   </div>
 
-                  {/* 質問（[knowledge_id:UUID] プレフィックスは非表示・改行を保持して表示）
-                      新フォーマットは ❓/⚠️ で始まるためJSX側の絵文字プレフィックスは不要 */}
-                  <p className="font-medium text-gray-800 text-sm mb-1 whitespace-pre-wrap">{formatAiQuestion(item.question)}</p>
+                  {/* 質問本文（内部タグ・メタ行を除去済み・改行を保持して全文表示） */}
+                  <p className="font-medium text-gray-800 text-sm mb-1 whitespace-pre-wrap">{cleanText}</p>
 
                   {/* 憶測 */}
                   {item.speculation && (
@@ -3188,7 +3262,8 @@ export default function TemplateModal({
                     </div>
                   ) : null}
                 </div>
-                );
+                  );
+                };
                 const normalItems = feedbackItems.filter(f => f.category !== "adapt_feedback");
                 const adaptItems = feedbackItems.filter(f => f.category === "adapt_feedback");
                 return (

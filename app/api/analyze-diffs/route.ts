@@ -375,7 +375,7 @@ async function checkContradiction(
 
         const knowledgePrefix = newKnowledgeId ? `[knowledge_id:${newKnowledgeId}] ` : "";
         await insertAiQuestion({
-          question: `${knowledgePrefix}[矛盾確認] 新ナレッジ「${title.slice(0, 40)}」が既存ルール「${(rule.title as string).slice(0, 40)}」と矛盾する可能性があります。NGフレーズ「${ngPhrase}」が confirmed ルール本文に含まれています。どちらのルールが正しいですか？`,
+          question: `${knowledgePrefix}❓【教えてください】確認済みルールとの矛盾 — どちらを優先しますか？\n\n━━ 対象ナレッジ ━━\n「${title.slice(0, 40)}」\n内容: ${content.slice(0, 200)}\n\n━━ なぜ確認が必要か ━━\n新ナレッジに含まれる NGフレーズ「${ngPhrase}」が、既存の confirmed ルール「${(rule.title as string).slice(0, 40)}」の本文に含まれています。2つのルールが矛盾している可能性があります。\n\n❓ 竹内さんへの質問\n① 新ナレッジ「${title.slice(0, 40)}」と既存ルール「${(rule.title as string).slice(0, 40)}」、どちらが正しいですか？\n② 新ナレッジを採用する場合、既存ルールはどう修正すべきでしょうか？`,
           speculation: `新ナレッジ内のNGフレーズ「${ngPhrase}」が、既存 confirmed ルール「${(rule.title as string).slice(0, 50)}」の本文に含まれていました。新ナレッジは hypothesis のまま保留しています。`,
           category: "knowledge_gap",
           evidence: `既存ナレッジID: ${rule.id as string}${newKnowledgeId ? ` / 新ナレッジID: ${newKnowledgeId}` : ""} / 新ナレッジ内容（抜粋）: ${content.slice(0, 120)}`,
@@ -413,7 +413,7 @@ async function checkContradiction(
 
           const knowledgePrefixHuman = newKnowledgeId ? `[knowledge_id:${newKnowledgeId}] ` : "";
           await insertAiQuestion({
-            question: `${knowledgePrefixHuman}[HUMAN矛盾] 新ナレッジ「${title.slice(0, 40)}」が竹内さん確認済み最優先ルール「${humanRule.rule_key as string}」と矛盾する可能性があります。NGフレーズ「${ngPhrase}」が最優先ルール本文に含まれています。どちらが正しいですか？`,
+            question: `${knowledgePrefixHuman}⚠️【教えてください】最優先ルール（HUMAN）との矛盾 — どちらを優先しますか？\n\n━━ 対象ナレッジ ━━\n「${title.slice(0, 40)}」\n内容: ${content.slice(0, 200)}\n\n━━ なぜ確認が必要か ━━\n新ナレッジに含まれる NGフレーズ「${ngPhrase}」が、竹内さん確認済み最優先ルール「${humanRule.rule_key as string}」の本文に含まれています。最優先ルールと矛盾するため、新ナレッジを採用するには最優先ルール側の修正が必要です。\n\n❓ 竹内さんへの質問\n① 新ナレッジ「${title.slice(0, 40)}」と最優先ルール「${humanRule.rule_key as string}」、どちらが正しいですか？\n② 新ナレッジを採用する場合、最優先ルール「${humanRule.rule_key as string}」はどう修正すべきでしょうか？`,
             speculation: `新ナレッジのNGフレーズ「${ngPhrase}」が HUMAN優先ルール（${humanRule.rule_key as string}）の本文に含まれていました。新ナレッジを採用するには最優先ルールの修正が必要です。`,
             category: "knowledge_gap",
             evidence: `HUMANルールkey: ${humanRule.rule_key as string}${newKnowledgeId ? ` / 新ナレッジID: ${newKnowledgeId}` : ""} / HUMANルール本文（抜粋）: ${(humanRule.rule_text as string).slice(0, 80)} / 新ナレッジ内容（抜粋）: ${content.slice(0, 80)}`,
@@ -638,7 +638,7 @@ async function detectRepeatedDeletions(): Promise<{ detected: number; demoted: n
 
     // ⑤ ai_feedback_items へ起票（既存スキーマ: question/category/evidence を使用）
     //    question 先頭50字（=フレーズ部分）で dedup し、同じフレーズを毎日重複起票しない
-    const question = `「${phrase.slice(0, 60)}」が${cluster.convIds.size}件の別会話でスタッフに修正されています。このフレーズはどういう顧客状況のときに使うべきですか？また現在のプロンプトや知識のどこが曖昧でこのフレーズが不適切な場面で出てしまったと思いますか？`;
+    const question = `❓【教えてください】複数会話で削除されたフレーズの適用条件\n\n━━ 対象フレーズ ━━\n「${phrase.slice(0, 60)}」\n削除件数: ${cluster.convIds.size}件の別会話でスタッフが削除\n\n━━ なぜ確認が必要か ━━\nこのフレーズが${cluster.convIds.size}件の異なる会話でスタッフに削除されています。特定顧客向けの表現が汎用フレーズとして誤学習されている可能性があります。\n\n❓ 竹内さんへの質問\n① このフレーズはどんな顧客状況のときに使うべきですか？（使うべき場面・使わないべき場面）\n② 現在のプロンプトや知識のどこが曖昧で、不適切な場面でこのフレーズが出てしまったと思いますか？`;
     const dedupKey = question.slice(0, 50).replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
     const { data: existing } = await supabase
       .from("ai_feedback_items")
@@ -838,7 +838,7 @@ export async function POST(req: NextRequest) {
       }
 
       // ai_feedback_items に再確認質問を起票（重複防止）
-      const question = `「${(rule.title as string).slice(0, 50)}」ルールの妥当性を再確認してください（RLHF wrong率${Math.round(wrong / total * 100)}%）`;
+      const question = `❓【教えてください】confirmed ルールの妥当性を再確認してください\n\n━━ 対象ナレッジ ━━\n「${(rule.title as string).slice(0, 50)}」\n\n━━ なぜ確認が必要か ━━\nこのルールは過去に confirmed（確認済み）になりましたが、直近のフィードバックで外れ率が ${Math.round(wrong / total * 100)}% に達しています（correct:${correct}件 / wrong:${wrong}件）。市況変化・方針変更でルールが陳腐化している可能性があります。\n\n❓ 竹内さんへの質問\n① このルールは今も正しいですか？問題があれば修正内容を教えてください。\n② 外れ率が高い原因として心当たりはありますか？（方針変更・特殊ケースの混入など）`;
       const dedupKey = question.slice(0, 50).replace(/[%_\\]/g, "\\$&");
       const { data: existsFb } = await supabase
         .from("ai_feedback_items")
@@ -909,7 +909,7 @@ export async function POST(req: NextRequest) {
       }
 
       // ── Tier 2: 確認起票あり（既存動作）──
-      const question = `「${(rule.title as string).slice(0, 50)}」ルールが自動confirmed昇格しました（correct:${correct}件 / apply:${applyCount}件 / 外れ率:${Math.round(wrongRate * 100)}%）。内容を確認して問題ないか教えてください。`;
+      const question = `❓【教えてください】自動 confirmed 昇格ルールの内容を確認してください\n\n━━ 対象ナレッジ ━━\n「${(rule.title as string).slice(0, 50)}」\n\n━━ なぜ確認が必要か ━━\nこのルールが自動で confirmed（確認済み）に昇格しました（correct:${correct}件 / apply:${applyCount}件 / 外れ率:${Math.round(wrongRate * 100)}%）。AI生成物への自動昇格のため、内容を人間が確認する必要があります。\n\n❓ 竹内さんへの質問\n① このルールの内容は正しいですか？問題があれば修正内容を教えてください。\n② confirmed のままでよいですか？それとも再度 hypothesis に戻しますか？`;
       const dedupKey = question.slice(0, 50).replace(/[%_\\]/g, "\\$&");
       const { data: existsFb } = await supabase
         .from("ai_feedback_items")
@@ -1250,8 +1250,8 @@ export async function POST(req: NextRequest) {
                 const contentPreview = compResult.rule.slice(0, 150);
                 const reason = judgeReason || "内容の妥当性を確認したい";
                 const questionText = verdict === "contradiction"
-                  ? `[knowledge_id:${upsertResult.id}]\n⚠️ 【矛盾の可能性あり】フェーズ: ${compState}\n\nナレッジ: 「${compResult.title}」\n内容: ${contentPreview}...\n\n❓ ${reason}\n\n▶ このナレッジを活かすべきか、既存ルールとどちらを優先すべきか教えてください。`
-                  : `[knowledge_id:${upsertResult.id}]\n❓ 【適用場面を確認】フェーズ: ${compState}\n\nナレッジ: 「${compResult.title}」\n内容: ${contentPreview}...\n\n不明点: ${reason}\n\n▶ このナレッジをどんな場面で使うべきか、または修正すべき点があれば教えてください。`;
+                  ? `[knowledge_id:${upsertResult.id}]\n⚠️【教えてください】既存ルールとの矛盾 — どちらを優先しますか？\n\n━━ 対象ナレッジ ━━\n「${compResult.title}」（フェーズ: ${compState}）\n内容: ${contentPreview}...\n\n━━ なぜ確認が必要か ━━\nAIによる品質判定で「既存ルールとの矛盾」が検出されました。${reason}\n\n❓ 竹内さんへの質問\n① このナレッジを活かすべきですか？それとも既存ルールを優先しますか？\n② 採用する場合、既存ルールはどう修正すべきでしょうか？`
+                  : `[knowledge_id:${upsertResult.id}]\n❓【教えてください】${reason}\n\n━━ 対象ナレッジ ━━\n「${compResult.title}」（フェーズ: ${compState}）\n内容: ${contentPreview}...\n\n━━ なぜ確認が必要か ━━\nAIによる品質判定で「適用場面が不明確」と判定されました。このナレッジの使いどころを特定できないと、誤った場面でAIが適用してしまう可能性があります。\n\n❓ 竹内さんへの質問\n① このナレッジはどんな場面（顧客状況・フェーズ）で使うべきですか？\n② 内容に修正すべき点があれば教えてください。`;
                 const categoryVal = verdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity";
                 await insertAiQuestion({
                   question: questionText,
@@ -1376,8 +1376,8 @@ export async function POST(req: NextRequest) {
               const phase = conversation_state ?? "不明";
               const reason = judgeReason || "内容の妥当性を確認したい";
               const questionText = verdict === "contradiction"
-                ? `[knowledge_id:${upsertResult.id}]\n⚠️ 【矛盾の可能性あり】フェーズ: ${phase}\n\nナレッジ: 「${result.title}」\n内容: ${contentPreview}...\n\n❓ ${reason}\n\n▶ このナレッジを活かすべきか、既存ルールとどちらを優先すべきか教えてください。`
-                : `[knowledge_id:${upsertResult.id}]\n❓ 【適用場面を確認】フェーズ: ${phase}\n\nナレッジ: 「${result.title}」\n内容: ${contentPreview}...\n\n不明点: ${reason}\n\n▶ このナレッジをどんな場面で使うべきか、または修正すべき点があれば教えてください。`;
+                ? `[knowledge_id:${upsertResult.id}]\n⚠️【教えてください】既存ルールとの矛盾 — どちらを優先しますか？\n\n━━ 対象ナレッジ ━━\n「${result.title}」（フェーズ: ${phase}）\n内容: ${contentPreview}...\n\n━━ なぜ確認が必要か ━━\nAIによる品質判定で「既存ルールとの矛盾」が検出されました。${reason}\n\n❓ 竹内さんへの質問\n① このナレッジを活かすべきですか？それとも既存ルールを優先しますか？\n② 採用する場合、既存ルールはどう修正すべきでしょうか？`
+                : `[knowledge_id:${upsertResult.id}]\n❓【教えてください】${reason}\n\n━━ 対象ナレッジ ━━\n「${result.title}」（フェーズ: ${phase}）\n内容: ${contentPreview}...\n\n━━ なぜ確認が必要か ━━\nAIによる品質判定で「適用場面が不明確」と判定されました。このナレッジの使いどころを特定できないと、誤った場面でAIが適用してしまう可能性があります。\n\n❓ 竹内さんへの質問\n① このナレッジはどんな場面（顧客状況・フェーズ）で使うべきですか？\n② 内容に修正すべき点があれば教えてください。`;
               const categoryVal = verdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity";
               await insertAiQuestion({
                 question: questionText,
