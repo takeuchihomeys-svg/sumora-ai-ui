@@ -1138,7 +1138,9 @@ export default function TemplateModal({
           category: c.category,
         }));
       setSuggestions([...aixItems, ...baseList]);
-    } catch { /* noop */ }
+    } catch (e) {
+      console.error("[TemplateModal] loadSuggestions 失敗:", e);
+    }
     finally { setSuggestionLoading(false); }
   }, []);
 
@@ -1153,7 +1155,9 @@ export default function TemplateModal({
       const res = await fetch("/api/ai-feedback");
       const json = await res.json() as { ok: boolean; items: FeedbackItem[] };
       if (json.ok) setFeedbackItems(json.items ?? []);
-    } catch { /* noop */ }
+    } catch (e) {
+      console.error("[TemplateModal] loadFeedbackItems 失敗:", e);
+    }
     finally { setFeedbackLoading(false); }
   }, []);
 
@@ -1168,7 +1172,9 @@ export default function TemplateModal({
       const res = await fetch("/api/aix-feature-suggestions?type=knowledge_question");
       const json = await res.json() as { ok: boolean; suggestions: AixFeatureSuggestion[] };
       if (json.ok) setKnowledgeQuestions(json.suggestions ?? []);
-    } catch { /* noop */ }
+    } catch (e) {
+      console.error("[TemplateModal] loadKnowledgeQuestions 失敗:", e);
+    }
     finally { setKnowledgeQuestionsLoading(false); }
   }, []);
 
@@ -1237,7 +1243,9 @@ export default function TemplateModal({
       const json = await res.json() as { rules: KnowledgeItem[]; total?: number };
       setKnowledgeItems(json.rules ?? []);
       setKnowledgeTotal(typeof json.total === "number" ? json.total : null);
-    } catch { /* noop */ }
+    } catch (e) {
+      console.error("[TemplateModal] loadKnowledgeItems 失敗:", e);
+    }
     finally { setKnowledgeLoading(false); }
   }, []);
 
@@ -1370,16 +1378,20 @@ export default function TemplateModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id, action: "clarify", new_content: content }),
       });
-      const data = await res.json() as { ok: boolean; rule_key?: string };
+      const data = await res.json() as { ok: boolean; rule_key?: string; error?: string };
       if (data.ok) {
         setKnowledgeItems(prev => prev.filter(k => k.id !== id));
         setKnowledgeTotal(prev => (prev === null ? prev : Math.max(0, prev - 1)));
         setClarifyingKnowledgeId(null);
         setClarifyContent(prev => { const n = { ...prev }; delete n[id]; return n; });
+      } else {
+        showModalError(`優先反映に失敗しました${(data as { error?: string }).error ? `（${(data as { error?: string }).error}）` : ""}。もう一度お試しください。`);
       }
-    } catch { /* noop */ }
+    } catch (e) {
+      showModalError(`優先反映に失敗しました（通信エラー）: ${e instanceof Error ? e.message : String(e)}`);
+    }
     finally { setSubmittingClarify(null); }
-  }, [clarifyContent]);
+  }, [clarifyContent, showModalError]);
 
   // 回答を送信 → Sonnetが知識化（trigger_action_rules / ai_prompts に保存）
   const submitFeedbackAnswer = useCallback(async (id: string) => {
@@ -2291,9 +2303,10 @@ export default function TemplateModal({
               >
                 🤖AI提案{(() => {
                   // aix_edit候補はsuggestionsに統合されているため二重カウントを避ける
+                  // adopted（実装待ち）はバッジ件数から除外する
                   const total =
                     candidates.filter(c => !c.is_adopted && !c.is_dismissed && c.source !== "aix_edit").length +
-                    suggestions.length +
+                    suggestions.filter(s => s.status !== "adopted").length +
                     feedbackItems.filter(f => f.status === "pending").length;
                   return total > 0 ? ` (${total})` : "";
                 })()}
@@ -2446,7 +2459,8 @@ export default function TemplateModal({
                   }
                 >
                   💡改善案{(() => {
-                    const count = suggestions.length + improvementCandidates.length;
+                    // adopted（実装待ち）はバッジ件数から除外する
+                    const count = suggestions.filter(s => s.status !== "adopted").length + improvementCandidates.length;
                     return count > 0 ? ` (${count})` : "";
                   })()}
                 </button>

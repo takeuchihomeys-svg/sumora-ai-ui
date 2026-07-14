@@ -235,7 +235,8 @@ export async function POST(req: NextRequest) {
           .update({ hypothesis_status: "confirmed" })
           .eq("id", knowledgeId);
         if (kErr) {
-          console.warn("[aix-feature-suggestions] adopted knowledge_brushup 更新失敗:", kErr.message);
+          // ナレッジ更新失敗はユーザーに伝え、status 更新も行わない（失敗を隠さない）
+          return NextResponse.json({ ok: false, error: "ナレッジの更新に失敗しました: " + kErr.message }, { status: 500 });
         } else {
           const { data: kRow } = await supabase
             .from("ai_reply_knowledge")

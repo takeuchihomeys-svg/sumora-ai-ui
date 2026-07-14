@@ -335,6 +335,16 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
       parts.push("【📘 テンプレート修正学習ルール（テンプレ活用時の改善パターン — テンプレを使う場合は必ず参照）】\n" +
         (adaptRules as { rule_text: string; category: string }[]).map(r => `・[${r.category}] ${r.rule_text}`).join("\n"));
     }
+    // adaptation_improvement_rules の使用記録（fire-and-forget）
+    // used_count 専用 RPC がない場合は updated_at をタッチして「最後に使われた日時」を記録する
+    const adaptIds = (adaptRules ?? []).map((r: { id: string }) => r.id).filter(Boolean);
+    if (adaptIds.length > 0) {
+      supabase
+        .from("adaptation_improvement_rules")
+        .update({ updated_at: new Date().toISOString() })
+        .in("id", adaptIds)
+        .then(() => {}, (e: Error) => console.warn("[aix/action] adaptation_improvement_rules updated_at update failed:", e.message));
+    }
     // F04: pgvector で追加取得した文脈関連ルール
     if (vectorExtras.length > 0) {
       parts.push("【🔍 この顧客メッセージへの関連ルール（文脈検索）】\n" +

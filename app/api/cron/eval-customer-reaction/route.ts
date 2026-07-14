@@ -21,7 +21,7 @@ const EXCLUDED_STATUSES = ["applying", "screening"];
 // - greeting_viewing: 内覧後挨拶（社交的・返信率低くても正常）
 // - acknowledge_check: 管理会社/オーナー宛て確認（顧客へのメッセージでない）
 // - condition_hearing: 条件ヒアリングフォーム送付（フォーム回答=LINE返信でない）
-const EXCLUDED_AIX_TYPES = ["meeting_place", "greeting_viewing", "acknowledge_check", "condition_hearing"];
+const EXCLUDED_AIX_TYPES = ["meeting_place", "greeting_viewing", "acknowledge_check", "condition_hearing", "followup_revive"];
 
 export async function POST(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;

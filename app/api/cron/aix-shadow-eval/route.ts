@@ -25,6 +25,7 @@ const EXCLUDED_AIX_TYPES = [
   "greeting_viewing",
   "acknowledge_check",
   "condition_hearing",
+  "followup_revive",
 ];
 
 export async function POST(req: NextRequest) {
