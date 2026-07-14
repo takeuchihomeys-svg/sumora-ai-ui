@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
   let query = supabase
     .from("aix_feature_suggestions")
     .select("*")
-    .in("status", ["pending", "approved"])
+    .in("status", ["pending", "approved", "adopted"])
     .order("created_at", { ascending: false })
     .limit(100);
 
@@ -28,8 +28,11 @@ export async function GET(req: NextRequest) {
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   // 打ち合わせ済み（approved = 実装待ち）を上部に表示
+  const STATUS_ORDER: Record<string, number> = { approved: 0, adopted: 1, pending: 2 };
   const suggestions = (data ?? []).sort((a, b) => {
-    if (a.status !== b.status) return a.status === "approved" ? -1 : 1;
+    const ao = STATUS_ORDER[a.status as string] ?? 3;
+    const bo = STATUS_ORDER[b.status as string] ?? 3;
+    if (ao !== bo) return ao - bo;
     return 0; // created_at 降順（元のDB順）を維持
   });
   return NextResponse.json({ ok: true, suggestions });

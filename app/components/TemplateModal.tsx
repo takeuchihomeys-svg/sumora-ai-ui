@@ -1588,16 +1588,19 @@ export default function TemplateModal({
   // P4/P5: AIX改善案のステータス更新（adopted / dismissed / implemented + 理由）
   // API失敗時は一覧から消さずエラー表示する（silent catchだと却下が効いていないのに消えたように見える）
   const updateSuggestionStatus = useCallback(async (id: string, status: "adopted" | "dismissed" | "implemented", reason?: string) => {
+    // new_picker/new_button/new_aix は採用後も「採用済み・実装待ち」としてリストに残す
+    const IMPL_TRACKING_TYPES = ["new_picker", "new_button", "new_aix"];
+    const targetSg = suggestions.find(s => s.id === id);
+    const needsImplTracking = status === "adopted" && !!targetSg && IMPL_TRACKING_TYPES.includes(targetSg.suggestion_type);
     try {
       // adopted 時: ナレッジ連動フィールドを添付する
       // （knowledge_aix_align / knowledge_brushup を採用したらAPI側で実際にナレッジへ反映されるようにする）
       const extra: Record<string, string> = {};
       if (status === "adopted") {
-        const sg = suggestions.find(s => s.id === id);
-        if (sg) {
-          extra.suggestion_type = sg.suggestion_type;
+        if (targetSg) {
+          extra.suggestion_type = targetSg.suggestion_type;
           try {
-            const notes = JSON.parse(sg.implementation_notes ?? "{}") as { knowledge_id?: string; append_text?: string };
+            const notes = JSON.parse(targetSg.implementation_notes ?? "{}") as { knowledge_id?: string; append_text?: string };
             if (notes.knowledge_id) extra.knowledge_id = notes.knowledge_id;
             if (notes.append_text) extra.append_text = notes.append_text;
           } catch { /* implementation_notes がJSONでない提案は連動対象外 */ }
@@ -1610,7 +1613,12 @@ export default function TemplateModal({
       });
       const json = await res.json() as { ok?: boolean; error?: string };
       if (!res.ok || !json.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
-      setSuggestions(prev => prev.filter(s => s.id !== id));
+      if (needsImplTracking) {
+        // 実装待ちとしてリストに残す（statusだけ更新）
+        setSuggestions(prev => prev.map(s => s.id === id ? { ...s, status: "adopted" } : s));
+      } else {
+        setSuggestions(prev => prev.filter(s => s.id !== id));
+      }
     } catch (e) {
       showModalError(`ステータス更新に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -2779,6 +2787,12 @@ export default function TemplateModal({
                           🤝 打ち合わせ済み
                         </span>
                       )}
+                      {/* 採用済み・実装待ち（new_picker/new_button/new_aix の adopted） */}
+                      {suggestion.status === "adopted" && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-700 font-bold shrink-0">
+                          ✅ 採用済み・実装待ち
+                        </span>
+                      )}
                       {/* AIXボタン名バッジ（action_typeがある場合） */}
                       {suggestion.action_type && (
                         <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full font-bold shrink-0"
@@ -2864,7 +2878,7 @@ export default function TemplateModal({
                       );
                     })()}
                     <div className="flex gap-2">
-                      {suggestion.status === "approved" ? (
+                      {(suggestion.status === "approved" || suggestion.status === "adopted") ? (
                         <button
                           onClick={() => updateSuggestionStatus(suggestion.id, "implemented")}
                           className="flex-1 py-1.5 rounded-lg bg-green-500 text-white text-sm font-semibold hover:bg-green-600 transition"
@@ -2896,15 +2910,18 @@ export default function TemplateModal({
                           ✅ 確認して採用
                         </button>
                       )}
-                      <button
-                        onClick={() => setDismissingId(dismissingId === suggestion.id ? null : suggestion.id)}
-                        className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-500 text-sm hover:bg-gray-200 transition"
-                      >
-                        却下
-                      </button>
+                      {/* 採用済みは却下不要なので非表示 */}
+                      {suggestion.status !== "adopted" && (
+                        <button
+                          onClick={() => setDismissingId(dismissingId === suggestion.id ? null : suggestion.id)}
+                          className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-500 text-sm hover:bg-gray-200 transition"
+                        >
+                          却下
+                        </button>
+                      )}
                     </div>
                     {/* P5: 却下理由チップ */}
-                    {dismissingId === suggestion.id && (
+                    {dismissingId === suggestion.id && suggestion.status !== "adopted" && (
                       <div className="mt-2 rounded-lg bg-gray-50 p-2">
                         <p className="text-[11px] text-gray-400 mb-1.5">却下理由を選ぶとAIが学習します</p>
                         <div className="flex flex-wrap gap-1.5">
