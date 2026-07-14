@@ -105,6 +105,10 @@ export async function POST(req: NextRequest) {
         customerConditions,
         customerSummary: pcData?.ai_summary || "",
         replyHint,
+        // RLHF断絶修正: conversationId を渡して generate-reply 側の logKnowledgeApply を発火させる
+        // （knowledge_apply_log 記録 → text_retention / deal_outcome フィードバック対象化）
+        // ※ generate-reply 側も ai_draft を保存するが同一内容の冪等上書きのため二重化の実害なし
+        conversationId: convId,
       }),
       signal: AbortSignal.timeout(30_000),
     });
@@ -133,7 +137,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const finalDraft = fullText.trim();
+    // 内部タグ（<<<SUGGESTED_AIX:{...}>>> / <<<STOP_REASON:xxx>>>）を本文から除去してから保存
+    // （generate-reply はストリーム末尾にトレーラーを付加するため、未除去のまま保存すると内部指示が顧客に届く事故になる）
+    const finalDraft = fullText
+      .replace(/\n?<<<SUGGESTED_AIX:[\s\S]*?>>>/g, "")
+      .replace(/\n?<<<STOP_REASON:[\w-]*>>>/g, "")
+      .trim();
     if (!finalDraft) return NextResponse.json({ ok: false });
 
     // DBに保存（Realtimeで他デバイスにも反映）

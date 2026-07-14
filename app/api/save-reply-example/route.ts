@@ -6,6 +6,10 @@ import { learnFromModifiedExample } from "@/app/lib/auto-knowledge";
 // Vercel Functions のタイムアウト上限（秒）— Haiku分析チェーン×3に余裕を持たせる
 export const maxDuration = 60;
 
+// 精密評価窓（knowledge_apply_log を遡って評価する時間幅）
+// 夜間問い合わせ→翌日返信のケースで評価が粗くならないよう 6h → 24h に拡大
+const PRECISE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 // ─── OpenAI 埋め込み生成（text-embedding-3-small・1536次元）────────────────────
 async function getEmbedding(text: string): Promise<number[] | null> {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -280,13 +284,13 @@ JSONのみで返答（説明不要）：
 // 対象は category IN ('phrase', 'pattern') のみ（principle 等のルール系は下げない）。
 async function decayRemovedKnowledge(conversationId: string, aiDraft: string, sentReply: string): Promise<void> {
   try {
-    // 賃貸仲介では確認・検討に数時間かかるため 1h → 6h に拡張（MEDIUM-08修正）
-    const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+    // 夜間問い合わせ→翌日返信のケースを取りこぼさないよう 6h → 24h に拡張
+    const windowStart = new Date(Date.now() - PRECISE_WINDOW_MS).toISOString();
     const { data: logs } = await supabase
       .from("knowledge_apply_log")
       .select("knowledge_id, ai_reply_knowledge(id, category, content)")
       .eq("conversation_id", conversationId)
-      .gte("applied_at", sixHoursAgo)
+      .gte("applied_at", windowStart)
       .limit(100);
     if (!logs || logs.length === 0) return;
 
@@ -323,8 +327,8 @@ async function preciseKnowledgeFeedback(
   overallSim: number
 ): Promise<void> {
   try {
-    // 賃貸仲介では確認・検討に数時間かかるため 1h → 6h に拡張（MEDIUM-08修正）
-    const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
+    // 夜間問い合わせ→翌日返信のケースを取りこぼさないよう 6h → 24h に拡張
+    const windowStart = new Date(Date.now() - PRECISE_WINDOW_MS).toISOString();
     type LogRow = {
       knowledge_id: string;
       ai_reply_knowledge:
@@ -338,7 +342,7 @@ async function preciseKnowledgeFeedback(
       .eq("conversation_id", conversationId)
       .eq("result", "pending")
       .eq("source", source)
-      .gte("applied_at", sixHoursAgo)
+      .gte("applied_at", windowStart)
       .limit(60);
 
     if (!logs || logs.length === 0) {

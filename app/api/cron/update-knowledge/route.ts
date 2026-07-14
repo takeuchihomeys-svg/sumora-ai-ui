@@ -59,7 +59,9 @@ ${sentReply}
     };
     const entries = [
       { category: "pattern" as const,    title: analysis.situation,          content: analysis.pattern,    importance: 7 },
-      { category: "principle" as const,  title: `原則：${analysis.situation}`, content: analysis.principle,  importance: 8 },
+      // principle は importance=9 で保存する（generate-reply の fetchKnowledge は principle を
+      // importance>=9 の保証バケットでのみ注入するため、8 だとプロンプトに一切届かず死蔵される）
+      { category: "principle" as const,  title: `原則：${analysis.situation}`, content: analysis.principle,  importance: 9 },
       ...analysis.style_elements.map((el) => ({ category: "style" as const, title: "口調・スタイル", content: el, importance: 6 })),
       ...analysis.key_phrases.map((p)  => ({ category: "phrase" as const,   title: "フレーズ",      content: p,  importance: 6 })),
     ];

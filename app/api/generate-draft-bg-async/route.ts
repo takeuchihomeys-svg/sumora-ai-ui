@@ -174,6 +174,10 @@ export async function POST(req: NextRequest) {
             customerConditions,
             customerSummary: pcData?.ai_summary || "",
             replyHint,
+            // RLHF断絶修正: conversationId を渡して generate-reply 側の logKnowledgeApply を発火させる
+            // （knowledge_apply_log 記録 → text_retention / deal_outcome フィードバック対象化）
+            // ※ generate-reply 側も ai_draft を保存するが同一内容の冪等上書きのため二重化の実害なし
+            conversationId: convId,
           }),
         });
         clearTimeout(timeoutId);
@@ -217,15 +221,24 @@ export async function POST(req: NextRequest) {
         }
       } catch (streamErr) {
         console.error("[bg-async] stream read error:", String(streamErr), "convId:", convId, "partial text length:", fullText.length);
-        // 部分テキストがあれば保存を試みる
-        if (fullText.trim().length > 20) {
-          await db.from("conversations").update({ ai_draft: fullText.trim() }).eq("id", convId);
-          console.log("[bg-async] saved partial draft:", fullText.length, "chars, convId:", convId);
+        // 部分テキストがあれば保存を試みる（内部タグは除去）
+        const partialDraft = fullText
+          .replace(/\n?<<<SUGGESTED_AIX:[\s\S]*?>>>/g, "")
+          .replace(/\n?<<<STOP_REASON:[\w-]*>>>/g, "")
+          .trim();
+        if (partialDraft.length > 20) {
+          await db.from("conversations").update({ ai_draft: partialDraft }).eq("id", convId);
+          console.log("[bg-async] saved partial draft:", partialDraft.length, "chars, convId:", convId);
         }
         return;
       }
 
-      const finalDraft = fullText.trim();
+      // 内部タグ（<<<SUGGESTED_AIX:{...}>>> / <<<STOP_REASON:xxx>>>）を本文から除去してから保存
+      // （generate-reply はストリーム末尾にトレーラーを付加するため、未除去のまま保存すると内部指示が顧客に届く事故になる）
+      const finalDraft = fullText
+        .replace(/\n?<<<SUGGESTED_AIX:[\s\S]*?>>>/g, "")
+        .replace(/\n?<<<STOP_REASON:[\w-]*>>>/g, "")
+        .trim();
       if (finalDraft) {
         const { error: saveErr } = await db.from("conversations").update({ ai_draft: finalDraft }).eq("id", convId);
         if (saveErr) {

@@ -232,6 +232,11 @@ async function run() {
           recentMessages: recentMsgs.map(m => ({ sender: m.sender, text: m.text || "" })),
           customerConditions,
           customerSummary: pcData?.ai_summary || "",
+          // RLHF断絶修正: conversationId を渡して generate-reply 側の logKnowledgeApply を発火させる
+          // （knowledge_apply_log に記録され、text_retention / deal_outcome フィードバックの対象になる）
+          // ※ generate-reply 側も成功時に ai_draft を保存するが、同一クリーンテキストの冪等な上書きなので二重化の実害なし。
+          //    max_tokens 時は generate-reply は保存スキップ → 本cronが後から __TRUNCATED__ センチネルを書くため整合する。
+          conversationId: convId,
           // 本文末尾に <<<STOP_REASON:xxx>>> トレーラーを付けてもらう（尻切れドラフトの品質ゲート用）
           includeStopReason: true,
         }),

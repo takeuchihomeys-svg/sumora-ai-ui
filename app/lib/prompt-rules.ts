@@ -24,7 +24,7 @@ export async function fetchPromptRules(
     // ── 枠取り方式 ──
     // LEARN-* が数千件あり、単一クエリ LIMIT 100 だと priority=8 の LEARN-* が枠を埋め尽くして
     // HUMAN-*(priority=10) / FEEDBACK-*(priority=8) / IMPLEMENT-*(priority=7) が届かなくなる。
-    // → 非LEARN上位40件 + LEARN上位60件を別枠で取得してから priority 降順で結合する。
+    // → 非LEARN上位70件 + LEARN上位60件を別枠で取得してから priority 降順で結合する。
     const buildBaseQuery = () => {
       let q = supabase
         .from("ai_prompt_rules")
@@ -39,12 +39,14 @@ export async function fetchPromptRules(
     };
 
     const [highPrioRes, learnRes] = await Promise.all([
-      // HUMAN-* / FEEDBACK-* / IMPLEMENT-* 等（件数が少ないため上位40件で全件カバーされる想定）
+      // HUMAN-* / FEEDBACK-* / IMPLEMENT-* 等
+      // FEEDBACK-* は最大60件（MAX_FEEDBACK_RULES）まで増えるため、40だと枠落ちする
+      // → 70件（FEEDBACK 60 + HUMAN/IMPLEMENT の余裕）に拡大
       buildBaseQuery()
         .not("rule_key", "like", "LEARN-%")
         .order("priority", { ascending: false })
         .order("updated_at", { ascending: false, nullsFirst: false })
-        .limit(40),
+        .limit(70),
       // LEARN-*（ai_reply_knowledge 同期コピー）は上位60件のみ
       excludeLearnRules
         ? Promise.resolve({ data: [] as PromptRuleRow[], error: null })
