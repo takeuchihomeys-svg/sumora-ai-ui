@@ -10849,19 +10849,24 @@ export default function Home() {
                     data: "☆実例（property_send）/ カレンダー情報 / お客様希望条件",
                   },
                   "物件確認した（募集状況）": {
-                    inputs: "確認結果（物件あった / 別の部屋 / なかった）/ 物件画像（任意）",
-                    process: "パターン別プロンプトで生成。「物件あった」時はカレンダー自動取得して内覧日程を含める",
-                    data: "パターン別実例 / ノウハウ（availability_check）",
+                    inputs: "確認結果6パターン（物件あった / 別の部屋が募集してた / 物件なかった / 専任物件だった / 入居日確認した / 室内写真を確認した）/ 物件画像（任意）",
+                    process: "パターン別プロンプトで生成。「物件あった」時はカレンダー自動取得して内覧日程を含める。専任・なかったは固定文（AI不使用）",
+                    data: "パターン別実例 / ノウハウ（property_check_result）/ 差分学習ナレッジ",
                   },
                   "見積書送る": {
                     inputs: "見積書画像（必須）",
-                    process: "Vision OCR で初期費用・割引額・仲介手数料を数値抽出 → 節約額を計算して固定フォーマット出力",
-                    data: "固定テンプレート（AI文生成なし・計算値のみ）",
+                    process: "Vision OCR で初期費用・割引額・仲介手数料を数値抽出 → 節約額を計算して固定フォーマット出力 + AIカバーレター生成（差分学習ループ対象）",
+                    data: "固定テンプレート（計算値）+ AIカバーレター / ☆実例（estimate_sheet）",
                   },
-                  "内覧へ（内覧日調整）": {
-                    inputs: "なし（会話履歴・カレンダーを自動取得）",
-                    process: "ワンタップで即生成 → 確認画面を経て送信。カレンダー情報があれば内覧可能日時を自動で含める",
-                    data: "フレーズ辞書（viewing_invite）/ 直近会話履歴",
+                  "お部屋探し条件ヒアリング": {
+                    inputs: "なし（会話履歴を自動取得）",
+                    process: "条件フォーム①〜⑧をワンタップ送信。会話に合わせたAI導入メッセージを添える",
+                    data: "フレーズ辞書（hearing_followup）/ 直近会話履歴",
+                  },
+                  "内覧日を調整する": {
+                    inputs: "候補日程をタップ選択（会話履歴・カレンダーを自動取得）",
+                    process: "選択日程からAI文生成 → 確認画面を経て送信。カレンダー情報があれば内覧可能日時を全日程漏れなく含める",
+                    data: "フレーズ辞書（viewing_invite）/ 差分学習ナレッジ / 直近会話履歴",
                   },
                   "申込（誘導・決定）": {
                     inputs: "空室状況（空室 / 退去予定）/ 退去予定日（任意）",
@@ -10873,11 +10878,31 @@ export default function Home() {
                     process: "物件資料画像からOCRで物件名・住所を自動取得 → 日時を入力 → テンプレートを組み立て",
                     data: "AI不使用（クライアント側で生成）",
                   },
+                  "挨拶（内覧前・内覧後）": {
+                    inputs: "内覧前 / 内覧後の選択・内覧日時（内覧前のみ）",
+                    process: "内覧前後の挨拶文をAI生成。内覧前は日時登録で viewings に保存 → 前後アナウンスを自動送信",
+                    data: "☆実例（greeting_viewing）/ 差分学習ナレッジ / 直近会話履歴",
+                  },
+                  "確認した（条件・交渉）": {
+                    inputs: "確認先（管理会社・代表・オーナー・近隣月極）/ 確認内容（退去予定日・入居可能日・初期費用・保証会社・駐車場・ペット等）",
+                    process: "確認結果の報告文をパターン別プロンプトでAI生成 → 確認後送信",
+                    data: "ノウハウ（property_check_result系）/ 直近会話履歴",
+                  },
+                  "確認します": {
+                    inputs: "なし（会話履歴を自動取得）",
+                    process: "ワンタップで「確認します」の旨をAI生成 → 確認後送信",
+                    data: "フレーズ辞書（hearing_followup）/ 直近会話履歴",
+                  },
+                  "追客する": {
+                    inputs: "補足情報（任意・新着物件あり / 条件変更の提案など）",
+                    process: "近況確認から入る追客LINEをAI生成。押しつけがましくならないトーンで2〜4行",
+                    data: "フレーズ辞書（urgency_push）/ 差分学習ナレッジ / 直近会話履歴",
+                  },
                 };
                 return [
                   { color: "#00897B", label: "物件ピックアップした", actionType: "property_send", sub: "ピックアップした物件を送る・退去予定も自動案内", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); setShowPropertySendPicker(true); } },
                   { color: "#2196F3", label: "1件特にオススメする", actionType: "property_recommendation", sub: "おすすめ物件をAIが提案", action: () => { openPropertyRecommendationPicker("withImage"); } },
-                  { color: "#4CAF50", label: "物件確認した（募集状況）", actionType: "property_check_result", sub: "確認結果を3パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); } },
+                  { color: "#4CAF50", label: "物件確認した（募集状況）", actionType: "property_check_result", sub: "確認結果を6パターンでAIが報告文を生成", action: () => { setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_check_result"); openAixDirect("property_check_result"); } },
                   { color: "#FF9800", label: "見積書送る", actionType: "estimate_sheet", sub: "費用の見積書を作成", action: () => {
                     setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("estimate_sheet");
                     const cid = selectedConversation.id; const cname = selectedConversation.customerName;

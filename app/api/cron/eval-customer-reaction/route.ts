@@ -16,6 +16,12 @@ const CONCURRENCY = 10;
 const REACTION_WINDOW_HOURS = 72;
 // 申込中・審査中は screening-admin でやりとりするため LINE沈黙は誤シグナルにしない
 const EXCLUDED_STATUSES = ["applying", "screening"];
+// H-4: 顧客返信を期待しないAIXアクション（非返信=wrong にしてはいけない）
+// - meeting_place: 待ち合わせ確定連絡（返信不要）
+// - greeting_viewing: 内覧後挨拶（社交的・返信率低くても正常）
+// - acknowledge_check: 管理会社/オーナー宛て確認（顧客へのメッセージでない）
+// - condition_hearing: 条件ヒアリングフォーム送付（フォーム回答=LINE返信でない）
+const EXCLUDED_AIX_TYPES = ["meeting_place", "greeting_viewing", "acknowledge_check", "condition_hearing"];
 
 export async function POST(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
@@ -69,12 +75,15 @@ export async function POST(req: NextRequest) {
         .filter(c => EXCLUDED_STATUSES.includes(c.status as string))
         .map(c => c.id as string)
     );
-    const logs = rawLogs.filter(l => !excludedConvIds.has(l.conversation_id));
-    const skippedByStatus = rawLogs.length - logs.length;
+    const statusFiltered = rawLogs.filter(l => !excludedConvIds.has(l.conversation_id));
+    const skippedByStatus = rawLogs.length - statusFiltered.length;
+    // H-4: 返信不要アクションを72h非返信評価から除外（非返信=wrong の誤シグナル防止）
+    const logs = statusFiltered.filter(l => !l.aix_type || !EXCLUDED_AIX_TYPES.includes(l.aix_type));
+    const skippedByAixType = statusFiltered.length - logs.length;
 
     if (logs.length === 0) {
-      await finishCronLog(runLogId, true, { evaluated: 0, skipped_by_status: skippedByStatus });
-      return NextResponse.json({ ok: true, evaluated: 0, skipped_by_status: skippedByStatus });
+      await finishCronLog(runLogId, true, { evaluated: 0, skipped_by_status: skippedByStatus, skipped_by_aix_type: skippedByAixType });
+      return NextResponse.json({ ok: true, evaluated: 0, skipped_by_status: skippedByStatus, skipped_by_aix_type: skippedByAixType });
     }
 
     const reactedIds: string[] = [];
@@ -294,6 +303,7 @@ export async function POST(req: NextRequest) {
       reaction_rate: reactionRate,
       knowledge_fed: knowledgeFed,
       skipped_by_status: skippedByStatus,
+      skipped_by_aix_type: skippedByAixType,
       decay_succeeded: decaySucceeded,
       decay_failed: decayFailed,
       brushup_succeeded: brushupSucceeded,
@@ -307,6 +317,7 @@ export async function POST(req: NextRequest) {
       reaction_rate: reactionRate,
       knowledge_fed: knowledgeFed,
       skipped_by_status: skippedByStatus,
+      skipped_by_aix_type: skippedByAixType,
       decay_succeeded: decaySucceeded,
       decay_failed: decayFailed,
       brushup_succeeded: brushupSucceeded,

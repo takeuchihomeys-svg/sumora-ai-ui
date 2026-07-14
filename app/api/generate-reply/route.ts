@@ -13,6 +13,7 @@ import {
 } from "@/app/lib/line-reply-prompts";
 import { validateAndClean } from "@/app/lib/validate-reply";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
+import { safeSlice } from "@/app/lib/safe-slice";
 
 // Vercel Functions のタイムアウト上限（秒）— Vision + 2段LLM呼び出しに余裕を持たせる
 export const maxDuration = 60;
@@ -555,7 +556,7 @@ function buildGenerationMessages(
   const repetitionNote = allPastStaffMsgs.length > 1
     ? `\n【🚫 繰り返し厳禁（スモラが過去に送った内容）— 同じ情報・同じ言い回し・同じ説明を絶対に使わない】\n${
         allPastStaffMsgs.slice(0, -1).slice(-5).map((m, i) =>
-          `・${m.slice(0, 120)}${m.length > 120 ? "…" : ""}`
+          `・${safeSlice(m, 120)}${m.length > 120 ? "…" : ""}`
         ).join("\n")
       }\n→ 特に費用・ルール・フロー説明は「一度伝えた」事実を必ず踏まえ、同じ内容を別の言い方でも繰り返さない。次のアクションに進むこと。`
     : "";
@@ -840,8 +841,8 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
   // pgvector検索（customerMessageがある場合・OPENAI_API_KEYが設定済みの場合）
   if (customerMessage && process.env.OPENAI_API_KEY) {
     const searchQuery = analysisContext
-      ? `${state}: ${customerMessage} ${analysisContext}`.slice(0, 2000)
-      : `${state}: ${customerMessage}`.slice(0, 2000);
+      ? safeSlice(`${state}: ${customerMessage} ${analysisContext}`, 2000)
+      : safeSlice(`${state}: ${customerMessage}`, 2000);
 
     const embedding = await getEmbedding(searchQuery);
     if (embedding) {
@@ -1027,7 +1028,7 @@ async function getEmbedding(text: string): Promise<number[] | null> {
     const res = await fetch("https://api.openai.com/v1/embeddings", {
       method: "POST",
       headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "text-embedding-3-small", input: text.slice(0, 2000) }),
+      body: JSON.stringify({ model: "text-embedding-3-small", input: safeSlice(text, 2000) }),
       signal: controller.signal,
     });
     clearTimeout(tid);
@@ -1048,7 +1049,7 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
   // pgvector 類似検索（OPENAI_API_KEY がある場合のみ・エラー時はフォールバック）
   // follow-up時: 「スモラが送った内容の続き」として検索クエリを構成
   const baseQuery = lastStaffMessage
-    ? `${state}: [前返信]${lastStaffMessage.slice(0, 100)} [顧客]${customerMessage}`
+    ? `${state}: [前返信]${safeSlice(lastStaffMessage, 100)} [顧客]${customerMessage}`
     : customerMessage ? `${state}: ${customerMessage}` : null;
   // 分析で検出したパターン（検討中・URL確認・複数質問等）をクエリに追加して関連例を引く
   const searchQuery = baseQuery && analysisContext
@@ -1182,7 +1183,7 @@ async function fetchQuotedContext(conversationId: string): Promise<string> {
     const isImage = !q.text || q.text === "[画像]" || q.text === "[動画]";
     const contentDesc = isImage
       ? "【画像（スタッフ送付なら物件カード・物件資料の可能性が高い）】"
-      : `「${String(q.text).slice(0, 300)}」`;
+      : `「${safeSlice(String(q.text), 300)}」`;
     return `
 【💬 引用リプライ検出（確定事実・最優先文脈）】
 お客様の最新メッセージは、${senderLabel}が送ったメッセージ ${contentDesc} への引用（リプライ）です。
@@ -1421,7 +1422,7 @@ export async function POST(req: NextRequest) {
         const p = JSON.parse(analysis) as Record<string, unknown>;
         const parts: string[] = [];
         // 返し方の方針
-        if (p.approach && typeof p.approach === "string") parts.push(p.approach.slice(0, 60));
+        if (p.approach && typeof p.approach === "string") parts.push(safeSlice(p.approach, 60));
         // 迷い・保留パターン → 検索に使うキーワード化
         const hp = p.hesitancy_pattern;
         if (hp === "thinking")  parts.push("検討します また連絡します ごゆっくり");
@@ -1620,12 +1621,16 @@ export async function POST(req: NextRequest) {
             // ✅ 成功時: ai_draft 保存 + draft_pending_at クリア（次のCronでスキップさせる）+ draft_attempted_at クリア（orphanedクエリで拾われないように）
             // ※ draft_updated_at カラムは conversations に存在しないため未使用（追加時はここで更新すること）
             if (conversationId) {
+              // M-3: max_tokens で切れた場合は ai_draft に保存しない（尻切れ文をスタッフがそのまま送信する事故を防止）
+              // pending 解除のみ行う（attempted_at は残す＝10分間リトライしない）
+              const isTruncated = String(genStopReason ?? "") === "max_tokens";
+              if (isTruncated) console.warn("[generate-reply] max_tokens stop: ai_draft保存スキップ", conversationId);
               const { error: saveErr } = await supabase
                 .from("conversations")
                 .update(
-                  finalDraftText.trim()
+                  !isTruncated && finalDraftText.trim()
                     ? { ai_draft: finalDraftText.trim(), draft_pending_at: null, draft_attempted_at: null }
-                    : { draft_pending_at: null } // 空生成でも pending は解除（永続pending防止）。attempted_at は残す＝10分間リトライしない
+                    : { draft_pending_at: null } // 空生成・尻切れでも pending は解除（永続pending防止）。attempted_at は残す＝10分間リトライしない
                 )
                 .eq("id", conversationId);
               if (saveErr) console.error("[generate-reply] ai_draft save error:", conversationId, saveErr.message);

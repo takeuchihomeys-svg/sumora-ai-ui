@@ -259,6 +259,26 @@ export async function POST(req: NextRequest) {
       .from("conversations")
       .upsert(upsertData, { onConflict: "id" });
 
+    // M-7: id は違うが同一 (line_user_id, account) の会話が既に存在する場合、
+    // 部分UNIQUEインデックス idx_conversations_line_user_id_account_unique に当たって
+    // duplicate key (23505) になる。この場合は既存行への UPDATE にフォールバックする。
+    // ※ onConflict: "line_user_id,account" は部分インデックスのため PostgREST の推論が効かず使えない
+    if (error && error.code === "23505" && upsertData.line_user_id) {
+      const { id: _dupId, account: _dupAccount, ...updateFields } = upsertData;
+      let updateQuery = supabase
+        .from("conversations")
+        .update(updateFields)
+        .eq("line_user_id", upsertData.line_user_id as string);
+      if (resolvedAccount) updateQuery = updateQuery.eq("account", resolvedAccount);
+      const { error: fallbackErr } = await updateQuery;
+      if (fallbackErr) {
+        console.error("sync conversations fallback update error:", fallbackErr.code, fallbackErr.message);
+        return NextResponse.json({ error: fallbackErr.message }, { status: 500 });
+      }
+      console.log("[sync] conversations duplicate (line_user_id, account) → 既存行にUPDATEフォールバック:", upsertData.line_user_id);
+      return NextResponse.json({ ok: true, synced: "conversation", id: record.id, account: resolvedAccount, deduped: true });
+    }
+
     if (error) {
       console.error("sync conversations error:", error.code, error.message, error.details, error.hint);
       return NextResponse.json({ error: error.message }, { status: 500 });

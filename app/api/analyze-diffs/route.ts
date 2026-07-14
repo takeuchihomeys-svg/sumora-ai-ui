@@ -1,7 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, buildKnowledgeEmbeddingInput, generateEmbedding } from "@/app/lib/knowledge-utils";
-import { syncConfirmedToPromptRule } from "@/app/lib/knowledge-promote";
+import { promoteToConfirmed } from "@/app/lib/knowledge-promote";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -882,25 +882,28 @@ export async function POST(req: NextRequest) {
       const wrongRate = correct + wrong > 0 ? wrong / (correct + wrong) : 0;
       if (wrongRate >= 0.3) continue; // 外れ率30%以上は昇格しない
 
-      const { error: promoteErr } = await supabase
-        .from("ai_reply_knowledge")
-        .update({ hypothesis_status: "confirmed" })
-        .eq("id", rule.id as string);
-      if (promoteErr) continue;
-      promoted++;
-
       // ── Tier 1: サイレント昇格（フィードバック起票なし）──
       // 条件: importance>=9 かつ apply>=8 かつ correct>=6 かつ wrong率<15% かつ内容明確
       const isTier1 = ruleImportance >= 9 && applyCount >= 8 && correct >= 6 && wrongRate < 0.15
         && isContentClear((rule.title as string) ?? "");
+
+      // H-2: promoted_by / promoted_at を記録して昇格（promoteToConfirmed に一元化）。
+      // Tier1 は ai_prompt_rules への即時同期あり、Tier2 は従来どおり起票のみ（同期は日次バッチに委ねる）
+      await promoteToConfirmed(
+        rule.id as string,
+        isTier1 ? "analyze_diffs_tier1" : "analyze_diffs_batch",
+        isTier1
+          ? {
+              title: rule.title as string,
+              content: (rule.content as string) ?? "",
+              conversation_state: (rule.conversation_state as string | null) ?? null,
+              importance: ruleImportance,
+            }
+          : undefined
+      );
+      promoted++;
+
       if (isTier1) {
-        await syncConfirmedToPromptRule({
-          id: rule.id as string,
-          title: rule.title as string,
-          content: (rule.content as string) ?? "",
-          conversation_state: (rule.conversation_state as string | null) ?? null,
-          importance: ruleImportance,
-        });
         promotedSilent++;
         continue; // ai_feedback_items 起票をスキップ
       }
@@ -969,9 +972,12 @@ export async function POST(req: NextRequest) {
   // タイムアウト対策でループ前に移動。処理対象がある実行のみ昇格する
   // （旧 (learned+processed)>0 ガードと同等 — 処理対象ゼロの実行では走らず二重実行を防止）
   if ((examples?.length ?? 0) > 0) try {
+    // M-2: 7日クールダウン — 直近7日以内にブースト済みのルールは再ブーストしない
+    // （correct_count>=3 のルールが実行のたびに +1 され続けて importance がインフレするのを防ぐ）
+    const boostCooldownBefore = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
     const { data: correctRules } = await supabase
       .from("ai_reply_knowledge")
-      .select("id, importance, apply_count, correct_count, wrong_count")
+      .select("id, importance, apply_count, correct_count, wrong_count, last_boosted_at")
       .gte("correct_count", 3)
       .lt("importance", 9)
       .neq("hypothesis_status", "rejected")
@@ -980,8 +986,14 @@ export async function POST(req: NextRequest) {
     for (const rule of correctRules ?? []) {
       // correct_count>=3 でも apply_count に対する正解率が低い/外れ率が高いルールは昇格しない
       if (!isBoostEligible(rule as BoostStats)) continue;
+      // 7日以内に既にブーストされていたらスキップ
+      const lastBoostedAt = rule.last_boosted_at as string | null;
+      if (lastBoostedAt && lastBoostedAt >= boostCooldownBefore) continue;
       await supabase.from("ai_reply_knowledge")
-        .update({ importance: Math.min(9, (rule.importance as number) + 1) })
+        .update({
+          importance: Math.min(9, (rule.importance as number) + 1),
+          last_boosted_at: new Date().toISOString(),
+        })
         .eq("id", rule.id);
     }
   } catch { /* ignore */ }
@@ -1206,13 +1218,17 @@ export async function POST(req: NextRequest) {
           if (upsertResult.result === "inserted" || upsertResult.result === "merged") learned++;
           // スマートナレッジフロー: 新規 INSERT 時の後処理
           if (upsertResult.result === "inserted" && upsertResult.id) {
-            if (imp >= 8 && isContentClear(compResult.title)) {
-              // Tier 1 サイレント昇格: importance>=8 かつ明確なアクションキーワードを含む
-              await supabase.from("ai_reply_knowledge")
-                .update({ hypothesis_status: "confirmed" })
-                .eq("id", upsertResult.id);
-              await syncConfirmedToPromptRule({
-                id: upsertResult.id,
+            // H-2: Tier 1 昇格に実績要件（correct_count >= 2）を追加。
+            // 一度も正解フィードバックを得ていないナレッジはフリーパスで confirmed にしない
+            const { data: freshRow } = await supabase
+              .from("ai_reply_knowledge")
+              .select("correct_count")
+              .eq("id", upsertResult.id)
+              .maybeSingle();
+            const freshCorrect = (freshRow?.correct_count as number | null) ?? 0;
+            if (imp >= 9 && freshCorrect >= 2 && isContentClear(compResult.title)) {
+              // Tier 1 サイレント昇格: importance>=9 + 正解実績2件以上 + 明確なアクションキーワードを含む
+              await promoteToConfirmed(upsertResult.id, "analyze_diffs_tier1", {
                 title: compResult.title,
                 content: compResult.rule,
                 conversation_state: compState,
@@ -1223,11 +1239,8 @@ export async function POST(req: NextRequest) {
               judgeCount++;
               const { verdict, reason: judgeReason } = await autoJudgeKnowledge(upsertResult.id, compResult.title, compResult.rule, compState, imp, customer_message);
               if (verdict === "confirm") {
-                await supabase.from("ai_reply_knowledge")
-                  .update({ hypothesis_status: "confirmed" })
-                  .eq("id", upsertResult.id);
-                await syncConfirmedToPromptRule({
-                  id: upsertResult.id,
+                // H-2: promoted_by='auto_judge' を記録して昇格
+                await promoteToConfirmed(upsertResult.id, "auto_judge", {
                   title: compResult.title,
                   content: compResult.rule,
                   conversation_state: compState,
@@ -1330,13 +1343,17 @@ export async function POST(req: NextRequest) {
         learned++;
         // スマートナレッジフロー: 新規 INSERT 時の後処理
         if (upsertResult.id) {
-          if (imp >= 8 && isContentClear(result.title)) {
-            // Tier 1 サイレント昇格: importance>=8 かつ明確なアクションキーワードを含む
-            await supabase.from("ai_reply_knowledge")
-              .update({ hypothesis_status: "confirmed" })
-              .eq("id", upsertResult.id);
-            await syncConfirmedToPromptRule({
-              id: upsertResult.id,
+          // H-2: Tier 1 昇格に実績要件（correct_count >= 2）を追加。
+          // 一度も正解フィードバックを得ていないナレッジはフリーパスで confirmed にしない
+          const { data: freshRow2 } = await supabase
+            .from("ai_reply_knowledge")
+            .select("correct_count")
+            .eq("id", upsertResult.id)
+            .maybeSingle();
+          const freshCorrect2 = (freshRow2?.correct_count as number | null) ?? 0;
+          if (imp >= 9 && freshCorrect2 >= 2 && isContentClear(result.title)) {
+            // Tier 1 サイレント昇格: importance>=9 + 正解実績2件以上 + 明確なアクションキーワードを含む
+            await promoteToConfirmed(upsertResult.id, "analyze_diffs_tier1", {
               title: result.title,
               content: result.rule,
               conversation_state: conversation_state ?? "proposing",
@@ -1347,11 +1364,8 @@ export async function POST(req: NextRequest) {
             judgeCount++;
             const { verdict, reason: judgeReason } = await autoJudgeKnowledge(upsertResult.id, result.title, result.rule, conversation_state ?? null, imp, result.trigger_example);
             if (verdict === "confirm") {
-              await supabase.from("ai_reply_knowledge")
-                .update({ hypothesis_status: "confirmed" })
-                .eq("id", upsertResult.id);
-              await syncConfirmedToPromptRule({
-                id: upsertResult.id,
+              // H-2: promoted_by='auto_judge' を記録して昇格
+              await promoteToConfirmed(upsertResult.id, "auto_judge", {
                 title: result.title,
                 content: result.rule,
                 conversation_state: conversation_state ?? "proposing",

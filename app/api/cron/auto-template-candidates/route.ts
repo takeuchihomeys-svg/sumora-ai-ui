@@ -191,8 +191,15 @@ async function run() {
     .order("created_at", { ascending: true })
     .limit(500);
 
-  if (aixErr) return NextResponse.json({ ok: false, error: aixErr.message }, { status: 500 });
-  if (!aixMsgs?.length) return NextResponse.json({ ok: true, saved: 0, message: "no AIX messages in window" });
+  // M-4: 早期returnでも finishCronLog を必ず呼ぶ（cron_run_logs に「開始したのに終了なし」の宙ぶらりん行を残さない）
+  if (aixErr) {
+    await finishCronLog(runLogId, false, undefined, aixErr.message);
+    return NextResponse.json({ ok: false, error: aixErr.message }, { status: 500 });
+  }
+  if (!aixMsgs?.length) {
+    await finishCronLog(runLogId, true, { saved: 0, message: "no AIX messages in window" });
+    return NextResponse.json({ ok: true, saved: 0, message: "no AIX messages in window" });
+  }
 
   const convIds = [...new Set(aixMsgs.map((m) => m.conversation_id as string))];
 
@@ -214,8 +221,15 @@ async function run() {
       .limit(1000),
   ]);
 
-  if (staffErr) return NextResponse.json({ ok: false, error: staffErr.message }, { status: 500 });
-  if (logErr) return NextResponse.json({ ok: false, error: logErr.message }, { status: 500 });
+  // M-4: 早期returnでも finishCronLog を必ず呼ぶ
+  if (staffErr) {
+    await finishCronLog(runLogId, false, undefined, staffErr.message);
+    return NextResponse.json({ ok: false, error: staffErr.message }, { status: 500 });
+  }
+  if (logErr) {
+    await finishCronLog(runLogId, false, undefined, logErr.message);
+    return NextResponse.json({ ok: false, error: logErr.message }, { status: 500 });
+  }
 
   const msgsByConv = new Map<string, Msg[]>();
   for (const m of (staffMsgs ?? []) as Msg[]) {

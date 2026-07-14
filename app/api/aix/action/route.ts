@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
+import { safeSlice } from "@/app/lib/safe-slice";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEND_RULES, GENERATION_SYSTEM } from "@/app/lib/line-reply-prompts";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
@@ -139,7 +140,9 @@ async function getPhrases(category: string, customerName?: string): Promise<stri
     .limit(15);
   const fallback = customerName || "お客様";
   return (data || []).map((r: { phrase: string }) =>
-    `- ${r.phrase.replace(/\{\{customer_name\}\}/g, fallback)}`
+    // M-8: フレーズ側に「{{customer_name}}さん」と書かれている場合、さん付き名を渡すと
+    // 「〇〇さんさん」になるため、置換後の「さんさん」を1つに畳む
+    `- ${r.phrase.replace(/\{\{customer_name\}\}/g, fallback).replace(/さんさん/g, "さん")}`
   ).join("\n");
 }
 
@@ -286,7 +289,7 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
     // 顧客メッセージの embedding で類似ルールを追加取得し、DB query 結果に文脈優先でマージ
     let vectorExtras: KRow[] = [];
     if (customerMsg && process.env.OPENAI_API_KEY) {
-      const searchQuery = `${states[0]}: ${customerMsg}`.slice(0, 2000);
+      const searchQuery = safeSlice(`${states[0]}: ${customerMsg}`, 2000);
       const embedding = await generateEmbedding(searchQuery);
       if (embedding) {
         const { data: vectorResults } = await supabase.rpc("match_reply_knowledge", {
@@ -324,7 +327,7 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
     if ((editExamples?.length ?? 0) > 0) {
       parts.push("【✏️ スタッフが実際に改善した送信例（この質感・表現を目指すこと。ただし上記の【構成】ルールを最優先にすること）】\n" +
         (editExamples as { template_text: string }[])
-          .map((r, i) => `[改善例${i + 1}]\n${r.template_text.slice(0, 250)}`)
+          .map((r, i) => `[改善例${i + 1}]\n${safeSlice(r.template_text, 250)}`)
           .join("\n\n"));
     }
     // HIGH-05: テンプレート修正学習ルール注入
@@ -355,7 +358,7 @@ async function getStarredExamplesForAction(states: string[], customerMsg: string
     const embRes = await fetch("https://api.openai.com/v1/embeddings", {
       method: "POST",
       headers: { "Authorization": `Bearer ${openaiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "text-embedding-3-small", input: customerMsg.slice(0, 500) }),
+      body: JSON.stringify({ model: "text-embedding-3-small", input: safeSlice(customerMsg, 500) }),
     });
     if (!embRes.ok) return "";
     const embData = await embRes.json() as { data: Array<{ embedding: number[] }> };
@@ -375,7 +378,7 @@ async function getStarredExamplesForAction(states: string[], customerMsg: string
     if (!examples.length) return "";
 
     return "\n\n【✅ 過去の成功返信パターン（☆スタッフ承認済み・参考にすること）】\n" +
-      examples.map(e => `顧客:「${e.customer_message.slice(0, 80)}」\nスタッフ返信:「${e.sent_reply.slice(0, 200)}」`).join("\n---\n");
+      examples.map(e => `顧客:「${safeSlice(e.customer_message, 80)}」\nスタッフ返信:「${safeSlice(e.sent_reply, 200)}」`).join("\n---\n");
   } catch {
     return ""; // ☆実例取得失敗は生成自体を止めない
   }
@@ -625,7 +628,7 @@ export async function POST(request: NextRequest) {
             await supabase.from("aix_generate_log").insert({
               action_type: currentAction,
               conversation_id: conversationId,
-              generated_text: message.slice(0, 2000),
+              generated_text: safeSlice(message, 2000),
             });
           } catch (e) {
             console.error("[aix/action] aix_generate_log insert failed (after callback):", e);
@@ -648,7 +651,10 @@ export async function POST(request: NextRequest) {
       acknowledge_check: "hearing_followup",
     };
     const phraseCategory = phraseCategoryMap[action];
-    const phraseText = phraseCategory ? await getPhrases(phraseCategory, customer_name) : "";
+    // M-8: {{customer_name}} 置換には生の customer_name（LINE表示名フルネーム等）ではなく、
+    // さん付き整形済みの name（「〇〇さん」/「お客様」）を渡す。
+    // 生の名前を渡すとフレーズ側の「さん」と二重になり「〇〇さんさん」が生成されるバグがあった
+    const phraseText = phraseCategory ? await getPhrases(phraseCategory, name) : "";
 
     let message_text = "";
     let parsed_estimate_result = null;
@@ -2356,13 +2362,22 @@ ${pcrCalendarBlock}
         const exRoomNo = ((body.exclusive_room_no as string | undefined) ?? "").trim();
         const propText = `${exPropName}${exRoomNo}`;
         message_text = `お送りいただきました${propText}は専任のお部屋となっており、弊社ではご紹介ができないお部屋となります！！\n\nよろしければ私の方で${name}にオススメ出来るお部屋ピックアップさせていただきます😊！！`;
-        // aix_generate_log fire-and-forget（finalizeResponse を経由しない早期returnパス）
+        // aix_generate_log 記録（finalizeResponse を経由しない早期returnパス）
+        // C-2: fire-and-forget（.then）だとレスポンス返却後にサーバレス実行が凍結されて
+        // INSERT が失われることがあるため、finalizeResponse と同じ after() パターンに統一
         if (conversationId) {
-          supabase.from("aix_generate_log").insert({
-            action_type: currentAction,
-            conversation_id: conversationId,
-            generated_text: message_text.slice(0, 2000),
-          }).then(() => {}, (e: unknown) => console.error("[aix/action] aix_generate_log insert failed (exclusive):", e));
+          const exclusiveText = message_text;
+          after(async () => {
+            try {
+              await supabase.from("aix_generate_log").insert({
+                action_type: currentAction,
+                conversation_id: conversationId,
+                generated_text: safeSlice(exclusiveText, 2000),
+              });
+            } catch (e) {
+              console.error("[aix/action] aix_generate_log insert failed (exclusive):", e);
+            }
+          });
         }
         return NextResponse.json({ ok: true, message_text });
       }
@@ -3407,12 +3422,20 @@ ${SMORA_COMMON_RULES}
     const { message: cleanedMessage, notice } = finalize(message_text);
 
     // aix_generate_log 記録（メインフロー: finalizeResponse を使わない全アクションパス）
+    // C-2: fire-and-forget（.then）だとレスポンス返却後にサーバレス実行が凍結されて
+    // INSERT が失われることがあるため、finalizeResponse と同じ after() パターンに統一
     if (conversationId) {
-      supabase.from("aix_generate_log").insert({
-        action_type: currentAction,
-        conversation_id: conversationId,
-        generated_text: cleanedMessage.slice(0, 2000),
-      }).then(() => {}, (e: unknown) => console.error("[aix/action] aix_generate_log insert failed (main):", e));
+      after(async () => {
+        try {
+          await supabase.from("aix_generate_log").insert({
+            action_type: currentAction,
+            conversation_id: conversationId,
+            generated_text: safeSlice(cleanedMessage, 2000),
+          });
+        } catch (e) {
+          console.error("[aix/action] aix_generate_log insert failed (main):", e);
+        }
+      });
     }
 
     return NextResponse.json({

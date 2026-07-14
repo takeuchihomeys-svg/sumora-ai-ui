@@ -175,6 +175,15 @@ export async function GET(req: NextRequest) {
       ttlExpiredCount = ttlCount ?? 0;
     }
 
+    // H-1: 30日以上 pending のままの ai_feedback_items を dismissed に自動expire
+    // （morning-report でも同処理を行っているが、レポートcron障害時の保険としてここでも実行。冪等）
+    const { error: expireErr } = await supabase
+      .from("ai_feedback_items")
+      .update({ status: "dismissed" })
+      .eq("status", "pending")
+      .lt("created_at", new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString());
+    if (expireErr) console.warn("[update-knowledge] ai_feedback_items expire失敗:", expireErr.message);
+
     return NextResponse.json({
       ok: true,
       newly_processed: toProcess.length,

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
-import { syncConfirmedToPromptRule } from "@/app/lib/knowledge-promote";
+import { promoteToConfirmed } from "@/app/lib/knowledge-promote";
 
 export const maxDuration = 60;
 
@@ -153,11 +153,21 @@ export async function POST(req: NextRequest) {
       resolved.map(l => ({ id: l.id, predicted_pattern: l.predicted_pattern, actual_outcome: l.outcome }))
     );
 
-    // actual_outcome + was_correct を UPDATE（Sonnet判定が得られなかった行は outcome のみ記録）
+    // actual_outcome + was_correct を UPDATE
+    // M-5: LLM判定が得られなかった行は actual_outcome を書かずにスキップする。
+    // （旧実装は was_correct=null のまま actual_outcome を記録していたため、判定失敗行が
+    //   未評価プールから外れて永久に was_correct 不明のままになるサイレント失敗だった。
+    //   スキップすれば actual_outcome IS NULL のまま → 次回cronで再判定対象になる）
     let correct = 0;
     let wrong = 0;
+    let skippedNoVerdict = 0;
     for (const l of resolved) {
-      const wasCorrect = verdicts.has(l.id) ? verdicts.get(l.id)! : null;
+      if (!verdicts.has(l.id)) {
+        skippedNoVerdict += 1;
+        console.warn("[eval-winning-pattern] 判定取得失敗 - スキップ（次回再判定） id:", l.id);
+        continue; // actual_outcome を書かない → 次回cronで再判定対象になる
+      }
+      const wasCorrect = verdicts.get(l.id)!;
       if (wasCorrect === true) correct += 1;
       if (wasCorrect === false) wrong += 1;
       const { error: updateErr } = await supabase
@@ -238,21 +248,14 @@ export async function POST(req: NextRequest) {
           const w = (rule.wrong_count as number) ?? 0;
           if (c + w === 0) continue;
           if (w / (c + w) >= 0.3) continue; // 外れ率30%以上は昇格しない
-          const { error: promoteErr } = await supabase
-            .from("ai_reply_knowledge")
-            .update({ hypothesis_status: "confirmed" })
-            .eq("id", rule.id as string);
-          if (!promoteErr) {
-            autoPromoted++;
-            // ai_prompt_rules に即時反映（最大24h遅延を解消）
-            await syncConfirmedToPromptRule({
-              id: rule.id as string,
-              title: rule.title as string,
-              content: (rule.content as string | null) ?? "",
-              importance: (rule.importance as number | null) ?? 0,
-              conversation_state: (rule.conversation_state as string | null) ?? null,
-            });
-          }
+          // H-2: promoted_by='batch_eval' を記録して昇格（ai_prompt_rules への即時同期込み）
+          await promoteToConfirmed(rule.id as string, "batch_eval", {
+            title: rule.title as string,
+            content: (rule.content as string | null) ?? "",
+            importance: (rule.importance as number | null) ?? 0,
+            conversation_state: (rule.conversation_state as string | null) ?? null,
+          });
+          autoPromoted++;
         }
         if (autoPromoted > 0) {
           console.log(`[eval-winning-pattern] hypothesis→confirmed自動昇格: ${autoPromoted}件`);
@@ -265,15 +268,16 @@ export async function POST(req: NextRequest) {
     }
 
     const summary = {
-      evaluated: resolved.length,
+      evaluated: resolved.length - skippedNoVerdict,
       judged,
       correct,
       wrong,
       accuracy,
       knowledge_fed: knowledgeFed,
+      skipped_no_verdict: skippedNoVerdict,
       won: resolved.filter(l => l.outcome === "closed_won").length,
       lost: resolved.filter(l => l.outcome === "closed_lost").length,
-      pending: logs.length - resolved.length,
+      pending: logs.length - resolved.length + skippedNoVerdict,
       evaluated_at: new Date().toISOString(),
     };
 

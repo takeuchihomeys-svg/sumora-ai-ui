@@ -496,7 +496,7 @@ export async function GET(req: NextRequest) {
   try {
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const [{ data: cronLogs }, { count: pendingFeedbackCount }, { count: pendingKnowledgeAlignCount }] = await Promise.all([
+    const [{ data: cronLogs }, { count: pendingFeedbackCount }, { count: pendingKnowledgeAlignCount }, { count: examples24hCount, error: examples24hErr }, { count: applyLog24hCount, error: applyLog24hErr }] = await Promise.all([
       // 週次Cron（corpus2skill 等）の判定に7日分必要なため7日窓で取得し、日次Cronは24hで判定する
       supabase
         .from("cron_run_logs")
@@ -515,6 +515,16 @@ export async function GET(req: NextRequest) {
         .select("*", { count: "exact", head: true })
         .eq("status", "pending")
         .eq("suggestion_type", "knowledge_aix_align"),
+      // 学習ループ停止検知①: ai_reply_examples の過去24h件数（0件 = save-reply-example が沈黙 → 学習停止の疑い）
+      supabase
+        .from("ai_reply_examples")
+        .select("id", { count: "exact", head: true })
+        .gte("created_at", oneDayAgo),
+      // 学習ループ停止検知②: knowledge_apply_log の過去24h件数（0件 = ナレッジ適用記録が沈黙 → RLHFループ停止の疑い）
+      supabase
+        .from("knowledge_apply_log")
+        .select("id", { count: "exact", head: true })
+        .gte("applied_at", oneDayAgo),
     ]);
 
     // Cron名ごとの最新実行（降順取得済みのため最初に出た行が最新）
@@ -546,7 +556,17 @@ export async function GET(req: NextRequest) {
     const alignLine = alignN > 0
       ? `■ ナレッジAIXアライン 未対応: ${alignN}件（改善案タブから確認できます）`
       : "■ ナレッジAIXアライン 未対応: 0件";
-    statsLines.push(`🧠 学習ヘルス\n■ 直近24h学習Cron:\n${healthLines.join("\n")}\n${feedbackLine}\n${alignLine}`);
+    // 学習ループ停止の警告（PostgRESTスキーマキャッシュ事故等でINSERTが全滅すると24h件数が0になる）
+    // クエリ自体が失敗した場合は count=null → 誤警告しないためスキップ
+    const loopWarnings: string[] = [];
+    if (!examples24hErr && examples24hCount === 0) {
+      loopWarnings.push("⚠️ 学習ループ停止の可能性: ai_reply_examples 24h=0件（save-reply-example のINSERT失敗・スキーマキャッシュ要確認）");
+    }
+    if (!applyLog24hErr && applyLog24hCount === 0) {
+      loopWarnings.push("⚠️ 学習ループ停止の可能性: knowledge_apply_log 24h=0件（ナレッジ適用記録が止まっています）");
+    }
+    const loopWarningBlock = loopWarnings.length > 0 ? `\n${loopWarnings.join("\n")}` : "";
+    statsLines.push(`🧠 学習ヘルス\n■ 直近24h学習Cron:\n${healthLines.join("\n")}\n${feedbackLine}\n${alignLine}${loopWarningBlock}`);
   } catch (e) {
     console.error("[morning-report] learning health section:", e);
   }

@@ -122,6 +122,8 @@ async function run() {
   console.log("[generate-pending-drafts] processing:", combined.length, "conversations at", new Date().toISOString());
 
   if (combined.length === 0) {
+    // M-4: 早期returnでも finishCronLog を必ず呼ぶ（「開始したのに終了なし」の宙ぶらりんログ防止）
+    if (runLogId) await finishCronLog(runLogId, true, { processed: 0 }).catch(() => null);
     return NextResponse.json({ ok: true, processed: 0, debug: { pending: pendingConvs?.length ?? 0, orphaned: orphanedConvs?.length ?? 0, orphanedError: orphanedError?.message ?? null, yesterday } });
   }
 
@@ -300,5 +302,7 @@ async function run() {
     }
   }
 
+  // M-4: 正常終了時も finishCronLog を必ず呼ぶ（従来はエラー時のみ記録され、成功実行が「終了なし」で残っていた）
+  if (runLogId) await finishCronLog(runLogId, true, { processed, skipped }).catch(() => null);
   return NextResponse.json({ ok: true, processed, skipped });
 }

@@ -78,6 +78,7 @@ export async function syncConfirmedToPromptRule(row: KnowledgeRow): Promise<void
 export type PromotedBy =
   | "rpc_auto"            // update_knowledge_feedback_by_pairs / confirm_knowledge_feedback のRPC内自動昇格
   | "analyze_diffs_tier1" // analyze-diffs cron のTier1昇格
+  | "analyze_diffs_batch" // analyze-diffs cron のバッチ昇格（Tier2: 確認起票あり）
   | "auto_judge"          // 自動判定
   | "batch_eval"          // eval-winning-pattern の週次バッチ昇格
   | "bulk_judge"          // bulk-judge-knowledge のSonnet審査昇格

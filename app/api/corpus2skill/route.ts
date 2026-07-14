@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
+import { safeInsertAiQuestion } from "@/app/lib/ai-feedback-guard";
 import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 300;
@@ -750,16 +751,16 @@ ${answeredSection || "（なし）"}
       .limit(1);
     if (existing && existing.length > 0) continue;
 
-    const { error } = await supabase.from("ai_feedback_items").insert({
+    // H-1: 直接INSERTではなく起票ガード（pending 60件上限）経由で起票する
+    const inserted = await safeInsertAiQuestion({
       question,
       speculation: item.speculation?.trim() || null,
-      category: VALID_CATEGORIES.includes(item.category ?? "") ? item.category : "general",
+      category: (VALID_CATEGORIES.includes(item.category ?? "") ? item.category : "general") as string,
       evidence: item.evidence?.trim() || null,
       confidence: VALID_CONFIDENCE.includes(item.confidence ?? "") ? item.confidence : "medium",
-      status: "pending",
     });
-    if (!error) questionsSaved++;
-    else console.error("[corpus2skill] feedback item insert error:", error.message);
+    if (inserted) questionsSaved++;
+    else console.warn("[corpus2skill] feedback item 起票スキップ（上限またはINSERT失敗）");
   }
 
   return { questionsSaved };

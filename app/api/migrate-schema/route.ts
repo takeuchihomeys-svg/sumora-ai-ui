@@ -1567,6 +1567,16 @@ ON CONFLICT (rule_key) DO UPDATE
       is_active  = true,
       updated_at = now();
 
+-- ── importance ブースト冷却（2026-07-14）──
+-- ai_reply_knowledge: 最終ブースト時刻（analyze-diffs ポジティブ強化Bの7日クールダウン用）
+ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS last_boosted_at TIMESTAMPTZ;
+
+-- ── PostgREST スキーマキャッシュ再読込（必ず最後に実行する）──
+-- 新カラム追加後に PostgREST のスキーマキャッシュが古いままだと、
+-- 以降の INSERT/SELECT が「column does not exist」で全滅する
+-- （2026-07: is_full_rewrite カラムで save-reply-example が207回連続失敗した事故の恒久対策）。
+SELECT pg_notify('pgrst', 'reload schema');
+
 `.trim();
 
 // GET: スキーマSQLを返す（POSTと同じ CRON_SECRET 認証必須 — 無認証でのスキーマ情報開示を防止）
@@ -1616,6 +1626,14 @@ export async function POST(req: Request) {
     } catch (e) {
       errors.push(e instanceof Error ? e.message : String(e));
     }
+  }
+  // PostgREST スキーマキャッシュ再読込（新カラム追加後に必須）。
+  // SQL末尾の pg_notify に加えてここでも明示実行する（途中の statement 分割不具合等で
+  // 末尾まで到達しなかった場合の保険。失敗しても migration 自体は成功として扱う）
+  try {
+    await supabase.rpc("exec_sql", { sql: "SELECT pg_notify('pgrst', 'reload schema');" });
+  } catch (e) {
+    console.warn("[migrate-schema] pgrst reload notify failed:", e instanceof Error ? e.message : String(e));
   }
   return NextResponse.json({ ok: errors.length === 0, errors });
 }
