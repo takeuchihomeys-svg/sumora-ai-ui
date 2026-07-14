@@ -893,6 +893,11 @@ export default function TemplateModal({
   const [dismissingId, setDismissingId] = useState<string | null>(null);
   // AI質問のスキップ理由チップを表示中のフィードバックID
   const [dismissingFeedbackId, setDismissingFeedbackId] = useState<string | null>(null);
+  // AI質問 打ち合わせ機能
+  const [discussingItemId, setDiscussingItemId] = useState<string | null>(null);
+  const [discussionMessages, setDiscussionMessages] = useState<Record<string, Array<{role:"user"|"assistant", content:string}>>>({});
+  const [discussionInput, setDiscussionInput] = useState("");
+  const [discussionSending, setDiscussionSending] = useState(false);
   // AI質問タブ: auto-judgeが生成したナレッジ品質確認質問（aix_feature_suggestions type=knowledge_question）
   const [knowledgeQuestions, setKnowledgeQuestions] = useState<AixFeatureSuggestion[]>([]);
   const [knowledgeQuestionsLoading, setKnowledgeQuestionsLoading] = useState(false);
@@ -1418,6 +1423,42 @@ export default function TemplateModal({
     }
     finally { setSubmittingFeedback(null); }
   }, [feedbackAnswers, loadFeedbackItems, showModalSuccess, showModalError]);
+
+  const sendDiscussionMessage = useCallback(async (item: FeedbackItem) => {
+    const msg = discussionInput.trim();
+    if (!msg || discussionSending) return;
+    setDiscussionSending(true);
+    const prevMessages = discussionMessages[item.id] ?? [];
+    const newMessages = [...prevMessages, { role: "user" as const, content: msg }];
+    setDiscussionMessages(prev => ({ ...prev, [item.id]: newMessages }));
+    setDiscussionInput("");
+    try {
+      const res = await fetch("/api/ai-question-discuss", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          item_id: item.id,
+          question: item.question,
+          messages: prevMessages,
+          user_message: msg,
+        }),
+      });
+      const json = await res.json() as { ok?: boolean; reply?: string; error?: string };
+      if (json.ok && json.reply) {
+        setDiscussionMessages(prev => ({
+          ...prev,
+          [item.id]: [...newMessages, { role: "assistant" as const, content: json.reply! }],
+        }));
+      } else {
+        showModalError(json.error ?? "送信に失敗しました");
+      }
+    } catch (e) {
+      showModalError("通信エラーが発生しました");
+      console.error("[TemplateModal] discussion send failed:", e);
+    } finally {
+      setDiscussionSending(false);
+    }
+  }, [discussionInput, discussionMessages, discussionSending, showModalError]);
 
   // スキップ（status="dismissed"・理由があれば dismissed_reason として保存しAIの学習材料にする）
   // API失敗時はリストから除去せずエラー表示する（silent catchだとスキップが効いていないのに消えたように見える）
@@ -3275,6 +3316,56 @@ export default function TemplateModal({
                       )}
                     </div>
                   ) : null}
+                  {/* 打ち合わせ機能 */}
+                  <div className="mt-3 border-t border-orange-100 pt-3">
+                    <button
+                      onClick={() => setDiscussingItemId(discussingItemId === item.id ? null : item.id)}
+                      className="text-xs text-orange-500 font-bold hover:text-orange-700 flex items-center gap-1"
+                    >
+                      💬 {discussingItemId === item.id ? "打ち合わせを閉じる" : "AIと打ち合わせする"}
+                    </button>
+                    {discussingItemId === item.id && (
+                      <div className="mt-2 space-y-2">
+                        {/* 過去の会話 */}
+                        {(discussionMessages[item.id] ?? []).map((msg, idx) => (
+                          <div key={idx} className={`rounded-xl px-3 py-2 text-sm ${
+                            msg.role === "user"
+                              ? "bg-orange-50 text-gray-800 ml-6 text-right"
+                              : "bg-gray-50 text-gray-700 mr-6"
+                          }`}>
+                            <span className="text-[10px] font-bold text-gray-400 block mb-0.5">
+                              {msg.role === "user" ? "竹内さん" : "🤖 AI"}
+                            </span>
+                            <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                          </div>
+                        ))}
+                        {/* 入力欄 */}
+                        <div className="flex gap-2">
+                          <textarea
+                            value={discussionInput}
+                            onChange={e => setDiscussionInput(e.target.value)}
+                            placeholder="気軽に返信してください..."
+                            rows={2}
+                            className="flex-1 rounded-xl border border-orange-200 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-orange-300"
+                            onKeyDown={e => {
+                              if (e.key === "Enter" && !e.shiftKey) {
+                                e.preventDefault();
+                                void sendDiscussionMessage(item);
+                              }
+                            }}
+                          />
+                          <button
+                            onClick={() => void sendDiscussionMessage(item)}
+                            disabled={discussionSending || !discussionInput.trim()}
+                            className="px-3 py-2 rounded-xl bg-orange-400 text-white text-sm font-bold hover:bg-orange-500 disabled:opacity-40 transition"
+                          >
+                            {discussionSending ? "..." : "送信"}
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-gray-400">Enterで送信 / Shift+Enterで改行</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
                   );
                 };
