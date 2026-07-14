@@ -18,6 +18,15 @@ export const maxDuration = 300;
 // 判定するため、送信当時の状態と完全一致ではない。傾向計測としては十分なので許容する。
 const EVAL_LIMIT = 30; // maxDuration 300秒 / 1件あたり最大約8秒（Sonnetフォールバック含む）
 
+// 管理会社向けアクション（担当者が押すが顧客ステータス変化には紐づかない）はシャドー評価対象外。
+// これらを含めると「正常なルール」が毎日×0.95ずつ降格されてしまうため除外する。
+const EXCLUDED_AIX_TYPES = [
+  "meeting_place",
+  "greeting_viewing",
+  "acknowledge_check",
+  "condition_hearing",
+];
+
 export async function POST(req: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.get("authorization");
@@ -44,6 +53,7 @@ export async function POST(req: NextRequest) {
       .select("id, conversation_id, aix_type, previous_action_type, sent_at, created_at")
       .gte("created_at", yesterdayStart.toISOString())
       .lt("created_at", todayStart.toISOString())
+      .not("aix_type", "in", `(${EXCLUDED_AIX_TYPES.join(",")})`)
       .order("created_at", { ascending: true })
       .limit(EVAL_LIMIT);
 

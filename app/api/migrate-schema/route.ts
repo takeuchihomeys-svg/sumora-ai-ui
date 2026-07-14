@@ -1579,6 +1579,8 @@ SELECT pg_notify('pgrst', 'reload schema');
 
 `.trim();
 
+export const maxDuration = 300;
+
 // GET: スキーマSQLを返す（POSTと同じ CRON_SECRET 認証必須 — 無認証でのスキーマ情報開示を防止）
 export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET;

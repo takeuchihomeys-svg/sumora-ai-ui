@@ -819,7 +819,7 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
       .from("ai_reply_knowledge")
       .select("id, category, title, content, importance")
       .eq("category", "principle")
-      .gte("importance", 9)
+      .gte("importance", 8)
       .neq("hypothesis_status", "rejected")
       .order("importance", { ascending: false })
       .limit(5),
@@ -882,9 +882,9 @@ async function fetchKnowledge(state: string, customerMessage?: string, analysisC
         const diffLearned = filteredResults.filter(r => r.title.includes("差分学習")).slice(0, 5);
         const correctionPairs = filteredResults.filter(r => r.title.includes("修正対比")).slice(0, 5);
         // importance>=9 の principle は embedding 検索に漏れても必ず注入する（topPrinciples で保証）
-        const criticalVector = filteredResults.filter(r => r.importance >= 9 && r.category === "principle").slice(0, 8);
+        const criticalVector = filteredResults.filter(r => r.importance >= 8 && r.category === "principle").slice(0, 8);
         const criticalGuaranteed = (topPrinciples ?? []).filter(p => !criticalVector.some(c => c.id === p.id));
-        const critical = [...criticalVector, ...criticalGuaranteed].slice(0, 8);
+        const critical = [...criticalGuaranteed, ...criticalVector.filter(c => !criticalGuaranteed.some(g => g.id === c.id))].slice(0, 8);
         const patterns = filteredResults.filter(r => r.category === "pattern" && !r.title.includes("差分学習") && !r.title.includes("修正対比")).slice(0, 5);
         const phrases = filteredResults.filter(r => r.category === "phrase").slice(0, 6);
 

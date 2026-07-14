@@ -893,6 +893,20 @@ export async function POST(req: NextRequest) {
           const mergeSim = textSimilarity(existAiDraft.trim(), existSentReply.trim());
           jobs.push(analyzeDiff(existingRecord.id, existConvState, existCustMsg, existAiDraft, existSentReply, mergeSim));
         }
+        // PATCHパスとの対称性: ☆マージパスでも was_ai_modified=true の場合は learnFromModifiedExample を実行
+        if (existAiDraft && (existingRecord.was_ai_modified as boolean)) {
+          jobs.push(
+            learnFromModifiedExample({
+              exampleId: existingRecord.id as string,
+              aiDraft: existAiDraft,
+              sentReply: existSentReply,
+              conversationState: existConvState,
+              customerMessage: existCustMsg,
+            })
+              .then(() => undefined)
+              .catch((e) => console.error("[save-reply-example] auto-knowledge failed:", e))
+          );
+        }
         await Promise.all(jobs);
         // ☆マージ分析後に diff_analyzed_at を更新 → cronの二重処理を防止
         await supabase.from("ai_reply_examples")

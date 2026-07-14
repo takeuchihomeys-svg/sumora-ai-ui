@@ -41,12 +41,12 @@ export async function fetchPromptRules(
     const [highPrioRes, learnRes] = await Promise.all([
       // HUMAN-* / FEEDBACK-* / IMPLEMENT-* 等
       // FEEDBACK-* は最大60件（MAX_FEEDBACK_RULES）まで増えるため、40だと枠落ちする
-      // → 70件（FEEDBACK 60 + HUMAN/IMPLEMENT の余裕）に拡大
+      // → 150件（FEEDBACK 60 + HUMAN/IMPLEMENT の余裕を大幅拡大）に拡大
       buildBaseQuery()
         .not("rule_key", "like", "LEARN-%")
         .order("priority", { ascending: false })
         .order("updated_at", { ascending: false, nullsFirst: false })
-        .limit(70),
+        .limit(150),
       // LEARN-*（ai_reply_knowledge 同期コピー）は上位60件のみ
       excludeLearnRules
         ? Promise.resolve({ data: [] as PromptRuleRow[], error: null })

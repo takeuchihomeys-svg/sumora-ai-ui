@@ -106,6 +106,7 @@ JSONのみ回答: {"verdict":"confirm"|"question"|"contradiction","reason":"何�
         category: item.category as string,
         conversation_state: item.conversation_state as string | null,
         importance: imp,
+        correct_count: item.correct_count as number,
         verdict: (parsed.verdict ?? "skip") as string,
         reason: parsed.reason ?? "",
       };
@@ -114,8 +115,15 @@ JSONのみ回答: {"verdict":"confirm"|"question"|"contradiction","reason":"何�
     for (const r of results) {
       if (r.status === "fulfilled" && r.value) {
         const v = r.value;
-        if (v.verdict === "confirm") confirmed.push(v.id);
-        else if (v.verdict === "question" || v.verdict === "contradiction") {
+        if (v.verdict === "confirm") {
+          const vConfirmed = v as { importance?: number; correct_count?: number };
+          if ((vConfirmed.importance ?? 0) >= 9 && (vConfirmed.correct_count ?? 0) >= 2) {
+            confirmed.push(v.id);
+          } else {
+            // 条件未満はAI質問に回す
+            questions.push({ ...v, verdict: "question", reason: "AIが確認OK判定だが実績不足（importance<9 または correct_count<2）" } as typeof questions[0]);
+          }
+        } else if (v.verdict === "question" || v.verdict === "contradiction") {
           questions.push({ ...v, verdict: v.verdict } as typeof questions[0]);
         }
       }

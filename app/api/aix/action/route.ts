@@ -267,7 +267,7 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
         : Promise.resolve({ data: null, error: null }),
       // ④ テンプレート修正学習ルール（HIGH-05: テンプレ適用→スタッフ編集→送信のパターンから学習）
       supabase.from("adaptation_improvement_rules")
-        .select("rule_text, confidence, category")
+        .select("id, rule_text, confidence, category")
         .eq("is_active", true)
         .gte("confidence", 0.7)
         .order("confidence", { ascending: false })
