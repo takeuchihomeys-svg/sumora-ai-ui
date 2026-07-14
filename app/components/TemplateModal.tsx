@@ -420,6 +420,103 @@ function stripEditPrefix(title: string): string {
   return title.replace(/^\[編集\]\s*/, "");
 }
 
+// ズレ自動検出カード: action_type（conversationState / AIXステート）→ 人間が読める名前
+// save-reply-example の registerAlignmentFix が入れる値を網羅する
+// （新5段階フェーズ・旧ステート・AIXアクションステート・T02サブパターン）
+const AIX_ACTION_LABELS: Record<string, string> = {
+  ...ACTION_LABELS,
+  // 新5段階フェーズ
+  first_reply:  "初回返信フェーズ",
+  hearing:      "ヒアリングフェーズ",
+  proposing:    "物件提案中フェーズ",
+  applying:     "申込フェーズ",
+  closed_won:   "成約済みフェーズ",
+  // 旧ステート（後方互換）
+  condition_hearing:  "お部屋探し条件ヒアリング",
+  property_search:    "物件検索中",
+  viewing:            "内覧調整",
+  estimate_request:   "見積もり説明",
+  availability_check: "空室確認",
+  application:        "申込手続き",
+  screening:          "審査中",
+  contract:           "契約手続き",
+  // AIXボタン（AixModal の title と一致させる）
+  property_send:          "物件ピックアップした",
+  property_recommendation:"物件オススメ（1件特にオススメする）",
+  property_check_result:  "物件確認した",
+  estimate_sheet:         "見積書送る",
+  viewing_invite:         "内覧へ！",
+  application_push:       "申込へ！",
+  meeting_place:          "待ち合わせ",
+  acknowledge_check:      "確認します",
+  followup_revive:        "追客する",
+  greeting_viewing:       "内覧後の挨拶",
+  // T02サブパターン（property_check_result）
+  property_check_result_available:         "物件確認した（募集中）",
+  property_check_result_unavailable:       "物件確認した（満室）",
+  property_check_result_alternative:       "物件確認した（代替提案）",
+  property_check_result_vacate_date:       "物件確認した（退去予定日）",
+  property_check_result_mgmt_guarantor:    "物件確認した（保証人）",
+  property_check_result_mgmt_move_in:      "物件確認した（入居日）",
+  property_check_result_mgmt_initial_cost: "物件確認した（初期費用）",
+  property_check_result_mgmt_parking:      "物件確認した（駐車場）",
+  property_check_result_mgmt_pet:          "物件確認した（ペット）",
+  // T02サブパターン（application_push / property_send）
+  application_push_push:         "申込へ！（後押し）",
+  application_push_confirm:      "申込へ！（意思確認）",
+  application_push_docs_request: "申込へ！（書類依頼）",
+  property_send_new_arrival:     "物件ピックアップした（新着）",
+  property_send_widen:           "物件ピックアップした（条件拡大）",
+};
+function getAixActionLabel(actionType: string): string {
+  return AIX_ACTION_LABELS[actionType] ?? actionType;
+}
+
+// ズレ自動検出カード: ズレの種類 → 日本語ラベル（save-reply-example の ALIGNMENT_DIFF_LABEL と同一定義）
+const ALIGNMENT_MISMATCH_LABELS: Record<string, string> = {
+  date_mismatch:   "日付のズレ",
+  time_mismatch:   "時刻のズレ",
+  number_mismatch: "数値のズレ",
+  large_rewrite:   "大幅書き換え",
+};
+
+// ズレ自動検出カード: implementation_notes（JSON）から構造化データを取り出す
+// 新形式（mismatch_type / ai_draft / sent_text / explanation）と
+// 旧形式（diff_type / ai_text_preview / sent_text_preview）の両方に対応する
+type AlignmentNotes = {
+  mismatchLabel: string;
+  aiDraft: string | null;
+  sentText: string | null;
+  similarity: number | null;
+  explanation: string;
+};
+function parseAlignmentNotes(notes?: string | null): AlignmentNotes | null {
+  const t = notes?.trim();
+  if (!t || !t.startsWith("{")) return null;
+  try {
+    const obj = JSON.parse(t) as Record<string, unknown>;
+    const str = (k: string): string | null => {
+      const v = obj[k];
+      return typeof v === "string" && v.trim() ? v.trim() : null;
+    };
+    const mismatchType = str("mismatch_type") ?? str("diff_type");
+    const aiDraft = str("ai_draft") ?? str("ai_text_preview");
+    const sentText = str("sent_text") ?? str("sent_text_preview");
+    if (!mismatchType && !aiDraft && !sentText) return null;
+    return {
+      mismatchLabel: str("mismatch_label")
+        ?? (mismatchType ? (ALIGNMENT_MISMATCH_LABELS[mismatchType] ?? mismatchType) : "ズレ"),
+      aiDraft,
+      sentText,
+      similarity: typeof obj.similarity === "number" ? obj.similarity : null,
+      explanation: str("explanation")
+        ?? "このズレを解消すればスタッフの手修正が不要になり、AIX生成の精度が上がります",
+    };
+  } catch {
+    return null;
+  }
+}
+
 // 改善案タブ: フィルターで使う表示カテゴリを導出する
 // DBの proposal_category が 'other'・未知値（knowledge_quality等）でも、
 // suggestion_type から正しいフィルター（①AIXボタン/②ピッカー/③ボタン追加/ズレ修正）に割り当てる。
@@ -2661,6 +2758,10 @@ export default function TemplateModal({
                   }
                   // --- 通常の改善案カード（aix_feature_suggestions） ---
                   const propCat = PROPOSAL_CAT_MAP[getEffectiveProposalCategory(suggestion)] ?? PROPOSAL_CAT_MAP.other;
+                  // ズレ自動検出カード: implementation_notes から AI文/実送信文/ズレ種類を構造化表示する
+                  const alignNotes = suggestion.suggestion_type === "alignment_fix"
+                    ? parseAlignmentNotes(suggestion.implementation_notes)
+                    : null;
                   return (
                   <div
                     key={suggestion.id}
@@ -2682,7 +2783,7 @@ export default function TemplateModal({
                       {suggestion.action_type && (
                         <span className="inline-block text-[10px] px-1.5 py-0.5 rounded-full font-bold shrink-0"
                           style={{ backgroundColor: getCategoryColor(suggestion.action_type) + "20", color: getCategoryColor(suggestion.action_type) }}>
-                          {ACTION_LABELS[suggestion.action_type] ?? suggestion.action_type}
+                          {getAixActionLabel(suggestion.action_type)}
                         </span>
                       )}
                       <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 12, background: propCat.color, color: '#fff', fontSize: 11, marginBottom: 4, flexShrink: 0 }}>
@@ -2695,8 +2796,39 @@ export default function TemplateModal({
                         </span>
                       )}
                     </div>
+                    {/* ズレ自動検出: AIXボタン名・ズレの種類・AI文/実送信文を構造化して表示 */}
+                    {alignNotes && (
+                      <div className="mb-2 space-y-2">
+                        <p className="text-sm font-bold text-gray-800">
+                          🤖 AIX: {getAixActionLabel(suggestion.action_type ?? "")}
+                          {suggestion.action_type && (
+                            <span className="ml-2 text-[10px] font-normal text-gray-400">（{suggestion.action_type}）</span>
+                          )}
+                        </p>
+                        <p className="text-sm text-red-600 font-medium">
+                          ⚡ ズレの種類: {alignNotes.mismatchLabel}
+                          {alignNotes.similarity != null && (
+                            <span className="ml-1 text-xs font-normal text-gray-400">（一致度 {Math.round(alignNotes.similarity * 100)}%）</span>
+                          )}
+                        </p>
+                        {alignNotes.aiDraft && (
+                          <div className="bg-blue-50 rounded-lg p-2">
+                            <p className="text-[11px] text-blue-600 font-bold mb-1">🤖 AIが生成した文</p>
+                            <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{alignNotes.aiDraft}</p>
+                          </div>
+                        )}
+                        {alignNotes.sentText && (
+                          <div className="bg-green-50 rounded-lg p-2">
+                            <p className="text-[11px] text-green-600 font-bold mb-1">✏️ スタッフが実際に送った文</p>
+                            <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{alignNotes.sentText}</p>
+                          </div>
+                        )}
+                        <p className="text-sm text-gray-600">💡 {alignNotes.explanation}</p>
+                      </div>
+                    )}
                     {/* 📋 なぜこの改善が必要か: description 全文（承認/却下の判断材料） */}
-                    {suggestion.description && (
+                    {/* ズレ自動検出カードは構造化表示（上）に集約するため description は出さない（重複防止） */}
+                    {suggestion.description && !alignNotes && (
                       <div className="mb-2">
                         <p className="text-[11px] font-bold text-violet-500 mb-0.5">📋 なぜこの改善が必要か</p>
                         <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
@@ -2717,7 +2849,9 @@ export default function TemplateModal({
                       </div>
                     )}
                     {/* 🔧 実装メモ: implementation_notes の要点（JSONはパースして表示） */}
+                    {/* ズレ自動検出カードは構造化表示で全内容を出しているため実装メモは省略 */}
                     {(() => {
+                      if (alignNotes) return null;
                       const notes = extractNotesSummary(suggestion.implementation_notes);
                       if (!notes || notes === suggestion.description) return null;
                       return (
@@ -2963,8 +3097,9 @@ export default function TemplateModal({
                     </span>
                   </div>
 
-                  {/* 質問（[knowledge_id:UUID] プレフィックスは非表示・改行を保持して表示） */}
-                  <p className="font-medium text-gray-800 text-sm mb-1 whitespace-pre-wrap">❓ {formatAiQuestion(item.question)}</p>
+                  {/* 質問（[knowledge_id:UUID] プレフィックスは非表示・改行を保持して表示）
+                      新フォーマットは ❓/⚠️ で始まるためJSX側の絵文字プレフィックスは不要 */}
+                  <p className="font-medium text-gray-800 text-sm mb-1 whitespace-pre-wrap">{formatAiQuestion(item.question)}</p>
 
                   {/* 憶測 */}
                   {item.speculation && (

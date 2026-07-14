@@ -403,6 +403,53 @@ const ALIGNMENT_DIFF_LABEL: Record<AlignmentDiffType, string> = {
   large_rewrite:   "大幅書き換え",
 };
 
+// aixType（conversationState / AIXステート）→ 人間が読めるAIXボタン・フェーズ名
+// TemplateModal.tsx の AIX_ACTION_LABELS と同一定義（改善案タブのズレ検出カード表示用）
+const AIX_ACTION_LABELS: Record<string, string> = {
+  // 新5段階フェーズ
+  first_reply:  "初回返信フェーズ",
+  hearing:      "ヒアリングフェーズ",
+  proposing:    "物件提案中フェーズ",
+  applying:     "申込フェーズ",
+  closed_won:   "成約済みフェーズ",
+  // 旧ステート（後方互換）
+  condition_hearing:  "お部屋探し条件ヒアリング",
+  property_search:    "物件検索中",
+  viewing:            "内覧調整",
+  estimate_request:   "見積もり説明",
+  availability_check: "空室確認",
+  application:        "申込手続き",
+  screening:          "審査中",
+  contract:           "契約手続き",
+  // AIXボタン（AixModal の title と一致させる）
+  property_send:          "物件ピックアップした",
+  property_recommendation:"物件オススメ（1件特にオススメする）",
+  property_check_result:  "物件確認した",
+  estimate_sheet:         "見積書送る",
+  viewing_invite:         "内覧へ！",
+  application_push:       "申込へ！",
+  meeting_place:          "待ち合わせ",
+  acknowledge_check:      "確認します",
+  followup_revive:        "追客する",
+  greeting_viewing:       "内覧後の挨拶",
+  // T02サブパターン（property_check_result）
+  property_check_result_available:         "物件確認した（募集中）",
+  property_check_result_unavailable:       "物件確認した（満室）",
+  property_check_result_alternative:       "物件確認した（代替提案）",
+  property_check_result_vacate_date:       "物件確認した（退去予定日）",
+  property_check_result_mgmt_guarantor:    "物件確認した（保証人）",
+  property_check_result_mgmt_move_in:      "物件確認した（入居日）",
+  property_check_result_mgmt_initial_cost: "物件確認した（初期費用）",
+  property_check_result_mgmt_parking:      "物件確認した（駐車場）",
+  property_check_result_mgmt_pet:          "物件確認した（ペット）",
+  // T02サブパターン（application_push / property_send）
+  application_push_push:         "申込へ！（後押し）",
+  application_push_confirm:      "申込へ！（意思確認）",
+  application_push_docs_request: "申込へ！（書類依頼）",
+  property_send_new_arrival:     "物件ピックアップした（新着）",
+  property_send_widen:           "物件ピックアップした（条件拡大）",
+};
+
 function detectAlignmentMismatch(aiDraft: string, sentReply: string, sim: number): AlignmentDiffType | null {
   const setOf = (text: string, re: RegExp) => new Set(text.match(re) ?? []);
   const hasNotIn = (a: Set<string>, b: Set<string>) => [...a].some((x) => !b.has(x));
@@ -461,21 +508,24 @@ async function registerAlignmentFix(params: {
       .limit(1);
     if (exists && exists.length > 0) return;
 
-    const oneLine = (t: string) => t.replace(/\s+/g, " ").trim();
-    const aiPreview = oneLine(aiDraft).slice(0, 60);
-    const sentPreview = oneLine(sentReply).slice(0, 60);
+    const actionLabel = AIX_ACTION_LABELS[aixType] ?? aixType;
     const { error } = await supabase.from("aix_feature_suggestions").insert({
       suggestion_type: "alignment_fix",
-      suggested_title: `[ズレ検出] ${aixType}: ${ALIGNMENT_DIFF_LABEL[diffType]}`,
-      description: `「${aixType}」フェーズでAIの生成文とスタッフの実送信文にズレ（${ALIGNMENT_DIFF_LABEL[diffType]}）が発生しています。\nAI文「${aiPreview}」→ 実際送信「${sentPreview}」\nこのズレを解消すればスタッフの手修正が不要になり、AIX生成の精度が上がります。`,
+      suggested_title: `[ズレ検出] ${actionLabel}: ${ALIGNMENT_DIFF_LABEL[diffType]}`,
+      // description は「なぜ必要か」の1文に絞る（AI文/実送信文は implementation_notes に構造化保存し、
+      // 改善案タブのズレ検出カードが省略なし・区分表示でレンダリングする）
+      description: `【${actionLabel}】AIの生成文とスタッフの実送信文に「${ALIGNMENT_DIFF_LABEL[diffType]}」が発生しています。AIの生成精度を上げることでスタッフの手修正作業を削減できます。`,
       implementation_notes: JSON.stringify({
-        aix_type: aixType,
-        ai_text_preview: aiDraft.slice(0, 100),
-        sent_text_preview: sentReply.slice(0, 100),
-        diff_type: diffType,
+        mismatch_type: diffType,
+        mismatch_label: ALIGNMENT_DIFF_LABEL[diffType],
+        ai_draft: aiDraft.slice(0, 300),
+        sent_text: sentReply.slice(0, 300),
+        action_type: aixType,
+        action_label: actionLabel,
         similarity: Math.round(sim * 100) / 100,
         conversation_id: conversationId,
         detected_at: new Date().toISOString(),
+        explanation: "このズレを解消すればスタッフの手修正が不要になり、AIX生成の精度が上がります",
       }),
       action_type: aixType,
       status: "pending",
