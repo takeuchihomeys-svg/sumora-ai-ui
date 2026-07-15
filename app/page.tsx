@@ -591,6 +591,7 @@ export default function Home() {
   const [greetingViewingDate, setGreetingViewingDate] = useState("");
   const [greetingViewingTime, setGreetingViewingTime] = useState("");
   const [greetingViewingGenerating, setGreetingViewingGenerating] = useState(false);
+  const [greetingViewingAutoFilling, setGreetingViewingAutoFilling] = useState(false);
   const [greetingViewingAfterType, setGreetingViewingAfterType] = useState<"apply" | "apply_guide" | "confirm" | "search" | null>(null);
   const [greetingViewingConfirmType, setGreetingViewingConfirmType] = useState<"estimate" | "freeword" | null>(null);
   const [greetingViewingSearchType, setGreetingViewingSearchType] = useState<"new" | "expand" | "change" | null>(null);
@@ -4257,6 +4258,65 @@ export default function Home() {
     } else {
       openAixDirect("property_recommendation");
     }
+  };
+
+  // 内覧前の日時をviewingsテーブル・会話履歴から自動補完
+  const autoFillGreetingDateTime = async () => {
+    if (!selectedConversation) return;
+    setGreetingViewingAutoFilling(true);
+    try {
+      // 1. viewingsテーブルで予約済みの内覧を確認
+      const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+      const todayStr = `${jstNow.getUTCFullYear()}-${String(jstNow.getUTCMonth() + 1).padStart(2, "0")}-${String(jstNow.getUTCDate()).padStart(2, "0")}`;
+      const { data: viewingRow } = await supabase
+        .from("viewings")
+        .select("viewing_date, viewing_time")
+        .eq("conversation_id", selectedConversation.id)
+        .eq("status", "scheduled")
+        .gte("viewing_date", todayStr)
+        .order("viewing_date", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if ((viewingRow as { viewing_date?: string } | null)?.viewing_date) {
+        setGreetingViewingDate((viewingRow as { viewing_date: string; viewing_time?: string }).viewing_date);
+        if ((viewingRow as { viewing_time?: string }).viewing_time) {
+          setGreetingViewingTime((viewingRow as { viewing_time: string }).viewing_time);
+        }
+        setGreetingViewingAutoFilling(false);
+        return;
+      }
+      // 2. 会話履歴からAIで日時抽出
+      const recentMsgs = (selectedConversation.messages || [])
+        .slice(-15)
+        .map((m) => ({ sender: m.sender, text: m.text || "" }));
+      const res = await fetch("/api/aix/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "extract_datetime",
+          conversation_id: selectedConversation.id,
+          recent_messages: recentMsgs,
+        }),
+      });
+      const json = await res.json() as { ok: boolean; date?: string; time?: string };
+      if (json.date) {
+        // "7/3（金）" → "2026-07-03" に変換
+        const match = json.date.match(/(\d+)\/(\d+)/);
+        if (match) {
+          const month = parseInt(match[1]);
+          const day = parseInt(match[2]);
+          const year = jstNow.getUTCFullYear();
+          const candidate = new Date(year, month - 1, day);
+          const today = new Date(jstNow.getUTCFullYear(), jstNow.getUTCMonth(), jstNow.getUTCDate());
+          const finalYear = candidate < today ? year + 1 : year;
+          setGreetingViewingDate(`${finalYear}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`);
+        }
+      }
+      if (json.time) setGreetingViewingTime(json.time);
+    } catch {
+      // 失敗時は空のまま（手動入力で対応）
+    }
+    setGreetingViewingAutoFilling(false);
   };
 
   // 内覧前・後挨拶を生成してreplyDraftに反映
@@ -9896,6 +9956,7 @@ export default function Home() {
                           }).catch(() => {});
                         }
                         setGreetingViewingMode(key);
+                        if (key === "before") void autoFillGreetingDateTime();
                       }}
                       className="flex-1 rounded-2xl px-3 py-4 text-center transition-all active:bg-teal-50"
                       style={isSuggested ? { border: "2px solid #00796B", background: "#E0F2F1", boxShadow: "0 0 0 3px #00796B22" } : { border: "2px solid #E5E7EB", background: "#FAFAFA" }}
@@ -9915,15 +9976,23 @@ export default function Home() {
               <>
                 <p className="mb-1 text-center text-[18px] font-bold text-[#111827]">内覧前の挨拶</p>
                 <div className="mb-4 rounded-2xl border border-[#E5E7EB] bg-[#F8FFFE] px-4 py-3 mt-4">
-                  <p className="mb-2 text-[11px] font-bold text-[#00796B]">日時を入力するとアナウンスが自動化されます</p>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[11px] font-bold text-[#00796B]">日時を入力するとアナウンスが自動化されます</p>
+                    {greetingViewingAutoFilling && (
+                      <span className="text-[10px] text-[#00796B] animate-pulse">📅 読み取り中…</span>
+                    )}
+                    {!greetingViewingAutoFilling && (greetingViewingDate || greetingViewingTime) && (
+                      <span className="text-[10px] text-[#00796B]">✓ 自動入力</span>
+                    )}
+                  </div>
                   <div className="flex gap-2">
                     <div className="flex-1">
                       <p className="mb-1 text-[10px] text-[#6B7280]">内覧日</p>
-                      <input type="date" value={greetingViewingDate} onChange={(e) => setGreetingViewingDate(e.target.value)} className="w-full rounded-xl border border-[#D1D5DB] px-2.5 py-2 text-[13px] focus:border-teal-400 focus:outline-none" />
+                      <input type="date" value={greetingViewingDate} onChange={(e) => setGreetingViewingDate(e.target.value)} disabled={greetingViewingAutoFilling} className="w-full rounded-xl border border-[#D1D5DB] px-2.5 py-2 text-[13px] focus:border-teal-400 focus:outline-none disabled:opacity-50" />
                     </div>
                     <div className="w-[100px]">
                       <p className="mb-1 text-[10px] text-[#6B7280]">時間（任意）</p>
-                      <input type="time" value={greetingViewingTime} onChange={(e) => setGreetingViewingTime(e.target.value)} className="w-full rounded-xl border border-[#D1D5DB] px-2.5 py-2 text-[13px] focus:border-teal-400 focus:outline-none" />
+                      <input type="time" value={greetingViewingTime} onChange={(e) => setGreetingViewingTime(e.target.value)} disabled={greetingViewingAutoFilling} className="w-full rounded-xl border border-[#D1D5DB] px-2.5 py-2 text-[13px] focus:border-teal-400 focus:outline-none disabled:opacity-50" />
                     </div>
                   </div>
                 </div>
