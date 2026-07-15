@@ -22,6 +22,7 @@
   ],
   "permissions": [
     "sidePanel",
+    "storage",
     "tabs",
     "clipboardWrite",
     "scripting",

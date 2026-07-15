@@ -318,14 +318,18 @@
   }
 
   // ── chrome.storage.onChanged: 顧客切り替え時に即反映 ────────
-  chrome.storage.onChanged.addListener(function (changes, area) {
-    if (area !== "session" || !changes.axlx_score_data) return;
-    storedConditions = changes.axlx_score_data.newValue;
-    if (!storedConditions) return;
-    showConditionBar();
-    setTimeout(runScoring, 500);
-    startObserver();
-  });
+  try {
+    chrome.storage.onChanged.addListener(function (changes, area) {
+      if (area !== "session" || !changes.axlx_score_data) return;
+      storedConditions = changes.axlx_score_data.newValue;
+      if (!storedConditions) return;
+      showConditionBar();
+      setTimeout(runScoring, 500);
+      startObserver();
+    });
+  } catch (e) {
+    // storage 権限未付与環境ではスキップ（manifest に storage を追加することが本来の対処）
+  }
 
   // ── chrome.runtime.onMessage: popup.js からの直接トリガー ───
   chrome.runtime.onMessage.addListener(function (msg) {
