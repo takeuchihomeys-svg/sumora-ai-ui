@@ -1270,8 +1270,8 @@ export async function POST(req: NextRequest) {
                 const sentPreview = (sent_reply ?? "").slice(0, 200);
                 const angleLabel = getReplyAngleLabel(reply_angle);
                 const questionText = verdict === "contradiction"
-                  ? `[knowledge_id:${upsertResult.id}]\n⚠️【確認】既存ルールとの矛盾\n\n━━ 今回の会話（実例）━━\n▶ AIが送ろうとした文\n「${draftPreview}」\n\n▶ スタッフが実際に送った文\n「${sentPreview}」\n\n▶ 変化した部分\n${angleLabel}\n\n━━ 学ぼうとしているルール ━━\n「${compResult.title}」（フェーズ: ${compState}）\n内容: ${contentPreview}...\n\n━━ 矛盾している既存ルール ━━\n${reason}\n\n❓ どちらを優先しますか？\n① 新しいルールを採用する\n② 既存ルールを優先する（新ルールは却下）\n③ 場面で使い分ける → どう使い分けますか？`
-                  : `[knowledge_id:${upsertResult.id}]\n❓【確認】適用場面が不明確\n\n━━ 今回の会話（実例）━━\n▶ AIが送ろうとした文\n「${draftPreview}」\n\n▶ スタッフが実際に送った文\n「${sentPreview}」\n\n▶ 変化した部分\n${angleLabel}\n\n━━ 確認したいナレッジ ━━\n「${compResult.title}」（フェーズ: ${compState}）\n内容: ${contentPreview}...\n\n━━ 矛盾のポイント ━━\n${reason}\n\n❓ 教えてください\n① このルールはどんな場面で使いますか？\n  例：「顧客が○○と言ったとき」「○○の提案後」など\n② AIが送った文の何が問題でしたか？（なければ「特になし」）`;
+                  ? `[knowledge_id:${upsertResult.id}]\n⚠️【確認】既存ルールとの矛盾\n\n━━ 今回の会話（実例）━━\n【AI案】\n${draftPreview}\n【/AI案】\n\n【送信例】\n${sentPreview}\n【/送信例】\n\n▶ 変化した部分\n${angleLabel}\n\n━━ 学ぼうとしているルール ━━\n「${compResult.title}」（フェーズ: ${compState}）\n内容: ${contentPreview}...\n\n━━ 矛盾している既存ルール ━━\n${reason}\n\n❓ どちらを優先しますか？\n① 新しいルールを採用する\n② 既存ルールを優先する（新ルールは却下）\n③ 場面で使い分ける → どう使い分けますか？`
+                  : `[knowledge_id:${upsertResult.id}]\n❓【確認】適用場面が不明確\n\n━━ 今回の会話（実例）━━\n【AI案】\n${draftPreview}\n【/AI案】\n\n【送信例】\n${sentPreview}\n【/送信例】\n\n▶ 変化した部分\n${angleLabel}\n\n━━ 確認したいナレッジ ━━\n「${compResult.title}」（フェーズ: ${compState}）\n内容: ${contentPreview}...\n\n━━ 矛盾のポイント ━━\n${reason}\n\n❓ 教えてください\n① このルールはどんな場面で使いますか？\n  例：「顧客が○○と言ったとき」「○○の提案後」など\n② AIが送った文の何が問題でしたか？（なければ「特になし」）`;
                 const categoryVal = verdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity";
                 await insertAiQuestion({
                   question: questionText,
@@ -1399,8 +1399,8 @@ export async function POST(req: NextRequest) {
               const sentPreview2 = (sent_reply ?? "").slice(0, 200);
               const angleLabel2 = getReplyAngleLabel(reply_angle);
               const questionText = verdict === "contradiction"
-                ? `[knowledge_id:${upsertResult.id}]\n⚠️【確認】既存ルールとの矛盾\n\n━━ 今回の会話（実例）━━\n▶ AIが送ろうとした文\n「${draftPreview2}」\n\n▶ スタッフが実際に送った文\n「${sentPreview2}」\n\n▶ 変化した部分\n${angleLabel2}\n\n━━ 学ぼうとしているルール ━━\n「${result.title}」（フェーズ: ${phase}）\n内容: ${contentPreview}...\n\n━━ 矛盾している既存ルール ━━\n${reason}\n\n❓ どちらを優先しますか？\n① 新しいルールを採用する\n② 既存ルールを優先する（新ルールは却下）\n③ 場面で使い分ける → どう使い分けますか？`
-                : `[knowledge_id:${upsertResult.id}]\n❓【確認】適用場面が不明確\n\n━━ 今回の会話（実例）━━\n▶ AIが送ろうとした文\n「${draftPreview2}」\n\n▶ スタッフが実際に送った文\n「${sentPreview2}」\n\n▶ 変化した部分\n${angleLabel2}\n\n━━ 確認したいナレッジ ━━\n「${result.title}」（フェーズ: ${phase}）\n内容: ${contentPreview}...\n\n━━ 矛盾のポイント ━━\n${reason}\n\n❓ 教えてください\n① このルールはどんな場面で使いますか？\n  例：「顧客が○○と言ったとき」「○○の提案後」など\n② AIが送った文の何が問題でしたか？（なければ「特になし」）`;
+                ? `[knowledge_id:${upsertResult.id}]\n⚠️【確認】既存ルールとの矛盾\n\n━━ 今回の会話（実例）━━\n【AI案】\n${draftPreview2}\n【/AI案】\n\n【送信例】\n${sentPreview2}\n【/送信例】\n\n▶ 変化した部分\n${angleLabel2}\n\n━━ 学ぼうとしているルール ━━\n「${result.title}」（フェーズ: ${phase}）\n内容: ${contentPreview}...\n\n━━ 矛盾している既存ルール ━━\n${reason}\n\n❓ どちらを優先しますか？\n① 新しいルールを採用する\n② 既存ルールを優先する（新ルールは却下）\n③ 場面で使い分ける → どう使い分けますか？`
+                : `[knowledge_id:${upsertResult.id}]\n❓【確認】適用場面が不明確\n\n━━ 今回の会話（実例）━━\n【AI案】\n${draftPreview2}\n【/AI案】\n\n【送信例】\n${sentPreview2}\n【/送信例】\n\n▶ 変化した部分\n${angleLabel2}\n\n━━ 確認したいナレッジ ━━\n「${result.title}」（フェーズ: ${phase}）\n内容: ${contentPreview}...\n\n━━ 矛盾のポイント ━━\n${reason}\n\n❓ 教えてください\n① このルールはどんな場面で使いますか？\n  例：「顧客が○○と言ったとき」「○○の提案後」など\n② AIが送った文の何が問題でしたか？（なければ「特になし」）`;
               const categoryVal = verdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity";
               await insertAiQuestion({
                 question: questionText,

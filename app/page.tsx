@@ -9996,7 +9996,7 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
-                <button onClick={handleGreetingViewingGenerate} disabled={greetingViewingGenerating} className="w-full rounded-2xl bg-teal-600 py-3.5 text-[15px] font-bold text-white transition active:opacity-80 disabled:opacity-40">
+                <button onClick={handleGreetingViewingGenerate} disabled={greetingViewingGenerating || greetingViewingAutoFilling} className="w-full rounded-2xl bg-teal-600 py-3.5 text-[15px] font-bold text-white transition active:opacity-80 disabled:opacity-40">
                   {greetingViewingGenerating ? "生成中…" : "生成する"}
                 </button>
                 <button onClick={() => setGreetingViewingMode(null)} className="mt-3 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60">← 戻る</button>
