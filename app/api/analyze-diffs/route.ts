@@ -499,6 +499,23 @@ const COMPONENT_NAMES: Record<string, string> = {
   widen_note:       "条件広げ説明文",
 };
 
+// reply_angle を日本語ラベルに変換（AI質問フォーマット「▶ 変化した部分」用）
+function getReplyAngleLabel(angle: string | null): string {
+  if (!angle) return "全体的な修正";
+  if (angle.startsWith("component_diff:")) {
+    const parts = angle.replace("component_diff:", "").split(",").map(c => {
+      const m = c.match(/^(\w+)\((\w+)\)$/);
+      const compKey = m ? m[1] : c;
+      const changeType = m ? m[2] : "phrase";
+      const compName = COMPONENT_NAMES[compKey] ?? compKey;
+      const typeName = changeType === "structure" ? "構成変更" : "言い回し変更";
+      return `${compName}（${typeName}）`;
+    });
+    return parts.join("、");
+  }
+  return angle;
+}
+
 // 【textSimilarity 案C】数字・肯否変化がある場合のみ true（意味的変化の有無を低コストで判定）
 // 言い回しが変わっても数字・Yes/Noが同じなら意味的に同じとみなす
 function hasSemanticChange(a: string, b: string): boolean {
@@ -1249,15 +1266,18 @@ export async function POST(req: NextRequest) {
               } else if (verdict === "question" || verdict === "contradiction") {
                 const contentPreview = compResult.rule.slice(0, 150);
                 const reason = judgeReason || "内容の妥当性を確認したい";
+                const draftPreview = (ai_draft ?? "").slice(0, 200);
+                const sentPreview = (sent_reply ?? "").slice(0, 200);
+                const angleLabel = getReplyAngleLabel(reply_angle);
                 const questionText = verdict === "contradiction"
-                  ? `[knowledge_id:${upsertResult.id}]\n⚠️【教えてください】既存ルールとの矛盾 — どちらを優先しますか？\n\n━━ 対象ナレッジ ━━\n「${compResult.title}」（フェーズ: ${compState}）\n内容: ${contentPreview}...\n\n━━ なぜ確認が必要か ━━\nAIによる品質判定で「既存ルールとの矛盾」が検出されました。${reason}\n\n❓ 竹内さんへの質問\n① このナレッジを活かすべきですか？それとも既存ルールを優先しますか？\n② 採用する場合、既存ルールはどう修正すべきでしょうか？`
-                  : `[knowledge_id:${upsertResult.id}]\n❓【教えてください】${reason}\n\n━━ 対象ナレッジ ━━\n「${compResult.title}」（フェーズ: ${compState}）\n内容: ${contentPreview}...\n\n━━ なぜ確認が必要か ━━\nAIによる品質判定で「適用場面が不明確」と判定されました。このナレッジの使いどころを特定できないと、誤った場面でAIが適用してしまう可能性があります。\n\n❓ 竹内さんへの質問\n① このナレッジはどんな場面（顧客状況・フェーズ）で使うべきですか？\n② 内容に修正すべき点があれば教えてください。`;
+                  ? `[knowledge_id:${upsertResult.id}]\n⚠️【確認】既存ルールとの矛盾\n\n━━ 今回の会話（実例）━━\n▶ AIが送ろうとした文\n「${draftPreview}」\n\n▶ スタッフが実際に送った文\n「${sentPreview}」\n\n▶ 変化した部分\n${angleLabel}\n\n━━ 学ぼうとしているルール ━━\n「${compResult.title}」（フェーズ: ${compState}）\n内容: ${contentPreview}...\n\n━━ 矛盾している既存ルール ━━\n${reason}\n\n❓ どちらを優先しますか？\n① 新しいルールを採用する\n② 既存ルールを優先する（新ルールは却下）\n③ 場面で使い分ける → どう使い分けますか？`
+                  : `[knowledge_id:${upsertResult.id}]\n❓【確認】適用場面が不明確\n\n━━ 今回の会話（実例）━━\n▶ AIが送ろうとした文\n「${draftPreview}」\n\n▶ スタッフが実際に送った文\n「${sentPreview}」\n\n▶ 変化した部分\n${angleLabel}\n\n━━ 確認したいナレッジ ━━\n「${compResult.title}」（フェーズ: ${compState}）\n内容: ${contentPreview}...\n\n━━ 矛盾のポイント ━━\n${reason}\n\n❓ 教えてください\n① このルールはどんな場面で使いますか？\n  例：「顧客が○○と言ったとき」「○○の提案後」など\n② AIが送った文の何が問題でしたか？（なければ「特になし」）`;
                 const categoryVal = verdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity";
                 await insertAiQuestion({
                   question: questionText,
-                  speculation: "auto_judge による品質判定",
+                  speculation: `フェーズ: ${compState} / 重要度: ${imp}`,
                   category: categoryVal,
-                  evidence: `knowledge_id: ${upsertResult.id} / state: ${compState}`,
+                  evidence: `AI案:\n${ai_draft ?? ""}\n\n送信文:\n${sent_reply ?? ""}\n\nangle: ${reply_angle ?? ""}\n類似度: ${Math.round(sim * 100)}%`,
                   confidence: "medium",
                   status: "pending",
                 });
@@ -1375,15 +1395,18 @@ export async function POST(req: NextRequest) {
               const contentPreview = result.rule.slice(0, 150);
               const phase = conversation_state ?? "不明";
               const reason = judgeReason || "内容の妥当性を確認したい";
+              const draftPreview2 = (ai_draft ?? "").slice(0, 200);
+              const sentPreview2 = (sent_reply ?? "").slice(0, 200);
+              const angleLabel2 = getReplyAngleLabel(reply_angle);
               const questionText = verdict === "contradiction"
-                ? `[knowledge_id:${upsertResult.id}]\n⚠️【教えてください】既存ルールとの矛盾 — どちらを優先しますか？\n\n━━ 対象ナレッジ ━━\n「${result.title}」（フェーズ: ${phase}）\n内容: ${contentPreview}...\n\n━━ なぜ確認が必要か ━━\nAIによる品質判定で「既存ルールとの矛盾」が検出されました。${reason}\n\n❓ 竹内さんへの質問\n① このナレッジを活かすべきですか？それとも既存ルールを優先しますか？\n② 採用する場合、既存ルールはどう修正すべきでしょうか？`
-                : `[knowledge_id:${upsertResult.id}]\n❓【教えてください】${reason}\n\n━━ 対象ナレッジ ━━\n「${result.title}」（フェーズ: ${phase}）\n内容: ${contentPreview}...\n\n━━ なぜ確認が必要か ━━\nAIによる品質判定で「適用場面が不明確」と判定されました。このナレッジの使いどころを特定できないと、誤った場面でAIが適用してしまう可能性があります。\n\n❓ 竹内さんへの質問\n① このナレッジはどんな場面（顧客状況・フェーズ）で使うべきですか？\n② 内容に修正すべき点があれば教えてください。`;
+                ? `[knowledge_id:${upsertResult.id}]\n⚠️【確認】既存ルールとの矛盾\n\n━━ 今回の会話（実例）━━\n▶ AIが送ろうとした文\n「${draftPreview2}」\n\n▶ スタッフが実際に送った文\n「${sentPreview2}」\n\n▶ 変化した部分\n${angleLabel2}\n\n━━ 学ぼうとしているルール ━━\n「${result.title}」（フェーズ: ${phase}）\n内容: ${contentPreview}...\n\n━━ 矛盾している既存ルール ━━\n${reason}\n\n❓ どちらを優先しますか？\n① 新しいルールを採用する\n② 既存ルールを優先する（新ルールは却下）\n③ 場面で使い分ける → どう使い分けますか？`
+                : `[knowledge_id:${upsertResult.id}]\n❓【確認】適用場面が不明確\n\n━━ 今回の会話（実例）━━\n▶ AIが送ろうとした文\n「${draftPreview2}」\n\n▶ スタッフが実際に送った文\n「${sentPreview2}」\n\n▶ 変化した部分\n${angleLabel2}\n\n━━ 確認したいナレッジ ━━\n「${result.title}」（フェーズ: ${phase}）\n内容: ${contentPreview}...\n\n━━ 矛盾のポイント ━━\n${reason}\n\n❓ 教えてください\n① このルールはどんな場面で使いますか？\n  例：「顧客が○○と言ったとき」「○○の提案後」など\n② AIが送った文の何が問題でしたか？（なければ「特になし」）`;
               const categoryVal = verdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity";
               await insertAiQuestion({
                 question: questionText,
-                speculation: "auto_judge による品質判定",
+                speculation: `フェーズ: ${phase} / 重要度: ${imp}`,
                 category: categoryVal,
-                evidence: `knowledge_id: ${upsertResult.id} / state: ${conversation_state ?? "unknown"}`,
+                evidence: `AI案:\n${ai_draft ?? ""}\n\n送信文:\n${sent_reply ?? ""}\n\nangle: ${reply_angle ?? ""}\n類似度: ${Math.round(sim * 100)}%`,
                 confidence: "medium",
                 status: "pending",
               });

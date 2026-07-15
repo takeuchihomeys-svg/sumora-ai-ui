@@ -397,6 +397,8 @@ type AiQuestionMeta = {
   phase: string | null;
   importance: number | null;
   embeddedCategory: string | null;
+  aiDraftExample: string | null;
+  staffSentExample: string | null;
 };
 function parseAiQuestion(question: string): AiQuestionMeta {
   // [knowledge_id:UUID] タグを全箇所から除去（先頭だけでなく本文内も）
@@ -418,7 +420,21 @@ function parseAiQuestion(question: string): AiQuestionMeta {
     return "";
   });
 
-  return { cleanText: text.trim(), phase, importance, embeddedCategory };
+  // 【AI案】...【/AI案】 ブロックを抽出して除去（複数行対応）
+  let aiDraftExample: string | null = null;
+  text = text.replace(/【AI案】\n?([\s\S]*?)【\/AI案】\n?/g, (_, content) => {
+    aiDraftExample = content.trim();
+    return "";
+  });
+
+  // 【送信例】...【/送信例】 ブロックを抽出して除去（複数行対応）
+  let staffSentExample: string | null = null;
+  text = text.replace(/【送信例】\n?([\s\S]*?)【\/送信例】\n?/g, (_, content) => {
+    staffSentExample = content.trim();
+    return "";
+  });
+
+  return { cleanText: text.trim(), phase, importance, embeddedCategory, aiDraftExample, staffSentExample };
 }
 
 // ナレッジタイトルの内部タグ（[修正対比] [差分学習] [原則] [パターン] 等）を除去して表示用タイトルを返す
@@ -3224,7 +3240,7 @@ export default function TemplateModal({
               {/* adapt_feedback（会話を合わせる）は他のカテゴリと分けて一番下にまとめて表示する */}
               {!feedbackLoading && (() => {
                 const renderFeedbackItem = (item: FeedbackItem) => {
-                  const { cleanText, phase, importance, embeddedCategory } = parseAiQuestion(item.question);
+                  const { cleanText, phase, importance, embeddedCategory, aiDraftExample, staffSentExample } = parseAiQuestion(item.question);
                   return (
                 <div key={item.id} className="border border-orange-200 rounded-xl p-4 bg-orange-50">
                   {/* カテゴリバッジ・フェーズ・重要度・埋め込みカテゴリ */}
@@ -3263,6 +3279,26 @@ export default function TemplateModal({
                   {/* 根拠 */}
                   {item.evidence && (
                     <p className="text-xs text-gray-400 mb-3">📊 {item.evidence}</p>
+                  )}
+
+                  {/* AI生成文の例（水色背景） */}
+                  {aiDraftExample && (
+                    <div className="rounded-lg px-3 py-2.5 mb-2 bg-cyan-50 border border-cyan-200">
+                      <p className="text-[11px] font-bold text-cyan-600 mb-1 flex items-center gap-1">
+                        🤖 <span>AI生成文の例</span>
+                      </p>
+                      <p className="text-xs text-cyan-900 whitespace-pre-wrap leading-relaxed">{aiDraftExample}</p>
+                    </div>
+                  )}
+
+                  {/* スタッフ実送信文（緑背景） */}
+                  {staffSentExample && (
+                    <div className="rounded-lg px-3 py-2.5 mb-3 bg-green-50 border border-green-200">
+                      <p className="text-[11px] font-bold text-green-600 mb-1 flex items-center gap-1">
+                        ✅ <span>スタッフ実送信文</span>
+                      </p>
+                      <p className="text-xs text-green-900 whitespace-pre-wrap leading-relaxed">{staffSentExample}</p>
+                    </div>
                   )}
 
                   {item.status === "pending" ? (
