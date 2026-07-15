@@ -13,8 +13,8 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", time
 // 1日に大量起票されて竹内さんが処理しきれなくなるのを防ぐ:
 // - pending 総数が MAX_PENDING_AI_QUESTIONS 件以上なら新規起票をスキップ
 // - 1回の実行での新規起票は MAX_AI_QUESTIONS_PER_RUN 件まで
-const MAX_PENDING_AI_QUESTIONS = 60;
-const MAX_AI_QUESTIONS_PER_RUN = 5;
+const MAX_PENDING_AI_QUESTIONS = 120;
+const MAX_AI_QUESTIONS_PER_RUN = 10;
 let aiQuestionsInsertedThisRun = 0;
 let pendingAiQuestionCount: number | null = null;
 
@@ -263,7 +263,7 @@ function extractNgPhrases(content: string): string[] {
 // importance >= 7 のものを対象に、同一ステートの confirmed ルールと比較して
 // confirm / question / contradiction / skip を返す。
 // 失敗・タイムアウト時は "skip" を返してメインループを止めない。
-const MAX_JUDGE_PER_RUN = 5; // 1クロン実行あたりの最大判定回数（LLM呼び出しコスト・タイムガード対策）
+const MAX_JUDGE_PER_RUN = 8; // 1クロン実行あたりの最大判定回数（LLM呼び出しコスト・タイムガード対策）
 
 async function autoJudgeKnowledge(
   knowledgeId: string,
@@ -1096,10 +1096,11 @@ export async function POST(req: NextRequest) {
   const startTime = Date.now();
   let timedOut = false;
   let judgeCount = 0; // 1クロン実行あたりの autoJudgeKnowledge 呼び出し回数上限管理
+  let mergeJudgeCount = 0; // mergedルール品質チェック用スロット（MAX_JUDGE_PER_RUN枠とは独立・最大2件/実行）
   for (const ex of examples) {
-    if (Date.now() - startTime > 30_000) {
+    if (Date.now() - startTime > 40_000) {
       timedOut = true;
-      console.warn(`[analyze-diffs] 30秒タイムガード発動 — ${processed}/${examples.length}件で打ち切り（残りは次回実行で処理）`);
+      console.warn(`[analyze-diffs] 40秒タイムガード発動 — ${processed}/${examples.length}件で打ち切り（残りは次回実行で処理）`);
       break;
     }
     const { id, customer_message, ai_draft, sent_reply, conversation_state, is_starred, ai_components, reply_angle } = ex as {
@@ -1419,6 +1420,36 @@ export async function POST(req: NextRequest) {
       } else if (upsertResult.result === "merged") {
         console.log(`[analyze-diffs] 既存ルール強化: "${result.title}"`);
         learned++;
+        // merged品質チェック: importance>=8 かつ wrong_count>=1 のmergedルールに対して軽量autoJudge
+        // MAX_JUDGE_PER_RUN枠とは独立した mergeJudgeCount スロット（最大2件/実行）で管理する
+        // メインループの末尾で実行するためタイムガード超過時は自然にスキップされる
+        if (mergeJudgeCount < 2 && upsertResult.id) {
+          try {
+            const { data: mergedRuleData } = await supabase
+              .from("ai_reply_knowledge")
+              .select("importance, wrong_count")
+              .eq("id", upsertResult.id)
+              .maybeSingle();
+            const mergedImp = (mergedRuleData?.importance as number) ?? 0;
+            const mergedWrong = (mergedRuleData?.wrong_count as number) ?? 0;
+            if (mergedImp >= 8 && mergedWrong >= 1) {
+              mergeJudgeCount++;
+              const { verdict: mergeVerdict, reason: mergeReason } = await autoJudgeKnowledge(
+                upsertResult.id, result.title, result.rule, conversation_state ?? null, mergedImp, result.trigger_example,
+              );
+              if (mergeVerdict === "question" || mergeVerdict === "contradiction") {
+                await insertAiQuestion({
+                  question: `[knowledge_id:${upsertResult.id}]\n🔄【確認】強化済みルールの品質チェック\n\n━━ 強化されたナレッジ ━━\n「${result.title}」（フェーズ: ${conversation_state ?? "不明"}）\n内容: ${result.rule.slice(0, 150)}\n\n━━ 確認が必要な理由 ━━\n${mergeReason || "既存ルールと新差分の整合性を確認してください"}\n\n❓ このルールの内容は正確ですか？修正が必要な場合は教えてください。`,
+                  speculation: `upsertResult=merged かつ wrong_count=${mergedWrong}件 の高重要度ルールが再強化されました（importance=${mergedImp}）。品質確認が必要です。`,
+                  category: mergeVerdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity",
+                  evidence: `AI案:\n${ai_draft ?? ""}\n\n送信文:\n${sent_reply ?? ""}\n\n類似度: ${Math.round(sim * 100)}%`,
+                  confidence: "medium",
+                  status: "pending",
+                });
+              }
+            }
+          } catch { /* merged品質チェック失敗はメイン処理を止めない */ }
+        }
       } else {
         console.log(`[analyze-diffs] スキップ（重複）: "${result.title}"`);
       }

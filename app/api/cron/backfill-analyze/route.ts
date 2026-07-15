@@ -10,7 +10,7 @@ function getBaseUrl(): string {
 async function runBackfill() {
   try {
     const cronSecret = process.env.CRON_SECRET;
-    const res = await fetch(`${getBaseUrl()}/api/analyze-diffs`, {
+    const res = await fetch(`${getBaseUrl()}/api/analyze-diffs?limit=15`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

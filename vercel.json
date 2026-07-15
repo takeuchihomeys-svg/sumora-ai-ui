@@ -45,6 +45,14 @@
       "schedule": "23 6 * * *"
     },
     {
+      "path": "/api/analyze-diffs?limit=15",
+      "schedule": "23 2 * * *"
+    },
+    {
+      "path": "/api/analyze-diffs?limit=15",
+      "schedule": "23 14 * * *"
+    },
+    {
       "path": "/api/cron/backfill-analyze",
       "schedule": "0 10 * * *"
     },
