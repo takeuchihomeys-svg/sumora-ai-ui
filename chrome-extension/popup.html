@@ -203,6 +203,7 @@
           </div>
         </div>
       </div>
+      <button id="feedback-btn" title="フィードバック">💬</button>
       <div class="copy-all-bar">
         <div id="unknown-warn" style="display:none;background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:6px 10px;font-size:11px;color:#856404;margin:4px 0;line-height:1.5;width:100%;box-sizing:border-box"></div>
         <button class="autofill-btn" id="autofill-btn" style="display:none">🔍 リアプロで自動検索</button>
@@ -211,6 +212,23 @@
       </div>
     </div>
 
+  </div>
+  <div id="feedback-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;align-items:center;justify-content:center;">
+    <div id="feedback-modal" style="background:#fff;border-radius:12px;padding:20px;width:300px;display:flex;flex-direction:column;gap:10px;">
+      <p style="font-weight:bold;margin:0;font-size:14px;">💬 フィードバック</p>
+      <select id="feedback-category" style="width:100%;padding:6px;border:1px solid #ddd;border-radius:6px;font-size:13px;">
+        <option value="station_area_mismatch">🚉 駅/地域の誤判定</option>
+        <option value="station_map_request">🗺️ 駅マップ追加依頼</option>
+        <option value="bug_report">🐛 バグ報告</option>
+        <option value="other">💬 その他</option>
+      </select>
+      <textarea id="feedback-text" placeholder="例：「日本橋」が地域でも検索されてしまった" rows="4" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;font-size:13px;resize:vertical;box-sizing:border-box;"></textarea>
+      <div style="display:flex;gap:8px;">
+        <button id="feedback-submit-btn" style="flex:1;padding:8px;background:#00796B;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer;">送信</button>
+        <button id="feedback-cancel-btn" style="flex:1;padding:8px;background:#f3f4f6;color:#374151;border:none;border-radius:8px;font-size:13px;cursor:pointer;">キャンセル</button>
+      </div>
+      <p id="feedback-status" style="margin:0;font-size:12px;text-align:center;color:#6B7280;"></p>
+    </div>
   </div>
   <script src="popup-maps.js"></script>
   <script src="popup.js"></script>

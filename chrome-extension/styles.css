@@ -408,3 +408,15 @@ body.mini-mode .header-logo {
 body.mini-mode .view {
   display: none !important;
 }
+
+/* ── Feedback button & modal ── */
+#feedback-btn {
+  background: none;
+  border: 1px solid #D1D5DB;
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 16px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+#feedback-btn:hover { opacity: 1; }

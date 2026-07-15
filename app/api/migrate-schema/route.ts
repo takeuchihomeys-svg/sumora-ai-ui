@@ -1571,6 +1571,27 @@ ON CONFLICT (rule_key) DO UPDATE
 -- ai_reply_knowledge: 最終ブースト時刻（analyze-diffs ポジティブ強化Bの7日クールダウン用）
 ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS last_boosted_at TIMESTAMPTZ;
 
+-- ── Chrome拡張フィードバックテーブル（2026-07-15）──
+-- popup.js から駅エリア不一致・バグ報告などを受け取り蓄積する。
+-- category: station_area_mismatch | station_map_request | bug_report | other
+-- site: realpro | itandi | reins（フィードバック発生元サイト）
+-- resolved: 管理者が対応済みにした場合 true
+CREATE TABLE IF NOT EXISTS public.chrome_extension_feedback (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  created_at TIMESTAMPTZ DEFAULT now(),
+  category   TEXT NOT NULL,
+  content    TEXT NOT NULL,
+  area_raw   TEXT,
+  token      TEXT,
+  site       TEXT,
+  resolved   BOOLEAN DEFAULT false
+);
+ALTER TABLE chrome_extension_feedback DISABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_chrome_extension_feedback_category
+  ON chrome_extension_feedback(category, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chrome_extension_feedback_resolved
+  ON chrome_extension_feedback(resolved, created_at DESC);
+
 -- ── PostgREST スキーマキャッシュ再読込（必ず最後に実行する）──
 -- 新カラム追加後に PostgREST のスキーマキャッシュが古いままだと、
 -- 以降の INSERT/SELECT が「column does not exist」で全滅する

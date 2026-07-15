@@ -2201,3 +2201,52 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 });
+
+// ── フィードバック機能 ──────────────────────────────
+(function() {
+  var fbBtn = document.getElementById('feedback-btn');
+  var fbOverlay = document.getElementById('feedback-overlay');
+  var fbCancel = document.getElementById('feedback-cancel-btn');
+  var fbSubmit = document.getElementById('feedback-submit-btn');
+  var fbStatus = document.getElementById('feedback-status');
+
+  if (!fbBtn || !fbOverlay) return;
+
+  fbBtn.addEventListener('click', function() {
+    fbOverlay.style.display = 'flex';
+    fbStatus.textContent = '';
+  });
+  fbCancel.addEventListener('click', function() {
+    fbOverlay.style.display = 'none';
+  });
+  fbOverlay.addEventListener('click', function(e) {
+    if (e.target === fbOverlay) fbOverlay.style.display = 'none';
+  });
+  fbSubmit.addEventListener('click', async function() {
+    var category = document.getElementById('feedback-category').value;
+    var content = document.getElementById('feedback-text').value.trim();
+    if (!content) { fbStatus.textContent = '内容を入力してください'; return; }
+    fbSubmit.disabled = true;
+    fbStatus.textContent = '送信中…';
+    try {
+      var areaRaw = (selectedCustomer) ? (selectedCustomer.desired_area || selectedCustomer.area || '') : '';
+      var siteKey = selectedSite || '';
+      var res = await fetch(API_BASE + '/api/chrome-extension-feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: category, content: content, area_raw: areaRaw, site: siteKey })
+      });
+      var json = await res.json();
+      if (json.ok) {
+        fbStatus.textContent = '✅ 送信しました！';
+        document.getElementById('feedback-text').value = '';
+        setTimeout(function() { fbOverlay.style.display = 'none'; }, 1200);
+      } else {
+        fbStatus.textContent = '❌ 送信失敗: ' + (json.error || '不明なエラー');
+      }
+    } catch(e) {
+      fbStatus.textContent = '❌ 通信エラー: ' + e.message;
+    }
+    fbSubmit.disabled = false;
+  });
+})();
