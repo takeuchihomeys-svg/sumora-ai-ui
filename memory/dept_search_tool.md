@@ -106,6 +106,9 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 
 | 日付 | 内容 |
 |---|---|
+| 2026-07-15 | Chrome拡張フィードバックUI追加: popup.html に💬ボタン＋モーダル・popup.js に送信ロジック（POST /api/chrome-extension-feedback）・styles.css にスタイル追加 |
+| 2026-07-15 | NEIGHBORHOOD_WARD_MAP から重複トークン4件削除（天満・日本橋・帝塚山・文の里）: STATION_LINE_MAPに収録済みのため地域として検索されてしまうバグを修正 |
+| 2026-07-15 | /api/chrome-extension-feedback 新設: POSTでフィードバック保存・GETで最新50件取得。Supabase chrome_extension_feedback テーブル新設（category/content/area_raw/token/site/resolved）|
 | 2026-07-06 | score-overlay.js 新規追加: 物件検索結果に条件マッチ度スコア表示（◎85+/○70+/△55+/×）。API不使用・コスト0・MutationObserver自動再スコア |
 | 2026-06-09 | itandi PDF キャプチャ時にAdobeが開く問題を修正: onCreated内でchrome.downloads.cancel()を即座に呼ぶことでファイル保存をキャンセル（LINEにだけ送る用途なのでファイル不要） |
 | 2026-06-08 | ミニボタン→パネル再展開バグ修正: doExpand()のcross-origin contentDocument=null問題を修正（`!fr.contentDocument\|\|` 削除）✅ |
