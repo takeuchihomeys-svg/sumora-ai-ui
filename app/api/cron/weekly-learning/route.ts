@@ -6,19 +6,23 @@ import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 300;
 
-// ── weekly-learning: 週次バッチ差分学習 ──────────────────────────────────────
-// 未分析差分（was_ai_modified=true AND diff_analyzed_at IS NULL）を週単位で
-// グルーピングし、クロスパターン分析から新ルールを抽出する。
-// analyze-diffs は1件ごとの個別学習、weekly-learning は複数件を束ねた
-// マクロパターン学習。両者は補完関係にある。
-//
-// ?chunk=1|2|3|4 で週の4分割バッチを制御（各 40 件）。
-// Vercel cron では週1回呼ぶか、管理画面から手動トリガーする想定。
+// ── weekly-learning: 週次バッチ学習 ─────────────────────────────────────────
+// chunk=1: 新規diff分析（現行維持）
+//   未分析差分40件をグルーピングしクロスパターン分析から新ルールを抽出する
+// chunk=2: hypothesis × confirmed 矛盾チェック（新規）
+//   全hypothesisを confirmed と照合し、矛盾/冗長をrejectedに落とす
+// chunk=3: 品質選別 Stage A/B/C（新規）
+//   自動却下SQL → 自動昇格SQL → AI中間層判定
+// chunk=4: 重複排除 + 週次質問まとめ（新規）
+//   pg_trgm類似ペア→Claude判定→重複廃棄 + AI質問起票
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CHUNK_SIZE = 40;
-const MAX_AI_QUESTIONS_PER_RUN = 5; // weekly は件数少ないので保守的に
+const MAX_AI_QUESTIONS_PER_RUN = 5;
 const MAX_PENDING_AI_QUESTIONS = 120;
+const CONTRADICTION_BATCH = 30; // chunk=2: 1回のClaude呼び出しで処理するhypothesis件数
+const AI_CLASSIFY_BATCH = 20;   // chunk=3: Stage C で処理するhypothesis件数
+const DEDUP_LIMIT = 200;        // chunk=4: 重複排除のhypothesis上位件数
 
 const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY ?? "",
@@ -26,7 +30,7 @@ const client = new Anthropic({
   maxRetries: 1,
 });
 
-// ── AI質問起票ガード（analyze-diffs と同じパターン） ─────────────────────────
+// ── AI質問起票ガード ───────────────────────────────────────────────────────────
 let aiQuestionsInsertedThisRun = 0;
 let pendingAiQuestionCount: number | null = null;
 
@@ -73,30 +77,30 @@ type DiffExample = {
 };
 
 type ExistingRule = {
+  id: string;
   title: string;
   content: string;
   hypothesis_status: string | null;
 };
 
+type HypothesisRule = {
+  id: string;
+  title: string;
+  content: string;
+  importance: number;
+  category: string;
+  conversation_state: string | null;
+};
+
 type WeeklyAnalysisResult = {
-  newRules: Array<{
-    title: string;
-    content: string;
-    trigger?: string;
-  }>;
-  gaps: Array<{
-    description: string;
-    frequency: number;
-  }>;
-  contradictions: Array<{
-    description: string;
-  }>;
+  newRules: Array<{ title: string; content: string; trigger?: string }>;
+  gaps: Array<{ description: string; frequency: number }>;
+  contradictions: Array<{ description: string }>;
   weeklyQuestion: string | null;
 };
 
-// ── Claude によるクロスパターン分析 ──────────────────────────────────────────
-// 同一 conversation_state 内の複数差分を束ねて、週内で2件以上繰り返された
-// パターンのみを新ルール候補として抽出する。
+// ── chunk=1: 新規diff分析（現行維持） ────────────────────────────────────────
+
 async function analyzeStateGroup(
   state: string,
   examples: DiffExample[],
@@ -105,9 +109,7 @@ async function analyzeStateGroup(
   const empty: WeeklyAnalysisResult = { newRules: [], gaps: [], contradictions: [], weeklyQuestion: null };
 
   const examplesText = examples.map((e, i) => {
-    const label = (!e.ai_draft || !e.ai_draft.trim())
-      ? "✍️ スタッフ手書き"
-      : "🔴 AIを修正";
+    const label = (!e.ai_draft || !e.ai_draft.trim()) ? "✍️ スタッフ手書き" : "🔴 AIを修正";
     return `
 --- 差分${i + 1} [${label}] ${e.is_starred ? "⭐" : ""} ---
 顧客: ${(e.customer_message ?? "").slice(0, 200)}
@@ -162,7 +164,6 @@ ${existingRulesText}
     });
 
     const text = res.content[0].type === "text" ? res.content[0].text.trim() : "";
-    // JSON オブジェクト抽出（Claudeが余計なテキストを返す場合に対応）
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       console.warn(`[weekly-learning] ${state}: Claude応答からJSONを抽出できず`);
@@ -181,9 +182,593 @@ ${existingRulesText}
   }
 }
 
+async function runChunk1(chunk: number): Promise<Record<string, unknown>> {
+  const offset = (chunk - 1) * CHUNK_SIZE; // chunk=1 → offset=0
+
+  const { data: rawExamples, error: fetchErr } = await supabase
+    .from("ai_reply_examples")
+    .select("id, conversation_state, customer_message, sent_reply, ai_draft, is_starred, created_at")
+    .eq("was_ai_modified", true)
+    .is("diff_analyzed_at", null)
+    .not("sent_reply", "is", null)
+    .order("is_starred", { ascending: false })
+    .order("created_at", { ascending: true })
+    .range(offset, offset + CHUNK_SIZE - 1);
+
+  if (fetchErr) throw new Error(fetchErr.message);
+
+  const examples = (rawExamples ?? []) as DiffExample[];
+
+  if (examples.length === 0) {
+    return { chunk, processed: 0, newRules: 0, questionsRaised: 0, message: `chunk${chunk}: 未分析差分なし` };
+  }
+
+  const stateGroups = new Map<string, DiffExample[]>();
+  for (const ex of examples) {
+    const state = ex.conversation_state ?? "unknown";
+    if (!stateGroups.has(state)) stateGroups.set(state, []);
+    stateGroups.get(state)!.push(ex);
+  }
+
+  let totalNewRules = 0;
+  let totalQuestionsRaised = 0;
+  const processedIds: string[] = [];
+
+  for (const [state, stateExamples] of stateGroups.entries()) {
+    try {
+      const { data: existingRulesRaw } = await supabase
+        .from("ai_reply_knowledge")
+        .select("id, title, content, hypothesis_status")
+        .eq("conversation_state", state)
+        .eq("hypothesis_status", "confirmed")
+        .order("importance", { ascending: false })
+        .limit(8);
+
+      const existingRules = (existingRulesRaw ?? []) as ExistingRule[];
+      const analysis = await analyzeStateGroup(state, stateExamples, existingRules);
+
+      for (const rule of analysis.newRules) {
+        if (!rule.title || !rule.content) continue;
+        try {
+          const embeddingInput = buildKnowledgeEmbeddingInput({
+            trigger_example: rule.trigger,
+            content: rule.content,
+            conversation_state: state,
+          });
+          const embedding = await generateEmbedding(embeddingInput);
+          const result = await upsertKnowledge(supabase, {
+            title: `[weekly] ${rule.title}`,
+            content: rule.content,
+            category: "pattern",
+            importance: 7,
+            conversation_state: state,
+            ...(embedding ? { embedding } : {}),
+            ...(rule.trigger ? { trigger_example: rule.trigger } : {}),
+          });
+          if (result.result === "inserted" || result.result === "merged") totalNewRules++;
+        } catch (e) {
+          console.error(`[weekly-learning] ${state}: upsertKnowledge失敗`, e);
+        }
+      }
+
+      if (analysis.weeklyQuestion && (analysis.contradictions.length > 0 || analysis.gaps.length > 0)) {
+        const questionSlice = analysis.weeklyQuestion.slice(0, 50);
+        const { data: existing } = await supabase
+          .from("ai_feedback_items")
+          .select("id")
+          .ilike("question", `%${questionSlice}%`)
+          .in("status", ["pending", "answered", "applied"])
+          .limit(1);
+
+        if (!existing || existing.length === 0) {
+          const evidence = [
+            analysis.gaps.map(g => `ギャップ(${g.frequency}件): ${g.description}`).join(" / "),
+            analysis.contradictions.map(c => `矛盾: ${c.description}`).join(" / "),
+          ].filter(Boolean).join("\n");
+
+          const raised = await insertAiQuestion({
+            question: analysis.weeklyQuestion,
+            category: "knowledge_gap",
+            confidence: "medium",
+            evidence: evidence.slice(0, 500) || null,
+            speculation: `週次バッチ学習 chunk${chunk} / ${state} / ${stateExamples.length}件の差分から検出`,
+          });
+          if (raised) totalQuestionsRaised++;
+        }
+      }
+
+      for (const ex of stateExamples) processedIds.push(ex.id);
+    } catch (e) {
+      console.error(`[weekly-learning] ${state}: ステート処理失敗`, e);
+    }
+  }
+
+  if (processedIds.length > 0) {
+    const now = new Date().toISOString();
+    await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).in("id", processedIds);
+  }
+
+  return {
+    chunk,
+    processed: processedIds.length,
+    newRules: totalNewRules,
+    questionsRaised: totalQuestionsRaised,
+    message: `chunk${chunk}: ${processedIds.length}件処理・${totalNewRules}件ルール保存・${totalQuestionsRaised}件AI質問起票`,
+  };
+}
+
+// ── chunk=2: hypothesis × confirmed 矛盾チェック ─────────────────────────────
+
+type ContradictionResult = {
+  contradicts: string[];
+  redundant_to_confirmed: string[];
+  independent: string[];
+};
+
+async function checkContradictions(
+  hypothesisBatch: HypothesisRule[],
+  confirmedRules: ExistingRule[],
+): Promise<ContradictionResult> {
+  const empty: ContradictionResult = { contradicts: [], redundant_to_confirmed: [], independent: hypothesisBatch.map(r => r.id) };
+
+  const confirmedText = confirmedRules.length > 0
+    ? confirmedRules.map(r => `[ID:${r.id}] ${r.title}\n  内容: ${r.content}`).join("\n\n")
+    : "（なし）";
+
+  const hypothesisText = hypothesisBatch.map(r =>
+    `[ID:${r.id}] ${r.title}\n  内容: ${r.content}`
+  ).join("\n\n");
+
+  const prompt = `あなたはLINE不動産返信AIのルールベース品質チェッカーです。
+
+## 確定済みルール（confirmed）
+${confirmedText}
+
+## チェック対象の仮説ルール（hypothesis）
+${hypothesisText}
+
+以下を判定してください：
+1. confirmedと明確に「逆のことを言っている」矛盾ルールのIDリスト
+2. confirmedとほぼ同じ内容の冗長ルール（内容の90%以上が重複）のIDリスト
+3. 上記いずれでもなく、独立した新知識として価値があるIDリスト
+
+JSON形式のみ返答：
+{"contradicts": ["ID", ...], "redundant_to_confirmed": ["ID", ...], "independent": ["ID", ...]}`;
+
+  try {
+    const res = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1000,
+      system: "ルールベース品質チェッカーです。指定されたJSON形式のみ返してください。",
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const text = res.content[0].type === "text" ? res.content[0].text.trim() : "";
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return empty;
+    const parsed = JSON.parse(jsonMatch[0]) as ContradictionResult;
+    return {
+      contradicts: Array.isArray(parsed.contradicts) ? parsed.contradicts : [],
+      redundant_to_confirmed: Array.isArray(parsed.redundant_to_confirmed) ? parsed.redundant_to_confirmed : [],
+      independent: Array.isArray(parsed.independent) ? parsed.independent : [],
+    };
+  } catch (e) {
+    console.error("[weekly-learning] chunk=2: Claude矛盾チェック失敗", e);
+    return empty;
+  }
+}
+
+async function runChunk2(): Promise<Record<string, unknown>> {
+  // contradiction_checked_at IS NULL な hypothesis を取得（importance降順）
+  const { data: rawHypothesis } = await supabase
+    .from("ai_reply_knowledge")
+    .select("id, title, content, importance, category, conversation_state")
+    .eq("hypothesis_status", "hypothesis")
+    .is("contradiction_checked_at", null)
+    .order("importance", { ascending: false })
+    .limit(CONTRADICTION_BATCH * 10); // 最大300件（10バッチ分）
+
+  const allHypothesis = (rawHypothesis ?? []) as HypothesisRule[];
+
+  if (allHypothesis.length === 0) {
+    return { chunk: 2, processed: 0, rejected: 0, message: "chunk2: 矛盾チェック対象なし" };
+  }
+
+  // conversation_state でグルーピング
+  const stateGroups = new Map<string, HypothesisRule[]>();
+  for (const h of allHypothesis) {
+    const state = h.conversation_state ?? "unknown";
+    if (!stateGroups.has(state)) stateGroups.set(state, []);
+    stateGroups.get(state)!.push(h);
+  }
+
+  let totalRejected = 0;
+  let totalProcessed = 0;
+  const processedIds: string[] = [];
+
+  for (const [state, hyps] of stateGroups.entries()) {
+    // そのstateのconfirmedルールを取得
+    const { data: confirmedRaw } = await supabase
+      .from("ai_reply_knowledge")
+      .select("id, title, content, hypothesis_status")
+      .eq("conversation_state", state)
+      .eq("hypothesis_status", "confirmed")
+      .order("importance", { ascending: false })
+      .limit(15);
+
+    const confirmedRules = (confirmedRaw ?? []) as ExistingRule[];
+
+    // バッチ処理
+    for (let i = 0; i < hyps.length; i += CONTRADICTION_BATCH) {
+      const batch = hyps.slice(i, i + CONTRADICTION_BATCH);
+
+      const result = await checkContradictions(batch, confirmedRules);
+
+      // 矛盾・冗長をrejected化
+      const toReject = [...result.contradicts, ...result.redundant_to_confirmed];
+      if (toReject.length > 0) {
+        const now = new Date().toISOString();
+        await supabase
+          .from("ai_reply_knowledge")
+          .update({
+            hypothesis_status: "rejected",
+            rejection_reason: "ai_contradiction_or_redundant",
+            contradiction_checked_at: now,
+          })
+          .in("id", toReject);
+        totalRejected += toReject.length;
+      }
+
+      // 独立ルールに contradiction_checked_at を打つ
+      if (result.independent.length > 0) {
+        const now = new Date().toISOString();
+        await supabase
+          .from("ai_reply_knowledge")
+          .update({ contradiction_checked_at: now })
+          .in("id", result.independent);
+      }
+
+      for (const h of batch) processedIds.push(h.id);
+    }
+
+    totalProcessed += hyps.length;
+  }
+
+  return {
+    chunk: 2,
+    processed: totalProcessed,
+    rejected: totalRejected,
+    message: `chunk2: ${totalProcessed}件チェック・${totalRejected}件rejected（矛盾/冗長）`,
+  };
+}
+
+// ── chunk=3: 品質選別 Stage A/B/C ──────────────────────────────────────────
+
+type AiClassifyResult = {
+  results: Array<{ id: string; verdict: "promote" | "reject" | "keep"; reason?: string }>;
+};
+
+async function aiClassifyBatch(batch: HypothesisRule[]): Promise<AiClassifyResult> {
+  const empty: AiClassifyResult = { results: [] };
+
+  const batchText = batch.map(r =>
+    `[ID:${r.id}] ${r.title}\n  内容: ${r.content}\n  カテゴリ: ${r.category} / importance: ${r.importance}`
+  ).join("\n\n");
+
+  const prompt = `以下の仮説ルール（不動産LINE返信AI用）を評価してください。
+
+${batchText}
+
+判定基準：
+- promote: 具体的・実用的・他のconfirmedルールに未収録の新知識 → confirmed昇格
+- reject: 抽象的すぎる・フレーズ単発で汎用性なし・実用性が見えない → rejected
+- keep: 判断保留（人間への質問候補）
+
+各ルールIDに対してpromote/reject/keepを返してください。
+JSON形式のみ返答（keepは最大3件まで）：
+{"results": [{"id": "UUID", "verdict": "promote/reject/keep", "reason": "一言"}]}`;
+
+  try {
+    const res = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1000,
+      system: "不動産LINE返信AIのルール品質評価者です。指定されたJSON形式のみ返してください。",
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const text = res.content[0].type === "text" ? res.content[0].text.trim() : "";
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return empty;
+    const parsed = JSON.parse(jsonMatch[0]) as AiClassifyResult;
+    return { results: Array.isArray(parsed.results) ? parsed.results : [] };
+  } catch (e) {
+    console.error("[weekly-learning] chunk=3: AI判定失敗", e);
+    return empty;
+  }
+}
+
+async function runChunk3(): Promise<Record<string, unknown>> {
+  let autoRejected = 0;
+  let autoPromoted = 0;
+  let aiPromoted = 0;
+  let aiRejected = 0;
+  let questionsRaised = 0;
+
+  // Stage A: 自動却下（低重要度 + 30日超過 + 未使用）
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
+  const { data: stageAReject } = await supabase
+    .from("ai_reply_knowledge")
+    .select("id")
+    .eq("hypothesis_status", "hypothesis")
+    .lte("importance", 5)
+    .eq("apply_count", 0)
+    .lt("created_at", thirtyDaysAgo);
+
+  if (stageAReject && stageAReject.length > 0) {
+    const ids = stageAReject.map((r: { id: string }) => r.id);
+    await supabase
+      .from("ai_reply_knowledge")
+      .update({ hypothesis_status: "rejected", rejection_reason: "auto_low_quality_30d" })
+      .in("id", ids);
+    autoRejected += ids.length;
+  }
+
+  // Stage A: 自動却下（content短すぎ ≤ 20文字）
+  const { data: shortContent } = await supabase
+    .from("ai_reply_knowledge")
+    .select("id, content")
+    .eq("hypothesis_status", "hypothesis");
+
+  if (shortContent) {
+    const shortIds = shortContent
+      .filter((r: { content: string }) => (r.content ?? "").length < 20)
+      .map((r: { id: string }) => r.id);
+    if (shortIds.length > 0) {
+      await supabase
+        .from("ai_reply_knowledge")
+        .update({ hypothesis_status: "rejected", rejection_reason: "auto_too_short" })
+        .in("id", shortIds);
+      autoRejected += shortIds.length;
+    }
+  }
+
+  // Stage B: 自動昇格（importance≥9 + apply_count≥3 + correct > wrong）
+  const { data: stageBPromote } = await supabase
+    .from("ai_reply_knowledge")
+    .select("id, apply_count, correct_count, wrong_count")
+    .eq("hypothesis_status", "hypothesis")
+    .gte("importance", 9)
+    .gte("apply_count", 3);
+
+  if (stageBPromote) {
+    const promoteIds = stageBPromote
+      .filter((r: { correct_count: number; wrong_count: number }) =>
+        (r.correct_count ?? 0) > (r.wrong_count ?? 0)
+      )
+      .map((r: { id: string }) => r.id);
+    if (promoteIds.length > 0) {
+      await supabase
+        .from("ai_reply_knowledge")
+        .update({ hypothesis_status: "confirmed", promoted_by: "auto_quality_gate" })
+        .in("id", promoteIds);
+      autoPromoted += promoteIds.length;
+    }
+  }
+
+  // Stage C: AI判定（中間層: importance 6〜8、apply_count 0〜2）
+  const { data: stageCTarget } = await supabase
+    .from("ai_reply_knowledge")
+    .select("id, title, content, importance, category, conversation_state")
+    .eq("hypothesis_status", "hypothesis")
+    .gte("importance", 6)
+    .lte("importance", 8)
+    .order("importance", { ascending: false })
+    .limit(AI_CLASSIFY_BATCH);
+
+  const stageCRules = (stageCTarget ?? []) as HypothesisRule[];
+
+  if (stageCRules.length > 0) {
+    const aiResult = await aiClassifyBatch(stageCRules);
+    const keepCandidates: Array<{ id: string; reason?: string }> = [];
+
+    for (const item of aiResult.results) {
+      if (item.verdict === "promote") {
+        await supabase
+          .from("ai_reply_knowledge")
+          .update({ hypothesis_status: "confirmed", promoted_by: "weekly_ai_judge" })
+          .eq("id", item.id);
+        aiPromoted++;
+      } else if (item.verdict === "reject") {
+        await supabase
+          .from("ai_reply_knowledge")
+          .update({ hypothesis_status: "rejected", rejection_reason: "ai_low_quality" })
+          .eq("id", item.id);
+        aiRejected++;
+      } else if (item.verdict === "keep") {
+        keepCandidates.push({ id: item.id, reason: item.reason });
+      }
+    }
+
+    // keepを週次質問として起票（最大3件）
+    const keepToRaise = keepCandidates.slice(0, 3);
+    for (const k of keepToRaise) {
+      const rule = stageCRules.find(r => r.id === k.id);
+      if (!rule) continue;
+
+      const question = `このルール候補を採用すべきか教えてください：「${rule.title}」 — ${rule.content}`;
+      const slice = question.slice(0, 50);
+      const { data: existing } = await supabase
+        .from("ai_feedback_items")
+        .select("id")
+        .ilike("question", `%${slice}%`)
+        .in("status", ["pending", "answered", "applied"])
+        .limit(1);
+
+      if (!existing || existing.length === 0) {
+        const raised = await insertAiQuestion({
+          question,
+          category: "knowledge_gap",
+          confidence: "medium",
+          evidence: k.reason ?? null,
+          speculation: `weekly-learning chunk3 Stage C: AI判定 keep（importance ${rule.importance}）`,
+        });
+        if (raised) questionsRaised++;
+      }
+    }
+  }
+
+  return {
+    chunk: 3,
+    autoRejected,
+    autoPromoted,
+    aiPromoted,
+    aiRejected,
+    questionsRaised,
+    message: `chunk3: 自動却下${autoRejected}件・自動昇格${autoPromoted}件・AI昇格${aiPromoted}件・AI却下${aiRejected}件`,
+  };
+}
+
+// ── chunk=4: 重複排除 + 週次質問まとめ ────────────────────────────────────
+
+type DedupPair = {
+  id_a: string;
+  id_b: string;
+  title_a: string;
+  title_b: string;
+  imp_a: number;
+  imp_b: number;
+  sim_score: number;
+};
+
+type DedupJudgeResult = {
+  pairs: Array<{
+    id_a: string;
+    id_b: string;
+    verdict: "same" | "similar_but_different" | "merge_candidate";
+    keep_id: string | null;
+  }>;
+};
+
+async function runChunk4(): Promise<Record<string, unknown>> {
+  let dedupRejected = 0;
+  let questionsRaised = 0;
+
+  // pg_trgm で類似タイトルペアを検出（dedup_checked_at IS NULL な上位200件から）
+  let simPairs: DedupPair[] = [];
+  try {
+    const { data: simPairsRaw } = await supabase.rpc("find_similar_hypothesis_pairs", {
+      p_limit: DEDUP_LIMIT,
+      p_threshold: 0.6,
+    });
+    simPairs = (simPairsRaw ?? []) as DedupPair[];
+  } catch (e) {
+    console.warn("[weekly-learning] chunk=4: find_similar_hypothesis_pairs 失敗", e);
+  }
+
+  if (simPairs.length > 0) {
+    // Claude判定（類似ペアのみ・最大30ペア）
+    const pairsToJudge = simPairs.slice(0, 30);
+    const pairsText = pairsToJudge.map((p, i) =>
+      `ペア${i + 1}:\n  A (ID: ${p.id_a}): ${p.title_a}\n  B (ID: ${p.id_b}): ${p.title_b}\n  類似スコア: ${p.sim_score.toFixed(2)}`
+    ).join("\n\n");
+
+    const prompt = `以下のルールペアを判定してください（不動産LINE返信AI用）：
+
+${pairsText}
+
+判定：
+- same: 実質同一 → keep_id に残す方のIDを入れる（importanceが高い方）
+- similar_but_different: 別パターン → 両方keep、keep_id=null
+- merge_candidate: 統合推奨 → keep_id=null（人間に質問）
+
+JSON形式のみ返答：
+{"pairs": [{"id_a": "...", "id_b": "...", "verdict": "same/similar_but_different/merge_candidate", "keep_id": "IDまたはnull"}]}`;
+
+    try {
+      const res = await client.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 1000,
+        system: "ルール重複排除の判定者です。指定されたJSON形式のみ返してください。",
+        messages: [{ role: "user", content: prompt }],
+      });
+
+      const text = res.content[0].type === "text" ? res.content[0].text.trim() : "";
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const judged = JSON.parse(jsonMatch[0]) as DedupJudgeResult;
+
+        for (const pair of judged.pairs ?? []) {
+          if (pair.verdict === "same" && pair.keep_id) {
+            const discardId = pair.id_a === pair.keep_id ? pair.id_b : pair.id_a;
+            await supabase
+              .from("ai_reply_knowledge")
+              .update({ hypothesis_status: "rejected", rejection_reason: "ai_dedup_same" })
+              .eq("id", discardId);
+            dedupRejected++;
+          } else if (pair.verdict === "merge_candidate") {
+            // マージ候補を質問として起票
+            const { data: ruleA } = await supabase
+              .from("ai_reply_knowledge")
+              .select("title, content")
+              .eq("id", pair.id_a)
+              .single();
+            if (ruleA) {
+              const question = `以下2つのルールを1つに統合すべきですか？\nA: ${ruleA.title}\nB: （類似ルール）`;
+              const slice = question.slice(0, 50);
+              const { data: existing } = await supabase
+                .from("ai_feedback_items")
+                .select("id")
+                .ilike("question", `%${slice}%`)
+                .in("status", ["pending", "answered", "applied"])
+                .limit(1);
+
+              if (!existing || existing.length === 0) {
+                const raised = await insertAiQuestion({
+                  question,
+                  category: "knowledge_gap",
+                  confidence: "low",
+                  evidence: `類似スコア: ${simPairs.find(p => p.id_a === pair.id_a && p.id_b === pair.id_b)?.sim_score?.toFixed(2) ?? "N/A"}`,
+                  speculation: "weekly-learning chunk4 重複排除: マージ候補",
+                });
+                if (raised) questionsRaised++;
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error("[weekly-learning] chunk=4: 重複排除Claude判定失敗", e);
+    }
+  }
+
+  // dedup_checked_at を更新（上位200件）
+  const { data: toMark } = await supabase
+    .from("ai_reply_knowledge")
+    .select("id")
+    .eq("hypothesis_status", "hypothesis")
+    .is("dedup_checked_at", null)
+    .order("importance", { ascending: false })
+    .limit(DEDUP_LIMIT);
+
+  if (toMark && toMark.length > 0) {
+    const now = new Date().toISOString();
+    const markIds = (toMark as { id: string }[]).map(r => r.id);
+    await supabase
+      .from("ai_reply_knowledge")
+      .update({ dedup_checked_at: now })
+      .in("id", markIds);
+  }
+
+  return {
+    chunk: 4,
+    dedupRejected,
+    questionsRaised,
+    message: `chunk4: 重複却下${dedupRejected}件・週次質問${questionsRaised}件起票`,
+  };
+}
+
 // ── POST ─────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
-  // ── CRON_SECRET 認証 ──
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.get("authorization");
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
@@ -194,169 +779,26 @@ export async function POST(req: NextRequest) {
   resetAiQuestionGuard();
 
   try {
-    // ── chunk パラメータ読み取り（1〜4、未指定は 1） ──
     const url = new URL(req.url);
     const chunkParam = url.searchParams.get("chunk");
     const chunk = chunkParam ? Math.min(Math.max(parseInt(chunkParam, 10) || 1, 1), 4) : 1;
-    const offset = (chunk - 1) * CHUNK_SIZE;
 
-    console.log(`[weekly-learning] chunk=${chunk}, offset=${offset}, limit=${CHUNK_SIZE}`);
+    console.log(`[weekly-learning] chunk=${chunk} 開始`);
 
-    // ── 未分析差分を取得（is_starred優先・created_at昇順） ──
-    const { data: rawExamples, error: fetchErr } = await supabase
-      .from("ai_reply_examples")
-      .select("id, conversation_state, customer_message, sent_reply, ai_draft, is_starred, created_at")
-      .eq("was_ai_modified", true)
-      .is("diff_analyzed_at", null)
-      .not("sent_reply", "is", null)
-      .order("is_starred", { ascending: false })
-      .order("created_at", { ascending: true })
-      .range(offset, offset + CHUNK_SIZE - 1);
+    let result: Record<string, unknown>;
 
-    if (fetchErr) {
-      await finishCronLog(runLogId, false, undefined, fetchErr.message);
-      return NextResponse.json({ ok: false, error: fetchErr.message }, { status: 500 });
+    if (chunk === 1) {
+      result = await runChunk1(chunk);
+    } else if (chunk === 2) {
+      result = await runChunk2();
+    } else if (chunk === 3) {
+      result = await runChunk3();
+    } else {
+      result = await runChunk4();
     }
 
-    const examples = (rawExamples ?? []) as DiffExample[];
-
-    if (examples.length === 0) {
-      await finishCronLog(runLogId, true, { chunk, processed: 0, newRules: 0, questionsRaised: 0 });
-      return NextResponse.json({
-        ok: true, chunk, processed: 0, newRules: 0, questionsRaised: 0,
-        message: `[weekly-learning] chunk${chunk}: 未分析差分なし`,
-      });
-    }
-
-    // ── conversation_state でグルーピング ──
-    const stateGroups = new Map<string, DiffExample[]>();
-    for (const ex of examples) {
-      const state = ex.conversation_state ?? "unknown";
-      if (!stateGroups.has(state)) stateGroups.set(state, []);
-      stateGroups.get(state)!.push(ex);
-    }
-
-    let totalNewRules = 0;
-    let totalQuestionsRaised = 0;
-    const processedIds: string[] = [];
-
-    // ── 各ステートグループを処理 ──
-    for (const [state, stateExamples] of stateGroups.entries()) {
-      try {
-        // 既存の confirmed ルールを取得（最大8件）
-        const { data: existingRulesRaw } = await supabase
-          .from("ai_reply_knowledge")
-          .select("title, content, hypothesis_status")
-          .eq("conversation_state", state)
-          .eq("hypothesis_status", "confirmed")
-          .order("importance", { ascending: false })
-          .limit(8);
-
-        const existingRules = (existingRulesRaw ?? []) as ExistingRule[];
-
-        console.log(`[weekly-learning] ${state}: ${stateExamples.length}件分析開始 (既存ルール${existingRules.length}件)`);
-
-        // ── Claude 分析 ──
-        const analysis = await analyzeStateGroup(state, stateExamples, existingRules);
-
-        // ── 新ルールを upsertKnowledge で保存 ──
-        for (const rule of analysis.newRules) {
-          if (!rule.title || !rule.content) continue;
-          try {
-            const embeddingInput = buildKnowledgeEmbeddingInput({
-              trigger_example: rule.trigger,
-              content: rule.content,
-              conversation_state: state,
-            });
-            const embedding = await generateEmbedding(embeddingInput);
-
-            const result = await upsertKnowledge(supabase, {
-              title: `[weekly] ${rule.title}`,
-              content: rule.content,
-              category: "pattern",
-              importance: 7,
-              conversation_state: state,
-              ...(embedding ? { embedding } : {}),
-              ...(rule.trigger ? { trigger_example: rule.trigger } : {}),
-            });
-
-            if (result.result === "inserted" || result.result === "merged") {
-              totalNewRules++;
-              console.log(`[weekly-learning] ${state}: ルール${result.result} — ${rule.title}`);
-            }
-          } catch (e) {
-            console.error(`[weekly-learning] ${state}: upsertKnowledge失敗`, e);
-          }
-        }
-
-        // ── AI質問起票（contradictions/gaps がある場合のみ） ──
-        if (
-          analysis.weeklyQuestion &&
-          (analysis.contradictions.length > 0 || analysis.gaps.length > 0)
-        ) {
-          // 重複チェック（先頭50文字でilike）
-          const questionSlice = analysis.weeklyQuestion.slice(0, 50);
-          const { data: existing } = await supabase
-            .from("ai_feedback_items")
-            .select("id")
-            .ilike("question", `%${questionSlice}%`)
-            .in("status", ["pending", "answered", "applied"])
-            .limit(1);
-
-          if (!existing || existing.length === 0) {
-            const evidence = [
-              analysis.gaps.map(g => `ギャップ(${g.frequency}件): ${g.description}`).join(" / "),
-              analysis.contradictions.map(c => `矛盾: ${c.description}`).join(" / "),
-            ].filter(Boolean).join("\n");
-
-            const raised = await insertAiQuestion({
-              question: analysis.weeklyQuestion,
-              category: "knowledge_gap",
-              confidence: "medium",
-              evidence: evidence.slice(0, 500) || null,
-              speculation: `週次バッチ学習 chunk${chunk} / ${state} / ${stateExamples.length}件の差分から検出`,
-            });
-            if (raised) totalQuestionsRaised++;
-          }
-        }
-
-        // 処理済み ID を収集
-        for (const ex of stateExamples) {
-          processedIds.push(ex.id);
-        }
-      } catch (e) {
-        // 1ステートの失敗は他ステートを止めない
-        console.error(`[weekly-learning] ${state}: ステート処理失敗`, e);
-      }
-    }
-
-    // ── 処理済み差分に diff_analyzed_at を記録 ──
-    if (processedIds.length > 0) {
-      const now = new Date().toISOString();
-      const { error: markErr } = await supabase
-        .from("ai_reply_examples")
-        .update({ diff_analyzed_at: now })
-        .in("id", processedIds);
-
-      if (markErr) {
-        console.error("[weekly-learning] diff_analyzed_at 更新失敗:", markErr.message);
-        // diff_analyzed_at 更新失敗は致命的ではない（次回バッチで再処理される）
-      } else {
-        console.log(`[weekly-learning] ${processedIds.length}件に diff_analyzed_at を記録`);
-      }
-    }
-
-    const processed = processedIds.length;
-
-    await finishCronLog(runLogId, true, { chunk, processed, newRules: totalNewRules, questionsRaised: totalQuestionsRaised });
-    return NextResponse.json({
-      ok: true,
-      chunk,
-      processed,
-      newRules: totalNewRules,
-      questionsRaised: totalQuestionsRaised,
-      message: `[weekly-learning] chunk${chunk}: ${processed}件処理・${totalNewRules}件ルール保存・${totalQuestionsRaised}件AI質問起票`,
-    });
+    await finishCronLog(runLogId, true, result);
+    return NextResponse.json({ ok: true, ...result });
   } catch (e) {
     console.error("[weekly-learning]", e);
     await finishCronLog(runLogId, false, undefined, e instanceof Error ? e.message : String(e));

@@ -1592,6 +1592,49 @@ CREATE INDEX IF NOT EXISTS idx_chrome_extension_feedback_category
 CREATE INDEX IF NOT EXISTS idx_chrome_extension_feedback_resolved
   ON chrome_extension_feedback(resolved, created_at DESC);
 
+-- ── find_similar_hypothesis_pairs RPC（2026-07-16）──
+-- weekly-learning chunk=4 の重複排除でpg_trgm類似タイトルペアを検出するために使用
+CREATE OR REPLACE FUNCTION find_similar_hypothesis_pairs(p_limit INT DEFAULT 200, p_threshold FLOAT DEFAULT 0.6)
+RETURNS TABLE(
+  id_a UUID,
+  id_b UUID,
+  title_a TEXT,
+  title_b TEXT,
+  imp_a INT,
+  imp_b INT,
+  sim_score FLOAT
+) LANGUAGE sql STABLE AS $$
+  WITH hypothesis_sample AS (
+    SELECT id, title, importance
+    FROM ai_reply_knowledge
+    WHERE hypothesis_status = 'hypothesis'
+      AND dedup_checked_at IS NULL
+    ORDER BY importance DESC
+    LIMIT p_limit
+  )
+  SELECT
+    a.id    AS id_a,
+    b.id    AS id_b,
+    a.title AS title_a,
+    b.title AS title_b,
+    a.importance AS imp_a,
+    b.importance AS imp_b,
+    similarity(a.title, b.title)::FLOAT AS sim_score
+  FROM hypothesis_sample a
+  JOIN hypothesis_sample b ON a.id < b.id
+  WHERE similarity(a.title, b.title) >= p_threshold
+  ORDER BY sim_score DESC
+  LIMIT 30;
+$$;
+
+-- ── hypothesis 週次レビュー管理カラム（2026-07-16）──
+-- contradiction_checked_at: hypothesis × confirmed 矛盾チェック済み時刻（weekly-learning chunk=2 が打つ）
+-- dedup_checked_at: hypothesis 重複排除済み時刻（weekly-learning chunk=4 が打つ）
+-- rejection_reason: 自動却下・AI却下の理由コード（auto_low_quality_30d / auto_too_short / ai_contradiction / ai_redundant 等）
+ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS contradiction_checked_at TIMESTAMPTZ;
+ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS dedup_checked_at TIMESTAMPTZ;
+ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+
 -- ── PostgREST スキーマキャッシュ再読込（必ず最後に実行する）──
 -- 新カラム追加後に PostgREST のスキーマキャッシュが古いままだと、
 -- 以降の INSERT/SELECT が「column does not exist」で全滅する
