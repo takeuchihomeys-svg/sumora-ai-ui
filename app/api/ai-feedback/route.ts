@@ -287,6 +287,10 @@ export async function POST(req: NextRequest) {
           }
 
           // choice='old': 既存ルールを強化するHUMAN-*ルールを作成（同じ矛盾の再起票防止）
+          // 矛盾HUMAN共存防止: -old 保存前に新ルール採用側（HUMAN-{id}）を無効化する
+          await supabase.from("ai_prompt_rules")
+            .update({ is_active: false })
+            .eq("rule_key", `HUMAN-${linkedKnowledgeId}`);
           const humanOldRuleText = promptRuleTexts.length > 0
             ? promptRuleTexts[0].text.slice(0, 500)
             : answer.slice(0, 500);
@@ -309,10 +313,18 @@ export async function POST(req: NextRequest) {
         } else {
           // ── choice === 'new' または undefined（既存動作: confirmed 昇格） ──
           // 1. confirmed 昇格・importance を min(10, max(現在値, 9)) に引き上げ
-          await supabase
+          // safety guard: choice='old' と対称に hypothesis のみを対象にする
+          // （rejected ナレッジが別回答で誤って復活するのを防ぐ）
+          const { error: upgradeError } = await supabase
             .from("ai_reply_knowledge")
             .update({ hypothesis_status: "confirmed", importance: Math.min(10, Math.max(currentImportance, 9)) })
-            .eq("id", linkedKnowledgeId);
+            .eq("id", linkedKnowledgeId)
+            .eq("hypothesis_status", "hypothesis"); // ガード: hypothesis 以外は触らない
+          if (upgradeError) {
+            console.error("[ai-feedback] confirmed昇格 update 失敗:", upgradeError.message);
+            // DB更新失敗時は後続の syncConfirmedToPromptRule / HUMAN-* 保存をスキップして不整合を防ぐ
+            throw new Error(`[ai-feedback] confirmed昇格失敗: ${upgradeError.message}`);
+          }
 
           // LEARN-* を即時同期（analyze-diffs バッチを待たずに反映）
           try {
@@ -345,6 +357,10 @@ export async function POST(req: NextRequest) {
 
           // 3. HUMAN-{id} を priority=10 でグローバル保存（clarify action と同じキー体系）
           //    rule_text: Opusが抽出した最初のルール → なければ竹内さんの回答そのもの（最大500字）
+          // 矛盾HUMAN共存防止: choice='new' で保存する前に -old 側（既存ルール維持）を無効化する
+          await supabase.from("ai_prompt_rules")
+            .update({ is_active: false })
+            .eq("rule_key", `HUMAN-${linkedKnowledgeId}-old`);
           const humanRuleText = promptRuleTexts.length > 0
             ? promptRuleTexts[0].text.slice(0, 500)
             : answer.slice(0, 500);
