@@ -373,7 +373,7 @@ async function checkContradiction(
           .limit(1);
         if (existing && existing.length > 0) continue;
 
-        const knowledgePrefix = newKnowledgeId ? `[knowledge_id:${newKnowledgeId}] ` : "";
+        const knowledgePrefix = newKnowledgeId ? `[knowledge_id:${newKnowledgeId}] [old_knowledge_id:${rule.id as string}] ` : "";
         await insertAiQuestion({
           question: `${knowledgePrefix}❓【教えてください】確認済みルールとの矛盾 — どちらを優先しますか？\n\n━━ 対象ナレッジ ━━\n「${title.slice(0, 40)}」\n内容: ${content.slice(0, 200)}\n\n━━ なぜ確認が必要か ━━\n新ナレッジに含まれる NGフレーズ「${ngPhrase}」が、既存の confirmed ルール「${(rule.title as string).slice(0, 40)}」の本文に含まれています。2つのルールが矛盾している可能性があります。\n\n❓ 竹内さんへの質問\n① 新ナレッジ「${title.slice(0, 40)}」と既存ルール「${(rule.title as string).slice(0, 40)}」、どちらが正しいですか？\n② 新ナレッジを採用する場合、既存ルールはどう修正すべきでしょうか？`,
           speculation: `新ナレッジ内のNGフレーズ「${ngPhrase}」が、既存 confirmed ルール「${(rule.title as string).slice(0, 50)}」の本文に含まれていました。新ナレッジは hypothesis のまま保留しています。`,

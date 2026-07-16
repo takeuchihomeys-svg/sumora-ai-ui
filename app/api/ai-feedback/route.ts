@@ -121,18 +121,20 @@ JSON配列のみ返してください（説明・コードフェンス不要）:
   }
 }
 
-// POST: { id, answer } → user_answer保存 + Sonnetで知識化 + status="answered"に更新
+// POST: { id, answer, choice? } → user_answer保存 + Sonnetで知識化 + status="answered"に更新
+// choice: 'new' = 新ルール採用, 'old' = 既存ルール維持, undefined = 既存動作維持（安全側）
 export async function POST(req: NextRequest) {
-  const body = await req.json() as { id?: string; answer?: string };
+  const body = await req.json() as { id?: string; answer?: string; choice?: 'new' | 'old' };
   const id = body.id;
   const answer = body.answer?.trim();
+  const choice = body.choice;
   if (!id || !answer) {
     return NextResponse.json({ ok: false, error: "id and answer required" }, { status: 400 });
   }
 
   const { data: item, error: fetchError } = await supabase
     .from("ai_feedback_items")
-    .select("id, question, status, category")
+    .select("id, question, status, category, evidence")
     .eq("id", id)
     .single();
   if (fetchError || !item) {
@@ -143,6 +145,10 @@ export async function POST(req: NextRequest) {
   // 存在する場合は回答後に当該ナレッジを confirmed 昇格 + HUMAN-* priority=10 で即時反映する（closed-loop）。
   const knowledgeIdMatch = (item.question as string).match(/\[knowledge_id:([0-9a-f-]{36})\]/i);
   const linkedKnowledgeId = knowledgeIdMatch ? knowledgeIdMatch[1] : null;
+
+  // question または evidence から旧 confirmed のIDを抽出（Step1: checkContradiction が埋め込む）
+  const oldKnowledgeIdMatch = (item.question ?? '').match(/\[old_knowledge_id:([^\]]+)\]/);
+  const oldKnowledgeId = oldKnowledgeIdMatch?.[1] ?? null;
 
   // 知識化（失敗しても回答自体は保存する）
   let rules: ExtractedRule[] = [];
@@ -246,12 +252,12 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── Closed-loop: 特定 knowledge_id に紐づいた質問への回答 → knowledge を confirm + HUMAN-* priority=10 ──
-  // autoJudge（question/contradiction 判定）や checkContradiction が [knowledge_id:UUID] を question に埋め込む。
-  // 竹内さんが回答することで「そのナレッジが正しい」と確定したとみなし：
-  //   1. ai_reply_knowledge を confirmed 昇格・importance を max(現在値, 9) に
-  //   2. HUMAN-{uuid} を priority=10 でグローバル保存（clarify action と同等）
-  // これにより「質問起票 → 回答 → 知識確定」が analyze-diffs cron を待たず 0h で反映される。
+  // ── Closed-loop: 特定 knowledge_id に紐づいた質問への回答 → choice に基づき knowledge を分岐処理 ──
+  // autoJudge / checkContradiction が [knowledge_id:UUID] を question に埋め込む。
+  //
+  // choice === 'new': 新ルール採用 → linkedKnowledgeId を confirmed・oldKnowledgeId を rejected
+  // choice === 'old': 既存ルール正しい → linkedKnowledgeId を rejected（confirmed昇格しない）
+  // choice === undefined: 既存動作を維持（安全側 = 無条件に confirmed）
   if (linkedKnowledgeId) {
     try {
       const { data: knowledgeRow } = await supabase
@@ -262,31 +268,60 @@ export async function POST(req: NextRequest) {
 
       if (knowledgeRow) {
         const currentImportance = (knowledgeRow.importance as number) ?? 7;
-        // 1. confirmed 昇格・importance を min(10, max(現在値, 9)) に引き上げ
-        await supabase.from("ai_reply_knowledge")
-          .update({ hypothesis_status: "confirmed", importance: Math.min(10, Math.max(currentImportance, 9)) })
-          .eq("id", linkedKnowledgeId);
 
-        // 2. HUMAN-{id} を priority=10 でグローバル保存（clarify action と同じキー体系）
-        //    rule_text: Opusが抽出した最初のルール → なければ竹内さんの回答そのもの（最大500字）
-        const humanRuleText = promptRuleTexts.length > 0
-          ? promptRuleTexts[0].text.slice(0, 500)
-          : answer.slice(0, 500);
-        const { error: humanRuleErr } = await supabase.from("ai_prompt_rules").upsert({
-          rule_key: `HUMAN-${linkedKnowledgeId}`,
-          action_type: null,   // null = 全アクションにグローバル注入
-          condition_key: null,
-          condition_value: null,
-          rule_text: humanRuleText,
-          reason: `AI質問回答により竹内さん確定（${new Date().toISOString().slice(0, 10)}）: ${(item.question as string).slice(0, 100)}`,
-          priority: 10,
-          is_active: true,
-          updated_at: new Date().toISOString(),
-        }, { onConflict: "rule_key" });
-        if (!humanRuleErr) {
-          appliedRules.push(`[HUMAN-${linkedKnowledgeId}] knowledge confirmed + priority=10 グローバル反映`);
+        if (choice === 'old') {
+          // ── 既存ルールが正しい: 新 hypothesis を rejected に ──
+          await supabase
+            .from("ai_reply_knowledge")
+            .update({
+              hypothesis_status: "rejected",
+              rejection_reason: "ai_feedback: existing confirmed rule is correct",
+            })
+            .eq("id", linkedKnowledgeId)
+            .eq("hypothesis_status", "hypothesis"); // safety guard: confirmed には触らない
+          appliedRules.push(`[REJECT-${linkedKnowledgeId}] hypothesis rejected (old confirmed rule is correct)`);
         } else {
-          console.error("[ai-feedback] closed-loop HUMAN rule upsert error:", humanRuleErr.message);
+          // ── choice === 'new' または undefined（既存動作: confirmed 昇格） ──
+          // 1. confirmed 昇格・importance を min(10, max(現在値, 9)) に引き上げ
+          await supabase
+            .from("ai_reply_knowledge")
+            .update({ hypothesis_status: "confirmed", importance: Math.min(10, Math.max(currentImportance, 9)) })
+            .eq("id", linkedKnowledgeId);
+
+          // 2. choice === 'new' かつ oldKnowledgeId がある場合 → 旧 confirmed を rejected に
+          if (choice === 'new' && oldKnowledgeId) {
+            await supabase
+              .from("ai_reply_knowledge")
+              .update({
+                hypothesis_status: "rejected",
+                rejection_reason: "ai_feedback: replaced by newer rule",
+              })
+              .eq("id", oldKnowledgeId)
+              .eq("hypothesis_status", "confirmed"); // confirmed のみ対象（安全ガード）
+            appliedRules.push(`[REJECT-${oldKnowledgeId}] old confirmed rule rejected (replaced by new)`);
+          }
+
+          // 3. HUMAN-{id} を priority=10 でグローバル保存（clarify action と同じキー体系）
+          //    rule_text: Opusが抽出した最初のルール → なければ竹内さんの回答そのもの（最大500字）
+          const humanRuleText = promptRuleTexts.length > 0
+            ? promptRuleTexts[0].text.slice(0, 500)
+            : answer.slice(0, 500);
+          const { error: humanRuleErr } = await supabase.from("ai_prompt_rules").upsert({
+            rule_key: `HUMAN-${linkedKnowledgeId}`,
+            action_type: null,   // null = 全アクションにグローバル注入
+            condition_key: null,
+            condition_value: null,
+            rule_text: humanRuleText,
+            reason: `AI質問回答により竹内さん確定（${new Date().toISOString().slice(0, 10)}）: ${(item.question as string).slice(0, 100)}`,
+            priority: 10,
+            is_active: true,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: "rule_key" });
+          if (!humanRuleErr) {
+            appliedRules.push(`[HUMAN-${linkedKnowledgeId}] knowledge confirmed + priority=10 グローバル反映`);
+          } else {
+            console.error("[ai-feedback] closed-loop HUMAN rule upsert error:", humanRuleErr.message);
+          }
         }
       }
     } catch (e) {

@@ -1423,15 +1423,18 @@ export default function TemplateModal({
   }, [clarifyContent, showModalError]);
 
   // 回答を送信 → Sonnetが知識化（trigger_action_rules / ai_prompts に保存）
-  const submitFeedbackAnswer = useCallback(async (id: string) => {
-    const answer = feedbackAnswers[id]?.trim();
+  // choice が指定された場合（矛盾系質問）: 自動でanswerテキストを生成し choice をbodyに含める
+  const submitFeedbackAnswer = useCallback(async (id: string, choice?: 'new' | 'old') => {
+    const answer = choice === 'new' ? '① 新しいルールが正しい'
+      : choice === 'old' ? '② 既存のルールが正しい'
+      : feedbackAnswers[id]?.trim();
     if (!answer) return;
     setSubmittingFeedback(id);
     try {
       const res = await fetch("/api/ai-feedback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, answer }),
+        body: JSON.stringify({ id, answer, ...(choice ? { choice } : {}) }),
       });
       const json = await res.json().catch(() => null) as { ok?: boolean; error?: string } | null;
       if (!res.ok || !json?.ok) {
@@ -3241,6 +3244,8 @@ export default function TemplateModal({
               {!feedbackLoading && (() => {
                 const renderFeedbackItem = (item: FeedbackItem) => {
                   const { cleanText, phase, importance, embeddedCategory, aiDraftExample, staffSentExample } = parseAiQuestion(item.question);
+                  // 矛盾系質問の判定: questionに「どちら」「矛盾」「既存」「[old_knowledge_id:」が含まれる場合、選択ボタンUIに切り替える
+                  const isContradiction = item.question.includes('どちら') || item.question.includes('矛盾') || item.question.includes('[old_knowledge_id:');
                   return (
                 <div key={item.id} className="border border-orange-200 rounded-xl p-4 bg-orange-50">
                   {/* カテゴリバッジ・フェーズ・重要度・埋め込みカテゴリ */}
@@ -3303,29 +3308,67 @@ export default function TemplateModal({
 
                   {item.status === "pending" ? (
                     <>
-                      {/* テキスト入力 */}
-                      <textarea
-                        value={feedbackAnswers[item.id] ?? ""}
-                        onChange={e => setFeedbackAnswers(prev => ({ ...prev, [item.id]: e.target.value }))}
-                        placeholder="ここに回答を入力してください..."
-                        className="w-full border border-orange-300 rounded-lg px-3 py-2 text-sm resize-none h-20 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white"
-                      />
-                      <div className="flex gap-2 mt-2">
-                        <button
-                          onClick={() => submitFeedbackAnswer(item.id)}
-                          disabled={!feedbackAnswers[item.id]?.trim() || submittingFeedback === item.id}
-                          className="flex-1 bg-orange-500 text-white rounded-lg py-2 text-sm font-medium disabled:opacity-50 hover:bg-orange-600 transition"
-                        >
-                          {submittingFeedback === item.id ? "送信中..." : "✅ 回答して適用"}
-                        </button>
-                        <button
-                          onClick={() => setDismissingFeedbackId(dismissingFeedbackId === item.id ? null : item.id)}
-                          disabled={submittingFeedback === item.id}
-                          className="px-3 py-2 text-gray-400 text-sm border border-gray-200 rounded-lg bg-white hover:bg-gray-50 transition"
-                        >
-                          スキップ
-                        </button>
-                      </div>
+                      {isContradiction ? (
+                        /* 矛盾系質問: 選択ボタン（新ルール vs 既存ルール） */
+                        <div className="flex flex-col gap-2 mt-1">
+                          <button
+                            onClick={() => submitFeedbackAnswer(item.id, 'new')}
+                            disabled={submittingFeedback === item.id}
+                            className="w-full bg-blue-500 text-white rounded-lg py-3 text-sm font-bold disabled:opacity-50 hover:bg-blue-600 transition text-left px-4"
+                          >
+                            ① 新しいルールが正しい
+                          </button>
+                          <button
+                            onClick={() => submitFeedbackAnswer(item.id, 'old')}
+                            disabled={submittingFeedback === item.id}
+                            className="w-full bg-gray-500 text-white rounded-lg py-3 text-sm font-bold disabled:opacity-50 hover:bg-gray-600 transition text-left px-4"
+                          >
+                            ② 既存のルールが正しい
+                          </button>
+                          {submittingFeedback === item.id && (
+                            <p className="text-xs text-center text-gray-400 mt-1">送信中...</p>
+                          )}
+                        </div>
+                      ) : (
+                        /* 通常質問: 自由テキスト入力 */
+                        <>
+                          {/* テキスト入力 */}
+                          <textarea
+                            value={feedbackAnswers[item.id] ?? ""}
+                            onChange={e => setFeedbackAnswers(prev => ({ ...prev, [item.id]: e.target.value }))}
+                            placeholder="ここに回答を入力してください..."
+                            className="w-full border border-orange-300 rounded-lg px-3 py-2 text-sm resize-none h-20 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white"
+                          />
+                          <div className="flex gap-2 mt-2">
+                            <button
+                              onClick={() => submitFeedbackAnswer(item.id)}
+                              disabled={!feedbackAnswers[item.id]?.trim() || submittingFeedback === item.id}
+                              className="flex-1 bg-orange-500 text-white rounded-lg py-2 text-sm font-medium disabled:opacity-50 hover:bg-orange-600 transition"
+                            >
+                              {submittingFeedback === item.id ? "送信中..." : "✅ 回答して適用"}
+                            </button>
+                            <button
+                              onClick={() => setDismissingFeedbackId(dismissingFeedbackId === item.id ? null : item.id)}
+                              disabled={submittingFeedback === item.id}
+                              className="px-3 py-2 text-gray-400 text-sm border border-gray-200 rounded-lg bg-white hover:bg-gray-50 transition"
+                            >
+                              スキップ
+                            </button>
+                          </div>
+                        </>
+                      )}
+                      {/* 矛盾系質問のスキップボタン（通常質問はテキスト入力行内に配置済み） */}
+                      {isContradiction && (
+                        <div className="flex justify-end mt-1">
+                          <button
+                            onClick={() => setDismissingFeedbackId(dismissingFeedbackId === item.id ? null : item.id)}
+                            disabled={submittingFeedback === item.id}
+                            className="px-3 py-1.5 text-gray-400 text-xs border border-gray-200 rounded-lg bg-white hover:bg-gray-50 transition"
+                          >
+                            スキップ
+                          </button>
+                        </div>
+                      )}
                       {dismissingFeedbackId === item.id && (
                         <div className="mt-2 rounded-lg bg-gray-50 p-2">
                           <p className="text-[11px] text-gray-400 mb-1.5">スキップ理由（AIが学習します）</p>
