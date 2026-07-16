@@ -692,6 +692,7 @@ export async function POST(req: NextRequest) {
   const url = new URL(req.url);
   const limitParam = url.searchParams.get("limit");
   const limit = limitParam ? Math.min(parseInt(limitParam, 10) || 10, 200) : 10;
+  const mode = url.searchParams.get("mode"); // "maintain" = メンテナンスのみ・差分学習ループをスキップ
 
   // 未処理の差分を取得（is_starred順で重要な学習から処理）
   const { data: examples, error: examplesError } = await supabase
@@ -1097,6 +1098,17 @@ export async function POST(req: NextRequest) {
     console.error("[analyze-diffs] 回帰センチネル失敗:", e);
     return { detected: 0, demoted: 0 };
   });
+
+  // mode=maintain の場合は差分学習ループをスキップしてメンテナンス処理のみ実行
+  if (mode === "maintain") {
+    const sentinel = await sentinelPromise;
+    await finishCronLog(runLogId, true, { processed: 0, learned: 0, synced, demotedConfirmed, promoted, promotedSilent });
+    return NextResponse.json({
+      ok: true, processed: 0, learned: 0, synced, demotedConfirmed, promoted, promotedSilent,
+      sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted,
+      message: `[maintain] 差分学習スキップ・メンテ処理のみ実行 — confirmed差し戻し${demotedConfirmed}件・昇格${promoted}件`,
+    });
+  }
 
   // ── メインループ: 30秒タイムガード付き（残り約30秒を後続処理・レスポンスに確保）──
   const startTime = Date.now();
