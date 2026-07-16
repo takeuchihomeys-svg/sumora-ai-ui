@@ -18,7 +18,8 @@ interface PromptRuleRow {
 export async function fetchPromptRules(
   actionType: string | null,
   conditions: Record<string, string | boolean | null | undefined> = {},
-  excludeLearnRules = false
+  excludeLearnRules = false,
+  onLearnIds?: (ids: string[]) => void
 ): Promise<string> {
   try {
     // ── 枠取り方式 ──
@@ -88,6 +89,15 @@ export async function fetchPromptRules(
     });
 
     if (!applicable.length) return "";
+
+    // LEARN ルール適用追跡: knowledge_apply_log へのコールバック（generate-reply 経由のみ使用）
+    if (onLearnIds) {
+      const learnIds = applicable
+        .filter(r => r.rule_key.startsWith("LEARN-"))
+        .map(r => r.rule_key.slice(6))   // "LEARN-{uuid}" → uuid
+        .filter(Boolean);
+      if (learnIds.length > 0) onLearnIds(learnIds);
+    }
 
     const ruleLines = applicable.map(r => `・${r.rule_text}`).join("\n");
     return `\n\n【管理者追加ルール（最優先 — 以下を必ず守ること）】\n${ruleLines}`;

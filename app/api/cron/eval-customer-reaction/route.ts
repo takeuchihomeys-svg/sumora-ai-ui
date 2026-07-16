@@ -188,6 +188,81 @@ export async function POST(req: NextRequest) {
       console.warn("[eval-customer-reaction] knowledge feedback失敗:", e);
     }
 
+    // ── generate-reply 由来の LEARN ルール フィードバック ──
+    // aix_usage_logs ではなく knowledge_apply_log.applied_at を基準にする
+    let replyKnowledgeFed = 0;
+    try {
+      const { data: genApplyLogs } = await supabase
+        .from("knowledge_apply_log")
+        .select("knowledge_id, conversation_id, applied_at")
+        .eq("source", "generate_reply")
+        .eq("result", "pending")
+        .gte("applied_at", since7d)
+        .lte("applied_at", until72hAgo)
+        .limit(BATCH_LIMIT);
+
+      if ((genApplyLogs ?? []).length > 0) {
+        // 除外ステータス（申込中・審査中）の会話を除外
+        const genConvIds = [...new Set((genApplyLogs ?? []).map(l => l.conversation_id as string))];
+        const { data: genStatuses } = await supabase
+          .from("conversations").select("id, status").in("id", genConvIds);
+        const excludedGenConvIds = new Set(
+          (genStatuses ?? []).filter(c => EXCLUDED_STATUSES.includes(c.status as string)).map(c => c.id as string)
+        );
+
+        // conversation_id → 最新 applied_at + knowledge_id セット
+        // （同一会話に複数回ルール適用がある場合は最後の適用を基準にする）
+        const convAnchor = new Map<string, string>();
+        const convKids = new Map<string, Set<string>>();
+        for (const l of (genApplyLogs ?? [])) {
+          const cid = l.conversation_id as string;
+          const kid = l.knowledge_id as string;
+          const at  = l.applied_at as string;
+          if (!cid || !kid || excludedGenConvIds.has(cid)) continue;
+          if (!convAnchor.has(cid) || at > convAnchor.get(cid)!) convAnchor.set(cid, at);
+          if (!convKids.has(cid)) convKids.set(cid, new Set());
+          convKids.get(cid)!.add(kid);
+        }
+
+        type FeedbackPair = { knowledge_id: string; conversation_id: string };
+        const rCorrect: FeedbackPair[] = [];
+        const rWrong: FeedbackPair[] = [];
+
+        const convEntries = [...convAnchor.entries()];
+        for (let i = 0; i < convEntries.length; i += CONCURRENCY) {
+          const chunk = convEntries.slice(i, i + CONCURRENCY);
+          await Promise.all(chunk.map(async ([cid, anchor]) => {
+            const windowEnd = new Date(new Date(anchor).getTime() + REACTION_WINDOW_HOURS * 3600 * 1000).toISOString();
+            try {
+              const { count } = await supabase
+                .from("messages")
+                .select("id", { count: "exact", head: true })
+                .eq("conversation_id", cid)
+                .eq("sender", "customer")
+                .gt("created_at", anchor)
+                .lte("created_at", windowEnd);
+              const reacted = (count ?? 0) > 0;
+              for (const kid of (convKids.get(cid) ?? [])) {
+                if (reacted) rCorrect.push({ knowledge_id: kid, conversation_id: cid });
+                else rWrong.push({ knowledge_id: kid, conversation_id: cid });
+              }
+            } catch {}
+          }));
+        }
+
+        if (rCorrect.length > 0 || rWrong.length > 0) {
+          await supabase.rpc("update_knowledge_feedback_by_pairs", {
+            p_correct_pairs: rCorrect.length > 0 ? rCorrect : null,
+            p_wrong_pairs:   rWrong.length > 0   ? rWrong   : null,
+            p_feedback_source: "reply_reaction_72h",
+          });
+          replyKnowledgeFed = rCorrect.length + rWrong.length;
+        }
+      }
+    } catch (e) {
+      console.warn("[eval-customer-reaction] generate-reply knowledge feedback失敗:", e);
+    }
+
     // ── 低反応 aix_type のナレッジを decay（学習ループへの接続） ──
     let decaySucceeded = 0;
     let decayFailed = 0;
@@ -302,6 +377,7 @@ export async function POST(req: NextRequest) {
       not_reacted: notReactedIds.length,
       reaction_rate: reactionRate,
       knowledge_fed: knowledgeFed,
+      reply_knowledge_fed: replyKnowledgeFed,
       skipped_by_status: skippedByStatus,
       skipped_by_aix_type: skippedByAixType,
       decay_succeeded: decaySucceeded,
@@ -316,6 +392,7 @@ export async function POST(req: NextRequest) {
       not_reacted: notReactedIds.length,
       reaction_rate: reactionRate,
       knowledge_fed: knowledgeFed,
+      reply_knowledge_fed: replyKnowledgeFed,
       skipped_by_status: skippedByStatus,
       skipped_by_aix_type: skippedByAixType,
       decay_succeeded: decaySucceeded,
