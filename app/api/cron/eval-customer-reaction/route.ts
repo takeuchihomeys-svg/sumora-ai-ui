@@ -189,16 +189,20 @@ export async function POST(req: NextRequest) {
     }
 
     // ── generate-reply 由来の LEARN ルール フィードバック ──
-    // aix_usage_logs ではなく knowledge_apply_log.applied_at を基準にする
+    // 基準: スタッフが実際に送った返信（お客さん反応ではなくスタッフ判断が最高品質シグナル）
+    // was_ai_modified=false（AIのまま送った）→ correct
+    // was_ai_modified=true（スタッフが修正して送った）→ neutral（analyze-diffsが修正内容を学習済み）
+    // 7日経過してもai_reply_examplesに記録なし → wrong（スタッフがAI返信を使わなかった）
     let replyKnowledgeFed = 0;
+    const since14d = new Date(now - 14 * 24 * 3600 * 1000).toISOString();
+    const until7dAgo = new Date(now - 7 * 24 * 3600 * 1000).toISOString();
     try {
       const { data: genApplyLogs } = await supabase
         .from("knowledge_apply_log")
         .select("knowledge_id, conversation_id, applied_at")
         .eq("source", "generate_reply")
         .eq("result", "pending")
-        .gte("applied_at", since7d)
-        .lte("applied_at", until72hAgo)
+        .gte("applied_at", since14d)
         .limit(BATCH_LIMIT);
 
       if ((genApplyLogs ?? []).length > 0) {
@@ -211,7 +215,6 @@ export async function POST(req: NextRequest) {
         );
 
         // conversation_id → 最新 applied_at + knowledge_id セット
-        // （同一会話に複数回ルール適用がある場合は最後の適用を基準にする）
         const convAnchor = new Map<string, string>();
         const convKids = new Map<string, Set<string>>();
         for (const l of (genApplyLogs ?? [])) {
@@ -224,37 +227,56 @@ export async function POST(req: NextRequest) {
           convKids.get(cid)!.add(kid);
         }
 
+        // conversation_id → スタッフ送信記録（ai_reply_examples）を取得
+        const { data: sentReplies } = await supabase
+          .from("ai_reply_examples")
+          .select("conversation_id, was_ai_modified, sent_at")
+          .in("conversation_id", [...convAnchor.keys()])
+          .not("sent_at", "is", null)
+          .order("sent_at", { ascending: false });
+
+        // conversation_id → 最新の送信記録をマップ
+        const convSentMap = new Map<string, { was_ai_modified: boolean; sent_at: string }>();
+        for (const r of (sentReplies ?? [])) {
+          const cid = r.conversation_id as string;
+          if (!convSentMap.has(cid)) {
+            convSentMap.set(cid, {
+              was_ai_modified: r.was_ai_modified as boolean,
+              sent_at: r.sent_at as string,
+            });
+          }
+        }
+
         type FeedbackPair = { knowledge_id: string; conversation_id: string };
         const rCorrect: FeedbackPair[] = [];
         const rWrong: FeedbackPair[] = [];
 
-        const convEntries = [...convAnchor.entries()];
-        for (let i = 0; i < convEntries.length; i += CONCURRENCY) {
-          const chunk = convEntries.slice(i, i + CONCURRENCY);
-          await Promise.all(chunk.map(async ([cid, anchor]) => {
-            const windowEnd = new Date(new Date(anchor).getTime() + REACTION_WINDOW_HOURS * 3600 * 1000).toISOString();
-            try {
-              const { count } = await supabase
-                .from("messages")
-                .select("id", { count: "exact", head: true })
-                .eq("conversation_id", cid)
-                .eq("sender", "customer")
-                .gt("created_at", anchor)
-                .lte("created_at", windowEnd);
-              const reacted = (count ?? 0) > 0;
+        for (const [cid, anchor] of convAnchor.entries()) {
+          const sent = convSentMap.get(cid);
+
+          if (sent && new Date(sent.sent_at) > new Date(anchor)) {
+            // スタッフが生成後に送信済み → was_ai_modifiedで判定
+            if (!sent.was_ai_modified) {
+              // AIのまま送った = ルールが役に立った → correct
               for (const kid of (convKids.get(cid) ?? [])) {
-                if (reacted) rCorrect.push({ knowledge_id: kid, conversation_id: cid });
-                else rWrong.push({ knowledge_id: kid, conversation_id: cid });
+                rCorrect.push({ knowledge_id: kid, conversation_id: cid });
               }
-            } catch {}
-          }));
+            }
+            // was_ai_modified=true の場合は neutral（修正箇所はanalyze-diffsが学習済み）
+          } else if (anchor < until7dAgo) {
+            // 7日以上経過してもスタッフが送信しなかった → ルールが使えなかった → wrong
+            for (const kid of (convKids.get(cid) ?? [])) {
+              rWrong.push({ knowledge_id: kid, conversation_id: cid });
+            }
+          }
+          // 7日未満でまだ送信なし → pending のまま（次回評価を待つ）
         }
 
         if (rCorrect.length > 0 || rWrong.length > 0) {
           await supabase.rpc("update_knowledge_feedback_by_pairs", {
             p_correct_pairs: rCorrect.length > 0 ? rCorrect : null,
             p_wrong_pairs:   rWrong.length > 0   ? rWrong   : null,
-            p_feedback_source: "reply_reaction_72h",
+            p_feedback_source: "staff_send_judgment",
           });
           replyKnowledgeFed = rCorrect.length + rWrong.length;
         }
