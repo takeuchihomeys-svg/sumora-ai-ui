@@ -108,13 +108,23 @@ ${adaptedText}`;
       // ※ ai_feedback_items に priority カラムは無いため confidence: "low" で優先度低を表現し、
       //    UI側（TemplateModal）で adapt_feedback カテゴリを一番下にまとめて表示する
       const feedbackQuestion = `「会話を合わせる」の結果が修正されました。\n\n【会話の流れ】\n${recentConversation}\n\n【AI生成文（修正前）】\n${adaptedText}\n\n【ユーザーコメント】\n${comment || "（なし）"}\n\nどう改善すれば次回の「会話を合わせる」が自然になりますか？`;
+      // 👎スパム防止: 同じ会話内容からの重複起票を防ぐ（先頭50字 ilike）
+      const dedupPrefix = feedbackQuestion.slice(0, 50).replace(/[%_\\]/g, "\\$&");
+      const { data: dupCheck } = await supabase
+        .from("ai_feedback_items")
+        .select("id")
+        .eq("status", "pending")
+        .ilike("question", `${dedupPrefix}%`)
+        .limit(1);
       // H-1: 直接INSERTではなく起票ガード（pending 60件上限）経由で起票する
-      const fbInserted = await safeInsertAiQuestion({
-        category: "adapt_feedback",
-        question: feedbackQuestion,
-        confidence: "low",
-      });
-      if (!fbInserted) console.warn("[adapt-feedback] ai_feedback_items 起票スキップ（上限またはINSERT失敗）");
+      const fbInserted = dupCheck && dupCheck.length > 0
+        ? false
+        : await safeInsertAiQuestion({
+            category: "adapt_feedback",
+            question: feedbackQuestion,
+            confidence: "low",
+          });
+      if (!fbInserted) console.warn("[adapt-feedback] ai_feedback_items 起票スキップ（上限・重複またはINSERT失敗）");
 
       return NextResponse.json({ ok: true, rule });
     }

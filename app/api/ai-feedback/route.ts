@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
+import { syncConfirmedToPromptRule } from "@/app/lib/knowledge-promote";
 import Anthropic from "@anthropic-ai/sdk";
 
 // AI盲点フィードバック（ai_feedback_items）
@@ -271,7 +272,7 @@ export async function POST(req: NextRequest) {
 
         if (choice === 'old') {
           // ── 既存ルールが正しい: 新 hypothesis を rejected に ──
-          await supabase
+          const { error: oldChoiceErr } = await supabase
             .from("ai_reply_knowledge")
             .update({
               hypothesis_status: "rejected",
@@ -279,7 +280,32 @@ export async function POST(req: NextRequest) {
             })
             .eq("id", linkedKnowledgeId)
             .eq("hypothesis_status", "hypothesis"); // safety guard: confirmed には触らない
-          appliedRules.push(`[REJECT-${linkedKnowledgeId}] hypothesis rejected (old confirmed rule is correct)`);
+          if (!oldChoiceErr) {
+            appliedRules.push(`[REJECT-${linkedKnowledgeId}] hypothesis rejected (old confirmed rule is correct)`);
+          } else {
+            console.error("[ai-feedback] choice=old: hypothesis rejected update 失敗:", oldChoiceErr.message);
+          }
+
+          // choice='old': 既存ルールを強化するHUMAN-*ルールを作成（同じ矛盾の再起票防止）
+          const humanOldRuleText = promptRuleTexts.length > 0
+            ? promptRuleTexts[0].text.slice(0, 500)
+            : answer.slice(0, 500);
+          const { error: humanOldErr } = await supabase.from("ai_prompt_rules").upsert({
+            rule_key: `HUMAN-${linkedKnowledgeId}-old`,
+            action_type: null,
+            condition_key: null,
+            condition_value: null,
+            rule_text: humanOldRuleText,
+            reason: `AI質問で既存ルール維持確認（${new Date().toISOString().slice(0, 10)}）: ${(item.question as string).slice(0, 100)}`,
+            priority: 10,
+            is_active: true,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: "rule_key" });
+          if (!humanOldErr) {
+            appliedRules.push(`[HUMAN-${linkedKnowledgeId}-old] 既存ルール強化・再起票防止`);
+          } else {
+            console.error("[ai-feedback] HUMAN-old rule upsert error:", humanOldErr.message);
+          }
         } else {
           // ── choice === 'new' または undefined（既存動作: confirmed 昇格） ──
           // 1. confirmed 昇格・importance を min(10, max(現在値, 9)) に引き上げ
@@ -288,9 +314,21 @@ export async function POST(req: NextRequest) {
             .update({ hypothesis_status: "confirmed", importance: Math.min(10, Math.max(currentImportance, 9)) })
             .eq("id", linkedKnowledgeId);
 
+          // LEARN-* を即時同期（analyze-diffs バッチを待たずに反映）
+          try {
+            const { data: syncRow } = await supabase
+              .from("ai_reply_knowledge")
+              .select("id, title, content, conversation_state, importance")
+              .eq("id", linkedKnowledgeId)
+              .single();
+            if (syncRow) await syncConfirmedToPromptRule(syncRow as Parameters<typeof syncConfirmedToPromptRule>[0]);
+          } catch (e) {
+            console.error("[ai-feedback] syncConfirmedToPromptRule 失敗:", e);
+          }
+
           // 2. choice === 'new' かつ oldKnowledgeId がある場合 → 旧 confirmed を rejected に
           if (choice === 'new' && oldKnowledgeId) {
-            await supabase
+            const { error: oldRejectErr } = await supabase
               .from("ai_reply_knowledge")
               .update({
                 hypothesis_status: "rejected",
@@ -298,7 +336,11 @@ export async function POST(req: NextRequest) {
               })
               .eq("id", oldKnowledgeId)
               .eq("hypothesis_status", "confirmed"); // confirmed のみ対象（安全ガード）
-            appliedRules.push(`[REJECT-${oldKnowledgeId}] old confirmed rule rejected (replaced by new)`);
+            if (!oldRejectErr) {
+              appliedRules.push(`[REJECT-${oldKnowledgeId}] old confirmed rule rejected (replaced by new)`);
+            } else {
+              console.error("[ai-feedback] oldKnowledgeId rejected update 失敗:", oldRejectErr.message);
+            }
           }
 
           // 3. HUMAN-{id} を priority=10 でグローバル保存（clarify action と同じキー体系）

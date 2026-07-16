@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { syncConfirmedToPromptRule } from "@/app/lib/knowledge-promote";
+import { canInsertAiQuestion } from "@/app/lib/ai-feedback-guard";
 
 export const maxDuration = 300; // Vercel Pro: 5分まで延長
 
@@ -172,8 +173,14 @@ JSONのみ回答: {"verdict":"confirm"|"question"|"contradiction","reason":"何�
   }
 
   // 6. Register to ai_feedback_items
+  // pending 上限チェック（60件以上なら起票スキップ）
+  const canInsert = await canInsertAiQuestion();
   let questionCount = 0;
+  if (!canInsert) {
+    console.log("[bulk-judge-knowledge] AI質問pending上限に達しているため起票スキップ");
+  }
   for (const q of deduped) {
+    if (!canInsert) break;
     const categoryVal = q.verdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity";
     const contentPreview = String(q.content ?? "");
     const phase = q.conversation_state ?? "不明";

@@ -594,8 +594,8 @@ async function runChunk3(): Promise<Record<string, unknown>> {
       const rule = stageCRules.find(r => r.id === k.id);
       if (!rule) continue;
 
-      const question = `このルール候補を採用すべきか教えてください：「${rule.title}」 — ${rule.content}`;
-      const slice = question.slice(0, 50);
+      const question = `[knowledge_id:${rule.id}] このルール候補を採用すべきか教えてください：「${rule.title}」 — ${rule.content}`;
+      const slice = rule.id; // knowledge_id で dedup（タイトル変化に強い）
       const { data: existing } = await supabase
         .from("ai_feedback_items")
         .select("id")
@@ -740,19 +740,21 @@ JSON形式のみ返答：
               .eq("id", discardId);
             dedupRejected++;
           } else if (pair.verdict === "merge_candidate") {
-            // マージ候補を質問として起票
-            const { data: ruleA } = await supabase
-              .from("ai_reply_knowledge")
-              .select("title, content")
-              .eq("id", pair.id_a)
-              .single();
-            if (ruleA) {
-              const question = `以下2つのルールを1つに統合すべきですか？\nA: ${ruleA.title}\nB: （類似ルール）`;
-              const slice = question.slice(0, 50);
+            // マージ候補を質問として起票（A・B両方のタイトルと内容を含める）
+            const [ruleARes, ruleBRes] = await Promise.all([
+              supabase.from("ai_reply_knowledge").select("title, content").eq("id", pair.id_a).single(),
+              supabase.from("ai_reply_knowledge").select("title, content").eq("id", pair.id_b).single(),
+            ]);
+            const ruleA = ruleARes.data;
+            const ruleB = ruleBRes.data;
+            if (ruleA && ruleB) {
+              const simScore = simPairs.find(p => p.id_a === pair.id_a && p.id_b === pair.id_b)?.sim_score?.toFixed(2) ?? "N/A";
+              const question = `以下2つのルールを1つに統合すべきですか？（類似スコア: ${simScore}）\n\nA「${ruleA.title}」\n${String(ruleA.content).slice(0, 120)}\n\nB「${ruleB.title}」\n${String(ruleB.content).slice(0, 120)}`;
+              // A・B両IDで dedup（どちらかのIDが含まれていれば重複）
               const { data: existing } = await supabase
                 .from("ai_feedback_items")
                 .select("id")
-                .ilike("question", `%${slice}%`)
+                .or(`question.ilike.%${pair.id_a}%,question.ilike.%${pair.id_b}%`)
                 .in("status", ["pending", "answered", "applied"])
                 .limit(1);
 
@@ -761,7 +763,7 @@ JSON形式のみ返答：
                   question,
                   category: "knowledge_gap",
                   confidence: "low",
-                  evidence: `類似スコア: ${simPairs.find(p => p.id_a === pair.id_a && p.id_b === pair.id_b)?.sim_score?.toFixed(2) ?? "N/A"}`,
+                  evidence: `ルールA ID: ${pair.id_a} / ルールB ID: ${pair.id_b} / 類似スコア: ${simScore}`,
                   speculation: "weekly-learning chunk4 重複排除: マージ候補",
                 });
                 if (raised) questionsRaised++;
