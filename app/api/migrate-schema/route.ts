@@ -881,13 +881,13 @@ BEGIN
   FROM knowledge_apply_log
   WHERE conversation_id = p_conversation_id AND result = 'pending'
     AND (p_source IS NULL OR source = p_source)
-    AND applied_at > NOW() - INTERVAL '24 hours';
+    AND applied_at > NOW() - INTERVAL '7 days';
   IF v_knowledge_ids IS NULL OR ARRAY_LENGTH(v_knowledge_ids, 1) = 0 THEN RETURN; END IF;
   UPDATE knowledge_apply_log
   SET result = p_result
   WHERE conversation_id = p_conversation_id AND result = 'pending'
     AND (p_source IS NULL OR source = p_source)
-    AND applied_at > NOW() - INTERVAL '24 hours';
+    AND applied_at > NOW() - INTERVAL '7 days';
   UPDATE ai_reply_knowledge
   SET
     apply_count   = COALESCE(apply_count, 0) + 1,

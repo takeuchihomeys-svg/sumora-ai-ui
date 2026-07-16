@@ -532,18 +532,17 @@ async function runChunk3(): Promise<Record<string, unknown>> {
     }
   }
 
-  // Stage B: 自動昇格（importance≥9 + apply_count≥3 + correct > wrong）
+  // Stage B: 自動昇格（apply_count≥5 + correct_rate≥70%）
   const { data: stageBPromote } = await supabase
     .from("ai_reply_knowledge")
     .select("id, apply_count, correct_count, wrong_count")
     .eq("hypothesis_status", "hypothesis")
-    .gte("importance", 9)
-    .gte("apply_count", 3);
+    .gte("apply_count", 5);
 
   if (stageBPromote) {
     const promoteIds = stageBPromote
-      .filter((r: { correct_count: number; wrong_count: number }) =>
-        (r.correct_count ?? 0) > (r.wrong_count ?? 0)
+      .filter((r: { apply_count: number; correct_count: number }) =>
+        (r.correct_count ?? 0) / Math.max(r.apply_count ?? 1, 1) >= 0.7
       )
       .map((r: { id: string }) => r.id);
     if (promoteIds.length > 0) {
@@ -614,6 +613,41 @@ async function runChunk3(): Promise<Record<string, unknown>> {
         });
         if (raised) questionsRaised++;
       }
+    }
+  }
+
+  // Stage D: バックグラウンド再評価（フィードバック関数が呼ばれなかった場合の救済）
+  // apply_count/correct_countが既に閾値を超えているhypothesisを再チェックして昇格
+  const { data: stageDBatch } = await supabase
+    .from("ai_reply_knowledge")
+    .select("id, apply_count, correct_count, wrong_count")
+    .eq("hypothesis_status", "hypothesis")
+    .gte("apply_count", 5);
+
+  if (stageDBatch && stageDBatch.length > 0) {
+    const rescuePromoteIds = stageDBatch
+      .filter((r: { apply_count: number; correct_count: number }) =>
+        (r.correct_count ?? 0) / Math.max(r.apply_count ?? 1, 1) >= 0.7
+      )
+      .map((r: { id: string }) => r.id);
+    const rescueRejectIds = stageDBatch
+      .filter((r: { apply_count: number; wrong_count: number }) =>
+        (r.wrong_count ?? 0) / Math.max(r.apply_count ?? 1, 1) >= 0.7
+      )
+      .map((r: { id: string }) => r.id);
+    if (rescuePromoteIds.length > 0) {
+      await supabase
+        .from("ai_reply_knowledge")
+        .update({ hypothesis_status: "confirmed", promoted_by: "weekly_rescue_eval" })
+        .in("id", rescuePromoteIds);
+      autoPromoted += rescuePromoteIds.length;
+    }
+    if (rescueRejectIds.length > 0) {
+      await supabase
+        .from("ai_reply_knowledge")
+        .update({ hypothesis_status: "rejected", rejection_reason: "weekly_rescue_eval_low" })
+        .in("id", rescueRejectIds);
+      autoRejected += rescueRejectIds.length;
     }
   }
 
