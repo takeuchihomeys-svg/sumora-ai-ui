@@ -773,7 +773,7 @@ export async function POST(req: NextRequest) {
       .eq("hypothesis_status", "confirmed")
       .gte("importance", 7)
       .order("importance", { ascending: false })
-      .limit(500);
+      .limit(2000);
 
     if (confirmedRules && confirmedRules.length > 0) {
       const upserts = confirmedRules.map((r) => {
@@ -834,6 +834,12 @@ export async function POST(req: NextRequest) {
         .update({ hypothesis_status: "hypothesis" })
         .eq("id", rule.id as string);
       demotedConfirmed++; // demotedConfirmed は外側のスコープで集計
+
+      // hypothesis に差し戻されたルールを ai_prompt_rules でも非活性化
+      await supabase
+        .from("ai_prompt_rules")
+        .update({ is_active: false })
+        .eq("rule_key", `LEARN-${rule.id as string}`)
 
       // Part C demotion-time: knowledge_brushup 提案を起票（重複防止）
       const brushupTitle = `要ブラッシュアップ: ${(rule.title as string).slice(0, 35)}`;
