@@ -107,7 +107,20 @@ ${adaptedText}`;
       // 竹内さんが回答すると /api/ai-feedback の Opus 4.8 ルール化フローに乗る。
       // ※ ai_feedback_items に priority カラムは無いため confidence: "low" で優先度低を表現し、
       //    UI側（TemplateModal）で adapt_feedback カテゴリを一番下にまとめて表示する
-      const feedbackQuestion = `「会話を合わせる」の結果が修正されました。\n\n【会話の流れ】\n${recentConversation}\n\n【AI生成文（修正前）】\n${adaptedText}\n\n【ユーザーコメント】\n${comment || "（なし）"}\n\nどう改善すれば次回の「会話を合わせる」が自然になりますか？`;
+
+      // 適用されたルール（greeting_viewing の上位アクティブルール）を取得
+      const { data: appliedRules } = await supabase
+        .from("adaptation_improvement_rules")
+        .select("rule_text, confidence")
+        .eq("category", "greeting_viewing")
+        .eq("is_active", true)
+        .order("confidence", { ascending: false })
+        .limit(5);
+      const appliedRulesText = appliedRules && appliedRules.length > 0
+        ? appliedRules.map((r, i) => `${i + 1}. ${String((r.rule_text as string) ?? '').slice(0, 150)}`).join("\n")
+        : "（ルールなし）";
+
+      const feedbackQuestion = `「会話を合わせる」の結果が修正されました。\n\n【会話の流れ】\n${recentConversation}\n\n【AI生成文（修正前）】\n${adaptedText}\n\n【適用されたルール（上位5件）】\n${appliedRulesText}\n\n【ユーザーコメント】\n${comment || "（なし）"}\n\nどう改善すれば次回の「会話を合わせる」が自然になりますか？`;
       // 👎スパム防止: 同じ会話内容からの重複起票を防ぐ（先頭50字 ilike）
       const dedupPrefix = feedbackQuestion.slice(0, 50).replace(/[%_\\]/g, "\\$&");
       const { data: dupCheck } = await supabase
