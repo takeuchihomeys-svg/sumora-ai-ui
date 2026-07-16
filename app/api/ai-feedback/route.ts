@@ -421,8 +421,15 @@ export async function POST(req: NextRequest) {
 
     if (activeFeedbackRules && activeFeedbackRules.length > MAX_FEEDBACK_RULES) {
       const excessCount = activeFeedbackRules.length - MAX_FEEDBACK_RULES;
+      // 当日作成分（JST今日）は保護してクリーンアップ対象外にする
+      // 「直前に保存したFEEDBACKルールを同一セッション内の別回答が即消す」問題を防ぐ
+      const todayJST = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const deletableFeedbackRules = activeFeedbackRules.filter(r => {
+        const createdJST = new Date(new Date(r.created_at as string).getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        return createdJST < todayJST; // 当日作成分は保護
+      });
       // グローバル（action_type IS NULL）を先に削除、スコープ付きは後（より精密なため）
-      const sortedByPriority = [...activeFeedbackRules].sort((a, b) => {
+      const sortedByPriority = [...deletableFeedbackRules].sort((a, b) => {
         const aIsGlobal = (a as { action_type: string | null }).action_type === null ? 0 : 1;
         const bIsGlobal = (b as { action_type: string | null }).action_type === null ? 0 : 1;
         if (aIsGlobal !== bIsGlobal) return aIsGlobal - bIsGlobal;
