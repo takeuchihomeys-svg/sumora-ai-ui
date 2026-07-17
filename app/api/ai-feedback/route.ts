@@ -14,9 +14,6 @@ export const maxDuration = 60;
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 50_000, maxRetries: 1 });
 
-// FEEDBACKルール上限: アクティブな FEEDBACK-* ルールがこれを超えたら古い順に無効化する
-// （回答のたびに増え続けてプロンプトが肥大化するのを防ぐ）
-const MAX_FEEDBACK_RULES = 60;  // AIXスコープ付きルールの generate-reply コピー（-gr）が加わるため
 
 // 改善⑧: suggest-next-action/route.ts の KNOWN_AIX_TYPES と同一のwhitelist。
 // Opusが返す未知の action_type をそのまま trigger_action_rules に upsert すると
@@ -396,42 +393,28 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // FEEDBACKルール上限管理: アクティブなFEEDBACKルールが MAX_FEEDBACK_RULES 件を超えたら古いものを無効化
-  // （エラーが出ても回答保存自体は止めない）
+  // FEEDBACK-* 優先度decayロジック（削除なし・demoteのみ）
+  // 90日超のFEEDBACK-*は priority を 2 に下げてアクティブを維持
+  // （たまにしか使わないルールも消さずに残し、プロンプト注入の重みだけ下げる）
   try {
-    const { data: activeFeedbackRules } = await supabase
+    const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: staleFeedbackRules } = await supabase
       .from("ai_prompt_rules")
-      .select("rule_key, created_at, action_type")
+      .select("id, priority")
       .like("rule_key", "FEEDBACK-%")
       .eq("is_active", true)
-      .order("created_at", { ascending: true }); // 古い順（後でグローバル優先ソートする）
+      .lt("created_at", ninetyDaysAgo)
+      .gt("priority", 2);
 
-    if (activeFeedbackRules && activeFeedbackRules.length > MAX_FEEDBACK_RULES) {
-      const excessCount = activeFeedbackRules.length - MAX_FEEDBACK_RULES;
-      // 当日作成分（JST今日）は保護してクリーンアップ対象外にする
-      // 「直前に保存したFEEDBACKルールを同一セッション内の別回答が即消す」問題を防ぐ
-      const todayJST = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
-      const deletableFeedbackRules = activeFeedbackRules.filter(r => {
-        const createdJST = new Date(new Date(r.created_at as string).getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
-        return createdJST < todayJST; // 当日作成分は保護
-      });
-      // グローバル（action_type IS NULL）を先に削除、スコープ付きは後（より精密なため）
-      const sortedByPriority = [...deletableFeedbackRules].sort((a, b) => {
-        const aIsGlobal = (a as { action_type: string | null }).action_type === null ? 0 : 1;
-        const bIsGlobal = (b as { action_type: string | null }).action_type === null ? 0 : 1;
-        if (aIsGlobal !== bIsGlobal) return aIsGlobal - bIsGlobal;
-        return new Date(a.created_at as string).getTime() - new Date(b.created_at as string).getTime();
-      });
-      const oldestKeys = sortedByPriority.slice(0, excessCount).map((r) => r.rule_key);
-      const { error: deactivateError } = await supabase
+    if (staleFeedbackRules && staleFeedbackRules.length > 0) {
+      await supabase
         .from("ai_prompt_rules")
-        .update({ is_active: false })
-        .in("rule_key", oldestKeys);
-      if (deactivateError) console.error("[ai-feedback] FEEDBACKルール無効化エラー:", deactivateError.message);
-      else console.log(`[ai-feedback] FEEDBACKルール上限超過 → 古い${excessCount}件を無効化: ${oldestKeys.join(", ")}`);
+        .update({ priority: 2 })
+        .in("id", staleFeedbackRules.map((r: { id: string }) => r.id as string));
+      console.log(`[ai-feedback] FEEDBACK-* ${staleFeedbackRules.length}件をpriority=2にdemote`);
     }
   } catch (e) {
-    console.error("[ai-feedback] FEEDBACKルール上限チェック失敗:", e);
+    console.error("[ai-feedback] FEEDBACK-* demoteチェック失敗:", e);
   }
 
   const { error: updateError } = await supabase
