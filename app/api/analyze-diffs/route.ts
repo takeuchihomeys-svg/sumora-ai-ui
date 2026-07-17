@@ -1037,6 +1037,9 @@ export async function POST(req: NextRequest) {
   // 変更率 >= 70% = AIが外れ続けている → 下位ルール -1
   if ((examples?.length ?? 0) > 0) try {
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    // M-2同様の7日クールダウン（強化Bと同じ last_boosted_at を使い回す）
+    // maintainが毎日実行されるたびに同じルールが±1され続けて importance が9/5に張り付くのを防ぐ
+    const modRateCooldownBefore = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
     const { data: examples30 } = await supabase
       .from("ai_reply_examples")
       .select("conversation_state, was_ai_modified")
@@ -1067,12 +1070,16 @@ export async function POST(req: NextRequest) {
             .in("conversation_state", matchStates)
             .lt("importance", 9)
             .neq("hypothesis_status", "rejected")
+            .or(`last_boosted_at.is.null,last_boosted_at.lt.${modRateCooldownBefore}`) // 7日クールダウン
             .order("apply_count", { ascending: false })
             .limit(3);
           for (const rule of topRules ?? []) {
             if (!isBoostEligible(rule as BoostStats)) continue; // apply_count順の盲目ブースト防止
             await supabase.from("ai_reply_knowledge")
-              .update({ importance: Math.min(9, (rule.importance as number) + 1) })
+              .update({
+                importance: Math.min(9, (rule.importance as number) + 1),
+                last_boosted_at: new Date().toISOString(), // クールダウン起点を記録
+              })
               .eq("id", rule.id);
           }
         } else if (modRate >= 0.7) {
@@ -1083,11 +1090,15 @@ export async function POST(req: NextRequest) {
             .in("conversation_state", matchStates)
             .gt("importance", 5)
             .neq("hypothesis_status", "confirmed")
+            .or(`last_boosted_at.is.null,last_boosted_at.lt.${modRateCooldownBefore}`) // 7日クールダウン
             .order("apply_count", { ascending: true })
             .limit(3);
           for (const rule of lowRules ?? []) {
             await supabase.from("ai_reply_knowledge")
-              .update({ importance: Math.max(5, (rule.importance as number) - 1) })
+              .update({
+                importance: Math.max(5, (rule.importance as number) - 1),
+                last_boosted_at: new Date().toISOString(), // クールダウン起点を記録
+              })
               .eq("id", rule.id);
           }
         }
@@ -1095,7 +1106,9 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* ignore */ }
 
-  if (!examples || examples.length === 0) {
+  // mode=maintain は差分学習ループを使わないため、examples 0件でも早期リターンせず
+  // 回帰センチネル（detectRepeatedDeletions）を必ず実行させる
+  if (mode !== "maintain" && (!examples || examples.length === 0)) {
     // 処理対象ゼロでも同期・decayは上で実行済み。cron logも完了させる（ok=null放置を防ぐ）
     await finishCronLog(runLogId, true, { processed: 0, learned: 0, synced, demotedConfirmed, promoted, promotedSilent });
     return NextResponse.json({ ok: true, processed: 0, learned: 0, synced, demotedConfirmed, promoted, promotedSilent, message: `処理対象なし・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件（うちサイレント${promotedSilent}件）` });
@@ -1352,12 +1365,13 @@ export async function POST(req: NextRequest) {
 
     const result = await analyzeDiff(customer_message, ai_draft, sent_reply, conversation_state);
 
-    // AI呼び出し失敗時も diff_analyzed_at をマークして「試行済み」扱いにする
-    // （マークしないと毎日同じレコードを拾い続け、常に失敗するレコードでキューが詰まるため）
+    // AI呼び出し失敗時（Anthropic一時障害・タイムアウト等）は diff_analyzed_at を null に戻して
+    // 楽観的ロック（ループ冒頭のクレーム）を解放し、次回cron実行でリトライできるようにする。
+    // （now でマークすると .is("diff_analyzed_at", null) のクエリに二度とヒットせず永久に学習されない）
     if (result === null) {
-      console.error(`[analyze-diffs] analyzeDiff failed for example id=${id} — marking diff_analyzed_at to prevent infinite retry`);
-      await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
-      processed++;
+      console.error(`[analyze-diffs] analyzeDiff failed for example id=${id} — resetting diff_analyzed_at for retry on next run`);
+      // ロック解放SQL相当: UPDATE ai_reply_examples SET diff_analyzed_at = NULL WHERE id = '<id>'
+      await supabase.from("ai_reply_examples").update({ diff_analyzed_at: null }).eq("id", id);
       continue;
     }
 
