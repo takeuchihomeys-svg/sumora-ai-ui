@@ -40,22 +40,15 @@ export async function fetchPromptRules(
     };
 
     const [highPrioRes, learnRes] = await Promise.all([
-      // HUMAN-* / FEEDBACK-* / IMPLEMENT-* 等
-      // FEEDBACK-* は最大60件（MAX_FEEDBACK_RULES）まで増えるため、40だと枠落ちする
-      // → 150件（FEEDBACK 60 + HUMAN/IMPLEMENT の余裕を大幅拡大）に拡大
+      // HUMAN-* / FEEDBACK-* / IMPLEMENT-* 等（LEARN-*はPhase1で廃止済み）
       buildBaseQuery()
         .not("rule_key", "like", "LEARN-%")
         .order("priority", { ascending: false })
         .order("updated_at", { ascending: false, nullsFirst: false })
         .limit(150),
-      // LEARN-*（ai_reply_knowledge 同期コピー）は上位60件のみ
-      excludeLearnRules
-        ? Promise.resolve({ data: [] as PromptRuleRow[], error: null })
-        : buildBaseQuery()
-            .like("rule_key", "LEARN-%")
-            .order("priority", { ascending: false })
-            .order("updated_at", { ascending: false, nullsFirst: false })
-            .limit(60),
+      // LEARN-*廃止（Phase1）: DBでis_active=false済み・クエリも常に空配列を返す
+      // ナレッジはfetchKnowledge()のpgvector RAGで届くため二重注入不要
+      Promise.resolve({ data: [] as PromptRuleRow[], error: null }),
     ]);
 
     if (highPrioRes.error) console.error("[fetchPromptRules] high-prio query", highPrioRes.error);

@@ -48,28 +48,11 @@ export type KnowledgeRow = {
 
 // confirmed になった知識を ai_prompt_rules に即時同期
 // importance >= 7 のもののみ対象（analyze-diffs の >= 8 より緩和）
-export async function syncConfirmedToPromptRule(row: KnowledgeRow): Promise<void> {
-  if (row.importance < 7) return;
-  const state = row.conversation_state;
-  const actionType = state
-    ? (Object.prototype.hasOwnProperty.call(KNOWLEDGE_STATE_TO_ACTION, state)
-        ? KNOWLEDGE_STATE_TO_ACTION[state]
-        : null)
-    : null;
-  const { error } = await supabase.from("ai_prompt_rules").upsert(
-    {
-      rule_key: `LEARN-${row.id}`,
-      action_type: actionType,
-      condition_key: null,
-      condition_value: null,
-      rule_text: row.content.slice(0, 500),
-      reason: `ai_reply_knowledge自動昇格: ${row.title.slice(0, 100)}`,
-      priority: 8,
-      is_active: true,
-    },
-    { onConflict: "rule_key" }
-  );
-  if (error) console.warn("[knowledge-promote] sync failed:", error.message);
+export async function syncConfirmedToPromptRule(_row: KnowledgeRow): Promise<void> {
+  // LEARN-* 廃止（Phase1）: ai_prompt_rules へのコピーは行わない
+  // ナレッジは fetchKnowledge()（pgvector RAG）で届くため二重注入不要
+  // 呼び出し元6箇所の削除はPhase2で対応
+  return;
 }
 
 // ⑤ 昇格ロジック一元化: hypothesis → confirmed 昇格の単一エントリポイント
