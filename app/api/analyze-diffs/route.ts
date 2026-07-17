@@ -731,8 +731,8 @@ export async function POST(req: NextRequest) {
 
   // ── 確認済みルール → ai_prompt_rules 自動同期 ──
   // importance>=7 かつ hypothesis_status='confirmed' のルールをプロンプトルールとして自動登録
-  // （閾値は lib/knowledge-promote.ts の syncConfirmedToPromptRule と揃える。即時反映は
-  //   knowledge-promote 側が担当し、ここは cron バッチとしての取りこぼし補完を担う）
+  // （syncConfirmedToPromptRule は LEARN-* 廃止（Phase1）により参照不要。
+  //   このバッチは LEARN-* とは独立した cron 補完処理として継続稼働）
   // ステートに応じた action_type でスコープ付き保存
   // （複合ステートはAIXアクション名へ、汎用ステートはgenerate_reply へ、未知はグローバル）
 
