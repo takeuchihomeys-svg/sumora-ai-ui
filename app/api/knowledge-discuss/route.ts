@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
-import { syncConfirmedToPromptRule } from "@/app/lib/knowledge-promote";
 
 // 🤝 ナレッジ打ち合わせ（チャット形式）
 // TemplateModal のナレッジ承認パネル「🤝 打ち合わせ」から呼ばれる。
@@ -13,7 +12,6 @@ import { syncConfirmedToPromptRule } from "@/app/lib/knowledge-promote";
 //   1. 会話履歴から Sonnet が最終ナレッジ content を抽出/改善
 //   2. ai_reply_knowledge.content を UPDATE
 //   3. hypothesis_status を 'confirmed' に UPDATE
-//   4. syncConfirmedToPromptRule() で ai_prompt_rules に即時反映
 
 export const maxDuration = 60;
 
@@ -96,7 +94,7 @@ async function handleChat(body: DiscussBody): Promise<NextResponse> {
 // 確定・反映（?action=finalize）
 // ─────────────────────────────────────────────
 async function handleFinalize(body: DiscussBody): Promise<NextResponse> {
-  const { id, title, content, category, conversation_state, messages } = body;
+  const { id, title, content, category, messages } = body;
 
   if (!id || !title || !content) {
     return NextResponse.json({ ok: false, error: "id / title / content は必須です" }, { status: 400 });
@@ -138,27 +136,7 @@ async function handleFinalize(body: DiscussBody): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: `DB更新に失敗しました: ${updateError.message}` }, { status: 500 });
   }
 
-  // 4. ai_prompt_rules に即時反映（importance は DB から取得。取得失敗時は安全サイドでスキップ）
-  const { data: row, error: fetchError } = await supabase
-    .from("ai_reply_knowledge")
-    .select("importance")
-    .eq("id", id)
-    .single();
-  if (fetchError) {
-    console.error("[knowledge-discuss] importance fetch failed:", fetchError.message);
-    // importance 不明時は importance=7 を仮定してサイレント昇格するバグを防ぐため sync をスキップ
-    return NextResponse.json({ ok: true, updatedContent, synced: false, reason: "importance_fetch_failed" });
-  }
-
-  await syncConfirmedToPromptRule({
-    id,
-    title,
-    content: updatedContent,
-    conversation_state: conversation_state ?? null,
-    importance: row.importance as number,
-  });
-
-  return NextResponse.json({ ok: true, updatedContent, synced: (row.importance as number) >= 7 });
+  return NextResponse.json({ ok: true, updatedContent });
 }
 
 // ─────────────────────────────────────────────

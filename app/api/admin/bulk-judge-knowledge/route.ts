@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
-import { syncConfirmedToPromptRule } from "@/app/lib/knowledge-promote";
 import { canInsertAiQuestion } from "@/app/lib/ai-feedback-guard";
 
 export const maxDuration = 300; // Vercel Pro: 5分まで延長
@@ -148,7 +147,6 @@ JSONのみ回答: {"verdict":"confirm"|"question"|"contradiction","reason":"何�
     if (!error) {
       const { data: row } = await supabase.from("ai_reply_knowledge").select("id, title, content, conversation_state, importance").eq("id", id).single();
       if (row) {
-        await syncConfirmedToPromptRule(row);
         confirmedCount++;
       }
     }

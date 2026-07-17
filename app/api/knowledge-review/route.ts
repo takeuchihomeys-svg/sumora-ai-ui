@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
-import { syncConfirmedToPromptRule, deactivatePromptRule } from "@/app/lib/knowledge-promote";
+import { deactivatePromptRule } from "@/app/lib/knowledge-promote";
 
 // GET: hypothesis ナレッジ一覧（手動承認待ち）
 // ?mode=ambiguous: 曖昧ナレッジのみ返す（title短い or 条件・場面マーカーなし）
@@ -84,7 +84,6 @@ export async function PATCH(req: NextRequest) {
       console.warn("[knowledge-review] brushup行の再取得失敗:", fetchErr?.message ?? "row null");
       return NextResponse.json({ ok: true, brushed: true, synced: false });
     }
-    await syncConfirmedToPromptRule(row);
     return NextResponse.json({ ok: true, brushed: true, synced: true, rule_key: `LEARN-${id}` });
   }
 
@@ -141,7 +140,6 @@ export async function PATCH(req: NextRequest) {
       console.warn("[knowledge-review] confirmed行の再取得失敗:", fetchErr?.message ?? "row null");
       return NextResponse.json({ ok: true, synced: false, reason: "re_select_failed" });
     }
-    await syncConfirmedToPromptRule(row);
     const importance = (row.importance as number) ?? 0;
     return NextResponse.json({
       ok: true,

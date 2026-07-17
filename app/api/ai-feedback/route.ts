@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
-import { syncConfirmedToPromptRule } from "@/app/lib/knowledge-promote";
 import Anthropic from "@anthropic-ai/sdk";
 
 // AI盲点フィードバック（ai_feedback_items）
@@ -324,18 +323,6 @@ export async function POST(req: NextRequest) {
             console.error("[ai-feedback] confirmed昇格 update 失敗:", upgradeError.message);
             // DB更新失敗時は後続の syncConfirmedToPromptRule / HUMAN-* 保存をスキップして不整合を防ぐ
             throw new Error(`[ai-feedback] confirmed昇格失敗: ${upgradeError.message}`);
-          }
-
-          // LEARN-* を即時同期（analyze-diffs バッチを待たずに反映）
-          try {
-            const { data: syncRow } = await supabase
-              .from("ai_reply_knowledge")
-              .select("id, title, content, conversation_state, importance")
-              .eq("id", linkedKnowledgeId)
-              .single();
-            if (syncRow) await syncConfirmedToPromptRule(syncRow as Parameters<typeof syncConfirmedToPromptRule>[0]);
-          } catch (e) {
-            console.error("[ai-feedback] syncConfirmedToPromptRule 失敗:", e);
           }
 
           // 2. choice === 'new' かつ oldKnowledgeId がある場合 → 旧 confirmed を rejected に
