@@ -895,9 +895,11 @@ export async function POST(req: NextRequest) {
   // ── ⑤ hypothesis → confirmed 自動昇格 ──
   // correct_count>=5 かつ wrong率<0.3 かつ apply_count>=5 の hypothesis ルールを confirmed に昇格する。
   // Tier 1: importance>=9 かつ apply>=8 かつ correct>=6 かつ wrong率<15% かつ内容明確 → サイレント昇格（確認不要）
-  // Tier 2: それ以外 → ai_feedback_items に確認起票（竹内さんに承認を仰ぐ）
+  // Tier 2: それ以外 → ask-then-promote。昇格はせず ai_feedback_items に事前承認質問を起票し、
+  //         竹内さんの回答（ai-feedback の [knowledge_id:] closed-loop）で confirmed に昇格する
   let promoted = 0;
   let promotedSilent = 0;
+  let promotionAsked = 0;
   try {
     const { data: promotionCandidates } = await supabase
       .from("ai_reply_knowledge")
@@ -921,28 +923,29 @@ export async function POST(req: NextRequest) {
         && isContentClear((rule.title as string) ?? "");
 
       // H-2: promoted_by / promoted_at を記録して昇格（promoteToConfirmed に一元化）。
-      // Tier1 は ai_prompt_rules への即時同期あり、Tier2 は従来どおり起票のみ（同期は日次バッチに委ねる）
-      await promoteToConfirmed(
-        rule.id as string,
-        isTier1 ? "analyze_diffs_tier1" : "analyze_diffs_batch",
-        isTier1
-          ? {
-              title: rule.title as string,
-              content: (rule.content as string) ?? "",
-              conversation_state: (rule.conversation_state as string | null) ?? null,
-              importance: ruleImportance,
-            }
-          : undefined
-      );
-      promoted++;
-
+      // Tier1 のみサイレント昇格（ai_prompt_rules への即時同期あり）。
+      // Tier2 は昇格せず hypothesis のまま、事前承認質問のみ起票する（ask-then-promote）。
       if (isTier1) {
+        await promoteToConfirmed(
+          rule.id as string,
+          "analyze_diffs_tier1",
+          {
+            title: rule.title as string,
+            content: (rule.content as string) ?? "",
+            conversation_state: (rule.conversation_state as string | null) ?? null,
+            importance: ruleImportance,
+          }
+        );
+        promoted++;
         promotedSilent++;
         continue; // ai_feedback_items 起票をスキップ
       }
 
-      // ── Tier 2: 確認起票あり（既存動作）──
-      const question = `❓【教えてください】自動 confirmed 昇格ルールの内容を確認してください\n\n━━ 対象ナレッジ ━━\n「${(rule.title as string).slice(0, 50)}」\n\n━━ ルール内容 ━━\n${String((rule.content as string) ?? '').slice(0, 300) || '（内容なし）'}\n\n━━ なぜ確認が必要か ━━\nこのルールが自動で confirmed（確認済み）に昇格しました（correct:${correct}件 / apply:${applyCount}件 / 外れ率:${Math.round(wrongRate * 100)}%）。AI生成物への自動昇格のため、内容を人間が確認する必要があります。\n\n❓ 竹内さんへの質問\n① このルールの内容は正しいですか？問題があれば修正内容を教えてください。\n② confirmed のままでよいですか？それとも再度 hypothesis に戻しますか？`;
+      // ── Tier 2: 事前承認質問を起票（ask-then-promote）──
+      // [knowledge_id:] プレフィックスは ai-feedback 回答時の closed-loop に使用。
+      // 竹内さんが OK と回答（choice='new' または省略）すると ai-feedback/route.ts が
+      // hypothesis → confirmed に昇格させる。ここでは昇格しない。
+      const question = `[knowledge_id:${rule.id as string}]\n❓【教えてください】ナレッジの confirmed 昇格を承認してください\n\n━━ 対象ナレッジ ━━\n「${(rule.title as string).slice(0, 50)}」\n\n━━ ルール内容 ━━\n${String((rule.content as string) ?? '').slice(0, 300) || '（内容なし）'}\n\n━━ なぜ確認が必要か ━━\nこのルールは昇格基準を満たしました（correct:${correct}件 / apply:${applyCount}件 / 外れ率:${Math.round(wrongRate * 100)}%）。AI生成物のため、confirmed（確認済み）に昇格させる前に人間の承認が必要です。承認されるまで hypothesis のまま保留します。\n\n❓ 竹内さんへの質問\n① このルールの内容は正しいですか？問題があれば修正内容を教えてください。\n② confirmed に昇格させてよいですか？（OKなら回答するだけで昇格が反映されます）`;
       const dedupKey = question.slice(0, 50).replace(/[%_\\]/g, "\\$&");
       const { data: existsFb } = await supabase
         .from("ai_feedback_items")
@@ -951,14 +954,15 @@ export async function POST(req: NextRequest) {
         .ilike("question", `${dedupKey}%`)
         .limit(1);
       if (!existsFb || existsFb.length === 0) {
-        await insertAiQuestion({
+        const inserted = await insertAiQuestion({
           question,
-          speculation: `correct_count>=${correct}件 かつ apply_count>=${applyCount}件 かつ 外れ率${Math.round(wrongRate * 100)}%のため自動昇格。`,
+          speculation: `correct_count>=${correct}件 かつ apply_count>=${applyCount}件 かつ 外れ率${Math.round(wrongRate * 100)}%のため昇格基準を満たした。承認回答で knowledge_id=${rule.id as string} を confirmed に昇格する（ask-then-promote）。`,
           category: "knowledge_gap",
-          evidence: `correct:${correct}, wrong:${wrong}, apply:${applyCount}, 外れ率:${Math.round(wrongRate * 100)}%`,
+          evidence: `knowledge_id:${rule.id as string}, correct:${correct}, wrong:${wrong}, apply:${applyCount}, 外れ率:${Math.round(wrongRate * 100)}%`,
           confidence: "high",
           status: "pending",
         });
+        if (inserted) promotionAsked++;
       }
     }
   } catch { /* 昇格失敗はメイン処理を止めない */ }
@@ -1110,8 +1114,8 @@ export async function POST(req: NextRequest) {
   // 回帰センチネル（detectRepeatedDeletions）を必ず実行させる
   if (mode !== "maintain" && (!examples || examples.length === 0)) {
     // 処理対象ゼロでも同期・decayは上で実行済み。cron logも完了させる（ok=null放置を防ぐ）
-    await finishCronLog(runLogId, true, { processed: 0, learned: 0, synced, demotedConfirmed, promoted, promotedSilent });
-    return NextResponse.json({ ok: true, processed: 0, learned: 0, synced, demotedConfirmed, promoted, promotedSilent, message: `処理対象なし・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件（うちサイレント${promotedSilent}件）` });
+    await finishCronLog(runLogId, true, { processed: 0, learned: 0, synced, demotedConfirmed, promoted, promotedSilent, promotionAsked });
+    return NextResponse.json({ ok: true, processed: 0, learned: 0, synced, demotedConfirmed, promoted, promotedSilent, promotionAsked, message: `処理対象なし・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件（Tier1サイレント）・昇格承認起票${promotionAsked}件` });
   }
 
   // ── 回帰センチネル: メインの差分学習ループと並列実行 ──
@@ -1124,11 +1128,11 @@ export async function POST(req: NextRequest) {
   // mode=maintain の場合は差分学習ループをスキップしてメンテナンス処理のみ実行
   if (mode === "maintain") {
     const sentinel = await sentinelPromise;
-    await finishCronLog(runLogId, true, { processed: 0, learned: 0, synced, demotedConfirmed, promoted, promotedSilent });
+    await finishCronLog(runLogId, true, { processed: 0, learned: 0, synced, demotedConfirmed, promoted, promotedSilent, promotionAsked });
     return NextResponse.json({
-      ok: true, processed: 0, learned: 0, synced, demotedConfirmed, promoted, promotedSilent,
+      ok: true, processed: 0, learned: 0, synced, demotedConfirmed, promoted, promotedSilent, promotionAsked,
       sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted,
-      message: `[maintain] 差分学習スキップ・メンテ処理のみ実行 — confirmed差し戻し${demotedConfirmed}件・昇格${promoted}件`,
+      message: `[maintain] 差分学習スキップ・メンテ処理のみ実行 — confirmed差し戻し${demotedConfirmed}件・昇格${promoted}件・昇格承認起票${promotionAsked}件`,
     });
   }
 
@@ -1655,12 +1659,12 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* ignore - 可視化失敗はメイン処理を止めない */ }
 
-  await finishCronLog(runLogId, true, { processed, learned, synced, demotedConfirmed, promoted, promotedSilent, timedOut, sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted, ...(cronWarning ? { cronWarning } : {}) });
+  await finishCronLog(runLogId, true, { processed, learned, synced, demotedConfirmed, promoted, promotedSilent, promotionAsked, timedOut, sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted, ...(cronWarning ? { cronWarning } : {}) });
   return NextResponse.json({
-    ok: true, processed, learned, synced, demotedConfirmed, promoted, promotedSilent, timedOut,
+    ok: true, processed, learned, synced, demotedConfirmed, promoted, promotedSilent, promotionAsked, timedOut,
     sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted,
     ...(cronWarning ? { cronWarning } : {}),
-    message: `${processed}件処理・${learned}件学習・${synced}件ルール同期・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件（うちサイレント${promotedSilent}件）・反復削除フレーズ${sentinel.detected}件検知（${sentinel.demoted}件降格）${timedOut ? "・⏱30秒タイムガードで打ち切り" : ""}${cronWarning ? ` / ${cronWarning}` : ""}`,
+    message: `${processed}件処理・${learned}件学習・${synced}件ルール同期・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件（Tier1サイレント）・昇格承認起票${promotionAsked}件・反復削除フレーズ${sentinel.detected}件検知（${sentinel.demoted}件降格）${timedOut ? "・⏱30秒タイムガードで打ち切り" : ""}${cronWarning ? ` / ${cronWarning}` : ""}`,
   });
   } catch (e) {
     console.error("[analyze-diffs]", e);
