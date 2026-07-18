@@ -755,9 +755,7 @@ ${SMORA_COMMON_RULES}`;
         getPropertyExamples(),
         getPropertyKnowledge(conversationId),
         getStarredExamplesForAction(["property_recommendation", "proposing"], latestCustomerMsg),
-        // excludeLearnRules=true: LEARN-* keys are already injected via getPropertyKnowledge (ai_reply_knowledge);
-        // passing them again via ai_prompt_rules would duplicate the same content in the prompt (L5 fix).
-        fetchPromptRules("property_recommendation", {}, true).catch(() => ""),
+        fetchPromptRules("property_recommendation", {}).catch(() => ""),
       ]);
 
       // {{examples}} {{knowledge}} {{phrases}} を実データに置換
