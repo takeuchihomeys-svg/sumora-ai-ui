@@ -33,6 +33,12 @@ const KNOWN_AIX_TYPES = new Set([
   "condition_hearing", "alternative_send",
 ]);
 
+// 曖昧な物件参照（「前の物件」「あの部屋」「例の物件」「さっきの物件」「気になってた物件」等）の検知パターン。
+// どの物件を指すか特定できないままAIが物件名を推測して返信（ハルシネーション）しないよう、
+// 検知時は「物件確認」（property_check_result）を通常提案より優先して返し、スタッフに対象物件の確認を促す。
+// ※「駅前の物件」等の非曖昧表現を誤検知しないよう「前」には否定後読み (?<!駅) を付ける
+const AMBIGUOUS_PROPERTY_RE = /(?:(?<!駅)前|この前|以前|前回|先日|さっき|例|最初|検討中)の(?:物件|お?部屋|マンション|やつ|とこ(?:ろ)?)|あの(?:物件|お?部屋|マンション|やつ|とこ(?:ろ)?)|気になっ(?:てい|て)た(?:物件|お?部屋|マンション)/;
+
 // アクション別の初期化パラメータ（クライアントのAIXモーダル初期状態に引き継ぐ）
 const ACTION_PARAMS: Record<string, { check_pattern?: string; send_mode?: string }> = {
   property_check_result: { check_pattern: "available" },
@@ -319,6 +325,31 @@ export async function POST(req: NextRequest) {
   // 顧客が内覧・申込・費用等を明示的に意図している場合はチェーンルールをスキップ
   const EXPLICIT_CUSTOMER_INTENT_RE = /内覧|内見|見に行|みに行|みにいき|見学|申込|申し込|費用|初期費用|見積|決めます|でお願いでき|でお願いします|明日.*時|あした.*時|今日.*時|本日.*時/;
   const hasExplicitCustomerIntent = conv.last_sender === "customer" && EXPLICIT_CUSTOMER_INTENT_RE.test(lastCustomerMsg);
+
+  // ---- 曖昧な物件参照の検知（最優先・ハルシネーション防止）----
+  // 「前の物件」「あの部屋」等、どの物件を指すか特定できないメッセージは、
+  // AIが物件名を推測して返信する前に「物件確認」でスタッフが対象を特定するよう最優先で誘導する。
+  // 抑制（採択率30%未満）・経路別低採択率の場合のみ通常フローへフォールスルー
+  if (
+    conv.last_sender === "customer" &&
+    (currentStatus === "hearing" || currentStatus === "proposing") &&
+    AMBIGUOUS_PROPERTY_RE.test(lastCustomerMsg) &&
+    !shouldSuppressAction("property_check_result") &&
+    !isLowSourceRate("property_check_result", "ambiguous_property_rule")
+  ) {
+    return NextResponse.json({
+      action: "property_check_result",
+      action_label: "物件を確認する",
+      reason: "どの物件か曖昧なメッセージ",
+      description: "どの物件のことか確認してから返信しましょう",
+      priority: "high",
+      source: "ambiguous_property_rule",
+      params: buildParams("property_check_result"),
+      acceptanceRate: acceptanceRateMap["property_check_result"] ?? null,
+      sub_mode_stats: subModeStats,
+      ...templateRec("property_check_result"),
+    });
+  }
 
   // ---- AIXチェーンルール: 直前のAIXアクションから次を提案 ----
   // ※ staff early return より前に置くことで送信直後にも発火する（Fable5 S-1修正）
