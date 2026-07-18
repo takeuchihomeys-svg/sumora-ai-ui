@@ -885,7 +885,9 @@ export async function POST(req: NextRequest) {
       .eq("used_count", 0)                          // 一度も使われていない
       .eq("correct_count", 0)                       // MED-02: 正答実績があるルールは除外
       .gt("apply_count", 0)                         // S04: apply実績がないルールは対象外（稀少ステート保護）
-      .lt("created_at", staleThreshold)             // 90日以上前に作成
+      // 90日判定: last_applied_at があればそちら、なければ created_at で判定
+      // （= 最後にapplyされてから90日経過したルールのみ decay。作成が古くても最近applyされていれば残す）
+      .or(`and(last_applied_at.is.null,created_at.lt.${staleThreshold}),last_applied_at.lt.${staleThreshold}`)
       .neq("hypothesis_status", "confirmed")        // 確認済みは除外
       .neq("hypothesis_status", "rejected");        // 既にrejectは除外
   } catch { /* decay 失敗は無視して処理を続ける */ }
@@ -902,7 +904,8 @@ export async function POST(req: NextRequest) {
       .eq("used_count", 0)
       .eq("correct_count", 0)
       .gt("apply_count", 0)                         // BUG-03: 90日decayと同様、apply実績ゼロは除外
-      .lt("created_at", staleThreshold180)
+      // 180日判定: last_applied_at があればそちら、なければ created_at（90日decayと同方式）
+      .or(`and(last_applied_at.is.null,created_at.lt.${staleThreshold180}),last_applied_at.lt.${staleThreshold180}`)
       .neq("hypothesis_status", "confirmed")
       .neq("hypothesis_status", "rejected");
   } catch { /* ignore */ }

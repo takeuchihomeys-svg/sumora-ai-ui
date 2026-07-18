@@ -51,7 +51,7 @@ type ExtractedRule = {
 // ※ 旧実装は全status混合 limit=50 で、pending が50件を超えると未回答質問が見えなくなっていた。
 //   pending 枠を独立させて優先取得し、total_pending も返す（UIで「全◯件」表示に使える）
 export async function GET() {
-  const [pendingRes, doneRes, pendingCountRes] = await Promise.all([
+  const [pendingRes, doneRes, pendingCountRes, knowledgeGapCountRes] = await Promise.all([
     supabase
       .from("ai_feedback_items")
       .select("*")
@@ -68,13 +68,24 @@ export async function GET() {
       .from("ai_feedback_items")
       .select("id", { count: "exact", head: true })
       .eq("status", "pending"),
+    // Tier2承認質問（knowledge_gap）の未回答件数（UIバッジ用サーバカウント）
+    supabase
+      .from("ai_feedback_items")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "pending")
+      .eq("category", "knowledge_gap"),
   ]);
 
   const error = pendingRes.error ?? doneRes.error;
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
   const items = [...(pendingRes.data ?? []), ...(doneRes.data ?? [])];
-  return NextResponse.json({ ok: true, items, total_pending: pendingCountRes.count ?? (pendingRes.data ?? []).length });
+  return NextResponse.json({
+    ok: true,
+    items,
+    total_pending: pendingCountRes.count ?? (pendingRes.data ?? []).length,
+    total_knowledge_gap_pending: knowledgeGapCountRes.count ?? 0,
+  });
 }
 
 // 回答をOpus 4.8で解釈して業務ルールを1〜3個抽出する（高品質な永続ルールを生成するため最上位モデルを使用）

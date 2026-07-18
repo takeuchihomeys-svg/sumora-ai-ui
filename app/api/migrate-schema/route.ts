@@ -892,7 +892,8 @@ BEGIN
   SET
     apply_count   = COALESCE(apply_count, 0) + 1,
     correct_count = CASE WHEN p_result = 'correct' THEN COALESCE(correct_count, 0) + 1 ELSE COALESCE(correct_count, 0) END,
-    wrong_count   = CASE WHEN p_result = 'wrong'   THEN COALESCE(wrong_count, 0)   + 1 ELSE COALESCE(wrong_count, 0) END
+    wrong_count   = CASE WHEN p_result = 'wrong'   THEN COALESCE(wrong_count, 0)   + 1 ELSE COALESCE(wrong_count, 0) END,
+    last_applied_at = NOW()
   WHERE id = ANY(v_knowledge_ids);
   UPDATE ai_reply_knowledge
   SET hypothesis_status = CASE
@@ -1269,7 +1270,8 @@ BEGIN
     WHERE knowledge_id = ANY(p_correct_ids) AND result = 'pending';
     UPDATE ai_reply_knowledge
     SET apply_count   = COALESCE(apply_count, 0) + 1,
-        correct_count = COALESCE(correct_count, 0) + 1
+        correct_count = COALESCE(correct_count, 0) + 1,
+        last_applied_at = NOW()
     WHERE id = ANY(p_correct_ids);
   END IF;
   IF p_wrong_ids IS NOT NULL AND ARRAY_LENGTH(p_wrong_ids, 1) > 0 THEN
@@ -1277,7 +1279,8 @@ BEGIN
     WHERE knowledge_id = ANY(p_wrong_ids) AND result = 'pending';
     UPDATE ai_reply_knowledge
     SET apply_count = COALESCE(apply_count, 0) + 1,
-        wrong_count = COALESCE(wrong_count, 0) + 1
+        wrong_count = COALESCE(wrong_count, 0) + 1,
+        last_applied_at = NOW()
     WHERE id = ANY(p_wrong_ids);
   END IF;
   UPDATE ai_reply_knowledge
@@ -1344,7 +1347,8 @@ CREATE OR REPLACE FUNCTION update_knowledge_feedback_by_ids(
 BEGIN
   -- apply_count: 両リストの union（重複排除）に対して +1
   UPDATE ai_reply_knowledge
-  SET apply_count = COALESCE(apply_count, 0) + 1
+  SET apply_count = COALESCE(apply_count, 0) + 1,
+      last_applied_at = NOW()
   WHERE id = ANY(ARRAY(
     SELECT DISTINCT unnest(
       ARRAY_CAT(
@@ -1398,6 +1402,9 @@ ALTER TABLE knowledge_apply_log ADD COLUMN IF NOT EXISTS feedback_source TEXT;
 ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS promoted_by TEXT;
 ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS promoted_at TIMESTAMPTZ;
 
+-- ⑥ ai_reply_knowledge: 最終apply時刻（stale decay の基準を created_at → last_applied_at に切替）
+ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS last_applied_at TIMESTAMPTZ;
+
 -- ① update_knowledge_feedback_by_pairs: (knowledge_id × conversation_id) ペア単位のRLHFフィードバック
 -- 旧 update_knowledge_feedback_by_ids は WHERE knowledge_id = ANY(...) AND result='pending' のみで
 -- 更新するため、あるナレッジを1会話で correct 判定すると別会話の pending ログまで塗り替える混線バグがあった。
@@ -1423,7 +1430,8 @@ BEGIN
     -- apply_count / correct_count: そのナレッジが含まれるペア数（=適用会話数）だけ加算
     UPDATE ai_reply_knowledge k
     SET correct_count = COALESCE(k.correct_count, 0) + sub.cnt,
-        apply_count   = COALESCE(k.apply_count, 0) + sub.cnt
+        apply_count   = COALESCE(k.apply_count, 0) + sub.cnt,
+        last_applied_at = NOW()
     FROM (
       SELECT (elem->>'knowledge_id')::uuid AS kid, count(*) AS cnt
       FROM jsonb_array_elements(p_correct_pairs) AS elem
@@ -1442,7 +1450,8 @@ BEGIN
       );
     UPDATE ai_reply_knowledge k
     SET wrong_count = COALESCE(k.wrong_count, 0) + sub.cnt,
-        apply_count = COALESCE(k.apply_count, 0) + sub.cnt
+        apply_count = COALESCE(k.apply_count, 0) + sub.cnt,
+        last_applied_at = NOW()
     FROM (
       SELECT (elem->>'knowledge_id')::uuid AS kid, count(*) AS cnt
       FROM jsonb_array_elements(p_wrong_pairs) AS elem

@@ -6,9 +6,11 @@ import { promoteToConfirmed } from "@/app/lib/knowledge-promote";
 export const maxDuration = 60;
 
 // POST /api/cron/eval-winning-pattern（毎週月曜 JST 9:00 = UTC 0:00）
-// 判定軸: was_ai_modified=false & was_ai_used=true = スタッフがAI返信を無修正で送信 = AI正解
-// 直近7日の ai_reply_examples から「AI返信そのまま送信」を取得し、
-// 対応する knowledge_apply_log の pending ログを correct に更新する。
+// 判定軸:
+//   was_ai_modified=false & was_ai_used=true = スタッフがAI返信を無修正で送信 = AI正解 → correct
+//   was_ai_modified=true  & was_ai_used=true = スタッフがAI返信を修正して送信 = AI返信に問題あり → wrong
+// 直近7日の ai_reply_examples から両シグナルを取得し、
+// 対応する knowledge_apply_log の pending ログを correct / wrong に更新する。
 // 成約/失注による判定は廃止（closed_won/closed_lost は今のフェーズでは判断基準にしない）。
 const BATCH_LIMIT = 200;
 
@@ -44,13 +46,32 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: exErr.message }, { status: 500 });
     }
 
+    // 直近7日の「スタッフがAI返信を修正して送信」= AI返信に問題があったケース = wrong シグナル
+    const { data: wrongExamples, error: wrongErr } = await supabase
+      .from("ai_reply_examples")
+      .select("id, conversation_id")
+      .eq("was_ai_modified", true)
+      .eq("was_ai_used", true)
+      .gte("created_at", since7d)
+      .order("created_at", { ascending: false })
+      .limit(BATCH_LIMIT);
+
+    if (wrongErr) {
+      await finishCronLog(runLogId, false, undefined, wrongErr.message);
+      return NextResponse.json({ ok: false, error: wrongErr.message }, { status: 500 });
+    }
+
     const exampleList = (examples ?? []) as ReplyExample[];
-    if (exampleList.length === 0) {
+    const wrongList = (wrongExamples ?? []) as ReplyExample[];
+    if (exampleList.length === 0 && wrongList.length === 0) {
       await finishCronLog(runLogId, true, { evaluated: 0, knowledge_fed: 0 });
       return NextResponse.json({ ok: true, evaluated: 0, knowledge_fed: 0 });
     }
 
-    const convIds = [...new Set(exampleList.map(e => e.conversation_id))];
+    const convIds = [...new Set([
+      ...exampleList.map(e => e.conversation_id),
+      ...wrongList.map(e => e.conversation_id),
+    ])];
 
     // 対応する knowledge_apply_log（source='generate_reply', result='pending'）を取得
     const { data: applyLogs } = await supabase
@@ -82,16 +103,36 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // was_ai_modified=true → wrong として kWrong ペアを構築
+    // 同一会話が correct と wrong の両方に現れた場合は correct を優先し wrong から除外する
+    // （同一会話に複数 example があるケースの矛盾防止）
+    const kWrong: FeedbackPair[] = [];
+    const wrongPairsSeen = new Set<string>();
+    for (const ex of wrongList) {
+      const kids = [...new Set(
+        (applyLogs ?? [])
+          .filter(a => a.conversation_id === ex.conversation_id && a.knowledge_id)
+          .map(a => a.knowledge_id as string)
+      )];
+      for (const kid of kids) {
+        const pairKey = `${kid}::${ex.conversation_id}`;
+        // correct 側で既に採用されたペアは wrong にしない（correct優先）
+        if (correctPairsSeen.has(pairKey) || wrongPairsSeen.has(pairKey)) continue;
+        wrongPairsSeen.add(pairKey);
+        kWrong.push({ knowledge_id: kid, conversation_id: ex.conversation_id });
+      }
+    }
+
     let knowledgeFed = 0;
-    if (kCorrect.length > 0) {
-      // ペア単位RPC: (knowledge_id × conversation_id) で correct に更新（別会話の pending 巻き込み防止）
-      // feedback_source='text_retention': スタッフがテキストを無修正採用したシグナル
+    if (kCorrect.length > 0 || kWrong.length > 0) {
+      // ペア単位RPC: (knowledge_id × conversation_id) で correct/wrong に更新（別会話の pending 巻き込み防止）
+      // feedback_source='text_retention': スタッフのテキスト採用/修正シグナル
       await supabase.rpc("update_knowledge_feedback_by_pairs", {
-        p_correct_pairs: kCorrect,
-        p_wrong_pairs: null,
+        p_correct_pairs: kCorrect.length > 0 ? kCorrect : null,
+        p_wrong_pairs: kWrong.length > 0 ? kWrong : null,
         p_feedback_source: "text_retention",
       });
-      knowledgeFed = kCorrect.length;
+      knowledgeFed = kCorrect.length + kWrong.length;
     }
 
     // ── hypothesis → confirmed 自動昇格 ──
@@ -127,8 +168,9 @@ export async function POST(req: NextRequest) {
     }
 
     const summary = {
-      evaluated: exampleList.length,
+      evaluated: exampleList.length + wrongList.length,
       correct: kCorrect.length,
+      wrong: kWrong.length,
       knowledge_fed: knowledgeFed,
       evaluated_at: new Date().toISOString(),
     };

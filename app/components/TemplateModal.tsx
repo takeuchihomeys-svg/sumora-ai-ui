@@ -910,6 +910,8 @@ export default function TemplateModal({
 
   // AI盲点フィードバック（❓ AI質問タブ）
   const [feedbackItems, setFeedbackItems] = useState<FeedbackItem[]>([]);
+  // Tier2承認質問（knowledge_gap・pending）のサーバカウント（バッジ表示用）
+  const [knowledgeGapPendingCount, setKnowledgeGapPendingCount] = useState(0);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
   const [feedbackAnswers, setFeedbackAnswers] = useState<Record<string, string>>({});
   const [submittingFeedback, setSubmittingFeedback] = useState<string | null>(null);
@@ -1182,8 +1184,11 @@ export default function TemplateModal({
     setFeedbackLoading(true);
     try {
       const res = await fetch("/api/ai-feedback");
-      const json = await res.json() as { ok: boolean; items: FeedbackItem[] };
-      if (json.ok) setFeedbackItems(json.items ?? []);
+      const json = await res.json() as { ok: boolean; items: FeedbackItem[]; total_knowledge_gap_pending?: number };
+      if (json.ok) {
+        setFeedbackItems(json.items ?? []);
+        setKnowledgeGapPendingCount(json.total_knowledge_gap_pending ?? 0);
+      }
     } catch (e) {
       console.error("[TemplateModal] loadFeedbackItems 失敗:", e);
     }
@@ -1193,6 +1198,11 @@ export default function TemplateModal({
   useEffect(() => {
     if (isCandidateTabActive && candidateSubTab === "feedback") loadFeedbackItems();
   }, [isCandidateTabActive, candidateSubTab, loadFeedbackItems]);
+
+  // マウント時に1回読み込み（タブを開かなくてもバッジ件数を表示するため）
+  useEffect(() => {
+    loadFeedbackItems();
+  }, [loadFeedbackItems]);
 
   // auto-judgeが生成したナレッジ品質確認質問（aix_feature_suggestions type=knowledge_question）の読み込み
   const loadKnowledgeQuestions = useCallback(async () => {
@@ -2546,6 +2556,11 @@ export default function TemplateModal({
                     const count = feedbackItems.filter(f => f.status === "pending").length;
                     return count > 0 ? ` (${count})` : "";
                   })()}
+                  {knowledgeGapPendingCount > 0 && (
+                    <span className="ml-1 rounded-full bg-orange-500 px-1.5 text-[10px] text-white">
+                      承認{knowledgeGapPendingCount}
+                    </span>
+                  )}
                 </button>
                 {/* 🧠ナレッジ承認 */}
                 <button
