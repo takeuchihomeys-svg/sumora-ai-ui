@@ -37,7 +37,21 @@ const KNOWN_AIX_TYPES = new Set([
 // どの物件を指すか特定できないままAIが物件名を推測して返信（ハルシネーション）しないよう、
 // 検知時は「物件確認」（property_check_result）を通常提案より優先して返し、スタッフに対象物件の確認を促す。
 // ※「駅前の物件」等の非曖昧表現を誤検知しないよう「前」には否定後読み (?<!駅) を付ける
-const AMBIGUOUS_PROPERTY_RE = /(?:(?<!駅)前|この前|以前|前回|先日|さっき|例|最初|検討中)の(?:物件|お?部屋|マンション|やつ|とこ(?:ろ)?)|あの(?:物件|お?部屋|マンション|やつ|とこ(?:ろ)?)|気になっ(?:てい|て)た(?:物件|お?部屋|マンション)/;
+const AMBIGUOUS_PROPERTY_RE = /(?:(?<!駅)前|この前|以前|前回|先日|さっき|例|最初|検討中)の(?:物件|お?部屋|マンション|やつ|とこ(?:ろ)?)|あの(?:物件|お?部屋|マンション|やつ|とこ(?:ろ)?)|気になっ(?:てい|て)た(?:物件|お?部屋|マンション)|(?:これ|この|こちら)(?:の)?(?:物件|お?部屋|マンション)|こちらのやつ/;
+
+// 退去予定・空室予定の検知パターン。「今は内覧できないが将来空く」状態を示す文言があれば、
+// viewing_invite（内覧誘導）ではなく property_check_result（入居可能日／空き時期の確認）を優先する。
+// これがないと「退去予定だが内覧したい」等で内覧誘導が誤発火する。
+const EXIT_SCHEDULED_RE = /退去予定|退去後|退去され|退去次第|来月.*退去|現在.*入居中|入居中.*退去|空き予定|空室予定|空く予定|(?:退去|明け渡し)は/;
+
+// 指示語（これ／この／こちら／あの）の検知。画像引用＋指示語で「どの物件か曖昧」を取りこぼさないため。
+const DEMONSTRATIVE_RE = /これ|この|こちら|あの/;
+
+// 物件画像・動画・物件URL・空室確認の質問 → 「物件確認した」を提案してよいステータス。
+// currentStatus は正規化済みのため hearing / proposing の2値でカバーできる
+// （first_reply/condition_hearing→hearing, property_recommendation/availability_check→proposing）。
+// 退去予定検知ブロックと空室確認キーワード判定の両方で共用するためモジュールスコープに置く。
+const PROPERTY_CHECK_STATUSES = new Set(["hearing", "proposing"]);
 
 // アクション別の初期化パラメータ（クライアントのAIXモーダル初期状態に引き継ぐ）
 const ACTION_PARAMS: Record<string, { check_pattern?: string; send_mode?: string }> = {
@@ -290,6 +304,19 @@ export async function POST(req: NextRequest) {
     .find((m) => m.sender === "customer" && (m.image_url as string))
     ?.image_url as string | undefined;
 
+  // ---- 最新顧客メッセージ・画像/引用フラグの事前抽出 ----
+  // チェーンルール・available分岐より前に置くことで、退去予定検知・画像引用検知を先に効かせられる
+  // （また顧客の明示的意図でチェーンルールをスキップする判定にも使う）。
+  const lastCustomerMsg = ((customer_message ?? "").trim())
+    || ((messages.find((m) => m.sender === "customer" && (m.text as string)?.trim())?.text as string) ?? "");
+  // 画像/引用検知: LINE の引用返信（[引用]マーカー・「〜に返信」）や画像のみ（text空）メッセージは
+  // lastCustomerMsg テキストに "[画像]" を含まないことがあるため、image_url 実在・[引用]・返信マーカーからも
+  // 「物件が共有された」事実を拾う（property_check_result のトリガー判定に使う）。
+  const latestCustomerMsgObj = (messages ?? []).find((m) => m.sender === "customer");
+  const hasCustomerImage = !!(latestCustomerMsgObj?.image_url as string) || !!lastCustomerImageUrl;
+  const hasQuoteMarker = /\[引用\]|\[画像\]|\[動画\]|画像を引用|に返信/.test(lastCustomerMsg)
+    || /\[引用\]|\[画像\]|\[動画\]/.test((latestCustomerMsgObj?.text as string) ?? "");
+
   // アクション返却時に付与する params を組み立てる
   const buildParams = (actionType: string | null | undefined) => ({
     ...(actionType ? (ACTION_PARAMS[actionType] ?? {}) : {}),
@@ -301,12 +328,19 @@ export async function POST(req: NextRequest) {
   //   （フォールスルーすると汎用チェーンルールが同じ状態に二重マッチして提案が揺れるため）
   if (last_aix_action === "property_check_result" && conv.last_sender === "customer") {
     if (available === true) {
-      // 空室あり → 見積書または内覧誘導（両方抑制時は提案なしで確定）
-      const nextAction = !shouldSuppressAction("estimate_sheet") ? "estimate_sheet"
+      // 退去予定（今は入居中で将来空くだけ）の場合、available=true でも実際にはまだ内覧不可のため
+      // viewing_invite/estimate_sheet を出さず property_check_result（入居可能日の確認）にフォールバックする
+      const exitScheduled = EXIT_SCHEDULED_RE.test(lastCustomerMsg);
+      // 空室あり → 見積書または内覧誘導（退去予定時は先に入居可能日確認・全抑制時は提案なしで確定）
+      const nextAction = exitScheduled && !shouldSuppressAction("property_check_result") ? "property_check_result"
+        : !shouldSuppressAction("estimate_sheet") ? "estimate_sheet"
         : !shouldSuppressAction("viewing_invite") ? "viewing_invite"
         : null;
       if (!nextAction) return NextResponse.json({ action: null, reason: "" });
-      return NextResponse.json({ action: nextAction, reason: nextAction === "estimate_sheet" ? "空室確認後・見積書" : "空室確認後・内覧へ", source: "chain_rule", params: buildParams(nextAction), acceptanceRate: acceptanceRateMap[nextAction] ?? null, sub_mode_stats: subModeStats, ...templateRec(nextAction) });
+      const reason = nextAction === "property_check_result" ? "退去予定・入居可能日を確認"
+        : nextAction === "estimate_sheet" ? "空室確認後・見積書"
+        : "空室確認後・内覧へ";
+      return NextResponse.json({ action: nextAction, reason, source: nextAction === "property_check_result" ? "exit_scheduled_rule" : "chain_rule", params: buildParams(nextAction), acceptanceRate: acceptanceRateMap[nextAction] ?? null, sub_mode_stats: subModeStats, ...templateRec(nextAction) });
     }
     if (available === false) {
       // 空室なしが明示された場合のみ → 代替物件送りへ誘導（抑制時は提案なしで確定）
@@ -318,20 +352,46 @@ export async function POST(req: NextRequest) {
     // available が undefined/null（クライアント未送信）の場合のみ後続フェーズにフォールスルー
   }
 
-  // ---- トリガールール即判定のために最新顧客メッセージを事前抽出 ----
-  // チェーンルールより前に置くことで、顧客の明示的意図でチェーンルールをスキップできる
-  const lastCustomerMsg = ((customer_message ?? "").trim())
-    || ((messages.find((m) => m.sender === "customer" && (m.text as string)?.trim())?.text as string) ?? "");
+  // ---- トリガールール即判定用（lastCustomerMsg / 画像フラグは available 分岐より前で抽出済み）----
   // 顧客が内覧・申込・費用等を明示的に意図している場合はチェーンルールをスキップ
   const EXPLICIT_CUSTOMER_INTENT_RE = /内覧|内見|見に行|みに行|みにいき|見学|申込|申し込|費用|初期費用|見積|決めます|でお願いでき|でお願いします|明日.*時|あした.*時|今日.*時|本日.*時/;
   const hasExplicitCustomerIntent = conv.last_sender === "customer" && EXPLICIT_CUSTOMER_INTENT_RE.test(lastCustomerMsg);
 
+  // ---- 画像引用＋指示語の検知（最優先・ハルシネーション防止）----
+  // 顧客が画像/引用（[引用]・[画像]・返信マーカー・image_url 実在）で物件を共有しつつ
+  // 「これ／この物件／こちら／あの」等の指示語で参照している場合、どの物件か特定できないため、
+  // AIが物件名を推測する前に「物件確認」でスタッフに対象特定を促す（引用×指示語の二重取りこぼし解消）。
+  if (
+    conv.last_sender === "customer" &&
+    PROPERTY_CHECK_STATUSES.has(currentStatus) &&
+    (hasQuoteMarker || hasCustomerImage) &&
+    DEMONSTRATIVE_RE.test(lastCustomerMsg) &&
+    !shouldSuppressAction("property_check_result") &&
+    !isLowSourceRate("property_check_result", "image_quote_rule")
+  ) {
+    return NextResponse.json({
+      action: "property_check_result",
+      action_label: "物件を確認する",
+      reason: "画像引用＋指示語：どの物件か確認が必要",
+      description: "共有された画像がどの物件か確認してから返信しましょう",
+      priority: "high",
+      source: "image_quote_rule",
+      params: buildParams("property_check_result"),
+      acceptanceRate: acceptanceRateMap["property_check_result"] ?? null,
+      sub_mode_stats: subModeStats,
+      ...templateRec("property_check_result"),
+    });
+  }
+
   // ---- 曖昧な物件参照の検知（最優先・ハルシネーション防止）----
   // 「前の物件」「あの部屋」等、どの物件を指すか特定できないメッセージは、
   // AIが物件名を推測して返信する前に「物件確認」でスタッフが対象を特定するよう最優先で誘導する。
+  // ※ 画像あり（hasCustomerImage）の場合は上の image_quote_rule／下の空室確認キーワード判定側を優先させ、
+  //   ここ（画像なしの曖昧参照）は画像がない時のみ発火させる（「こちらの物件」等の二重発火を防ぐ）。
   // 抑制（採択率30%未満）・経路別低採択率の場合のみ通常フローへフォールスルー
   if (
     conv.last_sender === "customer" &&
+    !hasCustomerImage &&
     (currentStatus === "hearing" || currentStatus === "proposing") &&
     AMBIGUOUS_PROPERTY_RE.test(lastCustomerMsg) &&
     !shouldSuppressAction("property_check_result") &&
@@ -344,6 +404,31 @@ export async function POST(req: NextRequest) {
       description: "どの物件のことか確認してから返信しましょう",
       priority: "high",
       source: "ambiguous_property_rule",
+      params: buildParams("property_check_result"),
+      acceptanceRate: acceptanceRateMap["property_check_result"] ?? null,
+      sub_mode_stats: subModeStats,
+      ...templateRec("property_check_result"),
+    });
+  }
+
+  // ---- 退去予定・空室予定の検知（内覧誘導の誤発火を抑止）----
+  // 「退去予定」「来月退去」「現在入居中」等、今は内覧できないが将来空く状態を検知したら、
+  // viewing_invite（内覧誘導）ではなく property_check_result（入居可能日／空き時期の確認）を最優先で返す。
+  // これがないと「退去予定だが内覧したい」で下位のキーワード判定が内覧を誤提案してしまう。
+  if (
+    conv.last_sender === "customer" &&
+    PROPERTY_CHECK_STATUSES.has(currentStatus) &&
+    EXIT_SCHEDULED_RE.test(lastCustomerMsg) &&
+    !shouldSuppressAction("property_check_result") &&
+    !isLowSourceRate("property_check_result", "exit_scheduled_rule")
+  ) {
+    return NextResponse.json({
+      action: "property_check_result",
+      action_label: "物件を確認する",
+      reason: "退去予定・空き時期を確認",
+      description: "退去予定のため入居可能日を確認してから内覧・見積へ進めましょう",
+      priority: "high",
+      source: "exit_scheduled_rule",
       params: buildParams("property_check_result"),
       acceptanceRate: acceptanceRateMap["property_check_result"] ?? null,
       sub_mode_stats: subModeStats,
@@ -433,12 +518,11 @@ export async function POST(req: NextRequest) {
   }
 
   // 物件画像・動画・物件URL・空室確認の質問 → 「物件確認した」を提案
-  // ※ currentStatus は正規化済みのため hearing / proposing の2値でカバーできる
-  //   （first_reply/condition_hearing→hearing, property_recommendation/availability_check→proposing）
-  const PROPERTY_CHECK_STATUSES = new Set(["hearing", "proposing"]);
+  // ※ PROPERTY_CHECK_STATUSES はモジュールスコープ（退去予定検知と共用）
   const PROPERTY_URL_RE = /athome\.co\.jp|suumo\.jp|homes\.co\.jp|lifull\.com|chintai\.net|reins\.|realestate\.|rakumachi\.jp/i;
   const AVAILABILITY_KEYWORDS = ["まだありますか", "空いていますか", "空いてますか", "空室ですか", "空室確認", "空き確認", "まだ空い", "まだ残って", "空室はありますか", "こちらの物件"];
-  const hasPropertyMedia = lastCustomerMsg.includes("[画像]") || lastCustomerMsg.includes("[動画]");
+  // リテラル "[画像]"/"[動画]" だけでなく、image_url 実在・[引用]・返信マーカーからも物件共有を検知する
+  const hasPropertyMedia = hasQuoteMarker || hasCustomerImage;
   // 直近3件（messages は降順なので先頭3件）の顧客メッセージにURLがあるか確認
   const recentCustomerMsgs = messages.filter((m) => m.sender === "customer").slice(0, 3).map((m) => (m.text as string) ?? "");
   const hasPropertyUrl = recentCustomerMsgs.some((t) => PROPERTY_URL_RE.test(t));
@@ -452,7 +536,7 @@ export async function POST(req: NextRequest) {
   if ((hasPropertyMedia || hasPropertyUrl || hasAvailabilityQuestion) && PROPERTY_CHECK_STATUSES.has(currentStatus) &&
       !isLowSourceRate("property_check_result", "keyword_hardcode")) {
     if (shouldSuppressAction("property_check_result")) return NextResponse.json({ action: null, reason: "" });
-    return NextResponse.json({ action: "property_check_result", reason: hasSmowariKeyword ? "スモ割は空室確認から" : hasPropertyMedia ? "物件画像が送られた" : "物件の空室確認依頼", source: "keyword_hardcode", params: buildParams("property_check_result"), acceptanceRate: acceptanceRateMap["property_check_result"] ?? null, sub_mode_stats: subModeStats, ...templateRec("property_check_result") });
+    return NextResponse.json({ action: "property_check_result", reason: hasSmowariKeyword ? "スモ割は空室確認から" : hasQuoteMarker ? "画像/引用で物件共有" : hasCustomerImage ? "物件画像が送られた" : "物件の空室確認依頼", source: "keyword_hardcode", params: buildParams("property_check_result"), acceptanceRate: acceptanceRateMap["property_check_result"] ?? null, sub_mode_stats: subModeStats, ...templateRec("property_check_result") });
   }
 
   // S-5: 費用・内覧・申込キーワード即判定（DBルール不要・Haiku流入削減）
@@ -471,7 +555,10 @@ export async function POST(req: NextRequest) {
     if (hit) return hit;
   }
   // 内覧: 「内見」（内覧より多い表記）「見学」「現地確認」もカバー
-  if (/内覧|内見|見学.*したい|見学.*希望|見学.*できますか|現地.*確認|現地.*見た|見に行|みに行|みにいき/.test(lastCustomerMsg)) {
+  // ※ 退去予定（EXIT_SCHEDULED_RE）が同居する場合は内覧を出さない（上の exit_scheduled_rule で
+  //   property_check_result を返すのが本来。ここは保険ガード）
+  if (!EXIT_SCHEDULED_RE.test(lastCustomerMsg) &&
+      /内覧|内見|見学.*したい|見学.*希望|見学.*できますか|現地.*確認|現地.*見た|見に行|みに行|みにいき/.test(lastCustomerMsg)) {
     const hit = keywordHit("viewing_invite", "内覧希望を検出");
     if (hit) return hit;
   }

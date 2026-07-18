@@ -75,7 +75,20 @@ async function deriveSuggestedAix(
   conversationState: string,
   conversationId?: string,
   internalBaseUrl?: string,
+  propertyStatus?: PropertyStatus,
 ): Promise<{ action: string; note: string } | null> {
+  // 退去予定/入居中の物件では現地内覧が不可のため viewing_invite（内覧日調整）は提案しない。
+  // 代わりに空室確認（acknowledge_check）または申込で先に確保（application_push）を優先する。
+  const isMoveOut = propertyStatus === "move_out_scheduled" || propertyStatus === "occupied";
+  const redirectMoveOut = (action: string, note: string): { action: string; note: string } => {
+    if (isMoveOut && action === "viewing_invite") {
+      return {
+        action: "application_push",
+        note: "退去予定/入居中の物件のため現地内覧は不可 → AIX【申込へ！】でお部屋を先に抑えるクロージング、または AIX【確認します】で退去日・入居可能時期の確認を送ってください",
+      };
+    }
+    return { action, note };
+  };
   // ─── Step 0: webhook が先行計算したキャッシュを確認（最速パス・ネットワーク呼び出し不要）───
   if (conversationId) {
     try {
@@ -86,7 +99,7 @@ async function deriveSuggestedAix(
         .maybeSingle();
       const cached = (convCache as { suggested_next_aix?: string | null } | null)?.suggested_next_aix;
       if (cached && AIX_ACTION_NOTES[cached]) {
-        return { action: cached, note: AIX_ACTION_NOTES[cached] };
+        return redirectMoveOut(cached, AIX_ACTION_NOTES[cached]);
       }
     } catch { /* DBエラーは無視して次のステップへ */ }
   }
@@ -103,7 +116,7 @@ async function deriveSuggestedAix(
       if (res.ok) {
         const data = await res.json() as { action?: string | null; reason?: string };
         if (data.action && AIX_ACTION_NOTES[data.action]) {
-          return { action: data.action, note: AIX_ACTION_NOTES[data.action] };
+          return redirectMoveOut(data.action, AIX_ACTION_NOTES[data.action]);
         }
       }
     } catch {
@@ -121,12 +134,12 @@ async function deriveSuggestedAix(
       note: "送信後 → AIX【確認します】ボタンで管理会社への空室確認＋見積書依頼を送ってください（宛先は管理会社です）",
     };
   }
-  // ② 日程プレースホルダーあり → viewing_invite
+  // ② 日程プレースホルダーあり → viewing_invite（退去予定物件では申込/確認へリダイレクト）
   if (/\[日付\]|\[時間帯\]|\[日時\]/.test(d)) {
-    return {
-      action: "viewing_invite",
-      note: "⚠️ AIX【内覧日調整】ボタンで日時を選択してから送信してください（空欄のまま送らないでください）",
-    };
+    return redirectMoveOut(
+      "viewing_invite",
+      "⚠️ AIX【内覧日調整】ボタンで日時を選択してから送信してください（空欄のまま送らないでください）",
+    );
   }
   // ③ ピックアップ・物件送付系 → property_send
   if (/ピックアップ|お送りします|物件(を|の資料|情報)/.test(d)) {
@@ -188,8 +201,43 @@ const QUOTE_REPLY_JUDGE_NOTE = `
 お客様メッセージが「ここ」「こちら」「気になる」「いいですね」「見たい」等を含み、
 直近のスタッフメッセージに物件画像（【物件資料を送付した】等の[画像]）または物件名・物件URL送付が含まれる場合、
 お客様は直前の物件への興味・内覧希望を示している可能性が高い。
-この場合は「気になる物件のURLをお送りください」ではなく、
-その物件の内覧日程調整の方向で返信を生成すること。`;
+この場合は「気になる物件のURLをお送りください」ではなく、その物件を前提に返信を生成すること。
+【⚠️ ただし内覧誘導の前に募集状況を必ずゲートすること】
+・当該物件が退去予定・入居中の場合は、現地内覧日程（[日付][時間帯]や2択提示）を絶対に提案しない。
+  「退去日以降のご案内」または「お申込みでお部屋を先に抑えてからのご内覧」を案内する。
+・退去予定でないことが明らかな空室物件のみ、内覧日程調整の方向で返信してよい。
+【💡 リンク（URL）そのものを求められた場合は内覧に飛ばさない】
+・お客様が引用先の物件について「リンク教えて」「URL教えて」「この部屋のリンク（URL）ください」等、
+  URL自体を求めている場合は、内覧日程調整には誘導しない。
+  → 引用先が特定できる物件なら、その物件のURL/詳細を案内する（履歴にURLがあれば再提示）。
+  → 「気になる物件のURLをお送りください」という聞き返しは絶対禁止（お客様は既に物件を特定している）。`;
+
+// ─── 物件募集状況（退去予定/入居中）の決定論的検出 ─────────────────────────────
+// 会話履歴・お客様メッセージに退去予定/入居中を示す文字列があれば、テキスト依存の条件付きルール
+// （line-reply-prompts.ts の MOVE_IN_TIMING_RULE 等）が発火漏れしないよう、確定事実として最優先ブロックを注入する。
+// 明示的な propertyStatus（呼び出し側がDB募集状況を渡した場合）はテキスト検出より優先する。
+type PropertyStatus = "move_out_scheduled" | "occupied" | "vacant" | "unknown";
+
+// 退去予定・入居中を示すキーワード（現地内覧不可 → 内覧日程提案を禁止すべき状態）
+const MOVE_OUT_PATTERN = /退去予定|退去後|入居中|居住中|入居者|[0-9０-９]{1,2}\s*月末?\s*退去|退去[はが]?[0-9０-９]{1,2}\s*月/;
+
+function detectPropertyStatus(history: string, customerMessage: string, explicit?: PropertyStatus): PropertyStatus {
+  if (explicit && explicit !== "unknown") return explicit;
+  const haystack = `${history}\n${customerMessage}`;
+  if (MOVE_OUT_PATTERN.test(haystack)) return "move_out_scheduled";
+  return explicit ?? "unknown";
+}
+
+// 退去予定・入居中と判定された場合に注入する強制ブロック（最優先）
+function buildPropertyStatusNote(status: PropertyStatus): string {
+  if (status === "move_out_scheduled" || status === "occupied") {
+    return `\n【🚨 物件募集状況（確定事実・最優先 — 他のどのルールより上位）】この物件は退去予定/入居中です。現地内覧は退去日の翌日以降のみ可能で、今は現地内覧できません。
+・内覧日程（[日付][時間帯]や2択日程提示）は絶対に提案しない。「〇日にご内覧いかがですか」等の現地内覧日の提示も禁止。
+・入居可能時期を聞かれたら「退去後のクリーニング・鍵交換で2〜3週間程かかるため○月下旬頃のご入居となります」の方向で答える（退去月翌月1日入居は言わない）。
+・内覧・興味を示されたら「退去前のため現在は現地ご案内ができません。退去後すぐにご案内させて頂きます！！お気に召されましたらお申込みでお部屋を先に抑えておくことも可能です😊！！」の方向で返す。`;
+  }
+  return "";
+}
 
 // ─── ai_summary_json の構造化サマリー（customer-summary/route.ts の SummaryJson と互換）──
 type ReplySummaryJson = {
@@ -356,7 +404,8 @@ function buildGenerationMessages(
   customerStructured?: CustomerStructured,
   dbRules = "",
   summaryJson?: ReplySummaryJson,
-  quotedContextNote = ""
+  quotedContextNote = "",
+  propertyStatus?: PropertyStatus
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   const jstDay = getJSTDayOfWeek();
@@ -629,9 +678,26 @@ function buildGenerationMessages(
     ? `\n\n【🚨 申込フォーム受取・身分証なし検出】お客様からフォーム（個人情報テキスト）が送られてきたが、身分証明書の写真がない。返信には必ず「身分証明書（運転免許証またはマイナンバーカード）の表裏のお写真もお送りいただけますでしょうか！！」を含めること。フォーム未記入欄（勤務先等）があれば同時に確認する。パターンG-1で対応。`
     : "";
 
-  const viewingFactNote = viewingNote
+  // 退去予定/入居中を決定論的に検出 → 最優先ブロックを注入（テキスト検出漏れによる誤内覧提案を防止）
+  const resolvedPropertyStatus = detectPropertyStatus(history, customerMessage, propertyStatus);
+  const propertyStatusNote = buildPropertyStatusNote(resolvedPropertyStatus);
+
+  // 退去予定物件では「内覧可能日時あり」でも現地内覧日を提案させない（viewingFactNote を上書き）
+  const viewingFactNote = (resolvedPropertyStatus === "move_out_scheduled" || resolvedPropertyStatus === "occupied")
+    ? `\n\n【📅 内覧日時について】この物件は退去予定/入居中のため現地内覧はできません。内覧可能日時が渡されていても現地内覧日程は提案せず、[日付][時間帯]プレースホルダーも使用禁止。「退去後すぐにご案内します」「お申込みでお部屋を先に抑えてからのご内覧も可能です」の方向で返すこと。`
+    : viewingNote
     ? `\n\n【📅 内覧可能日時（確定事実）】\n${viewingNote}\n※ 内覧を提案する場合はこの日時のみ使用。[日付][時間帯]はこの内容で必ず置き換えること。`
     : `\n\n【📅 内覧日時について】内覧可能日時の情報がないため、[日付][時間帯]プレースホルダーは使用禁止。内覧を提案する場合は「ご都合のよい日時をお聞かせください！！」等の表現に置き換えること。架空の日時・曜日は絶対に記載しない。`;
+
+  // お客様メッセージ自体がリンク（URL）を求めている場合の専用ノート（引用コンテキスト非依存の保険）
+  const isLinkRequestMsg = /(リンク|url|ＵＲＬ)\s*(を|の|教え|くださ|ちょうだい|ください|欲し|ほし|送)/i.test(customerMessage)
+    || /(この|こちらの|その|これの|さっきの)(部屋|物件|お部屋).{0,6}(リンク|url|ＵＲＬ)/i.test(customerMessage);
+  const linkRequestNote = isLinkRequestMsg
+    ? `\n\n【🔗 リンク（URL）要求検出（最優先・内覧誘導より上位）】お客様は物件のURL・詳細情報そのものを求めています。内覧日程調整・空室確認へは飛ばさず、対象物件のURL/詳細を案内すること。
+・直近の会話で送付済み・話題になっている物件が特定できる場合のみリンク/情報を案内する。履歴にURLがあれば再提示する。
+・特定できない場合は「こちらのお部屋ですね！！詳細（募集状況）を確認しご案内させて頂きます😊！！」と物件を確認してから案内する。「気になる物件のURLをお送りください」の聞き返しは禁止。
+・対象が退去予定/入居中の物件であれば、その旨を伝えた上で情報を案内し、現地内覧日程は提案しない。`
+    : "";
 
   const replyHintNote = replyHint
     ? `\n\n【🔴✨ 指定生成モード（通常の生成ルールをすべて上書き）】
@@ -657,7 +723,7 @@ function buildGenerationMessages(
     return `【🎯 最優先指示 — フェーズ別パターンより上位・この返信で必ず実行すること】\n${parts.join("\n")}\n`;
   })();
 
-  const prompt = `
+  const prompt = `${propertyStatusNote}
 ${closingNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${approachNote}${staffContextNote}
@@ -675,7 +741,7 @@ ${phrases}
 
 ${QUOTE_REPLY_JUDGE_NOTE}${quotedContextNote}
 ${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}
-${customerMessage}${applicationFormNote}${viewingFactNote}
+${customerMessage}${applicationFormNote}${viewingFactNote}${linkRequestNote}
 
 ${examples}${examplesInstruction}
 
@@ -1162,7 +1228,7 @@ async function fetchQuotedContext(conversationId: string): Promise<string> {
   try {
     const { data: lastCustomerMsg } = await supabase
       .from("messages")
-      .select("quoted_message_id")
+      .select("quoted_message_id, text")
       .eq("conversation_id", conversationId)
       .eq("sender", "customer")
       .order("created_at", { ascending: false })
@@ -1184,12 +1250,25 @@ async function fetchQuotedContext(conversationId: string): Promise<string> {
     const contentDesc = isImage
       ? "【画像（スタッフ送付なら物件カード・物件資料の可能性が高い）】"
       : `「${safeSlice(String(q.text), 300)}」`;
+    // お客様がリンク（URL）そのものを求めているか判定
+    const custText = String((lastCustomerMsg as { text?: string | null } | null)?.text ?? "");
+    const isLinkRequest = /(リンク|url|ＵＲＬ)\s*(を|の|教え|くださ|ちょうだい|ください|欲し|ほし|送|ちょーだい)?/i.test(custText)
+      || /(この|こちらの|その|これの)(部屋|物件|お部屋).{0,6}(リンク|url|ＵＲＬ)/i.test(custText);
+    const linkRequestNote = (isLinkRequest && q.sender === "staff")
+      ? `
+【🔗 リンク（URL）要求検出（最優先・内覧誘導より上位）】
+お客様は引用先の物件のURL・詳細情報そのものを求めています。内覧日程調整・空室確認には飛ばさないこと。
+→ 履歴に当該物件のURLがあれば再提示する。無ければ「こちらのお部屋ですね！！詳細（募集状況）を確認しご案内させて頂きます😊！！」と物件を特定した上で募集状況確認へ進む。
+→ 「気になる物件のURLをお送りください」という聞き返しは絶対禁止（お客様は既に物件を特定している）。
+→ 当該物件が退去予定・入居中の場合は、その旨を伝えた上で情報を案内し、現地内覧日程は提案しない。`
+      : "";
     return `
 【💬 引用リプライ検出（確定事実・最優先文脈）】
 お客様の最新メッセージは、${senderLabel}が送ったメッセージ ${contentDesc} への引用（リプライ）です。
 お客様は引用先の内容について話している。引用先が物件画像・物件名・物件URLの場合、
-その物件への興味・内覧希望として扱い、「気になる物件のURLをお送りください」等の聞き返しは絶対にせず、
-その物件を前提に内覧日程調整・空室確認の方向で返信を生成すること。`;
+その物件への興味として扱い、「気になる物件のURLをお送りください」等の聞き返しは絶対にせず、その物件を前提に返信を生成すること。
+ただし内覧日程調整・空室確認の方向で返信するのは、当該物件が退去予定・入居中でない場合に限る。
+退去予定・入居中の物件の場合は、現地内覧日程は提案せず「退去日以降のご案内」または「お申込みでお部屋を先に抑えてからのご内覧」を案内すること。${linkRequestNote}`;
   } catch (err) {
     // quoted_message_id カラム未作成環境・クエリ失敗時は通常生成にフォールバック
     console.warn("[generate-reply] 引用コンテキスト取得失敗 — 通常生成で続行:", err);
@@ -1233,6 +1312,7 @@ export async function POST(req: NextRequest) {
   let viewingNote = "";
   let customerStructured: CustomerStructured | undefined;
   let bodySummaryJson: ReplySummaryJson | undefined;
+  let propertyStatus: PropertyStatus | undefined;
   // conversationId が渡された場合のみ、成功時に ai_draft 保存 + draft_pending_at クリア、
   // 失敗時にも draft_pending_at をクリアする（毎分Cronが永遠に再試行する永続pendingバグの防止）
   let conversationId = "";
@@ -1256,6 +1336,7 @@ export async function POST(req: NextRequest) {
       activeTaskTypes?: string[];
       conversationId?: string;
       includeStopReason?: boolean;
+      propertyStatus?: PropertyStatus;
     };
     message = body.message;
     state = body.state;
@@ -1278,6 +1359,7 @@ export async function POST(req: NextRequest) {
     screenshotBase64 = body.screenshotBase64;
     screenshotMediaType = body.screenshotMediaType;
     viewingNote = body.viewingNote || "";
+    propertyStatus = body.propertyStatus;
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid request body" }, { status: 400 });
   }
@@ -1502,7 +1584,7 @@ export async function POST(req: NextRequest) {
       analysis, knowledge, examples, phrases, customerConditions, resolvedSummary,
       promptOverrides, isFollowUp, replyHint, alreadyGreetedToday,
       isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules,
-      resolvedSummaryJson, quotedContextNote
+      resolvedSummaryJson, quotedContextNote, propertyStatus
     );
     // 中6: 顧客の温度感に応じて生成temperatureを可変にする（Step1分析は temperature:0 のまま）
     // ④ Step1で今まさに分析したフレッシュな emotion を最優先し、なければ ai_summary_json.emotion（過去の要約）を使う
@@ -1607,7 +1689,8 @@ export async function POST(req: NextRequest) {
             // AIXボタン誘導: ドラフト完成後にどのAIXボタンを使うべきか提案（トレーラーとして付加）
             // suggest-next-action（DB学習ルール）を優先し、失敗時はregexにフォールバック
             const internalBaseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000";
-            const suggestedAix = await deriveSuggestedAix(finalDraftText, currentState, conversationId || undefined, internalBaseUrl);
+            const resolvedStatusForAix = detectPropertyStatus(history, message, propertyStatus);
+            const suggestedAix = await deriveSuggestedAix(finalDraftText, currentState, conversationId || undefined, internalBaseUrl, resolvedStatusForAix);
             if (suggestedAix) {
               controller.enqueue(encoder.encode(`\n<<<SUGGESTED_AIX:${JSON.stringify(suggestedAix)}>>>`));
             }
