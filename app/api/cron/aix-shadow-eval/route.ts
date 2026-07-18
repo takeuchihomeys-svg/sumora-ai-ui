@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
       nowJst.getUTCDate()
     ) - 9 * 3600 * 1000);
     const yesterdayStart = new Date(todayStart.getTime() - 24 * 3600 * 1000);
-    const reportDate = yesterdayStart.toISOString().slice(0, 10);
+    const reportDate = new Date(yesterdayStart.getTime() + 9 * 3600 * 1000).toISOString().slice(0, 10);
 
     // 1. 前日の aix_usage_logs（sent_at は NULL がありうるため created_at で範囲抽出し、
     //    送信時刻としては sent_at ?? created_at を採用する）
@@ -120,7 +120,10 @@ export async function POST(req: NextRequest) {
           }),
           signal: AbortSignal.timeout(25_000),
         });
-        if (!res.ok) continue;
+        if (!res.ok) {
+          console.error("[aix-shadow-eval] suggest-next-action non-2xx:", res.status, "for log", log.id);
+          continue;
+        }
 
         const suggestion = await res.json() as { action?: string | null; source?: string | null };
         const predicted = suggestion.action ?? null;

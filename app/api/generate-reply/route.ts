@@ -1688,7 +1688,8 @@ export async function POST(req: NextRequest) {
             }
             // AIXボタン誘導: ドラフト完成後にどのAIXボタンを使うべきか提案（トレーラーとして付加）
             // suggest-next-action（DB学習ルール）を優先し、失敗時はregexにフォールバック
-            const internalBaseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000";
+            const internalBaseUrl = process.env.NEXT_PUBLIC_SITE_URL
+              ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
             const resolvedStatusForAix = detectPropertyStatus(history, message, propertyStatus);
             const suggestedAix = await deriveSuggestedAix(finalDraftText, currentState, conversationId || undefined, internalBaseUrl, resolvedStatusForAix);
             if (suggestedAix) {
