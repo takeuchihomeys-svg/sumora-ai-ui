@@ -66,7 +66,7 @@ export async function PATCH(req: NextRequest) {
   if (!id) return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
 
   // ── brushup: knowledge_contradiction / knowledge_brushup 提案の承認ハンドラー ──
-  // 既存 confirmed ルールの content を new_content で上書きし、ai_prompt_rules を再同期する
+  // 既存 confirmed ルールの content を new_content で上書きする
   if (action === "brushup") {
     if (!new_content) return NextResponse.json({ ok: false, error: "new_content required for brushup" }, { status: 400 });
     const { error: updateErr } = await supabase
@@ -75,16 +75,7 @@ export async function PATCH(req: NextRequest) {
       .eq("id", id);
     if (updateErr) return NextResponse.json({ ok: false, error: updateErr.message }, { status: 500 });
 
-    const { data: row, error: fetchErr } = await supabase
-      .from("ai_reply_knowledge")
-      .select("id, title, content, conversation_state, importance")
-      .eq("id", id)
-      .single();
-    if (fetchErr || !row) {
-      console.warn("[knowledge-review] brushup行の再取得失敗:", fetchErr?.message ?? "row null");
-      return NextResponse.json({ ok: true, brushed: true, synced: false });
-    }
-    return NextResponse.json({ ok: true, brushed: true, synced: true, rule_key: `LEARN-${id}` });
+    return NextResponse.json({ ok: true, brushed: true });
   }
 
   // ── clarify: ユーザーが内容を直接修正して優先反映（priority=10・全アクションにグローバル注入） ──
@@ -129,25 +120,8 @@ export async function PATCH(req: NextRequest) {
 
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
-  // confirm/reject 時に ai_prompt_rules へ即時同期
-  if (action === "confirm") {
-    const { data: row, error: fetchErr } = await supabase
-      .from("ai_reply_knowledge")
-      .select("id, title, content, conversation_state, importance")
-      .eq("id", id)
-      .single();
-    if (fetchErr || !row) {
-      console.warn("[knowledge-review] confirmed行の再取得失敗:", fetchErr?.message ?? "row null");
-      return NextResponse.json({ ok: true, synced: false, reason: "re_select_failed" });
-    }
-    const importance = (row.importance as number) ?? 0;
-    return NextResponse.json({
-      ok: true,
-      synced: importance >= 7,
-      importance,
-      rule_key: `LEARN-${id}`,
-    });
-  } else if (action === "reject") {
+  // reject 時は ai_prompt_rules 側の対応ルールを無効化
+  if (action === "reject") {
     await deactivatePromptRule(id);
   }
 

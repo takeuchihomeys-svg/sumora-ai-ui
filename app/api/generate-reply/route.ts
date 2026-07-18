@@ -1454,7 +1454,7 @@ export async function POST(req: NextRequest) {
       fetchPromptRules("generate_reply", {
         conversation_state: currentState,
         is_first_reply: String(isFirstEverReplyFromMsgs ?? false),
-      }, false, conversationId ? (ids: string[]) => logKnowledgeApply(ids, conversationId) : undefined)
+      })
         .catch((err) => { console.error("[generate-reply] fetchPromptRules失敗 — ルールなしで生成続行:", err); return ""; }),
       // 構造化サマリー: body未指定かつconversationIdありならDBから直接取得（regex往復の廃止）
       !bodySummaryJson && conversationId

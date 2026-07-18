@@ -161,25 +161,9 @@ export async function learnFromModifiedExample(params: {
   } else if (upsertResult.result === "skipped") {
     console.log(`[auto-knowledge] スキップ（重複）: "${rule.slice(0, 50)}"`);
   } else if (upsertResult.result === "inserted") {
-    // 新規ルール → ai_prompt_rules に非アクティブ候補として即座に登録
-    // （翌朝 analyze-diffs で confirmed になると is_active=true・priority=8 に昇格）
-    try {
-      // upsertKnowledge が id を返すようになったため直接利用（DB再クエリ不要）
-      const newId = upsertResult.id;
-      if (newId) {
-        await supabase.from("ai_prompt_rules").upsert({
-          rule_key: `LEARN-${newId}`,
-          action_type: "generate_reply",
-          condition_key: normalized ? "conversation_state" : null,
-          condition_value: normalized ?? null,
-          rule_text: enrichedContent.slice(0, 500),
-          reason: `auto-knowledge候補（importance=8）。confirmed後に自動アクティブ化`,
-          priority: 4,
-          is_active: false,
-        }, { onConflict: "rule_key", ignoreDuplicates: true });
-        console.log(`[auto-knowledge] ai_prompt_rules候補登録: LEARN-${newId}`);
-      }
-    } catch { /* ignore */ }
+    // LEARN-* 廃止: ai_prompt_rules への候補登録は行わない
+    // ナレッジは fetchKnowledge()（pgvector RAG）で届くため二重注入不要
+    console.log(`[auto-knowledge] 新規ルール登録: "${rule.slice(0, 50)}"`);
   }
 
   return { ok: true, rule, upsertResult: upsertResult.result };

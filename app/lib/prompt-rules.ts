@@ -17,9 +17,7 @@ interface PromptRuleRow {
  */
 export async function fetchPromptRules(
   actionType: string | null,
-  conditions: Record<string, string | boolean | null | undefined> = {},
-  excludeLearnRules = false,
-  onLearnIds?: (ids: string[]) => void
+  conditions: Record<string, string | boolean | null | undefined> = {}
 ): Promise<string> {
   try {
     // ── 枠取り方式 ──
@@ -39,38 +37,20 @@ export async function fetchPromptRules(
       return q;
     };
 
-    const [highPrioRes, learnRes] = await Promise.all([
-      // HUMAN-* / FEEDBACK-* / IMPLEMENT-* 等（LEARN-*はPhase1で廃止済み）
-      buildBaseQuery()
-        .not("rule_key", "like", "LEARN-%")
-        .order("priority", { ascending: false })
-        .order("updated_at", { ascending: false, nullsFirst: false })
-        .limit(150),
-      // LEARN-*廃止（Phase1）: DBでis_active=false済み・クエリも常に空配列を返す
-      // ナレッジはfetchKnowledge()のpgvector RAGで届くため二重注入不要
-      Promise.resolve({ data: [] as PromptRuleRow[], error: null }),
-    ]);
+    // HUMAN-* / FEEDBACK-* / IMPLEMENT-* 等（LEARN-*はPhase1で廃止済み）
+    // ナレッジはfetchKnowledge()のpgvector RAGで届くため二重注入不要
+    const highPrioRes = await buildBaseQuery()
+      .not("rule_key", "like", "LEARN-%")
+      .order("priority", { ascending: false })
+      .order("updated_at", { ascending: false, nullsFirst: false })
+      .limit(150);
 
     if (highPrioRes.error) console.error("[fetchPromptRules] high-prio query", highPrioRes.error);
-    if (learnRes.error) console.error("[fetchPromptRules] learn query", learnRes.error);
-    if (highPrioRes.error && learnRes.error) return "";
+    if (highPrioRes.error) return "";
 
     const highPrio = (highPrioRes.data ?? []) as PromptRuleRow[];
-    const learn = (learnRes.data ?? []) as PromptRuleRow[];
 
-    // priority 降順・rule_key 重複除去で結合
-    const seen = new Set<string>();
-    const merged: PromptRuleRow[] = [];
-    for (const r of [...highPrio, ...learn]) {
-      if (seen.has(r.rule_key)) continue;
-      seen.add(r.rule_key);
-      merged.push(r);
-    }
-    merged.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
-
-    if (!merged.length) return "";
-
-    const applicable = merged.filter(r => {
+    const applicable = highPrio.filter(r => {
       if (!r.condition_key || r.condition_value === null) return true;
       const actual = conditions[r.condition_key];
       if (actual === undefined) {
@@ -82,15 +62,6 @@ export async function fetchPromptRules(
     });
 
     if (!applicable.length) return "";
-
-    // LEARN ルール適用追跡: knowledge_apply_log へのコールバック（generate-reply 経由のみ使用）
-    if (onLearnIds) {
-      const learnIds = applicable
-        .filter(r => r.rule_key.startsWith("LEARN-"))
-        .map(r => r.rule_key.slice(6))   // "LEARN-{uuid}" → uuid
-        .filter(Boolean);
-      if (learnIds.length > 0) onLearnIds(learnIds);
-    }
 
     const ruleLines = applicable.map(r => `・${r.rule_text}`).join("\n");
     return `\n\n【管理者追加ルール（最優先 — 以下を必ず守ること）】\n${ruleLines}`;

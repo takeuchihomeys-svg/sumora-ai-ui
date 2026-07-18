@@ -725,104 +725,12 @@ export async function POST(req: NextRequest) {
   let learned = 0;
   const now = new Date().toISOString();
 
-  // ══ 【タイムアウト対策】後半処理（確認済みルール同期・stale decay・ポジティブ強化B/C）を
+  // ══ 【タイムアウト対策】後半処理（stale decay・ポジティブ強化B/C）を
   //    メインループの「前」に実行する。以前はループの後にあり、ループが60秒を使い切ると
-  //    一度も実行されず confirmed→ai_prompt_rules 同期・decay が永遠に走らなかった。══
+  //    一度も実行されず decay が永遠に走らなかった。══
+  // ※ LEARN-* → ai_prompt_rules 同期バッチは廃止済み（Phase2）
 
-  // ── 確認済みルール → ai_prompt_rules 自動同期 ──
-  // importance>=7 かつ hypothesis_status='confirmed' のルールをプロンプトルールとして自動登録
-  // （syncConfirmedToPromptRule は LEARN-* 廃止（Phase1）により参照不要。
-  //   このバッチは LEARN-* とは独立した cron 補完処理として継続稼働）
-  // ステートに応じた action_type でスコープ付き保存
-  // （複合ステートはAIXアクション名へ、汎用ステートはgenerate_reply へ、未知はグローバル）
-
-  // confirmed ナレッジの conversation_state → ai_prompt_rules の action_type マップ
-  // AIX固有ステート → AIXのaction_type（scoped注入）
-  // generate-reply 汎用ステート → "generate_reply"（generate-replyのみに注入）
-  // 未知ステート / null → null（全アクションに注入するグローバル）
-  const KNOWLEDGE_STATE_TO_ACTION: Record<string, string | null> = {
-    // AIX アクション固有ステート
-    property_send: "property_send", property_send_pickup: "property_send",
-    viewing_invite: "viewing_invite", viewing: "viewing_invite",
-    viewing_schedule: "viewing_invite", inspection: "viewing_invite",
-    greeting_viewing: "greeting_viewing",
-    application_push: "application_push", applying: "application_push",
-    application: "application_push", screening: "application_push", contract: "application_push",
-    condition_hearing: "condition_hearing",
-    estimate_sheet: "estimate_sheet", estimate_request: "estimate_sheet",
-    meeting_place: "meeting_place",
-    property_check_result: "property_check_result",
-    property_check_result_available: "property_check_result",
-    property_check_result_unavailable: "property_check_result",
-    property_check_result_alternative: "property_check_result",
-    property_check_result_vacate_date: "property_check_result",
-    property_check_result_mgmt_guarantor: "property_check_result",
-    property_check_result_mgmt_move_in: "property_check_result",
-    property_check_result_mgmt_initial_cost: "property_check_result",
-    property_check_result_mgmt_parking: "property_check_result",
-    property_check_result_mgmt_pet: "property_check_result",
-    property_recommendation: "property_recommendation",
-    // サブステート（STATE_LEARNABLE に存在するが旧版で未定義だったエントリ）
-    application_push_push: "application_push",
-    application_push_confirm: "application_push",
-    application_push_docs_request: "application_push",
-    property_send_new_arrival: "property_send",
-    property_send_widen: "property_send",
-    // generate-reply 汎用ステート
-    hearing: "generate_reply", first_reply: "generate_reply",
-    proposing: "generate_reply", closed_won: "generate_reply",
-    // 未知ステート → null（グローバル）
-  };
-
-  let synced = 0;
   let demotedConfirmed = 0;
-  try {
-    const { data: confirmedRules } = await supabase
-      .from("ai_reply_knowledge")
-      .select("id, title, content, conversation_state")
-      .eq("hypothesis_status", "confirmed")
-      .gte("importance", 7)
-      .order("importance", { ascending: false })
-      .limit(2000);
-
-    if (confirmedRules && confirmedRules.length > 0) {
-      const upserts = confirmedRules.map((r) => {
-        const state = r.conversation_state as string | null;
-        const mappedActionType = state
-          ? (Object.prototype.hasOwnProperty.call(KNOWLEDGE_STATE_TO_ACTION, state)
-              ? KNOWLEDGE_STATE_TO_ACTION[state]
-              : null)
-          : null;
-        return {
-          rule_key: `LEARN-${r.id as string}`,
-          action_type: mappedActionType,   // ← ステートに応じた正しいスコープ
-          condition_key: null,             // ← action_type でスコープ済み。condition は不要
-          condition_value: null,
-          rule_text: (r.content as string).slice(0, 500),
-          reason: `ai_reply_knowledge自動昇格: ${(r.title as string).slice(0, 100)}`,
-          priority: 8,
-          is_active: true,
-        };
-      });
-      const { error: upsertError } = await supabase
-        .from("ai_prompt_rules")
-        .upsert(upserts, { onConflict: "rule_key" });
-      if (!upsertError) synced = confirmedRules.length;
-    }
-
-    // rejected ルールは ai_prompt_rules でも非アクティブ化
-    const { data: rejectedRules } = await supabase
-      .from("ai_reply_knowledge")
-      .select("id")
-      .eq("hypothesis_status", "rejected")
-      .limit(100);
-    if (rejectedRules && rejectedRules.length > 0) {
-      const keys = rejectedRules.map((r) => `LEARN-${r.id as string}`);
-      await supabase.from("ai_prompt_rules")
-        .update({ is_active: false })
-        .in("rule_key", keys);
-    }
-  } catch { /* ignore - プロンプトルール同期失敗はメイン処理を止めない */ }
 
   // ── ④ confirmed 再検証: 直近フィードバックで wrong 比率≥50%（計4件以上）→ hypothesis に差し戻し ──
   // 「昔は正しかったが今は違う」ルールを自動検出。市況変化・方針変更で陳腐化した confirmed を救出する。
@@ -844,12 +752,6 @@ export async function POST(req: NextRequest) {
         .update({ hypothesis_status: "hypothesis" })
         .eq("id", rule.id as string);
       demotedConfirmed++; // demotedConfirmed は外側のスコープで集計
-
-      // hypothesis に差し戻されたルールを ai_prompt_rules でも非活性化
-      await supabase
-        .from("ai_prompt_rules")
-        .update({ is_active: false })
-        .eq("rule_key", `LEARN-${rule.id as string}`)
 
       // Part C demotion-time: knowledge_brushup 提案を起票（重複防止）
       const brushupTitle = `要ブラッシュアップ: ${(rule.title as string).slice(0, 35)}`;
@@ -1114,8 +1016,8 @@ export async function POST(req: NextRequest) {
   // 回帰センチネル（detectRepeatedDeletions）を必ず実行させる
   if (mode !== "maintain" && (!examples || examples.length === 0)) {
     // 処理対象ゼロでも同期・decayは上で実行済み。cron logも完了させる（ok=null放置を防ぐ）
-    await finishCronLog(runLogId, true, { processed: 0, learned: 0, synced, demotedConfirmed, promoted, promotedSilent, promotionAsked });
-    return NextResponse.json({ ok: true, processed: 0, learned: 0, synced, demotedConfirmed, promoted, promotedSilent, promotionAsked, message: `処理対象なし・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件（Tier1サイレント）・昇格承認起票${promotionAsked}件` });
+    await finishCronLog(runLogId, true, { processed: 0, learned: 0, demotedConfirmed, promoted, promotedSilent, promotionAsked });
+    return NextResponse.json({ ok: true, processed: 0, learned: 0, demotedConfirmed, promoted, promotedSilent, promotionAsked, message: `処理対象なし・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件（Tier1サイレント）・昇格承認起票${promotionAsked}件` });
   }
 
   // ── 回帰センチネル: メインの差分学習ループと並列実行 ──
@@ -1128,9 +1030,9 @@ export async function POST(req: NextRequest) {
   // mode=maintain の場合は差分学習ループをスキップしてメンテナンス処理のみ実行
   if (mode === "maintain") {
     const sentinel = await sentinelPromise;
-    await finishCronLog(runLogId, true, { processed: 0, learned: 0, synced, demotedConfirmed, promoted, promotedSilent, promotionAsked });
+    await finishCronLog(runLogId, true, { processed: 0, learned: 0, demotedConfirmed, promoted, promotedSilent, promotionAsked });
     return NextResponse.json({
-      ok: true, processed: 0, learned: 0, synced, demotedConfirmed, promoted, promotedSilent, promotionAsked,
+      ok: true, processed: 0, learned: 0, demotedConfirmed, promoted, promotedSilent, promotionAsked,
       sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted,
       message: `[maintain] 差分学習スキップ・メンテ処理のみ実行 — confirmed差し戻し${demotedConfirmed}件・昇格${promoted}件・昇格承認起票${promotionAsked}件`,
     });
@@ -1659,12 +1561,12 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* ignore - 可視化失敗はメイン処理を止めない */ }
 
-  await finishCronLog(runLogId, true, { processed, learned, synced, demotedConfirmed, promoted, promotedSilent, promotionAsked, timedOut, sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted, ...(cronWarning ? { cronWarning } : {}) });
+  await finishCronLog(runLogId, true, { processed, learned, demotedConfirmed, promoted, promotedSilent, promotionAsked, timedOut, sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted, ...(cronWarning ? { cronWarning } : {}) });
   return NextResponse.json({
-    ok: true, processed, learned, synced, demotedConfirmed, promoted, promotedSilent, promotionAsked, timedOut,
+    ok: true, processed, learned, demotedConfirmed, promoted, promotedSilent, promotionAsked, timedOut,
     sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted,
     ...(cronWarning ? { cronWarning } : {}),
-    message: `${processed}件処理・${learned}件学習・${synced}件ルール同期・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件（Tier1サイレント）・昇格承認起票${promotionAsked}件・反復削除フレーズ${sentinel.detected}件検知（${sentinel.demoted}件降格）${timedOut ? "・⏱30秒タイムガードで打ち切り" : ""}${cronWarning ? ` / ${cronWarning}` : ""}`,
+    message: `${processed}件処理・${learned}件学習・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件（Tier1サイレント）・昇格承認起票${promotionAsked}件・反復削除フレーズ${sentinel.detected}件検知（${sentinel.demoted}件降格）${timedOut ? "・⏱30秒タイムガードで打ち切り" : ""}${cronWarning ? ` / ${cronWarning}` : ""}`,
   });
   } catch (e) {
     console.error("[analyze-diffs]", e);

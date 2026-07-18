@@ -92,10 +92,9 @@ export async function promoteToConfirmed(
   }
 }
 
-// 却下された知識の ai_prompt_rules を無効化
-export async function deactivatePromptRule(knowledgeId: string): Promise<void> {
-  const { error } = await supabase.from("ai_prompt_rules")
-    .update({ is_active: false })
-    .eq("rule_key", `LEARN-${knowledgeId}`);
-  if (error) console.warn("[knowledge-promote] deactivate failed:", error.message);
+// 却下された知識の ai_prompt_rules 無効化
+export async function deactivatePromptRule(_knowledgeId: string): Promise<void> {
+  // LEARN-* 廃止（Phase1）: ai_prompt_rules への LEARN-* 登録自体を廃止したため無効化処理も不要
+  // 呼び出し元（knowledge-review/route.ts）の削除はPhase2で対応
+  return;
 }
