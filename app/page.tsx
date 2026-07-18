@@ -7789,7 +7789,7 @@ export default function Home() {
             return sendMessageText(text, imageUrl, isAix);
           }}
           onDelayedSend={handleDelayedSend}
-          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean }) => {
+          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean }) => {
             // 2通目自動送信スケジュール（AIXフロー用・予約送信は対象外）
             if (pendingSecondMsgRef.current) {
               const config = pendingSecondMsgRef.current;
@@ -7903,7 +7903,10 @@ export default function Home() {
               setNextActionMap((prev) => { const n = { ...prev }; delete n[selectedConversation.id]; return n; });
               nextActionFetchingRef.current.delete(selectedConversation.id);
               // 物件あった → 即座に「内覧へ！」を次のAIX提案としてセット（再フェッチで上書きしない）
-              if (meta?.suggestViewing) {
+              if (meta?.suggestApplicationPushVacating) {
+                // 退去予定（空室あり・申込あり）→ 内覧より先に申込で抑える提案
+                setNextActionMap((prev) => ({ ...prev, [selectedConversation.id]: { action: "application_push", reason: "退去予定物件：申込で先に抑えることをご提案", source: "trigger_rule" } }));
+              } else if (meta?.suggestViewing) {
                 setNextActionMap((prev) => ({ ...prev, [selectedConversation.id]: { action: "viewing_invite", reason: "物件が空室でした", source: "trigger_rule" } }));
               } else if (meta?.suggestAlternativeSend) {
                 // 物件なかった → 代替物件送りへ誘導（property_send ピッカーを自動表示）

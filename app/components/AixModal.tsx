@@ -55,11 +55,16 @@ interface AixModalProps {
   templateId?: string; // テンプレートモーダル経由で開いた場合のtemplate_id（学習ループ紐付け用）
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
-  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean }) => void;
+  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean }) => void;
   onDelayedSend?: (seconds: number, sendFn: () => Promise<void>) => void;
   onScheduled?: () => void;
   onVacatingDetected?: (date: string) => void;
   onOpenTemplateFiltered?: (search: string) => void;
+}
+
+// 有効な物件ステータス（先頭 count 件）に退去予定("vacating")が含まれるか判定
+function isVacating(propStatuses: string[], count: number): boolean {
+  return propStatuses.slice(0, count).includes("vacating");
 }
 
 // 待ち合わせ送信後にカレンダーイベントを作成（fire-and-forget）
@@ -2006,7 +2011,8 @@ export default function AixModal({
       onAfterSend?.({
         suggest2ndHand: actionType === "property_check_result" && checkAvailableApp === "yes",
         suggestViewingTemplate: actionType === "viewing_invite",
-        suggestViewing: actionType === "property_check_result" && checkPattern === "available" && checkAvailableApp !== "yes",
+        suggestViewing: actionType === "property_check_result" && checkPattern === "available" && checkAvailableApp !== "yes" && !isVacating(checkPropStatuses, checkPropertyCount),
+        suggestApplicationPushVacating: actionType === "property_check_result" && checkPattern === "available" && checkAvailableApp !== "yes" && isVacating(checkPropStatuses, checkPropertyCount),
         suggestInitialCostTemplate: actionType === "property_recommendation" && recommendFocusPoints.includes("初期費用"),
         suggestAlternativeSend: actionType === "property_check_result" && checkPattern === "unavailable",
         suggestPropertySend: actionType === "condition_hearing",
@@ -2106,6 +2112,7 @@ export default function AixModal({
             const capturedActionType: string = actionType;
             const capturedCheckAvailableApp: string | null = checkAvailableApp;
             const capturedCheckPattern: string | null = checkPattern;
+            const capturedHasVacating: boolean = isVacating(checkPropStatuses, checkPropertyCount);
             const capturedRecommendFocusPoints: string[] = recommendFocusPoints;
             const capturedAppSubMode: string | null | undefined = appSubMode;
             const capturedSendMode: string | null | undefined = sendMode;
@@ -2124,7 +2131,8 @@ export default function AixModal({
               capturedOnAfterSend?.({
                 suggest2ndHand: capturedActionType === "property_check_result" && capturedCheckAvailableApp === "yes",
                 suggestViewingTemplate: capturedActionType === "viewing_invite",
-                suggestViewing: capturedActionType === "property_check_result" && capturedCheckPattern === "available" && capturedCheckAvailableApp !== "yes",
+                suggestViewing: capturedActionType === "property_check_result" && capturedCheckPattern === "available" && capturedCheckAvailableApp !== "yes" && !capturedHasVacating,
+                suggestApplicationPushVacating: capturedActionType === "property_check_result" && capturedCheckPattern === "available" && capturedCheckAvailableApp !== "yes" && capturedHasVacating,
                 suggestInitialCostTemplate: capturedActionType === "property_recommendation" && capturedRecommendFocusPoints.includes("初期費用"),
                 suggestAlternativeSend: capturedActionType === "property_check_result" && capturedCheckPattern === "unavailable",
                 suggestPropertySend: capturedActionType === "condition_hearing",
@@ -2233,7 +2241,8 @@ export default function AixModal({
       onAfterSend?.({
         suggest2ndHand: actionType === "property_check_result" && checkAvailableApp === "yes",
         suggestViewingTemplate: actionType === "viewing_invite",
-        suggestViewing: actionType === "property_check_result" && checkPattern === "available" && checkAvailableApp !== "yes",
+        suggestViewing: actionType === "property_check_result" && checkPattern === "available" && checkAvailableApp !== "yes" && !isVacating(checkPropStatuses, checkPropertyCount),
+        suggestApplicationPushVacating: actionType === "property_check_result" && checkPattern === "available" && checkAvailableApp !== "yes" && isVacating(checkPropStatuses, checkPropertyCount),
         suggestInitialCostTemplate: actionType === "property_recommendation" && recommendFocusPoints.includes("初期費用"),
         suggestAlternativeSend: actionType === "property_check_result" && checkPattern === "unavailable",
         suggestPropertySend: actionType === "condition_hearing",
