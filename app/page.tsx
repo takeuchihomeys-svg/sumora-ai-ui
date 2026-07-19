@@ -2448,7 +2448,7 @@ export default function Home() {
           hasViewed: selectedConversation.hasViewed ?? false,
           activeTaskTypes: (activeTasks[selectedConversation.id] ?? []).map(t => t.task_type),
           recentMessages: (() => {
-            const last20 = contextMsgs.slice(-20);
+            const last20 = contextMsgs.slice(-25);
             // 直近20件にスタッフ返信がない場合のみ、最新のスタッフ返信を先頭に追加
             const hasStaffInLast20 = last20.some((m) => m.sender === "staff");
             const lastStaff = !hasStaffInLast20
@@ -2601,7 +2601,7 @@ export default function Home() {
           customerConditions: enhanceConditions,
           customerSummary: linkedCustomerForEnhance?.ai_summary ?? undefined,
           customerName: preferredCustomerName,
-          recentMessages: msgs.slice(-15).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined })),
+          recentMessages: msgs.slice(-25).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined })),
           activeTasks: activeTaskTypes.length > 0 ? activeTaskTypes : undefined,
         }),
       });
@@ -2756,7 +2756,7 @@ export default function Home() {
           replyHint: replyHintWithEstimate,
           hasViewed: selectedConversation.hasViewed ?? false,
           activeTaskTypes: (activeTasks[selectedConversation.id] ?? []).map(t => t.task_type),
-          recentMessages: msgs.slice(-20).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined, createdAt: m.rawCreatedAt || undefined, isAix: m.isAix || false })),
+          recentMessages: msgs.slice(-25).map((m) => ({ sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined, createdAt: m.rawCreatedAt || undefined, isAix: m.isAix || false })),
           ...(sparkleScreenshot ? { screenshotBase64: sparkleScreenshot.base64, screenshotMediaType: sparkleScreenshot.mediaType } : {}),
         }),
       });
