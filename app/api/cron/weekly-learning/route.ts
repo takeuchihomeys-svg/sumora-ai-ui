@@ -438,7 +438,7 @@ async function runConfirmedVsConfirmedScan(): Promise<number> {
       if (!pair) continue;
 
       const raised = await insertAiQuestion({
-        question: `[knowledge_id:${pair.a.id}] [old_knowledge_id:${pair.b.id}] ${dedupKey} 確定済みルール同士が矛盾しています。どちらが正しいですか？\nA: ${pair.a.title} — ${pair.a.content.slice(0, 150)}\nB: ${pair.b.title} — ${pair.b.content.slice(0, 150)}\n（「新ルール採用」=Aを維持しBをreject／「既存ルール維持」=Bを維持しAをreject）`,
+        question: `[knowledge_id:${pair.a.id}] [old_knowledge_id:${pair.b.id}] ${dedupKey} 確定済みルール同士が矛盾しています。どちらが正しいですか？\n\n■ 使われそうな場面\n会話フェーズ「${state}」でAIが返信を選ぶ際に、以下の2つのルールが同時に参照されますが内容が矛盾しています。\n\n━━ ルールA ━━\nタイトル：「${pair.a.title}」\n内容：${pair.a.content.slice(0, 300)}\n\n━━ ルールB ━━\nタイトル：「${pair.b.title}」\n内容：${pair.b.content.slice(0, 300)}\n\n（「新ルール採用」=Aを維持しBをreject／「既存ルール維持」=Bを維持しAをreject）`,
         category: "knowledge_gap",
         confidence: "medium",
         evidence: `confirmed同士の矛盾検出（weekly chunk2）: ${pair.reason}`.slice(0, 500),
@@ -694,7 +694,7 @@ async function runChunk3(): Promise<Record<string, unknown>> {
       const rule = stageCRules.find(r => r.id === k.id);
       if (!rule) continue;
 
-      const question = `[knowledge_id:${rule.id}] このルール候補を採用すべきか教えてください：「${rule.title}」 — ${rule.content}`;
+      const question = `[knowledge_id:${rule.id}] ❓【教えてください】このルール候補を採用すべきか確認してください\n\n■ 使われそうな場面\n会話フェーズ「${rule.conversation_state ?? '不明'}」でAIが返信する際に使われるルール候補です。\n\n━━ ルール候補 ━━\nタイトル：「${rule.title}」\n内容：${String(rule.content ?? '').slice(0, 400)}\n\n━━ AIによる評価理由 ━━\n${k.reason ?? '（理由なし）'}\n\n❓ 竹内さんへの質問\n① このルールの内容は正しいですか？\n② confirmed（確認済み）として採用してよいですか？`;
       const slice = rule.id; // knowledge_id で dedup（タイトル変化に強い）
       const { data: existing } = await supabase
         .from("ai_feedback_items")
@@ -849,7 +849,7 @@ JSON形式のみ返答：
             const ruleB = ruleBRes.data;
             if (ruleA && ruleB) {
               const simScore = simPairs.find(p => p.id_a === pair.id_a && p.id_b === pair.id_b)?.sim_score?.toFixed(2) ?? "N/A";
-              const question = `以下2つのルールを1つに統合すべきですか？（類似スコア: ${simScore}）\n\nA「${ruleA.title}」\n${String(ruleA.content).slice(0, 120)}\n\nB「${ruleB.title}」\n${String(ruleB.content).slice(0, 120)}`;
+              const question = `以下2つのルールを1つに統合すべきですか？（類似スコア: ${simScore}）\n\n■ 使われそうな場面\n似た内容のルールが2つ存在し、どちらを使うかAIが迷う可能性があります。統合または一方を削除することを検討してください。\n\n━━ ルールA ━━\nタイトル：「${ruleA.title}」\n内容：${String(ruleA.content).slice(0, 300)}\n\n━━ ルールB ━━\nタイトル：「${ruleB.title}」\n内容：${String(ruleB.content).slice(0, 300)}`;
               // A・B両IDで dedup（どちらかのIDが含まれていれば重複）
               const { data: existing } = await supabase
                 .from("ai_feedback_items")

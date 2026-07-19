@@ -737,7 +737,7 @@ export async function POST(req: NextRequest) {
   try {
     const { data: confirmedRules2 } = await supabase
       .from("ai_reply_knowledge")
-      .select("id, title, content, correct_count, wrong_count")
+      .select("id, title, content, correct_count, wrong_count, conversation_state")
       .eq("hypothesis_status", "confirmed")
       .limit(300);
 
@@ -773,7 +773,7 @@ export async function POST(req: NextRequest) {
       }
 
       // ai_feedback_items に再確認質問を起票（重複防止）
-      const question = `❓【教えてください】confirmed ルールの妥当性を再確認してください\n\n━━ 対象ナレッジ ━━\n「${(rule.title as string).slice(0, 50)}」\n\n━━ ルール内容 ━━\n${String((rule.content as string) ?? '').slice(0, 300) || '（内容なし）'}\n\n━━ なぜ確認が必要か ━━\nこのルールは過去に confirmed（確認済み）になりましたが、直近のフィードバックで外れ率が ${Math.round(wrong / total * 100)}% に達しています（correct:${correct}件 / wrong:${wrong}件）。市況変化・方針変更でルールが陳腐化している可能性があります。\n\n❓ 竹内さんへの質問\n① このルールは今も正しいですか？問題があれば修正内容を教えてください。\n② 外れ率が高い原因として心当たりはありますか？（方針変更・特殊ケースの混入など）`;
+      const question = `❓【教えてください】confirmed ルールの妥当性を再確認してください\n\n■ 使われそうな場面\n会話フェーズ「${String((rule as Record<string, unknown>).conversation_state ?? '不明')}」でAIが返信を生成する際にこのルールが参照されていますが、直近のフィードバックで外れが続いています。\n\n━━ 対象ナレッジ ━━\n「${(rule.title as string).slice(0, 50)}」\n\n━━ ルール内容 ━━\n${String((rule.content as string) ?? '').slice(0, 300) || '（内容なし）'}\n\n━━ なぜ確認が必要か ━━\nこのルールは過去に confirmed（確認済み）になりましたが、直近のフィードバックで外れ率が ${Math.round(wrong / total * 100)}% に達しています（correct:${correct}件 / wrong:${wrong}件）。市況変化・方針変更でルールが陳腐化している可能性があります。\n\n❓ 竹内さんへの質問\n① このルールは今も正しいですか？問題があれば修正内容を教えてください。\n② 外れ率が高い原因として心当たりはありますか？（方針変更・特殊ケースの混入など）`;
       const dedupKey = question.slice(0, 50).replace(/[%_\\]/g, "\\$&");
       const { data: existsFb } = await supabase
         .from("ai_feedback_items")
@@ -847,7 +847,7 @@ export async function POST(req: NextRequest) {
       // [knowledge_id:] プレフィックスは ai-feedback 回答時の closed-loop に使用。
       // 竹内さんが OK と回答（choice='new' または省略）すると ai-feedback/route.ts が
       // hypothesis → confirmed に昇格させる。ここでは昇格しない。
-      const question = `[knowledge_id:${rule.id as string}]\n❓【教えてください】ナレッジの confirmed 昇格を承認してください\n\n━━ 対象ナレッジ ━━\n「${(rule.title as string).slice(0, 50)}」\n\n━━ ルール内容 ━━\n${String((rule.content as string) ?? '').slice(0, 300) || '（内容なし）'}\n\n━━ なぜ確認が必要か ━━\nこのルールは昇格基準を満たしました（correct:${correct}件 / apply:${applyCount}件 / 外れ率:${Math.round(wrongRate * 100)}%）。AI生成物のため、confirmed（確認済み）に昇格させる前に人間の承認が必要です。承認されるまで hypothesis のまま保留します。\n\n❓ 竹内さんへの質問\n① このルールの内容は正しいですか？問題があれば修正内容を教えてください。\n② confirmed に昇格させてよいですか？（OKなら回答するだけで昇格が反映されます）`;
+      const question = `[knowledge_id:${rule.id as string}]\n❓【教えてください】ナレッジの confirmed 昇格を承認してください\n\n■ 使われそうな場面\n会話フェーズ「${(rule.conversation_state as string) ?? '不明'}」でAIが返信を生成する際に使われるルール候補です。十分なフィードバック実績が積まれたため、確定ルールへの昇格承認が必要です。\n\n━━ 対象ナレッジ ━━\n「${(rule.title as string).slice(0, 50)}」\n\n━━ ルール内容 ━━\n${String((rule.content as string) ?? '').slice(0, 300) || '（内容なし）'}\n\n━━ なぜ確認が必要か ━━\nこのルールは昇格基準を満たしました（correct:${correct}件 / apply:${applyCount}件 / 外れ率:${Math.round(wrongRate * 100)}%）。AI生成物のため、confirmed（確認済み）に昇格させる前に人間の承認が必要です。承認されるまで hypothesis のまま保留します。\n\n❓ 竹内さんへの質問\n① このルールの内容は正しいですか？問題があれば修正内容を教えてください。\n② confirmed に昇格させてよいですか？（OKなら回答するだけで昇格が反映されます）`;
       const dedupKey = question.slice(0, 50).replace(/[%_\\]/g, "\\$&");
       const { data: existsFb } = await supabase
         .from("ai_feedback_items")
