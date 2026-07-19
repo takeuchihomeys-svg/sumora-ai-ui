@@ -403,6 +403,11 @@ export async function POST(req: NextRequest) {
       }
     } catch (e) {
       console.error("[ai-feedback] closed-loop knowledge confirm 失敗:", e);
+      // ナレッジ昇格失敗時は status='applied' にせず pending のまま維持して再回答可能にする
+      return NextResponse.json(
+        { ok: false, error: "ナレッジ昇格処理に失敗しました。もう一度お試しください。" },
+        { status: 500 }
+      );
     }
   }
 
