@@ -84,7 +84,8 @@ async function run() {
     .from("conversations")
     .select("id, status, property_customer_id, last_sender, draft_pending_at, updated_at")
     .eq("last_sender", "customer")
-    .is("ai_draft", null)
+    // __TRUNCATED__センチネル（尻切れで保存見送りになった会話）も救済対象に含める
+    .or("ai_draft.is.null,ai_draft.eq.__TRUNCATED__")
     .or("draft_pending_at.is.null,draft_pending_at.lt." + tenMinutesAgo)
     // DB側リトライ制御: 10分以内に生成試行済み（draft_attempted_at）ならスキップ
     // （インメモリMapはVercelサーバーレスでインスタンス間共有されないため、DBフラグが本命の防波堤）
@@ -107,16 +108,23 @@ async function run() {
   pruneAttemptedMarkers();
   const pendingIds = new Set((pendingConvs || []).map(c => c.id as string));
   const combined = [
-    ...(pendingConvs || []),
-    ...(orphanedConvs || []).filter(c => !pendingIds.has(c.id as string)),
+    ...(pendingConvs || []).map(c => ({ ...c, __source: "pending" as const })),
+    ...(orphanedConvs || [])
+      .filter(c => !pendingIds.has(c.id as string))
+      .map(c => ({ ...c, __source: "orphaned" as const })),
   ].filter(c => {
     const rec = attemptedMarkers.get(c.id as string);
     return rec === undefined || markerOf(c) > rec.markerMs;
   });
 
   if (error) {
-    if (runLogId) await finishCronLog(runLogId, false, undefined, error.message).catch(() => null);
-    return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    // pendingクエリ失敗でも、取得済みのorphaned救済分は処理を続行する
+    // （従来は500即returnで、フェッチ済みorphaned行がこの実行で一切処理されず破棄されていた）
+    console.error("[generate-pending-drafts] pending query error:", error);
+    if (orphanedError || combined.length === 0) {
+      if (runLogId) await finishCronLog(runLogId, false, undefined, error.message).catch(() => null);
+      return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    }
   }
 
   console.log("[generate-pending-drafts] processing:", combined.length, "conversations at", new Date().toISOString());
@@ -132,6 +140,7 @@ async function run() {
 
   let processed = 0;
   let skipped = 0;
+  let failed = 0;
 
   const batchStart = Date.now();
   let isFirst = true;
@@ -155,13 +164,17 @@ async function run() {
 
     // 先にpendingをクリアして重複処理を防ぐ ＋ 生成試行時刻をDBに記録
     // （失敗しても draft_attempted_at から10分間はorphanedクエリの再試行対象外になる）
-    // MEDIUM-4: draft_pending_at がまだセットされている行のみ更新（楽観的ロック）
-    // → 複数インスタンスが同一会話を同時にクレームしようとしても1つしか成功しない
-    const { data: claimed, error: markErr } = await db.from("conversations")
+    // MEDIUM-4: 楽観的ロック — 複数インスタンスが同一会話を同時にクレームしても1つしか成功しない
+    // ①pending  → draft_pending_at がまだセットされている行のみ更新
+    // ②orphaned → draft_pending_at は NULL のため .not(pending,is,null) では絶対に成立しない。
+    //             draft_attempted_at（未試行 or 10分以上前）をロック条件に使う
+    const claimBase = db.from("conversations")
       .update({ draft_pending_at: null, draft_attempted_at: new Date().toISOString() })
-      .eq("id", convId)
-      .not("draft_pending_at", "is", null)
-      .select("id");
+      .eq("id", convId);
+    const { data: claimed, error: markErr } = await (conv.__source === "orphaned"
+      ? claimBase.or("draft_attempted_at.is.null,draft_attempted_at.lt." + tenMinutesAgo)
+      : claimBase.not("draft_pending_at", "is", null)
+    ).select("id");
     if (markErr) {
       // マーク失敗のまま生成すると毎分再処理＋二重生成になるためスキップ
       console.error("[generate-pending-drafts] mark update failed:", convId, markErr.message);
@@ -243,11 +256,16 @@ async function run() {
         signal: AbortSignal.timeout(PER_CONV_TIMEOUT_MS),
       });
 
-      if (!draftRes.ok || !draftRes.body) continue;
+      if (!draftRes.ok || !draftRes.body) {
+        const errBody = await draftRes.text().catch(() => "(body読み取り失敗)");
+        console.error("[generate-pending-drafts] generate-reply HTTPエラー:", convId, "status:", draftRes.status, "body:", errBody.slice(0, 200));
+        failed++;
+        continue;
+      }
 
       const reader = draftRes.body.getReader();
       const decoder = new TextDecoder();
-      let buffer = "", metaDone = false, fullText = "";
+      let buffer = "", metaDone = false, fullText = "", metaFailed = false;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -256,13 +274,28 @@ async function run() {
           buffer += chunk;
           const nl = buffer.indexOf("\n");
           if (nl >= 0) {
-            try { const meta = JSON.parse(buffer.slice(0, nl)) as { ok: boolean }; if (!meta.ok) break; } catch { break; }
+            const metaLine = buffer.slice(0, nl);
+            let metaOk = false;
+            try { metaOk = (JSON.parse(metaLine) as { ok: boolean }).ok === true; } catch { /* パース失敗 → metaOk=false */ }
+            if (!metaOk) {
+              console.error("[generate-pending-drafts] generate-reply メタ行NG（ok:false or JSONパース失敗）:", convId, "meta:", metaLine.slice(0, 200));
+              metaFailed = true;
+              break;
+            }
             metaDone = true;
             fullText = buffer.slice(nl + 1);
           }
         } else {
           fullText += chunk;
         }
+      }
+      // マルチバイト文字がチャンク境界で分断された場合の残りをフラッシュ（日本語末尾文字の欠け防止）
+      fullText += decoder.decode();
+
+      if (metaFailed || !metaDone) {
+        if (!metaFailed) console.error("[generate-pending-drafts] ストリームがメタ行なしで終了:", convId, "buffer:", buffer.slice(0, 200));
+        failed++;
+        continue;
       }
 
       // 内部タグ（<<<STOP_REASON:xxx>>> / <<<SUGGESTED_AIX:{...}>>>）を抽出して本文から除去
@@ -280,15 +313,16 @@ async function run() {
         .trim();
 
       // 品質ゲート①: max_tokens 尻切れドラフトは保存しない
-      // MEDIUM-3: センチネル値 "__TRUNCATED__" を保存して再試行を防ぐ
-      // （draft_attempted_at=null にして orphaned クエリの 10 分待ちも解除）
-      // 新しい顧客メッセージが来れば draft_pending_at が再セットされ即再生成される
+      // MEDIUM-3: センチネル値 "__TRUNCATED__" を保存して尻切れドラフトの誤送信を防ぐ
+      // __TRUNCATED__ はorphaned救済の再試行対象になったため、attempted_at はクリアせず残す
+      // （null にすると orphaned クエリを毎分すり抜けて無限リトライになる。10分バックオフで再試行）
+      // 新しい顧客メッセージが来れば draft_pending_at が再セットされ①経由で即再生成される
       if (stopReason === "max_tokens") {
         console.warn("[generate-pending-drafts] draft truncated (stop_reason=max_tokens), saving sentinel:", convId);
         await db.from("conversations")
-          .update({ ai_draft: "__TRUNCATED__", draft_attempted_at: null })
+          .update({ ai_draft: "__TRUNCATED__" })
           .eq("id", convId);
-        skipped++;
+        failed++;
         continue;
       }
 
@@ -301,13 +335,19 @@ async function run() {
         // 成功時: 下書き保存 ＋ attempted_at クリア（次の新着メッセージで即座に生成対象に戻す）
         await db.from("conversations").update({ ai_draft: finalDraft, draft_attempted_at: null }).eq("id", convId);
         processed++;
+      } else {
+        // タグ除去後に本文が空 → 生成失敗として記録（attempted_at は残し10分バックオフで再試行させる）
+        console.error("[generate-pending-drafts] 生成結果が空（タグ除去後）:", convId, "raw:", fullText.slice(0, 200));
+        failed++;
       }
     } catch (e) {
+      // fetchタイムアウト（AbortSignal 30秒）・ネットワーク断・DB例外もここに落ちる
       console.error("[generate-pending-drafts] convId:", convId, e);
+      failed++;
     }
   }
 
   // M-4: 正常終了時も finishCronLog を必ず呼ぶ（従来はエラー時のみ記録され、成功実行が「終了なし」で残っていた）
-  if (runLogId) await finishCronLog(runLogId, true, { processed, skipped }).catch(() => null);
-  return NextResponse.json({ ok: true, processed, skipped });
+  if (runLogId) await finishCronLog(runLogId, true, { processed, skipped, failed }).catch(() => null);
+  return NextResponse.json({ ok: true, processed, skipped, failed });
 }
