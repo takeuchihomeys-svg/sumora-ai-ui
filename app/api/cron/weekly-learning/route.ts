@@ -185,11 +185,12 @@ ${existingRulesText}
 async function runChunk1(chunk: number): Promise<Record<string, unknown>> {
   const offset = (chunk - 1) * CHUNK_SIZE; // chunk=1 → offset=0
 
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const { data: rawExamples, error: fetchErr } = await supabase
     .from("ai_reply_examples")
     .select("id, conversation_state, customer_message, sent_reply, ai_draft, is_starred, created_at")
     .eq("was_ai_modified", true)
-    .is("diff_analyzed_at", null)
+    .gte("created_at", sevenDaysAgo)
     .not("sent_reply", "is", null)
     .order("is_starred", { ascending: false })
     .order("created_at", { ascending: true })
@@ -200,7 +201,7 @@ async function runChunk1(chunk: number): Promise<Record<string, unknown>> {
   const examples = (rawExamples ?? []) as DiffExample[];
 
   if (examples.length === 0) {
-    return { chunk, processed: 0, newRules: 0, questionsRaised: 0, message: `chunk${chunk}: 未分析差分なし` };
+    return { chunk, processed: 0, newRules: 0, questionsRaised: 0, message: `chunk${chunk}: 直近7日の修正差分なし` };
   }
 
   const stateGroups = new Map<string, DiffExample[]>();
@@ -281,11 +282,6 @@ async function runChunk1(chunk: number): Promise<Record<string, unknown>> {
     } catch (e) {
       console.error(`[weekly-learning] ${state}: ステート処理失敗`, e);
     }
-  }
-
-  if (processedIds.length > 0) {
-    const now = new Date().toISOString();
-    await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).in("id", processedIds);
   }
 
   return {

@@ -98,7 +98,7 @@
     },
     {
       "path": "/api/corpus2skill",
-      "schedule": "20 20 * * 6"
+      "schedule": "0 6 * * 1"
     },
     {
       "path": "/api/cron/weekly-learning?chunk=1",
