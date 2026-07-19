@@ -192,8 +192,8 @@ async function runChunk1(chunk: number): Promise<Record<string, unknown>> {
     .eq("was_ai_modified", true)
     .gte("created_at", sevenDaysAgo)
     .not("sent_reply", "is", null)
-    // AIX生成文（viewing_invite, application_push等）を除外しLINE返信AI由来のみ対象にする
-    .in("conversation_state", ["first_reply", "hearing", "proposing", "greeting_viewing"])
+    // AIX生成文を除外しLINE返信AI由来のみ対象にする（entry_source で明示的に区分）
+    .eq("entry_source", "line_reply")
     .order("is_starred", { ascending: false })
     .order("created_at", { ascending: true })
     .range(offset, offset + CHUNK_SIZE - 1);

@@ -573,7 +573,7 @@ async function discoverBlindSpots(): Promise<{ questionsSaved: number }> {
     .eq("was_ai_modified", true)
     .not("ai_draft", "is", null)
     .not("sent_reply", "is", null)
-    .in("conversation_state", ["first_reply", "hearing", "proposing", "greeting_viewing"])
+    .eq("entry_source", "line_reply")
     .gte("created_at", thirtyDaysAgo)
     .order("created_at", { ascending: false })
     .limit(12);
@@ -889,8 +889,8 @@ export async function POST(req: NextRequest) {
       .select("id, conversation_id, created_at, sent_reply, ai_draft, conversation_state, customer_message, was_ai_modified")
       .gte("created_at", since)
       .not("sent_reply", "is", null)
-      // AIX生成文（viewing_invite, application_push等）を除外しLINE返信AI由来のみ対象にする
-      .in("conversation_state", ["first_reply", "hearing", "proposing", "greeting_viewing"])
+      // AIX生成文を除外しLINE返信AI由来のみ対象にする（entry_source で明示的に区分）
+      .eq("entry_source", "line_reply")
       .order("created_at", { ascending: false })
       .limit(200),
     analyzeAixMismatch().catch((e) => {

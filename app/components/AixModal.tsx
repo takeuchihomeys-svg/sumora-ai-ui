@@ -1837,6 +1837,7 @@ export default function AixModal({
       // AIXからの送信は AIX固有のstate名（property_recommendation / condition_hearing 等）のまま保存する
       // （save-reply-example の STATE_NORMALIZE による proposing / hearing への変換をスキップ）
       skipNormalize: true,
+      entry_source: "aix_action",
       // 各ピッカー: コンポーネント別AI生成結果（差分学習ループ用・全アクション共通）
       ...(aiActionComponents ? { aiComponents: aiActionComponents } : {}),
       // CRIT-02修正: テンプレートモーダル経由で開いた場合はtemplate_idを付与（テンプレート成果学習ループ用）

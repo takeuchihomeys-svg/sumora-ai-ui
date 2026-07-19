@@ -823,6 +823,7 @@ export async function POST(req: NextRequest) {
     isAutoStar?: boolean; // バッチ経由（auto-star-winners等）→ LLM分析チェーンを抑止
     aiComponents?: Record<string, string> | null; // 物件ピックアップした コンポーネント別生成結果
     template_id?: string | null; // 使ったテンプレートのID（テンプレート成果学習ループ用）
+    entry_source?: string; // 'line_reply'（LINE返信AI由来）| 'aix_action'（AIX生成文由来）
   };
   let body: PostBody;
   try {
@@ -842,6 +843,7 @@ export async function POST(req: NextRequest) {
     skipNormalize,
     isAutoStar,
     aiComponents,
+    entry_source,
   } = body;
   const templateId = typeof body.template_id === "string" ? body.template_id : null;
   let replyAngle = typeof body.replyAngle === "string" ? body.replyAngle : null;
@@ -1107,6 +1109,7 @@ export async function POST(req: NextRequest) {
         ai_components: aiComponentsObj || null,
         template_id: templateId || null,
         is_full_rewrite: isFullRewrite,
+        entry_source: typeof entry_source === "string" ? entry_source : "line_reply",
       })
       .select("id")
       .single(),

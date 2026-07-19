@@ -1586,6 +1586,16 @@ ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS contradiction_checked_at
 ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS dedup_checked_at TIMESTAMPTZ;
 ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
 
+-- ── ai_reply_examples: entry_source（AIX生成文とLINE返信案の分離）（2026-07-19）──
+-- 'line_reply': page.tsx/generate-reply からの LINE返信保存（差分学習・週次学習の対象）
+-- 'aix_action': AixModal からの AIX生成文保存（LINE返信学習から除外・AIXズレ分析のみ対象）
+ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS entry_source TEXT DEFAULT 'line_reply';
+-- 既存AIX由来レコードをバックフィル（conversation_state が LINE返信ステートでないものはAIX由来）
+UPDATE ai_reply_examples
+SET entry_source = 'aix_action'
+WHERE conversation_state NOT IN ('first_reply', 'hearing', 'proposing', 'greeting_viewing')
+  AND entry_source = 'line_reply';
+
 -- ── PostgREST スキーマキャッシュ再読込（必ず最後に実行する）──
 -- 新カラム追加後に PostgREST のスキーマキャッシュが古いままだと、
 -- 以降の INSERT/SELECT が「column does not exist」で全滅する
