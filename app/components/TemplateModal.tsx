@@ -1434,9 +1434,11 @@ export default function TemplateModal({
 
   // 回答を送信 → Sonnetが知識化（trigger_action_rules / ai_prompts に保存）
   // choice が指定された場合（矛盾系質問）: 自動でanswerテキストを生成し choice をbodyに含める
-  const submitFeedbackAnswer = useCallback(async (id: string, choice?: 'new' | 'old') => {
+  const submitFeedbackAnswer = useCallback(async (id: string, choice?: 'new' | 'old' | 'keep' | 'remove') => {
     const answer = choice === 'new' ? '① 新しいルールが正しい'
       : choice === 'old' ? '② 既存のルールが正しい'
+      : choice === 'keep' ? '✅ 正しい（維持）'
+      : choice === 'remove' ? '❌ 間違い（無効化）'
       : feedbackAnswers[id]?.trim();
     if (!answer) return;
     setSubmittingFeedback(id);
@@ -3261,6 +3263,8 @@ export default function TemplateModal({
                   const { cleanText, phase, importance, embeddedCategory, aiDraftExample, staffSentExample } = parseAiQuestion(item.question);
                   // 矛盾系質問の判定: questionに「どちら」「矛盾」「既存」「[old_knowledge_id:」が含まれる場合、選択ボタンUIに切り替える
                   const isContradiction = item.question.includes('どちら') || item.question.includes('矛盾') || item.question.includes('[old_knowledge_id:');
+                  // ルール再確認の判定: questionに「[feedback_rule_key:」が含まれる場合、維持/無効化ボタンUIに切り替える
+                  const isFeedbackRuleReconfirm = item.question.includes('[feedback_rule_key:');
                   return (
                 <div key={item.id} className="border border-orange-200 rounded-xl p-4 bg-orange-50">
                   {/* カテゴリバッジ・フェーズ・重要度・埋め込みカテゴリ */}
@@ -3323,7 +3327,25 @@ export default function TemplateModal({
 
                   {item.status === "pending" ? (
                     <>
-                      {isContradiction ? (
+                      {isFeedbackRuleReconfirm ? (
+                        /* ルール再確認質問: 維持 vs 無効化 ボタン */
+                        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                          <button
+                            onClick={() => submitFeedbackAnswer(item.id, 'keep')}
+                            disabled={submittingFeedback === item.id}
+                            style={{ flex: 1, padding: "8px 12px", background: "#22c55e", color: "white", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, opacity: submittingFeedback === item.id ? 0.5 : 1 }}
+                          >
+                            ✅ 正しい（維持）
+                          </button>
+                          <button
+                            onClick={() => submitFeedbackAnswer(item.id, 'remove')}
+                            disabled={submittingFeedback === item.id}
+                            style={{ flex: 1, padding: "8px 12px", background: "#ef4444", color: "white", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, opacity: submittingFeedback === item.id ? 0.5 : 1 }}
+                          >
+                            ❌ 間違い（無効化）
+                          </button>
+                        </div>
+                      ) : isContradiction ? (
                         /* 矛盾系質問: 選択ボタン（新ルール vs 既存ルール） */
                         <div className="flex flex-col gap-2 mt-1">
                           <button

@@ -132,7 +132,7 @@ JSON配列のみ返してください（説明・コードフェンス不要）:
 // POST: { id, answer, choice? } → user_answer保存 + Sonnetで知識化 + status="answered"に更新
 // choice: 'new' = 新ルール採用, 'old' = 既存ルール維持, undefined = 既存動作維持（安全側）
 export async function POST(req: NextRequest) {
-  const body = await req.json() as { id?: string; answer?: string; choice?: 'new' | 'old' };
+  const body = await req.json() as { id?: string; answer?: string; choice?: 'new' | 'old' | 'remove' | 'keep' };
   const id = body.id;
   const answer = body.answer?.trim();
   const choice = body.choice;
@@ -408,6 +408,33 @@ export async function POST(req: NextRequest) {
         { ok: false, error: "ナレッジ昇格処理に失敗しました。もう一度お試しください。" },
         { status: 500 }
       );
+    }
+  }
+
+  // ── Feedback Rule 再確認: [feedback_rule_key:FEEDBACK-xxx] への回答処理 ──
+  const feedbackRuleKeyMatch = (item.question as string).match(/\[feedback_rule_key:(FEEDBACK-[^\]]+)\]/);
+  const linkedFeedbackRuleKey = feedbackRuleKeyMatch?.[1] ?? null;
+
+  if (linkedFeedbackRuleKey) {
+    try {
+      if (choice === 'remove') {
+        // ❌ 間違い → is_active=false に無効化
+        const { error: deactivateErr } = await supabase
+          .from("ai_prompt_rules")
+          .update({ is_active: false, updated_at: new Date().toISOString() })
+          .eq("rule_key", linkedFeedbackRuleKey);
+        if (!deactivateErr) {
+          appliedRules.push(`[DEACTIVATE:${linkedFeedbackRuleKey}] 再確認で誤りと判定 → is_active=false`);
+          console.log(`[ai-feedback] ${linkedFeedbackRuleKey} を無効化しました`);
+        } else {
+          console.error("[ai-feedback] FEEDBACK-* deactivate 失敗:", deactivateErr.message);
+        }
+      } else {
+        // ✅ 正しい（choice='keep' または自由回答）→ 維持
+        appliedRules.push(`[CONFIRM:${linkedFeedbackRuleKey}] 再確認で正しいと確認 → 維持`);
+      }
+    } catch (e) {
+      console.error("[ai-feedback] feedback_rule_key 処理失敗:", e);
     }
   }
 

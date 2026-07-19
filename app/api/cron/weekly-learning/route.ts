@@ -753,6 +753,10 @@ async function runChunk3(): Promise<Record<string, unknown>> {
     }
   }
 
+  // Stage E: FEEDBACK-*ルール週次再確認質問を起票
+  const feedbackRuleQuestions = await runFeedbackRuleReconfirm();
+  questionsRaised += feedbackRuleQuestions;
+
   return {
     chunk: 3,
     autoRejected,
@@ -760,7 +764,8 @@ async function runChunk3(): Promise<Record<string, unknown>> {
     aiPromoted,
     aiRejected,
     questionsRaised,
-    message: `chunk3: 自動却下${autoRejected}件・自動昇格${autoPromoted}件・AI昇格${aiPromoted}件・AI却下${aiRejected}件`,
+    feedbackRuleQuestions,
+    message: `chunk3: 自動却下${autoRejected}件・自動昇格${autoPromoted}件・AI昇格${aiPromoted}件・AI却下${aiRejected}件・FBルール再確認${feedbackRuleQuestions}件`,
   };
 }
 
@@ -903,6 +908,70 @@ JSON形式のみ返答：
     questionsRaised,
     message: `chunk4: 重複却下${dedupRejected}件・週次質問${questionsRaised}件起票`,
   };
+}
+
+// ── FEEDBACK-*ルール 週次再確認 ────────────────────────────────────────────────
+// ai_prompt_rules に登録されている FEEDBACK-* ルールを定期的に人間に再確認させる。
+// 登録から14日以上経過したアクティブルールのうち、まだ pending/answered/applied の
+// 再確認質問がないものを対象に ai_feedback_items へ起票する（1回最大10件）。
+
+async function runFeedbackRuleReconfirm(): Promise<number> {
+  let questionsRaised = 0;
+  try {
+    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: rules, error } = await supabase
+      .from("ai_prompt_rules")
+      .select("id, rule_key, rule_text, action_type, created_at")
+      .like("rule_key", "FEEDBACK-%")
+      .eq("is_active", true)
+      .lt("created_at", fourteenDaysAgo)
+      .order("created_at", { ascending: true })
+      .limit(10);
+
+    if (error) {
+      console.error("[weekly-learning] FEEDBACK-*ルール取得失敗:", error.message);
+      return 0;
+    }
+
+    for (const rule of rules ?? []) {
+      try {
+        // 既に pending/answered/applied の再確認質問があればスキップ
+        const { count } = await supabase
+          .from("ai_feedback_items")
+          .select("id", { count: "exact", head: true })
+          .like("question", `%[feedback_rule_key:${rule.rule_key}]%`)
+          .in("status", ["pending", "answered", "applied"]);
+
+        if ((count ?? 0) > 0) continue;
+
+        const daysSinceCreated = Math.floor(
+          (Date.now() - new Date(rule.created_at ?? "").getTime()) / (1000 * 60 * 60 * 24)
+        );
+
+        const question =
+          `[feedback_rule_key:${rule.rule_key}] ❓【確認】このルールはまだ正しいですか？\n\n` +
+          `■ 使われそうな場面\nAIが返信を生成する際にこのルールが「最優先ルール」として注入されています。\n\n` +
+          `■ ルール内容\n${rule.rule_text}\n\n` +
+          `■ 登録日\n${(rule.created_at ?? "").slice(0, 10)}\n\n` +
+          `❓ このルールの内容は今も正しいですか？\n` +
+          `「✅ 正しい（維持）」→ そのまま使い続けます\n` +
+          `「❌ 間違い（無効化）」→ このルールを無効化します`;
+
+        const raised = await insertAiQuestion({
+          question,
+          category: "prompt_ambiguity",
+          confidence: "medium",
+          evidence: `FEEDBACK-*ルールの定期再確認（登録から${daysSinceCreated}日経過）`,
+        });
+        if (raised) questionsRaised++;
+      } catch (e) {
+        console.error(`[weekly-learning] FEEDBACK-*再確認質問起票失敗 (${rule.rule_key}):`, e);
+      }
+    }
+  } catch (e) {
+    console.error("[weekly-learning] runFeedbackRuleReconfirm 失敗:", e);
+  }
+  return questionsRaised;
 }
 
 // ── POST ─────────────────────────────────────────────────────────────────────
