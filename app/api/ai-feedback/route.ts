@@ -279,16 +279,21 @@ export async function POST(req: NextRequest) {
 
         if (choice === 'old') {
           // ── 既存ルールが正しい: 新 hypothesis を rejected に ──
-          const { error: oldChoiceErr } = await supabase
+          const { data: oldChoiceData, error: oldChoiceErr } = await supabase
             .from("ai_reply_knowledge")
             .update({
               hypothesis_status: "rejected",
               rejection_reason: "ai_feedback: existing confirmed rule is correct",
             })
             .eq("id", linkedKnowledgeId)
-            .eq("hypothesis_status", "hypothesis"); // safety guard: confirmed には触らない
+            .in("hypothesis_status", ["hypothesis", "confirmed"]) // auto_judge等で先にconfirmed化されていてもrejectできるように
+            .select("id");
           if (!oldChoiceErr) {
-            appliedRules.push(`[REJECT-${linkedKnowledgeId}] hypothesis rejected (old confirmed rule is correct)`);
+            if (!oldChoiceData || oldChoiceData.length === 0) {
+              console.warn(`[ai-feedback] choice=old: reject更新0件（${linkedKnowledgeId} は既にrejected済み等の可能性）`);
+            } else {
+              appliedRules.push(`[REJECT-${linkedKnowledgeId}] hypothesis rejected (old confirmed rule is correct)`);
+            }
           } else {
             console.error("[ai-feedback] choice=old: hypothesis rejected update 失敗:", oldChoiceErr.message);
           }
@@ -333,18 +338,27 @@ export async function POST(req: NextRequest) {
             throw new Error(`[ai-feedback] confirmed昇格失敗: ${upgradeError.message}`);
           }
 
-          // 2. choice === 'new' かつ oldKnowledgeId がある場合 → 旧 confirmed を rejected に
-          if (choice === 'new' && oldKnowledgeId) {
+          // 2. oldKnowledgeId がある場合 → 旧ルールを rejected に
+          //    choice === 'new': 明示的な置き換え
+          //    choice === undefined（自由記述回答）: 新仮説がconfirmed化されるため、
+          //    旧confirmedも暗黙的にrejectして「矛盾するconfirmed 2件の共存」を防ぐ
+          if (oldKnowledgeId) {
+            const isImplicit = choice !== 'new';
+            if (isImplicit) {
+              console.warn(`[ai-feedback] choice未指定（自由記述回答）: 旧ナレッジ ${oldKnowledgeId} を暗黙的にrejectします`);
+            }
             const { error: oldRejectErr } = await supabase
               .from("ai_reply_knowledge")
               .update({
                 hypothesis_status: "rejected",
-                rejection_reason: "ai_feedback: replaced by newer rule",
+                rejection_reason: isImplicit
+                  ? "implicit_new: replaced by free-form answer"
+                  : "ai_feedback: replaced by newer rule",
               })
               .eq("id", oldKnowledgeId)
-              .eq("hypothesis_status", "confirmed"); // confirmed のみ対象（安全ガード）
+              .in("hypothesis_status", ["hypothesis", "confirmed"]); // confirmed昇格前後どちらでもrejectできるように
             if (!oldRejectErr) {
-              appliedRules.push(`[REJECT-${oldKnowledgeId}] old confirmed rule rejected (replaced by new)`);
+              appliedRules.push(`[REJECT-${oldKnowledgeId}] old rule rejected (${isImplicit ? "implicit_new" : "replaced by new"})`);
             } else {
               console.error("[ai-feedback] oldKnowledgeId rejected update 失敗:", oldRejectErr.message);
             }
@@ -356,6 +370,16 @@ export async function POST(req: NextRequest) {
           await supabase.from("ai_prompt_rules")
             .update({ is_active: false })
             .eq("rule_key", `HUMAN-${linkedKnowledgeId}-old`);
+          // 旧ナレッジ（oldKnowledgeId）に紐づく過去セッションのHUMAN-*/FEEDBACK-*ルールも無効化
+          // （旧confirmedをrejectしても派生ルールがactiveのまま矛盾注入され続けるのを防ぐ）
+          if (oldKnowledgeId) {
+            await supabase.from("ai_prompt_rules")
+              .update({ is_active: false })
+              .like("rule_key", `HUMAN-${oldKnowledgeId}%`);
+            await supabase.from("ai_prompt_rules")
+              .update({ is_active: false })
+              .like("rule_key", `FEEDBACK-${oldKnowledgeId}%`);
+          }
           const humanRuleText = promptRuleTexts.length > 0
             ? promptRuleTexts[0].text.slice(0, 500)
             : answer.slice(0, 500);

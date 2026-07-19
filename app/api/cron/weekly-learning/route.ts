@@ -305,7 +305,9 @@ async function checkContradictions(
   hypothesisBatch: HypothesisRule[],
   confirmedRules: ExistingRule[],
 ): Promise<ContradictionResult> {
-  const empty: ContradictionResult = { contradicts: [], redundant_to_confirmed: [], independent: hypothesisBatch.map(r => r.id) };
+  // 失敗時（JSON抽出不可/パースエラー）は independent を空にして contradiction_checked_at を打たない
+  // → 未チェックのまま残り、翌週の実行で再チェックされる
+  const empty: ContradictionResult = { contradicts: [], redundant_to_confirmed: [], independent: [] };
 
   const confirmedText = confirmedRules.length > 0
     ? confirmedRules.map(r => `[ID:${r.id}] ${r.title}\n  内容: ${r.content}`).join("\n\n")
@@ -354,6 +356,102 @@ JSON形式のみ返答：
   }
 }
 
+// ── chunk=2 追加: confirmed × confirmed 矛盾スキャン ─────────────────────────
+// 2つのconfirmed同士が矛盾したまま永久に共存するのを防ぐ。
+// stateグループごとに1回のLLM呼び出しで矛盾ペアを1組検出し、AI質問を起票する（自動rejectはしない）。
+
+type ConfirmedRow = { id: string; title: string; content: string; conversation_state: string | null };
+
+async function findConfirmedContradictionPair(
+  state: string,
+  rules: ConfirmedRow[],
+): Promise<{ a: ConfirmedRow; b: ConfirmedRow; reason: string } | null> {
+  const rulesText = rules.map(r => `[ID:${r.id}] ${r.title}\n  内容: ${r.content}`).join("\n\n");
+
+  const prompt = `あなたはLINE不動産返信AIのルールベース品質チェッカーです。
+
+以下は【${state}】フェーズの確定済み（confirmed）ルール一覧です。
+互いに「逆のことを言っている」明確な矛盾ペアが1組でもあれば、その2つのIDと理由を返してください。
+表現の違い・補完関係は矛盾に含めません。矛盾がなければ pair は null にしてください。
+
+${rulesText}
+
+JSON形式のみ返答：
+{"pair": {"id_a": "ID", "id_b": "ID", "reason": "矛盾の説明（80字以内）"}}
+矛盾なしの場合: {"pair": null}`;
+
+  try {
+    const res = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 500,
+      system: "ルールベース品質チェッカーです。指定されたJSON形式のみ返してください。",
+      messages: [{ role: "user", content: prompt }],
+    });
+    const text = res.content[0].type === "text" ? res.content[0].text.trim() : "";
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    const parsed = JSON.parse(jsonMatch[0]) as { pair?: { id_a?: string; id_b?: string; reason?: string } | null };
+    if (!parsed.pair?.id_a || !parsed.pair?.id_b) return null;
+    const a = rules.find(r => r.id === parsed.pair!.id_a);
+    const b = rules.find(r => r.id === parsed.pair!.id_b);
+    if (!a || !b || a.id === b.id) return null;
+    return { a, b, reason: (parsed.pair.reason ?? "").slice(0, 100) };
+  } catch (e) {
+    console.error("[weekly-learning] chunk=2: confirmed×confirmed矛盾チェック失敗", e);
+    return null;
+  }
+}
+
+async function runConfirmedVsConfirmedScan(): Promise<number> {
+  let questionsRaised = 0;
+  try {
+    const { data: confirmedRaw } = await supabase
+      .from("ai_reply_knowledge")
+      .select("id, title, content, conversation_state")
+      .eq("hypothesis_status", "confirmed")
+      .gte("importance", 6)
+      .order("importance", { ascending: false })
+      .limit(80);
+
+    const confirmedAll = (confirmedRaw ?? []) as ConfirmedRow[];
+    const groups = new Map<string, ConfirmedRow[]>();
+    for (const r of confirmedAll) {
+      const state = r.conversation_state ?? "unknown";
+      if (!groups.has(state)) groups.set(state, []);
+      groups.get(state)!.push(r);
+    }
+
+    for (const [state, rules] of groups.entries()) {
+      if (rules.length < 3) continue; // 3件未満のstateはスキップ（コスト削減）
+
+      // dedup: 同じstateのconfirmed矛盾質問が既にあれば再起票しない
+      const dedupKey = `[confirmed-vs-confirmed] ${state}`;
+      const { data: existingQ } = await supabase
+        .from("ai_feedback_items")
+        .select("id")
+        .ilike("question", `%${dedupKey}%`)
+        .in("status", ["pending", "answered", "applied"])
+        .limit(1);
+      if (existingQ && existingQ.length > 0) continue;
+
+      const pair = await findConfirmedContradictionPair(state, rules);
+      if (!pair) continue;
+
+      const raised = await insertAiQuestion({
+        question: `[knowledge_id:${pair.a.id}] [old_knowledge_id:${pair.b.id}] ${dedupKey} 確定済みルール同士が矛盾しています。どちらが正しいですか？\nA: ${pair.a.title} — ${pair.a.content.slice(0, 150)}\nB: ${pair.b.title} — ${pair.b.content.slice(0, 150)}\n（「新ルール採用」=Aを維持しBをreject／「既存ルール維持」=Bを維持しAをreject）`,
+        category: "knowledge_gap",
+        confidence: "medium",
+        evidence: `confirmed同士の矛盾検出（weekly chunk2）: ${pair.reason}`.slice(0, 500),
+        speculation: `state=${state} のconfirmed ${rules.length}件をスキャンして検出`,
+      });
+      if (raised) questionsRaised++;
+    }
+  } catch (e) {
+    console.error("[weekly-learning] chunk=2: confirmed×confirmedスキャン失敗", e);
+  }
+  return questionsRaised;
+}
+
 async function runChunk2(): Promise<Record<string, unknown>> {
   // contradiction_checked_at IS NULL な hypothesis を取得（importance降順）
   const { data: rawHypothesis } = await supabase
@@ -367,7 +465,9 @@ async function runChunk2(): Promise<Record<string, unknown>> {
   const allHypothesis = (rawHypothesis ?? []) as HypothesisRule[];
 
   if (allHypothesis.length === 0) {
-    return { chunk: 2, processed: 0, rejected: 0, message: "chunk2: 矛盾チェック対象なし" };
+    // hypothesis がなくても confirmed 同士の矛盾スキャンは実行する
+    const confirmedPairQuestions = await runConfirmedVsConfirmedScan();
+    return { chunk: 2, processed: 0, rejected: 0, confirmedPairQuestions, message: `chunk2: 矛盾チェック対象なし・confirmed矛盾質問${confirmedPairQuestions}件起票` };
   }
 
   // conversation_state でグルーピング
@@ -430,11 +530,15 @@ async function runChunk2(): Promise<Record<string, unknown>> {
     totalProcessed += hyps.length;
   }
 
+  // confirmed × confirmed 矛盾スキャン（stateごとに1回のLLM呼び出し）
+  const confirmedPairQuestions = await runConfirmedVsConfirmedScan();
+
   return {
     chunk: 2,
     processed: totalProcessed,
     rejected: totalRejected,
-    message: `chunk2: ${totalProcessed}件チェック・${totalRejected}件rejected（矛盾/冗長）`,
+    confirmedPairQuestions,
+    message: `chunk2: ${totalProcessed}件チェック・${totalRejected}件rejected（矛盾/冗長）・confirmed矛盾質問${confirmedPairQuestions}件起票`,
   };
 }
 
