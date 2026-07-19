@@ -10,10 +10,10 @@ function getDb() {
   );
 }
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 
-const PER_CONV_TIMEOUT_MS = 30_000;
-const TIME_BUDGET_MS = 50_000;
+const PER_CONV_TIMEOUT_MS = 45_000;
+const TIME_BUDGET_MS = 100_000;
 
 const SKIP_STATUSES = new Set(["applying", "screening", "contract", "closed_won", "closed_lost"]);
 
@@ -200,7 +200,7 @@ async function run() {
     try {
       const [{ data: msgs }, { data: pc }] = await Promise.all([
         db.from("messages").select("sender, text, image_url, created_at, is_aix_generated").eq("conversation_id", convId)
-          .order("created_at", { ascending: false }).limit(15),
+          .order("created_at", { ascending: false }).limit(20),
         pcId
           ? db.from("property_customers")
             .select("customer_name, desired_area, floor_plan, rent_min, rent_max, ai_summary, preferences, ng_points, walk_minutes, move_in_time, building_age, other_requests, additional_conditions")
