@@ -727,9 +727,6 @@ function buildGenerationMessages(
 ${closingNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${approachNote}${staffContextNote}
-
-【直近の会話履歴（スモラ自身の返信も含む）】
-${history || "なし"}
 ${quickPatterns}
 ${smoraRulesNote}
 ${realEstateNote}
@@ -740,6 +737,9 @@ ${knowledgeNote}
 ${phrases}
 
 ${QUOTE_REPLY_JUDGE_NOTE}${quotedContextNote}
+【直近の会話履歴（スモラ自身の返信も含む）】この履歴を必ず参照すること。履歴内でお客様が既に答えた質問を再度聞かない。スモラが既に伝えた情報と矛盾しない。
+${history || "なし"}
+
 ${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}
 ${customerMessage}${applicationFormNote}${viewingFactNote}${linkRequestNote}
 
@@ -1142,7 +1142,7 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
           return scoreB - scoreA;
         }).slice(0, 8);
 
-        return "\n\n【⭐ スモラの実際の返信例（状況が最も類似した実例・類似度順）— 文体・言い回し・感嘆符・絵文字・長さをこの例から忠実に再現すること。これが最優先の文体基準。ラベル: 王道=標準スモラスタイル / シンプル=短く簡潔 / C案=別角度アプローチ】\n" +
+        return "\n\n【⭐ スモラの実際の返信例（状況が最も類似した実例・類似度順）— 文体・言い回し・感嘆符・絵文字・長さをこの例から忠実に再現すること。文体の参考（会話内容・文脈は当該顧客の履歴を最優先）。ラベル: 王道=標準スモラスタイル / シンプル=短く簡潔 / C案=別角度アプローチ】\n" +
           sorted.map((ex, i) => {
             const angleTag = ex.reply_angle && ex.reply_angle !== "starred" ? `|${ANGLE_LABEL[ex.reply_angle] ?? ex.reply_angle}` : "";
             return `[例${i + 1}${ex.is_starred ? "⭐" : ""}${angleTag}]\nお客様: 「${ex.customer_message}」\nスモラ: 「${ex.sent_reply}」`;
@@ -1186,7 +1186,7 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
 
   if (all.length === 0) return "";
 
-  return "\n\n【⭐ スモラの実際の返信例（☆をつけた良質な実例）— 文体・言い回し・感嘆符・絵文字・長さをこの例から忠実に再現すること。これが最優先の文体基準。ラベル: 王道=標準スモラスタイル / シンプル=短く簡潔 / C案=別角度アプローチ】\n" +
+  return "\n\n【⭐ スモラの実際の返信例（☆をつけた良質な実例）— 文体・言い回し・感嘆符・絵文字・長さをこの例から忠実に再現すること。文体の参考（会話内容・文脈は当該顧客の履歴を最優先）。ラベル: 王道=標準スモラスタイル / シンプル=短く簡潔 / C案=別角度アプローチ】\n" +
     all.map((ex, i) => {
       const ra = (ex as { reply_angle?: string | null }).reply_angle;
       const angleTag = ra && ra !== "starred" ? `|${ANGLE_LABEL[ra] ?? ra}` : "";
