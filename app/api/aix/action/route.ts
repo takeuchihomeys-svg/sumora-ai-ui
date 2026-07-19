@@ -1362,13 +1362,12 @@ ${calendarBlock}
 ・🙏 絵文字は絶対に使わない（スモラ禁止絵文字）
 ・お客様のメッセージを読まずにテンプレを出力する
 ・複数の案内可能日があるのに1日だけ案内する
-・冒頭に「〇〇さんお世話になっております」「お待たせ致しました」等の挨拶を付けない（内覧案内は挨拶なしで本文から直接始める）
 
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
         const rawVI = await callClaude(
-          convMatchVISystem + viewingConvMatchDiffNote + viewingConvMatchStarNote,
+          convMatchVISystem + greetingTimeNote + viewingConvMatchDiffNote + viewingConvMatchStarNote,
           `${recentHistory}\n\n上記の会話を深く読み取り、${name}への内覧案内返信を生成してください。`,
           currentAction
         );
