@@ -194,7 +194,7 @@ async function run() {
 
     try {
       const [{ data: msgs }, { data: pc }] = await Promise.all([
-        db.from("messages").select("sender, text").eq("conversation_id", convId)
+        db.from("messages").select("sender, text, image_url, created_at, is_aix_generated").eq("conversation_id", convId)
           .order("created_at", { ascending: false }).limit(25),
         pcId
           ? db.from("property_customers")
@@ -203,17 +203,24 @@ async function run() {
           : Promise.resolve({ data: null }),
       ]);
 
-      const recentMsgs = ((msgs || []) as Array<{ sender: string; text: string }>).reverse();
+      type Msg = { sender: string; text: string | null; image_url: string | null; created_at: string; is_aix_generated: boolean | null };
+      // 画像のみメッセージ（image_urlあり・textなし）は "[画像]" プレースホルダとして文脈に残す
+      const recentMsgs = ((msgs || []) as Msg[]).reverse().map(m => ({
+        ...m,
+        text: m.text || (m.image_url ? "[画像]" : ""),
+      }));
 
       // スタッフの最後のメッセージ以降の未読を全てまとめる（最大5通）
       const lastStaffIdx = recentMsgs.map((m, i) => m.sender === "staff" ? i : -1).filter(i => i >= 0).at(-1);
       const msgsAfterStaff = lastStaffIdx !== undefined ? recentMsgs.slice(lastStaffIdx + 1) : recentMsgs;
       const unreplied = msgsAfterStaff
-        .filter(m => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
+        .filter(m => m.sender === "customer" && m.text)
         .slice(-5);
 
       const targetMessage = unreplied.map(m => m.text).join("\n");
-      if (!targetMessage.trim()) { skipped++; continue; }
+      // 未読が画像/動画プレースホルダのみなら生成スキップ（文脈自体はrecentMessagesで保持される）
+      const hasRealText = unreplied.some(m => m.text !== "[画像]" && m.text !== "[動画]");
+      if (!targetMessage.trim() || !hasRealText) { skipped++; continue; }
 
       type PC = { customer_name?: string; desired_area?: string; floor_plan?: string; rent_min?: number; rent_max?: number; ai_summary?: string; preferences?: string; ng_points?: string; walk_minutes?: number; move_in_time?: string; building_age?: number; other_requests?: string; additional_conditions?: string } | null;
       const pcData = pc as PC;
@@ -242,7 +249,7 @@ async function run() {
           message: targetMessage,
           state: effectiveState,
           customerName: pcData?.customer_name || "",
-          recentMessages: recentMsgs.map(m => ({ sender: m.sender, text: m.text || "" })),
+          recentMessages: recentMsgs.map(m => ({ sender: m.sender, text: m.text || "", imageUrl: m.image_url || null, createdAt: m.created_at, isAix: m.is_aix_generated ?? false })),
           customerConditions,
           customerSummary: pcData?.ai_summary || "",
           // RLHF断絶修正: conversationId を渡して generate-reply 側の logKnowledgeApply を発火させる
