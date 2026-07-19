@@ -1367,6 +1367,12 @@ export async function POST(req: NextRequest) {
   // 空メッセージは Vision 呼び出しより前に弾く（無駄な API 課金・待ち時間の防止）
   if (!message) return NextResponse.json({ ok: false, error: "message required" }, { status: 400 });
 
+  // 孤立サロゲート（LINE絵文字等）をU+FFFDに置換してAnthropicへのHTTP 400を防止
+  const _sanitizeSurrogates = (s: string) =>
+    s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "�");
+  message = _sanitizeSurrogates(message);
+  recentMessages = recentMessages.map(m => ({ ...m, text: _sanitizeSurrogates(m.text) }));
+
   // スクショがある場合: Sonnet Vision でトーク内容を抽出して replyHint に注入
   if (screenshotBase64) {
     try {

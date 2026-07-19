@@ -37,6 +37,11 @@ const STATUS_ALIAS: Record<string, string> = {
 const MARKER_RETENTION_MS = 24 * 60 * 60 * 1000; // 記録の保持期限（メモリ肥大防止のみが目的）
 const attemptedMarkers = new Map<string, { markerMs: number; recordedAt: number }>(); // convId -> 生成試行済みメッセージマーカー
 
+// 孤立サロゲート（LINE絵文字等）をU+FFFDに置換してAnthropicへのHTTP 400を防止
+function sanitizeSurrogates(s: string): string {
+  return s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "�");
+}
+
 function pruneAttemptedMarkers() {
   const cutoff = Date.now() - MARKER_RETENTION_MS;
   for (const [id, rec] of attemptedMarkers) {
@@ -68,7 +73,7 @@ async function run() {
   // 10分以上前のpendingは対象外（処理失敗した会話が毎分再処理され続けるのを防ぐ上限）
   const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
 
-  const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
   // ① 60秒以上前〜10分以内にpendingになった会話（デバウンス経過・古すぎるものは除外）
   const { data: pendingConvs, error } = await db
@@ -90,7 +95,7 @@ async function run() {
     // DB側リトライ制御: 10分以内に生成試行済み（draft_attempted_at）ならスキップ
     // （インメモリMapはVercelサーバーレスでインスタンス間共有されないため、DBフラグが本命の防波堤）
     .or("draft_attempted_at.is.null,draft_attempted_at.lt." + tenMinutesAgo)
-    .gte("updated_at", yesterday)
+    .gte("updated_at", sevenDaysAgo)
     .neq("status", "applying")
     .neq("status", "screening")
     .neq("status", "contract")
@@ -101,7 +106,7 @@ async function run() {
   if (orphanedError) {
     console.error("[generate-pending-drafts] orphaned query error:", orphanedError);
   }
-  console.log("[generate-pending-drafts] pending:", pendingConvs?.length ?? 0, "orphaned:", orphanedConvs?.length ?? 0, "yesterday:", yesterday);
+  console.log("[generate-pending-drafts] pending:", pendingConvs?.length ?? 0, "orphaned:", orphanedConvs?.length ?? 0, "sevenDaysAgo:", sevenDaysAgo);
 
   // 重複除外してまとめる ＋ メッセージ基準スキップ: 最新の顧客メッセージ（マーカー）に対して生成試行済みならスキップ。
   // 記録より新しいマーカー（＝生成後に届いた新メッセージ）なら経過時間に関係なく即座に処理対象になる。
@@ -132,7 +137,7 @@ async function run() {
   if (combined.length === 0) {
     // M-4: 早期returnでも finishCronLog を必ず呼ぶ（「開始したのに終了なし」の宙ぶらりんログ防止）
     if (runLogId) await finishCronLog(runLogId, true, { processed: 0 }).catch(() => null);
-    return NextResponse.json({ ok: true, processed: 0, debug: { pending: pendingConvs?.length ?? 0, orphaned: orphanedConvs?.length ?? 0, orphanedError: orphanedError?.message ?? null, yesterday } });
+    return NextResponse.json({ ok: true, processed: 0, debug: { pending: pendingConvs?.length ?? 0, orphaned: orphanedConvs?.length ?? 0, orphanedError: orphanedError?.message ?? null, sevenDaysAgo } });
   }
 
   const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
@@ -195,7 +200,7 @@ async function run() {
     try {
       const [{ data: msgs }, { data: pc }] = await Promise.all([
         db.from("messages").select("sender, text, image_url, created_at, is_aix_generated").eq("conversation_id", convId)
-          .order("created_at", { ascending: false }).limit(25),
+          .order("created_at", { ascending: false }).limit(15),
         pcId
           ? db.from("property_customers")
             .select("customer_name, desired_area, floor_plan, rent_min, rent_max, ai_summary, preferences, ng_points, walk_minutes, move_in_time, building_age, other_requests, additional_conditions")
@@ -207,7 +212,7 @@ async function run() {
       // 画像のみメッセージ（image_urlあり・textなし）は "[画像]" プレースホルダとして文脈に残す
       const recentMsgs = ((msgs || []) as Msg[]).reverse().map(m => ({
         ...m,
-        text: m.text || (m.image_url ? "[画像]" : ""),
+        text: sanitizeSurrogates(m.text || (m.image_url ? "[画像]" : "")),
       }));
 
       // スタッフの最後のメッセージ以降の未読を全てまとめる（最大5通）
@@ -217,7 +222,7 @@ async function run() {
         .filter(m => m.sender === "customer" && m.text)
         .slice(-5);
 
-      const targetMessage = unreplied.map(m => m.text).join("\n");
+      const targetMessage = sanitizeSurrogates(unreplied.map(m => m.text).join("\n"));
       // 未読が画像/動画プレースホルダのみなら生成スキップ（文脈自体はrecentMessagesで保持される）
       const hasRealText = unreplied.some(m => m.text !== "[画像]" && m.text !== "[動画]");
       if (!targetMessage.trim() || !hasRealText) { skipped++; continue; }
@@ -249,7 +254,7 @@ async function run() {
           message: targetMessage,
           state: effectiveState,
           customerName: pcData?.customer_name || "",
-          recentMessages: recentMsgs.map(m => ({ sender: m.sender, text: m.text || "", imageUrl: m.image_url || null, createdAt: m.created_at, isAix: m.is_aix_generated ?? false })),
+          recentMessages: recentMsgs.map(m => ({ sender: m.sender, text: m.text || "", imageUrl: m.image_url ?? undefined, createdAt: m.created_at, isAix: m.is_aix_generated ?? false })),
           customerConditions,
           customerSummary: pcData?.ai_summary || "",
           // RLHF断絶修正: conversationId を渡して generate-reply 側の logKnowledgeApply を発火させる
