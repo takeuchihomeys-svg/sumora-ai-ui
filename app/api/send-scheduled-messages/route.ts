@@ -101,6 +101,8 @@ export async function GET(req: NextRequest) {
       }
 
       // messages テーブルに記録
+      // AIXフラグ引き継ぎ: scheduled_messages.is_aix → messages.is_aix_generated（nullの場合も明示的に false）
+      const isAixGenerated: boolean = (msg.is_aix as boolean | null | undefined) ?? false;
       if (imageUrls.length > 0) {
         const imageUrlData = imageUrls.length === 1 ? imageUrls[0] : JSON.stringify(imageUrls);
         const { error: imgInsertErr } = await supabase.from("messages").insert({
@@ -109,6 +111,7 @@ export async function GET(req: NextRequest) {
           text: "[画像]",
           image_url: imageUrlData,
           created_at: sentAt.toISOString(),
+          is_aix_generated: isAixGenerated,
         });
         if (imgInsertErr) {
           console.error("[send-scheduled] 画像message記録失敗（LINE送信は成功）:", imgInsertErr.message, "id:", msg.id);
@@ -121,6 +124,7 @@ export async function GET(req: NextRequest) {
           sender: "staff",
           text,
           created_at: textAt.toISOString(),
+          is_aix_generated: isAixGenerated,
         });
         if (textInsertErr) {
           console.error("[send-scheduled] message記録失敗（LINE送信は成功）:", textInsertErr.message, "id:", msg.id);

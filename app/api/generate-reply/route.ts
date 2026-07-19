@@ -1449,6 +1449,16 @@ export async function POST(req: NextRequest) {
         const who = m.sender === "customer" ? "お客様" : "スモラ";
         const isImageMsg = m.text === "[画像]" || m.text === "[動画]" || (!m.text && !!m.imageUrl);
 
+        // AIX（AI提案）由来のスタッフメッセージは明示ラベル付け
+        // ※行頭は「スモラ:」のまま維持（isFollowUp判定・過去返信抽出・挨拶判定の正規表現が「スモラ:」依存）
+        if (m.sender === "staff" && m.isAix) {
+          // AIXで物件を送る時は必ず画像もセット → isAix+画像のみ = AIX物件提案の資料
+          if (isImageMsg) return `${who}: 【AIX物件提案の資料画像を送付した】`;
+          if (m.text && m.imageUrl) return `${who}: (AI提案)【AIX物件提案の資料を送付しながら】「${m.text}」`;
+          if (m.text) return `${who}: (AI提案)「${m.text}」`;
+          return null;
+        }
+
         if (isImageMsg) {
           if (m.sender === "customer") return `${who}: 【画像を送ってきた】`;
           // スタッフの画像: 前後5件のテキストで文脈を判定（見積書はお客様の礼金反応からも判定可能）

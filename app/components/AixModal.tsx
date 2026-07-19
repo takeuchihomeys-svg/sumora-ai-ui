@@ -1942,6 +1942,7 @@ export default function AixModal({
         text: textToSend || null,
         image_urls: imageUrls,
         scheduled_at: scheduledAt,
+        is_aix: true,
       });
       if (insertErr) throw insertErr;
 
