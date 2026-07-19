@@ -3228,7 +3228,7 @@ export default function AixModal({
                         <button
                           key={mode}
                           onClick={() => {
-                            const roomSuffix = moveInRoomNo.trim() ? `(${moveInRoomNo.trim()})号室` : "";
+                            const roomSuffix = moveInRoomNo.trim() ? `${moveInRoomNo.trim()}号室` : "";
                             const base = `${moveInPropName.trim()}${roomSuffix}管理会社に確認しましたところ\n${moveInVacateDate.trim()}退去予定の為\n最短で${moveInMonth.trim()}${moveInPeriod}にご入居出来る予定となります！！`;
                             const append = mode === "申込誘導"
                               ? `\n${customerName}さん良ければ先にお申込みでお部屋を抑えてから内覧もできます！！😊良ければお申込みはいかがでしょうか！！`
