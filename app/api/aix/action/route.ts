@@ -1362,12 +1362,13 @@ ${calendarBlock}
 ・🙏 絵文字は絶対に使わない（スモラ禁止絵文字）
 ・お客様のメッセージを読まずにテンプレを出力する
 ・複数の案内可能日があるのに1日だけ案内する
+・冒頭に「〇〇さんお世話になっております」「お待たせ致しました」等の挨拶を付けない（内覧案内は挨拶なしで本文から直接始める）
 
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
         const rawVI = await callClaude(
-          convMatchVISystem + greetingTimeNote + viewingConvMatchDiffNote + viewingConvMatchStarNote,
+          convMatchVISystem + viewingConvMatchDiffNote + viewingConvMatchStarNote,
           `${recentHistory}\n\n上記の会話を深く読み取り、${name}への内覧案内返信を生成してください。`,
           currentAction
         );
@@ -2960,12 +2961,27 @@ ${jstTodayStr}
 ・どちらも不明な場合は両方空文字に
 ・JSONのみ返す（説明文・コメント不要）`;
 
+      // LLMが出力した曜日は信用せず、月/日から決定論的に曜日を再計算して上書きする
+      // （例: 2026/7/21（火）をLLMが「（月）」と誤答するバグの恒久対策）
+      const fixExtractedWeekday = (dateStr: string): string => {
+        const dm = dateStr.match(/(\d{1,2})\/(\d{1,2})/);
+        if (!dm) return dateStr;
+        const mo = parseInt(dm[1], 10);
+        const da = parseInt(dm[2], 10);
+        const nowJst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+        let yr = nowJst.getUTCFullYear();
+        const todayMid = Date.UTC(yr, nowJst.getUTCMonth(), nowJst.getUTCDate());
+        if (Date.UTC(yr, mo - 1, da) < todayMid - 180 * 24 * 3600 * 1000) yr += 1;
+        const wd = ["日", "月", "火", "水", "木", "金", "土"][new Date(Date.UTC(yr, mo - 1, da)).getUTCDay()];
+        return `${mo}/${da}（${wd}）`;
+      };
+
       try {
         const raw = await callClaudeHaiku(system, msgs, currentAction);
         const jsonMatch = raw.match(/\{[^}]+\}/);
         if (!jsonMatch) return NextResponse.json({ ok: true, date: "", time: "" });
         const parsed = JSON.parse(jsonMatch[0]) as { date?: string; time?: string };
-        return NextResponse.json({ ok: true, date: parsed.date || "", time: parsed.time || "" });
+        return NextResponse.json({ ok: true, date: parsed.date ? fixExtractedWeekday(parsed.date) : "", time: parsed.time || "" });
       } catch {
         return NextResponse.json({ ok: true, date: "", time: "" });
       }

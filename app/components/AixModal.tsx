@@ -67,6 +67,20 @@ function isVacating(propStatuses: string[], count: number): boolean {
   return propStatuses.slice(0, count).includes("vacating");
 }
 
+// 「7/21（月）」等の日付文字列の曜日を月/日から決定論的に再計算して正す
+// （AI抽出・手入力の曜日ズレ対策。90日以上過去に見える日付は翌年として補正）
+function fixDateWeekday(dateStr: string): string {
+  const m = dateStr.match(/(\d{1,2})[\/月](\d{1,2})/);
+  if (!m) return dateStr;
+  const month = parseInt(m[1], 10);
+  const day = parseInt(m[2], 10);
+  const now = new Date();
+  let year = now.getFullYear();
+  if (new Date(year, month - 1, day).getTime() < now.getTime() - 90 * 24 * 3600 * 1000) year += 1;
+  const wd = ["日", "月", "火", "水", "木", "金", "土"][new Date(year, month - 1, day).getDay()];
+  return dateStr.replace(/[（(][日月火水木金土][）)]/, `（${wd}）`);
+}
+
 // 待ち合わせ送信後にカレンダーイベントを作成（fire-and-forget）
 function createViewingCalendarEvent(params: {
   meetingDate: string;
@@ -1650,9 +1664,10 @@ export default function AixModal({
         if (!meetingPropertyName.trim()) throw new Error("物件名を入力してください（画像読み込みまたは手動入力）");
         const hasTime = !!meetingTime.trim();
         if (hasTime) {
-          // 時間あり: 即座にローカル生成
-          const meetingDateNoWd = meetingDate.replace(/（[日月火水木金土]）/, "");
-          let msg = `かしこまりました！！\n${meetingDate}ご案内させて頂きます！！\n\n${meetingDateNoWd} ${meetingTime}に${meetingPropertyName}\n現地エントランスお待ち合わせで何卒よろしくお願い致します！！`;
+          // 時間あり: 即座にローカル生成（曜日は月/日から再計算して誤りを補正）
+          const meetingDateFixed = fixDateWeekday(meetingDate);
+          const meetingDateNoWd = meetingDateFixed.replace(/[（(][日月火水木金土][）)]/, "");
+          let msg = `かしこまりました！！\n${meetingDateFixed}ご案内させて頂きます！！\n\n${meetingDateNoWd} ${meetingTime}に${meetingPropertyName}\n現地エントランスお待ち合わせで何卒よろしくお願い致します！！`;
           if (meetingPropertyAddress.trim()) msg += `\n住所: ${meetingPropertyAddress}`;
           setAiDraft(msg);
           setPreview(useEmoji ? msg : stripEmoji(msg));
