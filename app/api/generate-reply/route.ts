@@ -1443,24 +1443,40 @@ export async function POST(req: NextRequest) {
     const currentState = normalizeState(state || "first_reply");
 
     // 画像送付を会話履歴に反映（[画像]をフィルタせず意味のあるラベルに変換）
+    // 連続する画像メッセージ（同一sender・同一isAixフラグ）は1エントリにまとめて枚数を _imageCount に記録
+    type HistoryMsg = RecentMessage & { _imageCount?: number };
+    const isImageOnlyMsg = (m: RecentMessage) =>
+      m.text === "[画像]" || m.text === "[動画]" || (!m.text && !!m.imageUrl);
     const history = recentMessages
       .slice(-25)
+      .reduce<HistoryMsg[]>((acc, m) => {
+        const prev = acc[acc.length - 1];
+        if (prev && isImageOnlyMsg(m) && isImageOnlyMsg(prev) && prev.sender === m.sender && !!prev.isAix === !!m.isAix) {
+          prev._imageCount = (prev._imageCount || 1) + 1;
+        } else {
+          acc.push({ ...m });
+        }
+        return acc;
+      }, [])
       .map((m, i, arr) => {
         const who = m.sender === "customer" ? "お客様" : "スモラ";
-        const isImageMsg = m.text === "[画像]" || m.text === "[動画]" || (!m.text && !!m.imageUrl);
+        const isImageMsg = isImageOnlyMsg(m);
+        const imgCount = m._imageCount || 1;
 
         // AIX（AI提案）由来のスタッフメッセージは明示ラベル付け
         // ※行頭は「スモラ:」のまま維持（isFollowUp判定・過去返信抽出・挨拶判定の正規表現が「スモラ:」依存）
         if (m.sender === "staff" && m.isAix) {
           // AIXで物件を送る時は必ず画像もセット → isAix+画像のみ = AIX物件提案の資料
-          if (isImageMsg) return `${who}: 【AIX物件提案の資料画像を送付した】`;
+          if (isImageMsg) return imgCount > 1 ? `${who}: 【AIX物件提案の資料画像を${imgCount}枚送付した】` : `${who}: 【AIX物件提案の資料画像を送付した】`;
           if (m.text && m.imageUrl) return `${who}: (AI提案)【AIX物件提案の資料を送付しながら】「${m.text}」`;
           if (m.text) return `${who}: (AI提案)「${m.text}」`;
           return null;
         }
 
         if (isImageMsg) {
-          if (m.sender === "customer") return `${who}: 【画像を送ってきた】`;
+          if (m.sender === "customer") return imgCount > 1 ? `${who}: 【画像を${imgCount}枚送ってきた】` : `${who}: 【画像を送ってきた】`;
+          // 連続スタッフ画像（isAixなし）は枚数のみで表現（前後文脈による判定は単発時のみ）
+          if (imgCount > 1) return `${who}: 【画像を${imgCount}枚送付した】`;
           // スタッフの画像: 前後5件のテキストで文脈を判定（見積書はお客様の礼金反応からも判定可能）
           const startIdx = Math.max(0, i - 5);
           const nearbyMsgs = arr.slice(startIdx, i + 4).filter((_, ni) => startIdx + ni !== i);
