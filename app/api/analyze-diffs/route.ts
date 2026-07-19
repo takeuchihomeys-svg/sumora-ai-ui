@@ -711,6 +711,8 @@ export async function POST(req: NextRequest) {
     .is("diff_analyzed_at", null)
     .not("ai_draft", "is", null)
     .not("sent_reply", "is", null)
+    // AIX生成文（viewing_invite, application_push等）を除外しLINE返信AI由来のみ対象にする
+    .in("conversation_state", ["first_reply", "hearing", "proposing", "greeting_viewing"])
     .order("is_starred", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(limit);

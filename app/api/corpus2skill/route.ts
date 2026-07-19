@@ -566,12 +566,14 @@ async function discoverBlindSpots(): Promise<{ questionsSaved: number }> {
 
   // ④ was_ai_modified=true のAI案vs送信文の対比（直近30日）
   // AIが誤った事実（例: 日割家賃の計算方向）を述べてスタッフが修正した例を根本原因診断の材料にする
+  // AIX生成文（viewing_invite, application_push等）を除外しLINE返信AI由来のみ対象にする
   const { data: modifiedExamples } = await supabase
     .from("ai_reply_examples")
     .select("customer_message, ai_draft, sent_reply, conversation_state")
     .eq("was_ai_modified", true)
     .not("ai_draft", "is", null)
     .not("sent_reply", "is", null)
+    .in("conversation_state", ["first_reply", "hearing", "proposing", "greeting_viewing"])
     .gte("created_at", thirtyDaysAgo)
     .order("created_at", { ascending: false })
     .limit(12);
@@ -887,6 +889,8 @@ export async function POST(req: NextRequest) {
       .select("id, conversation_id, created_at, sent_reply, ai_draft, conversation_state, customer_message, was_ai_modified")
       .gte("created_at", since)
       .not("sent_reply", "is", null)
+      // AIX生成文（viewing_invite, application_push等）を除外しLINE返信AI由来のみ対象にする
+      .in("conversation_state", ["first_reply", "hearing", "proposing", "greeting_viewing"])
       .order("created_at", { ascending: false })
       .limit(200),
     analyzeAixMismatch().catch((e) => {
