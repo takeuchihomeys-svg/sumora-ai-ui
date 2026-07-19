@@ -780,6 +780,8 @@ export default function AixModal({
   const sendFileInputRef = useRef<HTMLInputElement | null>(null);
   const moveInImageInputRef = useRef<HTMLInputElement | null>(null);
   const mgmtMoveInImageInputRef = useRef<HTMLInputElement | null>(null);
+  // 入居可能日: 申込/内覧誘導タイプをrefで同期保持（setState+generate()の同ターン実行対応）
+  const moveInGuidanceTypeRef = useRef<"申込" | "内覧" | null>(null);
   const recommendEstimateInputRef = useRef<HTMLInputElement | null>(null);
   const estimatePropertyInputRef = useRef<HTMLInputElement | null>(null);
   const estimateMulti1Ref = useRef<HTMLInputElement | null>(null);
@@ -1499,7 +1501,20 @@ export default function AixModal({
           if (nearbyParkingDistance.trim()) body.nearby_parking_distance = nearbyParkingDistance.trim();
           if (nearbyParkingFee.trim()) body.nearby_parking_fee = nearbyParkingFee.trim();
         }
-        if (isMgmtCheck && checkPattern !== "mgmt_initial_cost" && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_parking" && checkPattern !== "mgmt_pet" && checkPattern !== "nearby_parking" && !inputText.trim()) throw new Error("管理会社に確認した内容を入力してください");
+        if (checkPattern === "mgmt_move_in") {
+          if (!moveInPropName.trim()) throw new Error("物件名を入力してください");
+          if (!moveInVacateDate.trim()) throw new Error("退去予定日を入力してください");
+          if (!moveInMonth.trim()) throw new Error("入居可能月を入力してください");
+          if (!moveInPeriod) throw new Error("上旬・中旬・下旬を選択してください");
+          if (!moveInGuidanceTypeRef.current) throw new Error("申込誘導または内覧誘導を選択してください");
+          body.move_in_prop_name = moveInPropName.trim();
+          if (moveInRoomNo.trim()) body.move_in_room_no = moveInRoomNo.trim();
+          body.move_in_vacate_date = moveInVacateDate.trim();
+          body.move_in_month = moveInMonth.trim();
+          body.move_in_period = moveInPeriod;
+          body.move_in_guidance_type = moveInGuidanceTypeRef.current;
+        }
+        if (isMgmtCheck && checkPattern !== "mgmt_initial_cost" && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_parking" && checkPattern !== "mgmt_pet" && checkPattern !== "nearby_parking" && checkPattern !== "mgmt_move_in" && !inputText.trim()) throw new Error("管理会社に確認した内容を入力してください");
         if (checkPattern === "move_in_date") {
           if (!moveInImageFile) throw new Error("物件資料を選択してください");
           body.image_url = await uploadImageCached(moveInImageFile);
@@ -3221,19 +3236,16 @@ export default function AixModal({
                     </div>
                   </div>
 
-                  {/* 申込誘導 / 内覧誘導 ボタン */}
+                  {/* 申込誘導 / 内覧誘導 ボタン（AI生成） */}
                   {moveInPropName.trim() && moveInVacateDate.trim() && moveInMonth.trim() && moveInPeriod && (
                     <div className="flex flex-col gap-2 pt-1">
                       {(["申込誘導", "内覧誘導"] as const).map((mode) => (
                         <button
                           key={mode}
                           onClick={() => {
-                            const roomSuffix = moveInRoomNo.trim() ? `${moveInRoomNo.trim()}号室` : "";
-                            const base = `${moveInPropName.trim()}${roomSuffix}管理会社に確認しましたところ\n${moveInVacateDate.trim()}退去予定の為\n最短で${moveInMonth.trim()}${moveInPeriod}にご入居出来る予定となります！！`;
-                            const append = mode === "申込誘導"
-                              ? `\n${customerName}さん良ければ先にお申込みでお部屋を抑えてから内覧もできます！！😊良ければお申込みはいかがでしょうか！！`
-                              : `\n退去後のご内覧となりますが、${customerName}さんご都合よろしいお日にちにご案内させて頂きます😊！！`;
-                            setPreview(base + append);
+                            moveInGuidanceTypeRef.current = mode === "申込誘導" ? "申込" : "内覧";
+                            setError("");
+                            void generate();
                           }}
                           className={`w-full rounded-2xl py-3 text-sm font-bold text-white transition ${
                             mode === "申込誘導"
