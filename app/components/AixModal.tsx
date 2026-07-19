@@ -598,6 +598,15 @@ export default function AixModal({
   // 入居日確認専用: 物件資料画像
   const [moveInImageFile, setMoveInImageFile] = useState<File | null>(null);
   const [moveInImagePreview, setMoveInImagePreview] = useState<string>("");
+  // 管理会社確認: 入居可能日 専用
+  const [mgmtMoveInImageFile, setMgmtMoveInImageFile] = useState<File | null>(null);
+  const [mgmtMoveInImagePreview, setMgmtMoveInImagePreview] = useState<string>("");
+  const [moveInPropName, setMoveInPropName] = useState<string>("");
+  const [moveInRoomNo, setMoveInRoomNo] = useState<string>("");
+  const [moveInVacateDate, setMoveInVacateDate] = useState<string>("");
+  const [moveInMonth, setMoveInMonth] = useState<string>("");
+  const [moveInPeriod, setMoveInPeriod] = useState<"上旬" | "中旬" | "下旬" | null>(null);
+  const [moveInOcrLoading, setMoveInOcrLoading] = useState(false);
   // 物件あった専用: 申込状況
   const [checkAvailableApp, setCheckAvailableApp] = useState<"yes" | "no" | null>(null);
   // 物件あった専用: 内覧誘導モード（折りたたみ）
@@ -770,6 +779,7 @@ export default function AixModal({
   const checkProp3EstRef = useRef<HTMLInputElement | null>(null);
   const sendFileInputRef = useRef<HTMLInputElement | null>(null);
   const moveInImageInputRef = useRef<HTMLInputElement | null>(null);
+  const mgmtMoveInImageInputRef = useRef<HTMLInputElement | null>(null);
   const recommendEstimateInputRef = useRef<HTMLInputElement | null>(null);
   const estimatePropertyInputRef = useRef<HTMLInputElement | null>(null);
   const estimateMulti1Ref = useRef<HTMLInputElement | null>(null);
@@ -3061,12 +3071,10 @@ export default function AixModal({
                 </div>
               </div>
 
-              {/* 退去予定日・入居可能日: 日付ピッカー */}
-              {(checkPattern === "vacate_date" || checkPattern === "mgmt_move_in") && (
+              {/* 退去予定日: 日付ピッカー */}
+              {checkPattern === "vacate_date" && (
                 <div>
-                  <p className="mb-2 text-xs font-bold text-[#54656f]">
-                    {checkPattern === "vacate_date" ? "退去予定日" : "入居可能日"}を選択
-                  </p>
+                  <p className="mb-2 text-xs font-bold text-[#54656f]">退去予定日を選択</p>
                   <div className="relative">
                     <input
                       type="date"
@@ -3076,14 +3084,168 @@ export default function AixModal({
                         const m = d.getMonth() + 1;
                         const day = d.getDate();
                         const dateStr = `${m}月${day}日`;
-                        const prefix = checkPattern === "vacate_date" ? "退去予定日：" : "入居可能日：";
-                        setInputText(prefix + dateStr);
+                        setInputText("退去予定日：" + dateStr);
                         setPreview("");
                       }}
                       className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-teal-400"
                       style={{ colorScheme: "light" }}
                     />
                   </div>
+                </div>
+              )}
+
+              {/* 管理会社確認: 入居可能日 専用UI */}
+              {checkPattern === "mgmt_move_in" && (
+                <div className="flex flex-col gap-3">
+                  {/* 物件資料スクショOCR */}
+                  <div>
+                    <p className="mb-1 text-xs font-bold text-[#54656f]">
+                      物件資料スクショ <span className="font-normal text-[#90a4ae]">（任意・物件名を自動入力）</span>
+                    </p>
+                    <input
+                      ref={mgmtMoveInImageInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        setMgmtMoveInImageFile(file);
+                        setPreview("");
+                        const reader = new FileReader();
+                        reader.onload = (ev) => setMgmtMoveInImagePreview(ev.target?.result as string);
+                        reader.readAsDataURL(file);
+                        setMoveInOcrLoading(true);
+                        try {
+                          const base64 = await new Promise<string>((resolve, reject) => {
+                            const r2 = new FileReader();
+                            r2.onload = () => resolve((r2.result as string).split(",")[1]);
+                            r2.onerror = () => reject(new Error("読み込み失敗"));
+                            r2.readAsDataURL(file);
+                          });
+                          const res = await fetch("/api/aix/viewing-guide", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ action: "ocr_name", image: { base64, mediaType: file.type } }),
+                          });
+                          const data = await res.json() as { ok?: boolean; propertyName?: string; roomNumber?: string };
+                          if (data.propertyName) setMoveInPropName(data.propertyName);
+                          if (data.roomNumber) setMoveInRoomNo(data.roomNumber);
+                        } catch (err) {
+                          console.error("[AixModal] mgmt_move_in OCR失敗:", err);
+                        }
+                        setMoveInOcrLoading(false);
+                      }}
+                    />
+                    {mgmtMoveInImagePreview ? (
+                      <div className="relative inline-block">
+                        <img src={mgmtMoveInImagePreview} className="h-24 w-auto rounded-xl object-cover border border-[#d1d7db]" />
+                        <button
+                          onClick={() => { setMgmtMoveInImageFile(null); setMgmtMoveInImagePreview(""); }}
+                          className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-[10px] text-white"
+                        >×</button>
+                        <button
+                          onClick={() => mgmtMoveInImageInputRef.current?.click()}
+                          className="absolute bottom-1 right-1 rounded-md bg-black/50 px-1.5 py-0.5 text-[10px] text-white"
+                        >変更</button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => mgmtMoveInImageInputRef.current?.click()}
+                        className="flex items-center gap-1.5 rounded-xl bg-[#f0f2f5] px-3 py-2 text-xs text-[#54656f]"
+                      >
+                        <span>＋ 画像を選択</span>
+                      </button>
+                    )}
+                    {moveInOcrLoading && <p className="mt-1 text-[11px] text-teal-600">物件名を読み取り中...</p>}
+                  </div>
+
+                  {/* 物件名 */}
+                  <div>
+                    <p className="mb-1 text-xs font-bold text-[#54656f]">物件名 <span className="text-red-400">*</span></p>
+                    <input
+                      type="text"
+                      value={moveInPropName}
+                      onChange={(e) => { setMoveInPropName(e.target.value); setPreview(""); }}
+                      placeholder="例: レジュールアッシュ梅田AXIA"
+                      className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-teal-400 placeholder:text-[#8696a0]"
+                    />
+                  </div>
+
+                  {/* 号室 */}
+                  <div>
+                    <p className="mb-1 text-xs font-bold text-[#54656f]">号室 <span className="font-normal text-[#90a4ae]">（任意）</span></p>
+                    <input
+                      type="text"
+                      value={moveInRoomNo}
+                      onChange={(e) => { setMoveInRoomNo(e.target.value); setPreview(""); }}
+                      placeholder="例: 206"
+                      className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-teal-400 placeholder:text-[#8696a0]"
+                    />
+                  </div>
+
+                  {/* 退去予定日 */}
+                  <div>
+                    <p className="mb-1 text-xs font-bold text-[#54656f]">退去予定日 <span className="text-red-400">*</span></p>
+                    <input
+                      type="text"
+                      value={moveInVacateDate}
+                      onChange={(e) => { setMoveInVacateDate(e.target.value); setPreview(""); }}
+                      placeholder="例: 7月20日、8月1日"
+                      className="w-full rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-teal-400 placeholder:text-[#8696a0]"
+                    />
+                  </div>
+
+                  {/* 入居可能月 + 旬 */}
+                  <div>
+                    <p className="mb-1 text-xs font-bold text-[#54656f]">入居可能月 <span className="text-red-400">*</span></p>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={moveInMonth}
+                        onChange={(e) => { setMoveInMonth(e.target.value); setPreview(""); }}
+                        placeholder="例: 8月"
+                        className="flex-1 rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-teal-400 placeholder:text-[#8696a0]"
+                      />
+                      {(["上旬", "中旬", "下旬"] as const).map((p) => (
+                        <button
+                          key={p}
+                          onClick={() => { setMoveInPeriod(moveInPeriod === p ? null : p); setPreview(""); }}
+                          className={`rounded-xl border-2 px-3 py-2 text-xs font-bold transition ${
+                            moveInPeriod === p
+                              ? "border-teal-400 bg-teal-50 text-teal-700"
+                              : "border-[#e9edef] text-[#54656f]"
+                          }`}
+                        >{p}</button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 申込誘導 / 内覧誘導 ボタン */}
+                  {moveInPropName.trim() && moveInVacateDate.trim() && moveInMonth.trim() && moveInPeriod && (
+                    <div className="flex flex-col gap-2 pt-1">
+                      {(["申込誘導", "内覧誘導"] as const).map((mode) => (
+                        <button
+                          key={mode}
+                          onClick={() => {
+                            const roomSuffix = moveInRoomNo.trim() ? `(${moveInRoomNo.trim()})号室` : "";
+                            const base = `${moveInPropName.trim()}${roomSuffix}管理会社に確認しましたところ\n${moveInVacateDate.trim()}退去予定の為\n最短で${moveInMonth.trim()}${moveInPeriod}にご入居出来る予定となります！！`;
+                            const append = mode === "申込誘導"
+                              ? `\n${customerName}さん良ければ先にお申込みでお部屋を抑えてから内覧もできます！！😊良ければお申込みはいかがでしょうか！！`
+                              : `\n退去後のご内覧となりますが、${customerName}さんご都合よろしいお日にちにご案内させて頂きます😊！！`;
+                            setPreview(base + append);
+                          }}
+                          className={`w-full rounded-2xl py-3 text-sm font-bold text-white transition ${
+                            mode === "申込誘導"
+                              ? "bg-[#7C3AED] hover:bg-[#6D28D9]"
+                              : "bg-teal-600 hover:bg-teal-700"
+                          }`}
+                        >
+                          {mode === "申込誘導" ? "申込誘導 文章を作成" : "内覧誘導 文章を作成"}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -3289,11 +3451,11 @@ export default function AixModal({
                 </div>
               )}
 
-              {/* テキスト入力（初期費用は見積書以外で表示、保証会社確認・駐車場・ペット・他パターンは条件付き表示） */}
-              {((checkPattern !== "mgmt_initial_cost" && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_parking" && checkPattern !== "mgmt_pet" && checkPattern !== "nearby_parking") || mgmtCostType === "negotiation") && (
+              {/* テキスト入力（初期費用は見積書以外で表示、保証会社確認・駐車場・ペット・入居可能日・他パターンは条件付き表示） */}
+              {((checkPattern !== "mgmt_initial_cost" && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_parking" && checkPattern !== "mgmt_pet" && checkPattern !== "nearby_parking" && checkPattern !== "mgmt_move_in") || mgmtCostType === "negotiation") && (
                 <div>
                   <p className="mb-1 text-xs font-bold text-[#54656f]">
-                    {(checkPattern === "vacate_date" || checkPattern === "mgmt_move_in") ? "または直接入力・補足" : "確認した内容"}
+                    {checkPattern === "vacate_date" ? "または直接入力・補足" : "確認した内容"}
                     {checkPattern === "mgmt_initial_cost" && <span className="text-red-400 ml-1">*</span>}
                   </p>
                   <textarea
@@ -3301,7 +3463,6 @@ export default function AixModal({
                     onChange={(e) => { setInputText(e.target.value); setPreview(""); }}
                     placeholder={
                       checkPattern === "vacate_date" ? "例：退去予定日：7月31日退去確定"
-                      : checkPattern === "mgmt_move_in" ? "例：入居可能日：8月上旬〜"
                       : "例：礼金なし交渉成功、または礼金交渉できなかった等"
                     }
                     rows={2}
@@ -3310,15 +3471,13 @@ export default function AixModal({
                   <p className="mt-1 text-[10px] text-[#8696a0]">
                     {checkPattern === "vacate_date"
                       ? "退去日を選ぶとAIが内覧可能時期も自動で計算します"
-                      : checkPattern === "mgmt_move_in"
-                      ? "「即入居可」「7月上旬〜」など管理会社から聞いた内容を入力"
                       : "交渉の結果を入力してください（例：礼金1→0に交渉成功）"}
                   </p>
                 </div>
               )}
 
-              {/* 物件資料アップロード（保証会社確認以外の mgmt パターン共通・任意） */}
-              {checkPattern !== "mgmt_guarantor" && (
+              {/* 物件資料アップロード（保証会社確認・入居可能日以外の mgmt パターン共通・任意） */}
+              {checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_move_in" && (
                 <div className="mt-1">
                   <p className="mb-1 text-xs font-bold text-[#54656f]">{checkPattern === "nearby_parking" ? "駐車場資料（任意）" : "物件資料（任意）"}</p>
                   <input
