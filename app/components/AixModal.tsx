@@ -521,6 +521,24 @@ export default function AixModal({
   // AIX経由の全送信に isAix=true フラグを付与（挨拶判定から除外するため）
   const sendAsAix = (text: string, imageUrl?: string) => onSend(text, imageUrl, true);
 
+  // 見積書送る「申込誘導」バッジON時の追加テンプレ文を組み立てる
+  // 物件名・号室は parsedEstimate（OCR結果: property_name / room_number）から取得
+  const buildEstimateAppealText = (): string => {
+    const propName = parsedEstimate?.["物件名"] ?? parsedEstimate?.["property_name"] ?? "";
+    const roomRaw = parsedEstimate?.["号室"] ?? parsedEstimate?.["room_number"] ?? "";
+    const roomText = roomRaw ? (roomRaw.includes("号室") ? roomRaw : `${roomRaw}号室`) : "";
+    const propLine = [propName, roomText].filter(Boolean).join(" ");
+    const lines = [
+      `${customerName}さんお世話になっております！！`,
+      propLine,
+      "最大限割引した初期費用御見積書となります！！",
+      "お気に召されましたらお申込みしお部屋抑えさせて頂きます😊！！",
+      "お手隙の際にご査収ください！！",
+    ].filter(Boolean);
+    const text = lines.join("\n");
+    return useEmoji ? text : stripEmoji(text);
+  };
+
   const [showAixScheduleModal, setShowAixScheduleModal] = useState(false);
   const [aixScheduleDateTime, setAixScheduleDateTime] = useState("");
   const [aixScheduleSaving, setAixScheduleSaving] = useState(false);
@@ -760,6 +778,8 @@ export default function AixModal({
   // 見積書送る専用: 物件資料（任意）
   const [estimatePropertyFile, setEstimatePropertyFile] = useState<File | null>(null);
   const [estimatePropertyPreview, setEstimatePropertyPreview] = useState<string>("");
+  // 見積書送る専用: 申込誘導テンプレを追加送信するか（ON時は 画像→金額文→申込誘導文 の順で3通送る）
+  const [estimateWithAppeal, setEstimateWithAppeal] = useState(false);
   // 見積書送る複数件モード
   const [estimateMultiMode] = useState(initialEstimateMulti ?? false);
   // ⑥ 固定長3スロットで管理（filter(Boolean)で詰めるとpreviewsとindexがずれるため、詰めるのは送信直前のみ）
@@ -2243,6 +2263,10 @@ export default function AixModal({
             sentImageIndexRef.current = imgIdx;
           }
           await sendAsAix(preview);
+          // 申込誘導バッジON: 合算金額文の後に申込誘導テンプレを送る
+          if (estimateWithAppeal) {
+            await sendAsAix(buildEstimateAppealText());
+          }
           sentImageIndexRef.current = -1;
         } else if (actionType === "estimate_sheet") {
           // 送信順: ①カバーレター（AI挨拶文・任意）→ ②物件資料（任意）→ ③見積書 → ④テキスト（送信済みステップはスキップ＝再押下時の重複送信防止）
@@ -2260,6 +2284,11 @@ export default function AixModal({
             markStep(3);
           }
           await sendAsAix(preview);
+          // 申込誘導バッジON: 金額文の後に申込誘導テンプレを4通目として送る
+          if (estimateWithAppeal && !stepDone(4)) {
+            await sendAsAix(buildEstimateAppealText());
+            markStep(4);
+          }
           delete sentStepRef.current[actionType]; // 全ステップ送信完了でリセット
         } else {
           await sendAsAix(preview, uploadedImageUrl);
@@ -4558,6 +4587,20 @@ export default function AixModal({
                   </div>
                 ))}
               </div>
+              {/* 見積書送る（複数件）: 申込誘導バッジ */}
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => setEstimateWithAppeal(v => !v)}
+                  className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold text-white transition-all"
+                  style={{ backgroundColor: estimateWithAppeal ? "#E53935" : "#9E9E9E" }}
+                >
+                  {estimateWithAppeal ? "✓ " : ""}申込誘導
+                </button>
+                <p className="mt-1 text-[11px] text-[#90a4ae]">
+                  ONにすると見積書・金額文の後に申込誘導メッセージを追加送信します
+                </p>
+              </div>
             </div>
           ) : config.requiresImage ? (
             /* その他の画像あきアクション */
@@ -4597,6 +4640,22 @@ export default function AixModal({
                     }}
                     className="hidden"
                   />
+                </div>
+              )}
+              {/* 見積書送る: 申込誘導バッジ（ON時は 見積書画像→金額文→申込誘導文 の順で送信） */}
+              {actionType === "estimate_sheet" && (
+                <div className="mb-3">
+                  <button
+                    type="button"
+                    onClick={() => setEstimateWithAppeal(v => !v)}
+                    className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold text-white transition-all"
+                    style={{ backgroundColor: estimateWithAppeal ? "#E53935" : "#9E9E9E" }}
+                  >
+                    {estimateWithAppeal ? "✓ " : ""}申込誘導
+                  </button>
+                  <p className="mt-1 text-[11px] text-[#90a4ae]">
+                    ONにすると見積書・金額文の後に申込誘導メッセージを追加送信します
+                  </p>
                 </div>
               )}
               <label className="mb-1 block text-xs font-semibold text-[#54656f]">見積書画像</label>
