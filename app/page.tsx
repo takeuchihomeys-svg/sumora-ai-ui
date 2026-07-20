@@ -584,6 +584,12 @@ export default function Home() {
   const [aixInitInputText, setAixInitInputText] = useState("");
   // 管理会社に確認したピッカー: 選択した確認種別をAIXモーダルへ引き継ぐ
   const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "nearby_parking" | null>(null);
+  // 物件成約した（管理会社確認ピッカーのサブ項目）: 中間フォーム用state
+  const [showContractedForm, setShowContractedForm] = useState(false);
+  const [contractedPropertyName, setContractedPropertyName] = useState("");
+  const [contractedRoomNumber, setContractedRoomNumber] = useState("");
+  const [contractedImagePreview, setContractedImagePreview] = useState<string | null>(null);
+  const [contractedExtractLoading, setContractedExtractLoading] = useState(false);
   const [aixInitSendMode, setAixInitSendMode] = useState<"normal" | "new_arrival" | "widen" | "alternative" | null>(null);
   const [showGreetingViewingPicker, setShowGreetingViewingPicker] = useState(false);
   const [suggestedGreetingMode, setSuggestedGreetingMode] = useState<"before" | "after" | null>(null);
@@ -10336,12 +10342,32 @@ export default function Home() {
                     <path d="M36 37c-4.8 0-8.5 4-8.5 7.7 0 2.8 2.3 4.8 5.2 4.8 1.4 0 2.3-.5 3.3-.5s1.9.5 3.3.5c2.9 0 5.2-2 5.2-4.8 0-3.7-3.7-7.7-8.5-7.7z" stroke="#546E7A" strokeWidth="1.8" strokeLinejoin="round"/>
                   </>
                 },
-              ] as Array<{ key: "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet"; label: string; desc: string; hint: string; icon: ReactNode }>).map(({ key, label, desc, hint, icon }) => {
+                {
+                  key: "property_contracted",
+                  label: "物件成約した",
+                  desc: "1番手の方で成約となったことを報告し、別物件のピックアップを案内",
+                  hint: "",
+                  icon: <>
+                    <path d="M36 20L50 30V52H24V30L36 20Z" stroke="#546E7A" strokeWidth="1.8" strokeLinejoin="round"/>
+                    <path d="M30 39l4 4 9-9.5" stroke="#2E7D32" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </>
+                },
+              ] as Array<{ key: "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "property_contracted"; label: string; desc: string; hint: string; icon: ReactNode }>).map(({ key, label, desc, hint, icon }) => {
                 const isSuggested = suggestedPropertyCheckMode === key;
                 return (
                 <button
                   key={key}
                   onClick={() => {
+                    if (key === "property_contracted") {
+                      setShowPropertyCheckPicker(false);
+                      setActiveAixFlow(null);
+                      setContractedPropertyName("");
+                      setContractedRoomNumber("");
+                      setContractedImagePreview(null);
+                      setContractedExtractLoading(false);
+                      setShowContractedForm(true);
+                      return;
+                    }
                     if (suggestedPropertyCheckMode && selectedConversation?.id && selectedConversation?.status) {
                       fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ action: "log", conversation_status: selectedConversation.status, action_type: "mgmt_check_submode", predicted_action: `mgmt_check:${suggestedPropertyCheckMode}`, source: key === suggestedPropertyCheckMode ? "prediction_accepted" : "prediction_bypassed", conversation_id: selectedConversation.id, customer_msg_summary: key }),
@@ -10379,6 +10405,124 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/* 物件成約した 入力フォーム（管理会社確認ピッカーのサブ項目） */}
+      {showContractedForm && (() => {
+        const conv = selectedConversation;
+        const custName = conv?.customerName ?? "お客様";
+
+        const handleContractedImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = async (ev) => {
+            const dataUrl = ev.target?.result as string;
+            setContractedImagePreview(dataUrl);
+            const base64 = dataUrl.split(",")[1];
+            const mediaType = dataUrl.split(";")[0].split(":")[1] || "image/jpeg";
+            setContractedExtractLoading(true);
+            try {
+              const ocrRes = await fetch("/api/aix/viewing-guide", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "ocr_name", image: { base64, mediaType } }),
+              });
+              const ocrData = await ocrRes.json() as { ok: boolean; propertyName?: string; roomNumber?: string };
+              if (ocrData.ok) {
+                if (ocrData.propertyName) setContractedPropertyName(ocrData.propertyName);
+                if (ocrData.roomNumber) setContractedRoomNumber(ocrData.roomNumber);
+              }
+            } catch { /* OCR失敗は無視 */ } finally {
+              setContractedExtractLoading(false);
+            }
+          };
+          reader.readAsDataURL(file);
+          e.target.value = "";
+        };
+
+        const handleContractedSubmit = () => {
+          const name = contractedPropertyName.trim();
+          const room = contractedRoomNumber.trim();
+          const tmpl = `${custName}さんお世話になっております！！\n${name}${room}\nですが1番手の方で契約がご成約となったとのことです。\n${custName}さんにオススメできるお部屋ピックアップしお送りさせて頂きます！！\n何卒よろしくお願い致します！！`;
+          setReplyDraft(tmpl);
+          setShowContractedForm(false);
+          setActiveAixFlow(null);
+          setContractedImagePreview(null);
+          setTimeout(() => textareaRef.current?.focus(), 50);
+        };
+
+        return (
+        <div
+          className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
+          onClick={() => { setShowContractedForm(false); setActiveAixFlow(null); }}
+        >
+          <div
+            className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-5 flex justify-center">
+              <svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="36" cy="36" r="36" fill="#E8F5E9"/>
+                <path d="M36 20L50 30V52H24V30L36 20Z" fill="#C8E6C9" stroke="#2E7D32" strokeWidth="1.5" strokeLinejoin="round"/>
+                <path d="M30 39l4 4 9-9.5" stroke="#2E7D32" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+            <p className="mb-1 text-center text-[20px] font-bold text-[#111827]">物件成約した</p>
+            <p className="mb-6 text-center text-[13px] leading-snug text-[#6B7280]">1番手成約を報告し、別物件のご案内をします</p>
+
+            {/* 物件資料画像アップロード */}
+            <label className="mb-4 flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-[#CFD8DC] bg-[#FAFAFA] px-4 py-5 active:bg-[#ECEFF1]">
+              {contractedImagePreview ? (
+                <img src={contractedImagePreview} alt="物件資料プレビュー" className="max-h-32 rounded-lg" />
+              ) : (
+                <>
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" className="mb-1.5">
+                    <rect x="3" y="5" width="18" height="14" rx="2" stroke="#546E7A" strokeWidth="1.5"/>
+                    <circle cx="8.5" cy="10" r="1.5" stroke="#546E7A" strokeWidth="1.3"/>
+                    <path d="M4 17l5-4 4 3 3-2 4 3" stroke="#546E7A" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  <p className="text-[12px] font-bold text-[#546E7A]">物件資料の画像をアップロード</p>
+                  <p className="text-[10px] text-[#9CA3AF]">物件名・号室を自動で読み取ります</p>
+                </>
+              )}
+              <input type="file" accept="image/*" className="hidden" onChange={handleContractedImageSelect} />
+            </label>
+            {contractedExtractLoading && (
+              <p className="mb-3 text-center text-[12px] font-bold text-[#546E7A] animate-pulse">読み取り中...</p>
+            )}
+
+            {/* 物件名 */}
+            <label className="mb-1 block text-[12px] font-bold text-[#54656f]">物件名</label>
+            <input
+              value={contractedPropertyName}
+              onChange={(e) => setContractedPropertyName(e.target.value)}
+              placeholder="例：サンプルマンション"
+              className="mb-3 w-full rounded-xl border border-[#E5E7EB] px-3 py-2.5 text-[14px] outline-none focus:border-[#546E7A]"
+            />
+
+            {/* 号室 */}
+            <label className="mb-1 block text-[12px] font-bold text-[#54656f]">号室</label>
+            <input
+              value={contractedRoomNumber}
+              onChange={(e) => setContractedRoomNumber(e.target.value)}
+              placeholder="例：101号室"
+              className="mb-5 w-full rounded-xl border border-[#E5E7EB] px-3 py-2.5 text-[14px] outline-none focus:border-[#546E7A]"
+            />
+
+            <button
+              onClick={handleContractedSubmit}
+              disabled={!contractedPropertyName.trim()}
+              className="w-full rounded-2xl py-3 text-[15px] font-bold text-white active:opacity-80 disabled:opacity-40"
+              style={{ background: "#546E7A" }}
+            >返信文を作成</button>
+            <button
+              onClick={() => { setShowContractedForm(false); setActiveAixFlow(null); }}
+              className="mt-3 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
+            >キャンセル</button>
+          </div>
+        </div>
+        );
+      })()}
 
       {/* 確認した（条件・交渉）親ピッカー */}
       {showKoshoParentPicker && (
