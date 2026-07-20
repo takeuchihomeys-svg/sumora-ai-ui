@@ -13,7 +13,7 @@ function getDb() {
 export const maxDuration = 120;
 
 const PER_CONV_TIMEOUT_MS = 45_000;
-const TIME_BUDGET_MS = 60_000;
+const TIME_BUDGET_MS = 90_000; // 60s→90s: 典型的な生成時間（15s）なら最大6件処理可能
 
 const SKIP_STATUSES = new Set(["applying", "screening", "contract", "closed_won", "closed_lost"]);
 
@@ -82,7 +82,7 @@ async function run() {
     .not("draft_pending_at", "is", null)
     .lte("draft_pending_at", threshold)
     .gte("draft_pending_at", tenMinutesAgo)
-    .limit(3);
+    .limit(5); // 3→5: 同時多数メッセージ時の処理件数を増やす
 
   // ② 取りこぼし救済: pending_atなし（または10分以上前の古いpending）・下書きなし・24時間以内・未返信
   const { data: orphanedConvs, error: orphanedError } = await db
@@ -103,7 +103,7 @@ async function run() {
     .neq("status", "closed_lost")
     // 5回以上失敗した会話は諦める（draft_fail_countがnullの行=未失敗も対象に含める）
     .or("draft_fail_count.is.null,draft_fail_count.lt.5")
-    .limit(2);
+    .limit(3); // 2→3: orphaned救済の件数を増やす
 
   if (orphanedError) {
     console.error("[generate-pending-drafts] orphaned query error:", orphanedError);

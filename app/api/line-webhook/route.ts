@@ -315,11 +315,19 @@ async function handleTextMessage(
       // 申込以降ステータスはai_draft生成不要
       if (["applying", "screening", "contract", "closed_won", "closed_lost"].includes(convStatus)) return;
 
-      // 60秒デバウンス: draft_pending_atを更新してCronに生成を委ねる
-      // 連続送信された場合も最後のメッセージから60秒後に未読まとめで生成される
+      // 60秒デバウンス維持（cron fallback / バースト時の統合生成として機能し続ける）
       await db.from("conversations")
         .update({ draft_pending_at: new Date().toISOString(), ai_draft: null })
         .eq("id", convId);
+
+      // 直接トリガー: 60s debounce待ちを排除して即座にbg-asyncを起動
+      // - bg-async側のatomic claim (draft_attempted_at) が重複生成を防ぐ
+      // - draft_pending_at は維持されるため、このfetchが失敗してもcronが60-120s後にfallbackとして拾う
+      fetch(`${baseUrl}/api/generate-draft-bg-async`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation_id: convId }),
+      }).catch((e) => console.warn("[line-webhook] direct bg-async trigger failed:", e));
     } catch (e) {
       console.error("[line-webhook] after() draft_pending_at update failed:", e);
     }
