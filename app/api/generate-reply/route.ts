@@ -9,6 +9,7 @@ import {
   SMORA_RULES,
   REAL_ESTATE_RULES,
   REPLY_CONTENT_RULES,
+  CURATED_REPLY_RULES,
   STATE_SEARCH_ALIASES,
 } from "@/app/lib/line-reply-prompts";
 import { validateAndClean } from "@/app/lib/validate-reply";
@@ -662,6 +663,7 @@ function buildGenerationMessages(
   const realEstateNote = `\n${promptOverrides?.realEstateRules ?? REAL_ESTATE_RULES}`;
   const smoraRulesNote = `\n${promptOverrides?.smoraRules ?? SMORA_RULES}`;
   const replyContentNote = `\n${promptOverrides?.replyContentRules ?? REPLY_CONTENT_RULES}`;
+  const curatedReplyRulesNote = `\n${CURATED_REPLY_RULES}`;
   // AIXルールはgenerate-reply（一般LINE返信）には注入しない（aix/action専用）
   // 管理UIでオーバーライドが明示設定された場合のみ注入
   const aixPropertyRecommendationNote = promptOverrides?.aixPropertyRecommendationRules ? `\n${promptOverrides.aixPropertyRecommendationRules}` : "";
@@ -731,6 +733,7 @@ ${quickPatterns}
 ${smoraRulesNote}
 ${realEstateNote}
 ${replyContentNote}
+${curatedReplyRulesNote}
 ${aixPropertyRecommendationNote}
 ${aixPropertySendNote}
 ${knowledgeNote}

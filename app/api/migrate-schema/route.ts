@@ -1596,6 +1596,13 @@ SET entry_source = 'aix_action'
 WHERE conversation_state NOT IN ('first_reply', 'hearing', 'proposing', 'greeting_viewing')
   AND entry_source = 'line_reply';
 
+-- ── HUMAN-*ルール永続化（卒業メカニズム）（2026-07-20）──
+-- is_permanent=true のルールはLIMITなしで最優先注入される「永久ルール」。
+-- 通常の HUMAN-*(50件上限)とは別枠で常に全件注入されるため、どれほどルールが増えても
+-- 永久ルールは絶対に抜け落ちない。fetchPromptRules() が別クエリで先行取得する。
+ALTER TABLE ai_prompt_rules ADD COLUMN IF NOT EXISTS is_permanent BOOLEAN DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_ai_prompt_rules_permanent ON ai_prompt_rules(is_permanent) WHERE is_permanent = TRUE;
+
 -- ── PostgREST スキーマキャッシュ再読込（必ず最後に実行する）──
 -- 新カラム追加後に PostgREST のスキーマキャッシュが古いままだと、
 -- 以降の INSERT/SELECT が「column does not exist」で全滅する

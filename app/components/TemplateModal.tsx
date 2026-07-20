@@ -885,7 +885,7 @@ export default function TemplateModal({
   const [isCandidateTabActive, setIsCandidateTabActive] = useState(false);
   // AIX候補サブタブ: "all" = 全候補（従来のAIXテンプレ候補タブ）, "aix_edit" = スタッフ編集候補のみ,
   // "suggestions" = P4 AIX改善案（aix_feature_suggestions）, "feedback" = AI盲点フィードバック（ai_feedback_items）
-  const [candidateSubTab, setCandidateSubTab] = useState<"all" | "suggestions" | "feedback" | "knowledge">("all");
+  const [candidateSubTab, setCandidateSubTab] = useState<"all" | "suggestions" | "feedback" | "knowledge" | "rules">("all");
   const [candidates, setCandidates] = useState<AiTemplateCandidate[]>([]);
   const [candidateLoading, setCandidateLoading] = useState(false);
   const [adoptingId, setAdoptingId] = useState<string | null>(null);
@@ -960,6 +960,11 @@ export default function TemplateModal({
   const [recommendLoading, setRecommendLoading] = useState(false);
   // モーダル1回のオープンにつき1回だけフェッチする
   const recommendFetchedRef = useRef(false);
+  // ⭐ 永久ルール管理タブ（HUMAN-* is_permanent フラグ管理）
+  interface HumanRule { id: string; rule_key: string; rule_text: string; is_permanent: boolean; updated_at: string | null; priority: number; }
+  const [humanRulesList, setHumanRulesList] = useState<HumanRule[]>([]);
+  const [humanRulesLoading, setHumanRulesLoading] = useState(false);
+  const [promotingRuleId, setPromotingRuleId] = useState<string | null>(null);
 
   function applyVacatingDates(text: string, vd: { month: number; day: number } | null): string {
     const lastDayOf = (m: number) => new Date(new Date().getFullYear(), m, 0).getDate();
@@ -1315,6 +1320,44 @@ export default function TemplateModal({
   useEffect(() => {
     if (isCandidateTabActive && candidateSubTab === "knowledge") loadKnowledgeItems();
   }, [isCandidateTabActive, candidateSubTab, loadKnowledgeItems]);
+
+  // ⭐ 永久ルール管理タブ: HUMAN-* ルール一覧を取得
+  const loadHumanRules = useCallback(async () => {
+    setHumanRulesLoading(true);
+    try {
+      const res = await fetch("/api/prompt-rules");
+      const json = await res.json().catch(() => null) as { rules?: HumanRule[] } | null;
+      setHumanRulesList(json?.rules ?? []);
+    } catch (e) {
+      console.error("[TemplateModal] loadHumanRules 失敗:", e);
+    } finally {
+      setHumanRulesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isCandidateTabActive && candidateSubTab === "rules") void loadHumanRules();
+  }, [isCandidateTabActive, candidateSubTab, loadHumanRules]);
+
+  // ⭐ 永久ルール昇格/降格
+  const togglePermanentRule = useCallback(async (rule: HumanRule) => {
+    setPromotingRuleId(rule.id);
+    try {
+      const res = await fetch("/api/prompt-rules", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: rule.id, is_permanent: !rule.is_permanent }),
+      });
+      const json = await res.json().catch(() => null) as { ok?: boolean; message?: string; error?: string } | null;
+      if (!res.ok || !json?.ok) throw new Error(json?.error ?? `HTTP ${res.status}`);
+      setHumanRulesList(prev => prev.map(r => r.id === rule.id ? { ...r, is_permanent: !rule.is_permanent } : r));
+      showModalSuccess(json?.message ?? (rule.is_permanent ? "通常ルールに降格しました" : "永久ルールに昇格しました"));
+    } catch (e) {
+      showModalError(`操作に失敗しました: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setPromotingRuleId(null);
+    }
+  }, [showModalSuccess, showModalError]);
 
   // API失敗時はリストから除去せずエラー表示する（silent catchだと承認できていないのに消えたように見える）
   const confirmKnowledge = useCallback(async (id: string) => {
@@ -2607,6 +2650,18 @@ export default function TemplateModal({
                 >
                   🧠ナレッジ{knowledgeItems.length > 0 ? ` (${knowledgeItems.length})` : ""}
                 </button>
+                {/* ⭐永久ルール管理 */}
+                <button
+                  onClick={() => setCandidateSubTab("rules")}
+                  className="shrink-0 rounded-full px-3 py-1.5 text-[11px] font-bold transition"
+                  style={
+                    candidateSubTab === "rules"
+                      ? { background: "linear-gradient(135deg, #D97706, #F59E0B)", color: "white" }
+                      : { backgroundColor: "#e8edf2", color: "#54656f" }
+                  }
+                >
+                  ⭐永久ルール{humanRulesList.filter(r => r.is_permanent).length > 0 ? ` (${humanRulesList.filter(r => r.is_permanent).length})` : ""}
+                </button>
               </div>
             )}
           </>
@@ -3810,6 +3865,93 @@ export default function TemplateModal({
                   );
                 });
               })()}
+            </div>
+          )}
+
+          {/* ⭐ 永久ルール管理タブ */}
+          {!showAddForm && isCandidateTabActive && candidateSubTab === "rules" && (
+            <div className="flex-1 overflow-y-auto p-3 space-y-3">
+              {/* ヘッダー説明 */}
+              <div className="bg-amber-50 rounded-xl p-3 mb-1 text-sm text-amber-800">
+                <p className="font-bold mb-0.5">⭐ 永久ルール（卒業メカニズム）</p>
+                <p className="text-xs text-amber-600">
+                  昇格したルールは <strong>50件上限の対象外</strong> となり、どれほど HUMAN-* が増えても常に最優先で注入されます。
+                  重要度が高く確実に守ってほしいルールを昇格してください。
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  永久ルール: {humanRulesList.filter(r => r.is_permanent).length}件 / 通常ルール: {humanRulesList.filter(r => !r.is_permanent).length}件
+                </p>
+              </div>
+
+              {humanRulesLoading && (
+                <p className="text-center text-gray-400 py-8">読み込み中...</p>
+              )}
+              {!humanRulesLoading && humanRulesList.length === 0 && (
+                <div className="text-center text-gray-400 py-12">
+                  <p className="text-2xl mb-2">⭐</p>
+                  <p className="text-sm font-medium text-gray-500">HUMAN-* ルールがありません</p>
+                  <p className="text-sm text-gray-400">（AI質問タブで「最高優先反映」すると追加されます）</p>
+                </div>
+              )}
+              {!humanRulesLoading && humanRulesList.length > 0 && (
+                <>
+                  {/* 永久ルール一覧 */}
+                  {humanRulesList.filter(r => r.is_permanent).length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-bold text-amber-600 flex items-center gap-1">
+                        ⭐ 永久ルール（上限なし・常時注入）
+                        <span className="font-normal text-amber-400">{humanRulesList.filter(r => r.is_permanent).length}件</span>
+                      </p>
+                      {humanRulesList.filter(r => r.is_permanent).map(rule => (
+                        <div key={rule.id} className="border border-amber-300 rounded-xl p-3 bg-amber-50 flex flex-col gap-1.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-sm text-gray-800 flex-1 leading-relaxed">{rule.rule_text}</p>
+                            <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-full bg-amber-200 text-amber-800 font-bold">⭐ 永久</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] text-gray-400">{rule.rule_key}</span>
+                            <button
+                              onClick={() => void togglePermanentRule(rule)}
+                              disabled={promotingRuleId === rule.id}
+                              className="text-[11px] px-2.5 py-1 rounded-lg bg-gray-100 text-gray-500 hover:bg-gray-200 font-medium transition disabled:opacity-50"
+                            >
+                              {promotingRuleId === rule.id ? "処理中..." : "⬇ 通常ルールに降格"}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* 通常ルール一覧（昇格ボタン付き） */}
+                  {humanRulesList.filter(r => !r.is_permanent).length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-bold text-gray-500 flex items-center gap-1 mt-2">
+                        通常ルール（50件上限あり）
+                        <span className="font-normal text-gray-400">{humanRulesList.filter(r => !r.is_permanent).length}件</span>
+                      </p>
+                      {humanRulesList.filter(r => !r.is_permanent).map(rule => (
+                        <div key={rule.id} className="border border-gray-200 rounded-xl p-3 bg-white flex flex-col gap-1.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-sm text-gray-700 flex-1 leading-relaxed">{rule.rule_text}</p>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] text-gray-400">{rule.rule_key}</span>
+                            <button
+                              onClick={() => void togglePermanentRule(rule)}
+                              disabled={promotingRuleId === rule.id}
+                              className="text-[11px] px-2.5 py-1 rounded-lg font-medium transition disabled:opacity-50"
+                              style={{ background: "linear-gradient(135deg, #D97706, #F59E0B)", color: "white" }}
+                            >
+                              {promotingRuleId === rule.id ? "処理中..." : "⬆ 永久ルールに昇格"}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
 
