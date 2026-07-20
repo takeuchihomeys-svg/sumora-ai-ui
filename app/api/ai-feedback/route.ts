@@ -106,7 +106,7 @@ ${answer}
 
 この質問と回答から、AIが今後使える業務ルールを1〜3個抽出してください。
 各ルールについて:
-- rule_text: ルール本文（AIがそのまま参照できる具体的な指示文・150文字以内）
+- rule_text: ルール本文（AIがそのまま参照できる具体的な指示文・300文字以内）
 - save_target: "trigger_action_rules"（特定AIXボタンの発動条件に関わるルール）or "ai_prompts"（返信文面・対応方針の一般ルール）
 - action_type: 該当AIXボタン名（property_send / viewing_invite / application_push / condition_hearing / estimate_sheet / followup_revive / acknowledge_check / property_check_result / property_recommendation / meeting_place 等）、なければ null
 - save_target が "trigger_action_rules" の場合は、trigger_keywords フィールドも必ず付ける。

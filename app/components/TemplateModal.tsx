@@ -437,6 +437,28 @@ function parseAiQuestion(question: string): AiQuestionMeta {
   return { cleanText: text.trim(), phase, importance, embeddedCategory, aiDraftExample, staffSentExample };
 }
 
+// 矛盾系質問テキストから新ルール・既存ルール・会話例ブロックを抽出する
+type ContradictionContent = {
+  newRuleBlock: string | null;
+  oldRuleBlock: string | null;
+  conversationBlock: string | null;
+};
+function parseContradictionContent(rawQuestion: string): ContradictionContent {
+  // 新ルールブロック: 「━━ 【新しいルール（仮説）】━━」と次の「━━」の間
+  const newRuleMatch = rawQuestion.match(/━━ 【新しいルール（仮説）】━━\n([\s\S]*?)(?=\n\n━━|$)/);
+  const newRuleBlock = newRuleMatch ? newRuleMatch[1].trim() : null;
+
+  // 既存ルールブロック: 「━━ 【既存のルール...】━━」と次の「━━」の間（HUMAN最優先バリアントも対応）
+  const oldRuleMatch = rawQuestion.match(/━━ 【既存のルール[^━]*】━━\n([\s\S]*?)(?=\n\n━━|$)/);
+  const oldRuleBlock = oldRuleMatch ? oldRuleMatch[1].trim() : null;
+
+  // 会話例ブロック: 「━━ 今回の会話（実例）━━」と次の「━━」の間
+  const convMatch = rawQuestion.match(/━━ 今回の会話（実例）━━\n([\s\S]*?)(?=\n\n━━|$)/);
+  const conversationBlock = convMatch ? convMatch[1].trim() : null;
+
+  return { newRuleBlock, oldRuleBlock, conversationBlock };
+}
+
 // ナレッジタイトルの内部タグ（[修正対比] [差分学習] [原則] [パターン] 等）を除去して表示用タイトルを返す
 function cleanKnowledgeTitle(title: string): string {
   return title.replace(/^\[.*?\]\s*/, "").trim();
@@ -915,6 +937,8 @@ export default function TemplateModal({
   const [feedbackLoading, setFeedbackLoading] = useState(false);
   const [feedbackAnswers, setFeedbackAnswers] = useState<Record<string, string>>({});
   const [submittingFeedback, setSubmittingFeedback] = useState<string | null>(null);
+  // 矛盾系質問の補足コメント（任意）: per-item テキスト入力の状態
+  const [contradictionComments, setContradictionComments] = useState<Record<string, string>>({});
   // P5: 却下理由チップを表示中の候補/提案ID
   const [dismissingId, setDismissingId] = useState<string | null>(null);
   // AI質問のスキップ理由チップを表示中のフィードバックID
@@ -1434,13 +1458,19 @@ export default function TemplateModal({
 
   // 回答を送信 → Sonnetが知識化（trigger_action_rules / ai_prompts に保存）
   // choice が指定された場合（矛盾系質問）: 自動でanswerテキストを生成し choice をbodyに含める
-  const submitFeedbackAnswer = useCallback(async (id: string, choice?: 'new' | 'old' | 'keep' | 'remove') => {
-    const answer = choice === 'new' ? '① 新しいルールが正しい'
+  // extraComment: 矛盾系質問での任意補足コメント（使い分け条件・理由など）
+  const submitFeedbackAnswer = useCallback(async (id: string, choice?: 'new' | 'old' | 'keep' | 'remove', extraComment?: string) => {
+    let baseAnswer = choice === 'new' ? '① 新しいルールが正しい'
       : choice === 'old' ? '② 既存のルールが正しい'
       : choice === 'keep' ? '✅ 正しい（維持）'
       : choice === 'remove' ? '❌ 間違い（無効化）'
       : feedbackAnswers[id]?.trim();
-    if (!answer) return;
+    if (!baseAnswer) return;
+    // 補足コメントがある場合は回答テキストに付加（Opusがルール抽出する際の文脈として使用）
+    const trimmedComment = extraComment?.trim();
+    const answer = (trimmedComment && (choice === 'new' || choice === 'old'))
+      ? `${baseAnswer}\n補足: ${trimmedComment}`
+      : baseAnswer;
     setSubmittingFeedback(id);
     try {
       const res = await fetch("/api/ai-feedback", {
@@ -1456,12 +1486,13 @@ export default function TemplateModal({
       }
       await loadFeedbackItems();
       setFeedbackAnswers(prev => { const next = { ...prev }; delete next[id]; return next; });
+      setContradictionComments(prev => { const next = { ...prev }; delete next[id]; return next; });
       showModalSuccess("回答を反映しました（次の返信生成から即時適用）");
     } catch {
       showModalError("回答の送信に失敗しました（通信エラー）。もう一度お試しください。");
     }
     finally { setSubmittingFeedback(null); }
-  }, [feedbackAnswers, loadFeedbackItems, showModalSuccess, showModalError]);
+  }, [feedbackAnswers, contradictionComments, loadFeedbackItems, showModalSuccess, showModalError]);
 
   const sendDiscussionMessage = useCallback(async (item: FeedbackItem) => {
     const msg = discussionInput.trim();
@@ -3346,26 +3377,53 @@ export default function TemplateModal({
                           </button>
                         </div>
                       ) : isContradiction ? (
-                        /* 矛盾系質問: 選択ボタン（新ルール vs 既存ルール） */
-                        <div className="flex flex-col gap-2 mt-1">
-                          <button
-                            onClick={() => submitFeedbackAnswer(item.id, 'new')}
-                            disabled={submittingFeedback === item.id}
-                            className="w-full bg-blue-500 text-white rounded-lg py-3 text-sm font-bold disabled:opacity-50 hover:bg-blue-600 transition text-left px-4"
-                          >
-                            ① 新しいルールが正しい
-                          </button>
-                          <button
-                            onClick={() => submitFeedbackAnswer(item.id, 'old')}
-                            disabled={submittingFeedback === item.id}
-                            className="w-full bg-gray-500 text-white rounded-lg py-3 text-sm font-bold disabled:opacity-50 hover:bg-gray-600 transition text-left px-4"
-                          >
-                            ② 既存のルールが正しい
-                          </button>
-                          {submittingFeedback === item.id && (
-                            <p className="text-xs text-center text-gray-400 mt-1">送信中...</p>
-                          )}
-                        </div>
+                        /* 矛盾系質問: ルールプレビュー + 補足コメント + 選択ボタン */
+                        (() => {
+                          const { newRuleBlock, oldRuleBlock } = parseContradictionContent(item.question);
+                          return (
+                            <div className="flex flex-col gap-2 mt-2">
+                              {/* 新ルール（仮説）プレビュー */}
+                              {newRuleBlock && (
+                                <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
+                                  <p className="text-[11px] font-bold text-blue-600 mb-1">【新しいルール（仮説）】</p>
+                                  <p className="text-xs text-blue-900 whitespace-pre-wrap leading-relaxed max-h-24 overflow-y-auto">{newRuleBlock}</p>
+                                </div>
+                              )}
+                              {/* 既存ルール（確定済み）プレビュー */}
+                              {oldRuleBlock && (
+                                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                                  <p className="text-[11px] font-bold text-amber-700 mb-1">【既存のルール（確定済み）】</p>
+                                  <p className="text-xs text-amber-900 whitespace-pre-wrap leading-relaxed max-h-24 overflow-y-auto">{oldRuleBlock}</p>
+                                </div>
+                              )}
+                              {/* 選択ボタン */}
+                              <button
+                                onClick={() => void submitFeedbackAnswer(item.id, 'new', contradictionComments[item.id])}
+                                disabled={submittingFeedback === item.id}
+                                className="w-full bg-blue-500 text-white rounded-lg py-3 text-sm font-bold disabled:opacity-50 hover:bg-blue-600 transition text-left px-4"
+                              >
+                                ① 新しいルールが正しい
+                              </button>
+                              <button
+                                onClick={() => void submitFeedbackAnswer(item.id, 'old', contradictionComments[item.id])}
+                                disabled={submittingFeedback === item.id}
+                                className="w-full bg-gray-500 text-white rounded-lg py-3 text-sm font-bold disabled:opacity-50 hover:bg-gray-600 transition text-left px-4"
+                              >
+                                ② 既存のルールが正しい
+                              </button>
+                              {/* 補足コメント入力（任意） */}
+                              <textarea
+                                value={contradictionComments[item.id] ?? ""}
+                                onChange={e => setContradictionComments(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                placeholder="補足・使い分け条件など（任意）"
+                                className="w-full border border-orange-200 rounded-lg px-3 py-2 text-xs resize-none h-16 focus:outline-none focus:ring-2 focus:ring-orange-300 bg-white text-gray-700"
+                              />
+                              {submittingFeedback === item.id && (
+                                <p className="text-xs text-center text-gray-400 mt-1">送信中...</p>
+                              )}
+                            </div>
+                          );
+                        })()
                       ) : (
                         /* 通常質問: 自由テキスト入力 */
                         <>
