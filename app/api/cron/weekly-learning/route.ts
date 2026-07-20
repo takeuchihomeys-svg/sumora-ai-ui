@@ -66,6 +66,12 @@ async function insertAiQuestion(row: Record<string, unknown>): Promise<boolean> 
 
 // ── 型定義 ────────────────────────────────────────────────────────────────────
 
+type RecentAnswer = {
+  question_text: string | null;
+  user_answer: string | null;
+  created_at: string;
+};
+
 type DiffExample = {
   id: string;
   conversation_state: string;
@@ -105,6 +111,7 @@ async function analyzeStateGroup(
   state: string,
   examples: DiffExample[],
   existingRules: ExistingRule[],
+  recentAnswers: RecentAnswer[],
 ): Promise<WeeklyAnalysisResult> {
   const empty: WeeklyAnalysisResult = { newRules: [], gaps: [], contradictions: [], weeklyQuestion: null };
 
@@ -121,15 +128,24 @@ AI案: ${(e.ai_draft ?? "(なし)").slice(0, 300)}
     ? existingRules.map((r, i) => `ルール${i + 1}: ${r.title}\n${r.content}`).join("\n---\n")
     : "（なし）";
 
+  const recentAnswersText = recentAnswers.length > 0
+    ? recentAnswers.map((a, i) =>
+        `Q${i + 1}: ${(a.question_text ?? "").slice(0, 150)}\nA: ${(a.user_answer ?? "").slice(0, 200)}`
+      ).join("\n---\n")
+    : "（なし）";
+
   const prompt = `あなたは賃貸仲介の営業コーチです。
 以下は【${state}】フェーズで今週スタッフがAIを修正・手書きした返信の差分集（${examples.length}件）です。
-既存の確認済みルールも参考にしてください。
+既存の確認済みルールと、直近7日の竹内さんの回答も参考にしてください。
 
 ## 今週の差分集
 ${examplesText}
 
 ## 既存の確認済みルール（重複不要）
 ${existingRulesText}
+
+## 直近7日の竹内さんの回答（参考）
+${recentAnswersText}
 
 ## 分析指示
 今週の差分群を横断的に分析し、以下のJSONを返してください。
@@ -187,6 +203,20 @@ async function runChunk1(chunk: number): Promise<Record<string, unknown>> {
   const offset = (chunk - 1) * CHUNK_SIZE; // chunk=1 → offset=0
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  // 直近7日の竹内さんの回答（user_answer）をコンテキストとして取得
+  const { data: recentAnswersRaw } = await supabase
+    .from("ai_feedback_items")
+    .select("question_text, user_answer, created_at")
+    .eq("status", "applied")
+    .gte("created_at", sevenDaysAgo)
+    .not("user_answer", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(30);
+
+  const recentAnswers = (recentAnswersRaw ?? []) as RecentAnswer[];
+  console.log(`[weekly-learning] chunk${chunk}: user_answer還流 ${recentAnswers.length}件取得`);
+
   const { data: rawExamples, error: fetchErr } = await supabase
     .from("ai_reply_examples")
     .select("id, conversation_state, customer_message, sent_reply, ai_draft, is_starred, created_at")
@@ -229,7 +259,7 @@ async function runChunk1(chunk: number): Promise<Record<string, unknown>> {
         .limit(8);
 
       const existingRules = (existingRulesRaw ?? []) as ExistingRule[];
-      const analysis = await analyzeStateGroup(state, stateExamples, existingRules);
+      const analysis = await analyzeStateGroup(state, stateExamples, existingRules, recentAnswers);
 
       for (const rule of analysis.newRules) {
         if (!rule.title || !rule.content) continue;

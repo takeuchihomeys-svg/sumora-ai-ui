@@ -44,6 +44,7 @@ type ExtractedRule = {
   save_target: "trigger_action_rules" | "ai_prompts" | "ai_reply_knowledge";
   action_type: string | null;
   trigger_keywords?: string[];
+  trigger_example?: string;
 };
 
 // GET: pending を最大100件 + answered/applied を直近20件取得
@@ -115,9 +116,12 @@ ${answer}
 - save_target が "trigger_action_rules" の場合は、trigger_keywords フィールドも必ず付ける。
   trigger_keywords: 顧客メッセージに実際に含まれるであろうキーワード3文字以上の語句を1〜3個（例：「スモ割」「審査通る」「築年数」）。
   ルールの説明文ではなく、顧客がLINEで実際に打つ語句そのものを選ぶこと。
+- save_target が "ai_reply_knowledge" の場合は、trigger_example フィールドも必ず付ける。
+  trigger_example: このルールが必要になる典型的な顧客メッセージ例（1〜2文・顧客がLINEで実際に送りそうな自然な文体）。
+  ルールの説明文ではなく、顧客の発話そのものとして書くこと（例：「内見したいのですが、いつ空いていますか？」）。
 
 JSON配列のみ返してください（説明・コードフェンス不要）:
-[{"rule_text": "...", "save_target": "trigger_action_rules"|"ai_prompts"|"ai_reply_knowledge", "action_type": "..."|null, "trigger_keywords": ["..."]}]`,
+[{"rule_text": "...", "save_target": "trigger_action_rules"|"ai_prompts"|"ai_reply_knowledge", "action_type": "..."|null, "trigger_keywords": ["..."], "trigger_example": "..."}]`,
     }],
   });
 
@@ -196,7 +200,11 @@ export async function POST(req: NextRequest) {
     // -gr コピー（generate_reply スコープ重複保存）は不要（pgvector 経由で既に参照されるため）。
     if (rule.save_target === "ai_reply_knowledge") {
       try {
-        const embInput = buildKnowledgeEmbeddingInput({ content: ruleText });
+        // embedding は顧客メッセージに近い意味空間で生成するため trigger_example を優先する。
+        // ruleText（ルール説明文）はAI視点の指示文であり顧客メッセージとの類似度が低く
+        // generate-reply の pgvector 検索でヒットしにくいため、trigger_example を第一候補とする。
+        const embSourceText = rule.trigger_example?.trim() || ruleText;
+        const embInput = buildKnowledgeEmbeddingInput({ content: embSourceText });
         const embedding = embInput ? await generateEmbedding(embInput) : null;
         const result = await upsertKnowledge(supabase, {
           title: ruleText.slice(0, 30) + (ruleText.length > 30 ? "..." : ""),
@@ -274,6 +282,7 @@ export async function POST(req: NextRequest) {
         reason: `AI盲点質問への竹内さん回答（${new Date().toISOString().slice(0, 10)}）: ${item.question}`.slice(0, 500),
         priority: 8,
         is_active: true,
+        source_feedback_item_id: id,
         updated_at: new Date().toISOString(),
       }, { onConflict: "rule_key" });
       if (ruleError) console.error("[ai-feedback] ai_prompt_rules upsert error:", ruleError.message);
@@ -290,6 +299,7 @@ export async function POST(req: NextRequest) {
           reason: `AI盲点質問generate-replyコピー（${new Date().toISOString().slice(0, 10)}）: ${item.question as string}`.slice(0, 500),
           priority: 7,   // 元の priority=8 より低く（AIX側と重複するため）
           is_active: true,
+          source_feedback_item_id: id,
           updated_at: new Date().toISOString(),
         }, { onConflict: "rule_key" });
       }
@@ -379,10 +389,22 @@ export async function POST(req: NextRequest) {
 
           // 3. confirmed昇格のみ。RAGにより自動参照されるためai_prompt_rulesへの書き込みは不要。
           // 旧ナレッジに紐づく過去のFEEDBACK-*ルールを無効化（矛盾注入防止）
+          // ※ rule_key は FEEDBACK-{ai_feedback_items.id}-{n} 形式のため、
+          //   oldKnowledgeId（ai_reply_knowledge.id）を LIKE マッチさせても永久に0件になる。
+          //   生成元フィードバックIDを source_feedback_item_id で追跡し、正確にクリーンアップする。
+          //   oldFeedbackItemIds: checkContradiction が [knowledge_id:UUID] を question に埋め込む仕様を利用し、
+          //   oldKnowledgeId をその knowledge_id として持つ feedback item を逆引きして特定する。
           if (oldKnowledgeId) {
-            await supabase.from("ai_prompt_rules")
-              .update({ is_active: false })
-              .like("rule_key", `FEEDBACK-${oldKnowledgeId}%`);
+            const { data: oldFeedbackItems } = await supabase
+              .from("ai_feedback_items")
+              .select("id")
+              .like("question", `%[knowledge_id:${oldKnowledgeId}]%`);
+            if (oldFeedbackItems && oldFeedbackItems.length > 0) {
+              const oldFeedbackItemIds = oldFeedbackItems.map((r: { id: string }) => r.id as string);
+              await supabase.from("ai_prompt_rules")
+                .update({ is_active: false })
+                .in("source_feedback_item_id", oldFeedbackItemIds);
+            }
           }
           appliedRules.push(`[CONFIRMED-${linkedKnowledgeId}] knowledge confirmed → RAGで自動参照`);
         }

@@ -1603,6 +1603,11 @@ WHERE conversation_state NOT IN ('first_reply', 'hearing', 'proposing', 'greetin
 ALTER TABLE ai_prompt_rules ADD COLUMN IF NOT EXISTS is_permanent BOOLEAN DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_ai_prompt_rules_permanent ON ai_prompt_rules(is_permanent) WHERE is_permanent = TRUE;
 
+-- FEEDBACK-* ルールの生成元 ai_feedback_items.id を追跡するカラム（2026-07-20）
+-- choice='new' で旧ナレッジに紐づく FEEDBACK-* を無効化する際に、
+-- rule_key の UUID 部分（feedback item id）と ai_reply_knowledge.id を誤照合するバグを修正するために追加。
+ALTER TABLE ai_prompt_rules ADD COLUMN IF NOT EXISTS source_feedback_item_id UUID;
+
 -- ── PostgREST スキーマキャッシュ再読込（必ず最後に実行する）──
 -- 新カラム追加後に PostgREST のスキーマキャッシュが古いままだと、
 -- 以降の INSERT/SELECT が「column does not exist」で全滅する

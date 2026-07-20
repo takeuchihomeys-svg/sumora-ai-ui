@@ -80,7 +80,15 @@ export async function fetchPromptRules(
     const permanentApplicable = permanentRows.filter(filterRow);
     const applicable = highPrio.filter(filterRow);
 
-    if (!applicable.length && !permanentApplicable.length) return "";
+    // rule_textで重複排除（priority降順ソート済みなので最初の出現を残す）
+    const seen = new Set<string>();
+    const deduped = applicable.filter(r => {
+      if (seen.has(r.rule_text)) return false;
+      seen.add(r.rule_text);
+      return true;
+    });
+
+    if (!deduped.length && !permanentApplicable.length) return "";
 
     const sections: string[] = [];
 
@@ -92,8 +100,8 @@ export async function fetchPromptRules(
 
     // FEEDBACK-* / IMPLEMENT-* 等を priority 降順で注入
     // HUMAN-* は is_active=false（RAGへ完全移行済み）のためここには現れない
-    if (applicable.length > 0) {
-      const otherLines = applicable.map(r => `・${r.rule_text}`).join("\n");
+    if (deduped.length > 0) {
+      const otherLines = deduped.map(r => `・${r.rule_text}`).join("\n");
       sections.push(`【AI学習ルール（参考）】\n${otherLines}`);
     }
     return "\n\n" + sections.join("\n\n");
