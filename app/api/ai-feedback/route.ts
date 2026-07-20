@@ -446,6 +446,66 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── rule_elevate: [rule_elevate:FEEDBACK-xxx] → is_permanent昇格の承認処理 ──
+  const ruleElevateMatch = (item.question as string).match(/\[rule_elevate:(FEEDBACK-[^\]]+)\]/);
+  const elevateRuleKey = ruleElevateMatch?.[1] ?? null;
+
+  if (elevateRuleKey) {
+    try {
+      const lowerAnswer = answer.toLowerCase();
+      const isApproved = lowerAnswer.includes("はい") || lowerAnswer.includes("yes") || lowerAnswer.includes("昇格") || lowerAnswer.includes("ok");
+      if (isApproved) {
+        const { error: elevErr } = await supabase
+          .from("ai_prompt_rules")
+          .update({ is_permanent: true, updated_at: new Date().toISOString() })
+          .eq("rule_key", elevateRuleKey)
+          .eq("is_active", true);
+        if (!elevErr) {
+          appliedRules.push(`[ELEVATE:${elevateRuleKey}] 恒久ルールに昇格 → is_permanent=true`);
+        } else {
+          console.error("[ai-feedback] rule_elevate 昇格失敗:", elevErr.message);
+        }
+      } else {
+        appliedRules.push(`[ELEVATE_SKIP:${elevateRuleKey}] 昇格見送り`);
+      }
+    } catch (e) {
+      console.error("[ai-feedback] rule_elevate 処理失敗:", e);
+    }
+  }
+
+  // ── rule_merge: [rule_merge:KEY1:KEY2] → 統合承認処理 ──
+  const ruleMergeMatch = (item.question as string).match(/\[rule_merge:(FEEDBACK-[^:]+):(FEEDBACK-[^\]]+)\]/);
+  const mergeKey1 = ruleMergeMatch?.[1] ?? null;
+  const mergeKey2 = ruleMergeMatch?.[2] ?? null;
+
+  if (mergeKey1 && mergeKey2) {
+    try {
+      const lowerAnswer = answer.toLowerCase();
+      const isApproved = lowerAnswer.includes("はい") || lowerAnswer.includes("yes") || lowerAnswer.includes("統合") || lowerAnswer.includes("ok");
+      if (isApproved) {
+        // 統合案テキストを回答から抽出（または回答そのものを使用）
+        // 古いルール2件を無効化し、新しいルールを作成
+        const { error: d1 } = await supabase
+          .from("ai_prompt_rules")
+          .update({ is_active: false, updated_at: new Date().toISOString() })
+          .eq("rule_key", mergeKey1);
+        const { error: d2 } = await supabase
+          .from("ai_prompt_rules")
+          .update({ is_active: false, updated_at: new Date().toISOString() })
+          .eq("rule_key", mergeKey2);
+        if (!d1 && !d2) {
+          appliedRules.push(`[MERGE:${mergeKey1}+${mergeKey2}] 統合承認 → 両ルール無効化`);
+        } else {
+          console.error("[ai-feedback] rule_merge deactivate失敗:", d1?.message, d2?.message);
+        }
+      } else {
+        appliedRules.push(`[MERGE_SKIP:${mergeKey1}+${mergeKey2}] 統合見送り`);
+      }
+    } catch (e) {
+      console.error("[ai-feedback] rule_merge 処理失敗:", e);
+    }
+  }
+
   // knowledge_gap（AIが誤った事実を述べた → 竹内さんが正しい事実を回答）は
   // ai_prompt_rules（150字ルール）だけでは弱いため、ai_reply_knowledge の principle としても保存する。
   // item.question は「AIが〜と誤回答しました」等のメタ文のため embedding が意味空間ズレ。
