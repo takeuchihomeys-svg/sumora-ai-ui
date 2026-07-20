@@ -55,6 +55,20 @@ export async function POST(req: NextRequest) {
       if (conv.ai_draft) return;
       if (SKIP_STATUSES.has(conv.status as string)) return;
 
+      // Atomic claim: 並列bg-asyncが同じ会話を重複生成するのを防ぐ
+      // draft_attempted_atが5分以内に設定済みの場合はスキップ
+      const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const { data: claimed } = await db.from("conversations")
+        .update({ draft_attempted_at: new Date().toISOString() })
+        .eq("id", convId)
+        .is("ai_draft", null)
+        .or(`draft_attempted_at.is.null,draft_attempted_at.lt.${fiveMinAgo}`)
+        .select("id");
+      if (!claimed?.length) {
+        console.log("[bg-async] 同時生成をスキップ（atomic claim失敗）, convId:", convId);
+        return;
+      }
+
       const [{ data: msgs, error: msgsErr }, { data: pc }] = await Promise.all([
         db.from("messages").select("sender, text, created_at").eq("conversation_id", convId)
           .order("created_at", { ascending: false }).limit(20),
@@ -229,7 +243,7 @@ export async function POST(req: NextRequest) {
           .replace(/\n?<<<STOP_REASON:[\w-]*>>>/g, "")
           .trim();
         if (partialDraft.length > 20) {
-          await db.from("conversations").update({ ai_draft: partialDraft }).eq("id", convId);
+          await db.from("conversations").update({ ai_draft: partialDraft, draft_pending_at: null }).eq("id", convId);
           console.log("[bg-async] saved partial draft:", partialDraft.length, "chars, convId:", convId);
         }
         return;
@@ -242,7 +256,11 @@ export async function POST(req: NextRequest) {
         .replace(/\n?<<<STOP_REASON:[\w-]*>>>/g, "")
         .trim();
       if (finalDraft) {
-        const { error: saveErr } = await db.from("conversations").update({ ai_draft: finalDraft }).eq("id", convId);
+        // ai_draft IS NULL ガード: 人間が編集中の場合は上書きしない
+        const { error: saveErr } = await db.from("conversations")
+          .update({ ai_draft: finalDraft, draft_pending_at: null })
+          .eq("id", convId)
+          .is("ai_draft", null);
         if (saveErr) {
           console.error("[bg-async] save error:", saveErr.message, "convId:", convId);
         } else {

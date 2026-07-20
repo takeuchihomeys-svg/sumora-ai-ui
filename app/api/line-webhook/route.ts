@@ -2,8 +2,8 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
 
-// Vercel Functions のタイムアウト上限（秒）— AI解析・画像処理に余裕を持たせる
-export const maxDuration = 60;
+// Vercel Functions のタイムアウト上限（秒）— after()内のAnthropicコール（30s）と画像処理に余裕を持たせる
+export const maxDuration = 120;
 
 // ── LINE アカウント設定（スモラ・イエヤス・ギガ賃貸） ──────────────────
 type AccountConfig = {
@@ -82,6 +82,7 @@ async function fetchLineProfile(
   try {
     const res = await fetch(`https://api.line.me/v2/bot/profile/${userId}`, {
       headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(5_000),
     });
     if (!res.ok) return null;
     return (await res.json()) as { displayName?: string; pictureUrl?: string };
@@ -279,15 +280,17 @@ async function handleTextMessage(
     } catch { /* サイレント失敗 — suggest-next-action が遅延しても webhook 応答に影響しない */ }
   })();
 
-  // ai_summary 自動更新 + 返信ドラフト自動生成（レスポンス後に非同期実行）
-  after(async () => {
-    try {
-      // フォーマット解析はレスポンス返却後に実行（Anthropic呼び出しを含むため）
-      if (isFormatMessage(text)) {
+  // after() A: フォーマット解析（独立実行 — draft_pending_at更新と並列・30s Anthropicコールを含む）
+  if (isFormatMessage(text)) {
+    after(async () => {
+      try {
         await autoParseFormat(db, userId, text, account);
-      }
-    } catch (e) { console.error("[autoParseFormat]", e); }
+      } catch (e) { console.error("[autoParseFormat]", e); }
+    });
+  }
 
+  // after() B: ai_summary更新 + draft_pending_at設定（autoParseFormatに依存しない）
+  after(async () => {
     try {
       const { data: conv } = await db
         .from("conversations")
@@ -913,7 +916,7 @@ async function fetchAndUploadLineImage(
   try {
     const contentRes = await fetch(
       `https://api-data.line.me/v2/bot/message/${lineMessageId}/content`,
-      { headers: { Authorization: `Bearer ${account.token}` } },
+      { headers: { Authorization: `Bearer ${account.token}` }, signal: AbortSignal.timeout(10_000) },
     );
 
     if (!contentRes.ok) {
