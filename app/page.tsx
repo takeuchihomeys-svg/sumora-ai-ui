@@ -10444,11 +10444,11 @@ export default function Home() {
           const name = contractedPropertyName.trim();
           const room = contractedRoomNumber.trim();
           const tmpl = `${custName}さんお世話になっております！！\n${name}${room}\nですが1番手の方で契約がご成約となったとのことです。\n${custName}さんにオススメできるお部屋ピックアップしお送りさせて頂きます！！\n何卒よろしくお願い致します！！`;
-          setReplyDraft(tmpl);
+          // テンプレートをAIXの初期入力テキストとして渡してAIXで生成
+          setAixInitInputText(tmpl);
           setShowContractedForm(false);
-          setActiveAixFlow(null);
           setContractedImagePreview(null);
-          setTimeout(() => textareaRef.current?.focus(), 50);
+          setActiveAixFlow("property_check_result");
         };
 
         return (
