@@ -165,12 +165,20 @@ export async function POST(req: NextRequest) {
   const oldKnowledgeIdMatch = (item.question ?? '').match(/\[old_knowledge_id:([^\]]+)\]/);
   const oldKnowledgeId = oldKnowledgeIdMatch?.[1] ?? null;
 
+  // rule_elevate / rule_merge の承認タグがある場合はextractRulesをスキップ
+  // （「はい」等の短い承認回答からOpusが余計なFEEDBACK-*を生成するのを防ぐ）
+  const isMetaApprovalQuestion =
+    /\[rule_elevate:FEEDBACK-/.test(item.question as string) ||
+    /\[rule_merge:FEEDBACK-/.test(item.question as string);
+
   // 知識化（失敗しても回答自体は保存する）
   let rules: ExtractedRule[] = [];
-  try {
-    rules = await extractRules(item.question as string, answer);
-  } catch (e) {
-    console.error("[ai-feedback] ルール抽出失敗:", e);
+  if (!isMetaApprovalQuestion) {
+    try {
+      rules = await extractRules(item.question as string, answer);
+    } catch (e) {
+      console.error("[ai-feedback] ルール抽出失敗:", e);
+    }
   }
 
   const appliedRules: string[] = [];
@@ -495,6 +503,25 @@ export async function POST(req: NextRequest) {
           .eq("rule_key", mergeKey2);
         if (!d1 && !d2) {
           appliedRules.push(`[MERGE:${mergeKey1}+${mergeKey2}] 統合承認 → 両ルール無効化`);
+          // question内の【統合案】以降を新ルールとして保存
+          const mergedTextMatch = (item.question as string).match(/【統合案】\n([\s\S]+)$/);
+          const mergedText = mergedTextMatch?.[1]?.trim();
+          if (mergedText) {
+            const { error: mergeUpsertErr } = await supabase.from("ai_prompt_rules").upsert({
+              rule_key: `FEEDBACK-${id}-merged`,
+              rule_text: mergedText.slice(0, 500),
+              action_type: null,
+              priority: 8,
+              is_active: true,
+              source_feedback_item_id: id,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: "rule_key" });
+            if (!mergeUpsertErr) {
+              appliedRules.push(`[MERGE_NEW:FEEDBACK-${id}-merged] 統合ルール保存`);
+            } else {
+              console.error("[ai-feedback] rule_merge 新ルール保存失敗:", mergeUpsertErr.message);
+            }
+          }
         } else {
           console.error("[ai-feedback] rule_merge deactivate失敗:", d1?.message, d2?.message);
         }
