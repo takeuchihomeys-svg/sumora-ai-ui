@@ -1683,7 +1683,8 @@ export default function Home() {
       }
     }
 
-    // 未読かつai_draft未生成の会話を最大5件、バックグラウンドでプリ生成（毎回チェック・重複はpreGenInProgressで防止）
+    // 未読かつai_draft未生成の会話を最大3件、バックグラウンドでプリ生成（毎回チェック・重複はpreGenInProgressで防止）
+    // 同時発火を3件・2秒ずらしに制限してClaude API負荷を分散（旧10件同時は詰まりの原因）
     {
       const skipStatuses = new Set(["applying", "screening", "contract", "closed_won"]);
       const readAtMap = manuallyReadAtRef.current;
@@ -1701,18 +1702,22 @@ export default function Home() {
           const latestCust = c.messages.filter((m) => m.sender === "customer").at(-1);
           return !!latestCust?.rawCreatedAt && latestCust.rawCreatedAt > rAt;
         })
-        .slice(0, 10);
+        .slice(0, 3);
 
-      for (const conv of targets) {
+      for (let i = 0; i < targets.length; i++) {
+        const conv = targets[i];
         preGenInProgress.current.add(conv.id);
         // 即200返却のasyncエンドポイント → ブラウザ接続をブロックしない
         // 2分後に自動クリーンアップ（Realtimeが来なかった場合の保険）
         setTimeout(() => preGenInProgress.current.delete(conv.id), 120000);
-        fetch("/api/generate-draft-bg-async", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ conversation_id: conv.id, memo: memosRef.current[conv.id] || "" }),
-        }).catch(() => { preGenInProgress.current.delete(conv.id); });
+        // 2秒ずつずらして同時Claude呼び出しを分散
+        setTimeout(() => {
+          fetch("/api/generate-draft-bg-async", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ conversation_id: conv.id, memo: memosRef.current[conv.id] || "" }),
+          }).catch(() => { preGenInProgress.current.delete(conv.id); });
+        }, i * 2000);
       }
     }
 
