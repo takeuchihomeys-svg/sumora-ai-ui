@@ -45,8 +45,11 @@ export async function fetchPromptRules(
       .order("updated_at", { ascending: false, nullsFirst: false })
       .limit(150);
 
-    if (highPrioRes.error) console.error("[fetchPromptRules] high-prio query", highPrioRes.error);
-    if (highPrioRes.error) return "";
+    if (highPrioRes.error) {
+      // ③ DB障害時: サイレント消失を防ぐ。空文字ではなく警告テキストを返してAIに認知させる
+      console.error("[fetchPromptRules] CRITICAL: DBクエリ失敗 — ルールが注入されません", highPrioRes.error);
+      return "\n\n【重要: ルールDBへの接続に失敗しました。基本的な敬語・正確な情報提供・謝罪禁止の原則を守って回答してください。】";
+    }
 
     const highPrio = (highPrioRes.data ?? []) as PromptRuleRow[];
 
@@ -63,10 +66,23 @@ export async function fetchPromptRules(
 
     if (!applicable.length) return "";
 
-    const ruleLines = applicable.map(r => `・${r.rule_text}`).join("\n");
-    return `\n\n【管理者追加ルール（最優先 — 以下を必ず守ること）】\n${ruleLines}`;
+    // ① HUMAN-*（竹内さん確認済み・priority=10）を専用セクションに分離して最優先で注入
+    // FEEDBACK-*/WEEKLY-*/DIFF-POLICY-* と同列に並べると末尾に埋もれてLLMに無視されるリスクがある
+    const humanRules = applicable.filter(r => r.rule_key.startsWith("HUMAN-")).slice(0, 30);
+    const otherRules = applicable.filter(r => !r.rule_key.startsWith("HUMAN-"));
+
+    const sections: string[] = [];
+    if (humanRules.length > 0) {
+      const humanLines = humanRules.map(r => `・${r.rule_text}`).join("\n");
+      sections.push(`【確認済み運用ルール（最優先・必ず守ること）】\n${humanLines}`);
+    }
+    if (otherRules.length > 0) {
+      const otherLines = otherRules.map(r => `・${r.rule_text}`).join("\n");
+      sections.push(`【AI学習ルール（参考）】\n${otherLines}`);
+    }
+    return "\n\n" + sections.join("\n\n");
   } catch (error) {
-    console.error("[fetchPromptRules]", error);
-    return "";
+    console.error("[fetchPromptRules] CRITICAL: 予期しないエラー — ルールが注入されません", error);
+    return "\n\n【重要: ルールシステムエラーが発生しました。基本的な敬語・正確な情報提供・謝罪禁止の原則を守って回答してください。】";
   }
 }
