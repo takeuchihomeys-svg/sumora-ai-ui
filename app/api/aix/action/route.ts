@@ -2687,16 +2687,16 @@ ${availableTemplate}`;
       } else if (pattern === "unavailable") {
         const unavailPropName = typeof property_name === "string" ? property_name.trim() : "";
         if (unavailPropName) {
-          // 物件名あり: 「〇〇につきまして」
-          message_text = `お待たせ致しました！！\n${name}お送り頂きました${unavailPropName}につきまして、募集状況確認しましたところ現在募集終了しておりました。\n引き続きご希望条件に合ったお部屋を探させて頂きます😊！！`;
+          // 物件名あり
+          message_text = `${name}お世話になっております！！\nお送り頂きました${unavailPropName}の募集状況確認させて頂きましたところ現在募集が終了しているお部屋となります！！`;
         } else {
           // 物件名なし: 会話履歴から件数を簡易判定
           const countM = recentHistory.match(/([2-9０-９])\s*件/);
           const cnt = countM ? parseInt(countM[1].replace(/[０-９]/g, (c) => String(c.charCodeAt(0) - 0xFF10))) : 1;
           if (cnt >= 2) {
-            message_text = `お待たせ致しました！！\n${name}お送り頂きました${cnt}件の物件につきまして、募集状況確認しましたところいずれも募集終了しておりました。\n引き続きご希望条件に合ったお部屋を探させて頂きます😊！！`;
+            message_text = `${name}お世話になっております！！\nお送り頂きました${cnt}件の物件につきまして募集状況確認させて頂きましたところ現在いずれも募集が終了しているお部屋となります！！`;
           } else {
-            message_text = `お待たせ致しました！！\n${name}お送り頂きました物件につきまして、募集状況確認しましたところ現在募集終了しておりました。\n引き続きご希望条件に合ったお部屋を探させて頂きます😊！！`;
+            message_text = `${name}お世話になっております！！\nお送り頂きました物件の募集状況確認させて頂きましたところ現在募集が終了しているお部屋となります！！`;
           }
         }
 
