@@ -17,7 +17,7 @@ import { fetchPromptRules } from "@/app/lib/prompt-rules";
 import { safeSlice } from "@/app/lib/safe-slice";
 
 // Vercel Functions のタイムアウト上限（秒）— Vision + 2段LLM呼び出しに余裕を持たせる
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 // ─── モデル定義 ───────────────────────────────────────────────────────────────
 // Step1（分析）: Sonnet — 感情・本音・成約戦略の精度重視

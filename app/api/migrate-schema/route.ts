@@ -1608,6 +1608,13 @@ CREATE INDEX IF NOT EXISTS idx_ai_prompt_rules_permanent ON ai_prompt_rules(is_p
 -- rule_key の UUID 部分（feedback item id）と ai_reply_knowledge.id を誤照合するバグを修正するために追加。
 ALTER TABLE ai_prompt_rules ADD COLUMN IF NOT EXISTS source_feedback_item_id UUID;
 
+-- ── draft失敗カウント・エラー記録（2026-07-20）──
+-- generate-pending-drafts が下書き生成に失敗した回数とエラー内容を記録する。
+-- draft_fail_count: 連続失敗回数（3回超えたらスキップ対象にする等の制御に使う）
+-- draft_last_error: 直近失敗時のエラーメッセージ（デバッグ用）
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS draft_fail_count INTEGER DEFAULT 0;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS draft_last_error TEXT;
+
 -- ── PostgREST スキーマキャッシュ再読込（必ず最後に実行する）──
 -- 新カラム追加後に PostgREST のスキーマキャッシュが古いままだと、
 -- 以降の INSERT/SELECT が「column does not exist」で全滅する

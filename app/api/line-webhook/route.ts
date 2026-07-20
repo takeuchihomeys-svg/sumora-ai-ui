@@ -240,9 +240,6 @@ async function handleTextMessage(
 
   // LINEフォーマット自動検知・解析 → ステータスを物件提案中に自動昇格
   if (isFormatMessage(text)) {
-    void (async () => {
-      try { await autoParseFormat(db, userId, text, account); } catch (e) { console.error("[autoParseFormat]", e); }
-    })();
     // hearing/first_reply 状態なら proposing に自動昇格
     await db
       .from("conversations")
@@ -285,6 +282,13 @@ async function handleTextMessage(
   // ai_summary 自動更新 + 返信ドラフト自動生成（レスポンス後に非同期実行）
   after(async () => {
     try {
+      // フォーマット解析はレスポンス返却後に実行（Anthropic呼び出しを含むため）
+      if (isFormatMessage(text)) {
+        await autoParseFormat(db, userId, text, account);
+      }
+    } catch (e) { console.error("[autoParseFormat]", e); }
+
+    try {
       const { data: conv } = await db
         .from("conversations")
         .select("property_customer_id, status")
@@ -306,7 +310,7 @@ async function handleTextMessage(
       }
 
       // 申込以降ステータスはai_draft生成不要
-      if (["applying", "screening", "contract", "closed_won"].includes(convStatus)) return;
+      if (["applying", "screening", "contract", "closed_won", "closed_lost"].includes(convStatus)) return;
 
       // 60秒デバウンス: draft_pending_atを更新してCronに生成を委ねる
       // 連続送信された場合も最後のメッセージから60秒後に未読まとめで生成される

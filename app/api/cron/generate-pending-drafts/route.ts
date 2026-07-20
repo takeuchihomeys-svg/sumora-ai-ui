@@ -13,7 +13,7 @@ function getDb() {
 export const maxDuration = 120;
 
 const PER_CONV_TIMEOUT_MS = 45_000;
-const TIME_BUDGET_MS = 100_000;
+const TIME_BUDGET_MS = 60_000;
 
 const SKIP_STATUSES = new Set(["applying", "screening", "contract", "closed_won", "closed_lost"]);
 
@@ -78,7 +78,7 @@ async function run() {
   // ① 60秒以上前〜10分以内にpendingになった会話（デバウンス経過・古すぎるものは除外）
   const { data: pendingConvs, error } = await db
     .from("conversations")
-    .select("id, status, property_customer_id, last_sender, draft_pending_at, updated_at")
+    .select("id, status, property_customer_id, last_sender, draft_pending_at, updated_at, draft_fail_count")
     .not("draft_pending_at", "is", null)
     .lte("draft_pending_at", threshold)
     .gte("draft_pending_at", tenMinutesAgo)
@@ -87,7 +87,7 @@ async function run() {
   // ② 取りこぼし救済: pending_atなし（または10分以上前の古いpending）・下書きなし・24時間以内・未返信
   const { data: orphanedConvs, error: orphanedError } = await db
     .from("conversations")
-    .select("id, status, property_customer_id, last_sender, draft_pending_at, updated_at")
+    .select("id, status, property_customer_id, last_sender, draft_pending_at, updated_at, draft_fail_count")
     .eq("last_sender", "customer")
     // __TRUNCATED__センチネル（尻切れで保存見送りになった会話）も救済対象に含める
     .or("ai_draft.is.null,ai_draft.eq.__TRUNCATED__")
@@ -101,6 +101,8 @@ async function run() {
     .neq("status", "contract")
     .neq("status", "closed_won")
     .neq("status", "closed_lost")
+    // 5回以上失敗した会話は諦める（draft_fail_countがnullの行=未失敗も対象に含める）
+    .or("draft_fail_count.is.null,draft_fail_count.lt.5")
     .limit(2);
 
   if (orphanedError) {
@@ -164,6 +166,12 @@ async function run() {
     if (!isFirst) await new Promise(r => setTimeout(r, 1000));
     isFirst = false;
 
+    // SKIPチェック: DB書き込み（claim）前に確認してクレーム無駄打ちを防ぐ（修正③）
+    if (SKIP_STATUSES.has(convStatus) || conv.last_sender !== "customer") {
+      skipped++;
+      continue;
+    }
+
     // このメッセージ（マーカー）への生成試行を記録（成否に関わらず記録。新しいメッセージが来れば即再処理される）
     attemptedMarkers.set(convId, { markerMs: markerOf(conv), recordedAt: Date.now() });
 
@@ -188,11 +196,6 @@ async function run() {
     }
     if (!claimed?.length) {
       // 別インスタンスが先にクレーム済み → スキップ
-      skipped++;
-      continue;
-    }
-
-    if (SKIP_STATUSES.has(convStatus) || conv.last_sender !== "customer") {
       skipped++;
       continue;
     }
@@ -271,6 +274,10 @@ async function run() {
       if (!draftRes.ok || !draftRes.body) {
         const errBody = await draftRes.text().catch(() => "(body読み取り失敗)");
         console.error("[generate-pending-drafts] generate-reply HTTPエラー:", convId, "status:", draftRes.status, "body:", errBody.slice(0, 200));
+        await db.from("conversations").update({
+          draft_fail_count: (conv.draft_fail_count ?? 0) + 1,
+          draft_last_error: `HTTP ${draftRes.status}: ${errBody.slice(0, 500)}`,
+        }).eq("id", convId);
         failed++;
         continue;
       }
@@ -306,6 +313,10 @@ async function run() {
 
       if (metaFailed || !metaDone) {
         if (!metaFailed) console.error("[generate-pending-drafts] ストリームがメタ行なしで終了:", convId, "buffer:", buffer.slice(0, 200));
+        await db.from("conversations").update({
+          draft_fail_count: (conv.draft_fail_count ?? 0) + 1,
+          draft_last_error: metaFailed ? "generate-reply meta line NG (ok:false or parse error)" : "stream ended without meta line",
+        }).eq("id", convId);
         failed++;
         continue;
       }
@@ -332,7 +343,11 @@ async function run() {
       if (stopReason === "max_tokens") {
         console.warn("[generate-pending-drafts] draft truncated (stop_reason=max_tokens), saving sentinel:", convId);
         await db.from("conversations")
-          .update({ ai_draft: "__TRUNCATED__" })
+          .update({
+            ai_draft: "__TRUNCATED__",
+            draft_fail_count: (conv.draft_fail_count ?? 0) + 1,
+            draft_last_error: "stop_reason=max_tokens: draft truncated",
+          })
           .eq("id", convId);
         failed++;
         continue;
@@ -350,11 +365,22 @@ async function run() {
       } else {
         // タグ除去後に本文が空 → 生成失敗として記録（attempted_at は残し10分バックオフで再試行させる）
         console.error("[generate-pending-drafts] 生成結果が空（タグ除去後）:", convId, "raw:", fullText.slice(0, 200));
+        await db.from("conversations").update({
+          draft_fail_count: (conv.draft_fail_count ?? 0) + 1,
+          draft_last_error: `empty draft after tag removal. raw: ${fullText.slice(0, 500)}`,
+        }).eq("id", convId);
         failed++;
       }
     } catch (e) {
-      // fetchタイムアウト（AbortSignal 30秒）・ネットワーク断・DB例外もここに落ちる
+      // fetchタイムアウト（AbortSignal 45秒）・ネットワーク断・DB例外もここに落ちる
       console.error("[generate-pending-drafts] convId:", convId, e);
+      const errMsg = (e instanceof Error ? e.message : String(e)).slice(0, 500);
+      try {
+        await db.from("conversations").update({
+          draft_fail_count: (conv.draft_fail_count ?? 0) + 1,
+          draft_last_error: errMsg,
+        }).eq("id", convId);
+      } catch { /* DB更新失敗は無視 */ }
       failed++;
     }
   }
