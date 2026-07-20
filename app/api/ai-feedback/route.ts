@@ -41,7 +41,7 @@ const PROMPT_RULE_ACTION_TYPES = new Set([
 
 type ExtractedRule = {
   rule_text: string;
-  save_target: "trigger_action_rules" | "ai_prompts";
+  save_target: "trigger_action_rules" | "ai_prompts" | "ai_reply_knowledge";
   action_type: string | null;
   trigger_keywords?: string[];
 };
@@ -107,14 +107,17 @@ ${answer}
 この質問と回答から、AIが今後使える業務ルールを1〜3個抽出してください。
 各ルールについて:
 - rule_text: ルール本文（AIがそのまま参照できる具体的な指示文・300文字以内）
-- save_target: "trigger_action_rules"（特定AIXボタンの発動条件に関わるルール）or "ai_prompts"（返信文面・対応方針の一般ルール）
+- save_target: 以下の3つから選択
+  "ai_prompts" → どんな文脈でも常に守る方針・禁止ルール（例：謝罪禁止、能動表現必須、特定フレーズ禁止）
+  "trigger_action_rules" → AIXボタンの発動キーワード条件（特定単語が含まれたらXXXボタン推奨など）
+  "ai_reply_knowledge" → 特定場面・状況専用の返信パターン・フレーズ・文章構造（例：「審査落ち連絡の場合は〜」「物件に興味なしと言われた場合は〜」「入居日を尋ねられた場合の返信構造」）
 - action_type: 該当AIXボタン名（property_send / viewing_invite / application_push / condition_hearing / estimate_sheet / followup_revive / acknowledge_check / property_check_result / property_recommendation / meeting_place 等）、なければ null
 - save_target が "trigger_action_rules" の場合は、trigger_keywords フィールドも必ず付ける。
   trigger_keywords: 顧客メッセージに実際に含まれるであろうキーワード3文字以上の語句を1〜3個（例：「スモ割」「審査通る」「築年数」）。
   ルールの説明文ではなく、顧客がLINEで実際に打つ語句そのものを選ぶこと。
 
 JSON配列のみ返してください（説明・コードフェンス不要）:
-[{"rule_text": "...", "save_target": "trigger_action_rules"|"ai_prompts", "action_type": "..."|null, "trigger_keywords": ["..."]}]`,
+[{"rule_text": "...", "save_target": "trigger_action_rules"|"ai_prompts"|"ai_reply_knowledge", "action_type": "..."|null, "trigger_keywords": ["..."]}]`,
     }],
   });
 
@@ -185,6 +188,39 @@ export async function POST(req: NextRequest) {
       console.warn(`[ai-feedback] whitelist外のaction_type "${actionType}" → trigger_action_rules をスキップし ai_prompts へフォールバック保存`);
       promptRuleTexts.push({ text: ruleText, actionType: scopedActionType });
       continue;
+    }
+
+    // ── save_target === 'ai_reply_knowledge': 特定場面専用の返信パターンを知識DBに保存 ──
+    // ai_prompts（静的テキストルール）ではなく ai_reply_knowledge（pgvector検索）へ保存することで、
+    // generate-reply の fetchKnowledge が類似顧客メッセージにヒットした際に自動注入される。
+    // -gr コピー（generate_reply スコープ重複保存）は不要（pgvector 経由で既に参照されるため）。
+    if (rule.save_target === "ai_reply_knowledge") {
+      try {
+        const embInput = buildKnowledgeEmbeddingInput({ content: ruleText });
+        const embedding = embInput ? await generateEmbedding(embInput) : null;
+        const result = await upsertKnowledge(supabase, {
+          title: ruleText.slice(0, 30) + (ruleText.length > 30 ? "..." : ""),
+          content: ruleText,
+          category: "principle",
+          importance: 8,
+          ...(embedding ? { embedding } : {}),
+        });
+        // upsertKnowledge は hypothesis_status / promoted_by を設定しないため、
+        // 挿入・マージどちらの場合も confirmed + human_feedback を上書きする
+        if (result.result !== "skipped" && result.id) {
+          await supabase.from("ai_reply_knowledge").update({
+            hypothesis_status: "confirmed",
+            promoted_by: "human_feedback",
+            promoted_at: new Date().toISOString(),
+          }).eq("id", result.id);
+        }
+        if (result.result !== "skipped") {
+          appliedRules.push(`[ai_reply_knowledge:${result.result}] ${ruleText.slice(0, 50)}`);
+        }
+      } catch (e) {
+        console.error("[ai-feedback] ai_reply_knowledge upsert失敗:", e);
+      }
+      continue; // ai_prompts / trigger_action_rules パスはスキップ
     }
 
     if (rule.save_target === "trigger_action_rules" && actionType && keywords.length > 0) {
