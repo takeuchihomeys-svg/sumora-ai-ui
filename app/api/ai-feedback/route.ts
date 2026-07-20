@@ -334,30 +334,7 @@ export async function POST(req: NextRequest) {
             console.error("[ai-feedback] choice=old: hypothesis rejected update 失敗:", oldChoiceErr.message);
           }
 
-          // choice='old': 既存ルールを強化するHUMAN-*ルールを作成（同じ矛盾の再起票防止）
-          // 矛盾HUMAN共存防止: -old 保存前に新ルール採用側（HUMAN-{id}）を無効化する
-          await supabase.from("ai_prompt_rules")
-            .update({ is_active: false })
-            .eq("rule_key", `HUMAN-${linkedKnowledgeId}`);
-          const humanOldRuleText = promptRuleTexts.length > 0
-            ? promptRuleTexts[0].text.slice(0, 500)
-            : answer.slice(0, 500);
-          const { error: humanOldErr } = await supabase.from("ai_prompt_rules").upsert({
-            rule_key: `HUMAN-${linkedKnowledgeId}-old`,
-            action_type: null,
-            condition_key: null,
-            condition_value: null,
-            rule_text: humanOldRuleText,
-            reason: `AI質問で既存ルール維持確認（${new Date().toISOString().slice(0, 10)}）: ${(item.question as string).slice(0, 100)}`,
-            priority: 10,
-            is_active: true,
-            updated_at: new Date().toISOString(),
-          }, { onConflict: "rule_key" });
-          if (!humanOldErr) {
-            appliedRules.push(`[HUMAN-${linkedKnowledgeId}-old] 既存ルール強化・再起票防止`);
-          } else {
-            console.error("[ai-feedback] HUMAN-old rule upsert error:", humanOldErr.message);
-          }
+          // choice='old': hypothesis を rejected にするのみ。RAGがフィルタするため ai_prompt_rules への書き込みは不要。
         } else {
           // ── choice === 'new' または undefined（既存動作: confirmed 昇格） ──
           // 1. confirmed 昇格・importance を min(10, max(現在値, 9)) に引き上げ
@@ -370,7 +347,7 @@ export async function POST(req: NextRequest) {
             .eq("hypothesis_status", "hypothesis"); // ガード: hypothesis 以外は触らない
           if (upgradeError) {
             console.error("[ai-feedback] confirmed昇格 update 失敗:", upgradeError.message);
-            // DB更新失敗時は後続の syncConfirmedToPromptRule / HUMAN-* 保存をスキップして不整合を防ぐ
+            // DB更新失敗時は後続処理をスキップして不整合を防ぐ
             throw new Error(`[ai-feedback] confirmed昇格失敗: ${upgradeError.message}`);
           }
 
@@ -400,47 +377,14 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          // 3. HUMAN-{id} を priority=10 でグローバル保存（clarify action と同じキー体系）
-          //    rule_text: Opusが抽出した最初のルール → なければ竹内さんの回答そのもの（最大500字）
-          // 矛盾HUMAN共存防止: choice='new' で保存する前に -old 側（既存ルール維持）を無効化する
-          await supabase.from("ai_prompt_rules")
-            .update({ is_active: false })
-            .eq("rule_key", `HUMAN-${linkedKnowledgeId}-old`);
-          // 旧ナレッジ（oldKnowledgeId）に紐づく過去セッションのHUMAN-*/FEEDBACK-*ルールも無効化
-          // （旧confirmedをrejectしても派生ルールがactiveのまま矛盾注入され続けるのを防ぐ）
+          // 3. confirmed昇格のみ。RAGにより自動参照されるためai_prompt_rulesへの書き込みは不要。
+          // 旧ナレッジに紐づく過去のFEEDBACK-*ルールを無効化（矛盾注入防止）
           if (oldKnowledgeId) {
-            await supabase.from("ai_prompt_rules")
-              .update({ is_active: false })
-              .like("rule_key", `HUMAN-${oldKnowledgeId}%`);
             await supabase.from("ai_prompt_rules")
               .update({ is_active: false })
               .like("rule_key", `FEEDBACK-${oldKnowledgeId}%`);
           }
-          // GAP-1/GAP-2: pattern型（promptRuleTexts空 = Opusがai_reply_knowledgeへ保存と判断）は
-          // ai_reply_knowledge確定のみで十分。HUMAN-*をai_prompt_rulesに作ると二重注入になるためスキップ。
-          // policy型（promptRuleTexts>0）のみグローバルポリシーとしてHUMAN-*を作成する。
-          if (promptRuleTexts.length > 0) {
-            const humanRuleText = promptRuleTexts[0].text.slice(0, 500);
-            const { error: humanRuleErr } = await supabase.from("ai_prompt_rules").upsert({
-              rule_key: `HUMAN-${linkedKnowledgeId}`,
-              action_type: null,   // null = 全アクションにグローバル注入
-              condition_key: null,
-              condition_value: null,
-              rule_text: humanRuleText,
-              reason: `AI質問回答により竹内さん確定（${new Date().toISOString().slice(0, 10)}）: ${(item.question as string).slice(0, 100)}`,
-              priority: 10,
-              is_active: true,
-              updated_at: new Date().toISOString(),
-            }, { onConflict: "rule_key" });
-            if (!humanRuleErr) {
-              appliedRules.push(`[HUMAN-${linkedKnowledgeId}] knowledge confirmed + priority=10 グローバル反映`);
-            } else {
-              console.error("[ai-feedback] closed-loop HUMAN rule upsert error:", humanRuleErr.message);
-            }
-          } else {
-            // pattern型: ai_reply_knowledge確定済みのためHUMAN-*は不要
-            appliedRules.push(`[HUMAN-${linkedKnowledgeId}] pattern型: ai_reply_knowledge確定のみ（ai_prompt_rulesスキップ）`);
-          }
+          appliedRules.push(`[CONFIRMED-${linkedKnowledgeId}] knowledge confirmed → RAGで自動参照`);
         }
       }
     } catch (e) {

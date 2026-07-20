@@ -46,8 +46,8 @@ export async function fetchPromptRules(
       .order("priority", { ascending: false })
       .order("updated_at", { ascending: false, nullsFirst: false });
 
-    // HUMAN-* / FEEDBACK-* / IMPLEMENT-* 等（LEARN-*はPhase1で廃止済み）
-    // ナレッジはfetchKnowledge()のpgvector RAGで届くため二重注入不要
+    // FEEDBACK-* / IMPLEMENT-* 等（LEARN-*はPhase1で廃止済み・HUMAN-*はRAGへ完全移行）
+    // ナレッジはfetchKnowledge()のpgvector RAGで届くため ai_prompt_rules への重複注入不要
     const highPrioRes = await buildBaseQuery()
       .not("rule_key", "like", "LEARN-%")
       .eq("is_permanent", false)
@@ -90,18 +90,10 @@ export async function fetchPromptRules(
       sections.push(`【永久ルール（最上位・絶対厳守）】\n${permanentLines}`);
     }
 
-    // ① HUMAN-*（竹内さん確認済み・priority=10）を専用セクションに分離して最優先で注入
-    // FEEDBACK-*/WEEKLY-*/DIFF-POLICY-* と同列に並べると末尾に埋もれてLLMに無視されるリスクがある
-    // is_permanent=false の通常 HUMAN-* のみ（永久ルールは上のセクションに表示済み）
-    const humanRules = applicable.filter(r => r.rule_key.startsWith("HUMAN-")).slice(0, 50);
-    const otherRules = applicable.filter(r => !r.rule_key.startsWith("HUMAN-"));
-
-    if (humanRules.length > 0) {
-      const humanLines = humanRules.map(r => `・${r.rule_text}`).join("\n");
-      sections.push(`【確認済み運用ルール（最優先・必ず守ること）】\n${humanLines}`);
-    }
-    if (otherRules.length > 0) {
-      const otherLines = otherRules.map(r => `・${r.rule_text}`).join("\n");
+    // FEEDBACK-* / IMPLEMENT-* 等を priority 降順で注入
+    // HUMAN-* は is_active=false（RAGへ完全移行済み）のためここには現れない
+    if (applicable.length > 0) {
+      const otherLines = applicable.map(r => `・${r.rule_text}`).join("\n");
       sections.push(`【AI学習ルール（参考）】\n${otherLines}`);
     }
     return "\n\n" + sections.join("\n\n");
