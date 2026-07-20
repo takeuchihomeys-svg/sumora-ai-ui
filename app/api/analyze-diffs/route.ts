@@ -238,6 +238,13 @@ function isContentClear(title: string): boolean {
   return ACTION_KEYWORDS.some(kw => title.includes(kw));
 }
 
+// GAP-7: policy型コンテンツ検出（普遍的な禁止・必須制約を示すキーワード）
+// Tier 1 サイレント昇格時にai_reply_knowledgeへのconfirm昇格の代わりにai_prompt_rulesへ保存するために使用
+const POLICY_KEYWORDS = /禁止|絶対|必ず|してはいけない|しないこと|してはならない|使用禁止|送ってはいけない|言ってはいけない/;
+function isPolicyContent(content: string): boolean {
+  return POLICY_KEYWORDS.test(content);
+}
+
 // 曖昧ナレッジ判定（タイトルが短すぎる、または内容に条件・場面の記述がない）
 const STRUCTURE_MARKERS = ["→", "する場合", "ときは", "場面", "タイミング", "場合は", "際は", "のは", "すると"];
 function isAmbiguous(title: string, content: string): boolean {
@@ -1167,6 +1174,24 @@ export async function POST(req: NextRequest) {
           : await analyzeComponentDiff(customer_message, aiCompText, sent_reply, compState, compName);
 
         if (compResult && !compResult.skip && compResult.title && compResult.rule) {
+          // GAP-6: policy型コンテンツ（禁止/絶対/必ず等の普遍的制約）はai_reply_knowledgeでなく
+          // ai_prompt_rulesへ保存する。pgvector検索ではなくfetchPromptRulesで全会話に確実に注入される。
+          if (isPolicyContent(compResult.rule) && changeType === "structure") {
+            await supabase.from("ai_prompt_rules").upsert({
+              rule_key: `DIFF-POLICY-COMP-${id}-${comp}`,
+              action_type: "generate_reply",
+              condition_key: null,
+              condition_value: null,
+              rule_text: compResult.rule.slice(0, 500),
+              reason: `analyze-diffs コンポーネントdiff ポリシー検出: ${compResult.title}`.slice(0, 500),
+              priority: 8,
+              is_active: true,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: "rule_key" }).then(() => {
+              learned++;
+            }, (e) => console.error("[analyze-diffs] DIFF-POLICY-COMP upsert失敗:", e));
+            continue; // ai_reply_knowledgeパスをスキップ
+          }
           const embInput = buildKnowledgeEmbeddingInput({
             trigger_example: customer_message,
             rule: compResult.rule,
@@ -1196,13 +1221,29 @@ export async function POST(req: NextRequest) {
               .maybeSingle();
             const freshCorrect = (freshRow?.correct_count as number | null) ?? 0;
             if (imp >= 9 && freshCorrect >= 2 && isContentClear(compResult.title)) {
-              // Tier 1 サイレント昇格: importance>=9 + 正解実績2件以上 + 明確なアクションキーワードを含む
-              await promoteToConfirmed(upsertResult.id, "analyze_diffs_tier1", {
-                title: compResult.title,
-                content: compResult.rule,
-                conversation_state: compState,
-                importance: imp,
-              }).catch(() => {});
+              // GAP-7: policy型コンテンツ（禁止/絶対/必ず等）はai_prompt_rulesへ保存し、
+              // ai_reply_knowledgeはhypothesisのまま維持（confirm昇格 = 二重注入になるためスキップ）
+              if (isPolicyContent(compResult.rule)) {
+                await supabase.from("ai_prompt_rules").upsert({
+                  rule_key: `DIFF-POLICY-${upsertResult.id}`,
+                  action_type: "generate_reply",
+                  condition_key: null,
+                  condition_value: null,
+                  rule_text: compResult.rule.slice(0, 500),
+                  reason: `analyze-diffs Tier1ポリシー検出: ${compResult.title}`.slice(0, 500),
+                  priority: 8,
+                  is_active: true,
+                  updated_at: new Date().toISOString(),
+                }, { onConflict: "rule_key" }).then(() => {}, (e) => console.error("[analyze-diffs] DIFF-POLICY upsert失敗:", e));
+              } else {
+                // Tier 1 サイレント昇格: importance>=9 + 正解実績2件以上 + 明確なアクションキーワードを含む
+                await promoteToConfirmed(upsertResult.id, "analyze_diffs_tier1", {
+                  title: compResult.title,
+                  content: compResult.rule,
+                  conversation_state: compState,
+                  importance: imp,
+                }).catch(() => {});
+              }
             } else if (judgeCount < MAX_JUDGE_PER_RUN) {
               // AUTO-JUDGE: Sonnetで品質判定（Tier1未適用・importance>=7 のみ対象）
               judgeCount++;
@@ -1291,6 +1332,27 @@ export async function POST(req: NextRequest) {
       const ALLOWED_CATEGORIES = new Set(["pattern", "style", "phrase"]);
       const rawCategory = (result.category ?? "pattern").split("=")[0].trim();
       const safeCategory = ALLOWED_CATEGORIES.has(rawCategory) ? rawCategory : "pattern";
+
+      // GAP-6: policy型コンテンツ（禁止/絶対/必ず等の普遍的制約）はai_reply_knowledgeでなく
+      // ai_prompt_rulesへ直接保存する（pgvector=場面依存検索ではなく全会話への確実な注入のため）
+      if (isPolicyContent(result.rule) && safeCategory === "pattern") {
+        await supabase.from("ai_prompt_rules").upsert({
+          rule_key: `DIFF-POLICY-FULL-${id}`,
+          action_type: "generate_reply",
+          condition_key: null,
+          condition_value: null,
+          rule_text: result.rule.slice(0, 500),
+          reason: `analyze-diffs フルメッセージdiff ポリシー検出: ${result.title}`.slice(0, 500),
+          priority: 8,
+          is_active: true,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "rule_key" }).then(() => {
+          learned++;
+        }, (e) => console.error("[analyze-diffs] DIFF-POLICY-FULL upsert失敗:", e));
+        await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
+        processed++;
+        continue; // ai_reply_knowledgeパスをスキップ
+      }
       // #21: 検索クエリ（顧客メッセージ）と意味空間を揃えるため trigger_example を優先して embedding 化
       const embeddingInput = buildKnowledgeEmbeddingInput({
         trigger_example: result.trigger_example,
@@ -1325,13 +1387,29 @@ export async function POST(req: NextRequest) {
             .maybeSingle();
           const freshCorrect2 = (freshRow2?.correct_count as number | null) ?? 0;
           if (imp >= 9 && freshCorrect2 >= 2 && isContentClear(result.title)) {
-            // Tier 1 サイレント昇格: importance>=9 + 正解実績2件以上 + 明確なアクションキーワードを含む
-            await promoteToConfirmed(upsertResult.id, "analyze_diffs_tier1", {
-              title: result.title,
-              content: result.rule,
-              conversation_state: conversation_state ?? "proposing",
-              importance: imp,
-            }).catch(() => {});
+            // GAP-7: policy型コンテンツ（禁止/絶対/必ず等）はai_prompt_rulesへ保存し、
+            // ai_reply_knowledgeはhypothesisのまま維持（confirm昇格 = 二重注入になるためスキップ）
+            if (isPolicyContent(result.rule)) {
+              await supabase.from("ai_prompt_rules").upsert({
+                rule_key: `DIFF-POLICY-${upsertResult.id}`,
+                action_type: "generate_reply",
+                condition_key: null,
+                condition_value: null,
+                rule_text: result.rule.slice(0, 500),
+                reason: `analyze-diffs Tier1ポリシー検出: ${result.title}`.slice(0, 500),
+                priority: 8,
+                is_active: true,
+                updated_at: new Date().toISOString(),
+              }, { onConflict: "rule_key" }).then(() => {}, (e) => console.error("[analyze-diffs] DIFF-POLICY upsert失敗:", e));
+            } else {
+              // Tier 1 サイレント昇格: importance>=9 + 正解実績2件以上 + 明確なアクションキーワードを含む
+              await promoteToConfirmed(upsertResult.id, "analyze_diffs_tier1", {
+                title: result.title,
+                content: result.rule,
+                conversation_state: conversation_state ?? "proposing",
+                importance: imp,
+              }).catch(() => {});
+            }
           } else if (judgeCount < MAX_JUDGE_PER_RUN) {
             // AUTO-JUDGE: Sonnetで品質判定（Tier1未適用・importance>=7 のみ対象）
             judgeCount++;

@@ -93,7 +93,7 @@ type HypothesisRule = {
 };
 
 type WeeklyAnalysisResult = {
-  newRules: Array<{ title: string; content: string; trigger?: string }>;
+  newRules: Array<{ title: string; content: string; trigger?: string; ruleType?: "policy" | "pattern" }>;
   gaps: Array<{ description: string; frequency: number }>;
   contradictions: Array<{ description: string }>;
   weeklyQuestion: string | null;
@@ -140,11 +140,12 @@ ${existingRulesText}
 - 新ルールは具体的・行動的に書く（「〜する」「〜しない」の形式）
 - title は 30文字以内、content は 150文字以内
 - weeklyQuestion: 今週のデータから生まれた「AIへの最重要質問」1つ（contradictionsまたはgapsがある場合のみ）
+- ruleType: "policy"=禁止・必須など全会話に普遍的に適用する制約ルール / "pattern"=特定場面・特定顧客反応のみに使う状況依存パターン
 
 返答はJSON配列ではなく以下の形式のJSONオブジェクトのみ：
 {
   "newRules": [
-    {"title": "ルール名（30字以内）", "content": "具体的ルール（150字以内）", "trigger": "トリガー例（任意）"}
+    {"title": "ルール名（30字以内）", "content": "具体的ルール（150字以内）", "trigger": "トリガー例（任意）", "ruleType": "policy"}
   ],
   "gaps": [
     {"description": "AIが苦手なパターン説明（100字以内）", "frequency": 件数}
@@ -233,24 +234,47 @@ async function runChunk1(chunk: number): Promise<Record<string, unknown>> {
       for (const rule of analysis.newRules) {
         if (!rule.title || !rule.content) continue;
         try {
-          const embeddingInput = buildKnowledgeEmbeddingInput({
-            trigger_example: rule.trigger,
-            content: rule.content,
-            conversation_state: state,
-          });
-          const embedding = await generateEmbedding(embeddingInput);
-          const result = await upsertKnowledge(supabase, {
-            title: `[weekly] ${rule.title}`,
-            content: rule.content,
-            category: "pattern",
-            importance: 7,
-            conversation_state: state,
-            ...(embedding ? { embedding } : {}),
-            ...(rule.trigger ? { trigger_example: rule.trigger } : {}),
-          });
-          if (result.result === "inserted" || result.result === "merged") totalNewRules++;
+          // GAP-4: policy型は全会話に適用する普遍ルール → ai_prompt_rules へ保存（WEEKLY-*キー）
+          // pattern型（またはruleType未指定）は場面依存パターン → ai_reply_knowledge へ保存（従来通り）
+          if (rule.ruleType === "policy") {
+            const ruleKey = `WEEKLY-${state}-${Date.now()}-${totalNewRules}`;
+            const { error: policyErr } = await supabase.from("ai_prompt_rules").upsert({
+              rule_key: ruleKey,
+              action_type: "generate_reply",
+              condition_key: null,
+              condition_value: null,
+              rule_text: rule.content,
+              reason: `週次バッチ学習ポリシー: ${state}フェーズ / ${new Date().toISOString().slice(0, 10)}`,
+              priority: 6,
+              is_active: true,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: "rule_key" });
+            if (!policyErr) {
+              totalNewRules++;
+              console.log(`[weekly-learning] ${state}: policy型ルール → ai_prompt_rules: ${ruleKey}`);
+            } else {
+              console.error(`[weekly-learning] ${state}: policy型ルール保存失敗`, policyErr.message);
+            }
+          } else {
+            const embeddingInput = buildKnowledgeEmbeddingInput({
+              trigger_example: rule.trigger,
+              content: rule.content,
+              conversation_state: state,
+            });
+            const embedding = await generateEmbedding(embeddingInput);
+            const result = await upsertKnowledge(supabase, {
+              title: `[weekly] ${rule.title}`,
+              content: rule.content,
+              category: "pattern",
+              importance: 7,
+              conversation_state: state,
+              ...(embedding ? { embedding } : {}),
+              ...(rule.trigger ? { trigger_example: rule.trigger } : {}),
+            });
+            if (result.result === "inserted" || result.result === "merged") totalNewRules++;
+          }
         } catch (e) {
-          console.error(`[weekly-learning] ${state}: upsertKnowledge失敗`, e);
+          console.error(`[weekly-learning] ${state}: ルール保存失敗`, e);
         }
       }
 
@@ -948,14 +972,27 @@ async function runFeedbackRuleReconfirm(): Promise<number> {
           (Date.now() - new Date(rule.created_at ?? "").getTime()) / (1000 * 60 * 60 * 24)
         );
 
+        // GAP-5: action_type を使って質問テンプレートを分岐する。
+        // action_type=null → グローバルポリシー（全アクション適用）
+        // action_type="generate_reply" → LINE返信AIスコープ（-grコピーの可能性あり）
+        // それ以外 → AIXアクション限定スコープ
+        const actionScopeNote = !rule.action_type
+          ? "すべての返信生成（LINE返信AI・AIXアクション）に「最優先ルール」として注入されています。"
+          : rule.action_type === "generate_reply"
+          ? "LINE返信AIの文案生成に「最優先ルール」として注入されています（AIXアクション連動ルールのコピーの可能性あります）。"
+          : `AIXアクション「${rule.action_type}」専用として注入されています。`;
+        const patternMoveNote = rule.action_type === "generate_reply"
+          ? "\n\n💡 このルールが「特定の顧客反応・場面のみに使うパターン」であれば、ナレッジDBへの移行が適切です。その場合は「❌ 間違い（無効化）」を選んでください（後でナレッジDBへ追加します）。"
+          : "";
         const question =
           `[feedback_rule_key:${rule.rule_key}] ❓【確認】このルールはまだ正しいですか？\n\n` +
-          `■ 使われそうな場面\nAIが返信を生成する際にこのルールが「最優先ルール」として注入されています。\n\n` +
+          `■ 使われそうな場面\n${actionScopeNote}\n\n` +
           `■ ルール内容\n${rule.rule_text}\n\n` +
           `■ 登録日\n${(rule.created_at ?? "").slice(0, 10)}\n\n` +
           `❓ このルールの内容は今も正しいですか？\n` +
           `「✅ 正しい（維持）」→ そのまま使い続けます\n` +
-          `「❌ 間違い（無効化）」→ このルールを無効化します`;
+          `「❌ 間違い（無効化）」→ このルールを無効化します` +
+          patternMoveNote;
 
         const raised = await insertAiQuestion({
           question,

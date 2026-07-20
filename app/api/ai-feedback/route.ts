@@ -416,24 +416,30 @@ export async function POST(req: NextRequest) {
               .update({ is_active: false })
               .like("rule_key", `FEEDBACK-${oldKnowledgeId}%`);
           }
-          const humanRuleText = promptRuleTexts.length > 0
-            ? promptRuleTexts[0].text.slice(0, 500)
-            : answer.slice(0, 500);
-          const { error: humanRuleErr } = await supabase.from("ai_prompt_rules").upsert({
-            rule_key: `HUMAN-${linkedKnowledgeId}`,
-            action_type: null,   // null = 全アクションにグローバル注入
-            condition_key: null,
-            condition_value: null,
-            rule_text: humanRuleText,
-            reason: `AI質問回答により竹内さん確定（${new Date().toISOString().slice(0, 10)}）: ${(item.question as string).slice(0, 100)}`,
-            priority: 10,
-            is_active: true,
-            updated_at: new Date().toISOString(),
-          }, { onConflict: "rule_key" });
-          if (!humanRuleErr) {
-            appliedRules.push(`[HUMAN-${linkedKnowledgeId}] knowledge confirmed + priority=10 グローバル反映`);
+          // GAP-1/GAP-2: pattern型（promptRuleTexts空 = Opusがai_reply_knowledgeへ保存と判断）は
+          // ai_reply_knowledge確定のみで十分。HUMAN-*をai_prompt_rulesに作ると二重注入になるためスキップ。
+          // policy型（promptRuleTexts>0）のみグローバルポリシーとしてHUMAN-*を作成する。
+          if (promptRuleTexts.length > 0) {
+            const humanRuleText = promptRuleTexts[0].text.slice(0, 500);
+            const { error: humanRuleErr } = await supabase.from("ai_prompt_rules").upsert({
+              rule_key: `HUMAN-${linkedKnowledgeId}`,
+              action_type: null,   // null = 全アクションにグローバル注入
+              condition_key: null,
+              condition_value: null,
+              rule_text: humanRuleText,
+              reason: `AI質問回答により竹内さん確定（${new Date().toISOString().slice(0, 10)}）: ${(item.question as string).slice(0, 100)}`,
+              priority: 10,
+              is_active: true,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: "rule_key" });
+            if (!humanRuleErr) {
+              appliedRules.push(`[HUMAN-${linkedKnowledgeId}] knowledge confirmed + priority=10 グローバル反映`);
+            } else {
+              console.error("[ai-feedback] closed-loop HUMAN rule upsert error:", humanRuleErr.message);
+            }
           } else {
-            console.error("[ai-feedback] closed-loop HUMAN rule upsert error:", humanRuleErr.message);
+            // pattern型: ai_reply_knowledge確定済みのためHUMAN-*は不要
+            appliedRules.push(`[HUMAN-${linkedKnowledgeId}] pattern型: ai_reply_knowledge確定のみ（ai_prompt_rulesスキップ）`);
           }
         }
       }
@@ -479,7 +485,9 @@ export async function POST(req: NextRequest) {
   // item.question は「AIが〜と誤回答しました」等のメタ文のため embedding が意味空間ズレ。
   // 正しい知識内容（answer）を embedding 化して顧客の類似質問に pgvector でヒットさせる
   // ※ linkedKnowledgeId がある場合は上の closed-loop で既に knowledge を confirmed 化済みのためスキップ
-  if (item.category === "knowledge_gap" && !linkedKnowledgeId) {
+  // GAP-9: extractRulesでpolicy型ルール（FEEDBACK-*）を作成済みの場合は二重注入防止のためスキップ。
+  // promptRuleTexts>0 = Opusがai_prompt_rulesへ保存と判断した = knowledge_gap側の保存は冗長になる。
+  if (item.category === "knowledge_gap" && !linkedKnowledgeId && promptRuleTexts.length === 0) {
     try {
       const embInput = buildKnowledgeEmbeddingInput({ content: answer });
       const embedding = embInput ? await generateEmbedding(embInput) : null;

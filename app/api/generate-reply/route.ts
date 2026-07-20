@@ -1581,7 +1581,25 @@ export async function POST(req: NextRequest) {
     ]);
     const resolvedSummary = customerSummary || autoSummary;
     const resolvedSummaryJson = bodySummaryJson ?? fetchedSummaryJson ?? undefined;
-    const knowledge = knowledgeResult.text;
+    // GAP-3: Cross-table deduplication — dbRules（ai_prompt_rules）と knowledge（ai_reply_knowledge）の
+    // 内容重複を除去する。HUMAN-*/FEEDBACK-*がai_prompt_rulesとai_reply_knowledgeの両方に存在する場合、
+    // knowledge側から重複エントリを除外してプロンプトへの二重注入を防ぐ。
+    const knowledge = (() => {
+      if (!dbRules || !knowledgeResult.text) return knowledgeResult.text;
+      // dbRulesから個別ルールテキストを抽出（各行は「・{rule_text}」形式）
+      const dbRuleTexts = dbRules.split("\n")
+        .filter(l => l.startsWith("・"))
+        .map(l => l.slice(1).trim())
+        .filter(l => l.length >= 15);
+      if (dbRuleTexts.length === 0) return knowledgeResult.text;
+      // knowledgeの各行を検査し、dbRulesと重複する内容行を除外する
+      return knowledgeResult.text.split("\n").filter(line => {
+        // 番号付きリスト「1. 」プレフィックスを除去してコンテンツ部分を取得
+        const content = line.replace(/^\d+\.\s*/, "").trim();
+        if (content.length < 15) return true; // ヘッダー・区切り行等は保持
+        return !dbRuleTexts.some(r => content === r || r.includes(content) || content.includes(r));
+      }).join("\n");
+    })();
     // ⑥ フレーズ二重注入対策: pgvectorナレッジで phrase 系が3件以上ヒットした場合、
     // 汎用フレーズ集は 12 → 4 件に絞る（関連性ゼロのフレーズ大量混入を防ぐ）
     const phrases = formatPhrases(phraseList, knowledgeResult.phraseHits >= 3 ? 4 : 12);
