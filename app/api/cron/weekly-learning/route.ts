@@ -67,7 +67,7 @@ async function insertAiQuestion(row: Record<string, unknown>): Promise<boolean> 
 // ── 型定義 ────────────────────────────────────────────────────────────────────
 
 type RecentAnswer = {
-  question_text: string | null;
+  question: string | null;
   user_answer: string | null;
   created_at: string;
 };
@@ -130,7 +130,7 @@ AI案: ${(e.ai_draft ?? "(なし)").slice(0, 300)}
 
   const recentAnswersText = recentAnswers.length > 0
     ? recentAnswers.map((a, i) =>
-        `Q${i + 1}: ${(a.question_text ?? "").slice(0, 150)}\nA: ${(a.user_answer ?? "").slice(0, 200)}`
+        `Q${i + 1}: ${(a.question ?? "").slice(0, 150)}\nA: ${(a.user_answer ?? "").slice(0, 200)}`
       ).join("\n---\n")
     : "（なし）";
 
@@ -207,7 +207,7 @@ async function runChunk1(chunk: number): Promise<Record<string, unknown>> {
   // 直近7日の竹内さんの回答（user_answer）をコンテキストとして取得
   const { data: recentAnswersRaw } = await supabase
     .from("ai_feedback_items")
-    .select("question_text, user_answer, created_at")
+    .select("question, user_answer, created_at")
     .eq("status", "applied")
     .gte("created_at", sevenDaysAgo)
     .not("user_answer", "is", null)
