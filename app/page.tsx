@@ -2421,9 +2421,14 @@ export default function Home() {
         return null;
       })();
 
+      const latestCustomerMsgHasQuote = (() => {
+        const lastCust = [...contextMsgs].reverse().find((m) => m.sender === "customer");
+        return !!lastCust?.quotedMessageId;
+      })();
+
       let genReplyHint = "";
 
-      if (estimatePropertyFromMsg) {
+      if (estimatePropertyFromMsg && !latestCustomerMsgHasQuote) {
         genReplyHint = (genReplyHint ? genReplyHint + "\n" : "") + `【見積書の物件名固定】直近に送った見積書の物件「${estimatePropertyFromMsg}」を使うこと。会話に出てくる他の物件名は絶対に使わない`;
       }
       if (targetMessage === "（物件画像を送信）") {
