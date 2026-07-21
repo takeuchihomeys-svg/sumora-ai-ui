@@ -750,6 +750,7 @@ export default function Home() {
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const [scheduleSuccessInfo, setScheduleSuccessInfo] = useState<{ month: string; day: string; time: string; imageCount: number; text: string } | null>(null);
   const sendLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sendLongPressedRef = useRef(false);
   const [scheduledMsgsList, setScheduledMsgsList] = useState<{ id: string; text: string | null; image_urls: string[]; scheduled_at: string }[]>([]);
   const [showScheduledList, setShowScheduledList] = useState(false);
   const [cancellingScheduleId, setCancellingScheduleId] = useState<string | null>(null);
@@ -3075,6 +3076,7 @@ export default function Home() {
   };
 
   const sendReply = () => {
+    if (sendLongPressedRef.current) { sendLongPressedRef.current = false; return; }
     if (!selectedConversation.id) return;
     if (!replyDraft.trim() && selectedImageFiles.length === 0) return;
     setShowSendConfirm(true);
@@ -3174,6 +3176,7 @@ export default function Home() {
     if (!selectedConversation.id || !scheduleDateTime) return;
     const leftover = detectPlaceholders(replyDraft);
     if (leftover.length > 0) {
+      setShowScheduleModal(false);
       setError(`未置換のプレースホルダーがあります: ${leftover.join(" ")}`);
       return;
     }
@@ -6661,9 +6664,9 @@ export default function Home() {
               </div>
               <button
                 onClick={sendReply}
-                onTouchStart={() => { sendLongPressTimer.current = setTimeout(openScheduleModal, 600); }}
+                onTouchStart={() => { sendLongPressTimer.current = setTimeout(() => { sendLongPressedRef.current = true; openScheduleModal(); }, 600); }}
                 onTouchEnd={() => { if (sendLongPressTimer.current) { clearTimeout(sendLongPressTimer.current); sendLongPressTimer.current = null; } }}
-                onMouseDown={() => { sendLongPressTimer.current = setTimeout(openScheduleModal, 600); }}
+                onMouseDown={() => { sendLongPressTimer.current = setTimeout(() => { sendLongPressedRef.current = true; openScheduleModal(); }, 600); }}
                 onMouseUp={() => { if (sendLongPressTimer.current) { clearTimeout(sendLongPressTimer.current); sendLongPressTimer.current = null; } }}
                 onMouseLeave={() => { if (sendLongPressTimer.current) { clearTimeout(sendLongPressTimer.current); sendLongPressTimer.current = null; } }}
                 disabled={sending || (!replyDraft.trim() && selectedImageFiles.length === 0)}
