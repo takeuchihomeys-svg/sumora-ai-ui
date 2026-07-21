@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
       }
 
       const [{ data: msgs, error: msgsErr }, { data: pc }] = await Promise.all([
-        db.from("messages").select("sender, text, created_at").eq("conversation_id", convId)
+        db.from("messages").select("sender, text, image_url, created_at, is_aix_generated").eq("conversation_id", convId)
           .order("created_at", { ascending: false }).limit(20),
         conv.property_customer_id
           ? db.from("property_customers")
@@ -81,9 +81,16 @@ export async function POST(req: NextRequest) {
 
       if (msgsErr) { console.error("[bg-async] msgs fetch error:", msgsErr.message); return; }
 
-      const recentMsgs = ((msgs || []) as Array<{ sender: string; text: string; created_at?: string }>)
+      type MsgRow = { sender: string; text: string | null; image_url: string | null; created_at?: string; is_aix_generated: boolean | null };
+      const recentMsgs = ((msgs || []) as MsgRow[])
         .reverse()
-        .map((m) => ({ sender: m.sender, text: m.text, createdAt: m.created_at }));
+        .map((m) => ({
+          sender: m.sender,
+          text: m.text || (m.image_url ? "[画像]" : ""),
+          imageUrl: m.image_url ?? undefined,
+          createdAt: m.created_at,
+          isAix: m.is_aix_generated ?? false,
+        }));
 
       // 直近20件にスタッフ返信があるか確認
       const hasStaffInLast20 = recentMsgs.some((m) => m.sender === "staff");
@@ -104,7 +111,7 @@ export async function POST(req: NextRequest) {
         if (lastStaffData) {
           hasAnyStaffMsg = true;
           recentMsgsForGen = [
-            { sender: "staff", text: (lastStaffData.text as string) || "", createdAt: lastStaffData.created_at as string | undefined },
+            { sender: "staff", text: (lastStaffData.text as string) || "", imageUrl: undefined as string | undefined, createdAt: lastStaffData.created_at as string | undefined, isAix: false },
             ...recentMsgs,
           ];
         }
@@ -171,6 +178,12 @@ export async function POST(req: NextRequest) {
       const baseUrl = getBaseUrl();
       console.log("[bg-async] calling generate-reply at:", baseUrl, "convId:", convId, "state:", effectiveState);
 
+      const { data: pendingTasks } = await db.from("line_tasks")
+        .select("task_type")
+        .eq("conversation_id", convId)
+        .eq("status", "pending");
+      const activeTaskTypes = (pendingTasks ?? []).map((t: { task_type: string }) => t.task_type);
+
       // 150秒タイムアウト: generate-replyはStep1(最大45s)+Step2(最大45s)+余裕=最大90s超。
       // 40秒では重い会話で構造的に常にタイムアウトするため150秒に引き上げ（after()maxDuration=300s内）
       const controller = new AbortController();
@@ -191,6 +204,7 @@ export async function POST(req: NextRequest) {
             customerConditions,
             customerSummary: pcData?.ai_summary || "",
             replyHint,
+            activeTaskTypes,
             // RLHF断絶修正: conversationId を渡して generate-reply 側の logKnowledgeApply を発火させる
             // （knowledge_apply_log 記録 → text_retention / deal_outcome フィードバック対象化）
             // ※ generate-reply 側も ai_draft を保存するが同一内容の冪等上書きのため二重化の実害なし

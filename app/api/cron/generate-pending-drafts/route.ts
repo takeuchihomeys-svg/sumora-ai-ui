@@ -257,15 +257,24 @@ async function run() {
       const customerConditions = [
         pcData?.desired_area && `エリア: ${pcData.desired_area}`,
         pcData?.floor_plan && `間取り: ${pcData.floor_plan}`,
-        (pcData?.rent_min || pcData?.rent_max) && `家賃: ${pcData?.rent_min ? Math.floor(pcData.rent_min / 10000) + "万〜" : ""}${pcData?.rent_max ? Math.floor(pcData.rent_max / 10000) + "万" : ""}`,
-        pcData?.preferences && `こだわり: ${pcData.preferences}`,
-        pcData?.ng_points && `NG: ${pcData.ng_points}`,
+        (pcData?.rent_min || pcData?.rent_max) && `家賃: ${[pcData?.rent_min ? Math.floor(pcData.rent_min / 10000) + "万円〜" : "", pcData?.rent_max ? Math.floor(pcData.rent_max / 10000) + "万円以内" : ""].join("")}`,
         pcData?.walk_minutes && `駅徒歩: ${pcData.walk_minutes}分以内`,
-        pcData?.move_in_time && `入居時期: ${pcData.move_in_time}`,
+        pcData?.move_in_time && `入居: ${pcData.move_in_time}`,
         pcData?.building_age && `築年数: ${pcData.building_age}年以内`,
-        pcData?.other_requests && `その他希望: ${pcData.other_requests}`,
-        pcData?.additional_conditions && `追加条件: ${pcData.additional_conditions}`,
-      ].filter(Boolean).join(", ");
+        pcData?.preferences && `希望: ${pcData.preferences}`,
+        pcData?.ng_points && `NG: ${pcData.ng_points}`,
+        pcData?.other_requests && `その他: ${pcData.other_requests}`,
+        pcData?.additional_conditions && (() => {
+          const clean = pcData.additional_conditions!.split("\n").map((l: string) => l.replace(/^【[^】]*】/, "").trim()).filter(Boolean).join("、");
+          return clean ? `追加条件: ${clean}` : null;
+        })(),
+      ].filter(Boolean).join("\n");
+
+      const { data: cronPendingTasks } = await db.from("line_tasks")
+        .select("task_type")
+        .eq("conversation_id", convId)
+        .eq("status", "pending");
+      const activeTaskTypes = (cronPendingTasks ?? []).map((t: { task_type: string }) => t.task_type);
 
       const draftRes = await fetch(`${baseUrl}/api/generate-reply`, {
         method: "POST",
@@ -277,6 +286,7 @@ async function run() {
           recentMessages: recentMsgs.map(m => ({ sender: m.sender, text: m.text || "", imageUrl: m.image_url ?? undefined, createdAt: m.created_at, isAix: m.is_aix_generated ?? false })),
           customerConditions,
           customerSummary: pcData?.ai_summary || "",
+          activeTaskTypes,
           // RLHF断絶修正: conversationId を渡して generate-reply 側の logKnowledgeApply を発火させる
           // （knowledge_apply_log に記録され、text_retention / deal_outcome フィードバックの対象になる）
           // ※ generate-reply 側も成功時に ai_draft を保存するが、同一クリーンテキストの冪等な上書きなので二重化の実害なし。
