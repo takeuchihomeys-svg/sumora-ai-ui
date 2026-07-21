@@ -1635,6 +1635,17 @@ export async function POST(req: NextRequest) {
       });
     })();
 
+    const latestCustomerMsg = [...recentMessages].reverse().find(m => m.sender === "customer");
+    const latestStaffMsg = [...recentMessages].reverse().find(m => m.sender === "staff");
+    const isAmbiguousReply = !!latestCustomerMsg &&
+      /^[\s　]*(ありがとう|ありがとうございます|はい|わかりました|なるほど|そうですね|了解|👍|🙏)[！。!、\s　]*$/.test(latestCustomerMsg.text?.trim() ?? "");
+    const hadAggressivePush = !!latestStaffMsg &&
+      /(お申込み|お申込|申し込み|お部屋(を)?抑え|お部屋抑えさせ|抑えさせて頂き)/.test(latestStaffMsg.text ?? "");
+    if (isAmbiguousReply && hadAggressivePush) {
+      replyHint = (replyHint ? replyHint + "\n" : "") +
+        "【受け身モード】直前に申込誘導を送りお客様が曖昧な返答をした。今回は追い込まず受け身で締めること。「ご都合のよい日時をお聞かせください！！」等の追い込みは絶対にしない。「お気軽にお申し付けください！！」「いつでもご連絡くださいね！！」等の柔らかい一言で締める。";
+    }
+
     // Sonnetでストリーミング生成
     const messages = buildGenerationMessages(
       message, customerName, history, currentState,
