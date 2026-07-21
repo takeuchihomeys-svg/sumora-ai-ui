@@ -862,6 +862,7 @@ export default function TemplateModal({
   const [editViewingSub, setEditViewingSub] = useState<string | null>(null);
   const [editSecondMsgType, setEditSecondMsgType] = useState<string | null>(null);
   const [editSecondMsgDelay, setEditSecondMsgDelay] = useState<number | null>(null);
+  const [aixKeywordFilter, setAixKeywordFilter] = useState('');
   const [vacatingDates, setVacatingDates] = useState<Record<string, { month: number; day: number } | null>>({});
   const [inspectingId, setInspectingId] = useState<string | null>(null);
   const [templateImages, setTemplateImages] = useState<Record<string, File[]>>({});
@@ -1964,7 +1965,18 @@ export default function TemplateModal({
     ? templates.filter((t) =>
         t.label.includes(searchQuery) || t.text.includes(searchQuery) || t.category.includes(searchQuery)
       )
-    : templates.filter((t) => t.category === category)
+    : templates
+        .filter((t) => t.category === category)
+        .filter((t) => {
+          if (!aixKeywordFilter.trim()) return true;
+          const kw = aixKeywordFilter.trim().toLowerCase();
+          const inLabel = t.label.toLowerCase().includes(kw);
+          const inText = t.text.toLowerCase().includes(kw);
+          const inStructure = t.structure?.some(
+            (b) => b.label.toLowerCase().includes(kw) || b.text.toLowerCase().includes(kw)
+          ) ?? false;
+          return inLabel || inText || inStructure;
+        })
   ).sort(compareTemplates);
 
   const isAixCategory = category === "物件オススメ【AIX】" && !isSearching;
@@ -3960,6 +3972,20 @@ export default function TemplateModal({
             <div className="p-4">
               {!loading && filtered.length > 0 && (
                 <div className="mb-3 flex flex-col gap-2">
+                  {isAixCategoryActive && (
+                    <div>
+                      <input
+                        type="text"
+                        value={aixKeywordFilter}
+                        onChange={(e) => setAixKeywordFilter(e.target.value)}
+                        placeholder="どう伝えたいか入力して絞り込む..."
+                        className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3] bg-[#f8f9fa]"
+                      />
+                      {aixKeywordFilter && (
+                        <p className="mt-1 pl-1 text-[11px] text-[#888]">{filtered.length}件が一致</p>
+                      )}
+                    </div>
+                  )}
                   {/* AIXカテゴリ：大きな内覧誘導/申込誘導セレクター */}
                   {isAixCategory && (
                     <div className="flex flex-col gap-1">
