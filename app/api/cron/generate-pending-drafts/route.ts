@@ -15,7 +15,7 @@ export const maxDuration = 120;
 const PER_CONV_TIMEOUT_MS = 45_000;
 const TIME_BUDGET_MS = 90_000; // 60s→90s: 典型的な生成時間（15s）なら最大6件処理可能
 
-const SKIP_STATUSES = new Set(["applying", "screening", "contract", "closed_won", "closed_lost"]);
+const SKIP_STATUSES = new Set(["applying", "application", "screening", "contract", "closed_won", "closed_lost"]);
 
 const STATUS_ALIAS: Record<string, string> = {
   first_reply:             "hearing",
@@ -97,6 +97,7 @@ async function run() {
     .or("draft_attempted_at.is.null,draft_attempted_at.lt." + tenMinutesAgo)
     .gte("updated_at", sevenDaysAgo)
     .neq("status", "applying")
+    .neq("status", "application")
     .neq("status", "screening")
     .neq("status", "contract")
     .neq("status", "closed_won")
@@ -172,9 +173,6 @@ async function run() {
       continue;
     }
 
-    // このメッセージ（マーカー）への生成試行を記録（成否に関わらず記録。新しいメッセージが来れば即再処理される）
-    attemptedMarkers.set(convId, { markerMs: markerOf(conv), recordedAt: Date.now() });
-
     // 先にpendingをクリアして重複処理を防ぐ ＋ 生成試行時刻をDBに記録
     // （失敗しても draft_attempted_at から10分間はorphanedクエリの再試行対象外になる）
     // MEDIUM-4: 楽観的ロック — 複数インスタンスが同一会話を同時にクレームしても1つしか成功しない
@@ -199,6 +197,9 @@ async function run() {
       skipped++;
       continue;
     }
+
+    // クレーム成功後のみマーカーを記録（クレーム前に記録するとウォームインスタンスでorphanedが24時間ブロックされる）
+    attemptedMarkers.set(convId, { markerMs: markerOf(conv), recordedAt: Date.now() });
 
     try {
       const [{ data: msgs }, { data: pc }] = await Promise.all([
@@ -228,12 +229,28 @@ async function run() {
       const targetMessage = sanitizeSurrogates(unreplied.map(m => m.text).join("\n"));
       // 未読が画像/動画プレースホルダのみなら生成スキップ（文脈自体はrecentMessagesで保持される）
       const hasRealText = unreplied.some(m => m.text !== "[画像]" && m.text !== "[動画]");
-      if (!targetMessage.trim() || !hasRealText) { skipped++; continue; }
+      if (!targetMessage.trim()) { skipped++; continue; }
+      if (!hasRealText) {
+        // 画像/動画のみ：返信生成不可のため sentinel を書き込んで orphaned の無限10分ループを止める
+        await db.from("conversations")
+          .update({ ai_draft: "[画像のみ]", draft_attempted_at: null })
+          .eq("id", convId)
+          .is("ai_draft", null);
+        skipped++;
+        continue;
+      }
 
       type PC = { customer_name?: string; desired_area?: string; floor_plan?: string; rent_min?: number; rent_max?: number; ai_summary?: string; preferences?: string; ng_points?: string; walk_minutes?: number; move_in_time?: string; building_age?: number; other_requests?: string; additional_conditions?: string } | null;
       const pcData = pc as PC;
 
-      const hasStaffMsg = recentMsgs.some(m => m.sender === "staff");
+      let hasStaffMsg = recentMsgs.some(m => m.sender === "staff");
+      // 直近20件にスタッフ返信が見つからない場合は全履歴を確認（長い会話でfirst_reply誤判定を防ぐ）
+      if (!hasStaffMsg) {
+        const { data: staffCheck } = await db.from("messages")
+          .select("id").eq("conversation_id", convId).eq("sender", "staff")
+          .limit(1).maybeSingle();
+        if (staffCheck) hasStaffMsg = true;
+      }
       const normalizedStatus = STATUS_ALIAS[convStatus] ?? convStatus;
       const effectiveState = !hasStaffMsg && normalizedStatus === "hearing" ? "first_reply" : normalizedStatus;
 
@@ -360,7 +377,8 @@ async function run() {
           console.warn("[generate-pending-drafts] placeholder remains in draft:", convId, leftover.join(" "));
         }
         // 成功時: 下書き保存 ＋ attempted_at クリア（次の新着メッセージで即座に生成対象に戻す）
-        await db.from("conversations").update({ ai_draft: finalDraft, draft_attempted_at: null }).eq("id", convId);
+        // .is("ai_draft", null) ガード: bg-async が先に保存した下書きを上書きしない
+        await db.from("conversations").update({ ai_draft: finalDraft, draft_attempted_at: null }).eq("id", convId).is("ai_draft", null);
         processed++;
       } else {
         // タグ除去後に本文が空 → 生成失敗として記録（attempted_at は残し10分バックオフで再試行させる）
@@ -379,6 +397,7 @@ async function run() {
         await db.from("conversations").update({
           draft_fail_count: (conv.draft_fail_count ?? 0) + 1,
           draft_last_error: errMsg,
+          draft_attempted_at: null,
         }).eq("id", convId);
       } catch { /* DB更新失敗は無視 */ }
       failed++;

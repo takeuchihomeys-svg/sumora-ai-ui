@@ -10,7 +10,7 @@ function getDb() {
   );
 }
 
-const SKIP_STATUSES = new Set(["applying", "screening", "contract", "closed_won"]);
+const SKIP_STATUSES = new Set(["applying", "application", "screening", "contract", "closed_won", "closed_lost"]);
 
 const STATUS_ALIAS: Record<string, string> = {
   first_reply:             "hearing",
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
     try {
       const { data: conv, error: convErr } = await db
         .from("conversations")
-        .select("status, property_customer_id, ai_draft, last_sender, customer_name")
+        .select("status, property_customer_id, ai_draft, last_sender, customer_name, draft_fail_count")
         .eq("id", convId)
         .single();
 
@@ -200,12 +200,24 @@ export async function POST(req: NextRequest) {
       } catch (fetchErr) {
         clearTimeout(timeoutId);
         const isTimeout = fetchErr instanceof Error && fetchErr.name === "AbortError";
-        console.error("[bg-async] fetch error:", isTimeout ? "timeout (40s)" : String(fetchErr), "baseUrl:", baseUrl, "convId:", convId);
+        const errMsg = isTimeout ? "timeout (40s)" : String(fetchErr);
+        console.error("[bg-async] fetch error:", errMsg, "baseUrl:", baseUrl, "convId:", convId);
+        await db.from("conversations").update({
+          draft_fail_count: (conv.draft_fail_count ?? 0) + 1,
+          draft_last_error: errMsg.slice(0, 500),
+          draft_attempted_at: null,
+        }).eq("id", convId);
         return;
       }
 
       if (!draftRes.ok || !draftRes.body) {
-        console.error("[bg-async] generate-reply non-ok:", draftRes.status, draftRes.statusText, "convId:", convId);
+        const errMsg = `generate-reply non-ok: ${draftRes.status} ${draftRes.statusText}`;
+        console.error("[bg-async]", errMsg, "convId:", convId);
+        await db.from("conversations").update({
+          draft_fail_count: (conv.draft_fail_count ?? 0) + 1,
+          draft_last_error: errMsg,
+          draft_attempted_at: null,
+        }).eq("id", convId);
         return;
       }
 
