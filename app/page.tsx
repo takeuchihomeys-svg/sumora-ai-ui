@@ -2446,12 +2446,6 @@ export default function Home() {
         }
       }
 
-      let autoViewingNote: string | undefined;
-      try {
-        const { infoString } = await fetchCalendarSlots();
-        if (infoString) autoViewingNote = infoString;
-      } catch { /* カレンダー取得失敗は無視 */ }
-
       const res = await fetch("/api/generate-reply", {
         method: "POST",
         signal: genAbortController.signal,
@@ -2465,7 +2459,6 @@ export default function Home() {
           customerSummary: linkedCustomerForGen?.ai_summary ?? undefined,
           customerStructured: linkedCustomerForGen?.structured ?? undefined,
           replyHint: genReplyHint || undefined,
-          viewingNote: autoViewingNote,
           hasViewed: selectedConversation.hasViewed ?? false,
           activeTaskTypes: (activeTasks[selectedConversation.id] ?? []).map(t => t.task_type),
           recentMessages: (() => {

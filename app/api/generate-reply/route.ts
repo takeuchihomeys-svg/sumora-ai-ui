@@ -684,12 +684,10 @@ function buildGenerationMessages(
   const resolvedPropertyStatus = detectPropertyStatus(history, customerMessage, propertyStatus);
   const propertyStatusNote = buildPropertyStatusNote(resolvedPropertyStatus);
 
-  // 退去予定物件では「内覧可能日時あり」でも現地内覧日を提案させない（viewingFactNote を上書き）
+  // 内覧日時の具体的提案はAIXの「内覧へ」ボタン専用。generate-replyでは絶対に具体的日時を出さない
   const viewingFactNote = (resolvedPropertyStatus === "move_out_scheduled" || resolvedPropertyStatus === "occupied")
-    ? `\n\n【📅 内覧日時について】この物件は退去予定/入居中のため現地内覧はできません。内覧可能日時が渡されていても現地内覧日程は提案せず、[日付][時間帯]プレースホルダーも使用禁止。「退去後すぐにご案内します」「お申込みでお部屋を先に抑えてからのご内覧も可能です」の方向で返すこと。`
-    : viewingNote
-    ? `\n\n【📅 内覧可能日時（確定事実）】\n${viewingNote}\n※ 内覧を提案する場合はこの日時のみ使用。[日付][時間帯]はこの内容で必ず置き換えること。`
-    : `\n\n【📅 内覧日時について】内覧可能日時の情報がないため、[日付][時間帯]プレースホルダーは使用禁止。内覧を提案する場合は「ご都合のよい日時をお聞かせください！！」等の表現に置き換えること。架空の日時・曜日は絶対に記載しない。`;
+    ? `\n\n【📅 内覧日時について】この物件は退去予定/入居中のため現地内覧はできません。「退去後すぐにご案内します」「お申込みでお部屋を先に抑えてからのご内覧も可能です」の方向で返すこと。`
+    : `\n\n【📅 内覧日時の具体的提案は絶対禁止（最優先）】「〇/〇（木）14:00〜」「直近ですと[日付][時間帯]」「〇〇でご都合いかがでしょうか」のような具体的な内覧候補日時・2択日程提示は絶対に出力しない。内覧の日程調整はAIXの「内覧へ」ボタンのテンプレートで別途行うため、AI返信案には含めない。内覧に触れる場合は「お気に召されましたらご都合よろしいお日にちにご案内させて頂きます！！」のみ許可。[日付][時間帯]プレースホルダーも使用禁止。`;
 
   // お客様メッセージ自体がリンク（URL）を求めている場合の専用ノート（引用コンテキスト非依存の保険）
   const isLinkRequestMsg = /(リンク|url|ＵＲＬ)\s*(を|の|教え|くださ|ちょうだい|ください|欲し|ほし|送)/i.test(customerMessage)
