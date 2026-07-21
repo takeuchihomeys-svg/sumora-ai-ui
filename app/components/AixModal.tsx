@@ -2276,25 +2276,21 @@ export default function AixModal({
           }
           sentImageIndexRef.current = -1;
         } else if (actionType === "estimate_sheet") {
-          // 送信順: ①カバーレター（AI挨拶文・任意）→ ②物件資料（任意）→ ③見積書 → ④テキスト（送信済みステップはスキップ＝再押下時の重複送信防止）
-          if (estimateCoverLetter.trim() && !stepDone(1)) {
-            await sendAsAix(estimateCoverLetter);
-            markStep(1);
-          }
-          if (estimatePropertyFile && !stepDone(2)) {
+          // 送信順: ①物件資料（任意）→ ②見積書 → ③テキスト（送信済みステップはスキップ＝再押下時の重複送信防止）
+          if (estimatePropertyFile && !stepDone(1)) {
             const propUrl = await uploadImageCached(estimatePropertyFile);
             await sendAsAix("", propUrl);
+            markStep(1);
+          }
+          if (uploadedImageUrl && !stepDone(2)) {
+            await sendAsAix("", uploadedImageUrl);
             markStep(2);
           }
-          if (uploadedImageUrl && !stepDone(3)) {
-            await sendAsAix("", uploadedImageUrl);
-            markStep(3);
-          }
           await sendAsAix(preview);
-          // 申込誘導バッジON: 金額文の後に申込誘導テンプレを4通目として送る
-          if (estimateWithAppeal && !stepDone(4)) {
+          // 申込誘導バッジON: 金額文の後に申込誘導テンプレを3通目として送る
+          if (estimateWithAppeal && !stepDone(3)) {
             await sendAsAix(buildEstimateAppealText());
-            markStep(4);
+            markStep(3);
           }
           delete sentStepRef.current[actionType]; // 全ステップ送信完了でリセット
         } else {
