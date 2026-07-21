@@ -1150,7 +1150,7 @@ export default function TemplateModal({
       onRefresh?.();
     }
   };
-  useEffect(() => { setSoloEntry(false); hasScrolled.current = false; }, [category]);
+  useEffect(() => { setSoloEntry(false); hasScrolled.current = false; setAixKeywordFilter(""); setAixPurposeFilter(null); }, [category]);
 
   const loadCandidates = useCallback(async () => {
     setCandidateLoading(true);
@@ -1968,6 +1968,7 @@ export default function TemplateModal({
     : templates
         .filter((t) => t.category === category)
         .filter((t) => {
+          if (!isAixCategoryActive) return true;
           if (!aixKeywordFilter.trim()) return true;
           const kw = aixKeywordFilter.trim().toLowerCase();
           const inLabel = t.label.toLowerCase().includes(kw);
@@ -3970,19 +3971,27 @@ export default function TemplateModal({
           {/* テンプレート一覧 */}
           {!showAddForm && !isCandidateTabActive && (
             <div className="p-4">
-              {!loading && filtered.length > 0 && (
+              {!loading && (filtered.length > 0 || aixKeywordFilter.trim() !== "") && (
                 <div className="mb-3 flex flex-col gap-2">
-                  {isAixCategoryActive && (
+                  {isAixCategoryActive && !isSearching && (
                     <div>
-                      <input
-                        type="text"
-                        value={aixKeywordFilter}
-                        onChange={(e) => setAixKeywordFilter(e.target.value)}
-                        placeholder="どう伝えたいか入力して絞り込む..."
-                        className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 text-[13px] outline-none focus:border-[#2196F3] bg-[#f8f9fa]"
-                      />
-                      {aixKeywordFilter && (
-                        <p className="mt-1 pl-1 text-[11px] text-[#888]">{filtered.length}件が一致</p>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={aixKeywordFilter}
+                          onChange={(e) => setAixKeywordFilter(e.target.value)}
+                          placeholder="どう伝えたいか入力して絞り込む..."
+                          className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 pr-9 text-[13px] outline-none focus:border-[#2196F3] bg-[#f8f9fa]"
+                        />
+                        {aixKeywordFilter !== "" && (
+                          <button
+                            onClick={() => setAixKeywordFilter("")}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-full text-[13px] text-[#888] hover:bg-[#e9edef]"
+                          >✕</button>
+                        )}
+                      </div>
+                      {aixKeywordFilter.trim() !== "" && (
+                        <p className="mt-1 pl-1 text-[11px] text-[#888]">{displayFiltered.length}件が一致</p>
                       )}
                     </div>
                   )}
@@ -4040,33 +4049,36 @@ export default function TemplateModal({
                 </div>
               )}
               {/* サブカテゴリ件数サマリー（物件確認した/ピックアップした/内覧カテゴリのみ） */}
-              {!loading && !isSearching && (isAvailCheckCategory || isPropertySendCategory || isViewingCategory) && displayFiltered.length > 0 && (
+              {!loading && !isSearching && (isAvailCheckCategory || isPropertySendCategory || isViewingCategory) && filtered.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mb-3">
                   {isAvailCheckCategory && AVAIL_CHECK_TYPES.map(({ key, color }) => {
-                    const count = displayFiltered.filter(t => inferAvailCheckType(t.label) === key).length;
+                    const count = filtered.filter(t => inferAvailCheckType(t.label) === key).length;
                     if (count === 0) return null;
+                    const active = availCheckFilter === key;
                     return (
-                      <span key={key} className="text-[10px] px-2 py-0.5 rounded-full font-bold" style={{ backgroundColor: color + "20", color }}>
+                      <button key={key} onClick={() => setAvailCheckFilter(prev => prev === key ? null : key)} className="text-[10px] px-2 py-0.5 rounded-full font-bold" style={active ? { backgroundColor: color, color: "#fff" } : { backgroundColor: color + "20", color }}>
                         {key}({count})
-                      </span>
+                      </button>
                     );
                   })}
                   {isPropertySendCategory && PROPERTY_SEND_SUB_TYPES.map(({ key, color }) => {
-                    const count = displayFiltered.filter(t => getPropertySendSubTag(t.label) === key).length;
+                    const count = filtered.filter(t => getPropertySendSubTag(t.label) === key).length;
                     if (count === 0) return null;
+                    const active = propertySendSubFilter === key;
                     return (
-                      <span key={key} className="text-[10px] px-2 py-0.5 rounded-full font-bold" style={{ backgroundColor: color + "20", color }}>
+                      <button key={key} onClick={() => setPropertySendSubFilter(prev => prev === key ? null : key)} className="text-[10px] px-2 py-0.5 rounded-full font-bold" style={active ? { backgroundColor: color, color: "#fff" } : { backgroundColor: color + "20", color }}>
                         {key}({count})
-                      </span>
+                      </button>
                     );
                   })}
                   {isViewingCategory && VIEWING_SUB_TYPES.map(({ key, color }) => {
-                    const count = displayFiltered.filter(t => getViewingSubTag(t.label) === key).length;
+                    const count = filtered.filter(t => getViewingSubTag(t.label) === key).length;
                     if (count === 0) return null;
+                    const active = viewingSubFilter === key;
                     return (
-                      <span key={key} className="text-[10px] px-2 py-0.5 rounded-full font-bold" style={{ backgroundColor: color + "20", color }}>
+                      <button key={key} onClick={() => setViewingSubFilter(prev => prev === key ? null : key)} className="text-[10px] px-2 py-0.5 rounded-full font-bold" style={active ? { backgroundColor: color, color: "#fff" } : { backgroundColor: color + "20", color }}>
                         {key}({count})
-                      </span>
+                      </button>
                     );
                   })}
                 </div>
@@ -4085,14 +4097,28 @@ export default function TemplateModal({
                 </div>
               ) : displayFiltered.length === 0 ? (
                 <div className="py-8 text-center">
-                  <div className="text-[13px] text-[#aaa] mb-3">このカテゴリにテンプレートがありません</div>
-                  <button
-                    onClick={() => setShowAddForm(true)}
-                    className="rounded-full px-4 py-2 text-[12px] font-bold text-white"
-                    style={{ background: "linear-gradient(135deg, #1565C0, #4BA8E8)" }}
-                  >
-                    ＋ 追加する
-                  </button>
+                  {isAixCategoryActive && !isSearching && aixKeywordFilter.trim() !== "" ? (
+                    <>
+                      <div className="text-[13px] text-[#aaa] mb-3">「{aixKeywordFilter.trim()}」に一致するテンプレートがありません</div>
+                      <button
+                        onClick={() => setAixKeywordFilter("")}
+                        className="rounded-full border border-[#d1d7db] bg-white px-4 py-2 text-[12px] font-bold text-[#667781]"
+                      >
+                        絞り込みを解除
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-[13px] text-[#aaa] mb-3">このカテゴリにテンプレートがありません</div>
+                      <button
+                        onClick={() => setShowAddForm(true)}
+                        className="rounded-full px-4 py-2 text-[12px] font-bold text-white"
+                        style={{ background: "linear-gradient(135deg, #1565C0, #4BA8E8)" }}
+                      >
+                        ＋ 追加する
+                      </button>
+                    </>
+                  )}
                 </div>
               ) : (
                 <div className="flex flex-col gap-3">
