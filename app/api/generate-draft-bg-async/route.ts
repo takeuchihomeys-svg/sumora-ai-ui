@@ -171,9 +171,10 @@ export async function POST(req: NextRequest) {
       const baseUrl = getBaseUrl();
       console.log("[bg-async] calling generate-reply at:", baseUrl, "convId:", convId, "state:", effectiveState);
 
-      // 40秒タイムアウト（クライアント60秒フォールバックより20秒余裕を確保）
+      // 150秒タイムアウト: generate-replyはStep1(最大45s)+Step2(最大45s)+余裕=最大90s超。
+      // 40秒では重い会話で構造的に常にタイムアウトするため150秒に引き上げ（after()maxDuration=300s内）
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 40000);
+      const timeoutId = setTimeout(() => controller.abort(), 150000);
 
       let draftRes: Response;
       try {
@@ -200,12 +201,12 @@ export async function POST(req: NextRequest) {
       } catch (fetchErr) {
         clearTimeout(timeoutId);
         const isTimeout = fetchErr instanceof Error && fetchErr.name === "AbortError";
-        const errMsg = isTimeout ? "timeout (40s)" : String(fetchErr);
+        const errMsg = isTimeout ? "timeout (150s)" : String(fetchErr);
         console.error("[bg-async] fetch error:", errMsg, "baseUrl:", baseUrl, "convId:", convId);
+        // draft_attempted_at は上書きしない（クレーム時のタイムスタンプを維持 → 10分バックオフ有効）
         await db.from("conversations").update({
           draft_fail_count: (conv.draft_fail_count ?? 0) + 1,
           draft_last_error: errMsg.slice(0, 500),
-          draft_attempted_at: null,
         }).eq("id", convId);
         return;
       }
@@ -213,10 +214,10 @@ export async function POST(req: NextRequest) {
       if (!draftRes.ok || !draftRes.body) {
         const errMsg = `generate-reply non-ok: ${draftRes.status} ${draftRes.statusText}`;
         console.error("[bg-async]", errMsg, "convId:", convId);
+        // draft_attempted_at は上書きしない（10分バックオフ有効）
         await db.from("conversations").update({
           draft_fail_count: (conv.draft_fail_count ?? 0) + 1,
           draft_last_error: errMsg,
-          draft_attempted_at: null,
         }).eq("id", convId);
         return;
       }
@@ -270,7 +271,7 @@ export async function POST(req: NextRequest) {
       if (finalDraft) {
         // ai_draft IS NULL ガード: 人間が編集中の場合は上書きしない
         const { error: saveErr } = await db.from("conversations")
-          .update({ ai_draft: finalDraft, draft_pending_at: null })
+          .update({ ai_draft: finalDraft, draft_pending_at: null, draft_fail_count: 0 })
           .eq("id", convId)
           .is("ai_draft", null);
         if (saveErr) {

@@ -10,10 +10,10 @@ function getDb() {
   );
 }
 
-export const maxDuration = 120;
+export const maxDuration = 300;
 
-const PER_CONV_TIMEOUT_MS = 45_000;
-const TIME_BUDGET_MS = 90_000; // 60s→90s: 典型的な生成時間（15s）なら最大6件処理可能
+const PER_CONV_TIMEOUT_MS = 120_000; // generate-reply Step1(45s)+Step2(45s)+余裕=120s
+const TIME_BUDGET_MS = 240_000; // maxDuration300sの80%を処理に使う
 
 const SKIP_STATUSES = new Set(["applying", "application", "screening", "contract", "closed_won", "closed_lost"]);
 
@@ -376,9 +376,9 @@ async function run() {
         if (leftover.length > 0) {
           console.warn("[generate-pending-drafts] placeholder remains in draft:", convId, leftover.join(" "));
         }
-        // 成功時: 下書き保存 ＋ attempted_at クリア（次の新着メッセージで即座に生成対象に戻す）
+        // 成功時: 下書き保存 ＋ attempted_at クリア + fail_count リセット（API障害回復後にorphaned救済が再度拾えるようにする）
         // .is("ai_draft", null) ガード: bg-async が先に保存した下書きを上書きしない
-        await db.from("conversations").update({ ai_draft: finalDraft, draft_attempted_at: null }).eq("id", convId).is("ai_draft", null);
+        await db.from("conversations").update({ ai_draft: finalDraft, draft_attempted_at: null, draft_fail_count: 0 }).eq("id", convId).is("ai_draft", null);
         processed++;
       } else {
         // タグ除去後に本文が空 → 生成失敗として記録（attempted_at は残し10分バックオフで再試行させる）
@@ -394,10 +394,11 @@ async function run() {
       console.error("[generate-pending-drafts] convId:", convId, e);
       const errMsg = (e instanceof Error ? e.message : String(e)).slice(0, 500);
       try {
+        // draft_attempted_at は上書きしない（クレーム時のタイムスタンプを維持 → 10分バックオフ有効）
+        // null にリセットすると1分毎に連打リトライして draft_fail_count を無駄に消費する
         await db.from("conversations").update({
           draft_fail_count: (conv.draft_fail_count ?? 0) + 1,
           draft_last_error: errMsg,
-          draft_attempted_at: null,
         }).eq("id", convId);
       } catch { /* DB更新失敗は無視 */ }
       failed++;

@@ -312,8 +312,8 @@ async function handleTextMessage(
         }).catch(() => {});
       }
 
-      // 申込以降ステータスはai_draft生成不要
-      if (["applying", "screening", "contract", "closed_won", "closed_lost"].includes(convStatus)) return;
+      // 申込以降ステータスはai_draft生成不要（bg-async/cronのSKIP_STATUSESと一致させること）
+      if (["applying", "application", "screening", "contract", "closed_won", "closed_lost"].includes(convStatus)) return;
 
       // 60秒デバウンス維持（cron fallback / バースト時の統合生成として機能し続ける）
       await db.from("conversations")
@@ -321,12 +321,14 @@ async function handleTextMessage(
         .eq("id", convId);
 
       // 直接トリガー: 60s debounce待ちを排除して即座にbg-asyncを起動
-      // - bg-async側のatomic claim (draft_attempted_at) が重複生成を防ぐ
-      // - draft_pending_at は維持されるため、このfetchが失敗してもcronが60-120s後にfallbackとして拾う
-      fetch(`${baseUrl}/api/generate-draft-bg-async`, {
+      // - bg-asyncは即200を返す（実処理は自身のafter()で行う）→ 3秒でほぼ確実に完了
+      // - awaitにすることでVercelがafter()コールバック終了前にプロセスを終了させるリスクを排除
+      // - draft_pending_at は維持されるため、失敗してもcronが60-120s後にfallbackとして拾う
+      await fetch(`${baseUrl}/api/generate-draft-bg-async`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ conversation_id: convId }),
+        signal: AbortSignal.timeout(3000),
       }).catch((e) => console.warn("[line-webhook] direct bg-async trigger failed:", e));
     } catch (e) {
       console.error("[line-webhook] after() draft_pending_at update failed:", e);
