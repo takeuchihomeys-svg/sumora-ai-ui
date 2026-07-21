@@ -2104,6 +2104,10 @@ export default function Home() {
           if (ta && document.activeElement === ta) {
             ta.scrollTop = ta.scrollHeight;
           }
+          const ae = document.activeElement;
+          if (ae instanceof HTMLTextAreaElement && bottomPanelRef.current?.contains(ae)) {
+            ae.scrollIntoView({ block: "nearest" });
+          }
         });
       }
     };
@@ -6581,6 +6585,10 @@ export default function Home() {
                       const ta = textareaRef.current;
                       if (ta) ta.scrollIntoView({ behavior: "smooth", block: "end" });
                     }, 300);
+                    setTimeout(() => {
+                      const ta = textareaRef.current;
+                      if (ta && document.activeElement === ta) ta.scrollIntoView({ block: "nearest" });
+                    }, 650);
                   }}
                   onBlur={() => setInputFocused(false)}
                   rows={1}
@@ -6637,6 +6645,9 @@ export default function Home() {
                         setInputFocused(true);
                         const el = e.currentTarget;
                         setTimeout(() => { el.scrollIntoView({ behavior: "smooth", block: "end" }); }, 300);
+                        setTimeout(() => {
+                          if (document.activeElement === el) el.scrollIntoView({ block: "nearest" });
+                        }, 650);
                       }}
                       onBlur={() => setInputFocused(false)}
                       rows={3}
