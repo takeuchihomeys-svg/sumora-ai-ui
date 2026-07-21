@@ -55,12 +55,21 @@ export async function DELETE(req: NextRequest) {
 
   if (error || !task) return NextResponse.json({ ok: false, reason: "not found" });
 
-  // AIX誘導中sentinelをクリア（タスク削除後に次のメッセージでdraft再生成できるよう）
-  await supabase
-    .from("conversations")
-    .update({ ai_draft: null, draft_attempted_at: null })
-    .eq("id", task.conversation_id as string)
-    .eq("ai_draft", "[AIX誘導中]");
+  // AIX誘導中sentinelをクリア（他にpendingタスクが残っていない場合のみ）
+  const { count: remainingTasks } = await supabase
+    .from("line_tasks")
+    .select("id", { count: "exact", head: true })
+    .eq("conversation_id", task.conversation_id as string)
+    .eq("status", "pending")
+    .neq("id", id);
+  if ((remainingTasks ?? 0) === 0) {
+    const { error: clearErr } = await supabase
+      .from("conversations")
+      .update({ ai_draft: null, draft_attempted_at: null })
+      .eq("id", task.conversation_id as string)
+      .eq("ai_draft", "[AIX誘導中]");
+    if (clearErr) console.error("[line-tasks/delete] sentinelクリア失敗:", task.conversation_id, clearErr);
+  }
 
   const label = TASK_LABEL[task.task_type as string] ?? task.task_type;
   const text = `🚫【${label} キャンセル】\n${task.customer_name as string}さんのタスクが取り消されました`;

@@ -79,6 +79,7 @@ function stripInternalTags(text: string): string {
 // null許容版（DBから読んだ ai_draft の取り込み用）: 除去後に空文字なら null
 function stripInternalTagsOrNull(text: string | null | undefined): string | null {
   if (!text) return null;
+  if (text === "[AIX誘導中]") return null; // sentinel: テキストボックスに絶対に表示しない
   return stripInternalTags(text) || null;
 }
 

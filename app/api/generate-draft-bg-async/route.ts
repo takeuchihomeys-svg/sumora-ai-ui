@@ -188,7 +188,7 @@ export async function POST(req: NextRequest) {
       const AIX_SKIP_TYPES = ["property_send", "estimate_sheet"];
       if (activeTaskTypes.some((t: string) => AIX_SKIP_TYPES.includes(t))) {
         await db.from("conversations")
-          .update({ ai_draft: "[AIX誘導中]", draft_attempted_at: null })
+          .update({ ai_draft: "[AIX誘導中]", draft_attempted_at: null, draft_pending_at: null })
           .eq("id", convId)
           .is("ai_draft", null);
         console.log("[bg-async] AIXタスク進行中のためdraft生成スキップ:", convId, activeTaskTypes);
