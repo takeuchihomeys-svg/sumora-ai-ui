@@ -183,11 +183,17 @@ export async function POST(req: NextRequest) {
           const netMismatch = counts.mismatched - counts.matched;
           if (netMismatch === 0) continue; // 相殺 → 変更なし
 
-          // action_type に紐づくルールをすべて取得
+          // action_type に紐づく通常ルールのみ取得（特殊管理行は除外）
+          // 特殊行は0-1スケール値のため floor=10 が誤適用されると全提案が抑制される
           const { data: rules } = await supabase
             .from("trigger_action_rules")
             .select("id, confidence")
-            .eq("action_type", actionType);
+            .eq("action_type", actionType)
+            .not("keyword", "like", "SUGGESTION_ACCEPT_RATE%")
+            .not("keyword", "like", "PREDICTION_ACCURACY%")
+            .not("keyword", "like", "AFTER:%")
+            .not("keyword", "like", "SUBMODE_ACCEPT:%")
+            .not("keyword", "like", "SOURCE_ACCEPT_RATE%");
           if (!rules?.length) continue;
 
           for (const rule of rules as Array<{ id: string; confidence: number }>) {
