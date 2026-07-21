@@ -1744,7 +1744,27 @@ export async function POST(req: NextRequest) {
             const internalBaseUrl = process.env.NEXT_PUBLIC_SITE_URL
               ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
             const resolvedStatusForAix = detectPropertyStatus(history, message, propertyStatus);
-            const suggestedAix = await deriveSuggestedAix(finalDraftText, currentState, conversationId || undefined, internalBaseUrl, resolvedStatusForAix);
+
+            // Phase 0: rule-based 強制上書き（LLM不要・最優先）
+            // ① 全希望条件8項目確認済み → property_send を強制提案
+            // ② お客様がURLや物件名を送ってきた（pickup_request）→ property_check_result を強制提案
+            let forcedAixOverride: { action: string; note: string } | null = null;
+            const allConditionsConfirmed = customerStructured
+              ? Object.keys(CONDITION_LABELS).every(key => !!customerStructured![key as keyof CustomerStructured])
+              : false;
+            if (allConditionsConfirmed && resolvedStatusForAix !== "move_out_scheduled" && resolvedStatusForAix !== "occupied") {
+              forcedAixOverride = { action: "property_send", note: "希望条件①〜⑧がすべて確認済みです → AIX【物件ピックアップした】で物件提案に進みましょう！" };
+            }
+            if (!forcedAixOverride) {
+              try {
+                const step1Obj = JSON.parse(analysis) as Record<string, unknown>;
+                if (step1Obj.condition_change_type === "pickup_request") {
+                  forcedAixOverride = { action: "property_check_result", note: "お客様からURLまたは物件名が届いています → AIX【物件確認した】で空室状況を確認してください" };
+                }
+              } catch { /* JSON parse失敗は無視 */ }
+            }
+
+            const suggestedAix = forcedAixOverride ?? await deriveSuggestedAix(finalDraftText, currentState, conversationId || undefined, internalBaseUrl, resolvedStatusForAix);
             if (suggestedAix) {
               controller.enqueue(encoder.encode(`\n<<<SUGGESTED_AIX:${JSON.stringify(suggestedAix)}>>>`));
             }
