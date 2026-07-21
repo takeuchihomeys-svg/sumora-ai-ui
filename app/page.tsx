@@ -5825,7 +5825,7 @@ export default function Home() {
 
               <button
                 onClick={generateReply}
-                disabled={generating || !selectedConversation.id}
+                disabled={generating || !selectedConversation.id || activeTasks[selectedConversation?.id ?? ""]?.some(t => ["property_send","estimate_sheet"].includes(t.task_type))}
                 className={`shrink-0 flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-sm disabled:opacity-40 active:scale-95 transition-all duration-75 ${generating ? "border-blue-300 bg-blue-50 text-blue-600" : "border-[#d1d7db] bg-white text-[#111b21]"}`}
               >
                 {generating ? (
@@ -6466,7 +6466,7 @@ export default function Home() {
             )}
 
             {/* AIドラフト提案バナー */}
-            {selectedConversation.aiDraft && !replyDraft && selectedConversation.lastSender === "customer" && (
+            {selectedConversation.aiDraft && !replyDraft && selectedConversation.lastSender === "customer" && selectedConversation.aiDraft !== "[AIX誘導中]" && !activeTasks[selectedConversation.id]?.some(t => ["property_send","estimate_sheet"].includes(t.task_type)) && (
               <div className="mx-1 mb-1 rounded-2xl border border-blue-200 bg-blue-50 px-3 py-2">
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-[10px] font-bold text-blue-500 shrink-0">✨ AI返信案</span>

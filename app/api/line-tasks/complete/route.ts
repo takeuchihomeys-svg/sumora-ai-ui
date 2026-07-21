@@ -45,6 +45,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, reason: "not found or already completed" });
   }
 
+  // AIX誘導中sentinelをクリア（タスク完了後に次のメッセージでdraft再生成できるよう）
+  await supabase
+    .from("conversations")
+    .update({ ai_draft: null, draft_attempted_at: null })
+    .eq("id", task.conversation_id as string)
+    .eq("ai_draft", "[AIX誘導中]");
+
   const label = TASK_LABEL[task.task_type as string] ?? task.task_type;
   const suffix = source === "aix" ? "AIX送信で完了しました" : "2通送信で自動完了しました";
   const text = `✅【${label} 完了】\n${task.customer_name as string}さんへ${suffix}`;

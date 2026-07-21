@@ -184,6 +184,17 @@ export async function POST(req: NextRequest) {
         .eq("status", "pending");
       const activeTaskTypes = (pendingTasks ?? []).map((t: { task_type: string }) => t.task_type);
 
+      // AIX誘導タスクがある場合はdraft生成をスキップ（property_checkは短い返しを生成するため除外）
+      const AIX_SKIP_TYPES = ["property_send", "estimate_sheet"];
+      if (activeTaskTypes.some((t: string) => AIX_SKIP_TYPES.includes(t))) {
+        await db.from("conversations")
+          .update({ ai_draft: "[AIX誘導中]", draft_attempted_at: null })
+          .eq("id", convId)
+          .is("ai_draft", null);
+        console.log("[bg-async] AIXタスク進行中のためdraft生成スキップ:", convId, activeTaskTypes);
+        return;
+      }
+
       // 150秒タイムアウト: generate-replyはStep1(最大45s)+Step2(最大45s)+余裕=最大90s超。
       // 40秒では重い会話で構造的に常にタイムアウトするため150秒に引き上げ（after()maxDuration=300s内）
       const controller = new AbortController();

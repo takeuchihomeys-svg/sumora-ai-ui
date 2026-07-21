@@ -50,10 +50,17 @@ export async function DELETE(req: NextRequest) {
     .update({ status: "cancelled", completed_at: new Date().toISOString() })
     .eq("id", id)
     .eq("status", "pending")
-    .select("task_type, customer_name")
+    .select("task_type, customer_name, conversation_id")
     .single();
 
   if (error || !task) return NextResponse.json({ ok: false, reason: "not found" });
+
+  // AIX誘導中sentinelをクリア（タスク削除後に次のメッセージでdraft再生成できるよう）
+  await supabase
+    .from("conversations")
+    .update({ ai_draft: null, draft_attempted_at: null })
+    .eq("id", task.conversation_id as string)
+    .eq("ai_draft", "[AIX誘導中]");
 
   const label = TASK_LABEL[task.task_type as string] ?? task.task_type;
   const text = `🚫【${label} キャンセル】\n${task.customer_name as string}さんのタスクが取り消されました`;

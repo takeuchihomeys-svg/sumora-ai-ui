@@ -276,6 +276,18 @@ async function run() {
         .eq("status", "pending");
       const activeTaskTypes = (cronPendingTasks ?? []).map((t: { task_type: string }) => t.task_type);
 
+      // AIX誘導タスクがある場合はdraft生成をスキップ（property_checkは短い返しを生成するため除外）
+      const AIX_SKIP_TYPES = ["property_send", "estimate_sheet"];
+      if (activeTaskTypes.some((t: string) => AIX_SKIP_TYPES.includes(t))) {
+        await db.from("conversations")
+          .update({ ai_draft: "[AIX誘導中]", draft_attempted_at: null })
+          .eq("id", convId)
+          .is("ai_draft", null);
+        console.log("[generate-pending-drafts] AIXタスク進行中のためdraft生成スキップ:", convId, activeTaskTypes);
+        skipped++;
+        continue;
+      }
+
       const draftRes = await fetch(`${baseUrl}/api/generate-reply`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
