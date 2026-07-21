@@ -5,7 +5,7 @@ import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEND_RULES, GENERATION_SYSTEM } from "@/app/lib/line-reply-prompts";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY!;
 const MODEL = "claude-sonnet-4-6";

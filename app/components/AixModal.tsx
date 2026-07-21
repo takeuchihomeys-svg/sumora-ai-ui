@@ -1052,15 +1052,19 @@ export default function AixModal({
   }, [viewingSpecificMode, viewingCalendarDays]);
 
   // 待ち合わせ: 会話から日程・時間をAIで抽出してプリセット
+  // 6秒ポーリングで recentMessages が毎回新参照になるため、refで多重発火を防ぐ
+  const extractDatetimeFiredRef = useRef(false);
   useEffect(() => {
     if (actionType !== "meeting_place") return;
     if (meetingDate) return; // 既に入力済みならスキップ
+    if (extractDatetimeFiredRef.current) return; // 発火済みならスキップ
 
     const allMsgs = (recentMessages || []).filter(
       (m: { sender?: string; text?: string }) => m.text && m.text !== "[画像]" && m.text !== "[動画]"
     );
     if (!allMsgs.length) return;
 
+    extractDatetimeFiredRef.current = true;
     fetch("/api/aix/action", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1074,7 +1078,10 @@ export default function AixModal({
           if (d.time) setMeetingTime(d.time);
         }
       })
-      .catch((e) => { console.warn("[AixModal] 待ち合わせ日時の自動抽出失敗:", e); });
+      .catch((e) => {
+        extractDatetimeFiredRef.current = false; // 失敗時はリセットして再試行可能に
+        console.warn("[AixModal] 待ち合わせ日時の自動抽出失敗:", e);
+      });
   // recentMessages を deps に含める（メッセージ読み込み後に再実行。meetingDate 設定後は早期リターンで冪等）
   }, [actionType, recentMessages]);
 
