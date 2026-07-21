@@ -7951,10 +7951,10 @@ export default function Home() {
               } else {
                 void fetchNextAction(selectedConversation.id);
               }
-              // B5: AIX送信完了 → 同カテゴリのテンプレートを続けて送るバナーをセット（予約送信時は出さない）
+              // B5: AIX送信完了 → 同カテゴリのテンプレートを続けて送るバナーをセット（予約送信も含む）
               // ※専用チェーンバナー（P0/P3/P4/P5.5/P7）がある場合はそちらが優先表示される（バナー優先度P7.5）
               const _b5Meta = AIX_ACTION_META[aixModalType];
-              if (!meta?.scheduled && _b5Meta?.templateCategory) {
+              if (_b5Meta?.templateCategory) {
                 const _b5ConvId = selectedConversation.id;
                 let _b5Category = _b5Meta.templateCategory;
                 if (aixModalType === "property_check_result") {
