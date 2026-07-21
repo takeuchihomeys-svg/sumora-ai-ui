@@ -871,6 +871,7 @@ export default function TemplateModal({
   const [extractedTexts, setExtractedTexts] = useState<Record<string, string>>({});
   const [extractErrors, setExtractErrors] = useState<Record<string, string>>({});
   const addFormRef = useRef<HTMLDivElement | null>(null);
+  const aixKeywordComposingRef = useRef(false);
   const templateImageInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const categoryTabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const categoryScrollRef = useRef<HTMLDivElement | null>(null);
@@ -3979,9 +3980,11 @@ export default function TemplateModal({
                         <input
                           type="text"
                           value={aixKeywordFilter}
-                          onChange={(e) => setAixKeywordFilter(e.target.value)}
-                          placeholder="どう伝えたいか入力して絞り込む..."
-                          className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 pr-9 text-[13px] outline-none focus:border-[#2196F3] bg-[#f8f9fa]"
+                          onChange={(e) => { if (!aixKeywordComposingRef.current) setAixKeywordFilter(e.target.value); }}
+                          onCompositionStart={() => { aixKeywordComposingRef.current = true; }}
+                          onCompositionEnd={(e) => { aixKeywordComposingRef.current = false; setAixKeywordFilter(e.currentTarget.value); }}
+                          placeholder="キーワードで絞り込み（例：初期費用、日程、築年数）..."
+                          className="w-full rounded-xl border border-[#d1d7db] px-3 py-2 pr-9 text-[16px] outline-none focus:border-[#2196F3] bg-[#f8f9fa]"
                         />
                         {aixKeywordFilter !== "" && (
                           <button
