@@ -3680,9 +3680,18 @@ export default function Home() {
 
       // （入力欄クリアはLINE送信成否の判定直後に移動済み・UX改善③）
 
-      // 物件送り完了メッセージ検知（「ご査収ください」はAIX物件ピックアップした完了文の固定フレーズ）
-      // → P6「物件ピックアップした」を消してP4「物件オススメ」へ切り替え
-      if (textSent && textToSend && textToSend.includes("ご査収ください")) {
+      // 物件オススメ文（🌟物件名フォーマット）を送信 → P4「物件オススメ」誘導は役目を終えたので消す
+      // （送信済みなのに「次のアクション → AIX 物件オススメ」が再表示される問題の修正）
+      if (textSent && textToSend && textToSend.includes("🌟")) {
+        const convId = selectedConversation.id;
+        setSuggestPropertyRecommendMap((prev) => { if (!prev[convId]) return prev; const n = { ...prev }; delete n[convId]; return n; });
+      }
+
+      // 物件送り完了メッセージ検知 → P6「物件ピックアップした」を消してP4「物件オススメ」へ切り替え
+      // ※「ご査収ください」だけでは判定しない：申込誘導・見積書カバーレター・物件オススメ続きテンプレ等の
+      //   汎用の締め文にも含まれるため、送信のたびにP4「物件オススメ」誘導が誤発火していた。
+      //   ピックアップ完了文特有の文言（ピックアップ / 募集にでました）を併せて要求する。
+      if (textSent && textToSend && textToSend.includes("ご査収ください") && /ピックアップ|募集にでました/.test(textToSend)) {
         const convId = selectedConversation.id;
         setSuggestPropertyRecommendMap((prev) => ({ ...prev, [convId]: true }));
         setDismissedPropertyRecommendIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
@@ -3694,7 +3703,8 @@ export default function Home() {
           return { ...prev, [convId]: tasks };
         });
       // 物件送付予告メッセージ検知 → AIX「物件ピックアップした」誘導
-      } else if (textSent && textToSend && /ピックアップ|物件.*送|お送りさせて|物件をお送り/.test(textToSend)) {
+      // （「ご査収ください」を含む文は実際の送信であり予告ではないため除外・従来挙動を維持）
+      } else if (textSent && textToSend && !textToSend.includes("ご査収ください") && /ピックアップ|物件.*送|お送りさせて|物件をお送り/.test(textToSend)) {
         setSuggestPropertySendMap((prev) => ({ ...prev, [selectedConversation.id]: true }));
       }
 
@@ -7400,8 +7410,13 @@ export default function Home() {
                   }
 
                   try {
-                    await Promise.all([
-                      supabase.from("calendar_events").insert({
+                    // 必須処理: カレンダー本体の登録のみを await（自プロジェクトSupabase・高速）。
+                    // 以前は Promise.all で申込ツール同期(別プロジェクト)・LINE通知まで待っており、
+                    // どれか1つでも応答が遅いと保存ボタンが「保存中...」のまま固まっていた。
+                    // → 本体だけタイムアウト付きで確定し、付随処理は fire-and-forget にする。
+                    const { error: insertError } = await supabase
+                      .from("calendar_events")
+                      .insert({
                         title: calendarTitle.trim(),
                         event_type: calendarEventType,
                         customer_name: calendarCustomerName,
@@ -7409,34 +7424,49 @@ export default function Home() {
                         end_at: endAt,
                         all_day: isAllDay,
                         notes: builtNotes,
-                      }),
-                      fetch("/api/daily-tasks", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          customer_name: calendarCustomerName,
-                          content: `【${labelMap[calendarEventType]}】${calendarTitle.trim()}${builtNotes ? ` — ${builtNotes}` : ""}`,
-                          date: calendarDate,
-                          time: calendarTime,
-                          end_time: calendarEndTime || "",
-                        }),
-                      }),
-                      // 売上番長から物件出しグループへ通知（内覧・申込・契約は成功パターンも学習）
-                      fetch("/api/notify-viewing", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
-                        body: JSON.stringify({
-                          customer_name: calendarCustomerName,
-                          event_type: calendarEventType,
-                          date: calendarDate,
-                          time: calendarTime || undefined,
-                          notes: builtNotes || undefined,
-                          conversation_id: convId,
-                        }),
-                      }).catch(() => {}),
-                      supabase.from("conversations").update({ is_flagged: true }).eq("id", convId),
-                    ]);
+                      })
+                      .abortSignal(AbortSignal.timeout(15_000));
+                    if (insertError) throw insertError;
+
+                    // 会話フラグ更新（失敗してもカレンダー登録は成立しているのでUIは進める）
+                    void supabase
+                      .from("conversations")
+                      .update({ is_flagged: true })
+                      .eq("id", convId)
+                      .abortSignal(AbortSignal.timeout(15_000))
+                      .then(undefined, (e: unknown) => console.error("[calendar-save] flag update failed", e));
                     setFlaggedConvIds((prev) => { const next = new Set(prev); next.add(convId); return next; });
+
+                    // 付随処理（申込ツール同期・売上番長グループ通知）はUIをブロックしない。
+                    // それぞれタイムアウト＋個別catchで、遅延・失敗してもモーダルは閉じる。
+                    void fetch("/api/daily-tasks", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        customer_name: calendarCustomerName,
+                        content: `【${labelMap[calendarEventType]}】${calendarTitle.trim()}${builtNotes ? ` — ${builtNotes}` : ""}`,
+                        date: calendarDate,
+                        time: calendarTime,
+                        end_time: calendarEndTime || "",
+                      }),
+                      signal: AbortSignal.timeout(15_000),
+                    }).catch((e) => console.error("[calendar-save] daily-tasks sync failed", e));
+
+                    // 売上番長から物件出しグループへ通知（内覧・申込・契約は成功パターンも学習）
+                    void fetch("/api/notify-viewing", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", ...INTERNAL_AUTH_HEADER },
+                      body: JSON.stringify({
+                        customer_name: calendarCustomerName,
+                        event_type: calendarEventType,
+                        date: calendarDate,
+                        time: calendarTime || undefined,
+                        notes: builtNotes || undefined,
+                        conversation_id: convId,
+                      }),
+                      signal: AbortSignal.timeout(15_000),
+                    }).catch((e) => console.error("[calendar-save] notify-viewing failed", e));
+
                     setCalendarModalConvId(null);
                   } catch (err) {
                     console.error("[calendar-save]", err);
@@ -8064,6 +8094,9 @@ export default function Home() {
                   // 物件ピックアップしたバナーを消去（property_send タスク完了 + ローカル state 即時クリア）
                   setSuggestPropertySendMap((prev) => { const n = { ...prev }; delete n[convId]; return n; });
                   setDismissedPropertySendIds((prev) => { const n = new Set(prev); n.delete(convId); return n; });
+                  // 物件オススメを送信完了 → P4「物件オススメ」誘導バナーも消去
+                  // （property_send完了時にセットされたまま残り、送信済みなのに再誘導される問題の修正）
+                  setSuggestPropertyRecommendMap((prev) => { if (!prev[convId]) return prev; const n = { ...prev }; delete n[convId]; return n; });
                   // property_sendタスクの完了POST・ローカル除去は上の共通ブロックで実施済み（二重POST防止）
                   // property_checkタスクを自動作成（次の工程：物件確認）
                   const alreadyHasCheck = (activeTasks[convId] ?? []).some((t) => t.task_type === "property_check");
