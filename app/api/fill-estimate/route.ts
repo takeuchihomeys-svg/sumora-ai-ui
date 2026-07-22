@@ -44,6 +44,7 @@ type ItemData = {
   insurance: number;
   keyExchange: number;
   cleaning: number;
+  cleaningAtDeparture?: boolean;
   parkingDeposit: number;
   parkingMonthly: number;
   otherItems: Array<{ item: string; amount: number }>;
@@ -259,8 +260,12 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
     oneTimeItems.push({ label: "駐車場仲介手数料", amount: parkingTotal });
   if (d.parkingMonthly)
     oneTimeItems.push({ label: "翌月駐車場代", amount: d.parkingMonthly });
+  const isMonthlyOther = (name: string) => /[（(]月[)）]|月額/.test(name);
   for (const oi of d.otherItems || []) {
-    if (oi.item && oi.amount > 0)
+    if (!oi.item || oi.amount <= 0) continue;
+    if (isMonthlyOther(oi.item))
+      monthlyItems.push({ label: oi.item, amount: oi.amount });
+    else
       oneTimeItems.push({ label: oi.item, amount: oi.amount });
   }
 
@@ -287,7 +292,7 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
 
   // ── 固定下段費用
   // 行25（抗菌施工費/アクト安心ライフ）: 0円のときはラベルごと空欄にして非表示
-  if (d.cleaning) {
+  if (d.cleaning && !d.cleaningAtDeparture) {
     setCell(ws, "E25", d.cleaning);
     setCell(ws, "F25", d.cleaning);
   } else {
@@ -315,10 +320,10 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
     setCell(ws, "F27", "別途支払い");
   }
 
-  // 仲介手数料（0円のときは空欄・イエヤス/ギガ賃貸対応。F列は「一般的な不動産屋」比較用に維持）
-  setCell(ws, "E28", numOrBlank(d.commission));
+  // 仲介手数料（0円でも「0」を表示・イエヤス/ギガ賃貸対応。F列は「一般的な不動産屋」比較用に維持）
+  setCell(ws, "E28", d.commission || 0);
   setCell(ws, "F28", d.rent          || 0);
-  setCell(ws, "E29", numOrBlank(d.commissionTax));
+  setCell(ws, "E29", d.commissionTax || 0);
   setCell(ws, "F29", Math.round((d.rent || 0) * 0.1));
 
   // スモ割
@@ -332,7 +337,7 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
   e32 += nextRent;
   e32 += nextMgmt;
   for (const item of dynamicItems) e32 += item.amount;
-  e32 += (d.cleaning  || 0);
+  e32 += (d.cleaningAtDeparture ? 0 : d.cleaning || 0);
   e32 += (d.guarantee || 0);
   e32 += (d.insurance || 0);
   e32 += (d.commission    || 0);

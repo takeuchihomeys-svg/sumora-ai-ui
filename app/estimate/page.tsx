@@ -29,7 +29,11 @@ type EditableItems = Omit<ExtractedEstimate, "otherItems"> & {
   nextMonth: number;
   nextYear: number;
   guaranteeRate: number; // 賃貸保証料率（%）デフォルト50
+  cleaningAtDeparture: boolean; // クリーニング代を退去時清算にする（初期費用から除外）
 };
+
+// item名に「(月)」「（月）」「月額」を含むその他費用は月額扱い（毎月費用セクションに表示）
+const MONTHLY_ITEM_RE = /[（(]月[)）]|月額/;
 
 // 翌月1日の日付文字列を返す（デフォルト入居日）
 function getDefaultMoveInDate(): string {
@@ -99,7 +103,7 @@ const ITEM_CONFIG: Array<{
   { key: "parkingCommissionTax", label: "駐車場手数料 消費税" },
   { key: "guaranteeRate",   label: "保証料率（%）" },
   { key: "guarantee",       label: "賃貸保証料（自動計算）" },
-  { key: "insurance",       label: "住宅保険" },
+  { key: "insurance",       label: "火災保険" },
   { key: "keyExchange",     label: "鍵交換代" },
   { key: "cleaning",        label: "クリーニング代" },
   { key: "parkingDeposit",  label: "駐車場保証金",      group: "駐車場" },
@@ -198,6 +202,7 @@ function toEditable(e: ExtractedEstimate, account: Account = "sumora", moveInDat
     nextWaterFee: e.waterFee,
     nextMonth,
     nextYear,
+    cleaningAtDeparture: false,
   };
 }
 
@@ -221,6 +226,7 @@ function makeBlankItems(account: Account, moveInDate = ""): EditableItems {
     discountAmount: 0, discountNote: "", supplementaryNotes: "",
     nextRent: 0, nextManagementFee: 0, nextWaterFee: 0,
     nextMonth, nextYear,
+    cleaningAtDeparture: false,
   };
 }
 
@@ -442,6 +448,11 @@ export default function EstimatePage() {
     { label: items.nextMonth > 0 ? `${items.nextMonth}月分 家賃`   : "翌月家賃",   amount: items.nextRent,            editKey: "nextRent" },
     { label: items.nextMonth > 0 ? `${items.nextMonth}月分 共益費` : "翌月共益費", amount: items.nextManagementFee,   editKey: "nextManagementFee" },
     { label: items.nextMonth > 0 ? `${items.nextMonth}月分 水道代` : "翌月水道代", amount: items.nextWaterFee,        editKey: "nextWaterFee" },
+    // 月額扱いのその他費用（安心入居サポート(月)など）は毎月費用セクションに表示
+    ...items.otherItems
+      .map((o, i) => ({ o, i }))
+      .filter(({ o }) => MONTHLY_ITEM_RE.test(o.item) && o.amount > 0)
+      .map(({ o, i }): PreviewRow => ({ label: o.item, amount: o.amount, otherIdx: i })),
     // ── ここまで毎月かかる費用 / ここから入居初回のみの費用（区切り行） ──
     { label: "", amount: 0, isSeparator: true },
     { label: "仲介手数料",                          amount: items.commission,           editKey: "commission" },
@@ -449,13 +460,18 @@ export default function EstimatePage() {
     { label: "駐車場手数料",                        amount: items.parkingCommission,    editKey: "parkingCommission" },
     { label: "駐車場手数料 消費税",                 amount: items.parkingCommissionTax, editKey: "parkingCommissionTax" },
     { label: "賃貸保証料",                          amount: items.guarantee,            editKey: "guarantee" },
-    // 火災保険（住宅保険）は0円でも「別途支払い」と表示するため常に表示
-    { label: "住宅保険",                            amount: items.insurance,            editKey: "insurance", alwaysShow: true },
+    // 火災保険は0円でも「別途支払い」と表示するため常に表示
+    { label: "火災保険",                            amount: items.insurance,            editKey: "insurance", alwaysShow: true },
     { label: "鍵交換代",                            amount: items.keyExchange,          editKey: "keyExchange" },
-    { label: "クリーニング代",                       amount: items.cleaning,             editKey: "cleaning" },
+    // クリーニング代は退去時清算の場合、初期費用に含めない
+    ...(items.cleaningAtDeparture ? [] : [{ label: "クリーニング代", amount: items.cleaning, editKey: "cleaning" as keyof EditableItems }]),
     { label: "駐車場保証金",                        amount: items.parkingDeposit,       editKey: "parkingDeposit" },
     { label: items.nextMonth > 0 ? `${items.nextMonth}月分 駐車場代` : "翌月駐車場代", amount: items.parkingMonthly, editKey: "parkingMonthly" },
-    ...items.otherItems.map((o, i): PreviewRow => ({ label: o.item, amount: o.amount, otherIdx: i })),
+    // 月額扱い以外のその他費用（初回のみ費用）
+    ...items.otherItems
+      .map((o, i) => ({ o, i }))
+      .filter(({ o }) => !MONTHLY_ITEM_RE.test(o.item))
+      .map(({ o, i }): PreviewRow => ({ label: o.item, amount: o.amount, otherIdx: i })),
     // 0円の行は非表示（区切り行・その他費用の編集行・alwaysShow指定は除く）
   ] as PreviewRow[]).filter((r) => (r.amount || 0) !== 0 || r.alwaysShow || r.isSeparator || r.otherIdx !== undefined) : [];
 
@@ -932,6 +948,19 @@ export default function EstimatePage() {
                     </tr>
                   </tfoot>
                 </table>
+                {/* クリーニング代 退去時清算トグル */}
+                <div className="mt-2 flex items-center gap-2 rounded-xl bg-[#f7f9fa] px-3 py-2">
+                  <input
+                    type="checkbox"
+                    id="cleaningAtDeparture"
+                    className="h-4 w-4 accent-blue-500"
+                    checked={!!items.cleaningAtDeparture}
+                    onChange={(e) => setItems((prev) => prev ? { ...prev, cleaningAtDeparture: e.target.checked } : prev)}
+                  />
+                  <label htmlFor="cleaningAtDeparture" className="text-[12px] text-[#54656f]">
+                    クリーニング代は退去時清算（初期費用から除外）
+                  </label>
+                </div>
                 <div className="mt-2 text-right">
                   <button
                     onClick={addOtherItem}

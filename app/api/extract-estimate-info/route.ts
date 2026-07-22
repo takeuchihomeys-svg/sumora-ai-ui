@@ -26,6 +26,7 @@ export interface ExtractedEstimate {
   insurance: number;
   keyExchange: number;
   cleaning: number;
+  cleaningAtDeparture?: boolean;
   parkingDeposit: number;
   parkingMonthly: number;
   otherItems: Array<{ item: string; amount: number }>;
@@ -57,6 +58,7 @@ const EMPTY: ExtractedEstimate = {
   insurance: 0,
   keyExchange: 0,
   cleaning: 0,
+  cleaningAtDeparture: false,
   parkingDeposit: 0,
   parkingMonthly: 0,
   otherItems: [],
@@ -112,6 +114,7 @@ export async function POST(req: NextRequest) {
   "insurance": 住宅保険・火災保険（数値。不明なら0）,
   "keyExchange": 鍵交換代（数値。不明なら0）,
   "cleaning": クリーニング代（数値。不明なら0）,
+  "cleaningAtDeparture": クリーニング代が「退去時清算」「退去時精算」「退去時」の場合はtrue（入居時に支払わず退去時に精算するため初期費用から除外）、入居時支払いの場合はfalse（不明はfalse）,
   "parkingDeposit": 駐車場保証金（数値。不明なら0）,
   "parkingMonthly": 翌月駐車場代（数値。不明なら0）,
   "otherItems": [{"item": "項目名", "amount": 税込金額数値}],
@@ -126,6 +129,7 @@ export async function POST(req: NextRequest) {
 - 仲介手数料のみ税抜と消費税を分けて抽出（まとめて書いてあれば: 合計÷1.1=税抜、端数切捨て）
 - otherItemsの金額は【必ず税込金額のまま】記入すること。÷1.1の計算は絶対にしない。書いてある数字をそのまま使う
 - guarantee・insurance・keyExchange・cleaning等も税込のまま書いてある数字を使う（÷1.1しない）
+- cleaningAtDeparture: 「退去時清算」「退去時精算」「退去時 ¥○○」等の記載があればtrue。入居時に支払う場合はfalse
 - 日割賃料は抽出不要（入居日から自動計算するため）
 - 不明な項目は0または空文字
 - otherItemsには上記フィールドに当てはまらない費用のみ入れる`;
