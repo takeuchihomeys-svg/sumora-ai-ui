@@ -216,10 +216,10 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
   setCell(ws, "M19", numOrBlank(d.parkingDeposit));
 
   // ── 固定上段費用
-  setCell(ws, "E11", numOrBlank(d.shikikin));
-  setCell(ws, "F11", numOrBlank(d.shikikin));
-  setCell(ws, "E12", numOrBlank(d.reikin));
-  setCell(ws, "F12", numOrBlank(d.reikin));
+  setCell(ws, "E11", d.shikikin || 0);
+  setCell(ws, "F11", d.shikikin || 0);
+  setCell(ws, "E12", d.reikin || 0);
+  setCell(ws, "F12", d.reikin || 0);
   const nextRent = d.nextRent        || d.rent          || 0;
   const nextMgmt = d.nextManagementFee || d.managementFee || 0;
   setCell(ws, "E13", numOrBlank(nextRent));
