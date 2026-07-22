@@ -28,6 +28,7 @@ type Message = {
   rawCreatedAt?: string;
   isAix?: boolean;
   quotedMessageId?: string | null;
+  lineMessageId?: string | null;
 };
 
 type Conversation = {
@@ -93,6 +94,7 @@ type SupabaseMessageRow = {
   created_at: string;
   is_aix_generated?: boolean | null;
   quoted_message_id?: string | null;
+  line_message_id?: string | null;
 };
 
 // JST基準で今日の日付を YYYY-MM-DD で返す
@@ -1309,6 +1311,7 @@ export default function Home() {
                   rawCreatedAt: m.created_at,
                   isAix: m.is_aix_generated || false,
                   quotedMessageId: m.quoted_message_id || undefined,
+                  lineMessageId: m.line_message_id || undefined,
                 }));
                 setConversations((prev) =>
                   prev.map((c) => (c.id === selectedId ? { ...c, messages: msgs } : c))
@@ -1334,6 +1337,7 @@ export default function Home() {
           rawCreatedAt: m.created_at,
           isAix: m.is_aix_generated || false,
           quotedMessageId: m.quoted_message_id || undefined,
+          lineMessageId: m.line_message_id || undefined,
         }));
         scrollAfterFetchRef.current = selectedId;
         setConversations((prev) =>
@@ -1383,6 +1387,7 @@ export default function Home() {
         time: formatTime(m.created_at),
         rawCreatedAt: m.created_at,
         quotedMessageId: m.quoted_message_id || undefined,
+        lineMessageId: m.line_message_id || undefined,
       }));
       setConversations(prev => prev.map(c =>
         c.id === selectedId ? { ...c, messages: msgs } : c
@@ -1568,6 +1573,7 @@ export default function Home() {
           time: formatTime(message.created_at),
           rawCreatedAt: message.created_at,
           quotedMessageId: message.quoted_message_id || undefined,
+          lineMessageId: message.line_message_id || undefined,
         }))
         .sort((a, b) => (a.rawCreatedAt || "").localeCompare(b.rawCreatedAt || ""));
 
@@ -1861,6 +1867,15 @@ export default function Home() {
       filteredConversations[0]
     );
   }, [filteredConversations, selectedId]);
+
+  // line_message_id → message.id のルックアップ（引用スクロール用）
+  const lineMessageIdToMsgId = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const msg of (selectedConversation?.messages ?? [])) {
+      if (msg.lineMessageId) m.set(msg.lineMessageId, msg.id);
+    }
+    return m;
+  }, [selectedConversation?.messages]);
 
   // AixModal に渡す直近メッセージ。毎レンダーで新配列を作ると AixModal 内の
   // extract_datetime useEffect（deps: recentMessages）が6秒ポーリングのたびに再発火して
@@ -5359,14 +5374,29 @@ export default function Home() {
                           onTouchMove={cancelLongPress}
                           onContextMenu={(e) => { e.preventDefault(); setContextMenu({ messageId: message.id, x: e.clientX, y: e.clientY, text: message.text, sender: message.sender }); }}
                         >
-                          {/* 引用（リプライ）元メッセージの表示（装飾のみ・クリック不可） */}
+                          {/* 引用（リプライ）元メッセージの表示 */}
                           {isCustomer && message.quotedMessageId && quotedMessageMap.get(message.quotedMessageId) && (() => {
                             const quoted = quotedMessageMap.get(message.quotedMessageId)!;
                             const label = quoted.imageUrl || quoted.text === "[画像]"
                               ? "[画像]"
                               : quoted.text.slice(0, 30) + (quoted.text.length > 30 ? "…" : "");
+                            const targetMsgId = lineMessageIdToMsgId.get(message.quotedMessageId);
+                            const handleQuoteClick = () => {
+                              if (!targetMsgId) return;
+                              const el = document.getElementById(`msg-${targetMsgId}`);
+                              if (!el) return;
+                              el.scrollIntoView({ behavior: "smooth", block: "center" });
+                              // ハイライト: 0.8秒後に消えるフラッシュ
+                              el.style.transition = "background-color 0.1s";
+                              el.style.backgroundColor = "rgba(255, 220, 100, 0.5)";
+                              setTimeout(() => { el.style.backgroundColor = ""; }, 800);
+                            };
                             return (
-                              <div className="mb-1 flex items-start gap-1 rounded border-l-2 border-gray-300 bg-gray-100 px-2 py-1 text-[11px] text-gray-500">
+                              <div
+                                className={`mb-1 flex items-start gap-1 rounded border-l-2 bg-gray-100 px-2 py-1 text-[11px] text-gray-500 ${targetMsgId ? "cursor-pointer border-blue-400 hover:bg-blue-50 active:bg-blue-100" : "border-gray-300"}`}
+                                onClick={targetMsgId ? handleQuoteClick : undefined}
+                                title={targetMsgId ? "タップして元のメッセージに移動" : undefined}
+                              >
                                 <span className="shrink-0">↩ [引用]</span>
                                 <span className="truncate">{label}</span>
                               </div>
