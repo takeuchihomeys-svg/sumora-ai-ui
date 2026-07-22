@@ -126,6 +126,39 @@ function getDb() {
   );
 }
 
+// ── 大阪府の市区名一覧（popup-maps.js の WARD_CODE_MAP と同期）─────────────
+// 「富田林」のような市サフィックス欠落トークンを fuzzy検索・AIより前にコスト0で解決するために使う
+const OSAKA_WARDS = new Set<string>([
+  "大阪市都島区", "大阪市福島区", "大阪市此花区", "大阪市西区", "大阪市港区",
+  "大阪市大正区", "大阪市天王寺区", "大阪市浪速区", "大阪市西淀川区", "大阪市東淀川区",
+  "大阪市東成区", "大阪市生野区", "大阪市旭区", "大阪市城東区", "大阪市阿倍野区",
+  "大阪市住吉区", "大阪市東住吉区", "大阪市西成区", "大阪市淀川区", "大阪市鶴見区",
+  "大阪市住之江区", "大阪市平野区", "大阪市北区", "大阪市中央区",
+  "堺市堺区", "堺市中区", "堺市東区", "堺市西区", "堺市南区", "堺市北区", "堺市美原区",
+  "豊中市", "池田市", "吹田市", "高槻市", "守口市", "枚方市", "茨木市", "八尾市",
+  "寝屋川市", "東大阪市", "門真市", "摂津市", "岸和田市", "泉大津市", "貝塚市",
+  "泉佐野市", "富田林市", "河内長野市", "松原市", "大東市", "和泉市", "箕面市",
+  "柏原市", "羽曳野市", "藤井寺市", "大阪狭山市", "泉南市", "四條畷市", "交野市", "阪南市",
+]);
+
+// トークンが市区名そのもの / 市サフィックス欠落形（富田林→富田林市）なら市区名を返す
+function resolveCityName(token: string): string | null {
+  if (OSAKA_WARDS.has(token)) return token;
+  if (OSAKA_WARDS.has(token + "市")) return token + "市";
+  return null;
+}
+
+// ── fuzzy誤マッチガード ─────────────────────────────────────────────────
+// クエリがマッチ先トークンの完全上位互換（例: 「富田林」⊃「富田」）の場合は棄却する。
+// pg_trgm は「より具体的な地名」を「短い別の地名」に高スコアでマッチさせてしまう
+// （実例: similarity('富田林','富田')=0.40 で 富田林→高槻市 と誤判定）。
+// ただし「梅田駅」→「梅田」のような駅サフィックスのみの差は正当な表記ゆれとして許可。
+function isSuperstringMismatch(query: string, matched: string | null | undefined): boolean {
+  if (!matched || query === matched) return false;
+  if (!query.includes(matched)) return false;
+  return query !== matched + "駅";
+}
+
 type ResolvedToken = {
   type: "station" | "region" | "unknown";
   ward: string | null;
@@ -323,7 +356,26 @@ export async function POST(req: NextRequest) {
     resolvedTokens.add(row.token);
   }
 
-  const unknown = tokens.filter((t) => !resolvedTokens.has(t));
+  const preFuzzy = tokens.filter((t) => !resolvedTokens.has(t));
+  if (preFuzzy.length === 0) return NextResponse.json({ result });
+
+  // ── ①' 市サフィックス補完（fuzzy検索・AIより前にコスト0で確定）────────────
+  // 「富田林」→「富田林市」「羽曳野」→「羽曳野市」のような市名欠落形をルールで解決。
+  // fuzzy検索が「富田林」を「富田(高槻市)」に誤マッチさせた事故（2026-07）の再発防止。
+  for (const token of preFuzzy) {
+    const city = resolveCityName(token);
+    if (!city) continue;
+    result[token] = { type: "region", ward: city, realpro_lines: [], itandi_lines: [], reins_line: null, source: "db" };
+    resolvedTokens.add(token);
+    console.log(`[token-resolve] city rule: "${token}"→"${city}"`);
+    // 次回は完全一致キャッシュで解決できるよう region_map に保存
+    await db.from("region_map").upsert(
+      { token, ward: city, confidence: 95, source: "rule" },
+      { onConflict: "token" },
+    );
+  }
+
+  const unknown = preFuzzy.filter((t) => !resolvedTokens.has(t));
   if (unknown.length === 0) return NextResponse.json({ result });
 
   // ── ② pg_trgm 類似検索（完全一致しなかったトークンの表記ゆれを吸収）──────────
@@ -339,7 +391,9 @@ export async function POST(req: NextRequest) {
     // （find_similar_station は source を返さないためフィールドで判定）
     type SimStation = { token: string; ward: string | null; realpro_lines: string[]; itandi_lines: string[]; reins_line: string | null; similarity_score: number };
     const best = ((simStations ?? []) as SimStation[]).find(
-      (r) => r.ward || (r.realpro_lines?.length ?? 0) > 0 || (r.itandi_lines?.length ?? 0) > 0 || r.reins_line,
+      (r) =>
+        (r.ward || (r.realpro_lines?.length ?? 0) > 0 || (r.itandi_lines?.length ?? 0) > 0 || r.reins_line) &&
+        !isSuperstringMismatch(token, r.token),
     );
     if (best) {
       result[token] = {
@@ -358,11 +412,14 @@ export async function POST(req: NextRequest) {
     const { data: simRegions } = await db.rpc("find_similar_region", {
       query_text: token, threshold: 0.35,
     });
-    if (simRegions && simRegions.length > 0) {
-      const best = simRegions[0] as { token: string; ward: string | null; similarity_score: number };
-      result[token] = { type: "region", ward: best.ward, realpro_lines: [], itandi_lines: [], reins_line: null, source: "db" };
+    type SimRegion = { token: string; ward: string | null; similarity_score: number };
+    const bestRegion = ((simRegions ?? []) as SimRegion[]).find(
+      (r) => !isSuperstringMismatch(token, r.token),
+    );
+    if (bestRegion) {
+      result[token] = { type: "region", ward: bestRegion.ward, realpro_lines: [], itandi_lines: [], reins_line: null, source: "db" };
       resolvedTokens.add(token);
-      console.log(`[token-resolve] fuzzy region: "${token}"→"${best.token}" (${best.similarity_score.toFixed(2)})`);
+      console.log(`[token-resolve] fuzzy region: "${token}"→"${bestRegion.token}" (${bestRegion.similarity_score.toFixed(2)})`);
       return;
     }
 
@@ -370,18 +427,21 @@ export async function POST(req: NextRequest) {
     const { data: simLineStations } = await db.rpc("find_similar_line_station", {
       query_text: token, threshold: 0.35,
     });
-    if (simLineStations && simLineStations.length > 0) {
-      const best = simLineStations[0] as { station_name: string; line_name: string; token: string | null; ward: string | null; realpro_lines: string[] | null; itandi_lines: string[] | null; reins_line: string | null; similarity_score: number };
+    type SimLineStation = { station_name: string; line_name: string; token: string | null; ward: string | null; realpro_lines: string[] | null; itandi_lines: string[] | null; reins_line: string | null; similarity_score: number };
+    const bestLS = ((simLineStations ?? []) as SimLineStation[]).find(
+      (r) => !isSuperstringMismatch(token, r.station_name),
+    );
+    if (bestLS) {
       result[token] = {
         type: "station",
-        ward: best.ward ?? null,
-        realpro_lines: best.realpro_lines ?? [best.line_name],
-        itandi_lines: best.itandi_lines ?? [],
-        reins_line: best.reins_line ?? null,
+        ward: bestLS.ward ?? null,
+        realpro_lines: bestLS.realpro_lines ?? [bestLS.line_name],
+        itandi_lines: bestLS.itandi_lines ?? [],
+        reins_line: bestLS.reins_line ?? null,
         source: "db",
       };
       resolvedTokens.add(token);
-      console.log(`[token-resolve] fuzzy line_station: "${token}"→"${best.station_name}" (${best.similarity_score.toFixed(2)})`);
+      console.log(`[token-resolve] fuzzy line_station: "${token}"→"${bestLS.station_name}" (${bestLS.similarity_score.toFixed(2)})`);
       return;
     }
 

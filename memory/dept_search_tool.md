@@ -459,9 +459,25 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 
 ---
 
+## 🗾 2026-07-22 富田林→高槻市 誤判定の修正（v2.4.1）
+
+**原因**: pg_trgm fuzzy検索（token-resolve ②）が「富田林」を region_map の「富田(高槻市)」に similarity 0.40 でマッチさせていた（LLMは無関係・AIは呼ばれてすらいなかった）。富田林は駅マップ・地名マップのどこにも未登録だった。
+
+**修正内容**:
+1. **NEIGHBORHOOD_WARD_MAP 追加**（popup-maps.js）: `富田林→富田林市`・`富田林市→富田林市`・`河内長野→河内長野市`・`大阪狭山→大阪狭山市`（南河内セクション新設。「富田」(高槻市の町名)とは別物・混同禁止のコメント付き）
+2. **近鉄長野線を新規収録**: STATION_LINE_MAP に 喜志・富田林西口・川西・滝谷不動・汐ノ宮（各ward=富田林市をSTATION_WARD_MAPにも追加）、LINE_STATION_ORDER に全8駅（古市〜河内長野）。「富田林」トークン自体は地域として解決させるためSTATION_LINE_MAPには入れない
+3. **市サフィックス補完ルール**（popup.js resolveWard / computeUnknownTokens、token-resolve/route.ts）: 「トークン+『市』がWARD_CODE_MAP（サーバー側はOSAKA_WARDS）に実在」ならコスト0で市名に解決。fuzzy検索・AIより前に実行。サーバー側は region_map に source="rule", confidence=95 で保存
+4. **fuzzy誤マッチガード**（token-resolve/route.ts `isSuperstringMismatch`）: クエリがマッチ先の完全上位互換（富田林⊃富田）の場合は棄却。station_map/region_map/line_stations の3つのfuzzy検索すべてに適用。「梅田駅→梅田」のような駅サフィックスのみの差は許可
+5. **✗間違いボタンの正解学習UI**（popup.js `showCorrectionForm`/`correctLearnedToken`、region-map/route.ts POST新設）: ✗押下→インライン入力フォーム表示→正しい市区名を入力して保存すると region_map に source="manual", confidence=100 でupsert＋station_map誤エントリ削除＋token_blockブロック解除。「わからない」ボタンで従来どおり削除＋永久ブロック（オプションA+Bのハイブリッド。Bを主にした理由: ブロックのみだと正解が永久に学習されず未登録地名のまま検索に乗らないため）
+6. **Supabase直接投入済み**: region_map 4行（富田林/富田林市/河内長野/大阪狭山）・line_stations 近鉄長野線8駅・station_map 5駅（喜志/富田林西口/川西/滝谷不動/汐ノ宮）
+
+**注意**: window.prompt/alert はChrome拡張ポップアップでは動かないため、正解入力はインラインDOM フォームで実装している。
+
+---
+
 ## 🔁 引き継ぎ事項（次セッションへ）
 
-- 現在のバージョン: **v2.4.0**（manifest.json は v2.3.0 のまま・内部バージョン）
+- 現在のバージョン: **v2.4.1**（manifest.json も v2.4.1 に同期済み・2026-07-22）
 - **✅ 2026-06-07 a34f535 が最も安定したベースライン（竹内悠馬確認済み）**
 - 拡張ツールはChromeに手動インストール済み（開発者モード）
 - 変更後は chrome://extensions で再読み込み必要

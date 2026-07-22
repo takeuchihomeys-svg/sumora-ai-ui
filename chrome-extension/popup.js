@@ -115,6 +115,65 @@ async function deleteLearnedToken(token, type) {
   }
 }
 
+// 「✗ 間違い」→正しい市区名が入力された場合: 正解として region_map にupsert（ブロック解除も込み）
+async function correctLearnedToken(token, ward) {
+  try {
+    const res = await fetch(`${API_BASE}/api/region-map`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, ward }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    // ローカルマップも即時更新（誤learned駅エントリは除去して地名として上書き）
+    delete LEARNED_STATION_MAP[token];
+    LEARNED_WARD_MAP[token] = ward;
+    console.log("[AX] 正解学習:", token, "→", ward, "（次回からDB完全一致で解決）");
+    if (selectedCustomer && selectedSite) {
+      const areaVal = document.getElementById("adj-area")?.value || (selectedCustomer.desired_area || selectedCustomer.area || "");
+      showUnknownWarn(computeUnknownTokens(areaVal));
+      renderInstrSteps(selectedSite, buildAdjCustomer(selectedCustomer));
+    }
+    return true;
+  } catch (e) {
+    console.warn("[AX] 正解学習失敗:", e.message);
+    return false;
+  }
+}
+
+// 「✗ 間違い」押下時: 正しい市区名の入力フォームをインライン表示
+// 入力→保存: 正解をDBに学習（correctLearnedToken）/ わからない: 従来どおり削除＋永久ブロック
+function showCorrectionForm(container, token, type) {
+  const old = container.querySelector(".token-correct-form");
+  if (old) old.remove();
+  const div = document.createElement("div");
+  div.className = "token-correct-form";
+  div.style.cssText = "margin-top:5px;padding:4px;background:#fff3e0;border-radius:4px";
+  div.innerHTML = `「${esc(token)}」の正しい市区名: `
+    + `<input type="text" class="tc-input" placeholder="例: 富田林市" style="width:110px;font-size:11px;padding:2px 4px;border:1px solid #ccc;border-radius:3px">`
+    + ` <button class="tc-save" style="font-size:10px;padding:2px 7px;background:#1a73e8;color:#fff;border:none;border-radius:3px;cursor:pointer">✓ 保存して学習</button>`
+    + ` <button class="tc-block" style="font-size:10px;padding:2px 7px;background:#9e9e9e;color:#fff;border:none;border-radius:3px;cursor:pointer">わからない（今後解決しない）</button>`;
+  container.appendChild(div);
+  const input = div.querySelector(".tc-input");
+  input.focus();
+  const save = async () => {
+    const ward = input.value.trim();
+    // 「〇〇市」「大阪市〇〇区」「〇〇郡〇〇町」形式のみ受け付ける
+    if (!ward || !/[市区郡]/.test(ward)) {
+      input.style.borderColor = "#f44336";
+      input.placeholder = "市/区/郡を含めて入力";
+      return;
+    }
+    const btn = div.querySelector(".tc-save");
+    btn.disabled = true;
+    btn.textContent = "保存中...";
+    const ok = await correctLearnedToken(token, ward);
+    if (!ok) { btn.disabled = false; btn.textContent = "保存失敗（再試行）"; }
+  };
+  div.querySelector(".tc-save").addEventListener("click", save);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
+  div.querySelector(".tc-block").addEventListener("click", () => deleteLearnedToken(token, type));
+}
+
 // 未知トークンをWeb検索部隊（/api/token-resolve）で解決→LEARNED_MAPに追加→再描画
 async function resolveUnknownTokensWithAI(tokens, onResolved) {
   if (!tokens || tokens.length === 0) return;
@@ -148,9 +207,14 @@ async function resolveUnknownTokensWithAI(tokens, onResolved) {
   }
 }
 
-// 地名 → 市区の解決（NEIGHBORHOOD_WARD_MAP → LEARNED_WARD_MAP の順に参照）
+// 地名 → 市区の解決（NEIGHBORHOOD_WARD_MAP → LEARNED_WARD_MAP → 市サフィックス補完 の順に参照）
 function resolveWard(token) {
-  return NEIGHBORHOOD_WARD_MAP[token] || LEARNED_WARD_MAP[token] || null;
+  if (NEIGHBORHOOD_WARD_MAP[token]) return NEIGHBORHOOD_WARD_MAP[token];
+  if (LEARNED_WARD_MAP[token]) return LEARNED_WARD_MAP[token];
+  // 市サフィックス補完: 「富田林」→「富田林市」「羽曳野」→「羽曳野市」
+  // WARD_CODE_MAP に実在する市名のみ（AI・fuzzy検索に頼らずコスト0で正解できる）
+  if (WARD_CODE_MAP[token + "市"]) return token + "市";
+  return null;
 }
 
 // 「鶴見区横堤」→「鶴見区」→「大阪市鶴見区」のように先頭の市区郡部分で部分一致解決
@@ -1458,6 +1522,101 @@ function buildAdjCustomer(c) {
   };
 }
 
+// ── 未登録地名ヘルパー（博士連携: 駅でも地名マップにもないトークンを検出） ──────
+// ※ トップレベル定義必須: deleteLearnedToken / correctLearnedToken（トップレベル関数）から
+//    呼ばれるため、openInstructions 内に置くと strict mode で ReferenceError になる
+function computeUnknownTokens(areaStr) {
+  if (!areaStr) return [];
+  return parseAreaTokens(areaStr)
+    .filter(t => t.length >= 2 && !/^[0-9０-９]/.test(t))
+    .filter(t =>
+      !STATION_LINE_MAP[t] &&
+      !STATION_LINE_MAP[t.replace(/[町村]$/, "")] &&
+      !NEIGHBORHOOD_WARD_MAP[t] &&
+      !LEARNED_WARD_MAP[t] &&        // AI学習済みマップも参照
+      !WARD_CODE_MAP[t] &&
+      !WARD_CODE_MAP[t + "市"] &&    // 市サフィックス補完（「富田林」→富田林市）はAI解決不要
+      !/[都道府県市区郡]/.test(t) &&
+      !resolveStation(t)
+    );
+}
+function showUnknownWarn(tokens) {
+  const el = document.getElementById("unknown-warn");
+  if (!el) return;
+  if (!tokens || !tokens.length) { el.style.display = "none"; return; }
+
+  // 路線プレフィックス解決を試みる（例: JR高槻 → 高槻）
+  const analyzed = tokens.map(t => ({ original: t, suggestion: resolveWithLinePrefixes(t) }));
+  const hasResolvable = analyzed.some(r => r.suggestion);
+
+  let html = "⚠️ 未登録地名: <b>" + tokens.map(t => esc(t)).join("・") + "</b>";
+  if (hasResolvable) {
+    const hints = analyzed.filter(r => r.suggestion)
+      .map(r => esc(r.original) + "→<b>" + esc(r.suggestion.resolved) + "</b>("
+        + (r.suggestion.type === "station" ? "駅" : "地域") + ")");
+    html += "<br>🔄 解決候補: " + hints.join("、")
+      + ' <button id="unknown-resolve-btn" style="margin-left:6px;padding:2px 8px;'
+      + 'font-size:11px;background:#1a73e8;color:white;border:none;border-radius:4px;cursor:pointer">✓ 反映する</button>';
+  } else {
+    html += '<br>🤖 Web検索で自動解決中... <span id="ai-resolve-status"></span>';
+  }
+  el.style.display = "block";
+  el.innerHTML = html;
+
+  // 解決候補がない場合はAI+Web検索で自動解決を依頼
+  if (!hasResolvable) {
+    const unresolvedTokens = analyzed.filter(r => !r.suggestion).map(r => r.original);
+    resolveUnknownTokensWithAI(unresolvedTokens, () => {
+      // 解決後: 結果をチェックして「間違い？」ボタンを表示
+      if (selectedCustomer && selectedSite) {
+        const adjAreaEl = document.getElementById("adj-area");
+        const areaVal = adjAreaEl ? adjAreaEl.value : (selectedCustomer.desired_area || selectedCustomer.area || "");
+        const stillUnknown = computeUnknownTokens(areaVal);
+        if (stillUnknown.length === 0) {
+          // 全解決 → 解決結果と「間違い？」ボタンを表示
+          const resolved = unresolvedTokens.map(t => {
+            const w = LEARNED_WARD_MAP[t] || LEARNED_STATION_MAP[t]?.ward;
+            const type = LEARNED_STATION_MAP[t] ? "駅" : "地名";
+            return w ? `<span style="color:#1a73e8;font-weight:bold">${esc(t)}→${esc(w)}(${type})</span>
+              <button class="learned-token-del" data-token="${esc(t)}" data-type="${LEARNED_STATION_MAP[t] ? 'station' : 'region'}"
+                style="margin-left:4px;font-size:10px;padding:1px 5px;background:#f44336;color:white;border:none;border-radius:3px;cursor:pointer">✗ 間違い</button>` : esc(t);
+          }).join("　");
+          el.innerHTML = `✅ 自動解決: ${resolved}`;
+          el.querySelectorAll(".learned-token-del").forEach(btn => {
+            // ✗押下 → 即削除ではなく正解入力フォームを表示（正解をDBに学習させる）
+            btn.addEventListener("click", () => showCorrectionForm(el, btn.dataset.token, btn.dataset.type));
+          });
+        } else {
+          showUnknownWarn(stillUnknown);
+        }
+        renderInstrSteps(selectedSite, buildAdjCustomer(selectedCustomer));
+      }
+    });
+  }
+
+  if (hasResolvable) {
+    const btn = document.getElementById("unknown-resolve-btn");
+    if (btn) {
+      btn.onclick = () => {
+        const adjAreaEl = document.getElementById("adj-area");
+        let areaVal = adjAreaEl.value;
+        analyzed.forEach(r => {
+          if (r.suggestion) {
+            // 元トークンを解決済み名で置換
+            areaVal = areaVal.replace(
+              new RegExp(r.original.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"),
+              r.suggestion.resolved
+            );
+          }
+        });
+        adjAreaEl.value = areaVal;
+        showUnknownWarn(computeUnknownTokens(areaVal));
+        renderInstrSteps(selectedSite, buildAdjCustomer(selectedCustomer));
+      };
+    }
+  }
+}
+
 function openInstructions(siteKey) {
   selectedSite = siteKey;
   const cfg = SITE_CONFIG[siteKey];
@@ -1482,97 +1641,6 @@ function openInstructions(siteKey) {
   // 自動入力ボタン＋一時調整フォーム（リアプロ＋アンダーバーモードのみ）
   const autofillBtn = document.getElementById("autofill-btn");
   const adjForm     = document.getElementById("adj-form");
-
-  // ── 未登録地名ヘルパー（博士連携: 駅でも地名マップにもないトークンを検出） ──────
-  function computeUnknownTokens(areaStr) {
-    if (!areaStr) return [];
-    return parseAreaTokens(areaStr)
-      .filter(t => t.length >= 2 && !/^[0-9０-９]/.test(t))
-      .filter(t =>
-        !STATION_LINE_MAP[t] &&
-        !STATION_LINE_MAP[t.replace(/[町村]$/, "")] &&
-        !NEIGHBORHOOD_WARD_MAP[t] &&
-        !LEARNED_WARD_MAP[t] &&        // AI学習済みマップも参照
-        !WARD_CODE_MAP[t] &&
-        !/[都道府県市区郡]/.test(t) &&
-        !resolveStation(t)
-      );
-  }
-  function showUnknownWarn(tokens) {
-    const el = document.getElementById("unknown-warn");
-    if (!el) return;
-    if (!tokens || !tokens.length) { el.style.display = "none"; return; }
-
-    // 路線プレフィックス解決を試みる（例: JR高槻 → 高槻）
-    const analyzed = tokens.map(t => ({ original: t, suggestion: resolveWithLinePrefixes(t) }));
-    const hasResolvable = analyzed.some(r => r.suggestion);
-
-    let html = "⚠️ 未登録地名: <b>" + tokens.map(t => esc(t)).join("・") + "</b>";
-    if (hasResolvable) {
-      const hints = analyzed.filter(r => r.suggestion)
-        .map(r => esc(r.original) + "→<b>" + esc(r.suggestion.resolved) + "</b>("
-          + (r.suggestion.type === "station" ? "駅" : "地域") + ")");
-      html += "<br>🔄 解決候補: " + hints.join("、")
-        + ' <button id="unknown-resolve-btn" style="margin-left:6px;padding:2px 8px;'
-        + 'font-size:11px;background:#1a73e8;color:white;border:none;border-radius:4px;cursor:pointer">✓ 反映する</button>';
-    } else {
-      html += '<br>🤖 Web検索で自動解決中... <span id="ai-resolve-status"></span>';
-    }
-    el.style.display = "block";
-    el.innerHTML = html;
-
-    // 解決候補がない場合はAI+Web検索で自動解決を依頼
-    if (!hasResolvable) {
-      const unresolvedTokens = analyzed.filter(r => !r.suggestion).map(r => r.original);
-      resolveUnknownTokensWithAI(unresolvedTokens, () => {
-        // 解決後: 結果をチェックして「間違い？」ボタンを表示
-        if (selectedCustomer && selectedSite) {
-          const adjAreaEl = document.getElementById("adj-area");
-          const areaVal = adjAreaEl ? adjAreaEl.value : (selectedCustomer.desired_area || selectedCustomer.area || "");
-          const stillUnknown = computeUnknownTokens(areaVal);
-          if (stillUnknown.length === 0) {
-            // 全解決 → 解決結果と「間違い？」ボタンを表示
-            const resolved = unresolvedTokens.map(t => {
-              const w = LEARNED_WARD_MAP[t] || LEARNED_STATION_MAP[t]?.ward;
-              const type = LEARNED_STATION_MAP[t] ? "駅" : "地名";
-              return w ? `<span style="color:#1a73e8;font-weight:bold">${esc(t)}→${esc(w)}(${type})</span>
-                <button class="learned-token-del" data-token="${esc(t)}" data-type="${LEARNED_STATION_MAP[t] ? 'station' : 'region'}"
-                  style="margin-left:4px;font-size:10px;padding:1px 5px;background:#f44336;color:white;border:none;border-radius:3px;cursor:pointer">✗ 間違い</button>` : esc(t);
-            }).join("　");
-            el.innerHTML = `✅ 自動解決: ${resolved}`;
-            el.querySelectorAll(".learned-token-del").forEach(btn => {
-              btn.addEventListener("click", () => deleteLearnedToken(btn.dataset.token, btn.dataset.type));
-            });
-          } else {
-            showUnknownWarn(stillUnknown);
-          }
-          renderInstrSteps(selectedSite, buildAdjCustomer(selectedCustomer));
-        }
-      });
-    }
-
-    if (hasResolvable) {
-      const btn = document.getElementById("unknown-resolve-btn");
-      if (btn) {
-        btn.onclick = () => {
-          const adjAreaEl = document.getElementById("adj-area");
-          let areaVal = adjAreaEl.value;
-          analyzed.forEach(r => {
-            if (r.suggestion) {
-              // 元トークンを解決済み名で置換
-              areaVal = areaVal.replace(
-                new RegExp(r.original.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"),
-                r.suggestion.resolved
-              );
-            }
-          });
-          adjAreaEl.value = areaVal;
-          showUnknownWarn(computeUnknownTokens(areaVal));
-          renderInstrSteps(selectedSite, buildAdjCustomer(selectedCustomer));
-        };
-      }
-    }
-  }
 
   if (siteKey === "itandi") {
     adjForm.style.display = "block";
