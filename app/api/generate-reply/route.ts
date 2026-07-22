@@ -611,6 +611,31 @@ function buildGenerationMessages(
       }\n→ 特に費用・ルール・フロー説明は「一度伝えた」事実を必ず踏まえ、同じ内容を別の言い方でも繰り返さない。次のアクションに進むこと。`
     : "";
 
+  // ── ピックアップ約束後の感謝返信を決定論的に検出 ──────────────────────────
+  // スタッフが直前に「ピックアップしてお送りします」と約束済みのところへ、
+  // お客様が「ありがとうございます」「よろしくお願いします」等の短い感謝・承諾のみを返したケース。
+  // → AIが同じピックアップ宣言を再生成する二重宣言バグを防ぎ、短い確認文のみに制限する。
+  //   実際の物件送付はAIX「物件ピックアップした」で行う（送信後にUIが誘導バナーを表示済み）。
+  const trimmedCustomerMsg = (customerMessage || "").trim();
+  const isShortAckMsg =
+    trimmedCustomerMsg.length > 0 &&
+    trimmedCustomerMsg.length <= 60 &&
+    /(ありがとう|宜しく|よろしく|お願いします|お願い致します|お願いいたします|了解|承知|楽しみ)/.test(trimmedCustomerMsg) &&
+    !/[?？]/.test(trimmedCustomerMsg) &&
+    !/(家賃|エリア|間取り|物件|条件|変更|広げ|安く|抑え|内覧|見積|申込|キャンセル)/.test(trimmedCustomerMsg);
+  const staffPromisedPickup =
+    !!lastStaffMsg &&
+    /ピックアップ/.test(lastStaffMsg) &&
+    /(お送り|送らせて|お届け|送付)/.test(lastStaffMsg) &&
+    !lastStaffMsg.includes("ご査収ください"); // 「ご査収ください」= 物件送付済みの完了文なので約束中ではない
+  const pickupPromiseAckNote = (!isFollowUp && staffPromisedPickup && isShortAckMsg)
+    ? `\n【🚫 ピックアップ宣言の繰り返し禁止（最優先・フェーズ別パターン/条件変更検出より上位）】
+スタッフは直前の返信で既に「物件をピックアップしてお送りします」と約束済み。今回のお客様のメッセージはその約束に対する感謝・承諾のみ。
+→ 「ピックアップしてお送りさせて頂きます」宣言・エリアや家賃等の条件列挙・「初期費用も最大限割引」文を絶対にもう一度生成しない（二重宣言になる）
+→ 返信は短い確認文のみ（2行以内・挨拶ルールに従う）。例:「かしこまりました😊！！ピックアップ出来次第お送りさせて頂きますので、何卒よろしくお願い致します😌！！」
+→ 実際の物件送付はこの後AIX「物件ピックアップした」で行うため、AI返信で物件・条件の話を展開しない`
+    : "";
+
   const staffContextNote = isFollowUp && lastStaffMsg
     ? `\n【⚠️ 最重要：スモラは既にこのお客様メッセージに返信済み】\nスモラが直前に送った内容：「${lastStaffMsg}」\n→ お客様はまだ返信していない。これはその【続きのメッセージ】。前の返信で伝えた内容を絶対に繰り返さない。前の返信を踏まえて補足・追加・次のアクション提案など、自然につながる内容を生成すること。`
     : lastStaffMsg
@@ -724,7 +749,7 @@ function buildGenerationMessages(
   })();
 
   const prompt = `${propertyStatusNote}
-${closingNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}
+${closingNote}${nameNote}${conditionsNote}${missingConditionsNote}${opinionsNote}${summaryNote}${dateNote}${greetingNote}${managementNote}${repetitionNote}${currentPropertyNote}${repeatedConcernNote}${hesitancyNote}${questionsNote}${conditionChangeNote}${pickupPromiseAckNote}
 【現在の営業フェーズ】${state}
 ${phaseGuide}${approachNote}${staffContextNote}
 ${quickPatterns}
