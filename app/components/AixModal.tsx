@@ -721,7 +721,8 @@ export default function AixModal({
   const [aiActionComponents, setAiActionComponents] = useState<Record<string, string> | null>(null);
   const [newArrivalApply, setNewArrivalApply] = useState(false);
   const [editableCalendarSlots, setEditableCalendarSlots] = useState<string[]>([]);
-  const [includeCalendar, setIncludeCalendar] = useState(true);
+  // 内覧提案はデフォルトOFF（内覧誘導は「内覧へ」ボタンで別途送る運用）。必要時のみスタッフがトグルON
+  const [includeCalendar, setIncludeCalendar] = useState(false);
   // 内覧へ！専用: カレンダースロット選択
   const [viewingCalendarDays, setViewingCalendarDays] = useState<Array<{label: string; slots: string[]; fullyBooked: boolean; noEvents: boolean}>>([]);
   const [viewingCalendarLoading, setViewingCalendarLoading] = useState(false);

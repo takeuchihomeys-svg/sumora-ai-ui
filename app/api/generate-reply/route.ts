@@ -1202,7 +1202,12 @@ function extractPreferredName(
   lineDisplayName: string
 ): string {
   // 部分一致で除外（^先頭一致だと「通過後にオーナー」等が素通りするため含有一致に変更）
-  const NON_NAME_RE = /(お客様|オーナー|大家|管理|業者|保証|担当|スタッフ|弊社|不動産|審査|通過|契約|入居|退去|申込|内覧|皆さ|各位|こちら|まずは|引き続き|何卒|改めて)/;
+  // 「よろし」等の接続表現も除外（「よろしければサさん…」→「よろしければサ」誤抽出防止）
+  const NON_NAME_RE = /(お客様|オーナー|大家|管理|業者|保証|担当|スタッフ|弊社|不動産|審査|通過|契約|入居|退去|申込|内覧|皆さ|各位|こちら|まずは|引き続き|何卒|改めて|よろし|宜し|もしよ|できれば|出来れば|ぜひ|是非)/;
+  // 名前の形のみ許可: ひらがな2〜6字 / カタカナ2〜6字 / 漢字1〜4字 / 英字2〜12字（スクリプト混在=「よろしければサ」「頂きサ」等の文断片を排除）
+  const NAME_SHAPE_RE = /^[ぁ-ん]{2,6}$|^[ァ-ン]{2,6}$|^[一-鿿々]{1,4}$|^[A-Za-z]{2,12}$/;
+  // 動詞・助詞に使われる文字が中間に混ざる候補は文断片とみなして拒否（先頭・末尾は名前でも使われるため対象外）
+  const FRAGMENT_CHAR_RE = /[てでにをはがもやかなきしれめとのどこそあいう]/;
   for (const msg of [...messages].reverse()) {
     if (msg.sender !== "staff" || !msg.text) continue;
     // 冒頭の呼びかけのみ対象（文中の「オーナーさん」等の第三者言及は拾わない）
@@ -1210,14 +1215,17 @@ function extractPreferredName(
     if (!m) continue;
     const name = m[1];
     if (NON_NAME_RE.test(name)) continue;
-    if (!name) continue;
-    const hasJp = /[ぁ-んァ-ン一-鿿]/.test(name);
-    const hasLatin = /[a-zA-Z]/.test(name);
-    if (hasJp && hasLatin) continue;
+    if (name.length <= 1 || name.length > 8) continue;
+    // 名前の形（ひらがな/カタカナ/漢字/英字のみ）に一致しない候補は名前ではない
+    if (!NAME_SHAPE_RE.test(name)) continue;
+    if (name.length >= 3 && FRAGMENT_CHAR_RE.test(name.slice(1, -1))) continue;
     return name;
   }
-  // フォールバック: LINE表示名末尾の「さん」を除去してから返す（二重さん防止）
-  return lineDisplayName.replace(/さん$/, "");
+  // フォールバック: クライアント渡し名にも「よろしければサ」等の汚染が乗り得るためサニタイズ＋末尾「さん」除去（二重さん防止）
+  return lineDisplayName
+    .replace(/^(もし)?(よろしければ|宜しければ|よければ|できれば|出来れば|ぜひ|是非)/, "")
+    .replace(/さん$/, "")
+    .trim();
 }
 
 // ─── パターンA: 引用リプライの引用先メッセージ取得（quoted_message_id → line_message_id JOIN）──
