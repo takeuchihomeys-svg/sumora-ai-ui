@@ -106,6 +106,7 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 
 | 日付 | 内容 |
 |---|---|
+| 2026-07-23 | v2.4.2: 連結区名対応（「西区北区都島区中央区」→「大阪市西区　大阪市北区　大阪市都島区　大阪市中央区」）。decomposeToken第2フォールバック追加（NEIGHBORHOOD_WARD_MAP+WARD_CODE_MAP）・realpro表示にmultiWardLabel追加 |
 | 2026-07-15 | Chrome拡張フィードバックUI追加: popup.html に💬ボタン＋モーダル・popup.js に送信ロジック（POST /api/chrome-extension-feedback）・styles.css にスタイル追加 |
 | 2026-07-15 | NEIGHBORHOOD_WARD_MAP から重複トークン4件削除（天満・日本橋・帝塚山・文の里）: STATION_LINE_MAPに収録済みのため地域として検索されてしまうバグを修正 |
 | 2026-07-15 | /api/chrome-extension-feedback 新設: POSTでフィードバック保存・GETで最新50件取得。Supabase chrome_extension_feedback テーブル新設（category/content/area_raw/token/site/resolved）|
