@@ -72,12 +72,23 @@ export async function GET(req: NextRequest) {
   for (const msg of pending) {
     try {
       // アトミッククレーム: 並行実行での二重送信を防止
-      const { data: claimed } = await supabase
+      const { data: claimed, error: claimErr } = await supabase
         .from("scheduled_messages")
         .update({ status: "sending", updated_at: new Date().toISOString() })
         .eq("id", msg.id as string)
         .eq("status", "pending")
         .select("id");
+      if (claimErr) {
+        // クレーム失敗（例: CHECK制約違反）を握り潰さず可視化する。
+        // failed 化すればUIの失敗通知フローに乗り、pending のまま永久スキップされる事態を防ぐ
+        console.error("[send-scheduled] claim失敗:", claimErr.message, "id:", msg.id);
+        await supabase
+          .from("scheduled_messages")
+          .update({ status: "failed", error: `claim failed: ${claimErr.message}` })
+          .eq("id", msg.id as string)
+          .eq("status", "pending");
+        continue;
+      }
       if (!claimed?.length) continue;
 
       const accountKey = resolveAccountKey(msg.account as string | undefined);

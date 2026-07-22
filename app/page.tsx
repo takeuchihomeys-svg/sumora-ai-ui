@@ -1432,7 +1432,8 @@ export default function Home() {
         const errMsg = (failed[0] as { id: string; error?: string }).error;
         setError(`⚠️ 予約送信が失敗しました: ${errMsg ?? "LINE送信エラー"}`);
         // 通知済みにしてDB上で acknowledged に更新（再通知防止）
-        await supabase.from("scheduled_messages").update({ status: "failed_ack" }).eq("id", (failed[0] as { id: string }).id);
+        const { error: ackErr } = await supabase.from("scheduled_messages").update({ status: "failed_ack" }).eq("id", (failed[0] as { id: string }).id);
+        if (ackErr) console.error("[scheduled] failed_ack更新失敗:", ackErr.message);
       }
     }, 30000);
     return () => clearInterval(interval);

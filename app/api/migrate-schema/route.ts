@@ -1224,6 +1224,11 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_messages_scheduled_at ON scheduled_mess
 ALTER TABLE scheduled_messages DISABLE ROW LEVEL SECURITY;
 ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS is_aix BOOLEAN DEFAULT FALSE;
+-- status CHECK制約の更新（2026-07-22）: 旧制約は 'sending'（アトミッククレーム）と 'failed_ack'（UI通知済み）を
+-- 許可しておらず、send-scheduled-messages cron が毎分400エラーで全件スキップしていた（本番適用済み・冪等）
+ALTER TABLE scheduled_messages DROP CONSTRAINT IF EXISTS scheduled_messages_status_check;
+ALTER TABLE scheduled_messages ADD CONSTRAINT scheduled_messages_status_check
+  CHECK (status = ANY (ARRAY['pending'::text, 'sending'::text, 'sent'::text, 'failed'::text, 'failed_ack'::text, 'cancelled'::text]));
 
 -- calendar_events: 内覧カレンダー（screening-admin から sync → calendarSlots.ts が参照）
 -- 本番には既に存在するが migrate-schema 未定義だったため追記
