@@ -184,7 +184,7 @@ function toEditable(e: ExtractedEstimate, account: Account = "sumora", moveInDat
   const { nextMonth, nextYear } = calcNext(moveInDate);
   const { moveInDay, moveInMonth, moveInMonthDays } = calcMoveInInfo(moveInDate);
   const commDefaults = ACCOUNT_COMMISSION[account];
-  const guaranteeRate = 50;
+  const guaranteeRate = e.guaranteeRate || 50;
   return {
     ...e,
     moveInDate,

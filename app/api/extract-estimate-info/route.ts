@@ -26,6 +26,7 @@ export interface ExtractedEstimate {
   insurance: number;
   keyExchange: number;
   cleaning: number;
+  guaranteeRate?: number;
   cleaningAtDeparture?: boolean;
   parkingDeposit: number;
   parkingMonthly: number;
@@ -58,6 +59,7 @@ const EMPTY: ExtractedEstimate = {
   insurance: 0,
   keyExchange: 0,
   cleaning: 0,
+  guaranteeRate: 50,
   cleaningAtDeparture: false,
   parkingDeposit: 0,
   parkingMonthly: 0,
@@ -111,6 +113,7 @@ export async function POST(req: NextRequest) {
   "parkingCommission": 駐車場手数料（税抜。数値。不明なら0）,
   "parkingCommissionTax": 駐車場手数料消費税（数値。不明なら0）,
   "guarantee": 賃貸保証料（数値。不明なら0）,
+  "guaranteeRate": 賃貸保証料率（%の数値のみ。例: 30。複数ある場合は最低率。記載がなければ50）,
   "insurance": 住宅保険・火災保険（数値。不明なら0）,
   "keyExchange": 鍵交換代（数値。不明なら0）,
   "cleaning": クリーニング代（数値。不明なら0）,
@@ -129,6 +132,7 @@ export async function POST(req: NextRequest) {
 - 仲介手数料のみ税抜と消費税を分けて抽出（まとめて書いてあれば: 合計÷1.1=税抜、端数切捨て）
 - otherItemsの金額は【必ず税込金額のまま】記入すること。÷1.1の計算は絶対にしない。書いてある数字をそのまま使う
 - guarantee・insurance・keyExchange・cleaning等も税込のまま書いてある数字を使う（÷1.1しない）
+- guaranteeRate: 「エポス30%→」「JRAG50%/70%」等から保証料率を抽出。複数ある場合は最低率（例: 30）。記載がなければ50
 - cleaningAtDeparture: 「退去時清算」「退去時精算」「退去時 ¥○○」等の記載があればtrue。入居時に支払う場合はfalse
 - 日割賃料は抽出不要（入居日から自動計算するため）
 - 不明な項目は0または空文字

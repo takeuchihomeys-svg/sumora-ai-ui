@@ -199,6 +199,9 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
     ws.getCell(`F${r}`).value = null;
   }
 
+  // 0円の項目は「0」ではなく空欄にする（0円行を見せない）
+  const numOrBlank = (n: number): string | number => (n ? n : "");
+
   // ── 物件情報（右上）
   setCell(ws, "M8",  d.propertyName || "");
   setCell(ws, "N9",  d.roomNumber   || "");
@@ -210,11 +213,9 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
   setCell(ws, "M14", d.reikin        || 0);
   setCell(ws, "M15", d.rent          || 0);
   setCell(ws, "M16", d.managementFee || 0);
-  setCell(ws, "M19", d.parkingDeposit || 0);
+  setCell(ws, "M19", numOrBlank(d.parkingDeposit));
 
   // ── 固定上段費用
-  // 0円の項目は「0」ではなく空欄にする（0円行を見せない）
-  const numOrBlank = (n: number): string | number => (n ? n : "");
   setCell(ws, "E11", numOrBlank(d.shikikin));
   setCell(ws, "F11", numOrBlank(d.shikikin));
   setCell(ws, "E12", numOrBlank(d.reikin));
