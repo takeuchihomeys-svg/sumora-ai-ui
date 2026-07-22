@@ -310,7 +310,7 @@ ${customerMessage}
   "questions": ["お客様メッセージ内の質問・確認事項を全て列挙（例: [\"審査期間は？\",\"キャンセルできる？\",\"フリーレントある？\"]）。なければ空配列"],
   "repeated_concern": "履歴を見てお客様が繰り返し聞いているテーマ（例: 費用・審査・キャンセル）。なければnull",
   "current_property": "現在話題にしている物件名・号室（履歴から特定できる場合のみ）。なければnull",
-  "condition_change_type": "お客様が検索条件を変更・追加・緩和したか、または物件ピックアップ・送付を依頼しているか。該当する場合その種別（'area_change'=エリア変更、'rent_change'=家賃変更、'layout_change'=間取り変更、'condition_relax'=条件緩和、'pickup_request'=物件を送って・ピックアップ依頼・おすすめ、'multi'=複数変更）。なければnull",
+  "condition_change_type": "お客様が検索条件を変更・追加・緩和したか、または物件ピックアップ・送付を依頼しているか。該当する場合その種別（'area_change'=エリア変更、'rent_change'=家賃変更、'layout_change'=間取り変更、'equip_add'=設備・収納・こだわり条件の追加（WIC広め・SIC・収納多め・南向き・オートロック等の新しいこだわりを追加）、'condition_relax'=条件緩和、'pickup_request'=物件を送って・ピックアップ依頼・おすすめ、'multi'=複数変更）。なければnull。※すでに検討中の物件があっても、新しい条件を追加したら必ずその種別を返すこと",
   "hesitancy_pattern": "お客様が「検討します」「また連絡します」「少し待ってほしい」「迷っています」など、決断を保留するパターンを示しているか。示している場合はその種別（'thinking'=検討中・'callback'=また連絡・'waiting'=もう少し待って・'undecided'=どちらか迷い・'timeline'=○月に決めたい ）、なければnull",
   "future_timeline": "お客様が「○月に」「○日には」など具体的な決断・申込タイムラインを示している場合その内容。なければnull"
 }`;
@@ -539,8 +539,13 @@ function buildGenerationMessages(
       }
 
       // ④ 物件名追跡
+      // ★お客様が新しい条件を追加した場合は、既出物件を再提案しないよう文脈注記を切り替える
+      //   （condition_change_type が付いている＝新条件が来た → 既出物件の「文脈で返信」指示は再提案を誘発するため出さない）
+      const hasConditionChangeForProperty = typeof p.condition_change_type === "string" && p.condition_change_type.trim().length > 0;
       if (p.current_property && typeof p.current_property === "string") {
-        currentPropertyNote = `\n【🏠 現在話している物件】${p.current_property} — この物件の文脈で返信すること。`;
+        currentPropertyNote = hasConditionChangeForProperty
+          ? `\n【🏠 現在話している物件】${p.current_property}（※お客様が新しい条件を追加したため、この既出物件を再提案・再アピールしない。新条件に合うお部屋を新たに探してお送りする旨のみ伝えること）`
+          : `\n【🏠 現在話している物件】${p.current_property} — この物件の文脈で返信すること。`;
       }
 
       // ② 検討/保留パターン: 実データから抽出した対応策を注入
@@ -565,17 +570,20 @@ function buildGenerationMessages(
           area_change: "エリア変更",
           rent_change: "家賃変更",
           layout_change: "間取り変更",
+          equip_add: "設備・こだわり条件追加",
           condition_relax: "条件緩和（拡大）",
           pickup_request: "物件ピックアップ依頼",
           multi: "複数条件変更",
         };
         const label = typeLabel[changeType] ?? changeType;
+        // 既出物件の再提案禁止（全パターン共通）: 新条件が来た＝すでに検討中・提案済みの物件名を再提案してはいけない
+        const noReproposeNote = `\n→ ★既出物件の再提案禁止（最優先）: 会話履歴にすでに登場した物件名（検討中・提案済みの物件）を返信に絶対に出さない。既出物件が新条件を満たしていても、その物件名を出して再アピールしてはいけない。「新条件に合うお部屋を新たに探してお送りする」旨のみ伝えること（例:「WICが広めのお部屋でご条件に合うお部屋をピックアップしてお送りさせて頂きます！！」）`;
         // 拡大・緩和（condition_relax）の場合: ピックアップ宣言 + まだ聞けていない条件を1〜2点確認してよい
         if (changeType === "condition_relax") {
-          conditionChangeNote = `\n【🔄 ${label}検出】エリア拡大・家賃上限UP等で選択肢が広がった。必ずピックアップ宣言を行うこと。さらに「まだ聞けていない重要条件（間取り・築年数など）」が1〜2点あれば追加確認してよい（すでに分かっている条件は聞き返さない）。`;
+          conditionChangeNote = `\n【🔄 ${label}検出】エリア拡大・家賃上限UP等で選択肢が広がった。必ずピックアップ宣言を行うこと。さらに「まだ聞けていない重要条件（間取り・築年数など）」が1〜2点あれば追加確認してよい（すでに分かっている条件は聞き返さない）。${noReproposeNote}`;
         } else {
-          // 条件変更・ピックアップ依頼: 追加質問は禁止、即行動宣言で完結
-          conditionChangeNote = `\n【🔄 ${label}検出（最重要・絶対遵守）】追加条件を聞き返すことは絶対禁止。変更内容を具体的なエリア名・数字で言葉にして、即座に行動宣言する。「ピックアップします」「お送りします」で完結させること。`;
+          // 条件変更・設備追加・ピックアップ依頼: 追加質問は禁止、即行動宣言で完結
+          conditionChangeNote = `\n【🔄 ${label}検出（最重要・絶対遵守）】追加条件を聞き返すことは絶対禁止。変更・追加された条件を具体的な言葉（エリア名・数字・設備名）にして、即座に行動宣言する。「ピックアップします」「お送りします」で完結させること。${noReproposeNote}`;
         }
       }
     } catch (e) { console.warn("[generate-reply] Step1 JSON parse failed:", e); }
