@@ -244,6 +244,7 @@ function normalizeNumerals(s) {
 }
 
 // セパレーターなしで連結された複数駅名を分解（例: "寝屋川萱島大和田古川橋門真" → ["寝屋川市","萱島","大和田","古川橋","門真市"]）
+// 区名連結にも対応（例: "西区北区都島区中央区" → ["大阪市西区","大阪市北区","大阪市都島区","大阪市中央区"]）
 function decomposeToken(token) {
   if (token.length < 4) return null;
   const keys = Object.keys(STATION_LINE_MAP);
@@ -268,7 +269,28 @@ function decomposeToken(token) {
       }
     }
   }
-  return (dp[n] !== null && dp[n].length >= 2) ? dp[n] : null;
+  if (dp[n] !== null && dp[n].length >= 2) return dp[n];
+  // 第2フォールバック: NEIGHBORHOOD_WARD_MAP + WARD_CODE_MAP で連結区名を分解
+  const wardCands = [];
+  for (const [k, v] of Object.entries(NEIGHBORHOOD_WARD_MAP)) {
+    wardCands.push({ match: k, result: v });
+  }
+  for (const k of Object.keys(WARD_CODE_MAP)) {
+    if (!wardCands.find(c => c.match === k)) wardCands.push({ match: k, result: k });
+  }
+  wardCands.sort((a, b) => b.match.length - a.match.length);
+  const dp2 = new Array(n + 1).fill(null);
+  dp2[0] = [];
+  for (let i = 1; i <= n; i++) {
+    for (const { match, result } of wardCands) {
+      const len = match.length;
+      if (i >= len && token.slice(i - len, i) === match && dp2[i - len] !== null) {
+        dp2[i] = [...dp2[i - len], result];
+        break;
+      }
+    }
+  }
+  return (dp2[n] !== null && dp2[n].length >= 2) ? dp2[n] : null;
 }
 
 // 「第一希望:枚方市」「大阪府以外:奈良」などのラベルプレフィックスと方向サフィックスを除去してエリアトークンを分解
@@ -532,9 +554,19 @@ const SITE_CONFIG = {
       if (areaText) {
         if (isLocation && !isStation) {
           // 市・区・府・県など → 所在地
-          const locationValue = neighborhoodWard
-            ? neighborhoodWard + "（" + areaClean + "）"
-            : areaText;
+          // 連結区名（例:「西区北区都島区中央区」）→「大阪市西区　大阪市北区　...」に展開
+          let multiWardLabel = null;
+          if (!neighborhoodWard) {
+            const wardToks = parseAreaTokens(areaClean);
+            if (wardToks.length >= 2 && wardToks.every(t => !!WARD_CODE_MAP[t])) {
+              multiWardLabel = wardToks.join("　");
+            }
+          }
+          const locationValue = multiWardLabel
+            ? multiWardLabel
+            : neighborhoodWard
+              ? neighborhoodWard + "（" + areaClean + "）"
+              : areaText;
           steps.push({
             num: n++,
             field: "【所在地】絞り込み",
