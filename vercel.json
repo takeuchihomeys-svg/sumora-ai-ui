@@ -163,6 +163,10 @@
     {
       "path": "/api/cron/rule-organize",
       "schedule": "0 21 * * 0"
+    },
+    {
+      "path": "/api/auto-seiyaku",
+      "schedule": "0 0 * * *"
     }
   ]
 }
