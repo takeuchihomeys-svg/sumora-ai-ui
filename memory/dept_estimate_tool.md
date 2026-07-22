@@ -26,6 +26,9 @@
 | その他費用は税込金額をそのまま反映 | ✅ 2026-06-03 完成 | fill-estimate/route.ts（÷1.1しない） |
 | 家賃変更時に翌月家賃も連動 | ✅ 2026-06-03 完成 | estimate/page.tsx |
 | 賃貸保証料率（%）入力→自動計算 | 🚧 実装中（未コミット） | estimate/page.tsx (guaranteeRate) |
+| 0円項目の非表示（UI・Excel） | ✅ 2026-07-22 完成 | estimate/page.tsx + fill-estimate/route.ts |
+| 火災保険0円→「別途支払い」表示 | ✅ 2026-07-22 完成 | estimate/page.tsx + fill-estimate/route.ts |
+| 毎月費用/初回費用の区切り行 | ✅ 2026-07-22 完成 | estimate/page.tsx + fill-estimate/route.ts |
 | 見積書履歴 | ❌ 未実装（APIはある） | generate-estimate/route.ts (GET) |
 | 顧客名の自動引き継ぎ（LINEから） | ❌ 未実装 | — |
 
@@ -148,6 +151,10 @@ savings = Math.max(0, standardCommission - actualCommission) + discountAmount
 
 | 日付 | 変更内容 | 担当 |
 |------|---------|------|
+| 2026-07-22 | 0円項目非表示: UIプレビュー・画像化・Excel（E11〜E14/E28/E29は0のとき空欄）。仲介手数料・消費税・賃貸保証料の alwaysShow を削除 | #42-W |
+| 2026-07-22 | Excel行25（抗菌施工費/アクト安心ライフ=cleaningフィールド）: 0円のときB25/E25/F25を空欄化。行26（賃貸保証料）も同様 | #42-W |
+| 2026-07-22 | 火災保険（insurance・Excel行27）: 0円のときUI/画像/Excelとも「別途支払い」とテキスト表示 | #42-W |
+| 2026-07-22 | 毎月費用（日割り・翌月水道代）と初回のみ費用（鍵交換代等）の間に区切り: UIは破線行、Excelは動的行15〜24内に空行1行 | #42-W |
 | 2026-06-03 | exceljs移行・Excel黒画面・書式崩れ・画像消えを根絶 | #42-SZ |
 | 2026-06-03 | Excel節約金額を drawing2.xml + JSZip で動的書き換え | #42-SZ |
 | 2026-06-03 | drawing rId 保持方式に変更・キャラ画像消えを修正 | #42-SZ |

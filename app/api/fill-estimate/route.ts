@@ -212,16 +212,18 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
   setCell(ws, "M19", d.parkingDeposit || 0);
 
   // ── 固定上段費用
-  setCell(ws, "E11", d.shikikin || 0);
-  setCell(ws, "F11", d.shikikin || 0);
-  setCell(ws, "E12", d.reikin   || 0);
-  setCell(ws, "F12", d.reikin   || 0);
+  // 0円の項目は「0」ではなく空欄にする（0円行を見せない）
+  const numOrBlank = (n: number): string | number => (n ? n : "");
+  setCell(ws, "E11", numOrBlank(d.shikikin));
+  setCell(ws, "F11", numOrBlank(d.shikikin));
+  setCell(ws, "E12", numOrBlank(d.reikin));
+  setCell(ws, "F12", numOrBlank(d.reikin));
   const nextRent = d.nextRent        || d.rent          || 0;
   const nextMgmt = d.nextManagementFee || d.managementFee || 0;
-  setCell(ws, "E13", nextRent);
-  setCell(ws, "F13", nextRent);
-  setCell(ws, "E14", nextMgmt);
-  setCell(ws, "F14", nextMgmt);
+  setCell(ws, "E13", numOrBlank(nextRent));
+  setCell(ws, "F13", numOrBlank(nextRent));
+  setCell(ws, "E14", numOrBlank(nextMgmt));
+  setCell(ws, "F14", numOrBlank(nextMgmt));
 
   // ── 日割り計算
   const moveInDay   = d.moveInDay        || 1;
@@ -234,51 +236,89 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
   const proratedWater = prorated(d.waterFee);
 
   // ── 動的項目（行15〜24）
+  // 「毎月かかる費用」（日割り・翌月水道代）と「入居初回のみの費用」（鍵交換代など）の
+  // 間に空行を1行入れて視覚的に区別する
   type DynItem = { label: string; amount: number };
-  const dynamicItems: DynItem[] = [];
+  const monthlyItems: DynItem[] = [];
 
   // moveInDay=1（月初入居）は日割りなし（翌月家賃と二重払いになるため）
   if (proratedRent > 0 && moveInDay > 1)
-    dynamicItems.push({ label: `日割り家賃（${proratedDays}日分）`, amount: proratedRent });
+    monthlyItems.push({ label: `日割り家賃（${proratedDays}日分）`, amount: proratedRent });
   if (proratedMgmt > 0 && moveInDay > 1)
-    dynamicItems.push({ label: `日割り共益費（${proratedDays}日分）`, amount: proratedMgmt });
+    monthlyItems.push({ label: `日割り共益費（${proratedDays}日分）`, amount: proratedMgmt });
   if (proratedWater > 0 && moveInDay > 1)
-    dynamicItems.push({ label: `日割り水道代（${proratedDays}日分）`, amount: proratedWater });
+    monthlyItems.push({ label: `日割り水道代（${proratedDays}日分）`, amount: proratedWater });
+  if (d.nextWaterFee)
+    monthlyItems.push({ label: "翌月水道代", amount: d.nextWaterFee });
+
+  const oneTimeItems: DynItem[] = [];
   if (d.keyExchange)
-    dynamicItems.push({ label: "鍵交換代", amount: d.keyExchange });
+    oneTimeItems.push({ label: "鍵交換代", amount: d.keyExchange });
   const parkingTotal = (d.parkingCommission || 0) + (d.parkingCommissionTax || 0);
   if (parkingTotal > 0)
-    dynamicItems.push({ label: "駐車場仲介手数料", amount: parkingTotal });
+    oneTimeItems.push({ label: "駐車場仲介手数料", amount: parkingTotal });
   if (d.parkingMonthly)
-    dynamicItems.push({ label: "翌月駐車場代", amount: d.parkingMonthly });
-  if (d.nextWaterFee)
-    dynamicItems.push({ label: "翌月水道代", amount: d.nextWaterFee });
+    oneTimeItems.push({ label: "翌月駐車場代", amount: d.parkingMonthly });
   for (const oi of d.otherItems || []) {
     if (oi.item && oi.amount > 0)
-      dynamicItems.push({ label: oi.item, amount: oi.amount });
+      oneTimeItems.push({ label: oi.item, amount: oi.amount });
   }
 
-  for (let i = 0; i < Math.min(dynamicItems.length, 10); i++) {
-    const row = 15 + i;
-    setCell(ws, `B${row}`, dynamicItems[i].label);
-    setCell(ws, `E${row}`, dynamicItems[i].amount);
-    setCell(ws, `F${row}`, dynamicItems[i].amount);
+  // 合計計算用（書き込み位置に関係なく全項目を合算）
+  const dynamicItems: DynItem[] = [...monthlyItems, ...oneTimeItems];
+
+  let dynRow = 15;
+  for (const item of monthlyItems) {
+    if (dynRow > 24) break;
+    setCell(ws, `B${dynRow}`, item.label);
+    setCell(ws, `E${dynRow}`, item.amount);
+    setCell(ws, `F${dynRow}`, item.amount);
+    dynRow++;
+  }
+  // 毎月費用と初回のみ費用の間に空行（行24を超えない場合のみ）
+  if (oneTimeItems.length > 0 && dynRow <= 24) dynRow++;
+  for (const item of oneTimeItems) {
+    if (dynRow > 24) break;
+    setCell(ws, `B${dynRow}`, item.label);
+    setCell(ws, `E${dynRow}`, item.amount);
+    setCell(ws, `F${dynRow}`, item.amount);
+    dynRow++;
   }
 
   // ── 固定下段費用
-  setCell(ws, "E25", d.cleaning  || 0);
-  setCell(ws, "F25", d.cleaning  || 0);
-  // B26: 保証料ラベルを実際の率で上書き（テンプレートの「60%の場合」を消す）
-  ws.getCell("B26").value = `賃貸保証料(${d.guaranteeRate ?? 50}%の場合)`;
-  setCell(ws, "E26", d.guarantee || 0);
-  setCell(ws, "F26", d.guarantee || 0);
-  setCell(ws, "E27", d.insurance || 0);
-  setCell(ws, "F27", d.insurance || 0);
+  // 行25（抗菌施工費/アクト安心ライフ）: 0円のときはラベルごと空欄にして非表示
+  if (d.cleaning) {
+    setCell(ws, "E25", d.cleaning);
+    setCell(ws, "F25", d.cleaning);
+  } else {
+    ws.getCell("B25").value = "";
+    ws.getCell("E25").value = "";
+    ws.getCell("F25").value = "";
+  }
+  // 行26（賃貸保証料）: 0円のときはラベルごと空欄
+  if (d.guarantee) {
+    // B26: 保証料ラベルを実際の率で上書き（テンプレートの「60%の場合」を消す）
+    ws.getCell("B26").value = `賃貸保証料(${d.guaranteeRate ?? 50}%の場合)`;
+    setCell(ws, "E26", d.guarantee);
+    setCell(ws, "F26", d.guarantee);
+  } else {
+    ws.getCell("B26").value = "";
+    ws.getCell("E26").value = "";
+    ws.getCell("F26").value = "";
+  }
+  // 行27（火災保険）: 0円のときは「別途支払い」とテキスト表示（数値0は書かない）
+  if (d.insurance) {
+    setCell(ws, "E27", d.insurance);
+    setCell(ws, "F27", d.insurance);
+  } else {
+    setCell(ws, "E27", "別途支払い");
+    setCell(ws, "F27", "別途支払い");
+  }
 
-  // 仲介手数料
-  setCell(ws, "E28", d.commission    || 0);
+  // 仲介手数料（0円のときは空欄・イエヤス/ギガ賃貸対応。F列は「一般的な不動産屋」比較用に維持）
+  setCell(ws, "E28", numOrBlank(d.commission));
   setCell(ws, "F28", d.rent          || 0);
-  setCell(ws, "E29", d.commissionTax || 0);
+  setCell(ws, "E29", numOrBlank(d.commissionTax));
   setCell(ws, "F29", Math.round((d.rent || 0) * 0.1));
 
   // スモ割

@@ -123,6 +123,7 @@ type PreviewRow = {
   isDiscount?: boolean;
   isComputed?: boolean;
   alwaysShow?: boolean;
+  isSeparator?: boolean; // 毎月かかる費用と初回のみ費用の区切り行
 };
 
 const ACCOUNT_SAVINGS_TEMPLATE: Record<Account, (n: number) => string> = {
@@ -441,18 +442,26 @@ export default function EstimatePage() {
     { label: items.nextMonth > 0 ? `${items.nextMonth}月分 家賃`   : "翌月家賃",   amount: items.nextRent,            editKey: "nextRent" },
     { label: items.nextMonth > 0 ? `${items.nextMonth}月分 共益費` : "翌月共益費", amount: items.nextManagementFee,   editKey: "nextManagementFee" },
     { label: items.nextMonth > 0 ? `${items.nextMonth}月分 水道代` : "翌月水道代", amount: items.nextWaterFee,        editKey: "nextWaterFee" },
-    { label: "仲介手数料",                          amount: items.commission,           editKey: "commission",    alwaysShow: true },
-    { label: "仲介手数料 消費税",                   amount: items.commissionTax,        editKey: "commissionTax", alwaysShow: true },
+    // ── ここまで毎月かかる費用 / ここから入居初回のみの費用（区切り行） ──
+    { label: "", amount: 0, isSeparator: true },
+    { label: "仲介手数料",                          amount: items.commission,           editKey: "commission" },
+    { label: "仲介手数料 消費税",                   amount: items.commissionTax,        editKey: "commissionTax" },
     { label: "駐車場手数料",                        amount: items.parkingCommission,    editKey: "parkingCommission" },
     { label: "駐車場手数料 消費税",                 amount: items.parkingCommissionTax, editKey: "parkingCommissionTax" },
-    { label: "賃貸保証料",                          amount: items.guarantee,            editKey: "guarantee", alwaysShow: true },
-    { label: "住宅保険",                            amount: items.insurance,            editKey: "insurance" },
+    { label: "賃貸保証料",                          amount: items.guarantee,            editKey: "guarantee" },
+    // 火災保険（住宅保険）は0円でも「別途支払い」と表示するため常に表示
+    { label: "住宅保険",                            amount: items.insurance,            editKey: "insurance", alwaysShow: true },
     { label: "鍵交換代",                            amount: items.keyExchange,          editKey: "keyExchange" },
     { label: "クリーニング代",                       amount: items.cleaning,             editKey: "cleaning" },
     { label: "駐車場保証金",                        amount: items.parkingDeposit,       editKey: "parkingDeposit" },
     { label: items.nextMonth > 0 ? `${items.nextMonth}月分 駐車場代` : "翌月駐車場代", amount: items.parkingMonthly, editKey: "parkingMonthly" },
     ...items.otherItems.map((o, i): PreviewRow => ({ label: o.item, amount: o.amount, otherIdx: i })),
-  ] as PreviewRow[]).filter((r) => r.amount !== 0 || r.alwaysShow || r.otherIdx !== undefined) : [];
+    // 0円の行は非表示（区切り行・その他費用の編集行・alwaysShow指定は除く）
+  ] as PreviewRow[]).filter((r) => (r.amount || 0) !== 0 || r.alwaysShow || r.isSeparator || r.otherIdx !== undefined) : [];
+
+  // 区切り行の上下どちらかに表示行がない場合は区切りを外す
+  const sepIdx = costRows.findIndex((r) => r.isSeparator);
+  if (sepIdx !== -1 && (sepIdx === 0 || sepIdx === costRows.length - 1)) costRows.splice(sepIdx, 1);
 
   // 特別割引は 0 でも常に表示
   const discountRow: PreviewRow = {
@@ -824,7 +833,13 @@ export default function EstimatePage() {
               <div className="px-4 pb-4">
                 <table className="w-full text-[12px]">
                   <tbody>
-                    {totalItems.map((row, idx) => (
+                    {totalItems.map((row, idx) => row.isSeparator ? (
+                      <tr key={idx}>
+                        <td colSpan={2} className="py-1.5">
+                          <div className="border-t border-dashed border-[#cfd8dc]" />
+                        </td>
+                      </tr>
+                    ) : (
                       <tr key={idx} className={row.isDiscount ? "text-red-500 font-bold" : ""}>
                         <td className="py-0.5 pr-2 text-[#54656f] align-middle">
                           {row.otherIdx !== undefined ? (
@@ -884,6 +899,9 @@ export default function EstimatePage() {
                                 onFocus={(e) => e.target.select()}
                               />
                             </div>
+                          ) : row.editKey === "insurance" && !(items?.insurance) ? (
+                            // 火災保険が0円のときは「別途支払い」と表示（金額はフォーム側で編集可能）
+                            <span className="font-semibold text-[#111b21]">別途支払い</span>
                           ) : row.editKey ? (
                             <div className="flex items-center justify-end gap-0.5">
                               <span className="text-[11px] text-[#90a4ae]">¥</span>
@@ -1134,7 +1152,13 @@ export default function EstimatePage() {
           <div style={{ padding: "16px 20px 8px" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <tbody>
-                {totalItems.filter(r => r.amount !== 0 || r.alwaysShow).map((row, idx) => (
+                {totalItems.filter(r => (r.amount || 0) !== 0 || r.alwaysShow || r.isSeparator).map((row, idx) => row.isSeparator ? (
+                  <tr key={idx}>
+                    <td colSpan={2} style={{ padding: "5px 0" }}>
+                      <div style={{ borderTop: "1px dashed #cfd8dc" }} />
+                    </td>
+                  </tr>
+                ) : (
                   <tr key={idx} style={{ borderBottom: "1px solid #f0f2f5" }}>
                     <td style={{ padding: "6px 0", color: row.isDiscount ? "#e53e3e" : "#54656f" }}>
                       {row.label}
@@ -1143,7 +1167,9 @@ export default function EstimatePage() {
                     <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 600, color: row.isDiscount ? "#e53e3e" : "#111b21" }}>
                       {row.isDiscount
                         ? `▲¥${Math.abs(row.amount).toLocaleString()}`
-                        : `¥${(row.amount || 0).toLocaleString()}`}
+                        : row.editKey === "insurance" && !row.amount
+                          ? "別途支払い"
+                          : `¥${(row.amount || 0).toLocaleString()}`}
                     </td>
                   </tr>
                 ))}
