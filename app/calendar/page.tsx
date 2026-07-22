@@ -157,7 +157,7 @@ export default function CalendarPage() {
           .gte("start_at", startOfMonth)
           .lte("start_at", endOfMonth)
           .order("start_at", { ascending: true }),
-        fetch(`/api/daily-tasks?from=${fromDate}&to=${toDate}`).then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch(`/api/daily-tasks?from=${fromDate}&to=${toDate}`, { signal: AbortSignal.timeout(15_000) }).then(r => r.ok ? r.json() : []).catch(() => []),
       ]);
 
       if (!localResult.error && localResult.data) {
@@ -258,35 +258,53 @@ export default function CalendarPage() {
       notes: form.notes.trim(),
     };
 
-    let error;
-    if (editingEvent) {
-      ({ error } = await supabase.from("calendar_events").update(payload).eq("id", editingEvent.id));
-    } else {
-      ({ error } = await supabase.from("calendar_events").insert(payload));
+    try {
+      let error;
+      if (editingEvent) {
+        ({ error } = await supabase
+          .from("calendar_events")
+          .update(payload)
+          .eq("id", editingEvent.id)
+          .abortSignal(AbortSignal.timeout(15_000)));
+      } else {
+        ({ error } = await supabase
+          .from("calendar_events")
+          .insert(payload)
+          .abortSignal(AbortSignal.timeout(15_000)));
+      }
+
+      if (error) { setFormError("保存に失敗しました"); return; }
+
+      // 申込ツールにも同期（副次処理：失敗しても予定本体は保存済みなのでブロックしない）
+      if (form.sync_to_screening && !editingEvent) {
+        const cfg = EVENT_TYPE_CONFIG[form.event_type];
+        const endTimeStr = form.end_at ? form.end_at.slice(11, 16) : "";
+        try {
+          await fetch("/api/daily-tasks", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              customer_name: form.customer_name.trim(),
+              content: `${cfg.emoji} ${form.title.trim()}${form.customer_name.trim() ? ` — ${form.customer_name.trim()}` : ""}`,
+              date: dateStr,
+              time: timeStr,
+              end_time: endTimeStr,
+            }),
+            signal: AbortSignal.timeout(15_000),
+          });
+        } catch {
+          // 同期失敗は無視（予定本体は保存済み。申込ツール側だけ後で手動追加すればよい）
+        }
+      }
+
+      setShowModal(false);
+      fetchAll();
+    } catch {
+      // タイムアウト・通信エラー時もモーダルを固まらせず、再試行を促す
+      setFormError("保存に時間がかかっています。通信環境を確認して、もう一度お試しください。");
+    } finally {
+      setSaving(false);
     }
-
-    if (error) { setSaving(false); setFormError("保存に失敗しました"); return; }
-
-    // 申込ツールにも同期
-    if (form.sync_to_screening && !editingEvent) {
-      const cfg = EVENT_TYPE_CONFIG[form.event_type];
-      const endTimeStr = form.end_at ? form.end_at.slice(11, 16) : "";
-      await fetch("/api/daily-tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          customer_name: form.customer_name.trim(),
-          content: `${cfg.emoji} ${form.title.trim()}${form.customer_name.trim() ? ` — ${form.customer_name.trim()}` : ""}`,
-          date: dateStr,
-          time: timeStr,
-          end_time: endTimeStr,
-        }),
-      });
-    }
-
-    setSaving(false);
-    setShowModal(false);
-    fetchAll();
   };
 
   const deleteEvent = async (id: string) => {
@@ -303,14 +321,21 @@ export default function CalendarPage() {
   const saveTask = async () => {
     if (!taskForm.content.trim()) return;
     setTaskSaving(true);
-    await fetch(`/api/daily-tasks?id=${editingTask!.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: taskForm.content.trim(), time: taskForm.time, end_time: taskForm.end_time, customer_name: taskForm.customer_name }),
-    });
-    setTaskSaving(false);
-    setEditingTask(null);
-    fetchAll();
+    try {
+      const res = await fetch(`/api/daily-tasks?id=${editingTask!.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: taskForm.content.trim(), time: taskForm.time, end_time: taskForm.end_time, customer_name: taskForm.customer_name }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) { alert("保存に失敗しました。もう一度お試しください。"); return; }
+      setEditingTask(null);
+      fetchAll();
+    } catch {
+      alert("保存に時間がかかっています。通信環境を確認して、もう一度お試しください。");
+    } finally {
+      setTaskSaving(false);
+    }
   };
 
   const deleteTask = async (id: string) => {
