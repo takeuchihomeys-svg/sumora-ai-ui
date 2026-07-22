@@ -270,6 +270,13 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
       oneTimeItems.push({ label: oi.item, amount: oi.amount });
   }
 
+  // 月額その他費用の合計 → 契約条件「その他」(M20) に反映
+  // 例: サポート料(月額)1,320 → M20=1320 / 複数ある場合は合算
+  const sonotaMonthly = (d.otherItems || [])
+    .filter(oi => oi.item && oi.amount > 0 && isMonthlyOther(oi.item))
+    .reduce((s, oi) => s + oi.amount, 0);
+  if (sonotaMonthly > 0) setCell(ws, "M20", sonotaMonthly);
+
   // 合計計算用（書き込み位置に関係なく全項目を合算）
   const dynamicItems: DynItem[] = [...monthlyItems, ...oneTimeItems];
 
