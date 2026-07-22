@@ -8095,28 +8095,28 @@ export default function Home() {
                         }
                       }).catch(() => {});
                     }
-                    // 紐付き顧客を「物件送った」状態に更新（即時送信時のみ）
-                    // customers/page.tsx の「物件送った」(markSent) と同一経路。
-                    // PATCH /api/property-customers に last_property_sent_at のみ送り、
-                    // API側の自動ステータス昇格ロジック（new_inquiry→hot→property_search・
-                    // property_send_count 管理）に委ねる。status はハードコードしない。
-                    const pcId = selectedConversation.propertyCustomerId;
-                    if (pcId) {
-                      const sentAt = new Date().toISOString();
-                      fetch("/api/property-customers", {
-                        method: "PATCH",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ id: pcId, last_property_sent_at: sentAt }),
-                      }).then(async (r) => {
-                        if (!r.ok) return;
-                        const updated = await r.json() as { status?: string; last_property_sent_at?: string | null };
-                        setLinkedCustomerMap((prev) => {
-                          const cur = prev[convId];
-                          if (!cur) return prev;
-                          return { ...prev, [convId]: { ...cur, propertyStatus: updated.status ?? cur.propertyStatus, lastPropertySentAt: updated.last_property_sent_at ?? sentAt } };
-                        });
-                      }).catch(() => {});
-                    }
+                  }
+                  // 紐付き顧客を「物件送った」状態に更新（即時・予約送信ともに実行）
+                  // customers/page.tsx の「物件送った」(markSent) と同一経路。
+                  // PATCH /api/property-customers に last_property_sent_at のみ送り、
+                  // API側の自動ステータス昇格ロジック（new_inquiry→hot→property_search・
+                  // property_send_count 管理）に委ねる。status はハードコードしない。
+                  const pcId = selectedConversation.propertyCustomerId;
+                  if (pcId) {
+                    const sentAt = new Date().toISOString();
+                    fetch("/api/property-customers", {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ id: pcId, last_property_sent_at: sentAt }),
+                    }).then(async (r) => {
+                      if (!r.ok) return;
+                      const updated = await r.json() as { status?: string; last_property_sent_at?: string | null };
+                      setLinkedCustomerMap((prev) => {
+                        const cur = prev[convId];
+                        if (!cur) return prev;
+                        return { ...prev, [convId]: { ...cur, propertyStatus: updated.status ?? cur.propertyStatus, lastPropertySentAt: updated.last_property_sent_at ?? sentAt } };
+                      });
+                    }).catch(() => {});
                   }
                 }
               : aixModalType === "property_recommendation"
@@ -8134,30 +8134,28 @@ export default function Home() {
                   // 物件オススメを送信完了 → P4「物件オススメ」誘導バナーも消去
                   // （property_send完了時にセットされたまま残り、送信済みなのに再誘導される問題の修正）
                   setSuggestPropertyRecommendMap((prev) => { if (!prev[convId]) return prev; const n = { ...prev }; delete n[convId]; return n; });
-                  // 紐付き顧客を「物件送った」状態に更新（即時送信時のみ）
+                  // 紐付き顧客を「物件送った」状態に更新（即時・予約送信ともに実行）
                   // customers/page.tsx の「物件送った」(markSent) と同一経路。
                   // property_recommendation は従来 property_customers を一切更新せず、
                   // 物件オススメ送信後も customers 画面で未送信のままだったため、
                   // property_send と同じく last_property_sent_at のみ PATCH して API の
                   // 自動ステータスロジックに委ねる。
-                  if (!meta?.scheduled) {
-                    const pcId = selectedConversation.propertyCustomerId;
-                    if (pcId) {
-                      const sentAt = new Date().toISOString();
-                      fetch("/api/property-customers", {
-                        method: "PATCH",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ id: pcId, last_property_sent_at: sentAt }),
-                      }).then(async (r) => {
-                        if (!r.ok) return;
-                        const updated = await r.json() as { status?: string; last_property_sent_at?: string | null };
-                        setLinkedCustomerMap((prev) => {
-                          const cur = prev[convId];
-                          if (!cur) return prev;
-                          return { ...prev, [convId]: { ...cur, propertyStatus: updated.status ?? cur.propertyStatus, lastPropertySentAt: updated.last_property_sent_at ?? sentAt } };
-                        });
-                      }).catch(() => {});
-                    }
+                  const pcId2 = selectedConversation.propertyCustomerId;
+                  if (pcId2) {
+                    const sentAt = new Date().toISOString();
+                    fetch("/api/property-customers", {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ id: pcId2, last_property_sent_at: sentAt }),
+                    }).then(async (r) => {
+                      if (!r.ok) return;
+                      const updated = await r.json() as { status?: string; last_property_sent_at?: string | null };
+                      setLinkedCustomerMap((prev) => {
+                        const cur = prev[convId];
+                        if (!cur) return prev;
+                        return { ...prev, [convId]: { ...cur, propertyStatus: updated.status ?? cur.propertyStatus, lastPropertySentAt: updated.last_property_sent_at ?? sentAt } };
+                      });
+                    }).catch(() => {});
                   }
                   // property_sendタスクの完了POST・ローカル除去は上の共通ブロックで実施済み（二重POST防止）
                   // property_checkタスクを自動作成（次の工程：物件確認）
