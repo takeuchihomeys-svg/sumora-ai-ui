@@ -298,6 +298,8 @@ function parseAreaTokens(rawArea) {
   if (!rawArea) return [];
   // 括弧内の補足説明を除去（「西中島南方（〜じゃなくても可、大阪市内）」→「西中島南方」）
   rawArea = rawArea.replace(/（[^）]*）/g, "").replace(/\([^)]*\)/g, "").trim();
+  // 「大阪市内の御堂筋線」→「大阪市内,御堂筋線」に分割（市内/府内 + 線名の複合表現）
+  rawArea = rawArea.replace(/([^\s,、・\/（(]*(?:市内|府内))の([^\s,、・\/（(]+線)/g, "$1,$2");
   // 「AあたりからBあたりまで」「AからBまで」「A〜B」「A～B」→ 両端点をカンマで展開
   const expanded = rawArea
     .replace(/([^\s,、・\/～〜]+?)あたりから([^\s,、・\/～〜]+?)あたりまで/g, "$1,$2")
@@ -505,6 +507,20 @@ function buildAreaRouteCodes(c, mode = "auto") {
     // auto: 従来の自動判定
     if (WARD_CODE_MAP[part]) {
       if (!city_codes.includes(WARD_CODE_MAP[part])) city_codes.push(WARD_CODE_MAP[part]);
+      continue;
+    }
+    // 「大阪市内」トークン → 大阪市全区コード
+    if (part === '大阪市内') {
+      Object.entries(WARD_CODE_MAP)
+        .filter(([k]) => k.startsWith('大阪市'))
+        .forEach(([, v]) => { if (!city_codes.includes(v)) city_codes.push(v); });
+      continue;
+    }
+    // 短縮線名（例: 御堂筋線）→ LINE_ALIAS_MAP → LINE_ROUTE_MAP
+    if (part.endsWith('線') && typeof LINE_ALIAS_MAP !== 'undefined') {
+      const fullLineName = LINE_ALIAS_MAP[part] || part;
+      const lineId = LINE_ROUTE_MAP[fullLineName];
+      if (lineId && !route_ids.includes(lineId)) route_ids.push(lineId);
       continue;
     }
     const neighWard = resolveWard(part);
