@@ -630,20 +630,22 @@
   }
 
   // ── background.jsからの通知を受信 ───────────────────────────────────
-  chrome.runtime.onMessage.addListener(function (msg) {
-    if (msg.type === "axlx-blob-upload-progress") {
-      var lineBtn = document.getElementById("axlx-reins-line-btn");
-      if (lineBtn && isSending) {
-        lineBtn.textContent = "Blobアップ中... (" + msg.current + "/" + msg.total + ")";
+  if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener(function (msg) {
+      if (msg.type === "axlx-blob-upload-progress") {
+        var lineBtn = document.getElementById("axlx-reins-line-btn");
+        if (lineBtn && isSending) {
+          lineBtn.textContent = "Blobアップ中... (" + msg.current + "/" + msg.total + ")";
+        }
+        return;
       }
-      return;
-    }
-    // 新タブからキャプチャされたPDFをpdfHandlerに転送
-    if (msg.type === "axlx-reins-pdf-captured" && msg.b64) {
-      console.log("[AX-REINS] 新タブPDF受信 → pdfHandlerに転送");
-      window.postMessage({ from: "axlx-itandi-pdf", b64: msg.b64, ts: msg.ts || Date.now() }, "*");
-    }
-  });
+      // 新タブからキャプチャされたPDFをpdfHandlerに転送
+      if (msg.type === "axlx-reins-pdf-captured" && msg.b64) {
+        console.log("[AX-REINS] 新タブPDF受信 → pdfHandlerに転送");
+        window.postMessage({ from: "axlx-itandi-pdf", b64: msg.b64, ts: msg.ts || Date.now() }, "*");
+      }
+    });
+  }
 
   // ── MutationObserver で結果ページ更新時に再スキャン ──────────────────
   var mutObs = new MutationObserver(function () {

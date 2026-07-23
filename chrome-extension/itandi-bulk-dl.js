@@ -624,20 +624,22 @@
   });
 
   // background.jsからのメッセージ受信
-  chrome.runtime.onMessage.addListener(function (msg) {
-    // Blobアップロード進捗更新
-    if (msg.type === "axlx-blob-upload-progress") {
-      var lineBtn = document.getElementById("axlx-itandi-line-btn");
-      if (lineBtn) {
-        lineBtn.textContent = "Blobアップ中... (" + msg.current + "/" + msg.total + ")";
+  if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener(function (msg) {
+      // Blobアップロード進捗更新
+      if (msg.type === "axlx-blob-upload-progress") {
+        var lineBtn = document.getElementById("axlx-itandi-line-btn");
+        if (lineBtn) {
+          lineBtn.textContent = "Blobアップ中... (" + msg.current + "/" + msg.total + ")";
+        }
       }
-    }
-    // ダウンロード経由でキャプチャしたPDF（JSフック失敗時フォールバック）
-    if (msg.type === "axlx-itandi-pdf-by-download") {
-      console.log("[AXLX] DLフォールバック: PDF取得成功 " + Math.round((msg.b64 || "").length / 1024) + "KB");
-      window.postMessage({ from: "axlx-itandi-pdf", b64: msg.b64, ts: msg.ts }, "*");
-    }
-  });
+      // ダウンロード経由でキャプチャしたPDF（JSフック失敗時フォールバック）
+      if (msg.type === "axlx-itandi-pdf-by-download") {
+        console.log("[AXLX] DLフォールバック: PDF取得成功 " + Math.round((msg.b64 || "").length / 1024) + "KB");
+        window.postMessage({ from: "axlx-itandi-pdf", b64: msg.b64, ts: msg.ts }, "*");
+      }
+    });
+  }
 
   function start() {
     ensureBar();

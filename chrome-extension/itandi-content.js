@@ -15,13 +15,15 @@
     }
   }
 
-  chrome.runtime.onMessage.addListener(function (msg) {
-    if (msg.type !== "axlx-itandi-autofill") return;
-    try { injectPageScript(); } catch (e) { return; }
-    setTimeout(function () {
-      window.dispatchEvent(new CustomEvent("axlx-itandi-fill", { detail: msg.conditions }));
-    }, 200);
-  });
+  if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener(function (msg) {
+      if (msg.type !== "axlx-itandi-autofill") return;
+      try { injectPageScript(); } catch (e) { return; }
+      setTimeout(function () {
+        window.dispatchEvent(new CustomEvent("axlx-itandi-fill", { detail: msg.conditions }));
+      }, 200);
+    });
+  }
 
   // underbar.js経由のpostMessageも受け取る（iframe内でchrome.tabsが使えないため）
   window.addEventListener("message", function (e) {

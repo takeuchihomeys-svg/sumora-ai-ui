@@ -476,6 +476,18 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 
 ---
 
+## 🛡️ 2026-07-23 chrome API ガード追加（score-overlay.js L321エラー対応）
+
+**結論**: chrome://extensions に出ていた「Cannot read properties of undefined (reading 'onChanged') at score-overlay.js:321」は**旧バージョン(4ad32a8・storage権限なし時代)の残骸ログ**。現行コードのL321はコメント行で再発不可能。score-overlay.js は修正済み（typeofガード+try/catch完備）のため無変更。
+
+**予防措置として4ファイルのガードなし `chrome.runtime.onMessage.addListener` に `typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage` ガードを追加**（拡張リロード後の孤児content script対策）:
+- `itandi-content.js`（旧L18）/ `reins-content.js`（旧L18）/ `itandi-bulk-dl.js`（旧L627）/ `reins-bulk-dl.js`（旧L633）
+- background.js:347 はservice worker本体で chrome.runtime 保証のため対象外。popup.js / page-script.js / content.js / underbar.js は問題なし（調査済み）
+
+**ユーザー操作**: ①chrome://extensions→AIXLINXの「エラー」→すべてクリア ②拡張を再読み込み ③リアプロ/itandi/レインズの開きっぱなしタブを全リロード ④再発時のみ新規調査（タイムスタンプ確認）
+
+---
+
 ## 🔁 引き継ぎ事項（次セッションへ）
 
 - 現在のバージョン: **v2.4.1**（manifest.json も v2.4.1 に同期済み・2026-07-22）
