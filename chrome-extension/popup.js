@@ -341,6 +341,10 @@ function resolveStation(rawInput) {
   if (!clean) return null;
   if (STATION_LINE_MAP[clean]) return clean;                                 // 完全一致（ハードコード）
   if (LEARNED_STATION_MAP[clean]) return clean;                             // 完全一致（学習済み）
+  // 地域名ガード: 市・区・郡・市内などで終わるトークンは駅名のあいまい一致に回さない
+  // （例: "大阪市内" が includes で駅 "大阪" に誤変換されるのを防止。
+  //   摂津市駅・堺市駅など実在の「〜市」駅は上の完全一致で既に解決済みなのでここには来ない）
+  if (/(?:市内|府内|県内|都内|[市区郡都府県])$/.test(clean)) return null;
   const keys = Object.keys(STATION_LINE_MAP);
   const sw = keys.find(k => k.startsWith(clean) && clean.length >= 2);
   if (sw) return sw;
@@ -497,6 +501,16 @@ function buildAreaRouteCodes(c, mode = "auto") {
       continue;
     }
     if (mode === "station") {
+      // 駅モード: 線名トークン（例: 御堂筋線）→ LINE_ALIAS_MAP → LINE_ROUTE_MAP で路線ID直指定
+      // （「〜線」で終わる実在駅は除外。路線として解決できない場合は従来通り駅解決にフォールスルー）
+      if (part.endsWith('線') && !STATION_LINE_MAP[part] && !LEARNED_STATION_MAP[part]) {
+        const fullLineName = (typeof LINE_ALIAS_MAP !== 'undefined' && LINE_ALIAS_MAP[part]) || part;
+        const lineId = LINE_ROUTE_MAP[fullLineName];
+        if (lineId) {
+          if (!route_ids.includes(lineId)) route_ids.push(lineId);
+          continue;
+        }
+      }
       // 駅モード: 路線IDのみ追加（city_codesは追加しない → 所在地フィールドに入らないようにする）
       const station = resolveStation(part);
       const stationKey = station || part;
@@ -631,10 +645,12 @@ const SITE_CONFIG = {
 
           // 路線名ステップ（全線）
           lineToks.forEach(ln => {
+            // 短縮線名（例: 御堂筋線）→ 正式名（大阪市高速軌道御堂筋線）を併記
+            const fullLn = (typeof LINE_ALIAS_MAP !== 'undefined' && LINE_ALIAS_MAP[ln]) || ln;
             steps.push({
               num: n++,
               field: "【沿線・駅】絞り込み（全線）",
-              value: ln + "：全線",
+              value: (fullLn !== ln ? ln + "（" + fullLn + "）" : ln) + "：全線",
               hint: "左メニュー「沿線・駅絞り込み ＋」→「沿線から絞り込み」に路線名を入力 → 路線を選択 → 「全駅を選択」→ 「確定してリストへ」",
             });
           });
@@ -1971,6 +1987,12 @@ function openInstructions(siteKey) {
       if (currentAreaMode === "station") {
         const resolvedStations = [];
         for (const part of areaParts) {
+          // 路線として解決できる線名トークン（例: 御堂筋線・今里筋線）は駅名に変換しない（route_idsで処理済み）
+          // ※「今里筋線」→includes一致で駅「今里」に化けるのを防止
+          if (part.endsWith("線") && !STATION_LINE_MAP[part] && !LEARNED_STATION_MAP[part]) {
+            const fullLn = (typeof LINE_ALIAS_MAP !== 'undefined' && LINE_ALIAS_MAP[part]) || part;
+            if (LINE_ROUTE_MAP[fullLn]) continue;
+          }
           const station = resolveStation(part);
           if (station) {
             resolvedStations.push(station);
