@@ -488,6 +488,25 @@ STATION_LINE_MAP（駅名 → リアプロ内部路線名）
 
 ---
 
+## 🛤️ 2026-07-23 「御堂筋線」が駅名扱いされリアプロ自動検索が死ぬバグの根治
+
+**症状**: 「大阪市内の御堂筋線」で自動検索 → 沿線未選択のまま「指定の駅が選択できませんでした。駅: 御堂筋線」alert。
+
+**根本原因**: Supabase `station_map` に「御堂筋線」等12件の**路線名が"駅"として誤学習**されていた（2026-06-24 web_search由来）。popup.js の線名ガード `!LEARNED_STATION_MAP[part]` が汚染データで false になりすり抜け → station_names=["御堂筋線"] 送信。さらに学習データの路線名表記が「大阪市高速**電気**軌道御堂筋線」（現名称）で LINE_ROUTE_MAP キー「大阪市高速軌道御堂筋線」と不一致 → route_ids も空。
+
+**修正内容（5層防御）**:
+1. **popup.js**: `lineNameToRouteId()` 新設（buildAreaRouteCodes直前）。短縮名/リアプロ内部名/「電気軌道」表記ゆれ/サフィックス一致で route_id 解決
+2. **popup.js**: 線名ガード2箇所（buildAreaRouteCodes 駅モード・realproボタンonclick）から `!LEARNED_STATION_MAP[part]` を削除。路線として解決できるなら学習データより優先
+3. **popup.js**: `computeUnknownTokens` で既知路線名を除外（線名→AI→駅誤学習の汚染ループ遮断）＋ `resolveUnknownTokensWithAI` で「〜線」トークンの駅学習を一律スキップ
+4. **page-script.js**: `fillRealpro` 冒頭に `reclassifyLineTokens()` 追加。station_names に路線名が混入しても ROUTE_LINE_MAP 照合で route_ids に再分類（防御的フォールバック）
+5. **app/api/token-resolve/route.ts**: `isLineName()` ガード追加（既知路線名は駅解決スキップ・汚染キャッシュも無害化）＋「〜線」トークンの station_map 保存を禁止
+
+**DBクリーンアップ実施済み**: station_map から路線名12件削除（御堂筋線・谷町線・千日前線・四つ橋線・高野線・南海高野線・南海本線・片町線・阪急千里線・阪急神戸線・阪急宝塚線・近鉄奈良線）。
+
+**補足**: 「分からないトークンをDeepSeekで探す仕組み」は既存（`/api/token-resolve`: DB完全一致→市名ルール→pg_trgm fuzzy→DeepSeek-V3→Claude web_search の5段）。今回のバグはその学習結果の汚染が原因で、上記3・5で再発を遮断。`npx tsc --noEmit` パス済み・両JS `node --check` パス済み。**実機（リアプロ実ページ）での動作確認は未実施 → 次セッションで要確認**。
+
+---
+
 ## 🔁 引き継ぎ事項（次セッションへ）
 
 - 現在のバージョン: **v2.4.1**（manifest.json も v2.4.1 に同期済み・2026-07-22）

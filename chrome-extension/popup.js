@@ -193,6 +193,13 @@ async function resolveUnknownTokensWithAI(tokens, onResolved) {
         anyNew = true;
         console.log("[AX] 地名学習:", token, "→", r.ward, `(${r.source})`);
       } else if (r.type === "station" && !LEARNED_STATION_MAP[token]) {
+        // 誤学習ガード: 「〜線」で終わるトークン（例: 御堂筋線・学研都市線）がAIに"station"判定されても
+        // 駅マップには入れない。実在駅で「線」で終わる駅名は無いため一律スキップで安全。
+        // （LEARNED_STATION_MAP汚染 → 線名ガードすり抜け → リアプロで駅選択失敗、の再発防止）
+        if (token.endsWith("線")) {
+          console.warn("[AX] 「〜線」トークンのため駅学習をスキップ:", token);
+          continue;
+        }
         LEARNED_STATION_MAP[token] = {
           ward: r.ward, realpro_lines: r.realpro_lines || [],
           itandi_lines: r.itandi_lines || [], reins_line: r.reins_line || null,
@@ -476,6 +483,22 @@ function expandNambaWards(ward_names) {
   return expanded;
 }
 
+// 路線名 → route_id 解決（表記ゆれ吸収）
+// 「御堂筋線」(短縮名) / 「大阪市高速軌道御堂筋線」(リアプロ内部名) / 「大阪市高速電気軌道御堂筋線」(大阪メトロ現名称・学習データに混入しがち)
+// のいずれでも route_id を返す。解決できなければ null。
+function lineNameToRouteId(name) {
+  if (!name) return null;
+  if (LINE_ROUTE_MAP[name]) return LINE_ROUTE_MAP[name];
+  const alias = (typeof LINE_ALIAS_MAP !== 'undefined' && LINE_ALIAS_MAP[name]) || null;
+  if (alias && LINE_ROUTE_MAP[alias]) return LINE_ROUTE_MAP[alias];
+  // 表記ゆれ正規化: 「大阪市高速電気軌道」「大阪メトロ」→ リアプロ内部名「大阪市高速軌道」
+  const normalized = name.replace("大阪市高速電気軌道", "大阪市高速軌道").replace(/^大阪メトロ/, "大阪市高速軌道");
+  if (LINE_ROUTE_MAP[normalized]) return LINE_ROUTE_MAP[normalized];
+  // サフィックス一致（例: 学習データの「Osaka Metro御堂筋線」等 → 「大阪市高速軌道御堂筋線」）
+  const hit = Object.keys(LINE_ROUTE_MAP).find(k => k.endsWith(name) || name.endsWith(k));
+  return hit ? LINE_ROUTE_MAP[hit] : null;
+}
+
 function buildAreaRouteCodes(c, mode = "auto") {
   const rawArea = (c.desired_area || c.area || "").trim();
   const city_codes = [], route_ids = [];
@@ -501,11 +524,12 @@ function buildAreaRouteCodes(c, mode = "auto") {
       continue;
     }
     if (mode === "station") {
-      // 駅モード: 線名トークン（例: 御堂筋線）→ LINE_ALIAS_MAP → LINE_ROUTE_MAP で路線ID直指定
+      // 駅モード: 線名トークン（例: 御堂筋線）→ lineNameToRouteId で路線ID直指定
       // （「〜線」で終わる実在駅は除外。路線として解決できない場合は従来通り駅解決にフォールスルー）
-      if (part.endsWith('線') && !STATION_LINE_MAP[part] && !LEARNED_STATION_MAP[part]) {
-        const fullLineName = (typeof LINE_ALIAS_MAP !== 'undefined' && LINE_ALIAS_MAP[part]) || part;
-        const lineId = LINE_ROUTE_MAP[fullLineName];
+      // ※ LEARNED_STATION_MAP は判定に使わない: 「御堂筋線」が駅として誤学習される事故（2026-06-24 web_search由来）で
+      //   ガードがすり抜け、駅名として送信→リアプロで死ぬバグがあった。路線として解決できるなら学習データより優先する。
+      if (part.endsWith('線') && !STATION_LINE_MAP[part]) {
+        const lineId = lineNameToRouteId(part);
         if (lineId) {
           if (!route_ids.includes(lineId)) route_ids.push(lineId);
           continue;
@@ -515,7 +539,8 @@ function buildAreaRouteCodes(c, mode = "auto") {
       const station = resolveStation(part);
       const stationKey = station || part;
       const lines = STATION_LINE_MAP[stationKey] || LEARNED_STATION_MAP[stationKey]?.realpro_lines || [];
-      lines.forEach(l => { const id = LINE_ROUTE_MAP[l]; if (id && !route_ids.includes(id)) route_ids.push(id); });
+      // lineNameToRouteId で表記ゆれ吸収（学習データの「大阪市高速電気軌道御堂筋線」等もroute_idに変換できる）
+      lines.forEach(l => { const id = lineNameToRouteId(l); if (id && !route_ids.includes(id)) route_ids.push(id); });
       continue;
     }
     // auto: 従来の自動判定
@@ -1600,6 +1625,7 @@ function computeUnknownTokens(areaStr) {
       !LEARNED_WARD_MAP[t] &&        // AI学習済みマップも参照
       !WARD_CODE_MAP[t] &&
       !WARD_CODE_MAP[t + "市"] &&    // 市サフィックス補完（「富田林」→富田林市）はAI解決不要
+      !(t.endsWith("線") && lineNameToRouteId(t)) &&  // 既知路線名はAI解決不要（「御堂筋線」が駅として誤学習される汚染ループの遮断）
       !/[都道府県市区郡]/.test(t) &&
       !resolveStation(t)
     );
@@ -1989,9 +2015,10 @@ function openInstructions(siteKey) {
         for (const part of areaParts) {
           // 路線として解決できる線名トークン（例: 御堂筋線・今里筋線）は駅名に変換しない（route_idsで処理済み）
           // ※「今里筋線」→includes一致で駅「今里」に化けるのを防止
-          if (part.endsWith("線") && !STATION_LINE_MAP[part] && !LEARNED_STATION_MAP[part]) {
-            const fullLn = (typeof LINE_ALIAS_MAP !== 'undefined' && LINE_ALIAS_MAP[part]) || part;
-            if (LINE_ROUTE_MAP[fullLn]) continue;
+          // ※ LEARNED_STATION_MAP は判定に使わない: 「御堂筋線」が駅として誤学習されるとガードがすり抜けるため
+          //   （実際に発生: station_map汚染 → station_names=["御堂筋線"] → リアプロで「指定の駅が選択できませんでした」）
+          if (part.endsWith("線") && !STATION_LINE_MAP[part]) {
+            if (lineNameToRouteId(part)) continue;
           }
           const station = resolveStation(part);
           if (station) {

@@ -148,6 +148,22 @@ function resolveCityName(token: string): string | null {
   return null;
 }
 
+// ── 路線名ガード ────────────────────────────────────────────────────────
+// 「御堂筋線」のような路線名トークンが DeepSeek/Claude で type:"station" と誤判定され
+// station_map に保存される事故（2026-06-24: 御堂筋線・谷町線など12件汚染 →
+// Chrome拡張の線名ガードすり抜け → リアプロで駅選択失敗）の再発防止。
+// 既知路線名（リアプロ内部名・itandi名・REINS名）とのサフィックス一致で路線名を検出し、
+// 駅として解決・保存しない。
+const KNOWN_LINE_NAMES: string[] = Array.from(new Set([
+  ...Object.keys(ITANDI_LINE_MAP),
+  ...Object.values(ITANDI_LINE_MAP).flat(),
+  ...Object.values(REINS_LINE_MAP),
+]));
+function isLineName(token: string): boolean {
+  if (token.length < 3 || !token.endsWith("線")) return false;
+  return KNOWN_LINE_NAMES.some((k) => k === token || k.endsWith(token) || token.endsWith(k));
+}
+
 // ── fuzzy誤マッチガード ─────────────────────────────────────────────────
 // クエリがマッチ先トークンの完全上位互換（例: 「富田林」⊃「富田」）の場合は棄却する。
 // pg_trgm は「より具体的な地名」を「短い別の地名」に高スコアでマッチさせてしまう
@@ -329,11 +345,23 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── 路線名トークンは駅として解決しない（DBキャッシュ・fuzzy・AIすべてスキップ）──
+  // 汚染済みキャッシュ行（例: token="御堂筋線" type=station）があっても上書きで無害化する
+  for (const t of tokens) {
+    if (!resolvedTokens.has(t) && isLineName(t)) {
+      result[t] = { type: "unknown", ward: null, realpro_lines: [], itandi_lines: [], reins_line: null, source: "db" };
+      resolvedTokens.add(t);
+      console.log(`[token-resolve] line-name guard: "${t}" は路線名のため駅解決をスキップ`);
+    }
+  }
+
   for (const row of cachedRegions ?? []) {
+    if (resolvedTokens.has(row.token)) continue; // 路線名ガード済みトークンは上書きしない
     result[row.token] = { type: "region", ward: row.ward, realpro_lines: [], itandi_lines: [], reins_line: null, source: "db" };
     resolvedTokens.add(row.token);
   }
   for (const row of cachedStations ?? []) {
+    if (resolvedTokens.has(row.token)) continue; // 路線名ガード済みトークンは上書きしない
     // ── ネガティブキャッシュ（解決不能トークン）──────────────────────
     if (row.source === "unknown") {
       const age = Date.now() - new Date(row.created_at as string).getTime();
@@ -564,18 +592,24 @@ export async function POST(req: NextRequest) {
         { onConflict: "token" },
       );
     } else if (resolved.type === "station") {
-      await db.from("station_map").upsert(
-        {
-          token,
-          ward: resolved.ward,
-          realpro_lines: resolved.realpro_lines,
-          itandi_lines: resolved.itandi_lines,
-          reins_line: resolved.reins_line,
-          confidence: 80,
-          source: resolved.source,
-        },
-        { onConflict: "token" },
-      );
+      // 「〜線」で終わるトークンは駅として永続化しない（実在駅で「線」で終わる駅名は無い。
+      // 御堂筋線が station として保存された汚染事故の再発防止）
+      if (token.endsWith("線")) {
+        console.warn(`[token-resolve] "${token}" は「線」で終わるため station_map への保存をスキップ`);
+      } else {
+        await db.from("station_map").upsert(
+          {
+            token,
+            ward: resolved.ward,
+            realpro_lines: resolved.realpro_lines,
+            itandi_lines: resolved.itandi_lines,
+            reins_line: resolved.reins_line,
+            confidence: 80,
+            source: resolved.source,
+          },
+          { onConflict: "token" },
+        );
+      }
     } else if (resolved.type === "unknown" && webSearchAttempted) {
       // ── ネガティブキャッシュ: 全段階（DeepSeek＋Claude web_search）で解決不能 ──
       // 7日間はAI再呼び出しをスキップ（created_at を更新して期限をリセット）

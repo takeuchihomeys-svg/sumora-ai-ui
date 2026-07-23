@@ -530,6 +530,40 @@
       console.log("[AX] → popup.js の NEIGHBORHOOD_WARD_MAP に追加が必要です");
     }
 
+    // ── 防御: station_names に路線名が混入していた場合、沿線(route_ids)に再分類する ──
+    // 学習データ汚染等で「御堂筋線」が駅名として渡ってくると、駅リストに存在せず
+    // 「指定の駅が選択できませんでした」で停止していた。ROUTE_LINE_MAP と照合し、
+    // 路線名と判定できるトークンは route_ids に移して沿線ボタンクリックで処理する。
+    // ※ 将来拡張ポイント: ここで判定できない「〜線」トークンは popup.js 側の
+    //   /api/token-resolve（DeepSeek-V3 → Claude web_search の2段判定）で
+    //   線名/駅名を解決できる。page-script はページ文脈で外部APIを呼べないため
+    //   API判定は popup.js（resolveUnknownTokensWithAI）側に実装済み。
+    (function reclassifyLineTokens() {
+      var names = cond.station_names || [];
+      if (!names.length) return;
+      var keep = [];
+      for (var i = 0; i < names.length; i++) {
+        var token = String(names[i]).trim();
+        var matchedId = null;
+        if (/線$/.test(token) && token.length >= 3) {
+          // 正規化: 「大阪市高速電気軌道」(大阪メトロ現名称) → 「大阪市高速軌道」(リアプロ内部名)
+          var normTok = token.replace("大阪市高速電気軌道", "大阪市高速軌道");
+          for (var id in ROUTE_LINE_MAP) {
+            var ln = ROUTE_LINE_MAP[id];
+            if (ln === normTok || ln.endsWith(normTok) || normTok.endsWith(ln)) { matchedId = id; break; }
+          }
+        }
+        if (matchedId) {
+          cond.route_ids = cond.route_ids || [];
+          if (cond.route_ids.indexOf(matchedId) === -1) cond.route_ids.push(matchedId);
+          console.log("[AX] 路線名を検出 → 駅から沿線に再分類: " + token + " → route_id " + matchedId);
+        } else {
+          keep.push(names[i]);
+        }
+      }
+      cond.station_names = keep;
+    })();
+
     var hasStation   = cond.station_names && cond.station_names.length > 0;
     var hasRoutes    = cond.route_ids && cond.route_ids.length > 0;
     var hasCities    = cond.city_codes && cond.city_codes.length > 0;
