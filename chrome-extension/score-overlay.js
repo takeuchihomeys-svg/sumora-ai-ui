@@ -292,6 +292,7 @@
 
   // ── chrome.storage.session から条件を読み込んでスコア実行 ───
   function loadAndScore() {
+    if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.session) return;
     try {
       chrome.storage.session.get("axlx_score_data", function (data) {
         if (!data || !data.axlx_score_data) return;
@@ -318,31 +319,37 @@
   }
 
   // ── chrome.storage.onChanged: 顧客切り替え時に即反映 ────────
-  try {
-    chrome.storage.onChanged.addListener(function (changes, area) {
-      if (area !== "session" || !changes.axlx_score_data) return;
-      storedConditions = changes.axlx_score_data.newValue;
-      if (!storedConditions) return;
-      showConditionBar();
-      setTimeout(runScoring, 500);
-      startObserver();
-    });
-  } catch (e) {
-    // storage 権限未付与環境ではスキップ（manifest に storage を追加することが本来の対処）
+  if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.onChanged) {
+    try {
+      chrome.storage.onChanged.addListener(function (changes, area) {
+        if (area !== "session" || !changes.axlx_score_data) return;
+        storedConditions = changes.axlx_score_data.newValue;
+        if (!storedConditions) return;
+        showConditionBar();
+        setTimeout(runScoring, 500);
+        startObserver();
+      });
+    } catch (e) {
+      // Extension context invalidated 等ではスキップ
+    }
   }
 
   // ── chrome.runtime.onMessage: popup.js からの直接トリガー ───
-  chrome.runtime.onMessage.addListener(function (msg) {
-    if (msg.type !== "axlx-score-results") return;
-    if (!msg.conditions) return;
-    storedConditions = msg.conditions;
-    try {
-      chrome.storage.session.set({ axlx_score_data: storedConditions });
-    } catch (e) { /* ignore */ }
-    showConditionBar();
-    setTimeout(runScoring, 300);
-    startObserver();
-  });
+  if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener(function (msg) {
+      if (msg.type !== "axlx-score-results") return;
+      if (!msg.conditions) return;
+      storedConditions = msg.conditions;
+      try {
+        if (chrome.storage && chrome.storage.session) {
+          chrome.storage.session.set({ axlx_score_data: storedConditions });
+        }
+      } catch (e) { /* ignore */ }
+      showConditionBar();
+      setTimeout(runScoring, 300);
+      startObserver();
+    });
+  }
 
   // ── 初期化 ───────────────────────────────────────────────────
   function init() {
