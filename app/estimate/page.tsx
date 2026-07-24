@@ -30,7 +30,7 @@ type EditableItems = Omit<ExtractedEstimate, "otherItems"> & {
   nextYear: number;
   guaranteeRate: number; // 賃貸保証料率（%）デフォルト50
   cleaningAtDeparture: boolean; // クリーニング代を退去時清算にする（初期費用から除外）
-  cleaningLabel: string; // クリーニング代の項目名（空ならExcelテンプレートの既定ラベル「抗菌施工費」等を維持）
+  cleaningLabel: string; // クリーニング費の項目名（完全自由入力・空ならExcel B25も空欄）
 };
 
 // item名に「(月)」「（月）」「月額」を含むその他費用は月額扱い（毎月費用セクションに表示）
@@ -468,7 +468,8 @@ export default function EstimatePage() {
     { label: "火災保険",                            amount: items.insurance,            editKey: "insurance", alwaysShow: true },
     { label: "鍵交換代",                            amount: items.keyExchange,          editKey: "keyExchange" },
     // クリーニング代は退去時清算の場合、初期費用に含めない
-    ...(items.cleaningAtDeparture ? [] : [{ label: items.cleaningLabel || "クリーニング代", amount: items.cleaning, editKey: "cleaning" as keyof EditableItems }]),
+    // 項目名は固定しない（抗菌施工費/アクト安心ライフ等をハードコードしない）。未入力ならプレースホルダ表示
+    ...(items.cleaningAtDeparture ? [] : [{ label: items.cleaningLabel || "（項目名未入力）", amount: items.cleaning, editKey: "cleaning" as keyof EditableItems }]),
     { label: "駐車場保証金",                        amount: items.parkingDeposit,       editKey: "parkingDeposit" },
     { label: items.nextMonth > 0 ? `${items.nextMonth}月分 駐車場代` : "翌月駐車場代", amount: items.parkingMonthly, editKey: "parkingMonthly" },
     // 月額扱い以外のその他費用（初回のみ費用）
@@ -871,11 +872,11 @@ export default function EstimatePage() {
                               onChange={(e) => updateOtherItem(row.otherIdx!, "item", e.target.value)}
                             />
                           ) : row.editKey === "cleaning" ? (
-                            // 抗菌施工費/クリーニング代の項目名は編集可能（空ならExcelテンプレート既定ラベルを維持）
+                            // 項目名は自由入力（固定しない）。空ならExcel B25も空欄になる
                             <input
                               type="text"
                               className="w-full text-[12px] border-b border-[#d1d7db] focus:border-blue-400 outline-none bg-transparent text-[#54656f] placeholder:text-[#ccc]"
-                              placeholder="クリーニング代（項目名編集可）"
+                              placeholder="例：抗菌施工費、アクト安心ライフ など"
                               value={items?.cleaningLabel || ""}
                               onChange={(e) => updateItem("cleaningLabel", e.target.value)}
                             />

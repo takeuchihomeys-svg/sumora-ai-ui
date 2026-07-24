@@ -45,7 +45,7 @@ type ItemData = {
   keyExchange: number;
   cleaning: number;
   cleaningAtDeparture?: boolean;
-  cleaningLabel?: string; // 行25の項目名（ユーザー編集可・空ならテンプレート既定ラベル「抗菌施工費」等を維持）
+  cleaningLabel?: string; // 行25の項目名（完全自由入力・空ならB25も空欄・固定名なし）
   parkingDeposit: number;
   parkingMonthly: number;
   otherItems: Array<{ item: string; amount: number }>;
@@ -302,10 +302,11 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
   }
 
   // ── 固定下段費用
-  // 行25（抗菌施工費/アクト安心ライフ）: 0円のときはラベルごと空欄にして非表示
+  // 行25（クリーニング/抗菌施工費/アクト安心ライフ 等）: 0円のときはラベルごと空欄にして非表示
   if (d.cleaning && !d.cleaningAtDeparture) {
-    // 項目名はユーザー編集値を優先（空ならテンプレートの既定ラベルを維持）
-    if (d.cleaningLabel) ws.getCell("B25").value = d.cleaningLabel;
+    // 項目名は固定しない（抗菌施工費/アクト安心ライフをハードコードしない）。
+    // ユーザー入力値を書き込み、未入力ならテンプレートの既定ラベルも消して空欄にする
+    ws.getCell("B25").value = d.cleaningLabel || "";
     setCell(ws, "E25", d.cleaning);
     setCell(ws, "F25", d.cleaning);
   } else {
