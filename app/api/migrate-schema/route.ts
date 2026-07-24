@@ -1620,6 +1620,11 @@ ALTER TABLE ai_prompt_rules ADD COLUMN IF NOT EXISTS source_feedback_item_id UUI
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS draft_fail_count INTEGER DEFAULT 0;
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS draft_last_error TEXT;
 
+-- ── reply_mode_decision: シャドーモード分類器の判定結果（2026-07-24）──
+-- {mode, suggestedAction, matchedRule, confidence, shortDraft?, for_message_id, decided_at} を保持する
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS reply_mode_decision JSONB;
+COMMENT ON COLUMN conversations.reply_mode_decision IS 'シャドーモード分類器の判定結果 {mode, suggestedAction, matchedRule, confidence, shortDraft?, for_message_id, decided_at}';
+
 -- ── PostgREST スキーマキャッシュ再読込（必ず最後に実行する）──
 -- 新カラム追加後に PostgREST のスキーマキャッシュが古いままだと、
 -- 以降の INSERT/SELECT が「column does not exist」で全滅する

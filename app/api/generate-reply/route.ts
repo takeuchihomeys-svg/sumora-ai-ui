@@ -15,6 +15,7 @@ import {
 import { validateAndClean } from "@/app/lib/validate-reply";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
 import { safeSlice } from "@/app/lib/safe-slice";
+import { classifyReplyMode } from "@/app/lib/reply-mode-classifier";
 
 // Vercel Functions のタイムアウト上限（秒）— Vision + 2段LLM呼び出しに余裕を持たせる
 export const maxDuration = 300;
@@ -77,6 +78,7 @@ async function deriveSuggestedAix(
   conversationId?: string,
   internalBaseUrl?: string,
   propertyStatus?: PropertyStatus,
+  customerMessage?: string,
 ): Promise<{ action: string; note: string } | null> {
   // 退去予定/入居中の物件では現地内覧が不可のため viewing_invite（内覧日調整）は提案しない。
   // 代わりに空室確認（acknowledge_check）または申込で先に確保（application_push）を優先する。
@@ -90,6 +92,21 @@ async function deriveSuggestedAix(
     }
     return { action, note };
   };
+  // ─── Step 0.5: 顧客メッセージから「同一マンション内・別号室/別価格帯の依頼」を検知（★キャッシュ/DBルールより優先）───
+  // 例:「こちらの6万台のお部屋はないですか？」= 送った物件の同棟別号室依頼 →【確認します】ではなく物件ピックアップ系AIXを提案する。
+  // ※ webhookキャッシュが acknowledge_check を返して本判定を潰さないよう、Step 0 より前に置くこと（移動禁止）
+  if (customerMessage && conversationState === "proposing") {
+    const conditionChangeReq =
+      /([0-9０-９]+\s*万(円)?台|万円?台|(もっと|もう少し)安|安め|安い(お?部屋|物件)|家賃.{0,8}(抑え|低め|下げ)|(別|他|違う)の?(お?部屋|物件)|同じ(マンション|建物|物件))/;
+    const requestForm =
+      /(ない(です|でしょう)?か|あります|ありませんか|あれば|欲しい|希望|探して|お願い)/;
+    if (conditionChangeReq.test(customerMessage) && requestForm.test(customerMessage)) {
+      return {
+        action: "property_recommendation",
+        note: "同じマンション内の別の号室／別価格帯のお部屋をご希望です → AIX【1件特にオススメする】または【物件ピックアップした】で同棟の条件に合う部屋を検索してお送りください（「確認します」は不要です）",
+      };
+    }
+  }
   // ─── Step 0: webhook が先行計算したキャッシュを確認（最速パス・ネットワーク呼び出し不要）───
   if (conversationId) {
     try {
@@ -1799,7 +1816,33 @@ export async function POST(req: NextRequest) {
             const internalBaseUrl = process.env.NEXT_PUBLIC_SITE_URL
               ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
             const resolvedStatusForAix = detectPropertyStatus(history, message, propertyStatus);
-            const suggestedAix = await deriveSuggestedAix(finalDraftText, currentState, conversationId || undefined, internalBaseUrl, resolvedStatusForAix);
+            // ─── Shadow: 分類器ログ（シャドーモード・画面変更なし）───
+            // 純ルールベース分類器の結果を conversations.reply_mode_decision に記録するだけ。
+            // 返信内容・SUGGESTED_AIX・レスポンスには一切影響しない（fire-and-forget）。
+            if (conversationId && message) {
+              const _shadowClassify = (() => {
+                try {
+                  // history のスタッフ行プレフィックスは「スモラ:」（route内の履歴フォーマット準拠）
+                  const recentStaffMsg = (history || "").split("\n").filter((l: string) => l.startsWith("スモラ:")).slice(-1)[0] || "";
+                  const result = classifyReplyMode({
+                    customerMessage: message,
+                    conversationStatus: currentState || "",
+                    recentStaffMessage: recentStaffMsg,
+                    recentHistory: history || "",
+                  });
+                  // このrouteのbodyにはmessage idが存在しないため for_message_id は null 固定
+                  return supabase
+                    .from("conversations")
+                    .update({ reply_mode_decision: { ...result, for_message_id: null, decided_at: new Date().toISOString() } })
+                    .eq("id", conversationId)
+                    .then(() => {}, () => {}); // fire-and-forget（成功・失敗とも握りつぶす）
+                } catch {
+                  return Promise.resolve();
+                }
+              })();
+              void _shadowClassify;
+            }
+            const suggestedAix = await deriveSuggestedAix(finalDraftText, currentState, conversationId || undefined, internalBaseUrl, resolvedStatusForAix, message);
             if (suggestedAix) {
               controller.enqueue(encoder.encode(`\n<<<SUGGESTED_AIX:${JSON.stringify(suggestedAix)}>>>`));
             }
