@@ -1817,7 +1817,7 @@ export async function POST(req: NextRequest) {
               ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
             const resolvedStatusForAix = detectPropertyStatus(history, message, propertyStatus);
             // ─── Shadow: 分類器ログ（シャドーモード・画面変更なし）───
-            // 純ルールベース分類器の結果を conversations.reply_mode_decision に記録するだけ。
+            // 純ルールベース分類器の結果を reply_mode_shadow_logs に追記するだけ（上書きなし・1行1メッセージ）。
             // 返信内容・SUGGESTED_AIX・レスポンスには一切影響しない（fire-and-forget）。
             if (conversationId && message) {
               const _shadowClassify = (() => {
@@ -1830,11 +1830,18 @@ export async function POST(req: NextRequest) {
                     recentStaffMessage: recentStaffMsg,
                     recentHistory: history || "",
                   });
-                  // このrouteのbodyにはmessage idが存在しないため for_message_id は null 固定
                   return supabase
-                    .from("conversations")
-                    .update({ reply_mode_decision: { ...result, for_message_id: null, decided_at: new Date().toISOString() } })
-                    .eq("id", conversationId)
+                    .from("reply_mode_shadow_logs")
+                    .insert({
+                      conversation_id: conversationId,
+                      customer_message_preview: message.slice(0, 100),
+                      predicted_mode: result.mode,
+                      suggested_action: result.suggestedAction,
+                      matched_rule: result.matchedRule,
+                      confidence: result.confidence,
+                      short_draft: result.shortDraft ?? null,
+                      decided_at: new Date().toISOString(),
+                    })
                     .then(() => {}, () => {}); // fire-and-forget（成功・失敗とも握りつぶす）
                 } catch {
                   return Promise.resolve();

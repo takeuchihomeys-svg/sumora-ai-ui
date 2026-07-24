@@ -1625,6 +1625,28 @@ ALTER TABLE conversations ADD COLUMN IF NOT EXISTS draft_last_error TEXT;
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS reply_mode_decision JSONB;
 COMMENT ON COLUMN conversations.reply_mode_decision IS 'シャドーモード分類器の判定結果 {mode, suggestedAction, matchedRule, confidence, shortDraft?, for_message_id, decided_at}';
 
+-- ── reply_mode_shadow_logs: 分類器判定の追記ログ（2026-07-24）──
+-- 1メッセージ1行・上書きなし。eval cronが actual_mode/matched を後から埋める
+CREATE TABLE IF NOT EXISTS reply_mode_shadow_logs (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  customer_message_preview TEXT,
+  predicted_mode TEXT NOT NULL,
+  suggested_action TEXT,
+  matched_rule TEXT NOT NULL,
+  confidence TEXT NOT NULL,
+  short_draft TEXT,
+  decided_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  actual_mode TEXT,
+  actual_aix_type TEXT,
+  matched BOOLEAN,
+  evaluated_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_reply_mode_shadow_logs_conversation_id ON reply_mode_shadow_logs(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_reply_mode_shadow_logs_decided_at ON reply_mode_shadow_logs(decided_at);
+CREATE INDEX IF NOT EXISTS idx_reply_mode_shadow_logs_evaluated_at ON reply_mode_shadow_logs(evaluated_at) WHERE evaluated_at IS NULL;
+
 -- ── PostgREST スキーマキャッシュ再読込（必ず最後に実行する）──
 -- 新カラム追加後に PostgREST のスキーマキャッシュが古いままだと、
 -- 以降の INSERT/SELECT が「column does not exist」で全滅する
