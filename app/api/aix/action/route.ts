@@ -545,6 +545,62 @@ function extractNotice(text: string, customerName: string): { message: string; n
   return { message: trimmed, notice: null };
 }
 
+// base_message適応モード: AIX生成済みメッセージをベースに、会話文脈に合わせた最小限の調整のみを行う
+// （conversation_match + base_message で使用。ゼロから書き直さず、既存ドラフトの品質を維持する）
+// 返り値は生テキスト。呼び出し側で必ず finalizeResponse() を通すこと（号室ゼロ除去・内部メモ分離）
+async function adaptMessageToConversation(
+  baseMessage: string,
+  conversationHistory: string,
+  customerName: string,
+  actionLabel: string,
+  diffNote: string
+): Promise<string> {
+  const system = `${GENERATION_SYSTEM}
+
+${SMORA_COMMON_RULES}
+
+【お客様名】「${customerName}」
+
+【あなたのタスク：ベースメッセージの会話適応（書き直し禁止）】
+以下の「ベースメッセージ」は既に高品質に生成されたメインメッセージです。
+この品質・構成・トーン・スモラスタイルを必ず維持したまま、直近の会話に自然に噛み合うよう【最小限の調整のみ】を行ってください。
+
+【ベースメッセージ（この内容・構成・トーンを必ず維持すること）】
+${baseMessage}
+
+【調整して良いこと（最小限のみ）】
+・冒頭1〜2文を、お客様の直近メッセージへの直接的な応答に差し替える／追加する
+・お客様が会話で具体的に言及した要望・懸念・条件（日程・物件名・質問）を該当箇所に反映する
+・お客様の語彙・テンションに合わせた語尾の微調整
+・会話の流れ上、不自然・重複になった一文の削除や言い換え
+
+【絶対に守ること】
+・ゼロから書き直さない。ベースメッセージの文をできるだけそのまま残す（変更は全体の20〜30%まで）
+・ベースメッセージにある物件名・金額・日時・部屋のスペック（間取り・階数・号室等）は変えない
+・会話に出ていない情報を新たに追加しない（物件名・日時・金額の創作禁止）
+・ベースメッセージの「！！」パターン・絵文字の使い方をそのまま維持する
+・🙏 絵文字は絶対に使わない（スモラ禁止絵文字）
+
+【出力形式（必須・JSONのみ・説明不要）】
+{"message":"〜（調整後のLINEメッセージ全文・改行は\\nで）"}`;
+
+  const raw = await callClaude(
+    system + diffNote,
+    `${conversationHistory}\n\n上記の会話を深く読み取り、ベースメッセージを会話に合わせて最小限だけ調整した最終メッセージを出力してください。`,
+    actionLabel
+  );
+  try {
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (m) {
+      const d = JSON.parse(m[0]) as { message?: string };
+      return (d.message || raw).replace(/\\n/g, "\n");
+    }
+    return raw;
+  } catch {
+    return raw;
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -552,6 +608,9 @@ export async function POST(request: NextRequest) {
 
     // #30: max_tokens 尻切れ検知ログ・max_tokens決定用のアクション名（リクエストスコープ）
     const currentAction = String(action ?? "");
+
+    // base_message: AIX生成済みドラフト。conversation_match と併用時は「書き直し」ではなく「会話適応」モードになる
+    const baseMessage = typeof body.base_message === "string" && body.base_message.trim() ? body.base_message.trim() : null;
 
     // テンプレート構成ノート（テンプレートモーダルから渡された場合）
     const template_structure = Array.isArray(body.template_structure)
@@ -1385,6 +1444,11 @@ ${SMORA_COMMON_RULES}
       // conversation_match: 会話に合わせた自然文生成（generate-reply同等品質・早期 return）
       const conversationMatchVI = body.conversation_match as boolean | undefined;
       if (conversationMatchVI) {
+        // base_message適応モード: 既存のAIX生成文を会話に合わせて補正
+        if (baseMessage) {
+          message_text = await adaptMessageToConversation(baseMessage, recentHistory, name, currentAction, "");
+          return finalizeResponse(message_text);
+        }
         const calendarNoteForVI = calendarNote || "";
         const [viewingConvMatchDiffNote, viewingConvMatchStarNote] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.viewing_invite, currentAction, conversationId, latestCustomerMsg),
@@ -1799,6 +1863,11 @@ ${SMORA_COMMON_RULES}`;
       // conversation_match: 会話に合わせた自然文生成（generate-reply同等品質・早期 return）
       const conversationMatch = body.conversation_match as boolean | undefined;
       if (conversationMatch) {
+        // base_message適応モード: 既存のAIX生成文を会話に合わせて補正
+        if (baseMessage) {
+          message_text = await adaptMessageToConversation(baseMessage, recentHistory, name, currentAction, "");
+          return finalizeResponse(message_text);
+        }
         const calendarNoteForApp = calendar_info
           ? String(calendar_info)
           : "";
@@ -2383,6 +2452,11 @@ ${mgmtInfo}${recentHistory}`,
     } else if (action === "property_check_result") {
       // conversation_match: 会話に合わせた自然文生成（テンプレ固定なし・GENERATION_SYSTEM品質）
       if (body.conversation_match) {
+        // base_message適応モード: 既存のAIX生成文を会話に合わせて補正
+        if (baseMessage) {
+          message_text = await adaptMessageToConversation(baseMessage, recentHistory, name, currentAction, "");
+          return finalizeResponse(message_text);
+        }
         const calendarNoteForPCR = calendar_info ? String(calendar_info) : "";
         const pcrCalendarBlock = calendarNoteForPCR
           ? `【内覧可能日時（カレンダー自動取得・空室時はこの日程で案内すること）】\n${calendarNoteForPCR}`
@@ -2910,6 +2984,11 @@ ${templateText}`;
     } else if (action === "condition_hearing") {
       // conversation_match: 会話に合わせた自然な挨拶＋ヒアリング導入メッセージを生成（固定フォームなし）
       if (body.conversation_match) {
+        // base_message適応モード: 既存のAIX生成文を会話に合わせて補正
+        if (baseMessage) {
+          message_text = await adaptMessageToConversation(baseMessage, recentHistory, name, currentAction, "");
+          return finalizeResponse(message_text);
+        }
         const [hearingCMDiffNote, hearingCMStarNote] = await Promise.all([
           getKnowledgeForState([...AIX_ACTION_TO_STATES.condition_hearing, "first_reply"], currentAction, conversationId, latestCustomerMsg),
           getStarredExamplesForAction([...AIX_ACTION_TO_STATES.condition_hearing, "first_reply"], latestCustomerMsg),
@@ -3204,6 +3283,11 @@ ${SMORA_COMMON_RULES}`;
     } else if (action === "meeting_place") {
       // conversation_match: テンプレ固定なし・会話から日時・物件を読んで自然な待ち合わせ文を生成
       if (body.conversation_match) {
+        // base_message適応モード: 既存のAIX生成文を会話に合わせて補正
+        if (baseMessage) {
+          message_text = await adaptMessageToConversation(baseMessage, recentHistory, name, currentAction, "");
+          return finalizeResponse(message_text);
+        }
         const [mpDiffNote, mpStarNote, mpDbRules] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.meeting_place, currentAction, conversationId, latestCustomerMsg),
           getStarredExamplesForAction(AIX_ACTION_TO_STATES.meeting_place, latestCustomerMsg),

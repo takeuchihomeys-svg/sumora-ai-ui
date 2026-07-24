@@ -5357,7 +5357,7 @@ export default function AixModal({
             ) ? (
               <div className="flex flex-col gap-2 w-full">
                 <button
-                  onClick={() => void generate({ conversation_match: true })}
+                  onClick={() => void generate({ conversation_match: true, base_message: aiDraft })}
                   disabled={loading || !canGenerate}
                   className="w-full rounded-2xl bg-[#546E7A] py-3.5 text-sm font-bold text-white disabled:opacity-40"
                 >
