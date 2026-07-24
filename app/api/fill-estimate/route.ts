@@ -45,6 +45,7 @@ type ItemData = {
   keyExchange: number;
   cleaning: number;
   cleaningAtDeparture?: boolean;
+  cleaningLabel?: string; // 行25の項目名（ユーザー編集可・空ならテンプレート既定ラベル「抗菌施工費」等を維持）
   parkingDeposit: number;
   parkingMonthly: number;
   otherItems: Array<{ item: string; amount: number }>;
@@ -224,8 +225,9 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
   const nextMgmt = d.nextManagementFee || d.managementFee || 0;
   setCell(ws, "E13", numOrBlank(nextRent));
   setCell(ws, "F13", numOrBlank(nextRent));
-  setCell(ws, "E14", numOrBlank(nextMgmt));
-  setCell(ws, "F14", numOrBlank(nextMgmt));
+  // 共益費は0円でも「0」を表示（共益費なしであることを明示するため空欄にしない）
+  setCell(ws, "E14", nextMgmt);
+  setCell(ws, "F14", nextMgmt);
 
   // ── 日割り計算
   const moveInDay   = d.moveInDay        || 1;
@@ -270,12 +272,13 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
       oneTimeItems.push({ label: oi.item, amount: oi.amount });
   }
 
-  // 月額その他費用の合計 → 契約条件「その他」(M20) に反映
-  // 例: サポート料(月額)1,320 → M20=1320 / 複数ある場合は合算
+  // 毎月の費用の合計 → 契約条件「その他」(M20) に反映
+  // 家賃 + 共益費 + 水道代 + 月額その他費用（例: サポート料(月額)1,320）の合算
   const sonotaMonthly = (d.otherItems || [])
     .filter(oi => oi.item && oi.amount > 0 && isMonthlyOther(oi.item))
     .reduce((s, oi) => s + oi.amount, 0);
-  if (sonotaMonthly > 0) setCell(ws, "M20", sonotaMonthly);
+  const monthlyTotal = (d.rent || 0) + (d.managementFee || 0) + (d.waterFee || 0) + sonotaMonthly;
+  setCell(ws, "M20", monthlyTotal);
 
   // 合計計算用（書き込み位置に関係なく全項目を合算）
   const dynamicItems: DynItem[] = [...monthlyItems, ...oneTimeItems];
@@ -301,6 +304,8 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
   // ── 固定下段費用
   // 行25（抗菌施工費/アクト安心ライフ）: 0円のときはラベルごと空欄にして非表示
   if (d.cleaning && !d.cleaningAtDeparture) {
+    // 項目名はユーザー編集値を優先（空ならテンプレートの既定ラベルを維持）
+    if (d.cleaningLabel) ws.getCell("B25").value = d.cleaningLabel;
     setCell(ws, "E25", d.cleaning);
     setCell(ws, "F25", d.cleaning);
   } else {

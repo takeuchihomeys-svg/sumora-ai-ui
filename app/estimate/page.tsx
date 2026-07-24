@@ -30,6 +30,7 @@ type EditableItems = Omit<ExtractedEstimate, "otherItems"> & {
   nextYear: number;
   guaranteeRate: number; // 賃貸保証料率（%）デフォルト50
   cleaningAtDeparture: boolean; // クリーニング代を退去時清算にする（初期費用から除外）
+  cleaningLabel: string; // クリーニング代の項目名（空ならExcelテンプレートの既定ラベル「抗菌施工費」等を維持）
 };
 
 // item名に「(月)」「（月）」「月額」を含むその他費用は月額扱い（毎月費用セクションに表示）
@@ -203,6 +204,7 @@ function toEditable(e: ExtractedEstimate, account: Account = "sumora", moveInDat
     nextMonth,
     nextYear,
     cleaningAtDeparture: false,
+    cleaningLabel: "",
   };
 }
 
@@ -227,6 +229,7 @@ function makeBlankItems(account: Account, moveInDate = ""): EditableItems {
     nextRent: 0, nextManagementFee: 0, nextWaterFee: 0,
     nextMonth, nextYear,
     cleaningAtDeparture: false,
+    cleaningLabel: "",
   };
 }
 
@@ -446,7 +449,8 @@ export default function EstimatePage() {
     { label: items.moveInMonth > 0 ? `${items.moveInMonth}月分 日割共益費` : "日割共益費", amount: proratedMgmt,  isComputed: true },
     { label: items.moveInMonth > 0 ? `${items.moveInMonth}月分 日割水道代` : "日割水道代", amount: proratedWater, isComputed: true },
     { label: items.nextMonth > 0 ? `${items.nextMonth}月分 家賃`   : "翌月家賃",   amount: items.nextRent,            editKey: "nextRent" },
-    { label: items.nextMonth > 0 ? `${items.nextMonth}月分 共益費` : "翌月共益費", amount: items.nextManagementFee,   editKey: "nextManagementFee" },
+    // 共益費は0円でも「¥0」と表示（共益費なしであることを明示するため非表示にしない）
+    { label: items.nextMonth > 0 ? `${items.nextMonth}月分 共益費` : "翌月共益費", amount: items.nextManagementFee,   editKey: "nextManagementFee", alwaysShow: true },
     { label: items.nextMonth > 0 ? `${items.nextMonth}月分 水道代` : "翌月水道代", amount: items.nextWaterFee,        editKey: "nextWaterFee" },
     // 月額扱いのその他費用（安心入居サポート(月)など）は毎月費用セクションに表示
     ...items.otherItems
@@ -464,7 +468,7 @@ export default function EstimatePage() {
     { label: "火災保険",                            amount: items.insurance,            editKey: "insurance", alwaysShow: true },
     { label: "鍵交換代",                            amount: items.keyExchange,          editKey: "keyExchange" },
     // クリーニング代は退去時清算の場合、初期費用に含めない
-    ...(items.cleaningAtDeparture ? [] : [{ label: "クリーニング代", amount: items.cleaning, editKey: "cleaning" as keyof EditableItems }]),
+    ...(items.cleaningAtDeparture ? [] : [{ label: items.cleaningLabel || "クリーニング代", amount: items.cleaning, editKey: "cleaning" as keyof EditableItems }]),
     { label: "駐車場保証金",                        amount: items.parkingDeposit,       editKey: "parkingDeposit" },
     { label: items.nextMonth > 0 ? `${items.nextMonth}月分 駐車場代` : "翌月駐車場代", amount: items.parkingMonthly, editKey: "parkingMonthly" },
     // 月額扱い以外のその他費用（初回のみ費用）
@@ -865,6 +869,15 @@ export default function EstimatePage() {
                               placeholder="項目名"
                               value={row.label}
                               onChange={(e) => updateOtherItem(row.otherIdx!, "item", e.target.value)}
+                            />
+                          ) : row.editKey === "cleaning" ? (
+                            // 抗菌施工費/クリーニング代の項目名は編集可能（空ならExcelテンプレート既定ラベルを維持）
+                            <input
+                              type="text"
+                              className="w-full text-[12px] border-b border-[#d1d7db] focus:border-blue-400 outline-none bg-transparent text-[#54656f] placeholder:text-[#ccc]"
+                              placeholder="クリーニング代（項目名編集可）"
+                              value={items?.cleaningLabel || ""}
+                              onChange={(e) => updateItem("cleaningLabel", e.target.value)}
                             />
                           ) : row.editKey === "guarantee" ? (
                             <div className="flex items-center gap-1.5">
