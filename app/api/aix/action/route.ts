@@ -2598,6 +2598,15 @@ ${patternExample}${knowledgeText}${examplesText}${greetingTimeNote}`;
 
       const propStatusesArr = prop_statuses as string[] | undefined;
 
+      // 送られた物件数（任意・AixModalの「送られた物件数」セレクター）
+      // 募集終了件数 N = 送られた物件数 − 確認できた物件数
+      const sentPropCount = (body.sent_property_count as number | undefined) ?? null;
+      const endedPropCount = sentPropCount !== null && sentPropCount > propCount ? sentPropCount - propCount : 0;
+      // ケース2（一部のみ募集あり）: 末尾に「他N件は募集終了」の案内を追加
+      const endedSection = endedPropCount > 0
+        ? `\n\n${name}お送りいただきました他${endedPropCount}件は\n募集終了しているお部屋となります。\n引き続き条件に合うお部屋を探させていただきます！！`
+        : "";
+
       // ※ 差分学習ルール注入について: 以下の per-property固定テンプレ・テキスト置換エンジン（availableFixedSystem /
       //   unavailableSystem / fixedSystem same・different）は「一字一句そのまま出力」が前提のため注入対象外
       //   （学習ルールを注入するとテンプレ厳守が壊れるリスクがある）。自由生成パス（最後のelse）のみ注入する。
@@ -2647,7 +2656,13 @@ ${patternExample}${knowledgeText}${examplesText}${greetingTimeNote}`;
             message_text = `${pName}現在募集中となります！！${estimate1}${facSection}${inviteText}`;
           }
           // greeting1 を先頭に連結（1件モードで挨拶が抜けていたバグ修正）
-          message_text = `${greeting1}\n${message_text}`;
+          // 送られた物件数指定時: ケース1=「確認させていただきました」/ ケース2=「物件の中で」ヘッダー + 他N件募集終了
+          const sentHeader1 = sentPropCount === null
+            ? ""
+            : endedPropCount > 0
+              ? `${name}お送りいただきました物件の中で\n`
+              : `${name}確認させていただきました！！\n`;
+          message_text = `${greeting1}\n${sentHeader1}${message_text}${endedSection}`;
         } else {
           // 複数物件モード: per-property ステータスで箇条書き + クロージング
           const recommendIdx = (body.recommend_prop_index as number | undefined) ?? -1;
@@ -2700,10 +2715,10 @@ ${patternExample}${knowledgeText}${examplesText}${greetingTimeNote}`;
           }
           // 内覧誘導OFF → vacancySection = "" (内覧テキストなし)
           const greeting = greetingPhrase; // 挨拶時間ルール共通化（#19）
-          const header = (all_properties_available as boolean | undefined)
+          const header = (all_properties_available as boolean | undefined) && endedPropCount === 0
             ? `${name}お送り頂きました\n`
             : `${name}お送り頂きました物件の中で\n`;
-          message_text = `${greeting}\n${header}${bulletLines}\nこちら${propCount}件現在募集中となります！！${recommendNote}${estimateSection}${vacancySection}`;
+          message_text = `${greeting}\n${header}${bulletLines}\nこちら${propCount}件現在募集中となります！！${recommendNote}${estimateSection}${vacancySection}${endedSection}`;
         }
 
       // 「物件あった」申込あり・申込なし・未選択 は固定テンプレ（1件）
@@ -2713,10 +2728,10 @@ ${patternExample}${knowledgeText}${examplesText}${greetingTimeNote}`;
           ? `[物件名と号室]募集中となります！！
 現在1番手でお申込みが入っている為、2番手以降でのお申込となります！！${estimateLine}
 
-※2番手お申込の場合1番手の方が審査否決となった場合1番手に繰り上がります。`
+※2番手お申込の場合1番手の方が審査否決となった場合1番手に繰り上がります。${endedSection}`
           : `[物件名と号室]現在募集中となります！！${estimateLine}
 
-${name}ご都合よろしいお日にちにご案内させて頂きます😊！！`;
+${name}ご都合よろしいお日にちにご案内させて頂きます😊！！${endedSection}`;
 
         const availableFixedSystem = `あなたはテキスト置換エンジンです。
 以下のテンプレートを一字一句そのまま出力してください。
@@ -2746,7 +2761,10 @@ ${availableTemplate}`;
       // 「物件なかった」は完全固定テンプレ（AI不要・崩れ防止）
       } else if (pattern === "unavailable") {
         const unavailPropName = typeof property_name === "string" ? property_name.trim() : "";
-        if (unavailPropName) {
+        if (sentPropCount !== null) {
+          // ケース3: 送られた物件数が指定されている → 全件募集終了の固定文
+          message_text = `${name}お送りいただきました物件${sentPropCount}件\n現在全て募集終了しているお部屋となります。\n他にも良いお部屋を探してご連絡させていただきます！！`;
+        } else if (unavailPropName) {
           // 物件名あり
           message_text = `${name}お世話になっております！！\nお送り頂きました${unavailPropName}の募集状況確認させて頂きましたところ現在募集が終了しているお部屋となります！！`;
         } else {

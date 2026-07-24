@@ -648,6 +648,7 @@ export default function AixModal({
   const [checkEstimateFile, setCheckEstimateFile] = useState<File | null>(null);
   const [checkEstimatePreview, setCheckEstimatePreview] = useState<string>("");
   // 複数物件対応: 件数 + per-property 画像・見積書・物件名・退去予定日
+  const [sentPropertyCount, setSentPropertyCount] = useState<1|2|3|4|5|null>(null);
   const [checkPropertyCount, setCheckPropertyCount] = useState<1|2|3>(1);
   const [checkPropImages, setCheckPropImages] = useState<File[][]>([[], [], []]);
   const [checkPropImagePreviews, setCheckPropImagePreviews] = useState<string[][]>([[], [], []]);
@@ -655,6 +656,8 @@ export default function AixModal({
   const [checkPropEstimatePreviews, setCheckPropEstimatePreviews] = useState<string[]>(["", "", ""]);
   const [checkPropNames, setCheckPropNames] = useState<string[]>(["", "", ""]);
   const [checkPropVacancyDates, setCheckPropVacancyDates] = useState<string[]>(["", "", ""]);
+  // 物件画像追加時の物件名・号室OCR読取中フラグ（per-property）
+  const [checkPropOcrLoading, setCheckPropOcrLoading] = useState<boolean[]>([false, false, false]);
   // 物件確認「空室あり」専用: per-property 設備情報（駐車場・バイク置き場・ペット・ネット・保証会社）
   type PropFacility = {
     parkingAvail: 'あり' | 'なし' | null;
@@ -1204,7 +1207,39 @@ export default function AixModal({
       reader.readAsDataURL(file);
     });
     if (checkPropFileRefs[propIdx].current) checkPropFileRefs[propIdx].current!.value = "";
-    // 読み取りは送信ボタン押下時に行う（onSelectPropImagesでは画像のプレビューのみ）
+    // 物件名が未入力なら1枚目の画像からマンション名・号室をOCRで自動入力
+    // （退去予定日などの本読み取りは従来どおり送信ボタン押下時の extractPropInfoFromImages で行う）
+    if (!checkPropNames[propIdx].trim() && !checkPropOcrLoading[propIdx]) {
+      void ocrPropNameFromImage(propIdx, files[0]);
+    }
+  };
+
+  // 物件画像→マンション名・号室の自動OCR（既存 /api/aix/ocr-property = claude-sonnet Vision を再利用）
+  const ocrPropNameFromImage = async (propIdx: number, file: File) => {
+    setCheckPropOcrLoading(prev => prev.map((v, i) => i === propIdx ? true : v));
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve((reader.result as string).split(",")[1]);
+        reader.onerror = () => reject(new Error("画像の読み込みに失敗しました"));
+        reader.readAsDataURL(file);
+      });
+      const res = await fetch("/api/aix/ocr-property", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image_base64: base64, media_type: file.type || "image/jpeg" }),
+      });
+      const data = await res.json() as { prop_name?: string; room_no?: string };
+      const name = [data.prop_name, data.room_no].filter(Boolean).join(" ").trim();
+      if (name) {
+        // OCR中にスタッフが手入力した場合は上書きしない
+        setCheckPropNames(prev => prev.map((v, i) => (i === propIdx && !v.trim()) ? name : v));
+      }
+    } catch (ocrErr) {
+      // OCR失敗は致命的ではない（手入力可能）が、握りつぶさずログに残す
+      console.error("[AixModal] 物件確認 物件名OCR失敗:", ocrErr);
+    }
+    setCheckPropOcrLoading(prev => prev.map((v, i) => i === propIdx ? false : v));
   };
 
   // 物件画像から物件名・退去予定日をまとめて読み取るヘルパー（submit時に呼ぶ）
@@ -1555,6 +1590,7 @@ export default function AixModal({
         if (checkPattern === "available") {
           // 全件数（1件含む）: 物件カードから画像・名前を取得
           body.property_count = checkPropertyCount;
+          if (sentPropertyCount !== null) body.sent_property_count = sentPropertyCount;
           body.prop_statuses = checkPropStatuses.slice(0, checkPropertyCount);
           body.prop_facilities = propFacilities.slice(0, checkPropertyCount).map(f => ({
             parkingAvail: f.parkingAvail,
@@ -1606,6 +1642,8 @@ export default function AixModal({
         } else if (checkPattern === "unavailable") {
           // 物件なかった: 物件名のみ渡す（AI不要・固定テンプレ）
           if (checkUnavailablePropName.trim()) body.property_name = checkUnavailablePropName.trim();
+          // 送られた物件数（任意）: 指定時は「全件募集終了」固定文になる
+          if (sentPropertyCount !== null) body.sent_property_count = sentPropertyCount;
         } else {
           if (checkEstimateFile) body.estimate_image_url = await uploadImageCached(checkEstimateFile);
           if (checkImageFiles.length > 0) {
@@ -3700,7 +3738,10 @@ export default function AixModal({
                     { key: "exclusive",       label: "専任物件だった",       sub: "専任のためご紹介不可",           color: "red"     },
                     { key: "move_in_date",    label: "入居日確認した",       sub: "退去日から入居可能日を計算送信", color: "purple"  },
                     { key: "interior_photo",  label: "室内写真を確認した",   sub: "写真またはURLをお客さんに送る",  color: "pink"    },
-                  ] as const).map((p) => (
+                  ] as const).filter((p) =>
+                    /* 選択済みなら選択した項目のみ表示（未選択・リスト外の値なら全表示） */
+                    !(["available", "alternative", "unavailable", "exclusive", "move_in_date", "interior_photo"] as string[]).includes(checkPattern ?? "") || p.key === checkPattern
+                  ).map((p) => (
                     <button
                       key={p.key}
                       onClick={() => {
@@ -3746,6 +3787,24 @@ export default function AixModal({
                       </div>
                     </button>
                   ))}
+                  {/* 選択済み: 変更するボタンで再選択可能に */}
+                  {(["available", "alternative", "unavailable", "exclusive", "move_in_date", "interior_photo"] as string[]).includes(checkPattern ?? "") && (
+                    <button
+                      onClick={() => {
+                        setCheckPattern(null);
+                        setPreview("");
+                        setCheckAvailableApp(null);
+                        setShowCheckCalendar(false);
+                        setExclusiveImageFile(null);
+                        setExclusivePropName("");
+                        setExclusiveRoomNo("");
+                        setCheckUnavailablePropName("");
+                      }}
+                      className="self-start rounded-xl border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-semibold text-[#54656f] hover:bg-[#f0f2f5]"
+                    >
+                      ↩ 変更する
+                    </button>
+                  )}
                 </div>
               </div>
               {/* 専任物件だった: スクショOCR + 物件名・号室 → 固定文送信（AI不要） */}
@@ -4020,6 +4079,22 @@ export default function AixModal({
                 </div>
               )}
 
+              {/* 物件あった/物件なかった: 送られた物件数セレクター */}
+              {(checkPattern === "available" || checkPattern === "unavailable") && (
+                <div className="mb-1">
+                  <p className="mb-1.5 text-xs font-bold text-[#54656f]">送られた物件数</p>
+                  <div className="flex gap-2">
+                    {([1, 2, 3, 4, 5] as const).map((n) => (
+                      <button
+                        key={n}
+                        onClick={() => setSentPropertyCount(sentPropertyCount === n ? null : n)}
+                        className={`flex-1 rounded-xl border py-2 text-sm font-bold transition ${sentPropertyCount === n ? "border-[#4CAF50] bg-[#e8f5e9] text-[#2e7d32]" : "border-[#d1d7db] bg-white text-[#54656f]"}`}
+                      >{n}件</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* 物件あった: 件数セレクター */}
               {checkPattern === "available" && (
                 <div className="mb-1">
@@ -4114,15 +4189,18 @@ export default function AixModal({
                       {/* 物件名 */}
                       <input
                         type="text"
-                        placeholder="マンション名・号室（例: KTIレジデンス西中島II 202号室）"
+                        placeholder={checkPropOcrLoading[pi] ? "読取中..." : "マンション名・号室（例: KTIレジデンス西中島II 202号室）"}
                         value={checkPropNames[pi]}
                         onChange={(e) => {
                           const arr = [...checkPropNames];
                           arr[pi] = e.target.value;
                           setCheckPropNames(arr);
                         }}
-                        className="mb-2 w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-xs outline-none focus:border-[#4CAF50]"
+                        className={`mb-2 w-full rounded-xl border bg-white px-3 py-2 text-xs outline-none focus:border-[#4CAF50] ${checkPropOcrLoading[pi] ? "border-blue-300" : "border-[#d1d7db]"}`}
                       />
+                      {checkPropOcrLoading[pi] && (
+                        <p className="-mt-1 mb-2 text-[10px] text-blue-500">📷 画像からマンション名・号室を読取中...</p>
+                      )}
                       {/* 募集状況 */}
                       <div className="mb-2 flex gap-1">
                         {([
