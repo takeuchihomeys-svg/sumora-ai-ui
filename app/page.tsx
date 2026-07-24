@@ -596,7 +596,7 @@ export default function Home() {
   const [aixInitViewingReschedule, setAixInitViewingReschedule] = useState(false);
   const [aixInitInputText, setAixInitInputText] = useState("");
   // 管理会社に確認したピッカー: 選択した確認種別をAIXモーダルへ引き継ぐ
-  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "nearby_parking" | null>(null);
+  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "nearby_parking" | null>(null);
   // 物件成約した（管理会社確認ピッカーのサブ項目）: 中間フォーム用state
   const [showContractedForm, setShowContractedForm] = useState(false);
   const [contractedPropertyName, setContractedPropertyName] = useState("");
@@ -10406,7 +10406,7 @@ export default function Home() {
             </div>
             <p className="mb-1 text-center text-[20px] font-bold text-[#111827]">管理会社に確認した</p>
             <p className="mb-6 text-center text-[13px] leading-snug text-[#6B7280]">何について確認しましたか？</p>
-            <div className="flex flex-col gap-2.5">
+            <div className="flex flex-col gap-2.5 max-h-[65vh] overflow-y-auto -mx-1 px-1">
               {([
                 {
                   key: "vacate_date",
@@ -10465,6 +10465,16 @@ export default function Home() {
                   </>
                 },
                 {
+                  key: "mgmt_equipment",
+                  label: "設備について",
+                  desc: "エアコン・給湯器・バス・トイレなどの設備状況を管理会社に確認した結果",
+                  hint: "",
+                  icon: <>
+                    <circle cx="36" cy="36" r="7" stroke="#546E7A" strokeWidth="1.8"/>
+                    <path d="M36 22v-3M36 53v-3M50 36h3M19 36h3M45.9 26.1l2.1-2.1M24 48l2.1-2.1M45.9 45.9l2.1 2.1M24 24l2.1 2.1" stroke="#546E7A" strokeWidth="1.8" strokeLinecap="round"/>
+                  </>
+                },
+                {
                   key: "property_contracted",
                   label: "物件成約した",
                   desc: "1番手の方で成約となったことを報告し、別物件のピックアップを案内",
@@ -10474,7 +10484,7 @@ export default function Home() {
                     <path d="M30 39l4 4 9-9.5" stroke="#2E7D32" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
                   </>
                 },
-              ] as Array<{ key: "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "property_contracted"; label: string; desc: string; hint: string; icon: ReactNode }>).map(({ key, label, desc, hint, icon }) => {
+              ] as Array<{ key: "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "property_contracted"; label: string; desc: string; hint: string; icon: ReactNode }>).map(({ key, label, desc, hint, icon }) => {
                 const isSuggested = suggestedPropertyCheckMode === key;
                 return (
                 <button
