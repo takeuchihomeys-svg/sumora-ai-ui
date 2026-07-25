@@ -733,6 +733,32 @@ export default function AixModal({
   const [viewingSlotStarts, setViewingSlotStarts] = useState<string[]>([]);
   const [viewingSlotEnds, setViewingSlotEnds] = useState<string[]>([]);
   const [viewingSlotOverride, setViewingSlotOverride] = useState<boolean[]>([]); // 案内不可日を手動で追加
+
+  // 「日程をずらす」: その日を配列から外し、末尾日の翌日を新たに追加（5本の並行配列を同期更新）
+  const shiftViewingDay = (i: number) => {
+    if (viewingCalendarDays.length === 0) return;
+    const lastIdx = viewingCalendarDays.length - 1;
+    const m = viewingCalendarDays[lastIdx].label.match(/(\d{1,2})\/(\d{1,2})/);
+    if (!m) return;
+    // 末尾日の翌日を計算（年またぎ対応: 半年以上過去なら翌年扱い）
+    const now = new Date();
+    let d = new Date(now.getFullYear(), parseInt(m[1]) - 1, parseInt(m[2]));
+    if (d.getTime() < now.getTime() - 1000 * 60 * 60 * 24 * 180) {
+      d = new Date(now.getFullYear() + 1, parseInt(m[1]) - 1, parseInt(m[2]));
+    }
+    d.setDate(d.getDate() + 1);
+    const wd = ["日", "月", "火", "水", "木", "金", "土"][d.getDay()];
+    const newLabel = `${d.getMonth() + 1}/${d.getDate()}(${wd})`;
+    // 新しい日の時刻は既存の最後の日の設定を引き継ぐ
+    const newStart = viewingSlotStarts[lastIdx] || "11:00";
+    const newEnd = viewingSlotEnds[lastIdx] || "18:00";
+    setViewingCalendarDays(prev => [...prev.filter((_, idx) => idx !== i), { label: newLabel, slots: [`${newStart}〜${newEnd}`], fullyBooked: false, noEvents: true }]);
+    setViewingSlotEnabled(prev => [...prev.filter((_, idx) => idx !== i), true]);
+    setViewingSlotStarts(prev => [...prev.filter((_, idx) => idx !== i), newStart]);
+    setViewingSlotEnds(prev => [...prev.filter((_, idx) => idx !== i), newEnd]);
+    setViewingSlotOverride(prev => [...prev.filter((_, idx) => idx !== i), false]);
+  };
+
   // 申込へ！専用: 物件名 + 空室状況 + 退去予定日
   const [appPropertyName, setAppPropertyName] = useState("");
   // 申込パターンはデフォルトで「シンプル申込」を選択済みにする（最頻パターン・生成までのタップ数を減らす）
@@ -5003,6 +5029,11 @@ export default function AixModal({
                         {d.fullyBooked && !viewingSlotOverride[i] && (
                           <span className="text-red-400 text-[10px]">予定あり（タップで手動追加）</span>
                         )}
+                        {/* 日程をずらす: この日を外して末尾日の翌日を追加 */}
+                        <button
+                          onClick={() => shiftViewingDay(i)}
+                          className="ml-auto flex-shrink-0 text-[10px] font-bold text-[#8696a0] hover:text-emerald-600 transition-colors"
+                        >→ 日程をずらす</button>
                       </div>
                       {(!d.fullyBooked || viewingSlotOverride[i]) && (
                         <div className="mt-2 flex items-center gap-1.5 pl-7">
