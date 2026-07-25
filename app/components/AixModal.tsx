@@ -51,7 +51,7 @@ interface AixModalProps {
   initialAppSubMode?: "push" | "confirm" | "format" | "docs_request" | null;
   initialFollowupSubMode?: "apply_supplement" | "search_continue" | null;
   initialInputText?: string;
-  initialCheckPattern?: "available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "nearby_parking";
+  initialCheckPattern?: "available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking";
   templateId?: string; // テンプレートモーダル経由で開いた場合のtemplate_id（学習ループ紐付け用）
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
@@ -579,9 +579,11 @@ export default function AixModal({
   const [topPhrases, setTopPhrases] = useState<{ phrase: string; usage_count: number }[]>([]);
   const [floorPlanTouched, setFloorPlanTouched] = useState(false);
   // 物件確認した専用（vacate_date / mgmt_move_in / mgmt_initial_cost は「管理会社に確認した」ピッカー経由の専用パターン）
-  const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | "exclusive" | "move_in_date" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "nearby_parking" | null>(initialCheckPattern ?? null);
+  const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | "exclusive" | "move_in_date" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | null>(initialCheckPattern ?? null);
   // 管理会社確認パターンかどうか（テキスト入力のみで生成できる簡易フロー）
-  const isMgmtCheck = checkPattern === "vacate_date" || checkPattern === "mgmt_move_in" || checkPattern === "mgmt_initial_cost" || checkPattern === "mgmt_guarantor" || checkPattern === "mgmt_parking" || checkPattern === "mgmt_pet" || checkPattern === "mgmt_equipment" || checkPattern === "nearby_parking";
+  const isMgmtCheck = checkPattern === "vacate_date" || checkPattern === "mgmt_move_in" || checkPattern === "mgmt_initial_cost" || checkPattern === "mgmt_guarantor" || checkPattern === "mgmt_parking" || checkPattern === "mgmt_pet" || checkPattern === "mgmt_equipment" || checkPattern === "mgmt_availability" || checkPattern === "nearby_parking";
+  // 募集状況確認専用: 募集している / 募集終了した
+  const [mgmtAvailabilityStatus, setMgmtAvailabilityStatus] = useState<"available" | "ended" | null>(null);
   // 初期費用確認: サブパターン選択
   const [mgmtCostType, setMgmtCostType] = useState<"estimate" | "negotiation" | null>(null);
   // 駐車場確認専用: 有無・料金・空き状況
@@ -1583,6 +1585,10 @@ export default function AixModal({
           body.pet_policy = mgmtPetPolicy;
           if (mgmtPetCondition.trim()) body.pet_condition = mgmtPetCondition.trim();
         }
+        if (checkPattern === "mgmt_availability") {
+          if (!mgmtAvailabilityStatus) throw new Error("募集状況を選択してください");
+          body.mgmt_availability_status = mgmtAvailabilityStatus;
+        }
         if (checkPattern === "nearby_parking") {
           if (!nearbyParkingVacancy) throw new Error("空き状況を選択してください");
           body.nearby_parking_vacancy = nearbyParkingVacancy;
@@ -1603,7 +1609,7 @@ export default function AixModal({
           body.move_in_period = moveInPeriod;
           body.move_in_guidance_type = moveInGuidanceTypeRef.current;
         }
-        if (isMgmtCheck && checkPattern !== "mgmt_initial_cost" && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_parking" && checkPattern !== "mgmt_pet" && checkPattern !== "nearby_parking" && checkPattern !== "mgmt_move_in" && !inputText.trim()) throw new Error("管理会社に確認した内容を入力してください");
+        if (isMgmtCheck && checkPattern !== "mgmt_initial_cost" && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_parking" && checkPattern !== "mgmt_pet" && checkPattern !== "mgmt_availability" && checkPattern !== "nearby_parking" && checkPattern !== "mgmt_move_in" && !inputText.trim()) throw new Error("管理会社に確認した内容を入力してください");
         if (checkPattern === "move_in_date") {
           if (!moveInImageFile) throw new Error("物件資料を選択してください");
           body.image_url = await uploadImageCached(moveInImageFile);
@@ -2417,6 +2423,8 @@ export default function AixModal({
             ? !!mgmtPetPolicy
             : checkPattern === "nearby_parking"
             ? !!nearbyParkingVacancy
+            : checkPattern === "mgmt_availability"
+            ? !!mgmtAvailabilityStatus
             : !!inputText.trim()
         )
       : !!checkPattern)
@@ -3178,7 +3186,7 @@ export default function AixModal({
                 </span>
                 <div>
                   <div className="text-[13px] font-bold text-[#111b21]">
-                    {checkPattern === "nearby_parking" ? "近隣の月極駐車場を確認した" : <>管理会社に確認した：{checkPattern === "vacate_date" ? "退去予定日" : checkPattern === "mgmt_move_in" ? "入居可能日" : checkPattern === "mgmt_guarantor" ? "保証会社（審査面）" : checkPattern === "mgmt_parking" ? "駐車場" : checkPattern === "mgmt_pet" ? "ペット飼育" : checkPattern === "mgmt_equipment" ? "設備" : "初期費用"}</>}
+                    {checkPattern === "nearby_parking" ? "近隣の月極駐車場を確認した" : <>管理会社に確認した：{checkPattern === "vacate_date" ? "退去予定日" : checkPattern === "mgmt_move_in" ? "入居可能日" : checkPattern === "mgmt_guarantor" ? "保証会社（審査面）" : checkPattern === "mgmt_parking" ? "駐車場" : checkPattern === "mgmt_pet" ? "ペット飼育" : checkPattern === "mgmt_equipment" ? "設備" : checkPattern === "mgmt_availability" ? "募集状況" : "初期費用"}</>}
                   </div>
                   <div className="text-[10px] text-[#8696a0]">確認内容を入力するだけでAIが報告文を作成します</div>
                 </div>
@@ -3561,8 +3569,45 @@ export default function AixModal({
                 </div>
               )}
 
+              {/* 募集状況確認専用: 2択（募集している / 募集終了した） */}
+              {checkPattern === "mgmt_availability" && (
+                <div className="flex flex-col gap-3">
+                  <div>
+                    <p className="mb-2 text-xs font-bold text-[#54656f]">募集状況 <span className="text-red-400">*</span></p>
+                    <div className="flex gap-1.5">
+                      <button
+                        onClick={() => { setMgmtAvailabilityStatus("available"); setPreview(""); }}
+                        className={`flex-1 rounded-xl border-2 py-2.5 text-xs font-bold transition ${
+                          mgmtAvailabilityStatus === "available"
+                            ? "border-green-500 bg-green-50 text-green-700"
+                            : "border-[#e9edef] bg-[#f8f9fa] text-[#9CA3AF]"
+                        }`}
+                      >募集している</button>
+                      <button
+                        onClick={() => { setMgmtAvailabilityStatus("ended"); setPreview(""); }}
+                        className={`flex-1 rounded-xl border-2 py-2.5 text-xs font-bold transition ${
+                          mgmtAvailabilityStatus === "ended"
+                            ? "border-red-400 bg-red-50 text-red-600"
+                            : "border-[#e9edef] bg-[#f8f9fa] text-[#9CA3AF]"
+                        }`}
+                      >募集終了した</button>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="mb-1 text-xs font-bold text-[#54656f]">補足 <span className="font-normal text-[#90a4ae]">（任意）</span></p>
+                    <textarea
+                      value={inputText}
+                      onChange={(e) => { setInputText(e.target.value); setPreview(""); }}
+                      placeholder="例：申込はまだ入っていない、今週中なら先行申込可 等"
+                      rows={2}
+                      className="w-full resize-none rounded-xl border border-[#d1d7db] px-3 py-2.5 text-sm text-[#111b21] outline-none focus:border-[#2196F3] placeholder:text-[#8696a0]"
+                    />
+                  </div>
+                </div>
+              )}
+
               {/* テキスト入力（初期費用は見積書以外で表示、保証会社確認・駐車場・ペット・入居可能日・他パターンは条件付き表示） */}
-              {((checkPattern !== "mgmt_initial_cost" && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_parking" && checkPattern !== "mgmt_pet" && checkPattern !== "nearby_parking" && checkPattern !== "mgmt_move_in") || mgmtCostType === "negotiation") && (
+              {((checkPattern !== "mgmt_initial_cost" && checkPattern !== "mgmt_guarantor" && checkPattern !== "mgmt_parking" && checkPattern !== "mgmt_pet" && checkPattern !== "mgmt_availability" && checkPattern !== "nearby_parking" && checkPattern !== "mgmt_move_in") || mgmtCostType === "negotiation") && (
                 <div>
                   <p className="mb-1 text-xs font-bold text-[#54656f]">
                     {checkPattern === "vacate_date" ? "または直接入力・補足" : checkPattern === "mgmt_equipment" ? "確認した設備状況" : "確認した内容"}

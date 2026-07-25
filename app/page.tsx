@@ -596,7 +596,7 @@ export default function Home() {
   const [aixInitViewingReschedule, setAixInitViewingReschedule] = useState(false);
   const [aixInitInputText, setAixInitInputText] = useState("");
   // 管理会社に確認したピッカー: 選択した確認種別をAIXモーダルへ引き継ぐ
-  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "nearby_parking" | null>(null);
+  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | null>(null);
   // 物件成約した（管理会社確認ピッカーのサブ項目）: 中間フォーム用state
   const [showContractedForm, setShowContractedForm] = useState(false);
   const [contractedPropertyName, setContractedPropertyName] = useState("");
@@ -10409,6 +10409,13 @@ export default function Home() {
             <div className="flex flex-col gap-2.5 max-h-[65vh] overflow-y-auto -mx-1 px-1">
               {([
                 {
+                  key: "mgmt_availability",
+                  label: "募集状況について",
+                  desc: "募集中か募集終了かを管理会社に確認した結果を報告",
+                  hint: "",
+                  icon: <><path d="M36 20L50 30V52H22V30L36 20Z" stroke="#546E7A" strokeWidth="1.8" strokeLinejoin="round"/><circle cx="40" cy="40" r="6" stroke="#546E7A" strokeWidth="1.8"/><path d="M44.5 44.5L49 49" stroke="#546E7A" strokeWidth="1.8" strokeLinecap="round"/></>
+                },
+                {
                   key: "vacate_date",
                   label: "退去予定日について",
                   desc: "退去予定日を管理会社に確認した結果を報告",
@@ -10484,7 +10491,7 @@ export default function Home() {
                     <path d="M30 39l4 4 9-9.5" stroke="#2E7D32" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
                   </>
                 },
-              ] as Array<{ key: "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "property_contracted"; label: string; desc: string; hint: string; icon: ReactNode }>).map(({ key, label, desc, hint, icon }) => {
+              ] as Array<{ key: "mgmt_availability" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "property_contracted"; label: string; desc: string; hint: string; icon: ReactNode }>).map(({ key, label, desc, hint, icon }) => {
                 const isSuggested = suggestedPropertyCheckMode === key;
                 return (
                 <button

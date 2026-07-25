@@ -2253,10 +2253,10 @@ JSONのみ: {"greeting":"①","report":"②（[物件名]解決済み・改行�
         return finalizeResponse(message_text, { doc_image_url: String(image_url) });
       }
 
-    // ── 🏢 管理会社に確認した（退去予定日・入居可能日・初期費用・駐車場・ペット飼育）＋ 近隣月極駐車場確認 ──────────
+    // ── 🏢 管理会社に確認した（退去予定日・入居可能日・初期費用・駐車場・ペット飼育・設備・募集状況）＋ 近隣月極駐車場確認 ──────────
     } else if (
       action === "property_check_result" &&
-      (check_pattern === "vacate_date" || check_pattern === "mgmt_move_in" || check_pattern === "mgmt_initial_cost" || check_pattern === "mgmt_parking" || check_pattern === "mgmt_pet" || check_pattern === "mgmt_equipment" || check_pattern === "nearby_parking")
+      (check_pattern === "vacate_date" || check_pattern === "mgmt_move_in" || check_pattern === "mgmt_initial_cost" || check_pattern === "mgmt_parking" || check_pattern === "mgmt_pet" || check_pattern === "mgmt_equipment" || check_pattern === "mgmt_availability" || check_pattern === "nearby_parking")
     ) {
       let mgmtInfo = extra_input ? String(extra_input).trim() : "";
       // 駐車場・ペット飼育: 構造化入力（ピッカー選択+テキスト）からスタッフ入力情報を組み立てる
@@ -2289,6 +2289,12 @@ JSONのみ: {"greeting":"①","report":"②（[物件名]解決済み・改行�
         const roomSuffix = moveInRoomNo ? `${moveInRoomNo}号室` : "";
         const guidanceLabel = moveInGuidanceType === "申込" ? "申込誘導" : "内覧誘導";
         mgmtInfo = `物件名: ${moveInPropName}${roomSuffix}\n退去予定日: ${moveInVacateDate}\n最短入居可能時期: ${moveInMonth}${moveInPeriod}\n誘導タイプ: ${guidanceLabel}`;
+      } else if (check_pattern === "mgmt_availability") {
+        const availabilityStatus = body.mgmt_availability_status as string | undefined;
+        if (availabilityStatus !== "available" && availabilityStatus !== "ended") throw new Error("募集状況が必要です");
+        const lines = [`募集状況：${availabilityStatus === "available" ? "現在まだ募集している（募集中）" : "募集が終了した"}`];
+        if (mgmtInfo) lines.push(`補足：${mgmtInfo}`);
+        mgmtInfo = lines.join("\n");
       } else if (check_pattern === "nearby_parking") {
         const nearbyName = body.nearby_parking_name as string | undefined;
         const nearbyDistance = body.nearby_parking_distance as string | undefined;
@@ -2390,6 +2396,12 @@ ${name}お気に召されましたら[内覧解禁日]以降でご案内させ�
 ・設備がない/古い場合も正直に伝えつつ（謝罪表現は使用禁止）、前向きに締める
 ・複数の設備がある場合は各設備を1行ずつ記載してよい`,
         },
+        mgmt_availability: {
+          // 募集状況は会話文脈に合わせた自由生成（mgmtSystem側で専用プロンプトを使用。format/rulesは未使用）
+          label: "募集状況",
+          format: "",
+          rules: "",
+        },
         nearby_parking: {
           label: "近隣の月極駐車場",
           format: `${mgmtGreeting}
@@ -2407,8 +2419,39 @@ ${name}お気に召されましたら[内覧解禁日]以降でご案内させ�
 
       const mgmtCostType = body.mgmt_cost_type as string | undefined;
       const isNegotiation = mgmtCostType === "negotiation";
+      const isAvailability = check_pattern === "mgmt_availability";
+      const availabilityStatus = body.mgmt_availability_status as string | undefined;
 
-      const mgmtSystem = isNegotiation
+      const mgmtSystem = isAvailability
+        ? `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
+管理会社に物件の募集状況を確認した結果をお客様に報告するLINEメッセージを1つだけ作成してください。
+
+${SMORA_COMMON_RULES}
+
+【お客様の呼び方】必ず「${name}」で呼ぶこと
+
+【メッセージ構成】
+①挨拶：「${mgmtGreeting}」
+②結果報告（この一文を軸にする・必ず入れる）：${availabilityStatus === "available" ? "「管理会社に確認しましたところ現在まだ募集しているとのことでした！！」" : "「管理会社に確認しましたところ募集が終了したとのことでした」"}
+③会話の文脈に合わせた続き（1〜2行）：会話履歴からお客様の質問・希望を読み取り、それに自然につながる内容にする
+
+【③ 続きの書き方】
+${availabilityStatus === "available"
+  ? `・会話履歴でお客様が内覧や申込を希望していればそれに誘導する（例:「${name}お気に召されましたらご内覧・お申込みのご案内をさせて頂きます😊！！」）
+・スタッフ入力に補足があればその情報を必ず反映する（例: 申込がまだ入っていない→「まだお申込みも入っていない状況ですのでお早めのご検討がおすすめです！！」）
+・人気物件感を出しつつ押し付けにならないようにする`
+  : `・残念な結果だが謝罪表現（「申し訳ございません」等）は使用禁止。正直に伝えつつ前向きに締める
+・「ご希望の条件に合うお部屋を改めてピックアップさせて頂きます😊！！」のように次の提案につなげる
+・会話履歴からお客様の希望条件が分かればそれに触れてよい`}
+
+【物件名の特定】
+会話履歴からお客様が確認依頼した物件を特定し②の文頭に「[物件名]につきまして」のように付ける（号室があれば「マンション名 806号室」形式・先頭0省略）。特定できない場合は物件名なしで②をそのまま使う
+
+【厳守ルール】
+・感嘆符は「！！」（スモラスタイル）
+・絵文字は 😊 😌 のみ・1〜2個まで（他は全禁止）
+・完成したLINEメッセージのみ出力（候補複数・前置きは禁止）`
+        : isNegotiation
         ? `あなたは賃貸仲介サービス「スモラ」のLINE営業担当です。
 管理会社への初期費用交渉結果をお客様に報告するLINEメッセージを1つだけ作成してください。
 
