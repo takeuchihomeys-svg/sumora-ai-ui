@@ -30,11 +30,11 @@ type EditableItems = Omit<ExtractedEstimate, "otherItems"> & {
   nextYear: number;
   guaranteeRate: number; // 賃貸保証料率（%）デフォルト50
   cleaningAtDeparture: boolean; // クリーニング代を退去時清算にする（初期費用から除外）
-  cleaningLabel: string; // クリーニング費の項目名（完全自由入力・空ならExcel B25も空欄）
+  cleaningLabel: string; // クリーニング費の項目名（完全自由入力・空かつ金額ありならExcel B25は「ハウスクリーニング代」）
 };
 
-// item名に「(月)」「（月）」「月額」を含むその他費用は月額扱い（毎月費用セクションに表示）
-const MONTHLY_ITEM_RE = /[（(]月[)）]|月額/;
+// item名に「(月)」「（月）」「(毎月)」「（毎月）」「月額」「毎月」を含むその他費用は月額扱い（毎月費用セクションに表示）
+const MONTHLY_ITEM_RE = /[（(]毎?月[)）]|月額|毎月/;
 
 // 翌月1日の日付文字列を返す（デフォルト入居日）
 function getDefaultMoveInDate(): string {
@@ -468,8 +468,9 @@ export default function EstimatePage() {
     { label: "火災保険",                            amount: items.insurance,            editKey: "insurance", alwaysShow: true },
     { label: "鍵交換代",                            amount: items.keyExchange,          editKey: "keyExchange" },
     // クリーニング代は退去時清算の場合、初期費用に含めない
-    // 項目名は固定しない（抗菌施工費/アクト安心ライフ等をハードコードしない）。未入力ならプレースホルダ表示
-    ...(items.cleaningAtDeparture ? [] : [{ label: items.cleaningLabel || "（項目名未入力）", amount: items.cleaning, editKey: "cleaning" as keyof EditableItems }]),
+    // 項目名は固定しない（抗菌施工費/アクト安心ライフ等をハードコードしない）。
+    // 未入力かつ金額あり→「ハウスクリーニング代」（Excel B25と同じフォールバック）、未入力かつ金額なし→プレースホルダ表示
+    ...(items.cleaningAtDeparture ? [] : [{ label: items.cleaningLabel || (items.cleaning > 0 ? "ハウスクリーニング代" : "（項目名未入力）"), amount: items.cleaning, editKey: "cleaning" as keyof EditableItems }]),
     { label: "駐車場保証金",                        amount: items.parkingDeposit,       editKey: "parkingDeposit" },
     { label: items.nextMonth > 0 ? `${items.nextMonth}月分 駐車場代` : "翌月駐車場代", amount: items.parkingMonthly, editKey: "parkingMonthly" },
     // 月額扱い以外のその他費用（初回のみ費用）

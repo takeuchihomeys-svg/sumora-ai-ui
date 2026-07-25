@@ -45,7 +45,7 @@ type ItemData = {
   keyExchange: number;
   cleaning: number;
   cleaningAtDeparture?: boolean;
-  cleaningLabel?: string; // 行25の項目名（完全自由入力・空ならB25も空欄・固定名なし）
+  cleaningLabel?: string; // 行25の項目名（完全自由入力・空かつ金額ありなら「ハウスクリーニング代」・金額0ならB25空欄）
   parkingDeposit: number;
   parkingMonthly: number;
   otherItems: Array<{ item: string; amount: number }>;
@@ -263,7 +263,7 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
     oneTimeItems.push({ label: "駐車場仲介手数料", amount: parkingTotal });
   if (d.parkingMonthly)
     oneTimeItems.push({ label: "翌月駐車場代", amount: d.parkingMonthly });
-  const isMonthlyOther = (name: string) => /[（(]月[)）]|月額/.test(name);
+  const isMonthlyOther = (name: string) => /[（(]毎?月[)）]|月額|毎月/.test(name);
   for (const oi of d.otherItems || []) {
     if (!oi.item || oi.amount <= 0) continue;
     if (isMonthlyOther(oi.item))
@@ -306,8 +306,9 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
   // 行25（クリーニング/抗菌施工費/アクト安心ライフ 等）: 0円のときはラベルごと空欄にして非表示
   if (d.cleaning && !d.cleaningAtDeparture) {
     // 項目名は固定しない（抗菌施工費/アクト安心ライフをハードコードしない）。
-    // ユーザー入力値を書き込み、未入力ならテンプレートの既定ラベルも消して空欄にする
-    ws.getCell("B25").value = d.cleaningLabel || "";
+    // ユーザー入力値を書き込み、未入力かつ金額ありなら汎用名「ハウスクリーニング代」にフォールバック
+    // （金額だけの匿名行を防ぐ。金額0のときは下のelse分岐でラベルごと空欄）
+    ws.getCell("B25").value = d.cleaningLabel || "ハウスクリーニング代";
     setCell(ws, "E25", d.cleaning);
     setCell(ws, "F25", d.cleaning);
   } else {
