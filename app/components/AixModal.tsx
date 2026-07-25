@@ -574,6 +574,11 @@ export default function AixModal({
   const [estimateCoverLetter, setEstimateCoverLetter] = useState<string>("");
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [previewBackup, setPreviewBackup] = useState<string>("");
+  // 全画面編集オーバーレイ: iOSキーボード対応（visualViewportに高さ・位置を追従させる）
+  // fixed inset-0 はレイアウトビューポート基準のため、iOSでキーボードが開くと
+  // textarea下部と送信ボタンがキーボードの裏に隠れ、キャレット表示のための
+  // 強制スクロールで画面が跳ねる。vv.height/offsetTopに追従させて防ぐ。
+  const [editViewport, setEditViewport] = useState<{ height: number; top: number; keyboardOpen: boolean } | null>(null);
   const [useEmoji, setUseEmoji] = useState(true);
   const [showTemplateInfo, setShowTemplateInfo] = useState(false);
   const [topPhrases, setTopPhrases] = useState<{ phrase: string; usage_count: number }[]>([]);
@@ -844,6 +849,27 @@ export default function AixModal({
   const viewingVacancyInputRef = useRef<HTMLInputElement | null>(null);
   const confirmImageInputRef = useRef<HTMLInputElement | null>(null);
   const mgmtDocInputRef = useRef<HTMLInputElement | null>(null);
+
+  // 全画面編集オーバーレイ表示中のみ visualViewport を監視（iOSキーボード対応）
+  useEffect(() => {
+    if (!previewExpanded) {
+      setEditViewport(null);
+      return;
+    }
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const handler = () => {
+      const kh = Math.max(0, window.innerHeight - vv.height);
+      setEditViewport({ height: vv.height, top: vv.offsetTop, keyboardOpen: kh > 100 });
+    };
+    handler();
+    vv.addEventListener("resize", handler);
+    vv.addEventListener("scroll", handler);
+    return () => {
+      vv.removeEventListener("resize", handler);
+      vv.removeEventListener("scroll", handler);
+    };
+  }, [previewExpanded]);
 
   // 会話が変わったらシンプルモードをリセット
   useEffect(() => {
@@ -5545,8 +5571,15 @@ export default function AixModal({
 
       {/* 全画面編集オーバーレイ */}
       {previewExpanded && (
-        <div className="fixed inset-0 z-[60] flex flex-col bg-white"
-          style={{ paddingTop: "max(env(safe-area-inset-top), 0px)", paddingBottom: "max(env(safe-area-inset-bottom), 0px)" }}>
+        <div className="fixed left-0 right-0 z-[60] flex flex-col bg-white"
+          style={{
+            // visualViewport に高さ・位置を追従（キーボードの裏に隠れない・画面が跳ねない）
+            top: editViewport ? `${editViewport.top}px` : 0,
+            height: editViewport ? `${editViewport.height}px` : "100dvh",
+            paddingTop: "max(env(safe-area-inset-top), 0px)",
+            // キーボード表示中は下端＝キーボード上端なので safe-area 余白は不要
+            paddingBottom: editViewport?.keyboardOpen ? 0 : "max(env(safe-area-inset-bottom), 0px)",
+          }}>
           {/* ヘッダー */}
           <div className="flex items-center justify-between border-b border-[#f0f2f5] px-4 py-3"
             style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
@@ -5574,8 +5607,13 @@ export default function AixModal({
             value={preview}
             onChange={(e) => setPreview(e.target.value)}
             autoFocus
-            className="flex-1 resize-none px-5 py-4 text-[15px] leading-7 text-[#111b21] outline-none"
-            style={{ fontFamily: "inherit" }}
+            className="min-h-0 flex-1 resize-none overflow-y-auto px-5 py-4 text-[15px] leading-7 text-[#111b21] outline-none"
+            style={{
+              fontFamily: "inherit",
+              WebkitOverflowScrolling: "touch" as React.CSSProperties["WebkitOverflowScrolling"],
+              overscrollBehavior: "contain",
+              paddingBottom: "64px", // 最終行がキーボード直上でも編集できる余白
+            }}
           />
           {/* 送信ボタン（展開中も送信可） */}
           <div className="border-t border-[#f0f2f5] px-4 py-3">

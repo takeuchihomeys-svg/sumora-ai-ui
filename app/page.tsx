@@ -6646,7 +6646,8 @@ export default function Home() {
                     maxHeight: (inputFocused && keyboardHeight > 100)
                       ? `${Math.min((viewportHeight ?? 500) - 140, 400)}px`
                       : keyboardHeight > 100 ? "180px" : "320px",
-                    overflowY: textareaHeightPx > 80 ? "scroll" : "hidden",
+                    // auto: maxHeightでclampされた時だけ内部スクロール（キーボード表示中の画面ジャンプ防止）
+                    overflowY: "auto",
                     WebkitOverflowScrolling: "touch" as React.CSSProperties["WebkitOverflowScrolling"],
                     overscrollBehavior: "contain",
                     paddingBottom: "48px", // 最終行をスクロールアップできるよう余白
