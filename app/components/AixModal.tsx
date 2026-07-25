@@ -3776,6 +3776,8 @@ export default function AixModal({
                       onClick={() => {
                         setCheckPattern(p.key);
                         setPreview("");
+                        // パターン切替時に旧パターンの下書きを破棄（「会話を合わせる」で古い base_message が使われるバグ防止）
+                        setAiDraft("");
                         setCheckAvailableApp(null);
                         setShowCheckCalendar(false);
                         if (p.key !== "exclusive") {

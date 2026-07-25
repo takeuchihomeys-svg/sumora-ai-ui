@@ -2484,6 +2484,81 @@ ${mgmtInfo}${recentHistory}`,
           message_text = await adaptMessageToConversation(baseMessage, recentHistory, name, currentAction, "");
           return finalizeResponse(message_text);
         }
+
+        // バグ修正: 「会話を合わせる」は生成前（aiDraft空）に押される動線のため base_message が無く、
+        // スタッフが選択した確認結果（check_pattern）がAIに一切渡らず
+        // 「募集状況確認させて頂きます」等の確認前メッセージが生成されていた。
+        // → 結果が確定している unavailable/exclusive は固定テンプレを内部生成して適応モードへ、
+        //   それ以外は確認結果をプロンプトに必ず注入する。
+        const cmPattern = String(check_pattern ?? "");
+        const cmSentCount = (body.sent_property_count as number | undefined) ?? null;
+
+        // 「物件なかった」: 固定テンプレ（通常生成と同一文面）をベースに会話適応
+        // （adaptMessageToConversation のガードで確認前文への書き換えは絶対禁止済み）
+        if (cmPattern === "unavailable") {
+          const cmUnavailPropName = typeof property_name === "string" ? property_name.trim() : "";
+          let cmBase: string;
+          if (cmSentCount !== null) {
+            cmBase = `${name}お送りいただきました物件${cmSentCount}件\n現在全て募集終了しているお部屋となります。\n他にも良いお部屋を探してご連絡させていただきます！！`;
+          } else if (cmUnavailPropName) {
+            cmBase = `${name}お世話になっております！！\nお送り頂きました${cmUnavailPropName}の募集状況確認させて頂きましたところ現在募集が終了しているお部屋となります！！`;
+          } else {
+            const cmCountM = recentHistory.match(/([2-9０-９])\s*件/);
+            const cmCnt = cmCountM ? parseInt(cmCountM[1].replace(/[０-９]/g, (c) => String(c.charCodeAt(0) - 0xFF10))) : 1;
+            cmBase = cmCnt >= 2
+              ? `${name}お世話になっております！！\nお送り頂きました${cmCnt}件の物件につきまして募集状況確認させて頂きましたところ現在いずれも募集が終了しているお部屋となります！！`
+              : `${name}お世話になっております！！\nお送り頂きました物件の募集状況確認させて頂きましたところ現在募集が終了しているお部屋となります！！`;
+          }
+          message_text = await adaptMessageToConversation(cmBase, recentHistory, name, currentAction, "");
+          return finalizeResponse(message_text);
+        }
+
+        // 「専任物件だった」: 固定文をベースに会話適応
+        if (cmPattern === "exclusive") {
+          const cmExPropName = ((body.exclusive_prop_name as string | undefined) ?? "").trim();
+          const cmExRoomNo = ((body.exclusive_room_no as string | undefined) ?? "").trim();
+          const cmBase = `お送りいただきました${cmExPropName}${cmExRoomNo}は専任のお部屋となっており、弊社ではご紹介ができないお部屋となります！！\n\nよろしければ私の方で${name}にオススメ出来るお部屋ピックアップさせていただきます😊！！`;
+          message_text = await adaptMessageToConversation(cmBase, recentHistory, name, currentAction, "");
+          return finalizeResponse(message_text);
+        }
+
+        // 「物件あった」「別の部屋が募集してた」等: 自由生成だが確認結果を必ず注入
+        const CM_RESULT_DESC: Record<string, string> = {
+          available: "空室あり・入居可能（募集中）",
+          alternative: "リクエストのお部屋は募集終了。ただし同じ物件で別のお部屋が募集中",
+        };
+        const CM_STATUS_LABEL: Record<string, string> = {
+          available: "空室・募集中",
+          vacating: "退去予定あり（募集中）",
+          unavailable: "申込あり",
+          alternative: "別のお部屋が募集中",
+        };
+        const cmPropNamesRaw = ((property_names as string[] | undefined) ?? []).map((s) => (s ?? "").trim());
+        const cmStatuses = (prop_statuses as string[] | undefined) ?? [];
+        const cmPropCount = (property_count as number | undefined) ?? 0;
+        const cmPerPropLines = cmPattern === "available" && cmPropCount > 0
+          ? Array.from({ length: cmPropCount }, (_, i) => {
+              const nm = cmPropNamesRaw[i] || `物件${i + 1}`;
+              return `　- ${nm}: ${CM_STATUS_LABEL[cmStatuses[i] ?? ""] ?? "募集中"}`;
+            }).join("\n")
+          : "";
+        const cmSinglePropName = typeof property_name === "string" && property_name.trim() ? property_name.trim() : "";
+        const cmEndedFloor = body.ended_floor as number | undefined;
+        const cmEndedUnit = ((body.ended_unit as string | undefined) ?? "").trim();
+        const cmResultLines = [
+          `・確認結果: ${CM_RESULT_DESC[cmPattern] ?? "会話履歴から読み取ること"}`,
+          cmSinglePropName ? `・対象物件名: ${cmSinglePropName}` : "",
+          cmPerPropLines ? `・確認できた物件と状態:\n${cmPerPropLines}` : "",
+          cmPattern === "alternative" && cmEndedFloor != null ? `・募集終了だったお部屋: ${cmEndedFloor}階${cmEndedUnit ? `${cmEndedUnit}号室` : ""}` : "",
+          cmSentCount !== null ? `・お客様から送られた物件数: ${cmSentCount}件` : "",
+        ].filter(Boolean).join("\n");
+        const cmResultBlock = cmPattern
+          ? `【スタッフの確認結果（確定事実・必ずこの結果を報告するメッセージにすること）】
+${cmResultLines}
+・スタッフは既に募集状況の確認を完了しています。上記の結果を報告するメッセージを作成してください
+・「確認させて頂きます」「確認いたします」等の確認前メッセージの生成は絶対禁止（確認は完了済み）`
+          : "";
+
         const calendarNoteForPCR = calendar_info ? String(calendar_info) : "";
         const pcrCalendarBlock = calendarNoteForPCR
           ? `【内覧可能日時（カレンダー自動取得・空室時はこの日程で案内すること）】\n${calendarNoteForPCR}`
@@ -2491,8 +2566,8 @@ ${mgmtInfo}${recentHistory}`,
         const [pcrDiffNote, pcrStarNote, pcrDbRules] = await Promise.all([
           getKnowledgeForState(AIX_ACTION_TO_STATES.property_check_result, currentAction, conversationId, latestCustomerMsg),
           getStarredExamplesForAction(AIX_ACTION_TO_STATES.property_check_result, latestCustomerMsg),
-          // availability パスにも check_pattern を渡す（空conditionsだと check_pattern 指定ルールが全除外されるため）
-        fetchPromptRules("property_check_result", { check_pattern: "availability" }).catch(() => ""),
+          // 実際に選択された check_pattern を渡す（旧: "availability" ハードコードで unavailable 等のDBルールが引けていなかった）
+          fetchPromptRules("property_check_result", { check_pattern: cmPattern || "availability" }).catch(() => ""),
         ]);
 
         const pcrSystem = `${GENERATION_SYSTEM}
@@ -2500,6 +2575,8 @@ ${mgmtInfo}${recentHistory}`,
 ${SMORA_COMMON_RULES}
 
 【お客様名】「${name}」
+
+${cmResultBlock}
 
 ${pcrCalendarBlock}
 
@@ -2518,6 +2595,7 @@ ${pcrCalendarBlock}
 ・🙏 絵文字は絶対に使わない
 ・「申し訳ございません」等の謝罪表現
 ・物件名の創作
+・スタッフの確認結果があるのに「確認させて頂きます」等の確認前メッセージを生成すること
 
 【出力形式（必須・JSONのみ・説明不要）】
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
