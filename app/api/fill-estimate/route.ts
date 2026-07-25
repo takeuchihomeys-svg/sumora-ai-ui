@@ -272,13 +272,14 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
       oneTimeItems.push({ label: oi.item, amount: oi.amount });
   }
 
-  // 毎月の費用の合計 → 契約条件「その他」(M20) に反映
-  // 家賃 + 共益費 + 水道代 + 月額その他費用（例: サポート料(月額)1,320）の合算
+  // その他月額費用の合計 → 契約条件「その他」(M20) に反映
+  // 水道代 + 月額その他費用（例: サポート料(月額)1,320）の合算
+  // ※ 家賃はM15・共益費はM16に単独出力済みのため、M20には含めない
   const sonotaMonthly = (d.otherItems || [])
     .filter(oi => oi.item && oi.amount > 0 && isMonthlyOther(oi.item))
     .reduce((s, oi) => s + oi.amount, 0);
-  const monthlyTotal = (d.rent || 0) + (d.managementFee || 0) + (d.waterFee || 0) + sonotaMonthly;
-  setCell(ws, "M20", monthlyTotal);
+  const otherMonthlyTotal = (d.waterFee || 0) + sonotaMonthly;
+  setCell(ws, "M20", otherMonthlyTotal);
 
   // 合計計算用（書き込み位置に関係なく全項目を合算）
   const dynamicItems: DynItem[] = [...monthlyItems, ...oneTimeItems];
