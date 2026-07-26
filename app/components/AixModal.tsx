@@ -797,6 +797,11 @@ export default function AixModal({
   const [viewingVacancyPreview, setViewingVacancyPreview] = useState("");
   const [viewingVacancyOcrLoading, setViewingVacancyOcrLoading] = useState(false);
 
+  // 内覧へ！通常モード: 物件名（任意）＋物件資料画像OCR
+  const [viewingPropertyName, setViewingPropertyName] = useState("");
+  const [viewingPropImagePreview, setViewingPropImagePreview] = useState("");
+  const [isExtractingPropertyName, setIsExtractingPropertyName] = useState(false);
+
   // 内覧へ！内覧日指定あり専用
   const [viewingSpecificMode, setViewingSpecificMode] = useState(!!initialViewingSpecificMode);
   // 内覧へ！日程変更モード専用
@@ -847,6 +852,7 @@ export default function AixModal({
   const estimateMultiRefs = [estimateMulti1Ref, estimateMulti2Ref, estimateMulti3Ref];
   const meetingPropertyInputRef = useRef<HTMLInputElement | null>(null);
   const viewingVacancyInputRef = useRef<HTMLInputElement | null>(null);
+  const viewingPropInputRef = useRef<HTMLInputElement | null>(null);
   const confirmImageInputRef = useRef<HTMLInputElement | null>(null);
   const mgmtDocInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -1296,6 +1302,36 @@ export default function AixModal({
     setCheckPropOcrLoading(prev => prev.map((v, i) => i === propIdx ? false : v));
   };
 
+  // 内覧へ！通常モード: 物件資料画像から物件名（号室なし）をOCRで自動入力
+  const extractViewingPropertyName = async (file: File) => {
+    setIsExtractingPropertyName(true);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result ?? ""));
+        reader.onerror = () => reject(new Error("画像の読み込みに失敗しました"));
+        reader.readAsDataURL(file);
+      });
+      setViewingPropImagePreview(dataUrl);
+      const base64 = dataUrl.split(",")[1];
+      const res = await fetch("/api/extract-property-name", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image_base64: base64, media_type: file.type || "image/jpeg" }),
+      });
+      const data = await res.json() as { ok?: boolean; propertyName?: string };
+      const name = (data.propertyName ?? "").trim();
+      if (name) {
+        // OCR中にスタッフが手入力した場合は上書きしない
+        setViewingPropertyName(prev => prev.trim() ? prev : name);
+      }
+    } catch (ocrErr) {
+      // OCR失敗は致命的ではない（手入力可能）が、握りつぶさずログに残す
+      console.error("[AixModal] 内覧 物件名OCR失敗:", ocrErr);
+    }
+    setIsExtractingPropertyName(false);
+  };
+
   // 物件画像から物件名・退去予定日をまとめて読み取るヘルパー（submit時に呼ぶ）
   const extractPropInfoFromImages = async (count: number): Promise<{ name: string; vacancyDate: string }[]> => {
     const results: { name: string; vacancyDate: string }[] = [];
@@ -1742,7 +1778,8 @@ export default function AixModal({
         const s = viewingSpecificStart.trim();
         const e = viewingSpecificEnd.trim();
         const timeText = s && e ? `${s}〜${e}` : s || "";
-        const msg = `はい😊！！\n${viewingSpecificDate.trim()}ですと${timeText}ご内覧可能です！！\n${customerName}さんご都合如何でしょうか😌！！`;
+        const propLine = viewingPropertyName.trim() ? `${viewingPropertyName.trim()}\n` : "";
+        const msg = `はい😊！！\n${propLine}${viewingSpecificDate.trim()}ですと${timeText}ご内覧可能です！！\n${customerName}さんご都合如何でしょうか😌！！`;
         setAiDraft(msg);
         setPreview(useEmoji ? msg : stripEmoji(msg));
         setLoading(false);
@@ -1848,6 +1885,10 @@ export default function AixModal({
           .filter(Boolean)
           .join("\n");
         if (selectedSlots) body.calendar_info = selectedSlots;
+      }
+      // 内覧へ！通常モード: 物件名（任意）があれば生成メッセージに反映（API側は property_name 対応済み）
+      if (actionType === "viewing_invite" && !viewingIsVacancy && viewingPropertyName.trim()) {
+        body.property_name = viewingPropertyName.trim();
       }
       // おすすめポイント + 強調ポイントを結合
       const focusPrefix = recommendFocusPoints.length > 0
@@ -4892,6 +4933,63 @@ export default function AixModal({
           {/* 内覧へ！: 退去予定物件 / 内覧日指定ありトグル */}
           {actionType === "viewing_invite" && (
             <div className="mb-3">
+              {/* 物件名（任意）: 手入力 or 画像貼り付け/選択でOCR自動入力（退去予定物件モードは専用入力があるため非表示） */}
+              {!viewingIsVacancy && (
+                <div
+                  className="mb-2"
+                  onPaste={(e) => {
+                    const item = Array.from(e.clipboardData.items).find(it => it.type.startsWith("image/"));
+                    const f = item?.getAsFile();
+                    if (f) { e.preventDefault(); void extractViewingPropertyName(f); }
+                  }}
+                >
+                  <label className="mb-1 block text-xs font-semibold text-[#54656f]">
+                    物件名 <span className="font-normal text-[#90a4ae]">（任意・画像貼り付けで自動入力）</span>
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={viewingPropertyName}
+                      onChange={(e) => setViewingPropertyName(e.target.value)}
+                      placeholder="物件名を入力..."
+                      className="w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2 text-sm outline-none focus:border-emerald-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => viewingPropInputRef.current?.click()}
+                      className="shrink-0 rounded-full bg-[#f0f2f5] px-3 py-1.5 text-xs font-bold text-[#54656f]"
+                    >
+                      📎 画像
+                    </button>
+                    <input
+                      ref={viewingPropInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) void extractViewingPropertyName(f);
+                        if (viewingPropInputRef.current) viewingPropInputRef.current.value = "";
+                      }}
+                    />
+                  </div>
+                  {isExtractingPropertyName && (
+                    <p className="mt-1 flex items-center gap-1.5 text-xs text-[#90a4ae]">
+                      <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
+                      画像から物件名を読み取り中...
+                    </p>
+                  )}
+                  {viewingPropImagePreview && (
+                    <div className="relative mt-1 inline-block">
+                      <img src={viewingPropImagePreview} alt="物件資料" className="h-16 rounded-lg border border-[#d1d7db] object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => setViewingPropImagePreview("")}
+                        className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-[#54656f] text-[10px] text-white"
+                      >×</button>
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="flex items-center gap-2">
                 <button
                   type="button"
