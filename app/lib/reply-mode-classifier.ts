@@ -75,7 +75,9 @@ const CONDITION_FORM_PATTERNS: RegExp[] = [
 ];
 const CONDITION_CHANGE_RE =
   /(もっと|もう少し|さらに).{0,6}(安|広|抑え)|やっぱり.*間取り|エリア.{0,6}(広げ|変え)|家賃.{0,8}(上げ|下げ|抑え)/;
-const ESTIMATE_REQUEST_RE = /(初期費用|見積|費用.*教え|いくら.*かかる)/;
+// 「初期費用はいくらですか？内訳も教えてください」「スモ割使えますか？」等を確実にキャッチする
+const ESTIMATE_REQUEST_RE =
+  /(初期費用|見積|スモ割|費用.{0,8}(教え|内訳|詳細)|いくら.{0,8}(かかる|かかり|です|でしょう)|金額.{0,6}(教え|知り))/;
 const NEGOTIATION_FAILED_STAFF_RE = /(難しい状況|必須.*となっております|できかね)/;
 const NEGOTIATION_ACK_RE = /(そうですか|了解|わかりました|残念)/;
 const CONSIDERING_RE = /(検討(します|させて)|また.*連絡|少し.*考え)/;
@@ -83,7 +85,10 @@ const CONSIDERING_RE = /(検討(します|させて)|また.*連絡|少し.*考�
 // 直近履歴に物件情報（URL or 画像）が含まれるか
 const HISTORY_PROPERTY_RE =
   /https?:\/\/(reins\.|itandi|homes\.co|suumo|athome|lifull|chintai|rakumachi)|物件|お部屋|号室/i;
-const HISTORY_IMAGE_RE = /\[画像\]|\[image\]|image\/(jpeg|png)|スクリーンショット|写真/i;
+// route.ts の履歴ラベルは「【画像を送ってきた】」「【画像を〇枚送ってきた】」（全角隅付き括弧・お客様送信のみ）。
+// 旧パターン \[画像\] はこのラベルに一致せず hasImage が常に false になっていたため両対応にする
+const HISTORY_IMAGE_RE =
+  /【画像を[0-9０-９]*枚?送ってきた】|\[画像\]|\[image\]|image\/(jpeg|png)|スクリーンショット|写真/i;
 
 // ─────────────────────────────────────────────────────────────────────
 // ヘルパー
@@ -241,6 +246,18 @@ export function classifyReplyMode(input: ClassifierInput): ClassifierResult {
     };
   }
 
+  // 初期費用・見積もりの依頼（★履歴画像による hybrid_property_url より先に判定する。
+  // ただしメッセージ自体に物件URLがある場合は空室確認①が先のため hybrid_property_url に譲る）
+  if (ESTIMATE_REQUEST_RE.test(msg) && !PROPERTY_URL_RE.test(msg)) {
+    return {
+      mode: "hybrid",
+      suggestedAction: "estimate_sheet",
+      matchedRule: "hybrid_estimate_request",
+      confidence: "high",
+      shortDraft: "",
+    };
+  }
+
   // 物件URL・画像・空室確認の問い合わせ
   if (PROPERTY_URL_RE.test(msg) || hasImage(history) || PROPERTY_INQUIRY_RE.test(msg)) {
     return {
@@ -270,17 +287,6 @@ export function classifyReplyMode(input: ClassifierInput): ClassifierResult {
       suggestedAction: "property_send",
       matchedRule: "hybrid_condition_change",
       confidence: "medium",
-      shortDraft: "",
-    };
-  }
-
-  // 初期費用・見積もりの依頼
-  if (ESTIMATE_REQUEST_RE.test(msg)) {
-    return {
-      mode: "hybrid",
-      suggestedAction: "estimate_sheet",
-      matchedRule: "hybrid_estimate_request",
-      confidence: "high",
       shortDraft: "",
     };
   }

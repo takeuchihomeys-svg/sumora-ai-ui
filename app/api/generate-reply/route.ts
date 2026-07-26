@@ -107,6 +107,32 @@ async function deriveSuggestedAix(
       };
     }
   }
+  // ─── Step 0.6: 初期費用・見積書の質問を検知（★キャッシュ/DBルールより優先）───
+  // 例:「初期費用はいくらですか？内訳も教えてください」→ 見積書本体はAIX【見積書送る】で作成・送付するため、
+  // AI返信案が見積書カバー文（「御見積書となります…ご査収ください」）を代弁しないよう最優先でAIX誘導を確定させる。
+  // ※ Step 0 のキャッシュが別アクションを返して本判定を潰さないよう、Step 0 より前に置くこと（移動禁止）
+  if (customerMessage) {
+    const estimateKeyword =
+      /(初期費用|見積|スモ割|費用.{0,6}(内訳|詳細)|いくら.{0,8}(かかる|かかり|です|でしょう))/;
+    const estimateRequestForm =
+      /(いくら|どの(くらい|位)|内訳|教え|知りたい|いただけ|頂け|ください|下さい|ですか|でしょうか|お願い|？|\?)/;
+    // 誤爆ガード①: 内覧希望が主目的のメッセージは見積誘導にしない（viewing_invite系に任せる）
+    const viewingReq = /(内覧|内見|見学).{0,4}(したい|希望|でき|いつ|日程|調整)/;
+    // 誤爆ガード②: 「もっと初期費用安くなる物件ないですか？」等の別物件依頼はピックアップ系（Step 0.5/Step 1）に任せる
+    const otherPropertyReq =
+      /(安|抑え)[^。！!？?\n]{0,10}(物件|お?部屋)|(物件|お?部屋)[^。！!？?\n]{0,8}(ない(です|でしょう)?か|あります|ありません)/;
+    if (
+      estimateKeyword.test(customerMessage) &&
+      estimateRequestForm.test(customerMessage) &&
+      !viewingReq.test(customerMessage) &&
+      !otherPropertyReq.test(customerMessage)
+    ) {
+      return {
+        action: "estimate_sheet",
+        note: "初期費用・見積書のご質問です → AIX【見積書送る】で最大限割引した御見積書を作成してお送りください（AI返信案は作成宣言のみ・見積書本体と金額内訳は必ずAIXから送ってください）",
+      };
+    }
+  }
   // ─── Step 0: webhook が先行計算したキャッシュを確認（最速パス・ネットワーク呼び出し不要）───
   if (conversationId) {
     try {
@@ -739,6 +765,10 @@ function buildGenerationMessages(
     ? `\n\n【📅 内覧日時について】この物件は退去予定/入居中のため現地内覧はできません。「退去後すぐにご案内します」「お申込みでお部屋を先に抑えてからのご内覧も可能です」の方向で返すこと。`
     : `\n\n【📅 内覧日時の具体的提案は絶対禁止（最優先）】「〇/〇（木）14:00〜」「直近ですと[日付][時間帯]」「〇〇でご都合いかがでしょうか」のような具体的な内覧候補日時・2択日程提示は絶対に出力しない。内覧の日程調整はAIXの「内覧へ」ボタンのテンプレートで別途行うため、AI返信案には含めない。内覧に触れる場合は「お気に召されましたらご都合よろしいお日にちにご案内させて頂きます！！」のみ許可。[日付][時間帯]プレースホルダーも使用禁止。`;
 
+  // 見積書カバー文はAIXの「見積書送る」ボタン専用。generate-replyでは見積書を添付できないため、
+  // 添付済みを装う文面・金額内訳をAI返信案に出さない（内覧日時ゲート viewingFactNote と同型の常時注入ゲート）
+  const estimateGateNote = `\n\n【💰 見積書カバー文の生成は絶対禁止（最優先）】「〜の御見積書となります」「御見積書をお送りします＋ご査収ください」のような、見積書を既に添付した体のカバーメッセージ・初期費用の金額内訳は絶対に出力しない。見積書本体はAIXの「見積書送る」ボタンで別途作成・添付して送るため、AI返信案には含めない。初期費用・見積の質問への返信は「かしこまりました！！最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！」の作成宣言のみ許可（物件名入りの見積書送付文・金額内訳・見積書に対する「ご査収ください」は書かない）。`;
+
   // お客様メッセージ自体がリンク（URL）を求めている場合の専用ノート（引用コンテキスト非依存の保険）
   const isLinkRequestMsg = /(リンク|url|ＵＲＬ)\s*(を|の|教え|くださ|ちょうだい|ください|欲し|ほし|送)/i.test(customerMessage)
     || /(この|こちらの|その|これの|さっきの)(部屋|物件|お部屋).{0,6}(リンク|url|ＵＲＬ)/i.test(customerMessage);
@@ -792,7 +822,7 @@ ${QUOTE_REPLY_JUDGE_NOTE}${quotedContextNote}
 ${history || "なし"}
 
 ${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}
-${customerMessage}${applicationFormNote}${viewingFactNote}${linkRequestNote}
+${customerMessage}${applicationFormNote}${viewingFactNote}${estimateGateNote}${linkRequestNote}
 
 ${examples}${examplesInstruction}
 
