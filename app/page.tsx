@@ -6343,18 +6343,31 @@ export default function Home() {
                   <button onClick={() => { setDismissedPropertySendIds((prev) => { const n = new Set(prev); n.delete(id); return n; }); setShowAixMenu(false); setAixInspectLabel(null); setActiveAixFlow("property_send"); openAixDirect("property_send"); setSuggestPropertySendMap((prev) => { const n = { ...prev }; delete n[id]; return n; }); }}
                     className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
                     style={{ background: "linear-gradient(135deg, #00897B, #26a69a)" }}>AIX 物件ピックアップした</button>
+                  {postAixTemplateMap[id]?.actionType === "condition_hearing" ? (
+                    // ヒアリングAIX直後: このバナーがP7.5を遮蔽するため、ヒアリング【AIX】続きテンプレ誘導を併設
+                    <button onClick={() => { setTemplateOpenContext("post_aix"); setShowTemplateModal(true); }}
+                      className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                      style={{ background: postAixTemplateMap[id].color }}>テンプレ</button>
+                  ) : null}
                   <button onClick={() => setDismissedPropertySendIds((prev) => new Set([...prev, id]))}
                     className="shrink-0 text-teal-400 text-[11px] font-bold">✕</button>
                 </div>
               );
 
               // P6.5: 見積書送付後 → 申込へ！AIX誘導バナー
+              // ※このバナーがP7.5（AIX後の続きテンプレ誘導）より先にreturnして遮蔽するため、
+              //   見積書送る【AIX】テンプレ誘導ボタンをここに併設する（申込プッシュとテンプレ誘導の共存）
               if (suggestApplicationPushMap[id] && !dismissedApplicationPushIds.has(id)) return (
                 <div className="mx-1 mb-1 rounded-2xl border-2 border-red-400 bg-red-50 px-3 py-2 flex items-center gap-2">
                   <span className="text-[12px] font-bold text-red-700 flex-1"><svg className="inline shrink-0" style={{marginRight:"4px",verticalAlign:"-1px"}} width="7" height="9" viewBox="0 0 7 9" fill="currentColor"><polygon points="0,0 7,4.5 0,9"/></svg>見積書送付後 → AIX 申込へ！でクロージング</span>
                   <button onClick={() => { setShowAixMenu(false); setAixInspectLabel(null); openAixDirect("application_push"); setSuggestApplicationPushMap((prev) => { const n = { ...prev }; delete n[id]; return n; }); }}
                     className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
                     style={{ background: "linear-gradient(135deg, #c62828, #E53935)" }}>AIX 申込へ！</button>
+                  {postAixTemplateMap[id] ? (
+                    <button onClick={() => { setTemplateOpenContext("post_aix"); setShowTemplateModal(true); }}
+                      className="shrink-0 rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                      style={{ background: postAixTemplateMap[id].color }}>テンプレ</button>
+                  ) : null}
                   <button onClick={() => setDismissedApplicationPushIds((prev) => new Set([...prev, id]))}
                     className="shrink-0 text-red-400 text-[11px] font-bold">✕</button>
                 </div>
@@ -7741,6 +7754,8 @@ export default function Home() {
             templateOpenContext === "apply_step1" || templateOpenContext === "apply_step2" ? "申込・審査" :
             suggest2ndHandMap[selectedConversation.id] ? "物件確認した【AIX】" :
             activeAixFlow ? AIX_ACTION_META[activeAixFlow]?.templateCategory :
+            // AIX送信直後の手動テンプレオープン: 直近AIXのカテゴリで開く（post_aixバナー未経由でも誘導。次のAIX送信で上書きされる）
+            postAixTemplateMap[selectedConversation.id] ? postAixTemplateMap[selectedConversation.id]?.category :
             (() => {
               // AI提案（nextActionMap）があれば推薦カテゴリで開く（suggestedCategoryバッジと同じ導出）
               const action = nextActionMap[selectedConversation.id]?.action;
@@ -7885,7 +7900,7 @@ export default function Home() {
             return sendMessageText(text, imageUrl, isAix);
           }}
           onDelayedSend={handleDelayedSend}
-          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean }) => {
+          onAfterSend={(meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string }) => {
             // 2通目自動送信スケジュール（AIXフロー用・予約送信は対象外）
             if (pendingSecondMsgRef.current) {
               const config = pendingSecondMsgRef.current;
@@ -8022,16 +8037,18 @@ export default function Home() {
               // B5: AIX送信完了 → 同カテゴリのテンプレートを続けて送るバナーをセット（予約送信も含む）
               // ※専用チェーンバナー（P0/P3/P4/P5.5/P7）がある場合はそちらが優先表示される（バナー優先度P7.5）
               const _b5Meta = AIX_ACTION_META[aixModalType];
-              if (_b5Meta?.templateCategory) {
+              // API主導のカテゴリ（/api/aix/action の suggest_template_category）を優先し、無ければ AIX_ACTION_META にフォールバック
+              const _b5BaseCategory = meta?.suggestTemplateCategory ?? _b5Meta?.templateCategory;
+              if (_b5BaseCategory) {
                 const _b5ConvId = selectedConversation.id;
-                let _b5Category = _b5Meta.templateCategory;
+                let _b5Category = _b5BaseCategory;
                 if (aixModalType === "property_check_result") {
                   if (propertyCheckSubTypeRef.current === "mgmt") _b5Category = "管理会社に確認した【AIX】";
                   else if (propertyCheckSubTypeRef.current === "daihyo") _b5Category = "代表に確認した【AIX】";
                   else if (propertyCheckSubTypeRef.current === "owner") _b5Category = "オーナーに確認した【AIX】";
                   else if (propertyCheckSubTypeRef.current === "nearby_parking") _b5Category = "近隣の月極駐車場を確認した【AIX】";
                 }
-                setPostAixTemplateMap((prev) => ({ ...prev, [_b5ConvId]: { category: _b5Category, color: _b5Meta.color, actionType: aixModalType, sentMessage: lastAixSentTextRef.current.get(_b5ConvId) ?? "" } }));
+                setPostAixTemplateMap((prev) => ({ ...prev, [_b5ConvId]: { category: _b5Category, color: _b5Meta?.color ?? "#607D8B", actionType: aixModalType, sentMessage: lastAixSentTextRef.current.get(_b5ConvId) ?? "" } }));
                 setDismissedPostAixTemplateIds((prev) => { const n = new Set(prev); n.delete(_b5ConvId); return n; });
               }
             }

@@ -55,7 +55,7 @@ interface AixModalProps {
   templateId?: string; // テンプレートモーダル経由で開いた場合のtemplate_id（学習ループ紐付け用）
   onClose: () => void;
   onSend: (text: string, imageUrl?: string, isAix?: boolean) => Promise<void>;
-  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean }) => void;
+  onAfterSend?: (meta?: { suggest2ndHand?: boolean; suggestViewingTemplate?: boolean; suggestViewing?: boolean; scheduled?: boolean; suggestInitialCostTemplate?: boolean; suggestAlternativeSend?: boolean; suggestPropertySend?: boolean; suggestApplicationPush?: boolean; suggestApplicationPushVacating?: boolean; checkPattern?: string; appSubMode?: string; sendMode?: string; wasEdited?: boolean; suggestTemplateCategory?: string }) => void;
   onDelayedSend?: (seconds: number, sendFn: () => Promise<void>) => void;
   onScheduled?: () => void;
   onVacatingDetected?: (date: string) => void;
@@ -550,6 +550,8 @@ export default function AixModal({
   const uploadCacheRef = useRef<Map<File, string>>(new Map());
   // ② UX: actionTypeごとの送信済みステップ番号。送信失敗→「送信する」再押下時に送信済みステップをスキップして重複送信を防ぐ
   const sentStepRef = useRef<Record<string, number>>({});
+  // AIX完了後テンプレ誘導: /api/aix/action レスポンスの suggest_template_category を保持し、onAfterSend で親（page.tsx）へ渡す
+  const suggestTemplateCategoryRef = useRef<string | null>(null);
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>("");
@@ -1987,6 +1989,8 @@ export default function AixModal({
       if (data.coverLetter) setEstimateCoverLetter(data.coverLetter as string);
       // 保証会社確認: 画像URLをstateに保存（TODO: 画像→本文の順で送る際に使用）
       if (data.doc_image_url) setPreviewDocImageUrl(data.doc_image_url as string);
+      // AIX完了後テンプレ誘導カテゴリ（API主導。無ければ親側の AIX_ACTION_META にフォールバックされる）
+      suggestTemplateCategoryRef.current = typeof data.suggest_template_category === "string" ? data.suggest_template_category : null;
     } catch (err) {
       setError(err instanceof Error ? err.message : "エラーが発生しました");
     } finally {
@@ -2270,6 +2274,7 @@ export default function AixModal({
         sendMode: sendMode ?? undefined,
         scheduled: true,
         wasEdited: schedWasEdited,
+        suggestTemplateCategory: suggestTemplateCategoryRef.current ?? undefined,
       });
       onScheduled?.();
       setShowAixScheduleModal(false);
@@ -2371,6 +2376,7 @@ export default function AixModal({
               && _capSent !== _capDraft
               && stripEmoji(_capSent) !== stripEmoji(_capDraft);
             const capturedRunLearning = runLearning;
+            const capturedSuggestTemplateCategory = suggestTemplateCategoryRef.current;
             const sendFn = async () => {
               await capturedOnSend(capturedPreview);
               // UX改善①: 学習は実際に送信が完了した後にのみ実行する
@@ -2389,6 +2395,7 @@ export default function AixModal({
                 appSubMode: capturedAppSubMode ?? undefined,
                 sendMode: capturedSendMode ?? undefined,
                 wasEdited: capturedWasEdited,
+                suggestTemplateCategory: capturedSuggestTemplateCategory ?? undefined,
               });
             };
             onDelayedSend?.(30, sendFn); // 親がsetTimeoutを管理（キャンセル可能）
@@ -2504,6 +2511,7 @@ export default function AixModal({
         appSubMode: appSubMode ?? undefined,
         sendMode: sendMode ?? undefined,
         wasEdited: _sendWasEdited,
+        suggestTemplateCategory: suggestTemplateCategoryRef.current ?? undefined,
       });
       onClose();
     } catch (err) {

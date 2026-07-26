@@ -617,6 +617,22 @@ ${baseMessage}
   }
 }
 
+// AIX完了後のテンプレ誘導: アクション種別 → テンプレートモーダルのカテゴリ名（templates.category の実値）
+// ※page.tsx の AIX_ACTION_META[action].templateCategory と必ず一致させること（フロントはこの値で TemplateModal の initialCategory を開く）
+const AIX_SUGGEST_TEMPLATE_CATEGORY: Record<string, string> = {
+  condition_hearing: "ヒアリング【AIX】",
+  greeting_viewing: "挨拶【AIX】",
+  property_recommendation: "物件オススメ【AIX】",
+  property_send: "物件ピックアップした【AIX】",
+  property_check_result: "物件確認した【AIX】",
+  estimate_sheet: "見積書送る【AIX】",
+  viewing_invite: "内覧へ！【AIX】",
+  application_push: "申込へ！【AIX】",
+  meeting_place: "内覧【AIX】",
+  acknowledge_check: "確認します【AIX】",
+  followup_revive: "追客する【AIX】",
+};
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -624,6 +640,9 @@ export async function POST(request: NextRequest) {
 
     // #30: max_tokens 尻切れ検知ログ・max_tokens決定用のアクション名（リクエストスコープ）
     const currentAction = String(action ?? "");
+
+    // AIX完了後テンプレ誘導: レスポンスに suggest_template_category を付与（マッピングのあるアクションのみ）
+    const suggestTemplateCategory = AIX_SUGGEST_TEMPLATE_CATEGORY[currentAction] ?? null;
 
     // base_message: AIX生成済みドラフト。conversation_match と併用時は「書き直し」ではなく「会話適応」モードになる
     const baseMessage = typeof body.base_message === "string" && body.base_message.trim() ? body.base_message.trim() : null;
@@ -742,7 +761,7 @@ export async function POST(request: NextRequest) {
           }
         });
       }
-      return NextResponse.json({ ok: true, message_text: message, ...(notice ? { notice } : {}), ...(extra ?? {}) });
+      return NextResponse.json({ ok: true, message_text: message, ...(notice ? { notice } : {}), ...(suggestTemplateCategory ? { suggest_template_category: suggestTemplateCategory } : {}), ...(extra ?? {}) });
     };
 
     // phrase_dictionary 取得（固定フォーマット出力でないアクションにのみフレーズ注入する）
@@ -3851,6 +3870,8 @@ ${SMORA_COMMON_RULES}
       ...(cover_letter ? { coverLetter: cover_letter, aiDraft: cover_letter } : {}),
       // condition_hearing のAI導入メッセージ（LL-09）: フロントのプレビュー表示用 + 学習ループ用ドラフト
       ...(hearing_intro_result ? { hearingIntro: hearing_intro_result, aiDraft: hearing_intro_result } : {}),
+      // AIX完了後テンプレ誘導: フロントがテンプレモーダルをこのカテゴリで開く（AixModal→onAfterSend経由）
+      ...(suggestTemplateCategory ? { suggest_template_category: suggestTemplateCategory } : {}),
     });
   } catch (err) {
     console.error("[aix/action]", err);
