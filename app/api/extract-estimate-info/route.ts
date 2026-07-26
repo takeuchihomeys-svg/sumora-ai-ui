@@ -23,6 +23,7 @@ export interface ExtractedEstimate {
   parkingCommission: number;
   parkingCommissionTax: number;
   guarantee: number;
+  monthlyGuaranteeFee: number; // 月額保証料（毎月支払い分）
   insurance: number;
   keyExchange: number;
   cleaning: number;
@@ -56,6 +57,7 @@ const EMPTY: ExtractedEstimate = {
   parkingCommission: 0,
   parkingCommissionTax: 0,
   guarantee: 0,
+  monthlyGuaranteeFee: 0,
   insurance: 0,
   keyExchange: 0,
   cleaning: 0,
@@ -114,6 +116,7 @@ export async function POST(req: NextRequest) {
   "parkingCommissionTax": 駐車場手数料消費税（数値。不明なら0）,
   "guarantee": 賃貸保証料（数値。不明なら0）,
   "guaranteeRate": 賃貸保証料率（%の数値のみ。例: 30。複数ある場合は最低率。記載がなければ50）,
+  "monthlyGuaranteeFee": 月額保証料（毎月支払う保証料。数値。不明なら0）,
   "insurance": 住宅保険・火災保険（数値。不明なら0）,
   "keyExchange": 鍵交換代（数値。不明なら0）,
   "cleaning": クリーニング代（数値。不明なら0）,
@@ -134,6 +137,7 @@ export async function POST(req: NextRequest) {
 - guarantee・insurance・keyExchange・cleaning等も税込のまま書いてある数字を使う（÷1.1しない）
 - guaranteeRate: 「エポス30%→」「JRAG50%/70%」等から保証料率を抽出。複数ある場合は最低率（例: 30）。記載がなければ50
 - cleaningAtDeparture: 「退去時清算」「退去時精算」「退去時 ¥○○」等の記載があればtrue。入居時に支払う場合はfalse
+- monthlyGuaranteeFee: 「月額保証料」「保証料(月額)」等の毎月支払う保証料。otherItemsには入れずこのフィールドに入れる（初回保証料guaranteeとは別）
 - 日割賃料は抽出不要（入居日から自動計算するため）
 - 不明な項目は0または空文字
 - otherItemsには上記フィールドに当てはまらない費用のみ入れる`;

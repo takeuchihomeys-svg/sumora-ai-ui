@@ -41,6 +41,7 @@ type ItemData = {
   parkingCommissionTax: number;
   guaranteeRate?: number;
   guarantee: number;
+  monthlyGuaranteeFee?: number; // 月額保証料（毎月支払い分・M18に単独出力）
   insurance: number;
   keyExchange: number;
   cleaning: number;
@@ -264,6 +265,8 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
   if (d.parkingMonthly)
     oneTimeItems.push({ label: "翌月駐車場代", amount: d.parkingMonthly });
   const isMonthlyOther = (name: string) => /[（(]毎?月[)）]|月額|毎月/.test(name);
+  // 月額保証料系（例: 「月額保証料」「保証料(月額)」）はM18に単独出力するためM20計算から除外する
+  const isMonthlyGuaranteeOther = (name: string) => isMonthlyOther(name) && /保証料/.test(name);
   for (const oi of d.otherItems || []) {
     if (!oi.item || oi.amount <= 0) continue;
     if (isMonthlyOther(oi.item))
@@ -272,14 +275,25 @@ function fillEstimateSheet(ws: ExcelJS.Worksheet, d: ItemData, account: Account)
       oneTimeItems.push({ label: oi.item, amount: oi.amount });
   }
 
+  // 月額保証料 → 契約条件「保証料」(M18) に単独出力
+  // 専用フィールド + otherItemsに「月額保証料」等の名前で入力された分を合算（M20には含めない）
+  const guaranteeMonthlyFromOthers = (d.otherItems || [])
+    .filter(oi => oi.item && oi.amount > 0 && isMonthlyGuaranteeOther(oi.item))
+    .reduce((s, oi) => s + oi.amount, 0);
+  const monthlyGuaranteeTotal = (d.monthlyGuaranteeFee || 0) + guaranteeMonthlyFromOthers;
+  // 0円なら空白（数値0を見せない）
+  setCell(ws, "M18", numOrBlank(monthlyGuaranteeTotal));
+
   // その他月額費用の合計 → 契約条件「その他」(M20) に反映
   // 水道代 + 月額その他費用（例: サポート料(月額)1,320）の合算
   // ※ 家賃はM15・共益費はM16に単独出力済みのため、M20には含めない
+  // ※ 月額保証料系はM18に単独出力済みのため、M20から除外
   const sonotaMonthly = (d.otherItems || [])
-    .filter(oi => oi.item && oi.amount > 0 && isMonthlyOther(oi.item))
+    .filter(oi => oi.item && oi.amount > 0 && isMonthlyOther(oi.item) && !isMonthlyGuaranteeOther(oi.item))
     .reduce((s, oi) => s + oi.amount, 0);
   const otherMonthlyTotal = (d.waterFee || 0) + sonotaMonthly;
-  setCell(ws, "M20", otherMonthlyTotal);
+  // 0円なら空白（数値0を見せない）
+  setCell(ws, "M20", numOrBlank(otherMonthlyTotal));
 
   // 合計計算用（書き込み位置に関係なく全項目を合算）
   const dynamicItems: DynItem[] = [...monthlyItems, ...oneTimeItems];
