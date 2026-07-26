@@ -584,7 +584,7 @@ export default function AixModal({
   const [topPhrases, setTopPhrases] = useState<{ phrase: string; usage_count: number }[]>([]);
   const [floorPlanTouched, setFloorPlanTouched] = useState(false);
   // 物件確認した専用（vacate_date / mgmt_move_in / mgmt_initial_cost は「管理会社に確認した」ピッカー経由の専用パターン）
-  const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | "exclusive" | "move_in_date" | "interior_photo" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | null>(initialCheckPattern ?? null);
+  const [checkPattern, setCheckPattern] = useState<"available" | "alternative" | "unavailable" | "exclusive" | "move_in_date" | "interior_photo" | "other_room_check" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | null>(initialCheckPattern ?? null);
   // 管理会社確認パターンかどうか（テキスト入力のみで生成できる簡易フロー）
   const isMgmtCheck = checkPattern === "vacate_date" || checkPattern === "mgmt_move_in" || checkPattern === "mgmt_initial_cost" || checkPattern === "mgmt_guarantor" || checkPattern === "mgmt_parking" || checkPattern === "mgmt_pet" || checkPattern === "mgmt_equipment" || checkPattern === "mgmt_availability" || checkPattern === "nearby_parking";
   // 募集状況確認専用: 募集している / 募集終了した
@@ -648,6 +648,11 @@ export default function AixModal({
   // 物件なかった専用: 物件名OCR
   const [checkUnavailablePropName, setCheckUnavailablePropName] = useState("");
   const [checkUnavailableOcrLoading, setCheckUnavailableOcrLoading] = useState(false);
+  // 別の部屋について確認した専用: 物件名 + 画像OCR + 有無ピッカー（会話を合わせる専用パターン）
+  const [otherRoomPropertyName, setOtherRoomPropertyName] = useState<string>("");
+  const [otherRoomImagePreview, setOtherRoomImagePreview] = useState<string>("");
+  const [isExtractingOtherRoomName, setIsExtractingOtherRoomName] = useState(false);
+  const [otherRoomStatus, setOtherRoomStatus] = useState<"has_room" | "no_room" | null>(null);
   // 物件確認した専用: 複数画像
   const [checkImageFiles, setCheckImageFiles] = useState<File[]>([]);
   const [checkImagePreviews, setCheckImagePreviews] = useState<string[]>([]);
@@ -855,6 +860,7 @@ export default function AixModal({
   const viewingPropInputRef = useRef<HTMLInputElement | null>(null);
   const confirmImageInputRef = useRef<HTMLInputElement | null>(null);
   const mgmtDocInputRef = useRef<HTMLInputElement | null>(null);
+  const otherRoomInputRef = useRef<HTMLInputElement | null>(null);
 
   // 全画面編集オーバーレイ表示中のみ visualViewport を監視（iOSキーボード対応）
   useEffect(() => {
@@ -1332,6 +1338,36 @@ export default function AixModal({
     setIsExtractingPropertyName(false);
   };
 
+  // 別の部屋確認: 物件資料画像から物件名（号室なし）をOCRで自動入力
+  const extractOtherRoomPropertyName = async (file: File) => {
+    setIsExtractingOtherRoomName(true);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result ?? ""));
+        reader.onerror = () => reject(new Error("画像の読み込みに失敗しました"));
+        reader.readAsDataURL(file);
+      });
+      setOtherRoomImagePreview(dataUrl);
+      const base64 = dataUrl.split(",")[1];
+      const res = await fetch("/api/extract-property-name", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image_base64: base64, media_type: file.type || "image/jpeg" }),
+      });
+      const data = await res.json() as { ok?: boolean; propertyName?: string };
+      const name = (data.propertyName ?? "").trim();
+      if (name) {
+        // OCR中にスタッフが手入力した場合は上書きしない
+        setOtherRoomPropertyName(prev => prev.trim() ? prev : name);
+      }
+    } catch (ocrErr) {
+      // OCR失敗は致命的ではない（手入力可能）が、握りつぶさずログに残す
+      console.error("[AixModal] 別の部屋確認 物件名OCR失敗:", ocrErr);
+    }
+    setIsExtractingOtherRoomName(false);
+  };
+
   // 物件画像から物件名・退去予定日をまとめて読み取るヘルパー（submit時に呼ぶ）
   const extractPropInfoFromImages = async (count: number): Promise<{ name: string; vacancyDate: string }[]> => {
     const results: { name: string; vacancyDate: string }[] = [];
@@ -1650,6 +1686,11 @@ export default function AixModal({
         if (checkPattern === "mgmt_availability") {
           if (!mgmtAvailabilityStatus) throw new Error("募集状況を選択してください");
           body.mgmt_availability_status = mgmtAvailabilityStatus;
+        }
+        if (checkPattern === "other_room_check") {
+          if (!otherRoomStatus) throw new Error("別の部屋の有無を選択してください");
+          body.other_room_status = otherRoomStatus;
+          if (otherRoomPropertyName.trim()) body.property_name = otherRoomPropertyName.trim();
         }
         if (checkPattern === "nearby_parking") {
           if (!nearbyParkingVacancy) throw new Error("空き状況を選択してください");
@@ -1981,7 +2022,7 @@ export default function AixModal({
     // サブパターンをconversationStateに埋め込む（ピッカー選択別に差分学習ルールを分離）
     // property_check_result_available / application_push_confirm / property_send_widen 等
     const stateSubKey =
-      actionType === "property_check_result" && checkPattern && checkPattern !== "interior_photo" && checkPattern !== "move_in_date"
+      actionType === "property_check_result" && checkPattern && checkPattern !== "interior_photo" && checkPattern !== "move_in_date" && checkPattern !== "other_room_check"
         ? `property_check_result_${checkPattern}`
         : actionType === "application_push" && appSubMode
         ? `application_push_${appSubMode}`
@@ -2479,6 +2520,7 @@ export default function AixModal({
     ? (checkPattern === "move_in_date" ? !!moveInImageFile
       : checkPattern === "interior_photo" ? (!!interiorPhotoUrl.trim() || !!interiorPhotoFile)
       : checkPattern === "exclusive" ? !!exclusivePropName.trim()
+      : checkPattern === "other_room_check" ? !!otherRoomStatus
       : isMgmtCheck ? (
           checkPattern === "mgmt_initial_cost"
             ? !!mgmtCostType && (mgmtCostType === "estimate" || !!inputText.trim())
@@ -3879,9 +3921,10 @@ export default function AixModal({
                     { key: "exclusive",       label: "専任物件だった",       sub: "専任のためご紹介不可",           color: "red"     },
                     { key: "move_in_date",    label: "入居日確認した",       sub: "退去日から入居可能日を計算送信", color: "purple"  },
                     { key: "interior_photo",  label: "室内写真を確認した",   sub: "写真またはURLをお客さんに送る",  color: "pink"    },
+                    { key: "other_room_check", label: "別の部屋について確認した", sub: "同じ建物の別室を確認",       color: "teal"    },
                   ] as const).filter((p) =>
                     /* 選択済みなら選択した項目のみ表示（未選択・リスト外の値なら全表示） */
-                    !(["available", "alternative", "unavailable", "exclusive", "move_in_date", "interior_photo"] as string[]).includes(checkPattern ?? "") || p.key === checkPattern
+                    !(["available", "alternative", "unavailable", "exclusive", "move_in_date", "interior_photo", "other_room_check"] as string[]).includes(checkPattern ?? "") || p.key === checkPattern
                   ).map((p) => (
                     <button
                       key={p.key}
@@ -3900,6 +3943,11 @@ export default function AixModal({
                         if (p.key !== "unavailable") {
                           setCheckUnavailablePropName("");
                         }
+                        if (p.key !== "other_room_check") {
+                          setOtherRoomPropertyName("");
+                          setOtherRoomImagePreview("");
+                          setOtherRoomStatus(null);
+                        }
                       }}
                       className={`flex items-center gap-3 rounded-2xl border-2 px-4 py-3 text-left transition-all ${
                         checkPattern === p.key
@@ -3907,6 +3955,7 @@ export default function AixModal({
                           : p.color === "blue"    ? "border-blue-400 bg-blue-50"
                           : p.color === "purple"  ? "border-purple-400 bg-purple-50"
                           : p.color === "pink"    ? "border-pink-400 bg-pink-50"
+                          : p.color === "teal"    ? "border-teal-400 bg-teal-50"
                           : p.color === "red"     ? "border-red-400 bg-red-50"
                           :                         "border-orange-400 bg-orange-50"
                           : "border-[#e9edef] bg-[#f8f9fa]"
@@ -3918,6 +3967,7 @@ export default function AixModal({
                           : p.color === "blue"    ? "border-blue-500 bg-blue-500"
                           : p.color === "purple"  ? "border-purple-500 bg-purple-500"
                           : p.color === "pink"    ? "border-pink-500 bg-pink-500"
+                          : p.color === "teal"    ? "border-teal-500 bg-teal-500"
                           : p.color === "red"     ? "border-red-500 bg-red-500"
                           :                         "border-orange-500 bg-orange-500"
                           : "border-[#d1d7db]"
@@ -3931,7 +3981,7 @@ export default function AixModal({
                     </button>
                   ))}
                   {/* 選択済み: 変更するボタンで再選択可能に */}
-                  {(["available", "alternative", "unavailable", "exclusive", "move_in_date", "interior_photo"] as string[]).includes(checkPattern ?? "") && (
+                  {(["available", "alternative", "unavailable", "exclusive", "move_in_date", "interior_photo", "other_room_check"] as string[]).includes(checkPattern ?? "") && (
                     <button
                       onClick={() => {
                         setCheckPattern(null);
@@ -3942,6 +3992,9 @@ export default function AixModal({
                         setExclusivePropName("");
                         setExclusiveRoomNo("");
                         setCheckUnavailablePropName("");
+                        setOtherRoomPropertyName("");
+                        setOtherRoomImagePreview("");
+                        setOtherRoomStatus(null);
                       }}
                       className="self-start rounded-xl border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-semibold text-[#54656f] hover:bg-[#f0f2f5]"
                     >
@@ -3950,6 +4003,99 @@ export default function AixModal({
                   )}
                 </div>
               </div>
+              {/* 別の部屋について確認した: 物件名OCR + 有無ピッカー → 会話を合わせる専用（AIX生成なし） */}
+              {checkPattern === "other_room_check" && (
+                <div className="flex flex-col gap-3">
+                  {/* 物件名（手入力 or 画像貼り付け/選択でOCR自動入力） */}
+                  <div
+                    onPaste={(e) => {
+                      const item = Array.from(e.clipboardData.items).find(it => it.type.startsWith("image/"));
+                      const f = item?.getAsFile();
+                      if (f) { e.preventDefault(); void extractOtherRoomPropertyName(f); }
+                    }}
+                  >
+                    <p className="mb-1 text-xs font-bold text-[#54656f]">
+                      物件名 <span className="font-normal text-[#90a4ae]">（任意・画像貼り付けで自動入力）</span>
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={otherRoomPropertyName}
+                        onChange={(e) => { setOtherRoomPropertyName(e.target.value); setPreview(""); }}
+                        placeholder="例: GRAMM竹田"
+                        className="w-full rounded-xl border border-[#d1d7db] bg-white px-3 py-2.5 text-sm outline-none focus:border-teal-400 placeholder:text-[#8696a0]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => otherRoomInputRef.current?.click()}
+                        className="shrink-0 rounded-full bg-[#f0f2f5] px-3 py-1.5 text-xs font-bold text-[#54656f]"
+                      >
+                        📎 画像
+                      </button>
+                      <input
+                        ref={otherRoomInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) void extractOtherRoomPropertyName(f);
+                          if (otherRoomInputRef.current) otherRoomInputRef.current.value = "";
+                        }}
+                      />
+                    </div>
+                    {isExtractingOtherRoomName && (
+                      <p className="mt-1 flex items-center gap-1.5 text-xs text-[#90a4ae]">
+                        <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" />
+                        画像から物件名を読み取り中...
+                      </p>
+                    )}
+                    {otherRoomImagePreview && (
+                      <div className="relative mt-1 inline-block">
+                        <img src={otherRoomImagePreview} alt="物件資料" className="h-16 rounded-lg border border-[#d1d7db] object-cover" />
+                        <button
+                          type="button"
+                          onClick={() => setOtherRoomImagePreview("")}
+                          className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-[#54656f] text-[10px] text-white"
+                        >×</button>
+                      </div>
+                    )}
+                    <p className="mt-1 text-[10px] text-[#8696a0]">※ 画像はお客さんには送られません</p>
+                  </div>
+                  {/* 別の部屋の有無 2択 */}
+                  <div>
+                    <p className="mb-2 text-xs font-bold text-[#54656f]">別の部屋の有無 <span className="text-red-400">*</span></p>
+                    <div className="flex gap-1.5">
+                      <button
+                        onClick={() => { setOtherRoomStatus("has_room"); setPreview(""); }}
+                        className={`flex-1 rounded-xl border-2 py-2.5 text-xs font-bold transition ${
+                          otherRoomStatus === "has_room"
+                            ? "border-teal-400 bg-teal-50 text-teal-700"
+                            : "border-[#e9edef] bg-[#f8f9fa] text-[#9CA3AF]"
+                        }`}
+                      >別の部屋がある</button>
+                      <button
+                        onClick={() => { setOtherRoomStatus("no_room"); setPreview(""); }}
+                        className={`flex-1 rounded-xl border-2 py-2.5 text-xs font-bold transition ${
+                          otherRoomStatus === "no_room"
+                            ? "border-red-400 bg-red-50 text-red-600"
+                            : "border-[#e9edef] bg-[#f8f9fa] text-[#9CA3AF]"
+                        }`}
+                      >別の部屋が無い</button>
+                    </div>
+                  </div>
+                  {/* 会話を合わせる（このパターンはAIX生成なし・会話適応専用） */}
+                  {!preview && (
+                    <button
+                      onClick={() => void generate({ conversation_match: true, base_message: aiDraft })}
+                      disabled={loading || !otherRoomStatus}
+                      className="w-full rounded-2xl bg-[#546E7A] py-3.5 text-sm font-bold text-white disabled:opacity-40"
+                    >
+                      {loading ? "生成中..." : "💬 会話を合わせる"}
+                    </button>
+                  )}
+                </div>
+              )}
               {/* 専任物件だった: スクショOCR + 物件名・号室 → 固定文送信（AI不要） */}
               {checkPattern === "exclusive" && (
                 <div className="flex flex-col gap-3">
@@ -5518,7 +5664,11 @@ export default function AixModal({
                 return (
                   <>
                     <button
-                      onClick={() => void generate()}
+                      onClick={() => void generate(
+                        actionType === "property_check_result" && checkPattern === "other_room_check"
+                          ? { conversation_match: true } // 会話を合わせる専用パターン: 再生成もテンプレから会話適応し直す
+                          : undefined
+                      )}
                       disabled={loading || !canGenerate}
                       className="flex-1 rounded-full border border-[#d1d7db] py-3 text-sm font-semibold text-[#54656f] disabled:opacity-50"
                     >
@@ -5551,6 +5701,9 @@ export default function AixModal({
                   </>
                 );
               })()
+            ) : actionType === "property_check_result" && checkPattern === "other_room_check" ? (
+              /* 別の部屋について確認した: 会話を合わせるボタンはサブUI内に表示（AIX生成ボタンなし） */
+              null
             ) : (
               actionType === "viewing_invite" ||
               actionType === "application_push" ||

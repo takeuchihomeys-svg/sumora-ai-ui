@@ -620,7 +620,7 @@ ${baseMessage}
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, account, customer_name, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, vacancy_status, has_estimate, move_out_date, keyword, property_name, property_names, property_vacancy_dates, property_count, all_properties_available, prop_statuses, include_estimate_text, show_viewing_invite, app_push_type, appeal_points, conversation_id: conversationId } = body;
+    const { action, account, customer_name, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, vacancy_status, has_estimate, move_out_date, keyword, property_name, property_names, property_vacancy_dates, property_count, all_properties_available, prop_statuses, include_estimate_text, show_viewing_invite, app_push_type, appeal_points, other_room_status, conversation_id: conversationId } = body;
 
     // #30: max_tokens 尻切れ検知ログ・max_tokens決定用のアクション名（リクエストスコープ）
     const currentAction = String(action ?? "");
@@ -2565,6 +2565,28 @@ ${mgmtInfo}${recentHistory}`,
           return finalizeResponse(message_text);
         }
 
+        // 「別の部屋について確認した」: 固定文をベースに会話適応（AIX生成なし・会話を合わせる専用）
+        if (cmPattern === "other_room_check") {
+          const orStatus = String(other_room_status ?? "");
+          if (orStatus !== "has_room" && orStatus !== "no_room") {
+            throw new Error("別の部屋の有無（other_room_status）が必要です");
+          }
+          const orPropName = typeof property_name === "string" ? property_name.trim() : "";
+          let cmBase: string;
+          if (orStatus === "no_room") {
+            cmBase = orPropName
+              ? `${orPropName}\nこちらのお部屋が一番広いお部屋となり\n他のお部屋は募集されていない形となります！！`
+              : "こちらのお部屋が一番広いお部屋となり\n他のお部屋は募集されていない形となります！！";
+          } else {
+            // has_room
+            cmBase = orPropName
+              ? `こちらが${orPropName}広い間取りのお部屋となります`
+              : "こちらが広い間取りのお部屋となります";
+          }
+          message_text = await adaptMessageToConversation(cmBase, recentHistory, name, currentAction, "");
+          return finalizeResponse(message_text);
+        }
+
         // 「物件あった」「別の部屋が募集してた」等: 自由生成だが確認結果を必ず注入
         const CM_RESULT_DESC: Record<string, string> = {
           available: "空室あり・入居可能（募集中）",
@@ -2657,6 +2679,11 @@ ${pcrCalendarBlock}
         } catch { message_text = rawPCR; }
         // ⑦修正: conversation_match 早期returnでも共通後処理（号室ゼロ除去・内部メモ分離）を通す
         return finalizeResponse(message_text);
+      }
+
+      // 「別の部屋について確認した」は会話を合わせる（conversation_match）専用（通常AIX生成は未対応）
+      if (check_pattern === "other_room_check") {
+        throw new Error("「別の部屋について確認した」は会話を合わせる専用です");
       }
 
       const pattern = check_pattern as "available" | "alternative" | "unavailable" | "exclusive";
