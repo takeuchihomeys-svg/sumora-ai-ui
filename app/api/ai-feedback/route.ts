@@ -141,6 +141,59 @@ JSON配列のみ返してください（説明・コードフェンス不要）:
   }
 }
 
+async function extractAndUpsertTriggerKeywords(question: string, answer: string, actionType: string): Promise<void> {
+  try {
+    const res = await client.messages.create({
+      model: "claude-opus-4-8",
+      max_tokens: 200,
+      messages: [{
+        role: "user",
+        content: `以下の質問と回答から、お客様がLINEで実際に打ちそうな短いキーワードを1〜3個抽出してください。\nキーワードは2〜5文字の短い語句で、顧客がLINEに打ち込む言葉そのものを選んでください。\nJSON配列のみ返してください: ["keyword1", "keyword2"]\n\n【AIの質問】${question}\n【竹内さんの回答】${answer}`,
+      }],
+    });
+    const text = res.content[0]?.type === "text" ? res.content[0].text.trim() : "";
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return;
+    let parsed: unknown;
+    try { parsed = JSON.parse(jsonMatch[0]); } catch { return; }
+    if (!Array.isArray(parsed)) return;
+    const validKeywords = (parsed as string[])
+      .map((k) => (k ?? "").trim())
+      .filter((k) => k.length >= 2 && k.length <= 10)
+      .slice(0, 3);
+    for (const keyword of validKeywords) {
+      const { data: existing } = await supabase
+        .from("trigger_action_rules")
+        .select("id, occurrence_count, confidence")
+        .eq("keyword", keyword)
+        .eq("action_type", actionType)
+        .maybeSingle();
+      if (existing) {
+        await supabase
+          .from("trigger_action_rules")
+          .update({
+            occurrence_count: ((existing.occurrence_count as number | null) ?? 0) + 1,
+            confidence: Math.max((existing.confidence as number | null) ?? 0, 0.85),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", existing.id as string);
+      } else {
+        await supabase
+          .from("trigger_action_rules")
+          .insert({
+            keyword: keyword.slice(0, 200),
+            action_type: actionType,
+            confidence: 0.85,
+            occurrence_count: 3,
+            updated_at: new Date().toISOString(),
+          });
+      }
+    }
+  } catch (e) {
+    console.error("[ai-feedback] extractAndUpsertTriggerKeywords失敗:", e);
+  }
+}
+
 // POST: { id, answer, choice? } → user_answer保存 + Sonnetで知識化 + status="answered"に更新
 // choice: 'new' = 新ルール採用, 'old' = 既存ルール維持, undefined = 既存動作維持（安全側）
 export async function POST(req: NextRequest) {
@@ -188,6 +241,7 @@ export async function POST(req: NextRequest) {
 
   const appliedRules: string[] = [];
   const promptRuleTexts: Array<{ text: string; actionType: string | null }> = [];
+  const triggerKeywordActionTypes = new Set<string>();
 
   for (const rule of rules) {
     const ruleText = rule.rule_text.trim();
@@ -198,6 +252,10 @@ export async function POST(req: NextRequest) {
     const actionType = rule.action_type?.trim() ?? "";
     // ai_prompt_rules 保存時のスコープ: 既知AIXアクションならスコープ付き、それ以外はグローバル（null）
     const scopedActionType = PROMPT_RULE_ACTION_TYPES.has(actionType) ? actionType : null;
+
+    if (actionType && KNOWN_AIX_TYPES.has(actionType)) {
+      triggerKeywordActionTypes.add(actionType);
+    }
 
     // 改善⑧: whitelist外の action_type は trigger_action_rules を汚染するため
     // ai_prompts（一般ルール）へフォールバック保存する
@@ -268,6 +326,10 @@ export async function POST(req: NextRequest) {
       // 一般ルール（キーワード抽出できなかった trigger ルールも情報を失わずこちらへ）
       promptRuleTexts.push({ text: ruleText, actionType: scopedActionType });
     }
+  }
+
+  for (const at of triggerKeywordActionTypes) {
+    void extractAndUpsertTriggerKeywords(item.question as string, answer, at);
   }
 
   if (promptRuleTexts.length > 0) {
