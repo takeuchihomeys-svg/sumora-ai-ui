@@ -951,7 +951,7 @@ export default function TemplateModal({
   // 矛盾系質問の補足コメント（任意）: per-item テキスト入力の状態
   const [contradictionComments, setContradictionComments] = useState<Record<string, string>>({});
   // 矛盾系質問の選択状態（① new / ② old）: 選択→補足入力→送信の2段階フロー用（即送信だと補足が書けないため）
-  const [contradictionChoices, setContradictionChoices] = useState<Record<string, 'new' | 'old'>>({});
+  const [contradictionChoices, setContradictionChoices] = useState<Record<string, 'new' | 'old' | 'both'>>({});
   // P5: 却下理由チップを表示中の候補/提案ID
   const [dismissingId, setDismissingId] = useState<string | null>(null);
   // AI質問のスキップ理由チップを表示中のフィードバックID
@@ -1515,9 +1515,10 @@ export default function TemplateModal({
   // 回答を送信 → Sonnetが知識化（trigger_action_rules / ai_prompts に保存）
   // choice が指定された場合（矛盾系質問）: 自動でanswerテキストを生成し choice をbodyに含める
   // extraComment: 矛盾系質問での任意補足コメント（使い分け条件・理由など）
-  const submitFeedbackAnswer = useCallback(async (id: string, choice?: 'new' | 'old' | 'keep' | 'remove', extraComment?: string) => {
+  const submitFeedbackAnswer = useCallback(async (id: string, choice?: 'new' | 'old' | 'both' | 'keep' | 'remove', extraComment?: string) => {
     let baseAnswer = choice === 'new' ? '① 新しいルールが正しい'
       : choice === 'old' ? '② 既存のルールが正しい'
+      : choice === 'both' ? '③ 場面で使い分ける'
       : choice === 'keep' ? '✅ 正しい（維持）'
       : choice === 'remove' ? '❌ 間違い（無効化）'
       : feedbackAnswers[id]?.trim();
@@ -3506,7 +3507,17 @@ export default function TemplateModal({
                               >
                                 {contradictionChoices[item.id] === 'old' ? "✔ " : ""}② 既存のルールが正しい
                               </button>
-                              {/* 補足コメント入力（任意）: Enterで送信・Shift+Enterで改行（IME変換確定のEnterは除外） */}
+                              <button
+                                onClick={() => setContradictionChoices(prev => ({ ...prev, [item.id]: 'both' }))}
+                                disabled={submittingFeedback === item.id}
+                                className={`w-full rounded-lg py-3 text-sm font-bold disabled:opacity-50 transition text-left px-4 ${
+                                  contradictionChoices[item.id] === 'both'
+                                    ? "bg-green-600 text-white ring-2 ring-green-300"
+                                    : "bg-green-50 text-green-700 border border-green-300 hover:bg-green-100"
+                                }`}
+                              >
+                                {contradictionChoices[item.id] === 'both' ? "✔ " : ""}③ 場面で使い分ける
+                              </button>
                               <textarea
                                 value={contradictionComments[item.id] ?? ""}
                                 onChange={e => setContradictionComments(prev => ({ ...prev, [item.id]: e.target.value }))}
@@ -3517,10 +3528,9 @@ export default function TemplateModal({
                                   e.preventDefault();
                                   void submitFeedbackAnswer(item.id, choice, contradictionComments[item.id]);
                                 }}
-                                placeholder="補足・使い分け条件など（任意）。Enterで送信 / Shift+Enterで改行"
+                                placeholder={contradictionChoices[item.id] === 'both' ? "どう使い分けますか？（例: Aの場合は新しいルール、Bの場合は既存のルール）。Enterで送信 / Shift+Enterで改行" : "補足・使い分け条件など（任意）。Enterで送信 / Shift+Enterで改行"}
                                 className="w-full border border-orange-200 rounded-lg px-3 py-2 text-xs resize-none h-16 focus:outline-none focus:ring-2 focus:ring-orange-300 bg-white text-gray-700"
                               />
-                              {/* 送信ボタン: ①②のどちらかを選択すると押せる */}
                               <button
                                 onClick={() => {
                                   const choice = contradictionChoices[item.id];
@@ -3530,7 +3540,7 @@ export default function TemplateModal({
                                 disabled={!contradictionChoices[item.id] || submittingFeedback === item.id}
                                 className="w-full bg-orange-500 text-white rounded-lg py-2.5 text-sm font-bold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-orange-600 transition"
                               >
-                                {submittingFeedback === item.id ? "送信中..." : contradictionChoices[item.id] ? "回答を送信" : "①か②を選んでください"}
+                                {submittingFeedback === item.id ? "送信中..." : contradictionChoices[item.id] ? "回答を送信" : "①②③を選んでください"}
                               </button>
                             </div>
                           );
