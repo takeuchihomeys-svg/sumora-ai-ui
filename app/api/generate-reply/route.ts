@@ -769,6 +769,13 @@ function buildGenerationMessages(
   // 添付済みを装う文面・金額内訳をAI返信案に出さない（内覧日時ゲート viewingFactNote と同型の常時注入ゲート）
   const estimateGateNote = `\n\n【💰 見積書カバー文の生成は絶対禁止（最優先）】「〜の御見積書となります」「御見積書をお送りします＋ご査収ください」のような、見積書を既に添付した体のカバーメッセージ・初期費用の金額内訳は絶対に出力しない。見積書本体はAIXの「見積書送る」ボタンで別途作成・添付して送るため、AI返信案には含めない。初期費用・見積の質問への返信は「かしこまりました！！最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！」の作成宣言のみ許可（物件名入りの見積書送付文・金額内訳・見積書に対する「ご査収ください」は書かない）。`;
 
+  const aixOperationNote = [
+    "【重要】以下のナレッジには「AIXボタンから送る」「AIXで誘導する」等のスタッフ向け操作指示が含まれる場合があります。",
+    "これらはスタッフがどのボタンを押すかの原則であり、お客様へのLINE返信文に書いてはいけません。",
+    "「AIXボタンから送る」「内覧へ！ボタンを使う」「申込ボタンで誘導」などの表現はLINE返信文に含めず、",
+    "代わりにその話題に関する簡潔な受付・確認文のみ書いてください。",
+  ].join("\n");
+
   // お客様メッセージ自体がリンク（URL）を求めている場合の専用ノート（引用コンテキスト非依存の保険）
   const isLinkRequestMsg = /(リンク|url|ＵＲＬ)\s*(を|の|教え|くださ|ちょうだい|ください|欲し|ほし|送)/i.test(customerMessage)
     || /(この|こちらの|その|これの|さっきの)(部屋|物件|お部屋).{0,6}(リンク|url|ＵＲＬ)/i.test(customerMessage);
@@ -814,7 +821,7 @@ ${replyContentNote}
 ${curatedReplyRulesNote}
 ${aixPropertyRecommendationNote}
 ${aixPropertySendNote}
-${knowledgeNote}
+${knowledgeNote ? aixOperationNote + "\n" + knowledgeNote : ""}
 ${phrases}
 
 ${QUOTE_REPLY_JUDGE_NOTE}${quotedContextNote}

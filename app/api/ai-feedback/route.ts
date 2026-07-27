@@ -112,6 +112,11 @@ ${answer}
   "ai_prompts" → どんな文脈でも常に守る方針・禁止ルール（例：謝罪禁止、能動表現必須、特定フレーズ禁止）
   "trigger_action_rules" → AIXボタンの発動キーワード条件（特定単語が含まれたらXXXボタン推奨など）
   "ai_reply_knowledge" → 特定場面・状況専用の返信パターン・フレーズ・文章構造（例：「審査落ち連絡の場合は〜」「物件に興味なしと言われた場合は〜」「入居日を尋ねられた場合の返信構造」）
+save_target の分類基準：
+- ai_reply_knowledge：お客様へのLINE返信文の書き方・内容に関するルール（文体・タイミング・伝え方など）
+- trigger_action_rules：スタッフがどのAIXボタン・機能を使うべきかの操作原則
+  ※「AIXボタンから送る」「AIXで誘導する」「○○はAIX経由で行う」という内容は必ず trigger_action_rules に分類すること
+- ai_prompts：汎用的なプロンプト補強ルール
 - action_type: 該当AIXボタン名（property_send / viewing_invite / application_push / condition_hearing / estimate_sheet / followup_revive / acknowledge_check / property_check_result / property_recommendation / meeting_place 等）、なければ null
 - save_target が "trigger_action_rules" の場合は、trigger_keywords フィールドも必ず付ける。
   trigger_keywords: 顧客メッセージに実際に含まれるであろうキーワード3文字以上の語句を1〜3個（例：「スモ割」「審査通る」「築年数」）。
