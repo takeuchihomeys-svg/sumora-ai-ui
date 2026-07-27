@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
-import { canInsertAiQuestion } from "@/app/lib/ai-feedback-guard";
+import { canInsertAiQuestion, buildRuleConflictQuestion } from "@/app/lib/ai-feedback-guard";
 
 export const maxDuration = 300; // Vercel Pro: 5分まで延長
 
@@ -187,30 +187,20 @@ JSONのみ回答: {"verdict":"confirm"|"question"|"contradiction","reason":"何�
     const existingRules = (stateMap[state] ?? []).map((r, i) => `【ルール${i + 1}】「${r.title}」\n${r.content}`).join("\n\n");
 
     const questionText = q.verdict === "contradiction"
-      ? `[knowledge_id:${q.id}]
-
-竹内さん、ルールの矛盾について判断をお願いします。
-
-■ 新しく学んだルール
-タイトル：「${q.title}」
-フェーズ：${q.conversation_state ?? "不明"}
-重要度：${q.importance}点 ／ 適用 ${q.apply_count}回 ／ 正解 ${q.correct_count}回・誤答 ${q.wrong_count}回
-
-内容：
-${contentPreview}
-
-■ ぶつかっている既存ルール
-${existingRules || "（なし）"}
-
-■ 何がぶつかっているか
-${reason}
-
-■ 質問
-どちらのルールを優先しますか？
-
-① 新しいルールを採用する（既存ルールを更新）
-② 既存ルールを維持する（新ルールは不採用）
-③ 場面で使い分ける → どう使い分けますか？`
+      ? buildRuleConflictQuestion({
+          markerPrefix: `[knowledge_id:${q.id}]`,
+          newRule: {
+            title: q.title,
+            content: contentPreview,
+            phase: q.conversation_state ?? "不明",
+            importance: q.importance,
+            applyCount: q.apply_count,
+            correctCount: q.correct_count,
+            wrongCount: q.wrong_count,
+          },
+          existingRulesText: existingRules,
+          conflictReason: reason,
+        })
       : `[knowledge_id:${q.id}]
 
 竹内さん、判断をお願いします。

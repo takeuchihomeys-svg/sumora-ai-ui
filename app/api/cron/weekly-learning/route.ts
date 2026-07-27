@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
+import { buildRuleConflictQuestion } from "@/app/lib/ai-feedback-guard";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -416,7 +417,16 @@ JSON形式のみ返答：
 // 2つのconfirmed同士が矛盾したまま永久に共存するのを防ぐ。
 // stateグループごとに1回のLLM呼び出しで矛盾ペアを1組検出し、AI質問を起票する（自動rejectはしない）。
 
-type ConfirmedRow = { id: string; title: string; content: string; conversation_state: string | null };
+type ConfirmedRow = {
+  id: string;
+  title: string;
+  content: string;
+  conversation_state: string | null;
+  importance?: number | null;
+  apply_count?: number | null;
+  correct_count?: number | null;
+  wrong_count?: number | null;
+};
 
 async function findConfirmedContradictionPair(
   state: string,
@@ -463,7 +473,7 @@ async function runConfirmedVsConfirmedScan(): Promise<number> {
   try {
     const { data: confirmedRaw } = await supabase
       .from("ai_reply_knowledge")
-      .select("id, title, content, conversation_state")
+      .select("id, title, content, conversation_state, importance, apply_count, correct_count, wrong_count")
       .eq("hypothesis_status", "confirmed")
       .gte("importance", 6)
       .order("importance", { ascending: false })
@@ -494,11 +504,25 @@ async function runConfirmedVsConfirmedScan(): Promise<number> {
       if (!pair) continue;
 
       const raised = await insertAiQuestion({
-        question: `[knowledge_id:${pair.a.id}] [old_knowledge_id:${pair.b.id}] ${dedupKey} 確定済みルール同士が矛盾しています。どちらが正しいですか？\n\n■ 使われそうな場面\n会話フェーズ「${state}」でAIが返信を選ぶ際に、以下の2つのルールが同時に参照されますが内容が矛盾しています。\n\n━━ ルールA ━━\nタイトル：「${pair.a.title}」\n内容：${pair.a.content.slice(0, 300)}\n\n━━ ルールB ━━\nタイトル：「${pair.b.title}」\n内容：${pair.b.content.slice(0, 300)}\n\n（「新ルール採用」=Aを維持しBをreject／「既存ルール維持」=Bを維持しAをreject）`,
+        question: buildRuleConflictQuestion({
+          // dedupKey（[confirmed-vs-confirmed] state）は重複起票防止の照合キーとしてマーカー行に残す
+          markerPrefix: `[knowledge_id:${pair.a.id}] [old_knowledge_id:${pair.b.id}] ${dedupKey}`,
+          newRule: {
+            title: pair.a.title,
+            content: pair.a.content.slice(0, 300),
+            phase: state,
+            importance: pair.a.importance ?? null,
+            applyCount: pair.a.apply_count ?? 0,
+            correctCount: pair.a.correct_count ?? 0,
+            wrongCount: pair.a.wrong_count ?? 0,
+          },
+          existingRulesText: `【ルール1】「${pair.b.title}」\n${pair.b.content.slice(0, 300)}`,
+          conflictReason: `確定済み（confirmed）ルール同士が矛盾しています：${pair.reason}`,
+        }),
         category: "knowledge_gap",
         confidence: "medium",
         evidence: `confirmed同士の矛盾検出（weekly chunk2）: ${pair.reason}`.slice(0, 500),
-        speculation: `state=${state} のconfirmed ${rules.length}件をスキャンして検出`,
+        speculation: `state=${state} のconfirmed ${rules.length}件をスキャンして検出。①新ルール採用=「${pair.a.title.slice(0, 30)}」を維持しもう一方をreject／②既存ルール維持=「${pair.b.title.slice(0, 30)}」を維持しもう一方をreject`,
       });
       if (raised) questionsRaised++;
     }

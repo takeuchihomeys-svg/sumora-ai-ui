@@ -403,11 +403,16 @@ type AiQuestionMeta = {
 function parseAiQuestion(question: string): AiQuestionMeta {
   // [knowledge_id:UUID] タグを全箇所から除去（先頭だけでなく本文内も）
   let text = question.replace(/\[knowledge_id:[^\]]+\]\n?/g, "");
+  // [old_knowledge_id:UUID] / [confirmed-vs-confirmed] xxx マーカー（closed-loop・dedup用）も表示からは除去
+  text = text.replace(/\[old_knowledge_id:[^\]]+\]\s*/g, "");
+  text = text.replace(/\[confirmed-vs-confirmed\][^\n]*\n?/g, "");
 
   // "フェーズ: xxx / 重要度: x" 行を抽出して除去
+  // （統一フォーマットの「フェーズ：xxx / 重要度：7点 ／ 適用 N回 ／ 正解 N回・誤答 N回」行にも対応し、
+  //  重要度の数字以降の統計テールも行ごと除去する）
   let phase: string | null = null;
   let importance: number | null = null;
-  text = text.replace(/フェーズ[:：]\s*([A-Za-z_]+)\s*[/／]\s*重要度[:：]\s*(\d+)\s*/g, (_, p, i) => {
+  text = text.replace(/フェーズ[:：]\s*([A-Za-z_]+)\s*[/／]\s*重要度[:：]\s*(\d+)(?:点[^\n]*)?\s*/g, (_, p, i) => {
     phase = p.trim();
     importance = parseInt(i, 10);
     return "";
@@ -444,12 +449,16 @@ type ContradictionContent = {
   conversationBlock: string | null;
 };
 function parseContradictionContent(rawQuestion: string): ContradictionContent {
-  // 新ルールブロック: 「━━ 【新しいルール（仮説）】━━」と次の「━━」の間
-  const newRuleMatch = rawQuestion.match(/━━ 【新しいルール（仮説）】━━\n([\s\S]*?)(?=\n\n━━|$)/);
+  // 新ルールブロック:
+  // 旧フォーマット「━━ 【新しいルール（仮説）】━━」/ 統一フォーマット「■ 新しく学んだルール」の両方に対応
+  const newRuleMatch = rawQuestion.match(/━━ 【新しいルール（仮説）】━━\n([\s\S]*?)(?=\n\n━━|$)/)
+    ?? rawQuestion.match(/■ 新しく学んだルール\n([\s\S]*?)(?=\n\n■ |$)/);
   const newRuleBlock = newRuleMatch ? newRuleMatch[1].trim() : null;
 
-  // 既存ルールブロック: 「━━ 【既存のルール...】━━」と次の「━━」の間（HUMAN最優先バリアントも対応）
-  const oldRuleMatch = rawQuestion.match(/━━ 【既存のルール[^━]*】━━\n([\s\S]*?)(?=\n\n━━|$)/);
+  // 既存ルールブロック:
+  // 旧フォーマット「━━ 【既存のルール...】━━」（HUMAN最優先バリアント含む）/ 統一フォーマット「■ ぶつかっている既存ルール」
+  const oldRuleMatch = rawQuestion.match(/━━ 【既存のルール[^━]*】━━\n([\s\S]*?)(?=\n\n━━|$)/)
+    ?? rawQuestion.match(/■ ぶつかっている既存ルール\n([\s\S]*?)(?=\n\n■ |$)/);
   const oldRuleBlock = oldRuleMatch ? oldRuleMatch[1].trim() : null;
 
   // 会話例ブロック: 「━━ 今回の会話（実例）━━」と次の「━━」の間

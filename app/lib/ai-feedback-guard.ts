@@ -22,6 +22,52 @@ export type AiQuestionItem = {
   confidence?: string | null;
 };
 
+// ── ルール矛盾質問の統一フォーマット ──
+// 全起票元（analyze-diffs / bulk-judge-knowledge / weekly-learning）で共通の
+// 「■ 見出し」形式の質問テキストを生成する。
+// markerPrefix には ai-feedback closed-loop 用の [knowledge_id:] / [old_knowledge_id:] マーカーを渡す
+// （マーカーは質問先頭の1行目に置かれ、UI 表示時には除去される）。
+export type RuleConflictNewRule = {
+  title: string;
+  content: string;
+  phase?: string | null;
+  importance?: number | null;
+  applyCount?: number | null;
+  correctCount?: number | null;
+  wrongCount?: number | null;
+};
+
+export function buildRuleConflictQuestion(input: {
+  markerPrefix?: string;
+  newRule: RuleConflictNewRule;
+  // 【ルール1】「タイトル」\n内容 ... の形式で整形済みの既存ルール一覧テキスト
+  existingRulesText: string;
+  conflictReason: string;
+}): string {
+  const { markerPrefix, newRule, existingRulesText, conflictReason } = input;
+  const importanceText = newRule.importance != null ? `${newRule.importance}点` : "不明";
+  return `${markerPrefix ? `${markerPrefix}\n\n` : ""}竹内さん、ルールの矛盾について判断をお願いします。
+
+■ 新しく学んだルール
+タイトル：「${newRule.title}」
+フェーズ：${newRule.phase ?? "不明"} / 重要度：${importanceText} ／ 適用 ${newRule.applyCount ?? 0}回 ／ 正解 ${newRule.correctCount ?? 0}回・誤答 ${newRule.wrongCount ?? 0}回
+
+内容：
+${newRule.content}
+
+■ ぶつかっている既存ルール
+${existingRulesText || "（なし）"}
+
+■ 何がぶつかっているか
+${conflictReason}
+
+■ 質問
+どちらのルールを優先しますか？
+① 新しいルールを採用する（既存ルールを更新）
+② 既存ルールを維持する（新ルールは不採用）
+③ 場面で使い分ける → どう使い分けますか？`;
+}
+
 // pending 上限を確認してから ai_feedback_items に起票する。
 // 上限到達・INSERT失敗時は false を返す（呼び出し元はスキップとして扱う）。
 export async function safeInsertAiQuestion(item: AiQuestionItem): Promise<boolean> {

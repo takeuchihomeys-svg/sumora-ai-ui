@@ -2,6 +2,7 @@
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, buildKnowledgeEmbeddingInput, generateEmbedding } from "@/app/lib/knowledge-utils";
 import { promoteToConfirmed } from "@/app/lib/knowledge-promote";
+import { buildRuleConflictQuestion } from "@/app/lib/ai-feedback-guard";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -299,10 +300,10 @@ async function autoJudgeKnowledge(
   const existingText = (existing ?? []).map((r, i) =>
     `${i + 1}. ${(r.title as string)}: ${String(r.content).slice(0, 100)}`
   ).join("\n") || "（なし）";
-  // 矛盾質問テキスト用: 新旧ルール両方を視覚的に分かりやすく表示するため別フォーマットで保持
+  // 矛盾質問テキスト用: 統一フォーマット（■ ぶつかっている既存ルール）に合わせて【ルールN】形式で保持
   const existingRulesText = (existing ?? []).map((r, i) =>
-    `【既存ルール${i + 1}】「${(r.title as string)}」\n${String(r.content).slice(0, 250)}`
-  ).join("\n\n") || "（既存ルールなし）";
+    `【ルール${i + 1}】「${(r.title as string)}」\n${String(r.content).slice(0, 250)}`
+  ).join("\n\n") || "（なし）";
 
   const apiKey = process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "");
   if (!apiKey) return { verdict: "skip", reason: "" };
@@ -376,28 +377,58 @@ async function checkContradiction(
     const { data: confirmedRules } = await query;
     if (!confirmedRules || confirmedRules.length === 0) return;
 
+    // 新ナレッジの統計（重要度・適用/正解/誤答）を質問文の統一フォーマットに載せるため取得
+    let newImportance: number | null = null;
+    let newApply = 0, newCorrect = 0, newWrong = 0;
+    if (newKnowledgeId) {
+      const { data: kRow } = await supabase
+        .from("ai_reply_knowledge")
+        .select("importance, apply_count, correct_count, wrong_count")
+        .eq("id", newKnowledgeId)
+        .maybeSingle();
+      if (kRow) {
+        newImportance = (kRow.importance as number | null) ?? null;
+        newApply = (kRow.apply_count as number | null) ?? 0;
+        newCorrect = (kRow.correct_count as number | null) ?? 0;
+        newWrong = (kRow.wrong_count as number | null) ?? 0;
+      }
+    }
+
     for (const ngPhrase of ngPhrases) {
       const phraseNorm = ngPhrase.replace(/\s+/g, "");
       for (const rule of confirmedRules) {
         const ruleContent = ((rule.content as string) ?? "").replace(/\s+/g, "");
         if (!ruleContent.includes(phraseNorm)) continue;
 
-        // 矛盾検知: ai_feedback_items で重複起票防止
-        const dedupKey = `[矛盾確認] ${title.slice(0, 20)}`;
+        // 矛盾検知: ai_feedback_items で重複起票防止（統一フォーマットの「タイトル：「...」」で照合）
+        const dedupKey = `タイトル：「${title.slice(0, 20)}`;
         const { data: existing } = await supabase
           .from("ai_feedback_items")
           .select("id")
           .in("status", ["pending", "answered", "applied"])
-          .ilike("question", `${dedupKey.replace(/[%_\\]/g, "\\$&")}%`)
+          .ilike("question", `%${dedupKey.replace(/[%_\\]/g, "\\$&")}%`)
           .limit(1);
         if (existing && existing.length > 0) continue;
 
-        const knowledgePrefix = newKnowledgeId ? `[knowledge_id:${newKnowledgeId}] [old_knowledge_id:${rule.id as string}] ` : "";
+        const knowledgePrefix = newKnowledgeId ? `[knowledge_id:${newKnowledgeId}] [old_knowledge_id:${rule.id as string}]` : "";
         await insertAiQuestion({
-          question: `${knowledgePrefix}⚠️【確認】新旧ルールの矛盾 — どちらを優先しますか？\n\n━━ 今回の会話（実例）━━\n【AIが送った文】\n${(aiDraft ?? '').slice(0, 400) || '（記録なし）'}\n\n【スタッフが修正した文】\n${(sentReply ?? '').slice(0, 400) || '（修正なし）'}\n\n━━ 【新しいルール（仮説）】━━\nタイトル：「${title.slice(0, 40)}」\n内容：\n${content.slice(0, 300)}\n\n━━ 【既存のルール（確定済み）】━━\nタイトル：「${(rule.title as string).slice(0, 40)}」\n内容：\n${String((rule.content as string) ?? '').slice(0, 300) || '（内容なし）'}\n\n━━ AIが判断した矛盾の根拠 ━━\n新ナレッジに含まれる NGフレーズ「${ngPhrase}」が既存の確定ルール本文に含まれています。\n\n❓ どちらを優先しますか？\n① 新しいルールを採用する\n② 既存ルールを優先する（新ルールは却下）\n③ 場面で使い分ける → どう使い分けますか？`,
+          question: buildRuleConflictQuestion({
+            markerPrefix: knowledgePrefix,
+            newRule: {
+              title: title.slice(0, 50),
+              content: content.slice(0, 400),
+              phase: conversationState,
+              importance: newImportance,
+              applyCount: newApply,
+              correctCount: newCorrect,
+              wrongCount: newWrong,
+            },
+            existingRulesText: `【ルール1】「${(rule.title as string).slice(0, 50)}」\n${String((rule.content as string) ?? '').slice(0, 300) || '（内容なし）'}`,
+            conflictReason: `新しく学んだルールに含まれるNGフレーズ「${ngPhrase}」が、既存の確定ルール本文に含まれています。新ルールを採用すると既存ルールと逆の対応になる可能性があります。`,
+          }),
           speculation: `新ナレッジ内のNGフレーズ「${ngPhrase}」が、既存 confirmed ルール「${(rule.title as string).slice(0, 50)}」の本文に含まれていました。新ナレッジは hypothesis のまま保留しています。`,
           category: "knowledge_gap",
-          evidence: `既存ナレッジID: ${rule.id as string}${newKnowledgeId ? ` / 新ナレッジID: ${newKnowledgeId}` : ""} / 新ナレッジ内容（抜粋）: ${content.slice(0, 120)}`,
+          evidence: `既存ナレッジID: ${rule.id as string}${newKnowledgeId ? ` / 新ナレッジID: ${newKnowledgeId}` : ""} / 新ナレッジ内容（抜粋）: ${content.slice(0, 120)} / AIが送った文（抜粋）: ${(aiDraft ?? '').slice(0, 200) || '（記録なし）'} / スタッフが修正した文（抜粋）: ${(sentReply ?? '').slice(0, 200) || '（修正なし）'}`,
           confidence: "high",
           status: "pending",
         });
@@ -421,18 +452,32 @@ async function checkContradiction(
           const ruleText = ((humanRule.rule_text as string) ?? "").replace(/\s+/g, "");
           if (!ruleText.includes(phraseNorm)) continue;
 
-          const dedupKeyHuman = `[HUMAN矛盾] ${title.slice(0, 20)}`;
+          // 統一フォーマットの「タイトル：「...」」で dedup 照合（confirmed 矛盾と共通のキー形式）
+          const dedupKeyHuman = `タイトル：「${title.slice(0, 20)}`;
           const { data: existingHuman } = await supabase
             .from("ai_feedback_items")
             .select("id")
             .in("status", ["pending", "answered", "applied"])
-            .ilike("question", `${dedupKeyHuman.replace(/[%_\\]/g, "\\$&")}%`)
+            .ilike("question", `%${dedupKeyHuman.replace(/[%_\\]/g, "\\$&")}%`)
             .limit(1);
           if (existingHuman && existingHuman.length > 0) continue;
 
-          const knowledgePrefixHuman = newKnowledgeId ? `[knowledge_id:${newKnowledgeId}] ` : "";
+          const knowledgePrefixHuman = newKnowledgeId ? `[knowledge_id:${newKnowledgeId}]` : "";
           await insertAiQuestion({
-            question: `${knowledgePrefixHuman}⚠️【確認】最優先ルール（HUMAN）との矛盾 — どちらを優先しますか？\n\n━━ 今回の会話（実例）━━\n【AIが送った文】\n${(aiDraft ?? '').slice(0, 400) || '（記録なし）'}\n\n【スタッフが修正した文】\n${(sentReply ?? '').slice(0, 400) || '（修正なし）'}\n\n━━ 【新しいルール（仮説）】━━\nタイトル：「${title.slice(0, 40)}」\n内容：\n${content.slice(0, 300)}\n\n━━ 【既存のルール（確定済み・HUMAN最優先）】━━\nキー：「${humanRule.rule_key as string}」\n内容：\n${String((humanRule.rule_text as string) ?? '').slice(0, 300) || '（内容なし）'}\n\n━━ AIが判断した矛盾の根拠 ━━\n新ナレッジに含まれる NGフレーズ「${ngPhrase}」が竹内さん確認済みのHUMAN最優先ルール本文に含まれています。\n\n❓ どちらを優先しますか？\n① 新しいルールを採用する（最優先ルールを修正）\n② 既存ルールを優先する（新ルールは却下）\n③ 場面で使い分ける → どう使い分けますか？`,
+            question: buildRuleConflictQuestion({
+              markerPrefix: knowledgePrefixHuman,
+              newRule: {
+                title: title.slice(0, 50),
+                content: content.slice(0, 400),
+                phase: conversationState,
+                importance: newImportance,
+                applyCount: newApply,
+                correctCount: newCorrect,
+                wrongCount: newWrong,
+              },
+              existingRulesText: `【ルール1】「${humanRule.rule_key as string}（竹内さん確認済み・HUMAN最優先ルール）」\n${String((humanRule.rule_text as string) ?? '').slice(0, 300) || '（内容なし）'}`,
+              conflictReason: `新しく学んだルールに含まれるNGフレーズ「${ngPhrase}」が、竹内さん確認済みのHUMAN最優先ルール本文に含まれています。新ルールを採用するには最優先ルールの修正が必要です。`,
+            }),
             speculation: `新ナレッジのNGフレーズ「${ngPhrase}」が HUMAN優先ルール（${humanRule.rule_key as string}）の本文に含まれていました。新ナレッジを採用するには最優先ルールの修正が必要です。`,
             category: "knowledge_gap",
             evidence: `HUMANルールkey: ${humanRule.rule_key as string}${newKnowledgeId ? ` / 新ナレッジID: ${newKnowledgeId}` : ""} / HUMANルール本文（抜粋）: ${(humanRule.rule_text as string).slice(0, 80)} / 新ナレッジ内容（抜粋）: ${content.slice(0, 80)}`,
@@ -1269,7 +1314,20 @@ export async function POST(req: NextRequest) {
                 const sentPreview = (sent_reply ?? "").slice(0, 400);
                 const angleLabel = getReplyAngleLabel(reply_angle);
                 const questionText = verdict === "contradiction"
-                  ? `[knowledge_id:${upsertResult.id}]\n⚠️【確認】新旧ルールの矛盾 — どちらを優先しますか？\n\n━━ 今回の会話（実例）━━\n【AIが送った文】\n${draftPreview || '（記録なし）'}\n\n【スタッフが修正した文】\n${sentPreview || '（修正なし）'}\n\n▶ 変化した部分\n${angleLabel}\n\n━━ 【新しいルール（仮説）】━━\nタイトル：「${compResult.title}」（フェーズ: ${compState}）\n内容：\n${contentPreview}\n\n━━ 【既存のルール（確定済み・比較対象）】━━\n${compExistingRules || '（既存ルールなし）'}\n\n━━ AIが判断した矛盾の根拠 ━━\n${judgeReason}\n\n❓ どちらを優先しますか？\n① 新しいルールを採用する\n② 既存ルールを優先する（新ルールは却下）\n③ 場面で使い分ける → どう使い分けますか？`
+                  ? buildRuleConflictQuestion({
+                      markerPrefix: `[knowledge_id:${upsertResult.id}]`,
+                      newRule: {
+                        title: compResult.title,
+                        content: contentPreview,
+                        phase: compState,
+                        importance: imp,
+                        applyCount: 0,
+                        correctCount: 0,
+                        wrongCount: 0,
+                      },
+                      existingRulesText: compExistingRules ?? "",
+                      conflictReason: reason,
+                    })
                   : `[knowledge_id:${upsertResult.id}]\n❓【確認】適用場面が不明確\n\n━━ 今回の会話（実例）━━\n【AIが送った文】\n${draftPreview || '（記録なし）'}\n\n【スタッフが修正した文】\n${sentPreview || '（修正なし）'}\n\n▶ 変化した部分\n${angleLabel}\n\n━━ 確認したいナレッジ ━━\n「${compResult.title}」（フェーズ: ${compState}）\n内容：\n${contentPreview}\n\n━━ 不明確なポイント ━━\n${judgeReason}\n\n❓ 教えてください\n① このルールはどんな場面で使いますか？\n  例：「顧客が○○と言ったとき」「○○の提案後」など\n② AIが送った文の何が問題でしたか？（なければ「特になし」）`;
                 const categoryVal = verdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity";
                 await insertAiQuestion({
@@ -1436,7 +1494,20 @@ export async function POST(req: NextRequest) {
               const sentPreview2 = (sent_reply ?? "").slice(0, 400);
               const angleLabel2 = getReplyAngleLabel(reply_angle);
               const questionText = verdict === "contradiction"
-                ? `[knowledge_id:${upsertResult.id}]\n⚠️【確認】新旧ルールの矛盾 — どちらを優先しますか？\n\n━━ 今回の会話（実例）━━\n【AIが送った文】\n${draftPreview2 || '（記録なし）'}\n\n【スタッフが修正した文】\n${sentPreview2 || '（修正なし）'}\n\n▶ 変化した部分\n${angleLabel2}\n\n━━ 【新しいルール（仮説）】━━\nタイトル：「${result.title}」（フェーズ: ${phase}）\n内容：\n${contentPreview}\n\n━━ 【既存のルール（確定済み・比較対象）】━━\n${fullExistingRules || '（既存ルールなし）'}\n\n━━ AIが判断した矛盾の根拠 ━━\n${reason}\n\n❓ どちらを優先しますか？\n① 新しいルールを採用する\n② 既存ルールを優先する（新ルールは却下）\n③ 場面で使い分ける → どう使い分けますか？`
+                ? buildRuleConflictQuestion({
+                    markerPrefix: `[knowledge_id:${upsertResult.id}]`,
+                    newRule: {
+                      title: result.title,
+                      content: contentPreview,
+                      phase,
+                      importance: imp,
+                      applyCount: 0,
+                      correctCount: 0,
+                      wrongCount: 0,
+                    },
+                    existingRulesText: fullExistingRules ?? "",
+                    conflictReason: reason,
+                  })
                 : `[knowledge_id:${upsertResult.id}]\n❓【確認】適用場面が不明確\n\n━━ 今回の会話（実例）━━\n【AIが送った文】\n${draftPreview2 || '（記録なし）'}\n\n【スタッフが修正した文】\n${sentPreview2 || '（修正なし）'}\n\n▶ 変化した部分\n${angleLabel2}\n\n━━ 確認したいナレッジ ━━\n「${result.title}」（フェーズ: ${phase}）\n内容：\n${contentPreview}\n\n━━ 不明確なポイント ━━\n${reason}\n\n❓ 教えてください\n① このルールはどんな場面で使いますか？\n  例：「顧客が○○と言ったとき」「○○の提案後」など\n② AIが送った文の何が問題でしたか？（なければ「特になし」）`;
               const categoryVal = verdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity";
               await insertAiQuestion({
