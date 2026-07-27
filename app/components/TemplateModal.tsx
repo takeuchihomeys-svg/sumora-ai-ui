@@ -1560,12 +1560,18 @@ export default function TemplateModal({
     setDiscussionMessages(prev => ({ ...prev, [item.id]: newMessages }));
     setDiscussionInput("");
     try {
+      // フェーズ・重要度は question 本文に埋め込まれているためパースして構造化して送る
+      const meta = parseAiQuestion(item.question);
       const res = await fetch("/api/ai-question-discuss", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           item_id: item.id,
           question: item.question,
+          speculation: item.speculation,
+          evidence: item.evidence,
+          phase: meta.phase,
+          importance: meta.importance,
           messages: prevMessages,
           user_message: msg,
         }),
@@ -3650,6 +3656,78 @@ export default function TemplateModal({
                           </button>
                         </div>
                         <p className="text-[10px] text-gray-400">Enterで送信 / Shift+Enterで改行</p>
+                        {/* 打ち合わせの結論で回答を提出するUI（pending かつ AIの発言が1件以上ある場合のみ表示） */}
+                        {item.status === "pending" && (discussionMessages[item.id] ?? []).some(m => m.role === "assistant") && (() => {
+                          const lastAssistant = [...(discussionMessages[item.id] ?? [])].reverse().find(m => m.role === "assistant")?.content ?? "";
+                          // 矛盾系: 打ち合わせの結論（AIの最後の発言）を補足コメントとして付加する
+                          const discussionNote = lastAssistant ? `打ち合わせの結論: ${lastAssistant.slice(0, 500)}` : undefined;
+                          return (
+                            <div className="mt-2 rounded-lg border border-orange-200 bg-white p-2.5 space-y-2">
+                              <p className="text-[11px] font-bold text-orange-600">📝 打ち合わせの結論で回答する</p>
+                              {isContradiction ? (
+                                <>
+                                  <div className="flex flex-col gap-2">
+                                    <button
+                                      onClick={() => void submitFeedbackAnswer(item.id, 'new', discussionNote)}
+                                      disabled={submittingFeedback === item.id}
+                                      className="w-full rounded-lg py-2.5 text-sm font-bold bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 transition"
+                                    >
+                                      {submittingFeedback === item.id ? "送信中..." : "① 新しいルールが正しい"}
+                                    </button>
+                                    <button
+                                      onClick={() => void submitFeedbackAnswer(item.id, 'old', discussionNote)}
+                                      disabled={submittingFeedback === item.id}
+                                      className="w-full rounded-lg py-2.5 text-sm font-bold bg-gray-600 text-white hover:bg-gray-700 disabled:opacity-50 transition"
+                                    >
+                                      {submittingFeedback === item.id ? "送信中..." : "② 既存のルールが正しい"}
+                                    </button>
+                                  </div>
+                                  <p className="text-[10px] text-gray-400">打ち合わせの内容（AIの最後の発言）が補足として一緒に送信されます</p>
+                                </>
+                              ) : isFeedbackRuleReconfirm ? (
+                                <div className="flex gap-2">
+                                  <button
+                                    onClick={() => void submitFeedbackAnswer(item.id, 'keep')}
+                                    disabled={submittingFeedback === item.id}
+                                    className="flex-1 rounded-lg py-2.5 text-sm font-bold bg-green-500 text-white hover:bg-green-600 disabled:opacity-50 transition"
+                                  >
+                                    ✅ 正しい（維持）
+                                  </button>
+                                  <button
+                                    onClick={() => void submitFeedbackAnswer(item.id, 'remove')}
+                                    disabled={submittingFeedback === item.id}
+                                    className="flex-1 rounded-lg py-2.5 text-sm font-bold bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition"
+                                  >
+                                    ❌ 間違い（無効化）
+                                  </button>
+                                </div>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={() => setFeedbackAnswers(prev => ({ ...prev, [item.id]: lastAssistant }))}
+                                    disabled={!lastAssistant}
+                                    className="text-xs text-orange-500 font-medium border border-orange-200 rounded-lg px-2.5 py-1.5 bg-orange-50 hover:bg-orange-100 disabled:opacity-40 transition"
+                                  >
+                                    💡 AIの最後のアドバイスを回答欄にセット
+                                  </button>
+                                  <textarea
+                                    value={feedbackAnswers[item.id] ?? ""}
+                                    onChange={e => setFeedbackAnswers(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                    placeholder="打ち合わせの結論を回答として入力..."
+                                    className="w-full border border-orange-300 rounded-lg px-3 py-2 text-sm resize-none h-20 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white"
+                                  />
+                                  <button
+                                    onClick={() => void submitFeedbackAnswer(item.id)}
+                                    disabled={!feedbackAnswers[item.id]?.trim() || submittingFeedback === item.id}
+                                    className="w-full bg-orange-500 text-white rounded-lg py-2 text-sm font-bold disabled:opacity-50 hover:bg-orange-600 transition"
+                                  >
+                                    {submittingFeedback === item.id ? "送信中..." : "✅ 回答して適用"}
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
                   </div>
