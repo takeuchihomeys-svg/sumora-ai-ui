@@ -3348,6 +3348,7 @@ export default function Home() {
       let textSent = false;
       let textLineMsgId: string | null = null;
       let lineErrorMsg = "";
+      let lineErrorCode: string | null = null; // "monthly_limit" | "invalid_token" | "unknown"
       try {
         // 画像→テキストの順（LINEの表示順に合わせる）
         for (let i = 0; i < imageUrls.length; i++) {
@@ -3357,8 +3358,9 @@ export default function Home() {
             body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, image_url: imageUrls[i], account: selectedConversation.account }),
           });
           if (!lineRes.ok) {
-            const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string };
+            const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string; errorCode?: string };
             lineErrorMsg = `⚠️ LINE画像送信失敗: ${lineErr.error || lineRes.statusText}`;
+            if (lineErr.errorCode) lineErrorCode = lineErr.errorCode;
           } else {
             imageSentFlags[i] = true;
             if (!firstImageLineMsgId) {
@@ -3375,8 +3377,9 @@ export default function Home() {
             body: JSON.stringify({ line_user_id: selectedConversation.lineUserId, message: textToSend, account: selectedConversation.account }),
           });
           if (!lineRes.ok) {
-            const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string };
+            const lineErr = await lineRes.json().catch(() => ({ error: `HTTP ${lineRes.status}` })) as { error?: string; errorCode?: string };
             lineErrorMsg = `⚠️ LINE送信失敗: ${lineErr.error || lineRes.statusText}`;
+            if (lineErr.errorCode) lineErrorCode = lineErr.errorCode;
           } else {
             textSent = true;
             const txtJson = await lineRes.json().catch(() => null) as { sentMessageIds?: string[] } | null;
@@ -3390,7 +3393,14 @@ export default function Home() {
 
       const sentImageUrls = imageUrls.filter((_, i) => imageSentFlags[i]);
       const anyImageSent = sentImageUrls.length > 0;
-      if (lineErrorMsg) setError(`${lineErrorMsg}。未送信の内容は入力欄に残っています。`);
+      if (lineErrorMsg) {
+        if (lineErrorCode === "monthly_limit") {
+          // 月間上限は再試行しても解決しない → 専用メッセージ（エラーバナー側で再試行ボタンを非表示にする判定に使う文言）
+          setError("⚠️ LINEの送信上限を超えました。未送信の内容は入力欄に残っています。今月の送信上限（200通）に達したため、プランをアップグレードするか翌月までお待ちください。");
+        } else {
+          setError(`${lineErrorMsg}。未送信の内容は入力欄に残っています。`);
+        }
+      }
 
       // 全て送信失敗 → DBに記録せず終了（下書き・画像・2通目設定を残して再送できるようにする）
       if (!textSent && !anyImageSent) {
@@ -5540,7 +5550,12 @@ export default function Home() {
             {error ? (
               <div className="mb-2 flex items-center justify-between rounded-xl bg-red-50 px-3 py-2 text-xs text-red-600">
                 <span>{error}</span>
-                <button onClick={() => { void fetchConversationsAndMessages(); }} className="ml-3 shrink-0 font-bold text-[#1565C0] active:opacity-60">再試行</button>
+                {error.includes("LINEの送信上限") ? (
+                  // 月間上限は再試行しても解決しない → 再試行ボタンの代わりにLINE管理画面へのリンクを表示
+                  <a href="https://manager.line.biz/" target="_blank" rel="noopener noreferrer" className="ml-3 shrink-0 font-bold text-[#1565C0] active:opacity-60">LINEプランを確認</a>
+                ) : (
+                  <button onClick={() => { void fetchConversationsAndMessages(); }} className="ml-3 shrink-0 font-bold text-[#1565C0] active:opacity-60">再試行</button>
+                )}
               </div>
             ) : null}
 

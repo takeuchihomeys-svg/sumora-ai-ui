@@ -86,8 +86,33 @@ export async function POST(req: NextRequest) {
 
   if (!res.ok) {
     const text = await res.text();
-    console.error(`LINE push error [${accountKey}]:`, text);
-    return NextResponse.json({ ok: false, error: text }, { status: 500 });
+    console.error(`LINE push error [${accountKey}] status=${res.status}:`, text);
+
+    // LINE APIエラーを種別判定し、ユーザー向けの日本語メッセージ + errorCode を返す
+    // （生JSONをそのままUIに露出させない。フロントはerrorCodeで再試行可否を判断する）
+    let errorCode: "monthly_limit" | "invalid_token" | "unknown" = "unknown";
+    let friendlyError: string;
+    if (res.status === 429 || text.includes("monthly limit")) {
+      errorCode = "monthly_limit";
+      friendlyError = "今月のLINE送信上限（200通）に達しました。プランをアップグレードするか、翌月になるまでお待ちください。";
+    } else if (res.status === 401 || text.toLowerCase().includes("access token")) {
+      errorCode = "invalid_token";
+      friendlyError = "LINE APIトークンが無効です。管理者に連絡してください。";
+    } else {
+      // LINE APIレスポンス（JSON）から message だけを抽出して表示する
+      let detail = text;
+      try {
+        const parsed = JSON.parse(text) as { message?: string };
+        if (parsed.message) detail = parsed.message;
+      } catch {
+        // JSONでなければ生テキストのまま
+      }
+      friendlyError = `LINE送信に失敗しました: ${detail}`;
+    }
+    return NextResponse.json(
+      { ok: false, error: friendlyError, errorCode, lineStatus: res.status },
+      { status: 500 }
+    );
   }
 
   // P4: LINE push レスポンスの sentMessages から message id を取得
