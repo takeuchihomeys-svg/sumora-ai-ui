@@ -5895,18 +5895,23 @@ export default function Home() {
             <div className="mb-1.5 flex items-center gap-1.5 overflow-x-auto">
 
 
-              <button
-                onClick={generateReply}
-                disabled={generating || !selectedConversation.id || activeTasks[selectedConversation?.id ?? ""]?.some(t => ["property_send","estimate_sheet"].includes(t.task_type))}
-                className={`shrink-0 flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-sm disabled:opacity-40 active:scale-95 transition-all duration-75 ${generating ? "border-blue-300 bg-blue-50 text-blue-600" : "border-[#d1d7db] bg-white text-[#111b21]"}`}
-              >
-                {generating ? (
-                  <>
-                    <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-blue-400 border-t-transparent" />
-                    作成中...
-                  </>
-                ) : replyDraft ? (<><svg className="inline shrink-0 mr-1" style={{verticalAlign:"-2px"}} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>再生成</>) : "AI文案を作成"}
-              </button>
+              <span className="shrink-0 flex flex-col items-start">
+                <button
+                  onClick={generateReply}
+                  disabled={generating || !selectedConversation.id || activeTasks[selectedConversation?.id ?? ""]?.some(t => ["property_send","estimate_sheet"].includes(t.task_type))}
+                  className={`shrink-0 flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-sm disabled:opacity-40 active:scale-95 transition-all duration-75 ${generating ? "border-blue-300 bg-blue-50 text-blue-600" : (nextActionMap[selectedConversation?.id ?? ""] && !dismissedNextActionIds.has(selectedConversation?.id ?? "")) ? "border-gray-200 bg-gray-100 text-gray-400" : "border-[#d1d7db] bg-white text-[#111b21]"}`}
+                >
+                  {generating ? (
+                    <>
+                      <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-blue-400 border-t-transparent" />
+                      作成中...
+                    </>
+                  ) : replyDraft ? (<><svg className="inline shrink-0 mr-1" style={{verticalAlign:"-2px"}} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>再生成</>) : "AI文案を作成"}
+                </button>
+                {(nextActionMap[selectedConversation?.id ?? ""] && !dismissedNextActionIds.has(selectedConversation?.id ?? "")) && (
+                  <span className="text-[10px] text-gray-400 mt-0.5 whitespace-nowrap">AIXバナーの推薦を先にご確認ください</span>
+                )}
+              </span>
 
 
               <button
