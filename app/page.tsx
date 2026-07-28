@@ -2372,6 +2372,7 @@ export default function Home() {
 
   const generateReply = async () => {
     if (!selectedConversation.id) return;
+    const genConvId = selectedConversation.id; // finallyでdraftPreparingをリセットするために保存
 
     const msgs = selectedConversation.messages;
 
@@ -2540,6 +2541,11 @@ export default function Home() {
         }
       }
 
+      // metaDone=false はJSONメタ行が見つからなかったことを意味する（ストリーム内部エラー等）
+      if (!metaDone) {
+        throw new Error(buffer.trim() || "返信案の取得に失敗しました（ストリーム形式エラー）");
+      }
+
       // <<<SUGGESTED_AIX:...>>> トレーラーを解析してUIに反映
       const aixTrailerMatch = fullText.match(/<<<SUGGESTED_AIX:([\s\S]+?)>>>/);
       if (aixTrailerMatch) {
@@ -2575,6 +2581,9 @@ export default function Home() {
     } finally {
       setGenerating(false);
       setTargetOverrideMessage(null); // 生成完了後にバナーをクリア
+      // 手動生成が完了した会話と現在選択中の会話が一致する場合のみdraftPreparingをリセット
+      // （会話切替によるAbort後は別会話のdraftPreparingを誤って消さないようにする）
+      if (selectedIdRef.current === genConvId) setDraftPreparing(false);
     }
   };
 
