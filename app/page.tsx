@@ -1045,6 +1045,11 @@ export default function Home() {
             );
             // async プリ生成完了 → preGenInProgress をクリア
             if (upd.ai_draft) preGenInProgress.current.delete(String(upd.id));
+            // [AIX誘導中] sentinel が届いたら即座に draftPreparing をリセット（60秒待ち防止）
+            if (upd.ai_draft === "[AIX誘導中]" && selectedIdRef.current === String(upd.id)) {
+              if (draftTimeoutRef.current) { clearTimeout(draftTimeoutRef.current); draftTimeoutRef.current = null; }
+              setDraftPreparing(false);
+            }
             // 新規顧客メッセージ → AI次アクション提案を再取得（dismiss もリセット）
             if (upd.ai_draft) {
               const convId = String(upd.id);
@@ -5907,7 +5912,7 @@ export default function Home() {
               <span className="shrink-0 flex flex-col items-start">
                 <button
                   onClick={generateReply}
-                  disabled={generating || !selectedConversation.id || activeTasks[selectedConversation?.id ?? ""]?.some(t => ["property_send","estimate_sheet"].includes(t.task_type))}
+                  disabled={generating || !selectedConversation.id}
                   className={`shrink-0 flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-sm disabled:opacity-40 active:scale-95 transition-all duration-75 ${generating ? "border-blue-300 bg-blue-50 text-blue-600" : (nextActionMap[selectedConversation?.id ?? ""] && !dismissedNextActionIds.has(selectedConversation?.id ?? "")) ? "border-gray-200 bg-gray-100 text-gray-400" : "border-[#d1d7db] bg-white text-[#111b21]"}`}
                 >
                   {generating ? (
