@@ -1011,20 +1011,20 @@ export async function POST(req: NextRequest) {
   }
 
   // 90%以上 → AIをほぼそのまま使った
-  // 5〜90% → 何らかの修正あり（軽微〜大幅・すべて差分学習の対象）
-  // 5%未満 → ほぼ手書き（AIは参考のみ）
+  // 30〜90% → 何らかの修正あり（軽微〜大幅・すべて差分学習の対象）
+  // 30%未満 → ほぼ書き直し（日本語では助詞等で sim < 0.05 はほぼ達成不可能なため閾値を0.3に修正）
   const sim = aiDraft ? textSimilarity(aiDraft.trim(), sentReply.trim()) : 0;
   const wasAiUsed    = !!aiDraft && aiDraft.trim().length > 0 && sim >= 0.9;
   // 分割送信判定: 送信文が aiDraft の 40%未満 かつ 類似度 50%以上 → 分割送信の可能性が高いためスキップ
   // （「意図的な短縮編集」との誤判定を防ぐため閾値を緩め、100%一致短縮のみ誤判定しないよう調整済み）
   const likelySplit  = !!aiDraft && sentReply.trim().length < aiDraft.trim().length * 0.4 && sim >= 0.5;
-  const wasAiModified = !!aiDraft && aiDraft.trim().length > 0 && sim >= 0.05 && sim < 0.9 && !likelySplit;
+  const wasAiModified = !!aiDraft && aiDraft.trim().length > 0 && sim >= 0.3 && sim < 0.9 && !likelySplit;
 
   // RLHF: 仮説検証フィードバック（conversationId + aiDraft がある場合のみ）
   // sim>=0.65（軽微修正含む）→ correct、5〜65%修正 → wrong
-  // 改善④: sim<0.05（ほぼ手書き = 完全書き直し）も wrong として登録（AI案が捨てられた = 強い負のシグナル）
+  // 改善④: sim<0.3（ほぼ書き直し）も wrong として登録（AI案が捨てられた = 強い負のシグナル）
   // after()でVercelがレスポンス後にキャンセルするのを防ぐ
-  const isFullRewrite = !!aiDraft && aiDraft.trim().length > 0 && sim < 0.05;
+  const isFullRewrite = !!aiDraft && aiDraft.trim().length > 0 && sim < 0.3;
   // RLHF精密化: 意味のある操作があった場合のみ実行（likelySplit はフィードバック対象外）
   if (conversationId && aiDraft && (wasAiUsed || wasAiModified || isFullRewrite)) {
     after(async () => {
@@ -1109,6 +1109,7 @@ export async function POST(req: NextRequest) {
         ai_components: aiComponentsObj || null,
         template_id: templateId || null,
         is_full_rewrite: isFullRewrite,
+        ai_similarity: aiDraft ? sim : null,
         entry_source: typeof entry_source === "string" ? entry_source : "line_reply",
       })
       .select("id")

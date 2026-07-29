@@ -1647,6 +1647,11 @@ CREATE INDEX IF NOT EXISTS idx_reply_mode_shadow_logs_conversation_id ON reply_m
 CREATE INDEX IF NOT EXISTS idx_reply_mode_shadow_logs_decided_at ON reply_mode_shadow_logs(decided_at);
 CREATE INDEX IF NOT EXISTS idx_reply_mode_shadow_logs_evaluated_at ON reply_mode_shadow_logs(evaluated_at) WHERE evaluated_at IS NULL;
 
+-- ── ai_similarity + isFullRewrite閾値修正（2026-07-29追加）──
+
+-- ai_reply_examples: AI文案と送信文の類似度生値（方向性OK率を任意閾値で計算するため）
+ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS ai_similarity float;
+
 -- ── PostgREST スキーマキャッシュ再読込（必ず最後に実行する）──
 -- 新カラム追加後に PostgREST のスキーマキャッシュが古いままだと、
 -- 以降の INSERT/SELECT が「column does not exist」で全滅する
