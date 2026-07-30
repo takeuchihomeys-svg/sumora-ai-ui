@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
+import {
+  SYSTEM_OVERVIEW,
+  BUSINESS_RULES,
+  KNOWLEDGE_FORMAT,
+  fetchActiveKnowledgeSection,
+  phaseLabel,
+} from "@/app/lib/discuss-context";
 
 // 🤝 ナレッジ打ち合わせ（チャット形式）
 // TemplateModal のナレッジ承認パネル「🤝 打ち合わせ」から呼ばれる。
@@ -29,18 +36,46 @@ type DiscussBody = {
   userMessage?: string;
 };
 
-function buildSystemPrompt(title: string, content: string, category: string | null | undefined): string {
-  return `あなたは不動産仲介AIアシスタントです。
+function buildSystemPrompt(params: {
+  title: string;
+  content: string;
+  category?: string | null;
+  conversationState?: string | null;
+  knowledgeSection?: string;
+}): string {
+  const { title, content, category, conversationState, knowledgeSection } = params;
+  return `あなたは不動産AIアシスタント「スモラAI」のルール調整担当です。
 以下のナレッジについて竹内悠馬さんと打ち合わせをしています。
 竹内さんの意見を聞いてナレッジを改善してください。
+確定されたナレッジの content はそのままLINE返信AIのプロンプトに注入されます。
 
-【ナレッジタイトル】${title}
+---
+
+${SYSTEM_OVERVIEW}
+
+${KNOWLEDGE_FORMAT}
+
+---
+
+${BUSINESS_RULES}
+${knowledgeSection ? `
+---
+
+${knowledgeSection}
+` : ""}
+---
+
+【打ち合わせ対象のナレッジ】
+【タイトル】${title}
 【内容】${content}
-【カテゴリ】${category ?? "なし"}
+【カテゴリ】${category ?? "なし"}${conversationState ? `
+【フェーズ】${phaseLabel(conversationState)}` : ""}
 
 打ち合わせのルール:
 - 不動産仲介業務の専門家として、ナレッジの妥当性・改善点を具体的に議論する
+- 改善案が上記の業務ルール（禁止表現・仲介手数料2,980円固定・日付生成禁止など）や承認済みルールと矛盾しないか必ずチェックし、矛盾があれば指摘する
 - 竹内さんの意見を反映したナレッジの改善案を提案する
+- 改善案の content はプロンプト注入用の業務ルールとして簡潔に書く（500文字以内が目安）
 - 回答は簡潔に（長くても400文字程度）
 - 竹内さんが「反映して」「これでOK」「確定」など確定の意思を示したら「了解しました。確定ボタンを押してください。」とだけ返す`;
 }
@@ -69,16 +104,19 @@ function extractText(res: Anthropic.Message): string {
 // チャット1往復
 // ─────────────────────────────────────────────
 async function handleChat(body: DiscussBody): Promise<NextResponse> {
-  const { title, content, category, messages, userMessage } = body;
+  const { title, content, category, conversation_state, messages, userMessage } = body;
 
   if (!title || !content || !userMessage) {
     return NextResponse.json({ ok: false, error: "title / content / userMessage は必須です" }, { status: 400 });
   }
 
+  // 承認済みナレッジTOPを取得（失敗しても打ち合わせは続行）
+  const knowledgeSection = await fetchActiveKnowledgeSection(conversation_state);
+
   const res = await client.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 600,
-    system: buildSystemPrompt(title, content, category),
+    system: buildSystemPrompt({ title, content, category, conversationState: conversation_state, knowledgeSection }),
     messages: toAnthropicMessages(messages ?? [], userMessage),
   });
 
@@ -94,11 +132,14 @@ async function handleChat(body: DiscussBody): Promise<NextResponse> {
 // 確定・反映（?action=finalize）
 // ─────────────────────────────────────────────
 async function handleFinalize(body: DiscussBody): Promise<NextResponse> {
-  const { id, title, content, category, messages } = body;
+  const { id, title, content, category, conversation_state, messages } = body;
 
   if (!id || !title || !content) {
     return NextResponse.json({ ok: false, error: "id / title / content は必須です" }, { status: 400 });
   }
+
+  // 承認済みナレッジTOPを取得（失敗しても finalize は続行）
+  const knowledgeSection = await fetchActiveKnowledgeSection(conversation_state);
 
   // 1. 会話履歴を元に Sonnet が最終ナレッジ content を抽出/改善
   const finalizeInstruction = `以上の打ち合わせ内容を踏まえて、このナレッジの最終版の【内容】を出力してください。
@@ -111,12 +152,13 @@ async function handleFinalize(body: DiscussBody): Promise<NextResponse> {
 - 打ち合わせで竹内さんが指摘・合意した修正をすべて反映する
 - 打ち合わせで変更の合意がなければ元の内容をそのまま出力する
 - LINE返信AIのプロンプトに注入される業務ルールとして簡潔・明確に書く（500文字以内）
+- 業務ルール（禁止表現・仲介手数料2,980円固定・日付生成禁止など）と矛盾する内容を含めない
 - 最終ナレッジの本文のみ出力する（前置き・見出し・コードフェンス不要）`;
 
   const res = await client.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 1000,
-    system: buildSystemPrompt(title, content, category),
+    system: buildSystemPrompt({ title, content, category, conversationState: conversation_state, knowledgeSection }),
     messages: toAnthropicMessages(messages ?? [], finalizeInstruction),
   });
 

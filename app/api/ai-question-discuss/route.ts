@@ -1,20 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import {
+  SYSTEM_OVERVIEW,
+  BUSINESS_RULES,
+  KNOWLEDGE_FORMAT,
+  fetchActiveKnowledgeSection,
+  phaseLabel,
+} from "@/app/lib/discuss-context";
 
 export const maxDuration = 30;
 
 // 質問コンテキストを system prompt に毎ターン埋め込む
 // （以前は初回ターンのみ user メッセージとして注入していたが、クライアント側 state に保存されず
 //   2ターン目以降で質問コンテキストが消失するバグがあったため system 側に移設）
+// システム全体像・業務ルール・ナレッジDBフォーマットは app/lib/discuss-context.ts に集約。
 function buildSystemPrompt(params: {
   question: string;
   speculation?: string | null;
   evidence?: string | null;
   phase?: string | null;
   importance?: number | null;
+  knowledgeSection?: string;
 }): string {
   const attrs: string[] = [];
-  if (params.phase) attrs.push(`フェーズ: ${params.phase}`);
+  if (params.phase) attrs.push(`フェーズ: ${phaseLabel(params.phase)}`);
   if (params.importance !== null && params.importance !== undefined) attrs.push(`重要度: ${params.importance}`);
   if (params.speculation) attrs.push(`AIの憶測: ${params.speculation}`);
   if (params.evidence) attrs.push(`根拠・予測場面: ${params.evidence}`);
@@ -24,45 +33,30 @@ function buildSystemPrompt(params: {
 
 ---
 
-【スモラAIシステムの全体像】
-
-■ システム概要
-スモラAIは不動産仲介会社（スモラ）のLINE営業を自動化するシステムです。
-お客様とスタッフ（竹内さん）のLINEチャットを管理画面で確認し、AIが返信文案を生成します。
-
-■ 2つの返信方法
-
-1. 通常返信AI（文案生成ボタン）
-   - お客様のメッセージを見て「文案生成」ボタンを押すと Claude が返信案を生成する
-   - ai_reply_knowledge（返信ルール）+ ai_reply_examples（実例）+ phrase_dictionary（フレーズ辞書）を参照して生成
-   - スタッフが文案を確認・編集して送信する
-
-2. AIXボタン（特定シナリオ向け専用ボタン）
-   - AixModal（モーダル）→ Cloudflare Worker /api/aix/action → Claude Sonnet で生成する専用ルート
-   - 以下のシナリオに特化したボタンがある（括弧内はシナリオID）：
-     - ヒアリング（condition_hearing）: 希望条件を詳しく聞く
-     - 物件オススメ（property_recommendation）: 物件を提案する
-     - 内覧へ！（viewing_schedule）: 内覧日程を調整する ← 内覧日程はここで行う
-     - 申込へ！（apply_push）: 申込に誘導する
-     - 見積書送る（estimate_sheet）: 見積書を送付する
-     - 物件ピックアップした（property_pickup）: 物件を絞り込んで提示
-     - 物件確認した（property_check）: 管理会社への確認結果を報告
-     - 待ち合わせ（meeting_arrange）: 内覧当日の待ち合わせ連絡
-     - 確認します（confirm）: 後で確認することを伝える
-     - 追客する（follow_up）: お客様を追いかけてアプローチ
-   - 「内覧の日程調整はどうするか」と聞かれたら AIX の「内覧へ！」ボタンで行うと答えること
+${SYSTEM_OVERVIEW}
 
 ■ 「ルール」とは何か
 - ai_reply_knowledge テーブルに保存された返信知識（ルール）
 - 形式：「○○という状況のとき、△△のように返信する」というナレッジ
 - 週次学習ループでAIが新しいルールを自動生成し、矛盾チェックした上で竹内さんに承認を求める
-- ルールには「フェーズ」がある（P1:初回接触 〜 P7:申込 〜 P7.5:申込後）
-- ルールには「重要度」（1〜10点）がある
+
+${KNOWLEDGE_FORMAT}
+
+---
+
+${BUSINESS_RULES}
+${params.knowledgeSection ? `
+---
+
+${params.knowledgeSection}
+` : ""}
+---
 
 ■ この「打ち合わせ」機能の目的
 - AIが新しく学んだルールが正しいか・既存ルールと矛盾していないかを竹内さんと対話で確認する
 - 最終的には①新ルール採用・②既存ルール維持・③場面で使い分け のどれかを決める
 - AIは「議論パートナー」として具体例を出したり疑問点を整理したりする
+- 上記の業務ルール・承認済みルールと矛盾する提案が出た場合は必ず指摘する
 
 ---
 
@@ -109,6 +103,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "question と user_message は必須です" }, { status: 400 });
   }
 
+  // 承認済みナレッジTOPを取得（失敗しても打ち合わせは続行）
+  const knowledgeSection = await fetchActiveKnowledgeSection(phase);
+
   // 過去の会話履歴に今回のユーザーメッセージを追加
   // （質問コンテキストは system prompt に毎ターン含まれるため、履歴への注入は不要）
   const conversationMessages: Array<{ role: "user" | "assistant"; content: string }> = [
@@ -122,7 +119,7 @@ export async function POST(req: NextRequest) {
     const response = await client.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 1024,
-      system: buildSystemPrompt({ question, speculation, evidence, phase, importance }),
+      system: buildSystemPrompt({ question, speculation, evidence, phase, importance, knowledgeSection }),
       messages: conversationMessages,
     });
 
