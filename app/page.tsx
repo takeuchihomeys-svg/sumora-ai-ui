@@ -1597,12 +1597,11 @@ export default function Home() {
           ? latestMsgTime
           : (dbUpdatedAt || undefined);
 
-      // スタッフ返信なし → hearing（件数制限なし）
-      const hasStaffReply = relatedMessages.some((m) => m.sender === "staff");
-      const autoStatus =
-        !hasStaffReply
-          ? "hearing"
-          : (conversation.status || "hearing");
+      // DBステータスを正とする（未設定時のみ hearing にフォールバック）
+      // ※旧実装の「スタッフ返信なし→強制hearing」はシステム導入前の顧客
+      //   （messagesにスタッフ返信が無い）の手動ステータス変更を6秒ポーリングで
+      //   毎回上書きしてしまうため撤廃
+      const autoStatus = conversation.status || "hearing";
 
       return {
         id: String(conversation.id),
@@ -3499,7 +3498,7 @@ export default function Home() {
       const currentStatus = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
       const isSendingImages = anyImageSent;
       const convUpdate: Record<string, unknown> = { last_message: lastText, last_sender: "staff", updated_at: now.toISOString(), ai_draft: null, is_flagged: false };
-      if (isFirstStaffReply) convUpdate.status = "hearing";
+      if (isFirstStaffReply && (!selectedConversation.status || currentStatus === "hearing")) convUpdate.status = "hearing";
       // 画像送信時 & 初回対応中 → 物件提案中に自動昇格
       if (isSendingImages && currentStatus === "hearing") convUpdate.status = "proposing";
       const newStatus = convUpdate.status as string | undefined;
@@ -5152,7 +5151,7 @@ export default function Home() {
                             key={s.key}
                             onClick={() => updateConversationStatus(s.key)}
                             className={`flex w-full items-center gap-3 px-4 py-2.5 text-left text-[13px] font-semibold hover:bg-[#f5f6f6] border-b border-[#f0f2f5] last:border-b-0 ${
-                              selectedConversation.status === s.key ? "bg-[#f0f2f5]" : ""
+                              (STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status) === s.key ? "bg-[#f0f2f5]" : ""
                             }`}
                           >
                             <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${s.dot}`} />
