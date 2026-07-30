@@ -5668,7 +5668,14 @@ export default function AixModal({
           <div className="flex gap-2">
             {preview ? (
               (() => {
-                const isConfirmation = preview.includes("確認事項があります") || preview.includes("確認させてください");
+                const isConfirmation =
+                  preview.includes("確認事項があります") ||
+                  preview.includes("確認させてください") ||
+                  preview.includes("送付非推奨") ||
+                  preview.includes("条件に合わない") ||
+                  preview.includes("条件と合わない") ||
+                  preview.includes("希望条件と不一致") ||
+                  preview.includes("訴求しない");
                 return (
                   <>
                     <button
