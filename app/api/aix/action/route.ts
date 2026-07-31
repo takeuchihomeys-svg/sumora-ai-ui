@@ -2609,17 +2609,18 @@ ${mgmtInfo}${recentHistory}`,
         // （adaptMessageToConversation のガードで確認前文への書き換えは絶対禁止済み）
         if (cmPattern === "unavailable") {
           const cmUnavailPropName = typeof property_name === "string" ? property_name.trim() : "";
+          // 確定ベーステンプレ（通常生成と同一構造）: 冒頭表現以外は固定
+          const cmBuild = (opening: string) =>
+            `${name}お世話になっております！！\n${opening}募集状況確認させて頂きましたところ、現在募集に出ていないお部屋となっております！！\n\n引き続き${name}のご条件に合ったお部屋をピックアップしてお送りさせて頂きます！！`;
           let cmBase: string;
           if (cmSentCount !== null) {
-            cmBase = `${name}お送りいただきました物件${cmSentCount}件\n現在全て募集終了しているお部屋となります。\n他にも良いお部屋を探してご連絡させていただきます！！`;
+            cmBase = cmBuild(`お送り頂きました物件${cmSentCount}件につきまして`);
           } else if (cmUnavailPropName) {
-            cmBase = `${name}お世話になっております！！\nお送り頂きました${cmUnavailPropName}の募集状況確認させて頂きましたところ現在募集が終了しているお部屋となります！！`;
+            cmBase = cmBuild(`${cmUnavailPropName}につきまして`);
           } else {
             const cmCountM = recentHistory.match(/([2-9０-９])\s*件/);
             const cmCnt = cmCountM ? parseInt(cmCountM[1].replace(/[０-９]/g, (c) => String(c.charCodeAt(0) - 0xFF10))) : 1;
-            cmBase = cmCnt >= 2
-              ? `${name}お世話になっております！！\nお送り頂きました${cmCnt}件の物件につきまして募集状況確認させて頂きましたところ現在いずれも募集が終了しているお部屋となります！！`
-              : `${name}お世話になっております！！\nお送り頂きました物件の募集状況確認させて頂きましたところ現在募集が終了しているお部屋となります！！`;
+            cmBase = cmBuild(cmCnt >= 2 ? `お送り頂きました物件${cmCnt}件につきまして` : "お送り頂きました物件につきまして");
           }
           message_text = await adaptMessageToConversation(cmBase, recentHistory, name, currentAction, "");
           return finalizeResponse(message_text);
@@ -2811,10 +2812,10 @@ ${pcrCalendarBlock}
 こちらのお部屋〇〇さんお気に召されましたらご案内させていただきます！！
 ご都合いかがでしょうか😊！！」`,
         unavailable: `[パターン例: 満室・空きなし]
-スモラ:「お待たせいたしました！！
-残念ながらご確認の物件は現在募集に出ていないお部屋となっております🙇‍♀️！！
-引き続き〇〇さんのご希望に合うお部屋をピックアップさせていただきます！！
-新着で出次第すぐにお送りさせていただきます😌！！」`,
+スモラ:「〇〇さんお世話になっております！！
+お送り頂きました物件につきまして募集状況確認させて頂きましたところ、現在募集に出ていないお部屋となっております！！
+
+引き続き〇〇さんのご条件に合ったお部屋をピックアップしてお送りさせて頂きます！！」`,
       };
 
       const calendarNote = (pattern === "available" && calendar_info) ? String(calendar_info) : null;
@@ -2838,7 +2839,11 @@ M/D（曜日）HH:MM〜HH:MM
 [物件名]で現在募集中のお部屋御座いましたので、最大限割引しました御見積書と併せてお送りさせて頂きました！！
 お手隙の際にご査収ください！！」`
           : `物件を確認した結果「${endedRoomStr}は募集終了でしたが別の間取りのお部屋が募集中」でした。「残念ながら」等で正直に伝えつつ（「申し訳ございません」等の謝罪表現は使用禁止）、代替案への期待感を持たせて内覧誘導で締めてください。募集終了だったお部屋は${endedRoomStr}です。`,
-        unavailable: "物件を確認した結果「満室・空きなし」でした。「残念ながら」等で正直に伝えつつ（「申し訳ございません」等の謝罪表現は使用禁止）、引き続き物件探しを続けることを伝え、前向きな雰囲気で締めてください。",
+        unavailable: `物件を確認した結果「満室・空きなし」でした。以下の確定テンプレの構成・文体を一字一句守って作成してください（〇〇はお客様名。冒頭の「お送り頂きました物件につきまして」の部分のみ状況に応じて置き換え可：お客様がURL等で物件を送ってきた場合はそのまま、物件名が分かる場合は「[物件名]につきまして」）：
+「〇〇さんお世話になっております！！
+お送り頂きました物件につきまして募集状況確認させて頂きましたところ、現在募集に出ていないお部屋となっております！！
+
+引き続き〇〇さんのご条件に合ったお部屋をピックアップしてお送りさせて頂きます！！」`,
         exclusive: "専任物件のため紹介不可を伝える",
       };
 
@@ -3076,23 +3081,41 @@ ${availableTemplate}`;
         }
         // 号室の先頭ゼロ除去はメインパス末尾の finalize() で一括処理（⑦で共通化）
 
-      // 「物件なかった」は完全固定テンプレ（AI不要・崩れ防止）
+      // 「物件なかった」は確定ベーステンプレ（構造は完全固定・冒頭表現のみ文脈判断）
       } else if (pattern === "unavailable") {
         const unavailPropName = typeof property_name === "string" ? property_name.trim() : "";
+        // 確定ベーステンプレ: 冒頭表現（〇〇につきまして）以外は一字一句固定・AIに構造を崩させない
+        const buildUnavailableMessage = (opening: string) =>
+          `${name}お世話になっております！！\n${opening}募集状況確認させて頂きましたところ、現在募集に出ていないお部屋となっております！！\n\n引き続き${name}のご条件に合ったお部屋をピックアップしてお送りさせて頂きます！！`;
+        const UNAVAILABLE_DEFAULT_OPENING = "お送り頂きました物件につきまして";
         if (sentPropCount !== null) {
-          // ケース3: 送られた物件数が指定されている → 全件募集終了の固定文
-          message_text = `${name}お送りいただきました物件${sentPropCount}件\n現在全て募集終了しているお部屋となります。\n他にも良いお部屋を探してご連絡させていただきます！！`;
+          // 送られた物件数が指定されている → 件数入りの冒頭表現
+          message_text = buildUnavailableMessage(`お送り頂きました物件${sentPropCount}件につきまして`);
         } else if (unavailPropName) {
-          // 物件名あり
-          message_text = `${name}お世話になっております！！\nお送り頂きました${unavailPropName}の募集状況確認させて頂きましたところ現在募集が終了しているお部屋となります！！`;
+          // 物件名が分かる場合 → 「[物件名]につきまして」
+          message_text = buildUnavailableMessage(`${unavailPropName}につきまして`);
         } else {
-          // 物件名なし: 会話履歴から件数を簡易判定
-          const countM = recentHistory.match(/([2-9０-９])\s*件/);
-          const cnt = countM ? parseInt(countM[1].replace(/[０-９]/g, (c) => String(c.charCodeAt(0) - 0xFF10))) : 1;
-          if (cnt >= 2) {
-            message_text = `${name}お世話になっております！！\nお送り頂きました${cnt}件の物件につきまして募集状況確認させて頂きましたところ現在いずれも募集が終了しているお部屋となります！！`;
-          } else {
-            message_text = `${name}お世話になっております！！\nお送り頂きました物件の募集状況確認させて頂きましたところ現在募集が終了しているお部屋となります！！`;
+          // その他: AIは冒頭表現のみ判断（本文構造はコード側で固定）。失敗時はデフォルト冒頭にフォールバック
+          try {
+            const aiOpening = (await callClaude(
+              `あなたは不動産賃貸仲介スタッフのメッセージの冒頭表現だけを決めるエンジンです。
+「（冒頭表現）募集状況確認させて頂きましたところ、現在募集に出ていないお部屋となっております！！」という固定文の（冒頭表現）に入る一句だけを出力してください。
+ルール:
+- お客様がURLや画像で物件を送ってきた場合 → 「お送り頂きました物件につきまして」
+- 物件が複数件送られている場合 → 「お送り頂きました物件○件につきまして」（○は件数）
+- 会話から物件名が特定できる場合 → 「[物件名]につきまして」
+- 判断できない場合 → 「お送り頂きました物件につきまして」
+出力は冒頭表現の一句のみ。説明・改行・引用符・絵文字は一切禁止。`,
+              `以下の会話履歴から冒頭表現を決めてください。${recentHistory}`,
+              currentAction
+            )).replace(/[\n\r"「」]/g, "").trim();
+            message_text = buildUnavailableMessage(
+              aiOpening && aiOpening.length <= 40 && aiOpening.endsWith("につきまして")
+                ? aiOpening
+                : UNAVAILABLE_DEFAULT_OPENING
+            );
+          } catch {
+            message_text = buildUnavailableMessage(UNAVAILABLE_DEFAULT_OPENING);
           }
         }
 
