@@ -1376,14 +1376,23 @@ export async function POST(req: NextRequest) {
                     })
                   : `[knowledge_id:${upsertResult.id}]\n❓【確認】適用場面が不明確\n\n━━ 今回の会話（実例）━━\n【AIが送った文】\n${draftPreview || '（記録なし）'}\n\n【スタッフが修正した文】\n${sentPreview || '（修正なし）'}\n\n▶ 変化した部分\n${angleLabel}\n\n━━ 確認したいナレッジ ━━\n「${compResult.title}」（フェーズ: ${compState}）\n内容：\n${contentPreview}\n\n━━ 不明確なポイント ━━\n${judgeReason}\n\n❓ 教えてください\n① このルールはどんな場面で使いますか？\n  例：「顧客が○○と言ったとき」「○○の提案後」など\n② AIが送った文の何が問題でしたか？（なければ「特になし」）`;
                 const categoryVal = verdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity";
-                await insertAiQuestion({
-                  question: questionText,
-                  speculation: `フェーズ: ${compState} / 重要度: ${imp}`,
-                  category: categoryVal,
-                  evidence: `AI案:\n${ai_draft ?? ""}\n\n送信文:\n${sent_reply ?? ""}\n\nangle: ${reply_angle ?? ""}\n類似度: ${Math.round(sim * 100)}%`,
-                  confidence: "medium",
-                  status: "pending",
-                });
+                // dedup: 同一 knowledge_id への質問が既にあれば再起票しない（クエリ失敗時は data=null → 起票にフォールバック）
+                const { data: existingCompQ } = await supabase
+                  .from("ai_feedback_items")
+                  .select("id")
+                  .in("status", ["pending", "answered", "applied"])
+                  .ilike("question", `%[knowledge_id:${upsertResult.id}]%`)
+                  .limit(1);
+                if (!existingCompQ || existingCompQ.length === 0) {
+                  await insertAiQuestion({
+                    question: questionText,
+                    speculation: `フェーズ: ${compState} / 重要度: ${imp}`,
+                    category: categoryVal,
+                    evidence: `AI案:\n${ai_draft ?? ""}\n\n送信文:\n${sent_reply ?? ""}\n\nangle: ${reply_angle ?? ""}\n類似度: ${Math.round(sim * 100)}%`,
+                    confidence: "medium",
+                    status: "pending",
+                  });
+                }
               }
               // verdict === "skip": hypothesis のまま（stale decayか⑤昇格バッチに委ねる）
             }
@@ -1556,14 +1565,23 @@ export async function POST(req: NextRequest) {
                   })
                 : `[knowledge_id:${upsertResult.id}]\n❓【確認】適用場面が不明確\n\n━━ 今回の会話（実例）━━\n【AIが送った文】\n${draftPreview2 || '（記録なし）'}\n\n【スタッフが修正した文】\n${sentPreview2 || '（修正なし）'}\n\n▶ 変化した部分\n${angleLabel2}\n\n━━ 確認したいナレッジ ━━\n「${result.title}」（フェーズ: ${phase}）\n内容：\n${contentPreview}\n\n━━ 不明確なポイント ━━\n${reason}\n\n❓ 教えてください\n① このルールはどんな場面で使いますか？\n  例：「顧客が○○と言ったとき」「○○の提案後」など\n② AIが送った文の何が問題でしたか？（なければ「特になし」）`;
               const categoryVal = verdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity";
-              await insertAiQuestion({
-                question: questionText,
-                speculation: `フェーズ: ${phase} / 重要度: ${imp}`,
-                category: categoryVal,
-                evidence: `AI案:\n${ai_draft ?? ""}\n\n送信文:\n${sent_reply ?? ""}\n\nangle: ${reply_angle ?? ""}\n類似度: ${Math.round(sim * 100)}%`,
-                confidence: "medium",
-                status: "pending",
-              });
+              // dedup: 同一 knowledge_id への質問が既にあれば再起票しない（クエリ失敗時は data=null → 起票にフォールバック）
+              const { data: existingFullQ } = await supabase
+                .from("ai_feedback_items")
+                .select("id")
+                .in("status", ["pending", "answered", "applied"])
+                .ilike("question", `%[knowledge_id:${upsertResult.id}]%`)
+                .limit(1);
+              if (!existingFullQ || existingFullQ.length === 0) {
+                await insertAiQuestion({
+                  question: questionText,
+                  speculation: `フェーズ: ${phase} / 重要度: ${imp}`,
+                  category: categoryVal,
+                  evidence: `AI案:\n${ai_draft ?? ""}\n\n送信文:\n${sent_reply ?? ""}\n\nangle: ${reply_angle ?? ""}\n類似度: ${Math.round(sim * 100)}%`,
+                  confidence: "medium",
+                  status: "pending",
+                });
+              }
             }
             // verdict === "skip": hypothesis のまま（stale decayか⑤昇格バッチに委ねる）
           }
@@ -1591,14 +1609,25 @@ export async function POST(req: NextRequest) {
                 upsertResult.id, result.title, result.rule, conversation_state ?? null, mergedImp, result.trigger_example,
               );
               if (mergeVerdict === "question" || mergeVerdict === "contradiction") {
-                await insertAiQuestion({
-                  question: `[knowledge_id:${upsertResult.id}]\n🔄【確認】強化済みルールの品質チェック\n\n━━ 強化されたナレッジ ━━\n「${result.title}」（フェーズ: ${conversation_state ?? "不明"}）\n内容: ${result.rule.slice(0, 400)}\n\n━━ 今回の会話（実例）━━\n■ AIが送った文\n${(ai_draft ?? "").slice(0, 400) || '（記録なし）'}\n\n■ スタッフが修正した文\n${(sent_reply ?? "").slice(0, 400) || '（修正なし・AI文をそのまま使用）'}\n\n━━ 確認が必要な理由 ━━\n${mergeReason || "既存ルールと新差分の整合性を確認してください"}\n\n❓ このルールの内容は正確ですか？修正が必要な場合は教えてください。`,
-                  speculation: `upsertResult=merged かつ wrong_count=${mergedWrong}件 の高重要度ルールが再強化されました（importance=${mergedImp}）。品質確認が必要です。`,
-                  category: mergeVerdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity",
-                  evidence: `AI案:\n${ai_draft ?? ""}\n\n送信文:\n${sent_reply ?? ""}\n\n類似度: ${Math.round(sim * 100)}%`,
-                  confidence: "medium",
-                  status: "pending",
-                });
+                // dedup: 同一 knowledge_id への質問が既にあれば再起票しない（実行またぎの重複起票を防止。クエリ失敗時は data=null → 起票にフォールバック）
+                const { data: existingMergeQ } = await supabase
+                  .from("ai_feedback_items")
+                  .select("id")
+                  .in("status", ["pending", "answered", "applied"])
+                  .ilike("question", `%[knowledge_id:${upsertResult.id}]%`)
+                  .limit(1);
+                if (existingMergeQ && existingMergeQ.length > 0) {
+                  console.log(`[analyze-diffs] merged品質チェック: 既存質問あり（knowledge_id:${upsertResult.id}）→ 起票スキップ`);
+                } else {
+                  await insertAiQuestion({
+                    question: `[knowledge_id:${upsertResult.id}]\n🔄【確認】強化済みルールの品質チェック\n\n━━ 強化されたナレッジ ━━\n「${result.title}」（フェーズ: ${conversation_state ?? "不明"}）\n内容: ${result.rule.slice(0, 400)}\n\n━━ 今回の会話（実例）━━\n■ AIが送った文\n${(ai_draft ?? "").slice(0, 400) || '（記録なし）'}\n\n■ スタッフが修正した文\n${(sent_reply ?? "").slice(0, 400) || '（修正なし・AI文をそのまま使用）'}\n\n━━ 確認が必要な理由 ━━\n${mergeReason || "既存ルールと新差分の整合性を確認してください"}\n\n❓ このルールの内容は正確ですか？修正が必要な場合は教えてください。`,
+                    speculation: `upsertResult=merged かつ wrong_count=${mergedWrong}件 の高重要度ルールが再強化されました（importance=${mergedImp}）。品質確認が必要です。`,
+                    category: mergeVerdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity",
+                    evidence: `AI案:\n${ai_draft ?? ""}\n\n送信文:\n${sent_reply ?? ""}\n\n類似度: ${Math.round(sim * 100)}%`,
+                    confidence: "medium",
+                    status: "pending",
+                  });
+                }
               }
             }
           } catch { /* merged品質チェック失敗はメイン処理を止めない */ }
