@@ -1652,6 +1652,22 @@ CREATE INDEX IF NOT EXISTS idx_reply_mode_shadow_logs_evaluated_at ON reply_mode
 -- ai_reply_examples: AI文案と送信文の類似度生値（方向性OK率を任意閾値で計算するため）
 ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS ai_similarity float;
 
+-- ── prompt_candidates: プロンプト候補ピッカー（2026-07-30追加）──
+-- 週次cron（prompt-candidate-gen）が回答済みAI質問を横断分析して
+-- 「固定プロンプトにもルールにも無い欠落」の候補を生成 → 承認待ちキューに投入する
+CREATE TABLE IF NOT EXISTS prompt_candidates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  content TEXT NOT NULL,        -- ルール候補文（承認時に ai_prompt_rules.rule_text になる文）
+  reason TEXT,                  -- なぜ固定プロンプトで補えていないかの説明
+  category TEXT,                -- 'gap' | 'clarification' | 'new_scene' | 'contradiction_fix'
+  status TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'approved' | 'rejected'
+  week_label TEXT,              -- '2026-W31' 形式
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_prompt_candidates_pending
+  ON prompt_candidates(created_at DESC) WHERE status = 'pending';
+ALTER TABLE prompt_candidates DISABLE ROW LEVEL SECURITY;
+
 -- ── PostgREST スキーマキャッシュ再読込（必ず最後に実行する）──
 -- 新カラム追加後に PostgREST のスキーマキャッシュが古いままだと、
 -- 以降の INSERT/SELECT が「column does not exist」で全滅する

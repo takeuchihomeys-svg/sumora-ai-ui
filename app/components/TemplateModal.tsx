@@ -966,6 +966,11 @@ export default function TemplateModal({
   const [knowledgeQuestionsLoading, setKnowledgeQuestionsLoading] = useState(false);
   const [knowledgeQuestionAnswers, setKnowledgeQuestionAnswers] = useState<Record<string, string>>({});
   const [submittingKnowledgeQuestion, setSubmittingKnowledgeQuestion] = useState<string | null>(null);
+  // 🧠 プロンプト候補ピッカー（週次cronが生成した prompt_candidates の承認/スキップ）
+  interface PromptCandidate { id: string; content: string; reason: string | null; category: string | null; status: string; week_label: string | null; created_at: string; }
+  const [promptCandidates, setPromptCandidates] = useState<PromptCandidate[]>([]);
+  const [promptCandidatesLoading, setPromptCandidatesLoading] = useState(false);
+  const [approvingCandidateId, setApprovingCandidateId] = useState<string | null>(null);
   // 案1: サブカテゴリ別アコーディオンの折りたたみ状態（key: セクションID, true=折りたたみ中）
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
   // AIおすすめテンプレ（post_aix時のみ）: recommend-templates APIの結果（最大3件）
@@ -1262,6 +1267,50 @@ export default function TemplateModal({
   useEffect(() => {
     if (isCandidateTabActive && candidateSubTab === "feedback") loadKnowledgeQuestions();
   }, [isCandidateTabActive, candidateSubTab, loadKnowledgeQuestions]);
+
+  // 🧠 プロンプト候補（prompt_candidates pending）の読み込み
+  const loadPromptCandidates = useCallback(async () => {
+    setPromptCandidatesLoading(true);
+    try {
+      const res = await fetch("/api/prompt-candidates");
+      const json = await res.json() as { ok: boolean; candidates: PromptCandidate[] };
+      if (json.ok) setPromptCandidates(json.candidates ?? []);
+    } catch (e) {
+      console.error("[TemplateModal] loadPromptCandidates 失敗:", e);
+    }
+    finally { setPromptCandidatesLoading(false); }
+  }, []);
+
+  useEffect(() => {
+    if (isCandidateTabActive && candidateSubTab === "feedback") loadPromptCandidates();
+  }, [isCandidateTabActive, candidateSubTab, loadPromptCandidates]);
+
+  // マウント時に1回読み込み（タブを開かなくてもバッジ件数を表示するため）
+  useEffect(() => {
+    loadPromptCandidates();
+  }, [loadPromptCandidates]);
+
+  // プロンプト候補の承認/スキップ（成功時はリストから即除去 = optimistic update）
+  const handleCandidateAction = useCallback(async (id: string, action: "approve" | "dismiss") => {
+    setApprovingCandidateId(id);
+    try {
+      const res = await fetch("/api/prompt-candidates", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, action }),
+      });
+      const json = await res.json().catch(() => null) as { ok?: boolean; error?: string } | null;
+      if (res.ok && json?.ok) {
+        setPromptCandidates(prev => prev.filter(c => c.id !== id));
+      } else {
+        showModalError(`候補の${action === "approve" ? "承認" : "スキップ"}に失敗しました${json?.error ? `（${json.error}）` : ""}`);
+      }
+    } catch (e) {
+      console.error("[TemplateModal] handleCandidateAction 失敗:", e);
+      showModalError("通信エラーが発生しました。もう一度お試しください。");
+    }
+    finally { setApprovingCandidateId(null); }
+  }, [showModalError]);
 
   // ナレッジ品質確認質問への回答送信: clarify (HUMAN-* priority=10) → aix_suggestion を implemented に更新
   const submitKnowledgeQuestionAnswer = useCallback(async (item: AixFeatureSuggestion) => {
@@ -2670,6 +2719,11 @@ export default function TemplateModal({
                       承認{knowledgeGapPendingCount}
                     </span>
                   )}
+                  {promptCandidates.length > 0 && (
+                    <span className="ml-1 rounded-full bg-purple-500 px-1.5 text-[10px] text-white">
+                      候補{promptCandidates.length}
+                    </span>
+                  )}
                 </button>
                 {/* 🧠ナレッジ承認 */}
                 <button
@@ -3760,6 +3814,57 @@ export default function TemplateModal({
                   </>
                 );
               })()}
+              {/* 🧠 プロンプト候補ピッカー（週次cronが生成した固定プロンプトの欠落補完候補） */}
+              <div className="pt-3 border-t border-gray-200">
+                <p className="text-xs font-bold text-purple-600 mb-2">
+                  🧠 プロンプト候補{promptCandidates.length > 0 ? ` (${promptCandidates.length}件)` : ""}
+                  <span className="ml-1 font-normal text-purple-400">（承認するとAIルールに追加されます）</span>
+                </p>
+                {promptCandidatesLoading && (
+                  <p className="text-center text-gray-400 py-4 text-sm">読み込み中...</p>
+                )}
+                {!promptCandidatesLoading && promptCandidates.length === 0 && (
+                  <p className="text-center text-gray-400 py-4 text-sm">今週の候補はまだ生成されていません</p>
+                )}
+                {!promptCandidatesLoading && promptCandidates.length > 0 && (
+                  <div className="space-y-3">
+                    {promptCandidates.map(cand => (
+                      <div key={cand.id} className="border border-purple-200 rounded-xl p-4 bg-purple-50">
+                        <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                          {cand.category && (
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-bold">
+                              {cand.category}
+                            </span>
+                          )}
+                          {cand.week_label && (
+                            <span className="text-xs text-purple-400">{cand.week_label}</span>
+                          )}
+                        </div>
+                        <p className="text-sm text-gray-800 whitespace-pre-wrap mb-1">{cand.content}</p>
+                        {cand.reason && (
+                          <p className="text-xs text-gray-500 mb-2">{cand.reason}</p>
+                        )}
+                        <div className="flex gap-2 mt-2">
+                          <button
+                            onClick={() => void handleCandidateAction(cand.id, "approve")}
+                            disabled={approvingCandidateId === cand.id}
+                            className="flex-1 rounded-lg py-2 text-sm font-bold bg-green-500 text-white hover:bg-green-600 disabled:opacity-50 transition"
+                          >
+                            {approvingCandidateId === cand.id ? "処理中..." : "✅ 追加"}
+                          </button>
+                          <button
+                            onClick={() => void handleCandidateAction(cand.id, "dismiss")}
+                            disabled={approvingCandidateId === cand.id}
+                            className="flex-1 rounded-lg py-2 text-sm font-bold bg-gray-200 text-gray-600 hover:bg-gray-300 disabled:opacity-50 transition"
+                          >
+                            スキップ
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

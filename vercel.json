@@ -167,6 +167,10 @@
     {
       "path": "/api/auto-seiyaku",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/prompt-candidate-gen",
+      "schedule": "0 19 * * 0"
     }
   ]
 }
