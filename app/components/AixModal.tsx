@@ -2048,6 +2048,8 @@ export default function AixModal({
       // （save-reply-example の STATE_NORMALIZE による proposing / hearing への変換をスキップ）
       skipNormalize: true,
       entry_source: "aix_action",
+      // どのAIXボタン由来かを明示記録（analyze-diffs のAI質問に【AIX: 物件オススメ】等のラベルを付けるため）
+      aix_action: stateSubKey ?? ACTION_TO_STATE[actionType] ?? actionType,
       // 各ピッカー: コンポーネント別AI生成結果（差分学習ループ用・全アクション共通）
       ...(aiActionComponents ? { aiComponents: aiActionComponents } : {}),
       // CRIT-02修正: テンプレートモーダル経由で開いた場合はtemplate_idを付与（テンプレート成果学習ループ用）

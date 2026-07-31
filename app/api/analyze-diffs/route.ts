@@ -620,6 +620,29 @@ async function isMeaningfullySame(aiText: string, sentText: string): Promise<boo
 // 該当する ai_reply_knowledge を importance=min(現値,3) に降格（削除・rejected化はしない）し、
 // ai_feedback_items（TemplateModal「❓ AI質問」タブ）に竹内さんへの確認質問を起票する。
 
+// AIXアクション → 表示ラベル（AI質問タイトル・本文に埋め込む。TemplateModal の AIX_ACTION_LABELS と整合）
+const AIX_ACTION_QUESTION_LABELS: Record<string, string> = {
+  property_send: "物件ピックアップ",
+  property_recommendation: "物件オススメ",
+  property_check_result: "物件確認した",
+  estimate_sheet: "見積書",
+  viewing_invite: "内覧へ！",
+  application_push: "申込へ！",
+  meeting_place: "待ち合わせ",
+  condition_hearing: "条件ヒアリング",
+  greeting_viewing: "内覧後の挨拶",
+  acknowledge_check: "確認します",
+  followup_revive: "追客する",
+};
+// サブキー付き（property_check_result_available / application_push_push 等）でも前方一致でラベルを引く
+function aixActionLabel(action: string): string {
+  if (AIX_ACTION_QUESTION_LABELS[action]) return AIX_ACTION_QUESTION_LABELS[action];
+  const base = Object.keys(AIX_ACTION_QUESTION_LABELS)
+    .sort((a, b) => b.length - a.length)
+    .find((k) => action.startsWith(k));
+  return base ? AIX_ACTION_QUESTION_LABELS[base] : action;
+}
+
 // 句点・！！・改行で文分割（20文字以上のみ対象 = 固有情報の短文を除外）
 function splitSentences(text: string): string[] {
   return text
@@ -632,7 +655,7 @@ async function detectRepeatedDeletions(): Promise<{ detected: number; demoted: n
   const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
   const { data: recentExamples, error } = await supabase
     .from("ai_reply_examples")
-    .select("id, conversation_id, ai_draft, sent_reply")
+    .select("id, conversation_id, ai_draft, sent_reply, entry_source, aix_action, conversation_state")
     .eq("was_ai_modified", true)
     .not("ai_draft", "is", null)
     .not("sent_reply", "is", null)
@@ -642,13 +665,19 @@ async function detectRepeatedDeletions(): Promise<{ detected: number; demoted: n
   if (error || !recentExamples || recentExamples.length === 0) return { detected: 0, demoted: 0 };
 
   // ① 各例で「ai_draftにあってsent_replyから消えた文」を抽出し、類似フレーズをクラスタ化
-  type Cluster = { phrase: string; convIds: Set<string>; sampleAiDraft?: string; sampleSentReply?: string };
+  // aixActions: このフレーズを含んでいたAIX由来例のアクション種別（AI質問のラベル付けに使う）
+  // hasLineReply: LINE返信AI由来の例からも削除されたか（AIX/通常が混在するクラスタの注記用）
+  type Cluster = { phrase: string; convIds: Set<string>; sampleAiDraft?: string; sampleSentReply?: string; aixActions: Set<string>; hasLineReply: boolean };
   const clusters: Cluster[] = [];
   for (const ex of recentExamples) {
     const draftSentences = splitSentences((ex.ai_draft as string) ?? "");
     const sentSentences = splitSentences((ex.sent_reply as string) ?? "");
     const sentNorm = ((ex.sent_reply as string) ?? "").replace(/\s+/g, "");
     const convId = (ex.conversation_id as string | null) ?? `example:${ex.id as string}`;
+    // AIX由来の例はアクション種別を記録（aix_action が未設定の旧レコードは conversation_state で代用）
+    const exAixAction = (ex.entry_source as string | null) === "aix_action"
+      ? ((ex.aix_action as string | null) || (ex.conversation_state as string | null) || "aix")
+      : null;
     for (const sentence of draftSentences) {
       if (sentNorm.includes(sentence.replace(/\s+/g, ""))) continue; // そのまま残っている
       if (sentSentences.some((t) => textSimilarity(sentence, t) >= 0.85)) continue; // 言い換えで残っている
@@ -656,8 +685,16 @@ async function detectRepeatedDeletions(): Promise<{ detected: number; demoted: n
       const cluster = clusters.find((c) => c.phrase === sentence || textSimilarity(c.phrase, sentence) > 0.85);
       if (cluster) {
         cluster.convIds.add(convId);
+        if (exAixAction) cluster.aixActions.add(exAixAction); else cluster.hasLineReply = true;
       } else {
-        clusters.push({ phrase: sentence, convIds: new Set([convId]), sampleAiDraft: (ex.ai_draft as string) ?? undefined, sampleSentReply: (ex.sent_reply as string) ?? undefined });
+        clusters.push({
+          phrase: sentence,
+          convIds: new Set([convId]),
+          sampleAiDraft: (ex.ai_draft as string) ?? undefined,
+          sampleSentReply: (ex.sent_reply as string) ?? undefined,
+          aixActions: new Set(exAixAction ? [exAixAction] : []),
+          hasLineReply: !exAixAction,
+        });
       }
     }
   }
@@ -721,22 +758,31 @@ async function detectRepeatedDeletions(): Promise<{ detected: number; demoted: n
     }
 
     // ⑤ ai_feedback_items へ起票（既存スキーマ: question/category/evidence を使用）
-    //    question 先頭50字（=フレーズ部分）で dedup し、同じフレーズを毎日重複起票しない
-    const question = `❓【教えてください】複数会話で削除されたフレーズの適用条件\n\n━━ 対象フレーズ ━━\n「${phrase.slice(0, 60)}」\n削除件数: ${cluster.convIds.size}件の別会話でスタッフが削除\n\n━━ 削除の実例（代表1件）━━\n■ AIが送った文\n${(cluster.sampleAiDraft ?? '').slice(0, 400) || '（記録なし）'}\n\n■ スタッフが修正した文\n${(cluster.sampleSentReply ?? '').slice(0, 400) || '（修正なし・AI文をそのまま使用）'}\n\n━━ なぜ確認が必要か ━━\nこのフレーズが${cluster.convIds.size}件の異なる会話でスタッフに削除されています。特定顧客向けの表現が汎用フレーズとして誤学習されている可能性があります。\n\n❓ 竹内さんへの質問\n① このフレーズはどんな顧客状況のときに使うべきですか？（使うべき場面・使わないべき場面）\n② 現在のプロンプトや知識のどこが曖昧で、不適切な場面でこのフレーズが出てしまったと思いますか？`;
-    const dedupKey = question.slice(0, 50).replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+    //    対象フレーズ部分（「フレーズ…）で dedup し、同じフレーズを毎日重複起票しない
+    // AIX由来のクラスタは【AIX: 物件オススメ】等のラベルをタイトルに付け、質問と文脈の取り違えを防ぐ
+    const aixLabels = [...new Set([...cluster.aixActions].map(aixActionLabel))];
+    const isAixCluster = aixLabels.length > 0;
+    const aixLabelText = aixLabels.join("・");
+    const aixTag = isAixCluster ? `【AIX: ${aixLabelText}】` : "";
+    const aixNote = isAixCluster
+      ? `\n※この修正はAIXボタン（${aixLabelText}）で生成した文への修正です${cluster.hasLineReply ? "（LINE返信AIの修正例も含む）" : ""}`
+      : "";
+    const question = `❓${aixTag}【教えてください】複数会話で削除されたフレーズの適用条件\n\n━━ 対象フレーズ ━━\n「${phrase.slice(0, 60)}」\n削除件数: ${cluster.convIds.size}件の別会話でスタッフが削除${aixNote}\n\n━━ 削除の実例（代表1件）━━\n■ AIが送った文\n${(cluster.sampleAiDraft ?? '').slice(0, 400) || '（記録なし）'}\n\n■ スタッフが修正した文\n${(cluster.sampleSentReply ?? '').slice(0, 400) || '（修正なし・AI文をそのまま使用）'}\n\n━━ なぜ確認が必要か ━━\nこのフレーズが${cluster.convIds.size}件の異なる会話でスタッフに削除されています。特定顧客向けの表現が汎用フレーズとして誤学習されている可能性があります。\n\n❓ 竹内さんへの質問\n① このフレーズはどんな顧客状況のときに使うべきですか？（使うべき場面・使わないべき場面）\n② 現在のプロンプトや知識のどこが曖昧で、不適切な場面でこのフレーズが出てしまったと思いますか？`;
+    // dedup はタイトルではなく「対象フレーズ」で行う（AIXタグ付与によるタイトル変化で旧起票と重複しないように）
+    const phraseKey = phrase.slice(0, 40).replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
     const { data: existing } = await supabase
       .from("ai_feedback_items")
       .select("id")
       .in("status", ["pending", "answered", "applied"])
-      .ilike("question", `${dedupKey}%`)
+      .ilike("question", `%「${phraseKey}%`)
       .limit(1);
     if (existing && existing.length > 0) continue;
 
     await insertAiQuestion({
       question,
-      speculation: "特定顧客向けの特殊ケース返信が、文脈を剥がされて汎用フレーズとして学習された可能性があります",
+      speculation: `特定顧客向けの特殊ケース返信が、文脈を剥がされて汎用フレーズとして学習された可能性があります${isAixCluster ? `（AIXボタン「${aixLabelText}」の生成文由来）` : ""}`,
       category: "prompt_ambiguity",
-      evidence: `直近14日で${cluster.convIds.size}件の別会話から削除 / 降格ナレッジID: ${matchedIds.size > 0 ? [...matchedIds.keys()].join(", ") : "該当なし"}`,
+      evidence: `直近14日で${cluster.convIds.size}件の別会話から削除${isAixCluster ? ` / 由来: AIXボタン（${aixLabelText}）` : ""} / 降格ナレッジID: ${matchedIds.size > 0 ? [...matchedIds.keys()].join(", ") : "該当なし"}`,
       confidence: "high",
       status: "pending",
     });

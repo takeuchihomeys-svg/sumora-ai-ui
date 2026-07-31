@@ -1601,6 +1601,16 @@ SET entry_source = 'aix_action'
 WHERE conversation_state NOT IN ('first_reply', 'hearing', 'proposing', 'greeting_viewing')
   AND entry_source = 'line_reply';
 
+-- ── ai_reply_examples: aix_action（AIXアクション種別の記録）（2026-07-31）──
+-- AIX由来レコード（entry_source='aix_action'）がどのAIXボタン（property_recommendation /
+-- viewing_invite / application_push 等・サブキー付き含む）から生成されたかを保持する。
+-- analyze-diffs の反復削除検知が AI質問タイトルに「【AIX: 物件オススメ】」等のラベルを
+-- 付けるために使う（質問と文脈の取り違え防止）。AixModal → save-reply-example 経由で保存。
+ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS aix_action TEXT;
+-- バックフィル: AIX由来レコードは conversation_state にアクション名（サブキー含む）が入っている
+UPDATE ai_reply_examples SET aix_action = conversation_state
+WHERE entry_source = 'aix_action' AND aix_action IS NULL;
+
 -- ── HUMAN-*ルール永続化（卒業メカニズム）（2026-07-20）──
 -- is_permanent=true のルールはLIMITなしで最優先注入される「永久ルール」。
 -- 通常の HUMAN-*(50件上限)とは別枠で常に全件注入されるため、どれほどルールが増えても

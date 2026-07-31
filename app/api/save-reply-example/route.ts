@@ -824,6 +824,7 @@ export async function POST(req: NextRequest) {
     aiComponents?: Record<string, string> | null; // 物件ピックアップした コンポーネント別生成結果
     template_id?: string | null; // 使ったテンプレートのID（テンプレート成果学習ループ用）
     entry_source?: string; // 'line_reply'（LINE返信AI由来）| 'aix_action'（AIX生成文由来）
+    aix_action?: string; // AIXボタン種別（property_recommendation / viewing_invite 等・サブキー付き含む）。entry_source='aix_action' のとき AixModal が渡す
   };
   let body: PostBody;
   try {
@@ -844,6 +845,7 @@ export async function POST(req: NextRequest) {
     isAutoStar,
     aiComponents,
     entry_source,
+    aix_action,
   } = body;
   const templateId = typeof body.template_id === "string" ? body.template_id : null;
   let replyAngle = typeof body.replyAngle === "string" ? body.replyAngle : null;
@@ -1111,6 +1113,7 @@ export async function POST(req: NextRequest) {
         is_full_rewrite: isFullRewrite,
         ai_similarity: aiDraft ? sim : null,
         entry_source: typeof entry_source === "string" ? entry_source : "line_reply",
+        aix_action: typeof aix_action === "string" && aix_action ? aix_action : null,
       })
       .select("id")
       .single(),

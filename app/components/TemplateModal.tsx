@@ -3438,10 +3438,17 @@ export default function TemplateModal({
                   const isContradiction = item.question.includes('どちら') || item.question.includes('矛盾') || item.question.includes('[old_knowledge_id:');
                   // ルール再確認の判定: questionに「[feedback_rule_key:」が含まれる場合、維持/無効化ボタンUIに切り替える
                   const isFeedbackRuleReconfirm = item.question.includes('[feedback_rule_key:');
+                  // AIX由来質問の判定: analyze-diffs が「【AIX: 物件オススメ】」等のラベルを埋め込む
+                  const aixQuestionMatch = item.question.match(/【AIX[:：]\s*([^】]+)】/);
                   return (
                 <div key={item.id} className="border border-orange-200 rounded-xl p-4 bg-orange-50">
                   {/* カテゴリバッジ・フェーズ・重要度・埋め込みカテゴリ */}
                   <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                    {aixQuestionMatch && (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-orange-500 text-white font-bold">
+                        AIX: {aixQuestionMatch[1]}
+                      </span>
+                    )}
                     <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-bold">
                       {FEEDBACK_CATEGORY_LABEL[item.category ?? ""] ?? item.category ?? "一般"}
                     </span>
