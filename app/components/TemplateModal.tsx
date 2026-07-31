@@ -3684,9 +3684,14 @@ export default function TemplateModal({
                   <div className="mt-3 border-t border-orange-100 pt-3">
                     <button
                       onClick={() => setDiscussingItemId(discussingItemId === item.id ? null : item.id)}
-                      className="text-xs text-orange-500 font-bold hover:text-orange-700 flex items-center gap-1"
+                      className={aixQuestionMatch
+                        ? "text-xs font-bold flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-500 text-white hover:bg-orange-600 shadow-sm transition"
+                        : "text-xs text-orange-500 font-bold hover:text-orange-700 flex items-center gap-1"}
                     >
                       💬 {discussingItemId === item.id ? "打ち合わせを閉じる" : "AIと打ち合わせする"}
+                      {aixQuestionMatch && discussingItemId !== item.id && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-white text-orange-600">AIX質問は打ち合わせ推奨</span>
+                      )}
                     </button>
                     {discussingItemId === item.id && (
                       <div className="mt-2 space-y-2">
@@ -3727,6 +3732,26 @@ export default function TemplateModal({
                           </button>
                         </div>
                         <p className="text-[10px] text-gray-400">Enterで送信 / Shift+Enterで改行</p>
+                        {/* AIX質問専用: 外部（Claude Code等）での打ち合わせ結果を貼り付けて直接回答するUI */}
+                        {aixQuestionMatch && item.status === "pending" && (
+                          <div className="mt-2 rounded-lg border border-orange-200 bg-white p-2.5 space-y-2">
+                            <p className="text-[11px] font-bold text-orange-600">📋 打ち合わせ結果を直接入力</p>
+                            <p className="text-[10px] text-gray-400">打ち合わせの結論をここに貼り付けてください</p>
+                            <textarea
+                              value={feedbackAnswers[item.id] ?? ""}
+                              onChange={e => setFeedbackAnswers(prev => ({ ...prev, [item.id]: e.target.value }))}
+                              placeholder="打ち合わせの結論を入力またはペースト..."
+                              className="w-full border border-orange-300 rounded-lg px-3 py-2 text-sm resize-none h-20 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white"
+                            />
+                            <button
+                              onClick={() => void submitFeedbackAnswer(item.id)}
+                              disabled={!feedbackAnswers[item.id]?.trim() || submittingFeedback === item.id}
+                              className="w-full bg-orange-500 text-white rounded-lg py-2 text-sm font-bold disabled:opacity-50 hover:bg-orange-600 transition"
+                            >
+                              {submittingFeedback === item.id ? "送信中..." : "✅ この内容で回答する"}
+                            </button>
+                          </div>
+                        )}
                         {/* 打ち合わせの結論で回答を提出するUI（pending かつ AIの発言が1件以上ある場合のみ表示） */}
                         {item.status === "pending" && (discussionMessages[item.id] ?? []).some(m => m.role === "assistant") && (() => {
                           const lastAssistant = [...(discussionMessages[item.id] ?? [])].reverse().find(m => m.role === "assistant")?.content ?? "";
