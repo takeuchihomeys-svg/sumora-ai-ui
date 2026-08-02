@@ -2,7 +2,7 @@
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, buildKnowledgeEmbeddingInput, generateEmbedding } from "@/app/lib/knowledge-utils";
 import { promoteToConfirmed } from "@/app/lib/knowledge-promote";
-import { buildRuleConflictQuestion } from "@/app/lib/ai-feedback-guard";
+import { buildRuleConflictQuestion, SUMORA_QUESTION_SYSTEM_CONTEXT } from "@/app/lib/ai-feedback-guard";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -326,6 +326,12 @@ async function autoJudgeKnowledge(
         messages: [{
           role: "user",
           content: `あなたは賃貸仲介営業AIの品質審査員です。以下のナレッジを判定してください。
+この判定結果（question/contradiction）は竹内さんへのAI質問の起票に使われるため、以下のシステム絶対ルールを必ず参照してください。
+スモラ確定ルールと同じ内容・矛盾する内容の確認質問は不要です（その場合は confirm または skip 相当の判定にする）。
+AIXボタン由来の文と通常返信の領域を混同した判定・質問理由を書いてはいけません。
+
+${SUMORA_QUESTION_SYSTEM_CONTEXT}
+
 タイトル: ${title}
 内容: ${content.slice(0, 200)}
 フェーズ: ${conversationState ?? "不明"}

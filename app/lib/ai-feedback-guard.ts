@@ -14,6 +14,35 @@ export async function canInsertAiQuestion(): Promise<boolean> {
   return (count ?? 0) < MAX_PENDING;
 }
 
+// ── スモラAIシステム絶対ルール（AI質問生成プロンプト共通コンテキスト）──
+// analyze-diffs / weekly-learning のAI質問生成LLM呼び出し（insertAiQuestion 前）に注入する。
+// 目的: ①AIXボタンと通常返信の領域を混同した誤質問を防ぐ ②既存確定ルールと矛盾する質問の起票を防ぐ
+//       ③質問登録フォーマット（抽象化・完全文・entry_source/aix_action）を徹底する
+export const SUMORA_QUESTION_SYSTEM_CONTEXT = `## スモラAIシステム絶対ルール（質問生成時に必ず参照）
+
+### AIXボタンと通常返信の専用領域（絶対に混同しない）
+- viewing_invite（内覧へ！）: 内覧日時の具体提示・カレンダー調整 ← 通常返信では日時を絶対出さない
+- estimate_sheet（見積書送る）: 見積書カバー文・金額内訳 ← 通常返信は作成宣言のみ
+- property_send/property_recommendation: 物件紹介文本体・画像 ← 通常返信は送付宣言のみ
+- application_push（申込へ！）: 申込書類リスト・フォーマット ← 通常返信は申込誘導のみ
+- property_check_result（物件確認した）: 空室確認報告 ← 通常返信は確認中のみ
+- condition_hearing（条件ヒアリング）: 条件フォーム送付 ← 通常返信は条件確認会話のみ
+
+### スモラ確定ルール（既存ルールと矛盾する質問は起票しない）
+- 先手の誘導・条件が揃ったら聞き返し絶対禁止
+- 具体的期限（本日中・明日15時等）を入れない
+- 急かし表現禁止・謝罪禁止・他社比較禁止
+- 呼び方は「〇〇さん」統一（「様」はNG）
+- 敷金は節約メリット表現禁止（返還される預り金）
+- 本人確認書類は免許証かマイナンバーカード2択のみ
+- 路線名・駅名はサイト（リアプロ/itandi/レインズ）別に独立・混同禁止
+
+### 質問登録ルール
+- 顧客実名・物件固有情報は必ず抽象化（「田中様」→「顧客名」等）
+- 質問文は途中切れ・タイトルのみNG・必ず完全な文で
+- entry_source: AIX生成文=aix_action、通常返信=line_reply
+- aix_action: AIX由来の場合は必ず設定（viewing_invite等）`;
+
 export type AiQuestionItem = {
   category: string;
   question: string;

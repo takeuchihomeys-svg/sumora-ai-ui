@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
-import { buildRuleConflictQuestion } from "@/app/lib/ai-feedback-guard";
+import { buildRuleConflictQuestion, SUMORA_QUESTION_SYSTEM_CONTEXT } from "@/app/lib/ai-feedback-guard";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -139,6 +139,8 @@ AI案: ${(e.ai_draft ?? "(なし)").slice(0, 300)}
 以下は【${state}】フェーズで今週スタッフがAIを修正・手書きした返信の差分集（${examples.length}件）です。
 既存の確認済みルールと、直近7日の竹内さんの回答も参考にしてください。
 
+${SUMORA_QUESTION_SYSTEM_CONTEXT}
+
 ## 今週の差分集
 ${examplesText}
 
@@ -157,6 +159,7 @@ ${recentAnswersText}
 - 新ルールは具体的・行動的に書く（「〜する」「〜しない」の形式）
 - title は 30文字以内、content は 150文字以内
 - weeklyQuestion: 今週のデータから生まれた「AIへの最重要質問」1つ（contradictionsまたはgapsがある場合のみ）
+- weeklyQuestion は上記「スモラAIシステム絶対ルール」を必ず守る：確定ルールと矛盾する質問・AIXボタンと通常返信の領域を混同した質問は作らない。顧客実名・物件固有情報は抽象化し、途中切れ・タイトルのみは不可（必ず完全な文で書く）
 - ruleType: "policy"=禁止・必須など全会話に普遍的に適用する制約ルール / "pattern"=特定場面・特定顧客反応のみに使う状況依存パターン
 
 返答はJSON配列ではなく以下の形式のJSONオブジェクトのみ：
@@ -435,10 +438,15 @@ async function findConfirmedContradictionPair(
   const rulesText = rules.map(r => `[ID:${r.id}] ${r.title}\n  内容: ${r.content}`).join("\n\n");
 
   const prompt = `あなたはLINE不動産返信AIのルールベース品質チェッカーです。
+検出結果は竹内さんへのAI質問（矛盾確認）の起票に使われるため、以下のシステム絶対ルールを必ず参照してください。
+スモラ確定ルールどおりの内容同士を「矛盾」と誤判定しない・AIXボタンと通常返信の専用領域の違いを矛盾と混同しないこと。
+
+${SUMORA_QUESTION_SYSTEM_CONTEXT}
 
 以下は【${state}】フェーズの確定済み（confirmed）ルール一覧です。
 互いに「逆のことを言っている」明確な矛盾ペアが1組でもあれば、その2つのIDと理由を返してください。
 表現の違い・補完関係は矛盾に含めません。矛盾がなければ pair は null にしてください。
+理由（reason）に顧客実名・物件固有情報を書く場合は必ず抽象化してください（「田中様」→「顧客名」等）。
 
 ${rulesText}
 
@@ -636,13 +644,18 @@ async function aiClassifyBatch(batch: HypothesisRule[]): Promise<AiClassifyResul
   ).join("\n\n");
 
   const prompt = `以下の仮説ルール（不動産LINE返信AI用）を評価してください。
+keep判定の理由（reason）は竹内さんへのAI質問の起票に使われるため、以下のシステム絶対ルールを必ず参照してください。
+スモラ確定ルールと矛盾する仮説ルールは keep（質問）にせず reject にしてください。
+AIXボタン専用領域の内容を通常返信のルールとして評価しない（混同しない）こと。
+
+${SUMORA_QUESTION_SYSTEM_CONTEXT}
 
 ${batchText}
 
 判定基準：
 - promote: 具体的・実用的・他のconfirmedルールに未収録の新知識 → confirmed昇格
-- reject: 抽象的すぎる・フレーズ単発で汎用性なし・実用性が見えない → rejected
-- keep: 判断保留（人間への質問候補）
+- reject: 抽象的すぎる・フレーズ単発で汎用性なし・実用性が見えない → rejected（スモラ確定ルールと矛盾するものも reject）
+- keep: 判断保留（人間への質問候補）。reason は完全な文で書き、顧客実名・物件固有情報は抽象化する
 
 各ルールIDに対してpromote/reject/keepを返してください。
 JSON形式のみ返答（keepは最大3件まで）：
