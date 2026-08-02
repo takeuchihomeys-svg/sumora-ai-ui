@@ -504,6 +504,59 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ action: null, reason: "" });
   }
 
+  // ---- 竹内さん回答由来ルールの最優先判定（AI質問への回答 → trigger_action_rules）----
+  // ai-feedback/route.ts は「この場合はこのAIXを使う」という竹内さんの回答を
+  // confidence 0.95 / occurrence_count 10 の trigger_action_rules として保存する。
+  // 人間が明示的に教えたルールはハードコードキーワード判定（S-5等）より優先して発火させる。
+  // ※ ハルシネーション防止系の判定（画像引用・曖昧参照・退去予定）はこれより上位のまま維持。
+  // ※ UI_AIX_TYPES = AixModal に実在するボタンのみ（旧名 hearing / application 等はバナーから開けないため除外）
+  const UI_AIX_TYPES = new Set([
+    "property_send", "viewing_invite", "property_recommendation",
+    "property_check_result", "estimate_sheet", "meeting_place",
+    "acknowledge_check", "followup_revive", "application_push", "condition_hearing",
+  ]);
+  if (lastCustomerMsg && conv.last_sender === "customer") {
+    const { data: humanRules } = await supabase
+      .from("trigger_action_rules")
+      .select("action_type, keyword, confidence, occurrence_count, conversation_status")
+      .gte("confidence", 0.95)
+      .lte("confidence", 1)          // 汚染値（旧0-100スケール書き込み）を除外
+      .gte("occurrence_count", 10)   // ai-feedback 書き込み値（0.95/10）に整合
+      .not("keyword", "like", "AFTER:%")
+      .not("keyword", "like", "SUGGESTION_ACCEPT_RATE%")
+      .not("keyword", "like", "PREDICTION_ACCURACY%")
+      .not("keyword", "like", "SUBMODE_ACCEPT:%")
+      .not("keyword", "like", "SOURCE_ACCEPT_RATE%")
+      .not("keyword", "like", "MANUAL_RULE:%")
+      .or(`conversation_status.is.null,conversation_status.eq.${currentStatus}`)
+      .order("confidence", { ascending: false })
+      .order("occurrence_count", { ascending: false })
+      .order("keyword", { ascending: true })
+      .limit(200);
+
+    const humanHit = ((humanRules ?? []) as Array<{ action_type: string; keyword: string }>).find((r) => {
+      const action = r.action_type === "alternative_send" ? "property_send" : r.action_type;
+      return UI_AIX_TYPES.has(action) &&
+        typeof r.keyword === "string" && r.keyword.length >= 2 &&
+        lastCustomerMsg.includes(r.keyword) &&
+        !shouldSuppressAction(action) &&
+        !isLowSourceRate(action, "human_rule");
+    });
+    if (humanHit) {
+      const isAlt = humanHit.action_type === "alternative_send";
+      const action = isAlt ? "property_send" : humanHit.action_type;
+      return NextResponse.json({
+        action,
+        reason: `教えたルール「${humanHit.keyword}」`,
+        source: "human_rule",
+        params: isAlt ? { ...buildParams("property_send"), send_mode: "alternative" } : buildParams(action),
+        acceptanceRate: acceptanceRateMap[action] ?? null,
+        sub_mode_stats: subModeStats,
+        ...templateRec(action),
+      });
+    }
+  }
+
   // ---- トリガールールで即判定（Haiku不要の場合）----
   // lastCustomerMsg はチェーンルールブロック前に抽出済み
 
@@ -597,7 +650,9 @@ export async function POST(req: NextRequest) {
         const kw = rule.keyword as string;
         if (lastCustomerMsg.includes(kw)) {
           const a = rule.action_type as string;
-          const conf = rule.confidence as number;
+          // 0-1 スケールにクランプ（aix-shadow-eval 旧バグの 10+ 汚染値が入っても
+          // 単一アクションがスコアリングを支配しないよう防御）
+          const conf = Math.min(rule.confidence as number, 1);
           if (!scores[a] || conf > scores[a].topConf) {
             scores[a] = {
               score: (scores[a]?.score ?? 0) + conf,
@@ -635,7 +690,8 @@ export async function POST(req: NextRequest) {
       if (topValid) {
         return NextResponse.json({
           action: topValid[0],
-          reason: ACTION_REASON[topValid[0]] ?? topValid[1].topKeyword,
+          // どのDBルール（キーワード）が発火したかをスタッフに見せる（P8バナーにそのまま表示される）
+          reason: `${ACTION_REASON[topValid[0]] ?? "学習ルール"}（「${topValid[1].topKeyword}」に反応）`,
           source: "trigger_rule",
           params: buildParams(topValid[0]),
           acceptanceRate: acceptanceRateMap[topValid[0]] ?? null,

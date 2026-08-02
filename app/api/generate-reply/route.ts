@@ -154,7 +154,10 @@ async function deriveSuggestedAix(
       const res = await fetch(`${internalBaseUrl}/api/suggest-next-action`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversation_id: conversationId }),
+        // customer_message を渡すことで、竹内さんがAI質問に回答して学習した
+        // trigger_action_rules（human_rule）・キーワード判定が「今まさに来たメッセージ」に対して確実に効く
+        // （未指定だとDB保存済みの最新顧客メッセージへのフォールバックとなり、保存遅延時に判定が1通ズレる）
+        body: JSON.stringify({ conversation_id: conversationId, customer_message: customerMessage ?? null }),
         signal: AbortSignal.timeout(3000),
       });
       if (res.ok) {

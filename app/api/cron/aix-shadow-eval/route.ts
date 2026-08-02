@@ -165,9 +165,12 @@ export async function POST(req: NextRequest) {
     // 6. Fix-1a: trigger_action_rules の confidence をフィードバック更新
     // sessionFeedback は今セッションで新たに評価した行のみを含む（重複評価は evaluatedIds で防止済み）。
     // predicted_aix_type 単位で matched/mismatched を集計し、差分に応じて
-    //   mismatched 超過 → confidence × 0.95 （フロア 10）
-    //   matched 超過   → confidence × 1.02 （シーリング 100）
+    //   mismatched 超過 → confidence × 0.95 （フロア 0.1）
+    //   matched 超過   → confidence × 1.02 （シーリング 1.0）
     // を1回だけ適用する。これにより外れ続けるルールを徐々に降格できる。
+    // ⚠️ confidence は全システム共通で 0-1 スケール（suggest-next-action の gte(0.65) フィルタ等）。
+    //   旧実装がフロア10/シーリング100（0-100スケール想定）で書き込み、property_recommendation の
+    //   全ルールが confidence 10+ に汚染され常時最優先提案される事故が起きた（2026-08-02 修正・DBも復旧済み）。
     let rulesUpdated = 0;
     if (sessionFeedback.length > 0) {
       try {
@@ -197,14 +200,15 @@ export async function POST(req: NextRequest) {
           if (!rules?.length) continue;
 
           for (const rule of rules as Array<{ id: string; confidence: number }>) {
-            const current = rule.confidence ?? 50;
+            // 0-1 スケールに正規化（過去の0-100スケール書き込みで汚染された値も 1.0 に丸めて復旧）
+            const current = Math.min(rule.confidence ?? 0.5, 1);
             let next: number;
             if (netMismatch > 0) {
-              // ミスマッチ超過 → ペナルティ（×0.95 / フロア 10）
-              next = Math.max(current * 0.95, 10);
+              // ミスマッチ超過 → ペナルティ（×0.95 / フロア 0.1）
+              next = Math.max(current * 0.95, 0.1);
             } else {
-              // マッチ超過 → ブースト（×1.02 / シーリング 100）
-              next = Math.min(current * 1.02, 100);
+              // マッチ超過 → ブースト（×1.02 / シーリング 1.0）
+              next = Math.min(current * 1.02, 1);
             }
             // 丸めて変化があるときだけ書き込む
             const nextRounded = Math.round(next * 1000) / 1000;
