@@ -106,7 +106,7 @@
     },
     {
       "path": "/api/cron/weekly-learning?chunk=2",
-      "schedule": "30 3 * * *"
+      "schedule": "30 3 * * 1"
     },
     {
       "path": "/api/cron/weekly-learning?chunk=3",
