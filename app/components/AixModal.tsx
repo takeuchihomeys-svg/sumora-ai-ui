@@ -570,6 +570,8 @@ export default function AixModal({
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<string>("");
   const [aiDraft, setAiDraft] = useState<string>("");
+  // condition_hearing: APIが返す条件フォームテンプレ（「条件フォームを送る」ボタンで別送する）
+  const [hearingFormText, setHearingFormText] = useState<string>("");
   const [aixNotice, setAixNotice] = useState<string>("");
   const [parsedEstimate, setParsedEstimate] = useState<Record<string, string> | null>(null);
   // ① LL-07: 見積書カバーレター（AI生成・送信+学習ループ対象）
@@ -1987,6 +1989,8 @@ export default function AixModal({
       setEstimateTextReady(data.estimate_text || "");
       // ① LL-07: カバーレターを保存（見積書に添える挨拶文）
       if (data.coverLetter) setEstimateCoverLetter(data.coverLetter as string);
+      // condition_hearing: 条件フォームテンプレを保存（previewには入れず「条件フォームを送る」ボタンで別送）
+      if (data.hearing_form) setHearingFormText(data.hearing_form as string);
       // 保証会社確認: 画像URLをstateに保存（TODO: 画像→本文の順で送る際に使用）
       if (data.doc_image_url) setPreviewDocImageUrl(data.doc_image_url as string);
       // AIX完了後テンプレ誘導カテゴリ（API主導。無ければ親側の AIX_ACTION_META にフォールバックされる）
@@ -5731,6 +5735,15 @@ export default function AixModal({
               actionType === "followup_revive"
             ) ? (
               <div className="flex flex-col gap-2 w-full">
+                {actionType === "condition_hearing" && hearingFormText && (
+                  <button
+                    onClick={() => { void (async () => { await sendAsAix(hearingFormText); onClose(); })(); }}
+                    disabled={!hearingFormText || loading}
+                    className="w-full rounded-2xl bg-green-600 py-3.5 text-sm font-bold text-white disabled:opacity-40"
+                  >
+                    📋 条件フォームを送る
+                  </button>
+                )}
                 <button
                   onClick={() => void generate({ conversation_match: true, base_message: aiDraft })}
                   disabled={loading || !canGenerate}

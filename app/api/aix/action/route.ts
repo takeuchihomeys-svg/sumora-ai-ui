@@ -786,6 +786,7 @@ export async function POST(request: NextRequest) {
     let parsed_estimate_result = null;
     let estimate_text_result = "";
     let hearing_intro_result = ""; // condition_hearing のAI導入メッセージ（LL-09）
+    let hearing_form_content = ""; // condition_hearing のフォーム本体（別送用・message_textには入れない）
     let cover_letter = ""; // LL-07: 見積書に添えるAIカバーレター（学習ループ対象）
     let viewingInviteDraft = ""; // viewing_invite AIX生成ドラフト（差分学習ループ用）
     let aiComponents: Record<string, string> | null = null; // 各ピッカーのパーツ別生成結果（コンポーネント学習ループ用）
@@ -3338,7 +3339,7 @@ ${SMORA_COMMON_RULES}
         .join("\n");
 
       // name は「あさみさん」形式（さん付き）なのでそのまま使う
-      message_text = `（${name}ご希望のお部屋探しご条件）
+      hearing_form_content = `（${name}ご希望のお部屋探しご条件）
 ${formItems}`;
 
       // LL-09: フォームに添える導入メッセージをAI生成（学習ループ対象化）
@@ -3372,6 +3373,7 @@ ${SMORA_COMMON_RULES}
           currentAction
         );
         hearing_intro_result = hearingResult.trim();
+        message_text = hearing_intro_result;
       } catch {
         // 導入メッセージ生成失敗でも固定フォームはそのまま送れる
       }
@@ -3951,6 +3953,8 @@ ${SMORA_COMMON_RULES}
       ...(cover_letter ? { coverLetter: cover_letter, aiDraft: cover_letter } : {}),
       // condition_hearing のAI導入メッセージ（LL-09）: フロントのプレビュー表示用 + 学習ループ用ドラフト
       ...(hearing_intro_result ? { hearingIntro: hearing_intro_result, aiDraft: hearing_intro_result } : {}),
+      // condition_hearing のフォーム本体: フロントが導入メッセージとは別に表示・送信する
+      ...(hearing_form_content ? { hearing_form: hearing_form_content } : {}),
       // AIX完了後テンプレ誘導: フロントがテンプレモーダルをこのカテゴリで開く（AixModal→onAfterSend経由）
       ...(suggestTemplateCategory ? { suggest_template_category: suggestTemplateCategory } : {}),
     });
