@@ -42,7 +42,10 @@ async function insertAiQuestion(row: Record<string, unknown>): Promise<boolean> 
     console.log(`[analyze-diffs] AI質問pending上限(${MAX_PENDING_AI_QUESTIONS}件)到達、新規起票スキップ`);
     return false;
   }
-  const { error } = await supabase.from("ai_feedback_items").insert(row);
+  // 由来の構造化記録（単一真実源）: 呼び出し元が明示しない限り line_reply 由来として起票する。
+  // メイン差分学習ループは entry_source='line_reply' フィルタ済みのためデフォルトが正しい。
+  // AIX由来の起票（回帰センチネル等）は entry_source:'aix_action' + aix_action を row で明示的に渡すこと。
+  const { error } = await supabase.from("ai_feedback_items").insert({ entry_source: "line_reply", ...row });
   if (error) {
     console.warn("[analyze-diffs] AI質問起票失敗:", error.message);
     return false;
@@ -785,6 +788,9 @@ async function detectRepeatedDeletions(): Promise<{ detected: number; demoted: n
       evidence: `直近14日で${cluster.convIds.size}件の別会話から削除${isAixCluster ? ` / 由来: AIXボタン（${aixLabelText}）` : ""} / 降格ナレッジID: ${matchedIds.size > 0 ? [...matchedIds.keys()].join(", ") : "該当なし"}`,
       confidence: "high",
       status: "pending",
+      // 由来の構造化記録: UIバッジ表示と ai-feedback の回答反映先分類が参照する（【AIX:】タグは旧UI互換の表示用）
+      entry_source: isAixCluster ? "aix_action" : "line_reply",
+      aix_action: isAixCluster ? [...cluster.aixActions].join(",") : null,
     });
   }
 

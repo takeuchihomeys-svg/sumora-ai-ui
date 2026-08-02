@@ -355,6 +355,8 @@ interface FeedbackItem {
   applied_rule: string | null;
   created_at: string;
   answered_at: string | null;
+  entry_source?: string | null; // 'line_reply' | 'aix_action' | null（旧レコード=由来不明）— AIX/返信バッジの第一情報源
+  aix_action?: string | null;   // AIXアクションキー（カンマ区切り可・entry_source='aix_action' 時のみ）
 }
 
 // AI質問フェーズ: 英語キー → 日本語ラベル（question本文に埋め込まれた "フェーズ: xxx" を変換）
@@ -3438,15 +3440,23 @@ export default function TemplateModal({
                   const isContradiction = item.question.includes('どちら') || item.question.includes('矛盾') || item.question.includes('[old_knowledge_id:');
                   // ルール再確認の判定: questionに「[feedback_rule_key:」が含まれる場合、維持/無効化ボタンUIに切り替える
                   const isFeedbackRuleReconfirm = item.question.includes('[feedback_rule_key:');
-                  // AIX由来質問の判定: analyze-diffs が「【AIX: 物件オススメ】」等のラベルを埋め込む
+                  // AIX/返信の由来判定（一元化）: 構造化カラム entry_source を第一情報源とし、
+                  // 旧レコード向けに【AIX: xxx】埋め込みタグと category='new_aix_needed' をフォールバックにする
                   const aixQuestionMatch = item.question.match(/【AIX[:：]\s*([^】]+)】/);
+                  const isAixQuestion = item.entry_source === "aix_action" || !!aixQuestionMatch || item.category === "new_aix_needed";
+                  const aixBadgeLabel = aixQuestionMatch?.[1]
+                    ?? (item.aix_action ? item.aix_action.split(",").map((a) => AI_QUESTION_PHASE_LABELS[a.trim()] ?? a.trim()).join("・") : null);
                   return (
                 <div key={item.id} className="border border-orange-200 rounded-xl p-4 bg-orange-50">
                   {/* カテゴリバッジ・フェーズ・重要度・埋め込みカテゴリ */}
                   <div className="flex flex-wrap items-center gap-1.5 mb-2">
-                    {aixQuestionMatch && (
+                    {isAixQuestion ? (
                       <span className="text-xs px-2 py-0.5 rounded-full bg-orange-500 text-white font-bold">
-                        AIX: {aixQuestionMatch[1]}
+                        AIX{aixBadgeLabel ? `: ${aixBadgeLabel}` : ""}
+                      </span>
+                    ) : (
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${item.entry_source === "line_reply" ? "bg-blue-500 text-white" : "bg-gray-300 text-gray-700"}`}>
+                        {item.entry_source === "line_reply" ? "返信" : "返信（推定）"}
                       </span>
                     )}
                     <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-bold">

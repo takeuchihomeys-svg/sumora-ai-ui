@@ -90,14 +90,26 @@ export async function GET() {
 }
 
 // 回答をOpus 4.8で解釈して業務ルールを1〜3個抽出する（高品質な永続ルールを生成するため最上位モデルを使用）
-async function extractRules(question: string, answer: string): Promise<ExtractedRule[]> {
+async function extractRules(
+  question: string,
+  answer: string,
+  origin?: { entrySource: string | null; aixAction: string | null },
+): Promise<ExtractedRule[]> {
+  // 起票時に記録された構造化由来（ai_feedback_items.entry_source / aix_action）。
+  // テキストからの推測より優先すべき確定情報としてOpusに伝える。
+  const primaryAixAction = origin?.aixAction ? origin.aixAction.split(",")[0].trim() : null;
+  const originSection = origin?.entrySource === "aix_action"
+    ? `\n【この質問の由来（起票時に記録された確定情報）】\nAIXボタンで生成した文への修正から起票された質問です${primaryAixAction ? `（AIXアクション: ${origin!.aixAction}）` : ""}。\n- action_type は${primaryAixAction ? `「${primaryAixAction}」を第一候補と` : "該当するAIXボタン名と"}してください（回答内容が明らかに別のアクションやAIX以外の話である場合のみ変更可）。\n- 抽出ルールはAIX文面・AIX操作向けです。文面の書き方ルールでも action_type を必ず設定してください（スコープ付きでAIXプロンプトに注入されます）。\n`
+    : origin?.entrySource === "line_reply"
+      ? `\n【この質問の由来（起票時に記録された確定情報）】\nLINE返信AI（通常返信）の文への修正から起票された質問です。回答が明確にAIXボタン操作について述べていない限り、action_type は null にしてください。\n`
+      : "";
   const res = await client.messages.create({
     model: "claude-opus-4-8",
     max_tokens: 1500,
     system: `あなたはLINE不動産接客AIの知識管理エージェントです。担当者からの回答を、AIが今後使える業務ルールに変換します。`,
     messages: [{
       role: "user",
-      content: `以下はAIが担当者（竹内悠馬さん）に質問した内容と、その回答です。
+      content: `以下はAIが担当者（竹内悠馬さん）に質問した内容と、その回答です。\n${originSection}
 
 【AIの質問】
 ${question}
@@ -207,7 +219,7 @@ export async function POST(req: NextRequest) {
 
   const { data: item, error: fetchError } = await supabase
     .from("ai_feedback_items")
-    .select("id, question, status, category, evidence")
+    .select("id, question, status, category, evidence, entry_source, aix_action")
     .eq("id", id)
     .single();
   if (fetchError || !item) {
@@ -230,10 +242,14 @@ export async function POST(req: NextRequest) {
     /\[rule_merge:FEEDBACK-/.test(item.question as string);
 
   // 知識化（失敗しても回答自体は保存する）
+  // 起票時に記録された構造化由来（entry_source/aix_action）を確定情報としてOpusに渡す。
+  // これにより save_target / action_type の分類が質問文テキストの推測だけに依存しなくなる。
+  const itemEntrySource = (item as { entry_source?: string | null }).entry_source ?? null;
+  const itemAixAction = (item as { aix_action?: string | null }).aix_action ?? null;
   let rules: ExtractedRule[] = [];
   if (!isMetaApprovalQuestion) {
     try {
-      rules = await extractRules(item.question as string, answer);
+      rules = await extractRules(item.question as string, answer, { entrySource: itemEntrySource, aixAction: itemAixAction });
     } catch (e) {
       console.error("[ai-feedback] ルール抽出失敗:", e);
     }

@@ -1611,6 +1611,17 @@ ALTER TABLE ai_reply_examples ADD COLUMN IF NOT EXISTS aix_action TEXT;
 UPDATE ai_reply_examples SET aix_action = conversation_state
 WHERE entry_source = 'aix_action' AND aix_action IS NULL;
 
+-- ── ai_feedback_items: entry_source / aix_action（AI質問の由来の構造化記録）（2026-08-02）──
+-- AIX/返信の判定を【AIX: xxx】テキストタグの正規表現マッチから構造化カラムに一元化する。
+-- 'line_reply': LINE返信AI由来の質問 / 'aix_action': AIXボタン生成文由来の質問 / NULL: 旧レコード（由来不明・UIで「推定」表示）
+-- analyze-diffs の insertAiQuestion が起票時に必ず記録し、TemplateModal のバッジ表示と
+-- ai-feedback の回答反映先分類（action_type スコープ）が同じカラムを参照する（単一真実源）。
+ALTER TABLE ai_feedback_items ADD COLUMN IF NOT EXISTS entry_source TEXT;
+ALTER TABLE ai_feedback_items ADD COLUMN IF NOT EXISTS aix_action TEXT;
+-- バックフィル: 【AIX: xxx】タグ付きの旧起票は AIX由来として記録（タグなし旧レコードは NULL のまま）
+UPDATE ai_feedback_items SET entry_source = 'aix_action'
+WHERE entry_source IS NULL AND question LIKE '%【AIX%';
+
 -- ── HUMAN-*ルール永続化（卒業メカニズム）（2026-07-20）──
 -- is_permanent=true のルールはLIMITなしで最優先注入される「永久ルール」。
 -- 通常の HUMAN-*(50件上限)とは別枠で常に全件注入されるため、どれほどルールが増えても

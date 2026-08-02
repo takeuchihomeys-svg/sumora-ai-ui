@@ -1112,7 +1112,9 @@ export async function POST(req: NextRequest) {
         template_id: templateId || null,
         is_full_rewrite: isFullRewrite,
         ai_similarity: aiDraft ? sim : null,
-        entry_source: typeof entry_source === "string" ? entry_source : "line_reply",
+        // entry_source は whitelist 検証（'line_reply' | 'aix_action' のみ）。
+        // 任意文字列を通すと typo 由来の第3の値が .eq('entry_source','line_reply') フィルタから漏れるため入口で正規化する
+        entry_source: entry_source === "aix_action" ? "aix_action" : "line_reply",
         aix_action: typeof aix_action === "string" && aix_action ? aix_action : null,
       })
       .select("id")
