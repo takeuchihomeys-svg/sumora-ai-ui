@@ -80,7 +80,7 @@ async function deriveSuggestedAix(
   propertyStatus?: PropertyStatus,
   customerMessage?: string,
   analysisAixAction?: string | null,
-): Promise<{ action: string; note: string } | null> {
+): Promise<{ action: string; note: string; source: string } | null> {
   // 退去予定/入居中の物件では現地内覧が不可のため viewing_invite（内覧日調整）は提案しない。
   // 代わりに空室確認（acknowledge_check）または申込で先に確保（application_push）を優先する。
   const isMoveOut = propertyStatus === "move_out_scheduled" || propertyStatus === "occupied";
@@ -105,6 +105,7 @@ async function deriveSuggestedAix(
       return {
         action: "property_recommendation",
         note: "同じマンション内の別の号室／別価格帯のお部屋をご希望です → AIX【1件特にオススメする】または【物件ピックアップした】で同棟の条件に合う部屋を検索してお送りください（「確認します」は不要です）",
+        source: "same_building_regex",
       };
     }
   }
@@ -131,6 +132,7 @@ async function deriveSuggestedAix(
       return {
         action: "estimate_sheet",
         note: "初期費用・見積書のご質問です → AIX【見積書送る】で最大限割引した御見積書を作成してお送りください（AI返信案は作成宣言のみ・見積書本体と金額内訳は必ずAIXから送ってください）",
+        source: "estimate_regex",
       };
     }
   }
@@ -147,9 +149,9 @@ async function deriveSuggestedAix(
         signal: AbortSignal.timeout(3000),
       });
       if (res.ok) {
-        const data = await res.json() as { action?: string | null; reason?: string };
+        const data = await res.json() as { action?: string | null; reason?: string; source?: string };
         if (data.action && AIX_ACTION_NOTES[data.action]) {
-          return redirectMoveOut(data.action, AIX_ACTION_NOTES[data.action]);
+          return { ...redirectMoveOut(data.action, AIX_ACTION_NOTES[data.action]), source: data.source ?? "trigger_rule" };
         }
       }
     } catch {
@@ -160,7 +162,22 @@ async function deriveSuggestedAix(
   // ─── Step 1.5: Step1分析由来のAIX推薦（会話全文・感情・文脈を見たSonnet判断）───
   // 旧Step 2（ドラフト文regexフォールバック）は最弱シグナルだったため削除し、本判定に置き換え
   if (analysisAixAction && AIX_ACTION_NOTES[analysisAixAction]) {
-    return redirectMoveOut(analysisAixAction, AIX_ACTION_NOTES[analysisAixAction]);
+    // analysis_step1 の品質ゲート（採択率30%未満・サンプル10件以上ならスキップ）
+    // SOURCE_ACCEPT_RATE:{action}:{source} 行は update-action-confidence cron が毎日更新
+    const { data: srcRateRow } = await supabase
+      .from("trigger_action_rules")
+      .select("confidence, total_occurrence")
+      .eq("keyword", `SOURCE_ACCEPT_RATE:${analysisAixAction}:analysis_step1`)
+      .eq("action_type", analysisAixAction)
+      .maybeSingle();
+    const isAnalysisSuppressed = srcRateRow
+      && typeof srcRateRow.confidence === "number"
+      && typeof srcRateRow.total_occurrence === "number"
+      && srcRateRow.total_occurrence >= 10
+      && srcRateRow.confidence < 0.3;
+    if (!isAnalysisSuppressed) {
+      return { ...redirectMoveOut(analysisAixAction, AIX_ACTION_NOTES[analysisAixAction]), source: "analysis_step1" };
+    }
   }
   return null;
 }

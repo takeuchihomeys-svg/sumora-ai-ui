@@ -16,8 +16,10 @@ export const maxDuration = 300;
 // prediction_mismatch: 予測外れ
 // send_cancelled:      送信キャンセルは最弱シグナル（集計への影響を最小化）
 // suggestion_bypassed: 提案を無視して別行動 = 弱い負シグナル
+// analysis_step1:      差分分析ステップ1由来の採択シグナル（suggestion_acceptedと同等扱い）
 const SOURCE_WEIGHTS: Record<string, number> = {
   suggestion_accepted: 1.2,
+  analysis_step1: 1.2,
   prediction_match: 1.5,
   manual: 1.0,
   suggestion_dismissed: 0.2,

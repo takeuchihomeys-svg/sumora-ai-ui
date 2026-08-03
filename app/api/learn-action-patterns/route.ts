@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
     }
     // フロントから渡された source を尊重（提案採択学習ループ用）
     // 高2: page.tsx が送る全 source を許可（未登録だと manual に化けて学習の重み付けが壊れる）
-    const ALLOWED_SOURCES = new Set(["manual", "suggestion_accepted", "suggestion_dismissed", "prediction_match", "prediction_mismatch", "send_cancelled", "suggestion_bypassed", "prediction_accepted", "prediction_bypassed", "split_draft_used"]);
+    const ALLOWED_SOURCES = new Set(["manual", "suggestion_accepted", "suggestion_dismissed", "prediction_match", "prediction_mismatch", "send_cancelled", "suggestion_bypassed", "prediction_accepted", "prediction_bypassed", "split_draft_used", "analysis_step1"]);
     const source = body.source && ALLOWED_SOURCES.has(body.source) ? body.source : "manual";
 
     // 案5: 却下理由（提案バナー✕→3択チップで選択）。想定外の値はnullに落とす
