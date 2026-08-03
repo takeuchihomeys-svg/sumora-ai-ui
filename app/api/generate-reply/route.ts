@@ -16,6 +16,12 @@ import { validateAndClean } from "@/app/lib/validate-reply";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
 import { safeSlice } from "@/app/lib/safe-slice";
 import { classifyReplyMode } from "@/app/lib/reply-mode-classifier";
+import {
+  applyVacatingDateToTemplate,
+  applyGreetingSwap,
+  stripRoomLeadingZeros,
+  type VacatingDate,
+} from "@/app/lib/template-preprocess";
 
 // Vercel Functions のタイムアウト上限（秒）— Vision + 2段LLM呼び出しに余裕を持たせる
 export const maxDuration = 300;
@@ -39,6 +45,21 @@ function createGenerationModel(temperature: number) {
     temperature,
     anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
     clientOptions: { timeout: 45_000 },
+  });
+}
+
+// テンプレート最適化モード（templateText指定時）の生成モデル: Claude Sonnet 5
+// - Sonnet 5 は temperature 等のサンプリングパラメータ（非デフォルト値）を受け付けないため渡さない
+// - thinking は明示的に無効化する（有効だとストリーミングchunkのcontentがブロック配列になり、
+//   既存の「typeof chunk.content === "string"」蓄積ロジックがテキストを取りこぼすため）
+// - テンプレは長文（物件ピックアップ等）があるため maxTokens は通常生成より広め
+function createTemplateOptimizeModel() {
+  return new ChatAnthropic({
+    model: "claude-sonnet-5",
+    maxTokens: 4096,
+    thinking: { type: "disabled" },
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
+    clientOptions: { timeout: 60_000 },
   });
 }
 
@@ -396,7 +417,10 @@ function buildGenerationMessages(
   dbRules = "",
   summaryJson?: ReplySummaryJson,
   quotedContextNote = "",
-  propertyStatus?: PropertyStatus
+  propertyStatus?: PropertyStatus,
+  // テンプレート最適化モード: プロンプト最末尾（replyHintNoteと同じ上書きスロット）に注入するブロック。
+  // 指定時は replyHint（指定生成モード）を無効化する（templateText が勝つ）
+  templateNote = ""
 ): [SystemMessage, HumanMessage] {
   const jstHour = getJSTHour();
   const jstDay = getJSTDayOfWeek();
@@ -743,7 +767,9 @@ function buildGenerationMessages(
 ・対象が退去予定/入居中の物件であれば、その旨を伝えた上で情報を案内し、現地内覧日程は提案しない。`
     : "";
 
-  const replyHintNote = replyHint
+  // templateNote 指定時は指定生成モード（2〜3行制限・物件詳細禁止）を適用しない
+  // — テンプレは長文（物件ピックアップ等）が正であり、行数キャップが品質を壊すため
+  const replyHintNote = (replyHint && !templateNote)
     ? `\n\n【🔴✨ 指定生成モード（通常の生成ルールをすべて上書き）】
 以下の指定内容のみに従い返信を生成すること。フェーズ別の行動パターン・物件送る・ピックアップ・長い説明は一切不要。
 【長さ制限（絶対）】2〜3行に収めること。物件詳細・費用・比較・勧誘を書いてはいけない。
@@ -792,7 +818,7 @@ ${customerMessage}${applicationFormNote}${viewingFactNote}${estimateGateNote}${p
 ${examples}${examplesInstruction}
 
 ↑${isFollowUp ? "スモラは既にこのメッセージに返信済み。前の返信内容を繰り返さず、続きとして自然につながるメッセージを1つ生成すること。" : "スモラの直前返信の流れを踏まえ、⭐実例の文体・テンポを参考にしながら、上記の挨拶ルール・禁止ワードを必ず守って、このメッセージへのスモラらしい返信を1つ生成してください。"}
-長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。初回挨拶の「鈴木と申します」を除き、本文中に担当者名（鈴木など）を入れない。${replyHintNote}`;
+長さの目安: 承認・了解→2行、条件確認・ヒアリング→3〜4行、物件紹介→フォーマット通り（制限なし）。初回挨拶の「鈴木と申します」を除き、本文中に担当者名（鈴木など）を入れない。${replyHintNote}${templateNote}`;
 
   // dbRules を SystemMessage に注入（HumanMessage より優先度が高く aix/action と同じ注入経路）
   const baseSystem = promptOverrides?.generationSystem ?? GENERATION_SYSTEM;
@@ -1359,6 +1385,45 @@ async function fetchSummaryJsonByConversation(conversationId: string): Promise<R
   }
 }
 
+// ─── テンプレート最適化モード用: DB学習ルール取得 ─────────────────────────────
+// 旧 /api/templates/adapt が読んでいた2つのDB注入を引き継ぐ（学習資産を失わない）。
+// ① ai_prompts key='template_adapt_rules'（テンプレ最適化の追加ルール）
+async function fetchTemplateAdaptRules(): Promise<string> {
+  try {
+    const { data } = await supabase
+      .from("ai_prompts")
+      .select("content")
+      .eq("key", "template_adapt_rules")
+      .single();
+    return (data as { content?: string } | null)?.content ?? "";
+  } catch (err) {
+    console.error("[generate-reply] template_adapt_rules取得失敗 — ルールなしで続行:", err);
+    return "";
+  }
+}
+
+// ② adaptation_improvement_rules（スタッフの最適化後修正から自動学習したカテゴリ別ルール・上位5件）
+async function fetchCategoryAdaptationRules(templateCategory: string): Promise<string> {
+  try {
+    const { data } = await supabase
+      .from("adaptation_improvement_rules")
+      .select("rule_text, confidence, example_count")
+      .eq("category", templateCategory)
+      .eq("is_active", true)
+      .order("example_count", { ascending: false })
+      .order("confidence", { ascending: false })
+      .limit(5);
+    if (!data || data.length === 0) return "";
+    const rules = data as Array<{ rule_text: string; example_count: number }>;
+    return `【📚 このテンプレカテゴリで学習した改善ルール — 必ず守ること】
+過去にスタッフがAI最適化後に繰り返し修正したパターンです。次回は最初からこのように生成してください。
+${rules.map((r, i) => `${i + 1}. ${r.rule_text}（${r.example_count}回確認済み）`).join("\n")}`;
+  } catch (err) {
+    console.error("[generate-reply] adaptation_improvement_rules取得失敗 — ルールなしで続行:", err);
+    return "";
+  }
+}
+
 // ─── POST ────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   if (!process.env.ANTHROPIC_API_KEY) {
@@ -1380,6 +1445,18 @@ export async function POST(req: NextRequest) {
   let includeStopReason = false;
   // アクティブタスク（body指定 or DB自動補完）。property_check中の返信ガード等に使用
   let activeTaskTypes: string[] = [];
+  // ─── テンプレート最適化モード（templateText 指定で有効化）───
+  // 「AIで最適化」ボタン: generate-reply の品質パイプライン（Step1分析 + 全プロンプトスタック +
+  // ハードゲート + validateAndClean）をそのまま使い、テンプレを骨格として書き直す
+  let templateText = "";
+  let templateCategory = "";
+  let templateLabel = "";
+  let templateFocusPoints: string[] = [];
+  let noEmoji = false;
+  let soloEntry = false;
+  let pendingScheduledMessages: Array<{ text: string | null }> = [];
+  let vacatingDate: VacatingDate = null;
+  let staffMessagedToday = false;
   try {
     const body = await req.json() as {
       message: string;
@@ -1398,6 +1475,17 @@ export async function POST(req: NextRequest) {
       conversationId?: string;
       includeStopReason?: boolean;
       propertyStatus?: PropertyStatus;
+      // ─── テンプレート最適化モード用フィールド ───
+      templateText?: string;        // 指定するとテンプレート最適化モードが有効になる
+      templateCategory?: string;    // adaptation_improvement_rules のカテゴリ別学習ルール取得に使用
+      templateLabel?: string;       // テンプレート名（プロンプト参考情報）
+      templateFocusPoints?: string[]; // 訴求ポイント: ["家賃","初期費用","部屋の条件"]
+      conditions?: string[];        // templateFocusPoints の別名（選択チップ配列）
+      noEmoji?: boolean;
+      soloEntry?: boolean;
+      pendingScheduledMessages?: Array<{ text: string | null }>;
+      vacatingDate?: { month: number; day: number } | null;
+      staffMessagedToday?: boolean;
     };
     message = body.message;
     state = body.state;
@@ -1417,18 +1505,53 @@ export async function POST(req: NextRequest) {
     screenshotMediaType = body.screenshotMediaType;
     viewingNote = body.viewingNote || "";
     propertyStatus = body.propertyStatus;
+    // テンプレート最適化モードのフィールド
+    templateText = body.templateText || "";
+    templateCategory = body.templateCategory || "";
+    templateLabel = body.templateLabel || "";
+    templateFocusPoints = (body.templateFocusPoints ?? body.conditions ?? []).filter(
+      (p): p is string => typeof p === "string" && p.length > 0
+    );
+    noEmoji = body.noEmoji === true;
+    soloEntry = body.soloEntry === true;
+    pendingScheduledMessages = (body.pendingScheduledMessages ?? []).filter(
+      (m) => m && typeof m.text === "string" && m.text.length > 0
+    );
+    vacatingDate = body.vacatingDate ?? null;
+    staffMessagedToday = body.staffMessagedToday === true;
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid request body" }, { status: 400 });
   }
 
+  const isTemplateOptimize = templateText.length > 0;
+
   // 空メッセージは Vision 呼び出しより前に弾く（無駄な API 課金・待ち時間の防止）
-  if (!message) return NextResponse.json({ ok: false, error: "message required" }, { status: 400 });
+  // テンプレート最適化モードのみ例外: テンプレ送信はスタッフ発信の続きで行われることが多く、
+  // お客様の新着メッセージが無いケースが正当。履歴の最後のお客様発言、無ければ合成文脈で代替する
+  if (!message) {
+    if (isTemplateOptimize) {
+      const lastCustomerText = [...recentMessages].reverse().find(
+        (m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]"
+      )?.text;
+      message = lastCustomerText || "（お客様の新着メッセージなし・テンプレート送信の文脈）";
+    } else {
+      return NextResponse.json({ ok: false, error: "message required" }, { status: 400 });
+    }
+  }
 
   // 孤立サロゲート（LINE絵文字等）をU+FFFDに置換してAnthropicへのHTTP 400を防止
   const _sanitizeSurrogates = (s: string) =>
     s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "�");
   message = _sanitizeSurrogates(message);
   recentMessages = recentMessages.map(m => ({ ...m, text: _sanitizeSurrogates(m.text) }));
+
+  // テンプレート最適化モード: 旧adaptルートで実績のある前処理をプロンプト組み立て前に適用
+  // （退去予定日/内覧可能日の◯月◯日置換 + 挨拶差し替え。共有lib: app/lib/template-preprocess.ts）
+  let preprocessedTemplate = "";
+  if (isTemplateOptimize) {
+    preprocessedTemplate = applyVacatingDateToTemplate(_sanitizeSurrogates(templateText), vacatingDate);
+    preprocessedTemplate = applyGreetingSwap(preprocessedTemplate, staffMessagedToday);
+  }
 
   // activeTaskTypes の自動補完（Cron等で body.activeTaskTypes が渡されない場合のサーバー側フォールバック）
   // line_tasks から進行中（status=pending）のタスクを検出して補完する。
@@ -1635,7 +1758,7 @@ export async function POST(req: NextRequest) {
 
     // ── Step2: 残りを並列実行（実例検索はパターンキーワード付きクエリで実行）
     // 各フェッチはエラーでも生成を止めない（knowledgeなし・実例なしで生成続行）
-    const [knowledgeResult, examples, phraseList, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote] = await Promise.all([
+    const [knowledgeResult, examples, phraseList, autoSummary, dbRules, fetchedSummaryJson, quotedContextNote, templateAdaptRules, categoryAdaptationRules] = await Promise.all([
       fetchKnowledge(currentState, message, analysisContext, conversationId)
         .catch((err) => { console.error("[generate-reply] fetchKnowledge失敗 — knowledgeなしで生成続行:", err); return { text: "", phraseHits: 0 }; }),
       fetchExamples(currentState, message, isFollowUp ? lastStaffMsgForSearch : undefined, analysisContext)
@@ -1658,6 +1781,11 @@ export async function POST(req: NextRequest) {
       // パターンA: 引用リプライの引用先コンテキスト（quoted_message_id → line_message_id JOIN）
       conversationId
         ? fetchQuotedContext(conversationId)
+        : Promise.resolve(""),
+      // テンプレート最適化モードのみ: 旧adaptルートのDB学習ルール2種を追加取得
+      isTemplateOptimize ? fetchTemplateAdaptRules() : Promise.resolve(""),
+      isTemplateOptimize && templateCategory
+        ? fetchCategoryAdaptationRules(templateCategory)
         : Promise.resolve(""),
     ]);
     const resolvedSummary = customerSummary || autoSummary;
@@ -1720,13 +1848,48 @@ export async function POST(req: NextRequest) {
         "【受け身モード】直前に申込誘導を送りお客様が曖昧な返答をした。今回は追い込まず受け身で締めること。「ご都合のよい日時をお聞かせください！！」等の追い込みは絶対にしない。「お気軽にお申し付けください！！」「いつでもご連絡くださいね！！」等の柔らかい一言で締める。";
     }
 
+    // ─── テンプレート最適化モード: プロンプト最末尾に注入する上書きブロックを構築 ───
+    // replyHintNote と同じ「最後に書いたルールが勝つ」スロットに置く。
+    // 長さ制限（2〜3行等）はテンプレの長さを優先して解除するが、
+    // 内覧日時・見積金額・空室確認結果・待ち合わせ場所の捏造禁止ゲートはそのまま効かせる。
+    const templateNote = isTemplateOptimize
+      ? (() => {
+          const pendingSection = pendingScheduledMessages
+            .map((m) => m.text ?? "")
+            .filter(Boolean)
+            .join("\n\n---\n\n");
+          const learnedRulesSection = [templateAdaptRules, categoryAdaptationRules]
+            .filter(Boolean)
+            .join("\n\n");
+          return `\n\n【🟠✨ テンプレート最適化モード（最優先 — 上記「長さの目安」・フェーズ別行動パターンを上書き）】
+テンプレートをベースに、この顧客の状況に最適化した文章を作成してください。
+今回はお客様のメッセージへのゼロからの返信ではなく、下の【テンプレート原文】を「構成の骨格」として、今のお客様・今の会話に完全に合わせて書き直すこと。
+◆ 骨格維持: テンプレの段落数・流れ・目的（物件紹介テンプレなら物件を紹介する等）を維持する。長さはテンプレに準じる（「2〜3行」等の行数制限はこのモードでは適用しない。ただし内覧日時・見積金額内訳・空室確認結果・待ち合わせ場所の捏造禁止ゲートは引き続き厳守）
+◆ 状況適合: 冒頭に【🎯 最優先指示】がある場合はその方向へ文面を寄せる。お客様の感情状態に合うトーンにする（不安→安心材料を先に、前向き→次アクションを即宣言）
+◆ プレースホルダ置換: 「アカウント名」→「${customerName || "〇〇"}さん」。物件名・○月○日・〇〇円・〇〇分などは ①予約送信待ちのAIXメッセージ ②会話履歴 ③お客様の希望条件（DB） の優先順で実際の値に置換する。不明な値は「〇〇」のまま残す（でたらめな値を絶対に入れない）
+◆ ハードコード物件名: テンプレ内に特定の物件名が入っていて、今話している物件と違う場合は今回の物件名に必ず差し替える（不明なら「〇〇」。前の物件名を残さない）
+◆ 挨拶: テンプレ冒頭の挨拶は上の【⏰ 挨拶ルール】に従った1つだけにする（挨拶・お礼の二重は禁止）
+◆ 訴求ポイント指定: ${templateFocusPoints.length > 0 ? `スタッフ指定の訴求軸【${templateFocusPoints.join("・")}】を文中で最も強調すること` : "なし"}
+◆ 禁止: テンプレにない新しい質問リストの発明・会話履歴と矛盾する内容・スモラが既に案内済みの情報の繰り返し
+${noEmoji ? "◆ 絵文字は一切使用しない（テンプレートに絵文字があっても全て削除）\n" : ""}${soloEntry ? "◆ 1人入居モード（厳守）: 同居人・配偶者・同居者・家族構成・入居人数・お子様・子ども・子供・同居・ご家族 を含む行はすべて出力しない（完全に削除）\n" : ""}${templateLabel ? `【テンプレート名】${templateLabel}\n` : ""}${templateCategory ? `【テンプレートカテゴリ】${templateCategory}\n` : ""}【テンプレート原文（前処理済み）】
+${preprocessedTemplate}
+${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件名・家賃・オススメポイントはここから最優先で読む）】\n${pendingSection}\n` : ""}${learnedRulesSection ? `\n${learnedRulesSection}\n` : ""}
+出力は書き直したテンプレート本文のみ。説明・前置き・補足コメントは一切書かない。`;
+        })()
+      : "";
+
+    // テンプレート最適化モードは SystemMessage 側にもモード宣言を追加（dbRules と同じ注入経路）
+    const templateSystemNote = isTemplateOptimize
+      ? "\n\n【テンプレート最適化モード】今回はテンプレートをベースに、この顧客の状況に最適化した文章を作成してください。詳細ルールはプロンプト末尾の【🟠✨ テンプレート最適化モード】ブロックに従うこと。"
+      : "";
+
     // Sonnetでストリーミング生成
     const messages = buildGenerationMessages(
       message, customerName, history, currentState,
       analysis, knowledge, examples, phrases, customerConditions, resolvedSummary,
       promptOverrides, isFollowUp, replyHint, alreadyGreetedToday,
-      isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules,
-      resolvedSummaryJson, quotedContextNote, propertyStatus
+      isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules + templateSystemNote,
+      resolvedSummaryJson, quotedContextNote, propertyStatus, templateNote
     );
     // 中6: 顧客の温度感に応じて生成temperatureを可変にする（Step1分析は temperature:0 のまま）
     // ④ Step1で今まさに分析したフレッシュな emotion を最優先し、なければ ai_summary_json.emotion（過去の要約）を使う
@@ -1737,7 +1900,11 @@ export async function POST(req: NextRequest) {
       } catch { return undefined; }
     })();
     const genTemperature = emotionTemperature(analysisEmotion ?? resolvedSummaryJson?.emotion);
-    const genStream = createGenerationModel(genTemperature).stream(messages);
+    // テンプレート最適化モードは Claude Sonnet 5（temperature非対応のため感情temperatureは適用しない）
+    const genStream = (isTemplateOptimize
+      ? createTemplateOptimizeModel()
+      : createGenerationModel(genTemperature)
+    ).stream(messages);
 
     // B-2: 品質判定フラグ（自動返信ハードゲート用）
     // is_applying_docs は静的に判定可能なのでここで計算。
@@ -1779,9 +1946,12 @@ export async function POST(req: NextRequest) {
       new ReadableStream({
         async start(controller) {
           // 1行目: メタデータJSON（フロントエンドがok確認に使用）
-          controller.enqueue(encoder.encode(
-            JSON.stringify({ ok: true, quality: qualityFlags, suggested_aix: suggestedAixForMeta }) + "\n"
-          ));
+          // テンプレート最適化モードはボディを「最適化テキストのみ」にするためメタ行を出さない
+          if (!isTemplateOptimize) {
+            controller.enqueue(encoder.encode(
+              JSON.stringify({ ok: true, quality: qualityFlags, suggested_aix: suggestedAixForMeta }) + "\n"
+            ));
+          }
           // 生成完了テキスト（conversationId 指定時の ai_draft 保存用）
           let finalDraftText = "";
           // 生成のstop_reason（includeStopReason=true時にトレーラーで呼び出し元へ返す）
@@ -1790,8 +1960,9 @@ export async function POST(req: NextRequest) {
             const genInputLength = messages.reduce(
               (n, m) => n + (typeof m.content === "string" ? m.content.length : 0), 0
             );
-            if (shouldPrependGreeting) {
+            if (shouldPrependGreeting && !isTemplateOptimize) {
               // 真の初回: 全バッファして冒頭挨拶を強制置換（AIが誤生成しても確実に正しい名前を出す）
+              // ※テンプレート最適化モードは常に下の通常バッファ経路（テンプレの構成を挨拶強制置換で壊さない）
               let fullText = "";
               for await (const chunk of await genStream) {
                 const text = typeof chunk.content === "string" ? chunk.content : "";
@@ -1836,8 +2007,15 @@ export async function POST(req: NextRequest) {
               warnIfTruncated(genStopReason, genInputLength);
               const { cleaned, issues } = validateAndClean(fullText);
               if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
-              if (cleaned) controller.enqueue(encoder.encode(cleaned));
-              finalDraftText = cleaned;
+              let outText = cleaned;
+              // テンプレート最適化モードの後処理: 号室先頭ゼロ除去 + noEmoji時の絵文字除去（旧adaptルート互換）
+              if (isTemplateOptimize) {
+                outText = stripRoomLeadingZeros(outText);
+                if (noEmoji) outText = outText.replace(/[😊😌🌟✨]/gu, "");
+                outText = outText.trim();
+              }
+              if (outText) controller.enqueue(encoder.encode(outText));
+              finalDraftText = outText;
             }
             // AIXボタン誘導: ドラフト完成後にどのAIXボタンを使うべきか提案（トレーラーとして付加）
             // suggest-next-action（DB学習ルール）を優先し、失敗時はregexにフォールバック
@@ -1847,7 +2025,8 @@ export async function POST(req: NextRequest) {
             // ─── Shadow: 分類器ログ（シャドーモード・画面変更なし）───
             // 純ルールベース分類器の結果を reply_mode_shadow_logs に追記するだけ（上書きなし・1行1メッセージ）。
             // 返信内容・SUGGESTED_AIX・レスポンスには一切影響しない（fire-and-forget）。
-            if (conversationId && message) {
+            // ※テンプレート最適化モードは会話への返信生成ではないためログを残さない（書き込みゲート）
+            if (conversationId && message && !isTemplateOptimize) {
               const _shadowClassify = (() => {
                 try {
                   // history のスタッフ行プレフィックスは「スモラ:」（route内の履歴フォーマット準拠）
@@ -1877,21 +2056,26 @@ export async function POST(req: NextRequest) {
               })();
               void _shadowClassify;
             }
-            const suggestedAix = await deriveSuggestedAix(finalDraftText, currentState, conversationId || undefined, internalBaseUrl, resolvedStatusForAix, message, analysisAixAction);
-            if (suggestedAix) {
-              controller.enqueue(encoder.encode(`\n<<<SUGGESTED_AIX:${JSON.stringify(suggestedAix)}>>>`));
+            // テンプレート最適化モードはトレーラーを一切付けない（ボディ＝純粋な最適化テキスト）
+            if (!isTemplateOptimize) {
+              const suggestedAix = await deriveSuggestedAix(finalDraftText, currentState, conversationId || undefined, internalBaseUrl, resolvedStatusForAix, message, analysisAixAction);
+              if (suggestedAix) {
+                controller.enqueue(encoder.encode(`\n<<<SUGGESTED_AIX:${JSON.stringify(suggestedAix)}>>>`));
+              }
             }
             // includeStopReason=true（generate-pending-drafts）の場合のみ stop_reason トレーラーを付加
             // → 呼び出し元が max_tokens 尻切れを検知して保存をスキップできるようにする
             // ⚠️ 必ず【最後】のトレーラーとして出力する（SUGGESTED_AIX より後）。
             //    以前 STOP_REASON→SUGGESTED_AIX の順で出力していたため、呼び出し元の末尾アンカー抽出が失敗し
             //    タグ入りドラフトが ai_draft に保存されるバグが発生した（2026-07 修正済み）
-            if (includeStopReason) {
+            if (includeStopReason && !isTemplateOptimize) {
               controller.enqueue(encoder.encode(`\n<<<STOP_REASON:${String(genStopReason ?? "unknown")}>>>`));
             }
             // ✅ 成功時: ai_draft 保存 + draft_pending_at クリア（次のCronでスキップさせる）+ draft_attempted_at クリア（orphanedクエリで拾われないように）
             // ※ draft_updated_at カラムは conversations に存在しないため未使用（追加時はここで更新すること）
-            if (conversationId) {
+            // ※テンプレート最適化モードは conversationId を読み取り専用（summaryJson・引用コンテキスト等）にのみ使用し、
+            //   会話の ai_draft を絶対に上書きしない（書き込みゲート）
+            if (conversationId && !isTemplateOptimize) {
               // M-3: max_tokens で切れた場合は ai_draft に保存しない（尻切れ文をスタッフがそのまま送信する事故を防止）
               // pending 解除のみ行う（attempted_at は残す＝10分間リトライしない）
               const isTruncated = String(genStopReason ?? "") === "max_tokens";
@@ -1915,7 +2099,7 @@ export async function POST(req: NextRequest) {
             // ❌ 失敗時: draft_pending_at をクリアして永続pendingを防止
             // ※ draft_attempted_at は意図的に触らない（残す＝10分間はorphanedクエリでリトライされない）
             // ※ draft_error_at カラムは conversations に存在しないためエラー時刻は記録しない（追加時はここで記録すること）
-            if (conversationId) {
+            if (conversationId && !isTemplateOptimize) {
               const { error: clearErr } = await supabase
                 .from("conversations")
                 .update({ draft_pending_at: null })
@@ -1934,7 +2118,7 @@ export async function POST(req: NextRequest) {
     // ❌ 失敗時: draft_pending_at をクリアして永続pendingを防止（毎分Cronの無限再試行対策）
     // ※ draft_attempted_at は意図的に触らない（残す＝10分間はorphanedクエリでリトライされない）
     // ※ draft_error_at カラムは conversations に存在しないためエラー時刻は記録しない（追加時はここで記録すること）
-    if (conversationId) {
+    if (conversationId && !isTemplateOptimize) {
       try {
         await supabase.from("conversations").update({ draft_pending_at: null }).eq("id", conversationId);
       } catch (clearErr) {

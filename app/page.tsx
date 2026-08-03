@@ -7773,7 +7773,7 @@ export default function Home() {
           }}
           customerName={preferredCustomerName}
           conversationState={selectedConversation.status}
-          recentMessages={(selectedConversation.messages || []).slice(-15).map((m: Message) => ({
+          recentMessages={(selectedConversation.messages || []).slice(-25).map((m: Message) => ({
             sender: m.sender, text: m.text || "", imageUrl: m.imageUrl || undefined, rawCreatedAt: m.rawCreatedAt,
           }))}
           staffMessagedToday={(() => {

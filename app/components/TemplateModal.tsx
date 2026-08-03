@@ -2266,18 +2266,28 @@ export default function TemplateModal({
   const handleAdapt = async (tmpl: Template) => {
     setAdaptingId(tmpl.id);
     setAdaptErrors((prev) => { const n = { ...prev }; delete n[tmpl.id]; return n; });
+    // OCR抽出済みテキストがあれば優先（物件名・住所の消失防止）
+    const templateText = extractedTexts[tmpl.id] ?? tmpl.text;
+    // 万一トレーラー（<<<SUGGESTED_AIX:...>>> 等）が混入しても防御的に除去する
+    const stripTrailers = (s: string) => s.replace(/\n?<<<[A-Z_]+:[\s\S]*?>>>/g, "");
     try {
-      const res = await fetch("/api/templates/adapt", {
+      // 新: generate-reply のテンプレート最適化モード（Step1状況分析 + 全プロンプトスタック + Sonnet）
+      const res = await fetch("/api/generate-reply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          // OCR抽出済みテキストがあれば優先（物件名・住所の消失防止）
-          templateText: extractedTexts[tmpl.id] ?? tmpl.text,
-          templateCategory: tmpl.category,
+          // お客様の新着メッセージが無いケースはサーバー側で履歴から補完される
+          message: "",
+          state: conversationState,
           customerName,
-          conversationState,
           recentMessages,
           customerConditions: linkedCustomer?.conditions,
+          conversationId,
+          templateText,
+          templateCategory: tmpl.category,
+          templateLabel: tmpl.label,
+          // 訴求ポイントチップ（家賃/初期費用/部屋の条件）をAPIにも渡す
+          templateFocusPoints: focusPointsMap[tmpl.id] ?? [],
           noEmoji,
           soloEntry,
           // 予約送信待ちのAIXメッセージを渡す（物件情報の優先ソース）
@@ -2286,15 +2296,64 @@ export default function TemplateModal({
           staffMessagedToday: staffMessagedToday ?? false,
         }),
       });
-      const data = await res.json() as { ok: boolean; adapted?: string; error?: string };
-      if (data.ok && data.adapted) {
-        setAdaptedTexts((prev) => ({ ...prev, [tmpl.id]: data.adapted! }));
-        setDisplaySource((prev) => ({ ...prev, [tmpl.id]: "adapted" }));
+      if (!res.ok) throw new Error(`generate-reply ${res.status}`);
+      // ストリーム本文を逐次蓄積（テンプレート最適化モードは最適化テキストのみが流れる）
+      let accumulated = "";
+      if (res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let started = false;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          accumulated += decoder.decode(value, { stream: true });
+          const preview = stripTrailers(accumulated);
+          if (preview.trim()) {
+            if (!started) {
+              started = true;
+              setDisplaySource((prev) => ({ ...prev, [tmpl.id]: "adapted" }));
+            }
+            setAdaptedTexts((prev) => ({ ...prev, [tmpl.id]: preview }));
+          }
+        }
+        accumulated += decoder.decode();
       } else {
-        setAdaptErrors((prev) => ({ ...prev, [tmpl.id]: data.error || "AI最適化に失敗しました" }));
+        accumulated = await res.text();
       }
+      const finalText = stripTrailers(accumulated).trim();
+      if (!finalText) throw new Error("empty result");
+      setAdaptedTexts((prev) => ({ ...prev, [tmpl.id]: finalText }));
+      setDisplaySource((prev) => ({ ...prev, [tmpl.id]: "adapted" }));
     } catch {
-      setAdaptErrors((prev) => ({ ...prev, [tmpl.id]: "通信エラーが発生しました" }));
+      // 旧API（/api/templates/adapt）へフォールバック（ロールアウト中もボタンが完全には壊れないように）
+      try {
+        const res = await fetch("/api/templates/adapt", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            templateText,
+            templateCategory: tmpl.category,
+            customerName,
+            conversationState,
+            recentMessages,
+            customerConditions: linkedCustomer?.conditions,
+            noEmoji,
+            soloEntry,
+            pendingScheduledMessages: (pendingScheduledMessages ?? []).filter(m => m.text),
+            vacatingDate: vacatingDates[tmpl.id] ?? null,
+            staffMessagedToday: staffMessagedToday ?? false,
+          }),
+        });
+        const data = await res.json() as { ok: boolean; adapted?: string; error?: string };
+        if (data.ok && data.adapted) {
+          setAdaptedTexts((prev) => ({ ...prev, [tmpl.id]: data.adapted! }));
+          setDisplaySource((prev) => ({ ...prev, [tmpl.id]: "adapted" }));
+        } else {
+          setAdaptErrors((prev) => ({ ...prev, [tmpl.id]: data.error || "AI最適化に失敗しました" }));
+        }
+      } catch {
+        setAdaptErrors((prev) => ({ ...prev, [tmpl.id]: "通信エラーが発生しました" }));
+      }
     } finally {
       setAdaptingId(null);
     }

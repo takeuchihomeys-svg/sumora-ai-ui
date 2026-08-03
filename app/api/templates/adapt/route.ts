@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
+import {
+  applyVacatingDateToTemplate,
+  applyGreetingSwap,
+  stripRoomLeadingZeros,
+} from "@/app/lib/template-preprocess";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "") });
 
@@ -47,57 +52,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "templateText is required" }, { status: 400 });
   }
 
-  // 退去予定日・内覧可能日を前処理でテンプレートに埋め込む
-  // ◯(U+25EF)・○(U+25CB)・〇(U+3007) の3種を統一して扱う
-  const lastDayOf = (m: number) => new Date(new Date().getFullYear(), m, 0).getDate();
-  let processedTemplateText = templateText;
-  const C = '[◯○〇]'; // 丸文字クラス（DBは◯多用）
-
-  // 退去日・内覧可能日を計算
-  let vacStr: string | null = null;
-  let viewStr: string | null = null;
-  if (vacatingDate) {
-    const last = lastDayOf(vacatingDate.month);
-    const vacDay = Math.min(vacatingDate.day, last);
-    vacStr = `${vacatingDate.month}月${vacDay}日`;
-    // 内覧可能日 = 退去日 + 1日（月をまたぐ場合も対応）
-    let vm = vacatingDate.month;
-    let vd = vacDay + 1;
-    if (vd > lastDayOf(vm)) { vd = 1; vm = vm === 12 ? 1 : vm + 1; }
-    viewStr = `${vm}月${vd}日`;
-  }
-
-  // パターン優先順: 複合パターン（両日付）を先に処理してから単体パターンへ
-  // 1) 〇月〇日退去の為〇月〇日以降ご内覧可能
-  processedTemplateText = processedTemplateText.replace(
-    new RegExp(`${C}+月${C}+日退去の為${C}+月${C}+日以降ご内覧可能`, 'g'),
-    vacStr && viewStr ? `${vacStr}退去の為${viewStr}以降ご内覧可能` : '退去の為内覧可能日以降ご内覧可能'
-  );
-  // 2) 〇月〇退去予定の為〇月〇日以降ご内覧可能（「日」なしバリアント）
-  processedTemplateText = processedTemplateText.replace(
-    new RegExp(`${C}+月${C}+退去予定の為${C}+月${C}+日以降ご内覧可能`, 'g'),
-    vacStr && viewStr ? `${vacStr}退去予定の為${viewStr}以降ご内覧可能` : '退去予定の為内覧可能日以降ご内覧可能'
-  );
-  // 3) 〇月〇日以降ご内覧可能（単体・上のパターン未処理の残り）
-  processedTemplateText = processedTemplateText.replace(
-    new RegExp(`${C}+月${C}+日以降ご内覧可能`, 'g'),
-    viewStr ? `${viewStr}以降ご内覧可能` : '内覧可能日以降ご内覧可能'
-  );
-  // 4) 〇月〇日退去予定（単体）
-  processedTemplateText = processedTemplateText.replace(
-    new RegExp(`${C}+月${C}+日退去予定`, 'g'),
-    vacStr ? `${vacStr}退去予定` : '退去予定'
-  );
-
-  // 挨拶をルールに従って前処理で差し替える
-  const GREETING_RE = /お世話になっております！！?|お待たせ致しました！！?|夜分遅くに失礼致します！！?/g;
-  {
-    const jstHour = (new Date().getUTCHours() + 9) % 24;
-    const correctGreeting = staffMessagedToday
-      ? (jstHour >= 21 ? "夜分遅くに失礼致します！！" : "お待たせ致しました！！")
-      : "お世話になっております！！";
-    processedTemplateText = processedTemplateText.replace(GREETING_RE, correctGreeting);
-  }
+  // 退去予定日・内覧可能日 + 挨拶差し替えの前処理（共有ライブラリ: app/lib/template-preprocess.ts）
+  let processedTemplateText = applyVacatingDateToTemplate(templateText, vacatingDate);
+  processedTemplateText = applyGreetingSwap(processedTemplateText, staffMessagedToday ?? false);
 
   // DBからテンプレート追加ルール + 学習済み改善ルールを並列取得
   const [{ data: dbRule }, { data: learnedRules }] = await Promise.all([
@@ -303,7 +260,7 @@ ${extraRules ? `${extraRules}\n\n━━━━━━━━━━━━━━━�
 
     let adapted = msg.content[0].type === "text" ? msg.content[0].text.trim() : templateText;
     // 号室の先頭ゼロを除去（日本の号室は0始まりにならない: 0906→906）
-    adapted = adapted.replace(/(?<!\d)0+(\d+)号室/g, "$1号室");
+    adapted = stripRoomLeadingZeros(adapted);
     return NextResponse.json({ ok: true, adapted });
   } catch (err) {
     const message = err instanceof Error ? err.message : "AI最適化エラー";
