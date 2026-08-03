@@ -25,7 +25,7 @@ export const SUMORA_QUESTION_SYSTEM_CONTEXT = `## スモラAIシステム絶対�
 - estimate_sheet（見積書送る）: 見積書カバー文・金額内訳 ← 通常返信は作成宣言のみ
 - property_send/property_recommendation: 物件紹介文本体・画像 ← 通常返信は送付宣言のみ
 - application_push（申込へ！）: 申込書類リスト・フォーマット ← 通常返信は申込誘導のみ
-- property_check_result（物件確認した）: 空室確認報告 ← 通常返信は確認中のみ
+- property_check_result（物件確認した）: 空室確認・退去日・入居可能日の報告 ← 通常返信では断言・推測禁止
 - condition_hearing（条件ヒアリング）: 条件フォーム送付 ← 通常返信は条件確認会話のみ
 
 ### スモラ確定ルール（既存ルールと矛盾する質問は起票しない）

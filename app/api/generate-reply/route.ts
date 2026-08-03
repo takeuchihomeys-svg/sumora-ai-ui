@@ -772,6 +772,9 @@ function buildGenerationMessages(
   // 添付済みを装う文面・金額内訳をAI返信案に出さない（内覧日時ゲート viewingFactNote と同型の常時注入ゲート）
   const estimateGateNote = `\n\n【💰 見積書カバー文の生成は絶対禁止（最優先）】「〜の御見積書となります」「御見積書をお送りします＋ご査収ください」のような、見積書を既に添付した体のカバーメッセージ・初期費用の金額内訳は絶対に出力しない。見積書本体はAIXの「見積書送る」ボタンで別途作成・添付して送るため、AI返信案には含めない。初期費用・見積の質問への返信は「かしこまりました！！最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！」の作成宣言のみ許可（物件名入りの見積書送付文・金額内訳・見積書に対する「ご査収ください」は書かない）。`;
 
+  // 空室確認結果・入居可能日はAIXの「物件確認した」ボタン専用。generate-replyでは管理会社確認前の結果捏造を防ぐ（estimateGateNote と同型の常時注入ゲート）
+  const propertyFactGateNote = `\n\n【🏢 空室確認結果・退去日・入居可能日の捏造は絶対禁止（最優先）】「空室でした」「現在も募集中と確認できました」「埋まってしまいました」「退去日は〇月〇日です」「〇月〇日からご入居可能です」のような、管理会社に確認した体の結果報告や具体的な退去日・入居可能日の断言は絶対に出力しない。空室状況・退去予定日・入居可能日は管理会社への確認が必要な確定事実であり、確認結果の報告はAIXの「物件確認した」ボタンで別途生成・送信する。AI返信案で許可されるのは「空室状況を確認し改めてご連絡させて頂きます😊！！」等の確認宣言のみ。例外：会話履歴内でスタッフが既に伝えた確定情報（退去日・入居可能日）をそのまま引用する場合のみ言及可。新たな日付・募集状況をAIが推測して生成することは禁止。`;
+
   const aixOperationNote = [
     "【重要】以下のナレッジには「AIXボタンから送る」「AIXで誘導する」等のスタッフ向け操作指示が含まれる場合があります。",
     "これらはスタッフがどのボタンを押すかの原則であり、お客様へのLINE返信文に書いてはいけません。",
@@ -832,7 +835,7 @@ ${QUOTE_REPLY_JUDGE_NOTE}${quotedContextNote}
 ${history || "なし"}
 
 ${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}
-${customerMessage}${applicationFormNote}${viewingFactNote}${estimateGateNote}${linkRequestNote}
+${customerMessage}${applicationFormNote}${viewingFactNote}${estimateGateNote}${propertyFactGateNote}${linkRequestNote}
 
 ${examples}${examplesInstruction}
 
