@@ -827,7 +827,8 @@ ${replyContentNote}
 ${curatedReplyRulesNote}
 ${aixPropertyRecommendationNote}
 ${aixPropertySendNote}
-${knowledgeNote ? aixOperationNote + "\n" + knowledgeNote : ""}
+${aixOperationNote}
+${knowledgeNote}
 ${phrases}
 
 ${QUOTE_REPLY_JUDGE_NOTE}${quotedContextNote}
@@ -1426,6 +1427,8 @@ export async function POST(req: NextRequest) {
   // includeStopReason=true（generate-pending-drafts の品質ゲート用）の場合のみ、
   // 本文の後に <<<STOP_REASON:xxx>>> トレーラーを付加する（UIからの通常呼び出しには影響しない）
   let includeStopReason = false;
+  // アクティブタスク（body指定 or DB自動補完）。property_check中の返信ガード等に使用
+  let activeTaskTypes: string[] = [];
   try {
     const body = await req.json() as {
       message: string;
@@ -1458,11 +1461,7 @@ export async function POST(req: NextRequest) {
     bodySummaryJson = body.summaryJson;
     customerStructured = body.customerStructured;
     replyHint = body.replyHint || "";
-    // アクティブタスク状態をreplyHintに反映（動的コンテキスト注入）
-    if (body.activeTaskTypes?.includes("property_check")) {
-      replyHint = "【募集状況確認中★最重要】現在スタッフが物件の募集状況を確認している最中です。内覧日程・物件提案・見積書の話は絶対にしない。お客様の短い返信（「すいません」「ありがとう」「わかりました」等）には「大丈夫ですよ！！確認でき次第すぐにご連絡させて頂きます！！😊」のような短い返しのみ行う。"
-        + (replyHint ? "\n" + replyHint : "");
-    }
+    activeTaskTypes = body.activeTaskTypes ?? [];
     screenshotBase64 = body.screenshotBase64;
     screenshotMediaType = body.screenshotMediaType;
     viewingNote = body.viewingNote || "";
@@ -1479,6 +1478,30 @@ export async function POST(req: NextRequest) {
     s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "�");
   message = _sanitizeSurrogates(message);
   recentMessages = recentMessages.map(m => ({ ...m, text: _sanitizeSurrogates(m.text) }));
+
+  // activeTaskTypes の自動補完（Cron等で body.activeTaskTypes が渡されない場合のサーバー側フォールバック）
+  // line_tasks から進行中（status=pending）のタスクを検出して補完する。
+  // これにより generate-pending-drafts 等がタスク情報を渡し忘れても property_check ガードが効く。
+  if (activeTaskTypes.length === 0 && conversationId) {
+    try {
+      const { data: dbActiveTasks } = await supabase
+        .from("line_tasks")
+        .select("task_type")
+        .eq("conversation_id", conversationId)
+        .eq("status", "pending");
+      if (dbActiveTasks && dbActiveTasks.length > 0) {
+        activeTaskTypes = dbActiveTasks.map((t: { task_type: string }) => t.task_type);
+      }
+    } catch (err) {
+      // DB検出失敗時はガードなしで通常生成を続行（生成自体を止めない）
+      console.error("[generate-reply] activeTaskTypes DB補完失敗:", err);
+    }
+  }
+  // アクティブタスク状態をreplyHintに反映（動的コンテキスト注入）
+  if (activeTaskTypes.includes("property_check")) {
+    replyHint = "【募集状況確認中★最重要】現在スタッフが物件の募集状況を確認している最中です。内覧日程・物件提案・見積書の話は絶対にしない。お客様の短い返信（「すいません」「ありがとう」「わかりました」等）には「大丈夫ですよ！！確認でき次第すぐにご連絡させて頂きます！！😊」のような短い返しのみ行う。"
+      + (replyHint ? "\n" + replyHint : "");
+  }
 
   // スクショがある場合: Sonnet Vision でトーク内容を抽出して replyHint に注入
   if (screenshotBase64) {
