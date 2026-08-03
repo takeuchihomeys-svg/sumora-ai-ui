@@ -36,6 +36,28 @@ function isLowQualityRule(confidence: number, occurrenceCount: number): boolean 
   return confidence < 0.4 && occurrenceCount < 5;
 }
 
+// AIX送信文断片・汎用相槌・表記ゆれをtrigger_action_rulesに書き込まないフィルタ
+// enforceMinLength=false: n-gramキーワード（extractNgramsが3〜5文字で生成する設計）に対しては
+// 「8文字以下スキップ」を適用すると全n-gramルールが消滅するため、長さ条件だけ無効化できる
+function isGarbageTriggerRule(ruleDescription: string, actionType: string, enforceMinLength = true): boolean {
+  // 旧アクション名・表記ゆれ
+  const VALID_ACTION_TYPES = [
+    'property_recommendation','property_send','viewing_invite','estimate_sheet',
+    'application_push','property_check_result','acknowledge_check',
+    'condition_hearing','meeting_place','followup_revive','greeting_viewing'
+  ];
+  if (!VALID_ACTION_TYPES.includes(actionType)) return true;
+
+  // AIX送信文の断片パターン
+  const GARBAGE_PATTERNS = [/⇒/, /分[①-⑩]/, /オンコン/, /しいですか/, /住居年数/, /氏名フ/];
+  if (GARBAGE_PATTERNS.some(p => p.test(ruleDescription))) return true;
+
+  // 8文字以下の汎用キーワード（汎用相槌リスク）
+  if (enforceMinLength && ruleDescription.length <= 8) return true;
+
+  return false;
+}
+
 // 日本語テキストから意味のある n-gram を抽出
 // ノイズ対策(#24): 2文字断片（「お願」等）が無意味ルール化するため最小3文字
 const MIN_NGRAM_LENGTH = 3;
@@ -258,8 +280,11 @@ export async function POST(req?: Request) {
   }
 
   // 逐次upsert → バッチupsert（100件ずつ）でDB往復を最小化
+  // AIX送信文断片除外フィルタ: upsert直前にAIX文断片・旧アクション名のルールをスキップ
+  // （n-gramは3〜5文字設計のため長さ条件（8文字以下スキップ）は enforceMinLength=false で除外）
   const qualityRules = sorted
     .filter((r) => !isLowQualityRule(r.confidence, r.occurrence_count))
+    .filter((r) => !isGarbageTriggerRule(r.keyword, r.action_type, false))
     .map((r) => ({ ...r, updated_at: new Date().toISOString() }));
   const BATCH = 100;
   for (let i = 0; i < qualityRules.length; i += BATCH) {
@@ -323,7 +348,8 @@ export async function POST(req?: Request) {
       for (const [action, count] of Object.entries(nexts)) {
         const total = totals[prevKey] ?? count;
         const confidence = Math.round((count / total) * 1000) / 1000;
-        if (confidence >= 0.3 && count >= 2 && !isLowQualityRule(confidence, count)) {
+        // AIX送信文断片除外フィルタ: 旧アクション名・表記ゆれのチェーンルールもupsert前にスキップ
+        if (confidence >= 0.3 && count >= 2 && !isLowQualityRule(confidence, count) && !isGarbageTriggerRule(`AFTER:${prevKey}`, action)) {
           chainRules.push({ action_type: action, keyword: `AFTER:${prevKey}`, occurrence_count: Math.round(count), total_occurrence: Math.round(total), confidence, updated_at: new Date().toISOString() });
         }
       }
