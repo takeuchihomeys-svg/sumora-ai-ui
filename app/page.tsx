@@ -47,6 +47,7 @@ type Conversation = {
   isFlagged?: boolean;
   hasViewed?: boolean;
   aiDraft?: string | null;
+  suggestedAixMeta?: { action: string; note: string } | null;
   messages: Message[];
 };
 
@@ -66,6 +67,7 @@ type SupabaseConversationRow = {
   is_flagged?: boolean | null;
   has_viewed?: boolean | null;
   ai_draft?: string | null;
+  suggested_aix_meta?: { action: string; note: string } | null;
 };
 
 // AI下書きから内部メタタグ（<<<STOP_REASON:...>>> / <<<SUGGESTED_AIX:{...}>>>）を除去する。
@@ -1040,7 +1042,7 @@ export default function Home() {
           if (upd?.id && upd.ai_draft !== undefined) {
             setConversations((prev) =>
               prev.map((c) =>
-                c.id === String(upd.id) ? { ...c, aiDraft: stripInternalTagsOrNull(upd.ai_draft) } : c
+                c.id === String(upd.id) ? { ...c, aiDraft: stripInternalTagsOrNull(upd.ai_draft), suggestedAixMeta: upd.suggested_aix_meta ?? null } : c
               )
             );
             // async プリ生成完了 → preGenInProgress をクリア
@@ -1619,6 +1621,7 @@ export default function Home() {
         isFlagged: conversation.is_flagged ?? false,
         hasViewed: conversation.has_viewed ?? false,
         aiDraft: stripInternalTagsOrNull(conversation.ai_draft),
+        suggestedAixMeta: conversation.suggested_aix_meta ?? null,
         messages: relatedMessages,
       };
     });
@@ -2028,10 +2031,12 @@ export default function Home() {
       setReplyDraft(selectedConversation.aiDraft);
       aiDraftRef.current = selectedConversation.aiDraft;
       setDisplaySource("ai_draft");
+      // 事前生成ドラフトに suggested_aix_meta が付随していれば黄色メモ（AIX誘導）を復元
+      if (selectedConversation.suggestedAixMeta) setSuggestedAix(selectedConversation.suggestedAixMeta);
       setConversations((prev) =>
-        prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null } : c)
+        prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null, suggestedAixMeta: null } : c)
       );
-      supabase.from("conversations").update({ ai_draft: null }).eq("id", selectedConversation.id).then(() => {});
+      supabase.from("conversations").update({ ai_draft: null, suggested_aix_meta: null }).eq("id", selectedConversation.id).then(() => {});
     } else {
       setReplyDraft("");
       aiDraftRef.current = "";
@@ -2054,14 +2059,14 @@ export default function Home() {
             // Realtime が届かなかった場合のフォールバック：DB を直接確認
             const { data: convRow } = await supabase
               .from("conversations")
-              .select("ai_draft")
+              .select("ai_draft, suggested_aix_meta")
               .eq("id", convIdForGen)
               .single();
             if (convRow?.ai_draft) {
               // Realtime が漏れただけで実は生成済み → セットしてDBもクリア
               supabase.from("conversations").update({ ai_draft: null }).eq("id", convIdForGen).then(() => {});
               setConversations((prev) =>
-                prev.map((c) => c.id === convIdForGen ? { ...c, aiDraft: stripInternalTagsOrNull(convRow.ai_draft) } : c)
+                prev.map((c) => c.id === convIdForGen ? { ...c, aiDraft: stripInternalTagsOrNull(convRow.ai_draft), suggestedAixMeta: (convRow.suggested_aix_meta as { action: string; note: string } | null) ?? null } : c)
               );
             } else {
               // 本当に生成失敗 → 再生成ボタンを表示
@@ -2110,12 +2115,14 @@ export default function Home() {
     setReplyDraft(selectedConversation.aiDraft);
     aiDraftRef.current = selectedConversation.aiDraft;
     setDisplaySource("ai_draft");
+    // 事前生成ドラフトに suggested_aix_meta が付随していれば黄色メモ（AIX誘導）を復元
+    if (selectedConversation.suggestedAixMeta) setSuggestedAix(selectedConversation.suggestedAixMeta);
     setDraftNoEmoji(false);
     setDraftOrigText("");
     setConversations((prev) =>
-      prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null } : c)
+      prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null, suggestedAixMeta: null } : c)
     );
-    supabase.from("conversations").update({ ai_draft: null }).eq("id", selectedConversation.id).then(() => {});
+    supabase.from("conversations").update({ ai_draft: null, suggested_aix_meta: null }).eq("id", selectedConversation.id).then(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedConversation.aiDraft]);
 
@@ -6579,9 +6586,11 @@ export default function Home() {
                       aiDraftRef.current = selectedConversation.aiDraft!;
                       setReplyDraft(selectedConversation.aiDraft!);
                       setDisplaySource("ai_draft");
+                      // 事前生成ドラフトに suggested_aix_meta が付随していれば黄色メモ（AIX誘導）を復元
+                      if (selectedConversation.suggestedAixMeta) setSuggestedAix(selectedConversation.suggestedAixMeta);
                       setAiDraftExpanded(false);
-                      setConversations((prev) => prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null } : c));
-                      supabase.from("conversations").update({ ai_draft: null }).eq("id", selectedConversation.id).then(() => {});
+                      setConversations((prev) => prev.map((c) => c.id === selectedConversation.id ? { ...c, aiDraft: null, suggestedAixMeta: null } : c));
+                      supabase.from("conversations").update({ ai_draft: null, suggested_aix_meta: null }).eq("id", selectedConversation.id).then(() => {});
                       textareaRef.current?.focus();
                     }}
                     className="shrink-0 rounded-xl bg-blue-500 px-2.5 py-1 text-[11px] font-bold text-white active:bg-blue-600"

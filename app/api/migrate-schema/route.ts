@@ -1689,6 +1689,11 @@ CREATE INDEX IF NOT EXISTS idx_prompt_candidates_pending
   ON prompt_candidates(created_at DESC) WHERE status = 'pending';
 ALTER TABLE prompt_candidates DISABLE ROW LEVEL SECURITY;
 
+-- ── suggested_aix_meta: AIX提案の付随メタデータ（2026-08-03追加）──
+-- suggested_next_aix（TEXT）に対する構造化メタ情報を保持するJSONBカラム。
+-- 提案の根拠・サブモード・信頼度などを格納し、提案バナー表示や学習ループが参照する。
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS suggested_aix_meta JSONB DEFAULT NULL;
+
 -- ── PostgREST スキーマキャッシュ再読込（必ず最後に実行する）──
 -- 新カラム追加後に PostgREST のスキーマキャッシュが古いままだと、
 -- 以降の INSERT/SELECT が「column does not exist」で全滅する

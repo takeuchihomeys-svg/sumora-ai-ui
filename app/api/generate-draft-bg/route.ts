@@ -139,14 +139,20 @@ export async function POST(req: NextRequest) {
 
     // 内部タグ（<<<SUGGESTED_AIX:{...}>>> / <<<STOP_REASON:xxx>>>）を本文から除去してから保存
     // （generate-reply はストリーム末尾にトレーラーを付加するため、未除去のまま保存すると内部指示が顧客に届く事故になる）
+    // SUGGESTED_AIX は除去するだけでなくパースして suggested_aix_meta としてDBに保存する（UIでAIX誘導表示に使う）
+    let suggestedAixMeta: { action: string; note: string } | null = null;
+    const aixTrailerMatch = fullText.match(/<<<SUGGESTED_AIX:([\s\S]+?)>>>/);
+    if (aixTrailerMatch) {
+      try { suggestedAixMeta = JSON.parse(aixTrailerMatch[1]) as { action: string; note: string }; } catch { /* パース失敗は無視（除去のみ行う） */ }
+    }
     const finalDraft = fullText
       .replace(/\n?<<<SUGGESTED_AIX:[\s\S]*?>>>/g, "")
       .replace(/\n?<<<STOP_REASON:[\w-]*>>>/g, "")
       .trim();
     if (!finalDraft) return NextResponse.json({ ok: false });
 
-    // DBに保存（Realtimeで他デバイスにも反映）
-    await db.from("conversations").update({ ai_draft: finalDraft }).eq("id", convId);
+    // DBに保存（Realtimeで他デバイスにも反映）。トレーラーなし時は null で古いメタを掃除する
+    await db.from("conversations").update({ ai_draft: finalDraft, suggested_aix_meta: suggestedAixMeta }).eq("id", convId);
 
     return NextResponse.json({ ok: true, draft: finalDraft });
   } catch (e) {

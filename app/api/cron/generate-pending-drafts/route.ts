@@ -369,6 +369,12 @@ async function run() {
       if (trailerMatch) {
         stopReason = trailerMatch[1];
       }
+      // SUGGESTED_AIX は除去するだけでなくパースして suggested_aix_meta としてDBに保存する（UIでAIX誘導表示に使う）
+      let suggestedAixMeta: { action: string; note: string } | null = null;
+      const aixTrailerMatch = finalDraft.match(/<<<SUGGESTED_AIX:([\s\S]+?)>>>/);
+      if (aixTrailerMatch) {
+        try { suggestedAixMeta = JSON.parse(aixTrailerMatch[1]) as { action: string; note: string }; } catch { /* パース失敗は無視（除去のみ行う） */ }
+      }
       finalDraft = finalDraft
         .replace(/\n?<<<STOP_REASON:[\w-]*>>>/g, "")
         .replace(/\n?<<<SUGGESTED_AIX:[\s\S]*?>>>/g, "")
@@ -400,7 +406,7 @@ async function run() {
         }
         // 成功時: 下書き保存 ＋ attempted_at クリア + fail_count リセット（API障害回復後にorphaned救済が再度拾えるようにする）
         // .is("ai_draft", null) ガード: bg-async が先に保存した下書きを上書きしない
-        await db.from("conversations").update({ ai_draft: finalDraft, draft_attempted_at: null, draft_fail_count: 0 }).eq("id", convId).is("ai_draft", null);
+        await db.from("conversations").update({ ai_draft: finalDraft, draft_attempted_at: null, draft_fail_count: 0, suggested_aix_meta: suggestedAixMeta }).eq("id", convId).is("ai_draft", null);
         processed++;
       } else {
         // タグ除去後に本文が空 → 生成失敗として記録（attempted_at は残し10分バックオフで再試行させる）
