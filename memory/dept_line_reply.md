@@ -342,3 +342,19 @@ AIが「入居日が早いほど日割家賃は少ない」と**逆に**誤回�
 - **ai-feedback（回答側）**: category=knowledge_gap の回答は ai_prompt_rules に加えて `ai_reply_knowledge` の principle（importance=9・質問文をembedding化）としても保存 → pgvector検索で顧客の類似質問に確実にヒット
 - **TemplateModal**: 「❓AI質問」タブに knowledge_gap ラベル「知識不足（AIの誤事実）」追加
 - コミット: `4a845ff`
+
+---
+
+## 申込フォーム検知→applying自動昇格をサーバー側に実装（2026-08-03）
+
+**問題**: 申込・審査中(applying)への遷移経路がUI手動バナー（page.tsxの「申込に変更」ボタン）しか無く、会話を開いていないと遷移漏れ。さらにキーワードが個人フォーム専用で法人フォーム（【法人御契約】/法人名/代表者名/登記住所）は検知ゼロ。記入済みフォームの①②番号が isFormatMessage に誤ヒットし希望条件としてAI解析→proposingへ誤昇格するケースもあった。
+
+- **新モジュール** `app/lib/application-form-detect.ts`（サーバー/クライアント共通・キーワード一元化）
+  - `isApplicationFormMessage(text)`: 法人→個人の順に判定（代表者生年月日が個人側の生年月日に食われないよう法人が先）。法人=即時 /法人御契約|法人契約|法人名義/ or フィールド2つ以上、個人=即時 /入居申込書|入居申込|申込フォーム等/ or フィールド3つ以上（保証人・年収・職業も追加）
+  - `hasApplyHintKeyword` / `PRE_APPLY_STATUSES`（申込前ステータス9種）もexport
+- **line-webhook** `handleTextMessage`: isFormatMessage より先に申込フォーム判定→ `update status='applying'` を `.in(PRE_APPLY_STATUSES)` ガード付きで実行（冪等・closed_won/closed_lostからのダウングレード不可）。単発で閾値未満でもヒント語があれば直近8件の顧客メッセージを結合して再判定（分割送信対応）。検知時は isFormatMessage/autoParseFormat をスキップ（希望条件誤解析防止）。after() B は status をDB再読するので昇格後は ai_draft 生成も正しくスキップされる。console.logで昇格/失敗を記録
+- **line-webhook** `handleImageMessageSave`: 直近スタッフメッセージが /申込書|申込用紙|ご記入|入居申込/ にヒット＋申込前ステータスなら、顧客画像受信で applying 自動昇格（画像フォーム対策ヒューリスティック: `autoPromoteApplyingOnFormImage`）
+- **page.tsx**: isApplyFormDetected を共通モジュール利用に変更（法人対応）、窓を直近6→10メッセージに拡大。バナー却下キーを「会話ID+最新顧客メッセージID」に変更（フォーム再送でバナー再表示）。バナーは画像フォーム等のフォールバックとして存続
+- **generate-reply** L720: 申込フォーム正規表現に法人キーワード（法人名|代表者|登記住所|法人契約|法人御契約|法人名義）追加 → 法人申込者にも身分証リクエスト注入が効くように
+- **suggest-status-update/route.ts**: 呼び出し元ゼロのデッドコードと判明 → 冒頭にDEAD CODEコメント追記（削除はせず温存）
+- 検証: tsc --noEmit パス。検知テスト8ケース（個人/法人/法人2フィールド/入居申込書即時/条件フォーマット非検知/雑談非検知/ヒントのみ/連帯保証人系）全て期待どおり

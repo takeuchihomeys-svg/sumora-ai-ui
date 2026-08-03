@@ -6,6 +6,7 @@ import AixManualModal from "./components/AixManualModal";
 import BottomNav from "./components/BottomNav";
 import TemplateModal, { type Template as CachedTemplate } from "./components/TemplateModal";
 import { supabase } from "./lib/supabase";
+import { isApplicationFormMessage } from "./lib/application-form-detect";
 import { detectPlaceholders } from "./lib/validate-reply";
 import { fetchCalendarSlots } from "./lib/calendarSlots";
 import { registerSW, requestNotifPermission, showNotif, subscribePush } from "./lib/notifications";
@@ -2287,17 +2288,23 @@ export default function Home() {
   }, [showGreetingViewingPicker]);
 
   // 申込フォーム自動検知（お客さんが氏名・フリガナ等を送ってきたとき）
+  // 検知ロジックは app/lib/application-form-detect.ts に一元化（webhookサーバー側と共通・法人フォーム対応）
+  // サーバー側で自動昇格するため、このバナーは画像フォーム等サーバーが拾えないケースのフォールバック
   const isApplyFormDetected = useMemo(() => {
     const ns = STATUS_ALIAS[selectedConversation.status] ?? selectedConversation.status;
     if (ns === "applying" || ns === "closed_won") return false;
     const recentCustomerText = selectedConversation.messages
       .filter((m) => m.sender === "customer")
-      .slice(-6)
+      .slice(-10)
       .map((m) => m.text ?? "")
       .join("\n");
-    const keywords = ["氏名", "フリガナ", "生年月日", "現住所", "緊急連絡先", "勤務先", "続柄", "住居年数", "入居者"];
-    const matched = keywords.filter((kw) => recentCustomerText.includes(kw));
-    return matched.length >= 3;
+    return isApplicationFormMessage(recentCustomerText).detected;
+  }, [selectedConversation]);
+
+  // バナー却下キー: 会話ID + 最新顧客メッセージID（新しいフォームが再送されたらバナーを再表示する）
+  const applyFormDismissKey = useMemo(() => {
+    const lastCustomerMsg = [...selectedConversation.messages].reverse().find((m) => m.sender === "customer");
+    return `${selectedConversation.id}:${lastCustomerMsg?.id ?? ""}`;
   }, [selectedConversation]);
 
   const detailStatusMeta = getDetailStatusMeta(selectedConversation.status);
@@ -5327,7 +5334,7 @@ export default function Home() {
           )}
 
           {/* 申込フォーム自動検知バナー */}
-          {isApplyFormDetected && !dismissedApplyFormIds.has(selectedConversation.id) && (
+          {isApplyFormDetected && !dismissedApplyFormIds.has(applyFormDismissKey) && (
             <div className="flex items-center gap-2 border-b border-[#f8bbd0] px-4 py-2.5" style={{ background: "linear-gradient(90deg, #fce4ec, #fff0f5)" }}>
               <span className="text-base shrink-0">📝</span>
               <div className="min-w-0 flex-1">
@@ -5335,12 +5342,12 @@ export default function Home() {
                 <span className="ml-1 text-[10px] text-[#e91e63]">ステータスを申込・審査中に変更しますか？</span>
               </div>
               <button
-                onClick={() => setDismissedApplyFormIds((prev) => new Set([...prev, selectedConversation.id]))}
+                onClick={() => setDismissedApplyFormIds((prev) => new Set([...prev, applyFormDismissKey]))}
                 className="shrink-0 text-[10px] text-[#e91e63] active:opacity-60"
               >✕</button>
               <button
                 onClick={async () => {
-                  setDismissedApplyFormIds((prev) => new Set([...prev, selectedConversation.id]));
+                  setDismissedApplyFormIds((prev) => new Set([...prev, applyFormDismissKey]));
                   await updateConversationStatus("applying");
                 }}
                 className="shrink-0 rounded-full bg-[#e91e63] px-2.5 py-1 text-[10px] font-bold text-white active:opacity-70"

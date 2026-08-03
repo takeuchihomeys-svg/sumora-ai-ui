@@ -717,7 +717,8 @@ function buildGenerationMessages(
   const aixPropertySendNote = promptOverrides?.aixPropertySendRules ? `\n${promptOverrides.aixPropertySendRules}` : "";
 
   // 申込フォーム検出（applying フェーズのみ・氏名・緊急連絡先・住所等のキーワード）＋直近の画像なし → 身分証リクエスト注入
-  const isApplicationFormText = /緊急連絡|氏名|フリガナ|生年月日|現住所|住居年数|続柄|勤務先/.test(customerMessage);
+  // 法人フォーム（法人名・代表者・登記住所等）もカバー（キーワードは app/lib/application-form-detect.ts と整合させること）
+  const isApplicationFormText = /緊急連絡|氏名|フリガナ|生年月日|現住所|住居年数|続柄|勤務先|法人名|代表者|登記住所|法人契約|法人御契約|法人名義/.test(customerMessage);
   // 直近のスタッフ返信以降のお客様メッセージに画像があるかチェック（全履歴ではなく直近のみ）
   const historyLinesForCheck = (history || "").split("\n");
   const lastStaffLineIdx = historyLinesForCheck.map((l, i) => l.startsWith("スモラ:") ? i : -1).filter(i => i >= 0).at(-1) ?? -1;

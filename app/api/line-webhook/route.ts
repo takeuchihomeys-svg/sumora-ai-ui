@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
+import { isApplicationFormMessage, hasApplyHintKeyword, PRE_APPLY_STATUSES } from "@/app/lib/application-form-detect";
 
 // Vercel Functions のタイムアウト上限（秒）— after()内のAnthropicコール（30s）と画像処理に余裕を持たせる
 export const maxDuration = 120;
@@ -239,8 +240,53 @@ async function handleTextMessage(
     await autoUpgradeToHot(db, userId).catch((e) => console.warn("[line-webhook] autoUpgradeToHot:", e));
   });
 
+  // ── 申込フォーム自動検知 → ステータスを申込・審査中(applying)に自動昇格 ──
+  // これまでUI上の手動バナーしか経路がなく、会話を開いていないと遷移漏れしていた。
+  // isFormatMessage より先に判定する（記入済みフォームの①②番号で希望条件と誤解析されるのを防ぐ）。
+  let applyFormDetected = false;
+  try {
+    const applyForm = isApplicationFormMessage(text);
+    applyFormDetected = applyForm.detected;
+    let detectSource: string = applyForm.formType ?? "";
+
+    // 分割送信フォールバック: 単発では閾値未満でもヒント語があれば直近8件の顧客メッセージを結合して再判定
+    if (!applyFormDetected && hasApplyHintKeyword(text)) {
+      const { data: recentMsgs } = await db
+        .from("messages")
+        .select("text")
+        .eq("conversation_id", convId)
+        .eq("sender", "customer")
+        .order("created_at", { ascending: false })
+        .limit(8);
+      const joined = (recentMsgs ?? []).map((m) => (m.text as string) ?? "").reverse().join("\n");
+      const joinedResult = isApplicationFormMessage(joined);
+      applyFormDetected = joinedResult.detected;
+      if (joinedResult.detected) detectSource = `${joinedResult.formType}(joined)`;
+    }
+
+    if (applyFormDetected) {
+      // .in(PRE_APPLY_STATUSES)ガードで冪等（既にapplying以降なら何もしない）＋成約/失注からのダウングレード防止
+      const { data: updated, error: applyErr } = await db
+        .from("conversations")
+        .update({ status: "applying", updated_at: now })
+        .eq("id", convId)
+        .in("status", PRE_APPLY_STATUSES)
+        .select("id");
+      if (applyErr) {
+        console.error(`[line-webhook] applying自動昇格失敗: conv=${convId}`, applyErr.message);
+      } else if ((updated ?? []).length > 0) {
+        console.log(`[line-webhook] 申込フォーム検知 → applying自動昇格: conv=${convId} type=${detectSource}`);
+      } else {
+        console.log(`[line-webhook] 申込フォーム検知（ステータス変更なし・既にapplying以降）: conv=${convId}`);
+      }
+    }
+  } catch (e) {
+    console.error("[line-webhook] 申込フォーム検知エラー:", e);
+  }
+
   // LINEフォーマット自動検知・解析 → ステータスを物件提案中に自動昇格
-  if (isFormatMessage(text)) {
+  // ※申込フォームと判定済みのメッセージは希望条件として誤解析しない
+  if (!applyFormDetected && isFormatMessage(text)) {
     // hearing/first_reply 状態なら proposing に自動昇格
     await db
       .from("conversations")
@@ -258,7 +304,8 @@ async function handleTextMessage(
   }
 
   // after() A: フォーマット解析（独立実行 — draft_pending_at更新と並列・30s Anthropicコールを含む）
-  if (isFormatMessage(text)) {
+  // ※申込フォームは希望条件AI解析の対象外
+  if (!applyFormDetected && isFormatMessage(text)) {
     after(async () => {
       try {
         await autoParseFormat(db, userId, text, account);
@@ -884,11 +931,58 @@ async function handleImageMessageSave(
     .update({ last_message: "[画像]", last_sender: "customer", updated_at: now, is_flagged: true })
     .eq("id", convId);
 
+  // スタッフが申込書の記入を依頼した直後の顧客画像 → 記入済み申込書の可能性大 → applying自動昇格
+  // （画像フォームはテキスト検知できないためヒューリスティックで補完）
+  await autoPromoteApplyingOnFormImage(db, convId, now);
+
   // 会話内の画像が100枚を超えたら古い画像の保存期限を即時終了
   void expireOldImagesIfOverLimit(db, convId);
 
   updateProfileAsync(db, userId, convId, account, "[画像]", now);
   return { convId, msgId: String(msgData.id) };
+}
+
+// ── 申込書依頼直後の顧客画像 → applying自動昇格ヒューリスティック ────────────
+// 条件: (1) 現ステータスが申込前 (2) 直近のスタッフメッセージに申込書依頼の文言がある
+// テキストで検知できない画像フォーム（写真で送られた記入済み申込書）の遷移漏れを塞ぐ。
+async function autoPromoteApplyingOnFormImage(
+  db: ReturnType<typeof getDb>,
+  convId: string,
+  now: string,
+): Promise<void> {
+  try {
+    const { data: conv } = await db
+      .from("conversations")
+      .select("status")
+      .eq("id", convId)
+      .maybeSingle();
+    const status = (conv?.status as string) ?? "";
+    if (!PRE_APPLY_STATUSES.includes(status)) return;
+
+    const { data: staffMsgs } = await db
+      .from("messages")
+      .select("text")
+      .eq("conversation_id", convId)
+      .eq("sender", "staff")
+      .order("created_at", { ascending: false })
+      .limit(1);
+    const lastStaffText = (staffMsgs?.[0]?.text as string) ?? "";
+    if (!/申込書|申込用紙|ご記入|入居申込/.test(lastStaffText)) return;
+
+    const { data: updated, error } = await db
+      .from("conversations")
+      .update({ status: "applying", updated_at: now })
+      .eq("id", convId)
+      .in("status", PRE_APPLY_STATUSES)
+      .select("id");
+    if (error) {
+      console.error(`[line-webhook] 画像申込書→applying昇格失敗: conv=${convId}`, error.message);
+    } else if ((updated ?? []).length > 0) {
+      console.log(`[line-webhook] 申込書依頼後の画像受信 → applying自動昇格: conv=${convId}`);
+    }
+  } catch (e) {
+    console.warn("[line-webhook] autoPromoteApplyingOnFormImage:", e);
+  }
 }
 
 // ── LINE Content API から画像を取得してStorageに保存（after()で非同期実行）──
