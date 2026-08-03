@@ -990,9 +990,13 @@ export default function TemplateModal({
     setAiCandidates(null);
     setAiNoMatch(null);
     try {
-      const aixTemplates = templates
-        .filter((t) => t.category.includes("AIX"))
-        .map((t) => ({ id: t.id, category: t.category, label: t.label, text: t.text.slice(0, 400) }));
+      // 現在表示中のカテゴリ内のみ検索（コスト削減・精度向上）
+      const isSpecificAixCategory = category !== "全般" && category.includes("AIX");
+      const aixTemplates = (
+        isSpecificAixCategory
+          ? templates.filter((t) => t.category === category)
+          : templates.filter((t) => t.category.includes("AIX"))
+      ).map((t) => ({ id: t.id, category: t.category, label: t.label, text: t.text.slice(0, 400) }));
       if (aixTemplates.length === 0) {
         showModalError("AIXテンプレートがありません");
         return;
@@ -1024,7 +1028,7 @@ export default function TemplateModal({
     } finally {
       setIsSearchingTemplate(false);
     }
-  }, [templates, recentMessages, conversationState, customerName, conversationId, showModalError]);
+  }, [templates, recentMessages, conversationState, customerName, conversationId, showModalError, category]);
   // ⭐ 永久ルール管理タブ（HUMAN-* is_permanent フラグ管理）
   interface HumanRule { id: string; rule_key: string; rule_text: string; is_permanent: boolean; updated_at: string | null; priority: number; }
   const [humanRulesList, setHumanRulesList] = useState<HumanRule[]>([]);
