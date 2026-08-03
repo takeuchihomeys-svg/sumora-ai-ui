@@ -257,29 +257,6 @@ async function handleTextMessage(
     void autoMarkPropertyViewed(db, userId);
   }
 
-  // バックグラウンドでAIX提案を先行計算してキャッシュ（Fix-1c）
-  // derive SuggestedAix() が次回呼ばれたとき conversations.suggested_next_aix を即座に参照できる
-  void (async () => {
-    try {
-      const _baseUrl = process.env.NEXT_PUBLIC_SITE_URL
-        ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
-      const res = await fetch(`${_baseUrl}/api/suggest-next-action`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversation_id: convId }),
-        signal: AbortSignal.timeout(5_000),
-      });
-      if (res.ok) {
-        const data = await res.json() as { action?: string | null };
-        if (data.action) {
-          await db.from("conversations")
-            .update({ suggested_next_aix: data.action })
-            .eq("id", convId);
-        }
-      }
-    } catch { /* サイレント失敗 — suggest-next-action が遅延しても webhook 応答に影響しない */ }
-  })();
-
   // after() A: フォーマット解析（独立実行 — draft_pending_at更新と並列・30s Anthropicコールを含む）
   if (isFormatMessage(text)) {
     after(async () => {

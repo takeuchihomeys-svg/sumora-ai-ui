@@ -134,21 +134,6 @@ async function deriveSuggestedAix(
       };
     }
   }
-  // ─── Step 0: webhook が先行計算したキャッシュを確認（最速パス・ネットワーク呼び出し不要）───
-  if (conversationId) {
-    try {
-      const { data: convCache } = await supabase
-        .from("conversations")
-        .select("suggested_next_aix")
-        .eq("id", conversationId)
-        .maybeSingle();
-      const cached = (convCache as { suggested_next_aix?: string | null } | null)?.suggested_next_aix;
-      if (cached && AIX_ACTION_NOTES[cached]) {
-        return redirectMoveOut(cached, AIX_ACTION_NOTES[cached]);
-      }
-    } catch { /* DBエラーは無視して次のステップへ */ }
-  }
-
   // ─── Step 1: suggest-next-action（DB学習ルール）に問い合わせ（3秒タイムアウト） ───
   if (conversationId && internalBaseUrl) {
     try {

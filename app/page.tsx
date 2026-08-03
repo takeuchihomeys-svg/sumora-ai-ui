@@ -6469,7 +6469,7 @@ export default function Home() {
                       .reverse()
                       .find((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
                       ?.text ?? "";
-                    fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_dismissed", predicted_action: nextSugg.action ?? null, dismissed_reason: dismissedReason, customer_msg_summary: summarizeForLearning(lastCustomerMsg), previous_action_type: lastAixByConvRef.current.get(id) ?? null }) }).catch(() => {});
+                    fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_dismissed", predicted_action: nextSugg.action ?? null, dismissed_reason: dismissedReason, customer_msg_summary: summarizeForLearning(lastCustomerMsg), previous_action_type: lastAixByConvRef.current.get(id) ?? null, conversation_id: id }) }).catch(() => {});
                     setDismissedNextActionIds((prev) => new Set([...prev, id]));
                     setDismissReasonFor(null);
                   };
@@ -6504,8 +6504,10 @@ export default function Home() {
                             .reverse()
                             .find((m) => m.sender === "customer" && m.text && m.text !== "[画像]" && m.text !== "[動画]")
                             ?.text ?? "";
-                          void fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_accepted", predicted_action: nextSugg.action ?? null, suggestion_source: nextSugg.source ?? null, customer_msg_summary: summarizeForLearning(lastCustomerMsg), previous_action_type: lastAixByConvRef.current.get(id) ?? null }) }).catch(() => {});
+                          void fetch("/api/learn-action-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true, body: JSON.stringify({ action: "log", conversation_status: ns, action_type: nextSugg.action, source: "suggestion_accepted", predicted_action: nextSugg.action ?? null, suggestion_source: nextSugg.source ?? null, customer_msg_summary: summarizeForLearning(lastCustomerMsg), previous_action_type: lastAixByConvRef.current.get(id) ?? null, conversation_id: id }) }).catch(() => {});
                           setDismissedNextActionIds((prev) => new Set([...prev, id]));
+                          // 二重カウント防止: 採択ログを送った時点でnextActionMapを消す（残すとAIX送信時にprediction_matchが再ログされ1タップで2行記録される）
+                          setNextActionMap((prev) => { const next = { ...prev }; delete next[id]; return next; });
                           setShowAixMenu(false);
                           setAixInspectLabel(null);
                           openAixWithParams(nextSugg.action as AixActionType, nextSugg.params);
