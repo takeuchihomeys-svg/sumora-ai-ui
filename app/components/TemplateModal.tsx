@@ -980,6 +980,51 @@ export default function TemplateModal({
   const [recommendLoading, setRecommendLoading] = useState(false);
   // モーダル1回のオープンにつき1回だけフェッチする
   const recommendFetchedRef = useRef(false);
+  // ✨ AIテンプレ検索（suggest-template API）: 会話文脈からAIXテンプレTOP3を選定（手動トリガー）
+  const [aiCandidates, setAiCandidates] = useState<Array<{ templateId: string; title: string; body: string; reason: string; rank: number }> | null>(null);
+  const [aiNoMatch, setAiNoMatch] = useState<string | null>(null);
+  const [isSearchingTemplate, setIsSearchingTemplate] = useState(false);
+  const handleSearchTemplate = useCallback(async () => {
+    if (!recentMessages || recentMessages.length === 0) return;
+    setIsSearchingTemplate(true);
+    setAiCandidates(null);
+    setAiNoMatch(null);
+    try {
+      const aixTemplates = templates
+        .filter((t) => t.category.includes("AIX"))
+        .map((t) => ({ id: t.id, category: t.category, label: t.label, text: t.text.slice(0, 400) }));
+      if (aixTemplates.length === 0) {
+        showModalError("AIXテンプレートがありません");
+        return;
+      }
+      const res = await fetch("/api/suggest-template", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationId,
+          conversationState,
+          customerName,
+          messages: recentMessages.slice(-15).map((m) => ({ sender: m.sender, text: m.text, imageUrl: m.imageUrl })),
+          templates: aixTemplates,
+        }),
+      });
+      const data = await res.json() as { ok: boolean; candidates?: Array<{ templateId: string; title: string; body: string; reason: string; rank: number }>; noMatch?: boolean; noMatchReason?: string; error?: string };
+      if (data.ok) {
+        if (data.noMatch || !data.candidates || data.candidates.length === 0) {
+          setAiNoMatch(data.noMatchReason || "適切なテンプレートが見つかりませんでした");
+        } else {
+          setAiCandidates(data.candidates);
+        }
+      } else {
+        showModalError("AIテンプレ検索に失敗しました");
+      }
+    } catch (e) {
+      console.error("[handleSearchTemplate] AIテンプレ検索失敗:", e);
+      showModalError("AIテンプレ検索に失敗しました");
+    } finally {
+      setIsSearchingTemplate(false);
+    }
+  }, [templates, recentMessages, conversationState, customerName, conversationId, showModalError]);
   // ⭐ 永久ルール管理タブ（HUMAN-* is_permanent フラグ管理）
   interface HumanRule { id: string; rule_key: string; rule_text: string; is_permanent: boolean; updated_at: string | null; priority: number; }
   const [humanRulesList, setHumanRulesList] = useState<HumanRule[]>([]);
@@ -2473,14 +2518,34 @@ export default function TemplateModal({
           </div>
         </div>
         {/* 検索欄 */}
-        <div className="px-4 py-2 bg-white border-b border-[#f0f2f5] shrink-0">
+        <div className="flex items-center gap-2 px-4 py-2 bg-white border-b border-[#f0f2f5] shrink-0">
           <input
             type="text"
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              // AI候補は検索前の文脈で計算されたものなので、手動検索を始めたらクリア
+              if (aiCandidates || aiNoMatch) { setAiCandidates(null); setAiNoMatch(null); }
+            }}
             placeholder="🔍 テンプレートを検索..."
-            className="w-full rounded-full border border-[#d1d7db] px-4 py-1.5 text-[12px] outline-none focus:border-[#2196F3] bg-[#f8f9fa]"
+            className="flex-1 rounded-full border border-[#d1d7db] px-4 py-1.5 text-[12px] outline-none focus:border-[#2196F3] bg-[#f8f9fa]"
           />
+          <button
+            onClick={() => void handleSearchTemplate()}
+            disabled={isSearchingTemplate || !recentMessages || recentMessages.length === 0}
+            title={!recentMessages || recentMessages.length === 0 ? "会話を選択してください" : "AIが会話に合うテンプレを選定します"}
+            className="shrink-0 flex items-center gap-1 rounded-full px-3 py-1.5 text-[12px] font-bold text-white disabled:opacity-50"
+            style={{ background: "linear-gradient(135deg, #7B1FA2, #AB47BC)" }}
+          >
+            {isSearchingTemplate ? (
+              <>
+                <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                検索中...
+              </>
+            ) : (
+              "✨ テンプレートを探す"
+            )}
+          </button>
         </div>
 
         {/* カテゴリタブ（検索中は非表示） */}
@@ -4355,6 +4420,79 @@ export default function TemplateModal({
                     );
                   })}
                 </div>
+              )}
+              {/* ✨ AI候補 TOP3（suggest-template API結果・通常一覧の上に表示） */}
+              {isSearchingTemplate && (
+                <div className="mb-3 animate-pulse rounded-xl border border-[#9C27B0] bg-[#F3E5F5] p-3">
+                  <div className="text-[12px] font-bold text-[#7B1FA2]">🔍 AI分析中...</div>
+                  <div className="mt-2 h-3 w-3/4 rounded bg-[#E1BEE7]" />
+                  <div className="mt-1.5 h-3 w-1/2 rounded bg-[#E1BEE7]" />
+                </div>
+              )}
+              {!isSearchingTemplate && aiCandidates && aiCandidates.length > 0 && (
+                <>
+                  <div className="mb-3 rounded-xl border border-[#9C27B0] bg-[#F3E5F5] p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <div className="text-[12px] font-bold text-[#7B1FA2]">🤖 AI候補 TOP3</div>
+                      <button
+                        onClick={() => { setAiCandidates(null); setAiNoMatch(null); }}
+                        className="flex h-6 items-center rounded-full px-2 text-[10px] font-bold text-[#7B1FA2] hover:bg-[#E1BEE7]"
+                      >×クリア</button>
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      {aiCandidates.map((c) => {
+                        const tmpl = templates.find((t) => t.id === c.templateId);
+                        if (!tmpl) return null;
+                        const rankColors: Record<number, string> = { 1: "#D4A017", 2: "#8E9AAF", 3: "#B87333" };
+                        return (
+                          <div key={c.templateId} className="rounded-lg border border-[#E1BEE7] bg-white p-2.5">
+                            <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                              <span className="rounded-full px-2 py-0.5 text-[10px] font-bold text-white" style={{ backgroundColor: rankColors[c.rank] ?? "#888" }}>{c.rank}位</span>
+                              <span className="text-[12px] font-bold text-[#111b21]">{tmpl.label}</span>
+                              <span className="rounded-full bg-[#F3E5F5] px-2 py-0.5 text-[9px] font-bold text-[#7B1FA2]">{tmpl.category}</span>
+                            </div>
+                            <p className="mb-1 text-[11px] leading-relaxed text-[#667781]">{tmpl.text.slice(0, 80)}{tmpl.text.length > 80 ? "…" : ""}</p>
+                            <p className="mb-1.5 text-[11px] text-[#7B1FA2]">💡 理由: {c.reason}</p>
+                            <button
+                              onClick={() => {
+                                // 通常テンプレのクリックと同一の適用ルート（AIXカテゴリはAIXモーダルへ）
+                                const secondMsg = tmpl.second_msg_type && tmpl.second_msg_delay
+                                  ? { type: tmpl.second_msg_type, delay: tmpl.second_msg_delay }
+                                  : null;
+                                if (tmpl.category.includes("AIX") && onOpenAixWithFocus) {
+                                  onOpenAixWithFocus(focusPointsMap[tmpl.id] ?? [], { id: tmpl.id, name: tmpl.label, category: tmpl.category, structure: tmpl.structure ?? undefined, sample: tmpl.text || undefined, secondMsg });
+                                  onClose();
+                                  return;
+                                }
+                                onSelect?.(tmpl.text, undefined, tmpl.label, tmpl.category, secondMsg, tmpl.id, false, c.rank);
+                                onClose();
+                              }}
+                              className="rounded-full px-3 py-1 text-[11px] font-bold text-white"
+                              style={{ background: "linear-gradient(135deg, #7B1FA2, #AB47BC)" }}
+                            >選択</button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="mb-3 border-t border-[#E1BEE7]" />
+                </>
+              )}
+              {!isSearchingTemplate && aiNoMatch && (
+                <>
+                  <div className="mb-3 rounded-xl border border-[#9C27B0] bg-[#F3E5F5] p-3">
+                    <div className="mb-1 flex items-center justify-between">
+                      <div className="text-[12px] font-bold text-[#7B1FA2]">🤖 AI判定: 適切なテンプレートが見つかりませんでした</div>
+                      <button
+                        onClick={() => setAiNoMatch(null)}
+                        className="flex h-6 items-center rounded-full px-2 text-[10px] font-bold text-[#7B1FA2] hover:bg-[#E1BEE7]"
+                      >×クリア</button>
+                    </div>
+                    <p className="text-[11px] text-[#7B1FA2]">{aiNoMatch}</p>
+                    <p className="mt-1 text-[10px] text-[#9C27B0]">AIXボタンからの新規生成をご検討ください</p>
+                  </div>
+                  <div className="mb-3 border-t border-[#E1BEE7]" />
+                </>
               )}
               {loading ? (
                 <div className="py-8 text-center text-[13px] text-[#aaa]">読み込み中...</div>
