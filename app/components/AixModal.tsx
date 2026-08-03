@@ -479,6 +479,34 @@ const GUARANTOR_COMPANIES = [
   "エポスカード", "アプラス",
 ];
 
+// condition_hearing「会話を合わせる」: AI導入文を送信してからフォーム本体を自動送信するまでの秒数
+// （見積書テキスト先送りフローの onDelayedSend?.(30, ...) と同じ親管理カウントダウン・キャンセル可能）
+const HEARING_FORM_DELAY_SEC = 30;
+
+// condition_hearing: 条件フォーム本体をクライアント側で組み立てる
+// /api/aix/action の condition_hearing フォーム組み立てロジック（route.ts）と完全に同一に保つこと。
+// AIX生成前でも「フォームのみ送る」を即押せるようにするための初期値で、生成後はAPIの hearing_form が上書きする（API が真実のソース）
+function buildHearingFormText(customerName: string | undefined, condText: string | undefined): string {
+  const CIRCLE_NUMS = ["①","②","③","④","⑤","⑥","⑦","⑧"];
+  const ALL_ITEMS = [
+    { label: "ご入居時期",                                key: "入居:" },
+    { label: "ご希望家賃（管理費込み）",                    key: "家賃:" },
+    { label: "ご希望間取り",                               key: "間取り:" },
+    { label: "ご希望築年数",                               key: "築年数:" },
+    { label: "ご希望エリア・最寄り駅",                      key: "エリア:" },
+    { label: "駅からの徒歩分数",                           key: "駅徒歩:" },
+    { label: "初期費用ご予算",                             key: "初期費用" },
+    { label: "その他こだわり条件（ペット・保証人・駐車場等）", key: "その他:" },
+  ];
+  // 条件テキストに key が含まれていれば「既知」→ 除外（全部埋まっていた場合は全項目を聞くフォールバック）
+  const missing = condText ? ALL_ITEMS.filter(item => !condText.includes(item.key)) : ALL_ITEMS;
+  const showItems = missing.length > 0 ? missing : ALL_ITEMS;
+  // 番号を①②③…と詰めて振り直す
+  const formItems = showItems.map((item, i) => `${CIRCLE_NUMS[i]}${item.label}`).join("\n");
+  const namePart = customerName ? (/(さん|様)$/.test(customerName) ? customerName : `${customerName}さん`) : "";
+  return `（${namePart}ご希望のお部屋探しご条件）\n${formItems}`;
+}
+
 export default function AixModal({
   actionType,
   conversationId,
@@ -570,8 +598,10 @@ export default function AixModal({
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<string>("");
   const [aiDraft, setAiDraft] = useState<string>("");
-  // condition_hearing: APIが返す条件フォームテンプレ（「条件フォームを送る」ボタンで別送する）
+  // condition_hearing: APIが返す条件フォームテンプレ（「フォームのみ送る」ボタンで別送する。マウント時にクライアント側でも組み立て）
   const [hearingFormText, setHearingFormText] = useState<string>("");
+  // condition_hearing: 「会話を合わせる」で生成したか（true なら送信時に導入文→30秒後フォーム自動送信の2通フロー）
+  const [hearingConvMatchMode, setHearingConvMatchMode] = useState(false);
   const [aixNotice, setAixNotice] = useState<string>("");
   const [parsedEstimate, setParsedEstimate] = useState<Record<string, string> | null>(null);
   // ① LL-07: 見積書カバーレター（AI生成・送信+学習ループ対象）
@@ -920,6 +950,15 @@ export default function AixModal({
     setMgmtPetPolicy(null);
     setMgmtPetCondition("");
   }, [actionType, conversationId]);
+
+  // condition_hearing: フォーム本体をマウント時にクライアント側で即組み立て
+  // （AIX生成を待たずに「フォームのみ送る」を押せるようにする。生成後はAPIの hearing_form が上書き＝APIが真実のソース）
+  useEffect(() => {
+    if (actionType === "condition_hearing" && !hearingFormText) {
+      setHearingFormText(buildHearingFormText(customerName, customerConditions));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionType]);
 
   useEffect(() => {
     if (initialImageFile) {
@@ -1942,6 +1981,8 @@ export default function AixModal({
       const combinedExtra = `${focusPrefix}${inputText.trim()}`.trim();
       if (combinedExtra) body.extra_input = combinedExtra;
       if (recSimpleMode) body.simple_mode = true;
+      // condition_hearing: 既知条件をAPIへ渡す（フォームの既知項目除外に使用）
+      if (actionType === "condition_hearing" && customerConditions) body.customer_conditions = customerConditions;
       if (extraFlags) Object.assign(body, extraFlags);
       if (parsedEstimate) body.parsed_estimate = parsedEstimate;
       if (!body.recent_messages && recentMessages && recentMessages.length > 0) body.recent_messages = recentMessages;
@@ -1989,8 +2030,10 @@ export default function AixModal({
       setEstimateTextReady(data.estimate_text || "");
       // ① LL-07: カバーレターを保存（見積書に添える挨拶文）
       if (data.coverLetter) setEstimateCoverLetter(data.coverLetter as string);
-      // condition_hearing: 条件フォームテンプレを保存（previewには入れず「条件フォームを送る」ボタンで別送）
+      // condition_hearing: 条件フォームテンプレを保存（previewには入れず「フォームのみ送る」ボタンで別送）
       if (data.hearing_form) setHearingFormText(data.hearing_form as string);
+      // condition_hearing: 会話を合わせるモードか記録（送信時に導入文→フォーム自動送信の2通フローへ切替。通常のAIX生成/再生成でリセット）
+      if (actionType === "condition_hearing") setHearingConvMatchMode(!!extraFlags?.conversation_match);
       // 保証会社確認: 画像URLをstateに保存（TODO: 画像→本文の順で送る際に使用）
       if (data.doc_image_url) setPreviewDocImageUrl(data.doc_image_url as string);
       // AIX完了後テンプレ誘導カテゴリ（API主導。無ければ親側の AIX_ACTION_META にフォールバックされる）
@@ -2292,6 +2335,22 @@ export default function AixModal({
     }
   };
 
+  // condition_hearing「フォームのみ送る」: フォーム本体のみを1通即時送信
+  // 固定テンプレのため学習ループ（runLearning）対象外。送信後は物件ピックアップ提案バナー＋ヒアリング締めテンプレ誘導を出す
+  const sendHearingFormOnly = () => {
+    void (async () => {
+      try {
+        setLoading(true);
+        await sendAsAix(hearingFormText);
+        onAfterSend?.({ suggestPropertySend: true, suggestTemplateCategory: "ヒアリング【AIX】" });
+        onClose();
+      } catch {
+        setError("フォーム送信に失敗しました");
+        setLoading(false);
+      }
+    })();
+  };
+
   const handleSend = async () => {
     if (loading) return; // ② 再入ガード（送信中の連打・多重実行防止）
     if (!preview.trim()) return;
@@ -2485,6 +2544,24 @@ export default function AixModal({
             markStep(3);
           }
           delete sentStepRef.current[actionType]; // 全ステップ送信完了でリセット
+        } else if (actionType === "condition_hearing" && hearingConvMatchMode && hearingFormText) {
+          // 会話を合わせるモード: AI導入文を先に送信 → HEARING_FORM_DELAY_SEC秒後にフォーム本体を自動送信（見積書先送りフローと同パターン）
+          await sendAsAix(preview, uploadedImageUrl);
+          // 学習は実際に送信したAI導入文に対して即実行（フォームは固定テンプレのため学習対象外）
+          runLearning(preview);
+          // 送信関数・フォームをクロージャでキャプチャ（宛先が変わっても元の会話に送られる）
+          const capturedOnSend = onSend;
+          const capturedForm = hearingFormText;
+          const capturedOnAfterSend = onAfterSend;
+          const sendFn = async () => {
+            await capturedOnSend(capturedForm, undefined, true);
+            // バナー・テンプレ誘導はフォームが実際に送信された後にのみ発火（カウントダウンキャンセル時は出さない）
+            capturedOnAfterSend?.({ suggestPropertySend: true, suggestTemplateCategory: "ヒアリング【AIX】" });
+          };
+          onDelayedSend?.(HEARING_FORM_DELAY_SEC, sendFn); // 親がsetTimeoutを管理（カウントダウン表示・キャンセル可能）
+          setLoading(false);
+          onClose();
+          return;
         } else {
           await sendAsAix(preview, uploadedImageUrl);
         }
@@ -5682,43 +5759,67 @@ export default function AixModal({
                   preview.includes("条件と合わない") ||
                   preview.includes("希望条件と不一致") ||
                   preview.includes("訴求しない");
+                const regenerateBtn = (
+                  <button
+                    onClick={() => void generate(
+                      actionType === "property_check_result" && checkPattern === "other_room_check"
+                        ? { conversation_match: true } // 会話を合わせる専用パターン: 再生成もテンプレから会話適応し直す
+                        : actionType === "condition_hearing" && hearingConvMatchMode
+                          ? { conversation_match: true, base_message: aiDraft } // 会話を合わせるモード: 再生成も会話適応のまま
+                          : undefined
+                    )}
+                    disabled={loading || !canGenerate}
+                    className="flex-1 rounded-full border border-[#d1d7db] py-3 text-sm font-semibold text-[#54656f] disabled:opacity-50"
+                  >
+                    {loading ? "生成中..." : "再生成"}
+                  </button>
+                );
+                const sendBtn = isConfirmation ? (
+                  <button
+                    onClick={() => void generate({ skip_confirmation: true })}
+                    disabled={loading}
+                    className="flex-1 rounded-full bg-orange-500 py-3 text-sm font-bold text-white disabled:opacity-50"
+                  >
+                    {loading ? "生成中..." : "確認した・生成する"}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => { if (aixLongPressedRef.current) { aixLongPressedRef.current = false; return; } void handleSend(); }}
+                    onTouchStart={(e) => { e.preventDefault(); aixLongPressTimerRef.current = setTimeout(() => { aixLongPressedRef.current = true; openAixScheduleModal(); }, 600); }}
+                    onTouchEnd={() => { if (aixLongPressTimerRef.current) { clearTimeout(aixLongPressTimerRef.current); aixLongPressTimerRef.current = null; } }}
+                    onMouseDown={() => { aixLongPressTimerRef.current = setTimeout(() => { aixLongPressedRef.current = true; openAixScheduleModal(); }, 600); }}
+                    onMouseUp={() => { if (aixLongPressTimerRef.current) { clearTimeout(aixLongPressTimerRef.current); aixLongPressTimerRef.current = null; } }}
+                    onMouseLeave={() => { if (aixLongPressTimerRef.current) { clearTimeout(aixLongPressTimerRef.current); aixLongPressTimerRef.current = null; } }}
+                    disabled={loading}
+                    className="flex-1 rounded-full bg-[#06c755] py-3 text-sm font-bold text-white disabled:opacity-50 select-none"
+                    style={{ WebkitUserSelect: "none", touchAction: "manipulation" }}
+                    title="送信（長押しで予約送信）"
+                  >
+                    {loading ? "送信中..." : actionType === "condition_hearing" && hearingConvMatchMode ? `送信する（${HEARING_FORM_DELAY_SEC}秒後フォーム）` : "送信する"}
+                  </button>
+                );
+                // condition_hearing: 生成後も「フォームのみ送る」を出す（導入文とフォームを任意の順で手動送信できるようにする）
+                if (actionType === "condition_hearing") {
+                  return (
+                    <div className="flex w-full flex-col gap-2">
+                      <button
+                        onClick={sendHearingFormOnly}
+                        disabled={!hearingFormText || loading}
+                        className="w-full rounded-2xl bg-green-600 py-3.5 text-sm font-bold text-white disabled:opacity-40"
+                      >
+                        📋 フォームのみ送る
+                      </button>
+                      <div className="flex gap-2">
+                        {regenerateBtn}
+                        {sendBtn}
+                      </div>
+                    </div>
+                  );
+                }
                 return (
                   <>
-                    <button
-                      onClick={() => void generate(
-                        actionType === "property_check_result" && checkPattern === "other_room_check"
-                          ? { conversation_match: true } // 会話を合わせる専用パターン: 再生成もテンプレから会話適応し直す
-                          : undefined
-                      )}
-                      disabled={loading || !canGenerate}
-                      className="flex-1 rounded-full border border-[#d1d7db] py-3 text-sm font-semibold text-[#54656f] disabled:opacity-50"
-                    >
-                      {loading ? "生成中..." : "再生成"}
-                    </button>
-                    {isConfirmation ? (
-                      <button
-                        onClick={() => void generate({ skip_confirmation: true })}
-                        disabled={loading}
-                        className="flex-1 rounded-full bg-orange-500 py-3 text-sm font-bold text-white disabled:opacity-50"
-                      >
-                        {loading ? "生成中..." : "確認した・生成する"}
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => { if (aixLongPressedRef.current) { aixLongPressedRef.current = false; return; } void handleSend(); }}
-                        onTouchStart={(e) => { e.preventDefault(); aixLongPressTimerRef.current = setTimeout(() => { aixLongPressedRef.current = true; openAixScheduleModal(); }, 600); }}
-                        onTouchEnd={() => { if (aixLongPressTimerRef.current) { clearTimeout(aixLongPressTimerRef.current); aixLongPressTimerRef.current = null; } }}
-                        onMouseDown={() => { aixLongPressTimerRef.current = setTimeout(() => { aixLongPressedRef.current = true; openAixScheduleModal(); }, 600); }}
-                        onMouseUp={() => { if (aixLongPressTimerRef.current) { clearTimeout(aixLongPressTimerRef.current); aixLongPressTimerRef.current = null; } }}
-                        onMouseLeave={() => { if (aixLongPressTimerRef.current) { clearTimeout(aixLongPressTimerRef.current); aixLongPressTimerRef.current = null; } }}
-                        disabled={loading}
-                        className="flex-1 rounded-full bg-[#06c755] py-3 text-sm font-bold text-white disabled:opacity-50 select-none"
-                        style={{ WebkitUserSelect: "none", touchAction: "manipulation" }}
-                        title="送信（長押しで予約送信）"
-                      >
-                        {loading ? "送信中..." : "送信する"}
-                      </button>
-                    )}
+                    {regenerateBtn}
+                    {sendBtn}
                   </>
                 );
               })()
@@ -5735,13 +5836,13 @@ export default function AixModal({
               actionType === "followup_revive"
             ) ? (
               <div className="flex flex-col gap-2 w-full">
-                {actionType === "condition_hearing" && hearingFormText && (
+                {actionType === "condition_hearing" && (
                   <button
-                    onClick={() => { void (async () => { await sendAsAix(hearingFormText); onClose(); })(); }}
+                    onClick={sendHearingFormOnly}
                     disabled={!hearingFormText || loading}
                     className="w-full rounded-2xl bg-green-600 py-3.5 text-sm font-bold text-white disabled:opacity-40"
                   >
-                    📋 条件フォームを送る
+                    📋 フォームのみ送る
                   </button>
                 )}
                 <button
@@ -5751,6 +5852,9 @@ export default function AixModal({
                 >
                   {loading ? "生成中..." : "💬 会話を合わせる"}
                 </button>
+                {actionType === "condition_hearing" && (
+                  <p className="text-[11px] text-[#8696a0] text-center -mt-1">AI導入文を生成 → 送信すると{HEARING_FORM_DELAY_SEC}秒後にフォームを自動送信</p>
+                )}
                 <button
                   onClick={() => void generate()}
                   disabled={loading || !canGenerate}

@@ -3258,12 +3258,43 @@ ${templateText}`;
 
     // ── 📋 条件ヒアリング（フォームをテンプレ生成 + AI導入メッセージ） ───
     } else if (action === "condition_hearing") {
+      // フォーム本体はテンプレで直接生成（conversation_match の早期returnでも返せるよう先に組み立てる）
+      // 既知の条件を解析して、まだ聞けていない項目だけを番号詰めで表示する
+      const condText = (customer_conditions as string | undefined) ?? "";
+      const CIRCLE_NUMS = ["①","②","③","④","⑤","⑥","⑦","⑧"];
+      const ALL_ITEMS = [
+        { label: "ご入居時期",                                key: "入居:" },
+        { label: "ご希望家賃（管理費込み）",                    key: "家賃:" },
+        { label: "ご希望間取り",                               key: "間取り:" },
+        { label: "ご希望築年数",                               key: "築年数:" },
+        { label: "ご希望エリア・最寄り駅",                      key: "エリア:" },
+        { label: "駅からの徒歩分数",                           key: "駅徒歩:" },
+        { label: "初期費用ご予算",                             key: "初期費用" },
+        { label: "その他こだわり条件（ペット・保証人・駐車場等）", key: "その他:" },
+      ];
+      // 条件テキストに key が含まれていれば「既知」→ 除外
+      const missing = condText
+        ? ALL_ITEMS.filter(item => !condText.includes(item.key))
+        : ALL_ITEMS;
+      // 全部埋まっていた場合は全項目を聞く（フォールバック）
+      const showItems = missing.length > 0 ? missing : ALL_ITEMS;
+      // 番号を①②③…と詰めて振り直す
+      const formItems = showItems
+        .map((item, i) => `${CIRCLE_NUMS[i]}${item.label}`)
+        .join("\n");
+
+      // name は「あさみさん」形式（さん付き）なのでそのまま使う
+      hearing_form_content = `（${name}ご希望のお部屋探しご条件）
+${formItems}`;
+      // conversation_match 早期return用: finalizeResponse は hearing_form_content を自動では含めないため extra で渡す
+      const hearingFormExtra = { hearing_form: hearing_form_content };
+
       // conversation_match: 会話に合わせた自然な挨拶＋ヒアリング導入メッセージを生成（固定フォームなし）
       if (body.conversation_match) {
         // base_message適応モード: 既存のAIX生成文を会話に合わせて補正
         if (baseMessage) {
           message_text = await adaptMessageToConversation(baseMessage, recentHistory, name, currentAction, "");
-          return finalizeResponse(message_text);
+          return finalizeResponse(message_text, hearingFormExtra);
         }
         const [hearingCMDiffNote, hearingCMStarNote] = await Promise.all([
           getKnowledgeForState([...AIX_ACTION_TO_STATES.condition_hearing, "first_reply"], currentAction, conversationId, latestCustomerMsg),
@@ -3308,39 +3339,12 @@ ${SMORA_COMMON_RULES}
           } else { message_text = rawHCM; }
         } catch { message_text = rawHCM; }
         // ⑦修正: conversation_match 早期returnでも共通後処理（号室ゼロ除去・内部メモ分離）を通す
-        return finalizeResponse(message_text);
+        return finalizeResponse(message_text, hearingFormExtra);
       }
-      // ─── ヒアリング: 条件フォームはテンプレで直接生成（従来通り）＋ AI導入メッセージ（LL-09）────────────
+      // ─── ヒアリング: 条件フォームはテンプレで直接生成（従来通り・上で組み立て済み）＋ AI導入メッセージ（LL-09）────
       // フォーム本体は固定テンプレのまま。フォームに添える「導入メッセージ」のみAI生成し、
       // getDiffKnowledgeForState / getStarredExamplesForAction を注入して学習ループの対象にする。
       // 導入メッセージの生成に失敗してもフォームはそのまま送れる（hearingIntro は空になるだけ）。
-      // 既知の条件を解析して、まだ聞けていない項目だけを番号詰めで表示する
-      const condText = (customer_conditions as string | undefined) ?? "";
-      const CIRCLE_NUMS = ["①","②","③","④","⑤","⑥","⑦","⑧"];
-      const ALL_ITEMS = [
-        { label: "ご入居時期",                                key: "入居:" },
-        { label: "ご希望家賃（管理費込み）",                    key: "家賃:" },
-        { label: "ご希望間取り",                               key: "間取り:" },
-        { label: "ご希望築年数",                               key: "築年数:" },
-        { label: "ご希望エリア・最寄り駅",                      key: "エリア:" },
-        { label: "駅からの徒歩分数",                           key: "駅徒歩:" },
-        { label: "初期費用ご予算",                             key: "初期費用" },
-        { label: "その他こだわり条件（ペット・保証人・駐車場等）", key: "その他:" },
-      ];
-      // 条件テキストに key が含まれていれば「既知」→ 除外
-      const missing = condText
-        ? ALL_ITEMS.filter(item => !condText.includes(item.key))
-        : ALL_ITEMS;
-      // 全部埋まっていた場合は全項目を聞く（フォールバック）
-      const showItems = missing.length > 0 ? missing : ALL_ITEMS;
-      // 番号を①②③…と詰めて振り直す
-      const formItems = showItems
-        .map((item, i) => `${CIRCLE_NUMS[i]}${item.label}`)
-        .join("\n");
-
-      // name は「あさみさん」形式（さん付き）なのでそのまま使う
-      hearing_form_content = `（${name}ご希望のお部屋探しご条件）
-${formItems}`;
 
       // LL-09: フォームに添える導入メッセージをAI生成（学習ループ対象化）
       try {
