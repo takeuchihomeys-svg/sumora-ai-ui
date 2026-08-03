@@ -24,7 +24,7 @@ export const maxDuration = 300;
 // Step1（分析）: Sonnet — 感情・本音・成約戦略の精度重視
 const analysisModel = new ChatAnthropic({
   model: "claude-sonnet-4-6",
-  maxTokens: 1536, // 1024だと分析JSONが尻切れになりJSON.parse失敗するリスクがあるため引き上げ
+  maxTokens: 2048, // AIX推薦フィールド追加により分析JSONが尻切れになりJSON.parse失敗するリスクがあるため1536から引き上げ
   temperature: 0,
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
   clientOptions: { timeout: 45_000 },
@@ -79,6 +79,7 @@ async function deriveSuggestedAix(
   internalBaseUrl?: string,
   propertyStatus?: PropertyStatus,
   customerMessage?: string,
+  analysisAixAction?: string | null,
 ): Promise<{ action: string; note: string } | null> {
   // 退去予定/入居中の物件では現地内覧が不可のため viewing_invite（内覧日調整）は提案しない。
   // 代わりに空室確認（acknowledge_check）または申込で先に確保（application_push）を優先する。
@@ -171,73 +172,10 @@ async function deriveSuggestedAix(
     }
   }
 
-  // ─── Step 2: regexフォールバック（suggest-next-actionが何も返さなかった場合） ───
-  const d = draftText;
-
-  // ① 確認系 → acknowledge_check（管理会社への連絡）
-  if (/確認(させていただき|させて|出来|でき|しま)/.test(d)) {
-    return {
-      action: "acknowledge_check",
-      note: "送信後 → AIX【確認します】ボタンで管理会社への空室確認＋見積書依頼を送ってください（宛先は管理会社です）",
-    };
-  }
-  // ② 日程プレースホルダーあり → viewing_invite（退去予定物件では申込/確認へリダイレクト）
-  if (/\[日付\]|\[時間帯\]|\[日時\]/.test(d)) {
-    return redirectMoveOut(
-      "viewing_invite",
-      "⚠️ AIX【内覧日調整】ボタンで日時を選択してから送信してください（空欄のまま送らないでください）",
-    );
-  }
-  // ③ ピックアップ・物件送付系 → property_send
-  if (/ピックアップ|お送りします|物件(を|の資料|情報)/.test(d)) {
-    return {
-      action: "property_send",
-      note: "物件URLが揃ったら → AIX【物件ピックアップした】でカバーメッセージを生成して一緒に送ってください",
-    };
-  }
-  // ④ 申込前向き → application_push (confirm)
-  if (/申し込み|申込(みま|ます)|決めます|お願いします/.test(d)) {
-    return {
-      action: "application_push",
-      note: "申込の意思が確認できます → AIX【申込へ！】→ confirmモードで確定文を即送信してください",
-    };
-  }
-  // ⑤ 申込迷い系 → application_push (push)
-  if (/検討|迷って|どうしよう|もう少し/.test(d)) {
-    return {
-      action: "application_push",
-      note: "AIX【申込へ！】→ pushモードで背中を押すメッセージを生成できます",
-    };
-  }
-  // ⑥ 内覧後フォロー → greeting_viewing
-  if (conversationState === "viewing" || /いかがでしたか|いかがでした|感想|内覧(はいかが|後)/.test(d)) {
-    return {
-      action: "greeting_viewing",
-      note: "内覧後フォロー → AIX【挨拶（内覧後）】で結果に応じたフォローメッセージを生成してください",
-    };
-  }
-  // ⑦ 見積書案内 → estimate_sheet
-  if (/見積書|初期費用|費用のご案内|金額/.test(d)) {
-    return {
-      action: "estimate_sheet",
-      note: "見積書が届いたら → AIX【見積書送る】で画像を読み取って自動計算＋カバーメッセージを生成できます（OCR対応）",
-    };
-  }
-  // ⑧ 待ち合わせ確定 → meeting_place
-  if (/お待ちして|現地で|エントランス|お会いしま/.test(d)) {
-    return {
-      action: "meeting_place",
-      note: "AIX【待ち合わせ】ボタンで物件住所入り確定メッセージを生成できます",
-    };
-  }
-  // ⑨ ヒアリング誘導 → condition_hearing
-  if (conversationState === "first_reply" || conversationState === "hearing") {
-    if (/条件|ご希望|間取り|エリア|予算/.test(d)) {
-      return {
-        action: "condition_hearing",
-        note: "条件ヒアリングが必要な場合 → AIX【条件ヒアリング】ボタンで既知情報をスキップした形式で送れます",
-      };
-    }
+  // ─── Step 1.5: Step1分析由来のAIX推薦（会話全文・感情・文脈を見たSonnet判断）───
+  // 旧Step 2（ドラフト文regexフォールバック）は最弱シグナルだったため削除し、本判定に置き換え
+  if (analysisAixAction && AIX_ACTION_NOTES[analysisAixAction]) {
+    return redirectMoveOut(analysisAixAction, AIX_ACTION_NOTES[analysisAixAction]);
   }
   return null;
 }
@@ -336,7 +274,9 @@ ${customerMessage}
   "repeated_concern": "履歴を見てお客様が繰り返し聞いているテーマ（例: 費用・審査・キャンセル）。なければnull",
   "current_property": "現在話題にしている物件名・号室（履歴から特定できる場合のみ）。なければnull",
   "hesitancy_pattern": "お客様が「検討します」「また連絡します」「少し待ってほしい」「迷っています」など決断を保留しているか。パターン種別（'thinking'=検討中・'callback'=また連絡・'waiting'=もう少し待って・'undecided'=どちらか迷い・'timeline'=○月に決めたい）、なければnull",
-  "future_timeline": "お客様が「○月に」「○日には」など具体的な申込タイムラインを示している場合その内容。なければnull"
+  "future_timeline": "お客様が「○月に」「○日には」など具体的な申込タイムラインを示している場合その内容。なければnull",
+  "suggested_aix_action": "次に使うべきAIXアクション。以下から1つ選ぶかnullを返す: viewing_invite（内見案内）/ estimate_sheet（見積書送付）/ property_send（物件送付）/ application_push（申込促進）/ property_check_result（空室確認結果送付）/ acknowledge_check（空室確認承知）/ condition_hearing（条件ヒアリング）/ meeting_place（待ち合わせ）/ property_recommendation（物件おすすめ）/ followup_revive（追客）/ greeting_viewing（内見挨拶） — LINEの返信文を送るべき場面はnullとする",
+  "aix_reason": "AIXアクションを選んだ理由を1行で（nullの場合は空文字）"
 }` : `
 【営業フェーズ】${state}
 【お客様名】${customerName || "不明"}
@@ -358,7 +298,9 @@ ${customerMessage}
   "current_property": "現在話題にしている物件名・号室（履歴から特定できる場合のみ）。なければnull",
   "condition_change_type": "お客様が検索条件を変更・追加・緩和したか、または物件ピックアップ・送付を依頼しているか。該当する場合その種別（'area_change'=エリア変更、'rent_change'=家賃変更、'layout_change'=間取り変更、'equip_add'=設備・収納・こだわり条件の追加（WIC広め・SIC・収納多め・南向き・オートロック等の新しいこだわりを追加）、'condition_relax'=条件緩和、'pickup_request'=物件を送って・ピックアップ依頼・おすすめ、'multi'=複数変更）。なければnull。※すでに検討中の物件があっても、新しい条件を追加したら必ずその種別を返すこと",
   "hesitancy_pattern": "お客様が「検討します」「また連絡します」「少し待ってほしい」「迷っています」など、決断を保留するパターンを示しているか。示している場合はその種別（'thinking'=検討中・'callback'=また連絡・'waiting'=もう少し待って・'undecided'=どちらか迷い・'timeline'=○月に決めたい ）、なければnull",
-  "future_timeline": "お客様が「○月に」「○日には」など具体的な決断・申込タイムラインを示している場合その内容。なければnull"
+  "future_timeline": "お客様が「○月に」「○日には」など具体的な決断・申込タイムラインを示している場合その内容。なければnull",
+  "suggested_aix_action": "次に使うべきAIXアクション。以下から1つ選ぶかnullを返す: viewing_invite（内見案内）/ estimate_sheet（見積書送付）/ property_send（物件送付）/ application_push（申込促進）/ property_check_result（空室確認結果送付）/ acknowledge_check（空室確認承知）/ condition_hearing（条件ヒアリング）/ meeting_place（待ち合わせ）/ property_recommendation（物件おすすめ）/ followup_revive（追客）/ greeting_viewing（内見挨拶） — LINEの返信文を送るべき場面はnullとする",
+  "aix_reason": "AIXアクションを選んだ理由を1行で（nullの場合は空文字）"
 }`;
 
   try {
@@ -1819,6 +1761,17 @@ export async function POST(req: NextRequest) {
       } catch { return null; }
     })();
 
+    // Step1分析由来のAIX推薦（deriveSuggestedAix の Step 1.5 で使用）
+    // 会話全文・感情・文脈を見たSonnetの判断。aix_reason はログ用途のみで誘導メモには使わない
+    const analysisAixAction = (() => {
+      try {
+        const p = JSON.parse(analysis) as Record<string, unknown>;
+        return typeof p.suggested_aix_action === "string" && p.suggested_aix_action
+          ? p.suggested_aix_action
+          : null;
+      } catch { return null; }
+    })();
+
     const encoder = new TextEncoder();
     return new Response(
       new ReadableStream({
@@ -1922,7 +1875,7 @@ export async function POST(req: NextRequest) {
               })();
               void _shadowClassify;
             }
-            const suggestedAix = await deriveSuggestedAix(finalDraftText, currentState, conversationId || undefined, internalBaseUrl, resolvedStatusForAix, message);
+            const suggestedAix = await deriveSuggestedAix(finalDraftText, currentState, conversationId || undefined, internalBaseUrl, resolvedStatusForAix, message, analysisAixAction);
             if (suggestedAix) {
               controller.enqueue(encoder.encode(`\n<<<SUGGESTED_AIX:${JSON.stringify(suggestedAix)}>>>`));
             }
