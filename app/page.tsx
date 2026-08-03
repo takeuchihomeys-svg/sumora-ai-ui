@@ -3429,6 +3429,11 @@ export default function Home() {
       }
       lineDelivered = true;
 
+      // AIドラフトのSUGGESTED_AIXトレーラーを退避（直後の setSuggestedAix(null) で破棄されるため）
+      // draftIsAi ガード: スタッフが📌メモを実際に見た状態（AIドラフト送信）のときのみ消費する
+      const consumedAix = (textSent && draftIsAi && suggestedAix?.action) ? suggestedAix : null;
+      const trailerSaysPropertyCheck = !!(consumedAix && /物件確認/.test(consumedAix.action));
+
       // 送信に成功した分だけ入力欄をクリア（失敗した分は残して再送できるようにする）
       if (textSent || !textToSend) {
         setReplyDraft("");
@@ -3749,8 +3754,43 @@ export default function Home() {
         });
       // 物件送付予告メッセージ検知 → AIX「物件ピックアップした」誘導
       // （「ご査収ください」を含む文は実際の送信であり予告ではないため除外・従来挙動を維持）
-      } else if (textSent && textToSend && !textToSend.includes("ご査収ください") && /ピックアップ|物件.*送|お送りさせて|物件をお送り/.test(textToSend)) {
+      // ※トレーラーが「次はAIX物件確認した」を示す場合は再アームしない（P5.5への遷移と競合するため）
+      } else if (textSent && textToSend && !textToSend.includes("ご査収ください") && /ピックアップ|物件.*送|お送りさせて|物件をお送り/.test(textToSend) && !trailerSaysPropertyCheck) {
         setSuggestPropertySendMap((prev) => ({ ...prev, [selectedConversation.id]: true }));
+      }
+
+      // SUGGESTED_AIXトレーラー消費: 送信したAIドラフトが「次はAIX物件確認した」を示す場合、
+      // property_checkタスクを作成してP5.5「物件確認した」バナーへ即時遷移する。
+      // P5.5はP6「物件ピックアップした」より優先されるため、isCustomerFormatMsg等でP6が
+      // 消えない問題も同時に解消される。タスクはDB保存なのでリロード後も持続し、
+      // AIX物件確認した実行（タスク完了）でバナーが消える。
+      // ※ピックアップ完了文（ご査収ください+ピックアップ/募集にでました）は上の明示キーワード
+      //   ルール（P4物件オススメへの遷移）を優先し、矛盾するproperty_checkタスクは作らない。
+      const _isPickupCompleteMsg = !!(textSent && textToSend && textToSend.includes("ご査収ください") && /ピックアップ|募集にでました/.test(textToSend));
+      if (trailerSaysPropertyCheck && !_isPickupCompleteMsg) {
+        const convId = selectedConversation.id;
+        const customerName = selectedConversation.customerName;
+        // P6「物件ピックアップした」トリガーを消去
+        setSuggestPropertySendMap((prev) => { if (!prev[convId]) return prev; const n = { ...prev }; delete n[convId]; return n; });
+        // property_checkタスクを自動作成（AIXモーダル完了コールバックと同一パターン）
+        const alreadyHasCheck = (activeTasks[convId] ?? []).some((t) => t.task_type === "property_check");
+        if (!alreadyHasCheck) {
+          fetch("/api/line-tasks", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ conversation_id: convId, task_type: "property_check", customer_name: customerName }),
+          }).then(async (r) => {
+            if (!r.ok) return;
+            const d = await r.json() as { ok: boolean; id?: string; created_at?: string };
+            if (d.ok && d.id && d.created_at) {
+              setActiveTasks((prev) => {
+                const existing = prev[convId] ?? [];
+                if (existing.some((x) => x.task_type === "property_check")) return prev;
+                return { ...prev, [convId]: [...existing, { id: d.id!, task_type: "property_check", created_at: d.created_at!, customer_name: customerName }] };
+              });
+            }
+          }).catch(() => {});
+        }
       }
 
       // 待ち合わせ確定メッセージ送信 → 内覧済みフラグをセット
