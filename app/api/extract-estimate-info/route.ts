@@ -1,8 +1,6 @@
 ﻿import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest, NextResponse } from "next/server";
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 60_000 });
-
 export interface ExtractedEstimate {
   propertyName: string;
   roomNumber: string;
@@ -72,6 +70,9 @@ const EMPTY: ExtractedEstimate = {
 };
 
 export async function POST(req: NextRequest) {
+  // ビルド時の環境変数未定義を避けるため、クライアントはここで初期化する
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 60_000 });
+
   try {
     const body = await req.json() as {
       images?: Array<{ base64: string; mimeType: string }>;
@@ -154,13 +155,13 @@ export async function POST(req: NextRequest) {
 
     // claude-sonnet-5 の制約:
     //   - temperature / top_p / top_k は送ると 400 エラーになるため省略
-    //   - thinking は省略 = adaptive（type:"disabled" は仕様外で 400 エラーになる）
-    //   - adaptive thinking がある場合 content[0] が thinking ブロックになるため
-    //     find() で最初の text ブロックを取得する
-    //   - adaptive thinking 込みで max_tokens を余裕持たせる
+    //   - thinking: { type: "disabled" } で adaptive thinking を明示的に無効化する
+    //     （aix/action/route.ts の callClaudeVision でも同じ設定で本番稼働中）
+    //   - thinking 無効化により全トークンが JSON 出力に使われるため max_tokens を余裕持たせる
     const res = await client.messages.create({
       model: "claude-sonnet-5",
-      max_tokens: 4000,
+      max_tokens: 6000,
+      thinking: { type: "disabled" },
       system: systemPrompt,
       messages: [{ role: "user", content: contentParts }],
     });
