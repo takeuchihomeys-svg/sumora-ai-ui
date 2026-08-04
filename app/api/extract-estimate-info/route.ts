@@ -155,11 +155,18 @@ export async function POST(req: NextRequest) {
     const res = await client.messages.create({
       model: "claude-sonnet-5",
       max_tokens: 2000,
+      // Sonnet5はadaptive thinkingがデフォルトON。thinkingブロックがcontent[0]に入り
+      // text ブロックが空になるサイレント失敗を防ぐため明示的に無効化する
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      thinking: { type: "disabled" } as any,
+      temperature: 0, // JSON抽出を deterministic に（説明文を付けさせない）
       system: systemPrompt,
       messages: [{ role: "user", content: contentParts }],
     });
 
-    const raw = res.content[0].type === "text" ? res.content[0].text.trim() : "{}";
+    // Sonnet5はthinkingブロックがcontent[0]に入るため find() で最初のtextブロックを取得する
+    const textBlock = res.content.find((b) => b.type === "text");
+    const raw = textBlock && textBlock.type === "text" ? textBlock.text.trim() : "{}";
     const match = raw.match(/\{[\s\S]*\}/);
     const extracted: ExtractedEstimate = match
       ? { ...EMPTY, ...(JSON.parse(match[0]) as Partial<ExtractedEstimate>) }
