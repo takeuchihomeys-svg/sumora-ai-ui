@@ -27,7 +27,10 @@
       "Bash(git -C \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\" push)",
       "Bash(python -c ' *)",
       "Bash(git show *)",
-      "PowerShell(cd \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\"; npx tsc --noEmit 2>&1; Write-Host \"Exit code: $LASTEXITCODE\")"
+      "PowerShell(cd \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\"; npx tsc --noEmit 2>&1; Write-Host \"Exit code: $LASTEXITCODE\")",
+      "PowerShell(cd \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\"; npx tsc --noEmit; $exitCode = $LASTEXITCODE; Write-Output \"Exit: $exitCode\")",
+      "PowerShell(cd \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\"; $result = npx tsc --noEmit 2>&1; if \\($result\\) { Write-Output $result } else { Write-Output \"NO ERRORS\" }; Write-Output \"Exit code: $LASTEXITCODE\")",
+      "Bash(echo \"Exit: $?\")"
     ]
   }
 }
