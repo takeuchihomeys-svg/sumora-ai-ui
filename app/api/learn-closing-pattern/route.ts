@@ -92,7 +92,7 @@ ${history}
     if (!res.ok) return NextResponse.json({ ok: false, error: "AI error" }, { status: 500 });
 
     const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
-    const raw = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text ?? "";
+    const raw = data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
     const match = raw.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\{[\s\S]*\}/);
     if (!match) return NextResponse.json({ ok: false, error: "parse error" });
 

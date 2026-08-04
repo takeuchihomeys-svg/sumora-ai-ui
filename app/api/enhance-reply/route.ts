@@ -260,7 +260,7 @@ ${currentDraft.trim()}
     }
 
     const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
-    const enhanced = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() || "";
+    const enhanced = data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() || "";
 
     return NextResponse.json({ ok: true, enhanced });
   } catch (err) {

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
@@ -338,7 +338,7 @@ ${p.followText}
 ${existing.length > 0 ? existing.map((t) => `- ${t}`).join("\n") : "（なし）"}`,
           }],
         });
-        const raw = res.content[0]?.type === "text" ? res.content[0].text : "{}";
+        const raw = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "{}";
         return JSON.parse(stripCodeFence(raw)) as ConvertResult;
       })
     );
@@ -522,7 +522,7 @@ ${rep.addedText}
 （なし）`,
           }],
         });
-        const raw = res.content[0]?.type === "text" ? res.content[0].text : "{}";
+        const raw = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "{}";
         return JSON.parse(stripCodeFence(raw)) as { converted: string | null; skip: boolean };
       })
     );

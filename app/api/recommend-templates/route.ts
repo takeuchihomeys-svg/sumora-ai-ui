@@ -127,8 +127,7 @@ ${templates.map((t, i) => {
       messages: [{ role: "user", content: prompt }],
     });
 
-    const firstBlock = response.content[0];
-    const text = firstBlock?.type === "text" ? firstBlock.text : "[]";
+    const text = response.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "[]";
 
     // JSON抽出（前後に余計なテキストがあっても配列部分だけ取り出す）
     const match = text.match(/\[[\s\S]*\]/);

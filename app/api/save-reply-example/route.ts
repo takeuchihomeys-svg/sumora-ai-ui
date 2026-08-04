@@ -159,7 +159,7 @@ async function callClaude(model: string, prompt: string, maxTokens = 1024): Prom
     });
     if (!res.ok) return "";
     const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
-    return data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() || "";
+    return data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() || "";
   } catch {
     return "";
   }

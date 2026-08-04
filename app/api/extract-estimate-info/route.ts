@@ -152,29 +152,42 @@ export async function POST(req: NextRequest) {
     const userText = `${images.length > 0 ? "添付の画像・書類" : ""}${supplementaryText ? `\n\n【補足情報】\n${supplementaryText}` : ""}\n\nから賃貸初期費用の全項目をJSONで抽出してください。`;
     contentParts.push({ type: "text", text: userText });
 
+    // claude-sonnet-5 の制約:
+    //   - temperature / top_p / top_k は送ると 400 エラーになるため省略
+    //   - thinking は省略 = adaptive（type:"disabled" は仕様外で 400 エラーになる）
+    //   - adaptive thinking がある場合 content[0] が thinking ブロックになるため
+    //     find() で最初の text ブロックを取得する
+    //   - adaptive thinking 込みで max_tokens を余裕持たせる
     const res = await client.messages.create({
       model: "claude-sonnet-5",
-      max_tokens: 2000,
-      // Sonnet5はadaptive thinkingがデフォルトON。thinkingブロックがcontent[0]に入り
-      // text ブロックが空になるサイレント失敗を防ぐため明示的に無効化する
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      thinking: { type: "disabled" } as any,
-      temperature: 0, // JSON抽出を deterministic に（説明文を付けさせない）
+      max_tokens: 4000,
       system: systemPrompt,
       messages: [{ role: "user", content: contentParts }],
     });
 
-    // Sonnet5はthinkingブロックがcontent[0]に入るため find() で最初のtextブロックを取得する
+    console.log("[extract-estimate-info] content blocks:", res.content.map((b) => b.type));
     const textBlock = res.content.find((b) => b.type === "text");
-    const raw = textBlock && textBlock.type === "text" ? textBlock.text.trim() : "{}";
+    if (!textBlock) {
+      console.error("[extract-estimate-info] text block not found. content:", JSON.stringify(res.content));
+      return NextResponse.json({ error: "テキストブロックが見つかりませんでした" }, { status: 500 });
+    }
+    const raw = textBlock.type === "text" ? textBlock.text.trim() : "{}";
     const match = raw.match(/\{[\s\S]*\}/);
-    const extracted: ExtractedEstimate = match
-      ? { ...EMPTY, ...(JSON.parse(match[0]) as Partial<ExtractedEstimate>) }
-      : EMPTY;
+    if (!match) {
+      console.error("[extract-estimate-info] JSON not found in response:", raw.slice(0, 500));
+      return NextResponse.json({ error: "JSONを抽出できませんでした" }, { status: 500 });
+    }
+    let extracted: ExtractedEstimate;
+    try {
+      extracted = { ...EMPTY, ...(JSON.parse(match[0]) as Partial<ExtractedEstimate>) };
+    } catch (parseErr) {
+      console.error("[extract-estimate-info] JSON parse failed:", parseErr, "raw:", match[0].slice(0, 500));
+      return NextResponse.json({ error: "JSON解析に失敗しました" }, { status: 500 });
+    }
 
     return NextResponse.json({ ok: true, extracted });
   } catch (err) {
-    console.error("[extract-estimate-info]", err);
+    console.error("[extract-estimate-info] unexpected error:", err);
     return NextResponse.json({ error: "読み取りに失敗しました" }, { status: 500 });
   }
 }

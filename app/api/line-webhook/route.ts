@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse, after } from "next/server";
+﻿import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
 import { isApplicationFormMessage, hasApplyHintKeyword, PRE_APPLY_STATUSES } from "@/app/lib/application-form-detect";
@@ -520,7 +520,7 @@ ${text}
 JSONのみ返してください。説明文・コードブロック・マークダウンは一切不要です。`,
       }],
     });
-    const raw = res.content[0].type === "text" ? res.content[0].text : "";
+    const raw = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
     const match = raw.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\{[\s\S]*\}/);
     if (!match) return;
     parsed = JSON.parse(match[0]) as Record<string, unknown>;

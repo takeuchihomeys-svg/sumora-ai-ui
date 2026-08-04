@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
 const HAIKU_MODEL = "claude-haiku-4-5-20251001";
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
     }
 
     const data = await res.json();
-    const raw = (data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() || "").replace(/```json\n?|```/g, "").trim();
+    const raw = (data.content?.find((b: any) => b.type === "text")?.text?.trim() || "").replace(/```json\n?|```/g, "").trim();
 
     let properties: Array<{ name: string; status: string; move_out: string }> = [];
     try {

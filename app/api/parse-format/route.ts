@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 
 const client = new Anthropic({ timeout: 30_000 });
@@ -67,7 +67,7 @@ JSONのみ返してください。説明文・コードブロック・マーク�
     return NextResponse.json({ error: "AI解析に失敗しました" }, { status: 500 });
   }
 
-  const raw = message.content[0]?.type === "text" ? message.content[0].text : "";
+  const raw = message.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
 
   // コードブロックを除去してJSONだけ取り出す
   const cleaned = raw

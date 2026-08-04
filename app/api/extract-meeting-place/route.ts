@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
       ],
     });
 
-    const text = response.content[0]?.type === "text" ? response.content[0].text.trim() : "";
+    const text = response.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
 
     const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
     const nameLine = lines.find((l) => l.startsWith("物件名:"))?.replace("物件名:", "").trim() ?? "";

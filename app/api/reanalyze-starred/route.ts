@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
 export const maxDuration = 60;
@@ -35,7 +35,7 @@ async function callHaiku(prompt: string): Promise<string> {
     });
     if (!res.ok) return "";
     const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
-    return data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() || "";
+    return data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() || "";
   } catch {
     return "";
   }

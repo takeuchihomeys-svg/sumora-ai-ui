@@ -92,7 +92,7 @@ ${customerMessage || "不明"}
 JSONのみ返す。`,
       }],
     });
-    const text = res.content[0].type === "text" ? res.content[0].text.trim() : "";
+    const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return null;
     return JSON.parse(jsonMatch[0]) as { skip: boolean; title?: string; rule?: string };
@@ -141,7 +141,7 @@ ${sentReply}
 JSONのみを返す。説明不要。`,
       }],
     });
-    const text = res.content[0].type === "text" ? res.content[0].text.trim() : "";
+    const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return null;
     return JSON.parse(jsonMatch[0]) as { skip: boolean; title?: string; rule?: string };
@@ -200,7 +200,7 @@ JSONのみを返す。分析の途中経過は不要。`,
       }],
     });
 
-    const text = res.content[0].type === "text" ? res.content[0].text.trim() : "";
+    const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return null;
     return JSON.parse(jsonMatch[0]) as { skip: boolean; title?: string; rule?: string; category?: string; trigger_example?: string };
@@ -346,7 +346,7 @@ JSONのみで回答: {"verdict":"confirm"|"question"|"contradiction","reason":"�
     });
     if (!res.ok) return { verdict: "skip", reason: "" };
     const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
-    const text = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text ?? "";
+    const text = data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return { verdict: "skip", reason: "" };
     const parsed = JSON.parse(match[0]) as { verdict?: string; reason?: string };
@@ -612,7 +612,7 @@ async function isMeaningfullySame(aiText: string, sentText: string): Promise<boo
         `以下2つの文章は意味・意図が実質的に同じですか？言い回しが違うだけかどうか判断してください。\n【A】${aiText.slice(0, 400)}\n【B】${sentText.slice(0, 400)}\nJSONのみ: {"same": true}または{"same": false}`,
       }],
     });
-    const text = res.content[0].type === "text" ? res.content[0].text.trim() : "";
+    const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return false;
     const parsed = JSON.parse(match[0]) as { same: boolean };

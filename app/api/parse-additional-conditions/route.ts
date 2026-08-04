@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
     if (!extractRes.ok) return NextResponse.json({ ok: false, error: "Vision error" }, { status: 500 });
 
     const extractData = await extractRes.json() as { content?: Array<{ type: string; text?: string }> };
-    const extractedText = extractData.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() ?? "";
+    const extractedText = extractData.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
 
     if (!extractedText || extractedText.includes("読み取れませんでした")) {
       return NextResponse.json({ ok: false, error: "画像から条件を読み取れませんでした" }, { status: 422 });
@@ -141,7 +141,7 @@ export async function POST(req: NextRequest) {
     if (!parseRes.ok) return NextResponse.json({ ok: false, error: "AI error" }, { status: 500 });
 
     const parseData = await parseRes.json() as { content?: Array<{ type: string; text?: string }> };
-    const raw = parseData.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text ?? "";
+    const raw = parseData.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
     const match = raw.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\{[\s\S]*\}/);
     if (!match) return NextResponse.json({ ok: false, error: "parse error" }, { status: 500 });
 
@@ -181,7 +181,7 @@ export async function POST(req: NextRequest) {
   if (!res.ok) return NextResponse.json({ ok: false, error: "AI error" }, { status: 500 });
 
   const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
-  const raw = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text ?? "";
+  const raw = data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
   const match = raw.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\{[\s\S]*\}/);
   if (!match) return NextResponse.json({ ok: false, error: "parse error" }, { status: 500 });
 

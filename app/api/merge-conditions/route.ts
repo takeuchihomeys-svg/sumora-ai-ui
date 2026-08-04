@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 
 const anthropic = new Anthropic();
@@ -99,7 +99,7 @@ ${customer.additional_conditions}`,
         },
       ],
     });
-    const raw = msg.content[0].type === "text" ? msg.content[0].text : "";
+    const raw = msg.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
     const match = raw
       .replace(/```json\s*/gi, "")
       .replace(/```\s*/g, "")

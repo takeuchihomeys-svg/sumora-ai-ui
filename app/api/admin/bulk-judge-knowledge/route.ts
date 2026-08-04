@@ -100,7 +100,7 @@ JSONのみ回答: {"verdict":"confirm"|"question"|"contradiction","reason":"何�
 
       if (!res.ok) return { id: item.id as string, verdict: "skip" as const, reason: "api error" };
       const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
-      const text = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text ?? "";
+      const text = data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
       const match = text.match(/\{[\s\S]*\}/);
       if (!match) return { id: item.id as string, verdict: "skip" as const, reason: "parse error" };
       const parsed = JSON.parse(match[0]) as { verdict?: string; reason?: string; prediction?: string };

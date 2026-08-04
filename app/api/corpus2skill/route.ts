@@ -99,7 +99,7 @@ JSON配列のみ返す（説明不要）：
     }],
   });
 
-  const text = res.content[0].type === "text" ? res.content[0].text.trim() : "";
+  const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
   const match = text.match(/\[[\s\S]*\]/);
   if (!match) return [];
   try {
@@ -280,7 +280,7 @@ ${approvedSuggestionsSection || "（なし）"}
     }],
   });
 
-  const text = res.content[0]?.type === "text" ? res.content[0].text.trim() : "";
+  const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
   const match = text.match(/\[[\s\S]*\]/);
   if (!match) return { candidatesSaved: 0, suggestionsSaved: 0 };
 
@@ -764,7 +764,7 @@ ${answeredSection || "（なし）"}
     }],
   });
 
-  const text = res.content[0]?.type === "text" ? res.content[0].text.trim() : "";
+  const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
   const match = text.match(/\[[\s\S]*\]/);
   if (!match) return { questionsSaved: 0 };
 

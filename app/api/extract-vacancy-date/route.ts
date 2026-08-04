@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+﻿import Anthropic from "@anthropic-ai/sdk";
 import { NextResponse } from "next/server";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -52,7 +52,7 @@ export async function POST(req: Request) {
       }],
     });
 
-    const raw = (response.content[0] as { type: string; text?: string }).text?.trim() ?? "";
+    const raw = response.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return NextResponse.json({ propertyName: null, vacancyDate: null });
     const parsed = JSON.parse(jsonMatch[0]) as { propertyName?: string; vacancyDate?: string };

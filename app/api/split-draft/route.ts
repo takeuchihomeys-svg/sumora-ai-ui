@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
 
@@ -41,7 +41,7 @@ ${text}
     if (!res.ok) return NextResponse.json({ error: "api error" }, { status: 500 });
 
     const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
-    const raw = (data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text ?? "").trim().replace(/```json\n?|```/g, "").trim();
+    const raw = (data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "").trim().replace(/```json\n?|```/g, "").trim();
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return NextResponse.json({ error: "parse failed" }, { status: 500 });
 

@@ -1,4 +1,4 @@
-// GET /api/analyze-template-modifications  ← Vercel Cron（毎日深夜）
+﻿// GET /api/analyze-template-modifications  ← Vercel Cron（毎日深夜）
 // POST /api/analyze-template-modifications ← 手動実行
 //
 // 「AIで最適化」後にスタッフが手修正したテキストのパターンを分析し、
@@ -110,7 +110,7 @@ ${diffExamples}
       messages: [{ role: "user", content: prompt }],
     });
 
-    const text = response.content[0]?.type === "text" ? response.content[0].text : "[]";
+    const text = response.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "[]";
     const match = text.match(/\[[\s\S]*\]/);
     if (!match) return [];
 

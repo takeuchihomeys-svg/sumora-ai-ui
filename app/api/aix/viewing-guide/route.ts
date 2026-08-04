@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
 
         if (statusRes.ok) {
           const statusData = await statusRes.json() as { content?: Array<{ type: string; text?: string }> };
-          const statusRaw = (statusData.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() ?? "").replace(/```json\n?|```/g, "").trim();
+          const statusRaw = (statusData.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "").replace(/```json\n?|```/g, "").trim();
           try {
             const parsed = JSON.parse(statusRaw) as { status?: string; vacate_date?: string };
             status = parsed.status === "vacating" ? "vacating" : "available";
@@ -154,7 +154,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ ok: true, propertyName: "", roomNumber: "" });
       }
       const ocrData = await ocrRes.json() as { content?: Array<{ type: string; text?: string }> };
-      const ocrRaw = (ocrData.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() ?? "").replace(/```json\n?|```/g, "").trim();
+      const ocrRaw = (ocrData.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "").replace(/```json\n?|```/g, "").trim();
       try {
         const parsed = JSON.parse(ocrRaw) as { property_name?: string; room_number?: string };
         return NextResponse.json({ ok: true, propertyName: parsed.property_name ?? "", roomNumber: parsed.room_number ?? "" });
@@ -233,7 +233,7 @@ ${emojiRule}
       }
 
       const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
-      const adaptedText = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() ?? baseText;
+      const adaptedText = data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? baseText;
       return NextResponse.json({ ok: true, text: adaptedText });
     }
 

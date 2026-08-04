@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+﻿import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -186,7 +186,7 @@ AIXボタン「${actionType}」で生成されたテキストをスタッフが�
         system: systemPrompt,
       });
 
-      const rawText = response.content[0]?.type === "text" ? response.content[0].text : "";
+      const rawText = response.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
       const jsonMatch = rawText.match(/\[\s*[\s\S]*?\]/);
       if (!jsonMatch) { results[actionType] = 0; continue; }
 

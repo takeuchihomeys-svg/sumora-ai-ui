@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
 
@@ -240,7 +240,7 @@ ${supplementaryNotes ? `\n【補足情報】\n${supplementaryNotes}` : ""}
       messages: [{ role: "user", content: aiPrompt }],
     });
 
-    const raw = aiRes.content[0].type === "text" ? aiRes.content[0].text.trim() : "{}";
+    const raw = aiRes.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "{}";
     const match = raw.match(/\{[\s\S]*\}/);
     const ai = match
       ? (JSON.parse(match[0]) as { discountAppliedTo: string; discountBreakdown: string; total: number; lineText: string })

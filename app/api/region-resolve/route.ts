@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
         }],
       });
 
-      const raw = res.content[0].type === "text" ? res.content[0].text : "";
+      const raw = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
       const match = raw.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\{[\s\S]*\}/);
       if (match) {
         const aiResult = JSON.parse(match[0]) as Record<string, string | null>;

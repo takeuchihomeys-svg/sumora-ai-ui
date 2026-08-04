@@ -143,7 +143,7 @@ JSON配列のみ返してください（説明・コードフェンス不要）:
     }],
   });
 
-  const text = res.content[0]?.type === "text" ? res.content[0].text.trim() : "";
+  const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
   const match = text.match(/\[[\s\S]*\]/);
   if (!match) return [];
   try {
@@ -164,7 +164,7 @@ async function extractAndUpsertTriggerKeywords(question: string, answer: string,
         content: `以下の質問と回答から、お客様がLINEで実際に打ちそうな短いキーワードを1〜3個抽出してください。\nキーワードは2〜5文字の短い語句で、顧客がLINEに打ち込む言葉そのものを選んでください。\nJSON配列のみ返してください: ["keyword1", "keyword2"]\n\n【AIの質問】${question}\n【竹内さんの回答】${answer}`,
       }],
     });
-    const text = res.content[0]?.type === "text" ? res.content[0].text.trim() : "";
+    const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
     const jsonMatch = text.match(/\[[\s\S]*\]/);
     if (!jsonMatch) return;
     let parsed: unknown;

@@ -71,7 +71,7 @@ ${hasOriginal ? `【現在のテンプレート】\n${original}\n\n【提案テ�
     messages: conversationMessages,
   });
 
-  const reply = res.content[0].type === "text" ? res.content[0].text.trim() : "";
+  const reply = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
   const revisedTemplate = extractRevised(reply);
 
   return NextResponse.json({ ok: true, reply, revisedTemplate });

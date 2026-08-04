@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
 import {
@@ -258,7 +258,7 @@ ${extraRules ? `${extraRules}\n\n━━━━━━━━━━━━━━━�
       messages: [{ role: "user", content: prompt }],
     });
 
-    let adapted = msg.content[0].type === "text" ? msg.content[0].text.trim() : templateText;
+    let adapted = msg.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? templateText;
     // 号室の先頭ゼロを除去（日本の号室は0始まりにならない: 0906→906）
     adapted = stripRoomLeadingZeros(adapted);
     return NextResponse.json({ ok: true, adapted });

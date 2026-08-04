@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import webpush from "web-push";
 import Anthropic from "@anthropic-ai/sdk";
@@ -107,7 +107,7 @@ async function parseConditionsWithAI(text: string): Promise<Record<string, unkno
 ${text}`,
       }],
     });
-    const raw = msg.content[0].type === "text" ? msg.content[0].text : "";
+    const raw = msg.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
     const match = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim().match(/\{[\s\S]*\}/);
     if (!match) return null;
     return JSON.parse(match[0]);

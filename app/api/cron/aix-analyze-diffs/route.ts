@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+﻿import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
         system: `あなたはLINE賃貸営業AIの品質監視エージェントです。AIXボタン「${actionType}」の本日の編集パターンを分析し、明確に繰り返している問題だけをルール化してください。1回だけの修正や文体の好みはルール化しない。`,
       });
 
-      const rawText = response.content[0]?.type === "text" ? response.content[0].text : "";
+      const rawText = response.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
       const jsonMatch = rawText.match(/\[\s*[\s\S]*?\]/);
       if (!jsonMatch) { results[actionType] = 0; continue; }
 

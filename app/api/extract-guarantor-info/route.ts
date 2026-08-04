@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 30;
 
@@ -97,7 +97,7 @@ ${GUARANTOR_COMPANY_LIST}
     }
 
     const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
-    const rawText = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() || "";
+    const rawText = data.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() || "";
 
     // JSONを抽出してパース
     let propertyName = "";

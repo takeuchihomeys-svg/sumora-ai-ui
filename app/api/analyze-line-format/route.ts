@@ -71,7 +71,7 @@ JSONのみ出力。説明不要。`,
     }],
   });
 
-  const raw = res.content[0].type === "text" ? res.content[0].text.trim() : "";
+  const raw = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
     return NextResponse.json({ ok: false, error: "parse failed" });

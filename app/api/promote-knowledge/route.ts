@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
 import fs from "fs/promises";
@@ -20,7 +20,7 @@ async function callHaiku(prompt: string): Promise<string> {
     max_tokens: 2000,
     messages: [{ role: "user", content: prompt }],
   });
-  return res.content[0].type === "text" ? res.content[0].text.trim() : "";
+  return res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
 }
 
 export async function POST(req: Request) {

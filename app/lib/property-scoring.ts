@@ -30,6 +30,7 @@ export async function parsePropertyFromImage(base64: string, mediaType: string):
     body: JSON.stringify({
       model: VISION_MODEL,
       max_tokens: 1000,
+      thinking: { type: "disabled" },
       messages: [{
         role: "user",
         content: [
@@ -76,7 +77,7 @@ export async function parsePropertyFromImage(base64: string, mediaType: string):
     return null;
   }
   const data = await res.json() as { content: Array<{ type: string; text: string }> };
-  const text = data.content[0]?.text ?? "";
+  const text = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text ?? "";
   console.log("[parsePropertyFromImage] raw response:", text);
   try {
     const match = text.match(/\{[\s\S]*\}/);

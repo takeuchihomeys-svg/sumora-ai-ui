@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse, after } from "next/server";
+﻿import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { safeSlice } from "@/app/lib/safe-slice";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
@@ -457,7 +457,7 @@ async function callClaude(system: string, user: string, action: string): Promise
     if (!res.ok) throw new Error(`Claude error: ${await res.text()}`);
     const data = await res.json();
     warnIfTruncated(data, system.length + user.length, action);
-    return data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() || "";
+    return data.content?.find((b: any) => b.type === "text")?.text?.trim() || "";
   };
   try {
     return await attempt(25_000);
@@ -488,7 +488,7 @@ async function callClaudeHaiku(system: string, user: string, action: string): Pr
   if (!res.ok) throw new Error(`Claude Haiku error: ${await res.text()}`);
   const data = await res.json();
   warnIfTruncated(data, system.length + user.length, action);
-  return data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() || "";
+  return data.content?.find((b: any) => b.type === "text")?.text?.trim() || "";
 }
 
 // temperature省略時はデフォルト（生成系）、OCR/JSON抽出時は0を渡すこと
@@ -518,7 +518,7 @@ async function callClaudeVision(system: string, content: unknown[], action: stri
   const data = await res.json();
   warnIfTruncated(data, system.length + JSON.stringify(content).length, action);
   // Sonnet5はthinkingブロックが content[0] に入るため find() で最初のtextブロックを取得する
-  const visionText = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() || "";
+  const visionText = data.content?.find((b: any) => b.type === "text")?.text?.trim() || "";
   if (!visionText) throw new Error(`callClaudeVision: empty response for action=${action} (stop_reason=${data.stop_reason})`);
   return visionText;
 }

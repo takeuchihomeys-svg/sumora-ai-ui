@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse, after } from "next/server";
+﻿import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { requireInternalAuth } from "@/app/lib/api-auth";
 import { upsertKnowledge, generateEmbedding } from "@/app/lib/knowledge-utils";
@@ -75,7 +75,7 @@ ${history}
       }],
     });
 
-    const pattern = resp.content[0].type === "text" ? resp.content[0].text.trim() : null;
+    const pattern = resp.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? null;
     // 出口: 抽出不能（null / 空文字 / ★決まるパターンで始まらない出力）は knowledge保存・ai_summary反映をスキップ
     if (!pattern || pattern.toLowerCase() === "null" || !pattern.startsWith("★決まるパターン")) return;
 

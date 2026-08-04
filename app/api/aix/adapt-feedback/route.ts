@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { safeInsertAiQuestion } from "@/app/lib/ai-feedback-guard";
 import Anthropic from "@anthropic-ai/sdk";
@@ -35,7 +35,7 @@ ${adaptedText}
 ルールを1文（50文字以内）で出力してください。説明不要。`,
         }],
       });
-      const rule = res.content[0].type === "text" ? res.content[0].text.trim() : "";
+      const rule = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
       if (rule) {
         // 既存の類似ルールをチェック（先頭20文字ilike）
         const keyword = rule.slice(0, 20);
@@ -92,7 +92,7 @@ ${adaptedText}`;
         max_tokens: 200,
         messages: [{ role: "user", content: prompt }],
       });
-      const rule = res.content[0].type === "text" ? res.content[0].text.trim() : "";
+      const rule = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
       if (rule) {
         await supabase.from("adaptation_improvement_rules").insert({
           category: "greeting_viewing",

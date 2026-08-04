@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
 import { requireInternalAuth } from "@/app/lib/api-auth";
@@ -95,7 +95,7 @@ async function generateQuote(hotCount: number, totalCount: number): Promise<stri
 ・日本語で`,
       }],
     });
-    const text = res.content[0].type === "text" ? res.content[0].text : "";
+    const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
     return text;
   } catch {
     return "";

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import { supabase } from "@/app/lib/supabase";
 import Anthropic from "@anthropic-ai/sdk";
@@ -124,8 +124,7 @@ ${msgContext}
     messages: [{ role: "user", content: prompt }],
   });
 
-  const firstBlock = res.content[0];
-  const rawText = firstBlock?.type === "text" ? firstBlock.text : "{}";
+  const rawText = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "{}";
 
   let parsed: { was_accurate?: boolean; gap_summary?: string; reason?: string; learning_rule?: string } = {};
   try {

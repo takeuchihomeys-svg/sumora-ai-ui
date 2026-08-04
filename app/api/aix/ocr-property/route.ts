@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 
 export const maxDuration = 30;
@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
       ],
     });
 
-    const text = response.content[0]?.type === "text" ? response.content[0].text : "";
+    const text = response.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
     try {
       const json = JSON.parse(
         text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim()

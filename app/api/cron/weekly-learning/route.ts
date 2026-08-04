@@ -184,7 +184,7 @@ ${recentAnswersText}
       messages: [{ role: "user", content: prompt }],
     });
 
-    const text = res.content[0].type === "text" ? res.content[0].text.trim() : "";
+    const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       console.warn(`[weekly-learning] ${state}: Claude応答からJSONを抽出できず`);
@@ -401,7 +401,7 @@ JSON形式のみ返答：
       messages: [{ role: "user", content: prompt }],
     });
 
-    const text = res.content[0].type === "text" ? res.content[0].text.trim() : "";
+    const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return empty;
     const parsed = JSON.parse(jsonMatch[0]) as ContradictionResult;
@@ -461,7 +461,7 @@ JSON形式のみ返答：
       system: "ルールベース品質チェッカーです。指定されたJSON形式のみ返してください。",
       messages: [{ role: "user", content: prompt }],
     });
-    const text = res.content[0].type === "text" ? res.content[0].text.trim() : "";
+    const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return null;
     const parsed = JSON.parse(jsonMatch[0]) as { pair?: { id_a?: string; id_b?: string; reason?: string } | null };
@@ -669,7 +669,7 @@ JSON形式のみ返答（keepは最大3件まで）：
       messages: [{ role: "user", content: prompt }],
     });
 
-    const text = res.content[0].type === "text" ? res.content[0].text.trim() : "";
+    const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return empty;
     const parsed = JSON.parse(jsonMatch[0]) as AiClassifyResult;
@@ -924,7 +924,7 @@ JSON形式のみ返答：
         messages: [{ role: "user", content: prompt }],
       });
 
-      const text = res.content[0].type === "text" ? res.content[0].text.trim() : "";
+      const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const judged = JSON.parse(jsonMatch[0]) as DedupJudgeResult;

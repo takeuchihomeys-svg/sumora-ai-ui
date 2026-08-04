@@ -144,7 +144,7 @@ JSON配列のみ返してください:
         });
 
         const rawText =
-          response.content[0]?.type === "text" ? response.content[0].text : "";
+          response.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text ?? "";
 
         // Step 4: Parse Opus response
         const jsonMatch = rawText.match(/\[[\s\S]*\]/);

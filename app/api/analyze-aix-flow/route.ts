@@ -291,7 +291,7 @@ AIXを選ぶ → 生成を確認 → 送信`,
       }],
     });
 
-    const generated = resp.content[0].type === "text" ? resp.content[0].text.trim() : null;
+    const generated = resp.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? null;
     if (!generated) return NextResponse.json({ ok: false, error: "generation failed" });
 
     // 4. ai_promptsにupsert
