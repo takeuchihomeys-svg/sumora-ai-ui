@@ -48,7 +48,7 @@ type Conversation = {
   isFlagged?: boolean;
   hasViewed?: boolean;
   aiDraft?: string | null;
-  suggestedAixMeta?: { action: string; note: string } | null;
+  suggestedAixMeta?: { action: string; note: string; source?: string } | null;
   messages: Message[];
 };
 
@@ -412,7 +412,7 @@ export default function Home() {
   const [displaySource, setDisplaySource] = useState<"ai_draft" | "optimized" | null>(null);
   const draftIsAi = displaySource !== null; // AI生成の下書きがテキストエリアに入っているか（displaySourceから導出）
   const [replyQuality, setReplyQuality] = useState<{ auto_ok: boolean; is_applying_docs: boolean } | null>(null); // B-2: AI文案の品質判定バッジ
-  const [suggestedAix, setSuggestedAix] = useState<{ action: string; note: string } | null>(null); // AIドラフト生成時のスタッフ向けガイドメモ
+  const [suggestedAix, setSuggestedAix] = useState<{ action: string; note: string; source?: string } | null>(null); // AIドラフト生成時のスタッフ向けガイドメモ
   const [draftNoEmoji, setDraftNoEmoji] = useState(false); // 絵文字なしモード
   const [draftOrigText, setDraftOrigText] = useState(""); // 絵文字なし切替前の原文（復元用）
   const [extraDraftMessages, setExtraDraftMessages] = useState<Array<{text: string; delaySec: number}>>([]);
@@ -1130,7 +1130,7 @@ export default function Home() {
                 if (selectedIdRef.current !== convIdForGen) return;
                 const { data: convRow } = await supabase.from("conversations").select("ai_draft").eq("id", convIdForGen).single();
                 if (convRow?.ai_draft) {
-                  supabase.from("conversations").update({ ai_draft: null }).eq("id", convIdForGen).then(() => {});
+                  supabase.from("conversations").update({ ai_draft: null, suggested_aix_meta: null }).eq("id", convIdForGen).then(() => {});
                   setConversations(prev => prev.map(c => c.id === convIdForGen ? { ...c, aiDraft: stripInternalTagsOrNull(convRow.ai_draft) } : c));
                 } else {
                   setDraftRetryConvId(convIdForGen);
@@ -2065,7 +2065,7 @@ export default function Home() {
               .single();
             if (convRow?.ai_draft) {
               // Realtime が漏れただけで実は生成済み → セットしてDBもクリア
-              supabase.from("conversations").update({ ai_draft: null }).eq("id", convIdForGen).then(() => {});
+              supabase.from("conversations").update({ ai_draft: null, suggested_aix_meta: null }).eq("id", convIdForGen).then(() => {});
               setConversations((prev) =>
                 prev.map((c) => c.id === convIdForGen ? { ...c, aiDraft: stripInternalTagsOrNull(convRow.ai_draft), suggestedAixMeta: (convRow.suggested_aix_meta as { action: string; note: string } | null) ?? null } : c)
               );
@@ -11432,6 +11432,7 @@ export default function Home() {
                                   action_type: item.actionType,
                                   predicted_action: suggestedAixAction,
                                   source: item.actionType === suggestedAixAction ? "suggestion_accepted" : "suggestion_bypassed",
+                                  suggestion_source: suggestedAix?.source ?? null,
                                   conversation_id: selectedConversation.id,
                                 }),
                               }).catch(() => {});

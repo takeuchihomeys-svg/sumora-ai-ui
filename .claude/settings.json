@@ -6,7 +6,9 @@
       "Bash(curl -s \"https://sumora-ai-ui-git-main-takeuchihomeys-svgs-projects.vercel.app/api/line-ai-health\")",
       "Bash(python -m json.tool)",
       "PowerShell(git -C \"c:\\\\Users\\\\�|�� �I�n\\\\sumora-ai-ui\" log --oneline -3)",
-      "PowerShell(git -C \"c:\\\\Users\\\\�|�� �I�n\\\\sumora-ai-ui\" diff app/components/AixModal.tsx)"
+      "PowerShell(git -C \"c:\\\\Users\\\\�|�� �I�n\\\\sumora-ai-ui\" diff app/components/AixModal.tsx)",
+      "PowerShell(git -C \"c:\\\\Users\\\\�|�� �I�n\\\\sumora-ai-ui\" add -A)",
+      "PowerShell(git -C \"c:\\\\Users\\\\�|�� �I�n\\\\sumora-ai-ui\" commit -m \"fix: Fable5�o�O�C�� High�~2 Medium�~4 Low�~4\")"
     ]
   }
 }

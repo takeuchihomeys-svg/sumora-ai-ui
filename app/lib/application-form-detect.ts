@@ -23,7 +23,7 @@ const CORPORATE_IMMEDIATE = /法人御契約|法人契約|法人名義/;
 // B: 2つ以上ヒットで確定（フォームの項目ラベル）
 const CORPORATE_FIELDS = [
   "法人名", "会社名", "代表者名", "代表者生年月日", "登記住所",
-  "本社所在地", "所在地", "設立", "資本金", "事業内容",
+  "本社所在地", "設立", "資本金", "事業内容",
   "年商", "従業員数", "入居者名", "法人番号",
 ];
 const CORPORATE_THRESHOLD = 2;
@@ -64,7 +64,7 @@ export function isApplicationFormMessage(text: string): ApplicationFormDetection
   if (INDIVIDUAL_IMMEDIATE.test(t)) {
     return { detected: true, formType: "individual", matchedKeywords: [t.match(INDIVIDUAL_IMMEDIATE)![0]] };
   }
-  const indMatched = INDIVIDUAL_FIELDS.filter((kw) => t.includes(kw));
+  const indMatched = INDIVIDUAL_FIELDS.filter((kw) => t.includes(kw) && !corpMatched.some((ck) => ck.includes(kw)));
   if (indMatched.length >= INDIVIDUAL_THRESHOLD) {
     return { detected: true, formType: "individual", matchedKeywords: indMatched };
   }

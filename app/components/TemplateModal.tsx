@@ -1111,6 +1111,8 @@ export default function TemplateModal({
       const data = await res.json() as { ok: boolean; templates: Template[] };
       if (data.ok) {
         setTemplates(data.templates);
+        setAiCandidates(null);
+        setAiNoMatch(null);
         onCacheUpdate?.(data.templates); // 親のキャッシュを更新（次回オープン時に即時表示）
         const cats = Array.from(new Set(data.templates.map((t) => t.category)));
         if (cats.length > 0 && !cats.includes(category)) setCategory(cats[0]);
@@ -1129,6 +1131,8 @@ export default function TemplateModal({
   useEffect(() => {
     if (templatesProp) {
       setTemplates(templatesProp);
+      setAiCandidates(null);
+      setAiNoMatch(null);
       setLoading(false);
       setTemplateLoadError(null);
       const cats = Array.from(new Set(templatesProp.map((t) => t.category)));
@@ -2353,9 +2357,13 @@ export default function TemplateModal({
           setAdaptedTexts((prev) => ({ ...prev, [tmpl.id]: data.adapted! }));
           setDisplaySource((prev) => ({ ...prev, [tmpl.id]: "adapted" }));
         } else {
+          setAdaptedTexts((prev) => { const n = { ...prev }; delete n[tmpl.id]; return n; });
+          setDisplaySource((prev) => { const n = { ...prev }; delete n[tmpl.id]; return n; });
           setAdaptErrors((prev) => ({ ...prev, [tmpl.id]: data.error || "AI最適化に失敗しました" }));
         }
       } catch {
+        setAdaptedTexts((prev) => { const n = { ...prev }; delete n[tmpl.id]; return n; });
+        setDisplaySource((prev) => { const n = { ...prev }; delete n[tmpl.id]; return n; });
         setAdaptErrors((prev) => ({ ...prev, [tmpl.id]: "通信エラーが発生しました" }));
       }
     } finally {

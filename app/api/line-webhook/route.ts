@@ -959,11 +959,13 @@ async function autoPromoteApplyingOnFormImage(
     const status = (conv?.status as string) ?? "";
     if (!PRE_APPLY_STATUSES.includes(status)) return;
 
+    const cutoff = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
     const { data: staffMsgs } = await db
       .from("messages")
       .select("text")
       .eq("conversation_id", convId)
       .eq("sender", "staff")
+      .gt("created_at", cutoff)
       .order("created_at", { ascending: false })
       .limit(1);
     const lastStaffText = (staffMsgs?.[0]?.text as string) ?? "";

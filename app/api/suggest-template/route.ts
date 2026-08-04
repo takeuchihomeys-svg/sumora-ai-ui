@@ -285,9 +285,13 @@ export async function POST(req: NextRequest) {
     }
 
     // 捏造ID検証: 送信したテンプレ一覧に存在するIDのみ採用（重複も除去）
+    // AIが宣言したrankの昇順にソートしてから処理（rank順を保証）
+    const sortedParsedCandidates = (parsed.candidates ?? []).slice().sort(
+      (a, b) => (a.rank ?? 99) - (b.rank ?? 99),
+    );
     const seen = new Set<string>();
     const candidates: SuggestCandidate[] = [];
-    for (const c of parsed.candidates ?? []) {
+    for (const c of sortedParsedCandidates) {
       const id = String(c.templateId ?? "");
       const tmpl = templateMap.get(id);
       if (!tmpl || seen.has(id)) {
@@ -305,7 +309,7 @@ export async function POST(req: NextRequest) {
       if (candidates.length >= 3) break;
     }
 
-    const noMatch = candidates.length === 0 && (parsed.no_match === true || (parsed.candidates ?? []).length === 0);
+    const noMatch = candidates.length === 0;
 
     console.log(
       `[suggest-template] conversationId=${body.conversationId || "-"} state=${currentState} templates=${truncated.length} → candidates=${candidates.length} noMatch=${noMatch}`,

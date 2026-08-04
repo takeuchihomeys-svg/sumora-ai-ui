@@ -21,6 +21,8 @@ const SOURCE_WEIGHTS: Record<string, number> = {
   suggestion_accepted: 1.2,
   analysis_step1: 1.2,
   prediction_match: 1.5,
+  prediction_accepted: 1.2,
+  split_draft_used: 1.1,
   manual: 1.0,
   suggestion_dismissed: 0.2,
   prediction_mismatch: 0.5,
@@ -67,14 +69,12 @@ const MIN_NGRAM_LENGTH = 3;
 function extractNgrams(text: string): string[] {
   // 記号・スペースを除去
   const cleaned = text.replace(/[。、,.!?！？\s　\[\]【】「」『』（）()0-9０-９]/g, "");
-  let result: string[] = [];
-  for (let n = 2; n <= 5; n++) {
+  const result: string[] = [];
+  for (let n = MIN_NGRAM_LENGTH; n <= 5; n++) {
     for (let i = 0; i <= cleaned.length - n; i++) {
       result.push(cleaned.slice(i, i + n));
     }
   }
-  // 2文字以下のn-gramは除外
-  result = result.filter((ng) => ng.length >= MIN_NGRAM_LENGTH);
   return result;
 }
 
@@ -331,16 +331,17 @@ export async function POST(req?: Request) {
     // 案3: 鮮度重み付け — チェーン遷移も経過日数で指数減衰（60日で半減）
     const ageDays = (Date.now() - new Date(log.created_at as string).getTime()) / (1000 * 60 * 60 * 24);
     const decayFactor = Math.pow(0.5, ageDays / 60);
+    const weight = sourceWeight(log.source as string | null) * decayFactor;
     chainCount[prev] ??= {};
-    chainCount[prev][curr] = (chainCount[prev][curr] ?? 0) + decayFactor;
-    prevTotal[prev] = (prevTotal[prev] ?? 0) + decayFactor;
+    chainCount[prev][curr] = (chainCount[prev][curr] ?? 0) + weight;
+    prevTotal[prev] = (prevTotal[prev] ?? 0) + weight;
 
     const rawStatus = ((log.conversation_status as string | null) ?? "").trim();
     if (rawStatus) {
       const phaseKey = `${prev}|${normalizeStatus(rawStatus)}`;
       phaseChainCount[phaseKey] ??= {};
-      phaseChainCount[phaseKey][curr] = (phaseChainCount[phaseKey][curr] ?? 0) + decayFactor;
-      phasePrevTotal[phaseKey] = (phasePrevTotal[phaseKey] ?? 0) + decayFactor;
+      phaseChainCount[phaseKey][curr] = (phaseChainCount[phaseKey][curr] ?? 0) + weight;
+      phasePrevTotal[phaseKey] = (phasePrevTotal[phaseKey] ?? 0) + weight;
     }
   }
 
