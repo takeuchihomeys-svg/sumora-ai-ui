@@ -78,8 +78,8 @@ export async function POST(request: NextRequest) {
         });
 
         if (statusRes.ok) {
-          const statusData = await statusRes.json() as { content?: Array<{ text?: string }> };
-          const statusRaw = (statusData.content?.[0]?.text?.trim() ?? "").replace(/```json\n?|```/g, "").trim();
+          const statusData = await statusRes.json() as { content?: Array<{ type: string; text?: string }> };
+          const statusRaw = (statusData.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() ?? "").replace(/```json\n?|```/g, "").trim();
           try {
             const parsed = JSON.parse(statusRaw) as { status?: string; vacate_date?: string };
             status = parsed.status === "vacating" ? "vacating" : "available";
@@ -153,8 +153,8 @@ export async function POST(request: NextRequest) {
       if (!ocrRes.ok) {
         return NextResponse.json({ ok: true, propertyName: "", roomNumber: "" });
       }
-      const ocrData = await ocrRes.json() as { content?: Array<{ text?: string }> };
-      const ocrRaw = (ocrData.content?.[0]?.text?.trim() ?? "").replace(/```json\n?|```/g, "").trim();
+      const ocrData = await ocrRes.json() as { content?: Array<{ type: string; text?: string }> };
+      const ocrRaw = (ocrData.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() ?? "").replace(/```json\n?|```/g, "").trim();
       try {
         const parsed = JSON.parse(ocrRaw) as { property_name?: string; room_number?: string };
         return NextResponse.json({ ok: true, propertyName: parsed.property_name ?? "", roomNumber: parsed.room_number ?? "" });
@@ -222,6 +222,7 @@ ${emojiRule}
         body: JSON.stringify({
           model: SONNET_MODEL,
           max_tokens: 512,
+          thinking: { type: "disabled" },
           system: systemPrompt,
           messages: [{ role: "user", content: userPrompt }],
         }),
@@ -231,8 +232,8 @@ ${emojiRule}
         return NextResponse.json({ ok: true, text: baseText });
       }
 
-      const data = await res.json() as { content?: Array<{ text?: string }> };
-      const adaptedText = data.content?.[0]?.text?.trim() ?? baseText;
+      const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
+      const adaptedText = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() ?? baseText;
       return NextResponse.json({ ok: true, text: adaptedText });
     }
 

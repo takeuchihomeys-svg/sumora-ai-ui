@@ -132,8 +132,8 @@ ${chatLog}
 
   if (!res.ok) return NextResponse.json({ suggested: null });
 
-  const data = await res.json() as { content?: Array<{ text: string }> };
-  const raw = (data.content?.[0]?.text ?? "").replace(/```json?\s*/gi, "").replace(/```/g, "").trim();
+  const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
+  const raw = (data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text ?? "").replace(/```json?\s*/gi, "").replace(/```/g, "").trim();
 
   try {
     const parsed = JSON.parse(raw) as { should_upgrade: boolean; reason: string };

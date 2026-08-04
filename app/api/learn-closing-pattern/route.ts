@@ -83,6 +83,7 @@ ${history}
       body: JSON.stringify({
         model: "claude-opus-5",
         max_tokens: 512,
+        thinking: { type: "disabled" },
         messages: [{ role: "user", content: prompt }],
       }),
       signal: AbortSignal.timeout(30_000),
@@ -90,8 +91,8 @@ ${history}
 
     if (!res.ok) return NextResponse.json({ ok: false, error: "AI error" }, { status: 500 });
 
-    const data = await res.json() as { content?: Array<{ text: string }> };
-    const raw = data.content?.[0]?.text ?? "";
+    const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
+    const raw = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text ?? "";
     const match = raw.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\{[\s\S]*\}/);
     if (!match) return NextResponse.json({ ok: false, error: "parse error" });
 

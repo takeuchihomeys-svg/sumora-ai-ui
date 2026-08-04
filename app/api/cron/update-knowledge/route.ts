@@ -25,8 +25,8 @@ async function callHaiku(prompt: string): Promise<string> {
       signal: AbortSignal.timeout(30_000),
     });
     if (!res.ok) return "";
-    const data = (await res.json()) as { content?: Array<{ text: string }> };
-    return data.content?.[0]?.text?.trim() || "";
+    const data = (await res.json()) as { content?: Array<{ type: string; text?: string }> };
+    return data.content?.find((b) => b.type === "text")?.text?.trim() || "";
   } catch {
     return "";
   }

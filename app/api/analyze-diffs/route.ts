@@ -323,6 +323,7 @@ async function autoJudgeKnowledge(
       body: JSON.stringify({
         model: "claude-sonnet-5",
         max_tokens: 300,
+        thinking: { type: "disabled" },
         messages: [{
           role: "user",
           content: `あなたは賃貸仲介営業AIの品質審査員です。以下のナレッジを判定してください。
@@ -344,8 +345,8 @@ JSONのみで回答: {"verdict":"confirm"|"question"|"contradiction","reason":"�
       }),
     });
     if (!res.ok) return { verdict: "skip", reason: "" };
-    const data = await res.json() as { content?: Array<{ text: string }> };
-    const text = data.content?.[0]?.text ?? "";
+    const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
+    const text = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text ?? "";
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return { verdict: "skip", reason: "" };
     const parsed = JSON.parse(match[0]) as { verdict?: string; reason?: string };

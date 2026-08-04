@@ -96,8 +96,8 @@ ${GUARANTOR_COMPANY_LIST}
       return NextResponse.json({ ok: false, error: "Claude API エラー" }, { status: 500 });
     }
 
-    const data = await res.json() as { content?: Array<{ text?: string }> };
-    const rawText = data.content?.[0]?.text?.trim() || "";
+    const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
+    const rawText = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() || "";
 
     // JSONを抽出してパース
     let propertyName = "";

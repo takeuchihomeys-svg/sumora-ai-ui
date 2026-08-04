@@ -153,12 +153,13 @@ async function callClaude(model: string, prompt: string, maxTokens = 1024): Prom
       body: JSON.stringify({
         model,
         max_tokens: maxTokens,
+        ...(model.includes("haiku") ? {} : { thinking: { type: "disabled" } }),
         messages: [{ role: "user", content: prompt }],
       }),
     });
     if (!res.ok) return "";
-    const data = await res.json() as { content?: Array<{ text: string }> };
-    return data.content?.[0]?.text?.trim() || "";
+    const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
+    return data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() || "";
   } catch {
     return "";
   }

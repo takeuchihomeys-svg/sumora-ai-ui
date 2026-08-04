@@ -246,6 +246,7 @@ ${currentDraft.trim()}
       body: JSON.stringify({
         model: "claude-sonnet-5",
         max_tokens: 2048,
+        thinking: { type: "disabled" },
         system,
         messages: [{ role: "user", content: userPrompt }],
       }),
@@ -258,8 +259,8 @@ ${currentDraft.trim()}
       return NextResponse.json({ ok: false, error: "AI処理に失敗しました" }, { status: 500 });
     }
 
-    const data = await res.json() as { content?: Array<{ text: string }> };
-    const enhanced = data.content?.[0]?.text?.trim() || "";
+    const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
+    const enhanced = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() || "";
 
     return NextResponse.json({ ok: true, enhanced });
   } catch (err) {

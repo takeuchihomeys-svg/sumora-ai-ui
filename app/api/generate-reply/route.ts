@@ -1613,6 +1613,7 @@ export async function POST(req: NextRequest) {
         body: JSON.stringify({
           model: "claude-sonnet-5",
           max_tokens: 1500,
+          thinking: { type: "disabled" },
           messages: [{
             role: "user",
             content: [
@@ -1625,9 +1626,9 @@ export async function POST(req: NextRequest) {
         }),
       });
       if (visionRes.ok) {
-        const visionData = await visionRes.json() as { content?: Array<{ text: string }>; stop_reason?: string };
+        const visionData = await visionRes.json() as { content?: Array<{ type: string; text?: string }>; stop_reason?: string };
         warnIfTruncated(visionData.stop_reason, screenshotBase64.length);
-        const extracted = visionData.content?.[0]?.text?.trim() ?? "";
+        const extracted = visionData.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() ?? "";
         if (extracted && !extracted.includes("読み取れませんでした")) {
           replyHint = [
             `【📱 スクショから読み取ったトーク内容（最優先の文脈として参照すること）】\n${extracted}`,

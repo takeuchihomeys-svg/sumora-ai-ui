@@ -448,6 +448,7 @@ async function callClaude(system: string, user: string, action: string): Promise
       body: JSON.stringify({
         model: MODEL,
         max_tokens: maxTokensForAction(action),
+        thinking: { type: "disabled" },
         system,
         messages: [{ role: "user", content: user }],
       }),
@@ -456,7 +457,7 @@ async function callClaude(system: string, user: string, action: string): Promise
     if (!res.ok) throw new Error(`Claude error: ${await res.text()}`);
     const data = await res.json();
     warnIfTruncated(data, system.length + user.length, action);
-    return data.content?.[0]?.text?.trim() || "";
+    return data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() || "";
   };
   try {
     return await attempt(25_000);
@@ -487,7 +488,7 @@ async function callClaudeHaiku(system: string, user: string, action: string): Pr
   if (!res.ok) throw new Error(`Claude Haiku error: ${await res.text()}`);
   const data = await res.json();
   warnIfTruncated(data, system.length + user.length, action);
-  return data.content?.[0]?.text?.trim() || "";
+  return data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() || "";
 }
 
 // temperature省略時はデフォルト（生成系）、OCR/JSON抽出時は0を渡すこと

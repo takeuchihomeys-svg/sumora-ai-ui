@@ -32,6 +32,7 @@ async function extractCorrectionRule(
       body: JSON.stringify({
         model: "claude-sonnet-5",
         max_tokens: 300,
+        thinking: { type: "disabled" },
         temperature: 0,
         system: `賃貸仲介LINEのAI文案とスタッフが実際に送った文を比較し、次回以降のAIが学べる改善ルールを抽出してください。
 
@@ -65,8 +66,8 @@ ${sentReply.slice(0, 500)}`,
     });
 
     if (!res.ok) return null;
-    const data = await res.json() as { content?: Array<{ text: string }> };
-    const text = data.content?.[0]?.text?.trim() || "";
+    const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
+    const text = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() || "";
     if (!text) return null;
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return null;

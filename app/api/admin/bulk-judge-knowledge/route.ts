@@ -85,6 +85,7 @@ export async function GET(req: NextRequest) {
         body: JSON.stringify({
           model: "claude-sonnet-5",
           max_tokens: 500,
+          thinking: { type: "disabled" },
           messages: [{
             role: "user",
             content: `賃貸仲介AIのナレッジ品質審査員として判定してください。
@@ -98,8 +99,8 @@ JSONのみ回答: {"verdict":"confirm"|"question"|"contradiction","reason":"何�
       });
 
       if (!res.ok) return { id: item.id as string, verdict: "skip" as const, reason: "api error" };
-      const data = await res.json() as { content?: Array<{ text: string }> };
-      const text = data.content?.[0]?.text ?? "";
+      const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
+      const text = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text ?? "";
       const match = text.match(/\{[\s\S]*\}/);
       if (!match) return { id: item.id as string, verdict: "skip" as const, reason: "parse error" };
       const parsed = JSON.parse(match[0]) as { verdict?: string; reason?: string; prediction?: string };

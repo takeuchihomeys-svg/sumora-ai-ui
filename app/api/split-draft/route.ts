@@ -40,8 +40,8 @@ ${text}
 
     if (!res.ok) return NextResponse.json({ error: "api error" }, { status: 500 });
 
-    const data = await res.json() as { content?: Array<{ text?: string }> };
-    const raw = (data.content?.[0]?.text ?? "").trim().replace(/```json\n?|```/g, "").trim();
+    const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
+    const raw = (data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text ?? "").trim().replace(/```json\n?|```/g, "").trim();
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return NextResponse.json({ error: "parse failed" }, { status: 500 });
 

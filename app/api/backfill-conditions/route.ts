@@ -62,8 +62,8 @@ ${text}`,
   });
 
   if (!res.ok) return null;
-  const data = await res.json() as { content?: Array<{ text: string }> };
-  const raw = (data.content?.[0]?.text ?? "").replace(/```json?\s*/gi, "").replace(/```/g, "").trim();
+  const data = await res.json() as { content?: Array<{ type: string; text?: string }> };
+  const raw = (data.content?.find((b) => b.type === "text")?.text ?? "").replace(/```json?\s*/gi, "").replace(/```/g, "").trim();
   const match = raw.match(/\{[\s\S]*\}/);
   if (!match) return null;
 

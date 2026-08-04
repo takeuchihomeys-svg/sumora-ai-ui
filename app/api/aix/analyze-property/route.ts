@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
     }
 
     const data = await res.json();
-    const raw = (data.content?.[0]?.text?.trim() || "").replace(/```json\n?|```/g, "").trim();
+    const raw = (data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() || "").replace(/```json\n?|```/g, "").trim();
 
     let properties: Array<{ name: string; status: string; move_out: string }> = [];
     try {
