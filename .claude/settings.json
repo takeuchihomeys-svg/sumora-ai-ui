@@ -24,7 +24,10 @@
       "Bash(git -C \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\" diff --stat)",
       "Bash(git -C \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\" add -A)",
       "Bash(git -C \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\" commit -m \"feat: AIXのモデルをclaude-sonnet-4-6からclaude-sonnet-5に更新\")",
-      "Bash(git -C \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\" push)"
+      "Bash(git -C \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\" push)",
+      "Bash(python -c ' *)",
+      "Bash(git show *)",
+      "PowerShell(cd \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\"; npx tsc --noEmit 2>&1; Write-Host \"Exit code: $LASTEXITCODE\")"
     ]
   }
 }
