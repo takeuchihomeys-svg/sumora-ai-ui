@@ -4,12 +4,17 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 300;
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
+let _supabase: ReturnType<typeof createClient> | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getSupabase(): any {
+  if (!_supabase) {
+    _supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+  }
+  return _supabase;
+}
 
 const AIX_ACTIONS = [
   "property_recommendation","property_send","viewing_invite","meeting_place",
@@ -34,7 +39,8 @@ const ACTION_LABELS: Record<string, string> = {
 // Special actions with no current boundary rule — trigger at lower threshold
 const UNDEFINED_BOUNDARY_ACTIONS = new Set(['acknowledge_check', 'followup_revive', 'greeting_viewing']);
 
-async function detectBoundaryAmbiguity(): Promise<number> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function detectBoundaryAmbiguity(supabase: any): Promise<number> {
   const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
   let questionCount = 0;
   const MAX_QUESTIONS = 3;
@@ -101,7 +107,7 @@ ${isUndefined ? "※このアクションは現在【AIXとの役割分担】ル
 
 [aix_boundary_action:${actionType}]`;
 
-      await supabase.from("ai_feedback_items").insert({
+      await getSupabase().from("ai_feedback_items").insert({
         question: questionText,
         speculation: `AIXと通常返信AIの担当範囲が曖昧で、スタッフがAIX提案をスルーしているパターンを検出`,
         category: "aix_boundary",
@@ -125,6 +131,13 @@ export async function POST(req: NextRequest) {
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  // ビルド時の環境変数未定義を避けるため、クライアントはここで初期化する
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -196,7 +209,7 @@ AIXボタン「${actionType}」で生成されたテキストをスタッフが�
       let saved = 0;
       for (let i = 0; i < rules.length; i++) {
         const ruleKey = `LEARN-AIX-${actionType}-${weekKey}-${i + 1}`;
-        await supabase.from("ai_prompt_rules").upsert({
+        await getSupabase().from("ai_prompt_rules").upsert({
           rule_key: ruleKey,
           rule_text: rules[i].rule,
           action_type: actionType,
@@ -214,7 +227,7 @@ AIXボタン「${actionType}」で生成されたテキストをスタッフが�
     }
   }
 
-  const boundaryQuestions = await detectBoundaryAmbiguity();
+  const boundaryQuestions = await detectBoundaryAmbiguity(supabase);
 
   return NextResponse.json({ ok: true, weekKey, results, boundaryQuestions });
 }
