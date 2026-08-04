@@ -995,7 +995,8 @@ ${SMORA_COMMON_RULES}`;
 {
   "property_name": "物件名（マンション名のみ、号室は含めない）",
   "room_number": "号室番号のみ（例: 502）",
-  "rent": 月額家賃（整数）,
+  "rent": 月額家賃（整数。共益費・管理費は含めない）,
+  "management_fee": 共益費・管理費（月額・整数。なければ0）,
   "total": 初期費用合計（割引後・整数）,
   "discount": 割引額（なければ0）,
   "commission": 仲介手数料税抜（なければ0）,
@@ -1020,16 +1021,18 @@ ${SMORA_COMMON_RULES}`;
       const propertyName = String(est.property_name || "");
       const roomNumber   = String(est.room_number   || "");
       // 数値として正常に読み取れた値のみ使用（NaN・0は未取得扱い）
-      const totalRaw    = Number(est.total    || 0);
-      const discountRaw = Number(est.discount || 0);
-      const rentRaw     = Number(est.rent     || 0);
-      const commRaw     = Number(est.commission || 0);
-      const commTaxRaw  = Number(est.commission_tax || 0);
-      const total    = isNaN(totalRaw)    || totalRaw    < 0 ? 0 : totalRaw;
-      const discount = isNaN(discountRaw) || discountRaw < 0 ? 0 : discountRaw;
-      const rent     = isNaN(rentRaw)     || rentRaw     < 0 ? 0 : rentRaw;
-      const commission   = isNaN(commRaw)    ? 0 : commRaw;
-      const commTax      = isNaN(commTaxRaw) ? 0 : commTaxRaw;
+      const totalRaw     = Number(est.total    || 0);
+      const discountRaw  = Number(est.discount || 0);
+      const rentRaw      = Number(est.rent     || 0);
+      const mgmtFeeRaw   = Number(est.management_fee || 0);
+      const commRaw      = Number(est.commission || 0);
+      const commTaxRaw   = Number(est.commission_tax || 0);
+      const total         = isNaN(totalRaw)    || totalRaw    < 0 ? 0 : totalRaw;
+      const discount      = isNaN(discountRaw) || discountRaw < 0 ? 0 : discountRaw;
+      const rent          = isNaN(rentRaw)     || rentRaw     < 0 ? 0 : rentRaw;
+      const managementFee = isNaN(mgmtFeeRaw)  || mgmtFeeRaw  < 0 ? 0 : mgmtFeeRaw;
+      const commission    = isNaN(commRaw)    ? 0 : commRaw;
+      const commTax       = isNaN(commTaxRaw) ? 0 : commTaxRaw;
 
       const standardCommission = Math.round(rent * 1.1);
       const actualCommission   = commission + commTax;
@@ -1041,6 +1044,13 @@ ${SMORA_COMMON_RULES}`;
       if (propertyName || roomNumber) {
         const roomSuffix = roomNumber ? ` ${roomNumber}号室` : "";
         parts.push(`【${propertyName}${roomSuffix}】`);
+        // 月額費用（家賃・共益費）をOCRで読み取れた場合は明示して反映
+        if (rent > 0 || managementFee > 0) {
+          const rentPart = rent > 0 ? `家賃${rent.toLocaleString()}円` : "";
+          const mgmtPart = managementFee > 0 ? `共益費${managementFee.toLocaleString()}円` : "";
+          const monthlyParts = [rentPart, mgmtPart].filter(Boolean);
+          parts.push(`月額：${monthlyParts.join("・")}`);
+        }
         parts.push("");
       }
 
