@@ -2812,6 +2812,16 @@ export default function AixModal({
           ) : actionType === "property_send" ? (
             /* 物件ピックアップした: モード選択 + カレンダー自動取得 + 複数画像 + 退去予定メモ */
             <div className="mb-4 flex flex-col gap-3">
+              {/* 紐付け済み顧客条件 */}
+              {linkedCustomer && (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                  <div className="mb-1 flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-emerald-600">🔗 紐付け済み</span>
+                    <span className="text-xs text-emerald-600">{linkedCustomer.name}</span>
+                  </div>
+                  <pre className="whitespace-pre-wrap text-xs text-[#111b21] font-sans leading-5">{linkedCustomer.conditions}</pre>
+                </div>
+              )}
               {/* 物件画像（複数） */}
               <div>
                 <p className="mb-1 text-xs font-bold text-[#54656f]">

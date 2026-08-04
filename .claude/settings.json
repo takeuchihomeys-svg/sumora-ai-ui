@@ -17,7 +17,8 @@
       "PowerShell(git -C \"c:\\\\Users\\\\�|�� �I�n\\\\sumora-ai-ui\" diff app/lib/line-reply-prompts.ts)",
       "PowerShell(head -100)",
       "PowerShell(git -C \"c:\\\\Users\\\\�|�� �I�n\\\\sumora-ai-ui\" add app/lib/line-reply-prompts.ts)",
-      "PowerShell(git -C \"c:\\\\Users\\\\�|�� �I�n\\\\sumora-ai-ui\" commit -m \"fix: GENERATION_SYSTEM��AIX�������S���[����ǉ��iproperty_send�Eviewing_invite�E���̑�AIX���E�j\")"
+      "PowerShell(git -C \"c:\\\\Users\\\\�|�� �I�n\\\\sumora-ai-ui\" commit -m \"fix: GENERATION_SYSTEM��AIX�������S���[����ǉ��iproperty_send�Eviewing_invite�E���̑�AIX���E�j\")",
+      "PowerShell(git -C \"c:\\\\Users\\\\�|�� �I�n\\\\sumora-ai-ui\" commit -m \"feat: �����s�b�N�A�b�v����AIX�ɂ��q���������R�Â��iproperty_recommendation�Ɠ��p�^�[���j\")"
     ]
   }
 }

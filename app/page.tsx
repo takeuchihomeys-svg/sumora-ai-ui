@@ -7939,7 +7939,7 @@ export default function Home() {
           onScheduled={refreshScheduledMsgs}
           onVacatingDetected={(date) => setDetectedVacatingDate(date)}
           initialImageFile={aixInitialFile ?? undefined}
-          linkedCustomer={aixModalType === "property_recommendation" ? linkedCustomerMap[selectedConversation.id] : undefined}
+          linkedCustomer={(aixModalType === "property_recommendation" || aixModalType === "property_send") ? linkedCustomerMap[selectedConversation.id] : undefined}
           customerConditions={linkedCustomerMap[selectedConversation.id]?.conditions || memos[selectedConversation.id] || undefined}
           recentMessages={aixRecentMessages}
           lastMessageAt={(selectedConversation.messages || []).slice(-1)[0]?.rawCreatedAt}
