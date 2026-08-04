@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { startCronLog, finishCronLog } from "@/app/lib/cron-logger";
 import Anthropic from "@anthropic-ai/sdk";
@@ -165,7 +165,7 @@ ${rulesText}
 ]`;
 
     const response = await anthropic.messages.create({
-      model: "claude-opus-4-8",
+      model: "claude-opus-5",
       max_tokens: 8000,
       thinking: { type: "adaptive" },
       messages: [{ role: "user", content: prompt }],

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 
 // Sonnet呼び出し（80件履歴）+ embedding生成で15〜30秒かかるため延長
@@ -81,7 +81,7 @@ ${history}
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-opus-4-8",
+        model: "claude-opus-5",
         max_tokens: 512,
         messages: [{ role: "user", content: prompt }],
       }),

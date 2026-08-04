@@ -1,4 +1,4 @@
-// GET /api/cron/analyze-template-chains  ← Vercel Cron（週1回・月曜JST 8:30 = UTC 23:30 日曜）
+﻿// GET /api/cron/analyze-template-chains  ← Vercel Cron（週1回・月曜JST 8:30 = UTC 23:30 日曜）
 // POST /api/cron/analyze-template-chains ← 手動実行
 //
 // CHAIN-3: Opus 4.8 による週次テンプレートチェーン分析。
@@ -67,7 +67,7 @@ async function callOpus(prompt: string): Promise<string> {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-opus-4-8",
+        model: "claude-opus-5",
         max_tokens: 2000,
         messages: [{ role: "user", content: prompt }],
       }),

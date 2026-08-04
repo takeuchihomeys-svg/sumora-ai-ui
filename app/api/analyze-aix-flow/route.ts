@@ -223,7 +223,7 @@ export async function POST(req: NextRequest) {
 
     // 4. Claude Opus 4.8で分析・ガイド更新
     const resp = await anthropic.messages.create({
-      model: "claude-opus-4-8",
+      model: "claude-opus-5",
       // 改善15: 消費側 suggest-next-action の flowGuide.slice(0, 1000) と整合させる（800字指示+見出しでも切れない余裕）
       max_tokens: 1000,
       messages: [{

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
 
@@ -165,7 +165,7 @@ ${exampleText}
 3. 確認事項（竹内さんに確認すべき点）`;
 
       const res = await client.messages.create({
-        model: "claude-opus-4-8",
+        model: "claude-opus-5",
         max_tokens: 1500,
         messages: [{ role: "user", content: analysisPrompt }],
       });
@@ -186,7 +186,7 @@ ${exampleText}
       }
 
       const res = await client.messages.create({
-        model: "claude-opus-4-8",
+        model: "claude-opus-5",
         max_tokens: 1500,
         system: buildMeetingSystem(candidate),
         messages: history,
@@ -217,7 +217,7 @@ ${exampleText}
       });
 
       const res = await client.messages.create({
-        model: "claude-opus-4-8",
+        model: "claude-opus-5",
         max_tokens: 1200,
         system: buildMeetingSystem(candidate),
         messages: history,
@@ -232,7 +232,7 @@ ${exampleText}
           { role: "user", content: "JSONとして正確に出力してください。上記のJSON形式のみを、コードブロックなしで出力してください。" },
         ];
         const retryRes = await client.messages.create({
-          model: "claude-opus-4-8",
+          model: "claude-opus-5",
           max_tokens: 1200,
           system: buildMeetingSystem(candidate),
           messages: retryMessages,

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 import Anthropic from "@anthropic-ai/sdk";
@@ -104,7 +104,7 @@ async function extractRules(
       ? `\n【この質問の由来（起票時に記録された確定情報）】\nLINE返信AI（通常返信）の文への修正から起票された質問です。回答が明確にAIXボタン操作について述べていない限り、action_type は null にしてください。\n`
       : "";
   const res = await client.messages.create({
-    model: "claude-opus-4-8",
+    model: "claude-opus-5",
     max_tokens: 1500,
     system: `あなたはLINE不動産接客AIの知識管理エージェントです。担当者からの回答を、AIが今後使える業務ルールに変換します。`,
     messages: [{
@@ -156,7 +156,7 @@ JSON配列のみ返してください（説明・コードフェンス不要）:
 async function extractAndUpsertTriggerKeywords(question: string, answer: string, actionType: string): Promise<void> {
   try {
     const res = await client.messages.create({
-      model: "claude-opus-4-8",
+      model: "claude-opus-5",
       max_tokens: 200,
       messages: [{
         role: "user",

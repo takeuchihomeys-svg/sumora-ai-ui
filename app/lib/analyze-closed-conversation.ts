@@ -1,4 +1,4 @@
-import { supabase } from "@/app/lib/supabase";
+﻿import { supabase } from "@/app/lib/supabase";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 
 // ── 申込/成約/失注確定時の会話全体分析（Opus 4.8）─────────────────────────────────
@@ -44,7 +44,7 @@ async function callOpus(prompt: string): Promise<string> {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-opus-4-8",
+        model: "claude-opus-5",
         max_tokens: 1200,
         messages: [{ role: "user", content: prompt }],
       }),
