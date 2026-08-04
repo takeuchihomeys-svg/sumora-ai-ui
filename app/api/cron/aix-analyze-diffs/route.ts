@@ -97,6 +97,14 @@ export async function POST(req: NextRequest) {
 
       // If 3+ edits of same type today, generate an ai_feedback_items question
       if (examples.length >= 3 && totalAiQuestions < 3) {
+        const oneDayAgo2 = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const { count: discardCount } = await supabase
+          .from("aix_generate_log")
+          .select("id", { count: "exact", head: true })
+          .eq("action_type", actionType)
+          .eq("status", "discarded")
+          .gte("created_at", oneDayAgo2);
+
         const { data: existing } = await supabase
           .from("ai_feedback_items")
           .select("id")
@@ -106,10 +114,15 @@ export async function POST(req: NextRequest) {
           .limit(1);
 
         if (!existing || existing.length === 0) {
+          const isBoundaryCase = (discardCount ?? 0) >= 2;
+          const questionCategory = isBoundaryCase ? "aix_boundary" : "aix_pattern";
+          const questionText = isBoundaryCase
+            ? `【線引き質問】AIX「${actionType}」の本日の生成文がスタッフに送信されませんでした（${discardCount}件破棄）。このアクションをいつ使うべきか教えてください。\n[aix_boundary_action:${actionType}]`
+            : `【AIX日次分析】「${actionType}」で本日${examples.length}件の編集が発生しました。スタッフが繰り返し修正しているポイントを教えてください。`;
           await supabase.from("ai_feedback_items").insert({
-            question: `【AIX日次分析】「${actionType}」で本日${examples.length}件の編集が発生しました。スタッフが繰り返し修正しているポイントを教えてください。`,
+            question: questionText,
             speculation: `AI生成テキストにパターン的な問題がある可能性`,
-            category: "aix_pattern",
+            category: questionCategory,
             confidence: 0.7,
             entry_source: "aix_action",
             aix_action: actionType,

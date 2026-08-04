@@ -777,7 +777,7 @@ ${answeredSection || "（なし）"}
   if (!Array.isArray(parsed)) return { questionsSaved: 0 };
 
   let questionsSaved = 0;
-  const VALID_CATEGORIES = ["knowledge_gap", "prompt_ambiguity", "new_flow", "missing_keyword", "weak_scene", "new_aix_needed", "low_conversion", "general"];
+  const VALID_CATEGORIES = ["knowledge_gap", "prompt_ambiguity", "new_flow", "missing_keyword", "weak_scene", "new_aix_needed", "low_conversion", "general", "aix_boundary"];
   const VALID_CONFIDENCE = ["high", "medium", "low"];
 
   for (const item of parsed.slice(0, 5)) {

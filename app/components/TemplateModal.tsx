@@ -408,6 +408,8 @@ function parseAiQuestion(question: string): AiQuestionMeta {
   // [old_knowledge_id:UUID] / [confirmed-vs-confirmed] xxx マーカー（closed-loop・dedup用）も表示からは除去
   text = text.replace(/\[old_knowledge_id:[^\]]+\]\s*/g, "");
   text = text.replace(/\[confirmed-vs-confirmed\][^\n]*\n?/g, "");
+  // [aix_boundary_action:XXX] タグ（線引き確認質問）も表示からは除去
+  text = text.replace(/\[aix_boundary_action:[^\]]+\]\s*/g, "");
 
   // "フェーズ: xxx / 重要度: x" 行を抽出して除去
   // （統一フォーマットの「フェーズ：xxx / 重要度：7点 ／ 適用 N回 ／ 正解 N回・誤答 N回」行にも対応し、
@@ -964,7 +966,7 @@ export default function TemplateModal({
   const [discussionInput, setDiscussionInput] = useState("");
   const [discussionSending, setDiscussionSending] = useState(false);
   // AI質問タブ: モードトグル（全て / 通常返信 / AIX）
-  const [feedbackMode, setFeedbackMode] = useState<'all' | 'line_reply' | 'aix'>('all');
+  const [feedbackMode, setFeedbackMode] = useState<'all' | 'line_reply' | 'aix' | 'boundary'>('all');
   const [aixActionFilter, setAixActionFilter] = useState<string | null>(null);
   // AI質問タブ: auto-judgeが生成したナレッジ品質確認質問（aix_feature_suggestions type=knowledge_question）
   const [knowledgeQuestions, setKnowledgeQuestions] = useState<AixFeatureSuggestion[]>([]);
@@ -3579,7 +3581,7 @@ export default function TemplateModal({
                 return (
                   <>
                     <div className="flex gap-1 mb-3 p-1 bg-gray-100 dark:bg-gray-800 rounded-lg">
-                      {(['all', 'line_reply', 'aix'] as const).map(mode => (
+                      {(['all', 'line_reply', 'aix', 'boundary'] as const).map(mode => (
                         <button key={mode} onClick={() => { setFeedbackMode(mode); setAixActionFilter(null); }}
                           className={"flex-1 py-1 px-2 rounded-md text-xs font-medium transition-colors " +
                             (feedbackMode === mode ? "bg-white dark:bg-gray-700 shadow text-gray-900 dark:text-gray-100" : "text-gray-500 dark:text-gray-400 hover:text-gray-700")}>
@@ -3587,7 +3589,9 @@ export default function TemplateModal({
                             ? `全て(${feedbackItems.length})`
                             : mode === 'line_reply'
                             ? `通常返信(${feedbackItems.filter(i => i.entry_source === 'line_reply' || (!i.entry_source && !isAixFeedbackItem(i))).length})`
-                            : `AIX(${feedbackItems.filter(i => isAixFeedbackItem(i)).length})`}
+                            : mode === 'aix'
+                            ? `AIX(${feedbackItems.filter(i => isAixFeedbackItem(i)).length})`
+                            : `線引き(${feedbackItems.filter(i => i.category === 'aix_boundary').length})`}
                         </button>
                       ))}
                     </div>
@@ -3618,6 +3622,8 @@ export default function TemplateModal({
                   ? feedbackItems
                   : feedbackMode === 'line_reply'
                   ? feedbackItems.filter(item => item.entry_source === 'line_reply' || (!item.entry_source && !isAixFeedbackItem(item)))
+                  : feedbackMode === 'boundary'
+                  ? feedbackItems.filter(item => item.category === 'aix_boundary')
                   : feedbackItems.filter(item => isAixFeedbackItem(item)).filter(item => !aixActionFilter || item.aix_action?.split(',').includes(aixActionFilter));
                 const renderFeedbackItem = (item: FeedbackItem) => {
                   const { cleanText, phase, importance, embeddedCategory, aiDraftExample, staffSentExample } = parseAiQuestion(item.question);
@@ -3642,6 +3648,11 @@ export default function TemplateModal({
                     ) : (
                       <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${item.entry_source === "line_reply" ? "bg-blue-500 text-white" : "bg-gray-300 text-gray-700"}`}>
                         {item.entry_source === "line_reply" ? "返信" : "返信（推定）"}
+                      </span>
+                    )}
+                    {item.category === 'aix_boundary' && (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500 text-white font-bold">
+                        線引き確認
                       </span>
                     )}
                     <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-bold">

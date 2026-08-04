@@ -17,6 +17,109 @@ const AIX_ACTIONS = [
   "greeting_viewing","followup_revive","acknowledge_check"
 ];
 
+const ACTION_LABELS: Record<string, string> = {
+  property_recommendation: '物件オススメ',
+  property_send: '物件ピックアップ',
+  viewing_invite: '内覧へ',
+  meeting_place: '待ち合わせ',
+  application_push: '申込へ',
+  condition_hearing: '条件ヒアリング',
+  estimate_sheet: '見積書',
+  property_check_result: '物件確認した',
+  greeting_viewing: '挨拶（内覧前後）',
+  followup_revive: '追客する',
+  acknowledge_check: '確認します',
+};
+
+// Special actions with no current boundary rule — trigger at lower threshold
+const UNDEFINED_BOUNDARY_ACTIONS = new Set(['acknowledge_check', 'followup_revive', 'greeting_viewing']);
+
+async function detectBoundaryAmbiguity(): Promise<number> {
+  const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+  let questionCount = 0;
+  const MAX_QUESTIONS = 3;
+
+  try {
+    // Signal A: AIX生成→送信されなかった (discarded) — grouped by action_type
+    const { data: discardedRows } = await supabase
+      .from("aix_generate_log")
+      .select("action_type")
+      .eq("status", "discarded")
+      .gte("created_at", fourteenDaysAgo);
+
+    const discardCounts: Record<string, number> = {};
+    for (const row of discardedRows ?? []) {
+      if (row.action_type) discardCounts[row.action_type] = (discardCounts[row.action_type] ?? 0) + 1;
+    }
+
+    // Signal B: suggestion_bypassed — grouped by action_type
+    const { data: bypassedRows } = await supabase
+      .from("action_pattern_logs")
+      .select("action_type")
+      .eq("source", "suggestion_bypassed")
+      .gte("created_at", fourteenDaysAgo);
+
+    const bypassCounts: Record<string, number> = {};
+    for (const row of bypassedRows ?? []) {
+      if (row.action_type) bypassCounts[row.action_type] = (bypassCounts[row.action_type] ?? 0) + 1;
+    }
+
+    for (const actionType of AIX_ACTIONS) {
+      if (questionCount >= MAX_QUESTIONS) break;
+
+      const discards = discardCounts[actionType] ?? 0;
+      const bypasses = bypassCounts[actionType] ?? 0;
+      const isUndefined = UNDEFINED_BOUNDARY_ACTIONS.has(actionType);
+
+      // Threshold: lower for undefined actions
+      const discardThreshold = isUndefined ? 2 : 3;
+      const shouldTrigger = discards >= discardThreshold || bypasses >= discardThreshold || (discards >= 2 && bypasses >= 1);
+
+      if (!shouldTrigger) continue;
+
+      const actionLabel = ACTION_LABELS[actionType] ?? actionType;
+
+      // Dedup check: don't re-raise same question within 14 days
+      const questionPrefix = `【線引き質問】AIX「${actionLabel}`;
+      const { data: existing } = await supabase
+        .from("ai_feedback_items")
+        .select("id")
+        .ilike("question", `${questionPrefix}%`)
+        .gte("created_at", fourteenDaysAgo)
+        .limit(1);
+
+      if (existing && existing.length > 0) continue;
+
+      const questionText = `【線引き質問】AIX「${actionLabel}」vs 通常返信AI — 担当範囲の確定
+
+過去14日間のデータ:
+・AIXが生成したが送信されなかった件数: ${discards}件
+・AIX提案をスタッフがスルーした件数: ${bypasses}件
+${isUndefined ? "※このアクションは現在【AIXとの役割分担】ルールに明示されていない曖昧領域です。" : ""}
+質問: AIX「${actionLabel}」はどのような場面で使うべきですか？通常返信AIとの役割をはっきりさせてください。
+例: 「〇〇の場面はAIX専用」「〇〇の時は通常AIで対応」など具体的に教えてください。
+
+[aix_boundary_action:${actionType}]`;
+
+      await supabase.from("ai_feedback_items").insert({
+        question: questionText,
+        speculation: `AIXと通常返信AIの担当範囲が曖昧で、スタッフがAIX提案をスルーしているパターンを検出`,
+        category: "aix_boundary",
+        confidence: 0.8,
+        entry_source: "boundary_analysis",
+        aix_action: actionType,
+        status: "pending",
+      });
+
+      questionCount++;
+    }
+  } catch (e) {
+    console.error("detectBoundaryAmbiguity error:", e);
+  }
+
+  return questionCount;
+}
+
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -111,5 +214,7 @@ AIXボタン「${actionType}」で生成されたテキストをスタッフが�
     }
   }
 
-  return NextResponse.json({ ok: true, weekKey, results });
+  const boundaryQuestions = await detectBoundaryAmbiguity();
+
+  return NextResponse.json({ ok: true, weekKey, results, boundaryQuestions });
 }
