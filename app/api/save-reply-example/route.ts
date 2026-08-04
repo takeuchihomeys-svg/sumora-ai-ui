@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse, after } from "next/server";
+﻿import { NextRequest, NextResponse, after } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 import { learnFromModifiedExample } from "@/app/lib/auto-knowledge";
@@ -165,7 +165,7 @@ async function callClaude(model: string, prompt: string, maxTokens = 1024): Prom
 }
 
 const callHaiku = (prompt: string, maxTokens = 1024) => callClaude("claude-haiku-4-5-20251001", prompt, maxTokens);
-const callSonnet = (prompt: string, maxTokens = 1024) => callClaude("claude-sonnet-4-6", prompt, maxTokens);
+const callSonnet = (prompt: string, maxTokens = 1024) => callClaude("claude-sonnet-5", prompt, maxTokens);
 
 // ─── ④ state 自動判定 ────────────────────────────────────────────────────────
 async function autoClassifyState(customerMessage: string, sentReply: string): Promise<string> {

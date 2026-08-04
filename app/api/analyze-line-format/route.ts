@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge } from "@/app/lib/knowledge-utils";
 import Anthropic from "@anthropic-ai/sdk";
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
   const sampleText = texts.slice(0, 50).map((t, i) => `--- 例${i + 1} ---\n${t}`).join("\n\n");
 
   const res = await client.messages.create({
-    model: "claude-sonnet-4-6",
+    model: "claude-sonnet-5",
     max_tokens: 800,
     messages: [{
       role: "user",

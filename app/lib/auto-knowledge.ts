@@ -1,4 +1,4 @@
-// auto-knowledge のコアロジック（AI案 vs 送信文の差分から修正ルールを抽出してナレッジ化）
+﻿// auto-knowledge のコアロジック（AI案 vs 送信文の差分から修正ルールを抽出してナレッジ化）
 // 401修正: 以前は app/page.tsx が /api/auto-knowledge をAuthorizationヘッダなしでfetchしており
 // 常に401で学習が停止していた。HTTPを介さずサーバー側（save-reply-example PATCH の after()）から
 // この関数を直接呼ぶ構成に変更。/api/auto-knowledge ルート（cron/手動用）も同じ関数を使う。
@@ -30,7 +30,7 @@ async function extractCorrectionRule(
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-6",
+        model: "claude-sonnet-5",
         max_tokens: 300,
         temperature: 0,
         system: `賃貸仲介LINEのAI文案とスタッフが実際に送った文を比較し、次回以降のAIが学べる改善ルールを抽出してください。

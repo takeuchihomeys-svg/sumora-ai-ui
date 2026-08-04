@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+﻿import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest, NextResponse } from "next/server";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 60_000 });
@@ -153,7 +153,7 @@ export async function POST(req: NextRequest) {
     contentParts.push({ type: "text", text: userText });
 
     const res = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-5",
       max_tokens: 2000,
       system: systemPrompt,
       messages: [{ role: "user", content: contentParts }],

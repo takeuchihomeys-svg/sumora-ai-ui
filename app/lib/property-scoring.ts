@@ -1,9 +1,9 @@
-// 物件スコアリング共通ライブラリ
+﻿// 物件スコアリング共通ライブラリ
 // match-property-customers / recommend-property の両APIで使用する
 // 画像パース・エリアトークン化・顧客×物件スコアリングを提供
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
-const VISION_MODEL = "claude-sonnet-4-6"; // 画像読み取りはSonnetで精度優先
+const VISION_MODEL = "claude-sonnet-5"; // 画像読み取りはSonnetで精度優先
 
 export interface ParsedProperty {
   property_name: string;

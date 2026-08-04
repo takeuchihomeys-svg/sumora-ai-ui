@@ -1,4 +1,4 @@
-// POST /api/recommend-templates
+﻿// POST /api/recommend-templates
 // AIX送信後の「続きテンプレ」おすすめAPI
 // 入力: conversation_id, action_type, sent_message, category, templates[{ id, label, text }]
 //       customer_conditions (任意): お客様の希望条件テキスト
@@ -121,7 +121,7 @@ ${templates.map((t, i) => {
 [{"index": 0, "score": 95, "reason": "家賃条件はカバー済み・エリアの補足が必要なため"}]`;
 
     const response = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-5",
       max_tokens: 1200,
       system: "あなたは賃貸仲介サービス「スモラ」のLINE営業アシスタントです。指定されたJSON形式のみで回答し、説明文は一切付けないでください。",
       messages: [{ role: "user", content: prompt }],

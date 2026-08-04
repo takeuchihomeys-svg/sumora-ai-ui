@@ -65,7 +65,7 @@ async function analyzeStructureDiff(
 ): Promise<{ skip: boolean; title?: string; rule?: string } | null> {
   try {
     const res = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-5",
       max_tokens: 400,
       messages: [{
         role: "user",
@@ -113,7 +113,7 @@ async function analyzeComponentDiff(
 ): Promise<{ skip: boolean; title?: string; rule?: string } | null> {
   try {
     const res = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-5",
       max_tokens: 500,
       messages: [{
         role: "user",
@@ -160,7 +160,7 @@ async function analyzeDiff(
 ): Promise<{ skip: boolean; title?: string; rule?: string; category?: string; trigger_example?: string } | null> {
   try {
     const res = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-5",
       max_tokens: 900,
       messages: [{
         role: "user",
@@ -321,7 +321,7 @@ async function autoJudgeKnowledge(
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-6",
+        model: "claude-sonnet-5",
         max_tokens: 300,
         messages: [{
           role: "user",
@@ -605,7 +605,7 @@ function hasSemanticChange(a: string, b: string): boolean {
 async function isMeaningfullySame(aiText: string, sentText: string): Promise<boolean> {
   try {
     const res = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-5",
       max_tokens: 50,
       messages: [{ role: "user", content:
         `以下2つの文章は意味・意図が実質的に同じですか？言い回しが違うだけかどうか判断してください。\n【A】${aiText.slice(0, 400)}\n【B】${sentText.slice(0, 400)}\nJSONのみ: {"same": true}または{"same": false}`,

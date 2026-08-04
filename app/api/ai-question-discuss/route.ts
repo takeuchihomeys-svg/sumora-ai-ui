@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import {
   SYSTEM_OVERVIEW,
@@ -117,7 +117,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const response = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-5",
       max_tokens: 1024,
       system: buildSystemPrompt({ question, speculation, evidence, phase, importance, knowledgeSection }),
       messages: conversationMessages,

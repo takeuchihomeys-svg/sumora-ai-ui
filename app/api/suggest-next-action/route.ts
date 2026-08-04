@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
 import { normalizeStatus } from "@/app/lib/status-normalize";
@@ -879,7 +879,7 @@ ${recentText}
 
   try {
     const message = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-5",
       max_tokens: 100,
       temperature: 0,
       // 営業フロー基礎知識をハードコード（DBの学習ガイドに全依存しないフォールバック知識）

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { canInsertAiQuestion, buildRuleConflictQuestion } from "@/app/lib/ai-feedback-guard";
 
@@ -83,7 +83,7 @@ export async function GET(req: NextRequest) {
         signal: AbortSignal.timeout(8_000),
         headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
         body: JSON.stringify({
-          model: "claude-sonnet-4-6",
+          model: "claude-sonnet-5",
           max_tokens: 500,
           messages: [{
             role: "user",

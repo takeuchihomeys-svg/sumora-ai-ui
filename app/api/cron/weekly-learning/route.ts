@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/app/lib/supabase";
 import { upsertKnowledge, generateEmbedding, buildKnowledgeEmbeddingInput } from "@/app/lib/knowledge-utils";
 import { buildRuleConflictQuestion, SUMORA_QUESTION_SYSTEM_CONTEXT } from "@/app/lib/ai-feedback-guard";
@@ -178,7 +178,7 @@ ${recentAnswersText}
 
   try {
     const res = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-5",
       max_tokens: 2000,
       system: "あなたは賃貸仲介の営業コーチです。スタッフの返信データを分析してAI改善ルールを抽出します。必ず指定されたJSON形式のみ返してください。",
       messages: [{ role: "user", content: prompt }],
@@ -395,7 +395,7 @@ JSON形式のみ返答：
 
   try {
     const res = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-5",
       max_tokens: 1000,
       system: "ルールベース品質チェッカーです。指定されたJSON形式のみ返してください。",
       messages: [{ role: "user", content: prompt }],
@@ -456,7 +456,7 @@ JSON形式のみ返答：
 
   try {
     const res = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-5",
       max_tokens: 500,
       system: "ルールベース品質チェッカーです。指定されたJSON形式のみ返してください。",
       messages: [{ role: "user", content: prompt }],
@@ -663,7 +663,7 @@ JSON形式のみ返答（keepは最大3件まで）：
 
   try {
     const res = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-sonnet-5",
       max_tokens: 1000,
       system: "不動産LINE返信AIのルール品質評価者です。指定されたJSON形式のみ返してください。",
       messages: [{ role: "user", content: prompt }],
@@ -918,7 +918,7 @@ JSON形式のみ返答：
 
     try {
       const res = await client.messages.create({
-        model: "claude-sonnet-4-6",
+        model: "claude-sonnet-5",
         max_tokens: 1000,
         system: "ルール重複排除の判定者です。指定されたJSON形式のみ返してください。",
         messages: [{ role: "user", content: prompt }],

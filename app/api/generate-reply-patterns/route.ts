@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { supabase } from "@/app/lib/supabase";
@@ -14,7 +14,7 @@ const analysisModel = new ChatAnthropic({
 });
 
 const generationModel = new ChatAnthropic({
-  model: "claude-sonnet-4-6",
+  model: "claude-sonnet-5",
   maxTokens: 2000,
   temperature: 0.65,
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),

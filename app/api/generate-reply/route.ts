@@ -29,7 +29,7 @@ export const maxDuration = 300;
 // ─── モデル定義 ───────────────────────────────────────────────────────────────
 // Step1（分析）: Sonnet — 感情・本音・成約戦略の精度重視
 const analysisModel = new ChatAnthropic({
-  model: "claude-sonnet-4-6",
+  model: "claude-sonnet-5",
   maxTokens: 2048, // AIX推薦フィールド追加により分析JSONが尻切れになりJSON.parse失敗するリスクがあるため1536から引き上げ
   temperature: 0,
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
@@ -40,7 +40,7 @@ const analysisModel = new ChatAnthropic({
 // 中6: temperature は ai_summary_json.emotion に応じて可変（0.3〜0.5）のためリクエスト毎に生成する
 function createGenerationModel(temperature: number) {
   return new ChatAnthropic({
-    model: "claude-sonnet-4-6",
+    model: "claude-sonnet-5",
     maxTokens: 1500,
     temperature,
     anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
@@ -1587,7 +1587,7 @@ export async function POST(req: NextRequest) {
         signal: AbortSignal.timeout(30_000),
         headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
         body: JSON.stringify({
-          model: "claude-sonnet-4-6",
+          model: "claude-sonnet-5",
           max_tokens: 1500,
           messages: [{
             role: "user",

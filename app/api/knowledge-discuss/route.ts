@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
 import {
@@ -114,7 +114,7 @@ async function handleChat(body: DiscussBody): Promise<NextResponse> {
   const knowledgeSection = await fetchActiveKnowledgeSection(conversation_state);
 
   const res = await client.messages.create({
-    model: "claude-sonnet-4-6",
+    model: "claude-sonnet-5",
     max_tokens: 600,
     system: buildSystemPrompt({ title, content, category, conversationState: conversation_state, knowledgeSection }),
     messages: toAnthropicMessages(messages ?? [], userMessage),
@@ -156,7 +156,7 @@ async function handleFinalize(body: DiscussBody): Promise<NextResponse> {
 - 最終ナレッジの本文のみ出力する（前置き・見出し・コードフェンス不要）`;
 
   const res = await client.messages.create({
-    model: "claude-sonnet-4-6",
+    model: "claude-sonnet-5",
     max_tokens: 1000,
     system: buildSystemPrompt({ title, content, category, conversationState: conversation_state, knowledgeSection }),
     messages: toAnthropicMessages(messages ?? [], finalizeInstruction),
