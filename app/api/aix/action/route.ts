@@ -490,7 +490,8 @@ async function callClaudeHaiku(system: string, user: string, action: string): Pr
   return data.content?.[0]?.text?.trim() || "";
 }
 
-async function callClaudeVision(system: string, content: unknown[], action: string): Promise<string> {
+// temperature省略時はデフォルト（生成系）、OCR/JSON抽出時は0を渡すこと
+async function callClaudeVision(system: string, content: unknown[], action: string, temperature?: number): Promise<string> {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -501,15 +502,24 @@ async function callClaudeVision(system: string, content: unknown[], action: stri
     body: JSON.stringify({
       model: MODEL,
       max_tokens: maxTokensForAction(action),
+      // Sonnet5はthinkingフィールド省略時にadaptive thinkingがONになる（Sonnet4.6からの破壊的変更）。
+      // max_tokens:2000でthinkingトークンが全消費されると text ブロックが空になりサイレント失敗する。
+      // property_recommendationはthinking不要かつmax_tokensが低いため明示的に無効化する。
+      thinking: { type: "disabled" },
       system,
       messages: [{ role: "user", content }],
+      ...(temperature !== undefined ? { temperature } : {}),
     }),
-    signal: AbortSignal.timeout(45_000),
+    // Sonnet5は画像+長文システムプロンプトで45秒を超えることがある → 60秒に延長
+    signal: AbortSignal.timeout(60_000),
   });
   if (!res.ok) throw new Error(`Claude Vision error: ${await res.text()}`);
   const data = await res.json();
   warnIfTruncated(data, system.length + JSON.stringify(content).length, action);
-  return data.content?.[0]?.text?.trim() || "";
+  // Sonnet5はthinkingブロックが content[0] に入るため find() で最初のtextブロックを取得する
+  const visionText = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text?.trim() || "";
+  if (!visionText) throw new Error(`callClaudeVision: empty response for action=${action} (stop_reason=${data.stop_reason})`);
+  return visionText;
 }
 
 // AIが内部メモを出力した場合、顧客向けメッセージと分離する
@@ -956,10 +966,13 @@ ${SMORA_COMMON_RULES}`;
                 { type: "text", text: "この見積書から初期費用情報を抽出してください。" },
                 { type: "image", source: { type: "url", url } },
               ];
-              const estRaw = await callClaudeVision(multiEstSystem, estContent, currentAction);
-              const jsonMatch = estRaw.match(/\{[\s\S]*\}/);
-              if (!jsonMatch) return null;
-              const estData = JSON.parse(jsonMatch[0]) as { property_name?: string | null; room_number?: string | null; discount?: string | null; initial_cost?: string | null; savings?: string | null };
+              // temperature:0 で決定論的なJSON抽出（Sonnet5は前置き文を出しやすいため）
+              const estRaw = await callClaudeVision(multiEstSystem, estContent, currentAction, 0);
+              // コードブロック（```json...```）を優先して解析し、なければ裸の{}を使用
+              const codeBlockM = estRaw.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+              const estJsonStr = codeBlockM ? codeBlockM[1] : estRaw.match(/\{[\s\S]*\}/)?.[0];
+              if (!estJsonStr) return null;
+              const estData = JSON.parse(estJsonStr) as { property_name?: string | null; room_number?: string | null; discount?: string | null; initial_cost?: string | null; savings?: string | null };
               const pName = estData.property_name?.trim() || `物件${multiEstBadges[pi] ?? String(pi + 1)}`;
               const roomSuffix = estData.room_number?.trim() ? ` ${estData.room_number.trim()}号室` : "";
               const prefix = (image_urls as string[]).length > 1 ? `${multiEstBadges[pi] ?? (pi + 1) + "."}【${pName}${roomSuffix}】` : `【${pName}${roomSuffix}】`;
@@ -991,32 +1004,36 @@ ${SMORA_COMMON_RULES}`;
         if (!image_url) throw new Error("見積書画像が必要です");
 
         const propImgUrl = property_image_url as string | undefined;
-        const ocrSystem = `${propImgUrl ? "見積書画像と物件資料画像" : "見積書画像"}から以下の項目をJSONで抽出してください。${propImgUrl ? "\n物件名・家賃・共益費が見積書に記載されていない場合は物件資料画像から補完してください。" : ""}
-数値は整数のみ（円・¥・カンマは除く）。不明な項目は0または空文字。
-{
-  "property_name": "物件名（マンション名のみ、号室は含めない）",
-  "room_number": "号室番号のみ（例: 502）",
-  "rent": 月額家賃（整数。共益費・管理費は含めない）,
-  "management_fee": 共益費・管理費（月額・整数。なければ0）,
-  "total": 初期費用合計（割引後・整数）,
-  "discount": 割引額（なければ0）,
-  "commission": 仲介手数料税抜（なければ0）,
-  "commission_tax": 仲介手数料消費税（なければ0）
-}`;
+        // Sonnet5対応: JSON形式のみ返答を明示（前置き文・コードブロック出力を防止）
+        // 「見積書」に限定せず「以下の画像から」と汎用表現にすることでマイソク等でも対応可
+        const ocrSystem = `以下の画像から初期費用情報を抽出してください。JSON形式のみ返答（説明文・コードブロック・前置き・後置き一切不要）：
+{"property_name":"","room_number":"","rent":0,"management_fee":0,"total":0,"discount":0,"commission":0,"commission_tax":0}
+
+- property_name: マンション名のみ（号室は含めない）。読み取れなければ""
+- room_number: 号室番号のみ（例: 502）。読み取れなければ""
+- rent: 月額家賃（整数。円・¥・カンマ除く。共益費・管理費は含めない）。なければ0
+- management_fee: 共益費または管理費（月額・整数）。なければ0${propImgUrl ? "\n  ※見積書に物件名・家賃・共益費の記載がない場合は物件資料画像から補完すること" : ""}
+- total: 初期費用合計（割引後・整数）。なければ0
+- discount: 割引額（整数）。なければ0
+- commission: 仲介手数料税抜（整数）。なければ0
+- commission_tax: 仲介手数料消費税（整数）。なければ0`;
 
         const ocrContent: Array<{ type: string; text?: string; source?: { type: string; url: string } }> = [
-          { type: "text", text: "この画像から指定の項目を抽出してください。" },
+          { type: "text", text: "画像から指定の項目を抽出し、JSONのみ返答してください。" },
           { type: "image", source: { type: "url", url: image_url } },
         ];
         if (propImgUrl) {
-          ocrContent.push({ type: "text", text: "物件資料画像（物件名・家賃・共益費が見積書に記載されていない場合はこちらから補完）：" });
+          ocrContent.push({ type: "text", text: "物件資料画像（見積書に物件名・家賃・共益費の記載がない場合はこちらから補完）：" });
           ocrContent.push({ type: "image", source: { type: "url", url: propImgUrl } });
         }
-        const raw = await callClaudeVision(ocrSystem, ocrContent, currentAction);
+        // temperature:0 で決定論的なJSON抽出（Sonnet5はデフォルト温度で説明文を付けやすい）
+        const raw = await callClaudeVision(ocrSystem, ocrContent, currentAction, 0);
 
-        const match = raw.match(/\{[\s\S]*\}/);
-        if (match) {
-          try { estimate = JSON.parse(match[0]); } catch { estimate = {}; }
+        // コードブロック（```json...```）を優先して解析し、なければ裸の{}を使用
+        const codeBlockMatch = raw.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+        const rawJson = codeBlockMatch ? codeBlockMatch[1] : raw.match(/\{[\s\S]*\}/)?.[0];
+        if (rawJson) {
+          try { estimate = JSON.parse(rawJson); } catch { estimate = {}; }
         } else {
           estimate = {};
         }
