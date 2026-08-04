@@ -4,7 +4,9 @@
       "Bash(node -e ' *)",
       "PowerShell(Invoke-RestMethod -Uri \"https://sumora-ai-ui.vercel.app/api/migrate-account-from-line\" -Method POST)",
       "Bash(curl -s \"https://sumora-ai-ui-git-main-takeuchihomeys-svgs-projects.vercel.app/api/line-ai-health\")",
-      "Bash(python -m json.tool)"
+      "Bash(python -m json.tool)",
+      "PowerShell(git -C \"c:\\\\Users\\\\�|�� �I�n\\\\sumora-ai-ui\" log --oneline -3)",
+      "PowerShell(git -C \"c:\\\\Users\\\\�|�� �I�n\\\\sumora-ai-ui\" diff app/components/AixModal.tsx)"
     ]
   }
 }
