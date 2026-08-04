@@ -1854,6 +1854,10 @@ export default function AixModal({
         body.multi_estimate = true;
       } else if (config.requiresImage && imageFile) {
         body.image_url = await uploadImageCached(imageFile);
+        // estimate_sheet: 物件資料が選択されていればOCRコンテンツに追加（物件名・家賃・共益費を補完）
+        if (actionType === "estimate_sheet" && estimatePropertyFile) {
+          body.property_image_url = await uploadImageCached(estimatePropertyFile);
+        }
       }
 
       // 内覧へ！内覧日指定ありモード → テンプレで即生成（AI不要）

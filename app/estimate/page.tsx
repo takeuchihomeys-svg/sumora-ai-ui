@@ -93,8 +93,8 @@ const ITEM_CONFIG: Array<{
   { key: "assignee",        label: "担当者名",        group: "基本情報" },
   // moveInDate・moveInMonthDays はStep2の専用UIで操作（フォームには出さない）
   { key: "rent",            label: "月額家賃",          group: "賃料" },
-  { key: "managementFee",   label: "共益費・管理費" },
-  { key: "waterFee",        label: "水道代（月額）" },
+  { key: "managementFee",   label: "共益費・管理費",    group: "賃料" },
+  { key: "waterFee",        label: "水道代（月額）",    group: "賃料" },
   { key: "shikikin",        label: "敷金",              group: "初期費用" },
   { key: "reikin",          label: "礼金" },
   { key: "hoshokikin",      label: "保証金" },

@@ -636,7 +636,7 @@ const AIX_SUGGEST_TEMPLATE_CATEGORY: Record<string, string> = {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, account, customer_name, image_url, image_urls, condition_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, vacancy_status, has_estimate, move_out_date, keyword, property_name, property_names, property_vacancy_dates, property_count, all_properties_available, prop_statuses, include_estimate_text, show_viewing_invite, app_push_type, appeal_points, other_room_status, conversation_id: conversationId } = body;
+    const { action, account, customer_name, image_url, image_urls, condition_image_url, property_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, vacancy_status, has_estimate, move_out_date, keyword, property_name, property_names, property_vacancy_dates, property_count, all_properties_available, prop_statuses, include_estimate_text, show_viewing_invite, app_push_type, appeal_points, other_room_status, conversation_id: conversationId } = body;
 
     // #30: max_tokens 尻切れ検知ログ・max_tokens決定用のアクション名（リクエストスコープ）
     const currentAction = String(action ?? "");
@@ -990,7 +990,8 @@ ${SMORA_COMMON_RULES}`;
       if (!estimate) {
         if (!image_url) throw new Error("見積書画像が必要です");
 
-        const ocrSystem = `見積書画像から以下の項目をJSONで抽出してください。
+        const propImgUrl = property_image_url as string | undefined;
+        const ocrSystem = `${propImgUrl ? "見積書画像と物件資料画像" : "見積書画像"}から以下の項目をJSONで抽出してください。${propImgUrl ? "\n物件名・家賃・共益費が見積書に記載されていない場合は物件資料画像から補完してください。" : ""}
 数値は整数のみ（円・¥・カンマは除く）。不明な項目は0または空文字。
 {
   "property_name": "物件名（マンション名のみ、号室は含めない）",
@@ -1003,10 +1004,15 @@ ${SMORA_COMMON_RULES}`;
   "commission_tax": 仲介手数料消費税（なければ0）
 }`;
 
-        const raw = await callClaudeVision(ocrSystem, [
-          { type: "text", text: "この見積書から指定の項目を抽出してください。" },
+        const ocrContent: Array<{ type: string; text?: string; source?: { type: string; url: string } }> = [
+          { type: "text", text: "この画像から指定の項目を抽出してください。" },
           { type: "image", source: { type: "url", url: image_url } },
-        ], currentAction);
+        ];
+        if (propImgUrl) {
+          ocrContent.push({ type: "text", text: "物件資料画像（物件名・家賃・共益費が見積書に記載されていない場合はこちらから補完）：" });
+          ocrContent.push({ type: "image", source: { type: "url", url: propImgUrl } });
+        }
+        const raw = await callClaudeVision(ocrSystem, ocrContent, currentAction);
 
         const match = raw.match(/\{[\s\S]*\}/);
         if (match) {
