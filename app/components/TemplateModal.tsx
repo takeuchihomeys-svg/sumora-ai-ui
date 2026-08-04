@@ -963,6 +963,9 @@ export default function TemplateModal({
   const [discussionMessages, setDiscussionMessages] = useState<Record<string, Array<{role:"user"|"assistant", content:string}>>>({});
   const [discussionInput, setDiscussionInput] = useState("");
   const [discussionSending, setDiscussionSending] = useState(false);
+  // AI質問タブ: モードトグル（全て / 通常返信 / AIX）
+  const [feedbackMode, setFeedbackMode] = useState<'all' | 'line_reply' | 'aix'>('all');
+  const [aixActionFilter, setAixActionFilter] = useState<string | null>(null);
   // AI質問タブ: auto-judgeが生成したナレッジ品質確認質問（aix_feature_suggestions type=knowledge_question）
   const [knowledgeQuestions, setKnowledgeQuestions] = useState<AixFeatureSuggestion[]>([]);
   const [knowledgeQuestionsLoading, setKnowledgeQuestionsLoading] = useState(false);
@@ -3568,8 +3571,54 @@ export default function TemplateModal({
                   })}
                 </div>
               )}
+              {/* AI質問 モードトグル（全て / 通常返信 / AIX） */}
+              {!feedbackLoading && feedbackItems.length > 0 && (() => {
+                const isAixFeedbackItem = (item: FeedbackItem) =>
+                  item.entry_source === 'aix_action' ||
+                  !!(item.aix_action && item.aix_action.length > 0);
+                return (
+                  <>
+                    <div className="flex gap-1 mb-3 p-1 bg-gray-100 dark:bg-gray-800 rounded-lg">
+                      {(['all', 'line_reply', 'aix'] as const).map(mode => (
+                        <button key={mode} onClick={() => { setFeedbackMode(mode); setAixActionFilter(null); }}
+                          className={"flex-1 py-1 px-2 rounded-md text-xs font-medium transition-colors " +
+                            (feedbackMode === mode ? "bg-white dark:bg-gray-700 shadow text-gray-900 dark:text-gray-100" : "text-gray-500 dark:text-gray-400 hover:text-gray-700")}>
+                          {mode === 'all'
+                            ? `全て(${feedbackItems.length})`
+                            : mode === 'line_reply'
+                            ? `通常返信(${feedbackItems.filter(i => i.entry_source === 'line_reply' || (!i.entry_source && !isAixFeedbackItem(i))).length})`
+                            : `AIX(${feedbackItems.filter(i => isAixFeedbackItem(i)).length})`}
+                        </button>
+                      ))}
+                    </div>
+                    {feedbackMode === 'aix' && (
+                      <div className="flex flex-wrap gap-1 mb-3">
+                        {Object.entries({property_recommendation:'物件オススメ',property_send:'物件ピックアップ',viewing_invite:'内覧へ',meeting_place:'待ち合わせ',application_push:'申込へ',condition_hearing:'条件ヒアリング',estimate_sheet:'見積書',property_check_result:'物件確認',greeting_viewing:'内覧挨拶',followup_revive:'追客',acknowledge_check:'確認します'}).map(([action, label]) => {
+                          const count = feedbackItems.filter(i => isAixFeedbackItem(i) && i.aix_action?.split(',').includes(action)).length;
+                          if (count === 0) return null;
+                          return (
+                            <button key={action} onClick={() => setAixActionFilter(aixActionFilter === action ? null : action)}
+                              className={"px-2 py-0.5 rounded-full text-xs border transition-colors " +
+                                (aixActionFilter === action ? "bg-blue-600 text-white border-blue-600" : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-300 dark:border-gray-600")}>
+                              {label} <span className="ml-1 bg-gray-200 dark:bg-gray-600 rounded-full px-1">{count}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
               {/* adapt_feedback（会話を合わせる）は他のカテゴリと分けて一番下にまとめて表示する */}
               {!feedbackLoading && (() => {
+                const isAixFeedbackItem = (item: FeedbackItem) =>
+                  item.entry_source === 'aix_action' ||
+                  !!(item.aix_action && item.aix_action.length > 0);
+                const filteredFeedbackItems = feedbackMode === 'all'
+                  ? feedbackItems
+                  : feedbackMode === 'line_reply'
+                  ? feedbackItems.filter(item => item.entry_source === 'line_reply' || (!item.entry_source && !isAixFeedbackItem(item)))
+                  : feedbackItems.filter(item => isAixFeedbackItem(item)).filter(item => !aixActionFilter || item.aix_action?.split(',').includes(aixActionFilter));
                 const renderFeedbackItem = (item: FeedbackItem) => {
                   const { cleanText, phase, importance, embeddedCategory, aiDraftExample, staffSentExample } = parseAiQuestion(item.question);
                   // 矛盾系質問の判定: questionに「どちら」「矛盾」「既存」「[old_knowledge_id:」が含まれる場合、選択ボタンUIに切り替える
@@ -3976,8 +4025,8 @@ export default function TemplateModal({
                 </div>
                   );
                 };
-                const normalItems = feedbackItems.filter(f => f.category !== "adapt_feedback");
-                const adaptItems = feedbackItems.filter(f => f.category === "adapt_feedback");
+                const normalItems = filteredFeedbackItems.filter(f => f.category !== "adapt_feedback");
+                const adaptItems = filteredFeedbackItems.filter(f => f.category === "adapt_feedback");
                 return (
                   <>
                     {normalItems.map(renderFeedbackItem)}

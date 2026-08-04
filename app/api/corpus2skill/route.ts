@@ -802,6 +802,7 @@ ${answeredSection || "（なし）"}
       category: (VALID_CATEGORIES.includes(item.category ?? "") ? item.category : "general") as string,
       evidence: item.evidence?.trim() || null,
       confidence: VALID_CONFIDENCE.includes(item.confidence ?? "") ? item.confidence : "medium",
+      entry_source: "line_reply",
     });
     if (inserted) questionsSaved++;
     else console.warn("[corpus2skill] feedback item 起票スキップ（上限またはINSERT失敗）");

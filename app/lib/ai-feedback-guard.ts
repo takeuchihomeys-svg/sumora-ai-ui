@@ -50,6 +50,8 @@ export type AiQuestionItem = {
   speculation?: string | null;
   evidence?: string | null;
   confidence?: string | null;
+  entry_source?: string | null;
+  aix_action?: string | null;
 };
 
 // ── ルール矛盾質問の統一フォーマット ──

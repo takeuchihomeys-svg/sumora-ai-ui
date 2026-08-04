@@ -280,6 +280,53 @@ JSON配列のみ返してください:
       kept,
     };
 
+    // === Phase 2: LEARN-AIX-* / IMPLEMENT-* メンテナンス ===
+    try {
+      const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+
+      // LEARN-AIX-* の時効decay（90日超）
+      await supabase
+        .from("ai_prompt_rules")
+        .update({ is_active: false })
+        .like("rule_key", "LEARN-AIX-%")
+        .eq("is_active", true)
+        .lt("created_at", ninetyDaysAgo);
+
+      // IMPLEMENT-* の重複チェック（FEEDBACK-* との重複排除）
+      const { data: implementRules } = await supabase
+        .from("ai_prompt_rules")
+        .select("id, rule_key, rule_text, action_type, priority")
+        .like("rule_key", "IMPLEMENT-%")
+        .eq("is_active", true)
+        .limit(50);
+
+      const { data: feedbackRules } = await supabase
+        .from("ai_prompt_rules")
+        .select("id, rule_key, rule_text, priority")
+        .like("rule_key", "FEEDBACK-%")
+        .eq("is_active", true)
+        .limit(200);
+
+      if (implementRules && feedbackRules) {
+        for (const impl of implementRules) {
+          const implWords = impl.rule_text.split(/[\s。、！？]/).filter((w: string) => w.length >= 3);
+          for (const fb of feedbackRules) {
+            const fbWords = fb.rule_text.split(/[\s。、！？]/).filter((w: string) => w.length >= 3);
+            const commonWords = implWords.filter((w: string) => fbWords.includes(w));
+            const overlap = commonWords.length / Math.max(implWords.length, fbWords.length);
+            if (overlap >= 0.8) {
+              // 重複: 低priority側をdeactivate
+              const toDeactivate = impl.priority <= fb.priority ? impl.id : fb.id;
+              await supabase.from("ai_prompt_rules").update({ is_active: false }).eq("id", toDeactivate);
+              break;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error("rule-organize Phase 2 error:", e);
+    }
+
     await finishCronLog(runLogId, true, summary);
     return NextResponse.json(summary);
   } catch (e) {

@@ -121,6 +121,17 @@ async function run(): Promise<NextResponse> {
     if (ruleErr) throw new Error(`ai_prompt_rules 取得失敗: ${ruleErr.message}`);
     const rules = (activeRules ?? []) as ActiveRule[];
 
+    // 3b. 直近14日のAIXミスマッチ提案（alignment_fix / mismatch_fix）
+    const since14 = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: aixSuggestions } = await db
+      .from("aix_feature_suggestions")
+      .select("suggestion_type, description, action_type, status, created_at")
+      .in("suggestion_type", ["alignment_fix", "mismatch_fix"])
+      .eq("status", "pending")
+      .gte("created_at", since14)
+      .order("created_at", { ascending: false })
+      .limit(10);
+
     // 4. Claude で候補生成
     const answersText = items
       .map((it, i) => {
@@ -134,6 +145,10 @@ async function run(): Promise<NextResponse> {
     const rulesText = rules.length > 0
       ? rules.map((r) => `- [${r.rule_key}] ${r.rule_text}`).join("\n")
       : "（アクティブルールなし）";
+
+    const aixSuggestionsText = aixSuggestions && aixSuggestions.length > 0
+      ? "\n\n【直近14日のAIXミスマッチ（自動検出）】\n" + aixSuggestions.map((s) => `・[${s.action_type ?? "不明"}] ${s.description ?? ""}`).join("\n")
+      : "";
 
     const prompt = `あなたは不動産賃貸仲介のLINE返信AIのプロンプト改善アナリストです。
 
@@ -162,7 +177,7 @@ ${rulesText}
     "reason": "なぜこのルールが必要か（どの質問群から導かれたか）",
     "category": "gap | clarification | new_scene | contradiction_fix のいずれか"
   }
-]`;
+]${aixSuggestionsText}`;
 
     const response = await anthropic.messages.create({
       model: "claude-opus-5",
