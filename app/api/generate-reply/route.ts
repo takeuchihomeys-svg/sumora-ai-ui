@@ -101,7 +101,8 @@ async function deriveSuggestedAix(
   propertyStatus?: PropertyStatus,
   customerMessage?: string,
   analysisAixAction?: string | null,
-): Promise<{ action: string; note: string; source: string } | null> {
+  analysisAixEnforcement?: "required" | "recommended" | "optional" | null,
+): Promise<{ action: string; note: string; source: string; enforcement_level: "required" | "recommended" | "optional" } | null> {
   // 退去予定/入居中の物件では現地内覧が不可のため viewing_invite（内覧日調整）は提案しない。
   // 代わりに空室確認（acknowledge_check）または申込で先に確保（application_push）を優先する。
   const isMoveOut = propertyStatus === "move_out_scheduled" || propertyStatus === "occupied";
@@ -127,6 +128,7 @@ async function deriveSuggestedAix(
         action: "property_recommendation",
         note: "同じマンション内の別の号室／別価格帯のお部屋をご希望です → AIX【1件特にオススメする】または【物件ピックアップした】で同棟の条件に合う部屋を検索してお送りください（「確認します」は不要です）",
         source: "same_building_regex",
+        enforcement_level: "required" as const,
       };
     }
   }
@@ -154,6 +156,7 @@ async function deriveSuggestedAix(
         action: "estimate_sheet",
         note: "初期費用・見積書のご質問です → AIX【見積書送る】で最大限割引した御見積書を作成してお送りください（AI返信案は作成宣言のみ・見積書本体と金額内訳は必ずAIXから送ってください）",
         source: "estimate_regex",
+        enforcement_level: "required" as const,
       };
     }
   }
@@ -172,7 +175,18 @@ async function deriveSuggestedAix(
       if (res.ok) {
         const data = await res.json() as { action?: string | null; reason?: string; source?: string };
         if (data.action && AIX_ACTION_NOTES[data.action]) {
-          return { ...redirectMoveOut(data.action, AIX_ACTION_NOTES[data.action]), source: data.source ?? "trigger_rule" };
+          const redirected = redirectMoveOut(data.action, AIX_ACTION_NOTES[data.action]);
+          const baseLevelTrigger: "required" | "recommended" =
+            (data.action === "estimate_sheet" || data.action === "property_send" || data.action === "same_building_regex")
+              ? "required" : "recommended";
+          // trap②: redirectMoveOutがviewing_invite→application_pushに変換した場合はrecommendedに降格
+          const enforcementLevelTrigger: "required" | "recommended" =
+            (redirected.action !== data.action) ? "recommended" : baseLevelTrigger;
+          return {
+            ...redirected,
+            source: data.source ?? "trigger_rule",
+            enforcement_level: enforcementLevelTrigger,
+          };
         }
       }
     } catch {
@@ -197,7 +211,15 @@ async function deriveSuggestedAix(
       && srcRateRow.total_occurrence >= 10
       && srcRateRow.confidence < 0.3;
     if (!isAnalysisSuppressed) {
-      return { ...redirectMoveOut(analysisAixAction, AIX_ACTION_NOTES[analysisAixAction]), source: "analysis_step1" };
+      const redirectedAnalysis = redirectMoveOut(analysisAixAction, AIX_ACTION_NOTES[analysisAixAction]);
+      const analysisEnfLevel = (redirectedAnalysis.action !== analysisAixAction)
+        ? "recommended"  // trap②: redirect発生時はrecommendedに降格
+        : (analysisAixEnforcement ?? "optional");
+      return {
+        ...redirectedAnalysis,
+        source: "analysis_step1",
+        enforcement_level: analysisEnfLevel,
+      };
     }
   }
   return null;
@@ -299,7 +321,8 @@ ${customerMessage}
   "hesitancy_pattern": "お客様が「検討します」「また連絡します」「少し待ってほしい」「迷っています」など決断を保留しているか。パターン種別（'thinking'=検討中・'callback'=また連絡・'waiting'=もう少し待って・'undecided'=どちらか迷い・'timeline'=○月に決めたい）、なければnull",
   "future_timeline": "お客様が「○月に」「○日には」など具体的な申込タイムラインを示している場合その内容。なければnull",
   "suggested_aix_action": "次に使うべきAIXアクション。以下から1つ選ぶかnullを返す: viewing_invite（内見案内）/ estimate_sheet（見積書送付）/ property_send（物件送付）/ application_push（申込促進）/ property_check_result（空室確認結果送付）/ acknowledge_check（空室確認承知）/ condition_hearing（条件ヒアリング）/ meeting_place（待ち合わせ）/ property_recommendation（物件おすすめ）/ followup_revive（追客）/ greeting_viewing（内見挨拶） — LINEの返信文を送るべき場面はnullとする",
-  "aix_reason": "AIXアクションを選んだ理由を1行で（nullの場合は空文字）"
+  "aix_reason": "AIXアクションを選んだ理由を1行で（nullの場合は空文字）",
+  "aix_enforcement_level": "suggested_aix_actionがnullでない場合のみ回答。required（物件詳細・見積書本体・内覧日時等AIX専用コンテンツが必要）/ recommended（AIXが最善だが通常返信でも可）/ optional（使えるが必須ではない）。null不可"
 }` : `
 【営業フェーズ】${state}
 【お客様名】${customerName || "不明"}
@@ -323,7 +346,8 @@ ${customerMessage}
   "hesitancy_pattern": "お客様が「検討します」「また連絡します」「少し待ってほしい」「迷っています」など、決断を保留するパターンを示しているか。示している場合はその種別（'thinking'=検討中・'callback'=また連絡・'waiting'=もう少し待って・'undecided'=どちらか迷い・'timeline'=○月に決めたい ）、なければnull",
   "future_timeline": "お客様が「○月に」「○日には」など具体的な決断・申込タイムラインを示している場合その内容。なければnull",
   "suggested_aix_action": "次に使うべきAIXアクション。以下から1つ選ぶかnullを返す: viewing_invite（内見案内）/ estimate_sheet（見積書送付）/ property_send（物件送付）/ application_push（申込促進）/ property_check_result（空室確認結果送付）/ acknowledge_check（空室確認承知）/ condition_hearing（条件ヒアリング）/ meeting_place（待ち合わせ）/ property_recommendation（物件おすすめ）/ followup_revive（追客）/ greeting_viewing（内見挨拶） — LINEの返信文を送るべき場面はnullとする",
-  "aix_reason": "AIXアクションを選んだ理由を1行で（nullの場合は空文字）"
+  "aix_reason": "AIXアクションを選んだ理由を1行で（nullの場合は空文字）",
+  "aix_enforcement_level": "suggested_aix_actionがnullでない場合のみ回答。required（物件詳細・見積書本体・内覧日時等AIX専用コンテンツが必要）/ recommended（AIXが最善だが通常返信でも可）/ optional（使えるが必須ではない）。null不可"
 }`;
 
   try {
@@ -1943,6 +1967,16 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
       } catch { return null; }
     })();
 
+    const analysisAixEnforcement = (() => {
+      try {
+        const p = JSON.parse(analysis) as Record<string, unknown>;
+        const level = p.aix_enforcement_level;
+        return (level === "required" || level === "recommended" || level === "optional")
+          ? level as "required" | "recommended" | "optional"
+          : null;
+      } catch { return null; }
+    })();
+
     const encoder = new TextEncoder();
     return new Response(
       new ReadableStream({
@@ -2060,7 +2094,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             }
             // テンプレート最適化モードはトレーラーを一切付けない（ボディ＝純粋な最適化テキスト）
             if (!isTemplateOptimize) {
-              const suggestedAix = await deriveSuggestedAix(finalDraftText, currentState, conversationId || undefined, internalBaseUrl, resolvedStatusForAix, message, analysisAixAction);
+              const suggestedAix = await deriveSuggestedAix(finalDraftText, currentState, conversationId || undefined, internalBaseUrl, resolvedStatusForAix, message, analysisAixAction, analysisAixEnforcement);
               if (suggestedAix) {
                 controller.enqueue(encoder.encode(`\n<<<SUGGESTED_AIX:${JSON.stringify(suggestedAix)}>>>`));
               }

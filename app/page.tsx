@@ -48,7 +48,7 @@ type Conversation = {
   isFlagged?: boolean;
   hasViewed?: boolean;
   aiDraft?: string | null;
-  suggestedAixMeta?: { action: string; note: string; source?: string } | null;
+  suggestedAixMeta?: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional" } | null;
   messages: Message[];
 };
 
@@ -412,7 +412,7 @@ export default function Home() {
   const [displaySource, setDisplaySource] = useState<"ai_draft" | "optimized" | null>(null);
   const draftIsAi = displaySource !== null; // AI生成の下書きがテキストエリアに入っているか（displaySourceから導出）
   const [replyQuality, setReplyQuality] = useState<{ auto_ok: boolean; is_applying_docs: boolean } | null>(null); // B-2: AI文案の品質判定バッジ
-  const [suggestedAix, setSuggestedAix] = useState<{ action: string; note: string; source?: string } | null>(null); // AIドラフト生成時のスタッフ向けガイドメモ
+  const [suggestedAix, setSuggestedAix] = useState<{ action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional" } | null>(null); // AIドラフト生成時のスタッフ向けガイドメモ
   const [draftNoEmoji, setDraftNoEmoji] = useState(false); // 絵文字なしモード
   const [draftOrigText, setDraftOrigText] = useState(""); // 絵文字なし切替前の原文（復元用）
   const [extraDraftMessages, setExtraDraftMessages] = useState<Array<{text: string; delaySec: number}>>([]);
@@ -6758,21 +6758,29 @@ export default function Home() {
                   }}
                 />
                 {/* スタッフへのAIガイドメモ（AIドラフト使用時のみ表示） */}
-                {draftIsAi && replyDraft && suggestedAix && (
-                  <div style={{
-                    marginTop: 6,
-                    padding: "8px 12px",
-                    background: "#fff8e1",
-                    border: "1px solid #ffe082",
-                    borderRadius: 6,
-                    fontSize: 12,
-                    color: "#5d4037",
-                    lineHeight: 1.6,
-                  }}>
-                    <span style={{ fontWeight: "bold", marginRight: 4 }}>📌 スタッフへ:</span>
-                    {suggestedAix.note}
-                  </div>
-                )}
+                {draftIsAi && replyDraft && suggestedAix && (() => {
+                  const level = suggestedAix.enforcement_level ?? "recommended";
+                  const styles = {
+                    required: { bg: "#fff3e0", border: "#fb8c00", color: "#bf360c", icon: "⚠️", prefix: "AIX必須:" },
+                    recommended: { bg: "#fff8e1", border: "#ffe082", color: "#5d4037", icon: "📌", prefix: "スタッフへ:" },
+                    optional: { bg: "#f5f5f5", border: "#e0e0e0", color: "#9e9e9e", icon: "💡", prefix: "ヒント:" },
+                  }[level];
+                  return (
+                    <div style={{
+                      marginTop: 6, padding: "8px 12px",
+                      background: styles.bg, border: `1px solid ${styles.border}`,
+                      borderRadius: 6, fontSize: 12, color: styles.color, lineHeight: 1.6,
+                    }}>
+                      <span style={{ fontWeight: "bold", marginRight: 4 }}>{styles.icon} {styles.prefix}</span>
+                      {suggestedAix.note}
+                      {level === "required" && (
+                        <div style={{ marginTop: 4, fontSize: 11, fontWeight: "bold", color: "#e64a19" }}>
+                          このまま送信する前にAIXを実行してください（通常返信だけでは内容が届きません）
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
                 {/* 追加メッセージスロット（時間差送信） */}
                 {extraDraftMessages.map((extra, idx) => (
                   <div key={idx} className="mt-2 rounded-xl border border-blue-200 bg-white p-2">
