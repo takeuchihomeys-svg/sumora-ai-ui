@@ -19,7 +19,11 @@
       "PowerShell(git -C \"c:\\\\Users\\\\�|�� �I�n\\\\sumora-ai-ui\" add app/lib/line-reply-prompts.ts)",
       "PowerShell(git -C \"c:\\\\Users\\\\�|�� �I�n\\\\sumora-ai-ui\" commit -m \"fix: GENERATION_SYSTEM��AIX�������S���[����ǉ��iproperty_send�Eviewing_invite�E���̑�AIX���E�j\")",
       "PowerShell(git -C \"c:\\\\Users\\\\�|�� �I�n\\\\sumora-ai-ui\" commit -m \"feat: �����s�b�N�A�b�v����AIX�ɂ��q���������R�Â��iproperty_recommendation�Ɠ��p�^�[���j\")",
-      "PowerShell(git -C \"c:\\\\Users\\\\�|�� �I�n\\\\sumora-ai-ui\" commit -m \"feat: �������L�����s�b�J�[�����P�i��b�������o�E�����A�g�E�v�����v�g�����j\")"
+      "PowerShell(git -C \"c:\\\\Users\\\\�|�� �I�n\\\\sumora-ai-ui\" commit -m \"feat: �������L�����s�b�J�[�����P�i��b�������o�E�����A�g�E�v�����v�g�����j\")",
+      "Bash(git -C \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\" status --short)",
+      "Bash(git -C \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\" diff --stat)",
+      "Bash(git -C \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\" add -A)",
+      "Bash(git -C \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\" commit -m \"feat: AIXのモデルをclaude-sonnet-4-6からclaude-sonnet-5に更新\")"
     ]
   }
 }

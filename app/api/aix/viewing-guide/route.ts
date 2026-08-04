@@ -3,7 +3,7 @@ import { supabase } from "@/app/lib/supabase";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
 const HAIKU_MODEL = "claude-haiku-4-5-20251001";
-const SONNET_MODEL = "claude-sonnet-4-6";
+const SONNET_MODEL = "claude-sonnet-5";
 
 export async function POST(request: NextRequest) {
   try {

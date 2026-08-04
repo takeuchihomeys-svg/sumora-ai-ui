@@ -8,7 +8,7 @@ import { fetchPromptRules } from "@/app/lib/prompt-rules";
 export const maxDuration = 300;
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY!;
-const MODEL = "claude-sonnet-4-6";
+const MODEL = "claude-sonnet-5";
 
 // 退去予定日が過去かどうか判定（「7月下旬」「2026年7月15日」等の日本語表記対応）
 function isPastVacancyDate(dateStr: string): boolean {
