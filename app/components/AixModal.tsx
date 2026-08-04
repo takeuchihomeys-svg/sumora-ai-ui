@@ -752,6 +752,7 @@ export default function AixModal({
   const [sendKeyword, setSendKeyword] = useState("");
   const [sendExpandedConds, setSendExpandedConds] = useState<Set<string>>(new Set());
   const [showExpandedCond, setShowExpandedCond] = useState(false);
+  const [detectingExpanded, setDetectingExpanded] = useState(false);
   // analyzeLoading は退去自動検出削除に伴い未使用（将来拡張用に残す）
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
   void analyzeLoading; void setAnalyzeLoading;
@@ -2879,7 +2880,42 @@ export default function AixModal({
                   )}
                   {(sendMode === null || sendMode === "widen") && (
                     <button
-                      onClick={() => { setSendMode(sendMode === "widen" ? null : "widen"); setPreview(""); if (sendMode !== "widen") setSendExpandedConds(new Set()); }}
+                      onClick={async () => {
+                        if (sendMode === "widen") {
+                          setSendMode(null);
+                          setPreview("");
+                          setDetectingExpanded(false);
+                          return;
+                        }
+                        setSendMode("widen");
+                        setPreview("");
+                        setSendExpandedConds(new Set());
+                        const msgs = (recentMessages ?? []).slice(-20);
+                        if (msgs.length > 0 || customerConditions) {
+                          setDetectingExpanded(true);
+                          try {
+                            const res = await fetch("/api/aix/detect-expanded-conditions", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                recent_messages: msgs,
+                                customer_conditions: customerConditions ?? "",
+                              }),
+                              signal: AbortSignal.timeout(9_000),
+                            });
+                            if (res.ok) {
+                              const data = await res.json() as { expanded?: string[] };
+                              if (Array.isArray(data.expanded) && data.expanded.length > 0) {
+                                setSendExpandedConds(new Set(data.expanded));
+                              }
+                            }
+                          } catch {
+                            // detection failed — staff selects manually
+                          } finally {
+                            setDetectingExpanded(false);
+                          }
+                        }
+                      }}
                       className={`w-full rounded-full py-2.5 text-sm font-bold transition-all ${
                         sendMode === "widen"
                           ? "bg-[#F57C00] text-white shadow-sm"
@@ -2916,26 +2952,30 @@ export default function AixModal({
                   {includeCalendar ? "✅ 内覧提案あり" : "内覧提案を省略"}
                 </button>
               </div>
-              {/* 条件を広げたモード: チップを直接表示 */}
+              {/* 条件を広げたモード: チップを直接表示（自動検出中はローディング表示） */}
               {sendMode === "widen" && (
-                <div className="flex flex-wrap gap-2">
-                  {(["家賃", "礼金", "築年数", "地域", "初期費用"] as const).map((cond) => {
-                    const selected = sendExpandedConds.has(cond);
-                    return (
-                      <button
-                        key={cond}
-                        onClick={() => {
-                          setSendExpandedConds(prev => {
-                            const next = new Set(prev);
-                            if (next.has(cond)) next.delete(cond); else next.add(cond);
-                            return next;
-                          });
-                          setPreview("");
-                        }}
-                        className={`rounded-full border px-4 py-1.5 text-[13px] font-bold transition-colors ${selected ? "border-orange-500 bg-orange-500 text-white" : "border-[#d1d7db] bg-white text-[#555]"}`}
-                      >{cond}</button>
-                    );
-                  })}
+                <div className="flex flex-wrap gap-2 items-center">
+                  {detectingExpanded ? (
+                    <span className="text-[12px] text-[#F57C00] animate-pulse px-1">条件を検出中...</span>
+                  ) : (
+                    (["家賃", "礼金", "築年数", "地域", "初期費用"] as const).map((cond) => {
+                      const selected = sendExpandedConds.has(cond);
+                      return (
+                        <button
+                          key={cond}
+                          onClick={() => {
+                            setSendExpandedConds(prev => {
+                              const next = new Set(prev);
+                              if (next.has(cond)) next.delete(cond); else next.add(cond);
+                              return next;
+                            });
+                            setPreview("");
+                          }}
+                          className={`rounded-full border px-4 py-1.5 text-[13px] font-bold transition-colors ${selected ? "border-orange-500 bg-orange-500 text-white" : "border-[#d1d7db] bg-white text-[#555]"}`}
+                        >{cond}</button>
+                      );
+                    })
+                  )}
                 </div>
               )}
               {/* カレンダー自動取得（削除済み: 旧内覧誘導モード用） */}
