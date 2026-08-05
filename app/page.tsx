@@ -382,6 +382,25 @@ function formatConditions(customer: PropertyCustomerRow): string {
   return lines.join("\n");
 }
 
+// \u6761\u4ef6\u30d1\u30cd\u30eb\u300c\u7269\u4ef6\u691c\u7d22\u300d\u30dc\u30bf\u30f3\u7528: lc \u306e structured \u6761\u4ef6\u3092 Chrome\u62e1\u5f35 autofill \u5f62\u5f0f\u306b\u5909\u63db\u3059\u308b
+function lcToSearchConditions(lc: {
+  structured?: CustomerStructuredForGen | null;
+}) {
+  const s = lc.structured ?? ({} as Partial<CustomerStructuredForGen>);
+  return {
+    rent_max:     s.rent_max     ?? null,
+    rent_min:     null as number | null,
+    walk_minutes: s.walk_minutes ?? null,
+    building_age: s.building_age ?? null,
+    floor_plan:   s.floor_plan   ?? null,
+    areas:        s.desired_area ? [s.desired_area] : ([] as string[]),
+    lines:        [] as string[],
+    stations:     [] as string[],
+    prefecture:   null as string | null,
+    city:         null as string | null,
+  };
+}
+
 // \u9023\u7d9a\u753b\u50cf\u30e1\u30c3\u30bb\u30fc\u30b8\u30921\u4ef6\u306b\u307e\u3068\u3081\u3066\u30b0\u30ea\u30c3\u30c9\u8868\u793a\u3059\u308b\uff08LINE\u98a8\uff09
 // \u540c\u4e00\u9001\u4fe1\u8005\u30fb30\u79d2\u4ee5\u5185\u30fb[\u753b\u50cf]\u30c6\u30ad\u30b9\u30c8\u306e\u307f \u2192 imageUrl\u3092JSON\u914d\u5217\u306b\u7d71\u5408
 function groupImageMessages(messages: Message[]): Message[] {
@@ -867,6 +886,7 @@ export default function Home() {
   const [sparkleScreenshotPreview, setSparkleScreenshotPreview] = useState("");
   const [linkModalConvId, setLinkModalConvId] = useState<string | null>(null);
   const [linkSearchQuery, setLinkSearchQuery] = useState("");
+  const [condPanelSearchOpen, setCondPanelSearchOpen] = useState(false);
   const [propertyCustomers, setPropertyCustomers] = useState<Array<{ id: string; customer_name: string; desired_area?: string | null; floor_plan?: string | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; other_requests?: string | null; rent_min?: number | null; building_age?: number | null }>>([]);
   // convId → linked property customer（条件テキスト含む）
   const [linkedCustomerMap, setLinkedCustomerMap] = useState<Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null; additional_conditions?: string | null; structured?: CustomerStructuredForGen }>>({});
@@ -5378,6 +5398,38 @@ export default function Home() {
                 })()}
                 {/* 確定履歴タイムライン */}
                 <ConditionHistory additionalConditions={lc.additional_conditions ?? null} />
+                {/* ── 物件検索（Chrome拡張ブリッジ） */}
+                <div className="relative mt-2">
+                  <button
+                    onClick={() => setCondPanelSearchOpen((v) => !v)}
+                    className="rounded-xl border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs font-bold text-orange-700 hover:bg-orange-100 active:bg-orange-200"
+                  >
+                    🔍 物件検索
+                  </button>
+                  {condPanelSearchOpen && (
+                    <>
+                      {/* 透明オーバーレイ: 外側クリックで閉じる */}
+                      <div className="fixed inset-0 z-40" onClick={() => setCondPanelSearchOpen(false)} />
+                      <div className="absolute left-0 top-full mt-1 z-50 bg-white rounded-xl shadow-lg border border-gray-200 py-1 min-w-[150px]">
+                        {(["realnetpro", "itandi"] as const).map((site) => (
+                          <button
+                            key={site}
+                            onClick={() => {
+                              setCondPanelSearchOpen(false);
+                              window.postMessage(
+                                { from: "aixlinx-webapp", site, conditions: lcToSearchConditions(lc) },
+                                "*"
+                              );
+                            }}
+                            className="block w-full px-4 py-2 text-left text-xs hover:bg-gray-50 text-gray-700"
+                          >
+                            {site === "realnetpro" ? "リアプロで検索" : "itandiで検索"}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
             );
           })()}

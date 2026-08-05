@@ -18,7 +18,8 @@
     "*://realnetpro.com/*",
     "*://*.realnetpro.com/*",
     "https://itandibb.com/*",
-    "https://system.reins.jp/*"
+    "https://system.reins.jp/*",
+    "http://localhost:3000/*"
   ],
   "permissions": [
     "sidePanel",
@@ -104,6 +105,14 @@
     {
       "matches": ["https://system.reins.jp/*"],
       "js": ["score-overlay.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://sumora-ai-ui.vercel.app/*",
+        "http://localhost:3000/*"
+      ],
+      "js": ["webapp-bridge.js"],
       "run_at": "document_idle"
     }
   ]

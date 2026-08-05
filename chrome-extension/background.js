@@ -709,6 +709,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // ── WebApp（sumora-ai-ui）からの直接検索トリガー ──────────────────────────
+  if (msg.type === "axlx-webapp-search") {
+    const { site, conditions } = msg;
+    (async () => {
+      try {
+        await _webappAutofill(site, conditions);
+        sendResponse({ ok: true });
+      } catch (e) {
+        console.error("[webapp-search] error:", e);
+        sendResponse({ ok: false, error: String(e.message) });
+      }
+    })();
+    return true;
+  }
+
   return false;
 });
 
@@ -863,6 +878,52 @@ function _batchWaitForTabComplete(tabId) {
     chrome.tabs.onUpdated.addListener(listener);
     setTimeout(resolve, 15000);
   });
+}
+
+async function _webappAutofill(site, conditions) {
+  var siteUrlPrefixes = {
+    realnetpro: "https://www.realnetpro.com",
+    itandi:     "https://itandibb.com",
+    reins:      "https://system.reins.jp"
+  };
+  var siteUrls = {
+    realnetpro: "https://www.realnetpro.com/main.php",
+    itandi:     "https://itandibb.com/rent_rooms/list",
+    reins:      "https://system.reins.jp/main/PF08/SA08I010.aspx"
+  };
+  var prefix = siteUrlPrefixes[site];
+  if (!prefix) return;
+
+  var allTabs = await chrome.tabs.query({});
+  var existing = allTabs.find(function(t) { return t.url && t.url.startsWith(prefix); });
+  var tab = existing;
+  if (!tab) {
+    // タブが存在しない: 新規作成してフォアグラウンドで開く
+    tab = await chrome.tabs.create({ url: siteUrls[site], active: true });
+    await _batchWaitForTabComplete(tab.id);
+    await new Promise(function(r) { setTimeout(r, 2000); });
+  } else {
+    // タブが存在する: フォアグラウンドに切り替え
+    await chrome.tabs.update(tab.id, { active: true });
+    await new Promise(function(r) { setTimeout(r, 500); });
+  }
+
+  if (site === "realnetpro") {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      world: "MAIN",
+      func: function(c) { window.postMessage({ from: "aixlinx-fill", conditions: c }, "*"); },
+      args: [conditions]
+    });
+  } else {
+    var eventName = site === "reins" ? "axlx-reins-fill" : "axlx-itandi-fill";
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      world: "MAIN",
+      func: function(name, c) { window.dispatchEvent(new CustomEvent(name, { detail: c })); },
+      args: [eventName, conditions]
+    });
+  }
 }
 
 async function _updateBatchCommand(id, updates) {
