@@ -39,7 +39,7 @@ export async function fetchPromptRules(
     };
 
     // ── 永久ルール（is_permanent=true）を別枠で先行取得 ──
-    // 通常の50件上限とは独立して全件注入される。どれほどルールが増えても抜け落ちない。
+    // 通常の150件上限・priority閾値とは独立して全件注入される。どれほどルールが増えても抜け落ちない。
     const permanentRes = await buildBaseQuery()
       .eq("is_permanent", true)
       .not("rule_key", "like", "LEARN-%")
@@ -48,9 +48,16 @@ export async function fetchPromptRules(
 
     // FEEDBACK-* / IMPLEMENT-* 等（LEARN-*はPhase1で廃止済み・HUMAN-*はRAGへ完全移行）
     // ナレッジはfetchKnowledge()のpgvector RAGで届くため ai_prompt_rules への重複注入不要
+    //
+    // priority >= 4 のみ注入（decayを実際に機能させるための閾値）:
+    // ai-feedback/route.ts の90日decayは古いFEEDBACK-*を priority=2 に demote するが、
+    // 閾値なしで priority 降順 LIMIT 150 だと総件数が150未満の間は demote 済みルールも
+    // 全件注入され続け、decayが no-op になる。priority 3以下は注入対象から外す。
+    // （BOUNDARY-* は priority=9 かつ decay 対象外のため、この閾値の影響を受けない）
     const highPrioRes = await buildBaseQuery()
       .not("rule_key", "like", "LEARN-%")
       .eq("is_permanent", false)
+      .gte("priority", 4)
       .order("priority", { ascending: false })
       .order("updated_at", { ascending: false, nullsFirst: false })
       .limit(150);

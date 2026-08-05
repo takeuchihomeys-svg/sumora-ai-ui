@@ -232,12 +232,15 @@ function textSimilarity(a: string, b: string): number {
   return (2 * lcs) / (m + n); // Dice係数
 }
 
-// 修正量に応じて importance を変動（save-reply-example と統一）
-// sim < 0.4 = 大幅修正 → 9 / 0.4〜0.65 = 中程度 → 8 / 0.65〜 = 微修正 → 7
+// 修正量に応じて importance を変動
+// sim < 0.4 = 大幅修正 → 9 / 0.4〜0.65 = 中程度 → 8 / 0.65〜 = 微修正 → 6
+// ②-2 昇格経路復旧（2026-08）: 微修正の初期値を 7→6 に引き下げ。
+// 未検証の hypothesis を confirmed（importance7）と同列で配信しないため。
+// confirmed 昇格時に promoteToConfirmed 側で importance>=7 に引き上げる。
 function diffImportance(sim: number): number {
   if (sim < 0.4) return 9;
   if (sim < 0.65) return 8;
-  return 7;
+  return 6;
 }
 
 // ── スマートナレッジフロー: ヘルパー関数 ──
@@ -820,7 +823,10 @@ export async function POST(req: NextRequest) {
   const limit = limitParam ? Math.min(parseInt(limitParam, 10) || 10, 200) : 10;
   const mode = url.searchParams.get("mode"); // "maintain" = メンテナンスのみ・差分学習ループをスキップ
 
-  // 未処理の差分を取得（is_starred順で重要な学習から処理）
+  // 未処理の差分を古い順（created_at ASC）で取得。
+  // 以前は「最新N件（is_starred優先→created_at DESC）」だったため、新着差分に押し出された
+  // 古い未分析差分が永久に処理されなかった。古い順に処理することで diff_analyzed_at IS NULL の
+  // バックログを毎回先頭から確実に消化し、取りこぼしを防ぐ（1回あたりの上限 limit は維持）。
   const { data: examples, error: examplesError } = await supabase
     .from("ai_reply_examples")
     .select("id, customer_message, ai_draft, sent_reply, conversation_state, is_starred, ai_components, reply_angle")
@@ -830,14 +836,35 @@ export async function POST(req: NextRequest) {
     .not("sent_reply", "is", null)
     // AIX生成文を除外しLINE返信AI由来のみ対象にする（entry_source で明示的に区分）
     .eq("entry_source", "line_reply")
-    .order("is_starred", { ascending: false })
-    .order("created_at", { ascending: false })
+    .order("created_at", { ascending: true })
     .limit(limit);
 
   // DBエラーを空配列として握りつぶさず、明示的にエラーを返す
   if (examplesError) {
     await finishCronLog(runLogId, false, undefined, examplesError.message);
     return NextResponse.json({ ok: false, error: examplesError.message }, { status: 500 });
+  }
+
+  // ── ⑥ AIX編集差分の第2パス用フェッチ（2026-08追加）──
+  // メインループは entry_source='line_reply' のみ対象のため、スタッフがAIX生成文を修正した差分
+  // （entry_source='aix_action'・was_ai_modified=true）が一切学習されていなかった
+  // （LINE返信5,804件学習 vs AIX 227件の格差の主因）。メインループ後の第2パスで同様に差分分析し、
+  // conversation_state に aix_action の値を入れてナレッジ化する（AIX側の取得クエリ・⑦AIX昇格バッチが拾える形）。
+  // ※ entry_source の実値は 'line_reply' | 'aix_action' の2種のみ（save-reply-example が whitelist で正規化。
+  //    'aix_edit' という値は存在しない）。編集有無は was_ai_modified で判別する。
+  const { data: aixExamples, error: aixExamplesError } = await supabase
+    .from("ai_reply_examples")
+    .select("id, customer_message, ai_draft, sent_reply, conversation_state, aix_action, is_starred")
+    .eq("was_ai_modified", true)
+    .is("diff_analyzed_at", null)
+    .not("ai_draft", "is", null)
+    .not("sent_reply", "is", null)
+    .eq("entry_source", "aix_action")
+    .order("created_at", { ascending: true })
+    .limit(limit);
+  if (aixExamplesError) {
+    // ⑥は補助学習パスのため、フェッチ失敗でも run 全体は落とさない（メインループは実行する）
+    console.warn("[analyze-diffs] ⑥AIX差分フェッチ失敗（第2パスをスキップ）:", aixExamplesError.message);
   }
 
   let processed = 0;
@@ -913,8 +940,50 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* ignore - confirmed再検証失敗はメイン処理を止めない */ }
 
+  // ── ⑦ AIX系 hypothesis の自動昇格（2026-08追加）──
+  // LINE返信系には ⑤ Tier1/Tier2・AUTO-JUDGE の昇格経路があるが、AIX由来のナレッジには
+  // 自動昇格の仕組みがなく hypothesis のまま滞留していた（2026-08時点で約103件）。
+  // ai_reply_knowledge に action_type カラムは存在せず、AIX系は conversation_state に
+  // AIXアクション名（property_recommendation / viewing_invite / application_invite 等・
+  // property_check_result_available のようなサブキー付き含む）が入ることで区別されるため、
+  // AIX_ACTION_QUESTION_LABELS のキー前方一致で判定する。
+  // 昇格条件: apply_count>=2（②-2 で設定した ⑤ と同じ閾値）かつ 外れ率（wrong/apply）<25%
+  // → confirmed に昇格し importance を最低 7 へ引き上げ（promoteToConfirmed 内で実施）。
+  // AIX系は correct_count が積まれる経路が乏しいため ⑤ の correct_count>=2 条件は課さない。
+  // ⑤ より先に実行することで、昇格済みルールに ⑤ が重複して Tier2 承認質問を起票するのを防ぐ。
+  let promotedAix = 0;
+  try {
+    const AIX_STATE_PREFIXES = [...Object.keys(AIX_ACTION_QUESTION_LABELS), "application_invite"];
+    const isAixState = (state: string | null): boolean =>
+      !!state && AIX_STATE_PREFIXES.some((k) => state === k || state.startsWith(k + "_"));
+    const { data: aixCandidates } = await supabase
+      .from("ai_reply_knowledge")
+      .select("id, title, content, conversation_state, importance, apply_count, wrong_count")
+      .eq("hypothesis_status", "hypothesis")
+      .gte("apply_count", 2)
+      .order("apply_count", { ascending: false })
+      .limit(500);
+    for (const rule of aixCandidates ?? []) {
+      const state = (rule.conversation_state as string | null) ?? null;
+      if (!isAixState(state)) continue;
+      const applyCount = (rule.apply_count as number) ?? 0;
+      const wrong = (rule.wrong_count as number) ?? 0;
+      if (applyCount < 2) continue;
+      if (wrong / applyCount >= 0.25) continue; // 外れ率25%以上は昇格しない（⑤と同基準）
+      await promoteToConfirmed(rule.id as string, "analyze_diffs_aix_auto", {
+        title: (rule.title as string) ?? "",
+        content: (rule.content as string) ?? "",
+        conversation_state: state,
+        importance: (rule.importance as number) ?? 0,
+      });
+      promotedAix++;
+    }
+  } catch { /* AIX昇格失敗はメイン処理を止めない */ }
+
   // ── ⑤ hypothesis → confirmed 自動昇格 ──
-  // correct_count>=5 かつ wrong率<0.3 かつ apply_count>=5 の hypothesis ルールを confirmed に昇格する。
+  // correct_count>=2 かつ wrong率<0.25 かつ apply_count>=2 の hypothesis ルールを confirmed に昇格する。
+  // ②-2 昇格経路復旧（2026-08）: 旧閾値（correct>=5 / apply>=5 / wrong率<30%）は hypothesis の
+  // 平均 apply 回数 0.5 という実態に対して高すぎ、直近10日 promoted=0 の原因だったため引き下げ。
   // Tier 1: importance>=9 かつ apply>=8 かつ correct>=6 かつ wrong率<15% かつ内容明確 → サイレント昇格（確認不要）
   // Tier 2: それ以外 → ask-then-promote。昇格はせず ai_feedback_items に事前承認質問を起票し、
   //         竹内さんの回答（ai-feedback の [knowledge_id:] closed-loop）で confirmed に昇格する
@@ -926,8 +995,8 @@ export async function POST(req: NextRequest) {
       .from("ai_reply_knowledge")
       .select("id, title, content, conversation_state, importance, correct_count, wrong_count, apply_count")
       .eq("hypothesis_status", "hypothesis")
-      .gte("correct_count", 5)
-      .gte("apply_count", 5)
+      .gte("correct_count", 2)
+      .gte("apply_count", 2)
       .limit(50);
 
     for (const rule of promotionCandidates ?? []) {
@@ -936,7 +1005,7 @@ export async function POST(req: NextRequest) {
       const applyCount = (rule.apply_count as number) ?? 0;
       const ruleImportance = (rule.importance as number) ?? 0;
       const wrongRate = correct + wrong > 0 ? wrong / (correct + wrong) : 0;
-      if (wrongRate >= 0.3) continue; // 外れ率30%以上は昇格しない
+      if (wrongRate >= 0.25) continue; // 外れ率25%以上は昇格しない（②-2: 30%→25%に厳格化とセットで母数条件を緩和）
 
       // ── Tier 1: サイレント昇格（フィードバック起票なし）──
       // 条件: importance>=9 かつ apply>=8 かつ correct>=6 かつ wrong率<15% かつ内容明確
@@ -1136,7 +1205,10 @@ export async function POST(req: NextRequest) {
 
   // mode=maintain は差分学習ループを使わないため、examples 0件でも早期リターンせず
   // 回帰センチネル（detectRepeatedDeletions）を必ず実行させる
-  if (mode !== "maintain" && (!examples || examples.length === 0)) {
+  // ⑥AIX差分バックログがある場合も早期リターンしない（line_reply 側が0件の日でも第2パスを実行する。
+  // DB実測では line_reply の未処理はほぼ0・aix_action の未処理が大半のため、この条件がないと⑥が動かない）
+  const hasAixBacklog = !!aixExamples && aixExamples.length > 0;
+  if (mode !== "maintain" && (!examples || examples.length === 0) && !hasAixBacklog) {
     // 処理対象ゼロでも同期・decayは上で実行済み。cron logも完了させる（ok=null放置を防ぐ）
     await finishCronLog(runLogId, true, { processed: 0, learned: 0, demotedConfirmed, promoted, promotedSilent, promotionAsked });
     return NextResponse.json({ ok: true, processed: 0, learned: 0, demotedConfirmed, promoted, promotedSilent, promotionAsked, message: `処理対象なし・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件（Tier1サイレント）・昇格承認起票${promotionAsked}件` });
@@ -1152,11 +1224,11 @@ export async function POST(req: NextRequest) {
   // mode=maintain の場合は差分学習ループをスキップしてメンテナンス処理のみ実行
   if (mode === "maintain") {
     const sentinel = await sentinelPromise;
-    await finishCronLog(runLogId, true, { processed: 0, learned: 0, demotedConfirmed, promoted, promotedSilent, promotionAsked });
+    await finishCronLog(runLogId, true, { processed: 0, learned: 0, demotedConfirmed, promoted, promotedSilent, promotionAsked, promotedAix });
     return NextResponse.json({
-      ok: true, processed: 0, learned: 0, demotedConfirmed, promoted, promotedSilent, promotionAsked,
+      ok: true, processed: 0, learned: 0, demotedConfirmed, promoted, promotedSilent, promotionAsked, promotedAix,
       sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted,
-      message: `[maintain] 差分学習スキップ・メンテ処理のみ実行 — confirmed差し戻し${demotedConfirmed}件・昇格${promoted}件・昇格承認起票${promotionAsked}件`,
+      message: `[maintain] 差分学習スキップ・メンテ処理のみ実行 — confirmed差し戻し${demotedConfirmed}件・昇格${promoted}件・AIX昇格${promotedAix}件・昇格承認起票${promotionAsked}件`,
     });
   }
 
@@ -1272,6 +1344,9 @@ export async function POST(req: NextRequest) {
 
       // ── 誤差学習: 変化したコンポーネントをタイプ別に分析（最大2件）──
       const learnableChangedNames = new Set(learnableChanges.map(c => c.comp));
+      // LLM失敗（null返却 = Anthropic一時障害・JSONパース失敗等）が1件でもあれば
+      // 成功時マークをせずロック解放してリトライさせるためのフラグ
+      let compLlmFailed = false;
       for (const { comp, changeType } of learnableChanges.slice(0, 2)) {
         const aiCompText = (ai_components as Record<string, string>)[comp] ?? "";
         if (!aiCompText || aiCompText.length < 5) continue;
@@ -1283,7 +1358,13 @@ export async function POST(req: NextRequest) {
           ? await analyzeStructureDiff(customer_message, aiCompText, sent_reply, compState, compName)
           : await analyzeComponentDiff(customer_message, aiCompText, sent_reply, compState, compName);
 
-        if (compResult && !compResult.skip && compResult.title && compResult.rule) {
+        if (compResult === null) {
+          // LLM失敗 → このexampleは成功扱いにしない（diff_analyzed_at をマークせずリトライ対象に残す）
+          compLlmFailed = true;
+          continue;
+        }
+
+        if (!compResult.skip && compResult.title && compResult.rule) {
           // GAP-6: policy型コンテンツ（禁止/絶対/必ず等の普遍的制約）はai_reply_knowledgeでなく
           // ai_prompt_rulesへ保存する。pgvector検索ではなくfetchPromptRulesで全会話に確実に注入される。
           if (isPolicyContent(compResult.rule) && changeType === "structure") {
@@ -1442,6 +1523,14 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // 成功時のみ diff_analyzed_at をマークする。コンポーネント分析でLLM失敗があった場合は
+      // null に戻して楽観的ロックを解放し、次回cron実行でリトライさせる
+      // （now でマークすると .is("diff_analyzed_at", null) のクエリに二度とヒットせず永久に学習されない）
+      if (compLlmFailed) {
+        console.error(`[analyze-diffs] component diff analysis failed for example id=${id} — resetting diff_analyzed_at for retry on next run`);
+        await supabase.from("ai_reply_examples").update({ diff_analyzed_at: null }).eq("id", id);
+        continue;
+      }
       await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
       processed++;
       continue; // 通常の full-message analyzeDiff はスキップ
@@ -1680,6 +1769,135 @@ export async function POST(req: NextRequest) {
     processed++;
   }
 
+  // ── ⑥ AIX編集差分の第2パス: entry_source='aix_action' の修正差分を学習（2026-08追加）──
+  // メインループ（line_reply）と同じ analyzeDiff で差分をナレッジ化する。
+  // conversation_state には aix_action の値（property_check_result_available 等サブキー付き含む）を
+  // そのまま入れ、AIX側のナレッジ取得クエリと ⑦AIX自動昇格バッチ（conversation_state 前方一致判定）の
+  // 対象になるようにする。楽観的ロック・LLM失敗時の diff_analyzed_at リセット（次回リトライ）も
+  // メインループと同じ規約。コンポーネント2層学習・AUTO-JUDGE は行わない（時間予算と過剰起票の抑制）。
+  let aixProcessed = 0;
+  let aixLearned = 0;
+  for (const ex of aixExamples ?? []) {
+    // メインループ（40秒）とポジティブ強化A（50秒）の間の45秒をタイムガードとする
+    if (Date.now() - startTime > 45_000) {
+      timedOut = true;
+      console.warn(`[analyze-diffs] ⑥AIX差分: 45秒タイムガード発動 — ${aixProcessed}/${(aixExamples ?? []).length}件で打ち切り（残りは次回実行で処理）`);
+      break;
+    }
+    const { id, customer_message, ai_draft, sent_reply, conversation_state, aix_action, is_starred } = ex as {
+      id: string;
+      customer_message: string;
+      ai_draft: string;
+      sent_reply: string;
+      conversation_state: string | null;
+      aix_action: string | null;
+      is_starred: boolean;
+    };
+    // aix_action 未設定の旧レコード（entry_source バックフィル前）は conversation_state で代用
+    const aixState = aix_action || conversation_state || "aix_action";
+
+    // 楽観的ロック: 2インスタンス同時実行時の二重LLM呼び出し・重複insertを防止（メインループと同じ）
+    const { data: claimAix } = await supabase
+      .from("ai_reply_examples")
+      .update({ diff_analyzed_at: new Date().toISOString() })
+      .eq("id", id)
+      .is("diff_analyzed_at", null)
+      .select("id");
+    if (!claimAix || claimAix.length === 0) continue;
+
+    // 完全一致は学習不要としてマークのみ
+    if ((ai_draft ?? "").trim() === (sent_reply ?? "").trim()) {
+      await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
+      aixProcessed++;
+      continue;
+    }
+    // 分割送信っぽい場合（sentReplyがaiDraftの40%未満かつ類似度50%以上）はスキップ
+    const aixSim = textSimilarity((ai_draft ?? "").trim(), (sent_reply ?? "").trim());
+    const aixLikelySplit = (sent_reply ?? "").trim().length < (ai_draft ?? "").trim().length * 0.4 && aixSim >= 0.5;
+    if (aixLikelySplit) {
+      await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
+      aixProcessed++;
+      continue;
+    }
+    // グレーゾーン（sim 0.7〜0.95）かつ意味的変化なし → 言い回し差分の誤学習を防止（メインループと同じ判定）
+    if (aixSim >= 0.7 && aixSim < 0.95 && !hasSemanticChange(ai_draft ?? "", sent_reply ?? "")) {
+      const same = await isMeaningfullySame(ai_draft ?? "", sent_reply ?? "");
+      if (same) {
+        await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
+        aixProcessed++;
+        continue;
+      }
+    }
+
+    const aixResult = await analyzeDiff(
+      customer_message,
+      ai_draft,
+      sent_reply,
+      aixState,
+      `\n※ これはAIXボタン「${aixActionLabel(aixState)}」（${aixState}）の生成文をスタッフが修正した差分です。このAIXアクションの生成文に特有の改善パターンを抽出してください。`,
+    );
+    // LLM失敗時は diff_analyzed_at を null に戻してロック解放 → 次回cron実行でリトライ（メインループと同じ規約）
+    if (aixResult === null) {
+      console.error(`[analyze-diffs] ⑥AIX差分: analyzeDiff failed for example id=${id} — resetting diff_analyzed_at for retry on next run`);
+      await supabase.from("ai_reply_examples").update({ diff_analyzed_at: null }).eq("id", id);
+      continue;
+    }
+
+    if (!aixResult.skip && aixResult.title && aixResult.rule) {
+      const ALLOWED_CATEGORIES_AIX = new Set(["pattern", "style", "phrase"]);
+      const rawCat = (aixResult.category ?? "pattern").split("=")[0].trim();
+      const safeCat = ALLOWED_CATEGORIES_AIX.has(rawCat) ? rawCat : "pattern";
+
+      // policy型（禁止/必ず等の普遍的制約）は ai_prompt_rules へ直接保存。
+      // action_type はサブキーを除いたベースのAIXアクション名（既存の日次AIX分析 LEARN-AIX-* と同じ粒度）
+      if (isPolicyContent(aixResult.rule) && safeCat === "pattern") {
+        const baseAction = Object.keys(AIX_ACTION_QUESTION_LABELS)
+          .sort((a, b) => b.length - a.length)
+          .find((k) => aixState === k || aixState.startsWith(k + "_")) ?? aixState;
+        await supabase.from("ai_prompt_rules").upsert({
+          rule_key: `DIFF-POLICY-AIX-${id}`,
+          action_type: baseAction,
+          condition_key: null,
+          condition_value: null,
+          rule_text: aixResult.rule.slice(0, 500),
+          reason: `analyze-diffs ⑥AIX差分 ポリシー検出: ${aixResult.title}`.slice(0, 500),
+          priority: 8,
+          is_active: true,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "rule_key" }).then(() => {
+          aixLearned++;
+          learned++;
+        }, (e) => console.error("[analyze-diffs] DIFF-POLICY-AIX upsert失敗:", e));
+      } else {
+        // trigger_example 優先の embedding（メインループと同じ #21 方針）
+        const aixEmbeddingInput = buildKnowledgeEmbeddingInput({
+          trigger_example: aixResult.trigger_example,
+          rule: aixResult.rule,
+          conversation_state: aixState,
+        });
+        const aixEmbedding = await generateEmbedding(aixEmbeddingInput);
+        const aixBaseImp = diffImportance(aixSim);
+        const aixImp = is_starred ? Math.min(9, aixBaseImp + 1) : aixBaseImp;
+        const aixUpsert = await upsertKnowledge(supabase, {
+          title: aixResult.title,
+          content: aixResult.rule,
+          category: safeCat,
+          importance: aixImp,
+          conversation_state: aixState,
+          source_example_id: id,
+          ...(aixEmbedding ? { embedding: aixEmbedding } : {}),
+        });
+        if (aixUpsert.result === "inserted" || aixUpsert.result === "merged") {
+          aixLearned++;
+          learned++; // backfill-embeddings 起動判定（learned>0）にも反映
+        }
+      }
+    }
+
+    await supabase.from("ai_reply_examples").update({ diff_analyzed_at: now }).eq("id", id);
+    aixProcessed++;
+  }
+
   // ── ポジティブ強化 A: was_ai_used=true（AIそのまま送信）→ コンポーネントルールをブースト ──
   // スタッフが修正せず送信 = AI予想が正解 = 各コンポーネントのルールを強化する
   // was_ai_modified=false かつ ai_components あり のレコードが対象（最大20件）
@@ -1809,12 +2027,12 @@ export async function POST(req: NextRequest) {
     }
   } catch { /* ignore - 可視化失敗はメイン処理を止めない */ }
 
-  await finishCronLog(runLogId, true, { processed, learned, demotedConfirmed, promoted, promotedSilent, promotionAsked, timedOut, sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted, ...(cronWarning ? { cronWarning } : {}) });
+  await finishCronLog(runLogId, true, { processed, learned, aixProcessed, aixLearned, demotedConfirmed, promoted, promotedSilent, promotionAsked, promotedAix, timedOut, sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted, ...(cronWarning ? { cronWarning } : {}) });
   return NextResponse.json({
-    ok: true, processed, learned, demotedConfirmed, promoted, promotedSilent, promotionAsked, timedOut,
+    ok: true, processed, learned, aixProcessed, aixLearned, demotedConfirmed, promoted, promotedSilent, promotionAsked, promotedAix, timedOut,
     sentinelDetected: sentinel.detected, sentinelDemoted: sentinel.demoted,
     ...(cronWarning ? { cronWarning } : {}),
-    message: `${processed}件処理・${learned}件学習・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件（Tier1サイレント）・昇格承認起票${promotionAsked}件・反復削除フレーズ${sentinel.detected}件検知（${sentinel.demoted}件降格）${timedOut ? "・⏱30秒タイムガードで打ち切り" : ""}${cronWarning ? ` / ${cronWarning}` : ""}`,
+    message: `${processed}件処理・${learned}件学習・AIX差分${aixProcessed}件処理（${aixLearned}件学習）・confirmed差し戻し${demotedConfirmed}件・confirmed昇格${promoted}件（Tier1サイレント）・AIX昇格${promotedAix}件・昇格承認起票${promotionAsked}件・反復削除フレーズ${sentinel.detected}件検知（${sentinel.demoted}件降格）${timedOut ? "・⏱タイムガードで打ち切り" : ""}${cronWarning ? ` / ${cronWarning}` : ""}`,
   });
   } catch (e) {
     console.error("[analyze-diffs]", e);

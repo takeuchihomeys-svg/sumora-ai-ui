@@ -561,11 +561,33 @@ JSON配列で返す: [{aix_type, description, implementation_notes, proposal_cat
 
 type BlindSpotItem = {
   question: string;
+  aix_action?: string | null;
   speculation?: string;
   category?: string;
   evidence?: string;
   confidence?: string;
 };
+
+// ②-1 dedup強化用: 記号・空白を除いた文字バイグラム集合を作る（日本語の形態素解析なしで類似キーワード重複を判定するため）
+function questionBigrams(text: string): Set<string> {
+  const normalized = text
+    .replace(/[\s　。、．，！？!?・「」『』【】（）()\[\]■━→①②③❓／/：:｛｝{}]/g, "")
+    .slice(0, 200);
+  const grams = new Set<string>();
+  for (let i = 0; i < normalized.length - 1; i++) grams.add(normalized.slice(i, i + 2));
+  return grams;
+}
+
+// バイグラムJaccard類似度が0.4以上なら「類似キーワードが重複する同種の質問」とみなす
+function isSimilarQuestion(a: string, b: string): boolean {
+  const ga = questionBigrams(a);
+  const gb = questionBigrams(b);
+  if (ga.size === 0 || gb.size === 0) return false;
+  let inter = 0;
+  for (const g of ga) if (gb.has(g)) inter++;
+  const union = ga.size + gb.size - inter;
+  return union > 0 && inter / union >= 0.4;
+}
 
 async function discoverBlindSpots(): Promise<{ questionsSaved: number }> {
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -729,31 +751,28 @@ ${answeredSection || "（なし）"}
 2. プロンプト・知識の曖昧さ（prompt_ambiguity）: 知識自体は正しいがAIが使う場面・条件を誤解している場合
    → どういう条件・顧客状況でその表現/対応を使うべきかを質問する
 
-■ question フィールドの形式（必ず以下のテンプレートをそのまま使うこと・文字数制限なし）
+■ question フィールドの形式（必ず以下のテンプレートをそのまま使うこと・全体で最大400字）
 
-❓【教えてください】[確認したい事項を1行で]
+❓【AIX: {aix_action}】{簡潔な問い（1行・最大40字）}
 
-■ 使われそうな場面
-[1〜2文: どんな状況・お客様の発言・フェーズで問題が起きているか。スタッフが「あ、これ自分がよくやる場面だ」と即座に判断できるよう書く]
+{状況説明: 差分行のみ・最大100字}
 
-━━ 確認内容 ━━
-[背景・根拠・AIが観察したこと・なぜ今聞くかの詳細説明（制限なし・複数段落OK）]
+【AI案】{AIが推奨する改善案・最大100字}
 
-【送信例】
-[データに含まれるAI生成文またはスタッフ実送信文をそのまま引用（最大400文字）。どちらもない場合はこのブロックごと省略]
-【/送信例】
+→ ①この案で採用  ②現状維持  ③条件つき採用（自由記述）
 
-❓ 竹内さんへの質問
-① [具体的な質問]
-
-ルール変更を提案する場合は以下ブロックを追加（任意）:
-【AI案】
-[AIが正しいと思う新しいルールや対応手順の具体的な提案文]
-【/AI案】
+テンプレートのルール:
+- AIXボタン由来でない場合、見出しは ❓【通常返信】{簡潔な問い} とする
+- 状況説明では AI案 vs 実際の送信文の全文対比引用を禁止。違いがある行（差分行）だけを最大150字で引用する
+- 「プロンプトのどこが曖昧か」のような、スタッフが答えられない自由記述質問は禁止
+- 必ず【AI案】としてAIが推奨する改善案を1つ具体的に提示し、スタッフは3択（①②③）から選ぶだけにする
+- 最終行の3択（→ ①この案で採用  ②現状維持  ③条件つき採用（自由記述））は一字一句そのまま必ず含める
+- 質問文全体（見出し〜3択行まで）を400字以内に収める
 
 以下の形式でJSON配列を出力してください（最大5件・説明文・コードフェンス不要）:
 [{
-  "question": "上記テンプレートで記述した質問全文（文字数制限なし・改行を含んでよい）",
+  "question": "上記テンプレートで記述した質問全文（最大400字・改行を含んでよい）",
+  "aix_action": "AIXボタン由来の場合のみ設定: viewing_invite|estimate_sheet|property_send|property_recommendation|property_check_result|condition_hearing|meeting_place|application_push|greeting_viewing|followup_revive|acknowledge_check。通常返信由来なら null",
   "speculation": "AIの憶測・仮説（「〜ではないかと思われますが...」形式）",
   "category": "knowledge_gap|prompt_ambiguity|new_flow|missing_keyword|weak_scene|new_aix_needed|low_conversion|general",
   "evidence": "根拠となったデータの要約（件数・パターン・AIが述べた誤り）",
@@ -761,37 +780,33 @@ ${answeredSection || "（なし）"}
 }]
 
 良い質問の例（question フィールドにはこの形式で記述する）:
-- （knowledge_gap 例）
-  ❓【教えてください】日割家賃の計算方向
-  ■ 使われそうな場面
-  入居日を決定する商談中、スタッフがLINEで「〇〇日入居だと日割はXXX円です」と伝える場面で発生しています。
-  ━━ 確認内容 ━━
-  AI案に「入居日が早いほど日割家賃は少ない」と記載されてスタッフが訂正した事例が3件ありました。正しいルールをシステムに覚えさせるため確認が必要です。
-  【送信例】
-  「入居日が15日の場合、日割家賃は家賃の半額以下になります」（AI生成文・スタッフが誤りと判定して修正）
-  【/送信例】
-  ❓ 竹内さんへの質問
-  ① 日割家賃は入居日が早い方が高くなりますか？安くなりますか？正しい計算方法を教えてください。
+- （knowledge_gap 例・通常返信由来）
+  ❓【通常返信】日割家賃は入居日が早いほど高い？安い？
 
-- （weak_scene 例）
-  ❓【教えてください】「審査が不安」という顧客への正しい対応
-  ■ 使われそうな場面
-  内見後〜申込前のフェーズで、お客様が「審査が通るか心配です」「収入が少ないので…」と不安を口にしてきた時の場面です。
-  ━━ 確認内容 ━━
-  AIは「審査が不安」発言に対して「ヒアリング継続」と予測していますが、週3回外れています。スタッフが実際に何をしているかを把握していないため、予測モデルが改善できません。
-  【送信例】
-  「審査については弊社の方でしっかりサポートしますので、まずはお気軽にご相談ください」（AI生成文）
-  【/送信例】
-  ❓ 竹内さんへの質問
-  ① お客様が「審査が不安」と言った場合、まず何をしますか？（例：安心させるトーク／審査要件の確認／申込を急がせる、等）
+  AI案が「入居日が早いほど日割家賃は少ない」と書き、スタッフが逆方向に訂正した例が3件ありました。
+
+  【AI案】日割家賃＝月額家賃÷当月日数×（入居日から月末までの日数）。入居日が早いほど高くなる、と覚え直す。
+
+  → ①この案で採用  ②現状維持  ③条件つき採用（自由記述）
+
+- （weak_scene 例・AIX由来）
+  ❓【AIX: application_push】「審査が不安」発言時は申込誘導より安心トーク優先？
+
+  「審査が不安」発言へのAI予測（ヒアリング継続）が週3回外れています。差分行:「審査については弊社でサポートします」→スタッフは保証会社の説明を追加。
+
+  【AI案】「審査が不安」と言われたら、まず保証会社のサポート体制を伝えて安心させ、その後に必要書類の確認へ進む。
+
+  → ①この案で採用  ②現状維持  ③条件つき採用（自由記述）
 
 悪い質問の例（避ける）:
 - 「AIをどう改善しますか？」（抽象的すぎる）
 - 「営業方針は？」（業務と無関係）
 - 「この言い回しでいいですか？」（事実でも条件でもない単なる文体差。文体差は質問化しない）
+- 「プロンプトのどの部分が曖昧だと思いますか？」（スタッフが答えられない質問は禁止）
+- AI案と送信文を全文引用して対比する長文質問（差分行のみ・最大150字に制限）
 
-必須チェック: 全質問に「■ 使われそうな場面」セクションを含めること。ai_draftまたはsent_replyのデータがある場合は必ず【送信例】を含めること。
-根拠の薄い質問は出さないこと。質問がない場合は [] を返す。`,
+必須チェック: 全質問を400字以内に収めること。必ず【AI案】と3択行（→ ①この案で採用  ②現状維持  ③条件つき採用（自由記述））を含めること。
+全文対比引用・自由記述のみの質問は出さないこと。根拠の薄い質問は出さないこと。質問がない場合は [] を返す。`,
     }],
   });
 
@@ -800,30 +815,45 @@ ${answeredSection || "（なし）"}
   let questionsSaved = 0;
   const VALID_CATEGORIES = ["knowledge_gap", "prompt_ambiguity", "new_flow", "missing_keyword", "weak_scene", "new_aix_needed", "low_conversion", "general", "aix_boundary"];
   const VALID_CONFIDENCE = ["high", "medium", "low"];
+  const VALID_AIX_ACTIONS = Object.keys(ACTION_TO_CATEGORY);
 
   for (const item of parsed.slice(0, 5)) {
     if (!item?.question?.trim()) continue;
-    const question = item.question.trim();
+    // ③: 質問文は400字以内（プロンプトで指示済み。超過時は安全マージン500字でハード切り詰め）
+    const question = item.question.trim().slice(0, 500);
+    const category = (VALID_CATEGORIES.includes(item.category ?? "") ? item.category : "general") as string;
+    const rawAction = item.aix_action?.trim() || null;
+    const aixAction = rawAction && VALID_AIX_ACTIONS.includes(rawAction) ? rawAction : null;
 
-    // dedup: question の先頭50字が一致するものがあればスキップ（同じ質問を何度も出さない）
-    // 改善⑩: pending のみ → pending/answered/applied に拡大（回答済みの質問が翌週再起票されるのを防ぐ）
-    const escapedKey = question.slice(0, 50).replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
-    const { data: existing } = await supabase
+    // dedup強化(②-1): 先頭50字一致 → aix_action + category + 類似キーワード（バイグラムJaccard類似度）で判定
+    // pending/answered/applied を対象（回答済みの質問が翌週再起票されるのを防ぐ）
+    const { data: sameCategoryItems } = await supabase
       .from("ai_feedback_items")
-      .select("id")
+      .select("question, aix_action")
       .in("status", ["pending", "answered", "applied"])
-      .ilike("question", `${escapedKey}%`)
-      .limit(1);
-    if (existing && existing.length > 0) continue;
+      .eq("category", category)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    const isDup = (sameCategoryItems ?? []).some((ex) => {
+      const exAction = (ex.aix_action as string | null) ?? null;
+      // aix_action が両方設定済みで異なる場合のみ別質問として扱う（片方null時は同一領域とみなして類似判定）
+      const actionMatches = exAction === aixAction || exAction === null || aixAction === null;
+      return actionMatches && isSimilarQuestion(question, (ex.question as string) ?? "");
+    });
+    if (isDup) {
+      console.log(`[corpus2skill] 類似質問が既存のためスキップ: ${question.slice(0, 40)}`);
+      continue;
+    }
 
-    // H-1: 直接INSERTではなく起票ガード（pending 60件上限）経由で起票する
+    // H-1: 直接INSERTではなく起票ガード（pending 60件上限 + aix_action×category 2件キャップ）経由で起票する
     const inserted = await safeInsertAiQuestion({
       question,
       speculation: item.speculation?.trim() || null,
-      category: (VALID_CATEGORIES.includes(item.category ?? "") ? item.category : "general") as string,
+      category,
       evidence: item.evidence?.trim() || null,
       confidence: VALID_CONFIDENCE.includes(item.confidence ?? "") ? item.confidence : "medium",
       entry_source: "line_reply",
+      aix_action: aixAction,
     });
     if (inserted) questionsSaved++;
     else console.warn("[corpus2skill] feedback item 起票スキップ（上限またはINSERT失敗）");
@@ -897,6 +927,21 @@ export async function POST(req: NextRequest) {
     console.log(`[corpus2skill] 古いスキル降格: ${degraded}件`);
   } catch (e) {
     console.error("[corpus2skill] スキル降格失敗:", e);
+  }
+
+  // ②-1: pending 30日超のAI質問を expired に自動更新（滞留による窒息を防ぐ・corpus2skill実行時に毎回実行）
+  try {
+    const thirtyDaysAgoForExpire = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: expiredRows, error: expireError } = await supabase
+      .from("ai_feedback_items")
+      .update({ status: "expired" })
+      .eq("status", "pending")
+      .lt("created_at", thirtyDaysAgoForExpire)
+      .select("id");
+    if (expireError) console.warn("[corpus2skill] pending期限切れ更新失敗:", expireError.message);
+    else console.log(`[corpus2skill] pending 30日超のAI質問を expired 化: ${expiredRows?.length ?? 0}件`);
+  } catch (e) {
+    console.error("[corpus2skill] pending期限切れ更新失敗:", e);
   }
 
   // P2・P3・examplesフェッチ・AIXズレ分析をすべて並列実行（順次では300秒を超過するため）
