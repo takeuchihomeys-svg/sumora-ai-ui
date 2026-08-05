@@ -31,7 +31,10 @@
       "PowerShell(cd \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\"; npx tsc --noEmit; $exitCode = $LASTEXITCODE; Write-Output \"Exit: $exitCode\")",
       "PowerShell(cd \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\"; $result = npx tsc --noEmit 2>&1; if \\($result\\) { Write-Output $result } else { Write-Output \"NO ERRORS\" }; Write-Output \"Exit code: $LASTEXITCODE\")",
       "Bash(echo \"Exit: $?\")",
-      "Bash(python3 -c \"import sys,json; lines=[json.loads\\(l\\) for l in sys.stdin if l.strip\\(\\)]; design=[l for l in lines if '設計' in str\\(l.get\\('label',''\\)\\)]; print\\(json.dumps\\(design[-1].get\\('result',''\\)[:5000] if design else 'not found', ensure_ascii=False\\)\\)\")"
+      "Bash(python3 -c \"import sys,json; lines=[json.loads\\(l\\) for l in sys.stdin if l.strip\\(\\)]; design=[l for l in lines if '設計' in str\\(l.get\\('label',''\\)\\)]; print\\(json.dumps\\(design[-1].get\\('result',''\\)[:5000] if design else 'not found', ensure_ascii=False\\)\\)\")",
+      "PowerShell(\\(Get-Content \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\\\\chrome-extension\\\\background.js\" | Measure-Object -Line\\).Lines; \\(Get-Content \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\\\\app\\\\api\\\\generate-reply\\\\route.ts\" | Measure-Object -Line\\).Lines)",
+      "PowerShell(npx tsc --noEmit; echo \"EXIT:$LASTEXITCODE\")",
+      "PowerShell(git add app/api/generate-reply/route.ts app/api/aix/action/route.ts app/components/TemplateModal.tsx app/api/suggest-next-action/route.ts)"
     ]
   }
 }
