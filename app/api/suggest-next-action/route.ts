@@ -473,7 +473,13 @@ export async function POST(req: NextRequest) {
       // 抑制対象をスキップして最初の非抑制アクションを採用
       // 改善6: 成約貢献率が全体平均の半分未満（lowWinRate）の候補はランク下げ。他に候補がなければ従来通り採用
       // 中1: 予測精度40%未満（lowAccuracy）の候補も同様にランク下げ
-      const nonSuppressed = chainRules.filter((r) => !shouldSuppressAction(r.action_type as string));
+      // 物件オススメ直後に「物件確認した」を次アクションとして提案しない
+      // （物件オススメの直後の自然な流れは物件確認ではなく、お客様の反応を待つフェーズ）
+      const nonSuppressed = chainRules.filter((r) => {
+        if (shouldSuppressAction(r.action_type as string)) return false;
+        if (last_aix_action === "property_recommendation" && r.action_type === "property_check_result") return false;
+        return true;
+      });
       const validChainRule = nonSuppressed.find((r) => !isLowWinRate(r.action_type as string) && !isLowAccuracy(r.action_type as string)) ?? nonSuppressed[0];
       if (validChainRule) {
         return NextResponse.json({
