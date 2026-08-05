@@ -310,6 +310,15 @@ export default function CustomersPage() {
   const [loadingMsgs, setLoadingMsgs] = useState<Set<string>>(new Set());
   const [msgErrors, setMsgErrors] = useState<Set<string>>(new Set());
 
+  // ボックス / リスト 切り替え
+  const [viewMode, setViewMode] = useState<"list" | "box">("list");
+
+  // バッチ物件検索
+  const [batchMode, setBatchMode] = useState<boolean>(false);
+  const [batchIndex, setBatchIndex] = useState<number>(0);
+  const [batchDone, setBatchDone] = useState<boolean>(false);
+  const batchListRef = useRef<Customer[]>([]);
+
   // 改善13: 会話ログの自動スクロール用。顧客IDごとにスクロールコンテナのDOM参照を保持し、
   // メッセージ読み込み完了（msgCache更新）時に最下部（最新メッセージ）へスクロールする
   const msgLogRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -400,6 +409,20 @@ export default function CustomersPage() {
         return tb - ta;
       }),
   [base, filterMode, summaryJsons]);
+
+  // ボックスビュー用: sorted を updated_at の年月でグループ化
+  const boxGroups = useMemo((): Array<{ label: string; customers: Customer[] }> => {
+    const map = new Map<string, Customer[]>();
+    for (const c of sorted) {
+      const d = new Date(c.updated_at);
+      const k = `${d.getFullYear()}年${d.getMonth() + 1}月`;
+      if (!map.has(k)) map.set(k, []);
+      map.get(k)!.push(c);
+    }
+    return Array.from(map.entries())
+      .sort(([a], [b]) => b.localeCompare(a))
+      .map(([label, customers]) => ({ label, customers }));
+  }, [sorted]);
 
   const linkedCount    = customers.filter((c) => c.is_linked && !isApplying(c.status)).length;
   const replyCount     = customers.filter((c) => urgency(c) === "reply" && !isApplying(c.status)).length;
@@ -857,6 +880,63 @@ export default function CustomersPage() {
     }
   };
 
+  // ── ボックスセルタップ: リストモードに切り替えてカード展開・スクロール ──
+  const handleBoxCellTap = (c: Customer) => {
+    setViewMode("list");
+    setExpandedId(c.id);
+    setTimeout(() => {
+      document.getElementById(`customer-card-${c.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 100);
+  };
+
+  // ── バッチ物件検索（Chrome拡張 postMessage 連動） ──
+  const firePropertySearch = (c: Customer) => {
+    const conditions = {
+      desired_area: c.desired_area ?? null,
+      rent_max: c.rent_max ?? null,
+      rent_min: c.rent_min ?? null,
+      walk_minutes: c.walk_minutes ?? null,
+      floor_plan: c.floor_plan ?? null,
+      building_age: c.building_age ?? null,
+      areas: c.desired_area ? [c.desired_area] : [],
+      lines: [] as string[],
+      stations: [] as string[],
+      prefecture: null as string | null,
+      city: null as string | null,
+    };
+    window.postMessage({ from: "aixlinx-webapp", site: "realnetpro", conditions }, "*");
+    setTimeout(() => window.postMessage({ from: "aixlinx-webapp", site: "itandi", conditions }, "*"), 3000);
+  };
+
+  const startBatchSearch = () => {
+    setFilterMode("linked");
+    const targets = sorted.filter((c) => !isDoneToday(c));
+    batchListRef.current = targets;
+    setBatchIndex(0);
+    setBatchMode(true);
+    if (targets.length > 0) firePropertySearch(targets[0]);
+  };
+
+  const goNextBatch = () => {
+    const next = batchIndex + 1;
+    if (next >= batchListRef.current.length) {
+      setBatchMode(false);
+      setBatchIndex(0);
+      setBatchDone(true);
+      setTimeout(() => setBatchDone(false), 4000);
+      return;
+    }
+    setBatchIndex(next);
+    firePropertySearch(batchListRef.current[next]);
+  };
+
+  const goPrevBatch = () => {
+    const prev = batchIndex - 1;
+    if (prev < 0) return;
+    setBatchIndex(prev);
+    firePropertySearch(batchListRef.current[prev]);
+  };
+
   return (
     <div className="flex flex-col" style={{ height: "100svh", background: "#f0f2f5", overflowY: "auto" }}>
 
@@ -911,21 +991,98 @@ export default function CustomersPage() {
           </button>
         </div>
 
-        {/* 検索欄 */}
-        <div className="relative">
-          <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-white/50" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-          </svg>
-          <input
-            type="text"
-            placeholder="お客さんを検索..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-xl py-2 pl-8 pr-3 text-sm text-white placeholder-white/50 outline-none"
-            style={{ background: "rgba(255,255,255,0.15)" }}
-          />
-          {searchQuery && (
-            <button onClick={() => setSearchQuery("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/50 text-xs">✕</button>
+        {/* バッチ物件検索バナー（batchMode中のみ表示） */}
+        {batchMode && batchListRef.current.length > 0 && (() => {
+          const cur = batchListRef.current[batchIndex];
+          return (
+            <div
+              className="flex items-center gap-2 rounded-xl px-3 py-2 mb-2"
+              style={{ background: "rgba(255,255,255,0.18)", border: "1px solid rgba(255,255,255,0.3)" }}
+            >
+              <span className="flex-1 text-white text-sm font-bold truncate min-w-0">
+                🔍 {cur?.customer_name ?? ""}
+              </span>
+              <span className="text-white/70 text-xs font-bold shrink-0">
+                {batchIndex + 1}/{batchListRef.current.length}
+              </span>
+              <button
+                onClick={goPrevBatch}
+                disabled={batchIndex === 0}
+                className="rounded-lg px-2.5 py-1 text-xs font-bold text-white disabled:opacity-30 active:scale-95 transition-transform"
+                style={{ background: "rgba(255,255,255,0.15)" }}
+              >
+                ←
+              </button>
+              <button
+                onClick={goNextBatch}
+                className="rounded-lg px-2.5 py-1 text-xs font-bold text-white active:scale-95 transition-transform"
+                style={{ background: "rgba(255,255,255,0.3)" }}
+              >
+                {batchIndex + 1 >= batchListRef.current.length ? "完了" : "次へ →"}
+              </button>
+              <button
+                onClick={() => { setBatchMode(false); setBatchIndex(0); }}
+                className="rounded-lg px-1.5 py-1 text-[11px] text-white/60 active:scale-95"
+              >
+                ✕
+              </button>
+            </div>
+          );
+        })()}
+
+        {/* 検索欄 + ビュー切り替えボタン + バッチ起動ボタン */}
+        <div className="flex items-center gap-2">
+          {/* 検索欄（flex-1） */}
+          <div className="relative flex-1">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-white/50" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input
+              type="text"
+              placeholder="お客さんを検索..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full rounded-xl py-2 pl-8 pr-3 text-sm text-white placeholder-white/50 outline-none"
+              style={{ background: "rgba(255,255,255,0.15)" }}
+            />
+            {searchQuery && (
+              <button onClick={() => setSearchQuery("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/50 text-xs">✕</button>
+            )}
+          </div>
+
+          {/* ボックスビュー切り替えボタン */}
+          <button
+            onClick={() => setViewMode((v) => v === "box" ? "list" : "box")}
+            className="shrink-0 h-9 w-9 rounded-xl flex items-center justify-center active:scale-95 transition-transform"
+            style={{ background: viewMode === "box" ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.15)" }}
+            title={viewMode === "box" ? "リスト表示" : "ボックス表示"}
+          >
+            {viewMode === "box" ? (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1565C0" strokeWidth="2.5" strokeLinecap="round">
+                <line x1="3" y1="6" x2="21" y2="6"/>
+                <line x1="3" y1="12" x2="21" y2="12"/>
+                <line x1="3" y1="18" x2="21" y2="18"/>
+              </svg>
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="7" height="7" rx="1"/>
+                <rect x="14" y="3" width="7" height="7" rx="1"/>
+                <rect x="3" y="14" width="7" height="7" rx="1"/>
+                <rect x="14" y="14" width="7" height="7" rx="1"/>
+              </svg>
+            )}
+          </button>
+
+          {/* バッチ物件検索起動ボタン（紐付きタブのみ・バッチ非実行中のみ） */}
+          {filterMode === "linked" && !batchMode && (
+            <button
+              onClick={startBatchSearch}
+              className="shrink-0 h-9 rounded-xl px-2.5 flex items-center justify-center text-[11px] font-bold text-white active:scale-95 transition-transform"
+              style={{ background: "rgba(251,146,60,0.6)", border: "1px solid rgba(251,146,60,0.4)" }}
+              title="紐付き顧客を順番に物件検索"
+            >
+              一括
+            </button>
           )}
         </div>
       </div>
@@ -1035,10 +1192,75 @@ export default function CustomersPage() {
         </div>
       )}
 
-      {/* ── List ── */}
+      {/* ── List / Box ── */}
       <div className="flex-1 pb-28">
         {loading ? (
           <div className="py-16 text-center text-sm text-[#667781]">読み込み中...</div>
+        ) : viewMode === "box" ? (
+          /* ── ボックスグリッドビュー ── */
+          <div className="pb-4">
+            {boxGroups.length === 0 ? (
+              <div className="py-16 text-center text-sm text-[#667781]">お客さんがいません</div>
+            ) : (
+              boxGroups.map((group) => (
+                <div key={group.label}>
+                  {/* 月グループヘッダー */}
+                  <div className="px-4 pt-4 pb-1.5">
+                    <span className="text-[11px] font-bold text-[#667781] tracking-wide">{group.label}</span>
+                    <span className="ml-1.5 text-[10px] text-[#8696a0]">{group.customers.length}人</span>
+                  </div>
+                  {/* 4列グリッド */}
+                  <div className="grid px-4 gap-2" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
+                    {group.customers.map((c) => {
+                      const u = urgency(c);
+                      const conv = c.linked_conversation;
+                      const borderColor = u === "reply" ? "#ef4444" : u === "property" ? "#f97316" : "#e9edef";
+                      const bgColor     = u === "reply" ? "#fef2f2"  : u === "property" ? "#fff7ed"  : "#fff";
+                      return (
+                        <button
+                          key={c.id}
+                          onClick={() => handleBoxCellTap(c)}
+                          className="flex flex-col items-center gap-1 rounded-2xl p-1.5 active:scale-95 transition-transform"
+                          style={{ background: bgColor, border: `1.5px solid ${borderColor}` }}
+                        >
+                          {/* アバター */}
+                          <div className="relative shrink-0">
+                            {conv?.profile_image_url ? (
+                              <img
+                                src={conv.profile_image_url}
+                                alt={c.customer_name}
+                                className="h-14 w-14 rounded-full object-cover"
+                              />
+                            ) : (
+                              <div className="h-14 w-14 rounded-full flex items-center justify-center bg-[#d9fdd3] text-[#1565C0] font-bold text-lg">
+                                {initial(c.customer_name)}
+                              </div>
+                            )}
+                            {/* 緊急バッジ */}
+                            {(u === "reply" || u === "property") && (
+                              <span
+                                className="absolute -top-0.5 -right-0.5 h-4 w-4 rounded-full border-2 border-white flex items-center justify-center"
+                                style={{ background: u === "reply" ? "#ef4444" : "#f97316" }}
+                              >
+                                <span className="text-[7px] text-white font-black">!</span>
+                              </span>
+                            )}
+                          </div>
+                          {/* 名前（6文字上限） */}
+                          <span
+                            className="text-[10px] font-bold text-[#111b21] w-full text-center leading-tight"
+                            style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                          >
+                            {c.customer_name.length > 6 ? c.customer_name.slice(0, 6) + "…" : c.customer_name}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         ) : sorted.length === 0 ? (
           <div className="py-16 text-center text-sm text-[#667781]">
             {searchQuery ? "検索結果なし" : filterMode === "urgent" ? "物件送信が必要なお客さんはいません" : filterMode === "linked" ? "紐付き済みのお客さんがいません" : filterMode === "applying" ? "申込以降のお客さんはいません" : "お客さんがいません"}
@@ -1061,7 +1283,7 @@ export default function CustomersPage() {
               : [];
 
             return (
-              <div key={c.id} className="mx-3 mt-2.5 rounded-2xl overflow-hidden shadow-sm"
+              <div id={`customer-card-${c.id}`} key={c.id} className="mx-3 mt-2.5 rounded-2xl overflow-hidden shadow-sm"
                 style={{ border: `1.5px solid ${borderColor}`, background: "#fff" }}>
 
                 {/* ── ヘッダー行 ── */}
@@ -2097,6 +2319,14 @@ export default function CustomersPage() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* バッチ完了トースト */}
+      {batchDone && (
+        <div className="fixed bottom-28 left-1/2 z-50 rounded-2xl px-5 py-3 shadow-xl"
+          style={{ background: "#1565C0", transform: "translateX(-50%)" }}>
+          <span className="text-white text-sm font-bold">全員分の検索が完了しました！</span>
         </div>
       )}
 
