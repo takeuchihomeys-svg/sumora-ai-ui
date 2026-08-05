@@ -36,7 +36,13 @@
       "PowerShell(npx tsc --noEmit; echo \"EXIT:$LASTEXITCODE\")",
       "PowerShell(git add app/api/generate-reply/route.ts app/api/aix/action/route.ts app/components/TemplateModal.tsx app/api/suggest-next-action/route.ts)",
       "PowerShell(git add app/api/generate-reply/route.ts app/api/aix/action/route.ts app/api/ai-feedback/route.ts app/api/corpus2skill/route.ts)",
-      "PowerShell(\\(Get-Content \"app\\\\api\\\\analyze-diffs\\\\route.ts\" | Measure-Object -Line\\).Lines)"
+      "PowerShell(\\(Get-Content \"app\\\\api\\\\analyze-diffs\\\\route.ts\" | Measure-Object -Line\\).Lines)",
+      "PowerShell($f = \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\\\\app\\\\api\\\\aix\\\\action\\\\route.ts\"; \\(Get-Item $f\\).Length; \\(Get-Content $f | Measure-Object -Line\\).Lines)",
+      "PowerShell(\\(Get-Content \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\\\\app\\\\api\\\\generate-reply\\\\route.ts\" | Measure-Object -Line\\).Lines)",
+      "PowerShell(\\(Get-Content \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\\\\app\\\\lib\\\\line-reply-prompts.ts\" | Measure-Object -Line\\).Lines; \\(Get-Content \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\\\\app\\\\lib\\\\prompt-rules.ts\" | Measure-Object -Line\\).Lines)",
+      "PowerShell(npx tsc --noEmit 2>$null)",
+      "PowerShell($LASTEXITCODE)",
+      "PowerShell($f = \"c:\\\\Users\\\\竹内 悠馬\\\\sumora-ai-ui\\\\app\\\\api\\\\migrate-schema\\\\route.ts\"; \\(Get-Content $f | Measure-Object -Line\\).Lines)"
     ]
   }
 }
