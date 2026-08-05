@@ -6,7 +6,6 @@ import { supabase } from "@/app/lib/supabase";
 const model = new ChatAnthropic({
   model: "claude-sonnet-5",
   maxTokens: 600,
-  temperature: 0, // JSON構造化出力のため決定的にする
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
 });
 

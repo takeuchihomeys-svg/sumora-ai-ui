@@ -1685,10 +1685,12 @@ CREATE TABLE IF NOT EXISTS prompt_candidates (
   content TEXT NOT NULL,        -- ルール候補文（承認時に ai_prompt_rules.rule_text になる文）
   reason TEXT,                  -- なぜ固定プロンプトで補えていないかの説明
   category TEXT,                -- 'gap' | 'clarification' | 'new_scene' | 'contradiction_fix'
+  action_type TEXT,             -- 対象AIXアクション（ai_prompt_rules.action_type に引き継ぐ）
   status TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'approved' | 'rejected'
   week_label TEXT,              -- '2026-W31' 形式
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE prompt_candidates ADD COLUMN IF NOT EXISTS action_type TEXT;
 CREATE INDEX IF NOT EXISTS idx_prompt_candidates_pending
   ON prompt_candidates(created_at DESC) WHERE status = 'pending';
 ALTER TABLE prompt_candidates DISABLE ROW LEVEL SECURITY;
