@@ -87,7 +87,7 @@ const AIX_ACTION_NOTES: Record<string, string> = {
   property_recommendation: "AIX【1件特にオススメする】で1件に絞った詳細訴求文を生成できます",
   greeting_viewing: "AIX【挨拶（内覧前後）】でフォローメッセージを生成してください",
   condition_hearing: "AIX【条件ヒアリング】ボタンで既知情報をスキップした形式で送れます",
-  property_check_result: "管理会社から回答が来たら → AIX【物件確認した】で結果報告文を生成してください",
+  property_check_result: "管理会社・代表・オーナー・近隣月極から回答が来たら → 空室・募集状況はAIX【物件確認した（募集状況）】、保証会社・初期費用交渉・駐車場・ペット可否・退去日・入居可能日などの条件確認はAIX【確認した（条件・交渉）】（check_patternで切替）で結果報告文を生成してください",
   followup_revive: "AIX【追客する】で再接触メッセージを生成できます",
 };
 
@@ -318,7 +318,7 @@ ${customerMessage}
   "current_property": "現在話題にしている物件名・号室（履歴から特定できる場合のみ）。なければnull",
   "hesitancy_pattern": "お客様が「検討します」「また連絡します」「少し待ってほしい」「迷っています」など決断を保留しているか。パターン種別（'thinking'=検討中・'callback'=また連絡・'waiting'=もう少し待って・'undecided'=どちらか迷い・'timeline'=○月に決めたい）、なければnull",
   "future_timeline": "お客様が「○月に」「○日には」など具体的な申込タイムラインを示している場合その内容。なければnull",
-  "suggested_aix_action": "次に使うべきAIXアクション。以下から1つ選ぶかnullを返す: viewing_invite（内見案内）/ estimate_sheet（見積書送付）/ property_send（物件送付）/ application_push（申込促進）/ property_check_result（空室確認結果送付）/ acknowledge_check（空室確認承知）/ condition_hearing（条件ヒアリング）/ meeting_place（待ち合わせ）/ property_recommendation（物件おすすめ）/ followup_revive（追客）/ greeting_viewing（内見挨拶） — LINEの返信文を送るべき場面はnullとする",
+  "suggested_aix_action": "次に使うべきAIXアクション。以下から1つ選ぶかnullを返す: viewing_invite（内見案内）/ estimate_sheet（見積書送付）/ property_send（物件送付）/ application_push（申込促進）/ property_check_result（物件確認・条件確認の結果報告 — 空室状況/退去日/入居可能日/保証会社/初期費用交渉/駐車場/ペット可否など管理会社・オーナーへ確認した結果をお客様に報告する場面）/ acknowledge_check（空室確認承知）/ condition_hearing（条件ヒアリング）/ meeting_place（待ち合わせ）/ property_recommendation（物件おすすめ）/ followup_revive（追客）/ greeting_viewing（内見挨拶） — LINEの返信文を送るべき場面はnullとする",
   "aix_reason": "AIXアクションを選んだ理由を1行で（nullの場合は空文字）",
   "aix_enforcement_level": "suggested_aix_actionがnullでない場合のみ回答。required（物件詳細・見積書本体・内覧日時等AIX専用コンテンツが必要）/ recommended（AIXが最善だが通常返信でも可）/ optional（使えるが必須ではない）。null不可"
 }` : `
@@ -343,7 +343,7 @@ ${customerMessage}
   "condition_change_type": "お客様が検索条件を変更・追加・緩和したか、または物件ピックアップ・送付を依頼しているか。該当する場合その種別（'area_change'=エリア変更、'rent_change'=家賃変更、'layout_change'=間取り変更、'equip_add'=設備・収納・こだわり条件の追加（WIC広め・SIC・収納多め・南向き・オートロック等の新しいこだわりを追加）、'condition_relax'=条件緩和、'pickup_request'=物件を送って・ピックアップ依頼・おすすめ、'multi'=複数変更）。なければnull。※すでに検討中の物件があっても、新しい条件を追加したら必ずその種別を返すこと",
   "hesitancy_pattern": "お客様が「検討します」「また連絡します」「少し待ってほしい」「迷っています」など、決断を保留するパターンを示しているか。示している場合はその種別（'thinking'=検討中・'callback'=また連絡・'waiting'=もう少し待って・'undecided'=どちらか迷い・'timeline'=○月に決めたい ）、なければnull",
   "future_timeline": "お客様が「○月に」「○日には」など具体的な決断・申込タイムラインを示している場合その内容。なければnull",
-  "suggested_aix_action": "次に使うべきAIXアクション。以下から1つ選ぶかnullを返す: viewing_invite（内見案内）/ estimate_sheet（見積書送付）/ property_send（物件送付）/ application_push（申込促進）/ property_check_result（空室確認結果送付）/ acknowledge_check（空室確認承知）/ condition_hearing（条件ヒアリング）/ meeting_place（待ち合わせ）/ property_recommendation（物件おすすめ）/ followup_revive（追客）/ greeting_viewing（内見挨拶） — LINEの返信文を送るべき場面はnullとする",
+  "suggested_aix_action": "次に使うべきAIXアクション。以下から1つ選ぶかnullを返す: viewing_invite（内見案内）/ estimate_sheet（見積書送付）/ property_send（物件送付）/ application_push（申込促進）/ property_check_result（物件確認・条件確認の結果報告 — 空室状況/退去日/入居可能日/保証会社/初期費用交渉/駐車場/ペット可否など管理会社・オーナーへ確認した結果をお客様に報告する場面）/ acknowledge_check（空室確認承知）/ condition_hearing（条件ヒアリング）/ meeting_place（待ち合わせ）/ property_recommendation（物件おすすめ）/ followup_revive（追客）/ greeting_viewing（内見挨拶） — LINEの返信文を送るべき場面はnullとする",
   "aix_reason": "AIXアクションを選んだ理由を1行で（nullの場合は空文字）",
   "aix_enforcement_level": "suggested_aix_actionがnullでない場合のみ回答。required（物件詳細・見積書本体・内覧日時等AIX専用コンテンツが必要）/ recommended（AIXが最善だが通常返信でも可）/ optional（使えるが必須ではない）。null不可"
 }`;
@@ -763,8 +763,8 @@ function buildGenerationMessages(
   // 添付済みを装う文面・金額内訳をAI返信案に出さない（内覧日時ゲート viewingFactNote と同型の常時注入ゲート）
   const estimateGateNote = `\n\n【💰 見積書カバー文の生成は絶対禁止（最優先）】「〜の御見積書となります」「御見積書をお送りします＋ご査収ください」のような、見積書を既に添付した体のカバーメッセージ・初期費用の金額内訳は絶対に出力しない。見積書本体はAIXの「見積書送る」ボタンで別途作成・添付して送るため、AI返信案には含めない。初期費用・見積の質問への返信は「かしこまりました！！最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！」の作成宣言のみ許可（物件名入りの見積書送付文・金額内訳・見積書に対する「ご査収ください」は書かない）。`;
 
-  // 空室確認結果・入居可能日はAIXの「物件確認した」ボタン専用。generate-replyでは管理会社確認前の結果捏造を防ぐ（estimateGateNote と同型の常時注入ゲート）
-  const propertyFactGateNote = `\n\n【🏢 空室確認結果・退去日・入居可能日の捏造は絶対禁止（最優先）】「空室でした」「現在も募集中と確認できました」「埋まってしまいました」「退去日は〇月〇日です」「〇月〇日からご入居可能です」のような、管理会社に確認した体の結果報告や具体的な退去日・入居可能日の断言は絶対に出力しない。空室状況・退去予定日・入居可能日は管理会社への確認が必要な確定事実であり、確認結果の報告はAIXの「物件確認した」ボタンで別途生成・送信する。AI返信案で許可されるのは「空室状況を確認し改めてご連絡させて頂きます😊！！」等の確認宣言のみ。例外：会話履歴内でスタッフが既に伝えた確定情報（退去日・入居可能日）をそのまま引用する場合のみ言及可。新たな日付・募集状況をAIが推測して生成することは禁止。`;
+  // 空室確認結果・入居可能日・保証会社等の物件固有情報はAIXの「物件確認した」系ボタン専用。generate-replyでは管理会社確認前の結果捏造を防ぐ（estimateGateNote と同型の常時注入ゲート）
+  const propertyFactGateNote = `\n\n【🏢 管理会社確認が必要な物件固有情報の断言は絶対禁止（最優先）】「空室でした」「現在も募集中と確認できました」「埋まってしまいました」「退去日は〇月〇日です」「〇月〇日からご入居可能です」のような、管理会社に確認した体の結果報告や具体的な退去日・入居可能日の断言は絶対に出力しない。空室状況・退去予定日・入居可能日に加え、この物件の「保証会社名・保証料の金額・審査基準・ペット飼育可否・駐車場の空きと料金・設備の有無・礼金/家賃交渉の結果」も管理会社への確認が必要な確定事実であり、確認前にAIが「この物件の保証会社は〇〇です」「保証料は総賃料の〇%です」等と断言・推測してはいけない。保証会社の役割・審査の一般的な流れ・連帯保証人との違いなどの一般論は即答してよい。物件固有の質問には「確認しご連絡させて頂きます😊！！」の宣言のみ。確認結果の報告はAIX【確認した（条件・交渉）】（物件確認した系ボタン）で別途生成・送信する。例外：会話履歴内でスタッフが既に伝えた確定情報（退去日・入居可能日・保証会社名等）をそのまま引用する場合のみ言及可。新たな日付・募集状況・保証条件をAIが推測して生成することは禁止。`;
 
   // 待ち合わせ確定文はAIXの「待ち合わせ」ボタン専用。generate-replyでは住所・集合場所・集合時間の出力を禁止（propertyFactGateNoteと同型の常時注入ゲート）
   const meetingPlaceGateNote = [

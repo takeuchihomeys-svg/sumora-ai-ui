@@ -247,9 +247,13 @@ export async function POST(req: NextRequest) {
   // これにより save_target / action_type の分類が質問文テキストの推測だけに依存しなくなる。
   const itemEntrySource = (item as { entry_source?: string | null }).entry_source ?? null;
   const itemAixAction = (item as { aix_action?: string | null }).aix_action ?? null;
-  // [aix_boundary_action:XXX] を question から抽出（aix_boundary カテゴリの境界ルール保存先アクション）
-  const aixBoundaryMatch = (item.question as string).match(/\[aix_boundary_action:([^\]]+)\]/);
+  // [aix_boundary_action:XXX] または [aix_boundary_action:XXX|check_pattern] を question から抽出
+  // （aix_boundary カテゴリの境界ルール保存先アクション。`|` 以降は property_check_result のサブパターン）
+  const aixBoundaryMatch = (item.question as string).match(/\[aix_boundary_action:([^\]|]+)(?:\|([^\]]+))?\]/);
   const boundaryAixAction = aixBoundaryMatch?.[1] ?? null;
+  // check_pattern 粒度（例: mgmt_guarantor）。あれば BOUNDARY-*-aix を condition_key='check_pattern' で保存し、
+  // fetchPromptRules('property_check_result', { check_pattern }) が該当パターンのプロンプトにのみ注入する
+  const boundaryCheckPattern = aixBoundaryMatch?.[2] ?? null;
 
   // conversation_state 導出: AIX由来のフィードバック（entry_source="aix_action" or aix_action あり）は
   // ナレッジを当該AIXアクションの conversation_state に紐付ける。
@@ -408,20 +412,22 @@ export async function POST(req: NextRequest) {
 
         // AIX スコープ（AIXプロンプトに境界条件を注入）: AIX側言及あり or 判別不能（通常返信のみ言及でない場合）
         if (!mentionsReplyOnly) {
+          // check_pattern 粒度の線引き質問由来なら condition 付きで保存
+          // → 保証会社確認の境界ルールが空室確認プロンプトへ混入する（逆も）のを防ぐ
           const { error: aixErr } = await supabase.from("ai_prompt_rules").upsert({
             rule_key: `BOUNDARY-${id}-${i + 1}-aix`,
             action_type: boundaryAixAction,
-            condition_key: null,
-            condition_value: null,
+            condition_key: boundaryCheckPattern ? "check_pattern" : null,
+            condition_value: boundaryCheckPattern,
             rule_text: boundaryRuleText,
-            reason: `AIX境界ルール（${boundaryAixAction}側）（${new Date().toISOString().slice(0, 10)}）: ${item.question as string}`.slice(0, 500),
+            reason: `AIX境界ルール（${boundaryAixAction}${boundaryCheckPattern ? `|${boundaryCheckPattern}` : ""}側）（${new Date().toISOString().slice(0, 10)}）: ${item.question as string}`.slice(0, 500),
             priority: 9,
             is_active: true,
             source_feedback_item_id: id,
             updated_at: new Date().toISOString(),
           }, { onConflict: "rule_key" });
           if (aixErr) console.error("[ai-feedback] BOUNDARY-*-aix upsert error:", aixErr.message);
-          else appliedRules.push(`[BOUNDARY:${boundaryAixAction}] ${boundaryRuleText.slice(0, 50)}`);
+          else appliedRules.push(`[BOUNDARY:${boundaryAixAction}${boundaryCheckPattern ? `|${boundaryCheckPattern}` : ""}] ${boundaryRuleText.slice(0, 50)}`);
         }
       }
     } else {

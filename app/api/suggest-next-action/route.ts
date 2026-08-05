@@ -2,6 +2,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
 import { normalizeStatus } from "@/app/lib/status-normalize";
+import { PROPERTY_CHECK_RESULT_LABEL, PROPERTY_CHECK_RESULT_DESCRIPTION } from "@/app/lib/aix-taxonomy";
 
 export const maxDuration = 30;
 
@@ -60,6 +61,17 @@ const ACTION_PARAMS: Record<string, { check_pattern?: string; send_mode?: string
   // property_recommendation: send_mode "pickup" はフロント・API双方が受理しないモード名のため削除（専用ピッカーで初期化される）
   viewing_invite: { send_mode: "normal" },
 };
+
+// property_check_result 提案時の check_pattern を顧客メッセージの話題で分岐させるマッピング。
+// 先頭からマッチした最初のパターンを採用し、どれにもマッチしなければ従来通り 'available'（空室確認）。
+const CHECK_PATTERN_BY_TOPIC: Array<[RegExp, string]> = [
+  [/保証会社|保証料|審査.{0,6}(通|基準|厳し)/, "mgmt_guarantor"],
+  [/駐車場|月極/, "mgmt_parking"],
+  [/ペット|犬|猫.{0,4}(飼|可)/, "mgmt_pet"],
+  [/礼金|敷金.{0,8}(交渉|下げ|安く)|初期費用.{0,8}交渉/, "mgmt_initial_cost"],
+  [/退去日|退去予定日/, "vacate_date"],
+  [/入居可能日|いつから入居/, "mgmt_move_in"],
+];
 
 export async function POST(req: NextRequest) {
   let body: { conversation_id?: string; last_aix_action?: string | null; available?: boolean | null; customer_message?: string | null };
@@ -318,10 +330,19 @@ export async function POST(req: NextRequest) {
     || /\[引用\]|\[画像\]|\[動画\]/.test((latestCustomerMsgObj?.text as string) ?? "");
 
   // アクション返却時に付与する params を組み立てる
-  const buildParams = (actionType: string | null | undefined) => ({
-    ...(actionType ? (ACTION_PARAMS[actionType] ?? {}) : {}),
-    ...(lastCustomerImageUrl ? { imageUrl: lastCustomerImageUrl } : {}),
-  });
+  // property_check_result のときは顧客メッセージの話題（保証会社・駐車場・ペット等）に応じて
+  // check_pattern を分岐させる（マッチなしは ACTION_PARAMS の 'available' のまま）
+  const buildParams = (actionType: string | null | undefined) => {
+    const base: Record<string, string> = {
+      ...(actionType ? (ACTION_PARAMS[actionType] ?? {}) : {}),
+      ...(lastCustomerImageUrl ? { imageUrl: lastCustomerImageUrl } : {}),
+    };
+    if (actionType === "property_check_result" && lastCustomerMsg) {
+      const matched = CHECK_PATTERN_BY_TOPIC.find(([re]) => re.test(lastCustomerMsg));
+      if (matched) base.check_pattern = matched[1];
+    }
+    return base;
+  };
 
   // 物件確認結果の後にお客様が返信 → available フィールドで分岐
   // ※ available が true/false で確定している場合はこのフェーズで必ず判定を完結させる
@@ -634,6 +655,14 @@ export async function POST(req: NextRequest) {
     const hit = keywordHit("meeting_place", "日程確定の意向を検出");
     if (hit) return hit;
   }
+  // 管理会社確認が必要な物件固有条件の質問（保証会社・保証料・審査・ペット・駐車場・礼金交渉・設備）
+  // → property_check_result（AVAILABILITY_KEYWORDS は空室確認のみで拾えないためここでカバー）
+  // ※ 費用/estimate_sheet 判定より前に置く（「保証料はいくら」の「いくら」誤マッチ防止）
+  const MGMT_CONFIRM_RE = /保証会社|保証料|審査.{0,6}(通り|基準|厳し)|ペット.{0,6}(可|飼|大丈夫)|駐車場.{0,6}(あり|空き|使え)|礼金.{0,8}(交渉|下げ)|設備.{0,6}(あり|付い)/;
+  if (PROPERTY_CHECK_STATUSES.has(currentStatus) && MGMT_CONFIRM_RE.test(lastCustomerMsg)) {
+    const hit = keywordHit("property_check_result", "物件固有条件の確認が必要");
+    if (hit) return hit;
+  }
   // スモ割/割引 単独言及（物件URL/画像なし＝上の property_check_result 判定を通過してきた場合）も見積書へ
   if (/費用|初期費用|いくら/.test(lastCustomerMsg) || hasSmowariKeyword) {
     const hit = keywordHit("estimate_sheet", hasSmowariKeyword ? "スモ割・割引見積の依頼" : "費用に関する質問を検出");
@@ -878,7 +907,7 @@ ${recentText}
 上記の「各AIXボタンの発動条件」「AIXフロー運用ガイド」と過去実績データを参照して、スタッフが次に取るべき最適なアクションを1つ選んでください。
 
 選択肢:
-- property_check_result: 物件の空室確認結果を報告する
+- property_check_result: ${PROPERTY_CHECK_RESULT_LABEL}: ${PROPERTY_CHECK_RESULT_DESCRIPTION}
 - property_send: 物件を送る
 - viewing_invite: 内覧を提案する
 - application_push: 申込を促す

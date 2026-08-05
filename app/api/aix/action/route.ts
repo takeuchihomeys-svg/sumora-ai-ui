@@ -797,6 +797,12 @@ export async function POST(request: NextRequest) {
       // AIが内部メモを出力した場合、顧客向けメッセージと分離
       return extractNotice(stripped, familyName || rawName);
     };
+    // 線引き学習用: property_check_result の check_pattern を aix_generate_log に残す
+    // （aix-weekly-learning が discarded を check_pattern 粒度で集計し、境界質問を分割起票するため）
+    const generateLogCheckPattern =
+      currentAction === "property_check_result" && typeof check_pattern === "string" && check_pattern
+        ? check_pattern
+        : null;
     // 早期return用: finalize結果をそのままレスポンスJSONにするショートハンド
     const finalizeResponse = (text: string, extra?: Record<string, unknown>) => {
       const { message, notice } = finalize(text);
@@ -806,6 +812,7 @@ export async function POST(request: NextRequest) {
             await supabase.from("aix_generate_log").insert({
               action_type: currentAction,
               conversation_id: conversationId,
+              check_pattern: generateLogCheckPattern,
               generated_text: safeSlice(message, 2000),
             });
           } catch (e) {
@@ -2872,6 +2879,7 @@ ${pcrCalendarBlock}
               await supabase.from("aix_generate_log").insert({
                 action_type: currentAction,
                 conversation_id: conversationId,
+                check_pattern: generateLogCheckPattern,
                 generated_text: safeSlice(exclusiveText, 2000),
               });
             } catch (e) {
@@ -4023,6 +4031,7 @@ ${SMORA_COMMON_RULES}
           await supabase.from("aix_generate_log").insert({
             action_type: currentAction,
             conversation_id: conversationId,
+            check_pattern: generateLogCheckPattern,
             generated_text: safeSlice(cleanedMessage, 2000),
           });
         } catch (e) {

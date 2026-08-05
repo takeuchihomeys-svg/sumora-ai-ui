@@ -257,7 +257,7 @@ ${principlesText}
 【AIXボタン一覧（参考）】
 - property_recommendation（物件オススメ）: 条件揃った後
 - property_send（物件ピックアップした）: 物件画像を送付した後
-- property_check_result（物件確認した）: 空室確認の結果報告
+- property_check_result（物件確認した／確認した（条件・交渉））: 空室・退去日・入居可能日・保証会社・初期費用交渉・駐車場・ペット可否など、管理会社・代表・オーナー・近隣月極への確認結果を報告する（check_patternで切替）
 - estimate_sheet（見積書送る）: 初期費用見積もり送付
 - viewing_invite（内覧へ！）: 内覧日程の提案
 - meeting_place（待ち合わせ）: 内覧確定後の待ち合わせ案内

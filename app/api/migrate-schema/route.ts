@@ -1343,6 +1343,10 @@ ALTER TABLE aix_feature_suggestions ADD COLUMN IF NOT EXISTS updated_at TIMESTAM
 -- aix_generate_log: generated_text（analyzeAixMismatch の mismatch 分析と aix/action finalizeResponse で保存）
 ALTER TABLE aix_generate_log ADD COLUMN IF NOT EXISTS generated_text TEXT;
 
+-- aix_generate_log: check_pattern（property_check_result のサブパターン。aix-weekly-learning の
+-- 線引き質問を check_pattern 粒度で起票し、BOUNDARY-*-aix を condition_key='check_pattern' で保存するための集計元）
+ALTER TABLE aix_generate_log ADD COLUMN IF NOT EXISTS check_pattern TEXT DEFAULT NULL;
+
 -- update_knowledge_feedback_by_ids: apply_count double-counting 修正
 -- 同一 knowledge_id が p_correct_ids と p_wrong_ids 両方に含まれる場合、apply_count が +2 になるバグを修正
 -- apply_count はユニーク ID の union に対して +1 のみ。correct/wrong_count は独立して加算
