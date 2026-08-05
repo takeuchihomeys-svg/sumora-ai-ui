@@ -1482,6 +1482,7 @@ export async function POST(req: NextRequest) {
   let pendingScheduledMessages: Array<{ text: string | null }> = [];
   let vacatingDate: VacatingDate = null;
   let staffMessagedToday = false;
+  let aixSourceMessage = ""; // AIXカテゴリ最適化: AIXが送信したテキストをベースに改善（設定時はAIX最適化モード）
   try {
     const body = await req.json() as {
       message: string;
@@ -1511,6 +1512,7 @@ export async function POST(req: NextRequest) {
       pendingScheduledMessages?: Array<{ text: string | null }>;
       vacatingDate?: { month: number; day: number } | null;
       staffMessagedToday?: boolean;
+      aixSourceMessage?: string;    // AIXカテゴリ最適化: AIXが送信したテキストを渡す（設定時は会話全体ではなくこのテキストを改善）
     };
     message = body.message;
     state = body.state;
@@ -1544,6 +1546,7 @@ export async function POST(req: NextRequest) {
     );
     vacatingDate = body.vacatingDate ?? null;
     staffMessagedToday = body.staffMessagedToday === true;
+    aixSourceMessage = body.aixSourceMessage || "";
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid request body" }, { status: 400 });
   }
@@ -1887,6 +1890,28 @@ export async function POST(req: NextRequest) {
           const learnedRulesSection = [templateAdaptRules, categoryAdaptationRules]
             .filter(Boolean)
             .join("\n\n");
+
+          // AIXカテゴリのテンプレート最適化: AIXが送信したテキストをベースに改善する専用プロンプト
+          if (aixSourceMessage) {
+            return `\n\n【🟣✨ AIX最適化モード（最優先 — 上記すべてのフェーズ別指示・長さ制限を上書き）】
+以下のAIXが生成・送信したテキストをベースに、より自然で効果的な文章に最適化してください。
+会話全体への新しい返信を生成するのではなく、下の【AIXが送信したテキスト】を直接ブラッシュアップすること。
+
+◆ ベース厳守: 【AIXが送信したテキスト】が改善の唯一の出発点。その内容・構成・目的を維持しながら質を上げる
+◆ 差別化必須: 元のAIXテキストと一語一句同じにしてはいけない。表現・言い回し・強調点・流れを必ず変えて意味のある改善を加える
+◆ テンプレート参照: 下の【テンプレート原文】は文体・訴求パターンの参考として活用する（テンプレを骨格として書き直すのではなく、AIXテキストを改善するために使う）
+◆ 長さ: AIXテキストの長さに準じる（大幅に長くしたり短くしたりしない）
+◆ プレースホルダ: 物件名・家賃・日時等はAIXテキスト内の実際の値をそのまま使う。不明な値は「〇〇」のまま残す（でたらめな値を絶対に入れない）
+◆ 挨拶: テンプレ冒頭の挨拶は上の【⏰ 挨拶ルール】に従った1つだけにする（挨拶・お礼の二重は禁止）
+◆ 訴求ポイント指定: ${templateFocusPoints.length > 0 ? `スタッフ指定の訴求軸【${templateFocusPoints.join("・")}】を文中で最も強調すること` : "なし"}
+◆ 申込フォーム誘導フレーズの強制置換: 「お申込フォーマット」「ご本人確認書類」を含む文は出力禁止。申込案内が必要な場合は「お気に召されましたらお申込みしお部屋抑えさせて頂きます！！」、内覧案内が必要な場合は「お気に召されましたらご都合よろしいお日にちにお部屋ご案内させて頂きます！！」に必ず置き換える。
+◆ 捏造禁止ゲート: 内覧日時・見積金額内訳・空室確認結果・待ち合わせ場所の捏造禁止（これだけはAIXテキストにない情報を補完しない）
+${noEmoji ? "◆ 絵文字は一切使用しない（AIXテキストに絵文字があっても全て削除）\n" : ""}${soloEntry ? "◆ 1人入居モード（厳守）: 同居人・配偶者・同居者・家族構成・入居人数・お子様・子ども・子供・同居・ご家族 を含む行はすべて出力しない（完全に削除）\n" : ""}${templateLabel ? `【テンプレート名】${templateLabel}\n` : ""}${templateCategory ? `【テンプレートカテゴリ】${templateCategory}\n` : ""}【AIXが送信したテキスト（これをベースに改善する）】
+${aixSourceMessage}
+${preprocessedTemplate ? `\n【テンプレート原文（文体・訴求の参考）】\n${preprocessedTemplate}\n` : ""}${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ】\n${pendingSection}\n` : ""}${learnedRulesSection ? `\n${learnedRulesSection}\n` : ""}
+出力は改善した文章のみ。説明・前置き・補足コメントは一切書かない。`;
+          }
+
           return `\n\n【🟠✨ テンプレート最適化モード（最優先 — 上記「長さの目安」・フェーズ別行動パターンを上書き）】
 テンプレートをベースに、この顧客の状況に最適化した文章を作成してください。
 今回はお客様のメッセージへのゼロからの返信ではなく、下の【テンプレート原文】を「構成の骨格」として、今のお客様・今の会話に完全に合わせて書き直すこと。
@@ -1907,7 +1932,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
 
     // テンプレート最適化モードは SystemMessage 側にもモード宣言を追加（dbRules と同じ注入経路）
     const templateSystemNote = isTemplateOptimize
-      ? "\n\n【テンプレート最適化モード】今回はテンプレートをベースに、この顧客の状況に最適化した文章を作成してください。詳細ルールはプロンプト末尾の【🟠✨ テンプレート最適化モード】ブロックに従うこと。"
+      ? (aixSourceMessage
+          ? "\n\n【AIX最適化モード】AIXが送信したテキストをベースに、より自然で効果的な文章に改善してください。会話全体への新しい返信ではなく、AIXテキストそのものをブラッシュアップすること。詳細ルールはプロンプト末尾の【🟣✨ AIX最適化モード】ブロックに従うこと。"
+          : "\n\n【テンプレート最適化モード】今回はテンプレートをベースに、この顧客の状況に最適化した文章を作成してください。詳細ルールはプロンプト末尾の【🟠✨ テンプレート最適化モード】ブロックに従うこと。")
       : "";
 
     // Sonnetでストリーミング生成

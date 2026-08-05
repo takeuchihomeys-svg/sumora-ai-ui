@@ -2283,6 +2283,12 @@ export default function TemplateModal({
     const templateText = extractedTexts[tmpl.id] ?? tmpl.text;
     // 万一トレーラー（<<<SUGGESTED_AIX:...>>> 等）が混入しても防御的に除去する
     const stripTrailers = (s: string) => s.replace(/\n?<<<[A-Z_]+:[\s\S]*?>>>/g, "");
+    // AIXカテゴリのテンプレートの場合、AIXが送信したテキストをベースとして渡す
+    // → generate-reply側でAIX最適化モードに切り替わり、会話全体ではなくそのテキストのみを改善する
+    const isAixCategoryTemplate = tmpl.category.includes("AIX");
+    const aixSourceMessage = isAixCategoryTemplate && postAixContext?.sentMessage
+      ? postAixContext.sentMessage
+      : undefined;
     try {
       // 新: generate-reply のテンプレート最適化モード（Step1状況分析 + 全プロンプトスタック + Sonnet）
       const res = await fetch("/api/generate-reply", {
@@ -2307,6 +2313,8 @@ export default function TemplateModal({
           pendingScheduledMessages: (pendingScheduledMessages ?? []).filter(m => m.text),
           vacatingDate: vacatingDates[tmpl.id] ?? null,
           staffMessagedToday: staffMessagedToday ?? false,
+          // AIXカテゴリ: AIXが送信したテキストをベースに最適化（会話全体から生成しない）
+          ...(aixSourceMessage !== undefined ? { aixSourceMessage } : {}),
         }),
       });
       if (!res.ok) throw new Error(`generate-reply ${res.status}`);
