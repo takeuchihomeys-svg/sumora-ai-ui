@@ -4,7 +4,9 @@ import { supabase } from "@/app/lib/supabase";
 // analyze-diffs だけでなく corpus2skill / adapt-feedback 等の直接INSERTにも
 // 同じ上限を適用し、pending が溜まりすぎて竹内さんが処理しきれなくなるのを防ぐ。
 // - pending 総数が MAX_PENDING 件以上なら新規起票をスキップ
+// - 同一 aix_action × category の pending が MAX_PENDING_PER_ACTION_CATEGORY 件以上でもスキップ（②-1 窒息解消）
 const MAX_PENDING = 60;
+const MAX_PENDING_PER_ACTION_CATEGORY = 2;
 
 export async function canInsertAiQuestion(): Promise<boolean> {
   const { count } = await supabase
@@ -12,6 +14,19 @@ export async function canInsertAiQuestion(): Promise<boolean> {
     .select("id", { count: "exact", head: true })
     .eq("status", "pending");
   return (count ?? 0) < MAX_PENDING;
+}
+
+// ②-1: aix_action × category 単位のpending件数を数える（ハードキャップ判定用）
+// aix_action が null の場合は「aix_action未設定の同category質問」を数える
+async function countPendingForActionCategory(aixAction: string | null, category: string): Promise<number> {
+  let query = supabase
+    .from("ai_feedback_items")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "pending")
+    .eq("category", category);
+  query = aixAction != null ? query.eq("aix_action", aixAction) : query.is("aix_action", null);
+  const { count } = await query;
+  return count ?? 0;
 }
 
 // ── スモラAIシステム絶対ルール（AI質問生成プロンプト共通コンテキスト）──
@@ -105,6 +120,13 @@ ${conflictReason}
 export async function safeInsertAiQuestion(item: AiQuestionItem): Promise<boolean> {
   if (!(await canInsertAiQuestion())) {
     console.log(`[ai-feedback-guard] AI質問pending上限(${MAX_PENDING}件)到達、新規起票スキップ`);
+    return false;
+  }
+  // ②-1: 同一 aix_action × category のpendingが2件以上あれば新規起票しない（ハードキャップ）
+  const aixAction = item.aix_action?.trim() || null;
+  const perActionCount = await countPendingForActionCategory(aixAction, item.category);
+  if (perActionCount >= MAX_PENDING_PER_ACTION_CATEGORY) {
+    console.log(`[ai-feedback-guard] aix_action=${aixAction ?? "(なし)"} × category=${item.category} のpendingが${perActionCount}件あるため新規起票スキップ`);
     return false;
   }
   const { error } = await supabase.from("ai_feedback_items").insert({

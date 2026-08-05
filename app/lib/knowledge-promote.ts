@@ -62,6 +62,7 @@ export type PromotedBy =
   | "rpc_auto"            // update_knowledge_feedback_by_pairs / confirm_knowledge_feedback のRPC内自動昇格
   | "analyze_diffs_tier1" // analyze-diffs cron のTier1昇格
   | "analyze_diffs_batch" // analyze-diffs cron のバッチ昇格（Tier2: 確認起票あり）
+  | "analyze_diffs_aix_auto" // ⑦ analyze-diffs cron のAIX系hypothesis自動昇格（apply>=2・外れ率<25%）
   | "auto_judge"          // 自動判定
   | "batch_eval"          // eval-winning-pattern の週次バッチ昇格
   | "bulk_judge"          // bulk-judge-knowledge のSonnet審査昇格
@@ -80,6 +81,15 @@ export async function promoteToConfirmed(
   if (error) {
     console.warn("[knowledge-promote] promoteToConfirmed failed:", error.message);
     return;
+  }
+  // ②-2 昇格経路復旧（2026-08）: hypothesis の初期 importance は 6（未検証は低めで配信）のため、
+  // confirmed 昇格時に importance を最低 7 へ引き上げる（既に 7 以上のものは下げない）。
+  const { error: impError } = await supabase.from("ai_reply_knowledge")
+    .update({ importance: 7 })
+    .eq("id", id)
+    .lt("importance", 7);
+  if (impError) {
+    console.warn("[knowledge-promote] importance引き上げ失敗:", impError.message);
   }
   if (row) {
     await syncConfirmedToPromptRule({

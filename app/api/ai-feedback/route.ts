@@ -726,6 +726,10 @@ export async function POST(req: NextRequest) {
   // FEEDBACK-* 優先度decayロジック（削除なし・demoteのみ）
   // 90日超のFEEDBACK-*は priority を 2 に下げてアクティブを維持
   // （たまにしか使わないルールも消さずに残し、プロンプト注入の重みだけ下げる）
+  // ※ prompt-rules.ts は priority >= 4 のみ注入するため、demote されたルールは実際に注入対象から外れる。
+  // ※ BOUNDARY-* は【意図的に】decay対象外: AIXアクションと通常返信の役割分担を定める構造的な境界ルールであり、
+  //    時間経過で陳腐化する性質のものではない。decayさせると priority 閾値により注入から消え、
+  //    ユーザーが明示的に修正した境界違反（誤ルーティング）が再発するため、priority=9 のまま維持する。
   try {
     const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
     const { data: staleFeedbackRules } = await supabase
