@@ -930,12 +930,14 @@ export async function POST(req: NextRequest) {
   }
 
   // ②-1: pending 30日超のAI質問を expired に自動更新（滞留による窒息を防ぐ・corpus2skill実行時に毎回実行）
+  // ※ aix_boundary（線引き質問）は人間回答が必須の学習ループ起点のため失効対象から除外する
   try {
     const thirtyDaysAgoForExpire = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     const { data: expiredRows, error: expireError } = await supabase
       .from("ai_feedback_items")
       .update({ status: "expired" })
       .eq("status", "pending")
+      .neq("category", "aix_boundary")
       .lt("created_at", thirtyDaysAgoForExpire)
       .select("id");
     if (expireError) console.warn("[corpus2skill] pending期限切れ更新失敗:", expireError.message);

@@ -380,91 +380,102 @@ export async function POST(req: NextRequest) {
     }, { onConflict: "key" });
     if (!error) appliedRules.push(...promptRuleTexts.map((r) => r.text));
     else console.error("[ai-feedback] ai_prompts upsert error:", error.message);
+  }
 
-    // ai_prompt_rules にも保存 → fetchPromptRules 経由で generate-reply / AIX に実際に注入される
-    // （ai_prompts の feedback_rule_{id} は generate-reply の固定キーwhitelist外で参照されないため）
-    // ── aix_boundary カテゴリ専用: 境界ルールを AIX側 + generate_reply 側の両方に保存 ──
-    // boundaryAixAction が存在する場合は BOUNDARY-{id}-{n} キーで専用ルートを使い、
-    // 通常の FEEDBACK-* とは別テーブル行に分けてスコープを明確化する。
-    if ((item.category as string) === 'aix_boundary' && boundaryAixAction) {
-      for (let i = 0; i < promptRuleTexts.length; i++) {
-        const boundaryRuleText = promptRuleTexts[i].text;
-        const lowerRule = boundaryRuleText.toLowerCase();
-        // ルールが通常返信側のみに言及しているか判定
-        const mentionsAix = lowerRule.includes("aix") || lowerRule.includes(boundaryAixAction.toLowerCase()) || lowerRule.includes("ボタン");
-        const mentionsReplyOnly = lowerRule.includes("通常") && !mentionsAix;
+  // ai_prompt_rules にも保存 → fetchPromptRules 経由で generate-reply / AIX に実際に注入される
+  // （ai_prompts の feedback_rule_{id} は generate-reply の固定キーwhitelist外で参照されないため）
+  // ── aix_boundary カテゴリ専用: 境界ルールを AIX側 + generate_reply 側の両方に保存 ──
+  // boundaryAixAction が存在する場合は BOUNDARY-{id}-{n} キーで専用ルートを使い、
+  // 通常の FEEDBACK-* とは別テーブル行に分けてスコープを明確化する。
+  // 【重要】この分岐は promptRuleTexts.length に依存させない: Opus(extractRules)が
+  // 全ルールを save_target='ai_reply_knowledge' に分類すると promptRuleTexts が空になり
+  // （境界回答は返信パターン文になりやすい）、境界回答が黙って蒸発するため、
+  // 抽出ルール全体（rules）→ answer 本文の順でフォールバックして必ず BOUNDARY-* を保存する。
+  if ((item.category as string) === 'aix_boundary' && boundaryAixAction) {
+    const boundaryTexts: string[] =
+      promptRuleTexts.length > 0
+        ? promptRuleTexts.map((r) => r.text)
+        : rules.length > 0
+          ? rules.map((r) => r.rule_text.trim()).filter((t) => t.length > 0)
+          : [answer];
+    if (boundaryTexts.length === 0) boundaryTexts.push(answer);
+    for (let i = 0; i < boundaryTexts.length; i++) {
+      const boundaryRuleText = boundaryTexts[i];
+      const lowerRule = boundaryRuleText.toLowerCase();
+      // ルールが通常返信側のみに言及しているか判定
+      const mentionsAix = lowerRule.includes("aix") || lowerRule.includes(boundaryAixAction.toLowerCase()) || lowerRule.includes("ボタン");
+      const mentionsReplyOnly = lowerRule.includes("通常") && !mentionsAix;
 
-        // generate_reply スコープ（通常返信AIに禁止ルールを注入）: 全境界ルールに適用
-        const { error: grErr } = await supabase.from("ai_prompt_rules").upsert({
-          rule_key: `BOUNDARY-${id}-${i + 1}-gr`,
-          action_type: "generate_reply",
-          condition_key: null,
-          condition_value: null,
+      // generate_reply スコープ（通常返信AIに禁止ルールを注入）: 全境界ルールに適用
+      const { error: grErr } = await supabase.from("ai_prompt_rules").upsert({
+        rule_key: `BOUNDARY-${id}-${i + 1}-gr`,
+        action_type: "generate_reply",
+        condition_key: null,
+        condition_value: null,
+        rule_text: boundaryRuleText,
+        reason: `AIX境界ルール（generate_reply側）（${new Date().toISOString().slice(0, 10)}）: ${item.question as string}`.slice(0, 500),
+        priority: 9,
+        is_active: true,
+        source_feedback_item_id: id,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "rule_key" });
+      if (grErr) console.error("[ai-feedback] BOUNDARY-*-gr upsert error:", grErr.message);
+      else appliedRules.push(`[BOUNDARY:generate_reply] ${boundaryRuleText.slice(0, 50)}`);
+
+      // AIX スコープ（AIXプロンプトに境界条件を注入）: AIX側言及あり or 判別不能（通常返信のみ言及でない場合）
+      if (!mentionsReplyOnly) {
+        // check_pattern 粒度の線引き質問由来なら condition 付きで保存
+        // → 保証会社確認の境界ルールが空室確認プロンプトへ混入する（逆も）のを防ぐ
+        const { error: aixErr } = await supabase.from("ai_prompt_rules").upsert({
+          rule_key: `BOUNDARY-${id}-${i + 1}-aix`,
+          action_type: boundaryAixAction,
+          condition_key: boundaryCheckPattern ? "check_pattern" : null,
+          condition_value: boundaryCheckPattern,
           rule_text: boundaryRuleText,
-          reason: `AIX境界ルール（generate_reply側）（${new Date().toISOString().slice(0, 10)}）: ${item.question as string}`.slice(0, 500),
+          reason: `AIX境界ルール（${boundaryAixAction}${boundaryCheckPattern ? `|${boundaryCheckPattern}` : ""}側）（${new Date().toISOString().slice(0, 10)}）: ${item.question as string}`.slice(0, 500),
           priority: 9,
           is_active: true,
           source_feedback_item_id: id,
           updated_at: new Date().toISOString(),
         }, { onConflict: "rule_key" });
-        if (grErr) console.error("[ai-feedback] BOUNDARY-*-gr upsert error:", grErr.message);
-        else appliedRules.push(`[BOUNDARY:generate_reply] ${boundaryRuleText.slice(0, 50)}`);
-
-        // AIX スコープ（AIXプロンプトに境界条件を注入）: AIX側言及あり or 判別不能（通常返信のみ言及でない場合）
-        if (!mentionsReplyOnly) {
-          // check_pattern 粒度の線引き質問由来なら condition 付きで保存
-          // → 保証会社確認の境界ルールが空室確認プロンプトへ混入する（逆も）のを防ぐ
-          const { error: aixErr } = await supabase.from("ai_prompt_rules").upsert({
-            rule_key: `BOUNDARY-${id}-${i + 1}-aix`,
-            action_type: boundaryAixAction,
-            condition_key: boundaryCheckPattern ? "check_pattern" : null,
-            condition_value: boundaryCheckPattern,
-            rule_text: boundaryRuleText,
-            reason: `AIX境界ルール（${boundaryAixAction}${boundaryCheckPattern ? `|${boundaryCheckPattern}` : ""}側）（${new Date().toISOString().slice(0, 10)}）: ${item.question as string}`.slice(0, 500),
-            priority: 9,
-            is_active: true,
-            source_feedback_item_id: id,
-            updated_at: new Date().toISOString(),
-          }, { onConflict: "rule_key" });
-          if (aixErr) console.error("[ai-feedback] BOUNDARY-*-aix upsert error:", aixErr.message);
-          else appliedRules.push(`[BOUNDARY:${boundaryAixAction}${boundaryCheckPattern ? `|${boundaryCheckPattern}` : ""}] ${boundaryRuleText.slice(0, 50)}`);
-        }
+        if (aixErr) console.error("[ai-feedback] BOUNDARY-*-aix upsert error:", aixErr.message);
+        else appliedRules.push(`[BOUNDARY:${boundaryAixAction}${boundaryCheckPattern ? `|${boundaryCheckPattern}` : ""}] ${boundaryRuleText.slice(0, 50)}`);
       }
-    } else {
-      for (let i = 0; i < promptRuleTexts.length; i++) {
-        const { error: ruleError } = await supabase.from("ai_prompt_rules").upsert({
-          rule_key: `FEEDBACK-${id}-${i + 1}`,
-          // Opusが既知AIXアクションを返した場合はスコープ付きで保存（全アクションへのノイズ注入を防止）。
-          // 受け側の fetchPromptRules は .or(`action_type.eq.${actionType},action_type.is.null`) で
-          // 取得するため、スコープ付きルールは該当アクションのプロンプトにのみ注入される
-          action_type: promptRuleTexts[i].actionType,
+    }
+  } else {
+    for (let i = 0; i < promptRuleTexts.length; i++) {
+      const { error: ruleError } = await supabase.from("ai_prompt_rules").upsert({
+        rule_key: `FEEDBACK-${id}-${i + 1}`,
+        // Opusが既知AIXアクションを返した場合はスコープ付きで保存（全アクションへのノイズ注入を防止）。
+        // 受け側の fetchPromptRules は .or(`action_type.eq.${actionType},action_type.is.null`) で
+        // 取得するため、スコープ付きルールは該当アクションのプロンプトにのみ注入される
+        action_type: promptRuleTexts[i].actionType,
+        condition_key: null,
+        condition_value: null,
+        rule_text: promptRuleTexts[i].text,
+        reason: `AI盲点質問への竹内さん回答（${new Date().toISOString().slice(0, 10)}）: ${item.question}`.slice(0, 500),
+        priority: 8,
+        is_active: true,
+        source_feedback_item_id: id,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "rule_key" });
+      if (ruleError) console.error("[ai-feedback] ai_prompt_rules upsert error:", ruleError.message);
+
+      // AIXスコープ付きFEEDBACKルールは generate-reply にも注入する
+      // （viewing_invite等のルールは LINE文案生成の同フェーズでも有効なため）
+      if (!ruleError && promptRuleTexts[i].actionType !== null) {
+        await supabase.from("ai_prompt_rules").upsert({
+          rule_key: `FEEDBACK-${id as string}-${i + 1}-gr`,
+          action_type: "generate_reply",
           condition_key: null,
           condition_value: null,
           rule_text: promptRuleTexts[i].text,
-          reason: `AI盲点質問への竹内さん回答（${new Date().toISOString().slice(0, 10)}）: ${item.question}`.slice(0, 500),
-          priority: 8,
+          reason: `AI盲点質問generate-replyコピー（${new Date().toISOString().slice(0, 10)}）: ${item.question as string}`.slice(0, 500),
+          priority: 7,   // 元の priority=8 より低く（AIX側と重複するため）
           is_active: true,
           source_feedback_item_id: id,
           updated_at: new Date().toISOString(),
         }, { onConflict: "rule_key" });
-        if (ruleError) console.error("[ai-feedback] ai_prompt_rules upsert error:", ruleError.message);
-
-        // AIXスコープ付きFEEDBACKルールは generate-reply にも注入する
-        // （viewing_invite等のルールは LINE文案生成の同フェーズでも有効なため）
-        if (!ruleError && promptRuleTexts[i].actionType !== null) {
-          await supabase.from("ai_prompt_rules").upsert({
-            rule_key: `FEEDBACK-${id as string}-${i + 1}-gr`,
-            action_type: "generate_reply",
-            condition_key: null,
-            condition_value: null,
-            rule_text: promptRuleTexts[i].text,
-            reason: `AI盲点質問generate-replyコピー（${new Date().toISOString().slice(0, 10)}）: ${item.question as string}`.slice(0, 500),
-            priority: 7,   // 元の priority=8 より低く（AIX側と重複するため）
-            is_active: true,
-            source_feedback_item_id: id,
-            updated_at: new Date().toISOString(),
-          }, { onConflict: "rule_key" });
-        }
       }
     }
   }

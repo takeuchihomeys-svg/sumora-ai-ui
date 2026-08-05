@@ -2,6 +2,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { PROPERTY_CHECK_RESULT_LABEL } from "@/app/lib/aix-taxonomy";
+import { safeInsertAiQuestion } from "@/app/lib/ai-feedback-guard";
 
 export const maxDuration = 300;
 
@@ -159,15 +160,16 @@ ${isUndefined ? "※このアクションは現在【AIXとの役割分担】ル
 
 [aix_boundary_action:${boundaryTag}]`;
 
-      await getSupabase().from("ai_feedback_items").insert({
+      // pending上限ガード（MAX_PENDING / aix_action×categoryハードキャップ）経由で起票する
+      const inserted = await safeInsertAiQuestion({
         question: questionText,
         speculation: `AIXと通常返信AIの担当範囲が曖昧で、スタッフがAIX提案をスルーしているパターンを検出`,
         category: "aix_boundary",
-        confidence: 0.8,
+        confidence: "0.8",
         entry_source: "boundary_analysis",
         aix_action: actionType,
-        status: "pending",
       });
+      if (!inserted) continue;
 
       questionCount++;
     }

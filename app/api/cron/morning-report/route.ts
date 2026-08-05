@@ -42,6 +42,8 @@ export async function GET(req: NextRequest) {
     supabase.from("ai_feedback_items")
       .update({ status: "dismissed", updated_at: new Date().toISOString() })
       .eq("status", "pending")
+      // aix_boundary（線引き質問）は人間回答が必須の学習ループ起点のため自動クローズ対象外
+      .neq("category", "aix_boundary")
       .lt("created_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()),
     supabase.from("aix_feature_suggestions")
       .update({ status: "dismissed", updated_at: new Date().toISOString() })
@@ -496,7 +498,7 @@ export async function GET(req: NextRequest) {
   try {
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const [{ data: cronLogs }, { count: pendingFeedbackCount }, { count: pendingKnowledgeAlignCount }, { count: examples24hCount, error: examples24hErr }, { count: applyLog24hCount, error: applyLog24hErr }] = await Promise.all([
+    const [{ data: cronLogs }, { count: pendingFeedbackCount }, { count: pendingBoundaryCount }, { count: pendingKnowledgeAlignCount }, { count: examples24hCount, error: examples24hErr }, { count: applyLog24hCount, error: applyLog24hErr }] = await Promise.all([
       // 週次Cron（corpus2skill 等）の判定に7日分必要なため7日窓で取得し、日次Cronは24hで判定する
       supabase
         .from("cron_run_logs")
@@ -509,6 +511,12 @@ export async function GET(req: NextRequest) {
         .from("ai_feedback_items")
         .select("*", { count: "exact", head: true })
         .eq("status", "pending"),
+      // 線引き質問（aix_boundary）の未回答数（BOUNDARY-*ルール学習ループの起点。滞留すると学習が完全停止する）
+      supabase
+        .from("ai_feedback_items")
+        .select("*", { count: "exact", head: true })
+        .eq("status", "pending")
+        .eq("category", "aix_boundary"),
       // ナレッジAIXアライン未対応数（aix_feature_suggestions の knowledge_aix_align）
       supabase
         .from("aix_feature_suggestions")
@@ -552,6 +560,11 @@ export async function GET(req: NextRequest) {
     const feedbackLine = pendingN > 0
       ? `■ AI質問 未回答: ${pendingN}件（テンプレート画面の「❓AI質問」タブから回答できます）`
       : "■ AI質問 未回答: 0件";
+    // aix_boundary（線引き質問）が滞留すると BOUNDARY-* ルール学習が完全停止するため個別に警告する
+    const boundaryN = pendingBoundaryCount ?? 0;
+    const boundaryLine = boundaryN > 0
+      ? `⚠️ 線引き質問 未回答: ${boundaryN}件 — 回答されるまでBOUNDARY-*ルール学習が止まっています（「❓AI質問」タブから回答してください）`
+      : "";
     const alignN = pendingKnowledgeAlignCount ?? 0;
     const alignLine = alignN > 0
       ? `■ ナレッジAIXアライン 未対応: ${alignN}件（改善案タブから確認できます）`
@@ -566,7 +579,7 @@ export async function GET(req: NextRequest) {
       loopWarnings.push("⚠️ 学習ループ停止の可能性: knowledge_apply_log 24h=0件（ナレッジ適用記録が止まっています）");
     }
     const loopWarningBlock = loopWarnings.length > 0 ? `\n${loopWarnings.join("\n")}` : "";
-    statsLines.push(`🧠 学習ヘルス\n■ 直近24h学習Cron:\n${healthLines.join("\n")}\n${feedbackLine}\n${alignLine}${loopWarningBlock}`);
+    statsLines.push(`🧠 学習ヘルス\n■ 直近24h学習Cron:\n${healthLines.join("\n")}\n${feedbackLine}${boundaryLine ? `\n${boundaryLine}` : ""}\n${alignLine}${loopWarningBlock}`);
   } catch (e) {
     console.error("[morning-report] learning health section:", e);
   }

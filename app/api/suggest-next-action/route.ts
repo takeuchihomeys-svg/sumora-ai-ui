@@ -45,6 +45,15 @@ const AMBIGUOUS_PROPERTY_RE = /(?:(?<!駅)前|この前|以前|前回|先日|さ
 // これがないと「退去予定だが内覧したい」等で内覧誘導が誤発火する。
 const EXIT_SCHEDULED_RE = /退去予定|退去後|退去され|退去次第|来月.*退去|現在.*入居中|入居中.*退去|空き予定|空室予定|空く予定|(?:退去|明け渡し)は/;
 
+// f-8: キャンセル意向・リスケ（日程変更）の検知パターン。
+// これまでどのregexにも該当せず通常フローに流れ、「内覧」「申込」等の部分一致で
+// viewing_invite / application_push が誤発火し得た（例:「内覧をキャンセルしたい」「申込をやめたい」）。
+// キャンセル意向はセンシティブ案件としてAIX提案を出さず人間判断に委ね、
+// リスケ（日程変更）は viewing_invite（内覧日の再調整）を提案する。
+// ※「キャンセル料」「キャンセルできますか」等の不安系質問は通常返信AIの範囲のため除外（意向表明のみ検知）
+const CANCEL_INTENT_RE = /(?:キャンセル|解約|取消|取り消し?|白紙|辞退)(?!料|金|でき|出来|可能)(?:を|は|に|で)?(?:したい|します|させて|お願い|希望|することに|する事に)|なかったことに|見送(?:り(?:たい|ます)|らせて)|やめ(?:たい|ます|ておき|とき)/;
+const RESCHEDULE_RE = /リスケ|(?:日程|日にち|日時|予定)[^。！!？?\n]{0,6}(?:変更|ずら|延期)|別の日(?:に|で|へ)|(?:行け|いけ|伺え)なくな|都合が?(?:悪く|つかなく)/;
+
 // 指示語（これ／この／こちら／あの）の検知。画像引用＋指示語で「どの物件か曖昧」を取りこぼさないため。
 const DEMONSTRATIVE_RE = /これ|この|こちら|あの/;
 
@@ -67,8 +76,8 @@ const ACTION_PARAMS: Record<string, { check_pattern?: string; send_mode?: string
 const CHECK_PATTERN_BY_TOPIC: Array<[RegExp, string]> = [
   [/保証会社|保証料|審査.{0,6}(通|基準|厳し)/, "mgmt_guarantor"],
   [/駐車場|月極/, "mgmt_parking"],
-  [/ペット|犬|猫.{0,4}(飼|可)/, "mgmt_pet"],
-  [/礼金|敷金.{0,8}(交渉|下げ|安く)|初期費用.{0,8}交渉/, "mgmt_initial_cost"],
+  [/ペット|犬|猫.{0,8}(飼|大丈夫|可)/, "mgmt_pet"],
+  [/礼金|(?:敷金|家賃).{0,8}(交渉|下げ|安く)|初期費用.{0,8}交渉/, "mgmt_initial_cost"],
   [/退去日|退去予定日/, "vacate_date"],
   [/入居可能日|いつから入居/, "mgmt_move_in"],
 ];
@@ -464,6 +473,37 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // ---- f-8: キャンセル・リスケ検知（センシティブゲート・誤提案防止）----
+  // チェーンルール・キーワード判定より前に置くこと（「内覧をキャンセルしたい」が viewing_invite に、
+  // 「申込をやめたい」が application_push に誤マッチするのを防ぐ）
+  if (conv.last_sender === "customer" && CANCEL_INTENT_RE.test(lastCustomerMsg)) {
+    // キャンセル意向はセンシティブ案件 → AIX自動提案なし（スタッフの人間判断に委ねる）
+    return NextResponse.json({ action: null, reason: "キャンセル意向・手動対応推奨" });
+  }
+  // リスケは「内覧・待ち合わせの日程が既にある文脈」でのみ発火させる
+  // （「入居予定が延期になりました」等の非内覧リスケに viewing_invite を誤提案しない）
+  const hasViewingContext =
+    /内覧|内見|見学|待ち合わせ|集合|お伺い|訪問|来店/.test(lastCustomerMsg) ||
+    last_aix_action === "viewing_invite" ||
+    last_aix_action === "meeting_place";
+  if (
+    conv.last_sender === "customer" &&
+    RESCHEDULE_RE.test(lastCustomerMsg) &&
+    hasViewingContext &&
+    !shouldSuppressAction("viewing_invite") &&
+    !isLowSourceRate("viewing_invite", "reschedule_rule")
+  ) {
+    return NextResponse.json({
+      action: "viewing_invite",
+      reason: "日程変更・リスケ希望",
+      source: "reschedule_rule",
+      params: buildParams("viewing_invite"),
+      acceptanceRate: acceptanceRateMap["viewing_invite"] ?? null,
+      sub_mode_stats: subModeStats,
+      ...templateRec("viewing_invite"),
+    });
+  }
+
   // ---- AIXチェーンルール: 直前のAIXアクションから次を提案 ----
   // ※ staff early return より前に置くことで送信直後にも発火する（Fable5 S-1修正）
   if (last_aix_action && !hasExplicitCustomerIntent) {
@@ -662,7 +702,7 @@ export async function POST(req: NextRequest) {
   // → property_check_result（AVAILABILITY_KEYWORDS は空室確認のみで拾えないためここでカバー）
   // ※ 費用/estimate_sheet 判定より前に置く（「保証料はいくら」の「いくら」誤マッチ防止）
   // ※ applying（申込手続き中）も対象に含める（申込中の保証料質問が estimate_sheet に誤ルーティングされるのを防ぐ）
-  const MGMT_CONFIRM_RE = /保証会社|保証料|審査.{0,6}(通り|基準|厳し)|ペット.{0,6}(可|飼|大丈夫)|駐車場.{0,6}(あり|空き|使え)|礼金.{0,8}(交渉|下げ)|設備.{0,6}(あり|付い)/;
+  const MGMT_CONFIRM_RE = /保証会社|保証料|審査.{0,6}(通り|基準|厳し)|ペット.{0,6}(可|飼|大丈夫)|駐車場.{0,6}(あり|空き|使え)|礼金.{0,8}(交渉|下げ)|設備.{0,6}(あり|付い)|家賃.{0,8}(交渉|下げ|安く)|(?:猫|犬).{0,8}(飼|大丈夫|可)/;
   if ((PROPERTY_CHECK_STATUSES.has(currentStatus) || currentStatus === "applying") && MGMT_CONFIRM_RE.test(lastCustomerMsg)) {
     const hit = keywordHit("property_check_result", "物件固有条件の確認が必要");
     if (hit) return hit;
@@ -765,7 +805,7 @@ export async function POST(req: NextRequest) {
 
   // ---- UIで管理しているAIXロジック＋過去パターンデータ＋フロー運用ガイドを並列取得 ----
   // ※成約貢献率（aix_action_attribution）は冒頭の並列取得で取得済み（attrMap / avgWinRateMap を再利用）
-  const [{ data: aixLogicRows }, { data: patternRows }, { data: flowGuideRow }] = await Promise.all([
+  const [{ data: aixLogicRows }, { data: patternRows }, { data: flowGuideRow }, { data: boundaryRuleRows }] = await Promise.all([
     supabase.from("ai_prompts")
       .select("key, content")
       .like("key", "aix_logic_%"),
@@ -779,6 +819,15 @@ export async function POST(req: NextRequest) {
       .select("content")
       .eq("key", "aix_flow_guide")
       .maybeSingle(),
+    // f-3: 確定済み線引きルール（BOUNDARY-* / ai-feedback の aix_boundary 回答由来）。
+    // 生成側（generate-reply / AIX）だけでなく提案判断（Sonnet ai_fallback）にも注入し、
+    // AIXと通常返信の役割分担が提案側にも反映されるようにする
+    supabase.from("ai_prompt_rules")
+      .select("rule_key, action_type, rule_text")
+      .like("rule_key", "BOUNDARY-%")
+      .eq("is_active", true)
+      .order("updated_at", { ascending: false, nullsFirst: false })
+      .limit(50),
   ]);
 
   const aixFlowGuide = ((flowGuideRow?.content as string | undefined) ?? "").trim();
@@ -851,8 +900,28 @@ ${examples || "  (なし)"}
 `
     : "";
 
-  const aixLogicGuide = aixLogicSection
-    ? `## 各AIXボタンの発動条件（管理UIで設定済み）\n${aixLogicSection}\n\n`
+  // f-3: 確定済み線引きルール（BOUNDARY-*）を整形。
+  // -gr（generate_reply側）と -aix（AIXアクション側）は同一 rule_text のペアで保存されるため、
+  // アクション別ルール（-aix）を優先して rule_text で重複排除し、action_type ラベル付きで注入する
+  const boundaryRules = ((boundaryRuleRows ?? []) as Array<{ rule_key: string; action_type: string | null; rule_text: string | null }>)
+    .filter((r) => (r.rule_text ?? "").trim())
+    .sort((a, b) => Number(b.rule_key.endsWith("-aix")) - Number(a.rule_key.endsWith("-aix")));
+  const seenBoundaryTexts = new Set<string>();
+  const boundaryLines: string[] = [];
+  for (const r of boundaryRules) {
+    const text = (r.rule_text as string).trim();
+    if (seenBoundaryTexts.has(text)) continue;
+    seenBoundaryTexts.add(text);
+    const label = r.action_type && r.action_type !== "generate_reply" ? `[${r.action_type}]` : "[通常返信]";
+    boundaryLines.push(`- ${label} ${text.slice(0, 200)}`);
+    if (boundaryLines.length >= 20) break;
+  }
+  const boundarySection = boundaryLines.length
+    ? `### 確定済みの役割分担ルール（AIXと通常返信の線引き・竹内さん確認済み・最優先で遵守）\n${boundaryLines.join("\n")}`
+    : "";
+
+  const aixLogicGuide = (aixLogicSection || boundarySection)
+    ? `## 各AIXボタンの発動条件（管理UIで設定済み）\n${[aixLogicSection, boundarySection].filter(Boolean).join("\n\n---\n\n")}\n\n`
     : "";
 
   // JST現在日時（YYYY/M/D H:MM形式）

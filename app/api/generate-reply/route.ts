@@ -74,6 +74,32 @@ function buildFirstGreeting(customerName: string): string {
   return `${customerName ? `${customerName}さん、` : ""}はじめまして😊！！この度ご連絡頂きありがとうございます！！お部屋探しを担当させて頂きます鈴木と申します！！`;
 }
 
+// ─── f-8: センシティブ案件ゲート（線引き質問#10の回答確定に基づく）──────────────
+// クレーム・審査否決・キャンセル/リスケ等はAI不使用（人間判断）の場面。
+// 通常AIが生成したドラフトをそのまま送信させないよう、検知時はドラフト冒頭に
+// 警告メタを付与してスタッフの手動確認を必須にする（生成自体は参考用に行う）。
+const SENSITIVE_CLAIM_RE = /クレーム|苦情|納得(いか|でき)|話が違う|不誠実|誠意を|騙され|詐欺|訴え(る|ます|させ)|弁護士|消費者センター/;
+const SENSITIVE_REJECT_RE = /審査[^。！!？?\n]{0,8}(否決|落ち(た(?!ら)|まし|てしまい)|通りませんでした|通らなかった|不承認|NG(でし|になり|だっ)|ダメ(でし|だっ))|否決/;
+// ※「キャンセル料」「キャンセルできますか」等の不安系質問は通常AI回答の範囲（hesitancyNote等で対応済み）のため除外し、
+//   キャンセル・解約の「意向」とリスケ（日程変更）依頼のみ検知する
+const SENSITIVE_CANCEL_RE = /(?:キャンセル|解約|取消|取り消し?|白紙|辞退)(?!料|金|でき|出来|可能)(?:を|は|に|で)?(?:したい|します|させて|お願い|希望|することに|する事に)|なかったことに|見送(?:り(?:たい|ます)|らせて)|やめ(?:たい|ます|ておき|とき)|リスケ|(?:日程|日にち|日時|予定)[^。！!？?\n]{0,6}(?:変更|ずら|延期)/;
+
+function detectSensitiveCase(text: string): string | null {
+  if (!text) return null;
+  if (SENSITIVE_CLAIM_RE.test(text)) return "クレーム";
+  if (SENSITIVE_REJECT_RE.test(text)) return "審査否決";
+  if (SENSITIVE_CANCEL_RE.test(text)) return "キャンセル・リスケ";
+  return null;
+}
+
+// 検知時にドラフト冒頭へ付与する警告メタ（スタッフ向け・送信前に削除する目印）
+function buildSensitiveGateNote(customerMessage: string): string {
+  const kind = detectSensitiveCase(customerMessage);
+  return kind
+    ? `【⚠️センシティブ案件: この返信案は参考のみ。送信前に必ず手動確認（${kind}検知）】\n\n`
+    : "";
+}
+
 // ─── AIXボタン誘導ロジック: ドラフトテキスト＋会話状態からスタッフへのメモを生成 ────
 
 // action_type → スタッフ向け誘導メモ（suggest-next-action の結果をこの note に変換する）
@@ -136,7 +162,7 @@ async function deriveSuggestedAix(
   // ※ Step 0 のキャッシュが別アクションを返して本判定を潰さないよう、Step 0 より前に置くこと（移動禁止）
   if (customerMessage) {
     const estimateKeyword =
-      /(初期費用|見積|スモ割|費用.{0,6}(内訳|詳細)|いくら.{0,8}(かかる|かかり|です|でしょう))/;
+      /(初期費用|見積|スモ割|総額|予算|全部で.{0,6}いくら|費用.{0,6}(内訳|詳細)|いくら.{0,8}(かかる|かかり|です|でしょう))/;
     const estimateRequestForm =
       /(いくら|どの(くらい|位)|内訳|教え|知りたい|いただけ|頂け|ください|下さい|ですか|でしょうか|お願い|？|\?)/;
     // 誤爆ガード①: 内覧希望が主目的のメッセージは見積誘導にしない（viewing_invite系に任せる）
@@ -2040,6 +2066,9 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
             const genInputLength = messages.reduce(
               (n, m) => n + (typeof m.content === "string" ? m.content.length : 0), 0
             );
+            // f-8: センシティブ案件（クレーム/審査否決/キャンセル・リスケ）検知時はドラフト冒頭に警告メタを付与
+            // ※テンプレート最適化モードは会話への返信生成ではないため付与しない
+            const sensitiveGateNote = !isTemplateOptimize ? buildSensitiveGateNote(message) : "";
             if (shouldPrependGreeting && !isTemplateOptimize) {
               // 真の初回: 全バッファして冒頭挨拶を強制置換（AIが誤生成しても確実に正しい名前を出す）
               // ※テンプレート最適化モードは常に下の通常バッファ経路（テンプレの構成を挨拶強制置換で壊さない）
@@ -2072,10 +2101,13 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
               const fixedGreeting = `${buildFirstGreeting(customerName)}\n\n`;
               // 除去後が空（挨拶のみ生成・除去しすぎ）の場合はAI出力をそのまま使う（本文ゼロ防止フォールバック）
               const rawOutput = bodyPart ? fixedGreeting + bodyPart : (trimmedText || fixedGreeting.trim());
-              const { cleaned, issues } = validateAndClean(rawOutput);
+              // aixGates: プロンプトのAIXゲート指示をLLMが無視した場合の機械検証（違反文を宣言テンプレに置換）
+              const { cleaned, issues } = validateAndClean(rawOutput, { aixGates: true });
               if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
-              controller.enqueue(encoder.encode(cleaned));
-              finalDraftText = cleaned;
+              // f-8: センシティブ検知時は警告メタを冒頭に付与（ai_draft にも保存されスタッフの手動確認を促す）
+              const gatedFirstReply = sensitiveGateNote + cleaned;
+              controller.enqueue(encoder.encode(gatedFirstReply));
+              finalDraftText = gatedFirstReply;
             } else {
               // 非初回: 全テキストをバッファしてから validateAndClean を適用してストリーム出力
               let fullText = "";
@@ -2085,7 +2117,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 if (chunk.response_metadata?.stop_reason) genStopReason = chunk.response_metadata.stop_reason;
               }
               warnIfTruncated(genStopReason, genInputLength);
-              const { cleaned, issues } = validateAndClean(fullText);
+              // aixGates: 通常返信ドラフトのみ機械検証。テンプレート最適化はAIX由来の日時・金額が正当なため対象外
+              const { cleaned, issues } = validateAndClean(fullText, { aixGates: !isTemplateOptimize });
               if (issues.length > 0) console.warn("[validate-reply] issues:", issues);
               let outText = cleaned;
               // テンプレート最適化モードの後処理: 号室先頭ゼロ除去 + noEmoji時の絵文字除去（旧adaptルート互換）
@@ -2094,6 +2127,8 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
                 if (noEmoji) outText = outText.replace(/[😊😌🌟✨]/gu, "");
                 outText = outText.trim();
               }
+              // f-8: センシティブ検知時は警告メタを冒頭に付与（空生成時は付与しない・テンプレ最適化は sensitiveGateNote="" ）
+              if (outText && sensitiveGateNote) outText = sensitiveGateNote + outText;
               if (outText) controller.enqueue(encoder.encode(outText));
               finalDraftText = outText;
             }
