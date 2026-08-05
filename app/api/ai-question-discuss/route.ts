@@ -1,5 +1,5 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+import Anthropic, { APIError } from "@anthropic-ai/sdk";
 import {
   SYSTEM_OVERVIEW,
   BUSINESS_RULES,
@@ -113,7 +113,7 @@ export async function POST(req: NextRequest) {
     { role: "user", content: user_message },
   ];
 
-  const client = new Anthropic({ apiKey, timeout: 25_000, maxRetries: 1 });
+  const client = new Anthropic({ apiKey, timeout: 25_000, maxRetries: 2 });
 
   try {
     const response = await client.messages.create({
@@ -131,8 +131,15 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true, reply });
   } catch (err: unknown) {
+    console.error("[ai-question-discuss] Claude API エラー:", err instanceof Error ? err.message : err);
+    // 529 overloaded_error: Anthropic API 過負荷時はユーザーに分かりやすく伝える
+    if (err instanceof APIError && err.status === 529) {
+      return NextResponse.json(
+        { ok: false, error: "AIが混雑中です。少し時間をおいてから再度送信してください。" },
+        { status: 503 }
+      );
+    }
     const message = err instanceof Error ? err.message : "不明なエラー";
-    console.error("[ai-question-discuss] Claude API エラー:", message);
     return NextResponse.json({ ok: false, error: `AI呼び出しに失敗しました: ${message}` }, { status: 500 });
   }
 }

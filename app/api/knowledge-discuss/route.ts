@@ -1,5 +1,5 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+import Anthropic, { APIError } from "@anthropic-ai/sdk";
 import { supabase } from "@/app/lib/supabase";
 import {
   SYSTEM_OVERVIEW,
@@ -22,7 +22,7 @@ import {
 
 export const maxDuration = 60;
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 50_000, maxRetries: 1 });
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 50_000, maxRetries: 2 });
 
 type ChatMessage = { role: "user" | "assistant"; content: string };
 
@@ -194,8 +194,14 @@ export async function POST(req: NextRequest) {
     }
     return await handleChat(body);
   } catch (e) {
-    const message = e instanceof Error ? e.message : "unknown error";
     console.error("[knowledge-discuss] error:", e);
+    if (e instanceof APIError && e.status === 529) {
+      return NextResponse.json(
+        { ok: false, error: "AIが混雑中です。少し時間をおいてから再度送信してください。" },
+        { status: 503 }
+      );
+    }
+    const message = e instanceof Error ? e.message : "unknown error";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
