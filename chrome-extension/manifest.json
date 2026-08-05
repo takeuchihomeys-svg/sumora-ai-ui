@@ -27,7 +27,8 @@
     "clipboardWrite",
     "scripting",
     "cookies",
-    "downloads"
+    "downloads",
+    "alarms"
   ],
   "web_accessible_resources": [
     {

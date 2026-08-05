@@ -1698,6 +1698,27 @@ ALTER TABLE conversations ADD COLUMN IF NOT EXISTS suggested_aix_meta JSONB DEFA
 -- 新カラム追加後に PostgREST のスキーマキャッシュが古いままだと、
 -- 以降の INSERT/SELECT が「column does not exist」で全滅する
 -- （2026-07: is_full_rewrite カラムで save-reply-example が207回連続失敗した事故の恒久対策）。
+
+-- automation_commands テーブル（物件検索一括自動化コマンドキュー）（2026-08-05）
+-- Chrome拡張 / PC自動起動フローが「全顧客分まとめて物件検索してLINEグループ送信」を
+-- 非同期で実行するためのコマンドキュー。status: pending→running→done/error の3ステップ遷移。
+CREATE TABLE IF NOT EXISTS automation_commands (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  created_at timestamptz DEFAULT now(),
+  command_type text NOT NULL DEFAULT 'batch_property_search',
+  customer_ids text[],
+  sites text[] NOT NULL DEFAULT ARRAY['reins'],
+  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'done', 'error')),
+  total_customers int DEFAULT 0,
+  processed_customers int DEFAULT 0,
+  results jsonb DEFAULT '{}',
+  error_message text,
+  picked_up_at timestamptz,
+  completed_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS automation_commands_status_idx ON automation_commands (status, created_at);
+
+-- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
 `.trim();

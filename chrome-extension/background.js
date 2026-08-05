@@ -711,3 +711,169 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   return false;
 });
+
+// ===== 自動化バッチ検索 =====
+const SUMORA_BATCH_API = "https://sumora-ai-ui.vercel.app";
+
+chrome.alarms.create("sumora-batch-poll", { periodInMinutes: 0.5 });
+
+chrome.alarms.onAlarm.addListener(async function(alarm) {
+  if (alarm.name !== "sumora-batch-poll") return;
+  var st = await chrome.storage.local.get("batchRunning");
+  if (st.batchRunning) return;
+  await _pollAndRunBatch();
+});
+
+async function _pollAndRunBatch() {
+  try {
+    var res = await fetch(SUMORA_BATCH_API + "/api/automation/pending", { cache: "no-store" });
+    if (!res.ok) return;
+    var json = await res.json();
+    if (!json.command) return;
+    var cmd = json.command;
+    await chrome.storage.local.set({ batchRunning: true, batchCommandId: cmd.id });
+    try {
+      await _runBatchSearch(cmd);
+    } catch (e) {
+      await _updateBatchCommand(cmd.id, { status: "error", error_message: String(e) });
+    } finally {
+      await chrome.storage.local.set({ batchRunning: false, batchCommandId: null });
+    }
+  } catch (e) {
+    console.error("[batch] poll error:", e);
+  }
+}
+
+async function _runBatchSearch(command) {
+  var customersRes = await fetch(SUMORA_BATCH_API + "/api/property-customers", { cache: "no-store" });
+  if (!customersRes.ok) throw new Error("顧客データ取得失敗");
+  var allCustomers = await customersRes.json();
+
+  var targets;
+  if (command.customer_ids && command.customer_ids.length > 0) {
+    targets = allCustomers.filter(function(c) {
+      return command.customer_ids.indexOf(String(c.id)) !== -1;
+    });
+  } else {
+    var threeDaysMs = 3 * 24 * 60 * 60 * 1000;
+    var now = Date.now();
+    targets = allCustomers.filter(function(c) {
+      if (c.status === "new_inquiry") return true;
+      if (c.status === "hot") return true;
+      if (c.status === "property_search") {
+        if (!c.last_property_sent_at) return true;
+        return now - new Date(c.last_property_sent_at).getTime() > threeDaysMs;
+      }
+      return false;
+    });
+  }
+
+  var sites = command.sites || ["reins"];
+  await _updateBatchCommand(command.id, {
+    status: "running",
+    total_customers: targets.length,
+    processed_customers: 0
+  });
+
+  for (var i = 0; i < targets.length; i++) {
+    var customer = targets[i];
+    for (var j = 0; j < sites.length; j++) {
+      try {
+        await _batchAutofill(customer, sites[j]);
+        await new Promise(function(r) { setTimeout(r, 3000); });
+      } catch (e) {
+        console.error("[batch] autofill error:", customer.id, sites[j], e);
+      }
+    }
+    await _updateBatchCommand(command.id, { processed_customers: i + 1 });
+  }
+
+  await _updateBatchCommand(command.id, {
+    status: "done",
+    completed_at: new Date().toISOString()
+  });
+}
+
+async function _batchAutofill(customer, site) {
+  var siteUrlPrefixes = {
+    reins: "https://system.reins.jp",
+    itandi: "https://itandibb.com",
+    realnetpro: "https://www.realnetpro.com"
+  };
+  var siteUrls = {
+    reins: "https://system.reins.jp/main/PF08/SA08I010.aspx",
+    itandi: "https://itandibb.com/rent_rooms/list",
+    realnetpro: "https://www.realnetpro.com/main.php"
+  };
+  var prefix = siteUrlPrefixes[site];
+  if (!prefix) return;
+
+  var allTabs = await chrome.tabs.query({});
+  var existing = allTabs.find(function(t) { return t.url && t.url.startsWith(prefix); });
+  var tab = existing;
+  if (!tab) {
+    tab = await chrome.tabs.create({ url: siteUrls[site], active: false });
+    await _batchWaitForTabComplete(tab.id);
+    await new Promise(function(r) { setTimeout(r, 2000); });
+  }
+
+  var conds = _buildBatchConditions(customer);
+
+  if (site === "realnetpro") {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      world: "MAIN",
+      func: function(c) { window.postMessage({ from: "aixlinx-fill", conditions: c }, "*"); },
+      args: [conds]
+    });
+  } else {
+    var eventName = site === "reins" ? "axlx-reins-fill" : "axlx-itandi-fill";
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      world: "MAIN",
+      func: function(name, c) { window.dispatchEvent(new CustomEvent(name, { detail: c })); },
+      args: [eventName, conds]
+    });
+  }
+}
+
+function _buildBatchConditions(c) {
+  return {
+    rent_max: c.rent_max || null,
+    rent_min: c.rent_min || null,
+    walk_minutes: c.walk_minutes || null,
+    building_age: c.building_age || null,
+    floor_plan: c.floor_plan || null,
+    areas: c.areas || [],
+    lines: c.lines || [],
+    stations: c.stations || [],
+    prefecture: c.prefecture || null,
+    city: c.city || null
+  };
+}
+
+function _batchWaitForTabComplete(tabId) {
+  return new Promise(function(resolve) {
+    var listener = function(id, info) {
+      if (id === tabId && info.status === "complete") {
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+    setTimeout(resolve, 15000);
+  });
+}
+
+async function _updateBatchCommand(id, updates) {
+  try {
+    await fetch(SUMORA_BATCH_API + "/api/automation/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign({ id: id }, updates))
+    });
+  } catch (e) {
+    console.error("[batch] update error:", e);
+  }
+}
+// ===== END: 自動化バッチ検索 =====
