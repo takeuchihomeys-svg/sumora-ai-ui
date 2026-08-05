@@ -2,13 +2,18 @@
 import { supabase } from "@/app/lib/supabase";
 import { safeSlice } from "@/app/lib/safe-slice";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
-import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEND_RULES, GENERATION_SYSTEM } from "@/app/lib/line-reply-prompts";
+import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEND_RULES, GENERATION_SYSTEM, CURATED_REPLY_RULES, CRITICAL_RULES_COMPACT, REAL_ESTATE_RULES } from "@/app/lib/line-reply-prompts";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
 
 export const maxDuration = 300;
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY!;
 const MODEL = "claude-sonnet-5";
+
+// 全AIXアクション共通で末尾に注入するルールセット:
+// ① CURATED_REPLY_RULES … 確認済み返信ルール（「ご案内可能です」禁止・18時以降の管理会社確認・30日前ルール等）
+// ② CRITICAL_RULES_COMPACT … でっち上げ禁止・数字変形禁止・マークダウン太字禁止 等のクリティカル禁止ルール
+const AIX_CURATED_AND_CRITICAL_RULES = `\n\n${CURATED_REPLY_RULES}\n\n${CRITICAL_RULES_COMPACT}`;
 
 // 退去予定日が過去かどうか判定（「7月下旬」「2026年7月15日」等の日本語表記対応）
 function isPastVacancyDate(dateStr: string): boolean {
@@ -974,7 +979,7 @@ ${SMORA_COMMON_RULES}`;
         { type: "image", source: { type: "url", url: image_url } },
       ];
 
-      message_text = await callClaudeVision(system + propDbRules, content, currentAction);
+      message_text = await callClaudeVision(system + propDbRules + AIX_CURATED_AND_CRITICAL_RULES, content, currentAction);
       // 🌟より前に出力されたシステム注記・確認メモを除去（物件オススメは必ず🌟始まり）
       {
         const _starIdx = message_text.indexOf("🌟");
@@ -1602,7 +1607,7 @@ ${SMORA_COMMON_RULES}
 ・2〜4行程度・完成したLINEメッセージのみ出力${greetingTimeNote}${rescheduleDiffNote}`;
         const calendarPart = calendarNote ? `\n\n【変更後の内覧候補日時】\n${calendarNote}` : "";
         message_text = await callClaude(
-          rescheduleSystem,
+          rescheduleSystem + AIX_CURATED_AND_CRITICAL_RULES,
           `${name}への内覧日程変更メッセージを生成してください。${calendarPart}${recentHistory}`,
           currentAction
         );
@@ -1660,7 +1665,7 @@ ${calendarBlock}
 {"message":"〜（実際のLINEメッセージ全文・改行は\\nで）"}`;
 
         const rawVI = await callClaude(
-          convMatchVISystem + greetingTimeNote + viewingConvMatchDiffNote + viewingConvMatchStarNote,
+          convMatchVISystem + greetingTimeNote + viewingConvMatchDiffNote + viewingConvMatchStarNote + AIX_CURATED_AND_CRITICAL_RULES,
           `${recentHistory}\n\n上記の会話を深く読み取り、${name}への内覧案内返信を生成してください。`,
           currentAction
         );
@@ -1816,7 +1821,7 @@ ${phraseText || "なし"}
         ? `\n【物件状況】空室（今すぐ内覧可能）`
         : "";
       const propNamePart = property_name ? `\n【物件名】${property_name}` : "";
-      const rawViewingText = await callClaude(system + viewingDbRules + greetingTimeNote + viewingDiffNote + viewingComponentNote + viewingStarNote, `${name}への内覧お誘いメッセージ。${propNamePart}${vacancyPart}${calendarPart}${templateStructureNote}${recentHistory}`, currentAction);
+      const rawViewingText = await callClaude(system + viewingDbRules + greetingTimeNote + viewingDiffNote + viewingComponentNote + viewingStarNote + AIX_CURATED_AND_CRITICAL_RULES, `${name}への内覧お誘いメッセージ。${propNamePart}${vacancyPart}${calendarPart}${templateStructureNote}${recentHistory}`, currentAction);
       // JSON構成パーツを解析してコンポーネント学習ループに渡す
       {
         let vComps: Record<string, string> | null = null;
@@ -1913,7 +1918,7 @@ ${property_name ? `物件名は「${property_name}」を使う（指定済み）
 【スモラLINE営業ルール（必ず守る・ただし上記の2行構成が最優先）】
 ${SMORA_COMMON_RULES}`;
 
-        message_text = await callClaude(confirmSystem + appDbRules + appDiffNote + appStarNote, `${name}への申込確定メッセージ。${property_name ? `物件名:${property_name}。` : ""}${recentHistory}`, currentAction);
+        message_text = await callClaude(confirmSystem + appDbRules + appDiffNote + appStarNote + AIX_CURATED_AND_CRITICAL_RULES, `${name}への申込確定メッセージ。${property_name ? `物件名:${property_name}。` : ""}${recentHistory}`, currentAction);
 
       } else if (appSubMode === "docs_request") {
         // ── 書類依頼: 申込フォーム返送後の会話から不足書類を特定して追加依頼メッセージを生成
@@ -1993,7 +1998,8 @@ ${SMORA_COMMON_RULES}`;
 【スモラLINE営業ルール（必ず守る・ただし上記の3パーツ構成が最優先）】
 ${SMORA_COMMON_RULES}`;
 
-        const rawDocsText = await callClaude(docsRequestSystem + appDbRules + appDiffNote + appStarNote, `${name}への書類依頼メッセージ。${recentHistory}`, "docs_request");
+        // docs_request には不動産ルール（連帯保証人=実印+印鑑証明書・支払い義務あり vs 緊急連絡先=電話のみ・支払い義務なし 等）も注入
+        const rawDocsText = await callClaude(docsRequestSystem + appDbRules + appDiffNote + appStarNote + "\n\n" + REAL_ESTATE_RULES + AIX_CURATED_AND_CRITICAL_RULES, `${name}への書類依頼メッセージ。${recentHistory}`, "docs_request");
         // JSONパース → コンポーネント結合
         // ※ docs_request は aiComponents を返さない（conversation_state が application_push と同じため
         //   STATE_LEARNABLEが一致せず component_diff 学習がゼロになるのを防ぐ）。
@@ -2206,7 +2212,7 @@ ${examplesText}${greetingTimeNote}`;
         userMsg = `${name}への申込後押しメッセージ。${property_name ? `物件名:${property_name}。` : ""}${extra_input ? `補足:${extra_input}。` : ""}${calendarNoteForApp}${templateStructureNote}${recentHistory}`;
       }
 
-      const rawAppText = await callClaude(system + appDbRules + appDiffNote + compAppealNote + appStarNote, userMsg, currentAction);
+      const rawAppText = await callClaude(system + appDbRules + appDiffNote + compAppealNote + appStarNote + AIX_CURATED_AND_CRITICAL_RULES, userMsg, currentAction);
       if (!isScheduled) {
         // simple/hold_view: JSONパーツを解析してコンポーネント学習ループに渡す
         let appComps: Record<string, string> | null = null;
@@ -2377,7 +2383,7 @@ ${pushLine ? `④誘導: 「${pushLine}」` : "④誘導: なし（省略・cta�
 JSONのみ: {"greeting":"①","report":"②（[物件名]解決済み・改行は\\nで）","type_desc":"③","cta":"④またはnull"}`;
 
       const rawGuarantorText = await callClaude(
-        guarantorSystem + guarantorDbRules + guarantorDiffNote,
+        guarantorSystem + guarantorDbRules + guarantorDiffNote + AIX_CURATED_AND_CRITICAL_RULES,
         `${name}への保証会社確認報告メッセージ。${recentHistory}`,
         currentAction
       );

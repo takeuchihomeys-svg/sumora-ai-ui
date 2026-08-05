@@ -251,6 +251,15 @@ export async function POST(req: NextRequest) {
   const aixBoundaryMatch = (item.question as string).match(/\[aix_boundary_action:([^\]]+)\]/);
   const boundaryAixAction = aixBoundaryMatch?.[1] ?? null;
 
+  // conversation_state 導出: AIX由来のフィードバック（entry_source="aix_action" or aix_action あり）は
+  // ナレッジを当該AIXアクションの conversation_state に紐付ける。
+  // AIX側の fetchKnowledge は conversation_state IN (...) で取得するため、NULL のままだと届かない。
+  // aix_action はカンマ区切りの可能性があるため第一候補のみ採用（extractRules と同じ扱い）。
+  const derivedConversationState: string | null =
+    itemEntrySource === "aix_action" || itemAixAction
+      ? itemAixAction?.split(",")[0]?.trim() || null
+      : null;
+
   let rules: ExtractedRule[] = [];
   if (!isMetaApprovalQuestion) {
     try {
@@ -296,13 +305,18 @@ export async function POST(req: NextRequest) {
         // ruleText（ルール説明文）はAI視点の指示文であり顧客メッセージとの類似度が低く
         // generate-reply の pgvector 検索でヒットしにくいため、trigger_example を第一候補とする。
         const embSourceText = rule.trigger_example?.trim() || ruleText;
-        const embInput = buildKnowledgeEmbeddingInput({ content: embSourceText });
+        // AIX由来の場合は検索側クエリ形式「`${state}: ${顧客メッセージ}`」と揃えるため state を渡す（#21）
+        const embInput = buildKnowledgeEmbeddingInput({
+          content: embSourceText,
+          ...(derivedConversationState ? { conversation_state: derivedConversationState } : {}),
+        });
         const embedding = embInput ? await generateEmbedding(embInput) : null;
         const result = await upsertKnowledge(supabase, {
           title: ruleText.slice(0, 30) + (ruleText.length > 30 ? "..." : ""),
           content: ruleText,
           category: "principle",
           importance: 8,
+          ...(derivedConversationState ? { conversation_state: derivedConversationState } : {}),
           ...(embedding ? { embedding } : {}),
         });
         // upsertKnowledge は hypothesis_status / promoted_by を設定しないため、
@@ -689,13 +703,18 @@ export async function POST(req: NextRequest) {
   // promptRuleTexts>0 = Opusがai_prompt_rulesへ保存と判断した = knowledge_gap側の保存は冗長になる。
   if (item.category === "knowledge_gap" && !linkedKnowledgeId && promptRuleTexts.length === 0) {
     try {
-      const embInput = buildKnowledgeEmbeddingInput({ content: answer });
+      // AIX由来の場合は conversation_state を紐付け（NULL だと AIX 側の state 絞り込み取得に届かない）
+      const embInput = buildKnowledgeEmbeddingInput({
+        content: answer,
+        ...(derivedConversationState ? { conversation_state: derivedConversationState } : {}),
+      });
       const embedding = embInput ? await generateEmbedding(embInput) : null;
       const result = await upsertKnowledge(supabase, {
         title: `[盲点回答] ${(item.question as string).slice(0, 40)}`,
         content: `【竹内さん確認済みの正しい知識】\n質問: ${item.question}\n正しい説明: ${answer}${promptRuleTexts.length > 0 ? `\n\n要点:\n${promptRuleTexts.map((r) => `- ${r.text}`).join("\n")}` : ""}`,
         category: "principle",
         importance: 9,
+        ...(derivedConversationState ? { conversation_state: derivedConversationState } : {}),
         ...(embedding ? { embedding } : {}),
       });
       if (result.result !== "skipped") appliedRules.push(`[knowledge_gap→principle知識化: ${result.result}]`);
