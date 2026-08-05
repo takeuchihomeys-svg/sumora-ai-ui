@@ -1724,6 +1724,11 @@ CREATE TABLE IF NOT EXISTS automation_commands (
 );
 CREATE INDEX IF NOT EXISTS automation_commands_status_idx ON automation_commands (status, created_at);
 
+-- ── 物件検索条件 自動読み取り・インテント分類対応（2026-08-06）──
+
+-- 除外エリア専用カラム（ng_points は汎用NG条件、exclusion_areas はエリア除外専用として分離）
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS exclusion_areas TEXT;
+
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 

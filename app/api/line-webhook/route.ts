@@ -2,6 +2,8 @@
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
 import { isApplicationFormMessage, hasApplyHintKeyword, PRE_APPLY_STATUSES } from "@/app/lib/application-form-detect";
+import { classifyByKeywords, classifyByAI, type ConditionIntent } from "@/app/lib/condition-intent";
+import { mergeConditions, type ConditionFields } from "@/app/lib/condition-merge";
 
 // Vercel Functions のタイムアウト上限（秒）— after()内のAnthropicコール（30s）と画像処理に余裕を持たせる
 export const maxDuration = 120;
@@ -399,11 +401,15 @@ function isFormatMessage(text: string): boolean {
     "区", "市", "駅",
   ];
 
-  // 変更意図を示すフレーズ
+  // 変更意図を示すフレーズ（EXCLUDE系・ADD系も含む）
   const changeKeywords = [
     "変えたい", "変更", "に変えて", "に変更", "にしたい", "にしてほしい",
     "やっぱり", "修正", "更新", "に変わ", "に移", "広げ", "せばめ",
     "上げ", "下げ", "にしようかな", "検討",
+    // EXCLUDE系: 除外・NG化の意図
+    "は無し", "はなし", "除外", "やめ", "外して", "抜い",
+    // ADD系: 条件追加の意図
+    "追加", "も見たい", "も含め", "も良い", "もOK", "も可", "もあり",
   ];
 
   const condMatches = conditionKeywords.filter((k) => text.includes(k)).length;
@@ -546,12 +552,15 @@ JSONのみ返してください。説明文・コードブロック・マーク�
   const isFormalFormat = (text.match(/[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮]/g) ?? []).length >= 2;
 
   // ── 保存フィールドを準備 ──────────────────────────────────────────
-  const parsedFields: Record<string, unknown> = {
+  // ベースフィールド（メタデータのみ。カジュアル更新でのマージ基準として使う）
+  const baseFields: Record<string, unknown> = {
     format_received: true,
     raw_format_text: text,
     updated_at: new Date().toISOString(),
   };
-  // 常に解析した条件フィールドを保存（カジュアル更新でも条件タグに反映する）
+  // 正式フォーマット用フィールド（全条件フィールド + additional_conditions リセット）
+  // 新規顧客INSERT・売上番長通知にも使用する
+  const parsedFields: Record<string, unknown> = { ...baseFields };
   for (const f of ["move_in_time", "rent_min", "rent_max", "desired_area", "walk_minutes", "floor_plan", "initial_cost_limit", "building_age", "floor_area_min", "preferences", "ng_points", "other_requests"]) {
     if (parsed[f] !== null && parsed[f] !== undefined) parsedFields[f] = parsed[f];
   }
@@ -587,10 +596,10 @@ JSONのみ返してください。説明文・コードブロック・マーク�
       .eq("line_user_id", userId);
   }
 
-  // ── property_customers を line_user_id で検索 ─────────────────────
+  // ── property_customers を line_user_id で検索（カジュアル更新マージ用に条件フィールドも取得）──
   const { data: existing } = await db
     .from("property_customers")
-    .select("id, customer_name")
+    .select("id, customer_name, desired_area, floor_plan, rent_min, rent_max, walk_minutes, move_in_time, building_age, floor_area_min, initial_cost_limit, preferences, ng_points, other_requests")
     .eq("line_user_id", userId)
     .limit(1)
     .maybeSingle();
@@ -599,16 +608,34 @@ JSONのみ返してください。説明文・コードブロック・マーク�
   let isNewCustomer = false;
 
   // カジュアル更新時に additional_conditions へ追記するヘルパー
-  const appendAdditionalConditions = async (pcId: string) => {
+  // pattern を [MM/DD HH:MM|pattern] 形式で埋め込む（フロントのバッジ表示に使用）
+  const appendAdditionalConditions = async (pcId: string, intent: ConditionIntent) => {
     const note = buildConditionNote(parsed);
     if (!note) return;
     const { data: cur } = await db.from("property_customers")
       .select("additional_conditions").eq("id", pcId).maybeSingle();
     const prev = (cur?.additional_conditions as string | null) ?? "";
-    const newEntry = `[${getJSTTimestamp()}] ${note}`;
+    const pattern = intent === "ADD" ? "add" : intent === "EXCLUDE" ? "exclude" : "change";
+    const newEntry = `[${getJSTTimestamp()}|${pattern}] ${note}`;
     await db.from("property_customers")
       .update({ additional_conditions: prev ? `${prev}\n${newEntry}` : newEntry, updated_at: new Date().toISOString() })
       .eq("id", pcId);
+  };
+
+  // カジュアル更新用: インテント分類 → フィールドマージ
+  const computeCasualUpdate = async (existingRec: Record<string, unknown> | null) => {
+    const existingConds = (existingRec ?? {}) as ConditionFields;
+    let intentResult = classifyByKeywords(text, existingConds.desired_area as string | null);
+    if (!intentResult) {
+      intentResult = await classifyByAI(anthropic, text, existingConds.desired_area as string | null);
+    }
+    const mergedConds = mergeConditions(
+      existingConds,
+      parsed as unknown as ConditionFields,
+      intentResult.intent,
+      intentResult.excludeTargets,
+    );
+    return { mergedConds, intent: intentResult.intent };
   };
 
   if (existing?.id) {
@@ -619,11 +646,12 @@ JSONのみ返してください。説明文・コードブロック・マーク�
         .update({ ...parsedFields, customer_name: resolvedName })
         .eq("id", customerId);
     } else {
-      // カジュアル更新 → 条件フィールドも更新 + additional_conditions に追記（元の条件は上書きしない空フィールドのみ更新）
+      // カジュアル更新 → インテント分類 → スマートマージ（「追加」「除外」「変更」を正しく処理）
+      const { mergedConds, intent } = await computeCasualUpdate(existing as Record<string, unknown>);
       await db.from("property_customers")
-        .update({ ...parsedFields, customer_name: resolvedName })
+        .update({ ...baseFields, ...mergedConds, customer_name: resolvedName })
         .eq("id", customerId);
-      await appendAdditionalConditions(customerId);
+      await appendAdditionalConditions(customerId, intent);
     }
   } else if (conv?.property_customer_id) {
     // 会話がすでに売上サポ顧客と紐付け済み
@@ -634,11 +662,16 @@ JSONのみ返してください。説明文・コードブロック・マーク�
         .update({ ...parsedFields, line_user_id: userId, customer_name: resolvedName })
         .eq("id", customerId);
     } else {
-      // カジュアル更新 → 条件フィールドも更新
+      // カジュアル更新 → 既存条件フィールドを取得してマージ
+      const { data: linkedConds } = await db.from("property_customers")
+        .select("desired_area, floor_plan, rent_min, rent_max, walk_minutes, move_in_time, building_age, floor_area_min, initial_cost_limit, preferences, ng_points, other_requests")
+        .eq("id", linkedId)
+        .maybeSingle();
+      const { mergedConds, intent } = await computeCasualUpdate(linkedConds as Record<string, unknown> | null);
       await db.from("property_customers")
-        .update({ ...parsedFields, line_user_id: userId, customer_name: resolvedName })
+        .update({ ...baseFields, ...mergedConds, line_user_id: userId, customer_name: resolvedName })
         .eq("id", customerId);
-      await appendAdditionalConditions(customerId);
+      await appendAdditionalConditions(customerId, intent);
     }
   } else {
     // 未登録 → 新規登録（race condition対策: 再チェック後INSERT）

@@ -276,6 +276,71 @@ function propertyNeedsAction(status: string, lastSentAt?: string | null): boolea
 function parseCondLogLine(text: string): { isLog: boolean; content: string } {
   return /^【[^】]*】/.test(text) ? { isLog: true, content: text.replace(/^【[^】]*】/, "").trim() } : { isLog: false, content: text };
 }
+
+// パターン付き行解析（[MM/DD HH:MM|pattern] 形式・後方互換あり）
+type CondPatternType = "add" | "change" | "exclude" | "url" | null;
+function parseCondLine(line: string): { isLog: boolean; timestamp: string; pattern: CondPatternType; content: string } {
+  // 反映済みログ行: 【YYYY/MM/DD反映済み】...
+  if (/^【[^】]*】/.test(line)) {
+    const content = line.replace(/^【[^】]*】/, "").trim();
+    const pmatch = content.match(/^\[([^\]|]+)(?:\|(\w+))?\]\s*(.*)/);
+    return pmatch
+      ? { isLog: true, timestamp: pmatch[1], pattern: (pmatch[2] ?? null) as CondPatternType, content: pmatch[3] }
+      : { isLog: true, timestamp: "", pattern: null, content };
+  }
+  // 通常行: [MM/DD HH:MM|pattern] content  または旧フォーマット [MM/DD HH:MM] content
+  const match = line.match(/^\[([^\]|]+)(?:\|(\w+))?\]\s*(.*)/);
+  if (match) {
+    return { isLog: false, timestamp: match[1], pattern: (match[2] ?? null) as CondPatternType, content: match[3] };
+  }
+  return { isLog: false, timestamp: "", pattern: null, content: line };
+}
+
+const PATTERN_CFG: Record<NonNullable<CondPatternType>, { label: string; badge: string; defaultMode: "add" | "replace" }> = {
+  add:     { label: "AI: 追加",  badge: "bg-blue-100 text-blue-700 border-blue-300",    defaultMode: "add" },
+  change:  { label: "AI: 変更",  badge: "bg-amber-200 text-amber-800 border-amber-400", defaultMode: "replace" },
+  exclude: { label: "AI: 除外",  badge: "bg-red-100 text-red-700 border-red-300",        defaultMode: "replace" },
+  url:     { label: "URL条件",   badge: "bg-sky-100 text-sky-700 border-sky-300",        defaultMode: "add" },
+};
+
+// 確定履歴タイムライン（条件パネル下部に折りたたみ表示）
+function ConditionHistory({ additionalConditions }: { additionalConditions: string | null }) {
+  const [open, setOpen] = useState(false);
+  if (!additionalConditions) return null;
+
+  const logLines = additionalConditions.split("\n")
+    .filter((l) => l.trim())
+    .map(parseCondLine)
+    .filter((l) => l.isLog);
+
+  if (logLines.length === 0) return null;
+
+  const PATTERN_ICON: Record<string, string> = { add: "＋", change: "↺", exclude: "✕", url: "🔗" };
+
+  return (
+    <div className="mt-1">
+      <button onClick={() => setOpen((v) => !v)} className="text-[10px] text-gray-400 underline">
+        {open ? "▲ 確定履歴を閉じる" : `▼ 確定履歴 (${logLines.length}件)`}
+      </button>
+      {open && (
+        <div className="mt-1 space-y-0.5 border-l-2 border-gray-200 pl-2">
+          {logLines.slice(-5).reverse().map((l, i) => (
+            <div key={i} className="rounded bg-gray-50 px-2 py-0.5">
+              <div className="flex items-center gap-1">
+                {l.pattern && (
+                  <span className="text-[9px] text-gray-400">{PATTERN_ICON[l.pattern] ?? "・"}</span>
+                )}
+                <span className="text-[9px] text-gray-400">{l.timestamp}</span>
+              </div>
+              <p className="text-[11px] text-gray-600 leading-snug">{l.content}</p>
+            </div>
+          ))}
+          {logLines.length > 5 && <p className="text-[9px] text-gray-400">（最新5件のみ表示）</p>}
+        </div>
+      )}
+    </div>
+  );
+}
 function stripMarkdown(text: string): string {
   return text
     .replace(/^#{1,6}\s+/gm, "")          // ## 見出し
@@ -5311,6 +5376,8 @@ export default function Home() {
                     </div>
                   );
                 })()}
+                {/* 確定履歴タイムライン */}
+                <ConditionHistory additionalConditions={lc.additional_conditions ?? null} />
               </div>
             );
           })()}
@@ -5318,25 +5385,48 @@ export default function Home() {
           {!(inputFocused && keyboardHeight > 100) && (() => {
             const lc = linkedCustomerMap[selectedConversation.id];
             if (!lc?.additional_conditions) return null;
-            const rawLines = lc.additional_conditions.split("\n").filter(line => line.trim() && !parseCondLogLine(line).isLog);
-            if (rawLines.length === 0) return null;
-            const rawText = rawLines[rawLines.length - 1];
+            const pendingLines = lc.additional_conditions.split("\n")
+              .filter((line) => line.trim())
+              .map(parseCondLine)
+              .filter((l) => !l.isLog);
+            if (pendingLines.length === 0) return null;
+            const latest = pendingLines[pendingLines.length - 1];
+            const patCfg = latest.pattern ? PATTERN_CFG[latest.pattern] ?? null : null;
+            const recommendedMode = patCfg?.defaultMode ?? null;
             return (
               <div className="border-b border-amber-200 bg-amber-50 px-3 py-2">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-[11px] font-bold text-amber-700">新着要望</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-bold text-amber-700">新着要望</span>
+                    {pendingLines.length > 1 && (
+                      <span className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[9px] font-bold text-white">
+                        {pendingLines.length}件
+                      </span>
+                    )}
+                    {patCfg && (
+                      <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-bold ${patCfg.badge}`}>
+                        {patCfg.label}
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-1.5">
                     <button
                       onClick={() => void handleReplaceInChat(selectedConversation.id)}
                       disabled={reflectLoadingChat}
-                      className="rounded-lg border border-amber-500 bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700 active:opacity-70 disabled:opacity-50"
+                      className={`rounded-lg border px-2.5 py-1 text-[11px] font-bold active:opacity-70 disabled:opacity-50 ${
+                        recommendedMode === "replace"
+                          ? "border-amber-600 bg-amber-500 text-white ring-2 ring-amber-300"
+                          : "border-amber-500 bg-amber-50 text-amber-700"
+                      }`}
                     >
                       {reflectLoadingChat ? "解析中…" : "入れ替える"}
                     </button>
                     <button
                       onClick={() => void handleReflectInChat(selectedConversation.id)}
                       disabled={reflectLoadingChat}
-                      className="rounded-lg bg-amber-600 px-2.5 py-1 text-[11px] font-bold text-white active:opacity-70 disabled:opacity-50"
+                      className={`rounded-lg px-2.5 py-1 text-[11px] font-bold text-white active:opacity-70 disabled:opacity-50 ${
+                        recommendedMode === "add" ? "bg-amber-600 ring-2 ring-amber-300" : "bg-amber-400"
+                      }`}
                     >
                       追加する
                     </button>
@@ -5348,7 +5438,12 @@ export default function Home() {
                     </button>
                   </div>
                 </div>
-                <p className="text-[12px] text-amber-800 leading-relaxed">{stripMarkdown(rawText)}</p>
+                <p className="text-[12px] text-amber-800 leading-relaxed">{stripMarkdown(latest.content)}</p>
+                {pendingLines.length > 1 && (
+                  <p className="mt-0.5 text-[10px] text-amber-500">
+                    ほか{pendingLines.length - 1}件の未反映条件があります
+                  </p>
+                )}
               </div>
             );
           })()}
