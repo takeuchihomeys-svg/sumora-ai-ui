@@ -158,12 +158,16 @@
   }
 
   function _run() {
-    fetch("https://sumora-ai-ui.vercel.app/api/property-customers", { cache: "no-store" })
-      .then(function (r) { return r.json(); })
-      .then(function (list) {
-        var c = Array.isArray(list)
-          ? list.find(function (x) { return String(x.id) === String(_cid); })
-          : null;
+    // CSP対策: content scriptから直接fetchするとリアプロのCSPでブロックされるため
+    // background.js (Service Worker) 経由でfetchしてもらう
+    chrome.runtime.sendMessage(
+      { type: "axlx-fetch-customer", customerId: _cid },
+      function (resp) {
+        if (chrome.runtime.lastError) {
+          console.warn("[content] sendMessage error:", chrome.runtime.lastError.message);
+          return;
+        }
+        var c = resp && resp.customer;
         if (!c) {
           console.warn("[content] sumora_cid not found:", _cid);
           return;
@@ -172,10 +176,8 @@
         setTimeout(function () {
           window.postMessage({ from: "aixlinx-fill", conditions: _buildConditions(c) }, "*");
         }, 1000);
-      })
-      .catch(function (e) {
-        console.warn("[content] URLパラメータ自動入力エラー:", e);
-      });
+      }
+    );
   }
 
   if (document.readyState === "loading") {

@@ -724,6 +724,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // ── CSP回避: content.jsに代わってproperty-customersをfetch ─────────────────
+  if (msg.type === "axlx-fetch-customer") {
+    (async () => {
+      try {
+        const res = await fetch("https://sumora-ai-ui.vercel.app/api/property-customers", { cache: "no-store" });
+        const list = await res.json();
+        const customer = Array.isArray(list)
+          ? list.find(function (x) { return String(x.id) === String(msg.customerId); })
+          : null;
+        sendResponse({ customer: customer || null });
+      } catch (e) {
+        console.warn("[bg] axlx-fetch-customer error:", e);
+        sendResponse({ customer: null });
+      }
+    })();
+    return true;
+  }
+
   return false;
 });
 
