@@ -2346,6 +2346,15 @@ export default function TemplateModal({
       setAdaptedTexts((prev) => ({ ...prev, [tmpl.id]: finalText }));
       setDisplaySource((prev) => ({ ...prev, [tmpl.id]: "adapted" }));
     } catch {
+      // AIXモード（aixSourceMessageあり）の場合はフォールバックしない
+      // → 旧APIはaixSourceMessageを受け取れず、会話全体から生成してAIXモードが消滅してしまうため
+      if (aixSourceMessage !== undefined) {
+        setAdaptedTexts((prev) => { const n = { ...prev }; delete n[tmpl.id]; return n; });
+        setDisplaySource((prev) => { const n = { ...prev }; delete n[tmpl.id]; return n; });
+        setAdaptErrors((prev) => ({ ...prev, [tmpl.id]: "AIX最適化に失敗しました。再試行してください" }));
+        setAdaptingId(null);
+        return;
+      }
       // 旧API（/api/templates/adapt）へフォールバック（ロールアウト中もボタンが完全には壊れないように）
       try {
         const res = await fetch("/api/templates/adapt", {
@@ -5428,7 +5437,7 @@ export default function TemplateModal({
                                 onSelect(displayText, isOcrTemplate ? undefined : (templateImages[tmpl.id] ?? []), tmpl.label, tmpl.category, secondMsg, tmpl.id, wasAdapted, recommendedRank);
                                 onClose();
                               }}
-                              disabled={isOcrTemplate && extractingId === tmpl.id}
+                              disabled={(isOcrTemplate && extractingId === tmpl.id) || adaptingId === tmpl.id}
                               className="rounded-full px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-50"
                               style={{ background: "linear-gradient(135deg, #06c755, #06a043)" }}
                             >
@@ -5491,7 +5500,8 @@ export default function TemplateModal({
                                 onSelect(adaptedText, isOcrTemplate ? undefined : (templateImages[tmpl.id] ?? []), tmpl.label, tmpl.category, secondMsg, tmpl.id, true, recommendedRank);
                                 onClose();
                               }}
-                              className="rounded-full px-3 py-1.5 text-[11px] font-bold text-white"
+                              disabled={adaptingId === tmpl.id}
+                              className="rounded-full px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-50"
                               style={{ background: "linear-gradient(135deg, #06c755, #06a043)" }}
                             >
                               最適化版を使う

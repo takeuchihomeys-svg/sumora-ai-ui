@@ -31,18 +31,16 @@ export const maxDuration = 300;
 const analysisModel = new ChatAnthropic({
   model: "claude-sonnet-5",
   maxTokens: 2048, // AIX推薦フィールド追加により分析JSONが尻切れになりJSON.parse失敗するリスクがあるため1536から引き上げ
-  temperature: 0,
   anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
   clientOptions: { timeout: 45_000 },
 });
 
 // Step2（生成）: Sonnet — 品質重視
 // 中6: temperature は ai_summary_json.emotion に応じて可変（0.3〜0.5）のためリクエスト毎に生成する
-function createGenerationModel(temperature: number) {
+function createGenerationModel(_temperature: number) {
   return new ChatAnthropic({
     model: "claude-sonnet-5",
     maxTokens: 1500,
-    temperature,
     anthropicApiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
     clientOptions: { timeout: 45_000 },
   });
@@ -1572,6 +1570,7 @@ export async function POST(req: NextRequest) {
     s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "�");
   message = _sanitizeSurrogates(message);
   recentMessages = recentMessages.map(m => ({ ...m, text: _sanitizeSurrogates(m.text) }));
+  aixSourceMessage = _sanitizeSurrogates(aixSourceMessage);
 
   // テンプレート最適化モード: 旧adaptルートで実績のある前処理をプロンプト組み立て前に適用
   // （退去予定日/内覧可能日の◯月◯日置換 + 挨拶差し替え。共有lib: app/lib/template-preprocess.ts）
@@ -1910,7 +1909,7 @@ ${noEmoji ? "◆ 絵文字は一切使用しない（テンプレートに絵文
 ${preprocessedTemplate}
 
 【AIX物件情報（事実情報の参照元 — 物件名・家賃・間取り・特徴の事実のみ使う。構成は参照しない）】
-${aixSourceMessage.slice(0, 400)}
+${safeSlice(aixSourceMessage, 1000)}
 ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ】\n${pendingSection}\n` : ""}${learnedRulesSection ? `\n${learnedRulesSection}\n` : ""}
 出力は書き直したテンプレート本文のみ。説明・前置き・補足コメントは一切書かない。`;
           }

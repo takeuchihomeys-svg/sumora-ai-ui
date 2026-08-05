@@ -354,7 +354,9 @@ export async function POST(req: NextRequest) {
 
   // ---- トリガールール即判定用（lastCustomerMsg / 画像フラグは available 分岐より前で抽出済み）----
   // 顧客が内覧・申込・費用等を明示的に意図している場合はチェーンルールをスキップ
-  const EXPLICIT_CUSTOMER_INTENT_RE = /内覧|内見|見に行|みに行|みにいき|見学|申込|申し込|費用|初期費用|見積|決めます|でお願いでき|でお願いします|明日.*時|あした.*時|今日.*時|本日.*時/;
+  // 🚨5: 空室確認系（空室/空き/空いて/まだあり）も明示意図として扱い、chain_rule を迂回して
+  //   下の keyword_hardcode（AVAILABILITY_KEYWORDS 判定）で property_check_result を正しく返せるようにする
+  const EXPLICIT_CUSTOMER_INTENT_RE = /内覧|内見|見に行|みに行|みにいき|見学|申込|申し込|費用|初期費用|見積|決めます|でお願いでき|でお願いします|明日.*時|あした.*時|今日.*時|本日.*時|空室|空き|空いて|まだあり/;
   const hasExplicitCustomerIntent = conv.last_sender === "customer" && EXPLICIT_CUSTOMER_INTENT_RE.test(lastCustomerMsg);
 
   // ---- 画像引用＋指示語の検知（最優先・ハルシネーション防止）----
@@ -389,9 +391,14 @@ export async function POST(req: NextRequest) {
   // ※ 画像あり（hasCustomerImage）の場合は上の image_quote_rule／下の空室確認キーワード判定側を優先させ、
   //   ここ（画像なしの曖昧参照）は画像がない時のみ発火させる（「こちらの物件」等の二重発火を防ぐ）。
   // 抑制（採択率30%未満）・経路別低採択率の場合のみ通常フローへフォールスルー
+  // 🚨5: 物件オススメ（property_recommendation）直後は chain_rule 側で property_check_result を
+  //   除外しているため、ここ経由で property_check_result を返すと除外が迂回されてしまう。
+  //   last_aix_action が property_recommendation の場合はこのルールを発火させず通常フローへ流す
+  //   （顧客が空室確認を明示した場合は EXPLICIT_CUSTOMER_INTENT_RE → keyword_hardcode 側で拾う）。
   if (
     conv.last_sender === "customer" &&
     !hasCustomerImage &&
+    last_aix_action !== "property_recommendation" &&
     (currentStatus === "hearing" || currentStatus === "proposing") &&
     AMBIGUOUS_PROPERTY_RE.test(lastCustomerMsg) &&
     !shouldSuppressAction("property_check_result") &&

@@ -491,8 +491,8 @@ async function callClaudeHaiku(system: string, user: string, action: string): Pr
   return data.content?.find((b: any) => b.type === "text")?.text?.trim() || "";
 }
 
-// temperature省略時はデフォルト（生成系）、OCR/JSON抽出時は0を渡すこと
-async function callClaudeVision(system: string, content: unknown[], action: string, temperature?: number): Promise<string> {
+// ※ Sonnet5はtemperature等のサンプリングパラメータ非対応（400エラー）のため渡さない
+async function callClaudeVision(system: string, content: unknown[], action: string): Promise<string> {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -509,7 +509,6 @@ async function callClaudeVision(system: string, content: unknown[], action: stri
       thinking: { type: "disabled" },
       system,
       messages: [{ role: "user", content }],
-      ...(temperature !== undefined ? { temperature } : {}),
     }),
     // Sonnet5は画像+長文システムプロンプトで45秒を超えることがある → 60秒に延長
     signal: AbortSignal.timeout(60_000),
@@ -984,8 +983,7 @@ ${SMORA_COMMON_RULES}`;
                 { type: "text", text: "この見積書から初期費用情報を抽出してください。" },
                 { type: "image", source: { type: "url", url } },
               ];
-              // temperature:0 で決定論的なJSON抽出（Sonnet5は前置き文を出しやすいため）
-              const estRaw = await callClaudeVision(multiEstSystem, estContent, currentAction, 0);
+              const estRaw = await callClaudeVision(multiEstSystem, estContent, currentAction);
               // コードブロック（```json...```）を優先して解析し、なければ裸の{}を使用
               const codeBlockM = estRaw.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
               const estJsonStr = codeBlockM ? codeBlockM[1] : estRaw.match(/\{[\s\S]*\}/)?.[0];
@@ -1044,8 +1042,7 @@ ${SMORA_COMMON_RULES}`;
           ocrContent.push({ type: "text", text: "物件資料画像（見積書に物件名・家賃・共益費の記載がない場合はこちらから補完）：" });
           ocrContent.push({ type: "image", source: { type: "url", url: propImgUrl } });
         }
-        // temperature:0 で決定論的なJSON抽出（Sonnet5はデフォルト温度で説明文を付けやすい）
-        const raw = await callClaudeVision(ocrSystem, ocrContent, currentAction, 0);
+        const raw = await callClaudeVision(ocrSystem, ocrContent, currentAction);
 
         // コードブロック（```json...```）を優先して解析し、なければ裸の{}を使用
         const codeBlockMatch = raw.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
