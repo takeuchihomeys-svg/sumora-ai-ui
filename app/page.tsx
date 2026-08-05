@@ -49,6 +49,7 @@ type Conversation = {
   hasViewed?: boolean;
   aiDraft?: string | null;
   suggestedAixMeta?: { action: string; note: string; source?: string; enforcement_level?: "required" | "recommended" | "optional" } | null;
+  suggestedNextAix?: string | null;
   messages: Message[];
 };
 
@@ -69,6 +70,7 @@ type SupabaseConversationRow = {
   has_viewed?: boolean | null;
   ai_draft?: string | null;
   suggested_aix_meta?: { action: string; note: string } | null;
+  suggested_next_aix?: string | null;
 };
 
 // AI下書きから内部メタタグ（<<<STOP_REASON:...>>> / <<<SUGGESTED_AIX:{...}>>>）を除去する。
@@ -1623,6 +1625,7 @@ export default function Home() {
         hasViewed: conversation.has_viewed ?? false,
         aiDraft: stripInternalTagsOrNull(conversation.ai_draft),
         suggestedAixMeta: conversation.suggested_aix_meta ?? null,
+        suggestedNextAix: conversation.suggested_next_aix ?? null,
         messages: relatedMessages,
       };
     });
@@ -1779,6 +1782,7 @@ export default function Home() {
           isPostApply: !!c.is_post_apply,
           isHot: !!c.is_hot,
           hasViewed: !!c.has_viewed,
+          suggestedNextAix: c.suggested_next_aix ?? null,
         } as Conversation;
       });
       setConversations((prev) => {
@@ -4981,6 +4985,23 @@ export default function Home() {
                         {/* AI返信案が準備済み（開くと自動セットされる） */}
                         {conversation.aiDraft && conversation.lastSender === "customer" && (
                           <span className="text-[11px] leading-none" title="AI返信案あり">✨</span>
+                        )}
+                        {/* AIXバッジ: 次にAIXボタンで対応すべき顧客 */}
+                        {(conversation.suggestedNextAix ||
+                          (conversation.suggestedAixMeta && conversation.lastSender === "customer")) && (
+                          <span
+                            className="rounded-full bg-[#7C3AED] px-1.5 py-0.5 text-[9px] font-bold text-white leading-none"
+                            title={`AIX推奨: ${
+                              AIX_ACTION_META[
+                                conversation.suggestedNextAix ?? conversation.suggestedAixMeta?.action ?? ""
+                              ]?.label ??
+                              conversation.suggestedNextAix ??
+                              conversation.suggestedAixMeta?.action ??
+                              ""
+                            }`}
+                          >
+                            AIX
+                          </span>
                         )}
                       </div>
 
