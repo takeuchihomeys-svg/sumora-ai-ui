@@ -113,7 +113,8 @@ export async function POST(req: NextRequest) {
     { role: "user", content: user_message },
   ];
 
-  const client = new Anthropic({ apiKey, timeout: 25_000, maxRetries: 2 });
+  // timeout×(maxRetries+1) ≤ maxDuration(30s) の制約: 8s×3=24s < 30s
+  const client = new Anthropic({ apiKey, timeout: 8_000, maxRetries: 2 });
 
   try {
     const response = await client.messages.create({

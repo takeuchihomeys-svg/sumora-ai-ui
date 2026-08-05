@@ -22,8 +22,6 @@ import {
 
 export const maxDuration = 60;
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "", timeout: 50_000, maxRetries: 2 });
-
 type ChatMessage = { role: "user" | "assistant"; content: string };
 
 type DiscussBody = {
@@ -103,7 +101,7 @@ function extractText(res: Anthropic.Message): string {
 // ─────────────────────────────────────────────
 // チャット1往復
 // ─────────────────────────────────────────────
-async function handleChat(body: DiscussBody): Promise<NextResponse> {
+async function handleChat(body: DiscussBody, client: Anthropic): Promise<NextResponse> {
   const { title, content, category, conversation_state, messages, userMessage } = body;
 
   if (!title || !content || !userMessage) {
@@ -131,7 +129,7 @@ async function handleChat(body: DiscussBody): Promise<NextResponse> {
 // ─────────────────────────────────────────────
 // 確定・反映（?action=finalize）
 // ─────────────────────────────────────────────
-async function handleFinalize(body: DiscussBody): Promise<NextResponse> {
+async function handleFinalize(body: DiscussBody, client: Anthropic): Promise<NextResponse> {
   const { id, title, content, category, conversation_state, messages } = body;
 
   if (!id || !title || !content) {
@@ -185,20 +183,33 @@ async function handleFinalize(body: DiscussBody): Promise<NextResponse> {
 // エントリポイント
 // ─────────────────────────────────────────────
 export async function POST(req: NextRequest) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return NextResponse.json({ ok: false, error: "ANTHROPIC_API_KEY が設定されていません" }, { status: 500 });
+  }
+  // timeout×(maxRetries+1) ≤ maxDuration(60s) の制約: 18s×3=54s < 60s
+  const client = new Anthropic({ apiKey, timeout: 18_000, maxRetries: 2 });
+
   try {
     const action = req.nextUrl.searchParams.get("action");
     const body = (await req.json()) as DiscussBody;
 
     if (action === "finalize") {
-      return await handleFinalize(body);
+      return await handleFinalize(body, client);
     }
-    return await handleChat(body);
+    return await handleChat(body, client);
   } catch (e) {
     console.error("[knowledge-discuss] error:", e);
     if (e instanceof APIError && e.status === 529) {
       return NextResponse.json(
         { ok: false, error: "AIが混雑中です。少し時間をおいてから再度送信してください。" },
         { status: 503 }
+      );
+    }
+    if (e instanceof APIError && e.status === 429) {
+      return NextResponse.json(
+        { ok: false, error: "リクエスト上限に達しました。しばらくお待ちください。" },
+        { status: 429 }
       );
     }
     const message = e instanceof Error ? e.message : "unknown error";

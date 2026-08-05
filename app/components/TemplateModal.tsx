@@ -826,7 +826,7 @@ export default function TemplateModal({
   const showModalError = useCallback((msg: string) => {
     setModalError(msg);
     if (modalErrorTimerRef.current) clearTimeout(modalErrorTimerRef.current);
-    modalErrorTimerRef.current = setTimeout(() => setModalError(null), 4000);
+    modalErrorTimerRef.current = setTimeout(() => setModalError(null), 7000);
   }, []);
   useEffect(() => () => { if (modalErrorTimerRef.current) clearTimeout(modalErrorTimerRef.current); }, []);
   // 成功トースト（緑・4秒で自動消去）
@@ -1547,20 +1547,26 @@ export default function TemplateModal({
           userMessage: input,      // 今回の入力は userMessage で渡す（API 必須パラメータ）
         }),
       });
-      const data = await res.json() as { ok?: boolean; reply?: string; error?: string };
+      const data = await res.json().catch(() => null) as { ok?: boolean; reply?: string; error?: string } | null;
+      if (!res.ok || !data?.ok) {
+        // 失敗時: 楽観的に追加したユーザーメッセージを取り消してリトライ可能にする
+        setKnowledgeChatMessages(prev => ({ ...prev, [item.id]: history }));
+        setKnowledgeChatInput(prev => ({ ...prev, [item.id]: input }));
+        showModalError(data?.error ?? (res.status === 503 ? "AIが混雑中です。しばらくお待ちください。" : "返答の取得に失敗しました"));
+        return;
+      }
       setKnowledgeChatMessages(prev => ({
         ...prev,
-        [item.id]: [...nextMessages, { role: "assistant", content: data.reply || `返答の取得に失敗しました${data.error ? `（${data.error}）` : ""}` }],
+        [item.id]: [...nextMessages, { role: "assistant", content: data.reply! }],
       }));
     } catch {
-      setKnowledgeChatMessages(prev => ({
-        ...prev,
-        [item.id]: [...nextMessages, { role: "assistant", content: "返答の取得に失敗しました（通信エラー）" }],
-      }));
+      setKnowledgeChatMessages(prev => ({ ...prev, [item.id]: history }));
+      setKnowledgeChatInput(prev => ({ ...prev, [item.id]: input }));
+      showModalError("返答の取得に失敗しました（通信エラー）");
     } finally {
       setKnowledgeChatSending(null);
     }
-  }, [knowledgeChatInput, knowledgeChatMessages, knowledgeChatSending, knowledgeFinalizing]);
+  }, [knowledgeChatInput, knowledgeChatMessages, knowledgeChatSending, knowledgeFinalizing, showModalError]);
 
   // 🤝 打ち合わせ確定: チャット内容を踏まえて ai_prompt_rules に反映し、ナレッジを一覧から除外する
   const finalizeKnowledge = useCallback(async (item: KnowledgeItem) => {
@@ -1586,13 +1592,13 @@ export default function TemplateModal({
         setKnowledgeChatMessages(prev => { const next = { ...prev }; delete next[item.id]; return next; });
         setKnowledgeChatInput(prev => { const next = { ...prev }; delete next[item.id]; return next; });
       } else {
-        alert(`確定に失敗しました: ${data?.error || `HTTP ${res.status}`}`);
+        showModalError(`確定に失敗しました: ${data?.error || `HTTP ${res.status}`}`);
       }
     } catch {
-      alert("確定に失敗しました（通信エラー）。もう一度お試しください。");
+      showModalError("確定に失敗しました（通信エラー）。もう一度お試しください。");
     }
     finally { setKnowledgeFinalizing(null); }
-  }, [knowledgeChatMessages]);
+  }, [knowledgeChatMessages, showModalError]);
 
   // ✏️ 優先反映（clarify）: 内容を直接修正して HUMAN-{id} priority=10 で ai_prompt_rules に永続保存
   // HUMAN-* は LEARN-*(priority=8) / FEEDBACK-*(priority=8) より高優先度で全アクションに注入される
@@ -1686,14 +1692,16 @@ export default function TemplateModal({
           user_message: msg,
         }),
       });
-      const json = await res.json() as { ok?: boolean; reply?: string; error?: string };
-      if (json.ok && json.reply) {
+      const json = await res.json().catch(() => null) as { ok?: boolean; reply?: string; error?: string } | null;
+      if (!res.ok || !json?.ok) {
+        showModalError(json?.error ?? (res.status === 503 ? "AIが混雑中です。少し時間をおいてから再度送信してください。" : "送信に失敗しました"));
+        return;
+      }
+      if (json.reply) {
         setDiscussionMessages(prev => ({
           ...prev,
           [item.id]: [...newMessages, { role: "assistant" as const, content: json.reply! }],
         }));
-      } else {
-        showModalError(json.error ?? "送信に失敗しました");
       }
     } catch (e) {
       showModalError("通信エラーが発生しました");
