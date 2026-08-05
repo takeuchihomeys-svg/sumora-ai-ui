@@ -613,7 +613,10 @@ export async function POST(req: NextRequest) {
   // 直近3件（messages は降順なので先頭3件）の顧客メッセージにURLがあるか確認
   const recentCustomerMsgs = messages.filter((m) => m.sender === "customer").slice(0, 3).map((m) => (m.text as string) ?? "");
   const hasPropertyUrl = recentCustomerMsgs.some((t) => PROPERTY_URL_RE.test(t));
-  const hasAvailabilityQuestion = AVAILABILITY_KEYWORDS.some((kw) => lastCustomerMsg.includes(kw));
+  // 内覧/内見/見学キーワードが同居する場合（例:「内覧いつ空いていますか」）は空室確認ではなく
+  // 下の S-5 viewing_invite 判定を優先するため、空室確認質問としては扱わない
+  const VIEWING_CONTEXT_RE = /内覧|内見|見学/;
+  const hasAvailabilityQuestion = AVAILABILITY_KEYWORDS.some((kw) => lastCustomerMsg.includes(kw)) && !VIEWING_CONTEXT_RE.test(lastCustomerMsg);
   // スモ割/割引キーワード（スモラの初期費用最大限割引サービス）
   // 物件URL/画像と同時 → property_check_result（先に空室確認が必要・確認後に見積のセット運用）
   // 単独（物件は前回送付済み等）→ 下の estimate_sheet キーワード判定に合流して見積書を提案
@@ -658,8 +661,9 @@ export async function POST(req: NextRequest) {
   // 管理会社確認が必要な物件固有条件の質問（保証会社・保証料・審査・ペット・駐車場・礼金交渉・設備）
   // → property_check_result（AVAILABILITY_KEYWORDS は空室確認のみで拾えないためここでカバー）
   // ※ 費用/estimate_sheet 判定より前に置く（「保証料はいくら」の「いくら」誤マッチ防止）
+  // ※ applying（申込手続き中）も対象に含める（申込中の保証料質問が estimate_sheet に誤ルーティングされるのを防ぐ）
   const MGMT_CONFIRM_RE = /保証会社|保証料|審査.{0,6}(通り|基準|厳し)|ペット.{0,6}(可|飼|大丈夫)|駐車場.{0,6}(あり|空き|使え)|礼金.{0,8}(交渉|下げ)|設備.{0,6}(あり|付い)/;
-  if (PROPERTY_CHECK_STATUSES.has(currentStatus) && MGMT_CONFIRM_RE.test(lastCustomerMsg)) {
+  if ((PROPERTY_CHECK_STATUSES.has(currentStatus) || currentStatus === "applying") && MGMT_CONFIRM_RE.test(lastCustomerMsg)) {
     const hit = keywordHit("property_check_result", "物件固有条件の確認が必要");
     if (hit) return hit;
   }
