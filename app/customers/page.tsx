@@ -889,16 +889,18 @@ export default function CustomersPage() {
     }, 100);
   };
 
-  // ── バッチ物件検索（Chrome拡張 postMessage 連動） ──
+  // ── 物件検索: PC同一ブラウザ向けpostMessage ──
   const firePropertySearch = (c: Customer) => {
+    const areaArr = c.desired_area
+      ? c.desired_area.split(/[・、,]+/).map((s) => s.trim()).filter(Boolean)
+      : [];
     const conditions = {
-      desired_area: c.desired_area ?? null,
       rent_max: c.rent_max ?? null,
       rent_min: c.rent_min ?? null,
       walk_minutes: c.walk_minutes ?? null,
       floor_plan: c.floor_plan ?? null,
       building_age: c.building_age ?? null,
-      areas: c.desired_area ? [c.desired_area] : [],
+      areas: areaArr,
       lines: [] as string[],
       stations: [] as string[],
       prefecture: null as string | null,
@@ -908,13 +910,45 @@ export default function CustomersPage() {
     setTimeout(() => window.postMessage({ from: "aixlinx-webapp", site: "itandi", conditions }, "*"), 3000);
   };
 
-  const startBatchSearch = () => {
+  // ── スマホ→PC遠隔物件検索: automationキュー経由 ──
+  // スマホから押してもPCのChrome拡張（30秒ポーリング）が処理する
+  const [searchQueued, setSearchQueued] = useState<string | null>(null);
+  const queuePropertySearch = async (c: Customer, sites: string[] = ["realnetpro", "itandi"]) => {
+    // 同一ブラウザ（PC）への即時通知（スマホでは届かないが無害）
+    firePropertySearch(c);
+    // クロスデバイス対応: サーバー経由でキューに追加
+    try {
+      await fetch("/api/automation/trigger", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customer_ids: [c.id], sites, force: true }),
+      });
+      setSearchQueued(c.id);
+      setTimeout(() => setSearchQueued(null), 3000);
+    } catch (e) {
+      console.error("[queue search] error:", e);
+    }
+  };
+
+  const startBatchSearch = async () => {
     setFilterMode("linked");
     const targets = sorted.filter((c) => !isDoneToday(c));
     batchListRef.current = targets;
     setBatchIndex(0);
     setBatchMode(true);
-    if (targets.length > 0) firePropertySearch(targets[0]);
+    if (targets.length > 0) {
+      // 全員まとめてキューに追加（30秒以内にPC Chrome拡張が処理開始）
+      try {
+        await fetch("/api/automation/trigger", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ customer_ids: targets.map((c) => c.id), sites: ["realnetpro", "itandi"], force: true }),
+        });
+      } catch (e) {
+        console.error("[batch trigger] error:", e);
+      }
+      firePropertySearch(targets[0]);
+    }
   };
 
   const goNextBatch = () => {
@@ -1771,33 +1805,45 @@ export default function CustomersPage() {
                         🔍 物件検索
                       </button>
                       {propertySearchOpen === c.id && (
-                        <div className="absolute left-0 top-full mt-1 z-50 bg-white rounded-xl shadow-lg border border-gray-200 py-1 min-w-[140px]">
+                        <div className="absolute left-0 top-full mt-1 z-50 bg-white rounded-xl shadow-lg border border-gray-200 py-1 min-w-[180px]">
+                          {/* PC連動（スマホからでも動く） */}
+                          <button
+                            className="flex w-full items-center gap-1.5 px-3 py-2 text-xs font-bold text-orange-700 hover:bg-orange-50"
+                            onClick={() => {
+                              setPropertySearchOpen(null);
+                              void queuePropertySearch(c, ["realnetpro", "itandi"]);
+                            }}
+                          >
+                            🖥️ PC連動で検索
+                            {searchQueued === c.id && <span className="text-emerald-600 font-bold">✓ 送信</span>}
+                          </button>
+                          <div className="border-t border-gray-100 my-0.5" />
                           <a
                             href={`https://www.realnetpro.com/main.php?sumora_cid=${c.id}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="block px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100"
+                            className="block px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-100"
                             onClick={() => setPropertySearchOpen(null)}
                           >
-                            リアプロで検索
+                            ↗ リアプロを開く
                           </a>
                           <a
                             href={`https://itandibb.com/rent_rooms/list?sumora_cid=${c.id}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="block px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100"
+                            className="block px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-100"
                             onClick={() => setPropertySearchOpen(null)}
                           >
-                            itandiで検索
+                            ↗ itandiを開く
                           </a>
                           <a
                             href={`https://system.reins.jp/?sumora_cid=${c.id}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="block px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-100"
+                            className="block px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-100"
                             onClick={() => setPropertySearchOpen(null)}
                           >
-                            レインズで検索
+                            ↗ レインズを開く
                           </a>
                         </div>
                       )}

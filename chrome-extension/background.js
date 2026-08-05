@@ -853,13 +853,20 @@ async function _batchAutofill(customer, site) {
 }
 
 function _buildBatchConditions(c) {
+  // desired_area (文字列) → areas (配列) 変換
+  var areaArr = [];
+  if (c.areas && c.areas.length) {
+    areaArr = c.areas;
+  } else if (c.desired_area) {
+    areaArr = c.desired_area.split(/[・、,]+/).map(function(s) { return s.trim(); }).filter(Boolean);
+  }
   return {
     rent_max: c.rent_max || null,
     rent_min: c.rent_min || null,
     walk_minutes: c.walk_minutes || null,
     building_age: c.building_age || null,
     floor_plan: c.floor_plan || null,
-    areas: c.areas || [],
+    areas: areaArr,
     lines: c.lines || [],
     stations: c.stations || [],
     prefecture: c.prefecture || null,

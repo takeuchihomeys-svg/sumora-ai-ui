@@ -10,16 +10,19 @@ export async function POST(req: NextRequest) {
   const body = await req.json() as {
     customer_ids?: string[];
     sites?: string[];
+    force?: boolean;
   };
 
-  const { data: existing } = await supabase
-    .from("automation_commands")
-    .select("id, status")
-    .in("status", ["pending", "running"])
-    .limit(1);
+  if (!body.force) {
+    const { data: existing } = await supabase
+      .from("automation_commands")
+      .select("id, status")
+      .in("status", ["pending", "running"])
+      .limit(1);
 
-  if (existing && existing.length > 0) {
-    return NextResponse.json({ ok: true, commandId: existing[0].id, reused: true });
+    if (existing && existing.length > 0) {
+      return NextResponse.json({ ok: true, commandId: existing[0].id, reused: true });
+    }
   }
 
   const { data, error } = await supabase
