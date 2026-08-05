@@ -49,6 +49,56 @@ type Skill = {
   trigger?: string;
 };
 
+// ============================================================
+// Anthropic APIレスポンスのパース堅牢化ヘルパー
+// - adaptive thinking 対応: content[0] が thinking ブロックの場合があるため
+//   必ず content.find(b => b.type === "text") でテキストを取得する
+// - コードフェンス（```json ... ```）を優先的に取り除いてから JSON.parse する
+// - parse失敗件数を parseErrors にカウントし cron_run_logs に記録する
+// ============================================================
+
+// リクエスト単位のparse失敗カウンタ（POST冒頭でリセット。重複実行ガードにより同時実行はない）
+let parseErrors = 0;
+
+function extractTextBlock(content: Anthropic.Message["content"] | undefined): string {
+  return content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
+}
+
+function extractJson(text: string): string {
+  // コードフェンス優先
+  const m = text.match(/```(?:json)?\n?([\s\S]*?)```/);
+  const body = m ? m[1].trim() : text;
+  // 本ファイルの全プロンプトはJSON配列を要求するため [ ... ] を抽出
+  const start = body.indexOf("[");
+  const end = body.lastIndexOf("]");
+  if (start !== -1 && end !== -1 && end > start) return body.slice(start, end + 1);
+  return body.trim();
+}
+
+// 戻り値: T[] = パース成功（空配列は「モデルが正当に [] を返した」）
+//         null = パース失敗（parseErrors にカウント済み。呼び出し元は材料消費等の副作用を避けること）
+function parseJsonArray<T>(text: string, label: string): T[] | null {
+  if (!text) {
+    parseErrors++;
+    console.warn(`[corpus2skill] ${label}: textブロックが空（thinkingのみ／max_tokens到達の可能性）`);
+    return null;
+  }
+  const jsonText = extractJson(text);
+  try {
+    const parsed = JSON.parse(jsonText);
+    if (!Array.isArray(parsed)) {
+      parseErrors++;
+      console.warn(`[corpus2skill] ${label}: JSONパース結果が配列でない: ${jsonText.slice(0, 120)}`);
+      return null;
+    }
+    return parsed as T[];
+  } catch {
+    parseErrors++;
+    console.warn(`[corpus2skill] ${label}: JSONパース失敗 (先頭200字): ${jsonText.slice(0, 200)}`);
+    return null;
+  }
+}
+
 async function synthesizeSkills(state: string, examples: Example[], chainSection = ""): Promise<Skill[]> {
   const examplesText = examples.slice(0, 15).map((e, i) => {
     // 改善⑦: 2値→3値ラベル。ai_draftなしの手書き返信を「AIそのまま使用」と誤ラベルしない
@@ -99,14 +149,7 @@ JSON配列のみ返す（説明不要）：
     }],
   });
 
-  const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
-  const match = text.match(/\[[\s\S]*\]/);
-  if (!match) return [];
-  try {
-    return JSON.parse(match[0]) as Skill[];
-  } catch {
-    return [];
-  }
+  return parseJsonArray<Skill>(extractTextBlock(res.content), `synthesizeSkills(${state})`) ?? [];
 }
 
 // ============================================================
@@ -280,17 +323,9 @@ ${approvedSuggestionsSection || "（なし）"}
     }],
   });
 
-  const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
-  const match = text.match(/\[[\s\S]*\]/);
-  if (!match) return { candidatesSaved: 0, suggestionsSaved: 0 };
-
-  let proposals: TemplateProposal[] = [];
-  try {
-    proposals = JSON.parse(match[0]) as TemplateProposal[];
-  } catch {
-    return { candidatesSaved: 0, suggestionsSaved: 0 };
-  }
-  if (!Array.isArray(proposals)) return { candidatesSaved: 0, suggestionsSaved: 0 };
+  // parse失敗（null）時は早期return: 材料A（needsUpdateKeys）を未消費のまま残し、翌週再試行させる
+  const proposals = parseJsonArray<TemplateProposal>(extractTextBlock(res.content), "synthesizeTemplateImprovements");
+  if (proposals === null) return { candidatesSaved: 0, suggestionsSaved: 0 };
 
   let candidatesSaved = 0;
   let suggestionsSaved = 0;
@@ -476,14 +511,10 @@ JSON配列で返す: [{aix_type, description, implementation_notes, proposal_cat
     max_tokens: 2000,
     messages: [{ role: "user", content: analysisPrompt }],
   });
-  const content = resp.content[0];
-  if (content.type !== "text") return { pairsFound: mismatchPairs.length, suggestionsInserted: 0 };
-
-  let proposals: Array<{ aix_type?: string; description?: string; implementation_notes?: string; proposal_category?: string }> = [];
-  try {
-    const match = content.text.match(/\[[\s\S]*\]/);
-    if (match) proposals = JSON.parse(match[0]);
-  } catch { return { pairsFound: mismatchPairs.length, suggestionsInserted: 0 }; }
+  // content[0] 直接参照はadaptive thinking時にthinkingブロックを掴むためextractTextBlockに統一
+  const proposals = parseJsonArray<{ aix_type?: string; description?: string; implementation_notes?: string; proposal_category?: string }>(
+    extractTextBlock(resp.content), "analyzeAixMismatch"
+  ) ?? [];
 
   let suggestionsInserted = 0;
   for (const p of proposals) {
@@ -764,17 +795,7 @@ ${answeredSection || "（なし）"}
     }],
   });
 
-  const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
-  const match = text.match(/\[[\s\S]*\]/);
-  if (!match) return { questionsSaved: 0 };
-
-  let parsed: BlindSpotItem[] = [];
-  try {
-    parsed = JSON.parse(match[0]) as BlindSpotItem[];
-  } catch {
-    return { questionsSaved: 0 };
-  }
-  if (!Array.isArray(parsed)) return { questionsSaved: 0 };
+  const parsed = parseJsonArray<BlindSpotItem>(extractTextBlock(res.content), "discoverBlindSpots") ?? [];
 
   let questionsSaved = 0;
   const VALID_CATEGORIES = ["knowledge_gap", "prompt_ambiguity", "new_flow", "missing_keyword", "weak_scene", "new_aix_needed", "low_conversion", "general", "aix_boundary"];
@@ -845,6 +866,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "already running" }, { status: 409 });
   }
 
+  // parse失敗カウンタをリクエスト開始時にリセット（サーバレスのモジュールスコープ残留対策）
+  parseErrors = 0;
+
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
   // 案4: 知識ライフサイクル管理 — 4週間使われていない corpus2skill 由来スキルを importance 9→7→5 と段階降格
@@ -909,6 +933,7 @@ export async function POST(req: NextRequest) {
     await finishCronLog(runLogId, true, {
       reason: "no examples found",
       degraded,
+      parse_errors: parseErrors,
       templateCandidatesSaved: templateImprovements.candidatesSaved,
       aixSuggestionsSaved: templateImprovements.suggestionsSaved,
       feedbackQuestionsSaved: blindSpots.questionsSaved,
@@ -919,6 +944,7 @@ export async function POST(req: NextRequest) {
       ok: false,
       reason: "no examples found",
       degraded,
+      parse_errors: parseErrors,
       templateCandidatesSaved: templateImprovements.candidatesSaved,
       aixSuggestionsSaved: templateImprovements.suggestionsSaved,
       feedbackQuestionsSaved: blindSpots.questionsSaved,
@@ -1020,10 +1046,14 @@ ${limitedSequences.map((g) =>
     return NextResponse.json({ ok: false, error: "internal error" }, { status: 500 });
   }
 
-  console.log(`[corpus2skill] 完了: inserted=${totalInserted}, merged=${totalMerged}, degraded=${degraded}`);
+  console.log(`[corpus2skill] 完了: inserted=${totalInserted}, merged=${totalMerged}, degraded=${degraded}, parse_errors=${parseErrors}`);
+  if (totalInserted === 0 && totalMerged === 0) {
+    console.warn(`[corpus2skill] 0件生成 — examplesProcessed=${examples.length}, parse_errors=${parseErrors}${parseErrors > 0 ? "（parse失敗の可能性）" : ""}`);
+  }
   await finishCronLog(runLogId, true, {
     inserted: totalInserted,
     merged: totalMerged,
+    parse_errors: parseErrors,
     degraded,
     examplesProcessed: examples.length,
     templateCandidatesSaved: templateImprovements.candidatesSaved,
@@ -1036,6 +1066,7 @@ ${limitedSequences.map((g) =>
     ok: true,
     inserted: totalInserted,
     merged: totalMerged,
+    parse_errors: parseErrors,
     degraded,
     examplesProcessed: examples.length,
     templateCandidatesSaved: templateImprovements.candidatesSaved,

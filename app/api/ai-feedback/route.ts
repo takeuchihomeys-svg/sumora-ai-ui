@@ -570,13 +570,15 @@ export async function POST(req: NextRequest) {
     try {
       if (choice === 'remove') {
         // ❌ 間違い → is_active=false に無効化
+        // -gr サフィックスの generate_reply 側コピーも同時に無効化する
+        // （本体だけ無効化すると -gr コピーが生成時に注入され続けるため）
         const { error: deactivateErr } = await supabase
           .from("ai_prompt_rules")
           .update({ is_active: false, updated_at: new Date().toISOString() })
-          .eq("rule_key", linkedFeedbackRuleKey);
+          .in("rule_key", [linkedFeedbackRuleKey, `${linkedFeedbackRuleKey}-gr`]);
         if (!deactivateErr) {
-          appliedRules.push(`[DEACTIVATE:${linkedFeedbackRuleKey}] 再確認で誤りと判定 → is_active=false`);
-          console.log(`[ai-feedback] ${linkedFeedbackRuleKey} を無効化しました`);
+          appliedRules.push(`[DEACTIVATE:${linkedFeedbackRuleKey}] 再確認で誤りと判定 → is_active=false（-grコピー含む）`);
+          console.log(`[ai-feedback] ${linkedFeedbackRuleKey}（および -gr コピー）を無効化しました`);
         } else {
           console.error("[ai-feedback] FEEDBACK-* deactivate 失敗:", deactivateErr.message);
         }
@@ -628,6 +630,16 @@ export async function POST(req: NextRequest) {
       if (isApproved) {
         // 統合案テキストを回答から抽出（または回答そのものを使用）
         // 古いルール2件を無効化し、新しいルールを作成
+        // 無効化前に元ルールの action_type を取得（統合後ルールに継承するため）
+        // action_type を null にすると全アクションにスコープが広がってしまうのを防ぐ
+        const { data: mergeSourceRules } = await supabase
+          .from("ai_prompt_rules")
+          .select("rule_key, action_type")
+          .in("rule_key", [mergeKey1, mergeKey2]);
+        const mergedActionType: string | null =
+          (mergeSourceRules?.find((r: { rule_key: string; action_type: string | null }) => r.rule_key === mergeKey1)?.action_type as string | null | undefined)
+          ?? (mergeSourceRules?.find((r: { rule_key: string; action_type: string | null }) => r.rule_key === mergeKey2)?.action_type as string | null | undefined)
+          ?? null;
         const { error: d1 } = await supabase
           .from("ai_prompt_rules")
           .update({ is_active: false, updated_at: new Date().toISOString() })
@@ -645,7 +657,7 @@ export async function POST(req: NextRequest) {
             const { error: mergeUpsertErr } = await supabase.from("ai_prompt_rules").upsert({
               rule_key: `FEEDBACK-${id}-merged`,
               rule_text: mergedText.slice(0, 500),
-              action_type: null,
+              action_type: mergedActionType, // 元ルールのスコープを継承（null化して全体に広がるのを防止）
               priority: 8,
               is_active: true,
               source_feedback_item_id: id,

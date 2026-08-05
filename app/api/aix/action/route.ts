@@ -195,16 +195,26 @@ async function getPropertyKnowledge(conversationId?: string): Promise<string> {
       .order("importance", { ascending: false })
       .limit(12),
   ]);
-  // 使用追跡（fire-and-forget）+ knowledge_apply_log への記録（eval-winning でのフィードバックループ接続）
+  // 使用追跡（after()でレスポンス返却後も実行保証）+ knowledge_apply_log への記録（eval-winning でのフィードバックループ接続）
   const usedIds = [...(diffLearned ?? []), ...(stateKnowledge ?? [])].map(r => (r as { id: string }).id).filter(Boolean);
   if (usedIds.length) {
-    supabase.rpc("increment_knowledge_used_count", { p_ids: usedIds }).then(() => {}, (e) => console.error("[aix/action] increment_knowledge_used_count RPC失敗:", e));
-    if (conversationId) {
-      // C05: source='aix_action' を付与して generate-reply 由来のログと区別する
-      supabase.from("knowledge_apply_log").insert(
-        usedIds.map(id => ({ knowledge_id: id, conversation_id: conversationId, source: "aix_action" }))
-      ).then(() => {}, (e) => console.error("[aix/action] knowledge_apply_log insert失敗:", e));
-    }
+    after(async () => {
+      try {
+        await supabase.rpc("increment_knowledge_used_count", { p_ids: usedIds });
+      } catch (e) {
+        console.error("[aix/action] increment_knowledge_used_count RPC失敗:", e);
+      }
+      if (conversationId) {
+        // C05: source='aix_action' を付与して generate-reply 由来のログと区別する
+        try {
+          await supabase.from("knowledge_apply_log").insert(
+            usedIds.map(id => ({ knowledge_id: id, conversation_id: conversationId, source: "aix_action" }))
+          );
+        } catch (e) {
+          console.error("[aix/action] knowledge_apply_log insert失敗:", e);
+        }
+      }
+    });
   }
   const parts: string[] = [];
   if ((diffLearned?.length ?? 0) > 0)
@@ -310,16 +320,26 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
       }
     }
 
-    // 使用追跡（fire-and-forget）
+    // 使用追跡（after()でレスポンス返却後も実行保証）
     const allIds = [...sortedDiff, ...sortedOther, ...vectorExtras].map(r => r.id).filter(Boolean);
     if (allIds.length) {
-      supabase.rpc("increment_knowledge_used_count", { p_ids: allIds }).then(() => {}, (e) => console.error("[aix/action] increment_knowledge_used_count RPC失敗:", e));
-      if (conversationId) {
-        // C05: source='aix_action' を付与して generate-reply 由来のログと区別する
-        supabase.from("knowledge_apply_log").insert(
-          allIds.map(id => ({ knowledge_id: id, conversation_id: conversationId, source: "aix_action" }))
-        ).then(() => {}, (e) => console.error("[aix/action] knowledge_apply_log insert失敗:", e));
-      }
+      after(async () => {
+        try {
+          await supabase.rpc("increment_knowledge_used_count", { p_ids: allIds });
+        } catch (e) {
+          console.error("[aix/action] increment_knowledge_used_count RPC失敗:", e);
+        }
+        if (conversationId) {
+          // C05: source='aix_action' を付与して generate-reply 由来のログと区別する
+          try {
+            await supabase.from("knowledge_apply_log").insert(
+              allIds.map(id => ({ knowledge_id: id, conversation_id: conversationId, source: "aix_action" }))
+            );
+          } catch (e) {
+            console.error("[aix/action] knowledge_apply_log insert失敗:", e);
+          }
+        }
+      });
     }
     const editExamples = editResult.data;
     const parts: string[] = [];
@@ -342,15 +362,20 @@ async function getKnowledgeForState(states: string[], actionType?: string, conve
       parts.push("【📘 テンプレート修正学習ルール（テンプレ活用時の改善パターン — テンプレを使う場合は必ず参照）】\n" +
         (adaptRules as { rule_text: string; category: string }[]).map(r => `・[${r.category}] ${r.rule_text}`).join("\n"));
     }
-    // adaptation_improvement_rules の使用記録（fire-and-forget）
+    // adaptation_improvement_rules の使用記録（after()でレスポンス返却後も実行保証）
     // used_count 専用 RPC がない場合は updated_at をタッチして「最後に使われた日時」を記録する
     const adaptIds = (adaptRules ?? []).map((r: { id: string }) => r.id).filter(Boolean);
     if (adaptIds.length > 0) {
-      supabase
-        .from("adaptation_improvement_rules")
-        .update({ updated_at: new Date().toISOString() })
-        .in("id", adaptIds)
-        .then(() => {}, (e: Error) => console.warn("[aix/action] adaptation_improvement_rules updated_at update failed:", e.message));
+      after(async () => {
+        try {
+          await supabase
+            .from("adaptation_improvement_rules")
+            .update({ updated_at: new Date().toISOString() })
+            .in("id", adaptIds);
+        } catch (e) {
+          console.warn("[aix/action] adaptation_improvement_rules updated_at update failed:", e instanceof Error ? e.message : e);
+        }
+      });
     }
     // F04: pgvector で追加取得した文脈関連ルール
     if (vectorExtras.length > 0) {

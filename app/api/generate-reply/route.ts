@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse, after } from "next/server";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { supabase } from "@/app/lib/supabase";
@@ -946,17 +946,31 @@ type KnowledgeRow = { id: string; title: string; content: string; category: stri
 
 function incrementKnowledgeUsage(ids: string[]): void {
   if (!ids.length) return;
-  // fire-and-forget: used_count を +1、last_used_at を更新
-  supabase.rpc("increment_knowledge_used_count", { p_ids: ids }).then(() => {}, () => {});
+  // used_count を +1、last_used_at を更新
+  // after(): レスポンス返却後もサーバーレス実行コンテキストが凍結される前に完了を保証
+  after(async () => {
+    try {
+      await supabase.rpc("increment_knowledge_used_count", { p_ids: ids });
+    } catch {
+      // 使用回数更新の失敗は返信生成に影響させない
+    }
+  });
 }
 
 function logKnowledgeApply(ids: string[], conversationId: string): void {
   if (!ids.length || !conversationId) return;
-  // fire-and-forget: knowledge_apply_log に適用記録（result=pending）
+  // knowledge_apply_log に適用記録（result=pending）
   // C05: source='generate_reply' を付与して aix/action 由来のログと混在しないようスコープ
-  supabase.from("knowledge_apply_log").insert(
-    ids.map(id => ({ knowledge_id: id, conversation_id: conversationId, source: "generate_reply" }))
-  ).then(() => {}, () => {});
+  // after(): レスポンス返却後もサーバーレス実行コンテキストが凍結される前に完了を保証
+  after(async () => {
+    try {
+      await supabase.from("knowledge_apply_log").insert(
+        ids.map(id => ({ knowledge_id: id, conversation_id: conversationId, source: "generate_reply" }))
+      );
+    } catch {
+      // 適用ログの失敗は返信生成に影響させない
+    }
+  });
 }
 
 // 戻り値: text=プロンプト注入用ナレッジ文字列 / phraseHits=category=phrase のヒット件数（fetchPhrases の二重注入削減判定に使用）
