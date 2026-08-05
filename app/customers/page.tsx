@@ -301,9 +301,6 @@ export default function CustomersPage() {
   const [propCompareLoading, setPropCompareLoading] = useState<string | null>(null);
   const [propCompareResults, setPropCompareResults] = useState<Record<string, PropCompareResult>>({});
 
-  // 物件検索ドロップダウン（どの顧客の検索メニューが開いているか）
-  const [propertySearchOpen, setPropertySearchOpen] = useState<string | null>(null);
-
   // 会話ログタブ管理
   const [activeTabs, setActiveTabs] = useState<Record<string, "summary" | "log">>({});
   const [msgCache, setMsgCache] = useState<Record<string, Array<{ id: string; text: string | null; sender: string; created_at: string }>>>({});
@@ -1797,57 +1794,12 @@ export default function CustomersPage() {
                   )}
                   {/* 物件検索ボタン */}
                   {c.status !== "pending" && !isApplying(c.status) && (
-                    <div className="relative">
-                      <button
-                        onClick={() => setPropertySearchOpen(propertySearchOpen === c.id ? null : c.id)}
-                        className="rounded-xl border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs font-bold text-orange-700 active:scale-95 transition-transform"
-                      >
-                        🔍 物件検索
-                      </button>
-                      {propertySearchOpen === c.id && (
-                        <div className="absolute left-0 top-full mt-1 z-50 bg-white rounded-xl shadow-lg border border-gray-200 py-1 min-w-[180px]">
-                          {/* PC連動（スマホからでも動く） */}
-                          <button
-                            className="flex w-full items-center gap-1.5 px-3 py-2 text-xs font-bold text-orange-700 hover:bg-orange-50"
-                            onClick={() => {
-                              setPropertySearchOpen(null);
-                              void queuePropertySearch(c, ["realnetpro", "itandi"]);
-                            }}
-                          >
-                            🖥️ PC連動で検索
-                            {searchQueued === c.id && <span className="text-emerald-600 font-bold">✓ 送信</span>}
-                          </button>
-                          <div className="border-t border-gray-100 my-0.5" />
-                          <a
-                            href={`https://www.realnetpro.com/main.php?sumora_cid=${c.id}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="block px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-100"
-                            onClick={() => setPropertySearchOpen(null)}
-                          >
-                            ↗ リアプロを開く
-                          </a>
-                          <a
-                            href={`https://itandibb.com/rent_rooms/list?sumora_cid=${c.id}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="block px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-100"
-                            onClick={() => setPropertySearchOpen(null)}
-                          >
-                            ↗ itandiを開く
-                          </a>
-                          <a
-                            href={`https://system.reins.jp/?sumora_cid=${c.id}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="block px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-100"
-                            onClick={() => setPropertySearchOpen(null)}
-                          >
-                            ↗ レインズを開く
-                          </a>
-                        </div>
-                      )}
-                    </div>
+                    <button
+                      onClick={() => void queuePropertySearch(c, ["realnetpro", "itandi"])}
+                      className="rounded-xl border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs font-bold text-orange-700 active:scale-95 transition-transform"
+                    >
+                      {searchQueued === c.id ? "✓ 送信" : "🖥️ 物件検索"}
+                    </button>
                   )}
                   {/* 物件探しフォーマットボタン: LINEの原文を表示 */}
                   {c.linked_conversation?.id && (
