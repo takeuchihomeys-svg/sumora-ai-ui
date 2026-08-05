@@ -920,7 +920,8 @@ export default function CustomersPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ customer_ids: [c.id], sites, force: true }),
       });
-      setSearchQueued(c.id);
+      const key = c.id + "-" + sites[0];
+      setSearchQueued(key);
       setTimeout(() => setSearchQueued(null), 3000);
     } catch (e) {
       console.error("[queue search] error:", e);
@@ -1792,14 +1793,28 @@ export default function CustomersPage() {
                       {viewedUpdating === c.id ? "…" : "物件確認した"}
                     </button>
                   )}
-                  {/* 物件検索ボタン */}
+                  {/* 物件検索ボタン（サイト別3ボタン） */}
                   {c.status !== "pending" && !isApplying(c.status) && (
-                    <button
-                      onClick={() => void queuePropertySearch(c, ["realnetpro", "itandi"])}
-                      className="rounded-xl border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs font-bold text-orange-700 active:scale-95 transition-transform"
-                    >
-                      {searchQueued === c.id ? "✓ 送信" : "🖥️ 物件検索"}
-                    </button>
+                    <div className="flex gap-1.5">
+                      <button
+                        onClick={() => void queuePropertySearch(c, ["realnetpro"])}
+                        className="rounded-xl border border-orange-200 bg-orange-50 px-2.5 py-1.5 text-[11px] font-bold text-orange-700 active:scale-95 transition-transform"
+                      >
+                        {searchQueued === c.id + "-realnetpro" ? "✓" : "🖥️"} リアプロ
+                      </button>
+                      <button
+                        onClick={() => void queuePropertySearch(c, ["itandi"])}
+                        className="rounded-xl border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-[11px] font-bold text-blue-700 active:scale-95 transition-transform"
+                      >
+                        {searchQueued === c.id + "-itandi" ? "✓" : "🖥️"} itandi
+                      </button>
+                      <button
+                        onClick={() => void queuePropertySearch(c, ["reins"])}
+                        className="rounded-xl border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-[11px] font-bold text-purple-600 active:scale-95 transition-transform"
+                      >
+                        {searchQueued === c.id + "-reins" ? "✓" : "🖥️"} レインズ
+                      </button>
+                    </div>
                   )}
                   {/* 物件探しフォーマットボタン: LINEの原文を表示 */}
                   {c.linked_conversation?.id && (
