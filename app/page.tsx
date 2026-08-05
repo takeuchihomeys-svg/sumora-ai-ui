@@ -1809,6 +1809,11 @@ export default function Home() {
       result = result.filter((c) => hotConvIds.has(c.id));
     } else if (statusFilter === "flagged") {
       result = result.filter((c) => flaggedConvIds.has(c.id));
+    } else if (statusFilter === "aix_target") {
+      // AIXバッジと同一条件: 次にAIXボタンで対応すべき顧客
+      result = result.filter(
+        (c) => c.suggestedNextAix || (c.suggestedAixMeta && c.lastSender === "customer")
+      );
     } else if (statusFilter !== "all") {
       // 5段階ステータスキーで直接フィルター（旧キーもエイリアスで統一）
       result = result.filter((c) => (STATUS_ALIAS[c.status] ?? c.status) === statusFilter);
@@ -1832,7 +1837,14 @@ export default function Home() {
       if (!a.hasViewed && b.hasViewed) return 1;
       return 0;
     });
-  }, [conversations, statusFilter, deferredSearchQuery, aiSearchIds, accountFilter, hotConvIds]);
+  }, [conversations, statusFilter, deferredSearchQuery, aiSearchIds, accountFilter, hotConvIds, flaggedConvIds]);
+
+  // AIX送信対象（AIXバッジと同一条件）の件数
+  const aixTargetCount = useMemo(() => {
+    return conversations.filter(
+      (c) => c.suggestedNextAix || (c.suggestedAixMeta && c.lastSender === "customer")
+    ).length;
+  }, [conversations]);
 
   const needsReplyCount = useMemo(() => {
     return conversations.filter((c) => {
@@ -4717,26 +4729,26 @@ export default function Home() {
               </button>
               {/* 右端ボタン群 */}
               <div className="absolute right-0 flex items-center">
-                {/* 要対応フィルターボタン */}
+                {/* AIX送信対象フィルターボタン */}
                 <button
-                  onClick={() => setStatusFilter((prev) => prev === "flagged" ? "all" : "flagged")}
+                  onClick={() => setStatusFilter((prev) => prev === "aix_target" ? "all" : "aix_target")}
                   className="relative flex items-center justify-center p-1"
-                  title="要対応のみ表示"
+                  title="AIX送信対象のみ表示"
                 >
                   <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
                     <circle cx="13" cy="13.5" r="10.5"
-                      fill={statusFilter === "flagged" ? "#fff7ed" : "transparent"}
-                      stroke={statusFilter === "flagged" ? "#f97316" : "#aaaaaa"}
+                      fill={statusFilter === "aix_target" ? "#fff7ed" : "transparent"}
+                      stroke={statusFilter === "aix_target" ? "#f97316" : "#aaaaaa"}
                       strokeWidth="1.8"
                     />
-                    <circle cx="9.8" cy="12" r="1.3" fill={statusFilter === "flagged" ? "#f97316" : "#aaaaaa"}/>
-                    <circle cx="16.2" cy="12" r="1.3" fill={statusFilter === "flagged" ? "#f97316" : "#aaaaaa"}/>
-                    <path d="M9.5 15.5 Q13 19 16.5 15.5" stroke={statusFilter === "flagged" ? "#f97316" : "#aaaaaa"} strokeWidth="1.5" fill="none" strokeLinecap="round"/>
+                    <circle cx="9.8" cy="12" r="1.3" fill={statusFilter === "aix_target" ? "#f97316" : "#aaaaaa"}/>
+                    <circle cx="16.2" cy="12" r="1.3" fill={statusFilter === "aix_target" ? "#f97316" : "#aaaaaa"}/>
+                    <path d="M9.5 15.5 Q13 19 16.5 15.5" stroke={statusFilter === "aix_target" ? "#f97316" : "#aaaaaa"} strokeWidth="1.5" fill="none" strokeLinecap="round"/>
                     <path d="M21 3.5 L21.55 5.2 L23.2 5.7 L21.55 6.2 L21 7.9 L20.45 6.2 L18.8 5.7 L20.45 5.2 Z"
-                      fill={statusFilter === "flagged" ? "#f97316" : "#cccccc"}
+                      fill={statusFilter === "aix_target" ? "#f97316" : "#cccccc"}
                     />
                   </svg>
-                  {flaggedConvIds.size > 0 && (
+                  {aixTargetCount > 0 && (
                     <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-orange-500" />
                   )}
                 </button>
@@ -4754,7 +4766,7 @@ export default function Home() {
                 </button>
               </div>
               {(() => {
-                const lbl = statusFilter === "all" ? "すべて" : statusFilter === "flagged" ? "要対応" : (DETAIL_STATUSES.find((s) => s.key === statusFilter)?.label ?? "すべて");
+                const lbl = statusFilter === "all" ? "すべて" : statusFilter === "flagged" ? "要対応" : statusFilter === "aix_target" ? "AIX送信" : (DETAIL_STATUSES.find((s) => s.key === statusFilter)?.label ?? "すべて");
                 const fs = lbl.length >= 5 ? "text-[10px]" : lbl.length >= 4 ? "text-[11px]" : "text-[12px]";
                 return (
                   <button
@@ -4784,6 +4796,16 @@ export default function Home() {
                     あついお客さん
                     {hotConvIds.size > 0 && (
                       <span className="ml-auto text-[11px] font-bold text-orange-500">{hotConvIds.size}</span>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => { setStatusFilter("flagged"); setShowGroupFilter(false); }}
+                    className={`flex w-full items-center gap-2 px-4 py-2 text-left text-[13px] font-medium border-b border-[#f0f2f5] ${statusFilter === "flagged" ? "text-[#2196F3]" : "text-[#111b21]"}`}
+                  >
+                    <span className="h-2.5 w-2.5 rounded-full bg-orange-500" />
+                    要対応
+                    {flaggedConvIds.size > 0 && (
+                      <span className="ml-auto text-[11px] font-bold text-orange-500">{flaggedConvIds.size}</span>
                     )}
                   </button>
                   {DETAIL_STATUSES.map((s) => (
