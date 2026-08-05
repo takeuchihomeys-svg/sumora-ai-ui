@@ -113,12 +113,12 @@ export async function POST(req: NextRequest) {
     { role: "user", content: user_message },
   ];
 
-  // timeout×(maxRetries+1) ≤ maxDuration(30s) の制約: 8s×3=24s < 30s
-  const client = new Anthropic({ apiKey, timeout: 8_000, maxRetries: 2 });
+  // haiku は 2-4s で返答するため timeout:9s×3=27s < maxDuration:30s に収まる
+  const client = new Anthropic({ apiKey, timeout: 9_000, maxRetries: 2 });
 
   try {
     const response = await client.messages.create({
-      model: "claude-sonnet-5",
+      model: "claude-haiku-4-5-20251001",
       max_tokens: 1024,
       system: buildSystemPrompt({ question, speculation, evidence, phase, importance, knowledgeSection }),
       messages: conversationMessages,

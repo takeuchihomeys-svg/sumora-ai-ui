@@ -112,7 +112,7 @@ async function handleChat(body: DiscussBody, client: Anthropic): Promise<NextRes
   const knowledgeSection = await fetchActiveKnowledgeSection(conversation_state);
 
   const res = await client.messages.create({
-    model: "claude-sonnet-5",
+    model: "claude-haiku-4-5-20251001",
     max_tokens: 600,
     system: buildSystemPrompt({ title, content, category, conversationState: conversation_state, knowledgeSection }),
     messages: toAnthropicMessages(messages ?? [], userMessage),
@@ -187,17 +187,19 @@ export async function POST(req: NextRequest) {
   if (!apiKey) {
     return NextResponse.json({ ok: false, error: "ANTHROPIC_API_KEY が設定されていません" }, { status: 500 });
   }
-  // timeout×(maxRetries+1) ≤ maxDuration(60s) の制約: 18s×3=54s < 60s
-  const client = new Anthropic({ apiKey, timeout: 18_000, maxRetries: 2 });
+  // chat: haiku は 2-4s で返答。9s×3=27s < 60s
+  const chatClient = new Anthropic({ apiKey, timeout: 9_000, maxRetries: 2 });
+  // finalize: sonnet-5 で正確な知識抽出。18s×3=54s < 60s
+  const finalizeClient = new Anthropic({ apiKey, timeout: 18_000, maxRetries: 2 });
 
   try {
     const action = req.nextUrl.searchParams.get("action");
     const body = (await req.json()) as DiscussBody;
 
     if (action === "finalize") {
-      return await handleFinalize(body, client);
+      return await handleFinalize(body, finalizeClient);
     }
-    return await handleChat(body, client);
+    return await handleChat(body, chatClient);
   } catch (e) {
     console.error("[knowledge-discuss] error:", e);
     if (e instanceof APIError && e.status === 529) {
