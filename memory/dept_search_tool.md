@@ -106,6 +106,7 @@ Chrome拡張ツール（AIXLINX 物件検索サポート）の開発・改善・
 
 | 日付 | 内容 |
 |---|---|
+| 2026-08-06 | **「依頼中…」停止バグの根本修正**: 根本原因はVercel本番に`SUPABASE_SERVICE_ROLE_KEY`未設定で/api/automation/pending・status・update・triggerが空500クラッシュ→拡張ポーリングが無音スキップ→scrape_and_compareが一切実行されず。①4ルートにanonキーフォールバック+明示的JSONエラーガード追加（automation_commandsはRLS無効のため機能同等。ただしservice_roleキーのVercel設定は依然推奨）②background.js `_pollAndRunBatch`のHTTPエラーをconsole.warn+`chrome.storage.local.lastPollError`に記録（無音スキップ廃止）③`_webappAutofill`のリアプロタブ検索をmain.php優先に修正（ログイン画面タブを掴むと条件送信が無音消失するバグ）、main.php以外のタブしか無ければナビゲートしてから使用④executeScriptフォールバック失敗時はthrowしてstatus:'error'がDBに記録されるように⑤page.tsx: ScrapeCompareStatusに"timeout"追加、6分でdone/error未到達なら「⏰タイムアウト」表示→5秒後idle（旧実装はrunningのまま永久固着）、ボタンに状態別カラー（done=緑/error=赤/timeout・noext=アンバー）⑥滞留していたpending 8件はDBでstatus='error'に掃除済み |
 | 2026-08-06 | **v2.5.0: WebApp→Chrome拡張 物件検索ブリッジ実装**: page.tsxの顧客条件パネルに「🔍 物件検索」ボタン＋「リアプロで検索」「itandiで検索」サブメニューを追加。押すとwebapp-bridge.js(content script)経由でbackground.jsに転送→対象サイトのタブを開いて自動入力実行。Chrome拡張IDをWebAppに公開しないpostMessage+origin検証設計 |
 | 2026-07-23 | v2.4.2: 連結区名対応（「西区北区都島区中央区」→「大阪市西区　大阪市北区　大阪市都島区　大阪市中央区」）。decomposeToken第2フォールバック追加（NEIGHBORHOOD_WARD_MAP+WARD_CODE_MAP）・realpro表示にmultiWardLabel追加 |
 | 2026-07-15 | Chrome拡張フィードバックUI追加: popup.html に💬ボタン＋モーダル・popup.js に送信ロジック（POST /api/chrome-extension-feedback）・styles.css にスタイル追加 |

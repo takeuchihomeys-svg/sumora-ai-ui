@@ -82,7 +82,8 @@ type PropCompareResult = {
 // リアプロ自動スクレイプ比較 — automation_commands 経由
 // 修正11: pending→running→done/error をポーリングで追跡し、成否をボタンに反映する
 // noext = 60秒 pending のまま（PC拡張が起動していない可能性）
-type ScrapeCompareStatus = "idle" | "queued" | "running" | "done" | "error" | "noext";
+// timeout = 6分経過しても done/error に到達しない（拡張クラッシュ・PC停止等）
+type ScrapeCompareStatus = "idle" | "queued" | "running" | "done" | "error" | "noext" | "timeout";
 
 const PROP_STATUS: Record<string, { label: string; dot: string }> = {
   new_inquiry:     { label: "新規",    dot: "bg-red-500" },
@@ -899,9 +900,15 @@ export default function CustomersPage() {
           } catch {
             // 一時的な取得失敗は無視して次のポーリングへ
           }
-          // 10分でポーリング打ち切り（永久ポーリング防止）
-          if (Date.now() - startedAt > 10 * 60_000) {
+          // タイムアウト: 6分（正常実行1〜4分 + 拡張ポーリング間隔30秒の余裕）で
+          // done/error に到達しなければ「⏰ タイムアウト」を表示し、5秒後に idle へ戻す。
+          // （旧実装は clearInterval のみでボタンが running のまま永久に固まっていた）
+          if (Date.now() - startedAt > 6 * 60_000) {
             clearInterval(timer);
+            setScrapeCompareStatus((prev) => ({ ...prev, [key]: "timeout" }));
+            setTimeout(() => {
+              setScrapeCompareStatus((prev) => ({ ...prev, [key]: "idle" }));
+            }, 5000);
           }
         })();
       }, 5000);
@@ -2028,25 +2035,32 @@ export default function CustomersPage() {
                         const stW = scrapeCompareStatus[c.id + "-wide"] ?? "idle";
                         const busy = (s: ScrapeCompareStatus) => s === "queued" || s === "running";
                         const label = (s: ScrapeCompareStatus, idle: string) =>
-                          s === "queued" ? "依頼中…"
+                          s === "queued" ? "⏳ 依頼中…"
                           : s === "running" ? "実行中…"
                           : s === "done" ? "✅ LINE送信済み"
                           : s === "noext" ? "⚠️ PC拡張未起動?"
                           : s === "error" ? "❌ エラー"
+                          : s === "timeout" ? "⏰ タイムアウト"
                           : idle;
+                        // 状態別カラー（done=緑 / error=赤 / timeout・noext=オレンジ強調）
+                        const tone = (s: ScrapeCompareStatus, base: string) =>
+                          s === "done" ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                          : s === "error" ? "border-red-300 bg-red-50 text-red-600"
+                          : s === "timeout" || s === "noext" ? "border-amber-400 bg-amber-50 text-amber-700"
+                          : base;
                         return (
                           <div className="flex gap-0.5">
                             <button
                               onClick={() => void handleScrapeCompare(c, false)}
                               disabled={busy(stN)}
-                              className="rounded-xl border border-orange-200 bg-orange-50 px-2.5 py-1.5 text-[11px] font-bold text-orange-700 active:scale-95 transition-transform disabled:opacity-50"
+                              className={`rounded-xl border px-2.5 py-1.5 text-[11px] font-bold active:scale-95 transition-transform disabled:opacity-50 ${tone(stN, "border-orange-200 bg-orange-50 text-orange-700")}`}
                             >
                               {label(stN, "🖥️ リアプロ")}
                             </button>
                             <button
                               onClick={() => void handleScrapeCompare(c, true)}
                               disabled={busy(stW)}
-                              className="rounded-xl border border-orange-300 bg-orange-100 px-2 py-1 text-[10px] font-bold text-orange-600 active:scale-95 transition-transform disabled:opacity-50"
+                              className={`rounded-xl border px-2 py-1 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-50 ${tone(stW, "border-orange-300 bg-orange-100 text-orange-600")}`}
                             >
                               {label(stW, "↔️ 広")}
                             </button>

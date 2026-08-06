@@ -954,7 +954,16 @@ async function _pollAndRunBatch() {
       headers: await _getAutomationKeyHeader(),
       signal: AbortSignal.timeout(10000),
     });
-    if (!res.ok) return;
+    if (!res.ok) {
+      // 修正: pending API のHTTPエラーを無音スキップせず可視化する
+      // （SUPABASE_SERVICE_ROLE_KEY 未設定による全500がデバッグ不能だった）
+      console.warn("[batch] pending API HTTP " + res.status);
+      try {
+        await chrome.storage.local.set({ lastPollError: { status: res.status, at: Date.now() } });
+      } catch (e2) { /* ignore */ }
+      return;
+    }
+    try { await chrome.storage.local.set({ lastPollError: null }); } catch (e2) { /* ignore */ }
     var json = await res.json();
     if (!json.command) return;
     var cmd = json.command;
@@ -1269,6 +1278,19 @@ async function _webappAutofill(site, conditions) {
 
   var allTabs = await chrome.tabs.query({});
   var existing = allTabs.find(function(t) { return t.url && t.url.startsWith(prefix); });
+  // 修正: リアプロは content.js/page-script.js が main.php* にしか注入されない。
+  // ログイン画面等 main.php 以外のタブを掴むと条件送信が無音消失するため、
+  // main.php タブを優先し、無ければ既存タブを main.php へナビゲートしてから使う。
+  if (site === "realnetpro") {
+    var mainTab = allTabs.find(function(t) { return t.url && t.url.includes("realnetpro.com/main.php"); });
+    if (mainTab) {
+      existing = mainTab;
+    } else if (existing) {
+      await chrome.tabs.update(existing.id, { url: siteUrls.realnetpro, active: true });
+      await _batchWaitForTabComplete(existing.id);
+      await new Promise(function(r) { setTimeout(r, 2000); });
+    }
+  }
   var tab = existing;
   if (!tab) {
     // タブが存在しない: 新規作成してフォアグラウンドで開く
@@ -1295,22 +1317,28 @@ async function _webappAutofill(site, conditions) {
 
   if (!sent) {
     // content script が挿入されていない場合は executeScript にフォールバック
+    // 修正: フォールバックも失敗したら throw して呼び出し元が status:'error' を記録できるようにする
     console.warn("[webapp-autofill] sendMessage failed, fallback to executeScript for", site);
-    if (site === "realnetpro") {
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        world: "MAIN",
-        func: function(c) { window.postMessage({ from: "aixlinx-fill", conditions: c }, "*"); },
-        args: [conditions]
-      });
-    } else {
-      var evName = site === "reins" ? "axlx-reins-fill" : "axlx-itandi-fill";
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        world: "MAIN",
-        func: function(name, c) { window.dispatchEvent(new CustomEvent(name, { detail: c })); },
-        args: [evName, conditions]
-      });
+    try {
+      if (site === "realnetpro") {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          world: "MAIN",
+          func: function(c) { window.postMessage({ from: "aixlinx-fill", conditions: c }, "*"); },
+          args: [conditions]
+        });
+      } else {
+        var evName = site === "reins" ? "axlx-reins-fill" : "axlx-itandi-fill";
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          world: "MAIN",
+          func: function(name, c) { window.dispatchEvent(new CustomEvent(name, { detail: c })); },
+          args: [evName, conditions]
+        });
+      }
+    } catch (fallbackErr) {
+      throw new Error("autofill failed (" + site + "): sendMessage失敗 + executeScriptフォールバック失敗: " +
+        ((fallbackErr && fallbackErr.message) || fallbackErr));
     }
   }
 }

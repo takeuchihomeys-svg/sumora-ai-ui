@@ -8,10 +8,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
+  // 障害修正: SUPABASE_SERVICE_ROLE_KEY 未設定でも空500クラッシュせず、
+  // anon キーへフォールバック（automation_commands は RLS 無効のため機能同等）。
+  // 両方欠落時は明示的な JSON エラーを返して障害を可視化する。
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseKey) {
+    return NextResponse.json(
+      { error: "server misconfigured: SUPABASE_SERVICE_ROLE_KEY / NEXT_PUBLIC_SUPABASE_ANON_KEY missing" },
+      { status: 500 }
+    );
+  }
+  const supabase = createClient(supabaseUrl, supabaseKey);
 
   // 修正2: サーバー側ウォッチドッグ — running のまま30分以上放置されたコマンドを pending に戻す
   // （拡張SWクラッシュ等でコマンドが永久に running のまま止まるのを防ぐ）
