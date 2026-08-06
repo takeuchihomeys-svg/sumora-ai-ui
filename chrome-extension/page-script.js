@@ -876,12 +876,27 @@
         }
 
         // 所在地モーダル操作がタイムアウトした場合のフォールバック:
-        // 条件なし全件検索はLINE誤送信リスクが高いため検索せず fill-done(error) を送信し
-        // background.js にスクレイプを中止させる。
+        // city_codes があれば直接チェックボックス方式に降格して検索を継続する（区レベルで検索）。
+        // city_codes も無い場合のみ全件検索防止のため中止する。
         function fallbackSearchWithoutArea(msg) {
+          try { closeAreaModal(); } catch (e) { /* ignore */ }
+          if (cond.city_codes && cond.city_codes.length > 0) {
+            // 町丁目モーダルは失敗したが区コードがある → 直接チェックで代替（ピンポイントが区レベルに降格）
+            showWarnToast('所在地モーダル失敗 → 市区コードで代替検索: ' + msg);
+            var prefCb2 = document.querySelector('input[name="pref_code"][value="27"]');
+            if (prefCb2 && !prefCb2.checked) {
+              prefCb2.checked = true;
+              prefCb2.dispatchEvent(new Event('change', {bubbles:true}));
+            }
+            setTimeout(function() {
+              setCheckboxes('city_code[]', cond.city_codes);
+              setTimeout(clickSearch, 700);
+            }, 300);
+            return;
+          }
+          // city_codes もない → 全件検索になるため中止
           var errMsg = '所在地モーダル操作失敗（全件検索防止のため中止）: ' + msg;
           showWarnToast(errMsg);
-          try { closeAreaModal(); } catch (e) { /* ignore */ }
           notifyDone(errMsg);
         }
 
