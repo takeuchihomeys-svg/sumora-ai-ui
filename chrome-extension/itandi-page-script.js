@@ -512,6 +512,11 @@
           // STEP 9: 検索
           setTimeout(function () {
             clickBtn("検索");
+            // 修正4: 検索実行完了シグナル — itandi-content.js が background へ中継し、
+            // background 側はこのシグナル受信後にスクレイプを開始する
+            setTimeout(function () {
+              window.postMessage({ from: "aixlinx-fill-done" }, "*");
+            }, 500);
           }, 1000);
         }, 500);
       }

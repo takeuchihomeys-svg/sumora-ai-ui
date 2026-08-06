@@ -60,19 +60,27 @@ async function getGroupId(overrideId?: string): Promise<string | null> {
   return (data?.value as string | null) ?? null;
 }
 
-async function pushToLine(to: string, text: string): Promise<void> {
-  const res = await fetch("https://api.line.me/v2/bot/message/push", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${TOKEN}`,
-    },
-    body: JSON.stringify({ to, messages: [{ type: "text", text }] }),
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    console.error("[compare-properties] LINE push failed:", res.status, errText);
+// 修正8: 送信成否を boolean で返す（従来はLINE API 400/401でも呼び出し側が lineSent:true にしていた）
+async function pushToLine(to: string, text: string): Promise<boolean> {
+  try {
+    const res = await fetch("https://api.line.me/v2/bot/message/push", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${TOKEN}`,
+      },
+      body: JSON.stringify({ to, messages: [{ type: "text", text }] }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      console.error("[compare-properties] LINE push failed:", res.status, errText);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error("[compare-properties] LINE push error:", e);
+    return false;
   }
 }
 
@@ -160,6 +168,21 @@ export async function POST(req: NextRequest) {
     if (!body.customerId) {
       return NextResponse.json(
         { ok: false, error: "customerId が必要です" },
+        { status: 400 }
+      );
+    }
+    // 修正1: フィールド形式バリデーション — building_name 欠落は送信側のフィールド名不一致
+    // （例: リアプロ経路の name/access/move_in/detail_url 形式のまま送信）を早期検出する
+    if (
+      typeof body.properties[0]?.building_name !== "string" ||
+      body.properties[0].building_name.length === 0
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "properties[0].building_name がありません（フィールド名不一致の可能性: name→building_name / access→station_info / move_in→available_date / detail_url→url の変換を確認）",
+        },
         { status: 400 }
       );
     }
@@ -258,18 +281,26 @@ ${propListText}
 }`;
 
     // ─── 4. Claude Sonnet で比較 ─────────────────────────────────────────────
+    // 修正8: max_tokens 2048→8000。Sonnet 5 は適応思考がデフォルトONで、
+    // max_tokens は思考+本文の合計上限のため、2048だとJSONが途中切断されるリスクがある
     const aiRes = await anthropic.messages.create({
       model: "claude-sonnet-5",
-      max_tokens: 2048,
+      max_tokens: 8000,
       messages: [{ role: "user", content: prompt }],
     });
+
+    const stopReason = aiRes.stop_reason;
+    if (stopReason === "max_tokens") {
+      console.error("[compare-properties] AI応答が max_tokens で途中切断されました");
+    }
 
     const rawText =
       aiRes.content.find(
         (b): b is typeof b & { type: "text"; text: string } => b.type === "text"
       )?.text ?? "";
 
-    let aiData: AIResult = { scored: [], best: null };
+    // 修正8: AIパース失敗を「scored:[] の静かな成功」ではなく明示的なエラーとして返す
+    let aiData: AIResult | null = null;
     try {
       // コードブロックや前置き文を取り除いてJSONだけ抽出
       const jsonMatch = rawText.match(/\{[\s\S]*\}/);
@@ -280,17 +311,29 @@ ${propListText}
       console.error("[compare-properties] AI JSON parse error:", e, "\nraw:", rawText.slice(0, 500));
     }
 
-    const scored = aiData.scored ?? [];
+    if (!aiData || !Array.isArray(aiData.scored)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "ai_parse_failed",
+          stop_reason: stopReason,
+          raw_head: rawText.slice(0, 300),
+        },
+        { status: 502 }
+      );
+    }
+
+    const scored = aiData.scored;
     const best = aiData.best ?? null;
 
     // ─── 5. LINE グループへ送信 ──────────────────────────────────────────────
+    // 修正8: pushToLine の成否を lineSent に反映（従来は失敗しても true）
     let lineSent = false;
     if (TOKEN && scored.length > 0) {
       const groupId = await getGroupId(body.lineGroupId);
       if (groupId) {
         const lineMsg = buildLineMessage(customerName, properties, scored, best);
-        await pushToLine(groupId, lineMsg);
-        lineSent = true;
+        lineSent = await pushToLine(groupId, lineMsg);
       } else {
         console.warn("[compare-properties] LINE group_id 未設定のためスキップ");
       }
@@ -304,6 +347,7 @@ ${propListText}
       best,
       customer_name: customerName,
       lineSent,
+      stop_reason: stopReason,
     });
   } catch (e) {
     console.error("[compare-properties]", e);

@@ -149,6 +149,18 @@
     });
   }
 
+  // 修正4: itandi-page-script.js の検索実行完了シグナルを background.js へ中継する
+  window.addEventListener("message", function (e) {
+    if (e.source !== window || !e.data || e.data.from !== "aixlinx-fill-done") return;
+    try {
+      chrome.runtime.sendMessage({ type: "axlx-fill-done", site: "itandi" }, function () {
+        void chrome.runtime.lastError; // background が待機していない場合は無視
+      });
+    } catch (err) {
+      // 拡張リロード等で context が失われた場合は無視
+    }
+  });
+
   // underbar.js経由のpostMessageも受け取る（iframe内でchrome.tabsが使えないため）
   window.addEventListener("message", function (e) {
     if (!e.data || e.data.from !== "aixlinx-itandi-fill") return;

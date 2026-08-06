@@ -714,11 +714,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const { site, conditions } = msg;
     (async () => {
       try {
+        // 修正4: itandi スクレイプ用の fill-done ウェイターを autofill 発火「前」に作成
+        var itandiFillDone = (site === "itandi" && conditions && conditions.customerId)
+          ? _createFillDoneWaiter("itandi", 60000)
+          : null;
         await _webappAutofill(site, conditions);
         // itandi の場合: autofill 後にバックグラウンドでスクレイプ+AI比較+LINE送信を実行
         // conditions.customerId は customers/page.tsx の firePropertySearch で付与
         if (site === "itandi" && conditions && conditions.customerId) {
           _scrapeAndCompareItandi(
+            itandiFillDone,
             String(conditions.customerId),
             conditions.customerName || null,
             conditions
@@ -780,6 +785,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               rent_max: conditions.rent_max || null,
               building_age: conditions.building_age || null,
             }),
+            signal: AbortSignal.timeout(15000), // 修正9
           });
           if (resolveResp.ok) resolved = await resolveResp.json();
         } catch (e) {
@@ -805,28 +811,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         });
 
         // リアプロを条件付きで開く（既存インフラ流用）
+        // 修正4: 固定3秒待ちを廃止し fill-done シグナル待機 → スクレイプ → 送信（修正1の変換込み）
+        var fillDonePromise = _createFillDoneWaiter("realnetpro", 60000);
         await _webappAutofill("realnetpro", resolvedConditions);
-        // 検索結果表示まで待機
-        await new Promise(function (r) { setTimeout(r, 3000); });
-
-        // リアプロタブを特定
-        var allTabs = await chrome.tabs.query({});
-        var realproTab = allTabs.find(function (t) {
-          return t.url && t.url.includes("realnetpro.com");
-        });
-        if (!realproTab) {
-          sendResponse({ ok: false, error: "リアプロのタブが見つかりません" });
-          return;
-        }
-
-        // 全ページスクレイプ
-        var properties = await _scrapeAllRealproPages(realproTab.id);
-        console.log("[axlx-scrape-and-compare] 合計 " + properties.length + "件");
-
-        if (properties.length > 0) {
-          await _sendPropertiesToBackend(properties, customerId, resolvedConditions);
-        }
-        sendResponse({ ok: true, count: properties.length });
+        var scrapedCount = await _scrapeAndSendRealpro(
+          fillDonePromise,
+          customerId,
+          (conditions && conditions.customerName) || null,
+          resolvedConditions
+        );
+        sendResponse({ ok: true, count: scrapedCount });
       } catch (e) {
         console.error("[axlx-scrape-and-compare] error:", e);
         sendResponse({ ok: false, error: String(e.message) });
@@ -841,6 +835,84 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // ===== 自動化バッチ検索 =====
 const SUMORA_BATCH_API = "https://sumora-ai-ui.vercel.app";
 
+// ── 修正10: automation API 共有シークレット ──────────────────────────────────
+// chrome.storage.local の automationApiKey に設定した値を x-automation-key として送る。
+// （拡張にはハードコード禁止のため、サービスワーカーコンソールで
+//   chrome.storage.local.set({automationApiKey: "..."}) を一度実行して設定する）
+async function _getAutomationKeyHeader() {
+  try {
+    var st = await chrome.storage.local.get("automationApiKey");
+    return st.automationApiKey ? { "x-automation-key": st.automationApiKey } : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+// ── 修正4: 検索完了シグナル（fill-done）待機インフラ ─────────────────────────
+// page-script.js / itandi-page-script.js が検索実行後に postMessage する
+// 'aixlinx-fill-done' を content script が axlx-fill-done として中継してくる。
+// スクレイプ側は autofill 発火「前」に _createFillDoneWaiter() で Promise を
+// 作成しておき、シグナル受信（true）またはタイムアウト（false）を待つ。
+var _fillDoneWaiters = [];
+
+function _notifyFillDone(site) {
+  var remaining = [];
+  _fillDoneWaiters.forEach(function (w) {
+    if (!w.site || !site || w.site === site) {
+      clearTimeout(w.timer);
+      w.resolve(true);
+    } else {
+      remaining.push(w);
+    }
+  });
+  _fillDoneWaiters = remaining;
+}
+
+function _createFillDoneWaiter(site, timeoutMs) {
+  return new Promise(function (resolve) {
+    var entry = { site: site || null, resolve: resolve, timer: null };
+    entry.timer = setTimeout(function () {
+      var idx = _fillDoneWaiters.indexOf(entry);
+      if (idx >= 0) _fillDoneWaiters.splice(idx, 1);
+      resolve(false);
+    }, timeoutMs || 60000);
+    _fillDoneWaiters.push(entry);
+  });
+}
+
+// content script からの fill-done 中継を受信
+chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
+  if (msg && msg.type === "axlx-fill-done") {
+    console.log("[fill-done] 受信 site=" + (msg.site || "unknown"));
+    _notifyFillDone(msg.site || null);
+    sendResponse({ ok: true });
+    return true;
+  }
+  return false;
+});
+
+// ── 修正1: リアプロ物件データを compare-properties API の形式へ変換 ──────────
+// bulk-dl.js のスクレイパは name/access/move_in/detail_url で返すが、
+// API は building_name/station_info/available_date/url を期待する。
+// この不一致のままだとAIプロンプトが「【undefined】」・LINE文面が賃料/間取り欠落になる。
+// （itandi 経路は元から正しい形式のため変換不要）
+function _normalizeRealproProperties(properties) {
+  return (properties || []).map(function (p) {
+    return {
+      building_name:  p.building_name || p.name || "",
+      room_number:    p.room_number || p.room || undefined,
+      rent:           p.rent !== undefined ? p.rent : null,
+      management_fee: p.management_fee || undefined,
+      floor_plan:     p.floor_plan || undefined,
+      area:           p.area || undefined,
+      address:        p.address || undefined,
+      station_info:   p.station_info || p.access || undefined,
+      available_date: p.available_date || p.move_in || undefined,
+      url:            p.url || p.detail_url || p.pdf_url || undefined,
+    };
+  });
+}
+
 // alarmが既に存在する場合は再作成しない（Service Worker再起動時の重複防止）
 chrome.alarms.get("sumora-batch-poll", function(existing) {
   if (!existing) {
@@ -848,27 +920,55 @@ chrome.alarms.get("sumora-batch-poll", function(existing) {
   }
 });
 
+// 修正2: SW再起動・拡張更新時に batchRunning ロックを必ずリセット
+// （SWクラッシュでロックが残ると全自動化が無音で永久停止するため）
+function _resetBatchLock() {
+  try {
+    chrome.storage.local.set({ batchRunning: null, batchCommandId: null });
+  } catch (e) { /* ignore */ }
+}
+chrome.runtime.onStartup.addListener(_resetBatchLock);
+chrome.runtime.onInstalled.addListener(_resetBatchLock);
+
+var BATCH_LOCK_TTL_MS = 15 * 60 * 1000; // 修正2: ロックTTL 15分
+
 chrome.alarms.onAlarm.addListener(async function(alarm) {
   if (alarm.name !== "sumora-batch-poll") return;
   var st = await chrome.storage.local.get("batchRunning");
-  if (st.batchRunning) return;
+  var lock = st.batchRunning;
+  if (lock) {
+    // 修正2: TTL方式 — {running:true, startedAt} 形式で15分未満なら実行中とみなす。
+    // 旧boolean形式（startedAt無し）や15分超過は古いロックとして上書き実行する。
+    var startedAt = (typeof lock === "object" && lock) ? lock.startedAt : 0;
+    if (startedAt && Date.now() - startedAt < BATCH_LOCK_TTL_MS) return;
+    console.warn("[batch] 古い batchRunning ロックを検出 → 上書き実行:", JSON.stringify(lock));
+  }
   await _pollAndRunBatch();
 });
 
 async function _pollAndRunBatch() {
   try {
-    var res = await fetch(SUMORA_BATCH_API + "/api/automation/pending", { cache: "no-store" });
+    // 修正9: pending ポーリングに10秒タイムアウト / 修正10: 共有シークレットヘッダー
+    var res = await fetch(SUMORA_BATCH_API + "/api/automation/pending", {
+      cache: "no-store",
+      headers: await _getAutomationKeyHeader(),
+      signal: AbortSignal.timeout(10000),
+    });
     if (!res.ok) return;
     var json = await res.json();
     if (!json.command) return;
     var cmd = json.command;
-    await chrome.storage.local.set({ batchRunning: true, batchCommandId: cmd.id });
+    // 修正2: ロックを {running, startedAt} 形式で保存（TTL判定用）
+    await chrome.storage.local.set({
+      batchRunning: { running: true, startedAt: Date.now() },
+      batchCommandId: cmd.id,
+    });
     try {
       await _runBatchSearch(cmd);
     } catch (e) {
       await _updateBatchCommand(cmd.id, { status: "error", error_message: String(e) });
     } finally {
-      await chrome.storage.local.set({ batchRunning: false, batchCommandId: null });
+      await chrome.storage.local.set({ batchRunning: null, batchCommandId: null });
     }
   } catch (e) {
     // MV3 Service Worker起動直後の一時的なfetch失敗は無視（次の30秒ポーリングで自動回復）
@@ -939,45 +1039,77 @@ async function _runBatchSearch(command) {
   }
 
   var sites = command.sites || ["reins"];
+  // 修正5: is_wide をキュー経路（trigger API → payload.is_wide）から伝搬
+  var batchIsWide = !!(command.is_wide || (command.payload && command.payload.is_wide));
   await _updateBatchCommand(command.id, {
     status: "running",
     total_customers: targets.length,
     processed_customers: 0
   });
 
+  var batchErrors = []; // 修正12: サイト別の失敗を集約してサーバーへ可視化する
+
   for (var i = 0; i < targets.length; i++) {
     var customer = targets[i];
     for (var j = 0; j < sites.length; j++) {
       var batchSite = sites[j];
       try {
+        // 修正4: fill-done ウェイターを autofill 発火「前」に作成しておく
+        var fillDoneP = (batchSite === "itandi" || batchSite === "realnetpro")
+          ? _createFillDoneWaiter(batchSite, 60000)
+          : null;
         // _batchAutofill は解決済み条件（itandi_lines 等を含む）を返す
-        var resolvedBatchConds = await _batchAutofill(customer, batchSite);
+        var resolvedBatchConds = await _batchAutofill(customer, batchSite, batchIsWide);
         if (batchSite === "itandi") {
           // itandi の場合: autofill後にスクレイプ+AI比較+LINE送信を実行
-          // （_scrapeAndCompareItandi 内で8秒待機するため別途 sleep 不要）
           // 解決済み条件（itandi_lines を含む）を渡すことで compare-properties API に正しい路線情報を届ける
           await _scrapeAndCompareItandi(
+            fillDoneP,
             String(customer.id),
             customer.customer_name || null,
-            resolvedBatchConds || _buildBatchConditions(customer)
+            resolvedBatchConds || _buildBatchConditions(customer, batchIsWide)
+          );
+        } else if (batchSite === "realnetpro") {
+          // 修正7: 通常バッチのリアプロ分岐にもスクレイプ→AI比較→LINE送信を追加
+          // （従来は autofill + 3秒 sleep のみで結果がどこにも届かなかった）
+          await _scrapeAndSendRealpro(
+            fillDoneP,
+            String(customer.id),
+            customer.customer_name || null,
+            resolvedBatchConds || _buildBatchConditions(customer, batchIsWide)
           );
         } else {
           await new Promise(function(r) { setTimeout(r, 3000); });
         }
       } catch (e) {
         console.error("[batch] error:", customer.id, batchSite, e);
+        batchErrors.push(customer.id + "/" + batchSite + ": " + ((e && e.message) || e));
       }
     }
     await _updateBatchCommand(command.id, { processed_customers: i + 1 });
   }
 
-  await _updateBatchCommand(command.id, {
+  // 修正12: 全件失敗なら status:'error'、一部失敗でも error_message に記録して可視化
+  var totalAttempts = targets.length * sites.length;
+  if (batchErrors.length > 0 && batchErrors.length >= totalAttempts && totalAttempts > 0) {
+    await _updateBatchCommand(command.id, {
+      status: "error",
+      error_message: batchErrors.join(" | ").slice(0, 1900),
+      completed_at: new Date().toISOString()
+    });
+    return;
+  }
+  var doneUpdates = {
     status: "done",
     completed_at: new Date().toISOString()
-  });
+  };
+  if (batchErrors.length > 0) {
+    doneUpdates.error_message = "一部失敗: " + batchErrors.join(" | ").slice(0, 1800);
+  }
+  await _updateBatchCommand(command.id, doneUpdates);
 }
 
-async function _batchAutofill(customer, site) {
+async function _batchAutofill(customer, site, isWide) {
   var siteUrlPrefixes = {
     reins: "https://system.reins.jp",
     itandi: "https://itandibb.com",
@@ -1000,7 +1132,7 @@ async function _batchAutofill(customer, site) {
     await new Promise(function(r) { setTimeout(r, 2000); });
   }
 
-  var conds = _buildBatchConditions(customer);
+  var conds = _buildBatchConditions(customer, isWide);
 
   // ── itandi 専用: 路線名・エリア名を itandi-page-script.js が使うキー形式に変換 ──
   // itandi-page-script.js は cond.itandi_lines と cond.ward_names を参照する。
@@ -1020,7 +1152,7 @@ async function _batchAutofill(customer, site) {
             desired_area: (conds.areas || []).join("・"),
             lines: conds.lines,
             stations: conds.stations || [],
-            is_wide: false,
+            is_wide: !!isWide, // 修正5: 広ボタンのキュー経路伝搬（従来 false ハードコード）
             rent_max: conds.rent_max || null,
             building_age: conds.building_age || null,
           }),
@@ -1085,7 +1217,7 @@ async function _batchAutofill(customer, site) {
   return conds;
 }
 
-function _buildBatchConditions(c) {
+function _buildBatchConditions(c, isWide) {
   // desired_area (文字列) → areas (配列) 変換
   var areaArr = [];
   if (c.areas && c.areas.length) {
@@ -1094,6 +1226,7 @@ function _buildBatchConditions(c) {
     areaArr = c.desired_area.split(/[・、,]+/).map(function(s) { return s.trim(); }).filter(Boolean);
   }
   return {
+    is_wide: !!isWide, // 修正5: page-script 側の広ロジック（間取り拡張等）に伝搬
     rent_max: c.rent_max || null,
     rent_min: c.rent_min || null,
     walk_minutes: c.walk_minutes || null,
@@ -1184,10 +1317,13 @@ async function _webappAutofill(site, conditions) {
 
 async function _updateBatchCommand(id, updates) {
   try {
+    // 修正9: 10秒タイムアウト / 修正10: 共有シークレットヘッダー
+    var keyHeader = await _getAutomationKeyHeader();
     await fetch(SUMORA_BATCH_API + "/api/automation/update", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(Object.assign({ id: id }, updates))
+      headers: Object.assign({ "Content-Type": "application/json" }, keyHeader),
+      body: JSON.stringify(Object.assign({ id: id }, updates)),
+      signal: AbortSignal.timeout(10000)
     });
   } catch (e) {
     console.error("[batch] update error:", e);
@@ -1197,12 +1333,15 @@ async function _updateBatchCommand(id, updates) {
 // ===== スクレイピング支援関数 =====
 
 // リアプロのタブに axlx-scrape-realpro メッセージを送り、物件配列を受け取る
+// 修正12: 応答不能（content script不在・拡張リロード等）は {error: message} を返し、
+// 「0件」と「スクレイプ失敗」を区別できるようにする
 async function _scrapeRealproPage(tabId) {
   return new Promise(function (resolve) {
     chrome.tabs.sendMessage(tabId, { type: "axlx-scrape-realpro" }, function (resp) {
       if (chrome.runtime.lastError || !resp) {
-        console.warn("[scrape] _scrapeRealproPage: no response from tab " + tabId + " (" + (chrome.runtime.lastError && chrome.runtime.lastError.message) + ")");
-        resolve([]);
+        var errMsg = (chrome.runtime.lastError && chrome.runtime.lastError.message) || "no response";
+        console.warn("[scrape] _scrapeRealproPage: no response from tab " + tabId + " (" + errMsg + ")");
+        resolve({ error: errMsg });
         return;
       }
       resolve(resp.properties || []);
@@ -1226,6 +1365,14 @@ async function _scrapeAllRealproPages(tabId) {
   var maxPages = 10; // リアプロは通常 1〜3 ページ。安全マージンで 10 ページ上限
   for (var page = 0; page < maxPages; page++) {
     var props = await _scrapeRealproPage(tabId);
+    // 修正12: スクレイプ失敗（error オブジェクト）と0件を区別する
+    if (props && props.error) {
+      if (page === 0) {
+        throw new Error("リアプロスクレイプ失敗: " + props.error);
+      }
+      console.warn("[scrape] page " + (page + 1) + " scrape error: " + props.error + " → 打ち切り");
+      break;
+    }
     console.log("[scrape] page " + (page + 1) + ": " + props.length + "件");
     if (props.length === 0) break; // ページに物件がない = 終了
     allProperties = allProperties.concat(props);
@@ -1241,11 +1388,12 @@ async function _scrapeAllRealproPages(tabId) {
 async function _sendPropertiesToBackend(properties, customerId, conditions, customerName) {
   var body = { properties: properties, customerId: customerId, conditions: conditions };
   if (customerName) body.customerName = customerName;
+  // 修正9: サーバー側 maxDuration=120 と整合させ120秒に延長（途中Abort→再送によるLINE二重送信リスクを減らす）
   var resp = await fetch(SUMORA_BATCH_API + "/api/compare-properties", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60000)
+    signal: AbortSignal.timeout(120000)
   });
   if (!resp.ok) {
     var errText = await resp.text().catch(function () { return ""; });
@@ -1282,6 +1430,7 @@ async function _scrapeAndCompareForCustomer(customer) {
         rent_max: baseConditions.rent_max || null,
         building_age: baseConditions.building_age || null,
       }),
+      signal: AbortSignal.timeout(15000), // 修正9
     });
     if (resolveResp.ok) resolved = await resolveResp.json();
   } catch (e) {
@@ -1307,32 +1456,52 @@ async function _scrapeAndCompareForCustomer(customer) {
     building_age:  resolved.building_age_resolved || baseConditions.building_age || null,
   });
 
+  // Phase 3〜6: fill-done 待機 → スクレイプ → AI比較+LINE送信
+  // 修正4: 固定8秒待ちを廃止。ウェイターは autofill 発火「前」に作成する
+  var fillDonePromise = _createFillDoneWaiter("realnetpro", 60000);
   await _webappAutofill("realnetpro", mergedConditions);
+  await _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, mergedConditions);
+}
 
-  // Phase 3: 検索完了を待機（8秒）
-  await new Promise(function(r) { setTimeout(r, 8000); });
+// ── 修正4+7+12: リアプロの fill-done 待機 → 全ページスクレイプ → AI比較+LINE送信 ──
+// fillDonePromise は autofill 発火「前」に _createFillDoneWaiter("realnetpro", 60000)
+// で作成しておくこと。失敗（シグナル未着・タブ不在・スクレイプ全失敗）は throw して
+// 呼び出し元（scrape_and_compare / 通常バッチ）が status:'error' として記録できるようにする。
+async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, conditions) {
+  // 修正4: 検索実行シグナルを待つ（所在地・沿線駅モーダル経由だと入力に15〜60秒かかる）
+  var fillDone = fillDonePromise ? await fillDonePromise : false;
+  if (!fillDone) {
+    throw new Error("リアプロ検索完了シグナル（fill-done）が60秒以内に届きませんでした。前回結果の誤送信を防ぐためスクレイプを中止します。");
+  }
+  // 検索結果の描画完了を待つ
+  await new Promise(function (r) { setTimeout(r, 3000); });
 
-  // Phase 4: リアプロタブを取得
+  // リアプロタブを取得
   var allTabs = await chrome.tabs.query({});
-  var realproTab = allTabs.find(function(t) {
+  var realproTab = allTabs.find(function (t) {
     return t.url && t.url.includes("realnetpro.com");
   });
   if (!realproTab) {
-    console.warn("[scrapeAndCompare] リアプロタブが見つかりません");
-    return;
+    throw new Error("リアプロのタブが見つかりません");
   }
 
-  // Phase 5: 全ページスクレイピング（最大10ページ）
+  // 全ページスクレイピング（最大10ページ）— 1ページ目のスクレイプ失敗は throw（修正12）
   var properties = await _scrapeAllRealproPages(realproTab.id);
   console.log("[scrapeAndCompare] customer=" + customerId + " scraped=" + properties.length + "件");
 
   if (properties.length === 0) {
     console.warn("[scrapeAndCompare] 物件0件のためAPIスキップ");
-    return;
+    return 0;
   }
 
-  // Phase 6: AI比較 + 売上番長LINE送信
-  await _sendPropertiesToBackend(properties, customerId, mergedConditions, customerName);
+  // AI比較 + 売上番長LINE送信（修正1: フィールド名を API 形式へ変換してから送信）
+  await _sendPropertiesToBackend(
+    _normalizeRealproProperties(properties),
+    customerId,
+    conditions,
+    customerName
+  );
+  return properties.length;
 }
 
 // ===== itandi スクレイプ支援関数 =====
@@ -1380,10 +1549,15 @@ async function _scrapeAllItandiPages(tabId) {
 }
 
 // itandi の autofill 完了後にスクレイプ + /api/compare-properties で AI比較 + LINE送信する
-// （autofill で検索ボタンが自動クリックされるため、8秒待機してから結果を取得）
-async function _scrapeAndCompareItandi(customerId, customerName, conditions) {
-  // 検索完了を待機（itandi の検索はリアプロより速いが余裕を持って8秒）
-  await new Promise(function (r) { setTimeout(r, 8000); });
+// 修正4: 固定8秒待ちを廃止し、itandi-page-script.js の検索実行シグナル（fill-done）を待つ。
+// fillDonePromise は autofill 発火「前」に _createFillDoneWaiter("itandi", 60000) で作成しておくこと。
+async function _scrapeAndCompareItandi(fillDonePromise, customerId, customerName, conditions) {
+  var fillDone = fillDonePromise ? await fillDonePromise : false;
+  if (!fillDone) {
+    throw new Error("itandi 検索完了シグナル（fill-done）が60秒以内に届きませんでした。前回結果の誤送信を防ぐためスクレイプを中止します。");
+  }
+  // 検索結果の描画完了を待つ
+  await new Promise(function (r) { setTimeout(r, 3000); });
 
   // itandi タブを取得
   var allTabs = await chrome.tabs.query({});
@@ -1391,8 +1565,7 @@ async function _scrapeAndCompareItandi(customerId, customerName, conditions) {
     return t.url && t.url.includes("itandibb.com");
   });
   if (!itandiTab) {
-    console.warn("[itandiScrape] itandiタブが見つかりません");
-    return;
+    throw new Error("itandiのタブが見つかりません"); // 修正12: 無音の欠落を検知可能にする
   }
 
   // 全ページスクレイプ（最大 10 ページ）

@@ -19,6 +19,12 @@ window.addEventListener("message", (e) => {
 
   console.log("[webapp-bridge] site=" + site + " conditions=", conditions);
 
+  // 修正6: 拡張が同一ブラウザに存在することを WebApp に即時通知する受領ACK。
+  // WebApp（queuePropertySearch）はこのACKを受け取ったらキュー投入をスキップして二重実行を防ぐ
+  try {
+    window.postMessage({ from: "aixlinx-webapp-received", site: site }, "*");
+  } catch (_e) { /* ignore */ }
+
   chrome.runtime.sendMessage(
     { type: "axlx-webapp-search", site, conditions },
     (resp) => {

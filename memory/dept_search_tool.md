@@ -615,3 +615,31 @@ var NON_RESULT_PAGES = ["GBK001310"];
 | ~~GBK002200~~ | ~~物件詳細/登録系ページ~~ | ~~2026-06-15 削除。実際は賃貸検索結果一覧ページだった~~ |
 
 **新しいページでエラーが出たら**: そのページコードを `NON_RESULT_PAGES` 配列に追加し、4箇所全てに適用すること（`reins-bulk-dl.js` 内 `NON_RESULT_PAGES` を一括検索して更新）。
+
+---
+
+## 🛠️ 物件検索フロー Fable5全体監査・抜け修正（2026-08-06）
+
+**目的**: リアプロボタン1回押し→自動検索→AI採点→売上番長LINE送信のエンドツーエンド信頼性確保。
+
+### 修正一覧（12件）
+| # | 内容 | ファイル |
+|---|---|---|
+| 1 | リアプロ物件のフィールド名不一致修正: `_normalizeRealproProperties()` で name→building_name / access→station_info / move_in→available_date / detail_url→url に変換してから compare-properties へ送信。API側にも building_name 欠落で400を返すバリデーション追加 | `background.js`, `app/api/compare-properties/route.ts` |
+| 2 | batchRunning を `{running:true, startedAt}` のTTL方式（15分）に変更、onStartup/onInstalled でリセット。pending API に「running かつ picked_up_at が30分前」の行を pending に戻すサーバー側ウォッチドッグ追加 | `background.js`, `app/api/automation/pending/route.ts` |
+| 3 | pending API の claim を条件付きUPDATE + `.select()` で確認（0行なら command:null）。複数PC同時ポーリングの二重実行防止 | `app/api/automation/pending/route.ts` |
+| 4 | 固定8秒/3秒待ちを廃止し fill-done シグナル待機に変更。page-script.js の `aixlinx-fill-done` を content.js / itandi-content.js が `axlx-fill-done` として background へ中継。itandi-page-script.js にも検索クリック後のシグナル発火を追加。background 側は `_createFillDoneWaiter(site, 60000)` を **autofill発火前** に作成 → シグナル受信+3秒でスクレイプ開始、60秒タイムアウト時はスクレイプ中止して error | `background.js`, `content.js`, `itandi-content.js`, `itandi-page-script.js` |
+| 5 | is_wide のキュー経路伝搬: queuePropertySearch → trigger API（payload.is_wide 保存）→ `_runBatchSearch` → `_batchAutofill(customer, site, isWide)` → resolve API 呼び出し + `_buildBatchConditions(c, isWide)` | `page.tsx`, `trigger/route.ts`, `background.js` |
+| 6 | itandi二重実行解消: webapp-bridge.js が受領ACK `aixlinx-webapp-received` を即時 postMessage。firePropertySearch が Promise<boolean> でACKを1.5秒待ち、拡張検出時はキュー投入スキップ。trigger API 側にも customer_ids+sites+is_wide 単位の直近5分デデュープ（force でも有効） | `webapp-bridge.js`, `page.tsx`, `trigger/route.ts` |
+| 7 | 通常バッチの realnetpro 分岐に `_scrapeAndSendRealpro()`（fill-done待機→全ページスクレイプ→正規化→AI比較→LINE送信）を追加。従来は autofill+3秒で終了し結果が届かなかった | `background.js` |
+| 8 | compare-properties: max_tokens 2048→8000、stop_reason ログ+レスポンス付与、pushToLine を boolean 返却にして lineSent に反映、AIパース失敗は ok:false / error:'ai_parse_failed' / raw_head 付き 502 | `route.ts` |
+| 9 | 拡張の外部fetchにタイムアウト統一: resolve系15秒、pending/update系10秒、compare-properties 60→120秒（サーバー maxDuration=120 と整合） | `background.js` |
+| 10 | automation pending/update に x-automation-key 認証追加（env `AUTOMATION_API_KEY` 設定時のみ強制）。update は許可フィールドのホワイトリスト+status enum検証。拡張側は `chrome.storage.local` の `automationApiKey` からヘッダー付与 | 両route.ts, `background.js` |
+| 11 | リアプロボタンのフィードバック: コマンドIDを保持して5秒間隔ポーリング、queued/running/done(LINE送信済み)/error/noext(PC拡張未起動?) をボタン表示。実行中は disabled。状態キーは通常=c.id / 広=c.id+"-wide"。キュー投入失敗は消えない赤色エラー表示 | `page.tsx` |
+| 12 | スクレイプ失敗と0件の区別: `_scrapeRealproPage` が lastError 時 `{error}` を返し、1ページ目失敗は throw → バッチ/コマンドの status:'error' + error_message としてサーバーに記録 | `background.js` |
+
+### ⚠️ 運用メモ
+- **AUTOMATION_API_KEY**: Vercel 環境変数に設定 + 各PCの拡張SWコンソールで `chrome.storage.local.set({automationApiKey: "同じ値"})` を実行すると認証が有効化。未設定なら従来通り認証なしで動く（後方互換）
+- **fill-done 未着時の挙動**: 60秒以内にシグナルが来ないとスクレイプせず error になる（前回結果の誤送信防止）。page-script が検索ボタンを押せなかった場合もここで検知される
+- **拡張の再読み込みが必要**: content.js / itandi-content.js / itandi-page-script.js / webapp-bridge.js / background.js を変更したため chrome://extensions で再読み込みすること
+- ステータス語彙: サーバー側 ALLOWED_STATUS = pending / running / done / completed / error（done と completed は両方 done 扱いでUI表示）

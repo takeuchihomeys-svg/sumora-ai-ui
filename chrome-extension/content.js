@@ -197,3 +197,17 @@ if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage)
     sendResponse({ ok: true });
   });
 }
+
+// 修正4: page-script.js の検索実行完了シグナル（aixlinx-fill-done）を background.js へ中継する
+// background 側の _createFillDoneWaiter がこれを待ってからスクレイプを開始する
+window.addEventListener("message", function (e) {
+  if (e.source !== window || !e.data || e.data.from !== "aixlinx-fill-done") return;
+  try {
+    chrome.runtime.sendMessage({ type: "axlx-fill-done", site: "realnetpro" }, function () {
+      // background が待機していない場合の lastError は無視
+      void chrome.runtime.lastError;
+    });
+  } catch (err) {
+    // 拡張リロード等で context が失われた場合は無視
+  }
+});
