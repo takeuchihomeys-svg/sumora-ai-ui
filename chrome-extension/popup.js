@@ -2048,6 +2048,20 @@ function openInstructions(siteKey) {
       // 区名だけの場合はcity_codesの直接チェックで複数区を同時選択（例:北区+福島区）
       const detailWard = detailNeighborhood ? resolveWard(neighPart) : null;
 
+      // town_names (Supabase property_customers.town_names): 複数町字指定
+      // TOWN_CODE_MAP 逆引きで ward を特定 → detail_ward を上書き設定してモーダルを開く
+      const customerTownNames = (c.town_names && c.town_names.length > 0) ? c.town_names : null;
+      let townNamesDetailWard = null;
+      if (customerTownNames) {
+        const firstTown = customerTownNames[0];
+        for (const ward of Object.keys(TOWN_CODE_MAP || {})) {
+          if (TOWN_CODE_MAP[ward][firstTown]) { townNamesDetailWard = ward; break; }
+        }
+      }
+      const effectiveDetailWard = townNamesDetailWard || detailWard;
+      // town_names 使用時は detail_area 不要（STEP5 で townNamesForStep5 を全てクリック）
+      const effectiveDetailArea = customerTownNames ? null : detailNeighborhood;
+
       // 広げて検索：賃料上限を自動拡張
       // preloadAdjFormで初期値が入るためadjRentMaxは常にtruthy。
       // お客さんのデフォルト値と異なる場合のみ手動変更とみなす。
@@ -2080,8 +2094,9 @@ function openInstructions(siteKey) {
           city_codes,
           route_ids,
           station_names: realpro_station_names,
-          detail_area:   detailNeighborhood,
-          detail_ward:   detailWard,
+          detail_area:   effectiveDetailArea,
+          detail_ward:   effectiveDetailWard,
+          town_names:    customerTownNames,
           area_min:        adjAreaMin ? Number(adjAreaMin) : (c.floor_area_min || c.area_min || c.min_area || parseAreaMin(c.floor_plan || c.layout) || parseAreaMin(c.preferences) || parseAreaMin(c.other_requests) || null),
           area_max:        adjAreaMax ? Number(adjAreaMax) : (c.floor_area_max || null),
           structure_types: adjC.structure_types,

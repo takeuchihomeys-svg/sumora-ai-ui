@@ -699,7 +699,10 @@
     var hasRoutes    = cond.route_ids && cond.route_ids.length > 0;
     var hasCities    = cond.city_codes && cond.city_codes.length > 0;
     var hasModalWard = !!(cond.detail_ward);   // 所在地モーダルを使う（ピンポイント・広げて両方）
-    var hasDetailArea = !!(cond.detail_area);  // 町字まで選択（ピンポイントのみ）
+    var hasDetailArea = !!(cond.detail_area) || !!(cond.town_names && cond.town_names.length > 0);  // 町字まで選択
+    // town_names: 複数町字配列（Supabase property_customers.town_names から）。detail_area と共存可。
+    var townNamesList = (cond.town_names && cond.town_names.length > 0)
+      ? cond.town_names : (cond.detail_area ? [cond.detail_area] : []);
 
     // ── 場所モード判定の一元化（優先順位: station > route > area > none）──────
     // リアプロは駅×所在地がAND条件になるため、駅/沿線がある場合は地域を使わない
@@ -866,6 +869,9 @@
         var wardFull  = cond.detail_ward || "";
         var wardShort = wardFull.replace(/^大阪市|^大阪府/, "");
         var detailAreaName = cond.detail_area || "";
+        // town_names が優先: 複数町字を全てクリック。detail_area 単体は後方互換で残す
+        var townNamesForStep5 = (cond.town_names && cond.town_names.length > 0)
+          ? cond.town_names : (detailAreaName ? [detailAreaName] : []);
 
         function closeAreaModal() {
           var d = document.querySelector('div.this_window_close');
@@ -994,8 +1000,14 @@
                       waitForClick(
                         function() {
                           var n = document.querySelectorAll('label.one_town').length;
-                          console.log('[AX] STEP5 poll: label.one_town=' + n + '個');
-                          return clickDetailArea(detailAreaName);
+                          console.log('[AX] STEP5 poll: label.one_town=' + n + '個 townNames:', townNamesForStep5);
+                          if (n === 0) return false;
+                          // 複数町字を全てクリック（townNamesForStep5 配列を順次処理）
+                          var clicked = false;
+                          for (var ti = 0; ti < townNamesForStep5.length; ti++) {
+                            if (clickDetailArea(townNamesForStep5[ti])) clicked = true;
+                          }
+                          return clicked;
                         },
                         function() {
                           console.log('[AX] STEP5完了: 町字クリック済 → 閉じる待機');
@@ -1011,7 +1023,7 @@
                           });
                         },
                         30, 500, 600,
-                        function() { fallbackSearchWithoutArea('「' + detailAreaName + '」の地域ボタンが見つかりませんでした。'); }
+                        function() { fallbackSearchWithoutArea('「' + townNamesForStep5.join('、') + '」の地域ボタンが見つかりませんでした。'); }
                       );
                     },
                     30, 500, 600,

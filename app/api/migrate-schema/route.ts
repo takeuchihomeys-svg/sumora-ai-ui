@@ -1751,6 +1751,11 @@ CREATE TABLE IF NOT EXISTS unknown_tokens (
 CREATE INDEX IF NOT EXISTS idx_unknown_tokens_token ON unknown_tokens (token);
 ALTER TABLE unknown_tokens DISABLE ROW LEVEL SECURITY;
 
+-- ── 町字絞り込み（リアプロ town_code[] 対応）（2026-08-06）──
+-- Chrome拡張の popup-maps.js TOWN_CODE_MAP と連携して顧客の希望町字を保存する。
+-- 値: ['安立', '北加賀屋'] 等の町字名配列（TOWN_CODE_MAP でtown_code[]値に変換してリアプロに設定）
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS town_names text[];
+
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
