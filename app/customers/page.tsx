@@ -938,6 +938,8 @@ export default function CustomersPage() {
               detail_ward: resolved?.detail_ward ?? null,
               detail_area: resolved?.detail_area ?? null,
               unknown_tokens: resolved?.unknown_tokens ?? [],
+              structure_types: [] as string[],
+              rp_update_days: null as number | null,
             },
           },
           status: "pending",
@@ -1156,6 +1158,8 @@ export default function CustomersPage() {
       stations:      c.stations      ?? [] as string[],
       prefecture:    null as string | null,
       city:          null as string | null,
+      structure_types: [] as string[],
+      rp_update_days: null as number | null,
     };
     let delay = 0;
     for (const site of sites) {
