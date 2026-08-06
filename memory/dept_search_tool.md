@@ -691,3 +691,24 @@ var NON_RESULT_PAGES = ["GBK001310"];
 - タイムアウト序列: page-script watchdog 85秒 < background ウェイター 90秒（watchdog が必ず先に発火し、90秒タイムアウト経由の error を回避）
 - フォールバック検索の思想: 「何もせず fill-done だけ送る」と前回結果ページを誤スクレイプする恐れがあるため、タイムアウト時も必ず clickSearch を実行してから通知する
 - **拡張の再読み込み必須**: page-script.js / background.js 変更のため chrome://extensions で再読み込みすること
+
+---
+
+## 🛠️ エリア条件解決のローカルファースト化（2026-08-06 Fable5）
+
+**目的**: バッチ/自動検索の Phase 1 が毎回 resolve-search-conditions API（DeepSeek 最大20秒 + 失敗モード）を往復していた。静的マップで解決できる大多数のケースをネットワークなしで完結させる。
+
+### 修正一覧
+| # | 内容 | ファイル |
+|---|---|---|
+| 1 | `resolution-core.js` を静的 `import` で読み込み（manifest の background.type="module" のため importScripts 不可。`globalThis.SUMORA_RESOLUTION` ブリッジ経由で参照） | `background.js` |
+| 2 | `_getLearnedMapsCached()` 新設: region-map / station-map / line-stations を6秒タイムアウトで取得し `{wards, stations, lineOrder}` に整形。成功6時間・失敗10分キャッシュ。失敗時 `{}`（静的マップのみで解決続行） | `background.js` |
+| 3 | `_resolveLocalFirst(baseConditions, isWide)` 新設: Phase 1a=resolveConditionsLocal（popup.jsと同一ロジック）→ Phase 1b=`unknown_tokens あり || (エリア入力あり && ローカル全空)` のときだけAPIフォールバック。APIには未解決トークンのみ投げる（全部未解決なら desired_area 全体・lines/stations は常に空）。resolution-core 未ロード時は従来どおりフルスコープAPI | `background.js` |
+| 4 | `_mergeResolved(local, api)` 新設: 配列はローカル優先の和集合（city_codes/route_ids/station_names/ward_names/itandi_line_names/reins_line_names）。detail_ward/detail_area は local優先。unknown_tokens はAPIの最終判定を採用（二重報告防止）。rent_max_resolved / building_age_resolved はローカル値（wide時 +5000/+10000・+5年 の二重適用防止） | `background.js` |
+| 5 | `_scrapeAndCompareForCustomer` Phase 1 のAPI直呼びを `_resolveLocalFirst` に置換。Phase 2 の length-check マージ・city_codes>=2→detail_ward null 化・`hasAreaInput && !hasAreaResolved → throw`（サイレント全件検索防止）は一切変更なし | `background.js` |
+| 6 | `_batchAutofill` itandi 分岐・realnetpro 分岐の resolve API 直呼びも `_resolveLocalFirst` に置換（発火条件・結果の反映ロジックは従来のまま） | `background.js` |
+
+### 設計メモ
+- ハッピーパス（全トークンが静的マップで解決）は Phase 1 で一切ネットワークに触れない
+- API失敗/タイムアウト時は `resolved = local`（部分解決）で続行。最終安全網の throw は既存のまま
+- **拡張の再読み込み必須**: background.js 変更のため chrome://extensions で再読み込みすること
