@@ -887,7 +887,7 @@ export default function CustomersPage() {
   };
 
   // ── 物件検索: PC同一ブラウザ向けpostMessage ──
-  const firePropertySearch = (c: Customer) => {
+  const firePropertySearch = (c: Customer, sites: string[] = ["realnetpro", "itandi"]) => {
     const areaArr = c.desired_area
       ? c.desired_area.split(/[・、,]+/).map((s) => s.trim()).filter(Boolean)
       : [];
@@ -903,8 +903,16 @@ export default function CustomersPage() {
       prefecture: null as string | null,
       city: null as string | null,
     };
-    window.postMessage({ from: "aixlinx-webapp", site: "realnetpro", conditions }, "*");
-    setTimeout(() => window.postMessage({ from: "aixlinx-webapp", site: "itandi", conditions }, "*"), 3000);
+    let delay = 0;
+    for (const site of sites) {
+      const s = site;
+      if (delay === 0) {
+        window.postMessage({ from: "aixlinx-webapp", site: s, conditions }, "*");
+      } else {
+        setTimeout(() => window.postMessage({ from: "aixlinx-webapp", site: s, conditions }, "*"), delay);
+      }
+      delay += 3000;
+    }
   };
 
   // ── スマホ→PC遠隔物件検索: automationキュー経由 ──
@@ -912,7 +920,7 @@ export default function CustomersPage() {
   const [searchQueued, setSearchQueued] = useState<string | null>(null);
   const queuePropertySearch = async (c: Customer, sites: string[] = ["realnetpro", "itandi"]) => {
     // 同一ブラウザ（PC）への即時通知（スマホでは届かないが無害）
-    firePropertySearch(c);
+    firePropertySearch(c, sites);
     // クロスデバイス対応: サーバー経由でキューに追加
     try {
       await fetch("/api/automation/trigger", {
