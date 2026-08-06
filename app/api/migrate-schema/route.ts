@@ -1724,6 +1724,10 @@ CREATE TABLE IF NOT EXISTS automation_commands (
 );
 CREATE INDEX IF NOT EXISTS automation_commands_status_idx ON automation_commands (status, created_at);
 
+-- scrape_and_compare コマンドの顧客情報・条件を格納するペイロードカラム（2026-08-06）
+-- customers/page.tsx の handleScrapeCompare が INSERT 時に使用
+ALTER TABLE automation_commands ADD COLUMN IF NOT EXISTS payload jsonb;
+
 -- ── 物件検索条件 自動読み取り・インテント分類対応（2026-08-06）──
 
 -- 除外エリア専用カラム（ng_points は汎用NG条件、exclusion_areas はエリア除外専用として分離）

@@ -824,7 +824,7 @@ async function _pollAndRunBatch() {
 
 async function _runBatchSearch(command) {
   // ── scrape_and_compare: WebApp（リアプロボタン）からのスクレイプ比較依頼 ────
-  if (command.type === "scrape_and_compare") {
+  if (command.command_type === "scrape_and_compare") {
     await _updateBatchCommand(command.id, { status: "running" });
     try {
       var payload = command.payload || {};
@@ -842,7 +842,7 @@ async function _runBatchSearch(command) {
   }
 
   // ── property_scrape: 指定顧客の物件をスクレイプして比較API に渡す ──────────
-  if (command.type === "property_scrape") {
+  if (command.command_type === "property_scrape") {
     await _updateBatchCommand(command.id, { status: "running" });
     try {
       var scrapeCustomersRes = await fetch(SUMORA_BATCH_API + "/api/property-customers", { cache: "no-store" });
