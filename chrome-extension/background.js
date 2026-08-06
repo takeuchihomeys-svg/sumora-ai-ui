@@ -715,8 +715,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       try {
         // 修正4: itandi スクレイプ用の fill-done ウェイターを autofill 発火「前」に作成
+        // フォーム入力＋ページロードで60秒を超えるケースがあるため90秒（リアプロと統一）
         var itandiFillDone = (site === "itandi" && conditions && conditions.customerId)
-          ? _createFillDoneWaiter("itandi", 60000)
+          ? _createFillDoneWaiter("itandi", 90000)
           : null;
         await _webappAutofill(site, conditions);
         // itandi の場合: autofill 後にバックグラウンドでスクレイプ+AI比較+LINE送信を実行
@@ -855,12 +856,14 @@ async function _getAutomationKeyHeader() {
 // 作成しておき、シグナル受信（true）またはタイムアウト（false）を待つ。
 var _fillDoneWaiters = [];
 
-function _notifyFillDone(site) {
+// resolve 値は { timedOut: boolean, error: string|null } に統一。
+// error は page-script.js が fill-done に載せたエラー内容（フォールバック検索は実行済み）。
+function _notifyFillDone(site, error) {
   var remaining = [];
   _fillDoneWaiters.forEach(function (w) {
     if (!w.site || !site || w.site === site) {
       clearTimeout(w.timer);
-      w.resolve(true);
+      w.resolve({ timedOut: false, error: error || null });
     } else {
       remaining.push(w);
     }
@@ -874,7 +877,7 @@ function _createFillDoneWaiter(site, timeoutMs) {
     entry.timer = setTimeout(function () {
       var idx = _fillDoneWaiters.indexOf(entry);
       if (idx >= 0) _fillDoneWaiters.splice(idx, 1);
-      resolve(false);
+      resolve({ timedOut: true, error: null });
     }, timeoutMs || 90000);
     _fillDoneWaiters.push(entry);
   });
@@ -883,8 +886,12 @@ function _createFillDoneWaiter(site, timeoutMs) {
 // content script からの fill-done 中継を受信
 chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   if (msg && msg.type === "axlx-fill-done") {
-    console.log("[fill-done] 受信 site=" + (msg.site || "unknown"));
-    _notifyFillDone(msg.site || null);
+    if (msg.error) {
+      console.warn("[fill-done] 受信 site=" + (msg.site || "unknown") + " error=" + msg.error);
+    } else {
+      console.log("[fill-done] 受信 site=" + (msg.site || "unknown"));
+    }
+    _notifyFillDone(msg.site || null, msg.error || null);
     sendResponse({ ok: true });
     return true;
   }
@@ -1064,9 +1071,9 @@ async function _runBatchSearch(command) {
       var batchSite = sites[j];
       try {
         // 修正4: fill-done ウェイターを autofill 発火「前」に作成しておく
-        // リアプロは所在地・沿線駅モーダル操作で60秒を超えることがあるため90秒
+        // リアプロ・itandi ともモーダル操作/ページロードで60秒を超えることがあるため90秒に統一
         var fillDoneP = (batchSite === "itandi" || batchSite === "realnetpro")
-          ? _createFillDoneWaiter(batchSite, batchSite === "realnetpro" ? 90000 : 60000)
+          ? _createFillDoneWaiter(batchSite, 90000)
           : null;
         // _batchAutofill は解決済み条件（itandi_lines 等を含む）を返す
         var resolvedBatchConds = await _batchAutofill(customer, batchSite, batchIsWide);
@@ -1555,9 +1562,15 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
   // 修正4: 検索実行シグナルを待つ（所在地・沿線駅モーダル経由だと入力に15〜60秒かかる上、
   // タブのページロード時間もこの待機予算から消費されるため90秒に設定。
   // page-script.js 側は85秒のフェイルセーフで必ず fill-done を送る）
-  var fillDone = fillDonePromise ? await fillDonePromise : false;
-  if (!fillDone) {
+  // resolve 値は { timedOut, error } 形式（_createFillDoneWaiter 参照）
+  var fillDone = fillDonePromise ? await fillDonePromise : null;
+  if (!fillDone || fillDone.timedOut) {
     throw new Error("リアプロ検索完了シグナル（fill-done）が90秒以内に届きませんでした。前回結果の誤送信を防ぐためスクレイプを中止します。");
+  }
+  if (fillDone.error) {
+    // page-script.js 側でエラーが起きた場合でもフォールバック検索は実行済みのため
+    // スクレイプは続行する。ログに残して学習・デバッグ材料にする。
+    console.warn("[fill-done] page-script側エラー（スクレイプは続行）: " + fillDone.error);
   }
   // 検索結果の描画完了を待つ
   await new Promise(function (r) { setTimeout(r, 3000); });
@@ -1636,11 +1649,15 @@ async function _scrapeAllItandiPages(tabId) {
 
 // itandi の autofill 完了後にスクレイプ + /api/compare-properties で AI比較 + LINE送信する
 // 修正4: 固定8秒待ちを廃止し、itandi-page-script.js の検索実行シグナル（fill-done）を待つ。
-// fillDonePromise は autofill 発火「前」に _createFillDoneWaiter("itandi", 60000) で作成しておくこと。
+// fillDonePromise は autofill 発火「前」に _createFillDoneWaiter("itandi", 90000) で作成しておくこと。
 async function _scrapeAndCompareItandi(fillDonePromise, customerId, customerName, conditions) {
-  var fillDone = fillDonePromise ? await fillDonePromise : false;
-  if (!fillDone) {
-    throw new Error("itandi 検索完了シグナル（fill-done）が60秒以内に届きませんでした。前回結果の誤送信を防ぐためスクレイプを中止します。");
+  // resolve 値は { timedOut, error } 形式（_createFillDoneWaiter 参照）
+  var fillDone = fillDonePromise ? await fillDonePromise : null;
+  if (!fillDone || fillDone.timedOut) {
+    throw new Error("itandi 検索完了シグナル（fill-done）が90秒以内に届きませんでした。前回結果の誤送信を防ぐためスクレイプを中止します。");
+  }
+  if (fillDone.error) {
+    console.warn("[fill-done] itandi page-script側エラー（スクレイプは続行）: " + fillDone.error);
   }
   // 検索結果の描画完了を待つ
   await new Promise(function (r) { setTimeout(r, 3000); });

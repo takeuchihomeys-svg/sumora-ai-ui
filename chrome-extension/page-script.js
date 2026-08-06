@@ -202,7 +202,7 @@
         if (onFail) {
           try { onFail(); return; } catch (e2) { console.error('[AX] waitForClick: onFail例外', e2); }
         }
-        notifyDone();
+        notifyDone('waitForClick: tryFn例外: ' + (err && err.message));
         return;
       }
       if (ok) {
@@ -211,7 +211,7 @@
             onDone();
           } catch (err) {
             console.error('[AX] waitForClick: onDone例外 → fill-done送信', err);
-            notifyDone();
+            notifyDone('waitForClick: onDone例外: ' + (err && err.message));
           }
         }, pauseMs);
       } else if (tries < maxTries) {
@@ -223,12 +223,12 @@
             onFail();
           } catch (err) {
             console.error('[AX] waitForClick: onFail例外 → fill-done送信', err);
-            notifyDone();
+            notifyDone('waitForClick: onFail例外: ' + (err && err.message));
           }
         } else {
           // onFail未指定: 従来は「静かに停止」で fill-done が来ずタイムアウトしていた
           console.warn('[AX] waitForClick: タイムアウト（onFail未指定）→ fill-done送信');
-          notifyDone();
+          notifyDone('waitForClick timeout');
         }
       }
     }
@@ -240,11 +240,16 @@
   var _doneNotified = false;
   var _watchdogTimer = null;
 
-  function notifyDone() {
+  // errMsg を渡すと fill-done メッセージに error フィールドが付き、
+  // content.js → background.js へ中継されてログ・デバッグ材料になる。
+  // 正常系は引数なしで呼ぶこと。
+  function notifyDone(errMsg) {
     if (_doneNotified) return;
     _doneNotified = true;
     if (_watchdogTimer) { clearTimeout(_watchdogTimer); _watchdogTimer = null; }
-    window.postMessage({ from: 'aixlinx-fill-done' }, '*');
+    var msg = { from: 'aixlinx-fill-done' };
+    if (errMsg) msg.error = String(errMsg).slice(0, 300);
+    window.postMessage(msg, '*');
   }
 
   // 非ブロッキング警告表示（alert() はモーダルブロッキングで無人運転時に
@@ -532,8 +537,12 @@
     _doneNotified = false;
     if (_watchdogTimer) clearTimeout(_watchdogTimer);
     _watchdogTimer = setTimeout(function() {
-      console.warn('[AX] フェイルセーフ: 85秒以内に検索完了しなかったため fill-done を強制送信');
-      notifyDone();
+      // 素の notifyDone だと「done 到着後に検索が走り前回結果を誤スクレイプする」余地が
+      // あるため、先に検索を強制実行してから done を送る（clickSearch が内部で notifyDone する）
+      console.warn('[AX] フェイルセーフ: 85秒経過 → 検索を強制実行して fill-done 送信');
+      try { clickSearch(); }
+      catch (e) { notifyDone('watchdog: ' + (e && e.message)); }
+      if (!_doneNotified) notifyDone('watchdog-timeout');
     }, 85000);
 
     if (!cond) { notifyDone(); return; }
@@ -547,7 +556,11 @@
         return (t === "× とじる" || t === "×とじる" || t === "とじる" || t === "閉じる") && el.offsetParent !== null;
       });
       var closeDelay = 0;
-      if (closeBtn) { closeBtn.click(); closeDelay = 400; console.log("[AX] モーダルを閉じました"); }
+      if (closeBtn) {
+        // click() の同期例外で callback 未到達（= fill-done 永久欠落）にならないよう try-catch
+        try { closeBtn.click(); closeDelay = 400; console.log("[AX] モーダルを閉じました"); }
+        catch (err) { console.error("[AX] _doReset: モーダル閉じで例外（続行）", err); }
+      }
 
       setTimeout(function() {
         try {
@@ -566,8 +579,10 @@
         });
 
         // セレクト系をリセット（structured_date=築年数 / square_meter=面積 も select要素）
+        // update_date: 前顧客の更新日フィルターが残留すると次顧客の検索が絞られるバグの修正
         var selectNames = ["rental_cost1", "rental_cost2", "transportation_id",
-                           "structured_date", "square_meter_l", "square_meter_h"];
+                           "structured_date", "square_meter_l", "square_meter_h",
+                           "update_date"];
         selectNames.forEach(function(name) {
           var el = document.querySelector("select[name='" + name + "']");
           if (el) { el.selectedIndex = 0; el.dispatchEvent(new Event("change", {bubbles:true})); }
@@ -639,6 +654,19 @@
     var hasCities    = cond.city_codes && cond.city_codes.length > 0;
     var hasModalWard = !!(cond.detail_ward);   // 所在地モーダルを使う（ピンポイント・広げて両方）
     var hasDetailArea = !!(cond.detail_area);  // 町字まで選択（ピンポイントのみ）
+
+    // ── 場所モード判定の一元化（優先順位: station > route > area > none）──────
+    // リアプロは駅×所在地がAND条件になるため、駅/沿線がある場合は地域を使わない
+    function decideLocationMode(c) {
+      if (c.station_names && c.station_names.length > 0) return "station";
+      if (c.route_ids && c.route_ids.length > 0)         return "route";
+      if ((c.city_codes && c.city_codes.length > 0) || c.detail_ward) return "area";
+      return "none";
+    }
+    var locationMode = decideLocationMode(cond);
+    console.log("[AX] 場所モード判定: " + locationMode,
+      { stations: cond.station_names, routes: cond.route_ids,
+        cities: cond.city_codes, ward: cond.detail_ward });
 
     // ── T=0ms: 基本条件 ──────────────────────────────────────────────
     if (cond.rent_min) setSelVal("rental_cost1", nearestDown(RENT_OPTS, cond.rent_min));
@@ -743,7 +771,9 @@
     // ── T=150ms: 所在地絞り込み（直接チェック — モーダルを使わない場合のみ）─────
     // detail_ward がある場合はモーダル経由で選択するのでスキップ
     // 駅・沿線指定がある場合は所在地をセットしない（リアプロはAND条件になり検索結果が出なくなる）
-    if (hasCities && !hasModalWard && !hasStation && !hasRoutes) {
+    // locationMode === "area" は「駅・沿線なし かつ (city_codes or detail_ward)あり」なので
+    // !hasModalWard との組み合わせで従来の hasCities && !hasModalWard && !hasStation && !hasRoutes と等価
+    if (locationMode === "area" && !hasModalWard) {
       var prefCb = document.querySelector('input[name="pref_code"][value="27"]');
       if (prefCb && !prefCb.checked) {
         prefCb.checked = true;
@@ -752,8 +782,18 @@
       setTimeout(function() { setCheckboxes("city_code[]", cond.city_codes); }, 150);
     }
 
-    // 沿線・駅なし
-    if (!hasStation && !hasRoutes) {
+    // 沿線・駅なし（locationMode: area または none）
+    if (locationMode === "area" || locationMode === "none") {
+      if (locationMode === "none") {
+        // 場所条件ゼロ: エラーにはしない（現行踏襲）が、無条件検索であることを必ず可視化する
+        var warnNone = "場所条件なしで検索します（家賃・間取り等のみ）。";
+        if (cond.unknown_tokens && cond.unknown_tokens.length) {
+          warnNone = "未解決の地名: " + cond.unknown_tokens.join("、") + "\n" + warnNone;
+        }
+        showWarnToast(warnNone);
+        setTimeout(clickSearch, 300);
+        return;
+      }
       if (hasModalWard) {
         // ── ポーリング方式（waitForClick）──────────────────────────────
         // 各ステップ: 要素が見つかるまで500msごとにリトライ
@@ -968,9 +1008,20 @@
           function() { fallbackSearchWithoutArea('「所在地絞り込み」ボタンが見つかりませんでした。'); }
         );
       } else {
-        setTimeout(function() { clickSearch(); }, hasCities ? 700 : 300);
+        // area && !hasModalWard: 直接チェック（T=150ms）反映後に検索（none は上で処理済み）
+        setTimeout(function() { clickSearch(); }, 700);
       }
       return;
+    }
+
+    // ── ここから locationMode === "station" || "route" ──────────────────────
+    // 駅+地域併記時: リアプロはAND条件になるため地域条件は捨てる（仕様維持）が、
+    // 黙って捨てず必ず可視化する
+    if ((locationMode === "station" || locationMode === "route") &&
+        (hasModalWard || hasCities)) {
+      console.log("[AX] 駅/沿線条件を優先し、地域条件（" +
+        (cond.detail_ward || (cond.city_codes || []).join(",")) + "）はスキップ");
+      showWarnToast("駅条件を優先し、地域条件はスキップしました。");
     }
 
     // 沿線 form state を事前セット（モーダルを開いた時に反映される可能性あり）
@@ -1086,7 +1137,7 @@
     } catch (err) {
       // 本体の同期例外（不正な条件データ等）でも fill-done を必ず送る
       console.error('[AX] fillRealpro 本体例外 → fill-done送信', err);
-      notifyDone();
+      notifyDone('fillRealpro: ' + ((err && err.message) || String(err)));
     }
     }, 0); // _doReset内で待機済みのため即時実行
     }); // _doReset end
@@ -1099,7 +1150,7 @@
     } catch (err) {
       // fill-done 保証: 同期例外でも必ず完了シグナルを送る
       console.error('[AX] fillRealpro 同期例外 → fill-done送信', err);
-      notifyDone();
+      notifyDone('fillRealpro listener: ' + ((err && err.message) || String(err)));
     }
   });
 })();

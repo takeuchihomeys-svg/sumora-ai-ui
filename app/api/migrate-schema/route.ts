@@ -1733,6 +1733,24 @@ ALTER TABLE automation_commands ADD COLUMN IF NOT EXISTS payload jsonb;
 -- 除外エリア専用カラム（ng_points は汎用NG条件、exclusion_areas はエリア除外専用として分離）
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS exclusion_areas TEXT;
 
+-- unknown_tokens テーブル（未解決地名トークンの学習・DeepSeek解決キャッシュ）（2026-08-06）
+-- resolve-search-conditions の3段フォールバック（CONCEPT_AREA_MAP → 本テーブル → DeepSeek）の学習正本。
+-- resolved_as: {"type":"station","names":[...]} | {"type":"ward","names":[...]} | NULL（未解決）
+-- resolution_type: 'deepseek' | 'manual'（手動登録で次回から自動解決） | 'unresolved' | NULL
+-- to_review=TRUE の行は将来AI提案タブ等で人間レビュー対象
+CREATE TABLE IF NOT EXISTS unknown_tokens (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  token TEXT NOT NULL UNIQUE,
+  resolution_type TEXT,
+  resolved_as JSONB,
+  to_review BOOLEAN NOT NULL DEFAULT FALSE,
+  attempt_count INT NOT NULL DEFAULT 1,
+  last_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_unknown_tokens_token ON unknown_tokens (token);
+ALTER TABLE unknown_tokens DISABLE ROW LEVEL SECURITY;
+
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
