@@ -902,11 +902,6 @@ export default function CustomersPage() {
         }
       }
 
-      // 即時リアプロフィル: webapp-bridge経由で条件を直ちにリアプロに反映（UX改善）
-      // automation_commandsの30秒ポーリング待ちなしでボタン押下直後に検索結果が見える
-      // スクレイプ+比較は引き続きautomation_commands経由で実行される
-      void firePropertySearch(c, ["realnetpro"], resolved, isWide);
-
       const { data: inserted, error } = await supabase
         .from("automation_commands")
         .insert({
@@ -944,6 +939,9 @@ export default function CustomersPage() {
         .select("id")
         .single();
       if (error || !inserted) throw error ?? new Error("insert failed");
+
+      // 同一PCの拡張に即時ポーリングを要求（30秒アラーム待ち不要にする）
+      window.postMessage({ from: "aixlinx-webapp-poll-now" }, "*");
 
       const cmdId = (inserted as { id: string | number }).id;
       const startedAt = Date.now();

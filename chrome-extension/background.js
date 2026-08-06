@@ -709,6 +709,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // ── WebApp からの即時ポーリング要求（30秒アラーム待ちをスキップ）────────────
+  if (msg.type === "axlx-poll-now") {
+    (async () => {
+      var st = await chrome.storage.local.get("batchRunning");
+      var lock = st.batchRunning;
+      if (lock) {
+        var startedAt = (typeof lock === "object" && lock) ? lock.startedAt : 0;
+        if (startedAt && Date.now() - startedAt < BATCH_LOCK_TTL_MS) {
+          sendResponse({ ok: false, reason: "locked" });
+          return;
+        }
+      }
+      sendResponse({ ok: true });
+      _pollAndRunBatch().catch(function(e) {
+        console.warn("[poll-now] error:", e.message || e);
+      });
+    })();
+    return true;
+  }
+
   // ── WebApp（sumora-ai-ui）からの直接検索トリガー ──────────────────────────
   if (msg.type === "axlx-webapp-search") {
     const { site, conditions } = msg;
