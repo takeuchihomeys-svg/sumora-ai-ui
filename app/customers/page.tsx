@@ -892,7 +892,9 @@ export default function CustomersPage() {
   // resolvedConditions は /api/resolve-search-conditions で事前解決済みのフィールド群
   type ResolvedSearchConditions = {
     station_names: string[];
-    route_ids: string[];
+    route_ids: string[];           // リアプロ用 route_id
+    itandi_line_names: string[];   // itandi 用路線名（正式形式）
+    reins_line_names: string[];    // レインズ用路線名
     city_codes: string[];
     detail_ward: string | null;
     detail_area: string | null;
@@ -911,7 +913,8 @@ export default function CustomersPage() {
     const areaArr = c.desired_area
       ? c.desired_area.split(/[・、,]+/).map((s) => s.trim()).filter(Boolean)
       : [];
-    const conditions = {
+    // サイト共通のベース条件
+    const baseConditions = {
       rent_max:      resolvedConditions?.rent_max_resolved ?? c.rent_max ?? null,
       rent_min:      c.rent_min      ?? null,
       walk_minutes:  c.walk_minutes  ?? null,
@@ -921,9 +924,7 @@ export default function CustomersPage() {
       area_max:      c.floor_area_max ?? null,
       pet_ok:        c.pet === true,
       is_wide:       isWide,
-      // 解決済み条件（あれば上書き、なければ空配列）
       station_names: resolvedConditions?.station_names  ?? [],
-      route_ids:     resolvedConditions?.route_ids      ?? [],
       city_codes:    resolvedConditions?.city_codes     ?? [],
       detail_ward:   resolvedConditions?.detail_ward    ?? null,
       detail_area:   resolvedConditions?.detail_area    ?? null,
@@ -938,6 +939,13 @@ export default function CustomersPage() {
     let delay = 0;
     for (const site of sites) {
       const s = site;
+      // サイト別に路線条件を切り替える
+      const lineConditions = s === "itandi"
+        ? { line_names: resolvedConditions?.itandi_line_names ?? [], route_ids: [] as string[] }
+        : s === "reins"
+        ? { line_names: resolvedConditions?.reins_line_names ?? [], route_ids: [] as string[] }
+        : { line_names: [] as string[], route_ids: resolvedConditions?.route_ids ?? [] };  // realnetpro
+      const conditions = { ...baseConditions, ...lineConditions };
       if (delay === 0) {
         window.postMessage({ from: "aixlinx-webapp", site: s, conditions }, "*");
       } else {

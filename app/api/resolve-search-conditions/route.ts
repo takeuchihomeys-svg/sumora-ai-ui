@@ -194,7 +194,9 @@ async function resolveConceptArea(token: string): Promise<string[] | null> {
 
 export type ResolvedSearchConditions = {
   station_names: string[];
-  route_ids: string[];
+  route_ids: string[];           // リアプロ用 route_id
+  itandi_line_names: string[];   // itandi 用路線名（正式形式）
+  reins_line_names: string[];    // レインズ用路線名
   city_codes: string[];
   detail_ward: string | null;
   detail_area: string | null;
@@ -247,8 +249,8 @@ export async function POST(req: NextRequest) {
   // desired_area が空かつ lines/stations も空なら早期リターン
   if (!desired_area && lines.length === 0 && stations.length === 0) {
     return NextResponse.json<ResolvedSearchConditions>({
-      station_names: [], route_ids: [], city_codes: [],
-      detail_ward: null, detail_area: null, unknown_tokens: [],
+      station_names: [], route_ids: [], itandi_line_names: [], reins_line_names: [],
+      city_codes: [], detail_ward: null, detail_area: null, unknown_tokens: [],
       is_wide, rent_max_resolved, building_age_resolved,
     });
   }
@@ -287,7 +289,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ── ② DBキャッシュ（station_map / region_map）で一致解決 ──────────────────
-  type StationRow = { token: string; ward: string | null; realpro_lines: string[]; source: string };
+  type StationRow = { token: string; ward: string | null; realpro_lines: string[]; itandi_lines: string[] | null; reins_line: string | null; source: string };
   type RegionRow  = { token: string; ward: string | null };
 
   const resolvedStation = new Map<string, StationRow>();
@@ -296,7 +298,7 @@ export async function POST(req: NextRequest) {
   if (remaining.length > 0) {
     const [{ data: stationRows }, { data: regionRows }] = await Promise.all([
       db.from("station_map")
-        .select("token, ward, realpro_lines, source")
+        .select("token, ward, realpro_lines, itandi_lines, reins_line, source")
         .in("token", remaining),
       db.from("region_map")
         .select("token, ward")
@@ -323,7 +325,7 @@ export async function POST(req: NextRequest) {
       const { data: simSt } = await db.rpc("find_similar_station", {
         query_text: token, threshold: 0.35,
       });
-      type SimSt = { token: string; ward: string | null; realpro_lines: string[]; source: string; similarity_score: number };
+      type SimSt = { token: string; ward: string | null; realpro_lines: string[]; itandi_lines: string[] | null; reins_line: string | null; source: string; similarity_score: number };
       const bestSt = ((simSt ?? []) as SimSt[]).find(
         (r) => (r.realpro_lines?.length ?? 0) > 0 && r.source !== "unknown",
       );
@@ -342,6 +344,8 @@ export async function POST(req: NextRequest) {
   // ── ④ 結果を station_names / route_ids / city_codes に変換 ────────────────
   const station_names: string[] = [];
   const route_id_set = new Set<string>();
+  const itandi_line_set = new Set<string>();
+  const reins_line_set = new Set<string>();
   const city_code_set = new Set<string>();
   let detail_ward: string | null = null;
   const unknown_tokens: string[] = [];
@@ -364,6 +368,10 @@ export async function POST(req: NextRequest) {
         const rid = lineToRouteId(line);
         if (rid) route_id_set.add(rid);
       }
+      for (const line of st.itandi_lines ?? []) {
+        itandi_line_set.add(line);
+      }
+      if (st.reins_line) reins_line_set.add(st.reins_line);
       continue;
     }
 
@@ -469,6 +477,8 @@ export async function POST(req: NextRequest) {
   const result: ResolvedSearchConditions = {
     station_names,
     route_ids: Array.from(route_id_set),
+    itandi_line_names: Array.from(itandi_line_set),
+    reins_line_names: Array.from(reins_line_set),
     city_codes: Array.from(city_code_set),
     detail_ward,
     detail_area: null, // 町丁目ピンポイントは今後対応
