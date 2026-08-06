@@ -311,6 +311,8 @@ export default function CustomersPage() {
 
   // 🔍 リアプロ自動スクレイプ比較 — Chrome拡張 automation_commands 経由
   const [scrapeCompareStatus, setScrapeCompareStatus] = useState<Record<string, ScrapeCompareStatus>>({});
+  // 修正: error時に automation_commands.error_message を保持して表示（未ログイン等が竹内さんに見える）
+  const [scrapeCompareErrors, setScrapeCompareErrors] = useState<Record<string, string>>({});
   // ポーリングinterval / idle復帰timeout をアンマウント時に確実に停止するための保持
   const scrapePollIntervalsRef = useRef<Set<ReturnType<typeof setInterval>>>(new Set());
   const scrapeIdleTimeoutsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
@@ -855,8 +857,51 @@ export default function CustomersPage() {
   // 通常/広で状態キーを分離（c.id / c.id + "-wide"）
   const handleScrapeCompare = async (c: Customer, isWide: boolean = false) => {
     const key = isWide ? `${c.id}-wide` : c.id;
+    // 修正: 実行中（queued/running/noext表示中）の再押下による重複INSERTを防止
+    const cur = scrapeCompareStatus[key] ?? "idle";
+    if (cur === "queued" || cur === "running" || cur === "noext") return;
     setScrapeCompareStatus((prev) => ({ ...prev, [key]: "queued" }));
+    setScrapeCompareErrors((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
     try {
+      // 修正: itandi/レインズ経路（queuePropertySearch）と対称化。
+      // クライアント側で resolve-search-conditions を呼び、解決済み条件を payload に含める。
+      // 拡張（background.js）側の resolve は残っているためフォールバックとして機能する。
+      let resolved: ResolvedSearchConditions | null = null;
+      if (c.desired_area?.trim() || (c.lines?.length ?? 0) > 0 || (c.stations?.length ?? 0) > 0) {
+        try {
+          const res = await fetch("/api/resolve-search-conditions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              desired_area:  c.desired_area  ?? "",
+              lines:         c.lines         ?? [],
+              stations:      c.stations      ?? [],
+              is_wide:       isWide,
+              rent_max:      c.rent_max      ?? null,
+              building_age:  c.building_age  ?? null,
+            }),
+          });
+          if (res.ok) {
+            resolved = await res.json() as ResolvedSearchConditions;
+            if (resolved.unknown_tokens?.length) {
+              console.warn("[handleScrapeCompare] 未解決トークン:", resolved.unknown_tokens);
+              // 未解決トークンをサーバーサイドで非同期学習（fire-and-forget）
+              fetch("/api/token-resolve", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ tokens: resolved.unknown_tokens }),
+              }).catch(() => {});
+            }
+          }
+        } catch (e) {
+          console.error("[handleScrapeCompare] resolve-search-conditions 失敗（拡張側resolveにフォールバック）:", e);
+        }
+      }
+
       const { data: inserted, error } = await supabase
         .from("automation_commands")
         .insert({
@@ -866,17 +911,26 @@ export default function CustomersPage() {
             customer_name: c.customer_name,
             is_wide: isWide,
             conditions: {
-              rent_max: c.rent_max ?? undefined,
+              rent_max: resolved?.rent_max_resolved ?? c.rent_max ?? undefined,
+              rent_min: c.rent_min ?? undefined,
               walk_minutes: c.walk_minutes ?? undefined,
               floor_plan: c.floor_plan ?? undefined,
-              building_age: c.building_age ?? undefined,
+              building_age: resolved?.building_age_resolved ?? c.building_age ?? undefined,
+              area_min: c.floor_area_min ?? undefined,
+              area_max: c.floor_area_max ?? undefined,
               pet_ok: !!c.pet,
               desired_area: c.desired_area ?? undefined,
               lines: c.lines ?? [],
               stations: c.stations ?? [],
-              city_codes: [],
-              station_names: [],
-              route_ids: [],
+              // 解決済み条件（resolve失敗時は空配列 → 拡張側resolveがフォールバック）
+              city_codes: resolved?.city_codes ?? [],
+              station_names: resolved?.station_names ?? [],
+              route_ids: resolved?.route_ids ?? [],
+              itandi_line_names: resolved?.itandi_line_names ?? [],
+              reins_line_names: resolved?.reins_line_names ?? [],
+              detail_ward: resolved?.detail_ward ?? null,
+              detail_area: resolved?.detail_area ?? null,
+              unknown_tokens: resolved?.unknown_tokens ?? [],
             },
           },
           status: "pending",
@@ -910,7 +964,7 @@ export default function CustomersPage() {
             const elapsed = Date.now() - startedAt;
             const { data } = await supabase
               .from("automation_commands")
-              .select("status")
+              .select("status, error_message")
               .eq("id", cmdId)
               .maybeSingle();
             const st = (data?.status as string | undefined) ?? null;
@@ -920,6 +974,11 @@ export default function CustomersPage() {
               finish("done");
               return;
             } else if (st === "error") {
+              // 修正: エラー理由（未ログイン・エリア未解決等）をUIに保持して表示する
+              const em = (data?.error_message as string | undefined) ?? "";
+              if (em) {
+                setScrapeCompareErrors((prev) => ({ ...prev, [key]: em.slice(0, 200) }));
+              }
               finish("error");
               return;
             } else if (st === "pending" && elapsed > 90_000) {
@@ -2067,7 +2126,9 @@ export default function CustomersPage() {
                       {(() => {
                         const stN = scrapeCompareStatus[c.id] ?? "idle";
                         const stW = scrapeCompareStatus[c.id + "-wide"] ?? "idle";
-                        const busy = (s: ScrapeCompareStatus) => s === "queued" || s === "running";
+                        // 修正: noext（⚠️PC拡張未起動?）表示中も disabled にして重複INSERTを防ぐ
+                        const busy = (s: ScrapeCompareStatus) => s === "queued" || s === "running" || s === "noext";
+                        const errMsg = scrapeCompareErrors[c.id] ?? scrapeCompareErrors[c.id + "-wide"] ?? null;
                         const label = (s: ScrapeCompareStatus, idle: string) =>
                           s === "queued" ? "⏳ 依頼中…"
                           : s === "running" ? "実行中…"
@@ -2083,21 +2144,28 @@ export default function CustomersPage() {
                           : s === "timeout" || s === "noext" ? "border-amber-400 bg-amber-50 text-amber-700"
                           : base;
                         return (
-                          <div className="flex gap-0.5">
-                            <button
-                              onClick={() => void handleScrapeCompare(c, false)}
-                              disabled={busy(stN)}
-                              className={`rounded-xl border px-2.5 py-1.5 text-[11px] font-bold active:scale-95 transition-transform disabled:opacity-50 ${tone(stN, "border-orange-200 bg-orange-50 text-orange-700")}`}
-                            >
-                              {label(stN, "🖥️ リアプロ")}
-                            </button>
-                            <button
-                              onClick={() => void handleScrapeCompare(c, true)}
-                              disabled={busy(stW)}
-                              className={`rounded-xl border px-2 py-1 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-50 ${tone(stW, "border-orange-300 bg-orange-100 text-orange-600")}`}
-                            >
-                              {label(stW, "↔️ 広")}
-                            </button>
+                          <div className="flex flex-col gap-0.5">
+                            <div className="flex gap-0.5">
+                              <button
+                                onClick={() => void handleScrapeCompare(c, false)}
+                                disabled={busy(stN)}
+                                className={`rounded-xl border px-2.5 py-1.5 text-[11px] font-bold active:scale-95 transition-transform disabled:opacity-50 ${tone(stN, "border-orange-200 bg-orange-50 text-orange-700")}`}
+                              >
+                                {label(stN, "🖥️ リアプロ")}
+                              </button>
+                              <button
+                                onClick={() => void handleScrapeCompare(c, true)}
+                                disabled={busy(stW)}
+                                className={`rounded-xl border px-2 py-1 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-50 ${tone(stW, "border-orange-300 bg-orange-100 text-orange-600")}`}
+                              >
+                                {label(stW, "↔️ 広")}
+                              </button>
+                            </div>
+                            {errMsg && (
+                              <div className="max-w-[280px] break-words text-[10px] leading-tight text-red-600">
+                                {errMsg}
+                              </div>
+                            )}
                           </div>
                         );
                       })()}

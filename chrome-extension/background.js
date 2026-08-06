@@ -1304,38 +1304,63 @@ async function _webappAutofill(site, conditions) {
     await new Promise(function(r) { setTimeout(r, 1500); });
   }
 
+  // 修正: タブ準備後にURLを再取得して検証する。
+  // リアプロは未ログインだと main.php がログイン画面（別URL）へリダイレクトされ、
+  // content.js（main.php* 限定注入）も page-script.js も不在になり、
+  // sendMessage / executeScript とも無音失敗して「条件が反映されない」原因になっていた。
+  try {
+    tab = await chrome.tabs.get(tab.id);
+  } catch (tabErr) {
+    throw new Error("autofill failed (" + site + "): タブが閉じられました");
+  }
+  if (site === "realnetpro" && !(tab.url && tab.url.includes("realnetpro.com/main.php"))) {
+    throw new Error(
+      "リアプロが未ログインです（main.php 以外へリダイレクト）。実行PCのChromeでリアプロにログインしてから再実行してください (現URL: " +
+      (tab.url || "不明") + ")"
+    );
+  }
+
   // sendMessage 優先（executeScript の world:"MAIN" はホスト権限エラーが出やすいため）
   var msgType = site === "realnetpro" ? "axlx-realnetpro-autofill"
               : site === "reins"      ? "axlx-reins-autofill"
               :                        "axlx-itandi-autofill";
-  var sent = await new Promise(function(resolve) {
-    chrome.tabs.sendMessage(tab.id, { type: msgType, conditions: conditions }, function(resp) {
-      if (chrome.runtime.lastError) { resolve(false); return; }
-      resolve(true);
+  // 修正: リダイレクト直後は content script のリスナー登録が間に合わないことがあるため
+  // 1回で諦めず 1.5秒間隔で最大3回リトライする
+  var sent = false;
+  for (var sendAttempt = 0; sendAttempt < 3 && !sent; sendAttempt++) {
+    if (sendAttempt > 0) {
+      await new Promise(function(r) { setTimeout(r, 1500); });
+      console.warn("[webapp-autofill] sendMessage retry " + sendAttempt + " for " + site);
+    }
+    sent = await new Promise(function(resolve) {
+      chrome.tabs.sendMessage(tab.id, { type: msgType, conditions: conditions }, function(resp) {
+        if (chrome.runtime.lastError) { resolve(false); return; }
+        resolve(true);
+      });
     });
-  });
+  }
 
   if (!sent) {
-    // content script が挿入されていない場合は executeScript にフォールバック
+    // 修正: リアプロは page-script.js を content.js が注入する構造のため、
+    // content.js 不在タブへの executeScript(postMessage) は受け手ゼロで無音消失する。
+    // フォールバックせず原因が分かるメッセージで throw する。
+    if (site === "realnetpro") {
+      throw new Error(
+        "autofill failed (realnetpro): content.js が3回とも応答しませんでした。" +
+        "リアプロタブの再読み込み、または拡張の再読み込みを試してください (URL: " + (tab.url || "不明") + ")"
+      );
+    }
+    // itandi / reins は従来どおり executeScript にフォールバック
     // 修正: フォールバックも失敗したら throw して呼び出し元が status:'error' を記録できるようにする
     console.warn("[webapp-autofill] sendMessage failed, fallback to executeScript for", site);
     try {
-      if (site === "realnetpro") {
-        await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          world: "MAIN",
-          func: function(c) { window.postMessage({ from: "aixlinx-fill", conditions: c }, "*"); },
-          args: [conditions]
-        });
-      } else {
-        var evName = site === "reins" ? "axlx-reins-fill" : "axlx-itandi-fill";
-        await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          world: "MAIN",
-          func: function(name, c) { window.dispatchEvent(new CustomEvent(name, { detail: c })); },
-          args: [evName, conditions]
-        });
-      }
+      var evName = site === "reins" ? "axlx-reins-fill" : "axlx-itandi-fill";
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        world: "MAIN",
+        func: function(name, c) { window.dispatchEvent(new CustomEvent(name, { detail: c })); },
+        args: [evName, conditions]
+      });
     } catch (fallbackErr) {
       throw new Error("autofill failed (" + site + "): sendMessage失敗 + executeScriptフォールバック失敗: " +
         ((fallbackErr && fallbackErr.message) || fallbackErr));
@@ -1478,11 +1503,40 @@ async function _scrapeAndCompareForCustomer(customer) {
     route_ids:     mergedRoutes,
     city_codes:    mergedCityCodes,
     detail_ward:   mergedDetailWard,                  // 所在地モーダル法で必要（例: "大阪市西淀川区"）
-    detail_area:   resolved.detail_area   || null,   // 町字ピンポイント選択用（未実装）
+    detail_area:   resolved.detail_area || baseConditions.detail_area || null, // 町字ピンポイント選択用
+    // itandi / レインズ用路線名もマージ（payload事前解決 or 拡張側resolveのどちらでも揃うように）
+    itandi_line_names: (resolved.itandi_line_names && resolved.itandi_line_names.length)
+      ? resolved.itandi_line_names : (baseConditions.itandi_line_names || []),
+    reins_line_names:  (resolved.reins_line_names && resolved.reins_line_names.length)
+      ? resolved.reins_line_names  : (baseConditions.reins_line_names  || []),
+    unknown_tokens: (resolved.unknown_tokens && resolved.unknown_tokens.length)
+      ? resolved.unknown_tokens : (baseConditions.unknown_tokens || []),
     is_wide:       isWide,
     rent_max:      resolved.rent_max_resolved     || baseConditions.rent_max     || null,
     building_age:  resolved.building_age_resolved || baseConditions.building_age || null,
   });
+
+  // 修正: サイレント全件検索の防止。
+  // エリア入力（desired_area / lines / stations）があるのに、resolve後も
+  // 駅・路線・区コード・区名がすべて空 = 条件解決失敗。このまま検索すると
+  // エリア条件ゼロの全件検索が黙って実行され、無関係物件がAI比較→LINE送信される。
+  // 誤送信を防ぐため error として明示的に終了する。
+  var hasAreaInput = !!(
+    (baseConditions.desired_area && String(baseConditions.desired_area).trim()) ||
+    (baseConditions.lines && baseConditions.lines.length) ||
+    (baseConditions.stations && baseConditions.stations.length)
+  );
+  var hasAreaResolved =
+    mergedStations.length > 0 || mergedRoutes.length > 0 ||
+    mergedCityCodes.length > 0 || !!mergedDetailWard;
+  if (hasAreaInput && !hasAreaResolved) {
+    var utList = (mergedConditions.unknown_tokens || []).join(", ");
+    throw new Error(
+      "エリア条件を解決できませんでした（条件なし全件検索を防ぐため中止）。" +
+      "desired_area=\"" + (baseConditions.desired_area || "") + "\"" +
+      (utList ? " / unknown_tokens: " + utList : " / resolve-search-conditions が空応答")
+    );
+  }
 
   // Phase 3〜6: fill-done 待機 → スクレイプ → AI比較+LINE送信
   // 修正4: 固定8秒待ちを廃止。ウェイターは autofill 発火「前」に作成する

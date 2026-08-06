@@ -644,3 +644,28 @@ var NON_RESULT_PAGES = ["GBK001310"];
 - **fill-done 未着時の挙動**: 60秒以内にシグナルが来ないとスクレイプせず error になる（前回結果の誤送信防止）。page-script が検索ボタンを押せなかった場合もここで検知される
 - **拡張の再読み込みが必要**: content.js / itandi-content.js / itandi-page-script.js / webapp-bridge.js / background.js を変更したため chrome://extensions で再読み込みすること
 - ステータス語彙: サーバー側 ALLOWED_STATUS = pending / running / done / completed / error（done と completed は両方 done 扱いでUI表示）
+
+---
+
+## 🛠️ リアプロ自動検索「条件が反映されない」根本原因修正（2026-08-06 Fable5）
+
+**症状**: リアプロボタンで「⏳依頼中...のまま」→「条件が反映されず全件検索に見える」。
+
+**確定した根本原因**（DB実レコード + error_message で確定）:
+1. 「依頼中のまま」= pending API 500（SUPABASE_SERVICE_ROLE_KEY 未設定）でコマンド滞留 → **コード側は anon フォールバック実装済み・復旧済み**。Vercel に SUPABASE_SERVICE_ROLE_KEY を設定すること（運用）
+2. 「条件が反映されない」= リアプロ未ログインで main.php がログイン画面へリダイレクト → content.js（main.php* 限定注入）不在 → autofill メッセージが誰にも届かず無音失敗
+3. resolve 空解決時に条件なし全件検索がサイレント実行される構造問題
+
+### 修正一覧（5件）
+| # | 内容 | ファイル |
+|---|---|---|
+| 1 | handleScrapeCompare がクライアント側で resolve-search-conditions を呼び、解決済み条件（station_names/route_ids/city_codes/itandi_line_names/reins_line_names/detail_ward/detail_area/unknown_tokens + rent_min/area_min/area_max）を payload に含める（itandi/レインズ経路と対称化。拡張側 resolve はフォールバックとして残存） | `page.tsx` |
+| 2 | _webappAutofill: タブ準備後に URL 再検証し main.php でなければ「リアプロが未ログインです」と明示 throw。sendMessage を1.5秒間隔3回リトライ。realnetpro の executeScript フォールバック（content.js不在なら受け手ゼロで無意味）を廃止し明示エラー化 | `background.js` |
+| 3 | _scrapeAndCompareForCustomer: エリア入力があるのに resolve 後も駅/路線/区コード/区名が全空なら「エリア条件を解決できませんでした」で error 終了（条件なし全件検索→無関係物件LINE送信を防止）。mergedConditions に itandi_line_names / reins_line_names / unknown_tokens を追加 | `background.js` |
+| 4 | _doReset に route_id[] / station_code[] を追加（前顧客の沿線・駅選択が残るバグ修正） | `page-script.js` |
+| 5 | UI: noext表示中もボタン disabled（重複INSERT防止）。error 時に automation_commands.error_message をボタン下に赤字表示（「未ログイン」等が直接見える） | `page.tsx` |
+
+### ⚠️ 運用メモ
+- **実行PCでリアプロにログインした状態を維持すること**（未ログインは即 error_message で可視化される）
+- manifest 2.4.4 へ bump。background.js / page-script.js 変更のため chrome://extensions で**拡張の再読み込み必須**
+- Vercel 環境変数 SUPABASE_SERVICE_ROLE_KEY の設定を確認（未設定でも anon フォールバックで動くが本来は設定すべき）

@@ -490,9 +490,12 @@
 
       setTimeout(function() {
         // Step2: フォームを直接手動クリア（ページ遷移なし・確実にリセット）
-        // チェックボックス系：市区郡・間取り・構造・設備をすべてリセット
+        // チェックボックス系：市区郡・沿線・駅・間取り・構造・設備をすべてリセット
+        // 修正: route_id[]（沿線）と station_code[]（駅）が抜けており、
+        // 前顧客の沿線・駅選択が残ったまま次顧客の検索が実行されるバグがあった
         var checkboxNames = [
           "city_code[]", "town_code[]",
+          "route_id[]", "station_code[]",
           "room_layout_id[]", "structured_type[]", "eq_rm[]",
         ];
         checkboxNames.forEach(function(name) {
