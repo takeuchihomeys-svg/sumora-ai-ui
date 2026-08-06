@@ -468,6 +468,12 @@ function expandStationRange(stationA, stationB) {
 const NAMBA_CLUSTER_CODES = ["27128", "27111", "27106"]; // 中央区・浪速区・西区
 const NAMBA_CLUSTER_WARDS = ["大阪市中央区", "大阪市浪速区", "大阪市西区"];
 
+// 乗換時間込みで到達可能駅を返す（METRO_GRAPH + Dijkstra使用）
+function getTransitStations(targetStation, maxMin) {
+  if (typeof getReachableStations === 'undefined') return [];
+  return getReachableStations(targetStation, maxMin);
+}
+
 // 地域モード+広げて検索で難波クラスター内のコードがあれば3区全部追加
 function expandNambaCodes(city_codes) {
   if (!NAMBA_CLUSTER_CODES.some(code => city_codes.includes(code))) return city_codes;
@@ -2079,6 +2085,29 @@ function openInstructions(siteKey) {
 
       const rpUnknownTokens = computeUnknownTokens(adjAreaClean);
       showUnknownWarn(rpUnknownTokens); // クリック後も最新状態で更新
+
+      // adjacent_ok: 顧客の主エリアに隣接する市区コードを city_codes に追加
+      if (c.adjacent_ok && typeof ADJACENT_AREA_MAP !== 'undefined') {
+        const mainWards = new Set();
+        // town_names から主エリアを特定
+        if (customerTownNames) {
+          for (const ward of Object.keys(TOWN_CODE_MAP || {})) {
+            if (customerTownNames.some(t => TOWN_CODE_MAP[ward][t])) mainWards.add(ward);
+          }
+        }
+        // city_codes に含まれるエリアも考慮
+        for (const [wardName, code] of Object.entries(WARD_CODE_MAP || {})) {
+          if (city_codes.includes(code)) mainWards.add(wardName);
+        }
+        // 隣接エリアのコードを追加
+        for (const ward of mainWards) {
+          for (const adj of (ADJACENT_AREA_MAP[ward] || [])) {
+            const adjCode = WARD_CODE_MAP[adj];
+            if (adjCode && !city_codes.includes(adjCode)) city_codes.push(adjCode);
+          }
+        }
+      }
+
       window.parent.postMessage({
         from: "aixlinx-underbar",
         action: "autofill",

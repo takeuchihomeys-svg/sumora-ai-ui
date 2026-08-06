@@ -1756,6 +1756,9 @@ ALTER TABLE unknown_tokens DISABLE ROW LEVEL SECURITY;
 -- 値: ['安立', '北加賀屋'] 等の町字名配列（TOWN_CODE_MAP でtown_code[]値に変換してリアプロに設定）
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS town_names text[];
 
+-- 隣接駅OK（条件緩和フラグ）（2026-08-06追加）
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS adjacent_ok BOOLEAN DEFAULT FALSE;
+
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
