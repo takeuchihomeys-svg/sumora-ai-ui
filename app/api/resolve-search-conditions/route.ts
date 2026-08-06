@@ -61,6 +61,20 @@ const LINE_ALIAS_MAP: Record<string, string> = {
   "南港ポートタウン線":"大阪市高速軌道南港ポートタウン線",
 };
 
+// ── 概念的広域地名 → 大阪府の市区名（静的マップ・コスト0）───────────────────
+const CONCEPT_AREA_MAP: Record<string, string[]> = {
+  "北摂": ["豊中市", "吹田市", "茨木市", "高槻市", "池田市", "箕面市", "摂津市", "三島郡島本町"],
+  "河内": ["東大阪市", "八尾市", "大東市", "四條畷市", "柏原市", "松原市", "大阪狭山市", "富田林市", "河内長野市", "羽曳野市", "藤井寺市"],
+  "南河内": ["富田林市", "河内長野市", "羽曳野市", "藤井寺市", "大阪狭山市", "柏原市", "太子町", "河南町", "千早赤阪村"],
+  "泉州": ["堺市", "岸和田市", "泉大津市", "貝塚市", "泉佐野市", "泉南市", "阪南市", "和泉市"],
+  "なんば": ["大阪市中央区", "大阪市浪速区", "大阪市西区"],
+  "難波": ["大阪市中央区", "大阪市浪速区", "大阪市西区"],
+  "梅田": ["大阪市北区", "大阪市福島区"],
+  "天王寺": ["大阪市天王寺区", "大阪市阿倍野区"],
+  "新大阪": ["大阪市淀川区", "大阪市東淀川区"],
+  "大阪市内": ["大阪市都島区", "大阪市福島区", "大阪市此花区", "大阪市西区", "大阪市港区", "大阪市大正区", "大阪市天王寺区", "大阪市浪速区", "大阪市西淀川区", "大阪市東淀川区", "大阪市東成区", "大阪市生野区", "大阪市旭区", "大阪市城東区", "大阪市阿倍野区", "大阪市住吉区", "大阪市東住吉区", "大阪市西成区", "大阪市淀川区", "大阪市鶴見区", "大阪市住之江区", "大阪市平野区", "大阪市北区", "大阪市中央区"],
+};
+
 // 市サフィックス補完（「富田林」→「富田林市」など）
 const ALL_WARD_NAMES = new Set(Object.keys(WARD_CODE_MAP));
 function resolveCityToken(token: string): string | null {
@@ -132,6 +146,52 @@ async function resolveNearbyWithDeepSeek(station: string, minutes: number): Prom
   }
 }
 
+// ── 概念的地域名 → 市区名リスト（静的マップ優先・なければDeepSeek）──────────
+async function resolveConceptArea(token: string): Promise<string[] | null> {
+  // 静的マップで解決（完全一致 + 末尾「エリア」除去して再試行）
+  const stripped = token.replace(/エリア$/, "").trim();
+  const fromMap = CONCEPT_AREA_MAP[token] ?? CONCEPT_AREA_MAP[stripped] ?? null;
+  if (fromMap) return fromMap;
+
+  // DeepSeekで解決
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  if (!apiKey) return null;
+  try {
+    const wardNames = Object.keys(WARD_CODE_MAP).join("、");
+    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
+      method: "POST",
+      signal: AbortSignal.timeout(20_000),
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        max_tokens: 200,
+        messages: [{
+          role: "user",
+          content: `「${token}」は大阪府のどの市・区に対応しますか？
+以下のリストにある名前のみを使ってJSON配列で返してください: ${wardNames}
+例: ["豊中市", "吹田市"]
+リスト外の名前は使わないでください。`,
+        }],
+        temperature: 0,
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { choices: Array<{ message: { content: string } }> };
+    const raw = (data.choices[0]?.message?.content ?? "").trim();
+    const match = raw.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\[[\s\S]*\]/);
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]) as unknown[];
+    const resolved = parsed.filter((s): s is string => typeof s === "string" && WARD_CODE_MAP[s] !== undefined);
+    return resolved.length > 0 ? resolved : null;
+  } catch (e) {
+    console.warn("[resolve-conditions] DeepSeek concept area error:", e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
 export type ResolvedSearchConditions = {
   station_names: string[];
   route_ids: string[];
@@ -139,29 +199,64 @@ export type ResolvedSearchConditions = {
   detail_ward: string | null;
   detail_area: string | null;
   unknown_tokens: string[];
+  is_wide: boolean;
+  rent_max_resolved: number | null;
+  building_age_resolved: number | null;
 };
 
 export async function POST(req: NextRequest) {
   let desired_area: string;
+  let lines: string[];
+  let stations: string[];
+  let is_wide: boolean;
+  let rent_max: number | undefined;
+  let building_age: number | undefined;
+
   try {
-    const body = await req.json() as { desired_area?: string };
+    const body = await req.json() as {
+      desired_area?: string;
+      lines?: string[];
+      stations?: string[];
+      is_wide?: boolean;
+      rent_max?: number;
+      building_age?: number;
+    };
     desired_area = body.desired_area?.trim() ?? "";
+    lines = Array.isArray(body.lines) ? body.lines : [];
+    stations = Array.isArray(body.stations) ? body.stations : [];
+    is_wide = body.is_wide === true;
+    rent_max = typeof body.rent_max === "number" ? body.rent_max : undefined;
+    building_age = typeof body.building_age === "number" ? body.building_age : undefined;
   } catch {
     return NextResponse.json({ error: "invalid request" }, { status: 400 });
   }
 
-  if (!desired_area) {
+  // ── is_wide による賃料・築年数の拡張 ───────────────────────────────────────
+  let rent_max_resolved: number | null = null;
+  let building_age_resolved: number | null = null;
+
+  if (is_wide) {
+    if (rent_max !== undefined) {
+      rent_max_resolved = rent_max <= 100000 ? rent_max + 5000 : rent_max + 10000;
+    }
+    if (building_age !== undefined) {
+      building_age_resolved = building_age + 5;
+    }
+  }
+
+  // desired_area が空かつ lines/stations も空なら早期リターン
+  if (!desired_area && lines.length === 0 && stations.length === 0) {
     return NextResponse.json<ResolvedSearchConditions>({
       station_names: [], route_ids: [], city_codes: [],
       detail_ward: null, detail_area: null, unknown_tokens: [],
+      is_wide, rent_max_resolved, building_age_resolved,
     });
   }
 
   // desired_area を「・」「、」「,」で分割してトークン化（スペースは近隣クエリ内部にあるので除外）
   const rawTokens = desired_area
-    .split(/[・、,]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+    ? desired_area.split(/[・、,]+/).map((s) => s.trim()).filter(Boolean)
+    : [];
 
   // 「〜まで〜分の駅」パターンを分離
   const nearbyQueries: NearbyQuery[] = [];
@@ -292,13 +387,50 @@ export async function POST(req: NextRequest) {
     const nearbyResults = await Promise.all(
       nearbyQueries.map((q) => resolveNearbyWithDeepSeek(q.station, q.minutes))
     );
-    for (const stations of nearbyResults) {
-      for (const s of stations) {
+    for (const nearbyStations of nearbyResults) {
+      for (const s of nearbyStations) {
         if (!station_names.includes(s)) station_names.push(s);
       }
     }
     console.log("[resolve-conditions] nearby stations resolved:", nearbyResults.flat());
   }
+
+  // ── ⑥ lines フィールド → route_ids に変換 ──────────────────────────────────
+  for (const lineName of lines) {
+    const rid = lineToRouteId(lineName);
+    if (rid) {
+      route_id_set.add(rid);
+    } else {
+      console.warn("[resolve-conditions] unknown line name:", lineName);
+    }
+  }
+
+  // ── ⑦ stations フィールド → station_names に追加（重複除去）─────────────────
+  for (const stName of stations) {
+    if (stName && !station_names.includes(stName)) {
+      station_names.push(stName);
+    }
+  }
+
+  // ── ⑧ unknown_tokens の概念的地域名を解決 ────────────────────────────────
+  const conceptResolved = new Set<string>();
+  if (unknown_tokens.length > 0) {
+    await Promise.all(unknown_tokens.map(async (token) => {
+      const cityNames = await resolveConceptArea(token);
+      if (cityNames && cityNames.length > 0) {
+        conceptResolved.add(token);
+        for (const cityName of cityNames) {
+          const code = WARD_CODE_MAP[cityName];
+          if (code) city_code_set.add(code);
+          if (!detail_ward) detail_ward = cityName;
+        }
+        console.log("[resolve-conditions] concept area resolved:", token, "->", cityNames);
+      }
+    }));
+  }
+
+  // 概念地域として解決できたものを unknown_tokens から除去
+  const filteredUnknownTokens = unknown_tokens.filter((t) => !conceptResolved.has(t));
 
   const result: ResolvedSearchConditions = {
     station_names,
@@ -306,7 +438,10 @@ export async function POST(req: NextRequest) {
     city_codes: Array.from(city_code_set),
     detail_ward,
     detail_area: null, // 町丁目ピンポイントは今後対応
-    unknown_tokens,
+    unknown_tokens: filteredUnknownTokens,
+    is_wide,
+    rent_max_resolved,
+    building_age_resolved,
   };
 
   return NextResponse.json(result);

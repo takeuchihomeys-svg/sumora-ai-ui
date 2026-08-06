@@ -60,6 +60,8 @@ type Customer = {
   updated_at: string;
   is_linked?: boolean;
   linked_conversation?: LinkedConv | null;
+  lines?: string[] | null;
+  stations?: string[] | null;
 };
 
 // 物件比較（🏠 物件比較）の結果型
@@ -895,25 +897,30 @@ export default function CustomersPage() {
     detail_ward: string | null;
     detail_area: string | null;
     unknown_tokens: string[];
+    rent_max_resolved?: number | null;
+    building_age_resolved?: number | null;
+    is_wide?: boolean;
   };
 
   const firePropertySearch = (
     c: Customer,
     sites: string[] = ["realnetpro", "itandi"],
     resolvedConditions: ResolvedSearchConditions | null = null,
+    isWide: boolean = false,
   ) => {
     const areaArr = c.desired_area
       ? c.desired_area.split(/[・、,]+/).map((s) => s.trim()).filter(Boolean)
       : [];
     const conditions = {
-      rent_max:      c.rent_max      ?? null,
+      rent_max:      resolvedConditions?.rent_max_resolved ?? c.rent_max ?? null,
       rent_min:      c.rent_min      ?? null,
       walk_minutes:  c.walk_minutes  ?? null,
       floor_plan:    c.floor_plan    ?? null,
-      building_age:  c.building_age  ?? null,
+      building_age:  resolvedConditions?.building_age_resolved ?? c.building_age ?? null,
       area_min:      c.floor_area_min ?? null,
       area_max:      c.floor_area_max ?? null,
       pet_ok:        c.pet === true,
+      is_wide:       isWide,
       // 解決済み条件（あれば上書き、なければ空配列）
       station_names: resolvedConditions?.station_names  ?? [],
       route_ids:     resolvedConditions?.route_ids      ?? [],
@@ -923,8 +930,8 @@ export default function CustomersPage() {
       unknown_tokens: resolvedConditions?.unknown_tokens ?? null,
       // 後方互換: areas フィールドも維持（旧ハンドラが参照する場合に備える）
       areas:         areaArr,
-      lines:         [] as string[],
-      stations:      [] as string[],
+      lines:         c.lines         ?? [] as string[],
+      stations:      c.stations      ?? [] as string[],
       prefecture:    null as string | null,
       city:          null as string | null,
     };
@@ -943,15 +950,22 @@ export default function CustomersPage() {
   // ── スマホ→PC遠隔物件検索: automationキュー経由 ──
   // スマホから押してもPCのChrome拡張（30秒ポーリング）が処理する
   const [searchQueued, setSearchQueued] = useState<string | null>(null);
-  const queuePropertySearch = async (c: Customer, sites: string[] = ["realnetpro", "itandi"]) => {
+  const queuePropertySearch = async (c: Customer, sites: string[] = ["realnetpro", "itandi"], isWide: boolean = false) => {
     // /api/resolve-search-conditions で desired_area をトークン解析・駅・路線・区コードに変換
     let resolved: ResolvedSearchConditions | null = null;
-    if (c.desired_area?.trim()) {
+    if (c.desired_area?.trim() || (c.lines?.length ?? 0) > 0 || (c.stations?.length ?? 0) > 0) {
       try {
         const res = await fetch("/api/resolve-search-conditions", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ desired_area: c.desired_area }),
+          body: JSON.stringify({
+            desired_area:  c.desired_area  ?? "",
+            lines:         c.lines         ?? [],
+            stations:      c.stations      ?? [],
+            is_wide:       isWide,
+            rent_max:      c.rent_max      ?? null,
+            building_age:  c.building_age  ?? null,
+          }),
         });
         if (res.ok) {
           resolved = await res.json() as ResolvedSearchConditions;
@@ -965,7 +979,7 @@ export default function CustomersPage() {
     }
 
     // 同一ブラウザ（PC）への即時通知（解決済み条件を渡す）
-    firePropertySearch(c, sites, resolved);
+    firePropertySearch(c, sites, resolved, isWide);
 
     // クロスデバイス対応: サーバー経由でキューに追加
     try {
@@ -974,7 +988,7 @@ export default function CustomersPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ customer_ids: [c.id], sites, force: true }),
       });
-      const key = c.id + "-" + sites[0];
+      const key = c.id + "-" + sites[0] + (isWide ? "-wide" : "");
       setSearchQueued(key);
       setTimeout(() => setSearchQueued(null), 3000);
     } catch (e) {
@@ -1847,27 +1861,54 @@ export default function CustomersPage() {
                       {viewedUpdating === c.id ? "…" : "物件確認した"}
                     </button>
                   )}
-                  {/* 物件検索ボタン（サイト別3ボタン） */}
+                  {/* 物件検索ボタン（サイト別3ペア: 通常 + 広） */}
                   {c.status !== "pending" && !isApplying(c.status) && (
-                    <div className="flex gap-1.5">
-                      <button
-                        onClick={() => void queuePropertySearch(c, ["realnetpro"])}
-                        className="rounded-xl border border-orange-200 bg-orange-50 px-2.5 py-1.5 text-[11px] font-bold text-orange-700 active:scale-95 transition-transform"
-                      >
-                        {searchQueued === c.id + "-realnetpro" ? "✓" : "🖥️"} リアプロ
-                      </button>
-                      <button
-                        onClick={() => void queuePropertySearch(c, ["itandi"])}
-                        className="rounded-xl border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-[11px] font-bold text-blue-700 active:scale-95 transition-transform"
-                      >
-                        {searchQueued === c.id + "-itandi" ? "✓" : "🖥️"} itandi
-                      </button>
-                      <button
-                        onClick={() => void queuePropertySearch(c, ["reins"])}
-                        className="rounded-xl border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-[11px] font-bold text-purple-600 active:scale-95 transition-transform"
-                      >
-                        {searchQueued === c.id + "-reins" ? "✓" : "🖥️"} レインズ
-                      </button>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {/* リアプロ */}
+                      <div className="flex gap-0.5">
+                        <button
+                          onClick={() => void queuePropertySearch(c, ["realnetpro"])}
+                          className="rounded-xl border border-orange-200 bg-orange-50 px-2.5 py-1.5 text-[11px] font-bold text-orange-700 active:scale-95 transition-transform"
+                        >
+                          {searchQueued === c.id + "-realnetpro" ? "✓" : "🖥️"} リアプロ
+                        </button>
+                        <button
+                          onClick={() => void queuePropertySearch(c, ["realnetpro"], true)}
+                          className="rounded-xl border border-orange-300 bg-orange-100 px-2 py-1 text-[10px] font-bold text-orange-600 active:scale-95 transition-transform"
+                        >
+                          {searchQueued === c.id + "-realnetpro-wide" ? "✓" : "↔️"} 広
+                        </button>
+                      </div>
+                      {/* itandi */}
+                      <div className="flex gap-0.5">
+                        <button
+                          onClick={() => void queuePropertySearch(c, ["itandi"])}
+                          className="rounded-xl border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-[11px] font-bold text-blue-700 active:scale-95 transition-transform"
+                        >
+                          {searchQueued === c.id + "-itandi" ? "✓" : "🖥️"} itandi
+                        </button>
+                        <button
+                          onClick={() => void queuePropertySearch(c, ["itandi"], true)}
+                          className="rounded-xl border border-blue-300 bg-blue-100 px-2 py-1 text-[10px] font-bold text-blue-600 active:scale-95 transition-transform"
+                        >
+                          {searchQueued === c.id + "-itandi-wide" ? "✓" : "↔️"} 広
+                        </button>
+                      </div>
+                      {/* レインズ */}
+                      <div className="flex gap-0.5">
+                        <button
+                          onClick={() => void queuePropertySearch(c, ["reins"])}
+                          className="rounded-xl border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-[11px] font-bold text-purple-600 active:scale-95 transition-transform"
+                        >
+                          {searchQueued === c.id + "-reins" ? "✓" : "🖥️"} レインズ
+                        </button>
+                        <button
+                          onClick={() => void queuePropertySearch(c, ["reins"], true)}
+                          className="rounded-xl border border-purple-300 bg-purple-100 px-2 py-1 text-[10px] font-bold text-purple-500 active:scale-95 transition-transform"
+                        >
+                          {searchQueued === c.id + "-reins-wide" ? "✓" : "↔️"} 広
+                        </button>
+                      </div>
                     </div>
                   )}
                   {/* 物件探しフォーマットボタン: LINEの原文を表示 */}
