@@ -109,12 +109,11 @@
     el.dispatchEvent(new Event("change", {bubbles:true}));
   }
   function setCheckboxes(name, vals) {
+    var svals = (vals || []).map(String);
     var cbs = document.querySelectorAll('input[name="' + name + '"]');
     cbs.forEach(function(cb) {
-      var shouldCheck = vals.indexOf(cb.value) >= 0;
-      if (cb.checked !== shouldCheck) {
-        cb.click();
-      }
+      var shouldCheck = svals.indexOf(String(cb.value)) >= 0;
+      if (cb.checked !== shouldCheck) cb.click();
     });
   }
 
@@ -142,10 +141,8 @@
     try {
       var s = window.getComputedStyle(el);
       if (s.display === 'none' || s.visibility === 'hidden') return false;
-      // getBoundingClientRect()のwidth/height=0チェックを削除:
-      // 結果ページでサイドバーがスクロールされてボタンがビューポート外に出ると
-      // width/height=0と誤判定してclickByText/waitForClickが全て空振りになる。
-      // el.click()はビューポート外の要素でも動作するため不要。
+      var r = el.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) return false; // display:none祖先の検出
       return true;
     } catch(e) { return false; }
   }
@@ -345,7 +342,7 @@
         if (txt === SEARCH_TEXTS[si]) { b.click(); notifyDone(); return; }
       }
     }
-    notifyDone();
+    notifyDone('clickSearch: 検索ボタンが見つかりません（フォーム折りたたみ/モーダル遮蔽の可能性）');
   }
 
   // 路線ボタンをクリック（リアプロモーダル: LABEL.one_line 構造確認済み）
@@ -560,7 +557,8 @@
       for (var si0 = 0; si0 < allEls0.length; si0++) {
         var se0 = allEls0[si0];
         if (!se0.offsetParent) continue;
-        if ((se0.textContent || '').trim().indexOf('検索条件を表示') >= 0) { showFormBtn = se0; break; }
+        var _t0 = (se0.textContent || '').trim();
+        if (_t0 === '検索条件を表示' || _t0 === '▼検索条件を表示' || _t0 === '▶検索条件を表示') { showFormBtn = se0; break; }
       }
       if (showFormBtn) {
         try { showFormBtn.click(); showFormDelay = 800; console.log("[AX] 検索条件を表示 クリック → フォーム展開待機"); }
@@ -880,7 +878,8 @@
         // city_codes も無い場合のみ全件検索防止のため中止する。
         function fallbackSearchWithoutArea(msg) {
           try { closeAreaModal(); } catch (e) { /* ignore */ }
-          if (cond.city_codes && cond.city_codes.length > 0) {
+          var codes = (cond.city_codes || []).map(String);
+          if (codes.length > 0) {
             // 町丁目モーダルは失敗したが区コードがある → 直接チェックで代替（ピンポイントが区レベルに降格）
             showWarnToast('所在地モーダル失敗 → 市区コードで代替検索: ' + msg);
             var prefCb2 = document.querySelector('input[name="pref_code"][value="27"]');
@@ -889,8 +888,18 @@
               prefCb2.dispatchEvent(new Event('change', {bubbles:true}));
             }
             setTimeout(function() {
-              setCheckboxes('city_code[]', cond.city_codes);
-              setTimeout(clickSearch, 700);
+              try { setCheckboxes('city_code[]', codes); } catch (e) { console.error('[AX] fallback setCheckboxes例外', e); }
+              setTimeout(function() {
+                // 1つ以上実際にチェックされた場合のみ検索（全件検索防止）
+                var applied = document.querySelectorAll('input[name="city_code[]"]:checked').length;
+                if (applied > 0) {
+                  clickSearch();
+                } else {
+                  var em = '所在地フォールバック失敗: city_codeチェック未反映（全件検索防止のため中止）: ' + msg;
+                  showWarnToast(em);
+                  notifyDone(em);
+                }
+              }, 700);
             }, 300);
             return;
           }
