@@ -933,21 +933,36 @@ async function _webappAutofill(site, conditions) {
     await new Promise(function(r) { setTimeout(r, 500); });
   }
 
-  if (site === "realnetpro") {
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      world: "MAIN",
-      func: function(c) { window.postMessage({ from: "aixlinx-fill", conditions: c }, "*"); },
-      args: [conditions]
+  // sendMessage 優先（executeScript の world:"MAIN" はホスト権限エラーが出やすいため）
+  var msgType = site === "realnetpro" ? "axlx-realnetpro-autofill"
+              : site === "reins"      ? "axlx-reins-autofill"
+              :                        "axlx-itandi-autofill";
+  var sent = await new Promise(function(resolve) {
+    chrome.tabs.sendMessage(tab.id, { type: msgType, conditions: conditions }, function(resp) {
+      if (chrome.runtime.lastError) { resolve(false); return; }
+      resolve(true);
     });
-  } else {
-    var eventName = site === "reins" ? "axlx-reins-fill" : "axlx-itandi-fill";
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      world: "MAIN",
-      func: function(name, c) { window.dispatchEvent(new CustomEvent(name, { detail: c })); },
-      args: [eventName, conditions]
-    });
+  });
+
+  if (!sent) {
+    // content script が挿入されていない場合は executeScript にフォールバック
+    console.warn("[webapp-autofill] sendMessage failed, fallback to executeScript for", site);
+    if (site === "realnetpro") {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        world: "MAIN",
+        func: function(c) { window.postMessage({ from: "aixlinx-fill", conditions: c }, "*"); },
+        args: [conditions]
+      });
+    } else {
+      var evName = site === "reins" ? "axlx-reins-fill" : "axlx-itandi-fill";
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        world: "MAIN",
+        func: function(name, c) { window.dispatchEvent(new CustomEvent(name, { detail: c })); },
+        args: [evName, conditions]
+      });
+    }
   }
 }
 
