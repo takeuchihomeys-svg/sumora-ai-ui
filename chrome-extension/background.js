@@ -742,18 +742,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       try {
         // ポップアップを開いて顧客を事前選択させるためのコマンドをセッションに保存
         if (conditions && conditions.customerId) {
-          chrome.storage.session.set({
-            pendingPopupCmd: {
-              customerId:   conditions.customerId,
-              customerName: conditions.customerName || null,
-              site:         site || null,
-              areaMode:     conditions.area_mode || null,
-            }
-          });
+          // 修正: session.set を await してから openPopup を呼ぶ（レースコンディション修正）
+          // set が完了する前に popup.js が読むと空/古い pendingPopupCmd を参照してしまう
+          try {
+            await chrome.storage.session.set({
+              pendingPopupCmd: {
+                customerId:   conditions.customerId,
+                customerName: conditions.customerName || null,
+                site:         site || null,
+                areaMode:     conditions.area_mode || null,
+              }
+            });
+          } catch (_sessionErr) { /* session storage 非対応環境では無視 */ }
           // MV3 Chrome 127+: openPopup はユーザージェスチャー無しでも呼べる
-          chrome.action.openPopup().catch(function() {
-            // 旧Chrome / ユーザージェスチャーなしで失敗する場合は無視
-          });
+          // 失敗時は赤バッジ '!' を 10秒表示してアイコンクリックを促す（_pollAndRunBatch と統一）
+          try {
+            await chrome.action.openPopup();
+          } catch (_openPopupErr) {
+            chrome.action.setBadgeText({ text: '!' });
+            chrome.action.setBadgeBackgroundColor({ color: '#e74c3c' });
+            setTimeout(function() { chrome.action.setBadgeText({ text: '' }); }, 10000);
+          }
         }
 
         // 修正4: itandi スクレイプ用の fill-done ウェイターを autofill 発火「前」に作成
@@ -1891,13 +1900,17 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
 // ===== itandi スクレイプ支援関数 =====
 
 // itandi タブに axlx-scrape-itandi メッセージを送り、物件配列を受け取る
+// 修正: content script 無応答は [] ではなく {error: msg} を返す（_scrapeRealproPage と統一）
+// _scrapeAllItandiPages で error を検知して throw させることで
+// 「0件」と「スクレイプ失敗」を区別できるようにする
 async function _scrapeItandiPage(tabId) {
   return new Promise(function (resolve) {
     chrome.tabs.sendMessage(tabId, { type: "axlx-scrape-itandi" }, function (resp) {
       if (chrome.runtime.lastError || !resp) {
+        var errMsg = (chrome.runtime.lastError && chrome.runtime.lastError.message) || "no response";
         console.warn("[itandiScrape] _scrapeItandiPage: no response from tab " + tabId +
-          " (" + (chrome.runtime.lastError && chrome.runtime.lastError.message) + ")");
-        resolve([]);
+          " (" + errMsg + ")");
+        resolve({ error: errMsg });
         return;
       }
       resolve(resp.properties || []);

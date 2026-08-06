@@ -1158,7 +1158,7 @@
           for (var i = 0; i < divs.length; i++) {
             if (!isVisible(divs[i])) continue;
             var t = divs[i].textContent.replace(/\s+/g, '');
-            if (t === '沿線・駅絞り込み＋' || t === '沿線・駅絞り込み+') {
+            if (t.includes('沿線・駅絞り込み')) {
               divs[i].click(); return true;
             }
           }
@@ -1167,18 +1167,32 @@
       },
       function() {
         // STEP B: 路線ボタン（label.one_line）が描画されたらクリック
+        var stationPageDirect = false;
         waitForClick(
           function() {
             var labels = Array.prototype.slice.call(document.querySelectorAll('label.one_line'));
             var vis = labels.filter(function(l) { return isVisible(l); });
-            if (!vis.length) return false; // まだ描画されていない
+            if (!vis.length) {
+              // 駅ページが直接表示されている場合（モーダルが前回の状態を記憶）
+              var stationInputs = Array.prototype.slice.call(document.querySelectorAll('input[name="station_code[]"]'));
+              var visStationInputs = stationInputs.filter(function(i) { return isVisible(i); });
+              if (visStationInputs.length) {
+                console.log('[AX] STEP B: 駅ページが直接表示 → stationPageDirect=true');
+                stationPageDirect = true;
+                return true;
+              }
+              return false; // まだ描画されていない
+            }
             if (hasRoutes) clickLineButtons(cond.route_ids);
             return true;
           },
           function() {
             // STEP C: 「駅の設定へ進む」が出るまで待ってクリック
             waitForClick(
-              function() { return clickByText(['駅の設定へ進む', '駅の設定へ進む›', '駅の設定へ進む>']); },
+              function() {
+                if (stationPageDirect) { console.log('[AX] STEP C: 駅ページ直接表示 → スキップ'); return true; }
+                return clickByText(['駅の設定へ進む', '駅の設定へ進む›', '駅の設定へ進む>']);
+              },
               function() {
                 if (!hasStation) {
                   // 駅指定なし → そのまま閉じて検索
