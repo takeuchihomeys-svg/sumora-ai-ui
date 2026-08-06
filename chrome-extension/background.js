@@ -715,6 +715,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       try {
         await _webappAutofill(site, conditions);
+        // itandi の場合: autofill 後にバックグラウンドでスクレイプ+AI比較+LINE送信を実行
+        // conditions.customerId は customers/page.tsx の firePropertySearch で付与
+        if (site === "itandi" && conditions && conditions.customerId) {
+          _scrapeAndCompareItandi(
+            String(conditions.customerId),
+            conditions.customerName || null,
+            conditions
+          ).catch(function (e) {
+            console.error("[itandiScrape] バックグラウンドエラー:", e.message || e);
+          });
+        }
         sendResponse({ ok: true });
       } catch (e) {
         console.error("[webapp-search] error:", e);
@@ -750,8 +761,40 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const { customerId, conditions } = msg;
     (async () => {
       try {
+        // resolve-search-conditions を呼んで station_names/route_ids/city_codes/detail_ward を解決する
+        // （webapp から受け取った conditions は city_codes:[] 等が空のため、必ずここで解決する）
+        var isWide = !!(conditions.is_wide);
+        var resolved = { station_names: [], route_ids: [], city_codes: [], detail_ward: null, detail_area: null, rent_max_resolved: null, building_age_resolved: null };
+        try {
+          var resolveResp = await fetch("https://sumora-ai-ui.vercel.app/api/resolve-search-conditions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              desired_area: conditions.desired_area || (conditions.areas && conditions.areas.join("・")) || "",
+              lines: conditions.lines || [],
+              stations: conditions.stations || [],
+              is_wide: isWide,
+              rent_max: conditions.rent_max || null,
+              building_age: conditions.building_age || null,
+            }),
+          });
+          if (resolveResp.ok) resolved = await resolveResp.json();
+        } catch (e) {
+          console.warn("[axlx-scrape-and-compare] resolve-search-conditions 失敗（元の条件で続行）:", e);
+        }
+        var resolvedConditions = Object.assign({}, conditions, {
+          station_names: resolved.station_names || conditions.station_names || [],
+          route_ids:     resolved.route_ids     || conditions.route_ids     || [],
+          city_codes:    resolved.city_codes    || conditions.city_codes    || [],
+          detail_ward:   resolved.detail_ward   || null,
+          detail_area:   resolved.detail_area   || null,
+          is_wide:       isWide,
+          rent_max:      resolved.rent_max_resolved || conditions.rent_max || null,
+          building_age:  resolved.building_age_resolved || conditions.building_age || null,
+        });
+
         // リアプロを条件付きで開く（既存インフラ流用）
-        await _webappAutofill("realnetpro", conditions);
+        await _webappAutofill("realnetpro", resolvedConditions);
         // 検索結果表示まで待機
         await new Promise(function (r) { setTimeout(r, 3000); });
 
@@ -770,7 +813,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         console.log("[axlx-scrape-and-compare] 合計 " + properties.length + "件");
 
         if (properties.length > 0) {
-          await _sendPropertiesToBackend(properties, customerId, conditions);
+          await _sendPropertiesToBackend(properties, customerId, resolvedConditions);
         }
         sendResponse({ ok: true, count: properties.length });
       } catch (e) {
@@ -894,11 +937,23 @@ async function _runBatchSearch(command) {
   for (var i = 0; i < targets.length; i++) {
     var customer = targets[i];
     for (var j = 0; j < sites.length; j++) {
+      var batchSite = sites[j];
       try {
-        await _batchAutofill(customer, sites[j]);
-        await new Promise(function(r) { setTimeout(r, 3000); });
+        await _batchAutofill(customer, batchSite);
+        if (batchSite === "itandi") {
+          // itandi の場合: autofill後にスクレイプ+AI比較+LINE送信を実行
+          // （_scrapeAndCompareItandi 内で8秒待機するため別途 sleep 不要）
+          var batchConds = _buildBatchConditions(customer);
+          await _scrapeAndCompareItandi(
+            String(customer.id),
+            customer.customer_name || null,
+            batchConds
+          );
+        } else {
+          await new Promise(function(r) { setTimeout(r, 3000); });
+        }
       } catch (e) {
-        console.error("[batch] autofill error:", customer.id, sites[j], e);
+        console.error("[batch] error:", customer.id, batchSite, e);
       }
     }
     await _updateBatchCommand(command.id, { processed_customers: i + 1 });
@@ -934,6 +989,51 @@ async function _batchAutofill(customer, site) {
   }
 
   var conds = _buildBatchConditions(customer);
+
+  // ── itandi 専用: 路線名・エリア名を itandi-page-script.js が使うキー形式に変換 ──
+  // itandi-page-script.js は cond.itandi_lines と cond.ward_names を参照する。
+  // _buildBatchConditions は cond.lines（リアプロ形式）と cond.areas を返すため変換が必要。
+  if (site === "itandi") {
+    // エリア: areas 配列をそのまま ward_names として使用
+    if (conds.areas && conds.areas.length) {
+      conds.ward_names = conds.areas;
+    }
+    // 路線名: resolve-search-conditions API で itandi 形式の路線名に変換
+    if (conds.lines && conds.lines.length) {
+      try {
+        var resolveResp = await fetch(SUMORA_BATCH_API + "/api/resolve-search-conditions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            desired_area: (conds.areas || []).join("・"),
+            lines: conds.lines,
+            stations: conds.stations || [],
+            is_wide: false,
+            rent_max: conds.rent_max || null,
+            building_age: conds.building_age || null,
+          }),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (resolveResp.ok) {
+          var resolvedItandi = await resolveResp.json();
+          if (resolvedItandi.itandi_line_names && resolvedItandi.itandi_line_names.length) {
+            conds.itandi_lines = resolvedItandi.itandi_line_names;
+          }
+          if (resolvedItandi.station_names && resolvedItandi.station_names.length) {
+            conds.station_names = resolvedItandi.station_names;
+          }
+          // エリア解決済み ward_names がある場合は上書き（概念地域対応）
+          if (resolvedItandi.detail_ward) {
+            if (!conds.ward_names || !conds.ward_names.length) {
+              conds.ward_names = [resolvedItandi.detail_ward];
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("[batchAutofill] itandi resolve失敗（デフォルト条件で続行）:", e.message || e);
+      }
+    }
+  }
 
   if (site === "realnetpro") {
     await chrome.scripting.executeScript({
@@ -1012,8 +1112,9 @@ async function _webappAutofill(site, conditions) {
     await new Promise(function(r) { setTimeout(r, 2000); });
   } else {
     // タブが存在する: フォアグラウンドに切り替え
+    // page-script.js の message リスナー登録完了まで待機（新規タブ2000ms・既存タブも1500ms確保）
     await chrome.tabs.update(tab.id, { active: true });
-    await new Promise(function(r) { setTimeout(r, 500); });
+    await new Promise(function(r) { setTimeout(r, 1500); });
   }
 
   // sendMessage 優先（executeScript の world:"MAIN" はホスト権限エラーが出やすいため）
@@ -1160,6 +1261,8 @@ async function _scrapeAndCompareForCustomer(customer) {
     station_names: resolved.station_names || baseConditions.station_names || [],
     route_ids:     resolved.route_ids     || baseConditions.route_ids     || [],
     city_codes:    resolved.city_codes    || baseConditions.city_codes    || [],
+    detail_ward:   resolved.detail_ward   || null,   // 所在地モーダル法で必要（例: "大阪市西淀川区"）
+    detail_area:   resolved.detail_area   || null,   // 町字ピンポイント選択用（未実装）
     is_wide:       isWide,
     rent_max:      resolved.rent_max_resolved     || baseConditions.rent_max     || null,
     building_age:  resolved.building_age_resolved || baseConditions.building_age || null,
@@ -1191,6 +1294,79 @@ async function _scrapeAndCompareForCustomer(customer) {
 
   // Phase 6: AI比較 + 売上番長LINE送信
   await _sendPropertiesToBackend(properties, customerId, mergedConditions, customerName);
+}
+
+// ===== itandi スクレイプ支援関数 =====
+
+// itandi タブに axlx-scrape-itandi メッセージを送り、物件配列を受け取る
+async function _scrapeItandiPage(tabId) {
+  return new Promise(function (resolve) {
+    chrome.tabs.sendMessage(tabId, { type: "axlx-scrape-itandi" }, function (resp) {
+      if (chrome.runtime.lastError || !resp) {
+        console.warn("[itandiScrape] _scrapeItandiPage: no response from tab " + tabId +
+          " (" + (chrome.runtime.lastError && chrome.runtime.lastError.message) + ")");
+        resolve([]);
+        return;
+      }
+      resolve(resp.properties || []);
+    });
+  });
+}
+
+// itandi の「次へ」ボタンをクリック。クリックできた場合は true を返す
+async function _clickNextPageItandi(tabId) {
+  return new Promise(function (resolve) {
+    chrome.tabs.sendMessage(tabId, { type: "axlx-click-next-page-itandi" }, function (resp) {
+      if (chrome.runtime.lastError || !resp) { resolve(false); return; }
+      resolve(resp.clicked === true);
+    });
+  });
+}
+
+// 最大 maxPages ページを巡回してすべての itandi 物件データを収集する
+async function _scrapeAllItandiPages(tabId) {
+  var allProperties = [];
+  var maxPages = 10; // itandi は通常 1〜5 ページ程度。安全マージンで 10 ページ上限
+  for (var page = 0; page < maxPages; page++) {
+    var props = await _scrapeItandiPage(tabId);
+    console.log("[itandiScrape] page " + (page + 1) + ": " + props.length + "件");
+    if (props.length === 0) break;
+    allProperties = allProperties.concat(props);
+    var hasNext = await _clickNextPageItandi(tabId);
+    if (!hasNext) break;
+    // 次ページ読み込みを待つ
+    await new Promise(function (r) { setTimeout(r, 2000); });
+  }
+  return allProperties;
+}
+
+// itandi の autofill 完了後にスクレイプ + /api/compare-properties で AI比較 + LINE送信する
+// （autofill で検索ボタンが自動クリックされるため、8秒待機してから結果を取得）
+async function _scrapeAndCompareItandi(customerId, customerName, conditions) {
+  // 検索完了を待機（itandi の検索はリアプロより速いが余裕を持って8秒）
+  await new Promise(function (r) { setTimeout(r, 8000); });
+
+  // itandi タブを取得
+  var allTabs = await chrome.tabs.query({});
+  var itandiTab = allTabs.find(function (t) {
+    return t.url && t.url.includes("itandibb.com");
+  });
+  if (!itandiTab) {
+    console.warn("[itandiScrape] itandiタブが見つかりません");
+    return;
+  }
+
+  // 全ページスクレイプ（最大 10 ページ）
+  var properties = await _scrapeAllItandiPages(itandiTab.id);
+  console.log("[itandiScrape] customer=" + customerId + " scraped=" + properties.length + "件");
+
+  if (properties.length === 0) {
+    console.warn("[itandiScrape] 物件0件のためAPIスキップ");
+    return;
+  }
+
+  // AI比較 + 売上番長グループへ LINE 送信
+  await _sendPropertiesToBackend(properties, customerId, conditions, customerName);
 }
 
 // ===== END: 自動化バッチ検索 =====

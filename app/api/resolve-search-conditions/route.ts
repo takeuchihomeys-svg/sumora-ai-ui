@@ -80,6 +80,11 @@ const ALL_WARD_NAMES = new Set(Object.keys(WARD_CODE_MAP));
 function resolveCityToken(token: string): string | null {
   if (ALL_WARD_NAMES.has(token)) return token;
   if (ALL_WARD_NAMES.has(token + "市")) return token + "市";
+  // 短縮形サフィックスマッチ（例: "西淀川区" → "大阪市西淀川区"）
+  // 区・市の完全名がWARD_CODE_MAPに登録されているが、顧客入力は短縮形が多い
+  for (const name of ALL_WARD_NAMES) {
+    if (name.endsWith(token) && name !== token) return name;
+  }
   return null;
 }
 
