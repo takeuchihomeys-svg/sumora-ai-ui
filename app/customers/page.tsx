@@ -1213,10 +1213,9 @@ export default function CustomersPage() {
         : s === "reins"
         ? { line_names: resolvedConditions?.reins_line_names ?? [], route_ids: [] as string[] }
         : { line_names: [] as string[], route_ids: resolvedConditions?.route_ids ?? [] };  // realnetpro
-      // itandi の場合: スクレイプ+AI比較を background.js に委譲するために customerId を付与
-      const customerMeta = s === "itandi"
-        ? { customerId: String(c.id), customerName: c.customer_name ?? null }
-        : {};
+      // 全サイト共通: customerId を渡すことで background.js が pendingPopupCmd を書いてポップアップを開く
+      // itandi のスクレイプ+AI比較は background.js 側で site==="itandi" 判定で制御済み
+      const customerMeta = { customerId: String(c.id), customerName: c.customer_name ?? null };
       const conditions = { ...baseConditions, ...lineConditions, ...customerMeta };
       if (delay === 0) {
         window.postMessage({ from: "aixlinx-webapp", site: s, conditions }, "*");
