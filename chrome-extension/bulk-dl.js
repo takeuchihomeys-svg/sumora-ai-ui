@@ -381,6 +381,138 @@
     }, "image/png");
   }
 
+  // ── スクレイピング: 現在ページの物件データをJSON収集 ─────────────────────
+  // findPrintBtns() が返すボタン1本 = 物件1件として処理する。
+  // extractCard() の TR取得・建物名ロジックをそのまま流用し、
+  // 賃料・間取り・面積・アクセス・所在地・入居可能日・URLも正規表現で抽出する。
+  function scrapePropertiesFromPage() {
+    var btns = findPrintBtns();
+    var results = [];
+
+    btns.forEach(function (btn) {
+      var card = extractCard(btn);
+
+      // TR を特定（extractCard と同じロジック）
+      var row = btn;
+      while (row && row.tagName !== "TR") row = row.parentElement;
+
+      var cells = row ? Array.from(row.querySelectorAll("td")) : [];
+      var allTexts = cells.map(function (td) {
+        return td.textContent.replace(/\s+/g, " ").trim();
+      }).filter(function (t) { return t.length > 0; });
+
+      // 賃料（万円表記）
+      var rentText = allTexts.find(function (t) { return /[0-9,，.]+\s*万円/.test(t); }) || "";
+      var rentMatch = rentText.match(/([0-9,，.]+)\s*万円/);
+      var rent = rentMatch
+        ? Math.round(parseFloat(rentMatch[1].replace(/[,，]/g, "")) * 10000)
+        : null;
+
+      // 管理費・共益費（円表記で、万円を含まない短いセル）
+      var mgmtText = allTexts.find(function (t) {
+        return /[0-9,，]+\s*円/.test(t) && !/万円/.test(t) && t.length < 30;
+      }) || "";
+      var mgmtMatch = mgmtText.match(/([0-9,，]+)\s*円/);
+      var management_fee = mgmtMatch
+        ? parseInt(mgmtMatch[1].replace(/[,，]/g, ""), 10)
+        : null;
+
+      // 間取り（全セル結合して最初にマッチしたもの）
+      var floorPlanMatch = allTexts.join(" ").match(/[1-9](?:R|K|DK|LDK|SLDK|SDK)\b/);
+      var floor_plan = floorPlanMatch ? floorPlanMatch[0] : null;
+
+      // 専有面積（m² / m2 / ㎡ を含むセル）
+      var areaText = allTexts.find(function (t) { return /[\d.]+\s*[m㎡²]/.test(t); }) || "";
+      var areaMatch = areaText.match(/([\d.]+)\s*[m㎡²]/);
+      var area = areaMatch ? parseFloat(areaMatch[1]) : null;
+
+      // アクセス（「徒歩」優先、次に「線」「駅」を含むセル）
+      var accessText = allTexts.find(function (t) { return /徒歩/.test(t); }) ||
+                       allTexts.find(function (t) { return /[線駅]/.test(t); }) || "";
+
+      // 所在地（区・市・町・村を含み、賃料/面積/アクセス系でないセル）
+      var addressText = allTexts.find(function (t) {
+        return /[区市町村]/.test(t) &&
+               t.length < 60 &&
+               !/万円|徒歩|m[²2]|㎡|間取|[0-9]+分/.test(t);
+      }) || "";
+
+      // 入居可能日（「入居」「即入居」「即時」「相談」を含む短いセル）
+      var moveinText = allTexts.find(function (t) {
+        return /入居|即入居|即時|相談/.test(t) && t.length < 30;
+      }) || "";
+
+      // 詳細URL（印刷用PDF以外の最初のリンク）
+      var pdfHref = btn.href || "";
+      var links = row ? Array.from(row.querySelectorAll("a[href]")) : [];
+      var detailLink = links.find(function (a) {
+        return a.href && a.href !== pdfHref && !/印刷用PDF/.test(a.textContent);
+      });
+      var detail_url = detailLink ? detailLink.href : pdfHref;
+
+      results.push({
+        name:           card.name,
+        rent:           rent,
+        management_fee: management_fee,
+        floor_plan:     floor_plan,
+        area:           area,
+        access:         accessText,
+        address:        addressText,
+        move_in:        moveinText,
+        detail_url:     detail_url,
+        pdf_url:        pdfHref
+      });
+    });
+
+    return results;
+  }
+
+  // ── ページネーション: 「次へ」ボタンをクリックして true を返す ───────────
+  // リアプロの「次へ」ボタンは DOM 上どこにあるか機種依存のため多段探索する。
+  function clickNextPageBtn() {
+    // フェーズ1: テキストノードウォーカーで「次へ」「>」「>>」を探す
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    var node;
+    while ((node = walker.nextNode())) {
+      var t = node.textContent.trim();
+      if (t !== "次へ" && t !== "次のページ" && t !== ">" && t !== ">>") continue;
+      var el = node.parentElement;
+      for (var up = 0; up < 4 && el && el !== document.body; up++, el = el.parentElement) {
+        if ((el.tagName === "A" || el.tagName === "BUTTON") && el.offsetParent !== null) {
+          el.click();
+          return true;
+        }
+      }
+    }
+    // フェーズ2: CSSクラス・aria-label ベース（モダンなページャーに対応）
+    var candidates = document.querySelectorAll(
+      '[aria-label*="次"], .pagination-next, .page-next, a.next, button.next'
+    );
+    for (var i = 0; i < candidates.length; i++) {
+      if (candidates[i].offsetParent !== null) {
+        candidates[i].click();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // ── メッセージリスナー（background.js からのスクレイプ指示）──────────────
+  chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
+    if (msg.type === "axlx-scrape-realpro") {
+      var properties = scrapePropertiesFromPage();
+      console.log("[AXLX bulk-dl] axlx-scrape-realpro: " + properties.length + "件取得");
+      sendResponse({ properties: properties });
+      return true;
+    }
+    if (msg.type === "axlx-click-next-page") {
+      var clicked = clickNextPageBtn();
+      console.log("[AXLX bulk-dl] axlx-click-next-page: clicked=" + clicked);
+      sendResponse({ clicked: clicked });
+      return true;
+    }
+  });
+
   // ── MutationObserver ────────────────────────────
   var obs = new MutationObserver(function () {
     if (injectTimer) return;

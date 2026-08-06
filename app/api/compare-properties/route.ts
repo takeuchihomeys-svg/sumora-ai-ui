@@ -1,0 +1,312 @@
+import { NextRequest, NextResponse } from "next/server";
+import { supabase } from "@/app/lib/supabase";
+import Anthropic from "@anthropic-ai/sdk";
+
+export const maxDuration = 120;
+
+// 売上番長グループへの LINE 送信トークン（既存インフラ流用）
+const TOKEN =
+  process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ??
+  process.env.LINE_SUMORA_CHANNEL_ACCESS_TOKEN ??
+  "";
+
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, ""),
+  timeout: 90_000,
+});
+
+// ─── 型定義 ──────────────────────────────────────────────────────────────────
+
+export type PropertyItem = {
+  building_name: string;
+  room_number?: string;
+  rent: number | null; // 円
+  management_fee?: number;
+  floor_plan?: string;
+  area?: number; // m²
+  address?: string;
+  station_info?: string; // 例: "御堂筋線 江坂駅 徒歩5分"
+  available_date?: string;
+  url?: string;
+};
+
+type ScoredItem = {
+  building_name: string;
+  room: string;
+  score: number;
+  comment: string;
+};
+
+type BestItem = {
+  building_name: string;
+  room: string;
+  reason: string;
+};
+
+type AIResult = {
+  scored: ScoredItem[];
+  best: BestItem | null;
+};
+
+// ─── LINE 送信ヘルパー ───────────────────────────────────────────────────────
+
+async function getGroupId(overrideId?: string): Promise<string | null> {
+  if (overrideId) return overrideId;
+  const { data } = await supabase
+    .from("hanbancyo_settings")
+    .select("value")
+    .eq("key", "group_id")
+    .maybeSingle();
+  return (data?.value as string | null) ?? null;
+}
+
+async function pushToLine(to: string, text: string): Promise<void> {
+  const res = await fetch("https://api.line.me/v2/bot/message/push", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${TOKEN}`,
+    },
+    body: JSON.stringify({ to, messages: [{ type: "text", text }] }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    console.error("[compare-properties] LINE push failed:", res.status, errText);
+  }
+}
+
+// ─── フォーマットヘルパー ────────────────────────────────────────────────────
+
+function formatRent(rent: number | null): string {
+  if (rent === null || rent === 0) return "不明";
+  const man = rent / 10000;
+  return `${man % 1 === 0 ? man : man.toFixed(1)}万円`;
+}
+
+function buildLineMessage(
+  customerName: string,
+  properties: PropertyItem[],
+  scored: ScoredItem[],
+  best: BestItem | null
+): string {
+  // building_name → PropertyItem の逆引きマップ
+  const propMap = new Map<string, PropertyItem>();
+  for (const p of properties) {
+    propMap.set(p.building_name, p);
+  }
+
+  const lines: string[] = [
+    `🏠【${customerName}さん 物件検索結果】`,
+    "",
+    `📋 候補物件一覧（${scored.length}件）:`,
+    "━━━━━━━━━━━━━━",
+  ];
+
+  scored.forEach((s, i) => {
+    const prop = propMap.get(s.building_name);
+    const roomStr = s.room ? ` ${s.room}` : "";
+    const rentStr = prop ? formatRent(prop.rent) : "不明";
+    const planStr = prop?.floor_plan ? ` / ${prop.floor_plan}` : "";
+    const areaStr = prop?.area ? ` / ${prop.area}㎡` : "";
+    const stationStr = prop?.station_info ? `\n   ${prop.station_info}` : "";
+
+    lines.push(`${i + 1}. ${s.building_name}${roomStr} ★${s.score}/10`);
+    lines.push(`   ${rentStr}${planStr}${areaStr}${stationStr}`);
+    lines.push(`   ${s.comment}`);
+  });
+
+  if (best) {
+    const roomStr = best.room ? ` ${best.room}` : "";
+    lines.push(
+      "",
+      "🥇 最もオススメの物件:",
+      "━━━━━━━━━━━━━━",
+      `【${best.building_name}${roomStr}】`,
+      best.reason
+    );
+  }
+
+  return lines.join("\n");
+}
+
+// ─── POST ハンドラ ───────────────────────────────────────────────────────────
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = (await req.json()) as {
+      properties?: PropertyItem[];
+      customerId?: string;
+      conditions?: {
+        rent_max?: number;
+        walk_minutes?: number;
+        floor_plan?: string;
+        building_age?: number;
+        pet_ok?: boolean;
+        station_names?: string[];
+        desired_area?: string;
+      };
+      customerName?: string;
+      lineGroupId?: string;
+    };
+
+    // ─── バリデーション ──────────────────────────────────────────────────────
+    if (!body.properties || body.properties.length === 0) {
+      return NextResponse.json(
+        { ok: false, error: "properties が必要です" },
+        { status: 400 }
+      );
+    }
+    if (!body.customerId) {
+      return NextResponse.json(
+        { ok: false, error: "customerId が必要です" },
+        { status: 400 }
+      );
+    }
+
+    // ─── 1. 顧客情報を Supabase から取得 ────────────────────────────────────
+    const { data: customer, error: custErr } = await supabase
+      .from("property_customers")
+      .select(
+        "id, customer_name, rent_max, max_rent, desired_area, walk_minutes, floor_plan, building_age, pet, preferences, ng_points, additional_conditions"
+      )
+      .eq("id", body.customerId)
+      .single();
+
+    if (custErr || !customer) {
+      return NextResponse.json(
+        { ok: false, error: custErr?.message ?? "顧客が見つかりません" },
+        { status: 404 }
+      );
+    }
+
+    const customerName =
+      body.customerName ?? (customer.customer_name as string) ?? "";
+
+    // body.conditions でオーバーライド可能（未指定は DB 値を使用）
+    const cond = body.conditions ?? {};
+    const rentMax =
+      cond.rent_max ??
+      (customer.rent_max as number | null) ??
+      (customer.max_rent as number | null) ??
+      null;
+    const walkMin =
+      cond.walk_minutes ?? (customer.walk_minutes as number | null) ?? null;
+    const floorPlan =
+      cond.floor_plan ?? (customer.floor_plan as string | null) ?? null;
+    const buildingAge =
+      cond.building_age ?? (customer.building_age as number | null) ?? null;
+    const petOk =
+      cond.pet_ok !== undefined
+        ? cond.pet_ok
+        : (customer.pet as boolean | null) ?? null;
+    const desiredArea =
+      cond.desired_area ?? (customer.desired_area as string | null) ?? null;
+    const preferences = (customer.preferences as string | null) ?? null;
+    const ngPoints = (customer.ng_points as string | null) ?? null;
+    const additionalCond =
+      (customer.additional_conditions as string | null) ?? null;
+
+    // ─── 2. 物件数を最大 20 件に制限 ────────────────────────────────────────
+    const MAX_PROPS = 20;
+    const properties = body.properties.slice(0, MAX_PROPS);
+
+    // ─── 3. AI プロンプト構築 ────────────────────────────────────────────────
+    const condLines: string[] = [];
+    if (rentMax) condLines.push(`- 賃料上限: ${(rentMax / 10000).toFixed(1)}万円`);
+    if (desiredArea) condLines.push(`- 沿線・エリア: ${desiredArea}`);
+    if (walkMin) condLines.push(`- 徒歩: ${walkMin}分以内`);
+    if (floorPlan) condLines.push(`- 間取り: ${floorPlan}`);
+    if (buildingAge) condLines.push(`- 築年数: ${buildingAge}年以内`);
+    if (petOk !== null) condLines.push(`- ペット: ${petOk ? "可" : "不可"}`);
+    if (preferences) condLines.push(`- こだわり: ${preferences}`);
+    if (ngPoints) condLines.push(`- NGポイント: ${ngPoints}`);
+    if (additionalCond) condLines.push(`- 追加条件: ${additionalCond}`);
+
+    const propListText = properties
+      .map((p, i) => {
+        const parts: string[] = [
+          `${i + 1}. 【${p.building_name}${p.room_number ? ` ${p.room_number}` : ""}】`,
+        ];
+        if (p.rent !== null)
+          parts.push(
+            `  賃料: ${formatRent(p.rent)}${p.management_fee ? `（管理費 ${formatRent(p.management_fee)}）` : ""}`
+          );
+        if (p.floor_plan) parts.push(`  間取り: ${p.floor_plan}`);
+        if (p.area) parts.push(`  面積: ${p.area}㎡`);
+        if (p.station_info) parts.push(`  アクセス: ${p.station_info}`);
+        if (p.address) parts.push(`  住所: ${p.address}`);
+        if (p.available_date) parts.push(`  入居可能日: ${p.available_date}`);
+        return parts.join("\n");
+      })
+      .join("\n\n");
+
+    const prompt = `お客さんの条件:
+${condLines.length > 0 ? condLines.join("\n") : "（条件情報なし）"}
+
+以下の物件をお客さんの条件に照らし合わせて評価してください。
+各物件に1〜10点のスコアと30文字以内の一言コメントをつけてください。
+最後に最もオススメの物件を1つ選んでください（条件への合致度・コストパフォーマンスを重視）。
+
+物件一覧:
+${propListText}
+
+必ずJSON形式のみで返してください（マークダウン・説明文は一切不要）:
+{
+  "scored": [{"building_name": "建物名", "room": "部屋番号（なければ空文字）", "score": 8, "comment": "条件にぴったり"}],
+  "best": {"building_name": "建物名", "room": "部屋番号（なければ空文字）", "reason": "なぜ最優秀か（50文字以内）"}
+}`;
+
+    // ─── 4. Claude Sonnet で比較 ─────────────────────────────────────────────
+    const aiRes = await anthropic.messages.create({
+      model: "claude-sonnet-5",
+      max_tokens: 2048,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const rawText =
+      aiRes.content.find(
+        (b): b is typeof b & { type: "text"; text: string } => b.type === "text"
+      )?.text ?? "";
+
+    let aiData: AIResult = { scored: [], best: null };
+    try {
+      // コードブロックや前置き文を取り除いてJSONだけ抽出
+      const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        aiData = JSON.parse(jsonMatch[0]) as AIResult;
+      }
+    } catch (e) {
+      console.error("[compare-properties] AI JSON parse error:", e, "\nraw:", rawText.slice(0, 500));
+    }
+
+    const scored = aiData.scored ?? [];
+    const best = aiData.best ?? null;
+
+    // ─── 5. LINE グループへ送信 ──────────────────────────────────────────────
+    let lineSent = false;
+    if (TOKEN && scored.length > 0) {
+      const groupId = await getGroupId(body.lineGroupId);
+      if (groupId) {
+        const lineMsg = buildLineMessage(customerName, properties, scored, best);
+        await pushToLine(groupId, lineMsg);
+        lineSent = true;
+      } else {
+        console.warn("[compare-properties] LINE group_id 未設定のためスキップ");
+      }
+    } else if (!TOKEN) {
+      console.warn("[compare-properties] LINE トークン未設定のためスキップ");
+    }
+
+    return NextResponse.json({
+      ok: true,
+      scored,
+      best,
+      customer_name: customerName,
+      lineSent,
+    });
+  } catch (e) {
+    console.error("[compare-properties]", e);
+    return NextResponse.json({ ok: false, error: "internal error" }, { status: 500 });
+  }
+}

@@ -742,6 +742,45 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // ── WebApp から直接スクレイプ+比較トリガー ──────────────────────────────
+  // WebApp の UI から「物件を比較」ボタンを押すと送られるメッセージ。
+  // 既存の _webappAutofill でリアプロを検索条件付きで開いた後、
+  // 全ページをスクレイプして /api/compare-properties に POST する。
+  if (msg.type === "axlx-scrape-and-compare") {
+    const { customerId, conditions } = msg;
+    (async () => {
+      try {
+        // リアプロを条件付きで開く（既存インフラ流用）
+        await _webappAutofill("realnetpro", conditions);
+        // 検索結果表示まで待機
+        await new Promise(function (r) { setTimeout(r, 3000); });
+
+        // リアプロタブを特定
+        var allTabs = await chrome.tabs.query({});
+        var realproTab = allTabs.find(function (t) {
+          return t.url && t.url.includes("realnetpro.com");
+        });
+        if (!realproTab) {
+          sendResponse({ ok: false, error: "リアプロのタブが見つかりません" });
+          return;
+        }
+
+        // 全ページスクレイプ
+        var properties = await _scrapeAllRealproPages(realproTab.id);
+        console.log("[axlx-scrape-and-compare] 合計 " + properties.length + "件");
+
+        if (properties.length > 0) {
+          await _sendPropertiesToBackend(properties, customerId, conditions);
+        }
+        sendResponse({ ok: true, count: properties.length });
+      } catch (e) {
+        console.error("[axlx-scrape-and-compare] error:", e);
+        sendResponse({ ok: false, error: String(e.message) });
+      }
+    })();
+    return true;
+  }
+
   return false;
 });
 
@@ -778,6 +817,26 @@ async function _pollAndRunBatch() {
 }
 
 async function _runBatchSearch(command) {
+  // ── property_scrape: 指定顧客の物件をスクレイプして比較API に渡す ──────────
+  if (command.type === "property_scrape") {
+    await _updateBatchCommand(command.id, { status: "running" });
+    try {
+      var scrapeCustomersRes = await fetch(SUMORA_BATCH_API + "/api/property-customers", { cache: "no-store" });
+      if (!scrapeCustomersRes.ok) throw new Error("顧客データ取得失敗");
+      var scrapeAllCustomers = await scrapeCustomersRes.json();
+      var scrapeCustomer = Array.isArray(scrapeAllCustomers) && command.customer_ids && command.customer_ids.length > 0
+        ? scrapeAllCustomers.find(function (c) { return command.customer_ids.indexOf(String(c.id)) !== -1; })
+        : null;
+      if (!scrapeCustomer) throw new Error("対象顧客が見つかりません (customer_ids=" + (command.customer_ids || []).join(",") + ")");
+      await _scrapeAndCompareForCustomer(scrapeCustomer);
+      await _updateBatchCommand(command.id, { status: "done", completed_at: new Date().toISOString() });
+    } catch (scrapeErr) {
+      await _updateBatchCommand(command.id, { status: "error", error_message: String(scrapeErr) });
+    }
+    return;
+  }
+
+  // ── 通常バッチ検索（既存処理）────────────────────────────────────────────
   var customersRes = await fetch(SUMORA_BATCH_API + "/api/property-customers", { cache: "no-store" });
   if (!customersRes.ok) throw new Error("顧客データ取得失敗");
   var allCustomers = await customersRes.json();
@@ -977,4 +1036,92 @@ async function _updateBatchCommand(id, updates) {
     console.error("[batch] update error:", e);
   }
 }
+
+// ===== スクレイピング支援関数 =====
+
+// リアプロのタブに axlx-scrape-realpro メッセージを送り、物件配列を受け取る
+async function _scrapeRealproPage(tabId) {
+  return new Promise(function (resolve) {
+    chrome.tabs.sendMessage(tabId, { type: "axlx-scrape-realpro" }, function (resp) {
+      if (chrome.runtime.lastError || !resp) {
+        console.warn("[scrape] _scrapeRealproPage: no response from tab " + tabId + " (" + (chrome.runtime.lastError && chrome.runtime.lastError.message) + ")");
+        resolve([]);
+        return;
+      }
+      resolve(resp.properties || []);
+    });
+  });
+}
+
+// 「次へ」ボタンをクリック。クリックできた場合は true を返す
+async function _clickNextPage(tabId) {
+  return new Promise(function (resolve) {
+    chrome.tabs.sendMessage(tabId, { type: "axlx-click-next-page" }, function (resp) {
+      if (chrome.runtime.lastError || !resp) { resolve(false); return; }
+      resolve(resp.clicked === true);
+    });
+  });
+}
+
+// 最大 maxPages ページを巡回してすべての物件データを収集する
+async function _scrapeAllRealproPages(tabId) {
+  var allProperties = [];
+  var maxPages = 10; // リアプロは通常 1〜3 ページ。安全マージンで 10 ページ上限
+  for (var page = 0; page < maxPages; page++) {
+    var props = await _scrapeRealproPage(tabId);
+    console.log("[scrape] page " + (page + 1) + ": " + props.length + "件");
+    if (props.length === 0) break; // ページに物件がない = 終了
+    allProperties = allProperties.concat(props);
+    var hasNext = await _clickNextPage(tabId);
+    if (!hasNext) break;
+    // 次ページ読み込みを待つ
+    await new Promise(function (r) { setTimeout(r, 2000); });
+  }
+  return allProperties;
+}
+
+// スクレイプ結果を /api/compare-properties に POST する
+async function _sendPropertiesToBackend(properties, customerId, conditions) {
+  var resp = await fetch(SUMORA_BATCH_API + "/api/compare-properties", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ properties: properties, customerId: customerId, conditions: conditions }),
+    signal: AbortSignal.timeout(60000)
+  });
+  if (!resp.ok) {
+    var errText = await resp.text().catch(function () { return ""; });
+    throw new Error("compare-properties API error HTTP " + resp.status + ": " + errText.slice(0, 120));
+  }
+  return resp.json();
+}
+
+// 1顧客分のスクレイプ+比較を実行する（property_scrape コマンド / axlx-scrape-and-compare 共用）
+async function _scrapeAndCompareForCustomer(customer) {
+  // 1. 条件でリアプロを開く（既存 _webappAutofill を流用）
+  var conditions = _buildBatchConditions(customer);
+  await _webappAutofill("realnetpro", conditions);
+
+  // 2. 検索結果が表示されるまで待機
+  await new Promise(function (r) { setTimeout(r, 3000); });
+
+  // 3. リアプロタブを特定
+  var allTabs = await chrome.tabs.query({});
+  var realproTab = allTabs.find(function (t) {
+    return t.url && t.url.includes("realnetpro.com");
+  });
+  if (!realproTab) throw new Error("リアプロのタブが見つかりません");
+
+  // 4. 全ページスクレイプ
+  var properties = await _scrapeAllRealproPages(realproTab.id);
+  console.log("[scrape] customer=" + customer.id + " 合計 " + properties.length + "件");
+
+  if (properties.length === 0) {
+    console.warn("[scrape] 0件のためAPIスキップ");
+    return;
+  }
+
+  // 5. バックエンドAPI に送信（比較・LINE送信は API 側で行う）
+  await _sendPropertiesToBackend(properties, customer.id, conditions);
+}
+
 // ===== END: 自動化バッチ検索 =====

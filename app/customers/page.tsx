@@ -79,6 +79,9 @@ type PropCompareResult = {
   customer_name: string;
 };
 
+// リアプロ自動スクレイプ比較 — automation_commands 経由
+type ScrapeCompareStatus = "idle" | "queued" | "error";
+
 const PROP_STATUS: Record<string, { label: string; dot: string }> = {
   new_inquiry:     { label: "新規",    dot: "bg-red-500" },
   hot:             { label: "毎日",    dot: "bg-orange-400" },
@@ -302,6 +305,9 @@ export default function CustomersPage() {
   const [propCompareImages, setPropCompareImages] = useState<Record<string, Array<{ base64: string; mediaType: string; label: string; preview: string }>>>({});
   const [propCompareLoading, setPropCompareLoading] = useState<string | null>(null);
   const [propCompareResults, setPropCompareResults] = useState<Record<string, PropCompareResult>>({});
+
+  // 🔍 リアプロ自動スクレイプ比較 — Chrome拡張 automation_commands 経由
+  const [scrapeCompareStatus, setScrapeCompareStatus] = useState<Record<string, ScrapeCompareStatus>>({});
 
   // 会話ログタブ管理
   const [activeTabs, setActiveTabs] = useState<Record<string, "summary" | "log">>({});
@@ -826,6 +832,41 @@ export default function CustomersPage() {
       ...prev,
       [customerId]: (prev[customerId] ?? []).filter((_, i) => i !== index),
     }));
+  };
+
+  // 🔍 リアプロ自動スクレイプ比較: automation_commands に scrape_and_compare を積む
+  const handleScrapeCompare = async (c: Customer) => {
+    setScrapeCompareStatus((prev) => ({ ...prev, [c.id]: "queued" }));
+    try {
+      const { error } = await supabase.from("automation_commands").insert({
+        command_type: "scrape_and_compare",
+        payload: {
+          customer_id: c.id,
+          customer_name: c.customer_name,
+          conditions: {
+            rent_max: c.rent_max ?? undefined,
+            walk_minutes: c.walk_minutes ?? undefined,
+            floor_plan: c.floor_plan ?? undefined,
+            building_age: c.building_age ?? undefined,
+            pet_ok: c.pet ?? undefined,
+            desired_area: c.desired_area ?? undefined,
+          },
+        },
+        status: "pending",
+        created_at: new Date().toISOString(),
+      });
+      if (error) throw error;
+      // Chrome拡張のポーリングが拾うまで少し待ってからステータスをリセット
+      setTimeout(() => {
+        setScrapeCompareStatus((prev) => ({ ...prev, [c.id]: "idle" }));
+      }, 5000);
+    } catch (e) {
+      console.error("[handleScrapeCompare]", e);
+      setScrapeCompareStatus((prev) => ({ ...prev, [c.id]: "error" }));
+      setTimeout(() => {
+        setScrapeCompareStatus((prev) => ({ ...prev, [c.id]: "idle" }));
+      }, 3000);
+    }
   };
 
   // 🏠 物件比較: /api/recommend-property に画像を送って比較実行
@@ -1975,6 +2016,24 @@ export default function CustomersPage() {
                   >
                     🏠 物件比較
                   </button>
+                  {/* リアプロ自動スクレイプ比較ボタン */}
+                  {(() => {
+                    const st = scrapeCompareStatus[c.id] ?? "idle";
+                    return (
+                      <button
+                        onClick={() => handleScrapeCompare(c)}
+                        disabled={st !== "idle"}
+                        title="Chrome拡張がリアプロをスクレイプして売上番長グループに送信"
+                        className={`rounded-xl border px-3 py-1.5 text-xs font-bold active:scale-95 transition-transform disabled:opacity-50 ${
+                          st === "error"
+                            ? "border-red-300 bg-red-50 text-red-700"
+                            : "border-blue-300 bg-blue-50 text-blue-700"
+                        }`}
+                      >
+                        {st === "queued" ? "依頼中…" : st === "error" ? "エラー" : "🔍 自動比較"}
+                      </button>
+                    );
+                  })()}
                   {c.phone && (
                     <a href={`tel:${c.phone}`}
                       className="rounded-xl border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-bold text-[#444] active:scale-95 transition-transform">
