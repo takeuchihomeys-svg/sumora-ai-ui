@@ -988,11 +988,20 @@ export default function CustomersPage() {
       const s = site;
       // サイト別に路線条件を切り替える
       const lineConditions = s === "itandi"
-        ? { line_names: resolvedConditions?.itandi_line_names ?? [], route_ids: [] as string[] }
+        ? {
+            // itandi-page-script.js は itandi_lines キーを参照するため両キーで渡す
+            itandi_lines: resolvedConditions?.itandi_line_names ?? [],
+            line_names: resolvedConditions?.itandi_line_names ?? [],
+            route_ids: [] as string[],
+          }
         : s === "reins"
         ? { line_names: resolvedConditions?.reins_line_names ?? [], route_ids: [] as string[] }
         : { line_names: [] as string[], route_ids: resolvedConditions?.route_ids ?? [] };  // realnetpro
-      const conditions = { ...baseConditions, ...lineConditions };
+      // itandi の場合: スクレイプ+AI比較を background.js に委譲するために customerId を付与
+      const customerMeta = s === "itandi"
+        ? { customerId: String(c.id), customerName: c.customer_name ?? null }
+        : {};
+      const conditions = { ...baseConditions, ...lineConditions, ...customerMeta };
       if (delay === 0) {
         window.postMessage({ from: "aixlinx-webapp", site: s, conditions }, "*");
       } else {

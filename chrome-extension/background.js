@@ -939,15 +939,16 @@ async function _runBatchSearch(command) {
     for (var j = 0; j < sites.length; j++) {
       var batchSite = sites[j];
       try {
-        await _batchAutofill(customer, batchSite);
+        // _batchAutofill は解決済み条件（itandi_lines 等を含む）を返す
+        var resolvedBatchConds = await _batchAutofill(customer, batchSite);
         if (batchSite === "itandi") {
           // itandi の場合: autofill後にスクレイプ+AI比較+LINE送信を実行
           // （_scrapeAndCompareItandi 内で8秒待機するため別途 sleep 不要）
-          var batchConds = _buildBatchConditions(customer);
+          // 解決済み条件（itandi_lines を含む）を渡すことで compare-properties API に正しい路線情報を届ける
           await _scrapeAndCompareItandi(
             String(customer.id),
             customer.customer_name || null,
-            batchConds
+            resolvedBatchConds || _buildBatchConditions(customer)
           );
         } else {
           await new Promise(function(r) { setTimeout(r, 3000); });
@@ -1042,15 +1043,35 @@ async function _batchAutofill(customer, site) {
       func: function(c) { window.postMessage({ from: "aixlinx-fill", conditions: c }, "*"); },
       args: [conds]
     });
+  } else if (site === "itandi") {
+    // itandi: chrome.tabs.sendMessage で axlx-itandi-autofill を送る
+    // itandi-content.js が injectPageScript() を呼んでから axlx-itandi-fill イベントを転送する
+    var itandiSent = await new Promise(function(resolve) {
+      chrome.tabs.sendMessage(tab.id, { type: "axlx-itandi-autofill", conditions: conds }, function(resp) {
+        resolve(!chrome.runtime.lastError && !!(resp && resp.ok));
+      });
+    });
+    if (!itandiSent) {
+      // フォールバック: page script が既に注入済みの場合は MAIN world で直接イベント発火
+      console.warn("[batchAutofill] itandi sendMessage未確認, executeScript fallback");
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        world: "MAIN",
+        func: function(c) { window.dispatchEvent(new CustomEvent("axlx-itandi-fill", { detail: c })); },
+        args: [conds]
+      });
+    }
   } else {
-    var eventName = site === "reins" ? "axlx-reins-fill" : "axlx-itandi-fill";
+    // reins
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       world: "MAIN",
-      func: function(name, c) { window.dispatchEvent(new CustomEvent(name, { detail: c })); },
-      args: [eventName, conds]
+      func: function(c) { window.dispatchEvent(new CustomEvent("axlx-reins-fill", { detail: c })); },
+      args: [conds]
     });
   }
+  // 解決済み条件を返す（呼び出し元でスクレイプ+比較に再利用できるようにする）
+  return conds;
 }
 
 function _buildBatchConditions(c) {
