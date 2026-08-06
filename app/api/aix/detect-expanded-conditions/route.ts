@@ -5,7 +5,7 @@ const HAIKU_MODEL = "claude-haiku-4-5-20251001";
 
 export const maxDuration = 30;
 
-const VALID_CHIPS = new Set(["家賃", "礼金", "築年数", "地域", "初期費用"]);
+const VALID_CHIPS = new Set(["家賃", "礼金", "築年数", "地域", "初期費用", "隣接エリア"]);
 
 export async function POST(request: NextRequest) {
   try {
@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
     const userText = [
       conditions ? `【お客様の希望条件】\n${conditions}` : "",
       conversationText ? `【会話履歴（最新${messages.length}件）】\n${conversationText}` : "",
-      `\n上記の会話を読み、お客様が了承した・受け入れた・条件を緩めることに同意した項目を以下のラベルから選んでください。\n選択肢：家賃、礼金、築年数、地域、初期費用\n\nラベルが会話に明確に現れない場合は空配列にしてください。\n必ず以下のJSON形式のみで返してください：\n{"expanded":["ラベル1","ラベル2"]}`,
+      `\n上記の会話を読み、お客様が了承した・受け入れた・条件を緩めることに同意した項目を以下のラベルから選んでください。\n選択肢：家賃、礼金、築年数、地域、初期費用、隣接エリア\n\n【隣接エリアの判定基準】「隣の区域も大丈夫」「周辺エリアも検討可能」「近くならどこでも」「その辺ならどこでもいい」など、指定エリアに隣接する地域への拡張を明示的に了承した場合のみ選択してください。\n\nラベルが会話に明確に現れない場合は空配列にしてください。\n必ず以下のJSON形式のみで返してください：\n{"expanded":["ラベル1","ラベル2"]}`,
     ].filter(Boolean).join("\n\n");
 
     const res = await fetch("https://api.anthropic.com/v1/messages", {

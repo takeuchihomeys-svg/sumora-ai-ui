@@ -2041,6 +2041,18 @@ function openInstructions(siteKey) {
           const intermediate = expandStationRange(resolvedStations[i], resolvedStations[i + 1]);
           intermediate.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
         }
+        // 「江坂まで20分」等のパターン → METRO_GRAPH Dijkstra で到達可能駅を一括展開
+        const transitRe = /([^\s、。,　]{1,10}?)駅?(?:まで|から)(\d+)分/g;
+        let _tm;
+        while ((_tm = transitRe.exec(adjAreaClean)) !== null) {
+          const tgt = _tm[1].replace(/駅$/, '').trim();
+          const maxMin = parseInt(_tm[2], 10);
+          if (typeof getReachableStations === 'function' && tgt && maxMin > 0 && maxMin <= 90) {
+            getReachableStations(tgt, maxMin).forEach(s => {
+              if (!realpro_station_names.includes(s)) realpro_station_names.push(s);
+            });
+          }
+        }
       }
 
       // 地名マップから町字レベルのトークンを検索（駅モード時はスキップ：所在地フィールドに入らないようにする）
