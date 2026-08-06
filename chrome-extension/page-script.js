@@ -140,10 +140,13 @@
   // position:fixed のモーダル内要素は offsetParent=null になるため BoundingClientRect で判定
   function isVisible(el) {
     try {
-      var r = el.getBoundingClientRect();
-      if (r.width === 0 && r.height === 0) return false;
       var s = window.getComputedStyle(el);
-      return s.display !== 'none' && s.visibility !== 'hidden';
+      if (s.display === 'none' || s.visibility === 'hidden') return false;
+      // getBoundingClientRect()のwidth/height=0チェックを削除:
+      // 結果ページでサイドバーがスクロールされてボタンがビューポート外に出ると
+      // width/height=0と誤判定してclickByText/waitForClickが全て空振りになる。
+      // el.click()はビューポート外の要素でも動作するため不要。
+      return true;
     } catch(e) { return false; }
   }
 
@@ -1085,12 +1088,13 @@
     }
 
     // 沿線・駅モーダル操作がタイムアウトした場合のフォールバック:
-    // モーダルを閉じて（選択できた条件だけで）そのまま検索する。
-    // 何もせず fill-done だけ送ると前回結果ページを誤スクレイプする恐れがあるため必ず検索する。
+    // 全件検索（エリアなし）を送信するのは誤物件LINE送信の原因になるためnotifyDone(error)で中止する。
+    // fallbackSearchWithoutArea と同じ方針: エリア条件が解決できない場合は検索しない。
     function fallbackSearchWithoutStation(msg) {
-      showWarnToast(msg + '\n沿線・駅の選択なしで検索します。');
-      try { closeStationModal(); } catch (e) { /* 閉じ失敗でも続行 */ }
-      setTimeout(clickSearch, 800); // clickSearch が必ず notifyDone する
+      var errMsg = '沿線・駅モーダル操作失敗（全件検索防止のため中止）: ' + msg;
+      showWarnToast(errMsg);
+      try { closeStationModal(); } catch (e) { /* ignore */ }
+      notifyDone(errMsg);
     }
 
     // STEP A: 「沿線・駅絞り込み＋」が出るまで待ってクリック
