@@ -764,7 +764,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // resolve-search-conditions を呼んで station_names/route_ids/city_codes/detail_ward を解決する
         // （webapp から受け取った conditions は city_codes:[] 等が空のため、必ずここで解決する）
         var isWide = !!(conditions.is_wide);
-        var resolved = { station_names: [], route_ids: [], city_codes: [], detail_ward: null, detail_area: null, rent_max_resolved: null, building_age_resolved: null };
+        // resolved は {} で初期化する（_scrapeAndCompareForCustomer と同じ書き方）。
+        // 空配列で事前初期化すると [] が truthy のため resolve API 失敗時の
+        // 「元の条件で続行」フォールバックが機能せず無条件検索になる
+        var resolved = {};
         try {
           var resolveResp = await fetch("https://sumora-ai-ui.vercel.app/api/resolve-search-conditions", {
             method: "POST",
@@ -782,12 +785,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         } catch (e) {
           console.warn("[axlx-scrape-and-compare] resolve-search-conditions 失敗（元の条件で続行）:", e);
         }
+        // resolve結果が空配列の場合も webapp から渡された条件を残す（length チェック）
+        var mergedStations  = (resolved.station_names && resolved.station_names.length) ? resolved.station_names : (conditions.station_names || []);
+        var mergedRoutes    = (resolved.route_ids && resolved.route_ids.length)         ? resolved.route_ids     : (conditions.route_ids     || []);
+        var mergedCityCodes = (resolved.city_codes && resolved.city_codes.length)       ? resolved.city_codes    : (conditions.city_codes    || []);
+        // 複数区顧客の暫定策: resolve API は detail_ward を最初の1区しか返さないため、
+        // city_codes が2つ以上ある場合は detail_ward を捨てて従来の直接チェックボックス法に戻す
+        // （所在地モーダル法だと2区目以降がサイレントに脱落する）
+        var mergedDetailWard = (mergedCityCodes.length >= 2) ? null : (resolved.detail_ward || null);
         var resolvedConditions = Object.assign({}, conditions, {
-          station_names: resolved.station_names || conditions.station_names || [],
-          route_ids:     resolved.route_ids     || conditions.route_ids     || [],
-          city_codes:    resolved.city_codes    || conditions.city_codes    || [],
-          detail_ward:   resolved.detail_ward   || null,
-          detail_area:   resolved.detail_area   || null,
+          station_names: mergedStations,
+          route_ids:     mergedRoutes,
+          city_codes:    mergedCityCodes,
+          detail_ward:   mergedDetailWard,
+          detail_area:   resolved.detail_area || null,
           is_wide:       isWide,
           rent_max:      resolved.rent_max_resolved || conditions.rent_max || null,
           building_age:  resolved.building_age_resolved || conditions.building_age || null,
@@ -1278,11 +1289,18 @@ async function _scrapeAndCompareForCustomer(customer) {
   }
 
   // Phase 2: 解決済み条件をマージしてリアプロを開き条件入力・検索
+  // resolve結果が空配列の場合も従来条件を残す（length チェック）
+  var mergedStations  = (resolved.station_names && resolved.station_names.length) ? resolved.station_names : (baseConditions.station_names || []);
+  var mergedRoutes    = (resolved.route_ids && resolved.route_ids.length)         ? resolved.route_ids     : (baseConditions.route_ids     || []);
+  var mergedCityCodes = (resolved.city_codes && resolved.city_codes.length)       ? resolved.city_codes    : (baseConditions.city_codes    || []);
+  // 複数区顧客の暫定策: detail_ward は最初の1区しか返らないため、
+  // city_codes が2つ以上ある場合は null にして従来の直接チェックボックス法を使う
+  var mergedDetailWard = (mergedCityCodes.length >= 2) ? null : (resolved.detail_ward || null);
   var mergedConditions = Object.assign({}, baseConditions, {
-    station_names: resolved.station_names || baseConditions.station_names || [],
-    route_ids:     resolved.route_ids     || baseConditions.route_ids     || [],
-    city_codes:    resolved.city_codes    || baseConditions.city_codes    || [],
-    detail_ward:   resolved.detail_ward   || null,   // 所在地モーダル法で必要（例: "大阪市西淀川区"）
+    station_names: mergedStations,
+    route_ids:     mergedRoutes,
+    city_codes:    mergedCityCodes,
+    detail_ward:   mergedDetailWard,                  // 所在地モーダル法で必要（例: "大阪市西淀川区"）
     detail_area:   resolved.detail_area   || null,   // 町字ピンポイント選択用（未実装）
     is_wide:       isWide,
     rent_max:      resolved.rent_max_resolved     || baseConditions.rent_max     || null,

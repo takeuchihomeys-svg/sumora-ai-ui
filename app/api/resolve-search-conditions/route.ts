@@ -82,8 +82,14 @@ function resolveCityToken(token: string): string | null {
   if (ALL_WARD_NAMES.has(token + "市")) return token + "市";
   // 短縮形サフィックスマッチ（例: "西淀川区" → "大阪市西淀川区"）
   // 区・市の完全名がWARD_CODE_MAPに登録されているが、顧客入力は短縮形が多い
+  // 境界チェック必須: プレフィックスが「市」で終わる場合のみ採用する。
+  // これがないと「淀川区」→大阪市西淀川区（誤・正は大阪市淀川区）、
+  // 「東区」→大阪市城東区（誤・正は堺市東区）、「大阪市」→東大阪市（誤）になる
   for (const name of ALL_WARD_NAMES) {
-    if (name.endsWith(token) && name !== token) return name;
+    if (name.endsWith(token) && name !== token) {
+      const prefix = name.slice(0, name.length - token.length);
+      if (prefix.endsWith("市")) return name;
+    }
   }
   return null;
 }

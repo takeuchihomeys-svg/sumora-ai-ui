@@ -833,7 +833,25 @@
                   console.log('[AX] STEP2: 既に町字ページ → STEP4へ直行');
                   return true;
                 }
-                if (isWardChecked()) { prefClicked = false; console.log('[AX] STEP2: city_code[]選択済みを検出 → 再クリックスキップ'); return true; }
+                if (isWardChecked()) {
+                  // 連続検索対策: checked済みが「今回の顧客の区」か検証する。
+                  // 前顧客の選択が残っているとそのまま検索されてしまうため、
+                  // checked値が今回の city_codes に含まれない場合は解除して選び直す
+                  var checkedInputs = Array.prototype.slice.call(document.querySelectorAll('label input[name="city_code[]"]:checked'));
+                  var wantCodes = (cond.city_codes || []).map(String);
+                  var staleInputs = checkedInputs.filter(function(inp) { return wantCodes.indexOf(String(inp.value)) === -1; });
+                  if (wantCodes.length === 0 || checkedInputs.length === 0 || staleInputs.length === 0) {
+                    // 検証不能（期待コードなし/チェックボックス未描画）または一致 → 従来通りスキップ
+                    prefClicked = false; console.log('[AX] STEP2: city_code[]選択済みを検出 → 再クリックスキップ'); return true;
+                  }
+                  console.log('[AX] STEP2: 前顧客のcity_code残留を検出（' + staleInputs.length + '件）→ 解除して選び直し');
+                  staleInputs.forEach(function(inp) {
+                    var lbl = inp.closest ? inp.closest('label') : null;
+                    if (lbl) simulateClick(lbl); // トグルで解除
+                  });
+                  if (clickWardPrecise([wardFull, wardShort])) { prefClicked = false; return true; }
+                  return false; // 市区郡ラベル未描画 → 次ポーリングで再試行
+                }
                 if (clickWardPrecise([wardFull, wardShort])) { prefClicked = false; return true; }
                 if (clickByText(['大阪府'])) { prefClicked = true; return true; }
                 return false;
