@@ -817,6 +817,24 @@ async function _pollAndRunBatch() {
 }
 
 async function _runBatchSearch(command) {
+  // ── scrape_and_compare: WebApp（リアプロボタン）からのスクレイプ比較依頼 ────
+  if (command.type === "scrape_and_compare") {
+    await _updateBatchCommand(command.id, { status: "running" });
+    try {
+      var payload = command.payload || {};
+      await _scrapeAndCompareForCustomer({
+        customer_id: payload.customer_id,
+        customer_name: payload.customer_name,
+        is_wide: payload.is_wide || false,
+        conditions: payload.conditions || {},
+      });
+      await _updateBatchCommand(command.id, { status: "done", completed_at: new Date().toISOString() });
+    } catch (scrapeErr) {
+      await _updateBatchCommand(command.id, { status: "error", error_message: String(scrapeErr) });
+    }
+    return;
+  }
+
   // ── property_scrape: 指定顧客の物件をスクレイプして比較API に渡す ──────────
   if (command.type === "property_scrape") {
     await _updateBatchCommand(command.id, { status: "running" });
@@ -1081,11 +1099,13 @@ async function _scrapeAllRealproPages(tabId) {
 }
 
 // スクレイプ結果を /api/compare-properties に POST する
-async function _sendPropertiesToBackend(properties, customerId, conditions) {
+async function _sendPropertiesToBackend(properties, customerId, conditions, customerName) {
+  var body = { properties: properties, customerId: customerId, conditions: conditions };
+  if (customerName) body.customerName = customerName;
   var resp = await fetch(SUMORA_BATCH_API + "/api/compare-properties", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ properties: properties, customerId: customerId, conditions: conditions }),
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(60000)
   });
   if (!resp.ok) {
@@ -1095,33 +1115,76 @@ async function _sendPropertiesToBackend(properties, customerId, conditions) {
   return resp.json();
 }
 
-// 1顧客分のスクレイプ+比較を実行する（property_scrape コマンド / axlx-scrape-and-compare 共用）
+// 1顧客分のスクレイプ+比較を実行する（scrape_and_compare / property_scrape 共用）
+// 両形式に対応:
+//   新形式: { customer_id, customer_name, is_wide, conditions }  ← scrape_and_compare
+//   旧形式: フル顧客オブジェクト { id, rent_max, ... }           ← property_scrape
 async function _scrapeAndCompareForCustomer(customer) {
-  // 1. 条件でリアプロを開く（既存 _webappAutofill を流用）
-  var conditions = _buildBatchConditions(customer);
-  await _webappAutofill("realnetpro", conditions);
+  var customerId = customer.customer_id || customer.id;
+  var customerName = customer.customer_name;
+  var isWide = customer.is_wide || false;
 
-  // 2. 検索結果が表示されるまで待機
-  await new Promise(function (r) { setTimeout(r, 3000); });
+  // conditions: 新形式は customer.conditions、旧形式は _buildBatchConditions で構築
+  var baseConditions = customer.conditions
+    ? customer.conditions
+    : _buildBatchConditions(customer);
 
-  // 3. リアプロタブを特定
+  // Phase 1: resolve-search-conditions でエリア→駅名・路線・区コードに変換
+  var resolved = {};
+  try {
+    var resolveResp = await fetch("https://sumora-ai-ui.vercel.app/api/resolve-search-conditions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        desired_area: baseConditions.desired_area || (baseConditions.areas && baseConditions.areas.join("・")) || "",
+        lines: baseConditions.lines || [],
+        stations: baseConditions.stations || [],
+        is_wide: isWide,
+        rent_max: baseConditions.rent_max || null,
+        building_age: baseConditions.building_age || null,
+      }),
+    });
+    if (resolveResp.ok) resolved = await resolveResp.json();
+  } catch (e) {
+    console.warn("[scrapeAndCompare] resolve-search-conditions 失敗（従来条件で続行）:", e);
+  }
+
+  // Phase 2: 解決済み条件をマージしてリアプロを開き条件入力・検索
+  var mergedConditions = Object.assign({}, baseConditions, {
+    station_names: resolved.station_names || baseConditions.station_names || [],
+    route_ids:     resolved.route_ids     || baseConditions.route_ids     || [],
+    city_codes:    resolved.city_codes    || baseConditions.city_codes    || [],
+    is_wide:       isWide,
+    rent_max:      resolved.rent_max_resolved     || baseConditions.rent_max     || null,
+    building_age:  resolved.building_age_resolved || baseConditions.building_age || null,
+  });
+
+  await _webappAutofill("realnetpro", mergedConditions);
+
+  // Phase 3: 検索完了を待機（8秒）
+  await new Promise(function(r) { setTimeout(r, 8000); });
+
+  // Phase 4: リアプロタブを取得
   var allTabs = await chrome.tabs.query({});
-  var realproTab = allTabs.find(function (t) {
+  var realproTab = allTabs.find(function(t) {
     return t.url && t.url.includes("realnetpro.com");
   });
-  if (!realproTab) throw new Error("リアプロのタブが見つかりません");
-
-  // 4. 全ページスクレイプ
-  var properties = await _scrapeAllRealproPages(realproTab.id);
-  console.log("[scrape] customer=" + customer.id + " 合計 " + properties.length + "件");
-
-  if (properties.length === 0) {
-    console.warn("[scrape] 0件のためAPIスキップ");
+  if (!realproTab) {
+    console.warn("[scrapeAndCompare] リアプロタブが見つかりません");
     return;
   }
 
-  // 5. バックエンドAPI に送信（比較・LINE送信は API 側で行う）
-  await _sendPropertiesToBackend(properties, customer.id, conditions);
+  // Phase 5: 全ページスクレイピング（最大10ページ）
+  var properties = await _scrapeAllRealproPages(realproTab.id);
+  console.log("[scrapeAndCompare] customer=" + customerId + " scraped=" + properties.length + "件");
+
+  if (properties.length === 0) {
+    console.warn("[scrapeAndCompare] 物件0件のためAPIスキップ");
+    return;
+  }
+
+  // Phase 6: AI比較 + 売上番長LINE送信
+  await _sendPropertiesToBackend(properties, customerId, mergedConditions, customerName);
 }
 
 // ===== END: 自動化バッチ検索 =====

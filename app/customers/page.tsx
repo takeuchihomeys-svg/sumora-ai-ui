@@ -835,7 +835,7 @@ export default function CustomersPage() {
   };
 
   // 🔍 リアプロ自動スクレイプ比較: automation_commands に scrape_and_compare を積む
-  const handleScrapeCompare = async (c: Customer) => {
+  const handleScrapeCompare = async (c: Customer, isWide: boolean = false) => {
     setScrapeCompareStatus((prev) => ({ ...prev, [c.id]: "queued" }));
     try {
       const { error } = await supabase.from("automation_commands").insert({
@@ -843,13 +843,19 @@ export default function CustomersPage() {
         payload: {
           customer_id: c.id,
           customer_name: c.customer_name,
+          is_wide: isWide,
           conditions: {
             rent_max: c.rent_max ?? undefined,
             walk_minutes: c.walk_minutes ?? undefined,
             floor_plan: c.floor_plan ?? undefined,
             building_age: c.building_age ?? undefined,
-            pet_ok: c.pet ?? undefined,
+            pet_ok: !!c.pet,
             desired_area: c.desired_area ?? undefined,
+            lines: c.lines ?? [],
+            stations: c.stations ?? [],
+            city_codes: [],
+            station_names: [],
+            route_ids: [],
           },
         },
         status: "pending",
@@ -1923,16 +1929,16 @@ export default function CustomersPage() {
                       {/* リアプロ */}
                       <div className="flex gap-0.5">
                         <button
-                          onClick={() => void queuePropertySearch(c, ["realnetpro"])}
+                          onClick={() => void handleScrapeCompare(c, false)}
                           className="rounded-xl border border-orange-200 bg-orange-50 px-2.5 py-1.5 text-[11px] font-bold text-orange-700 active:scale-95 transition-transform"
                         >
-                          {searchQueued === c.id + "-realnetpro" ? "✓" : "🖥️"} リアプロ
+                          {scrapeCompareStatus[c.id] === "queued" ? "依頼中…" : scrapeCompareStatus[c.id] === "error" ? "エラー" : "🖥️"} リアプロ
                         </button>
                         <button
-                          onClick={() => void queuePropertySearch(c, ["realnetpro"], true)}
+                          onClick={() => void handleScrapeCompare(c, true)}
                           className="rounded-xl border border-orange-300 bg-orange-100 px-2 py-1 text-[10px] font-bold text-orange-600 active:scale-95 transition-transform"
                         >
-                          {searchQueued === c.id + "-realnetpro-wide" ? "✓" : "↔️"} 広
+                          {scrapeCompareStatus[c.id] === "queued" ? "…" : "↔️"} 広
                         </button>
                       </div>
                       {/* itandi */}
@@ -2016,24 +2022,6 @@ export default function CustomersPage() {
                   >
                     🏠 物件比較
                   </button>
-                  {/* リアプロ自動スクレイプ比較ボタン */}
-                  {(() => {
-                    const st = scrapeCompareStatus[c.id] ?? "idle";
-                    return (
-                      <button
-                        onClick={() => handleScrapeCompare(c)}
-                        disabled={st !== "idle"}
-                        title="Chrome拡張がリアプロをスクレイプして売上番長グループに送信"
-                        className={`rounded-xl border px-3 py-1.5 text-xs font-bold active:scale-95 transition-transform disabled:opacity-50 ${
-                          st === "error"
-                            ? "border-red-300 bg-red-50 text-red-700"
-                            : "border-blue-300 bg-blue-50 text-blue-700"
-                        }`}
-                      >
-                        {st === "queued" ? "依頼中…" : st === "error" ? "エラー" : "🔍 自動比較"}
-                      </button>
-                    );
-                  })()}
                   {c.phone && (
                     <a href={`tel:${c.phone}`}
                       className="rounded-xl border border-[#d1d7db] bg-white px-3 py-1.5 text-xs font-bold text-[#444] active:scale-95 transition-transform">
