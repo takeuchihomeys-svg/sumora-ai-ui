@@ -311,6 +311,19 @@ export default function CustomersPage() {
 
   // 🔍 リアプロ自動スクレイプ比較 — Chrome拡張 automation_commands 経由
   const [scrapeCompareStatus, setScrapeCompareStatus] = useState<Record<string, ScrapeCompareStatus>>({});
+  // ポーリングinterval / idle復帰timeout をアンマウント時に確実に停止するための保持
+  const scrapePollIntervalsRef = useRef<Set<ReturnType<typeof setInterval>>>(new Set());
+  const scrapeIdleTimeoutsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  useEffect(() => {
+    const intervals = scrapePollIntervalsRef.current;
+    const timeouts = scrapeIdleTimeoutsRef.current;
+    return () => {
+      intervals.forEach((t) => clearInterval(t));
+      intervals.clear();
+      timeouts.forEach((t) => clearTimeout(t));
+      timeouts.clear();
+    };
+  }, []);
 
   // 会話ログタブ管理
   const [activeTabs, setActiveTabs] = useState<Record<string, "summary" | "log">>({});
@@ -875,9 +888,26 @@ export default function CustomersPage() {
 
       const cmdId = (inserted as { id: string | number }).id;
       const startedAt = Date.now();
+
+      // 終了状態を表示 → 4秒後に idle へ戻す共通処理（timeoutもrefに保持しアンマウント時に停止）
+      const scheduleIdle = (finalStatus: ScrapeCompareStatus) => {
+        setScrapeCompareStatus((prev) => ({ ...prev, [key]: finalStatus }));
+        const t = setTimeout(() => {
+          scrapeIdleTimeoutsRef.current.delete(t);
+          setScrapeCompareStatus((prev) => ({ ...prev, [key]: "idle" }));
+        }, 4000);
+        scrapeIdleTimeoutsRef.current.add(t);
+      };
+
       const timer = setInterval(() => {
         void (async () => {
+          const finish = (finalStatus: ScrapeCompareStatus) => {
+            clearInterval(timer);
+            scrapePollIntervalsRef.current.delete(timer);
+            scheduleIdle(finalStatus);
+          };
           try {
+            const elapsed = Date.now() - startedAt;
             const { data } = await supabase
               .from("automation_commands")
               .select("status")
@@ -887,35 +917,39 @@ export default function CustomersPage() {
             if (st === "running") {
               setScrapeCompareStatus((prev) => ({ ...prev, [key]: "running" }));
             } else if (st === "done" || st === "completed") {
-              clearInterval(timer);
-              setScrapeCompareStatus((prev) => ({ ...prev, [key]: "done" }));
+              finish("done");
               return;
             } else if (st === "error") {
-              clearInterval(timer);
-              setScrapeCompareStatus((prev) => ({ ...prev, [key]: "error" }));
+              finish("error");
               return;
-            } else if (st === "pending" && Date.now() - startedAt > 60_000) {
+            } else if (st === "pending" && elapsed > 90_000) {
+              // 90秒pendingのまま = Chrome拡張が応答していない
+              finish("noext");
+              return;
+            } else if (st === "pending" && elapsed > 60_000) {
+              // 60秒経過で警告表示（ポーリングは継続）
               setScrapeCompareStatus((prev) => ({ ...prev, [key]: "noext" }));
             }
           } catch {
             // 一時的な取得失敗は無視して次のポーリングへ
           }
           // タイムアウト: 6分（正常実行1〜4分 + 拡張ポーリング間隔30秒の余裕）で
-          // done/error に到達しなければ「⏰ タイムアウト」を表示し、5秒後に idle へ戻す。
-          // （旧実装は clearInterval のみでボタンが running のまま永久に固まっていた）
+          // done/error に到達しなければ「⏰ タイムアウト」を表示し、4秒後に idle へ戻す。
           if (Date.now() - startedAt > 6 * 60_000) {
-            clearInterval(timer);
-            setScrapeCompareStatus((prev) => ({ ...prev, [key]: "timeout" }));
-            setTimeout(() => {
-              setScrapeCompareStatus((prev) => ({ ...prev, [key]: "idle" }));
-            }, 5000);
+            finish("timeout");
           }
         })();
       }, 5000);
+      scrapePollIntervalsRef.current.add(timer);
     } catch (e) {
       console.error("[handleScrapeCompare]", e);
-      // 修正11: 失敗は消えないエラー表示にする（ボタン再押下でリトライ可能）
+      // INSERT失敗: エラー表示 → 4秒後に idle へ戻す（ボタン再押下でリトライ可能）
       setScrapeCompareStatus((prev) => ({ ...prev, [key]: "error" }));
+      const t = setTimeout(() => {
+        scrapeIdleTimeoutsRef.current.delete(t);
+        setScrapeCompareStatus((prev) => ({ ...prev, [key]: "idle" }));
+      }, 4000);
+      scrapeIdleTimeoutsRef.current.add(t);
     }
   };
 
