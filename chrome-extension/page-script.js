@@ -550,6 +550,24 @@
     // 連続検索対応: モーダルを閉じる → フォームを手動クリア → 条件入力 の順で実行
     // ※ リセットボタンはページ遷移を引き起こすため使用しない（ページ遷移するとスクリプトが死ぬ）
     function _doReset(callback) {
+      // Step0: 検索結果ページでフォームが折りたたまれている場合→「検索条件を表示」をクリックして展開
+      // ポップアップ展開時はresizeイベントが発火して自動クリックされるが、
+      // background.jsからの自動実行時はresizeが起きないためここで明示的に展開する
+      var showFormDelay = 0;
+      var allEls0 = [].slice.call(document.querySelectorAll("a,button,div,span,td,p"));
+      var showFormBtn = null;
+      for (var si0 = 0; si0 < allEls0.length; si0++) {
+        var se0 = allEls0[si0];
+        if (!se0.offsetParent) continue;
+        if ((se0.textContent || '').trim().indexOf('検索条件を表示') >= 0) { showFormBtn = se0; break; }
+      }
+      if (showFormBtn) {
+        try { showFormBtn.click(); showFormDelay = 800; console.log("[AX] 検索条件を表示 クリック → フォーム展開待機"); }
+        catch (e) { console.error("[AX] _doReset: 検索条件を表示クリックで例外（続行）", e); }
+      }
+
+      setTimeout(function() {
+
       // Step1: 開いているモーダルを先に閉じる
       var closeBtn = [].slice.call(document.querySelectorAll("a, button, div, span")).find(function(el) {
         var t = (el.textContent || "").trim();
@@ -602,6 +620,8 @@
         }
         setTimeout(callback, 300); // 短い安定待機のみ
       }, closeDelay);
+
+      }, showFormDelay); // Step0: 検索条件を表示 展開待機
     }
 
     _doReset(function() {
