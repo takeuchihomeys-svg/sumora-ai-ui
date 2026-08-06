@@ -1197,6 +1197,43 @@ async function _batchAutofill(customer, site, isWide) {
   }
 
   if (site === "realnetpro") {
+    // itandi分岐と同様: resolve-search-conditions API で city_codes/route_ids/station_names を解決する
+    // _buildBatchConditions は raw (areas/lines/stations) しか返さないため、
+    // page-script.js の decideLocationMode が参照する解決済みフィールドを補完する必要がある
+    if ((conds.areas && conds.areas.length) || (conds.lines && conds.lines.length) || (conds.stations && conds.stations.length)) {
+      try {
+        var resolveRealnetpro = await fetch(SUMORA_BATCH_API + "/api/resolve-search-conditions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            desired_area: (conds.areas || []).join("・"),
+            lines: conds.lines || [],
+            stations: conds.stations || [],
+            is_wide: !!isWide,
+            rent_max: conds.rent_max || null,
+            building_age: conds.building_age || null,
+          }),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (resolveRealnetpro.ok) {
+          var resolvedRealnetpro = await resolveRealnetpro.json();
+          if (resolvedRealnetpro.city_codes && resolvedRealnetpro.city_codes.length) {
+            conds.city_codes = resolvedRealnetpro.city_codes;
+          }
+          if (resolvedRealnetpro.route_ids && resolvedRealnetpro.route_ids.length) {
+            conds.route_ids = resolvedRealnetpro.route_ids;
+          }
+          if (resolvedRealnetpro.station_names && resolvedRealnetpro.station_names.length) {
+            conds.station_names = resolvedRealnetpro.station_names;
+          }
+          if (resolvedRealnetpro.detail_ward) {
+            conds.detail_ward = resolvedRealnetpro.detail_ward;
+          }
+        }
+      } catch (e) {
+        console.warn("[batchAutofill] realnetpro resolve失敗（デフォルト条件で続行）:", e.message || e);
+      }
+    }
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       world: "MAIN",
