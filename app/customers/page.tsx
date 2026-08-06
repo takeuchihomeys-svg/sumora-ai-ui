@@ -262,6 +262,46 @@ function parseAreaMin(text: string | null | undefined): number | null {
   return m ? Number(m[1]) : null;
 }
 
+// popup.js の calcUpdateDays と同一ロジック: 最終物件送信日からリアプロ更新日フィルターを算出
+function calcRpUpdateDays(lastSentAt: string | null | undefined): number | null {
+  if (!lastSentAt) return null;
+  const daysSince = Math.floor((Date.now() - new Date(lastSentAt).getTime()) / 86400000);
+  if (daysSince <= 1) return 1;
+  if (daysSince <= 3) return 3;
+  if (daysSince <= 7) return 7;
+  return 14;
+}
+
+// popup.js preloadAdjForm のペット判定と同一ロジック: pet=null時は自由記述フォールバック
+function resolvePetOk(c: Customer): boolean {
+  if (c.pet === true) return true;
+  if (c.pet === false) return false;
+  const petFields = [c.preferences, c.other_requests, c.additional_conditions].filter(Boolean).join(" ");
+  return /ペット|pet/i.test(petFields);
+}
+
+// 建物構造トークン (page-script.js の STRUCTURE_MAP キーと一致。長い順で部分一致誤検出を防ぐ)
+const STRUCTURE_TOKENS = [
+  "鉄骨鉄筋コンクリート造", "鉄筋コンクリート造", "木造一部RC造",
+  "重量鉄骨造", "軽量鉄骨造", "SRC造", "鉄骨造", "RC造", "SRC", "S造", "RC", "木造",
+];
+
+// 自由記述から建物構造希望を抽出。否定表現(木造NG等)は除外（フィルターが反転するため）
+function parseStructureTypes(...texts: (string | null | undefined)[]): string[] {
+  let joined = texts.filter(Boolean).join("、");
+  if (!joined) return [];
+  const found: string[] = [];
+  for (const tok of STRUCTURE_TOKENS) {
+    const idx = joined.indexOf(tok);
+    if (idx === -1) continue;
+    const after = joined.slice(idx + tok.length, idx + tok.length + 6);
+    joined = joined.split(tok).join(" ");
+    if (/^(は|も)?(NG|ＮＧ|以外|不可|×|避け|嫌|ダメ|だめ)/.test(after)) continue;
+    found.push(tok);
+  }
+  return found;
+}
+
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading]     = useState(true);
@@ -894,12 +934,12 @@ export default function CustomersPage() {
       building_age: c.building_age  ?? null,
       area_min:     c.floor_area_min ?? parseAreaMin(c.floor_plan) ?? parseAreaMin(c.preferences) ?? parseAreaMin(c.other_requests) ?? null,
       area_max:     c.floor_area_max ?? null,
-      pet_ok:       !!c.pet,
+      pet_ok:       resolvePetOk(c),
       desired_area: c.desired_area  ?? null,
       lines:        c.lines         ?? [] as string[],
       stations:     c.stations      ?? [] as string[],
-      structure_types: [] as string[],
-      rp_update_days:  null as number | null,
+      structure_types: parseStructureTypes(c.preferences, c.other_requests),
+      rp_update_days:  calcRpUpdateDays(c.last_property_sent_at),
       is_wide:      isWide,
     };
 
@@ -965,21 +1005,21 @@ export default function CustomersPage() {
             customer_id: c.id, customer_name: c.customer_name, is_wide: isWide,
             conditions: {
               area_mode: getAreaMode(c.id),
-              rent_max: resolved?.rent_max_resolved ?? c.rent_max ?? undefined,
+              rent_max: c.rent_max ?? undefined,
               rent_min: c.rent_min ?? undefined,
               walk_minutes: c.walk_minutes ?? undefined,
               floor_plan: c.floor_plan ?? undefined,
-              building_age: resolved?.building_age_resolved ?? c.building_age ?? undefined,
+              building_age: c.building_age ?? undefined,
               area_min: c.floor_area_min ?? parseAreaMin(c.floor_plan) ?? parseAreaMin(c.preferences) ?? parseAreaMin(c.other_requests) ?? undefined,
               area_max: c.floor_area_max ?? undefined,
-              pet_ok: !!c.pet,
+              pet_ok: resolvePetOk(c),
               desired_area: c.desired_area ?? undefined,
               lines: c.lines ?? [], stations: c.stations ?? [],
               city_codes: resolved?.city_codes ?? [], station_names: resolved?.station_names ?? [],
               route_ids: resolved?.route_ids ?? [], itandi_line_names: resolved?.itandi_line_names ?? [],
               reins_line_names: resolved?.reins_line_names ?? [], detail_ward: resolved?.detail_ward ?? null,
               detail_area: resolved?.detail_area ?? null, unknown_tokens: resolved?.unknown_tokens ?? [],
-              structure_types: [] as string[], rp_update_days: null as number | null,
+              structure_types: parseStructureTypes(c.preferences, c.other_requests), rp_update_days: calcRpUpdateDays(c.last_property_sent_at),
             },
           },
           status: "pending", created_at: new Date().toISOString(),
@@ -1142,7 +1182,8 @@ export default function CustomersPage() {
       building_age:  resolvedConditions?.building_age_resolved ?? c.building_age ?? null,
       area_min:      c.floor_area_min ?? parseAreaMin(c.floor_plan) ?? parseAreaMin(c.preferences) ?? parseAreaMin(c.other_requests) ?? null,
       area_max:      c.floor_area_max ?? null,
-      pet_ok:        c.pet === true,
+      pet_ok:        resolvePetOk(c),
+      desired_area:  c.desired_area ?? null,
       is_wide:       isWide,
       station_names: resolvedConditions?.station_names  ?? [],
       city_codes:    resolvedConditions?.city_codes     ?? [],
@@ -1155,8 +1196,8 @@ export default function CustomersPage() {
       stations:      c.stations      ?? [] as string[],
       prefecture:    null as string | null,
       city:          null as string | null,
-      structure_types: [] as string[],
-      rp_update_days: null as number | null,
+      structure_types: parseStructureTypes(c.preferences, c.other_requests),
+      rp_update_days: calcRpUpdateDays(c.last_property_sent_at),
     };
     let delay = 0;
     for (const site of sites) {
