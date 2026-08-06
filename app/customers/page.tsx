@@ -254,6 +254,14 @@ function emptyEditFields(): EditFields {
   return { desired_area:"", floor_plan:"", rent_min:"", rent_max:"", walk_minutes:"", move_in_time:"", building_age:"", initial_cost_limit:"", floor_area_min:"", floor_area_max:"", pet:"", preferences:"", ng_points:"", other_requests:"", property_memo:"" };
 }
 
+// popup.js の parseAreaMin と同一ロジック
+// "25㎡以上" / "25平米以上" / "25m2以上" 等の自由記述から面積下限を抽出
+function parseAreaMin(text: string | null | undefined): number | null {
+  if (!text) return null;
+  const m = text.match(/(\d+)\s*(?:平米|㎡|m2|m²)\s*以上/i);
+  return m ? Number(m[1]) : null;
+}
+
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading]     = useState(true);
@@ -923,7 +931,7 @@ export default function CustomersPage() {
               walk_minutes: c.walk_minutes ?? undefined,
               floor_plan: c.floor_plan ?? undefined,
               building_age: resolved?.building_age_resolved ?? c.building_age ?? undefined,
-              area_min: c.floor_area_min ?? undefined,
+              area_min: c.floor_area_min ?? parseAreaMin(c.floor_plan) ?? parseAreaMin(c.preferences) ?? parseAreaMin(c.other_requests) ?? undefined,
               area_max: c.floor_area_max ?? undefined,
               pet_ok: !!c.pet,
               desired_area: c.desired_area ?? undefined,
@@ -1143,7 +1151,7 @@ export default function CustomersPage() {
       walk_minutes:  c.walk_minutes  ?? null,
       floor_plan:    c.floor_plan    ?? null,
       building_age:  resolvedConditions?.building_age_resolved ?? c.building_age ?? null,
-      area_min:      c.floor_area_min ?? null,
+      area_min:      c.floor_area_min ?? parseAreaMin(c.floor_plan) ?? parseAreaMin(c.preferences) ?? parseAreaMin(c.other_requests) ?? null,
       area_max:      c.floor_area_max ?? null,
       pet_ok:        c.pet === true,
       is_wide:       isWide,
