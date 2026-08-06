@@ -62,14 +62,32 @@ const LINE_ALIAS_MAP: Record<string, string> = {
 };
 
 // ── 概念的広域地名 → 大阪府の市区名（静的マップ・コスト0）───────────────────
+// 注意: ここに載せる名前は必ず WARD_CODE_MAP に登録済みのものだけにする
+// （未登録名は city_code に変換できず黙って落ちるため。三島郡島本町・太子町・河南町・千早赤阪村は
+//   WARD_CODE_MAP に無いため削除済み。堺市は区単位に展開済み）
 const CONCEPT_AREA_MAP: Record<string, string[]> = {
-  "北摂": ["豊中市", "吹田市", "茨木市", "高槻市", "池田市", "箕面市", "摂津市", "三島郡島本町"],
+  "北摂": ["豊中市", "吹田市", "茨木市", "高槻市", "池田市", "箕面市", "摂津市"],
   "河内": ["東大阪市", "八尾市", "大東市", "四條畷市", "柏原市", "松原市", "大阪狭山市", "富田林市", "河内長野市", "羽曳野市", "藤井寺市"],
-  "南河内": ["富田林市", "河内長野市", "羽曳野市", "藤井寺市", "大阪狭山市", "柏原市", "太子町", "河南町", "千早赤阪村"],
-  "泉州": ["堺市", "岸和田市", "泉大津市", "貝塚市", "泉佐野市", "泉南市", "阪南市", "和泉市"],
+  "南河内": ["富田林市", "河内長野市", "羽曳野市", "藤井寺市", "大阪狭山市", "柏原市"],
+  "泉州": ["堺市堺区", "堺市北区", "堺市西区", "堺市中区", "堺市東区", "堺市南区", "堺市美原区", "岸和田市", "泉大津市", "貝塚市", "泉佐野市", "泉南市", "阪南市", "和泉市"],
   "なんば": ["大阪市中央区", "大阪市浪速区", "大阪市西区"],
   "難波": ["大阪市中央区", "大阪市浪速区", "大阪市西区"],
+  "ミナミ": ["大阪市中央区", "大阪市浪速区", "大阪市西区"],
   "梅田": ["大阪市北区", "大阪市福島区"],
+  "キタ": ["大阪市北区", "大阪市福島区"],
+  "南": ["大阪市中央区", "大阪市浪速区", "大阪市西区"],
+  "北": ["大阪市北区", "大阪市福島区"],
+  "堀江": ["大阪市西区"],
+  "南堀江": ["大阪市西区"],
+  "御堂筋": ["大阪市北区", "大阪市中央区"],
+  "心斎橋": ["大阪市中央区"],
+  "本町": ["大阪市中央区"],
+  "南船場": ["大阪市中央区"],
+  "西天満": ["大阪市北区"],
+  "福島": ["大阪市福島区"],
+  "靭": ["大阪市西区"],
+  "靭公園": ["大阪市西区"],
+  "肥後橋": ["大阪市西区", "大阪市北区"],
   "天王寺": ["大阪市天王寺区", "大阪市阿倍野区"],
   "新大阪": ["大阪市淀川区", "大阪市東淀川区"],
   "大阪市内": ["大阪市都島区", "大阪市福島区", "大阪市此花区", "大阪市西区", "大阪市港区", "大阪市大正区", "大阪市天王寺区", "大阪市浪速区", "大阪市西淀川区", "大阪市東淀川区", "大阪市東成区", "大阪市生野区", "大阪市旭区", "大阪市城東区", "大阪市阿倍野区", "大阪市住吉区", "大阪市東住吉区", "大阪市西成区", "大阪市淀川区", "大阪市鶴見区", "大阪市住之江区", "大阪市平野区", "大阪市北区", "大阪市中央区"],
@@ -101,9 +119,10 @@ function lineToRouteId(lineName: string): string | null {
 }
 
 function getDb() {
+  // 書き込み（unknown_tokens 学習キャッシュ等）があるため SERVICE_ROLE を優先し、無ければ anon にフォールバック
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
   );
 }
 
@@ -118,6 +137,34 @@ function parseNearbyQuery(token: string): NearbyQuery | null {
   const minutes = parseInt(m[2]);
   if (!station || !minutes) return null;
   return { token, station, minutes };
+}
+
+// ── 「〜線沿い」「〜沿線」パターン → route_ids 変換 ──────────────────────────
+// 「御堂筋線沿い」→ [6701]、「阪急線沿い」「阪急沿い」→ 阪急全路線に展開
+function parseLineSoiQuery(token: string): string[] | null {
+  const m = token.match(/^(.+?)(?:線?沿い|沿線)$/);
+  if (!m) return null;
+  const linePart = m[1].trim(); // 「阪急」「御堂筋線」「阪急神戸線」など
+  if (!linePart) return null;
+  // 完全路線名（〜線）で一致確認
+  const fullLine = linePart.endsWith("線") ? linePart : linePart + "線";
+  const rid = lineToRouteId(fullLine) ?? lineToRouteId(linePart);
+  if (rid) return [rid];
+  // 「阪急神戸線」→「阪急電鉄神戸線」のような 電鉄/電気鉄道 省略形を正規化して照合
+  for (const [name, id] of Object.entries(LINE_ROUTE_MAP)) {
+    const normalized = name.replace(/(電気軌道|電気鉄道|電鉄)/, "");
+    if (normalized === fullLine || normalized === linePart) return [id];
+  }
+  // 会社名のみ（「阪急」「南海」「近鉄」等）→ その会社の全路線 route_id に展開
+  // 1文字プレフィックスは過剰マッチ（「阪」→阪急+阪神+阪堺）するため2文字以上のみ
+  if (linePart.length >= 2) {
+    const rids = new Set<string>();
+    for (const [name, id] of Object.entries(LINE_ROUTE_MAP)) {
+      if (name.startsWith(linePart)) rids.add(id);
+    }
+    if (rids.size > 0) return Array.from(rids);
+  }
+  return null;
 }
 
 // DeepSeekに「〜まで〜分で行ける駅」を問い合わせ、駅名リストを返す
@@ -157,14 +204,29 @@ async function resolveNearbyWithDeepSeek(station: string, minutes: number): Prom
   }
 }
 
-// ── 概念的地域名 → 市区名リスト（静的マップ優先・なければDeepSeek）──────────
-async function resolveConceptArea(token: string): Promise<string[] | null> {
-  // 静的マップで解決（完全一致 + 末尾「エリア」除去して再試行）
+// ── 概念的地域名 → 市区名リスト（段1: 静的マップ・コスト0）──────────────────
+function resolveConceptAreaStatic(token: string): string[] | null {
+  // 完全一致 + 末尾「エリア」除去して再試行
   const stripped = token.replace(/エリア$/, "").trim();
-  const fromMap = CONCEPT_AREA_MAP[token] ?? CONCEPT_AREA_MAP[stripped] ?? null;
-  if (fromMap) return fromMap;
+  return CONCEPT_AREA_MAP[token] ?? CONCEPT_AREA_MAP[stripped] ?? null;
+}
 
-  // DeepSeekで解決
+// ── unknown_tokens 3段フォールバック用の型 ─────────────────────────────────
+// resolved_as の JSON 形式: {"type":"station","names":[...]} | {"type":"ward","names":[...]}
+type TokenResolution = { type: "station" | "ward"; names: string[] };
+type UnknownTokenRow = {
+  token: string;
+  resolution_type: string | null;
+  resolved_as: TokenResolution | null;
+  attempt_count: number | null;
+  last_attempt_at: string | null;
+};
+
+// 文字化け・記号混入トークンをDB保存前に弾く（region_map 文字化け行事故の再発防止）
+const TOKEN_CHARSET_RE = /^[　-鿿゠-ヿA-Za-z0-9ー・]+$/;
+
+// ── 段3: DeepSeek 統合問い合わせ（駅名 or 市区名を1回で判定）──────────────────
+async function resolveTokenWithDeepSeek(token: string): Promise<TokenResolution | null> {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) return null;
   try {
@@ -178,13 +240,16 @@ async function resolveConceptArea(token: string): Promise<string[] | null> {
       },
       body: JSON.stringify({
         model: "deepseek-chat",
-        max_tokens: 200,
+        max_tokens: 300,
         messages: [{
           role: "user",
-          content: `「${token}」は大阪府のどの市・区に対応しますか？
-以下のリストにある名前のみを使ってJSON配列で返してください: ${wardNames}
-例: ["豊中市", "吹田市"]
-リスト外の名前は使わないでください。`,
+          content: `「${token}」は大阪府のどの駅名または市区名に対応しますか？
+駅名の場合: {"type":"station","names":["駅名1","駅名2"]}
+市区名の場合: {"type":"ward","names":["大阪市◯◯区","△△市"]}
+どちらでもない場合: {"type":"unknown"}
+JSONのみ返してください。
+駅名には「駅」を付けず、実在する駅の正式名のみ使ってください。
+市区名は次のリストにある名前のみ使用してください: ${wardNames}`,
         }],
         temperature: 0,
       }),
@@ -192,13 +257,25 @@ async function resolveConceptArea(token: string): Promise<string[] | null> {
     if (!res.ok) return null;
     const data = await res.json() as { choices: Array<{ message: { content: string } }> };
     const raw = (data.choices[0]?.message?.content ?? "").trim();
-    const match = raw.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\[[\s\S]*\]/);
+    const match = raw.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\{[\s\S]*\}/);
     if (!match) return null;
-    const parsed = JSON.parse(match[0]) as unknown[];
-    const resolved = parsed.filter((s): s is string => typeof s === "string" && WARD_CODE_MAP[s] !== undefined);
-    return resolved.length > 0 ? resolved : null;
+    const parsed = JSON.parse(match[0]) as { type?: unknown; names?: unknown };
+    const names = Array.isArray(parsed.names)
+      ? parsed.names.filter((n): n is string =>
+          typeof n === "string" && n.length > 0 && TOKEN_CHARSET_RE.test(n))
+      : [];
+    if (parsed.type === "station" && names.length > 0) {
+      // 「線」で終わる名前は駅として扱わない（御堂筋線汚染事故の再発防止ガード）
+      const stationNames = names.filter((n) => !n.endsWith("線"));
+      return stationNames.length > 0 ? { type: "station", names: stationNames } : null;
+    }
+    if (parsed.type === "ward" && names.length > 0) {
+      const validWards = names.filter((n) => WARD_CODE_MAP[n] !== undefined);
+      return validWards.length > 0 ? { type: "ward", names: validWards } : null;
+    }
+    return null;
   } catch (e) {
-    console.warn("[resolve-conditions] DeepSeek concept area error:", e instanceof Error ? e.message : e);
+    console.warn("[resolve-conditions] DeepSeek token resolve error:", e instanceof Error ? e.message : e);
     return null;
   }
 }
@@ -273,16 +350,24 @@ export async function POST(req: NextRequest) {
 
   // 「〜まで〜分の駅」パターンを分離
   const nearbyQueries: NearbyQuery[] = [];
+  const lineSoiRouteIds: string[] = [];
   const tokens: string[] = [];
   for (const t of rawTokens) {
     const nearby = parseNearbyQuery(t);
     if (nearby) {
       nearbyQueries.push(nearby);
-    } else {
-      // スペースでも分割（通常のエリア・駅名トークン）
-      const subs = t.split(/\s+/).filter(Boolean);
-      tokens.push(...subs);
+      continue;
     }
+    // 「〜線沿い」「〜沿線」パターン → route_ids に直接変換（駅名解決には回さない）
+    const soiRouteIds = parseLineSoiQuery(t);
+    if (soiRouteIds) {
+      lineSoiRouteIds.push(...soiRouteIds);
+      console.log("[resolve-conditions] line-soi resolved:", t, "->", soiRouteIds);
+      continue;
+    }
+    // スペースでも分割（通常のエリア・駅名トークン）
+    const subs = t.split(/\s+/).filter(Boolean);
+    tokens.push(...subs);
   }
 
   const db = getDb();
@@ -300,34 +385,58 @@ export async function POST(req: NextRequest) {
   }
 
   // ── ② DBキャッシュ（station_map / region_map）で一致解決 ──────────────────
-  type StationRow = { token: string; ward: string | null; realpro_lines: string[]; itandi_lines: string[] | null; reins_line: string | null; source: string };
+  type StationRow = { token: string; ward: string | null; realpro_lines: string[]; itandi_lines: string[] | null; reins_line: string | null; source: string; created_at?: string | null };
   type RegionRow  = { token: string; ward: string | null };
 
   const resolvedStation = new Map<string, StationRow>();
   const resolvedRegion  = new Map<string, RegionRow>();
+  // ネガティブキャッシュTTL: source="unknown" 行が7日以内なら fuzzy/DeepSeek をスキップ
+  const knownUnknown = new Set<string>();
+  const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
   if (remaining.length > 0) {
     const [{ data: stationRows }, { data: regionRows }] = await Promise.all([
       db.from("station_map")
-        .select("token, ward, realpro_lines, itandi_lines, reins_line, source")
+        .select("token, ward, realpro_lines, itandi_lines, reins_line, source, created_at")
         .in("token", remaining),
       db.from("region_map")
         .select("token, ward")
         .in("token", remaining),
     ]);
 
+    const expiredUnknown: string[] = [];
     for (const row of (stationRows ?? []) as StationRow[]) {
       // ネガティブキャッシュ（source="unknown"）は解決済み扱いにしない
-      if (row.source !== "unknown") resolvedStation.set(row.token, row);
+      if (row.source === "unknown") {
+        const ageMs = Date.now() - new Date(row.created_at ?? 0).getTime();
+        if (ageMs < SEVEN_DAYS_MS) {
+          // 7日以内 → fuzzy/DeepSeek 再試行を抑制（コスト対策）
+          knownUnknown.add(row.token);
+        } else {
+          // 7日以上古い → unresolved のまま再試行。期限切れ負キャッシュは削除
+          // （再試行後も未解決なら末尾の upsert が新しい created_at で再挿入 = TTL更新）
+          expiredUnknown.push(row.token);
+        }
+        continue;
+      }
+      resolvedStation.set(row.token, row);
+    }
+    if (expiredUnknown.length > 0) {
+      void db.from("station_map")
+        .delete().in("token", expiredUnknown).eq("source", "unknown")
+        .then(
+          () => { console.log("[resolve-conditions] expired negative cache deleted:", expiredUnknown); },
+          (e: unknown) => { console.warn("[resolve-conditions] expired negative cache delete failed:", e); }
+        );
     }
     for (const row of (regionRows ?? []) as RegionRow[]) {
       resolvedRegion.set(row.token, row);
     }
   }
 
-  // ── ③ 未解決トークンは fuzzy検索で補完 ──────────────────────────────────
+  // ── ③ 未解決トークンは fuzzy検索で補完（TTL内ネガティブキャッシュは除外）──
   const unresolved = remaining.filter(
-    (t) => !resolvedStation.has(t) && !resolvedRegion.has(t),
+    (t) => !resolvedStation.has(t) && !resolvedRegion.has(t) && !knownUnknown.has(t),
   );
 
   if (unresolved.length > 0) {
@@ -425,6 +534,11 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── ⑤.5 「〜線沿い」パターンで解決した route_ids を反映 ─────────────────────
+  for (const rid of lineSoiRouteIds) {
+    route_id_set.add(rid);
+  }
+
   // ── ⑥ lines フィールド → route_ids に変換 ──────────────────────────────────
   for (const lineName of lines) {
     const rid = lineToRouteId(lineName);
@@ -442,35 +556,192 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── ⑧ unknown_tokens の概念的地域名を解決 ────────────────────────────────
+  // ── ⑧ unknown_tokens の3段フォールバック解決 ──────────────────────────────
+  // 段1: CONCEPT_AREA_MAP（静的・コスト0）
+  // 段2: unknown_tokens テーブルの過去解決キャッシュ（DeepSeek/手動登録の再利用）
+  // 段3: DeepSeek 統合問い合わせ（駅名 or 市区名を1回で判定）→ 結果を unknown_tokens に保存
   const conceptResolved = new Set<string>();
   if (unknown_tokens.length > 0) {
-    await Promise.all(unknown_tokens.map(async (token) => {
-      const cityNames = await resolveConceptArea(token);
-      if (cityNames && cityNames.length > 0) {
-        conceptResolved.add(token);
-        for (const cityName of cityNames) {
-          const code = WARD_CODE_MAP[cityName];
-          if (code) city_code_set.add(code);
-          if (!detail_ward) detail_ward = cityName;
-        }
-        console.log("[resolve-conditions] concept area resolved:", token, "->", cityNames);
-        // 静的マップにないもの（=DeepSeek解決）のみDBにキャッシュ
-        const strippedToken = token.replace(/エリア$/, "").trim();
-        if (!(CONCEPT_AREA_MAP[token] ?? CONCEPT_AREA_MAP[strippedToken])) {
-          void db.from("region_map")
-            .upsert(
-              cityNames.map((ward) => ({ token, ward, source: "deepseek", confidence: 75 })),
-              { onConflict: "token", ignoreDuplicates: true }
-            )
-            .then(() => {}, (e: unknown) => { console.error("[resolve-conditions] deepseek concept area upsert failed:", token, e); });
+    // 市区名リストを city_code_set / detail_ward に適用（WARD_CODE_MAP 未登録名は黙殺せず警告）
+    const applyWards = (token: string, wardNames: string[]): boolean => {
+      let applied = false;
+      for (const wardName of wardNames) {
+        const code = WARD_CODE_MAP[wardName];
+        if (code) {
+          city_code_set.add(code);
+          if (!detail_ward) detail_ward = wardName;
+          applied = true;
+        } else {
+          console.warn("[resolve-conditions] WARD_CODE_MAP 未登録の市区名をスキップ:", wardName, "(token:", token, ")");
         }
       }
-    }));
+      return applied;
+    };
+
+    // 駅名リストを station_map で実在検証してから station_names / 路線系Setに適用
+    // （source='unknown' や realpro_lines 空の行は検証NG = ハルシネーション防止）
+    // 戻り値: 検証通過した駅名リスト
+    const applyStations = async (names: string[]): Promise<string[]> => {
+      const candidates = names.filter((n) => n && !n.endsWith("線"));
+      if (candidates.length === 0) return [];
+      const { data, error } = await db
+        .from("station_map")
+        .select("token, ward, realpro_lines, itandi_lines, reins_line, source")
+        .in("token", candidates);
+      if (error) {
+        console.warn("[resolve-conditions] station validation query failed:", error.message);
+        return [];
+      }
+      const valid: string[] = [];
+      for (const row of (data ?? []) as StationRow[]) {
+        if (row.source === "unknown") continue;
+        if (!row.realpro_lines || row.realpro_lines.length === 0) continue;
+        if (!station_names.includes(row.token)) station_names.push(row.token);
+        for (const line of row.realpro_lines) {
+          const rid = lineToRouteId(line);
+          if (rid) route_id_set.add(rid);
+        }
+        for (const line of row.itandi_lines ?? []) itandi_line_set.add(line);
+        if (row.reins_line) reins_line_set.add(row.reins_line);
+        valid.push(row.token);
+      }
+      return valid;
+    };
+
+    // resolved_as（キャッシュ/DeepSeek結果）を実際の検索条件に適用
+    const applyResolution = async (token: string, res: TokenResolution): Promise<boolean> => {
+      if (res.type === "station" && Array.isArray(res.names)) {
+        const valid = await applyStations(res.names);
+        return valid.length > 0;
+      }
+      if (res.type === "ward" && Array.isArray(res.names)) {
+        return applyWards(token, res.names);
+      }
+      return false;
+    };
+
+    // ── 段1: CONCEPT_AREA_MAP ──────────────────────────────────────────────
+    const afterStage1: string[] = [];
+    for (const token of unknown_tokens) {
+      const fromMap = resolveConceptAreaStatic(token);
+      if (fromMap && applyWards(token, fromMap)) {
+        conceptResolved.add(token);
+        console.log("[resolve-conditions] concept area resolved (static):", token, "->", fromMap);
+      } else if (!knownUnknown.has(token)) {
+        // TTL内ネガティブキャッシュは段2/3（DeepSeek）へ回さない
+        afterStage1.push(token);
+      }
+    }
+
+    // ── 段2: unknown_tokens テーブルキャッシュ + 段3: DeepSeek ─────────────
+    // エラーが出てもメイン処理を止めない（テーブル未作成時なども検索自体は続行）
+    if (afterStage1.length > 0) {
+      try {
+        const { data: cachedRows, error: cacheErr } = await db
+          .from("unknown_tokens")
+          .select("token, resolution_type, resolved_as, attempt_count, last_attempt_at")
+          .in("token", afterStage1);
+        if (cacheErr) {
+          console.warn("[resolve-conditions] unknown_tokens cache lookup failed:", cacheErr.message);
+        }
+        const cacheMap = new Map<string, UnknownTokenRow>();
+        for (const row of (cachedRows ?? []) as UnknownTokenRow[]) cacheMap.set(row.token, row);
+
+        const needsDeepSeek: string[] = [];
+        for (const token of afterStage1) {
+          const row = cacheMap.get(token);
+          if (row?.resolved_as) {
+            // 段2: 過去のDeepSeek/手動解決を再利用（DeepSeek呼び出し不要）
+            const applied = await applyResolution(token, row.resolved_as);
+            if (applied) {
+              conceptResolved.add(token);
+              console.log("[resolve-conditions] token resolved (unknown_tokens cache):", token, "->", row.resolved_as);
+              continue;
+            }
+            // キャッシュ内容が現在のマップで適用不能 → 再解決へ
+            needsDeepSeek.push(token);
+            continue;
+          }
+          if (row && !row.resolved_as && row.last_attempt_at &&
+              Date.now() - new Date(row.last_attempt_at).getTime() < SEVEN_DAYS_MS) {
+            // 未解決キャッシュの7日TTL内 → DeepSeek再呼び出し抑制（コスト対策）
+            continue;
+          }
+          needsDeepSeek.push(token);
+        }
+
+        // 段3: DeepSeek（1リクエストあたり最大3トークンに cap。残りは次回リクエストで再試行）
+        // 文字化けトークンは結果を保存できず毎回呼ばれてしまうため、DeepSeek呼び出し前に除外
+        const cleanTargets = needsDeepSeek.filter((t) => TOKEN_CHARSET_RE.test(t));
+        const deepSeekTargets = cleanTargets.slice(0, 3);
+        if (cleanTargets.length > deepSeekTargets.length) {
+          console.log("[resolve-conditions] DeepSeek cap: 残り", cleanTargets.length - deepSeekTargets.length, "トークンは次回へ");
+        }
+        await Promise.all(deepSeekTargets.map(async (token) => {
+          try {
+            const prevAttempts = cacheMap.get(token)?.attempt_count ?? 0;
+            let resolution = await resolveTokenWithDeepSeek(token);
+
+            // 「線」で終わるトークンは station として保存しない（汚染事故ガード）
+            if (resolution?.type === "station" && token.endsWith("線")) resolution = null;
+
+            // station は station_map 実在検証を通過した駅のみ採用・保存
+            let applied = false;
+            let validatedResolution: TokenResolution | null = null;
+            if (resolution?.type === "station") {
+              const valid = await applyStations(resolution.names);
+              if (valid.length > 0) {
+                applied = true;
+                validatedResolution = { type: "station", names: valid };
+              }
+            } else if (resolution?.type === "ward") {
+              applied = applyWards(token, resolution.names);
+              if (applied) validatedResolution = resolution;
+            }
+
+            if (applied && validatedResolution) {
+              conceptResolved.add(token);
+              console.log("[resolve-conditions] token resolved (deepseek):", token, "->", validatedResolution);
+              // 解決結果を unknown_tokens に保存（次回以降はDBキャッシュで解決）
+              const { error: upErr } = await db.from("unknown_tokens").upsert({
+                token,
+                resolution_type: "deepseek",
+                resolved_as: validatedResolution,
+                to_review: false,
+                attempt_count: prevAttempts + 1,
+                last_attempt_at: new Date().toISOString(),
+              }, { onConflict: "token" });
+              if (upErr) console.error("[resolve-conditions] unknown_tokens upsert failed:", token, upErr.message);
+              // 旧ネガティブキャッシュ（station_map source='unknown'）を掃除
+              const { error: delErr } = await db.from("station_map")
+                .delete().eq("token", token).eq("source", "unknown");
+              if (delErr) console.warn("[resolve-conditions] negative cache cleanup failed:", token, delErr.message);
+            } else {
+              // 未解決として記録（7日TTLでDeepSeek再呼び出しを抑制・to_review で人間レビュー対象に）
+              const { error: upErr } = await db.from("unknown_tokens").upsert({
+                token,
+                resolution_type: "unresolved",
+                resolved_as: null,
+                to_review: true,
+                attempt_count: prevAttempts + 1,
+                last_attempt_at: new Date().toISOString(),
+              }, { onConflict: "token" });
+              if (upErr) console.error("[resolve-conditions] unknown_tokens (unresolved) upsert failed:", token, upErr.message);
+            }
+          } catch (e) {
+            console.error("[resolve-conditions] token fallback error:", token, e instanceof Error ? e.message : e);
+          }
+        }));
+      } catch (e) {
+        console.error("[resolve-conditions] unknown_tokens fallback pipeline error:", e instanceof Error ? e.message : e);
+      }
+    }
   }
 
-  // 概念地域として解決できたものを unknown_tokens から除去
-  const filteredUnknownTokens = unknown_tokens.filter((t) => !conceptResolved.has(t));
+  // 概念地域として解決できたもの・TTL内ネガティブキャッシュ済みのものを unknown_tokens から除去
+  const filteredUnknownTokens = unknown_tokens.filter(
+    (t) => !conceptResolved.has(t) && !knownUnknown.has(t),
+  );
 
   // 完全未解決トークンを station_map にネガティブキャッシュ（次回以降のDeepSeek呼び出し抑制）
   // ignoreDuplicates: true により既存レコードは上書きしない（created_at は初回挿入時のまま）
