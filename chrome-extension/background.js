@@ -765,20 +765,68 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
         }
 
-        // 修正4: itandi スクレイプ用の fill-done ウェイターを autofill 発火「前」に作成
-        // フォーム入力＋ページロードで60秒を超えるケースがあるため90秒（リアプロと統一）
-        var itandiFillDone = (site === "itandi" && conditions && conditions.customerId)
+        // 拡張ツール側の顧客データで条件を自己解決する
+        // webappからは customerId + site + is_wide + area_mode だけ受け取り、
+        // 拡張ツールが自分でAPIから顧客取得・条件解決を行う（二重変換バグを根絶）
+        var _cid      = conditions && conditions.customerId;
+        var _isWide   = !!(conditions && conditions.is_wide);
+        var _areaMode = (conditions && conditions.area_mode) || 'auto';
+        var _custName = (conditions && conditions.customerName) || null;
+
+        var _customer = null;
+        try {
+          var _custRes  = await fetch(SUMORA_BATCH_API + "/api/property-customers", { cache: "no-store" });
+          var _custList = await _custRes.json();
+          _customer = Array.isArray(_custList)
+            ? _custList.find(function(x) { return String(x.id) === String(_cid); })
+            : null;
+        } catch (_custErr) {
+          console.warn("[webapp-search] 顧客取得失敗:", _custErr && _custErr.message);
+        }
+
+        var _fullConditions;
+        if (_customer) {
+          var _base = Object.assign(
+            _buildBatchConditions(_customer, _isWide),
+            { area_mode: _areaMode, desired_area: _customer.desired_area || null }
+          );
+          var _res = await _resolveLocalFirst(_base, _isWide);
+          _fullConditions = Object.assign({}, _base, {
+            station_names: (_res.station_names && _res.station_names.length) ? _res.station_names : (_base.station_names || []),
+            route_ids:     (_res.route_ids     && _res.route_ids.length)     ? _res.route_ids     : (_base.route_ids     || []),
+            city_codes:    (_res.city_codes    && _res.city_codes.length)    ? _res.city_codes    : (_base.city_codes    || []),
+            detail_ward:   _res.detail_ward   || null,
+            detail_area:   _res.detail_area   || null,
+            itandi_lines:       (_res.itandi_line_names && _res.itandi_line_names.length) ? _res.itandi_line_names : [],
+            itandi_line_names:  (_res.itandi_line_names && _res.itandi_line_names.length) ? _res.itandi_line_names : [],
+            reins_line_names:   (_res.reins_line_names  && _res.reins_line_names.length)  ? _res.reins_line_names  : [],
+            line_names: site === "itandi"
+              ? ((_res.itandi_line_names && _res.itandi_line_names.length) ? _res.itandi_line_names : [])
+              : site === "reins"
+              ? ((_res.reins_line_names && _res.reins_line_names.length) ? _res.reins_line_names : [])
+              : [],
+            unknown_tokens: _res.unknown_tokens || [],
+            is_wide:      _isWide,
+            rent_max:     _res.rent_max_resolved     || _base.rent_max     || null,
+            building_age: _res.building_age_resolved || _base.building_age || null,
+            customerId:   String(_customer.id),
+            customerName: _customer.customer_name || _custName,
+          });
+        } else {
+          // 顧客取得失敗時: 最小条件で続行
+          _fullConditions = conditions || {};
+        }
+
+        var itandiFillDone = (site === "itandi" && _cid)
           ? _createFillDoneWaiter("itandi", 90000)
           : null;
-        await _webappAutofill(site, conditions);
-        // itandi の場合: autofill 後にバックグラウンドでスクレイプ+AI比較+LINE送信を実行
-        // conditions.customerId は customers/page.tsx の firePropertySearch で付与
-        if (site === "itandi" && conditions && conditions.customerId) {
+        await _webappAutofill(site, _fullConditions);
+        if (site === "itandi" && _cid) {
           _scrapeAndCompareItandi(
             itandiFillDone,
-            String(conditions.customerId),
-            conditions.customerName || null,
-            conditions
+            String(_cid),
+            _custName,
+            _fullConditions
           ).catch(function (e) {
             console.error("[itandiScrape] バックグラウンドエラー:", e.message || e);
           });

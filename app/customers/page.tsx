@@ -1144,7 +1144,6 @@ export default function CustomersPage() {
   const firePropertySearch = (
     c: Customer,
     sites: string[] = ["realnetpro", "itandi"],
-    resolvedConditions: ResolvedSearchConditions | null = null,
     isWide: boolean = false,
   ): Promise<boolean> => {
     // ACKリスナーは postMessage 発火前に登録しておく
@@ -1168,55 +1167,17 @@ export default function CustomersPage() {
       }, 1500);
     });
 
-    const areaArr = c.desired_area
-      ? c.desired_area.split(/[・、,]+/).map((s) => s.trim()).filter(Boolean)
-      : [];
-    // サイト共通のベース条件
-    const baseConditions = {
-      // 地域/駅モード（"auto"=従来の自動判定）。リアプロ/itandi/レインズ共通で伝搬する
-      area_mode:     getAreaMode(c.id),
-      rent_max:      resolvedConditions?.rent_max_resolved ?? c.rent_max ?? null,
-      rent_min:      c.rent_min      ?? null,
-      walk_minutes:  c.walk_minutes  ?? null,
-      floor_plan:    c.floor_plan    ?? null,
-      building_age:  resolvedConditions?.building_age_resolved ?? c.building_age ?? null,
-      area_min:      c.floor_area_min ?? parseAreaMin(c.floor_plan) ?? parseAreaMin(c.preferences) ?? parseAreaMin(c.other_requests) ?? null,
-      area_max:      c.floor_area_max ?? null,
-      pet_ok:        resolvePetOk(c),
-      desired_area:  c.desired_area ?? null,
-      is_wide:       isWide,
-      station_names: resolvedConditions?.station_names  ?? [],
-      city_codes:    resolvedConditions?.city_codes     ?? [],
-      detail_ward:   resolvedConditions?.detail_ward    ?? null,
-      detail_area:   resolvedConditions?.detail_area    ?? null,
-      unknown_tokens: resolvedConditions?.unknown_tokens ?? null,
-      // 後方互換: areas フィールドも維持（旧ハンドラが参照する場合に備える）
-      areas:         areaArr,
-      lines:         c.lines         ?? [] as string[],
-      stations:      c.stations      ?? [] as string[],
-      prefecture:    null as string | null,
-      city:          null as string | null,
-      structure_types: parseStructureTypes(c.preferences, c.other_requests),
-      rp_update_days: calcRpUpdateDays(c.last_property_sent_at),
+    // 拡張ツール側に同じ顧客リストがあるため customerId だけ送れば十分
+    // 条件の解決（エリア→コード変換等）は background.js 側で実施する
+    const conditions = {
+      customerId:   String(c.id),
+      customerName: c.customer_name ?? null,
+      is_wide:      isWide,
+      area_mode:    getAreaMode(c.id),
     };
     let delay = 0;
     for (const site of sites) {
       const s = site;
-      // サイト別に路線条件を切り替える
-      const lineConditions = s === "itandi"
-        ? {
-            // itandi-page-script.js は itandi_lines キーを参照するため両キーで渡す
-            itandi_lines: resolvedConditions?.itandi_line_names ?? [],
-            line_names: resolvedConditions?.itandi_line_names ?? [],
-            route_ids: [] as string[],
-          }
-        : s === "reins"
-        ? { line_names: resolvedConditions?.reins_line_names ?? [], route_ids: [] as string[] }
-        : { line_names: [] as string[], route_ids: resolvedConditions?.route_ids ?? [] };  // realnetpro
-      // 全サイト共通: customerId を渡すことで background.js が pendingPopupCmd を書いてポップアップを開く
-      // itandi のスクレイプ+AI比較は background.js 側で site==="itandi" 判定で制御済み
-      const customerMeta = { customerId: String(c.id), customerName: c.customer_name ?? null };
-      const conditions = { ...baseConditions, ...lineConditions, ...customerMeta };
       if (delay === 0) {
         window.postMessage({ from: "aixlinx-webapp", site: s, conditions }, "*");
       } else {
@@ -1235,7 +1196,7 @@ export default function CustomersPage() {
   const queuePropertySearch = async (c: Customer, sites: string[] = ["realnetpro", "itandi"], isWide: boolean = false) => {
     // 拡張ツールには生データをそのまま渡す（拡張側で resolve-search-conditions を実行するため事前変換不要）
     // webapp で事前変換すると拡張側と二重変換になりバグの原因になる
-    const extHandled = await firePropertySearch(c, sites, null, isWide);
+    const extHandled = await firePropertySearch(c, sites, isWide);
 
     const key = c.id + "-" + sites[0] + (isWide ? "-wide" : "");
     setQueueErrors((prev) => {
