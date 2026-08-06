@@ -669,3 +669,25 @@ var NON_RESULT_PAGES = ["GBK001310"];
 - **実行PCでリアプロにログインした状態を維持すること**（未ログインは即 error_message で可視化される）
 - manifest 2.4.4 へ bump。background.js / page-script.js 変更のため chrome://extensions で**拡張の再読み込み必須**
 - Vercel 環境変数 SUPABASE_SERVICE_ROLE_KEY の設定を確認（未設定でも anon フォールバックで動くが本来は設定すべき）
+
+---
+
+## 🛠️ fill-done タイムアウト問題の恒久対策（2026-08-06 Fable5）
+
+**症状**: リアプロ autofill 中にエラー・タイムアウトが起きると fill-done が永遠に届かず、background.js が60秒待ってタイムアウト → status:error。
+
+### 修正一覧（コミット 040f76e）
+| # | 内容 | ファイル |
+|---|---|---|
+| 1 | notifyDone をべき等化（1回のfillRealproにつき1回だけ送信）+ 85秒フェイルセーフ watchdog 追加。全経路が沈黙しても必ず fill-done が送られる | `page-script.js` |
+| 2 | waitForClick に try-catch 追加（tryFn/onDone/onFail の例外で静かに死なない）。onFail 未指定時のタイムアウトも notifyDone を送る | `page-script.js` |
+| 3 | fillRealpro エントリ・本体・_doReset に例外保護。cond が falsy でも notifyDone | `page-script.js` |
+| 4 | ブロッキング alert()（alertStop）を廃止 → 非ブロッキングトースト showWarnToast に変更。無人運転で alert が fill-done 配送を止めるバグを解消 | `page-script.js` |
+| 5 | 所在地モーダルのタイムアウト時 → fallbackSearchWithoutArea（モーダル閉じて所在地条件なしで検索）。沿線・駅モーダルも同様に fallbackSearchWithoutStation | `page-script.js` |
+| 6 | closeAreaModal / closeStationModal 待機（従来 onFail 未指定＝最大のハングポイント）に onFail 追加。閉じ失敗でも検索実行 | `page-script.js` |
+| 7 | realnetpro の fill-done タイムアウトを 60秒→90秒（3箇所+デフォルト値）。itandi は60秒のまま。モーダル操作＋タブロード時間で60秒では余裕ゼロだった | `background.js` |
+
+### 設計メモ
+- タイムアウト序列: page-script watchdog 85秒 < background ウェイター 90秒（watchdog が必ず先に発火し、90秒タイムアウト経由の error を回避）
+- フォールバック検索の思想: 「何もせず fill-done だけ送る」と前回結果ページを誤スクレイプする恐れがあるため、タイムアウト時も必ず clickSearch を実行してから通知する
+- **拡張の再読み込み必須**: page-script.js / background.js 変更のため chrome://extensions で再読み込みすること
