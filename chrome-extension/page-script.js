@@ -540,12 +540,10 @@
     _doneNotified = false;
     if (_watchdogTimer) clearTimeout(_watchdogTimer);
     _watchdogTimer = setTimeout(function() {
-      // 素の notifyDone だと「done 到着後に検索が走り前回結果を誤スクレイプする」余地が
-      // あるため、先に検索を強制実行してから done を送る（clickSearch が内部で notifyDone する）
-      console.warn('[AX] フェイルセーフ: 85秒経過 → 検索を強制実行して fill-done 送信');
-      try { clickSearch(); }
-      catch (e) { notifyDone('watchdog: ' + (e && e.message)); }
-      if (!_doneNotified) notifyDone('watchdog-timeout');
+      // 条件入力が未完了のまま clickSearch すると全件検索→LINE誤送信になるため検索しない。
+      // error付きdoneでbackground.jsがスクレイプを中止するので前回結果の誤スクレイプも起きない。
+      console.warn('[AX] フェイルセーフ: 85秒経過 → 検索せず fill-done(error) 送信');
+      notifyDone('watchdog-timeout: 85秒以内に条件入力が完了しませんでした（全件検索防止のため中止）');
     }, 85000);
 
     if (!cond) { notifyDone(); return; }
@@ -680,6 +678,16 @@
     //   station_names/route_ids の両方を埋めるため、負けた軸をここで一括抹消しないと
     //   後段の駅名入力・隣駅展開・detail_ward モーダルが誤発火する。
     //   路線名再分類 IIFE の後に置くこと（ward モード時に再分類された route_ids も消すため）。
+
+    // suppression前スナップショット: area_mode抹消で軸が空になったか判定するため
+    var _hadAreaBeforeSuppress = !!(
+      (cond.station_names && cond.station_names.length) ||
+      (cond.route_ids && cond.route_ids.length) ||
+      (cond.city_codes && cond.city_codes.length) ||
+      cond.detail_ward ||
+      (cond.desired_area && String(cond.desired_area).trim())
+    );
+
     if (cond.area_mode === "ward") {
       cond.station_names = [];
       cond.route_ids    = [];
@@ -835,7 +843,15 @@
     // 沿線・駅なし（locationMode: area または none）
     if (locationMode === "area" || locationMode === "none") {
       if (locationMode === "none") {
-        // 場所条件ゼロ: エラーにはしない（現行踏襲）が、無条件検索であることを必ず可視化する
+        // area_mode抹消等で場所条件が空になった場合 → 全件検索せず中止（fallbackSearchWithoutAreaと同方針）
+        if (_hadAreaBeforeSuppress) {
+          var errNone = "area_mode=" + (cond.area_mode || "auto") +
+            " 指定により場所条件が空になりました（全件検索防止のため中止）";
+          showWarnToast(errNone);
+          notifyDone(errNone);
+          return;
+        }
+        // 本当に場所条件ゼロの顧客（desired_area自体が空）のみ: 従来どおり可視化して検索
         var warnNone = "場所条件なしで検索します（家賃・間取り等のみ）。";
         if (cond.unknown_tokens && cond.unknown_tokens.length) {
           warnNone = "未解決の地名: " + cond.unknown_tokens.join("、") + "\n" + warnNone;

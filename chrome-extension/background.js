@@ -1773,9 +1773,14 @@ async function _scrapeAndCompareForCustomer(customer) {
     (baseConditions.lines && baseConditions.lines.length) ||
     (baseConditions.stations && baseConditions.stations.length)
   );
-  var hasAreaResolved =
-    mergedStations.length > 0 || mergedRoutes.length > 0 ||
-    mergedCityCodes.length > 0 || !!mergedDetailWard;
+  // page-script.js の area_mode suppression と同じロジックでチェックする（guard が suppression後の実態を見るため）
+  var _am = mergedConditions.area_mode;
+  var hasAreaResolved = (_am === "ward")
+    ? (mergedCityCodes.length > 0 || !!mergedDetailWard)
+    : (_am === "station")
+      ? (mergedStations.length > 0 || mergedRoutes.length > 0)
+      : (mergedStations.length > 0 || mergedRoutes.length > 0 ||
+         mergedCityCodes.length > 0 || !!mergedDetailWard);
   if (hasAreaInput && !hasAreaResolved) {
     var utList = (mergedConditions.unknown_tokens || []).join(", ");
     throw new Error(
