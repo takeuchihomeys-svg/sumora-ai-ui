@@ -887,21 +887,46 @@ export default function CustomersPage() {
   };
 
   // ── 物件検索: PC同一ブラウザ向けpostMessage ──
-  const firePropertySearch = (c: Customer, sites: string[] = ["realnetpro", "itandi"]) => {
+  // resolvedConditions は /api/resolve-search-conditions で事前解決済みのフィールド群
+  type ResolvedSearchConditions = {
+    station_names: string[];
+    route_ids: string[];
+    city_codes: string[];
+    detail_ward: string | null;
+    detail_area: string | null;
+    unknown_tokens: string[];
+  };
+
+  const firePropertySearch = (
+    c: Customer,
+    sites: string[] = ["realnetpro", "itandi"],
+    resolvedConditions: ResolvedSearchConditions | null = null,
+  ) => {
     const areaArr = c.desired_area
       ? c.desired_area.split(/[・、,]+/).map((s) => s.trim()).filter(Boolean)
       : [];
     const conditions = {
-      rent_max: c.rent_max ?? null,
-      rent_min: c.rent_min ?? null,
-      walk_minutes: c.walk_minutes ?? null,
-      floor_plan: c.floor_plan ?? null,
-      building_age: c.building_age ?? null,
-      areas: areaArr,
-      lines: [] as string[],
-      stations: [] as string[],
-      prefecture: null as string | null,
-      city: null as string | null,
+      rent_max:      c.rent_max      ?? null,
+      rent_min:      c.rent_min      ?? null,
+      walk_minutes:  c.walk_minutes  ?? null,
+      floor_plan:    c.floor_plan    ?? null,
+      building_age:  c.building_age  ?? null,
+      area_min:      c.floor_area_min ?? null,
+      area_max:      c.floor_area_max ?? null,
+      pet_ok:        c.pet === true,
+      // 解決済み条件（あれば上書き、なければ空配列）
+      station_names: resolvedConditions?.station_names  ?? [],
+      route_ids:     resolvedConditions?.route_ids      ?? [],
+      city_codes:    resolvedConditions?.city_codes     ?? [],
+      detail_ward:   resolvedConditions?.detail_ward    ?? null,
+      detail_area:   resolvedConditions?.detail_area    ?? null,
+      unknown_tokens: resolvedConditions?.unknown_tokens ?? null,
+      // 後方互換: areas フィールドも維持（旧ハンドラが参照する場合に備える）
+      areas:         areaArr,
+      lines:         [] as string[],
+      stations:      [] as string[],
+      prefecture:    null as string | null,
+      city:          null as string | null,
     };
     let delay = 0;
     for (const site of sites) {
@@ -919,8 +944,29 @@ export default function CustomersPage() {
   // スマホから押してもPCのChrome拡張（30秒ポーリング）が処理する
   const [searchQueued, setSearchQueued] = useState<string | null>(null);
   const queuePropertySearch = async (c: Customer, sites: string[] = ["realnetpro", "itandi"]) => {
-    // 同一ブラウザ（PC）への即時通知（スマホでは届かないが無害）
-    firePropertySearch(c, sites);
+    // /api/resolve-search-conditions で desired_area をトークン解析・駅・路線・区コードに変換
+    let resolved: ResolvedSearchConditions | null = null;
+    if (c.desired_area?.trim()) {
+      try {
+        const res = await fetch("/api/resolve-search-conditions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ desired_area: c.desired_area }),
+        });
+        if (res.ok) {
+          resolved = await res.json() as ResolvedSearchConditions;
+          if (resolved.unknown_tokens?.length) {
+            console.warn("[queuePropertySearch] 未解決トークン:", resolved.unknown_tokens);
+          }
+        }
+      } catch (e) {
+        console.error("[queuePropertySearch] resolve-search-conditions 失敗（従来方式で続行）:", e);
+      }
+    }
+
+    // 同一ブラウザ（PC）への即時通知（解決済み条件を渡す）
+    firePropertySearch(c, sites, resolved);
+
     // クロスデバイス対応: サーバー経由でキューに追加
     try {
       await fetch("/api/automation/trigger", {
