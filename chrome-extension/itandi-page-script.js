@@ -488,6 +488,22 @@
       console.log("[AX] → popup.js の NEIGHBORHOOD_WARD_MAP に追加が必要です");
     }
 
+    // ── area_mode: webappトグル/ポップアップの明示指定が絶対ルール（自動判定より優先）──
+    // "ward"    → 所在地モーダルのみ使用。路線・駅の軸を完全に消す
+    // "station" → 路線・駅モーダルのみ使用。所在地の軸を完全に消す
+    // "auto" / undefined → 何も消さない（従来動作）
+    if (cond.area_mode === "ward") {
+      cond.itandi_lines  = [];
+      cond.station_names = null;
+    } else if (cond.area_mode === "station") {
+      cond.ward_name     = null;
+      cond.ward_names    = null;
+      cond.ward_town_map = null;
+    }
+    console.log("[AX] 場所モード判定(itandi)", {
+      area_mode: cond.area_mode, wards: cond.ward_names || cond.ward_name,
+      lines: cond.itandi_lines, stations: cond.station_names });
+
     // ── STEP 1: 賃料（最初に入力）────────────────────────────────────────
     if (cond.rent_max) {
       var rentVal = cond.rent_max > 1000 ? cond.rent_max / 10000 : cond.rent_max;

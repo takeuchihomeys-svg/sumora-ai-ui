@@ -74,6 +74,22 @@
     });
     if (_resetBtn) { _resetBtn.click(); console.log("[AX] 条件リセット実行"); await sleep(600); }
 
+    // ── area_mode: webappトグル/ポップアップの明示指定が絶対ルール（自動判定より優先）──
+    // "ward"    → 所在地入力のみ使用。沿線・駅の軸を完全に消す
+    // "station" → 沿線・駅入力のみ使用。所在地の軸を完全に消す
+    // "auto" / undefined → 何も消さない（従来動作）
+    if (cond.area_mode === "ward") {
+      cond.reins_station_pairs = [];
+      cond.reins_line   = null;
+      cond.station_name = null;
+    } else if (cond.area_mode === "station") {
+      cond.ward_name  = null;
+      cond.ward_names = [];
+    }
+    console.log("[AX] 場所モード判定(reins)", {
+      area_mode: cond.area_mode, wards: cond.ward_names || cond.ward_name,
+      line: cond.reins_line, pairs: cond.reins_station_pairs, station: cond.station_name });
+
     // 遅延レンダリング対策：最上部にスクロールして全フィールドを確実にレンダリング
     window.scrollTo(0, 0);
     await sleep(800);
