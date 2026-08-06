@@ -393,6 +393,17 @@ export async function POST(req: NextRequest) {
       }
     }
     console.log("[resolve-conditions] nearby stations resolved:", nearbyResults.flat());
+
+    // DeepSeekで解決した近隣駅をDBにキャッシュ（以降はDBから返せる）
+    const nearbyFlat = nearbyResults.flat();
+    if (nearbyFlat.length > 0) {
+      void db.from("station_map")
+        .upsert(
+          nearbyFlat.map((s) => ({ token: s, ward: null, realpro_lines: [] as string[], source: "deepseek_nearby" })),
+          { onConflict: "token", ignoreDuplicates: true }
+        )
+        .then(() => {}, () => {});
+    }
   }
 
   // ── ⑥ lines フィールド → route_ids に変換 ──────────────────────────────────
@@ -425,12 +436,35 @@ export async function POST(req: NextRequest) {
           if (!detail_ward) detail_ward = cityName;
         }
         console.log("[resolve-conditions] concept area resolved:", token, "->", cityNames);
+        // 静的マップにないもの（=DeepSeek解決）のみDBにキャッシュ
+        const strippedToken = token.replace(/エリア$/, "").trim();
+        if (!(CONCEPT_AREA_MAP[token] ?? CONCEPT_AREA_MAP[strippedToken])) {
+          void db.from("region_map")
+            .upsert(
+              cityNames.map((ward) => ({ token, ward, source: "deepseek", confidence: 75 })),
+              { onConflict: "token", ignoreDuplicates: true }
+            )
+            .then(() => {}, () => {});
+        }
       }
     }));
   }
 
   // 概念地域として解決できたものを unknown_tokens から除去
   const filteredUnknownTokens = unknown_tokens.filter((t) => !conceptResolved.has(t));
+
+  // 完全未解決トークンを station_map にネガティブキャッシュ（次回以降のDeepSeek呼び出し抑制）
+  if (filteredUnknownTokens.length > 0) {
+    void db.from("station_map")
+      .upsert(
+        filteredUnknownTokens.map((t) => ({ token: t, ward: null, realpro_lines: [] as string[], source: "unknown" })),
+        { onConflict: "token", ignoreDuplicates: true }
+      )
+      .then(
+        () => { console.log("[resolve-conditions] unknown tokens saved:", filteredUnknownTokens); },
+        (e: unknown) => { console.warn("[resolve-conditions] failed to save unknown tokens:", e); }
+      );
+  }
 
   const result: ResolvedSearchConditions = {
     station_names,
