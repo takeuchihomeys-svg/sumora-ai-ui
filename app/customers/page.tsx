@@ -1233,43 +1233,9 @@ export default function CustomersPage() {
   // 修正11: キュー投入失敗を消えない赤色エラーとして保持（キー: c.id + "-" + site [+ "-wide"]）
   const [queueErrors, setQueueErrors] = useState<Record<string, string>>({});
   const queuePropertySearch = async (c: Customer, sites: string[] = ["realnetpro", "itandi"], isWide: boolean = false) => {
-    // /api/resolve-search-conditions で desired_area をトークン解析・駅・路線・区コードに変換
-    let resolved: ResolvedSearchConditions | null = null;
-    if (c.desired_area?.trim() || (c.lines?.length ?? 0) > 0 || (c.stations?.length ?? 0) > 0) {
-      try {
-        const res = await fetch("/api/resolve-search-conditions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            desired_area:  c.desired_area  ?? "",
-            lines:         c.lines         ?? [],
-            stations:      c.stations      ?? [],
-            is_wide:       isWide,
-            rent_max:      c.rent_max      ?? null,
-            building_age:  c.building_age  ?? null,
-          }),
-        });
-        if (res.ok) {
-          resolved = await res.json() as ResolvedSearchConditions;
-          if (resolved.unknown_tokens?.length) {
-            console.warn("[queuePropertySearch] 未解決トークン:", resolved.unknown_tokens);
-            // 未解決トークンをサーバーサイドで非同期解決（popup.js依存を排除）
-            // popup が開いていない自動化モードでも学習が機能するようにする
-            fetch("/api/token-resolve", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ tokens: resolved.unknown_tokens }),
-            }).catch(() => {}); // fire-and-forget: エラーでも物件検索に影響させない
-          }
-        }
-      } catch (e) {
-        console.error("[queuePropertySearch] resolve-search-conditions 失敗（従来方式で続行）:", e);
-      }
-    }
-
-    // 同一ブラウザ（PC）への即時通知（解決済み条件を渡す）
-    // 修正6: webapp-bridge の受領ACKで拡張の有無を判定する
-    const extHandled = await firePropertySearch(c, sites, resolved, isWide);
+    // 拡張ツールには生データをそのまま渡す（拡張側で resolve-search-conditions を実行するため事前変換不要）
+    // webapp で事前変換すると拡張側と二重変換になりバグの原因になる
+    const extHandled = await firePropertySearch(c, sites, null, isWide);
 
     const key = c.id + "-" + sites[0] + (isWide ? "-wide" : "");
     setQueueErrors((prev) => {
