@@ -979,6 +979,13 @@ export default function CustomersPage() {
           resolved = await res.json() as ResolvedSearchConditions;
           if (resolved.unknown_tokens?.length) {
             console.warn("[queuePropertySearch] 未解決トークン:", resolved.unknown_tokens);
+            // 未解決トークンをサーバーサイドで非同期解決（popup.js依存を排除）
+            // popup が開いていない自動化モードでも学習が機能するようにする
+            fetch("/api/token-resolve", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ tokens: resolved.unknown_tokens }),
+            }).catch(() => {}); // fire-and-forget: エラーでも物件検索に影響させない
           }
         }
       } catch (e) {

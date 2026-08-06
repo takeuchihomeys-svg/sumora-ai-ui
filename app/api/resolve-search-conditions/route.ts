@@ -410,7 +410,7 @@ export async function POST(req: NextRequest) {
           nearbyFlat.map((s) => ({ token: s, ward: null, realpro_lines: [] as string[], source: "deepseek_nearby" })),
           { onConflict: "token", ignoreDuplicates: true }
         )
-        .then(() => {}, () => {});
+        .then(() => {}, (e: unknown) => { console.error("[resolve-conditions] deepseek_nearby upsert failed:", e); });
     }
   }
 
@@ -452,7 +452,7 @@ export async function POST(req: NextRequest) {
               cityNames.map((ward) => ({ token, ward, source: "deepseek", confidence: 75 })),
               { onConflict: "token", ignoreDuplicates: true }
             )
-            .then(() => {}, () => {});
+            .then(() => {}, (e: unknown) => { console.error("[resolve-conditions] deepseek concept area upsert failed:", token, e); });
         }
       }
     }));
@@ -462,15 +462,23 @@ export async function POST(req: NextRequest) {
   const filteredUnknownTokens = unknown_tokens.filter((t) => !conceptResolved.has(t));
 
   // 完全未解決トークンを station_map にネガティブキャッシュ（次回以降のDeepSeek呼び出し抑制）
+  // ignoreDuplicates: true により既存レコードは上書きしない（created_at は初回挿入時のまま）
+  // token-resolve の 7日TTL ロジックが created_at を参照するため、新規挿入時のみ created_at を付与する
   if (filteredUnknownTokens.length > 0) {
     void db.from("station_map")
       .upsert(
-        filteredUnknownTokens.map((t) => ({ token: t, ward: null, realpro_lines: [] as string[], source: "unknown" })),
+        filteredUnknownTokens.map((t) => ({
+          token: t,
+          ward: null,
+          realpro_lines: [] as string[],
+          source: "unknown",
+          created_at: new Date().toISOString(),
+        })),
         { onConflict: "token", ignoreDuplicates: true }
       )
       .then(
-        () => { console.log("[resolve-conditions] unknown tokens saved:", filteredUnknownTokens); },
-        (e: unknown) => { console.warn("[resolve-conditions] failed to save unknown tokens:", e); }
+        () => { console.log("[resolve-conditions] unknown tokens cached:", filteredUnknownTokens); },
+        (e: unknown) => { console.error("[resolve-conditions] failed to cache unknown tokens:", e); }
       );
   }
 
