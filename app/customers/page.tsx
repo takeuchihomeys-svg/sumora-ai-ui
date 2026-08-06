@@ -313,6 +313,11 @@ export default function CustomersPage() {
   const [scrapeCompareStatus, setScrapeCompareStatus] = useState<Record<string, ScrapeCompareStatus>>({});
   // 修正: error時に automation_commands.error_message を保持して表示（未ログイン等が竹内さんに見える）
   const [scrapeCompareErrors, setScrapeCompareErrors] = useState<Record<string, string>>({});
+  // 地域/駅 検索モード切替（リアプロ/itandi/レインズ共通・顧客ごと）
+  // セッション内のみ保持しDB保存しない（popup.js の currentAreaMode と同じ揮発設計）。
+  // "auto" = 従来の自動判定（decideLocationMode）にそのまま委ねる = デフォルト
+  const [areaModeByCustomer, setAreaModeByCustomer] = useState<Record<string, "auto" | "ward" | "station">>({});
+  const getAreaMode = (id: string): "auto" | "ward" | "station" => areaModeByCustomer[id] ?? "auto";
   // ポーリングinterval / idle復帰timeout をアンマウント時に確実に停止するための保持
   const scrapePollIntervalsRef = useRef<Set<ReturnType<typeof setInterval>>>(new Set());
   const scrapeIdleTimeoutsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
@@ -911,6 +916,8 @@ export default function CustomersPage() {
             customer_name: c.customer_name,
             is_wide: isWide,
             conditions: {
+              // 地域/駅モード（"auto"=従来の自動判定）。常に明示的に含めて下流の undefined 分岐を防ぐ
+              area_mode: getAreaMode(c.id),
               rent_max: resolved?.rent_max_resolved ?? c.rent_max ?? undefined,
               rent_min: c.rent_min ?? undefined,
               walk_minutes: c.walk_minutes ?? undefined,
@@ -1127,6 +1134,8 @@ export default function CustomersPage() {
       : [];
     // サイト共通のベース条件
     const baseConditions = {
+      // 地域/駅モード（"auto"=従来の自動判定）。リアプロ/itandi/レインズ共通で伝搬する
+      area_mode:     getAreaMode(c.id),
       rent_max:      resolvedConditions?.rent_max_resolved ?? c.rent_max ?? null,
       rent_min:      c.rent_min      ?? null,
       walk_minutes:  c.walk_minutes  ?? null,
@@ -1242,7 +1251,8 @@ export default function CustomersPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // 修正5: is_wide をキューへ伝搬（trigger API が payload.is_wide として保存）
-        body: JSON.stringify({ customer_ids: [c.id], sites, is_wide: isWide, force: true }),
+        // area_mode: 地域/駅モードもキュー経路へ伝搬（"auto"=従来の自動判定）
+        body: JSON.stringify({ customer_ids: [c.id], sites, is_wide: isWide, area_mode: getAreaMode(c.id), force: true }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setSearchQueued(key);
@@ -2125,6 +2135,25 @@ export default function CustomersPage() {
                   {/* 物件検索ボタン（サイト別3ペア: 通常 + 広） */}
                   {c.status !== "pending" && !isApplying(c.status) && (
                     <div className="flex gap-1.5 flex-wrap">
+                      {/* 地域/駅モード切替（3セグメントピル・6ボタン共通・セッション内のみ有効） */}
+                      <div
+                        className="flex items-center self-start overflow-hidden rounded-xl border border-gray-200 bg-white"
+                        title="地域で検索 or 駅で検索（リアプロ/itandi/レインズ共通）"
+                      >
+                        {([["auto", "自動"], ["ward", "地域"], ["station", "駅"]] as const).map(([m, lbl]) => (
+                          <button
+                            key={m}
+                            onClick={() => setAreaModeByCustomer((prev) => ({ ...prev, [c.id]: m }))}
+                            className={`px-1.5 py-1.5 text-[10px] font-bold transition-colors ${
+                              getAreaMode(c.id) === m
+                                ? "bg-blue-600 text-white"
+                                : "bg-white text-gray-400"
+                            }`}
+                          >
+                            {lbl}
+                          </button>
+                        ))}
+                      </div>
                       {/* リアプロ（修正11: 状態表示 + 実行中の連打ガード。広は c.id+"-wide" で状態分離） */}
                       {(() => {
                         const stN = scrapeCompareStatus[c.id] ?? "idle";

@@ -1327,6 +1327,28 @@ function _batchWaitForTabComplete(tabId) {
   });
 }
 
+// content script 生存確認 ping。応答があれば true、受け手不在・タイムアウト時は false。
+// orphaned content.js（拡張リロード後に切断された古い content script）は応答できないため、
+// これが「ナビゲーション省略しても安全か」の判定シグナルになる。
+async function _pingTab(tabId, timeoutMs) {
+  timeoutMs = timeoutMs || 800;
+  return new Promise(function (resolve) {
+    var done = false;
+    var timer = setTimeout(function () { if (!done) { done = true; resolve(false); } }, timeoutMs);
+    try {
+      chrome.tabs.sendMessage(tabId, { type: "axlx-ping" }, function (resp) {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        if (chrome.runtime.lastError) { resolve(false); return; }
+        resolve(!!(resp && resp.pong));
+      });
+    } catch (e) {
+      if (!done) { done = true; clearTimeout(timer); resolve(false); }
+    }
+  });
+}
+
 async function _webappAutofill(site, conditions) {
   var siteUrlPrefixes = {
     realnetpro: "https://www.realnetpro.com",
@@ -1350,12 +1372,23 @@ async function _webappAutofill(site, conditions) {
     var mainTab = allTabs.find(function(t) { return t.url && t.url.includes("realnetpro.com/main.php"); });
     var targetRealTab = mainTab || existing;
     if (targetRealTab) {
-      // orphaned content.js 対策: 既存タブも必ず main.php へナビゲートして content.js を fresh に保つ
-      // （拡張リロード後・更新後に既存タブの content.js が切断されると sendMessage が全失敗する）
-      await chrome.tabs.update(targetRealTab.id, { url: siteUrls.realnetpro, active: true });
-      await _batchWaitForTabComplete(targetRealTab.id);
-      await new Promise(function(r) { setTimeout(r, 2000); });
-      existing = targetRealTab;
+      // ping-first: content.js が生きていればナビゲーション自体を省略する
+      // （ping は main.php タブのみ対象。content.js は main.php* にしか注入されないため）
+      var alive = mainTab ? await _pingTab(mainTab.id, 800) : false;
+      if (alive) {
+        console.log("[webapp-autofill] ping OK — skip navigation, reuse live tab", mainTab.id);
+        await chrome.tabs.update(mainTab.id, { active: true }); // フォアグラウンド化のみ・URL変更なし
+        await new Promise(function(r) { setTimeout(r, 300); });
+        existing = mainTab;
+      } else {
+        // ping 失敗 → orphaned content.js または main.php 以外のタブ → 従来どおりナビゲートして fresh にする
+        // （拡張リロード後・更新後に既存タブの content.js が切断されると sendMessage が全失敗する）
+        console.warn("[webapp-autofill] ping NG — navigating to main.php to refresh content.js");
+        await chrome.tabs.update(targetRealTab.id, { url: siteUrls.realnetpro, active: true });
+        await _batchWaitForTabComplete(targetRealTab.id);
+        await new Promise(function(r) { setTimeout(r, 2000); });
+        existing = targetRealTab;
+      }
     }
   }
   var tab = existing;
@@ -1366,8 +1399,10 @@ async function _webappAutofill(site, conditions) {
     await new Promise(function(r) { setTimeout(r, 2000); });
   } else if (site !== "realnetpro") {
     // タブが存在する: フォアグラウンドに切り替え（realnetpro は上でナビゲート・待機済み）
+    // ping が通れば content script は生きているので待機を 1500ms → 300ms に短縮
     await chrome.tabs.update(tab.id, { active: true });
-    await new Promise(function(r) { setTimeout(r, 1500); });
+    var alive2 = await _pingTab(tab.id, 800);
+    await new Promise(function(r) { setTimeout(r, alive2 ? 300 : 1500); });
   }
 
   // 修正: タブ準備後にURLを再取得して検証する。

@@ -190,6 +190,10 @@
 // background.js からの自動入力トリガー（executeScript を使わずに sendMessage 経由で呼ぶ）
 if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
   chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
+    if (msg.type === "axlx-ping") {
+      sendResponse({ ok: true });
+      return true;
+    }
     if (msg.type !== "axlx-realnetpro-autofill") return;
     setTimeout(function () {
       window.postMessage({ from: "aixlinx-fill", conditions: msg.conditions }, "*");

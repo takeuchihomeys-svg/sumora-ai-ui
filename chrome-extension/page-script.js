@@ -649,6 +649,23 @@
       cond.station_names = keep;
     })();
 
+    // ── area_mode: webappトグル/ポップアップの明示指定が絶対ルール（自動判定より優先）──
+    // "ward"    → 所在地モーダルのみ使用。駅/沿線の軸を完全に消す
+    // "station" → 沿線・駅モーダルのみ使用。所在地の軸を完全に消す
+    // "auto" / undefined → 何も消さない（従来の自動判定）
+    // ※ resolve-search-conditions は同じ desired_area から city_codes と
+    //   station_names/route_ids の両方を埋めるため、負けた軸をここで一括抹消しないと
+    //   後段の駅名入力・隣駅展開・detail_ward モーダルが誤発火する。
+    //   路線名再分類 IIFE の後に置くこと（ward モード時に再分類された route_ids も消すため）。
+    if (cond.area_mode === "ward") {
+      cond.station_names = [];
+      cond.route_ids    = [];
+    } else if (cond.area_mode === "station") {
+      cond.city_codes  = [];
+      cond.detail_ward = null;
+      cond.detail_area = null;
+    }
+
     var hasStation   = cond.station_names && cond.station_names.length > 0;
     var hasRoutes    = cond.route_ids && cond.route_ids.length > 0;
     var hasCities    = cond.city_codes && cond.city_codes.length > 0;
@@ -657,7 +674,17 @@
 
     // ── 場所モード判定の一元化（優先順位: station > route > area > none）──────
     // リアプロは駅×所在地がAND条件になるため、駅/沿線がある場合は地域を使わない
+    // area_mode が明示指定されている場合はユーザー意図を最優先する
     function decideLocationMode(c) {
+      if (c.area_mode === "ward") {
+        return ((c.city_codes && c.city_codes.length > 0) || c.detail_ward) ? "area" : "none";
+      }
+      if (c.area_mode === "station") {
+        if (c.station_names && c.station_names.length > 0) return "station";
+        if (c.route_ids && c.route_ids.length > 0)         return "route";
+        return "none";
+      }
+      // auto（従来: station > route > area > none）
       if (c.station_names && c.station_names.length > 0) return "station";
       if (c.route_ids && c.route_ids.length > 0)         return "route";
       if ((c.city_codes && c.city_codes.length > 0) || c.detail_ward) return "area";
@@ -665,7 +692,7 @@
     }
     var locationMode = decideLocationMode(cond);
     console.log("[AX] 場所モード判定: " + locationMode,
-      { stations: cond.station_names, routes: cond.route_ids,
+      { area_mode: cond.area_mode, stations: cond.station_names, routes: cond.route_ids,
         cities: cond.city_codes, ward: cond.detail_ward });
 
     // ── T=0ms: 基本条件 ──────────────────────────────────────────────
