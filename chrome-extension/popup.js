@@ -2345,6 +2345,29 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   });
+  // popup already open のとき DOMContentLoaded は再発火しないため
+  // storage.onChanged で pendingPopupCmd をリアルタイム検知して自動選択を補完する
+  chrome.storage.session.onChanged.addListener(function(changes) {
+    if (!changes.pendingPopupCmd || !changes.pendingPopupCmd.newValue) return;
+    var cmd = changes.pendingPopupCmd.newValue;
+    // allCustomers 未ロードなら DOMContentLoaded の then() 側で処理されるので無視
+    if (!allCustomers || allCustomers.length === 0) return;
+    chrome.storage.session.remove("pendingPopupCmd");
+    try { chrome.action.setBadgeText({ text: '' }); } catch (_) {}
+    var c = allCustomers.find(function(x) {
+      return String(x.id) === String(cmd.customerId);
+    });
+    if (!c) return;
+    openSiteView(c);
+    if (cmd.site) {
+      openInstructions(cmd.site);
+      if (cmd.areaMode === 'station' || cmd.areaMode === 'ward') {
+        var btnEl = document.getElementById(cmd.areaMode === 'station' ? 'btn-mode-station' : 'btn-mode-ward');
+        if (btnEl) btnEl.click();
+      }
+    }
+  });
+
   // 初期状態で「紐付け済み」ボタンをONに見せる
   document.getElementById("linked-filter-btn").classList.add("active");
 

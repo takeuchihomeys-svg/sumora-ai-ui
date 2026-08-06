@@ -818,9 +818,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const { customerId, conditions } = msg;
     (async () => {
       try {
+        // popup に進捗を表示するため pendingPopupCmd を set して openPopup を呼ぶ
+        // axlx-webapp-search と同じ可視性を scrape+compare ボタンでも実現する
+        if (customerId) {
+          try {
+            await chrome.storage.session.set({
+              pendingPopupCmd: {
+                customerId:   customerId,
+                customerName: (conditions && conditions.customerName) || null,
+                site:         null,
+                areaMode:     null,
+              }
+            });
+          } catch (_sessionErr) { /* session storage 非対応環境では無視 */ }
+          try {
+            await chrome.action.openPopup();
+          } catch (_openPopupErr) {
+            chrome.action.setBadgeText({ text: '!' });
+            chrome.action.setBadgeBackgroundColor({ color: '#e74c3c' });
+            setTimeout(function() { chrome.action.setBadgeText({ text: '' }); }, 10000);
+          }
+        }
+
         // resolve-search-conditions を呼んで station_names/route_ids/city_codes/detail_ward を解決する
         // （webapp から受け取った conditions は city_codes:[] 等が空のため、必ずここで解決する）
-        var isWide = !!(conditions.is_wide);
+        var isWide = !!(conditions.isWide || conditions.is_wide);
         // resolved は {} で初期化する（_scrapeAndCompareForCustomer と同じ書き方）。
         // 空配列で事前初期化すると [] が truthy のため resolve API 失敗時の
         // 「元の条件で続行」フォールバックが機能せず無条件検索になる

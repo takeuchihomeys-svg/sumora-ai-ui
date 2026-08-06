@@ -27,7 +27,7 @@ window.addEventListener("message", (e) => {
     // 即時ACKを返してwebappに拡張の存在を通知（フォールバック判定用）
     try { window.postMessage({ from: "aixlinx-webapp-scrape-ack", customerId }, "*"); } catch (_) {}
     chrome.runtime.sendMessage(
-      { type: "axlx-scrape-and-compare", customerId, conditions: Object.assign({}, conditions, { customerName }) },
+      { type: "axlx-scrape-and-compare", customerId, conditions: Object.assign({}, conditions, { customerName, isWide: !!isWide }) },
       (resp) => {
         void chrome.runtime.lastError;
         window.postMessage({
