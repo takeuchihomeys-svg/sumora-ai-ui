@@ -787,7 +787,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // ===== 自動化バッチ検索 =====
 const SUMORA_BATCH_API = "https://sumora-ai-ui.vercel.app";
 
-chrome.alarms.create("sumora-batch-poll", { periodInMinutes: 0.5 });
+// alarmが既に存在する場合は再作成しない（Service Worker再起動時の重複防止）
+chrome.alarms.get("sumora-batch-poll", function(existing) {
+  if (!existing) {
+    chrome.alarms.create("sumora-batch-poll", { periodInMinutes: 0.5 });
+  }
+});
 
 chrome.alarms.onAlarm.addListener(async function(alarm) {
   if (alarm.name !== "sumora-batch-poll") return;
@@ -812,7 +817,8 @@ async function _pollAndRunBatch() {
       await chrome.storage.local.set({ batchRunning: false, batchCommandId: null });
     }
   } catch (e) {
-    console.error("[batch] poll error:", e);
+    // MV3 Service Worker起動直後の一時的なfetch失敗は無視（次の30秒ポーリングで自動回復）
+    console.warn("[batch] poll error (transient):", e.message || e);
   }
 }
 
