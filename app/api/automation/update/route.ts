@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 
 // 修正10: status は enum 検証、更新フィールドはホワイトリスト方式で明示抽出
-const ALLOWED_STATUS = ["pending", "running", "done", "completed", "error"];
+const ALLOWED_STATUS = ["pending", "running", "done", "error"];
 
 export async function POST(req: NextRequest) {
   // 修正10: 共有シークレット認証（AUTOMATION_API_KEY 設定時のみ強制。未設定なら従来通り許可）
