@@ -184,7 +184,8 @@
   // maxTries : 最大リトライ数（デフォルト30回 = 約15秒）
   // retryMs  : リトライ間隔ms（デフォルト500ms）
   // pauseMs  : 成功後 onDone を呼ぶまでの待機ms（デフォルト600ms）
-  // onFail   : maxTries超過時に呼ぶコールバック（省略時は静かに停止）
+  // onFail   : maxTries超過時に呼ぶコールバック
+  //            （省略時も静かに停止せず notifyDone を送る — fill-done タイムアウト対策）
   // ────────────────────────────────────────────────────────────────────
   function waitForClick(tryFn, onDone, maxTries, retryMs, pauseMs, onFail) {
     maxTries = maxTries !== undefined ? maxTries : 30;
@@ -192,20 +193,73 @@
     pauseMs  = pauseMs  !== undefined ? pauseMs  : 600;
     var tries = 0;
     function attempt() {
-      if (tryFn()) {
-        setTimeout(onDone, pauseMs);
+      var ok = false;
+      try {
+        ok = tryFn();
+      } catch (err) {
+        // tryFn内の例外で静かに死ぬと fill-done が永遠に来ない → 失敗扱いで打ち切る
+        console.error('[AX] waitForClick: tryFn例外 → 打ち切り', err);
+        if (onFail) {
+          try { onFail(); return; } catch (e2) { console.error('[AX] waitForClick: onFail例外', e2); }
+        }
+        notifyDone();
+        return;
+      }
+      if (ok) {
+        setTimeout(function() {
+          try {
+            onDone();
+          } catch (err) {
+            console.error('[AX] waitForClick: onDone例外 → fill-done送信', err);
+            notifyDone();
+          }
+        }, pauseMs);
       } else if (tries < maxTries) {
         tries++;
         setTimeout(attempt, retryMs);
       } else {
-        if (onFail) onFail(); // 失敗通知（検索はしない）
+        if (onFail) {
+          try {
+            onFail();
+          } catch (err) {
+            console.error('[AX] waitForClick: onFail例外 → fill-done送信', err);
+            notifyDone();
+          }
+        } else {
+          // onFail未指定: 従来は「静かに停止」で fill-done が来ずタイムアウトしていた
+          console.warn('[AX] waitForClick: タイムアウト（onFail未指定）→ fill-done送信');
+          notifyDone();
+        }
       }
     }
     attempt();
   }
 
+  // fill-done は1回の fillRealpro につき1回だけ送る（多重送信防止）
+  // フェイルセーフ watchdog: 何らかの理由で全経路が沈黙しても必ず送信される
+  var _doneNotified = false;
+  var _watchdogTimer = null;
+
   function notifyDone() {
+    if (_doneNotified) return;
+    _doneNotified = true;
+    if (_watchdogTimer) { clearTimeout(_watchdogTimer); _watchdogTimer = null; }
     window.postMessage({ from: 'aixlinx-fill-done' }, '*');
+  }
+
+  // 非ブロッキング警告表示（alert() はモーダルブロッキングで無人運転時に
+  // fill-done の配送まで止めてしまうため使用禁止）
+  function showWarnToast(msg) {
+    try {
+      console.warn('[AX] ' + msg);
+      var t = document.createElement('div');
+      t.textContent = '⚠️ ' + msg;
+      t.style.cssText = 'position:fixed;top:16px;right:16px;z-index:2147483647;' +
+        'background:#c0392b;color:#fff;padding:12px 16px;border-radius:8px;' +
+        'font-size:13px;max-width:340px;box-shadow:0 4px 12px rgba(0,0,0,.3);white-space:pre-wrap;';
+      document.body.appendChild(t);
+      setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 15000);
+    } catch (e) { /* 表示失敗は無視 */ }
   }
 
   // next_step_button2 がY状態（市区郡選択済み）か確認
@@ -257,10 +311,8 @@
     return false;
   }
 
-  function alertStop(msg) {
-    alert('⚠️ ' + msg + '\n\n手動で選択してから「検索」を押してください。');
-    notifyDone();
-  }
+  // 旧 alertStop は alert() ブロッキングにより無人運転で fill-done が届かなくなるため廃止。
+  // タイムアウト時は各モーダル経路のフォールバック関数（条件なし検索）を使うこと。
 
   // 検索ボタンをクリック
   // リアプロは DIV.go_search が実際の検索ボタン（診断で確認済み）
@@ -475,7 +527,16 @@
   }
 
   function fillRealpro(cond) {
-    if (!cond) return;
+    // fill-done 保証: 実行開始時にフラグをリセットし、85秒のフェイルセーフを仕掛ける
+    // （background.js 側のタイムアウト90秒より必ず先に発火させる）
+    _doneNotified = false;
+    if (_watchdogTimer) clearTimeout(_watchdogTimer);
+    _watchdogTimer = setTimeout(function() {
+      console.warn('[AX] フェイルセーフ: 85秒以内に検索完了しなかったため fill-done を強制送信');
+      notifyDone();
+    }, 85000);
+
+    if (!cond) { notifyDone(); return; }
 
     // 連続検索対応: モーダルを閉じる → フォームを手動クリア → 条件入力 の順で実行
     // ※ リセットボタンはページ遷移を引き起こすため使用しない（ページ遷移するとスクリプトが死ぬ）
@@ -489,6 +550,7 @@
       if (closeBtn) { closeBtn.click(); closeDelay = 400; console.log("[AX] モーダルを閉じました"); }
 
       setTimeout(function() {
+        try {
         // Step2: フォームを直接手動クリア（ページ遷移なし・確実にリセット）
         // チェックボックス系：市区郡・沿線・駅・間取り・構造・設備をすべてリセット
         // 修正: route_id[]（沿線）と station_code[]（駅）が抜けており、
@@ -519,6 +581,10 @@
         });
 
         console.log("[AX] フォーム手動クリア完了 → 条件入力開始");
+        } catch (err) {
+          // クリア失敗でも条件入力は続行する（静かに停止すると fill-done が来なくなる）
+          console.error("[AX] _doReset クリア中の例外（続行）", err);
+        }
         setTimeout(callback, 300); // 短い安定待機のみ
       }, closeDelay);
     }
@@ -526,6 +592,7 @@
     _doReset(function() {
 
     setTimeout(function() {
+    try { // fill-done 保証: 本体で例外が起きても必ず notifyDone する
 
     // 未登録地名の警告（NEIGHBORHOOD_WARD_MAPに未登録のトークン）
     if (cond.unknown_tokens && cond.unknown_tokens.length) {
@@ -702,6 +769,15 @@
           return clickByText(['確定してリストへ', '×とじる', '× とじる', 'とじる', '閉じる']);
         }
 
+        // 所在地モーダル操作がタイムアウトした場合のフォールバック:
+        // モーダルを閉じて「所在地条件なし」でそのまま検索する。
+        // （永遠に停止する・alertでブロックするより、条件なし検索の方がマシ）
+        function fallbackSearchWithoutArea(msg) {
+          showWarnToast(msg + '\n所在地条件なしで検索します。');
+          try { closeAreaModal(); } catch (e) { /* 閉じ失敗でも続行 */ }
+          setTimeout(clickSearch, 800); // clickSearch が必ず notifyDone する
+        }
+
         // 「詳細な地域の設定へ進む」ボタン
         // 診断確認: class=next_action_town_search_Y のときだけ機能する
         // → Y状態を確認してからクリック・N状態なら市区郡を再クリック
@@ -795,14 +871,20 @@
                           waitForClick(closeAreaModal, function() {
                             console.log('[AX] STEP6完了: モーダル閉じた → 検索');
                             setTimeout(clickSearch, 800);
+                          },
+                          20, 500, 600,
+                          function() {
+                            // 閉じるボタンが見つからなくても検索を試みる（clickSearch が必ず notifyDone）
+                            console.warn('[AX] STEP6: モーダルを閉じられず → そのまま検索');
+                            setTimeout(clickSearch, 800);
                           });
                         },
                         30, 500, 600,
-                        function() { alertStop('「' + detailAreaName + '」の地域ボタンが見つかりませんでした。'); }
+                        function() { fallbackSearchWithoutArea('「' + detailAreaName + '」の地域ボタンが見つかりませんでした。'); }
                       );
                     },
                     30, 500, 600,
-                    function() { alertStop('「詳細な地域の設定へ進む」ボタンが見つかりませんでした。'); }
+                    function() { fallbackSearchWithoutArea('「詳細な地域の設定へ進む」ボタンが見つかりませんでした。'); }
                   );
                 }
 
@@ -819,6 +901,11 @@
               } else {
                 // 広げて検索: 市区郡まで選択して閉じる（詳細地域には進まない）
                 waitForClick(closeAreaModal, function() {
+                  setTimeout(clickSearch, 800);
+                },
+                20, 500, 600,
+                function() {
+                  console.warn('[AX] モーダルを閉じられず → そのまま検索');
                   setTimeout(clickSearch, 800);
                 });
               }
@@ -869,16 +956,16 @@
                     function() { return clickWardPrecise([wardFull, wardShort]); },
                     doAfterWard,
                     30, 500, 600,
-                    function() { alertStop('「' + wardFull + '」の市区郡ボタンが見つかりませんでした。'); }
+                    function() { fallbackSearchWithoutArea('「' + wardFull + '」の市区郡ボタンが見つかりませんでした。'); }
                   );
                 }
               },
               30, 500, 600,
-              function() { alertStop('大阪府または市区郡の選択ができませんでした。'); }
+              function() { fallbackSearchWithoutArea('大阪府または市区郡の選択ができませんでした。'); }
             );
           },
           30, 500, 600,
-          function() { alertStop('「所在地絞り込み」ボタンが見つかりませんでした。'); }
+          function() { fallbackSearchWithoutArea('「所在地絞り込み」ボタンが見つかりませんでした。'); }
         );
       } else {
         setTimeout(function() { clickSearch(); }, hasCities ? 700 : 300);
@@ -896,6 +983,15 @@
       var d = document.querySelector('div.this_window_close');
       if (d && isVisible(d)) { d.click(); return true; }
       return clickByText(['確定してリストへ', '×とじる', '× とじる', 'とじる']);
+    }
+
+    // 沿線・駅モーダル操作がタイムアウトした場合のフォールバック:
+    // モーダルを閉じて（選択できた条件だけで）そのまま検索する。
+    // 何もせず fill-done だけ送ると前回結果ページを誤スクレイプする恐れがあるため必ず検索する。
+    function fallbackSearchWithoutStation(msg) {
+      showWarnToast(msg + '\n沿線・駅の選択なしで検索します。');
+      try { closeStationModal(); } catch (e) { /* 閉じ失敗でも続行 */ }
+      setTimeout(clickSearch, 800); // clickSearch が必ず notifyDone する
     }
 
     // STEP A: 「沿線・駅絞り込み＋」が出るまで待ってクリック
@@ -931,7 +1027,12 @@
               function() {
                 if (!hasStation) {
                   // 駅指定なし → そのまま閉じて検索
-                  waitForClick(closeStationModal, function() { setTimeout(clickSearch, 800); });
+                  waitForClick(closeStationModal, function() { setTimeout(clickSearch, 800); },
+                    20, 500, 600,
+                    function() {
+                      console.warn('[AX] 沿線モーダルを閉じられず → そのまま検索');
+                      setTimeout(clickSearch, 800);
+                    });
                   return;
                 }
                 var stNamesStr = (cond.station_names || []).join('・');
@@ -959,30 +1060,46 @@
                     waitForClick(closeStationModal, function() {
                       // STEP F: 検索実行（駅が確定してから）
                       setTimeout(clickSearch, 800);
+                    },
+                    20, 500, 600,
+                    function() {
+                      console.warn('[AX] 駅モーダルを閉じられず → そのまま検索');
+                      setTimeout(clickSearch, 800);
                     });
                   },
                   30, 500, 600,
-                  function() { alertStop('指定の駅が選択できませんでした。\n駅: ' + stNamesStr); }
+                  function() { fallbackSearchWithoutStation('指定の駅が選択できませんでした。\n駅: ' + stNamesStr); }
                 );
               },
               30, 500, 600,
-              function() { alertStop('「駅の設定へ進む」ボタンが見つかりませんでした。'); }
+              function() { fallbackSearchWithoutStation('「駅の設定へ進む」ボタンが見つかりませんでした。'); }
             );
           },
           30, 500, 600,
-          function() { alertStop('路線一覧が表示されませんでした。'); }
+          function() { fallbackSearchWithoutStation('路線一覧が表示されませんでした。'); }
         );
       },
       30, 500, 600,
-      function() { alertStop('「沿線・駅絞り込み」ボタンが見つかりませんでした。'); }
+      function() { fallbackSearchWithoutStation('「沿線・駅絞り込み」ボタンが見つかりませんでした。'); }
     );
 
+    } catch (err) {
+      // 本体の同期例外（不正な条件データ等）でも fill-done を必ず送る
+      console.error('[AX] fillRealpro 本体例外 → fill-done送信', err);
+      notifyDone();
+    }
     }, 0); // _doReset内で待機済みのため即時実行
     }); // _doReset end
   }
 
   window.addEventListener("message", function(e) {
     if (!e.data || e.data.from !== "aixlinx-fill") return;
-    fillRealpro(e.data.conditions);
+    try {
+      fillRealpro(e.data.conditions);
+    } catch (err) {
+      // fill-done 保証: 同期例外でも必ず完了シグナルを送る
+      console.error('[AX] fillRealpro 同期例外 → fill-done送信', err);
+      notifyDone();
+    }
   });
 })();

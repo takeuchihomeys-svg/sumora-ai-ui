@@ -812,7 +812,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         // リアプロを条件付きで開く（既存インフラ流用）
         // 修正4: 固定3秒待ちを廃止し fill-done シグナル待機 → スクレイプ → 送信（修正1の変換込み）
-        var fillDonePromise = _createFillDoneWaiter("realnetpro", 60000);
+        var fillDonePromise = _createFillDoneWaiter("realnetpro", 90000);
         await _webappAutofill("realnetpro", resolvedConditions);
         var scrapedCount = await _scrapeAndSendRealpro(
           fillDonePromise,
@@ -875,7 +875,7 @@ function _createFillDoneWaiter(site, timeoutMs) {
       var idx = _fillDoneWaiters.indexOf(entry);
       if (idx >= 0) _fillDoneWaiters.splice(idx, 1);
       resolve(false);
-    }, timeoutMs || 60000);
+    }, timeoutMs || 90000);
     _fillDoneWaiters.push(entry);
   });
 }
@@ -1064,8 +1064,9 @@ async function _runBatchSearch(command) {
       var batchSite = sites[j];
       try {
         // 修正4: fill-done ウェイターを autofill 発火「前」に作成しておく
+        // リアプロは所在地・沿線駅モーダル操作で60秒を超えることがあるため90秒
         var fillDoneP = (batchSite === "itandi" || batchSite === "realnetpro")
-          ? _createFillDoneWaiter(batchSite, 60000)
+          ? _createFillDoneWaiter(batchSite, batchSite === "realnetpro" ? 90000 : 60000)
           : null;
         // _batchAutofill は解決済み条件（itandi_lines 等を含む）を返す
         var resolvedBatchConds = await _batchAutofill(customer, batchSite, batchIsWide);
@@ -1541,20 +1542,22 @@ async function _scrapeAndCompareForCustomer(customer) {
 
   // Phase 3〜6: fill-done 待機 → スクレイプ → AI比較+LINE送信
   // 修正4: 固定8秒待ちを廃止。ウェイターは autofill 発火「前」に作成する
-  var fillDonePromise = _createFillDoneWaiter("realnetpro", 60000);
+  var fillDonePromise = _createFillDoneWaiter("realnetpro", 90000);
   await _webappAutofill("realnetpro", mergedConditions);
   await _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, mergedConditions);
 }
 
 // ── 修正4+7+12: リアプロの fill-done 待機 → 全ページスクレイプ → AI比較+LINE送信 ──
-// fillDonePromise は autofill 発火「前」に _createFillDoneWaiter("realnetpro", 60000)
+// fillDonePromise は autofill 発火「前」に _createFillDoneWaiter("realnetpro", 90000)
 // で作成しておくこと。失敗（シグナル未着・タブ不在・スクレイプ全失敗）は throw して
 // 呼び出し元（scrape_and_compare / 通常バッチ）が status:'error' として記録できるようにする。
 async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, conditions) {
-  // 修正4: 検索実行シグナルを待つ（所在地・沿線駅モーダル経由だと入力に15〜60秒かかる）
+  // 修正4: 検索実行シグナルを待つ（所在地・沿線駅モーダル経由だと入力に15〜60秒かかる上、
+  // タブのページロード時間もこの待機予算から消費されるため90秒に設定。
+  // page-script.js 側は85秒のフェイルセーフで必ず fill-done を送る）
   var fillDone = fillDonePromise ? await fillDonePromise : false;
   if (!fillDone) {
-    throw new Error("リアプロ検索完了シグナル（fill-done）が60秒以内に届きませんでした。前回結果の誤送信を防ぐためスクレイプを中止します。");
+    throw new Error("リアプロ検索完了シグナル（fill-done）が90秒以内に届きませんでした。前回結果の誤送信を防ぐためスクレイプを中止します。");
   }
   // 検索結果の描画完了を待つ
   await new Promise(function (r) { setTimeout(r, 3000); });
