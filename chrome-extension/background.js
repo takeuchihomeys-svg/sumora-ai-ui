@@ -1,5 +1,11 @@
 "use strict";
 
+// ── ローカル条件解決コア（popup.js と同一ロジック）─────────────────────────
+// manifest の background.type が "module" のため importScripts() は使えない。
+// 静的 import で読み込み、resolution-core.js が公開する globalThis.SUMORA_RESOLUTION
+// 経由で resolveConditionsLocal 等を参照する（_resolveLocalFirst 参照）。
+import "./resolution-core.js";
+
 const UNDERBAR_SITES = ["realnetpro.com", "system.reins.jp"];
 
 // ── レインズ新タブ監視（window.openで開かれるタブからPDFを取得）────────────
@@ -856,6 +862,189 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // ===== 自動化バッチ検索 =====
 const SUMORA_BATCH_API = "https://sumora-ai-ui.vercel.app";
 
+// ── 学習済みマップのキャッシュ付き取得（resolveConditionsLocal の learned パラメータ用）──
+// popup.js の fetchLearnedMaps と同じ3エンドポイントを読む。失敗時は {}（静的マップのみで解決）。
+var _learnedMapsCache = null;   // { wards, stations, lineOrder } または { __failed: true }
+var _learnedMapsCacheAt = 0;    // epoch ms
+var _LEARNED_MAPS_TTL_OK = 6 * 60 * 60 * 1000; // 成功キャッシュ: 6時間
+var _LEARNED_MAPS_TTL_NG = 10 * 60 * 1000;     // 失敗キャッシュ: 10分（連続バッチで毎回タイムアウト待ちしない）
+
+async function _getLearnedMapsCached() {
+  var now = Date.now();
+  if (_learnedMapsCache) {
+    var ttl = _learnedMapsCache.__failed ? _LEARNED_MAPS_TTL_NG : _LEARNED_MAPS_TTL_OK;
+    if (now - _learnedMapsCacheAt < ttl) {
+      return _learnedMapsCache.__failed ? {} : _learnedMapsCache;
+    }
+  }
+  try {
+    var ctrl = new AbortController();
+    var timer = setTimeout(function () { ctrl.abort(); }, 6000);
+    var results;
+    try {
+      results = await Promise.all([
+        fetch(SUMORA_BATCH_API + "/api/region-map",    { cache: "no-store", signal: ctrl.signal }),
+        fetch(SUMORA_BATCH_API + "/api/station-map",   { cache: "no-store", signal: ctrl.signal }),
+        fetch(SUMORA_BATCH_API + "/api/line-stations", { cache: "no-store", signal: ctrl.signal }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+    var wards = {}, stations = {}, lineOrder = {};
+    if (results[0].ok) {
+      var rd = await results[0].json();
+      (rd.regions || []).forEach(function (r) { wards[r.token] = r.ward; });
+    }
+    if (results[1].ok) {
+      var sd = await results[1].json();
+      (sd.stations || []).forEach(function (s) {
+        stations[s.token] = {
+          ward: s.ward,
+          realpro_lines: s.realpro_lines || [],
+          itandi_lines: s.itandi_lines || [],
+          reins_line: s.reins_line || null,
+        };
+      });
+    }
+    if (results[2].ok) {
+      var ld = await results[2].json();
+      lineOrder = ld.lines || {};
+    }
+    _learnedMapsCache = { wards: wards, stations: stations, lineOrder: lineOrder };
+    _learnedMapsCacheAt = now;
+    return _learnedMapsCache;
+  } catch (e) {
+    console.warn("[bg] 学習済みマップ取得失敗（静的マップのみでローカル解決）:", (e && e.message) || e);
+    _learnedMapsCache = { __failed: true };
+    _learnedMapsCacheAt = now;
+    return {};
+  }
+}
+
+// ── ローカル解決結果にAPI結果をマージ（配列はローカル優先の和集合・順序保持）──
+function _mergeResolved(local, api) {
+  api = api || {};
+  function union(a, b) {
+    var out = (a || []).slice();
+    (b || []).forEach(function (v) { if (out.indexOf(v) === -1) out.push(v); });
+    return out;
+  }
+  return {
+    city_codes:        union(local.city_codes,        api.city_codes),
+    route_ids:         union(local.route_ids,         api.route_ids),
+    station_names:     union(local.station_names,     api.station_names),
+    ward_names:        union(local.ward_names,        api.ward_names),
+    itandi_line_names: union(local.itandi_line_names, api.itandi_line_names),
+    reins_line_names:  union(local.reins_line_names,  api.reins_line_names),
+    detail_ward: local.detail_ward || api.detail_ward || null,
+    detail_area: local.detail_area || api.detail_area || null,
+    // ローカルの unknown_tokens はAPIへの入力そのもの。残すと二重報告になるためAPIの最終判定を採用
+    unknown_tokens: api.unknown_tokens || [],
+    // 家賃・築年数は決定的な算術（wide時 +5000/+10000・+5年）。API側の再適用を無視して二重加算を防ぐ
+    rent_max_resolved:     local.rent_max_resolved,
+    building_age_resolved: local.building_age_resolved,
+  };
+}
+
+// ── エリア条件解決のローカルファースト化 ─────────────────────────────────────
+// Phase 1a: resolution-core.js の resolveConditionsLocal（popup.js と同一ロジック）で
+//           ネットワークなしで解決。静的マップにあるトークン（大多数）はここで完結する。
+// Phase 1b: 未解決トークンが残った場合のみ resolve-search-conditions API（DeepSeek）に
+//           フォールバック。未解決分だけを投げるため、APIの応答がローカル解決分を潰さない。
+// API 呼び出し条件: unknown_tokens あり、または エリア入力があるのにローカル結果が完全空。
+// API 失敗時はローカル結果のまま続行（部分解決でも有効な条件）。
+// 戻り値は resolve-search-conditions API と同形（呼び出し側のマージコードは変更不要）。
+async function _resolveLocalFirst(baseConditions, isWide) {
+  baseConditions = baseConditions || {};
+
+  var desiredAreaFull = String(
+    baseConditions.desired_area ||
+    (baseConditions.areas && baseConditions.areas.length ? baseConditions.areas.join("・") : "") ||
+    ""
+  ).trim();
+  var hasAreaInput = !!(
+    desiredAreaFull ||
+    (baseConditions.lines && baseConditions.lines.length) ||
+    (baseConditions.stations && baseConditions.stations.length)
+  );
+
+  // Phase 1a: ローカル解決
+  var local = null;
+  try {
+    var R = globalThis.SUMORA_RESOLUTION;
+    if (R && typeof R.resolveConditionsLocal === "function") {
+      var learned = await _getLearnedMapsCached(); // 失敗時 {}
+      local = R.resolveConditionsLocal(baseConditions, { isWide: !!isWide, learned: learned }) || null;
+      if (local) {
+        console.log("[resolveLocalFirst] ローカル解決:", JSON.stringify({
+          city_codes: local.city_codes,
+          route_ids: local.route_ids,
+          station_names: local.station_names,
+          unknown_tokens: local.unknown_tokens,
+        }));
+      }
+    }
+  } catch (e) {
+    console.warn("[resolveLocalFirst] ローカル解決エラー（APIフォールバックへ）:", e);
+    local = null;
+  }
+
+  // resolution-core 未ロード等でローカル解決不能 → 従来どおりフルスコープでAPI
+  if (!local) {
+    if (!hasAreaInput) return {};
+    try {
+      var respFull = await fetch(SUMORA_BATCH_API + "/api/resolve-search-conditions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          desired_area: desiredAreaFull,
+          lines: baseConditions.lines || [],
+          stations: baseConditions.stations || [],
+          is_wide: !!isWide,
+          rent_max: baseConditions.rent_max || null,
+          building_age: baseConditions.building_age || null,
+        }),
+        signal: AbortSignal.timeout(30000), // DeepSeekが最大20秒かかるため30秒
+      });
+      if (respFull.ok) return await respFull.json();
+    } catch (e) {
+      console.warn("[resolveLocalFirst] resolve-search-conditions 失敗（従来条件で続行）:", e);
+    }
+    return {};
+  }
+
+  // Phase 1b: APIフォールバック判定
+  var unknownTokens = local.unknown_tokens || [];
+  var localEmpty =
+    !(local.city_codes && local.city_codes.length) &&
+    !(local.route_ids && local.route_ids.length) &&
+    !(local.station_names && local.station_names.length) &&
+    !local.detail_ward;
+  var needApi = unknownTokens.length > 0 || (hasAreaInput && localEmpty);
+  if (!needApi) return local; // ハッピーパス: ネットワーク不要
+
+  var resolved = local;
+  try {
+    var resolveResp = await fetch(SUMORA_BATCH_API + "/api/resolve-search-conditions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        // 未解決トークンだけをAPIに投げる（全部未解決なら desired_area 全体）
+        desired_area: unknownTokens.length ? unknownTokens.join("・") : desiredAreaFull,
+        lines: [], stations: [], // 明示 lines/stations はローカルで処理済み
+        is_wide: !!isWide,
+        rent_max: baseConditions.rent_max || null,
+        building_age: baseConditions.building_age || null,
+      }),
+      signal: AbortSignal.timeout(30000), // DeepSeekが最大20秒かかるため30秒
+    });
+    if (resolveResp.ok) resolved = _mergeResolved(local, await resolveResp.json());
+  } catch (e) {
+    console.warn("[resolveLocalFirst] APIフォールバック失敗（ローカル解決結果で続行）:", (e && e.message) || e);
+  }
+  return resolved;
+}
+
 // ── 修正10: automation API 共有シークレット ──────────────────────────────────
 // chrome.storage.local の automationApiKey に設定した値を x-automation-key として送る。
 // （拡張にはハードコード禁止のため、サービスワーカーコンソールで
@@ -1179,35 +1368,21 @@ async function _batchAutofill(customer, site, isWide) {
     if (conds.areas && conds.areas.length) {
       conds.ward_names = conds.areas;
     }
-    // 路線名: resolve-search-conditions API で itandi 形式の路線名に変換
+    // 路線名: ローカルファースト解決で itandi 形式の路線名に変換
+    // （静的マップで解決できればAPI不要・未解決トークンのみAPIフォールバック）
     if (conds.lines && conds.lines.length) {
       try {
-        var resolveResp = await fetch(SUMORA_BATCH_API + "/api/resolve-search-conditions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            desired_area: (conds.areas || []).join("・"),
-            lines: conds.lines,
-            stations: conds.stations || [],
-            is_wide: !!isWide, // 修正5: 広ボタンのキュー経路伝搬（従来 false ハードコード）
-            rent_max: conds.rent_max || null,
-            building_age: conds.building_age || null,
-          }),
-          signal: AbortSignal.timeout(30000), // DeepSeekが最大20秒かかるため30秒に延長
-        });
-        if (resolveResp.ok) {
-          var resolvedItandi = await resolveResp.json();
-          if (resolvedItandi.itandi_line_names && resolvedItandi.itandi_line_names.length) {
-            conds.itandi_lines = resolvedItandi.itandi_line_names;
-          }
-          if (resolvedItandi.station_names && resolvedItandi.station_names.length) {
-            conds.station_names = resolvedItandi.station_names;
-          }
-          // エリア解決済み ward_names がある場合は上書き（概念地域対応）
-          if (resolvedItandi.detail_ward) {
-            if (!conds.ward_names || !conds.ward_names.length) {
-              conds.ward_names = [resolvedItandi.detail_ward];
-            }
+        var resolvedItandi = await _resolveLocalFirst(conds, isWide);
+        if (resolvedItandi.itandi_line_names && resolvedItandi.itandi_line_names.length) {
+          conds.itandi_lines = resolvedItandi.itandi_line_names;
+        }
+        if (resolvedItandi.station_names && resolvedItandi.station_names.length) {
+          conds.station_names = resolvedItandi.station_names;
+        }
+        // エリア解決済み ward_names がある場合は上書き（概念地域対応）
+        if (resolvedItandi.detail_ward) {
+          if (!conds.ward_names || !conds.ward_names.length) {
+            conds.ward_names = [resolvedItandi.detail_ward];
           }
         }
       } catch (e) {
@@ -1222,33 +1397,19 @@ async function _batchAutofill(customer, site, isWide) {
     // page-script.js の decideLocationMode が参照する解決済みフィールドを補完する必要がある
     if ((conds.areas && conds.areas.length) || (conds.lines && conds.lines.length) || (conds.stations && conds.stations.length)) {
       try {
-        var resolveRealnetpro = await fetch(SUMORA_BATCH_API + "/api/resolve-search-conditions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            desired_area: (conds.areas || []).join("・"),
-            lines: conds.lines || [],
-            stations: conds.stations || [],
-            is_wide: !!isWide,
-            rent_max: conds.rent_max || null,
-            building_age: conds.building_age || null,
-          }),
-          signal: AbortSignal.timeout(30000), // DeepSeekが最大20秒かかるため30秒に延長
-        });
-        if (resolveRealnetpro.ok) {
-          var resolvedRealnetpro = await resolveRealnetpro.json();
-          if (resolvedRealnetpro.city_codes && resolvedRealnetpro.city_codes.length) {
-            conds.city_codes = resolvedRealnetpro.city_codes;
-          }
-          if (resolvedRealnetpro.route_ids && resolvedRealnetpro.route_ids.length) {
-            conds.route_ids = resolvedRealnetpro.route_ids;
-          }
-          if (resolvedRealnetpro.station_names && resolvedRealnetpro.station_names.length) {
-            conds.station_names = resolvedRealnetpro.station_names;
-          }
-          if (resolvedRealnetpro.detail_ward) {
-            conds.detail_ward = resolvedRealnetpro.detail_ward;
-          }
+        // ローカルファースト解決（静的マップで解決できればAPI不要・未解決トークンのみAPIフォールバック）
+        var resolvedRealnetpro = await _resolveLocalFirst(conds, isWide);
+        if (resolvedRealnetpro.city_codes && resolvedRealnetpro.city_codes.length) {
+          conds.city_codes = resolvedRealnetpro.city_codes;
+        }
+        if (resolvedRealnetpro.route_ids && resolvedRealnetpro.route_ids.length) {
+          conds.route_ids = resolvedRealnetpro.route_ids;
+        }
+        if (resolvedRealnetpro.station_names && resolvedRealnetpro.station_names.length) {
+          conds.station_names = resolvedRealnetpro.station_names;
+        }
+        if (resolvedRealnetpro.detail_ward) {
+          conds.detail_ward = resolvedRealnetpro.detail_ward;
         }
       } catch (e) {
         console.warn("[batchAutofill] realnetpro resolve失敗（デフォルト条件で続行）:", e.message || e);
@@ -1570,26 +1731,11 @@ async function _scrapeAndCompareForCustomer(customer) {
     ? customer.conditions
     : _buildBatchConditions(customer);
 
-  // Phase 1: resolve-search-conditions でエリア→駅名・路線・区コードに変換
-  var resolved = {};
-  try {
-    var resolveResp = await fetch("https://sumora-ai-ui.vercel.app/api/resolve-search-conditions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        desired_area: baseConditions.desired_area || (baseConditions.areas && baseConditions.areas.join("・")) || "",
-        lines: baseConditions.lines || [],
-        stations: baseConditions.stations || [],
-        is_wide: isWide,
-        rent_max: baseConditions.rent_max || null,
-        building_age: baseConditions.building_age || null,
-      }),
-      signal: AbortSignal.timeout(30000), // DeepSeekが最大20秒かかるため30秒に延長
-    });
-    if (resolveResp.ok) resolved = await resolveResp.json();
-  } catch (e) {
-    console.warn("[scrapeAndCompare] resolve-search-conditions 失敗（従来条件で続行）:", e);
-  }
+  // Phase 1: エリア→駅名・路線・区コードの解決（ローカルファースト）
+  // 1a: resolveConditionsLocal（popup.jsと同一ロジック・ネットワーク不要）で解決し、
+  // 1b: 未解決トークンが残った場合のみ resolve-search-conditions API にフォールバックする。
+  // 静的マップで解決できる大多数のケースでは 30秒の DeepSeek 往復が丸ごと消える。
+  var resolved = await _resolveLocalFirst(baseConditions, isWide);
 
   // Phase 2: 解決済み条件をマージしてリアプロを開き条件入力・検索
   // resolve結果が空配列の場合も従来条件を残す（length チェック）
