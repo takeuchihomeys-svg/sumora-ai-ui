@@ -20,6 +20,28 @@ window.addEventListener("message", (e) => {
     return;
   }
 
+  // ── scrape-and-compare: リアプロ自動スクレイプ+比較の直接トリガー ──
+  // Supabase automation_commands 経由より高速・条件は拡張側で resolve（popupと同等）
+  if (e.data && e.data.from === "aixlinx-webapp-scrape") {
+    const { customerId, customerName, isWide, conditions } = e.data;
+    // 即時ACKを返してwebappに拡張の存在を通知（フォールバック判定用）
+    try { window.postMessage({ from: "aixlinx-webapp-scrape-ack", customerId }, "*"); } catch (_) {}
+    chrome.runtime.sendMessage(
+      { type: "axlx-scrape-and-compare", customerId, conditions: Object.assign({}, conditions, { customerName }) },
+      (resp) => {
+        void chrome.runtime.lastError;
+        window.postMessage({
+          from: "aixlinx-webapp-scrape-result",
+          customerId,
+          ok:    resp?.ok    ?? false,
+          count: resp?.count ?? 0,
+          error: resp?.error ?? null,
+        }, "*");
+      }
+    );
+    return;
+  }
+
   // ② ペイロード検証
   if (!e.data || e.data.from !== "aixlinx-webapp") return;
   const { site, conditions } = e.data;

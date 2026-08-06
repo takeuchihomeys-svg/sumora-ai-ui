@@ -865,54 +865,96 @@ export default function CustomersPage() {
     }));
   };
 
-  // 🔍 リアプロ自動スクレイプ比較: automation_commands に scrape_and_compare を積む
-  // 修正11: コマンドIDを保持して5秒間隔でポーリングし、pending→running→done/error をボタンに反映。
-  // 通常/広で状態キーを分離（c.id / c.id + "-wide"）
+  // 🔍 リアプロ自動スクレイプ比較
+  // 優先: webapp-bridge → axlx-scrape-and-compare（拡張側でresolve: popupと同等）
+  // フォールバック: Supabase automation_commands 経由（拡張なし・ACK未着時）
   const handleScrapeCompare = async (c: Customer, isWide: boolean = false) => {
     const key = isWide ? `${c.id}-wide` : c.id;
-    // 修正: 実行中（queued/running/noext表示中）の再押下による重複INSERTを防止
     const cur = scrapeCompareStatus[key] ?? "idle";
     if (cur === "queued" || cur === "running" || cur === "noext") return;
     setScrapeCompareStatus((prev) => ({ ...prev, [key]: "queued" }));
-    setScrapeCompareErrors((prev) => {
-      const next = { ...prev };
-      delete next[key];
-      return next;
+    setScrapeCompareErrors((prev) => { const next = { ...prev }; delete next[key]; return next; });
+
+    const scheduleIdle = (finalStatus: ScrapeCompareStatus) => {
+      setScrapeCompareStatus((prev) => ({ ...prev, [key]: finalStatus }));
+      const t = setTimeout(() => {
+        scrapeIdleTimeoutsRef.current.delete(t);
+        setScrapeCompareStatus((prev) => ({ ...prev, [key]: "idle" }));
+      }, 4000);
+      scrapeIdleTimeoutsRef.current.add(t);
+    };
+
+    // 拡張へ渡す生の顧客条件（resolve は拡張側で実施 = popupと同等）
+    const rawConditions = {
+      area_mode:    getAreaMode(c.id),
+      rent_max:     c.rent_max      ?? null,
+      rent_min:     c.rent_min      ?? null,
+      walk_minutes: c.walk_minutes  ?? null,
+      floor_plan:   c.floor_plan    ?? null,
+      building_age: c.building_age  ?? null,
+      area_min:     c.floor_area_min ?? parseAreaMin(c.floor_plan) ?? parseAreaMin(c.preferences) ?? parseAreaMin(c.other_requests) ?? null,
+      area_max:     c.floor_area_max ?? null,
+      pet_ok:       !!c.pet,
+      desired_area: c.desired_area  ?? null,
+      lines:        c.lines         ?? [] as string[],
+      stations:     c.stations      ?? [] as string[],
+      structure_types: [] as string[],
+      rp_update_days:  null as number | null,
+      is_wide:      isWide,
+    };
+
+    // ① 拡張への直接送信 → 1.5秒以内にACKが返れば直接パスで完結
+    const ackReceived = await new Promise<boolean>((resolve) => {
+      const handler = (e: MessageEvent) => {
+        if (e.data?.from === "aixlinx-webapp-scrape-ack" && String(e.data?.customerId) === String(c.id)) {
+          window.removeEventListener("message", handler);
+          resolve(true);
+        }
+      };
+      window.addEventListener("message", handler);
+      window.postMessage({ from: "aixlinx-webapp-scrape", customerId: c.id, customerName: c.customer_name, isWide, conditions: rawConditions }, "*");
+      setTimeout(() => { window.removeEventListener("message", handler); resolve(false); }, 1500);
     });
+
+    if (ackReceived) {
+      // ② 拡張直接パス: autofill→スクレイプ→LINE送信の完了を待つ（最大6分）
+      setScrapeCompareStatus((prev) => ({ ...prev, [key]: "running" }));
+      const result = await new Promise<{ ok: boolean; count?: number; error?: string }>((resolve) => {
+        const handler = (e: MessageEvent) => {
+          if (e.data?.from === "aixlinx-webapp-scrape-result" && String(e.data?.customerId) === String(c.id)) {
+            window.removeEventListener("message", handler);
+            resolve({ ok: !!e.data.ok, count: e.data.count, error: e.data.error });
+          }
+        };
+        window.addEventListener("message", handler);
+        setTimeout(() => { window.removeEventListener("message", handler); resolve({ ok: false, error: "timeout" }); }, 6 * 60_000);
+      });
+      if (result.ok) {
+        scheduleIdle("done");
+      } else {
+        if (result.error) setScrapeCompareErrors((prev) => ({ ...prev, [key]: result.error!.slice(0, 200) }));
+        scheduleIdle(result.error === "timeout" ? "timeout" : "error");
+      }
+      return;
+    }
+
+    // ③ フォールバック: Supabase automation_commands 経由（拡張なし or ACK未着）
     try {
-      // 修正: itandi/レインズ経路（queuePropertySearch）と対称化。
-      // クライアント側で resolve-search-conditions を呼び、解決済み条件を payload に含める。
-      // 拡張（background.js）側の resolve は残っているためフォールバックとして機能する。
       let resolved: ResolvedSearchConditions | null = null;
       if (c.desired_area?.trim() || (c.lines?.length ?? 0) > 0 || (c.stations?.length ?? 0) > 0) {
         try {
           const res = await fetch("/api/resolve-search-conditions", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              desired_area:  c.desired_area  ?? "",
-              lines:         c.lines         ?? [],
-              stations:      c.stations      ?? [],
-              is_wide:       isWide,
-              rent_max:      c.rent_max      ?? null,
-              building_age:  c.building_age  ?? null,
-            }),
+            body: JSON.stringify({ desired_area: c.desired_area ?? "", lines: c.lines ?? [], stations: c.stations ?? [], is_wide: isWide, rent_max: c.rent_max ?? null, building_age: c.building_age ?? null }),
           });
           if (res.ok) {
             resolved = await res.json() as ResolvedSearchConditions;
             if (resolved.unknown_tokens?.length) {
-              console.warn("[handleScrapeCompare] 未解決トークン:", resolved.unknown_tokens);
-              // 未解決トークンをサーバーサイドで非同期学習（fire-and-forget）
-              fetch("/api/token-resolve", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ tokens: resolved.unknown_tokens }),
-              }).catch(() => {});
+              fetch("/api/token-resolve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tokens: resolved.unknown_tokens }) }).catch(() => {});
             }
           }
-        } catch (e) {
-          console.error("[handleScrapeCompare] resolve-search-conditions 失敗（拡張側resolveにフォールバック）:", e);
-        }
+        } catch (e) { console.error("[handleScrapeCompare] resolve失敗:", e); }
       }
 
       const { data: inserted, error } = await supabase
@@ -920,11 +962,8 @@ export default function CustomersPage() {
         .insert({
           command_type: "scrape_and_compare",
           payload: {
-            customer_id: c.id,
-            customer_name: c.customer_name,
-            is_wide: isWide,
+            customer_id: c.id, customer_name: c.customer_name, is_wide: isWide,
             conditions: {
-              // 地域/駅モード（"auto"=従来の自動判定）。常に明示的に含めて下流の undefined 分岐を防ぐ
               area_mode: getAreaMode(c.id),
               rent_max: resolved?.rent_max_resolved ?? c.rent_max ?? undefined,
               rent_min: c.rent_min ?? undefined,
@@ -935,99 +974,49 @@ export default function CustomersPage() {
               area_max: c.floor_area_max ?? undefined,
               pet_ok: !!c.pet,
               desired_area: c.desired_area ?? undefined,
-              lines: c.lines ?? [],
-              stations: c.stations ?? [],
-              // 解決済み条件（resolve失敗時は空配列 → 拡張側resolveがフォールバック）
-              city_codes: resolved?.city_codes ?? [],
-              station_names: resolved?.station_names ?? [],
-              route_ids: resolved?.route_ids ?? [],
-              itandi_line_names: resolved?.itandi_line_names ?? [],
-              reins_line_names: resolved?.reins_line_names ?? [],
-              detail_ward: resolved?.detail_ward ?? null,
-              detail_area: resolved?.detail_area ?? null,
-              unknown_tokens: resolved?.unknown_tokens ?? [],
-              structure_types: [] as string[],
-              rp_update_days: null as number | null,
+              lines: c.lines ?? [], stations: c.stations ?? [],
+              city_codes: resolved?.city_codes ?? [], station_names: resolved?.station_names ?? [],
+              route_ids: resolved?.route_ids ?? [], itandi_line_names: resolved?.itandi_line_names ?? [],
+              reins_line_names: resolved?.reins_line_names ?? [], detail_ward: resolved?.detail_ward ?? null,
+              detail_area: resolved?.detail_area ?? null, unknown_tokens: resolved?.unknown_tokens ?? [],
+              structure_types: [] as string[], rp_update_days: null as number | null,
             },
           },
-          status: "pending",
-          created_at: new Date().toISOString(),
+          status: "pending", created_at: new Date().toISOString(),
         })
-        .select("id")
-        .single();
+        .select("id").single();
       if (error || !inserted) throw error ?? new Error("insert failed");
 
-      // 同一PCの拡張に即時ポーリングを要求（30秒アラーム待ち不要にする）
       window.postMessage({ from: "aixlinx-webapp-poll-now" }, "*");
 
       const cmdId = (inserted as { id: string | number }).id;
       const startedAt = Date.now();
-
-      // 終了状態を表示 → 4秒後に idle へ戻す共通処理（timeoutもrefに保持しアンマウント時に停止）
-      const scheduleIdle = (finalStatus: ScrapeCompareStatus) => {
-        setScrapeCompareStatus((prev) => ({ ...prev, [key]: finalStatus }));
-        const t = setTimeout(() => {
-          scrapeIdleTimeoutsRef.current.delete(t);
-          setScrapeCompareStatus((prev) => ({ ...prev, [key]: "idle" }));
-        }, 4000);
-        scrapeIdleTimeoutsRef.current.add(t);
-      };
-
       const timer = setInterval(() => {
         void (async () => {
           const finish = (finalStatus: ScrapeCompareStatus) => {
-            clearInterval(timer);
-            scrapePollIntervalsRef.current.delete(timer);
-            scheduleIdle(finalStatus);
+            clearInterval(timer); scrapePollIntervalsRef.current.delete(timer); scheduleIdle(finalStatus);
           };
           try {
             const elapsed = Date.now() - startedAt;
-            const { data } = await supabase
-              .from("automation_commands")
-              .select("status, error_message")
-              .eq("id", cmdId)
-              .maybeSingle();
+            const { data } = await supabase.from("automation_commands").select("status, error_message").eq("id", cmdId).maybeSingle();
             const st = (data?.status as string | undefined) ?? null;
-            if (st === "running") {
-              setScrapeCompareStatus((prev) => ({ ...prev, [key]: "running" }));
-            } else if (st === "done" || st === "completed") {
-              finish("done");
-              return;
-            } else if (st === "error") {
-              // 修正: エラー理由（未ログイン・エリア未解決等）をUIに保持して表示する
+            if (st === "running") { setScrapeCompareStatus((prev) => ({ ...prev, [key]: "running" })); }
+            else if (st === "done" || st === "completed") { finish("done"); return; }
+            else if (st === "error") {
               const em = (data?.error_message as string | undefined) ?? "";
-              if (em) {
-                setScrapeCompareErrors((prev) => ({ ...prev, [key]: em.slice(0, 200) }));
-              }
-              finish("error");
-              return;
-            } else if (st === "pending" && elapsed > 90_000) {
-              // 90秒pendingのまま = Chrome拡張が応答していない
-              finish("noext");
-              return;
-            } else if (st === "pending" && elapsed > 60_000) {
-              // 60秒経過で警告表示（ポーリングは継続）
-              setScrapeCompareStatus((prev) => ({ ...prev, [key]: "noext" }));
-            }
-          } catch {
-            // 一時的な取得失敗は無視して次のポーリングへ
-          }
-          // タイムアウト: 6分（正常実行1〜4分 + 拡張ポーリング間隔30秒の余裕）で
-          // done/error に到達しなければ「⏰ タイムアウト」を表示し、4秒後に idle へ戻す。
-          if (Date.now() - startedAt > 6 * 60_000) {
-            finish("timeout");
-          }
+              if (em) setScrapeCompareErrors((prev) => ({ ...prev, [key]: em.slice(0, 200) }));
+              finish("error"); return;
+            } else if (st === "pending" && elapsed > 90_000) { finish("noext"); return; }
+            else if (st === "pending" && elapsed > 60_000) { setScrapeCompareStatus((prev) => ({ ...prev, [key]: "noext" })); }
+            if (Date.now() - startedAt > 6 * 60_000) finish("timeout");
+          } catch { /* 一時的な取得失敗は無視 */ }
         })();
       }, 5000);
       scrapePollIntervalsRef.current.add(timer);
     } catch (e) {
       console.error("[handleScrapeCompare]", e);
-      // INSERT失敗: エラー表示 → 4秒後に idle へ戻す（ボタン再押下でリトライ可能）
       setScrapeCompareStatus((prev) => ({ ...prev, [key]: "error" }));
-      const t = setTimeout(() => {
-        scrapeIdleTimeoutsRef.current.delete(t);
-        setScrapeCompareStatus((prev) => ({ ...prev, [key]: "idle" }));
-      }, 4000);
+      const t = setTimeout(() => { scrapeIdleTimeoutsRef.current.delete(t); setScrapeCompareStatus((prev) => ({ ...prev, [key]: "idle" })); }, 4000);
       scrapeIdleTimeoutsRef.current.add(t);
     }
   };
