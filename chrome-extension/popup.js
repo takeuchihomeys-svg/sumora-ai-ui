@@ -2319,7 +2319,32 @@ function filterCustomers(q) {
 document.addEventListener("DOMContentLoaded", () => {
   // DBが空なら既存ハードコードデータをシード → 学習済みマップをロード
   seedMapsIfEmpty().then(() => fetchLearnedMaps());
-  loadCustomers();
+  // loadCustomers 完了後に pendingPopupCmd を確認して顧客を自動選択
+  // 修正④b: 読み取り成功後にバッジをクリア（openPopup失敗時の赤バッジ '!' を消す）
+  loadCustomers().then(function() {
+    chrome.storage.session.get(["pendingPopupCmd"], function(res) {
+      var cmd = res.pendingPopupCmd;
+      if (!cmd) return;
+      chrome.storage.session.remove("pendingPopupCmd");
+      // openPopup() 失敗時に background.js が立てた赤バッジを消す
+      try { chrome.action.setBadgeText({ text: '' }); } catch (_) {}
+      var c = allCustomers.find(function(x) {
+        return String(x.id) === String(cmd.customerId);
+      });
+      if (!c) return;
+      openSiteView(c);
+      if (cmd.site) {
+        openInstructions(cmd.site);
+        // Step ④a: setupAreaModeSelector の自動判定をウェブアプリのボタン押下で上書きする
+        // (例: 阿倍野区が area に含まれると 'ward' が自動選択されるが、
+        //  スタッフが '駅' ボタンを押した場合は 'station' を強制する)
+        if (cmd.areaMode === 'station' || cmd.areaMode === 'ward') {
+          var btnEl = document.getElementById(cmd.areaMode === 'station' ? 'btn-mode-station' : 'btn-mode-ward');
+          if (btnEl) btnEl.click();
+        }
+      }
+    });
+  });
   // 初期状態で「紐付け済み」ボタンをONに見せる
   document.getElementById("linked-filter-btn").classList.add("active");
 

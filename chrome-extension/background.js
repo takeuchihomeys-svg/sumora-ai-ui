@@ -740,6 +740,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const { site, conditions } = msg;
     (async () => {
       try {
+        // ポップアップを開いて顧客を事前選択させるためのコマンドをセッションに保存
+        if (conditions && conditions.customerId) {
+          chrome.storage.session.set({
+            pendingPopupCmd: {
+              customerId:   conditions.customerId,
+              customerName: conditions.customerName || null,
+              site:         site || null,
+              areaMode:     conditions.area_mode || null,
+            }
+          });
+          // MV3 Chrome 127+: openPopup はユーザージェスチャー無しでも呼べる
+          chrome.action.openPopup().catch(function() {
+            // 旧Chrome / ユーザージェスチャーなしで失敗する場合は無視
+          });
+        }
+
         // 修正4: itandi スクレイプ用の fill-done ウェイターを autofill 発火「前」に作成
         // フォーム入力＋ページロードで60秒を超えるケースがあるため90秒（リアプロと統一）
         var itandiFillDone = (site === "itandi" && conditions && conditions.customerId)
@@ -1183,6 +1199,27 @@ async function _pollAndRunBatch() {
     var json = await res.json();
     if (!json.command) return;
     var cmd = json.command;
+    // 修正④b: コマンド受信時にポップアップを開き、スタッフに実行中を通知する。
+    // chrome.action.openPopup() は Chrome 127 未満またはユーザージェスチャなし環境で失敗するため
+    // try/catch でラップし、失敗時は赤バッジ '!' を 10秒表示してアイコンクリックを促す。
+    // popup.js が chrome.storage.session で読むため session に書く。
+    // customerId は customer_ids の先頭要素（ポップアップで顧客を自動選択するため）。
+    try {
+      await chrome.storage.session.set({
+        pendingPopupCmd: {
+          id: cmd.id,
+          command_type: cmd.command_type,
+          customerId: (cmd.customer_ids && cmd.customer_ids.length > 0) ? cmd.customer_ids[0] : null,
+        }
+      });
+    } catch (_sessionErr) { /* session storage 非対応環境では無視 */ }
+    try {
+      await chrome.action.openPopup();
+    } catch (_openPopupErr) {
+      chrome.action.setBadgeText({ text: '!' });
+      chrome.action.setBadgeBackgroundColor({ color: '#e74c3c' });
+      setTimeout(function() { chrome.action.setBadgeText({ text: '' }); }, 10000);
+    }
     // 修正2: ロックを {running, startedAt} 形式で保存（TTL判定用）
     await chrome.storage.local.set({
       batchRunning: { running: true, startedAt: Date.now() },
@@ -1634,12 +1671,17 @@ async function _updateBatchCommand(id, updates) {
   try {
     // 修正9: 10秒タイムアウト / 修正10: 共有シークレットヘッダー
     var keyHeader = await _getAutomationKeyHeader();
-    await fetch(SUMORA_BATCH_API + "/api/automation/update", {
+    var resp = await fetch(SUMORA_BATCH_API + "/api/automation/update", {
       method: "POST",
       headers: Object.assign({ "Content-Type": "application/json" }, keyHeader),
       body: JSON.stringify(Object.assign({ id: id }, updates)),
       signal: AbortSignal.timeout(10000)
     });
+    if (!resp.ok) {
+      var txt = "";
+      try { txt = await resp.text(); } catch (_) {}
+      console.error("[batch] update HTTP error", resp.status, txt);
+    }
   } catch (e) {
     console.error("[batch] update error:", e);
   }
