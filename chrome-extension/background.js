@@ -806,7 +806,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               rent_max: conditions.rent_max || null,
               building_age: conditions.building_age || null,
             }),
-            signal: AbortSignal.timeout(15000), // 修正9
+            signal: AbortSignal.timeout(30000), // DeepSeekが最大20秒かかるため30秒に延長
           });
           if (resolveResp.ok) resolved = await resolveResp.json();
         } catch (e) {
@@ -1193,7 +1193,7 @@ async function _batchAutofill(customer, site, isWide) {
             rent_max: conds.rent_max || null,
             building_age: conds.building_age || null,
           }),
-          signal: AbortSignal.timeout(15000),
+          signal: AbortSignal.timeout(30000), // DeepSeekが最大20秒かかるため30秒に延長
         });
         if (resolveResp.ok) {
           var resolvedItandi = await resolveResp.json();
@@ -1233,7 +1233,7 @@ async function _batchAutofill(customer, site, isWide) {
             rent_max: conds.rent_max || null,
             building_age: conds.building_age || null,
           }),
-          signal: AbortSignal.timeout(15000),
+          signal: AbortSignal.timeout(30000), // DeepSeekが最大20秒かかるため30秒に延長
         });
         if (resolveRealnetpro.ok) {
           var resolvedRealnetpro = await resolveRealnetpro.json();
@@ -1549,7 +1549,7 @@ async function _scrapeAndCompareForCustomer(customer) {
         rent_max: baseConditions.rent_max || null,
         building_age: baseConditions.building_age || null,
       }),
-      signal: AbortSignal.timeout(15000), // 修正9
+      signal: AbortSignal.timeout(30000), // DeepSeekが最大20秒かかるため30秒に延長
     });
     if (resolveResp.ok) resolved = await resolveResp.json();
   } catch (e) {
@@ -1625,9 +1625,9 @@ async function _scrapeAndSendRealpro(fillDonePromise, customerId, customerName, 
     throw new Error("リアプロ検索完了シグナル（fill-done）が90秒以内に届きませんでした。前回結果の誤送信を防ぐためスクレイプを中止します。");
   }
   if (fillDone.error) {
-    // page-script.js 側でエラーが起きた場合でもフォールバック検索は実行済みのため
-    // スクレイプは続行する。ログに残して学習・デバッグ材料にする。
-    console.warn("[fill-done] page-script側エラー（スクレイプは続行）: " + fillDone.error);
+    // fallbackSearchWithoutArea はエラー送信のみで検索を実行しないため、
+    // スクレイプすると前回結果やエリア条件なし全件を誤送信する。中止する。
+    throw new Error("page-script側エラー（スクレイプ中止）: " + fillDone.error);
   }
   // 検索結果の描画完了を待つ
   await new Promise(function (r) { setTimeout(r, 3000); });

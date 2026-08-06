@@ -810,12 +810,13 @@
         }
 
         // 所在地モーダル操作がタイムアウトした場合のフォールバック:
-        // モーダルを閉じて「所在地条件なし」でそのまま検索する。
-        // （永遠に停止する・alertでブロックするより、条件なし検索の方がマシ）
+        // 条件なし全件検索はLINE誤送信リスクが高いため検索せず fill-done(error) を送信し
+        // background.js にスクレイプを中止させる。
         function fallbackSearchWithoutArea(msg) {
-          showWarnToast(msg + '\n所在地条件なしで検索します。');
-          try { closeAreaModal(); } catch (e) { /* 閉じ失敗でも続行 */ }
-          setTimeout(clickSearch, 800); // clickSearch が必ず notifyDone する
+          var errMsg = '所在地モーダル操作失敗（全件検索防止のため中止）: ' + msg;
+          showWarnToast(errMsg);
+          try { closeAreaModal(); } catch (e) { /* ignore */ }
+          notifyDone(errMsg);
         }
 
         // 「詳細な地域の設定へ進む」ボタン
