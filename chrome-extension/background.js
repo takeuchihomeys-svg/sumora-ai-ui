@@ -1283,12 +1283,14 @@ async function _webappAutofill(site, conditions) {
   // main.php タブを優先し、無ければ既存タブを main.php へナビゲートしてから使う。
   if (site === "realnetpro") {
     var mainTab = allTabs.find(function(t) { return t.url && t.url.includes("realnetpro.com/main.php"); });
-    if (mainTab) {
-      existing = mainTab;
-    } else if (existing) {
-      await chrome.tabs.update(existing.id, { url: siteUrls.realnetpro, active: true });
-      await _batchWaitForTabComplete(existing.id);
+    var targetRealTab = mainTab || existing;
+    if (targetRealTab) {
+      // orphaned content.js 対策: 既存タブも必ず main.php へナビゲートして content.js を fresh に保つ
+      // （拡張リロード後・更新後に既存タブの content.js が切断されると sendMessage が全失敗する）
+      await chrome.tabs.update(targetRealTab.id, { url: siteUrls.realnetpro, active: true });
+      await _batchWaitForTabComplete(targetRealTab.id);
       await new Promise(function(r) { setTimeout(r, 2000); });
+      existing = targetRealTab;
     }
   }
   var tab = existing;
@@ -1297,9 +1299,8 @@ async function _webappAutofill(site, conditions) {
     tab = await chrome.tabs.create({ url: siteUrls[site], active: true });
     await _batchWaitForTabComplete(tab.id);
     await new Promise(function(r) { setTimeout(r, 2000); });
-  } else {
-    // タブが存在する: フォアグラウンドに切り替え
-    // page-script.js の message リスナー登録完了まで待機（新規タブ2000ms・既存タブも1500ms確保）
+  } else if (site !== "realnetpro") {
+    // タブが存在する: フォアグラウンドに切り替え（realnetpro は上でナビゲート・待機済み）
     await chrome.tabs.update(tab.id, { active: true });
     await new Promise(function(r) { setTimeout(r, 1500); });
   }
