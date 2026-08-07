@@ -1,20 +1,6 @@
 (function () {
   "use strict";
 
-  var injected = false;
-
-  function injectPageScript() {
-    if (injected) return;
-    injected = true;
-    try {
-      var s = document.createElement("script");
-      s.src = chrome.runtime.getURL("itandi-page-script.js");
-      (document.head || document.documentElement).appendChild(s);
-    } catch (e) {
-      injected = false;
-    }
-  }
-
   // ── 物件リストから情報を収集（スクレイプ支援） ───────────────────────────────
   function _scrapeItandiPropertiesFromPage() {
     var results = [];
@@ -139,14 +125,11 @@
       }
       // ── autofill ─────────────────────────────────────────────────────────
       if (msg.type !== "axlx-itandi-autofill") return;
-      try { injectPageScript(); } catch (e) { sendResponse({ ok: false }); return true; }
       // itandi-bulk-dl.js に現在の物件ボタンをスナップショットさせる（自動送信アーム準備）
       // サイドパネルモード時はunderbar.jsを経由しないためここで直接発火する
       window.postMessage({ from: "axlx-itandi-autofill-initiated" }, "*");
-      setTimeout(function () {
-        window.dispatchEvent(new CustomEvent("axlx-itandi-fill", { detail: msg.conditions }));
-      }, 200);
-      // sendResponse を返すことで background.js が「送信成功」と判定できるようにする
+      // itandi-page-script.js（world:MAIN）へpostMessageで転送（CustomEventよりも確実なクロスワールド通信）
+      window.postMessage({ from: "axlx-itandi-fill-exec", conditions: msg.conditions }, "*");
       sendResponse({ ok: true });
       return true;
     });
@@ -165,12 +148,10 @@
   });
 
   // underbar.js経由のpostMessageも受け取る（iframe内でchrome.tabsが使えないため）
+  // itandi-page-script.js（world:MAIN）へpostMessageで転送
   window.addEventListener("message", function (e) {
     if (!e.data || e.data.from !== "aixlinx-itandi-fill") return;
-    try { injectPageScript(); } catch (e2) { return; }
-    setTimeout(function () {
-      window.dispatchEvent(new CustomEvent("axlx-itandi-fill", { detail: e.data.conditions }));
-    }, 200);
+    window.postMessage({ from: "axlx-itandi-fill-exec", conditions: e.data.conditions }, "*");
   });
 
   // URLパラメータ検知：?sumora_cid=<ID> でページを開いたとき自動入力をトリガー
@@ -213,12 +194,7 @@
             console.warn("[itandi-content] sumora_cid not found:", _cid);
             return;
           }
-          try { injectPageScript(); } catch (e) { return; }
-          setTimeout(function () {
-            window.dispatchEvent(
-              new CustomEvent("axlx-itandi-fill", { detail: _buildConditions(c) })
-            );
-          }, 600);
+          window.postMessage({ from: "axlx-itandi-fill-exec", conditions: _buildConditions(c) }, "*");
         })
         .catch(function (e) {
           console.warn("[itandi-content] URLパラメータ自動入力エラー:", e);

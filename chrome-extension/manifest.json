@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AIXLINX 物件検索",
-  "version": "2.4.4",
+  "version": "2.4.5",
   "description": "お客さんの条件に合わせてリアプロ・itandi・レインズを検索するサポートツール",
   "action": {
     "default_title": "AIXLINX 物件検索"
@@ -75,6 +75,12 @@
     {
       "matches": ["https://itandibb.com/*"],
       "js": ["itandi-content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://itandibb.com/*"],
+      "js": ["itandi-page-script.js"],
+      "world": "MAIN",
       "run_at": "document_idle"
     },
     {

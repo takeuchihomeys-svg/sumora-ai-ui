@@ -562,5 +562,8 @@
     }, _resetDelay); // 連続検索リセット待機
   }
 
-  window.addEventListener("axlx-itandi-fill", function (e) { fill(e.detail); });
+  window.addEventListener("message", function (e) {
+    if (!e.data || e.data.from !== "axlx-itandi-fill-exec") return;
+    fill(e.data.conditions);
+  });
 })();
