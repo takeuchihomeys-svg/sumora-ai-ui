@@ -1590,7 +1590,7 @@ function setupAreaModeSelector(c, siteKey) {
   }
 
   // デフォルト: WARD_CODE_MAP収録済み → 地域 / 駅名のみ → 駅 / それ以外 → 地域
-  const hasWardToken    = toks.some(t => WARD_CODE_MAP[t] || NEIGHBORHOOD_WARD_MAP[t] || /[市区郡]/.test(t));
+  const hasWardToken    = toks.some(t => !t.endsWith("線") && (WARD_CODE_MAP[t] || NEIGHBORHOOD_WARD_MAP[t] || /[市区郡]$/.test(t)));
   const _cpRe = /^(?:阪急|阪神|南海|近鉄|JR|京阪|大阪メトロ|地下鉄)/;
   const hasStationToken = toks.some(t => {
     if (WARD_CODE_MAP[t]) return false;
@@ -2665,6 +2665,11 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
         // 顧客サイト選択ビューに切り替え（selectedCustomer を更新し view-site を表示）
         openSiteView(c);
         if (msg.site) {
+          // wide モードが指定されていれば先にクリック（pendingPopupCmd パスと同様）
+          if (msg.is_wide) {
+            var wBtnEl = document.querySelector('.mode-btn[data-mode="wide"]');
+            if (wBtnEl) wBtnEl.click();
+          }
           // サイト別手順ビューを開く（selectedSite を更新）
           openInstructions(msg.site);
           // areaMode が指定されていればボタンをクリックして上書き
@@ -2679,9 +2684,13 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
             setTimeout(resolve, 800 + Math.floor(Math.random() * 400));
           });
           var aBtn = document.getElementById('autofill-btn');
-          if (aBtn && aBtn.style.display !== 'none') aBtn.click();
+          if (aBtn && aBtn.style.display !== 'none') {
+            aBtn.click();
+            sendResponse({ ok: true });
+          } else {
+            sendResponse({ ok: false });
+          }
         }
-        sendResponse({ ok: true });
       } catch(e) {
         console.error("[popup] axlx-switch-customer error:", e);
         sendResponse({ ok: false });
