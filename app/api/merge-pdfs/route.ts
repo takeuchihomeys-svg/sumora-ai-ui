@@ -58,7 +58,13 @@ async function rankAndAnnotateSummaries(summaries: string[]): Promise<string[]> 
       max_tokens: 120,
       messages: [{
         role: "user",
-        content: `以下の物件一覧を見て、家賃・面積・駅徒歩・間取りを総合的に判断し、特にオススメの物件番号（1始まり）を選んでください。上位1〜3件をJSONで返してください。JSONのみ返すこと。
+        content: `以下の物件一覧を見て、特にオススメの物件番号（1始まり）を選んでください。上位1〜3件をJSONで返してください。JSONのみ返すこと。
+
+判断基準（テキストから読み取れる数値のみで判断）:
+1. ㎡あたりの家賃（安いほど良い）
+2. 駅からの徒歩分数（近いほど良い）
+3. 面積の広さ（㎡が大きいほど良い）
+※間取りの種別（1LDKや2LDKなど）は判断材料にしない
 
 ${summaries.join('\n\n')}
 
