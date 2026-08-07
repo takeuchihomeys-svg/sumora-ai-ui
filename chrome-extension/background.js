@@ -772,6 +772,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 customerName: _custName,
                 site:         "realpro",  // popup.js SITE_CONFIGのキーは"realpro"
                 areaMode:     _areaMode,
+                is_wide:      !!(conditions && conditions.is_wide),
               }
             });
             console.log("[webapp-search] ✔ pendingPopupCmd設定完了 → underbarが引き継ぎ");
@@ -905,82 +906,45 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const { customerId, conditions } = msg;
     (async () => {
       try {
-        // popup に進捗を表示するため pendingPopupCmd を set して openPopup を呼ぶ
-        // axlx-webapp-search と同じ可視性を scrape+compare ボタンでも実現する
-        if (customerId) {
-          try {
-            await chrome.storage.session.set({
-              pendingPopupCmd: {
-                customerId:   customerId,
-                customerName: (conditions && conditions.customerName) || null,
-                site:         null,
-                areaMode:     null,
-              }
-            });
-          } catch (_sessionErr) { /* session storage 非対応環境では無視 */ }
-          try {
-            await chrome.action.openPopup();
-          } catch (_openPopupErr) {
-            chrome.action.setBadgeText({ text: '!' });
-            chrome.action.setBadgeBackgroundColor({ color: '#e74c3c' });
-            setTimeout(function() { chrome.action.setBadgeText({ text: '' }); }, 10000);
-          }
-        }
+        var _scIsWide   = !!(conditions.isWide || conditions.is_wide);
+        var _scAreaMode = (conditions && conditions.area_mode) || null;
+        var _scCustName = (conditions && conditions.customerName) || null;
 
-        // resolve-search-conditions を呼んで station_names/route_ids/city_codes/detail_ward を解決する
-        // （webapp から受け取った conditions は city_codes:[] 等が空のため、必ずここで解決する）
-        var isWide = !!(conditions.isWide || conditions.is_wide);
-        // resolved は {} で初期化する（_scrapeAndCompareForCustomer と同じ書き方）。
-        // 空配列で事前初期化すると [] が truthy のため resolve API 失敗時の
-        // 「元の条件で続行」フォールバックが機能せず無条件検索になる
-        var resolved = {};
-        try {
-          var resolveResp = await fetch("https://sumora-ai-ui.vercel.app/api/resolve-search-conditions", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              desired_area: conditions.desired_area || (conditions.areas && conditions.areas.join("・")) || "",
-              lines: conditions.lines || [],
-              stations: conditions.stations || [],
-              is_wide: isWide,
-              rent_max: conditions.rent_max || null,
-              building_age: conditions.building_age || null,
-            }),
-            signal: AbortSignal.timeout(30000), // DeepSeekが最大20秒かかるため30秒に延長
-          });
-          if (resolveResp.ok) resolved = await resolveResp.json();
-        } catch (e) {
-          console.warn("[axlx-scrape-and-compare] resolve-search-conditions 失敗（元の条件で続行）:", e);
-        }
-        // resolve結果が空配列の場合も webapp から渡された条件を残す（length チェック）
-        var mergedStations  = (resolved.station_names && resolved.station_names.length) ? resolved.station_names : (conditions.station_names || []);
-        var mergedRoutes    = (resolved.route_ids && resolved.route_ids.length)         ? resolved.route_ids     : (conditions.route_ids     || []);
-        var mergedCityCodes = (resolved.city_codes && resolved.city_codes.length)       ? resolved.city_codes    : (conditions.city_codes    || []);
-        // 複数区顧客の暫定策: resolve API は detail_ward を最初の1区しか返さないため、
-        // city_codes が2つ以上ある場合は detail_ward を捨てて従来の直接チェックボックス法に戻す
-        // （所在地モーダル法だと2区目以降がサイレントに脱落する）
-        var mergedDetailWard = (mergedCityCodes.length >= 2) ? null : (resolved.detail_ward || null);
-        var resolvedConditions = Object.assign({}, conditions, {
-          station_names: mergedStations,
-          route_ids:     mergedRoutes,
-          city_codes:    mergedCityCodes,
-          detail_ward:   mergedDetailWard,
-          detail_area:   resolved.detail_area || null,
-          is_wide:       isWide,
-          rent_max:      resolved.rent_max_resolved || conditions.rent_max || null,
-          building_age:  resolved.building_age_resolved || conditions.building_age || null,
-        });
-
-        // リアプロを条件付きで開く（既存インフラ流用）
-        // 修正4: 固定3秒待ちを廃止し fill-done シグナル待機 → スクレイプ → 送信（修正1の変換込み）
+        // fill-done Promise を先に作る（underbarがfill後に content.js 経由で解決する）
         var fillDonePromise = _createFillDoneWaiter("realnetpro", 90000);
-        await _webappAutofill("realnetpro", resolvedConditions);
-        var scrapedCount = await _scrapeAndSendRealpro(
-          fillDonePromise,
-          customerId,
-          (conditions && conditions.customerName) || null,
-          resolvedConditions
-        );
+
+        // リアプロをmain.phpへナビゲート（フォームクリーン化）
+        var _scAllTabs = await chrome.tabs.query({});
+        var _scRealTab = _scAllTabs.find(function(t) { return t.url && t.url.startsWith("https://www.realnetpro.com"); });
+        if (_scRealTab) {
+          console.log("[scrape-compare] リアプロタブ発見 → main.phpへ:", _scRealTab.id);
+          await chrome.tabs.update(_scRealTab.id, { url: "https://www.realnetpro.com/main.php", active: true });
+          await _batchWaitForTabComplete(_scRealTab.id);
+          await new Promise(function(r) { setTimeout(r, 1500); });
+        } else {
+          console.log("[scrape-compare] リアプロタブなし → 新規作成");
+          _scRealTab = await chrome.tabs.create({ url: "https://www.realnetpro.com/main.php", active: true });
+          await _batchWaitForTabComplete(_scRealTab.id);
+          await new Promise(function(r) { setTimeout(r, 2000); });
+        }
+
+        // pendingPopupCmd → underbarのpopup.jsが顧客/サイト/モード選択+autofill-btn自動クリック
+        // （ユーザーが拡張ツールで手動でボタンを押した場合と全く同じ経路で検索実行）
+        if (customerId) {
+          await chrome.storage.session.set({
+            pendingPopupCmd: {
+              customerId:   String(customerId),
+              customerName: _scCustName,
+              site:         "realpro",
+              areaMode:     _scAreaMode,
+              is_wide:      _scIsWide,
+            }
+          });
+          console.log("[scrape-compare] ✔ pendingPopupCmd設定 → underbarが引き継ぎ");
+        }
+
+        // fill完了シグナル待機 → スクレイプ → LINE送信
+        var scrapedCount = await _scrapeAndSendRealpro(fillDonePromise, customerId, _scCustName, conditions);
         sendResponse({ ok: true, count: scrapedCount });
       } catch (e) {
         console.error("[axlx-scrape-and-compare] error:", e);

@@ -2336,17 +2336,18 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!c) return;
       openSiteView(c);
       if (cmd.site) {
+        // webappで「広げて検索」が押された場合はwideモードに切り替え（openInstructions前に実行）
+        if (cmd.is_wide) {
+          var wBtnEl = document.querySelector('.mode-btn[data-mode="wide"]');
+          if (wBtnEl) wBtnEl.click();
+        }
         openInstructions(cmd.site);
         // Step ④a: setupAreaModeSelector の自動判定をウェブアプリのボタン押下で上書きする
-        // (例: 阿倍野区が area に含まれると 'ward' が自動選択されるが、
-        //  スタッフが '駅' ボタンを押した場合は 'station' を強制する)
         if (cmd.areaMode === 'station' || cmd.areaMode === 'ward') {
           var btnEl = document.getElementById(cmd.areaMode === 'station' ? 'btn-mode-station' : 'btn-mode-ward');
           if (btnEl) btnEl.click();
         }
         // Step ④ auto-click: autofill-btnをユーザー操作に近い遅延で自動クリックする
-        // isUnderbar=trueのとき（underbar iframe）のみbtnが表示されている
-        // isUnderbar=falseのとき（action popup）はbtnがdisplay:noneなのでクリックしない
         var _autoClickDelay = 800 + Math.floor(Math.random() * 400); // 800-1200ms
         setTimeout(function() {
           var aBtn = document.getElementById('autofill-btn');
@@ -2370,10 +2371,15 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!c) return;
     openSiteView(c);
     if (cmd.site) {
+      // webappで「広げて検索」が押された場合はwideモードに切り替え（openInstructions前に実行）
+      if (cmd.is_wide) {
+        var wBtnEl2 = document.querySelector('.mode-btn[data-mode="wide"]');
+        if (wBtnEl2) wBtnEl2.click();
+      }
       openInstructions(cmd.site);
       if (cmd.areaMode === 'station' || cmd.areaMode === 'ward') {
-        var btnEl = document.getElementById(cmd.areaMode === 'station' ? 'btn-mode-station' : 'btn-mode-ward');
-        if (btnEl) btnEl.click();
+        var btnEl2 = document.getElementById(cmd.areaMode === 'station' ? 'btn-mode-station' : 'btn-mode-ward');
+        if (btnEl2) btnEl2.click();
       }
       // Step ④ auto-click (onChanged path)
       var _autoClickDelay2 = 800 + Math.floor(Math.random() * 400);
