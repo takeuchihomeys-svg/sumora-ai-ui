@@ -896,34 +896,61 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // fill-done Promise を先に作る（underbarがfill後に content.js 経由で解決する）
         var fillDonePromise = _createFillDoneWaiter("realnetpro", 90000);
 
-        // リアプロをmain.phpへナビゲート（フォームクリーン化）
+        // リアプロタブを探す
         var _scAllTabs = await chrome.tabs.query({});
         var _scRealTab = _scAllTabs.find(function(t) { return t.url && t.url.startsWith("https://www.realnetpro.com"); });
-        if (_scRealTab) {
-          console.log("[scrape-compare] リアプロタブ発見 → main.phpへ:", _scRealTab.id);
-          await chrome.tabs.update(_scRealTab.id, { url: "https://www.realnetpro.com/main.php", active: true });
-          await _batchWaitForTabComplete(_scRealTab.id);
-          await new Promise(function(r) { setTimeout(r, 1500); });
-        } else {
-          console.log("[scrape-compare] リアプロタブなし → 新規作成");
-          _scRealTab = await chrome.tabs.create({ url: "https://www.realnetpro.com/main.php", active: true });
-          await _batchWaitForTabComplete(_scRealTab.id);
-          await new Promise(function(r) { setTimeout(r, 2000); });
+
+        // まず underbar.js 直接通信を試みる（ページ更新なし）
+        var _directOk = false;
+        if (_scRealTab && customerId) {
+          try {
+            var _directResp = await new Promise(function(resolve) {
+              chrome.tabs.sendMessage(_scRealTab.id, {
+                type:         "axlx-switch-customer",
+                customerId:   String(customerId),
+                customerName: _scCustName,
+                site:         "realpro",
+                areaMode:     _scAreaMode,
+                is_wide:      _scIsWide,
+              }, function(r) {
+                void chrome.runtime.lastError;
+                resolve(r || { ok: false });
+              });
+            });
+            _directOk = !!_directResp.ok;
+            console.log("[scrape-compare] underbar直接通信:", JSON.stringify(_directResp));
+          } catch(e) {
+            console.log("[scrape-compare] underbar直接通信エラー:", e);
+          }
         }
 
-        // pendingPopupCmd → underbarのpopup.jsが顧客/サイト/モード選択+autofill-btn自動クリック
-        // （ユーザーが拡張ツールで手動でボタンを押した場合と全く同じ経路で検索実行）
-        if (customerId) {
-          await chrome.storage.session.set({
-            pendingPopupCmd: {
-              customerId:   String(customerId),
-              customerName: _scCustName,
-              site:         "realpro",
-              areaMode:     _scAreaMode,
-              is_wide:      _scIsWide,
-            }
-          });
-          console.log("[scrape-compare] ✔ pendingPopupCmd設定 → underbarが引き継ぎ");
+        if (!_directOk) {
+          // フォールバック: main.phpナビゲート → pendingPopupCmd
+          if (_scRealTab) {
+            console.log("[scrape-compare] フォールバック → main.phpへ:", _scRealTab.id);
+            await chrome.tabs.update(_scRealTab.id, { url: "https://www.realnetpro.com/main.php", active: true });
+            await _batchWaitForTabComplete(_scRealTab.id);
+            await new Promise(function(r) { setTimeout(r, 1500); });
+          } else {
+            console.log("[scrape-compare] リアプロタブなし → 新規作成");
+            _scRealTab = await chrome.tabs.create({ url: "https://www.realnetpro.com/main.php", active: true });
+            await _batchWaitForTabComplete(_scRealTab.id);
+            await new Promise(function(r) { setTimeout(r, 2000); });
+          }
+          if (customerId) {
+            await chrome.storage.session.set({
+              pendingPopupCmd: {
+                customerId:   String(customerId),
+                customerName: _scCustName,
+                site:         "realpro",
+                areaMode:     _scAreaMode,
+                is_wide:      _scIsWide,
+              }
+            });
+            console.log("[scrape-compare] ✔ pendingPopupCmd設定 → underbarが引き継ぎ");
+          }
+        } else {
+          console.log("[scrape-compare] ✔ underbar直接通信成功 → ページ更新なし");
         }
 
         // fill完了シグナル待機 → スクレイプ → LINE送信
