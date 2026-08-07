@@ -889,7 +889,17 @@ export default function Home() {
   const [condPanelSearchOpen, setCondPanelSearchOpen] = useState(false);
   const [propertyCustomers, setPropertyCustomers] = useState<Array<{ id: string; customer_name: string; desired_area?: string | null; floor_plan?: string | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; other_requests?: string | null; rent_min?: number | null; building_age?: number | null }>>([]);
   // convId → linked property customer（条件テキスト含む）
-  const [linkedCustomerMap, setLinkedCustomerMap] = useState<Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null; additional_conditions?: string | null; structured?: CustomerStructuredForGen }>>({});
+  const [linkedCustomerMap, setLinkedCustomerMap] = useState<Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null; additional_conditions?: string | null; structured?: CustomerStructuredForGen; rawData?: PropertyCustomerRow | null }>>({});
+  // チャット内 条件編集モーダル
+  const [chatCondEditOpen, setChatCondEditOpen] = useState(false);
+  const [chatCondEditId, setChatCondEditId] = useState<string | null>(null);
+  const [chatCondEditFields, setChatCondEditFields] = useState<{ desired_area: string; floor_plan: string; rent_min: string; rent_max: string; walk_minutes: string; building_age: string; move_in_time: string; preferences: string; ng_points: string; other_requests: string } | null>(null);
+  const [chatCondEditSaving, setChatCondEditSaving] = useState(false);
+  // チャット内 条件追加モーダル
+  const [chatCondAddOpen, setChatCondAddOpen] = useState(false);
+  const [chatCondAddId, setChatCondAddId] = useState<string | null>(null);
+  const [chatCondAddText, setChatCondAddText] = useState("");
+  const [chatCondAddSaving, setChatCondAddSaving] = useState(false);
   const [reflectLoadingChat, setReflectLoadingChat] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1768,7 +1778,7 @@ export default function Home() {
         .select("id,customer_name,status,last_property_sent_at,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age,initial_cost_limit,additional_conditions,ai_summary")
         .in("id", propCustomerIds);
       if (pcData) {
-        const map: Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null; additional_conditions?: string | null; structured?: CustomerStructuredForGen }> = {};
+        const map: Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null; additional_conditions?: string | null; structured?: CustomerStructuredForGen; rawData?: PropertyCustomerRow | null }> = {};
         for (const conv of formatted) {
           if (!conv.propertyCustomerId) continue;
           const pc = (pcData as PropertyCustomerRow[]).find((d) => d.id === conv.propertyCustomerId);
@@ -1791,6 +1801,7 @@ export default function Home() {
                 building_age: pc.building_age ?? null,
                 other_requests: pc.other_requests ?? pc.preferences ?? null,
               },
+              rawData: pc,
             };
           }
         }
@@ -4780,6 +4791,67 @@ export default function Home() {
   const showListOnMobile = mobileView === "list";
   const showChatOnMobile = mobileView === "chat";
 
+  // ── チャット内 条件編集保存 ──────────────────────────────────────────────────
+  const saveChatCondEdit = async () => {
+    if (!chatCondEditId || !chatCondEditFields || chatCondEditSaving) return;
+    setChatCondEditSaving(true);
+    const patch = {
+      id: chatCondEditId,
+      desired_area: chatCondEditFields.desired_area || null,
+      floor_plan: chatCondEditFields.floor_plan || null,
+      rent_min: chatCondEditFields.rent_min ? Number(chatCondEditFields.rent_min) * 10000 : null,
+      rent_max: chatCondEditFields.rent_max ? Number(chatCondEditFields.rent_max) * 10000 : null,
+      walk_minutes: chatCondEditFields.walk_minutes ? Number(chatCondEditFields.walk_minutes) : null,
+      building_age: chatCondEditFields.building_age ? Number(chatCondEditFields.building_age) : null,
+      move_in_time: chatCondEditFields.move_in_time || null,
+      preferences: chatCondEditFields.preferences || null,
+      ng_points: chatCondEditFields.ng_points || null,
+      other_requests: chatCondEditFields.other_requests || null,
+    };
+    const res = await fetch("/api/property-customers", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+    if (res.ok) {
+      const updated = await res.json() as PropertyCustomerRow;
+      setLinkedCustomerMap((prev) => {
+        const next = { ...prev };
+        for (const [convId, entry] of Object.entries(next)) {
+          if (entry.id === chatCondEditId) {
+            const merged = { ...entry.rawData, ...updated } as PropertyCustomerRow;
+            next[convId] = { ...entry, conditions: formatConditions(merged), rawData: merged, additional_conditions: merged.additional_conditions ?? null,
+              structured: { move_in_time: merged.move_in_time ?? null, rent_max: merged.rent_max ?? null, desired_area: merged.desired_area ?? null, walk_minutes: merged.walk_minutes ?? null, floor_plan: merged.floor_plan ?? null, initial_cost_limit: merged.initial_cost_limit ?? null, building_age: merged.building_age ?? null, other_requests: merged.other_requests ?? merged.preferences ?? null } };
+          }
+        }
+        return next;
+      });
+    }
+    setChatCondEditOpen(false); setChatCondEditId(null); setChatCondEditFields(null); setChatCondEditSaving(false);
+  };
+
+  // ── チャット内 条件追加保存 ──────────────────────────────────────────────────
+  const saveChatCondAdd = async () => {
+    if (!chatCondAddId || !chatCondAddText.trim() || chatCondAddSaving) return;
+    setChatCondAddSaving(true);
+    const lc = Object.values(linkedCustomerMap).find((e) => e.id === chatCondAddId);
+    const existing = lc?.additional_conditions || "";
+    const d = new Date();
+    const ds = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+    const newEntry = `【${ds} 追加】${chatCondAddText.trim()}`;
+    const newVal = existing ? existing + "\n" + newEntry : newEntry;
+    const res = await fetch("/api/property-customers", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: chatCondAddId, additional_conditions: newVal }) });
+    if (res.ok) {
+      setLinkedCustomerMap((prev) => {
+        const next = { ...prev };
+        for (const [convId, entry] of Object.entries(next)) {
+          if (entry.id === chatCondAddId) {
+            const merged = { ...entry.rawData, additional_conditions: newVal } as PropertyCustomerRow;
+            next[convId] = { ...entry, conditions: formatConditions(merged), rawData: merged, additional_conditions: newVal };
+          }
+        }
+        return next;
+      });
+    }
+    setChatCondAddOpen(false); setChatCondAddId(null); setChatCondAddText(""); setChatCondAddSaving(false);
+  };
+
   return (
     <main
       className="overflow-hidden bg-[#111b21]"
@@ -5398,6 +5470,43 @@ export default function Home() {
                 })()}
                 {/* 確定履歴タイムライン */}
                 <ConditionHistory additionalConditions={lc.additional_conditions ?? null} />
+                {/* ── 条件編集・追加・お客さん詳細 ボタン */}
+                <div className="flex gap-1.5 mt-2 flex-wrap">
+                  <button
+                    onClick={() => {
+                      if (!lc.rawData) return;
+                      setChatCondEditId(lc.id);
+                      setChatCondEditFields({
+                        desired_area: lc.rawData.desired_area || "",
+                        floor_plan: lc.rawData.floor_plan || "",
+                        rent_min: lc.rawData.rent_min ? String(Math.floor(lc.rawData.rent_min / 10000)) : "",
+                        rent_max: lc.rawData.rent_max ? String(Math.floor(lc.rawData.rent_max / 10000)) : "",
+                        walk_minutes: lc.rawData.walk_minutes ? String(lc.rawData.walk_minutes) : "",
+                        building_age: lc.rawData.building_age ? String(lc.rawData.building_age) : "",
+                        move_in_time: lc.rawData.move_in_time || "",
+                        preferences: lc.rawData.preferences || "",
+                        ng_points: lc.rawData.ng_points || "",
+                        other_requests: lc.rawData.other_requests || "",
+                      });
+                      setChatCondEditOpen(true);
+                    }}
+                    className="rounded-xl border border-[#1565C0]/30 bg-blue-50 px-3 py-1.5 text-xs font-bold text-[#1565C0] hover:bg-blue-100 active:bg-blue-200"
+                  >
+                    ✏️ 条件編集
+                  </button>
+                  <button
+                    onClick={() => { setChatCondAddId(lc.id); setChatCondAddText(""); setChatCondAddOpen(true); }}
+                    className="rounded-xl border border-green-200 bg-green-50 px-3 py-1.5 text-xs font-bold text-green-700 hover:bg-green-100 active:bg-green-200"
+                  >
+                    ＋ 条件追加
+                  </button>
+                  <button
+                    onClick={() => { window.location.href = `/customers?id=${lc.id}`; }}
+                    className="rounded-xl border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-bold text-purple-700 hover:bg-purple-100 active:bg-purple-200"
+                  >
+                    👤 お客さん詳細
+                  </button>
+                </div>
                 {/* ── 物件検索（Chrome拡張ブリッジ） */}
                 <div className="relative mt-2">
                   <button
@@ -11902,6 +12011,75 @@ export default function Home() {
           >
             ✕
           </button>
+        </div>
+      )}
+
+      {/* ── チャット内 条件編集モーダル ── */}
+      {chatCondEditOpen && chatCondEditFields && (
+        <div className="fixed inset-0 z-[60] flex items-end" style={{ background: "rgba(0,0,0,0.5)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) { setChatCondEditOpen(false); setChatCondEditId(null); setChatCondEditFields(null); } }}>
+          <div className="w-full rounded-t-2xl bg-white overflow-y-auto"
+            style={{ maxHeight: "85svh", paddingBottom: "max(env(safe-area-inset-bottom),20px)" }}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#f0f2f5] sticky top-0 bg-white z-10">
+              <h2 className="font-bold text-[#111b21] text-[15px]">条件編集</h2>
+              <button onClick={() => { setChatCondEditOpen(false); setChatCondEditId(null); setChatCondEditFields(null); }} className="text-[#aaa] text-xl leading-none">✕</button>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              {([ ["エリア", "desired_area", "例: 大阪市内", "text"], ["間取り", "floor_plan", "例: 1LDK・2DK", "text"], ["家賃 下限（万）", "rent_min", "5", "number"], ["家賃 上限（万）", "rent_max", "7", "number"], ["駅徒歩（分）", "walk_minutes", "15", "number"], ["築年数以内", "building_age", "20", "number"], ["入居時期", "move_in_time", "例: 7月・なるべく早く", "text"] ] as [string, keyof typeof chatCondEditFields, string, string][]).map(([label, key, ph, type]) => (
+                <div key={key}>
+                  <label className="text-[11px] font-semibold text-[#8696a0] mb-1 block">{label}</label>
+                  <input type={type} placeholder={ph} value={chatCondEditFields[key]} onChange={(e) => setChatCondEditFields((f) => f ? { ...f, [key]: e.target.value } : f)}
+                    className="w-full border border-[#e9edef] rounded-xl px-3 py-2 text-sm text-[#111b21] focus:outline-none focus:border-[#2196F3]" />
+                </div>
+              ))}
+              {([ ["こだわり", "preferences", "例: オートロック・ペット可"], ["NG条件", "ng_points", "例: 1階NG・木造NG"], ["その他", "other_requests", "その他の要望"] ] as [string, keyof typeof chatCondEditFields, string][]).map(([label, key, ph]) => (
+                <div key={key}>
+                  <label className="text-[11px] font-semibold text-[#8696a0] mb-1 block">{label}</label>
+                  <textarea placeholder={ph} value={chatCondEditFields[key]} onChange={(e) => setChatCondEditFields((f) => f ? { ...f, [key]: e.target.value } : f)} rows={2}
+                    className="w-full border border-[#e9edef] rounded-xl px-3 py-2 text-sm text-[#111b21] focus:outline-none focus:border-[#2196F3] resize-none" />
+                </div>
+              ))}
+            </div>
+            <div className="px-5 pb-2">
+              <button onClick={saveChatCondEdit} disabled={chatCondEditSaving}
+                className="w-full py-3 rounded-xl font-bold text-white text-sm disabled:opacity-40"
+                style={{ background: "linear-gradient(135deg, #1565C0, #2196F3)" }}>
+                {chatCondEditSaving ? "保存中..." : "保存する"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── チャット内 条件追加モーダル ── */}
+      {chatCondAddOpen && (
+        <div className="fixed inset-0 z-[60] flex items-end" style={{ background: "rgba(0,0,0,0.5)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) { setChatCondAddOpen(false); setChatCondAddId(null); setChatCondAddText(""); } }}>
+          <div className="w-full rounded-t-2xl bg-white"
+            style={{ paddingBottom: "max(env(safe-area-inset-bottom),20px)" }}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-[#f0f2f5]">
+              <h2 className="font-bold text-[#111b21] text-[15px]">条件追加</h2>
+              <button onClick={() => { setChatCondAddOpen(false); setChatCondAddId(null); setChatCondAddText(""); }} className="text-[#aaa] text-xl leading-none">✕</button>
+            </div>
+            <div className="px-5 py-4">
+              <label className="text-[11px] font-semibold text-[#8696a0] mb-1 block">追加したい条件・メモ</label>
+              <textarea
+                value={chatCondAddText}
+                onChange={(e) => setChatCondAddText(e.target.value)}
+                placeholder="例: 南向き希望・ペット飼育予定あり"
+                rows={4}
+                className="w-full border border-[#e9edef] rounded-xl px-3 py-2 text-sm text-[#111b21] focus:outline-none focus:border-[#2196F3] resize-none"
+                autoFocus
+              />
+            </div>
+            <div className="px-5">
+              <button onClick={saveChatCondAdd} disabled={chatCondAddSaving || !chatCondAddText.trim()}
+                className="w-full py-3 rounded-xl font-bold text-white text-sm disabled:opacity-40"
+                style={{ background: "linear-gradient(135deg, #388e3c, #43a047)" }}>
+                {chatCondAddSaving ? "追加中..." : "追加する"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </main>

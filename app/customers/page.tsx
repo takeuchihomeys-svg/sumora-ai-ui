@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import BottomNav from "@/app/components/BottomNav";
 import { supabase } from "@/app/lib/supabase";
 
@@ -305,6 +306,7 @@ function parseStructureTypes(...texts: (string | null | undefined)[]): string[] 
 }
 
 export default function CustomersPage() {
+  const searchParams = useSearchParams();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading]     = useState(true);
   const [filterMode, setFilterMode] = useState<"linked" | "all" | "urgent" | "applying">("linked");
@@ -436,6 +438,15 @@ export default function CustomersPage() {
     }
   };
   useEffect(() => { fetchCustomers(); }, []);
+
+  // URLパラメータ ?id=xxx でそのお客さんを自動展開
+  useEffect(() => {
+    const id = searchParams.get("id");
+    if (id) {
+      setExpandedId(id);
+      setFilterMode("all");
+    }
+  }, [searchParams]);
 
   // ロード完了後: DB保存済み要約をstateに読み込み → 未生成の紐付き客を順次自動生成
   useEffect(() => {
