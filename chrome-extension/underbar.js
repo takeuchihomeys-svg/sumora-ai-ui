@@ -354,6 +354,8 @@
     if (a === "autofill") {
       // page-script.jsのリスナーに転送（ページのJS文脈で動かす）
       window.postMessage({ from: "aixlinx-fill", conditions: e.data.conditions }, "*");
+      // 全ページ自動送信トリガー: 検索結果表示後にbulk-dl.jsが受信して自動送信を開始
+      window.postMessage({ from: "axlx-auto-send-armed" }, "*");
     }
     if (a === "itandi-autofill") {
       // itandi-content.jsに転送（chrome.tabsがiframe内で使えないためpostMessage経由）

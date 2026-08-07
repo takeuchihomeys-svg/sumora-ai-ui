@@ -7,6 +7,7 @@
   var tracked = [];
   var injectTimer = null;
   var _pendingAutoSendDispatched = false; // inject() から autoSendAllPages を起動済みか
+  var _autoSendArmed = false;            // underbar.js からの autofill シグナル受信済みか
 
   // ── 全ページ自動送信: sessionStorage キー ──────────────
   var AUTO_SEND_KEY = "axlx_auto_send";
@@ -60,18 +61,11 @@
     });
     updateBar();
 
-    // リアプロ自動入力ボタンが押された後、検索結果が表示されたら自動送信を開始
-    // _pendingAutoSendDispatched はフラグが実際に見つかったときのみ true にする（最初のinject()で無条件にtrueにしない）
-    if (tracked.length > 0 && !getAutoSendState() && !_pendingAutoSendDispatched) {
-      try {
-        chrome.storage.session.get(["axlx_pending_auto_send"], function (data) {
-          if (data && data.axlx_pending_auto_send && !_pendingAutoSendDispatched) {
-            _pendingAutoSendDispatched = true;
-            chrome.storage.session.remove("axlx_pending_auto_send");
-            setTimeout(autoSendAllPages, 800);
-          }
-        });
-      } catch (_) {}
+    // 自動入力ボタン後の全ページ自動送信: _autoSendArmed が立っていて結果が出たら起動
+    if (_autoSendArmed && tracked.length > 0 && !getAutoSendState() && !_pendingAutoSendDispatched) {
+      _autoSendArmed = false;
+      _pendingAutoSendDispatched = true;
+      setTimeout(autoSendAllPages, 800);
     }
   }
 
@@ -632,6 +626,16 @@
       });
     });
   }
+
+  // ── underbar.js からの全ページ自動送信シグナル受信 ───────────────────────
+  // underbar.js が autofill を転送するときに window.postMessage で通知してくる。
+  // 次に inject() が物件を検出したとき自動送信を開始する。
+  window.addEventListener("message", function (e) {
+    if (!e.data || e.data.from !== "axlx-auto-send-armed") return;
+    _autoSendArmed = true;
+    _pendingAutoSendDispatched = false;
+    console.log("[AXLX bulk-dl] 全ページ自動送信 armed");
+  });
 
   // ── メッセージリスナー（background.js からのスクレイプ指示）──────────────
   chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
