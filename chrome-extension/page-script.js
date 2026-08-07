@@ -1182,11 +1182,14 @@
             var labels = Array.prototype.slice.call(document.querySelectorAll('label.one_line'));
             var vis = labels.filter(function(l) { return isVisible(l); });
             if (!vis.length) {
-              // 駅ページが直接表示されている場合（モーダルが前回の状態を記憶）
+              // 駅ページが直接表示されている場合（事前選択済みルートでモーダルが駅一覧を直接表示）
+              // input[name="station_code[]"] はhidden checkboxのためisVisibleで不可視→親ラベルで判定
               var stationInputs = Array.prototype.slice.call(document.querySelectorAll('input[name="station_code[]"]'));
-              var visStationInputs = stationInputs.filter(function(i) { return isVisible(i); });
-              if (visStationInputs.length) {
-                console.log('[AX] STEP B: 駅ページが直接表示 → stationPageDirect=true');
+              var visStationParents = stationInputs.filter(function(i) {
+                return i.parentElement && isVisible(i.parentElement);
+              });
+              if (visStationParents.length) {
+                console.log('[AX] STEP B: 駅ページが直接表示(親label可視) → stationPageDirect=true');
                 stationPageDirect = true;
                 return true;
               }

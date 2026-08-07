@@ -505,6 +505,27 @@ function lineNameToRouteId(name) {
   return hit ? LINE_ROUTE_MAP[hit] : null;
 }
 
+// 路線名 → LINE_ROUTE_MAP 内部キー（STATION_LINE_MAP の値と同形式）を返す
+function lineNameToInternalName(name) {
+  if (!name) return null;
+  if (LINE_ROUTE_MAP[name]) return name;
+  const alias = (typeof LINE_ALIAS_MAP !== 'undefined' && LINE_ALIAS_MAP[name]) || null;
+  if (alias && LINE_ROUTE_MAP[alias]) return alias;
+  const normalized = name.replace("大阪市高速電気軌道", "大阪市高速軌道").replace(/^大阪メトロ/, "大阪市高速軌道");
+  if (LINE_ROUTE_MAP[normalized]) return normalized;
+  const hit = Object.keys(LINE_ROUTE_MAP).find(k => k.endsWith(name) || name.endsWith(k));
+  return hit || null;
+}
+
+// 路線名 → その路線に属する全駅名リスト（LEARNED_LINE_ORDER 優先、なければ STATION_LINE_MAP 反転）
+function getStationsForLine(name) {
+  const internalName = lineNameToInternalName(name);
+  if (!internalName) return [];
+  const ordered = LEARNED_LINE_ORDER[internalName];
+  if (ordered && ordered.length > 0) return ordered;
+  return Object.keys(STATION_LINE_MAP).filter(s => (STATION_LINE_MAP[s] || []).includes(internalName));
+}
+
 function buildAreaRouteCodes(c, mode = "auto") {
   const rawArea = (c.desired_area || c.area || "").trim();
   const city_codes = [], route_ids = [];
@@ -2021,12 +2042,16 @@ function openInstructions(siteKey) {
       if (currentAreaMode === "station") {
         const resolvedStations = [];
         for (const part of areaParts) {
-          // 路線として解決できる線名トークン（例: 御堂筋線・今里筋線）は駅名に変換しない（route_idsで処理済み）
-          // ※「今里筋線」→includes一致で駅「今里」に化けるのを防止
-          // ※ LEARNED_STATION_MAP は判定に使わない: 「御堂筋線」が駅として誤学習されるとガードがすり抜けるため
-          //   （実際に発生: station_map汚染 → station_names=["御堂筋線"] → リアプロで「指定の駅が選択できませんでした」）
+          // 路線名トークン（例: 阪急千里線・御堂筋線）→ その路線の全駅を展開してstation_namesに追加
+          // ※ 沿線モーダル（label.one_line）は不安定なため、駅個別選択方式で代替する
+          // ※ LEARNED_STATION_MAP で路線名が誤学習されても station_names には混入させない
           if (part.endsWith("線") && !STATION_LINE_MAP[part]) {
-            if (lineNameToRouteId(part)) continue;
+            const lineStations = getStationsForLine(part);
+            if (lineStations.length > 0) {
+              lineStations.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
+              continue;
+            }
+            if (lineNameToRouteId(part)) continue; // 駅一覧が取れない場合もスキップ（station_map汚染防止）
           }
           const station = resolveStation(part);
           if (station) {
