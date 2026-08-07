@@ -446,4 +446,26 @@
     if (!e.data || e.data.from !== "axlx-customer-response") return;
     window.postMessage({ from: "axlx-customer-response", name: e.data.name, id: e.data.id ?? null }, "*");
   });
+
+  // ── background.js からの顧客切替指示を popup.js iframe に中継 ────────────────
+  // chrome.runtime.sendMessage でiframe直接に届けると frame登録ラグで失敗するため
+  // chrome.tabs.sendMessage(content script経路) → postMessage(iframe) の2段中継を使う
+  chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
+    if (msg.type !== "axlx-switch-customer") return false;
+    if (!iframe || !iframe.contentWindow) {
+      sendResponse({ ok: false, reason: "iframe-not-ready" });
+      return true;
+    }
+    iframe.contentWindow.postMessage({
+      from:         "underbar-parent",
+      action:       "switch-customer",
+      customerId:   msg.customerId,
+      customerName: msg.customerName,
+      site:         msg.site,
+      areaMode:     msg.areaMode,
+      is_wide:      msg.is_wide,
+    }, "*");
+    sendResponse({ ok: true }); // 転送完了（popup.js側は非同期で処理）
+    return true;
+  });
 })();

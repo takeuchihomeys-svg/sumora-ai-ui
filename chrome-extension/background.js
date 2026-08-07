@@ -751,30 +751,35 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
           if (!_cid) { sendResponse({ ok: false, error: "no customerId" }); return; }
 
-          // popup.jsに直接メッセージ → popup.jsの完全な条件組み立てロジック（Dijkstra展開含む）を使う
-          var _directOk = await new Promise(function(resolve) {
-            chrome.runtime.sendMessage({
-              type:         "axlx-switch-customer",
-              customerId:   String(_cid),
-              customerName: _custName,
-              site:         "realpro",
-              areaMode:     _areaMode,
-              is_wide:      _isWide,
-            }, function(resp) {
-              if (chrome.runtime.lastError) { resolve(false); return; }
-              resolve(!!(resp && resp.ok));
+          // underbar.js（content script）経由でpopup.js iframeに中継
+          // chrome.tabs.sendMessage はContent Script経路で確実にデリバリされる（iframe frame登録ラグなし）
+          var _allTabs = await chrome.tabs.query({});
+          var _realTab = _allTabs.find(function(t) { return t.url && t.url.startsWith("https://www.realnetpro.com"); });
+          var _directOk = false;
+          if (_realTab) {
+            _directOk = await new Promise(function(resolve) {
+              chrome.tabs.sendMessage(_realTab.id, {
+                type:         "axlx-switch-customer",
+                customerId:   String(_cid),
+                customerName: _custName,
+                site:         "realpro",
+                areaMode:     _areaMode,
+                is_wide:      _isWide,
+              }, function(resp) {
+                if (chrome.runtime.lastError) { resolve(false); return; }
+                resolve(!!(resp && resp.ok));
+              });
             });
-          });
+          }
           if (_directOk) {
-            console.log("[webapp-search] ✔ popup.js直接メッセージ成功");
+            console.log("[webapp-search] ✔ underbar.js中継メッセージ成功");
             sendResponse({ ok: true });
             return;
           }
           console.log("[webapp-search] popup未応答 → フォールバック: ページ更新経由");
 
           // フォールバック: main.phpへナビゲート + pendingPopupCmd
-          var _allTabs = await chrome.tabs.query({});
-          var _realTab = _allTabs.find(function(t) { return t.url && t.url.startsWith("https://www.realnetpro.com"); });
+          // _realTab は上で取得済み（null の場合は新規タブ作成）
           if (_realTab) {
             await chrome.tabs.update(_realTab.id, { url: "https://www.realnetpro.com/main.php", active: true });
             await _batchWaitForTabComplete(_realTab.id);

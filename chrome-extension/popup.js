@@ -2542,6 +2542,44 @@ document.addEventListener("DOMContentLoaded", () => {
           id: selectedCustomer?.id ?? null,
         }, "*");
       }
+      // ── underbar.js経由の顧客切替指示（Approach D: tabs.sendMessage → postMessage 2段中継）──
+      // chrome.runtime.sendMessage のiframe frame登録ラグを回避するため
+      // background.js → tabs.sendMessage → underbar.js → postMessage → ここ の経路を使う
+      if (e.data?.from === "underbar-parent" && e.data?.action === "switch-customer") {
+        (async function() {
+          // allCustomers ロード完了待ち（初回ロード時の非同期フェッチ完了前に届く場合を吸収 Bug 1 fix）
+          var deadline = Date.now() + 5000;
+          while ((!allCustomers || !allCustomers.length) && Date.now() < deadline) {
+            await new Promise(function(r) { setTimeout(r, 100); });
+          }
+          var c = (allCustomers || []).find(function(x) {
+            return String(x.id) === String(e.data.customerId);
+          });
+          if (!c) {
+            console.warn("[popup] switch-customer postMessage: 顧客が見つかりません id=", e.data.customerId);
+            return;
+          }
+          openSiteView(c);
+          if (e.data.site) {
+            if (e.data.is_wide) {
+              var wBtn = document.querySelector('.mode-btn[data-mode="wide"]');
+              if (wBtn) wBtn.click();
+            }
+            openInstructions(e.data.site);
+            if (e.data.areaMode === 'station' || e.data.areaMode === 'ward') {
+              var mBtn = document.getElementById(
+                e.data.areaMode === 'station' ? 'btn-mode-station' : 'btn-mode-ward'
+              );
+              if (mBtn) mBtn.click();
+            }
+            await new Promise(function(r) {
+              setTimeout(r, 800 + Math.floor(Math.random() * 400));
+            });
+            var aBtn = document.getElementById('autofill-btn');
+            if (aBtn) aBtn.click();
+          }
+        })();
+      }
     });
   }
 
@@ -2708,6 +2746,9 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
           } else {
             sendResponse({ ok: false });
           }
+        } else {
+          // Bug 3 fix: msg.site が falsy の場合も必ず sendResponse を呼ぶ（チャンネル放置防止）
+          sendResponse({ ok: false, reason: "no-site" });
         }
       } catch(e) {
         console.error("[popup] axlx-switch-customer error:", e);
