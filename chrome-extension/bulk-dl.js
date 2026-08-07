@@ -209,7 +209,8 @@
       return td.textContent.replace(/\s+/g, " ").trim();
     }).filter(function (t) { return t && t.length > 0 && t.length < 60; });
 
-    return { name: name || "物件", texts: texts.slice(0, 8) };
+    // AD列はリアプロで10〜12列目あたりのため15まで取得
+    return { name: name || "物件", texts: texts.slice(0, 15) };
   }
 
   // ── 物件サマリーテキスト生成（LINE送信用）──────────
@@ -237,14 +238,24 @@
     }
     if (accessText) lines.push(accessText.trim());
 
-    // AD（「AD」を含むセルから金額だけ抽出）
-    var adText = card.texts.find(function (t) {
-      return /AD/.test(t) || /広告料/.test(t);
-    });
-    if (adText) {
-      var adMatch = adText.match(/[\d,，]+円/);
-      if (adMatch) lines.push("AD " + adMatch[0]);
+    // AD（リアプロのAD列: "2ヶ月"/"1ヶ月" のみのセルを探す。"AD"文字列はヘッダのみ）
+    var adLine = null;
+    for (var _ai = 0; _ai < card.texts.length; _ai++) {
+      var _at = card.texts[_ai].trim();
+      var _am = _at.match(/^(\d+)[ヶか]月$/);
+      if (_am) { adLine = "AD " + _at; break; }
     }
+    // 旧形式: "AD 2ヶ月" や "広告料 xxxxxx円" が同一セルに入っている場合
+    if (!adLine) {
+      var _adCell = card.texts.find(function (t) { return /AD|広告料/.test(t); });
+      if (_adCell) {
+        var _adM = _adCell.match(/\d+[ヶか]月/);
+        var _adY = _adCell.match(/[\d,，]+円/);
+        if (_adM) adLine = "AD " + _adM[0];
+        else if (_adY) adLine = "AD " + _adY[0];
+      }
+    }
+    if (adLine) lines.push(adLine);
 
     return lines.join("\n");
   }
