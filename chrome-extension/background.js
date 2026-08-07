@@ -1651,23 +1651,15 @@ async function _webappAutofill(site, conditions) {
     var mainTab = allTabs.find(function(t) { return t.url && t.url.includes("realnetpro.com/main.php"); });
     var targetRealTab = mainTab || existing;
     if (targetRealTab) {
-      // ping-first: content.js が生きていればナビゲーション自体を省略する
-      // （ping は main.php タブのみ対象。content.js は main.php* にしか注入されないため）
-      var alive = mainTab ? await _pingTab(mainTab.id, 800) : false;
-      if (alive) {
-        console.log("[webapp-autofill] ping OK — skip navigation, reuse live tab", mainTab.id);
-        await chrome.tabs.update(mainTab.id, { active: true }); // フォアグラウンド化のみ・URL変更なし
-        await new Promise(function(r) { setTimeout(r, 300); });
-        existing = mainTab;
-      } else {
-        // ping 失敗 → orphaned content.js または main.php 以外のタブ → 従来どおりナビゲートして fresh にする
-        // （拡張リロード後・更新後に既存タブの content.js が切断されると sendMessage が全失敗する）
-        console.warn("[webapp-autofill] ping NG — navigating to main.php to refresh content.js");
-        await chrome.tabs.update(targetRealTab.id, { url: siteUrls.realnetpro, active: true });
-        await _batchWaitForTabComplete(targetRealTab.id);
-        await new Promise(function(r) { setTimeout(r, 2000); });
-        existing = targetRealTab;
-      }
+      // 必ずmain.phpへナビゲートしてフォームをクリーンな初期状態にする
+      // ※ ping-skip最適化（alive時にナビゲーション省略）は廃止:
+      //   検索結果ページ（フォームが折りたたまれた状態）のまま送信されると
+      //   「所在地絞り込み」ボタンが見つからず中止になるバグを引き起こしていた
+      console.log("[webapp-autofill] → main.php にナビゲート（フォームクリーン化）", targetRealTab.id);
+      await chrome.tabs.update(targetRealTab.id, { url: siteUrls.realnetpro, active: true });
+      await _batchWaitForTabComplete(targetRealTab.id);
+      await new Promise(function(r) { setTimeout(r, 2000); });
+      existing = targetRealTab;
     }
   }
   var tab = existing;
