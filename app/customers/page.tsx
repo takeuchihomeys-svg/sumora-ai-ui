@@ -369,14 +369,19 @@ export default function CustomersPage() {
   // ポーリングinterval / idle復帰timeout をアンマウント時に確実に停止するための保持
   const scrapePollIntervalsRef = useRef<Set<ReturnType<typeof setInterval>>>(new Set());
   const scrapeIdleTimeoutsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  // Supabase Realtime チャンネル（ext-results）追跡 — アンマウント時に確実に解放
+  const scrapeResultChannelsRef = useRef<Set<ReturnType<typeof supabase.channel>>>(new Set());
   useEffect(() => {
     const intervals = scrapePollIntervalsRef.current;
     const timeouts = scrapeIdleTimeoutsRef.current;
+    const channels = scrapeResultChannelsRef.current;
     return () => {
       intervals.forEach((t) => clearInterval(t));
       intervals.clear();
       timeouts.forEach((t) => clearTimeout(t));
       timeouts.clear();
+      channels.forEach((ch) => { supabase.removeChannel(ch).catch(() => {}); });
+      channels.clear();
     };
   }, []);
 
@@ -978,7 +983,8 @@ export default function CustomersPage() {
       return;
     }
 
-    // ③ フォールバック: Supabase automation_commands 経由（拡張なし or ACK未着）
+    // ③ フォールバック: Supabase automation_commands + Realtime broadcast（スマホ対応）
+    // broadcast で拡張ツールが即時受信 → 30秒ポーリング待ちを解消。polling は backup として存続。
     try {
       let resolved: ResolvedSearchConditions | null = null;
       if (c.desired_area?.trim() || (c.lines?.length ?? 0) > 0 || (c.stations?.length ?? 0) > 0) {
@@ -1031,10 +1037,65 @@ export default function CustomersPage() {
 
       const cmdId = (inserted as { id: string | number }).id;
       const startedAt = Date.now();
+
+      // ── Supabase Realtime broadcast: ext-results を購読して結果をリアルタイム受信 ──
+      let sbResultDone = false;
+      const resultCh = supabase.channel("ext-results");
+      scrapeResultChannelsRef.current.add(resultCh);
+      resultCh.on("broadcast", { event: "scrape_result" }, (event: { payload?: { customerId?: string; ok?: boolean; error?: string } }) => {
+        if (sbResultDone) return;
+        if (String(event.payload?.customerId) !== String(c.id)) return;
+        sbResultDone = true;
+        scrapeResultChannelsRef.current.delete(resultCh);
+        supabase.removeChannel(resultCh).catch(() => {});
+        if (event.payload?.ok) {
+          scheduleIdle("done");
+        } else {
+          const em = event.payload?.error ?? "";
+          if (em) setScrapeCompareErrors((prev) => ({ ...prev, [key]: em.slice(0, 200) }));
+          scheduleIdle("error");
+        }
+      }).subscribe();
+
+      // ── ext-commands broadcast で拡張ツールに即時配信（SW が起きていれば 30秒待ちを回避）──
+      void (async () => {
+        try {
+          const cmdCh = supabase.channel("ext-commands");
+          await new Promise<void>((res) => {
+            cmdCh.subscribe((st) => { if (st === "SUBSCRIBED") res(); });
+          });
+          await cmdCh.send({
+            type: "broadcast",
+            event: "scrape_command",
+            payload: {
+              customerId: c.id, customerName: c.customer_name, isWide,
+              commandId: cmdId,
+              conditions: {
+                ...rawConditions,
+                city_codes: resolved?.city_codes ?? [], station_names: resolved?.station_names ?? [],
+                route_ids: resolved?.route_ids ?? [], itandi_line_names: resolved?.itandi_line_names ?? [],
+                reins_line_names: resolved?.reins_line_names ?? [],
+              },
+            },
+          });
+          await supabase.removeChannel(cmdCh);
+          console.log("[WS] ext-commands broadcast 送信完了 customerId=" + c.id);
+        } catch (e) {
+          console.warn("[WS] broadcast 失敗（polling で継続）:", e);
+        }
+      })();
+
+      // ── 既存の 5秒ポーリング（broadcast で処理できなかった場合のバックアップ）──
       const timer = setInterval(() => {
         void (async () => {
           const finish = (finalStatus: ScrapeCompareStatus) => {
-            clearInterval(timer); scrapePollIntervalsRef.current.delete(timer); scheduleIdle(finalStatus);
+            clearInterval(timer); scrapePollIntervalsRef.current.delete(timer);
+            if (!sbResultDone) {
+              sbResultDone = true;
+              scrapeResultChannelsRef.current.delete(resultCh);
+              supabase.removeChannel(resultCh).catch(() => {});
+              scheduleIdle(finalStatus);
+            }
           };
           try {
             const elapsed = Date.now() - startedAt;

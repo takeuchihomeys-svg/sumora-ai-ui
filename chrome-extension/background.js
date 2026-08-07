@@ -972,6 +972,114 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // ===== 自動化バッチ検索 =====
 const SUMORA_BATCH_API = "https://sumora-ai-ui.vercel.app";
 
+// ── Supabase Realtime WebSocket（スマホ→拡張 リアルタイムコマンド配信）─────────────────
+// スマホからボタンを押したとき、30秒ポーリングを待たずに即座に拡張に届けるための双方向チャンネル
+var _SB_WS_URL       = "wss://wfwsmwxakhyxobytszoq.supabase.co/realtime/v1/websocket?apikey=sb_publishable_0MBDxmVGZHFnjWX79QzKlw_x6sT1w4N&vsn=1.0.0";
+var _SB_CMD_CHANNEL  = "realtime:ext-commands";  // スマホ → 拡張（コマンド受信）
+var _SB_RES_CHANNEL  = "realtime:ext-results";   // 拡張 → スマホ（結果配信）
+var _sbWs            = null;
+var _sbWsRef         = 0;
+var _sbHbTimer       = null;
+var _sbCmdJoined     = false;
+var _sbResJoined     = false;
+
+function _sbSend(obj) {
+  if (_sbWs && _sbWs.readyState === WebSocket.OPEN) {
+    try { _sbWs.send(JSON.stringify(obj)); } catch(_) { /* ignore */ }
+  }
+}
+
+function _sbConnect() {
+  if (_sbWs && (_sbWs.readyState === WebSocket.OPEN || _sbWs.readyState === WebSocket.CONNECTING)) return;
+  _sbCmdJoined = false; _sbResJoined = false;
+  try {
+    _sbWs = new WebSocket(_SB_WS_URL);
+    _sbWs.onopen = function() {
+      console.log("[SB-RT] Supabase Realtime 接続");
+      // ext-commands（受信）と ext-results（送信）の両チャンネルに参加
+      _sbSend({ topic: _SB_CMD_CHANNEL, event: "phx_join", payload: { config: { broadcast: { ack: false, self: false } } }, ref: String(++_sbWsRef), join_ref: "cmd" });
+      _sbSend({ topic: _SB_RES_CHANNEL, event: "phx_join", payload: { config: { broadcast: { ack: false, self: false } } }, ref: String(++_sbWsRef), join_ref: "res" });
+      // ハートビート 25秒ごと（Supabase の 30秒タイムアウト前に送る + SW を起こし続ける）
+      if (_sbHbTimer) clearInterval(_sbHbTimer);
+      _sbHbTimer = setInterval(function() {
+        _sbSend({ topic: "phoenix", event: "heartbeat", payload: {}, ref: String(++_sbWsRef) });
+      }, 25000);
+    };
+    _sbWs.onmessage = function(ev) {
+      try {
+        var msg = JSON.parse(ev.data);
+        // チャンネル参加確認
+        if (msg.event === "phx_reply" && msg.payload && msg.payload.status === "ok") {
+          if (msg.topic === _SB_CMD_CHANNEL) { _sbCmdJoined = true; console.log("[SB-RT] ext-commands 参加完了"); }
+          if (msg.topic === _SB_RES_CHANNEL) { _sbResJoined = true; console.log("[SB-RT] ext-results 参加完了"); }
+        }
+        // スマホからのコマンドを受信 → 即時実行
+        if (msg.topic === _SB_CMD_CHANNEL && msg.event === "broadcast" && msg.payload && msg.payload.event === "scrape_command") {
+          _sbHandleCommand(msg.payload.payload || {});
+        }
+      } catch(_) { /* ignore */ }
+    };
+    _sbWs.onclose = function() {
+      console.log("[SB-RT] 切断 → 8秒後に再接続");
+      _sbCmdJoined = false; _sbResJoined = false;
+      if (_sbHbTimer) { clearInterval(_sbHbTimer); _sbHbTimer = null; }
+      _sbWs = null;
+      setTimeout(_sbConnect, 8000);
+    };
+    _sbWs.onerror = function() {};
+  } catch(e) {
+    console.warn("[SB-RT] 接続失敗:", e.message);
+    setTimeout(_sbConnect, 15000);
+  }
+}
+
+async function _sbHandleCommand(payload) {
+  var customerId   = String(payload.customerId   || payload.customer_id   || "");
+  var customerName = String(payload.customerName || payload.customer_name || "");
+  var conditions   = payload.conditions || {};
+  var commandId    = payload.commandId  || null;
+  if (!customerId) return;
+
+  // batchRunning ロックチェック（二重実行防止）
+  var stLock = await chrome.storage.local.get("batchRunning");
+  var lock = stLock.batchRunning;
+  if (lock) {
+    var startedAt = (typeof lock === "object" && lock) ? lock.startedAt : 0;
+    if (startedAt && Date.now() - startedAt < BATCH_LOCK_TTL_MS) {
+      console.log("[SB-RT] batchRunning 中 → スキップ (customerId=" + customerId + ")");
+      return;
+    }
+  }
+
+  console.log("[SB-RT] scrape_command 受信 → 即時実行 customerId=" + customerId);
+  await chrome.storage.local.set({ batchRunning: { running: true, startedAt: Date.now() }, batchCommandId: commandId });
+  if (commandId) _updateBatchCommand(commandId, { status: "running" }).catch(function() {});
+
+  try {
+    await _scrapeAndCompareForCustomer({ customer_id: customerId, customer_name: customerName, is_wide: !!conditions.is_wide, conditions });
+    if (commandId) _updateBatchCommand(commandId, { status: "done", completed_at: new Date().toISOString() }).catch(function() {});
+    _sbBroadcastResult({ customerId, ok: true });
+  } catch(e) {
+    if (commandId) _updateBatchCommand(commandId, { status: "error", error_message: String(e) }).catch(function() {});
+    _sbBroadcastResult({ customerId, ok: false, error: String(e).slice(0, 300) });
+  } finally {
+    await chrome.storage.local.set({ batchRunning: null, batchCommandId: null });
+  }
+}
+
+function _sbBroadcastResult(result) {
+  _sbSend({
+    topic: _SB_RES_CHANNEL,
+    event: "broadcast",
+    payload: { type: "broadcast", event: "scrape_result", payload: result },
+    ref: String(++_sbWsRef),
+  });
+  console.log("[SB-RT] 結果配信:", JSON.stringify(result));
+}
+
+// 起動時に Supabase Realtime へ接続
+_sbConnect();
+
 // ── 学習済みマップのキャッシュ付き取得（resolveConditionsLocal の learned パラメータ用）──
 // popup.js の fetchLearnedMaps と同じ3エンドポイントを読む。失敗時は {}（静的マップのみで解決）。
 var _learnedMapsCache = null;   // { wards, stations, lineOrder } または { __failed: true }
