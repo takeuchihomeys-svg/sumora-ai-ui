@@ -819,7 +819,83 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
     }
 
-    // ─── itandi / reins: _batchAutofill直接呼び出し（popup.js経由なし・ページ更新なし）──
+    // ─── itandi: switch-customer経由でunderbar.js→popup.js→自動入力（リアプロと同一仕組み）──
+    if (site === "itandi") {
+      (async () => {
+        try {
+          var _cid      = conditions && conditions.customerId;
+          var _custName = (conditions && conditions.customerName) || null;
+          var _areaMode = (conditions && conditions.area_mode) || null;
+          var _isWide   = !!(conditions && conditions.is_wide);
+
+          if (!_cid) { sendResponse({ ok: false, error: "no customerId" }); return; }
+
+          // fill-done後にスクレイプ→LINE送信するため先に作成
+          var _siteFillDone = _createFillDoneWaiter("itandi", 90000);
+
+          // itandiタブを探す（なければ新規作成）
+          var _allTabs = await chrome.tabs.query({});
+          var _itandiTab = _allTabs.find(function(t) { return t.url && t.url.startsWith("https://itandibb.com"); });
+          if (!_itandiTab) {
+            _itandiTab = await chrome.tabs.create({ url: "https://itandibb.com/rent_rooms/list", active: false });
+            await _batchWaitForTabComplete(_itandiTab.id);
+            await new Promise(function(r) { setTimeout(r, 2000); });
+          }
+          console.log("[webapp-search] itandiタブ:", _itandiTab.url);
+
+          // underbar.js → popup.js 経由でリアプロと同じ仕組みで自動入力
+          var _directOk = await new Promise(function(resolve) {
+            chrome.tabs.sendMessage(_itandiTab.id, {
+              type:         "axlx-switch-customer",
+              customerId:   String(_cid),
+              customerName: _custName,
+              site:         "itandi",
+              areaMode:     _areaMode,
+              is_wide:      _isWide,
+            }, function(resp) {
+              if (chrome.runtime.lastError) {
+                console.log("[webapp-search] itandi tabs.sendMessage エラー:", chrome.runtime.lastError.message);
+                resolve(false); return;
+              }
+              console.log("[webapp-search] itandi underbar.js応答:", JSON.stringify(resp));
+              resolve(!!(resp && resp.ok));
+            });
+          });
+
+          if (!_directOk) {
+            // フォールバック: popup.js未応答 → _batchAutofill直接呼び出し
+            console.warn("[webapp-search] itandi popup未応答 → _batchAutofill fallback");
+            var _fetchRes = await fetch("https://sumora-ai-ui.vercel.app/api/property-customers", { cache: "no-store" });
+            var _custList = await _fetchRes.json();
+            var _customer = Array.isArray(_custList)
+              ? _custList.find(function(x) { return String(x.id) === String(_cid); })
+              : null;
+            if (_customer) {
+              if (_areaMode) _customer = Object.assign({}, _customer, { area_mode: _areaMode });
+              await _batchAutofill(_customer, "itandi", _isWide);
+            }
+          }
+
+          sendResponse({ ok: true });
+
+          // fill完了後にスクレイプ+LINE送信
+          _scrapeAndCompareItandi(
+            _siteFillDone,
+            String(_cid),
+            _custName,
+            conditions
+          ).catch(function(e) {
+            console.error("[webapp-search] itandi _scrapeAndCompareItandi error:", e.message || e);
+          });
+        } catch (e) {
+          console.error("[webapp-search] itandi error:", e);
+          sendResponse({ ok: false, error: String(e.message) });
+        }
+      })();
+      return true;
+    }
+
+    // ─── reins: _batchAutofill直接呼び出し ──────────────────────────────────
     (async () => {
       try {
         var _cid      = conditions && conditions.customerId;
@@ -828,7 +904,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         if (!_cid) { sendResponse({ ok: false, error: "no customerId" }); return; }
 
-        // 顧客データをAPIから取得
         var _fetchRes = await fetch("https://sumora-ai-ui.vercel.app/api/property-customers", { cache: "no-store" });
         var _custList = await _fetchRes.json();
         var _customer = Array.isArray(_custList)
@@ -836,30 +911,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           : null;
         if (!_customer) { sendResponse({ ok: false, error: "customer not found" }); return; }
 
-        // area_modeを付与（page-script.jsが参照できるように）
         if (_areaMode) _customer = Object.assign({}, _customer, { area_mode: _areaMode });
 
-        // itandiのみ: fill-done後にスクレイプ→LINE送信するため先に作成
-        var _siteFillDone = (site === "itandi")
-          ? _createFillDoneWaiter("itandi", 90000)
-          : null;
-
-        // in-place autofill（ページ移動なし・バッチ処理と完全同一経路）
         console.log("[webapp-search] ▶ " + site + " _batchAutofill直接呼び出し customerId=" + _cid);
         await _batchAutofill(_customer, site, _isWide);
         console.log("[webapp-search] ✔ " + site + " _batchAutofill完了");
-
-        // itandiのみ: fill完了後にスクレイプ+LINE送信（レインズはスクレイプなし）
-        if (site === "itandi" && _siteFillDone) {
-          _scrapeAndCompareItandi(
-            _siteFillDone,
-            String(_cid),
-            (conditions && conditions.customerName) || null,
-            conditions
-          ).catch(function(e) {
-            console.error("[itandiScrape] バックグラウンドエラー:", e.message || e);
-          });
-        }
 
         sendResponse({ ok: true });
       } catch (e) {
@@ -1672,20 +1728,20 @@ async function _batchAutofill(customer, site, isWide) {
       args: [conds]
     });
   } else if (site === "itandi") {
-    // itandi: chrome.tabs.sendMessage で axlx-itandi-autofill を送る
-    // itandi-content.js が injectPageScript() を呼んでから axlx-itandi-fill イベントを転送する
+    // itandi: itandi-content.js 経由で axlx-itandi-fill-exec を postMessage
+    // itandi-page-script.js（world:MAIN）が message リスナーで受信して検索を実行する
     var itandiSent = await new Promise(function(resolve) {
       chrome.tabs.sendMessage(tab.id, { type: "axlx-itandi-autofill", conditions: conds }, function(resp) {
         resolve(!chrome.runtime.lastError && !!(resp && resp.ok));
       });
     });
     if (!itandiSent) {
-      // フォールバック: page script が既に注入済みの場合は MAIN world で直接イベント発火
+      // フォールバック: executeScript で MAIN world に直接 postMessage
       console.warn("[batchAutofill] itandi sendMessage未確認, executeScript fallback");
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         world: "MAIN",
-        func: function(c) { window.dispatchEvent(new CustomEvent("axlx-itandi-fill", { detail: c })); },
+        func: function(c) { window.postMessage({ from: "axlx-itandi-fill-exec", conditions: c }, "*"); },
         args: [conds]
       });
     }
