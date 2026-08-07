@@ -2105,6 +2105,8 @@ function openInstructions(siteKey) {
     setupAreaModeSelector(c0, "realpro");
 
     autofillBtn.onclick = async () => {
+      // pendingPopupCmd（自動バッチ）経由の click か手動クリックかを区別
+      const isAutomated = !!autofillBtn.dataset.automated;
       const c = selectedCustomer;
       // 調整フォームの値を優先して使う
       const adjArea     = document.getElementById("adj-area").value.trim();
@@ -2292,6 +2294,7 @@ function openInstructions(siteKey) {
       window.parent.postMessage({
         from: "aixlinx-underbar",
         action: "autofill",
+        source: isAutomated ? "automated" : "manual",
         conditions: {
           area_mode:     currentAreaMode,
           rent_min:      adjC.rent_min,
@@ -2316,8 +2319,10 @@ function openInstructions(siteKey) {
           unknown_tokens: rpUnknownTokens.length > 0 ? rpUnknownTokens : null,
         },
       }, "*");
-      // 検索結果表示後に全ページ自動送信を開始するフラグを立てる
-      try { chrome.storage.session.set({ axlx_pending_auto_send: true }); } catch (_) {}
+      // 手動クリック時のみ: ページリロード後も自動送信が再開できるようフラグを立てる
+      if (!isAutomated) {
+        try { chrome.storage.session.set({ axlx_pending_auto_send: true }); } catch (_) {}
+      }
       // スコアオーバーレイ用に有効条件（adj後）で上書き保存
       try {
         chrome.storage.session.set({ axlx_score_data: {
@@ -2547,7 +2552,11 @@ document.addEventListener("DOMContentLoaded", () => {
         var _autoClickDelay = 800 + Math.floor(Math.random() * 400); // 800-1200ms
         setTimeout(function() {
           var aBtn = document.getElementById('autofill-btn');
-          if (aBtn && aBtn.style.display !== 'none') aBtn.click();
+          if (aBtn && aBtn.style.display !== 'none') {
+            aBtn.dataset.automated = "1"; // 自動バッチであることを onclick ハンドラに伝える
+            aBtn.click();
+            delete aBtn.dataset.automated;
+          }
         }, _autoClickDelay);
       }
     });
@@ -2581,7 +2590,11 @@ document.addEventListener("DOMContentLoaded", () => {
       var _autoClickDelay2 = 800 + Math.floor(Math.random() * 400);
       setTimeout(function() {
         var aBtn = document.getElementById('autofill-btn');
-        if (aBtn && aBtn.style.display !== 'none') aBtn.click();
+        if (aBtn && aBtn.style.display !== 'none') {
+          aBtn.dataset.automated = "1"; // 自動バッチであることを onclick ハンドラに伝える
+          aBtn.click();
+          delete aBtn.dataset.automated;
+        }
       }, _autoClickDelay2);
     }
   });

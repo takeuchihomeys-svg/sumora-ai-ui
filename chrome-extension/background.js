@@ -279,6 +279,11 @@ chrome.runtime.onInstalled.addListener(setupSidePanel);
 chrome.runtime.onStartup.addListener(setupSidePanel);
 setupSidePanel();
 
+// content script から chrome.storage.session へのアクセスを許可
+if (chrome.storage && chrome.storage.session && chrome.storage.session.setAccessLevel) {
+  chrome.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_AND_UNTRUSTED_CONTEXTS' }).catch(function() {});
+}
+
 chrome.tabs.onActivated.addListener(({ tabId }) => {
   chrome.tabs.get(tabId, (tab) => {
     if (chrome.runtime.lastError || !tab?.url) return;

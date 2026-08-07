@@ -7,7 +7,9 @@
   var tracked = [];
   var injectTimer = null;
   var _pendingAutoSendDispatched = false; // inject() から autoSendAllPages を起動済みか
-  var _autoSendArmed = false;            // underbar.js からの autofill シグナル受信済みか
+  var _autoSendArmed = false;            // fill-done 受信後、新結果待ちフラグ
+  var _autofillInitiated = false;        // 手動autofillボタン押下フラグ（fill-done到着前）
+  var _preAutofillBtns = new Set();      // autofill前の 印刷用PDF ボタンスナップショット
 
   // ── 全ページ自動送信: sessionStorage キー ──────────────
   var AUTO_SEND_KEY = "axlx_auto_send";
@@ -61,12 +63,16 @@
     });
     updateBar();
 
-    // Case A: 自動入力ボタン直後（window.postMessage "axlx-auto-send-armed" 受信済み）
+    // Case A: fill-done 受信済み かつ スナップショット前にない新しい結果が出た
     if (_autoSendArmed && tracked.length > 0 && !getAutoSendState() && !_pendingAutoSendDispatched) {
-      _autoSendArmed = false;
-      _pendingAutoSendDispatched = true;
-      console.log("[AXLX bulk-dl] Case A: 自動入力後の初回自動送信開始");
-      setTimeout(autoSendAllPages, 800);
+      var _hasNewBtn = tracked.some(function(item) { return !_preAutofillBtns.has(item.btn); });
+      if (_hasNewBtn) {
+        _autoSendArmed = false;
+        _pendingAutoSendDispatched = true;
+        try { chrome.storage.session.remove("axlx_pending_auto_send"); } catch (_) {}
+        console.log("[AXLX bulk-dl] Case A: 新結果検出 → 自動送信開始");
+        setTimeout(autoSendAllPages, 800);
+      }
     }
     // Case B: AJAXページネーション継続（tryNext がページ遷移後に inject() が再実行される）
     else if (tracked.length > 0 && !_pendingAutoSendDispatched) {
@@ -644,13 +650,22 @@
   }
 
   // ── underbar.js からの全ページ自動送信シグナル受信 ───────────────────────
-  // underbar.js が autofill を転送するときに window.postMessage で通知してくる。
-  // 次に inject() が物件を検出したとき自動送信を開始する。
+  // Step1: autofill ボタン押下時 → 現在の結果ボタンをスナップショット
   window.addEventListener("message", function (e) {
-    if (!e.data || e.data.from !== "axlx-auto-send-armed") return;
-    _autoSendArmed = true;
+    if (!e.data || e.data.from !== "axlx-autofill-initiated") return;
+    _autofillInitiated = true;
+    _preAutofillBtns = new Set(findPrintBtns());
     _pendingAutoSendDispatched = false;
-    console.log("[AXLX bulk-dl] 全ページ自動送信 armed");
+    console.log("[AXLX bulk-dl] autofill initiated, snapshot=" + _preAutofillBtns.size + "btn");
+  });
+
+  // Step2: fill-done 受信 → arm（スナップショット外の新結果が出たら Case A で発動）
+  window.addEventListener("message", function (e) {
+    if (!e.data || e.data.from !== "aixlinx-fill-done") return;
+    if (!_autofillInitiated) return;
+    _autoSendArmed = true;
+    _autofillInitiated = false;
+    console.log("[AXLX bulk-dl] fill-done 受信 → 全ページ自動送信 armed");
   });
 
   // ── メッセージリスナー（background.js からのスクレイプ指示）──────────────
