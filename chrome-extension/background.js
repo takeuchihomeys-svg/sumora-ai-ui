@@ -1669,31 +1669,40 @@ async function _batchAutofill(customer, site, isWide) {
   // ── itandi 専用: 路線名・エリア名を itandi-page-script.js が使うキー形式に変換 ──
   // itandi-page-script.js は cond.itandi_lines と cond.ward_names を参照する。
   // _buildBatchConditions は cond.lines（リアプロ形式）と cond.areas を返すため変換が必要。
+  // 修正: areas に駅名が入る場合（desired_area="鶴橋"など）、ward_names として使うのではなく
+  //       _resolveLocalFirst で itandi_lines に変換する必要があるため、常に解決を試みる。
   if (site === "itandi") {
-    // エリア: areas 配列をそのまま ward_names として使用
-    if (conds.areas && conds.areas.length) {
-      conds.ward_names = conds.areas;
-    }
-    // 路線名: ローカルファースト解決で itandi 形式の路線名に変換
-    // （静的マップで解決できればAPI不要・未解決トークンのみAPIフォールバック）
-    if (conds.lines && conds.lines.length) {
+    var hasItandiAreaInput = (conds.areas && conds.areas.length) || (conds.lines && conds.lines.length) || (conds.stations && conds.stations.length);
+    if (hasItandiAreaInput) {
       try {
         var resolvedItandi = await _resolveLocalFirst(conds, isWide);
         if (resolvedItandi.itandi_line_names && resolvedItandi.itandi_line_names.length) {
+          // 路線解決成功 → 路線・駅モード優先（ward_namesは使わない）
           conds.itandi_lines = resolvedItandi.itandi_line_names;
-        }
-        if (resolvedItandi.station_names && resolvedItandi.station_names.length) {
-          conds.station_names = resolvedItandi.station_names;
-        }
-        // エリア解決済み ward_names がある場合は上書き（概念地域対応）
-        if (resolvedItandi.detail_ward) {
-          if (!conds.ward_names || !conds.ward_names.length) {
+          if (resolvedItandi.station_names && resolvedItandi.station_names.length) {
+            conds.station_names = resolvedItandi.station_names;
+          }
+          conds.ward_names = null; // 路線モード時は所在地フィルターを無効化
+        } else {
+          // 路線未解決 → 所在地モード（区・市区町村ベース）
+          if (resolvedItandi.ward_names && resolvedItandi.ward_names.length) {
+            conds.ward_names = resolvedItandi.ward_names;
+          } else if (conds.areas && conds.areas.length) {
+            conds.ward_names = conds.areas;
+          }
+          if (resolvedItandi.detail_ward && (!conds.ward_names || !conds.ward_names.length)) {
             conds.ward_names = [resolvedItandi.detail_ward];
           }
         }
       } catch (e) {
         console.warn("[batchAutofill] itandi resolve失敗（デフォルト条件で続行）:", e.message || e);
+        // フォールバック: areas をそのまま ward_names として使用
+        if (conds.areas && conds.areas.length) {
+          conds.ward_names = conds.areas;
+        }
       }
+    } else if (conds.areas && conds.areas.length) {
+      conds.ward_names = conds.areas;
     }
   }
 

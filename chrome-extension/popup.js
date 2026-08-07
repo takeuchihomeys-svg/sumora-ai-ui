@@ -1879,6 +1879,21 @@ function openInstructions(siteKey) {
           document.getElementById("btn-mode-station")?.classList.remove("active");
         }
       }
+      // ローカル補正: STATION_LINE_MAPに一致する既知駅があれば駅モードへ自動切替
+      // （既知駅はAPIを呼ばないためAPIによるモード補正が動かない問題を解消する）
+      if (_areaModeSource === "auto" && currentAreaMode !== "station") {
+        const _localToks = parseAreaTokens(rawArea);
+        const _hasKnownStation = _localToks.some(t => {
+          const s = t.replace(/[町村]$/, "");
+          return !!(STATION_LINE_MAP[t] || STATION_LINE_MAP[s] ||
+                    LEARNED_STATION_MAP[t]?.realpro_lines?.length > 0);
+        });
+        if (_hasKnownStation) {
+          currentAreaMode = "station";
+          document.getElementById("btn-mode-station")?.classList.add("active");
+          document.getElementById("btn-mode-ward")?.classList.remove("active");
+        }
+      }
 
       // 複数駅・複数地域対応（「第一希望:〇〇」「第二希望:〇〇」などのプレフィックスも除去）
       const tokens = parseAreaTokens(rawArea);
