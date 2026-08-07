@@ -920,6 +920,8 @@ export default function Home() {
   const replyTargetCustomerMsgRef = useRef<string>("");
   // G-10: 直近に選択したテンプレートID（送信成功時に使用回数をインクリメント）
   const selectedTemplateIdRef = useRef<string>("");
+  // AIXカテゴリのテンプレートから選択した文は entry_source=aix_action で保存（通常返信学習に混入させない）
+  const isAixTemplateDraftRef = useRef<boolean>(false);
   // テンプレート選択ログ（送信時に修正検知して記録）
   const templateSelectionMetaRef = useRef<{
     logId: string;
@@ -3374,6 +3376,8 @@ export default function Home() {
       // 学習データ保存（予約送信もexecuteSendと同様に記録・fire-and-forget）
       if (textToSend) {
         const lastCustomerMsg = replyTargetCustomerMsgRef.current || latestCustomerMessage;
+        const isAixTemplateScheduled = isAixTemplateDraftRef.current;
+        isAixTemplateDraftRef.current = false;
         fetch("/api/save-reply-example", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -3386,6 +3390,8 @@ export default function Home() {
             isScheduled: true,
             // MED-05修正: 予約送信もtemplate_id を記録（通常送信と対称化）
             ...(selectedTemplateIdRef.current ? { template_id: selectedTemplateIdRef.current } : {}),
+            // 🚫 AIXカテゴリのテンプレートは通常返信学習に混入させない
+            ...(isAixTemplateScheduled ? { entry_source: "aix_action" } : {}),
           }),
         }).catch(() => {});
         // 予約送信後もtemplate_idをクリア（通常送信の line:3341 と対称化）
@@ -3744,6 +3750,8 @@ export default function Home() {
           .at(-1)?.text || undefined;
         // 送信したメッセージの example ID を記録して、後で☆を押したとき PATCH で更新できるようにする
         // HIGH-04: retryFetchResponse でネットワーク障害時も学習データを確実に保存（最大2リトライ）
+        const isAixTemplate = isAixTemplateDraftRef.current;
+        isAixTemplateDraftRef.current = false;
         retryFetchResponse("/api/save-reply-example", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -3760,6 +3768,8 @@ export default function Home() {
             sentAt: new Date().toISOString(),
             // テンプレート経由の場合は template_id を記録（☆・差分学習をテンプレに紐付ける）
             ...(selectedTemplateIdRef.current ? { template_id: selectedTemplateIdRef.current } : {}),
+            // 🚫 AIXカテゴリのテンプレートは通常返信学習に混入させない
+            ...(isAixTemplate ? { entry_source: "aix_action" } : {}),
           }),
         }).then(async (r) => {
           if (!r || !r.ok) return;
@@ -8056,6 +8066,8 @@ export default function Home() {
             aiDraftRef.current = "";
             // G-10: 選択したテンプレートIDを記録（送信成功時に使用回数をインクリメント）
             selectedTemplateIdRef.current = templateId ?? "";
+            // 🚫 AIXカテゴリのテンプレートは通常返信学習に含めない
+            isAixTemplateDraftRef.current = !!(category?.includes("AIX"));
             // テンプレート内「アカウント名」→ preferredCustomerName に置換
             const resolvedText = text.replace(/アカウント名/g, preferredCustomerName);
             setReplyDraft(resolvedText);
