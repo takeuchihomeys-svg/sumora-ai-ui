@@ -889,74 +889,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const { customerId, conditions } = msg;
     (async () => {
       try {
-        var _scIsWide   = !!(conditions.isWide || conditions.is_wide);
-        var _scAreaMode = (conditions && conditions.area_mode) || null;
-        var _scCustName = (conditions && conditions.customerName) || null;
-
-        // fill-done Promise を先に作る（underbarがfill後に content.js 経由で解決する）
-        var fillDonePromise = _createFillDoneWaiter("realnetpro", 90000);
-
-        // リアプロタブを探す
-        var _scAllTabs = await chrome.tabs.query({});
-        var _scRealTab = _scAllTabs.find(function(t) { return t.url && t.url.startsWith("https://www.realnetpro.com"); });
-
-        // まず underbar.js 直接通信を試みる（ページ更新なし）
-        var _directOk = false;
-        if (_scRealTab && customerId) {
-          try {
-            // リアプロタブをアクティブ化（バックグラウンドタブのJSスロットルを回避）
-            await chrome.tabs.update(_scRealTab.id, { active: true });
-            var _directResp = await new Promise(function(resolve) {
-              chrome.tabs.sendMessage(_scRealTab.id, {
-                type:         "axlx-switch-customer",
-                customerId:   String(customerId),
-                customerName: _scCustName,
-                site:         "realpro",
-                areaMode:     _scAreaMode,
-                is_wide:      _scIsWide,
-              }, function(r) {
-                void chrome.runtime.lastError;
-                resolve(r || { ok: false });
-              });
-            });
-            _directOk = !!_directResp.ok;
-            console.log("[scrape-compare] underbar直接通信:", JSON.stringify(_directResp));
-          } catch(e) {
-            console.log("[scrape-compare] underbar直接通信エラー:", e);
-          }
-        }
-
-        if (!_directOk) {
-          // フォールバック: main.phpナビゲート → pendingPopupCmd
-          if (_scRealTab) {
-            console.log("[scrape-compare] フォールバック → main.phpへ:", _scRealTab.id);
-            await chrome.tabs.update(_scRealTab.id, { url: "https://www.realnetpro.com/main.php", active: true });
-            await _batchWaitForTabComplete(_scRealTab.id);
-            await new Promise(function(r) { setTimeout(r, 1500); });
-          } else {
-            console.log("[scrape-compare] リアプロタブなし → 新規作成");
-            _scRealTab = await chrome.tabs.create({ url: "https://www.realnetpro.com/main.php", active: true });
-            await _batchWaitForTabComplete(_scRealTab.id);
-            await new Promise(function(r) { setTimeout(r, 2000); });
-          }
-          if (customerId) {
-            await chrome.storage.session.set({
-              pendingPopupCmd: {
-                customerId:   String(customerId),
-                customerName: _scCustName,
-                site:         "realpro",
-                areaMode:     _scAreaMode,
-                is_wide:      _scIsWide,
-              }
-            });
-            console.log("[scrape-compare] ✔ pendingPopupCmd設定 → underbarが引き継ぎ");
-          }
-        } else {
-          console.log("[scrape-compare] ✔ underbar直接通信成功 → ページ更新なし");
-        }
-
-        // fill完了シグナル待機 → スクレイプ → LINE送信
-        var scrapedCount = await _scrapeAndSendRealpro(fillDonePromise, customerId, _scCustName, conditions);
+        var scrapedCount = await _runScrapeAndCompare(customerId, conditions);
         sendResponse({ ok: true, count: scrapedCount });
       } catch (e) {
         console.error("[axlx-scrape-and-compare] error:", e);
@@ -1033,6 +966,75 @@ function _sbConnect() {
   }
 }
 
+// ── popup.js 経由の完全フロー共通実装（PC ボタン・スマホ WebSocket 両方から呼ぶ）──────
+// underbar.js → popup.js → page-script.js というルートを通る。
+// バッチパス（_webappAutofill → page-script.js 直接）とは異なり、
+// Dijkstra 路線展開・エリアAPI自動判定・駅/区モード切替が popup.js 内で正しく動く。
+async function _runScrapeAndCompare(customerId, conditions) {
+  var _scIsWide   = !!(conditions.isWide || conditions.is_wide);
+  var _scAreaMode = (conditions && conditions.area_mode) || null;
+  var _scCustName = (conditions && conditions.customerName) || null;
+
+  var fillDonePromise = _createFillDoneWaiter("realnetpro", 90000);
+
+  var _scAllTabs = await chrome.tabs.query({});
+  var _scRealTab = _scAllTabs.find(function(t) { return t.url && t.url.startsWith("https://www.realnetpro.com"); });
+
+  var _directOk = false;
+  if (_scRealTab && customerId) {
+    try {
+      await chrome.tabs.update(_scRealTab.id, { active: true });
+      var _directResp = await new Promise(function(resolve) {
+        chrome.tabs.sendMessage(_scRealTab.id, {
+          type:         "axlx-switch-customer",
+          customerId:   String(customerId),
+          customerName: _scCustName,
+          site:         "realpro",
+          areaMode:     _scAreaMode,
+          is_wide:      _scIsWide,
+        }, function(r) {
+          void chrome.runtime.lastError;
+          resolve(r || { ok: false });
+        });
+      });
+      _directOk = !!_directResp.ok;
+      console.log("[scrape-compare] underbar直接通信:", JSON.stringify(_directResp));
+    } catch(e) {
+      console.log("[scrape-compare] underbar直接通信エラー:", e);
+    }
+  }
+
+  if (!_directOk) {
+    if (_scRealTab) {
+      console.log("[scrape-compare] フォールバック → main.phpへ:", _scRealTab.id);
+      await chrome.tabs.update(_scRealTab.id, { url: "https://www.realnetpro.com/main.php", active: true });
+      await _batchWaitForTabComplete(_scRealTab.id);
+      await new Promise(function(r) { setTimeout(r, 1500); });
+    } else {
+      console.log("[scrape-compare] リアプロタブなし → 新規作成");
+      _scRealTab = await chrome.tabs.create({ url: "https://www.realnetpro.com/main.php", active: true });
+      await _batchWaitForTabComplete(_scRealTab.id);
+      await new Promise(function(r) { setTimeout(r, 2000); });
+    }
+    if (customerId) {
+      await chrome.storage.session.set({
+        pendingPopupCmd: {
+          customerId:   String(customerId),
+          customerName: _scCustName,
+          site:         "realpro",
+          areaMode:     _scAreaMode,
+          is_wide:      _scIsWide,
+        }
+      });
+      console.log("[scrape-compare] ✔ pendingPopupCmd設定 → underbarが引き継ぎ");
+    }
+  } else {
+    console.log("[scrape-compare] ✔ underbar直接通信成功 → ページ更新なし");
+  }
+
+  return await _scrapeAndSendRealpro(fillDonePromise, customerId, _scCustName, conditions);
+}
+
 async function _sbHandleCommand(payload) {
   var customerId   = String(payload.customerId   || payload.customer_id   || "");
   var customerName = String(payload.customerName || payload.customer_name || "");
@@ -1051,17 +1053,19 @@ async function _sbHandleCommand(payload) {
     }
   }
 
-  console.log("[SB-RT] scrape_command 受信 → 即時実行 customerId=" + customerId);
+  console.log("[SB-RT] scrape_command 受信 → popup.js完全フローで実行 customerId=" + customerId);
   await chrome.storage.local.set({ batchRunning: { running: true, startedAt: Date.now() }, batchCommandId: commandId });
   if (commandId) _updateBatchCommand(commandId, { status: "running" }).catch(function() {});
 
   try {
-    await _scrapeAndCompareForCustomer({ customer_id: customerId, customer_name: customerName, is_wide: !!conditions.is_wide, conditions });
+    // customerName を conditions に含める（_runScrapeAndCompare は conditions.customerName を参照）
+    var mergedConditions = Object.assign({}, conditions, { customerName: customerName });
+    await _runScrapeAndCompare(customerId, mergedConditions);
     if (commandId) _updateBatchCommand(commandId, { status: "done", completed_at: new Date().toISOString() }).catch(function() {});
-    _sbBroadcastResult({ customerId, ok: true });
+    _sbBroadcastResult({ customerId: customerId, ok: true });
   } catch(e) {
     if (commandId) _updateBatchCommand(commandId, { status: "error", error_message: String(e) }).catch(function() {});
-    _sbBroadcastResult({ customerId, ok: false, error: String(e).slice(0, 300) });
+    _sbBroadcastResult({ customerId: customerId, ok: false, error: String(e).slice(0, 300) });
   } finally {
     await chrome.storage.local.set({ batchRunning: null, batchCommandId: null });
   }
