@@ -749,36 +749,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           var _areaMode = (conditions && conditions.area_mode) || null;
 
           // ── 直接メッセージ試行: popup.jsが開いていればページ更新なしで顧客切替 ──
+          // URL制限なし: 検索結果ページでもpage-script.jsがin-placeでfill可能なため常に試行する
           if (_cid) {
-            // タブが検索結果URLの場合は直接メッセージをスキップ（フォームがdirty状態の可能性）
-            var _curRealTab = (await chrome.tabs.query({})).find(function(t) { return t.url && t.url.startsWith("https://www.realnetpro.com"); });
-            var _tabAtMain = _curRealTab && (
-              _curRealTab.url === "https://www.realnetpro.com/main.php" ||
-              _curRealTab.url === "https://www.realnetpro.com/main.php?"
-            );
-            if (!_tabAtMain) {
-              console.log("[webapp-search] タブが検索結果状態 → ページ更新経由にフォールバック");
-            } else {
-              var _directOk = await new Promise(function(resolve) {
-                chrome.runtime.sendMessage({
-                  type:         "axlx-switch-customer",
-                  customerId:   String(_cid),
-                  customerName: _custName,
-                  site:         "realpro",
-                  areaMode:     _areaMode,
-                  is_wide:      !!(conditions && conditions.is_wide),
-                }, function(resp) {
-                  if (chrome.runtime.lastError) { resolve(false); return; }
-                  resolve(!!(resp && resp.ok));
-                });
+            var _directOk = await new Promise(function(resolve) {
+              chrome.runtime.sendMessage({
+                type:         "axlx-switch-customer",
+                customerId:   String(_cid),
+                customerName: _custName,
+                site:         "realpro",
+                areaMode:     _areaMode,
+                is_wide:      !!(conditions && conditions.is_wide),
+              }, function(resp) {
+                if (chrome.runtime.lastError) { resolve(false); return; }
+                resolve(!!(resp && resp.ok));
               });
-              if (_directOk) {
-                console.log("[webapp-search] ✔ 直接メッセージ成功 → ページ更新なしで顧客切替");
-                sendResponse({ ok: true });
-                return;
-              }
-              console.log("[webapp-search] popup未応答 → フォールバック: ページ更新経由");
+            });
+            if (_directOk) {
+              console.log("[webapp-search] ✔ 直接メッセージ成功 → ページ更新なしで顧客切替");
+              sendResponse({ ok: true });
+              return;
             }
+            console.log("[webapp-search] popup未応答 → フォールバック: ページ更新経由");
           }
 
           // ── フォールバック: リアプロタブをmain.phpへナビゲート（フォームクリーン化）──
