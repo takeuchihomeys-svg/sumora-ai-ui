@@ -597,6 +597,7 @@
   // mergePdfs を再利用せず chrome.runtime.sendMessage を直接呼ぶ
   // （コールバック内で onDone を呼ぶため）。
   function autoSendOnePage(state, onDone) {
+    var BATCH_SIZE = 20;
     var countEl = document.getElementById("axlx-count");
     if (countEl) countEl.textContent = "全ページ送信中 P" + state.currentPage + "...";
 
@@ -615,26 +616,49 @@
       return buildPropertySummary(extractCard(t.btn), i);
     });
 
-    chrome.runtime.sendMessage({
-      type: "axlx-send-to-line",
-      urls: urls,
-      customer_name: state.customerName || null,
-      property_summaries: propertySummaries,
-    }, function (resp) {
-      if (chrome.runtime.lastError) {
-        clearAutoSendState();
-        if (countEl) countEl.textContent = "送信エラー";
-        alert("全ページ送信エラー: " + chrome.runtime.lastError.message);
+    // 20件ずつバッチに分割して順番に送信（一括送信はタイムアウトするため）
+    var batches = [];
+    for (var i = 0; i < urls.length; i += BATCH_SIZE) {
+      batches.push({
+        urls: urls.slice(i, i + BATCH_SIZE),
+        summaries: propertySummaries.slice(i, i + BATCH_SIZE),
+      });
+    }
+
+    var batchIndex = 0;
+    function sendNextBatch() {
+      if (batchIndex >= batches.length) {
+        onDone(true);
         return;
       }
-      if (!resp || !resp.ok) {
-        clearAutoSendState();
-        if (countEl) countEl.textContent = "送信エラー";
-        alert("全ページ送信エラー:\n" + (resp ? resp.error : "応答なし"));
-        return;
+      var batch = batches[batchIndex];
+      if (countEl) {
+        countEl.textContent = "P" + state.currentPage + " 送信中 (" + (batchIndex + 1) + "/" + batches.length + ")";
       }
-      onDone(true);
-    });
+      chrome.runtime.sendMessage({
+        type: "axlx-send-to-line",
+        urls: batch.urls,
+        customer_name: state.customerName || null,
+        property_summaries: batch.summaries,
+      }, function (resp) {
+        if (chrome.runtime.lastError) {
+          clearAutoSendState();
+          if (countEl) countEl.textContent = "送信エラー";
+          alert("全ページ送信エラー: " + chrome.runtime.lastError.message);
+          return;
+        }
+        if (!resp || !resp.ok) {
+          clearAutoSendState();
+          if (countEl) countEl.textContent = "送信エラー";
+          alert("全ページ送信エラー:\n" + (resp ? resp.error : "応答なし"));
+          return;
+        }
+        batchIndex++;
+        sendNextBatch();
+      });
+    }
+
+    sendNextBatch();
   }
 
   // ── 全ページ自動送信: エントリポイント ────────────────────────────────────
