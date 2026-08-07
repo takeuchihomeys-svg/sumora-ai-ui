@@ -2242,6 +2242,7 @@ function openInstructions(siteKey) {
         from: "aixlinx-underbar",
         action: "autofill",
         conditions: {
+          area_mode:     currentAreaMode,
           rent_min:      adjC.rent_min,
           rent_max:      rpEffectiveRentMax,
           walk_minutes:  adjC.walk_minutes,
