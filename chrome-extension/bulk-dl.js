@@ -7,6 +7,24 @@
   var tracked = [];
   var injectTimer = null;
 
+  // ── 全ページ自動送信: sessionStorage キー ──────────────
+  var AUTO_SEND_KEY = "axlx_auto_send";
+
+  function getAutoSendState() {
+    try {
+      var raw = sessionStorage.getItem(AUTO_SEND_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+
+  function setAutoSendState(state) {
+    try { sessionStorage.setItem(AUTO_SEND_KEY, JSON.stringify(state)); } catch (e) {}
+  }
+
+  function clearAutoSendState() {
+    try { sessionStorage.removeItem(AUTO_SEND_KEY); } catch (e) {}
+  }
+
   function findPrintBtns() {
     var seen = new Set();
     var results = [];
@@ -72,6 +90,9 @@
       '  <button id="axlx-line-btn" style="flex:1;padding:6px 8px;background:#06c755;border:none;border-radius:8px;color:white;font-size:11px;font-weight:700;cursor:pointer;">📤 売上番長に送る</button>',
       "</div>",
       '<div style="display:flex;gap:6px;">',
+      '  <button id="axlx-auto-btn" style="flex:1;padding:6px 8px;background:#e91e63;border:none;border-radius:8px;color:white;font-size:11px;font-weight:700;cursor:pointer;">📡 全ページ送る</button>',
+      "</div>",
+      '<div style="display:flex;gap:6px;">',
       '  <button id="axlx-print-btn" style="flex:1;padding:6px 4px;background:rgba(255,255,255,0.18);border:none;border-radius:8px;color:white;font-size:10px;font-weight:700;cursor:pointer;">🖨 印刷プレビュー</button>',
       '  <button id="axlx-img-btn" style="flex:1;padding:6px 4px;background:#7b1fa2;border:none;border-radius:8px;color:white;font-size:10px;font-weight:700;cursor:pointer;">📸 画像保存</button>',
       "</div>",
@@ -81,6 +102,7 @@
     document.getElementById("axlx-dl-btn").addEventListener("click", bulkDownload);
     document.getElementById("axlx-merge-btn").addEventListener("click", function () { mergePdfs(false); });
     document.getElementById("axlx-line-btn").addEventListener("click", function () { getCustomerFromPopup(function (customerName) { mergePdfs(true, customerName); }); });
+    document.getElementById("axlx-auto-btn").addEventListener("click", function () { autoSendAllPages(); });
     document.getElementById("axlx-print-btn").addEventListener("click", printMerged);
     document.getElementById("axlx-img-btn").addEventListener("click", downloadImages);
   }
@@ -467,15 +489,39 @@
     return results;
   }
 
-  // ── ページネーション: 「次へ」ボタンをクリックして true を返す ───────────
-  // リアプロの「次へ」ボタンは DOM 上どこにあるか機種依存のため多段探索する。
-  function clickNextPageBtn() {
-    // フェーズ1: テキストノードウォーカーで「次へ」「>」「>>」を探す
+  // ── ページネーション: 次ページボタンの存在確認（クリックなし）──────────────
+  // clickNextPageBtn と同じ探索ロジックで true/false のみ返す。
+  function hasNextPageBtn() {
     var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     var node;
     while ((node = walker.nextNode())) {
       var t = node.textContent.trim();
-      if (t !== "次へ" && t !== "次のページ" && t !== ">" && t !== ">>") continue;
+      if (t !== "次" && t !== "次へ" && t !== "次のページ" && t !== ">" && t !== ">>") continue;
+      var el = node.parentElement;
+      for (var up = 0; up < 4 && el && el !== document.body; up++, el = el.parentElement) {
+        if ((el.tagName === "A" || el.tagName === "BUTTON") && el.offsetParent !== null) {
+          return true;
+        }
+      }
+    }
+    var candidates = document.querySelectorAll(
+      '[aria-label*="次"], .pagination-next, .page-next, a.next, button.next'
+    );
+    for (var i = 0; i < candidates.length; i++) {
+      if (candidates[i].offsetParent !== null) return true;
+    }
+    return false;
+  }
+
+  // ── ページネーション: 「次」ボタンをクリックして true を返す ───────────────
+  // リアプロの「次へ」ボタンは DOM 上どこにあるか機種依存のため多段探索する。
+  function clickNextPageBtn() {
+    // フェーズ1: テキストノードウォーカーで「次」「次へ」「>」「>>」を探す
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    var node;
+    while ((node = walker.nextNode())) {
+      var t = node.textContent.trim();
+      if (t !== "次" && t !== "次へ" && t !== "次のページ" && t !== ">" && t !== ">>") continue;
       var el = node.parentElement;
       for (var up = 0; up < 4 && el && el !== document.body; up++, el = el.parentElement) {
         if ((el.tagName === "A" || el.tagName === "BUTTON") && el.offsetParent !== null) {
@@ -495,6 +541,81 @@
       }
     }
     return false;
+  }
+
+  // ── 全ページ自動送信: 共通の次ページ遷移 or 完了処理 ─────────────────────
+  // autoSendOnePage の onDone コールバックと start() 内の再開処理で共通利用する。
+  function tryNext(state) {
+    if (hasNextPageBtn()) {
+      setAutoSendState({ active: true, currentPage: state.currentPage + 1, customerName: state.customerName });
+      var clicked = clickNextPageBtn();
+      if (!clicked) {
+        clearAutoSendState();
+        alert("次ページへの遷移に失敗しました。手動で操作してください。");
+      }
+      // ページリロード後は start() 内の sessionStorage チェックで再開
+    } else {
+      clearAutoSendState();
+      var countEl = document.getElementById("axlx-count");
+      if (countEl) countEl.textContent = "全ページ送信完了！";
+      alert("全ページ自動送信が完了しました。（" + state.currentPage + "ページ処理済み）");
+    }
+  }
+
+  // ── 全ページ自動送信: 現ページを自動送信する ──────────────────────────────
+  // mergePdfs を再利用せず chrome.runtime.sendMessage を直接呼ぶ
+  // （コールバック内で onDone を呼ぶため）。
+  function autoSendOnePage(state, onDone) {
+    var countEl = document.getElementById("axlx-count");
+    if (countEl) countEl.textContent = "全ページ送信中 P" + state.currentPage + "...";
+
+    // 全チェックボックス選択
+    tracked.forEach(function (t) { t.cb.checked = true; });
+    updateBar();
+
+    var urls = getSelectedUrls();
+    if (!urls.length) {
+      onDone(true);
+      return;
+    }
+
+    var selectedTargets = tracked.filter(function (t) { return t.cb.checked; });
+    var propertySummaries = selectedTargets.map(function (t, i) {
+      return buildPropertySummary(extractCard(t.btn), i);
+    });
+
+    chrome.runtime.sendMessage({
+      type: "axlx-send-to-line",
+      urls: urls,
+      customer_name: state.customerName || null,
+      property_summaries: propertySummaries,
+    }, function (resp) {
+      if (chrome.runtime.lastError) {
+        clearAutoSendState();
+        if (countEl) countEl.textContent = "送信エラー";
+        alert("全ページ送信エラー: " + chrome.runtime.lastError.message);
+        return;
+      }
+      if (!resp || !resp.ok) {
+        clearAutoSendState();
+        if (countEl) countEl.textContent = "送信エラー";
+        alert("全ページ送信エラー:\n" + (resp ? resp.error : "応答なし"));
+        return;
+      }
+      onDone(true);
+    });
+  }
+
+  // ── 全ページ自動送信: エントリポイント ────────────────────────────────────
+  function autoSendAllPages() {
+    if (getAutoSendState()) return; // 既に動作中
+    getCustomerFromPopup(function (name) {
+      var state = { active: true, currentPage: 1, customerName: name };
+      setAutoSendState(state);
+      autoSendOnePage(state, function (ok) {
+        tryNext(state);
+      });
+    });
   }
 
   // ── メッセージリスナー（background.js からのスクレイプ指示）──────────────
@@ -529,6 +650,14 @@
     ensureBar();
     setTimeout(inject, 1200);
     obs.observe(document.body, { childList: true, subtree: true });
+
+    // 全ページ自動送信: ページリロード後の再開チェック
+    var autoState = getAutoSendState();
+    if (autoState && autoState.active) {
+      setTimeout(function () {
+        autoSendOnePage(autoState, function (ok) { tryNext(autoState); });
+      }, 2500);
+    }
   }
 
   if (document.readyState === "loading") {
