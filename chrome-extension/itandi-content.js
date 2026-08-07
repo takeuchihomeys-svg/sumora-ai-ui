@@ -72,6 +72,23 @@
       if (!stMatch) stMatch = text.match(/([^\s]+線)\s*([^\s]+駅)\s*徒歩(\d+)分/);
       if (stMatch) stationInfo = stMatch[1] + " " + stMatch[2] + " 徒歩" + stMatch[3] + "分";
 
+      // 築年数（itandiは「（築7年）」または「築7年」形式で表示）
+      var buildingAge = null;
+      var ageMatch = text.match(/（築(\d+)年）/);
+      if (ageMatch) {
+        buildingAge = parseInt(ageMatch[1], 10);
+      } else {
+        // フォールバック: 「2019年4月」形式の建築年から計算
+        var constructMatch = text.match(/(\d{4})年\d{1,2}月[\s\/（]/);
+        if (constructMatch) {
+          var constructYear = parseInt(constructMatch[1], 10);
+          var nowYear = new Date().getFullYear();
+          if (constructYear >= 1970 && constructYear <= nowYear) {
+            buildingAge = nowYear - constructYear;
+          }
+        }
+      }
+
       results.push({
         building_name: name || ("物件" + propId),
         rent: rent,
@@ -79,6 +96,7 @@
         floor_plan: floorPlan,
         area: area,
         station_info: stationInfo,
+        building_age: buildingAge,
         url: propUrl || ("https://itandibb.com/rent_rooms/" + propId),
       });
     });

@@ -27,6 +27,7 @@ export type PropertyItem = {
   address?: string;
   station_info?: string; // 例: "御堂筋線 江坂駅 徒歩5分"
   available_date?: string;
+  building_age?: number | null; // 築年数（年）
   url?: string;
 };
 
@@ -257,6 +258,7 @@ export async function POST(req: NextRequest) {
           );
         if (p.floor_plan) parts.push(`  間取り: ${p.floor_plan}`);
         if (p.area) parts.push(`  面積: ${p.area}㎡`);
+        if (p.building_age != null) parts.push(`  築年数: 築${p.building_age}年`);
         if (p.station_info) parts.push(`  アクセス: ${p.station_info}`);
         if (p.address) parts.push(`  住所: ${p.address}`);
         if (p.available_date) parts.push(`  入居可能日: ${p.available_date}`);
