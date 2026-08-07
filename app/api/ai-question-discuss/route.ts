@@ -4,6 +4,7 @@ import {
   SYSTEM_OVERVIEW,
   BUSINESS_RULES,
   KNOWLEDGE_FORMAT,
+  DISCUSSION_QUALITY_GUIDE,
   fetchActiveKnowledgeSection,
   phaseLabel,
 } from "@/app/lib/discuss-context";
@@ -66,11 +67,14 @@ ${attrs.length > 0 ? `
 【質問の属性】
 ${attrs.join("\n")}
 ` : ""}
+---
+
+${DISCUSSION_QUALITY_GUIDE}
+
+---
+
 竹内さんと一緒に、この質問に対して正しい判断ができるよう議論してください。
 LINEのような短い返信で、分かりやすく会話してください。
-竹内さんの回答が曖昧な場合は、具体的な例を挙げてさらに聞いてください。
-最終的に竹内さんが「①新しいルールが正しい」「②既存のルールが正しい」「③場面で使い分ける」のどれか、
-または具体的な回答文を決められるよう導いてください。
 実際のナレッジ更新は竹内さんが画面上の回答ボタンで行うため、あなた自身が更新するとは言わないでください。`;
 }
 

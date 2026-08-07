@@ -780,7 +780,7 @@ async function detectRepeatedDeletions(): Promise<{ detected: number; demoted: n
     const aixNote = isAixCluster
       ? `\n※この修正はAIXボタン（${aixLabelText}）で生成した文への修正です${cluster.hasLineReply ? "（LINE返信AIの修正例も含む）" : ""}`
       : "";
-    const question = `❓${aixTag}【教えてください】複数会話で削除されたフレーズの適用条件\n\n━━ 対象フレーズ ━━\n「${phrase.slice(0, 60)}」\n削除件数: ${cluster.convIds.size}件の別会話でスタッフが削除${aixNote}\n\n━━ 削除の実例（代表1件）━━\n■ AIが送った文\n${(cluster.sampleAiDraft ?? '').slice(0, 400) || '（記録なし）'}\n\n■ スタッフが修正した文\n${(cluster.sampleSentReply ?? '').slice(0, 400) || '（修正なし・AI文をそのまま使用）'}\n\n━━ なぜ確認が必要か ━━\nこのフレーズが${cluster.convIds.size}件の異なる会話でスタッフに削除されています。特定顧客向けの表現が汎用フレーズとして誤学習されている可能性があります。\n\n❓ 竹内さんへの質問\n① このフレーズはどんな顧客状況のときに使うべきですか？（使うべき場面・使わないべき場面）\n② 現在のプロンプトや知識のどこが曖昧で、不適切な場面でこのフレーズが出てしまったと思いますか？`;
+    const question = `❓${aixTag}【削除フレーズのルール確認】\n\n━━ 削除されたフレーズ ━━\n「${phrase.slice(0, 60)}」\n${cluster.convIds.size}件の別会話でスタッフが削除${aixNote}\n\n━━ 削除の実例（代表1件）━━\n■ AIが出した文\n${(cluster.sampleAiDraft ?? '').slice(0, 400) || '（記録なし）'}\n\n■ スタッフが修正した文\n${(cluster.sampleSentReply ?? '').slice(0, 400) || '（修正なし・AI文をそのまま使用）'}\n\n━━ なぜ確認が必要か ━━\n「${phrase.slice(0, 60)}」が${cluster.convIds.size}件の異なる会話でスタッフに削除されています。このフレーズを使う場面・使わない場面のルールが未定義のため、AIが不適切な場面でも出してしまっています。\n\n❓ このフレーズの削除ルールを具体的に定義してください\n■ 削除する場面（使わない場面）：「○○の場合は削除する」を具体的に\n■ 残す場面（使う場面）：「○○の場合は残す / AIXボタン○○で代わりに出す」を具体的に\n■ このフレーズ自体をプロンプトから完全に除外すべきですか？（はい/いいえ）`;
     // dedup はタイトルではなく「対象フレーズ」で行う（AIXタグ付与によるタイトル変化で旧起票と重複しないように）
     const phraseKey = phrase.slice(0, 40).replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
     const { data: existing } = await supabase
@@ -1468,7 +1468,7 @@ export async function POST(req: NextRequest) {
                       existingRulesText: compExistingRules ?? "",
                       conflictReason: reason,
                     })
-                  : `[knowledge_id:${upsertResult.id}]\n❓【確認】適用場面が不明確\n\n━━ 今回の会話（実例）━━\n【AIが送った文】\n${draftPreview || '（記録なし）'}\n\n【スタッフが修正した文】\n${sentPreview || '（修正なし）'}\n\n▶ 変化した部分\n${angleLabel}\n\n━━ 確認したいナレッジ ━━\n「${compResult.title}」（フェーズ: ${compState}）\n内容：\n${contentPreview}\n\n━━ 不明確なポイント ━━\n${judgeReason}\n\n❓ 教えてください\n① このルールはどんな場面で使いますか？\n  例：「顧客が○○と言ったとき」「○○の提案後」など\n② AIが送った文の何が問題でしたか？（なければ「特になし」）`;
+                  : `[knowledge_id:${upsertResult.id}]\n❓【ルール適用条件の確認】\n\n━━ 今回の差分（実例）━━\n■ AIが出した文\n${draftPreview || '（記録なし）'}\n\n■ スタッフが修正した文\n${sentPreview || '（修正なし）'}\n\n▶ 変化した部分\n${angleLabel}\n\n━━ 対象ナレッジ ━━\n「${compResult.title}」（フェーズ: ${compState}）\n現在のルール内容：\n${contentPreview}\n\n━━ 不明確な点 ━━\n${judgeReason}\n\n❓ このルールの適用条件を教えてください\n■ 使う場面：「顧客が〇〇と言っているとき」「〇〇の提案をした直後」など具体的に\n■ 使わない場面：「〇〇の場合は除外」「AIXボタン〇〇で代わりに対応する場面」など\n■ AIが出した文の何が不適切でしたか？（問題なければ「なし」と明記）`;
                 const categoryVal = verdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity";
                 // dedup: 同一 knowledge_id への質問が既にあれば再起票しない（クエリ失敗時は data=null → 起票にフォールバック）
                 const { data: existingCompQ } = await supabase
@@ -1722,7 +1722,7 @@ export async function POST(req: NextRequest) {
                   console.log(`[analyze-diffs] merged品質チェック: 既存質問あり（knowledge_id:${upsertResult.id}）→ 起票スキップ`);
                 } else {
                   await insertAiQuestion({
-                    question: `[knowledge_id:${upsertResult.id}]\n🔄【確認】強化済みルールの品質チェック\n\n━━ 強化されたナレッジ ━━\n「${result.title}」（フェーズ: ${conversation_state ?? "不明"}）\n内容: ${result.rule.slice(0, 400)}\n\n━━ 今回の会話（実例）━━\n■ AIが送った文\n${(ai_draft ?? "").slice(0, 400) || '（記録なし）'}\n\n■ スタッフが修正した文\n${(sent_reply ?? "").slice(0, 400) || '（修正なし・AI文をそのまま使用）'}\n\n━━ 確認が必要な理由 ━━\n${mergeReason || "既存ルールと新差分の整合性を確認してください"}\n\n❓ このルールの内容は正確ですか？修正が必要な場合は教えてください。`,
+                    question: `[knowledge_id:${upsertResult.id}]\n🔄【強化済みルールの適用条件確認】\n\n━━ 強化されたナレッジ ━━\n「${result.title}」（フェーズ: ${conversation_state ?? "不明"}）\n内容: ${result.rule.slice(0, 400)}\n\n━━ 今回の差分（実例）━━\n■ AIが出した文\n${(ai_draft ?? "").slice(0, 400) || '（記録なし）'}\n\n■ スタッフが修正した文\n${(sent_reply ?? "").slice(0, 400) || '（修正なし・AI文をそのまま使用）'}\n\n━━ 確認が必要な理由 ━━\n${mergeReason || "既存ルールと新差分の整合性を確認してください"}\n\n❓ このルールの適用条件を教えてください\n■ このルールを使う場面：「〇〇のとき」「〇〇の後」など具体的に\n■ このルールを使わない場面：「〇〇のケースは除外」「AIXボタン〇〇で対応する場面」など\n■ ルール内容に修正が必要な場合は正しい内容を定義してください`,
                     speculation: `upsertResult=merged かつ wrong_count=${mergedWrong}件 の高重要度ルールが再強化されました（importance=${mergedImp}）。品質確認が必要です。`,
                     category: mergeVerdict === "contradiction" ? "knowledge_gap" : "prompt_ambiguity",
                     evidence: `AI案:\n${ai_draft ?? ""}\n\n送信文:\n${sent_reply ?? ""}\n\n類似度: ${Math.round(sim * 100)}%`,

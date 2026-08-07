@@ -57,7 +57,33 @@ export const SUMORA_QUESTION_SYSTEM_CONTEXT = `## スモラAIシステム絶対�
 - 顧客実名・物件固有情報は必ず抽象化（「田中様」→「顧客名」等）
 - 質問文は途中切れ・タイトルのみNG・必ず完全な文で
 - entry_source: AIX生成文=aix_action、通常返信=line_reply
-- aix_action: AIX由来の場合は必ず設定（viewing_invite等）`;
+- aix_action: AIX由来の場合は必ず設定（viewing_invite等）
+
+### 質問文の設計原則（高品質な回答を引き出すために必ず守る）
+- 質問本文にAIが実際に出した文またはルールの内容を必ず引用して見せる（抽象的な説明だけにしない）
+- 「どんな場面で使いますか？」と聞かない — 代わりに「○○の場合は〜すべきか / △△の場合は〜しないか、という形でルールの適用条件を定義してください」と求める
+- 使うべき場面と使わないべき場面を必ず両方セットで確認する（片方だけ聞かない）
+- AIXボタンとの境界が関わる場合は「通常返信AIが担当すること / AIXボタンが担当すること」の役割分担を明示的に問う
+- 既存ルールと差分が矛盾する場合は「現行ルール: [内容] ↔ 今回の差分: [内容]」と対比を見せてからどちらが正しいかを問う
+- 選択肢（①②③）形式を使わない — 選択肢があると番号だけで終わる。代わりに「正しいルールを具体的に定義してください」と求める
+- 「なければ特になし」「問題なければスキップ」等の逃げ道を作らない
+
+### 高品質な質問の例（目指すフォーマット）
+【良い例】
+「今回の差分で、AIは『お気軽にご連絡ください』と送りましたが、スタッフが削除しました。
+現在のルール：一次返信後の誘導文は禁止。
+↔ 今回の差分：締め文として使った場面では削除された。
+締め文としての「お気軽に〜」も禁止ですか？それとも一次返信の誘導文のみ禁止ですか？
+・禁止の場面：〇〇のとき
+・使ってよい場面：△△のとき
+という形でルールの適用条件を定義してください。」
+
+【悪い例（生成しない）】
+「AIが送った文の何が問題でしたか？（なければ特になし）」
+「① 新しいルールを採用 ② 既存ルールを維持 ③ 場面で使い分ける」
+「どんな場面でこのルールを使いますか？」`;
+
+
 
 export type AiQuestionItem = {
   category: string;
@@ -93,26 +119,24 @@ export function buildRuleConflictQuestion(input: {
 }): string {
   const { markerPrefix, newRule, existingRulesText, conflictReason } = input;
   const importanceText = newRule.importance != null ? `${newRule.importance}点` : "不明";
-  return `${markerPrefix ? `${markerPrefix}\n\n` : ""}竹内さん、ルールの矛盾について判断をお願いします。
+  return `${markerPrefix ? `${markerPrefix}\n\n` : ""}竹内さん、2つのルールが矛盾しています。正しいルールを定義してください。
 
-■ 新しく学んだルール
-タイトル：「${newRule.title}」
-フェーズ：${newRule.phase ?? "不明"} / 重要度：${importanceText} ／ 適用 ${newRule.applyCount ?? 0}回 ／ 正解 ${newRule.correctCount ?? 0}回・誤答 ${newRule.wrongCount ?? 0}回
+━━ 新しく学んだルール ━━
+「${newRule.title}」（フェーズ: ${newRule.phase ?? "不明"} / 重要度: ${importanceText}）
+適用 ${newRule.applyCount ?? 0}回 ／ 正解 ${newRule.correctCount ?? 0}回・誤答 ${newRule.wrongCount ?? 0}回
 
-内容：
 ${newRule.content}
 
-■ ぶつかっている既存ルール
+━━ 矛盾している既存ルール ━━
 ${existingRulesText || "（なし）"}
 
-■ 何がぶつかっているか
+━━ 何が矛盾しているか ━━
 ${conflictReason}
 
-■ 質問
-どちらのルールを優先しますか？
-① 新しいルールを採用する（既存ルールを更新）
-② 既存ルールを維持する（新ルールは不採用）
-③ 場面で使い分ける → どう使い分けますか？`;
+❓ どちらが正しいか、または場面で使い分けるかを、以下の形で教えてください：
+・新しいルールが正しい場合 → 既存ルールのどこを修正すべきか
+・既存ルールが正しい場合 → 新しいルールのどこが誤っているか
+・場面で使い分ける場合 → 「○○の場合は〜する / △△の場合は〜しない」という形でルールの適用条件を定義してください`;
 }
 
 // pending 上限を確認してから ai_feedback_items に起票する。
