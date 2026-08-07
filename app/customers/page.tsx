@@ -62,6 +62,7 @@ type Customer = {
   linked_conversation?: LinkedConv | null;
   lines?: string[] | null;
   stations?: string[] | null;
+  rp_update_days?: number | null;
 };
 
 // 物件比較（🏠 物件比較）の結果型
@@ -309,6 +310,7 @@ export default function CustomersPage() {
   const [expandedId, setExpandedId]     = useState<string | null>(null);
   const [sentUpdating, setSentUpdating]   = useState<string | null>(null);
   const [viewedUpdating, setViewedUpdating]   = useState<string | null>(null);
+  const [updateDaysUpdating, setUpdateDaysUpdating] = useState<string | null>(null);
   const [formatCopied, setFormatCopied]   = useState<string | null>(null);
   const [formatMsgModal, setFormatMsgModal] = useState<{ text: string } | null>(null);
   const [formatMsgLoading, setFormatMsgLoading] = useState<string | null>(null);
@@ -531,6 +533,25 @@ export default function CustomersPage() {
     } finally {
       setSentUpdating(null);
     }
+  };
+
+  const cycleRpUpdateDays = async (c: Customer) => {
+    const CYCLE: (number | null)[] = [1, 3, 7, 14, null];
+    const cur = c.rp_update_days ?? null;
+    const nextIdx = (CYCLE.indexOf(cur) + 1) % CYCLE.length;
+    const nextVal = CYCLE[nextIdx];
+    setUpdateDaysUpdating(c.id);
+    try {
+      const res = await fetch("/api/property-customers", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: c.id, rp_update_days: nextVal }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setCustomers((p) => p.map((x) => x.id === c.id ? { ...x, ...updated } : x));
+      }
+    } catch { /* ignore */ }
+    setUpdateDaysUpdating(null);
   };
 
   const addCustomer = async () => {
@@ -944,7 +965,7 @@ export default function CustomersPage() {
       lines:        c.lines         ?? [] as string[],
       stations:     c.stations      ?? [] as string[],
       structure_types: parseStructureTypes(c.preferences, c.other_requests),
-      rp_update_days:  calcRpUpdateDays(c.last_property_sent_at),
+      rp_update_days:  c.rp_update_days ?? calcRpUpdateDays(c.last_property_sent_at),
       is_wide:      isWide,
     };
 
@@ -1025,7 +1046,7 @@ export default function CustomersPage() {
               route_ids: resolved?.route_ids ?? [], itandi_line_names: resolved?.itandi_line_names ?? [],
               reins_line_names: resolved?.reins_line_names ?? [], detail_ward: resolved?.detail_ward ?? null,
               detail_area: resolved?.detail_area ?? null, unknown_tokens: resolved?.unknown_tokens ?? [],
-              structure_types: parseStructureTypes(c.preferences, c.other_requests), rp_update_days: calcRpUpdateDays(c.last_property_sent_at),
+              structure_types: parseStructureTypes(c.preferences, c.other_requests), rp_update_days: c.rp_update_days ?? calcRpUpdateDays(c.last_property_sent_at),
             },
           },
           status: "pending", created_at: new Date().toISOString(),
@@ -2262,6 +2283,23 @@ export default function CustomersPage() {
                       </div>
                     </div>
                   )}
+                  {/* 更新日フィルター（自動計算 or アプリで上書き） */}
+                  {c.status !== "pending" && !isApplying(c.status) && (() => {
+                    const autoVal = calcRpUpdateDays(c.last_property_sent_at);
+                    const manualVal = c.rp_update_days ?? null;
+                    const displayVal = manualVal ?? autoVal;
+                    const isAuto = manualVal === null;
+                    return (
+                      <button
+                        onClick={() => void cycleRpUpdateDays(c)}
+                        disabled={updateDaysUpdating === c.id}
+                        title="タップで更新日を切替（1/3/7/14日・autoで自動計算）"
+                        className={`rounded-xl border px-2.5 py-1.5 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-50 ${isAuto ? "border-gray-200 bg-gray-50 text-gray-500" : "border-amber-300 bg-amber-50 text-amber-700"}`}
+                      >
+                        {updateDaysUpdating === c.id ? "…" : displayVal ? `更新${displayVal}日${isAuto ? "▸" : "✎"}` : `更新-${isAuto ? "▸" : "✎"}`}
+                      </button>
+                    );
+                  })()}
                   {/* 修正11: キュー投入失敗の消えない赤色エラー表示 */}
                   {Object.entries(queueErrors)
                     .filter(([k]) => k.startsWith(c.id + "-"))

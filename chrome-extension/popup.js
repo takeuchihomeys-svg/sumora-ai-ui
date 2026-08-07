@@ -1668,11 +1668,15 @@ function preloadAdjForm(c) {
     };
   }
 
-  // 更新日：日付から自動計算
+  // 更新日：アプリで上書き済みなら優先、なければ日付から自動計算
   const updateDaysEl = document.getElementById("adj-update-days");
   if (updateDaysEl) {
-    const initDate = c.last_property_sent_at ? c.last_property_sent_at.split("T")[0] : "";
-    updateDaysEl.value = calcUpdateDays(initDate, c.status);
+    if (c.rp_update_days) {
+      updateDaysEl.value = String(c.rp_update_days);
+    } else {
+      const initDate = c.last_property_sent_at ? c.last_property_sent_at.split("T")[0] : "";
+      updateDaysEl.value = calcUpdateDays(initDate, c.status);
+    }
   }
 
   // レインズ登録日：初めての物件出しは絞り込まない

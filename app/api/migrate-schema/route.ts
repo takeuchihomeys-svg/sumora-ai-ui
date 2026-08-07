@@ -1759,6 +1759,9 @@ ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS town_names text[];
 -- 隣接駅OK（条件緩和フラグ）（2026-08-06追加）
 ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS adjacent_ok BOOLEAN DEFAULT FALSE;
 
+-- rp_update_days: アプリから設定する更新日フィルター上書き（1/3/7/14日・NULLは自動計算）（2026-08-08）
+ALTER TABLE property_customers ADD COLUMN IF NOT EXISTS rp_update_days INTEGER;
+
 -- PostgREST スキーマキャッシュ再読込（必ず最後に実行）
 SELECT pg_notify('pgrst', 'reload schema');
 
