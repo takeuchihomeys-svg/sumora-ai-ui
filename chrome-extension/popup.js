@@ -1239,6 +1239,7 @@ let selectedCustomer = null;
 let selectedSite = null;
 let searchMode = "pinpoint"; // "pinpoint" | "wide"
 let currentAreaMode = "ward"; // "station" | "ward" — ボタン押下が絶対ルール（自動判定より優先）
+let _areaModeSource = "auto"; // "auto"=静的/API自動判定, "user"=手動クリック — "user"のときAPIによる上書きを禁止
 let currentAccount = ""; // "" = すべて / "sumora" / "ieyasu" / "giga" / "hasu"
 let linkedOnly = true;   // 紐付け済みのみ表示（デフォルトON・初期表示を軽くする）
 let todayOnly  = false;  // 今日対応のみ表示
@@ -1614,9 +1615,22 @@ function setupAreaModeSelector(c, siteKey) {
   });
   const defaultMode = hasWardToken ? "ward" : (hasStationToken ? "station" : "ward");
 
+  _areaModeSource = "auto";
   setMode(defaultMode);
-  btnStation.onclick = () => setMode("station");
-  btnWard.onclick    = () => setMode("ward");
+  btnStation.onclick = () => { _areaModeSource = "user"; setMode("station"); };
+  btnWard.onclick    = () => { _areaModeSource = "user"; setMode("ward"); };
+
+  // 自動判定が曖昧（静的マップで判定できなかった）場合 → APIで補完
+  // resolveAreaWithAPI はキャッシュがあれば即返る。未知トークンがなければ null を返してスキップ。
+  if (!hasWardToken && !hasStationToken) {
+    resolveAreaWithAPI(rawA, "auto").then(function(apiData) {
+      if (!apiData || _areaModeSource !== "auto") return; // ユーザーが手動クリック済みなら無視
+      var hasApiSt = (apiData.realpro?.station_names?.length > 0) || (apiData.realpro?.route_ids?.length > 0);
+      var hasApiWd = (apiData.realpro?.city_codes?.length > 0);
+      if (hasApiSt && !hasApiWd) { console.log("[AX] setupAreaMode API→station"); setMode("station"); }
+      else if (hasApiWd && !hasApiSt) { console.log("[AX] setupAreaMode API→ward"); setMode("ward"); }
+    }).catch(function() {});
+  }
 }
 
 function preloadAdjForm(c) {
@@ -2100,17 +2114,39 @@ function openInstructions(siteKey) {
           ? adjStructure.split(/[,、・\/\.\s]+/).map(s => s.trim()).filter(Boolean)
           : [],
       };
-      // ボタン押下が絶対ルール: currentAreaMode を buildAreaRouteCodes に渡す
+      const adjAreaClean = (adjC.desired_area || adjC.area || "").trim();
+
+      // ① API呼び出しを先に実施（モード判定 + 補完データ取得を兼ねる）
+      // キャッシュがあれば即返る。未知トークンがなければ null。
+      const apiData = await resolveAreaWithAPI(adjAreaClean, "auto");
+
+      // ② 自動判定モードの場合のみ: API結果でモードを補正（手動クリック済みは無視）
+      if (_areaModeSource === "auto" && apiData?.realpro) {
+        const _hasApiSt = (apiData.realpro.station_names?.length > 0) || (apiData.realpro.route_ids?.length > 0);
+        const _hasApiWd = (apiData.realpro.city_codes?.length > 0);
+        if (_hasApiSt && !_hasApiWd && currentAreaMode !== "station") {
+          console.log("[AX] autofill: API補正 ward→station");
+          currentAreaMode = "station";
+          document.getElementById("btn-mode-station")?.classList.add("active");
+          document.getElementById("btn-mode-ward")?.classList.remove("active");
+          renderInstrSteps("realpro", adjC);
+        } else if (_hasApiWd && !_hasApiSt && currentAreaMode !== "ward") {
+          console.log("[AX] autofill: API補正 station→ward");
+          currentAreaMode = "ward";
+          document.getElementById("btn-mode-ward")?.classList.add("active");
+          document.getElementById("btn-mode-station")?.classList.remove("active");
+          renderInstrSteps("realpro", adjC);
+        }
+      }
+
+      // ③ ボタン押下が絶対ルール: currentAreaMode を buildAreaRouteCodes に渡す
       let { city_codes, route_ids } = buildAreaRouteCodes(adjC, currentAreaMode);
       // 地域モード+広げて検索: 難波/心斎橋エリアは中央区・浪速区・西区を全域追加
       if (currentAreaMode === "ward" && searchMode === "wide") {
         city_codes = expandNambaCodes(city_codes);
       }
 
-      // 駅名リスト: 駅モードのみ解決（地域モードでは空のまま）
-      const adjAreaClean = (adjC.desired_area || adjC.area || "").trim();
-      // 路線名・未登録地名をAPIで解決（route_ids/city_codes/station_names を補完）
-      const apiData = await resolveAreaWithAPI(adjAreaClean, currentAreaMode);
+      // ④ APIデータを route_ids / city_codes に追記
       if (apiData?.realpro) {
         (apiData.realpro.route_ids || []).forEach(r => { if (!route_ids.includes(r)) route_ids.push(r); });
         (apiData.realpro.city_codes || []).forEach(c => { if (!city_codes.includes(c)) city_codes.push(c); });
