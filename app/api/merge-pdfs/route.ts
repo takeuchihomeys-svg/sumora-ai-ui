@@ -67,9 +67,8 @@ async function rankAndAnnotateSummaries(summaries: string[]): Promise<string[]> 
    - AD記載なし = 追加報酬ゼロ
    ※ADが高いほど大幅に優先すること
 2. ㎡あたりの家賃（安いほど良い）
-3. 駅からの徒歩分数（近いほど良い）
-4. 面積の広さ（㎡が大きいほど良い）
-※間取り種別（1LDKや2LDKなど）は判断材料にしない
+3. 間取りと面積の広さ（2LDK>1LDK>1DK>1K>1R、かつ㎡数が大きいほど良い）
+4. 駅からの徒歩分数（近いほど良い）
 
 ${summaries.join('\n\n')}
 
