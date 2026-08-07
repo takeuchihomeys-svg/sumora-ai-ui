@@ -214,6 +214,52 @@ async function resolveUnknownTokensWithAI(tokens, onResolved) {
   }
 }
 
+// ── resolve-area API: 路線名・未登録地名を全サイト用コードに変換 ────────────
+// 呼び出し条件: 路線名トークン（STATION_LINE_MAPにないもの）or computeUnknownTokens > 0
+let _resolveAreaCache = null; // { area, mode, data }
+async function resolveAreaWithAPI(rawArea, areaMode) {
+  if (!rawArea) return null;
+  const toks = parseAreaTokens(rawArea);
+  const hasRoute   = toks.some(t => t.endsWith("線") && !STATION_LINE_MAP[t]);
+  const hasUnknown = computeUnknownTokens(rawArea).length > 0;
+  if (!hasRoute && !hasUnknown) return null;
+
+  if (_resolveAreaCache && _resolveAreaCache.area === rawArea && _resolveAreaCache.mode === areaMode) {
+    return _resolveAreaCache.data;
+  }
+  try {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 7000);
+    const res = await fetch(`${API_BASE}/api/resolve-area`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ desired_area: rawArea, area_mode: areaMode }),
+      signal: ctrl.signal,
+    });
+    clearTimeout(tid);
+    if (!res.ok) return null;
+    const data = await res.json();
+    // 新規学習をローカルキャッシュに反映
+    (data.new_stations || []).forEach(({ token, ward, realpro_lines, itandi_lines, reins_line }) => {
+      if (!LEARNED_STATION_MAP[token]) {
+        LEARNED_STATION_MAP[token] = { ward, realpro_lines: realpro_lines || [], itandi_lines: itandi_lines || [], reins_line: reins_line || null };
+        console.log("[AX] resolve-area 駅学習:", token, "→", ward);
+      }
+    });
+    (data.new_regions || []).forEach(({ token, ward }) => {
+      if (!LEARNED_WARD_MAP[token]) {
+        LEARNED_WARD_MAP[token] = ward;
+        console.log("[AX] resolve-area 地名学習:", token, "→", ward);
+      }
+    });
+    _resolveAreaCache = { area: rawArea, mode: areaMode, data };
+    return data;
+  } catch (e) {
+    console.warn("[AX] resolve-area 失敗:", e.message);
+    return null;
+  }
+}
+
 // 地名 → 市区の解決（NEIGHBORHOOD_WARD_MAP → LEARNED_WARD_MAP → 市サフィックス補完 の順に参照）
 function resolveWard(token) {
   if (NEIGHBORHOOD_WARD_MAP[token]) return NEIGHBORHOOD_WARD_MAP[token];
@@ -1771,7 +1817,7 @@ function openInstructions(siteKey) {
     // ボタン表示と同時に未登録地名チェック（クリック前に気づける）
     showUnknownWarn(computeUnknownTokens(selectedCustomer.desired_area || selectedCustomer.area || ""));
 
-    autofillBtn.onclick = () => {
+    autofillBtn.onclick = async () => {
       const c = selectedCustomer;
       const adjArea      = document.getElementById("adj-area").value.trim();
       const adjRentMax   = document.getElementById("adj-rent-max").value;
@@ -1783,6 +1829,9 @@ function openInstructions(siteKey) {
       const adjStructure = document.getElementById("adj-structure").value.trim();
       const adjPet       = document.getElementById("adj-pet").checked;
       const rawArea = (adjArea || c.desired_area || c.area || "").trim();
+
+      // 路線名・未登録地名をAPIで解決（itandi用途: 路線名→itandi路線名変換が必須）
+      const apiData = await resolveAreaWithAPI(rawArea, currentAreaMode);
 
       // 複数駅・複数地域対応（「第一希望:〇〇」「第二希望:〇〇」などのプレフィックスも除去）
       const tokens = parseAreaTokens(rawArea);
@@ -1852,6 +1901,10 @@ function openInstructions(siteKey) {
         if (!v) return [];
         return Array.isArray(v) ? v : [v];
       }).filter((v, i, arr) => arr.indexOf(v) === i);
+      // API補完: 路線名トークン由来の itandi 路線名を追加
+      if (apiData?.itandi?.line_names) {
+        apiData.itandi.line_names.forEach(n => { if (!itandiLines.includes(n)) itandiLines.push(n); });
+      }
 
       // 所在地名: NEIGHBORHOOD_WARD_MAP → 市区郡テキスト → STATION_WARD_MAP の優先順
       const wardName = isWardArea_itandi
@@ -1869,6 +1922,11 @@ function openInstructions(siteKey) {
             adj.forEach(a => { if (!stationNames.includes(a)) stationNames.push(a); });
           });
         }
+      }
+      // API補完: 路線→駅一覧を station_names に追加（路線指定の場合 matchedStations は空）
+      if (!isWardArea_itandi && apiData?.itandi?.station_names?.length > 0) {
+        if (!stationNames) stationNames = [];
+        apiData.itandi.station_names.forEach(s => { if (!stationNames.includes(s)) stationNames.push(s); });
       }
 
       // 広げて検索：賃料上限を自動拡張
@@ -2003,7 +2061,7 @@ function openInstructions(siteKey) {
     // ── 駅/地域 切替ボタン（混在条件の検出） ──────────────────────────
     setupAreaModeSelector(c0, "realpro");
 
-    autofillBtn.onclick = () => {
+    autofillBtn.onclick = async () => {
       const c = selectedCustomer;
       // 調整フォームの値を優先して使う
       const adjArea     = document.getElementById("adj-area").value.trim();
@@ -2037,6 +2095,12 @@ function openInstructions(siteKey) {
 
       // 駅名リスト: 駅モードのみ解決（地域モードでは空のまま）
       const adjAreaClean = (adjC.desired_area || adjC.area || "").trim();
+      // 路線名・未登録地名をAPIで解決（route_ids/city_codes/station_names を補完）
+      const apiData = await resolveAreaWithAPI(adjAreaClean, currentAreaMode);
+      if (apiData?.realpro) {
+        (apiData.realpro.route_ids || []).forEach(r => { if (!route_ids.includes(r)) route_ids.push(r); });
+        (apiData.realpro.city_codes || []).forEach(c => { if (!city_codes.includes(c)) city_codes.push(c); });
+      }
       const areaParts = parseAreaTokens(adjAreaClean);
       const realpro_station_names = [];
       if (currentAreaMode === "station") {
@@ -2080,6 +2144,11 @@ function openInstructions(siteKey) {
             });
           }
         }
+      }
+
+      // API補完: 路線名→駅一覧を station_names に追加（LEARNED_LINE_ORDER で未取得の路線に対応）
+      if (currentAreaMode === "station" && apiData?.realpro?.station_names) {
+        apiData.realpro.station_names.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
       }
 
       // 地名マップから町字レベルのトークンを検索（駅モード時はスキップ：所在地フィールドに入らないようにする）
@@ -2196,12 +2265,14 @@ function openInstructions(siteKey) {
     autofillBtn.style.display = "block";
     autofillBtn.textContent = "⚡ REINSに自動入力";
     autofillBtn.className = "autofill-btn";
-    autofillBtn.onclick = () => {
+    autofillBtn.onclick = async () => {
       const adjC = buildAdjCustomer(selectedCustomer);
       renderInstrSteps("reins", adjC);
 
       // ボタン押下が絶対ルール: currentAreaMode で駅 or 地域を決定
       const rawArea = (adjC.desired_area || adjC.area || "").trim();
+      // 路線名・未登録地名をAPIで解決（reins用途: 路線名→REINS路線名変換が必須）
+      const apiData = await resolveAreaWithAPI(rawArea, currentAreaMode);
       const areaToks = parseAreaTokens(rawArea);
       const isStationMode = currentAreaMode === "station";
 
@@ -2233,6 +2304,14 @@ function openInstructions(siteKey) {
           }
           if (reinsStationPairs.length >= 3) break;
         }
+      }
+      // API補完: 路線名トークン由来の REINS 路線名ペアを追加（上記ループで見逃した路線）
+      if (isStationMode && apiData?.reins?.station_pairs) {
+        apiData.reins.station_pairs.forEach(p => {
+          if (reinsStationPairs.length < 3 && !reinsStationPairs.some(x => x.line === p.line)) {
+            reinsStationPairs.push(p);
+          }
+        });
       }
       const reinsLine = reinsStationPairs[0]?.line || null;
 
