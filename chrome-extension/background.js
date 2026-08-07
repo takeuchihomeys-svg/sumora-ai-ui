@@ -748,7 +748,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           var _custName = (conditions && conditions.customerName) || null;
           var _areaMode = (conditions && conditions.area_mode) || null;
 
-          // リアプロタブをmain.phpへナビゲート（フォームクリーン化）
+          // ── 直接メッセージ試行: popup.jsが開いていればページ更新なしで顧客切替 ──
+          if (_cid) {
+            var _directOk = await new Promise(function(resolve) {
+              chrome.runtime.sendMessage({
+                type:         "axlx-switch-customer",
+                customerId:   String(_cid),
+                customerName: _custName,
+                site:         "realpro",
+                areaMode:     _areaMode,
+                is_wide:      !!(conditions && conditions.is_wide),
+              }, function(resp) {
+                if (chrome.runtime.lastError) { resolve(false); return; }
+                resolve(!!(resp && resp.ok));
+              });
+            });
+            if (_directOk) {
+              console.log("[webapp-search] ✔ 直接メッセージ成功 → ページ更新なしで顧客切替");
+              sendResponse({ ok: true });
+              return;
+            }
+            console.log("[webapp-search] popup未応答 → フォールバック: ページ更新経由");
+          }
+
+          // ── フォールバック: リアプロタブをmain.phpへナビゲート（フォームクリーン化）──
           var _allTabs = await chrome.tabs.query({});
           var _realTab = _allTabs.find(function(t) { return t.url && t.url.startsWith("https://www.realnetpro.com"); });
           if (_realTab) {
@@ -764,13 +787,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
 
           // pendingPopupCmdをセット → underbar内popup.jsが顧客選択+autofill-btn自動クリック
-          // （ユーザーが拡張ツールで手動ボタンを押したときと全く同じ経路で検索実行）
           if (_cid) {
             await chrome.storage.session.set({
               pendingPopupCmd: {
                 customerId:   String(_cid),
                 customerName: _custName,
-                site:         "realpro",  // popup.js SITE_CONFIGのキーは"realpro"
+                site:         "realpro",
                 areaMode:     _areaMode,
                 is_wide:      !!(conditions && conditions.is_wide),
               }
@@ -793,6 +815,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         var _isWide   = !!(conditions && conditions.is_wide);
         var _areaMode = (conditions && conditions.area_mode) || null;
         var _custName = (conditions && conditions.customerName) || null;
+
+        // ── reinsのみ: 直接メッセージ試行（popup.jsが開いていればページ更新なし）──
+        // itandiはfill後にスクレイプが必要なため従来経路のまま
+        if (site === "reins" && _cid) {
+          var _reinsDirectOk = await new Promise(function(resolve) {
+            chrome.runtime.sendMessage({
+              type:         "axlx-switch-customer",
+              customerId:   String(_cid),
+              customerName: _custName,
+              site:         "reins",
+              areaMode:     _areaMode,
+              is_wide:      _isWide,
+            }, function(resp) {
+              if (chrome.runtime.lastError) { resolve(false); return; }
+              resolve(!!(resp && resp.ok));
+            });
+          });
+          if (_reinsDirectOk) {
+            console.log("[webapp-search] ✔ reins 直接メッセージ成功 → ページ更新なしで顧客切替");
+            sendResponse({ ok: true });
+            return;
+          }
+          console.log("[webapp-search] reins popup未応答 → フォールバック: ページ更新経由");
+        }
 
         // itandiはfill-done後にスクレイプ→LINE送信するため先に作成
         var _siteFillDone = (site === "itandi" && _cid)

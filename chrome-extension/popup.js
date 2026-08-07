@@ -2645,3 +2645,48 @@ document.addEventListener("DOMContentLoaded", () => {
     fbSubmit.disabled = false;
   });
 })();
+
+// ── axlx-switch-customer: 連続顧客切替メッセージハンドラ ──────────────────────
+// background.js から送られてくる { type: "axlx-switch-customer", customerId, site, areaMode }
+// を受け取り、ポップアップを即座に該当顧客・サイトに切り替えて autofill を自動実行する。
+chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
+  if (msg.type === "axlx-switch-customer") {
+    (async function() {
+      try {
+        // allCustomers からIDで顧客を検索
+        var c = (allCustomers || []).find(function(x) {
+          return String(x.id) === String(msg.customerId);
+        });
+        if (!c) {
+          console.warn("[popup] axlx-switch-customer: 顧客が見つかりません id=", msg.customerId);
+          sendResponse({ ok: false, reason: "customer not found" });
+          return;
+        }
+        // 顧客サイト選択ビューに切り替え（selectedCustomer を更新し view-site を表示）
+        openSiteView(c);
+        if (msg.site) {
+          // サイト別手順ビューを開く（selectedSite を更新）
+          openInstructions(msg.site);
+          // areaMode が指定されていればボタンをクリックして上書き
+          if (msg.areaMode === 'station' || msg.areaMode === 'ward') {
+            var modeBtn = document.getElementById(
+              msg.areaMode === 'station' ? 'btn-mode-station' : 'btn-mode-ward'
+            );
+            if (modeBtn) modeBtn.click();
+          }
+          // DOM レンダリング完了を待って autofill-btn をクリック
+          await new Promise(function(resolve) {
+            setTimeout(resolve, 800 + Math.floor(Math.random() * 400));
+          });
+          var aBtn = document.getElementById('autofill-btn');
+          if (aBtn && aBtn.style.display !== 'none') aBtn.click();
+        }
+        sendResponse({ ok: true });
+      } catch(e) {
+        console.error("[popup] axlx-switch-customer error:", e);
+        sendResponse({ ok: false });
+      }
+    })();
+    return true; // 非同期 sendResponse のためチャンネルを開いたままにする
+  }
+});
