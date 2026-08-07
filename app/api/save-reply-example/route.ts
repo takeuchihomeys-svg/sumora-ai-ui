@@ -746,7 +746,7 @@ export async function PATCH(req: NextRequest) {
   // 既存レコードを取得
   const { data: existing } = await supabase
     .from("ai_reply_examples")
-    .select("id, conversation_state, customer_message, sent_reply, ai_draft, was_ai_used, was_ai_modified")
+    .select("id, conversation_state, customer_message, sent_reply, ai_draft, was_ai_used, was_ai_modified, entry_source")
     .eq("id", id)
     .maybeSingle();
 
@@ -766,6 +766,10 @@ export async function PATCH(req: NextRequest) {
   // 🚫 AI自己強化ループ防止: AIが生成してスタッフが無修正で送った例はLLM分析スキップ
   // was_ai_used=true && was_ai_modified=false = AIドラフトそのまま → 差分なし → 学習ノイズのみ
   if ((existing.was_ai_used as boolean) && !(existing.was_ai_modified as boolean)) {
+    return NextResponse.json({ ok: true, skippedAnalysis: true });
+  }
+  // 🚫 AIX由来は通常返信ナレッジへの学習をスキップ（phrase_dictionary/ai_reply_knowledge への混入防止）
+  if ((existing.entry_source as string | null) === "aix_action") {
     return NextResponse.json({ ok: true, skippedAnalysis: true });
   }
 
@@ -866,7 +870,7 @@ export async function POST(req: NextRequest) {
     // conversation_id でも絞り込む（別会話の同一 sent_reply レコードに☆が付く混線を防止）
     let starQuery = supabase
       .from("ai_reply_examples")
-      .select("id, conversation_state, customer_message, sent_reply, ai_draft, was_ai_modified, is_starred")
+      .select("id, conversation_state, customer_message, sent_reply, ai_draft, was_ai_modified, is_starred, entry_source")
       .eq("sent_reply", sentReply);
     if (conversationId) {
       starQuery = starQuery.eq("conversation_id", conversationId);
@@ -881,6 +885,10 @@ export async function POST(req: NextRequest) {
       await supabase.from("ai_reply_examples").update({ is_starred: true }).eq("id", existingRecord.id);
       // 🚫 バッチ☆はLLM分析をスキップ（コスト暴発防止）
       if (isAutoStar) {
+        return NextResponse.json({ ok: true, id: existingRecord.id, merged: true, skippedAnalysis: true });
+      }
+      // 🚫 AIX由来は通常返信ナレッジへの学習をスキップ（analyze-diffs⑥AIXパスで別途処理）
+      if ((existingRecord.entry_source as string | null) === "aix_action") {
         return NextResponse.json({ ok: true, id: existingRecord.id, merged: true, skippedAnalysis: true });
       }
       const existConvState = existingRecord.conversation_state as string;
@@ -1152,6 +1160,12 @@ export async function POST(req: NextRequest) {
   }
   // 🚫 バッチ経由（isAutoStar）はLLM分析チェーンを全て抑止（コスト暴発防止）
   if (isAutoStar) {
+    shouldDeepAnalyze = false;
+    shouldExtractPhrases = false;
+  }
+  // 🚫 AIX由来は通常返信ナレッジへの学習をスキップ（phrase_dictionary/ai_reply_knowledge への混入防止）
+  // AIXの差分は analyze-diffs⑥AIXパスで aix_action 専用の ai_feedback_items として別途処理される
+  if (entry_source === "aix_action") {
     shouldDeepAnalyze = false;
     shouldExtractPhrases = false;
   }

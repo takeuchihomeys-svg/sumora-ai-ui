@@ -56,7 +56,7 @@ async function insertAiQuestion(row: Record<string, unknown>): Promise<boolean> 
     console.log(`[weekly-learning] AI質問pending上限(${MAX_PENDING_AI_QUESTIONS}件)到達、新規起票スキップ`);
     return false;
   }
-  const { error } = await supabase.from("ai_feedback_items").insert(row);
+  const { error } = await supabase.from("ai_feedback_items").insert({ entry_source: "line_reply", ...row });
   if (error) {
     console.warn("[weekly-learning] AI質問起票失敗:", error.message);
     return false;

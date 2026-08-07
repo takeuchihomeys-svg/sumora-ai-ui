@@ -1140,6 +1140,7 @@ export async function POST(req: NextRequest) {
     const { data: examples30 } = await supabase
       .from("ai_reply_examples")
       .select("conversation_state, was_ai_modified")
+      .eq("entry_source", "line_reply")
       .gte("created_at", thirtyDaysAgo)
       .not("ai_draft", "is", null);
 
