@@ -128,7 +128,7 @@
     document.getElementById("axlx-all-btn").addEventListener("click", toggleAll);
     document.getElementById("axlx-dl-btn").addEventListener("click", bulkDownload);
     document.getElementById("axlx-merge-btn").addEventListener("click", function () { mergePdfs(false); });
-    document.getElementById("axlx-line-btn").addEventListener("click", function () { getCustomerFromPopup(function (customerName) { mergePdfs(true, customerName); }); });
+    document.getElementById("axlx-line-btn").addEventListener("click", function () { getCustomerFromPopup(function (customerName, customerConditions) { mergePdfs(true, customerName, customerConditions); }); });
     document.getElementById("axlx-auto-btn").addEventListener("click", function () { autoSendAllPages(); });
     document.getElementById("axlx-print-btn").addEventListener("click", printMerged);
     document.getElementById("axlx-img-btn").addEventListener("click", downloadImages);
@@ -229,18 +229,33 @@
     });
     if (madoriText) lines.push(madoriText.trim());
 
-    // 駅・徒歩（「徒歩」または「駅」を含むセル）
-    var accessText = card.texts.find(function (t) {
-      return /徒歩/.test(t);
-    });
-    if (!accessText) {
-      accessText = card.texts.find(function (t) { return /駅/.test(t); });
+    // 間取りのインデックスをAD/敷金礼金抽出の境界として使う
+    var madoriIdx = madoriText ? card.texts.indexOf(madoriText) : -1;
+
+    // 敷金・礼金: 間取りの直前2セルが Nヶ月 or なし/－ 形式なら採用
+    // 列順: ...管理費 | 敷金 | 礼金 | 間取り...
+    if (madoriIdx >= 2) {
+      var _toMonth = function(t) {
+        if (!t) return null;
+        t = t.trim();
+        if (/^(\d+)[ヶか]月$/.test(t)) return t;
+        if (t === "なし" || t === "－" || t === "-") return "なし";
+        return null;
+      };
+      var _s = _toMonth(card.texts[madoriIdx - 2]);
+      var _r = _toMonth(card.texts[madoriIdx - 1]);
+      if (_s && _r) lines.push("敷" + _s + " 礼" + _r);
     }
+
+    // 駅・徒歩（「徒歩」または「駅」を含むセル）
+    var accessText = card.texts.find(function (t) { return /徒歩/.test(t); });
+    if (!accessText) accessText = card.texts.find(function (t) { return /駅/.test(t); });
     if (accessText) lines.push(accessText.trim());
 
-    // AD（リアプロのAD列: "2ヶ月"/"1ヶ月" のみのセルを探す。"AD"文字列はヘッダのみ）
+    // AD（間取りより後のセルだけを検索して敷金礼金との混同を防ぐ）
     var adLine = null;
-    for (var _ai = 0; _ai < card.texts.length; _ai++) {
+    var _adStart = madoriIdx >= 0 ? madoriIdx + 1 : 0;
+    for (var _ai = _adStart; _ai < card.texts.length; _ai++) {
       var _at = card.texts[_ai].trim();
       var _am = _at.match(/^(\d+)[ヶか]月$/);
       if (_am) { adLine = "AD " + _at; break; }
@@ -268,20 +283,20 @@
       if (!e.data || e.data.from !== "axlx-customer-response") return;
       clearTimeout(timer);
       window.removeEventListener("message", handler);
-      callback(e.data.name || null);
+      callback(e.data.name || null, e.data.conditions || null);
     };
     window.addEventListener("message", handler);
     window.postMessage({ from: "axlx-get-customer" }, "*");
     // 800ms 以内に応答がなければ null で続行（アンダーバー外から使った場合など）
     timer = setTimeout(function () {
       window.removeEventListener("message", handler);
-      callback(null);
+      callback(null, null);
     }, 800);
   }
 
   // ── LINE送信: 1件ずつ順番に送信（background経由・CSP/CORS完全回避）──────
   // ── PDF結合ダウンロード: background経由 ───────────────────────────────────
-  function mergePdfs(sendToLine, customerName) {
+  function mergePdfs(sendToLine, customerName, customerConditions) {
     var urls = getSelectedUrls();
     if (!urls.length) {
       alert("物件を選択してください（印刷用PDFリンクが検出できる物件をチェックしてください）");
@@ -307,6 +322,7 @@
         urls: urls,
         customer_name: customerName || null,
         property_summaries: propertySummaries,
+        customer_conditions: customerConditions || null,
       }, function (resp) {
         lineBtn.disabled = false;
         if (chrome.runtime.lastError) {
@@ -651,6 +667,7 @@
         urls: batch.urls,
         customer_name: state.customerName || null,
         property_summaries: batch.summaries,
+        customer_conditions: state.customerConditions || null,
       }, function (resp) {
         if (chrome.runtime.lastError) {
           clearAutoSendState();
@@ -675,8 +692,8 @@
   // ── 全ページ自動送信: エントリポイント ────────────────────────────────────
   function autoSendAllPages() {
     if (getAutoSendState()) return; // 既に動作中
-    getCustomerFromPopup(function (name) {
-      var state = { active: true, currentPage: 1, customerName: name };
+    getCustomerFromPopup(function (name, conditions) {
+      var state = { active: true, currentPage: 1, customerName: name, customerConditions: conditions };
       setAutoSendState(state);
       autoSendOnePage(state, function (ok) {
         tryNext(state);

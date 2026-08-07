@@ -49,26 +49,35 @@ async function getGroupId(): Promise<string | null> {
   return data?.value ?? null;
 }
 
-async function rankAndAnnotateSummaries(summaries: string[]): Promise<string[]> {
+async function rankAndAnnotateSummaries(summaries: string[], customerConditions?: string | null): Promise<string[]> {
   if (summaries.length <= 1) return summaries;
   try {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "") });
+    const conditionsBlock = customerConditions
+      ? `【お客様の希望条件（最優先で照らし合わせること）】\n${customerConditions}\n\n`
+      : "";
     const response = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 120,
+      max_tokens: 200,
       messages: [{
         role: "user",
-        content: `以下の物件一覧を見て、特にオススメの物件番号（1始まり）を選んでください。上位1〜3件をJSONで返してください。JSONのみ返すこと。
+        content: `以下の物件一覧を見て、お客様に最もオススメの物件番号（1始まり）を選んでください。上位1〜3件をJSONで返してください。JSONのみ返すこと。
 
-判断基準（優先順位が高い順）:
-1. AD（最重要）: 仲介手数料に直結するため最優先
-   - 「AD 2ヶ月」= 家賃×2ヶ月分の報酬（例: 家賃7万円→報酬14万円）
-   - 「AD 1ヶ月」= 家賃×1ヶ月分の報酬（例: 家賃7万円→報酬7万円）
+${conditionsBlock}判断基準（優先順位が高い順）:
+1. お客様希望条件への合致度（最優先）:
+   - 家賃が希望予算以内か
+   - 間取りが希望と一致するか
+   - 徒歩分数が希望以内か
+   - 専有面積が希望以上か
+   - 敷・礼が0ヶ月に近いほど良い（なし > 1ヶ月 > 2ヶ月以上）
+   ※ 予算を大幅に超える・希望外間取りの物件は絶対に選ばないこと
+2. AD（仲介手数料の追加報酬・重要）:
+   - 「AD 2ヶ月」= 家賃×2ヶ月分の追加報酬（非常に優先）
+   - 「AD 1ヶ月」= 家賃×1ヶ月分の追加報酬（優先）
    - AD記載なし = 追加報酬ゼロ
-   ※ADが高いほど大幅に優先すること
-2. ㎡あたりの家賃（安いほど良い）
-3. 間取りと面積の広さ（2LDK>1LDK>1DK>1K>1R、かつ㎡数が大きいほど良い）
-4. 駅からの徒歩分数（近いほど良い）
+3. ㎡あたりの家賃（安いほど良い）
+4. 間取りと面積の広さ（2LDK>1LDK>1DK>1K>1R、かつ㎡数が大きいほど良い）
+5. 駅からの徒歩分数（近いほど良い）
 
 ${summaries.join('\n\n')}
 
@@ -183,9 +192,10 @@ export async function POST(req: NextRequest) {
       send_to_line?: boolean;
       customer_name?: string | null;
       property_summaries?: string[] | null;
+      customer_conditions?: string | null;
     };
 
-    const { pdf_data, pdf_urls, cookie_str, file_name, send_to_line, customer_name, property_summaries } = body;
+    const { pdf_data, pdf_urls, cookie_str, file_name, send_to_line, customer_name, property_summaries, customer_conditions } = body;
 
     // PDF データを収集
     let pdfBase64List: string[] = [];
@@ -262,7 +272,7 @@ export async function POST(req: NextRequest) {
         }
 
         const rankedSummaries = property_summaries && property_summaries.length > 0
-          ? await rankAndAnnotateSummaries(property_summaries)
+          ? await rankAndAnnotateSummaries(property_summaries, customer_conditions)
           : property_summaries;
         const lineText = buildLineMessage(
           blob.url,

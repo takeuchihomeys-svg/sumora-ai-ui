@@ -362,6 +362,10 @@
     if (a === "itandi-autofill") {
       // itandi-content.jsに転送（chrome.tabsがiframe内で使えないためpostMessage経由）
       window.postMessage({ from: "aixlinx-itandi-fill", conditions: e.data.conditions }, "*");
+      // 手動クリック時のみ自動送信を予約（バッチ処理はbackground.js経由で別フロー）
+      if (e.data.source !== "automated") {
+        window.postMessage({ from: "axlx-itandi-autofill-initiated" }, "*");
+      }
     }
     if (a === "copy" && typeof e.data.text === "string") {
       // Clipboard APIは一切使わずexecCommandのみでコピー
@@ -448,7 +452,7 @@
   // popup.js → underbar.js → bulk-dl.js（応答）
   window.addEventListener("message", function(e) {
     if (!e.data || e.data.from !== "axlx-customer-response") return;
-    window.postMessage({ from: "axlx-customer-response", name: e.data.name, id: e.data.id ?? null }, "*");
+    window.postMessage({ from: "axlx-customer-response", name: e.data.name, id: e.data.id ?? null, conditions: e.data.conditions ?? null }, "*");
   });
 
   // ── background.js からの顧客切替指示を popup.js iframe に中継 ────────────────

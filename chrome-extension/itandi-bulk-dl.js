@@ -1,5 +1,5 @@
-// itandi BB 物件資料一括PDF取得 → LINE送信 v2.2.0
-// 改善: チェックボックス状態保持 / モーダル操作強化 / AD抽出 / LINE物件サマリー付き
+// itandi BB 物件資料一括PDF取得 → LINE送信 v2.3.0
+// 改善: チェックボックス状態保持 / モーダル操作強化 / AD抽出 / LINE物件サマリー付き / 全ページ自動送信
 (function () {
   "use strict";
 
@@ -8,6 +8,13 @@
   var checkedKeys = new Set(); // re-inject時にchecked状態を復元するキー集合
   var injectTimer = null;
   var pdfHookInjected = false;
+
+  // ── 全ページ自動送信の状態 ─────────────────────────────────────────────
+  var _autoSendArmed = false;
+  var _autofillInitiated = false;
+  var _preAutofillBtns = new Set();
+  var _pendingAutoSendDispatched = false;
+  var _autoSendInProgress = false;
 
   function ensurePdfHook() {
     if (pdfHookInjected) return;
@@ -127,6 +134,17 @@
       tracked.push({ cb: cb, btn: btn, rowKey: rowKey });
     });
     updateBar();
+
+    // 全ページ自動送信: autofill後に新しいボタンが出現したら自動発火
+    if (_autoSendArmed && tracked.length > 0 && !_pendingAutoSendDispatched && !_autoSendInProgress) {
+      var _hasNewBtn = tracked.some(function(item) { return !_preAutofillBtns.has(item.btn); });
+      if (_hasNewBtn) {
+        _autoSendArmed = false;
+        _pendingAutoSendDispatched = true;
+        console.log("[AXLX itandi] 新結果検出 → 全ページ自動送信開始");
+        setTimeout(autoSendAllPages, 800);
+      }
+    }
   }
 
   // ── フローティングバー ──────────────────────────────────────────────
@@ -150,11 +168,13 @@
       '<div style="display:flex;gap:6px;">',
       '  <button id="axlx-itandi-all-btn" style="flex:1;padding:6px 4px;background:rgba(255,255,255,0.18);border:none;border-radius:8px;color:white;font-size:11px;font-weight:700;cursor:pointer;">全選択</button>',
       '  <button id="axlx-itandi-line-btn" style="flex:2;padding:6px 8px;background:#06c755;border:none;border-radius:8px;color:white;font-size:12px;font-weight:700;cursor:pointer;">📤 売上番長に送る</button>',
+      '  <button id="axlx-itandi-all-pages-btn" style="flex:2;padding:6px 8px;background:#1565C0;border:none;border-radius:8px;color:white;font-size:12px;font-weight:700;cursor:pointer;">🔄 全ページ送る</button>',
       "</div>",
     ].join("");
     document.body.appendChild(bar);
     document.getElementById("axlx-itandi-all-btn").addEventListener("click", toggleAll);
     document.getElementById("axlx-itandi-line-btn").addEventListener("click", onSendToLine);
+    document.getElementById("axlx-itandi-all-pages-btn").addEventListener("click", function() { autoSendAllPages(); });
   }
 
   function updateBar() {
@@ -469,13 +489,13 @@
       if (!e.data || e.data.from !== "axlx-customer-response") return;
       clearTimeout(timer);
       window.removeEventListener("message", handler);
-      callback(e.data.name || null, e.data.id || null);
+      callback(e.data.name || null, e.data.id || null, e.data.conditions || null);
     };
     window.addEventListener("message", handler);
     window.postMessage({ from: "axlx-get-customer" }, "*");
     timer = setTimeout(function () {
       window.removeEventListener("message", handler);
-      callback(null, null);
+      callback(null, null, null);
     }, 800);
   }
 
@@ -489,8 +509,8 @@
     lineBtn.disabled  = true;
     lineBtn.textContent = "準備中...";
 
-    getCustomerFromPopup(function (customerName, customerId) {
-      startSend(targets, customerName, customerId, lineBtn, lineOrig);
+    getCustomerFromPopup(function (customerName, customerId, customerConditions) {
+      startSend(targets, customerName, customerId, lineBtn, lineOrig, null, customerConditions);
     });
   }
 
@@ -503,7 +523,7 @@
     return null;
   }
 
-  function startSend(targets, customerName, customerId, lineBtn, lineOrig) {
+  function startSend(targets, customerName, customerId, lineBtn, lineOrig, onComplete, customerConditions) {
     // AD情報は事前に収集（物件名はPDFキャプチャ時に取得するのでフォールバック用）
     var propertyInfos = targets.map(function (t) {
       return extractPropertyInfo(t.btn);
@@ -546,11 +566,12 @@
         lineBtn.textContent = "Blobアップ中... (1/" + pdfBase64List.length + ")";
         var today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
         chrome.runtime.sendMessage({
-          type:               "axlx-send-pdf-data-to-line",
-          pdf_data:           pdfBase64List,
-          file_name:          "物件まとめ_" + today + ".pdf",
-          customer_name:      customerName || null,
-          property_summaries: propertySummaries,
+          type:                "axlx-send-pdf-data-to-line",
+          pdf_data:            pdfBase64List,
+          file_name:           "物件まとめ_" + today + ".pdf",
+          customer_name:       customerName || null,
+          property_summaries:  propertySummaries,
+          customer_conditions: customerConditions || null,
         }, function (resp) {
           finalizeSend();
           lineBtn.disabled    = false;
@@ -558,6 +579,7 @@
             var errMsg = resp ? resp.error : (chrome.runtime.lastError ? chrome.runtime.lastError.message : "不明");
             alert("LINE送信エラー:\n" + errMsg);
             lineBtn.textContent = lineOrig;
+            if (onComplete) onComplete(false);
             return;
           }
           // 選択をリセット
@@ -576,6 +598,7 @@
               body: JSON.stringify({ customer_id: customerId }),
             }).catch(function () {});
           }
+          if (onComplete) onComplete(true);
         });
         return;
       }
@@ -603,6 +626,85 @@
 
     processNext(0);
   }
+
+  // ── 次ページボタンをクリック ─────────────────────────────────────────────
+  function clickNextPage() {
+    var btns = Array.from(document.querySelectorAll("button,a[href]"));
+    var nextBtn = btns.find(function(b) {
+      if (b.tagName === "BUTTON" && b.disabled) return false;
+      var t = b.textContent.trim();
+      return t === "次へ" || t === "次のページ" || t === ">" || t === "›" || t === "→";
+    });
+    if (!nextBtn) {
+      nextBtn = Array.from(document.querySelectorAll("[aria-label]")).find(function(el) {
+        var label = el.getAttribute("aria-label") || "";
+        return label.includes("次") || label.toLowerCase().includes("next");
+      });
+    }
+    if (nextBtn && !nextBtn.disabled) { nextBtn.click(); return true; }
+    return false;
+  }
+
+  // ── 全ページ自動送信 ─────────────────────────────────────────────────────
+  function autoSendAllPages() {
+    if (_autoSendInProgress) return;
+    _autoSendInProgress = true;
+    getCustomerFromPopup(function(customerName, customerId, customerConditions) {
+      _autoSendOnePage(customerName, customerId, customerConditions, function done(ok) {
+        var clicked = clickNextPage();
+        if (!clicked) {
+          _autoSendInProgress = false;
+          _pendingAutoSendDispatched = false;
+          console.log("[AXLX itandi] 全ページ送信完了");
+          return;
+        }
+        // 次ページのDOM更新を待ってから再送
+        setTimeout(function() {
+          inject();
+          setTimeout(function() {
+            if (tracked.length > 0) {
+              _autoSendOnePage(customerName, customerId, customerConditions, done);
+            } else {
+              _autoSendInProgress = false;
+              _pendingAutoSendDispatched = false;
+            }
+          }, 2000);
+        }, 1000);
+      });
+    });
+  }
+
+  function _autoSendOnePage(customerName, customerId, customerConditions, onComplete) {
+    // 全選択
+    tracked.forEach(function(t) { t.cb.checked = true; checkedKeys.add(t.rowKey); });
+    updateBar();
+    var targets = tracked.filter(function(t) { return t.cb.checked; });
+    if (!targets.length) { onComplete(true); return; }
+    var lineBtn = document.getElementById("axlx-itandi-line-btn");
+    if (!lineBtn) { onComplete(false); return; }
+    var lineOrig = lineBtn.textContent;
+    lineBtn.disabled = true;
+    startSend(targets, customerName, customerId, lineBtn, lineOrig, onComplete, customerConditions);
+  }
+
+  // ── 自動送信アームリスナー ────────────────────────────────────────────────
+  // Step1: underbar.js が autofill-initiated を送ったらボタンスナップショット
+  window.addEventListener("message", function(e) {
+    if (!e.data || e.data.from !== "axlx-itandi-autofill-initiated") return;
+    _autofillInitiated = true;
+    _preAutofillBtns = new Set(findMaterialBtns());
+    _pendingAutoSendDispatched = false;
+    console.log("[AXLX itandi] autofill initiated, snapshot=" + _preAutofillBtns.size + "btn");
+  });
+
+  // Step2: 検索完了シグナル → 自動送信をアーム
+  window.addEventListener("message", function(e) {
+    if (!e.data || e.data.from !== "aixlinx-fill-done") return;
+    if (!_autofillInitiated) return;
+    _autoSendArmed = true;
+    _autofillInitiated = false;
+    console.log("[AXLX itandi] fill-done 受信 → 全ページ自動送信 armed");
+  });
 
   // ── MutationObserver（チェックボックスの再注入） ──────────────────────
   var mutObs = new MutationObserver(function () {

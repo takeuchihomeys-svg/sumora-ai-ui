@@ -637,7 +637,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       try {
         const cookie_str = await getRealproCookies();
-        const { urls, customer_name, property_summaries } = msg;
+        const { urls, customer_name, property_summaries, customer_conditions } = msg;
         const today = new Date().toLocaleDateString("ja-JP").replace(/\//g, "-");
 
         const data = await callMergeApi({
@@ -647,6 +647,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           send_to_line: true,
           customer_name: customer_name || null,
           property_summaries: property_summaries || null,
+          customer_conditions: customer_conditions || null,
         });
 
         sendResponse({ ok: true, line_sent: !!data.line_sent, url: data.url });
@@ -684,12 +685,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         // Step2: URLでまとめてmerge → LINE送信（リアプロと同じ仕組み）
         const data = await callMergeApi({
-          pdf_urls:           blobUrls,
-          cookie_str:         "",   // 公開Blob URLはcookie不要
-          file_name:          `${baseName}.pdf`,
-          send_to_line:       true,
-          customer_name:      msg.customer_name || null,
-          property_summaries: msg.property_summaries || null,
+          pdf_urls:            blobUrls,
+          cookie_str:          "",   // 公開Blob URLはcookie不要
+          file_name:           `${baseName}.pdf`,
+          send_to_line:        true,
+          customer_name:       msg.customer_name || null,
+          property_summaries:  msg.property_summaries || null,
+          customer_conditions: msg.customer_conditions || null,
         });
         sendResponse({ ok: true, line_sent: !!data.line_sent, url: data.url });
       } catch (e) {
