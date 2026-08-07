@@ -411,6 +411,10 @@ JSONのみ返却（改行なし）:
                 reins_line: reinsLine,
               };
               result.new_stations.push(newSt);
+              // API解決駅をautofill用station_namesにも追加（Break 4 fix）
+              if (!result.realpro.station_names.includes(newSt.token)) {
+                result.realpro.station_names.push(newSt.token);
+              }
               await db.from("station_map").upsert(
                 { ...newSt, confidence: 75, source: "resolve-area" },
                 { onConflict: "token" }

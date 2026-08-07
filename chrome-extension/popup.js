@@ -601,6 +601,9 @@ function buildAreaRouteCodes(c, mode = "auto") {
       // （「〜線」で終わる実在駅は除外。路線として解決できない場合は従来通り駅解決にフォールスルー）
       // ※ LEARNED_STATION_MAP は判定に使わない: 「御堂筋線」が駅として誤学習される事故（2026-06-24 web_search由来）で
       //   ガードがすり抜け、駅名として送信→リアプロで死ぬバグがあった。路線として解決できるなら学習データより優先する。
+      // 都市名・府県名トークンを駅として解決しない（「大阪・難波」の「大阪」が大阪環状線になるのを防ぐ）
+      const AREA_PREFIX_SKIP = new Set(["大阪", "大阪府", "東京", "京都", "神戸", "兵庫", "奈良", "大阪市"]);
+      if (AREA_PREFIX_SKIP.has(part)) continue;
       if (part.endsWith('線') && !STATION_LINE_MAP[part]) {
         const lineId = lineNameToRouteId(part);
         if (lineId) {
@@ -614,6 +617,13 @@ function buildAreaRouteCodes(c, mode = "auto") {
       const lines = STATION_LINE_MAP[stationKey] || LEARNED_STATION_MAP[stationKey]?.realpro_lines || [];
       // lineNameToRouteId で表記ゆれ吸収（学習データの「大阪市高速電気軌道御堂筋線」等もroute_idに変換できる）
       lines.forEach(l => { const id = lineNameToRouteId(l); if (id && !route_ids.includes(id)) route_ids.push(id); });
+      // 漢字↔ひらがなエイリアスの路線も追加（難波→なんば でOsaka Metro、なんば→難波 で南海）
+      const _ROUTE_ALIASES = { "難波": "なんば", "なんば": "難波" };
+      const _aliasKey = stationKey && _ROUTE_ALIASES[stationKey];
+      if (_aliasKey) {
+        const _aliasLines = STATION_LINE_MAP[_aliasKey] || [];
+        _aliasLines.forEach(l => { const id = lineNameToRouteId(l); if (id && !route_ids.includes(id)) route_ids.push(id); });
+      }
       continue;
     }
     // auto: 従来の自動判定
@@ -2105,7 +2115,12 @@ function openInstructions(siteKey) {
       const realpro_station_names = [];
       if (currentAreaMode === "station") {
         const resolvedStations = [];
+        // 駅名ページのDOM表記エイリアス（難波=漢字→南海、なんば=ひらがな→大阪メトロ）
+        const _STATION_DOM_ALIASES = { "難波": "なんば", "なんば": "難波" };
         for (const part of areaParts) {
+          // 都市名・府県名トークンは駅名として station_names に追加しない
+          const _SNAME_SKIP = new Set(["大阪", "大阪府", "東京", "京都", "神戸", "兵庫", "奈良", "大阪市"]);
+          if (_SNAME_SKIP.has(part)) continue;
           // 路線名トークン（例: 阪急千里線・御堂筋線）→ その路線の全駅を展開してstation_namesに追加
           // ※ 沿線モーダル（label.one_line）は不安定なため、駅個別選択方式で代替する
           // ※ LEARNED_STATION_MAP で路線名が誤学習されても station_names には混入させない
@@ -2121,6 +2136,9 @@ function openInstructions(siteKey) {
           if (station) {
             resolvedStations.push(station);
             if (!realpro_station_names.includes(station)) realpro_station_names.push(station);
+            // 漢字↔ひらがなエイリアスも追加（難波→なんば でOsaka MetroのDOM、なんば→難波 で南海のDOM）
+            const _stAlias = _STATION_DOM_ALIASES[station];
+            if (_stAlias && !realpro_station_names.includes(_stAlias)) realpro_station_names.push(_stAlias);
             if (searchMode === "wide") {
               const adj = getAdjacentStations(station, STATION_LINE_MAP[station] || []);
               adj.forEach(s => { if (!realpro_station_names.includes(s)) realpro_station_names.push(s); });
