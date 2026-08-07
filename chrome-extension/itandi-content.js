@@ -140,6 +140,9 @@
       // ── autofill ─────────────────────────────────────────────────────────
       if (msg.type !== "axlx-itandi-autofill") return;
       try { injectPageScript(); } catch (e) { sendResponse({ ok: false }); return true; }
+      // itandi-bulk-dl.js に現在の物件ボタンをスナップショットさせる（自動送信アーム準備）
+      // サイドパネルモード時はunderbar.jsを経由しないためここで直接発火する
+      window.postMessage({ from: "axlx-itandi-autofill-initiated" }, "*");
       setTimeout(function () {
         window.dispatchEvent(new CustomEvent("axlx-itandi-fill", { detail: msg.conditions }));
       }, 200);

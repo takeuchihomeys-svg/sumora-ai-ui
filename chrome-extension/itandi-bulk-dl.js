@@ -697,13 +697,15 @@
     console.log("[AXLX itandi] autofill initiated, snapshot=" + _preAutofillBtns.size + "btn");
   });
 
-  // Step2: 検索完了シグナル → 自動送信をアーム
+  // Step2: 検索完了シグナル → 自動送信をアーム + inject()で新ボタン確認
   window.addEventListener("message", function(e) {
     if (!e.data || e.data.from !== "aixlinx-fill-done") return;
     if (!_autofillInitiated) return;
     _autoSendArmed = true;
     _autofillInitiated = false;
     console.log("[AXLX itandi] fill-done 受信 → 全ページ自動送信 armed");
+    // DOMがまだ更新中の場合がある → 1.5秒後に明示的にinject()を呼んで新ボタンを検出
+    setTimeout(function() { inject(); }, 1500);
   });
 
   // ── MutationObserver（チェックボックスの再注入） ──────────────────────
