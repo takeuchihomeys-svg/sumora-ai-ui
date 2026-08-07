@@ -1371,6 +1371,29 @@ export default function CustomersPage() {
     void firePropertySearch(batchListRef.current[prev]);
   };
 
+  // バッチモード中にタイムアウト/エラー/拡張なしになったら自動で次のお客さんへ進む
+  useEffect(() => {
+    if (!batchMode) return;
+    const currentCustomer = batchListRef.current[batchIndex];
+    if (!currentCustomer) return;
+    const status = scrapeCompareStatus[currentCustomer.id];
+    if (status !== "timeout" && status !== "error" && status !== "noext") return;
+    const t = setTimeout(() => {
+      const next = batchIndex + 1;
+      if (next >= batchListRef.current.length) {
+        setBatchMode(false);
+        setBatchIndex(0);
+        setBatchDone(true);
+        setTimeout(() => setBatchDone(false), 4000);
+      } else {
+        setBatchIndex(next);
+        void firePropertySearch(batchListRef.current[next]);
+      }
+    }, 2500);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrapeCompareStatus, batchMode, batchIndex]);
+
   return (
     <div className="flex flex-col" style={{ height: "100svh", background: "#f0f2f5", overflowY: "auto" }}>
 
@@ -1428,13 +1451,15 @@ export default function CustomersPage() {
         {/* バッチ物件検索バナー（batchMode中のみ表示） */}
         {batchMode && batchListRef.current.length > 0 && (() => {
           const cur = batchListRef.current[batchIndex];
+          const curStatus = cur ? (scrapeCompareStatus[cur.id] ?? "idle") : "idle";
+          const isAutoAdvancing = curStatus === "timeout" || curStatus === "error" || curStatus === "noext";
           return (
             <div
               className="flex items-center gap-2 rounded-xl px-3 py-2 mb-2"
-              style={{ background: "rgba(255,255,255,0.18)", border: "1px solid rgba(255,255,255,0.3)" }}
+              style={{ background: isAutoAdvancing ? "rgba(239,68,68,0.35)" : "rgba(255,255,255,0.18)", border: `1px solid ${isAutoAdvancing ? "rgba(239,68,68,0.6)" : "rgba(255,255,255,0.3)"}` }}
             >
               <span className="flex-1 text-white text-sm font-bold truncate min-w-0">
-                🔍 {cur?.customer_name ?? ""}
+                {isAutoAdvancing ? "⚠️ タイムアウト → 次へ自動移動中..." : `🔍 ${cur?.customer_name ?? ""}`}
               </span>
               <span className="text-white/70 text-xs font-bold shrink-0">
                 {batchIndex + 1}/{batchListRef.current.length}
