@@ -2702,8 +2702,8 @@ chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
             setTimeout(resolve, 800 + Math.floor(Math.random() * 400));
           });
           var aBtn = document.getElementById('autofill-btn');
-          if (aBtn && aBtn.style.display !== 'none') {
-            aBtn.click();
+          if (aBtn) {
+            aBtn.click(); // display:noneでもonclickは発火する
             sendResponse({ ok: true });
           } else {
             sendResponse({ ok: false });

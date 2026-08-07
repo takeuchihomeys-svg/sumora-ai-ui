@@ -740,31 +740,59 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const { site, conditions } = msg;
     console.log("[webapp-search] ▶ 受信 site=" + site + " customerId=" + (conditions && conditions.customerId));
 
-    // ─── リアプロ: _batchAutofill直接呼び出し（popup.js経由なし・ページ更新なし）────
+    // ─── リアプロ: popup.js直接メッセージ経由（Dijkstra展開含む完全な条件組み立てを使う）──
     if (site === "realnetpro" || site === "realpro") {
       (async () => {
         try {
           var _cid      = conditions && conditions.customerId;
-          var _isWide   = !!(conditions && conditions.is_wide);
+          var _custName = (conditions && conditions.customerName) || null;
           var _areaMode = (conditions && conditions.area_mode) || null;
+          var _isWide   = !!(conditions && conditions.is_wide);
 
           if (!_cid) { sendResponse({ ok: false, error: "no customerId" }); return; }
 
-          // 顧客データをAPIから取得
-          var _fetchRes = await fetch("https://sumora-ai-ui.vercel.app/api/property-customers", { cache: "no-store" });
-          var _custList = await _fetchRes.json();
-          var _customer = Array.isArray(_custList)
-            ? _custList.find(function(x) { return String(x.id) === String(_cid); })
-            : null;
-          if (!_customer) { sendResponse({ ok: false, error: "customer not found" }); return; }
+          // popup.jsに直接メッセージ → popup.jsの完全な条件組み立てロジック（Dijkstra展開含む）を使う
+          var _directOk = await new Promise(function(resolve) {
+            chrome.runtime.sendMessage({
+              type:         "axlx-switch-customer",
+              customerId:   String(_cid),
+              customerName: _custName,
+              site:         "realpro",
+              areaMode:     _areaMode,
+              is_wide:      _isWide,
+            }, function(resp) {
+              if (chrome.runtime.lastError) { resolve(false); return; }
+              resolve(!!(resp && resp.ok));
+            });
+          });
+          if (_directOk) {
+            console.log("[webapp-search] ✔ popup.js直接メッセージ成功");
+            sendResponse({ ok: true });
+            return;
+          }
+          console.log("[webapp-search] popup未応答 → フォールバック: ページ更新経由");
 
-          // area_modeを付与（page-script.jsが参照できるように）
-          if (_areaMode) _customer = Object.assign({}, _customer, { area_mode: _areaMode });
-
-          // in-place autofill（ページ移動なし・バッチ処理と完全同一経路）
-          console.log("[webapp-search] ▶ realnetpro _batchAutofill直接呼び出し customerId=" + _cid);
-          await _batchAutofill(_customer, "realnetpro", _isWide);
-          console.log("[webapp-search] ✔ realnetpro _batchAutofill完了");
+          // フォールバック: main.phpへナビゲート + pendingPopupCmd
+          var _allTabs = await chrome.tabs.query({});
+          var _realTab = _allTabs.find(function(t) { return t.url && t.url.startsWith("https://www.realnetpro.com"); });
+          if (_realTab) {
+            await chrome.tabs.update(_realTab.id, { url: "https://www.realnetpro.com/main.php", active: true });
+            await _batchWaitForTabComplete(_realTab.id);
+            await new Promise(function(r) { setTimeout(r, 1500); });
+          } else {
+            _realTab = await chrome.tabs.create({ url: "https://www.realnetpro.com/main.php", active: true });
+            await _batchWaitForTabComplete(_realTab.id);
+            await new Promise(function(r) { setTimeout(r, 2000); });
+          }
+          await chrome.storage.session.set({
+            pendingPopupCmd: {
+              customerId:   String(_cid),
+              customerName: _custName,
+              site:         "realpro",
+              areaMode:     _areaMode,
+              is_wide:      _isWide,
+            }
+          });
           sendResponse({ ok: true });
         } catch (e) {
           console.error("[webapp-search] realnetpro error:", e);
