@@ -63,6 +63,7 @@ type Customer = {
   lines?: string[] | null;
   stations?: string[] | null;
   rp_update_days?: number | null;
+  area_mode?: string | null;
 };
 
 // 物件比較（🏠 物件比較）の結果型
@@ -415,7 +416,19 @@ export default function CustomersPage() {
   const fetchCustomers = async () => {
     try {
       const res = await fetch("/api/property-customers");
-      if (res.ok) setCustomers(await res.json());
+      if (res.ok) {
+        const data: Customer[] = await res.json();
+        setCustomers(data);
+        const initModes: Record<string, "auto" | "ward" | "station"> = {};
+        for (const c of data) {
+          if (c.area_mode === "ward" || c.area_mode === "station") {
+            initModes[c.id] = c.area_mode;
+          }
+        }
+        if (Object.keys(initModes).length > 0) {
+          setAreaModeByCustomer((prev) => ({ ...initModes, ...prev }));
+        }
+      }
     } catch (err) {
       console.error("[fetchCustomers] failed:", err);
     } finally {
@@ -2193,7 +2206,13 @@ export default function CustomersPage() {
                         {([["auto", "自動"], ["ward", "地域"], ["station", "駅"]] as const).map(([m, lbl]) => (
                           <button
                             key={m}
-                            onClick={() => setAreaModeByCustomer((prev) => ({ ...prev, [c.id]: m }))}
+                            onClick={() => {
+                              setAreaModeByCustomer((prev) => ({ ...prev, [c.id]: m }));
+                              fetch("/api/property-customers", {
+                                method: "PATCH", headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ id: c.id, area_mode: m }),
+                              }).catch(() => {});
+                            }}
                             className={`px-1.5 py-1.5 text-[10px] font-bold transition-colors ${
                               getAreaMode(c.id) === m
                                 ? "bg-blue-600 text-white"

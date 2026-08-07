@@ -616,7 +616,7 @@
       clearAutoSendState();
       var countEl = document.getElementById("axlx-count");
       if (countEl) countEl.textContent = "全ページ送信完了！";
-      alert("全ページ自動送信が完了しました。（" + state.currentPage + "ページ処理済み）");
+      console.log("[AXLX bulk-dl] 全ページ自動送信が完了しました。（" + state.currentPage + "ページ処理済み）");
     }
   }
 
