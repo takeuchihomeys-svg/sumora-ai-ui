@@ -740,66 +740,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const { site, conditions } = msg;
     console.log("[webapp-search] ▶ 受信 site=" + site + " customerId=" + (conditions && conditions.customerId));
 
-    // ─── リアプロ: underbarに全部委譲（手動ボタンと完全同一経路）────────────
+    // ─── リアプロ: _batchAutofill直接呼び出し（popup.js経由なし・ページ更新なし）────
     if (site === "realnetpro" || site === "realpro") {
       (async () => {
         try {
           var _cid      = conditions && conditions.customerId;
-          var _custName = (conditions && conditions.customerName) || null;
+          var _isWide   = !!(conditions && conditions.is_wide);
           var _areaMode = (conditions && conditions.area_mode) || null;
 
-          // ── 直接メッセージ試行: popup.jsが開いていればページ更新なしで顧客切替 ──
-          // URL制限なし: 検索結果ページでもpage-script.jsがin-placeでfill可能なため常に試行する
-          if (_cid) {
-            var _directOk = await new Promise(function(resolve) {
-              chrome.runtime.sendMessage({
-                type:         "axlx-switch-customer",
-                customerId:   String(_cid),
-                customerName: _custName,
-                site:         "realpro",
-                areaMode:     _areaMode,
-                is_wide:      !!(conditions && conditions.is_wide),
-              }, function(resp) {
-                if (chrome.runtime.lastError) { resolve(false); return; }
-                resolve(!!(resp && resp.ok));
-              });
-            });
-            if (_directOk) {
-              console.log("[webapp-search] ✔ 直接メッセージ成功 → ページ更新なしで顧客切替");
-              sendResponse({ ok: true });
-              return;
-            }
-            console.log("[webapp-search] popup未応答 → フォールバック: ページ更新経由");
-          }
+          if (!_cid) { sendResponse({ ok: false, error: "no customerId" }); return; }
 
-          // ── フォールバック: リアプロタブをmain.phpへナビゲート（フォームクリーン化）──
-          var _allTabs = await chrome.tabs.query({});
-          var _realTab = _allTabs.find(function(t) { return t.url && t.url.startsWith("https://www.realnetpro.com"); });
-          if (_realTab) {
-            console.log("[webapp-search] リアプロタブ発見 → main.phpへ:", _realTab.id);
-            await chrome.tabs.update(_realTab.id, { url: "https://www.realnetpro.com/main.php", active: true });
-            await _batchWaitForTabComplete(_realTab.id);
-            await new Promise(function(r) { setTimeout(r, 1500); });
-          } else {
-            console.log("[webapp-search] リアプロタブなし → 新規作成");
-            _realTab = await chrome.tabs.create({ url: "https://www.realnetpro.com/main.php", active: true });
-            await _batchWaitForTabComplete(_realTab.id);
-            await new Promise(function(r) { setTimeout(r, 2000); });
-          }
+          // 顧客データをAPIから取得
+          var _fetchRes = await fetch("https://sumora-ai-ui.vercel.app/api/property-customers", { cache: "no-store" });
+          var _custList = await _fetchRes.json();
+          var _customer = Array.isArray(_custList)
+            ? _custList.find(function(x) { return String(x.id) === String(_cid); })
+            : null;
+          if (!_customer) { sendResponse({ ok: false, error: "customer not found" }); return; }
 
-          // pendingPopupCmdをセット → underbar内popup.jsが顧客選択+autofill-btn自動クリック
-          if (_cid) {
-            await chrome.storage.session.set({
-              pendingPopupCmd: {
-                customerId:   String(_cid),
-                customerName: _custName,
-                site:         "realpro",
-                areaMode:     _areaMode,
-                is_wide:      !!(conditions && conditions.is_wide),
-              }
-            });
-            console.log("[webapp-search] ✔ pendingPopupCmd設定完了 → underbarが引き継ぎ");
-          }
+          // area_modeを付与（page-script.jsが参照できるように）
+          if (_areaMode) _customer = Object.assign({}, _customer, { area_mode: _areaMode });
+
+          // in-place autofill（ページ移動なし・バッチ処理と完全同一経路）
+          console.log("[webapp-search] ▶ realnetpro _batchAutofill直接呼び出し customerId=" + _cid);
+          await _batchAutofill(_customer, "realnetpro", _isWide);
+          console.log("[webapp-search] ✔ realnetpro _batchAutofill完了");
           sendResponse({ ok: true });
         } catch (e) {
           console.error("[webapp-search] realnetpro error:", e);
@@ -809,86 +774,42 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
     }
 
-    // ─── itandi / reins: underbar経由（手動ボタンと同一経路）─────────────────
+    // ─── itandi / reins: _batchAutofill直接呼び出し（popup.js経由なし・ページ更新なし）──
     (async () => {
       try {
         var _cid      = conditions && conditions.customerId;
         var _isWide   = !!(conditions && conditions.is_wide);
         var _areaMode = (conditions && conditions.area_mode) || null;
-        var _custName = (conditions && conditions.customerName) || null;
 
-        // ── reinsのみ: 直接メッセージ試行（popup.jsが開いていればページ更新なし）──
-        // itandiはfill後にスクレイプが必要なため従来経路のまま
-        if (site === "reins" && _cid) {
-          var _reinsDirectOk = await new Promise(function(resolve) {
-            chrome.runtime.sendMessage({
-              type:         "axlx-switch-customer",
-              customerId:   String(_cid),
-              customerName: _custName,
-              site:         "reins",
-              areaMode:     _areaMode,
-              is_wide:      _isWide,
-            }, function(resp) {
-              if (chrome.runtime.lastError) { resolve(false); return; }
-              resolve(!!(resp && resp.ok));
-            });
-          });
-          if (_reinsDirectOk) {
-            console.log("[webapp-search] ✔ reins 直接メッセージ成功 → ページ更新なしで顧客切替");
-            sendResponse({ ok: true });
-            return;
-          }
-          console.log("[webapp-search] reins popup未応答 → フォールバック: ページ更新経由");
-        }
+        if (!_cid) { sendResponse({ ok: false, error: "no customerId" }); return; }
 
-        // itandiはfill-done後にスクレイプ→LINE送信するため先に作成
-        var _siteFillDone = (site === "itandi" && _cid)
+        // 顧客データをAPIから取得
+        var _fetchRes = await fetch("https://sumora-ai-ui.vercel.app/api/property-customers", { cache: "no-store" });
+        var _custList = await _fetchRes.json();
+        var _customer = Array.isArray(_custList)
+          ? _custList.find(function(x) { return String(x.id) === String(_cid); })
+          : null;
+        if (!_customer) { sendResponse({ ok: false, error: "customer not found" }); return; }
+
+        // area_modeを付与（page-script.jsが参照できるように）
+        if (_areaMode) _customer = Object.assign({}, _customer, { area_mode: _areaMode });
+
+        // itandiのみ: fill-done後にスクレイプ→LINE送信するため先に作成
+        var _siteFillDone = (site === "itandi")
           ? _createFillDoneWaiter("itandi", 90000)
           : null;
 
-        // サイトURL定義
-        var _siteUrl = site === "itandi"
-          ? "https://itandibb.com/rent_rooms/list"
-          : "https://system.reins.jp/main/PF08/SA08I010.aspx";
-        var _sitePrefix = site === "itandi"
-          ? "https://itandibb.com"
-          : "https://system.reins.jp";
-
-        // タブをナビゲート（クリーン状態にするため検索ページへ）
-        var _sAllTabs = await chrome.tabs.query({});
-        var _sTab = _sAllTabs.find(function(t) { return t.url && t.url.startsWith(_sitePrefix); });
-        if (_sTab) {
-          console.log("[webapp-search] " + site + "タブ発見 → ナビゲート:", _sTab.id);
-          await chrome.tabs.update(_sTab.id, { url: _siteUrl, active: true });
-          await _batchWaitForTabComplete(_sTab.id);
-          await new Promise(function(r) { setTimeout(r, 1500); });
-        } else {
-          console.log("[webapp-search] " + site + "タブなし → 新規作成");
-          _sTab = await chrome.tabs.create({ url: _siteUrl, active: true });
-          await _batchWaitForTabComplete(_sTab.id);
-          await new Promise(function(r) { setTimeout(r, 2000); });
-        }
-
-        // pendingPopupCmd → underbarのpopup.jsが顧客/サイト/モード選択+autofill-btn自動クリック
-        if (_cid) {
-          await chrome.storage.session.set({
-            pendingPopupCmd: {
-              customerId:   String(_cid),
-              customerName: _custName,
-              site:         site,       // "itandi" or "reins"
-              areaMode:     _areaMode,
-              is_wide:      _isWide,
-            }
-          });
-          console.log("[webapp-search] ✔ " + site + " pendingPopupCmd設定 → underbarが引き継ぎ");
-        }
+        // in-place autofill（ページ移動なし・バッチ処理と完全同一経路）
+        console.log("[webapp-search] ▶ " + site + " _batchAutofill直接呼び出し customerId=" + _cid);
+        await _batchAutofill(_customer, site, _isWide);
+        console.log("[webapp-search] ✔ " + site + " _batchAutofill完了");
 
         // itandiのみ: fill完了後にスクレイプ+LINE送信（レインズはスクレイプなし）
-        if (site === "itandi" && _cid && _siteFillDone) {
+        if (site === "itandi" && _siteFillDone) {
           _scrapeAndCompareItandi(
             _siteFillDone,
             String(_cid),
-            _custName,
+            (conditions && conditions.customerName) || null,
             conditions
           ).catch(function(e) {
             console.error("[itandiScrape] バックグラウンドエラー:", e.message || e);
@@ -1605,6 +1526,7 @@ function _buildBatchConditions(c, isWide) {
   }
   return {
     is_wide: !!isWide, // 修正5: page-script 側の広ロジック（間取り拡張等）に伝搬
+    area_mode: c.area_mode || null, // webapp経由で渡されたarea_modeをpage-scriptに伝搬
     rent_max: c.rent_max || null,
     rent_min: c.rent_min || null,
     walk_minutes: c.walk_minutes || null,
