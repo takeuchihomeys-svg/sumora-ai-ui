@@ -452,20 +452,40 @@
   // chrome.tabs.sendMessage(content script経路) → postMessage(iframe) の2段中継を使う
   chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
     if (msg.type !== "axlx-switch-customer") return false;
-    if (!iframe || !iframe.contentWindow) {
-      sendResponse({ ok: false, reason: "iframe-not-ready" });
-      return true;
+
+    var doForward = function() {
+      if (!iframe || !iframe.contentWindow) {
+        sendResponse({ ok: false, reason: "iframe-lost" });
+        return;
+      }
+      iframe.contentWindow.postMessage({
+        from:         "underbar-parent",
+        action:       "switch-customer",
+        customerId:   msg.customerId,
+        customerName: msg.customerName,
+        site:         msg.site,
+        areaMode:     msg.areaMode,
+        is_wide:      msg.is_wide,
+      }, "*");
+      sendResponse({ ok: true });
+    };
+
+    if (!iframe) {
+      // iframeが未作成（遅延初期化）→ 今すぐ作成してload後に転送
+      ensureIframe();
+      if (!iframe) {
+        sendResponse({ ok: false, reason: "iframe-create-failed" });
+        return true;
+      }
+      // load完了後にpopup.jsの初期化を待って転送（allCustomers fetchも含め1秒待機）
+      iframe.addEventListener("load", function _onLoad() {
+        iframe.removeEventListener("load", _onLoad);
+        setTimeout(doForward, 1000);
+      });
+    } else {
+      doForward();
     }
-    iframe.contentWindow.postMessage({
-      from:         "underbar-parent",
-      action:       "switch-customer",
-      customerId:   msg.customerId,
-      customerName: msg.customerName,
-      site:         msg.site,
-      areaMode:     msg.areaMode,
-      is_wide:      msg.is_wide,
-    }, "*");
-    sendResponse({ ok: true }); // 転送完了（popup.js側は非同期で処理）
+
     return true;
   });
 })();
