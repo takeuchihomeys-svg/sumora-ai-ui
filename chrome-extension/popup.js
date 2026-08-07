@@ -1859,7 +1859,22 @@ function openInstructions(siteKey) {
       const rawArea = (adjArea || c.desired_area || c.area || "").trim();
 
       // 路線名・未登録地名をAPIで解決（itandi用途: 路線名→itandi路線名変換が必須）
-      const apiData = await resolveAreaWithAPI(rawArea, currentAreaMode);
+      const apiData = await resolveAreaWithAPI(rawArea, "auto");
+
+      // 自動判定モードの場合のみ: API結果でモードを補正（手動クリック済みは無視）
+      if (_areaModeSource === "auto" && apiData?.realpro) {
+        const _hasApiSt = (apiData.realpro.station_names?.length > 0) || (apiData.realpro.route_ids?.length > 0);
+        const _hasApiWd = (apiData.realpro.city_codes?.length > 0);
+        if (_hasApiSt && !_hasApiWd && currentAreaMode !== "station") {
+          currentAreaMode = "station";
+          document.getElementById("btn-mode-station")?.classList.add("active");
+          document.getElementById("btn-mode-ward")?.classList.remove("active");
+        } else if (_hasApiWd && !_hasApiSt && currentAreaMode !== "ward") {
+          currentAreaMode = "ward";
+          document.getElementById("btn-mode-ward")?.classList.add("active");
+          document.getElementById("btn-mode-station")?.classList.remove("active");
+        }
+      }
 
       // 複数駅・複数地域対応（「第一希望:〇〇」「第二希望:〇〇」などのプレフィックスも除去）
       const tokens = parseAreaTokens(rawArea);
@@ -2331,7 +2346,23 @@ function openInstructions(siteKey) {
       // ボタン押下が絶対ルール: currentAreaMode で駅 or 地域を決定
       const rawArea = (adjC.desired_area || adjC.area || "").trim();
       // 路線名・未登録地名をAPIで解決（reins用途: 路線名→REINS路線名変換が必須）
-      const apiData = await resolveAreaWithAPI(rawArea, currentAreaMode);
+      const apiData = await resolveAreaWithAPI(rawArea, "auto");
+
+      // 自動判定モードの場合のみ: API結果でモードを補正（手動クリック済みは無視）
+      if (_areaModeSource === "auto" && apiData?.realpro) {
+        const _hasApiSt = (apiData.realpro.station_names?.length > 0) || (apiData.realpro.route_ids?.length > 0);
+        const _hasApiWd = (apiData.realpro.city_codes?.length > 0);
+        if (_hasApiSt && !_hasApiWd && currentAreaMode !== "station") {
+          currentAreaMode = "station";
+          document.getElementById("btn-mode-station")?.classList.add("active");
+          document.getElementById("btn-mode-ward")?.classList.remove("active");
+        } else if (_hasApiWd && !_hasApiSt && currentAreaMode !== "ward") {
+          currentAreaMode = "ward";
+          document.getElementById("btn-mode-ward")?.classList.add("active");
+          document.getElementById("btn-mode-station")?.classList.remove("active");
+        }
+      }
+
       const areaToks = parseAreaTokens(rawArea);
       const isStationMode = currentAreaMode === "station";
 
