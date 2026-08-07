@@ -904,6 +904,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         var _directOk = false;
         if (_scRealTab && customerId) {
           try {
+            // リアプロタブをアクティブ化（バックグラウンドタブのJSスロットルを回避）
+            await chrome.tabs.update(_scRealTab.id, { active: true });
             var _directResp = await new Promise(function(resolve) {
               chrome.tabs.sendMessage(_scRealTab.id, {
                 type:         "axlx-switch-customer",
