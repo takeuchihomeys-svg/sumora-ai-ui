@@ -668,7 +668,9 @@ RETURNS TABLE (id uuid, customer_message text, sent_reply text, conversation_sta
 LANGUAGE sql STABLE AS $func$
   SELECT ae.id, ae.customer_message, ae.sent_reply, ae.conversation_state, ae.is_starred, ae.reply_angle, (1 - (ae.embedding <=> query_embedding))::float AS similarity
   FROM ai_reply_examples ae
-  WHERE ae.conversation_state = ANY(filter_states) AND ae.embedding IS NOT NULL
+  WHERE ae.conversation_state = ANY(filter_states)
+    AND ae.embedding IS NOT NULL
+    AND ae.entry_source = 'line_reply'
   ORDER BY ae.embedding <=> query_embedding
   LIMIT match_count
 $func$;

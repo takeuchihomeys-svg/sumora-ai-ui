@@ -97,6 +97,7 @@ export async function GET(req: NextRequest) {
       .from("ai_reply_examples")
       .select("id, conversation_state, customer_message, sent_reply")
       .eq("is_starred", true)
+      .eq("entry_source", "line_reply")
       .order("created_at", { ascending: false })
       .limit(1000);
 

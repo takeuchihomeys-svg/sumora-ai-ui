@@ -131,6 +131,7 @@ async function fetchEnhanceContext(state: string, customerMessage?: string, last
   const { data: exampleRows } = await supabase.from("ai_reply_examples")
     .select("customer_message, sent_reply, reply_angle")
     .in("conversation_state", aliases)
+    .eq("entry_source", "line_reply")
     .eq("is_starred", true)
     .order("created_at", { ascending: false })
     .limit(10);

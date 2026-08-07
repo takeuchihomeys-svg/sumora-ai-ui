@@ -9713,6 +9713,8 @@ export default function Home() {
                 aiDraft: adaptedGreetingRef.current, // adapt結果（手修正前）
                 skipNormalize: true,
                 sentAt: new Date().toISOString(),
+                entry_source: "aix_action",
+                aix_action: "greeting_viewing",
               }),
             }).catch(() => {});
             void fetch("/api/log-aix-usage", {

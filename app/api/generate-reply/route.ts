@@ -1295,11 +1295,13 @@ async function fetchExamples(state: string, customerMessage?: string, lastStaffM
     // 同フェーズ全件: ☆降順 → 新着順
     supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state, is_starred, reply_angle")
       .in("conversation_state", stateAliases)
+      .eq("entry_source", "line_reply")
       .order("is_starred", { ascending: false })
       .order("created_at", { ascending: false })
       .limit(60),
     // 全フェーズ全件: ☆降順 → 新着順
     supabase.from("ai_reply_examples").select("customer_message, sent_reply, conversation_state, is_starred, reply_angle")
+      .eq("entry_source", "line_reply")
       .order("is_starred", { ascending: false })
       .order("created_at", { ascending: false })
       .limit(120),
