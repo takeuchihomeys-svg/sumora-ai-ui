@@ -453,11 +453,15 @@
   chrome.runtime.onMessage.addListener(function(msg, sender, sendResponse) {
     if (msg.type !== "axlx-switch-customer") return false;
 
+    console.log("[underbar] axlx-switch-customer 受信 iframe=", !!iframe, "customerId=", msg.customerId);
+
     var doForward = function() {
       if (!iframe || !iframe.contentWindow) {
+        console.log("[underbar] doForward: iframe消失");
         sendResponse({ ok: false, reason: "iframe-lost" });
         return;
       }
+      console.log("[underbar] postMessage → popup.js送信");
       iframe.contentWindow.postMessage({
         from:         "underbar-parent",
         action:       "switch-customer",
@@ -472,14 +476,18 @@
 
     if (!iframe) {
       // iframeが未作成（遅延初期化）→ 今すぐ作成してload後に転送
+      console.log("[underbar] iframe未作成 → ensureIframe()で作成");
       ensureIframe();
       if (!iframe) {
+        console.log("[underbar] iframe作成失敗（拡張コンテキスト無効？）");
         sendResponse({ ok: false, reason: "iframe-create-failed" });
         return true;
       }
+      console.log("[underbar] iframe作成完了 → loadイベント待機中");
       // load完了後にpopup.jsの初期化を待って転送（allCustomers fetchも含め1秒待機）
       iframe.addEventListener("load", function _onLoad() {
         iframe.removeEventListener("load", _onLoad);
+        console.log("[underbar] iframe load完了 → 1秒後に転送");
         setTimeout(doForward, 1000);
       });
     } else {

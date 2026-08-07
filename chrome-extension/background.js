@@ -755,6 +755,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // chrome.tabs.sendMessage はContent Script経路で確実にデリバリされる（iframe frame登録ラグなし）
           var _allTabs = await chrome.tabs.query({});
           var _realTab = _allTabs.find(function(t) { return t.url && t.url.startsWith("https://www.realnetpro.com"); });
+          console.log("[webapp-search] リアプロタブ:", _realTab ? _realTab.url : "見つからない");
           var _directOk = false;
           if (_realTab) {
             _directOk = await new Promise(function(resolve) {
@@ -766,7 +767,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 areaMode:     _areaMode,
                 is_wide:      _isWide,
               }, function(resp) {
-                if (chrome.runtime.lastError) { resolve(false); return; }
+                if (chrome.runtime.lastError) {
+                  console.log("[webapp-search] tabs.sendMessage エラー:", chrome.runtime.lastError.message);
+                  resolve(false); return;
+                }
+                console.log("[webapp-search] underbar.js応答:", JSON.stringify(resp));
                 resolve(!!(resp && resp.ok));
               });
             });
@@ -776,7 +781,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             sendResponse({ ok: true });
             return;
           }
-          console.log("[webapp-search] popup未応答 → フォールバック: ページ更新経由");
+          console.log("[webapp-search] ✗ popup未応答 → フォールバック: ページ更新経由");
 
           // フォールバック: main.phpへナビゲート + pendingPopupCmd
           // _realTab は上で取得済み（null の場合は新規タブ作成）
