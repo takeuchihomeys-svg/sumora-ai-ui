@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PDFDocument } from "pdf-lib";
 import { supabase } from "@/app/lib/supabase";
+import Anthropic from "@anthropic-ai/sdk";
 
-export const maxDuration = 60;
+export const maxDuration = 90;
 
 const HANBANCYO_TOKEN = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN ?? "";
 
@@ -46,6 +47,40 @@ async function getGroupId(): Promise<string | null> {
     .eq("key", "group_id")
     .single();
   return data?.value ?? null;
+}
+
+async function rankAndAnnotateSummaries(summaries: string[]): Promise<string[]> {
+  if (summaries.length <= 1) return summaries;
+  try {
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY?.replace(/\s/g, "") });
+    const response = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 120,
+      messages: [{
+        role: "user",
+        content: `以下の物件一覧を見て、家賃・面積・駅徒歩・間取りを総合的に判断し、特にオススメの物件番号（1始まり）を選んでください。上位1〜3件をJSONで返してください。JSONのみ返すこと。
+
+${summaries.join('\n\n')}
+
+例: {"recommended":[2,5]}`
+      }],
+    });
+    const text = response.content[0]?.type === "text" ? response.content[0].text : "";
+    const match = text.match(/"recommended"\s*:\s*\[([^\]]*)\]/);
+    if (!match) return summaries;
+    const recommended = new Set(
+      match[1].split(",").map(n => parseInt(n.trim())).filter(n => !isNaN(n))
+    );
+    return summaries.map((summary, i) => {
+      if (!recommended.has(i + 1)) return summary;
+      const lines = summary.split("\n");
+      lines[0] = lines[0].replace(/^【(\d+)】/, "【$1🌟】");
+      return lines.join("\n");
+    });
+  } catch (e) {
+    console.warn("[merge-pdfs] AI ranking skipped:", e);
+    return summaries;
+  }
 }
 
 function buildLineMessage(
@@ -216,12 +251,15 @@ export async function POST(req: NextRequest) {
           );
         }
 
+        const rankedSummaries = property_summaries && property_summaries.length > 0
+          ? await rankAndAnnotateSummaries(property_summaries)
+          : property_summaries;
         const lineText = buildLineMessage(
           blob.url,
           name,
           merged.getPageCount(),
           customer_name,
-          property_summaries,
+          rankedSummaries,
         );
         await pushLineMessage(groupId, lineText);
         return NextResponse.json({ ok: true, line_sent: true, url: blob.url });
