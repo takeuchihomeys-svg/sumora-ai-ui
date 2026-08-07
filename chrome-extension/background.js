@@ -786,94 +786,71 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return true;
     }
 
-    // ─── itandi / reins: 既存の条件解決+直接fill経路 ─────────────────────────
+    // ─── itandi / reins: underbar経由（手動ボタンと同一経路）─────────────────
     (async () => {
       try {
-        if (conditions && conditions.customerId) {
-          try {
-            await chrome.storage.session.set({
-              pendingPopupCmd: {
-                customerId:   conditions.customerId,
-                customerName: conditions.customerName || null,
-                site:         site || null,
-                areaMode:     conditions.area_mode || null,
-              }
-            });
-          } catch (_sessionErr) { /* session storage 非対応環境では無視 */ }
-          try {
-            await chrome.action.openPopup();
-          } catch (_openPopupErr) {
-            chrome.action.setBadgeText({ text: '!' });
-            chrome.action.setBadgeBackgroundColor({ color: '#e74c3c' });
-            setTimeout(function() { chrome.action.setBadgeText({ text: '' }); }, 10000);
-          }
-        }
-
         var _cid      = conditions && conditions.customerId;
         var _isWide   = !!(conditions && conditions.is_wide);
-        var _areaMode = (conditions && conditions.area_mode) || 'auto';
+        var _areaMode = (conditions && conditions.area_mode) || null;
         var _custName = (conditions && conditions.customerName) || null;
 
-        var _customer = null;
-        try {
-          var _custRes  = await fetch(SUMORA_BATCH_API + "/api/property-customers", { cache: "no-store" });
-          var _custList = await _custRes.json();
-          _customer = Array.isArray(_custList)
-            ? _custList.find(function(x) { return String(x.id) === String(_cid); })
-            : null;
-        } catch (_custErr) {
-          console.warn("[webapp-search] 顧客取得失敗:", _custErr && _custErr.message);
-        }
-
-        var _fullConditions;
-        if (_customer) {
-          var _base = Object.assign(
-            _buildBatchConditions(_customer, _isWide),
-            { area_mode: _areaMode, desired_area: _customer.desired_area || null }
-          );
-          var _res = await _resolveLocalFirst(_base, _isWide);
-          _fullConditions = Object.assign({}, _base, {
-            station_names: (_res.station_names && _res.station_names.length) ? _res.station_names : (_base.station_names || []),
-            route_ids:     (_res.route_ids     && _res.route_ids.length)     ? _res.route_ids     : (_base.route_ids     || []),
-            city_codes:    (_res.city_codes    && _res.city_codes.length)    ? _res.city_codes    : (_base.city_codes    || []),
-            detail_ward:   _res.detail_ward   || null,
-            detail_area:   _res.detail_area   || null,
-            itandi_lines:       (_res.itandi_line_names && _res.itandi_line_names.length) ? _res.itandi_line_names : [],
-            itandi_line_names:  (_res.itandi_line_names && _res.itandi_line_names.length) ? _res.itandi_line_names : [],
-            reins_line_names:   (_res.reins_line_names  && _res.reins_line_names.length)  ? _res.reins_line_names  : [],
-            line_names: site === "itandi"
-              ? ((_res.itandi_line_names && _res.itandi_line_names.length) ? _res.itandi_line_names : [])
-              : site === "reins"
-              ? ((_res.reins_line_names && _res.reins_line_names.length) ? _res.reins_line_names : [])
-              : [],
-            unknown_tokens: _res.unknown_tokens || [],
-            is_wide:      _isWide,
-            rent_max:     _res.rent_max_resolved     || _base.rent_max     || null,
-            building_age: _res.building_age_resolved || _base.building_age || null,
-            customerId:   String(_customer.id),
-            customerName: _customer.customer_name || _custName,
-          });
-        } else {
-          _fullConditions = conditions || {};
-        }
-
-        var itandiFillDone = (site === "itandi" && _cid)
+        // itandiはfill-done後にスクレイプ→LINE送信するため先に作成
+        var _siteFillDone = (site === "itandi" && _cid)
           ? _createFillDoneWaiter("itandi", 90000)
           : null;
-        await _webappAutofill(site, _fullConditions);
-        if (site === "itandi" && _cid) {
+
+        // サイトURL定義
+        var _siteUrl = site === "itandi"
+          ? "https://itandibb.com/rent_rooms/list"
+          : "https://system.reins.jp/main/PF08/SA08I010.aspx";
+        var _sitePrefix = site === "itandi"
+          ? "https://itandibb.com"
+          : "https://system.reins.jp";
+
+        // タブをナビゲート（クリーン状態にするため検索ページへ）
+        var _sAllTabs = await chrome.tabs.query({});
+        var _sTab = _sAllTabs.find(function(t) { return t.url && t.url.startsWith(_sitePrefix); });
+        if (_sTab) {
+          console.log("[webapp-search] " + site + "タブ発見 → ナビゲート:", _sTab.id);
+          await chrome.tabs.update(_sTab.id, { url: _siteUrl, active: true });
+          await _batchWaitForTabComplete(_sTab.id);
+          await new Promise(function(r) { setTimeout(r, 1500); });
+        } else {
+          console.log("[webapp-search] " + site + "タブなし → 新規作成");
+          _sTab = await chrome.tabs.create({ url: _siteUrl, active: true });
+          await _batchWaitForTabComplete(_sTab.id);
+          await new Promise(function(r) { setTimeout(r, 2000); });
+        }
+
+        // pendingPopupCmd → underbarのpopup.jsが顧客/サイト/モード選択+autofill-btn自動クリック
+        if (_cid) {
+          await chrome.storage.session.set({
+            pendingPopupCmd: {
+              customerId:   String(_cid),
+              customerName: _custName,
+              site:         site,       // "itandi" or "reins"
+              areaMode:     _areaMode,
+              is_wide:      _isWide,
+            }
+          });
+          console.log("[webapp-search] ✔ " + site + " pendingPopupCmd設定 → underbarが引き継ぎ");
+        }
+
+        // itandiのみ: fill完了後にスクレイプ+LINE送信（レインズはスクレイプなし）
+        if (site === "itandi" && _cid && _siteFillDone) {
           _scrapeAndCompareItandi(
-            itandiFillDone,
+            _siteFillDone,
             String(_cid),
             _custName,
-            _fullConditions
-          ).catch(function (e) {
+            conditions
+          ).catch(function(e) {
             console.error("[itandiScrape] バックグラウンドエラー:", e.message || e);
           });
         }
+
         sendResponse({ ok: true });
       } catch (e) {
-        console.error("[webapp-search] error:", e);
+        console.error("[webapp-search] " + site + " error:", e);
         sendResponse({ ok: false, error: String(e.message) });
       }
     })();
