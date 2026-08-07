@@ -739,12 +739,56 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "axlx-webapp-search") {
     const { site, conditions } = msg;
     console.log("[webapp-search] ▶ 受信 site=" + site + " customerId=" + (conditions && conditions.customerId));
+
+    // ─── リアプロ: underbarに全部委譲（手動ボタンと完全同一経路）────────────
+    if (site === "realnetpro" || site === "realpro") {
+      (async () => {
+        try {
+          var _cid      = conditions && conditions.customerId;
+          var _custName = (conditions && conditions.customerName) || null;
+          var _areaMode = (conditions && conditions.area_mode) || null;
+
+          // リアプロタブをmain.phpへナビゲート（フォームクリーン化）
+          var _allTabs = await chrome.tabs.query({});
+          var _realTab = _allTabs.find(function(t) { return t.url && t.url.startsWith("https://www.realnetpro.com"); });
+          if (_realTab) {
+            console.log("[webapp-search] リアプロタブ発見 → main.phpへ:", _realTab.id);
+            await chrome.tabs.update(_realTab.id, { url: "https://www.realnetpro.com/main.php", active: true });
+            await _batchWaitForTabComplete(_realTab.id);
+            await new Promise(function(r) { setTimeout(r, 1500); });
+          } else {
+            console.log("[webapp-search] リアプロタブなし → 新規作成");
+            _realTab = await chrome.tabs.create({ url: "https://www.realnetpro.com/main.php", active: true });
+            await _batchWaitForTabComplete(_realTab.id);
+            await new Promise(function(r) { setTimeout(r, 2000); });
+          }
+
+          // pendingPopupCmdをセット → underbar内popup.jsが顧客選択+autofill-btn自動クリック
+          // （ユーザーが拡張ツールで手動ボタンを押したときと全く同じ経路で検索実行）
+          if (_cid) {
+            await chrome.storage.session.set({
+              pendingPopupCmd: {
+                customerId:   String(_cid),
+                customerName: _custName,
+                site:         "realpro",  // popup.js SITE_CONFIGのキーは"realpro"
+                areaMode:     _areaMode,
+              }
+            });
+            console.log("[webapp-search] ✔ pendingPopupCmd設定完了 → underbarが引き継ぎ");
+          }
+          sendResponse({ ok: true });
+        } catch (e) {
+          console.error("[webapp-search] realnetpro error:", e);
+          sendResponse({ ok: false, error: String(e.message) });
+        }
+      })();
+      return true;
+    }
+
+    // ─── itandi / reins: 既存の条件解決+直接fill経路 ─────────────────────────
     (async () => {
       try {
-        // ポップアップを開いて顧客を事前選択させるためのコマンドをセッションに保存
         if (conditions && conditions.customerId) {
-          // 修正: session.set を await してから openPopup を呼ぶ（レースコンディション修正）
-          // set が完了する前に popup.js が読むと空/古い pendingPopupCmd を参照してしまう
           try {
             await chrome.storage.session.set({
               pendingPopupCmd: {
@@ -755,8 +799,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               }
             });
           } catch (_sessionErr) { /* session storage 非対応環境では無視 */ }
-          // MV3 Chrome 127+: openPopup はユーザージェスチャー無しでも呼べる
-          // 失敗時は赤バッジ '!' を 10秒表示してアイコンクリックを促す（_pollAndRunBatch と統一）
           try {
             await chrome.action.openPopup();
           } catch (_openPopupErr) {
@@ -766,9 +808,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
         }
 
-        // 拡張ツール側の顧客データで条件を自己解決する
-        // webappからは customerId + site + is_wide + area_mode だけ受け取り、
-        // 拡張ツールが自分でAPIから顧客取得・条件解決を行う（二重変換バグを根絶）
         var _cid      = conditions && conditions.customerId;
         var _isWide   = !!(conditions && conditions.is_wide);
         var _areaMode = (conditions && conditions.area_mode) || 'auto';
@@ -814,7 +853,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             customerName: _customer.customer_name || _custName,
           });
         } else {
-          // 顧客取得失敗時: 最小条件で続行
           _fullConditions = conditions || {};
         }
 
