@@ -61,11 +61,23 @@
     });
     updateBar();
 
-    // 自動入力ボタン後の全ページ自動送信: _autoSendArmed が立っていて結果が出たら起動
+    // Case A: 自動入力ボタン直後（window.postMessage "axlx-auto-send-armed" 受信済み）
     if (_autoSendArmed && tracked.length > 0 && !getAutoSendState() && !_pendingAutoSendDispatched) {
       _autoSendArmed = false;
       _pendingAutoSendDispatched = true;
+      console.log("[AXLX bulk-dl] Case A: 自動入力後の初回自動送信開始");
       setTimeout(autoSendAllPages, 800);
+    }
+    // Case B: AJAXページネーション継続（tryNext がページ遷移後に inject() が再実行される）
+    else if (tracked.length > 0 && !_pendingAutoSendDispatched) {
+      var _resumeState = getAutoSendState();
+      if (_resumeState && _resumeState.active) {
+        _pendingAutoSendDispatched = true;
+        console.log("[AXLX bulk-dl] Case B: AJAXページネーション継続 P" + _resumeState.currentPage);
+        setTimeout(function () {
+          autoSendOnePage(_resumeState, function (ok) { tryNext(_resumeState); });
+        }, 800);
+      }
     }
   }
 
@@ -561,8 +573,12 @@
       if (!clicked) {
         clearAutoSendState();
         alert("次ページへの遷移に失敗しました。手動で操作してください。");
+      } else {
+        // AJAX: 次のinject()でCase Bが拾えるようにリセット
+        // ページリロード: _pendingAutoSendDispatched は再初期化されるので問題なし
+        _pendingAutoSendDispatched = false;
+        console.log("[AXLX bulk-dl] 次ページへ遷移 P" + (state.currentPage + 1));
       }
-      // ページリロード後は start() 内の sessionStorage チェックで再開
     } else {
       clearAutoSendState();
       var countEl = document.getElementById("axlx-count");
@@ -670,13 +686,32 @@
     setTimeout(inject, 1200);
     obs.observe(document.body, { childList: true, subtree: true });
 
-    // 全ページ自動送信: ページリロード後の再開チェック
+    // Case D: ページリロード後の再開（ページ2以降: tryNext がsetAutoSendStateした後）
     var autoState = getAutoSendState();
     if (autoState && autoState.active) {
       setTimeout(function () {
+        if (_pendingAutoSendDispatched) return; // inject() Case B が先に処理済み
+        _pendingAutoSendDispatched = true;
+        console.log("[AXLX bulk-dl] Case D: ページリロード後の継続 P" + autoState.currentPage);
         autoSendOnePage(autoState, function (ok) { tryNext(autoState); });
       }, 2500);
+      return; // Case C は不要（ページ1ではないため）
     }
+
+    // Case C: ページリロード後の初回起動（chrome.storage.session経由 / AJAXでCase Aが動かなかった場合の保険）
+    setTimeout(function () {
+      if (_pendingAutoSendDispatched) return;
+      try {
+        chrome.storage.session.get(["axlx_pending_auto_send"], function (data) {
+          if (data && data.axlx_pending_auto_send && !_pendingAutoSendDispatched) {
+            _pendingAutoSendDispatched = true;
+            chrome.storage.session.remove("axlx_pending_auto_send");
+            console.log("[AXLX bulk-dl] Case C: ページリロード初回起動");
+            autoSendAllPages();
+          }
+        });
+      } catch (_) {}
+    }, 2500);
   }
 
   if (document.readyState === "loading") {
