@@ -1371,28 +1371,26 @@ export default function CustomersPage() {
     void firePropertySearch(batchListRef.current[prev]);
   };
 
-  // バッチモード中にタイムアウト/エラー/拡張なしになったら自動で次のお客さんへ進む
+  // タイムアウト/エラー/拡張なし → 1秒後にステータスをidleにリセット（すぐ別のお客さんを検索できるようにする）
   useEffect(() => {
-    if (!batchMode) return;
-    const currentCustomer = batchListRef.current[batchIndex];
-    if (!currentCustomer) return;
-    const status = scrapeCompareStatus[currentCustomer.id];
-    if (status !== "timeout" && status !== "error" && status !== "noext") return;
+    const terminalKeys = Object.entries(scrapeCompareStatus)
+      .filter(([, st]) => st === "timeout" || st === "error" || st === "noext")
+      .map(([k]) => k);
+    if (terminalKeys.length === 0) return;
     const t = setTimeout(() => {
-      const next = batchIndex + 1;
-      if (next >= batchListRef.current.length) {
-        setBatchMode(false);
-        setBatchIndex(0);
-        setBatchDone(true);
-        setTimeout(() => setBatchDone(false), 4000);
-      } else {
-        setBatchIndex(next);
-        void firePropertySearch(batchListRef.current[next]);
-      }
-    }, 2500);
+      setScrapeCompareStatus((prev) => {
+        const next = { ...prev };
+        for (const k of terminalKeys) {
+          if (next[k] === "timeout" || next[k] === "error" || next[k] === "noext") {
+            next[k] = "idle";
+          }
+        }
+        return next;
+      });
+    }, 1000);
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scrapeCompareStatus, batchMode, batchIndex]);
+  }, [scrapeCompareStatus]);
 
   return (
     <div className="flex flex-col" style={{ height: "100svh", background: "#f0f2f5", overflowY: "auto" }}>
@@ -1459,7 +1457,7 @@ export default function CustomersPage() {
               style={{ background: isAutoAdvancing ? "rgba(239,68,68,0.35)" : "rgba(255,255,255,0.18)", border: `1px solid ${isAutoAdvancing ? "rgba(239,68,68,0.6)" : "rgba(255,255,255,0.3)"}` }}
             >
               <span className="flex-1 text-white text-sm font-bold truncate min-w-0">
-                {isAutoAdvancing ? "⚠️ タイムアウト → 次へ自動移動中..." : `🔍 ${cur?.customer_name ?? ""}`}
+                {isAutoAdvancing ? "⚠️ タイムアウト — 別のお客さんを選んで検索できます" : `🔍 ${cur?.customer_name ?? ""}`}
               </span>
               <span className="text-white/70 text-xs font-bold shrink-0">
                 {batchIndex + 1}/{batchListRef.current.length}
