@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { isApplicationFormMessage, hasApplyHintKeyword, PRE_APPLY_STATUSES } from "@/app/lib/application-form-detect";
 import { classifyByKeywords, classifyByAI, type ConditionIntent } from "@/app/lib/condition-intent";
 import { mergeConditions, type ConditionFields } from "@/app/lib/condition-merge";
+import { isPropertySiteUrl } from "@/app/api/parse-condition-url/route";
 
 // Vercel Functions のタイムアウト上限（秒）— after()内のAnthropicコール（30s）と画像処理に余裕を持たせる
 export const maxDuration = 120;
@@ -389,6 +390,13 @@ async function autoUpgradeToHot(db: ReturnType<typeof getDb>, userId: string) {
 }
 
 function isFormatMessage(text: string): boolean {
+  // 物件サイトURLのみのメッセージは条件フォーマットとして扱わない（SUUMOバグ防止）
+  if (isPropertySiteUrl(text)) {
+    const textOnly = text.replace(/https?:\/\/[^\s]+/g, "").trim();
+    if (textOnly.length < 15) return false;
+    return isFormatMessage(textOnly);
+  }
+
   // 丸数字が2つ以上 → フォーマット確定
   if ((text.match(/[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮]/g) ?? []).length >= 2) return true;
 
@@ -438,6 +446,16 @@ function getJSTTimestamp(): string {
   return `${jst.getUTCMonth() + 1}/${jst.getUTCDate()} ${String(jst.getUTCHours()).padStart(2, "0")}:${String(jst.getUTCMinutes()).padStart(2, "0")}`;
 }
 
+// JST 年月日（自動反映マーク用: 【YYYY/MM/DD 自動反映】）
+function getJSTDate(): string {
+  const now = new Date();
+  const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  const y = jst.getUTCFullYear();
+  const m = String(jst.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(jst.getUTCDate()).padStart(2, "0");
+  return `${y}/${m}/${d}`;
+}
+
 // 解析結果から人読みメモを生成（新着要望ログ用）
 function buildConditionNote(parsed: Record<string, unknown>): string {
   const parts: string[] = [];
@@ -480,6 +498,8 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, tex
     timeout: 30_000,
     maxRetries: 1,
   });
+  // URLを除去してからClaudeに渡す（物件サイトURLパラメータの誤解釈防止）
+  const cleanText = text.replace(/https?:\/\/[^\s]+/g, "[URL省略]").trim();
   let parsed: Record<string, unknown>;
   try {
     const res = await anthropic.messages.create({
@@ -521,7 +541,7 @@ async function autoParseFormat(db: ReturnType<typeof getDb>, userId: string, tex
 }
 
 テキスト:
-${text}
+${cleanText}
 
 JSONのみ返してください。説明文・コードブロック・マークダウンは一切不要です。`,
       }],
@@ -616,7 +636,9 @@ JSONのみ返してください。説明文・コードブロック・マーク�
       .select("additional_conditions").eq("id", pcId).maybeSingle();
     const prev = (cur?.additional_conditions as string | null) ?? "";
     const pattern = intent === "ADD" ? "add" : intent === "EXCLUDE" ? "exclude" : "change";
-    const newEntry = `[${getJSTTimestamp()}|${pattern}] ${note}`;
+    // 構造化フィールドは常に自動反映済みのため「【YYYY/MM/DD 自動反映】」をマーク
+    // UIの parseConditionLog() でこのマークを認識して「自動反映」バッジを表示する
+    const newEntry = `[${getJSTTimestamp()}|${pattern}] ${note} 【${getJSTDate()} 自動反映】`;
     await db.from("property_customers")
       .update({ additional_conditions: prev ? `${prev}\n${newEntry}` : newEntry, updated_at: new Date().toISOString() })
       .eq("id", pcId);

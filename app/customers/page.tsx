@@ -177,11 +177,11 @@ function isDoneToday(c: Customer): boolean {
   return sent || viewed;
 }
 
-// 条件ログエントリのパース: "【2026/06/07追加】" or "【2026/06/07反映済み】" 形式を検出
-function parseConditionLog(text: string): { isLog: boolean; isReflected: boolean; date: string; content: string } {
-  const m = text.match(/^【(\d{4}\/\d{2}\/\d{2})(追加|反映済み)】([\s\S]*)$/);
-  if (m) return { isLog: true, isReflected: m[2] === "反映済み", date: m[1], content: m[3].trim() };
-  return { isLog: false, isReflected: false, date: "", content: text };
+// 条件ログエントリのパース: "【2026/06/07追加】" or "【2026/06/07反映済み】" or "【2026/06/07 自動反映】" 形式を検出
+function parseConditionLog(text: string): { isLog: boolean; isReflected: boolean; isAutoReflected: boolean; date: string; content: string } {
+  const m = text.match(/^【(\d{4}\/\d{2}\/\d{2})(追加|反映済み| 自動反映)】([\s\S]*)$/);
+  if (m) return { isLog: true, isReflected: m[2] === "反映済み", isAutoReflected: m[2] === " 自動反映", date: m[1], content: m[3].trim() };
+  return { isLog: false, isReflected: false, isAutoReflected: false, date: "", content: text };
 }
 
 // 駅リスト（5駅以上の・区切り）を「なかもず 他47駅」に要約して表示
@@ -1933,7 +1933,15 @@ export default function CustomersPage() {
                             )}
                             {displayed.map((entry, i) =>
                               entry.isLog ? (
-                                entry.isReflected ? (
+                                entry.isAutoReflected ? (
+                                  // 自動反映ログ（青緑）
+                                  <div key={i} className="rounded-xl border border-teal-100 bg-teal-50 px-3 py-2">
+                                    <div className="flex items-center justify-between mb-1">
+                                      <span className="text-[10px] font-bold text-teal-600">🤖 {entry.date} 自動反映済み</span>
+                                    </div>
+                                    <p className="text-[11px] text-teal-800 leading-relaxed">{summarizeCondContent(entry.content)}</p>
+                                  </div>
+                                ) : entry.isReflected ? (
                                   // 反映済みログ（緑）
                                   <div key={i} className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2">
                                     <div className="flex items-center justify-between mb-1">
