@@ -14,6 +14,7 @@ interface SuggestTemplateRequest {
   customerName?: string;            // プレースホルダ認識用
   lastCustomerMsg?: string;         // お客様の最新メッセージ（省略時は messages から抽出）
   currentAixAction?: string;        // 現在サジェスト中のAIXアクション（任意）
+  lastAixSentMessage?: string;      // AIXで直前に送ったスタッフの文（最優先コンテキスト）
   messages: Array<{
     sender: string;                 // "staff" | "customer"
     text: string;
@@ -101,6 +102,8 @@ const sanitizeSurrogates = (s: string) =>
 const SELECTION_SYSTEM = `あなたは不動産賃貸仲介『スモラ』のLINE営業テンプレート選定AIです。会話履歴とAIXテンプレート一覧から、次にスタッフが送るべきテンプレートを最大3件、適合度順に選びます。
 
 【選定ルール（優先度順）】
+
+0. 【AIX文最優先ルール】ユーザーメッセージに「スタッフが直前に送ったAIX文」セクションが含まれる場合、それが「スタッフの直前アクション」です。「お客様の最新メッセージ」よりも後に送られた文なので、そのAIX文への自然な続き（補足・クロージング・次ステップ誘導）となるテンプレを最優先で選んでください。お客様の返信への応答テンプレは選ばないこと。
 
 1. 【状況分析を先に行う】お客様の最新メッセージ・感情状態（不安・急ぎ・比較検討中・信頼済み等）・会話フェーズ（first_reply=初回接触/hearing=条件ヒアリング/proposing=物件案内中/applying=申込検討）・お客様が本当に求めているもの（物件情報・スケジュール・安心感等）・返信の目的（次のアクションへ誘導・信頼構築・情報提供・クロージング）を内心で特定してから選ぶ。成約への一手（closing_strategy）に合致するテンプレを最上位に。
 
@@ -212,11 +215,17 @@ export async function POST(req: NextRequest) {
     .map((t) => `[${t.id}] ${t.category} | ${t.label} | ${t.text}`)
     .join("\n");
 
+  const lastAixSentMessage = sanitizeSurrogates(body.lastAixSentMessage || "");
+
   const userPrompt = [
     `【会話履歴】\n${history || "（履歴なし）"}`,
     lastCustomerMsg ? `【お客様の最新メッセージ】\n${lastCustomerMsg}` : "",
+    // AIX文が存在する場合は最も後に起きたスタッフ行動として最上位に提示
+    lastAixSentMessage
+      ? `【スタッフが直前に送ったAIX文】（お客様メッセージより後のアクション・最優先コンテキスト）\n${lastAixSentMessage}`
+      : "",
     `【会話ステータス】${currentState}`,
-    body.currentAixAction ? `【現在サジェスト中のAIXアクション】${body.currentAixAction}` : "",
+    body.currentAixAction ? `【現在のAIXアクション】${body.currentAixAction}` : "",
     `【テンプレート一覧】\n${templateList}`,
   ].filter(Boolean).join("\n\n");
 

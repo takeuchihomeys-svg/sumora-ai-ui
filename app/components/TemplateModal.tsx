@@ -1015,6 +1015,8 @@ export default function TemplateModal({
           customerName,
           messages: recentMessages.slice(-15).map((m) => ({ sender: m.sender, text: m.text, imageUrl: m.imageUrl })),
           templates: aixTemplates,
+          currentAixAction: postAixContext?.actionType,
+          lastAixSentMessage: postAixContext?.sentMessage,
         }),
       });
       const data = await res.json() as { ok: boolean; candidates?: Array<{ templateId: string; title: string; body: string; reason: string; rank: number }>; noMatch?: boolean; noMatchReason?: string; error?: string };
@@ -1033,7 +1035,7 @@ export default function TemplateModal({
     } finally {
       setIsSearchingTemplate(false);
     }
-  }, [templates, recentMessages, conversationState, customerName, conversationId, showModalError, category]);
+  }, [templates, recentMessages, conversationState, customerName, conversationId, showModalError, category, postAixContext]);
   // ⭐ 永久ルール管理タブ（HUMAN-* is_permanent フラグ管理）
   interface HumanRule { id: string; rule_key: string; rule_text: string; is_permanent: boolean; updated_at: string | null; priority: number; }
   const [humanRulesList, setHumanRulesList] = useState<HumanRule[]>([]);
