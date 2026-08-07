@@ -197,7 +197,7 @@ if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage)
     if (msg.type !== "axlx-realnetpro-autofill") return;
     setTimeout(function () {
       window.postMessage({ from: "aixlinx-fill", conditions: msg.conditions }, "*");
-    }, 200);
+    }, 500);
     sendResponse({ ok: true });
   });
 }

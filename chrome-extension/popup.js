@@ -2342,6 +2342,14 @@ document.addEventListener("DOMContentLoaded", () => {
           var btnEl = document.getElementById(cmd.areaMode === 'station' ? 'btn-mode-station' : 'btn-mode-ward');
           if (btnEl) btnEl.click();
         }
+        // Step ④ auto-click: autofill-btnをユーザー操作に近い遅延で自動クリックする
+        // isUnderbar=trueのとき（underbar iframe）のみbtnが表示されている
+        // isUnderbar=falseのとき（action popup）はbtnがdisplay:noneなのでクリックしない
+        var _autoClickDelay = 800 + Math.floor(Math.random() * 400); // 800-1200ms
+        setTimeout(function() {
+          var aBtn = document.getElementById('autofill-btn');
+          if (aBtn && aBtn.style.display !== 'none') aBtn.click();
+        }, _autoClickDelay);
       }
     });
   });
@@ -2365,6 +2373,12 @@ document.addEventListener("DOMContentLoaded", () => {
         var btnEl = document.getElementById(cmd.areaMode === 'station' ? 'btn-mode-station' : 'btn-mode-ward');
         if (btnEl) btnEl.click();
       }
+      // Step ④ auto-click (onChanged path)
+      var _autoClickDelay2 = 800 + Math.floor(Math.random() * 400);
+      setTimeout(function() {
+        var aBtn = document.getElementById('autofill-btn');
+        if (aBtn && aBtn.style.display !== 'none') aBtn.click();
+      }, _autoClickDelay2);
     }
   });
 

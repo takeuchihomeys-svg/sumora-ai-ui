@@ -244,6 +244,7 @@
   // content.js → background.js へ中継されてログ・デバッグ材料になる。
   // 正常系は引数なしで呼ぶこと。
   function notifyDone(errMsg) {
+    window._axFillRunning = false; // 次回呼び出しのためにフラグをリセット
     if (_doneNotified) return;
     _doneNotified = true;
     if (_watchdogTimer) { clearTimeout(_watchdogTimer); _watchdogTimer = null; }
@@ -532,6 +533,14 @@
   }
 
   function fillRealpro(cond) {
+    // 重複実行防止: popupパス(underbar→postMessage)とbackgroundパス(content.js→postMessage)が
+    // 同時に aixlinx-fill を送ると fillRealpro が2回呼ばれてDOMレースが起きる
+    if (window._axFillRunning) {
+      console.warn('[AX] fillRealpro 重複呼び出しを無視 (既に実行中)');
+      notifyDone('duplicate-call-ignored');
+      return;
+    }
+    window._axFillRunning = true;
     // fill-done 保証: 実行開始時にフラグをリセットし、85秒のフェイルセーフを仕掛ける
     // （background.js 側のタイムアウト90秒より必ず先に発火させる）
     _doneNotified = false;
@@ -1196,11 +1205,11 @@
               function() {
                 if (!hasStation) {
                   // 駅指定なし → そのまま閉じて検索
-                  waitForClick(closeStationModal, function() { setTimeout(clickSearch, 800); },
-                    20, 500, 600,
+                  waitForClick(closeStationModal, function() { setTimeout(clickSearch, 700 + Math.floor(Math.random() * 400)); },
+                    20, 500, (500 + Math.floor(Math.random() * 500)),
                     function() {
                       console.warn('[AX] 沿線モーダルを閉じられず → そのまま検索');
-                      setTimeout(clickSearch, 800);
+                      setTimeout(clickSearch, 700 + Math.floor(Math.random() * 400));
                     });
                   return;
                 }
@@ -1228,27 +1237,27 @@
                     // STEP E: 駅が選択された → モーダルを閉じる
                     waitForClick(closeStationModal, function() {
                       // STEP F: 検索実行（駅が確定してから）
-                      setTimeout(clickSearch, 800);
+                      setTimeout(clickSearch, 700 + Math.floor(Math.random() * 400)); // 700-1100ms human-like jitter
                     },
-                    20, 500, 600,
+                    20, 500, (500 + Math.floor(Math.random() * 500)),
                     function() {
                       console.warn('[AX] 駅モーダルを閉じられず → そのまま検索');
-                      setTimeout(clickSearch, 800);
+                      setTimeout(clickSearch, 700 + Math.floor(Math.random() * 400));
                     });
                   },
-                  30, 500, 600,
+                  30, 500, (500 + Math.floor(Math.random() * 500)),
                   function() { fallbackSearchWithoutStation('指定の駅が選択できませんでした。\n駅: ' + stNamesStr); }
                 );
               },
-              30, 500, 600,
+              30, 500, (500 + Math.floor(Math.random() * 500)),
               function() { fallbackSearchWithoutStation('「駅の設定へ進む」ボタンが見つかりませんでした。'); }
             );
           },
-          30, 500, 600,
+          30, 500, (500 + Math.floor(Math.random() * 500)),
           function() { fallbackSearchWithoutStation('路線一覧が表示されませんでした。'); }
         );
       },
-      30, 500, 600,
+      30, 500, (500 + Math.floor(Math.random() * 500)),
       function() { fallbackSearchWithoutStation('「沿線・駅絞り込み」ボタンが見つかりませんでした。'); }
     );
 
