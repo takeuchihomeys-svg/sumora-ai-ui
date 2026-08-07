@@ -1714,6 +1714,8 @@ function showUnknownWarn(tokens) {
 }
 
 function openInstructions(siteKey) {
+  // webappからは "realnetpro" で来るが SITE_CONFIG のキーは "realpro"
+  if (siteKey === "realnetpro") siteKey = "realpro";
   selectedSite = siteKey;
   const cfg = SITE_CONFIG[siteKey];
 

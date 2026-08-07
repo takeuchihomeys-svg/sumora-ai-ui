@@ -738,6 +738,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // ── WebApp（sumora-ai-ui）からの直接検索トリガー ──────────────────────────
   if (msg.type === "axlx-webapp-search") {
     const { site, conditions } = msg;
+    console.log("[webapp-search] ▶ 受信 site=" + site + " customerId=" + (conditions && conditions.customerId));
     (async () => {
       try {
         // ポップアップを開いて顧客を事前選択させるためのコマンドをセッションに保存
@@ -1627,6 +1628,7 @@ async function _pingTab(tabId, timeoutMs) {
 }
 
 async function _webappAutofill(site, conditions) {
+  console.log("[webapp-autofill] ▶ 開始 site=" + site);
   var siteUrlPrefixes = {
     realnetpro: "https://www.realnetpro.com",
     itandi:     "https://itandibb.com",
@@ -1638,7 +1640,7 @@ async function _webappAutofill(site, conditions) {
     reins:      "https://system.reins.jp/main/PF08/SA08I010.aspx"
   };
   var prefix = siteUrlPrefixes[site];
-  if (!prefix) return;
+  if (!prefix) { console.warn("[webapp-autofill] 不明なsite:", site); return; }
 
   var allTabs = await chrome.tabs.query({});
   var existing = allTabs.find(function(t) { return t.url && t.url.startsWith(prefix); });
@@ -1699,6 +1701,7 @@ async function _webappAutofill(site, conditions) {
   }
 
   // sendMessage 優先（executeScript の world:"MAIN" はホスト権限エラーが出やすいため）
+  console.log("[webapp-autofill] ▶ tab確定 id=" + tab.id + " url=" + tab.url);
   var msgType = site === "realnetpro" ? "axlx-realnetpro-autofill"
               : site === "reins"      ? "axlx-reins-autofill"
               :                        "axlx-itandi-autofill";
@@ -1712,7 +1715,11 @@ async function _webappAutofill(site, conditions) {
     }
     sent = await new Promise(function(resolve) {
       chrome.tabs.sendMessage(tab.id, { type: msgType, conditions: conditions }, function(resp) {
-        if (chrome.runtime.lastError) { resolve(false); return; }
+        if (chrome.runtime.lastError) {
+          console.warn("[webapp-autofill] attempt" + sendAttempt + " lastError:", chrome.runtime.lastError.message);
+          resolve(false); return;
+        }
+        console.log("[webapp-autofill] ✔ sendMessage成功 attempt=" + sendAttempt);
         resolve(true);
       });
     });
