@@ -6,6 +6,7 @@
 
   var tracked = [];
   var injectTimer = null;
+  var _autoSendPendingChecked = false; // inject() からの自動送信開始は1回のみ
 
   // ── 全ページ自動送信: sessionStorage キー ──────────────
   var AUTO_SEND_KEY = "axlx_auto_send";
@@ -58,6 +59,17 @@
       tracked.push({ cb: cb, btn: btn });
     });
     updateBar();
+
+    // リアプロ自動入力ボタンが押された後、検索結果が表示されたら自動送信を開始
+    if (!_autoSendPendingChecked && tracked.length > 0 && !getAutoSendState()) {
+      _autoSendPendingChecked = true;
+      chrome.storage.session.get(["axlx_pending_auto_send"], function (data) {
+        if (data && data.axlx_pending_auto_send) {
+          chrome.storage.session.remove("axlx_pending_auto_send");
+          setTimeout(autoSendAllPages, 800);
+        }
+      });
+    }
   }
 
   // ── フローティングバー ────────────────────────────

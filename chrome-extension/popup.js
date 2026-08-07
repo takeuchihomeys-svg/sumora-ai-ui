@@ -2316,6 +2316,8 @@ function openInstructions(siteKey) {
           unknown_tokens: rpUnknownTokens.length > 0 ? rpUnknownTokens : null,
         },
       }, "*");
+      // 検索結果表示後に全ページ自動送信を開始するフラグを立てる
+      try { chrome.storage.session.set({ axlx_pending_auto_send: true }); } catch (_) {}
       // スコアオーバーレイ用に有効条件（adj後）で上書き保存
       try {
         chrome.storage.session.set({ axlx_score_data: {
