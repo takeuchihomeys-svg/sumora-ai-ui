@@ -4,6 +4,7 @@ import { safeSlice } from "@/app/lib/safe-slice";
 import { generateEmbedding } from "@/app/lib/knowledge-utils";
 import { SMORA_COMMON_RULES, AIX_PROPERTY_RECOMMENDATION_RULES, AIX_PROPERTY_SEND_RULES, GENERATION_SYSTEM, CURATED_REPLY_RULES, CRITICAL_RULES_COMPACT, REAL_ESTATE_RULES } from "@/app/lib/line-reply-prompts";
 import { fetchPromptRules } from "@/app/lib/prompt-rules";
+import { aixStream, budgetSignal, remainingMs, type AixEvent, type AixStreamCtx } from "@/app/lib/aix-stream";
 
 export const maxDuration = 300;
 
@@ -494,7 +495,7 @@ async function callClaude(system: string, user: string, action: string): Promise
         system,
         messages: [{ role: "user", content: user }],
       }),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: budgetSignal(timeoutMs),
     });
     if (!res.ok) throw new Error(`Claude error: ${await res.text()}`);
     const data = await res.json();
@@ -506,8 +507,10 @@ async function callClaude(system: string, user: string, action: string): Promise
   } catch (e) {
     const isTimeout = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
     if (!isTimeout) throw e;
-    console.warn("[aix/action] callClaude timeout → リトライ:", { action });
-    return await attempt(25_000);
+    const left = remainingMs(25_000);
+    if (left < 10_000) throw new Error("AI生成がタイムアウトしました。もう一度お試しください");
+    console.warn("[aix/action] callClaude timeout → リトライ:", { action, left });
+    return await attempt(Math.min(25_000, left));
   }
 }
 
@@ -553,7 +556,7 @@ async function callClaudeVision(system: string, content: unknown[], action: stri
       messages: [{ role: "user", content }],
     }),
     // Sonnet5は画像+長文システムプロンプトで45秒を超えることがある → 60秒に延長
-    signal: AbortSignal.timeout(60_000),
+    signal: budgetSignal(38_000),
   });
   if (!res.ok) throw new Error(`Claude Vision error: ${await res.text()}`);
   const data = await res.json();
@@ -685,7 +688,7 @@ const AIX_SUGGEST_TEMPLATE_CATEGORY: Record<string, string> = {
   followup_revive: "追客する【AIX】",
 };
 
-export async function POST(request: NextRequest) {
+async function handleAction(request: NextRequest): Promise<Response> {
   try {
     const body = await request.json();
     const { action, account, customer_name, image_url, image_urls, condition_image_url, property_image_url, customer_conditions, extra_input, parsed_estimate, recent_messages, check_pattern, vacating_note, calendar_info, vacancy_status, has_estimate, move_out_date, keyword, property_name, property_names, property_vacancy_dates, property_count, all_properties_available, prop_statuses, include_estimate_text, show_viewing_invite, app_push_type, appeal_points, other_room_status, conversation_id: conversationId } = body;
@@ -890,8 +893,16 @@ export async function POST(request: NextRequest) {
 （設備）[物件資料の設備欄に記載の主要設備を「、」で区切って列挙する。例：「インターネット無料、オートロック、宅配ボックス、モニター付きインターホン、エアコン」など。設備記載がない場合はこの行ごと省略。バストイレ別・オートバイ駐輪場・バイク置場・自転車置き場・駐輪場は記載しない]
 
 [締め文 — 以下の条件で使い分ける]
-・「退去予定日:」としてユーザーメッセージに日付が明示されている場合：その日付をそのまま使い「[明示された日付]退去予定のため、[明示された日付]以降にご内覧可能です！！」（画像から読み直し絶対禁止）
-・退去予定が画像から読み取れる場合（日付未明示）：「○月末退去予定のため、○月○日以降にご内覧可能です！！」
+・「退去予定日:」としてユーザーメッセージに日付が明示されている場合：その日付をそのまま使い「[明示された日付]退去予定のため、[内覧可能日（退去日の翌日）]以降にご内覧可能です！！」（画像から読み直し絶対禁止）
+・退去予定が画像から読み取れる場合（日付未明示）：「[退去予定日]退去予定のため、[退去翌日]以降にご内覧可能です！！」
+  【🔴 退去日の読み取りルール（必ず守ること）】
+  ① 備考欄（remarks欄）に「解約予定」「退去予定」「解約日」と書かれた日付がある場合 → その日付を退去予定日として使う
+  ② 現況/入居時期の欄は「退去後に入居可能になる日」であり退去予定日ではない → 絶対に退去予定日として使わない
+  ③ 例：備考欄「2026/08/31解約予定」→ 退去日=8月31日、内覧可能=9月1日以降
+  【🔴 日付フォーマット（必ず守ること）】
+  ・西暦（年）を含めない。「○月○日」の形式のみ（「2026年8月31日」→「8月31日」）
+  ・内覧可能日は退去予定日の翌日（8月31日退去なら9月1日以降・9月28日退去なら9月29日以降）
+  ・「○月末退去予定のため、○月○日以降にご内覧可能です！！」の形式で書く
 ・「建築中」「新築未完成」「竣工予定」など内覧不可の物件の場合：「※こちらのお部屋は建築中のため、[竣工・入居予定時期]のご入居となります！！[お客様の希望入居時期と合わない場合は「〇月のご入居をご希望の場合はご入居時期が合わない形となりますが、新築物件でかなり条件の良いお部屋のためご検討頂けますと幸いです！！」を追加]」のみで締める。案内誘導文（「お気に召されましたら〜ご案内させて頂きます」）は絶対に付けない
 ・【🔴 絶対禁止】退去予定・建築中以外の通常の空室物件では「お気に召されましたら〜ご案内」「ご都合よろしいお日にちに〜」等の内覧誘導文を書くのは絶対禁止。内覧誘導は別途テンプレートで送るため、物件オススメ文には含めない。（設備）欄の後で必ず終わること
 
@@ -4095,4 +4106,58 @@ ${SMORA_COMMON_RULES}
     console.error("[aix/action]", err);
     return NextResponse.json({ ok: false, error: String(err) }, { status: 500 });
   }
+}
+
+// ── ストリーミングラッパー ──────────────────────────────────────────────────
+const SERVER_BUDGET_MS = 55_000;
+
+export async function POST(request: NextRequest) {
+  if (!request.headers.get("accept")?.includes("application/x-ndjson")) {
+    return handleAction(request);
+  }
+
+  const encoder = new TextEncoder();
+  const deadline = Date.now() + SERVER_BUDGET_MS;
+  const ac = new AbortController();
+  const onClientAbort = () => ac.abort(new Error("client disconnected"));
+  request.signal.addEventListener("abort", onClientAbort);
+  const hardStop = setTimeout(() => ac.abort(new Error("server budget 55s exceeded")), SERVER_BUDGET_MS);
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      let closed = false;
+      const emit = (ev: AixEvent) => {
+        if (closed) return;
+        try { controller.enqueue(encoder.encode(JSON.stringify(ev) + "\n")); }
+        catch { closed = true; }
+      };
+      emit({ t: "phase", phase: "prepare", label: "情報を集めています" });
+
+      const ctx: AixStreamCtx = { emit, deadline, signal: ac.signal, seq: 0, busy: false };
+      try {
+        const res = await aixStream.run(ctx, () => handleAction(request));
+        const resData = await (res as Response).json().catch(() => ({}));
+        emit({ t: "done", payload: resData });
+      } catch (err) {
+        console.error("[aix/action] stream error:", err);
+        const msg = err instanceof Error ? err.message : String(err);
+        emit({ t: "error", error: /abort|timeout|budget/i.test(msg)
+          ? "AI生成がタイムアウトしました（55秒）。もう一度お試しください"
+          : msg });
+      } finally {
+        closed = true;
+        clearTimeout(hardStop);
+        request.signal.removeEventListener("abort", onClientAbort);
+        try { controller.close(); } catch { /* already closed */ }
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",
+    },
+  });
 }
