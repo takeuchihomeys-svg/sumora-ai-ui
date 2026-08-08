@@ -465,7 +465,28 @@ commute_constraints: 通勤・通学時間制約
 
           // ── Step 2: stations → station_map / line_stations 照合 ─────────────
           for (const stName of ai.stations ?? []) {
-            if (result.realpro.station_names.includes(stName)) continue; // ローカル解決済みはスキップ
+            if (result.realpro.station_names.includes(stName)) {
+              // ローカル解決済みでも station_pairs に特定駅エントリがなければ補完する
+              if (!result.reins.station_pairs.some(p => p.station === stName)) {
+                const { data: spRow } = await db
+                  .from("station_map")
+                  .select("reins_line")
+                  .eq("token", stName)
+                  .neq("source", "unknown")
+                  .maybeSingle();
+                if (spRow?.reins_line) {
+                  const nullIdx = result.reins.station_pairs.findIndex(
+                    p => p.line === spRow.reins_line && p.station === null
+                  );
+                  if (nullIdx >= 0) {
+                    result.reins.station_pairs[nullIdx] = { line: spRow.reins_line, station: stName };
+                  } else {
+                    result.reins.station_pairs.push({ line: spRow.reins_line, station: stName });
+                  }
+                }
+              }
+              continue; // ローカル解決済みはスキップ
+            }
 
             // station_map で検索
             const { data: stRow } = await db

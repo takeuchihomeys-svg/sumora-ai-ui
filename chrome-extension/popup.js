@@ -238,7 +238,7 @@ async function resolveAreaWithAPI(rawArea, areaMode) {
   }
 
   const toks = parseAreaTokens(rawArea);
-  const hasRoute   = toks.some(t => t.endsWith("線") && !STATION_LINE_MAP[t]);
+  const hasRoute   = toks.some(t => t.endsWith("線") && !STATION_LINE_MAP[t] && !lineNameToRouteId(t));
   const hasUnknown = computeUnknownTokens(rawArea).length > 0;
   // "auto" は最も広く解決するモード → auto で空なら ward/station でも必ず空
   const _local = buildAreaRouteCodes({ desired_area: rawArea }, "auto");
@@ -775,8 +775,18 @@ const SITE_CONFIG = {
           // 駅名・沿線名 → 沿線・駅
           // トークン単位で「駅名」か「路線名（全線）」かを判別して個別ステップ表示
           const toks = parseAreaTokens(areaText);
-          const lineToks = toks.filter(t => t.endsWith("線") && !STATION_LINE_MAP[t] && !STATION_LINE_MAP[t.replace(/[町村]$/, "")]);
-          const stToks   = toks.filter(t => !lineToks.includes(t));
+          const _routeCandidates = toks.filter(t => t.endsWith("線") && !STATION_LINE_MAP[t] && !STATION_LINE_MAP[t.replace(/[町村]$/, "")]);
+          const _stCandidates = toks.filter(t => !_routeCandidates.includes(t));
+          const lineToks = _routeCandidates.filter(routeTok => {
+            const routeInternal = lineNameToInternalName(routeTok) || routeTok;
+            const isContextRoute = _stCandidates.some(stTok => {
+              const stLines = findStationLines(stTok) ||
+                              (LEARNED_STATION_MAP[stTok] && LEARNED_STATION_MAP[stTok].realpro_lines) || [];
+              return stLines.some(sl => sl === routeInternal || sl === routeTok);
+            });
+            return !isContextRoute;
+          });
+          const stToks = _stCandidates;  // 路線候補トークンを完全に除外した残り
 
           // 駅名ステップ
           if (stToks.length > 0) {
@@ -982,8 +992,14 @@ const SITE_CONFIG = {
       };
 
       // 駅に対応するitandi路線名を取得（STATION_LINE_MAP → LEARNED_STATION_MAP の順）
-      const stationKey_i = rawArea ? rawArea.replace(/駅|周辺|付近|近く/g, "").trim() : "";
-      const stationLines_i = STATION_LINE_MAP[stationKey_i] || [];
+      const _itandiToks = parseAreaTokens(rawArea);
+      const _itandiStTok = _itandiToks.find(t =>
+        STATION_LINE_MAP[t] ||
+        (LEARNED_STATION_MAP[t] && LEARNED_STATION_MAP[t].itandi_lines && LEARNED_STATION_MAP[t].itandi_lines.length > 0)
+      );
+      const stationKey_i = _itandiStTok || (rawArea ? rawArea.replace(/駅|周辺|付近|近く/g, "").trim() : "");
+      const stationLines_i = STATION_LINE_MAP[stationKey_i] ||
+        (LEARNED_STATION_MAP[stationKey_i] && LEARNED_STATION_MAP[stationKey_i].realpro_lines) || [];
       let itandiLines;
       if (stationLines_i.length > 0) {
         itandiLines = stationLines_i.map(l => ITANDI_LINE_MAP[l] || l);
@@ -1070,8 +1086,16 @@ const SITE_CONFIG = {
       });
 
       // エリア絞り込み（沿線・駅 or 所在地）
-      const stationKey = rawArea.replace(/駅|周辺|付近|近く/g, "").trim();
-      const stationLines = stationKey ? (STATION_LINE_MAP[stationKey] || []) : [];
+      const _reinsToks = parseAreaTokens(rawArea);
+      const _reinsStTok = _reinsToks.find(t =>
+        STATION_LINE_MAP[t] ||
+        (LEARNED_STATION_MAP[t] && LEARNED_STATION_MAP[t].reins_line)
+      );
+      const stationKey = _reinsStTok || rawArea.replace(/駅|周辺|付近|近く/g, "").trim();
+      const stationLines = stationKey ? (
+        STATION_LINE_MAP[stationKey] ||
+        (LEARNED_STATION_MAP[stationKey] && LEARNED_STATION_MAP[stationKey].realpro_lines) || []
+      ) : [];
       if (stationLines.length) {
         // 沿線モード — 内部名をREINS表記に変換
         const reinsLines = stationLines.map(l => REINS_LINE_MAP[l] || l);
@@ -1668,7 +1692,10 @@ function setupAreaModeSelector(c, siteKey) {
     return vs.some(v => STATION_LINE_MAP[v]) ||
       Object.values(REINS_LINE_MAP).some(v => v === t || v.endsWith(t));
   });
-  const defaultMode = hasWardToken ? "ward" : (hasStationToken ? "station" : "ward");
+  const hasResolvableRoute = toks.some(t => t.endsWith("線") && lineNameToRouteId(t));
+  const defaultMode = (hasStationToken || hasResolvableRoute) ? "station"
+                    : hasWardToken ? "ward"
+                    : "ward";
 
   _areaModeSource = "auto";
   setMode(defaultMode);
