@@ -184,6 +184,19 @@ async function deriveSuggestedAix(
       };
     }
   }
+  // ─── Step 0.7: 内覧希望を検知 → viewing_invite を最優先で誘導 ───
+  // お客様が「内覧したい」等を明示したらAIX【内覧日調整】を確定誘導する
+  if (customerMessage) {
+    const viewingIntent =
+      /(内覧|内見|見学).{0,8}(したい|希望|お願い|可能|行き?たい|行ってみ|させてください|でき(ます|そう)|いつ(頃)?)|一度.*見てみ|実際に見てみ|見てみたい/;
+    if (viewingIntent.test(customerMessage)) {
+      const redirected = redirectMoveOut(
+        "viewing_invite",
+        "お客様が内覧希望です → AIX【内覧日調整】で日程候補を送ってください",
+      );
+      return { ...redirected, source: "viewing_intent_regex", enforcement_level: "required" as const };
+    }
+  }
   // ─── Step 1: suggest-next-action（DB学習ルール）に問い合わせ（3秒タイムアウト） ───
   if (conversationId && internalBaseUrl) {
     try {
@@ -785,6 +798,15 @@ function buildGenerationMessages(
     ? `\n\n【📅 内覧日時について】この物件は退去予定/入居中のため現地内覧はできません。「退去後すぐにご案内します」「お申込みでお部屋を先に抑えてからのご内覧も可能です」の方向で返すこと。`
     : `\n\n【📅 内覧日時の具体的提案は絶対禁止（最優先）】「〇/〇（木）14:00〜」「直近ですと[日付][時間帯]」「〇〇でご都合いかがでしょうか」のような具体的な内覧候補日時・2択日程提示は絶対に出力しない。内覧の日程調整はAIXの「内覧へ」ボタンのテンプレートで別途行うため、AI返信案には含めない。内覧に触れる場合は「お気に召されましたらご都合よろしいお日にちにご案内させて頂きます！！」のみ許可。[日付][時間帯]プレースホルダーも使用禁止。`;
 
+  // お客様が「内覧したい」を明示した場合: 返信は短い承認文のみ。日程・申込み提案は含めない
+  const hasViewingIntent =
+    /(内覧|内見|見学).{0,8}(したい|希望|お願い|可能|行き?たい|行ってみ|させてください|でき(ます|そう)|いつ(頃)?)|一度.*見てみ|実際に見てみ|見てみたい/.test(
+      customerMessage ?? "",
+    );
+  const viewingIntentShortReplyNote = hasViewingIntent && resolvedPropertyStatus !== "move_out_scheduled" && resolvedPropertyStatus !== "occupied"
+    ? `\n\n【📅 内覧希望への返信は短く（最重要）】お客様が内覧希望を明示しています。返信は「かしこまりました！！ご都合よろしいお日にちをお伝えさせて頂きます！！」程度の短い承認文のみにしてください。以下は絶対禁止：① 申込み提案（「先にお申込みでお部屋を抑えることも可能」等）② 内覧を促す誘導文（「お気に召されましたら〜」は不要）③ その他の追加情報。内覧日程の詳細はAIX【内覧日調整】から別途送るため、この返信には含めない。`
+    : "";
+
   // 見積書カバー文はAIXの「見積書送る」ボタン専用。generate-replyでは見積書を添付できないため、
   // 添付済みを装う文面・金額内訳をAI返信案に出さない（内覧日時ゲート viewingFactNote と同型の常時注入ゲート）
   const estimateGateNote = `\n\n【💰 見積書カバー文の生成は絶対禁止（最優先）】「〜の御見積書となります」「御見積書をお送りします＋ご査収ください」のような、見積書を既に添付した体のカバーメッセージ・初期費用の金額内訳は絶対に出力しない。見積書本体はAIXの「見積書送る」ボタンで別途作成・添付して送るため、AI返信案には含めない。初期費用・見積の質問への返信は「かしこまりました！！最大限割引させていただいた御見積書を作成しお送りさせて頂きます！！」の作成宣言のみ許可（物件名入りの見積書送付文・金額内訳・見積書に対する「ご査収ください」は書かない）。この物件の家賃・管理費（共益費）・敷金・礼金の実額もAIは物件資料画像を読めないため断言・推測禁止。会話履歴内でスタッフが既に伝えた金額をそのまま引用する場合のみ言及可。それ以外は『確認しご連絡させて頂きます😊！！』または見積書作成宣言で返すこと。敷金・礼金の一般論（通常0〜2ヶ月分等）は可。`;
@@ -862,7 +884,7 @@ ${QUOTE_REPLY_JUDGE_NOTE}${quotedContextNote}
 ${history || "なし"}
 
 ${isFollowUp ? "【参考：お客様の直近メッセージ（既に返信済み）】" : "【お客様の最新メッセージ】"}
-${customerMessage}${applicationFormNote}${viewingFactNote}${estimateGateNote}${propertyFactGateNote}\n\n${meetingPlaceGateNote}${linkRequestNote}
+${customerMessage}${applicationFormNote}${viewingFactNote}${viewingIntentShortReplyNote}${estimateGateNote}${propertyFactGateNote}\n\n${meetingPlaceGateNote}${linkRequestNote}
 
 ${examples}${examplesInstruction}
 
