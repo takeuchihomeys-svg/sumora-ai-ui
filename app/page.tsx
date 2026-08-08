@@ -900,6 +900,8 @@ export default function Home() {
   const [chatCondAddId, setChatCondAddId] = useState<string | null>(null);
   const [chatCondAddText, setChatCondAddText] = useState("");
   const [chatCondAddSaving, setChatCondAddSaving] = useState(false);
+  // AIプロフィール分析テキストの折りたたみ
+  const [condProfileExpanded, setCondProfileExpanded] = useState(false);
   const [reflectLoadingChat, setReflectLoadingChat] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -5437,18 +5439,27 @@ export default function Home() {
             const condLines = lc.conditions.split("\n").filter(Boolean);
             return (
               <div className="border-b border-[#d1d7db] bg-white/95 backdrop-blur-md px-3 py-2.5 shadow-sm">
-                <div className="flex flex-wrap gap-1.5">
-                  {condLines.map((line, i) => {
-                    const colonIdx = line.indexOf(": ");
-                    const key = colonIdx >= 0 ? line.slice(0, colonIdx) : line;
-                    const val = colonIdx >= 0 ? line.slice(colonIdx + 2) : "";
-                    return (
-                      <span key={i} className="flex items-center gap-1 rounded-xl bg-[#f0f2f5] px-2.5 py-1 text-[11px]">
-                        <span className="text-[#8696a0] font-medium">{key}</span>
-                        {val && <span className="text-[#1565C0] font-semibold">{val}</span>}
-                      </span>
-                    );
-                  })}
+                <div className="flex items-start gap-2">
+                  <div className="flex flex-wrap gap-1.5 flex-1">
+                    {condLines.map((line, i) => {
+                      const colonIdx = line.indexOf(": ");
+                      const key = colonIdx >= 0 ? line.slice(0, colonIdx) : line;
+                      const val = colonIdx >= 0 ? line.slice(colonIdx + 2) : "";
+                      return (
+                        <span key={i} className="flex items-center gap-1 rounded-xl bg-[#f0f2f5] px-2.5 py-1 text-[11px]">
+                          <span className="text-[#8696a0] font-medium">{key}</span>
+                          {val && <span className="text-[#1565C0] font-semibold">{val}</span>}
+                        </span>
+                      );
+                    })}
+                  </div>
+                  <button
+                    onClick={() => { setChatCondAddId(lc.id); setChatCondAddText(""); setChatCondAddOpen(true); }}
+                    className="shrink-0 flex items-center justify-center h-7 w-7 rounded-full bg-[#1565C0] text-white text-base font-bold shadow-sm active:scale-95 transition-transform"
+                    title="条件を追加"
+                  >
+                    ＋
+                  </button>
                 </div>
                 {lc.ai_summary && (() => {
                   const summary = lc.ai_summary as string;
@@ -5471,8 +5482,19 @@ export default function Home() {
                         </div>
                       )}
                       {profileBullets && (
-                        <div className="rounded-xl border border-[#e8e8e8] bg-[#fafafa] px-3 py-2">
-                          <p className="text-[11px] leading-relaxed text-[#666]">{profileBullets}</p>
+                        <div className="rounded-xl border border-[#e8e8e8] bg-[#fafafa] overflow-hidden">
+                          <button
+                            onClick={() => setCondProfileExpanded((v) => !v)}
+                            className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] text-[#888] hover:bg-[#f0f0f0] active:bg-[#e8e8e8] transition-colors"
+                          >
+                            <span className="font-medium">AI分析 詳細</span>
+                            <span className="text-[10px]">{condProfileExpanded ? "▲ 閉じる" : "▼ 開く"}</span>
+                          </button>
+                          {condProfileExpanded && (
+                            <div className="px-3 pb-2 border-t border-[#efefef]">
+                              <p className="text-[11px] leading-relaxed text-[#666] pt-1.5">{profileBullets}</p>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
