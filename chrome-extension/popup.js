@@ -406,6 +406,18 @@ function parseAreaTokens(rawArea) {
   );
   // 括弧内の補足説明を除去（「西中島南方（〜じゃなくても可、大阪市内）」→「西中島南方」）
   rawArea = rawArea.replace(/（[^）]*）/g, "").replace(/\([^)]*\)/g, "").trim();
+  // 「野田阪神駅・住之江駅へ乗り換え1回で行けるところ」→ 1乗り換え到達路線に展開
+  rawArea = rawArea.replace(
+    /([^\s,、\/（(]{1,40})(?:から|へ|に)?乗り換え[1一]回(?:で行けるところ|以内)?/g,
+    (_, stationsStr) => {
+      const hubs = stationsStr
+        .split(/[・,、\/]/)
+        .map(s => s.replace(/駅$/, "").trim())
+        .filter(s => s.length > 0);
+      const expanded = getOneTransferLines(hubs);
+      return expanded.length > 0 ? expanded.join(",") : stationsStr;
+    }
+  );
   // 「大阪市内の御堂筋線」→「大阪市内,御堂筋線」に分割（市内/府内 + 線名の複合表現）
   rawArea = rawArea.replace(/([^\s,、・\/（(]*(?:市内|府内))の([^\s,、・\/（(]+線)/g, "$1,$2");
   // 「江坂まで20分くらいの」→「江坂」（時間ベースエリア表現から目的駅名を抽出）
@@ -645,6 +657,29 @@ function getHubLines(stationKey) {
     }
   }
   return lines;
+}
+
+// 指定駅から乗り換え1回で到達できる全路線名を返す（STATION_LINE_MAP を逆引き）
+function getOneTransferLines(hubStations) {
+  const lines = new Set();
+  for (const rawSt of hubStations) {
+    const candidates = (typeof STATION_HUB_MAP !== "undefined" && STATION_HUB_MAP[rawSt])
+      ? STATION_HUB_MAP[rawSt]
+      : [rawSt];
+    for (const st of candidates) {
+      const directLines = STATION_LINE_MAP[st] || LEARNED_STATION_MAP[st]?.realpro_lines || [];
+      for (const line of directLines) lines.add(line);
+      // 直通路線に属する全駅のSTATION_LINE_MAPエントリから乗り換え路線を収集
+      for (const line of directLines) {
+        for (const stLines of Object.values(STATION_LINE_MAP)) {
+          if (stLines.includes(line)) {
+            for (const tl of stLines) lines.add(tl);
+          }
+        }
+      }
+    }
+  }
+  return [...lines];
 }
 
 function buildAreaRouteCodes(c, mode = "auto") {
