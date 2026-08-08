@@ -620,6 +620,22 @@ function getStationsForLine(name) {
   return Object.keys(STATION_LINE_MAP).filter(s => (STATION_LINE_MAP[s] || []).includes(internalName));
 }
 
+// ハブ駅展開: 「梅田」→ 梅田・東梅田・西梅田・大阪梅田・大阪 の全路線をまとめて返す
+// ハブでない場合は単一駅の路線リストをそのまま返す
+function getHubLines(stationKey) {
+  const hubStations = (typeof STATION_HUB_MAP !== "undefined" && STATION_HUB_MAP[stationKey])
+    ? STATION_HUB_MAP[stationKey]
+    : [stationKey];
+  const lines = [];
+  for (const st of hubStations) {
+    const stLines = STATION_LINE_MAP[st] || LEARNED_STATION_MAP[st]?.realpro_lines || [];
+    for (const l of stLines) {
+      if (!lines.includes(l)) lines.push(l);
+    }
+  }
+  return lines;
+}
+
 function buildAreaRouteCodes(c, mode = "auto") {
   const rawArea = (c.desired_area || c.area || "").trim();
   const city_codes = [], route_ids = [];
@@ -668,7 +684,7 @@ function buildAreaRouteCodes(c, mode = "auto") {
         if (_pfxR?.type === "station") station = _pfxR.resolved;
       }
       const stationKey = station || part;
-      const lines = STATION_LINE_MAP[stationKey] || LEARNED_STATION_MAP[stationKey]?.realpro_lines || [];
+      const lines = getHubLines(stationKey); // ハブ駅展開（梅田→御堂筋+谷町+四つ橋+阪急3線+阪神+JR等）
       // lineNameToRouteId で表記ゆれ吸収（学習データの「大阪市高速電気軌道御堂筋線」等もroute_idに変換できる）
       lines.forEach(l => { const id = lineNameToRouteId(l); if (id && !route_ids.includes(id)) route_ids.push(id); });
       // 漢字↔ひらがなエイリアスの路線も追加（難波→なんば でOsaka Metro、なんば→難波 で南海）
@@ -714,7 +730,7 @@ function buildAreaRouteCodes(c, mode = "auto") {
     const stationKey = station || part;
     const ward = STATION_WARD_MAP[stationKey] || findStationWard(part);
     if (ward && WARD_CODE_MAP[ward] && !city_codes.includes(WARD_CODE_MAP[ward])) city_codes.push(WARD_CODE_MAP[ward]);
-    const lines = STATION_LINE_MAP[stationKey] || LEARNED_STATION_MAP[stationKey]?.realpro_lines || [];
+    const lines = getHubLines(stationKey); // ハブ駅展開
     lines.forEach(l => { const id = LINE_ROUTE_MAP[l]; if (id && !route_ids.includes(id)) route_ids.push(id); });
   }
   return { city_codes, route_ids };
@@ -998,8 +1014,7 @@ const SITE_CONFIG = {
         (LEARNED_STATION_MAP[t] && LEARNED_STATION_MAP[t].itandi_lines && LEARNED_STATION_MAP[t].itandi_lines.length > 0)
       );
       const stationKey_i = _itandiStTok || (rawArea ? rawArea.replace(/駅|周辺|付近|近く/g, "").trim() : "");
-      const stationLines_i = STATION_LINE_MAP[stationKey_i] ||
-        (LEARNED_STATION_MAP[stationKey_i] && LEARNED_STATION_MAP[stationKey_i].realpro_lines) || [];
+      const stationLines_i = getHubLines(stationKey_i); // ハブ駅展開（梅田→御堂筋+谷町+四つ橋+阪急3線+阪神等）
       let itandiLines;
       if (stationLines_i.length > 0) {
         itandiLines = stationLines_i.map(l => ITANDI_LINE_MAP[l] || l);
@@ -1092,10 +1107,7 @@ const SITE_CONFIG = {
         (LEARNED_STATION_MAP[t] && LEARNED_STATION_MAP[t].reins_line)
       );
       const stationKey = _reinsStTok || rawArea.replace(/駅|周辺|付近|近く/g, "").trim();
-      const stationLines = stationKey ? (
-        STATION_LINE_MAP[stationKey] ||
-        (LEARNED_STATION_MAP[stationKey] && LEARNED_STATION_MAP[stationKey].realpro_lines) || []
-      ) : [];
+      const stationLines = stationKey ? getHubLines(stationKey) : []; // ハブ駅展開
       if (stationLines.length) {
         // 沿線モード — 内部名をREINS表記に変換
         const reinsLines = stationLines.map(l => REINS_LINE_MAP[l] || l);
