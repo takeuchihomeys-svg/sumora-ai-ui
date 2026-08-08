@@ -181,6 +181,30 @@ const REINS_LINE_MAP: Record<string, string> = {
   "阪堺電気軌道阪堺線":"阪堺電気軌道阪堺線",
 };
 
+// ── 概念的広域地名 → 大阪府の市区名（resolve-search-conditions/route.ts と同期維持）──
+const CONCEPT_AREA_MAP: Record<string, string[]> = {
+  "北摂": ["豊中市","吹田市","茨木市","高槻市","池田市","箕面市","摂津市"],
+  "河内": ["東大阪市","八尾市","大東市","四條畷市","柏原市","松原市","大阪狭山市","富田林市","河内長野市","羽曳野市","藤井寺市"],
+  "南河内": ["富田林市","河内長野市","羽曳野市","藤井寺市","大阪狭山市","柏原市"],
+  "泉州": ["堺市堺区","堺市北区","堺市西区","堺市中区","堺市東区","堺市南区","堺市美原区","岸和田市","泉大津市","貝塚市","泉佐野市","泉南市","阪南市","和泉市"],
+  "なんば": ["大阪市中央区","大阪市浪速区","大阪市西区"],
+  "難波":   ["大阪市中央区","大阪市浪速区","大阪市西区"],
+  "ミナミ": ["大阪市中央区","大阪市浪速区","大阪市西区"],
+  "梅田":   ["大阪市北区","大阪市福島区"],
+  "キタ":   ["大阪市北区","大阪市福島区"],
+  "心斎橋": ["大阪市中央区"],
+  "本町":   ["大阪市中央区"],
+  "天王寺": ["大阪市天王寺区","大阪市阿倍野区"],
+  "新大阪": ["大阪市淀川区","大阪市東淀川区"],
+  "大阪市内": [
+    "大阪市都島区","大阪市福島区","大阪市此花区","大阪市西区","大阪市港区","大阪市大正区",
+    "大阪市天王寺区","大阪市浪速区","大阪市西淀川区","大阪市東淀川区","大阪市東成区",
+    "大阪市生野区","大阪市旭区","大阪市城東区","大阪市阿倍野区","大阪市住吉区",
+    "大阪市東住吉区","大阪市西成区","大阪市淀川区","大阪市鶴見区","大阪市住之江区",
+    "大阪市平野区","大阪市北区","大阪市中央区",
+  ],
+};
+
 // 路線名を内部正式名に解決（LINE_ROUTE_MAP のキー形式に変換）
 function resolveLineInternal(name: string): string | null {
   if (LINE_ROUTE_MAP[name]) return name;
@@ -217,6 +241,38 @@ function toItandiNames(internal: string): string[] {
   const v = ITANDI_LINE_MAP_FILL[internal];
   if (!v) return [];
   return Array.isArray(v) ? v : [v];
+}
+
+// DeepSeek に「〜まで〜分で行ける駅」を問い合わせ、駅名リストを返す
+// タイムアウト 15_000ms（Claude NL抽出と合わせた最大処理時間に対応）
+async function resolveNearbyWithDeepSeek(station: string, minutes: number): Promise<string[]> {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  if (!apiKey) return [];
+  try {
+    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
+      method: "POST",
+      signal: AbortSignal.timeout(15_000),
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        max_tokens: 300,
+        messages: [{ role: "user", content:
+          `大阪府で「${station}駅」から電車で${minutes}分以内（乗り換え含む）に行ける主要な駅を列挙してください。\n大阪府内の駅のみ対象。JSONの配列形式のみで返してください: ["駅名1", "駅名2", ...]\n駅名には「駅」を付けないでください。10〜20駅程度。`,
+        }],
+        temperature: 0,
+      }),
+    });
+    if (!res.ok) return [];
+    const data = await res.json() as { choices: Array<{ message: { content: string } }> };
+    const raw = (data.choices[0]?.message?.content ?? "").trim();
+    const match = raw.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\[[\s\S]*\]/);
+    if (!match) return [];
+    const parsed = JSON.parse(match[0]) as unknown[];
+    return parsed.filter((s): s is string => typeof s === "string" && s.length > 0);
+  } catch (e) {
+    console.warn("[resolve-area] DeepSeek nearby error:", e instanceof Error ? e.message : e);
+    return [];
+  }
 }
 
 interface ResolveAreaResponse {
@@ -268,8 +324,6 @@ export async function POST(req: NextRequest) {
       new_regions:  [],
     };
 
-    const unknownForAI: string[] = [];
-
     for (const tok of tokens) {
       if (tok.length < 2) continue;
 
@@ -294,11 +348,8 @@ export async function POST(req: NextRequest) {
           const rName = REINS_LINE_MAP[internal];
           if (rName && !result.reins.station_pairs.some(p => p.line === rName))
             result.reins.station_pairs.push({ line: rName, station: null });
-
-          continue;
         }
-        // 未解決の路線名 → Claude に問い合わせ
-        if (!unknownForAI.includes(tok)) unknownForAI.push(tok);
+        // 未解決の路線名はClaudeのNL抽出（全文）で処理されるためスキップのみ
         continue;
       }
 
@@ -317,113 +368,187 @@ export async function POST(req: NextRequest) {
       }
 
       // ── それ以外: 数字始まり・都道府県市区郡含みはスキップ ────────────────
+      // 残りトークンは Claude NL抽出（全文渡し）で処理される
       if (/^[0-9０-９]/.test(tok) || /[都道府県市区郡]/.test(tok)) continue;
-
-      if (!unknownForAI.includes(tok)) unknownForAI.push(tok);
     }
 
-    // ── Claude Haiku で未解決トークンを処理 ────────────────────────────────
-    if (unknownForAI.length > 0) {
+    // ── Claude Haiku: 生テキストからNL entity extraction ────────────────────────
+    // 旧: unknownForAI トークンを route/ward/station に分類
+    // 新: desired_area 全文を渡して stations/lines/areas/commute_constraints を抽出
+    // 理由: parseTokens が自然言語構造を破壊するため「阪急茨木市まで30分で通える沿線」の
+    //       commute制約が失われていた。全文渡しで自然言語の意味を正確に取得する。
+    if (desired_area.trim()) {
       const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-      const knownRoutes = [
-        "御堂筋線","谷町線","四つ橋線","中央線","千日前線","堺筋線","長堀鶴見緑地線","今里筋線",
-        "阪急千里線","阪急宝塚線","阪急京都線","阪急神戸線","阪急箕面線",
-        "阪神本線","阪神なんば線","南海本線","南海高野線","南海空港線",
-        "京阪本線","京阪中之島線","大阪環状線","阪和線","おおさか東線","福知山線","片町線",
-        "近鉄南大阪線","近鉄大阪線","近鉄奈良線","近鉄けいはんな線","近鉄長野線",
-        "北大阪急行","大阪モノレール本線",
-      ].join("、");
+      const systemPrompt = `あなたは大阪府の不動産検索システムの自然言語解析エンジンです。
+エリア希望文字列から不動産検索に必要な情報を構造化して抽出してください。
 
-      const prompt = `大阪府の不動産検索システムです。以下のトークンを分類してJSON返却してください。
+【出力形式】JSONのみ（説明文不要）:
+{"stations":[],"lines":[],"areas":[],"commute_constraints":[]}
 
-トークン: ${JSON.stringify(unknownForAI)}
+【フィールド定義】
+stations: 駅名の配列（「駅」を付けない。例: "茨木市","梅田","天王寺"）
+  - 「〜まで〜分」の基準駅もここに含める
+  - 実在が確実な駅名のみ（推測禁止）
 
-既知路線（短縮名）の例: ${knownRoutes}
-市区名の例: 大阪市北区、大阪市中央区、東大阪市、豊中市、吹田市、堺市
+lines: 以下のリストから選択のみ（自由記述禁止）:
+  御堂筋線,谷町線,四つ橋線,中央線,千日前線,堺筋線,長堀鶴見緑地線,今里筋線,
+  阪急京都線,阪急千里線,阪急神戸線,阪急宝塚線,阪急箕面線,
+  阪神本線,阪神なんば線,南海本線,南海高野線,南海空港線,南海泉北線,
+  京阪本線,京阪中之島線,京阪交野線,
+  大阪環状線,JR東西線,片町線,阪和線,おおさか東線,関西本線,福知山線,桜島線,
+  近鉄南大阪線,近鉄大阪線,近鉄奈良線,近鉄けいはんな線,近鉄長野線,近鉄道明寺線,
+  北大阪急行,大阪モノレール本線,大阪モノレール彩都線,能勢電鉄,
+  南海汐見橋線,南海多奈川線,南海高師浜線,阪堺阪堺線,阪堺上町線,水間鉄道
 
-各トークンの分類:
-- 路線名 → type:"route", internal_name: 内部正式名(「大阪市高速軌道〜」「阪急電鉄〜」「南海電鉄〜」等)
-- 地域/市区名 → type:"ward", ward: 正式市区名(例:「大阪市城東区」「豊中市」)
-- 駅名 → type:"station", ward: 最寄り市区, realpro_lines:[内部路線名], reins_line:REINS路線名
-- 不明 → type:"unknown"
+areas: 駅名・路線名に還元できない地名・概念エリア名
+  例: "梅田","難波","北摂","大阪市内","心斎橋","天王寺"
 
-JSONのみ返却（改行なし）:
-{"results":[{"raw":"...","type":"route|ward|station|unknown","internal_name":"...","ward":"...","realpro_lines":[],"reins_line":"..."}]}`;
+commute_constraints: 通勤・通学時間制約
+  形式: {"base_station":"駅名（駅なし）","max_minutes":数値}
+  対象: 「〜まで〜分」「〜駅から〜分圏内」「〜まで通える」等
+
+【例】
+入力: "阪急茨木市駅まで30分で通える沿線"
+出力: {"stations":["茨木市"],"lines":[],"areas":[],"commute_constraints":[{"base_station":"茨木市","max_minutes":30}]}
+
+入力: "梅田か御堂筋線沿い"
+出力: {"stations":[],"lines":["御堂筋線"],"areas":["梅田"],"commute_constraints":[]}
+
+入力: "難波・心斎橋"
+出力: {"stations":[],"lines":[],"areas":["難波","心斎橋"],"commute_constraints":[]}
+
+入力: "梅田から20分圏内"
+出力: {"stations":["梅田"],"lines":[],"areas":[],"commute_constraints":[{"base_station":"梅田","max_minutes":20}]}
+
+入力: "北摂エリアで阪急沿線"
+出力: {"stations":[],"lines":["阪急京都線","阪急宝塚線","阪急神戸線","阪急千里線","阪急箕面線"],"areas":["北摂"],"commute_constraints":[]}`;
 
       try {
         const msg = await anthropic.messages.create({
           model: "claude-haiku-4-5-20251001",
-          max_tokens: 1024,
-          messages: [{ role: "user", content: prompt }],
+          max_tokens: 512,
+          temperature: 0,
+          system: systemPrompt,
+          messages: [{ role: "user", content: `エリア: "${desired_area}"` }],
         });
 
         const text = msg.content[0].type === "text" ? msg.content[0].text : "";
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-          const aiResult = JSON.parse(jsonMatch[0]);
-          for (const item of (aiResult.results || []) as Array<Record<string, unknown>>) {
-            const itemType = item.type as string;
-            if (itemType === "route") {
-              const internal = resolveLineInternal((item.internal_name as string) || "");
-              if (!internal) continue;
-              const routeId = LINE_ROUTE_MAP[internal];
-              if (routeId && !result.realpro.route_ids.includes(routeId))
-                result.realpro.route_ids.push(routeId);
+          const ai = JSON.parse(jsonMatch[0]) as {
+            stations?: string[];
+            lines?: string[];
+            areas?: string[];
+            commute_constraints?: Array<{ base_station: string; max_minutes: number }>;
+          };
 
-              const stations = lineStations[internal] || [];
-              stations.forEach(s => {
-                if (!result.realpro.station_names.includes(s)) result.realpro.station_names.push(s);
-                if (!result.itandi.station_names.includes(s))  result.itandi.station_names.push(s);
-              });
-              toItandiNames(internal).forEach(n => {
-                if (!result.itandi.line_names.includes(n)) result.itandi.line_names.push(n);
-              });
-              const rName = REINS_LINE_MAP[internal];
-              if (rName && !result.reins.station_pairs.some(p => p.line === rName))
-                result.reins.station_pairs.push({ line: rName, station: null });
+          // ── Step 1: lines → route_ids ──────────────────────────────────────
+          for (const lineName of ai.lines ?? []) {
+            const internal = resolveLineInternal(lineName);
+            if (!internal) continue;
+            const routeId = LINE_ROUTE_MAP[internal];
+            if (routeId && !result.realpro.route_ids.includes(routeId))
+              result.realpro.route_ids.push(routeId);
+            const stationsOnLine = lineStations[internal] ?? [];
+            stationsOnLine.forEach(s => {
+              if (!result.realpro.station_names.includes(s)) result.realpro.station_names.push(s);
+              if (!result.itandi.station_names.includes(s))  result.itandi.station_names.push(s);
+            });
+            toItandiNames(internal).forEach(n => {
+              if (!result.itandi.line_names.includes(n)) result.itandi.line_names.push(n);
+            });
+            const rName = REINS_LINE_MAP[internal];
+            if (rName && !result.reins.station_pairs.some(p => p.line === rName))
+              result.reins.station_pairs.push({ line: rName, station: null });
+          }
 
-            } else if (itemType === "ward") {
-              const ward = item.ward as string;
-              if (!ward) continue;
-              const code = WARD_CODE_MAP[ward];
-              if (code && !result.realpro.city_codes.includes(code)) result.realpro.city_codes.push(code);
-              if (!result.itandi.ward_names.includes(ward)) result.itandi.ward_names.push(ward);
-              if (!result.reins.ward_names.includes(ward))  result.reins.ward_names.push(ward);
-              result.new_regions.push({ token: item.raw as string, ward });
-              await db.from("region_map").upsert(
-                { token: item.raw, ward, confidence: 75, source: "resolve-area" },
-                { onConflict: "token" }
-              );
+          // ── Step 2: stations → station_map / line_stations 照合 ─────────────
+          for (const stName of ai.stations ?? []) {
+            if (result.realpro.station_names.includes(stName)) continue; // ローカル解決済みはスキップ
 
-            } else if (itemType === "station") {
-              const ward = item.ward as string;
-              const rLines = (item.realpro_lines as string[]) || [];
-              const iLines = rLines.flatMap(l => toItandiNames(l));
-              const reinsLine = (item.reins_line as string) || null;
-              const rawToken = item.raw as string;
-              if (!ward || rawToken.endsWith("線")) continue; // 路線名の誤学習を防止
-              const newSt = {
-                token: item.raw as string,
-                ward,
-                realpro_lines: rLines,
-                itandi_lines: iLines,
-                reins_line: reinsLine,
-              };
-              result.new_stations.push(newSt);
-              // API解決駅をautofill用station_namesにも追加（Break 4 fix）
-              if (!result.realpro.station_names.includes(newSt.token)) {
-                result.realpro.station_names.push(newSt.token);
+            // station_map で検索
+            const { data: stRow } = await db
+              .from("station_map")
+              .select("token, ward, realpro_lines, itandi_lines, reins_line, source")
+              .eq("token", stName)
+              .neq("source", "unknown")
+              .maybeSingle();
+
+            if (stRow && (stRow.realpro_lines?.length ?? 0) > 0) {
+              result.realpro.station_names.push(stName);
+              for (const line of stRow.realpro_lines ?? []) {
+                const rid = LINE_ROUTE_MAP[line];
+                if (rid && !result.realpro.route_ids.includes(rid)) result.realpro.route_ids.push(rid);
               }
+              for (const line of stRow.itandi_lines ?? []) {
+                if (!result.itandi.line_names.includes(line)) result.itandi.line_names.push(line);
+              }
+              if (stRow.reins_line && !result.reins.station_pairs.some(p => p.station === stName))
+                result.reins.station_pairs.push({ line: stRow.reins_line, station: stName });
+              continue;
+            }
+
+            // line_stations でフォールバック（station_map 未登録の場合）
+            const { data: lsStRows } = await db
+              .from("line_stations")
+              .select("line_name, station_name")
+              .eq("station_name", stName)
+              .limit(5);
+
+            if (lsStRows && lsStRows.length > 0) {
+              result.realpro.station_names.push(stName);
+              const uniqueLines = [...new Set(lsStRows.map((r: { line_name: string }) => r.line_name))];
+              for (const line of uniqueLines) {
+                const rid = LINE_ROUTE_MAP[line];
+                if (rid && !result.realpro.route_ids.includes(rid)) result.realpro.route_ids.push(rid);
+              }
+              const iLines = uniqueLines.flatMap(l => toItandiNames(l));
+              const rLine = REINS_LINE_MAP[uniqueLines[0]] ?? null;
+              const newSt = { token: stName, ward: "", realpro_lines: uniqueLines, itandi_lines: iLines, reins_line: rLine };
+              result.new_stations.push(newSt);
               await db.from("station_map").upsert(
-                { ...newSt, confidence: 75, source: "resolve-area" },
+                { ...newSt, confidence: 80, source: "resolve-area-nl" },
                 { onConflict: "token" }
               );
             }
+            // line_stations にもなければ無視（AI hallucination）
+          }
+
+          // ── Step 3: areas → CONCEPT_AREA_MAP / WARD_CODE_MAP ────────────────
+          for (const area of ai.areas ?? []) {
+            const stripped = area.replace(/エリア$/, "").trim();
+            const wards = CONCEPT_AREA_MAP[area] ?? CONCEPT_AREA_MAP[stripped] ?? null;
+            if (wards) {
+              for (const w of wards) {
+                const code = WARD_CODE_MAP[w];
+                if (code && !result.realpro.city_codes.includes(code)) result.realpro.city_codes.push(code);
+              }
+            } else {
+              // 直接 WARD_CODE_MAP に存在する市区名
+              const code = WARD_CODE_MAP[area] ?? WARD_CODE_MAP[area + "市"] ?? null;
+              if (code && !result.realpro.city_codes.includes(code)) result.realpro.city_codes.push(code);
+            }
+          }
+
+          // ── Step 4: commute_constraints → DeepSeek で近隣駅展開 ─────────────
+          if ((ai.commute_constraints ?? []).length > 0) {
+            const nearbyResults = await Promise.all(
+              (ai.commute_constraints ?? []).map(({ base_station, max_minutes }) =>
+                resolveNearbyWithDeepSeek(base_station, max_minutes)
+              )
+            );
+            for (const nearbyStations of nearbyResults) {
+              for (const s of nearbyStations) {
+                if (!result.realpro.station_names.includes(s)) result.realpro.station_names.push(s);
+              }
+            }
+            console.log("[resolve-area] commute expanded stations:", nearbyResults.flat());
           }
         }
       } catch (aiErr) {
-        console.warn("[resolve-area] Claude呼び出し失敗:", aiErr);
+        console.warn("[resolve-area] Claude NL抽出失敗:", aiErr);
+        // フォールバック: ローカルトークン解決（上の for ループ）の結果のみで継続
       }
     }
 

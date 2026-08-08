@@ -222,15 +222,19 @@ async function resolveUnknownTokensWithAI(tokens, onResolved) {
 //      ＝「マップ上は既知だがコード化できない」トークン（例: NEIGHBORHOOD_WARD_MAP に
 //        あるが WARD_CODE_MAP に無い区、路線も所在区も引けない駅）。
 //        ①②では検出できず、無条件検索が黙って走っていた。
-let _resolveAreaCache = null; // { area, mode, data }
+const _resolveAreaCache = new Map(); // key: `${area}|${mode}`, value: { data, ts }
+const _RESOLVE_AREA_CACHE_MAX = 20;
+const _RESOLVE_AREA_CACHE_TTL = 10 * 60 * 1000; // 10分
 async function resolveAreaWithAPI(rawArea, areaMode) {
   if (!rawArea) return null;
 
   // キャッシュ判定はガードより先。API結果で LEARNED_*_MAP が埋まると
   // hasUnknown / localEmpty が反転し、2回目以降が null を返して
   // 取得済みデータを捨てる（かつ再フェッチを繰り返す）ため。
-  if (_resolveAreaCache && _resolveAreaCache.area === rawArea && _resolveAreaCache.mode === areaMode) {
-    return _resolveAreaCache.data;
+  const _cacheKey = `${rawArea}|${areaMode}`;
+  const _cached = _resolveAreaCache.get(_cacheKey);
+  if (_cached && Date.now() - _cached.ts < _RESOLVE_AREA_CACHE_TTL) {
+    return _cached.data;
   }
 
   const toks = parseAreaTokens(rawArea);
@@ -242,12 +246,16 @@ async function resolveAreaWithAPI(rawArea, areaMode) {
   // 数字始まり・1文字トークンしかない場合はAPIを無駄打ちしない
   const hasMeaningfulToken = toks.some(t => t.length >= 2 && !/^[0-9０-９]/.test(t));
 
-  const needApi = hasRoute || hasUnknown || (localEmpty && hasMeaningfulToken);
+  // 「まで30分」「から20分」等の通勤時間制約パターンは parseAreaTokens が剥ぎ取るため
+  // ローカル解決が成功していてもAPIを呼ぶ必要がある（近隣駅展開のため）
+  const hasCommutePattern = /まで\d+分|から\d+分|へ\d+分/.test(rawArea);
+  const needApi = hasRoute || hasUnknown || hasCommutePattern || (localEmpty && hasMeaningfulToken);
   if (!needApi) return null;
-  if (!hasRoute && !hasUnknown) console.log("[AX] resolve-area: ローカル解決が空 → API補完:", rawArea);
+  if (!hasRoute && !hasUnknown && !hasCommutePattern) console.log("[AX] resolve-area: ローカル解決が空 → API補完:", rawArea);
   try {
     const ctrl = new AbortController();
-    const tid = setTimeout(() => ctrl.abort(), 7000);
+    const tid = setTimeout(() => ctrl.abort(), 15000);
+    // 理由: Claude NL抽出(~2s) + DeepSeek commute展開(~8s) = 最大10s必要
     const res = await fetch(`${API_BASE}/api/resolve-area`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -270,7 +278,12 @@ async function resolveAreaWithAPI(rawArea, areaMode) {
         console.log("[AX] resolve-area 地名学習:", token, "→", ward);
       }
     });
-    _resolveAreaCache = { area: rawArea, mode: areaMode, data };
+    // LRU: 上限超過時は最古エントリを削除
+    if (_resolveAreaCache.size >= _RESOLVE_AREA_CACHE_MAX) {
+      const _oldestKey = [..._resolveAreaCache.entries()].sort((a, b) => a[1].ts - b[1].ts)[0][0];
+      _resolveAreaCache.delete(_oldestKey);
+    }
+    _resolveAreaCache.set(_cacheKey, { data, ts: Date.now() });
     return data;
   } catch (e) {
     console.warn("[AX] resolve-area 失敗:", e.message);
