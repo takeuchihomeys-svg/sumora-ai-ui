@@ -233,6 +233,82 @@ type PropertyCustomerRow = {
   initial_cost_limit?: number | null;
   additional_conditions?: string | null;
   ai_summary?: string | null;
+  // ── 物件検索（Chrome拡張ブリッジ）用の追加カラム ──
+  floor_area_min?: number | null;
+  floor_area_max?: number | null;
+  pet?: boolean | null;
+  lines?: string[] | null;
+  stations?: string[] | null;
+  rp_update_days?: number | null;
+  area_mode?: string | null;
+};
+
+// ── 物件検索ステータス（customers/page.tsx と同一定義） ──
+// noext = 60秒 pending のまま（PC拡張が起動していない可能性）
+// timeout = 6分経過しても done/error に到達しない（拡張クラッシュ・PC停止等）
+type ScrapeCompareStatus = "idle" | "queued" | "running" | "done" | "error" | "noext" | "timeout";
+
+// popup.js の parseAreaMin と同一ロジック
+// "25㎡以上" / "25平米以上" / "25m2以上" 等の自由記述から面積下限を抽出
+function parseAreaMin(text: string | null | undefined): number | null {
+  if (!text) return null;
+  const m = text.match(/(\d+)\s*(?:平米|㎡|m2|m²)\s*以上/i);
+  return m ? Number(m[1]) : null;
+}
+
+// popup.js の calcUpdateDays と同一ロジック: 最終物件送信日からリアプロ更新日フィルターを算出
+function calcRpUpdateDays(lastSentAt: string | null | undefined): number | null {
+  if (!lastSentAt) return null;
+  const daysSince = Math.floor((Date.now() - new Date(lastSentAt).getTime()) / 86400000);
+  if (daysSince <= 1) return 1;
+  if (daysSince <= 3) return 3;
+  if (daysSince <= 7) return 7;
+  return 14;
+}
+
+// popup.js preloadAdjForm のペット判定と同一ロジック: pet=null時は自由記述フォールバック
+function resolvePetOk(c: PropertyCustomerRow): boolean {
+  if (c.pet === true) return true;
+  if (c.pet === false) return false;
+  const petFields = [c.preferences, c.other_requests, c.additional_conditions].filter(Boolean).join(" ");
+  return /ペット|pet/i.test(petFields);
+}
+
+// 建物構造トークン (page-script.js の STRUCTURE_MAP キーと一致。長い順で部分一致誤検出を防ぐ)
+const STRUCTURE_TOKENS = [
+  "鉄骨鉄筋コンクリート造", "鉄筋コンクリート造", "木造一部RC造",
+  "重量鉄骨造", "軽量鉄骨造", "SRC造", "鉄骨造", "RC造", "SRC", "S造", "RC", "木造",
+];
+
+// 自由記述から建物構造希望を抽出。否定表現(木造NG等)は除外（フィルターが反転するため）
+function parseStructureTypes(...texts: (string | null | undefined)[]): string[] {
+  let joined = texts.filter(Boolean).join("、");
+  if (!joined) return [];
+  const found: string[] = [];
+  for (const tok of STRUCTURE_TOKENS) {
+    const idx = joined.indexOf(tok);
+    if (idx === -1) continue;
+    const after = joined.slice(idx + tok.length, idx + tok.length + 6);
+    joined = joined.split(tok).join(" ");
+    if (/^(は|も)?(NG|ＮＧ|以外|不可|×|避け|嫌|ダメ|だめ)/.test(after)) continue;
+    found.push(tok);
+  }
+  return found;
+}
+
+// 物件検索: /api/resolve-search-conditions で事前解決済みのフィールド群
+type ResolvedSearchConditions = {
+  station_names: string[];
+  route_ids: string[];           // リアプロ用 route_id
+  itandi_line_names: string[];   // itandi 用路線名（正式形式）
+  reins_line_names: string[];    // レインズ用路線名
+  city_codes: string[];
+  detail_ward: string | null;
+  detail_area: string | null;
+  unknown_tokens: string[];
+  rent_max_resolved?: number | null;
+  building_age_resolved?: number | null;
+  is_wide?: boolean;
 };
 
 // generate-reply に渡す構造化条件（未取得項目の計算用）
@@ -891,6 +967,345 @@ export default function Home() {
   const [linkModalConvId, setLinkModalConvId] = useState<string | null>(null);
   const [linkSearchQuery, setLinkSearchQuery] = useState("");
   const [condPanelSearchOpen, setCondPanelSearchOpen] = useState(false);
+  // ── 物件検索（customers/page.tsx と同一実装） ──
+  // 🔍 リアプロ自動スクレイプ比較 — Chrome拡張 / automation_commands 経由
+  const [scrapeCompareStatus, setScrapeCompareStatus] = useState<Record<string, ScrapeCompareStatus>>({});
+  // error時に automation_commands.error_message を保持して表示（未ログイン等が見える）
+  const [scrapeCompareErrors, setScrapeCompareErrors] = useState<Record<string, string>>({});
+  // 地域/駅 検索モード切替（リアプロ/itandi/レインズ共通・顧客ごと）。"auto" = 従来の自動判定
+  const [areaModeByCustomer, setAreaModeByCustomer] = useState<Record<string, "auto" | "ward" | "station">>({});
+  const getAreaMode = (id: string): "auto" | "ward" | "station" => areaModeByCustomer[id] ?? "auto";
+  // itandi / レインズ キュー投入の「✓」フィードバック（キー: id + "-" + site [+ "-wide"]）
+  const [searchQueued, setSearchQueued] = useState<string | null>(null);
+  // キュー投入失敗を消えない赤色エラーとして保持
+  const [queueErrors, setQueueErrors] = useState<Record<string, string>>({});
+  // ポーリングinterval / idle復帰timeout / Realtimeチャンネル をアンマウント時に確実に停止
+  const scrapePollIntervalsRef = useRef<Set<ReturnType<typeof setInterval>>>(new Set());
+  const scrapeIdleTimeoutsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  const scrapeResultChannelsRef = useRef<Set<ReturnType<typeof supabase.channel>>>(new Set());
+  useEffect(() => {
+    const intervals = scrapePollIntervalsRef.current;
+    const timeouts = scrapeIdleTimeoutsRef.current;
+    const channels = scrapeResultChannelsRef.current;
+    return () => {
+      intervals.forEach((t) => clearInterval(t));
+      intervals.clear();
+      timeouts.forEach((t) => clearTimeout(t));
+      timeouts.clear();
+      channels.forEach((ch) => { supabase.removeChannel(ch).catch(() => {}); });
+      channels.clear();
+    };
+  }, []);
+  // タイムアウト/エラー/拡張なし → 1秒後にステータスをidleにリセット
+  useEffect(() => {
+    const terminalKeys = Object.entries(scrapeCompareStatus)
+      .filter(([, st]) => st === "timeout" || st === "error" || st === "noext")
+      .map(([k]) => k);
+    if (terminalKeys.length === 0) return;
+    const t = setTimeout(() => {
+      setScrapeCompareStatus((prev) => {
+        const next = { ...prev };
+        for (const k of terminalKeys) {
+          if (next[k] === "timeout" || next[k] === "error" || next[k] === "noext") next[k] = "idle";
+        }
+        return next;
+      });
+    }, 1000);
+    return () => clearTimeout(t);
+  }, [scrapeCompareStatus]);
+
+  // 🔍 リアプロ自動スクレイプ比較
+  // 優先: webapp-bridge → axlx-scrape-and-compare（拡張側でresolve: popupと同等）
+  // フォールバック: Supabase automation_commands 経由（拡張なし・ACK未着時）
+  const handleScrapeCompare = async (c: PropertyCustomerRow, isWide: boolean = false) => {
+    const key = isWide ? `${c.id}-wide` : c.id;
+    const cur = scrapeCompareStatus[key] ?? "idle";
+    if (cur === "queued" || cur === "running" || cur === "noext") return;
+    setScrapeCompareStatus((prev) => ({ ...prev, [key]: "queued" }));
+    setScrapeCompareErrors((prev) => { const next = { ...prev }; delete next[key]; return next; });
+
+    const scheduleIdle = (finalStatus: ScrapeCompareStatus) => {
+      setScrapeCompareStatus((prev) => ({ ...prev, [key]: finalStatus }));
+      const t = setTimeout(() => {
+        scrapeIdleTimeoutsRef.current.delete(t);
+        setScrapeCompareStatus((prev) => ({ ...prev, [key]: "idle" }));
+      }, 4000);
+      scrapeIdleTimeoutsRef.current.add(t);
+    };
+
+    // 拡張へ渡す生の顧客条件（resolve は拡張側で実施 = popupと同等）
+    const rawConditions = {
+      area_mode:    getAreaMode(c.id),
+      rent_max:     c.rent_max      ?? null,
+      rent_min:     c.rent_min      ?? null,
+      walk_minutes: c.walk_minutes  ?? null,
+      floor_plan:   c.floor_plan    ?? null,
+      building_age: c.building_age  ?? null,
+      area_min:     c.floor_area_min ?? parseAreaMin(c.floor_plan) ?? parseAreaMin(c.preferences) ?? parseAreaMin(c.other_requests) ?? null,
+      area_max:     c.floor_area_max ?? null,
+      pet_ok:       resolvePetOk(c),
+      desired_area: c.desired_area  ?? null,
+      lines:        c.lines         ?? [] as string[],
+      stations:     c.stations      ?? [] as string[],
+      structure_types: parseStructureTypes(c.preferences, c.other_requests),
+      rp_update_days:  c.rp_update_days ?? calcRpUpdateDays(c.last_property_sent_at),
+      is_wide:      isWide,
+    };
+
+    // ① 拡張への直接送信 → 1.5秒以内にACKが返れば直接パスで完結
+    const ackReceived = await new Promise<boolean>((resolve) => {
+      const handler = (e: MessageEvent) => {
+        if (e.data?.from === "aixlinx-webapp-scrape-ack" && String(e.data?.customerId) === String(c.id)) {
+          window.removeEventListener("message", handler);
+          resolve(true);
+        }
+      };
+      window.addEventListener("message", handler);
+      window.postMessage({ from: "aixlinx-webapp-scrape", customerId: c.id, customerName: c.customer_name, isWide, conditions: rawConditions }, "*");
+      setTimeout(() => { window.removeEventListener("message", handler); resolve(false); }, 1500);
+    });
+
+    if (ackReceived) {
+      // ② 拡張直接パス: autofill→スクレイプ→LINE送信の完了を待つ（最大6分）
+      setScrapeCompareStatus((prev) => ({ ...prev, [key]: "running" }));
+      const result = await new Promise<{ ok: boolean; count?: number; error?: string }>((resolve) => {
+        const handler = (e: MessageEvent) => {
+          if (e.data?.from === "aixlinx-webapp-scrape-result" && String(e.data?.customerId) === String(c.id)) {
+            window.removeEventListener("message", handler);
+            resolve({ ok: !!e.data.ok, count: e.data.count, error: e.data.error });
+          }
+        };
+        window.addEventListener("message", handler);
+        setTimeout(() => { window.removeEventListener("message", handler); resolve({ ok: false, error: "timeout" }); }, 6 * 60_000);
+      });
+      if (result.ok) {
+        scheduleIdle("done");
+      } else {
+        if (result.error) setScrapeCompareErrors((prev) => ({ ...prev, [key]: result.error!.slice(0, 200) }));
+        scheduleIdle(result.error === "timeout" ? "timeout" : "error");
+      }
+      return;
+    }
+
+    // ③ フォールバック: Supabase automation_commands + Realtime broadcast（スマホ対応）
+    try {
+      let resolved: ResolvedSearchConditions | null = null;
+      if (c.desired_area?.trim() || (c.lines?.length ?? 0) > 0 || (c.stations?.length ?? 0) > 0) {
+        try {
+          const res = await fetch("/api/resolve-search-conditions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ desired_area: c.desired_area ?? "", lines: c.lines ?? [], stations: c.stations ?? [], is_wide: isWide, rent_max: c.rent_max ?? null, building_age: c.building_age ?? null }),
+          });
+          if (res.ok) {
+            resolved = await res.json() as ResolvedSearchConditions;
+            if (resolved.unknown_tokens?.length) {
+              fetch("/api/token-resolve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tokens: resolved.unknown_tokens }) }).catch(() => {});
+            }
+          }
+        } catch (e) { console.error("[handleScrapeCompare] resolve失敗:", e); }
+      }
+
+      const { data: inserted, error } = await supabase
+        .from("automation_commands")
+        .insert({
+          command_type: "scrape_and_compare",
+          payload: {
+            customer_id: c.id, customer_name: c.customer_name, is_wide: isWide,
+            conditions: {
+              area_mode: getAreaMode(c.id),
+              rent_max: c.rent_max ?? undefined,
+              rent_min: c.rent_min ?? undefined,
+              walk_minutes: c.walk_minutes ?? undefined,
+              floor_plan: c.floor_plan ?? undefined,
+              building_age: c.building_age ?? undefined,
+              area_min: c.floor_area_min ?? parseAreaMin(c.floor_plan) ?? parseAreaMin(c.preferences) ?? parseAreaMin(c.other_requests) ?? undefined,
+              area_max: c.floor_area_max ?? undefined,
+              pet_ok: resolvePetOk(c),
+              desired_area: c.desired_area ?? undefined,
+              lines: c.lines ?? [], stations: c.stations ?? [],
+              city_codes: resolved?.city_codes ?? [], station_names: resolved?.station_names ?? [],
+              route_ids: resolved?.route_ids ?? [], itandi_line_names: resolved?.itandi_line_names ?? [],
+              reins_line_names: resolved?.reins_line_names ?? [], detail_ward: resolved?.detail_ward ?? null,
+              detail_area: resolved?.detail_area ?? null, unknown_tokens: resolved?.unknown_tokens ?? [],
+              structure_types: parseStructureTypes(c.preferences, c.other_requests),
+              rp_update_days: c.rp_update_days ?? calcRpUpdateDays(c.last_property_sent_at),
+            },
+          },
+          status: "pending", created_at: new Date().toISOString(),
+        })
+        .select("id").single();
+      if (error || !inserted) throw error ?? new Error("insert failed");
+
+      window.postMessage({ from: "aixlinx-webapp-poll-now" }, "*");
+
+      const cmdId = (inserted as { id: string | number }).id;
+      const startedAt = Date.now();
+
+      // ── Supabase Realtime broadcast: ext-results を購読して結果をリアルタイム受信 ──
+      let sbResultDone = false;
+      const resultCh = supabase.channel("ext-results");
+      scrapeResultChannelsRef.current.add(resultCh);
+      resultCh.on("broadcast", { event: "scrape_result" }, (event: { payload?: { customerId?: string; ok?: boolean; error?: string } }) => {
+        if (sbResultDone) return;
+        if (String(event.payload?.customerId) !== String(c.id)) return;
+        sbResultDone = true;
+        scrapeResultChannelsRef.current.delete(resultCh);
+        supabase.removeChannel(resultCh).catch(() => {});
+        if (event.payload?.ok) {
+          scheduleIdle("done");
+        } else {
+          const em = event.payload?.error ?? "";
+          if (em) setScrapeCompareErrors((prev) => ({ ...prev, [key]: em.slice(0, 200) }));
+          scheduleIdle("error");
+        }
+      }).subscribe();
+
+      // ── ext-commands broadcast で拡張ツールに即時配信 ──
+      void (async () => {
+        try {
+          const cmdCh = supabase.channel("ext-commands");
+          await new Promise<void>((res) => {
+            cmdCh.subscribe((st) => { if (st === "SUBSCRIBED") res(); });
+          });
+          await cmdCh.send({
+            type: "broadcast",
+            event: "scrape_command",
+            payload: {
+              customerId: c.id, customerName: c.customer_name, isWide,
+              commandId: cmdId,
+              conditions: {
+                ...rawConditions,
+                city_codes: resolved?.city_codes ?? [], station_names: resolved?.station_names ?? [],
+                route_ids: resolved?.route_ids ?? [], itandi_line_names: resolved?.itandi_line_names ?? [],
+                reins_line_names: resolved?.reins_line_names ?? [],
+              },
+            },
+          });
+          await supabase.removeChannel(cmdCh);
+        } catch (e) {
+          console.warn("[WS] broadcast 失敗（polling で継続）:", e);
+        }
+      })();
+
+      // ── 既存の 5秒ポーリング（broadcast で処理できなかった場合のバックアップ）──
+      const timer = setInterval(() => {
+        void (async () => {
+          const finish = (finalStatus: ScrapeCompareStatus) => {
+            clearInterval(timer); scrapePollIntervalsRef.current.delete(timer);
+            if (!sbResultDone) {
+              sbResultDone = true;
+              scrapeResultChannelsRef.current.delete(resultCh);
+              supabase.removeChannel(resultCh).catch(() => {});
+              scheduleIdle(finalStatus);
+            }
+          };
+          try {
+            const elapsed = Date.now() - startedAt;
+            const { data } = await supabase.from("automation_commands").select("status, error_message").eq("id", cmdId).maybeSingle();
+            const st = (data?.status as string | undefined) ?? null;
+            if (st === "running") { setScrapeCompareStatus((prev) => ({ ...prev, [key]: "running" })); }
+            else if (st === "done" || st === "completed") { finish("done"); return; }
+            else if (st === "error") {
+              const em = (data?.error_message as string | undefined) ?? "";
+              if (em) setScrapeCompareErrors((prev) => ({ ...prev, [key]: em.slice(0, 200) }));
+              finish("error"); return;
+            } else if (st === "pending" && elapsed > 90_000) { finish("noext"); return; }
+            else if (st === "pending" && elapsed > 60_000) { setScrapeCompareStatus((prev) => ({ ...prev, [key]: "noext" })); }
+            if (Date.now() - startedAt > 6 * 60_000) finish("timeout");
+          } catch { /* 一時的な取得失敗は無視 */ }
+        })();
+      }, 5000);
+      scrapePollIntervalsRef.current.add(timer);
+    } catch (e) {
+      console.error("[handleScrapeCompare]", e);
+      setScrapeCompareStatus((prev) => ({ ...prev, [key]: "error" }));
+      const t = setTimeout(() => { scrapeIdleTimeoutsRef.current.delete(t); setScrapeCompareStatus((prev) => ({ ...prev, [key]: "idle" })); }, 4000);
+      scrapeIdleTimeoutsRef.current.add(t);
+    }
+  };
+
+  // ── 物件検索: PC同一ブラウザ向けpostMessage ──
+  // webapp-bridge.js（Chrome拡張）が受領すると { from: "aixlinx-webapp-received" } を返すため、
+  // それを1.5秒待って「同一ブラウザに拡張が存在し処理を引き受けたか」を判定する。
+  const firePropertySearch = (
+    c: PropertyCustomerRow,
+    sites: string[] = ["realnetpro", "itandi"],
+    isWide: boolean = false,
+  ): Promise<boolean> => {
+    const ackPromise = new Promise<boolean>((resolve) => {
+      let settled = false;
+      const onAck = (e: MessageEvent) => {
+        const d = e.data as { from?: string } | null;
+        if (d?.from === "aixlinx-webapp-received" && !settled) {
+          settled = true;
+          window.removeEventListener("message", onAck);
+          resolve(true);
+        }
+      };
+      window.addEventListener("message", onAck);
+      setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          window.removeEventListener("message", onAck);
+          resolve(false);
+        }
+      }, 1500);
+    });
+
+    // 拡張ツール側に同じ顧客リストがあるため customerId だけ送れば十分
+    // 条件の解決（エリア→コード変換等）は background.js 側で実施する
+    const conditions = {
+      customerId:   String(c.id),
+      customerName: c.customer_name ?? null,
+      is_wide:      isWide,
+      area_mode:    getAreaMode(c.id),
+    };
+    let delay = 0;
+    for (const site of sites) {
+      const s = site;
+      if (delay === 0) {
+        window.postMessage({ from: "aixlinx-webapp", site: s, conditions }, "*");
+      } else {
+        setTimeout(() => window.postMessage({ from: "aixlinx-webapp", site: s, conditions }, "*"), delay);
+      }
+      delay += 3000;
+    }
+    return ackPromise;
+  };
+
+  // ── スマホ→PC遠隔物件検索: automationキュー経由 ──
+  const queuePropertySearch = async (c: PropertyCustomerRow, sites: string[] = ["realnetpro", "itandi"], isWide: boolean = false) => {
+    const extHandled = await firePropertySearch(c, sites, isWide);
+
+    const key = c.id + "-" + sites[0] + (isWide ? "-wide" : "");
+    setQueueErrors((prev) => { const next = { ...prev }; delete next[key]; return next; });
+
+    if (extHandled) {
+      // 同一ブラウザの拡張が処理を引き受けた → キュー投入をスキップして二重実行を防ぐ
+      setSearchQueued(key);
+      setTimeout(() => setSearchQueued(null), 3000);
+      return;
+    }
+
+    // クロスデバイス対応（拡張未検出時のみ）: サーバー経由でキューに追加
+    try {
+      const res = await fetch("/api/automation/trigger", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customer_ids: [c.id], sites, is_wide: isWide, area_mode: getAreaMode(c.id), force: true }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setSearchQueued(key);
+      setTimeout(() => setSearchQueued(null), 3000);
+    } catch (e) {
+      console.error("[queue search] error:", e);
+      setQueueErrors((prev) => ({
+        ...prev,
+        [key]: "検索依頼の送信に失敗しました。通信環境を確認して再度お試しください。",
+      }));
+    }
+  };
   const [propertyCustomers, setPropertyCustomers] = useState<Array<{ id: string; customer_name: string; desired_area?: string | null; floor_plan?: string | null; rent_max?: number | null; move_in_time?: string | null; preferences?: string | null; ng_points?: string | null; walk_minutes?: number | null; other_requests?: string | null; rent_min?: number | null; building_age?: number | null }>>([]);
   // convId → linked property customer（条件テキスト含む）
   const [linkedCustomerMap, setLinkedCustomerMap] = useState<Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null; additional_conditions?: string | null; structured?: CustomerStructuredForGen; rawData?: PropertyCustomerRow | null }>>({});
@@ -1783,14 +2198,17 @@ export default function Home() {
     if (propCustomerIds.length > 0) {
       const { data: pcData } = await supabase
         .from("property_customers")
-        .select("id,customer_name,status,last_property_sent_at,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age,initial_cost_limit,additional_conditions,ai_summary")
+        .select("id,customer_name,status,last_property_sent_at,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age,initial_cost_limit,additional_conditions,ai_summary,floor_area_min,floor_area_max,pet,lines,stations,rp_update_days,area_mode")
         .in("id", propCustomerIds);
       if (pcData) {
         const map: Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null; additional_conditions?: string | null; structured?: CustomerStructuredForGen; rawData?: PropertyCustomerRow | null }> = {};
+        // 地域/駅モードのDB永続値を初期反映（customers/page.tsx と同一）
+        const initModes: Record<string, "auto" | "ward" | "station"> = {};
         for (const conv of formatted) {
           if (!conv.propertyCustomerId) continue;
           const pc = (pcData as PropertyCustomerRow[]).find((d) => d.id === conv.propertyCustomerId);
           if (pc) {
+            if (pc.area_mode === "ward" || pc.area_mode === "station") initModes[pc.id] = pc.area_mode;
             map[conv.id] = {
               id: pc.id,
               name: pc.customer_name,
@@ -1814,6 +2232,7 @@ export default function Home() {
           }
         }
         setLinkedCustomerMap((prev) => ({ ...prev, ...map }));
+        if (Object.keys(initModes).length > 0) setAreaModeByCustomer((prev) => ({ ...initModes, ...prev }));
       }
     }
 
@@ -5575,6 +5994,124 @@ export default function Home() {
                     </>
                   )}
                 </div>
+                {/* ── 物件検索ボタン群（customers/page.tsx と同一: 自動/地域/駅 + リアプロ/itandi/レインズ × 通常/広） */}
+                {lc.rawData && (() => {
+                  const c = lc.rawData;
+                  return (
+                    <div className="mt-2 flex gap-1.5 flex-wrap">
+                      {/* 地域/駅モード切替（3セグメントピル・6ボタン共通） */}
+                      <div
+                        className="flex items-center self-start overflow-hidden rounded-xl border border-gray-200 bg-white"
+                        title="地域で検索 or 駅で検索（リアプロ/itandi/レインズ共通）"
+                      >
+                        {([["auto", "自動"], ["ward", "地域"], ["station", "駅"]] as const).map(([m, lbl]) => (
+                          <button
+                            key={m}
+                            onClick={() => {
+                              setAreaModeByCustomer((prev) => ({ ...prev, [c.id]: m }));
+                              fetch("/api/property-customers", {
+                                method: "PATCH", headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ id: c.id, area_mode: m }),
+                              }).catch(() => {});
+                            }}
+                            className={`px-1.5 py-1.5 text-[10px] font-bold transition-colors ${
+                              getAreaMode(c.id) === m
+                                ? "bg-blue-600 text-white"
+                                : "bg-white text-gray-400"
+                            }`}
+                          >
+                            {lbl}
+                          </button>
+                        ))}
+                      </div>
+                      {/* リアプロ（状態表示 + 実行中の連打ガード。広は c.id+"-wide" で状態分離） */}
+                      {(() => {
+                        const stN = scrapeCompareStatus[c.id] ?? "idle";
+                        const stW = scrapeCompareStatus[c.id + "-wide"] ?? "idle";
+                        // noext（⚠️PC拡張未起動?）表示中も disabled にして重複INSERTを防ぐ
+                        const busy = (s: ScrapeCompareStatus) => s === "queued" || s === "running" || s === "noext";
+                        const errMsg = scrapeCompareErrors[c.id] ?? scrapeCompareErrors[c.id + "-wide"] ?? null;
+                        const label = (s: ScrapeCompareStatus, idle: string) =>
+                          s === "queued" ? "⏳ 依頼中…"
+                          : s === "running" ? "実行中…"
+                          : s === "done" ? "✅ LINE送信済み"
+                          : s === "noext" ? "⚠️ PC拡張未起動?"
+                          : s === "error" ? "❌ エラー"
+                          : s === "timeout" ? "⏰ タイムアウト"
+                          : idle;
+                        // 状態別カラー（done=緑 / error=赤 / timeout・noext=オレンジ強調）
+                        const tone = (s: ScrapeCompareStatus, base: string) =>
+                          s === "done" ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                          : s === "error" ? "border-red-300 bg-red-50 text-red-600"
+                          : s === "timeout" || s === "noext" ? "border-amber-400 bg-amber-50 text-amber-700"
+                          : base;
+                        return (
+                          <div className="flex flex-col gap-0.5">
+                            <div className="flex gap-0.5">
+                              <button
+                                onClick={() => void handleScrapeCompare(c, false)}
+                                disabled={busy(stN)}
+                                className={`rounded-xl border px-2.5 py-1.5 text-[11px] font-bold active:scale-95 transition-transform disabled:opacity-50 ${tone(stN, "border-orange-200 bg-orange-50 text-orange-700")}`}
+                              >
+                                {label(stN, "🖥️ リアプロ")}
+                              </button>
+                              <button
+                                onClick={() => void handleScrapeCompare(c, true)}
+                                disabled={busy(stW)}
+                                className={`rounded-xl border px-2 py-1 text-[10px] font-bold active:scale-95 transition-transform disabled:opacity-50 ${tone(stW, "border-orange-300 bg-orange-100 text-orange-600")}`}
+                              >
+                                {label(stW, "↔️ 広")}
+                              </button>
+                            </div>
+                            {errMsg && (
+                              <div className="max-w-[280px] break-words text-[10px] leading-tight text-red-600">
+                                {errMsg}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                      {/* itandi */}
+                      <div className="flex gap-0.5">
+                        <button
+                          onClick={() => void queuePropertySearch(c, ["itandi"])}
+                          className="rounded-xl border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-[11px] font-bold text-blue-700 active:scale-95 transition-transform"
+                        >
+                          {searchQueued === c.id + "-itandi" ? "✓" : "🖥️"} itandi
+                        </button>
+                        <button
+                          onClick={() => void queuePropertySearch(c, ["itandi"], true)}
+                          className="rounded-xl border border-blue-300 bg-blue-100 px-2 py-1 text-[10px] font-bold text-blue-600 active:scale-95 transition-transform"
+                        >
+                          {searchQueued === c.id + "-itandi-wide" ? "✓" : "↔️"} 広
+                        </button>
+                      </div>
+                      {/* レインズ */}
+                      <div className="flex gap-0.5">
+                        <button
+                          onClick={() => void queuePropertySearch(c, ["reins"])}
+                          className="rounded-xl border border-purple-200 bg-purple-50 px-2.5 py-1.5 text-[11px] font-bold text-purple-600 active:scale-95 transition-transform"
+                        >
+                          {searchQueued === c.id + "-reins" ? "✓" : "🖥️"} レインズ
+                        </button>
+                        <button
+                          onClick={() => void queuePropertySearch(c, ["reins"], true)}
+                          className="rounded-xl border border-purple-300 bg-purple-100 px-2 py-1 text-[10px] font-bold text-purple-500 active:scale-95 transition-transform"
+                        >
+                          {searchQueued === c.id + "-reins-wide" ? "✓" : "↔️"} 広
+                        </button>
+                      </div>
+                      {/* キュー投入失敗の消えない赤色エラー表示 */}
+                      {Object.entries(queueErrors)
+                        .filter(([k]) => k.startsWith(c.id + "-"))
+                        .map(([k, msg]) => (
+                          <div key={k} className="w-full text-[10px] font-bold text-red-600">
+                            ⚠️ {msg}
+                          </div>
+                        ))}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })()}
