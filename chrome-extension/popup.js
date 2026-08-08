@@ -1682,7 +1682,7 @@ function preloadAdjForm(c) {
     document.getElementById("adj-pet").checked = false;
   } else {
     const petFields = [c.preferences, c.notes, c.other_requests, c.additional_conditions].filter(Boolean).join(" ");
-    document.getElementById("adj-pet").checked = /ペット|pet/i.test(petFields);
+    document.getElementById("adj-pet").checked = /ペット|pet|犬|猫|動物飼育|動物可/i.test(petFields);
   }
 
   // お客様名表示
@@ -2241,7 +2241,13 @@ function openInstructions(siteKey) {
             }
             if (lineNameToRouteId(part)) continue; // 駅一覧が取れない場合もスキップ（station_map汚染防止）
           }
-          const station = resolveStation(part);
+          let station = resolveStation(part);
+          if (!station) {
+            // 「阪急茨木市」「JR高槻」等: resolveStation は "市" サフィックスガードで null を返すため
+            // resolveWithLinePrefixes でプレフィックス除去後に再解決する
+            const _pfxR = resolveWithLinePrefixes(part);
+            if (_pfxR?.type === "station") station = _pfxR.resolved;
+          }
           if (station) {
             resolvedStations.push(station);
             if (!realpro_station_names.includes(station)) realpro_station_names.push(station);
@@ -2263,7 +2269,12 @@ function openInstructions(siteKey) {
         const transitRe = /([^\s、。,　]{1,10}?)駅?(?:まで|から)(\d+)分/g;
         let _tm;
         while ((_tm = transitRe.exec(adjAreaClean)) !== null) {
-          const tgt = _tm[1].replace(/駅$/, '').trim();
+          let tgt = _tm[1].replace(/駅$/, '').trim();
+          // 「阪急茨木市」「JR高槻」等: METRO_GRAPHのノードは純粋な駅名で登録されているため
+          // 路線会社プレフィックスを除去してから検索する（例: 阪急茨木市→茨木市）
+          for (const _pfx of LINE_PREFIXES_TO_STRIP) {
+            if (tgt.startsWith(_pfx) && tgt.length > _pfx.length) { tgt = tgt.slice(_pfx.length).trim(); break; }
+          }
           const maxMin = parseInt(_tm[2], 10);
           if (typeof getReachableStations === 'function' && tgt && maxMin > 0 && maxMin <= 90) {
             getReachableStations(tgt, maxMin).forEach(s => {

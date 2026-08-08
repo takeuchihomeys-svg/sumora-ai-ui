@@ -460,9 +460,34 @@
       });
     }
     if (cond.pet_ok) {
-      // CSSセレクターとlabelクリックの両方を試みる
       var petEl = document.querySelector('input[name="option_id:all_in"][id="22010"]');
-      if (petEl) tick(petEl); else clickLabel("ペット相談");
+      function tryTickPet() {
+        if (petEl) { tick(petEl); return true; }
+        // isVis不要で直接探す（セクション折り畳み中でも対応）
+        var lbl = [].slice.call(document.querySelectorAll("label")).find(function(l) {
+          return l.textContent.trim() === "ペット相談";
+        });
+        if (!lbl) return false;
+        var inp = lbl.querySelector("input[type='checkbox']");
+        if (inp) { if (!inp.checked) inp.click(); } else lbl.click();
+        console.log("[AX] ペット相談チェック完了");
+        return true;
+      }
+      if (!tryTickPet()) {
+        // セクションが折り畳まれている → 「入居条件（その他）」を展開して再試行
+        var sectionToggle = [].slice.call(document.querySelectorAll("button,[role='button'],div,li")).find(function(el) {
+          return el.textContent.includes("入居条件") && el.textContent.includes("その他") && isVis(el);
+        });
+        if (sectionToggle) {
+          sectionToggle.click();
+          setTimeout(function() {
+            petEl = document.querySelector('input[name="option_id:all_in"][id="22010"]');
+            if (!tryTickPet()) clickLabel("ペット相談");
+          }, 700);
+        } else {
+          clickLabel("ペット相談");
+        }
+      }
     }
     if (cond.preferences && /バス.*トイレ別|トイレ別|バストイレ別/i.test(cond.preferences)) {
       var bathEl = document.querySelector('input[name="option_id:all_in"][id="11010"]');
