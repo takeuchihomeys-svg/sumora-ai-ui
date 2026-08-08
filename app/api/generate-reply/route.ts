@@ -129,6 +129,9 @@ async function deriveSuggestedAix(
 ): Promise<{ action: string; note: string; source: string; enforcement_level: "required" | "recommended" | "optional" } | null> {
   // 退去予定/入居中の物件では現地内覧が不可のため viewing_invite（内覧日調整）は提案しない。
   // 代わりに空室確認（acknowledge_check）または申込で先に確保（application_push）を優先する。
+  // 初回対応フェーズはAIX誘導不要（初回挨拶が主目的）
+  if (conversationState === "first_reply") return null;
+
   const isMoveOut = propertyStatus === "move_out_scheduled" || propertyStatus === "occupied";
   const redirectMoveOut = (action: string, note: string): { action: string; note: string } => {
     if (isMoveOut && action === "viewing_invite") {
