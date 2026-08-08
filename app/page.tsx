@@ -8912,6 +8912,22 @@ export default function Home() {
                 body: JSON.stringify({ action: "log", conversation_status: _ns, action_type: aixModalType, customer_msg_summary: summarizeForLearning(_lastCustomerMsg), previous_action_type: _prevAix, source: _learnSource, predicted_action: _predictedAction, suggestion_source: _suggSource, conversation_id: selectedConversation.id }),
               }).catch(() => {});
               lastAixByConvRef.current.set(selectedConversation.id, aixModalType);
+              // 物件ピックアップ or 物件オススメ送信 → 「物件送った」を自動記録
+              if ((aixModalType === "property_send" || aixModalType === "property_recommendation") && !meta?.scheduled) {
+                const _linkedPcId = linkedCustomerMap[selectedConversation.id]?.id;
+                if (_linkedPcId) {
+                  const _now = new Date().toISOString();
+                  fetch("/api/property-customers", {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ id: _linkedPcId, last_property_sent_at: _now }),
+                  }).catch(() => {});
+                  setLinkedCustomerMap((prev) => ({
+                    ...prev,
+                    [selectedConversation.id]: { ...prev[selectedConversation.id], lastPropertySentAt: _now },
+                  }));
+                }
+              }
               // 物件確認結果の空室有無を保持（suggestViewing=空室あり / suggest2ndHand=空室ありだが申込あり）
               if (aixModalType === "property_check_result") {
                 propertyAvailableByConvRef.current.set(selectedConversation.id, Boolean(meta?.suggestViewing || meta?.suggest2ndHand));
