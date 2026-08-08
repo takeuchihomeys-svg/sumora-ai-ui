@@ -685,7 +685,11 @@ export default function Home() {
   const [aixInitViewingReschedule, setAixInitViewingReschedule] = useState(false);
   const [aixInitInputText, setAixInitInputText] = useState("");
   // 管理会社に確認したピッカー: 選択した確認種別をAIXモーダルへ引き継ぐ
-  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | null>(null);
+  const [aixInitCheckPattern, setAixInitCheckPattern] = useState<"available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other" | null>(null);
+  // オーナーに確認した（その他）: 中間フォーム用state
+  const [showOwnerOtherForm, setShowOwnerOtherForm] = useState(false);
+  const [ownerOtherWhat, setOwnerOtherWhat] = useState("");
+  const [ownerOtherResult, setOwnerOtherResult] = useState("");
   // 物件成約した（管理会社確認ピッカーのサブ項目）: 中間フォーム用state
   const [showContractedForm, setShowContractedForm] = useState(false);
   const [contractedPropertyName, setContractedPropertyName] = useState("");
@@ -11262,8 +11266,14 @@ export default function Home() {
                       }).catch(() => {});
                     }
                     setShowOwnerCheckPicker(false);
-                    setAixInitInputText(hint);
-                    openAixDirect("property_check_result");
+                    if (key === "other") {
+                      setOwnerOtherWhat("");
+                      setOwnerOtherResult("");
+                      setShowOwnerOtherForm(true);
+                    } else {
+                      setAixInitInputText(hint);
+                      openAixDirect("property_check_result");
+                    }
                   }}
                   className="flex items-center gap-3.5 rounded-2xl border px-4 py-3.5 text-left transition active:bg-[#E3F2FD] active:border-[#1565C0]"
                   style={isSuggested ? { border: "2px solid #1565C0", background: "#EFF6FF", boxShadow: "0 0 0 3px #1565C022" } : { border: "1px solid #E5E7EB", background: "#FAFAFA" }}
@@ -11288,6 +11298,69 @@ export default function Home() {
             <button
               onClick={() => { setShowOwnerCheckPicker(false); setActiveAixFlow(null); }}
               className="mt-4 w-full py-2.5 text-[13px] text-[#9CA3AF] active:opacity-60"
+            >キャンセル</button>
+          </div>
+        </div>
+      )}
+
+      {/* オーナーに確認した（その他）フリーワードフォーム */}
+      {showOwnerOtherForm && (
+        <div
+          className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 px-6"
+          onClick={() => { setShowOwnerOtherForm(false); setActiveAixFlow(null); }}
+        >
+          <div
+            className="w-full max-w-sm rounded-3xl bg-white px-6 pb-7 pt-8 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-5 flex justify-center">
+              <svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="36" cy="36" r="36" fill="#E3F2FD"/>
+                <path d="M36 20L50 30V52H22V30L36 20Z" fill="#BBDEFB" stroke="#1565C0" strokeWidth="1.5" strokeLinejoin="round"/>
+                <rect x="30" y="38" width="12" height="14" rx="1.5" fill="#E3F2FD" stroke="#1565C0" strokeWidth="1.5"/>
+                <circle cx="50" cy="22" r="9" fill="#1565C0"/>
+                <path d="M46 22l3 3 5-5" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+            <p className="mb-1 text-center text-[18px] font-bold text-[#111827]">オーナーに確認した（その他）</p>
+            <p className="mb-6 text-center text-[12px] leading-snug text-[#6B7280]">確認内容と結果を入力してください</p>
+            <div className="flex flex-col gap-3.5">
+              <div>
+                <p className="mb-1.5 text-[12px] font-semibold text-[#374151]">何を確認しましたか？</p>
+                <textarea
+                  value={ownerOtherWhat}
+                  onChange={(e) => setOwnerOtherWhat(e.target.value)}
+                  placeholder="例：ペット飼育について確認しました"
+                  rows={3}
+                  className="w-full rounded-xl border border-[#D1D5DB] px-3 py-2.5 text-[13px] text-[#111827] outline-none focus:border-[#1565C0] resize-none"
+                />
+              </div>
+              <div>
+                <p className="mb-1.5 text-[12px] font-semibold text-[#374151]">確認した結果は？</p>
+                <textarea
+                  value={ownerOtherResult}
+                  onChange={(e) => setOwnerOtherResult(e.target.value)}
+                  placeholder="例：条件付きで可とのことでした"
+                  rows={3}
+                  className="w-full rounded-xl border border-[#D1D5DB] px-3 py-2.5 text-[13px] text-[#111827] outline-none focus:border-[#1565C0] resize-none"
+                />
+              </div>
+            </div>
+            <button
+              disabled={!ownerOtherWhat.trim() || !ownerOtherResult.trim()}
+              onClick={() => {
+                const combined = `確認内容：${ownerOtherWhat.trim()}\n確認結果：${ownerOtherResult.trim()}`;
+                setShowOwnerOtherForm(false);
+                setAixInitInputText(combined);
+                setAixInitCheckPattern("owner_other");
+                openAixDirect("property_check_result");
+              }}
+              className="mt-5 w-full rounded-2xl py-3.5 text-[14px] font-bold text-white transition disabled:opacity-40"
+              style={{ background: "#1565C0" }}
+            >会話を合わせる</button>
+            <button
+              onClick={() => { setShowOwnerOtherForm(false); setActiveAixFlow(null); }}
+              className="mt-3 w-full py-2 text-[13px] text-[#9CA3AF] active:opacity-60"
             >キャンセル</button>
           </div>
         </div>
