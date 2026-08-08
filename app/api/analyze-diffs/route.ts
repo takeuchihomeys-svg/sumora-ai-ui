@@ -25,8 +25,24 @@ function resetAiQuestionGuard() {
   pendingAiQuestionCount = null;
 }
 
+// ai_feedback_items への INSERT 行の型。
+// phase / importance は 2026-08 追加の専用カラム（従来は question / speculation テキスト内埋め込みのみだった）。
+// 質問が関係するルールのフェーズ・重要度が取得できない起票経路では null を渡す（強制しない）。
+type AiFeedbackItemInsert = {
+  question: string;
+  speculation?: string | null;
+  category?: string | null;
+  evidence?: string | null;
+  confidence?: string | null;
+  status?: string;
+  entry_source?: string | null;
+  aix_action?: string | null;
+  phase?: string | null;      // 質問が関係するルールの会話フェーズ（例: 'proposing', 'hearing'）
+  importance?: number | null; // ルールの重要度（数値、例: 9）
+};
+
 // ai_feedback_items への起票はすべてこの関数経由で行う（上限ガード付き）
-async function insertAiQuestion(row: Record<string, unknown>): Promise<boolean> {
+async function insertAiQuestion(row: AiFeedbackItemInsert): Promise<boolean> {
   if (aiQuestionsInsertedThisRun >= MAX_AI_QUESTIONS_PER_RUN) {
     console.log(`[analyze-diffs] AI質問 1回あたり起票上限(${MAX_AI_QUESTIONS_PER_RUN}件)到達、新規起票スキップ`);
     return false;
@@ -448,6 +464,8 @@ async function checkContradiction(
           evidence: `既存ナレッジID: ${rule.id as string}${newKnowledgeId ? ` / 新ナレッジID: ${newKnowledgeId}` : ""} / 新ナレッジ内容（抜粋）: ${content.slice(0, 120)} / AIが送った文（抜粋）: ${(aiDraft ?? '').slice(0, 200) || '（記録なし）'} / スタッフが修正した文（抜粋）: ${(sentReply ?? '').slice(0, 200) || '（修正なし）'}`,
           confidence: "high",
           status: "pending",
+          phase: conversationState,
+          importance: newImportance,
         });
       }
     }
@@ -506,6 +524,8 @@ async function checkContradiction(
             evidence: `HUMANルールkey: ${humanRule.rule_key as string}${newKnowledgeId ? ` / 新ナレッジID: ${newKnowledgeId}` : ""} / HUMANルール本文（抜粋）: ${(humanRule.rule_text as string).slice(0, 80)} / 新ナレッジ内容（抜粋）: ${content.slice(0, 80)}`,
             confidence: "high",
             status: "pending",
+            phase: conversationState,
+            importance: newImportance,
           });
         }
       }
@@ -811,6 +831,9 @@ async function detectRepeatedDeletions(): Promise<{ detected: number; demoted: n
       // 由来の構造化記録: UIバッジ表示と ai-feedback の回答反映先分類が参照する（【AIX:】タグは旧UI互換の表示用）
       entry_source: isAixCluster ? "aix_action" : "line_reply",
       aix_action: isAixCluster ? [...cluster.aixActions].join(",") : null,
+      // 削除フレーズクラスタは複数会話・複数ナレッジ横断のため単一のフェーズ・重要度を特定できない
+      phase: null,
+      importance: null,
     });
   }
 
@@ -893,7 +916,7 @@ export async function POST(req: NextRequest) {
   try {
     const { data: confirmedRules2 } = await supabase
       .from("ai_reply_knowledge")
-      .select("id, title, content, correct_count, wrong_count, conversation_state")
+      .select("id, title, content, correct_count, wrong_count, conversation_state, importance")
       .eq("hypothesis_status", "confirmed")
       .limit(300);
 
@@ -945,6 +968,8 @@ export async function POST(req: NextRequest) {
           evidence: `correct:${correct}, wrong:${wrong}, 外れ率:${Math.round(wrong / total * 100)}%`,
           confidence: "high",
           status: "pending",
+          phase: (rule.conversation_state as string | null) ?? null,
+          importance: (rule.importance as number | null) ?? null,
         });
       }
     }
@@ -1061,6 +1086,8 @@ export async function POST(req: NextRequest) {
           evidence: `knowledge_id:${rule.id as string}, correct:${correct}, wrong:${wrong}, apply:${applyCount}, 外れ率:${Math.round(wrongRate * 100)}%`,
           confidence: "high",
           status: "pending",
+          phase: (rule.conversation_state as string | null) ?? null,
+          importance: (rule.importance as number | null) ?? null,
         });
         if (inserted) promotionAsked++;
       }
@@ -1496,6 +1523,8 @@ export async function POST(req: NextRequest) {
                     evidence: `AI案:\n${ai_draft ?? ""}\n\n送信文:\n${sent_reply ?? ""}\n\nangle: ${reply_angle ?? ""}\n類似度: ${Math.round(sim * 100)}%`,
                     confidence: "medium",
                     status: "pending",
+                    phase: compState,
+                    importance: imp,
                   });
                 }
               }
@@ -1693,6 +1722,8 @@ export async function POST(req: NextRequest) {
                   evidence: `AI案:\n${ai_draft ?? ""}\n\n送信文:\n${sent_reply ?? ""}\n\nangle: ${reply_angle ?? ""}\n類似度: ${Math.round(sim * 100)}%`,
                   confidence: "medium",
                   status: "pending",
+                  phase: conversation_state ?? null, // 表示用の "不明" ではなく DB には null を入れる
+                  importance: imp,
                 });
               }
             }
@@ -1739,6 +1770,8 @@ export async function POST(req: NextRequest) {
                     evidence: `AI案:\n${ai_draft ?? ""}\n\n送信文:\n${sent_reply ?? ""}\n\n類似度: ${Math.round(sim * 100)}%`,
                     confidence: "medium",
                     status: "pending",
+                    phase: conversation_state ?? null,
+                    importance: mergedImp,
                   });
                 }
               }

@@ -357,6 +357,8 @@ interface FeedbackItem {
   answered_at: string | null;
   entry_source?: string | null; // 'line_reply' | 'aix_action' | null（旧レコード=由来不明）— AIX/返信バッジの第一情報源
   aix_action?: string | null;   // AIXアクションキー（カンマ区切り可・entry_source='aix_action' 時のみ）
+  phase?: string | null;        // 構造化カラム（英語フェーズキー）。存在すれば question 本文パースより優先する
+  importance?: number | null;   // 構造化カラム（重要度 1-10）。存在すれば question 本文パースより優先する
 }
 
 // AI質問フェーズ: 英語キー → 日本語ラベル（question本文に埋め込まれた "フェーズ: xxx" を変換）
@@ -418,6 +420,14 @@ function parseAiQuestion(question: string): AiQuestionMeta {
   //  重要度の数字以降の統計テールも行ごと除去する）
   let phase: string | null = null;
   let importance: number | null = null;
+  // ① 括弧付き形式「タイトル（フェーズ: xxx / 重要度: N点）」は括弧ごと除去する。
+  //    （旧実装は "点" 以降を行末まで食って閉じ括弧だけ消し、開き括弧が宙ぶらりんに残るバグがあった）
+  text = text.replace(/[（(]\s*フェーズ[:：]\s*([A-Za-z_]+)\s*[/／]\s*重要度[:：]\s*(\d+)(?:点[^）)\n]*)?\s*[）)]\s*/g, (_, p, i) => {
+    phase = p.trim();
+    importance = parseInt(i, 10);
+    return "";
+  });
+  // ② 括弧なし形式（統計テール付き行）は行末まで除去する
   text = text.replace(/フェーズ[:：]\s*([A-Za-z_]+)\s*[/／]\s*重要度[:：]\s*(\d+)(?:点[^\n]*)?\s*/g, (_, p, i) => {
     phase = p.trim();
     importance = parseInt(i, 10);
@@ -1683,7 +1693,8 @@ export default function TemplateModal({
     setDiscussionMessages(prev => ({ ...prev, [item.id]: newMessages }));
     setDiscussionInput("");
     try {
-      // フェーズ・重要度は question 本文に埋め込まれているためパースして構造化して送る
+      // フェーズ・重要度はDBカラム（item.phase / item.importance）を最優先。
+      // 旧レコード（カラム未設定）のみ question 本文パースにフォールバック（後方互換）
       const meta = parseAiQuestion(item.question);
       const res = await fetch("/api/ai-question-discuss", {
         method: "POST",
@@ -1693,8 +1704,8 @@ export default function TemplateModal({
           question: item.question,
           speculation: item.speculation,
           evidence: item.evidence,
-          phase: meta.phase,
-          importance: meta.importance,
+          phase: item.phase ?? meta.phase,
+          importance: item.importance ?? meta.importance,
           messages: prevMessages,
           user_message: msg,
         }),
@@ -3658,7 +3669,11 @@ export default function TemplateModal({
                   ? feedbackItems.filter(item => item.category === 'aix_boundary')
                   : feedbackItems.filter(item => isAixFeedbackItem(item)).filter(item => !aixActionFilter || item.aix_action?.split(',').includes(aixActionFilter));
                 const renderFeedbackItem = (item: FeedbackItem) => {
-                  const { cleanText, phase, importance, embeddedCategory, aiDraftExample, staffSentExample } = parseAiQuestion(item.question);
+                  const { cleanText, phase: parsedPhase, importance: parsedImportance, embeddedCategory, aiDraftExample, staffSentExample } = parseAiQuestion(item.question);
+                  // 構造化カラム（ai_feedback_items.phase / .importance）を第一情報源とし、
+                  // 旧レコード向けに question 本文パース結果をフォールバックにする
+                  const phase = item.phase ?? parsedPhase;
+                  const importance = item.importance ?? parsedImportance;
                   // 矛盾系質問の判定: 起票側(buildRuleConflictQuestion)が埋め込む構造マーカーのみで判定する。
                   // 「どちら」「矛盾」等のキーワード部分一致は通常の自由質問に誤爆するため廃止（旧フォーマット見出しはpending残存分のため維持）
                   const isContradiction =

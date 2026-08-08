@@ -1196,6 +1196,8 @@ CREATE TABLE IF NOT EXISTS ai_feedback_items (
   user_answer TEXT,
   status TEXT DEFAULT 'pending',  -- 'pending' | 'answered' | 'applied' | 'dismissed'
   applied_rule TEXT,
+  phase TEXT,
+  importance INTEGER,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   answered_at TIMESTAMPTZ
 );
@@ -1260,6 +1262,11 @@ CREATE INDEX IF NOT EXISTS idx_aix_feature_suggestions_implemented
 
 -- ai_feedback_items: 却下理由（AI質問の却下パターンを corpus2skill の学習材料に）
 ALTER TABLE ai_feedback_items ADD COLUMN IF NOT EXISTS dismissed_reason TEXT;
+
+-- ai_feedback_items: phase / importance（既存テーブル向けの追加。CREATE TABLE 定義にも同カラムあり）
+ALTER TABLE ai_feedback_items ADD COLUMN IF NOT EXISTS phase TEXT;
+ALTER TABLE ai_feedback_items ADD COLUMN IF NOT EXISTS importance INTEGER;
+CREATE INDEX IF NOT EXISTS idx_ai_feedback_items_phase ON ai_feedback_items(phase);
 
 -- ai_reply_knowledge: 出所管理（corpus2skill起票・手動・FEEDBACK回答などを区別）
 ALTER TABLE ai_reply_knowledge ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'manual';
