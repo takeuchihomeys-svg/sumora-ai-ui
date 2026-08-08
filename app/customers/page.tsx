@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useEffect, useState, useMemo, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import BottomNav from "@/app/components/BottomNav";
 import { supabase } from "@/app/lib/supabase";
@@ -305,7 +305,7 @@ function parseStructureTypes(...texts: (string | null | undefined)[]): string[] 
   return found;
 }
 
-export default function CustomersPage() {
+function CustomersPageInner() {
   const searchParams = useSearchParams();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading]     = useState(true);
@@ -2937,5 +2937,13 @@ function Field({
           onChange={(e) => onChange(e.target.value)} />
       )}
     </div>
+  );
+}
+
+export default function CustomersPage() {
+  return (
+    <Suspense>
+      <CustomersPageInner />
+    </Suspense>
   );
 }
