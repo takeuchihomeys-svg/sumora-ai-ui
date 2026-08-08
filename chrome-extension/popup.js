@@ -223,7 +223,7 @@ async function resolveUnknownTokensWithAI(tokens, onResolved) {
 //        あるが WARD_CODE_MAP に無い区、路線も所在区も引けない駅）。
 //        ①②では検出できず、無条件検索が黙って走っていた。
 const _resolveAreaCache = new Map(); // key: `${area}|${mode}`, value: { data, ts }
-const _RESOLVE_AREA_CACHE_MAX = 20;
+const _RESOLVE_AREA_CACHE_MAX = 50;
 const _RESOLVE_AREA_CACHE_TTL = 10 * 60 * 1000; // 10分
 async function resolveAreaWithAPI(rawArea, areaMode) {
   if (!rawArea) return null;
@@ -249,9 +249,19 @@ async function resolveAreaWithAPI(rawArea, areaMode) {
   // 「まで30分」「から20分」等の通勤時間制約パターンは parseAreaTokens が剥ぎ取るため
   // ローカル解決が成功していてもAPIを呼ぶ必要がある（近隣駅展開のため）
   const hasCommutePattern = /まで\d+分|から\d+分|へ\d+分/.test(rawArea);
-  const needApi = hasRoute || hasUnknown || hasCommutePattern || (localEmpty && hasMeaningfulToken);
+  // 乗り換えなし・直通は parseAreaTokens が路線展開するが制約情報は失われるためAPI必須
+  const hasTransferNone = /乗り換えなし|直通/.test(rawArea);
+  // 通いやすい・アクセスしやすい系は自然言語解析（Haiku）でないと意図が取れない
+  const hasCommuteExpression = /通いやすい|アクセスしやすい|通勤しやすい|便利/.test(rawArea);
+  // LEARNED_STATION_MAP にあるが realpro_lines が空（壊れたレコード）→ 再解決が必要
+  const hasIncompleteLearnedStation = toks.some(t => {
+    const entry = LEARNED_STATION_MAP[t];
+    return entry && entry.realpro_lines && entry.realpro_lines.length === 0;
+  });
+  const needApi = hasRoute || hasUnknown || hasCommutePattern || hasTransferNone || hasCommuteExpression || hasIncompleteLearnedStation || (localEmpty && hasMeaningfulToken);
   if (!needApi) return null;
-  if (!hasRoute && !hasUnknown && !hasCommutePattern) console.log("[AX] resolve-area: ローカル解決が空 → API補完:", rawArea);
+  const _triggerReason = hasRoute ? "路線名未解決" : hasUnknown ? "未知トークン" : hasCommutePattern ? "通勤時間制約" : hasTransferNone ? "乗り換えなし/直通" : hasCommuteExpression ? "通勤便利系表現" : hasIncompleteLearnedStation ? "LEARNED駅データ不完全" : "ローカル解決が空";
+  console.log("[AX] resolve-area 呼び出し:", _triggerReason, rawArea);
   try {
     const ctrl = new AbortController();
     const tid = setTimeout(() => ctrl.abort(), 15000);

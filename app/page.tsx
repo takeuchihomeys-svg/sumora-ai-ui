@@ -1892,6 +1892,8 @@ export default function Home() {
   }, [replyDraft, draftIsAi]);
 
   // メッセージが0件の会話を選択したとき、個別に取得して補完する
+  // conversations.length を依存に加えることで、?conv= 直遷移時（conversations未ロード状態でselectedId設定）
+  // の race condition を修正: conversations初回ロード完了後に再発火してメッセージを補完する
   useEffect(() => {
     if (!selectedId) return;
     const conv = conversations.find(c => c.id === selectedId);
@@ -1920,7 +1922,7 @@ export default function Home() {
       ));
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId]);
+  }, [selectedId, conversations.length]);
 
   // 会話選択時にAI次アクション提案を取得（未取得の場合のみ）
   useEffect(() => {
