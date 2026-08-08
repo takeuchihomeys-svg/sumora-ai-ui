@@ -595,6 +595,11 @@ export default function AixModal({
   const [recommendFocusPoints, setRecommendFocusPoints] = useState<string[]>(initialFocusPoints ?? []);
   const [recSimpleMode, setRecSimpleMode] = useState(false);
   const [loading, setLoading] = useState(false);
+  type GenPhase = "idle" | "uploading" | "prepare" | "generating" | "finalizing";
+  const [genPhase, setGenPhase] = useState<GenPhase>("idle");
+  const [genLabel, setGenLabel] = useState("");
+  const genAbortRef = useRef<AbortController | null>(null);
+  const genReqIdRef = useRef(0);
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<string>("");
   const [aiDraft, setAiDraft] = useState<string>("");
@@ -934,6 +939,8 @@ export default function AixModal({
     const cache = uploadCacheRef.current;
     return () => { cache.clear(); };
   }, []);
+  // unmount時に進行中のAI生成リクエストを中断（loading固まり防止）
+  useEffect(() => () => { genAbortRef.current?.abort(); }, []);
   // initialAppSubMode（picker/バナー経由の指定）をマウント時に潰さないよう、初期値を尊重してリセット
   useEffect(() => { setAppSubMode(initialAppSubMode ?? null); setPreview(""); }, [actionType, initialAppSubMode]);
   useEffect(() => { setAiActionComponents(null); }, [actionType, conversationId]);
@@ -1589,8 +1596,21 @@ export default function AixModal({
   };
 
   const generate = async (extraFlags?: Record<string, unknown>) => {
+    if (loading) return;
+    genAbortRef.current?.abort();
+    const aborter = new AbortController();
+    genAbortRef.current = aborter;
+    const reqId = ++genReqIdRef.current;
+    const isStale = () => reqId !== genReqIdRef.current;
+    const CLIENT_BUDGET_MS = 75_000;
+    const tid = setTimeout(
+      () => aborter.abort(new DOMException("client budget", "TimeoutError")),
+      CLIENT_BUDGET_MS,
+    );
     try {
       setLoading(true);
+      setGenPhase("uploading");
+      setGenLabel("準備しています");
       setError("");
 
       const body: Record<string, unknown> = {
@@ -1999,28 +2019,64 @@ export default function AixModal({
       if (initialTemplateStructure && initialTemplateStructure.length > 0) body.template_structure = initialTemplateStructure;
       if (initialTemplateSample) body.template_sample = initialTemplateSample;
 
-      // 60秒タイムアウト（AI生成が遅いと loading=true のまま固まるのを防ぐ）
-      const aborter = new AbortController();
-      const tid = setTimeout(() => aborter.abort(), 60000);
-      let res: Response;
-      try {
-        res = await fetch("/api/aix/action", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-          signal: aborter.signal,
-        });
-      } catch (fetchErr) {
-        if (fetchErr instanceof Error && fetchErr.name === "AbortError") {
-          throw new Error("AI生成がタイムアウトしました（60秒）。もう一度お試しください");
-        }
-        throw fetchErr;
-      } finally {
-        clearTimeout(tid);
+      setGenPhase("prepare");
+      const res = await fetch("/api/aix/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
+        body: JSON.stringify(body),
+        signal: aborter.signal,
+      });
+      if (!res.ok || !res.body) {
+        const errData = await res.json().catch(() => ({} as { error?: string }));
+        throw new Error(errData.error || `生成に失敗しました（HTTP ${res.status}）`);
       }
 
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.ok) throw new Error(data.error || `生成に失敗しました（HTTP ${res.status}）`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "", streamed = "", curSeq = -1;
+      let payload: Record<string, unknown> | null = null;
+
+      readLoop: while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          let ev: Record<string, unknown>;
+          try { ev = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+          if (isStale()) { await reader.cancel(); return; }
+          if (ev.t === "phase") {
+            setGenPhase(ev.phase === "prepare" ? "prepare" : "generating");
+            setGenLabel(String(ev.label ?? ""));
+          } else if (ev.t === "reset") {
+            curSeq = ev.seq as number; streamed = ""; setPreview("");
+            setGenPhase("generating");
+          } else if (ev.t === "delta") {
+            if (ev.seq !== curSeq) { curSeq = ev.seq as number; streamed = ""; }
+            streamed += ev.text as string;
+            setPreview(useEmoji ? streamed : stripEmoji(streamed));
+          } else if (ev.t === "done") {
+            payload = ev.payload as Record<string, unknown>;
+            break readLoop;
+          } else if (ev.t === "error") {
+            throw new Error(String(ev.error));
+          }
+        }
+      }
+      if (!payload) throw new Error("生成が中断されました。もう一度お試しください");
+      setGenPhase("finalizing");
+      const data = payload as Record<string, unknown> & {
+        ok?: boolean;
+        error?: string;
+        message_text?: string;
+        notice?: string;
+        estimate_text?: string;
+        parsed_estimate?: Record<string, string>;
+      };
+      if (!data.ok) throw new Error(data.error || "生成に失敗しました");
 
       let generatedMsg = data.message_text || "";
       // 申込有（2番手）: 物件確認した「物件あった」でONのとき本文末尾に2番手申込可能の案内を追加
@@ -2049,9 +2105,18 @@ export default function AixModal({
       // AIX完了後テンプレ誘導カテゴリ（API主導。無ければ親側の AIX_ACTION_META にフォールバックされる）
       suggestTemplateCategoryRef.current = typeof data.suggest_template_category === "string" ? data.suggest_template_category : null;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "エラーが発生しました");
+      if (isStale()) return;
+      const name = err instanceof Error ? err.name : "";
+      if (name === "AbortError" && !aborter.signal.aborted) return;
+      if (name === "AbortError" || name === "TimeoutError") {
+        setError("AI生成がタイムアウトしました。もう一度お試しください");
+      } else {
+        setError(err instanceof Error ? err.message : "エラーが発生しました");
+      }
     } finally {
-      setLoading(false);
+      clearTimeout(tid);
+      if (genAbortRef.current === aborter) genAbortRef.current = null;
+      if (!isStale()) { setLoading(false); setGenPhase("idle"); setGenLabel(""); }
     }
   };
 
@@ -2613,6 +2678,16 @@ export default function AixModal({
       setLoading(false);
     }
   };
+
+  // 生成中のフェーズ表示ラベル
+  const GEN_PHASE_LABEL: Record<string, string> = {
+    idle: "AIX 生成",
+    uploading: "画像アップロード中…",
+    prepare: "情報を集めています…",
+    generating: "生成中…",
+    finalizing: "仕上げ中…",
+  };
+  const busyLabel = genLabel && genPhase === "generating" ? `${genLabel}…` : GEN_PHASE_LABEL[genPhase] ?? "生成中…";
 
   // 生成ボタンが押せるか
   const canGenerate = actionType === "property_recommendation"
@@ -4258,7 +4333,7 @@ export default function AixModal({
                       disabled={loading || !otherRoomStatus}
                       className="w-full rounded-2xl bg-[#546E7A] py-3.5 text-sm font-bold text-white disabled:opacity-40"
                     >
-                      {loading ? "生成中..." : "💬 会話を合わせる"}
+                      {loading ? busyLabel : "💬 会話を合わせる"}
                     </button>
                   )}
                 </div>
@@ -5815,7 +5890,8 @@ export default function AixModal({
               {error.includes("タイムアウト") && (
                 <button
                   onClick={() => { setError(""); void generate(); }}
-                  className="mt-2 flex items-center gap-1 rounded-full bg-red-500 px-4 py-1.5 text-xs font-bold text-white active:opacity-70"
+                  disabled={loading}
+                  className="mt-2 flex items-center gap-1 rounded-full bg-red-500 px-4 py-1.5 text-xs font-bold text-white active:opacity-70 disabled:opacity-40"
                 >
                   🔄 もう一度生成
                 </button>
@@ -5847,7 +5923,7 @@ export default function AixModal({
                     disabled={loading || !canGenerate}
                     className="flex-1 rounded-full border border-[#d1d7db] py-3 text-sm font-semibold text-[#54656f] disabled:opacity-50"
                   >
-                    {loading ? "生成中..." : "再生成"}
+                    {loading ? busyLabel : "再生成"}
                   </button>
                 );
                 const sendBtn = isConfirmation ? (
@@ -5856,7 +5932,7 @@ export default function AixModal({
                     disabled={loading}
                     className="flex-1 rounded-full bg-orange-500 py-3 text-sm font-bold text-white disabled:opacity-50"
                   >
-                    {loading ? "生成中..." : "確認した・生成する"}
+                    {loading ? busyLabel : "確認した・生成する"}
                   </button>
                 ) : (
                   <button
@@ -5926,7 +6002,7 @@ export default function AixModal({
                   disabled={loading || !canGenerate}
                   className="w-full rounded-2xl bg-[#546E7A] py-3.5 text-sm font-bold text-white disabled:opacity-40"
                 >
-                  {loading ? "生成中..." : "💬 会話を合わせる"}
+                  {loading ? busyLabel : "💬 会話を合わせる"}
                 </button>
                 {actionType === "condition_hearing" && (
                   <p className="text-[11px] text-[#8696a0] text-center -mt-1">AI導入文を生成 → 送信すると{HEARING_FORM_DELAY_SEC}秒後にフォームを自動送信</p>
@@ -5936,17 +6012,35 @@ export default function AixModal({
                   disabled={loading || !canGenerate}
                   className="w-full rounded-full bg-[#111b21] py-3 text-sm font-bold text-white disabled:opacity-50"
                 >
-                  {loading ? "生成中..." : "AIX 生成"}
+                  {loading ? busyLabel : "AIX 生成"}
                 </button>
+                {loading && (
+                  <button
+                    onClick={() => { genReqIdRef.current++; genAbortRef.current?.abort(); setLoading(false); setGenPhase("idle"); setGenLabel(""); }}
+                    className="mt-2 w-full rounded-full border border-[#d1d7db] py-2 text-xs font-bold text-[#54656f] active:opacity-70"
+                  >
+                    ✕ 生成をキャンセル
+                  </button>
+                )}
               </div>
             ) : (
-              <button
-                onClick={() => void generate()}
-                disabled={loading || !canGenerate}
-                className="w-full rounded-full bg-[#111b21] py-3 text-sm font-bold text-white disabled:opacity-50"
-              >
-                {loading ? "生成中..." : "AIX 生成"}
-              </button>
+              <div className="flex w-full flex-col gap-2">
+                <button
+                  onClick={() => void generate()}
+                  disabled={loading || !canGenerate}
+                  className="w-full rounded-full bg-[#111b21] py-3 text-sm font-bold text-white disabled:opacity-50"
+                >
+                  {loading ? busyLabel : "AIX 生成"}
+                </button>
+                {loading && (
+                  <button
+                    onClick={() => { genReqIdRef.current++; genAbortRef.current?.abort(); setLoading(false); setGenPhase("idle"); setGenLabel(""); }}
+                    className="w-full rounded-full border border-[#d1d7db] py-2 text-xs font-bold text-[#54656f] active:opacity-70"
+                  >
+                    ✕ 生成をキャンセル
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>

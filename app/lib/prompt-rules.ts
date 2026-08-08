@@ -38,15 +38,9 @@ export async function fetchPromptRules(
       return q;
     };
 
-    // ── 永久ルール（is_permanent=true）を別枠で先行取得 ──
-    // 通常の150件上限・priority閾値とは独立して全件注入される。どれほどルールが増えても抜け落ちない。
-    const permanentRes = await buildBaseQuery()
-      .eq("is_permanent", true)
-      .not("rule_key", "like", "LEARN-%")
-      .order("priority", { ascending: false })
-      .order("updated_at", { ascending: false, nullsFirst: false });
-
-    // FEEDBACK-* / IMPLEMENT-* 等（LEARN-*はPhase1で廃止済み・HUMAN-*はRAGへ完全移行）
+    // ── 2クエリを並列実行（Promise.all）──
+    // [1] 永久ルール（is_permanent=true）: 通常の150件上限・priority閾値とは独立した別枠（上限80件）。
+    // [2] FEEDBACK-* / IMPLEMENT-* 等（LEARN-*はPhase1で廃止済み・HUMAN-*はRAGへ完全移行）
     // ナレッジはfetchKnowledge()のpgvector RAGで届くため ai_prompt_rules への重複注入不要
     //
     // priority >= 4 のみ注入（decayを実際に機能させるための閾値）:
@@ -54,13 +48,23 @@ export async function fetchPromptRules(
     // 閾値なしで priority 降順 LIMIT 150 だと総件数が150未満の間は demote 済みルールも
     // 全件注入され続け、decayが no-op になる。priority 3以下は注入対象から外す。
     // （BOUNDARY-* は priority=9 かつ decay 対象外のため、この閾値の影響を受けない）
-    const highPrioRes = await buildBaseQuery()
-      .not("rule_key", "like", "LEARN-%")
-      .eq("is_permanent", false)
-      .gte("priority", 4)
-      .order("priority", { ascending: false })
-      .order("updated_at", { ascending: false, nullsFirst: false })
-      .limit(150);
+    const [permanentRes, highPrioRes] = await Promise.all([
+      buildBaseQuery()
+        .eq("is_permanent", true)
+        .not("rule_key", "like", "LEARN-%")
+        .order("priority", { ascending: false })
+        .order("updated_at", { ascending: false, nullsFirst: false })
+        .limit(80)
+        .abortSignal(AbortSignal.timeout(8_000)),
+      buildBaseQuery()
+        .not("rule_key", "like", "LEARN-%")
+        .eq("is_permanent", false)
+        .gte("priority", 4)
+        .order("priority", { ascending: false })
+        .order("updated_at", { ascending: false, nullsFirst: false })
+        .limit(150)
+        .abortSignal(AbortSignal.timeout(8_000)),
+    ]);
 
     if (highPrioRes.error || permanentRes.error) {
       // ③ DB障害時: サイレント消失を防ぐ。空文字ではなく警告テキストを返してAIに認知させる
