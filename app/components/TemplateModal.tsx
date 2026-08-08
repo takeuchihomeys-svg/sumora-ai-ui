@@ -410,6 +410,8 @@ function parseAiQuestion(question: string): AiQuestionMeta {
   text = text.replace(/\[confirmed-vs-confirmed\][^\n]*\n?/g, "");
   // [aix_boundary_action:XXX] タグ（線引き確認質問）も表示からは除去
   text = text.replace(/\[aix_boundary_action:[^\]]+\]\s*/g, "");
+  // [rule_elevate:KEY] / [rule_merge:KEY1:KEY2] タグ（昇格・統合承認質問）も表示からは除去
+  text = text.replace(/\[rule_(?:elevate|merge):[^\]]+\]\s*/g, "");
 
   // "フェーズ: xxx / 重要度: x" 行を抽出して除去
   // （統一フォーマットの「フェーズ：xxx / 重要度：7点 ／ 適用 N回 ／ 正解 N回・誤答 N回」行にも対応し、
@@ -1632,17 +1634,20 @@ export default function TemplateModal({
   // 回答を送信 → Sonnetが知識化（trigger_action_rules / ai_prompts に保存）
   // choice が指定された場合（矛盾系質問）: 自動でanswerテキストを生成し choice をbodyに含める
   // extraComment: 矛盾系質問での任意補足コメント（使い分け条件・理由など）
-  const submitFeedbackAnswer = useCallback(async (id: string, choice?: 'new' | 'old' | 'both' | 'keep' | 'remove', extraComment?: string) => {
+  const submitFeedbackAnswer = useCallback(async (id: string, choice?: 'new' | 'old' | 'both' | 'keep' | 'remove' | 'approve' | 'reject', extraComment?: string) => {
     let baseAnswer = choice === 'new' ? '① 新しいルールが正しい'
       : choice === 'old' ? '② 既存のルールが正しい'
       : choice === 'both' ? '③ 場面で使い分ける'
       : choice === 'keep' ? '✅ 正しい（維持）'
       : choice === 'remove' ? '❌ 間違い（無効化）'
+      : choice === 'approve' ? '✅ 承認する'
+      : choice === 'reject' ? '❌ 却下（見送り）'
       : feedbackAnswers[id]?.trim();
     if (!baseAnswer) return;
     // 補足コメントがある場合は回答テキストに付加（Opusがルール抽出する際の文脈として使用）
     const trimmedComment = extraComment?.trim();
-    const answer = (trimmedComment && (choice === 'new' || choice === 'old'))
+    // choice='both' では補足＝使い分け条件そのものであり、extractRules の条件付きルール化に必須
+    const answer = (trimmedComment && (choice === 'new' || choice === 'old' || choice === 'both'))
       ? `${baseAnswer}\n補足: ${trimmedComment}`
       : baseAnswer;
     setSubmittingFeedback(id);
@@ -2477,7 +2482,7 @@ export default function TemplateModal({
                   placeholder="Opus 4.8に伝えたいことを入力..."
                   value={meetingInput}
                   onChange={e => setMeetingInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendMeetingMessage(); } }}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void sendMeetingMessage(); } }}
                   disabled={meetingSending}
                 />
                 {meetingConfirming && (
@@ -2574,7 +2579,7 @@ export default function TemplateModal({
               <textarea
                 value={reviewInput}
                 onChange={e => setReviewInput(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendReviewMessage(); } }}
+                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void sendReviewMessage(); } }}
                 placeholder="「短くして」「もっと丁寧に」など..."
                 className="flex-1 border border-gray-300 rounded-xl px-3 py-2 text-sm resize-none"
                 rows={2}
@@ -3654,10 +3659,17 @@ export default function TemplateModal({
                   : feedbackItems.filter(item => isAixFeedbackItem(item)).filter(item => !aixActionFilter || item.aix_action?.split(',').includes(aixActionFilter));
                 const renderFeedbackItem = (item: FeedbackItem) => {
                   const { cleanText, phase, importance, embeddedCategory, aiDraftExample, staffSentExample } = parseAiQuestion(item.question);
-                  // 矛盾系質問の判定: questionに「どちら」「矛盾」「既存」「[old_knowledge_id:」が含まれる場合、選択ボタンUIに切り替える
-                  const isContradiction = item.question.includes('どちら') || item.question.includes('矛盾') || item.question.includes('[old_knowledge_id:');
+                  // 矛盾系質問の判定: 起票側(buildRuleConflictQuestion)が埋め込む構造マーカーのみで判定する。
+                  // 「どちら」「矛盾」等のキーワード部分一致は通常の自由質問に誤爆するため廃止（旧フォーマット見出しはpending残存分のため維持）
+                  const isContradiction =
+                    item.question.includes('[old_knowledge_id:') ||
+                    item.question.includes('━━ 新しく学んだルール ━━') ||
+                    item.question.includes('━━ 【新しいルール（仮説）】━━');
                   // ルール再確認の判定: questionに「[feedback_rule_key:」が含まれる場合、維持/無効化ボタンUIに切り替える
                   const isFeedbackRuleReconfirm = item.question.includes('[feedback_rule_key:');
+                  // 昇格/統合承認の判定: 自由回答の文字列判定は否定回答を誤承認しやすいため、明示ボタンUIに切り替える
+                  const isRuleMergeApproval = item.question.includes('[rule_merge:');
+                  const isRuleApproval = item.question.includes('[rule_elevate:') || isRuleMergeApproval;
                   // AIX/返信の由来判定（一元化）: 構造化カラム entry_source を第一情報源とし、
                   // 旧レコード向けに【AIX: xxx】埋め込みタグと category='new_aix_needed' をフォールバックにする
                   const aixQuestionMatch = item.question.match(/【AIX[:：]\s*([^】]+)】/);
@@ -3740,7 +3752,25 @@ export default function TemplateModal({
 
                   {item.status === "pending" ? (
                     <>
-                      {isFeedbackRuleReconfirm ? (
+                      {isRuleApproval ? (
+                        /* 昇格/統合承認質問: 承認 vs 却下 の明示ボタン（自由回答の文字列判定を使わない） */
+                        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                          <button
+                            onClick={() => submitFeedbackAnswer(item.id, 'approve')}
+                            disabled={submittingFeedback === item.id}
+                            style={{ flex: 1, padding: "8px 12px", background: "#22c55e", color: "white", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, opacity: submittingFeedback === item.id ? 0.5 : 1 }}
+                          >
+                            ✅ {isRuleMergeApproval ? "統合を承認" : "昇格を承認"}
+                          </button>
+                          <button
+                            onClick={() => submitFeedbackAnswer(item.id, 'reject')}
+                            disabled={submittingFeedback === item.id}
+                            style={{ flex: 1, padding: "8px 12px", background: "#6b7280", color: "white", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, opacity: submittingFeedback === item.id ? 0.5 : 1 }}
+                          >
+                            ❌ 見送る
+                          </button>
+                        </div>
+                      ) : isFeedbackRuleReconfirm ? (
                         /* ルール再確認質問: 維持 vs 無効化 ボタン */
                         <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                           <button
@@ -3950,7 +3980,7 @@ export default function TemplateModal({
                             rows={2}
                             className="flex-1 rounded-xl border border-orange-200 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-orange-300"
                             onKeyDown={e => {
-                              if (e.key === "Enter" && !e.shiftKey) {
+                              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                                 e.preventDefault();
                                 void sendDiscussionMessage(item);
                               }

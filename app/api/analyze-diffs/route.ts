@@ -413,8 +413,12 @@ async function checkContradiction(
         const ruleContent = ((rule.content as string) ?? "").replace(/\s+/g, "");
         if (!ruleContent.includes(phraseNorm)) continue;
 
-        // 矛盾検知: ai_feedback_items で重複起票防止（統一フォーマットの「タイトル：「...」」で照合）
-        const dedupKey = `タイトル：「${title.slice(0, 20)}`;
+        // 矛盾検知: ai_feedback_items で重複起票防止。
+        // 質問文フォーマット変更に強い [knowledge_id:] [old_knowledge_id:] マーカー照合（AUTO-JUDGE経路と同方式）。
+        // newKnowledgeId が無い場合のみ、実際の質問文に含まれる「{title}」で照合
+        const dedupKey = newKnowledgeId
+          ? `[knowledge_id:${newKnowledgeId}] [old_knowledge_id:${rule.id as string}]`
+          : `「${title.slice(0, 20)}`;
         const { data: existing } = await supabase
           .from("ai_feedback_items")
           .select("id")
@@ -465,13 +469,19 @@ async function checkContradiction(
           const ruleText = ((humanRule.rule_text as string) ?? "").replace(/\s+/g, "");
           if (!ruleText.includes(phraseNorm)) continue;
 
-          // 統一フォーマットの「タイトル：「...」」で dedup 照合（confirmed 矛盾と共通のキー形式）
-          const dedupKeyHuman = `タイトル：「${title.slice(0, 20)}`;
+          // dedup: [knowledge_id:] マーカー（無ければ「{title}」）× HUMANルールkey の組み合わせで照合。
+          // [knowledge_id:] 単独だと同一ナレッジのAUTO-JUDGE品質チェック質問と衝突して過剰スキップするため、
+          // 質問文に実際に含まれる「{rule_key}（竹内さん確認済み」もAND条件にして矛盾ペア単位で判定する
+          const dedupKeyHuman = newKnowledgeId
+            ? `[knowledge_id:${newKnowledgeId}]`
+            : `「${title.slice(0, 20)}`;
+          const humanRuleKeyFragment = `「${humanRule.rule_key as string}（竹内さん確認済み`;
           const { data: existingHuman } = await supabase
             .from("ai_feedback_items")
             .select("id")
             .in("status", ["pending", "answered", "applied"])
             .ilike("question", `%${dedupKeyHuman.replace(/[%_\\]/g, "\\$&")}%`)
+            .ilike("question", `%${humanRuleKeyFragment.replace(/[%_\\]/g, "\\$&")}%`)
             .limit(1);
           if (existingHuman && existingHuman.length > 0) continue;
 

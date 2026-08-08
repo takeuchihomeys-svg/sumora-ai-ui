@@ -48,6 +48,10 @@ type ExtractedRule = {
   trigger_example?: string;
 };
 
+// choice未指定（自由記述回答）時にOpusが判定する回答意図。
+// new=新ルール採用 / old=既存ルール維持 / conditional=条件で使い分け / unknown=判定不能
+type AnswerIntent = "new" | "old" | "conditional" | "unknown";
+
 // GET: pending を最大100件 + answered/applied を直近20件取得
 // applied = ルール反映済み（UI でグレーアウト表示用に含める）
 // ※ 旧実装は全status混合 limit=50 で、pending が50件を超えると未回答質問が見えなくなっていた。
@@ -91,11 +95,14 @@ export async function GET() {
 }
 
 // 回答をOpus 4.8で解釈して業務ルールを1〜3個抽出する（高品質な永続ルールを生成するため最上位モデルを使用）
+// classifyIntent=true（choice未指定の自由記述回答 × knowledge_id付き質問）の場合は、
+// 回答が新ルール採用/既存維持/条件分岐のどれを意味するかの分類（answer_intent）も同時に取得する
 async function extractRules(
   question: string,
   answer: string,
   origin?: { entrySource: string | null; aixAction: string | null },
-): Promise<ExtractedRule[]> {
+  classifyIntent = false,
+): Promise<{ rules: ExtractedRule[]; answerIntent: AnswerIntent }> {
   // 起票時に記録された構造化由来（ai_feedback_items.entry_source / aix_action）。
   // テキストからの推測より優先すべき確定情報としてOpusに伝える。
   const primaryAixAction = origin?.aixAction ? origin.aixAction.split(",")[0].trim() : null;
@@ -104,6 +111,12 @@ async function extractRules(
     : origin?.entrySource === "line_reply"
       ? `\n【この質問の由来（起票時に記録された確定情報）】\nLINE返信AI（通常返信）の文への修正から起票された質問です。回答が明確にAIXボタン操作について述べていない限り、action_type は null にしてください。\n`
       : "";
+  const intentSection = classifyIntent
+    ? `\n【回答意図の分類（answer_intent）】\nこの質問は「新しいルール仮説（新ルール）」と「既存の確定ルール（既存ルール）」のどちらを採用すべきかを確認する質問です。\n竹内さんの回答が次のどれを意味するかを answer_intent として分類してください:\n- "new": 新ルールを採用する（既存ルールは置き換える）\n- "old": 既存ルールのままでよい（新ルールは採用しない）\n- "conditional": 条件・場面によって両方を使い分ける（どちらか一方に確定しない）\n- "unknown": 上記のどれとも判断できない\n`
+    : "";
+  const outputInstruction = classifyIntent
+    ? `JSONオブジェクトのみ返してください（説明・コードフェンス不要）:\n{"answer_intent": "new"|"old"|"conditional"|"unknown", "rules": [{"rule_text": "...", "save_target": "trigger_action_rules"|"ai_prompts"|"ai_reply_knowledge", "action_type": "..."|null, "trigger_keywords": ["..."], "trigger_example": "..."}]}`
+    : `JSON配列のみ返してください（説明・コードフェンス不要）:\n[{"rule_text": "...", "save_target": "trigger_action_rules"|"ai_prompts"|"ai_reply_knowledge", "action_type": "..."|null, "trigger_keywords": ["..."], "trigger_example": "..."}]`;
   const res = await client.messages.create({
     model: "claude-opus-5",
     max_tokens: 1500,
@@ -137,20 +150,34 @@ save_target の分類基準：
 - save_target が "ai_reply_knowledge" の場合は、trigger_example フィールドも必ず付ける。
   trigger_example: このルールが必要になる典型的な顧客メッセージ例（1〜2文・顧客がLINEで実際に送りそうな自然な文体）。
   ルールの説明文ではなく、顧客の発話そのものとして書くこと（例：「内見したいのですが、いつ空いていますか？」）。
-
-JSON配列のみ返してください（説明・コードフェンス不要）:
-[{"rule_text": "...", "save_target": "trigger_action_rules"|"ai_prompts"|"ai_reply_knowledge", "action_type": "..."|null, "trigger_keywords": ["..."], "trigger_example": "..."}]`,
+${intentSection}
+${outputInstruction}`,
     }],
   });
 
   const text = res.content?.find((b): b is typeof b & { text: string } => b.type === "text")?.text?.trim() ?? "";
+  const sanitizeRules = (raw: unknown): ExtractedRule[] =>
+    Array.isArray(raw) ? (raw as ExtractedRule[]).filter((r) => r?.rule_text?.trim()).slice(0, 3) : [];
+  if (classifyIntent) {
+    const objMatch = text.match(/\{[\s\S]*\}/);
+    if (!objMatch) return { rules: [], answerIntent: "unknown" };
+    try {
+      const parsed = JSON.parse(objMatch[0]) as { answer_intent?: unknown; rules?: unknown };
+      const answerIntent: AnswerIntent =
+        parsed.answer_intent === "new" || parsed.answer_intent === "old" || parsed.answer_intent === "conditional"
+          ? parsed.answer_intent
+          : "unknown";
+      return { rules: sanitizeRules(parsed.rules), answerIntent };
+    } catch {
+      return { rules: [], answerIntent: "unknown" };
+    }
+  }
   const match = text.match(/\[[\s\S]*\]/);
-  if (!match) return [];
+  if (!match) return { rules: [], answerIntent: "unknown" };
   try {
-    const parsed = JSON.parse(match[0]) as ExtractedRule[];
-    return Array.isArray(parsed) ? parsed.filter((r) => r?.rule_text?.trim()).slice(0, 3) : [];
+    return { rules: sanitizeRules(JSON.parse(match[0])), answerIntent: "unknown" };
   } catch {
-    return [];
+    return { rules: [], answerIntent: "unknown" };
   }
 }
 
@@ -207,10 +234,24 @@ async function extractAndUpsertTriggerKeywords(question: string, answer: string,
   }
 }
 
+// rule_elevate / rule_merge の自由回答承認判定。
+// 「統合しないでください」「昇格は不要」等の否定・保留回答を承認と誤判定しないよう、
+// 否定語チェックを先に行い、肯定語のみ含む場合だけ承認とみなす。
+// 「とはいえ」は「はい」を部分文字列として含むため、肯定判定前に除去する。
+function isFreeTextApproval(answer: string, approvalWords: string[]): boolean {
+  const lower = answer.toLowerCase();
+  const negativeWords = ["しない", "しません", "不要", "いいえ", "やめ", "ダメ", "だめ", "却下", "見送", "ng"];
+  if (negativeWords.some((w) => lower.includes(w))) return false;
+  const normalized = lower.replace(/とはいえ/g, "");
+  return approvalWords.some((w) => normalized.includes(w));
+}
+
 // POST: { id, answer, choice? } → user_answer保存 + Sonnetで知識化 + status="answered"に更新
-// choice: 'new' = 新ルール採用, 'old' = 既存ルール維持, undefined = 既存動作維持（安全側）
+// choice: 'new' = 新ルール採用, 'old' = 既存ルール維持, 'both' = 場面で使い分け（両ルール併存）,
+//         undefined = 自由記述回答（knowledge_id付き質問はOpusが回答意図を分類して昇格/reject/保留を分岐）
+// choice: 'approve' = rule_elevate/rule_merge を承認, 'reject' = 却下（文字列判定より優先）
 export async function POST(req: NextRequest) {
-  const body = await req.json() as { id?: string; answer?: string; choice?: 'new' | 'old' | 'remove' | 'keep' };
+  const body = await req.json() as { id?: string; answer?: string; choice?: 'new' | 'old' | 'both' | 'remove' | 'keep' | 'approve' | 'reject' };
   const id = body.id;
   const answer = body.answer?.trim();
   const choice = body.choice;
@@ -265,9 +306,18 @@ export async function POST(req: NextRequest) {
       : null;
 
   let rules: ExtractedRule[] = [];
+  let answerIntent: AnswerIntent = "unknown";
   if (!isMetaApprovalQuestion) {
     try {
-      rules = await extractRules(item.question as string, answer, { entrySource: itemEntrySource, aixAction: itemAixAction });
+      const extracted = await extractRules(
+        item.question as string,
+        answer,
+        { entrySource: itemEntrySource, aixAction: itemAixAction },
+        // choice未指定の自由記述回答 × knowledge_id付き質問のみ回答意図を分類させる
+        choice === undefined && linkedKnowledgeId !== null,
+      );
+      rules = extracted.rules;
+      answerIntent = extracted.answerIntent;
     } catch (e) {
       console.error("[ai-feedback] ルール抽出失敗:", e);
     }
@@ -485,7 +535,11 @@ export async function POST(req: NextRequest) {
   //
   // choice === 'new': 新ルール採用 → linkedKnowledgeId を confirmed・oldKnowledgeId を rejected
   // choice === 'old': 既存ルール正しい → linkedKnowledgeId を rejected（confirmed昇格しない）
-  // choice === undefined: 既存動作を維持（安全側 = 無条件に confirmed）
+  // choice === 'both': 場面で使い分け → linkedKnowledgeId を confirmed・oldKnowledgeId は維持（両ルール併存）
+  // choice === undefined（自由記述回答）: Opusの回答意図分類（answerIntent）で分岐
+  //   'new' → confirmed昇格のみ（旧confirmedの暗黙rejectはしない。rejectは明示choice='new'に限定）
+  //   'old' → linkedKnowledgeId を rejected
+  //   'conditional' / 'unknown' → 保留（昇格もrejectもしない安全側）
   if (linkedKnowledgeId) {
     try {
       const { data: knowledgeRow } = await supabase
@@ -497,13 +551,15 @@ export async function POST(req: NextRequest) {
       if (knowledgeRow) {
         const currentImportance = (knowledgeRow.importance as number) ?? 7;
 
-        if (choice === 'old') {
+        if (choice === 'old' || (choice === undefined && answerIntent === 'old')) {
           // ── 既存ルールが正しい: 新 hypothesis を rejected に ──
           const { data: oldChoiceData, error: oldChoiceErr } = await supabase
             .from("ai_reply_knowledge")
             .update({
               hypothesis_status: "rejected",
-              rejection_reason: "ai_feedback: existing confirmed rule is correct",
+              rejection_reason: choice === 'old'
+                ? "ai_feedback: existing confirmed rule is correct"
+                : "ai_feedback: free-form answer classified as keeping existing rule",
             })
             .eq("id", linkedKnowledgeId)
             .in("hypothesis_status", ["hypothesis", "confirmed"]) // auto_judge等で先にconfirmed化されていてもrejectできるように
@@ -519,9 +575,22 @@ export async function POST(req: NextRequest) {
           }
 
           // choice='old': hypothesis を rejected にするのみ。RAGがフィルタするため ai_prompt_rules への書き込みは不要。
-        } else {
-          // ── choice === 'new' または undefined（既存動作: confirmed 昇格） ──
-          // 1. confirmed 昇格・importance を min(10, max(現在値, 9)) に引き上げ
+        } else if (choice === 'both') {
+          // ── 場面で使い分ける: 新 hypothesis を confirmed 昇格し、旧 confirmed も維持（両ルール併存） ──
+          // 使い分け条件は answer に付加された補足コメント経由で extractRules（上部で実行済み）が条件付きルール化する。
+          // oldKnowledgeId の reject や旧 FEEDBACK-* の無効化は行わない。
+          const { error: bothUpgradeError } = await supabase
+            .from("ai_reply_knowledge")
+            .update({ hypothesis_status: "confirmed", importance: Math.min(10, Math.max(currentImportance, 9)) })
+            .eq("id", linkedKnowledgeId)
+            .eq("hypothesis_status", "hypothesis"); // ガード: rejected ナレッジの誤復活を防ぐ
+          if (bothUpgradeError) {
+            console.error("[ai-feedback] choice=both: confirmed昇格 update 失敗:", bothUpgradeError.message);
+            throw new Error(`[ai-feedback] choice=both: confirmed昇格失敗: ${bothUpgradeError.message}`);
+          }
+          appliedRules.push(`[CONFIRMED-${linkedKnowledgeId}] knowledge confirmed（既存ルール${oldKnowledgeId ? ` ${oldKnowledgeId} ` : ""}は維持・場面で使い分け）`);
+        } else if (choice === 'new' || (choice === undefined && answerIntent === 'new')) {
+          // ── 新ルール採用: confirmed 昇格・importance を min(10, max(現在値, 9)) に引き上げ ──
           // safety guard: choice='old' と対称に hypothesis のみを対象にする
           // （rejected ナレッジが別回答で誤って復活するのを防ぐ）
           const { error: upgradeError } = await supabase
@@ -535,40 +604,30 @@ export async function POST(req: NextRequest) {
             throw new Error(`[ai-feedback] confirmed昇格失敗: ${upgradeError.message}`);
           }
 
-          // 2. oldKnowledgeId がある場合 → 旧ルールを rejected に
-          //    choice === 'new': 明示的な置き換え
-          //    choice === undefined（自由記述回答）: 新仮説がconfirmed化されるため、
-          //    旧confirmedも暗黙的にrejectして「矛盾するconfirmed 2件の共存」を防ぐ
-          if (oldKnowledgeId) {
-            const isImplicit = choice !== 'new';
-            if (isImplicit) {
-              console.warn(`[ai-feedback] choice未指定（自由記述回答）: 旧ナレッジ ${oldKnowledgeId} を暗黙的にrejectします`);
-            }
+          // 旧confirmedのrejectと旧FEEDBACK-*無効化は明示的な choice='new' のみ。
+          // 自由記述回答のOpus分類（answerIntent='new'）は推定にすぎないため、
+          // 既存確定ルールの破棄までは行わない（誤分類でユーザー意図が反転するのを防ぐ）
+          if (oldKnowledgeId && choice === 'new') {
             const { error: oldRejectErr } = await supabase
               .from("ai_reply_knowledge")
               .update({
                 hypothesis_status: "rejected",
-                rejection_reason: isImplicit
-                  ? "implicit_new: replaced by free-form answer"
-                  : "ai_feedback: replaced by newer rule",
+                rejection_reason: "ai_feedback: replaced by newer rule",
               })
               .eq("id", oldKnowledgeId)
               .in("hypothesis_status", ["hypothesis", "confirmed"]); // confirmed昇格前後どちらでもrejectできるように
             if (!oldRejectErr) {
-              appliedRules.push(`[REJECT-${oldKnowledgeId}] old rule rejected (${isImplicit ? "implicit_new" : "replaced by new"})`);
+              appliedRules.push(`[REJECT-${oldKnowledgeId}] old rule rejected (replaced by new)`);
             } else {
               console.error("[ai-feedback] oldKnowledgeId rejected update 失敗:", oldRejectErr.message);
             }
-          }
 
-          // 3. confirmed昇格のみ。RAGにより自動参照されるためai_prompt_rulesへの書き込みは不要。
-          // 旧ナレッジに紐づく過去のFEEDBACK-*ルールを無効化（矛盾注入防止）
-          // ※ rule_key は FEEDBACK-{ai_feedback_items.id}-{n} 形式のため、
-          //   oldKnowledgeId（ai_reply_knowledge.id）を LIKE マッチさせても永久に0件になる。
-          //   生成元フィードバックIDを source_feedback_item_id で追跡し、正確にクリーンアップする。
-          //   oldFeedbackItemIds: checkContradiction が [knowledge_id:UUID] を question に埋め込む仕様を利用し、
-          //   oldKnowledgeId をその knowledge_id として持つ feedback item を逆引きして特定する。
-          if (oldKnowledgeId) {
+            // 旧ナレッジに紐づく過去のFEEDBACK-*ルールを無効化（矛盾注入防止）
+            // ※ rule_key は FEEDBACK-{ai_feedback_items.id}-{n} 形式のため、
+            //   oldKnowledgeId（ai_reply_knowledge.id）を LIKE マッチさせても永久に0件になる。
+            //   生成元フィードバックIDを source_feedback_item_id で追跡し、正確にクリーンアップする。
+            //   oldFeedbackItemIds: checkContradiction が [knowledge_id:UUID] を question に埋め込む仕様を利用し、
+            //   oldKnowledgeId をその knowledge_id として持つ feedback item を逆引きして特定する。
             const { data: oldFeedbackItems } = await supabase
               .from("ai_feedback_items")
               .select("id")
@@ -580,7 +639,13 @@ export async function POST(req: NextRequest) {
                 .in("source_feedback_item_id", oldFeedbackItemIds);
             }
           }
-          appliedRules.push(`[CONFIRMED-${linkedKnowledgeId}] knowledge confirmed → RAGで自動参照`);
+          // confirmed昇格のみ。RAGにより自動参照されるためai_prompt_rulesへの書き込みは不要。
+          appliedRules.push(`[CONFIRMED-${linkedKnowledgeId}] knowledge confirmed → RAGで自動参照${choice === undefined && oldKnowledgeId ? `（自由記述分類のため既存ルール ${oldKnowledgeId} は維持）` : ""}`);
+        } else {
+          // ── 保留: 自由記述の意図が conditional/unknown、または knowledge に作用しない choice ──
+          // 誤分類による既存ルール破棄・仮説誤採用を防ぐため昇格もrejectもしない
+          console.warn(`[ai-feedback] choice=${choice ?? "未指定"}・answerIntent=${answerIntent}: ${linkedKnowledgeId} の昇格/rejectを保留`);
+          appliedRules.push(`[HOLD-${linkedKnowledgeId}] 回答意図が${answerIntent === "conditional" ? "条件分岐" : "判定不能"}のため昇格/rejectを保留（hypothesisのまま維持）`);
         }
       }
     } catch (e) {
@@ -628,8 +693,11 @@ export async function POST(req: NextRequest) {
 
   if (elevateRuleKey) {
     try {
-      const lowerAnswer = answer.toLowerCase();
-      const isApproved = lowerAnswer.includes("はい") || lowerAnswer.includes("yes") || lowerAnswer.includes("昇格") || lowerAnswer.includes("ok");
+      const isApproved = choice === 'approve'
+        ? true
+        : choice === 'reject'
+        ? false
+        : isFreeTextApproval(answer, ["はい", "yes", "昇格", "ok"]);
       if (isApproved) {
         const { error: elevErr } = await supabase
           .from("ai_prompt_rules")
@@ -656,8 +724,11 @@ export async function POST(req: NextRequest) {
 
   if (mergeKey1 && mergeKey2) {
     try {
-      const lowerAnswer = answer.toLowerCase();
-      const isApproved = lowerAnswer.includes("はい") || lowerAnswer.includes("yes") || lowerAnswer.includes("統合") || lowerAnswer.includes("ok");
+      const isApproved = choice === 'approve'
+        ? true
+        : choice === 'reject'
+        ? false
+        : isFreeTextApproval(answer, ["はい", "yes", "統合", "ok"]);
       if (isApproved) {
         // 統合案テキストを回答から抽出（または回答そのものを使用）
         // 古いルール2件を無効化し、新しいルールを作成
