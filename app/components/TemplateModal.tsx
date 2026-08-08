@@ -1644,15 +1644,16 @@ export default function TemplateModal({
   // 回答を送信 → Sonnetが知識化（trigger_action_rules / ai_prompts に保存）
   // choice が指定された場合（矛盾系質問）: 自動でanswerテキストを生成し choice をbodyに含める
   // extraComment: 矛盾系質問での任意補足コメント（使い分け条件・理由など）
-  const submitFeedbackAnswer = useCallback(async (id: string, choice?: 'new' | 'old' | 'both' | 'keep' | 'remove' | 'approve' | 'reject', extraComment?: string) => {
-    let baseAnswer = choice === 'new' ? '① 新しいルールが正しい'
+  const submitFeedbackAnswer = useCallback(async (id: string, choice?: 'new' | 'old' | 'both' | 'keep' | 'remove' | 'approve' | 'reject', extraComment?: string, quickAnswer?: string) => {
+    let baseAnswer = quickAnswer?.trim()
+      || (choice === 'new' ? '① 新しいルールが正しい'
       : choice === 'old' ? '② 既存のルールが正しい'
       : choice === 'both' ? '③ 場面で使い分ける'
       : choice === 'keep' ? '✅ 正しい（維持）'
       : choice === 'remove' ? '❌ 間違い（無効化）'
       : choice === 'approve' ? '✅ 承認する'
       : choice === 'reject' ? '❌ 却下（見送り）'
-      : feedbackAnswers[id]?.trim();
+      : feedbackAnswers[id]?.trim());
     if (!baseAnswer) return;
     // 補足コメントがある場合は回答テキストに付加（Opusがルール抽出する際の文脈として使用）
     const trimmedComment = extraComment?.trim();
@@ -3885,22 +3886,47 @@ export default function TemplateModal({
                           );
                         })()
                       ) : (
-                        /* 通常質問: 自由テキスト入力 */
+                        /* 通常質問: クイック回答 or テキスト入力 */
                         <>
-                          {/* テキスト入力 */}
+                          {/* クイック回答ボタン */}
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => void submitFeedbackAnswer(item.id, undefined, undefined, "はい、合っています")}
+                              disabled={submittingFeedback === item.id}
+                              className="flex-1 bg-green-500 text-white rounded-lg py-2.5 text-sm font-bold disabled:opacity-50 hover:bg-green-600 active:bg-green-700 transition"
+                            >
+                              {submittingFeedback === item.id ? "送信中..." : "✅ 合ってます"}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setFeedbackAnswers(prev => ({ ...prev, [item.id]: prev[item.id] ?? "" }));
+                                // テキストエリアにフォーカス
+                                setTimeout(() => {
+                                  const ta = document.querySelector<HTMLTextAreaElement>(`[data-feedback-ta="${item.id}"]`);
+                                  ta?.focus();
+                                }, 50);
+                              }}
+                              disabled={submittingFeedback === item.id}
+                              className="flex-1 bg-red-50 text-red-600 border border-red-200 rounded-lg py-2.5 text-sm font-bold disabled:opacity-50 hover:bg-red-100 transition"
+                            >
+                              ❌ 違います
+                            </button>
+                          </div>
+                          {/* 詳細入力（任意） */}
                           <textarea
+                            data-feedback-ta={item.id}
                             value={feedbackAnswers[item.id] ?? ""}
                             onChange={e => setFeedbackAnswers(prev => ({ ...prev, [item.id]: e.target.value }))}
-                            placeholder="ここに回答を入力してください..."
-                            className="w-full border border-orange-300 rounded-lg px-3 py-2 text-sm resize-none h-20 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white"
+                            placeholder="補足・修正がある場合に入力（任意）"
+                            className="w-full border border-orange-300 rounded-lg px-3 py-2 text-sm resize-none h-16 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white mt-1"
                           />
-                          <div className="flex gap-2 mt-2">
+                          <div className="flex gap-2 mt-1">
                             <button
                               onClick={() => submitFeedbackAnswer(item.id)}
                               disabled={!feedbackAnswers[item.id]?.trim() || submittingFeedback === item.id}
                               className="flex-1 bg-orange-500 text-white rounded-lg py-2 text-sm font-medium disabled:opacity-50 hover:bg-orange-600 transition"
                             >
-                              {submittingFeedback === item.id ? "送信中..." : "✅ 回答して適用"}
+                              {submittingFeedback === item.id ? "送信中..." : "📝 詳細回答を送信"}
                             </button>
                             <button
                               onClick={() => setDismissingFeedbackId(dismissingFeedbackId === item.id ? null : item.id)}
