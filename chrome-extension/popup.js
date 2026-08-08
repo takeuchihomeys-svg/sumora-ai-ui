@@ -393,6 +393,17 @@ function decomposeToken(token) {
 // 「第一希望:枚方市」「大阪府以外:奈良」などのラベルプレフィックスと方向サフィックスを除去してエリアトークンを分解
 function parseAreaTokens(rawArea) {
   if (!rawArea) return [];
+  // 「大阪市内(北区、都島区)」→「大阪市北区,大阪市都島区」に展開（括弧除去より先に処理）
+  rawArea = rawArea.replace(
+    /([^\s,、・\/（(]{1,8}市)内?[（(]([^)）]+)[）)]/g,
+    (_, city, wardList) =>
+      wardList
+        .split(/[,、・\/\s]+/)
+        .map(w => w.trim())
+        .filter(w => w.length > 0)
+        .map(w => (w.startsWith(city) ? w : city + w))
+        .join(",")
+  );
   // 括弧内の補足説明を除去（「西中島南方（〜じゃなくても可、大阪市内）」→「西中島南方」）
   rawArea = rawArea.replace(/（[^）]*）/g, "").replace(/\([^)]*\)/g, "").trim();
   // 「大阪市内の御堂筋線」→「大阪市内,御堂筋線」に分割（市内/府内 + 線名の複合表現）
