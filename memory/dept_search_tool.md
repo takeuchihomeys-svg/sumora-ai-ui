@@ -713,3 +713,36 @@ var NON_RESULT_PAGES = ["GBK001310"];
 - ハッピーパス（全トークンが静的マップで解決）は Phase 1 で一切ネットワークに触れない
 - API失敗/タイムアウト時は `resolved = local`（部分解決）で続行。最終安全網の throw は既存のまま
 - **拡張の再読み込み必須**: background.js 変更のため chrome://extensions で再読み込みすること
+
+---
+
+## 🛠️ APIフォールバック強化: resolveAreaWithAPIにlocalEmpty判定追加（2026-08-08 Fable5）
+
+**対象**: `chrome-extension/popup.js` L217〜（`resolveAreaWithAPI`）
+
+**問題**: popup 側の `resolveAreaWithAPI` の発火条件が `hasRoute || hasUnknown` の2つだけだった。
+「トークンはマップ上既知だがコード化できない」ケース（例: `NEIGHBORHOOD_WARD_MAP` にはあるが `WARD_CODE_MAP` に無い区、路線も所在区も引けない駅）は
+`computeUnknownTokens` が 0 を返すため API が呼ばれず、`buildAreaRouteCodes` が `{city_codes:[], route_ids:[]}` を返したまま
+**エリア無条件の全件検索が黙って走っていた**。background.js は同じ判定を
+`unknownTokens.length > 0 || (hasAreaInput && localEmpty)` で持っており、popup だけ抜けていた。
+
+### 修正内容（popup.js 1ハンク・呼び出し側は無変更）
+| # | 内容 |
+|---|---|
+| 1 | 発火条件を `needApi = hasRoute \|\| hasUnknown \|\| (localEmpty && hasMeaningfulToken)` に拡張。`localEmpty` は `buildAreaRouteCodes({desired_area: rawArea}, "auto")` の city_codes/route_ids がどちらも空かで判定（"auto" は最も広く解決するモードなので、auto で空なら ward/station でも必ず空） |
+| 2 | `hasMeaningfulToken`（2文字以上・数字始まりでないトークンが1つ以上）でAPIの無駄打ちを抑制 |
+| 3 | **キャッシュ判定をガードより前に移動**（必須）。API結果で `LEARNED_*_MAP` が埋まると `hasUnknown` は反転するが `localEmpty` は真のまま残りうる → キャッシュが後ろだと毎クリック7秒タイムアウトPOSTを撃ち続ける再フェッチループになる。前に出すことで `(rawArea, mode)` あたり1回に固定 |
+| 4 | ローカル空でAPI補完したときは `[AX] resolve-area: ローカル解決が空 → API補完:` をログ出力 |
+| 5 | ついでに L2220 の `forEach(c => ...)` を `forEach(cc => ...)` にリネーム（外側の `const c = selectedCustomer` をシャドウしていた。実害はなかったが紛らわしい） |
+
+### 影響範囲
+- 呼び出し4箇所（L1658 fire-and-forget / L1898 / L2189 autofill / L2407 reins）は全て `"auto"` を渡し非nullの `apiData` を正しく扱うため、**呼び出し側の変更ゼロ**でそのまま恩恵を受ける
+- `hasRoute || hasUnknown` が先に短絡するので既存パスの挙動はビット単位で同一。キャッシュは移動しただけで書き込み位置は不変（ヒットは増えることはあっても減らない）
+- マージ処理は全て `includes` 重複排除の加算なので、API呼び出しが増えても壊れる方向のリスクはない（コスト増のみ）
+
+### 既知の残課題（今回のスコープ外）
+- `_resolveAreaCache` は `rawArea` 完全一致の**1スロット**。顧客を交互に切り替える／`#adj-area` を1文字編集するだけで飛ぶ。呼び出し量が増えたぶん影響が出やすくなった → `Map` 化（キー `${areaMode}\0${rawArea}`・上限付き）が改善案
+- **in-flight の重複排除なし**。L1658 の fire-and-forget が L1898/2189/2407 と同一 rawArea でレースするとPOSTが2本出る（キャッシュ書き込みはレスポンス着弾後のため）→ `_resolveAreaInflight` でPromise共有する対策が有効
+- L2410 の reins パスがモード補正で `apiData.realpro` を読みつつデータは `apiData.reins` から取る不整合。今回の修正で発火頻度が上がるため、`reins` は埋まっているが `realpro` が空のレスポンスだとモード補正が黙って no-op になる → 要フォローアップ
+
+**拡張の再読み込み必須**: popup.js 変更のため chrome://extensions で再読み込みすること

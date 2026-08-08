@@ -215,18 +215,36 @@ async function resolveUnknownTokensWithAI(tokens, onResolved) {
 }
 
 // ── resolve-area API: 路線名・未登録地名を全サイト用コードに変換 ────────────
-// 呼び出し条件: 路線名トークン（STATION_LINE_MAPにないもの）or computeUnknownTokens > 0
+// 呼び出し条件（background.js の needApi と同一ロジック）:
+//   ① 路線名トークン（STATION_LINE_MAPにないもの）がある
+//   ② computeUnknownTokens > 0（未登録地名がある）
+//   ③ エリア入力はあるのにローカル解決結果が空
+//      ＝「マップ上は既知だがコード化できない」トークン（例: NEIGHBORHOOD_WARD_MAP に
+//        あるが WARD_CODE_MAP に無い区、路線も所在区も引けない駅）。
+//        ①②では検出できず、無条件検索が黙って走っていた。
 let _resolveAreaCache = null; // { area, mode, data }
 async function resolveAreaWithAPI(rawArea, areaMode) {
   if (!rawArea) return null;
-  const toks = parseAreaTokens(rawArea);
-  const hasRoute   = toks.some(t => t.endsWith("線") && !STATION_LINE_MAP[t]);
-  const hasUnknown = computeUnknownTokens(rawArea).length > 0;
-  if (!hasRoute && !hasUnknown) return null;
 
+  // キャッシュ判定はガードより先。API結果で LEARNED_*_MAP が埋まると
+  // hasUnknown / localEmpty が反転し、2回目以降が null を返して
+  // 取得済みデータを捨てる（かつ再フェッチを繰り返す）ため。
   if (_resolveAreaCache && _resolveAreaCache.area === rawArea && _resolveAreaCache.mode === areaMode) {
     return _resolveAreaCache.data;
   }
+
+  const toks = parseAreaTokens(rawArea);
+  const hasRoute   = toks.some(t => t.endsWith("線") && !STATION_LINE_MAP[t]);
+  const hasUnknown = computeUnknownTokens(rawArea).length > 0;
+  // "auto" は最も広く解決するモード → auto で空なら ward/station でも必ず空
+  const _local = buildAreaRouteCodes({ desired_area: rawArea }, "auto");
+  const localEmpty = !_local.city_codes.length && !_local.route_ids.length;
+  // 数字始まり・1文字トークンしかない場合はAPIを無駄打ちしない
+  const hasMeaningfulToken = toks.some(t => t.length >= 2 && !/^[0-9０-９]/.test(t));
+
+  const needApi = hasRoute || hasUnknown || (localEmpty && hasMeaningfulToken);
+  if (!needApi) return null;
+  if (!hasRoute && !hasUnknown) console.log("[AX] resolve-area: ローカル解決が空 → API補完:", rawArea);
   try {
     const ctrl = new AbortController();
     const tid = setTimeout(() => ctrl.abort(), 7000);
@@ -2199,7 +2217,8 @@ function openInstructions(siteKey) {
       // ④ APIデータを route_ids / city_codes に追記
       if (apiData?.realpro) {
         (apiData.realpro.route_ids || []).forEach(r => { if (!route_ids.includes(r)) route_ids.push(r); });
-        (apiData.realpro.city_codes || []).forEach(c => { if (!city_codes.includes(c)) city_codes.push(c); });
+        // ※ パラメータ名は cc: 外側の const c = selectedCustomer をシャドウしないため
+        (apiData.realpro.city_codes || []).forEach(cc => { if (!city_codes.includes(cc)) city_codes.push(cc); });
       }
       const areaParts = parseAreaTokens(adjAreaClean);
       const realpro_station_names = [];
