@@ -204,7 +204,7 @@
   // ── 進捗バー更新（captureOnePdf 内から現在ステップを表示） ─────────────
   function setStatusBar(text) {
     var btn = document.getElementById("axlx-itandi-line-btn");
-    if (btn && !btn.disabled) btn.textContent = text;
+    if (btn) btn.textContent = text; // disabled 中でも更新（進捗表示のため）
   }
 
   // ── モーダルの要素を可視・不可視問わず取得（itandi は transition中でrect=0になる） ─
@@ -452,9 +452,16 @@
       modalObs = new MutationObserver(tryDetectModal);
       modalObs.observe(document.body, { childList: true, subtree: true });
 
-      // MutationObserverが検知できない場合のポーリングバックアップ（500ms毎・最大10秒）
+      // MutationObserverが検知できない場合のポーリングバックアップ（500ms毎・最大15秒）
       pollTimer = setInterval(tryDetectModal, 500);
-      setTimeout(function() { clearInterval(pollTimer); }, 10000);
+      setTimeout(function() {
+        clearInterval(pollTimer);
+        // モーダルが15秒以内に現れなければ即時リジェクト（60秒タイムアウトを待たない）
+        if (!appeared) {
+          cleanup();
+          reject(new Error("モーダルが15秒以内に表示されませんでした（ボタンクリック失敗の可能性）"));
+        }
+      }, 15000);
     });
   }
 
@@ -478,7 +485,7 @@
     if (closeBtn) { closeBtn.click(); return; }
     findBtnByText("キャンセル").concat(findBtnByText("閉じる")).forEach(function (b) {
       var r = b.getBoundingClientRect();
-      if (r.width > 0 || b.parentElement) b.click();
+      if (r.width > 0) b.click(); // 可視ボタンのみクリック（b.parentElementは常にtruthyなので除外）
     });
   }
 
@@ -605,7 +612,11 @@
 
       lineBtn.textContent = "PDF取得中... (" + (i + 1) + "/" + targets.length + ")";
       // DOM更新後もボタンを正しく取得（stale reference 防止）
-      var freshBtn = findFreshBtn(targets[i].rowKey) || targets[i].btn;
+      var freshBtn = findFreshBtn(targets[i].rowKey);
+      if (!freshBtn) {
+        console.warn("[AXLX] rowKey=" + targets[i].rowKey + " の物件資料ボタンが見つからず → stale参照を使用");
+        freshBtn = targets[i].btn;
+      }
       captureOnePdfWithRetry(freshBtn)
         .then(function (result) {
           var b64  = result.b64;
