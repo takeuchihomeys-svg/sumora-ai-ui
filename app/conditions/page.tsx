@@ -195,40 +195,6 @@ export default function ConditionsPage() {
     }
   };
 
-  // Chrome拡張にリアプロ検索を依頼する
-  const fireExtSearch = (qt: Customer) => {
-    setExtSearchStatus('idle');
-    let settled = false;
-    const onAck = (e: MessageEvent) => {
-      if ((e.data as { from?: string })?.from === 'aixlinx-webapp-received' && !settled) {
-        settled = true;
-        window.removeEventListener('message', onAck);
-        setExtSearchStatus('sent');
-        setTimeout(() => setExtSearchStatus('idle'), 4000);
-      }
-    };
-    window.addEventListener('message', onAck);
-    window.postMessage({
-      from: 'aixlinx-webapp',
-      site: 'realnetpro',
-      conditions: {
-        customerId:   String(qt.id),
-        customerName: qt.customer_name ?? null,
-        is_wide:      false,
-        area_mode:    'auto',
-      },
-    }, '*');
-    // 1.5秒以内にACKが来なければ拡張未インストール扱い
-    setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        window.removeEventListener('message', onAck);
-        setExtSearchStatus('noext');
-        setTimeout(() => setExtSearchStatus('idle'), 3000);
-      }
-    }, 1500);
-  };
-
   // 紐付け済み property_customer_id セット
   const [linkedIds, setLinkedIds] = useState<Set<string>>(new Set());
 
@@ -242,9 +208,6 @@ export default function ConditionsPage() {
 
   // 元のLINE文表示
   const [showRawFormat, setShowRawFormat] = useState(false);
-
-  // 拡張ツール連携ステータス
-  const [extSearchStatus, setExtSearchStatus] = useState<'idle' | 'sent' | 'noext'>('idle');
 
   // 物件絞り込み
   type ScoreBreakdown = { label: string; point: number; note: string };
@@ -1103,7 +1066,7 @@ export default function ConditionsPage() {
         <div
           className="fixed inset-0 z-50 flex items-end"
           style={{ background: "rgba(0,0,0,0.4)" }}
-          onClick={(e) => { if (e.target === e.currentTarget) { setQuickTarget(null); setShowRawFormat(false); setExtSearchStatus('idle'); } }}
+          onClick={(e) => { if (e.target === e.currentTarget) { setQuickTarget(null); setShowRawFormat(false); } }}
         >
           <div
             className="w-full bg-white rounded-t-2xl px-5 py-5 space-y-3"
@@ -1186,25 +1149,6 @@ export default function ConditionsPage() {
               詳細を編集する
             </button>
 
-            {/* 拡張ツール連携: リアプロ検索 */}
-            <button
-              onClick={() => fireExtSearch(quickTarget)}
-              disabled={extSearchStatus !== 'idle'}
-              className={`w-full py-3.5 rounded-2xl font-bold text-sm border transition-colors ${
-                extSearchStatus === 'sent'
-                  ? 'text-emerald-700 border-emerald-200 bg-emerald-50'
-                  : extSearchStatus === 'noext'
-                  ? 'text-slate-400 border-slate-200 bg-slate-100'
-                  : 'text-indigo-600 border-indigo-100 bg-indigo-50'
-              }`}
-            >
-              {extSearchStatus === 'sent'
-                ? 'リアプロに送信しました'
-                : extSearchStatus === 'noext'
-                ? '拡張ツールが見つかりません（PC同一ブラウザで開いてください）'
-                : '🔍 リアプロで検索（拡張ツール）'}
-            </button>
-
             {/* 元のLINE文 */}
             {quickTarget.raw_format_text && (
               <>
@@ -1227,7 +1171,7 @@ export default function ConditionsPage() {
 
             {/* キャンセル */}
             <button
-              onClick={() => { setQuickTarget(null); setShowRawFormat(false); setExtSearchStatus('idle'); }}
+              onClick={() => { setQuickTarget(null); setShowRawFormat(false); }}
               className="w-full py-3 text-slate-400 text-sm font-medium"
             >
               閉じる
