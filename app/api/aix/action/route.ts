@@ -3950,22 +3950,25 @@ ${SMORA_COMMON_RULES}
 ${SMORA_COMMON_RULES}
 
 【構成ルール（この順番で・必ず守ること）】
-① 書き出し: 「${name}${greetingPhrase}」（⑤修正: greetingTimeNoteの時間帯・初回・当日挨拶済みルールと整合させる）
+① 書き出し: 「${name}${greetingPhrase}」（greetingTimeNoteの時間帯・初回・当日挨拶済みルールと整合させる）
 ② 新着のご連絡: ${followPropertyName ? `「新しく${followPropertyName}が募集にでましたのでご連絡させていただきました！！」` : `「新しくオススメ出来る物件が募集にでましたのでご連絡させていただきました！！」`}
   ※補足情報に物件の特徴（駅近・築浅・家賃など）があれば、②に一言だけ自然に添えてよい
-③ 締め: 「お部屋お探し継続されていますでしょうか！！」
+③ 締め（＝メッセージの最後の一文）: 「${name}さんお部屋探し継続されていますでしょうか！！」
+  ※③の後に文章を追加しない・サポート宣言・フォロー宣言・補足一切不要
 
 【トーン】
 ・押しつけがましくない・軽いタッチ
-・返信を強要する表現（「ご返信ください」「お早めに」等）は使わない・③の一文で終える
+・返信を強要する表現（「ご返信ください」「お早めに」等）は使わない
+・「〜ご満足いただけるまでサポートします」「引き続きお手伝いします」等の宣言は絶対に入れない
 
 【禁止事項】
+・③の後に一切の文章・絵文字・補足を追加しない（③で完全に終える）
 ・補足情報にない物件の設備・家賃・条件を創作しない
 ・物件名を創作しない（${followPropertyName ? `「${followPropertyName}」以外の物件名を出さない` : "物件名が不明な場合は「オススメ出来る物件」のままにする"}）
 ・「様」を使わない（「さん」で統一）
 ・🙏絵文字は絶対禁止
 
-【文字数】2〜3行程度・完成したLINEメッセージのみを出力（JSONや説明文は不要）`;
+【文字数】①②③の3パート・完成したLINEメッセージのみを出力（JSONや説明文は不要）`;
 
         const scUser = `${name}への物件探し継続確認メッセージを生成してください。${followPropertyName ? `\n物件名: ${followPropertyName}` : ""}${extra_input ? `\n補足（物件の特徴など）: ${extra_input}` : ""}${recentHistory}`;
         message_text = await callClaude(scSystem + scDbRules + greetingTimeNote + scDiffNote + scStarNote, scUser, currentAction);
