@@ -343,7 +343,20 @@ function decomposeToken(token) {
       }
     }
   }
-  return (dp2[n] !== null && dp2[n].length >= 2) ? dp2[n] : null;
+  if (dp2[n] !== null && dp2[n].length >= 2) return dp2[n];
+  // 第3フォールバック: 区/市名+駅名のハイブリッド分解（例: "鶴見区横堤" → ["大阪市鶴見区", "横堤"]）
+  // 駅名が末尾に付いた「地名+駅名」連結パターン（"鶴見区横堤"など）を検出する
+  const stKeys = Object.keys(STATION_LINE_MAP).sort((a, b) => b.length - a.length);
+  for (const stk of stKeys) {
+    if (token.endsWith(stk) && stk.length < token.length) {
+      const wardPart = token.slice(0, token.length - stk.length);
+      if (wardPart.length >= 1) {
+        const ward = resolveWard(wardPart) || (WARD_CODE_MAP[wardPart] ? wardPart : null);
+        if (ward) return [ward, stk];
+      }
+    }
+  }
+  return null;
 }
 
 // 「第一希望:枚方市」「大阪府以外:奈良」などのラベルプレフィックスと方向サフィックスを除去してエリアトークンを分解
@@ -591,10 +604,11 @@ function buildAreaRouteCodes(c, mode = "auto") {
   for (const part of parts) {
     if (mode === "ward") {
       // 地域モード: WARD_CODE_MAP → NEIGHBORHOOD_WARD_MAP のみ。路線IDは追加しない
+      // resolveWardLoose を使い「鶴見区横堤」→「鶴見区」のような区名+駅名連結トークンも正しく解決する
       if (WARD_CODE_MAP[part]) {
         if (!city_codes.includes(WARD_CODE_MAP[part])) city_codes.push(WARD_CODE_MAP[part]);
       } else {
-          const neighWard = resolveWard(part);
+        const neighWard = resolveWardLoose(part);
         if (neighWard && WARD_CODE_MAP[neighWard] && !city_codes.includes(WARD_CODE_MAP[neighWard]))
           city_codes.push(WARD_CODE_MAP[neighWard]);
       }
@@ -1731,7 +1745,7 @@ function computeUnknownTokens(areaStr) {
       !WARD_CODE_MAP[t] &&
       !WARD_CODE_MAP[t + "市"] &&    // 市サフィックス補完（「富田林」→富田林市）はAI解決不要
       !(t.endsWith("線") && lineNameToRouteId(t)) &&  // 既知路線名はAI解決不要（「御堂筋線」が駅として誤学習される汚染ループの遮断）
-      !/[都道府県市区郡]/.test(t) &&
+      !resolveWardLoose(t) &&  // resolveWardLooseで解決できる区名+駅名連結（「鶴見区横堤」等）はAI不要
       !resolveStation(t)
     );
 }
