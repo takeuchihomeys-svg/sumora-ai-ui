@@ -52,6 +52,8 @@ const LINE_ALIAS_MAP: Record<string, string> = {
   "南海多奈川線":"南海電鉄多奈川線",
   "南海汐見橋線":"南海電鉄汐見橋線",
   "南海高師浜線":"南海電鉄高師浜線",
+  "南海泉北線":"南海電鉄泉北線",
+  "ニュートラム":"大阪市高速軌道南港ポートタウン線",
   "京阪本線":"京阪電気鉄道京阪線",
   "京阪中之島線":"京阪電気鉄道中之島線",
   "京阪交野線":"京阪電気鉄道交野線",
@@ -275,6 +277,128 @@ async function resolveNearbyWithDeepSeek(station: string, minutes: number): Prom
   }
 }
 
+// 乗り換え制約 → DeepSeek で路線名リストを取得し resolveLineInternal フィルタ適用
+// ハルシネーション耐性: 返ってきた路線名を resolveLineInternal で既知マップと照合し、
+// 解決できない名称（架空路線）は除外する。
+async function resolveTransferLinesWithDeepSeek(baseStation: string, maxTransfers: number): Promise<string[]> {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  if (!apiKey) return [];
+  try {
+    const condition = maxTransfers === 0 ? "乗り換えなし（直通のみ）" : `乗り換え${maxTransfers}回以内`;
+    const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
+      method: "POST",
+      signal: AbortSignal.timeout(12_000),
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        max_tokens: 200,
+        messages: [{ role: "user", content:
+          `大阪府で「${baseStation}駅」から${condition}で行ける路線名を列挙してください。\n大阪府内の路線のみ対象。JSONの配列形式のみで返してください: ["路線名1", "路線名2", ...]\n10路線程度。`,
+        }],
+        temperature: 0,
+      }),
+    });
+    if (!res.ok) return [];
+    const data = await res.json() as { choices: Array<{ message: { content: string } }> };
+    const raw = (data.choices[0]?.message?.content ?? "").trim();
+    const match = raw.replace(/```json?\s*/gi, "").replace(/```\s*/g, "").trim().match(/\[[\s\S]*\]/);
+    if (!match) return [];
+    const parsed = JSON.parse(match[0]) as unknown[];
+    const lineNames = parsed.filter((s): s is string => typeof s === "string" && s.length > 0);
+    // resolveLineInternal でフィルタリング（ハルシネーション耐性）
+    return lineNames.map(n => resolveLineInternal(n)).filter((n): n is string => n !== null);
+  } catch (e) {
+    if (process.env.NODE_ENV !== "production") console.warn("[resolve-area] DeepSeek transfer error:", e instanceof Error ? e.message : e);
+    return [];
+  }
+}
+
+// 駅名リスト → station_map / line_stations 一括照合（最大2往復固定）
+// → result に route_ids / itandi.line_names+station_names / reins.station_pairs を全反映
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function resolveStationsFromList(
+  stations: string[],
+  result: ResolveAreaResponse,
+  db: any
+): Promise<void> {
+  const unresolved = stations.filter(s => !result.realpro.station_names.includes(s));
+  if (unresolved.length === 0) return;
+
+  // 1往復目: station_map 一括取得
+  const { data: smRows } = await db
+    .from("station_map")
+    .select("token, ward, realpro_lines, itandi_lines, reins_line")
+    .in("token", unresolved)
+    .neq("source", "unknown");
+
+  const resolved = new Set<string>();
+  for (const row of (smRows || [])) {
+    if ((row.realpro_lines?.length ?? 0) === 0) continue;
+    result.realpro.station_names.push(row.token);
+    resolved.add(row.token);
+    for (const line of (row.realpro_lines ?? [])) {
+      const rid = LINE_ROUTE_MAP[line];
+      if (rid && !result.realpro.route_ids.includes(rid)) result.realpro.route_ids.push(rid);
+    }
+    for (const line of (row.itandi_lines ?? [])) {
+      if (!result.itandi.line_names.includes(line)) result.itandi.line_names.push(line);
+    }
+    if (!result.itandi.station_names.includes(row.token)) result.itandi.station_names.push(row.token);
+    if (row.reins_line && !result.reins.station_pairs.some(p => p.station === row.token)) {
+      const nullIdx = result.reins.station_pairs.findIndex(
+        p => p.line === row.reins_line && p.station === null
+      );
+      if (nullIdx >= 0) {
+        result.reins.station_pairs[nullIdx] = { line: row.reins_line, station: row.token };
+      } else {
+        result.reins.station_pairs.push({ line: row.reins_line, station: row.token });
+      }
+    }
+  }
+
+  // 2往復目: line_stations フォールバック（station_map 未登録）
+  const stillUnresolved = unresolved.filter(s => !resolved.has(s));
+  if (stillUnresolved.length === 0) return;
+
+  const { data: lsFallback } = await db
+    .from("line_stations")
+    .select("line_name, station_name")
+    .in("station_name", stillUnresolved)
+    .limit(stillUnresolved.length * 5);
+
+  const byStation: Record<string, string[]> = {};
+  for (const row of (lsFallback || [])) {
+    if (!byStation[row.station_name]) byStation[row.station_name] = [];
+    byStation[row.station_name].push(row.line_name);
+  }
+
+  const toUpsert: Array<{
+    token: string; ward: string; realpro_lines: string[];
+    itandi_lines: string[]; reins_line: string | null; confidence: number; source: string;
+  }> = [];
+  for (const [stName, lines] of Object.entries(byStation)) {
+    const uniqueLines = [...new Set(lines)];
+    result.realpro.station_names.push(stName);
+    if (!result.itandi.station_names.includes(stName)) result.itandi.station_names.push(stName);
+    for (const line of uniqueLines) {
+      const rid = LINE_ROUTE_MAP[line];
+      if (rid && !result.realpro.route_ids.includes(rid)) result.realpro.route_ids.push(rid);
+    }
+    const iLines = uniqueLines.flatMap(l => toItandiNames(l));
+    iLines.forEach(n => { if (!result.itandi.line_names.includes(n)) result.itandi.line_names.push(n); });
+    const rLine = REINS_LINE_MAP[uniqueLines[0]] ?? null;
+    if (rLine && !result.reins.station_pairs.some(p => p.station === stName)) {
+      result.reins.station_pairs.push({ line: rLine, station: stName });
+    }
+    const newSt = { token: stName, ward: "", realpro_lines: uniqueLines, itandi_lines: iLines, reins_line: rLine };
+    result.new_stations.push(newSt);
+    toUpsert.push({ ...newSt, confidence: 80, source: "resolve-area-nl" });
+  }
+  if (toUpsert.length > 0) {
+    await db.from("station_map").upsert(toUpsert, { onConflict: "token" });
+  }
+}
+
 interface ResolveAreaResponse {
   realpro: { route_ids: string[]; city_codes: string[]; station_names: string[] };
   itandi:  { line_names: string[]; station_names: string[]; ward_names: string[] };
@@ -399,16 +523,38 @@ lines: 以下のリストから選択のみ（自由記述禁止）:
   大阪環状線,JR東西線,片町線,阪和線,おおさか東線,関西本線,福知山線,桜島線,
   近鉄南大阪線,近鉄大阪線,近鉄奈良線,近鉄けいはんな線,近鉄長野線,近鉄道明寺線,
   北大阪急行,大阪モノレール本線,大阪モノレール彩都線,能勢電鉄,
-  南海汐見橋線,南海多奈川線,南海高師浜線,阪堺阪堺線,阪堺上町線,水間鉄道
+  南海汐見橋線,南海多奈川線,南海高師浜線,阪堺阪堺線,阪堺上町線,水間鉄道,ニュートラム
 
 areas: 駅名・路線名に還元できない地名・概念エリア名
   例: "梅田","難波","北摂","大阪市内","心斎橋","天王寺"
 
-commute_constraints: 通勤・通学時間制約
-  形式: {"base_station":"駅名（駅なし）","max_minutes":数値}
-  対象: 「〜まで〜分」「〜駅から〜分圏内」「〜まで通える」等
+commute_constraints: 通勤・通学・乗り換え制約
+  形式: {"base_station":"駅名（駅なし）","max_minutes":数値または省略,"max_transfers":回数または省略,"transport_mode":"bicycle"/"walk"または省略}
+  対象:
+    「〜まで〜分」「〜駅から〜分圏内」→ max_minutes を設定
+    「乗り換えなし」「直通」「乗り換え0回」→ max_transfers:0（max_minutesは省略）
+    「乗り換え1回以内」→ max_transfers:1
+    「自転車〜分」「徒歩〜分」→ transport_mode:"bicycle"/"walk"（max_minutesと併用可）
+  ルール: base_stationは勤務地・通勤先の最寄り駅。transport_mode=bicycle/walkはDeepSeek展開不要。
+
+【重要ルール】
+・「路線名 + 駅名」の形式（例: "阪急電鉄京都線 摂津市"）は、駅名のみ stations に含める。路線名は lines に含めない。
+  → 路線名は駅名を特定するための文脈情報であり、路線全体を検索する意図ではない。
+・「阪急京都本線」「阪急電鉄京都線」「阪急京都線」はすべて同じ路線を指す別称。
 
 【例】
+入力: "阪急電鉄京都線 摂津市"
+出力: {"stations":["摂津市"],"lines":[],"areas":[],"commute_constraints":[]}
+
+入力: "阪急京都本線 摂津市"
+出力: {"stations":["摂津市"],"lines":[],"areas":[],"commute_constraints":[]}
+
+入力: "おおさか東線 野江"
+出力: {"stations":["野江"],"lines":[],"areas":[],"commute_constraints":[]}
+
+入力: "JR東海道本線 茨木"
+出力: {"stations":["茨木"],"lines":[],"areas":[],"commute_constraints":[]}
+
 入力: "阪急茨木市駅まで30分で通える沿線"
 出力: {"stations":["茨木市"],"lines":[],"areas":[],"commute_constraints":[{"base_station":"茨木市","max_minutes":30}]}
 
@@ -422,7 +568,22 @@ commute_constraints: 通勤・通学時間制約
 出力: {"stations":["梅田"],"lines":[],"areas":[],"commute_constraints":[{"base_station":"梅田","max_minutes":20}]}
 
 入力: "北摂エリアで阪急沿線"
-出力: {"stations":[],"lines":["阪急京都線","阪急宝塚線","阪急神戸線","阪急千里線","阪急箕面線"],"areas":["北摂"],"commute_constraints":[]}`;
+出力: {"stations":[],"lines":["阪急京都線","阪急宝塚線","阪急神戸線","阪急千里線","阪急箕面線"],"areas":["北摂"],"commute_constraints":[]}
+
+入力: "梅田まで乗り換えなし"
+出力: {"stations":["梅田"],"lines":[],"areas":[],"commute_constraints":[{"base_station":"梅田","max_transfers":0}]}
+
+入力: "梅田直通で行ける場所"
+出力: {"stations":["梅田"],"lines":[],"areas":[],"commute_constraints":[{"base_station":"梅田","max_transfers":0}]}
+
+入力: "駅から自転車10分圏内"
+出力: {"stations":[],"lines":[],"areas":[],"commute_constraints":[{"base_station":"","max_minutes":10,"transport_mode":"bicycle"}]}
+
+入力: "梅田まで30分・野田阪神まで乗り換え1回"
+出力: {"stations":["梅田","野田阪神"],"lines":[],"areas":[],"commute_constraints":[{"base_station":"梅田","max_minutes":30},{"base_station":"野田阪神","max_transfers":1}]}
+
+入力: "難波から自転車15分以内"
+出力: {"stations":["難波"],"lines":[],"areas":[],"commute_constraints":[{"base_station":"難波","max_minutes":15,"transport_mode":"bicycle"}]}`;
 
       try {
         const msg = await anthropic.messages.create({
@@ -440,7 +601,12 @@ commute_constraints: 通勤・通学時間制約
             stations?: string[];
             lines?: string[];
             areas?: string[];
-            commute_constraints?: Array<{ base_station: string; max_minutes: number }>;
+            commute_constraints?: Array<{
+              base_station: string;
+              max_minutes?: number | null;
+              max_transfers?: number;
+              transport_mode?: string;
+            }>;
           };
 
           // ── Step 1: lines → route_ids ──────────────────────────────────────
@@ -463,78 +629,46 @@ commute_constraints: 通勤・通学時間制約
               result.reins.station_pairs.push({ line: rName, station: null });
           }
 
-          // ── Step 2: stations → station_map / line_stations 照合 ─────────────
-          for (const stName of ai.stations ?? []) {
+          // ── Step 2: stations → station_map / line_stations 照合（バッチ化）──
+          // 旧: 駅ごとにシリアルDB往復（15駅×0.5s=7.5s）
+          // 新: 既解決駅のreins補完を1往復にまとめ、未解決駅はresolveStationsFromListに委譲（計2往復）
+          const allAiStations = ai.stations ?? [];
+          const needReinsCheck: string[] = [];
+          const unresolvedStations: string[] = [];
+
+          for (const stName of allAiStations) {
             if (result.realpro.station_names.includes(stName)) {
-              // ローカル解決済みでも station_pairs に特定駅エントリがなければ補完する
+              // ローカル解決済みでも station_pairs に特定駅エントリがなければ補完候補に追加
               if (!result.reins.station_pairs.some(p => p.station === stName)) {
-                const { data: spRow } = await db
-                  .from("station_map")
-                  .select("reins_line")
-                  .eq("token", stName)
-                  .neq("source", "unknown")
-                  .maybeSingle();
-                if (spRow?.reins_line) {
-                  const nullIdx = result.reins.station_pairs.findIndex(
-                    p => p.line === spRow.reins_line && p.station === null
-                  );
-                  if (nullIdx >= 0) {
-                    result.reins.station_pairs[nullIdx] = { line: spRow.reins_line, station: stName };
-                  } else {
-                    result.reins.station_pairs.push({ line: spRow.reins_line, station: stName });
-                  }
-                }
+                needReinsCheck.push(stName);
               }
-              continue; // ローカル解決済みはスキップ
+            } else {
+              unresolvedStations.push(stName);
             }
-
-            // station_map で検索
-            const { data: stRow } = await db
-              .from("station_map")
-              .select("token, ward, realpro_lines, itandi_lines, reins_line, source")
-              .eq("token", stName)
-              .neq("source", "unknown")
-              .maybeSingle();
-
-            if (stRow && (stRow.realpro_lines?.length ?? 0) > 0) {
-              result.realpro.station_names.push(stName);
-              for (const line of stRow.realpro_lines ?? []) {
-                const rid = LINE_ROUTE_MAP[line];
-                if (rid && !result.realpro.route_ids.includes(rid)) result.realpro.route_ids.push(rid);
-              }
-              for (const line of stRow.itandi_lines ?? []) {
-                if (!result.itandi.line_names.includes(line)) result.itandi.line_names.push(line);
-              }
-              if (stRow.reins_line && !result.reins.station_pairs.some(p => p.station === stName))
-                result.reins.station_pairs.push({ line: stRow.reins_line, station: stName });
-              continue;
-            }
-
-            // line_stations でフォールバック（station_map 未登録の場合）
-            const { data: lsStRows } = await db
-              .from("line_stations")
-              .select("line_name, station_name")
-              .eq("station_name", stName)
-              .limit(5);
-
-            if (lsStRows && lsStRows.length > 0) {
-              result.realpro.station_names.push(stName);
-              const uniqueLines = [...new Set(lsStRows.map((r: { line_name: string }) => r.line_name))];
-              for (const line of uniqueLines) {
-                const rid = LINE_ROUTE_MAP[line];
-                if (rid && !result.realpro.route_ids.includes(rid)) result.realpro.route_ids.push(rid);
-              }
-              const iLines = uniqueLines.flatMap(l => toItandiNames(l));
-              const rLine = REINS_LINE_MAP[uniqueLines[0]] ?? null;
-              const newSt = { token: stName, ward: "", realpro_lines: uniqueLines, itandi_lines: iLines, reins_line: rLine };
-              result.new_stations.push(newSt);
-              await db.from("station_map").upsert(
-                { ...newSt, confidence: 80, source: "resolve-area-nl" },
-                { onConflict: "token" }
-              );
-            }
-            // line_stations にもなければ無視（AI hallucination）
           }
+
+          // 既解決駅のreins補完: 一括取得（シリアルDB往復を1往復に圧縮）
+          if (needReinsCheck.length > 0) {
+            const { data: reinsRows } = await db
+              .from("station_map")
+              .select("token, reins_line")
+              .in("token", needReinsCheck)
+              .neq("source", "unknown");
+            for (const row of (reinsRows || [])) {
+              if (!row.reins_line) continue;
+              const nullIdx = result.reins.station_pairs.findIndex(
+                p => p.line === row.reins_line && p.station === null
+              );
+              if (nullIdx >= 0) {
+                result.reins.station_pairs[nullIdx] = { line: row.reins_line, station: row.token };
+              } else {
+                result.reins.station_pairs.push({ line: row.reins_line, station: row.token });
+              }
+            }
+          }
+
+          // 未解決駅: resolveStationsFromList で一括解決（station_map + line_stations 2往復）
+          await resolveStationsFromList(unresolvedStations, result, db);
 
           // ── Step 3: areas → CONCEPT_AREA_MAP / WARD_CODE_MAP ────────────────
           for (const area of ai.areas ?? []) {
@@ -552,19 +686,46 @@ commute_constraints: 通勤・通学時間制約
             }
           }
 
-          // ── Step 4: commute_constraints → DeepSeek で近隣駅展開 ─────────────
+          // ── Step 4: commute_constraints → DeepSeek展開 + 全システム反映 ────────
+          // max_transfers → resolveTransferLinesWithDeepSeek → route_ids/itandi/reins全展開
+          // max_minutes   → resolveNearbyWithDeepSeek → resolveStationsFromList（全システム反映）
+          // transport_mode=bicycle/walk → DeepSeek呼び出しスキップ
           if ((ai.commute_constraints ?? []).length > 0) {
-            const nearbyResults = await Promise.all(
-              (ai.commute_constraints ?? []).map(({ base_station, max_minutes }) =>
-                resolveNearbyWithDeepSeek(base_station, max_minutes)
-              )
+            await Promise.all(
+              (ai.commute_constraints ?? []).map(async (constraint) => {
+                const { base_station, max_minutes, max_transfers, transport_mode } = constraint;
+                // 自転車・徒歩はDeepSeek展開不要
+                if (transport_mode === "bicycle" || transport_mode === "walk") return;
+
+                if (max_transfers !== undefined && max_transfers !== null) {
+                  // 乗り換え制約: 路線名ベースで展開（resolveLineInternalフィルタ済み）
+                  const lineNames = await resolveTransferLinesWithDeepSeek(base_station, max_transfers);
+                  for (const internal of lineNames) {
+                    const routeId = LINE_ROUTE_MAP[internal];
+                    if (routeId && !result.realpro.route_ids.includes(routeId)) result.realpro.route_ids.push(routeId);
+                    const stationsOnLine = lineStations[internal] ?? [];
+                    stationsOnLine.forEach(s => {
+                      if (!result.realpro.station_names.includes(s)) result.realpro.station_names.push(s);
+                      if (!result.itandi.station_names.includes(s)) result.itandi.station_names.push(s);
+                    });
+                    toItandiNames(internal).forEach(n => {
+                      if (!result.itandi.line_names.includes(n)) result.itandi.line_names.push(n);
+                    });
+                    const rName = REINS_LINE_MAP[internal];
+                    if (rName && !result.reins.station_pairs.some(p => p.line === rName)) {
+                      result.reins.station_pairs.push({ line: rName, station: null });
+                    }
+                  }
+                } else if (max_minutes !== undefined && max_minutes !== null) {
+                  // 時間制約: 近隣駅展開 + resolveStationsFromList で route_ids/itandi/reins全反映
+                  const nearbyStations = await resolveNearbyWithDeepSeek(base_station, max_minutes);
+                  await resolveStationsFromList(nearbyStations, result, db);
+                  if (process.env.NODE_ENV !== "production") {
+                    console.log("[resolve-area] commute expanded stations:", nearbyStations);
+                  }
+                }
+              })
             );
-            for (const nearbyStations of nearbyResults) {
-              for (const s of nearbyStations) {
-                if (!result.realpro.station_names.includes(s)) result.realpro.station_names.push(s);
-              }
-            }
-            console.log("[resolve-area] commute expanded stations:", nearbyResults.flat());
           }
         }
       } catch (aiErr) {
