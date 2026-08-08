@@ -637,6 +637,8 @@ export default function AixModal({
   // ペット飼育確認専用: 可否・条件
   const [mgmtPetPolicy, setMgmtPetPolicy] = useState<"可" | "不可" | "相談可" | null>(null);
   const [mgmtPetCondition, setMgmtPetCondition] = useState<string>("");
+  // 設備確認専用: 申込誘導 / 内覧誘導
+  const [mgmtEquipmentGuidanceType, setMgmtEquipmentGuidanceType] = useState<"申込" | "内覧" | null>(null);
   // 保証会社確認専用: 誘導方向
   const [mgmtGuarantorPushType, setMgmtGuarantorPushType] = useState<"apply" | "viewing" | null>(null);
   // 保証会社確認専用: テキスト入力 + タイプ + OCRローディング
@@ -1726,6 +1728,9 @@ export default function AixModal({
           if (!mgmtPetPolicy) throw new Error("ペット飼育の可否を選択してください");
           body.pet_policy = mgmtPetPolicy;
           if (mgmtPetCondition.trim()) body.pet_condition = mgmtPetCondition.trim();
+        }
+        if (checkPattern === "mgmt_equipment" && mgmtEquipmentGuidanceType) {
+          body.equipment_guidance_type = mgmtEquipmentGuidanceType;
         }
         if (checkPattern === "mgmt_availability") {
           if (!mgmtAvailabilityStatus) throw new Error("募集状況を選択してください");
@@ -3885,6 +3890,23 @@ export default function AixModal({
                       ? "確認した設備状況を入力してください（エアコン・給湯器・バス・トイレ等）"
                       : "交渉の結果を入力してください（例：礼金1→0に交渉成功）"}
                   </p>
+                </div>
+              )}
+
+              {/* 設備確認専用: 申込誘導 / 内覧誘導ボタン */}
+              {checkPattern === "mgmt_equipment" && (
+                <div>
+                  <p className="mb-1.5 text-xs font-bold text-[#54656f]">誘導（任意）</p>
+                  <div className="flex gap-2">
+                    {([{ key: "申込", label: "📝 申込誘導", color: "#7C3AED" }, { key: "内覧", label: "🏠 内覧誘導", color: "#0F766E" }] as const).map(({ key, label, color }) => (
+                      <button
+                        key={key}
+                        onClick={() => { setMgmtEquipmentGuidanceType(prev => prev === key ? null : key); setPreview(""); }}
+                        className="flex-1 rounded-xl border py-2.5 text-xs font-semibold transition"
+                        style={mgmtEquipmentGuidanceType === key ? { border: `2px solid ${color}`, background: color + "14", color } : { border: "1px solid #E5E7EB", color: "#9CA3AF" }}
+                      >{label}</button>
+                    ))}
+                  </div>
                 </div>
               )}
 
