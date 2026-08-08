@@ -648,7 +648,12 @@ function buildAreaRouteCodes(c, mode = "auto") {
         }
       }
       // 駅モード: 路線IDのみ追加（city_codesは追加しない → 所在地フィールドに入らないようにする）
-      const station = resolveStation(part);
+      let station = resolveStation(part);
+      // 「阪急茨木市」「JR高槻」等: 市サフィックスガードでnull→resolveWithLinePrefixesで再解決
+      if (!station) {
+        const _pfxR = resolveWithLinePrefixes(part);
+        if (_pfxR?.type === "station") station = _pfxR.resolved;
+      }
       const stationKey = station || part;
       const lines = STATION_LINE_MAP[stationKey] || LEARNED_STATION_MAP[stationKey]?.realpro_lines || [];
       // lineNameToRouteId で表記ゆれ吸収（学習データの「大阪市高速電気軌道御堂筋線」等もroute_idに変換できる）
@@ -687,7 +692,12 @@ function buildAreaRouteCodes(c, mode = "auto") {
         city_codes.push(WARD_CODE_MAP[neighWard]);
       continue;
     }
-    const station = resolveStation(part);
+    let station = resolveStation(part);
+    // 「阪急茨木市」「JR高槻」等: 市サフィックスガードでnull→resolveWithLinePrefixesで再解決
+    if (!station) {
+      const _pfxR = resolveWithLinePrefixes(part);
+      if (_pfxR?.type === "station") station = _pfxR.resolved;
+    }
     const stationKey = station || part;
     const ward = STATION_WARD_MAP[stationKey] || findStationWard(part);
     if (ward && WARD_CODE_MAP[ward] && !city_codes.includes(WARD_CODE_MAP[ward])) city_codes.push(WARD_CODE_MAP[ward]);
