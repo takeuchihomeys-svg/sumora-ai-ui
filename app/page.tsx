@@ -237,10 +237,7 @@ type PropertyCustomerRow = {
   floor_area_min?: number | null;
   floor_area_max?: number | null;
   pet?: boolean | null;
-  lines?: string[] | null;
-  stations?: string[] | null;
   rp_update_days?: number | null;
-  area_mode?: string | null;
 };
 
 // ── 物件検索ステータス（customers/page.tsx と同一定義） ──
@@ -1045,8 +1042,8 @@ export default function Home() {
       area_max:     c.floor_area_max ?? null,
       pet_ok:       resolvePetOk(c),
       desired_area: c.desired_area  ?? null,
-      lines:        c.lines         ?? [] as string[],
-      stations:     c.stations      ?? [] as string[],
+      lines:        [] as string[],
+      stations:     [] as string[],
       structure_types: parseStructureTypes(c.preferences, c.other_requests),
       rp_update_days:  c.rp_update_days ?? calcRpUpdateDays(c.last_property_sent_at),
       is_wide:      isWide,
@@ -1090,12 +1087,12 @@ export default function Home() {
     // ③ フォールバック: Supabase automation_commands + Realtime broadcast（スマホ対応）
     try {
       let resolved: ResolvedSearchConditions | null = null;
-      if (c.desired_area?.trim() || (c.lines?.length ?? 0) > 0 || (c.stations?.length ?? 0) > 0) {
+      if (c.desired_area?.trim()) {
         try {
           const res = await fetch("/api/resolve-search-conditions", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ desired_area: c.desired_area ?? "", lines: c.lines ?? [], stations: c.stations ?? [], is_wide: isWide, rent_max: c.rent_max ?? null, building_age: c.building_age ?? null }),
+            body: JSON.stringify({ desired_area: c.desired_area ?? "", lines: [], stations: [], is_wide: isWide, rent_max: c.rent_max ?? null, building_age: c.building_age ?? null }),
           });
           if (res.ok) {
             resolved = await res.json() as ResolvedSearchConditions;
@@ -1123,7 +1120,7 @@ export default function Home() {
               area_max: c.floor_area_max ?? undefined,
               pet_ok: resolvePetOk(c),
               desired_area: c.desired_area ?? undefined,
-              lines: c.lines ?? [], stations: c.stations ?? [],
+              lines: [], stations: [],
               city_codes: resolved?.city_codes ?? [], station_names: resolved?.station_names ?? [],
               route_ids: resolved?.route_ids ?? [], itandi_line_names: resolved?.itandi_line_names ?? [],
               reins_line_names: resolved?.reins_line_names ?? [], detail_ward: resolved?.detail_ward ?? null,
@@ -2198,17 +2195,14 @@ export default function Home() {
     if (propCustomerIds.length > 0) {
       const { data: pcData } = await supabase
         .from("property_customers")
-        .select("id,customer_name,status,last_property_sent_at,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age,initial_cost_limit,additional_conditions,ai_summary,floor_area_min,floor_area_max,pet,lines,stations,rp_update_days,area_mode")
+        .select("id,customer_name,status,last_property_sent_at,desired_area,floor_plan,rent_min,rent_max,move_in_time,preferences,ng_points,walk_minutes,other_requests,building_age,initial_cost_limit,additional_conditions,ai_summary,floor_area_min,floor_area_max,pet,rp_update_days")
         .in("id", propCustomerIds);
       if (pcData) {
         const map: Record<string, { id: string; name: string; conditions: string; propertyStatus?: string; lastPropertySentAt?: string | null; ai_summary?: string | null; additional_conditions?: string | null; structured?: CustomerStructuredForGen; rawData?: PropertyCustomerRow | null }> = {};
-        // 地域/駅モードのDB永続値を初期反映（customers/page.tsx と同一）
-        const initModes: Record<string, "auto" | "ward" | "station"> = {};
         for (const conv of formatted) {
           if (!conv.propertyCustomerId) continue;
           const pc = (pcData as PropertyCustomerRow[]).find((d) => d.id === conv.propertyCustomerId);
           if (pc) {
-            if (pc.area_mode === "ward" || pc.area_mode === "station") initModes[pc.id] = pc.area_mode;
             map[conv.id] = {
               id: pc.id,
               name: pc.customer_name,
@@ -2232,7 +2226,6 @@ export default function Home() {
           }
         }
         setLinkedCustomerMap((prev) => ({ ...prev, ...map }));
-        if (Object.keys(initModes).length > 0) setAreaModeByCustomer((prev) => ({ ...initModes, ...prev }));
       }
     }
 
