@@ -747,6 +747,7 @@ export default function Home() {
   const [showApplicationPicker, setShowApplicationPicker] = useState(false);
   const [suggestedAppMode, setSuggestedAppMode] = useState<"push" | "confirm" | null>(null);
   const [aixInitAppSubMode, setAixInitAppSubMode] = useState<"push" | "confirm" | "format" | "docs_request" | null>(null);
+  const [aixInitAutoConvMatch, setAixInitAutoConvMatch] = useState(false);
   const [showPropertyCheckPicker, setShowPropertyCheckPicker] = useState(false);
   const [suggestedPropertyCheckMode, setSuggestedPropertyCheckMode] = useState<"vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | null>(null);
   const [showDaihyoCheckPicker, setShowDaihyoCheckPicker] = useState(false);
@@ -8831,6 +8832,7 @@ export default function Home() {
           initialPickupType={aixInitialPickupType}
           initialEstimateMulti={aixInitEstimateMulti}
           initialAppSubMode={aixInitAppSubMode}
+          autoConvMatch={aixInitAutoConvMatch}
           initialFollowupSubMode={aixInitFollowupSubMode ?? undefined}
           initialInputText={aixInitInputText || undefined}
           initialCheckPattern={aixInitCheckPattern ?? undefined}
@@ -8850,6 +8852,7 @@ export default function Home() {
             setAixInitialSendImages([]);
             setAixInitEstimateMulti(false);
             setAixInitAppSubMode(null);
+            setAixInitAutoConvMatch(false);
             setAixInitFollowupSubMode(null);
             setAixInitInputText("");
             setAixInitCheckPattern(null);
@@ -11017,6 +11020,7 @@ export default function Home() {
                     if (key === "apply_push") {
                       setAixInitAppSubMode("push");
                       setActiveAixFlow("application_push");
+                      setAixInitAutoConvMatch(true);
                       openAixDirect("application_push");
                     } else {
                       setAixInitFollowupSubMode(key);

@@ -51,6 +51,7 @@ interface AixModalProps {
   initialAppSubMode?: "push" | "confirm" | "format" | "docs_request" | null;
   initialFollowupSubMode?: "apply_supplement" | "search_continue" | null;
   initialInputText?: string;
+  autoConvMatch?: boolean;
   initialCheckPattern?: "available" | "vacate_date" | "mgmt_move_in" | "mgmt_initial_cost" | "mgmt_guarantor" | "mgmt_parking" | "mgmt_pet" | "mgmt_equipment" | "mgmt_availability" | "nearby_parking" | "owner_other";
   templateId?: string; // テンプレートモーダル経由で開いた場合のtemplate_id（学習ループ紐付け用）
   onClose: () => void;
@@ -537,6 +538,7 @@ export default function AixModal({
   initialInputText,
   initialCheckPattern,
   templateId,
+  autoConvMatch,
   onClose,
   onSend,
   onAfterSend,
@@ -600,6 +602,7 @@ export default function AixModal({
   const [genLabel, setGenLabel] = useState("");
   const genAbortRef = useRef<AbortController | null>(null);
   const genReqIdRef = useRef(0);
+  const autoConvMatchFiredRef = useRef(false);
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<string>("");
   const [aiDraft, setAiDraft] = useState<string>("");
@@ -1086,6 +1089,16 @@ export default function AixModal({
       }
     })();
   }, [actionType]);
+
+  // 追客する→申込について催促: 自動で「会話を合わせる」発火
+  // autoConvMatch=true のとき、マウント後に generate({ conversation_match: true }) を1回だけ実行
+  useEffect(() => {
+    if (!autoConvMatch || autoConvMatchFiredRef.current || loading) return;
+    autoConvMatchFiredRef.current = true;
+    void generate({ conversation_match: true });
+  // generateはコンポーネント内のconstのため依存配列から除外
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoConvMatch, loading]);
 
   // 内覧へ！: カレンダー取得 + お客様指定日の自動検出
   useEffect(() => {
