@@ -9,7 +9,7 @@ import {
   phaseLabel,
 } from "@/app/lib/discuss-context";
 
-export const maxDuration = 30;
+export const maxDuration = 90;
 
 // 質問コンテキストを system prompt に毎ターン埋め込む
 // （以前は初回ターンのみ user メッセージとして注入していたが、クライアント側 state に保存されず
@@ -22,16 +22,63 @@ function buildSystemPrompt(params: {
   phase?: string | null;
   importance?: number | null;
   knowledgeSection?: string;
+  isFirstTurn?: boolean;
 }): string {
-  const attrs: string[] = [];
-  if (params.phase) attrs.push(`フェーズ: ${phaseLabel(params.phase)}`);
-  if (params.importance !== null && params.importance !== undefined) attrs.push(`重要度: ${params.importance}`);
-  if (params.speculation) attrs.push(`AIの憶測: ${params.speculation}`);
-  if (params.evidence) attrs.push(`根拠・予測場面: ${params.evidence}`);
+  const phaseStr = params.phase ? phaseLabel(params.phase) : null;
+
+  // evidence と speculation を名前付きブロックで提示（メタデータ重複を避ける）
+  const contextLines: string[] = [];
+  if (phaseStr || params.importance != null) {
+    contextLines.push(`フェーズ: ${phaseStr ?? "未指定"}　重要度: ${params.importance ?? "?"}点`);
+  }
+  if (params.evidence) {
+    contextLines.push(`■ AIがこのルールを使おうとした具体的な場面\n${params.evidence}`);
+  }
+  if (params.speculation) {
+    contextLines.push(`■ AIの憶測・背景\n${params.speculation}`);
+  }
+  const contextBlock = contextLines.join("\n\n");
+
+  // 第1ターン強制フォーマット（isFirstTurn のときのみ注入）
+  const firstTurnInstruction = params.isFirstTurn ? `
+---
+
+【第1ターン 必須フォーマット — この返信でのみ適用・厳守すること】
+
+最初の返信は以下の2段構成で必ず始めること：
+
+第1段「私の理解：」
+- 上記の【AIの憶測・背景】【AIがこのルールを使おうとした具体的な場面】【今回の議題】を統合して、
+  AIが今どう理解しているかを2〜3行で要約する
+- 「私はこのルールを○○の場面で○○のように使うものと理解しています」という形式
+- 業務ルール・既存ナレッジと照らして気になる点があれば1行で添える
+
+第2段「確認：」
+- 竹内さんが「はい」または「いいえ（〜の場合は違います）」で答えられる1行の質問で締める
+- 複数の疑問点がある場合は最も核心的な1つに絞る
+- 選択肢列挙は絶対禁止
+
+例（形式のみ参考）：
+「私の理解：○○という場面でAIが△△するかどうか迷っているルールと理解しています。
+確認：□□のときは必ず使う、という方向で合っていますか？」
+
+❌ 絶対禁止: 長い背景説明・経緯の再掲・選択肢を並べる・質問文をそのまま読み上げる
+✅ 必須: 「私の理解：」→「確認：」の2段で始め、竹内さんが即答できる形にする
+` : "";
 
   return `あなたは不動産AIアシスタント「スモラAI」のルール調整担当です。
-竹内さん（スタッフ）がAIのルール（返信ルール）を判断するのを手伝ってください。
+竹内さん（スタッフ）と対話しながら、AIの返信ルールを正確に定義することが仕事です。
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【今回の議題 ── まずここを把握してから動く】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${params.question}
+${contextBlock ? `\n${contextBlock}` : ""}
+
+---
+
+${DISCUSSION_QUALITY_GUIDE}
+${firstTurnInstruction}
 ---
 
 ${SYSTEM_OVERVIEW}
@@ -46,36 +93,15 @@ ${KNOWLEDGE_FORMAT}
 ---
 
 ${BUSINESS_RULES}
-${params.knowledgeSection ? `
+${params.knowledgeSection ? `\n---\n\n${params.knowledgeSection}\n` : ""}
 ---
 
-${params.knowledgeSection}
-` : ""}
----
-
-■ この「打ち合わせ」機能の目的
-- AIが新しく学んだルールが正しいか・既存ルールと矛盾していないかを竹内さんと対話で確認する
+■ この打ち合わせ機能について
 - 最終的には①新ルール採用・②既存ルール維持・③場面で使い分け のどれかを決める
-- AIは「議論パートナー」として具体例を出したり疑問点を整理したりする
-- 上記の業務ルール・承認済みルールと矛盾する提案が出た場合は必ず指摘する
+- 業務ルール・承認済みルールと矛盾する提案があれば必ず指摘する
+- 実際のナレッジ更新は竹内さんが画面上の回答ボタンで行うため、あなた自身が更新するとは言わない
 
----
-
-【今回の質問内容】
-${params.question}
-${attrs.length > 0 ? `
-【質問の属性】
-${attrs.join("\n")}
-` : ""}
----
-
-${DISCUSSION_QUALITY_GUIDE}
-
----
-
-竹内さんと一緒に、この質問に対して正しい判断ができるよう議論してください。
-LINEのような短い返信で、分かりやすく会話してください。
-実際のナレッジ更新は竹内さんが画面上の回答ボタンで行うため、あなた自身が更新するとは言わないでください。`;
+LINEのような短い返信で、分かりやすく会話してください。`;
 }
 
 export async function POST(req: NextRequest) {
@@ -110,6 +136,9 @@ export async function POST(req: NextRequest) {
   // 承認済みナレッジTOPを取得（失敗しても打ち合わせは続行）
   const knowledgeSection = await fetchActiveKnowledgeSection(phase);
 
+  // 会話履歴が空 = 初回ターン（第1ターン強制フォーマットを注入するために検出）
+  const isFirstTurn = !messages || messages.length === 0;
+
   // 過去の会話履歴に今回のユーザーメッセージを追加
   // （質問コンテキストは system prompt に毎ターン含まれるため、履歴への注入は不要）
   const conversationMessages: Array<{ role: "user" | "assistant"; content: string }> = [
@@ -117,14 +146,14 @@ export async function POST(req: NextRequest) {
     { role: "user", content: user_message },
   ];
 
-  // haiku は 2-4s で返答するため timeout:9s×3=27s < maxDuration:30s に収まる
-  const client = new Anthropic({ apiKey, timeout: 9_000, maxRetries: 2 });
+  // Sonnet は 10-20s で返答するため timeout:25s × maxRetries:2 (最大3試行) を考慮し maxDuration:90s
+  const client = new Anthropic({ apiKey, timeout: 25_000, maxRetries: 2 });
 
   try {
     const response = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 1024,
-      system: buildSystemPrompt({ question, speculation, evidence, phase, importance, knowledgeSection }),
+      model: "claude-sonnet-4-6",
+      max_tokens: 1200,
+      system: buildSystemPrompt({ question, speculation, evidence, phase, importance, knowledgeSection, isFirstTurn }),
       messages: conversationMessages,
     });
 
