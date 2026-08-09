@@ -466,7 +466,7 @@ export async function GET(req: NextRequest) {
           : "";
         return `・${c.customer_name || "名称未設定"}　${time}${replyMark}${action}`;
       });
-      parts.push(`【🚨最優先】今すぐ対応して！！\n${lines.join("\n")}`);
+      parts.push(`【最優先】今すぐ対応して！！\n${lines.join("\n")}`);
     }
 
     // 物件出しリスト（DB上のアクティブ客参考リスト）
@@ -486,7 +486,7 @@ export async function GET(req: NextRequest) {
       parts.join("\n\n"),
       "",
       "──────────────────",
-      `優先順：🚨最優先 → 決まる → アツい → 追加アツい → 新規`,
+      `優先順：最優先 → 決まる → アツい → 追加アツい → 新規`,
       `全員に物件出して返信して！！それがしょーへいの今日の全仕事！！`,
       "",
       pickByDay(MORNING_CLOSERS),
