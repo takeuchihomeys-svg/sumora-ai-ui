@@ -1813,6 +1813,12 @@ export async function POST(req: NextRequest) {
       .filter(Boolean)
       .join("\n");
 
+    // AIXテンプレート最適化モードでは historyから過去のAIXメッセージ行を除外する
+    // → aixSourceMessage（直近AIX）のみを物件情報の唯一の参照元にし、複数AIX送信の混ぜを防ぐ
+    const historyForTemplate = aixSourceMessage
+      ? history.split("\n").filter(l => !l.includes("(AI提案)") && !l.includes("AIX物件提案")).join("\n")
+      : history;
+
     // 真の初回判定（冒頭挨拶を強制注入するかどうか）
     // AIX生成メッセージ・画像のみは「スタッフが返信した」とみなさない
     const isFirstEverReplyFromMsgs = !recentMessages.some(
@@ -1974,6 +1980,7 @@ export async function POST(req: NextRequest) {
 ◆ テンプレート骨格厳守: 【テンプレート原文】の段落数・文体・長さ・トーンを厳密に守ること。これが出力の唯一の骨格
 ◆ 長さ厳守: テンプレートが短い（5行以内）なら出力も同等の短さにする。AIX文の長さに合わせてはいけない
 ◆ 事実抽出のみ: 【AIX物件情報】から物件名・家賃・間取り・オススメポイント・特徴などの事実情報のみを抽出し、テンプレートの該当箇所に自然に当てはめる
+◆ 過去AIX参照禁止: 会話履歴に他の物件を紹介した過去のAIX送信が含まれていても一切参照しない。物件情報は必ず【AIX物件情報】のみから取る（件数・物件名・金額等を過去のAIX送信と混ぜることを絶対禁止）
 ◆ AIX構成の持ち込み禁止: AIX文の詳細な段落構成（オススメポイント箇条書き・設備リスト・長い説明文等）はテンプレートにない場合は出力しない
 ◆ プレースホルダ置換: 「アカウント名」→「${customerName || "〇〇"}さん」。物件名・家賃・間取り等はAIX物件情報から読み取った実際の値に置換する。不明な値は「〇〇」のまま残す（でたらめな値を絶対に入れない）
 ◆ 挨拶: テンプレ冒頭の挨拶は上の【⏰ 挨拶ルール】に従った1つだけにする（挨拶・お礼の二重は禁止）
@@ -2016,7 +2023,7 @@ ${pendingSection ? `\n【🔑 予約送信待ちのAIXメッセージ（物件�
 
     // Sonnetでストリーミング生成
     const messages = buildGenerationMessages(
-      message, customerName, history, currentState,
+      message, customerName, aixSourceMessage ? historyForTemplate : history, currentState,
       analysis, knowledge, examples, phrases, customerConditions, resolvedSummary,
       promptOverrides, isFollowUp, replyHint, alreadyGreetedToday,
       isFirstEverReplyFromMsgs, viewingNote, customerStructured, dbRules + templateSystemNote,
