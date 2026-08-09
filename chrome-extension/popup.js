@@ -301,9 +301,15 @@ async function resolveAreaWithAPI(rawArea, areaMode) {
     const entry = LEARNED_STATION_MAP[t];
     return entry && entry.realpro_lines && entry.realpro_lines.length === 0;
   });
-  const needApi = hasRoute || hasUnknown || hasCommutePattern || hasTransferNone || hasCommuteExpression || hasIncompleteLearnedStation || (localEmpty && hasMeaningfulToken);
+  // 「鶴見区槇塚」のような 区+地名 複合トークン: resolveWardLoose では区として解決できるが
+  // WARD_CODE_MAP/NEIGHBORHOOD_WARD_MAP に直接登録されておらず buildAreaRouteCodes が区コードを落とす
+  const hasWardCompoundToken = toks.some(t => {
+    if (WARD_CODE_MAP[t] || NEIGHBORHOOD_WARD_MAP[t]) return false;
+    return !!resolveWardLoose(t);
+  });
+  const needApi = hasRoute || hasUnknown || hasCommutePattern || hasTransferNone || hasCommuteExpression || hasIncompleteLearnedStation || hasWardCompoundToken || (localEmpty && hasMeaningfulToken);
   if (!needApi) return null;
-  const _triggerReason = hasRoute ? "路線名未解決" : hasUnknown ? "未知トークン" : hasCommutePattern ? "通勤時間制約" : hasTransferNone ? "乗り換えなし/直通" : hasCommuteExpression ? "通勤便利系表現" : hasIncompleteLearnedStation ? "LEARNED駅データ不完全" : "ローカル解決が空";
+  const _triggerReason = hasRoute ? "路線名未解決" : hasUnknown ? "未知トークン" : hasCommutePattern ? "通勤時間制約" : hasTransferNone ? "乗り換えなし/直通" : hasCommuteExpression ? "通勤便利系表現" : hasIncompleteLearnedStation ? "LEARNED駅データ不完全" : hasWardCompoundToken ? "区+地名複合トークン" : "ローカル解決が空";
   console.log("[AX] resolve-area 呼び出し:", _triggerReason, rawArea);
   try {
     const ctrl = new AbortController();
@@ -1814,8 +1820,15 @@ function setupAreaModeSelector(c, siteKey) {
       Object.values(REINS_LINE_MAP).some(v => v === t || v.endsWith(t));
   });
   const hasResolvableRoute = toks.some(t => t.endsWith("線") && lineNameToRouteId(t));
-  const defaultMode = (hasStationToken || hasResolvableRoute) ? "station"
-                    : hasWardToken ? "ward"
+  // 「鶴見区槇塚」のような 区+地名 複合トークン: resolveWardLoose で区として解決できるが
+  // WARD_CODE_MAP/NEIGHBORHOOD_WARD_MAP に直接登録されていないトークン
+  const hasWardCompoundToken = toks.some(t => {
+    if (WARD_CODE_MAP[t] || NEIGHBORHOOD_WARD_MAP[t]) return false;
+    return !!resolveWardLoose(t);
+  });
+  // 区+駅 混在（hasStationToken && (hasWardToken || hasWardCompoundToken)）→ 区指定を優先
+  const defaultMode = (hasStationToken || hasResolvableRoute)
+                    ? ((hasWardToken || hasWardCompoundToken) ? "ward" : "station")
                     : "ward";
 
   _areaModeSource = "auto";
@@ -1825,7 +1838,8 @@ function setupAreaModeSelector(c, siteKey) {
 
   // 自動判定が曖昧（静的マップで判定できなかった）場合 → APIで補完
   // resolveAreaWithAPI はキャッシュがあれば即返る。未知トークンがなければ null を返してスキップ。
-  if (!hasWardToken && !hasStationToken) {
+  // hasWardCompoundToken: 区+地名複合でローカル解決が不完全な場合も API を呼んで補完
+  if ((!hasWardToken && !hasStationToken) || hasWardCompoundToken) {
     resolveAreaWithAPI(rawA, "auto").then(function(apiData) {
       if (!apiData || _areaModeSource !== "auto") return; // ユーザーが手動クリック済みなら無視
       var hasApiSt = (apiData.realpro?.station_names?.length > 0) || (apiData.realpro?.route_ids?.length > 0);
