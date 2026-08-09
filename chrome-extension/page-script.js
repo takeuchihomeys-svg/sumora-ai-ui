@@ -389,9 +389,9 @@
       if (!clean) return;
       var found = false;
 
-      // STEP1: label+checkbox（フォーム方式）
+      // STEP1: label+checkbox（フォーム方式）- 全マッチをクリック（同名駅が複数路線に出現するため）
       var labels = Array.prototype.slice.call(document.querySelectorAll('label'));
-      for (var i = 0; i < labels.length && !found; i++) {
+      for (var i = 0; i < labels.length; i++) {
         if (!isVisible(labels[i])) continue;
         var txt = labels[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
         if (txt === clean) {
@@ -406,15 +406,15 @@
         document.querySelectorAll('a,button,td,li,span,div,p')
       );
 
-      // STEP2: 直接テキスト 完全一致
-      for (var i = 0; i < els.length && !found; i++) {
+      // STEP2: 直接テキスト 完全一致 - 全マッチをクリック（同名駅が複数路線に出現するため）
+      for (var i = 0; i < els.length; i++) {
         if (!isVisible(els[i])) continue;
         if (getDirectText(els[i]) === clean) { fireClick(els[i]); found = true; }
       }
       if (found) return;
 
-      // STEP3: 全テキスト完全一致かつ葉ノード
-      for (var i = 0; i < els.length && !found; i++) {
+      // STEP3: 全テキスト完全一致かつ葉ノード - 全マッチをクリック
+      for (var i = 0; i < els.length; i++) {
         if (!isVisible(els[i])) continue;
         var ft = els[i].textContent.replace(/\s+/g, '').replace(/駅$/, '');
         if (ft === clean && els[i].children.length === 0) { fireClick(els[i]); found = true; }
