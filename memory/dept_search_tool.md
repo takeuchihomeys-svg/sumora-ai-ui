@@ -746,3 +746,24 @@ var NON_RESULT_PAGES = ["GBK001310"];
 - L2410 の reins パスがモード補正で `apiData.realpro` を読みつつデータは `apiData.reins` から取る不整合。今回の修正で発火頻度が上がるため、`reins` は埋まっているが `realpro` が空のレスポンスだとモード補正が黙って no-op になる → 要フォローアップ
 
 **拡張の再読み込み必須**: popup.js 変更のため chrome://extensions で再読み込みすること
+
+---
+
+## 🛠️ 駅→沿線マッピングのDB動的取得化（2026-08-09 Fable5）
+
+**目的**: `getHubLines` がハードコードの `STATION_LINE_MAP` に依存していたため、DBの `station_map`（realpro_lines）を最優先で参照するように変更。DBに新駅を追加すれば拡張の再デプロイなしで反映される。
+
+### 修正一覧
+| # | 内容 | ファイル |
+|---|---|---|
+| 1 | `GET /api/station-route-cache` 新設: `station_map` から `token, realpro_lines` を全件取得（source='unknown' のネガティブキャッシュ行・realpro_lines 空の行は除外）。1000行ページング。レスポンス `{ data: { 駅名: [路線名,...] } }`。Cache-Control: public, max-age=86400 | `app/api/station-route-cache/route.ts`（新規） |
+| 2 | `fetchStationRouteCache()` 新設: chrome.storage.local の `stationRouteCache` キーを確認し ts が24時間以内ならそれを使用。期限切れ/なしなら API を10秒タイムアウト付き fetch → `{data, ts}` 形式で保存。失敗時は console.warn して null（hardcodedマップで動作継続） | `popup.js` L15〜 |
+| 3 | `getHubLines` の各駅ループで `_dbStationRouteMap` を最優先参照。値は「配列」「{realpro_lines:[...]}」両形式対応。DBに無い/空の駅のみ従来の `STATION_LINE_MAP` → `LEARNED_STATION_MAP` フォールバック。引数・戻り値インターフェース不変 | `popup.js` L701〜 |
+| 4 | DOMContentLoaded に `fetchStationRouteCache()` 追加（seedMapsIfEmpty/fetchLearnedMaps と独立・非ブロッキング） | `popup.js` L2770 |
+
+### 設計メモ
+- realpro_lines のみ使用。itandi_lines / reins_line は含めない（サイト別表記の独立管理方針・feedback_site_naming_separation.md 準拠）
+- 初回ポップアップ表示直後は `_dbStationRouteMap=null` のため hardcoded マップで動作（仕様どおり）。2回目以降はローカルキャッシュから即時ロード
+- `getOneTransferLines` と resolution-core.js 側の `STATION_LINE_MAP` 参照は今回スコープ外（未変更）
+- API失敗時は期限切れキャッシュも使わず null 返却（stale-while-error が必要なら catch 内で cached.data を返す1行で対応可）
+- **拡張の再読み込み必須**: popup.js 変更のため chrome://extensions で再読み込みすること

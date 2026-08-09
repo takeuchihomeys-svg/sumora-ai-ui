@@ -7,6 +7,49 @@ const LEARNED_WARD_MAP    = {};  // 地名 → 市区
 const LEARNED_STATION_MAP = {};  // 駅名 → { ward, realpro_lines[], itandi_lines[], reins_line }
 const LEARNED_LINE_ORDER  = {};  // 路線名 → 駅配列（順序付き）- DBのline_stationsから起動時にロード
 
+// DB由来の駅→路線マップ（/api/station-route-cache から取得・24時間ローカルキャッシュ）
+// null のあいだは getHubLines が既存の STATION_LINE_MAP / LEARNED_STATION_MAP にフォールバックする
+let _dbStationRouteMap = null;
+
+// 起動時: DBの駅→路線キャッシュをロード（chrome.storage.local に24時間キャッシュ）
+async function fetchStationRouteCache() {
+  const CACHE_KEY = "stationRouteCache";
+  const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24時間
+  try {
+    // 1) ローカルキャッシュ確認（24時間以内ならAPIを叩かず使用）
+    const stored = await new Promise((resolve) => {
+      try {
+        chrome.storage.local.get([CACHE_KEY], (res) => resolve(res || {}));
+      } catch (_) { resolve({}); }
+    });
+    const cached = stored[CACHE_KEY];
+    if (cached && cached.data && typeof cached.ts === "number" && (Date.now() - cached.ts) < CACHE_TTL_MS) {
+      _dbStationRouteMap = cached.data;
+      return _dbStationRouteMap;
+    }
+    // 2) キャッシュなし/期限切れ → APIから取得（10秒タイムアウト）
+    const res = await fetch(`${API_BASE}/api/station-route-cache`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    const data = (json && typeof json === "object")
+      ? (json.data || json.stations || json)
+      : null;
+    if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("invalid payload");
+    _dbStationRouteMap = data;
+    // 3) 取得結果を {data, ts} 形式で保存
+    try {
+      chrome.storage.local.set({ [CACHE_KEY]: { data, ts: Date.now() } });
+    } catch (_) {}
+    return _dbStationRouteMap;
+  } catch (e) {
+    console.warn("[AX] station-route-cache 取得失敗（hardcodedマップにフォールバック）:", e);
+    return null;
+  }
+}
+
 // ハードコードマップとSupabase DBを差分sync（DBにないtokenだけupsert）
 async function seedMapsIfEmpty() {
   try {
@@ -661,7 +704,16 @@ function getHubLines(stationKey) {
     : [stationKey];
   const lines = [];
   for (const st of hubStations) {
-    const stLines = STATION_LINE_MAP[st] || LEARNED_STATION_MAP[st]?.realpro_lines || [];
+    // DBキャッシュ（_dbStationRouteMap）を最優先。値は配列 or {realpro_lines:[...]} の両形式に対応
+    let dbLines = null;
+    if (_dbStationRouteMap) {
+      const v = _dbStationRouteMap[st];
+      if (Array.isArray(v)) dbLines = v;
+      else if (v && Array.isArray(v.realpro_lines)) dbLines = v.realpro_lines;
+    }
+    const stLines = (dbLines && dbLines.length > 0)
+      ? dbLines
+      : (STATION_LINE_MAP[st] || LEARNED_STATION_MAP[st]?.realpro_lines || []);
     for (const l of stLines) {
       if (!lines.includes(l)) lines.push(l);
     }
@@ -2714,6 +2766,8 @@ function filterCustomers(q) {
 document.addEventListener("DOMContentLoaded", () => {
   // DBが空なら既存ハードコードデータをシード → 学習済みマップをロード
   seedMapsIfEmpty().then(() => fetchLearnedMaps());
+  // DBの駅→路線キャッシュをロード（24hローカルキャッシュ・失敗時はhardcodedマップで動作継続）
+  fetchStationRouteCache();
   // loadCustomers 完了後に pendingPopupCmd を確認して顧客を自動選択
   // 修正④b: 読み取り成功後にバッジをクリア（openPopup失敗時の赤バッジ '!' を消す）
   loadCustomers().then(function() {
