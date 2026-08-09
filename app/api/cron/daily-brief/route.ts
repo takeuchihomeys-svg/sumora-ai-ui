@@ -39,6 +39,46 @@ function msgPreview(msg: string | null, max = 22): string {
   return `「${s.slice(0, max)}${s.length > max ? "…" : ""}」`;
 }
 
+// ── 鈴木 祥平 LINE User ID 解決（DBキャッシュ → Group Members API） ──────
+const SUZUKI_NAME = "鈴木 祥平";
+const SUZUKI_CACHE_KEY = "suzuki_line_user_id";
+
+async function resolveSuzukiUserId(groupId: string, token: string): Promise<string | null> {
+  // 1. DBキャッシュ確認
+  const { data: cached } = await supabase
+    .from("hanbancyo_settings")
+    .select("value")
+    .eq("key", SUZUKI_CACHE_KEY)
+    .maybeSingle();
+  if (cached?.value) return cached.value as string;
+
+  // 2. LINE Group Members IDs API でメンバー一覧取得
+  const idsRes = await fetch(`https://api.line.me/v2/bot/group/${groupId}/members/ids`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!idsRes.ok) return null;
+  const { memberIds } = (await idsRes.json()) as { memberIds: string[] };
+
+  // 3. 各メンバーのプロフィールを確認して「鈴木 祥平」を探す
+  for (const uid of memberIds) {
+    const profileRes = await fetch(
+      `https://api.line.me/v2/bot/group/${groupId}/member/${uid}`,
+      { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(5_000) }
+    );
+    if (!profileRes.ok) continue;
+    const profile = (await profileRes.json()) as { displayName?: string; userId?: string };
+    if (profile.displayName === SUZUKI_NAME && profile.userId) {
+      // 4. DBにキャッシュして次回以降は即座に返す
+      await supabase
+        .from("hanbancyo_settings")
+        .upsert({ key: SUZUKI_CACHE_KEY, value: profile.userId }, { onConflict: "key" });
+      return profile.userId;
+    }
+  }
+  return null;
+}
+
 // ── Route handler ─────────────────────────────────────────────────────
 
 const COOLDOWN_KEY = "daily_brief_last_sent_at";
@@ -82,12 +122,12 @@ export async function GET(req: NextRequest) {
     process.env.LINE_CHANNEL_ACCESS_TOKEN ??
     null;
 
-  const suzukiUserId =
-    process.env.SUZUKI_LINE_USER_ID ?? process.env.LINE_SUZUKI_USER_ID ?? null;
-
   if (!groupId || !token) {
     return NextResponse.json({ ok: false, error: "LINE config missing" }, { status: 500 });
   }
+
+  // 鈴木 祥平の LINE User ID を取得（DB キャッシュ → なければ Group Members API で検索）
+  const suzukiUserId = await resolveSuzukiUserId(groupId, token);
 
   // ── Parallel DB queries ─────────────────────────────────────────────
   const sixHoursAgo  = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
