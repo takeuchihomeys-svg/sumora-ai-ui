@@ -469,8 +469,7 @@ export async function GET(req: NextRequest) {
     ? `今日ここまで${todayDoneCount}件動かしてる。ナイス！！\n\n`
     : "";
 
-  // ── 夕方ターゲット残り確認ブロック ───────────────────────────────────
-  const eveningTargetBlock: string[] = [
+  const eveningTargetText = [
     "【今日のターゲット残り確認】全員出せた？",
     "",
     "▶ 決まる",
@@ -478,64 +477,12 @@ export async function GET(req: NextRequest) {
     "",
     "▶ アツい",
     ...SUZUKI_TARGET_HOT.map(n => `・${n}`),
-  ];
-
-  // 夕方も返信あり・新規を追加ターゲットとして表示
-  if (hannou && hannou.length > 0) {
-    eveningTargetBlock.push("", "▶ 追加アツい（返信来たやつ）");
-    (hannou as ConvRow[]).forEach(c => {
-      const time = elapsedLabel(c.updated_at);
-      const preview = msgPreview(c.last_message ?? null);
-      eveningTargetBlock.push(`・${c.customer_name || "名称未設定"}　${time}${preview ? `　${preview}` : ""}`);
-    });
-  }
-  if (shinchaku && shinchaku.length > 0) {
-    const unanswered = (shinchaku as ConvRow[]).filter(c =>
-      c.status === "first_reply" || c.status === "condition_hearing"
-    );
-    if (unanswered.length > 0) {
-      eveningTargetBlock.push("", "▶ 新規問い合わせ（まだ返せてないやつ）");
-      unanswered.forEach(c => {
-        eveningTargetBlock.push(`・${c.customer_name || "名称未設定"}　${elapsedLabel(c.created_at)}登録`);
-      });
-    }
-  }
-
-  const eveningParts: string[] = [eveningTargetBlock.join("\n")];
-
-  if (saiyuusen && saiyuusen.length > 0) {
-    const lines = (saiyuusen as ConvRow[]).map(c => {
-      const time = elapsedLabel(c.updated_at);
-      const replyMark = c.last_sender === "customer" ? "[返信あり]" : "";
-      const action = ["viewing", "estimate_request", "availability_check"].includes(c.status ?? "")
-        ? " → 内覧アポ"
-        : ["application", "applying"].includes(c.status ?? "")
-        ? " → 申込"
-        : "";
-      return `・${c.customer_name || "名称未設定"}　${time}${replyMark}${action}`;
-    });
-    eveningParts.push(`【最優先】\n${lines.join("\n")}`);
-  }
-
-  // 返信あり・新着はターゲットブロック内に統合済みのためここでは物件出し参考のみ
-  if (bukkenRows.length > 0) {
-    const bukkenLines = buildBukkenLines(bukkenRows);
-    eveningParts.push(
-      [
-        `【物件出し】残り${totalBukken}件`,
-        ...bukkenLines,
-      ].join("\n")
-    );
-  }
-
-  if (eveningParts.length === 0) {
-    return NextResponse.json({ ok: true, skipped: true, reason: "no customers to report" });
-  }
+  ].join("\n");
 
   const eveningText = [
     `${mentionPrefix} ${todayPraise}${pickByDay(EVENING_OPENERS)}`,
     "",
-    eveningParts.join("\n\n"),
+    eveningTargetText,
     "",
     "──────────────────",
     `今日中にターゲット全員物件出して返信して！！`,
