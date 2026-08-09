@@ -1217,12 +1217,21 @@
                   return;
                 }
                 var stNamesStr = (cond.station_names || []).join('・');
+                var _modalStationsCleared = false; // 前顧客残留クリア済みフラグ（_doResetはフォームDOMしか消せないため）
                 // STEP D: 駅ページが描画され、かつ指定駅が選択されるまでリトライ
                 waitForClick(
                   function() {
                     var labels = Array.prototype.slice.call(document.querySelectorAll('label'));
                     var vis = labels.filter(function(l) { return isVisible(l); });
                     if (!vis.length) return false; // 駅リストがまだ描画されていない
+                    // 前顧客のモーダル残留選択を一度だけクリア
+                    // リアプロのモーダルは独自JS内部状態を持ち _doReset のフォームDOM操作では消せない
+                    if (!_modalStationsCleared) {
+                      Array.prototype.slice.call(document.querySelectorAll('input[name="station_code[]"]:checked'))
+                        .filter(function(inp) { return inp.parentElement && isVisible(inp.parentElement); })
+                        .forEach(function(inp) { inp.click(); });
+                      _modalStationsCleared = true;
+                    }
                     selectStationsByName(cond.station_names);
                     // 指定駅のいずれかがチェックされたか確認
                     return (cond.station_names || []).some(function(sn) {
