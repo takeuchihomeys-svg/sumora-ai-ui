@@ -2605,8 +2605,19 @@ function CustomersPageInner() {
                 })}
               </div>
               <button
+                onClick={async () => {
+                  if (!confirm(`「${target.customer_name}」を削除しますか？`)) return;
+                  await fetch(`/api/property-customers?id=${target.id}`, { method: "DELETE" });
+                  setCustomers((p) => p.filter((x) => x.id !== target.id));
+                  setStatusMenuId(null);
+                }}
+                className="mx-5 mt-3 mb-1 w-[calc(100%-2.5rem)] rounded-2xl bg-[#fff0f0] py-3.5 text-[14px] font-bold text-[#e53935] active:bg-[#ffd7d7]"
+              >
+                削除
+              </button>
+              <button
                 onClick={() => setStatusMenuId(null)}
-                className="mx-5 mt-3 mb-1 w-[calc(100%-2.5rem)] rounded-2xl bg-[#f0f2f5] py-3.5 text-[14px] font-bold text-[#667781] active:bg-[#e9edef]"
+                className="mx-5 mt-1 mb-1 w-[calc(100%-2.5rem)] rounded-2xl bg-[#f0f2f5] py-3.5 text-[14px] font-bold text-[#667781] active:bg-[#e9edef]"
               >
                 キャンセル
               </button>
