@@ -1368,6 +1368,23 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const msgType = event.message?.type;
     const userId = event.source.userId;
 
+    // 鈴木のuserIdが未保存なら、プロフィールをチェックして自動保存
+    after(async () => {
+      try {
+        const db2 = getDb();
+        const { data: existing } = await db2.from("hanbancyo_settings").select("value").eq("key", "suzuki_line_user_id").maybeSingle();
+        if (!existing?.value && matchedAccount.token) {
+          const profile = await fetchLineProfile(userId, matchedAccount.token);
+          if (profile?.displayName?.includes("鈴木")) {
+            await db2.from("hanbancyo_settings").upsert({ key: "suzuki_line_user_id", value: userId }, { onConflict: "key" });
+            console.log("[line-webhook] 鈴木のuserIdを自動保存:", userId, profile.displayName);
+          }
+        }
+      } catch (e) {
+        console.warn("[line-webhook] 鈴木userId自動検出エラー:", e);
+      }
+    });
+
     if (msgType === "text") {
       const lineMessageId = event.message?.id;
       const text = (event.message as { text?: string })?.text;
