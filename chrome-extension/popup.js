@@ -2236,6 +2236,8 @@ function openInstructions(siteKey) {
 
       const conditions = {
         rent_max:        itandiEffectiveRentMax,
+        area_mode:       currentAreaMode,
+        shikirei_free:   detectShikireiFlag(c),
         walk_minutes:    adjWalk    ? Number(adjWalk)    : (c.walk_minutes || null),
         building_age:    adjAge     ? Number(adjAge)     : (c.building_age || null),
         floor_plan:      adjFloor   || c.floor_plan || c.layout || null,
