@@ -422,11 +422,39 @@ export async function GET(req: NextRequest) {
       ? `昨日${yesterdayCount}件動かしてたな。ナイス！！\n\n`
       : "";
 
-    const parts: string[] = [];
+    // ── ターゲット全リスト（固定＋動的追加を1ブロックに統合）──────────────
+    const targetBlock: string[] = [
+      "【しょーへいの今日のターゲット全リスト】",
+      "",
+      "▶ 決まる（最優先）",
+      ...SUZUKI_TARGET_CLOSE.map(n => `・${n}`),
+      "",
+      "▶ アツい（追撃必須）",
+      ...SUZUKI_TARGET_HOT.map(n => `・${n}`),
+    ];
 
-    // ターゲットリストは毎朝必ず最上部に表示
-    parts.push(buildTargetSection());
+    // 返信来たやつ（ターゲット外含め全員）→ 追加アツい
+    if (hannou && hannou.length > 0) {
+      targetBlock.push("", "▶ 追加アツい（返信来たやつ・ターゲット追加）");
+      (hannou as ConvRow[]).forEach(c => {
+        const time = elapsedLabel(c.updated_at);
+        const preview = msgPreview(c.last_message ?? null);
+        targetBlock.push(`・${c.customer_name || "名称未設定"}　${time}${preview ? `　${preview}` : ""}`);
+      });
+    }
 
+    // 新規問い合わせ → リストに追加ターゲットとして追記
+    if (shinchaku && shinchaku.length > 0) {
+      targetBlock.push("", "▶ 新規問い合わせ（追加ターゲット）");
+      (shinchaku as ConvRow[]).forEach(c => {
+        const time = elapsedLabel(c.created_at);
+        targetBlock.push(`・${c.customer_name || "名称未設定"}　${time}登録`);
+      });
+    }
+
+    const parts: string[] = [targetBlock.join("\n")];
+
+    // 最優先（flag付き）= 緊急対応が必要なやつ
     if (saiyuusen && saiyuusen.length > 0) {
       const lines = (saiyuusen as ConvRow[]).map(c => {
         const time = elapsedLabel(c.updated_at);
@@ -438,38 +466,18 @@ export async function GET(req: NextRequest) {
           : "";
         return `・${c.customer_name || "名称未設定"}　${time}${replyMark}${action}`;
       });
-      parts.push(`【最優先】\n${lines.join("\n")}`);
+      parts.push(`【🚨最優先】今すぐ対応して！！\n${lines.join("\n")}`);
     }
 
-    if (hannou && hannou.length > 0) {
-      const lines = (hannou as ConvRow[]).map(c => {
-        const time = elapsedLabel(c.updated_at);
-        const preview = msgPreview(c.last_message ?? null);
-        return `・${c.customer_name || "名称未設定"}　${time}${preview ? `\n　${preview}` : ""}`;
-      });
-      parts.push(`【返信あり】ターゲット＋その他含め返信来てる！！今すぐ全員返して！！\n${lines.join("\n")}`);
-    }
-
-    if (shinchaku && shinchaku.length > 0) {
-      const lines = (shinchaku as ConvRow[]).map(c => {
-        const time = elapsedLabel(c.created_at);
-        return `・${c.customer_name || "名称未設定"}　${time}登録`;
-      });
-      parts.push(`【新着・追加ターゲット】${shinchaku.length}人入ってきた！！今日中に全員返して！！\n${lines.join("\n")}`);
-    }
-
+    // 物件出しリスト（DB上のアクティブ客参考リスト）
     if (bukkenRows.length > 0) {
       const bukkenLines = buildBukkenLines(bukkenRows);
       parts.push(
         [
-          `【物件出し】（直近アクティブ${totalBukken}件）`,
+          `【物件出しリスト参考】（直近アクティブ${totalBukken}件）`,
           ...bukkenLines,
         ].join("\n")
       );
-    }
-
-    if (parts.length === 0) {
-      return NextResponse.json({ ok: true, skipped: true, reason: "no customers to report" });
     }
 
     const fullText = [
@@ -478,8 +486,8 @@ export async function GET(req: NextRequest) {
       parts.join("\n\n"),
       "",
       "──────────────────",
-      `しょーへいの今日の全仕事：ターゲット全員物件出し＋返信あり対応＋新着対応`,
-      `優先順：最優先 → ターゲット → 返信あり → 新着 → 物件出し`,
+      `優先順：🚨最優先 → 決まる → アツい → 追加アツい → 新規`,
+      `全員に物件出して返信して！！それがしょーへいの今日の全仕事！！`,
       "",
       pickByDay(MORNING_CLOSERS),
     ].join("\n");
@@ -510,18 +518,39 @@ export async function GET(req: NextRequest) {
     ? `今日ここまで${todayDoneCount}件動かしてる。ナイス！！\n\n`
     : "";
 
-  const eveningParts: string[] = [];
+  // ── 夕方ターゲット残り確認ブロック ───────────────────────────────────
+  const eveningTargetBlock: string[] = [
+    "【今日のターゲット残り確認】全員出せた？",
+    "",
+    "▶ 決まる",
+    ...SUZUKI_TARGET_CLOSE.map(n => `・${n}`),
+    "",
+    "▶ アツい",
+    ...SUZUKI_TARGET_HOT.map(n => `・${n}`),
+  ];
 
-  // 夕方もターゲットリストを再掲（今日中に物件出せてないやつの確認用）
-  const targetCloseNames = SUZUKI_TARGET_CLOSE.map(n => `・${n}`).join("\n");
-  const targetHotNames = SUZUKI_TARGET_HOT.map(n => `・${n}`).join("\n");
-  eveningParts.push(
-    [
-      "【今日のターゲット残り確認】全員出せた？",
-      "▶ 決まる", targetCloseNames,
-      "", "▶ アツい", targetHotNames,
-    ].join("\n")
-  );
+  // 夕方も返信あり・新規を追加ターゲットとして表示
+  if (hannou && hannou.length > 0) {
+    eveningTargetBlock.push("", "▶ 追加アツい（返信来たやつ）");
+    (hannou as ConvRow[]).forEach(c => {
+      const time = elapsedLabel(c.updated_at);
+      const preview = msgPreview(c.last_message ?? null);
+      eveningTargetBlock.push(`・${c.customer_name || "名称未設定"}　${time}${preview ? `　${preview}` : ""}`);
+    });
+  }
+  if (shinchaku && shinchaku.length > 0) {
+    const unanswered = (shinchaku as ConvRow[]).filter(c =>
+      c.status === "first_reply" || c.status === "condition_hearing"
+    );
+    if (unanswered.length > 0) {
+      eveningTargetBlock.push("", "▶ 新規問い合わせ（まだ返せてないやつ）");
+      unanswered.forEach(c => {
+        eveningTargetBlock.push(`・${c.customer_name || "名称未設定"}　${elapsedLabel(c.created_at)}登録`);
+      });
+    }
+  }
+
+  const eveningParts: string[] = [eveningTargetBlock.join("\n")];
 
   if (saiyuusen && saiyuusen.length > 0) {
     const lines = (saiyuusen as ConvRow[]).map(c => {
@@ -537,25 +566,7 @@ export async function GET(req: NextRequest) {
     eveningParts.push(`【最優先】\n${lines.join("\n")}`);
   }
 
-  if (hannou && hannou.length > 0) {
-    const lines = (hannou as ConvRow[]).map(c => {
-      const time = elapsedLabel(c.updated_at);
-      const preview = msgPreview(c.last_message ?? null);
-      return `・${c.customer_name || "名称未設定"}　${time}${preview ? ` ${preview}` : ""}`;
-    });
-    eveningParts.push(`【返信あり】ターゲット＋その他含め返信来てる！！今日中に全員返して！！\n${lines.join("\n")}`);
-  }
-
-  if (shinchaku && shinchaku.length > 0) {
-    const unanswered = (shinchaku as ConvRow[]).filter(c =>
-      c.status === "first_reply" || c.status === "condition_hearing"
-    );
-    if (unanswered.length > 0) {
-      const lines = unanswered.map(c => `・${c.customer_name || "名称未設定"}　${elapsedLabel(c.created_at)}登録`);
-      eveningParts.push(`【新着・未対応・追加ターゲット】今日入ったのにまだ返せてないのがいる！！今夜中に絶対返して！！\n${lines.join("\n")}`);
-    }
-  }
-
+  // 返信あり・新着はターゲットブロック内に統合済みのためここでは物件出し参考のみ
   if (bukkenRows.length > 0) {
     const bukkenLines = buildBukkenLines(bukkenRows);
     eveningParts.push(
@@ -576,7 +587,7 @@ export async function GET(req: NextRequest) {
     eveningParts.join("\n\n"),
     "",
     "──────────────────",
-    `今日の残り：ターゲット未出しのやつ＋返信あり${hannou?.length ?? 0}人＋未対応の新着を全部片付けて！！`,
+    `今日中にターゲット全員物件出して返信して！！`,
     "",
     pickByDay(EVENING_CLOSERS),
   ].join("\n");
