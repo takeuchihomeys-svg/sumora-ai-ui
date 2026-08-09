@@ -13,6 +13,7 @@ type ConvRow = {
   last_sender?: string | null;
   is_hot?: boolean | null;
   updated_at: string | null;
+  created_at?: string | null;
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -69,58 +70,58 @@ function buildBukkenLines(rows: ConvRow[]): string[] {
   });
 }
 
-// ── 人間っぽい声かけ（絵文字なし）────────────────────────────────────
+// ── 厳しさと感動が混ざった声かけ ─────────────────────────────────────
 
 const MORNING_OPENERS = [
-  "日曜やけどよろしく。休みでも動いてるお客さんいる。",
-  "月曜の朝。今週も反応あるやつから全部返して。",
-  "火曜日。昨日の勢いそのままいって。",
-  "水曜。週の折り返しやから今日もしっかり回して。",
-  "木曜日。週末まであと少し。今日も全力でいって。",
-  "金曜の朝。週末前に全部片付けて。ここが踏ん張りどころ。",
-  "土曜やけどよろしく。お客さんは休日こそ動いてる。",
+  "日曜やけどよろしく。休みでも待ってるお客さんがいる。返さない理由はない。",
+  "月曜の朝。先週繋いだお客さんが今週どうなるかは今日の動き次第。いって。",
+  "火曜日。昨日動いた分だけ今日がある。その続きをやって。",
+  "水曜。週の折り返し。ここで止まるか続けるかで結果が変わる。動いて。",
+  "木曜日。今週あと2日。このまま終わるか、ここから決めるかは今日次第。",
+  "金曜の朝。週の最後やけど、お客さんには関係ない。全部返して。",
+  "土曜やけどよろしく。休みの日に連絡してくるお客さんは本気のやつ。逃すな。",
 ];
 
 const MORNING_CLOSERS = [
-  "反応あるやつから順番に全部返して。",
-  "上から一気にいって。",
-  "要対応から潰したら熱い客を攻める流れで。",
-  "返信早いほどアポに繋がるから今日もよろしく。",
-  "鈴木ならできる。全部やって。",
-  "お客さん待ってるから今日もよろしく。",
-  "いつも動いてくれてありがとう。今日もよろしく。",
+  "返せてない客がいる間は仕事終わってない。全部返してから終わりにして。",
+  "地味に見えるかもしれんけど、これが誰かの家を決める仕事。続けよう。",
+  "鈴木が動けば動くほどお客さんが前に進む。今日もよろしく。",
+  "できてないことを責めてるんじゃない。もっとできると思ってるから言ってる。いって。",
+  "鈴木ならこのリスト全部いける。やって。",
+  "毎朝このリストを送り続けるのは、鈴木に結果を出してほしいから。今日もよろしく。",
+  "しんどい日もある。それでも動き続けてる鈴木を見てる。今日もよろしく。",
 ];
 
 const EVENING_OPENERS = [
-  "日曜もここまでありがとう。残りだけやって。",
-  "月曜の終わり。残りの対応だけやりきって終わりにして。",
-  "火曜のラスト。あと少しだけ頑張って。",
-  "水曜の夕方。今日中に全部返して。",
-  "木曜のラスト。明日を楽にするために今日やりきって。",
-  "金曜夕方。週末前にここをきれいにして終わって。",
-  "土曜もここまでありがとう。残りのお客さんだけあと少し。",
+  "日曜もここまでありがとう。残ってる分だけやって終わりにして。",
+  "月曜の終わり。今日動いた分は明日の自分が楽になる。残りだけやって。",
+  "火曜の夕方。返せてない客はどんな気持ちで待ってるかを考えて動いて。",
+  "水曜の夕方。週の折り返しやけど、今日中に全部返しておけば後半が楽になる。",
+  "木曜のラスト。明日の自分のために今日やりきって。",
+  "金曜夕方。週末前に残りを全部片付けて、気持ちよく終わって。",
+  "土曜もここまでありがとう。お客さんを待たせないで終わらせよう。",
 ];
 
 const EVENING_CLOSERS = [
-  "今日よく動けた。残りだけ頼む。",
-  "ここ返したら今日は終わりにしていい。あと少し。",
-  "夕方はお客さんも返事しやすいから今がチャンス。",
+  "今日動いた分だけ結果につながる。残りだけ頼む。",
+  "ここ返したら今日は終わりにしていい。あと少しだけ。",
+  "正直しんどいと思う。それでも動き続けてる鈴木に感謝してる。最後だけ頼む。",
   "今日頑張った分、明日が楽になる。いって。",
-  "残り全部返したらゆっくり休んで。",
-  "鈴木の対応でお客さん助かってる。もう少しだけ。",
-  "今日も1日ありがとう。最後だけ頼む。",
+  "鈴木の対応でお客さんが次に進める。残り全部返したらゆっくり休んで。",
+  "毎日同じことの繰り返しに見えるかもしれんけど、これが積み重なって結果になる。もう少しだけ。",
+  "今日1日本当にありがとう。最後だけ頼む。",
 ];
 
 const DEADLINE_DONE_MESSAGES = [
-  "このペース続けて。",
-  "明日もよろしく。",
-  "完璧だった。",
+  "鈴木が動いてくれるから結果が出る。本当にありがとう。",
+  "今日この動きができたなら明日も絶対できる。続けよう。",
+  "完璧だった。これを続けていけば必ず数字になる。",
 ];
 
 const DEADLINE_PUSH_MESSAGES = [
-  "まだ残ってる。19時まで動いて。",
-  "あと少しやから集中して。",
-  "定時ギリギリやけど、残りを全部返してから終わりにして。",
+  "まだ残ってる。返せてない客はずっと待ってる。19時まで動いて。",
+  "あと少し。ここで止まるか動くかで明日が変わる。",
+  "定時ギリギリやけど、残りを全部返してから終わりにして。お客さんを待たせるな。",
 ];
 
 // ── 鈴木 祥平 LINE User ID 解決 ──────────────────────────────────────
@@ -319,9 +320,10 @@ export async function GET(req: NextRequest) {
 
   // ── DB queries（朝・夕方共通）─────────────────────────────────────────
   const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
 
-  const [{ data: hannou }, { data: saiyuusen }, { data: bukkenDashi }] = await Promise.all([
-    // 【新着】= お客さんから返信が来ている（24h以内・flagなし）
+  const [{ data: hannou }, { data: saiyuusen }, { data: bukkenDashi }, { data: shinchaku }] = await Promise.all([
+    // 【返信あり】= お客さんから返信が来ている（24h以内・flagなし）
     supabase.from("conversations")
       .select("id, customer_name, status, last_message, last_sender, is_hot, updated_at")
       .eq("last_sender", "customer").eq("is_flagged", false).eq("line_status", "active")
@@ -342,6 +344,14 @@ export async function GET(req: NextRequest) {
       .order("is_hot", { ascending: false })
       .order("updated_at", { ascending: false })
       .limit(20),
+
+    // 【新着】= 2日以内に新規登録・まだhot/flaggedでない初回対応待ち
+    supabase.from("conversations")
+      .select("id, customer_name, status, created_at")
+      .eq("is_flagged", false).eq("is_hot", false).eq("line_status", "active")
+      .in("status", ["first_reply", "condition_hearing", "hearing"])
+      .gt("created_at", twoDaysAgo)
+      .order("created_at", { ascending: false }).limit(8),
   ]);
 
   const bukkenRows = (bukkenDashi as ConvRow[]) ?? [];
@@ -365,15 +375,6 @@ export async function GET(req: NextRequest) {
 
     const parts: string[] = [];
 
-    if (hannou && hannou.length > 0) {
-      const lines = (hannou as ConvRow[]).map(c => {
-        const time = elapsedLabel(c.updated_at);
-        const preview = msgPreview(c.last_message ?? null);
-        return `・${c.customer_name || "名称未設定"}　${time}${preview ? `\n　${preview}` : ""}`;
-      });
-      parts.push(`【新着】返信来てる。今すぐ対応して。\n${lines.join("\n")}`);
-    }
-
     if (saiyuusen && saiyuusen.length > 0) {
       const lines = (saiyuusen as ConvRow[]).map(c => {
         const time = elapsedLabel(c.updated_at);
@@ -388,13 +389,30 @@ export async function GET(req: NextRequest) {
       parts.push(`【最優先】\n${lines.join("\n")}`);
     }
 
+    if (hannou && hannou.length > 0) {
+      const lines = (hannou as ConvRow[]).map(c => {
+        const time = elapsedLabel(c.updated_at);
+        const preview = msgPreview(c.last_message ?? null);
+        return `・${c.customer_name || "名称未設定"}　${time}${preview ? `\n　${preview}` : ""}`;
+      });
+      parts.push(`【返信あり】今すぐ対応して。\n${lines.join("\n")}`);
+    }
+
+    if (shinchaku && shinchaku.length > 0) {
+      const lines = (shinchaku as ConvRow[]).map(c => {
+        const time = elapsedLabel(c.created_at);
+        return `・${c.customer_name || "名称未設定"}　${time}登録`;
+      });
+      parts.push(`【新着】${shinchaku.length}人入ってきた。今日中に全員返して。\n${lines.join("\n")}`);
+    }
+
     if (bukkenRows.length > 0) {
       const bukkenLines = buildBukkenLines(bukkenRows);
       parts.push(
         [
           `【物件出し】（本日の目標: 20件）`,
           ...bukkenLines,
-          `合計 ${totalBukken} 件 | 反応あり → 最優先 → 物件出し の順で動いて。`,
+          `合計 ${totalBukken} 件 | 最優先 → 返信あり → 新着 → 物件出し の順で動いて。`,
         ].join("\n")
       );
     }
@@ -444,15 +462,6 @@ export async function GET(req: NextRequest) {
 
   const eveningParts: string[] = [];
 
-  if (hannou && hannou.length > 0) {
-    const lines = (hannou as ConvRow[]).map(c => {
-      const time = elapsedLabel(c.updated_at);
-      const preview = msgPreview(c.last_message ?? null);
-      return `・${c.customer_name || "名称未設定"}　${time}${preview ? ` ${preview}` : ""}`;
-    });
-    eveningParts.push(`【新着】今日中に全員返して。\n${lines.join("\n")}`);
-  }
-
   if (saiyuusen && saiyuusen.length > 0) {
     const lines = (saiyuusen as ConvRow[]).map(c => {
       const time = elapsedLabel(c.updated_at);
@@ -465,6 +474,25 @@ export async function GET(req: NextRequest) {
       return `・${c.customer_name || "名称未設定"}　${time}${replyMark}${action}`;
     });
     eveningParts.push(`【最優先】\n${lines.join("\n")}`);
+  }
+
+  if (hannou && hannou.length > 0) {
+    const lines = (hannou as ConvRow[]).map(c => {
+      const time = elapsedLabel(c.updated_at);
+      const preview = msgPreview(c.last_message ?? null);
+      return `・${c.customer_name || "名称未設定"}　${time}${preview ? ` ${preview}` : ""}`;
+    });
+    eveningParts.push(`【返信あり】今日中に全員返して。\n${lines.join("\n")}`);
+  }
+
+  if (shinchaku && shinchaku.length > 0) {
+    const unanswered = (shinchaku as ConvRow[]).filter(c =>
+      c.status === "first_reply" || c.status === "condition_hearing"
+    );
+    if (unanswered.length > 0) {
+      const lines = unanswered.map(c => `・${c.customer_name || "名称未設定"}　${elapsedLabel(c.created_at)}登録`);
+      eveningParts.push(`【新着・未対応】今日入ったのにまだ返せてないのがいる。今夜中に返して。\n${lines.join("\n")}`);
+    }
   }
 
   if (bukkenRows.length > 0) {

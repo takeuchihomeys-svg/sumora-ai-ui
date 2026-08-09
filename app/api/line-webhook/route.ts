@@ -248,6 +248,24 @@ async function handleTextMessage(
     await notifySuzukiReply(db, convId, text).catch((e) => console.warn("[notifySuzukiReply]", e));
   });
 
+  // 新規客（初メッセージ）検知 → @鈴木即時通知
+  after(async () => {
+    const { count: msgCount } = await db
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .eq("conversation_id", convId)
+      .eq("sender", "customer");
+    if ((msgCount ?? 0) === 1) {
+      const { data: convInfo } = await db
+        .from("conversations")
+        .select("customer_name")
+        .eq("id", convId)
+        .maybeSingle();
+      await notifyNewCustomer(db, convId, (convInfo?.customer_name as string) || "")
+        .catch(e => console.warn("[notifyNewCustomer]", e));
+    }
+  });
+
   // ── 申込フォーム自動検知 → ステータスを申込・審査中(applying)に自動昇格 ──
   // これまでUI上の手動バナーしか経路がなく、会話を開いていないと遷移漏れしていた。
   // isFormatMessage より先に判定する（記入済みフォームの①②番号で希望条件と誤解析されるのを防ぐ）。
@@ -907,6 +925,50 @@ async function autoDetectTask(
     }
   } catch (e) {
     console.error("[autoDetectTask] LINE push error:", e);
+  }
+}
+
+// 新規客が来た → @鈴木メンションで即時通知
+async function notifyNewCustomer(db: ReturnType<typeof getDb>, convId: string, customerName: string) {
+  let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? process.env.LINE_GROUP_ID ?? null;
+  if (!groupId) {
+    const { data: grpRow } = await db.from("hanbancyo_settings").select("value").eq("key", "group_id").maybeSingle();
+    groupId = (grpRow?.value as string) ?? null;
+  }
+  const token = process.env.LINE_HANBANCYO_CHANNEL_ACCESS_TOKEN;
+  if (!groupId || !token) return;
+
+  const { data: suzukiRow } = await db.from("hanbancyo_settings").select("value").eq("key", "suzuki_line_user_id").maybeSingle();
+  const suzukiUserId = suzukiRow?.value as string | undefined;
+
+  // 今日の新着件数を取得
+  const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  jstNow.setUTCHours(0, 0, 0, 0);
+  const todayStart = new Date(jstNow.getTime() - 9 * 60 * 60 * 1000).toISOString();
+  const { count: todayNewCount } = await db
+    .from("conversations")
+    .select("id", { count: "exact", head: true })
+    .gt("created_at", todayStart);
+
+  const name = customerName || "名称未設定";
+  const countNote = (todayNewCount ?? 0) > 1 ? `（今日${todayNewCount}人目）` : "（今日初めての新着！）";
+
+  const text = `﻿@鈴木 祥平 【新着】${name}が入ってきた。${countNote}\n第一印象で全部決まる。今日中に必ず返して。`;
+
+  type MentionMsg = { type: "text"; text: string; mentionees?: { index: number; length: number; type: "user"; userId: string }[] };
+  const message: MentionMsg = suzukiUserId
+    ? { type: "text", text, mentionees: [{ index: 0, length: 7, type: "user", userId: suzukiUserId }] }
+    : { type: "text", text };
+
+  try {
+    await fetch("https://api.line.me/v2/bot/message/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ to: groupId, messages: [message] }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (e) {
+    console.warn("[notifyNewCustomer] push failed:", e);
   }
 }
 
