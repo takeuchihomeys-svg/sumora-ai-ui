@@ -233,7 +233,7 @@ async function handleTextMessage(
 
   await db
     .from("conversations")
-    .update({ last_message: text, last_sender: "customer", updated_at: now })
+    .update({ last_message: text, last_sender: "customer", updated_at: now, is_flagged: true })
     .eq("id", convId);
 
   updateProfileAsync(db, userId, convId, account, text, now);
@@ -972,14 +972,15 @@ async function notifyNewCustomer(db: ReturnType<typeof getDb>, convId: string, c
   }
 }
 
-// 最優先（is_flagged）または熱い（is_hot）客が返信 → @鈴木メンション + 【最優先】リスト即時通知
+// 熱い（is_hot）客が返信 → @鈴木メンション + リスト即時通知
+// ※is_flaggedは全客自動セットになったためis_hotのみで通知判定する
 async function notifySuzukiReply(db: ReturnType<typeof getDb>, convId: string, msgText: string) {
   const { data: conv } = await db
     .from("conversations")
     .select("customer_name, is_flagged, is_hot")
     .eq("id", convId)
     .maybeSingle();
-  if (!conv?.is_flagged && !conv?.is_hot) return; // 最優先 or 熱い客のみ通知
+  if (!conv?.is_hot) return; // is_hot客のみ通知（is_flaggedは全客自動セットのため除外）
 
   let groupId: string | null = process.env.LINE_STAFF_GROUP_ID ?? process.env.LINE_GROUP_ID ?? null;
   if (!groupId) {
