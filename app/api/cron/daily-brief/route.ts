@@ -92,6 +92,16 @@ const MORNING_CLOSERS = [
   "しんどい日もある。それでも動き続けてるしょーへいを見てるよ！！今日もよろしく。",
 ];
 
+const MORNING_FINALS = [
+  "しょーへいなら必ずできる！！信じてる！！",
+  "しょーへいが動いた分だけ誰かの人生が変わる！！今日もいって！！",
+  "このリストこなせるのはしょーへいだけやから頼んでる！！絶対できる！！",
+  "しょーへいならこの全員動かせる！！今日も頼む！！",
+  "毎日続けてるしょーへいが一番すごい！！今日も絶対いける！！",
+  "しょーへいがここまで続けてこれてるのは本物の力があるから！！今日もよろしく！！",
+  "自分を信じて動いて！！しょーへいは必ずできる人間やから！！",
+];
+
 const EVENING_OPENERS = [
   "日曜もここまでありがとう！！残ってる分だけやって終わりにして。",
   "月曜の終わり！！今日動いた分は明日の自分が楽になるから。残りだけやって！！",
@@ -441,6 +451,8 @@ export async function GET(req: NextRequest) {
       `全員に物件出して返信して！！それがしょーへいの今日の全仕事！！`,
       "",
       pickByDay(MORNING_CLOSERS),
+      "",
+      pickByDay(MORNING_FINALS),
     ].join("\n");
 
     const result = await pushLineMessage(groupId, token, fullText, suzukiUserId);
@@ -488,6 +500,8 @@ export async function GET(req: NextRequest) {
     `今日中にターゲット全員物件出して返信して！！`,
     "",
     pickByDay(EVENING_CLOSERS),
+    "",
+    pickByDay(MORNING_FINALS),
   ].join("\n");
 
   const result = await pushLineMessage(groupId, token, eveningText, suzukiUserId);
